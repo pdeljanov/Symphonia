@@ -6,6 +6,19 @@ Quick-and-dirty audio player for testing Sonata decoders.
 
 Sonata Play currently only supports Linux with PulseAudio.
 
+## Usage
+
+```
+# Play a song
+cargo run -- /path/to/the/file
+
+# Probe a file for streams
+cargo run -- --probe /path/to/the/file
+
+# Decode and check if the decoded audio is valid (some formats)
+cargo run -- --check /path/to/the/file
+```
+
 ## License
 
 Sonata is provided under the LGPLv2.1 license. Please refer to the LICENSE file for more details.

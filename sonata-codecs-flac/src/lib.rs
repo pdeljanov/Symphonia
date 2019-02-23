@@ -2,8 +2,8 @@
 
 use sonata_core::audio::{Duration, AudioBuffer, SignalSpec};
 use sonata_core::codecs::{CODEC_TYPE_FLAC, CodecParameters};
-use sonata_core::errors::Result;
-use sonata_core::formats::{Stream, Packet};
+use sonata_core::errors::{Result, unsupported_error};
+use sonata_core::formats::{Stream, Packet, SeekIndex};
 use sonata_core::io::*;
 
 mod metadata;
@@ -42,6 +42,7 @@ impl Format for Flac {
 pub struct FlacReader {
     reader: MediaSourceStream,
     streams: Vec<Stream>,
+    index: Option<SeekIndex>,
 }
 
 impl FlacReader {
@@ -50,6 +51,7 @@ impl FlacReader {
         FlacReader {
             reader: source,
             streams: Vec::new(),
+            index: None,
         }
     }
 
@@ -67,6 +69,10 @@ impl FormatReader for FlacReader {
 
     fn streams(&self) -> &[Stream] {
         &self.streams
+    }
+
+    fn seek(&mut self, timestamp: f64) -> Result<f64> {
+        unsupported_error("Seeking not supported.")
     }
 
     fn probe(&mut self, depth: ProbeDepth) -> Result<ProbeResult> {

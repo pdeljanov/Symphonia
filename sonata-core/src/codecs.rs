@@ -139,8 +139,10 @@ impl CodecParameters {
 
 }
 
+/// A `Decoder` implements a Codec's decode process. It consumes `Packet`'s and produces `AudioBuffers`.
 pub trait Decoder {
 
+    /// Instantiates the Decoder will the provided `CodecParameters`.
     fn new(params: &CodecParameters) -> Self;
 
     fn codec_params(&self) -> &CodecParameters;
@@ -149,4 +151,6 @@ pub trait Decoder {
 
     fn decode<B: Bytestream>(&mut self, packet: &mut Packet<'_, B>, buf: &mut AudioBuffer<i32>) -> Result<()>;
  
+    // fn decode_from<B: Bytestream>(&mut self, packet: &mut Packet<'_, B>, buf: &mut AudioBuffer<i32>) -> Result<()>;
+
 }

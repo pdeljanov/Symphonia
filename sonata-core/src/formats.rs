@@ -163,7 +163,6 @@ impl SeekIndex {
 
 pub struct Stream {
     pub codec_params: CodecParameters,
-    pub seek_index: Option<SeekIndex>,
     pub language: Option<String>,
 }
 
@@ -171,7 +170,6 @@ impl Stream {
     pub fn new(codec_params: CodecParameters) -> Self {
         Stream {
             codec_params,
-            seek_index: None,
             language: None,
         }
     }
@@ -196,12 +194,21 @@ impl Stream {
 /// until a seek.
 pub trait FormatReader {
 
+    /// Probes the container to check for support, contained streams, and other metadata. The complexity of the probe 
+    /// can be set based on the caller's use-case.
     fn probe(&mut self, depth: ProbeDepth) -> Result<ProbeResult>;
 
-    //fn seek(&mut self, time: f64);
+    /// Seek, as closely as possible, to the timestamp requested. 
+    /// 
+    /// Note that many containers cannot seek to an exact timestamp, rather they can only seek to a coarse location and 
+    /// then to the decoder must decode packets until the exact timestamp is reached. 
+    fn seek(&mut self, time: f64) -> Result<f64>;
 
+    /// Gets a list of streams in the container.
     fn streams(&self) -> &[Stream];
 
+    /// Gets the default stream. If the media container has a method of determing the default stream, the function 
+    /// should return it. Otherwise, the first stream is returned. If no streams are present, None is returned.
     fn default_stream(&self) -> Option<&Stream> {
         let streams = self.streams();
         match streams.len() {
