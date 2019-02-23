@@ -661,14 +661,12 @@ fn verify_rice_signed_to_i32() {
 }
 
 
-// Move to FIR
-
 fn fixed_predict(order: u32, buf: &mut [i32]) -> Result<()> {
     debug_assert!(order <= 4);
 
     // The Fixed Predictor is just a hard-coded version of the Linear Predictor up to order 4 and with fixed
     // coefficients. Some cases may be simplified such as orders 0 and 1. For orders 2 through 4, use the
-    // same FIR-style algorithm as the Linear Predictor.
+    // same IIR-style algorithm as the Linear Predictor.
     //
     // TODO: Split into 64-bit and 32-bit versions?
     // TODO: Instead of wrapping, why not saturate? Don't use saturating_add though, it incurs a
