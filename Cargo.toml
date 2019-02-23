@@ -1,0 +1,8 @@
+[workspace]
+
+members = [
+    "sonata",
+    "sonata-core",
+    "sonata-codecs-flac",
+    "sonata-play",
+]

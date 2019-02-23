@@ -1,0 +1,18 @@
+[package]
+name = "sonata"
+version = "0.1.0"
+description = "Pure Rust media container and audio codec library."
+authors = ["Philip Deljanov <philip.deljanov@gmail.com>"]
+license = "LGPL-2.1-only"
+readme = "README.md"
+categories = ["multimedia"]
+keywords = ["audio", "codec", "decoder", "encoder", "format"]
+
+edition = "2018"
+
+[features]
+default = ["sonata-codecs-flac"]
+flac = ["sonata-codecs-flac"]
+
+[dependencies]
+sonata-codecs-flac = { version = "*", path = "../sonata-codecs-flac", optional = true }
