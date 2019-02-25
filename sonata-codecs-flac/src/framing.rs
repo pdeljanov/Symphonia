@@ -320,7 +320,11 @@ fn read_frame_header<B: Bytestream>(reader: &mut B) -> Result<FrameHeader> {
         }
     };
 
-    // TODO: Validate sample_rate > 0 && sample_rate <= 655350 or error.
+    if let Some(rate) = sample_rate {
+        if rate < 1 || rate > 655350 {
+            return decode_error("Sample rate out of bounds.");
+        }
+    }
 
     let bits_per_sample = match bits_per_sample_enc {
         0x0 => None, // Get from StreamInfo if possible.
