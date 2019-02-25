@@ -182,7 +182,22 @@ impl io::Read for MediaSourceStream {
 
 impl io::Seek for MediaSourceStream {
     fn seek(&mut self, pos: io::SeekFrom) -> io::Result<u64> {
-        self.inner.seek(pos)
+        // The current position of the underlying reader is ahead of the current position of the MediaSourceStream by
+        // how ever many bytes have not been read from the read-ahead buffer yet. When seeking from the current position
+        // adjust the position delta to offset that difference.
+        let result = match pos {
+            io::SeekFrom::Current(delta_pos) => {
+                let bytes_ahead = (self.byte_length - self.pos) as i64;
+                self.inner.seek(io::SeekFrom::Current(delta_pos - bytes_ahead))
+            }
+            _ => self.inner.seek(pos)
+        };
+
+        // Invalidate the read-ahead buffer.
+        self.pos = 0;
+        self.byte_length = 0;
+
+        result
     }
 }
 
