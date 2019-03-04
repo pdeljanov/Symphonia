@@ -97,17 +97,35 @@ pub fn mask_range(upper: u32, lower: u32) -> u8 {
 pub trait MediaSource: io::Read + io::Seek {
     /// Returns if the source is seekable.
     fn is_seekable(&self) -> bool;
+
+    /// Returns the length in bytes, if available.
+    fn len(&self) -> Option<u64>;
 }
 
 impl MediaSource for std::fs::File {
     fn is_seekable(&self) -> bool {
+        // TODO: Check that the underlying file is actually seekable. Only regular files are seekable.
         true
+    }
+
+    fn len(&self) -> Option<u64> {
+        match self.metadata() {
+            Ok(metadata) => Some(metadata.len()),
+            _ => None,
+        }
     }
 }
 
 impl<T: std::convert::AsRef<[u8]>> MediaSource for io::Cursor<T> {
     fn is_seekable(&self) -> bool {
         true
+    }
+
+    fn len(&self) -> Option<u64> {
+        // Get the underlying container, usually &Vec<T>.
+        let inner = self.get_ref();
+        // Get slice from the underlying container, &[T], for the len() function.
+        Some(inner.as_ref().len() as u64)
     }
 }
 
@@ -202,8 +220,14 @@ impl io::Seek for MediaSourceStream {
 }
 
 impl MediaSource for MediaSourceStream {
+    #[inline]
     fn is_seekable(&self) -> bool {
         self.inner.is_seekable()
+    }
+
+    #[inline]
+    fn len(&self) -> Option<u64> {
+        self.inner.len()
     }
 } 
 
