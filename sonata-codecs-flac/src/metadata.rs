@@ -18,9 +18,10 @@
 use std::fmt;
 use std::mem;
 use sonata_core::audio::Channel;
+use sonata_core::errors::{Result, decode_error};
+use sonata_core::formats::SeekIndex;
 use sonata_core::tags::*;
 use sonata_core::io::*;
-use sonata_core::errors::{Result, decode_error};
 
 #[derive(Debug)]
 pub enum MetadataBlockType {
@@ -280,64 +281,29 @@ impl fmt::Display for VorbisComment {
     }
 }
 
-
-#[derive(Debug)]
-pub struct SeekPoint {
-    sample: u64,
-    byte_offset: u64,
-    n_samples: u16,
-}
-
-impl SeekPoint {
-    pub fn new(sample: u64, byte_offset: u64, n_samples: u16) -> SeekPoint {
-        SeekPoint {
-            sample,
-            byte_offset,
-            n_samples
-        }
-    }
-}
-
-pub struct SeekTable {
-    seek_points: Vec<SeekPoint>
-}
+pub struct SeekTable;
 
 impl SeekTable {
-    pub fn read<B : Bytestream>(reader: &mut B, length: usize)  -> Result<SeekTable> {
-        let count = length / 18;
+    pub fn process<B : Bytestream>(reader: &mut B, block_length: usize, table: &mut SeekIndex) -> Result<()> {
+        let count = block_length / 18;
 
-        let mut seek_table = SeekTable {
-            seek_points: Vec::<SeekPoint>::new()
-        };
-
-        for _i in 0..count {
+        for _ in 0..count {
             let sample = reader.read_be_u64()?;
 
             // A sample value of 0xFFFFFFFFFFFFFFFF is designated as a placeholder and is to be
             // ignored by decoders. The remaining 10 bytes of the seek point are undefined and must
             // still be consumed.
             if sample != 0xffffffffffffffff {
-                seek_table.seek_points.push(
-                    SeekPoint::new(sample, reader.read_be_u64()?, reader.read_be_u16()?));
+                table.insert(sample, reader.read_be_u64()?, reader.read_be_u16()? as u32);
             }
             else {
                 reader.ignore_bytes(10)?;
             }
         }
 
-        Ok(seek_table)
+        Ok(())
     }
 
-}
-
-impl fmt::Display for SeekTable {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "SeekTable [")?;
-        for seek_point in &self.seek_points {
-            writeln!(f, "\t{:?},", seek_point)?;
-        }
-        writeln!(f, "]")
-    }
 }
 
 /// Converts a string of bytes to an ASCII string if all characters are within the printable ASCII range. If a null
