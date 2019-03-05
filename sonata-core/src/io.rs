@@ -282,34 +282,39 @@ impl MediaSourceStream {
                 // the invariant that the rewind buffer partition is always at capacity, then the current active buffer 
                 // partition must be filled to capacity before swapping.
                 if self.part[cur_idx].len < self.part[cur_idx].capacity {
-                    let end = self.pos + (self.part[cur_idx].capacity - self.part[cur_idx].len);
-                    let len = self.inner.read(&mut self.buf[self.pos..end])?;
+                    let amount = self.part[cur_idx].capacity - self.part[cur_idx].len;
+                    let len = self.inner.read(&mut self.buf[self.pos..self.pos + amount])?;
+
+                    // Update the partition information now that the read has succeeded.
                     self.part[cur_idx].len += len;
+
+                    // Update the read boundary.
                     self.end_pos += len;
                 }
                 // The read-ahead buffer has been filled to capacity, and subsequently read fully. Swap the active 
                 // buffer partition with the old rewind buffer partition and read in new data from the inner reader.
                 else {
-                    // The read boundary initial position is the beginning of the partition in the buffer.
-                    self.pos = alt_idx * Self::MAX_CAPACITY;
-
                     // Grow the buffer partition capacity exponentially to reduce the overhead of buffering on seeking.
-                    self.cur_capacity = cmp::min(self.cur_capacity << 1, Self::MAX_CAPACITY);
-                    self.part[alt_idx].capacity = self.cur_capacity;
-
+                    let capacity = cmp::min(self.cur_capacity << 1, Self::MAX_CAPACITY);
+                    
                     // Read into the active buffer partition.
-                    let end = self.pos + self.part[alt_idx].capacity;
-                    let len = self.inner.read(&mut self.buf[self.pos..end])?;
+                    let pos = alt_idx * Self::MAX_CAPACITY;
+                    let len = self.inner.read(&mut self.buf[pos..pos + capacity])?;
 
-                    // Update base position, and the length of the current partition.
+                    // Update partition information now that the read has succeeded.
                     self.part[alt_idx].base_pos = self.part[cur_idx].base_pos + self.part[cur_idx].len as u64;
+                    self.part[alt_idx].capacity = self.cur_capacity;
                     self.part[alt_idx].len = len;
 
                     // Swap the buffer partitions.
                     self.part_idx = self.part_idx.wrapping_add(1);
 
-                    // Update the read boundary end position.
-                    self.end_pos = self.pos + len;
+                    // Update the current capacity after the read was successful.
+                    self.cur_capacity = capacity;
+
+                    // Update the read boundaries.
+                    self.pos = pos;
+                    self.end_pos = pos + len;
                 }
             }
 
