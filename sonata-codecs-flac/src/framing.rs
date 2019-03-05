@@ -20,7 +20,7 @@ use std::num::Wrapping;
 use sonata_core::audio::{AudioBuffer, Signal};
 use sonata_core::io::*;
 use sonata_core::errors::{Result, decode_error, unsupported_error};
-use sonata_core::checksum::{Crc8, Crc16};
+use sonata_core::checksum::{Crc8, Crc16, Checksum};
 
 use crate::validate::Md5AudioValidator;
 
@@ -121,6 +121,46 @@ struct FrameHeader {
     bits_per_sample: Option<u32>,
 }
 
+pub struct ParsedPacket {
+    /// The timestamp of the first audio frame in the packet.
+    pub packet_ts: u64,
+    /// The number of audio frames in the packet.
+    pub n_frames: u32,
+    // The number of bytes of the packet that were consumed while parsing.
+    pub parsed_len: usize,
+}   
+
+pub struct PacketParser;
+
+impl PacketParser {
+
+    pub fn parse_packet(reader: &mut MediaSourceStream) -> Result<ParsedPacket> {
+        let mut byte_offset;
+
+        let header = loop {
+            let sync = sync_frame(reader)?;
+
+            byte_offset = reader.pos() - 2;
+
+            match read_frame_header(reader, sync) {
+                Ok(header) => break header,
+                _ => (),
+            }
+        };
+
+        let packet_ts = match header.block_sequence {
+            BlockSequence::ByFrame(seq) => seq as u64 * header.block_num_samples as u64,
+            BlockSequence::BySample(seq) => seq,
+        };
+
+        Ok(ParsedPacket {
+            packet_ts,
+            n_frames: header.block_num_samples as u32,
+            parsed_len: (reader.pos() - byte_offset) as usize,
+        })
+    }
+}
+
 pub struct FrameStream {
     stream_bps: Option<u32>,
     stream_sample_rate: Option<u32>,
@@ -138,11 +178,17 @@ impl FrameStream {
     }
 
     pub fn next<B: Bytestream>(&mut self, reader: &mut B, buf: &mut AudioBuffer<i32>) -> Result<()> {
-        // The entire frame is checksummed with a CRC16, wrap the main reader in a CRC16 error
-        // detection stream.
-        let mut reader_crc16 = ErrorDetectingStream::new(Crc16::new(), reader);
+        // Synchronize to a frame and get the synchronization code.
+        let sync = sync_frame(reader)?;
 
-        let header = read_frame_header(&mut reader_crc16)?;
+        // The entire frame is checksummed with a CRC16, wrap the main reader in a CRC16 error
+        // detection stream. Include the sync code in the CRC.
+        let mut crc16 = Crc16::new();
+        crc16.process_buf_bytes(&sync.to_be_bytes());
+
+        let mut reader_crc16 = ErrorDetectingStream::new(crc16, reader);
+
+        let header = read_frame_header(&mut reader_crc16, sync)?;
 
         // Use the bits per sample and sample rate as stated in the frame header, falling back to the stream information
         // if provided. If neither are available, return an error.
@@ -238,20 +284,26 @@ impl FrameStream {
     }
 }
 
-fn read_frame_header<B: Bytestream>(reader: &mut B) -> Result<FrameHeader> {
-    let mut reader_crc8 = ErrorDetectingStream::new(Crc8::new(), reader);
-
+fn sync_frame<B: Bytestream>(reader: &mut B) -> Result<u16> {
     let mut sync = 0u16;
 
     // Synchronize stream to Frame Header. FLAC specifies a byte-aligned 14 bit sync code of
     // `0b11_1111_1111_1110`. This would be difficult to find on its own. Expand the search to
-    // a 16-bit field of `0b1111_1111_1111_10xx` and search two words at a time.
+    // a 16-bit field of `0b1111_1111_1111_10xx` and search a word at a time.
     while (sync & 0xfffc) != 0xfff8 {
-        // TODO: Reset CRC reader checksums if searching for sync.
-
-        // Reset the checksums so that they are zeroed when the sync code is read.
-        sync = reader_crc8.read_be_u16()?;
+        sync = sync.wrapping_shl(8) | reader.read_u8()? as u16;
     }
+
+    Ok(sync)
+}
+
+fn read_frame_header<B: Bytestream>(reader: &mut B, sync: u16) -> Result<FrameHeader> {
+
+    // The header is checksummed with a CRC8 hash. Include the sync code in this CRC.
+    let mut crc8 = Crc8::new();
+    crc8.process_buf_bytes(&sync.to_be_bytes());
+
+    let mut reader_crc8 = ErrorDetectingStream::new(crc8, reader);
 
     // Extract the blocking strategy from the expanded synchronization code.
     let blocking_strategy = match sync & 0x1 {
@@ -271,7 +323,10 @@ fn read_frame_header<B: Bytestream>(reader: &mut B) -> Result<FrameHeader> {
     let block_sequence = match blocking_strategy {
         // Fixed-blocksize stream sequence blocks by a frame number.
         BlockingStrategy::Fixed => {
-            let frame = utf8_decode_be_u64(&mut reader_crc8)?.unwrap();
+            let frame = match utf8_decode_be_u64(&mut reader_crc8)? {
+                Some(frame) => frame,
+                None => return decode_error("Frame sequence number is not valid."),
+            };
 
             // The frame number should only be 31-bits. Since it is UTF8 encoded, the actual length
             // cannot be enforced by the decoder. Return an error if the frame number exceeds the
@@ -284,7 +339,10 @@ fn read_frame_header<B: Bytestream>(reader: &mut B) -> Result<FrameHeader> {
         },
         // Variable-blocksize streams sequence blocks by a sample number.
         BlockingStrategy::Variable => {
-            BlockSequence::BySample(utf8_decode_be_u64(&mut reader_crc8)?.unwrap())
+            match utf8_decode_be_u64(&mut reader_crc8)? {
+                Some(sample) => BlockSequence::BySample(sample),
+                None => return decode_error("Frame sequence number is not valid."),
+            }
         }
     };
 
@@ -292,7 +350,13 @@ fn read_frame_header<B: Bytestream>(reader: &mut B) -> Result<FrameHeader> {
         0x1       => 192,
         0x2..=0x5 => 576 * (1 << (block_size_enc - 2)),
         0x6       => reader_crc8.read_u8()? as u16 + 1,
-        0x7       => reader_crc8.read_be_u16()? + 1,
+        0x7       => {
+            let block_size = reader_crc8.read_be_u16()?;
+            if block_size == 0xffff {
+                return decode_error("Block size not allowed to be greater than 65535.");
+            }
+            block_size + 1
+        },
         0x8..=0xf => 256 * (1 << (block_size_enc - 8)),
         _         => {
             return decode_error("Block size set to reserved value.");
@@ -355,7 +419,6 @@ fn read_frame_header<B: Bytestream>(reader: &mut B) -> Result<FrameHeader> {
     let crc8_expected = reader_crc8.to_inner().read_u8()?;
 
     if crc8_expected != crc8_computed {
-        dbg!(crc8_computed == crc8_expected);
         return decode_error("Computed frame header CRC does not match expected CRC.");
     }
 
@@ -460,6 +523,9 @@ fn samples_shl(shift: u32, buf: &mut [i32]) {
         }
     }
 }
+
+
+
 
 fn decode_constant<B: BitStream>(bs: &mut B, bps: u32, buf: &mut [i32]) -> Result<()> {
     let const_sample = sign_extend_leq32_to_i32(bs.read_bits_leq32(bps)?, bps);

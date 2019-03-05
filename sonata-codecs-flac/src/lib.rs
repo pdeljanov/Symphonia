@@ -1,8 +1,10 @@
 #![warn(rust_2018_idioms)]
 
+use std::io::{Seek, SeekFrom};
+
 use sonata_core::audio::{Duration, AudioBuffer, SignalSpec};
 use sonata_core::codecs::{CODEC_TYPE_FLAC, CodecParameters};
-use sonata_core::errors::{Result, unsupported_error};
+use sonata_core::errors::{Result, decode_error, unsupported_error};
 use sonata_core::formats::{Stream, Packet, SeekIndex};
 use sonata_core::io::*;
 
@@ -13,7 +15,7 @@ mod validate;
 use metadata::{MetadataBlockType, MetadataBlockHeader};
 use metadata::{StreamInfo, VorbisComment, SeekTable, Cuesheet, Application, Picture};
 
-use framing::FrameStream;
+use framing::{FrameStream, PacketParser};
 
 /// The FLAC start of stream marker: "fLaC" in ASCII.
 const FLAC_STREAM_MARKER: [u8; 4] = [0x66, 0x4c, 0x61, 0x43];
@@ -21,7 +23,7 @@ const FLAC_STREAM_MARKER: [u8; 4] = [0x66, 0x4c, 0x61, 0x43];
 /// The recommended maximum number of bytes advance a stream to find the stream marker before giving up.
 const FLAC_PROBE_SEARCH_LIMIT: usize = 512 * 1024;
 
-pub use sonata_core::formats::{ProbeDepth, ProbeResult, Format, FormatReader};
+pub use sonata_core::formats::{ProbeDepth, ProbeResult, Format, FormatReader, SeekSearchResult};
 pub use sonata_core::codecs::Decoder;
 
 /// `Flac` (FLAC) is the Free Lossless Audio Codec.
@@ -55,6 +57,85 @@ impl FlacReader {
         }
     }
 
+    /// Reads a StreamInfo block and populates the reader with stream information.
+    fn read_stream_info_block(&mut self) -> Result<()> {
+        // Only one StreamInfo block, and therefore ony one Stream, is allowed per media source stream.
+        if self.streams.len() == 0 {
+            let info = StreamInfo::read(&mut self.reader)?;
+            eprintln!("{}", info);
+
+            // Populate the codec parameters with the information read from StreamInfo.
+            let mut codec_params = CodecParameters::new(CODEC_TYPE_FLAC);
+
+            codec_params
+                .with_sample_rate(info.sample_rate)
+                .with_bits_per_sample(info.bits_per_sample)
+                .with_max_frames_per_packet(info.block_size_bounds.1 as u64)
+                .with_channels(&info.channels);
+            
+            // Total samples (per channel) may or may not be stated in StreamInfo.
+            if let Some(samples) = info.n_samples {
+                codec_params.with_length(&Duration::Frames(samples));
+            }
+
+            // Add the stream.
+            self.streams.push(Stream::new(codec_params));
+        }
+        else {
+            return decode_error("Found more than one StreamInfo block.");
+        }
+
+        Ok(())
+    }
+
+    /// Reads all the metadata blocks.
+    fn read_all_metadata_blocks(&mut self) -> Result<()> {
+        loop {
+            let header = MetadataBlockHeader::read(&mut self.reader)?;
+
+            match header.block_type {
+                MetadataBlockType::Application => {
+                    eprintln!("{}", Application::read(&mut self.reader, header.block_length)?);
+                },
+                MetadataBlockType::SeekTable => {
+                    // Only one SeekTable is allowed.
+                    if self.index.is_none() {
+                        let mut index = SeekIndex::new();
+                        SeekTable::process(&mut self.reader, header.block_length, &mut index)?;
+                        eprintln!("{}", &index);
+                        self.index = Some(index);
+                    }
+                    else {
+                        return decode_error("Found more than one SeekTable block.");
+                    }
+                },
+                MetadataBlockType::VorbisComment => {
+                    eprintln!("{}", VorbisComment::read(&mut self.reader, header.block_length)?);
+                },
+                MetadataBlockType::Cuesheet => {
+                    eprintln!("{}", Cuesheet::read(&mut self.reader, header.block_length)?);
+                },
+                MetadataBlockType::Picture => {
+                    eprintln!("{}", Picture::read(&mut self.reader, header.block_length)?);
+                },
+                MetadataBlockType::StreamInfo => {
+                    self.read_stream_info_block()?;
+                },
+                _ => {
+                    self.reader.ignore_bytes(header.block_length)?;
+                    eprintln!("Ignoring {} bytes of {:?} block.", header.block_length, header.block_type);
+                }
+            }
+
+            // Exit when the last header is processed.
+            if header.is_last {
+                break;
+            }
+        }
+
+        Ok(())
+    }
+
 }
 
 impl FormatReader for FlacReader {
@@ -71,7 +152,98 @@ impl FormatReader for FlacReader {
         &self.streams
     }
 
-    fn seek(&mut self, timestamp: f64) -> Result<f64> {
+    fn seek(&mut self, frame_ts: u64) -> Result<u64> {
+        // If the reader supports seeking, coarsely seek to the nearest packet using a binary search.
+        if self.reader.is_seekable() {
+            // The byte offsets in the SeekIndex are relative to the first byte of the first frame, so offset the 
+            // start_byte_offset by the number of bytes to the first frame. In the case of no SeekIndex, the search will
+            // begin from the first byte of the first frame.
+            let first_frame_byte_offset = self.reader.seek(SeekFrom::Current(0))?;
+
+            let mut start_byte_offset = first_frame_byte_offset;
+            let mut end_byte_offset = self.reader.seek(SeekFrom::End(0))?;
+
+            eprintln!("Seeking to frame_ts={}", frame_ts);
+
+            // There is an index, use it to refine the binary search area.
+            if let Some(ref index) = self.index {
+                // Search the index for the timestamp. Adjust the search based on the result.
+                match index.search(frame_ts) {
+                    // Search from the start of stream up-to an ending point.
+                    SeekSearchResult::Upper(upper) => {
+                        end_byte_offset = upper.byte_offset + first_frame_byte_offset;
+                    },
+                    // Search from a starting point up-to the end of the stream.
+                    SeekSearchResult::Lower(lower) => {
+                        start_byte_offset = lower.byte_offset + first_frame_byte_offset;
+                    },
+                    // Search between two points of the stream.
+                    SeekSearchResult::Range(lower,upper) => {
+                        start_byte_offset = lower.byte_offset + first_frame_byte_offset;
+                        end_byte_offset = upper.byte_offset + first_frame_byte_offset;
+                    },
+                    // Search the entire stream (default behaviour, so do nothing).
+                    SeekSearchResult::Stream => (),
+                }
+            }
+
+            // Binary search the range of bytes formed by start_by_offset..end_byte_offset for the desired frame 
+            // timestamp. When the difference of the range reaches 2x the maximum frame size, exit the loop and search 
+            // from the start_byte_offset linearly. The binary search becomes inefficient when the range is small.
+            while end_byte_offset - start_byte_offset > 2 * 8096 {
+                let mid_byte_offset = (start_byte_offset + end_byte_offset) / 2;
+                self.reader.seek(SeekFrom::Start(mid_byte_offset))?;
+
+                let packet = PacketParser::parse_packet(&mut self.reader)?;
+
+                if frame_ts < packet.packet_ts {
+                    end_byte_offset = mid_byte_offset;
+                }
+                else if frame_ts > packet.packet_ts && frame_ts < (packet.packet_ts + packet.n_frames as u64) {
+                    // Rewind the stream back to the beginning of the frame.
+                    self.reader.rewind(packet.parsed_len);
+
+                    eprintln!("Seeked to packet_ts={} (delta={})", 
+                        packet.packet_ts, packet.packet_ts as i64 - frame_ts as i64);
+
+                    return Ok(packet.packet_ts);
+                }
+                else {
+                    start_byte_offset = mid_byte_offset;
+                }
+            }
+
+            // The binary search did not find an exact frame, but the range has been narrowed. Seek to the start of the 
+            // range, and continue with a linear search.
+            self.reader.seek(SeekFrom::Start(start_byte_offset))?;
+        }
+
+        // Linearly search the stream packet-by-packet for the packet that contains the desired timestamp. This search 
+        // is used to find the exact packet containing the desired timestamp after the search range was narrowed by the
+        // binary search. It is also the ONLY way for a non-seekable stream to be "seeked".
+        loop {
+            let packet = PacketParser::parse_packet(&mut self.reader)?;
+
+            if frame_ts < packet.packet_ts {
+                // Rewind the stream back to the beginning of the frame.
+                self.reader.rewind(packet.parsed_len);
+
+                eprintln!("Seeked to packet_ts={} (delta={})", 
+                    packet.packet_ts, packet.packet_ts as i64 - frame_ts as i64);
+
+                return Ok(packet.packet_ts);
+            }
+            else if frame_ts > packet.packet_ts && frame_ts < (packet.packet_ts + packet.n_frames as u64) {
+                // Rewind the stream back to the beginning of the frame.
+                self.reader.rewind(packet.parsed_len);
+
+                eprintln!("Seeked to packet_ts={} (delta={})", 
+                    packet.packet_ts, packet.packet_ts as i64 - frame_ts as i64);
+
+                return Ok(packet.packet_ts);
+            }
+        }
+
         unsupported_error("Seeking not supported.")
     }
 
@@ -96,30 +268,12 @@ impl FormatReader for FlacReader {
 
                 // Strictly speaking, the first metadata block must be a StreamInfo block. There is no technical need 
                 // for this from the reader's point of view. Additionally, if the reader is fed a stream mid-way there
-                // is no StreamInfo block. Therefore, don't enforce this too strictly.
+                // is no StreamInfo block. Therefore, probably just read all metadata blocks?
                 let header = MetadataBlockHeader::read(&mut self.reader)?;
 
                 match header.block_type {
                     MetadataBlockType::StreamInfo => {
-
-                        let info = StreamInfo::read(&mut self.reader)?;
-
-                        let mut codec_params = CodecParameters::new(CODEC_TYPE_FLAC);
-
-                        // Populate the codec parameters with the information read from StreamInfo.
-                        codec_params
-                            .with_sample_rate(info.sample_rate)
-                            .with_bits_per_sample(info.bits_per_sample)
-                            .with_max_frames_per_packet(info.block_size_bounds.1 as u64)
-                            .with_channels(&info.channels);
-                        
-                        // Total samples (per channel) may or may not be stated in StreamInfo.
-                        if let Some(samples) = info.n_samples {
-                            codec_params.with_length(&Duration::Frames(samples));
-                        }
-
-                        // Add the stream.
-                        self.streams.push(Stream::new(codec_params));
+                        self.read_stream_info_block()?;
                     },
                     _ => {
                         eprintln!("Probe: First block is not StreamInfo.");
@@ -129,7 +283,7 @@ impl FormatReader for FlacReader {
 
                 // If there are more metablocks, read and process them.
                 if !header.is_last {
-                    read_all_metadata_blocks(&mut self.reader)?;
+                    self.read_all_metadata_blocks()?;
                 }
 
                 // Read the rest of the metadata blocks.
@@ -169,41 +323,7 @@ impl FormatReader for FlacReader {
 
 }
 
-fn read_all_metadata_blocks<B: Bytestream>(reader: &mut B) -> Result<()> {
-    loop {
-        let header = MetadataBlockHeader::read(reader)?;
 
-        match header.block_type {
-            MetadataBlockType::Application => {
-                eprintln!("{}", Application::read(reader, header.block_length)?);
-            },
-            MetadataBlockType::SeekTable => {
-                eprintln!("{}", SeekTable::read(reader, header.block_length)?);
-            },
-            MetadataBlockType::VorbisComment => {
-                eprintln!("{}", VorbisComment::read(reader, header.block_length)?);
-            },
-            MetadataBlockType::Cuesheet => {
-                eprintln!("{}", Cuesheet::read(reader, header.block_length)?);
-            },
-            MetadataBlockType::Picture => {
-                eprintln!("{}", Picture::read(reader, header.block_length)?);
-            },
-            //MetadataBlockType::StreamInfo => SUPER ILLEGAL,
-            _ => {
-                reader.ignore_bytes(header.block_length)?;
-                eprintln!("Ignoring {} bytes of {:?} block.", header.block_length, header.block_type);
-            }
-        }
-
-        // Exit when the last header is processed.
-        if header.is_last {
-            break;
-        }
-    }
-
-    Ok(())
-}
 
 /// `FlacDecoder` implements a decoder for the FLAC codec bitstream. The decoder is compatible with OGG encapsulated 
 /// FLAC.

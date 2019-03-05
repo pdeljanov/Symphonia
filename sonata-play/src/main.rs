@@ -31,6 +31,12 @@ fn main() {
                         .version("1.0")
                         .author("Philip Deljanov <philip.deljanov@gmail.com>")
                         .about("Play audio files with Sonata")
+                        .arg(Arg::with_name("seek")
+                            .long("seek")
+                            .short("-s")
+                            .value_name("TIMESTAMP")
+                            .help("Seek to the given timestamp")
+                            .conflicts_with_all(&["check", "probe"]))
                         .arg(Arg::with_name("probe")
                             .long("probe")
                             .short("-p")
@@ -39,7 +45,7 @@ fn main() {
                         .arg(Arg::with_name("check")
                             .long("check")
                             .short("-c")
-                            .help("Decodes the entire file checking that the decoded audio is valid"))
+                            .help("Decodes the entire file and checks that the decoded audio is valid"))
                        .arg(Arg::with_name("verbose")
                             .short("v")
                             .multiple(true)
@@ -71,6 +77,15 @@ fn main() {
                 validate(&mut reader);
             }
             else if !matches.is_present("probe") {
+
+                match matches.value_of("seek") {
+                    Some(seek_value) => {
+                        let pos = seek_value.parse::<u64>().unwrap();
+                        reader.seek(pos).unwrap();
+                    },
+                    None => ()
+                };
+
                 play(&mut reader);
             }
         }

@@ -236,10 +236,7 @@ impl SeekIndex {
             // or a single SeekPoint is found.
             while upper - lower > 1 {
                 let mid = (lower + upper) / 2;
-                
-                let lower_ts = self.points[lower].frame_ts;
                 let mid_ts = self.points[mid].frame_ts;
-                let upper_ts = self.points[upper].frame_ts;
 
                 if frame_ts < mid_ts {
                     upper = mid;
