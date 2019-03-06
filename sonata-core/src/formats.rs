@@ -164,16 +164,6 @@ impl fmt::Display for SeekPoint {
     }
 }
 
-/*
-use std::cmp::Ordering;
-
-impl Ord for SeekPoint {
-    fn cmp(&self, other: &SeekPoint) -> Ordering {
-        self.0.cmp(&other.0)
-    }
-}
-*/
-
 /// A `SeekIndex` stores seek points (generally a sample or frame number to byte offset) within an audio stream.
 pub struct SeekIndex {
     points: Vec<SeekPoint>,

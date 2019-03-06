@@ -15,7 +15,10 @@
 // License along with this library; if not, write to the Free Software
 // Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301 USA
 
-use crate::sample::{u24, i24, Sample};
+use crate::sample::{u24, i24};
+
+#[cfg(test)]
+use crate::sample::Sample;
 
 /// Converts a sample of one type and value to another type with an equivalent value.
 /// 

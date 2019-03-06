@@ -1030,33 +1030,6 @@ impl<B: Bytestream> BitStream for BitStreamLtr<B> {
     }
 }
 
-
-
-
-// Look up table of masks given the number of bits remaining and number of bits desired.
-const BIT_LOOKUP_MASKS: [u8; 72]= [
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,   // 0 bits remaining => 0b0000_0000
-    0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,   // 1 bits remaining => 0b0000_0001
-    0x02, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03,   // 2 bits remaining => 0b0000_0011
-    0x04, 0x06, 0x07, 0x07, 0x07, 0x07, 0x07, 0x07,   // 3 bits remaining => 0b0000_0111
-    0x08, 0x0c, 0x0e, 0x0f, 0x0f, 0x0f, 0x0f, 0x0f,   // 4 bits remaining => 0b0000_1111
-    0x10, 0x18, 0x1c, 0x1e, 0x1f, 0x1f, 0x1f, 0x1f,   // 5 bits remaining => 0b0001_1111
-    0x20, 0x30, 0x38, 0x3c, 0x3e, 0x3f, 0x3f, 0x3f,   // 6 bits remaining => 0b0011_1111
-    0x40, 0x60, 0x70, 0x78, 0x7c, 0x7e, 0x7f, 0x7f,   // 7 bits remaining => 0b0111_1111
-    0x80, 0xc0, 0xe0, 0xf0, 0xf8, 0xfc, 0xfe, 0xff,   // 8 bits remaining => 0b1111_1111
-];
-
-/*
-/// A `BitReaderRtl` provides an implementation of a `BitReader` that interprets sequential bits in
-/// a single read as increasing in significance. That is to say, if N-bits are read from a
-/// `BitReaderRtl` then bit 0 (the first bit read from the source) is the least-significant bit and
-/// bit N-1 is the most-significant.
-pub struct BitReaderRtl {
-    byte: u8,
-    bit_pos: u32,
-}
-*/
-
 /// Decodes a big-endiann unsigned integers encoded via extended UTF8. In this context, extended
 /// UTF8 simply means the encoded UTF8 value may be up to 7 bytes for a maximum integer bit width
 /// of 36-bits.

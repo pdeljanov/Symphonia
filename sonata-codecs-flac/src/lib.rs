@@ -2,7 +2,7 @@
 
 use std::io::{Seek, SeekFrom};
 
-use sonata_core::audio::{AudioBuffer, Duration, SignalSpec, Timestamp};
+use sonata_core::audio::{AudioBuffer, SignalSpec, Timestamp};
 use sonata_core::codecs::{CODEC_TYPE_FLAC, CodecParameters};
 use sonata_core::errors::{Result, decode_error, seek_error, SeekErrorKind};
 use sonata_core::formats::{Packet, Stream, SeekIndex};
@@ -45,6 +45,7 @@ pub struct FlacReader {
     reader: MediaSourceStream,
     streams: Vec<Stream>,
     index: Option<SeekIndex>,
+    first_frame_offset: u64,
 }
 
 impl FlacReader {
@@ -54,6 +55,7 @@ impl FlacReader {
             reader: source,
             streams: Vec::new(),
             index: None,
+            first_frame_offset: 0,
         }
     }
 
@@ -73,9 +75,9 @@ impl FlacReader {
                 .with_max_frames_per_packet(info.block_size_bounds.1 as u64)
                 .with_channels(&info.channels);
             
-            // Total samples (per channel) may or may not be stated in StreamInfo.
-            if let Some(samples) = info.n_samples {
-                codec_params.with_n_frames(samples);
+            // Total samples (per channel) aka frames may or may not be stated in StreamInfo.
+            if let Some(n_frames) = info.n_samples {
+                codec_params.with_n_frames(n_frames);
             }
 
             // Add the stream.
@@ -181,6 +183,8 @@ impl FormatReader for FlacReader {
             }
         };
 
+        eprintln!("Seeking to frame_ts={}", frame_ts);
+
         // If the total number of frames in the stream is known, verify the desired frame timestamp does not exceed it.
         if let Some(n_frames) = params.n_frames {
             if frame_ts > n_frames {
@@ -191,32 +195,28 @@ impl FormatReader for FlacReader {
         // If the reader supports seeking, coarsely seek to the nearest packet with a timestamp lower than the desired 
         // timestamp using a binary search.
         if self.reader.is_seekable() {
-            // The byte offsets in the SeekIndex are relative to the first byte of the first frame, so offset the 
-            // start_byte_offset by the number of bytes to the first frame. In the case of no SeekIndex, the search will
-            // begin from the first byte of the first frame.
-            let first_frame_byte_offset = self.reader.seek(SeekFrom::Current(0))?;
-
-            let mut start_byte_offset = first_frame_byte_offset;
+            // The range formed by start_byte_offset..end_byte_offset defines an area where the binary search for the 
+            // packet containing the desired timestamp will be performed. The lower bound is set to the byte offset of 
+            // the first frame, while the upper bound is set to the length of the stream.
+            let mut start_byte_offset = self.first_frame_offset;
             let mut end_byte_offset = self.reader.seek(SeekFrom::End(0))?;
 
-            eprintln!("Seeking to frame_ts={}", frame_ts);
-
-            // There is an index, use it to refine the binary search area.
+            // If there is an index, use it to refine the binary search range.
             if let Some(ref index) = self.index {
                 // Search the index for the timestamp. Adjust the search based on the result.
                 match index.search(frame_ts) {
                     // Search from the start of stream up-to an ending point.
                     SeekSearchResult::Upper(upper) => {
-                        end_byte_offset = upper.byte_offset + first_frame_byte_offset;
+                        end_byte_offset = self.first_frame_offset + upper.byte_offset;
                     },
                     // Search from a starting point up-to the end of the stream.
                     SeekSearchResult::Lower(lower) => {
-                        start_byte_offset = lower.byte_offset + first_frame_byte_offset;
+                        start_byte_offset = self.first_frame_offset + lower.byte_offset;
                     },
                     // Search between two points of the stream.
-                    SeekSearchResult::Range(lower,upper) => {
-                        start_byte_offset = lower.byte_offset + first_frame_byte_offset;
-                        end_byte_offset = upper.byte_offset + first_frame_byte_offset;
+                    SeekSearchResult::Range(lower, upper) => {
+                        start_byte_offset = self.first_frame_offset + lower.byte_offset;
+                        end_byte_offset = self.first_frame_offset + upper.byte_offset;
                     },
                     // Search the entire stream (default behaviour, so do nothing).
                     SeekSearchResult::Stream => (),
@@ -278,7 +278,7 @@ impl FormatReader for FlacReader {
                 }
             }
             // The desired timestamp is contained within the current packet.
-            else if frame_ts > packet.packet_ts && frame_ts < (packet.packet_ts + packet.n_frames as u64) {
+            else if frame_ts >= packet.packet_ts && frame_ts < (packet.packet_ts + packet.n_frames as u64) {
                 // Rewind the stream back to the beginning of the frame.
                 self.reader.rewind(packet.parsed_len);
 
@@ -328,6 +328,8 @@ impl FormatReader for FlacReader {
                 if !header.is_last {
                     self.read_all_metadata_blocks()?;
                 }
+
+                self.first_frame_offset = self.reader.pos();
 
                 // Read the rest of the metadata blocks.
                 return Ok(ProbeResult::Supported);
