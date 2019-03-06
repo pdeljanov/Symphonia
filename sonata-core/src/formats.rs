@@ -17,9 +17,10 @@
 
 use std::fmt;
 
-use crate::io::{MediaSource, MediaSourceStream, Bytestream};
-use crate::codecs::{CodecParameters};
+use crate::audio::Timestamp;
+use crate::codecs::CodecParameters;
 use super::errors::Result;
+use crate::io::{MediaSource, MediaSourceStream, Bytestream};
 use super::tags::Tag;
 
 /// The verbosity of log messages produced by a decoder or demuxer.
@@ -322,7 +323,7 @@ pub trait FormatReader {
     /// 
     /// Note that many containers cannot seek to an exact timestamp, rather they can only seek to a coarse location and 
     /// then to the decoder must decode packets until the exact timestamp is reached. 
-    fn seek(&mut self, frame_ts: u64) -> Result<u64>;
+    fn seek(&mut self, ts: Timestamp) -> Result<u64>;
 
     /// Gets a list of streams in the container.
     fn streams(&self) -> &[Stream];
@@ -376,26 +377,6 @@ impl<'b, B: Bytestream> Packet<'b, B> {
         self.len
     }
 }
-
-
-/*
-
-
-    let dec0 = reader.streams()[0].make_decoder();
-    let dec1 = reader.streams()[1].make_decoder();
-
-    for packet in reader.iter_packets() {
-        match packet.stream() {
-            dec0.stream() => dec0.decode(packet);
-            dec1.stream() => dec1.decode(packet);
-            _ => ();
-        }
-    }
-
-
-
-
-*/
 
 pub enum ProbeResult {
     Unsupported,

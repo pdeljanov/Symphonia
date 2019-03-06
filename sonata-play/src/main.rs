@@ -80,8 +80,8 @@ fn main() {
 
                 match matches.value_of("seek") {
                     Some(seek_value) => {
-                        let pos = seek_value.parse::<u64>().unwrap();
-                        reader.seek(pos).unwrap();
+                        let pos = seek_value.parse::<f64>().unwrap();
+                        reader.seek(Timestamp::Time(pos)).unwrap();
                     },
                     None => ()
                 };

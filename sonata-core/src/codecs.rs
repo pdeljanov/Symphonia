@@ -64,8 +64,8 @@ pub struct CodecParameters {
     /// The sample rate of the audio in Hz.
     pub sample_rate: Option<u32>,
 
-    /// The length of the encoded stream.
-    pub length: Option<Duration>,
+    /// The length of the encoded stream in number of frames.
+    pub n_frames: Option<u64>,
 
     /// The number of bits per one decoded audio sample.
     pub bits_per_sample: Option<u32>,
@@ -97,7 +97,7 @@ impl CodecParameters {
         CodecParameters {
             codec,
             sample_rate: None,
-            length: None,
+            n_frames: None,
             bits_per_sample: None,
             bits_per_coded_sample: None,
             n_channels: None,
@@ -114,8 +114,8 @@ impl CodecParameters {
         self
     }
 
-    pub fn with_length(&mut self, length: &Duration) -> &mut Self {
-        self.length = Some(*length);
+    pub fn with_n_frames(&mut self, n_frames: u64) -> &mut Self {
+        self.n_frames = Some(n_frames);
         self
     }
 

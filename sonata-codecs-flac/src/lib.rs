@@ -2,10 +2,10 @@
 
 use std::io::{Seek, SeekFrom};
 
-use sonata_core::audio::{Duration, AudioBuffer, SignalSpec};
+use sonata_core::audio::{AudioBuffer, Duration, SignalSpec, Timestamp};
 use sonata_core::codecs::{CODEC_TYPE_FLAC, CodecParameters};
-use sonata_core::errors::{Result, decode_error, unsupported_error};
-use sonata_core::formats::{Stream, Packet, SeekIndex};
+use sonata_core::errors::{Result, decode_error, seek_error, SeekErrorKind};
+use sonata_core::formats::{Packet, Stream, SeekIndex};
 use sonata_core::io::*;
 
 mod metadata;
@@ -75,7 +75,7 @@ impl FlacReader {
             
             // Total samples (per channel) may or may not be stated in StreamInfo.
             if let Some(samples) = info.n_samples {
-                codec_params.with_length(&Duration::Frames(samples));
+                codec_params.with_n_frames(samples);
             }
 
             // Add the stream.
@@ -152,8 +152,44 @@ impl FormatReader for FlacReader {
         &self.streams
     }
 
-    fn seek(&mut self, frame_ts: u64) -> Result<u64> {
-        // If the reader supports seeking, coarsely seek to the nearest packet using a binary search.
+    fn seek(&mut self, ts: Timestamp) -> Result<u64> {
+        if self.streams.len() < 1 {
+            return seek_error(SeekErrorKind::Unseekable);
+        }
+
+        let params = &self.streams[0].codec_params;
+
+        // Get the timestamp of the desired audio frame.
+        let frame_ts = match ts {
+            // Frame timestamp given.
+            Timestamp::Frame(frame) => frame,
+            // Time value given, calculate frame timestamp from sample rate.
+            Timestamp::Time(time) => {
+                // Ensure time value is positive.
+                if time < 0.0 {
+                    return seek_error(SeekErrorKind::OutOfRange);
+                }
+
+                // Use the sample rate to calculate the frame timestamp. If sample rate is not known, the seek cannot 
+                // be completed.
+                if let Some(sample_rate) = params.sample_rate {
+                    (time * sample_rate as f64) as u64
+                }
+                else {
+                    return seek_error(SeekErrorKind::Unseekable);
+                }
+            }
+        };
+
+        // If the total number of frames in the stream is known, verify the desired frame timestamp does not exceed it.
+        if let Some(n_frames) = params.n_frames {
+            if frame_ts > n_frames {
+                return seek_error(SeekErrorKind::OutOfRange);
+            }
+        }
+
+        // If the reader supports seeking, coarsely seek to the nearest packet with a timestamp lower than the desired 
+        // timestamp using a binary search.
         if self.reader.is_seekable() {
             // The byte offsets in the SeekIndex are relative to the first byte of the first frame, so offset the 
             // start_byte_offset by the number of bytes to the first frame. In the case of no SeekIndex, the search will
@@ -220,19 +256,28 @@ impl FormatReader for FlacReader {
 
         // Linearly search the stream packet-by-packet for the packet that contains the desired timestamp. This search 
         // is used to find the exact packet containing the desired timestamp after the search range was narrowed by the
-        // binary search. It is also the ONLY way for a non-seekable stream to be "seeked".
+        // binary search. It is also the ONLY way for a unseekable stream to be "seeked" forward.
         loop {
             let packet = PacketParser::parse_packet(&mut self.reader)?;
 
+            // The desired timestamp preceeds the current packet's timestamp.
             if frame_ts < packet.packet_ts {
                 // Rewind the stream back to the beginning of the frame.
                 self.reader.rewind(packet.parsed_len);
 
-                eprintln!("Seeked to packet_ts={} (delta={})", 
-                    packet.packet_ts, packet.packet_ts as i64 - frame_ts as i64);
+                // Attempted to seek backwards on an unseekable stream.
+                if !self.reader.is_seekable() {
+                    return seek_error(SeekErrorKind::ForwardOnly);
+                }
+                // Overshot a regular seek, or the stream is corrupted, not necessarily an error per-say.
+                else {
+                    eprintln!("Seeked to packet_ts={} (delta={})", 
+                        packet.packet_ts, packet.packet_ts as i64 - frame_ts as i64);
 
-                return Ok(packet.packet_ts);
+                    return Ok(packet.packet_ts);
+                }
             }
+            // The desired timestamp is contained within the current packet.
             else if frame_ts > packet.packet_ts && frame_ts < (packet.packet_ts + packet.n_frames as u64) {
                 // Rewind the stream back to the beginning of the frame.
                 self.reader.rewind(packet.parsed_len);
@@ -243,8 +288,6 @@ impl FormatReader for FlacReader {
                 return Ok(packet.packet_ts);
             }
         }
-
-        unsupported_error("Seeking not supported.")
     }
 
     fn probe(&mut self, depth: ProbeDepth) -> Result<ProbeResult> {

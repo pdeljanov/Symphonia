@@ -22,10 +22,22 @@ use std::marker::PhantomData;
 
 use super::sample::{Sample, i24, u24};
 
+/// A `Timestamp` indicates an instantaneous moment in time.
+#[derive(Copy, Clone)]
+pub enum Timestamp {
+    /// The time is expressed by a number of frames.
+    Frame(u64),
+    /// The time is expressed by a number of seconds.
+    Time(f64),
+}
+
+/// A `Duration` indicates a span of time.
 #[derive(Copy, Clone)]
 pub enum Duration {
+    /// The duration is expressed by an amount of frames.
     Frames(u64),
-    Time(f64),
+    /// The duration is expressed by an amount of time.
+    Seconds(f64),
 }
 
 /// Channel defines the audio channel position.
@@ -283,7 +295,7 @@ impl<S : Sample + WriteSample> AudioBuffer<S> {
     pub fn new(duration: Duration, spec: &SignalSpec) -> Self {
         let n_capacity = match duration {
             Duration::Frames(frames) => frames,
-            Duration::Time(time) => (time * (1f64 / spec.rate as f64)) as u64,
+            Duration::Seconds(time) => (time * (1f64 / spec.rate as f64)) as u64,
         };
 
         let n_sample_capacity = n_capacity * spec.channels.len() as u64;
@@ -375,7 +387,7 @@ impl<S: Sample> SampleBuffer<S> {
     pub fn new(duration: Duration, spec: &SignalSpec) -> SampleBuffer<S> {
         let n_frames = match duration {
             Duration::Frames(frames) => frames,
-            Duration::Time(time) => (time * (1f64 / spec.rate as f64)) as u64,
+            Duration::Seconds(time) => (time * (1f64 / spec.rate as f64)) as u64,
         };
 
         let n_samples = n_frames * spec.channels.len() as u64;
