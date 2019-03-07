@@ -59,11 +59,11 @@ impl Md5AudioValidator {
         // Calculate the number of bytes required to store all the converted samples.
         let bytes_required = bytes_per_sample * n_channels * n_frames;
 
-        eprintln!("Validate: n_samples={}, n_channels={}, bytes_per_sample={}, bytes_required={}",
-            n_samples,
-            n_channels,
-            bytes_per_sample,
-            bytes_required);
+        // eprintln!("Validate: n_samples={}, n_channels={}, bytes_per_sample={}, bytes_required={}",
+        //     n_samples,
+        //     n_channels,
+        //     bytes_per_sample,
+        //     bytes_required);
 
         // Resize the formatting buffer to ensure there is enough capacity for all the converted samples.
         if self.format_buf.len() < bytes_required {

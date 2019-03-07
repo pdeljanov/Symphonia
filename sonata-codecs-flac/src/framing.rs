@@ -204,13 +204,13 @@ impl FrameStream {
                                 else { return decode_error("Neither stream nor frame specified sample rate."); }
                             };
 
-        eprintln!("Frame: [{:?}] strategy={:?}, n_samples={}, bps={}, rate={}, channels={:?}",
-            header.block_sequence,
-            header.blocking_strategy,
-            header.block_num_samples,
-            bits_per_sample,
-            sample_rate,
-            &header.channel_assignment);
+        // eprintln!("Frame: [{:?}] strategy={:?}, n_samples={}, bps={}, rate={}, channels={:?}",
+        //     header.block_sequence,
+        //     header.blocking_strategy,
+        //     header.block_num_samples,
+        //     bits_per_sample,
+        //     sample_rate,
+        //     &header.channel_assignment);
 
         // Reserve a writeable chunk in the buffer equal to the number of samples in the block.
         buf.produce(header.block_num_samples as usize);
@@ -274,11 +274,10 @@ impl FrameStream {
         let crc16_computed = read_frame_footer(reader_crc16.to_inner())?;
 
         if crc16_computed != crc16_expected {
-            dbg!(crc16_computed == crc16_expected);
             return decode_error("Computed frame CRC does not match expected CRC.");
         }
 
-        eprintln!("");
+        // eprintln!("");
 
         Ok(())
     }
@@ -493,14 +492,10 @@ fn read_subframe<B: BitStream>(bs: &mut B, frame_bps: u32, buf: &mut [i32]) -> R
     // sub-frame and obtaining the truncated audio sub-block samples.
     let bps = frame_bps - dropped_bps;
 
-    // dbg!(&subframe_type);
-    // dbg!(dropped_bps);
-    // dbg!(bps);
-
-    eprintln!("\tSubframe: type={:?}, bps={}, dropped_bps={}",
-        &subframe_type,
-        bps,
-        dropped_bps);
+    // eprintln!("\tSubframe: type={:?}, bps={}, dropped_bps={}",
+    //     &subframe_type,
+    //     bps,
+    //     dropped_bps);
 
     match subframe_type {
         SubFrameType::Constant           => decode_constant(bs, bps, buf)?,
@@ -574,20 +569,31 @@ fn decode_linear<B: BitStream>(bs: &mut B, bps: u32, order: u32, buf: &mut [i32]
     // QLP coefficients bit shift [-16, 15].
     let qlp_coeff_shift = sign_extend_leq32_to_i32(bs.read_bits_leq32(5)?, 5);
 
-    // Statically allocate the LPC coefficients array and read the coefficients from the
-    // bitstream.
-    let mut qlp_coeffs = [0i32; 32];
-
-    for coeff in qlp_coeffs[32 - order as usize..32].iter_mut().rev() {
-        *coeff = sign_extend_leq32_to_i32(bs.read_bits_leq32(qlp_precision)?, qlp_precision);
-    }
-
-    // Decode the residuals for the predicted samples.
-    decode_residual(bs, order, buf)?;
-
     if qlp_coeff_shift >= 0 {
-        // Run the LPC predictor (appends to residuals).
-        lpc_predict(order as usize, &qlp_coeffs, qlp_coeff_shift as u32, buf)?;
+        // Pick the best sized linear predictor to use based on the order. Choosing a predictor sized less than 12
+        // doesn't improve performance that much.
+        if order <= 12 {
+            let mut qlp_coeffs = [0i32; 12];
+
+            for coeff in qlp_coeffs[12 - order as usize..12].iter_mut().rev() {
+                *coeff = sign_extend_leq32_to_i32(bs.read_bits_leq32(qlp_precision)?, qlp_precision);
+            }
+
+            decode_residual(bs, order, buf)?;
+
+            lpc_predict_12(order as usize, &qlp_coeffs, qlp_coeff_shift as u32, buf)?;
+        }
+        else {
+            let mut qlp_coeffs = [0i32; 32];
+
+            for coeff in qlp_coeffs[32 - order as usize..32].iter_mut().rev() {
+                *coeff = sign_extend_leq32_to_i32(bs.read_bits_leq32(qlp_precision)?, qlp_precision);
+            }
+
+            decode_residual(bs, order, buf)?;
+
+            lpc_predict_32(order as usize, &qlp_coeffs, qlp_coeff_shift as u32, buf)?;
+        }
     }
     else {
         return unsupported_error("LPC shifts less than 0 are not supported.");
@@ -636,10 +642,10 @@ fn decode_residual<B: BitStream>(bs: &mut B, n_prelude_samples: u32, buf: &mut [
         return decode_error("Block size is not same as encoded residual.");
     }
 
-    eprintln!("\t\tResidual: n_partitions={}, n_partition_samples={}, n_prelude_samples={}",
-        n_partitions,
-        n_partition_samples,
-        n_prelude_samples);
+    // eprintln!("\t\tResidual: n_partitions={}, n_partition_samples={}, n_prelude_samples={}",
+    //     n_partitions,
+    //     n_partition_samples,
+    //     n_prelude_samples);
 
     // Decode the first partition as it may have less than n_partition_samples samples.
     decode_rice_partition(bs, param_bit_width, &mut buf[n_prelude_samples as usize..n_partition_samples])?;
@@ -661,7 +667,7 @@ fn decode_rice_partition<B: BitStream>(bs: &mut B, param_bit_width: u32, buf: &m
     // parameter is less than this value, the residuals are Rice encoded.
     if rice_param < (1 << param_bit_width) - 1 {
 
-        //eprintln!("\t\t\tPartition (Rice): n_residuals={}, rice_param={}", buf.len(), rice_param);
+        // eprintln!("\t\t\tPartition (Rice): n_residuals={}, rice_param={}", buf.len(), rice_param);
 
         // Read each rice encoded residual and store in buffer.
         for sample in buf.iter_mut() {
@@ -673,7 +679,7 @@ fn decode_rice_partition<B: BitStream>(bs: &mut B, param_bit_width: u32, buf: &m
     else {
         let residual_bits = bs.read_bits_leq32(5)?;
 
-        eprintln!("\t\t\tPartition (Binary): n_residuals={}, residual_bits={}", buf.len(), residual_bits);
+        // eprintln!("\t\t\tPartition (Binary): n_residuals={}, residual_bits={}", buf.len(), residual_bits);
 
         // Read each binary encoded residual and store in buffer.
         for sample in buf.iter_mut() {
@@ -784,48 +790,63 @@ fn fixed_predict(order: u32, buf: &mut [i32]) -> Result<()> {
     Ok(())
 }
 
-
-
-/// Generalized Linear Predictive Coding (LPC) decoder accepting up to 32 coefficients. The exact number of coefficients
+/// Generalized Linear Predictive Coding (LPC) decoder macro for orders >= 4. The exact number of coefficients given
 /// is specified by `order`. Coefficients must be stored in reverse order in `coeffs` with the first coefficient at
 /// index 31. Coefficients at indicies less than 31-`order` must be 0. It is expected that the first `order` samples
 /// in `buf` are warm-up samples.
-fn lpc_predict(order: usize, coeffs: &[i32; 32], coeff_shift: u32, buf: &mut [i32]) -> Result<()> {
+macro_rules! lpc_predictor {
+    ($func_name:ident, $order:expr) => {
+        fn $func_name(order: usize, coeffs: &[i32; $order], coeff_shift: u32, buf: &mut [i32]) -> Result<()> {
 
-    // Order must be less than or equal to the number of coefficients.
-    debug_assert!(order as usize <= coeffs.len());
+            // Order must be less than or equal to the number of coefficients.
+            debug_assert!(order as usize <= coeffs.len());
 
-    // Order must be less than to equal to the number of samples the buffer can hold.
-    debug_assert!(order as usize <= buf.len());
+            // Order must be less than to equal to the number of samples the buffer can hold.
+            debug_assert!(order as usize <= buf.len());
 
-    // If order is less than coeffs.len(), we need to precompute some extra samples before
-    // running the general prediction algorithm as it requires the same number of samples as
-    // coefficients.
-    let n_prefill = cmp::min(32, buf.len()) - order;
+            let n_prefill = cmp::min($order, buf.len()) - order;
 
-    for i in order..order + n_prefill {
-        let predicted = coeffs[32 - order..32].iter()
-                                            .zip(&buf[i - order..i])
-                                            .map(|(&coeff, &sample)| coeff as i64 * sample as i64)
-                                            .sum::<i64>();
-        buf[i] += (predicted >> coeff_shift) as i32;
-    }
+            // If the pre-fill computation filled the entire sample buffer, return immediately since the main 
+            // predictor requires atleast 32 samples to be present in the buffer.
+            for i in order..order + n_prefill {
+                let predicted = coeffs[$order - order..$order].iter()
+                                                    .zip(&buf[i - order..i])
+                                                    .map(|(&coeff, &sample)| coeff as i64 * sample as i64)
+                                                    .sum::<i64>();
 
-    // If the pre-fill computation filled the entire sample buffer, return immediately since the main predictor requires
-    // atleast 32 samples to be present in the buffer.
-    if buf.len() <= 32 {
-        return Ok(());
-    }
+                buf[i] += (predicted >> coeff_shift) as i32;
+            }
 
-    for i in 32..buf.len() {
-        // Predict each sample by applying what is essentially a FIR filter. As per The Book, this will be unrolled
-        // by the compiler without bounds checking as all array bounds are known.
-        let predicted = coeffs.iter()
-                              .zip(&buf[i - 32..i])
-                              .map(|(&coeff, &sample)| coeff as i64 * sample as i64)
-                              .sum::<i64>();
-        buf[i] += (predicted >> coeff_shift) as i32;
-    }
+            if buf.len() <= $order {
+                return Ok(());
+            }
 
-    Ok(())
+            for i in $order..buf.len() {
+                // Predict each sample by applying what is essentially an IIR filter. 
+                //
+                // This implementation supersedes an iterator based approach where coeffs and samples were zipped 
+                // together, multiplied together via map, and then summed. That implementation did not pipeline well 
+                // since summing was performed before the next multiplication, introducing pipleine stalls. This 
+                // unrolled approach is much faster atleast on Intel hardware.
+                let s = &buf[i - $order..i];
+
+                let mut predicted = 0i64;
+
+                for j in 0..($order / 4) {
+                    let a = coeffs[4*j + 0] as i64 * s[4*j + 0] as i64;
+                    let b = coeffs[4*j + 1] as i64 * s[4*j + 1] as i64;
+                    let c = coeffs[4*j + 2] as i64 * s[4*j + 2] as i64;
+                    let d = coeffs[4*j + 3] as i64 * s[4*j + 3] as i64;
+                    predicted += a + b + c + d;
+                }
+
+                buf[i] += (predicted >> coeff_shift) as i32;
+            }
+
+            Ok(())
+        }
+    };
 }
+
+lpc_predictor!(lpc_predict_32, 32);
+lpc_predictor!(lpc_predict_12, 12);
