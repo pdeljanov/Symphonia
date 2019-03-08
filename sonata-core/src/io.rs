@@ -850,7 +850,9 @@ impl BitReader for BitReaderLtr {
     fn read_bits_leq32<B: Bytestream>(&mut self, src: &mut B, mut num_bits: u32) -> io::Result<u32> {
         debug_assert!(num_bits <= 32);
 
-        let mut res: u32 = self.bits & !(0xffffffff << self.n_bits_left);
+        let mask = !(0xffffffff << num_bits);
+
+        let mut res: u32 = self.bits;
 
         if num_bits <= self.n_bits_left {
             self.n_bits_left -= num_bits;
@@ -876,7 +878,7 @@ impl BitReader for BitReaderLtr {
             }
         }
 
-        Ok(res)
+        Ok(res & mask)
     }
 
     #[inline(always)]
@@ -899,18 +901,19 @@ impl BitReader for BitReaderLtr {
 
         loop {
 
-            let zeros = if self.n_bits_left == 0 {
-                self.bits = src.read_u8()? as u32;
-                self.n_bits_left = 8;
+            let zeros = 
+                if self.n_bits_left == 0 {
+                    self.bits = src.read_u8()? as u32;
+                    self.n_bits_left = 8;
 
-                (self.bits as u8).leading_zeros()
-            }
-            else {
-                // Remove the previously read bits from the byte by lefting left, and appending 1s to
-                // prevent reading the extra 0s shifted on.
-                let byte = (self.bits | 0xffffff00).rotate_right(self.n_bits_left);
-                byte.leading_zeros()
-            };
+                    (self.bits as u8).leading_zeros()
+                }
+                else {
+                    // Remove the previously read bits from the byte by lefting left, and appending 1s to
+                    // prevent reading the extra 0s shifted on.
+                    let byte = (self.bits | 0xffffff00).rotate_right(self.n_bits_left);
+                    byte.leading_zeros()
+                };
 
             // Increment the decoded number.
             num += zeros;
@@ -931,7 +934,6 @@ impl BitReader for BitReaderLtr {
     }
 
 }
-
 
 /// A `BitStream` provides methods to sequentially read non-byte aligned data from an inner
 /// `Bytestream`.
