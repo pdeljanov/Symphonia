@@ -257,7 +257,7 @@ impl FrameStream {
         }
 
         // Feed the validator if validation is enabled.
-        self.validator.update(buf, bits_per_sample);
+        // self.validator.update(buf, bits_per_sample);
 
         // The decoder uses a 32bit sample format as a common denominator, but that doesn't mean
         // the encoded audio samples are actually 32bit. Shift all samples in the output buffer
@@ -519,9 +519,6 @@ fn samples_shl(shift: u32, buf: &mut [i32]) {
     }
 }
 
-
-
-
 fn decode_constant<B: BitStream>(bs: &mut B, bps: u32, buf: &mut [i32]) -> Result<()> {
     let const_sample = sign_extend_leq32_to_i32(bs.read_bits_leq32(bps)?, bps);
 
@@ -570,9 +567,33 @@ fn decode_linear<B: BitStream>(bs: &mut B, bps: u32, order: u32, buf: &mut [i32]
     let qlp_coeff_shift = sign_extend_leq32_to_i32(bs.read_bits_leq32(5)?, 5);
 
     if qlp_coeff_shift >= 0 {
-        // Pick the best sized linear predictor to use based on the order. Choosing a predictor sized less than 12
-        // doesn't improve performance that much.
-        if order <= 12 {
+        // Pick the best sized linear predictor to use based on the order. Most if not all FLAC streams apppear to have 
+        // an order <= 12. Specializing a predictor for orders <= 6 and <= 12 appears to give the best performance.
+        //
+        // TODO: Reduce code duplication here.
+        if order <= 4 {
+            let mut qlp_coeffs = [0i32; 4];
+
+            for coeff in qlp_coeffs[4 - order as usize..4].iter_mut().rev() {
+                *coeff = sign_extend_leq32_to_i32(bs.read_bits_leq32(qlp_precision)?, qlp_precision);
+            }
+
+            decode_residual(bs, order, buf)?;
+
+            lpc_predict_4(order as usize, &qlp_coeffs, qlp_coeff_shift as u32, buf)?;
+        }
+        else if order <= 8 {
+            let mut qlp_coeffs = [0i32; 8];
+
+            for coeff in qlp_coeffs[8 - order as usize..8].iter_mut().rev() {
+                *coeff = sign_extend_leq32_to_i32(bs.read_bits_leq32(qlp_precision)?, qlp_precision);
+            }
+
+            decode_residual(bs, order, buf)?;
+
+            lpc_predict_8(order as usize, &qlp_coeffs, qlp_coeff_shift as u32, buf)?;
+        }
+        else if order <= 12 {
             let mut qlp_coeffs = [0i32; 12];
 
             for coeff in qlp_coeffs[12 - order as usize..12].iter_mut().rev() {
@@ -760,28 +781,28 @@ fn fixed_predict(order: u32, buf: &mut [i32]) -> Result<()> {
         // A 2nd order predictor uses the polynomial: s(i) = 2*s(i-1) - 1*s(i-2).
         2 => {
             for i in 2..buf.len() {
-                buf[i] += [ -1, 2 ].iter()
-                                   .zip(&buf[i - 2..i])
-                                   .map(|(&coeff, &sample)| Wrapping(coeff * sample))
-                                   .sum::<Wrapping<i32>>().0;
+                let a = Wrapping(-1i32) * Wrapping(buf[i - 2]);
+                let b = Wrapping( 2i32) * Wrapping(buf[i - 1]);
+                buf[i] += (a + b).0;
             }
         },
         // A 3rd order predictor uses the polynomial: s(i) = 3*s(i-1) - 3*s(i-2) + 1*s(i-3).
         3 => {
             for i in 3..buf.len() {
-                buf[i] += [ 1, -3, 3 ].iter()
-                                      .zip(&buf[i - 3..i])
-                                      .map(|(&coeff, &sample)| Wrapping(coeff * sample))
-                                      .sum::<Wrapping<i32>>().0;
+                let a = Wrapping( 1i32) * Wrapping(buf[i - 3]);
+                let b = Wrapping(-3i32) * Wrapping(buf[i - 2]);
+                let c = Wrapping( 3i32) * Wrapping(buf[i - 1]);
+                buf[i] += (a + b + c).0;
             }
         },
         // A 4th order predictor uses the polynomial: s(i) = 4*s(i-1) - 6*s(i-2) + 4*s(i-3) - 1*s(i-4).
         4 => {
             for i in 4..buf.len() {
-                buf[i] += [ -1, 4, -6, 4 ].iter()
-                                          .zip(&buf[i - 4..i])
-                                          .map(|(&coeff, &sample)| Wrapping(coeff * sample))
-                                          .sum::<Wrapping<i32>>().0;
+                let a = Wrapping(-1i32) * Wrapping(buf[i - 4]);
+                let b = Wrapping( 4i32) * Wrapping(buf[i - 3]);
+                let c = Wrapping(-6i32) * Wrapping(buf[i - 2]);
+                let d = Wrapping( 4i32) * Wrapping(buf[i - 1]);
+                buf[i] += (a + b + c + d).0;
             }
         }
         _ => unreachable!()
@@ -850,3 +871,5 @@ macro_rules! lpc_predictor {
 
 lpc_predictor!(lpc_predict_32, 32);
 lpc_predictor!(lpc_predict_12, 12);
+lpc_predictor!(lpc_predict_8, 8);
+lpc_predictor!(lpc_predict_4, 4);

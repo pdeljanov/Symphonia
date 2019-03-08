@@ -439,18 +439,18 @@ pub trait Bytestream {
     /// integer or returns an error.
     #[inline(always)]
     fn read_u24(&mut self) -> io::Result<u32> {
-        let mut b = [0u8; 4];
-        b[0..3].clone_from_slice(&self.read_triple_bytes()?);
-        Ok(u32::from_le_bytes(b))
+        let mut buf = [0u8; 4];
+        buf[0..3].clone_from_slice(&self.read_triple_bytes()?);
+        Ok(u32::from_le_bytes(buf))
     }
 
     /// Reads three bytes from the stream and interprets them as an unsigned 24-bit big-endian
     /// integer or returns an error.
     #[inline(always)]
     fn read_be_u24(&mut self) -> io::Result<u32> {
-        let mut b = [0u8; 4];
-        b[0..3].clone_from_slice(&self.read_triple_bytes()?);
-        Ok(u32::from_be_bytes(b) >> 8)
+        let mut buf = [0u8; 4];
+        buf[0..3].clone_from_slice(&self.read_triple_bytes()?);
+        Ok(u32::from_be_bytes(buf) >> 8)
     }
 
     /// Reads four bytes from the stream and interprets them as an unsigned 32-bit little-endian
@@ -471,18 +471,18 @@ pub trait Bytestream {
     /// integer or returns an error.
     #[inline(always)]
     fn read_u64(&mut self) -> io::Result<u64> {
-        let mut b = [0u8; 8];
-        self.read_buf_bytes(&mut b)?;
-        Ok(u64::from_le_bytes(b))
+        let mut buf = [0u8; 8];
+        self.read_buf_bytes(&mut buf)?;
+        Ok(u64::from_le_bytes(buf))
     }
 
     /// Reads eight bytes from the stream and interprets them as an unsigned 64-bit big-endian
     /// integer or returns an error.
     #[inline(always)]
     fn read_be_u64(&mut self) -> io::Result<u64> {
-        let mut b = [0u8; 8];
-        self.read_buf_bytes(&mut b)?;
-        Ok(u64::from_be_bytes(b))
+        let mut buf = [0u8; 8];
+        self.read_buf_bytes(&mut buf)?;
+        Ok(u64::from_be_bytes(buf))
     }
 
     /// Ignores the specified number of bytes from the stream or returns an error.
@@ -493,7 +493,7 @@ impl Bytestream for MediaSourceStream {
 
     #[inline(always)]
     fn read_byte(&mut self) -> io::Result<u8> {
-        // This function, read_u8, is inlined for performance. To reduce code bloat, place the
+        // This function, read_byte, is inlined for performance. To reduce code bloat, place the
         // read-ahead buffer replenishment in a seperate function. Call overhead will be negligible
         // compared to the actual underlying read.
         if self.pos >= self.end_pos {
@@ -503,22 +503,22 @@ impl Bytestream for MediaSourceStream {
         let byte = unsafe { *self.buf.get_unchecked(self.pos) };
         self.pos += 1;
 
-
         Ok(byte)
     }
 
     // Reads two bytes from the stream and returns them in read-order or an error.
     #[inline(always)]
     fn read_double_bytes(&mut self) -> io::Result<[u8; 2]> {
-        let mut double_byte = [0u8; 2];
+        let mut double_byte: [u8; 2] = unsafe { std::mem::uninitialized() };
 
         // If the buffer has two bytes available, copy directly from it and skip any safety or
         // buffering checks.
         if self.pos + 2 < self.end_pos {
-            unsafe { *double_byte.get_unchecked_mut(0) = *self.buf.get_unchecked(self.pos) }
-            self.pos += 1;
-            unsafe { *double_byte.get_unchecked_mut(1) = *self.buf.get_unchecked(self.pos) }
-            self.pos += 1;
+            unsafe { 
+                double_byte[0] = *self.buf.get_unchecked(self.pos + 0);
+                double_byte[1] = *self.buf.get_unchecked(self.pos + 1);
+            }
+            self.pos += 2;
         }
         // If the by buffer does not have two bytes available, copy one byte at a time from the
         // buffer, checking if it needs to be replenished.
@@ -537,17 +537,17 @@ impl Bytestream for MediaSourceStream {
 
     // Reads three bytes from the stream and returns them in read-order or an error.
     fn read_triple_bytes(&mut self) -> io::Result<[u8; 3]> {
-        let mut triple_byte = [0u8; 3];
+        let mut triple_byte: [u8; 3] = unsafe { std::mem::uninitialized() };
 
         // If the buffer has three bytes available, copy directly from it and skip any safety or
         // buffering checks.
         if self.pos + 3 < self.end_pos {
-            unsafe { *triple_byte.get_unchecked_mut(0) = *self.buf.get_unchecked(self.pos) }
-            self.pos += 1;
-            unsafe { *triple_byte.get_unchecked_mut(1) = *self.buf.get_unchecked(self.pos) }
-            self.pos += 1;
-            unsafe { *triple_byte.get_unchecked_mut(2) = *self.buf.get_unchecked(self.pos) }
-            self.pos += 1;
+            unsafe { 
+                triple_byte[0] = *self.buf.get_unchecked(self.pos + 0);
+                triple_byte[1] = *self.buf.get_unchecked(self.pos + 1);
+                triple_byte[2] = *self.buf.get_unchecked(self.pos + 2);
+            }
+            self.pos += 3;
         }
         // If the by buffer does not have three bytes available, copy one byte at a time from the
         // buffer, checking if it needs to be replenished.
@@ -566,19 +566,18 @@ impl Bytestream for MediaSourceStream {
 
     // Reads four bytes from the stream and returns them in read-order or an error.
     fn read_quad_bytes(&mut self) -> io::Result<[u8; 4]> {
-        let mut quad_byte = [0u8; 4];
+        let mut quad_byte: [u8; 4] = unsafe { std::mem::uninitialized() };
 
         // If the buffer has four bytes available, copy directly from it and skip any safety or
         // buffering checks.
         if self.pos + 4 < self.end_pos {
-            unsafe { *quad_byte.get_unchecked_mut(0) = *self.buf.get_unchecked(self.pos) }
-            self.pos += 1;
-            unsafe { *quad_byte.get_unchecked_mut(1) = *self.buf.get_unchecked(self.pos) }
-            self.pos += 1;
-            unsafe { *quad_byte.get_unchecked_mut(2) = *self.buf.get_unchecked(self.pos) }
-            self.pos += 1;
-            unsafe { *quad_byte.get_unchecked_mut(3) = *self.buf.get_unchecked(self.pos) }
-            self.pos += 1;
+            unsafe { 
+                quad_byte[0] = *self.buf.get_unchecked(self.pos + 0);
+                quad_byte[1] = *self.buf.get_unchecked(self.pos + 1);
+                quad_byte[2] = *self.buf.get_unchecked(self.pos + 2);
+                quad_byte[3] = *self.buf.get_unchecked(self.pos + 3);
+            }
+            self.pos += 4;
         }
         // If the by buffer does not have four bytes available, copy one byte at a time from the
         // buffer, checking if it needs to be replenished.
@@ -783,8 +782,8 @@ pub trait BitReader {
 /// `BitReaderLtr` then bit 0 (the first bit read from the source) is the most-significant bit and
 /// bit N-1 is the least-significant.
 pub struct BitReaderLtr {
-    byte: u8,
-    bits_left: u32,
+    bits: u32,
+    n_bits_left: u32, 
 }
 
 impl BitReaderLtr {
@@ -792,126 +791,126 @@ impl BitReaderLtr {
     /// Instantiates a new `BitReaderLtr`.
     pub fn new() -> BitReaderLtr {
         BitReaderLtr {
-            byte: 0,
-            bits_left: 0,
+            bits: 0,
+            n_bits_left: 0,
         }
     }
 
-    #[inline(always)]
-    fn get_byte<B: Bytestream>(&mut self, src: &mut B) -> io::Result<u8> {
-        if self.bits_left == 0 {
-            self.byte = src.read_u8()?;
-            self.bits_left = 8;
-        }
-        Ok(self.byte)
-    }
 }
 
 impl BitReader for BitReaderLtr {
-
+    
+    #[inline(always)]
     fn realign(&mut self) {
-        self.bits_left = 0;
+        self.n_bits_left = 0;
     }
 
+    #[inline(always)]
     fn ignore_bits<B: Bytestream>(&mut self, src: &mut B, mut num_bits: u32) -> io::Result<()> {
-        if num_bits <= self.bits_left {
-            self.bits_left = 0;
+        // If the number of bits to ignore is less than the amount left, simply reduce the amount left.
+        if num_bits <= self.n_bits_left {
+            self.n_bits_left -= num_bits;
         }
+        // Otherwise, there are more bits to ignore than are left.
         else {
-            while num_bits > 0 {
-                self.get_byte(src)?;
-                let skip = cmp::min(self.bits_left, num_bits);
-                self.bits_left -= skip;
-                num_bits -= skip;
+            // Consume all bits left.
+            num_bits -= self.n_bits_left;
+
+            // Consume 8 bit blocks at a time.
+            while num_bits >= 8 {
+                src.read_u8()?;
+                num_bits -= 8;
+            }
+
+            // Less than 8 bits remain to be ignored.
+            if num_bits > 0 {
+                self.bits = src.read_u8()? as u32;
+                self.n_bits_left = 8 - num_bits;
+            }
+            else {
+                self.n_bits_left = 0;
             }
         }
 
         Ok(())
     }
 
+    #[inline(always)]
     fn read_bit<B: Bytestream>(&mut self, src: &mut B) -> io::Result<bool> {
-        let byte = self.get_byte(src)?;
-        self.bits_left -= 1;
-        let mask = mask_at(self.bits_left);
-        Ok((byte & mask) == mask)
+        if self.n_bits_left == 0 {
+            self.bits = src.read_u8()? as u32;
+            self.n_bits_left = 8;
+        }
+        self.n_bits_left -= 1;
+        let mask = 1u32 << self.n_bits_left;
+        Ok((self.bits & mask) == mask)
     }
 
-    fn read_bits_leq32<B: Bytestream>(&mut self, src: &mut B, num_bits: u32) -> io::Result<u32> {
+    #[inline(always)]
+    fn read_bits_leq32<B: Bytestream>(&mut self, src: &mut B, mut num_bits: u32) -> io::Result<u32> {
         debug_assert!(num_bits <= 32);
 
-        let mut idx: u32 = 0;
-        let mut res: u32 = 0;
+        let mut res: u32 = self.bits & !(0xffffffff << self.n_bits_left);
 
-        while idx < num_bits {
-            // Obtain the currently readable byte.
-            let byte = self.get_byte(src)?;
+        if num_bits <= self.n_bits_left {
+            self.n_bits_left -= num_bits;
+            res >>= self.n_bits_left;
+        }
+        else {
+            num_bits -= self.n_bits_left;
 
-            // Calculate the maximum number bits to stream from the currently readable byte.
-            let count = cmp::min(num_bits - idx, self.bits_left);
+            while num_bits >= 8 {
+                res <<= 8;
+                res |= src.read_u8()? as u32;
+                num_bits -= 8;
+            }
 
-            // Create a bitmask from the current bit position, and the count.
-            let mask = mask_range(self.bits_left, self.bits_left - count);
-
-            // Extract the masked bits, which could be any range within the byte, and shift it so
-            // that the LSB of the extracted bits, and the actual LSB align.
-            let bits = ((byte & mask) as u32) >> (self.bits_left - count);
-
-            idx += count;
-
-            // Shift into final position.
-            res |= bits << (num_bits - idx);
-
-            self.bits_left -= count;
+            if num_bits > 0 {
+                res <<= num_bits;
+                self.bits = src.read_u8()? as u32;
+                self.n_bits_left = 8 - num_bits;
+                res |= self.bits >> self.n_bits_left;
+            }
+            else {
+                self.n_bits_left = 0;
+            }
         }
 
         Ok(res)
     }
 
+    #[inline(always)]
     fn read_bits_leq64<B: Bytestream>(&mut self, src: &mut B, num_bits: u32) -> io::Result<u64> {
         debug_assert!(num_bits <= 64);
 
-        let mut idx: u32 = 0;
-        let mut res: u64 = 0;
-
-        while idx < num_bits {
-            // Obtain the currently readable byte.
-            let byte = self.get_byte(src)?;
-
-            // Calculate the maximum number bits to stream from the currently readable byte.
-            let count = cmp::min(num_bits - idx, self.bits_left);
-
-            // Create a bitmask from the current bit position, and the count.
-            let mask = mask_range(self.bits_left, self.bits_left - count);
-
-            // Extract the masked bits, which could be any range within the byte, and shift it so
-            // that the LSB of the extracted bits, and the actual LSB align.
-            let bits = ((byte & mask) as u64) >> (self.bits_left - count);
-
-            idx += count;
-
-            // Shift into final position.
-            res |= bits << (num_bits - idx);
-
-            self.bits_left -= count;
+        if num_bits > 32 {
+            let top = self.read_bits_leq32(src, num_bits - 32)?;
+            let bottom = self.read_bits_leq32(src, 32)?;
+            let res = ((top as u64) << 32) | (bottom as u64);
+            return Ok(res);
         }
-
-        Ok(res)
+        
+        Ok(self.read_bits_leq32(src, num_bits)? as u64)
     }
 
+    #[inline(always)]
     fn read_unary<B: Bytestream>(&mut self, src: &mut B) -> io::Result<u32> {
         let mut num = 0;
 
         loop {
-            // Obtain the currently readable byte.
-            let mut byte = self.get_byte(src)?;
 
-            // Remove the previously read bits from the byte by lefting left, and appending 1s to
-            // prevent reading the extra 0s shifted on.
-            let shift = 8 - self.bits_left;
-            byte = byte.wrapping_shl(shift) | mask_lower(shift);
+            let zeros = if self.n_bits_left == 0 {
+                self.bits = src.read_u8()? as u32;
+                self.n_bits_left = 8;
 
-            // Count the leading zeros.
-            let zeros = byte.leading_zeros();
+                (self.bits as u8).leading_zeros()
+            }
+            else {
+                // Remove the previously read bits from the byte by lefting left, and appending 1s to
+                // prevent reading the extra 0s shifted on.
+                let byte = (self.bits | 0xffffff00).rotate_right(self.n_bits_left);
+                byte.leading_zeros()
+            };
 
             // Increment the decoded number.
             num += zeros;
@@ -920,18 +919,19 @@ impl BitReader for BitReaderLtr {
             // currently readable byte is greater than the number of 0s counted this iteration,
             // then a 1 was encounted. The unary number is decoded at this point. Subtract an extra
             // bit from the bits_left value to account for the suffixed 1.
-            if zeros < self.bits_left {
-                self.bits_left -= zeros + 1;
+            if zeros < self.n_bits_left {
+                self.n_bits_left -= zeros + 1;
                 break;
             }
 
-            self.bits_left -= zeros;
+            self.n_bits_left -= zeros;
         }
 
         Ok(num)
     }
 
 }
+
 
 /// A `BitStream` provides methods to sequentially read non-byte aligned data from an inner
 /// `Bytestream`.
@@ -1179,13 +1179,15 @@ fn verify_read_bits_leq32() {
 #[test]
 fn verify_read_bits_leq64() {
     let mut source = MediaSourceStream::new(Box::new(io::Cursor::new(
-        vec![0x99, 0xaa, 0x55, 0xff, 0xff, 0x55, 0xaa, 0x99])));
+        vec![0x99, 0xaa, 0x55, 0xff, 0xff, 0x55, 0xaa, 0x99, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88])));
 
     let mut br = BitReaderLtr::new();
 
     assert_eq!(br.read_bits_leq64(&mut source, 40).unwrap(), 0x99aa55ffff);
-    assert_eq!(br.read_bits_leq64(&mut source,  8).unwrap(), 0x55);
+    assert_eq!(br.read_bits_leq64(&mut source,  4).unwrap(), 0x05);
+    assert_eq!(br.read_bits_leq64(&mut source,  4).unwrap(), 0x05);
     assert_eq!(br.read_bits_leq64(&mut source, 16).unwrap(), 0xaa99);
+    assert_eq!(br.read_bits_leq64(&mut source, 64).unwrap(), 0x1122334455667788);
 }
 
 #[test]
