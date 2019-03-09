@@ -1,5 +1,11 @@
+# Rust/Cargo
 /target
 **/*.rs.bk
 Cargo.lock
 
+# Ghostwriter
 *.backup
+
+# Profiling data
+perf.data
+perf.data.old
