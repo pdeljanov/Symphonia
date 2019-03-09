@@ -850,7 +850,7 @@ impl BitReader for BitReaderLtr {
     fn read_bits_leq32<B: Bytestream>(&mut self, src: &mut B, mut num_bits: u32) -> io::Result<u32> {
         debug_assert!(num_bits <= 32);
 
-        let mask = !(0xffffffff << num_bits);
+        let mask = !(0xffffffffffffffffu64 << num_bits) as u32;
 
         let mut res: u32 = self.bits;
 
@@ -886,9 +886,8 @@ impl BitReader for BitReaderLtr {
         debug_assert!(num_bits <= 64);
 
         if num_bits > 32 {
-            let top = self.read_bits_leq32(src, num_bits - 32)?;
-            let bottom = self.read_bits_leq32(src, 32)?;
-            let res = ((top as u64) << 32) | (bottom as u64);
+            let shift = num_bits - 32;
+            let res = ((self.read_bits_leq32(src, 32)? as u64) << shift) | self.read_bits_leq32(src, shift)? as u64;
             return Ok(res);
         }
         
