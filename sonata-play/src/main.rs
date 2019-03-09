@@ -15,10 +15,12 @@
 // License along with this library; if not, write to the Free Software
 // Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301 USA
 
+use std::default::Default;
 use std::fs::File;
 use clap::{Arg, App};
 use sonata_core::errors::{Result, unsupported_error};
 use sonata_core::audio::*;
+use sonata_core::codecs::DecoderOptions;
 use sonata_codecs_flac::*;
 
 use libpulse_binding as pulse;
@@ -36,16 +38,19 @@ fn main() {
                             .short("-s")
                             .value_name("TIMESTAMP")
                             .help("Seek to the given timestamp")
-                            .conflicts_with_all(&["check", "probe"]))
-                        .arg(Arg::with_name("probe")
-                            .long("probe")
-                            .short("-p")
+                            .conflicts_with_all(&["verify", "verify-only", "probe-only"]))
+                        .arg(Arg::with_name("probe-only")
+                            .long("probe-only")
                             .help("Only probe the file for metadata")
-                            .conflicts_with_all(&["check"]))
-                        .arg(Arg::with_name("check")
-                            .long("check")
-                            .short("-c")
-                            .help("Decodes the entire file and checks that the decoded audio is valid"))
+                            .conflicts_with_all(&["verify-only"]))
+                        .arg(Arg::with_name("verify-only")
+                            .long("verify-only")
+                            .help("Verifies the decoded audio is valid, but does not play the audio")
+                            .conflicts_with_all(&["verify"]))
+                        .arg(Arg::with_name("verify")
+                            .long("verify")
+                            .short("-V")
+                            .help("Verifies the decoded audio is valid during playback"))
                        .arg(Arg::with_name("verbose")
                             .short("v")
                             .multiple(true)
@@ -71,12 +76,12 @@ fn main() {
     match probe_info {
         ProbeResult::Unsupported => {
             eprintln!("File not supported!");
-        }
+        },
         ProbeResult::Supported => {
-            if matches.is_present("check") {
-                validate(&mut reader);
+            if matches.is_present("verify-only") {
+                verify(&mut reader);
             }
-            else if !matches.is_present("probe") {
+            else if !matches.is_present("probe-only") {
 
                 match matches.value_of("seek") {
                     Some(seek_value) => {
@@ -86,20 +91,26 @@ fn main() {
                     None => ()
                 };
 
-                play(&mut reader);
+                // Setup the decoder options.
+                let options = DecoderOptions { verify: matches.is_present("verify"), ..Default::default() };
+
+                play(&mut reader, &options);
             }
         }
     }
 }
 
-fn validate(reader: &mut FlacReader) -> Result<()> {
+fn verify(reader: &mut FlacReader) -> Result<()> {
     // Get the default stream.
     // TODO: Allow stream selection.
     let stream = reader.default_stream().unwrap();
 
+    // Setup decoder options, in verify's case, always verify.
+    let options = DecoderOptions { verify: true, ..Default::default() };
+
     // Create a decoder for the stream.
     // TODO: Implement stream.make_decoder().
-    let mut decoder = FlacDecoder::new(&stream.codec_params);
+    let mut decoder = FlacDecoder::new(&stream.codec_params, &options);
 
     // Get the expected signal spec from the decoder.
     // TODO: Handle the case where the signal spec is not known until the first buffer is decoded.
@@ -133,7 +144,7 @@ fn validate(reader: &mut FlacReader) -> Result<()> {
     Ok(())
 }
 
-fn play(reader: &mut FlacReader) -> Result<()> {
+fn play(reader: &mut FlacReader, decode_options: &DecoderOptions) -> Result<()> {
 
     // Get the default stream.
     // TODO: Allow stream selection.
@@ -141,7 +152,7 @@ fn play(reader: &mut FlacReader) -> Result<()> {
 
     // Create a decoder for the stream.
     // TODO: Implement stream.make_decoder().
-    let mut decoder = FlacDecoder::new(&stream.codec_params);
+    let mut decoder = FlacDecoder::new(&stream.codec_params, decode_options);
 
     // Get the expected signal spec from the decoder.
     // TODO: Handle the case where the signal spec is not known until the first buffer is decoded.

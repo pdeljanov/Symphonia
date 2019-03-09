@@ -1,10 +1,11 @@
 #![warn(rust_2018_idioms)]
 
+use std::io;
 use std::io::{Seek, SeekFrom};
 
 use sonata_core::audio::{AudioBuffer, SignalSpec, Timestamp};
-use sonata_core::codecs::{CODEC_TYPE_FLAC, CodecParameters};
-use sonata_core::errors::{Result, decode_error, seek_error, SeekErrorKind};
+use sonata_core::codecs::{CODEC_TYPE_FLAC, CodecParameters, DecoderOptions};
+use sonata_core::errors::{Result, Error, decode_error, seek_error, SeekErrorKind};
 use sonata_core::formats::{Packet, Stream, SeekIndex};
 use sonata_core::io::*;
 
@@ -379,10 +380,10 @@ pub struct FlacDecoder {
 
 impl Decoder for FlacDecoder {
 
-    fn new(params: &CodecParameters) -> Self {
+    fn new(params: &CodecParameters, options: &DecoderOptions) -> Self {
         FlacDecoder {
             params: params.clone(),
-            fs: FrameStream::new(params.bits_per_sample, params.sample_rate),
+            fs: FrameStream::new(params.bits_per_sample, params.sample_rate, options.verify),
         }
     }
 
@@ -404,6 +405,18 @@ impl Decoder for FlacDecoder {
     }
 
     fn decode<B: Bytestream>(&mut self, packet: &mut Packet<'_, B>, buf: &mut AudioBuffer<i32>) -> Result<()> {
-        self.fs.next(packet.reader(), buf)
+        let result = self.fs.next(packet.reader(), buf);
+
+        match result {
+            Err(Error::IoError(ref err)) => {
+                // IF the IoError is an "UnexpectedEof", it may actually be the right proper end-of-stream. Close the 
+                // frame stream before returning the result.
+                if err.kind() == io::ErrorKind::UnexpectedEof {
+                    self.fs.close();
+                }
+                result
+            },
+            _ => result
+        }
     }
 }

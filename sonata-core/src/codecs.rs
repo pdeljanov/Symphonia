@@ -15,6 +15,8 @@
 // License along with this library; if not, write to the Free Software
 // Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301 USA
 
+use std::default::Default;
+
 use crate::audio::{AudioBuffer, Channel, Layout, SignalSpec};
 use crate::io::Bytestream;
 use crate::errors::Result;
@@ -156,11 +158,25 @@ impl CodecParameters {
 
 }
 
+/// `DecoderOptions` is a common set of options that all decoders use.
+pub struct DecoderOptions {
+    /// The decoded audio should be verified if possible during the decode process.
+    pub verify: bool,
+}
+
+impl Default for DecoderOptions {
+    fn default() -> Self { 
+        DecoderOptions {
+            verify: false,
+        }
+    }
+}
+
 /// A `Decoder` implements a Codec's decode process. It consumes `Packet`'s and produces `AudioBuffers`.
 pub trait Decoder {
 
     /// Instantiates the Decoder will the provided `CodecParameters`.
-    fn new(params: &CodecParameters) -> Self;
+    fn new(params: &CodecParameters, options: &DecoderOptions) -> Self;
 
     fn codec_params(&self) -> &CodecParameters;
 

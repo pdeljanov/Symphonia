@@ -164,15 +164,17 @@ impl PacketParser {
 pub struct FrameStream {
     stream_bps: Option<u32>,
     stream_sample_rate: Option<u32>,
+    is_validating: bool,
     validator: Md5AudioValidator,
 }
 
 impl FrameStream {
 
-    pub fn new(stream_bps: Option<u32>, stream_sample_rate: Option<u32>) -> Self {
+    pub fn new(stream_bps: Option<u32>, stream_sample_rate: Option<u32>, is_validating: bool) -> Self {
         FrameStream {
             stream_bps,
             stream_sample_rate,
+            is_validating,
             validator: Md5AudioValidator::new(),
         }
     }
@@ -198,11 +200,11 @@ impl FrameStream {
                                     else { return decode_error("Neither stream nor frame specified bits per sample."); }
                                 };
 
-        let sample_rate =   if let Some(sample_rate) = header.sample_rate { sample_rate }
-                            else {
-                                if let Some(sample_rate) = self.stream_sample_rate { sample_rate }
-                                else { return decode_error("Neither stream nor frame specified sample rate."); }
-                            };
+        // let sample_rate =   if let Some(sample_rate) = header.sample_rate { sample_rate }
+        //                     else {
+        //                         if let Some(sample_rate) = self.stream_sample_rate { sample_rate }
+        //                         else { return decode_error("Neither stream nor frame specified sample rate."); }
+        //                     };
 
         // eprintln!("Frame: [{:?}] strategy={:?}, n_samples={}, bps={}, rate={}, channels={:?}",
         //     header.block_sequence,
@@ -257,7 +259,9 @@ impl FrameStream {
         }
 
         // Feed the validator if validation is enabled.
-        // self.validator.update(buf, bits_per_sample);
+        if self.is_validating {
+            self.validator.update(buf, bits_per_sample);
+        }
 
         // The decoder uses a 32bit sample format as a common denominator, but that doesn't mean
         // the encoded audio samples are actually 32bit. Shift all samples in the output buffer
@@ -280,6 +284,12 @@ impl FrameStream {
         // eprintln!("");
 
         Ok(())
+    }
+
+    pub fn close(&mut self) {
+        if self.is_validating {
+            eprintln!("{:?}", self.validator.finalize());
+        }
     }
 }
 

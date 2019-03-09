@@ -15,6 +15,7 @@
 // License along with this library; if not, write to the Free Software
 // Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301 USA
 
+use std::default::Default;
 use std::fmt;
 
 use crate::audio::Timestamp;
@@ -55,16 +56,26 @@ pub enum Limit {
 
 /// `FormatOptions` is a common set of options that all demuxers use.
 pub struct FormatOptions {
-    /// Selects the logging verbosity of the demuxer and decoder.
-    verbosity: Verbosity,
+    /// Selects the logging verbosity of the demuxer.
+    pub verbosity: Verbosity,
 
     /// The maximum size limit in bytes that a tag may occupy in memory once decoded. Tags exceeding this limit will be 
     /// skipped by the demuxer. Take note that tags in-memory are stored as UTF-8 and therefore may occupy more than one
     /// byte per character.
-    limit_metadata_bytes: Limit,
+    pub limit_metadata_bytes: Limit,
 
     // The maximum size limit in bytes that a visual (picture) may occupy.
-    limit_visual_bytes: Limit,
+    pub limit_visual_bytes: Limit,
+}
+
+impl Default for FormatOptions {
+    fn default() -> Self { 
+        FormatOptions {
+            verbosity: Verbosity::Error,
+            limit_metadata_bytes: Limit::Default,
+            limit_visual_bytes: Limit::Default,
+        }
+    }
 }
 
 /// The `ProbeDepth` is how hard a `FormatReader` should try to determine if it can support a stream.

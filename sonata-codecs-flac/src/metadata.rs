@@ -162,7 +162,10 @@ impl fmt::Display for StreamInfo {
         writeln!(f, "\tsample_rate: {} Hz,", self.sample_rate)?;
         writeln!(f, "\tn_channels: {:?},", self.channels)?;
         writeln!(f, "\tbits_per_sample: {},", self.bits_per_sample)?;
-        writeln!(f, "\tn_samples: {},", self.n_samples.unwrap_or(0))?;
+        match self.n_samples {
+            Some(n_sample) => writeln!(f, "\tn_samples: {},", self.n_samples.unwrap_or(0))?,
+            None => writeln!(f, "\tn_samples: ?")?,
+        };
         writeln!(f, "\tmd5: {:x?}", self.md5)?;
         writeln!(f, "}}")
     }
