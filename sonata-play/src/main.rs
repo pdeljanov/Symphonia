@@ -38,15 +38,19 @@ fn main() {
                             .short("-s")
                             .value_name("TIMESTAMP")
                             .help("Seek to the given timestamp")
-                            .conflicts_with_all(&["verify", "verify-only", "probe-only"]))
+                            .conflicts_with_all(&[ "verify", "decode-only", "verify-only", "probe-only" ]))
+                        .arg(Arg::with_name("decode-only")
+                            .long("decode-only")
+                            .help("Decodes, but does not play the audio")
+                            .conflicts_with_all(&[ "probe-only", "verify-only", "verify" ]))
                         .arg(Arg::with_name("probe-only")
                             .long("probe-only")
                             .help("Only probe the file for metadata")
-                            .conflicts_with_all(&["verify-only"]))
+                            .conflicts_with_all(&[ "decode-only", "verify-only" ]))
                         .arg(Arg::with_name("verify-only")
                             .long("verify-only")
                             .help("Verifies the decoded audio is valid, but does not play the audio")
-                            .conflicts_with_all(&["verify"]))
+                            .conflicts_with_all(&[ "verify" ]))
                         .arg(Arg::with_name("verify")
                             .long("verify")
                             .short("-V")
@@ -78,11 +82,19 @@ fn main() {
             eprintln!("File not supported!");
         },
         ProbeResult::Supported => {
+            // Verify only mode decodes and always verifies the audio, but doese not play it.
             if matches.is_present("verify-only") {
-                verify(&mut reader);
+                let options = DecoderOptions { verify: true, ..Default::default() };
+                decode_only(&mut reader, &options);
             }
+            // Decode only mode decodes the audio, but not does verify it.
+            else if matches.is_present("decode-only") {
+                let options = DecoderOptions { verify: false, ..Default::default() };
+                decode_only(&mut reader, &options);
+            }
+            // If not probing, play the audio back.
             else if !matches.is_present("probe-only") {
-
+                // Seek to the desired timestamp if requested.
                 match matches.value_of("seek") {
                     Some(seek_value) => {
                         let pos = seek_value.parse::<f64>().unwrap();
@@ -91,26 +103,24 @@ fn main() {
                     None => ()
                 };
 
-                // Setup the decoder options.
+                // Set the decoder options.
                 let options = DecoderOptions { verify: matches.is_present("verify"), ..Default::default() };
 
+                // Commence playback.
                 play(&mut reader, &options);
             }
         }
     }
 }
 
-fn verify(reader: &mut FlacReader) -> Result<()> {
+fn decode_only(reader: &mut FlacReader, decode_options: &DecoderOptions) -> Result<()> {
     // Get the default stream.
     // TODO: Allow stream selection.
     let stream = reader.default_stream().unwrap();
 
-    // Setup decoder options, in verify's case, always verify.
-    let options = DecoderOptions { verify: true, ..Default::default() };
-
     // Create a decoder for the stream.
     // TODO: Implement stream.make_decoder().
-    let mut decoder = FlacDecoder::new(&stream.codec_params, &options);
+    let mut decoder = FlacDecoder::new(&stream.codec_params, &decode_options);
 
     // Get the expected signal spec from the decoder.
     // TODO: Handle the case where the signal spec is not known until the first buffer is decoded.
@@ -133,7 +143,6 @@ fn verify(reader: &mut FlacReader) -> Result<()> {
         // Try to decode more frames until an error.
         match decoder.decode(&mut packet, &mut samples) {
             Err(err) => {
-                //reader.end();
                 eprint!("Error: {}", err);
                 break;
             },
