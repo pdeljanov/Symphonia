@@ -163,52 +163,13 @@ impl fmt::Display for StreamInfo {
         writeln!(f, "\tn_channels: {:?},", self.channels)?;
         writeln!(f, "\tbits_per_sample: {},", self.bits_per_sample)?;
         match self.n_samples {
-            Some(n_sample) => writeln!(f, "\tn_samples: {},", self.n_samples.unwrap_or(0))?,
+            Some(n_samples) => writeln!(f, "\tn_samples: {},", n_samples)?,
             None => writeln!(f, "\tn_samples: ?")?,
         };
         writeln!(f, "\tmd5: {:x?}", self.md5)?;
         writeln!(f, "}}")
     }
 }
-
-
-pub struct VorbisTag;
-
-impl VorbisTag {
-    fn parse(tag: &str) -> Tag {
-        // Vorbis Comments (aka tags) are stored as <key>=<value> where <key> is
-        // a reduced ASCII-only identifier and <value> is a UTF8 value.
-        //
-        // <Key> must only contain ASCII 0x20 through 0x7D, with 0x3D ('=') excluded.
-        // ASCII 0x41 through 0x5A inclusive (A-Z) is to be considered equivalent to
-        // ASCII 0x61 through 0x7A inclusive (a-z) for tag matching.
-
-        let field: Vec<&str> = tag.splitn(2, "=").collect();
-
-        // Attempt to assign standardized tag keys as per Xiph recommendations.
-        let std_tag = match field[0].to_lowercase().as_ref() {
-            "title"        => Some(StandardTagKey::TrackTitle),
-            "album"        => Some(StandardTagKey::Release),
-            "tracknumber"  => Some(StandardTagKey::TrackNumber),
-            "artist"       => Some(StandardTagKey::Artist),
-            "performer"    => Some(StandardTagKey::Performer),
-            "organization" => Some(StandardTagKey::Label),
-            "genre"        => Some(StandardTagKey::Genre),
-            "date"         => Some(StandardTagKey::Date),
-            "composer"     => Some(StandardTagKey::Composer),
-            "version"      => Some(StandardTagKey::Remixer),
-            _ => None
-        };
-
-        //  Empty value field. Fill with default value.
-        if field.len() == 1 {
-            return Tag::new(std_tag, field[0], "");
-        }
-
-        Tag::new(std_tag, field[0], field[1])
-    }
-}
-
 
 macro_rules! verify_block_bounds {
     ($accum:ident, $bound:ident, $len:expr) => (

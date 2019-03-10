@@ -53,10 +53,11 @@ pub fn sign_extend_leq64_to_i64(value: u64, width: u32) -> i64 {
 
 /// Masks the bit at the specified bit index.
 #[inline(always)]
-fn mask_at(idx: u32) -> u8 {
+pub fn mask_at(idx: u32) -> u8 {
     debug_assert!(idx <= 7);
     1 << idx
 }
+
 /// Masks all bits with an index greater than or equal to idx.
 #[inline(always)]
 pub fn mask_upper_eq(idx: u32) -> u8 {

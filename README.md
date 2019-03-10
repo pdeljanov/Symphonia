@@ -18,6 +18,8 @@ Sonata's planned features are:
 Support for individual audio codecs and media formats is provided by separate crates. By default, Sonata selects
 support for FOSS codecs and formats, but others may be included via the features option.
 
+Up-to-date project progress on the [Trello Board](https://trello.com/b/2EhGvDsR).
+
 ### Formats (Mux/Demux)
 
 | Format  | Status      | Feature Flag | Default | Crate                  |  

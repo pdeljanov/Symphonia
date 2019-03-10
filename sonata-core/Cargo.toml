@@ -11,3 +11,4 @@ keywords = ["audio", "codec", "decoder", "encoder", "format"]
 edition = "2018"
 
 [dependencies]
+lazy_static = "1.3.0"
