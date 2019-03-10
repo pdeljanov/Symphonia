@@ -555,6 +555,10 @@ fn decode_fixed_linear<B: BitStream>(bs: &mut B, bps: u32, order: u32, buf: &mut
     decode_residual(bs, order, buf)?;
 
     // Run the Fixed predictor (appends to residuals).
+    // 
+    // TODO: The fixed predictor uses 64-bit accumulators by default to support bps > 26. On 64-bit machines, this is 
+    //       preferable, but on 32-bit machines if bps <= 26, run a 32-bit predictor, and fallback to the 64-bit 
+    //       predictor if necessary (which is likely never).
     fixed_predict(order, buf)?;
 
     Ok(())
@@ -774,10 +778,6 @@ fn fixed_predict(order: u32, buf: &mut [i32]) -> Result<()> {
     // The Fixed Predictor is just a hard-coded version of the Linear Predictor up to order 4 and with fixed
     // coefficients. Some cases may be simplified such as orders 0 and 1. For orders 2 through 4, use the
     // same IIR-style algorithm as the Linear Predictor.
-    //
-    // TODO: Split into 64-bit and 32-bit versions?
-    // TODO: Instead of wrapping, why not saturate? Don't use saturating_add though, it incurs a
-    //       branch.
     match order {
         // A 0th order predictor always predicts 0, and therefore adds nothing to any of the samples
         // in buf. Do nothing.
@@ -791,28 +791,28 @@ fn fixed_predict(order: u32, buf: &mut [i32]) -> Result<()> {
         // A 2nd order predictor uses the polynomial: s(i) = 2*s(i-1) - 1*s(i-2).
         2 => {
             for i in 2..buf.len() {
-                let a = Wrapping(-1i32) * Wrapping(buf[i - 2]);
-                let b = Wrapping( 2i32) * Wrapping(buf[i - 1]);
-                buf[i] += (a + b).0;
+                let a = Wrapping(-1) * Wrapping(buf[i - 2] as i64);
+                let b = Wrapping( 2) * Wrapping(buf[i - 1] as i64);
+                buf[i] += (a + b).0 as i32;
             }
         },
         // A 3rd order predictor uses the polynomial: s(i) = 3*s(i-1) - 3*s(i-2) + 1*s(i-3).
         3 => {
             for i in 3..buf.len() {
-                let a = Wrapping( 1i32) * Wrapping(buf[i - 3]);
-                let b = Wrapping(-3i32) * Wrapping(buf[i - 2]);
-                let c = Wrapping( 3i32) * Wrapping(buf[i - 1]);
-                buf[i] += (a + b + c).0;
+                let a = Wrapping( 1) * Wrapping(buf[i - 3] as i64);
+                let b = Wrapping(-3) * Wrapping(buf[i - 2] as i64);
+                let c = Wrapping( 3) * Wrapping(buf[i - 1] as i64);
+                buf[i] += (a + b + c).0 as i32;
             }
         },
         // A 4th order predictor uses the polynomial: s(i) = 4*s(i-1) - 6*s(i-2) + 4*s(i-3) - 1*s(i-4).
         4 => {
             for i in 4..buf.len() {
-                let a = Wrapping(-1i32) * Wrapping(buf[i - 4]);
-                let b = Wrapping( 4i32) * Wrapping(buf[i - 3]);
-                let c = Wrapping(-6i32) * Wrapping(buf[i - 2]);
-                let d = Wrapping( 4i32) * Wrapping(buf[i - 1]);
-                buf[i] += (a + b + c + d).0;
+                let a = Wrapping(-1) * Wrapping(buf[i - 4] as i64);
+                let b = Wrapping( 4) * Wrapping(buf[i - 3] as i64);
+                let c = Wrapping(-6) * Wrapping(buf[i - 2] as i64);
+                let d = Wrapping( 4) * Wrapping(buf[i - 1] as i64);
+                buf[i] += (a + b + c + d).0 as i32;
             }
         }
         _ => unreachable!()
