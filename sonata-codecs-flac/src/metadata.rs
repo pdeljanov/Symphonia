@@ -466,7 +466,7 @@ impl Application {
     pub fn read<B : Bytestream>(reader: &mut B, block_length: usize) -> Result<Application> {
         let application = reader.read_be_u32()?;
         // TODO: Actually read the application data.
-        reader.ignore_bytes(block_length - mem::size_of::<u32>())?;
+        reader.ignore_bytes(block_length as u64 - 4)?;
         Ok(Application { application })
     }
 }
@@ -560,7 +560,7 @@ impl Picture {
         let byte_length = reader.read_be_u32()? as usize;
 
         // TODO: Actually read the image data.
-        reader.ignore_bytes(byte_length)?;
+        reader.ignore_bytes(byte_length as u64)?;
 
         Ok(Picture {
             disposition: visual_key_from_id3v2_apic(type_enc),

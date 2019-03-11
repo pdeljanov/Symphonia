@@ -487,7 +487,7 @@ pub trait Bytestream {
     }
 
     /// Ignores the specified number of bytes from the stream or returns an error.
-    fn ignore_bytes(&mut self, count: usize) -> io::Result<()>;
+    fn ignore_bytes(&mut self, count: u64) -> io::Result<()>;
 }
 
 impl Bytestream for MediaSourceStream {
@@ -599,11 +599,11 @@ impl Bytestream for MediaSourceStream {
         self.read_exact(buf)
     }
 
-    fn ignore_bytes(&mut self, mut count: usize) -> io::Result<()> {
+    fn ignore_bytes(&mut self, mut count: u64) -> io::Result<()> {
         while count > 0 {
             let buffer = self.fetch_buffer()?;
-            let discard_count = cmp::min(buffer.len(), count);
-            self.pos += discard_count;
+            let discard_count = cmp::min(buffer.len() as u64, count);
+            self.pos += discard_count as usize;
             count -= discard_count;
         }
         Ok(())
@@ -638,7 +638,7 @@ impl<'b, B: Bytestream> Bytestream for &'b mut B {
     }
 
     #[inline(always)]
-    fn ignore_bytes(&mut self, count: usize) -> io::Result<()> {
+    fn ignore_bytes(&mut self, count: u64) -> io::Result<()> {
         (*self).ignore_bytes(count)
     }
 
@@ -722,7 +722,7 @@ impl<B : Bytestream, C: Checksum> Bytestream for ErrorDetectingStream<B, C> {
         Ok(())
     }
 
-    fn ignore_bytes(&mut self, count: usize) -> io::Result<()> {
+    fn ignore_bytes(&mut self, count: u64) -> io::Result<()> {
         self.inner.ignore_bytes(count)
     }
 

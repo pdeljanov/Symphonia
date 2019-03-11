@@ -125,7 +125,7 @@ impl FlacReader {
                     self.read_stream_info_block()?;
                 },
                 _ => {
-                    self.reader.ignore_bytes(header.block_length)?;
+                    self.reader.ignore_bytes(header.block_length as u64)?;
                     eprintln!("Ignoring {} bytes of {:?} block.", header.block_length, header.block_type);
                 }
             }
