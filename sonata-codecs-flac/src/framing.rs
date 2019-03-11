@@ -329,6 +329,10 @@ fn read_frame_header<B: Bytestream>(reader: &mut B, sync: u16) -> Result<FrameHe
     let channels_enc        = ((desc & 0x00f0) >>  4) as u32;
     let bits_per_sample_enc = ((desc & 0x000e) >>  1) as u32;
 
+    if (desc & 0x0001) == 1 {
+        return decode_error("Frame header reserved bit is not set to mandatory value.");
+    }
+
     let block_sequence = match blocking_strategy {
         // Fixed-blocksize stream sequence blocks by a frame number.
         BlockingStrategy::Fixed => {
@@ -348,10 +352,19 @@ fn read_frame_header<B: Bytestream>(reader: &mut B, sync: u16) -> Result<FrameHe
         },
         // Variable-blocksize streams sequence blocks by a sample number.
         BlockingStrategy::Variable => {
-            match utf8_decode_be_u64(&mut reader_crc8)? {
-                Some(sample) => BlockSequence::BySample(sample),
+            let sample = match utf8_decode_be_u64(&mut reader_crc8)? {
+                Some(sample) => sample,
                 None => return decode_error("Frame sequence number is not valid."),
+            };
+
+            // The sample number should only be 36-bits. Since it is UTF8 encoded, the actual length
+            // cannot be enforced by the decoder. Return an error if the frame number exceeds the
+            // maximum 36-bit value.
+            if sample > 0xfffffffff {
+                return decode_error("Sample sequence number exceeds 36-bits");
             }
+
+            BlockSequence::BySample(sample)
         }
     };
 
@@ -478,7 +491,7 @@ fn read_subframe<B: BitStream>(bs: &mut B, frame_bps: u32, buf: &mut [i32]) -> R
                 return decode_error("Fixed predictor orders of greater than 4 are invalid.");
             }
             SubFrameType::FixedLinear(order)
-        }
+        },
         0x20..=0x3f => SubFrameType::Linear((subframe_type_enc & 0x1f) + 1),
         _ => {
             return decode_error("Subframe type set to reserved value.");
@@ -489,7 +502,7 @@ fn read_subframe<B: BitStream>(bs: &mut B, frame_bps: u32, buf: &mut [i32]) -> R
     // bits per sample in the audio sub-block. If the bit is set, unary decode the number of
     // dropped bits per sample.
     let dropped_bps = if bs.read_bit()? {
-        bs.read_unary()?
+        bs.read_unary()? + 1
     }
     else {
         0
@@ -558,7 +571,7 @@ fn decode_fixed_linear<B: BitStream>(bs: &mut B, bps: u32, order: u32, buf: &mut
     // 
     // TODO: The fixed predictor uses 64-bit accumulators by default to support bps > 26. On 64-bit machines, this is 
     //       preferable, but on 32-bit machines if bps <= 26, run a 32-bit predictor, and fallback to the 64-bit 
-    //       predictor if necessary (which is likely never).
+    //       predictor if necessary (which is basically never).
     fixed_predict(order, buf)?;
 
     Ok(())
@@ -702,7 +715,7 @@ fn decode_rice_partition<B: BitStream>(bs: &mut B, param_bit_width: u32, buf: &m
     // parameter is less than this value, the residuals are Rice encoded.
     if rice_param < (1 << param_bit_width) - 1 {
 
-        // eprintln!("\t\t\tPartition (Rice): n_residuals={}, rice_param={}", buf.len(), rice_param);
+        // println!("\t\t\tPartition (Rice): n_residuals={}, rice_param={}", buf.len(), rice_param);
 
         // Read each rice encoded residual and store in buffer.
         for sample in buf.iter_mut() {

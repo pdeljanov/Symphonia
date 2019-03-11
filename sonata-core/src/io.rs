@@ -27,28 +27,28 @@ pub fn sign_extend_leq8_to_i8(value: u8, width: u32) -> i8 {
     // Rust uses an arithmetic shift right (the original sign bit is repeatedly shifted on) for
     // signed integer types. Therefore, shift the value to the right-hand side of the integer,
     // then shift it back to extend the sign bit.
-    ((value << (8 - width)) as i8) >> (8 - width)
+    (value.wrapping_shl(8 - width) as i8).wrapping_shr(8 - width)
 }
 
 /// Sign extends an arbitrary, 16-bit or less, signed two's complement integer stored within an u16
 /// to a full width i16.
 #[inline(always)]
 pub fn sign_extend_leq16_to_i16(value: u16, width: u32) -> i16 {
-    ((value << (16 - width) )as i16) >> (16 - width)
+    (value.wrapping_shl(16 - width) as i16).wrapping_shr(16 - width)
 }
 
 /// Sign extends an arbitrary, 32-bit or less, signed two's complement integer stored within an u32
 /// to a full width i32.
 #[inline(always)]
 pub fn sign_extend_leq32_to_i32(value: u32, width: u32) -> i32 {
-    ((value << (32 - width)) as i32) >> (32 - width)
+    (value.wrapping_shl(32 - width) as i32).wrapping_shr(32 - width)
 }
 
 /// Sign extends an arbitrary, 64-bit or less, signed two's complement integer stored within an u64
 /// to a full width i64.
 #[inline(always)]
 pub fn sign_extend_leq64_to_i64(value: u64, width: u32) -> i64 {
-    ((value << (64 - width)) as i64) >> (64 - width)
+    (value.wrapping_shl(64 - width) as i64).wrapping_shr(64 - width)
 }
 
 /// Masks the bit at the specified bit index.
