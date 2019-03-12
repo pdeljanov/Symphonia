@@ -98,6 +98,7 @@ pub enum StandardTagKey {
     Opus,
     OriginalDate,
     Part,
+    PartTotal,
     Performer,
     Producer,
     Rating,
@@ -149,6 +150,47 @@ pub struct TagCollection {
 
 }
 
+lazy_static! {
+    static ref RIFF_COMMENT_MAP: HashMap<&'static str, StandardTagKey> = {
+        let mut m = HashMap::new();
+        m.insert("ages", StandardTagKey::Rating);
+        m.insert("cmnt", StandardTagKey::Comment);
+        // Is this the same as a cmnt?
+        m.insert("comm", StandardTagKey::Comment);
+        m.insert("dtim", StandardTagKey::OriginalDate);
+        m.insert("genr", StandardTagKey::Genre);
+        m.insert("iart", StandardTagKey::Artist);
+        // Is this also  the same as cmnt?
+        m.insert("icmt", StandardTagKey::Comment);
+        m.insert("icop", StandardTagKey::Copyright);
+        m.insert("icrd", StandardTagKey::Date);
+        m.insert("idit", StandardTagKey::OriginalDate);
+        m.insert("ienc", StandardTagKey::EncodedBy);
+        m.insert("ieng", StandardTagKey::Engineer);
+        m.insert("ifrm", StandardTagKey::TrackTotal);
+        m.insert("ilng", StandardTagKey::Language);
+        m.insert("imus", StandardTagKey::Composer);
+        m.insert("inam", StandardTagKey::TrackTitle);
+        m.insert("iprd", StandardTagKey::Album);
+        m.insert("ipro", StandardTagKey::Producer);
+        m.insert("irtd", StandardTagKey::Rating);
+        m.insert("isft", StandardTagKey::Encoder);
+        m.insert("isgn", StandardTagKey::Genre);
+        m.insert("isrf", StandardTagKey::MediaFormat);
+        m.insert("itch", StandardTagKey::EncodedBy);
+        m.insert("iwri", StandardTagKey::Writer);
+        m.insert("lang", StandardTagKey::Language);
+        m.insert("prt1", StandardTagKey::TrackNumber);
+        m.insert("prt2", StandardTagKey::TrackTotal);
+        // Same as inam?
+        m.insert("titl", StandardTagKey::TrackTitle);
+        m.insert("torg", StandardTagKey::Label);
+        m.insert("trck", StandardTagKey::TrackNumber);
+        m.insert("tver", StandardTagKey::Version);
+        m.insert("year", StandardTagKey::Date);
+        m
+    };
+}
 
 lazy_static! {
     static ref VORBIS_COMMENT_MAP: HashMap<&'static str, StandardTagKey> = {
