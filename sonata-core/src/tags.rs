@@ -151,7 +151,7 @@ pub struct TagCollection {
 }
 
 lazy_static! {
-    static ref RIFF_COMMENT_MAP: HashMap<&'static str, StandardTagKey> = {
+    static ref RIFF_INFO_MAP: HashMap<&'static str, StandardTagKey> = {
         let mut m = HashMap::new();
         m.insert("ages", StandardTagKey::Rating);
         m.insert("cmnt", StandardTagKey::Comment);
