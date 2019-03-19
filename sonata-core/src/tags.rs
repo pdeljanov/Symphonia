@@ -168,11 +168,13 @@ lazy_static! {
         m.insert("ienc", StandardTagKey::EncodedBy);
         m.insert("ieng", StandardTagKey::Engineer);
         m.insert("ifrm", StandardTagKey::TrackTotal);
+        m.insert("ignr", StandardTagKey::Genre);
         m.insert("ilng", StandardTagKey::Language);
         m.insert("imus", StandardTagKey::Composer);
         m.insert("inam", StandardTagKey::TrackTitle);
         m.insert("iprd", StandardTagKey::Album);
         m.insert("ipro", StandardTagKey::Producer);
+        m.insert("iprt", StandardTagKey::TrackNumber);
         m.insert("irtd", StandardTagKey::Rating);
         m.insert("isft", StandardTagKey::Encoder);
         m.insert("isgn", StandardTagKey::Genre);
@@ -296,5 +298,22 @@ impl VorbisTag {
         }
 
         Tag::new(std_tag, field[0], field[1])
+    }
+}
+
+pub struct RiffTag;
+
+impl RiffTag {
+    pub fn parse(tag: [u8; 4], value: &str) ->  Tag {
+        // TODO: Key should be checked that it only contains ASCII characters.
+        let key = String::from_utf8_lossy(&tag);
+
+        // Attempt to assign a standardized tag key.
+        let std_tag = match RIFF_INFO_MAP.get(key.to_lowercase().as_str()) {
+            Some(&tag) => Some(tag),
+            None => None,
+        };
+
+        Tag::new(std_tag, &key, &value)
     }
 }
