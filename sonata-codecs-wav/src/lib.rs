@@ -8,28 +8,119 @@ use sonata_core::codecs::{CODEC_TYPE_WAVE, CodecParameters, DecoderOptions};
 use sonata_core::errors::{Result, Error, decode_error, seek_error, unsupported_error, SeekErrorKind};
 use sonata_core::formats::{Packet, Stream, SeekIndex};
 use sonata_core::io::*;
+use sonata_core::tags::{Tag, RiffTag};
 
 pub use sonata_core::formats::{ProbeDepth, ProbeResult, Format, FormatReader, SeekSearchResult};
 pub use sonata_core::codecs::Decoder;
 
-
-/// The Wav (RIFF) start of stream marker: "RIFF" in ASCII.
-const RIFF_STREAM_MARKER: [u8; 4] = [0x52, 0x49, 0x46, 0x46];
-
-// RIFF chunk, id parameter for WAVE
-const RIFF_ID_WAVE: u32 = 0x57415645;
-
 /// The recommended maximum number of bytes advance a stream to find the stream marker before giving up.
 const WAVE_PROBE_SEARCH_LIMIT: usize = 512 * 1024;
 
+use std::marker::PhantomData;
 
-enum Chunk {
-    Format(WaveFormat),
-    List,
-    Fact(Fact),
-    Data,
-    Unknown,
+trait MakeParser : Sized {
+    fn make_parser(tag: &[u8; 4], len: u32) -> Option<Self>;
 }
+
+struct ChunkReader<T: MakeParser> {
+    len: u32,
+    consumed: u32,
+    phantom: PhantomData<T>,
+}
+
+impl<T: MakeParser> ChunkReader<T> {
+    fn new(len: u32) -> Self {
+        ChunkReader { 
+            len, 
+            consumed: 0, 
+            phantom: PhantomData
+        }
+    }
+
+    fn next<B: Bytestream>(&mut self, reader: &mut B) -> Result<Option<T>> {
+        // Loop until a chunk is recognized and returned, or the end of stream is reached.
+        loop {
+            // Align to the next 2-byte boundary if not currently aligned..
+            if self.consumed & 0x1 == 1 {
+                reader.read_u8()?;
+                self.consumed += 1;
+            }
+
+            // Check if there are enough bytes for another chunk, if not, there are no more chunks.
+            if self.consumed + 8 > self.len {
+                return Ok(None);
+            }
+
+            // Read tag and len, the chunk header.
+            let tag = reader.read_quad_bytes()?;
+            let len = reader.read_u32()?;
+            self.consumed += 8;
+
+            // Check if the chunk length will exceed the parent chunk.
+            if self.consumed + len > self.len {
+                return decode_error("Info chunk length exceeds parent List chunk length.");
+            }
+
+            // "Consume" the chunk.
+            self.consumed += len;
+
+            match T::make_parser(&tag, len) {
+                Some(chunk) => return Ok(Some(chunk)),
+                None => {
+                    // As per the RIFF spec, unknown chunks are to be ignored.
+                    eprintln!("Ignoring unknown chunk: tag={}, len={}.", String::from_utf8_lossy(&tag), len);
+                    reader.ignore_bytes(len as u64)?
+                }
+            }
+        }
+    }
+
+    fn finish<B: Bytestream>(&mut self, reader: &mut B) -> Result<()>{
+        // If data is remaining in this chunk, skip it.
+        if self.consumed < self.len {
+            let remaining = self.len - self.consumed;
+            reader.ignore_bytes(remaining as u64)?;
+            self.consumed += remaining;
+        }
+
+        // Pad the chunk to the next 2-byte boundary.
+        if self.len & 0x1 == 1 {
+            reader.read_u8()?;
+        }
+
+        Ok(())
+    }
+}
+
+trait ParseChunk : Sized {
+    fn parse<B: Bytestream>(reader: &mut B, tag: [u8; 4], len: u32) -> Result<Self>;
+}
+
+struct ChunkParser<P: ParseChunk> {
+    tag: [u8; 4],
+    len: u32,
+    phantom: PhantomData<P>,
+}
+
+impl<P: ParseChunk> ChunkParser<P> {
+    fn new(tag: [u8; 4], len: u32) -> Self {
+        ChunkParser {
+            tag,
+            len,
+            phantom: PhantomData,
+        }
+    }
+
+    fn parse<B: Bytestream>(&self, reader: &mut B) -> Result<P> {
+        P::parse(reader, self.tag, self.len)
+    }
+}
+
+
+
+
+
+
 
 enum WaveFormatData {
     Pcm(WaveFormatPcm),
@@ -53,7 +144,7 @@ struct WaveFormatExtensible {
     sub_format_guid: [u8; 16],
 }
 
-struct WaveFormat {
+struct WaveFormatChunk {
     /// The number of channels.
     n_channels: u16,
     /// The sample rate in Hz. For non-PCM formats, this value must be interpreted as per the format's specifications.
@@ -69,7 +160,7 @@ struct WaveFormat {
     format_data: WaveFormatData,
 }
 
-impl WaveFormat {
+impl WaveFormatChunk {
 
     fn read_pcm_fmt<B: Bytestream>(reader: &mut B, bits_per_sample: u16, chunk_len: u32) -> Result<WaveFormatData> {
         // WaveFormat for a PCM format /may/ be extended with an extra data length parameter followed by the 
@@ -152,11 +243,11 @@ impl WaveFormat {
         // These GUIDs identifiy the format of the data chunks. These definitions can be found in ksmedia.h of the 
         // Microsoft Windows Platform SDK.
         const KSDATAFORMAT_SUBTYPE_PCM: [u8; 16] = 
-            [0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x10, 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71];
+            [0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71];
         // const KSDATAFORMAT_SUBTYPE_ADPCM: [u8; 16] = 
         //     [0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x10, 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71];
         const KSDATAFORMAT_SUBTYPE_IEEE_FLOAT: [u8; 16] = 
-            [0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x10, 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71];
+            [0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71];
         // const KSDATAFORMAT_SUBTYPE_ALAW: [u8; 16] = 
         //     [0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00, 0x10, 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71];
         // const KSDATAFORMAT_SUBTYPE_MULAW: [u8; 16] = 
@@ -172,8 +263,10 @@ impl WaveFormat {
         Ok(WaveFormatData::Extensible(WaveFormatExtensible { 
             bits_per_sample, bits_per_coded_sample, channel_mask, sub_format_guid }))
     }
+}
 
-    fn read<B: Bytestream>(reader: &mut B, chunk_len: u32) -> Result<WaveFormat> {
+impl ParseChunk for WaveFormatChunk {
+    fn parse<B: Bytestream>(reader: &mut B, _tag: [u8; 4], len: u32) -> Result<WaveFormatChunk> {
         let format = reader.read_u16()?;
         let n_channels = reader.read_u16()?;
         let sample_rate = reader.read_u32()?;
@@ -191,27 +284,103 @@ impl WaveFormat {
 
         let format_data = match format {
             // The PCM Wave Format
-            WAVE_FORMAT_PCM => Self::read_pcm_fmt(reader, bits_per_sample, chunk_len),
+            WAVE_FORMAT_PCM => Self::read_pcm_fmt(reader, bits_per_sample, len),
             // The IEEE Float Wave Format
-            WAVE_FORMAT_IEEE_FLOAT => Self::read_ieee_fmt(reader, bits_per_sample, chunk_len),
+            WAVE_FORMAT_IEEE_FLOAT => Self::read_ieee_fmt(reader, bits_per_sample, len),
             // The Extensible Wave Format
-            WAVE_FORMAT_EXTENSIBLE => Self::read_ext_fmt(reader, bits_per_sample, chunk_len),
+            WAVE_FORMAT_EXTENSIBLE => Self::read_ext_fmt(reader, bits_per_sample, len),
             // Unsupported format.
             _ => unsupported_error("Unsupported Wave Format."),
         }?;
 
-        Ok(WaveFormat { n_channels, sample_rate, avg_bytes_per_sec, block_align, format_data })
+        Ok(WaveFormatChunk { n_channels, sample_rate, avg_bytes_per_sec, block_align, format_data })
     }
-
 }
 
-struct Fact {
+
+struct FactChunk {
     n_frames: u32,
 }
 
-impl Fact {
-    fn read<B: Bytestream>(reader: &mut B, _chunk_len: u32) -> Result<Fact> {
-        Ok(Fact{ n_frames: reader.read_u32()? })
+impl ParseChunk for FactChunk {
+    fn parse<B: Bytestream>(reader: &mut B, _tag: [u8; 4], _len: u32) -> Result<Self> {
+        Ok(FactChunk{ n_frames: reader.read_u32()? })
+    }
+}
+
+struct ListChunk {
+    form: [u8; 4],
+    len: u32, 
+}
+
+impl ListChunk {
+    fn form(&self) -> [u8; 4] {
+        self.form
+    }
+
+    fn len(&self) -> u32 {
+        self.len
+    }
+
+    fn skip<B: Bytestream>(&self, reader: &mut B) -> Result<()> {
+        unimplemented!("Skipping list chunks is unimplemented.")
+    }
+}
+
+impl ParseChunk for ListChunk {
+    fn parse<B: Bytestream>(reader: &mut B, _tag: [u8; 4], len: u32) -> Result<Self> {
+        Ok(ListChunk{ 
+            form: reader.read_quad_bytes()?,
+            len: len - 4
+        })
+    }
+}
+
+struct InfoChunk {
+    tag: Tag,
+}
+
+impl ParseChunk for InfoChunk {
+    fn parse<B: Bytestream>(reader: &mut B, tag: [u8; 4], len: u32) -> Result<InfoChunk> {
+        let mut value_buf = vec![0u8; len as usize];
+        reader.read_buf_bytes(&mut value_buf)?;
+
+        let value = String::from_utf8_lossy(&value_buf);
+
+        Ok(InfoChunk {
+            tag: RiffTag::parse(tag, &value)
+        })
+    }
+}
+
+enum RiffWaveChunks {
+    Format(ChunkParser<WaveFormatChunk>),
+    List(ChunkParser<ListChunk>),
+    Fact(ChunkParser<FactChunk>),
+    Data
+}
+
+impl MakeParser for RiffWaveChunks {
+    fn make_parser(tag: &[u8; 4], len: u32) -> Option<Self> {
+        match tag {
+            b"fmt " => Some(RiffWaveChunks::Format(ChunkParser::<WaveFormatChunk>::new(*tag, len))),
+            b"LIST" => Some(RiffWaveChunks::List(ChunkParser::<ListChunk>::new(*tag, len))),
+            b"fact" => Some(RiffWaveChunks::Fact(ChunkParser::<FactChunk>::new(*tag, len))),
+            b"data" => Some(RiffWaveChunks::Data),
+            _ => None,
+        }
+    }
+}
+
+enum RiffInfoListChunks {
+    Info(ChunkParser<InfoChunk>),
+}
+
+impl MakeParser for RiffInfoListChunks {
+    fn make_parser(tag: &[u8; 4], len: u32) -> Option<Self> {
+        // Right now it is assumed all list chunks are INFO chunks, but that's not really guaranteed.
+        // TODO: Actually validate that the chunk is an info chunk.
+        Some(RiffInfoListChunks::Info(ChunkParser::<InfoChunk>::new(*tag, len)))
     }
 }
 
@@ -247,34 +416,27 @@ impl WavReader {
         }
     }
 
-    fn read_chunk(&mut self) -> Result<Chunk>{
-        // First four bytes in a RIFF chunk is the type id.
-        let chunk_id = self.reader.read_quad_bytes()?;
-        // Next, an unsigned 32-bit length field of the data to follow.
-        let chunk_len = self.reader.read_u32()?;
+    fn read_metadata(&mut self, len: u32) -> Result<()> {
+        let mut info_list = ChunkReader::<RiffInfoListChunks>::new(len);
 
-        match &chunk_id {
-            b"fmt " => {
-                let fmt = WaveFormat::read(&mut self.reader, chunk_len)?;
-                Ok(Chunk::Format(fmt))
+        loop {
+            let chunk = info_list.next(&mut self.reader)?;
+
+            if chunk.is_none() {
+                break;
             }
-            //b"list" => (),
-            b"fact" => {
-                let fact = Fact::read(&mut self.reader, chunk_len)?;
-                Ok(Chunk::Fact(fact))
-            },
-            b"data" => {
-                Ok(Chunk::Data)
-            },
-            _ => {
-                // As per the RIFF spec, unknown chunks are to be ignored.
-                eprintln!("Unknown chunks of type={}, size={}. Ignoring...", 
-                    String::from_utf8_lossy(&chunk_id), chunk_len);
-            
-                self.reader.ignore_bytes(chunk_len as u64)?;
-                Ok(Chunk::Unknown)
+
+            match chunk.unwrap() {
+                RiffInfoListChunks::Info(nfo) => { 
+                    let info = nfo.parse(&mut self.reader)?;
+                    eprintln!("{}", info.tag); 
+                }
             }
         }
+        
+        info_list.finish(&mut self.reader)?;
+
+        Ok(())
     }
 
 }
@@ -295,77 +457,106 @@ impl FormatReader for WavReader {
     }
 
     fn probe(&mut self, depth: ProbeDepth) -> Result<ProbeResult> {
-        let mut marker = [
-            self.reader.read_u8()?,
-            self.reader.read_u8()?,
-            self.reader.read_u8()?,
-            self.reader.read_u8()?,
-        ];
 
-        // Count the number of bytes read in the probe so that a limit may (optionally) be applied.
-        let mut probed_bytes = 4usize;
+        // Search for the "RIFF" marker.
+        let marker = search_for_marker(&mut self.reader, b"RIFF", depth)?;
 
-        loop {
-            if marker == RIFF_STREAM_MARKER {
-                // Found the marker.
-                eprintln!("Probe: Found RIFF header @ +{} bytes.", probed_bytes - 4);
+        if marker.is_none() {
+            return Ok(ProbeResult::Unsupported);
+        }
 
-                // A Wave file is one large RIFF chunk, with the actual meta and audio data as sub-chunks. Therefore, 
-                // the header was the chunk ID, and the next 4 bytes is the length of the RIFF chunk.
-                let riff_size = self.reader.read_u32()?;
-                let id = self.reader.read_u32()?;
+        // A Wave file is one large RIFF chunk, with the actual meta and audio data as sub-chunks. Therefore, 
+        // the header was the chunk ID, and the next 4 bytes is the length of the RIFF chunk.
+        let riff_len = self.reader.read_u32()?;
+        let riff_form = self.reader.read_quad_bytes()?;
 
-                // The RIFF chunk contains WAVE data.
-                if id == RIFF_ID_WAVE {
+        // The RIFF chunk contains WAVE data.
+        if riff_form != *b"wave" {
 
-                    // Read chunks until the audio data is found.
-                    loop {
-                        let chunk = self.read_chunk()?;
+            let mut riff_chunks = ChunkReader::<RiffWaveChunks>::new(riff_len);
+            
+            loop {
+                let chunk = riff_chunks.next(&mut self.reader)?;
 
-                        match chunk {
-                            Chunk::Data => break,
-                            _ => ()
-                        }
-                    }
-                    
-                }
-
-                return Ok(ProbeResult::Unsupported);
-            }
-            // If the ProbeDepth is deep, continue searching for the stream marker.
-            else if depth == ProbeDepth::Deep {
-                // Do not search more than the designated search limit.
-                if probed_bytes <= WAVE_PROBE_SEARCH_LIMIT {
-
-                    if probed_bytes % 4096 == 0 {
-                        eprintln!("Probe: Searching for stream marker... ({} / {}) bytes.", 
-                            probed_bytes, WAVE_PROBE_SEARCH_LIMIT);
-                    }
-
-                    marker[0] = marker[1];
-                    marker[1] = marker[2];
-                    marker[2] = marker[3];
-                    marker[3] = self.reader.read_u8()?;
-
-                    probed_bytes += 1;
-                }
-                else {
-                    eprintln!("Probe: Stream marker search limit exceeded.");
+                // The last chunk should always be a data chunk. Probe will exit with a supported result in that case.
+                // Therefore, if there is no more chunks left, then the file is unsupported. Exit.
+                if chunk.is_none() {
                     break;
                 }
-            }
-            else {
-                break;
+
+                match chunk.unwrap() {
+                    RiffWaveChunks::Format(fmt) => {
+                        let format = fmt.parse(&mut self.reader)?;
+                    },
+                    RiffWaveChunks::Fact(fct) => {
+                        let fact = fct.parse(&mut self.reader)?;
+                    },
+                    RiffWaveChunks::List(lst) => {
+                        let list = lst.parse(&mut self.reader)?;
+
+                        // Riff Lists can have many different forms, but WavReader only supports Info lists.
+                        match &list.form() {
+                            b"INFO" => self.read_metadata(list.len())?,
+                            _ => list.skip(&mut self.reader)?
+                        }
+                    },
+                    RiffWaveChunks::Data => {
+                        return Ok(ProbeResult::Supported);
+                    }
+                }
             }
         }
 
-        // Loop exited, therefore stream is unsupported.
+        // Not supported.
         Ok(ProbeResult::Unsupported)
     }
 
 }
 
+fn search_for_marker<B: Bytestream>(reader: &mut B, marker: &[u8; 4], depth: ProbeDepth) -> Result<Option<[u8; 4]>> {
+    let mut window = [0u8; 4];
 
+    reader.read_buf_bytes(&mut window)?;
+
+    // Count the number of bytes read in the probe so that a limit may (optionally) be applied.
+    let mut probed_bytes = 4usize;
+
+    loop {
+        if window == *marker {
+            // Found the marker.
+            eprintln!("Probe: Found stream marker @ +{} bytes.", probed_bytes - 4);
+            return Ok(Some(*marker));
+        }
+        // If the ProbeDepth is deep, continue searching for the stream marker.
+        else if depth == ProbeDepth::Deep {
+            // Do not search more than the designated search limit.
+            if probed_bytes <= WAVE_PROBE_SEARCH_LIMIT {
+
+                if probed_bytes % 4096 == 0 {
+                    eprintln!("Probe: Searching for stream marker... ({} / {}) bytes.", 
+                        probed_bytes, WAVE_PROBE_SEARCH_LIMIT);
+                }
+
+                window[0] = window[1];
+                window[1] = window[2];
+                window[2] = window[3];
+                window[3] = reader.read_u8()?;
+
+                probed_bytes += 1;
+            }
+            else {
+                eprintln!("Probe: Stream marker search limit exceeded.");
+                break;
+            }
+        }
+        else {
+            break;
+        }
+    }
+
+    // Loop exited, therefore stream is unsupported.
+    Ok(None)
+}
 
 /// `WavDecoder` implements a decoder for the Wav codec bitstream. The decoder is compatible with OGG encapsulated 
 /// Wav.
@@ -397,8 +588,13 @@ impl Decoder for WavDecoder {
 
 #[cfg(test)]
 mod tests {
+    use std::fs::File;
+    use super::{Format, FormatReader, Wav, ProbeDepth};
+
     #[test]
     fn it_works() {
-        assert_eq!(2 + 2, 4);
+        let file = Box::new(File::open("samples/wav/metadata_pcm32le.wav").unwrap());
+        let mut reader = Wav::open(file);
+        let probe_info = reader.probe(ProbeDepth::Deep).unwrap();
     }
 }
