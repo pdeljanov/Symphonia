@@ -156,10 +156,10 @@ pub struct WaveFormatChunk {
 
 impl WaveFormatChunk {
 
-    fn read_pcm_fmt<B: Bytestream>(reader: &mut B, bits_per_sample: u16, chunk_len: u32) -> Result<WaveFormatData> {
+    fn read_pcm_fmt<B: Bytestream>(reader: &mut B, bits_per_sample: u16, len: u32) -> Result<WaveFormatData> {
         // WaveFormat for a PCM format /may/ be extended with an extra data length parameter followed by the 
         // extra data itself. Use the chunk length to determine if the format chunk is extended.
-        let is_extended = match chunk_len {
+        let is_extended = match len {
             // Minimal WavFormat struct, no extension.
             16 => false,
             // WaveFormatEx with exta data length field present, but not extra data.
@@ -188,16 +188,16 @@ impl WaveFormatChunk {
         Ok(WaveFormatData::Pcm(WaveFormatPcm { bits_per_sample }))
     }
 
-    fn read_ieee_fmt<B: Bytestream>(reader: &mut B, bits_per_sample: u16, chunk_len: u32) -> Result<WaveFormatData> {
+    fn read_ieee_fmt<B: Bytestream>(reader: &mut B, bits_per_sample: u16, len: u32) -> Result<WaveFormatData> {
         // WaveFormat for a IEEE format should not be extended, but it may still have an extra data length 
         // parameter.
-        if chunk_len == 18 {
+        if len == 18 {
             let extra_size = reader.read_u16()?; 
             if extra_size != 0 {
                 return decode_error("Extra data not expected for IEEE fmt chunk.");
             }
         }
-        else if chunk_len > 16 {
+        else if len > 16 {
             return decode_error("Malformed IEEE fmt chunk.");
         }
 
@@ -209,9 +209,9 @@ impl WaveFormatChunk {
         Ok(WaveFormatData::IeeeFloat)
     }
 
-    fn read_ext_fmt<B: Bytestream>(reader: &mut B, bits_per_sample: u16, chunk_len: u32) -> Result<WaveFormatData> {
+    fn read_ext_fmt<B: Bytestream>(reader: &mut B, bits_per_sample: u16, len: u32) -> Result<WaveFormatData> {
         // WaveFormat for the extensible format must be extended to 40 bytes in length.
-        if chunk_len < 40 {
+        if len < 40 {
             return decode_error("Malformed Extensible fmt chunk.");
         }
 
@@ -261,6 +261,11 @@ impl WaveFormatChunk {
 
 impl ParseChunk for WaveFormatChunk {
     fn parse<B: Bytestream>(reader: &mut B, _tag: [u8; 4], len: u32) -> Result<WaveFormatChunk> {
+        // WaveFormat has a minimal length of 16 bytes. This may be extended with format specific data later.
+        if len < 16 {
+            return decode_error("Malformed fmt chunk.");
+        }
+
         let format = reader.read_u16()?;
         let n_channels = reader.read_u16()?;
         let sample_rate = reader.read_u32()?;
@@ -326,7 +331,13 @@ pub struct FactChunk {
 }
 
 impl ParseChunk for FactChunk {
-    fn parse<B: Bytestream>(reader: &mut B, _tag: [u8; 4], _len: u32) -> Result<Self> {
+    fn parse<B: Bytestream>(reader: &mut B, _tag: [u8; 4], len: u32) -> Result<Self> {
+        // A Fact chunk is exactly 4 bytes long, though there is some mystery as to whether there can be more fields
+        // in the chunk.
+        if len != 4 {
+            return decode_error("Malformed fact chunk.");
+        }
+
         Ok(FactChunk{ n_frames: reader.read_u32()? })
     }
 }
@@ -352,6 +363,11 @@ impl ListChunk {
 
 impl ParseChunk for ListChunk {
     fn parse<B: Bytestream>(reader: &mut B, _tag: [u8; 4], len: u32) -> Result<Self> {
+        // A List chunk must contain atleast the list/form identifier. However, an empty list (len = 4) is permissible.
+        if len < 4 {
+            return decode_error("Malformed list chunk.");
+        }
+
         Ok(ListChunk{ 
             form: reader.read_quad_bytes()?,
             len: len - 4
@@ -392,12 +408,18 @@ pub enum RiffWaveChunks {
     Data
 }
 
+macro_rules! parser {
+    ($class:expr, $result:ty, $tag:expr, $len:expr) => {
+        Some($class(ChunkParser::<$result>::new($tag, $len)))
+    };
+}
+
 impl ParseChunkTag for RiffWaveChunks {
     fn parse_tag(tag: &[u8; 4], len: u32) -> Option<Self> {
         match tag {
-            b"fmt " => Some(RiffWaveChunks::Format(ChunkParser::<WaveFormatChunk>::new(*tag, len))),
-            b"LIST" => Some(RiffWaveChunks::List(ChunkParser::<ListChunk>::new(*tag, len))),
-            b"fact" => Some(RiffWaveChunks::Fact(ChunkParser::<FactChunk>::new(*tag, len))),
+            b"fmt " => parser!(RiffWaveChunks::Format, WaveFormatChunk, *tag, len),
+            b"LIST" => parser!(RiffWaveChunks::List, ListChunk, *tag, len),
+            b"fact" => parser!(RiffWaveChunks::Fact, FactChunk, *tag, len),
             b"data" => Some(RiffWaveChunks::Data),
             _ => None,
         }
@@ -412,6 +434,6 @@ impl ParseChunkTag for RiffInfoListChunks {
     fn parse_tag(tag: &[u8; 4], len: u32) -> Option<Self> {
         // Right now it is assumed all list chunks are INFO chunks, but that's not really guaranteed.
         // TODO: Actually validate that the chunk is an info chunk.
-        Some(RiffInfoListChunks::Info(ChunkParser::<InfoChunk>::new(*tag, len)))
+        parser!(RiffInfoListChunks::Info, InfoChunk, *tag, len)
     }
 }
