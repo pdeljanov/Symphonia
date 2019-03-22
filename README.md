@@ -22,27 +22,27 @@ Up-to-date project progress on the [Trello Board](https://trello.com/b/2EhGvDsR)
 
 ### Formats (Mux/Demux)
 
-| Format  | Status      | Feature Flag | Default | Crate                  |  
-|---------|-------------|--------------|---------|------------------------|
-| OGG     | Planned     | `ogg`        | Yes     | `sonata-format-ogg`    |
-| MKV     | Planned     | `mkv`        | Yes     | `sonata-format-mkv`    |
-| ISO/MP4 | In Progress | `isomp4`     | No      | `sonata-format-isomp4` |
-| MPEG-TS | Planned     | `mpeg-ts`    | No      | `sonata-format-mpegts` |
-| WebM    | Planned     | `webm`       | No      | `sonata-format-webm`   |
-| Wave    | Planned     | `wav`        | Yes     | `sonata-format-wav`     |
+| Format       | Status  | Feature Flag | Default | Crate                  |  
+|--------------|---------|--------------|---------|------------------------|
+| ISO/MP4      | Planned | `isomp4`     | No      | `sonata-format-isomp4` |
+| MKV          | Planned | `mkv`        | Yes     | `sonata-format-mkv`    |
+| MPEG-TS      | Planned | `mpeg-ts`    | No      | `sonata-format-mpegts` |
+| OGG          | Planned | `ogg`        | Yes     | `sonata-format-ogg`    |
+| Wave/AIFF    | In Work | `wav`        | Yes     | `sonata-format-wav`    |
+| WebM         | Planned | `webm`       | No      | `sonata-format-webm`   |
 
 ### Codecs (Decode)
 
 | Codec    | Status      | Feature Flag | Default | Crate                  |
 |----------|-------------|--------------|---------|------------------------|
-| Flac     | Functional  | `flac`       | Yes     | `sonata-codec-flac`    |
-| PCM      | In Progress | `pcm`        | Yes     | `sonata-codec-pcm`     |
-| Vorbis   | Planned     | `vorbis`     | Yes     | `sonata-codec-vorbis`  |
-| Opus     | Planned     | `opus`       | Yes     | `sonata-codec-opus`    |
-| MP3      | Planned     | `mp3`        | No      | `sonata-codec-mp3`     |
 | AAC      | Planned     | `aac`        | No      | `sonata-codec-aac`     |
-| WavPack  | Planned     | `wavpack`    | Yes     | `sonata-codec-wavpack` |
+| Flac     | Functional  | `flac`       | Yes     | `sonata-codec-flac`    |
 | Hardware | Planned     | `hwdec`      | No      | `sonata-codec-hwdec`   |
+| MP3      | Planned     | `mp3`        | No      | `sonata-codec-mp3`     |
+| Opus     | Planned     | `opus`       | Yes     | `sonata-codec-opus`    |
+| PCM      | In Work     | `pcm`        | Yes     | `sonata-codec-pcm`     |
+| Vorbis   | Planned     | `vorbis`     | Yes     | `sonata-codec-vorbis`  |
+| WavPack  | Planned     | `wavpack`    | Yes     | `sonata-codec-wavpack` |
 
 ### Codecs (Encode)
 

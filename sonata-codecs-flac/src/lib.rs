@@ -68,9 +68,10 @@ impl FlacReader {
             eprintln!("{}", info);
 
             // Populate the codec parameters with the information read from StreamInfo.
-            let mut codec_params = CodecParameters::new(CODEC_TYPE_FLAC);
+            let mut codec_params = CodecParameters::new();
 
             codec_params
+                .for_codec(CODEC_TYPE_FLAC)
                 .with_sample_rate(info.sample_rate)
                 .with_bits_per_sample(info.bits_per_sample)
                 .with_max_frames_per_packet(info.block_size_bounds.1 as u64)

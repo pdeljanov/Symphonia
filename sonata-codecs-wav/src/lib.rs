@@ -1,12 +1,10 @@
 #![warn(rust_2018_idioms)]
-
 use std::io;
-use std::io::{Seek, SeekFrom};
 
 use sonata_core::audio::{AudioBuffer, SignalSpec, Timestamp};
-use sonata_core::codecs::{CODEC_TYPE_NULL, CodecParameters, DecoderOptions};
+use sonata_core::codecs::{CodecParameters, DecoderOptions};
 use sonata_core::errors::{Result, seek_error, unsupported_error, SeekErrorKind};
-use sonata_core::formats::{Packet, Stream, SeekIndex};
+use sonata_core::formats::{Packet, Stream};
 use sonata_core::io::*;
 
 mod chunks;
@@ -19,7 +17,7 @@ pub use sonata_core::codecs::Decoder;
 /// The recommended maximum number of bytes advance a stream to find the stream marker before giving up.
 const WAVE_PROBE_SEARCH_LIMIT: usize = 512 * 1024;
 
-/// `Wav` (Wave) Codec.
+/// `Wav` (Wave) Format.
 /// 
 /// This format only supports reading.
 pub struct Wav;
@@ -37,7 +35,6 @@ impl Format for Wav {
 pub struct WavReader {
     reader: MediaSourceStream,
     streams: Vec<Stream>,
-    index: Option<SeekIndex>,
 }
 
 impl WavReader {
@@ -46,7 +43,6 @@ impl WavReader {
         WavReader {
             reader: source,
             streams: Vec::new(),
-            index: None,
         }
     }
 
@@ -109,7 +105,7 @@ impl FormatReader for WavReader {
 
             let mut riff_chunks = ChunksReader::<RiffWaveChunks>::new(riff_len);
             
-            let mut codec_params = CodecParameters::new(CODEC_TYPE_NULL);
+            let mut codec_params = CodecParameters::new();
 
             loop {
                 let chunk = riff_chunks.next(&mut self.reader)?;
@@ -162,7 +158,6 @@ impl FormatReader for WavReader {
 
 
 
-
 fn append_format_params(codec_params: &mut CodecParameters, format: &WaveFormatChunk) {
 
     codec_params.with_sample_rate(format.sample_rate);
@@ -170,16 +165,19 @@ fn append_format_params(codec_params: &mut CodecParameters, format: &WaveFormatC
     match format.format_data {
         WaveFormatData::Pcm(ref pcm) => {
             codec_params
+                .for_codec(pcm.codec)
                 .with_bits_per_coded_sample(pcm.bits_per_sample as u32)
                 .with_bits_per_sample(pcm.bits_per_sample as u32)
                 .with_channels(pcm.channels);
         },
         WaveFormatData::IeeeFloat(ref ieee) => {
             codec_params
+                .for_codec(ieee.codec)
                 .with_channels(ieee.channels);
         },
         WaveFormatData::Extensible(ref ext) => {
             codec_params
+                .for_codec(ext.codec)
                 .with_bits_per_coded_sample(ext.bits_per_coded_sample as u32)
                 .with_bits_per_sample(ext.bits_per_sample as u32)
                 .with_channels(ext.channels);

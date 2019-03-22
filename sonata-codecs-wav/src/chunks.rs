@@ -2,6 +2,15 @@ use std::fmt;
 use std::marker::PhantomData;
 
 use sonata_core::audio::Channels;
+use sonata_core::codecs::{
+    CODEC_TYPE_PCM_U8, 
+    CODEC_TYPE_PCM_S16LE, 
+    CODEC_TYPE_PCM_S24LE, 
+    CODEC_TYPE_PCM_S32LE, 
+    CODEC_TYPE_PCM_F32LE, 
+    CODEC_TYPE_PCM_F64LE
+};
+use sonata_core::codecs::CodecType;
 use sonata_core::errors::{Result, decode_error, unsupported_error};
 use sonata_core::io::Bytestream;
 use sonata_core::tags::{Tag, RiffTag};
@@ -172,11 +181,15 @@ pub struct WaveFormatPcm {
     pub bits_per_sample: u16,
     /// Channel bitmask.
     pub channels: Channels,
+    /// Codec type.
+    pub codec: CodecType,
 }
 
 pub struct WaveFormatIeeeFloat {
     /// Channel bitmask.
     pub channels: Channels,
+    /// Codec type.
+    pub codec: CodecType,
 }
 
 pub struct WaveFormatExtensible {
@@ -188,6 +201,8 @@ pub struct WaveFormatExtensible {
     pub channels: Channels,
     /// Globally unique identifier of the format.
     pub sub_format_guid: [u8; 16],
+    /// Codec type.
+    pub codec: CodecType,
 }
 
 pub struct WaveFormatChunk {
@@ -199,8 +214,8 @@ pub struct WaveFormatChunk {
     /// per the format's specifications.
     pub avg_bytes_per_sec: u32,
     /// The byte alignment of one audio frame. For PCM formats, this is equal to 
-    /// `(n_channels * extra_data.bits_per_sample) / 8`. For non-PCM formats, this value must be interpreted as per the 
-    /// format's specifications.
+    /// `(n_channels * format_data.bits_per_sample) / 8`. For non-PCM formats, this value must be interpreted as per 
+    /// the format's specifications.
     pub block_align: u16,
     /// Extra data associated with the format block conditional upon the format tag.
     pub format_data: WaveFormatData,
@@ -218,7 +233,7 @@ impl WaveFormatChunk {
             18 => true,
             // WaveFormatEx with extra data length field and extra data.
             40 => true,
-            _ => return decode_error("Malformed PCM fmt chunk."),
+            _ => return decode_error("Malformed fmt_pcm chunk."),
         };
 
         // If there is extra data, read the length, and discard the extra data.
@@ -233,18 +248,25 @@ impl WaveFormatChunk {
         // Bits per sample for PCM is both the encoded sample width, and the actual sample width. Strictly, this must 
         // either be 8 or 16 bits, but there is no reason why 24 and 32 bits can't be supported. Since these files do 
         // exist, allow for 8/16/24/32-bit samples, but error if not a multiple of 8 or greater than 32-bits.
-        if (bits_per_sample > 32) || (bits_per_sample & 0x7 != 0) {
-            return decode_error("Bits per sample for PCM Wave Format must either be 8 or 16 bits.");
-        }
+        //
+        // Select the appropriate codec using bits per sample. Samples are always interleaved and little-endian 
+        // encoded for the PCM format.
+        let codec = match bits_per_sample {
+            8  => CODEC_TYPE_PCM_U8,
+            16 => CODEC_TYPE_PCM_S16LE,
+            24 => CODEC_TYPE_PCM_S24LE,
+            32 => CODEC_TYPE_PCM_S32LE,
+            _  => return decode_error("Bits per sample for fmt_pcm must be 8, 16, 24 or 32 bits.")
+        };
 
         // The PCM format only supports 1 or 2 channels, for mono and stereo channel layouts, respectively.
         let channels = match n_channels {
             1 => Channels::FRONT_LEFT,
             2 => Channels::FRONT_LEFT | Channels::FRONT_RIGHT,
-            _ => return decode_error("PCM Wave Format must have either 1 or 2 channels.")
+            _ => return decode_error("Only mono and stereo channel layouts are supported for fmt_pcm.")
         };
 
-        Ok(WaveFormatData::Pcm(WaveFormatPcm { bits_per_sample, channels }))
+        Ok(WaveFormatData::Pcm(WaveFormatPcm { bits_per_sample, channels, codec }))
     }
 
     fn read_ieee_fmt<B: Bytestream>(reader: &mut B, bits_per_sample: u16, n_channels: u16, len: u32) -> Result<WaveFormatData> {
@@ -253,39 +275,44 @@ impl WaveFormatChunk {
         if len == 18 {
             let extra_size = reader.read_u16()?; 
             if extra_size != 0 {
-                return decode_error("Extra data not expected for IEEE fmt chunk.");
+                return decode_error("Extra data not expected for fmt_ieee chunk.");
             }
         }
         else if len > 16 {
-            return decode_error("Malformed IEEE fmt chunk.");
+            return decode_error("Malformed fmt_ieee chunk.");
         }
 
         // Officially, only 32-bit floats are supported, but Sonata can handle 64-bit floats.
-        if bits_per_sample != 32 || bits_per_sample != 64 {
-            return decode_error("Bits per sample for IEEE Wave Format must be 32-bits.");
-        }
+        //
+        // Select the appropriate codec using bits per sample. Samples are always interleaved and little-endian 
+        // encoded for the IEEE Float format.
+        let codec = match bits_per_sample {
+            32 => CODEC_TYPE_PCM_F32LE,
+            64 => CODEC_TYPE_PCM_F64LE,
+            _  => return decode_error("Bits per sample for fmt_ieee must be 32 or 64 bits.")
+        };
 
         // The IEEE format only supports 1 or 2 channels, for mono and stereo channel layouts, respectively.
         let channels = match n_channels {
             1 => Channels::FRONT_LEFT,
             2 => Channels::FRONT_LEFT | Channels::FRONT_RIGHT,
-            _ => return decode_error("IEEE Float Wave Format must have either 1 or 2 channels.")
+            _ => return decode_error("Only mono and stereo channel layouts are supported for fmt_ieee.")
         };
 
-        Ok(WaveFormatData::IeeeFloat(WaveFormatIeeeFloat { channels }))
+        Ok(WaveFormatData::IeeeFloat(WaveFormatIeeeFloat { channels, codec }))
     }
 
     fn read_ext_fmt<B: Bytestream>(reader: &mut B, bits_per_coded_sample: u16, len: u32) -> Result<WaveFormatData> {
         // WaveFormat for the extensible format must be extended to 40 bytes in length.
         if len < 40 {
-            return decode_error("Malformed extended fmt chunk.");
+            return decode_error("Malformed fmt_ext chunk.");
         }
 
         let extra_size = reader.read_u16()?; 
 
         // The size of the extra data for the Extensible format is exactly 22 bytes.
         if extra_size != 22 {
-            return decode_error("Extra data size not 22 bytes for extended fmt chunk.");
+            return decode_error("Extra data size not 22 bytes for fmt_ext chunk.");
         }
 
         let bits_per_sample = reader.read_u16()?;
@@ -293,13 +320,13 @@ impl WaveFormatChunk {
         // Bits per coded sample for extensible formats is the width per sample as stored in the stream. This must be a 
         // multiple of 8.
         if (bits_per_coded_sample & 0x7) != 0 {
-            return decode_error("Bits per coded sample for extended format must be a multiple of 8 bits.");
+            return decode_error("Bits per coded sample for fmt_ext must be a multiple of 8 bits.");
         }
 
         // Bits per sample indicates the number of valid bits in the encoded sample. The sample is encoded in a bits per 
         // coded sample width value, therefore the valid number of bits must be at most bits per coded sample long.
         if bits_per_sample > bits_per_coded_sample {
-            return decode_error("Bits per sample must be <= bits per coded sample for extended format.");
+            return decode_error("Bits per sample must be <= bits per coded sample for fmt_ext.");
         }
 
         let channel_mask = reader.read_u32()?;
@@ -321,26 +348,43 @@ impl WaveFormatChunk {
         //     [0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71];
 
         // Verify support based on the format GUID.
-        match sub_format_guid {
+        let codec = match sub_format_guid {
             KSDATAFORMAT_SUBTYPE_PCM => {
                 // Only support up-to 32-bit integer samples.
                 if bits_per_coded_sample > 32 {
-                    return decode_error("Bits per sample for extended PCM format must be <= 32 bits.");
+                    return decode_error("Bits per sample for fmt_ext PCM sub-type must be <= 32 bits.");
+                }
+
+                // Use bits per coded sample to select the codec to use. If bits per sample is less than the bits per 
+                // coded sample, the codec will expand the sample during decode.
+                match bits_per_coded_sample {
+                    8  => CODEC_TYPE_PCM_U8,
+                    16 => CODEC_TYPE_PCM_S16LE,
+                    24 => CODEC_TYPE_PCM_S24LE,
+                    32 => CODEC_TYPE_PCM_S32LE,
+                    _ => unreachable!()
                 }
             },
             KSDATAFORMAT_SUBTYPE_IEEE_FLOAT => {
-                // Only support 32-bit or 64-bit floating point samples.
-                if bits_per_sample != bits_per_coded_sample || bits_per_sample != 32 || bits_per_sample != 64 {
-                    return decode_error("Bits per sample for extended IEEE format must be 32-bits.");
+                // IEEE floating formats do not support truncated sample widths.
+                if bits_per_sample != bits_per_coded_sample {
+                    return decode_error("Bits per sample for fmt_ext IEEE sub-type must equal bits per coded sample.");
+                }
+
+                // Select the appropriate codec based on the bits per coded sample.
+                match bits_per_coded_sample {
+                    32 => CODEC_TYPE_PCM_F32LE,
+                    64 => CODEC_TYPE_PCM_F64LE,
+                    _ =>  return decode_error("Bits per sample for fmt_ext IEEE sub-type must be 32 or 64 bits.")
                 }
             },
-            _ => return unsupported_error("Unsupported extended format."),
-        }
+            _ => return unsupported_error("Unsupported fmt_ext sub-type."),
+        };
 
         let channels = map_wave_channels(channel_mask);
 
         Ok(WaveFormatData::Extensible(WaveFormatExtensible { 
-            bits_per_sample, bits_per_coded_sample, channels, sub_format_guid }))
+            bits_per_sample, bits_per_coded_sample, channels, sub_format_guid, codec }))
     }
 }
 
@@ -368,14 +412,14 @@ impl ParseChunk for WaveFormatChunk {
 
         let format_data = match format {
             // The PCM Wave Format
-            WAVE_FORMAT_PCM => Self::read_pcm_fmt(reader, bits_per_sample, n_channels, len),
+            WAVE_FORMAT_PCM => Self::read_pcm_fmt(reader, bits_per_sample, n_channels, len)?,
             // The IEEE Float Wave Format
-            WAVE_FORMAT_IEEE_FLOAT => Self::read_ieee_fmt(reader, bits_per_sample, n_channels, len),
+            WAVE_FORMAT_IEEE_FLOAT => Self::read_ieee_fmt(reader, bits_per_sample, n_channels, len)?,
             // The Extensible Wave Format
-            WAVE_FORMAT_EXTENSIBLE => Self::read_ext_fmt(reader, bits_per_sample, len),
+            WAVE_FORMAT_EXTENSIBLE => Self::read_ext_fmt(reader, bits_per_sample, len)?,
             // Unsupported format.
-            _ => unsupported_error("Unsupported wave format."),
-        }?;
+            _ => return unsupported_error("Unsupported format data."),
+        };
 
         Ok(WaveFormatChunk { n_channels, sample_rate, avg_bytes_per_sec, block_align, format_data })
     }
@@ -390,21 +434,24 @@ impl fmt::Display for WaveFormatChunk {
         writeln!(f, "\tblock_align: {},", self.block_align)?;
 
         match self.format_data {
-            WaveFormatData::Pcm(ref data) => {
+            WaveFormatData::Pcm(ref pcm) => {
                 writeln!(f, "\tformat_data: Pcm {{")?;
-                writeln!(f, "\t\tbits_per_sample: {},", data.bits_per_sample)?;
-                writeln!(f, "\t\tchannels: {},", data.channels)?;
+                writeln!(f, "\t\tbits_per_sample: {},", pcm.bits_per_sample)?;
+                writeln!(f, "\t\tchannels: {},", pcm.channels)?;
+                writeln!(f, "\t\tcodec: {},", pcm.codec)?;
             },
             WaveFormatData::IeeeFloat(ref ieee) => {
                 writeln!(f, "\tformat_data: IeeeFloat {{")?;
                 writeln!(f, "\t\tchannels: {},", ieee.channels)?;
+                writeln!(f, "\t\tcodec: {},", ieee.codec)?;
             },
-            WaveFormatData::Extensible(ref data) => {
+            WaveFormatData::Extensible(ref ext) => {
                 writeln!(f, "\tformat_data: Extensible {{")?;
-                writeln!(f, "\t\tbits_per_sample: {},", data.bits_per_sample)?;
-                writeln!(f, "\t\tbits_per_coded_sample: {},", data.bits_per_coded_sample)?;
-                writeln!(f, "\t\tchannels: {},", data.channels)?;
-                writeln!(f, "\t\tsub_format_guid: {:?},", &data.sub_format_guid)?;
+                writeln!(f, "\t\tbits_per_sample: {},", ext.bits_per_sample)?;
+                writeln!(f, "\t\tbits_per_coded_sample: {},", ext.bits_per_coded_sample)?;
+                writeln!(f, "\t\tchannels: {},", ext.channels)?;
+                writeln!(f, "\t\tsub_format_guid: {:?},", &ext.sub_format_guid)?;
+                writeln!(f, "\t\tcodec: {},", ext.codec)?;
             },
         };
 

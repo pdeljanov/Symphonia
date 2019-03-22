@@ -16,6 +16,7 @@
 // Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301 USA
 
 use std::default::Default;
+use std::fmt;
 
 use crate::audio::{AudioBuffer, Channels, Layout, SignalSpec};
 use crate::errors::Result;
@@ -34,7 +35,7 @@ pub struct CodecType(u32);
 pub const CODEC_TYPE_NULL: CodecType             = CodecType(0x0);
 
 // Hardware or Operating System provided codecs
-//---------------------------------------------------------
+//---------------------------------------------
 
 /// Native Hardware Decoder
 pub const CODEC_TYPE_HWDEC: CodecType            = CodecType(0x1);
@@ -136,6 +137,12 @@ pub const CODEC_TYPE_OPUS: CodecType             = CodecType(0x5000);
 pub const CODEC_TYPE_WAVPACK: CodecType          = CodecType(0x6000);
 
 
+impl fmt::Display for CodecType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 /// Codec parameters stored in a container format's headers and metadata may be passed to a codec using the 
 /// `CodecParameters` structure. All fields in this structure are optional.
 #[derive(Clone)]
@@ -174,9 +181,9 @@ pub struct CodecParameters {
 }
 
 impl CodecParameters {
-    pub fn new(codec: CodecType) -> CodecParameters {
+    pub fn new() -> CodecParameters {
         CodecParameters {
-            codec,
+            codec: CODEC_TYPE_NULL,
             sample_rate: None,
             n_frames: None,
             sample_format: None,
@@ -188,6 +195,11 @@ impl CodecParameters {
             trailing_padding: None,
             max_frames_per_packet: None,
         }
+    }
+
+    pub fn for_codec(&mut self, codec: CodecType) -> &mut Self {
+        self.codec = codec;
+        self
     }
 
     pub fn with_sample_rate(&mut self, sample_rate: u32) -> &mut Self {
