@@ -48,57 +48,57 @@ bitflags! {
     /// Channels is a bit mask of all channels contained in a signal.
     pub struct Channels: u32 {
         /// Front-left (left) or the Mono channel.
-        const FrontLeft         = 0x0000001;
+        const FRONT_LEFT         = 0x0000001;
         /// Front-right (right) channel.
-        const FrontRight        = 0x0000002;
+        const FRONT_RIGHT        = 0x0000002;
         /// Front-centre (centre) channel.
-        const FrontCentre       = 0x0000004;
+        const FRONT_CENTRE       = 0x0000004;
         /// Rear-left (surround rear left) channel.
-        const RearLeft          = 0x0000008;
+        const REAR_LEFT          = 0x0000008;
         /// Rear-centre (surround rear centre) channel.
-        const RearCentre        = 0x0000010;
+        const REAR_CENTRE        = 0x0000010;
         /// Rear-right (surround rear right) channel.
-        const RearRight         = 0x0000020;
+        const REAR_RIGHT         = 0x0000020;
         /// Low frequency channel 1.
-        const LFE1              = 0x0000040;
+        const LFE1               = 0x0000040;
         /// Front left-of-centre (left center) channel.
-        const FrontLeftCentre   = 0x0000080;
+        const FRONT_LEFT_CENTRE  = 0x0000080;
         /// Front right-of-centre (right center) channel.
-        const FrontRightCentre  = 0x0000100;
+        const FRONT_RIGHT_CENTRE = 0x0000100;
         /// Rear left-of-centre channel.
-        const RearLeftCentre    = 0x0000200;
+        const REAR_LEFT_CENTRE   = 0x0000200;
         /// Rear right-of-centre channel.
-        const RearRightCentre   = 0x0000400;
+        const REAR_RIGHT_CENTRE  = 0x0000400;
         /// Front left-wide channel.
-        const FrontLeftWide     = 0x0000800;
+        const FRONT_LEFT_WIDE    = 0x0000800;
         /// Front right-wide channel.
-        const FrontRightWide    = 0x0001000;
+        const FRONT_RIGHT_WIDE   = 0x0001000;
         /// Front left-high channel.
-        const FrontLeftHigh     = 0x0002000;
+        const FRONT_LEFT_HIGH    = 0x0002000;
         /// Front centre-high channel.
-        const FrontCentreHigh   = 0x0004000;
+        const FRONT_CENTRE_HIGH  = 0x0004000;
         /// Front right-high channel.
-        const FrontRightHigh    = 0x0008000;
+        const FRONT_RIGHT_HIGH   = 0x0008000;
         /// Low frequency channel 2.
-        const LFE2              = 0x0010000;
+        const LFE2               = 0x0010000;
         /// Side left (surround left) channel.
-        const SideLeft          = 0x0020000;
+        const SIDE_LEFT          = 0x0020000;
         /// Side right (surround right) channel.
-        const SideRight         = 0x0040000;
+        const SIDE_RIGHT         = 0x0040000;
         /// Top centre channel.
-        const TopCentre         = 0x0080000;
+        const TOP_CENTRE         = 0x0080000;
         /// Top front-left channel.
-        const TopFrontLeft      = 0x0100000;
+        const TOP_FRONT_LEFT     = 0x0100000;
         /// Top centre channel.
-        const TopFrontCentre    = 0x0200000;
+        const TOP_FRONT_CENTRE   = 0x0200000;
         /// Top front-right channel.
-        const TopFrontRight     = 0x0400000;
+        const TOP_FRONT_RIGHT    = 0x0400000;
         /// Top rear-left channel.
-        const TopRearLeft       = 0x0800000;
+        const TOP_REAR_LEFT      = 0x0800000;
         /// Top rear-centre channel.
-        const TopRearCentre     = 0x1000000;
+        const TOP_REAR_CENTRE    = 0x1000000;
         /// Top rear-right channel.
-        const TopRearRight      = 0x2000000;
+        const TOP_REAR_RIGHT     = 0x2000000;
     }
 }
 
@@ -159,22 +159,22 @@ impl SignalSpec {
 fn layout_to_channels(layout: Layout) -> Channels {
     match layout {
         Layout::Mono => {
-            Channels::FrontLeft
+            Channels::FRONT_LEFT
         },
         Layout::Stereo => {
-            Channels::FrontLeft | Channels::FrontRight
+            Channels::FRONT_LEFT | Channels::FRONT_RIGHT
         },
         Layout::TwoPointOne => {
-            Channels::FrontLeft
-                | Channels::FrontRight
+            Channels::FRONT_LEFT
+                | Channels::FRONT_RIGHT
                 | Channels::LFE1
         },
         Layout::FivePointOne => {
-            Channels::FrontLeft
-                | Channels::FrontRight
-                | Channels::FrontCentre
-                | Channels::RearLeft
-                | Channels::RearRight
+            Channels::FRONT_LEFT
+                | Channels::FRONT_RIGHT
+                | Channels::FRONT_CENTRE
+                | Channels::REAR_LEFT
+                | Channels::REAR_RIGHT
                 | Channels::LFE1
         }
     }

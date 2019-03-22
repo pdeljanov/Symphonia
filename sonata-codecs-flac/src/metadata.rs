@@ -38,56 +38,56 @@ pub enum MetadataBlockType {
 fn flac_channels_to_channel_vec(channels: u32) -> Channels {
     match channels {
         1 => { 
-            Channels::FrontLeft
+            Channels::FRONT_LEFT
         },
         2 => {
-            Channels::FrontLeft
-                | Channels::FrontRight
+            Channels::FRONT_LEFT
+                | Channels::FRONT_RIGHT
         },
         3 => {
-            Channels::FrontLeft
-                | Channels::FrontRight 
-                | Channels::FrontCentre
+            Channels::FRONT_LEFT
+                | Channels::FRONT_RIGHT 
+                | Channels::FRONT_CENTRE
         },
         4 => {
-            Channels::FrontLeft
-                | Channels::FrontRight
-                | Channels::RearLeft
-                | Channels::RearRight
+            Channels::FRONT_LEFT
+                | Channels::FRONT_RIGHT
+                | Channels::REAR_LEFT
+                | Channels::REAR_RIGHT
         },
         5 => {
-            Channels::FrontLeft
-                | Channels::FrontRight
-                | Channels::FrontCentre
-                | Channels::RearLeft
-                | Channels::RearRight
+            Channels::FRONT_LEFT
+                | Channels::FRONT_RIGHT
+                | Channels::FRONT_CENTRE
+                | Channels::REAR_LEFT
+                | Channels::REAR_RIGHT
         },
         6 => {
-            Channels::FrontLeft
-                | Channels::FrontRight
-                | Channels::FrontCentre
+            Channels::FRONT_LEFT
+                | Channels::FRONT_RIGHT
+                | Channels::FRONT_CENTRE
                 | Channels::LFE1
-                | Channels::RearLeft
-                | Channels::RearRight
+                | Channels::REAR_LEFT
+                | Channels::REAR_RIGHT
         },
         7 => {
-            Channels::FrontLeft
-                | Channels::FrontRight
-                | Channels::FrontCentre
+            Channels::FRONT_LEFT
+                | Channels::FRONT_RIGHT
+                | Channels::FRONT_CENTRE
                 | Channels::LFE1
-                | Channels::RearCentre
-                | Channels::RearLeft
-                | Channels::RearRight
+                | Channels::REAR_CENTRE
+                | Channels::REAR_LEFT
+                | Channels::REAR_RIGHT
         },
         8 => {
-            Channels::FrontLeft
-                | Channels::FrontRight
-                | Channels::FrontCentre
+            Channels::FRONT_LEFT
+                | Channels::FRONT_RIGHT
+                | Channels::FRONT_CENTRE
                 | Channels::LFE1
-                | Channels::RearLeft
-                | Channels::RearRight
-                | Channels::SideLeft
-                | Channels::SideRight
+                | Channels::REAR_LEFT
+                | Channels::REAR_RIGHT
+                | Channels::SIDE_LEFT
+                | Channels::SIDE_RIGHT
         },
         _ => panic!("Invalid channel assignment for FLAC.")
     }

@@ -5,10 +5,9 @@ use std::io::{Seek, SeekFrom};
 
 use sonata_core::audio::{AudioBuffer, SignalSpec, Timestamp};
 use sonata_core::codecs::{CODEC_TYPE_NULL, CodecParameters, DecoderOptions};
-use sonata_core::errors::{Result, decode_error, seek_error, unsupported_error, SeekErrorKind};
+use sonata_core::errors::{Result, seek_error, unsupported_error, SeekErrorKind};
 use sonata_core::formats::{Packet, Stream, SeekIndex};
 use sonata_core::io::*;
-use sonata_core::sample::SampleFormat;
 
 mod chunks;
 
@@ -173,13 +172,11 @@ fn append_format_params(codec_params: &mut CodecParameters, format: &WaveFormatC
             codec_params
                 .with_bits_per_coded_sample(pcm.bits_per_sample as u32)
                 .with_bits_per_sample(pcm.bits_per_sample as u32)
-                .with_channels(pcm.channels)
-                .with_sample_format(SampleFormat::U32);
+                .with_channels(pcm.channels);
         },
         WaveFormatData::IeeeFloat(ref ieee) => {
             codec_params
-                .with_channels(ieee.channels)
-                .with_sample_format(SampleFormat::F32);
+                .with_channels(ieee.channels);
         },
         WaveFormatData::Extensible(ref ext) => {
             codec_params

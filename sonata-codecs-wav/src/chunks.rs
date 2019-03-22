@@ -139,24 +139,24 @@ fn map_wave_channels(channel_mask: u32) -> Channels {
 
     let mut channels = Channels::empty();
 
-    if channel_mask & SPEAKER_FRONT_LEFT            != 0 { channels |= Channels::FrontLeft;        }
-    if channel_mask & SPEAKER_FRONT_RIGHT           != 0 { channels |= Channels::FrontRight;       }
-    if channel_mask & SPEAKER_FRONT_CENTER          != 0 { channels |= Channels::FrontCentre;      }
-    if channel_mask & SPEAKER_LOW_FREQUENCY         != 0 { channels |= Channels::LFE1;             }
-    if channel_mask & SPEAKER_BACK_LEFT             != 0 { channels |= Channels::RearLeft;         }
-    if channel_mask & SPEAKER_BACK_RIGHT            != 0 { channels |= Channels::RearRight;        }
-    if channel_mask & SPEAKER_FRONT_LEFT_OF_CENTER  != 0 { channels |= Channels::FrontLeftCentre;  }
-    if channel_mask & SPEAKER_FRONT_RIGHT_OF_CENTER != 0 { channels |= Channels::FrontRightCentre; }
-    if channel_mask & SPEAKER_BACK_CENTER           != 0 { channels |= Channels::RearCentre;       }
-    if channel_mask & SPEAKER_SIDE_LEFT             != 0 { channels |= Channels::SideLeft;         }
-    if channel_mask & SPEAKER_SIDE_RIGHT            != 0 { channels |= Channels::SideRight;        }
-    if channel_mask & SPEAKER_TOP_CENTER            != 0 { channels |= Channels::TopCentre;        }
-    if channel_mask & SPEAKER_TOP_FRONT_LEFT        != 0 { channels |= Channels::TopFrontLeft;     }
-    if channel_mask & SPEAKER_TOP_FRONT_CENTER      != 0 { channels |= Channels::TopFrontCentre;   }
-    if channel_mask & SPEAKER_TOP_FRONT_RIGHT       != 0 { channels |= Channels::TopFrontRight;    }
-    if channel_mask & SPEAKER_TOP_BACK_LEFT         != 0 { channels |= Channels::TopRearLeft;      }
-    if channel_mask & SPEAKER_TOP_BACK_CENTER       != 0 { channels |= Channels::TopRearCentre;    }
-    if channel_mask & SPEAKER_TOP_BACK_RIGHT        != 0 { channels |= Channels::TopRearRight;     }
+    if channel_mask & SPEAKER_FRONT_LEFT            != 0 { channels |= Channels::FRONT_LEFT;         }
+    if channel_mask & SPEAKER_FRONT_RIGHT           != 0 { channels |= Channels::FRONT_RIGHT;        }
+    if channel_mask & SPEAKER_FRONT_CENTER          != 0 { channels |= Channels::FRONT_CENTRE;       }
+    if channel_mask & SPEAKER_LOW_FREQUENCY         != 0 { channels |= Channels::LFE1;               }
+    if channel_mask & SPEAKER_BACK_LEFT             != 0 { channels |= Channels::REAR_LEFT;          }
+    if channel_mask & SPEAKER_BACK_RIGHT            != 0 { channels |= Channels::REAR_RIGHT;         }
+    if channel_mask & SPEAKER_FRONT_LEFT_OF_CENTER  != 0 { channels |= Channels::FRONT_LEFT_CENTRE;  }
+    if channel_mask & SPEAKER_FRONT_RIGHT_OF_CENTER != 0 { channels |= Channels::FRONT_RIGHT_CENTRE; }
+    if channel_mask & SPEAKER_BACK_CENTER           != 0 { channels |= Channels::REAR_CENTRE;        }
+    if channel_mask & SPEAKER_SIDE_LEFT             != 0 { channels |= Channels::SIDE_LEFT;          }
+    if channel_mask & SPEAKER_SIDE_RIGHT            != 0 { channels |= Channels::SIDE_RIGHT;         }
+    if channel_mask & SPEAKER_TOP_CENTER            != 0 { channels |= Channels::TOP_CENTRE;         }
+    if channel_mask & SPEAKER_TOP_FRONT_LEFT        != 0 { channels |= Channels::TOP_FRONT_LEFT;     }
+    if channel_mask & SPEAKER_TOP_FRONT_CENTER      != 0 { channels |= Channels::TOP_FRONT_CENTRE;   }
+    if channel_mask & SPEAKER_TOP_FRONT_RIGHT       != 0 { channels |= Channels::TOP_FRONT_RIGHT;    }
+    if channel_mask & SPEAKER_TOP_BACK_LEFT         != 0 { channels |= Channels::TOP_REAR_LEFT;      }
+    if channel_mask & SPEAKER_TOP_BACK_CENTER       != 0 { channels |= Channels::TOP_REAR_CENTRE;    }
+    if channel_mask & SPEAKER_TOP_BACK_RIGHT        != 0 { channels |= Channels::TOP_REAR_RIGHT;     }
 
     channels
 }
@@ -239,8 +239,8 @@ impl WaveFormatChunk {
 
         // The PCM format only supports 1 or 2 channels, for mono and stereo channel layouts, respectively.
         let channels = match n_channels {
-            1 => Channels::FrontLeft,
-            2 => Channels::FrontLeft | Channels::FrontRight,
+            1 => Channels::FRONT_LEFT,
+            2 => Channels::FRONT_LEFT | Channels::FRONT_RIGHT,
             _ => return decode_error("PCM Wave Format must have either 1 or 2 channels.")
         };
 
@@ -267,8 +267,8 @@ impl WaveFormatChunk {
 
         // The IEEE format only supports 1 or 2 channels, for mono and stereo channel layouts, respectively.
         let channels = match n_channels {
-            1 => Channels::FrontLeft,
-            2 => Channels::FrontLeft | Channels::FrontRight,
+            1 => Channels::FRONT_LEFT,
+            2 => Channels::FRONT_LEFT | Channels::FRONT_RIGHT,
             _ => return decode_error("IEEE Float Wave Format must have either 1 or 2 channels.")
         };
 
