@@ -15,7 +15,8 @@
 // License along with this library; if not, write to the Free Software
 // Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301 USA
 
-/// SampleFormat describes the data encoding for one audio sample.
+/// SampleFormat describes the data encoding for an audio sample.
+#[derive(Copy, Clone)]
 pub enum SampleFormat {
     /// Unsigned 8bit integer.
     U8,

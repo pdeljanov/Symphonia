@@ -15,10 +15,14 @@
 // License along with this library; if not, write to the Free Software
 // Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301 USA
 
+
+use std::fmt;
 use std::vec::Vec;
 use std::mem;
 use std::slice;
 use std::marker::PhantomData;
+
+use bitflags::bitflags;
 
 use super::sample::{Sample, i24, u24};
 
@@ -40,74 +44,75 @@ pub enum Duration {
     Seconds(f64),
 }
 
-/// Channel defines the audio channel position.
-#[derive(Debug, Copy, Clone)]
-pub enum Channel {
-    /// Mono, single channel.
-    Mono,
+bitflags! {
+    /// Channels is a bit mask of all channels contained in a signal.
+    pub struct Channels: u32 {
+        /// Front-left (left) or the Mono channel.
+        const FrontLeft         = 0x0000001;
+        /// Front-right (right) channel.
+        const FrontRight        = 0x0000002;
+        /// Front-centre (centre) channel.
+        const FrontCentre       = 0x0000004;
+        /// Rear-left (surround rear left) channel.
+        const RearLeft          = 0x0000008;
+        /// Rear-centre (surround rear centre) channel.
+        const RearCentre        = 0x0000010;
+        /// Rear-right (surround rear right) channel.
+        const RearRight         = 0x0000020;
+        /// Low frequency channel 1.
+        const LFE1              = 0x0000040;
+        /// Front left-of-centre (left center) channel.
+        const FrontLeftCentre   = 0x0000080;
+        /// Front right-of-centre (right center) channel.
+        const FrontRightCentre  = 0x0000100;
+        /// Rear left-of-centre channel.
+        const RearLeftCentre    = 0x0000200;
+        /// Rear right-of-centre channel.
+        const RearRightCentre   = 0x0000400;
+        /// Front left-wide channel.
+        const FrontLeftWide     = 0x0000800;
+        /// Front right-wide channel.
+        const FrontRightWide    = 0x0001000;
+        /// Front left-high channel.
+        const FrontLeftHigh     = 0x0002000;
+        /// Front centre-high channel.
+        const FrontCentreHigh   = 0x0004000;
+        /// Front right-high channel.
+        const FrontRightHigh    = 0x0008000;
+        /// Low frequency channel 2.
+        const LFE2              = 0x0010000;
+        /// Side left (surround left) channel.
+        const SideLeft          = 0x0020000;
+        /// Side right (surround right) channel.
+        const SideRight         = 0x0040000;
+        /// Top centre channel.
+        const TopCentre         = 0x0080000;
+        /// Top front-left channel.
+        const TopFrontLeft      = 0x0100000;
+        /// Top centre channel.
+        const TopFrontCentre    = 0x0200000;
+        /// Top front-right channel.
+        const TopFrontRight     = 0x0400000;
+        /// Top rear-left channel.
+        const TopRearLeft       = 0x0800000;
+        /// Top rear-centre channel.
+        const TopRearCentre     = 0x1000000;
+        /// Top rear-right channel.
+        const TopRearRight      = 0x2000000;
+    }
+}
 
-    /// Front-left (left) channel.
-    FrontLeft,
-    /// Front-right (right) channel.
-    FrontRight,
-    /// Front-centre (centre) channel.
-    FrontCentre,
+impl Channels {
+    /// Gets the number of channels.
+    pub fn len(&self) -> usize {
+        self.bits.count_ones() as usize
+    }
+}
 
-    /// Rear-left (surround rear left) channel.
-    RearLeft,
-    /// Rear-centre (surround rear centre) channel.
-    RearCentre,
-    /// Rear-right (surround rear right) channel.
-    RearRight,
-
-    /// Low frequency channel 1.
-    LFE1,
-
-    /// Front left-of-centre (left center) channel.
-    FrontLeftCentre,
-    /// Front right-of-centre (right center) channel.
-    FrontRightCentre,
-    /// Rear left-of-centre channel.
-    RearLeftCentre,
-
-    /// Rear right-of-centre channel.
-    RearRightCentre,
-    /// Front left-wide channel.
-    FrontLeftWide,
-    /// Front right-wide channel.
-    FrontRightWide,
-
-    /// Front left-high channel.
-    FrontLeftHigh,
-    /// Front centre-high channel.
-    FrontCentreHigh,
-    /// Front right-high channel.
-    FrontRightHigh,
-
-    /// Low frequency channel 2.
-    LFE2,
-
-    /// Side left (surround left) channel.
-    SideLeft,
-    /// Side right (surround right) channel.
-    SideRight,
-
-    /// Top centre channel.
-    TopCentre,
-
-    /// Top front-left channel.
-    TopFrontLeft,
-    /// Top centre channel.
-    TopFrontCentre,
-    /// Top front-right channel.
-    TopFrontRight,
-
-    /// Top rear-left channel.
-    TopRearLeft,
-    /// Top rear-centre channel.
-    TopRearCentre,
-    /// Top rear-right channel.
-    TopRearRight
+impl fmt::Display for Channels {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:#032b}", self.bits)
+    }
 }
 
 /// Layout describes common audio channel configurations.
@@ -125,21 +130,21 @@ pub enum Layout {
 
 
 /// SignalSpec describes the characteristics of a Signal.
-#[derive(Clone)]
+#[derive(Copy, Clone)]
 pub struct SignalSpec {
     /// The signal sampling rate in hertz (Hz).
     pub rate: u32,
 
     /// The channel assignments of the signal. The order of the channels in the vector is the order
     /// in which each channel sample is stored in a frame.
-    pub channels: Vec<Channel>
+    pub channels: Channels
 }
 
 impl SignalSpec {
-    pub fn new(rate: u32, channels: &[Channel]) -> Self {
+    pub fn new(rate: u32, channels: Channels) -> Self {
         SignalSpec {
             rate,
-            channels: channels.to_vec(),
+            channels,
         }
     }
 
@@ -151,18 +156,26 @@ impl SignalSpec {
     }
 }
 
-fn layout_to_channels(layout: Layout) -> Vec<Channel> {
+fn layout_to_channels(layout: Layout) -> Channels {
     match layout {
-        Layout::Mono         => vec![Channel::Mono],
-        Layout::Stereo       => vec![Channel::FrontLeft, Channel::FrontRight],
-        Layout::TwoPointOne  => vec![Channel::FrontLeft, Channel::FrontRight, Channel::LFE1],
+        Layout::Mono => {
+            Channels::FrontLeft
+        },
+        Layout::Stereo => {
+            Channels::FrontLeft | Channels::FrontRight
+        },
+        Layout::TwoPointOne => {
+            Channels::FrontLeft
+                | Channels::FrontRight
+                | Channels::LFE1
+        },
         Layout::FivePointOne => {
-            vec![Channel::FrontLeft,
-            Channel::FrontRight,
-            Channel::FrontCentre,
-            Channel::RearLeft,
-            Channel::RearRight,
-            Channel::LFE1]
+            Channels::FrontLeft
+                | Channels::FrontRight
+                | Channels::FrontCentre
+                | Channels::RearLeft
+                | Channels::RearRight
+                | Channels::LFE1
         }
     }
 }

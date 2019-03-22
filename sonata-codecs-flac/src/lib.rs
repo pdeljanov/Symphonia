@@ -74,7 +74,7 @@ impl FlacReader {
                 .with_sample_rate(info.sample_rate)
                 .with_bits_per_sample(info.bits_per_sample)
                 .with_max_frames_per_packet(info.block_size_bounds.1 as u64)
-                .with_channels(&info.channels);
+                .with_channels(info.channels);
             
             // Total samples (per channel) aka frames may or may not be stated in StreamInfo.
             if let Some(n_frames) = info.n_samples {
@@ -397,8 +397,8 @@ impl Decoder for FlacDecoder {
             if let Some(layout) = self.params.channel_layout {
                 return Some(SignalSpec::new_with_layout(rate, layout));
             }
-            else if let Some(ref channels) = self.params.channels {
-                return Some(SignalSpec::new(rate, &channels));
+            else if let Some(channels) = self.params.channels {
+                return Some(SignalSpec::new(rate, channels));
             }
         }
         None

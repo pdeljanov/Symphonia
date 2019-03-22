@@ -29,16 +29,17 @@ Up-to-date project progress on the [Trello Board](https://trello.com/b/2EhGvDsR)
 | ISO/MP4 | In Progress | `isomp4`     | No      | `sonata-format-isomp4` |
 | MPEG-TS | Planned     | `mpeg-ts`    | No      | `sonata-format-mpegts` |
 | WebM    | Planned     | `webm`       | No      | `sonata-format-webm`   |
+| Wave    | Planned     | `wav`        | Yes     | `sonata-format-wav`     |
 
 ### Codecs (Decode)
 
 | Codec    | Status      | Feature Flag | Default | Crate                  |
 |----------|-------------|--------------|---------|------------------------|
 | Flac     | Functional  | `flac`       | Yes     | `sonata-codec-flac`    |
+| PCM      | In Progress | `pcm`        | Yes     | `sonata-codec-pcm`     |
 | Vorbis   | Planned     | `vorbis`     | Yes     | `sonata-codec-vorbis`  |
 | Opus     | Planned     | `opus`       | Yes     | `sonata-codec-opus`    |
-| Wav      | Planned     | `wav`        | Yes     | `sonata-codec-wav`     |
-| MP3      | In Progress | `mp3`        | No      | `sonata-codec-mp3`     |
+| MP3      | Planned     | `mp3`        | No      | `sonata-codec-mp3`     |
 | AAC      | Planned     | `aac`        | No      | `sonata-codec-aac`     |
 | WavPack  | Planned     | `wavpack`    | Yes     | `sonata-codec-wavpack` |
 | Hardware | Planned     | `hwdec`      | No      | `sonata-codec-hwdec`   |

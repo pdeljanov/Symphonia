@@ -4,10 +4,11 @@ use std::io;
 use std::io::{Seek, SeekFrom};
 
 use sonata_core::audio::{AudioBuffer, SignalSpec, Timestamp};
-use sonata_core::codecs::{CODEC_TYPE_WAVE, CodecParameters, DecoderOptions};
+use sonata_core::codecs::{CODEC_TYPE_NULL, CodecParameters, DecoderOptions};
 use sonata_core::errors::{Result, decode_error, seek_error, unsupported_error, SeekErrorKind};
 use sonata_core::formats::{Packet, Stream, SeekIndex};
 use sonata_core::io::*;
+use sonata_core::sample::SampleFormat;
 
 mod chunks;
 
@@ -109,6 +110,8 @@ impl FormatReader for WavReader {
 
             let mut riff_chunks = ChunksReader::<RiffWaveChunks>::new(riff_len);
             
+            let mut codec_params = CodecParameters::new(CODEC_TYPE_NULL);
+
             loop {
                 let chunk = riff_chunks.next(&mut self.reader)?;
 
@@ -122,10 +125,16 @@ impl FormatReader for WavReader {
                     RiffWaveChunks::Format(fmt) => {
                         let format = fmt.parse(&mut self.reader)?;
                         eprintln!("{}", format);
+
+                        // Append Format chunk fields to codec parameters.
+                        append_format_params(&mut codec_params, &format);
                     },
                     RiffWaveChunks::Fact(fct) => {
                         let fact = fct.parse(&mut self.reader)?;
                         eprintln!("{}", fact);
+
+                        // Append Fact chunk fields to codec parameters.
+                        append_fact_params(&mut codec_params, &fact);
                     },
                     RiffWaveChunks::List(lst) => {
                         let list = lst.parse(&mut self.reader)?;
@@ -137,6 +146,9 @@ impl FormatReader for WavReader {
                         }
                     },
                     RiffWaveChunks::Data => {
+                        // Add new stream using the collected codec parameters.
+                        self.streams.push(Stream::new(codec_params));
+
                         return Ok(ProbeResult::Supported);
                     }
                 }
@@ -147,6 +159,39 @@ impl FormatReader for WavReader {
         Ok(ProbeResult::Unsupported)
     }
 
+}
+
+
+
+
+fn append_format_params(codec_params: &mut CodecParameters, format: &WaveFormatChunk) {
+
+    codec_params.with_sample_rate(format.sample_rate);
+
+    match format.format_data {
+        WaveFormatData::Pcm(ref pcm) => {
+            codec_params
+                .with_bits_per_coded_sample(pcm.bits_per_sample as u32)
+                .with_bits_per_sample(pcm.bits_per_sample as u32)
+                .with_channels(pcm.channels)
+                .with_sample_format(SampleFormat::U32);
+        },
+        WaveFormatData::IeeeFloat(ref ieee) => {
+            codec_params
+                .with_channels(ieee.channels)
+                .with_sample_format(SampleFormat::F32);
+        },
+        WaveFormatData::Extensible(ref ext) => {
+            codec_params
+                .with_bits_per_coded_sample(ext.bits_per_coded_sample as u32)
+                .with_bits_per_sample(ext.bits_per_sample as u32)
+                .with_channels(ext.channels);
+        }
+    }
+}
+
+fn append_fact_params(codec_params: &mut CodecParameters, fact: &FactChunk) {
+    codec_params.with_n_frames(fact.n_frames as u64);
 }
 
 fn search_for_marker<B: Bytestream>(reader: &mut B, marker: &[u8; 4], depth: ProbeDepth) -> Result<Option<[u8; 4]>> {

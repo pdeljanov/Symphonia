@@ -17,11 +17,11 @@
 
 use std::default::Default;
 
-use crate::audio::{AudioBuffer, Channel, Layout, SignalSpec};
-use crate::io::Bytestream;
+use crate::audio::{AudioBuffer, Channels, Layout, SignalSpec};
 use crate::errors::Result;
 use crate::formats::Packet;
-
+use crate::io::Bytestream;
+use crate::sample::SampleFormat;
 
 /// A `CodecType` is a unique identifier used to identify a specific codec. `CodecType` is mainly used for matching 
 /// a format's stream to a specific `Decoder`. Decoders advertisting support for a specific `CodecType` should be 
@@ -31,31 +31,54 @@ use crate::formats::Packet;
 pub struct CodecType(u32);
 
 /// Null decoder, simply discards all data.
-pub const CODEC_TYPE_NULL: CodecType = CodecType(0);
-
-/// Free Lossless Audio Codec (FLAC)
-pub const CODEC_TYPE_FLAC: CodecType = CodecType(1);
-
-/// MPEG Layer 1, 2, and 3 (MP1, MP2, MP3)
-pub const CODEC_TYPE_MP3: CodecType = CodecType(2);
-
-/// Advanced Audio Coding (AAC)
-pub const CODEC_TYPE_AAC: CodecType = CodecType(3);
-
-/// Vorbis 
-pub const CODEC_TYPE_VORBIS: CodecType = CodecType(4);
-
-/// Opus
-pub const CODEC_TYPE_OPUS: CodecType = CodecType(5);
-
-/// Wave (WAV)
-pub const CODEC_TYPE_WAVE: CodecType = CodecType(6);
-
-/// WavPack
-pub const CODEC_TYPE_WAVPACK: CodecType = CodecType(7);
+pub const CODEC_TYPE_NULL: CodecType      = CodecType(0x0);
 
 /// Native Hardware Decoder
-pub const CODEC_TYPE_HWDEC: CodecType = CodecType(128);
+pub const CODEC_TYPE_HWDEC: CodecType     = CodecType(0x1);
+
+/// PCM Codecs
+pub const CODEC_TYPE_PCM_S32LE: CodecType = CodecType(0x100);
+pub const CODEC_TYPE_PCM_S32BE: CodecType = CodecType(0x200);
+pub const CODEC_TYPE_PCM_S24LE: CodecType = CodecType(0x300);
+pub const CODEC_TYPE_PCM_S24BE: CodecType = CodecType(0x400);
+pub const CODEC_TYPE_PCM_S16LE: CodecType = CodecType(0x500);
+pub const CODEC_TYPE_PCM_S16BE: CodecType = CodecType(0x600);
+pub const CODEC_TYPE_PCM_S8: CodecType    = CodecType(0x700);
+
+pub const CODEC_TYPE_PCM_U32LE: CodecType = CodecType(0x800);
+pub const CODEC_TYPE_PCM_U32BE: CodecType = CodecType(0x900);
+pub const CODEC_TYPE_PCM_U24LE: CodecType = CodecType(0xa00);
+pub const CODEC_TYPE_PCM_U24BE: CodecType = CodecType(0xb00);
+pub const CODEC_TYPE_PCM_U16LE: CodecType = CodecType(0xc00);
+pub const CODEC_TYPE_PCM_U16BE: CodecType = CodecType(0xd00);
+pub const CODEC_TYPE_PCM_U8: CodecType    = CodecType(0xe00);
+
+pub const CODEC_TYPE_PCM_F32LE: CodecType = CodecType(0xf00);
+pub const CODEC_TYPE_PCM_F32BE: CodecType = CodecType(0x1000);
+pub const CODEC_TYPE_PCM_F64LE: CodecType = CodecType(0x1100);
+pub const CODEC_TYPE_PCM_F64BE: CodecType = CodecType(0x1200);
+
+pub const CODEC_TYPE_PCM_ALAW: CodecType  = CodecType(0x1300);
+pub const CODEC_TYPE_PCM_MULAW: CodecType = CodecType(0x1400);
+
+/// Free Lossless Audio Codec (FLAC)
+pub const CODEC_TYPE_FLAC: CodecType      = CodecType(0x10000);
+
+/// MPEG Layer 1, 2, and 3 (MP1, MP2, MP3)
+pub const CODEC_TYPE_MP3: CodecType       = CodecType(0x20000);
+
+/// Advanced Audio Coding (AAC)
+pub const CODEC_TYPE_AAC: CodecType       = CodecType(0x30000);
+
+/// Vorbis 
+pub const CODEC_TYPE_VORBIS: CodecType    = CodecType(0x40000);
+
+/// Opus
+pub const CODEC_TYPE_OPUS: CodecType      = CodecType(0x50000);
+
+/// WavPack
+pub const CODEC_TYPE_WAVPACK: CodecType   = CodecType(0x60000);
+
 
 /// Codec parameters stored in a container format's headers and metadata may be passed to a codec using the 
 /// `CodecParameters` structure. All fields in this structure are optional.
@@ -69,17 +92,20 @@ pub struct CodecParameters {
     /// The length of the encoded stream in number of frames.
     pub n_frames: Option<u64>,
 
+    /// The sample format of an audio sample.
+    pub sample_format: Option<SampleFormat>,
+
     /// The number of bits per one decoded audio sample.
     pub bits_per_sample: Option<u32>,
 
-    /// The number of bits per one coded audio sample.
+    /// The number of bits per one encoded audio sample.
     pub bits_per_coded_sample: Option<u32>,
 
     /// The number of audio channels.
     pub n_channels: Option<u32>,
 
     /// A list of in-order channels.
-    pub channels: Option<Vec<Channel>>,
+    pub channels: Option<Channels>,
 
     /// The channel layout.
     pub channel_layout: Option<Layout>,
@@ -100,6 +126,7 @@ impl CodecParameters {
             codec,
             sample_rate: None,
             n_frames: None,
+            sample_format: None,
             bits_per_sample: None,
             bits_per_coded_sample: None,
             n_channels: None,
@@ -121,6 +148,11 @@ impl CodecParameters {
         self
     }
 
+    pub fn with_sample_format(&mut self, sample_format: SampleFormat) -> &mut Self {
+        self.sample_format = Some(sample_format);
+        self
+    }
+
     pub fn with_bits_per_sample(&mut self, bits_per_sample: u32) -> &mut Self {
         self.bits_per_sample = Some(bits_per_sample);
         self
@@ -131,8 +163,8 @@ impl CodecParameters {
         self
     }
 
-    pub fn with_channels(&mut self, channels: &Vec<Channel>) -> &mut Self {
-        self.channels = Some(channels.clone());
+    pub fn with_channels(&mut self, channels: Channels) -> &mut Self {
+        self.channels = Some(channels);
         self
     }
 

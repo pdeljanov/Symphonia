@@ -17,7 +17,7 @@
 
 use std::fmt;
 use std::mem;
-use sonata_core::audio::Channel;
+use sonata_core::audio::Channels;
 use sonata_core::errors::{Result, decode_error};
 use sonata_core::formats::SeekIndex;
 use sonata_core::tags::*;
@@ -35,50 +35,60 @@ pub enum MetadataBlockType {
     Unknown
 }
 
-fn flac_channels_to_channel_vec(channels: u32) -> Vec<Channel> {
+fn flac_channels_to_channel_vec(channels: u32) -> Channels {
     match channels {
-        1 => vec![ Channel::Mono ],
-        2 => vec![ Channel::FrontLeft, Channel::FrontRight ],
-        3 => vec![ Channel::FrontLeft, Channel::FrontRight, Channel::FrontCentre ],
-        4 => vec![ Channel::FrontLeft, Channel::FrontRight, Channel::RearLeft, Channel::RearRight],
-        5 => 
-            vec![
-                    Channel::FrontLeft, 
-                    Channel::FrontRight,
-                    Channel::FrontCentre, 
-                    Channel::RearLeft, 
-                    Channel::RearRight
-                 ],
-        6 => 
-            vec![
-                    Channel::FrontLeft,
-                    Channel::FrontRight,
-                    Channel::FrontCentre,
-                    Channel::LFE1, 
-                    Channel::RearLeft,
-                    Channel::RearRight
-                ],
-        7 => 
-            vec![
-                    Channel::FrontLeft,
-                    Channel::FrontRight,
-                    Channel::FrontCentre,
-                    Channel::LFE1, 
-                    Channel::RearCentre,
-                    Channel::RearLeft,
-                    Channel::RearRight
-                ],
-        8 => 
-            vec![
-                    Channel::FrontLeft,
-                    Channel::FrontRight,
-                    Channel::FrontCentre,
-                    Channel::LFE1, 
-                    Channel::RearLeft,
-                    Channel::RearRight,
-                    Channel::SideLeft,
-                    Channel::SideRight
-                ],
+        1 => { 
+            Channels::FrontLeft
+        },
+        2 => {
+            Channels::FrontLeft
+                | Channels::FrontRight
+        },
+        3 => {
+            Channels::FrontLeft
+                | Channels::FrontRight 
+                | Channels::FrontCentre
+        },
+        4 => {
+            Channels::FrontLeft
+                | Channels::FrontRight
+                | Channels::RearLeft
+                | Channels::RearRight
+        },
+        5 => {
+            Channels::FrontLeft
+                | Channels::FrontRight
+                | Channels::FrontCentre
+                | Channels::RearLeft
+                | Channels::RearRight
+        },
+        6 => {
+            Channels::FrontLeft
+                | Channels::FrontRight
+                | Channels::FrontCentre
+                | Channels::LFE1
+                | Channels::RearLeft
+                | Channels::RearRight
+        },
+        7 => {
+            Channels::FrontLeft
+                | Channels::FrontRight
+                | Channels::FrontCentre
+                | Channels::LFE1
+                | Channels::RearCentre
+                | Channels::RearLeft
+                | Channels::RearRight
+        },
+        8 => {
+            Channels::FrontLeft
+                | Channels::FrontRight
+                | Channels::FrontCentre
+                | Channels::LFE1
+                | Channels::RearLeft
+                | Channels::RearRight
+                | Channels::SideLeft
+                | Channels::SideRight
+        },
         _ => panic!("Invalid channel assignment for FLAC.")
     }
 }
@@ -88,7 +98,7 @@ pub struct StreamInfo {
     pub block_size_bounds: (u16, u16),
     pub frame_size_bounds: (u32, u32),
     pub sample_rate: u32,
-    pub channels: Vec<Channel>,
+    pub channels: Channels,
     pub bits_per_sample: u32,
     pub n_samples: Option<u64>,
     pub md5: [u8; 16],
@@ -101,7 +111,7 @@ impl StreamInfo {
             block_size_bounds: (0, 0),
             frame_size_bounds: (0, 0),
             sample_rate: 0,
-            channels: Vec::new(),
+            channels: Channels::empty(),
             bits_per_sample: 0,
             n_samples: None,
             md5: [0; 16],

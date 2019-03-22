@@ -1,6 +1,7 @@
 use std::fmt;
 use std::marker::PhantomData;
 
+use sonata_core::audio::Channels;
 use sonata_core::errors::{Result, decode_error, unsupported_error};
 use sonata_core::io::Bytestream;
 use sonata_core::tags::{Tag, RiffTag};
@@ -116,24 +117,75 @@ impl<P: ParseChunk> ChunkParser<P> {
     }
 }
 
+fn map_wave_channels(channel_mask: u32) -> Channels {
+    const SPEAKER_FRONT_LEFT: u32            = 0x1;
+    const SPEAKER_FRONT_RIGHT: u32           = 0x2;
+    const SPEAKER_FRONT_CENTER: u32          = 0x4;
+    const SPEAKER_LOW_FREQUENCY: u32         = 0x8;
+    const SPEAKER_BACK_LEFT: u32             = 0x10;
+    const SPEAKER_BACK_RIGHT: u32            = 0x20;
+    const SPEAKER_FRONT_LEFT_OF_CENTER: u32  = 0x40;
+    const SPEAKER_FRONT_RIGHT_OF_CENTER: u32 = 0x80;
+    const SPEAKER_BACK_CENTER: u32           = 0x100;
+    const SPEAKER_SIDE_LEFT: u32             = 0x200;
+    const SPEAKER_SIDE_RIGHT: u32            = 0x400;
+    const SPEAKER_TOP_CENTER: u32            = 0x800;
+    const SPEAKER_TOP_FRONT_LEFT: u32        = 0x1000;
+    const SPEAKER_TOP_FRONT_CENTER: u32      = 0x2000;
+    const SPEAKER_TOP_FRONT_RIGHT: u32       = 0x4000;
+    const SPEAKER_TOP_BACK_LEFT: u32         = 0x8000;
+    const SPEAKER_TOP_BACK_CENTER: u32       = 0x10000;
+    const SPEAKER_TOP_BACK_RIGHT: u32        = 0x20000;
+
+    let mut channels = Channels::empty();
+
+    if channel_mask & SPEAKER_FRONT_LEFT            != 0 { channels |= Channels::FrontLeft;        }
+    if channel_mask & SPEAKER_FRONT_RIGHT           != 0 { channels |= Channels::FrontRight;       }
+    if channel_mask & SPEAKER_FRONT_CENTER          != 0 { channels |= Channels::FrontCentre;      }
+    if channel_mask & SPEAKER_LOW_FREQUENCY         != 0 { channels |= Channels::LFE1;             }
+    if channel_mask & SPEAKER_BACK_LEFT             != 0 { channels |= Channels::RearLeft;         }
+    if channel_mask & SPEAKER_BACK_RIGHT            != 0 { channels |= Channels::RearRight;        }
+    if channel_mask & SPEAKER_FRONT_LEFT_OF_CENTER  != 0 { channels |= Channels::FrontLeftCentre;  }
+    if channel_mask & SPEAKER_FRONT_RIGHT_OF_CENTER != 0 { channels |= Channels::FrontRightCentre; }
+    if channel_mask & SPEAKER_BACK_CENTER           != 0 { channels |= Channels::RearCentre;       }
+    if channel_mask & SPEAKER_SIDE_LEFT             != 0 { channels |= Channels::SideLeft;         }
+    if channel_mask & SPEAKER_SIDE_RIGHT            != 0 { channels |= Channels::SideRight;        }
+    if channel_mask & SPEAKER_TOP_CENTER            != 0 { channels |= Channels::TopCentre;        }
+    if channel_mask & SPEAKER_TOP_FRONT_LEFT        != 0 { channels |= Channels::TopFrontLeft;     }
+    if channel_mask & SPEAKER_TOP_FRONT_CENTER      != 0 { channels |= Channels::TopFrontCentre;   }
+    if channel_mask & SPEAKER_TOP_FRONT_RIGHT       != 0 { channels |= Channels::TopFrontRight;    }
+    if channel_mask & SPEAKER_TOP_BACK_LEFT         != 0 { channels |= Channels::TopRearLeft;      }
+    if channel_mask & SPEAKER_TOP_BACK_CENTER       != 0 { channels |= Channels::TopRearCentre;    }
+    if channel_mask & SPEAKER_TOP_BACK_RIGHT        != 0 { channels |= Channels::TopRearRight;     }
+
+    channels
+}
+
 pub enum WaveFormatData {
     Pcm(WaveFormatPcm),
-    IeeeFloat,
+    IeeeFloat(WaveFormatIeeeFloat),
     Extensible(WaveFormatExtensible),
 }
 
 pub struct WaveFormatPcm {
     /// The number of bits per sample. In the PCM format, this is always a multiple of 8-bits.
     pub bits_per_sample: u16,
+    /// Channel bitmask.
+    pub channels: Channels,
+}
+
+pub struct WaveFormatIeeeFloat {
+    /// Channel bitmask.
+    pub channels: Channels,
 }
 
 pub struct WaveFormatExtensible {
-    /// The number of bits per sample rounded up to the nearest 8-bits.
+    /// The number of bits per sample as stored in the stream. This value is always a multiple of 8-bits.
     pub bits_per_sample: u16,
-    /// The number of bits per sample.
+    /// The number of bits per sample that are valid. This number is always less than the number of bits per sample.
     pub bits_per_coded_sample: u16,
-    /// Mask of channels.
-    pub channel_mask: u32,
+    /// Channel bitmask.
+    pub channels: Channels,
     /// Globally unique identifier of the format.
     pub sub_format_guid: [u8; 16],
 }
@@ -156,7 +208,7 @@ pub struct WaveFormatChunk {
 
 impl WaveFormatChunk {
 
-    fn read_pcm_fmt<B: Bytestream>(reader: &mut B, bits_per_sample: u16, len: u32) -> Result<WaveFormatData> {
+    fn read_pcm_fmt<B: Bytestream>(reader: &mut B, bits_per_sample: u16, n_channels: u16, len: u32) -> Result<WaveFormatData> {
         // WaveFormat for a PCM format /may/ be extended with an extra data length parameter followed by the 
         // extra data itself. Use the chunk length to determine if the format chunk is extended.
         let is_extended = match len {
@@ -178,17 +230,24 @@ impl WaveFormatChunk {
             }
         }
 
-        // Bits per sample for PCM is both the decoded width, and actual sample width. Strictly, this must 
-        // either be 8 or 16 bits, but there is no reason why 24 and 32 bits can't be supported. Since these 
-        // files do exist, allow 8/16/24/32-bit, but error if not a multiple of 8 or greater than 32-bits.
+        // Bits per sample for PCM is both the encoded sample width, and the actual sample width. Strictly, this must 
+        // either be 8 or 16 bits, but there is no reason why 24 and 32 bits can't be supported. Since these files do 
+        // exist, allow for 8/16/24/32-bit samples, but error if not a multiple of 8 or greater than 32-bits.
         if (bits_per_sample > 32) || (bits_per_sample & 0x7 != 0) {
             return decode_error("Bits per sample for PCM Wave Format must either be 8 or 16 bits.");
         }
 
-        Ok(WaveFormatData::Pcm(WaveFormatPcm { bits_per_sample }))
+        // The PCM format only supports 1 or 2 channels, for mono and stereo channel layouts, respectively.
+        let channels = match n_channels {
+            1 => Channels::FrontLeft,
+            2 => Channels::FrontLeft | Channels::FrontRight,
+            _ => return decode_error("PCM Wave Format must have either 1 or 2 channels.")
+        };
+
+        Ok(WaveFormatData::Pcm(WaveFormatPcm { bits_per_sample, channels }))
     }
 
-    fn read_ieee_fmt<B: Bytestream>(reader: &mut B, bits_per_sample: u16, len: u32) -> Result<WaveFormatData> {
+    fn read_ieee_fmt<B: Bytestream>(reader: &mut B, bits_per_sample: u16, n_channels: u16, len: u32) -> Result<WaveFormatData> {
         // WaveFormat for a IEEE format should not be extended, but it may still have an extra data length 
         // parameter.
         if len == 18 {
@@ -206,32 +265,46 @@ impl WaveFormatChunk {
             return decode_error("Bits per sample for IEEE Wave Format must be 32-bits.");
         }
 
-        Ok(WaveFormatData::IeeeFloat)
+        // The IEEE format only supports 1 or 2 channels, for mono and stereo channel layouts, respectively.
+        let channels = match n_channels {
+            1 => Channels::FrontLeft,
+            2 => Channels::FrontLeft | Channels::FrontRight,
+            _ => return decode_error("IEEE Float Wave Format must have either 1 or 2 channels.")
+        };
+
+        Ok(WaveFormatData::IeeeFloat(WaveFormatIeeeFloat { channels }))
     }
 
-    fn read_ext_fmt<B: Bytestream>(reader: &mut B, bits_per_sample: u16, len: u32) -> Result<WaveFormatData> {
+    fn read_ext_fmt<B: Bytestream>(reader: &mut B, bits_per_coded_sample: u16, len: u32) -> Result<WaveFormatData> {
         // WaveFormat for the extensible format must be extended to 40 bytes in length.
         if len < 40 {
-            return decode_error("Malformed Extensible fmt chunk.");
+            return decode_error("Malformed extended fmt chunk.");
         }
 
         let extra_size = reader.read_u16()?; 
 
         // The size of the extra data for the Extensible format is exactly 22 bytes.
         if extra_size != 22 {
-            return decode_error("Extra data size not 22 bytes for Extensible fmt chunk.");
+            return decode_error("Extra data size not 22 bytes for extended fmt chunk.");
         }
 
-        // Bits per sample for extensible formats is the decoded "container" width per sample. This must be 
-        // a multiple of 8.
-        if bits_per_sample % 8 > 0 {
-            return decode_error("Bits per sample for Extensible Wave Format must be a multiple of 8 bits.");
+        let bits_per_sample = reader.read_u16()?;
+
+        // Bits per coded sample for extensible formats is the width per sample as stored in the stream. This must be a 
+        // multiple of 8.
+        if (bits_per_coded_sample & 0x7) != 0 {
+            return decode_error("Bits per coded sample for extended format must be a multiple of 8 bits.");
         }
-        
-        let bits_per_coded_sample = reader.read_u16()?;
+
+        // Bits per sample indicates the number of valid bits in the encoded sample. The sample is encoded in a bits per 
+        // coded sample width value, therefore the valid number of bits must be at most bits per coded sample long.
+        if bits_per_sample > bits_per_coded_sample {
+            return decode_error("Bits per sample must be <= bits per coded sample for extended format.");
+        }
+
         let channel_mask = reader.read_u32()?;
-        let mut sub_format_guid = [0u8; 16];
 
+        let mut sub_format_guid = [0u8; 16];
         reader.read_buf_bytes(&mut sub_format_guid)?;
 
         // These GUIDs identifiy the format of the data chunks. These definitions can be found in ksmedia.h of the 
@@ -239,23 +312,35 @@ impl WaveFormatChunk {
         const KSDATAFORMAT_SUBTYPE_PCM: [u8; 16] = 
             [0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71];
         // const KSDATAFORMAT_SUBTYPE_ADPCM: [u8; 16] = 
-        //     [0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x10, 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71];
+        //  [0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71];
         const KSDATAFORMAT_SUBTYPE_IEEE_FLOAT: [u8; 16] = 
             [0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71];
         // const KSDATAFORMAT_SUBTYPE_ALAW: [u8; 16] = 
-        //     [0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00, 0x10, 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71];
+        //     [0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71];
         // const KSDATAFORMAT_SUBTYPE_MULAW: [u8; 16] = 
-        //     [0x00, 0x00, 0x00, 0x07, 0x00, 0x00, 0x00, 0x10, 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71];
+        //     [0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71];
 
         // Verify support based on the format GUID.
         match sub_format_guid {
-            KSDATAFORMAT_SUBTYPE_PCM => {}
-            KSDATAFORMAT_SUBTYPE_IEEE_FLOAT => {},
-            _ => return unsupported_error("Unsupported Wave Format."),
-        };
+            KSDATAFORMAT_SUBTYPE_PCM => {
+                // Only support up-to 32-bit integer samples.
+                if bits_per_coded_sample > 32 {
+                    return decode_error("Bits per sample for extended PCM format must be <= 32 bits.");
+                }
+            },
+            KSDATAFORMAT_SUBTYPE_IEEE_FLOAT => {
+                // Only support 32-bit or 64-bit floating point samples.
+                if bits_per_sample != bits_per_coded_sample || bits_per_sample != 32 || bits_per_sample != 64 {
+                    return decode_error("Bits per sample for extended IEEE format must be 32-bits.");
+                }
+            },
+            _ => return unsupported_error("Unsupported extended format."),
+        }
+
+        let channels = map_wave_channels(channel_mask);
 
         Ok(WaveFormatData::Extensible(WaveFormatExtensible { 
-            bits_per_sample, bits_per_coded_sample, channel_mask, sub_format_guid }))
+            bits_per_sample, bits_per_coded_sample, channels, sub_format_guid }))
     }
 }
 
@@ -275,7 +360,7 @@ impl ParseChunk for WaveFormatChunk {
 
         // The definition of these format identifiers can be found in mmreg.h of the Microsoft Windows Platform SDK.
         const WAVE_FORMAT_PCM: u16        = 0x0001;
-        // const WAVE_FORMAT_ADPCM: u16        = 0x0002;
+        // const WAVE_FORMAT_ADPCM: u16      = 0x0002;
         const WAVE_FORMAT_IEEE_FLOAT: u16 = 0x0003;
         // const WAVE_FORMAT_ALAW: u16       = 0x0006;
         // const WAVE_FORMAT_MULAW: u16      = 0x0007;
@@ -283,13 +368,13 @@ impl ParseChunk for WaveFormatChunk {
 
         let format_data = match format {
             // The PCM Wave Format
-            WAVE_FORMAT_PCM => Self::read_pcm_fmt(reader, bits_per_sample, len),
+            WAVE_FORMAT_PCM => Self::read_pcm_fmt(reader, bits_per_sample, n_channels, len),
             // The IEEE Float Wave Format
-            WAVE_FORMAT_IEEE_FLOAT => Self::read_ieee_fmt(reader, bits_per_sample, len),
+            WAVE_FORMAT_IEEE_FLOAT => Self::read_ieee_fmt(reader, bits_per_sample, n_channels, len),
             // The Extensible Wave Format
             WAVE_FORMAT_EXTENSIBLE => Self::read_ext_fmt(reader, bits_per_sample, len),
             // Unsupported format.
-            _ => unsupported_error("Unsupported Wave Format."),
+            _ => unsupported_error("Unsupported wave format."),
         }?;
 
         Ok(WaveFormatChunk { n_channels, sample_rate, avg_bytes_per_sec, block_align, format_data })
@@ -308,15 +393,17 @@ impl fmt::Display for WaveFormatChunk {
             WaveFormatData::Pcm(ref data) => {
                 writeln!(f, "\tformat_data: Pcm {{")?;
                 writeln!(f, "\t\tbits_per_sample: {},", data.bits_per_sample)?;
+                writeln!(f, "\t\tchannels: {},", data.channels)?;
             },
-            WaveFormatData::IeeeFloat => {
+            WaveFormatData::IeeeFloat(ref ieee) => {
                 writeln!(f, "\tformat_data: IeeeFloat {{")?;
+                writeln!(f, "\t\tchannels: {},", ieee.channels)?;
             },
             WaveFormatData::Extensible(ref data) => {
                 writeln!(f, "\tformat_data: Extensible {{")?;
                 writeln!(f, "\t\tbits_per_sample: {},", data.bits_per_sample)?;
                 writeln!(f, "\t\tbits_per_coded_sample: {},", data.bits_per_coded_sample)?;
-                writeln!(f, "\t\tchannel_maske: {},", data.channel_mask)?;
+                writeln!(f, "\t\tchannels: {},", data.channels)?;
                 writeln!(f, "\t\tsub_format_guid: {:?},", &data.sub_format_guid)?;
             },
         };
@@ -327,7 +414,7 @@ impl fmt::Display for WaveFormatChunk {
 }
 
 pub struct FactChunk {
-    n_frames: u32,
+    pub n_frames: u32,
 }
 
 impl ParseChunk for FactChunk {
