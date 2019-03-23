@@ -22,27 +22,27 @@ Up-to-date project progress on the [Trello Board](https://trello.com/b/2EhGvDsR)
 
 ### Formats (Mux/Demux)
 
-| Format       | Status  | Feature Flag | Default | Crate                  |  
-|--------------|---------|--------------|---------|------------------------|
-| ISO/MP4      | Planned | `isomp4`     | No      | `sonata-format-isomp4` |
-| MKV          | Planned | `mkv`        | Yes     | `sonata-format-mkv`    |
-| MPEG-TS      | Planned | `mpeg-ts`    | No      | `sonata-format-mpegts` |
-| OGG          | Planned | `ogg`        | Yes     | `sonata-format-ogg`    |
-| Wave/AIFF    | In Work | `wav`        | Yes     | `sonata-format-wav`    |
-| WebM         | Planned | `webm`       | No      | `sonata-format-webm`   |
+| Format       | Status   | Feature Flag | Default | Crate                  |  
+|--------------|----------|--------------|---------|------------------------|
+| ISO/MP4      | Planning | `isomp4`     | No      | `sonata-format-isomp4` |
+| MKV          | -        | `mkv`        | Yes     | `sonata-format-mkv`    |
+| MPEG-TS      | -        | `mpeg-ts`    | No      | `sonata-format-mpegts` |
+| OGG          | -        | `ogg`        | Yes     | `sonata-format-ogg`    |
+| Wave/AIFF    | In Work  | `wav`        | Yes     | `sonata-format-wav`    |
+| WebM         | -        | `webm`       | No      | `sonata-format-webm`   |
 
 ### Codecs (Decode)
 
 | Codec    | Status      | Feature Flag | Default | Crate                  |
 |----------|-------------|--------------|---------|------------------------|
-| AAC      | Planned     | `aac`        | No      | `sonata-codec-aac`     |
+| AAC      | -           | `aac`        | No      | `sonata-codec-aac`     |
 | Flac     | Functional  | `flac`       | Yes     | `sonata-codec-flac`    |
-| Hardware | Planned     | `hwdec`      | No      | `sonata-codec-hwdec`   |
-| MP3      | Planned     | `mp3`        | No      | `sonata-codec-mp3`     |
-| Opus     | Planned     | `opus`       | Yes     | `sonata-codec-opus`    |
+| Hardware | -           | `hwdec`      | No      | `sonata-codec-hwdec`   |
+| MP3      | Planning    | `mp3`        | No      | `sonata-codec-mp3`     |
+| Opus     | -           | `opus`       | Yes     | `sonata-codec-opus`    |
 | PCM      | In Work     | `pcm`        | Yes     | `sonata-codec-pcm`     |
-| Vorbis   | Planned     | `vorbis`     | Yes     | `sonata-codec-vorbis`  |
-| WavPack  | Planned     | `wavpack`    | Yes     | `sonata-codec-wavpack` |
+| Vorbis   | -           | `vorbis`     | Yes     | `sonata-codec-vorbis`  |
+| WavPack  | -           | `wavpack`    | Yes     | `sonata-codec-wavpack` |
 
 ### Codecs (Encode)
 
@@ -52,10 +52,10 @@ Sonata plans to provide "unsafe" encoder packages that wrap traditional C-based 
 
 | Codec    | Status      | Feature Flag | Default | Crate                           |
 |----------|-------------|--------------|---------|---------------------------------|
-| Flac     | Planned     | `libflac`    | No      | `sonata-unsafe-codec-libflac`   |
-| Opus     | Planned     | `libopus`    | No      | `sonata-unsafe-codec-libopus`   |
-| Vorbis   | Planned     | `libvorbis`  | No      | `sonata-unsafe-codec-libvorbis` |
-| Hardware | Planned     | `hwenc`      | No      | `sonata-codec-hwenc`            |
+| Flac     | -           | `libflac`    | No      | `sonata-unsafe-codec-libflac`   |
+| Hardware | -           | `hwenc`      | No      | `sonata-codec-hwenc`            |
+| Opus     | -           | `libopus`    | No      | `sonata-unsafe-codec-libopus`   |
+| Vorbis   | -           | `libvorbis`  | No      | `sonata-unsafe-codec-libvorbis` |
 
 ## Quality
 
