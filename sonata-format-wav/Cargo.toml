@@ -1,15 +1,14 @@
 [package]
-name = "sonata-codecs-flac"
+name = "sonata-format-wav"
 version = "0.1.0"
-description = "Pure Rust FLAC decoder."
+description = "Sonata WAV decoder"
 authors = ["Philip Deljanov <philip.deljanov@gmail.com>"]
 license = "LGPL-2.1-only"
 readme = "README.md"
 categories = ["multimedia::audio"]
-keywords = ["audio", "codec", "decoder", "flac"]
+keywords = ["audio", "codec", "decoder", "wav", "riff", "pcm"]
 
 edition = "2018"
 
 [dependencies]
 sonata-core = { version="*", path = "../sonata-core" }
-md5 = "0.6.1"

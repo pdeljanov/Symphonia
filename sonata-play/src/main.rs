@@ -21,7 +21,7 @@ use clap::{Arg, App};
 use sonata_core::errors::{Result, unsupported_error};
 use sonata_core::audio::*;
 use sonata_core::codecs::DecoderOptions;
-use sonata_codecs_flac::*;
+use sonata_codec_flac::*;
 
 use libpulse_binding as pulse;
 use libpulse_simple_binding as psimple;
