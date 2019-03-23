@@ -5,5 +5,6 @@ members = [
     "sonata-core",
     "sonata-codecs-flac",
     "sonata-codecs-wav",
+    "sonata-codec-pcm",
     "sonata-play",
 ]

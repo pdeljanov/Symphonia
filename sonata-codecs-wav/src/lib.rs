@@ -73,7 +73,7 @@ impl WavReader {
 
 impl FormatReader for WavReader {
 
-    fn next_packet(&mut self) -> Result<Packet<'_, MediaSourceStream>> {
+    fn next_packet(&mut self) -> Result<Packet<'_>> {
         // Return next RIFF chunk.
         unsupported_error("Packet streaming is unsupported")
     }
@@ -234,32 +234,6 @@ fn search_for_marker<B: Bytestream>(reader: &mut B, marker: &[u8; 4], depth: Pro
     Ok(None)
 }
 
-/// `WavDecoder` implements a decoder for the Wav codec bitstream. The decoder is compatible with OGG encapsulated 
-/// Wav.
-pub struct WavDecoder {
-    params: CodecParameters,
-}
-
-impl Decoder for WavDecoder {
-
-    fn new(params: &CodecParameters, options: &DecoderOptions) -> Self {
-        WavDecoder {
-            params: params.clone(),
-        }
-    }
-
-    fn codec_params(&self) -> &CodecParameters {
-        &self.params
-    }
-
-    fn spec(&self) -> Option<SignalSpec> {
-        None
-    }
-
-    fn decode<B: Bytestream>(&mut self, packet: &mut Packet<'_, B>, buf: &mut AudioBuffer<i32>) -> Result<()> {
-        unsupported_error("Decoding is unsupported.")
-    }
-}
 
 
 #[cfg(test)]

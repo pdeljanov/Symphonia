@@ -135,13 +135,13 @@ fn decode_only(reader: &mut FlacReader, decode_options: &DecoderOptions) -> Resu
     let mut samples = AudioBuffer::<i32>::new(duration, &spec);
 
     loop {
-        let mut packet = reader.next_packet()?;
+        let packet = reader.next_packet()?;
 
         // Reuse the buffer.
         samples.renew();
 
         // Try to decode more frames until an error.
-        match decoder.decode(&mut packet, &mut samples) {
+        match decoder.decode(packet, &mut samples) {
             Err(err) => {
                 eprint!("Error: {}", err);
                 break;
@@ -202,10 +202,10 @@ fn play(reader: &mut FlacReader, decode_options: &DecoderOptions) -> Result<()> 
         // Reuse the buffer.
         samples.renew();
         
-        let mut packet = reader.next_packet()?;
+        let packet = reader.next_packet()?;
 
         // Try to decode more frames until an error.
-        match decoder.decode(&mut packet, &mut samples) {
+        match decoder.decode(packet, &mut samples) {
             Err(err) => {
                 //reader.end();
                 eprint!("Error: {}", err);

@@ -144,12 +144,12 @@ impl FlacReader {
 
 impl FormatReader for FlacReader {
 
-    fn next_packet(&mut self) -> Result<Packet<'_, MediaSourceStream>> {
+    fn next_packet(&mut self) -> Result<Packet<'_>> {
         // FLAC is not a "real" container format. FLAC frames are more-so part of the codec bitstream than the actual 
         // format. In fact, it is not possible to know how long a FLAC frame is without decoding its header and 
         // practically decoding it. This is all to say that the what follows the metadata blocks is a codec bitstream.
         // Therefore, next_packet will simply always return the reader and let the codec advance the stream.
-        Ok(Packet::new(0, &mut self.reader))
+        Ok(Packet::new_direct(0, &mut self.reader))
     }
 
     fn streams(&self) -> &[Stream] {
@@ -405,8 +405,8 @@ impl Decoder for FlacDecoder {
         None
     }
 
-    fn decode<B: Bytestream>(&mut self, packet: &mut Packet<'_, B>, buf: &mut AudioBuffer<i32>) -> Result<()> {
-        let result = self.fs.next(packet.reader(), buf);
+    fn decode(&mut self, packet: Packet<'_>, buf: &mut AudioBuffer<i32>) -> Result<()> {
+        let result = self.fs.next(&mut packet.into_stream(), buf);
 
         match result {
             Err(Error::IoError(ref err)) => {

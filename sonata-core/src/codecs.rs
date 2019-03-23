@@ -272,14 +272,46 @@ impl Default for DecoderOptions {
 pub trait Decoder {
 
     /// Instantiates the Decoder will the provided `CodecParameters`.
-    fn new(params: &CodecParameters, options: &DecoderOptions) -> Self;
+    fn new(params: &CodecParameters, options: &DecoderOptions) -> Self
+    where
+        Self: Sized;
 
     fn codec_params(&self) -> &CodecParameters;
 
     fn spec(&self) -> Option<SignalSpec>;
 
-    fn decode<B: Bytestream>(&mut self, packet: &mut Packet<'_, B>, buf: &mut AudioBuffer<i32>) -> Result<()>;
- 
-    // fn decode_from<B: Bytestream>(&mut self, packet: &mut Packet<'_, B>, buf: &mut AudioBuffer<i32>) -> Result<()>;
+    fn decode(&mut self, packet: Packet<'_>, buf: &mut AudioBuffer<i32>) -> Result<()>;
+}
 
+pub struct CodecDescriptor {
+    /// The CodecType identifier.
+    codec: CodecType,
+    /// A short (3-10) character ASCII string identifying the codec.
+    short_name: &'static str,
+    /// An optional, longer, string identifying the codec.
+    long_name: Option<&'static str>,
+    // An instantiation function for the codec.
+    inst_func: Fn(&CodecParameters, &DecoderOptions) -> Box<dyn Decoder>,
+}
+
+pub struct CodecRegistry {
+
+}
+
+impl CodecRegistry {
+
+    /// Registers all codecs supported by the Decoder at the provided tier.
+    pub fn register_all<D: Decoder>(&mut self, tier: u32) {
+        //F::supported_types();
+    }
+
+    /// Register a single codec at the provided tier.
+    pub fn register(&mut self, descriptor: &CodecDescriptor, tier: u32) {
+
+    }
+
+    // Searches the registry provided codec and returns an instance if it is found. If it is not found, returns None.
+    pub fn make(&self, codec: CodecType) -> Option<Box<dyn Decoder>> {
+        None
+    }
 }

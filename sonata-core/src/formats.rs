@@ -17,6 +17,7 @@
 
 use std::default::Default;
 use std::fmt;
+use std::io;
 
 use crate::audio::Timestamp;
 use crate::codecs::CodecParameters;
@@ -340,27 +341,71 @@ pub trait FormatReader {
     }
 
     /// Lazily get the next packet from the container. 
-    fn next_packet(&mut self) -> Result<Packet<'_, MediaSourceStream>>;
+    fn next_packet(&mut self) -> Result<Packet<'_>>;
 
+}
+
+
+pub enum PacketSource<'a> {
+    Direct(&'a mut MediaSourceStream),
+}
+
+pub struct PacketStream<'a, B: Bytestream> {
+    src: &'a mut B
+}
+
+impl<'a, B: Bytestream> Bytestream for PacketStream<'a, B> {
+
+    /// Reads a single byte from the stream and returns it or an error.
+    #[inline(always)]
+    fn read_byte(&mut self) -> io::Result<u8> {
+        self.src.read_byte()
+    }
+
+    // Reads two bytes from the stream and returns them in read-order or an error.
+    #[inline(always)]
+    fn read_double_bytes(&mut self) -> io::Result<[u8; 2]> {
+       self.src.read_double_bytes()
+    }
+
+    // Reads three bytes from the stream and returns them in read-order or an error.
+    #[inline(always)]
+    fn read_triple_bytes(&mut self) -> io::Result<[u8; 3]> {
+        self.src.read_triple_bytes()
+    }
+
+    // Reads four bytes from the stream and returns them in read-order or an error.
+    #[inline(always)]
+    fn read_quad_bytes(&mut self) -> io::Result<[u8; 4]> {
+        self.src.read_quad_bytes()
+    }
+
+    #[inline(always)]
+    fn read_buf_bytes(&mut self, buf: &mut [u8]) -> io::Result<()> {
+        self.src.read_buf_bytes(buf)
+    }
+
+    #[inline(always)]
+    fn ignore_bytes(&mut self, count: u64) -> io::Result<()> {
+        self.src.ignore_bytes(count)
+    }
+    
 }
 
 /// A `Packet` contains a discrete amount of encoded data for a single media stream. The exact amount of data is 
 /// bounded, but not defined and is dependant on the container and how it was muxed.
 ///
 /// Packets may be read by using the provided reader. 
-pub struct Packet<'b, B: Bytestream> {
+pub struct Packet<'a> {
     idx: u32, 
     len: Option<usize>,
-    reader: &'b mut B,
+    src: PacketSource<'a>,
 }
 
-impl<'b, B: Bytestream> Packet<'b, B> {
-    pub fn new_with_len(idx: u32, len: usize, reader: &'b mut B) -> Self {
-        Packet { idx, len: Some(len), reader }
-    }
+impl<'a> Packet<'a> {
 
-    pub fn new(idx: u32, reader: &'b mut B) -> Self {
-        Packet { idx, len: None, reader }
+    pub fn new_direct(idx: u32, mss: &'a mut MediaSourceStream) -> Self {
+        Packet { idx, len: None, src: PacketSource::Direct(mss) }
     }
 
     /// The stream index for the stream this packet belongs to.
@@ -368,15 +413,18 @@ impl<'b, B: Bytestream> Packet<'b, B> {
         self.idx
     }
 
-    /// Read the contents of the packet as a bytestream.
-    pub fn reader(&mut self) -> &mut B {
-        self.reader
-    }
-
     /// The length of the packet in bytes.
     pub fn len(&self) -> Option<usize> {
         self.len
     }
+
+    /// Converts the packet into a `Bytestream` for consumption.
+    pub fn into_stream(self) -> PacketStream<'a, impl Bytestream> {
+        match self.src {
+            PacketSource::Direct(src) => PacketStream::<'a, MediaSourceStream> { src }
+        }
+    }
+
 }
 
 pub enum ProbeResult {
