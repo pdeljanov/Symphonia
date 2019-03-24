@@ -1,12 +1,13 @@
 #![warn(rust_2018_idioms)]
 
+use sonata_core::support_codec;
+
 use sonata_core::audio::{AudioBuffer, SignalSpec};
-use sonata_core::codecs::{CodecParameters, Decoder, DecoderOptions};
+use sonata_core::codecs::{CodecParameters, CodecDescriptor, Decoder, DecoderOptions};
+use sonata_core::codecs::{CODEC_TYPE_PCM_S32LE};
 use sonata_core::errors::Result;
 use sonata_core::formats::Packet;
 use sonata_core::io::Bytestream;
-
-use sonata_core::codecs::{CODEC_TYPE_PCM_S32LE};
 
 /// `PcmDecoder` implements a decoder all raw PCM bitstreams.
 pub struct PcmDecoder {
@@ -19,6 +20,12 @@ impl Decoder for PcmDecoder {
         PcmDecoder {
             params: params.clone(),
         }
+    }
+
+    fn supported_codecs() -> &'static [CodecDescriptor] {
+        &[
+            support_codec!(CODEC_TYPE_PCM_S32LE, "pcm32le", "PCM Signed 32-bit Little-Endian"),
+        ]
     }
 
     fn codec_params(&self) -> &CodecParameters {
@@ -47,3 +54,4 @@ mod tests {
         assert_eq!(2 + 2, 4);
     }
 }
+

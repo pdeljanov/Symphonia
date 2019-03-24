@@ -15,20 +15,20 @@
 // License along with this library; if not, write to the Free Software
 // Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301 USA
 
+use std::collections::HashMap;
 use std::default::Default;
 use std::fmt;
 
 use crate::audio::{AudioBuffer, Channels, Layout, SignalSpec};
 use crate::errors::Result;
 use crate::formats::Packet;
-use crate::io::Bytestream;
 use crate::sample::SampleFormat;
 
 /// A `CodecType` is a unique identifier used to identify a specific codec. `CodecType` is mainly used for matching 
 /// a format's stream to a specific `Decoder`. Decoders advertisting support for a specific `CodecType` should be 
 /// interchangeable in regards to their ability to consume packets from a packet stream. This means that while support 
 /// for codec features and quality may differ, all Decoders will identically advance the packet stream.
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub struct CodecType(u32);
 
 /// Null decoder, simply discards all data.
@@ -276,6 +276,11 @@ pub trait Decoder {
     where
         Self: Sized;
 
+    /// Gets a list of codec descriptors for the codecs supported by this Decoder.
+    fn supported_codecs() -> &'static [CodecDescriptor]
+    where
+        Self: Sized;
+
     fn codec_params(&self) -> &CodecParameters;
 
     fn spec(&self) -> Option<SignalSpec>;
@@ -283,35 +288,76 @@ pub trait Decoder {
     fn decode(&mut self, packet: Packet<'_>, buf: &mut AudioBuffer<i32>) -> Result<()>;
 }
 
+/// A `CodecDescriptor` stores a description of a single logical codec. Common information such as the `CodecType`, a
+/// short name, and a long name are provided. The `CodecDescriptor` also provides an instantiation function. When the 
+/// instantiation function is called, a `Decoder` for the codec is returned.
+#[derive(Copy, Clone)]
 pub struct CodecDescriptor {
     /// The CodecType identifier.
-    codec: CodecType,
+    pub codec: CodecType,
     /// A short (3-10) character ASCII string identifying the codec.
-    short_name: &'static str,
+    pub short_name: &'static str,
     /// An optional, longer, string identifying the codec.
-    long_name: Option<&'static str>,
+    pub long_name: &'static str,
     // An instantiation function for the codec.
-    inst_func: Fn(&CodecParameters, &DecoderOptions) -> Box<dyn Decoder>,
+    pub inst_func: fn(&CodecParameters, &DecoderOptions) -> Box<dyn Decoder>,
 }
 
+/// A `CodecRegistry` allows the registration of codecs, and provides a method to instantiate a `Decoder` given a  
+/// `CodecParameters` object.
 pub struct CodecRegistry {
-
+    codecs: HashMap<CodecType, Vec<(CodecDescriptor, u32)>>,
 }
 
 impl CodecRegistry {
 
+    /// Instantiate a new `CodecRegistry`.
+    pub fn new() -> Self {
+        CodecRegistry {
+            codecs: HashMap::new(),
+        }
+    }
+
     /// Registers all codecs supported by the Decoder at the provided tier.
     pub fn register_all<D: Decoder>(&mut self, tier: u32) {
-        //F::supported_types();
+        for descriptor in D::supported_codecs() {
+            self.register(&descriptor, tier);
+        }
     }
 
     /// Register a single codec at the provided tier.
     pub fn register(&mut self, descriptor: &CodecDescriptor, tier: u32) {
+        if let Some(descriptors) = self.codecs.get_mut(&descriptor.codec) {
+            let pos = descriptors.iter()
+                        .position(|entry| entry.1 < tier)
+                        .unwrap_or(descriptors.len());
 
+            descriptors.insert(pos, (*descriptor, tier));
+        }
+        else {
+            self.codecs.insert(descriptor.codec, vec![(*descriptor, tier)]);
+        }
     }
 
     // Searches the registry provided codec and returns an instance if it is found. If it is not found, returns None.
-    pub fn make(&self, codec: CodecType) -> Option<Box<dyn Decoder>> {
+    pub fn make(&self, params: &CodecParameters, options: &DecoderOptions) 
+        -> Option<Box<dyn Decoder>> {
+
+        if let Some(descriptors) = self.codecs.get(&params.codec) {
+            return Some((descriptors[0].0.inst_func)(params, options));
+        }
         None
     }
+}
+
+#[macro_export]
+macro_rules! support_codec {
+    ($type:expr, $short_name:expr, $long_name:expr) => {
+        CodecDescriptor { 
+            codec: $type,
+            short_name: $short_name,
+            long_name: $long_name,
+            inst_func: |params, opt| { Box::new(Self::new(&params, &opt)) }
+        }
+    };
 }

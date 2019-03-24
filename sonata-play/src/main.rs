@@ -20,13 +20,21 @@ use std::fs::File;
 use clap::{Arg, App};
 use sonata_core::errors::{Result, unsupported_error};
 use sonata_core::audio::*;
-use sonata_core::codecs::DecoderOptions;
+use sonata_core::codecs::{CodecRegistry, DecoderOptions};
 use sonata_codec_flac::*;
 
 use libpulse_binding as pulse;
 use libpulse_simple_binding as psimple;
 
+use lazy_static::lazy_static;
 
+lazy_static! {
+    static ref CODEC_REGISTRY: CodecRegistry = {
+        let mut registry = CodecRegistry::new();
+        registry.register_all::<FlacDecoder>(0);
+        registry
+    };
+}
 
 fn main() {
     let matches = App::new("Sonata Player")
@@ -119,8 +127,7 @@ fn decode_only(reader: &mut FlacReader, decode_options: &DecoderOptions) -> Resu
     let stream = reader.default_stream().unwrap();
 
     // Create a decoder for the stream.
-    // TODO: Implement stream.make_decoder().
-    let mut decoder = FlacDecoder::new(&stream.codec_params, &decode_options);
+    let mut decoder = CODEC_REGISTRY.make(&stream.codec_params, &decode_options).unwrap();
 
     // Get the expected signal spec from the decoder.
     // TODO: Handle the case where the signal spec is not known until the first buffer is decoded.
@@ -160,8 +167,7 @@ fn play(reader: &mut FlacReader, decode_options: &DecoderOptions) -> Result<()> 
     let stream = reader.default_stream().unwrap();
 
     // Create a decoder for the stream.
-    // TODO: Implement stream.make_decoder().
-    let mut decoder = FlacDecoder::new(&stream.codec_params, decode_options);
+    let mut decoder = CODEC_REGISTRY.make(&stream.codec_params, &decode_options).unwrap();
 
     // Get the expected signal spec from the decoder.
     // TODO: Handle the case where the signal spec is not known until the first buffer is decoded.

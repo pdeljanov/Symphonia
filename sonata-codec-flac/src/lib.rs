@@ -3,8 +3,10 @@
 use std::io;
 use std::io::{Seek, SeekFrom};
 
+use sonata_core::support_codec;
+
 use sonata_core::audio::{AudioBuffer, SignalSpec, Timestamp};
-use sonata_core::codecs::{CODEC_TYPE_FLAC, CodecParameters, DecoderOptions};
+use sonata_core::codecs::{CODEC_TYPE_FLAC, CodecParameters, CodecDescriptor, DecoderOptions};
 use sonata_core::errors::{Result, Error, decode_error, seek_error, SeekErrorKind};
 use sonata_core::formats::{Packet, Stream, SeekIndex};
 use sonata_core::io::*;
@@ -386,6 +388,10 @@ impl Decoder for FlacDecoder {
             params: params.clone(),
             fs: FrameStream::new(params.bits_per_sample, params.sample_rate, options.verify),
         }
+    }
+
+    fn supported_codecs() -> &'static [CodecDescriptor] {
+        &[ support_codec!(CODEC_TYPE_FLAC, "flac", "Free Lossless Audio Codec") ]
     }
 
     fn codec_params(&self) -> &CodecParameters {
