@@ -22,6 +22,8 @@ use sonata_core::errors::{Result, unsupported_error};
 use sonata_core::audio::*;
 use sonata_core::codecs::{CodecRegistry, DecoderOptions};
 use sonata_codec_flac::*;
+use sonata_codec_pcm::*;
+use sonata_format_wav::*;
 
 use libpulse_binding as pulse;
 use libpulse_simple_binding as psimple;
@@ -32,6 +34,7 @@ lazy_static! {
     static ref CODEC_REGISTRY: CodecRegistry = {
         let mut registry = CodecRegistry::new();
         registry.register_all::<FlacDecoder>(0);
+        registry.register_all::<PcmDecoder>(0);
         registry
     };
 }
@@ -80,7 +83,7 @@ fn main() {
     let file = Box::new(File::open(file_path).unwrap());
 
     // Create a FLAC reader from the given file.
-    let mut reader = Flac::open(file);
+    let mut reader = Wav::open(file);
 
     // Probe the file to check for support.
     let probe_info = reader.probe(ProbeDepth::Deep).unwrap();
@@ -93,12 +96,12 @@ fn main() {
             // Verify only mode decodes and always verifies the audio, but doese not play it.
             if matches.is_present("verify-only") {
                 let options = DecoderOptions { verify: true, ..Default::default() };
-                decode_only(&mut reader, &options);
+                decode_only(&mut reader, &options).unwrap();
             }
             // Decode only mode decodes the audio, but not does verify it.
             else if matches.is_present("decode-only") {
                 let options = DecoderOptions { verify: false, ..Default::default() };
-                decode_only(&mut reader, &options);
+                decode_only(&mut reader, &options).unwrap();
             }
             // If not probing, play the audio back.
             else if !matches.is_present("probe-only") {
@@ -115,13 +118,13 @@ fn main() {
                 let options = DecoderOptions { verify: matches.is_present("verify"), ..Default::default() };
 
                 // Commence playback.
-                play(&mut reader, &options);
+                play(&mut reader, &options).unwrap();
             }
         }
     }
 }
 
-fn decode_only(reader: &mut FlacReader, decode_options: &DecoderOptions) -> Result<()> {
+fn decode_only(reader: &mut FormatReader, decode_options: &DecoderOptions) -> Result<()> {
     // Get the default stream.
     // TODO: Allow stream selection.
     let stream = reader.default_stream().unwrap();
@@ -160,7 +163,7 @@ fn decode_only(reader: &mut FlacReader, decode_options: &DecoderOptions) -> Resu
     Ok(())
 }
 
-fn play(reader: &mut FlacReader, decode_options: &DecoderOptions) -> Result<()> {
+fn play(reader: &mut FormatReader, decode_options: &DecoderOptions) -> Result<()> {
 
     // Get the default stream.
     // TODO: Allow stream selection.
@@ -183,15 +186,14 @@ fn play(reader: &mut FlacReader, decode_options: &DecoderOptions) -> Result<()> 
 
     // An interleaved buffer is required to send data to the OS.
     let mut raw_samples = SampleBuffer::<i32>::new(duration, &spec);
-    
 
-    let spec = pulse::sample::Spec {
+    let pulse_spec = pulse::sample::Spec {
         format: pulse::sample::SAMPLE_S32NE,
         channels: spec.channels.len() as u8,
         rate: spec.rate,
     };
 
-    assert!(spec.is_valid());
+    assert!(pulse_spec.is_valid());
 
     let s = psimple::Simple::new(
         None,                                   // Use the default server
@@ -199,7 +201,7 @@ fn play(reader: &mut FlacReader, decode_options: &DecoderOptions) -> Result<()> 
         pulse::stream::Direction::Playback,     // We want a playback stream
         None,                                   // Use the default device
         "Music",                                // Description of our stream
-        &spec,                                  // Our sample format
+        &pulse_spec,                            // Our sample format
         None,                                   // Use default channel map
         None                                    // Use default buffering attributes
     ).unwrap();

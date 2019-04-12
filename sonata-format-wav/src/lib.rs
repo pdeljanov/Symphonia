@@ -17,6 +17,8 @@ pub use sonata_core::codecs::Decoder;
 /// The recommended maximum number of bytes advance a stream to find the stream marker before giving up.
 const WAVE_PROBE_SEARCH_LIMIT: usize = 512 * 1024;
 
+const WAVE_MAX_FRAMES_PER_PACKET: u64 = 4096;
+
 /// `Wav` (Wave) Format.
 /// 
 /// This format only supports reading.
@@ -74,8 +76,7 @@ impl WavReader {
 impl FormatReader for WavReader {
 
     fn next_packet(&mut self) -> Result<Packet<'_>> {
-        // Return next RIFF chunk.
-        unsupported_error("Packet streaming is unsupported")
+        Ok(Packet::new_direct(0, &mut self.reader))
     }
 
     fn streams(&self) -> &[Stream] {
@@ -160,7 +161,9 @@ impl FormatReader for WavReader {
 
 fn append_format_params(codec_params: &mut CodecParameters, format: &WaveFormatChunk) {
 
-    codec_params.with_sample_rate(format.sample_rate);
+    codec_params
+        .with_max_frames_per_packet(WAVE_MAX_FRAMES_PER_PACKET)
+        .with_sample_rate(format.sample_rate);
 
     match format.format_data {
         WaveFormatData::Pcm(ref pcm) => {

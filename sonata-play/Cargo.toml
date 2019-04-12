@@ -8,6 +8,8 @@ edition = "2018"
 clap = "2.32.0"
 sonata-core = { version="*", path = "../sonata-core" }
 sonata-codec-flac = { version="*", path = "../sonata-codec-flac" }
+sonata-codec-pcm = { version="*", path = "../sonata-codec-pcm" }
+sonata-format-wav = { version="*", path = "../sonata-format-wav" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libpulse-binding = "2.5.0"
