@@ -268,7 +268,7 @@ impl Default for DecoderOptions {
     }
 }
 
-/// A `Decoder` implements a Codec's decode process. It consumes `Packet`'s and produces `AudioBuffers`.
+/// A `Decoder` implements a codec's decode algorithm. It consumes `Packet`s and produces `AudioBuffer`s.
 pub trait Decoder {
 
     /// Instantiates the Decoder will the provided `CodecParameters`.
@@ -281,10 +281,13 @@ pub trait Decoder {
     where
         Self: Sized;
 
+    /// Gets a reference to parameters the `Decoder` was instantiated with.
     fn codec_params(&self) -> &CodecParameters;
 
+    /// If it is known, gets the `SignalSpec` describing the output signal.
     fn spec(&self) -> Option<SignalSpec>;
 
+    /// Decodes a `Packet` of audio data into the provided `AudioBuffer`.
     fn decode(&mut self, packet: Packet<'_>, buf: &mut AudioBuffer<i32>) -> Result<()>;
 }
 
@@ -293,11 +296,11 @@ pub trait Decoder {
 /// instantiation function is called, a `Decoder` for the codec is returned.
 #[derive(Copy, Clone)]
 pub struct CodecDescriptor {
-    /// The CodecType identifier.
+    /// The `CodecType` identifier.
     pub codec: CodecType,
-    /// A short (3-10) character ASCII string identifying the codec.
+    /// A short ASCII-only string identifying the codec.
     pub short_name: &'static str,
-    /// An optional, longer, string identifying the codec.
+    /// A longer, more descriptive, string identifying the codec.
     pub long_name: &'static str,
     // An instantiation function for the codec.
     pub inst_func: fn(&CodecParameters, &DecoderOptions) -> Box<dyn Decoder>,

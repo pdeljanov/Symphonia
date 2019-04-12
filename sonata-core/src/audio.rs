@@ -24,6 +24,7 @@ use std::marker::PhantomData;
 
 use bitflags::bitflags;
 
+use super::errors::Result;
 use super::sample::{Sample, i24, u24};
 
 /// A `Timestamp` indicates an instantaneous moment in time.
@@ -270,21 +271,9 @@ impl WriteSample for f64 {
 
 
 pub trait Signal<S : Sample> {
-
-    /// Gets the total capacity of the buffer. The capacity is the maximum number of frames a
-    /// buffer can hold.
-    fn capacity(&self) -> usize;
-
     /// Gets the number of actual frames written to the buffer. Conversely, this also is the number
     /// of written samples in any one channel.
     fn frames(&self) -> usize;
-
-    /// Resets the number of frames to 0 allowing the buffer to be reused.
-    fn renew(&mut self);
-
-    /// Reserves `amount` number of frames for writing. This function will panic if the number of
-    /// frames already written plus `amount` exceed the capacity.
-    fn produce(&mut self, amount: usize);
 
     /// Gets an immutable reference to all the written samples in the specified channel.
     fn chan(&self, channel: u8) -> &[S];
@@ -328,6 +317,24 @@ impl<S : Sample + WriteSample> AudioBuffer<S> {
         }
     }
 
+    /// Gets the total capacity of the buffer. The capacity is the maximum number of frames a
+    /// buffer can hold.
+    pub fn capacity(&self) -> usize {
+        self.n_capacity
+    }
+
+    /// Resets the number of frames to 0 allowing the buffer to be reused.
+    pub fn renew(&mut self) {
+        self.n_frames = 0;
+    }
+
+    /// Reserves `amount` number of frames for writing. This function will panic if the number of
+    /// frames already written plus `amount` exceed the capacity.
+    pub fn produce(&mut self, amount: usize) {
+        self.n_frames += amount;
+        assert!(self.n_frames <= self.n_capacity);
+    }
+
     pub fn as_planar(&self) -> &[S] {
         &self.buf[..self.n_frames * self.spec.channels.len()]
     }
@@ -338,23 +345,12 @@ impl<S : Sample + WriteSample> AudioBuffer<S> {
     
 }
 
-impl<S : Sample + WriteSample> Signal<S> for AudioBuffer<S>{
 
-    fn capacity(&self) -> usize {
-        self.n_capacity
-    }
+
+impl<S : Sample + WriteSample> Signal<S> for AudioBuffer<S>{
 
     fn frames(&self) -> usize {
         self.n_frames
-    }
-
-    fn produce(&mut self, amount: usize) {
-        self.n_frames += amount;
-        assert!(self.n_frames <= self.n_capacity);
-    }
-
-    fn renew(&mut self) {
-        self.n_frames = 0;
     }
 
     fn chan(&self, channel: u8) -> &[S]{
@@ -469,7 +465,7 @@ pub struct SampleWriter<'a, S: Sample> {
 
 impl<'a, S: Sample> SampleWriter<'a, S> {
 
-    pub fn from_buf(n_samples: usize, buf: &mut SampleBuffer<S>) -> SampleWriter<S> {
+    fn from_buf(n_samples: usize, buf: &mut SampleBuffer<S>) -> SampleWriter<S> {
         let bytes = buf.req_bytes_mut(n_samples);
         unsafe {
             SampleWriter {
@@ -480,11 +476,8 @@ impl<'a, S: Sample> SampleWriter<'a, S> {
     }
 
     pub fn write(&mut self, src: &S::StreamType) {
-        //self.buf[self.next] = *src;
-        unsafe {
-            // Copy the source sample to the output buffer at the next writeable index.
-            *self.buf.get_unchecked_mut(self.next) = *src;
-        }
+        // Copy the source sample to the output buffer at the next writeable index.
+        unsafe { *self.buf.get_unchecked_mut(self.next) = *src; }
         // Increment writeable index.
         self.next += 1;
     }
@@ -498,29 +491,12 @@ impl<'a, S: Sample> SampleWriter<'a, S> {
 /// If the implementor of `ExportBuffer` over-provisions samples, only the actual samples
 /// in the source will be exported.
 pub trait ExportBuffer<S: Sample + WriteSample> {
-
     /// Copies all samples from a channel to the `SampleBuffer` before copying the 
     /// next channel.
-    /// 
-    /// For example, for Stereo channels with 4 frames, the output buffer would 
-    /// contain:
-    /// 
-    /// +---------------+
-    /// |L|L|L|L|R|R|R|R|
-    /// +---------------+
-    /// 
     fn copy_planar(&self, dst: &mut SampleBuffer<S>);
 
     /// Copies one sample per channel as a set to the `SampleBuffer` before copying
     /// the next set.
-    /// 
-    /// For example, for Stereo channels with 4 frames, the output buffer would 
-    /// contain: 
-    /// 
-    /// +---------------+
-    /// |L|R|L|R|L|R|L|R|
-    /// +---------------+
-    /// 
     fn copy_interleaved(&self, dst: &mut SampleBuffer<S>);
 }
 
@@ -608,14 +584,73 @@ impl<S: Sample + WriteSample> ExportBuffer<S> for AudioBuffer<S> {
                 }
             }
         }
-
     }
-
-
 
 }
 
+pub trait ImportBuffer<S: Sample> {
 
+    //fn render_silence(&mut self, n_frames: usize);
 
+    //fn render(&mut self, n_frames: usize);
 
+    //fn fill_silence(&mut self);
 
+    fn fill<'a, F>(&'a mut self, fill: F) -> Result<()> 
+    where
+        F: FnMut(&mut PlanarBuffers<'a, S>, usize) -> Result<()>;
+}
+
+pub struct PlanarBuffers<'a, S: 'a + Sample> {
+    planes: [&'a mut [S]; 32],
+    ch_map: Channels,
+}
+
+impl<'a, S : Sample> PlanarBuffers<'a, S> {
+
+    pub fn planes(&mut self) -> &mut [&'a mut [S]] {
+        &mut self.planes[..self.ch_map.len()]
+    }
+
+    pub fn channels(&self) -> Channels {
+        self.ch_map
+    }
+
+}
+
+impl<S: Sample + WriteSample> ImportBuffer<S> for AudioBuffer<S> {
+
+    fn fill<'a, F>(&'a mut self, mut fill: F) -> Result<()> 
+    where
+        F: FnMut(&mut PlanarBuffers<'a, S>, usize) -> Result<()> 
+    {
+
+        // Create the PlanarBuffer structure.
+        let mut planar_buffers = unsafe {
+
+            let mut buffers = PlanarBuffers {
+                planes: std::mem::uninitialized(),
+                ch_map: self.spec.channels,
+            };
+
+            let mut ptr = self.buf.as_mut_ptr();
+
+            // Only fill the planes array up to the number of channels.
+            for i in 0..self.spec.channels.len() {
+                buffers.planes[i] = slice::from_raw_parts_mut(ptr as *mut S, self.n_capacity);
+                ptr = ptr.add(self.n_capacity);
+            }
+
+            buffers
+        };
+
+        // Attempt to fill the entire buffer, exiting only if there is an error.
+        for idx in 0..self.n_capacity {
+            fill(&mut planar_buffers, idx)?;
+        }
+
+        Ok(())
+    }
+
+}
+ 

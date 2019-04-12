@@ -44,7 +44,7 @@ pub enum SampleFormat {
 /// underlying data type. Additionally, `Sample` provides information regarding the 
 /// format of underlying data types representing the sample when in memory, but also
 /// when exported.
-pub trait Sample : Copy + Clone {
+pub trait Sample : Copy + Clone + Sized {
 
     /// The `StreamType` is the primitive data type, or fixed-size byte array, that 
     /// represents the sample when exported.
