@@ -148,7 +148,7 @@ fn decode_only(reader: &mut FormatReader, decode_options: &DecoderOptions) -> Re
         let packet = reader.next_packet()?;
 
         // Reuse the buffer.
-        samples.renew();
+        samples.clear();
 
         // Try to decode more frames until an error.
         match decoder.decode(packet, &mut samples) {
@@ -208,7 +208,7 @@ fn play(reader: &mut FormatReader, decode_options: &DecoderOptions) -> Result<()
 
     loop {
         // Reuse the buffer.
-        samples.renew();
+        samples.clear();
         
         let packet = reader.next_packet()?;
 

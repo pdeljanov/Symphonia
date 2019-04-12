@@ -268,21 +268,30 @@ impl WriteSample for f64 {
     }
 }
 
+/// `AudioPlanes` provides immutable slices to each audio channel (plane) contained in a signal.
+pub struct AudioPlanes<'a, S: 'a + Sample> {
+    planes: [&'a [S]; 32],
+    n_planes: usize
+}
 
+impl<'a, S : Sample> AudioPlanes<'a, S> {
+    /// Gets all the audio planes.
+    pub fn planes(&mut self) -> &[&'a [S]] {
+        &self.planes[..self.n_planes]
+    }
+}
 
-pub trait Signal<S : Sample> {
-    /// Gets the number of actual frames written to the buffer. Conversely, this also is the number
-    /// of written samples in any one channel.
-    fn frames(&self) -> usize;
+/// `AudioPlanesMut` provides mutable slices to each audio channel (plane) contained in a signal.
+pub struct AudioPlanesMut<'a, S: 'a + Sample> {
+    planes: [&'a mut [S]; 32],
+    n_planes: usize
+}
 
-    /// Gets an immutable reference to all the written samples in the specified channel.
-    fn chan(&self, channel: u8) -> &[S];
-
-    /// Gets a mutable reference to all the written samples in the specified channel.
-    fn chan_mut(&mut self, channel: u8) -> &mut [S];
-
-    /// Gets two mutable references to two different channels.
-    fn chan_pair_mut(&mut self, first: u8, second: u8) -> (&mut [S], &mut [S]);
+impl<'a, S : Sample> AudioPlanesMut<'a, S> {
+    /// Gets all the audio planes.
+    pub fn planes(&mut self) -> &mut [&'a mut [S]] {
+        &mut self.planes[..self.n_planes]
+    }
 }
 
 pub struct AudioBuffer<S : Sample + WriteSample> {
@@ -323,18 +332,6 @@ impl<S : Sample + WriteSample> AudioBuffer<S> {
         self.n_capacity
     }
 
-    /// Resets the number of frames to 0 allowing the buffer to be reused.
-    pub fn renew(&mut self) {
-        self.n_frames = 0;
-    }
-
-    /// Reserves `amount` number of frames for writing. This function will panic if the number of
-    /// frames already written plus `amount` exceed the capacity.
-    pub fn produce(&mut self, amount: usize) {
-        self.n_frames += amount;
-        assert!(self.n_frames <= self.n_capacity);
-    }
-
     pub fn as_planar(&self) -> &[S] {
         &self.buf[..self.n_frames * self.spec.channels.len()]
     }
@@ -346,8 +343,55 @@ impl<S : Sample + WriteSample> AudioBuffer<S> {
 }
 
 
+pub trait Signal<S : Sample> {
+    /// Gets the number of actual frames written to the buffer. Conversely, this also is the number
+    /// of written samples in any one channel.
+    fn frames(&self) -> usize;
+
+    /// Clears all written frames from the buffer. This is a cheap operation and does not zero the underlying audio 
+    /// data.
+    fn clear(&mut self);
+
+    /// Gets an immutable reference to all the written samples in the specified channel.
+    fn chan(&self, channel: u8) -> &[S];
+
+    /// Gets a mutable reference to all the written samples in the specified channel.
+    fn chan_mut(&mut self, channel: u8) -> &mut [S];
+
+    /// Gets two mutable references to two different channels.
+    fn chan_pair_mut(&mut self, first: u8, second: u8) -> (&mut [S], &mut [S]);
+
+    /// Renders a reserved number of frames. This is a cheap operation and simply advances the frame counter. The 
+    /// underlying audio data is not modified and should be overwritten through other means.
+    /// 
+    /// If `n_frames` is `None`, the remaining number of samples will be used. If `n_frames` is too large, this function
+    /// will assert.
+    fn render_reserved(&mut self, n_frames: Option<usize>);
+
+    /// Renders a number of frames using the provided render function. The number of frames to render is specified be 
+    /// `n_frames`. If `n_frames` is None, the remaining number of frames in the buffer will be rendered. If the render
+    /// function returns an error, the render operation is terminated prematurely.
+    fn render<'a, F>(&'a mut self, n_frames: Option<usize>, render: F) -> Result<()>
+    where
+      F: FnMut(&mut AudioPlanesMut<'a, S>, usize) -> Result<()>;
+
+    /// Clears and then renders the entire buffer using the fill function. This is a convenience wrapper around `render`
+    /// and behaves identically to `render`.
+    #[inline(always)]
+    fn fill<'a, F>(&'a mut self, fill: F) -> Result<()> 
+    where
+        F: FnMut(&mut AudioPlanesMut<'a, S>, usize) -> Result<()>
+    {
+        self.clear();
+        self.render(None, fill)
+    }
+}
 
 impl<S : Sample + WriteSample> Signal<S> for AudioBuffer<S>{
+
+    fn clear(&mut self) {
+        self.n_frames = 0;
+    }
 
     fn frames(&self) -> usize {
         self.n_frames
@@ -379,8 +423,51 @@ impl<S : Sample + WriteSample> Signal<S> for AudioBuffer<S>{
         }
     }
 
-}
+    fn render_reserved(&mut self, n_frames: Option<usize>) {
+        let n_reserved_frames = n_frames.unwrap_or(self.n_capacity - self.n_frames);
+        assert!(self.n_frames + n_reserved_frames <= self.n_capacity);
+        self.n_frames += n_reserved_frames;
+    }
 
+    fn render<'a, F>(&'a mut self, n_frames: Option<usize>, mut render: F) -> Result<()>
+    where
+        F: FnMut(&mut AudioPlanesMut<'a, S>, usize) -> Result<()> 
+    {
+        // Calculate the number of frames to render if it is not provided.
+        let n_render_frames = n_frames.unwrap_or(self.n_capacity - self.n_frames);
+        let end = self.n_frames + n_render_frames;
+
+        assert!(end <= self.n_capacity);
+
+        // Create the PlanarBuffer structure.
+        let mut planes = unsafe {
+
+            let mut buffers = AudioPlanesMut {
+                planes: std::mem::uninitialized(),
+                n_planes: self.spec.channels.len(),
+            };
+
+            let mut ptr = self.buf.as_mut_ptr().add(self.n_frames);
+
+            // Only fill the planes array up to the number of channels.
+            for i in 0..buffers.n_planes {
+                buffers.planes[i] = slice::from_raw_parts_mut(ptr as *mut S, n_render_frames);
+                ptr = ptr.add(self.n_capacity);
+            }
+
+            buffers
+        };
+
+        // Attempt to fill the entire buffer, exiting only if there is an error.
+        while self.n_frames < end {
+            render(&mut planes, self.n_frames)?;
+            self.n_frames += 1;
+        }
+
+        Ok(())
+    }
+
+}
 
 /// A `SampleBuffer`, as the name implies, is a Sample oriented buffer. It is agnostic to the ordering/layout 
 /// of samples within the buffer. 
@@ -483,7 +570,6 @@ impl<'a, S: Sample> SampleWriter<'a, S> {
     }
 
 }
-
 
 /// `ExportBuffer` provides the interface to copy the contents of a buffer containing 
 /// audio samples into a `SampleBuffer`. When exported, Sample's that have a StreamType 
@@ -588,69 +674,3 @@ impl<S: Sample + WriteSample> ExportBuffer<S> for AudioBuffer<S> {
 
 }
 
-pub trait ImportBuffer<S: Sample> {
-
-    //fn render_silence(&mut self, n_frames: usize);
-
-    //fn render(&mut self, n_frames: usize);
-
-    //fn fill_silence(&mut self);
-
-    fn fill<'a, F>(&'a mut self, fill: F) -> Result<()> 
-    where
-        F: FnMut(&mut PlanarBuffers<'a, S>, usize) -> Result<()>;
-}
-
-pub struct PlanarBuffers<'a, S: 'a + Sample> {
-    planes: [&'a mut [S]; 32],
-    n_planes: usize
-}
-
-impl<'a, S : Sample> PlanarBuffers<'a, S> {
-
-    pub fn planes(&mut self) -> &mut [&'a mut [S]] {
-        &mut self.planes[..self.n_planes]
-    }
-
-}
-
-impl<S: Sample + WriteSample> ImportBuffer<S> for AudioBuffer<S> {
-
-    fn fill<'a, F>(&'a mut self, mut fill: F) -> Result<()> 
-    where
-        F: FnMut(&mut PlanarBuffers<'a, S>, usize) -> Result<()> 
-    {
-
-        // Create the PlanarBuffer structure.
-        let mut planar_buffers = unsafe {
-
-            let mut buffers = PlanarBuffers {
-                planes: std::mem::uninitialized(),
-                n_planes: self.spec.channels.len(),
-            };
-
-            let mut ptr = self.buf.as_mut_ptr();
-
-            // Only fill the planes array up to the number of channels.
-            for i in 0..buffers.n_planes {
-                buffers.planes[i] = slice::from_raw_parts_mut(ptr as *mut S, self.n_capacity);
-                ptr = ptr.add(self.n_capacity);
-            }
-
-            buffers
-        };
-
-        // Attempt to fill the entire buffer, exiting only if there is an error.
-        self.n_frames = 0;
-
-        while self.n_frames < self.n_capacity {
-            fill(&mut planar_buffers, self.n_frames)?;
-            self.n_frames += 1;
-        }
-
-
-        Ok(())
-    }
-
-}
- 

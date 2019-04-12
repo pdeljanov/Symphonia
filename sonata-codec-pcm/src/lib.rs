@@ -2,7 +2,7 @@
 
 use sonata_core::support_codec;
 
-use sonata_core::audio::{AudioBuffer, ImportBuffer, SignalSpec};
+use sonata_core::audio::{AudioBuffer, Signal, SignalSpec};
 use sonata_core::codecs::{CodecParameters, CodecDescriptor, Decoder, DecoderOptions};
 use sonata_core::codecs::{CODEC_TYPE_PCM_S8, CODEC_TYPE_PCM_S16LE, CODEC_TYPE_PCM_S24LE, CODEC_TYPE_PCM_S32LE};
 use sonata_core::errors::{Result, unsupported_error};
@@ -11,8 +11,8 @@ use sonata_core::io::Bytestream;
 
 macro_rules! read_pcm_signed {
     ($buf:ident, $read:expr, $shift:expr) => {
-        $buf.fill(| planar_buffers, idx | -> Result<()> {
-            for plane in planar_buffers.planes() {
+        $buf.fill(| audio_planes, idx | -> Result<()> {
+            for plane in audio_planes.planes() {
                 plane[idx] = (($read as u32) << (32 - $shift)) as i32;
             }
             Ok(()) 

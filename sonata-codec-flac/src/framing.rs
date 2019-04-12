@@ -215,7 +215,7 @@ impl FrameStream {
         //     &header.channel_assignment);
 
         // Reserve a writeable chunk in the buffer equal to the number of samples in the block.
-        buf.produce(header.block_num_samples as usize);
+        buf.render_reserved(Some(header.block_num_samples as usize));
 
         // Only Bitstream reading for subframes.
         {
