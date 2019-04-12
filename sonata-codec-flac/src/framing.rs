@@ -268,9 +268,7 @@ impl FrameStream {
         // so that regardless the encoded bits/sample, the output is always 32bits/sample.
         if bits_per_sample < 32 {
             let shift = 32 - bits_per_sample;
-            for sample in buf.as_planar_mut() {
-                *sample <<= shift;
-            }
+            buf.transform(| sample | sample << shift);
         }
 
         // Retrieve the CRC16 before the reading the footer.
@@ -280,8 +278,6 @@ impl FrameStream {
         if crc16_computed != crc16_expected {
             return decode_error("Computed frame CRC does not match expected CRC.");
         }
-
-        // eprintln!("");
 
         Ok(())
     }

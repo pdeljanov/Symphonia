@@ -71,10 +71,10 @@ impl Md5AudioValidator {
         }
 
         let compute_slice = match bytes_per_sample {
-            1 => slice_format_as_i8(&mut self.format_buf, buf, n_channels, n_samples, n_frames),
-            2 => slice_format_as_i16(&mut self.format_buf, buf, n_channels, n_samples, n_frames),
-            3 => slice_format_as_i24(&mut self.format_buf, buf, n_channels, n_samples, n_frames),
-            4 => slice_format_as_i32(&mut self.format_buf, buf, n_channels, n_samples, n_frames),
+            1 => slice_format_as_i8(&mut self.format_buf, buf, n_samples, n_frames),
+            2 => slice_format_as_i16(&mut self.format_buf, buf, n_samples, n_frames),
+            3 => slice_format_as_i24(&mut self.format_buf, buf, n_samples, n_frames),
+            4 => slice_format_as_i32(&mut self.format_buf, buf, n_samples, n_frames),
             _ => unreachable!(),
         };
 
@@ -86,16 +86,15 @@ impl Md5AudioValidator {
     }
 }
 
-  fn slice_format_as_i8<'a>(out_buf: &'a mut [u8], buf: &AudioBuffer<i32>, n_channels: usize, n_samples: usize, n_frames: usize) -> &'a [u8] {
+  fn slice_format_as_i8<'a>(out_buf: &'a mut [u8], buf: &AudioBuffer<i32>, n_samples: usize, n_frames: usize) -> &'a [u8] {
         unsafe {
             let format_buf = slice::from_raw_parts_mut(out_buf.as_mut_ptr() as *mut i8, n_samples);
-            let in_buf = buf.as_planar();
-            let planar_stride = buf.capacity();
+            let mut buffer_planes = buf.planes();
 
             let mut k = 0;
             for i in 0..n_frames {
-                for j in 0..n_channels {
-                    *format_buf.get_unchecked_mut(k) = *in_buf.get_unchecked(j*planar_stride + i) as i8;
+                for plane in buffer_planes.planes() {
+                    *format_buf.get_unchecked_mut(k) = plane[i] as i8;
                     k += 1;
                 }
             }
@@ -103,16 +102,15 @@ impl Md5AudioValidator {
         &out_buf[..n_samples * mem::size_of::<i8>()]
     }
 
-    fn slice_format_as_i16<'a>(out_buf: &'a mut [u8], buf: &AudioBuffer<i32>, n_channels: usize, n_samples: usize, n_frames: usize) -> &'a [u8] {
+    fn slice_format_as_i16<'a>(out_buf: &'a mut [u8], buf: &AudioBuffer<i32>, n_samples: usize, n_frames: usize) -> &'a [u8] {
         unsafe {
             let format_buf = slice::from_raw_parts_mut(out_buf.as_mut_ptr() as *mut i16, n_samples);
-            let in_buf = buf.as_planar();
-            let planar_stride = buf.capacity();
+            let mut buffer_planes = buf.planes();
 
             let mut k = 0;
             for i in 0..n_frames {
-                for j in 0..n_channels {
-                    *format_buf.get_unchecked_mut(k) = *in_buf.get_unchecked(j*planar_stride + i) as i16;
+                for plane in buffer_planes.planes() {
+                    *format_buf.get_unchecked_mut(k) = plane[i]  as i16;
                     k += 1;
                 }
             }
@@ -120,16 +118,14 @@ impl Md5AudioValidator {
         &out_buf[..n_samples * mem::size_of::<i16>()]
     }
 
-    fn slice_format_as_i24<'a>(out_buf: &'a mut [u8], buf: &AudioBuffer<i32>, n_channels: usize, n_samples: usize, n_frames: usize) -> &'a [u8] {
-        let in_buf = buf.as_planar();
-
-        let planar_stride = buf.capacity();
+    fn slice_format_as_i24<'a>(out_buf: &'a mut [u8], buf: &AudioBuffer<i32>, n_samples: usize, n_frames: usize) -> &'a [u8] {
+        let mut buffer_planes = buf.planes();
 
         let mut k = 0;
         for i in 0..n_frames {
-            for j in 0..n_channels {
+            for plane in buffer_planes.planes() {
                 unsafe {
-                    let sample = *in_buf.get_unchecked(j*planar_stride + i);
+                    let sample = plane[i];
 
                     *out_buf.get_unchecked_mut(k) = (sample & 0x0000ff) as u8;
                     *out_buf.get_unchecked_mut(k + 1) = ((sample & 0x00ff00) >> 8) as u8;
@@ -142,16 +138,15 @@ impl Md5AudioValidator {
         &out_buf[..n_samples * 3]
     }
 
-    fn slice_format_as_i32<'a>(out_buf: &'a mut [u8], buf: &AudioBuffer<i32>, n_channels: usize, n_samples: usize, n_frames: usize) -> &'a [u8] {
+    fn slice_format_as_i32<'a>(out_buf: &'a mut [u8], buf: &AudioBuffer<i32>, n_samples: usize, n_frames: usize) -> &'a [u8] {
         unsafe {
             let format_buf = slice::from_raw_parts_mut(out_buf.as_mut_ptr() as *mut i32, n_samples);
-            let in_buf = buf.as_planar();
-            let planar_stride = buf.capacity();
+            let mut buffer_planes = buf.planes();
 
             let mut k = 0;
             for i in 0..n_frames {
-                for j in 0..n_channels {
-                    *format_buf.get_unchecked_mut(k) = *in_buf.get_unchecked(j*planar_stride + i);
+                for plane in buffer_planes.planes() {
+                    *format_buf.get_unchecked_mut(k) = plane[i];
                     k += 1;
                 }
             }
