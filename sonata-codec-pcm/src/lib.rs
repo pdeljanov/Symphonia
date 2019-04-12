@@ -13,7 +13,7 @@ macro_rules! read_pcm_signed {
     ($buf:ident, $read:expr, $shift:expr) => {
         $buf.fill(| planar_buffers, idx | -> Result<()> {
             for plane in planar_buffers.planes() {
-                plane[idx] = (($read as u32) << $shift) as i32;
+                plane[idx] = (($read as u32) << (32 - $shift)) as i32;
             }
             Ok(()) 
         })
@@ -61,17 +61,15 @@ impl Decoder for PcmDecoder {
     fn decode(&mut self, packet: Packet<'_>, buf: &mut AudioBuffer<i32>) -> Result<()> {
         let mut stream = packet.into_stream();
 
-        buf.produce(4096);
-
         match self.params.codec {
             CODEC_TYPE_PCM_S8 => 
-                read_pcm_signed!(buf, stream.read_u8()?,   8 - self.params.bits_per_coded_sample.unwrap_or( 8)),
+                read_pcm_signed!(buf, stream.read_u8()?,  self.params.bits_per_coded_sample.unwrap_or( 8)),
             CODEC_TYPE_PCM_S16LE => 
-                read_pcm_signed!(buf, stream.read_u16()?, 16 - self.params.bits_per_coded_sample.unwrap_or(16)),
+                read_pcm_signed!(buf, stream.read_u16()?, self.params.bits_per_coded_sample.unwrap_or(16)),
             CODEC_TYPE_PCM_S24LE => 
-                read_pcm_signed!(buf, stream.read_u24()?, 32 - self.params.bits_per_coded_sample.unwrap_or(24)),
+                read_pcm_signed!(buf, stream.read_u24()?, self.params.bits_per_coded_sample.unwrap_or(24)),
             CODEC_TYPE_PCM_S32LE => 
-                read_pcm_signed!(buf, stream.read_u32()?, 32 - self.params.bits_per_coded_sample.unwrap_or(32)),
+                read_pcm_signed!(buf, stream.read_u32()?, self.params.bits_per_coded_sample.unwrap_or(32)),
             _ => 
                 unsupported_error("PCM codec unsupported.")
         }

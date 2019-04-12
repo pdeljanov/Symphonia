@@ -603,17 +603,13 @@ pub trait ImportBuffer<S: Sample> {
 
 pub struct PlanarBuffers<'a, S: 'a + Sample> {
     planes: [&'a mut [S]; 32],
-    ch_map: Channels,
+    n_planes: usize
 }
 
 impl<'a, S : Sample> PlanarBuffers<'a, S> {
 
     pub fn planes(&mut self) -> &mut [&'a mut [S]] {
-        &mut self.planes[..self.ch_map.len()]
-    }
-
-    pub fn channels(&self) -> Channels {
-        self.ch_map
+        &mut self.planes[..self.n_planes]
     }
 
 }
@@ -630,13 +626,13 @@ impl<S: Sample + WriteSample> ImportBuffer<S> for AudioBuffer<S> {
 
             let mut buffers = PlanarBuffers {
                 planes: std::mem::uninitialized(),
-                ch_map: self.spec.channels,
+                n_planes: self.spec.channels.len(),
             };
 
             let mut ptr = self.buf.as_mut_ptr();
 
             // Only fill the planes array up to the number of channels.
-            for i in 0..self.spec.channels.len() {
+            for i in 0..buffers.n_planes {
                 buffers.planes[i] = slice::from_raw_parts_mut(ptr as *mut S, self.n_capacity);
                 ptr = ptr.add(self.n_capacity);
             }
@@ -645,9 +641,13 @@ impl<S: Sample + WriteSample> ImportBuffer<S> for AudioBuffer<S> {
         };
 
         // Attempt to fill the entire buffer, exiting only if there is an error.
-        for idx in 0..self.n_capacity {
-            fill(&mut planar_buffers, idx)?;
+        self.n_frames = 0;
+
+        while self.n_frames < self.n_capacity {
+            fill(&mut planar_buffers, self.n_frames)?;
+            self.n_frames += 1;
         }
+
 
         Ok(())
     }

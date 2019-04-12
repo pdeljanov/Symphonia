@@ -1,8 +1,8 @@
 #![warn(rust_2018_idioms)]
 use std::io;
 
-use sonata_core::audio::{AudioBuffer, SignalSpec, Timestamp};
-use sonata_core::codecs::{CodecParameters, DecoderOptions};
+use sonata_core::audio::Timestamp;
+use sonata_core::codecs::CodecParameters;
 use sonata_core::errors::{Result, seek_error, unsupported_error, SeekErrorKind};
 use sonata_core::formats::{Packet, Stream};
 use sonata_core::io::*;
