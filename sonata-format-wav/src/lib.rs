@@ -13,7 +13,7 @@ mod chunks;
 
 use chunks::*;
 
-pub use sonata_core::formats::{ProbeDepth, ProbeResult, Format, FormatReader, SeekSearchResult};
+pub use sonata_core::formats::{ProbeDepth, ProbeResult, FormatReader, SeekSearchResult};
 pub use sonata_core::codecs::Decoder;
 
 /// The recommended maximum number of bytes advance a stream to find the stream marker before giving up.
@@ -23,19 +23,7 @@ const WAVE_MAX_FRAMES_PER_PACKET: u64 = 4096;
 
 /// `Wav` (Wave) Format.
 /// 
-/// This format only supports reading.
-pub struct Wav;
-
-impl Format for Wav {
-    type Reader = WavReader;
-
-    fn open<S: 'static + MediaSource>(source: Box<S>, options: &FormatOptions) -> Self::Reader {
-        let mss = MediaSourceStream::new(source);
-        WavReader::open(mss, options)
-    }
-}
-
-/// `WavReader` implements a demultiplexer for the native Wav format container.
+/// `WavReader` implements a demuxer for the Wave format container.
 pub struct WavReader {
     reader: MediaSourceStream,
     streams: Vec<Stream>,
@@ -79,7 +67,10 @@ impl FormatReader for WavReader {
 
     fn supported_formats() -> &'static [FormatDescriptor] {
         &[
-            support_format!(&["wav", "wave"], &["audio/vnd.wave", "audio/x-wav", "audio/wav", "audio/wave"], b"RIFF    ", 4, 0)
+            support_format!(
+                &["wav", "wave"], 
+                &["audio/vnd.wave", "audio/x-wav", "audio/wav", "audio/wave"], 
+                b"RIFF    ", 4, 0)
         ]
     }
 

@@ -113,16 +113,6 @@ pub struct VendorData {
 
 }
 
-
-
-
-pub trait Format {
-    type Reader;
-
-    fn open<S: 'static + MediaSource>(src: Box<S>, options: &FormatOptions) -> Self::Reader;
-}
-
-
 /// The `EventHooks` traits provides an interface to (optionally) catch and react to supplementary
 /// data present within a media stream. The most obvious use-case of this supplementary data is
 /// metadata, the textual tags, describing the audio stream. If the data is not worthwhile for the

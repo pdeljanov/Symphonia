@@ -26,23 +26,11 @@ const FLAC_STREAM_MARKER: [u8; 4] = [0x66, 0x4c, 0x61, 0x43];
 /// The recommended maximum number of bytes advance a stream to find the stream marker before giving up.
 const FLAC_PROBE_SEARCH_LIMIT: usize = 512 * 1024;
 
-pub use sonata_core::formats::{ProbeDepth, ProbeResult, Format, FormatReader, SeekSearchResult};
+pub use sonata_core::formats::{ProbeDepth, ProbeResult, FormatReader, SeekSearchResult};
 pub use sonata_core::codecs::Decoder;
 
 /// `Flac` (FLAC) is the Free Lossless Audio Codec.
 /// 
-/// This format only supports reading.
-pub struct Flac;
-
-impl Format for Flac {
-    type Reader = FlacReader;
-
-    fn open<S: 'static + MediaSource>(source: Box<S>, options: &FormatOptions) -> Self::Reader {
-        let mss = MediaSourceStream::new(source);
-        FlacReader::open(mss, options)
-    }
-}
-
 /// `FlacReader` implements a demultiplexer for the native FLAC format container.
 pub struct FlacReader {
     reader: MediaSourceStream,
@@ -147,9 +135,7 @@ impl FormatReader for FlacReader {
     }
 
     fn supported_formats() -> &'static [FormatDescriptor] {
-        &[
-            support_format!(&["flac"], &["audio/flac"], b"fLaC    ", 4, 0)
-        ]
+        &[ support_format!(&["flac"], &["audio/flac"], b"fLaC    ", 4, 0) ]
     }
 
     fn next_packet(&mut self) -> Result<Packet<'_>> {

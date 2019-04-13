@@ -22,11 +22,7 @@ use clap::{Arg, App};
 use sonata_core::errors::{Result, unsupported_error};
 use sonata_core::audio::*;
 use sonata_core::codecs::{CodecRegistry, DecoderOptions};
-use sonata_core::formats::{FormatRegistry, Hint, FormatOptions};
-use sonata_codec_flac::*;
-use sonata_codec_pcm::*;
-use sonata_format_wav::*;
-
+use sonata_core::formats::{FormatReader, FormatRegistry, Hint, FormatOptions, ProbeDepth, ProbeResult};
 use libpulse_binding as pulse;
 use libpulse_simple_binding as psimple;
 
@@ -34,6 +30,9 @@ use lazy_static::lazy_static;
 
 lazy_static! {
     static ref CODEC_REGISTRY: CodecRegistry = {
+        use sonata_codec_flac::FlacDecoder;
+        use sonata_codec_pcm::PcmDecoder;
+
         let mut registry = CodecRegistry::new();
         registry.register_all::<FlacDecoder>(0);
         registry.register_all::<PcmDecoder>(0);
@@ -43,6 +42,9 @@ lazy_static! {
 
 lazy_static! {
     static ref FORMAT_REGISTRY: FormatRegistry = {
+        use sonata_codec_flac::FlacReader;
+        use sonata_format_wav::WavReader;
+
         let mut registry = FormatRegistry::new();
         registry.register_all::<FlacReader>(0);
         registry.register_all::<WavReader>(0);
@@ -87,30 +89,36 @@ fn main() {
                             .index(1))
                         .get_matches();
 
-    let file_path = matches.value_of("FILE").unwrap();
+    // Get the file path option.
+    let path = Path::new(matches.value_of("FILE").unwrap());
 
-    // Create a reader from the given file.
+    // Create a hint to help the format registry guess what format reader is appropriate for file at the given file 
+    // path.
     let mut hint = Hint::new();
 
-    if let Some(extension) = Path::new(file_path).extension() {
+    // Use the file extension as a hint.
+    if let Some(extension) = path.extension() {
         hint.with_extension(extension.to_str().unwrap());
     }
 
-    let fmt_options = FormatOptions { ..Default::default() };
-
     // Open the given file.
     // TODO: Catch errors.
-    let file = Box::new(File::open(file_path).unwrap());
+    let file = Box::new(File::open(path).unwrap());
 
-    let mut reader = FORMAT_REGISTRY.guess(&hint, file, &fmt_options).unwrap();
+    // Use the format registry to pick a format reader for the given file and instantiate it with a default set of 
+    // options.
+    let format_options = FormatOptions { ..Default::default() };
+    let mut reader = FORMAT_REGISTRY.guess(&hint, file, &format_options).unwrap();
 
-    // Probe the file to check for support.
+    // Probe the file using the format reader to verify the file is actually supported.
     let probe_info = reader.probe(ProbeDepth::Deep).unwrap();
 
     match probe_info {
+        // The file was not actually supported by the format reader.
         ProbeResult::Unsupported => {
             eprintln!("File not supported!");
         },
+        // The file is supported by the format reader.
         ProbeResult::Supported => {
             // Verify only mode decodes and always verifies the audio, but doese not play it.
             if matches.is_present("verify-only") {
