@@ -15,8 +15,7 @@ use sonata_core::codecs::{CODEC_TYPE_PCM_F32LE, CODEC_TYPE_PCM_F32BE, CODEC_TYPE
 // G711 ALaw and MuLaw PCM cdoecs.
 use sonata_core::codecs::{CODEC_TYPE_PCM_ALAW, CODEC_TYPE_PCM_MULAW};
 use sonata_core::conv::FromSample;
-use sonata_core::errors::{Result, unsupported_error};
-
+use sonata_core::errors::{Result, decode_error, unsupported_error};
 use sonata_core::formats::Packet;
 use sonata_core::io::Bytestream;
 
@@ -64,17 +63,17 @@ macro_rules! read_pcm_transfer_func {
     };
 }
 
-// alaw_to_linear and mulaw_to_linear are adaptations of alaw2linear and ulaw2linear from g711.c by SUN Microsystems.
-// (unrestricted use license). 
-const QUANT_MASK: u8 = 0x0f;
-const SEG_MASK: u8   = 0x70;
-const SEG_SHIFT: u32 = 4;
+// alaw_to_linear and mulaw_to_linear are adaptations of alaw2linear and ulaw2linear from g711.c by SUN Microsystems
+// (unrestricted use license).
+const XLAW_QUANT_MASK: u8 = 0x0f;
+const XLAW_SEG_MASK: u8   = 0x70;
+const XLAW_SEG_SHIFT: u32 = 4;
 
 fn alaw_to_linear(mut a_val: u8) -> i16 {
     a_val ^= 0x55;
 
-    let mut t = ((a_val & QUANT_MASK) << 4) as i16;
-    let seg = (a_val & SEG_MASK) >> SEG_SHIFT;
+    let mut t = ((a_val & XLAW_QUANT_MASK) << 4) as i16;
+    let seg = (a_val & XLAW_SEG_MASK) >> XLAW_SEG_SHIFT;
 
     match seg {
         0 => t += 0x8,
@@ -85,20 +84,20 @@ fn alaw_to_linear(mut a_val: u8) -> i16 {
     if a_val & 0x80 == 0x80 { t } else { -t }
 }
 
-fn mulaw_to_linear(mut u_val: u8) -> i16 {
+fn mulaw_to_linear(mut mu_val: u8) -> i16 {
     const BIAS: i16 = 0x84;
 
     // Complement to obtain normal u-law value.
-    u_val = !u_val;
+    mu_val = !mu_val;
 
     // Extract and bias the quantization bits. Then shift up by the segment number and subtract out the bias.
-    let mut t = ((u_val & QUANT_MASK) << 3) as i16 + BIAS;
-    t <<= (u_val & SEG_MASK) >> SEG_SHIFT;
+    let mut t = ((mu_val & XLAW_QUANT_MASK) << 3) as i16 + BIAS;
+    t <<= (mu_val & XLAW_SEG_MASK) >> XLAW_SEG_SHIFT;
 
-    if u_val & 0x80 == 0x80 { t - BIAS } else { BIAS - t }
+    if mu_val & 0x80 == 0x80 { t - BIAS } else { BIAS - t }
 }
 
-/// `PcmDecoder` implements a decoder all raw PCM bitstreams.
+/// `PcmDecoder` implements a decoder for all raw PCM, and log-PCM bitstreams.
 pub struct PcmDecoder {
     params: CodecParameters,
 }
@@ -176,30 +175,33 @@ impl Decoder for PcmDecoder {
 
         let width = self.params.bits_per_coded_sample.unwrap_or(self.params.bits_per_sample.unwrap_or(0));
 
-        // Only ALaw and MuLaw has an implicit bit width (8 bits), other PCM codecs require atleast either 
-        // bits_per_sample or bits_per_coded_sample to be declared.
+        // Only A-Law and Mu-Law codecs have an implicit coded sample bit-width (8 bits), other PCM codecs require 
+        // atleast either bits_per_sample or bits_per_coded_sample to be declared.
         if width == 0 &&
            self.params.codec != CODEC_TYPE_PCM_ALAW && 
            self.params.codec != CODEC_TYPE_PCM_MULAW 
         {
-            return unsupported_error("Unknown bits per coded sample.");
+            return decode_error("Unknown bits per (coded) sample.");
         }
 
+        // Signed or unsigned integer PCM codecs must be shifted to expand the sample into the entire i32 range.
+        let int_shift = 32 - width;
+
         match self.params.codec {
-            CODEC_TYPE_PCM_S32LE => read_pcm_signed!(buf,   stream.read_u32()?,    32 - width),
-            CODEC_TYPE_PCM_S32BE => read_pcm_signed!(buf,   stream.read_be_u32()?, 32 - width),
-            CODEC_TYPE_PCM_S24LE => read_pcm_signed!(buf,   stream.read_u24()?,    32 - width),
-            CODEC_TYPE_PCM_S24BE => read_pcm_signed!(buf,   stream.read_be_u24()?, 32 - width),
-            CODEC_TYPE_PCM_S16LE => read_pcm_signed!(buf,   stream.read_u16()?,    32 - width),
-            CODEC_TYPE_PCM_S16BE => read_pcm_signed!(buf,   stream.read_be_u16()?, 32 - width),
-            CODEC_TYPE_PCM_S8    => read_pcm_signed!(buf,   stream.read_u8()?,     32 - width),
-            CODEC_TYPE_PCM_U32LE => read_pcm_unsigned!(buf, stream.read_u32()?,    32 - width),
-            CODEC_TYPE_PCM_U32BE => read_pcm_unsigned!(buf, stream.read_be_u32()?, 32 - width),
-            CODEC_TYPE_PCM_U24LE => read_pcm_unsigned!(buf, stream.read_u24()?,    32 - width),
-            CODEC_TYPE_PCM_U24BE => read_pcm_unsigned!(buf, stream.read_be_u24()?, 32 - width),
-            CODEC_TYPE_PCM_U16LE => read_pcm_unsigned!(buf, stream.read_u16()?,    32 - width),
-            CODEC_TYPE_PCM_U16BE => read_pcm_unsigned!(buf, stream.read_be_u16()?, 32 - width),
-            CODEC_TYPE_PCM_U8    => read_pcm_unsigned!(buf, stream.read_u8()?,     32 - width),
+            CODEC_TYPE_PCM_S32LE => read_pcm_signed!(buf,   stream.read_u32()?,    int_shift),
+            CODEC_TYPE_PCM_S32BE => read_pcm_signed!(buf,   stream.read_be_u32()?, int_shift),
+            CODEC_TYPE_PCM_S24LE => read_pcm_signed!(buf,   stream.read_u24()?,    int_shift),
+            CODEC_TYPE_PCM_S24BE => read_pcm_signed!(buf,   stream.read_be_u24()?, int_shift),
+            CODEC_TYPE_PCM_S16LE => read_pcm_signed!(buf,   stream.read_u16()?,    int_shift),
+            CODEC_TYPE_PCM_S16BE => read_pcm_signed!(buf,   stream.read_be_u16()?, int_shift),
+            CODEC_TYPE_PCM_S8    => read_pcm_signed!(buf,   stream.read_u8()?,     int_shift),
+            CODEC_TYPE_PCM_U32LE => read_pcm_unsigned!(buf, stream.read_u32()?,    int_shift),
+            CODEC_TYPE_PCM_U32BE => read_pcm_unsigned!(buf, stream.read_be_u32()?, int_shift),
+            CODEC_TYPE_PCM_U24LE => read_pcm_unsigned!(buf, stream.read_u24()?,    int_shift),
+            CODEC_TYPE_PCM_U24BE => read_pcm_unsigned!(buf, stream.read_be_u24()?, int_shift),
+            CODEC_TYPE_PCM_U16LE => read_pcm_unsigned!(buf, stream.read_u16()?,    int_shift),
+            CODEC_TYPE_PCM_U16BE => read_pcm_unsigned!(buf, stream.read_be_u16()?, int_shift),
+            CODEC_TYPE_PCM_U8    => read_pcm_unsigned!(buf, stream.read_u8()?,     int_shift),
             CODEC_TYPE_PCM_F32LE => read_pcm_floating!(buf, stream.read_f32()?),
             CODEC_TYPE_PCM_F32BE => read_pcm_floating!(buf, stream.read_be_f32()?),
             CODEC_TYPE_PCM_F64LE => read_pcm_floating!(buf, stream.read_f64()?),
@@ -224,19 +226,7 @@ impl Decoder for PcmDecoder {
             // CODEC_TYPE_PCM_F32BE_PLANAR => 
             // CODEC_TYPE_PCM_F64LE_PLANAR => 
             // CODEC_TYPE_PCM_F64BE_PLANAR => 
-            _ => 
-                unsupported_error("PCM codec unsupported.")
+            _ => unsupported_error("PCM codec unsupported.")
         }
     }
 }
-
-
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {
-        assert_eq!(2 + 2, 4);
-    }
-}
-

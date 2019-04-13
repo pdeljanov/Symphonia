@@ -518,11 +518,15 @@ impl fmt::Display for WaveFormatChunk {
                 writeln!(f, "\t\tsub_format_guid: {:?},", &ext.sub_format_guid)?;
                 writeln!(f, "\t\tcodec: {},", ext.codec)?;
             },
-            WaveFormatData::ALaw(_) => {
+            WaveFormatData::ALaw(ref alaw) => {
                 writeln!(f, "\tformat_data: ALaw {{")?;
+                writeln!(f, "\t\tchannels: {},", alaw.channels)?;
+                writeln!(f, "\t\tcodec: {},", alaw.codec)?;
             },
-            WaveFormatData::MuLaw(_) => {
+            WaveFormatData::MuLaw(ref mulaw) => {
                 writeln!(f, "\tformat_data: MuLaw {{")?;
+                writeln!(f, "\t\tchannels: {},", mulaw.channels)?;
+                writeln!(f, "\t\tcodec: {},", mulaw.codec)?;
             }
         };
 
