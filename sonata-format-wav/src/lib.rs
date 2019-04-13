@@ -187,11 +187,13 @@ fn append_format_params(codec_params: &mut CodecParameters, format: &WaveFormatC
         },
         WaveFormatData::ALaw(ref alaw) => {
             codec_params
-                .for_codec(alaw.codec);
+                .for_codec(alaw.codec)
+                .with_channels(alaw.channels);
         },
         WaveFormatData::MuLaw(ref mulaw) => {
             codec_params
-                .for_codec(mulaw.codec);
+                .for_codec(mulaw.codec)
+                .with_channels(mulaw.channels);
         }
     }
 }

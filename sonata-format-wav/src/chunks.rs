@@ -210,11 +210,15 @@ pub struct WaveFormatExtensible {
 }
 
 pub struct WaveFormatALaw {
+    /// Channel bitmask.
+    pub channels: Channels,
     /// Codec type.
     pub codec: CodecType,
 }
 
 pub struct WaveFormatMuLaw {
+    /// Channel bitmask.
+    pub channels: Channels,
     /// Codec type.
     pub codec: CodecType,
 }
@@ -402,6 +406,47 @@ impl WaveFormatChunk {
         Ok(WaveFormatData::Extensible(WaveFormatExtensible { 
             bits_per_sample, bits_per_coded_sample, channels, sub_format_guid, codec }))
     }
+
+    fn read_alaw_pcm_fmt<B: Bytestream>(reader: &mut B, n_channels: u16, len: u32) -> Result<WaveFormatData> {
+        if len != 18 {
+            return decode_error("Malformed fmt_alaw chunk.");
+        }
+
+        let extra_size = reader.read_u16()?; 
+
+        if extra_size > 0 {
+            reader.ignore_bytes(extra_size as u64)?;
+        }
+
+        let channels = match n_channels {
+            1 => Channels::FRONT_LEFT,
+            2 => Channels::FRONT_LEFT | Channels::FRONT_RIGHT,
+            _ => return decode_error("Only mono and stereo channel layouts are supported for fmt_alaw.")
+        };
+
+        Ok(WaveFormatData::ALaw(WaveFormatALaw{ codec: CODEC_TYPE_PCM_ALAW, channels }))
+
+    }
+
+    fn read_mulaw_pcm_fmt<B: Bytestream>(reader: &mut B, n_channels: u16, len: u32) -> Result<WaveFormatData> {
+        if len != 18 {
+            return decode_error("Malformed fmt_mulaw chunk.");
+        }
+
+        let extra_size = reader.read_u16()?; 
+
+        if extra_size > 0 {
+            reader.ignore_bytes(extra_size as u64)?;
+        }
+
+        let channels = match n_channels {
+            1 => Channels::FRONT_LEFT,
+            2 => Channels::FRONT_LEFT | Channels::FRONT_RIGHT,
+            _ => return decode_error("Only mono and stereo channel layouts are supported for fmt_mulaw.")
+        };
+
+        Ok(WaveFormatData::MuLaw(WaveFormatMuLaw{ codec: CODEC_TYPE_PCM_MULAW, channels }))
+    }
 }
 
 impl ParseChunk for WaveFormatChunk {
@@ -433,8 +478,10 @@ impl ParseChunk for WaveFormatChunk {
             WAVE_FORMAT_IEEE_FLOAT => Self::read_ieee_fmt(reader, bits_per_sample, n_channels, len)?,
             // The Extensible Wave Format
             WAVE_FORMAT_EXTENSIBLE => Self::read_ext_fmt(reader, bits_per_sample, len)?,
-            WAVE_FORMAT_ALAW => WaveFormatData::ALaw(WaveFormatALaw{ codec: CODEC_TYPE_PCM_ALAW }),
-            WAVE_FORMAT_MULAW => WaveFormatData::MuLaw(WaveFormatMuLaw{ codec: CODEC_TYPE_PCM_MULAW }),
+            // The Alaw Wave Format.
+            WAVE_FORMAT_ALAW => Self::read_alaw_pcm_fmt(reader, n_channels, len)?,
+            // The MuLaw Wave Format.
+            WAVE_FORMAT_MULAW => Self::read_mulaw_pcm_fmt(reader, n_channels, len)?,
             // Unsupported format.
             _ => return unsupported_error("Unsupported format data."),
         };
