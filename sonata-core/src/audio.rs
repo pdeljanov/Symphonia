@@ -294,14 +294,16 @@ impl<'a, S : Sample> AudioPlanesMut<'a, S> {
     }
 }
 
-pub struct AudioBuffer<S : Sample + WriteSample> {
+/// `AudioBuffer` is a container for planar audio data. An `AudioBuffer` can store upto capacity samples. It implements 
+/// the Signal trait for reading and writing audio to the buffer itself.
+pub struct AudioBuffer<S : Sample> {
     buf: Vec<S>,
     spec: SignalSpec,
     n_frames: usize,
     n_capacity: usize,
 }
 
-impl<S : Sample + WriteSample> AudioBuffer<S> {
+impl<S : Sample> AudioBuffer<S> {
 
     pub fn new(duration: Duration, spec: &SignalSpec) -> Self {
         let n_capacity = match duration {
@@ -326,8 +328,7 @@ impl<S : Sample + WriteSample> AudioBuffer<S> {
         }
     }
 
-    /// Gets the total capacity of the buffer. The capacity is the maximum number of frames a
-    /// buffer can hold.
+    /// Gets the total capacity of the buffer. The capacity is the maximum number of frames a buffer can store.
     pub fn capacity(&self) -> usize {
         self.n_capacity
     }
@@ -427,7 +428,7 @@ pub trait Signal<S : Sample> {
         F: Fn(S) -> S;
 }
 
-impl<S: Sample + WriteSample> Signal<S> for AudioBuffer<S> {
+impl<S: Sample> Signal<S> for AudioBuffer<S> {
 
     fn clear(&mut self) {
         self.n_frames = 0;

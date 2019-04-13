@@ -184,6 +184,14 @@ fn append_format_params(codec_params: &mut CodecParameters, format: &WaveFormatC
                 .with_bits_per_coded_sample(ext.bits_per_coded_sample as u32)
                 .with_bits_per_sample(ext.bits_per_sample as u32)
                 .with_channels(ext.channels);
+        },
+        WaveFormatData::ALaw(ref alaw) => {
+            codec_params
+                .for_codec(alaw.codec);
+        },
+        WaveFormatData::MuLaw(ref mulaw) => {
+            codec_params
+                .for_codec(mulaw.codec);
         }
     }
 }

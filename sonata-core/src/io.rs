@@ -18,6 +18,7 @@
 use std::io;
 use std::io::Read;
 use std::cmp;
+use std::mem;
 use super::checksum::Checksum;
 
 /// Sign extends an arbitrary, 8-bit or less, signed two's complement integer stored within an u8
@@ -440,7 +441,7 @@ pub trait Bytestream {
     /// integer or returns an error.
     #[inline(always)]
     fn read_u24(&mut self) -> io::Result<u32> {
-        let mut buf = [0u8; 4];
+        let mut buf = [0u8; mem::size_of::<u32>()];
         buf[0..3].clone_from_slice(&self.read_triple_bytes()?);
         Ok(u32::from_le_bytes(buf))
     }
@@ -449,7 +450,7 @@ pub trait Bytestream {
     /// integer or returns an error.
     #[inline(always)]
     fn read_be_u24(&mut self) -> io::Result<u32> {
-        let mut buf = [0u8; 4];
+        let mut buf = [0u8; mem::size_of::<u32>()];
         buf[0..3].clone_from_slice(&self.read_triple_bytes()?);
         Ok(u32::from_be_bytes(buf) >> 8)
     }
@@ -472,7 +473,7 @@ pub trait Bytestream {
     /// integer or returns an error.
     #[inline(always)]
     fn read_u64(&mut self) -> io::Result<u64> {
-        let mut buf = [0u8; 8];
+        let mut buf = [0u8; mem::size_of::<u64>()];
         self.read_buf_bytes(&mut buf)?;
         Ok(u64::from_le_bytes(buf))
     }
@@ -481,9 +482,41 @@ pub trait Bytestream {
     /// integer or returns an error.
     #[inline(always)]
     fn read_be_u64(&mut self) -> io::Result<u64> {
-        let mut buf = [0u8; 8];
+        let mut buf = [0u8; mem::size_of::<u64>()];
         self.read_buf_bytes(&mut buf)?;
         Ok(u64::from_be_bytes(buf))
+    }
+
+    /// Reads four bytes from the stream and interprets them as a 32-bit little-endiann IEEE-754 
+    /// floating point value.
+    #[inline(always)]
+    fn read_f32(&mut self) -> io::Result<f32> {
+        Ok(unsafe { *(&u32::from_le_bytes(self.read_quad_bytes()?) as *const u32 as *const f32) })
+    }
+
+    /// Reads four bytes from the stream and interprets them as a 32-bit big-endiann IEEE-754 
+    /// floating point value.
+    #[inline(always)]
+    fn read_be_f32(&mut self) -> io::Result<f32> {
+        Ok(unsafe { *(&u32::from_be_bytes(self.read_quad_bytes()?) as *const u32 as *const f32) })
+    }
+
+    /// Reads four bytes from the stream and interprets them as a 64-bit little-endiann IEEE-754 
+    /// floating point value.
+    #[inline(always)]
+    fn read_f64(&mut self) -> io::Result<f64> {
+        let mut buf = [0u8; mem::size_of::<u64>()];
+        self.read_buf_bytes(&mut buf)?;
+        Ok(unsafe { *(&u64::from_le_bytes(buf) as *const u64 as *const f64) })
+    }
+
+    /// Reads four bytes from the stream and interprets them as a 64-bit big-endiann IEEE-754 
+    /// floating point value.
+    #[inline(always)]
+    fn read_be_f64(&mut self) -> io::Result<f64> {
+        let mut buf = [0u8; mem::size_of::<u64>()];
+        self.read_buf_bytes(&mut buf)?;
+        Ok(unsafe { *(&u64::from_be_bytes(buf) as *const u64 as *const f64) })
     }
 
     /// Ignores the specified number of bytes from the stream or returns an error.

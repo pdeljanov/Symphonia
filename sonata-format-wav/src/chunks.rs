@@ -8,7 +8,9 @@ use sonata_core::codecs::{
     CODEC_TYPE_PCM_S24LE, 
     CODEC_TYPE_PCM_S32LE, 
     CODEC_TYPE_PCM_F32LE, 
-    CODEC_TYPE_PCM_F64LE
+    CODEC_TYPE_PCM_F64LE,
+    CODEC_TYPE_PCM_ALAW,
+    CODEC_TYPE_PCM_MULAW,
 };
 use sonata_core::codecs::CodecType;
 use sonata_core::errors::{Result, decode_error, unsupported_error};
@@ -174,6 +176,8 @@ pub enum WaveFormatData {
     Pcm(WaveFormatPcm),
     IeeeFloat(WaveFormatIeeeFloat),
     Extensible(WaveFormatExtensible),
+    ALaw(WaveFormatALaw),
+    MuLaw(WaveFormatMuLaw),
 }
 
 pub struct WaveFormatPcm {
@@ -201,6 +205,16 @@ pub struct WaveFormatExtensible {
     pub channels: Channels,
     /// Globally unique identifier of the format.
     pub sub_format_guid: [u8; 16],
+    /// Codec type.
+    pub codec: CodecType,
+}
+
+pub struct WaveFormatALaw {
+    /// Codec type.
+    pub codec: CodecType,
+}
+
+pub struct WaveFormatMuLaw {
     /// Codec type.
     pub codec: CodecType,
 }
@@ -342,10 +356,10 @@ impl WaveFormatChunk {
         //  [0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71];
         const KSDATAFORMAT_SUBTYPE_IEEE_FLOAT: [u8; 16] = 
             [0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71];
-        // const KSDATAFORMAT_SUBTYPE_ALAW: [u8; 16] = 
-        //     [0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71];
-        // const KSDATAFORMAT_SUBTYPE_MULAW: [u8; 16] = 
-        //     [0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71];
+        const KSDATAFORMAT_SUBTYPE_ALAW: [u8; 16] = 
+            [0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71];
+        const KSDATAFORMAT_SUBTYPE_MULAW: [u8; 16] = 
+            [0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71];
 
         // Verify support based on the format GUID.
         let codec = match sub_format_guid {
@@ -378,6 +392,8 @@ impl WaveFormatChunk {
                     _ =>  return decode_error("Bits per sample for fmt_ext IEEE sub-type must be 32 or 64 bits.")
                 }
             },
+            KSDATAFORMAT_SUBTYPE_ALAW => CODEC_TYPE_PCM_ALAW,
+            KSDATAFORMAT_SUBTYPE_MULAW => CODEC_TYPE_PCM_MULAW,
             _ => return unsupported_error("Unsupported fmt_ext sub-type."),
         };
 
@@ -406,8 +422,8 @@ impl ParseChunk for WaveFormatChunk {
         const WAVE_FORMAT_PCM: u16        = 0x0001;
         // const WAVE_FORMAT_ADPCM: u16      = 0x0002;
         const WAVE_FORMAT_IEEE_FLOAT: u16 = 0x0003;
-        // const WAVE_FORMAT_ALAW: u16       = 0x0006;
-        // const WAVE_FORMAT_MULAW: u16      = 0x0007;
+        const WAVE_FORMAT_ALAW: u16       = 0x0006;
+        const WAVE_FORMAT_MULAW: u16      = 0x0007;
         const WAVE_FORMAT_EXTENSIBLE: u16 = 0xfffe;
 
         let format_data = match format {
@@ -417,6 +433,8 @@ impl ParseChunk for WaveFormatChunk {
             WAVE_FORMAT_IEEE_FLOAT => Self::read_ieee_fmt(reader, bits_per_sample, n_channels, len)?,
             // The Extensible Wave Format
             WAVE_FORMAT_EXTENSIBLE => Self::read_ext_fmt(reader, bits_per_sample, len)?,
+            WAVE_FORMAT_ALAW => WaveFormatData::ALaw(WaveFormatALaw{ codec: CODEC_TYPE_PCM_ALAW }),
+            WAVE_FORMAT_MULAW => WaveFormatData::MuLaw(WaveFormatMuLaw{ codec: CODEC_TYPE_PCM_MULAW }),
             // Unsupported format.
             _ => return unsupported_error("Unsupported format data."),
         };
@@ -453,6 +471,12 @@ impl fmt::Display for WaveFormatChunk {
                 writeln!(f, "\t\tsub_format_guid: {:?},", &ext.sub_format_guid)?;
                 writeln!(f, "\t\tcodec: {},", ext.codec)?;
             },
+            WaveFormatData::ALaw(_) => {
+                writeln!(f, "\tformat_data: ALaw {{")?;
+            },
+            WaveFormatData::MuLaw(_) => {
+                writeln!(f, "\tformat_data: MuLaw {{")?;
+            }
         };
 
         writeln!(f, "\t}}")?;
