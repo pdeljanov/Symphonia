@@ -1,10 +1,12 @@
 #![warn(rust_2018_idioms)]
 use std::io;
 
+use sonata_core::support_format;
+
 use sonata_core::audio::Timestamp;
 use sonata_core::codecs::CodecParameters;
 use sonata_core::errors::{Result, seek_error, unsupported_error, SeekErrorKind};
-use sonata_core::formats::{Packet, Stream};
+use sonata_core::formats::{Packet, Stream, FormatDescriptor, FormatOptions};
 use sonata_core::io::*;
 
 mod chunks;
@@ -27,9 +29,9 @@ pub struct Wav;
 impl Format for Wav {
     type Reader = WavReader;
 
-    fn open<S: 'static + MediaSource>(source: Box<S>) -> Self::Reader {
+    fn open<S: 'static + MediaSource>(source: Box<S>, options: &FormatOptions) -> Self::Reader {
         let mss = MediaSourceStream::new(source);
-        WavReader::open(mss)
+        WavReader::open(mss, options)
     }
 }
 
@@ -40,13 +42,6 @@ pub struct WavReader {
 }
 
 impl WavReader {
-
-    pub fn open(source: MediaSourceStream) -> Self {
-        WavReader {
-            reader: source,
-            streams: Vec::new(),
-        }
-    }
 
     fn read_metadata(&mut self, len: u32) -> Result<()> {
         let mut info_list = ChunksReader::<RiffInfoListChunks>::new(len);
@@ -74,6 +69,19 @@ impl WavReader {
 }
 
 impl FormatReader for WavReader {
+
+    fn open(source: MediaSourceStream, options: &FormatOptions) -> Self {
+        WavReader {
+            reader: source,
+            streams: Vec::new(),
+        }
+    }
+
+    fn supported_formats() -> &'static [FormatDescriptor] {
+        &[
+            support_format!(&["wav", "wave"], &["audio/vnd.wave", "audio/x-wav", "audio/wav", "audio/wave"], b"RIFF    ", 4, 0)
+        ]
+    }
 
     fn next_packet(&mut self) -> Result<Packet<'_>> {
         Ok(Packet::new_direct(0, &mut self.reader))

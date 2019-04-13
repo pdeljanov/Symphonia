@@ -119,7 +119,7 @@ pub struct VendorData {
 pub trait Format {
     type Reader;
 
-    fn open<S: 'static + MediaSource>(src: Box<S>) -> Self::Reader;
+    fn open<S: 'static + MediaSource>(src: Box<S>, options: &FormatOptions) -> Self::Reader;
 }
 
 
@@ -296,9 +296,6 @@ impl Stream {
             language: None,
         }
     }
-
-
-
 }
 
 /// A `FormatReader` is a container demuxer. It provides methods to probe a media container for information and access
@@ -316,6 +313,16 @@ impl Stream {
 /// `FormatReader` provides an iterator interface over packets for easy consumption and filterting. Iterators are valid 
 /// until a seek.
 pub trait FormatReader {
+
+    /// Instantiates the `FormatReader` with the provided `FormatOptions`.
+    fn open(source: MediaSourceStream, options: &FormatOptions) -> Self
+    where
+        Self: Sized;
+
+    /// Gets a list of `FormatDescriptor`s for the formats supported by this `FormatReader`.
+    fn supported_formats() -> &'static [FormatDescriptor]
+    where
+        Self: Sized;
 
     /// Probes the container to check for support, contained streams, and other metadata. The complexity of the probe 
     /// can be set based on the caller's use-case.
@@ -445,30 +452,134 @@ pub struct ProbeInfo {
 
 }
 
-/*
-struct FormatRegistry {
 
+pub struct FormatRegistry {
+    descriptors: Vec<(FormatDescriptor, u32)>,
 }
 
 impl FormatRegistry {
 
-    pub fn register<F: Format>(&mut self, tier: u32) {
-        F::supported_types();
+    pub fn new() -> Self {
+        FormatRegistry {
+            descriptors: Vec::new(),
+        }
     }
 
-    /// Attempts to guess the appropriate demuxer and select it for use. If the guess is incorrect
-    /// further attempts will be made with progressively more complexity.
-    pub fn select() -> Box<Format> {
+    /// Attempts to guess the appropriate demuxer and select it for use through analysis and the provided format hints.
+    /// 
+    /// Note: Guessing is naively implemented and only uses the extension and mime-type to choose the format.
+    pub fn guess<S>(&self, guess: &Hint, src: Box<S>, options: &FormatOptions) -> Option<Box<dyn FormatReader>> 
+    where
+        S: 'static + MediaSource
+    {
+        for descriptor in &self.descriptors {
+            let mut supported = false;
 
+            supported |= match guess.extension {
+                Some(ref extension) => descriptor.0.supports_extension(extension),
+                None => false
+            };
+
+            supported |= match guess.mime_type {
+                Some(ref mime_type) => descriptor.0.supports_mime_type(mime_type),
+                None => false
+            };
+
+            if supported {
+                let mss = MediaSourceStream::new(src);
+                return Some((descriptor.0.inst_func)(mss, options));
+            }
+        }
+
+        None
     }
 
-    /// Guesses the demuxer to use from a media (MIME) type.
-    pub fn guess_by_media_type(){}
+    /// Registers all formats supported by the Demuxer at the provided tier.
+    pub fn register_all<F: FormatReader>(&mut self, tier: u32) {
+        for descriptor in F::supported_formats() {
+            self.register(&descriptor, tier);
+        }
+    }
 
-    /// Guesses the demuxer to use from a file extension.
-    pub fn guess_by_extension(){}
+    /// Register a single format at the provided tier.
+    pub fn register(&mut self, descriptor: &FormatDescriptor, tier: u32) {
+        let pos = self.descriptors.iter()
+                                  .position(|entry| entry.1 < tier)
+                                  .unwrap_or(self.descriptors.len());
 
-    /// Guess the demuxer to use through analysis of the file contents.
-    pub fn guess_by_analysis(){}
+        self.descriptors.insert(pos, (descriptor.clone(), tier));
+    }
+
 }
-*/
+
+pub struct Hint {
+    extension: Option<String>,
+    mime_type: Option<String>,
+}
+
+impl Hint {
+    pub fn new() -> Self {
+        Hint {
+            extension: None,
+            mime_type: None,
+        }
+    }
+
+    pub fn with_extension(&mut self, extension: &str) -> &mut Self {
+        self.extension = Some(extension.to_owned());
+        self
+    }
+
+    pub fn mime_type(&mut self, mime_type: &str) -> &mut Self {
+        self.mime_type = Some(mime_type.to_owned());
+        self
+    }
+}
+
+/// `FormatDescriptor` provides declarative information about the multimedia format that is used by the `FormatRegistry`
+/// and related machinery to guess the appropriate `FormatReader` for a given media stream.
+#[derive(Copy, Clone)]
+pub struct FormatDescriptor {
+    /// A list of case-insensitive file extensions that are generally used by the format.
+    pub extensions: &'static [&'static str],
+    /// A list of case-insensitive MIME types that are generally used by the format.
+    pub mime_types: &'static [&'static str],
+    /// An up-to 8 byte start-of-stream marker that will be searched for within the stream.
+    pub marker: &'static [u8; 8],
+    /// A bitmask applied to the aforementioned marker and the stream data to allow for bit-aligned start-of-stream 
+    /// markers. A mask of 0 disables masking.
+    pub marker_mask: u64,
+    /// The length of the marker in bytes (between 1 and 8). A length of 0 disables the marker search.
+    pub marker_len: usize,
+    // An instantiation function for the format.
+    pub inst_func: fn(MediaSourceStream, &FormatOptions) -> Box<dyn FormatReader>,
+}
+
+impl FormatDescriptor {
+    fn supports_extension(&self, extension: &str) -> bool {
+        for supported_extension in self.extensions {
+            if supported_extension.eq_ignore_ascii_case(extension) {
+                return true
+            }
+        }
+        false
+    }
+
+    fn supports_mime_type(&self, mime_type: &str) -> bool {
+        false
+    }
+}
+
+#[macro_export]
+macro_rules! support_format {
+    ($exts:expr, $mimes:expr, $marker:expr, $mask:expr, $len:expr) => {
+        FormatDescriptor { 
+            extensions: $exts,
+            mime_types: $mimes,
+            marker: $marker,
+            marker_mask: $mask,
+            marker_len: $len,
+            inst_func: |source, opt| { Box::new(Self::open(source, &opt)) }
+        }
+    };
+}

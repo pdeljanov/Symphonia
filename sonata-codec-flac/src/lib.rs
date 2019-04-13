@@ -3,12 +3,12 @@
 use std::io;
 use std::io::{Seek, SeekFrom};
 
-use sonata_core::support_codec;
+use sonata_core::{support_codec, support_format};
 
 use sonata_core::audio::{AudioBuffer, SignalSpec, Timestamp};
 use sonata_core::codecs::{CODEC_TYPE_FLAC, CodecParameters, CodecDescriptor, DecoderOptions};
 use sonata_core::errors::{Result, Error, decode_error, seek_error, SeekErrorKind};
-use sonata_core::formats::{Packet, Stream, SeekIndex};
+use sonata_core::formats::{Packet, FormatDescriptor, FormatOptions, Stream, SeekIndex};
 use sonata_core::io::*;
 
 mod metadata;
@@ -37,9 +37,9 @@ pub struct Flac;
 impl Format for Flac {
     type Reader = FlacReader;
 
-    fn open<S: 'static + MediaSource>(source: Box<S>) -> Self::Reader {
+    fn open<S: 'static + MediaSource>(source: Box<S>, options: &FormatOptions) -> Self::Reader {
         let mss = MediaSourceStream::new(source);
-        FlacReader::open(mss)
+        FlacReader::open(mss, options)
     }
 }
 
@@ -52,15 +52,6 @@ pub struct FlacReader {
 }
 
 impl FlacReader {
-
-    pub fn open(source: MediaSourceStream) -> Self {
-        FlacReader {
-            reader: source,
-            streams: Vec::new(),
-            index: None,
-            first_frame_offset: 0,
-        }
-    }
 
     /// Reads a StreamInfo block and populates the reader with stream information.
     fn read_stream_info_block(&mut self) -> Result<()> {
@@ -145,6 +136,21 @@ impl FlacReader {
 }
 
 impl FormatReader for FlacReader {
+
+    fn open(source: MediaSourceStream, options: &FormatOptions) -> Self {
+        FlacReader {
+            reader: source,
+            streams: Vec::new(),
+            index: None,
+            first_frame_offset: 0,
+        }
+    }
+
+    fn supported_formats() -> &'static [FormatDescriptor] {
+        &[
+            support_format!(&["flac"], &["audio/flac"], b"fLaC    ", 4, 0)
+        ]
+    }
 
     fn next_packet(&mut self) -> Result<Packet<'_>> {
         // FLAC is not a "real" container format. FLAC frames are more-so part of the codec bitstream than the actual 

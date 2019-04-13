@@ -17,10 +17,12 @@
 
 use std::default::Default;
 use std::fs::File;
+use std::path::Path;
 use clap::{Arg, App};
 use sonata_core::errors::{Result, unsupported_error};
 use sonata_core::audio::*;
 use sonata_core::codecs::{CodecRegistry, DecoderOptions};
+use sonata_core::formats::{FormatRegistry, Hint, FormatOptions};
 use sonata_codec_flac::*;
 use sonata_codec_pcm::*;
 use sonata_format_wav::*;
@@ -35,6 +37,15 @@ lazy_static! {
         let mut registry = CodecRegistry::new();
         registry.register_all::<FlacDecoder>(0);
         registry.register_all::<PcmDecoder>(0);
+        registry
+    };
+}
+
+lazy_static! {
+    static ref FORMAT_REGISTRY: FormatRegistry = {
+        let mut registry = FormatRegistry::new();
+        registry.register_all::<FlacReader>(0);
+        registry.register_all::<WavReader>(0);
         registry
     };
 }
@@ -78,12 +89,20 @@ fn main() {
 
     let file_path = matches.value_of("FILE").unwrap();
 
+    // Create a reader from the given file.
+    let mut hint = Hint::new();
+
+    if let Some(extension) = Path::new(file_path).extension() {
+        hint.with_extension(extension.to_str().unwrap());
+    }
+
+    let fmt_options = FormatOptions { ..Default::default() };
+
     // Open the given file.
     // TODO: Catch errors.
     let file = Box::new(File::open(file_path).unwrap());
 
-    // Create a FLAC reader from the given file.
-    let mut reader = Wav::open(file);
+    let mut reader = FORMAT_REGISTRY.guess(&hint, file, &fmt_options).unwrap();
 
     // Probe the file to check for support.
     let probe_info = reader.probe(ProbeDepth::Deep).unwrap();
@@ -96,12 +115,12 @@ fn main() {
             // Verify only mode decodes and always verifies the audio, but doese not play it.
             if matches.is_present("verify-only") {
                 let options = DecoderOptions { verify: true, ..Default::default() };
-                decode_only(&mut reader, &options).unwrap();
+                decode_only(reader, &options).unwrap();
             }
             // Decode only mode decodes the audio, but not does verify it.
             else if matches.is_present("decode-only") {
                 let options = DecoderOptions { verify: false, ..Default::default() };
-                decode_only(&mut reader, &options).unwrap();
+                decode_only(reader, &options).unwrap();
             }
             // If not probing, play the audio back.
             else if !matches.is_present("probe-only") {
@@ -118,13 +137,13 @@ fn main() {
                 let options = DecoderOptions { verify: matches.is_present("verify"), ..Default::default() };
 
                 // Commence playback.
-                play(&mut reader, &options).unwrap();
+                play(reader, &options).unwrap();
             }
         }
     }
 }
 
-fn decode_only(reader: &mut FormatReader, decode_options: &DecoderOptions) -> Result<()> {
+fn decode_only(mut reader: Box<dyn FormatReader>, decode_options: &DecoderOptions) -> Result<()> {
     // Get the default stream.
     // TODO: Allow stream selection.
     let stream = reader.default_stream().unwrap();
@@ -163,7 +182,7 @@ fn decode_only(reader: &mut FormatReader, decode_options: &DecoderOptions) -> Re
     Ok(())
 }
 
-fn play(reader: &mut FormatReader, decode_options: &DecoderOptions) -> Result<()> {
+fn play(mut reader: Box<dyn FormatReader>, decode_options: &DecoderOptions) -> Result<()> {
 
     // Get the default stream.
     // TODO: Allow stream selection.

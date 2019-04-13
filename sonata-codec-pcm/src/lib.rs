@@ -19,6 +19,9 @@ use sonata_core::errors::{Result, decode_error, unsupported_error};
 use sonata_core::formats::Packet;
 use sonata_core::io::Bytestream;
 
+use std::cmp;
+
+
 macro_rules! read_pcm_signed {
     ($buf:ident, $read:expr, $shift:expr) => {
         $buf.fill(| audio_planes, idx | -> Result<()> {
@@ -185,7 +188,7 @@ impl Decoder for PcmDecoder {
         }
 
         // Signed or unsigned integer PCM codecs must be shifted to expand the sample into the entire i32 range.
-        let int_shift = 32 - width;
+        let int_shift = 32 - cmp::min(32, width);
 
         match self.params.codec {
             CODEC_TYPE_PCM_S32LE => read_pcm_signed!(buf,   stream.read_u32()?,    int_shift),
