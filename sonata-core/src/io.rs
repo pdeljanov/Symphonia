@@ -576,11 +576,7 @@ impl Bytestream for MediaSourceStream {
         // If the buffer has three bytes available, copy directly from it and skip any safety or
         // buffering checks.
         if self.pos + 3 < self.end_pos {
-            unsafe { 
-                triple_byte[0] = *self.buf.get_unchecked(self.pos + 0);
-                triple_byte[1] = *self.buf.get_unchecked(self.pos + 1);
-                triple_byte[2] = *self.buf.get_unchecked(self.pos + 2);
-            }
+            triple_byte.copy_from_slice(&self.buf[self.pos..self.pos + 3]);
             self.pos += 3;
         }
         // If the by buffer does not have three bytes available, copy one byte at a time from the
@@ -605,12 +601,7 @@ impl Bytestream for MediaSourceStream {
         // If the buffer has four bytes available, copy directly from it and skip any safety or
         // buffering checks.
         if self.pos + 4 < self.end_pos {
-            unsafe { 
-                quad_byte[0] = *self.buf.get_unchecked(self.pos + 0);
-                quad_byte[1] = *self.buf.get_unchecked(self.pos + 1);
-                quad_byte[2] = *self.buf.get_unchecked(self.pos + 2);
-                quad_byte[3] = *self.buf.get_unchecked(self.pos + 3);
-            }
+            quad_byte.copy_from_slice(&self.buf[self.pos..self.pos + 4]);
             self.pos += 4;
         }
         // If the by buffer does not have four bytes available, copy one byte at a time from the
@@ -628,6 +619,7 @@ impl Bytestream for MediaSourceStream {
         return Ok(quad_byte);
     }
 
+    #[inline(always)]
     fn read_buf_bytes(&mut self, buf: &mut [u8]) -> io::Result<()> {
         self.read_exact(buf)
     }
@@ -942,8 +934,9 @@ impl BitReader for BitReaderLtr {
                     (self.bits as u8).leading_zeros()
                 }
                 else {
-                    // Remove the previously read bits from the byte by lefting left, and appending 1s to
-                    // prevent reading the extra 0s shifted on.
+                    // Count the number of valid leading zeros in bits by filling the upper unused 24 bits with 1s and 
+                    // rotating right by the number of bits left. The leading bits will then contain the number of 
+                    // unread bits.
                     let byte = (self.bits | 0xffffff00).rotate_right(self.n_bits_left);
                     byte.leading_zeros()
                 };
