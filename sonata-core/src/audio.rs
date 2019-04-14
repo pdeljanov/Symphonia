@@ -328,6 +328,11 @@ impl<S : Sample> AudioBuffer<S> {
         }
     }
 
+    /// Gets the signal specification for the buffer.
+    pub fn spec(&self) -> &SignalSpec {
+        &self.spec
+    }
+
     /// Gets the total capacity of the buffer. The capacity is the maximum number of frames a buffer can store.
     pub fn capacity(&self) -> usize {
         self.n_capacity
