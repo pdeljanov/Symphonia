@@ -17,10 +17,14 @@
 
 use std::cmp;
 use std::num::Wrapping;
-use sonata_core::audio::{AudioBuffer, Signal};
-use sonata_core::io::*;
-use sonata_core::errors::{Result, decode_error, unsupported_error};
+
+use sonata_core::audio::{AudioBuffer, Signal, SignalSpec};
 use sonata_core::checksum::{Crc8, Crc16, Checksum};
+use sonata_core::codecs::{CODEC_TYPE_FLAC, CodecParameters, CodecDescriptor, Decoder, DecoderOptions};
+use sonata_core::errors::{Result, decode_error, unsupported_error};
+use sonata_core::formats::Packet;
+use sonata_core::io::*;
+use sonata_core::support_codec;
 
 use crate::validate::Md5AudioValidator;
 
@@ -161,27 +165,50 @@ impl PacketParser {
     }
 }
 
-pub struct FrameStream {
-    stream_bps: Option<u32>,
-    stream_sample_rate: Option<u32>,
+/// `FlacDecoder` implements a decoder for the FLAC codec bitstream. The decoder is compatible with OGG encapsulated 
+/// FLAC.
+pub struct FlacDecoder {
+    params: CodecParameters,
     is_validating: bool,
     validator: Md5AudioValidator,
 }
 
-impl FrameStream {
+impl Decoder for FlacDecoder {
 
-    pub fn new(stream_bps: Option<u32>, stream_sample_rate: Option<u32>, is_validating: bool) -> Self {
-        FrameStream {
-            stream_bps,
-            stream_sample_rate,
-            is_validating,
+    fn new(params: &CodecParameters, options: &DecoderOptions) -> Self {
+        FlacDecoder {
+            params: params.clone(),
+            is_validating: options.verify,
             validator: Md5AudioValidator::new(),
         }
     }
 
-    pub fn next<B: Bytestream>(&mut self, reader: &mut B, buf: &mut AudioBuffer<i32>) -> Result<()> {
+    fn supported_codecs() -> &'static [CodecDescriptor] {
+        &[ support_codec!(CODEC_TYPE_FLAC, "flac", "Free Lossless Audio Codec") ]
+    }
+
+    fn codec_params(&self) -> &CodecParameters {
+        &self.params
+    }
+
+    fn spec(&self) -> Option<SignalSpec> {
+        if let Some(rate) = self.params.sample_rate {
+            // Prefer the channel layout over a list of channels.
+            if let Some(layout) = self.params.channel_layout {
+                return Some(SignalSpec::new_with_layout(rate, layout));
+            }
+            else if let Some(channels) = self.params.channels {
+                return Some(SignalSpec::new(rate, channels));
+            }
+        }
+        None
+    }
+
+    fn decode(&mut self, packet: Packet<'_>, buf: &mut AudioBuffer<i32>) -> Result<()> {
+        let mut reader = packet.into_stream();
+
         // Synchronize to a frame and get the synchronization code.
-        let sync = sync_frame(reader)?;
+        let sync = sync_frame(&mut reader)?;
 
         // The entire frame is checksummed with a CRC16, wrap the main reader in a CRC16 error
         // detection stream. Include the sync code in the CRC.
@@ -196,7 +223,7 @@ impl FrameStream {
         // if provided. If neither are available, return an error.
         let bits_per_sample =   if let Some(bps) = header.bits_per_sample { bps }
                                 else {
-                                    if let Some(bps) = self.stream_bps { bps }
+                                    if let Some(bps) = self.params.bits_per_sample { bps }
                                     else { return decode_error("Neither stream nor frame specified bits per sample."); }
                                 };
 
@@ -273,7 +300,7 @@ impl FrameStream {
 
         // Retrieve the CRC16 before the reading the footer.
         let crc16_expected = reader_crc16.checksum().crc();
-        let crc16_computed = read_frame_footer(reader_crc16.to_inner())?;
+        let crc16_computed = read_frame_footer(&mut reader_crc16.to_inner())?;
 
         if crc16_computed != crc16_expected {
             return decode_error("Computed frame CRC does not match expected CRC.");
@@ -282,11 +309,12 @@ impl FrameStream {
         Ok(())
     }
 
-    pub fn close(&mut self) {
+    fn close(&mut self) {
         if self.is_validating {
             eprintln!("{:?}", self.validator.finalize());
         }
     }
+
 }
 
 fn sync_frame<B: Bytestream>(reader: &mut B) -> Result<u16> {

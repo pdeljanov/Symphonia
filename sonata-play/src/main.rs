@@ -180,6 +180,7 @@ fn decode_only(mut reader: Box<dyn FormatReader>, decode_options: &DecoderOption
         // Try to decode more frames until an error.
         match decoder.decode(packet, &mut samples) {
             Err(err) => {
+                decoder.close();
                 eprint!("Error: {}", err);
                 break;
             },
@@ -242,7 +243,7 @@ fn play(mut reader: Box<dyn FormatReader>, decode_options: &DecoderOptions) -> R
         // Try to decode more frames until an error.
         match decoder.decode(packet, &mut samples) {
             Err(err) => {
-                //reader.end();
+                decoder.close();
                 eprint!("Error: {}", err);
                 break;
             },

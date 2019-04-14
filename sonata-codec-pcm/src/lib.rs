@@ -230,4 +230,8 @@ impl Decoder for PcmDecoder {
             _ => unsupported_error("PCM codec unsupported.")
         }
     }
+
+    fn close(&mut self) {
+        // Intentionally left empty.
+    }
 }

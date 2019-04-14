@@ -289,6 +289,9 @@ pub trait Decoder {
 
     /// Decodes a `Packet` of audio data into the provided `AudioBuffer`.
     fn decode(&mut self, packet: Packet<'_>, buf: &mut AudioBuffer<i32>) -> Result<()>;
+
+    /// Closes a decoder.
+    fn close(&mut self);
 }
 
 /// A `CodecDescriptor` stores a description of a single logical codec. Common information such as the `CodecType`, a

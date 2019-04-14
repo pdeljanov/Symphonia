@@ -1,20 +1,17 @@
 #![warn(rust_2018_idioms)]
-use std::io;
 
 use sonata_core::support_format;
 
 use sonata_core::audio::Timestamp;
 use sonata_core::codecs::CodecParameters;
 use sonata_core::errors::{Result, seek_error, unsupported_error, SeekErrorKind};
-use sonata_core::formats::{Packet, Stream, FormatDescriptor, FormatOptions};
+use sonata_core::formats::{FormatDescriptor, FormatOptions, FormatReader, Packet};
+use sonata_core::formats::{ProbeDepth, ProbeResult, SeekSearchResult, Stream};
 use sonata_core::io::*;
 
 mod chunks;
 
 use chunks::*;
-
-pub use sonata_core::formats::{ProbeDepth, ProbeResult, FormatReader, SeekSearchResult};
-pub use sonata_core::codecs::Decoder;
 
 /// The recommended maximum number of bytes advance a stream to find the stream marker before giving up.
 const WAVE_PROBE_SEARCH_LIMIT: usize = 512 * 1024;
