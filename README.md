@@ -26,7 +26,6 @@ Up-to-date project progress on the [Trello Board](https://trello.com/b/2EhGvDsR)
 |--------------|----------|--------------|---------|------------------------|
 | ISO/MP4      | Planning | `isomp4`     | No      | `sonata-format-isomp4` |
 | MKV          | -        | `mkv`        | Yes     | `sonata-format-mkv`    |
-| MPEG-TS      | -        | `mpeg-ts`    | No      | `sonata-format-mpegts` |
 | OGG          | -        | `ogg`        | Yes     | `sonata-format-ogg`    |
 | Wave/AIFF    | In Work  | `wav`        | Yes     | `sonata-format-wav`    |
 | WebM         | -        | `webm`       | No      | `sonata-format-webm`   |
@@ -40,7 +39,7 @@ Up-to-date project progress on the [Trello Board](https://trello.com/b/2EhGvDsR)
 | Hardware | -           | `hwdec`      | No      | `sonata-codec-hwdec`   |
 | MP3      | Planning    | `mp3`        | No      | `sonata-codec-mp3`     |
 | Opus     | -           | `opus`       | Yes     | `sonata-codec-opus`    |
-| PCM      | In Work     | `pcm`        | Yes     | `sonata-codec-pcm`     |
+| PCM      | Functional  | `pcm`        | Yes     | `sonata-codec-pcm`     |
 | Vorbis   | -           | `vorbis`     | Yes     | `sonata-codec-vorbis`  |
 | WavPack  | -           | `wavpack`    | Yes     | `sonata-codec-wavpack` |
 

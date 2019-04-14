@@ -4,8 +4,7 @@ WAV decoder for the Sonata media framework.
 
 ## Status
 
-- [ ] Container reading
-- [ ] Decoding
+- [x] Container reading
 - [ ] Container writing
 - [ ] Correctness verification
 - [ ] Fuzzing

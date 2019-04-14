@@ -1,6 +1,6 @@
 # Sonata Play
 
-Quick-and-dirty audio player for testing Sonata decoders.
+Quick-and-dirty audio player for testing Sonata demuxers and decoders.
 
 ## Operating System Support
 
@@ -8,23 +8,23 @@ Sonata Play currently only supports Linux with PulseAudio.
 
 ## Usage
 
-```
+```bash
 # Play an audio file.
 cargo run -- /path/to/file
 
-# Play an audio file and verify the decoded while playing.
+# Play an audio file and verify the decoded audio whilst playing.
 cargo run -- --verify /path/to/file
 
-# Seek to desired location, and play the audio file.
+# Seek the audio file to the desired timestamp and then play.
 cargo run -- -s <seconds> /path/to/file
 
-# Probe a file for audio streams.
+# Probe a file for metadata, streams, visuals, etc.
 cargo run -- --probe-only /path/to/file
 
 # Decode and verify if the decoded audio is valid (some formats only).
 cargo run -- --verify-only /path/to/file
 
-# Decode but do not play or verify the decode audio (benchmarking).
+# Decode, but do not play or verify the decoded audio (benchmarking).
 cargo run -- --decode-only /path/to/file
 ```
 
