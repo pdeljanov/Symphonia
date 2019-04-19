@@ -11,12 +11,14 @@ keywords = ["audio", "codec", "decoder", "encoder", "format"]
 edition = "2018"
 
 [features]
-default = ["sonata-format-wav", "sonata-codec-flac", "sonata-codec-pcm"]
+default = ["wav", "flac", "pcm"]
 flac = ["sonata-codec-flac"]
 pcm = ["sonata-codec-pcm"]
 wav = ["sonata-format-wav"]
 
 [dependencies]
+lazy_static = "1.3.0"
+sonata-core = { version="*", path = "../sonata-core" }
 sonata-codec-flac = { version = "*", path = "../sonata-codec-flac", optional = true }
 sonata-codec-pcm = { version = "*", path = "../sonata-codec-pcm", optional = true }
 sonata-format-wav = { version = "*", path = "../sonata-format-wav", optional = true }

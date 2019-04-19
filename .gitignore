@@ -9,3 +9,7 @@ Cargo.lock
 # Profiling data
 perf.data
 perf.data.old
+
+# Sample data
+sonata-codec-*/samples
+sonata-format-*/samples

@@ -19,38 +19,13 @@ use std::default::Default;
 use std::fs::File;
 use std::path::Path;
 use clap::{Arg, App};
-use sonata_core::errors::{Result, unsupported_error};
-use sonata_core::audio::*;
-use sonata_core::codecs::{CodecRegistry, DecoderOptions};
-use sonata_core::formats::{FormatReader, FormatRegistry, Hint, FormatOptions, ProbeDepth, ProbeResult};
+use sonata;
+use sonata::core::errors::{Result, unsupported_error};
+use sonata::core::audio::*;
+use sonata::core::codecs::DecoderOptions;
+use sonata::core::formats::{FormatReader, Hint, FormatOptions, ProbeDepth, ProbeResult};
 use libpulse_binding as pulse;
 use libpulse_simple_binding as psimple;
-
-use lazy_static::lazy_static;
-
-lazy_static! {
-    static ref CODEC_REGISTRY: CodecRegistry = {
-        use sonata_codec_flac::FlacDecoder;
-        use sonata_codec_pcm::PcmDecoder;
-
-        let mut registry = CodecRegistry::new();
-        registry.register_all::<FlacDecoder>(0);
-        registry.register_all::<PcmDecoder>(0);
-        registry
-    };
-}
-
-lazy_static! {
-    static ref FORMAT_REGISTRY: FormatRegistry = {
-        use sonata_codec_flac::FlacReader;
-        use sonata_format_wav::WavReader;
-
-        let mut registry = FormatRegistry::new();
-        registry.register_all::<FlacReader>(0);
-        registry.register_all::<WavReader>(0);
-        registry
-    };
-}
 
 fn main() {
     let matches = App::new("Sonata Player")
@@ -108,7 +83,7 @@ fn main() {
     // Use the format registry to pick a format reader for the given file and instantiate it with a default set of 
     // options.
     let format_options = FormatOptions { ..Default::default() };
-    let mut reader = FORMAT_REGISTRY.guess(&hint, file, &format_options).unwrap();
+    let mut reader = sonata::default::get_formats().guess(&hint, file, &format_options).unwrap();
 
     // Probe the file using the format reader to verify the file is actually supported.
     let probe_info = reader.probe(ProbeDepth::Deep).unwrap();
@@ -157,7 +132,7 @@ fn decode_only(mut reader: Box<dyn FormatReader>, decode_options: &DecoderOption
     let stream = reader.default_stream().unwrap();
 
     // Create a decoder for the stream.
-    let mut decoder = CODEC_REGISTRY.make(&stream.codec_params, &decode_options).unwrap();
+    let mut decoder = sonata::default::get_codecs().make(&stream.codec_params, &decode_options).unwrap();
 
     // Get the expected signal spec from the decoder.
     // TODO: Handle the case where the signal spec is not known until the first buffer is decoded.
@@ -198,7 +173,7 @@ fn play(mut reader: Box<dyn FormatReader>, decode_options: &DecoderOptions) -> R
     let stream = reader.default_stream().unwrap();
 
     // Create a decoder for the stream.
-    let mut decoder = CODEC_REGISTRY.make(&stream.codec_params, &decode_options).unwrap();
+    let mut decoder = sonata::default::get_codecs().make(&stream.codec_params, &decode_options).unwrap();
 
     // Get the expected signal spec from the decoder.
     // TODO: Handle the case where the signal spec is not known until the first buffer is decoded.
