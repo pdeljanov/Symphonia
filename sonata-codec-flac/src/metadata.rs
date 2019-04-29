@@ -190,13 +190,10 @@ macro_rules! verify_block_bounds {
     )
 }
 
-pub struct VorbisComment {
-    vendor: String,
-    comments: Vec<Tag>
-}
+pub struct VorbisComment;
 
 impl VorbisComment {
-    pub fn read<B : Bytestream>(reader: &mut B, block_length: usize) -> Result<VorbisComment> {
+    pub fn process<B : Bytestream>(reader: &mut B, block_length: usize, tags: &mut Vec<Tag>) -> Result<()> {
         // Accumulate the number of bytes read as the comment block is decoded and ensure that
         // the block_length as stated in the header is never exceeded.
         let mut block_bytes_read = 0usize;
@@ -209,17 +206,14 @@ impl VorbisComment {
         verify_block_bounds!(block_bytes_read, block_length, vendor_length);
 
         let mut vendor_string_octets = Vec::<u8>::with_capacity(vendor_length);
-        unsafe { vendor_string_octets.set_len(vendor_length); }
+        vendor_string_octets.resize(vendor_length, 0);
         reader.read_buf_bytes(&mut vendor_string_octets)?;
+
+        let vendor = String::from_utf8_lossy(&vendor_string_octets).to_string();
 
         // Read the number of comments.
         verify_block_bounds!(block_bytes_read, block_length, mem::size_of::<u32>());
         let n_comments = reader.read_u32()? as usize;
-
-        let mut comments = VorbisComment {
-            vendor: String::from_utf8_lossy(&vendor_string_octets).to_string(),
-            comments: Vec::<Tag>::with_capacity(n_comments as usize)
-        };
 
         for _ in 0..n_comments {
             // Read the comment length in bytes.
@@ -229,29 +223,15 @@ impl VorbisComment {
             // Read the comment string.
             verify_block_bounds!(block_bytes_read, block_length, comment_length);
 
-            let mut comment_bytes = Vec::<u8>::with_capacity(comment_length);
-            unsafe { comment_bytes.set_len(comment_length); }
-            reader.read_buf_bytes(&mut comment_bytes)?;
+            let mut comment_byte = Vec::<u8>::with_capacity(comment_length);
+            comment_byte.resize(comment_length, 0);
+            reader.read_buf_bytes(&mut comment_byte)?;
 
             // Parse comment as UTF-8 and add to list.
-            comments.comments.push(VorbisTag::parse(&String::from_utf8_lossy(&comment_bytes).to_string()));
+            tags.push(VorbisTag::parse(&String::from_utf8_lossy(&comment_byte).to_string()));
         }
 
-        Ok(comments)
-    }
-
-}
-
-impl fmt::Display for VorbisComment {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "VorbisComment: {{")?;
-        writeln!(f, "\tvendor: \"{}\"", self.vendor)?;
-        writeln!(f, "\tcomments: [")?;
-        for comment in &self.comments {
-            writeln!(f, "\t\t{},", comment)?;
-        }
-        writeln!(f, "\t]")?;
-        writeln!(f, "}}")
+        Ok(())
     }
 }
 

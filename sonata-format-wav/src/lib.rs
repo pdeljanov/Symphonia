@@ -24,6 +24,7 @@ use sonata_core::codecs::CodecParameters;
 use sonata_core::errors::{Result, seek_error, unsupported_error, SeekErrorKind};
 use sonata_core::formats::{FormatDescriptor, FormatOptions, FormatReader, Packet};
 use sonata_core::formats::{ProbeDepth, ProbeResult, SeekSearchResult, Stream};
+use sonata_core::tags::Tag;
 use sonata_core::io::*;
 
 mod chunks;
@@ -41,6 +42,7 @@ const WAVE_MAX_FRAMES_PER_PACKET: u64 = 4096;
 pub struct WavReader {
     reader: MediaSourceStream,
     streams: Vec<Stream>,
+    tags: Vec<Tag>
 }
 
 impl WavReader {
@@ -58,7 +60,7 @@ impl WavReader {
             match chunk.unwrap() {
                 RiffInfoListChunks::Info(nfo) => { 
                     let info = nfo.parse(&mut self.reader)?;
-                    eprintln!("{}", info.tag); 
+                    self.tags.push(info.tag); 
                 }
             }
         }
@@ -76,6 +78,7 @@ impl FormatReader for WavReader {
         WavReader {
             reader: source,
             streams: Vec::new(),
+            tags: Vec::new(),
         }
     }
 
@@ -90,6 +93,10 @@ impl FormatReader for WavReader {
 
     fn next_packet(&mut self) -> Result<Packet<'_>> {
         Ok(Packet::new_direct(0, &mut self.reader))
+    }
+
+    fn tags(&self) -> &[Tag] {
+        &self.tags
     }
 
     fn streams(&self) -> &[Stream] {

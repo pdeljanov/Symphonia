@@ -131,9 +131,9 @@ pub enum StandardTagKey {
 
 /// A `Tag` encapsulates the key-value pair of a media stream's metadata tag.
 pub struct Tag {
-    std_key: Option<StandardTagKey>,
-    key: String,
-    value: String,
+    pub std_key: Option<StandardTagKey>,
+    pub key: String,
+    pub value: String,
 }
 
 impl Tag {
@@ -143,6 +143,10 @@ impl Tag {
             key: key.to_string(),
             value: value.to_string()
         }
+    }
+
+    pub fn is_known(&self) -> bool {
+        self.std_key.is_some()
     }
 }
 

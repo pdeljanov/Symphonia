@@ -26,6 +26,7 @@ use sonata_core::codecs::{CODEC_TYPE_FLAC, CodecParameters};
 use sonata_core::errors::{Result, decode_error, seek_error, SeekErrorKind};
 use sonata_core::formats::{FormatDescriptor, FormatOptions, FormatReader, Packet};
 use sonata_core::formats::{ProbeDepth, ProbeResult, SeekIndex, SeekSearchResult, Stream};
+use sonata_core::tags::Tag;
 use sonata_core::io::*;
 
 use super::decoder::{PacketParser};
@@ -44,6 +45,7 @@ const FLAC_PROBE_SEARCH_LIMIT: usize = 512 * 1024;
 pub struct FlacReader {
     reader: MediaSourceStream,
     streams: Vec<Stream>,
+    tags: Vec<Tag>,
     index: Option<SeekIndex>,
     first_frame_offset: u64,
 }
@@ -91,24 +93,27 @@ impl FlacReader {
                 MetadataBlockType::Application => {
                     eprintln!("{}", Application::read(&mut self.reader, header.block_length)?);
                 },
+                // SeekTable blocks are parsed into a SeekIndex.
                 MetadataBlockType::SeekTable => {
                     // Only one SeekTable is allowed.
                     if self.index.is_none() {
                         let mut index = SeekIndex::new();
                         SeekTable::process(&mut self.reader, header.block_length, &mut index)?;
-                        eprintln!("{}", &index);
                         self.index = Some(index);
                     }
                     else {
                         return decode_error("Found more than one SeekTable block.");
                     }
                 },
+                // VorbisComment blocks are parsed into Tags.
                 MetadataBlockType::VorbisComment => {
-                    eprintln!("{}", VorbisComment::read(&mut self.reader, header.block_length)?);
+                    VorbisComment::process(&mut self.reader, header.block_length, &mut self.tags)?;
                 },
+                // Cuesheet blocks are parsed into CuePoints.
                 MetadataBlockType::Cuesheet => {
                     eprintln!("{}", Cuesheet::read(&mut self.reader, header.block_length)?);
                 },
+                // Picture block are read as Visuals.
                 MetadataBlockType::Picture => {
                     eprintln!("{}", Picture::read(&mut self.reader, header.block_length)?);
                 },
@@ -138,6 +143,7 @@ impl FormatReader for FlacReader {
         FlacReader {
             reader: source,
             streams: Vec::new(),
+            tags: Vec::new(),
             index: None,
             first_frame_offset: 0,
         }
@@ -153,6 +159,10 @@ impl FormatReader for FlacReader {
         // practically decoding it. This is all to say that the what follows the metadata blocks is a codec bitstream.
         // Therefore, next_packet will simply always return the reader and let the codec advance the stream.
         Ok(Packet::new_direct(0, &mut self.reader))
+    }
+
+    fn tags(&self) -> &[Tag] {
+        &self.tags
     }
 
     fn streams(&self) -> &[Stream] {

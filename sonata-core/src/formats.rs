@@ -52,7 +52,18 @@ pub enum Limit {
     /// Use the (reasonable) default specified by the `Format` or `Codec`.
     Default,
     /// Specify the upper limit of the resource. Units are use-case specific.
-    Maximum(u32),
+    Maximum(usize),
+}
+
+impl Limit {
+    /// Gets the numeric limit of the limit, or default value. If there is no limit, None is returned.
+    pub fn limit_or_default(&self, default: usize) -> Option<usize> {
+        match self {
+            Limit::None => None,
+            Limit::Default => Some(default),
+            Limit::Maximum(max) => Some(*max),
+        }
+    }
 }
 
 /// `FormatOptions` is a common set of options that all demuxers use.
@@ -96,13 +107,15 @@ pub enum ProbeDepth {
 }
 
 pub struct Visual {
-    data: Vec<u8>,
+    width: u32,
+    height: u32,
+    bits_per_pixel: u32,
+    
 }
 
 impl Visual {
-    fn as_bytes(&self) -> &[u8] {
-        &self.data
-    }
+
+
 }
 
 pub struct TableOfContents {
@@ -124,24 +137,34 @@ pub trait Hooks {
 
     /// Commonly known as "tags," metadata is human readable textual information describing the
     /// audio. This function is called by the decoder when such information becomes available.
-    fn on_metadata(&mut self, hook: Fn(&Tag));
+    fn on_metadata(&mut self, tag: &Tag);
 
-    /// Application data is any data embedded into the audio stream that is to be processed by a
+    /// Vendor data is any data embedded into the audio stream that is to be processed by a
     /// third-party or vendor-specific extension or application. This data is ignored by the
     /// decoder.
-    /// 
-    fn on_visual(&mut self, hook: Fn(&Visual));
+    fn on_vendor_data(&mut self, data: &VendorData);
 
     /// A visual is any kind of graphic (picture, video, or text) that is embedded into the audio
     /// stream that should be displayed to the user. A visual may be loaded and presented
     /// immediately when a stream is loaded, or be presented at a designated time.
-    fn on_table_of_contents(&mut self, hook: Fn(&TableOfContents));
+    fn on_visual(&mut self, visual: &Visual);
 
     /// A table of contents may be embedded in an audio stream to allow the presentation of a
     /// single audio stream as many logical tracks.
-    fn on_vendor_data(&mut self, hook: Fn(&VendorData));
+    fn on_table_of_contents(&mut self, toc: &TableOfContents);
     
 }
+
+pub enum Events {
+    OnMetadata(Box<dyn Fn(&Tag)>),
+    OnVendorData(Box<dyn Fn(&VendorData)>),
+    OnVisual(Box<dyn Fn(&Visual)>),
+    OnTableOfContents(Box<dyn Fn(&TableOfContents)>),
+}
+
+
+// self.emitter.emit::<Events::OnMetadata>::(&tag);
+// reader.on::<Events::OnMetadata>::();
 
 #[derive(Copy,Clone,PartialEq,Debug)]
 pub struct SeekPoint {
@@ -318,6 +341,12 @@ pub trait FormatReader {
     /// can be set based on the caller's use-case.
     fn probe(&mut self, depth: ProbeDepth) -> Result<ProbeResult>;
 
+    /// Gets a list of all tags.
+    fn tags(&self) -> &[Tag];
+    //fn visuals(&self) -> &[Visual];
+    //fn cuepoints(&self) -> &[CuePoint];
+    //fn vendor_data(&self) -> &[u8];
+
     /// Seek, as closely as possible, to the timestamp requested. 
     /// 
     /// Note that many containers cannot seek to an exact timestamp, rather they can only seek to a coarse location and 
@@ -327,7 +356,7 @@ pub trait FormatReader {
     /// Gets a list of streams in the container.
     fn streams(&self) -> &[Stream];
 
-    /// Gets the default stream. If the media container has a method of determing the default stream, the function 
+    /// Gets the default stream. If the media container has a method of determing the default stream, this function 
     /// should return it. Otherwise, the first stream is returned. If no streams are present, None is returned.
     fn default_stream(&self) -> Option<&Stream> {
         let streams = self.streams();

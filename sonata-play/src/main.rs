@@ -24,6 +24,7 @@ use sonata::core::errors::{Result, unsupported_error};
 use sonata::core::audio::*;
 use sonata::core::codecs::DecoderOptions;
 use sonata::core::formats::{FormatReader, Hint, FormatOptions, ProbeDepth, ProbeResult};
+use sonata::core::tags::Tag;
 use libpulse_binding as pulse;
 use libpulse_simple_binding as psimple;
 
@@ -67,6 +68,7 @@ fn main() {
     // Get the file path option.
     let path = Path::new(matches.value_of("FILE").unwrap());
 
+
     // Create a hint to help the format registry guess what format reader is appropriate for file at the given file 
     // path.
     let mut hint = Hint::new();
@@ -95,6 +97,12 @@ fn main() {
         },
         // The file is supported by the format reader.
         ProbeResult::Supported => {
+            // Print metadata fancily.
+            pretty_print_path(&path);
+            pretty_print_chapters();
+            pretty_print_tags(reader.tags());
+            pretty_print_visuals();
+
             // Verify only mode decodes and always verifies the audio, but doese not play it.
             if matches.is_present("verify-only") {
                 let options = DecoderOptions { verify: true, ..Default::default() };
@@ -124,6 +132,37 @@ fn main() {
             }
         }
     }
+}
+
+fn pretty_print_path(path: &Path) {
+    eprintln!("+ {}", path.display());
+    eprintln!("|");
+}
+
+fn pretty_print_chapters() {
+    eprintln!("| // Chapters:");
+}
+
+/// Print tags in a pretty manner. Known tags (tags with StandardTagKeys) will be printed first, then unknown tags.
+fn pretty_print_tags(tags: &[Tag]) {
+    eprintln!("| // Metadata:");
+    
+    for tag in tags.iter().filter(| tag | tag.is_known()) {
+        if let Some(std_key) = tag.std_key {
+            eprintln!("|      * {:<28} : {}", format!("{:?}", std_key), tag.value);
+        }
+    }
+
+    for tag in tags.iter().filter(| tag | !tag.is_known()) {
+        match tag.key.len() {
+            0...28 => eprintln!("|      * {:<28} : {}", tag.key, tag.value),
+            _ => eprintln!("|      * {:.<28} : {}", tag.key.split_at(26).0, tag.value),
+        }
+    }
+}
+
+fn pretty_print_visuals() {
+    eprintln!("| // Visuals:");
 }
 
 fn decode_only(mut reader: Box<dyn FormatReader>, decode_options: &DecoderOptions) -> Result<()> {
