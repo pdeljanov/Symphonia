@@ -120,21 +120,33 @@ pub const CODEC_TYPE_PCM_ALAW: CodecType         = CodecType(0x124);
 /// PCM Mu-law
 pub const CODEC_TYPE_PCM_MULAW: CodecType        = CodecType(0x125);
 
-// Regular codecs
-//---------------
+// Compressed audio codecs
+//------------------------
 
 /// Free Lossless Audio Codec (FLAC)
 pub const CODEC_TYPE_FLAC: CodecType             = CodecType(0x1000);
 /// MPEG Layer 1, 2, and 3 (MP1, MP2, MP3)
-pub const CODEC_TYPE_MP3: CodecType              = CodecType(0x2000);
+pub const CODEC_TYPE_MP3: CodecType              = CodecType(0x1001);
 /// Advanced Audio Coding (AAC)
-pub const CODEC_TYPE_AAC: CodecType              = CodecType(0x3000);
+pub const CODEC_TYPE_AAC: CodecType              = CodecType(0x1002);
 /// Vorbis 
-pub const CODEC_TYPE_VORBIS: CodecType           = CodecType(0x4000);
+pub const CODEC_TYPE_VORBIS: CodecType           = CodecType(0x1003);
 /// Opus
-pub const CODEC_TYPE_OPUS: CodecType             = CodecType(0x5000);
+pub const CODEC_TYPE_OPUS: CodecType             = CodecType(0x1004);
 /// WavPack
-pub const CODEC_TYPE_WAVPACK: CodecType          = CodecType(0x6000);
+pub const CODEC_TYPE_WAVPACK: CodecType          = CodecType(0x1005);
+
+// Image codecs
+//-------------
+
+/// Joint Photographic Experts Group (JPEG)
+pub const CODEC_TYPE_JPEG: CodecType             = CodecType(0x2000);
+/// Portable Network Graphics (PNG)
+pub const CODEC_TYPE_PNG: CodecType              = CodecType(0x2001);
+/// Bitmap (BMP)
+pub const CODEC_TYPE_BMP: CodecType              = CodecType(0x2002);
+/// Graphics Interchange Format (GIF)
+pub const CODEC_TYPE_GIF: CodecType              = CodecType(0x2003);
 
 
 impl fmt::Display for CodecType {

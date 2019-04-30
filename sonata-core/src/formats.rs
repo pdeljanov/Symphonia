@@ -20,10 +20,10 @@ use std::fmt;
 use std::io;
 
 use crate::audio::Timestamp;
-use crate::codecs::CodecParameters;
-use super::errors::Result;
+use crate::codecs::{CodecType, CodecParameters};
+use crate::errors::Result;
 use crate::io::{MediaSource, MediaSourceStream, Bytestream};
-use super::tags::Tag;
+use crate::tags::{StandardVisualKey, Tag};
 
 /// The verbosity of log messages produced by a decoder or demuxer.
 pub enum Verbosity {
@@ -106,80 +106,68 @@ pub enum ProbeDepth {
     Deep
 }
 
+/// A 2D (width and height) size type.
+pub struct Size {
+    /// The width.
+    pub width: u32,
+    /// The height.
+    pub height: u32,
+}
+
+/// A `Visual` is any 2D graphic that is embedded within a media format.
 pub struct Visual {
-    width: u32,
-    height: u32,
-    bits_per_pixel: u32,
-    
+    /// The codec used to encode the `Visual`.
+    pub codec: CodecType,
+    /// The dimensions of the `Visual`.
+    pub dimensions: Size,
+    /// The usage and/or content of the `Visual`.
+    pub usage: Option<StandardVisualKey>,
+    /// Any tags associated with the `Visual`.
+    pub tags: Vec<Tag>,
+    /// The data of the `Visual`, encoded with the `codec` specified above.
+    pub data: Box<[u8]>,
 }
 
-impl Visual {
-
-
+/// A `Cue` is a designated span of time within a media stream.
+/// 
+/// A `Cue` may be a mapping from either a source track, a chapter, cuesheet, or a timespan depending on the source 
+/// media. Each `Cue` may contain nested `Cue`s that never exceed the parent's start and end timestamps. A `Cue` may 
+/// also have associated `Tag`s.
+pub struct Cue {
+    /// A unique index for the `Cue`.
+    pub index: u32,
+    /// The starting timestamp in number of frames from the start of the stream.
+    pub start_ts: u64,
+    /// The ending timestamp in number of frames from the start of the stream.
+    pub end_ts: u64,
+    /// A list of `Tag`s associated with the `Cue`.
+    pub tags: Vec<Tag>,
+    /// A list of sub-cues that are contained within this `Cue`.
+    pub sub_cues: Vec<Cue>,
 }
 
-pub struct TableOfContents {
-
-}
-
+/// `VendorData` is application specific data embedded within the media format.
 pub struct VendorData {
-
+    /// A text representation of the vendor's application identifier.
+    pub ident: String,
+    /// The vendor data.
+    pub data: Box<[u8]>,
 }
 
-/// The `EventHooks` traits provides an interface to (optionally) catch and react to supplementary
-/// data present within a media stream. The most obvious use-case of this supplementary data is
-/// metadata, the textual tags, describing the audio stream. If the data is not worthwhile for the
-/// application at hand, it may simply be ignored.
-///
-/// Events may fire at any time during the decoding process, and will fire synchronously with the
-/// decoding process.
-pub trait Hooks {
-
-    /// Commonly known as "tags," metadata is human readable textual information describing the
-    /// audio. This function is called by the decoder when such information becomes available.
-    fn on_metadata(&mut self, tag: &Tag);
-
-    /// Vendor data is any data embedded into the audio stream that is to be processed by a
-    /// third-party or vendor-specific extension or application. This data is ignored by the
-    /// decoder.
-    fn on_vendor_data(&mut self, data: &VendorData);
-
-    /// A visual is any kind of graphic (picture, video, or text) that is embedded into the audio
-    /// stream that should be displayed to the user. A visual may be loaded and presented
-    /// immediately when a stream is loaded, or be presented at a designated time.
-    fn on_visual(&mut self, visual: &Visual);
-
-    /// A table of contents may be embedded in an audio stream to allow the presentation of a
-    /// single audio stream as many logical tracks.
-    fn on_table_of_contents(&mut self, toc: &TableOfContents);
-    
-}
-
-pub enum Events {
-    OnMetadata(Box<dyn Fn(&Tag)>),
-    OnVendorData(Box<dyn Fn(&VendorData)>),
-    OnVisual(Box<dyn Fn(&Visual)>),
-    OnTableOfContents(Box<dyn Fn(&TableOfContents)>),
-}
-
-
-// self.emitter.emit::<Events::OnMetadata>::(&tag);
-// reader.on::<Events::OnMetadata>::();
-
-#[derive(Copy,Clone,PartialEq,Debug)]
+/// A `SeekPoint` is a mapping between a sample or frame number to byte offset within a media stream.
+#[derive(Copy,Clone,PartialEq)]
 pub struct SeekPoint {
+    /// The frame or sample timestamp of the `SeekPoint`.
     pub frame_ts: u64,
+    /// The byte offset of the `SeekPoint`s timestamp relative to a format-specific location.
     pub byte_offset: u64,
+    /// The number of frames the `SeekPoint` covers.
     pub n_frames: u32,
 }
 
 impl SeekPoint {
     fn new(frame_ts: u64, byte_offset: u64, n_frames: u32) -> Self {
-        SeekPoint {
-            frame_ts,
-            byte_offset,
-            n_frames,
-        }
+        SeekPoint { frame_ts, byte_offset, n_frames }
     }
 }
 
@@ -189,7 +177,11 @@ impl fmt::Display for SeekPoint {
     }
 }
 
-/// A `SeekIndex` stores seek points (generally a sample or frame number to byte offset) within an audio stream.
+/// A `SeekIndex` stores `SeekPoint`s (generally a sample or frame number to byte offset) within a media stream and 
+/// provides methods to efficiently search for the nearest `SeekPoint`(s) given a timestamp.
+/// 
+/// A `SeekIndex` does not require complete coverage of the entire media stream. However, the better the coverage, the 
+/// smaller the manual search range the `SeekIndex` will return.
 pub struct SeekIndex {
     points: Vec<SeekPoint>,
 }
@@ -197,7 +189,7 @@ pub struct SeekIndex {
 /// `SeekSearchResult` is the return value for a search on a `SeekIndex`. It returns a range of `SeekPoint`s a 
 /// `FormatReader` should search to find the desired timestamp. Ranges are lower-bound inclusive, and upper-bound 
 /// exclusive.
-#[derive(PartialEq,Debug)]
+#[derive(PartialEq)]
 pub enum SeekSearchResult {
     /// The `SeekIndex` is empty so the desired timestamp could not be found. The entire stream should be searched for 
     /// the desired timestamp.
@@ -224,6 +216,7 @@ impl SeekIndex {
 
     /// Insert a `SeekPoint` into the index.
     pub fn insert(&mut self, frame: u64, byte_offset: u64, n_frames: u32) {
+        // TODO: Ensure monotonic timestamp ordering of self.points.
         self.points.push(SeekPoint::new(frame, byte_offset, n_frames));
     }
 
@@ -297,8 +290,12 @@ impl fmt::Display for SeekIndex {
     }
 }
 
+/// A `Stream` is an independently coded media stream. A media format may contain multiple media streams in one 
+/// container. Each of those media streams are represented by one `Stream`.
 pub struct Stream {
+    /// The parameters defining the codec for the `Stream`.
     pub codec_params: CodecParameters,
+    /// The language of the `Stream`.
     pub language: Option<String>,
 }
 
@@ -314,17 +311,18 @@ impl Stream {
 /// A `FormatReader` is a container demuxer. It provides methods to probe a media container for information and access
 /// the streams encapsulated in the container.
 ///
-/// Most, if not all, media containers contain some metadata, then a number of packetized and interleaved media streams. 
-/// Generally, the encapsulated streams are individually encoded using some codec. The allowed codecs for a container 
-/// are defined in the specification.
+/// Most, if not all, media containers contain metadata, then a number of packetized, and interleaved media streams. 
+/// Generally, the encapsulated streams are independently encoded using some codec. The allowed codecs for a container 
+/// are defined in the specification of the container format.
 ///
 /// During demuxing, packets are read one-by-one and may be discarded or decoded at the choice of the caller. The 
-/// definition of a packet is ambiguous, it may a frame of video, 1 millisecond or 1 second of audio, but a packet will 
-/// never contain encoded data from two different media streams. Therefore the caller can be selective in what stream
-/// should be decoded and played back.
+/// definition of a packet is ambiguous, it may be a frame of video, 1 millisecond or 1 second of audio, but a packet 
+/// will never contain data from two different media streams. Therefore the caller can be selective in what stream(s) 
+/// should be decoded and consumed.
 ///
-/// `FormatReader` provides an iterator interface over packets for easy consumption and filterting. Iterators are valid 
-/// until a seek.
+/// `FormatReader` provides an Iterator-like interface over packets for easy consumption and filterting. Seeking will
+/// invalidate the assumed state of any decoder processing the packets from `FormatReader` and should be reset after a 
+/// successful seek operation.
 pub trait FormatReader {
 
     /// Instantiates the `FormatReader` with the provided `FormatOptions`.
@@ -368,7 +366,6 @@ pub trait FormatReader {
 
     /// Lazily get the next packet from the container. 
     fn next_packet(&mut self) -> Result<Packet<'_>>;
-
 }
 
 
@@ -453,25 +450,18 @@ impl<'a> Packet<'a> {
 
 }
 
+/// The result of a probe operation.
 pub enum ProbeResult {
+    /// The format is unsupported.
     Unsupported,
+    /// The format is supported.
     Supported
 }
 
-/// The `ProbeInfo` struct contains implementation specific format information from the result of a
-/// probe operation. It is not directly useful to the end-user as it generally only contains
-/// information required by the `FormatReader` to continue where the probe left off. This is
-/// because a probe is simply the cheapest possible check to see if a byte stream asserts it is
-/// a certain media format type and that the `FormatReader` could potentially read it. Probe does
-/// not verify the validity of the stream, nor does it read all the metadata.
-///
-/// Additionally, the stream is owned by `ProbeInfo` to ensure the streaam is not modified between
-/// a `probe()` and `make_reader()` call.
-pub struct ProbeInfo {
-
-}
-
-
+/// The `FormatRegistry` allows the registration of an arbitrary number of `FormatReader`s and subsequently will guess
+/// which `FormatReader` among them is appropriate for reading a given `MediaSource`.
+/// 
+/// It is recommended that one `FormatRegistry` be created for the life of the application.
 pub struct FormatRegistry {
     descriptors: Vec<(FormatDescriptor, u32)>,
 }
@@ -484,22 +474,23 @@ impl FormatRegistry {
         }
     }
 
-    /// Attempts to guess the appropriate demuxer and select it for use through analysis and the provided format hints.
+    /// Attempts to guess and instantiate the appropriate `FormatReader` for the given source through analysis and the 
+    /// provided hints.
     /// 
-    /// Note: Guessing is naively implemented and only uses the extension and mime-type to choose the format.
-    pub fn guess<S>(&self, guess: &Hint, src: Box<S>, options: &FormatOptions) -> Option<Box<dyn FormatReader>> 
+    /// Note: Guessing is currently naively implemented and only uses the extension and mime-type to choose the format.
+    pub fn guess<S>(&self, hint: &Hint, src: Box<S>, options: &FormatOptions) -> Option<Box<dyn FormatReader>> 
     where
         S: 'static + MediaSource
     {
         for descriptor in &self.descriptors {
             let mut supported = false;
 
-            supported |= match guess.extension {
+            supported |= match hint.extension {
                 Some(ref extension) => descriptor.0.supports_extension(extension),
                 None => false
             };
 
-            supported |= match guess.mime_type {
+            supported |= match hint.mime_type {
                 Some(ref mime_type) => descriptor.0.supports_mime_type(mime_type),
                 None => false
             };
@@ -531,12 +522,21 @@ impl FormatRegistry {
 
 }
 
+/// A `Hint` provides additional information and context to the `FormatRegistry` when guessing what `FormatReader to 
+/// use to open and read a piece of media.
+/// 
+/// For example, the `FormatRegistry` cannot examine the extension or mime-type of the media because `MediaSourceStream`
+/// abstracts away such details. However, the embedder may have this information from a file path, HTTP header, email 
+/// attachment metadata, etc. `Hint`s are optional, and won't lead the registry astray if they're wrong, but they may
+/// provide an informed initial guess and optimize the guessing process siginificantly especially as more formats are
+/// registered.
 pub struct Hint {
     extension: Option<String>,
     mime_type: Option<String>,
 }
 
 impl Hint {
+    /// Instantiate an empty `Hint`.
     pub fn new() -> Self {
         Hint {
             extension: None,
@@ -544,11 +544,13 @@ impl Hint {
         }
     }
 
+    /// Add a file extension `Hint`.
     pub fn with_extension(&mut self, extension: &str) -> &mut Self {
         self.extension = Some(extension.to_owned());
         self
     }
 
+    /// Add a MIME/Media-type `Hint`.
     pub fn mime_type(&mut self, mime_type: &str) -> &mut Self {
         self.mime_type = Some(mime_type.to_owned());
         self

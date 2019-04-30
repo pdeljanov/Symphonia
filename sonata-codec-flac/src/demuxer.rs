@@ -95,7 +95,8 @@ impl FlacReader {
                 },
                 // SeekTable blocks are parsed into a SeekIndex.
                 MetadataBlockType::SeekTable => {
-                    // Only one SeekTable is allowed.
+                    // Check if a SeekTable has already be parsed. If one has, then the file is invalid, atleast for 
+                    // seeking. Either way, it's a violation of the specification.
                     if self.index.is_none() {
                         let mut index = SeekIndex::new();
                         SeekTable::process(&mut self.reader, header.block_length, &mut index)?;
@@ -113,13 +114,15 @@ impl FlacReader {
                 MetadataBlockType::Cuesheet => {
                     eprintln!("{}", Cuesheet::read(&mut self.reader, header.block_length)?);
                 },
-                // Picture block are read as Visuals.
+                // Picture blocks are read as Visuals.
                 MetadataBlockType::Picture => {
                     eprintln!("{}", Picture::read(&mut self.reader, header.block_length)?);
                 },
+                // StreamInfo blocks are parsed into Streams.
                 MetadataBlockType::StreamInfo => {
                     self.read_stream_info_block()?;
                 },
+                // Unknown block encountered. Skip these blocks as they may be part of a future version of FLAC.
                 _ => {
                     self.reader.ignore_bytes(header.block_length as u64)?;
                     eprintln!("Ignoring {} bytes of {:?} block.", header.block_length, header.block_type);

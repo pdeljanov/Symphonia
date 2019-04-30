@@ -99,9 +99,10 @@ fn main() {
         ProbeResult::Supported => {
             // Print metadata fancily.
             pretty_print_path(&path);
-            pretty_print_chapters();
             pretty_print_tags(reader.tags());
+            pretty_print_chapters();
             pretty_print_visuals();
+            eprintln!("-");
 
             // Verify only mode decodes and always verifies the audio, but doese not play it.
             if matches.is_present("verify-only") {
@@ -140,19 +141,20 @@ fn pretty_print_path(path: &Path) {
 }
 
 fn pretty_print_chapters() {
-    eprintln!("| // Chapters:");
+    eprintln!("|  // Cuepoints //");
 }
 
-/// Print tags in a pretty manner. Known tags (tags with StandardTagKeys) will be printed first, then unknown tags.
 fn pretty_print_tags(tags: &[Tag]) {
-    eprintln!("| // Metadata:");
+    eprintln!("|  // Tags //");
     
+    // Print tags with a standard tag key first, these are the most common tags.
     for tag in tags.iter().filter(| tag | tag.is_known()) {
         if let Some(std_key) = tag.std_key {
             eprintln!("|      * {:<28} : {}", format!("{:?}", std_key), tag.value);
         }
     }
 
+    // Print the remaining tags with keys truncated to 26 characters.
     for tag in tags.iter().filter(| tag | !tag.is_known()) {
         match tag.key.len() {
             0...28 => eprintln!("|      * {:<28} : {}", tag.key, tag.value),
@@ -162,7 +164,7 @@ fn pretty_print_tags(tags: &[Tag]) {
 }
 
 fn pretty_print_visuals() {
-    eprintln!("| // Visuals:");
+    eprintln!("|  // Visuals //");
 }
 
 fn decode_only(mut reader: Box<dyn FormatReader>, decode_options: &DecoderOptions) -> Result<()> {
