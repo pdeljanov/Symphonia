@@ -25,7 +25,7 @@ use lazy_static::lazy_static;
 ///
 /// The visual types listed here are derived from, though do not entirely cover, the ID3v2 APIC 
 /// frame specification.
-#[derive(Debug)]
+#[derive(Copy, Clone, Debug)]
 pub enum StandardVisualKey {
     FileIcon,
     OtherIcon,

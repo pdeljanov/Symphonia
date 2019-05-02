@@ -17,9 +17,10 @@
 
 use std::fmt;
 use std::mem;
+use std::num::NonZeroU32;
 use sonata_core::audio::Channels;
 use sonata_core::errors::{Result, decode_error};
-use sonata_core::formats::SeekIndex;
+use sonata_core::formats::{ColorMode, SeekIndex, Size, Visual};
 use sonata_core::tags::*;
 use sonata_core::io::*;
 
@@ -468,16 +469,7 @@ impl fmt::Display for Application {
 }
 
 
-pub struct Picture {
-    pub disposition: Option<StandardVisualKey>,
-    pub mime: String,
-    pub desc: String,
-    pub width: u32,
-    pub height: u32,
-    pub bits_per_pixel: u32,
-    pub indexed_colours: Option<u32>,
-    pub byte_length: usize,
-}
+pub struct Picture;
 
 fn visual_key_from_id3v2_apic(apic: u32) -> Option<StandardVisualKey> {
     match apic {
@@ -505,78 +497,65 @@ fn visual_key_from_id3v2_apic(apic: u32) -> Option<StandardVisualKey> {
 }
 
 impl Picture {
-    pub fn read<B : Bytestream>(reader: &mut B, _block_length: usize) -> Result<Picture> {
+    pub fn read<B : Bytestream>(reader: &mut B, _block_length: usize, visuals: &mut Vec<Visual>) -> Result<()> {
         let type_enc = reader.read_be_u32()?;
         
-        // Read the MIME type length in bytes.
-        let mime_length = reader.read_be_u32()? as usize;
+        // Read the Media Type length in bytes.
+        let media_type_len = reader.read_be_u32()? as usize;
 
-        // Read the MIME type bytes
-        let mut mime_buf = Vec::<u8>::with_capacity(mime_length);
-        unsafe { mime_buf.set_len(mime_length); }
-        reader.read_buf_bytes(&mut mime_buf)?;
+        // Read the Media Type bytes
+        let mut media_type_buf = vec![0u8; media_type_len];
+        reader.read_buf_bytes(&mut media_type_buf)?;
 
-        // Convert MIME type bytes to an ASCII string. Non-printable ASCII characters are invalid.
-        let mime = match printable_ascii_to_string(&mime_buf) {
+        // Convert Media Type bytes to an ASCII string. Non-printable ASCII characters are invalid.
+        let media_type = match printable_ascii_to_string(&media_type_buf) {
             Some(s) => s,
             None => return decode_error("Picture mime-type contains invalid characters."),
         };
 
         // Read the description length in bytes.
-        let desc_length = reader.read_be_u32()? as usize;
+        let desc_len = reader.read_be_u32()? as usize;
         
         // Read the description bytes.
-        let mut desc_buf = Vec::<u8>::with_capacity(desc_length);
-        unsafe { desc_buf.set_len(desc_length); }
+        let mut desc_buf = vec![0u8; desc_len];
         reader.read_buf_bytes(&mut desc_buf)?;
 
-        // Convert description bytes to a UTF-8 string
-        let desc = String::from_utf8_lossy(&desc_buf).to_string();
+        // Convert description bytes into a standard Vorbis DESCRIPTION tag.
+        let mut tags = Vec::<Tag>::new();
+        tags.push(Tag::new(Some(StandardTagKey::Description), "DESCRIPTION", &String::from_utf8_lossy(&desc_buf)));
 
         // Read the width, height, and bits-per-pixel of the visual.
         let width = reader.read_be_u32()?;
         let height = reader.read_be_u32()?;
-        let bits_per_pixel = reader.read_be_u32()?;
+        let bits_per_pixel = NonZeroU32::new(reader.read_be_u32()?);
 
         // Indexed colours is only valid for image formats that use an indexed colour palette. If it is 0, the image 
         // does not used indexed colours.
         let indexed_colours_enc = reader.read_be_u32()?;
 
-        let indexed_colours = match indexed_colours_enc {
-            0 => None,
-            _ => Some(indexed_colours_enc),
+        let color_mode = match indexed_colours_enc {
+            0 => ColorMode::Discrete,
+            _ => ColorMode::Indexed(NonZeroU32::new(indexed_colours_enc).unwrap()),
         };
 
-        let byte_length = reader.read_be_u32()? as usize;
+        // Read the image data
+        let data_len = reader.read_be_u32()? as usize;
 
-        // TODO: Actually read the image data.
-        reader.ignore_bytes(byte_length as u64)?;
+        let mut data_buf = Vec::<u8>::with_capacity(data_len);
+        unsafe { data_buf.set_len(data_len); }
+        reader.read_buf_bytes(&mut data_buf)?;
 
-        Ok(Picture {
-            disposition: visual_key_from_id3v2_apic(type_enc),
-            mime,
-            desc,
-            width,
-            height,
+        visuals.push(Visual {
+            media_type,
+            dimensions: Size { width, height },
             bits_per_pixel,
-            indexed_colours,
-            byte_length,
-        })
-    }
-}
+            color_mode,
+            usage: visual_key_from_id3v2_apic(type_enc),
+            tags,
+            data: data_buf.into_boxed_slice(),
+        });
 
-impl fmt::Display for Picture {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "Picture {{")?;
-        writeln!(f, "\tdisposition={:?},", self.disposition)?;
-        writeln!(f, "\tmime={},", self.mime)?;
-        writeln!(f, "\tdesc={},", self.desc)?;
-        writeln!(f, "\twidth={},", self.width)?;
-        writeln!(f, "\theight={},", self.height)?;
-        writeln!(f, "\tbits_per_pixel={},", self.bits_per_pixel)?;
-        writeln!(f, "\tindexed_colours={:?},", self.indexed_colours)?;
-        writeln!(f, "\tbyte_length={},", self.byte_length)?;
-        writeln!(f, "}}")
+        Ok(())
     }
 }
 

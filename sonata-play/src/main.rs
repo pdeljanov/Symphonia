@@ -23,7 +23,7 @@ use sonata;
 use sonata::core::errors::{Result, unsupported_error};
 use sonata::core::audio::*;
 use sonata::core::codecs::DecoderOptions;
-use sonata::core::formats::{FormatReader, Hint, FormatOptions, ProbeDepth, ProbeResult};
+use sonata::core::formats::{FormatReader, Hint, FormatOptions, ProbeDepth, ProbeResult, ColorMode, Visual};
 use sonata::core::tags::Tag;
 use libpulse_binding as pulse;
 use libpulse_simple_binding as psimple;
@@ -101,7 +101,7 @@ fn main() {
             pretty_print_path(&path);
             pretty_print_tags(reader.tags());
             pretty_print_chapters();
-            pretty_print_visuals();
+            pretty_print_visuals(reader.visuals());
             eprintln!("-");
 
             // Verify only mode decodes and always verifies the audio, but doese not play it.
@@ -137,34 +137,87 @@ fn main() {
 
 fn pretty_print_path(path: &Path) {
     eprintln!("+ {}", path.display());
-    eprintln!("|");
 }
 
 fn pretty_print_chapters() {
-    eprintln!("|  // Cuepoints //");
+    // eprintln!("|  // Cuepoints //");
 }
 
 fn pretty_print_tags(tags: &[Tag]) {
-    eprintln!("|  // Tags //");
-    
-    // Print tags with a standard tag key first, these are the most common tags.
-    for tag in tags.iter().filter(| tag | tag.is_known()) {
-        if let Some(std_key) = tag.std_key {
-            eprintln!("|      * {:<28} : {}", format!("{:?}", std_key), tag.value);
-        }
-    }
+    if tags.len() > 0 {
+        eprintln!("|");
+        eprintln!("|  // Tags //");
+        
+        let mut idx = 1;
 
-    // Print the remaining tags with keys truncated to 26 characters.
-    for tag in tags.iter().filter(| tag | !tag.is_known()) {
-        match tag.key.len() {
-            0...28 => eprintln!("|      * {:<28} : {}", tag.key, tag.value),
-            _ => eprintln!("|      * {:.<28} : {}", tag.key.split_at(26).0, tag.value),
+        // Print tags with a standard tag key first, these are the most common tags.
+        for tag in tags.iter().filter(| tag | tag.is_known()) {
+            if let Some(std_key) = tag.std_key {
+                eprintln!("|    [{:0>2}] {:<28} : {}", idx, format!("{:?}", std_key), tag.value);
+            }
+            idx += 1;
+        }
+
+        // Print the remaining tags with keys truncated to 26 characters.
+        for tag in tags.iter().filter(| tag | !tag.is_known()) {
+            match tag.key.len() {
+                0...28 => eprintln!("|    [{:0>2}] {:<28} : {}", idx, tag.key, tag.value),
+                _ => eprintln!("|    [{:0>2}] {:.<28} : {}", idx, tag.key.split_at(26).0, tag.value),
+            }
+            idx += 1;
         }
     }
 }
 
-fn pretty_print_visuals() {
-    eprintln!("|  // Visuals //");
+fn pretty_print_visuals(visuals: &[Visual]) {
+    if visuals.len() > 0 {
+        eprintln!("|");
+        eprintln!("|  // Visuals //");
+
+        for (idx, visual) in visuals.iter().enumerate() {
+
+            if let Some(usage) = visual.usage {
+                eprintln!("|    [{:0>2}] Usage:      {:?}", idx + 1, usage);
+                eprintln!("|         Media Type: {}", visual.media_type);
+            }
+            else {
+                eprintln!("|    [{:0>2}] Media Type: {}", idx + 1, visual.media_type);
+            }
+
+            eprintln!("|         Dimensions: {} px x {} px", visual.dimensions.width, visual.dimensions.height);
+            eprintln!("|         Size:       {} bytes", visual.data.len());
+
+            if let Some(bpp) = visual.bits_per_pixel {
+                eprintln!("|         Bits/Pixel: {}", bpp);
+            }
+            if let ColorMode::Indexed(colors) = visual.color_mode {
+                eprintln!("|         Palette:    {} colors", colors);
+            }
+
+            // Print out tags similar to how regular tags are printed.
+            if visual.tags.len() > 0 {
+                eprintln!("|         Tags:");
+            }
+
+            for (tidx, tag) in visual.tags.iter().enumerate() {
+                if let Some(std_key) = tag.std_key {
+                    eprintln!("|                     [{}] {:<12} : {}", tidx + 1, format!("{:?}", std_key), tag.value);
+                }
+                else {
+                    match tag.key.len() {
+                        0...12 => {
+                            eprintln!("|                     [{}] {:<12} : {}", tidx + 1, tag.key, tag.value);
+                        },
+                        _ => {
+                            eprintln!("|                     [{}] {:.<12} : {}", 
+                                tidx + 1, tag.key.split_at(10).0, tag.value);
+                        }
+                    }
+                }
+            }
+
+        }
+    }
 }
 
 fn decode_only(mut reader: Box<dyn FormatReader>, decode_options: &DecoderOptions) -> Result<()> {

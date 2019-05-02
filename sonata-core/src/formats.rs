@@ -18,9 +18,10 @@
 use std::default::Default;
 use std::fmt;
 use std::io;
+use std::num::NonZeroU32;
 
 use crate::audio::Timestamp;
-use crate::codecs::{CodecType, CodecParameters};
+use crate::codecs::CodecParameters;
 use crate::errors::Result;
 use crate::io::{MediaSource, MediaSourceStream, Bytestream};
 use crate::tags::{StandardVisualKey, Tag};
@@ -114,12 +115,25 @@ pub struct Size {
     pub height: u32,
 }
 
+/// `ColorMode` indicates how the color of a pixel is encoded in a `Visual`.
+pub enum ColorMode {
+    /// Each pixel in the `Visual` stores color information.
+    Discrete,
+    /// Each pixel in the `Visual` stores an index into a color palette containing the color information. The value 
+    /// stored by this variant indicates the number of colors in the color palette.
+    Indexed(NonZeroU32),
+}
+
 /// A `Visual` is any 2D graphic that is embedded within a media format.
 pub struct Visual {
-    /// The codec used to encode the `Visual`.
-    pub codec: CodecType,
+    /// The Media Type (formerly known as the MIME Type) used to encode the `Visual`.
+    pub media_type: String,
     /// The dimensions of the `Visual`.
     pub dimensions: Size,
+    /// The number of bits-per-pixel (aka bit-depth) of the unencoded image.
+    pub bits_per_pixel: Option<NonZeroU32>,
+    /// The color mode of the `Visual`.
+    pub color_mode: ColorMode,
     /// The usage and/or content of the `Visual`.
     pub usage: Option<StandardVisualKey>,
     /// Any tags associated with the `Visual`.
@@ -339,9 +353,12 @@ pub trait FormatReader {
     /// can be set based on the caller's use-case.
     fn probe(&mut self, depth: ProbeDepth) -> Result<ProbeResult>;
 
-    /// Gets a list of all tags.
+    /// Gets a list of all `Tag`s.
     fn tags(&self) -> &[Tag];
-    //fn visuals(&self) -> &[Visual];
+    
+    // Gets a list of all `Visual`s.
+    fn visuals(&self) -> &[Visual];
+
     //fn cuepoints(&self) -> &[CuePoint];
     //fn vendor_data(&self) -> &[u8];
 

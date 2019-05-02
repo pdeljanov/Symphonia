@@ -23,7 +23,7 @@ use sonata_core::audio::Timestamp;
 use sonata_core::codecs::CodecParameters;
 use sonata_core::errors::{Result, seek_error, unsupported_error, SeekErrorKind};
 use sonata_core::formats::{FormatDescriptor, FormatOptions, FormatReader, Packet};
-use sonata_core::formats::{ProbeDepth, ProbeResult, SeekSearchResult, Stream};
+use sonata_core::formats::{ProbeDepth, ProbeResult, SeekSearchResult, Stream, Visual};
 use sonata_core::tags::Tag;
 use sonata_core::io::*;
 
@@ -42,7 +42,8 @@ const WAVE_MAX_FRAMES_PER_PACKET: u64 = 4096;
 pub struct WavReader {
     reader: MediaSourceStream,
     streams: Vec<Stream>,
-    tags: Vec<Tag>
+    tags: Vec<Tag>,
+    visuals: Vec<Visual>,
 }
 
 impl WavReader {
@@ -79,6 +80,7 @@ impl FormatReader for WavReader {
             reader: source,
             streams: Vec::new(),
             tags: Vec::new(),
+            visuals: Vec::new(),
         }
     }
 
@@ -97,6 +99,10 @@ impl FormatReader for WavReader {
 
     fn tags(&self) -> &[Tag] {
         &self.tags
+    }
+
+    fn visuals(&self) -> &[Visual] {
+        &self.visuals
     }
 
     fn streams(&self) -> &[Stream] {

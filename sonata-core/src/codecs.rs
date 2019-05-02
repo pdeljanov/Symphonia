@@ -136,18 +136,6 @@ pub const CODEC_TYPE_OPUS: CodecType             = CodecType(0x1004);
 /// WavPack
 pub const CODEC_TYPE_WAVPACK: CodecType          = CodecType(0x1005);
 
-// Image codecs
-//-------------
-
-/// Joint Photographic Experts Group (JPEG)
-pub const CODEC_TYPE_JPEG: CodecType             = CodecType(0x2000);
-/// Portable Network Graphics (PNG)
-pub const CODEC_TYPE_PNG: CodecType              = CodecType(0x2001);
-/// Bitmap (BMP)
-pub const CODEC_TYPE_BMP: CodecType              = CodecType(0x2002);
-/// Graphics Interchange Format (GIF)
-pub const CODEC_TYPE_GIF: CodecType              = CodecType(0x2003);
-
 
 impl fmt::Display for CodecType {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {

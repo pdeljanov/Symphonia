@@ -25,7 +25,7 @@ use sonata_core::audio::Timestamp;
 use sonata_core::codecs::{CODEC_TYPE_FLAC, CodecParameters};
 use sonata_core::errors::{Result, decode_error, seek_error, SeekErrorKind};
 use sonata_core::formats::{FormatDescriptor, FormatOptions, FormatReader, Packet};
-use sonata_core::formats::{ProbeDepth, ProbeResult, SeekIndex, SeekSearchResult, Stream};
+use sonata_core::formats::{ProbeDepth, ProbeResult, SeekIndex, SeekSearchResult, Stream, Visual};
 use sonata_core::tags::Tag;
 use sonata_core::io::*;
 
@@ -46,6 +46,7 @@ pub struct FlacReader {
     reader: MediaSourceStream,
     streams: Vec<Stream>,
     tags: Vec<Tag>,
+    visuals: Vec<Visual>,
     index: Option<SeekIndex>,
     first_frame_offset: u64,
 }
@@ -116,7 +117,7 @@ impl FlacReader {
                 },
                 // Picture blocks are read as Visuals.
                 MetadataBlockType::Picture => {
-                    eprintln!("{}", Picture::read(&mut self.reader, header.block_length)?);
+                    Picture::read(&mut self.reader, header.block_length, &mut self.visuals)?;
                 },
                 // StreamInfo blocks are parsed into Streams.
                 MetadataBlockType::StreamInfo => {
@@ -147,6 +148,7 @@ impl FormatReader for FlacReader {
             reader: source,
             streams: Vec::new(),
             tags: Vec::new(),
+            visuals: Vec::new(),
             index: None,
             first_frame_offset: 0,
         }
@@ -166,6 +168,10 @@ impl FormatReader for FlacReader {
 
     fn tags(&self) -> &[Tag] {
         &self.tags
+    }
+
+    fn visuals(&self) -> &[Visual] {
+        &self.visuals
     }
 
     fn streams(&self) -> &[Stream] {
