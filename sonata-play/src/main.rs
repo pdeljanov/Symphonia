@@ -23,13 +23,13 @@ use sonata;
 use sonata::core::errors::{Result, unsupported_error};
 use sonata::core::audio::*;
 use sonata::core::codecs::DecoderOptions;
-use sonata::core::formats::{FormatReader, Hint, FormatOptions, ProbeDepth, ProbeResult, ColorMode, Visual};
+use sonata::core::formats::{FormatReader, Hint, FormatOptions, ProbeDepth, ProbeResult, ColorMode, Visual, Stream};
 use sonata::core::tags::Tag;
 use libpulse_binding as pulse;
 use libpulse_simple_binding as psimple;
 
 fn main() {
-    let matches = App::new("Sonata Player")
+    let matches = App::new("Sonata Play")
                         .version("1.0")
                         .author("Philip Deljanov <philip.deljanov@gmail.com>")
                         .about("Play audio files with Sonata")
@@ -68,7 +68,6 @@ fn main() {
     // Get the file path option.
     let path = Path::new(matches.value_of("FILE").unwrap());
 
-
     // Create a hint to help the format registry guess what format reader is appropriate for file at the given file 
     // path.
     let mut hint = Hint::new();
@@ -97,13 +96,6 @@ fn main() {
         },
         // The file is supported by the format reader.
         ProbeResult::Supported => {
-            // Print metadata fancily.
-            pretty_print_path(&path);
-            pretty_print_tags(reader.tags());
-            pretty_print_chapters();
-            pretty_print_visuals(reader.visuals());
-            eprintln!("-");
-
             // Verify only mode decodes and always verifies the audio, but doese not play it.
             if matches.is_present("verify-only") {
                 let options = DecoderOptions { verify: true, ..Default::default() };
@@ -114,8 +106,14 @@ fn main() {
                 let options = DecoderOptions { verify: false, ..Default::default() };
                 decode_only(reader, &options).unwrap();
             }
-            // If not probing, play the audio back.
-            else if !matches.is_present("probe-only") {
+            // Probe only mode prints information about the format, streams, metadata, etc.
+            else if matches.is_present("probe-only") {
+                pretty_print_format(&path, &reader);
+            }
+            // If nothing else, decode and play the audio.
+            else {
+                pretty_print_format(&path, &reader);
+
                 // Seek to the desired timestamp if requested.
                 match matches.value_of("seek") {
                     Some(seek_value) => {
@@ -131,91 +129,6 @@ fn main() {
                 // Commence playback.
                 play(reader, &options).unwrap();
             }
-        }
-    }
-}
-
-fn pretty_print_path(path: &Path) {
-    eprintln!("+ {}", path.display());
-}
-
-fn pretty_print_chapters() {
-    // eprintln!("|  // Cuepoints //");
-}
-
-fn pretty_print_tags(tags: &[Tag]) {
-    if tags.len() > 0 {
-        eprintln!("|");
-        eprintln!("|  // Tags //");
-        
-        let mut idx = 1;
-
-        // Print tags with a standard tag key first, these are the most common tags.
-        for tag in tags.iter().filter(| tag | tag.is_known()) {
-            if let Some(std_key) = tag.std_key {
-                eprintln!("|    [{:0>2}] {:<28} : {}", idx, format!("{:?}", std_key), tag.value);
-            }
-            idx += 1;
-        }
-
-        // Print the remaining tags with keys truncated to 26 characters.
-        for tag in tags.iter().filter(| tag | !tag.is_known()) {
-            match tag.key.len() {
-                0...28 => eprintln!("|    [{:0>2}] {:<28} : {}", idx, tag.key, tag.value),
-                _ => eprintln!("|    [{:0>2}] {:.<28} : {}", idx, tag.key.split_at(26).0, tag.value),
-            }
-            idx += 1;
-        }
-    }
-}
-
-fn pretty_print_visuals(visuals: &[Visual]) {
-    if visuals.len() > 0 {
-        eprintln!("|");
-        eprintln!("|  // Visuals //");
-
-        for (idx, visual) in visuals.iter().enumerate() {
-
-            if let Some(usage) = visual.usage {
-                eprintln!("|    [{:0>2}] Usage:      {:?}", idx + 1, usage);
-                eprintln!("|         Media Type: {}", visual.media_type);
-            }
-            else {
-                eprintln!("|    [{:0>2}] Media Type: {}", idx + 1, visual.media_type);
-            }
-
-            eprintln!("|         Dimensions: {} px x {} px", visual.dimensions.width, visual.dimensions.height);
-            eprintln!("|         Size:       {} bytes", visual.data.len());
-
-            if let Some(bpp) = visual.bits_per_pixel {
-                eprintln!("|         Bits/Pixel: {}", bpp);
-            }
-            if let ColorMode::Indexed(colors) = visual.color_mode {
-                eprintln!("|         Palette:    {} colors", colors);
-            }
-
-            // Print out tags similar to how regular tags are printed.
-            if visual.tags.len() > 0 {
-                eprintln!("|         Tags:");
-            }
-
-            for (tidx, tag) in visual.tags.iter().enumerate() {
-                if let Some(std_key) = tag.std_key {
-                    eprintln!("|                     [{}] {:<12} : {}", tidx + 1, format!("{:?}", std_key), tag.value);
-                }
-                else {
-                    match tag.key.len() {
-                        0...12 => {
-                            eprintln!("|                     [{}] {:<12} : {}", tidx + 1, tag.key, tag.value);
-                        },
-                        _ => {
-                            eprintln!("|                     [{}] {:.<12} : {}", 
-                                tidx + 1, tag.key.split_at(10).0, tag.value);
-                        }
-                    }
-                }
-            }
-
         }
     }
 }
@@ -327,4 +240,148 @@ fn play(mut reader: Box<dyn FormatReader>, decode_options: &DecoderOptions) -> R
 
     Ok(())
 
+}
+
+fn pretty_print_format(path: &Path, reader: &Box<dyn FormatReader>) {
+    println!("+ {}", path.display());
+    pretty_print_streams(reader.streams());
+    pretty_print_tags(reader.tags());
+    pretty_print_cues();
+    pretty_print_visuals(reader.visuals());
+    println!("-");
+}
+
+fn pretty_print_streams(streams: &[Stream]) {
+    if streams.len() > 0 {
+        println!("|");
+        println!("| // Streams //");
+
+        for (idx, stream) in streams.iter().enumerate() {
+            let params = &stream.codec_params;
+
+            println!("|     [{:0>2}] Codec:           {}", idx + 1, params.codec);
+            if let Some(sample_rate) = params.sample_rate {
+                println!("|          Sample Rate:     {}", sample_rate);
+            }
+            if let Some(n_frames) = params.n_frames {
+                println!("|          Frames:          {}", n_frames);
+            }
+            if let Some(sample_format) = params.sample_format {
+                println!("|          Sample Format:   {:?}", sample_format);
+            }
+            if let Some(bits_per_sample) = params.bits_per_sample {
+                println!("|          Bits per Sample: {}", bits_per_sample);
+            }
+            if let Some(channels) = params.channels {
+                println!("|          Channel(s):      {}", channels.len());
+                println!("|          Channel Map:     {}", channels);
+            }
+            if let Some(channel_layout) = params.channel_layout {
+                println!("|          Channel Layout:  {:?}", channel_layout);
+            }
+            if let Some(language) = &stream.language {
+                println!("|          Language:        {}", language);
+            }
+
+        }
+    }
+}
+
+fn pretty_print_cues() {
+    // println!("|  // Cuepoints //");
+}
+
+fn pretty_print_tags(tags: &[Tag]) {
+    if tags.len() > 0 {
+        println!("|");
+        println!("| // Tags //");
+        
+        let mut idx = 1;
+
+        // Print tags with a standard tag key first, these are the most common tags.
+        for tag in tags.iter().filter(| tag | tag.is_known()) {
+            if let Some(std_key) = tag.std_key {
+                println!("{}", pretty_print_tag_item(idx, &format!("{:?}", std_key), &tag.value, 4));
+            }
+            idx += 1;
+        }
+
+        // Print the remaining tags with keys truncated to 26 characters.
+        for tag in tags.iter().filter(| tag | !tag.is_known()) {
+            println!("{}", pretty_print_tag_item(idx, &tag.key, &tag.value, 4));
+            idx += 1;
+        }
+    }
+}
+
+fn pretty_print_visuals(visuals: &[Visual]) {
+    if visuals.len() > 0 {
+        println!("|");
+        println!("| // Visuals //");
+
+        for (idx, visual) in visuals.iter().enumerate() {
+
+            if let Some(usage) = visual.usage {
+                println!("|     [{:0>2}] Usage:      {:?}", idx + 1, usage);
+                println!("|          Media Type: {}", visual.media_type);
+            }
+            else {
+                println!("|     [{:0>2}] Media Type: {}", idx + 1, visual.media_type);
+            }
+
+            println!("|          Dimensions: {} px x {} px", visual.dimensions.width, visual.dimensions.height);
+            println!("|          Size:       {} bytes", visual.data.len());
+
+            if let Some(bpp) = visual.bits_per_pixel {
+                println!("|          Bits/Pixel: {}", bpp);
+            }
+            if let ColorMode::Indexed(colors) = visual.color_mode {
+                println!("|          Palette:    {} colors", colors);
+            }
+
+            // Print out tags similar to how regular tags are printed.
+            if visual.tags.len() > 0 {
+                println!("|          Tags:");
+            }
+
+            for (tidx, tag) in visual.tags.iter().enumerate() {
+                if let Some(std_key) = tag.std_key {
+                    println!("{}", pretty_print_tag_item(tidx + 1, &format!("{:?}", std_key), &tag.value, 21));
+                }
+                else {
+                    println!("{}", pretty_print_tag_item(tidx + 1, &tag.key, &tag.value, 21));
+                }
+            }
+        }
+    }
+}
+
+fn pretty_print_tag_item(idx: usize, key: &str, value: &str, indent: usize) -> String {
+    let key_str = match key.len() {
+        0...28 => format!("| {:w$}[{:0>2}] {:<28} : ", "", idx, key, w = indent),
+        _ => format!("| {:w$}[{:0>2}] {:.<28} : ", "", idx, key.split_at(26).0, w = indent),
+    };
+
+    let line_prefix = format!("\n| {:w$} : ", "", w = indent + 4 + 28 + 1);
+    let line_wrap_prefix = format!("\n| {:w$}   ", "", w = indent + 4 + 28 + 1);
+
+    let mut out = String::new();
+
+    out.push_str(&key_str);
+
+    for (wrapped, line) in value.lines().enumerate() {
+        if wrapped > 0 {
+            out.push_str(&line_prefix);
+        }
+
+        let mut chars = line.chars();
+        let split = (0..)
+            .map(|_| chars.by_ref().take(72).collect::<String>())
+            .take_while(|s| !s.is_empty())
+            .collect::<Vec<_>>();
+
+        out.push_str(&split.join(&line_wrap_prefix));
+    }
+
+    out
 }

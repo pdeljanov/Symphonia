@@ -165,23 +165,6 @@ impl StreamInfo {
     }
 }
 
-impl fmt::Display for StreamInfo {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "StreamInfo {{")?;
-        writeln!(f, "\tblock_size_bounds: [{}, {}],", self.block_size_bounds.0, self.block_size_bounds.1)?;
-        writeln!(f, "\tframe_size_bounds: [{}, {}],", self.frame_size_bounds.0, self.frame_size_bounds.1)?;
-        writeln!(f, "\tsample_rate: {} Hz,", self.sample_rate)?;
-        writeln!(f, "\tn_channels: {:?},", self.channels)?;
-        writeln!(f, "\tbits_per_sample: {},", self.bits_per_sample)?;
-        match self.n_samples {
-            Some(n_samples) => writeln!(f, "\tn_samples: {},", n_samples)?,
-            None => writeln!(f, "\tn_samples: ?")?,
-        };
-        writeln!(f, "\tmd5: {:x?}", self.md5)?;
-        writeln!(f, "}}")
-    }
-}
-
 macro_rules! verify_block_bounds {
     ($accum:ident, $bound:ident, $len:expr) => (
         $accum += $len;
@@ -203,14 +186,9 @@ impl VorbisComment {
         verify_block_bounds!(block_bytes_read, block_length, mem::size_of::<u32>());
         let vendor_length = reader.read_u32()? as usize;
 
-        // Read the vendor string.
+        // Ignore the vendor string.
         verify_block_bounds!(block_bytes_read, block_length, vendor_length);
-
-        let mut vendor_string_octets = Vec::<u8>::with_capacity(vendor_length);
-        vendor_string_octets.resize(vendor_length, 0);
-        reader.read_buf_bytes(&mut vendor_string_octets)?;
-
-        let vendor = String::from_utf8_lossy(&vendor_string_octets).to_string();
+        reader.ignore_bytes(vendor_length as u64)?;
 
         // Read the number of comments.
         verify_block_bounds!(block_bytes_read, block_length, mem::size_of::<u32>());

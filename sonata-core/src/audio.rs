@@ -117,7 +117,7 @@ impl fmt::Display for Channels {
 }
 
 /// Layout describes common audio channel configurations.
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub enum Layout {
     /// Single centre channel.
     Mono,

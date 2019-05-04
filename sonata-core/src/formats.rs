@@ -129,10 +129,16 @@ pub struct Visual {
     /// The Media Type (formerly known as the MIME Type) used to encode the `Visual`.
     pub media_type: String,
     /// The dimensions of the `Visual`.
+    /// 
+    /// Note: This value may not be accurate as it comes from metadata, not the `Visual` itself.
     pub dimensions: Size,
-    /// The number of bits-per-pixel (aka bit-depth) of the unencoded image.
+    /// The number of bits-per-pixel (aka bit-depth) of the unencoded image. 
+    /// 
+    /// Note: This value may not be accurate as it comes from metadata, not the `Visual` itself.
     pub bits_per_pixel: Option<NonZeroU32>,
     /// The color mode of the `Visual`.
+    /// 
+    /// Note: This value may not be accurate as it comes from metadata, not the `Visual` itself.
     pub color_mode: ColorMode,
     /// The usage and/or content of the `Visual`.
     pub usage: Option<StandardVisualKey>,

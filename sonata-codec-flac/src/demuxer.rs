@@ -58,7 +58,6 @@ impl FlacReader {
         // Only one StreamInfo block, and therefore ony one Stream, is allowed per media source stream.
         if self.streams.len() == 0 {
             let info = StreamInfo::read(&mut self.reader)?;
-            eprintln!("{}", info);
 
             // Populate the codec parameters with the information read from StreamInfo.
             let mut codec_params = CodecParameters::new();

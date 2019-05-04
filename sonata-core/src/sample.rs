@@ -16,7 +16,7 @@
 // Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301 USA
 
 /// SampleFormat describes the data encoding for an audio sample.
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub enum SampleFormat {
     /// Unsigned 8bit integer.
     U8,
