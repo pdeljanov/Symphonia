@@ -377,7 +377,9 @@ pub trait FormatReader {
     // Gets a list of all `Visual`s.
     fn visuals(&self) -> &[Visual];
 
-    //fn cuepoints(&self) -> &[CuePoint];
+    // Gets a list of all `Cue`s.
+    fn cues(&self) -> &[Cue];
+    
     //fn vendor_data(&self) -> &[u8];
 
     /// Seek, as closely as possible, to the timestamp requested. 

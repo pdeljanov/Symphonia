@@ -25,7 +25,7 @@ use sonata_core::audio::Timestamp;
 use sonata_core::codecs::CodecParameters;
 use sonata_core::errors::{Result, seek_error, SeekErrorKind};
 use sonata_core::formats::{FormatDescriptor, FormatOptions, FormatReader, Packet};
-use sonata_core::formats::{ProbeDepth, ProbeResult, Stream, Visual};
+use sonata_core::formats::{Cue, ProbeDepth, ProbeResult, Stream, Visual};
 use sonata_core::tags::Tag;
 use sonata_core::io::*;
 
@@ -46,6 +46,7 @@ pub struct WavReader {
     streams: Vec<Stream>,
     tags: Vec<Tag>,
     visuals: Vec<Visual>,
+    cues: Vec<Cue>,
     frame_len: u16,
     data_offset: u64,
 }
@@ -85,6 +86,7 @@ impl FormatReader for WavReader {
             streams: Vec::new(),
             tags: Vec::new(),
             visuals: Vec::new(),
+            cues: Vec::new(),
             frame_len: 0,
             data_offset: 0,
         }
@@ -109,6 +111,10 @@ impl FormatReader for WavReader {
 
     fn visuals(&self) -> &[Visual] {
         &self.visuals
+    }
+
+    fn cues(&self) -> &[Cue] {
+        &self.cues
     }
 
     fn streams(&self) -> &[Stream] {
@@ -233,7 +239,7 @@ impl FormatReader for WavReader {
                     RiffWaveChunks::Data => {
                         // Record the offset of the Data chunk's contents to support seeking.
                         self.data_offset = self.reader.pos();
-                        
+
                         // Add a new stream using the collected codec parameters.
                         self.streams.push(Stream::new(codec_params));
 

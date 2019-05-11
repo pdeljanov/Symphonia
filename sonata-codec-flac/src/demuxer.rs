@@ -180,6 +180,10 @@ impl FormatReader for FlacReader {
         &self.visuals
     }
 
+    fn cues(&self) -> &[Cue] {
+        &self.cues
+    }
+
     fn streams(&self) -> &[Stream] {
         &self.streams
     }
