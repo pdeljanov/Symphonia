@@ -15,16 +15,15 @@
 // License along with this library; if not, write to the Free Software
 // Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301 USA
 
-use std::fmt;
+use std::ascii;
 use std::mem;
 use std::num::NonZeroU32;
 use sonata_core::audio::Channels;
 use sonata_core::errors::{Result, decode_error};
-use sonata_core::formats::{ColorMode, SeekIndex, Size, Visual};
-use sonata_core::tags::*;
+use sonata_core::formats::{Cue, CuePoint, ColorMode, SeekIndex, Size, Visual, VendorData};
+use sonata_core::tags::{StandardTagKey, Tag, id3v2, vorbis};
 use sonata_core::io::*;
 
-#[derive(Debug)]
 pub enum MetadataBlockType {
     StreamInfo,
     Padding,
@@ -33,7 +32,7 @@ pub enum MetadataBlockType {
     VorbisComment,
     Cuesheet,
     Picture,
-    Unknown
+    Unknown(u8)
 }
 
 fn flac_channels_to_channel_vec(channels: u32) -> Channels {
@@ -174,69 +173,60 @@ macro_rules! verify_block_bounds {
     )
 }
 
-pub struct VorbisComment;
+pub fn read_comment_block<B : Bytestream>(reader: &mut B, block_length: usize, tags: &mut Vec<Tag>) -> Result<()> {
+    // Accumulate the number of bytes read as the comment block is decoded and ensure that
+    // the block_length as stated in the header is never exceeded.
+    let mut block_bytes_read = 0usize;
 
-impl VorbisComment {
-    pub fn process<B : Bytestream>(reader: &mut B, block_length: usize, tags: &mut Vec<Tag>) -> Result<()> {
-        // Accumulate the number of bytes read as the comment block is decoded and ensure that
-        // the block_length as stated in the header is never exceeded.
-        let mut block_bytes_read = 0usize;
+    // Get the vendor string length in bytes.
+    verify_block_bounds!(block_bytes_read, block_length, mem::size_of::<u32>());
+    let vendor_length = reader.read_u32()? as usize;
 
-        // Get the vendor string length in bytes.
+    // Ignore the vendor string.
+    verify_block_bounds!(block_bytes_read, block_length, vendor_length);
+    reader.ignore_bytes(vendor_length as u64)?;
+
+    // Read the number of comments.
+    verify_block_bounds!(block_bytes_read, block_length, mem::size_of::<u32>());
+    let n_comments = reader.read_u32()? as usize;
+
+    for _ in 0..n_comments {
+        // Read the comment length in bytes.
         verify_block_bounds!(block_bytes_read, block_length, mem::size_of::<u32>());
-        let vendor_length = reader.read_u32()? as usize;
+        let comment_length = reader.read_u32()? as usize;
 
-        // Ignore the vendor string.
-        verify_block_bounds!(block_bytes_read, block_length, vendor_length);
-        reader.ignore_bytes(vendor_length as u64)?;
+        // Read the comment string.
+        verify_block_bounds!(block_bytes_read, block_length, comment_length);
 
-        // Read the number of comments.
-        verify_block_bounds!(block_bytes_read, block_length, mem::size_of::<u32>());
-        let n_comments = reader.read_u32()? as usize;
+        let mut comment_byte = Vec::<u8>::with_capacity(comment_length);
+        comment_byte.resize(comment_length, 0);
+        reader.read_buf_bytes(&mut comment_byte)?;
 
-        for _ in 0..n_comments {
-            // Read the comment length in bytes.
-            verify_block_bounds!(block_bytes_read, block_length, mem::size_of::<u32>());
-            let comment_length = reader.read_u32()? as usize;
-
-            // Read the comment string.
-            verify_block_bounds!(block_bytes_read, block_length, comment_length);
-
-            let mut comment_byte = Vec::<u8>::with_capacity(comment_length);
-            comment_byte.resize(comment_length, 0);
-            reader.read_buf_bytes(&mut comment_byte)?;
-
-            // Parse comment as UTF-8 and add to list.
-            tags.push(VorbisTag::parse(&String::from_utf8_lossy(&comment_byte).to_string()));
-        }
-
-        Ok(())
+        // Parse comment as UTF-8 and add to list.
+        tags.push(vorbis::parse(&String::from_utf8_lossy(&comment_byte).to_string()));
     }
+
+    Ok(())
 }
 
-pub struct SeekTable;
+pub fn read_seek_table_block<B : Bytestream>(reader: &mut B, block_length: usize, table: &mut SeekIndex) -> Result<()> {
+    let count = block_length / 18;
 
-impl SeekTable {
-    pub fn process<B : Bytestream>(reader: &mut B, block_length: usize, table: &mut SeekIndex) -> Result<()> {
-        let count = block_length / 18;
+    for _ in 0..count {
+        let sample = reader.read_be_u64()?;
 
-        for _ in 0..count {
-            let sample = reader.read_be_u64()?;
-
-            // A sample value of 0xFFFFFFFFFFFFFFFF is designated as a placeholder and is to be
-            // ignored by decoders. The remaining 10 bytes of the seek point are undefined and must
-            // still be consumed.
-            if sample != 0xffffffffffffffff {
-                table.insert(sample, reader.read_be_u64()?, reader.read_be_u16()? as u32);
-            }
-            else {
-                reader.ignore_bytes(10)?;
-            }
+        // A sample value of 0xFFFFFFFFFFFFFFFF is designated as a placeholder and is to be
+        // ignored by decoders. The remaining 10 bytes of the seek point are undefined and must
+        // still be consumed.
+        if sample != 0xffffffffffffffff {
+            table.insert(sample, reader.read_be_u64()?, reader.read_be_u16()? as u32);
         }
-
-        Ok(())
+        else {
+            reader.ignore_bytes(10)?;
+        }
     }
 
+    Ok(())
 }
 
 /// Converts a string of bytes to an ASCII string if all characters are within the printable ASCII range. If a null
@@ -255,286 +245,233 @@ fn printable_ascii_to_string(bytes: &[u8]) -> Option<String> {
     Some(result)
 }
 
-pub struct CuesheetTrackIndex {
-    pub n_offset_samples: u64,
-    pub idx_point: u8,
-}
+pub fn read_cuesheet_block<B: Bytestream>(reader: &mut B, cues: &mut Vec<Cue>) -> Result<()> {
+    // Read cuesheet catalog number. The catalog number only allows printable ASCII characters.
+    let mut catalog_number_buf = vec![0u8; 128];
+    reader.read_buf_bytes(&mut catalog_number_buf)?;
 
-impl CuesheetTrackIndex {
-    pub fn read<B : Bytestream>(reader: &mut B) -> Result<CuesheetTrackIndex> {
-        let n_offset_samples = reader.read_be_u64()?;
-        let idx_point_enc = reader.read_be_u32()?;
+    let _catalog_number = match printable_ascii_to_string(&catalog_number_buf) {
+        Some(s) => s,
+        None => return decode_error("Cuesheet catalog number contains invalid characters."),
+    };
 
-        if idx_point_enc & 0x00ffffff != 0 {
-            return decode_error("Cuesheet track index reserved bits should be 0.");
-        }
+    // Number of lead-in samples.
+    let n_lead_in_samples = reader.read_be_u64()?;
 
-        let idx_point = ((idx_point_enc & 0xff000000) >> 24) as u8;
+    // Next bit is set for CD-DA cuesheets.
+    let is_cdda = (reader.read_u8()? & 0x80) == 0x80;
 
-        Ok(CuesheetTrackIndex {
-            n_offset_samples,
-            idx_point
-        })
+    // Lead-in should be non-zero only for CD-DA cuesheets.
+    if !is_cdda && n_lead_in_samples > 0 {
+        return decode_error("Cuesheet lead-in samples should be zero if not CD-DA.");
     }
+
+    // Next 258 bytes (read as 129 u16's) must be zero.
+    for _ in 0..129 {
+        if reader.read_be_u16()? != 0 {
+            return decode_error("Cuesheet reserved bits should be zero.");
+        }
+    }
+
+    let n_tracks = reader.read_u8()?;
+
+    // There should be at-least one track in the cuesheet.
+    if n_tracks == 0 {
+        return decode_error("Cuesheet must have at-least one track.");
+    }
+
+    // CD-DA cuesheets must have no more than 100 tracks (99 audio tracks + lead-out track)
+    if is_cdda && n_tracks > 100 {
+        return decode_error("Cuesheets for CD-DA must not have more than 100 tracks.");
+    }
+
+    for _ in 0..n_tracks {
+        read_cuesheet_track(reader, is_cdda, cues)?;
+    }
+
+    Ok(())
 }
 
-pub struct CuesheetTrack {
-    pub n_offset_samples: u64,
-    pub number: u8,
-    pub isrc: String,
-    pub is_audio: bool,
-    pub use_pre_emphasis: bool,
-    pub index: Vec<CuesheetTrackIndex>,
-}
+fn read_cuesheet_track<B: Bytestream>(reader: &mut B, is_cdda: bool, cues: &mut Vec<Cue>) -> Result<()> {
+    let n_offset_samples = reader.read_be_u64()?;
 
-impl CuesheetTrack {
-    pub fn read<B : Bytestream>(reader: &mut B) -> Result<CuesheetTrack> {
-        let n_offset_samples = reader.read_be_u64()?;
-        let number = reader.read_u8()?;
+    // For a CD-DA cuesheet, the track sample offset is the same as the first index (INDEX 00 or INDEX 01) on the 
+    // CD. Therefore, the offset must be a multiple of 588 samples 
+    // (588 samples = 44100 samples/sec * 1/75th of a sec).
+    if is_cdda && n_offset_samples % 588 != 0 {
+        return decode_error("Cuesheet track sample offset is not a multiple of 588 for CD-DA.");
+    }
 
-        let mut isrc_buf = vec![0u8; 12];
-        reader.read_buf_bytes(&mut isrc_buf)?;
+    let number = reader.read_u8()? as u32;
 
-        let isrc = match printable_ascii_to_string(&isrc_buf) {
-            Some(s) => s,
-            None => return decode_error("Cuesheet track ISRC contains invalid characters."),
-        };
+    // A track number of 0 is disallowed in all cases. For CD-DA cuesheets, track 0 is reserved for lead-in.
+    if number == 0 {
+        return decode_error("Cuesheet track number of 0 not allowed.");
+    }
 
-        // Next 14 bytes are reserved. However, the first two bits are flags. Consume the reserved bytes in u16 chunks 
-        // a minor performance improvement.
-        let flags = reader.read_u16()?;
+    // For CD-DA cuesheets, only track numbers 1-99 are allowed for regular tracks and 170 for lead-out.
+    if is_cdda && number > 99 && number != 170 {
+        return decode_error("Cuesheet track numbers greater than 99 are not allowed for CD-DA.");
+    }
 
-        let is_audio = (flags & 0x8000) == 0x0000;
-        let use_pre_emphasis = (flags & 0x4000) == 0x4000;
+    let mut isrc_buf = vec![0u8; 12];
+    reader.read_buf_bytes(&mut isrc_buf)?;
 
-        if flags & 0xcfff != 0x0000 {
+    let isrc = match printable_ascii_to_string(&isrc_buf) {
+        Some(s) => s,
+        None => return decode_error("Cuesheet track ISRC contains invalid characters."),
+    };
+
+    // Next 14 bytes are reserved. However, the first two bits are flags. Consume the reserved bytes in u16 chunks 
+    // a minor performance improvement.
+    let flags = reader.read_u16()?;
+
+    // These values are contained in the Cuesheet but have no analogue in Sonata.
+    let _is_audio = (flags & 0x8000) == 0x0000;
+    let _use_pre_emphasis = (flags & 0x4000) == 0x4000;
+
+    if flags & 0xcfff != 0x0000 {
+        return decode_error("Cuesheet track reserved bits should be zero.");
+    }
+
+    // Consume the remaining 12 bytes read in 3 u32 chunks.
+    for _ in 0..3 {
+        if reader.read_be_u32()? != 0 {
             return decode_error("Cuesheet track reserved bits should be zero.");
         }
-
-        // Consume the remaining 12 bytes read in 6 u16 chunks.
-        for _ in 0..6 {
-            if reader.read_be_u16()? != 0 {
-                return decode_error("Cuesheet track reserved bits should be zero.");
-            }
-        }
-
-        let n_indicies = reader.read_u8()? as usize;
-
-        let mut track = CuesheetTrack {
-            n_offset_samples,
-            number,
-            isrc,
-            is_audio,
-            use_pre_emphasis,
-            index: Vec::<CuesheetTrackIndex>::with_capacity(n_indicies),
-        };
-
-        for _ in 0..n_indicies {
-            track.index.push(CuesheetTrackIndex::read(reader)?);
-        }
-
-        Ok(track)
     }
-}
 
-pub struct Cuesheet {
-    pub catalog_number: String,
-    pub n_lead_in_samples: u64,
-    pub is_cdda: bool,
-    pub tracks: Vec<CuesheetTrack>,
-}
+    let n_indicies = reader.read_u8()? as usize;
 
-impl Cuesheet {
-    pub fn read<B : Bytestream>(reader: &mut B, _block_length: usize) -> Result<Cuesheet> {
-
-        // Read cuesheet catalog number. The catalog number only allows printable ASCII characters.
-        let mut catalog_number_buf = vec![0u8; 128];
-        reader.read_buf_bytes(&mut catalog_number_buf)?;
-
-        let catalog_number = match printable_ascii_to_string(&catalog_number_buf) {
-            Some(s) => s,
-            None => return decode_error("Cuesheet catalog number contains invalid characters."),
-        };
-
-        // Number of lead-in samples.
-        let n_lead_in_samples = reader.read_be_u64()?;
-
-        // Next bit is set for CD-DA cuesheets.
-        let is_cdda = (reader.read_u8()? & 0x80) == 0x80;
-
-        // Lead-in should be non-zero only for CD-DA cuesheets.
-        if !is_cdda && n_lead_in_samples > 0 {
-            return decode_error("Cuesheet lead-in samples should be zero if not CD-DA.");
-        }
-
-        // Next 258 bytes (read as 129 u16's) must be zero.
-        for _ in 0..129 {
-            if reader.read_be_u16()? != 0 {
-                return decode_error("Cuesheet reserved bits should be zero.");
-            }
-        }
-
-        let n_tracks = reader.read_u8()?;
-
-        // There should be at-least one track in the cuesheet.
-        if n_tracks == 0 {
-            return decode_error("Cuesheet must have at-least one track.");
-        }
-
-        // CD-DA cuesheets must have no more than 100 tracks (99 audio tracks + lead-out track)
-        if is_cdda && n_tracks > 100 {
-            return decode_error("Cuesheets for CD-DA must not have more than 100 tracks.");
-        }
-
-        let mut cuesheet = Cuesheet {
-            catalog_number,
-            n_lead_in_samples,
-            is_cdda,
-            tracks: Vec::<CuesheetTrack>::with_capacity(n_tracks as usize),
-        };
-
-        for _ in 0..n_tracks {
-            cuesheet.tracks.push(CuesheetTrack::read(reader)?);
-        }
-
-        Ok(cuesheet)
+    // For CD-DA cuesheets, the track index cannot exceed 100 indicies.
+    if is_cdda && n_indicies > 100 {
+        return decode_error("Cuesheet track indicies cannot exceed 100 for CD-DA.");
     }
-}
 
-impl fmt::Display for Cuesheet {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "Cuesheet {{")?;
-        writeln!(f, "\tcatalog_number={},", self.catalog_number)?;
-        writeln!(f, "\tn_lead_in_samples={},", self.n_lead_in_samples)?;
-        writeln!(f, "\tis_cdda={},", self.is_cdda)?;
-        writeln!(f, "\ttracks=[")?;
-        for track in &self.tracks {
-            writeln!(f, "\t\t{{")?;
-            writeln!(f, "\t\t\tn_offset_samples={}", track.n_offset_samples)?;
-            writeln!(f, "\t\t\tnumber={}", track.number)?;
-            writeln!(f, "\t\t\tisrc={}", track.isrc)?;
-            writeln!(f, "\t\t\tis_audio={}", track.is_audio)?;
-            writeln!(f, "\t\t\tuse_pre_emphasis={}", track.use_pre_emphasis)?;
-            writeln!(f, "\t\t\tindex=[")?;
-            for index in &track.index {
-                writeln!(f, "\t\t\t\t{{ n_offset_samples={}, idx_point={} }}", index.n_offset_samples, index.idx_point)?;
-            }
-            writeln!(f, "\t\t}}")?;
-            writeln!(f, "\t\t]")?;
-        }
-        writeln!(f, "\t]")?;
-        writeln!(f, "}}")
+    let mut cue = Cue {
+        index: number,
+        start_ts: n_offset_samples,
+        tags: Vec::new(),
+        points: Vec::new(),
+    };
+
+    // Push the ISRC as a tag.
+    cue.tags.push(Tag::new(Some(StandardTagKey::IdentIsrc), "ISRC", &isrc));
+
+    for _ in 0..n_indicies {
+        cue.points.push(read_cuesheet_track_index(reader, is_cdda)?);
     }
+
+    cues.push(cue);
+
+    Ok(())
 }
 
-pub struct Application {
-    pub application: u32,
-}
+fn read_cuesheet_track_index<B: Bytestream>(reader: &mut B, is_cdda: bool) -> Result<CuePoint> {
+    let n_offset_samples = reader.read_be_u64()?;
+    let idx_point_enc = reader.read_be_u32()?;
 
-impl Application {
-    pub fn read<B : Bytestream>(reader: &mut B, block_length: usize) -> Result<Application> {
-        let application = reader.read_be_u32()?;
-        // TODO: Actually read the application data.
-        reader.ignore_bytes(block_length as u64 - 4)?;
-        Ok(Application { application })
+    // CD-DA track index points must have a sample offset that is a multiple of 588 samples 
+    // (588 samples = 44100 samples/sec * 1/75th of a sec).
+    if is_cdda && n_offset_samples % 588 != 0 {
+        return decode_error("Cuesheet track index point sample offset is not a multiple of 588 for CD-DA.");
     }
+
+    if idx_point_enc & 0x00ffffff != 0 {
+        return decode_error("Cuesheet track index reserved bits should be 0.");
+    }
+
+    // TODO: Should be 0 or 1 for the first index for CD-DA.
+    let _idx_point = ((idx_point_enc & 0xff000000) >> 24) as u8;
+
+    Ok(CuePoint {
+        start_offset_ts: n_offset_samples,
+        tags: Vec::new(),
+    })
 }
 
-impl fmt::Display for Application {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "Application {{ application={} }}", self.application)
-    }
+pub fn read_application_block<B : Bytestream>(reader: &mut B, block_length: usize) -> Result<VendorData> {
+    // Read the application identifier. Usually this is just 4 ASCII characters, but it is not limited to that. 
+    // Non-printable ASCII characters must be escaped to create a valid UTF8 string.
+    let ident_buf = reader.read_quad_bytes()?;
+    let ident = String::from_utf8(
+        ident_buf.as_ref()
+                 .iter()
+                 .map(|b| ascii::escape_default(*b))
+                 .flatten()
+                 .collect()
+        ).unwrap();
+
+    let data = reader.read_boxed_slice_bytes(block_length - 4)?;
+    Ok(VendorData { ident, data })
 }
 
+pub fn read_picture_block<B : Bytestream>(reader: &mut B, visuals: &mut Vec<Visual>) -> Result<()> {
+    let type_enc = reader.read_be_u32()?;
+    
+    // Read the Media Type length in bytes.
+    let media_type_len = reader.read_be_u32()? as usize;
 
-pub struct Picture;
+    // Read the Media Type bytes
+    let mut media_type_buf = vec![0u8; media_type_len];
+    reader.read_buf_bytes(&mut media_type_buf)?;
 
-fn visual_key_from_id3v2_apic(apic: u32) -> Option<StandardVisualKey> {
-    match apic {
-        0x01 => Some(StandardVisualKey::FileIcon),
-        0x02 => Some(StandardVisualKey::OtherIcon),
-        0x03 => Some(StandardVisualKey::FrontCover),
-        0x04 => Some(StandardVisualKey::BackCover),
-        0x05 => Some(StandardVisualKey::Leaflet),
-        0x06 => Some(StandardVisualKey::Media),
-        0x07 => Some(StandardVisualKey::LeadArtistPerformerSoloist),
-        0x08 => Some(StandardVisualKey::ArtistPerformer),
-        0x09 => Some(StandardVisualKey::Conductor),
-        0x0a => Some(StandardVisualKey::BandOrchestra),
-        0x0b => Some(StandardVisualKey::Composer),
-        0x0c => Some(StandardVisualKey::Lyricist),
-        0x0d => Some(StandardVisualKey::RecordingLocation),
-        0x0e => Some(StandardVisualKey::RecordingSession),
-        0x0f => Some(StandardVisualKey::Performance),
-        0x10 => Some(StandardVisualKey::ScreenCapture),
-        0x12 => Some(StandardVisualKey::Illustration),
-        0x13 => Some(StandardVisualKey::BandArtistLogo),
-        0x14 => Some(StandardVisualKey::PublisherStudioLogo),
-        _ => None,
+    // Convert Media Type bytes to an ASCII string. Non-printable ASCII characters are invalid.
+    let media_type = match printable_ascii_to_string(&media_type_buf) {
+        Some(s) => s,
+        None => return decode_error("Picture mime-type contains invalid characters."),
+    };
+
+    // Read the description length in bytes.
+    let desc_len = reader.read_be_u32()? as usize;
+    
+    // Read the description bytes.
+    let mut desc_buf = vec![0u8; desc_len];
+    reader.read_buf_bytes(&mut desc_buf)?;
+
+    // Convert description bytes into a standard Vorbis DESCRIPTION tag.
+    let mut tags = Vec::<Tag>::new();
+    tags.push(Tag::new(Some(StandardTagKey::Description), "DESCRIPTION", &String::from_utf8_lossy(&desc_buf)));
+
+    // Read the width, and height of the visual.
+    let width = reader.read_be_u32()?;
+    let height = reader.read_be_u32()?;
+
+    // If either the width or height is 0, then the size is invalid.
+    let dimensions = if width > 0 && height > 0 {
+        Some(Size { width, height })
     }
-}
+    else {
+        None
+    };
 
-impl Picture {
-    pub fn read<B : Bytestream>(reader: &mut B, _block_length: usize, visuals: &mut Vec<Visual>) -> Result<()> {
-        let type_enc = reader.read_be_u32()?;
-        
-        // Read the Media Type length in bytes.
-        let media_type_len = reader.read_be_u32()? as usize;
+    // Read bits-per-pixel of the visual.
+    let bits_per_pixel = NonZeroU32::new(reader.read_be_u32()?);
 
-        // Read the Media Type bytes
-        let mut media_type_buf = vec![0u8; media_type_len];
-        reader.read_buf_bytes(&mut media_type_buf)?;
+    // Indexed colours is only valid for image formats that use an indexed colour palette. If it is 0, the image 
+    // does not used indexed colours.
+    let indexed_colours_enc = reader.read_be_u32()?;
 
-        // Convert Media Type bytes to an ASCII string. Non-printable ASCII characters are invalid.
-        let media_type = match printable_ascii_to_string(&media_type_buf) {
-            Some(s) => s,
-            None => return decode_error("Picture mime-type contains invalid characters."),
-        };
+    let color_mode = match indexed_colours_enc {
+        0 => Some(ColorMode::Discrete),
+        _ => Some(ColorMode::Indexed(NonZeroU32::new(indexed_colours_enc).unwrap())),
+    };
 
-        // Read the description length in bytes.
-        let desc_len = reader.read_be_u32()? as usize;
-        
-        // Read the description bytes.
-        let mut desc_buf = vec![0u8; desc_len];
-        reader.read_buf_bytes(&mut desc_buf)?;
+    // Read the image data
+    let data_len = reader.read_be_u32()? as usize;
+    let data = reader.read_boxed_slice_bytes(data_len)?;
 
-        // Convert description bytes into a standard Vorbis DESCRIPTION tag.
-        let mut tags = Vec::<Tag>::new();
-        tags.push(Tag::new(Some(StandardTagKey::Description), "DESCRIPTION", &String::from_utf8_lossy(&desc_buf)));
+    visuals.push(Visual {
+        media_type,
+        dimensions,
+        bits_per_pixel,
+        color_mode,
+        usage: id3v2::visual_key_from_apic(type_enc),
+        tags,
+        data,
+    });
 
-        // Read the width, height, and bits-per-pixel of the visual.
-        let width = reader.read_be_u32()?;
-        let height = reader.read_be_u32()?;
-        let bits_per_pixel = NonZeroU32::new(reader.read_be_u32()?);
-
-        // Indexed colours is only valid for image formats that use an indexed colour palette. If it is 0, the image 
-        // does not used indexed colours.
-        let indexed_colours_enc = reader.read_be_u32()?;
-
-        let color_mode = match indexed_colours_enc {
-            0 => ColorMode::Discrete,
-            _ => ColorMode::Indexed(NonZeroU32::new(indexed_colours_enc).unwrap()),
-        };
-
-        // Read the image data
-        let data_len = reader.read_be_u32()? as usize;
-
-        let mut data_buf = Vec::<u8>::with_capacity(data_len);
-        unsafe { data_buf.set_len(data_len); }
-        reader.read_buf_bytes(&mut data_buf)?;
-
-        visuals.push(Visual {
-            media_type,
-            dimensions: Size { width, height },
-            bits_per_pixel,
-            color_mode,
-            usage: visual_key_from_id3v2_apic(type_enc),
-            tags,
-            data: data_buf.into_boxed_slice(),
-        });
-
-        Ok(())
-    }
+    Ok(())
 }
 
 pub struct MetadataBlockHeader {
@@ -550,8 +487,10 @@ impl MetadataBlockHeader {
         // First bit of the header indicates if this is the last metadata block.
         let is_last = (header_enc & 0x80) == 0x80;
 
-        // Next 7 bits of the header indicates the metadata block type.
-        let block_type = match header_enc & 0x7f {
+        // The next 7 bits of the header indicates the block type.
+        let block_type_id = (header_enc & 0x7f) as u8;
+
+        let block_type = match block_type_id {
             0 => MetadataBlockType::StreamInfo,
             1 => MetadataBlockType::Padding,
             2 => MetadataBlockType::Application,
@@ -559,7 +498,7 @@ impl MetadataBlockHeader {
             4 => MetadataBlockType::VorbisComment,
             5 => MetadataBlockType::Cuesheet,
             6 => MetadataBlockType::Picture,
-            _ => MetadataBlockType::Unknown,
+            _ => MetadataBlockType::Unknown(block_type_id),
         };
 
         Ok(MetadataBlockHeader {

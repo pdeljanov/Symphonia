@@ -108,6 +108,7 @@ pub enum ProbeDepth {
 }
 
 /// A 2D (width and height) size type.
+#[derive(Copy, Clone)]
 pub struct Size {
     /// The width.
     pub width: u32,
@@ -131,7 +132,7 @@ pub struct Visual {
     /// The dimensions of the `Visual`.
     /// 
     /// Note: This value may not be accurate as it comes from metadata, not the `Visual` itself.
-    pub dimensions: Size,
+    pub dimensions: Option<Size>,
     /// The number of bits-per-pixel (aka bit-depth) of the unencoded image. 
     /// 
     /// Note: This value may not be accurate as it comes from metadata, not the `Visual` itself.
@@ -139,7 +140,7 @@ pub struct Visual {
     /// The color mode of the `Visual`.
     /// 
     /// Note: This value may not be accurate as it comes from metadata, not the `Visual` itself.
-    pub color_mode: ColorMode,
+    pub color_mode: Option<ColorMode>,
     /// The usage and/or content of the `Visual`.
     pub usage: Option<StandardVisualKey>,
     /// Any tags associated with the `Visual`.
@@ -148,22 +149,33 @@ pub struct Visual {
     pub data: Box<[u8]>,
 }
 
-/// A `Cue` is a designated span of time within a media stream.
+/// A `Cue` is a designated point of time within a media stream.
 /// 
-/// A `Cue` may be a mapping from either a source track, a chapter, cuesheet, or a timespan depending on the source 
-/// media. Each `Cue` may contain nested `Cue`s that never exceed the parent's start and end timestamps. A `Cue` may 
-/// also have associated `Tag`s.
+/// A `Cue` may be a mapping from either a source track, a chapter, cuesheet, or a timestamp depending on the source 
+/// media. A `Cue`'s duration is the difference between the `Cue`'s timestamp and the next. Each `Cue` may contain an 
+/// optional index of points relative to the `Cue` that never exceed the timestamp of the next `Cue`. A `Cue` may also 
+/// have associated `Tag`s.
 pub struct Cue {
     /// A unique index for the `Cue`.
     pub index: u32,
     /// The starting timestamp in number of frames from the start of the stream.
     pub start_ts: u64,
-    /// The ending timestamp in number of frames from the start of the stream.
-    pub end_ts: u64,
     /// A list of `Tag`s associated with the `Cue`.
     pub tags: Vec<Tag>,
-    /// A list of sub-cues that are contained within this `Cue`.
-    pub sub_cues: Vec<Cue>,
+    /// A list of `CuePoints`s that are contained within this `Cue`. These points are children of the `Cue` since the 
+    /// `Cue` itself is an implicit `CuePoint`.
+    pub points: Vec<CuePoint>,
+}
+
+/// A `CuePoint` is a point, represented as a frame offset, within a `Cue`.
+/// 
+/// A `CuePoint` provides more precise indexing within a parent `Cue`. Additional `Tag`s may be associated with a 
+/// `CuePoint`.
+pub struct CuePoint {
+    /// The offset of the first frame in the `CuePoint` relative to the start of the parent `Cue`.
+    pub start_offset_ts: u64,
+    /// A list of `Tag`s associated with the `CuePoint`.
+    pub tags: Vec<Tag>,
 }
 
 /// `VendorData` is application specific data embedded within the media format.
@@ -175,7 +187,7 @@ pub struct VendorData {
 }
 
 /// A `SeekPoint` is a mapping between a sample or frame number to byte offset within a media stream.
-#[derive(Copy,Clone,PartialEq)]
+#[derive(Copy, Clone, PartialEq)]
 pub struct SeekPoint {
     /// The frame or sample timestamp of the `SeekPoint`.
     pub frame_ts: u64,

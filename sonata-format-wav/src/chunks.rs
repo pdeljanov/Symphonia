@@ -32,7 +32,7 @@ use sonata_core::codecs::{
 use sonata_core::codecs::CodecType;
 use sonata_core::errors::{Result, decode_error, unsupported_error};
 use sonata_core::io::Bytestream;
-use sonata_core::tags::{Tag, RiffTag};
+use sonata_core::tags::{Tag, riff};
 
 /// `ParseChunkTag` implements `parse_tag` to map between the 4-byte chunk identifier and the enumeration 
 pub trait ParseChunkTag : Sized {
@@ -616,13 +616,12 @@ pub struct InfoChunk {
 
 impl ParseChunk for InfoChunk {
     fn parse<B: Bytestream>(reader: &mut B, tag: [u8; 4], len: u32) -> Result<InfoChunk> {
+        // TODO: Apply limit.
         let mut value_buf = vec![0u8; len as usize];
         reader.read_buf_bytes(&mut value_buf)?;
 
-        let value = String::from_utf8_lossy(&value_buf);
-
         Ok(InfoChunk {
-            tag: RiffTag::parse(tag, &value)
+            tag: riff::parse(tag, &value_buf)
         })
     }
 }

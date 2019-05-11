@@ -519,6 +519,14 @@ pub trait Bytestream {
         Ok(unsafe { *(&u64::from_be_bytes(buf) as *const u64 as *const f64) })
     }
 
+    /// Reads exactly the number of bytes requested, and returns a boxed slice of the data or an error.
+    fn read_boxed_slice_bytes(&mut self, len: usize) -> io::Result<Box<[u8]>> {
+        let mut buf = Vec::<u8>::with_capacity(len);
+        unsafe { buf.set_len(len); }
+        self.read_buf_bytes(&mut buf)?;
+        Ok(buf.into_boxed_slice())
+    }
+
     /// Ignores the specified number of bytes from the stream or returns an error.
     fn ignore_bytes(&mut self, count: u64) -> io::Result<()>;
 }

@@ -25,13 +25,12 @@ use sonata_core::audio::Timestamp;
 use sonata_core::codecs::{CODEC_TYPE_FLAC, CodecParameters};
 use sonata_core::errors::{Result, decode_error, seek_error, SeekErrorKind};
 use sonata_core::formats::{FormatDescriptor, FormatOptions, FormatReader, Packet};
-use sonata_core::formats::{ProbeDepth, ProbeResult, SeekIndex, SeekSearchResult, Stream, Visual};
+use sonata_core::formats::{Cue, ProbeDepth, ProbeResult, SeekIndex, SeekSearchResult, Stream, Visual};
 use sonata_core::tags::Tag;
 use sonata_core::io::*;
 
-use super::decoder::{PacketParser};
-use super::metadata::{MetadataBlockType, MetadataBlockHeader};
-use super::metadata::{StreamInfo, VorbisComment, SeekTable, Cuesheet, Application, Picture};
+use super::decoder::PacketParser;
+use super::metadata::*;
 
 /// The FLAC start of stream marker: "fLaC" in ASCII.
 const FLAC_STREAM_MARKER: [u8; 4] = [0x66, 0x4c, 0x61, 0x43];
@@ -47,6 +46,7 @@ pub struct FlacReader {
     streams: Vec<Stream>,
     tags: Vec<Tag>,
     visuals: Vec<Visual>,
+    cues: Vec<Cue>,
     index: Option<SeekIndex>,
     first_frame_offset: u64,
 }
@@ -91,7 +91,8 @@ impl FlacReader {
 
             match header.block_type {
                 MetadataBlockType::Application => {
-                    eprintln!("{}", Application::read(&mut self.reader, header.block_length)?);
+                    // TODO: Store vendor data.
+                    read_application_block(&mut self.reader, header.block_length)?;
                 },
                 // SeekTable blocks are parsed into a SeekIndex.
                 MetadataBlockType::SeekTable => {
@@ -99,7 +100,7 @@ impl FlacReader {
                     // seeking. Either way, it's a violation of the specification.
                     if self.index.is_none() {
                         let mut index = SeekIndex::new();
-                        SeekTable::process(&mut self.reader, header.block_length, &mut index)?;
+                        read_seek_table_block(&mut self.reader, header.block_length, &mut index)?;
                         self.index = Some(index);
                     }
                     else {
@@ -108,24 +109,29 @@ impl FlacReader {
                 },
                 // VorbisComment blocks are parsed into Tags.
                 MetadataBlockType::VorbisComment => {
-                    VorbisComment::process(&mut self.reader, header.block_length, &mut self.tags)?;
+                    read_comment_block(&mut self.reader, header.block_length, &mut self.tags)?;
                 },
-                // Cuesheet blocks are parsed into CuePoints.
+                // Cuesheet blocks are parsed into Cues.
                 MetadataBlockType::Cuesheet => {
-                    eprintln!("{}", Cuesheet::read(&mut self.reader, header.block_length)?);
+                    read_cuesheet_block(&mut self.reader, &mut self.cues)?;
                 },
                 // Picture blocks are read as Visuals.
                 MetadataBlockType::Picture => {
-                    Picture::read(&mut self.reader, header.block_length, &mut self.visuals)?;
+                    read_picture_block(&mut self.reader, &mut self.visuals)?;
                 },
                 // StreamInfo blocks are parsed into Streams.
                 MetadataBlockType::StreamInfo => {
                     self.read_stream_info_block()?;
                 },
-                // Unknown block encountered. Skip these blocks as they may be part of a future version of FLAC.
-                _ => {
+                // Padding blocks are skipped.
+                MetadataBlockType::Padding => {
                     self.reader.ignore_bytes(header.block_length as u64)?;
-                    eprintln!("Ignoring {} bytes of {:?} block.", header.block_length, header.block_type);
+                },
+                // Unknown block encountered. Skip these blocks as they may be part of a future version of FLAC, but 
+                // print a message.
+                MetadataBlockType::Unknown(id) => {
+                    self.reader.ignore_bytes(header.block_length as u64)?;
+                    eprintln!("Ignoring {} bytes of block width id={}.", header.block_length, id);
                 }
             }
 
@@ -148,6 +154,7 @@ impl FormatReader for FlacReader {
             streams: Vec::new(),
             tags: Vec::new(),
             visuals: Vec::new(),
+            cues: Vec::new(),
             index: None,
             first_frame_offset: 0,
         }

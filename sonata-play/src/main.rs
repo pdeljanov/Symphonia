@@ -328,16 +328,16 @@ fn pretty_print_visuals(visuals: &[Visual]) {
             else {
                 println!("|     [{:0>2}] Media Type: {}", idx + 1, visual.media_type);
             }
-
-            println!("|          Dimensions: {} px x {} px", visual.dimensions.width, visual.dimensions.height);
-            println!("|          Size:       {} bytes", visual.data.len());
-
+            if let Some(dimensions) = visual.dimensions {
+                println!("|          Dimensions: {} px x {} px", dimensions.width, dimensions.height);
+            }
             if let Some(bpp) = visual.bits_per_pixel {
                 println!("|          Bits/Pixel: {}", bpp);
             }
-            if let ColorMode::Indexed(colors) = visual.color_mode {
+            if let Some(ColorMode::Indexed(colors)) = visual.color_mode {
                 println!("|          Palette:    {} colors", colors);
             }
+            println!("|          Size:       {} bytes", visual.data.len());
 
             // Print out tags similar to how regular tags are printed.
             if visual.tags.len() > 0 {
