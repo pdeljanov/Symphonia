@@ -249,7 +249,7 @@ impl Decoder for FlacDecoder {
             // Sub-frames don't have any byte-aligned content, so use a BitReader.
             let mut bs = BitStreamLtr::new(&mut reader_crc16);
 
-            // Read each subframe based on the channel assignment into an interleaved buffer.
+            // Read each subframe based on the channel assignment into a planar buffer.
             match header.channel_assignment {
                 ChannelAssignment::Independant(channels) => {
                     for i in 0..channels as u8 {

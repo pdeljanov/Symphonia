@@ -10,8 +10,9 @@ Sonata's planned features are:
  * Reading and writing the most common media container formats
  * Probing and guessing the correct format and decoder combination(s) for playback or inspection
  * Reading and writing metadata
- * Providing a set of audio primitives for manipulating audio data
+ * Providing a set of audio primitives for manipulating audio data efficiently
  * Providing a C API for integration into other languages
+ * Providing a WASM API for web usage
 
 ## Format and Codec Support Roadmap
 

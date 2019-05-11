@@ -83,12 +83,13 @@ impl<T: ParseChunkTag> ChunksReader<T> {
             let len = reader.read_u32()?;
             self.consumed += 8;
 
-            // Check if the chunk length will exceed the parent chunk.
-            if self.consumed + len > self.len {
+            // Check if the ChunkReader has enough unread bytes to fully read the chunk. Warning: the formulation of 
+            // this conditional is critical because len is untrusted input, it may overflow when if added to anything.
+            if self.len - self.consumed < len {
                 return decode_error("Info chunk length exceeds parent List chunk length.");
             }
 
-            // "Consume" the chunk.
+            // The length of the chunk has been validated, so "consume" the chunk.
             self.consumed += len;
 
             match T::parse_tag(&tag, len) {

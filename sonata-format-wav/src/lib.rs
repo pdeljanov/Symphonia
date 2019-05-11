@@ -17,13 +17,15 @@
 
 #![warn(rust_2018_idioms)]
 
+use std::io::{Seek, SeekFrom};
+
 use sonata_core::support_format;
 
 use sonata_core::audio::Timestamp;
 use sonata_core::codecs::CodecParameters;
-use sonata_core::errors::{Result, seek_error, unsupported_error, SeekErrorKind};
+use sonata_core::errors::{Result, seek_error, SeekErrorKind};
 use sonata_core::formats::{FormatDescriptor, FormatOptions, FormatReader, Packet};
-use sonata_core::formats::{ProbeDepth, ProbeResult, SeekSearchResult, Stream, Visual};
+use sonata_core::formats::{ProbeDepth, ProbeResult, Stream, Visual};
 use sonata_core::tags::Tag;
 use sonata_core::io::*;
 
@@ -44,6 +46,8 @@ pub struct WavReader {
     streams: Vec<Stream>,
     tags: Vec<Tag>,
     visuals: Vec<Visual>,
+    frame_len: u16,
+    data_offset: u64,
 }
 
 impl WavReader {
@@ -81,6 +85,8 @@ impl FormatReader for WavReader {
             streams: Vec::new(),
             tags: Vec::new(),
             visuals: Vec::new(),
+            frame_len: 0,
+            data_offset: 0,
         }
     }
 
@@ -110,7 +116,61 @@ impl FormatReader for WavReader {
     }
 
     fn seek(&mut self, ts: Timestamp) -> Result<u64> {
-        unsupported_error("Seeking is unsupported")
+
+        if self.streams.len() < 1 || self.frame_len == 0 {
+            return seek_error(SeekErrorKind::Unseekable);
+        }
+
+        let params = &self.streams[0].codec_params;
+
+        // Get the timestamp of the desired audio frame.
+        let frame_ts = match ts {
+            // Frame timestamp given.
+            Timestamp::Frame(frame) => frame,
+            // Time value given, calculate frame timestamp from sample rate.
+            Timestamp::Time(time) => {
+                // Ensure time value is positive.
+                if time < 0.0 {
+                    return seek_error(SeekErrorKind::OutOfRange);
+                }
+                // Use the sample rate to calculate the frame timestamp. If sample rate is not known, the seek cannot 
+                // be completed.
+                if let Some(sample_rate) = params.sample_rate {
+                    (time * sample_rate as f64) as u64
+                }
+                else {
+                    return seek_error(SeekErrorKind::Unseekable);
+                }
+            }
+        };
+
+        // If the total number of frames in the stream is known, verify the desired frame timestamp does not exceed it.
+        if let Some(n_frames) = params.n_frames {
+            if frame_ts > n_frames {
+                return seek_error(SeekErrorKind::OutOfRange);
+            }
+        }
+
+        // Calculate the absolute byte offset of the desired audio frame.
+        let seek_pos = self.data_offset + (frame_ts * self.frame_len as u64);
+
+        // If the reader supports seeking we can seek directly to the frame's offset wherever it may be.
+        if self.reader.is_seekable() {
+            self.reader.seek(SeekFrom::Start(seek_pos))?;
+        }
+        // If the reader does not support seeking, we can only emulate forward seeks by consuming bytes. If the reader
+        // has to seek backwards, return an error.
+        else {
+            let current_pos = self.reader.pos();
+            if seek_pos >= current_pos {
+                self.reader.ignore_bytes(seek_pos - current_pos)?;
+            }
+            else {
+                return seek_error(SeekErrorKind::ForwardOnly)
+            }
+        }
+
+        Ok(frame_ts)
     }
 
     fn probe(&mut self, depth: ProbeDepth) -> Result<ProbeResult> {
@@ -146,14 +206,17 @@ impl FormatReader for WavReader {
                 match chunk.unwrap() {
                     RiffWaveChunks::Format(fmt) => {
                         let format = fmt.parse(&mut self.reader)?;
-                        eprintln!("{}", format);
+
+                        // The Format chunk contains the block_align field which indicates the size of one full audio 
+                        // frame in bytes, atleast for the codecs supported by WavReader. This value is stored to
+                        // support seeking.
+                        self.frame_len = format.block_align;
 
                         // Append Format chunk fields to codec parameters.
                         append_format_params(&mut codec_params, &format);
                     },
                     RiffWaveChunks::Fact(fct) => {
                         let fact = fct.parse(&mut self.reader)?;
-                        eprintln!("{}", fact);
 
                         // Append Fact chunk fields to codec parameters.
                         append_fact_params(&mut codec_params, &fact);
@@ -168,7 +231,10 @@ impl FormatReader for WavReader {
                         }
                     },
                     RiffWaveChunks::Data => {
-                        // Add new stream using the collected codec parameters.
+                        // Record the offset of the Data chunk's contents to support seeking.
+                        self.data_offset = self.reader.pos();
+                        
+                        // Add a new stream using the collected codec parameters.
                         self.streams.push(Stream::new(codec_params));
 
                         return Ok(ProbeResult::Supported);
@@ -180,10 +246,7 @@ impl FormatReader for WavReader {
         // Not supported.
         Ok(ProbeResult::Unsupported)
     }
-
 }
-
-
 
 fn append_format_params(codec_params: &mut CodecParameters, format: &WaveFormatChunk) {
 
