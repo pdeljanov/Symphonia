@@ -35,7 +35,9 @@ pub enum MetadataBlockType {
     Unknown(u8)
 }
 
-fn flac_channels_to_channel_vec(channels: u32) -> Channels {
+fn flac_channels_to_channels(channels: u32) -> Channels {
+    debug_assert!(channels > 0 && channels < 9);
+
     match channels {
         1 => { 
             Channels::FRONT_LEFT
@@ -89,18 +91,24 @@ fn flac_channels_to_channel_vec(channels: u32) -> Channels {
                 | Channels::SIDE_LEFT
                 | Channels::SIDE_RIGHT
         },
-        _ => panic!("Invalid channel assignment for FLAC.")
+        _ => unreachable!()
     }
 }
 
-
 pub struct StreamInfo {
-    pub block_size_bounds: (u16, u16),
-    pub frame_size_bounds: (u32, u32),
+    /// The minimum and maximum number of decoded samples per block of audio.
+    pub block_sample_len: (u16, u16),
+    /// The minimum and maximum byte length of an encoded block (frame) of audio. May be 0 if unknown.
+    pub frame_byte_len: (u32, u32),
+    /// The sample rate in Hz.
     pub sample_rate: u32,
+    /// The channel mask.
     pub channels: Channels,
+    /// The number of bits per sample of the stream.
     pub bits_per_sample: u32,
+    /// The total number of samples in the stream, if available.
     pub n_samples: Option<u64>,
+    /// The MD5 hash value of the decoded audio.
     pub md5: [u8; 16],
 }
 
@@ -108,8 +116,8 @@ impl StreamInfo {
 
     pub fn read<B : Bytestream>(reader: &mut B)  -> Result<StreamInfo> {
         let mut info = StreamInfo {
-            block_size_bounds: (0, 0),
-            frame_size_bounds: (0, 0),
+            block_sample_len: (0, 0),
+            frame_byte_len: (0, 0),
             sample_rate: 0,
             channels: Channels::empty(),
             bits_per_sample: 0,
@@ -117,17 +125,32 @@ impl StreamInfo {
             md5: [0; 16],
         };
 
-        // Read the block size bounds in samples. Valid values are 16-65535.
-        info.block_size_bounds = (reader.read_be_u16()?, reader.read_be_u16()?);
-        debug_assert!(info.block_size_bounds.0 >= 16 && info.block_size_bounds.1 >= 16);
+        // Read the block length bounds in number of samples.
+        info.block_sample_len = (reader.read_be_u16()?, reader.read_be_u16()?);
 
-        // Read the frame size bounds in bytes. Valid values are 0-2^24-1. A 0 indicates the size
-        // is unknown.
-        info.frame_size_bounds = (reader.read_be_u24()?, reader.read_be_u24()?);
+        // Validate the block length bounds are in the range [16, 65535] samples.
+        if info.block_sample_len.0 < 16 || info.block_sample_len.1 < 16{
+            return decode_error("Minimum block length is 16 samples.");
+        }
+
+        // Validate the maximum block size is greater than or equal to the minimum block size.
+        if info.block_sample_len.1 < info.block_sample_len.0 {
+            return decode_error("Maximum block length cannot be less than the minimum block length.");
+        }
+
+        // Read the frame byte length bounds.
+        info.frame_byte_len = (reader.read_be_u24()?, reader.read_be_u24()?);
+
+        // Validate the maximum frame byte length is greater than or equal to the minimum frame byte length if both are 
+        // known. A value of 0 for either indicates the respective byte length is unknown. Valid values are in the 
+        // range [0, (2^24) - 1] bytes.
+        if info.frame_byte_len.0 > 0 && info.frame_byte_len.1 > 0 && info.frame_byte_len.1 < info.frame_byte_len.0 {
+            return decode_error("Maximum frame length cannot be less than the minimum frame length.");
+        }
 
         let mut br = BitReaderLtr::new();
 
-        // Read sample rate, valid rates are 1-655350Hz.
+        // Read sample rate, valid rates are [1, 655350] Hz.
         info.sample_rate = br.read_bits_leq32(reader, 20)?;
 
         if info.sample_rate < 1 || info.sample_rate > 655350 {
@@ -141,7 +164,7 @@ impl StreamInfo {
             return decode_error("Stream channels are out of bounds.");
         }
 
-        info.channels = flac_channels_to_channel_vec(channels_enc);
+        info.channels = flac_channels_to_channels(channels_enc);
 
         // Read bits per sample minus 1. Valid number of bits per sample are 4-32.
         info.bits_per_sample = br.read_bits_leq32(reader, 5)? + 1;

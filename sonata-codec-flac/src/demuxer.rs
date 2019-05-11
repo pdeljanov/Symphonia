@@ -66,7 +66,7 @@ impl FlacReader {
                 .for_codec(CODEC_TYPE_FLAC)
                 .with_sample_rate(info.sample_rate)
                 .with_bits_per_sample(info.bits_per_sample)
-                .with_max_frames_per_packet(info.block_size_bounds.1 as u64)
+                .with_max_frames_per_packet(info.block_sample_len.1 as u64)
                 .with_channels(info.channels);
             
             // Total samples (per channel) aka frames may or may not be stated in StreamInfo.
