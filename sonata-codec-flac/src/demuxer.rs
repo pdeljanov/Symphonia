@@ -53,46 +53,19 @@ pub struct FlacReader {
 
 impl FlacReader {
 
-    /// Reads a StreamInfo block and populates the reader with stream information.
-    fn read_stream_info_block(&mut self) -> Result<()> {
-        // Only one StreamInfo block, and therefore ony one Stream, is allowed per media source stream.
-        if self.streams.len() == 0 {
-            let info = StreamInfo::read(&mut self.reader)?;
-
-            // Populate the codec parameters with the information read from StreamInfo.
-            let mut codec_params = CodecParameters::new();
-
-            codec_params
-                .for_codec(CODEC_TYPE_FLAC)
-                .with_sample_rate(info.sample_rate)
-                .with_bits_per_sample(info.bits_per_sample)
-                .with_max_frames_per_packet(info.block_sample_len.1 as u64)
-                .with_channels(info.channels);
-            
-            // Total samples (per channel) aka frames may or may not be stated in StreamInfo.
-            if let Some(n_frames) = info.n_samples {
-                codec_params.with_n_frames(n_frames);
-            }
-
-            // Add the stream.
-            self.streams.push(Stream::new(codec_params));
-        }
-        else {
-            return decode_error("Found more than one StreamInfo block.");
-        }
-
-        Ok(())
-    }
-
     /// Reads all the metadata blocks.
     fn read_all_metadata_blocks(&mut self) -> Result<()> {
         loop {
             let header = MetadataBlockHeader::read(&mut self.reader)?;
 
+            // Create a scoped bytestream to error if the metadata block read functions exceed the stated length of the 
+            // block.
+            let mut block_stream = ScopedStream::new(&mut self.reader, header.block_len as u64);
+
             match header.block_type {
                 MetadataBlockType::Application => {
                     // TODO: Store vendor data.
-                    read_application_block(&mut self.reader, header.block_length)?;
+                    read_application_block(&mut block_stream, header.block_len)?;
                 },
                 // SeekTable blocks are parsed into a SeekIndex.
                 MetadataBlockType::SeekTable => {
@@ -100,7 +73,7 @@ impl FlacReader {
                     // seeking. Either way, it's a violation of the specification.
                     if self.index.is_none() {
                         let mut index = SeekIndex::new();
-                        read_seek_table_block(&mut self.reader, header.block_length, &mut index)?;
+                        read_seek_table_block(&mut block_stream, header.block_len, &mut index)?;
                         self.index = Some(index);
                     }
                     else {
@@ -109,33 +82,42 @@ impl FlacReader {
                 },
                 // VorbisComment blocks are parsed into Tags.
                 MetadataBlockType::VorbisComment => {
-                    read_comment_block(&mut self.reader, header.block_length, &mut self.tags)?;
+                    read_comment_block(&mut block_stream, &mut self.tags)?;
                 },
                 // Cuesheet blocks are parsed into Cues.
                 MetadataBlockType::Cuesheet => {
-                    read_cuesheet_block(&mut self.reader, &mut self.cues)?;
+                    read_cuesheet_block(&mut block_stream, &mut self.cues)?;
                 },
                 // Picture blocks are read as Visuals.
                 MetadataBlockType::Picture => {
-                    read_picture_block(&mut self.reader, &mut self.visuals)?;
+                    read_picture_block(&mut block_stream, &mut self.visuals)?;
                 },
                 // StreamInfo blocks are parsed into Streams.
                 MetadataBlockType::StreamInfo => {
-                    self.read_stream_info_block()?;
+                    read_stream_info_block(&mut block_stream, &mut self.streams)?;
                 },
                 // Padding blocks are skipped.
                 MetadataBlockType::Padding => {
-                    self.reader.ignore_bytes(header.block_length as u64)?;
+                    block_stream.ignore_bytes(header.block_len as u64)?;
                 },
                 // Unknown block encountered. Skip these blocks as they may be part of a future version of FLAC, but 
                 // print a message.
                 MetadataBlockType::Unknown(id) => {
-                    self.reader.ignore_bytes(header.block_length as u64)?;
-                    eprintln!("Ignoring {} bytes of block width id={}.", header.block_length, id);
+                    block_stream.ignore_bytes(header.block_len as u64)?;
+                    eprintln!("Ignoring {} bytes of block width id={}.", header.block_len, id);
                 }
             }
 
-            // Exit when the last header is processed.
+            // If the stated block length is longer than the number of bytes from the block read, ignore the remaining 
+            // unread data.
+            let block_unread_len = block_stream.bytes_available();
+
+            if block_unread_len > 0 {
+                eprintln!("Under read block by {} bytes.", block_unread_len);
+                block_stream.ignore_bytes(block_unread_len)?;
+            }
+
+            // Exit when the last header is read.
             if header.is_last {
                 break;
             }
@@ -345,25 +327,17 @@ impl FormatReader for FlacReader {
 
                 // Strictly speaking, the first metadata block must be a StreamInfo block. There is no technical need 
                 // for this from the reader's point of view. Additionally, if the reader is fed a stream mid-way there
-                // is no StreamInfo block. Therefore, probably just read all metadata blocks?
-                let header = MetadataBlockHeader::read(&mut self.reader)?;
-
-                match header.block_type {
-                    MetadataBlockType::StreamInfo => {
-                        self.read_stream_info_block()?;
-                    },
-                    _ => {
-                        eprintln!("Probe: First block is not StreamInfo.");
-                        break;
-                    }
-                }
-
-                // If there are more metablocks, read and process them.
-                if !header.is_last {
-                    self.read_all_metadata_blocks()?;
-                }
+                // is no StreamInfo block. Therefore, just read all metadata blocks and handle the StreamInfo block as 
+                // it comes.
+                self.read_all_metadata_blocks()?;
 
                 self.first_frame_offset = self.reader.pos();
+                
+                // Make sure that there is atleast one StreamInfo block.
+                if self.streams.len() < 1 {
+                    return decode_error("No StreamInfo block.");
+                }
+
 
                 // Read the rest of the metadata blocks.
                 return Ok(ProbeResult::Supported);
@@ -403,4 +377,33 @@ impl FormatReader for FlacReader {
 }
 
 
+/// Reads a StreamInfo block and populates the reader with stream information.
+fn read_stream_info_block<B : Bytestream>(block_stream: &mut B, streams: &mut Vec<Stream>) -> Result<()> {
+    // Only one StreamInfo block, and therefore ony one Stream, is allowed per media source stream.
+    if streams.len() == 0 {
+        let info = StreamInfo::read(block_stream)?;
 
+        // Populate the codec parameters with the information read from StreamInfo.
+        let mut codec_params = CodecParameters::new();
+
+        codec_params
+            .for_codec(CODEC_TYPE_FLAC)
+            .with_sample_rate(info.sample_rate)
+            .with_bits_per_sample(info.bits_per_sample)
+            .with_max_frames_per_packet(info.block_sample_len.1 as u64)
+            .with_channels(info.channels);
+        
+        // Total samples (per channel) aka frames may or may not be stated in StreamInfo.
+        if let Some(n_frames) = info.n_samples {
+            codec_params.with_n_frames(n_frames);
+        }
+
+        // Add the stream.
+        streams.push(Stream::new(codec_params));
+    }
+    else {
+        return decode_error("Found more than one StreamInfo block.");
+    }
+
+    Ok(())
+}

@@ -16,7 +16,6 @@
 // Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301 USA
 
 use std::ascii;
-use std::mem;
 use std::num::NonZeroU32;
 use sonata_core::audio::Channels;
 use sonata_core::errors::{Result, decode_error};
@@ -187,42 +186,23 @@ impl StreamInfo {
     }
 }
 
-macro_rules! verify_block_bounds {
-    ($accum:ident, $bound:ident, $len:expr) => (
-        $accum += $len;
-        if $accum > $bound {
-            return decode_error("Comment exceeded stated block length.");
-        }
-    )
-}
-
-pub fn read_comment_block<B : Bytestream>(reader: &mut B, block_length: usize, tags: &mut Vec<Tag>) -> Result<()> {
-    // Accumulate the number of bytes read as the comment block is decoded and ensure that
-    // the block_length as stated in the header is never exceeded.
-    let mut block_bytes_read = 0usize;
-
+pub fn read_comment_block<B : Bytestream>(reader: &mut B, tags: &mut Vec<Tag>) -> Result<()> {
     // Get the vendor string length in bytes.
-    verify_block_bounds!(block_bytes_read, block_length, mem::size_of::<u32>());
-    let vendor_length = reader.read_u32()? as usize;
+    let vendor_length = reader.read_u32()?;
 
     // Ignore the vendor string.
-    verify_block_bounds!(block_bytes_read, block_length, vendor_length);
     reader.ignore_bytes(vendor_length as u64)?;
 
     // Read the number of comments.
-    verify_block_bounds!(block_bytes_read, block_length, mem::size_of::<u32>());
     let n_comments = reader.read_u32()? as usize;
 
     for _ in 0..n_comments {
         // Read the comment length in bytes.
-        verify_block_bounds!(block_bytes_read, block_length, mem::size_of::<u32>());
-        let comment_length = reader.read_u32()? as usize;
+        let comment_length = reader.read_u32()?;
 
         // Read the comment string.
-        verify_block_bounds!(block_bytes_read, block_length, comment_length);
-
-        let mut comment_byte = Vec::<u8>::with_capacity(comment_length);
-        comment_byte.resize(comment_length, 0);
+        let mut comment_byte = Vec::<u8>::with_capacity(comment_length as usize);
+        comment_byte.resize(comment_length as usize, 0);
         reader.read_buf_bytes(&mut comment_byte)?;
 
         // Parse comment as UTF-8 and add to list.
@@ -232,7 +212,7 @@ pub fn read_comment_block<B : Bytestream>(reader: &mut B, block_length: usize, t
     Ok(())
 }
 
-pub fn read_seek_table_block<B : Bytestream>(reader: &mut B, block_length: usize, table: &mut SeekIndex) -> Result<()> {
+pub fn read_seek_table_block<B : Bytestream>(reader: &mut B, block_length: u32, table: &mut SeekIndex) -> Result<()> {
     let count = block_length / 18;
 
     for _ in 0..count {
@@ -413,7 +393,7 @@ fn read_cuesheet_track_index<B: Bytestream>(reader: &mut B, is_cdda: bool) -> Re
     })
 }
 
-pub fn read_application_block<B : Bytestream>(reader: &mut B, block_length: usize) -> Result<VendorData> {
+pub fn read_application_block<B : Bytestream>(reader: &mut B, block_length: u32) -> Result<VendorData> {
     // Read the application identifier. Usually this is just 4 ASCII characters, but it is not limited to that. 
     // Non-printable ASCII characters must be escaped to create a valid UTF8 string.
     let ident_buf = reader.read_quad_bytes()?;
@@ -425,7 +405,7 @@ pub fn read_application_block<B : Bytestream>(reader: &mut B, block_length: usiz
                  .collect()
         ).unwrap();
 
-    let data = reader.read_boxed_slice_bytes(block_length - 4)?;
+    let data = reader.read_boxed_slice_bytes(block_length as usize - 4)?;
     Ok(VendorData { ident, data })
 }
 
@@ -500,7 +480,7 @@ pub fn read_picture_block<B : Bytestream>(reader: &mut B, visuals: &mut Vec<Visu
 pub struct MetadataBlockHeader {
     pub is_last: bool,
     pub block_type: MetadataBlockType,
-    pub block_length: usize
+    pub block_len: u32
 }
 
 impl MetadataBlockHeader {
@@ -524,10 +504,12 @@ impl MetadataBlockHeader {
             _ => MetadataBlockType::Unknown(block_type_id),
         };
 
+        let block_len = reader.read_be_u24()?;
+
         Ok(MetadataBlockHeader {
             is_last,
             block_type,
-            block_length: reader.read_be_u24()? as usize,
+            block_len,
         })
     }
 }
