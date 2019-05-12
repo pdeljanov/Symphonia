@@ -341,18 +341,3 @@ fn search_for_marker<B: Bytestream>(reader: &mut B, marker: &[u8; 4], depth: Pro
     // Loop exited, therefore stream is unsupported.
     Ok(None)
 }
-
-
-
-#[cfg(test)]
-mod tests {
-    use std::fs::File;
-    use super::{Format, FormatReader, Wav, ProbeDepth};
-
-    #[test]
-    fn it_works() {
-        let file = Box::new(File::open("samples/wav/metadata_pcm32le.wav").unwrap());
-        let mut reader = Wav::open(file);
-        let probe_info = reader.probe(ProbeDepth::Deep).unwrap();
-    }
-}

@@ -187,7 +187,7 @@ pub struct VendorData {
 }
 
 /// A `SeekPoint` is a mapping between a sample or frame number to byte offset within a media stream.
-#[derive(Copy, Clone, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct SeekPoint {
     /// The frame or sample timestamp of the `SeekPoint`.
     pub frame_ts: u64,
@@ -221,7 +221,7 @@ pub struct SeekIndex {
 /// `SeekSearchResult` is the return value for a search on a `SeekIndex`. It returns a range of `SeekPoint`s a 
 /// `FormatReader` should search to find the desired timestamp. Ranges are lower-bound inclusive, and upper-bound 
 /// exclusive.
-#[derive(PartialEq)]
+#[derive(Debug, PartialEq)]
 pub enum SeekSearchResult {
     /// The `SeekIndex` is empty so the desired timestamp could not be found. The entire stream should be searched for 
     /// the desired timestamp.
@@ -374,12 +374,12 @@ pub trait FormatReader {
     /// Gets a list of all `Tag`s.
     fn tags(&self) -> &[Tag];
     
-    // Gets a list of all `Visual`s.
+    /// Gets a list of all `Visual`s.
     fn visuals(&self) -> &[Visual];
 
-    // Gets a list of all `Cue`s.
+    /// Gets a list of all `Cue`s.
     fn cues(&self) -> &[Cue];
-    
+
     //fn vendor_data(&self) -> &[u8];
 
     /// Seek, as closely as possible, to the timestamp requested. 
@@ -559,7 +559,7 @@ impl FormatRegistry {
 
 }
 
-/// A `Hint` provides additional information and context to the `FormatRegistry` when guessing what `FormatReader to 
+/// A `Hint` provides additional information and context to the `FormatRegistry` when guessing what `FormatReader` to 
 /// use to open and read a piece of media.
 /// 
 /// For example, the `FormatRegistry` cannot examine the extension or mime-type of the media because `MediaSourceStream`
