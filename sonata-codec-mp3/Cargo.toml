@@ -1,0 +1,12 @@
+[package]
+name = "sonata-codec-mp3"
+version = "0.1.0"
+authors = ["Philip Deljanov <philip.deljanov@gmail.com>"]
+edition = "2018"
+license = "LGPL-2.1-only"
+readme = "README.md"
+categories = ["multimedia::audio"]
+keywords = ["audio", "codec", "decoder", "mp3", "mp2", "mp1", "mpeg"]
+
+[dependencies]
+sonata-core = { version="*", path = "../sonata-core" }

@@ -23,13 +23,13 @@ Up-to-date project progress on the [Trello Board](https://trello.com/b/2EhGvDsR)
 
 ### Formats (Mux/Demux)
 
-| Format       | Status   | Feature Flag | Default | Crate                  |  
-|--------------|----------|--------------|---------|------------------------|
-| ISO/MP4      | Planning | `isomp4`     | No      | `sonata-format-isomp4` |
-| MKV          | -        | `mkv`        | Yes     | `sonata-format-mkv`    |
-| OGG          | -        | `ogg`        | Yes     | `sonata-format-ogg`    |
-| Wave/AIFF    | In Work  | `wav`        | Yes     | `sonata-format-wav`    |
-| WebM         | -        | `webm`       | No      | `sonata-format-webm`   |
+| Format  | Status      | Feature Flag | Default | Crate                  |  
+|---------|-------------|--------------|---------|------------------------|
+| ISO/MP4 | In Work     | `isomp4`     | No      | `sonata-format-isomp4` |
+| MKV     | -           | `mkv`        | Yes     | `sonata-format-mkv`    |
+| OGG     | -           | `ogg`        | Yes     | `sonata-format-ogg`    |
+| Wave    | Functional  | `wav`        | Yes     | `sonata-format-wav`    |
+| WebM    | -           | `webm`       | No      | `sonata-format-webm`   |
 
 ### Codecs (Decode)
 
@@ -38,7 +38,7 @@ Up-to-date project progress on the [Trello Board](https://trello.com/b/2EhGvDsR)
 | AAC      | -           | `aac`        | No      | `sonata-codec-aac`     |
 | Flac     | Functional  | `flac`       | Yes     | `sonata-codec-flac`    |
 | Hardware | -           | `hwdec`      | No      | `sonata-codec-hwdec`   |
-| MP3      | Planning    | `mp3`        | No      | `sonata-codec-mp3`     |
+| MP3      | In Work     | `mp3`        | No      | `sonata-codec-mp3`     |
 | Opus     | -           | `opus`       | Yes     | `sonata-codec-opus`    |
 | PCM      | Functional  | `pcm`        | Yes     | `sonata-codec-pcm`     |
 | Vorbis   | -           | `vorbis`     | Yes     | `sonata-codec-vorbis`  |

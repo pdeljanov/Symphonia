@@ -398,23 +398,23 @@ impl io::Seek for MediaSourceStream {
     }
 }
 
-/// A `Bytestream` provides functions to read bytes and interpret them as little- or big-endian
-/// unsigned integers of varying widths.
+/// A `Bytestream` provides functions to read bytes and interpret them as little- or big-endian unsigned integers or 
+/// floating point values of standard widths.
 pub trait Bytestream {
 
     /// Reads a single byte from the stream and returns it or an error.
     fn read_byte(&mut self) -> io::Result<u8>;
 
-    // Reads two bytes from the stream and returns them in read-order or an error.
+    /// Reads two bytes from the stream and returns them in read-order or an error.
     fn read_double_bytes(&mut self) -> io::Result<[u8; 2]>;
 
-    // Reads three bytes from the stream and returns them in read-order or an error.
+    /// Reads three bytes from the stream and returns them in read-order or an error.
     fn read_triple_bytes(&mut self) -> io::Result<[u8; 3]>;
 
-    // Reads four bytes from the stream and returns them in read-order or an error.
+    /// Reads four bytes from the stream and returns them in read-order or an error.
     fn read_quad_bytes(&mut self) -> io::Result<[u8; 4]>;
 
-    // Reads exactly the number of bytes required to fill be provided buffer or returns an error.
+    /// Reads exactly the number of bytes required to fill be provided buffer or returns an error.
     fn read_buf_bytes(&mut self, buf: &mut [u8]) -> io::Result<()>;
 
     /// Reads a single unsigned byte from the stream and returns it or an error.
