@@ -9,4 +9,5 @@ categories = ["multimedia::audio"]
 keywords = ["audio", "codec", "decoder", "mp3", "mp2", "mp1", "mpeg"]
 
 [dependencies]
+bitflags = "1.0.4"
 sonata-core = { version="*", path = "../sonata-core" }
