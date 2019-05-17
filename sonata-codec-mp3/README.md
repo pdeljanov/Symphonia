@@ -1,6 +1,14 @@
 # Sonata MP3 (and MP1, MP2) Codec
 
-MP1/2/3 decoder for the Sonata media framework.
+MPEG-1 and MPEG-2 Layer I, II, III (MP1, MP2, MP3) decoder for the Sonata media framework.
+
+## Support
+
+This decoder implements Layer I, II, III of MPEG-1 Part 3 (ISO/IEC 11172-3), and all the extensions and enhancements defined in MPEG-2 Part 3 (ISO/IEC 13818-3).
+
+## Conformance
+
+The decoder will ideally conform to ISO/IEC 11172-4 and ISO/IEC 13818-4.
 
 ## License
 

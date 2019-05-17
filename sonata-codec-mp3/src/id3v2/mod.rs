@@ -15,6 +15,8 @@
 // License along with this library; if not, write to the Free Software
 // Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301 USA
 
+use std::io;
+
 use sonata_core::errors::{Result, decode_error, unsupported_error};
 use sonata_core::io::*;
 
@@ -96,6 +98,92 @@ fn read_syncsafe_leq32<B: Bytestream>(reader: &mut B, bit_width: u32) -> Result<
     Ok(result & (0xffffffff >> (32 - bit_width)))
 }
 
+struct UnsyncStream<B: Bytestream> {
+    inner: B,
+    byte: u8,
+}
+
+impl<B: Bytestream> UnsyncStream<B> {
+    pub fn new(inner: B) -> Self {
+        UnsyncStream {
+            inner,
+            byte: 0,
+        }
+    }
+
+    pub fn read_decoded_buf_bytes<'a>(&mut self, buf: &'a mut [u8]) -> io::Result<&'a mut [u8]> {
+        self.inner.read_buf_bytes(buf)?;
+
+        let mut i = 0;
+        let mut j = 0;
+
+        // Decode the unsynchronisation scheme in-place.
+        while i < buf.len() - 1 {
+            buf[j] = buf[i];
+            j += 1;
+            i += 1;
+
+            if buf[i - 1] == 0xff && buf[i] == 0x00 {
+                i += 1;
+            }
+        }
+
+        // Record the last byte for the read_* functions.
+        self.byte = buf[i];
+
+        Ok(&mut buf[..i])
+    }
+}
+
+impl<B: Bytestream> Bytestream for UnsyncStream<B> {
+
+    fn read_byte(&mut self) -> io::Result<u8> {
+        let last = self.byte;
+
+        self.byte = self.inner.read_byte()?;
+
+        // If the last byte was 0xff, and the current byte is 0x00, the current byte should be dropped and the next 
+        // byte read instead.
+        if last == 0xff && self.byte == 0x00 {
+            return self.inner.read_byte();
+        }
+
+        Ok(self.byte)
+    }
+
+    fn read_double_bytes(&mut self) -> io::Result<[u8; 2]> {
+        Ok([
+            self.read_byte()?,
+            self.read_byte()?,
+        ])
+    }
+
+    fn read_triple_bytes(&mut self) -> io::Result<[u8; 3]> {
+        Ok([
+            self.read_byte()?,
+            self.read_byte()?,
+            self.read_byte()?,
+        ])
+    }
+
+    fn read_quad_bytes(&mut self) -> io::Result<[u8; 4]> {
+        Ok([
+            self.read_byte()?,
+            self.read_byte()?,
+            self.read_byte()?,
+            self.read_byte()?,
+        ])
+    }
+
+    fn read_buf_bytes(&mut self, _buf: &mut [u8]) -> io::Result<()>{
+        unimplemented!();
+    }
+
+    fn ignore_bytes(&mut self, _count: u64) -> io::Result<()> {
+        unimplemented!();
+    }
+}
+
 /// Read the header of an ID3v2 (verions 2.2+) tag.
 fn read_id3v2_header<B: Bytestream>(reader: &mut B) -> Result<Header> {
     let marker = reader.read_triple_bytes()?;
@@ -126,7 +214,7 @@ fn read_id3v2_header<B: Bytestream>(reader: &mut B) -> Result<Header> {
 
     // Only support versions 2.2.x (first version) to 2.4.x (latest version as of May 2019) of the specification.
     if major_version < 2 || major_version > 4 {
-        return unsupported_error("Unsupported ID3v2.");
+        return unsupported_error("Unsupported ID3v2 version.");
     }
 
     // Version 2.2 of the standard specifies a compression flag bit, but does not specify a compression standard. 
