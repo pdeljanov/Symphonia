@@ -4,7 +4,7 @@
 Cargo.lock
 
 # Ghostwriter
-*.backup
+*.md.backup
 
 # Profiling data
 perf.data
@@ -13,3 +13,22 @@ perf.data.old
 # Sample data
 sonata-codec-*/samples
 sonata-format-*/samples
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Linux
+*~
+.directory
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+*.stackdump
+[Dd]esktop.ini
+*.lnk

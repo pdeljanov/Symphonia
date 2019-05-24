@@ -25,7 +25,10 @@ use sonata::core::audio::*;
 use sonata::core::codecs::DecoderOptions;
 use sonata::core::formats::{FormatReader, Hint, FormatOptions, ProbeDepth, ProbeResult, ColorMode, Visual, Stream};
 use sonata::core::tags::Tag;
+
+#[cfg(target_os = "linux")]
 use libpulse_binding as pulse;
+#[cfg(target_os = "linux")]
 use libpulse_simple_binding as psimple;
 
 fn main() {
@@ -99,12 +102,12 @@ fn main() {
             // Verify only mode decodes and always verifies the audio, but doese not play it.
             if matches.is_present("verify-only") {
                 let options = DecoderOptions { verify: true, ..Default::default() };
-                decode_only(reader, &options).unwrap();
+                decode_only(reader, &options).unwrap_or_else(|err| { eprintln!("{}", err) });
             }
             // Decode only mode decodes the audio, but not does verify it.
             else if matches.is_present("decode-only") {
                 let options = DecoderOptions { verify: false, ..Default::default() };
-                decode_only(reader, &options).unwrap();
+                decode_only(reader, &options).unwrap_or_else(|err| { eprintln!("{}", err) });
             }
             // Probe only mode prints information about the format, streams, metadata, etc.
             else if matches.is_present("probe-only") {
@@ -127,7 +130,7 @@ fn main() {
                 let options = DecoderOptions { verify: matches.is_present("verify"), ..Default::default() };
 
                 // Commence playback.
-                play(reader, &options).unwrap();
+                play(reader, &options).unwrap_or_else(|err| { eprintln!("{}", err) });
             }
         }
     }
@@ -173,6 +176,13 @@ fn decode_only(mut reader: Box<dyn FormatReader>, decode_options: &DecoderOption
     Ok(())
 }
 
+#[cfg(not(target_os = "linux"))]
+fn play(_: Box<dyn FormatReader>, _: &DecoderOptions) -> Result<()> {
+    // TODO: Support the platform.
+    unsupported_error("Playback is not supported on your platform.")
+}
+
+#[cfg(target_os = "linux")]
 fn play(mut reader: Box<dyn FormatReader>, decode_options: &DecoderOptions) -> Result<()> {
 
     // Get the default stream.
