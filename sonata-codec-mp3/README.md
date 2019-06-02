@@ -12,7 +12,7 @@ The decoder will ideally conform to ISO/IEC 11172-4 and ISO/IEC 13818-4.
 
 ## License
 
-Sonata is provided under the LGPLv2.1 license. Please refer to the LICENSE file for more details.
+Sonata is provided under the MPL v2.0 license. Please refer to the LICENSE file for more details.
 
 ## Contributing
 
