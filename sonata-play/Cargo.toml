@@ -3,6 +3,7 @@ name = "sonata-play"
 version = "0.1.0"
 authors = ["Philip Deljanov <philip.deljanov@gmail.com>"]
 edition = "2018"
+license = "MPL-2.0"
 
 [dependencies]
 clap = "2.32.0"
