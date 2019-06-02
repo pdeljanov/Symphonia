@@ -4,7 +4,7 @@ Meta-package for the Sonata.
 
 ## License
 
-Sonata is provided under the LGPLv2.1 license. Please refer to the LICENSE file for more details.
+Sonata is provided under the MPL v2.0 license. Please refer to the LICENSE file for more details.
 
 ## Contributing
 

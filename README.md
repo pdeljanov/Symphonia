@@ -6,13 +6,13 @@ Sonata is a pure Rust audio decoding and multimedia format library.
 
 Sonata's planned features are:
 
- * Decode support for the most popular audio codecs
- * Reading and writing the most common media container formats
- * Probing and guessing the correct format and decoder combination(s) for playback or inspection
- * Reading and writing metadata
- * Providing a set of audio primitives for manipulating audio data efficiently
- * Providing a C API for integration into other languages
- * Providing a WASM API for web usage
+* Decode support for the most popular audio codecs
+* Reading and writing the most common media container formats
+* Probing and guessing the correct format and decoder combination(s) for playback or inspection
+* Reading and writing metadata
+* Providing a set of audio primitives for manipulating audio data efficiently
+* Providing a C API for integration into other languages
+* Providing a WASM API for web usage
 
 ## Format and Codec Support Roadmap
 
@@ -61,10 +61,10 @@ Sonata plans to provide "unsafe" encoder packages that wrap traditional C-based 
 
 In addition to the safety guarantees provided by Rust, Sonata aims to:
 
- * Decode files identically to the leading free-and-open-source software decoder
- * Provide a powerful, consistent, and easy to use API
- * Prevent denial-of-service attacks
- * Be fuzz-tested
+* Decode files identically to the leading free-and-open-source software decoder
+* Provide a powerful, consistent, and easy to use API
+* Prevent denial-of-service attacks
+* Be fuzz-tested
 
 ## Speed
 
@@ -74,7 +74,7 @@ Sonata aims to be equivalent in speed to C-based implementations. As Rust suppor
 
 Sonata provides the following tools for debugging purposes:
 
- * `sonata-play` for playing back audio from files
+* `sonata-play` for playing back audio from files
 
 ## Why?
 
@@ -88,7 +88,7 @@ The primary author is Philip Deljanov.
 
 ## License
 
-Sonata is provided under the LGPLv2.1 license. Please refer to the LICENSE file for more details.
+Sonata is provided under the MPL v2.0 license. Please refer to the LICENSE file for more details.
 
 ## Contributing
 
