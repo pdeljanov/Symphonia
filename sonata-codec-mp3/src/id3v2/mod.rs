@@ -89,12 +89,12 @@ fn read_syncsafe_leq32<B: Bytestream>(reader: &mut B, bit_width: u32) -> Result<
 }
 
 struct UnsyncStream<B: Bytestream> {
-    inner: B,
+    inner: ScopedStream<B>,
     byte: u8,
 }
 
 impl<B: Bytestream> UnsyncStream<B> {
-    pub fn new(inner: B) -> Self {
+    pub fn new(inner: ScopedStream<B>) -> Self {
         UnsyncStream {
             inner,
             byte: 0,
@@ -125,6 +125,25 @@ impl<B: Bytestream> UnsyncStream<B> {
     }
 }
 
+impl<B: Bytestream> FiniteStream for UnsyncStream<B> {
+
+    #[inline(always)]
+    fn len(&self) -> u64 {
+        self.inner.len()
+    }
+
+    #[inline(always)]
+    fn bytes_read(&self) -> u64 {
+        self.inner.bytes_read()
+    }
+    
+    #[inline(always)]
+    fn bytes_available(&self) -> u64 {
+        self.inner.bytes_available()
+    }
+
+}
+
 impl<B: Bytestream> Bytestream for UnsyncStream<B> {
 
     fn read_byte(&mut self) -> io::Result<u8> {
@@ -135,7 +154,7 @@ impl<B: Bytestream> Bytestream for UnsyncStream<B> {
         // If the last byte was 0xff, and the current byte is 0x00, the current byte should be dropped and the next 
         // byte read instead.
         if last == 0xff && self.byte == 0x00 {
-            return self.inner.read_byte();
+            self.byte = self.inner.read_byte()?;
         }
 
         Ok(self.byte)
@@ -169,8 +188,8 @@ impl<B: Bytestream> Bytestream for UnsyncStream<B> {
         unimplemented!();
     }
 
-    fn ignore_bytes(&mut self, _count: u64) -> io::Result<()> {
-        unimplemented!();
+    fn ignore_bytes(&mut self, count: u64) -> io::Result<()> {
+        self.inner.ignore_bytes(count)
     }
 }
 
@@ -379,26 +398,13 @@ fn read_id3v2p4_frame<B: Bytestream>(reader: &mut B) -> Result<()> {
     Ok(())
 }
 
-pub fn read_id3v2<B: Bytestream>(reader: &mut B) -> Result<()> {
-    // Read the version agnostic tag header.
-    let header = read_id3v2_header(reader)?;
-    eprintln!("{:?}", &header);
-
-    // The header specified the byte length of the contents of the ID3v2 tag (excluding the header), use a scoped
-    // reader to ensure we don't exceed that length, and to determine if there are no more frames left to parse.
-    let mut scoped = ScopedStream::new(reader, header.size as u64);
-
-    // If the version is <= 3, and the unsynchronisation flag is set in the header, data must be passed through the 
-    // unsynchronisation decoder before being read.
-    if header.major_version <= 3 && header.unsynchronisation {
-
-    }
+fn read_id3v2_body<B: Bytestream + FiniteStream>(mut reader: B, header: &Header) -> Result<()> {
 
     // If there is an extended header, read and parse it based on the major version of the tag.
     if header.has_extended_header {
         let extended = match header.major_version {
-            3 => read_id3v2p3_extended_header(&mut scoped)?,
-            4 => read_id3v2p4_extended_header(&mut scoped)?,
+            3 => read_id3v2p3_extended_header(&mut reader)?,
+            4 => read_id3v2p4_extended_header(&mut reader)?,
             _ => unreachable!(),
         };
         eprintln!("{:?}", &extended);
@@ -407,23 +413,37 @@ pub fn read_id3v2<B: Bytestream>(reader: &mut B) -> Result<()> {
     loop {
         // Read frames based on the major version of the tag.
         let frame = match header.major_version {
-            2 => read_id3v2p2_frame(&mut scoped)?,
-            3 => read_id3v2p3_frame(&mut scoped)?,
-            4 => read_id3v2p4_frame(&mut scoped)?,
+            2 => read_id3v2p2_frame(&mut reader)?,
+            3 => read_id3v2p3_frame(&mut reader)?,
+            4 => read_id3v2p4_frame(&mut reader)?,
             _ => break,
         };
 
         // Read frames until either there are no more bytes available in the tag.
-        if scoped.bytes_available() == 0 {
+        if reader.bytes_available() == 0 {
             break;
-        }
-
-        // Alternatively, if the padding bytes (all 0s) have been reached, skip the padding bytes as a block and 
-        // exit.
-        if false {
-            scoped.ignore()?;
         }
     }
 
     Ok(())
+}
+
+pub fn read_id3v2<B: Bytestream>(reader: &mut B) -> Result<()> {
+    // Read the (sorta) version agnostic tag header.
+    let header = read_id3v2_header(reader)?;
+    eprintln!("{:?}", &header);
+
+    // The header specified the byte length of the contents of the ID3v2 tag (excluding the header), use a scoped
+    // reader to ensure we don't exceed that length, and to determine if there are no more frames left to parse.
+    let scoped = ScopedStream::new(reader, header.size as u64);
+
+    // If the unsynchronisation flag is set in the header, all tag data must be passed through the unsynchronisation 
+    // decoder before being read.
+    if header.unsynchronisation {
+        read_id3v2_body(UnsyncStream::new(scoped), &header)
+    }
+    // Otherwise, read the data as-is. Individual frames may be unsynchronised for major versions >= 4.
+    else {
+        read_id3v2_body(scoped, &header)
+    }
 }
