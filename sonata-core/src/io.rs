@@ -388,6 +388,19 @@ impl io::Seek for MediaSourceStream {
     }
 }
 
+/// A `FiniteStream` is a stream that has a definitive length. A `FiniteStream` therefore knows how many bytes are 
+/// available for reading, or have been previously read.
+pub trait FiniteStream {
+    /// Returns the length of the the stream.
+    fn len(&self) -> u64;
+
+    /// Returns the number of bytes read.
+    fn bytes_read(&self) -> u64;
+
+    /// Returns the number of bytes available for reading.
+    fn bytes_available(&self) -> u64;
+}
+
 /// A `Bytestream` provides functions to read bytes and interpret them as little- or big-endian unsigned integers or 
 /// floating point values of standard widths.
 pub trait Bytestream {
@@ -683,21 +696,6 @@ impl<B: Bytestream> ScopedStream<B> {
         }
     }
 
-    /// Returns the length of the the `ScopedStream`.
-    pub fn len(&self) -> u64 {
-        self.len
-    }
-
-    /// Returns the number of bytes read.
-    pub fn bytes_read(&self) -> u64 {
-        self.read
-    }
-
-    /// Returns the number of bytes available to read.
-    pub fn bytes_available(&self) -> u64 {
-        self.len - self.read
-    }
-
     /// Returns an immutable reference to the inner `Bytestream`.
     pub fn inner(&self) -> &B {
         &self.inner
@@ -716,6 +714,23 @@ impl<B: Bytestream> ScopedStream<B> {
     /// Convert the `ScopedStream` to the inner `Bytestream`.
     pub fn to_inner(self) -> B {
         self.inner
+    }
+}
+
+impl<B: Bytestream> FiniteStream for ScopedStream<B> {
+    /// Returns the length of the the `ScopedStream`.
+    fn len(&self) -> u64 {
+        self.len
+    }
+
+    /// Returns the number of bytes read.
+    fn bytes_read(&self) -> u64 {
+        self.read
+    }
+
+    /// Returns the number of bytes available to read.
+    fn bytes_available(&self) -> u64 {
+        self.len - self.read
     }
 }
 
