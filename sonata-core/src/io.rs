@@ -401,6 +401,23 @@ pub trait FiniteStream {
     fn bytes_available(&self) -> u64;
 }
 
+impl<'b, B: FiniteStream> FiniteStream for &'b mut B {
+    #[inline(always)]
+    fn len(&self) -> u64 {
+        (*self).len()
+    }
+
+    #[inline(always)]
+    fn bytes_read(&self) -> u64 {
+        (*self).bytes_read()
+    }
+
+    #[inline(always)]
+    fn bytes_available(&self) -> u64 {
+        (*self).bytes_available()
+    }
+}
+
 /// A `Bytestream` provides functions to read bytes and interpret them as little- or big-endian unsigned integers or 
 /// floating point values of standard widths.
 pub trait Bytestream {
@@ -678,6 +695,89 @@ impl<'b, B: Bytestream> Bytestream for &'b mut B {
         (*self).ignore_bytes(count)
     }
 
+}
+
+/// `BufStream` is a stream backed by a buffer.
+pub struct BufStream<'a> {
+    buf: &'a [u8],
+    pos: usize,
+}
+
+impl<'a> BufStream<'a> {
+    pub fn new(buf: &'a [u8]) -> Self {
+        BufStream {
+            buf,
+            pos: 0,
+        }
+    }
+}
+
+impl<'a> Bytestream for BufStream<'a> {
+
+    fn read_byte(&mut self) -> io::Result<u8> {
+        if self.pos >= self.buf.len() {
+            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "Would read past end of stream."));
+        }
+        self.pos += 1;
+        Ok(self.buf[self.pos - 1])
+    }
+
+    fn read_double_bytes(&mut self) -> io::Result<[u8; 2]> {
+        if self.pos + 2 > self.buf.len() {
+            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "Would read past end of stream."));
+        }
+
+        let mut double_bytes: [u8; 2] = unsafe { std::mem::uninitialized() };
+        double_bytes.copy_from_slice(&self.buf[self.pos..self.pos + 2]);
+        self.pos += 2;
+
+        Ok(double_bytes)
+    }
+
+    fn read_triple_bytes(&mut self) -> io::Result<[u8; 3]> {
+        if self.pos + 3 > self.buf.len() {
+            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "Would read past end of stream."));
+        }
+
+        let mut triple_bytes: [u8; 3] = unsafe { std::mem::uninitialized() };
+        triple_bytes.copy_from_slice(&self.buf[self.pos..self.pos + 3]);
+        self.pos += 3;
+
+        Ok(triple_bytes)
+    }
+
+    fn read_quad_bytes(&mut self) -> io::Result<[u8; 4]> {
+        if self.pos + 4 > self.buf.len() {
+            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "Would read past end of stream."));
+        }
+
+        let mut quad_bytes: [u8; 4] = unsafe { std::mem::uninitialized() };
+        quad_bytes.copy_from_slice(&self.buf[self.pos..self.pos + 4]);
+        self.pos += 4;
+
+        Ok(quad_bytes)
+    }
+
+    fn read_buf_bytes(&mut self, buf: &mut [u8]) -> io::Result<()> {
+
+        let len = buf.len();
+
+        if self.pos + len > self.buf.len() {
+            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "Would read past end of stream."));
+        }
+
+        buf.copy_from_slice(&self.buf[self.pos..self.pos + len]);
+        self.pos += len;
+        Ok(())
+    }
+
+    fn ignore_bytes(&mut self, count: u64) -> io::Result<()> {
+        self.pos += count as usize;
+        if self.pos > self.buf.len() {
+            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "Reached end of stream."));
+        }
+        Ok(())
+    }
 }
 
 /// A `ScopedStream` restricts the number of bytes read to a specified limit.
