@@ -10,6 +10,8 @@ use std::io;
 use sonata_core::errors::{Result, decode_error, unsupported_error};
 use sonata_core::io::*;
 
+mod frames;
+
 #[derive(Debug)]
 enum TagSizeRestriction {
     Max128Frames1024KiB,
@@ -68,9 +70,13 @@ struct Restrictions {
 
 #[derive(Debug)]
 struct ExtendedHeader {
-    size: u32,
-    is_update: bool,
+    /// ID3v2.3 only, the number of padding bytes.
+    padding_size: Option<u32>,
+    /// ID3v2.3+, a CRC32 checksum of the Tag.
     crc32: Option<u32>,
+    /// ID3v2.4 only, is this Tag an update to an earlier Tag.
+    is_update: Option<bool>,
+    /// ID3v2.4 only, Tag modification restrictions.
     restrictions: Option<Restrictions>,
 }
 
@@ -88,45 +94,45 @@ fn read_syncsafe_leq32<B: Bytestream>(reader: &mut B, bit_width: u32) -> Result<
     Ok(result & (0xffffffff >> (32 - bit_width)))
 }
 
-struct UnsyncStream<B: Bytestream> {
-    inner: ScopedStream<B>,
+fn decode_unsynchronisation<'a>(buf: &'a mut [u8]) -> &'a mut [u8] {
+    let len = buf.len();
+    let mut src = 0;
+    let mut dst = 0;
+
+    // Decode the unsynchronisation scheme in-place.
+    while src < len - 1 {
+        buf[dst] = buf[src];
+        dst += 1;
+        src += 1;
+
+        if buf[src - 1] == 0xff && buf[src] == 0x00 {
+            src += 1;
+        }
+    }
+
+    if src < len {
+        buf[dst] = buf[src];
+        dst += 1;
+    }
+
+    &mut buf[..dst]
+}
+
+struct UnsyncStream<B: Bytestream + FiniteStream> {
+    inner: B,
     byte: u8,
 }
 
-impl<B: Bytestream> UnsyncStream<B> {
-    pub fn new(inner: ScopedStream<B>) -> Self {
+impl<B: Bytestream + FiniteStream> UnsyncStream<B> {
+    pub fn new(inner: B) -> Self {
         UnsyncStream {
             inner,
             byte: 0,
         }
     }
-
-    pub fn read_decoded_buf_bytes<'a>(&mut self, buf: &'a mut [u8]) -> io::Result<&'a mut [u8]> {
-        self.inner.read_buf_bytes(buf)?;
-
-        let mut i = 0;
-        let mut j = 0;
-
-        // Decode the unsynchronisation scheme in-place.
-        while i < buf.len() - 1 {
-            buf[j] = buf[i];
-            j += 1;
-            i += 1;
-
-            if buf[i - 1] == 0xff && buf[i] == 0x00 {
-                i += 1;
-            }
-        }
-
-        // Record the last byte for the read_* functions.
-        self.byte = buf[i];
-
-        Ok(&mut buf[..i])
-    }
 }
 
-impl<B: Bytestream> FiniteStream for UnsyncStream<B> {
-
+impl<B: Bytestream + FiniteStream> FiniteStream for UnsyncStream<B> {
     #[inline(always)]
     fn len(&self) -> u64 {
         self.inner.len()
@@ -141,10 +147,9 @@ impl<B: Bytestream> FiniteStream for UnsyncStream<B> {
     fn bytes_available(&self) -> u64 {
         self.inner.bytes_available()
     }
-
 }
 
-impl<B: Bytestream> Bytestream for UnsyncStream<B> {
+impl<B: Bytestream + FiniteStream> Bytestream for UnsyncStream<B> {
 
     fn read_byte(&mut self) -> io::Result<u8> {
         let last = self.byte;
@@ -184,12 +189,53 @@ impl<B: Bytestream> Bytestream for UnsyncStream<B> {
         ])
     }
 
-    fn read_buf_bytes(&mut self, _buf: &mut [u8]) -> io::Result<()>{
-        unimplemented!();
+    fn read_buf_bytes(&mut self, buf: &mut [u8]) -> io::Result<()> {
+        let len = buf.len();
+
+        if len > 0 { 
+            // Fill the provided buffer directly from the underlying reader.
+            self.inner.read_buf_bytes(buf)?;
+
+            // If the last seen byte was 0xff, and the first byte in buf is 0x00, skip the first byte of buf.
+            let mut src = if self.byte == 0xff && buf[0] == 0x00 { 1 } else { 0 };
+            let mut dst = 0;
+
+            // Record the last byte in buf to continue unsychronisation streaming later.
+            self.byte = buf[len - 1];
+
+            // Decode the unsynchronisation scheme in-place.
+            while src < len - 1 {
+                buf[dst] = buf[src];
+                dst += 1;
+                src += 1;
+
+                if buf[src - 1] == 0xff && buf[src] == 0x00 {
+                    src += 1;
+                }
+            }
+
+            // When the final two src bytes are [ 0xff, 0x00 ], src will always equal len. Therefore, if src < len, then
+            // the final byte should always be copied to dst.
+            if src < len {
+                buf[dst] = buf[src];
+                dst += 1;
+            }
+
+            // If dst < len, then buf is not full. Read the remaining bytes manually to completely fill buf.
+            while dst < len {
+                buf[dst] = self.read_byte()?;
+                dst += 1;
+            }
+        }
+
+        Ok(())
     }
 
     fn ignore_bytes(&mut self, count: u64) -> io::Result<()> {
-        self.inner.ignore_bytes(count)
+        for _ in 0..count {
+            self.inner.read_byte()?;
+        }
+        Ok(())
     }
 }
 
@@ -198,7 +244,7 @@ fn read_id3v2_header<B: Bytestream>(reader: &mut B) -> Result<Header> {
     let marker = reader.read_triple_bytes()?;
 
     if marker != *b"ID3" {
-        return unsupported_error("Not an ID3 tag.");
+        return unsupported_error("Not an ID3v2 tag.");
     }
 
     let major_version = reader.read_u8()?;
@@ -253,8 +299,23 @@ fn read_id3v2_header<B: Bytestream>(reader: &mut B) -> Result<Header> {
 
 /// Read the extended header of an ID3v2.3 tag.
 fn read_id3v2p3_extended_header<B: Bytestream>(reader: &mut B) -> Result<ExtendedHeader> {
-    // Don't support until we can read unsychronisation streams.
-    return unsupported_error("ID3v2.3 extended headers not supported.");
+    let size = reader.read_u32()?;
+    let flags = reader.read_u16()?;
+    let padding_size = reader.read_u32()?;
+
+    let mut header = ExtendedHeader {
+        padding_size: Some(padding_size),
+        crc32: None,
+        is_update: None,
+        restrictions: None,
+    };
+
+    // CRC32 flag.
+    if (flags & 0x8000) == 0x8000 {
+        header.crc32 = Some(reader.read_u32()?);
+    }
+
+    Ok(header)
 }
 
 /// Read the extended header of an ID3v2.4 tag.
@@ -268,9 +329,9 @@ fn read_id3v2p4_extended_header<B: Bytestream>(reader: &mut B) -> Result<Extende
     let flags = reader.read_u8()?;
 
     let mut header = ExtendedHeader {
-        size,
-        is_update: false,
+        padding_size: None,
         crc32: None,
+        is_update: Some(false),
         restrictions: None,
     };
 
@@ -281,7 +342,7 @@ fn read_id3v2p4_extended_header<B: Bytestream>(reader: &mut B) -> Result<Extende
             return decode_error("Is update extended flag has invalid size.");
         }
 
-        header.is_update = true;
+        header.is_update = Some(true);
     }
 
     // CRC32 flag.
@@ -351,55 +412,7 @@ fn read_id3v2p4_extended_header<B: Bytestream>(reader: &mut B) -> Result<Extende
     Ok(header)
 }
 
-fn read_id3v2p2_frame<B: Bytestream>(reader: &mut B) -> Result<()> {
-    let id = reader.read_triple_bytes()?;
-    let size = reader.read_be_u24()?;
-
-    if id == [0, 0, 0] {
-        return Ok(());
-    }
-
-    eprintln!("Frame\t{}\t{}", String::from_utf8_lossy(&id), size);
-
-    reader.ignore_bytes(size as u64)?;
-
-    Ok(())
-}
-
-fn read_id3v2p3_frame<B: Bytestream>(reader: &mut B) -> Result<()> {
-    let id = reader.read_quad_bytes()?;
-    let size = reader.read_be_u32()?;
-    let flags = reader.read_be_u16()?;
-
-    if id == [0, 0, 0, 0] {
-        return Ok(());
-    }
-
-    eprintln!("Frame\t{}\t{}\t{:#b}", String::from_utf8_lossy(&id), size, flags);
-
-    reader.ignore_bytes(size as u64)?;
-
-    Ok(())
-}
-
-fn read_id3v2p4_frame<B: Bytestream>(reader: &mut B) -> Result<()> {
-    let id = reader.read_quad_bytes()?;
-    let size = read_syncsafe_leq32(reader, 28)?;
-    let flags = reader.read_be_u16()?;
-
-    if id == [0, 0, 0, 0] {
-        return Ok(());
-    }
-
-    eprintln!("Frame\t{}\t{}\t{:#b}", String::from_utf8_lossy(&id), size, flags);
-
-    reader.ignore_bytes(size as u64)?;
-
-    Ok(())
-}
-
 fn read_id3v2_body<B: Bytestream + FiniteStream>(mut reader: B, header: &Header) -> Result<()> {
-
     // If there is an extended header, read and parse it based on the major version of the tag.
     if header.has_extended_header {
         let extended = match header.major_version {
@@ -407,20 +420,27 @@ fn read_id3v2_body<B: Bytestream + FiniteStream>(mut reader: B, header: &Header)
             4 => read_id3v2p4_extended_header(&mut reader)?,
             _ => unreachable!(),
         };
-        eprintln!("{:?}", &extended);
+        eprintln!("{:#?}", &extended);
     }
+
+    let min_frame_size = match header.major_version {
+        2 => 6,
+        3 | 4 => 10,
+        _ => unreachable!()
+    };
 
     loop {
         // Read frames based on the major version of the tag.
         let frame = match header.major_version {
-            2 => read_id3v2p2_frame(&mut reader)?,
-            3 => read_id3v2p3_frame(&mut reader)?,
-            4 => read_id3v2p4_frame(&mut reader)?,
+            2 => frames::read_id3v2p2_frame(&mut reader)?,
+            3 => frames::read_id3v2p3_frame(&mut reader)?,
+            4 => frames::read_id3v2p4_frame(&mut reader)?,
             _ => break,
         };
 
-        // Read frames until either there are no more bytes available in the tag.
-        if reader.bytes_available() == 0 {
+        // Read frames until either the padding has been reached explicity (all 0 tag identifier), or there is not 
+        // enough bytes available in the tag for another frame.
+        if reader.bytes_available() < min_frame_size {
             break;
         }
     }
@@ -431,15 +451,15 @@ fn read_id3v2_body<B: Bytestream + FiniteStream>(mut reader: B, header: &Header)
 pub fn read_id3v2<B: Bytestream>(reader: &mut B) -> Result<()> {
     // Read the (sorta) version agnostic tag header.
     let header = read_id3v2_header(reader)?;
-    eprintln!("{:?}", &header);
+    eprintln!("{:#?}", &header);
 
     // The header specified the byte length of the contents of the ID3v2 tag (excluding the header), use a scoped
     // reader to ensure we don't exceed that length, and to determine if there are no more frames left to parse.
     let scoped = ScopedStream::new(reader, header.size as u64);
 
     // If the unsynchronisation flag is set in the header, all tag data must be passed through the unsynchronisation 
-    // decoder before being read.
-    if header.unsynchronisation {
+    // decoder before being read for verions < 4 of ID3v2.
+    if header.unsynchronisation && header.major_version < 4 {
         read_id3v2_body(UnsyncStream::new(scoped), &header)
     }
     // Otherwise, read the data as-is. Individual frames may be unsynchronised for major versions >= 4.

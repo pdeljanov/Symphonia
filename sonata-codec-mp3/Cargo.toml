@@ -10,4 +10,6 @@ keywords = ["audio", "codec", "decoder", "mp3", "mp2", "mp1", "mpeg"]
 
 [dependencies]
 bitflags = "1.0.4"
+encoding_rs = "0.8.17"
+lazy_static = "1.3.0"
 sonata-core = { version="*", path = "../sonata-core" }
