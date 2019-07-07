@@ -317,13 +317,13 @@ fn read_cuesheet_track<B: Bytestream>(reader: &mut B, is_cdda: bool, cues: &mut 
 
     // Next 14 bytes are reserved. However, the first two bits are flags. Consume the reserved bytes in u16 chunks 
     // a minor performance improvement.
-    let flags = reader.read_u16()?;
+    let flags = reader.read_be_u16()?;
 
     // These values are contained in the Cuesheet but have no analogue in Sonata.
     let _is_audio = (flags & 0x8000) == 0x0000;
     let _use_pre_emphasis = (flags & 0x4000) == 0x4000;
 
-    if flags & 0xcfff != 0x0000 {
+    if flags & 0x3fff != 0 {
         return decode_error("Cuesheet track reserved bits should be zero.");
     }
 
