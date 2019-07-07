@@ -13,7 +13,7 @@ use sonata;
 use sonata::core::errors::{Result, unsupported_error};
 use sonata::core::audio::*;
 use sonata::core::codecs::DecoderOptions;
-use sonata::core::formats::{FormatReader, Hint, FormatOptions, ProbeDepth, ProbeResult, ColorMode, Visual, Stream};
+use sonata::core::formats::{Cue, FormatReader, Hint, FormatOptions, ProbeDepth, ProbeResult, ColorMode, Visual, Stream};
 use sonata::core::tags::Tag;
 
 #[cfg(target_os = "linux")]
@@ -246,7 +246,7 @@ fn pretty_print_format(path: &Path, reader: &Box<dyn FormatReader>) {
     println!("+ {}", path.display());
     pretty_print_streams(reader.streams());
     pretty_print_tags(reader.tags());
-    pretty_print_cues();
+    pretty_print_cues(reader.cues());
     pretty_print_visuals(reader.visuals());
     println!("-");
 }
@@ -287,8 +287,45 @@ fn pretty_print_streams(streams: &[Stream]) {
     }
 }
 
-fn pretty_print_cues() {
-    // println!("|  // Cuepoints //");
+fn pretty_print_cues(cues: &[Cue]) {
+    if cues.len() > 0 {
+        println!("|");
+        println!("| // Cues //");
+
+        for (idx, cue) in cues.iter().enumerate() {
+            println!("|     [{:0>2}] Track:      {}", idx + 1, cue.index);
+            println!("|          Timestamp:  {}", cue.start_ts);
+
+            // Print tags associated with the Cue.
+            if cue.tags.len() > 0 {
+                println!("|          Tags:");
+
+                for (tidx, tag) in cue.tags.iter().enumerate() {
+                    if let Some(std_key) = tag.std_key {
+                        println!("{}", pretty_print_tag_item(tidx + 1, &format!("{:?}", std_key), &tag.value, 21));
+                    }
+                    else {
+                        println!("{}", pretty_print_tag_item(tidx + 1, &tag.key, &tag.value, 21));
+                    }
+                }
+            }
+
+            // Print any sub-cues.
+            if cue.points.len() > 0 {
+                println!("|          Sub-Cues:");
+
+                for (ptidx, pt) in cue.points.iter().enumerate() {
+                    println!("|                      [{:0>2}] Offset:    {:?}", ptidx + 1, pt.start_offset_ts);
+
+                    // Start the number of sub-cue tags, but don't print them.
+                    if pt.tags.len() > 0 {
+                        println!("|                           Sub-Tags:  {} (not listed)", pt.tags.len());
+                    }
+                }
+            }
+
+        }
+    }
 }
 
 fn pretty_print_tags(tags: &[Tag]) {
