@@ -436,8 +436,8 @@ impl<'a, B: Bytestream> Bytestream for PacketStream<'a, B> {
     }
 
     #[inline(always)]
-    fn scan_bytes<'b>(&mut self, pattern: &[u8], buf: &'b mut [u8]) -> io::Result<&'b mut [u8]> {
-        self.src.scan_bytes(pattern, buf)
+    fn scan_bytes_aligned<'b>(&mut self, pattern: &[u8], align: usize, buf: &'b mut [u8]) -> io::Result<&'b mut [u8]> {
+        self.src.scan_bytes_aligned(pattern, align, buf)
     }
 
     #[inline(always)]

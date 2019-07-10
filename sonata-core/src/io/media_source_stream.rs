@@ -370,66 +370,9 @@ impl Bytestream for MediaSourceStream {
         self.read_exact(buf)
     }
 
-    fn scan_bytes<'a>(&mut self, pattern: &[u8], buf: &'a mut [u8]) -> io::Result<&'a mut [u8]> {
-        // The pattern must be atleast one byte.
-        debug_assert!(pattern.len() > 0);
-        // The output buffer must be atleast the length of the pattern. 
-        debug_assert!(pattern.len() <= buf.len());
-
-        let mut i = 0;
-
-        // Fill the first pattern length bytes in buf without actually scanning for the pattern so that it is always 
-        // possible to look backwards for the pattern later on. Copy as efficiently as possible.
-        while i < pattern.len() {
-            let count = cmp::min(pattern.len() - i, self.end_pos - self.pos);
-
-            buf[i..i + count].copy_from_slice(&self.buf[self.pos..self.pos + count]);
-            i += count;
-
-            self.pos += count;
-            if self.pos >= self.end_pos {
-                self.fetch_buffer_or_eof()?;
-            }
-        }
-
-        if &buf[..i] == pattern {
-            return Ok(&mut buf[..i]);
-        }
-
-        let mut j = 1;
-        let end = buf.len();
-
-        // With atleast pattern length bytes in buf, we can now copy bytes one-by-one and search for the pattern.
-        while i < end {
-            // During this iteration, the maximum number of bytes that can be scanned is the minimum of either the 
-            // number of bytes remaining in buf, or the number of remaining buffered bytes in the stream.
-            let n_read = cmp::min(end - i, self.end_pos - self.pos);
-
-            // Copy bytes into buf one-by-one, checking for the pattern after each byte.
-            for _ in 0..n_read {
-                buf[i] = self.buf[self.pos];
-                self.pos += 1;
-
-                i += 1;
-
-                // Check for the pattern.
-                // TODO: Are slices too slow?
-                if &buf[j..i] == pattern {
-                    return Ok(&mut buf[..i]);
-                }
-
-                j += 1;
-            }
-
-            // Fetch a new buffer if we've exhausted the current buffer.
-            if self.pos >= self.end_pos {
-                self.fetch_buffer_or_eof()?;
-            }
-        }
-
-        Ok(buf)
-
-        //Err(io::Error::new(io::ErrorKind::Other, "unmatched pattern"))
+    fn scan_bytes_aligned<'a>(&mut self, pattern: &[u8], align: usize, buf: &'a mut [u8]) -> io::Result<&'a mut [u8]> {
+        // Intentionally left unimplemented.
+        unimplemented!();
     }
 
     fn ignore_bytes(&mut self, mut count: u64) -> io::Result<()> {

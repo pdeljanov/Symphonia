@@ -24,7 +24,12 @@ impl<'a> BufStream<'a> {
         }
     }
 
+    #[inline(always)]
     pub fn scan_bytes_ref(&mut self, pattern: &[u8], max_len: usize) -> io::Result<&[u8]> {
+        self.scan_bytes_aligned_ref(pattern, 1, max_len)
+    }
+
+    pub fn scan_bytes_aligned_ref(&mut self, pattern: &[u8], align: usize, max_len: usize) -> io::Result<&[u8]> {
                 // The pattern must be atleast one byte.
         debug_assert!(pattern.len() > 0);
         // The output buffer must be atleast the length of the pattern. 
@@ -46,11 +51,11 @@ impl<'a> BufStream<'a> {
             if &self.buf[j..i] == pattern {
                 break;
             }
-            i += 1;
-            j += 1;
+            i += align;
+            j += align;
         }
 
-        self.pos = i;
+        self.pos = cmp::min(i, self.buf.len());
         Ok(&self.buf[start..self.pos])
     }
 }
@@ -118,8 +123,8 @@ impl<'a> Bytestream for BufStream<'a> {
         Ok(())
     }
 
-    fn scan_bytes<'b>(&mut self, pattern: &[u8], buf: &'b mut [u8]) -> io::Result<&'b mut [u8]> {
-        let result = self.scan_bytes_ref(pattern, buf.len())?;
+    fn scan_bytes_aligned<'b>(&mut self, pattern: &[u8], align: usize, buf: &'b mut [u8]) -> io::Result<&'b mut [u8]> {
+        let result = self.scan_bytes_aligned_ref(pattern, align, buf.len())?;
         buf[..result.len()].copy_from_slice(result);
         Ok(&mut buf[..result.len()])
     }

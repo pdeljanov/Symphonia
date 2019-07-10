@@ -102,8 +102,8 @@ impl<B : Bytestream, M: Monitor> Bytestream for MonitorStream<B, M> {
         Ok(())
     }
 
-    fn scan_bytes<'a>(&mut self, pattern: &[u8], buf: &'a mut [u8]) -> io::Result<&'a mut [u8]> {
-        let result = self.inner.scan_bytes(pattern, buf)?;
+    fn scan_bytes_aligned<'a>(&mut self, pattern: &[u8], align: usize, buf: &'a mut [u8]) -> io::Result<&'a mut [u8]> {
+        let result = self.inner.scan_bytes_aligned(pattern, align, buf)?;
         self.monitor.process_buf_bytes(result);
         Ok(result)
     }

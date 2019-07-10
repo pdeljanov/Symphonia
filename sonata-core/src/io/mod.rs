@@ -201,8 +201,15 @@ pub trait Bytestream {
     }
 
     /// Reads bytes from the stream into a supplied buffer until a byte pattern is matched. Returns a mutable slice to
-    /// the valid region of the provided buffer. An error is returned if the pattern could not be matched.
-    fn scan_bytes<'a>(&mut self, pattern: &[u8], buf: &'a mut [u8]) -> io::Result<&'a mut [u8]>;
+    /// the valid region of the provided buffer.
+    #[inline(always)]
+    fn scan_bytes<'a>(&mut self, pattern: &[u8], buf: &'a mut [u8]) -> io::Result<&'a mut [u8]> {
+        self.scan_bytes_aligned(pattern, 1, buf)
+    }
+
+    /// Reads bytes from a stream into a supplied buffer until a byte patter is matched on an aligned byte boundary.
+    /// Returns a mutable slice to the valid region of the provided buffer.
+    fn scan_bytes_aligned<'a>(&mut self, pattern: &[u8], align: usize, buf: &'a mut [u8]) -> io::Result<&'a mut [u8]>;
 
     /// Ignores the specified number of bytes from the stream or returns an error.
     fn ignore_bytes(&mut self, count: u64) -> io::Result<()>;
@@ -235,8 +242,8 @@ impl<'b, B: Bytestream> Bytestream for &'b mut B {
     }
 
     #[inline(always)]
-    fn scan_bytes<'a>(&mut self, pattern: &[u8], buf: &'a mut [u8]) -> io::Result<&'a mut [u8]> {
-        (*self).scan_bytes(pattern, buf)
+    fn scan_bytes_aligned<'a>(&mut self, pattern: &[u8], align: usize, buf: &'a mut [u8]) -> io::Result<&'a mut [u8]> {
+        (*self).scan_bytes_aligned(pattern, align, buf)
     }
 
     #[inline(always)]
