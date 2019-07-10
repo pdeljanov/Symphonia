@@ -11,8 +11,7 @@ use std::collections::HashMap;
 use lazy_static::lazy_static;
 use encoding_rs::UTF_16BE;
 
-use super::{decode_unsynchronisation, read_syncsafe_leq32};
-use super::UnsyncStream;
+use super::unsync::{decode_unsynchronisation, read_syncsafe_leq32};
 
 // The following is a list of all standardized ID3v2.x frames for all ID3v2 major versions and their implementation
 // status ("S" column) in Sonata.
@@ -124,10 +123,80 @@ use super::UnsyncStream;
 //     ID3v2.3: http://id3.org/d3v2.3.0
 //     ID3v2.4: http://id3.org/id3v2.4.0-frames
 
-type Id3v2FrameParser = fn(&mut dyn Bytestream, usize) -> Result<()>;
+type Id3v2FrameParser = fn(&mut BufStream, usize) -> Result<()>;
 
 lazy_static! {
-    static ref ID3V2P3_FRAME_PARSERS: 
+    static ref LEGACY_FRAME_MAP: 
+        HashMap<&'static [u8; 3], &'static [u8; 4]> = {
+            let mut m = HashMap::new();
+            m.insert(b"CRA", b"AENC");
+            m.insert(b"PIC", b"APIC");
+            m.insert(b"COM", b"COMM");
+            m.insert(b"EQU", b"EQUA");
+            m.insert(b"ETC", b"ETCO");
+            m.insert(b"GEO", b"GEOB");
+            m.insert(b"IPL", b"IPLS");
+            m.insert(b"LNK", b"LINK");
+            m.insert(b"MCI", b"MCDI");
+            m.insert(b"MLL", b"MLLT");
+            m.insert(b"CNT", b"PCNT");
+            m.insert(b"POP", b"POPM");
+            m.insert(b"BUF", b"RBUF");
+            m.insert(b"RVA", b"RVAD");
+            m.insert(b"REV", b"RVRB");
+            m.insert(b"SLT", b"SYLT");
+            m.insert(b"STC", b"SYTC");
+            m.insert(b"TAL", b"TALB");
+            m.insert(b"TBP", b"TBPM");
+            m.insert(b"TCM", b"TCOM");
+            m.insert(b"TCO", b"TCON");
+            m.insert(b"TCR", b"TCOP");
+            m.insert(b"TDA", b"TDAT");
+            m.insert(b"TDY", b"TDLY");
+            m.insert(b"TEN", b"TENC");
+            m.insert(b"TXT", b"TEXT");
+            m.insert(b"TFT", b"TFLT");
+            m.insert(b"TIM", b"TIME");
+            m.insert(b"TT1", b"TIT1");
+            m.insert(b"TT2", b"TIT2");
+            m.insert(b"TT3", b"TIT3");
+            m.insert(b"TKE", b"TKEY");
+            m.insert(b"TLA", b"TLAN");
+            m.insert(b"TLE", b"TLEN");
+            m.insert(b"TMT", b"TMED");
+            m.insert(b"TOT", b"TOAL");
+            m.insert(b"TOF", b"TOFN");
+            m.insert(b"TOL", b"TOLY");
+            m.insert(b"TOA", b"TOPE");
+            m.insert(b"TOR", b"TORY");
+            m.insert(b"TP1", b"TPE1");
+            m.insert(b"TP2", b"TPE2");
+            m.insert(b"TP3", b"TPE3");
+            m.insert(b"TP4", b"TPE4");
+            m.insert(b"TPA", b"TPOS");
+            m.insert(b"TPB", b"TPUB");
+            m.insert(b"TRK", b"TRCK");
+            m.insert(b"TRD", b"TRDA");
+            m.insert(b"TSI", b"TSIZ");
+            m.insert(b"TRC", b"TSRC");
+            m.insert(b"TSS", b"TSSE");
+            m.insert(b"TYE", b"TYER");
+            m.insert(b"TXX", b"TXXX");
+            m.insert(b"UFI", b"UFID");
+            m.insert(b"ULT", b"USLT");
+            m.insert(b"WCM", b"WCOM");
+            m.insert(b"WCP", b"WCOP");
+            m.insert(b"WAF", b"WOAF");
+            m.insert(b"WAR", b"WOAR");
+            m.insert(b"WAS", b"WOAS");
+            m.insert(b"WPB", b"WPUB");
+            m.insert(b"WXX", b"WXXX");
+            m
+        };
+}
+
+lazy_static! {
+    static ref FRAME_PARSERS: 
         HashMap<&'static [u8; 4], Id3v2FrameParser> = {
             let mut m = HashMap::new();
             // m.insert(b"AENC", read_null_frame);
@@ -225,6 +294,20 @@ lazy_static! {
         };
 }
 
+/// Finds a frame parser for a "modern" ID3v2.3 or ID2v2.4 tag.
+fn find_parser(id: &[u8; 4]) -> Option<&Id3v2FrameParser> {
+    FRAME_PARSERS.get(id)
+}
+
+/// Finds a frame parser for a "legacy" ID3v2.2 tag by finding an equivalent ID3v2.3+ frame parser.
+fn find_parser_legacy(id: &[u8; 3]) -> Option<&Id3v2FrameParser> {
+     match LEGACY_FRAME_MAP.get(id) {
+        Some(id) => find_parser(id),
+        _        => None
+    }
+}
+
+/// Read an ID3v2.2 frame.
 pub fn read_id3v2p2_frame<B: Bytestream>(reader: &mut B) -> Result<()> {
     let id = reader.read_triple_bytes()?;
 
@@ -234,28 +317,25 @@ pub fn read_id3v2p2_frame<B: Bytestream>(reader: &mut B) -> Result<()> {
     }
 
     let size = reader.read_be_u24()? as usize;
-    // Text frame.
-    if id[0] == b"T"[0] {
-        let encoding = Encoding::parse(reader.read_byte()?);
-        let data = reader.read_boxed_slice_bytes(size - 1)?;
 
-        if encoding.is_none() {
-            return decode_error("Invalid text encoding.");
+    // Find a parser for the frame. If there is none, skip over the remainder of the frame as it cannot be parsed.
+    let parser = match find_parser_legacy(&id) {
+        Some(p) => p,
+        None => {
+            eprintln!("Frame {:?} is not supported.", String::from_utf8_lossy(&id));
+
+            reader.ignore_bytes(size as u64)?;
+            return Ok(());
         }
+    };
 
-        let text = read_text(encoding.unwrap(), &data);
-
-        eprintln!("Frame\t{}\t{}\t{:?}", String::from_utf8_lossy(&id), size, text);
-    }
-    else {
-        eprintln!("Frame\t{}\t{}", String::from_utf8_lossy(&id), size);
-        reader.ignore_bytes(size as u64)?;
-    }
-
+    let data = reader.read_boxed_slice_bytes(size as usize)?;
+    parser(&mut BufStream::new(&data), data.len())?;
 
     Ok(())
 }
 
+/// Read an ID3v2.3 frame.
 pub fn read_id3v2p3_frame<B: Bytestream>(reader: &mut B) -> Result<()> {
     let id = reader.read_quad_bytes()?;
 
@@ -263,30 +343,38 @@ pub fn read_id3v2p3_frame<B: Bytestream>(reader: &mut B) -> Result<()> {
         return Ok(());
     }
 
-    let size = reader.read_be_u32()? as usize;
+    let mut size = reader.read_be_u32()? as usize;
     let flags = reader.read_be_u16()?;
 
-    // Text frame.
-    if id[0] == b"T"[0] {
-        let encoding = Encoding::parse(reader.read_byte()?);
-        let data = reader.read_boxed_slice_bytes(size - 1)?;
+    // Find a parser for the frame. If there is none, skip over the remainder of the frame as it cannot be parsed.
+    let parser = match find_parser(&id) {
+        Some(p) => p,
+        None => {
+            eprintln!("Frame {:?} is not supported.", String::from_utf8_lossy(&id));
 
-        if encoding.is_none() {
-            return decode_error("Invalid text encoding.");
+            reader.ignore_bytes(size as u64)?;
+            return Ok(());
         }
+    };
 
-        let text = read_text(encoding.unwrap(), &data);
-
-        eprintln!("Frame\t{}\t{}\t{:#b}\t{:?}", String::from_utf8_lossy(&id), size, flags, text);
-    }
-    else {
-        eprintln!("Frame\t{}\t{}\t{:#b}", String::from_utf8_lossy(&id), size, flags);
+    // Frame compression, an unsupported feature.
+    if flags & 0x80 != 0x0 {
         reader.ignore_bytes(size as u64)?;
+        return unsupported_error("Compression is not supported.");
     }
 
+    // Frame group identifier.
+    if flags & 0x20 != 0x0 {
+        reader.read_byte()?;
+        size -= 1;
+    }
+
+    let data = reader.read_boxed_slice_bytes(size as usize)?;
+    parser(&mut BufStream::new(&data), data.len())?;
     Ok(())
 }
 
+/// Read an ID3v2.4 frame.
 pub fn read_id3v2p4_frame<B: Bytestream + FiniteStream>(reader: &mut B) -> Result<()> {
     let id = reader.read_quad_bytes()?;
 
@@ -298,7 +386,7 @@ pub fn read_id3v2p4_frame<B: Bytestream + FiniteStream>(reader: &mut B) -> Resul
     let flags = reader.read_be_u16()?;
 
     // Find a parser for the frame. If there is none, skip over the remainder of the frame as it cannot be parsed.
-    let parser = match ID3V2P3_FRAME_PARSERS.get(&id) {
+    let parser = match find_parser(&id) {
         Some(p) => p,
         None => {
             eprintln!("Frame {:?} is not supported.", String::from_utf8_lossy(&id));
@@ -329,7 +417,7 @@ pub fn read_id3v2p4_frame<B: Bytestream + FiniteStream>(reader: &mut B) -> Resul
     // used, but only encouraged for unsynchronisation.
     let data_len_indicator = if flags & 0x1 == 0x1 { 
         size -= 4;
-        Some(read_syncsafe_leq32(reader, 28)?)
+        Some(read_syncsafe_leq32(reader, 28)? as usize)
     } 
     else { 
         None
@@ -337,46 +425,72 @@ pub fn read_id3v2p4_frame<B: Bytestream + FiniteStream>(reader: &mut B) -> Resul
 
     let unsynchronised = flags & 0x2 == 0x2;
 
-    // The frame body is unsynchronised.
+    eprintln!("{}: len={}, unsync={} {{", String::from_utf8_lossy(&id), size, unsynchronised);
+    
+    // Read the frame body into a new buffer. This is, unfortunate. The original plan was to use an UnsyncStream to
+    // transparently decode the unsynchronisation stream, however, the format does not make this easy. For one, the 
+    // decoded data length field is optional. This is fine.. sometimes. For example, text frames should have their 
+    // text field terminated by 0x00 or 0x0000, so it /should/ be possible to scan for the termination. However, 
+    // despite being mandatory per the specification, not all tags have terminated text fields. It gets even worse 
+    // when your text field is actually a list. The condition to continue scanning for terminations is if there is 
+    // more data left in the frame body. However, the frame body length is the unsynchronised length, not the decoded 
+    // length (that part is optional). If we scan for a termination, we know the length of the /decoded/ data, not how 
+    // much data we actually consumed to obtain that decoded data. Therefore we exceed the bounds of the frame. 
+    // With this in mind, the easiest thing to do is just load frame body into memory, subject to a memory limit, and 
+    // decode it before passing it to a parser. Therefore we always know the decoded data length and the typical 
+    // algorithms work. It should be noted this isn't necessarily worse. Scanning for a termination still would've 
+    // required a buffer to scan into with the UnsyncStream, whereas we can just get references to the decoded data 
+    // buffer we create here. You win some, you lose some. :)
+    let mut raw_data = reader.read_boxed_slice_bytes(size as usize)?;
+
+    // The frame body is unsynchronised. Decode the unsynchronised data back to it's original form in-place before 
+    // wrapping the decoded data in a BufStream for the frame parsers.
     if unsynchronised {
-        // The original frame body size is known, the frame body can be streamed using an UnsyncStream to decode 
-        // the unsynchronisation scheme on the fly.
-        if let Some(data_len) = data_len_indicator {
-            parser(&mut UnsyncStream::new(reader), data_len as usize)?;
-        }
-        // The original frame body size is NOT known. Unfortunately, the length of the content in many frames is 
-        // implicitly determined via the original frame body size. However, in this case we only have the encoded 
-        // frame body size which may be smaller or larger than the original body size depending on the result of 
-        // encryption, compression, and/or unsynchronisation. Therefore, we must decode the encoded frame body 
-        // into memory before passing it to the frame parser. Hopefully this is not a common occurence.
-        else {
-            let mut encoded = reader.read_boxed_slice_bytes(size as usize)?;
-            let decoded = decode_unsynchronisation(&mut encoded);
-            parser(&mut BufStream::new(decoded), decoded.len())?;
-        }
+        let unsync_data = decode_unsynchronisation(&mut raw_data);
+        parser(&mut BufStream::new(&unsync_data), unsync_data.len())?;
     }
-    // The frame body has not been unsynchronised.
+    // The frame body has not been unsynchronised. Wrap the raw data buffer in BufStream without any additional 
+    // decoding.
     else {
-        parser(reader, size as usize)?;
+        parser(&mut BufStream::new(&raw_data), size as usize)?;
     };
 
+    eprintln!("}}");
 
     Ok(())
 }
 
-fn read_text_frame(reader: &mut dyn Bytestream, data_size: usize) -> Result<()> {
-    let encoding = Encoding::parse(reader.read_byte()?);
-    let data = reader.read_boxed_slice_bytes(data_size - 1)?;
+fn read_text_frame(reader: &mut BufStream, mut len: usize) -> Result<()> {
+    // The first byte of the frame is the encoding.
+    let encoding = match Encoding::parse(reader.read_byte()?) {
+        Some(encoding) => encoding,
+        _              => return decode_error("Invalid text encoding.")
+    };
 
-    if encoding.is_none() {
-        return decode_error("Invalid text encoding.");
+    len -= 1;
+
+    // The remainder of the frame is one or more null-terminated strings.
+    while len > 0 {
+        // Scan for the appropriate null terminator based on the encoding. If a null terminator is not found, then 
+        // scan_bytes() will return the remainder of the BufStream. This should handle the case where the text field
+        // is not properly terminated.
+        let data = match encoding {
+            Encoding::Iso8859_1 | Encoding::Utf8    => reader.scan_bytes_aligned_ref(&[0x00], 1, len),
+            Encoding::Utf16Bom  | Encoding::Utf16Be => reader.scan_bytes_aligned_ref(&[0x00, 0x00], 2, len),
+        }?;
+
+        len -= data.len();
+
+        let text = decode_text(encoding, &data);
+
+        // Decode the encoded text, trimming off the trailing null bytes.
+        eprintln!("[{:?}] {}", encoding, text);
     }
 
-    eprintln!("{:?}", read_text(encoding.unwrap(), &data));
-    
     Ok(())
 }
 
+#[derive(Copy, Clone, Debug)]
 enum Encoding {
     Iso8859_1,
     Utf16Bom,
@@ -401,35 +515,27 @@ impl Encoding {
     }
 }
 
-fn read_text(encoding: Encoding, data: &[u8]) -> Vec<String> {
+/// Decodes a slice of bytes containing encoded text into a `String`. Trailing null terminators are removed, and any
+/// invalid characters are replaced.
+fn decode_text(encoding: Encoding, data: &[u8]) -> String {
+    let mut end = data.len();
+
     match encoding {
-        Encoding::Iso8859_1 => read_text_utf8(data),
-        Encoding::Utf8      => read_text_utf8(data),
-        Encoding::Utf16Bom  => read_text_utf16(data),
-        Encoding::Utf16Be   => read_text_utf16(data),
+        Encoding::Iso8859_1 | Encoding::Utf8 => {
+            // Remove null terminators (trailing 0x0 bytes for ASCII and UTF8).
+            while end > 0 {
+                if data[end-1] != 0 { break; }
+                end -= 1;
+            }
+            String::from_utf8_lossy(&data[..end]).to_string()
+        },
+        Encoding::Utf16Bom  | Encoding::Utf16Be => {
+            // Remove null terminators (trailing [0x0, 0x0] bytes for UTF16).
+            while end > 1 {
+                if data[end-2] != 0x0 || data[end-1] != 0x0 { break; }
+                end -= 2;
+            }
+            UTF_16BE.decode(&data[..end]).0.to_string()
+        }
     }
-}
-
-fn read_text_utf16(data: &[u8]) -> Vec<String> {
-    let (text, _encoding, _errors) = UTF_16BE.decode(data);
-
-    text.split_terminator('\0')
-        .filter_map(|line| {
-            // Remove empty strings that may exist due to extra null characters.
-            if line.len() > 0 { Some(line.to_string()) } else { None }
-        })
-        .collect::<Vec<_>>()
-}
-
-fn read_text_utf8(data: &[u8]) -> Vec<String> {
-    // UTF-8 is endian-agnostic so the data slice may be converted directly into a UTF-8 string. However, there may be
-    // multiple related, yet independant, strings recorded in data. Iterate over each independant string by splitting 
-    // at the null terminator and collect them into a vector.
-    String::from_utf8_lossy(data)
-        .split_terminator('\0')
-        .filter_map(|line| {
-            // Remove empty strings that may exist due to extra null characters.
-            if line.len() > 0 { Some(line.to_string()) } else { None }
-        })
-        .collect::<Vec<_>>()
 }
