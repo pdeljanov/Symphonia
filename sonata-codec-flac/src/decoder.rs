@@ -9,11 +9,12 @@ use std::cmp;
 use std::num::Wrapping;
 
 use sonata_core::audio::{AudioBuffer, Signal, SignalSpec};
-use sonata_core::checksum::{Crc8, Crc16, Checksum};
+use sonata_core::checksum::{Crc8, Crc16};
 use sonata_core::codecs::{CODEC_TYPE_FLAC, CodecParameters, CodecDescriptor, Decoder, DecoderOptions};
 use sonata_core::errors::{Result, decode_error, unsupported_error};
 use sonata_core::formats::Packet;
 use sonata_core::io::*;
+use sonata_core::util::bits::sign_extend_leq32_to_i32;
 use sonata_core::support_codec;
 
 use crate::validate::Md5AudioValidator;
@@ -205,7 +206,7 @@ impl Decoder for FlacDecoder {
         let mut crc16 = Crc16::new();
         crc16.process_buf_bytes(&sync.to_be_bytes());
 
-        let mut reader_crc16 = ErrorDetectingStream::new(crc16, reader);
+        let mut reader_crc16 = MonitorStream::new(reader, crc16);
 
         let header = read_frame_header(&mut reader_crc16, sync)?;
 
@@ -289,7 +290,7 @@ impl Decoder for FlacDecoder {
         }
 
         // Retrieve the CRC16 before the reading the footer.
-        let crc16_expected = reader_crc16.checksum().crc();
+        let crc16_expected = reader_crc16.monitor().crc();
         let crc16_computed = read_frame_footer(&mut reader_crc16.to_inner())?;
 
         if crc16_computed != crc16_expected {
@@ -326,7 +327,7 @@ fn read_frame_header<B: Bytestream>(reader: &mut B, sync: u16) -> Result<FrameHe
     let mut crc8 = Crc8::new();
     crc8.process_buf_bytes(&sync.to_be_bytes());
 
-    let mut reader_crc8 = ErrorDetectingStream::new(crc8, reader);
+    let mut reader_crc8 = MonitorStream::new(reader, crc8);
 
     // Extract the blocking strategy from the expanded synchronization code.
     let blocking_strategy = match sync & 0x1 {
@@ -449,7 +450,7 @@ fn read_frame_header<B: Bytestream>(reader: &mut B, sync: u16) -> Result<FrameHe
     };
 
     // End of freame header, pop off CRC8 checksum.
-    let crc8_computed = reader_crc8.checksum().crc();
+    let crc8_computed = reader_crc8.monitor().crc();
 
     // Get expected CRC8 checksum from the header.
     let crc8_expected = reader_crc8.to_inner().read_u8()?;

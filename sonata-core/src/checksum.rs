@@ -5,32 +5,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-/// A `Checksum` provides a common interface to compute and validate checksums.
-pub trait Checksum {
-
-    fn process_byte(&mut self, byte: &u8);
-
-    #[inline(always)]
-    fn process_double_bytes(&mut self, buf: &[u8; 2]) {
-        self.process_buf_bytes(buf);
-    }
-
-    #[inline(always)]
-    fn process_triple_bytes(&mut self, buf: &[u8; 3]) {
-        self.process_buf_bytes(buf);
-    }
-
-    #[inline(always)]
-    fn process_quad_bytes(&mut self, buf: &[u8; 4]) {
-        self.process_buf_bytes(buf);
-    }
-
-    fn process_buf_bytes(&mut self, buf: &[u8]);
-
-    fn validate(&self, expected: &[u8]) -> bool;
-
-    fn reset(&mut self);
-}
+use super::io::Monitor;
 
 // Credit: This table was extracted from the FLAC reference decoder.
 const CRC8_ITU_T_I_432_1: [u8; 256] =
@@ -72,8 +47,7 @@ impl Crc8 {
     }
 }
 
-impl Checksum for Crc8 {
-
+impl Monitor for Crc8 {
     #[inline(always)]
     fn process_byte(&mut self, byte: &u8) {
         self.state = CRC8_ITU_T_I_432_1[(self.state ^ byte) as usize];
@@ -84,17 +58,6 @@ impl Checksum for Crc8 {
         for byte in buf {
             self.state = CRC8_ITU_T_I_432_1[(self.state ^ byte) as usize];
         }
-    }
-
-    #[inline(always)]
-    fn validate(&self, expected: &[u8]) -> bool {
-        debug_assert!(expected.len() == 1);
-        (expected[0] == self.state)
-    }
-
-    #[inline(always)]
-    fn reset(&mut self) {
-        self.state = 0;
     }
 }
 
@@ -154,8 +117,7 @@ impl Crc16 {
     }
 }
 
-impl Checksum for Crc16 {
-
+impl Monitor for Crc16 {
     #[inline(always)]
     fn process_byte(&mut self, byte: &u8) {
         self.state = (self.state << 8) ^ CRC16_ANSI[((self.state >> 8) as u8 ^ byte) as usize];
@@ -166,17 +128,5 @@ impl Checksum for Crc16 {
         for byte in buf {
             self.state = (self.state << 8) ^ CRC16_ANSI[((self.state >> 8) as u8 ^ byte) as usize];
         }
-    }
-
-    #[inline(always)]
-    fn validate(&self, expected: &[u8]) -> bool {
-        debug_assert!(expected.len() == 2);
-        (expected[0] == ((self.state & 0x00ff) >> 0) as u8) &&
-        (expected[1] == ((self.state & 0xff00) >> 8) as u8)
-    }
-
-    #[inline(always)]
-    fn reset(&mut self) {
-        self.state = 0;
     }
 }

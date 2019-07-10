@@ -436,6 +436,11 @@ impl<'a, B: Bytestream> Bytestream for PacketStream<'a, B> {
     }
 
     #[inline(always)]
+    fn scan_bytes<'b>(&mut self, pattern: &[u8], buf: &'b mut [u8]) -> io::Result<&'b mut [u8]> {
+        self.src.scan_bytes(pattern, buf)
+    }
+
+    #[inline(always)]
     fn ignore_bytes(&mut self, count: u64) -> io::Result<()> {
         self.src.ignore_bytes(count)
     }

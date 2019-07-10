@@ -15,11 +15,4 @@ pub mod tags;
 pub mod io;
 pub mod checksum;
 pub mod conv;
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {
-        assert_eq!(2 + 2, 4);
-    }
-}
+pub mod util;
