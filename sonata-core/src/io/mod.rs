@@ -23,19 +23,31 @@ pub use scoped_stream::ScopedStream;
 /// A `MediaSource` is a composite trait of `std::io::Read` and `std::io::Seek`. Seeking is an optional capability and 
 /// support for it can be queried at runtime.
 pub trait MediaSource: io::Read + io::Seek {
-    /// Returns if the source is seekable.
+    /// Returns if the source is seekable. This may be an expensive operation.
     fn is_seekable(&self) -> bool;
 
-    /// Returns the length in bytes, if available.
+    /// Returns the length in bytes, if available. This may be an expensive operation.
     fn len(&self) -> Option<u64>;
 }
 
 impl MediaSource for std::fs::File {
+    /// Returns if the `std::io::File` backing the `MediaSource` is seekable.
+    /// 
+    /// Note: This operation involves querying the underlying file descriptor for information and may be moderately
+    /// expensive. Therefore it is recommended to cache this value if used often.
     fn is_seekable(&self) -> bool {
-        // TODO: Check that the underlying file is actually seekable. Only regular files are seekable.
-        true
+        // If the file's metadata is available, and the file is a regular file (i.e., not a FIFO, etc.), then the 
+        // MediaSource will be seekable. Otherwise assume it is not. Note that metadata() follows symlinks.
+        match self.metadata() {
+            Ok(metadata) => metadata.is_file(),
+            _ => false
+        }
     }
 
+    /// Returns the length in bytes of the `std::io::File` backing the `MediaSource`.
+    /// 
+    /// Note: This operation involves querying the underlying file descriptor for information and may be moderately
+    /// expensive. Therefore it is recommended to cache this value if used often.
     fn len(&self) -> Option<u64> {
         match self.metadata() {
             Ok(metadata) => Some(metadata.len()),
@@ -45,10 +57,12 @@ impl MediaSource for std::fs::File {
 }
 
 impl<T: std::convert::AsRef<[u8]>> MediaSource for io::Cursor<T> {
+    /// Always returns true since a `io::Cursor<u8>` is always seekable.
     fn is_seekable(&self) -> bool {
         true
     }
 
+    /// Returns the length in bytes of the `io::Cursor<u8>` backing the `MediaSource`.
     fn len(&self) -> Option<u64> {
         // Get the underlying container, usually &Vec<T>.
         let inner = self.get_ref();
