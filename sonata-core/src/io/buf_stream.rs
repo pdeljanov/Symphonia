@@ -125,10 +125,10 @@ impl<'a> Bytestream for BufStream<'a> {
     }
 
     fn ignore_bytes(&mut self, count: u64) -> io::Result<()> {
-        self.pos += count as usize;
-        if self.pos > self.buf.len() {
+        if self.pos + count as usize > self.buf.len() {
             return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "would exceed buffer"));
         }
+        self.pos += count as usize;
         Ok(())
      }
 }
