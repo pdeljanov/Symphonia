@@ -8,7 +8,7 @@
 use std::cmp;
 use std::io;
 
-use super::Bytestream;
+use super::{Bytestream, FiniteStream};
 
 /// `BufStream` is a stream backed by a buffer.
 pub struct BufStream<'a> {
@@ -25,12 +25,12 @@ impl<'a> BufStream<'a> {
     }
 
     #[inline(always)]
-    pub fn scan_bytes_ref(&mut self, pattern: &[u8], max_len: usize) -> io::Result<&[u8]> {
+    pub fn scan_bytes_ref(&mut self, pattern: &[u8], max_len: usize) -> io::Result<&'a [u8]> {
         self.scan_bytes_aligned_ref(pattern, 1, max_len)
     }
 
-    pub fn scan_bytes_aligned_ref(&mut self, pattern: &[u8], align: usize, max_len: usize) -> io::Result<&[u8]> {
-                // The pattern must be atleast one byte.
+    pub fn scan_bytes_aligned_ref(&mut self, pattern: &[u8], align: usize, max_len: usize) -> io::Result<&'a [u8]> {
+        // The pattern must be atleast one byte.
         debug_assert!(pattern.len() > 0);
         // The output buffer must be atleast the length of the pattern. 
         debug_assert!(pattern.len() <= max_len);
@@ -136,4 +136,21 @@ impl<'a> Bytestream for BufStream<'a> {
         self.pos += count as usize;
         Ok(())
      }
+}
+
+impl<'a> FiniteStream for BufStream<'a> {
+    #[inline(always)]
+    fn len(&self) -> u64 {
+        self.buf.len() as u64
+    }
+
+    #[inline(always)]
+    fn bytes_read(&self) -> u64 {
+        self.pos as u64
+    }
+
+    #[inline(always)]
+    fn bytes_available(&self) -> u64 {
+        (self.buf.len() - self.pos) as u64
+    }
 }
