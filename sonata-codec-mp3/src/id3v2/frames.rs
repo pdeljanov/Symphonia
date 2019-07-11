@@ -132,7 +132,7 @@ pub enum FrameResult {
     Padding,
     /// An unknown frame was found and its body skipped.
     UnsupportedFrame,
-    /// A frame was parsed an yielded a single `Tag`.
+    /// A frame was parsed and yielded a single `Tag`.
     Tag(Tag),
     // A frame was parsed and yielded many `Tag`s.
     MultipleTags(Vec<Tag>)
@@ -309,6 +309,18 @@ lazy_static! {
         };
 }
 
+/// Validates that a frame id only contains the uppercase letters A-Z, and digits 0-9.
+fn validate_frame_id(id: &[u8]) -> bool {
+    // Only frame IDs with 3 or 4 characters are valid.
+    if id.len() != 4 && id.len() != 3 {
+        return false;
+    }
+    
+    // Character:   '/'   [ '0'  ...  '9' ]  ':'  ...  '@'  [ 'A'  ...  'Z' ]   '['
+    // ASCII Code:  0x2f  [ 0x30 ... 0x39 ]  0x3a ... 0x40  [ 0x41 ... 0x5a ]  0x5b
+    id.iter().filter(|&b| !((*b > 0x2f && *b < 0x3a) || (*b > 0x40 && *b < 0x5b))).count() == 0
+}
+
 /// Finds a frame parser for "modern" ID3v2.3 or ID2v2.4 tags.
 fn find_parser(id: &[u8; 4]) -> Option<&FrameParser> {
     FRAME_PARSERS.get(id)
@@ -326,23 +338,31 @@ fn find_parser_legacy(id: &[u8; 3]) -> Option<&FrameParser> {
 pub fn read_id3v2p2_frame<B: Bytestream>(reader: &mut B) -> Result<FrameResult> {
     let id = reader.read_triple_bytes()?;
 
-    // Is this padding?
+    // Check if padding (all 0s) was reached.
     if id == [0, 0, 0] {
         return Ok(FrameResult::Padding);
     }
 
-    let size = reader.read_be_u24()? as usize;
+    // Validate that the frame ID is legal.
+    if !validate_frame_id(&id) {
+        return decode_error("Invalid frame ID.");
+    }
+
+    let size = reader.read_be_u24()? as u64;
 
     // Find a parser for the frame. If there is none, skip over the remainder of the frame as it cannot be parsed.
     let parser = match find_parser_legacy(&id) {
         Some(p) => p,
         None => {
-            eprintln!("Frame {:?} is not supported.", String::from_utf8_lossy(&id));
-
-            reader.ignore_bytes(size as u64)?;
+            reader.ignore_bytes(size)?;
             return Ok(FrameResult::UnsupportedFrame);
         }
     };
+
+    // A frame must be atleast 1 byte as per the specification.
+    if size == 0 {
+        return decode_error("Frame has a size of 0.");
+    }
 
     let data = reader.read_boxed_slice_bytes(size as usize)?;
 
@@ -353,34 +373,55 @@ pub fn read_id3v2p2_frame<B: Bytestream>(reader: &mut B) -> Result<FrameResult> 
 pub fn read_id3v2p3_frame<B: Bytestream>(reader: &mut B) -> Result<FrameResult> {
     let id = reader.read_quad_bytes()?;
 
+    // Check if padding (all 0s) was reached.
     if id == [0, 0, 0, 0] {
         return Ok(FrameResult::Padding);
     }
 
-    let mut size = reader.read_be_u32()? as usize;
+    // Validate that the frame ID is legal.
+    if !validate_frame_id(&id) {
+        return decode_error("Invalid frame ID.");
+    }
+
+    let mut size = reader.read_be_u32()? as u64;
     let flags = reader.read_be_u16()?;
+
+    // Unused flag bits must be cleared.
+    if flags & 0x1f1f != 0 {
+        return decode_error("Unused flag bits are not cleared.");
+    }
 
     // Find a parser for the frame. If there is none, skip over the remainder of the frame as it cannot be parsed.
     let parser = match find_parser(&id) {
         Some(p) => p,
         None => {
-            eprintln!("Frame {:?} is not supported.", String::from_utf8_lossy(&id));
-
-            reader.ignore_bytes(size as u64)?;
+            reader.ignore_bytes(size)?;
             return Ok(FrameResult::UnsupportedFrame);
         }
     };
 
-    // Frame compression, an unsupported feature.
+    // Frame zlib DEFLATE compression usage flag.
+    // TODO: Implement decompression if it is actually used in the real world.
     if flags & 0x80 != 0x0 {
-        reader.ignore_bytes(size as u64)?;
-        return unsupported_error("Compression is not supported.");
+        reader.ignore_bytes(size)?;
+        return unsupported_error("Compressed frames are not supported.");
     }
 
-    // Frame group identifier.
-    if flags & 0x20 != 0x0 {
+    // Frame encryption usage flag. This will likely never be supported since encryption methods are vendor-specific.
+    if flags & 0x4 != 0x0 {
+        reader.ignore_bytes(size)?;
+        return unsupported_error("Encrypted frames are not supported.");
+    }
+
+    // Frame group identifier byte. Used to group a set of frames. There is no analogue in Sonata.
+    if size >= 1 && (flags & 0x20) != 0x0 {
         reader.read_byte()?;
         size -= 1;
+    }
+
+    // A frame must be atleast 1 byte as per the specification.
+    if size == 0 {
+        return decode_error("Frame has a size of 0.");
     }
 
     let data = reader.read_boxed_slice_bytes(size as usize)?;
@@ -392,36 +433,48 @@ pub fn read_id3v2p3_frame<B: Bytestream>(reader: &mut B) -> Result<FrameResult> 
 pub fn read_id3v2p4_frame<B: Bytestream + FiniteStream>(reader: &mut B) -> Result<FrameResult> {
     let id = reader.read_quad_bytes()?;
 
+    // Check if padding (all 0s) was reached.
     if id == [0, 0, 0, 0] {
         return Ok(FrameResult::Padding);
     }
 
-    let mut size = read_syncsafe_leq32(reader, 28)?;
+    // Validate that the frame ID is legal.
+    if !validate_frame_id(&id) {
+        return decode_error("Invalid frame ID.");
+    }
+
+    let mut size = read_syncsafe_leq32(reader, 28)? as u64;
     let flags = reader.read_be_u16()?;
+
+    // Unused flag bits must be cleared.
+    if flags & 0x8fb0 != 0 {
+        return decode_error("Unused flag bits are not cleared.");
+    }
 
     // Find a parser for the frame. If there is none, skip over the remainder of the frame as it cannot be parsed.
     let parser = match find_parser(&id) {
         Some(p) => p,
         None => {
-            eprintln!("Frame {:?} is not supported.", String::from_utf8_lossy(&id));
-
-            reader.ignore_bytes(size as u64)?;
+            reader.ignore_bytes(size)?;
             return Ok(FrameResult::UnsupportedFrame);
         }
     };
 
+    // Frame zlib DEFLATE compression usage flag.
+    // TODO: Implement decompression if it is actually used in the real world.
     if flags & 0x8 == 0x8 {
-        reader.ignore_bytes(size as u64)?;
-        return unsupported_error("Compression is not supported.");
+        reader.ignore_bytes(size)?;
+        return unsupported_error("Compressed frames are not supported.");
     }
 
+    // Frame encryption usage flag. This will likely never be supported since encryption methods are vendor-specific.
     if flags & 0x4 == 0x4 {
-        reader.ignore_bytes(size as u64)?;
-        return unsupported_error("Encryption is not supported.");
+        reader.ignore_bytes(size)?;
+        return unsupported_error("Encrypted frames are not supported.");
     }
 
-    // Frame group identifier.
-    if flags & 0x40 == 0x40 {
+    // Frame group identifier byte. Used to group a set of frames. There is no analogue in Sonata.
+    if size >= 1 && (flags & 0x40) != 0x0 {
         reader.read_byte()?;
         size -= 1;
     }
@@ -429,13 +482,16 @@ pub fn read_id3v2p4_frame<B: Bytestream + FiniteStream>(reader: &mut B) -> Resul
     // The data length indicator is optional in the frame header. This field indicates the original size of the frame
     // body before compression, encryption, and/or unsynchronisation. It is mandatory if encryption or compression are 
     // used, but only encouraged for unsynchronisation. It's not that helpful, so we just ignore it.
-    if flags & 0x1 == 0x1 { 
+    if size >= 4 && (flags & 0x1) != 0x0 { 
         read_syncsafe_leq32(reader, 28)?;
         size -= 4;
     }
 
-    let unsynchronised = flags & 0x2 == 0x2;
-    
+    // A frame must be atleast 1 byte as per the specification.
+    if size == 0 {
+        return decode_error("Frame has a size of 0.");
+    }
+
     // Read the frame body into a new buffer. This is, unfortunate. The original plan was to use an UnsyncStream to
     // transparently decode the unsynchronisation stream, however, the format does not make this easy. For one, the 
     // decoded data length field is optional. This is fine.. sometimes. For example, text frames should have their 
@@ -454,9 +510,9 @@ pub fn read_id3v2p4_frame<B: Bytestream + FiniteStream>(reader: &mut B) -> Resul
 
     // The frame body is unsynchronised. Decode the unsynchronised data back to it's original form in-place before 
     // wrapping the decoded data in a BufStream for the frame parsers.
-    if unsynchronised {
+    if flags & 0x2 != 0x0 {
         let unsync_data = decode_unsynchronisation(&mut raw_data);
-        
+
         parser(&mut BufStream::new(&unsync_data), str::from_utf8(&id).unwrap(), unsync_data.len())
     }
     // The frame body has not been unsynchronised. Wrap the raw data buffer in BufStream without any additional 
@@ -496,11 +552,16 @@ fn read_text_frame(reader: &mut BufStream, id: &str, mut len: usize) -> Result<F
     Ok(FrameResult::MultipleTags(tags))
 }
 
+/// Enumeration of valid encodings for text fields in ID3v2 tags
 #[derive(Copy, Clone, Debug)]
 enum Encoding {
+    /// ISO-8859-1 (aka Latin-1) characters in the range 0x20-0xFF.
     Iso8859_1,
+    /// UTF-16 (or UCS-2) with a byte-order-mark (BOM). If the BOM is missing, big-endian encoding is assumed.
     Utf16Bom,
+    /// UTF-16 big-endian without a byte-order-mark (BOM). 
     Utf16Be,
+    /// UTF-8.
     Utf8,
 }
 
