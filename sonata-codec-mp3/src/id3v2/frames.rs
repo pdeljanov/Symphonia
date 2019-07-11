@@ -6,7 +6,10 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 use sonata_core::errors::{Result, unsupported_error, decode_error};
 use sonata_core::io::{Bytestream, BufStream, FiniteStream};
+use sonata_core::tags::Tag;
 
+use std::borrow::Cow;
+use std::str;
 use std::collections::HashMap;
 use lazy_static::lazy_static;
 use encoding_rs::UTF_16BE;
@@ -22,100 +25,100 @@ use super::unsync::{decode_unsynchronisation, read_syncsafe_leq32};
 // All ID3v2.3 frames are officially part of ID3v2.4 with the exception of those marked "n/a". However, it is likely 
 // that ID3v2.3-only frames appear in some real-world ID3v2.4 tags.
 //
-//   -   ----   ----    ----    ------------------------------------------------
-//   S   v2.2   v2.3    v2.4    Description
-//   -   ----   ----    ----    ------------------------------------------------
-//       CRA    AENC            Audio encryption
-//       CRM                    Encrypted meta frame
-//       PIC    APIC            Attached picture
-//                      ASPI    Audio seek point index
-//       COM    COMM            Comments
-//              COMR            Commercial frame
-//              ENCR            Encryption method registration
-//       EQU    EQUA            Equalisation
-//                      EQU2    Equalisation (2)
-//       ETC    ETCO            Event timing codes
-//       GEO    GEOB            General encapsulated object
-//              GRID            Group identification registration
-//       IPL    IPLS    TIPL    Involved people list
-//       LNK    LINK            Linked information
-//       MCI    MCDI            Music CD identifier
-//       MLL    MLLT            MPEG location lookup table
-//              OWNE            Ownership frame
-//              PRIV            Private frame
-//       CNT    PCNT            Play counter
-//       POP    POPM            Popularimeter
-//              POSS            Position synchronisation frame
-//       BUF    RBUF            Recommended buffer size
-//       RVA    RVAD            Relative volume adjustment
-//                      RVA2    Relative volume adjustment (2)
-//       REV    RVRB            Reverb
-//                      SEEK    Seek frame
-//                      SIGN    Signature frame
-//       SLT    SYLT            Synchronized lyric/text
-//       STC    SYTC            Synchronized tempo codes
-//       TAL    TALB            Album/Movie/Show title
-//       TBP    TBPM            BPM (beats per minute)
-//       TCM    TCOM            Composer
-//       TCO    TCON            Content type
-//       TCR    TCOP            Copyright message
-//       TDA    TDAT            Date
-//                      TDEN    Encoding time
-//       TDY    TDLY            Playlist delay
-//                      TDOR    Original release time
-//                      TDRC    Recording time
-//                      TDRL    Release time
-//                      TDTG    Tagging time
-//       TEN    TENC            Encoded by
-//       TXT    TEXT            Lyricist/Text writer
-//       TFT    TFLT            File type
-//       TIM    TIME     n/a    Time
-//       TT1    TIT1            Content group description
-//       TT2    TIT2            Title/songname/content description
-//       TT3    TIT3            Subtitle/Description refinement
-//       TKE    TKEY            Initial key
-//       TLA    TLAN            Language(s)
-//       TLE    TLEN            Length
-//                      TMCL    Musician credits list
-//       TMT    TMED            Media type
-//                      TMOO    Mood
-//       TOT    TOAL            Original album/movie/show title
-//       TOF    TOFN            Original filename
-//       TOL    TOLY            Original lyricist(s)/text writer(s)
-//       TOA    TOPE            Original artist(s)/performer(s)
-//       TOR    TORY    n/a     Original release year
-//              TOWN            File owner/licensee
-//       TP1    TPE1            Lead performer(s)/Soloist(s)
-//       TP2    TPE2            Band/orchestra/accompaniment
-//       TP3    TPE3            Conductor/performer refinement
-//       TP4    TPE4            Interpreted, remixed, or otherwise modified by
-//       TPA    TPOS            Part of a set
-//                      TPRO    Produced notice
-//       TPB    TPUB            Publisher
-//       TRK    TRCK            Track number/Position in set
-//       TRD    TRDA    n/a     Recording dates
-//              TRSN            Internet radio station name
-//              TRSO            Internet radio station owner
-//                      TSOA    Album sort order
-//                      TSOP    Performer sort order
-//                      TSOT    Title sort order
-//       TSI    TSIZ    n/a     Size
-//       TRC    TSRC            ISRC (international standard recording code)
-//       TSS    TSSE            Software/Hardware and settings used for encoding
-//       TYE    TYER    n/a     Year
-//       TXX    TXXX            User defined text information frame
-//       UFI    UFID            Unique file identifier
-//              USER            Terms of use
-//       ULT    USLT            Unsychronized lyric/text transcription
-//       WCM    WCOM            Commercial information
-//       WCP    WCOP            Copyright/Legal information
-//       WAF    WOAF            Official audio file webpage
-//       WAR    WOAR            Official artist/performer webpage
-//       WAS    WOAS            Official audio source webpage
-//              WORS            Official internet radio station homepage
-//              WPAY            Payment
-//       WPB    WPUB            Publishers official webpage
-//       WXX    WXXX            User defined URL link frame
+//   -   ----   ----    ----    ----------------    ------------------------------------------------
+//   S   v2.2   v2.3    v2.4    Std. Key            Description
+//   -   ----   ----    ----    ----------------    ------------------------------------------------
+//       CRA    AENC                                Audio encryption
+//       CRM                                        Encrypted meta frame
+//       PIC    APIC                                Attached picture
+//                      ASPI                        Audio seek point index
+//       COM    COMM             Comment            Comments
+//              COMR                                Commercial frame
+//              ENCR                                Encryption method registration
+//       EQU    EQUA                                Equalisation
+//                      EQU2                        Equalisation (2)
+//       ETC    ETCO                                Event timing codes
+//       GEO    GEOB                                General encapsulated object
+//              GRID                                Group identification registration
+//       IPL    IPLS    TIPL                        Involved people list
+//       LNK    LINK                                Linked information
+//       MCI    MCDI                                Music CD identifier
+//       MLL    MLLT                                MPEG location lookup table
+//              OWNE                                Ownership frame
+//              PRIV                                Private frame
+//       CNT    PCNT                                Play counter
+//       POP    POPM                                Popularimeter
+//              POSS                                Position synchronisation frame
+//       BUF    RBUF                                Recommended buffer size
+//       RVA    RVAD                                Relative volume adjustment
+//                      RVA2                        Relative volume adjustment (2)
+//       REV    RVRB                                Reverb
+//                      SEEK                        Seek frame
+//                      SIGN                        Signature frame
+//       SLT    SYLT                                Synchronized lyric/text
+//       STC    SYTC                                Synchronized tempo codes
+//       TAL    TALB                                Album/Movie/Show title
+//       TBP    TBPM                                BPM (beats per minute)
+//       TCM    TCOM                                Composer
+//       TCO    TCON                                Content type
+//       TCR    TCOP             Copyright          Copyright message
+//       TDA    TDAT             Date               Date
+//                      TDEN                        Encoding time
+//       TDY    TDLY                                Playlist delay
+//                      TDOR                        Original release time
+//                      TDRC                        Recording time
+//                      TDRL                        Release time
+//                      TDTG                        Tagging time
+//       TEN    TENC                                Encoded by
+//       TXT    TEXT             Lyricist           Lyricist/Text writer
+//       TFT    TFLT                                File type
+//       TIM    TIME     n/a                        Time
+//       TT1    TIT1                                Content group description
+//       TT2    TIT2             TrackTitle         Title/songname/content description
+//       TT3    TIT3                                Subtitle/Description refinement
+//       TKE    TKEY                                Initial key
+//       TLA    TLAN             Language           Language(s)
+//       TLE    TLEN                                Length
+//                      TMCL                        Musician credits list
+//       TMT    TMED                                Media type
+//                      TMOO                        Mood
+//       TOT    TOAL                                Original album/movie/show title
+//       TOF    TOFN                                Original filename
+//       TOL    TOLY                                Original lyricist(s)/text writer(s)
+//       TOA    TOPE                                Original artist(s)/performer(s)
+//       TOR    TORY    n/a                         Original release year
+//              TOWN                                File owner/licensee
+//       TP1    TPE1             Performer          Lead performer(s)/Soloist(s)
+//       TP2    TPE2                                Band/orchestra/accompaniment
+//       TP3    TPE3                                Conductor/performer refinement
+//       TP4    TPE4                                Interpreted, remixed, or otherwise modified by
+//       TPA    TPOS                                Part of a set
+//                      TPRO                        Produced notice
+//       TPB    TPUB                                Publisher
+//       TRK    TRCK                                Track number/Position in set
+//       TRD    TRDA    n/a                         Recording dates
+//              TRSN                                Internet radio station name
+//              TRSO                                Internet radio station owner
+//                      TSOA     SortAlbumn         Album sort order
+//                      TSOP     SortArtist         Performer sort order
+//                      TSOT     SortTrackTitle     Title sort order
+//       TSI    TSIZ    n/a                         Size
+//       TRC    TSRC                                ISRC (international standard recording code)
+//       TSS    TSSE                                Software/Hardware and settings used for encoding
+//       TYE    TYER    n/a                         Year
+//       TXX    TXXX                                User defined text information frame
+//       UFI    UFID                                Unique file identifier
+//              USER                                Terms of use
+//       ULT    USLT                                Unsychronized lyric/text transcription
+//       WCM    WCOM                                Commercial information
+//       WCP    WCOP                                Copyright/Legal information
+//       WAF    WOAF                                Official audio file webpage
+//       WAR    WOAR                                Official artist/performer webpage
+//       WAS    WOAS                                Official audio source webpage
+//              WORS                                Official internet radio station homepage
+//              WPAY                                Payment
+//       WPB    WPUB                                Publishers official webpage
+//       WXX    WXXX                                User defined URL link frame
 //
 // Information on these frames can be found at:
 //
@@ -123,7 +126,19 @@ use super::unsync::{decode_unsynchronisation, read_syncsafe_leq32};
 //     ID3v2.3: http://id3.org/d3v2.3.0
 //     ID3v2.4: http://id3.org/id3v2.4.0-frames
 
-type Id3v2FrameParser = fn(&mut BufStream, usize) -> Result<()>;
+/// The result of parsing a frame.
+pub enum FrameResult {
+    /// Padding was encountered instead of a frame.
+    Padding,
+    /// An unknown frame was found and its body skipped.
+    UnsupportedFrame,
+    /// A frame was parsed an yielded a single `Tag`.
+    Tag(Tag),
+    // A frame was parsed and yielded many `Tag`s.
+    MultipleTags(Vec<Tag>)
+}
+
+type FrameParser = fn(&mut BufStream, &str, usize) -> Result<FrameResult>;
 
 lazy_static! {
     static ref LEGACY_FRAME_MAP: 
@@ -197,7 +212,7 @@ lazy_static! {
 
 lazy_static! {
     static ref FRAME_PARSERS: 
-        HashMap<&'static [u8; 4], Id3v2FrameParser> = {
+        HashMap<&'static [u8; 4], FrameParser> = {
             let mut m = HashMap::new();
             // m.insert(b"AENC", read_null_frame);
             // m.insert(b"APIC", read_null_frame);
@@ -227,7 +242,7 @@ lazy_static! {
             // m.insert(b"SIGN", read_null_frame);
             // m.insert(b"SYLT", read_null_frame);
             // m.insert(b"SYTC", read_null_frame);
-            m.insert(b"TALB", read_text_frame as Id3v2FrameParser);
+            m.insert(b"TALB", read_text_frame as FrameParser);
             m.insert(b"TBPM", read_text_frame);
             m.insert(b"TCOM", read_text_frame);
             m.insert(b"TCON", read_text_frame);
@@ -294,13 +309,13 @@ lazy_static! {
         };
 }
 
-/// Finds a frame parser for a "modern" ID3v2.3 or ID2v2.4 tag.
-fn find_parser(id: &[u8; 4]) -> Option<&Id3v2FrameParser> {
+/// Finds a frame parser for "modern" ID3v2.3 or ID2v2.4 tags.
+fn find_parser(id: &[u8; 4]) -> Option<&FrameParser> {
     FRAME_PARSERS.get(id)
 }
 
-/// Finds a frame parser for a "legacy" ID3v2.2 tag by finding an equivalent ID3v2.3+ frame parser.
-fn find_parser_legacy(id: &[u8; 3]) -> Option<&Id3v2FrameParser> {
+/// Finds a frame parser for a "legacy" ID3v2.2 tag by finding an equivalent "modern" ID3v2.3+ frame parser.
+fn find_parser_legacy(id: &[u8; 3]) -> Option<&FrameParser> {
      match LEGACY_FRAME_MAP.get(id) {
         Some(id) => find_parser(id),
         _        => None
@@ -308,12 +323,12 @@ fn find_parser_legacy(id: &[u8; 3]) -> Option<&Id3v2FrameParser> {
 }
 
 /// Read an ID3v2.2 frame.
-pub fn read_id3v2p2_frame<B: Bytestream>(reader: &mut B) -> Result<()> {
+pub fn read_id3v2p2_frame<B: Bytestream>(reader: &mut B) -> Result<FrameResult> {
     let id = reader.read_triple_bytes()?;
 
     // Is this padding?
     if id == [0, 0, 0] {
-        return Ok(());
+        return Ok(FrameResult::Padding);
     }
 
     let size = reader.read_be_u24()? as usize;
@@ -325,22 +340,21 @@ pub fn read_id3v2p2_frame<B: Bytestream>(reader: &mut B) -> Result<()> {
             eprintln!("Frame {:?} is not supported.", String::from_utf8_lossy(&id));
 
             reader.ignore_bytes(size as u64)?;
-            return Ok(());
+            return Ok(FrameResult::UnsupportedFrame);
         }
     };
 
     let data = reader.read_boxed_slice_bytes(size as usize)?;
-    parser(&mut BufStream::new(&data), data.len())?;
 
-    Ok(())
+    parser(&mut BufStream::new(&data), str::from_utf8(&id).unwrap(), data.len())
 }
 
 /// Read an ID3v2.3 frame.
-pub fn read_id3v2p3_frame<B: Bytestream>(reader: &mut B) -> Result<()> {
+pub fn read_id3v2p3_frame<B: Bytestream>(reader: &mut B) -> Result<FrameResult> {
     let id = reader.read_quad_bytes()?;
 
     if id == [0, 0, 0, 0] {
-        return Ok(());
+        return Ok(FrameResult::Padding);
     }
 
     let mut size = reader.read_be_u32()? as usize;
@@ -353,7 +367,7 @@ pub fn read_id3v2p3_frame<B: Bytestream>(reader: &mut B) -> Result<()> {
             eprintln!("Frame {:?} is not supported.", String::from_utf8_lossy(&id));
 
             reader.ignore_bytes(size as u64)?;
-            return Ok(());
+            return Ok(FrameResult::UnsupportedFrame);
         }
     };
 
@@ -370,16 +384,16 @@ pub fn read_id3v2p3_frame<B: Bytestream>(reader: &mut B) -> Result<()> {
     }
 
     let data = reader.read_boxed_slice_bytes(size as usize)?;
-    parser(&mut BufStream::new(&data), data.len())?;
-    Ok(())
+
+    parser(&mut BufStream::new(&data), str::from_utf8(&id).unwrap(), data.len())
 }
 
 /// Read an ID3v2.4 frame.
-pub fn read_id3v2p4_frame<B: Bytestream + FiniteStream>(reader: &mut B) -> Result<()> {
+pub fn read_id3v2p4_frame<B: Bytestream + FiniteStream>(reader: &mut B) -> Result<FrameResult> {
     let id = reader.read_quad_bytes()?;
 
     if id == [0, 0, 0, 0] {
-        return Ok(());
+        return Ok(FrameResult::Padding);
     }
 
     let mut size = read_syncsafe_leq32(reader, 28)?;
@@ -392,7 +406,7 @@ pub fn read_id3v2p4_frame<B: Bytestream + FiniteStream>(reader: &mut B) -> Resul
             eprintln!("Frame {:?} is not supported.", String::from_utf8_lossy(&id));
 
             reader.ignore_bytes(size as u64)?;
-            return Ok(());
+            return Ok(FrameResult::UnsupportedFrame);
         }
     };
 
@@ -414,18 +428,13 @@ pub fn read_id3v2p4_frame<B: Bytestream + FiniteStream>(reader: &mut B) -> Resul
 
     // The data length indicator is optional in the frame header. This field indicates the original size of the frame
     // body before compression, encryption, and/or unsynchronisation. It is mandatory if encryption or compression are 
-    // used, but only encouraged for unsynchronisation.
-    let data_len_indicator = if flags & 0x1 == 0x1 { 
+    // used, but only encouraged for unsynchronisation. It's not that helpful, so we just ignore it.
+    if flags & 0x1 == 0x1 { 
+        read_syncsafe_leq32(reader, 28)?;
         size -= 4;
-        Some(read_syncsafe_leq32(reader, 28)? as usize)
-    } 
-    else { 
-        None
-    };
+    }
 
     let unsynchronised = flags & 0x2 == 0x2;
-
-    eprintln!("{}: len={}, unsync={} {{", String::from_utf8_lossy(&id), size, unsynchronised);
     
     // Read the frame body into a new buffer. This is, unfortunate. The original plan was to use an UnsyncStream to
     // transparently decode the unsynchronisation stream, however, the format does not make this easy. For one, the 
@@ -447,20 +456,17 @@ pub fn read_id3v2p4_frame<B: Bytestream + FiniteStream>(reader: &mut B) -> Resul
     // wrapping the decoded data in a BufStream for the frame parsers.
     if unsynchronised {
         let unsync_data = decode_unsynchronisation(&mut raw_data);
-        parser(&mut BufStream::new(&unsync_data), unsync_data.len())?;
+        
+        parser(&mut BufStream::new(&unsync_data), str::from_utf8(&id).unwrap(), unsync_data.len())
     }
     // The frame body has not been unsynchronised. Wrap the raw data buffer in BufStream without any additional 
     // decoding.
     else {
-        parser(&mut BufStream::new(&raw_data), size as usize)?;
-    };
-
-    eprintln!("}}");
-
-    Ok(())
+        parser(&mut BufStream::new(&raw_data), str::from_utf8(&id).unwrap(), size as usize)
+    }
 }
 
-fn read_text_frame(reader: &mut BufStream, mut len: usize) -> Result<()> {
+fn read_text_frame(reader: &mut BufStream, id: &str, mut len: usize) -> Result<FrameResult> {
     // The first byte of the frame is the encoding.
     let encoding = match Encoding::parse(reader.read_byte()?) {
         Some(encoding) => encoding,
@@ -468,6 +474,8 @@ fn read_text_frame(reader: &mut BufStream, mut len: usize) -> Result<()> {
     };
 
     len -= 1;
+
+    let mut tags = Vec::<Tag>::new();
 
     // The remainder of the frame is one or more null-terminated strings.
     while len > 0 {
@@ -481,13 +489,11 @@ fn read_text_frame(reader: &mut BufStream, mut len: usize) -> Result<()> {
 
         len -= data.len();
 
-        let text = decode_text(encoding, &data);
-
-        // Decode the encoded text, trimming off the trailing null bytes.
-        eprintln!("[{:?}] {}", encoding, text);
+        // Decode the encoded text and build the tag.
+        tags.push(Tag::new(None, id, &decode_text(encoding, &data)));
     }
 
-    Ok(())
+    Ok(FrameResult::MultipleTags(tags))
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -515,27 +521,38 @@ impl Encoding {
     }
 }
 
-/// Decodes a slice of bytes containing encoded text into a `String`. Trailing null terminators are removed, and any
-/// invalid characters are replaced.
-fn decode_text(encoding: Encoding, data: &[u8]) -> String {
+/// Decodes a slice of bytes containing encoded text into a UTF-8 `str`. Trailing null terminators are removed, and any
+/// invalid characters are replaced with the [U+FFFD REPLACEMENT CHARACTER].
+fn decode_text(encoding: Encoding, data: &[u8]) -> Cow<'_, str> {
     let mut end = data.len();
 
     match encoding {
-        Encoding::Iso8859_1 | Encoding::Utf8 => {
-            // Remove null terminators (trailing 0x0 bytes for ASCII and UTF8).
+        Encoding::Iso8859_1 => {
+            // The ID3v2 specification says that only ISO-8859-1 characters between 0x20 to 0xFF, inclusive, 
+            // are considered valid. Any null terminator(s) (trailing 0x00 byte for ISO-8859-1) will also be
+            // removed.
+            //
+            // TODO: Improve this conversion by returning a copy-on-write str sliced from data if all characters
+            // are > 0x1F and < 0x80. Fallback to the iterator approach otherwise.
+            data.iter().filter(|&b| *b > 0x1f).map(|&b| b as char).collect()
+        },
+        Encoding::Utf8 => {
+            // Remove any null terminator(s) (trailing 0x00 byte for UTF-8).
             while end > 0 {
                 if data[end-1] != 0 { break; }
                 end -= 1;
             }
-            String::from_utf8_lossy(&data[..end]).to_string()
+            String::from_utf8_lossy(&data[..end])
         },
         Encoding::Utf16Bom  | Encoding::Utf16Be => {
-            // Remove null terminators (trailing [0x0, 0x0] bytes for UTF16).
+            // Remove any null terminator(s) (trailing [0x00, 0x00] bytes for UTF-16 variants).
             while end > 1 {
                 if data[end-2] != 0x0 || data[end-1] != 0x0 { break; }
                 end -= 2;
             }
-            UTF_16BE.decode(&data[..end]).0.to_string()
+            // Decode UTF-16 to UTF-8. If a byte-order-mark is present, UTF_16BE.decode() will use the indicated
+            // endianness. Otherwise, big endian is assumed.
+            UTF_16BE.decode(&data[..end]).0
         }
     }
 }

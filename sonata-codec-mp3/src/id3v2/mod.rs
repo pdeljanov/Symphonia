@@ -4,6 +4,7 @@ use sonata_core::io::*;
 mod frames;
 mod unsync;
 
+use frames::*;
 use unsync::{read_syncsafe_leq32, UnsyncStream};
 
 #[derive(Debug)]
@@ -274,14 +275,30 @@ fn read_id3v2_body<B: Bytestream + FiniteStream>(mut reader: B, header: &Header)
     loop {
         // Read frames based on the major version of the tag.
         let frame = match header.major_version {
-            2 => frames::read_id3v2p2_frame(&mut reader)?,
-            3 => frames::read_id3v2p3_frame(&mut reader)?,
-            4 => frames::read_id3v2p4_frame(&mut reader)?,
+            2 => read_id3v2p2_frame(&mut reader),
+            3 => read_id3v2p3_frame(&mut reader),
+            4 => read_id3v2p4_frame(&mut reader),
             _ => break,
-        };
+        }?;
 
-        // Read frames until either the padding has been reached explicity (all 0 tag identifier), or there is not 
-        // enough bytes available in the tag for another frame.
+        match frame {
+            // The padding has been reached, don't parse any further.
+            FrameResult::Padding => break,
+            // A frame was parsed into a tag, add it to the tag collection.
+            FrameResult::Tag(ref tag) => {
+                eprintln!("{}", tag);
+            },
+            // A frame was parsed into multiple tags, add them all to the tag collection.
+            FrameResult::MultipleTags(ref tags) => {
+                for tag in tags {
+                    eprintln!("{}", tag);
+                }
+            },
+            // An unknown frame was encountered, just ignore it.
+            FrameResult::UnsupportedFrame => ()
+        }
+
+        // Read frames until there is not  enough bytes available in the ID3v2 tag for another frame.
         if reader.bytes_available() < min_frame_size {
             break;
         }
