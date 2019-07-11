@@ -6,11 +6,13 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 use sonata_core::errors::{Result, unsupported_error, decode_error};
 use sonata_core::io::{Bytestream, BufStream, FiniteStream};
-use sonata_core::tags::Tag;
+use sonata_core::tags::{StandardTagKey, Tag};
 
 use std::borrow::Cow;
-use std::str;
 use std::collections::HashMap;
+use std::io;
+use std::str;
+
 use lazy_static::lazy_static;
 use encoding_rs::UTF_16BE;
 
@@ -40,7 +42,7 @@ use super::unsync::{decode_unsynchronisation, read_syncsafe_leq32};
 //       ETC    ETCO                                Event timing codes
 //       GEO    GEOB                                General encapsulated object
 //              GRID                                Group identification registration
-//       IPL    IPLS    TIPL                        Involved people list
+//       IPL    IPLS    TIPL     Engineer           Involved people list
 //       LNK    LINK                                Linked information
 //       MCI    MCDI                                Music CD identifier
 //       MLL    MLLT                                MPEG location lookup table
@@ -57,45 +59,45 @@ use super::unsync::{decode_unsynchronisation, read_syncsafe_leq32};
 //                      SIGN                        Signature frame
 //       SLT    SYLT                                Synchronized lyric/text
 //       STC    SYTC                                Synchronized tempo codes
-//       TAL    TALB                                Album/Movie/Show title
-//       TBP    TBPM                                BPM (beats per minute)
-//       TCM    TCOM                                Composer
-//       TCO    TCON                                Content type
+//       TAL    TALB             Album              Album/Movie/Show title
+//       TBP    TBPM             Bpm                BPM (beats per minute)
+//       TCM    TCOM             Composer           Composer
+//       TCO    TCON             Genre              Content type
 //       TCR    TCOP             Copyright          Copyright message
 //       TDA    TDAT             Date               Date
 //                      TDEN                        Encoding time
 //       TDY    TDLY                                Playlist delay
 //                      TDOR                        Original release time
-//                      TDRC                        Recording time
+//                      TDRC     Date               Recording time
 //                      TDRL                        Release time
 //                      TDTG                        Tagging time
-//       TEN    TENC                                Encoded by
-//       TXT    TEXT             Lyricist           Lyricist/Text writer
+//       TEN    TENC             EncodedBy          Encoded by
+//       TXT    TEXT             Writer             Lyricist/Text writer
 //       TFT    TFLT                                File type
 //       TIM    TIME     n/a                        Time
-//       TT1    TIT1                                Content group description
+//       TT1    TIT1             ContentGroup       Content group description
 //       TT2    TIT2             TrackTitle         Title/songname/content description
-//       TT3    TIT3                                Subtitle/Description refinement
+//       TT3    TIT3             TrackSubtitle      Subtitle/Description refinement
 //       TKE    TKEY                                Initial key
 //       TLA    TLAN             Language           Language(s)
 //       TLE    TLEN                                Length
 //                      TMCL                        Musician credits list
-//       TMT    TMED                                Media type
-//                      TMOO                        Mood
+//       TMT    TMED             MediaFormat        Media type
+//                      TMOO     Mood               Mood
 //       TOT    TOAL                                Original album/movie/show title
 //       TOF    TOFN                                Original filename
 //       TOL    TOLY                                Original lyricist(s)/text writer(s)
 //       TOA    TOPE                                Original artist(s)/performer(s)
-//       TOR    TORY    n/a                         Original release year
+//       TOR    TORY    n/a      OriginalDate       Original release year
 //              TOWN                                File owner/licensee
-//       TP1    TPE1             Performer          Lead performer(s)/Soloist(s)
-//       TP2    TPE2                                Band/orchestra/accompaniment
-//       TP3    TPE3                                Conductor/performer refinement
+//       TP1    TPE1             Artist             Lead performer(s)/Soloist(s)
+//       TP2    TPE2             AlbumArtist        Band/orchestra/accompaniment
+//       TP3    TPE3             Performer          Conductor/performer refinement
 //       TP4    TPE4                                Interpreted, remixed, or otherwise modified by
-//       TPA    TPOS                                Part of a set
+//       TPA    TPOS             TrackNumber        Part of a set
 //                      TPRO                        Produced notice
-//       TPB    TPUB                                Publisher
-//       TRK    TRCK                                Track number/Position in set
+//       TPB    TPUB             Label              Publisher
+//       TRK    TRCK             TrackNumber        Track number/Position in set
 //       TRD    TRDA    n/a                         Recording dates
 //              TRSN                                Internet radio station name
 //              TRSO                                Internet radio station owner
@@ -103,9 +105,9 @@ use super::unsync::{decode_unsynchronisation, read_syncsafe_leq32};
 //                      TSOP     SortArtist         Performer sort order
 //                      TSOT     SortTrackTitle     Title sort order
 //       TSI    TSIZ    n/a                         Size
-//       TRC    TSRC                                ISRC (international standard recording code)
-//       TSS    TSSE                                Software/Hardware and settings used for encoding
-//       TYE    TYER    n/a                         Year
+//       TRC    TSRC             IdentIsrc          ISRC (international standard recording code)
+//       TSS    TSSE             Encoder            Software/Hardware and settings used for encoding
+//       TYE    TYER    n/a      Date               Year
 //       TXX    TXXX                                User defined text information frame
 //       UFI    UFID                                Unique file identifier
 //              USER                                Terms of use
@@ -138,7 +140,7 @@ pub enum FrameResult {
     MultipleTags(Vec<Tag>)
 }
 
-type FrameParser = fn(&mut BufStream, &str, usize) -> Result<FrameResult>;
+type FrameParser = fn(&mut BufStream, Option<StandardTagKey>, &str) -> Result<FrameResult>;
 
 lazy_static! {
     static ref LEGACY_FRAME_MAP: 
@@ -212,7 +214,7 @@ lazy_static! {
 
 lazy_static! {
     static ref FRAME_PARSERS: 
-        HashMap<&'static [u8; 4], FrameParser> = {
+        HashMap<&'static [u8; 4], (FrameParser, Option<StandardTagKey>)> = {
             let mut m = HashMap::new();
             // m.insert(b"AENC", read_null_frame);
             // m.insert(b"APIC", read_null_frame);
@@ -242,57 +244,60 @@ lazy_static! {
             // m.insert(b"SIGN", read_null_frame);
             // m.insert(b"SYLT", read_null_frame);
             // m.insert(b"SYTC", read_null_frame);
-            m.insert(b"TALB", read_text_frame as FrameParser);
-            m.insert(b"TBPM", read_text_frame);
-            m.insert(b"TCOM", read_text_frame);
-            m.insert(b"TCON", read_text_frame);
-            m.insert(b"TCOP", read_text_frame);
-            m.insert(b"TDAT", read_text_frame);
-            m.insert(b"TDEN", read_text_frame);
-            m.insert(b"TDLY", read_text_frame);
-            m.insert(b"TDOR", read_text_frame);
-            m.insert(b"TDRC", read_text_frame);
-            m.insert(b"TDRL", read_text_frame);
-            m.insert(b"TDTG", read_text_frame);
-            m.insert(b"TENC", read_text_frame);
-            m.insert(b"TEXT", read_text_frame);
-            m.insert(b"TFLT", read_text_frame);
-            m.insert(b"TIME", read_text_frame);
-            m.insert(b"TIPL", read_text_frame);
-            m.insert(b"TIT1", read_text_frame);
-            m.insert(b"TIT2", read_text_frame);
-            m.insert(b"TIT3", read_text_frame);
-            m.insert(b"TKEY", read_text_frame);
-            m.insert(b"TLAN", read_text_frame);
-            m.insert(b"TLEN", read_text_frame);
-            m.insert(b"TMCL", read_text_frame);
-            m.insert(b"TMED", read_text_frame);
-            m.insert(b"TMOO", read_text_frame);
-            m.insert(b"TOAL", read_text_frame);
-            m.insert(b"TOFN", read_text_frame);
-            m.insert(b"TOLY", read_text_frame);
-            m.insert(b"TOPE", read_text_frame);
-            m.insert(b"TORY", read_text_frame);
-            m.insert(b"TOWN", read_text_frame);
-            m.insert(b"TPE1", read_text_frame);
-            m.insert(b"TPE2", read_text_frame);
-            m.insert(b"TPE3", read_text_frame);
-            m.insert(b"TPE4", read_text_frame);
-            m.insert(b"TPOS", read_text_frame);
-            m.insert(b"TPRO", read_text_frame);
-            m.insert(b"TPUB", read_text_frame);
-            m.insert(b"TRCK", read_text_frame);
-            m.insert(b"TRDA", read_text_frame);
-            m.insert(b"TRSN", read_text_frame);
-            m.insert(b"TRSO", read_text_frame);
-            m.insert(b"TSIZ", read_text_frame);
-            m.insert(b"TSOA", read_text_frame);
-            m.insert(b"TSOP", read_text_frame);
-            m.insert(b"TSOT", read_text_frame);
-            m.insert(b"TSRC", read_text_frame);
-            m.insert(b"TSSE", read_text_frame);
-            m.insert(b"TXXX", read_text_frame);
-            m.insert(b"TYER", read_text_frame);
+            m.insert(b"TALB", (read_text_frame as FrameParser, Some(StandardTagKey::Album)));
+            m.insert(b"TBPM", (read_text_frame, Some(StandardTagKey::Bpm)));
+            m.insert(b"TCOM", (read_text_frame, Some(StandardTagKey::Composer)));
+            m.insert(b"TCON", (read_text_frame, Some(StandardTagKey::Genre)));
+            m.insert(b"TCOP", (read_text_frame, Some(StandardTagKey::Copyright)));
+            m.insert(b"TDAT", (read_text_frame, Some(StandardTagKey::Date)));
+            m.insert(b"TDEN", (read_text_frame, None));
+            m.insert(b"TDLY", (read_text_frame, None));
+            m.insert(b"TDOR", (read_text_frame, None));
+            m.insert(b"TDRC", (read_text_frame, Some(StandardTagKey::Date)));
+            m.insert(b"TDRL", (read_text_frame, None));
+            m.insert(b"TDTG", (read_text_frame, None));
+            m.insert(b"TENC", (read_text_frame, Some(StandardTagKey::EncodedBy)));
+            // Also Writer?
+            m.insert(b"TEXT", (read_text_frame, Some(StandardTagKey::Writer)));
+            m.insert(b"TFLT", (read_text_frame, None));
+            m.insert(b"TIME", (read_text_frame, None));
+            m.insert(b"TIPL", (read_text_frame, Some(StandardTagKey::Engineer)));
+            m.insert(b"TIT1", (read_text_frame, Some(StandardTagKey::ContentGroup)));
+            m.insert(b"TIT2", (read_text_frame, Some(StandardTagKey::TrackTitle)));
+            m.insert(b"TIT3", (read_text_frame, Some(StandardTagKey::TrackSubtitle)));
+            m.insert(b"TKEY", (read_text_frame, None));
+            m.insert(b"TLAN", (read_text_frame, Some(StandardTagKey::Language)));
+            m.insert(b"TLEN", (read_text_frame, None));
+            m.insert(b"TMCL", (read_text_frame, None));
+            m.insert(b"TMED", (read_text_frame, Some(StandardTagKey::MediaFormat)));
+            m.insert(b"TMOO", (read_text_frame, Some(StandardTagKey::Mood)));
+            m.insert(b"TOAL", (read_text_frame, None));
+            m.insert(b"TOFN", (read_text_frame, None));
+            m.insert(b"TOLY", (read_text_frame, None));
+            m.insert(b"TOPE", (read_text_frame, None));
+            m.insert(b"TORY", (read_text_frame, Some(StandardTagKey::OriginalDate)));
+            m.insert(b"TOWN", (read_text_frame, None));
+            m.insert(b"TPE1", (read_text_frame, Some(StandardTagKey::Artist)));
+            m.insert(b"TPE2", (read_text_frame, Some(StandardTagKey::AlbumArtist)));
+            m.insert(b"TPE3", (read_text_frame, Some(StandardTagKey::Conductor)));
+            m.insert(b"TPE4", (read_text_frame, None));
+            // May be "track number / total tracks"
+            m.insert(b"TPOS", (read_text_frame, Some(StandardTagKey::TrackNumber)));
+            m.insert(b"TPRO", (read_text_frame, None));
+            m.insert(b"TPUB", (read_text_frame, Some(StandardTagKey::Label)));
+            // May be "track number / total tracks"
+            m.insert(b"TRCK", (read_text_frame, Some(StandardTagKey::TrackNumber)));
+            m.insert(b"TRDA", (read_text_frame, None));
+            m.insert(b"TRSN", (read_text_frame, None));
+            m.insert(b"TRSO", (read_text_frame, None));
+            m.insert(b"TSIZ", (read_text_frame, None));
+            m.insert(b"TSOA", (read_text_frame, Some(StandardTagKey::SortAlbum)));
+            m.insert(b"TSOP", (read_text_frame, Some(StandardTagKey::SortArtist)));
+            m.insert(b"TSOT", (read_text_frame, Some(StandardTagKey::SortTrackTitle)));
+            m.insert(b"TSRC", (read_text_frame, Some(StandardTagKey::IdentIsrc)));
+            m.insert(b"TSSE", (read_text_frame, Some(StandardTagKey::Encoder)));
+            m.insert(b"TXXX", (read_txxx_frame, None));
+            m.insert(b"TYER", (read_text_frame, Some(StandardTagKey::Date)));
             // m.insert(b"UFID", read_null_frame);
             // m.insert(b"USER", read_null_frame);
             // m.insert(b"USLT", read_null_frame);
@@ -315,19 +320,19 @@ fn validate_frame_id(id: &[u8]) -> bool {
     if id.len() != 4 && id.len() != 3 {
         return false;
     }
-    
+
     // Character:   '/'   [ '0'  ...  '9' ]  ':'  ...  '@'  [ 'A'  ...  'Z' ]   '['
     // ASCII Code:  0x2f  [ 0x30 ... 0x39 ]  0x3a ... 0x40  [ 0x41 ... 0x5a ]  0x5b
     id.iter().filter(|&b| !((*b > 0x2f && *b < 0x3a) || (*b > 0x40 && *b < 0x5b))).count() == 0
 }
 
 /// Finds a frame parser for "modern" ID3v2.3 or ID2v2.4 tags.
-fn find_parser(id: &[u8; 4]) -> Option<&FrameParser> {
+fn find_parser(id: &[u8; 4]) -> Option<&(FrameParser, Option<StandardTagKey>)> {
     FRAME_PARSERS.get(id)
 }
 
 /// Finds a frame parser for a "legacy" ID3v2.2 tag by finding an equivalent "modern" ID3v2.3+ frame parser.
-fn find_parser_legacy(id: &[u8; 3]) -> Option<&FrameParser> {
+fn find_parser_legacy(id: &[u8; 3]) -> Option<&(FrameParser, Option<StandardTagKey>)> {
      match LEGACY_FRAME_MAP.get(id) {
         Some(id) => find_parser(id),
         _        => None
@@ -366,7 +371,7 @@ pub fn read_id3v2p2_frame<B: Bytestream>(reader: &mut B) -> Result<FrameResult> 
 
     let data = reader.read_boxed_slice_bytes(size as usize)?;
 
-    parser(&mut BufStream::new(&data), str::from_utf8(&id).unwrap(), data.len())
+    parser.0(&mut BufStream::new(&data), parser.1, str::from_utf8(&id).unwrap())
 }
 
 /// Read an ID3v2.3 frame.
@@ -426,7 +431,7 @@ pub fn read_id3v2p3_frame<B: Bytestream>(reader: &mut B) -> Result<FrameResult> 
 
     let data = reader.read_boxed_slice_bytes(size as usize)?;
 
-    parser(&mut BufStream::new(&data), str::from_utf8(&id).unwrap(), data.len())
+    parser.0(&mut BufStream::new(&data), parser.1, str::from_utf8(&id).unwrap())
 }
 
 /// Read an ID3v2.4 frame.
@@ -513,40 +518,73 @@ pub fn read_id3v2p4_frame<B: Bytestream + FiniteStream>(reader: &mut B) -> Resul
     if flags & 0x2 != 0x0 {
         let unsync_data = decode_unsynchronisation(&mut raw_data);
 
-        parser(&mut BufStream::new(&unsync_data), str::from_utf8(&id).unwrap(), unsync_data.len())
+        parser.0(&mut BufStream::new(&unsync_data), parser.1, str::from_utf8(&id).unwrap())
     }
     // The frame body has not been unsynchronised. Wrap the raw data buffer in BufStream without any additional 
     // decoding.
     else {
-        parser(&mut BufStream::new(&raw_data), str::from_utf8(&id).unwrap(), size as usize)
+        parser.0(&mut BufStream::new(&raw_data), parser.1, str::from_utf8(&id).unwrap())
     }
 }
 
-fn read_text_frame(reader: &mut BufStream, id: &str, mut len: usize) -> Result<FrameResult> {
+/// Reads all text frames frame except for `TXXX`.
+fn read_text_frame(reader: &mut BufStream, std_key: Option<StandardTagKey>, id: &str) -> Result<FrameResult> {
     // The first byte of the frame is the encoding.
     let encoding = match Encoding::parse(reader.read_byte()?) {
         Some(encoding) => encoding,
         _              => return decode_error("Invalid text encoding.")
     };
 
-    len -= 1;
-
     let mut tags = Vec::<Tag>::new();
 
     // The remainder of the frame is one or more null-terminated strings.
-    while len > 0 {
-        // Scan for the appropriate null terminator based on the encoding. If a null terminator is not found, then 
-        // scan_bytes() will return the remainder of the BufStream. This should handle the case where the text field
-        // is not properly terminated.
-        let data = match encoding {
-            Encoding::Iso8859_1 | Encoding::Utf8    => reader.scan_bytes_aligned_ref(&[0x00], 1, len),
-            Encoding::Utf16Bom  | Encoding::Utf16Be => reader.scan_bytes_aligned_ref(&[0x00, 0x00], 2, len),
-        }?;
+    loop {
+        let len = reader.bytes_available() as usize;
 
-        len -= data.len();
+        if len > 0 {
+            // Scan for the appropriate null terminator based on the encoding. If a null terminator is not found, then 
+            // scan_bytes() will return the remainder of the BufStream. This should handle the case where the text field
+            // is not properly terminated.
+            let data = scan_text(reader, encoding, len)?;
+            // Decode the encoded text and build the tag.
+            tags.push(Tag::new(std_key, id, &decode_text(encoding, data)));
+        }
+        else {
+            break;
+        }
+    }
 
-        // Decode the encoded text and build the tag.
-        tags.push(Tag::new(None, id, &decode_text(encoding, &data)));
+    Ok(FrameResult::MultipleTags(tags))
+}
+
+/// Reads a `TXXX` (key-value) text frame.
+fn read_txxx_frame(reader: &mut BufStream, _: Option<StandardTagKey>, _: &str) -> Result<FrameResult> {
+    // The first byte of the frame is the encoding.
+    let encoding = match Encoding::parse(reader.read_byte()?) {
+        Some(encoding) => encoding,
+        _              => return decode_error("Invalid text encoding.")
+    };
+
+    // Read the description (key) string.
+    let desc = {
+        let desc_buf = scan_text(reader, encoding, reader.bytes_available() as usize)?;
+        decode_text(encoding, desc_buf).to_string()
+    };
+
+    // Since a TXXX frame can have a null-terminated list of values, and Sonata allows multiple tags with the same
+    // key, create one Tag per listed value.
+    let mut tags = Vec::<Tag>::new();
+
+    loop {
+        let len = reader.bytes_available() as usize;
+
+        if len > 0 {
+            let val_buf = scan_text(reader, encoding, len)?;
+            tags.push(Tag::new(None, &desc, &decode_text(encoding, val_buf)));
+        }
+        else {
+            break;
+        }
     }
 
     Ok(FrameResult::MultipleTags(tags))
@@ -579,6 +617,16 @@ impl Encoding {
             // Invalid encoding.
             _ => None
         }
+    }
+}
+
+/// Scans the provided `BufStream` for the appropriate null terminator for the given encoding, and returns a slice 
+/// of all the bytes upto and including the null terminator or an error. If there is no match, upto `max_len` bytes 
+/// will be returned.
+fn scan_text<'a>(reader: &'a mut BufStream, encoding: Encoding, max_len: usize) -> io::Result<&'a [u8]> {
+    match encoding {
+        Encoding::Iso8859_1 | Encoding::Utf8    => reader.scan_bytes_aligned_ref(&[0x00], 1, max_len),
+        Encoding::Utf16Bom  | Encoding::Utf16Be => reader.scan_bytes_aligned_ref(&[0x00, 0x00], 2, max_len),
     }
 }
 
