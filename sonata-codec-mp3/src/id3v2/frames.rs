@@ -47,7 +47,7 @@ use super::unsync::{decode_unsynchronisation, read_syncsafe_leq32};
 //       MCI    MCDI                                Music CD identifier
 //       MLL    MLLT                                MPEG location lookup table
 //              OWNE                                Ownership frame
-//              PRIV                                Private frame
+//   x          PRIV                                Private frame
 //       CNT    PCNT                                Play counter
 //       POP    POPM                                Popularimeter
 //              POSS                                Position synchronisation frame
@@ -59,68 +59,68 @@ use super::unsync::{decode_unsynchronisation, read_syncsafe_leq32};
 //                      SIGN                        Signature frame
 //       SLT    SYLT                                Synchronized lyric/text
 //       STC    SYTC                                Synchronized tempo codes
-//       TAL    TALB             Album              Album/Movie/Show title
-//       TBP    TBPM             Bpm                BPM (beats per minute)
-//       TCM    TCOM             Composer           Composer
-//       TCO    TCON             Genre              Content type
-//       TCR    TCOP             Copyright          Copyright message
-//       TDA    TDAT             Date               Date
-//                      TDEN                        Encoding time
-//       TDY    TDLY                                Playlist delay
-//                      TDOR                        Original release time
-//                      TDRC     Date               Recording time
-//                      TDRL                        Release time
-//                      TDTG                        Tagging time
-//       TEN    TENC             EncodedBy          Encoded by
-//       TXT    TEXT             Writer             Lyricist/Text writer
-//       TFT    TFLT                                File type
-//       TIM    TIME     n/a                        Time
-//       TT1    TIT1             ContentGroup       Content group description
-//       TT2    TIT2             TrackTitle         Title/songname/content description
-//       TT3    TIT3             TrackSubtitle      Subtitle/Description refinement
-//       TKE    TKEY                                Initial key
-//       TLA    TLAN             Language           Language(s)
-//       TLE    TLEN                                Length
-//                      TMCL                        Musician credits list
-//       TMT    TMED             MediaFormat        Media type
-//                      TMOO     Mood               Mood
-//       TOT    TOAL                                Original album/movie/show title
-//       TOF    TOFN                                Original filename
-//       TOL    TOLY                                Original lyricist(s)/text writer(s)
-//       TOA    TOPE                                Original artist(s)/performer(s)
-//       TOR    TORY    n/a      OriginalDate       Original release year
-//              TOWN                                File owner/licensee
-//       TP1    TPE1             Artist             Lead performer(s)/Soloist(s)
-//       TP2    TPE2             AlbumArtist        Band/orchestra/accompaniment
-//       TP3    TPE3             Performer          Conductor/performer refinement
-//       TP4    TPE4                                Interpreted, remixed, or otherwise modified by
-//       TPA    TPOS             TrackNumber        Part of a set
-//                      TPRO                        Produced notice
-//       TPB    TPUB             Label              Publisher
-//       TRK    TRCK             TrackNumber        Track number/Position in set
-//       TRD    TRDA    n/a                         Recording dates
-//              TRSN                                Internet radio station name
-//              TRSO                                Internet radio station owner
-//                      TSOA     SortAlbumn         Album sort order
-//                      TSOP     SortArtist         Performer sort order
-//                      TSOT     SortTrackTitle     Title sort order
-//       TSI    TSIZ    n/a                         Size
-//       TRC    TSRC             IdentIsrc          ISRC (international standard recording code)
-//       TSS    TSSE             Encoder            Software/Hardware and settings used for encoding
-//       TYE    TYER    n/a      Date               Year
-//       TXX    TXXX                                User defined text information frame
+//   x   TAL    TALB             Album              Album/Movie/Show title
+//   x   TBP    TBPM             Bpm                BPM (beats per minute)
+//   x   TCM    TCOM             Composer           Composer
+//   x   TCO    TCON             Genre              Content type
+//   x   TCR    TCOP             Copyright          Copyright message
+//   x   TDA    TDAT             Date               Date
+//   x                  TDEN                        Encoding time
+//   x   TDY    TDLY                                Playlist delay
+//   x                  TDOR                        Original release time
+//   x                  TDRC     Date               Recording time
+//   x                  TDRL                        Release time
+//   x                  TDTG                        Tagging time
+//   x   TEN    TENC             EncodedBy          Encoded by
+//   x   TXT    TEXT             Writer             Lyricist/Text writer
+//   x   TFT    TFLT                                File type
+//   x   TIM    TIME     n/a                        Time
+//   x   TT1    TIT1             ContentGroup       Content group description
+//   x   TT2    TIT2             TrackTitle         Title/songname/content description
+//   x   TT3    TIT3             TrackSubtitle      Subtitle/Description refinement
+//   x   TKE    TKEY                                Initial key
+//   x   TLA    TLAN             Language           Language(s)
+//   x   TLE    TLEN                                Length
+//   x                  TMCL                        Musician credits list
+//   x   TMT    TMED             MediaFormat        Media type
+//   x                  TMOO     Mood               Mood
+//   x   TOT    TOAL                                Original album/movie/show title
+//   x   TOF    TOFN                                Original filename
+//   x   TOL    TOLY                                Original lyricist(s)/text writer(s)
+//   x   TOA    TOPE                                Original artist(s)/performer(s)
+//   x   TOR    TORY    n/a      OriginalDate       Original release year
+//   x          TOWN                                File owner/licensee
+//   x   TP1    TPE1             Artist             Lead performer(s)/Soloist(s)
+//   x   TP2    TPE2             AlbumArtist        Band/orchestra/accompaniment
+//   x   TP3    TPE3             Performer          Conductor/performer refinement
+//   x   TP4    TPE4             Remixer            Interpreted, remixed, or otherwise modified by
+//   x   TPA    TPOS             TrackNumber        Part of a set
+//   x                  TPRO                        Produced notice
+//   x   TPB    TPUB             Label              Publisher
+//   x   TRK    TRCK             TrackNumber        Track number/Position in set
+//   x   TRD    TRDA    n/a                         Recording dates
+//   x          TRSN                                Internet radio station name
+//   x          TRSO                                Internet radio station owner
+//   x                  TSOA     SortAlbumn         Album sort order
+//   x                  TSOP     SortArtist         Performer sort order
+//   x                  TSOT     SortTrackTitle     Title sort order
+//   x   TSI    TSIZ    n/a                         Size
+//   x   TRC    TSRC             IdentIsrc          ISRC (international standard recording code)
+//   x   TSS    TSSE             Encoder            Software/Hardware and settings used for encoding
+//   x   TYE    TYER    n/a      Date               Year
+//   x   TXX    TXXX                                User defined text information frame
 //       UFI    UFID                                Unique file identifier
 //              USER                                Terms of use
 //       ULT    USLT                                Unsychronized lyric/text transcription
-//       WCM    WCOM                                Commercial information
-//       WCP    WCOP                                Copyright/Legal information
-//       WAF    WOAF                                Official audio file webpage
-//       WAR    WOAR                                Official artist/performer webpage
-//       WAS    WOAS                                Official audio source webpage
-//              WORS                                Official internet radio station homepage
-//              WPAY                                Payment
-//       WPB    WPUB                                Publishers official webpage
-//       WXX    WXXX                                User defined URL link frame
+//   x   WCM    WCOM                                Commercial information
+//   x   WCP    WCOP                                Copyright/Legal information
+//   x   WAF    WOAF                                Official audio file webpage
+//   x   WAR    WOAR                                Official artist/performer webpage
+//   x   WAS    WOAS                                Official audio source webpage
+//   x          WORS                                Official internet radio station homepage
+//   x          WPAY                                Payment
+//   x   WPB    WPUB                                Publishers official webpage
+//   x   WXX    WXXX                                User defined URL link frame
 //
 // Information on these frames can be found at:
 //
@@ -235,7 +235,7 @@ lazy_static! {
             // m.insert(b"PCNT", read_null_frame);
             // m.insert(b"POPM", read_null_frame);
             // m.insert(b"POSS", read_null_frame);
-            // m.insert(b"PRIV", read_null_frame);
+            m.insert(b"PRIV", (read_priv_frame as FrameParser, None));
             // m.insert(b"RBUF", read_null_frame);
             // m.insert(b"RVA2", read_null_frame);
             // m.insert(b"RVAD", read_null_frame);
@@ -244,7 +244,7 @@ lazy_static! {
             // m.insert(b"SIGN", read_null_frame);
             // m.insert(b"SYLT", read_null_frame);
             // m.insert(b"SYTC", read_null_frame);
-            m.insert(b"TALB", (read_text_frame as FrameParser, Some(StandardTagKey::Album)));
+            m.insert(b"TALB", (read_text_frame, Some(StandardTagKey::Album)));
             m.insert(b"TBPM", (read_text_frame, Some(StandardTagKey::Bpm)));
             m.insert(b"TCOM", (read_text_frame, Some(StandardTagKey::Composer)));
             m.insert(b"TCON", (read_text_frame, Some(StandardTagKey::Genre)));
@@ -280,7 +280,7 @@ lazy_static! {
             m.insert(b"TPE1", (read_text_frame, Some(StandardTagKey::Artist)));
             m.insert(b"TPE2", (read_text_frame, Some(StandardTagKey::AlbumArtist)));
             m.insert(b"TPE3", (read_text_frame, Some(StandardTagKey::Conductor)));
-            m.insert(b"TPE4", (read_text_frame, None));
+            m.insert(b"TPE4", (read_text_frame, Some(StandardTagKey::Remixer)));
             // May be "track number / total tracks"
             m.insert(b"TPOS", (read_text_frame, Some(StandardTagKey::TrackNumber)));
             m.insert(b"TPRO", (read_text_frame, None));
@@ -301,15 +301,15 @@ lazy_static! {
             // m.insert(b"UFID", read_null_frame);
             // m.insert(b"USER", read_null_frame);
             // m.insert(b"USLT", read_null_frame);
-            // m.insert(b"WCOM", read_null_frame);
-            // m.insert(b"WCOP", read_null_frame);
-            // m.insert(b"WOAF", read_null_frame);
-            // m.insert(b"WOAR", read_null_frame);
-            // m.insert(b"WOAS", read_null_frame);
-            // m.insert(b"WORS", read_null_frame);
-            // m.insert(b"WPAY", read_null_frame);
-            // m.insert(b"WPUB", read_null_frame);
-            // m.insert(b"WXXX", read_null_frame);
+            m.insert(b"WCOM", (read_url_frame, None));
+            m.insert(b"WCOP", (read_url_frame, None));
+            m.insert(b"WOAF", (read_url_frame, None));
+            m.insert(b"WOAR", (read_url_frame, None));
+            m.insert(b"WOAS", (read_url_frame, None));
+            m.insert(b"WORS", (read_url_frame, None));
+            m.insert(b"WPAY", (read_url_frame, None));
+            m.insert(b"WPUB", (read_url_frame, None));
+            m.insert(b"WXXX", (read_wxxx_frame, None));
             m
         };
 }
@@ -557,18 +557,20 @@ fn read_text_frame(reader: &mut BufStream, std_key: Option<StandardTagKey>, id: 
     Ok(FrameResult::MultipleTags(tags))
 }
 
-/// Reads a `TXXX` (key-value) text frame.
+/// Reads a `TXXX` (user defined) text frame.
 fn read_txxx_frame(reader: &mut BufStream, _: Option<StandardTagKey>, _: &str) -> Result<FrameResult> {
     // The first byte of the frame is the encoding.
     let encoding = match Encoding::parse(reader.read_byte()?) {
         Some(encoding) => encoding,
-        _              => return decode_error("Invalid text encoding.")
+        _              => return decode_error("Invalid TXXX text encoding.")
     };
 
     // Read the description (key) string.
     let desc = {
         let desc_buf = scan_text(reader, encoding, reader.bytes_available() as usize)?;
-        decode_text(encoding, desc_buf).to_string()
+        let mut desc = "TXXX:".to_string();
+        desc.push_str(&decode_text(encoding, desc_buf));
+        desc
     };
 
     // Since a TXXX frame can have a null-terminated list of values, and Sonata allows multiple tags with the same
@@ -588,6 +590,70 @@ fn read_txxx_frame(reader: &mut BufStream, _: Option<StandardTagKey>, _: &str) -
     }
 
     Ok(FrameResult::MultipleTags(tags))
+}
+
+/// Reads all URL frames except for `WXXX`.
+fn read_url_frame(reader: &mut BufStream, std_key: Option<StandardTagKey>, id: &str) -> Result<FrameResult> {
+    // Scan for ISO-8859-1 text (all URLs are encoded in this format).
+    let url_buf = scan_text(reader, Encoding::Iso8859_1, reader.bytes_available() as usize)?;
+    // Create a Tag.
+    let tag = Tag::new(std_key, id, &decode_text(Encoding::Iso8859_1, url_buf));
+
+    Ok(FrameResult::Tag(tag))
+}
+
+/// Reads a `WXXX` (user defined) URL frame.
+fn read_wxxx_frame(reader: &mut BufStream, std_key: Option<StandardTagKey>, _: &str) -> Result<FrameResult> {
+    // The first byte of the WXXX frame is the encoding of the description.
+    let encoding = match Encoding::parse(reader.read_byte()?) {
+        Some(encoding) => encoding,
+        _              => return decode_error("Invalid WXXX URL description encoding.")
+    };
+
+    // Read the description (key) string.
+    let desc = {
+        let desc_buf = scan_text(reader, encoding, reader.bytes_available() as usize)?;
+        let mut desc = "WXXX:".to_string();
+        desc.push_str(&decode_text(encoding, desc_buf));
+        desc
+    };
+
+    // Scan for ISO-8859-1 text (all URLs are encoded in this format).
+    let url_buf = scan_text(reader, Encoding::Iso8859_1, reader.bytes_available() as usize)?;
+    // Create a Tag.
+    let tag = Tag::new(std_key, &desc, &decode_text(Encoding::Iso8859_1, url_buf));
+
+    Ok(FrameResult::Tag(tag))
+}
+
+/// Reads a `PRIV` (private) frame.
+fn read_priv_frame(reader: &mut BufStream, std_key: Option<StandardTagKey>, _: &str) -> Result<FrameResult> {
+    // Scan for ISO-8859-1 text (all URLs are encoded in this format).
+    let ident = {
+        let ident_buf = scan_text(reader, Encoding::Iso8859_1, reader.bytes_available() as usize)?;
+        let mut ident = "PRIV:".to_string();
+        ident.push_str(&decode_text(Encoding::Iso8859_1, ident_buf));
+        ident
+    };
+
+    let data_buf = reader.read_buf_bytes_ref(reader.bytes_available() as usize)?;
+
+    // Quick and dirty buffer to hex-string serialization.
+    // TODO: Either allow Tags to hold binary data, OR encode as base64.
+    let mut data = String::new();
+
+    for ch in data_buf {
+        let u = (ch & 0xf0) >> 4;
+        let l = ch & 0x0f;
+        data.push_str("\\0x");
+        data.push(if u < 10 { (b'0' + u) as char } else { (b'a' + u - 10) as char});
+        data.push(if l < 10 { (b'0' + l) as char } else { (b'a' + l - 10) as char});
+    }
+    
+    // Create a Tag.
+    let tag = Tag::new(std_key, &ident, &data);
+
+    Ok(FrameResult::Tag(tag))
 }
 
 /// Enumeration of valid encodings for text fields in ID3v2 tags

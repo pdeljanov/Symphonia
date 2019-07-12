@@ -25,24 +25,24 @@ impl<'a> BufStream<'a> {
     }
 
     #[inline(always)]
-    pub fn scan_bytes_ref(&mut self, pattern: &[u8], max_len: usize) -> io::Result<&'a [u8]> {
-        self.scan_bytes_aligned_ref(pattern, 1, max_len)
+    pub fn scan_bytes_ref(&mut self, pattern: &[u8], scan_len: usize) -> io::Result<&'a [u8]> {
+        self.scan_bytes_aligned_ref(pattern, 1, scan_len)
     }
 
-    pub fn scan_bytes_aligned_ref(&mut self, pattern: &[u8], align: usize, max_len: usize) -> io::Result<&'a [u8]> {
+    pub fn scan_bytes_aligned_ref(&mut self, pattern: &[u8], align: usize, scan_len: usize) -> io::Result<&'a [u8]> {
         // The pattern must be atleast one byte.
         debug_assert!(pattern.len() > 0);
-        // The output buffer must be atleast the length of the pattern. 
-        debug_assert!(pattern.len() <= max_len);
 
         let start = self.pos;
         let remaining = self.buf.len() - start;
+        let end = start + cmp::min(remaining, scan_len);
 
-        if remaining < pattern.len() {
-            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "would exceed buffer"));
+        // If the pattern is longer than amount of bytes remaining, or the scan length is shorter than the pattern,
+        // then the pattern will never match. However, since unmatched patterns return the remainder of the buffer
+        // or scan_length bytes, which ever is shorter, we return that here.
+        if remaining < pattern.len() || scan_len < pattern.len() {
+            return Ok(&self.buf[start..end]);
         }
-
-        let end = start + cmp::min(remaining, max_len);
 
         let mut j = start;
         let mut i = start + pattern.len();
@@ -57,6 +57,14 @@ impl<'a> BufStream<'a> {
 
         self.pos = cmp::min(i, self.buf.len());
         Ok(&self.buf[start..self.pos])
+    }
+
+    pub fn read_buf_bytes_ref(&mut self, len: usize) -> io::Result<&'a [u8]> {
+        if self.pos + len > self.buf.len() {
+            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "would exceed buffer"));
+        }
+        self.pos += len;
+        Ok(&self.buf[self.pos - len..self.pos])
     }
 }
 
