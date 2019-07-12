@@ -1,3 +1,10 @@
+// Sonata
+// Copyright (c) 2019 The Sonata Project Developers.
+//
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 use sonata_core::errors::{Result, decode_error, unsupported_error};
 use sonata_core::io::*;
 
@@ -149,7 +156,7 @@ fn read_id3v2p3_extended_header<B: Bytestream>(reader: &mut B) -> Result<Extende
     };
 
     // CRC32 flag.
-    if (flags & 0x8000) == 0x8000 {
+    if flags & 0x8000 != 0 {
         header.crc32 = Some(reader.read_u32()?);
         read += 4;
     }
@@ -179,7 +186,7 @@ fn read_id3v2p4_extended_header<B: Bytestream>(reader: &mut B) -> Result<Extende
     };
 
     // Tag is an update flag.
-    if (flags & 0x40) == 0x40 {
+    if flags & 0x40 != 0x0 {
         let len = reader.read_u8()?;
         if len != 1 {
             return decode_error("Is update extended flag has invalid size.");
@@ -189,7 +196,7 @@ fn read_id3v2p4_extended_header<B: Bytestream>(reader: &mut B) -> Result<Extende
     }
 
     // CRC32 flag.
-    if (flags & 0x20) == 0x20 {
+    if flags & 0x20 != 0x0 {
         let len = reader.read_u8()?;
         if len != 5 {
             return decode_error("CRC32 extended flag has invalid size.");
@@ -199,7 +206,7 @@ fn read_id3v2p4_extended_header<B: Bytestream>(reader: &mut B) -> Result<Extende
     }
 
     // Restrictions flag.
-    if (flags & 0x10) == 0x10 {
+    if flags & 0x10 != 0x0 {
         let len = reader.read_u8()?;
         if len != 1 {
             return decode_error("Restrictions extended flag has invalid size.");

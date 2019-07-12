@@ -392,7 +392,7 @@ pub fn read_id3v2p3_frame<B: Bytestream>(reader: &mut B) -> Result<FrameResult> 
     let flags = reader.read_be_u16()?;
 
     // Unused flag bits must be cleared.
-    if flags & 0x1f1f != 0 {
+    if flags & 0x1f1f != 0x0 {
         return decode_error("Unused flag bits are not cleared.");
     }
 
@@ -452,7 +452,7 @@ pub fn read_id3v2p4_frame<B: Bytestream + FiniteStream>(reader: &mut B) -> Resul
     let flags = reader.read_be_u16()?;
 
     // Unused flag bits must be cleared.
-    if flags & 0x8fb0 != 0 {
+    if flags & 0x8fb0 != 0x0 {
         return decode_error("Unused flag bits are not cleared.");
     }
 
@@ -467,13 +467,13 @@ pub fn read_id3v2p4_frame<B: Bytestream + FiniteStream>(reader: &mut B) -> Resul
 
     // Frame zlib DEFLATE compression usage flag.
     // TODO: Implement decompression if it is actually used in the real world.
-    if flags & 0x8 == 0x8 {
+    if flags & 0x8 != 0x0 {
         reader.ignore_bytes(size)?;
         return unsupported_error("Compressed frames are not supported.");
     }
 
     // Frame encryption usage flag. This will likely never be supported since encryption methods are vendor-specific.
-    if flags & 0x4 == 0x4 {
+    if flags & 0x4 != 0x0 {
         reader.ignore_bytes(size)?;
         return unsupported_error("Encrypted frames are not supported.");
     }

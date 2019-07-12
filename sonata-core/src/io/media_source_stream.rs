@@ -370,7 +370,7 @@ impl Bytestream for MediaSourceStream {
         self.read_exact(buf)
     }
 
-    fn scan_bytes_aligned<'a>(&mut self, pattern: &[u8], align: usize, buf: &'a mut [u8]) -> io::Result<&'a mut [u8]> {
+    fn scan_bytes_aligned<'a>(&mut self, _: &[u8], _: usize, _: &'a mut [u8]) -> io::Result<&'a mut [u8]> {
         // Intentionally left unimplemented.
         unimplemented!();
     }

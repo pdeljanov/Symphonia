@@ -24,11 +24,18 @@ impl<'a> BufStream<'a> {
         }
     }
 
+
+    /// Scans up-to `scan_len` bytes from the stream until a byte pattern is matched. A reference to scanned bytes 
+    /// including the matched pattern are returned. If `scan_len` bytes are scanned without matching the pattern, 
+    /// a reference to the scanned bytes are also returned. Likewise, if the underlying buffer is exhausted before
+    /// matching the pattern, remainder of the buffer is returned.
     #[inline(always)]
     pub fn scan_bytes_ref(&mut self, pattern: &[u8], scan_len: usize) -> io::Result<&'a [u8]> {
         self.scan_bytes_aligned_ref(pattern, 1, scan_len)
     }
 
+    /// Scans up-to `scan_len` bytes from the stream until a byte pattern is matched on the specified byte alignment 
+    /// boundary. Operation is otherwise identical to `scan_bytes_ref`.
     pub fn scan_bytes_aligned_ref(&mut self, pattern: &[u8], align: usize, scan_len: usize) -> io::Result<&'a [u8]> {
         // The pattern must be atleast one byte.
         debug_assert!(pattern.len() > 0);
@@ -59,6 +66,7 @@ impl<'a> BufStream<'a> {
         Ok(&self.buf[start..self.pos])
     }
 
+    /// Returns a reference to the next `len` bytes in the buffer and advances the stream.
     pub fn read_buf_bytes_ref(&mut self, len: usize) -> io::Result<&'a [u8]> {
         if self.pos + len > self.buf.len() {
             return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "would exceed buffer"));
