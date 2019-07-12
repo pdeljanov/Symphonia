@@ -142,11 +142,13 @@ fn read_id3v2_header<B: Bytestream>(reader: &mut B) -> Result<Header> {
 
 /// Read the extended header of an ID3v2.3 tag.
 fn read_id3v2p3_extended_header<B: Bytestream>(reader: &mut B) -> Result<ExtendedHeader> {
-    let size = reader.read_u32()?;
-    let flags = reader.read_u16()?;
-    let padding_size = reader.read_u32()?;
+    let size = reader.read_be_u32()?;
+    let flags = reader.read_be_u16()?;
+    let padding_size = reader.read_be_u32()?;
 
-    let mut read = 6;
+    if !(size == 6 || size == 10) {
+        return decode_error("Invalid extended header size.");
+    }
 
     let mut header = ExtendedHeader {
         padding_size: Some(padding_size),
@@ -156,13 +158,8 @@ fn read_id3v2p3_extended_header<B: Bytestream>(reader: &mut B) -> Result<Extende
     };
 
     // CRC32 flag.
-    if flags & 0x8000 != 0 {
-        header.crc32 = Some(reader.read_u32()?);
-        read += 4;
-    }
-
-    if size > read {
-        reader.ignore_bytes(size as u64 - read as u64)?;
+    if size == 10 && flags & 0x8000 != 0 {
+        header.crc32 = Some(reader.read_be_u32()?);
     }
 
     Ok(header)
@@ -302,7 +299,9 @@ fn read_id3v2_body<B: Bytestream + FiniteStream>(mut reader: B, header: &Header)
                 }
             },
             // An unknown frame was encountered, just ignore it.
-            FrameResult::UnsupportedFrame => ()
+            FrameResult::UnsupportedFrame(ref id) => {
+                eprintln!("Unsupported frame {}.", id);
+            }
         }
 
         // Read frames until there is not  enough bytes available in the ID3v2 tag for another frame.

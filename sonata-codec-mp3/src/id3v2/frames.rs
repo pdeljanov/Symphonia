@@ -34,7 +34,7 @@ use super::unsync::{decode_unsynchronisation, read_syncsafe_leq32};
 //       CRM                                        Encrypted meta frame
 //       PIC    APIC                                Attached picture
 //                      ASPI                        Audio seek point index
-//       COM    COMM             Comment            Comments
+//   x   COM    COMM             Comment            Comments
 //              COMR                                Commercial frame
 //              ENCR                                Encryption method registration
 //       EQU    EQUA                                Equalisation
@@ -107,11 +107,12 @@ use super::unsync::{decode_unsynchronisation, read_syncsafe_leq32};
 //   x   TSI    TSIZ    n/a                         Size
 //   x   TRC    TSRC             IdentIsrc          ISRC (international standard recording code)
 //   x   TSS    TSSE             Encoder            Software/Hardware and settings used for encoding
+//   x                  TSST                        Set subtitle
 //   x   TYE    TYER    n/a      Date               Year
 //   x   TXX    TXXX                                User defined text information frame
 //       UFI    UFID                                Unique file identifier
 //              USER                                Terms of use
-//       ULT    USLT                                Unsychronized lyric/text transcription
+//   x   ULT    USLT                                Unsychronized lyric/text transcription
 //   x   WCM    WCOM                                Commercial information
 //   x   WCP    WCOP                                Copyright/Legal information
 //   x   WAF    WOAF                                Official audio file webpage
@@ -130,13 +131,13 @@ use super::unsync::{decode_unsynchronisation, read_syncsafe_leq32};
 
 /// The result of parsing a frame.
 pub enum FrameResult {
-    /// Padding was encountered instead of a frame.
+    /// Padding was encountered instead of a frame. The remainder of the ID3v2 Tag may be skipped.
     Padding,
     /// An unknown frame was found and its body skipped.
-    UnsupportedFrame,
+    UnsupportedFrame(String),
     /// A frame was parsed and yielded a single `Tag`.
     Tag(Tag),
-    // A frame was parsed and yielded many `Tag`s.
+    /// A frame was parsed and yielded many `Tag`s.
     MultipleTags(Vec<Tag>)
 }
 
@@ -219,7 +220,7 @@ lazy_static! {
             // m.insert(b"AENC", read_null_frame);
             // m.insert(b"APIC", read_null_frame);
             // m.insert(b"ASPI", read_null_frame);
-            // m.insert(b"COMM", read_null_frame);
+            m.insert(b"COMM", (read_comm_uslt_frame as FrameParser, Some(StandardTagKey::Comment)));
             // m.insert(b"COMR", read_null_frame);
             // m.insert(b"ENCR", read_null_frame);
             // m.insert(b"EQU2", read_null_frame);
@@ -235,7 +236,7 @@ lazy_static! {
             // m.insert(b"PCNT", read_null_frame);
             // m.insert(b"POPM", read_null_frame);
             // m.insert(b"POSS", read_null_frame);
-            m.insert(b"PRIV", (read_priv_frame as FrameParser, None));
+            m.insert(b"PRIV", (read_priv_frame, None));
             // m.insert(b"RBUF", read_null_frame);
             // m.insert(b"RVA2", read_null_frame);
             // m.insert(b"RVAD", read_null_frame);
@@ -296,11 +297,12 @@ lazy_static! {
             m.insert(b"TSOT", (read_text_frame, Some(StandardTagKey::SortTrackTitle)));
             m.insert(b"TSRC", (read_text_frame, Some(StandardTagKey::IdentIsrc)));
             m.insert(b"TSSE", (read_text_frame, Some(StandardTagKey::Encoder)));
+            m.insert(b"TSST", (read_text_frame, None));
             m.insert(b"TXXX", (read_txxx_frame, None));
             m.insert(b"TYER", (read_text_frame, Some(StandardTagKey::Date)));
             // m.insert(b"UFID", read_null_frame);
             // m.insert(b"USER", read_null_frame);
-            // m.insert(b"USLT", read_null_frame);
+            m.insert(b"USLT", (read_comm_uslt_frame, Some(StandardTagKey::Lyrics)));
             m.insert(b"WCOM", (read_url_frame, None));
             m.insert(b"WCOP", (read_url_frame, None));
             m.insert(b"WOAF", (read_url_frame, None));
@@ -324,6 +326,12 @@ fn validate_frame_id(id: &[u8]) -> bool {
     // Character:   '/'   [ '0'  ...  '9' ]  ':'  ...  '@'  [ 'A'  ...  'Z' ]   '['
     // ASCII Code:  0x2f  [ 0x30 ... 0x39 ]  0x3a ... 0x40  [ 0x41 ... 0x5a ]  0x5b
     id.iter().filter(|&b| !((*b > 0x2f && *b < 0x3a) || (*b > 0x40 && *b < 0x5b))).count() == 0
+}
+
+/// Validates that a language code conforms to the ISO-639-2 standard. That is to say, the code is 
+/// composed of 3 characters, each character being between lowercase letters a-z.
+fn validate_lang_code(code: &[u8; 3]) -> bool {
+    code.iter().filter(|&c| *c < 0x61 || *c > 0x7a).count() == 0
 }
 
 /// Finds a frame parser for "modern" ID3v2.3 or ID2v2.4 tags.
@@ -356,11 +364,11 @@ pub fn read_id3v2p2_frame<B: Bytestream>(reader: &mut B) -> Result<FrameResult> 
     let size = reader.read_be_u24()? as u64;
 
     // Find a parser for the frame. If there is none, skip over the remainder of the frame as it cannot be parsed.
-    let parser = match find_parser_legacy(&id) {
+    let (parser, std_key) = match find_parser_legacy(&id) {
         Some(p) => p,
         None => {
             reader.ignore_bytes(size)?;
-            return Ok(FrameResult::UnsupportedFrame);
+            return Ok(FrameResult::UnsupportedFrame(str::from_utf8(&id).unwrap().to_string()));
         }
     };
 
@@ -371,7 +379,7 @@ pub fn read_id3v2p2_frame<B: Bytestream>(reader: &mut B) -> Result<FrameResult> 
 
     let data = reader.read_boxed_slice_bytes(size as usize)?;
 
-    parser.0(&mut BufStream::new(&data), parser.1, str::from_utf8(&id).unwrap())
+    parser(&mut BufStream::new(&data), *std_key, str::from_utf8(&id).unwrap())
 }
 
 /// Read an ID3v2.3 frame.
@@ -397,11 +405,11 @@ pub fn read_id3v2p3_frame<B: Bytestream>(reader: &mut B) -> Result<FrameResult> 
     }
 
     // Find a parser for the frame. If there is none, skip over the remainder of the frame as it cannot be parsed.
-    let parser = match find_parser(&id) {
+    let (parser, std_key) = match find_parser(&id) {
         Some(p) => p,
         None => {
             reader.ignore_bytes(size)?;
-            return Ok(FrameResult::UnsupportedFrame);
+            return Ok(FrameResult::UnsupportedFrame(str::from_utf8(&id).unwrap().to_string()));
         }
     };
 
@@ -431,7 +439,7 @@ pub fn read_id3v2p3_frame<B: Bytestream>(reader: &mut B) -> Result<FrameResult> 
 
     let data = reader.read_boxed_slice_bytes(size as usize)?;
 
-    parser.0(&mut BufStream::new(&data), parser.1, str::from_utf8(&id).unwrap())
+    parser(&mut BufStream::new(&data), *std_key, str::from_utf8(&id).unwrap())
 }
 
 /// Read an ID3v2.4 frame.
@@ -457,11 +465,11 @@ pub fn read_id3v2p4_frame<B: Bytestream + FiniteStream>(reader: &mut B) -> Resul
     }
 
     // Find a parser for the frame. If there is none, skip over the remainder of the frame as it cannot be parsed.
-    let parser = match find_parser(&id) {
+    let (parser, std_key) = match find_parser(&id) {
         Some(p) => p,
         None => {
             reader.ignore_bytes(size)?;
-            return Ok(FrameResult::UnsupportedFrame);
+            return Ok(FrameResult::UnsupportedFrame(str::from_utf8(&id).unwrap().to_string()));
         }
     };
 
@@ -518,12 +526,12 @@ pub fn read_id3v2p4_frame<B: Bytestream + FiniteStream>(reader: &mut B) -> Resul
     if flags & 0x2 != 0x0 {
         let unsync_data = decode_unsynchronisation(&mut raw_data);
 
-        parser.0(&mut BufStream::new(&unsync_data), parser.1, str::from_utf8(&id).unwrap())
+        parser(&mut BufStream::new(&unsync_data), *std_key, str::from_utf8(&id).unwrap())
     }
     // The frame body has not been unsynchronised. Wrap the raw data buffer in BufStream without any additional 
     // decoding.
     else {
-        parser.0(&mut BufStream::new(&raw_data), parser.1, str::from_utf8(&id).unwrap())
+        parser(&mut BufStream::new(&raw_data), *std_key, str::from_utf8(&id).unwrap())
     }
 }
 
@@ -535,6 +543,8 @@ fn read_text_frame(reader: &mut BufStream, std_key: Option<StandardTagKey>, id: 
         _              => return decode_error("Invalid text encoding.")
     };
 
+    // Since a text frame can have a null-terminated list of values, and Sonata allows multiple tags with the same
+    // key, create one Tag per listed value.
     let mut tags = Vec::<Tag>::new();
 
     // The remainder of the frame is one or more null-terminated strings.
@@ -542,12 +552,8 @@ fn read_text_frame(reader: &mut BufStream, std_key: Option<StandardTagKey>, id: 
         let len = reader.bytes_available() as usize;
 
         if len > 0 {
-            // Scan for the appropriate null terminator based on the encoding. If a null terminator is not found, then 
-            // scan_bytes() will return the remainder of the BufStream. This should handle the case where the text field
-            // is not properly terminated.
-            let data = scan_text(reader, encoding, len)?;
-            // Decode the encoded text and build the tag.
-            tags.push(Tag::new(std_key, id, &decode_text(encoding, data)));
+            // Scan for text, and create a Tag.
+            tags.push(Tag::new(std_key, id, &scan_text(reader, encoding, len)?));
         }
         else {
             break;
@@ -565,24 +571,19 @@ fn read_txxx_frame(reader: &mut BufStream, _: Option<StandardTagKey>, _: &str) -
         _              => return decode_error("Invalid TXXX text encoding.")
     };
 
-    // Read the description (key) string.
-    let desc = {
-        let desc_buf = scan_text(reader, encoding, reader.bytes_available() as usize)?;
-        let mut desc = "TXXX:".to_string();
-        desc.push_str(&decode_text(encoding, desc_buf));
-        desc
-    };
+    // Read the description string.
+    let desc = format!("TXXX:{}", scan_text(reader, encoding, reader.bytes_available() as usize)?);
 
     // Since a TXXX frame can have a null-terminated list of values, and Sonata allows multiple tags with the same
     // key, create one Tag per listed value.
     let mut tags = Vec::<Tag>::new();
 
+    // The remainder of the frame is one or more null-terminated strings.
     loop {
         let len = reader.bytes_available() as usize;
 
         if len > 0 {
-            let val_buf = scan_text(reader, encoding, len)?;
-            tags.push(Tag::new(None, &desc, &decode_text(encoding, val_buf)));
+            tags.push(Tag::new(None, &desc, &scan_text(reader, encoding, len)?));
         }
         else {
             break;
@@ -594,10 +595,10 @@ fn read_txxx_frame(reader: &mut BufStream, _: Option<StandardTagKey>, _: &str) -
 
 /// Reads all URL frames except for `WXXX`.
 fn read_url_frame(reader: &mut BufStream, std_key: Option<StandardTagKey>, id: &str) -> Result<FrameResult> {
-    // Scan for ISO-8859-1 text (all URLs are encoded in this format).
-    let url_buf = scan_text(reader, Encoding::Iso8859_1, reader.bytes_available() as usize)?;
+    // Scan for a ISO-8859-1 URL string.
+    let url = scan_text(reader, Encoding::Iso8859_1, reader.bytes_available() as usize)?;
     // Create a Tag.
-    let tag = Tag::new(std_key, id, &decode_text(Encoding::Iso8859_1, url_buf));
+    let tag = Tag::new(std_key, id, &url);
 
     Ok(FrameResult::Tag(tag))
 }
@@ -610,32 +611,22 @@ fn read_wxxx_frame(reader: &mut BufStream, std_key: Option<StandardTagKey>, _: &
         _              => return decode_error("Invalid WXXX URL description encoding.")
     };
 
-    // Read the description (key) string.
-    let desc = {
-        let desc_buf = scan_text(reader, encoding, reader.bytes_available() as usize)?;
-        let mut desc = "WXXX:".to_string();
-        desc.push_str(&decode_text(encoding, desc_buf));
-        desc
-    };
-
-    // Scan for ISO-8859-1 text (all URLs are encoded in this format).
-    let url_buf = scan_text(reader, Encoding::Iso8859_1, reader.bytes_available() as usize)?;
+    // Scan for the the description string.
+    let desc = format!("WXXX:{}", &scan_text(reader, encoding, reader.bytes_available() as usize)?);
+    // Scan for a ISO-8859-1 URL string.
+    let url = scan_text(reader, Encoding::Iso8859_1, reader.bytes_available() as usize)?;
     // Create a Tag.
-    let tag = Tag::new(std_key, &desc, &decode_text(Encoding::Iso8859_1, url_buf));
+    let tag = Tag::new(std_key, &desc, &url);
 
     Ok(FrameResult::Tag(tag))
 }
 
 /// Reads a `PRIV` (private) frame.
 fn read_priv_frame(reader: &mut BufStream, std_key: Option<StandardTagKey>, _: &str) -> Result<FrameResult> {
-    // Scan for ISO-8859-1 text (all URLs are encoded in this format).
-    let ident = {
-        let ident_buf = scan_text(reader, Encoding::Iso8859_1, reader.bytes_available() as usize)?;
-        let mut ident = "PRIV:".to_string();
-        ident.push_str(&decode_text(Encoding::Iso8859_1, ident_buf));
-        ident
-    };
+    // Scan for a ISO-8859-1 owner identifier.
+    let owner = format!("PRIV:{}", &scan_text(reader, Encoding::Iso8859_1, reader.bytes_available() as usize)?);
 
+    // The remainder of the frame is binary data.
     let data_buf = reader.read_buf_bytes_ref(reader.bytes_available() as usize)?;
 
     // Quick and dirty buffer to hex-string serialization.
@@ -651,7 +642,40 @@ fn read_priv_frame(reader: &mut BufStream, std_key: Option<StandardTagKey>, _: &
     }
     
     // Create a Tag.
-    let tag = Tag::new(std_key, &ident, &data);
+    let tag = Tag::new(std_key, &owner, &data);
+
+    Ok(FrameResult::Tag(tag))
+}
+
+/// Reads a `COMM` (comment) or `USLT` (unsynchronized comment) frame.
+fn read_comm_uslt_frame(reader: &mut BufStream, std_key: Option<StandardTagKey>, id: &str) -> Result<FrameResult> {
+    // The first byte of the frame is the encoding of the description.
+    let encoding = match Encoding::parse(reader.read_byte()?) {
+        Some(encoding) => encoding,
+        _              => return decode_error("Invalid text encoding.")
+    };
+
+    // The next three bytes are the language.
+    let lang = reader.read_triple_bytes()?;
+
+    // Encode the language into the key of the comment Tag. Since many files don't use valid ISO-639-2 language
+    // codes, we'll just skip the language code if it doesn't validate. Returning an error would break far too 
+    // many files to be worth it.
+    let key = if validate_lang_code(&lang) {
+        format!("{}!{}", id, str::from_utf8(&lang).unwrap())
+    }
+    else {
+        id.to_string()
+    };
+
+    // Short text (content description) is next, but since there is no way to represent this in Sonata, skip it.
+    scan_text(reader, encoding, reader.bytes_available() as usize)?;
+
+    // Full text (lyrics) is last.
+    let text = scan_text(reader, encoding, reader.bytes_available() as usize)?;
+
+    // Create the tag.
+    let tag = Tag::new(std_key, &key, &text);
 
     Ok(FrameResult::Tag(tag))
 }
@@ -686,14 +710,18 @@ impl Encoding {
     }
 }
 
-/// Scans the provided `BufStream` for the appropriate null terminator for the given encoding, and returns a slice 
-/// of all the bytes upto and including the null terminator or an error. If there is no match, upto `max_len` bytes 
-/// will be returned.
-fn scan_text<'a>(reader: &'a mut BufStream, encoding: Encoding, max_len: usize) -> io::Result<&'a [u8]> {
-    match encoding {
-        Encoding::Iso8859_1 | Encoding::Utf8    => reader.scan_bytes_aligned_ref(&[0x00], 1, max_len),
-        Encoding::Utf16Bom  | Encoding::Utf16Be => reader.scan_bytes_aligned_ref(&[0x00, 0x00], 2, max_len),
-    }
+/// Scans up-to `scan_len` bytes from the provided `BufStream` for a string that is terminated with the appropriate 
+/// null terminator for the given encoding as per the ID3v2 specification. A copy-on-write reference to the string 
+/// excluding the null terminator is returned or an error. If the scanned string is valid UTF-8, or is equivalent to 
+/// UTF-8, then no copies will occur. If a null terminator is not found, and `scan_len` is reached, or the stream is
+/// exhausted, all the scanned bytes up-to that point are interpreted as the string.
+fn scan_text<'a>(reader: &'a mut BufStream, encoding: Encoding, scan_len: usize) -> io::Result<Cow<'a, str>> {
+    let buf = match encoding {
+        Encoding::Iso8859_1 | Encoding::Utf8    => reader.scan_bytes_aligned_ref(&[0x00], 1, scan_len),
+        Encoding::Utf16Bom  | Encoding::Utf16Be => reader.scan_bytes_aligned_ref(&[0x00, 0x00], 2, scan_len),
+    }?;
+
+    Ok(decode_text(encoding, buf))
 }
 
 /// Decodes a slice of bytes containing encoded text into a UTF-8 `str`. Trailing null terminators are removed, and any
