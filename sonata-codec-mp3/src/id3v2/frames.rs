@@ -65,12 +65,12 @@ use super::unsync::{decode_unsynchronisation, read_syncsafe_leq32};
 //   x   TCO    TCON             Genre              Content type
 //   x   TCR    TCOP             Copyright          Copyright message
 //   x   TDA    TDAT             Date               Date
-//   x                  TDEN                        Encoding time
+//   x                  TDEN     EncodingDate       Encoding time
 //   x   TDY    TDLY                                Playlist delay
 //   x                  TDOR     OriginalDate       Original release time
 //   x                  TDRC     Date               Recording time
 //   x                  TDRL     ReleaseDate        Release time
-//   x                  TDTG                        Tagging time
+//   x                  TDTG     TaggingDate        Tagging time
 //   x   TEN    TENC             EncodedBy          Encoded by
 //   x   TXT    TEXT             Writer             Lyricist/Text writer
 //   x   TFT    TFLT                                File type
@@ -271,12 +271,12 @@ lazy_static! {
             m.insert(b"TCON", (read_text_frame, Some(StandardTagKey::Genre)));
             m.insert(b"TCOP", (read_text_frame, Some(StandardTagKey::Copyright)));
             m.insert(b"TDAT", (read_text_frame, Some(StandardTagKey::Date)));
-            m.insert(b"TDEN", (read_text_frame, None));
+            m.insert(b"TDEN", (read_text_frame, Some(StandardTagKey::EncodingDate)));
             m.insert(b"TDLY", (read_text_frame, None));
             m.insert(b"TDOR", (read_text_frame, Some(StandardTagKey::OriginalDate)));
             m.insert(b"TDRC", (read_text_frame, Some(StandardTagKey::Date)));
             m.insert(b"TDRL", (read_text_frame, Some(StandardTagKey::ReleaseDate)));
-            m.insert(b"TDTG", (read_text_frame, None));
+            m.insert(b"TDTG", (read_text_frame, Some(StandardTagKey::TaggingDate)));
             m.insert(b"TENC", (read_text_frame, Some(StandardTagKey::EncodedBy)));
             // Also Writer?
             m.insert(b"TEXT", (read_text_frame, Some(StandardTagKey::Writer)));
