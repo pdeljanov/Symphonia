@@ -42,14 +42,14 @@ use super::unsync::{decode_unsynchronisation, read_syncsafe_leq32};
 //       ETC    ETCO                                Event timing codes
 //       GEO    GEOB                                General encapsulated object
 //              GRID                                Group identification registration
-//       IPL    IPLS    TIPL     Engineer           Involved people list
+//   x   IPL    IPLS    TIPL                        Involved people list
 //       LNK    LINK                                Linked information
-//       MCI    MCDI                                Music CD identifier
+//   x   MCI    MCDI                                Music CD identifier
 //       MLL    MLLT                                MPEG location lookup table
 //              OWNE                                Ownership frame
 //   x          PRIV                                Private frame
-//       CNT    PCNT                                Play counter
-//       POP    POPM                                Popularimeter
+//   x   CNT    PCNT                                Play counter
+//   x   POP    POPM             Rating             Popularimeter
 //              POSS                                Position synchronisation frame
 //       BUF    RBUF                                Recommended buffer size
 //       RVA    RVAD                                Relative volume adjustment
@@ -228,13 +228,13 @@ lazy_static! {
             // m.insert(b"ETCO", read_null_frame);
             // m.insert(b"GEOB", read_null_frame);
             // m.insert(b"GRID", read_null_frame);
-            // m.insert(b"IPLS", read_null_frame);
+            m.insert(b"IPLS", (read_text_frame, None));
             // m.insert(b"LINK", read_null_frame);
-            // m.insert(b"MCDI", read_null_frame);
+            m.insert(b"MCDI", (read_mcdi_frame, None));
             // m.insert(b"MLLT", read_null_frame);
             // m.insert(b"OWNE", read_null_frame);
-            // m.insert(b"PCNT", read_null_frame);
-            // m.insert(b"POPM", read_null_frame);
+            m.insert(b"PCNT", (read_pcnt_frame, None));
+            m.insert(b"POPM", (read_popm_frame, Some(StandardTagKey::Rating)));
             // m.insert(b"POSS", read_null_frame);
             m.insert(b"PRIV", (read_priv_frame, None));
             // m.insert(b"RBUF", read_null_frame);
@@ -262,7 +262,7 @@ lazy_static! {
             m.insert(b"TEXT", (read_text_frame, Some(StandardTagKey::Writer)));
             m.insert(b"TFLT", (read_text_frame, None));
             m.insert(b"TIME", (read_text_frame, None));
-            m.insert(b"TIPL", (read_text_frame, Some(StandardTagKey::Engineer)));
+            m.insert(b"TIPL", (read_text_frame, None));
             m.insert(b"TIT1", (read_text_frame, Some(StandardTagKey::ContentGroup)));
             m.insert(b"TIT2", (read_text_frame, Some(StandardTagKey::TrackTitle)));
             m.insert(b"TIT3", (read_text_frame, Some(StandardTagKey::TrackSubtitle)));
@@ -325,13 +325,13 @@ fn validate_frame_id(id: &[u8]) -> bool {
 
     // Character:   '/'   [ '0'  ...  '9' ]  ':'  ...  '@'  [ 'A'  ...  'Z' ]   '['
     // ASCII Code:  0x2f  [ 0x30 ... 0x39 ]  0x3a ... 0x40  [ 0x41 ... 0x5a ]  0x5b
-    id.iter().filter(|&b| !((*b > 0x2f && *b < 0x3a) || (*b > 0x40 && *b < 0x5b))).count() == 0
+    id.iter().filter(|&b| !((*b >= b'0' && *b <= b'9') || (*b >= b'A' && *b <= b'Z'))).count() == 0
 }
 
 /// Validates that a language code conforms to the ISO-639-2 standard. That is to say, the code is 
 /// composed of 3 characters, each character being between lowercase letters a-z.
 fn validate_lang_code(code: &[u8; 3]) -> bool {
-    code.iter().filter(|&c| *c < 0x61 || *c > 0x7a).count() == 0
+    code.iter().filter(|&c| *c < b'a' || *c > b'z').count() == 0
 }
 
 /// Finds a frame parser for "modern" ID3v2.3 or ID2v2.4 tags.
@@ -629,20 +629,9 @@ fn read_priv_frame(reader: &mut BufStream, std_key: Option<StandardTagKey>, _: &
     // The remainder of the frame is binary data.
     let data_buf = reader.read_buf_bytes_ref(reader.bytes_available() as usize)?;
 
-    // Quick and dirty buffer to hex-string serialization.
-    // TODO: Either allow Tags to hold binary data, OR encode as base64.
-    let mut data = String::new();
-
-    for ch in data_buf {
-        let u = (ch & 0xf0) >> 4;
-        let l = ch & 0x0f;
-        data.push_str("\\0x");
-        data.push(if u < 10 { (b'0' + u) as char } else { (b'a' + u - 10) as char});
-        data.push(if l < 10 { (b'0' + l) as char } else { (b'a' + l - 10) as char});
-    }
-    
     // Create a Tag.
-    let tag = Tag::new(std_key, &owner, &data);
+    // TODO: Either allow Tags to hold binary data, OR encode as base64.
+    let tag = Tag::new(std_key, &owner, &buf_to_hex_string(data_buf));
 
     Ok(FrameResult::Tag(tag))
 }
@@ -677,6 +666,59 @@ fn read_comm_uslt_frame(reader: &mut BufStream, std_key: Option<StandardTagKey>,
     // Create the tag.
     let tag = Tag::new(std_key, &key, &text);
 
+    Ok(FrameResult::Tag(tag))
+}
+
+/// Reads a `PCNT` (total file play count) frame.
+fn read_pcnt_frame(reader: &mut BufStream, std_key: Option<StandardTagKey>, id: &str) -> Result<FrameResult> {
+    let len = reader.len() as usize;
+
+    // The play counter must be a minimum of 4 bytes long.
+    if len < 4 {
+        return decode_error("Play counters must be a minimum of 32bits.");
+    }
+
+    // However it may be extended by an arbitrary amount of bytes (or so it would seem). Practically, a 4-byte 
+    // (32-bit) count is way more than enough, but we'll support up-to an 8-byte (64bit) count.
+    if len > 8 {
+        return unsupported_error("Play counters greater than 64bits are not supported.");
+    }
+
+    // The play counter is stored as an N-byte big-endian integer. Read N bytes into an 8-byte buffer, making sure
+    // the missing bytes are zeroed, and then reinterpret as a 64-bit integer.
+    let mut buf = [0u8; 8];
+    reader.read_buf_bytes(&mut buf[8 - len..])?;
+
+    // Create the tag.
+    let tag = Tag::new(std_key, id, &u64::from_be_bytes(buf).to_string());
+
+    Ok(FrameResult::Tag(tag))
+}
+
+/// Reads a `POPM` (popularimeter) frame.
+fn read_popm_frame(reader: &mut BufStream, std_key: Option<StandardTagKey>, id: &str) -> Result<FrameResult> {
+    let email = scan_text(reader, Encoding::Iso8859_1, reader.bytes_available() as usize)?;
+    let key = format!("{}:{}", id, &email);
+
+    let rating = reader.read_u8()?;
+
+    // There's a personalized play counter here, but there is no analogue in Sonata so don't do anything with
+    // it.
+
+    // Create the tag.
+    let tag = Tag::new(std_key, &key, &rating.to_string());
+
+    Ok(FrameResult::Tag(tag))
+}
+
+/// Reads a `MCDI` (music CD identifier) frame.
+fn read_mcdi_frame(reader: &mut BufStream, std_key: Option<StandardTagKey>, id: &str) -> Result<FrameResult> {
+    // The entire frame is a binary dump of a CD-DA TOC.
+    let buf = reader.read_buf_bytes_ref(reader.len() as usize)?;
+    // Create the tag.
+    // TODO: Either allow Tags to hold binary data, OR encode as base64.
+    let tag = Tag::new(std_key, id, &buf_to_hex_string(buf));
+    
     Ok(FrameResult::Tag(tag))
 }
 
@@ -758,4 +800,18 @@ fn decode_text(encoding: Encoding, data: &[u8]) -> Cow<'_, str> {
             UTF_16BE.decode(&data[..end]).0
         }
     }
+}
+
+fn buf_to_hex_string(buf: &[u8]) -> String {
+    let mut output = String::new();
+
+    for ch in buf {
+        let u = (ch & 0xf0) >> 4;
+        let l = ch & 0x0f;
+        output.push_str("\\0x");
+        output.push(if u < 10 { (b'0' + u) as char } else { (b'a' + u - 10) as char});
+        output.push(if l < 10 { (b'0' + l) as char } else { (b'a' + l - 10) as char});
+    }
+
+    output
 }
