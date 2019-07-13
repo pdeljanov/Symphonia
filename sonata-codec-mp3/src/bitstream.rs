@@ -8,42 +8,44 @@
 use sonata_core::errors::{Result, decode_error, unsupported_error};
 use sonata_core::io::Bytestream;
 
-/// Bitrate lookup table for MPEG version 1 audio per layer.
-static MPEG1_BIT_RATES: &[&[u32; 15]; 3] = &[
-    // Layer 1
-    &[
-        0,
-        32_000,  64_000,  96_000, 128_000, 160_000, 192_000, 224_000,
-        256_000, 288_000, 320_000, 352_000, 384_000, 416_000, 448_000,
-    ],
-    // Layer 2
-    &[
-        0,
-        32_000,  48_000,  56_000,  64_000,  80_000,  96_000, 112_000,
-        128_000, 160_000, 192_000, 224_000, 256_000, 320_000, 384_000,
-    ],
-    // Layer 3
-    &[
-        0,
-        32_000,  40_000,  48_000,  56_000,  64_000,  80_000,  96_000,
-        112_000, 128_000, 160_000, 192_000, 224_000, 256_000, 320_000
-    ]
+/// Bit-rate lookup table for MPEG version 1 layer 1.
+static BIT_RATES_MPEG1_L1: [u32; 15] = 
+[
+    0,
+    32_000,  64_000,  96_000, 128_000, 160_000, 192_000, 224_000,
+    256_000, 288_000, 320_000, 352_000, 384_000, 416_000, 448_000,
 ];
 
-/// Bitrate lookup table for MPEG version 2 and 2.5 audio by layer.
-static MPEG2_BIT_RATES: &[&[u32; 15]; 2] = &[
-    // Layer 1
-    &[
-        0,
-        32_000,  48_000,  56_000,  64_000,  80_000,  96_000,  112_000,
-        128_000, 144_000, 160_000, 176_000, 192_000, 224_000, 256_000,
-    ],
-    // Layer 2 & 3
-    &[
-        0,
-        8_000,  16_000, 24_000, 32_000,  40_000,  48_000,  56_000,
-        64_000, 80_000, 96_000, 112_000, 128_000, 144_000, 160_000,
-    ],
+/// Bit-rate lookup table for MPEG version 1 layer 2.
+static BIT_RATES_MPEG1_L2: [u32; 15] = 
+[
+    0,
+    32_000,  48_000,  56_000,  64_000,  80_000,  96_000, 112_000,
+    128_000, 160_000, 192_000, 224_000, 256_000, 320_000, 384_000,
+];
+
+/// Bit-rate lookup table for MPEG version 1 layer 3.
+static BIT_RATES_MPEG1_L3: [u32; 15] = 
+[
+    0,
+    32_000,  40_000,  48_000,  56_000,  64_000,  80_000,  96_000,
+    112_000, 128_000, 160_000, 192_000, 224_000, 256_000, 320_000
+];
+
+/// Bit-rate lookup table for MPEG version 2 & 2.5 audio layer 1.
+static BIT_RATES_MPEG2_L1: [u32; 15] =
+[
+    0,
+    32_000,  48_000,  56_000,  64_000,  80_000,  96_000,  112_000,
+    128_000, 144_000, 160_000, 176_000, 192_000, 224_000, 256_000,
+];
+
+/// Bit-rate lookup table for MPEG version 2 & 2.5 audio layers 2 & 3.
+static BIT_RATES_MPEG2_L23: [u32; 15] =
+[
+    0,
+    8_000,  16_000, 24_000, 32_000,  40_000,  48_000,  56_000,
+    64_000, 80_000, 96_000, 112_000, 128_000, 144_000, 160_000,
 ];
 
 /// The MPEG audio version.
@@ -72,9 +74,9 @@ enum MpegLayer {
 /// Stereo encoding.
 #[derive(Copy,Clone,Debug,PartialEq)]
 enum ModeExtension {
-    /// Joint Stereo in Layer 3 may use both Mid-Side and Intensity encoding.
+    /// Joint Stereo in layer 3 may use both Mid-Side and Intensity encoding.
     Layer3 { mid_side: bool, intensity: bool },
-    /// Joint Stereo in Layers 1 and 2 may only use Intensity encoding on a set of bands. The range
+    /// Joint Stereo in layers 1 and 2 may only use Intensity encoding on a set of bands. The range
     /// of bands is [band..32].
     Intensity { band: u32 },
 }
@@ -166,12 +168,12 @@ fn read_frame_header<B: Bytestream>(reader: &mut B) -> Result<FrameHeader> {
         // Invalid bit-rate.
         (0b1111, _, _) => return decode_error("Invalid bit-rate."),
         // MPEG 1 bit-rates.
-        (i, MpegVersion::Mpeg1, MpegLayer::Layer1) => MPEG1_BIT_RATES[0][i as usize],
-        (i, MpegVersion::Mpeg1, MpegLayer::Layer2) => MPEG1_BIT_RATES[1][i as usize],
-        (i, MpegVersion::Mpeg1, MpegLayer::Layer3) => MPEG1_BIT_RATES[2][i as usize],
+        (i, MpegVersion::Mpeg1, MpegLayer::Layer1) => BIT_RATES_MPEG1_L1[i as usize],
+        (i, MpegVersion::Mpeg1, MpegLayer::Layer2) => BIT_RATES_MPEG1_L2[i as usize],
+        (i, MpegVersion::Mpeg1, MpegLayer::Layer3) => BIT_RATES_MPEG1_L3[i as usize],
         // MPEG 2 bit-rates.
-        (i,                  _, MpegLayer::Layer1) => MPEG2_BIT_RATES[0][i as usize],
-        (i,                  _,                 _) => MPEG2_BIT_RATES[1][i as usize],
+        (i,                  _, MpegLayer::Layer1) => BIT_RATES_MPEG2_L1[i as usize],
+        (i,                  _,                 _) => BIT_RATES_MPEG2_L23[i as usize],
     };
 
     let sample_rate = match ((header & 0xc00) >> 10, version) {
@@ -188,19 +190,19 @@ fn read_frame_header<B: Bytestream>(reader: &mut B) -> Result<FrameHeader> {
     };
 
     let channel_mode = match ((header & 0xc0) >> 6, layer) {
-        // Stereo, for Layers 1, 2, and 3.
+        // Stereo, for layers 1, 2, and 3.
         (0b00,                 _) => Channels::Stereo,
-        // Dual mono, for Layers 1, 2, and 3.
+        // Dual mono, for layers 1, 2, and 3.
         (0b10,                 _) => Channels::DualMono,
-        // Mono, for Layers 1, 2, and 3.
+        // Mono, for layers 1, 2, and 3.
         (0b11,                 _) => Channels::Mono,
-        // Joint Stereo mode for Layer 3 supports a combination of Mid-Side and Intensity Stereo 
+        // Joint stereo mode for layer 3 supports a combination of Mid-Side and Intensity Stereo 
         // depending on the mode extension bits.
         (0b01, MpegLayer::Layer3) => Channels::JointStereo(ModeExtension::Layer3 {
             mid_side:  header & 0x20 != 0x0,
             intensity: header & 0x10 != 0x0,
         }),
-        // Joint Stereo mode for Layers 1 and 2 only supports Intensity Stereo. The mode extension
+        // Joint stereo mode for layers 1 and 2 only supports Intensity Stereo. The mode extension
         // bits indicate for which sub-bands intensity stereo coding is applied.
         (0b01,                 _) => Channels::JointStereo(ModeExtension::Intensity { 
             band: (1 + (header & 0x30) >> 4) << 2,
@@ -208,7 +210,8 @@ fn read_frame_header<B: Bytestream>(reader: &mut B) -> Result<FrameHeader> {
         _                         => unreachable!(),
     };
 
-    // Some Layer 2 combinations are not allowed. Validate that the frame does not use them.
+    // Some layer 2 channel and bit-rate combinations are not allowed. Check that the frame does not
+    // use them.
     if layer == MpegLayer::Layer2 {
         if channel_mode == Channels::Mono {
             if bitrate == 224_000 
@@ -260,4 +263,10 @@ fn read_frame_header<B: Bytestream>(reader: &mut B) -> Result<FrameHeader> {
         has_padding,
         crc,
     })
+}
+
+pub fn read_frame<B: Bytestream>(reader: &mut B) -> Result<()> {
+    let header = read_frame_header(reader)?;
+    eprintln!("{:?}", &header);
+    Ok(())
 }
