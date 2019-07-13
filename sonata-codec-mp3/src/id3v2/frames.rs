@@ -67,14 +67,14 @@ use super::unsync::{decode_unsynchronisation, read_syncsafe_leq32};
 //   x   TDA    TDAT             Date               Date
 //   x                  TDEN                        Encoding time
 //   x   TDY    TDLY                                Playlist delay
-//   x                  TDOR                        Original release time
+//   x                  TDOR     OriginalDate       Original release time
 //   x                  TDRC     Date               Recording time
-//   x                  TDRL                        Release time
+//   x                  TDRL     ReleaseDate        Release time
 //   x                  TDTG                        Tagging time
 //   x   TEN    TENC             EncodedBy          Encoded by
 //   x   TXT    TEXT             Writer             Lyricist/Text writer
 //   x   TFT    TFLT                                File type
-//   x   TIM    TIME     n/a                        Time
+//   x   TIM    TIME     n/a     Date               Time
 //   x   TT1    TIT1             ContentGroup       Content group description
 //   x   TT2    TIT2             TrackTitle         Title/songname/content description
 //   x   TT3    TIT3             TrackSubtitle      Subtitle/Description refinement
@@ -84,10 +84,10 @@ use super::unsync::{decode_unsynchronisation, read_syncsafe_leq32};
 //   x                  TMCL                        Musician credits list
 //   x   TMT    TMED             MediaFormat        Media type
 //   x                  TMOO     Mood               Mood
-//   x   TOT    TOAL                                Original album/movie/show title
-//   x   TOF    TOFN                                Original filename
-//   x   TOL    TOLY                                Original lyricist(s)/text writer(s)
-//   x   TOA    TOPE                                Original artist(s)/performer(s)
+//   x   TOT    TOAL             OriginalAlbum      Original album/movie/show title
+//   x   TOF    TOFN             OriginalFile       Original filename
+//   x   TOL    TOLY             OriginalWriter     Original lyricist(s)/text writer(s)
+//   x   TOA    TOPE             OriginalArtist     Original artist(s)/performer(s)
 //   x   TOR    TORY    n/a      OriginalDate       Original release year
 //   x          TOWN                                File owner/licensee
 //   x   TP1    TPE1             Artist             Lead performer(s)/Soloist(s)
@@ -98,10 +98,10 @@ use super::unsync::{decode_unsynchronisation, read_syncsafe_leq32};
 //   x                  TPRO                        Produced notice
 //   x   TPB    TPUB             Label              Publisher
 //   x   TRK    TRCK             TrackNumber        Track number/Position in set
-//   x   TRD    TRDA    n/a                         Recording dates
+//   x   TRD    TRDA    n/a      Date               Recording dates
 //   x          TRSN                                Internet radio station name
 //   x          TRSO                                Internet radio station owner
-//   x                  TSOA     SortAlbumn         Album sort order
+//   x                  TSOA     SortAlbum          Album sort order
 //   x                  TSOP     SortArtist         Performer sort order
 //   x                  TSOT     SortTrackTitle     Title sort order
 //   x   TSI    TSIZ    n/a                         Size
@@ -112,16 +112,30 @@ use super::unsync::{decode_unsynchronisation, read_syncsafe_leq32};
 //   x   TXX    TXXX                                User defined text information frame
 //       UFI    UFID                                Unique file identifier
 //              USER                                Terms of use
-//   x   ULT    USLT                                Unsychronized lyric/text transcription
-//   x   WCM    WCOM                                Commercial information
-//   x   WCP    WCOP                                Copyright/Legal information
-//   x   WAF    WOAF                                Official audio file webpage
-//   x   WAR    WOAR                                Official artist/performer webpage
-//   x   WAS    WOAS                                Official audio source webpage
-//   x          WORS                                Official internet radio station homepage
-//   x          WPAY                                Payment
-//   x   WPB    WPUB                                Publishers official webpage
-//   x   WXX    WXXX                                User defined URL link frame
+//   x   ULT    USLT             Lyrics             Unsychronized lyric/text transcription
+//   x   WCM    WCOM             UrlPurchase        Commercial information
+//   x   WCP    WCOP             UrlCopyright       Copyright/Legal information
+//   x   WAF    WOAF             UrlOfficial        Official audio file webpage
+//   x   WAR    WOAR             UrlArtist          Official artist/performer webpage
+//   x   WAS    WOAS             UrlSource          Official audio source webpage
+//   x          WORS             UrlInternetRadio   Official internet radio station homepage
+//   x          WPAY             UrlPayment         Payment
+//   x   WPB    WPUB             UrlLabel           Publishers official webpage
+//   x   WXX    WXXX             Url                User defined URL link frame
+//   x          GRP1                                (Apple iTunes) Grouping
+//   x          MVNM             MovementName       (Apple iTunes) Movement name
+//   x          MVIN             MovementNumber     (Apple iTunes) Movement number
+//       PCS    PCST                                (Apple iTunes) Podcast flag
+//   x          TCAT             PodcastCategory    (Apple iTunes) Podcast category
+//   x          TDES             PodcastDescription (Apple iTunes) Podcast description
+//   x          TGID             IdentPodcast       (Apple iTunes) Podcast identifier
+//   x          TKWD             PodcastKeywords    (Apple iTunes) Podcast keywords
+//   x          WFED             UrlPodcast         (Apple iTunes) Podcast url
+//   x   TST                     SortTrackTitle     (Apple iTunes) Title sort order
+//   x   TSP                     SortArtist         (Apple iTunes) Artist order order
+//   x   TSA                     SortAlbum          (Apple iTunes) Album sort order
+//   x   TS2    TSO2             SortAlbumArtist    (Apple iTunes) Album artist sort order       
+//   x   TSC    TSOC             SortComposer       (Apple iTunes) Composer sort order
 //
 // Information on these frames can be found at:
 //
@@ -147,9 +161,10 @@ lazy_static! {
     static ref LEGACY_FRAME_MAP: 
         HashMap<&'static [u8; 3], &'static [u8; 4]> = {
             let mut m = HashMap::new();
-            m.insert(b"CRA", b"AENC");
-            m.insert(b"PIC", b"APIC");
+            m.insert(b"BUF", b"RBUF");
+            m.insert(b"CNT", b"PCNT");
             m.insert(b"COM", b"COMM");
+            m.insert(b"CRA", b"AENC");
             m.insert(b"EQU", b"EQUA");
             m.insert(b"ETC", b"ETCO");
             m.insert(b"GEO", b"GEOB");
@@ -157,11 +172,11 @@ lazy_static! {
             m.insert(b"LNK", b"LINK");
             m.insert(b"MCI", b"MCDI");
             m.insert(b"MLL", b"MLLT");
-            m.insert(b"CNT", b"PCNT");
+            m.insert(b"PCS", b"PCST");
+            m.insert(b"PIC", b"APIC");
             m.insert(b"POP", b"POPM");
-            m.insert(b"BUF", b"RBUF");
-            m.insert(b"RVA", b"RVAD");
             m.insert(b"REV", b"RVRB");
+            m.insert(b"RVA", b"RVAD");
             m.insert(b"SLT", b"SYLT");
             m.insert(b"STC", b"SYTC");
             m.insert(b"TAL", b"TALB");
@@ -172,41 +187,46 @@ lazy_static! {
             m.insert(b"TDA", b"TDAT");
             m.insert(b"TDY", b"TDLY");
             m.insert(b"TEN", b"TENC");
-            m.insert(b"TXT", b"TEXT");
             m.insert(b"TFT", b"TFLT");
             m.insert(b"TIM", b"TIME");
-            m.insert(b"TT1", b"TIT1");
-            m.insert(b"TT2", b"TIT2");
-            m.insert(b"TT3", b"TIT3");
             m.insert(b"TKE", b"TKEY");
             m.insert(b"TLA", b"TLAN");
             m.insert(b"TLE", b"TLEN");
             m.insert(b"TMT", b"TMED");
-            m.insert(b"TOT", b"TOAL");
+            m.insert(b"TOA", b"TOPE");
             m.insert(b"TOF", b"TOFN");
             m.insert(b"TOL", b"TOLY");
-            m.insert(b"TOA", b"TOPE");
             m.insert(b"TOR", b"TORY");
+            m.insert(b"TOT", b"TOAL");
             m.insert(b"TP1", b"TPE1");
             m.insert(b"TP2", b"TPE2");
             m.insert(b"TP3", b"TPE3");
             m.insert(b"TP4", b"TPE4");
             m.insert(b"TPA", b"TPOS");
             m.insert(b"TPB", b"TPUB");
-            m.insert(b"TRK", b"TRCK");
-            m.insert(b"TRD", b"TRDA");
-            m.insert(b"TSI", b"TSIZ");
             m.insert(b"TRC", b"TSRC");
+            m.insert(b"TRD", b"TRDA");
+            m.insert(b"TRK", b"TRCK");
+            m.insert(b"TS2", b"TSO2");
+            m.insert(b"TSA", b"TSOA");
+            m.insert(b"TSC", b"TSOC");
+            m.insert(b"TSI", b"TSIZ");
+            m.insert(b"TSP", b"TSOP");
             m.insert(b"TSS", b"TSSE");
-            m.insert(b"TYE", b"TYER");
+            m.insert(b"TST", b"TSOT");
+            m.insert(b"TT1", b"TIT1");
+            m.insert(b"TT2", b"TIT2");
+            m.insert(b"TT3", b"TIT3");
+            m.insert(b"TXT", b"TEXT");
             m.insert(b"TXX", b"TXXX");
+            m.insert(b"TYE", b"TYER");
             m.insert(b"UFI", b"UFID");
             m.insert(b"ULT", b"USLT");
-            m.insert(b"WCM", b"WCOM");
-            m.insert(b"WCP", b"WCOP");
             m.insert(b"WAF", b"WOAF");
             m.insert(b"WAR", b"WOAR");
             m.insert(b"WAS", b"WOAS");
+            m.insert(b"WCM", b"WCOM");
+            m.insert(b"WCP", b"WCOP");
             m.insert(b"WPB", b"WPUB");
             m.insert(b"WXX", b"WXXX");
             m
@@ -253,15 +273,15 @@ lazy_static! {
             m.insert(b"TDAT", (read_text_frame, Some(StandardTagKey::Date)));
             m.insert(b"TDEN", (read_text_frame, None));
             m.insert(b"TDLY", (read_text_frame, None));
-            m.insert(b"TDOR", (read_text_frame, None));
+            m.insert(b"TDOR", (read_text_frame, Some(StandardTagKey::OriginalDate)));
             m.insert(b"TDRC", (read_text_frame, Some(StandardTagKey::Date)));
-            m.insert(b"TDRL", (read_text_frame, None));
+            m.insert(b"TDRL", (read_text_frame, Some(StandardTagKey::ReleaseDate)));
             m.insert(b"TDTG", (read_text_frame, None));
             m.insert(b"TENC", (read_text_frame, Some(StandardTagKey::EncodedBy)));
             // Also Writer?
             m.insert(b"TEXT", (read_text_frame, Some(StandardTagKey::Writer)));
             m.insert(b"TFLT", (read_text_frame, None));
-            m.insert(b"TIME", (read_text_frame, None));
+            m.insert(b"TIME", (read_text_frame, Some(StandardTagKey::Date)));
             m.insert(b"TIPL", (read_text_frame, None));
             m.insert(b"TIT1", (read_text_frame, Some(StandardTagKey::ContentGroup)));
             m.insert(b"TIT2", (read_text_frame, Some(StandardTagKey::TrackTitle)));
@@ -272,10 +292,10 @@ lazy_static! {
             m.insert(b"TMCL", (read_text_frame, None));
             m.insert(b"TMED", (read_text_frame, Some(StandardTagKey::MediaFormat)));
             m.insert(b"TMOO", (read_text_frame, Some(StandardTagKey::Mood)));
-            m.insert(b"TOAL", (read_text_frame, None));
-            m.insert(b"TOFN", (read_text_frame, None));
-            m.insert(b"TOLY", (read_text_frame, None));
-            m.insert(b"TOPE", (read_text_frame, None));
+            m.insert(b"TOAL", (read_text_frame, Some(StandardTagKey::OriginalAlbum)));
+            m.insert(b"TOFN", (read_text_frame, Some(StandardTagKey::OriginalFile)));
+            m.insert(b"TOLY", (read_text_frame, Some(StandardTagKey::OriginalWriter)));
+            m.insert(b"TOPE", (read_text_frame, Some(StandardTagKey::OriginalArtist)));
             m.insert(b"TORY", (read_text_frame, Some(StandardTagKey::OriginalDate)));
             m.insert(b"TOWN", (read_text_frame, None));
             m.insert(b"TPE1", (read_text_frame, Some(StandardTagKey::Artist)));
@@ -288,7 +308,7 @@ lazy_static! {
             m.insert(b"TPUB", (read_text_frame, Some(StandardTagKey::Label)));
             // May be "track number / total tracks"
             m.insert(b"TRCK", (read_text_frame, Some(StandardTagKey::TrackNumber)));
-            m.insert(b"TRDA", (read_text_frame, None));
+            m.insert(b"TRDA", (read_text_frame, Some(StandardTagKey::Date)));
             m.insert(b"TRSN", (read_text_frame, None));
             m.insert(b"TRSO", (read_text_frame, None));
             m.insert(b"TSIZ", (read_text_frame, None));
@@ -303,15 +323,50 @@ lazy_static! {
             // m.insert(b"UFID", read_null_frame);
             // m.insert(b"USER", read_null_frame);
             m.insert(b"USLT", (read_comm_uslt_frame, Some(StandardTagKey::Lyrics)));
-            m.insert(b"WCOM", (read_url_frame, None));
-            m.insert(b"WCOP", (read_url_frame, None));
-            m.insert(b"WOAF", (read_url_frame, None));
-            m.insert(b"WOAR", (read_url_frame, None));
-            m.insert(b"WOAS", (read_url_frame, None));
-            m.insert(b"WORS", (read_url_frame, None));
-            m.insert(b"WPAY", (read_url_frame, None));
-            m.insert(b"WPUB", (read_url_frame, None));
-            m.insert(b"WXXX", (read_wxxx_frame, None));
+            m.insert(b"WCOM", (read_url_frame, Some(StandardTagKey::UrlPurchase)));
+            m.insert(b"WCOP", (read_url_frame, Some(StandardTagKey::UrlCopyright)));
+            m.insert(b"WOAF", (read_url_frame, Some(StandardTagKey::UrlOfficial)));
+            m.insert(b"WOAR", (read_url_frame, Some(StandardTagKey::UrlArtist)));
+            m.insert(b"WOAS", (read_url_frame, Some(StandardTagKey::UrlSource)));
+            m.insert(b"WORS", (read_url_frame, Some(StandardTagKey::UrlInternetRadio)));
+            m.insert(b"WPAY", (read_url_frame, Some(StandardTagKey::UrlPayment)));
+            m.insert(b"WPUB", (read_url_frame, Some(StandardTagKey::UrlLabel)));
+            m.insert(b"WXXX", (read_wxxx_frame, Some(StandardTagKey::Url)));
+            // Apple iTunes frames
+            // m.insert(b"PCST", (read_null_frame, None));
+            m.insert(b"GRP1", (read_text_frame, None));
+            m.insert(b"MVIN", (read_text_frame, Some(StandardTagKey::MovementNumber)));
+            m.insert(b"MVNM", (read_text_frame, Some(StandardTagKey::MovementName)));
+            m.insert(b"TCAT", (read_text_frame, Some(StandardTagKey::PodcastCategory)));
+            m.insert(b"TDES", (read_text_frame, Some(StandardTagKey::PodcastDescription)));
+            m.insert(b"TGID", (read_text_frame, Some(StandardTagKey::IdentPodcast)));
+            m.insert(b"TKWD", (read_text_frame, Some(StandardTagKey::PodcastKeywords)));
+            m.insert(b"TSO2", (read_text_frame, Some(StandardTagKey::SortAlbumArtist)));
+            m.insert(b"TSOC", (read_text_frame, Some(StandardTagKey::SortComposer)));
+            m.insert(b"WFED", (read_text_frame, Some(StandardTagKey::UrlPodcast)));
+            m
+        };
+}
+
+lazy_static! {
+    static ref TXXX_FRAME_STD_KEYS: 
+        HashMap<&'static str, StandardTagKey> = {
+            let mut m = HashMap::new();
+            m.insert("ACOUSTID FINGERPRINT"        , StandardTagKey::AcoustidFingerprint);
+            m.insert("ACOUSTID ID"                 , StandardTagKey::AcoustidId);
+            m.insert("BARCODE"                     , StandardTagKey::IdentBarcode);
+            m.insert("CATALOGNUMBER"               , StandardTagKey::IdentCatalogNumber);
+            m.insert("LICENSE"                     , StandardTagKey::License);
+            m.insert("MUSICBRAINZ ALBUM ARTIST ID" , StandardTagKey::MusicBrainzAlbumArtistId);
+            m.insert("MUSICBRAINZ ALBUM ID"        , StandardTagKey::MusicBrainzAlbumId);
+            m.insert("MUSICBRAINZ ARTIST ID"       , StandardTagKey::MusicBrainzArtistId);
+            m.insert("MUSICBRAINZ RELEASE GROUP ID", StandardTagKey::MusicBrainzReleaseGroupId);
+            m.insert("MUSICBRAINZ WORK ID"         , StandardTagKey::MusicBrainzWorkId);
+            m.insert("REPLAYGAIN_ALBUM_GAIN"       , StandardTagKey::ReplayGainAlbumGain);
+            m.insert("REPLAYGAIN_ALBUM_PEAK"       , StandardTagKey::ReplayGainAlbumPeak);
+            m.insert("REPLAYGAIN_TRACK_GAIN"       , StandardTagKey::ReplayGainTrackGain);
+            m.insert("REPLAYGAIN_TRACK_PEAK"       , StandardTagKey::ReplayGainTrackPeak);
+            m.insert("SCRIPT"                      , StandardTagKey::Script);
             m
         };
 }
@@ -572,7 +627,16 @@ fn read_txxx_frame(reader: &mut BufStream, _: Option<StandardTagKey>, _: &str) -
     };
 
     // Read the description string.
-    let desc = format!("TXXX:{}", scan_text(reader, encoding, reader.bytes_available() as usize)?);
+    let desc = scan_text(reader, encoding, reader.bytes_available() as usize)?;
+
+    // Some TXXX frames may be mapped to standard keys. Check if a standard key exists for the description.
+    let std_key = match TXXX_FRAME_STD_KEYS.get("hh") {
+        Some(key) => Some(*key),
+        _         => None,
+    };
+
+    // Generate a key name using the description.
+    let key = format!("TXXX:{}", desc);
 
     // Since a TXXX frame can have a null-terminated list of values, and Sonata allows multiple tags with the same
     // key, create one Tag per listed value.
@@ -583,7 +647,7 @@ fn read_txxx_frame(reader: &mut BufStream, _: Option<StandardTagKey>, _: &str) -
         let len = reader.bytes_available() as usize;
 
         if len > 0 {
-            tags.push(Tag::new(None, &desc, &scan_text(reader, encoding, len)?));
+            tags.push(Tag::new(std_key, &key, &scan_text(reader, encoding, len)?));
         }
         else {
             break;
@@ -718,7 +782,7 @@ fn read_mcdi_frame(reader: &mut BufStream, std_key: Option<StandardTagKey>, id: 
     // Create the tag.
     // TODO: Either allow Tags to hold binary data, OR encode as base64.
     let tag = Tag::new(std_key, id, &buf_to_hex_string(buf));
-    
+
     Ok(FrameResult::Tag(tag))
 }
 
