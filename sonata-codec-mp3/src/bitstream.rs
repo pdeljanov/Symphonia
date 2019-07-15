@@ -5,8 +5,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+use sonata_core::checksum::Crc16;
 use sonata_core::errors::{Result, decode_error, unsupported_error};
-use sonata_core::io::{BufStream, BitStream, BitStreamLtr, Bytestream};
+use sonata_core::io::{BufStream, BitStream, BitStreamLtr, Bytestream, MonitorStream};
 
 /// Bit-rate lookup table for MPEG version 1 layer 1.
 static BIT_RATES_MPEG1_L1: [u32; 15] = 
@@ -48,7 +49,8 @@ static BIT_RATES_MPEG2_L23: [u32; 15] =
     64_000, 80_000, 96_000, 112_000, 128_000, 144_000, 160_000,
 ];
 
-static SCALEFAC_SIZES: [(u8, u8); 16] = 
+/// Number of bits for MPEG version 1 scale factors, as indexed by scalefac_compress.
+static SCALE_FACTOR_SLEN: [(u32, u32); 16] = 
 [
     (0, 0), (0, 1), (0, 2), (0, 3), (3, 0), (1, 1), (1, 2), (1, 3), 
     (2, 1), (2, 2), (2, 3), (3, 1), (3, 2), (3, 3), (4, 2), (4, 3),
@@ -115,7 +117,7 @@ impl Channels {
 enum Emphasis {
     // No emphasis
     None,
-    /// 50/15 ms
+    /// 50/15us
     Fifty15,
     /// CCIT J.17
     CcitJ17,
@@ -137,6 +139,43 @@ struct FrameHeader {
     frame_size: usize,
 }
 
+impl FrameHeader {
+    #[inline(always)]
+    fn is_mpeg1(&self) -> bool {
+        self.version == MpegVersion::Mpeg1
+    }
+
+    #[inline(always)]
+    fn is_mpeg2(&self) -> bool {
+        self.version != MpegVersion::Mpeg1
+    }
+    
+    #[inline(always)]
+    fn is_layer1(&self) -> bool {
+        self.layer == MpegLayer::Layer1
+    }
+
+    #[inline(always)]
+    fn is_layer2(&self) -> bool {
+        self.layer == MpegLayer::Layer2
+    }
+
+    #[inline(always)]
+    fn is_layer3(&self) -> bool {
+        self.layer == MpegLayer::Layer3
+    }
+
+    #[inline(always)]
+    fn n_granules(&self) -> usize {
+        if self.layer == MpegLayer::Layer1 { 2 } else { 2 }
+    }
+
+    #[inline(always)]
+    fn n_channels(&self) -> usize {
+        self.channels.count()
+    }
+}
+
 #[derive(Debug, Default)]
 struct SideInfoL3 {
     /// The byte offset into the bit resevoir indicating the location of the first bit of main_data.
@@ -147,7 +186,7 @@ struct SideInfoL3 {
     /// bits. Bands that share scale factors for both granules are indicated by a true. Otherwise, 
     /// each granule must store its own set of scale factors.
     /// 
-    /// Mapping of array indicies to bands [1-5, 6-10, 11-15, 16-20].
+    /// Mapping of array indicies to bands [0-5, 6-10, 11-15, 16-20].
     scfsi: [[bool; 4]; 2],
     /// Granules
     granules: [GranuleSideInfoL3; 2],
@@ -172,21 +211,6 @@ impl SideInfoL3 {
         }
     }
 
-    fn size(version: MpegVersion, channels: Channels) -> usize {
-        // MPEG version 2 & 2.5, one channel.
-        if version != MpegVersion::Mpeg1 && channels == Channels::Mono {
-            9
-        }
-        // MPEG version 1, two channel.
-        else if version == MpegVersion::Mpeg1 && channels != Channels::Mono {
-            32
-        }
-        // MPEG version 2 & 2.5, two channel OR MPEG version 1, one channel.
-        else {
-            17
-        }
-    }
-
 }
 
 #[derive(Debug, Default)]
@@ -201,10 +225,7 @@ enum BlockType {
     // on. Granule contains one long block.
     Long,
     Start,
-    // Scale factor bands 0-5 from scale factor table for long blocks, and bands 3-11 from
-    // scale factor table for short blocks.
-    Mixed,
-    Short,
+    Short { is_mixed: bool },
     End
 }
 
@@ -222,12 +243,11 @@ struct GranuleChannelSideInfoL3 {
     big_values: u16,
     /// Quantization step size.
     global_gain: u16,
-    // Number of bits used for scale factors.
+    // Index into SCALE_FACTOR_SLEN for number of bits used per scale factor in MPEG version 1.
+    // In MPEG version 2, decoded into slen[1-4] to determine number of bits per scale factor.
     scalefac_compress: u16,
     /// Indicates the type of window for the granule.
     block_type: BlockType,
-    /// Indicates different windows are used for lower and higher frequencies.
-    mixed_block: bool,
 
     subblock_gain: [f32; 3],
 
@@ -238,6 +258,24 @@ struct GranuleChannelSideInfoL3 {
     preflag: bool,
     scalefac_scale: bool,
     count1table_select: bool,
+}
+
+#[derive(Debug, Default)]
+struct MainData {
+    granules: [MainDataGranule; 2],
+}
+
+#[derive(Debug, Default)]
+struct MainDataGranule {
+    channels: [MainDataGranuleChannel; 2],
+}
+
+#[derive(Debug, Default)]
+struct MainDataGranuleChannel {
+    /// Long window scale factor bands.
+    scalefac_l: [u8; 22],
+    /// Short window scale factor bands.
+    scalefac_s: [[u8; 3]; 12],
 }
 
 /// Synchronize the provided reader to the end of the frame header, and return the frame header as
@@ -396,8 +434,9 @@ fn read_frame_header<B: Bytestream>(reader: &mut B) -> Result<FrameHeader> {
 fn read_granule_channel_side_info_l3<B: BitStream>(
     bs: &mut B,
     granule: &mut GranuleChannelSideInfoL3,
-    header: &FrameHeader) -> Result<()>
-{
+    header: &FrameHeader,
+) -> Result<()> {
+
     granule.part2_3_length = bs.read_bits_leq32(12)? as u16;
     granule.big_values = bs.read_bits_leq32(9)? as u16;
 
@@ -407,22 +446,24 @@ fn read_granule_channel_side_info_l3<B: BitStream>(
 
     granule.global_gain = bs.read_bits_leq32(8)? as u16;
 
-    granule.scalefac_compress = match header.version {
-        MpegVersion::Mpeg1 => bs.read_bits_leq32(4),
-        _                  => bs.read_bits_leq32(9),
+    granule.scalefac_compress = if header.is_mpeg1() {
+        bs.read_bits_leq32(4)
+    }
+    else {
+        bs.read_bits_leq32(9)
     }? as u16;
-
+    
     let window_switching = bs.read_bit()?;
 
     if window_switching {
         let block_type_enc = bs.read_bits_leq32(2)?;
 
-        granule.mixed_block = bs.read_bit()?;
+        let is_mixed = bs.read_bit()?;
 
         granule.block_type = match block_type_enc {
             0b00 => return decode_error("Invalid block_type."),
             0b01 => BlockType::Start,
-            0b10 => if granule.mixed_block { BlockType::Mixed } else { BlockType::Short },
+            0b10 => BlockType::Short { is_mixed },
             0b11 => BlockType::End,
             _ => unreachable!(),
         };
@@ -436,8 +477,8 @@ fn read_granule_channel_side_info_l3<B: BitStream>(
         }
 
         granule.region0_count = match granule.block_type {
-            BlockType::Short => 8,
-            _                => 7,
+            BlockType::Short {is_mixed: false } => 8,
+            _                                   => 7,
         };
 
         granule.region1_count = 20 - granule.region0_count;
@@ -453,9 +494,11 @@ fn read_granule_channel_side_info_l3<B: BitStream>(
         granule.region1_count = bs.read_bits_leq32(3)? as u8;
     }
 
-    granule.preflag = match header.version {
-        MpegVersion::Mpeg1 => bs.read_bit()?,
-        _                  => granule.scalefac_compress >= 500,
+    granule.preflag = if header.is_mpeg1() { 
+        bs.read_bit()? 
+    } 
+    else { 
+        granule.scalefac_compress >= 500
     };
 
     granule.scalefac_scale = bs.read_bit()?;
@@ -467,21 +510,21 @@ fn read_granule_channel_side_info_l3<B: BitStream>(
 fn read_granule_side_info_l3<B: BitStream>(
     bs: &mut B, 
     granules: &mut GranuleSideInfoL3, 
-    header: &FrameHeader) -> Result<()>
-{
+    header: &FrameHeader,
+) -> Result<()> {
     for channel_granule in &mut granules.channels[..header.channels.count()] {
         read_granule_channel_side_info_l3(bs, channel_granule, header)?;
     }
     Ok(())
 }
 
-fn read_audio_data_l3<B: Bytestream>(reader: &mut B, header: &FrameHeader) -> Result<SideInfoL3> {
+fn l3_read_side_info<B: Bytestream>(reader: &mut B, header: &FrameHeader) -> Result<SideInfoL3> {
     let mut side_info: SideInfoL3 = Default::default();
 
     let mut bs = BitStreamLtr::new(reader);
 
     // For MPEG version 1...
-    if header.version == MpegVersion::Mpeg1 {
+    if header.is_mpeg1() {
         // First 9 bits is main_data_begin.
         side_info.main_data_begin = bs.read_bits_leq32(9)? as u16;
 
@@ -529,6 +572,179 @@ fn read_audio_data_l3<B: Bytestream>(reader: &mut B, header: &FrameHeader) -> Re
     }
 
     Ok(side_info)
+}
+
+/// Reads the scale factors for a single channel in a granule in a MPEG version 1 frame.
+fn l3_read_scale_factors<B: BitStream>(
+    bs: &mut B, 
+    gr: usize,
+    ch: usize,
+    side_info: &SideInfoL3,
+    main_data: &mut MainData, 
+) -> Result<(usize)> {
+
+    let channel = &side_info.granules[gr].channels[ch];
+
+    let (slen1, slen2) = SCALE_FACTOR_SLEN[channel.scalefac_compress as usize];
+
+    // Short or Mixed windows...
+    if let BlockType::Short { is_mixed } = channel.block_type {
+        let data = &mut main_data.granules[gr].channels[ch];
+
+        if slen1 > 0 {
+            // If the block is mixed, then there is a long scale factor window, and two short scale 
+            // factor windows. The long window spans from scale factor bands 0 to 7, each scale 
+            // factor being slen1 number of bits long. Next, a short scale factor window from bands 
+            // 3 to 5, with each scale factor being slen1 number of bits long.
+            let start = if is_mixed {
+                for sfb in 0..8 { data.scalefac_l[sfb] = bs.read_bits_leq32(slen1)? as u8; }
+                3
+            }
+            // Otherwise, the block is short. There are two scale factor band windows. The first 
+            // from band 0 to 5, with each scale factor being slen1 bits long.
+            else {
+                0
+            };
+
+            // This is either the first or second scale factor band depending on if the block is 
+            // mixed or not (see above).
+            for sfb in start..6 {
+                for win in 0..3 { data.scalefac_s[sfb][win] = bs.read_bits_leq32(slen1)? as u8; }
+            }
+        }
+
+        // The final scale factor window is always a a short scale factor window from bands 6 to 11,
+        // with each scale factor being slen2 number of bits long.
+        if slen2 > 0 {
+            for sfb in 6..12 {
+                for win in 0..3 { data.scalefac_s[sfb][win] = bs.read_bits_leq32(slen2)? as u8; }
+            }
+        }
+    }
+    // Normal (long, start, end) windows...
+    else {
+        // For normal windows there are 21 scale factor bands. These bands are divivided into four 
+        // band ranges. Scale factors in the first two band ranges: [0..6], [6..11], have scale 
+        // factors that are slen1 bits long, while the last two band ranges: [11..16], [16..21] have
+        // scale factors that are slen2 bits long.
+        const SCALE_FACTOR_BANDS: [(usize, usize); 4] = [(0, 6), (6, 11), (11, 16), (16, 21)];
+
+        for (i, (start, end)) in SCALE_FACTOR_BANDS.iter().enumerate() {
+            let slen = if i < 2 { slen1 } else { slen2 };
+
+            // Scale factors are already zeroed out, so don't do anything if slen is 0.
+            if slen > 0 {
+                // The scale factor selection information for this channel indicates that the scale
+                // factors should be copied from granule 0 for this channel.
+                if gr > 0 && side_info.scfsi[gr][i] {
+                    let (granule0, granule1) = main_data.granules.split_first_mut().unwrap();
+
+                    granule1[0].channels[ch].scalefac_l[*start..*end]
+                        .copy_from_slice(&granule0.channels[ch].scalefac_l[*start..*end]);
+                }
+                // Otherwise, read the scale factors from the bitstream.
+                else {
+                    for sfb in *start..*end { 
+                        main_data.granules[gr].channels[ch].scalefac_l[sfb] = 
+                            bs.read_bits_leq32(slen)? as u8;
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(0)
+}
+
+/// Reads the scale factors for a single channel in a granule in a MPEG version 2 frame.
+fn l3_read_scale_factors_lsf<B: BitStream>(
+    bs: &mut B, 
+    gr: usize,
+    ch: usize,
+    is_intensity_stereo: bool,
+    side_info: &SideInfoL3,
+    main_data: &mut MainData, 
+) -> Result<(usize)> {
+
+    let slen = if is_intensity_stereo {
+        let sfc = side_info.granules[gr].channels[ch].scalefac_compress as u32 / 2;
+
+        match sfc {
+            0..=179   => [
+                (sfc / 36),
+                (sfc % 36) / 6,
+                (sfc % 36) % 6,
+                0,
+            ],
+            180..=243 => [
+                ((sfc - 180) % 64) >> 4,
+                ((sfc - 180) % 16) >> 2,
+                ((sfc - 180) %  4),
+                0,
+            ],
+            244..=255 => [
+                (sfc - 244) / 3,
+                (sfc - 244) % 3,
+                0,
+                0,
+            ],
+            _ => unreachable!(),
+        }
+    }
+    else {
+        let sfc = side_info.granules[gr].channels[ch].scalefac_compress as u32;
+
+        match sfc {
+            0..=399   => [
+                (sfc >> 4) / 5, 
+                (sfc >> 4) % 5, 
+                (sfc % 16) >> 2, 
+                (sfc %  4)
+            ],
+            400..=499 => [
+                ((sfc - 400) >> 2) / 5,
+                ((sfc - 400) >> 2) % 5,
+                (sfc - 400) % 4,
+                0,
+            ],
+            500..=512 => [
+                (sfc - 500) / 3,
+                (sfc - 500) % 3,
+                0,
+                0,
+            ],
+            _ => unreachable!(),
+        }
+    };
+
+    Ok(0)
+}
+
+fn l3_read_main_data<B: BitStream>(
+    bs: &mut B, 
+    header: &FrameHeader, 
+    side_info: &SideInfoL3,
+) -> Result<MainData> {
+
+    let mut main_data: MainData = Default::default();
+
+    for gr in 0..header.n_granules() {
+        for ch in 0..header.n_channels() {
+            
+            let part2_length = if header.is_mpeg1() {
+                l3_read_scale_factors(bs, gr, ch, side_info, &mut main_data)
+            }
+            else {
+                let is_intensity_stereo = false;
+                l3_read_scale_factors_lsf(bs, gr, ch, is_intensity_stereo, side_info, &mut main_data)
+            }?;
+
+
+        }
+    }
+
+
+    Ok(main_data)
 }
 
 /// `BitResevoir` implements the bit resevoir mechanism for main_data. Since frames have a 
@@ -603,7 +819,8 @@ impl<B: Bytestream> Mp3Decoder<B> {
         match header.layer {
             MpegLayer::Layer3 => {
                 // Read the side information.
-                let side_info = read_audio_data_l3(&mut self.reader, &header)?;
+                let side_info = l3_read_side_info(&mut self.reader, &header)?;
+                eprintln!("{:#?}", &side_info);
 
                 // Buffer main_data into the bit resevoir.
                 self.resevoir.fill(
@@ -613,10 +830,12 @@ impl<B: Bytestream> Mp3Decoder<B> {
 
                 // Read the main_data from the bit resevoir.
                 {
-                    let bs = BitStreamLtr::new(BufStream::new(self.resevoir.bytes_ref()));
+                    let mut bs = BitStreamLtr::new(BufStream::new(self.resevoir.bytes_ref()));
+
+                    let main_data = l3_read_main_data(&mut bs, &header, &side_info)?;
+                    eprintln!("{:#?}", &main_data);
                 }
 
-                eprintln!("{:#?}", &side_info);
             },
             _ => return unsupported_error("Unsupported MPEG Layer."),
         }
@@ -625,3 +844,4 @@ impl<B: Bytestream> Mp3Decoder<B> {
     }
 
 }
+
