@@ -51,56 +51,59 @@ pub mod huffman {
         pub data: &'static [H],
         /// The number of bits to read for the initial lookup in the table.
         pub init_bits: u32,
+        pub batch_bits: u32,
     }
 
     /// `H8` is a `HuffmanEntry` type for 8-bit data values in a `HuffmanTable`.
-    pub type H8 = u16;
+    pub type H8 = (u16, u16);
 
     impl HuffmanEntry for H8 {
         type DataType = u8;
         
         #[inline(always)]
         fn is_data(&self) -> bool {
-            *self & 0x8000 == 0
+            self.0 & 0x8000 != 0
         }
         
         #[inline(always)]
         fn is_jump(&self) -> bool {
-            *self & 0x8000 != 0
+            self.0 & 0x8000 == 0
         }
         
         #[inline(always)]
         fn jump_offset(&self) -> usize {
             debug_assert!(self.is_jump());
-            (*self & 0xfff) as usize
+            self.1 as usize
         }
         
         #[inline(always)]
         fn next_len(&self) -> u32 {
             debug_assert!(self.is_jump());
-            (*self & 0x7000) as u32 >> 12
+            self.0 as u32
         }
-            
+
         #[inline(always)]
         fn code_len(&self) -> u32 {
             debug_assert!(self.is_data());
-            (*self & 0x7000) as u32 >> 12
+            (self.0 & 0x7fff) as u32
         }
 
         #[inline(always)]
         fn into_data(self) -> Self::DataType {
             debug_assert!(self.is_data());
-            (self & 0xff) as u8
+            self.1 as u8
         }
     }
 }
 
+#[macro_export]
 macro_rules! val8 {
-    ($data:expr, $len:expr) => { (($len & 0x7) << 12) | ($data & 0xff) };
+    ($data:expr, $len:expr) => { (0x8000 | ($len & 0x7), $data & 0xff) };
 }
 
+#[macro_export]
 macro_rules! jmp8 {
-    ($offset:expr, $len:expr) => { 0x8000 | (($len & 0x7) << 12) | ($offset & 0x0fff) };
+    ($offset:expr, $len:expr) => { ($len & 0x7, $offset & 0xffff) };
 }
 
 use huffman::*;
@@ -202,34 +205,18 @@ impl BitReaderLtr {
     }
 
     #[inline(always)]
-    fn read_bits_leq8<B: Bytestream>(&mut self, src: &mut B, num_bits: u32) -> io::Result<u32> {
+    pub fn read_bits_leq8<B: Bytestream>(&mut self, src: &mut B, num_bits: u32) -> io::Result<u32> {
         debug_assert!(num_bits <= 8);
 
         if self.n_bits_left < num_bits {
             self.bits = (self.bits << 8) | src.read_u8()? as u32;
             self.n_bits_left += 8
         }
+
         self.n_bits_left -= num_bits;
-        Ok((self.bits >> self.n_bits_left) & !(0xffffffff << num_bits))
+        Ok((self.bits >> self.n_bits_left) & (1 << num_bits) - 1)
     }
 }
-
-// macro_rules! get_cached_bits {
-//     ($get_byte: expr, $cache: expr, $cache_len: expr, $n_needed: expr) => {
-//         {
-//             if $cache_len < $n_needed {
-//                 // Load a new byte.
-//                 $cache = ($cache << 8) | $get_byte as u32;
-//                 // Update bit count.
-//                 $cache_len += 8;
-//             }
-//             // Consume the bits.
-//             $cache_len -= $n_needed;
-//             // Return the bits.
-//             (($cache >> $cache_len) & !(0xffffffff << $n_needed)) as usize
-//         }
-//     };
-// }
 
 impl BitReader for BitReaderLtr {
     #[inline(always)]
@@ -377,40 +364,61 @@ impl BitReader for BitReaderLtr {
 
         debug_assert!(lim_bits > 0);
 
-        let mut n_prev = cmp::min(table.init_bits, lim_bits);
+        let mut n_bits;
+       
+        // The table's maximum possible code word is smaller than lim_bits. Since the limit cannot 
+        // be reached with this table, do not check the limit. This should be the case for most 
+        // reads in a Huffman bitstream.
+        let entry = if table.batch_bits <= lim_bits {
+            n_bits = table.init_bits;
 
-        // Get the first prefix, generally init_bits long, but may be shorter due to lim_bits.
-        let mut prefix = self.read_bits_leq8(src, n_prev)? as usize;
+            let mut entry = table.data[self.read_bits_leq8(src, n_bits)? as usize];
 
-        // The length of lim_bits is not constraining the initial prefix look-up, so further 
-        // look-ups may be required. Proceed with a the decode.
-        let entry = if table.init_bits < lim_bits {
+            while entry.is_jump() {
+                n_bits = entry.next_len();
 
-            let mut entry = table.data[prefix];
-            lim_bits -= n_prev;
-
-            while entry.is_jump() && lim_bits > 0 {
-                n_prev = cmp::min(entry.next_len(), lim_bits);
-                prefix = self.read_bits_leq8(src, n_prev)? as usize;
+                let prefix = self.read_bits_leq8(src, n_bits)? as usize;
                 entry = table.data[entry.jump_offset() + prefix];
-                lim_bits -= n_prev;
             }
 
             entry
         }
-        // The table's init_bit length is >= the lim_bits length. No further decoding can occur.
-        // However, assuming lim_bits is > 0, there may be a code word to decode.
+        // The table has a code in it that may exceed the limit. Verify the limit as the code is 
+        // decoded.
         else {
-            // Pad the shortened prefix up to the init_bit length, and perform a look-up. If prefix 
-            // is a valid code, then the padding bits won't matter.
-            prefix <<= table.init_bits - lim_bits;
-            table.data[prefix]
+            n_bits = cmp::min(table.init_bits, lim_bits);
+
+            // The limit is not constraining the initial prefix look-up, so further look-ups may be 
+            // possible and/or required.
+            if table.init_bits < lim_bits {
+                let mut entry = table.data[self.read_bits_leq8(src, n_bits)? as usize];
+                lim_bits -= n_bits;
+
+                while entry.is_jump() && lim_bits > 0 {
+                    n_bits = cmp::min(entry.next_len(), lim_bits);
+
+                    let prefix = self.read_bits_leq8(src, n_bits)? as usize;
+                    entry = table.data[entry.jump_offset() + prefix];
+
+                    lim_bits -= n_bits;
+                }
+
+                entry
+            }
+            // The table's initial lookup length is longer than the limit. Read the remaining bits 
+            // up-to the limit and try to decode them.
+            else {
+                let prefix = (self.read_bits_leq8(src, n_bits)? as usize) 
+                                << table.init_bits - lim_bits;
+
+                table.data[prefix]
+            }
         };
 
         // If the entry is a data entry, then a valid code was decoded. Return any extra bits 
         // consumed back to the bitstream and return the value.
         if entry.is_data() {
-            self.n_bits_left += n_prev - entry.code_len();
+            self.n_bits_left += n_bits - entry.code_len();
             Ok(entry.into_data())
         }
         // If the entry was a jump entry, then decoding exited early because lim_bits was reached.
@@ -660,6 +668,7 @@ mod tests {
                 val8!(0x20, 1),    // 0b1
             ],
             init_bits: 4,
+            batch_bits: 8,
         };
 
         let mut stream = BufStream::new(&[0b010_00000, 0b0_00001_00]);
