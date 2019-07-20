@@ -12,21 +12,23 @@ use crate::util::bits::*;
 use super::Bytestream;
 
 pub mod huffman {
+    //! The `huffman` module provides traits and structures for implementing Huffman decoders.
+    
     /// A `HuffmanEntry` represents a Huffman code within a table. It is used to abstract the 
     /// underlying data type of a `HuffmanTable` from the Huffman decoding algorithm.
     /// 
-    /// When a Huffman decoder reads a set of bits, those bits may be a partial Huffman code, a 
-    /// prefix, or a complete code. If the code is a prefix, then the `HuffmanEntry` for that code 
-    /// is a jump entry, pointing the Huffman decoder to where the next set of bits, the next part 
-    /// of the Huffman code, should looked up within the `HuffmanTable`. If the code is not a 
-    /// prefix, then `HuffmanEntry` is a data entry and the data will be returned by the Huffman 
+    /// When a Huffman decoder reads a set of bits, those bits may be a partial Huffman code (a 
+    /// prefix), or a complete code. If the code is a prefix, then the `HuffmanEntry` for that code 
+    /// is a jump entry, pointing the Huffman decoder to where the next set of bits (the next part 
+    /// of the Huffman code) should looked up within the `HuffmanTable`. If the code is not a 
+    /// prefix, then `HuffmanEntry` is a value entry and the value will be returned by the Huffman 
     /// decoder.
     pub trait HuffmanEntry : Copy + Clone + Sized {
-        /// The data type stored in the `HuffmanTable`.
-        type DataType : Copy;
+        /// The value type stored in the `HuffmanTable`.
+        type ValueType : Copy;
         
-        /// Returns true if the `HuffmanEntry` is a data entry.
-        fn is_data(&self) -> bool;
+        /// Returns true if the `HuffmanEntry` is a value entry.
+        fn is_value(&self) -> bool;
 
         /// Returns true if the `HuffmanEntry` is a jump entry.
         fn is_jump(&self) -> bool;
@@ -35,33 +37,44 @@ pub mod huffman {
         fn jump_offset(&self) -> usize;
 
         /// For jump entries only, returns the number of bits the Huffman decoder should read to 
-        /// obtain the index relative to the base offset.
+        /// obtain the next part of the Huffman code.
         fn next_len(&self) -> u32;
         
-        /// For data entries only, the length of the code.
+        /// For value entries only, the length of the code.
         fn code_len(&self) -> u32;
 
-        /// For data entries only, consumes the entry and returns the data.
-        fn into_data(self) -> Self::DataType;
+        /// For value entries only, consumes the entry and returns the value.
+        fn into_value(self) -> Self::ValueType;
     }
 
-    /// A `HuffmanTable` is the code table used to map Huffman codes to data values.
+    /// A `HuffmanTable` is the table used to map Huffman codes to decoded values.
+    /// 
+    /// A `HuffmanTable` is structured as a flattened table-of-tables. Wherein there is one table
+    /// partitioned into many sub-tables. Each sub-table is a look-up table for a portion of a 
+    /// complete Huffman code word. Upon look-up, a sub-table either contains the decoded value
+    /// or indicates how many further bits should be read and the index of the sub-table to use for
+    /// the the next look-up. In this way, a tree of "prefixes" is formed where the leaf nodes are 
+    /// contain decoded values.
+    /// 
+    /// The maximum length of each sub-table is `2^n_init_bits - 1`. The initial look-up into the 
+    /// table should be performed using a word of `n_init_bits`-bits long.
     pub struct HuffmanTable<H: HuffmanEntry + 'static> {
-        /// The Huffman code table.
+        /// The Huffman table.
         pub data: &'static [H],
         /// The number of bits to read for the initial lookup in the table.
-        pub init_bits: u32,
-        pub batch_bits: u32,
+        pub n_init_bits: u32,
+        /// The maximum code length within the table in bits.
+        pub n_table_bits: u32,
     }
 
     /// `H8` is a `HuffmanEntry` type for 8-bit data values in a `HuffmanTable`.
     pub type H8 = (u16, u16);
 
     impl HuffmanEntry for H8 {
-        type DataType = u8;
+        type ValueType = u8;
         
         #[inline(always)]
-        fn is_data(&self) -> bool {
+        fn is_value(&self) -> bool {
             self.0 & 0x8000 != 0
         }
         
@@ -84,29 +97,31 @@ pub mod huffman {
 
         #[inline(always)]
         fn code_len(&self) -> u32 {
-            debug_assert!(self.is_data());
+            debug_assert!(self.is_value());
             (self.0 & 0x7fff) as u32
         }
 
         #[inline(always)]
-        fn into_data(self) -> Self::DataType {
-            debug_assert!(self.is_data());
+        fn into_value(self) -> Self::ValueType {
+            debug_assert!(self.is_value());
             self.1 as u8
         }
     }
 }
 
+/// Convenience macro for encoding an `H8` value entry for a `HuffmanTable`. See `jmp8` for `val8`'s
+/// companion entry.
 #[macro_export]
 macro_rules! val8 {
     ($data:expr, $len:expr) => { (0x8000 | ($len & 0x7), $data & 0xff) };
 }
 
+/// Convenience macro for encoding an `H8` jump entry for a `HuffmanTable`. See `val8` for `jmp8`'s 
+/// companion entry.
 #[macro_export]
 macro_rules! jmp8 {
     ($offset:expr, $len:expr) => { ($len & 0x7, $offset & 0xffff) };
 }
-
-use huffman::*;
 
 /// A `BitReader` provides methods to sequentially read non-byte aligned data from a source
 /// `Bytestream`.
@@ -164,26 +179,12 @@ pub trait BitReader {
     /// potentially an extra byte, past the end of a particular code. These extra bits remain 
     /// buffered by the Bitstream for future reads, however, to prevent reading past critical byte 
     /// boundaries, `lim_bits` may be provided to limit the maximum number of bits read.
-    fn read_huffman<B: Bytestream, H: HuffmanEntry>(
+    fn read_huffman<B: Bytestream, H: huffman::HuffmanEntry>(
         &mut self, 
         src: &mut B,
-        table: &HuffmanTable<H>,
+        table: &huffman::HuffmanTable<H>,
         lim_bits: u32,
-    ) -> io::Result<H::DataType>;
-
-    /// Reads a Huffman code incrementally (bit-by-bit) from the `Bytestream` using the provided 
-    /// `HuffmanTable` and returns the decoded value, or an error.
-    /// 
-    /// This function reads bits one-by-one. Unlike `read_huffman` it will not read bits past the 
-    /// end of a code, and thus will not cross byte boundaries unless required to read the code. 
-    /// However, the trade-off is a less efficient decoding process.
-    fn read_huffman_inc<B: Bytestream, H: HuffmanEntry>(
-        &mut self, 
-        src: &mut B, 
-        table: &HuffmanTable<H>
-    ) -> io::Result<H::DataType> {
-        unimplemented!()
-    }
+    ) -> io::Result<H::ValueType>;
 }
 
 /// A `BitReaderLtr` provides an implementation of a `BitReader` that interprets sequential bits in
@@ -355,22 +356,23 @@ impl BitReader for BitReaderLtr {
     }
 
     #[inline(always)]
-    fn read_huffman<B: Bytestream, H: HuffmanEntry>(
+    fn read_huffman<B: Bytestream, H: huffman::HuffmanEntry>(
         &mut self, 
         src: &mut B,
-        table: &HuffmanTable<H>,
+        table: &huffman::HuffmanTable<H>,
         mut lim_bits: u32,
-    ) -> io::Result<H::DataType> {
+    ) -> io::Result<H::ValueType> {
 
         debug_assert!(lim_bits > 0);
 
+        // The most recent number of bits read from the bitstream.
         let mut n_bits;
        
-        // The table's maximum possible code word is smaller than lim_bits. Since the limit cannot 
+        // The table's longest possible code word is smaller than lim_bits. Since the limit cannot 
         // be reached with this table, do not check the limit. This should be the case for most 
         // reads in a Huffman bitstream.
-        let entry = if table.batch_bits <= lim_bits {
-            n_bits = table.init_bits;
+        let entry = if table.n_table_bits <= lim_bits {
+            n_bits = table.n_init_bits;
 
             let mut entry = table.data[self.read_bits_leq8(src, n_bits)? as usize];
 
@@ -383,14 +385,14 @@ impl BitReader for BitReaderLtr {
 
             entry
         }
-        // The table has a code in it that may exceed the limit. Verify the limit as the code is 
-        // decoded.
+        // The table's longest possible code word is longer than lim_bits. It is possible that that 
+        // the limit could be exceeded, therefore, check the limit as the code is decoded.
         else {
-            n_bits = cmp::min(table.init_bits, lim_bits);
+            n_bits = cmp::min(table.n_init_bits, lim_bits);
 
-            // The limit is not constraining the initial prefix look-up, so further look-ups may be 
-            // possible and/or required.
-            if table.init_bits < lim_bits {
+            // The limit is not constraining the initial look-up in the table, however it may 
+            // constrain some further look-up. Check the limit before each look-up after the first.
+            if table.n_init_bits < lim_bits {
                 let mut entry = table.data[self.read_bits_leq8(src, n_bits)? as usize];
                 lim_bits -= n_bits;
 
@@ -409,25 +411,27 @@ impl BitReader for BitReaderLtr {
             // up-to the limit and try to decode them.
             else {
                 let prefix = (self.read_bits_leq8(src, n_bits)? as usize) 
-                                << table.init_bits - lim_bits;
+                                << table.n_init_bits - lim_bits;
 
                 table.data[prefix]
             }
         };
 
-        // If the entry is a data entry, then a valid code was decoded. Return any extra bits 
-        // consumed back to the bitstream and return the value.
-        if entry.is_data() {
+        // If the entry is a data entry then a valid code was decoded. Return any extra bits 
+        // consumed back to the bitstream and then return the value.
+        if entry.is_value() {
             self.n_bits_left += n_bits - entry.code_len();
-            Ok(entry.into_data())
+            Ok(entry.into_value())
         }
-        // If the entry was a jump entry, then decoding exited early because lim_bits was reached.
-        // Return an error.
+        // If the entry is a jump entry then decoding exited early because lim_bits was reached, 
+        // since no matter how the table is followed, it will always reach a data entry. Any read
+        // bits remain consumed. Return an error as this would generally indicate either an error 
+        // in how the bitstream is being used, or the stream is malformed.
         else {
-            Err(io::Error::new(io::ErrorKind::UnexpectedEof, "limit bits reached"))
+            Err(io::Error::new(io::ErrorKind::UnexpectedEof, 
+                "reached bit limit for huffman decode"))
         }
     }
-
 }
 
 /// A `BitStream` provides methods to sequentially read non-byte aligned data from an inner
@@ -486,22 +490,11 @@ pub trait BitStream {
     /// potentially an extra byte, past the end of a particular code. These extra bits remain
     /// buffered by the `BitStream` for future reads, however, to prevent reading past critical byte 
     /// boundaries, `lim_bits` may be provided to limit the maximum number of bits read.
-    fn read_huffman<H: HuffmanEntry>(
+    fn read_huffman<H: huffman::HuffmanEntry>(
         &mut self, 
-        table: &HuffmanTable<H>,
+        table: &huffman::HuffmanTable<H>,
         lim_bits: u32,
-    ) -> io::Result<H::DataType>;
-
-    /// Reads a Huffman code incrementally (bit-by-bit) from the `BitStream` using the provided 
-    /// `HuffmanTable` and returns the decoded value, or an error.
-    /// 
-    /// This function reads bits one-by-one. Unlike `read_huffman` it will not read bits past the 
-    /// end of a code, and thus will not cross byte boundaries unless required to read the code. 
-    /// However, the trade-off is a less efficient decoding process.
-    fn read_huffman_inc<H: HuffmanEntry>(
-        &mut self, 
-        table: &HuffmanTable<H>
-    ) -> io::Result<H::DataType>;
+    ) -> io::Result<H::ValueType>;
 }
 
 pub struct BitStreamLtr<B: Bytestream> {
@@ -550,27 +543,19 @@ impl<B: Bytestream> BitStream for BitStreamLtr<B> {
     }
 
     #[inline(always)]
-    fn read_huffman<H: HuffmanEntry>(
+    fn read_huffman<H: huffman::HuffmanEntry>(
         &mut self, 
-        table: &HuffmanTable<H>,
+        table: &huffman::HuffmanTable<H>,
         lim_bits: u32,
-    ) -> io::Result<H::DataType> {
+    ) -> io::Result<H::ValueType> {
         self.reader.read_huffman(&mut self.inner, table, lim_bits)
-    }
-
-    #[inline(always)]
-    fn read_huffman_inc<H: HuffmanEntry>(
-        &mut self, 
-        table: &HuffmanTable<H>
-    ) -> io::Result<H::DataType> {
-        self.reader.read_huffman_inc(&mut self.inner, table)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::io::BufStream;
-    use super::{BitReader, BitReaderLtr, HuffmanTable, H8};
+    use super::{BitReader, BitReaderLtr, huffman::{HuffmanTable, H8}};
 
     #[test]
     fn verify_read_bit() {
@@ -667,8 +652,8 @@ mod tests {
                 val8!(0x21, 1),    // 0b0
                 val8!(0x20, 1),    // 0b1
             ],
-            init_bits: 4,
-            batch_bits: 8,
+            n_init_bits: 4,
+            n_table_bits: 8,
         };
 
         let mut stream = BufStream::new(&[0b010_00000, 0b0_00001_00]);
