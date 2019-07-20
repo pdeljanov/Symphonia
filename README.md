@@ -19,16 +19,14 @@ Sonata's planned features are:
 Support for individual audio codecs and media formats is provided by separate crates. By default, Sonata selects
 support for FOSS codecs and formats, but others may be included via the features option.
 
-Up-to-date project progress on the [Trello Board](https://trello.com/b/2EhGvDsR).
-
 ### Formats (Mux/Demux)
 
 | Format  | Status      | Feature Flag | Default | Crate                  |  
 |---------|-------------|--------------|---------|------------------------|
-| ISO/MP4 | In Work     | `isomp4`     | No      | `sonata-format-isomp4` |
+| ISO/MP4 | -           | `isomp4`     | No      | `sonata-format-isomp4` |
 | MKV     | -           | `mkv`        | Yes     | `sonata-format-mkv`    |
 | OGG     | -           | `ogg`        | Yes     | `sonata-format-ogg`    |
-| Wave    | Functional  | `wav`        | Yes     | `sonata-format-wav`    |
+| Wave    | Complete    | `wav`        | Yes     | `sonata-format-wav`    |
 | WebM    | -           | `webm`       | No      | `sonata-format-webm`   |
 
 ### Codecs (Decode)
@@ -36,8 +34,10 @@ Up-to-date project progress on the [Trello Board](https://trello.com/b/2EhGvDsR)
 | Codec    | Status      | Feature Flag | Default | Crate                  |
 |----------|-------------|--------------|---------|------------------------|
 | AAC      | -           | `aac`        | No      | `sonata-codec-aac`     |
-| Flac     | Functional  | `flac`       | Yes     | `sonata-codec-flac`    |
+| Flac     | Complete    | `flac`       | Yes     | `sonata-codec-flac`    |
 | Hardware | -           | `hwdec`      | No      | `sonata-codec-hwdec`   |
+| MP1      | In Work     | `mp3`        | No      | `sonata-codec-mp3`     |
+| MP2      | In Work     | `mp3`        | No      | `sonata-codec-mp3`     |
 | MP3      | In Work     | `mp3`        | No      | `sonata-codec-mp3`     |
 | Opus     | -           | `opus`       | Yes     | `sonata-codec-opus`    |
 | PCM      | Functional  | `pcm`        | Yes     | `sonata-codec-pcm`     |
@@ -57,12 +57,28 @@ Sonata plans to provide "unsafe" encoder packages that wrap traditional C-based 
 | Opus     | -           | `libopus`    | No      | `sonata-unsafe-codec-libopus`   |
 | Vorbis   | -           | `libvorbis`  | No      | `sonata-unsafe-codec-libvorbis` |
 
+### Tags (Decode)
+
+Sonata provides decoders for standard tagging formats in `sonata-core` since many multimedia formats share common tagging formats.
+
+| Format                | Status      |
+|-----------------------|-------------|
+| ID3v1                 | Complete    |
+| ID3v2                 | Functional  |
+| Vorbis comment (OGG)  | -           |
+| Vorbis comment (FLAC) | Complete    |
+| RIFF                  | Complete    |
+| APEv1                 | -           |
+| APEv2                 | -           |
+
 ## Quality
 
 In addition to the safety guarantees provided by Rust, Sonata aims to:
 
-* Decode files identically to the leading free-and-open-source software decoder
+* Decode files as well as the leading free-and-open-source software decoders
 * Provide a powerful, consistent, and easy to use API
+* Have absolutely no use of unsafe outside of `sonata-core`
+* Have very minimal dependencies
 * Prevent denial-of-service attacks
 * Be fuzz-tested
 
@@ -74,13 +90,13 @@ Sonata aims to be equivalent in speed to C-based implementations. As Rust suppor
 
 Sonata provides the following tools for debugging purposes:
 
-* `sonata-play` for playing back audio from files
+* `sonata-play` for probing files and playing back audio, as well as serving as a demo application
 
-## Why?
+## Motivation
 
-Rust makes a lot of sense for multimedia programming, particularly when accessing that media over the network. However, currently it is difficult to do something as simple as play a FLAC file. Rust does not have a library like FFMpeg, and even if one uses the FFI, FFMpeg is a difficult library to use and you'd have none of the protections afforded to you by Rust. Sonata is therefore an attempt to fill-in that gap. 
+Rust makes a lot of sense for multimedia programming, particularly when accessing that media over the network. However, currently it is difficult to do something as simple as play a FLAC file. Rust does not have a library like FFMpeg, and even if one uses the FFI, FFMpeg is a difficult library to use and you'd have none of the protections afforded to you by Rust. Sonata is therefore an attempt to fill-in that gap.
 
-Personally, this is a project to learn Rust, and experiment with signal processing.
+Personally, this is a project to learn Rust and experiment with signal processing.
 
 ## Authors
 
@@ -92,6 +108,6 @@ Sonata is provided under the MPL v2.0 license. Please refer to the LICENSE file 
 
 ## Contributing
 
-Sonata is an open-source project and contributions are very welcome! If you would like to make a large contribution, please raise an issue ahead of time to make sure your efforts fit into the project goals, and that there's duplication of effort.
+Sonata is an open-source project and contributions are very welcome! If you would like to make a large contribution, please raise an issue ahead of time to make sure your efforts fit into the project goals, and that there's no duplication of effort. Please be aware that all contributions must also be licensed under the MPL v2.0 license to be accepted.
 
 All contributors will be credited within the CONTRIBUTORS file.
