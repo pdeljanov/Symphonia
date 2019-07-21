@@ -2959,3 +2959,71 @@ pub const HUFFMAN_TABLE_24: HuffmanTable<H8> = HuffmanTable {
     n_table_bits: 12,
 };
 
+pub const QUADS_HUFFMAN_TABLE_A: HuffmanTable<H8> = HuffmanTable {
+    data: &[
+        // 0b ... (0 +16)
+        jmp8!(16, 2),    // 0b0000
+        jmp8!(20, 2),    // 0b0001
+        jmp8!(24, 1),    // 0b0010
+        jmp8!(26, 1),    // 0b0011
+        val8!(0x2, 4),    // 0b0100
+        val8!(0x1, 4),    // 0b0101
+        val8!(0x4, 4),    // 0b0110
+        val8!(0x8, 4),    // 0b0111
+        val8!(0x0, 1),    // 0b1000
+        val8!(0x0, 1),    // 0b1001
+        val8!(0x0, 1),    // 0b1010
+        val8!(0x0, 1),    // 0b1011
+        val8!(0x0, 1),    // 0b1100
+        val8!(0x0, 1),    // 0b1101
+        val8!(0x0, 1),    // 0b1110
+        val8!(0x0, 1),    // 0b1111
+
+        // 0b0000 ... (16 +4)
+        val8!(0xb, 2),    // 0b00
+        val8!(0xf, 2),    // 0b01
+        val8!(0xd, 2),    // 0b10
+        val8!(0xe, 2),    // 0b11
+
+        // 0b0001 ... (20 +4)
+        val8!(0x7, 2),    // 0b00
+        val8!(0x5, 2),    // 0b01
+        val8!(0x9, 1),    // 0b10
+        val8!(0x9, 1),    // 0b11
+
+        // 0b0010 ... (24 +2)
+        val8!(0x6, 1),    // 0b0
+        val8!(0x3, 1),    // 0b1
+
+        // 0b0011 ... (26 +2)
+        val8!(0xa, 1),    // 0b0
+        val8!(0xc, 1),    // 0b1
+    ],
+    n_init_bits: 4,
+    n_table_bits: 6,
+};
+
+pub const QUADS_HUFFMAN_TABLE_B: HuffmanTable<H8> = HuffmanTable {
+    data: &[
+        // 0b ... (0 +16)
+        val8!(0xf, 4),    // 0b0000
+        val8!(0xe, 4),    // 0b0001
+        val8!(0xd, 4),    // 0b0010
+        val8!(0xc, 4),    // 0b0011
+        val8!(0xb, 4),    // 0b0100
+        val8!(0xa, 4),    // 0b0101
+        val8!(0x9, 4),    // 0b0110
+        val8!(0x8, 4),    // 0b0111
+        val8!(0x7, 4),    // 0b1000
+        val8!(0x6, 4),    // 0b1001
+        val8!(0x5, 4),    // 0b1010
+        val8!(0x4, 4),    // 0b1011
+        val8!(0x3, 4),    // 0b1100
+        val8!(0x2, 4),    // 0b1101
+        val8!(0x1, 4),    // 0b1110
+        val8!(0x0, 4),    // 0b1111
+    ],
+    n_init_bits: 4,
+    n_table_bits: 4,
+};
+

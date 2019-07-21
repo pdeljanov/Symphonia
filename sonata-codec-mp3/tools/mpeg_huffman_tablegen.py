@@ -453,6 +453,12 @@ MPEG_HUFFBITS_24 = [
     7,  7,  7,  8,  8,  8,  8,  4,
     ]
 
+MPEG_QUADS_HUFFCODES_A = [ 1, 5, 4, 5, 6, 5, 4, 4, 7, 3, 6, 0, 7, 2, 3, 1, ]
+MPEG_QUADS_HUFFBITS_A  = [ 1, 4, 4, 5, 4, 6, 5, 6, 4, 5, 5, 6, 5, 6, 6, 6, ]
+
+MPEG_QUADS_HUFFCODES_B = [ 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0, ]
+MPEG_QUADS_HUFFBITS_B  = [  4,  4,  4,  4,  4,  4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, ]
+
 class MpegTable:
     def __init__(self, name, codes, code_lens, wrap):
         assert len(codes) == len(code_lens)
@@ -480,6 +486,8 @@ MPEG_TABLES = [
     MpegTable("HUFFMAN_TABLE_15", MPEG_HUFFCODES_15, MPEG_HUFFBITS_15, 0x10),
     MpegTable("HUFFMAN_TABLE_16", MPEG_HUFFCODES_16, MPEG_HUFFBITS_16, 0x10),
     MpegTable("HUFFMAN_TABLE_24", MPEG_HUFFCODES_24, MPEG_HUFFBITS_24, 0x10),
+    MpegTable("QUADS_HUFFMAN_TABLE_A", MPEG_QUADS_HUFFCODES_A, MPEG_QUADS_HUFFBITS_A, 0x10),
+    MpegTable("QUADS_HUFFMAN_TABLE_B", MPEG_QUADS_HUFFCODES_B, MPEG_QUADS_HUFFBITS_B, 0x10),
     ]
 
 class Node:
