@@ -19,6 +19,12 @@
 use sonata_core::{val8, jmp8};
 use sonata_core::io::huffman::{H8, HuffmanTable};
 
+pub const HUFFMAN_TABLE_0: HuffmanTable<H8> = HuffmanTable {
+    data: &[],
+    n_init_bits: 0,
+    n_table_bits: 0,
+};
+
 pub const HUFFMAN_TABLE_1: HuffmanTable<H8> = HuffmanTable {
     data: &[
         // 0b ... (0 +8)

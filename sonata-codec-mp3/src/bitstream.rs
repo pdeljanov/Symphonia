@@ -7,7 +7,9 @@
 
 use sonata_core::checksum::Crc16;
 use sonata_core::errors::{Result, decode_error, unsupported_error};
-use sonata_core::io::{BufStream, BitStream, BitStreamLtr, Bytestream};
+use sonata_core::io::{BufStream, BitStream, BitStreamLtr, Bytestream, huffman::{H8, HuffmanTable}};
+
+use super::huffman_tables::*;
 
 /// Bit-rate lookup table for MPEG version 1 layer 1.
 static BIT_RATES_MPEG1_L1: [u32; 15] = 
@@ -66,6 +68,119 @@ const SCALE_FACTOR_NSFB: [[[usize; 4]; 3]; 6] = [
     [[ 7,  7, 7, 0], [12, 12, 12, 0], [ 6, 15, 12, 0]],
     [[ 6,  6, 6, 3], [12,  9,  9, 6], [ 6, 12,  9, 6]],
     [[ 8,  8, 5, 0], [15, 12,  9, 0], [ 6, 18,  9, 0]],
+];
+
+/// Startng indicies of each scale factor band at various sampling rates for long blocks.
+const SCALE_FACTOR_LONG_BANDS: [[usize; 23]; 9] = [
+    // 44.1 kHz, MPEG version 1
+    [
+         0,  4,   8,  12,  16,  20,  24,  30,  36,  42,  50, 60, 
+        72, 88, 106, 128, 156, 190, 230, 276, 330, 384, 576,
+    ],
+    // 48 kHz
+    [
+         0,   4,   8,  12,  16,  20,  24,  30,  36,  44,  54, 66, 
+        82, 102, 126, 156, 194, 240, 296, 364, 448, 550, 576,
+    ],
+    // 32 kHz
+    [
+         0,   4,   8,  12,  16,  20,  24,  30,  36,  44,   52, 62,
+        74,  90, 110,  134, 162, 196, 238, 288, 342, 418, 576,
+    ],
+    // 22.050 kHz, MPEG version 2
+    [
+         0,  4,   8,  12,  16,  20,  24,  30,  36,  44,  52, 62, 
+        74, 90, 110, 134, 162, 196, 238, 288, 342, 418, 576,
+    ],
+    // 24 kHz
+    [
+        0, 4, 8, 12, 16, 20, 24, 30, 36, 42, 50, 60, 
+        72, 88, 106, 128, 156, 190, 230, 276, 330, 384, 576,
+    ],
+    // 16 kHz
+    [
+         0,   4,   8,  12,  16,  20,  24,  30,  36,  44,  54, 66, 
+        82, 102, 126, 156, 194, 240, 296, 364, 448, 550, 576,
+    ],
+    // 11.025 kHz, MPEG version 2.5
+    [
+          0,   6,  12,  18,  24,  30,  36,  44,  54,  66,  80, 96, 
+        116, 140, 168, 200, 238, 284, 336, 396, 464, 522, 576,
+    ],
+    // 12 kHz
+    [
+          0,   6,  12,  18,  24,  30,  36,  44,  54,  66,  80, 96, 
+        116, 140, 168, 200, 238, 284, 336, 396, 464, 522, 576,
+    ],
+    // 8 kHz
+    [
+          0,  12,  24 , 36,  48,  60,  72,  88, 108, 132, 160, 192, 
+        232, 280, 336, 400, 476, 566, 568, 570, 572, 574, 576,
+    ],
+];
+
+/// Startng indicies of each scale factor band at various sampling rates for short blocks.
+const SCALE_FACTOR_SHORT_BANDS: [[u32; 14]; 9] = [
+    // 44.1 kHz
+    [0, 4,  8, 12, 16, 22, 30, 40,  52,  66,  84, 106, 136, 192],
+    // 48 kHz
+    [0, 4,  8, 12, 16, 22, 28, 38,  50,  64,  80, 100, 126, 192],
+    // 32 kHz
+    [0, 4,  8, 12, 16, 22, 30, 42,  58,  78, 104, 138, 180, 192],
+    // 22.050 kHz
+    [0, 4,  8, 12, 16, 22, 30, 40,  52,  66,  84, 106, 136, 192],
+    // 24 kHz
+    [0, 4,  8, 12, 16, 22, 28, 38,  50,  64,  80, 100, 126, 192],
+    // 16 kHz
+    [0, 4,  8, 12, 16, 22, 30, 42,  58,  78, 104, 138, 180, 192],
+    // 11.025 kHz
+    [0, 4,  8, 12, 18, 26, 36, 48,  62,  80, 104, 134, 174, 192],
+    // 12 kHz
+    [0, 4,  8, 12, 18, 26, 36, 48,  62,  80, 104, 134, 174, 192],
+    // 8 kHz
+    [0, 8, 16, 24, 36, 52, 72, 96, 124, 160, 162, 164, 166, 192],
+];
+
+struct MpegHuffmanTable {
+    /// The Huffman decode table.
+    table: &'static HuffmanTable<H8>,
+    /// Number of extra bits to read if the decoded Huffman value is saturated.
+    linbits: u32,
+}
+
+const HUFFMAN_TABLES: [MpegHuffmanTable; 32] = [
+    MpegHuffmanTable { table: &HUFFMAN_TABLE_0,  linbits:  0 },
+    MpegHuffmanTable { table: &HUFFMAN_TABLE_1,  linbits:  0 },
+    MpegHuffmanTable { table: &HUFFMAN_TABLE_2,  linbits:  0 },
+    MpegHuffmanTable { table: &HUFFMAN_TABLE_3,  linbits:  0 },
+    MpegHuffmanTable { table: &HUFFMAN_TABLE_0,  linbits:  0 },
+    MpegHuffmanTable { table: &HUFFMAN_TABLE_5,  linbits:  0 },
+    MpegHuffmanTable { table: &HUFFMAN_TABLE_6,  linbits:  0 },
+    MpegHuffmanTable { table: &HUFFMAN_TABLE_7,  linbits:  0 },
+    MpegHuffmanTable { table: &HUFFMAN_TABLE_8,  linbits:  0 },
+    MpegHuffmanTable { table: &HUFFMAN_TABLE_9,  linbits:  0 },
+    MpegHuffmanTable { table: &HUFFMAN_TABLE_10, linbits:  0 },
+    MpegHuffmanTable { table: &HUFFMAN_TABLE_11, linbits:  0 },
+    MpegHuffmanTable { table: &HUFFMAN_TABLE_12, linbits:  0 },
+    MpegHuffmanTable { table: &HUFFMAN_TABLE_13, linbits:  0 },
+    MpegHuffmanTable { table: &HUFFMAN_TABLE_0,  linbits:  0 },
+    MpegHuffmanTable { table: &HUFFMAN_TABLE_15, linbits:  0 },
+    MpegHuffmanTable { table: &HUFFMAN_TABLE_16, linbits:  1 },
+    MpegHuffmanTable { table: &HUFFMAN_TABLE_16, linbits:  2 },
+    MpegHuffmanTable { table: &HUFFMAN_TABLE_16, linbits:  3 },
+    MpegHuffmanTable { table: &HUFFMAN_TABLE_16, linbits:  4 },
+    MpegHuffmanTable { table: &HUFFMAN_TABLE_16, linbits:  6 },
+    MpegHuffmanTable { table: &HUFFMAN_TABLE_16, linbits:  8 },
+    MpegHuffmanTable { table: &HUFFMAN_TABLE_16, linbits: 10 },
+    MpegHuffmanTable { table: &HUFFMAN_TABLE_16, linbits: 13 },
+    MpegHuffmanTable { table: &HUFFMAN_TABLE_24, linbits:  4 },
+    MpegHuffmanTable { table: &HUFFMAN_TABLE_24, linbits:  5 },
+    MpegHuffmanTable { table: &HUFFMAN_TABLE_24, linbits:  6 },
+    MpegHuffmanTable { table: &HUFFMAN_TABLE_24, linbits:  7 },
+    MpegHuffmanTable { table: &HUFFMAN_TABLE_24, linbits:  8 },
+    MpegHuffmanTable { table: &HUFFMAN_TABLE_24, linbits:  9 },
+    MpegHuffmanTable { table: &HUFFMAN_TABLE_24, linbits: 11 },
+    MpegHuffmanTable { table: &HUFFMAN_TABLE_24, linbits: 13 },
 ];
 
 /// The MPEG audio version.
@@ -142,6 +257,7 @@ struct FrameHeader {
     layer: MpegLayer,
     bitrate: u32,
     sample_rate: u32,
+    sample_rate_idx: usize,
     channels: Channels,
     emphasis: Emphasis,
     is_copyrighted: bool,
@@ -369,16 +485,16 @@ fn read_frame_header<B: Bytestream>(reader: &mut B) -> Result<FrameHeader> {
         (i,                  _,                 _) => BIT_RATES_MPEG2_L23[i as usize],
     };
 
-    let sample_rate = match ((header & 0xc00) >> 10, version) {
-        (0b00, MpegVersion::Mpeg1)   => 44_100,
-        (0b00, MpegVersion::Mpeg2)   => 22_050,
-        (0b00, MpegVersion::Mpeg2p5) => 11_025,
-        (0b01, MpegVersion::Mpeg1)   => 48_000,
-        (0b01, MpegVersion::Mpeg2)   => 24_000,
-        (0b01, MpegVersion::Mpeg2p5) => 12_000,
-        (0b10, MpegVersion::Mpeg1)   => 32_000,
-        (0b10, MpegVersion::Mpeg2)   => 16_000,
-        (0b10, MpegVersion::Mpeg2p5) =>  8_000,
+    let (sample_rate, sample_rate_idx) = match ((header & 0xc00) >> 10, version) {
+        (0b00, MpegVersion::Mpeg1)   => (44_100, 0),
+        (0b01, MpegVersion::Mpeg1)   => (48_000, 1),
+        (0b10, MpegVersion::Mpeg1)   => (32_000, 2),
+        (0b00, MpegVersion::Mpeg2)   => (22_050, 3),
+        (0b01, MpegVersion::Mpeg2)   => (24_000, 4),
+        (0b10, MpegVersion::Mpeg2)   => (16_000, 5),
+        (0b00, MpegVersion::Mpeg2p5) => (11_025, 6),
+        (0b01, MpegVersion::Mpeg2p5) => (12_000, 7),
+        (0b10, MpegVersion::Mpeg2p5) => ( 8_000, 8),
         _                            => return decode_error("Invalid sample rate."),
     };
 
@@ -456,6 +572,7 @@ fn read_frame_header<B: Bytestream>(reader: &mut B) -> Result<FrameHeader> {
         layer,
         bitrate,
         sample_rate,
+        sample_rate_idx,
         channels,
         emphasis,
         is_copyrighted,
@@ -766,6 +883,8 @@ fn l3_read_scale_factors_lsf<B: BitStream>(
     let mut start = 0;
 
     for (&slen, &n_sfb) in slen_table.iter().zip(nsfb_table.iter()) {
+        // TODO: A maximum value indicates an invalid position for Intensity Stereo. Deal with this
+        // here? (ISO-13818-3 part 2.4.3.2)
         for sfb in start..(start + n_sfb) {
            channel.scalefacs[sfb] = bs.read_bits_leq32(slen)? as u8;
         }
@@ -775,6 +894,34 @@ fn l3_read_scale_factors_lsf<B: BitStream>(
     }
 
     Ok(bits_read)
+}
+
+
+
+fn l3_read_huffman_samples<B: BitStream>(
+    bs: &mut B,
+    header: &FrameHeader,
+    side_info: &GranuleChannelSideInfoL3,
+    buf: &mut [f32; 576]
+) -> Result<()> {
+
+    let (region1_start, region2_start) = match side_info.block_type {
+        BlockType::Short { is_mixed } => (36, 576),
+        _ => {
+            let region1_start_idx = side_info.region0_count as usize + 1;
+            let region2_start_idx = side_info.region1_count as usize + region1_start_idx + 1;
+
+            (
+                SCALE_FACTOR_LONG_BANDS[header.sample_rate_idx][region1_start_idx],
+                SCALE_FACTOR_LONG_BANDS[header.sample_rate_idx][region2_start_idx]
+            )
+        }
+    };
+
+
+    
+
+    Ok(())
 }
 
 fn l3_read_main_data<B: BitStream>(
@@ -806,6 +953,16 @@ fn l3_read_main_data<B: BitStream>(
                 - part2_bits;
 
             eprintln!("part2_bits={}, part3_bits={}", part2_bits, part3_bits);
+
+            let mut samples = [0f32; 576];
+
+            l3_read_huffman_samples(
+                bs, 
+                header, 
+                &side_info.granules[gr].channels[ch], 
+                &mut samples
+                )?;
+
         }
     }
 
@@ -817,7 +974,7 @@ fn l3_read_main_data<B: BitStream>(
 /// deterministic length based on the bit-rate, low-complexity portions of the audio may not need
 /// every byte allocated to the frame. The bit resevoir mechanism allows these unused portions of 
 /// frames to be used by future frames.
-pub struct BitResevoir {
+struct BitResevoir {
     buf: Box<[u8]>,
     len: usize,
 }
@@ -909,4 +1066,3 @@ impl<B: Bytestream> Mp3Decoder<B> {
     }
 
 }
-
