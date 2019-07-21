@@ -732,7 +732,7 @@ fn l3_read_scale_factors<B: BitStream>(
     ch: usize,
     side_info: &SideInfoL3,
     main_data: &mut MainData, 
-) -> Result<(usize)> {
+) -> Result<(u32)> {
 
     let mut bits_read = 0;
 
@@ -804,7 +804,7 @@ fn l3_read_scale_factors<B: BitStream>(
         }
     }
 
-    Ok(bits_read)
+    Ok(bits_read as u32)
 }
 
 /// Reads the scale factors for a single channel in a granule in a MPEG version 2 frame.
@@ -813,7 +813,7 @@ fn l3_read_scale_factors_lsf<B: BitStream>(
     is_intensity_stereo: bool,
     side_info: &GranuleChannelSideInfoL3,
     channel: &mut MainDataGranuleChannel, 
-) -> Result<(usize)> {
+) -> Result<(u32)> {
 
     let mut bits_read = 0;
 
@@ -890,7 +890,7 @@ fn l3_read_scale_factors_lsf<B: BitStream>(
         }
 
         start += n_sfb;
-        bits_read += n_sfb * slen as usize;
+        bits_read += n_sfb as u32 * slen;
     }
 
     Ok(bits_read)
@@ -902,11 +902,17 @@ fn l3_read_huffman_samples<B: BitStream>(
     bs: &mut B,
     header: &FrameHeader,
     side_info: &GranuleChannelSideInfoL3,
+    part3_bits: u32,
     buf: &mut [f32; 576]
 ) -> Result<()> {
 
+
+    // Determine the starting indicies of region0, region1, and region2 of the big_values. Region0 
+    // always starts at 0, while the next two regions depend on block type and sample rate.
     let (region1_start, region2_start) = match side_info.block_type {
-        BlockType::Short { is_mixed } => (36, 576),
+        // Short block types (mixed or not), do not have a second region.
+        BlockType::Short { .. } => (36, 576),
+        // Other block types have their region boundaries set based on sample rate.
         _ => {
             let region1_start_idx = side_info.region0_count as usize + 1;
             let region2_start_idx = side_info.region1_count as usize + region1_start_idx + 1;
@@ -918,8 +924,120 @@ fn l3_read_huffman_samples<B: BitStream>(
         }
     };
 
+    let mut bits_read = 0;
+    let mut sample = 0;
 
-    
+    // Read the big_values.
+    let big_values_len = (side_info.big_values as usize) << 1;
+
+    while sample < big_values_len {
+        // Select the table based on the region.
+        let table = if sample < region1_start {
+            &HUFFMAN_TABLES[side_info.table_select[0] as usize]
+        }
+        else if sample < region2_start {
+            &HUFFMAN_TABLES[side_info.table_select[0] as usize]
+        }
+        else {
+            &HUFFMAN_TABLES[side_info.table_select[2] as usize]
+        };
+
+        // Decode the next Huffman code to get the value.
+        let value = bs.read_huffman(&table.table, part3_bits - bits_read)?;
+
+        // For big values, each Huffman code decodes to two sample values, x and y. Each sample is 
+        // 4-bits long.
+        let mut x = (value >> 4) as i32;
+        let mut y = (value & 0xf) as i32;
+
+        // If a sample is saturated, and the table has linbits, read linbits more bits and add it to
+        // the sample.
+        if table.linbits > 0 && x == 15 {
+            bits_read += table.linbits;
+            x += bs.read_bits_leq32(table.linbits)? as i32;
+        }
+
+        // If the sample is not zero, read the sign bit.
+        if x > 0 && bs.read_bit()? {
+            bits_read += 1;
+            x = -x;
+        }
+
+        // Likewise, repeat the previous two steps for the second sample.
+        if table.linbits > 0 && y == 15 {
+            bits_read += table.linbits;
+            y += bs.read_bits_leq32(table.linbits)? as i32;
+        }
+
+        if y > 0 && bs.read_bit()? {
+            bits_read += 1;
+            y = -y;
+        }
+
+        buf[sample] = x as f32;
+        sample += 1;
+        buf[sample] = y as f32;
+        sample += 1;
+    }
+
+    if bits_read > part3_bits {
+        return decode_error("huffman big_values overrun")
+    }
+
+    // Read the count1 region (quads)
+    let count1_table = match side_info.count1table_select {
+        true => QUADS_HUFFMAN_TABLE_A,
+        _    => QUADS_HUFFMAN_TABLE_B,
+    };
+
+    while sample <= 572 && bits_read < part3_bits {
+        let value = bs.read_huffman(&count1_table, part3_bits - bits_read)?;
+        
+        let mut v = ((value >> 3) & 0x1) as f32;
+        let mut w = ((value >> 2) & 0x1) as f32;
+        let mut x = ((value >> 1) & 0x1) as f32;
+        let mut y = ((value >> 0) & 0x1) as f32;
+
+        if v > 0.0 && bs.read_bit()? {
+            v = -v;
+        }
+
+        if w > 0.0 && bs.read_bit()? {
+            w = -w;
+        }
+        
+        if x > 0.0 && bs.read_bit()? {
+            x = -x;
+        }
+
+        if y > 0.0 && bs.read_bit()? {
+            y = -y;
+        }
+
+        buf[sample] = v;
+        sample += 1;
+        buf[sample] = w;
+        sample += 1;
+        buf[sample] = x;
+        sample += 1;
+        buf[sample] = y;
+        sample += 1;
+    }
+
+    // Ignore extra bits.
+    if bits_read < part3_bits {
+        bs.ignore_bits(part3_bits - bits_read)?;
+    }
+    // Some encoders mess up the boundary condition for the count1 region.
+    else if bits_read > part3_bits {
+        sample -= 4;
+    }
+
+    // Fill in the rzero (zeros) area.
+    while sample < 576 {
+        buf[sample] = 0.0;
+        sample += 1;
+    }
 
     Ok(())
 }
@@ -949,7 +1067,7 @@ fn l3_read_main_data<B: BitStream>(
             }?;
 
             // The Huffman code length (part3)
-            let part3_bits = side_info.granules[gr].channels[ch].part2_3_length as usize 
+            let part3_bits = side_info.granules[gr].channels[ch].part2_3_length as u32
                 - part2_bits;
 
             eprintln!("part2_bits={}, part3_bits={}", part2_bits, part3_bits);
@@ -960,6 +1078,7 @@ fn l3_read_main_data<B: BitStream>(
                 bs, 
                 header, 
                 &side_info.granules[gr].channels[ch], 
+                part3_bits,
                 &mut samples
                 )?;
 
