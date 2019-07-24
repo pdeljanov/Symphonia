@@ -184,7 +184,7 @@ pub trait BitReader {
         src: &mut B,
         table: &huffman::HuffmanTable<H>,
         lim_bits: u32,
-    ) -> io::Result<H::ValueType>;
+    ) -> io::Result<(H::ValueType, u32)>;
 }
 
 /// A `BitReaderLtr` provides an implementation of a `BitReader` that interprets sequential bits in
@@ -360,19 +360,22 @@ impl BitReader for BitReaderLtr {
         &mut self, 
         src: &mut B,
         table: &huffman::HuffmanTable<H>,
-        mut lim_bits: u32,
-    ) -> io::Result<H::ValueType> {
+        lim_bits: u32,
+    ) -> io::Result<(H::ValueType, u32)> {
 
         debug_assert!(lim_bits > 0);
+        debug_assert!(!table.data.is_empty());
 
         // The most recent number of bits read from the bitstream.
         let mut n_bits;
+        let mut code_len;
        
         // The table's longest possible code word is smaller than lim_bits. Since the limit cannot 
         // be reached with this table, do not check the limit. This should be the case for most 
         // reads in a Huffman bitstream.
         let entry = if table.n_table_bits <= lim_bits {
             n_bits = table.n_init_bits;
+            code_len = n_bits;
 
             let mut entry = table.data[self.read_bits_leq8(src, n_bits)? as usize];
 
@@ -381,30 +384,33 @@ impl BitReader for BitReaderLtr {
 
                 let prefix = self.read_bits_leq8(src, n_bits)? as usize;
                 entry = table.data[entry.jump_offset() + prefix];
-            }
 
+                code_len += n_bits;
+            }
+            
             entry
         }
         // The table's longest possible code word is longer than lim_bits. It is possible that that 
         // the limit could be exceeded, therefore, check the limit as the code is decoded.
         else {
             n_bits = cmp::min(table.n_init_bits, lim_bits);
+            code_len = n_bits;
 
             // The limit is not constraining the initial look-up in the table, however it may 
             // constrain some further look-up. Check the limit before each look-up after the first.
             if table.n_init_bits < lim_bits {
                 let mut entry = table.data[self.read_bits_leq8(src, n_bits)? as usize];
-                lim_bits -= n_bits;
 
-                while entry.is_jump() && lim_bits > 0 {
-                    n_bits = cmp::min(entry.next_len(), lim_bits);
+                while entry.is_jump() && code_len < lim_bits {
+                    n_bits = cmp::min(entry.next_len(), lim_bits - code_len);
+                    
+                    let prefix = self.read_bits_leq8(src, n_bits)? << (entry.next_len() - n_bits);
+                    
+                    entry = table.data[entry.jump_offset() + prefix as usize];
 
-                    let prefix = self.read_bits_leq8(src, n_bits)? as usize;
-                    entry = table.data[entry.jump_offset() + prefix];
-
-                    lim_bits -= n_bits;
+                    code_len += n_bits;
                 }
-
+                
                 entry
             }
             // The table's initial lookup length is longer than the limit. Read the remaining bits 
@@ -417,19 +423,22 @@ impl BitReader for BitReaderLtr {
             }
         };
 
-        // If the entry is a data entry then a valid code was decoded. Return any extra bits 
-        // consumed back to the bitstream and then return the value.
-        if entry.is_value() {
-            self.n_bits_left += n_bits - entry.code_len();
-            Ok(entry.into_value())
+        // If the entry is a data entry then a valid code was decoded.
+        if entry.is_value() && n_bits >= entry.code_len() {
+            // Extra bits may have been consumed by the decoder. Return any extra bits back to the
+            // bitstream.
+            let extra_bits = n_bits - entry.code_len();
+            self.n_bits_left += extra_bits;
+
+            // Return the value with the code length.
+            Ok((entry.into_value(), code_len - extra_bits))
         }
         // If the entry is a jump entry then decoding exited early because lim_bits was reached, 
         // since no matter how the table is followed, it will always reach a data entry. Any read
         // bits remain consumed. Return an error as this would generally indicate either an error 
         // in how the bitstream is being used, or the stream is malformed.
         else {
-            Err(io::Error::new(io::ErrorKind::UnexpectedEof, 
-                "reached bit limit for huffman decode"))
+            Err(io::Error::new(io::ErrorKind::Other, "reached bit limit for huffman decode"))
         }
     }
 }
@@ -494,7 +503,7 @@ pub trait BitStream {
         &mut self, 
         table: &huffman::HuffmanTable<H>,
         lim_bits: u32,
-    ) -> io::Result<H::ValueType>;
+    ) -> io::Result<(H::ValueType, u32)>;
 }
 
 pub struct BitStreamLtr<B: Bytestream> {
@@ -547,7 +556,7 @@ impl<B: Bytestream> BitStream for BitStreamLtr<B> {
         &mut self, 
         table: &huffman::HuffmanTable<H>,
         lim_bits: u32,
-    ) -> io::Result<H::ValueType> {
+    ) -> io::Result<(H::ValueType, u32)> {
         self.reader.read_huffman(&mut self.inner, table, lim_bits)
     }
 }
@@ -656,12 +665,14 @@ mod tests {
             n_table_bits: 8,
         };
 
-        let mut stream = BufStream::new(&[0b010_00000, 0b0_00001_00]);
+        let mut stream = BufStream::new(&[0b010_00000, 0b0_00001_00, 0b0001_001_0]);
 
         let mut br = BitReaderLtr::new();
 
-        assert_eq!(br.read_huffman(&mut stream, &TABLE, 16).unwrap(), 0x1);
-        assert_eq!(br.read_huffman(&mut stream, &TABLE, 13).unwrap(), 0x22);
-        assert_eq!(br.read_huffman(&mut stream, &TABLE, 7).unwrap(), 0x12);
+        assert_eq!(br.read_huffman(&mut stream, &TABLE, 24).unwrap().0, 0x1 );
+        assert_eq!(br.read_huffman(&mut stream, &TABLE, 21).unwrap().0, 0x22);
+        assert_eq!(br.read_huffman(&mut stream, &TABLE, 15).unwrap().0, 0x12);
+        assert_eq!(br.read_huffman(&mut stream, &TABLE, 10).unwrap().0, 0x2 );
+        assert_eq!(br.read_huffman(&mut stream, &TABLE,  3).unwrap().0, 0x11);
     }
 }

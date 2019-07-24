@@ -59,128 +59,160 @@ static SCALE_FACTOR_SLEN: [(u32, u32); 16] =
 ];
 
 /// Number of bits for MPEG version 2 scale factors. Indexed by scalefac_compress, and block_type.
-const SCALE_FACTOR_NSFB: [[[usize; 4]; 3]; 6] = [
+const SCALE_FACTOR_LSF_NSFB: [[[usize; 4]; 3]; 6] = [
     // Intensity stereo channel modes.
-    [[ 6,  5, 5, 5], [ 9,  9,  9, 9], [ 6,  9,  9, 9]],
-    [[ 6,  5, 7, 3], [ 9,  9, 12, 6], [ 6,  9, 12, 6]],
-    [[11, 10, 0, 0], [18, 18,  0, 0], [15, 18,  0, 0]],
-    // Other channel modes.
     [[ 7,  7, 7, 0], [12, 12, 12, 0], [ 6, 15, 12, 0]],
     [[ 6,  6, 6, 3], [12,  9,  9, 6], [ 6, 12,  9, 6]],
     [[ 8,  8, 5, 0], [15, 12,  9, 0], [ 6, 18,  9, 0]],
+    // Other channel modes.
+    [[ 6,  5, 5, 5], [ 9,  9,  9, 9], [ 6,  9,  9, 9]],
+    [[ 6,  5, 7, 3], [ 9,  9, 12, 6], [ 6,  9, 12, 6]],
+    [[11, 10, 0, 0], [18, 18,  0, 0], [15, 18,  0, 0]],
 ];
 
 /// Startng indicies of each scale factor band at various sampling rates for long blocks.
 const SCALE_FACTOR_LONG_BANDS: [[usize; 23]; 9] = [
     // 44.1 kHz, MPEG version 1
-    [
-         0,  4,   8,  12,  16,  20,  24,  30,  36,  42,  50, 60, 
-        72, 88, 106, 128, 156, 190, 230, 276, 330, 384, 576,
+    [ 
+        0, 4, 8, 12, 16, 20, 24, 30, 36, 44, 52, 62, 74, 90, 110, 134, 
+        162, 196, 238, 288, 342, 418, 576
     ],
     // 48 kHz
     [
-         0,   4,   8,  12,  16,  20,  24,  30,  36,  44,  54, 66, 
-        82, 102, 126, 156, 194, 240, 296, 364, 448, 550, 576,
+        0, 4, 8, 12, 16, 20, 24, 30, 36, 42, 50, 60, 72, 88, 106, 128, 
+        156, 190, 230, 276, 330, 384, 576,
     ],
     // 32 kHz
     [
-         0,   4,   8,  12,  16,  20,  24,  30,  36,  44,   52, 62,
-        74,  90, 110,  134, 162, 196, 238, 288, 342, 418, 576,
+        0, 4, 8, 12, 16, 20, 24, 30, 36, 44, 54, 66, 82, 102, 126, 156, 
+        194, 240, 296, 364, 448, 550, 576,
     ],
     // 22.050 kHz, MPEG version 2
     [
-         0,  4,   8,  12,  16,  20,  24,  30,  36,  44,  52, 62, 
-        74, 90, 110, 134, 162, 196, 238, 288, 342, 418, 576,
+        0, 4, 12, 18, 24, 30, 36, 44, 54, 66, 80, 96, 116, 140, 168, 200, 
+        238, 284, 336, 396, 464, 522, 576,
     ],
-    // 24 kHz
+    // 24 kHz (330 should be 332?)
     [
-        0, 4, 8, 12, 16, 20, 24, 30, 36, 42, 50, 60, 
-        72, 88, 106, 128, 156, 190, 230, 276, 330, 384, 576,
+        0, 6, 12, 18, 24, 30, 36, 44, 54, 66, 80, 96, 114, 136, 162, 194, 
+        232, 278, 332, 394, 464, 540, 576,
     ],
     // 16 kHz
     [
-         0,   4,   8,  12,  16,  20,  24,  30,  36,  44,  54, 66, 
-        82, 102, 126, 156, 194, 240, 296, 364, 448, 550, 576,
+        0, 6, 12, 18, 24, 30, 36, 44, 54, 66, 80, 96, 116, 140, 168, 200, 
+        238, 284, 336, 396, 464, 522, 576,
     ],
     // 11.025 kHz, MPEG version 2.5
     [
-          0,   6,  12,  18,  24,  30,  36,  44,  54,  66,  80, 96, 
-        116, 140, 168, 200, 238, 284, 336, 396, 464, 522, 576,
+        0, 6, 12, 18, 24, 30, 36, 44, 54, 66, 80, 96, 116, 140, 168, 200, 
+        238, 284, 336, 396, 464, 522, 576,
     ],
     // 12 kHz
     [
-          0,   6,  12,  18,  24,  30,  36,  44,  54,  66,  80, 96, 
-        116, 140, 168, 200, 238, 284, 336, 396, 464, 522, 576,
+        0, 6, 12, 18, 24, 30, 36, 44, 54, 66, 80, 96, 116, 140, 168, 200,
+        238, 284, 336, 396, 464, 522, 576,
     ],
     // 8 kHz
     [
-          0,  12,  24 , 36,  48,  60,  72,  88, 108, 132, 160, 192, 
-        232, 280, 336, 400, 476, 566, 568, 570, 572, 574, 576,
+        0, 12, 24, 36, 48, 60, 72, 88, 108, 132, 160, 192, 232, 280, 336, 400, 
+        476, 566, 568, 570, 572, 574, 576,
     ],
 ];
 
 /// Startng indicies of each scale factor band at various sampling rates for short blocks.
 const SCALE_FACTOR_SHORT_BANDS: [[u32; 14]; 9] = [
-    // 44.1 kHz
-    [0, 4,  8, 12, 16, 22, 30, 40,  52,  66,  84, 106, 136, 192],
+    // 44.1 kHz, MPEG version 1
+    [ 0, 4,  8, 12, 16, 22, 30, 40,  52,  66,  84, 106, 136, 192 ],
     // 48 kHz
-    [0, 4,  8, 12, 16, 22, 28, 38,  50,  64,  80, 100, 126, 192],
+    [ 0, 4,  8, 12, 16, 22, 28, 38,  50,  64,  80, 100, 126, 192 ],
     // 32 kHz
-    [0, 4,  8, 12, 16, 22, 30, 42,  58,  78, 104, 138, 180, 192],
-    // 22.050 kHz
-    [0, 4,  8, 12, 16, 22, 30, 40,  52,  66,  84, 106, 136, 192],
+    [ 0, 4,  8, 12, 16, 22, 30, 42,  58,  78, 104, 138, 180, 192 ],
+    // 22.050 kHz, MPEG version 2
+    [ 0, 4, 8, 12, 18, 24, 32, 42, 56, 74, 100, 132, 174, 192 ],
     // 24 kHz
-    [0, 4,  8, 12, 16, 22, 28, 38,  50,  64,  80, 100, 126, 192],
+    [ 0, 4, 8, 12, 18, 26, 36, 48, 62, 80, 104, 136, 180, 192 ],
     // 16 kHz
-    [0, 4,  8, 12, 16, 22, 30, 42,  58,  78, 104, 138, 180, 192],
-    // 11.025 kHz
-    [0, 4,  8, 12, 18, 26, 36, 48,  62,  80, 104, 134, 174, 192],
+    [ 0, 4, 8, 12, 18, 26, 36, 48, 62, 80, 104, 134, 174, 192 ],
+    // 11.025 kHz, MPEG version 2.5
+    [ 0, 4, 8, 12, 18, 26, 36, 48, 62, 80, 104, 134, 174, 192 ],
     // 12 kHz
-    [0, 4,  8, 12, 18, 26, 36, 48,  62,  80, 104, 134, 174, 192],
+    [ 0, 4, 8, 12, 18, 26, 36, 48, 62, 80, 104, 134, 174, 192 ],
     // 8 kHz
-    [0, 8, 16, 24, 36, 52, 72, 96, 124, 160, 162, 164, 166, 192],
+    [ 0, 8, 16, 24, 36, 52, 72, 96, 124, 160, 162, 164, 166, 192 ],
 ];
 
 struct MpegHuffmanTable {
     /// The Huffman decode table.
-    table: &'static HuffmanTable<H8>,
+    huff_table: &'static HuffmanTable<H8>,
     /// Number of extra bits to read if the decoded Huffman value is saturated.
     linbits: u32,
 }
 
 const HUFFMAN_TABLES: [MpegHuffmanTable; 32] = [
-    MpegHuffmanTable { table: &HUFFMAN_TABLE_0,  linbits:  0 },
-    MpegHuffmanTable { table: &HUFFMAN_TABLE_1,  linbits:  0 },
-    MpegHuffmanTable { table: &HUFFMAN_TABLE_2,  linbits:  0 },
-    MpegHuffmanTable { table: &HUFFMAN_TABLE_3,  linbits:  0 },
-    MpegHuffmanTable { table: &HUFFMAN_TABLE_0,  linbits:  0 },
-    MpegHuffmanTable { table: &HUFFMAN_TABLE_5,  linbits:  0 },
-    MpegHuffmanTable { table: &HUFFMAN_TABLE_6,  linbits:  0 },
-    MpegHuffmanTable { table: &HUFFMAN_TABLE_7,  linbits:  0 },
-    MpegHuffmanTable { table: &HUFFMAN_TABLE_8,  linbits:  0 },
-    MpegHuffmanTable { table: &HUFFMAN_TABLE_9,  linbits:  0 },
-    MpegHuffmanTable { table: &HUFFMAN_TABLE_10, linbits:  0 },
-    MpegHuffmanTable { table: &HUFFMAN_TABLE_11, linbits:  0 },
-    MpegHuffmanTable { table: &HUFFMAN_TABLE_12, linbits:  0 },
-    MpegHuffmanTable { table: &HUFFMAN_TABLE_13, linbits:  0 },
-    MpegHuffmanTable { table: &HUFFMAN_TABLE_0,  linbits:  0 },
-    MpegHuffmanTable { table: &HUFFMAN_TABLE_15, linbits:  0 },
-    MpegHuffmanTable { table: &HUFFMAN_TABLE_16, linbits:  1 },
-    MpegHuffmanTable { table: &HUFFMAN_TABLE_16, linbits:  2 },
-    MpegHuffmanTable { table: &HUFFMAN_TABLE_16, linbits:  3 },
-    MpegHuffmanTable { table: &HUFFMAN_TABLE_16, linbits:  4 },
-    MpegHuffmanTable { table: &HUFFMAN_TABLE_16, linbits:  6 },
-    MpegHuffmanTable { table: &HUFFMAN_TABLE_16, linbits:  8 },
-    MpegHuffmanTable { table: &HUFFMAN_TABLE_16, linbits: 10 },
-    MpegHuffmanTable { table: &HUFFMAN_TABLE_16, linbits: 13 },
-    MpegHuffmanTable { table: &HUFFMAN_TABLE_24, linbits:  4 },
-    MpegHuffmanTable { table: &HUFFMAN_TABLE_24, linbits:  5 },
-    MpegHuffmanTable { table: &HUFFMAN_TABLE_24, linbits:  6 },
-    MpegHuffmanTable { table: &HUFFMAN_TABLE_24, linbits:  7 },
-    MpegHuffmanTable { table: &HUFFMAN_TABLE_24, linbits:  8 },
-    MpegHuffmanTable { table: &HUFFMAN_TABLE_24, linbits:  9 },
-    MpegHuffmanTable { table: &HUFFMAN_TABLE_24, linbits: 11 },
-    MpegHuffmanTable { table: &HUFFMAN_TABLE_24, linbits: 13 },
+    // Table 0
+    MpegHuffmanTable { huff_table: &HUFFMAN_TABLE_0,  linbits:  0 },
+    // Table 1
+    MpegHuffmanTable { huff_table: &HUFFMAN_TABLE_1,  linbits:  0 },
+    // Table 2
+    MpegHuffmanTable { huff_table: &HUFFMAN_TABLE_2,  linbits:  0 },
+    // Table 3
+    MpegHuffmanTable { huff_table: &HUFFMAN_TABLE_3,  linbits:  0 },
+    // Table 4 (not used)
+    MpegHuffmanTable { huff_table: &HUFFMAN_TABLE_0,  linbits:  0 },
+    // Table 5
+    MpegHuffmanTable { huff_table: &HUFFMAN_TABLE_5,  linbits:  0 },
+    // Table 6
+    MpegHuffmanTable { huff_table: &HUFFMAN_TABLE_6,  linbits:  0 },
+    // Table 7
+    MpegHuffmanTable { huff_table: &HUFFMAN_TABLE_7,  linbits:  0 },
+    // Table 8
+    MpegHuffmanTable { huff_table: &HUFFMAN_TABLE_8,  linbits:  0 },
+    // Table 9
+    MpegHuffmanTable { huff_table: &HUFFMAN_TABLE_9,  linbits:  0 },
+    // Table 10
+    MpegHuffmanTable { huff_table: &HUFFMAN_TABLE_10, linbits:  0 },
+    // Table 11
+    MpegHuffmanTable { huff_table: &HUFFMAN_TABLE_11, linbits:  0 },
+    // Table 12
+    MpegHuffmanTable { huff_table: &HUFFMAN_TABLE_12, linbits:  0 },
+    // Table 13
+    MpegHuffmanTable { huff_table: &HUFFMAN_TABLE_13, linbits:  0 },
+    // Table 14 (not used)
+    MpegHuffmanTable { huff_table: &HUFFMAN_TABLE_0,  linbits:  0 },
+    // Table 15
+    MpegHuffmanTable { huff_table: &HUFFMAN_TABLE_15, linbits:  0 },
+    // Table 16
+    MpegHuffmanTable { huff_table: &HUFFMAN_TABLE_16, linbits:  1 },
+    // Table 17
+    MpegHuffmanTable { huff_table: &HUFFMAN_TABLE_16, linbits:  2 },
+    // Table 18
+    MpegHuffmanTable { huff_table: &HUFFMAN_TABLE_16, linbits:  3 },
+    // Table 19
+    MpegHuffmanTable { huff_table: &HUFFMAN_TABLE_16, linbits:  4 },
+    // Table 20
+    MpegHuffmanTable { huff_table: &HUFFMAN_TABLE_16, linbits:  6 },
+    // Table 21
+    MpegHuffmanTable { huff_table: &HUFFMAN_TABLE_16, linbits:  8 },
+    // Table 22
+    MpegHuffmanTable { huff_table: &HUFFMAN_TABLE_16, linbits: 10 },
+    // Table 23
+    MpegHuffmanTable { huff_table: &HUFFMAN_TABLE_16, linbits: 13 },
+    // Table 24
+    MpegHuffmanTable { huff_table: &HUFFMAN_TABLE_24, linbits:  4 },
+    // Table 25
+    MpegHuffmanTable { huff_table: &HUFFMAN_TABLE_24, linbits:  5 },
+    // Table 26
+    MpegHuffmanTable { huff_table: &HUFFMAN_TABLE_24, linbits:  6 },
+    // Table 27
+    MpegHuffmanTable { huff_table: &HUFFMAN_TABLE_24, linbits:  7 },
+    // Table 28
+    MpegHuffmanTable { huff_table: &HUFFMAN_TABLE_24, linbits:  8 },
+    // Table 29
+    MpegHuffmanTable { huff_table: &HUFFMAN_TABLE_24, linbits:  9 },
+    // Table 30
+    MpegHuffmanTable { huff_table: &HUFFMAN_TABLE_24, linbits: 11 },
+    // Table 31
+    MpegHuffmanTable { huff_table: &HUFFMAN_TABLE_24, linbits: 13 },
 ];
 
 /// The MPEG audio version.
@@ -307,7 +339,7 @@ impl FrameHeader {
     fn is_intensity_stereo(&self) -> bool {
         match self.channels {
             Channels::JointStereo(ModeExtension::Intensity { .. }) => true,
-            Channels::JointStereo(ModeExtension::Layer3 { intensity, ..}) => intensity,
+            Channels::JointStereo(ModeExtension::Layer3 { intensity, .. }) => intensity,
             _ => false,
         }
     }
@@ -633,7 +665,10 @@ fn read_granule_channel_side_info_l3<B: BitStream>(
             _                                    => 7,
         };
 
-        granule.region1_count = 20 - granule.region0_count;
+        // Region 1's count extends to the remaining sub-bands (22 total sub-bands - minus 
+        // region0_count - 2 since region0_count and region1_count are one less than the actual 
+        // count).
+        granule.region1_count = 22 - granule.region0_count - 2;
     }
     else {
         granule.block_type = BlockType::Long;
@@ -786,7 +821,7 @@ fn l3_read_scale_factors<B: BitStream>(
             if slen > 0 {
                 // The scale factor selection information for this channel indicates that the scale
                 // factors should be copied from granule 0 for this channel.
-                if gr > 0 && side_info.scfsi[gr][i] {
+                if gr > 0 && side_info.scfsi[ch][i] {
                     let (granule0, granule1) = main_data.granules.split_first_mut().unwrap();
 
                     granule1[0].channels[ch].scalefacs[*start..*end]
@@ -833,21 +868,21 @@ fn l3_read_scale_factors_lsf<B: BitStream>(
                 (sfc % 36) % 6,
                 0,
             ], 
-            &SCALE_FACTOR_NSFB[0][bi]),
+            &SCALE_FACTOR_LSF_NSFB[0][bi]),
             180..=243 => ([
                 ((sfc - 180) % 64) >> 4,
                 ((sfc - 180) % 16) >> 2,
                 ((sfc - 180) %  4),
                 0,
             ], 
-            &SCALE_FACTOR_NSFB[1][bi]),
+            &SCALE_FACTOR_LSF_NSFB[1][bi]),
             244..=255 => ([
                 (sfc - 244) / 3,
                 (sfc - 244) % 3,
                 0,
                 0,
             ], 
-            &SCALE_FACTOR_NSFB[2][bi]),
+            &SCALE_FACTOR_LSF_NSFB[2][bi]),
             _ => unreachable!(),
         }
     }
@@ -861,21 +896,21 @@ fn l3_read_scale_factors_lsf<B: BitStream>(
                 (sfc % 16) >> 2, 
                 (sfc %  4)
             ], 
-            &SCALE_FACTOR_NSFB[3][bi]),
+            &SCALE_FACTOR_LSF_NSFB[3][bi]),
             400..=499 => ([
                 ((sfc - 400) >> 2) / 5,
                 ((sfc - 400) >> 2) % 5,
                 (sfc - 400) % 4,
                 0,
             ], 
-            &SCALE_FACTOR_NSFB[4][bi]),
+            &SCALE_FACTOR_LSF_NSFB[4][bi]),
             500..=512 => ([
                 (sfc - 500) / 3,
                 (sfc - 500) % 3,
                 0,
                 0,
             ], 
-            &SCALE_FACTOR_NSFB[5][bi]),
+            &SCALE_FACTOR_LSF_NSFB[5][bi]),
             _ => unreachable!(),
         }
     };
@@ -890,12 +925,13 @@ fn l3_read_scale_factors_lsf<B: BitStream>(
         }
 
         start += n_sfb;
-        bits_read += n_sfb as u32 * slen;
+        bits_read += slen * n_sfb as u32;
     }
 
     Ok(bits_read)
 }
 
+use std::cmp::min;
 
 
 fn l3_read_huffman_samples<B: BitStream>(
@@ -906,6 +942,13 @@ fn l3_read_huffman_samples<B: BitStream>(
     buf: &mut [f32; 576]
 ) -> Result<()> {
 
+    // If there is no Huffman code bits, zero all samples and return.
+    if part3_bits == 0 {
+        for i in 0..576 {
+            buf[i] = 0.0;
+        }
+        return Ok(());
+    }
 
     // Determine the starting indicies of region0, region1, and region2 of the big_values. Region0 
     // always starts at 0, while the next two regions depend on block type and sample rate.
@@ -924,60 +967,84 @@ fn l3_read_huffman_samples<B: BitStream>(
         }
     };
 
+    eprintln!("region1_start={}, region2_start={}", region1_start, region2_start);
+
     let mut bits_read = 0;
-    let mut sample = 0;
+    let mut i = 0;
 
-    // Read the big_values.
-    let big_values_len = (side_info.big_values as usize) << 1;
+    // There are two samples per big_value, therefore multiply big_values by 2 to get number of 
+    // samples in the big_value partition.
+    let big_values_len = 2 * side_info.big_values as usize;
 
-    while sample < big_values_len {
+    // There are up-to 3 regions in the big_value partition. Determine the sample index denoting the
+    // end of each region (non-inclusive).
+    let regions: [usize; 3] = [
+        min(region1_start, big_values_len), 
+        min(region2_start, big_values_len), 
+        min(          576, big_values_len),
+    ];
+
+    // Iterate over each region.
+    for (region_idx, region_end) in regions.iter().enumerate() {
+
         // Select the table based on the region.
-        let table = if sample < region1_start {
-            &HUFFMAN_TABLES[side_info.table_select[0] as usize]
-        }
-        else if sample < region2_start {
-            &HUFFMAN_TABLES[side_info.table_select[0] as usize]
-        }
-        else {
-            &HUFFMAN_TABLES[side_info.table_select[2] as usize]
-        };
+        let table = &HUFFMAN_TABLES[side_info.table_select[region_idx] as usize];
 
-        // Decode the next Huffman code to get the value.
-        let value = bs.read_huffman(&table.table, part3_bits - bits_read)?;
-
-        // For big values, each Huffman code decodes to two sample values, x and y. Each sample is 
-        // 4-bits long.
-        let mut x = (value >> 4) as i32;
-        let mut y = (value & 0xf) as i32;
-
-        // If a sample is saturated, and the table has linbits, read linbits more bits and add it to
-        // the sample.
-        if table.linbits > 0 && x == 15 {
-            bits_read += table.linbits;
-            x += bs.read_bits_leq32(table.linbits)? as i32;
+        // If a table for a region is empty, fill with zeros up to the end of the region.
+        if table.huff_table.data.is_empty() {
+            while i < *region_end {
+                buf[i] = 0.0;
+                i += 1;
+                buf[i] = 0.0;
+                i += 1;
+            }
+            continue;
         }
 
-        // If the sample is not zero, read the sign bit.
-        if x > 0 && bs.read_bit()? {
-            bits_read += 1;
-            x = -x;
-        }
+        // Otherwise, read the big_values.
+        while i < *region_end {
+            // Decode the next Huffman code to get the value.
+            let (value, code_len) = bs.read_huffman(&table.huff_table, part3_bits - bits_read)?;
+            bits_read += code_len;
 
-        // Likewise, repeat the previous two steps for the second sample.
-        if table.linbits > 0 && y == 15 {
-            bits_read += table.linbits;
-            y += bs.read_bits_leq32(table.linbits)? as i32;
-        }
+            // For big values, each Huffman code decodes to two sample values, x and y. Each sample is 
+            // 4-bits long.
+            let mut x = (value >> 4) as i32;
+            let mut y = (value & 0xf) as i32;
 
-        if y > 0 && bs.read_bit()? {
-            bits_read += 1;
-            y = -y;
-        }
+            // If a sample is saturated, and the table has linbits, read linbits more bits and add it to
+            // the sample.
+            if table.linbits > 0 && x == 15 {
+                x += bs.read_bits_leq32(table.linbits)? as i32;
+                bits_read += table.linbits;
+            }
 
-        buf[sample] = x as f32;
-        sample += 1;
-        buf[sample] = y as f32;
-        sample += 1;
+            // If the sample is not zero, read the sign bit.
+            if x > 0 {
+                if bs.read_bit()? {
+                    x = -x;
+                }
+                bits_read += 1;
+            }
+
+            // Likewise, repeat the previous two steps for the second sample.
+            if table.linbits > 0 && y == 15 {
+                y += bs.read_bits_leq32(table.linbits)? as i32;
+                bits_read += table.linbits;
+            }
+
+            if y > 0 {
+                if bs.read_bit()? {
+                    y = -y;
+                }
+                bits_read += 1;
+            }
+
+            buf[i] = x as f32;
+            i += 1;
+            buf[i] = y as f32;
+            i += 1;
+        }
     }
 
     if bits_read > part3_bits {
@@ -986,57 +1053,72 @@ fn l3_read_huffman_samples<B: BitStream>(
 
     // Read the count1 region (quads)
     let count1_table = match side_info.count1table_select {
-        true => QUADS_HUFFMAN_TABLE_A,
-        _    => QUADS_HUFFMAN_TABLE_B,
+        true => QUADS_HUFFMAN_TABLE_B,
+        _    => QUADS_HUFFMAN_TABLE_A,
     };
 
-    while sample <= 572 && bits_read < part3_bits {
-        let value = bs.read_huffman(&count1_table, part3_bits - bits_read)?;
-        
+    while i <= 572 && bits_read < part3_bits {
+        let (value, code_len) = bs.read_huffman(&count1_table, part3_bits - bits_read)?;
+        bits_read += code_len;
+
         let mut v = ((value >> 3) & 0x1) as f32;
         let mut w = ((value >> 2) & 0x1) as f32;
         let mut x = ((value >> 1) & 0x1) as f32;
         let mut y = ((value >> 0) & 0x1) as f32;
 
-        if v > 0.0 && bs.read_bit()? {
-            v = -v;
+        if v > 0.0 {
+            if bs.read_bit()? {
+                v = -v;
+            }
+            bits_read += 1;
         }
 
-        if w > 0.0 && bs.read_bit()? {
-            w = -w;
+        if w > 0.0 {
+            if bs.read_bit()? {
+                w = -w;
+            }
+            bits_read += 1;
         }
         
-        if x > 0.0 && bs.read_bit()? {
-            x = -x;
+        if x > 0.0 {
+            if bs.read_bit()? {
+                x = -x;
+            }
+            bits_read += 1;
         }
 
-        if y > 0.0 && bs.read_bit()? {
-            y = -y;
+        if y > 0.0 {
+            if bs.read_bit()? {
+                y = -y;
+            }
+            bits_read += 1;
         }
 
-        buf[sample] = v;
-        sample += 1;
-        buf[sample] = w;
-        sample += 1;
-        buf[sample] = x;
-        sample += 1;
-        buf[sample] = y;
-        sample += 1;
+        buf[i] = v;
+        i += 1;
+        buf[i] = w;
+        i += 1;
+        buf[i] = x;
+        i += 1;
+        buf[i] = y;
+        i += 1;
     }
 
     // Ignore extra bits.
     if bits_read < part3_bits {
+        eprintln!("ignore: {}", part3_bits - bits_read);
         bs.ignore_bits(part3_bits - bits_read)?;
     }
     // Some encoders mess up the boundary condition for the count1 region.
     else if bits_read > part3_bits {
-        sample -= 4;
+        eprintln!("count1 overrun");
+        i -= 4;
     }
 
     // Fill in the rzero (zeros) area.
-    while sample < 576 {
-        buf[sample] = 0.0;
-        sample += 1;
+    while i < 576 {
+        buf[i] = 0.0;
+        i += 1;
     }
 
     Ok(())
@@ -1054,7 +1136,7 @@ fn l3_read_main_data<B: BitStream>(
         for ch in 0..header.n_channels() {
             
             // Read the scale factors (part2) and get the number of bits read. For MPEG version 1...
-            let part2_bits = if header.is_mpeg1() {
+            let part2_len = if header.is_mpeg1() {
                 l3_read_scale_factors(bs, gr, ch, side_info, &mut main_data)
             }
             // For MPEG version 2...
@@ -1066,11 +1148,17 @@ fn l3_read_main_data<B: BitStream>(
                     &mut main_data.granules[gr].channels[ch])
             }?;
 
-            // The Huffman code length (part3)
-            let part3_bits = side_info.granules[gr].channels[ch].part2_3_length as u32
-                - part2_bits;
+            let part2_3_length = side_info.granules[gr].channels[ch].part2_3_length as u32;
 
-            eprintln!("part2_bits={}, part3_bits={}", part2_bits, part3_bits);
+            // The length part2 must be less than or equal to the part2_3_length.
+            if part2_len > part2_3_length {
+                return decode_error("part2_3_length is not valid");
+            }
+
+            // The Huffman code length (part3)
+            let part3_len = part2_3_length - part2_len;
+
+            eprintln!("part2_len={}, part3_len={}", part2_len, part3_len);
 
             let mut samples = [0f32; 576];
 
@@ -1078,13 +1166,11 @@ fn l3_read_main_data<B: BitStream>(
                 bs, 
                 header, 
                 &side_info.granules[gr].channels[ch], 
-                part3_bits,
+                part3_len,
                 &mut samples
                 )?;
-
         }
     }
-
 
     Ok(main_data)
 }
@@ -1125,12 +1211,12 @@ impl BitResevoir {
         for i in 0..main_data_begin {
             self.buf[i] = self.buf[prev + i];
         }
-        self.len = main_data_begin;
 
         // Read the remaining amount of bytes.
-        let read_len = main_data_size - main_data_begin;
-        reader.read_buf_bytes(&mut self.buf[self.len..self.len + read_len])?;
-        self.len += read_len;
+        let main_data_end = main_data_begin + main_data_size;
+        reader.read_buf_bytes(&mut self.buf[main_data_begin..main_data_end])?;
+        self.len = main_data_end;
+        
         Ok(())
     }
 
