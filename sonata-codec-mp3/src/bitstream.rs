@@ -71,8 +71,8 @@ const SCALE_FACTOR_LSF_NSFB: [[[usize; 4]; 3]; 6] = [
 ];
 
 /// Startng indicies of each scale factor band at various sampling rates for long blocks.
-const SCALE_FACTOR_LONG_BANDS: [[usize; 23]; 9] = [
-    // 44.1 kHz, MPEG version 1
+const SCALE_FACTOR_LONG_BANDS: [[u32; 23]; 9] = [
+    // 44.1 kHz, MPEG version 1, derived from ISO/IEC 11172-3 Table B.8
     [ 
         0, 4, 8, 12, 16, 20, 24, 30, 36, 44, 52, 62, 74, 90, 110, 134, 
         162, 196, 238, 288, 342, 418, 576
@@ -87,7 +87,7 @@ const SCALE_FACTOR_LONG_BANDS: [[usize; 23]; 9] = [
         0, 4, 8, 12, 16, 20, 24, 30, 36, 44, 54, 66, 82, 102, 126, 156, 
         194, 240, 296, 364, 448, 550, 576,
     ],
-    // 22.050 kHz, MPEG version 2
+    // 22.050 kHz, MPEG version 2, derived from ISO/IEC 13818-3 Table B.2
     [
         0, 4, 12, 18, 24, 30, 36, 44, 54, 66, 80, 96, 116, 140, 168, 200, 
         238, 284, 336, 396, 464, 522, 576,
@@ -119,7 +119,8 @@ const SCALE_FACTOR_LONG_BANDS: [[usize; 23]; 9] = [
     ],
 ];
 
-/// Startng indicies of each scale factor band at various sampling rates for short blocks.
+/// Startng indicies of each scale factor band at various sampling rates for short blocks. Each 
+/// value should be multiplied by 3.
 const SCALE_FACTOR_SHORT_BANDS: [[u32; 14]; 9] = [
     // 44.1 kHz, MPEG version 1
     [ 0, 4,  8, 12, 16, 22, 30, 40,  52,  66,  84, 106, 136, 192 ],
@@ -311,6 +312,11 @@ impl FrameHeader {
     }
     
     #[inline(always)]
+    fn is_mpeg2p5(&self) -> bool {
+        self.version == MpegVersion::Mpeg2p5
+    }
+
+    #[inline(always)]
     fn is_layer1(&self) -> bool {
         self.layer == MpegLayer::Layer1
     }
@@ -408,21 +414,24 @@ impl Default for BlockType {
 struct GranuleChannelSideInfoL3 {
     /// Nums of bits used for scale factors (part2), and Huffman encoded data (part3).
     part2_3_length: u16,
-    /// Big values (sum of region0, region1, region2) partition size.
+    /// HALF the number of samples in region[0..3] of the big_values partition.
     big_values: u16,
     /// Quantization step size.
     global_gain: u16,
-    // Index into SCALE_FACTOR_SLEN for number of bits used per scale factor in MPEG version 1.
-    // In MPEG version 2, decoded into slen[1-4] to determine number of bits per scale factor.
+    /// Index into SCALE_FACTOR_SLEN for number of bits used per scale factor in MPEG version 1.
+    /// In MPEG version 2, decoded into slen[1-4] to determine number of bits per scale factor.
     scalefac_compress: u16,
     /// Indicates the type of window for the granule.
     block_type: BlockType,
 
     subblock_gain: [u8; 3],
 
+    /// The Huffman table to use for decoding region[0..3] in big_values.
     table_select: [u8; 3],
-    region0_count: u8,
-    region1_count: u8,
+    /// The index of the first sample in region1 of big_values.
+    region1_start: u32,
+    /// The index of the first sample in region2 of big_values.
+    region2_start: u32,
 
     preflag: bool,
     scalefac_scale: bool,
@@ -660,15 +669,50 @@ fn read_granule_channel_side_info_l3<B: BitStream>(
             granule.subblock_gain[i] = bs.read_bits_leq32(3)? as u8;
         }
 
-        granule.region0_count = match granule.block_type {
-            BlockType::Short { is_mixed: false } => 8,
-            _                                    => 7,
-        };
+        // When using window switching, the boundaries of region[0..3] are set implicitly according
+        // to the MPEG version and block type. Below, the boundaries to set as per the applicable
+        // standard.
+        //
+        // If MPEG version 2.5 specifically...
+        if header.is_mpeg2p5() {
+            // For MPEG2.5, the number of scale-factor bands in region0 depends on the block type.
+            // The standard indicates these as 1 less than the actual value, but 1 is added here at
+            // compile time.
+            let region0_count = match granule.block_type {
+                BlockType::Short { is_mixed: false } => 5 + 1,
+                _                                    => 7 + 1,
+            };
 
-        // Region 1's count extends to the remaining sub-bands (22 total sub-bands - minus 
-        // region0_count - 2 since region0_count and region1_count are one less than the actual 
-        // count).
-        granule.region1_count = 22 - granule.region0_count - 2;
+            granule.region1_start = SCALE_FACTOR_LONG_BANDS[header.sample_rate_idx][region0_count];
+        }
+        // If MPEG version 1, OR the block type is Short...
+        else if header.is_mpeg1() || block_type_enc == 0b11 {
+            // For MPEG1 and LONG blocks, the first 8 LONG scale-factor bands are used for region0.
+            // These bands are always [4, 4, 4, 4, 4, 4, 6, 6, ...] regardless of sample rate. These
+            // bands sum to 36 samples.
+            //
+            // For MPEG1 and SHORT blocks, the first 9 SHORT scale-factor bands are used for 
+            // region0. These band are always [4, 4, 4, 4, 4, 4, 4, 4, 4, ...] regardless of sample
+            // rate. These bands also sum to 36 samples.
+            //
+            // Finally, for MPEG2 and SHORT blocks, the first 9 short scale-factor bands are used
+            // for region0. These bands are also always  [4, 4, 4, 4, 4, 4, 4, 4, 4, ...] regardless
+            // of sample and thus sum to 36 samples.
+            //
+            // In all cases, the region0_count is 36.
+            granule.region1_start = 36;
+        }
+        // If MPEG version 2 AND the block type is not Short...
+        else if header.is_mpeg2() {
+            // For MPEG2 and LONG blocks, the first 8 LONG scale-factor bands are used for region0.
+            // These bands are always [6, 6, 6, 6, 6, 6, 8, 10, ...] regardless of sample rate. 
+            // These bands sum to 54.
+            granule.region1_start = 54;
+        }
+
+        // The second region, region1, spans the remaining samples. Therefore the third region, 
+        // region2, isn't used.
+        granule.region2_start = 576;
     }
     else {
         granule.block_type = BlockType::Long;
@@ -677,8 +721,20 @@ fn read_granule_channel_side_info_l3<B: BitStream>(
             granule.table_select[i] = bs.read_bits_leq32(5)? as u8;
         }
 
-        granule.region0_count = bs.read_bits_leq32(4)? as u8;
-        granule.region1_count = bs.read_bits_leq32(3)? as u8;
+        // When window switching is not used, only LONG scale-factor bands are used for each region.
+        // The number of bands in region0 and region1 are defined in side_info. The stored value is 
+        // 1 less than the actual value.
+        let region0_count   = bs.read_bits_leq32(4)? as usize + 1;
+        let region0_1_count = bs.read_bits_leq32(3)? as usize + region0_count + 1;
+
+        granule.region1_start = SCALE_FACTOR_LONG_BANDS[header.sample_rate_idx][region0_count];
+
+        // The count in region0_1_count may exceed the last band (22) in the LONG bands table. 
+        // Protect against this.
+        granule.region2_start = match region0_1_count {
+            0..=22 => SCALE_FACTOR_LONG_BANDS[header.sample_rate_idx][region0_1_count],
+            _      => 576,
+        };
     }
 
     granule.preflag = if header.is_mpeg1() { 
@@ -950,24 +1006,8 @@ fn l3_read_huffman_samples<B: BitStream>(
         return Ok(());
     }
 
-    // Determine the starting indicies of region0, region1, and region2 of the big_values. Region0 
-    // always starts at 0, while the next two regions depend on block type and sample rate.
-    let (region1_start, region2_start) = match side_info.block_type {
-        // Short block types (mixed or not), do not have a second region.
-        BlockType::Short { .. } => (36, 576),
-        // Other block types have their region boundaries set based on sample rate.
-        _ => {
-            let region1_start_idx = side_info.region0_count as usize + 1;
-            let region2_start_idx = side_info.region1_count as usize + region1_start_idx + 1;
-
-            (
-                SCALE_FACTOR_LONG_BANDS[header.sample_rate_idx][region1_start_idx],
-                SCALE_FACTOR_LONG_BANDS[header.sample_rate_idx][region2_start_idx]
-            )
-        }
-    };
-
-    eprintln!("region1_start={}, region2_start={}", region1_start, region2_start);
+    eprintln!("region1_start={}, region2_start={}", 
+        side_info.region1_start, side_info.region2_start);
 
     let mut bits_read = 0;
     let mut i = 0;
@@ -979,9 +1019,9 @@ fn l3_read_huffman_samples<B: BitStream>(
     // There are up-to 3 regions in the big_value partition. Determine the sample index denoting the
     // end of each region (non-inclusive).
     let regions: [usize; 3] = [
-        min(region1_start, big_values_len), 
-        min(region2_start, big_values_len), 
-        min(          576, big_values_len),
+        min(side_info.region1_start as usize, big_values_len), 
+        min(side_info.region2_start as usize, big_values_len), 
+        min(                             576, big_values_len),
     ];
 
     // Iterate over each region.
