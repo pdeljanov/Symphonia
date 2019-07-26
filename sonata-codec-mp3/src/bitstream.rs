@@ -7,6 +7,8 @@
 
 use std::cmp::min;
 
+use lazy_static::lazy_static;
+
 use sonata_core::checksum::Crc16;
 use sonata_core::errors::{Result, decode_error, unsupported_error};
 use sonata_core::io::{BufStream, BitStream, BitStreamLtr, Bytestream, huffman::{H8, HuffmanTable}};
@@ -152,6 +154,18 @@ const SCALE_FACTOR_SHORT_BANDS: [[u32; 14]; 9] = [
     // 8 kHz
     [ 0, 8, 16, 24, 36, 52, 72, 96, 124, 160, 162, 164, 166, 192 ],
 ];
+
+lazy_static! {
+    /// Lookup table for computing x(i) = s(i)^(4/3) where s(i) is a decoded Huffman sample. The 
+    /// value of s(i) is bound between 0..8207.
+    static ref POW43: [f32; 8207] = {
+        let mut pow43 = [0f32; 8207];
+        for i in 0..8207 {
+            pow43[i] = f32::powf(i as f32, 4.0 / 3.0);
+        }
+        pow43
+    };
+}
 
 struct MpegHuffmanTable {
     /// The Huffman decode table.
@@ -1032,6 +1046,10 @@ fn l3_read_huffman_samples<B: BitStream>(
     eprintln!("region1_start={}, region2_start={}", 
         side_info.region1_start, side_info.region2_start);
 
+    // Dereference the POW43 table once per granule since there is a tiny overhead each time a 
+    // lazy_static is dereferenced that should be amortized over as many samples as possible.
+    let pow43_table: &[f32; 8207] = &POW43;
+
     let mut bits_read = 0;
     let mut i = 0;
 
@@ -1073,40 +1091,43 @@ fn l3_read_huffman_samples<B: BitStream>(
 
             // In the big_values partition, each Huffman code decodes to two sample, x and y. Each 
             // sample being 4-bits long.
-            let mut x = (value >> 4) as i32;
-            let mut y = (value & 0xf) as i32;
+            let mut x = (value >> 4) as usize;
+            let mut y = (value & 0xf) as usize;
 
-            // If the first sample, x, is saturated (it is at the maximum possible value), and the 
-            // table specifies linbits, then read linbits more bits and add it to the sample.
-            if table.linbits > 0 && x == 15 {
-                x += bs.read_bits_leq32(table.linbits)? as i32;
-                bits_read += table.linbits;
-            }
-
-            // If the sample is not zero, read the next bit which is the sign bit.
+            // If the first sample, x, is not 0, further process it.
             if x > 0 {
-                if bs.read_bit()? {
-                    x = -x;
+                // If x is saturated (it is at the maximum possible value), and the table specifies 
+                // linbits, then read linbits more bits and add it to the sample.
+                if x == 15 && table.linbits > 0 {
+                    x += bs.read_bits_leq32(table.linbits)? as usize;
+                    bits_read += table.linbits;
                 }
+
+                // The next bit is the sign bit. The value of the sample is raised to the (4/3)
+                // power. 
+                buf[i] = if bs.read_bit()? { -pow43_table[x] } else { pow43_table[x] };
                 bits_read += 1;
             }
+            else {
+                buf[i] = 0.0;
+            }
+
+            i += 1;
 
             // Likewise, repeat the previous two steps for the second sample, y.
-            if table.linbits > 0 && y == 15 {
-                y += bs.read_bits_leq32(table.linbits)? as i32;
-                bits_read += table.linbits;
-            }
-
             if y > 0 {
-                if bs.read_bit()? {
-                    y = -y;
+                if table.linbits > 0 && y == 15 {
+                    y += bs.read_bits_leq32(table.linbits)? as usize;
+                    bits_read += table.linbits;
                 }
+
+                buf[i] = if bs.read_bit()? { -pow43_table[y] } else { pow43_table[y] };
                 bits_read += 1;
             }
+            else {
+                buf[i] = 0.0
+            }
 
-            buf[i] = x as f32;
-            i += 1;
-            buf[i] = y as f32;
             i += 1;
         }
     }
@@ -1129,49 +1150,48 @@ fn l3_read_huffman_samples<B: BitStream>(
 
         // In the count1 partition, each Huffman code decodes to 4 samples: v, w, x, and y. 
         // Each sample is 1-bit long (1 or 0).
-        let mut v = ((value >> 3) & 0x1) as f32;
-        let mut w = ((value >> 2) & 0x1) as f32;
-        let mut x = ((value >> 1) & 0x1) as f32;
-        let mut y = ((value >> 0) & 0x1) as f32;
-
-        // If the first sample, v, is not 0, then the next bit is the sign bit.
-        if v > 0.0 {
-            if bs.read_bit()? {
-                v = -v;
-            }
+        //
+        // For each 1-bit sample, if it is 0, then then dequantized sample value is 0 as well. If 
+        // the 1-bit sample is 1, then read the sign bit (the next bit). The dequantized sample is 
+        // then either +/-1.0 depending on the sign bit.
+        if value & 0x8 != 0 {
+            buf[i] = if bs.read_bit()? { -1.0 } else { 1.0 };
             bits_read += 1;
         }
-
-        // Likewise, if the second sample, w, is not 0, then the next bit is the sign bit.
-        if w > 0.0 {
-            if bs.read_bit()? {
-                w = -w;
-            }
-            bits_read += 1;
-        }
-        
-        // And so on...
-        if x > 0.0 {
-            if bs.read_bit()? {
-                x = -x;
-            }
-            bits_read += 1;
+        else {
+            buf[i] = 0.0;
         }
 
-        if y > 0.0 {
-            if bs.read_bit()? {
-                y = -y;
-            }
-            bits_read += 1;
-        }
-
-        buf[i] = v;
         i += 1;
-        buf[i] = w;
+
+        if value & 0x4 != 0 {
+            buf[i] = if bs.read_bit()? { -1.0 } else { 1.0 };
+            bits_read += 1;
+        }
+        else {
+            buf[i] = 0.0;
+        }
+
         i += 1;
-        buf[i] = x;
+
+        if value & 0x2 != 0 {
+            buf[i] = if bs.read_bit()? { -1.0 } else { 1.0 };
+            bits_read += 1;
+        }
+        else {
+            buf[i] = 0.0;
+        }
+
         i += 1;
-        buf[i] = y;
+
+        if value & 0x1 != 0 {
+            buf[i] = if bs.read_bit()? { -1.0 } else { 1.0 };
+            bits_read += 1;
+        }
+        else {
+            buf[i] = 0.0;
+        }
+
         i += 1;
     }
 
@@ -1304,7 +1324,7 @@ pub fn next_frame<B: Bytestream>(reader: &mut B, resevoir: &mut BitResevoir) -> 
 
     match header.layer {
         MpegLayer::Layer3 => {
-            // Read the side information.
+            // Read the side information. TODO: Use a MonitorStream to compute the CRC.
             let side_info = l3_read_side_info(reader, &header)?;
             eprintln!("{:#?}", &side_info);
 
