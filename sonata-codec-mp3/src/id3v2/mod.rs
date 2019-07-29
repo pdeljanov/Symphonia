@@ -110,20 +110,22 @@ fn read_id3v2_header<B: Bytestream>(reader: &mut B) -> Result<Header> {
         return decode_error("Invalid version number(s).");
     }
 
-    // Only support versions 2.2.x (first version) to 2.4.x (latest version as of May 2019) of the specification.
+    // Only support versions 2.2.x (first version) to 2.4.x (latest version as of May 2019) of the 
+    // specification.
     if major_version < 2 || major_version > 4 {
         return unsupported_error("Unsupported ID3v2 version.");
     }
 
-    // Version 2.2 of the standard specifies a compression flag bit, but does not specify a compression standard. 
-    // Future versions of the standard remove this feature and repurpose this bit for other features. Since there is
-    // no way to know how to handle the remaining tag data, return an unsupported error.
+    // Version 2.2 of the standard specifies a compression flag bit, but does not specify a 
+    // compression standard. Future versions of the standard remove this feature and repurpose this 
+    // bit for other features. Since there is no way to know how to handle the remaining tag data, 
+    // return an unsupported error.
     if major_version == 2 && (flags & 0x40) != 0 {
         return unsupported_error("ID3v2.2 compression is not supported.");
     }
 
-    // With the exception of the compression flag in version 2.2, flags were added sequentially each major version.
-    // Check each bit sequentially as they appear in each version.
+    // With the exception of the compression flag in version 2.2, flags were added sequentially each
+    // major version. Check each bit sequentially as they appear in each version.
     if major_version >= 2 {
         header.unsynchronisation = flags & 0x80 != 0;
     }
@@ -304,7 +306,7 @@ fn read_id3v2_body<B: Bytestream + FiniteStream>(mut reader: B, header: &Header)
             }
         }
 
-        // Read frames until there is not  enough bytes available in the ID3v2 tag for another frame.
+        // Read frames until there is not enough bytes available in the ID3v2 tag for another frame.
         if reader.bytes_available() < min_frame_size {
             break;
         }
@@ -318,16 +320,18 @@ pub fn read_id3v2<B: Bytestream>(reader: &mut B) -> Result<()> {
     let header = read_id3v2_header(reader)?;
     eprintln!("{:#?}", &header);
 
-    // The header specified the byte length of the contents of the ID3v2 tag (excluding the header), use a scoped
-    // reader to ensure we don't exceed that length, and to determine if there are no more frames left to parse.
+    // The header specified the byte length of the contents of the ID3v2 tag (excluding the header),
+    // use a scoped reader to ensure we don't exceed that length, and to determine if there are no 
+    // more frames left to parse.
     let scoped = ScopedStream::new(reader, header.size as u64);
 
-    // If the unsynchronisation flag is set in the header, all tag data must be passed through the unsynchronisation 
-    // decoder before being read for verions < 4 of ID3v2.
+    // If the unsynchronisation flag is set in the header, all tag data must be passed through the 
+    // unsynchronisation decoder before being read for verions < 4 of ID3v2.
     if header.unsynchronisation && header.major_version < 4 {
         read_id3v2_body(UnsyncStream::new(scoped), &header)
     }
-    // Otherwise, read the data as-is. Individual frames may be unsynchronised for major versions >= 4.
+    // Otherwise, read the data as-is. Individual frames may be unsynchronised for major versions 
+    // >= 4.
     else {
         read_id3v2_body(scoped, &header)
     }

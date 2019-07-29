@@ -255,8 +255,8 @@ pub fn read_id3v1<B: Bytestream>(reader: &mut B) -> Result<Vec<Tag>> {
 
     let genre_idx = buf[124] as usize;
 
-    // Convert the genre index to an actual genre name using the GENRES lookup table. Genre #133 is an offensive term
-    // and is excluded from Sonata.
+    // Convert the genre index to an actual genre name using the GENRES lookup table. Genre #133 is 
+    // an offensive term and is excluded from Sonata.
     if genre_idx < GENRES.len() && genre_idx != 133 {
         tags.push(Tag::new(Some(StandardTagKey::Genre), "GENRE", GENRES[genre_idx]));
     }

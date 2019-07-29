@@ -133,7 +133,8 @@ const SCALE_FACTOR_LONG_BANDS: [[u32; 23]; 9] = [
 ];
 
 /// Starting indicies of each scale factor band at various sampling rates for short blocks. Each 
-/// value must be multiplied by 3 since there are three windows per scale factor band.
+/// value must be multiplied by 3 since there are three equal length windows per short scale factor 
+/// band.
 const SCALE_FACTOR_SHORT_BANDS: [[u32; 14]; 9] = [
     // 44.1 kHz, MPEG version 1
     [ 0, 4,  8, 12, 16, 22, 30, 40,  52,  66,  84, 106, 136, 192 ],
@@ -1046,7 +1047,7 @@ fn l3_read_huffman_samples<B: BitStream>(
     bs: &mut B,
     side_info: &GranuleChannelSideInfoL3,
     part3_bits: u32,
-    buf: &mut [f32; 576]
+    buf: &mut [f32; 576],
 ) -> Result<usize> {
 
     // If there are no Huffman code bits, zero all samples and return immediately.
@@ -1231,7 +1232,7 @@ fn l3_requantize_long(
     header: &FrameHeader,
     side_info: &GranuleChannelSideInfoL3,
     main_data: &MainDataGranuleChannel,
-    buf: &mut [f32]
+    buf: &mut [f32],
 ) {
     // For long blocks dequantization and scaling is governed by the following equation:
     //
@@ -1292,7 +1293,7 @@ fn l3_requantize_short(
     side_info: &GranuleChannelSideInfoL3,
     main_data: &MainDataGranuleChannel,
     mut sfb: usize,
-    buf: &mut [f32]
+    buf: &mut [f32],
 ) {
     // For short blocks dequantization and scaling is governed by the following equation:
     //
@@ -1352,7 +1353,7 @@ fn l3_requantize(
     header: &FrameHeader,
     side_info: &GranuleChannelSideInfoL3,
     main_data: &MainDataGranuleChannel,
-    buf: &mut [f32]
+    buf: &mut [f32],
 ) {
     match side_info.block_type {
         BlockType::Short { is_mixed: false } => {
@@ -1379,6 +1380,21 @@ fn l3_requantize(
 fn l3_reorder(header: &FrameHeader, side_info: &GranuleChannelSideInfoL3, buf: &mut [f32; 576]) {
     // Only short blocks are reordered.
     if let BlockType::Short { is_mixed } = side_info.block_type {
+        // Every short block is split into 3 equally sized windows as illustrated below (e.g. for 
+        // a short scale factor band with win_len=4):
+        //
+        //    <- Window #1 ->  <- Window #2 ->  <- Window #3 ->
+        //   [ 0 | 1 | 2 | 3 ][ 4 | 5 | 6 | 7 ][ 8 | 9 | a | b ]
+        //    <-----  3 * Short Scale Factor Band Width  ----->
+        //
+        // Reordering interleaves the samples of each window as follows:
+        //
+        //   [ 0 | 4 | 8 | 1 | 5 | 9 | 2 | 6 | a | 3 | 7 | b ]
+        //    <----  3 * Short Scale Factor Band Width  ---->
+        //
+        // Basically, reordering interleaves the 3 windows the same way 3 planar audio buffers 
+        // would be interleaved.
+
         // Only the short bands in a mixed block are reordered.
         let sfb = if is_mixed { 3 } else { 0 };
 
@@ -1423,7 +1439,7 @@ fn l3_read_main_data<B: BitStream>(
 
             let mut samples = [0f32; 576];
 
-            // Decode the Huffman coded spectral samples and get starting index of the rzero 
+            // Decode the Huffman coded spectral samples and get the starting index of the rzero 
             // partition.
             let rzero = l3_read_huffman_samples(
                 bs, 
@@ -1432,7 +1448,7 @@ fn l3_read_main_data<B: BitStream>(
                 &mut samples
             )?;
 
-            // Requantize all non-zero (big_values and count1 partition) samples.
+            // Requantize all non-zero (big_values and count1 partition) spectral samples.
             l3_requantize(
                 header, 
                 &side_info.granules[gr].channels[ch], 
@@ -1440,6 +1456,7 @@ fn l3_read_main_data<B: BitStream>(
                 &mut samples[..rzero]
             );
 
+            // Reorder any spectral samples in short blocks into sub-band order.
             l3_reorder(header, &side_info.granules[gr].channels[ch], &mut samples);
         }
     }

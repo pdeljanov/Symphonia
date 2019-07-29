@@ -86,8 +86,8 @@ impl<B: Bytestream + FiniteStream> Bytestream for UnsyncStream<B> {
 
         self.byte = self.inner.read_byte()?;
 
-        // If the last byte was 0xff, and the current byte is 0x00, the current byte should be dropped and the next 
-        // byte read instead.
+        // If the last byte was 0xff, and the current byte is 0x00, the current byte should be 
+        // dropped and the next byte read instead.
         if last == 0xff && self.byte == 0x00 {
             self.byte = self.inner.read_byte()?;
         }
@@ -126,7 +126,8 @@ impl<B: Bytestream + FiniteStream> Bytestream for UnsyncStream<B> {
             // Fill the provided buffer directly from the underlying reader.
             self.inner.read_buf_bytes(buf)?;
 
-            // If the last seen byte was 0xff, and the first byte in buf is 0x00, skip the first byte of buf.
+            // If the last seen byte was 0xff, and the first byte in buf is 0x00, skip the first 
+            // byte of buf.
             let mut src = if self.byte == 0xff && buf[0] == 0x00 { 1 } else { 0 };
             let mut dst = 0;
 
@@ -144,14 +145,15 @@ impl<B: Bytestream + FiniteStream> Bytestream for UnsyncStream<B> {
                 }
             }
 
-            // When the final two src bytes are [ 0xff, 0x00 ], src will always equal len. Therefore, if src < len, then
-            // the final byte should always be copied to dst.
+            // When the final two src bytes are [ 0xff, 0x00 ], src will always equal len. 
+            // Therefore, if src < len, then the final byte should always be copied to dst.
             if src < len {
                 buf[dst] = buf[src];
                 dst += 1;
             }
 
-            // If dst < len, then buf is not full. Read the remaining bytes manually to completely fill buf.
+            // If dst < len, then buf is not full. Read the remaining bytes manually to completely 
+            // fill buf.
             while dst < len {
                 buf[dst] = self.read_byte()?;
                 dst += 1;
@@ -161,7 +163,12 @@ impl<B: Bytestream + FiniteStream> Bytestream for UnsyncStream<B> {
         Ok(())
     }
 
-    fn scan_bytes_aligned<'a>(&mut self, _: &[u8], _: usize, _: &'a mut [u8]) -> io::Result<&'a mut [u8]> {
+    fn scan_bytes_aligned<'a>(
+        &mut self, 
+        _: &[u8], 
+        _: usize, 
+        _: &'a mut [u8]
+    ) -> io::Result<&'a mut [u8]> {
         // Intentionally left unimplemented.
         unimplemented!();
     }
