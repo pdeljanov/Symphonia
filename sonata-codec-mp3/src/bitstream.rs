@@ -132,8 +132,8 @@ const SCALE_FACTOR_LONG_BANDS: [[u32; 23]; 9] = [
     ],
 ];
 
-/// Startng indicies of each scale factor band at various sampling rates for short blocks. Each 
-/// value must be multiplied by 3.
+/// Starting indicies of each scale factor band at various sampling rates for short blocks. Each 
+/// value must be multiplied by 3 since there are three windows per scale factor band.
 const SCALE_FACTOR_SHORT_BANDS: [[u32; 14]; 9] = [
     // 44.1 kHz, MPEG version 1
     [ 0, 4,  8, 12, 16, 22, 30, 40,  52,  66,  84, 106, 136, 192 ],
@@ -159,6 +159,10 @@ lazy_static! {
     /// Lookup table for computing x(i) = s(i)^(4/3) where s(i) is a decoded Huffman sample. The 
     /// value of s(i) is bound between 0..8207.
     static ref POW43: [f32; 8207] = {
+        // It is wasteful to initialize to 0.. however, Sonata policy is to limit unsafe code to
+        // only sonata-core.
+        //
+        // TODO: Implement generic lookup table initialization in the core library.
         let mut pow43 = [0f32; 8207];
         for i in 0..8207 {
             pow43[i] = f32::powf(i as f32, 4.0 / 3.0);
@@ -443,26 +447,28 @@ struct GranuleChannelSideInfoL3 {
     /// HALF the number of samples in the big_values (sum of samples in region[0..3]) partition.
     big_values: u16,
     /// Quantization step size.
-    global_gain: u16,
+    global_gain: u8,
     /// For MPEG1, the index into SCALE_FACTOR_SLEN for a number of bits per scale factor pair.
     /// For MPEG2/2.5, decodes into slen[1-4] to determine number of bits per scale factor and for 
     /// which bands.
     scalefac_compress: u16,
     /// Indicates the block type (type of window) for the channel in the granule.
     block_type: BlockType,
-
+    /// Gain factors for region[0..3] in big_values. Each gain factor has a maximum value of 7 
+    /// (3 bits).
     subblock_gain: [u8; 3],
-
     /// The Huffman table to use for decoding region[0..3] in big_values.
     table_select: [u8; 3],
     /// The index of the first sample in region1 of big_values.
     region1_start: u32,
     /// The index of the first sample in region2 of big_values.
     region2_start: u32,
-
+    /// Indicates if the pretab for each respective scale factor band should be added to the scale
+    /// factor.
     preflag: bool,
+    /// A 0.5x (false) or 1x (true) multiplier for scale factors.
     scalefac_scale: bool,
-    /// The Huffman table: A (false) or B (true), to use for decoding the count1 partition.
+    /// Use Huffman table A (false) or B (true), for decoding the count1 partition.
     count1table_select: bool,
 }
 
@@ -478,23 +484,26 @@ struct MainDataGranule {
 
 struct MainDataGranuleChannel {
     /// Long (scalefac_l) and short (scalefac_s) window scale factor bands. Must be interpreted 
-    /// based on block type.
+    /// based on the block type of the granule.
     /// 
-    /// For block_type == Short, is_mixed == false: 
-    ///     scalefac_s = scalefacs[0..36]
+    /// For `block_type == BlockType::Short { is_mixed: false }`: 
+    ///     scalefac_s[0..36] -> scalefacs[0..36]
     /// 
-    /// For block_type == Short, is_mixed == true: 
-    ///     scalefac_l[0..8]  = scalefacs[0..8] 
-    ///     scalefac_s[0..27] = scalefacs[8..35]
+    /// For `block_type == BlockType::Short { is_mixed: true }`:
+    ///     scalefac_l[0..8]  -> scalefacs[0..8],
+    ///     scalefac_s[0..27] -> scalefacs[8..35]
     /// 
-    /// For block_type != Short:
-    ///     scalefac_l[0..21] = scalefacs[0..21]
-    scalefacs: [u8; 36],
+    /// For `block_type != BlockType::Short { .. }`:
+    ///     scalefac_l[0..21] -> scalefacs[0..21]
+    /// 
+    /// Note: The standard doesn't explicitly call it out, but for Short blocks, scalefacs[36..39] 
+    ///       are always 0 and are not transmitted in the bitstream.
+    scalefacs: [u8; 39],
 }
 
 impl Default for MainDataGranuleChannel {
     fn default() -> Self {
-        MainDataGranuleChannel { scalefacs: [0; 36] }
+        MainDataGranuleChannel { scalefacs: [0; 39] }
     }
 }
 
@@ -668,7 +677,7 @@ fn read_granule_channel_side_info_l3<B: BitStream>(
         return decode_error("Granule big_values > 288.");
     }
 
-    granule.global_gain = bs.read_bits_leq32(8)? as u16;
+    granule.global_gain = bs.read_bits_leq32(8)? as u8;
 
     granule.scalefac_compress = if header.is_mpeg1() {
         bs.read_bits_leq32(4)
@@ -1027,24 +1036,26 @@ fn l3_read_scale_factors_mpeg2<B: BitStream>(
 }
 
 /// Reads the Huffman coded spectral samples for a given channel in a granule from a `BitStream` 
-/// into a provided sample buffer.
+/// into a provided sample buffer. Returns the number of decoded samples (the starting index of the
+/// rzero partition).
+/// 
+/// Note, each spectral sample is raised to the 4/3-rd power. This is not actually part of the 
+/// Huffman decoding process, but, by converting the integer sample to floating point here we don't
+/// need to do pointless casting or use an extra buffer.
 fn l3_read_huffman_samples<B: BitStream>(
     bs: &mut B,
     side_info: &GranuleChannelSideInfoL3,
     part3_bits: u32,
     buf: &mut [f32; 576]
-) -> Result<()> {
+) -> Result<usize> {
 
     // If there are no Huffman code bits, zero all samples and return immediately.
     if part3_bits == 0 {
         for i in 0..576 {
             buf[i] = 0.0;
         }
-        return Ok(());
+        return Ok(0);
     }
-
-    eprintln!("region1_start={}, region2_start={}", 
-        side_info.region1_start, side_info.region2_start);
 
     // Dereference the POW43 table once per granule since there is a tiny overhead each time a 
     // lazy_static is dereferenced that should be amortized over as many samples as possible.
@@ -1208,12 +1219,171 @@ fn l3_read_huffman_samples<B: BitStream>(
 
     // The final partition after the count1 partition is the rzero partition. Samples in this 
     // partition are all 0.
-    while i < 576 {
-        buf[i] = 0.0;
-        i += 1;
+    for j in i..576 {
+        buf[j] = 0.0;
     }
 
-    Ok(())
+    Ok(i)
+}
+
+/// Requantize long block samples in `buf`.
+fn l3_requantize_long(
+    header: &FrameHeader,
+    side_info: &GranuleChannelSideInfoL3,
+    main_data: &MainDataGranuleChannel,
+    buf: &mut [f32]
+) {
+    // For long blocks dequantization and scaling is governed by the following equation:
+    //
+    //                     xr(i) = s(i)^(4/3) * 2^(0.25*A) * 2^(-B)
+    // where:
+    //       s(i) is the decoded Huffman sample
+    //      xr(i) is the dequantized sample
+    // and:
+    //      A = global_gain[gr] - 210
+    //      B = scalefac_multiplier * (scalefacs[gr][ch][sfb] + (preflag[gr] * pretab[sfb]))
+    //
+    // Note: The samples in buf are the result of s(i)^(4/3) for each sample i.
+
+    const PRE_TAB: [f64; 22] = [
+        0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 2.0, 2.0, 3.0,
+        3.0, 3.0, 2.0, 0.0,
+    ];
+
+    let sfb_indicies = &SCALE_FACTOR_LONG_BANDS[header.sample_rate_idx as usize];
+
+    // Calculate 2^(0.25*A), this is constant for each granule.
+    let pow2a = f64::powf(2.0, 0.25 * (side_info.global_gain as f64 - 210.0));
+    let mut pow2ab = 0.0;
+
+    let scalefac_multiplier = if side_info.scalefac_scale { 1.0 } else { 0.5 };
+
+    let mut sfb = 0;
+    let mut sfb_end = sfb_indicies[sfb] as usize;
+
+    for i in 0..buf.len() {
+        // The value of B is dependant on the scale factor band. Therefore, update B only when the 
+        // scale factor band changes.
+        if i == sfb_end {
+            let pretab = if side_info.preflag { PRE_TAB[sfb] } else { 0.0 };
+
+            // Calculate 2^(-B).
+            let pow2b = f64::powf(
+                2.0, 
+                -scalefac_multiplier * (main_data.scalefacs[sfb] as f64 + pretab)
+            );
+
+            // Calculate 2^(0.25*A) * 2^(-B).
+            pow2ab = (pow2a * pow2b) as f32;
+
+            sfb += 1;
+            sfb_end = sfb_indicies[sfb] as usize;
+        }
+
+        // Buf contains s(i)^(4/3), now multiply in 2^(0.25*A) * 2^(-B) to get xr(i).
+        // TODO: This should lend itself well for SIMD...
+        buf[i] *= pow2ab;
+    }
+}
+
+/// Requantize short block samples in `buf`.
+fn l3_requantize_short(
+    header: &FrameHeader,
+    side_info: &GranuleChannelSideInfoL3,
+    main_data: &MainDataGranuleChannel,
+    mut sfb: usize,
+    buf: &mut [f32]
+) {
+    // For short blocks dequantization and scaling is governed by the following equation:
+    //
+    //                     xr(i) = s(i)^(4/3) * 2^(0.25*A) * 2^(-B)
+    // where:
+    //       s(i) is the decoded Huffman sample
+    //      xr(i) is the dequantized sample
+    // and:
+    //      A = global_gain[gr] - 210 - (8 * subblock_gain[gr][win])
+    //      B = scalefac_multiplier * scalefacs[gr][ch][sfb][win]
+    //
+    // Note: The samples in buf are the result of s(i)^(4/3) for each sample i.
+
+    let sfb_indicies = &SCALE_FACTOR_SHORT_BANDS[header.sample_rate_idx as usize];
+
+    // Calculate the constant part of A: global_gain[gr] - 210.
+    let gain = side_info.global_gain as f64 - 210.0;
+    // Likweise, the scalefac_multiplier is constant for the granule.
+    let scalefac_mulitplier = if side_info.scalefac_scale { 1.0 } else { 0.5 };
+
+    let mut i = 0;
+
+    while i < buf.len() {
+        // Determine the length of the window (the length of the scale factor band).
+        let win_len = (sfb_indicies[sfb+1] - sfb_indicies[sfb]) as usize;
+
+        // Each scale factor band is repeated 3 times over.
+        for win in 0..3 {
+            // Calculate the remaining portion of A, 2^(gain - 8*subblock_gain[gr][win]).
+            let pow2a = f64::powf(2.0, gain - 8.0 * side_info.subblock_gain[win] as f64);
+
+            // Calculate B, scalefac_multiplier * scalefacs[gr][ch][sfb][win].
+            let pow2b = f64::powf(
+                2.0,
+                scalefac_mulitplier * main_data.scalefacs[3*sfb + win] as f64,
+            );
+
+            // Calculate 2^(0.25*A) * 2^(-B).
+            let pow2ab = (pow2a * pow2b) as f32;
+
+            // Multiply each sample by the result of 2^(0.25*A) * 2^(-B).
+            // TODO: This should lend itself well for SIMD...
+            let win_end = min(buf.len(), i + win_len);
+
+            while i < win_end {
+                buf[i] *= pow2ab;
+                i += 1;
+            }
+        }
+
+        sfb += 1;
+    }
+}
+
+/// Requantize samples in `buf` regardless of block type.
+fn l3_requantize(
+    header: &FrameHeader,
+    side_info: &GranuleChannelSideInfoL3,
+    main_data: &MainDataGranuleChannel,
+    buf: &mut [f32]
+) {
+    match side_info.block_type {
+        BlockType::Short { is_mixed: false } => {
+            l3_requantize_short(header, side_info, main_data, 0, buf);
+        },
+        BlockType::Short { is_mixed: true } => {
+            eprintln!("requantize mixed block.");
+            // A mixed block is a combination of a long block and short block. The first 36 samples
+            // are part of a single long block, and the remaining samples are part of the short 
+            // blocks. Therefore, requantization for mixed blocks can be decomposed into short and
+            // long block requantizations.
+            //
+            // TODO: Verify if this split makes sense for 8kHz MPEG2.5 bitstreams.
+            l3_requantize_long(header, side_info, main_data, &mut buf[0..36]);
+            l3_requantize_short(header, side_info, main_data, 3, &mut buf[36..]);
+        },
+        _ => {
+            l3_requantize_long(header, side_info, main_data, buf);
+        },
+    }
+}
+
+/// Reorder samples that are part of short blocks into sub-band order.
+fn l3_reorder(header: &FrameHeader, side_info: &GranuleChannelSideInfoL3, buf: &mut [f32; 576]) {
+    // Only short blocks are reordered.
+    if let BlockType::Short { is_mixed } = side_info.block_type {
+        // Only the short bands in a mixed block are reordered.
+        let sfb = if is_mixed { 3 } else { 0 };
+
+
+    }
 }
 
 /// Reads the main_data portion of a MPEG audio frame from a `BitStream`.
@@ -1248,19 +1418,29 @@ fn l3_read_main_data<B: BitStream>(
                 return decode_error("part2_3_length is not valid");
             }
 
-            // The Huffman code length (part3)
+            // The Huffman code length (part3).
             let part3_len = part2_3_length - part2_len;
-
-            eprintln!("part2_len={}, part3_len={}", part2_len, part3_len);
 
             let mut samples = [0f32; 576];
 
-            l3_read_huffman_samples(
+            // Decode the Huffman coded spectral samples and get starting index of the rzero 
+            // partition.
+            let rzero = l3_read_huffman_samples(
                 bs, 
                 &side_info.granules[gr].channels[ch], 
                 part3_len,
                 &mut samples
-                )?;
+            )?;
+
+            // Requantize all non-zero (big_values and count1 partition) samples.
+            l3_requantize(
+                header, 
+                &side_info.granules[gr].channels[ch], 
+                &main_data.granules[gr].channels[ch], 
+                &mut samples[..rzero]
+            );
+
+            l3_reorder(header, &side_info.granules[gr].channels[ch], &mut samples);
         }
     }
 
