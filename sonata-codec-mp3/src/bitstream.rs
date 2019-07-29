@@ -137,11 +137,11 @@ const SCALE_FACTOR_LONG_BANDS: [[u32; 23]; 9] = [
 /// band.
 const SCALE_FACTOR_SHORT_BANDS: [[u32; 14]; 9] = [
     // 44.1 kHz, MPEG version 1
-    [ 0, 4,  8, 12, 16, 22, 30, 40,  52,  66,  84, 106, 136, 192 ],
+    [ 0, 4, 8, 12, 16, 22, 30, 40,  52,  66,  84, 106, 136, 192 ],
     // 48 kHz
-    [ 0, 4,  8, 12, 16, 22, 28, 38,  50,  64,  80, 100, 126, 192 ],
+    [ 0, 4, 8, 12, 16, 22, 28, 38,  50,  64,  80, 100, 126, 192 ],
     // 32 kHz
-    [ 0, 4,  8, 12, 16, 22, 30, 42,  58,  78, 104, 138, 180, 192 ],
+    [ 0, 4, 8, 12, 16, 22, 30, 42,  58,  78, 104, 138, 180, 192 ],
     // 22.050 kHz, MPEG version 2
     [ 0, 4, 8, 12, 18, 24, 32, 42, 56, 74, 100, 132, 174, 192 ],
     // 24 kHz
@@ -388,8 +388,10 @@ impl FrameHeader {
     }
 }
 
-#[derive(Debug, Default)]
-struct SideInfoL3 {
+/// `FrameData` contains the side_info and main_data portions of a MPEG audio frame. Once read from
+/// the bitstream, `FrameData` is immutable for the remainder of the decoding process.
+#[derive(Default)]
+struct FrameData {
     /// The byte offset into the bit resevoir indicating the location of the first bit of main_data.
     /// If 0, main_data begins after the side_info of this frame.
     main_data_begin: u16,
@@ -400,28 +402,20 @@ struct SideInfoL3 {
     /// 
     /// Mapping of array indicies to bands [0-5, 6-10, 11-15, 16-20].
     scfsi: [[bool; 4]; 2],
-    /// Granules
-    granules: [GranuleSideInfoL3; 2],
-    /// The size of the side_info.
-    size: usize,
+    /// The granules.
+    granules: [Granule; 2],
 }
 
-impl SideInfoL3 {
+impl FrameData {
     /// Get a mutable slice to the granule(s) in side_info. For MPEG1, a slice of 2 granules are
     /// returned. For MPEG2/2.5, a single granule slice is returned.
     #[inline(always)]
-    fn granules_mut(&mut self, version: MpegVersion) -> &mut [GranuleSideInfoL3] {
+    fn granules_mut(&mut self, version: MpegVersion) -> &mut [Granule] {
         match version {
             MpegVersion::Mpeg1 => &mut self.granules[..2],
             _                  => &mut self.granules[..1],
         }
     }
-}
-
-#[derive(Debug, Default)]
-struct GranuleSideInfoL3 {
-    /// Channels in the granule.
-    channels: [GranuleChannelSideInfoL3; 2],
 }
 
 #[derive(Debug)]
@@ -434,15 +428,13 @@ enum BlockType {
     End
 }
 
-impl Default for BlockType {
-    fn default() -> BlockType {
-        // The default block type is always long.
-        BlockType::Long
-    }
+#[derive(Default)]
+struct Granule {
+    /// Channels in the granule.
+    channels: [GranuleChannel; 2],
 }
 
-#[derive(Debug, Default)]
-struct GranuleChannelSideInfoL3 {
+struct GranuleChannel {
     /// Total number of bits used for scale factors (part2), and Huffman encoded data (part3).
     part2_3_length: u16,
     /// HALF the number of samples in the big_values (sum of samples in region[0..3]) partition.
@@ -477,19 +469,6 @@ struct GranuleChannelSideInfoL3 {
     scalefac_scale: bool,
     /// Use Huffman table A (false) or B (true), for decoding the count1 partition.
     count1table_select: bool,
-}
-
-#[derive(Default)]
-struct MainData {
-    granules: [MainDataGranule; 2],
-}
-
-#[derive(Default)]
-struct MainDataGranule {
-    channels: [MainDataGranuleChannel; 2],
-}
-
-struct MainDataGranuleChannel {
     /// Long (scalefac_l) and short (scalefac_s) window scale factor bands. Must be interpreted 
     /// based on the block type of the granule.
     /// 
@@ -509,9 +488,23 @@ struct MainDataGranuleChannel {
     scalefacs: [u8; 39],
 }
 
-impl Default for MainDataGranuleChannel {
+impl Default for GranuleChannel {
     fn default() -> Self {
-        MainDataGranuleChannel { scalefacs: [0; 39] }
+        GranuleChannel { 
+            part2_3_length: 0,
+            big_values: 0,
+            global_gain: 0,
+            scalefac_compress: 0,
+            block_type: BlockType::Long,
+            subblock_gain: [0; 3],
+            table_select: [0; 3],
+            region1_start: 0,
+            region2_start: 0,
+            preflag: false,
+            scalefac_scale: false,
+            count1table_select: false,
+            scalefacs: [0; 39], 
+        }
     }
 }
 
@@ -672,22 +665,22 @@ fn read_frame_header<B: Bytestream>(reader: &mut B) -> Result<FrameHeader> {
 /// Reads the side_info for a single channel in a Granule from a `BitStream`.
 fn read_granule_channel_side_info_l3<B: BitStream>(
     bs: &mut B,
-    granule: &mut GranuleChannelSideInfoL3,
+    channel: &mut GranuleChannel,
     header: &FrameHeader,
 ) -> Result<()> {
 
-    granule.part2_3_length = bs.read_bits_leq32(12)? as u16;
-    granule.big_values = bs.read_bits_leq32(9)? as u16;
+    channel.part2_3_length = bs.read_bits_leq32(12)? as u16;
+    channel.big_values = bs.read_bits_leq32(9)? as u16;
 
     // The maximum number of samples in a granule is 576. One big_value decodes to 2 samples,
     // therefore there can be no more than 288 (576/2) big_values.
-    if granule.big_values > 288 {
+    if channel.big_values > 288 {
         return decode_error("Granule big_values > 288.");
     }
 
-    granule.global_gain = bs.read_bits_leq32(8)? as u8;
+    channel.global_gain = bs.read_bits_leq32(8)? as u8;
 
-    granule.scalefac_compress = if header.is_mpeg1() {
+    channel.scalefac_compress = if header.is_mpeg1() {
         bs.read_bits_leq32(4)
     }
     else {
@@ -701,7 +694,7 @@ fn read_granule_channel_side_info_l3<B: BitStream>(
 
         let is_mixed = bs.read_bit()?;
 
-        granule.block_type = match block_type_enc {
+        channel.block_type = match block_type_enc {
             // Long block types are not allowed with window switching.
             0b00 => return decode_error("Invalid block_type."),
             0b01 => BlockType::Start,
@@ -713,11 +706,11 @@ fn read_granule_channel_side_info_l3<B: BitStream>(
         // When window switching is used, there are only two regions, therefore there are only
         // two table selectors.
         for i in 0..2 {
-            granule.table_select[i] = bs.read_bits_leq32(5)? as u8;
+            channel.table_select[i] = bs.read_bits_leq32(5)? as u8;
         }
 
         for i in 0..3 {
-            granule.subblock_gain[i] = bs.read_bits_leq32(3)? as u8;
+            channel.subblock_gain[i] = bs.read_bits_leq32(3)? as u8;
         }
 
         // When using window switching, the boundaries of region[0..3] are set implicitly according
@@ -729,12 +722,12 @@ fn read_granule_channel_side_info_l3<B: BitStream>(
             // For MPEG2.5, the number of scale-factor bands in region0 depends on the block type.
             // The standard indicates these values as 1 less than the actual value, therefore 1 is 
             // added here to both values.
-            let region0_count = match granule.block_type {
+            let region0_count = match channel.block_type {
                 BlockType::Short { is_mixed: false } => 5 + 1,
                 _                                    => 7 + 1,
             };
 
-            granule.region1_start = SCALE_FACTOR_LONG_BANDS[header.sample_rate_idx][region0_count];
+            channel.region1_start = SCALE_FACTOR_LONG_BANDS[header.sample_rate_idx][region0_count];
         }
         // If MPEG version 1, OR the block type is Short...
         else if header.is_mpeg1() || block_type_enc == 0b11 {
@@ -751,26 +744,26 @@ fn read_granule_channel_side_info_l3<B: BitStream>(
             // of sample and thus sum to 36 samples.
             //
             // In all cases, the region0_count is 36.
-            granule.region1_start = 36;
+            channel.region1_start = 36;
         }
         // If MPEG version 2 AND the block type is not Short...
         else {
             // For MPEG2 and LONG blocks, the first 8 LONG scale-factor bands are used for region0.
             // These bands are always [6, 6, 6, 6, 6, 6, 8, 10, ...] regardless of sample rate. 
             // These bands sum to 54.
-            granule.region1_start = 54;
+            channel.region1_start = 54;
         }
 
         // The second region, region1, spans the remaining samples. Therefore the third region, 
         // region2, isn't used.
-        granule.region2_start = 576;
+        channel.region2_start = 576;
     }
     else {
         // If window switching is not used, the block type is always Long.
-        granule.block_type = BlockType::Long;
+        channel.block_type = BlockType::Long;
 
         for i in 0..3 {
-            granule.table_select[i] = bs.read_bits_leq32(5)? as u8;
+            channel.table_select[i] = bs.read_bits_leq32(5)? as u8;
         }
 
         // When window switching is not used, only LONG scale-factor bands are used for each region.
@@ -779,26 +772,26 @@ fn read_granule_channel_side_info_l3<B: BitStream>(
         let region0_count   = bs.read_bits_leq32(4)? as usize + 1;
         let region0_1_count = bs.read_bits_leq32(3)? as usize + region0_count + 1;
 
-        granule.region1_start = SCALE_FACTOR_LONG_BANDS[header.sample_rate_idx][region0_count];
+        channel.region1_start = SCALE_FACTOR_LONG_BANDS[header.sample_rate_idx][region0_count];
 
         // The count in region0_1_count may exceed the last band (22) in the LONG bands table. 
         // Protect against this.
-        granule.region2_start = match region0_1_count {
+        channel.region2_start = match region0_1_count {
             0..=22 => SCALE_FACTOR_LONG_BANDS[header.sample_rate_idx][region0_1_count],
             _      => 576,
         };
     }
 
-    granule.preflag = if header.is_mpeg1() { 
+    channel.preflag = if header.is_mpeg1() { 
         bs.read_bit()? 
     } 
     else {
         // Pre-flag is determined implicitly for MPEG2: ISO/IEC 13818-3 section 2.4.3.4.
-        granule.scalefac_compress >= 500
+        channel.scalefac_compress >= 500
     };
 
-    granule.scalefac_scale = bs.read_bit()?;
-    granule.count1table_select = bs.read_bit()?;
+    channel.scalefac_scale = bs.read_bit()?;
+    channel.count1table_select = bs.read_bit()?;
 
     Ok(())
 }
@@ -806,26 +799,29 @@ fn read_granule_channel_side_info_l3<B: BitStream>(
 /// Reads the side_info for all channels in a Granule from a `BitStream`.
 fn read_granule_side_info_l3<B: BitStream>(
     bs: &mut B, 
-    granules: &mut GranuleSideInfoL3, 
+    granule: &mut Granule, 
     header: &FrameHeader,
 ) -> Result<()> {
     // Read the side_info for each channel in the granule.
-    for channel_granule in &mut granules.channels[..header.channels.count()] {
-        read_granule_channel_side_info_l3(bs, channel_granule, header)?;
+    for channel in &mut granule.channels[..header.channels.count()] {
+        read_granule_channel_side_info_l3(bs, channel, header)?;
     }
     Ok(())
 }
 
-/// Reads the side_info of a frame from a `BitStream`.
-fn l3_read_side_info<B: Bytestream>(reader: &mut B, header: &FrameHeader) -> Result<SideInfoL3> {
-    let mut side_info: SideInfoL3 = Default::default();
+/// Reads the side_info of a MPEG audio frame from a `BitStream` into `frame_data`.
+fn l3_read_side_info<B: Bytestream>(
+    reader: &mut B, 
+    header: &FrameHeader,
+    frame_data: &mut FrameData
+) -> Result<usize> {
 
     let mut bs = BitStreamLtr::new(reader);
 
     // For MPEG version 1...
-    if header.is_mpeg1() {
+    let side_info_len = if header.is_mpeg1() {
         // First 9 bits is main_data_begin.
-        side_info.main_data_begin = bs.read_bits_leq32(9)? as u16;
+        frame_data.main_data_begin = bs.read_bits_leq32(9)? as u16;
 
         // Next 3 (>1 channel) or 5 (1 channel) bits are private and should be ignored.
         match header.channels {
@@ -834,22 +830,22 @@ fn l3_read_side_info<B: Bytestream>(reader: &mut B, header: &FrameHeader) -> Res
         };
 
         // Next four (or 8, if more than one channel) are the SCFSI bits.
-        for scfsi in &mut side_info.scfsi[..header.n_channels()] {
+        for scfsi in &mut frame_data.scfsi[..header.n_channels()] {
             for i in 0..4 {
                 scfsi[i] = bs.read_bit()?;
             }
         }
 
         // The size of the side_info, fixed for layer 3.
-        side_info.size = match header.channels {
+        match header.channels {
             Channels::Mono => 17,
             _              => 32,
-        };
+        }
     }
     // For MPEG version 2...
     else {
         // First 8 bits is main_data_begin.
-        side_info.main_data_begin = bs.read_bits_leq32(8)? as u16;
+        frame_data.main_data_begin = bs.read_bits_leq32(8)? as u16;
 
         // Next 1 (1 channel) or 2 (>1 channel) bits are private and should be ignored.
         match header.channels {
@@ -858,18 +854,18 @@ fn l3_read_side_info<B: Bytestream>(reader: &mut B, header: &FrameHeader) -> Res
         };
 
         // The size of the side_info, fixed for layer 3.
-        side_info.size = match header.channels {
+        match header.channels {
             Channels::Mono =>  9,
             _              => 17,
-        };
-    }
+        }
+    };
 
     // Read the side_info for each granule.
-    for granule in side_info.granules_mut(header.version) {
+    for granule in frame_data.granules_mut(header.version) {
         read_granule_side_info_l3(&mut bs, granule, header)?;
     }
 
-    Ok(side_info)
+    Ok(side_info_len)
 }
 
 /// Reads the scale factors for a single channel in a granule in a MPEG version 1 audio frame.
@@ -877,20 +873,19 @@ fn l3_read_scale_factors_mpeg1<B: BitStream>(
     bs: &mut B, 
     gr: usize,
     ch: usize,
-    side_info: &SideInfoL3,
-    main_data: &mut MainData, 
+    frame_data: &mut FrameData,
 ) -> Result<(u32)> {
 
     let mut bits_read = 0;
 
-    let channel = &side_info.granules[gr].channels[ch];
+    let channel = &frame_data.granules[gr].channels[ch];
 
     // For MPEG1, scalefac_compress is a 4-bit index into a scale factor bit length lookup table.
     let (slen1, slen2) = SCALE_FACTOR_SLEN[channel.scalefac_compress as usize];
 
     // Short or Mixed windows...
     if let BlockType::Short { is_mixed } = channel.block_type {
-        let data = &mut main_data.granules[gr].channels[ch];
+        let data = &mut frame_data.granules[gr].channels[ch];
 
         // If the block is mixed, there are three total scale factor partitions. The first is a long 
         // scale factor partition for bands 0..8 (scalefacs[0..8] with each scale factor being slen1
@@ -934,8 +929,8 @@ fn l3_read_scale_factors_mpeg1<B: BitStream>(
             if slen > 0 {
                 // The scale factor selection information for this channel indicates that the scale
                 // factors should be copied from granule 0 for this channel.
-                if gr > 0 && side_info.scfsi[ch][i] {
-                    let (granule0, granule1) = main_data.granules.split_first_mut().unwrap();
+                if gr > 0 && frame_data.scfsi[ch][i] {
+                    let (granule0, granule1) = frame_data.granules.split_first_mut().unwrap();
 
                     granule1[0].channels[ch].scalefacs[*start..*end]
                         .copy_from_slice(&granule0.channels[ch].scalefacs[*start..*end]);
@@ -943,7 +938,7 @@ fn l3_read_scale_factors_mpeg1<B: BitStream>(
                 // Otherwise, read the scale factors from the bitstream.
                 else {
                     for sfb in *start..*end { 
-                        main_data.granules[gr].channels[ch].scalefacs[sfb] = 
+                        frame_data.granules[gr].channels[ch].scalefacs[sfb] = 
                             bs.read_bits_leq32(slen)? as u8;
                     }
                     bits_read += slen as usize * (end - start);
@@ -959,13 +954,12 @@ fn l3_read_scale_factors_mpeg1<B: BitStream>(
 fn l3_read_scale_factors_mpeg2<B: BitStream>(
     bs: &mut B, 
     is_intensity_stereo: bool,
-    side_info: &GranuleChannelSideInfoL3,
-    channel: &mut MainDataGranuleChannel, 
+    channel: &mut GranuleChannel,
 ) -> Result<(u32)> {
 
     let mut bits_read = 0;
 
-    let block_index = match side_info.block_type {
+    let block_index = match channel.block_type {
         BlockType::Short{ is_mixed: true  } => 2,
         BlockType::Short{ is_mixed: false } => 1,
         _                                   => 0,
@@ -974,7 +968,7 @@ fn l3_read_scale_factors_mpeg2<B: BitStream>(
     let (slen_table, nsfb_table) = if is_intensity_stereo {
         // The actual value of scalefac_compress is a 9-bit unsigned integer (0..512) for MPEG2. A 
         // left shift reduces it to an 8-bit value (0..255). 
-        let sfc = side_info.scalefac_compress as u32 >> 1;
+        let sfc = channel.scalefac_compress as u32 >> 1;
 
         match sfc {
             0..=179   => ([
@@ -1003,7 +997,7 @@ fn l3_read_scale_factors_mpeg2<B: BitStream>(
     }
     else {
         // The actual value of scalefac_compress is a 9-bit unsigned integer (0..512) for MPEG2.
-        let sfc = side_info.scalefac_compress as u32;
+        let sfc = channel.scalefac_compress as u32;
 
         match sfc {
             0..=399   => ([
@@ -1056,7 +1050,7 @@ fn l3_read_scale_factors_mpeg2<B: BitStream>(
 /// need to do pointless casting or use an extra buffer.
 fn l3_read_huffman_samples<B: BitStream>(
     bs: &mut B,
-    side_info: &GranuleChannelSideInfoL3,
+    channel: &GranuleChannel,
     part3_bits: u32,
     buf: &mut [f32; 576],
 ) -> Result<usize> {
@@ -1078,13 +1072,13 @@ fn l3_read_huffman_samples<B: BitStream>(
 
     // There are two samples per big_value, therefore multiply big_values by 2 to get number of 
     // samples in the big_value partition.
-    let big_values_len = 2 * side_info.big_values as usize;
+    let big_values_len = 2 * channel.big_values as usize;
 
     // There are up-to 3 regions in the big_value partition. Determine the sample index denoting the
     // end of each region (non-inclusive). Clamp to the end of the big_values partition.
     let regions: [usize; 3] = [
-        min(side_info.region1_start as usize, big_values_len), 
-        min(side_info.region2_start as usize, big_values_len), 
+        min(channel.region1_start as usize, big_values_len), 
+        min(channel.region2_start as usize, big_values_len), 
         min(                             576, big_values_len),
     ];
 
@@ -1092,7 +1086,7 @@ fn l3_read_huffman_samples<B: BitStream>(
     for (region_idx, region_end) in regions.iter().enumerate() {
 
         // Select the Huffman table based on the region's table select value.
-        let table = &HUFFMAN_TABLES[side_info.table_select[region_idx] as usize];
+        let table = &HUFFMAN_TABLES[channel.table_select[region_idx] as usize];
 
         // If the table for a region is empty, fill the region with zeros and move on to the next
         // region.
@@ -1160,7 +1154,7 @@ fn l3_read_huffman_samples<B: BitStream>(
     }
 
     // Select the Huffman table for the count1 partition.
-    let count1_table = match side_info.count1table_select {
+    let count1_table = match channel.count1table_select {
         true => QUADS_HUFFMAN_TABLE_B,
         _    => QUADS_HUFFMAN_TABLE_A,
     };
@@ -1241,8 +1235,7 @@ fn l3_read_huffman_samples<B: BitStream>(
 /// Requantize long block samples in `buf`.
 fn l3_requantize_long(
     header: &FrameHeader,
-    side_info: &GranuleChannelSideInfoL3,
-    main_data: &MainDataGranuleChannel,
+    channel: &GranuleChannel,
     buf: &mut [f32],
 ) {
     // For long blocks dequantization and scaling is governed by the following equation:
@@ -1265,10 +1258,10 @@ fn l3_requantize_long(
     let sfb_indicies = &SCALE_FACTOR_LONG_BANDS[header.sample_rate_idx as usize];
 
     // Calculate 2^(0.25*A), this is constant for each granule.
-    let pow2a = f64::powf(2.0, 0.25 * (side_info.global_gain as f64 - 210.0));
+    let pow2a = f64::powf(2.0, 0.25 * (channel.global_gain as f64 - 210.0));
     let mut pow2ab = 0.0;
 
-    let scalefac_multiplier = if side_info.scalefac_scale { 1.0 } else { 0.5 };
+    let scalefac_multiplier = if channel.scalefac_scale { 1.0 } else { 0.5 };
 
     let mut sfb = 0;
     let mut sfb_end = sfb_indicies[sfb] as usize;
@@ -1277,12 +1270,12 @@ fn l3_requantize_long(
         // The value of B is dependant on the scale factor band. Therefore, update B only when the 
         // scale factor band changes.
         if i == sfb_end {
-            let pretab = if side_info.preflag { PRE_TAB[sfb] } else { 0.0 };
+            let pretab = if channel.preflag { PRE_TAB[sfb] } else { 0.0 };
 
             // Calculate 2^(-B).
             let pow2b = f64::powf(
                 2.0, 
-                -scalefac_multiplier * (main_data.scalefacs[sfb] as f64 + pretab)
+                -scalefac_multiplier * (channel.scalefacs[sfb] as f64 + pretab)
             );
 
             // Calculate 2^(0.25*A) * 2^(-B).
@@ -1301,8 +1294,7 @@ fn l3_requantize_long(
 /// Requantize short block samples in `buf`.
 fn l3_requantize_short(
     header: &FrameHeader,
-    side_info: &GranuleChannelSideInfoL3,
-    main_data: &MainDataGranuleChannel,
+    channel: &GranuleChannel,
     mut sfb: usize,
     buf: &mut [f32],
 ) {
@@ -1321,9 +1313,9 @@ fn l3_requantize_short(
     let sfb_indicies = &SCALE_FACTOR_SHORT_BANDS[header.sample_rate_idx as usize];
 
     // Calculate the constant part of A: global_gain[gr] - 210.
-    let gain = side_info.global_gain as f64 - 210.0;
+    let gain = channel.global_gain as f64 - 210.0;
     // Likweise, the scalefac_multiplier is constant for the granule.
-    let scalefac_mulitplier = if side_info.scalefac_scale { 1.0 } else { 0.5 };
+    let scalefac_mulitplier = if channel.scalefac_scale { 1.0 } else { 0.5 };
 
     let mut i = 0;
 
@@ -1334,12 +1326,12 @@ fn l3_requantize_short(
         // Each scale factor band is repeated 3 times over.
         for win in 0..3 {
             // Calculate the remaining portion of A, 2^(gain - 8*subblock_gain[gr][win]).
-            let pow2a = f64::powf(2.0, gain - 8.0 * side_info.subblock_gain[win] as f64);
+            let pow2a = f64::powf(2.0, gain - 8.0 * channel.subblock_gain[win] as f64);
 
             // Calculate B, scalefac_multiplier * scalefacs[gr][ch][sfb][win].
             let pow2b = f64::powf(
                 2.0,
-                scalefac_mulitplier * main_data.scalefacs[3*sfb + win] as f64,
+                scalefac_mulitplier * channel.scalefacs[3*sfb + win] as f64,
             );
 
             // Calculate 2^(0.25*A) * 2^(-B).
@@ -1362,27 +1354,30 @@ fn l3_requantize_short(
 /// Requantize samples in `buf` regardless of block type.
 fn l3_requantize(
     header: &FrameHeader,
-    side_info: &GranuleChannelSideInfoL3,
-    main_data: &MainDataGranuleChannel,
+    channel: &GranuleChannel,
     buf: &mut [f32],
 ) {
-    match side_info.block_type {
+    match channel.block_type {
         BlockType::Short { is_mixed: false } => {
-            l3_requantize_short(header, side_info, main_data, 0, buf);
+            l3_requantize_short(header, channel, 0, buf);
         },
         BlockType::Short { is_mixed: true } => {
             eprintln!("requantize mixed block.");
-            // A mixed block is a combination of a long block and short block. The first 36 samples
-            // are part of a single long block, and the remaining samples are part of the short 
-            // blocks. Therefore, requantization for mixed blocks can be decomposed into short and
-            // long block requantizations.
+            // A mixed block is a combination of a long block and short blocks. The first few scale
+            // factor bands, and thus samples, belong to a single long block, while the remaining 
+            // bands and samples belong to short blocks. Therefore, requantization for mixed blocks 
+            // can be decomposed into short and long block requantizations.
+            //
+            // As per ISO/IEC 11172-3, the short scale factor band at which the long block ends and 
+            // the short blocks begin is denoted by switch_point_s (3). ISO/IEC 13818-3 does not 
+            // ammend this figure.
             //
             // TODO: Verify if this split makes sense for 8kHz MPEG2.5 bitstreams.
-            l3_requantize_long(header, side_info, main_data, &mut buf[0..36]);
-            l3_requantize_short(header, side_info, main_data, 3, &mut buf[36..]);
+            l3_requantize_long(header, channel, &mut buf[0..36]);
+            l3_requantize_short(header, channel, 3, &mut buf[36..]);
         },
         _ => {
-            l3_requantize_long(header, side_info, main_data, buf);
+            l3_requantize_long(header, channel, buf);
         },
     }
 }
@@ -1390,12 +1385,12 @@ fn l3_requantize(
 /// Reorder samples that are part of short blocks into sub-band order.
 fn l3_reorder(
     header: &FrameHeader, 
-    side_info: &GranuleChannelSideInfoL3, 
+    channel: &GranuleChannel, 
     rzero: usize,
     buf: &mut [f32; 576]
 ) {
     // Only short blocks are reordered.
-    if let BlockType::Short { is_mixed } = side_info.block_type {
+    if let BlockType::Short { is_mixed } = channel.block_type {
         // Every short block is split into 3 equally sized windows as illustrated below (e.g. for 
         // a short scale factor band with win_len=4):
         //
@@ -1423,10 +1418,10 @@ fn l3_reorder(
         // band accordingly.
         //
         // TODO: Verify if this split makes sense for 8kHz MPEG2.5 bitstreams.
-        let sfb_start = if is_mixed { 3 } else { 0 };
+        let mut sfb = if is_mixed { 3 } else { 0 };
 
-        let mut sfb = sfb_start;
-        let mut i = 12 * sfb_start;
+        let start = 3 * sfb_bands[sfb] as usize;
+        let mut i = start;
 
         while i < rzero {
             // Determine the scale factor band width.
@@ -1453,7 +1448,7 @@ fn l3_reorder(
         }
 
         // Copy reordered samples from the reorder buffer to the actual sample buffer.
-        buf[12*sfb_start..i].copy_from_slice(&reorder_buf[12*sfb_start..i]);
+        buf[start..i].copy_from_slice(&reorder_buf[start..i]);
     }
 }
 
@@ -1461,28 +1456,26 @@ fn l3_reorder(
 fn l3_read_main_data<B: BitStream>(
     bs: &mut B, 
     header: &FrameHeader, 
-    side_info: &SideInfoL3,
-) -> Result<MainData> {
-
-    let mut main_data: MainData = Default::default();
+    frame_data: &mut FrameData,
+    samples: &mut [f32; 576],
+) -> Result<()> {
 
     for gr in 0..header.n_granules() {
         for ch in 0..header.n_channels() {
             
             // Read the scale factors (part2) and get the number of bits read. For MPEG version 1...
             let part2_len = if header.is_mpeg1() {
-                l3_read_scale_factors_mpeg1(bs, gr, ch, side_info, &mut main_data)
+                l3_read_scale_factors_mpeg1(bs, gr, ch, frame_data)
             }
             // For MPEG version 2...
             else {
                 l3_read_scale_factors_mpeg2(
                     bs, 
                     ch > 0 && header.is_intensity_stereo(), 
-                    &side_info.granules[gr].channels[ch], 
-                    &mut main_data.granules[gr].channels[ch])
+                    &mut frame_data.granules[gr].channels[ch])
             }?;
 
-            let part2_3_length = side_info.granules[gr].channels[ch].part2_3_length as u32;
+            let part2_3_length = frame_data.granules[gr].channels[ch].part2_3_length as u32;
 
             // The length part2 must be less than or equal to the part2_3_length.
             if part2_len > part2_3_length {
@@ -1492,31 +1485,28 @@ fn l3_read_main_data<B: BitStream>(
             // The Huffman code length (part3).
             let part3_len = part2_3_length - part2_len;
 
-            let mut samples = [0f32; 576];
-
             // Decode the Huffman coded spectral samples and get the starting index of the rzero 
             // partition.
             let rzero = l3_read_huffman_samples(
                 bs, 
-                &side_info.granules[gr].channels[ch], 
+                &frame_data.granules[gr].channels[ch], 
                 part3_len,
-                &mut samples
+                samples
             )?;
 
             // Requantize all non-zero (big_values and count1 partition) spectral samples.
             l3_requantize(
                 header, 
-                &side_info.granules[gr].channels[ch], 
-                &main_data.granules[gr].channels[ch], 
+                &frame_data.granules[gr].channels[ch], 
                 &mut samples[..rzero]
             );
 
             // Reorder any spectral samples in short blocks into sub-band order.
-            l3_reorder(header, &side_info.granules[gr].channels[ch], rzero, &mut samples);
+            l3_reorder(header, &frame_data.granules[gr].channels[ch], rzero, samples);
         }
     }
 
-    Ok(main_data)
+    Ok(())
 }
 
 /// `BitResevoir` implements the bit resevoir mechanism for main_data. Since frames have a 
@@ -1573,24 +1563,28 @@ impl BitResevoir {
 pub fn next_frame<B: Bytestream>(reader: &mut B, resevoir: &mut BitResevoir) -> Result<()> {
     let header = read_frame_header(reader)?;
     eprintln!("{:#?}", &header);
+    
+    let mut samples = [0f32; 576];
 
     match header.layer {
         MpegLayer::Layer3 => {
-            // Read the side information. TODO: Use a MonitorStream to compute the CRC.
-            let side_info = l3_read_side_info(reader, &header)?;
-            eprintln!("{:#?}", &side_info);
+            // Initialize an empty frame data.
+            let mut frame_data: FrameData = Default::default();
+
+            // Read the side information info frame_data.
+            // TODO: Use a MonitorStream to compute the CRC.
+            let side_info_len = l3_read_side_info(reader, &header, &mut frame_data)?;
 
             // Buffer main_data into the bit resevoir.
             resevoir.fill(
                 reader, 
-                side_info.main_data_begin as usize,
-                header.frame_size - side_info.size)?;
+                frame_data.main_data_begin as usize,
+                header.frame_size - side_info_len)?;
 
             // Read the main_data from the bit resevoir.
             {
                 let mut bs = BitStreamLtr::new(BufStream::new(resevoir.bytes_ref()));
-
-                let main_data = l3_read_main_data(&mut bs, &header, &side_info)?;
+                l3_read_main_data(&mut bs, &header, &mut frame_data, &mut samples)?;
             }
 
         },
