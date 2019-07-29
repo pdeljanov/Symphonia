@@ -449,9 +449,15 @@ struct GranuleChannelSideInfoL3 {
     big_values: u16,
     /// Quantization step size.
     global_gain: u8,
-    /// For MPEG1, the index into SCALE_FACTOR_SLEN for a number of bits per scale factor pair.
-    /// For MPEG2/2.5, decodes into slen[1-4] to determine number of bits per scale factor and for 
-    /// which bands.
+    /// Depending on the MPEG version, `scalefac_compress` determines how many bits are allocated 
+    /// per scale factor.
+    /// 
+    /// - For MPEG1 bitstreams, `scalefac_compress` is a 4-bit index into SCALE_FACTOR_SLEN[0..16] 
+    /// to obtain a number of bits per scale factor pair.
+    /// 
+    /// - For MPEG2/2.5 bitstreams, `scalefac_compress` is a 9-bit value that decodes into 
+    /// slen[0..3] (referred to as slen1-4 in the standard) for the number of bits per scale factor,
+    /// and depending on which range the value falls into, for which bands.
     scalefac_compress: u16,
     /// Indicates the block type (type of window) for the channel in the granule.
     block_type: BlockType,
@@ -488,17 +494,18 @@ struct MainDataGranuleChannel {
     /// based on the block type of the granule.
     /// 
     /// For `block_type == BlockType::Short { is_mixed: false }`: 
-    ///     scalefac_s[0..36] -> scalefacs[0..36]
+    ///   - scalefac_s[0..36] -> scalefacs[0..36]
     /// 
     /// For `block_type == BlockType::Short { is_mixed: true }`:
-    ///     scalefac_l[0..8]  -> scalefacs[0..8],
-    ///     scalefac_s[0..27] -> scalefacs[8..35]
+    ///   - scalefac_l[0..8]  -> scalefacs[0..8]
+    ///   - scalefac_s[0..27] -> scalefacs[8..35]
     /// 
     /// For `block_type != BlockType::Short { .. }`:
-    ///     scalefac_l[0..21] -> scalefacs[0..21]
+    ///   - scalefac_l[0..21] -> scalefacs[0..21]
     /// 
-    /// Note: The standard doesn't explicitly call it out, but for Short blocks, scalefacs[36..39] 
-    ///       are always 0 and are not transmitted in the bitstream.
+    /// Note: The standard doesn't explicitly call it out, but for Short blocks, there are three 
+    ///       additional scale factors, scalefacs[36..39], that are always 0 and are not transmitted
+    ///       in the bitstream.
     scalefacs: [u8; 39],
 }
 
@@ -865,7 +872,7 @@ fn l3_read_side_info<B: Bytestream>(reader: &mut B, header: &FrameHeader) -> Res
     Ok(side_info)
 }
 
-/// Reads the scale factors for a single channel in a granule in a MPEG version 1 frame.
+/// Reads the scale factors for a single channel in a granule in a MPEG version 1 audio frame.
 fn l3_read_scale_factors_mpeg1<B: BitStream>(
     bs: &mut B, 
     gr: usize,
@@ -878,6 +885,7 @@ fn l3_read_scale_factors_mpeg1<B: BitStream>(
 
     let channel = &side_info.granules[gr].channels[ch];
 
+    // For MPEG1, scalefac_compress is a 4-bit index into a scale factor bit length lookup table.
     let (slen1, slen2) = SCALE_FACTOR_SLEN[channel.scalefac_compress as usize];
 
     // Short or Mixed windows...
@@ -947,7 +955,7 @@ fn l3_read_scale_factors_mpeg1<B: BitStream>(
     Ok(bits_read as u32)
 }
 
-/// Reads the scale factors for a single channel in a granule in a MPEG version 2 frame.
+/// Reads the scale factors for a single channel in a granule in a MPEG version 2 audio frame.
 fn l3_read_scale_factors_mpeg2<B: BitStream>(
     bs: &mut B, 
     is_intensity_stereo: bool,
@@ -964,6 +972,8 @@ fn l3_read_scale_factors_mpeg2<B: BitStream>(
     };
 
     let (slen_table, nsfb_table) = if is_intensity_stereo {
+        // The actual value of scalefac_compress is a 9-bit unsigned integer (0..512) for MPEG2. A 
+        // left shift reduces it to an 8-bit value (0..255). 
         let sfc = side_info.scalefac_compress as u32 >> 1;
 
         match sfc {
@@ -992,6 +1002,7 @@ fn l3_read_scale_factors_mpeg2<B: BitStream>(
         }
     }
     else {
+        // The actual value of scalefac_compress is a 9-bit unsigned integer (0..512) for MPEG2.
         let sfc = side_info.scalefac_compress as u32;
 
         match sfc {
@@ -999,7 +1010,7 @@ fn l3_read_scale_factors_mpeg2<B: BitStream>(
                 (sfc >> 4) / 5, 
                 (sfc >> 4) % 5, 
                 (sfc % 16) >> 2, 
-                (sfc %  4)
+                (sfc %  4),
             ], 
             &SCALE_FACTOR_MPEG2_NSFB[3][block_index]),
             400..=499 => ([
@@ -1377,7 +1388,12 @@ fn l3_requantize(
 }
 
 /// Reorder samples that are part of short blocks into sub-band order.
-fn l3_reorder(header: &FrameHeader, side_info: &GranuleChannelSideInfoL3, buf: &mut [f32; 576]) {
+fn l3_reorder(
+    header: &FrameHeader, 
+    side_info: &GranuleChannelSideInfoL3, 
+    rzero: usize,
+    buf: &mut [f32; 576]
+) {
     // Only short blocks are reordered.
     if let BlockType::Short { is_mixed } = side_info.block_type {
         // Every short block is split into 3 equally sized windows as illustrated below (e.g. for 
@@ -1394,11 +1410,50 @@ fn l3_reorder(header: &FrameHeader, side_info: &GranuleChannelSideInfoL3, buf: &
         //
         // Basically, reordering interleaves the 3 windows the same way 3 planar audio buffers 
         // would be interleaved.
+        debug_assert!(rzero <= 576);
 
-        // Only the short bands in a mixed block are reordered.
-        let sfb = if is_mixed { 3 } else { 0 };
+        // TODO: Frankly, this is wasteful... Consider swapping between two internal buffers so we
+        // can avoid initializing this to 0 every frame. Again, unsafe is allowed in codec's so this
+        // can't be left uninitialized.
+        let mut reorder_buf = [0f32; 576];
 
+        let sfb_bands = &SCALE_FACTOR_SHORT_BANDS[header.sample_rate_idx];
 
+        // Only the short bands in a mixed block are reordered. Adjust the starting scale factor
+        // band accordingly.
+        //
+        // TODO: Verify if this split makes sense for 8kHz MPEG2.5 bitstreams.
+        let sfb_start = if is_mixed { 3 } else { 0 };
+
+        let mut sfb = sfb_start;
+        let mut i = 12 * sfb_start;
+
+        while i < rzero {
+            // Determine the scale factor band width.
+            let win_len = (sfb_bands[sfb+1] - sfb_bands[sfb]) as usize;
+            sfb += 1;
+
+            // Respective starting indicies of windows 0, 1, and 2.
+            let mut w0 = i;
+            let mut w1 = i + 1 * win_len;
+            let mut w2 = i + 2 * win_len;
+
+            // Interleave the three windows. This is essentially a matrix transpose.
+            // TODO: This could likely be sped up with SIMD. Could this be done in-place?
+            for _ in 0..win_len {
+                reorder_buf[i+0] = buf[w0];
+                w0 += 1;
+                reorder_buf[i+1] = buf[w1];
+                w1 += 1;
+                reorder_buf[i+2] = buf[w2];
+                w2 += 1;
+
+                i += 3;
+            }
+        }
+
+        // Copy reordered samples from the reorder buffer to the actual sample buffer.
+        buf[12*sfb_start..i].copy_from_slice(&reorder_buf[12*sfb_start..i]);
     }
 }
 
@@ -1457,7 +1512,7 @@ fn l3_read_main_data<B: BitStream>(
             );
 
             // Reorder any spectral samples in short blocks into sub-band order.
-            l3_reorder(header, &side_info.granules[gr].channels[ch], &mut samples);
+            l3_reorder(header, &side_info.granules[gr].channels[ch], rzero, &mut samples);
         }
     }
 
