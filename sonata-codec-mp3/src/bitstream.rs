@@ -172,6 +172,32 @@ lazy_static! {
     };
 }
 
+lazy_static! {
+    /// Pair of lookup tables, CS and CA, for alias reduction.
+    /// 
+    /// As per ISO/IEC 11172-3, CS and CA are calculated as follows:
+    /// 
+    ///  - cs[i] =  1.0 / sqrt(1.0 + c[i]^2)
+    ///  - ca[i] = c[i] / sqrt(1.0 + c[i]^2)
+    /// 
+    /// where:
+    ///     c[i] = [ -0.6, -0.535, -0.33, -0.185, -0.095, -0.041, -0.0142, -0.0037 ]
+    static ref CS_CA: ([f32; 8], [f32; 8]) = {
+        const C: [f32; 8] = [ -0.6, -0.535, -0.33, -0.185, -0.095, -0.041, -0.0142, -0.0037 ];
+
+        let mut cs = [0f32; 8];
+        let mut ca = [0f32; 8];
+
+        for i in 0..8 {
+            let sqrt = f32::sqrt(1.0 + (C[i] * C[i]));
+            cs[i] = 1.0 / sqrt;
+            ca[i] = C[i] / sqrt;
+        }
+
+        (cs, ca)
+    };
+}
+
 struct MpegHuffmanTable {
     /// The Huffman decode table.
     huff_table: &'static HuffmanTable<H8>,
@@ -662,7 +688,7 @@ fn read_frame_header<B: Bytestream>(reader: &mut B) -> Result<FrameHeader> {
     })
 }
 
-/// Reads the side_info for a single channel in a Granule from a `BitStream`.
+/// Reads the side_info for a single channel in a granule from a `BitStream`.
 fn read_granule_channel_side_info_l3<B: BitStream>(
     bs: &mut B,
     channel: &mut GranuleChannel,
@@ -796,7 +822,7 @@ fn read_granule_channel_side_info_l3<B: BitStream>(
     Ok(())
 }
 
-/// Reads the side_info for all channels in a Granule from a `BitStream`.
+/// Reads the side_info for all channels in a granule from a `BitStream`.
 fn read_granule_side_info_l3<B: BitStream>(
     bs: &mut B, 
     granule: &mut Granule, 
@@ -809,7 +835,7 @@ fn read_granule_side_info_l3<B: BitStream>(
     Ok(())
 }
 
-/// Reads the side_info of a MPEG audio frame from a `BitStream` into `frame_data`.
+/// Reads the side_info of a MPEG audio frame from a `BitStream` into `FrameData`.
 fn l3_read_side_info<B: Bytestream>(
     reader: &mut B, 
     header: &FrameHeader,
@@ -1452,7 +1478,61 @@ fn l3_reorder(
     }
 }
 
-/// Reads the main_data portion of a MPEG audio frame from a `BitStream`.
+/// Applies the anti-aliasing filter to sub-bands that are not short blocks.
+fn l3_antialias(channel: &GranuleChannel, samples: &mut [f32; 576]) {
+
+    // The number of sub-bands to anti-aliasing depends on block type.
+    let sb_end = match channel.block_type {
+        // Short blocks are never anti-aliased.
+        BlockType::Short { is_mixed: false } => return,
+        // Mixed blocks have a long block span the first 36 samples (2 sub-bands). Therefore, only
+        // anti-alias these two sub-bands.
+        BlockType::Short { is_mixed: true  } =>  2 * 18,
+        // All other block types require all 32 sub-bands to be anti-aliased.
+        _                                    => 32 * 18,
+    };
+
+    // Amortize the lazy_static fetch over the entire anti-aliasing operation.
+    let (cs, ca): &([f32; 8], [f32; 8]) = &CS_CA;
+
+    // Anti-aliasing is performed using 8 butterfly calculations at the boundaries of ADJACENT
+    // sub-bands. For each calculation, there are two samples: lower and upper. For each iteration, 
+    // the lower sample advances backwards from the boundary, while the upper sample advanced 
+    // forward from the boundary.
+    //
+    // For example, let B(l, u) represent the butterfly calculation where l and u are the indicies 
+    // of the lower and upper samples respectively. If j is the index of the first sample of a 
+    // sub-band, then the iterations are as follows:
+    //
+    // B(j-1,j), B(j-2,j+1), B(j-3,j+2), B(j-4,j+3), B(j-5,j+4), B(j-6,j+5), B(j-7,j+6), B(j-8,j+7)
+    //
+    // The butterfly calculation itself can be illustrated as follows:
+    //
+    //              * cs[i]
+    //   l0 -------o------(-)------> l1
+    //               \    /                  l1 = l0 * cs[i] - u0 * ca[i]
+    //                \  / * ca[i]           u1 = u0 * cs[i] + l0 * ca[i]
+    //                 \
+    //               /  \  * ca[i]           where:
+    //             /     \                       cs[i], ca[i] are constant values for iteration i,
+    //   u0 ------o------(+)-------> u1          derived from table B.9 from ISO/IEC 11172-3.
+    //             * cs[i]
+    //
+    // Note that all butterfly calculations only involve two samples, and all iterations are 
+    // independant of each other. This lends itself well for SIMD processing.
+    for sb in (18..sb_end).step_by(18) {
+        for i in 0..8 {
+            let li = sb - 1 - i;
+            let ui = sb + i;
+            let lower = samples[li];
+            let upper = samples[ui];
+            samples[li] = lower * cs[i] - upper * ca[i];
+            samples[ui] = upper * cs[i] + lower * ca[i];
+        }
+    }
+}
+
+/// Reads the main_data portion of a MPEG audio frame from a `BitStream` into `FrameData`.
 fn l3_read_main_data<B: BitStream>(
     bs: &mut B, 
     header: &FrameHeader, 
@@ -1503,6 +1583,9 @@ fn l3_read_main_data<B: BitStream>(
 
             // Reorder any spectral samples in short blocks into sub-band order.
             l3_reorder(header, &frame_data.granules[gr].channels[ch], rzero, samples);
+
+            // Apply the anti-aliasing filter blocks that are not short.
+            l3_antialias(&frame_data.granules[gr].channels[ch], samples);
         }
     }
 
@@ -1568,10 +1651,11 @@ pub fn next_frame<B: Bytestream>(reader: &mut B, resevoir: &mut BitResevoir) -> 
 
     match header.layer {
         MpegLayer::Layer3 => {
-            // Initialize an empty frame data.
+            // Initialize an empty FrameData to store the side_info and main_data portions of the 
+            // frame.
             let mut frame_data: FrameData = Default::default();
 
-            // Read the side information info frame_data.
+            // Read side_info into the frame data.
             // TODO: Use a MonitorStream to compute the CRC.
             let side_info_len = l3_read_side_info(reader, &header, &mut frame_data)?;
 
@@ -1579,9 +1663,11 @@ pub fn next_frame<B: Bytestream>(reader: &mut B, resevoir: &mut BitResevoir) -> 
             resevoir.fill(
                 reader, 
                 frame_data.main_data_begin as usize,
-                header.frame_size - side_info_len)?;
+                header.frame_size - side_info_len
+            )?;
 
-            // Read the main_data from the bit resevoir.
+            // Read the main_data from the bit resevoir. A bit reader is required exclusively for 
+            // this operation, so scope it.
             {
                 let mut bs = BitStreamLtr::new(BufStream::new(resevoir.bytes_ref()));
                 l3_read_main_data(&mut bs, &header, &mut frame_data, &mut samples)?;
