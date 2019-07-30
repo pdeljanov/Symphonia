@@ -1054,14 +1054,17 @@ fn l3_read_scale_factors_mpeg2<B: BitStream>(
     let mut start = 0;
 
     for (&slen, &n_sfb) in slen_table.iter().zip(nsfb_table.iter()) {
-        // TODO: A maximum value indicates an invalid position for Intensity Stereo. Deal with this
-        // here? (ISO-13818-3 part 2.4.3.2)
-        for sfb in start..(start + n_sfb) {
-           channel.scalefacs[sfb] = bs.read_bits_leq32(slen)? as u8;
+        // If slen > 0, read n_sfb scale factors with each scale factor being slen bits long. If 
+        // slen == 0, but n_sfb > 0, then the those scale factors should be set to 0. Since all
+        // scalefacs are preinitialized to 0, this process may be skipped.
+        if slen > 0 {
+            for sfb in start..(start + n_sfb) {
+                channel.scalefacs[sfb] = bs.read_bits_leq32(slen)? as u8;
+            }
+            bits_read += slen * n_sfb as u32;
         }
 
         start += n_sfb;
-        bits_read += slen * n_sfb as u32;
     }
 
     Ok(bits_read)
@@ -1071,7 +1074,7 @@ fn l3_read_scale_factors_mpeg2<B: BitStream>(
 /// into a provided sample buffer. Returns the number of decoded samples (the starting index of the
 /// rzero partition).
 /// 
-/// Note, each spectral sample is raised to the 4/3-rd power. This is not actually part of the 
+/// Note, each spectral sample is raised to the (4/3)-rd power. This is not actually part of the 
 /// Huffman decoding process, but, by converting the integer sample to floating point here we don't
 /// need to do pointless casting or use an extra buffer.
 fn l3_read_huffman_samples<B: BitStream>(
@@ -1480,7 +1483,6 @@ fn l3_reorder(
 
 /// Applies the anti-aliasing filter to sub-bands that are not short blocks.
 fn l3_antialias(channel: &GranuleChannel, samples: &mut [f32; 576]) {
-
     // The number of sub-bands to anti-aliasing depends on block type.
     let sb_end = match channel.block_type {
         // Short blocks are never anti-aliased.
@@ -1497,12 +1499,12 @@ fn l3_antialias(channel: &GranuleChannel, samples: &mut [f32; 576]) {
 
     // Anti-aliasing is performed using 8 butterfly calculations at the boundaries of ADJACENT
     // sub-bands. For each calculation, there are two samples: lower and upper. For each iteration, 
-    // the lower sample advances backwards from the boundary, while the upper sample advanced 
-    // forward from the boundary.
+    // the lower sample index advances backwards from the boundary, while the upper sample index 
+    // advances forward from the boundary.
     //
-    // For example, let B(l, u) represent the butterfly calculation where l and u are the indicies 
-    // of the lower and upper samples respectively. If j is the index of the first sample of a 
-    // sub-band, then the iterations are as follows:
+    // For example, let B(li, ui) represent the butterfly calculation where li and ui are the 
+    // indicies of the lower and upper samples respectively. If j is the index of the first sample 
+    // of a sub-band, then the iterations are as follows:
     //
     // B(j-1,j), B(j-2,j+1), B(j-3,j+2), B(j-4,j+3), B(j-5,j+4), B(j-6,j+5), B(j-7,j+6), B(j-8,j+7)
     //
@@ -1515,7 +1517,7 @@ fn l3_antialias(channel: &GranuleChannel, samples: &mut [f32; 576]) {
     //                 \
     //               /  \  * ca[i]           where:
     //             /     \                       cs[i], ca[i] are constant values for iteration i,
-    //   u0 ------o------(+)-------> u1          derived from table B.9 from ISO/IEC 11172-3.
+    //   u0 ------o------(+)-------> u1          derived from table B.9 of ISO/IEC 11172-3.
     //             * cs[i]
     //
     // Note that all butterfly calculations only involve two samples, and all iterations are 
@@ -1584,7 +1586,7 @@ fn l3_read_main_data<B: BitStream>(
             // Reorder any spectral samples in short blocks into sub-band order.
             l3_reorder(header, &frame_data.granules[gr].channels[ch], rzero, samples);
 
-            // Apply the anti-aliasing filter blocks that are not short.
+            // Apply the anti-aliasing filter to blocks that are not short.
             l3_antialias(&frame_data.granules[gr].channels[ch], samples);
         }
     }
