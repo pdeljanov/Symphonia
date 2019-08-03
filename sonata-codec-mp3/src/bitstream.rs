@@ -5,7 +5,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use std::cmp::min;
+use std::cmp::{max, min};
+use std::{f32, f64};
 
 use lazy_static::lazy_static;
 
@@ -177,12 +178,16 @@ lazy_static! {
     /// 
     /// As per ISO/IEC 11172-3, CS and CA are calculated as follows:
     /// 
-    ///  - cs[i] =  1.0 / sqrt(1.0 + c[i]^2)
-    ///  - ca[i] = c[i] / sqrt(1.0 + c[i]^2)
+    /// ```text
+    /// cs[i] =  1.0 / sqrt(1.0 + c[i]^2)
+    /// ca[i] = c[i] / sqrt(1.0 + c[i]^2)
+    /// ```
     /// 
     /// where:
-    ///     c[i] = [ -0.6, -0.535, -0.33, -0.185, -0.095, -0.041, -0.0142, -0.0037 ]
-    static ref CS_CA: ([f32; 8], [f32; 8]) = {
+    /// ```text
+    /// c[i] = [ -0.6, -0.535, -0.33, -0.185, -0.095, -0.041, -0.0142, -0.0037 ]
+    /// ```
+    static ref ANTIALIAS_CS_CA: ([f32; 8], [f32; 8]) = {
         const C: [f32; 8] = [ -0.6, -0.535, -0.33, -0.185, -0.095, -0.041, -0.0142, -0.0037 ];
 
         let mut cs = [0f32; 8];
@@ -195,6 +200,96 @@ lazy_static! {
         }
 
         (cs, ca)
+    };
+}
+
+lazy_static! {
+    /// (Left, right) channel coefficients for decoding intensity stereo in MPEG2 bitstreams.
+    /// 
+    /// These coefficients are derived from section 2.4.3.2 of ISO/IEC 13818-3.
+    /// 
+    /// As per the specification, for a given intensity position, is_pos (0 <= is_pos < 32), the
+    /// channel coefficients, k_l and k_r, may be calculated as per the table below:
+    /// 
+    /// ```text
+    /// If...            | k_l                     | k_r
+    /// -----------------+-------------------------+-------------------
+    /// is_pos     == 0  | 1.0                     | 1.0
+    /// is_pos & 1 == 1  | i0 ^ [(is_pos + 1) / 2] | 1.0
+    /// is_pos & 1 == 0  | 1.0                     | i0 ^ (is_pos / 2)
+    /// ```
+    /// 
+    /// The value of i0 is dependant on the least significant bit of scalefac_compress.
+    /// 
+    ///  ```text
+    /// scalefac_compress & 1 | i0
+    /// ----------------------+---------------------
+    /// 0                     | 1 / sqrt(sqrt(2.0))
+    /// 1                     | 1 / sqrt(2.0)
+    /// ```
+    /// 
+    /// The first dimension of this table is indexed by scalefac_compress & 1 to select i0. The 
+    /// second dimension is indexed by is_pos to obtain the channel coefficients. Note that 
+    /// is_pos == 7 is considered an invalid position, but IS included in the table.
+    static ref INTENSITY_STEREO_RATIOS_MPEG2: [[(f32, f32); 32]; 2] = {
+        let IS_SCALE: [f64; 2] = [
+            1.0 / f64::sqrt(f64::sqrt(2.0)),
+            1.0 / f64::sqrt(2.0)
+        ];
+
+        let mut i = 0;
+        let mut ratios = [[(0.0, 0.0); 32]; 2];
+
+        for is_pos in 0..32 {
+            if is_pos & 1 != 0 {
+                ratios[0][i] = (f64::powi(IS_SCALE[0], (is_pos + 1) >> 1) as f32, 1.0);
+                ratios[1][i] = (f64::powi(IS_SCALE[1], (is_pos + 1) >> 1) as f32, 1.0);
+            }
+            else {
+                ratios[0][i] = (1.0, f64::powi(IS_SCALE[0], is_pos >> 1) as f32);
+                ratios[1][i] = (1.0, f64::powi(IS_SCALE[1], is_pos >> 1) as f32);
+            }
+            i += 1;
+        }
+
+        ratios
+    };
+}
+
+lazy_static! {
+    /// (Left, right) channel coeffcients for decoding intensity stereo in MPEG1 bitstreams.
+    /// 
+    /// These coefficients are derived from section 2.4.3.4.9.3 of ISO/IEC 11172-3.
+    ///
+    /// As per the specification, for a given intensity position, is_pos (0 <= is_pos < 7), a ratio,
+    /// is_ratio, is calculated as follows:
+    /// 
+    /// ```text
+    /// is_ratio = tan(is_pos * PI/12)
+    /// ```
+    /// 
+    /// Then, the channel coefficients, k_l and k_r, are calculated as follows:
+    /// 
+    /// ```text
+    /// k_l = is_ratio / (1 + is_ratio)
+    /// k_r =        1 / (1 + is_ratio)
+    /// ```
+    /// 
+    /// This table is indexed by is_pos. Note that is_pos == 7 is invalid and is NOT included in the
+    /// table.
+    static ref INTENSITY_STEREO_RATIOS: [(f32, f32); 7] = {
+        const PI_12: f64 = f64::consts::PI / 12.0;
+
+        let mut ratios = [(0.0, 0.0); 7];
+
+        for is_pos in 0..6 {
+            let ratio = (PI_12 * is_pos as f64).tan();
+            ratios[is_pos] = ((ratio / (1.0 + ratio)) as f32, 1.0 / (1.0 + ratio) as f32);
+        }
+
+        ratios[6] = (1.0, 0.0);
+
+        ratios
     };
 }
 
@@ -297,7 +392,7 @@ enum MpegLayer {
 /// For Joint Stereo mode, the mode extension describes the features and parameters of the Joint
 /// Stereo encoding.
 #[derive(Copy,Clone,Debug,PartialEq)]
-enum ModeExtension {
+enum Mode {
     /// Joint Stereo in layer 3 may use both Mid-Side and Intensity encoding.
     Layer3 { mid_side: bool, intensity: bool },
     /// Joint Stereo in layers 1 and 2 may only use Intensity encoding on a set of bands. The range
@@ -315,7 +410,7 @@ enum Channels {
     /// Stereo channels.
     Stereo,
     /// Joint Stereo encoded channels (decodes to Stereo).
-    JointStereo(ModeExtension),
+    JointStereo(Mode),
 }
 
 impl Channels {
@@ -407,8 +502,8 @@ impl FrameHeader {
     #[inline(always)]
     fn is_intensity_stereo(&self) -> bool {
         match self.channels {
-            Channels::JointStereo(ModeExtension::Intensity { .. }) => true,
-            Channels::JointStereo(ModeExtension::Layer3 { intensity, .. }) => intensity,
+            Channels::JointStereo(Mode::Intensity { .. }) => true,
+            Channels::JointStereo(Mode::Layer3 { intensity, .. }) => intensity,
             _ => false,
         }
     }
@@ -444,7 +539,7 @@ impl FrameData {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug,PartialEq)]
 enum BlockType {
     // Default case when window switching is off. Also the normal case when window switching is
     // on. Granule contains one long block.
@@ -511,7 +606,13 @@ struct GranuleChannel {
     /// Note: The standard doesn't explicitly call it out, but for Short blocks, there are three 
     ///       additional scale factors, scalefacs[36..39], that are always 0 and are not transmitted
     ///       in the bitstream.
+    /// 
+    /// For MPEG1 and MPEG 2 without intensity stereo coding a scale factor will not exceed 4 bits 
+    /// in length (maximum value 15). For MPEG2 with intensity stereo, a scale factor will not 
+    /// exceed 5 bits (maximum value 31).
     scalefacs: [u8; 39],
+    /// The starting sample of the rzero partition.
+    rzero: usize,
 }
 
 impl Default for GranuleChannel {
@@ -530,6 +631,7 @@ impl Default for GranuleChannel {
             scalefac_scale: false,
             count1table_select: false,
             scalefacs: [0; 39], 
+            rzero: 0,
         }
     }
 }
@@ -612,13 +714,13 @@ fn read_frame_header<B: Bytestream>(reader: &mut B) -> Result<FrameHeader> {
         (0b11,                 _) => Channels::Mono,
         // Joint stereo mode for layer 3 supports a combination of Mid-Side and Intensity Stereo 
         // depending on the mode extension bits.
-        (0b01, MpegLayer::Layer3) => Channels::JointStereo(ModeExtension::Layer3 {
+        (0b01, MpegLayer::Layer3) => Channels::JointStereo(Mode::Layer3 {
             mid_side:  header & 0x20 != 0x0,
             intensity: header & 0x10 != 0x0,
         }),
         // Joint stereo mode for layers 1 and 2 only supports Intensity Stereo. The mode extension
         // bits indicate for which sub-bands intensity stereo coding is applied.
-        (0b01,                 _) => Channels::JointStereo(ModeExtension::Intensity { 
+        (0b01,                 _) => Channels::JointStereo(Mode::Intensity { 
             bound: (1 + (header & 0x30) >> 4) << 2,
         }),
         _                         => unreachable!(),
@@ -1384,11 +1486,11 @@ fn l3_requantize_short(
 fn l3_requantize(
     header: &FrameHeader,
     channel: &GranuleChannel,
-    buf: &mut [f32],
+    buf: &mut [f32; 576],
 ) {
     match channel.block_type {
         BlockType::Short { is_mixed: false } => {
-            l3_requantize_short(header, channel, 0, buf);
+            l3_requantize_short(header, channel, 0, &mut buf[..channel.rzero]);
         },
         BlockType::Short { is_mixed: true } => {
             eprintln!("requantize mixed block.");
@@ -1403,10 +1505,10 @@ fn l3_requantize(
             //
             // TODO: Verify if this split makes sense for 8kHz MPEG2.5 bitstreams.
             l3_requantize_long(header, channel, &mut buf[0..36]);
-            l3_requantize_short(header, channel, 3, &mut buf[36..]);
+            l3_requantize_short(header, channel, 3, &mut buf[36..channel.rzero]);
         },
         _ => {
-            l3_requantize_long(header, channel, buf);
+            l3_requantize_long(header, channel, &mut buf[..channel.rzero]);
         },
     }
 }
@@ -1415,7 +1517,6 @@ fn l3_requantize(
 fn l3_reorder(
     header: &FrameHeader, 
     channel: &GranuleChannel, 
-    rzero: usize,
     buf: &mut [f32; 576]
 ) {
     // Only short blocks are reordered.
@@ -1434,11 +1535,11 @@ fn l3_reorder(
         //
         // Basically, reordering interleaves the 3 windows the same way 3 planar audio buffers 
         // would be interleaved.
-        debug_assert!(rzero <= 576);
+        debug_assert!(channel.rzero <= 576);
 
         // TODO: Frankly, this is wasteful... Consider swapping between two internal buffers so we
-        // can avoid initializing this to 0 every frame. Again, unsafe is allowed in codec's so this
-        // can't be left uninitialized.
+        // can avoid initializing this to 0 every frame. Again, unsafe is not allowed in codec's so 
+        // this can't be left uninitialized.
         let mut reorder_buf = [0f32; 576];
 
         let sfb_bands = &SCALE_FACTOR_SHORT_BANDS[header.sample_rate_idx];
@@ -1452,7 +1553,7 @@ fn l3_reorder(
         let start = 3 * sfb_bands[sfb] as usize;
         let mut i = start;
 
-        while i < rzero {
+        while i < channel.rzero {
             // Determine the scale factor band width.
             let win_len = (sfb_bands[sfb+1] - sfb_bands[sfb]) as usize;
             sfb += 1;
@@ -1495,7 +1596,7 @@ fn l3_antialias(channel: &GranuleChannel, samples: &mut [f32; 576]) {
     };
 
     // Amortize the lazy_static fetch over the entire anti-aliasing operation.
-    let (cs, ca): &([f32; 8], [f32; 8]) = &CS_CA;
+    let (cs, ca): &([f32; 8], [f32; 8]) = &ANTIALIAS_CS_CA;
 
     // Anti-aliasing is performed using 8 butterfly calculations at the boundaries of ADJACENT
     // sub-bands. For each calculation, there are two samples: lower and upper. For each iteration, 
@@ -1534,12 +1635,288 @@ fn l3_antialias(channel: &GranuleChannel, samples: &mut [f32; 576]) {
     }
 }
 
+fn l3_stereo(
+    header: &FrameHeader,
+    granule: &Granule,
+    ch: &mut [[f32; 576]; 2],
+) -> Result<()> {
+
+    // The block types must be the same.
+    if granule.channels[0].block_type != granule.channels[1].block_type {
+        return decode_error("stereo channel pair block_type mismatch");
+    }
+
+    let (ch0, ch1) = { 
+        let (ch0, ch1) = ch.split_first_mut().unwrap();
+        (ch0, &mut ch1[0])
+    };
+
+    let (mid_side, intensity) = match header.channels {
+        Channels::JointStereo(Mode::Layer3 { mid_side, intensity }) => (mid_side, intensity),
+        Channels::JointStereo(Mode::Intensity { .. })               => (false, true),
+        _ => (false, false),
+    };
+
+    // If mid-side (MS) stereo is used, then the left and right channels are encoded as an average
+    // (mid) and difference (side) components.
+    //
+    // As per ISO/IEC 11172-3, to reconstruct the left and right channels, the following calculation
+    // is performed:
+    //
+    //      l[i] = (m[i] + s[i]) / sqrt(2)
+    //      r[i] = (m[i] - s[i]) / sqrt(2)
+    // where:
+    //      l[i], and r[i] are the left and right channels, respectively.
+    //      m[i], and s[i] are the mid and side channels, respectively.
+    //
+    // In the bitstream, m[i] is transmitted in channel 0, while s[i] in channel 1. After decoding,
+    // the left channel replaces m[i] in channel 0, and the right channel replaces s[i] in channel 
+    // 1.
+    if mid_side {
+        let end = max(granule.channels[0].rzero, granule.channels[1].rzero);
+
+        for i in 0..end {
+            let left = (ch0[i] + ch1[i]) * f32::consts::FRAC_1_SQRT_2;
+            let right = (ch0[i] - ch1[i]) * f32::consts::FRAC_1_SQRT_2;
+            ch0[i] = left;
+            ch1[i] = right;
+        }
+    }
+
+    // If intensity stereo is used, then samples within the rzero partition are coded using 
+    // intensity stereo. Intensity stereo codes both channels (left and right) into channel 0.
+    // In channel 1, the scale factors, for the scale factor bands within the rzero partition 
+    // corresponding to the intensity coded bands of channel 0, contain the intensity position. 
+    // Using the intensity position for each band, the intensity signal may be decoded into left 
+    // and right channels.
+    //
+    // As per ISO/IEC 11172-3 and ISO/IEC 13818-3, the following calculation may be performed to 
+    // decode the intensity coded signal into left and right channels.
+    //
+    //      l[i] = ch0[i] * k_l
+    //      r[i] = ch0[i] * l_r
+    // where:
+    //      l[i], and r[i] are the left and right channels, respectively.
+    //      ch0[i] is the intensity coded signal store in channel 0.
+    //      k_l, and k_r are the left and right channel ratios.
+    //
+    // The channel ratios are dependant on MPEG version. For MPEG1:
+    //
+    //      r = tan(pos[sfb] * PI/12
+    //      k_l = r / (1 + r)
+    //      k_r = 1 / (1 + r)
+    // where:
+    //      pos[sfb] is the position for the scale factor band.
+    //
+    //  For MPEG2:
+    //
+    //  If...              | k_l                       | k_r
+    //  -------------------+---------------------------+---------------------
+    //  pos[sfb]     == 0  | 1.0                       | 1.0
+    //  pos[sfb] & 1 == 1  | i0 ^ [(pos[sfb] + 1) / 2] | 1.0
+    //  pos[sfb] & 1 == 0  | 1.0                       | i0 ^ (pos[sfb] / 2)
+    //
+    // where:
+    //      pos[sfb] is the position for the scale factor band.
+    //      i0 = 1 / sqrt(2)        if (intensity_scale = scalefac_compress & 1) == 1
+    //      i0 = 1 / sqrt(sqrt(2))  if (intensity_scale = scalefac_compress & 1) == 0
+    //
+    // Note: regardless of version, pos[sfb] == 7 is forbidden and indicates intensity stereo 
+    //       decoding should not be used.
+    if intensity {
+        let ch1_rzero = granule.channels[1].rzero as u32;
+
+        // Determine which bands are entirely contained within the rzero partition. Intensity stereo
+        // is applied to these bands only.
+        match granule.channels[1].block_type {
+            // For short blocks, every scale factor band is repeated thrice (for the three windows).
+            // Multiply each band start index by 3 before checking if it is above or below the rzero
+            // partition.
+            BlockType::Short { is_mixed: false } => {
+                let short_indicies = &SCALE_FACTOR_SHORT_BANDS[header.sample_rate_idx as usize];
+
+                let short_band = short_indicies[..13].iter()
+                                                     .map(|i| 3 * i)
+                                                     .position(|i| i >= ch1_rzero);
+
+                if let Some(start) = short_band {
+                    l3_intensity_stereo_short(header, &granule.channels[1], start, ch0, ch1);
+                }
+            },
+            // For mixed blocks, the first 36 samples are part of a long block, and the remaining 
+            // samples are part of short blocks.
+            BlockType::Short { is_mixed: true } => {
+                let long_indicies = &SCALE_FACTOR_LONG_BANDS[header.sample_rate_idx as usize];
+
+                // Check is rzero begins in the long block.
+                let long_band = long_indicies[..8].iter().position(|i| *i >= ch1_rzero);
+
+                // If rzero begins in the long block, then all short blocks are also part of rzero.
+                if let Some(start) = long_band {
+                    l3_intensity_stereo_long(header, &granule.channels[1], start, 8, ch0, ch1);
+                    l3_intensity_stereo_short(header, &granule.channels[1], 3, ch0, ch1);
+                }
+                // Otherwise, find where rzero begins in the short blocks.
+                else {
+                    let short_indicies = &SCALE_FACTOR_SHORT_BANDS[header.sample_rate_idx as usize];
+
+                    let short_band = short_indicies[3..13].iter()
+                                                          .map(|i| 3 * i)
+                                                          .position(|i| i >= ch1_rzero);
+
+                    if let Some(start) = short_band {
+                        l3_intensity_stereo_short(header, &granule.channels[1], start, ch0, ch1);
+                    }
+                };
+            },
+            // For long blocks, simply find the first scale factor band that is fully in the rzero
+            // partition.
+            _ => {
+                let long_indicies = &SCALE_FACTOR_LONG_BANDS[header.sample_rate_idx as usize];
+
+                let long_band = long_indicies[..22].iter().position(|i| *i >= ch1_rzero);
+
+                if let Some(start) = long_band {
+                    l3_intensity_stereo_long(header, &granule.channels[1], start, 22, ch0, ch1);
+                }
+            },
+        }
+    }
+
+    Ok(())
+}
+
+fn l3_intensity_stereo_short(
+    header: &FrameHeader, 
+    channel: &GranuleChannel,
+    sfb_start: usize,
+    ch0: &mut [f32; 576],
+    ch1: &mut [f32; 576],
+) {   
+    let sfb_indicies = &SCALE_FACTOR_SHORT_BANDS[header.sample_rate_idx as usize];
+
+    // If MPEG1...
+    if header.is_mpeg1() {
+        for sfb in sfb_start..13 {
+            let win_len = (sfb_indicies[sfb+1] - sfb_indicies[sfb]) as usize;
+
+            let mut start = 3 * sfb_indicies[sfb] as usize;
+
+            for win in 0..3 {          
+                let is_pos = channel.scalefacs[3*sfb + win] as usize;
+
+                if is_pos < 7 {
+                    let (ratio_l, ratio_r) = INTENSITY_STEREO_RATIOS[is_pos];
+
+                    // Process each sample within the scale factor band.
+                    for i in start..(start + win_len) {
+                        let is = ch0[i];
+                        ch0[i] = ratio_l * is;
+                        ch1[i] = ratio_r * is;
+                    }
+                }
+
+                start += win_len;
+            }
+        }
+    }
+    // Otherwise, if MPEG2 or 2.5...
+    else {
+        let is_pos_table = &INTENSITY_STEREO_RATIOS_MPEG2[channel.scalefac_compress as usize & 0x1];
+
+        for sfb in sfb_start..13 {
+            let win_len = (sfb_indicies[sfb+1] - sfb_indicies[sfb]) as usize;
+
+            let mut start = 3 * sfb_indicies[sfb] as usize;
+
+            for win in 0..3 {          
+                let is_pos = channel.scalefacs[3*sfb + win] as usize;
+
+                if is_pos != 7 {
+                    let (ratio_l, ratio_r) = is_pos_table[is_pos];
+
+                    // Process each sample within the scale factor band.
+                    for i in start..(start + win_len) {
+                        let is = ch0[i];
+                        ch0[i] = ratio_l * is;
+                        ch1[i] = ratio_r * is;
+                    }
+                }
+
+                start += win_len;
+            }
+        }
+    }
+}
+
+fn l3_intensity_stereo_long(
+    header: &FrameHeader, 
+    channel: &GranuleChannel,
+    sfb_start: usize,
+    sfb_end: usize,
+    ch0: &mut [f32; 576],
+    ch1: &mut [f32; 576],
+) {
+    let sfb_indicies = &SCALE_FACTOR_LONG_BANDS[header.sample_rate_idx as usize];
+    
+    // If MPEG1...
+    if header.is_mpeg1() {
+        for sfb in sfb_start..sfb_end {
+            let is_pos = channel.scalefacs[sfb] as usize;
+
+            // A position of 7 is considered invalid. Additionally, for MPEG1 bitstreams, a scalefac
+            // may be up to 4-bits long. A 4 bit scalefac is clearly invalid for intensity coded 
+            // scale factor bands since the maximum value is 7, but a maliciously crafted file could 
+            // conceivably make it happen. Therefore, any position > 7 is ignored, thus protecting 
+            // the table look-up from going out-of-bounds.
+            if is_pos < 7 {
+                let (ratio_l, ratio_r) = INTENSITY_STEREO_RATIOS[is_pos];
+
+                // Process each sample within the scale factor band.
+                let start = sfb_indicies[sfb] as usize;
+                let end = sfb_indicies[sfb+1] as usize;
+
+                for i in start..end {
+                    let is = ch0[i];
+                    ch0[i] = ratio_l * is;
+                    ch1[i] = ratio_r * is;
+                }
+            }
+        }
+    }
+    // Otherwise, if MPEG2 or 2.5...
+    else {
+        let is_pos_table = &INTENSITY_STEREO_RATIOS_MPEG2[channel.scalefac_compress as usize & 0x1];
+        
+        for sfb in sfb_start..sfb_end {
+            let is_pos = channel.scalefacs[sfb] as usize;
+
+            // A position of 7 is considered invalid.
+            if is_pos != 7 {
+                // For MPEG2 bitstreams, a scalefac can be up to 5-bits long and may index the 
+                // intensity stereo coefficients table directly.
+                let (ratio_l, ratio_r) = is_pos_table[is_pos];
+
+                // Process each sample within the scale factor band.
+                let start = sfb_indicies[sfb] as usize;
+                let end = sfb_indicies[sfb+1] as usize;
+
+                for i in start..end {
+                    let is = ch0[i];
+                    ch0[i] = ratio_l * is;
+                    ch1[i] = ratio_r * is;
+                }
+            }
+        }
+    }
+}
+
 /// Reads the main_data portion of a MPEG audio frame from a `BitStream` into `FrameData`.
 fn l3_read_main_data<B: BitStream>(
     bs: &mut B, 
     header: &FrameHeader, 
     frame_data: &mut FrameData,
-    samples: &mut [f32; 576],
+    state: &mut State,
 ) -> Result<()> {
 
     for gr in 0..header.n_granules() {
@@ -1566,33 +1943,21 @@ fn l3_read_main_data<B: BitStream>(
 
             // The Huffman code length (part3).
             let part3_len = part2_3_length - part2_len;
-
+            
             // Decode the Huffman coded spectral samples and get the starting index of the rzero 
             // partition.
-            let rzero = l3_read_huffman_samples(
+            frame_data.granules[gr].channels[ch].rzero = l3_read_huffman_samples(
                 bs, 
                 &frame_data.granules[gr].channels[ch], 
                 part3_len,
-                samples
+                &mut state.samples[gr][ch],
             )?;
-
-            // Requantize all non-zero (big_values and count1 partition) spectral samples.
-            l3_requantize(
-                header, 
-                &frame_data.granules[gr].channels[ch], 
-                &mut samples[..rzero]
-            );
-
-            // Reorder any spectral samples in short blocks into sub-band order.
-            l3_reorder(header, &frame_data.granules[gr].channels[ch], rzero, samples);
-
-            // Apply the anti-aliasing filter to blocks that are not short.
-            l3_antialias(&frame_data.granules[gr].channels[ch], samples);
         }
     }
 
     Ok(())
 }
+
 
 /// `BitResevoir` implements the bit resevoir mechanism for main_data. Since frames have a 
 /// deterministic length based on the bit-rate, low-complexity portions of the audio may not need
@@ -1644,12 +2009,24 @@ impl BitResevoir {
     }
 }
 
+/// MP3 depends on the state of the previous frame to decode the next. `State` is a structure 
+/// containing all the stateful information required to decode the next frame.
+struct State {
+    samples: [[[f32; 576]; 2]; 2],
+}
+
+impl State {
+    fn new() -> Self {
+        State { samples: [[[0f32; 576]; 2]; 2] }
+    }
+}
+
 /// Process the next MPEG audio frame from the stream.
 pub fn next_frame<B: Bytestream>(reader: &mut B, resevoir: &mut BitResevoir) -> Result<()> {
     let header = read_frame_header(reader)?;
     eprintln!("{:#?}", &header);
     
-    let mut samples = [0f32; 576];
+    let mut state = State::new();
 
     match header.layer {
         MpegLayer::Layer3 => {
@@ -1672,7 +2049,30 @@ pub fn next_frame<B: Bytestream>(reader: &mut B, resevoir: &mut BitResevoir) -> 
             // this operation, so scope it.
             {
                 let mut bs = BitStreamLtr::new(BufStream::new(resevoir.bytes_ref()));
-                l3_read_main_data(&mut bs, &header, &mut frame_data, &mut samples)?;
+                l3_read_main_data(&mut bs, &header, &mut frame_data, &mut state)?;
+            }
+
+            for gr in 0..header.n_granules() {
+                let granule = &frame_data.granules[gr];
+
+                // Requantize all non-zero (big_values and count1 partition) spectral samples.
+                l3_requantize(&header, &granule.channels[0], &mut state.samples[gr][0]);
+                // Reorder any spectral samples in short blocks into sub-band order.
+                l3_reorder(&header, &granule.channels[0], &mut state.samples[gr][0]);
+
+                // If there is more than one channel, requantize, reorder, and apply stereo 
+                // processing.
+                if header.channels != Channels::Mono {
+                    l3_requantize(&header, &granule.channels[1], &mut state.samples[gr][1]);
+                    l3_reorder(&header,&granule.channels[1], &mut state.samples[gr][1]);
+                    l3_stereo(&header, &granule, &mut state.samples[gr])?;
+                }
+
+                // The remainder of steps is applied regardless of channel count.
+                for ch in 0..header.n_channels() {
+                    // Apply the anti-aliasing filter to blocks that are not short.
+                    l3_antialias(&granule.channels[ch], &mut state.samples[gr][ch]);
+                }
             }
 
         },
