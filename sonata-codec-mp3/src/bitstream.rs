@@ -232,7 +232,7 @@ lazy_static! {
     /// second dimension is indexed by is_pos to obtain the channel coefficients. Note that 
     /// is_pos == 7 is considered an invalid position, but IS included in the table.
     static ref INTENSITY_STEREO_RATIOS_MPEG2: [[(f32, f32); 32]; 2] = {
-        let IS_SCALE: [f64; 2] = [
+        let is_scale: [f64; 2] = [
             1.0 / f64::sqrt(f64::sqrt(2.0)),
             1.0 / f64::sqrt(2.0)
         ];
@@ -242,12 +242,12 @@ lazy_static! {
 
         for is_pos in 0..32 {
             if is_pos & 1 != 0 {
-                ratios[0][i] = (f64::powi(IS_SCALE[0], (is_pos + 1) >> 1) as f32, 1.0);
-                ratios[1][i] = (f64::powi(IS_SCALE[1], (is_pos + 1) >> 1) as f32, 1.0);
+                ratios[0][i] = (f64::powi(is_scale[0], (is_pos + 1) >> 1) as f32, 1.0);
+                ratios[1][i] = (f64::powi(is_scale[1], (is_pos + 1) >> 1) as f32, 1.0);
             }
             else {
-                ratios[0][i] = (1.0, f64::powi(IS_SCALE[0], is_pos >> 1) as f32);
-                ratios[1][i] = (1.0, f64::powi(IS_SCALE[1], is_pos >> 1) as f32);
+                ratios[0][i] = (1.0, f64::powi(is_scale[0], is_pos >> 1) as f32);
+                ratios[1][i] = (1.0, f64::powi(is_scale[1], is_pos >> 1) as f32);
             }
             i += 1;
         }
@@ -291,6 +291,84 @@ lazy_static! {
 
         ratios
     };
+}
+
+lazy_static! {
+    /// Post-IMDCT window coefficients for each block type: Long, Start, End, Short, in that order.
+    /// 
+    /// For long blocks:
+    /// 
+    /// ```text
+    /// W[ 0..36] = sin(PI/36.0 * (i + 0.5))
+    /// ```
+    /// 
+    /// For start blocks:
+    /// 
+    /// ```text
+    /// W[ 0..18] = sin(PI/36.0 * (i + 0.5))
+    /// W[18..24] = 1.0
+    /// W[24..30] = sin(PI/12.0 * ((i - 18) - 0.5))
+    /// W[30..36] = 0.0
+    /// ```
+    /// 
+    /// For end blocks:
+    /// 
+    /// ```text
+    /// W[ 0..6 ] = 0.0
+    /// W[ 6..12] = sin(PI/12.0 * ((i - 6) + 0.5))
+    /// W[12..18] = 1.0
+    /// W[18..36] = sin(PI/36.0 * (i + 0.5))
+    /// ```
+    /// 
+    /// For short blocks (to be applied to each 12 sample window):
+    /// 
+    /// ```text
+    /// W[ 0..12] = sin(PI/12.0 * (i + 0.5))
+    /// W[12..24] = W[0..12]
+    /// W[24..36] = W[0..12]
+    /// ```
+    static ref IMDCT_WINDOWS: [[f32; 36]; 4] = {
+        const PI_36: f64 = f64::consts::PI / 36.0;
+        const PI_12: f64 = f64::consts::PI / 12.0;
+
+        let mut windows = [[0f32; 36]; 4];
+        
+        // Window for Long blocks.
+        for i in 0..36 {
+            windows[0][i] = (PI_36 * (i as f64 + 0.5)).sin() as f32;
+        }
+
+        // Window for Start blocks (indicies 30..36 implictly 0.0).
+        for i in 0..18 {
+            windows[1][i] = (PI_36 * (i as f64 + 0.5)).sin() as f32;
+        }
+        for i in 18..24 {
+            windows[1][i] = 1.0;
+        }
+        for i in 24..30 {
+            windows[1][i] = (PI_12 * ((i - 18) as f64 + 0.5)).sin() as f32;
+        }
+
+        // Window for End blocks (indicies 0..6 implicitly 0.0).
+        for i in 6..12 {
+            windows[2][i] = (PI_12 * ((i - 6) as f64 + 0.5)).sin() as f32;
+        }
+        for i in 12..18 {
+            windows[2][i] = 1.0;
+        }
+        for i in 18..36 {
+            windows[2][i] = (PI_36 * (i as f64 + 0.5)).sin() as f32;
+        }
+
+        // Window for Short blocks.
+        for win in 0..3 {
+            for i in 0..12 {
+                windows[3][12*win + i] = (PI_12 * (i as f64 + 0.5)).sin() as f32;
+            }
+        }
+
+        windows
+   };
 }
 
 struct MpegHuffmanTable {
@@ -1911,6 +1989,44 @@ fn l3_intensity_stereo_long(
     }
 }
 
+fn l3_hybrid_synthesis(
+    channel: &GranuleChannel,
+    overlap: &mut [f32; 576],
+    samples: &mut [f32; 576],
+) {
+    let mut output = [0f32; 36];
+    
+    let imdct_windows = &IMDCT_WINDOWS;
+
+    let win_idx = match channel.block_type {
+        BlockType::Long                      => [0; 16],
+        BlockType::Short { is_mixed: true  } => [0, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3],
+        BlockType::Short { is_mixed: false } => [3; 16],
+        BlockType::Start                     => [1; 16],
+        BlockType::End                       => [2; 16],
+    };
+
+    for sb in 0..32 {
+        let start = 18 * sb;
+
+        let window = &imdct_windows[win_idx[sb]];
+
+        // imdct36::imdct36(&samples[start..(start + 18)], &mut output);
+
+        // Overlap the lower half of the IMDCT output (values 0..18) with the upper values of the 
+        // IMDCT (values 18..36) of the /previous/ iteration of the IMDCT, or zeros. Also apply 
+        // the window.
+        for i in (start..start + 18).step_by(2) {
+            samples[i+0] = overlap[i+0] + output[i+0];
+            overlap[i+0] = output[i+0+18];
+
+            samples[i+1] = overlap[i+1] + output[i+1];
+            overlap[i+1] = output[i+1+18];
+        }
+
+    }
+}
+
 /// Reads the main_data portion of a MPEG audio frame from a `BitStream` into `FrameData`.
 fn l3_read_main_data<B: BitStream>(
     bs: &mut B, 
@@ -2013,11 +2129,15 @@ impl BitResevoir {
 /// containing all the stateful information required to decode the next frame.
 struct State {
     samples: [[[f32; 576]; 2]; 2],
+    overlap: [[f32; 576]; 2],
 }
 
 impl State {
     fn new() -> Self {
-        State { samples: [[[0f32; 576]; 2]; 2] }
+        State { 
+            samples: [[[0f32; 576]; 2]; 2],
+            overlap: [[0f32; 576]; 2],
+        }
     }
 }
 
@@ -2060,15 +2180,15 @@ pub fn next_frame<B: Bytestream>(reader: &mut B, resevoir: &mut BitResevoir) -> 
                 // Reorder any spectral samples in short blocks into sub-band order.
                 l3_reorder(&header, &granule.channels[0], &mut state.samples[gr][0]);
 
-                // If there is more than one channel, requantize, reorder, and apply stereo 
-                // processing.
+                // If there is more than one channel: requantize and reorder the second channel, 
+                // then apply stereo processing.
                 if header.channels != Channels::Mono {
                     l3_requantize(&header, &granule.channels[1], &mut state.samples[gr][1]);
-                    l3_reorder(&header,&granule.channels[1], &mut state.samples[gr][1]);
+                    l3_reorder(&header, &granule.channels[1], &mut state.samples[gr][1]);
                     l3_stereo(&header, &granule, &mut state.samples[gr])?;
                 }
 
-                // The remainder of steps is applied regardless of channel count.
+                // The remaining steps are channel independant.
                 for ch in 0..header.n_channels() {
                     // Apply the anti-aliasing filter to blocks that are not short.
                     l3_antialias(&granule.channels[ch], &mut state.samples[gr][ch]);
@@ -2080,4 +2200,236 @@ pub fn next_frame<B: Bytestream>(reader: &mut B, resevoir: &mut BitResevoir) -> 
     }
 
     Ok(())
+}
+
+
+
+mod imdct36 {
+
+    /// Performs an Inverse Modified Discrete Cosine Transform (IMDCT) transforming 18 
+    /// frequency-domain input samples, into 36 time-domain output samples.
+    /// 
+    /// This is a straight-forward implementation of the IMDCT using Szu-Wei Lee's algorithm 
+    /// published in article [1].
+    /// 
+    /// [1] Szu-Wei Lee, "Improved algorithm for efficient computation of the forward and backward 
+    /// MDCT in MPEG audio coder", Circuits and Systems II: Analog and Digital Signal Processing 
+    /// IEEE Transactions on, vol. 48, no. 10, pp. 990-994, 2001.
+    /// 
+    /// https://ieeexplore.ieee.org/document/974789
+    pub fn imdct36(x: &[f32; 18], y: &mut [f32; 36]) {
+        let mut t = [0f32; 18];
+
+        dct_iv(x, &mut t);
+
+        // Mapping of DCT-IV to IMDCT
+        //
+        //  0            9                       18           36
+        //  +------------+------------------------+------------+
+        //  | dct[9..18] | -dct[0..18].rev()      | -dct[0..9] |
+        //  +------------+------------------------+------------+
+        //
+        // where dct[] is the DCT-IV of x.
+
+        // First 9 IMDCT values are values 9..18 in the DCT-IV.
+        for i in (0..9).step_by(3) {
+            y[i+0] = t[9 + (i+0)];
+            y[i+1] = t[9 + (i+1)];
+            y[i+2] = t[9 + (i+2)];
+        }
+
+        // Next 18 IMDCT values are negated and /reversed/ values 0..18 in the DCT-IV.
+        for i in (9..27).step_by(3) {
+            y[i+0] = -t[27 - (i+0) - 1];
+            y[i+1] = -t[27 - (i+1) - 1];
+            y[i+2] = -t[27 - (i+2) - 1];
+        }
+
+        // Last 9 IMDCT values are negated values 0..9 in the DCT-IV.
+        for i in (27..36).step_by(3) {
+            y[i+0] = -t[(i+0) - 27];
+            y[i+1] = -t[(i+1) - 27];
+            y[i+2] = -t[(i+2) - 27];
+        }
+    }
+
+    /// Continutation of `imdct36`.
+    /// 
+    /// Step 2: Mapping N/2-point DCT-IV to N/2-point SDCT-II.
+    fn dct_iv(x: &[f32; 18], y: &mut [f32; 18]) {
+        // Scale factors for input samples. Computed from (16).
+        // 2 * cos(PI * (2*m + 1) / (2*36)
+        const SCALE: [f32; 18] = [
+            1.9980964431637156_f32,  // m=0
+            1.9828897227476208_f32,  // m=1
+            1.9525920142398667_f32,  // m=2
+            1.9074339014964539_f32,  // m=3
+            1.8477590650225735_f32,  // m=4
+            1.7740216663564434_f32,  // m=5
+            1.6867828916257714_f32,  // m=6
+            1.5867066805824706_f32,  // m=7
+            1.4745546736202479_f32,  // m=8
+            1.3511804152313207_f32,  // m=9
+            1.2175228580174413_f32,  // m=10
+            1.0745992166936478_f32,  // m=11
+            0.9234972264700677_f32,  // m=12
+            0.7653668647301797_f32,  // m=13
+            0.6014115990085461_f32,  // m=14
+            0.4328792278762058_f32,  // m=15
+            0.2610523844401030_f32,  // m=16
+            0.0872387747306720_f32,  // m=17
+        ];
+
+        let samples = [
+            SCALE[ 0] * x[ 0],
+            SCALE[ 1] * x[ 1],
+            SCALE[ 2] * x[ 2],
+            SCALE[ 3] * x[ 3],
+            SCALE[ 4] * x[ 4],
+            SCALE[ 5] * x[ 5],
+            SCALE[ 6] * x[ 6],
+            SCALE[ 7] * x[ 7],
+            SCALE[ 8] * x[ 8],
+            SCALE[ 9] * x[ 9],
+            SCALE[10] * x[10],
+            SCALE[11] * x[11],
+            SCALE[12] * x[12],
+            SCALE[13] * x[13],
+            SCALE[14] * x[14],
+            SCALE[15] * x[15],
+            SCALE[16] * x[16],
+            SCALE[17] * x[17],
+        ];
+
+        sdct_ii_18(&samples, y);
+
+        y[0] /= 2.0;
+        // Hopefully this is vectorized...
+        for i in (1..17).step_by(4) {
+            y[i+0] = (y[i+0] / 2.0) - y[i+0-1];
+            y[i+1] = (y[i+1] / 2.0) - y[i+1-1];
+            y[i+2] = (y[i+2] / 2.0) - y[i+2-1];
+            y[i+3] = (y[i+3] / 2.0) - y[i+3-1];
+        }
+        y[17] = (y[17] / 2.0) - y[16];
+    }
+
+    /// Continutation of `imdct36`.
+    /// 
+    /// Step 3: Decompose N/2-point SDCT-II into two N/4-point SDCT-IIs.
+    fn sdct_ii_18(x: &[f32; 18], y: &mut [f32; 18]) {
+        // Scale factors for odd input samples. Computed from (23).
+        // 2 * cos(PI * (2*m + 1) / 36)
+        const SCALE: [f32; 9] = [
+            1.9923893961834911_f32,  // m=0
+            1.9318516525781366_f32,  // m=1
+            1.8126155740732999_f32,  // m=2
+            1.6383040885779836_f32,  // m=3
+            1.4142135623730951_f32,  // m=4
+            1.1471528727020923_f32,  // m=5
+            0.8452365234813989_f32,  // m=6
+            0.5176380902050419_f32,  // m=7
+            0.1743114854953163_f32,  // m=8
+        ];
+
+        let even = [
+            x[0] + x[18 - 1],
+            x[1] + x[18 - 2],
+            x[2] + x[18 - 3],
+            x[3] + x[18 - 4],
+            x[4] + x[18 - 5],
+            x[5] + x[18 - 6],
+            x[6] + x[18 - 7],
+            x[7] + x[18 - 8],
+            x[8] + x[18 - 9],
+        ];
+
+        sdct_ii_9(&even, y);
+
+        let odd = [
+            SCALE[0] * (x[0] - x[18 - 1]),
+            SCALE[1] * (x[1] - x[18 - 2]),
+            SCALE[2] * (x[2] - x[18 - 3]),
+            SCALE[3] * (x[3] - x[18 - 4]),
+            SCALE[4] * (x[4] - x[18 - 5]),
+            SCALE[5] * (x[5] - x[18 - 6]),
+            SCALE[6] * (x[6] - x[18 - 7]),
+            SCALE[7] * (x[7] - x[18 - 8]),
+            SCALE[8] * (x[8] - x[18 - 9]),
+        ];
+
+        sdct_ii_9(&odd, &mut y[1..]);
+
+        y[ 3] -= y[ 3 - 2];
+        y[ 5] -= y[ 5 - 2];
+        y[ 7] -= y[ 7 - 2];
+        y[ 9] -= y[ 9 - 2];
+        y[11] -= y[11 - 2];
+        y[13] -= y[13 - 2];
+        y[15] -= y[15 - 2];
+        y[17] -= y[17 - 2];
+    }
+
+    /// Continutation of `imdct36`.
+    /// 
+    /// Step 4: Computation of 9-point (N/4) SDCT-II.
+    fn sdct_ii_9(x: &[f32; 9], y: &mut [f32]) {
+        const D: [f32; 7] = [
+            -1.7320508075688772_f32,  // -sqrt(3.0)
+             1.8793852415718166_f32,  // -2.0 * cos(8.0 * PI / 9.0)
+            -0.3472963553338608_f32,  // -2.0 * cos(4.0 * PI / 9.0)
+            -1.5320888862379560_f32,  // -2.0 * cos(2.0 * PI / 9.0)
+            -0.6840402866513378_f32,  // -2.0 * sin(8.0 * PI / 9.0)
+            -1.9696155060244160_f32,  // -2.0 * sin(4.0 * PI / 9.0)
+            -1.2855752193730785_f32,  // -2.0 * sin(2.0 * PI / 9.0)
+        ];
+
+        let a01 = x[3] + x[5];
+        let a02 = x[3] - x[5];
+        let a03 = x[6] + x[2];
+        let a04 = x[6] - x[2];
+        let a05 = x[1] + x[7];
+        let a06 = x[1] - x[7];
+        let a07 = x[8] + x[0];
+        let a08 = x[8] - x[0];
+
+        let a09 = x[4] + a05;
+        let a10 = a01 + a03;
+        let a11 = a10 + a07;
+        let a12 = a03 - a07;
+        let a13 = a01 - a07;
+        let a14 = a01 - a03;
+        let a15 = a02 - a04;
+        let a16 = a15 + a08;
+        let a17 = a04 + a08;
+        let a18 = a02 - a08;
+        let a19 = a02 + a04;
+        let a20 = 2.0 * x[4] - a05;
+
+        let m1 = D[0] * a06;
+        let m2 = D[1] * a12;
+        let m3 = D[2] * a13;
+        let m4 = D[3] * a14;
+        let m5 = D[0] * a16;
+        let m6 = D[4] * a17;
+        let m7 = D[5] * a18;  // Note: the cited paper has an error, a1 should be a18.
+        let m8 = D[6] * a19;
+
+        let a21 = a20 + m2;
+        let a22 = a20 - m2;
+        let a23 = a20 + m3;
+        let a24 = m1 + m6;
+        let a25 = m1 - m6;
+        let a26 = m1 + m7;
+
+        y[ 0] = a09 + a11;
+        y[ 2] = m8 - a26;
+        y[ 4] = m4 - a21;
+        y[ 6] = m5;
+        y[ 8] = a22 - m3;
+        y[10] = a25 - m7;
+        y[12] = a11 - 2.0 * a09;
+        y[14] = a24 + m8;
+        y[16] = a23 + m4;
+    }
 }
