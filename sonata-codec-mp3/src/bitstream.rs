@@ -2158,6 +2158,18 @@ fn l3_hybrid_synthesis(
     }
 }
 
+/// Inverts odd samples in odd sub-bands.
+fn l3_frequency_inversion(samples: &mut [f32; 576]) {
+    for i in (32..576).step_by(32) {
+        for j in (i..i+32).step_by(8) {
+            samples[j+1] = -samples[j+1];
+            samples[j+3] = -samples[j+3];
+            samples[j+5] = -samples[j+5];
+            samples[j+7] = -samples[j+7];
+        }
+    }
+}
+
 /// Reads the main_data portion of a MPEG audio frame from a `BitStream` into `FrameData`.
 fn l3_read_main_data<B: BitStream>(
     bs: &mut B, 
@@ -2330,6 +2342,9 @@ pub fn next_frame<B: Bytestream>(reader: &mut B, resevoir: &mut BitResevoir) -> 
                         &mut state.overlap[ch],
                         &mut state.samples[gr][ch]
                     );
+
+                    // Invert odd samples in odd sub-bands.
+                    l3_frequency_inversion(&mut state.samples[gr][ch]);
                 }
             }
 
