@@ -2512,6 +2512,7 @@ mod synthesis {
     /// 18 blocks of 32 PCM audio samples.
     pub fn subband_synthesis(samples: &mut [f32; 576], state: &mut SynthesisState) {
         let mut s_vec = [0f32; 32];
+        let mut u_vec = [0f32; 512];
 
         // There are 18 synthesized PCM sample blocks.
         for b in 0..18 {
@@ -2562,8 +2563,40 @@ mod synthesis {
                 v_vec[64-i-1] = a;
             }
 
+            // Copy even-odd 32-sample partitions of v_vec into u_vec.
+            for i in 0..8 {
+                let v_start = state.v_front + i;
+                let v0 = &state.v_vec[(v_start + 0) & 0xf];
+                let v1 = &state.v_vec[(v_start + 1) & 0xf];
 
+                for j in (0..32).step_by(4) {
+                    let k = (i << 6) + j;
+                    u_vec[k+0 +  0] = v0[j+0 +  0];
+                    u_vec[k+0 + 32] = v1[j+0 + 32];
 
+                    u_vec[k+1 +  0] = v0[j+1 +  0];
+                    u_vec[k+1 + 32] = v1[j+1 + 32];
+
+                    u_vec[k+2 +  0] = v0[j+2 +  0];
+                    u_vec[k+2 + 32] = v1[j+2 + 32];
+                    
+                    u_vec[k+3 +  0] = v0[j+3 +  0];
+                    u_vec[k+3 + 32] = v1[j+3 + 32];
+                }
+            }
+
+            // Window u_vec with D, and calculate each sample.
+            for i in 0..32 {
+                let mut sum = 0.0;
+                for j in (0..16).step_by(4) {
+                    let k = (j << 5) + i;
+                    sum += u_vec[k+0] * SYNTHESIS_D[k+0];
+                    sum += u_vec[k+1] * SYNTHESIS_D[k+1];
+                    sum += u_vec[k+2] * SYNTHESIS_D[k+2];
+                    sum += u_vec[k+3] * SYNTHESIS_D[k+3];
+                }
+                samples[(b << 5) + i] = sum;
+            }
         }
     }
 
@@ -2575,7 +2608,7 @@ mod synthesis {
     ///
     /// https://ieeexplore.ieee.org/document/1164443
     fn dct32(x: &[f32; 32], y: &mut [f32]) {
-        unimplemented!();
+        //unimplemented!();
     }
 
 }
