@@ -174,6 +174,31 @@ lazy_static! {
 }
 
 lazy_static! {
+    /// Lookup table of cosine coefficients for a 12-point IMDCT.
+    /// 
+    /// The table is derived from the expression:
+    /// 
+    /// ```text
+    /// cos12[k][i] = cos(PI/24.0 * (2*i + 1 + 12/2) * (2*k + 1))
+    /// ```
+    /// 
+    /// This table indexed by k and i.
+    static ref IMDCT_COS_12: [[f32; 6]; 12] = {
+        const PI_24: f64 = f64::consts::PI / 24.0;
+
+        let mut cos12 = [[0f32; 6]; 12];
+        
+        for i in 0..12 {
+            for k in 0..6 {
+                cos12[i][k] = (PI_24 * ((2*i + 7) * (2*k + 1)) as f64).cos() as f32;
+            }
+        }
+
+        cos12
+    };
+}
+
+lazy_static! {
     /// Pair of lookup tables, CS and CA, for alias reduction.
     /// 
     /// As per ISO/IEC 11172-3, CS and CA are calculated as follows:
@@ -1989,6 +2014,76 @@ fn l3_intensity_stereo_long(
     }
 }
 
+/// Performs the 12-point IMDCT, and windowing for each of the 3 short windows of a short block, and
+/// then overlap-adds the result.
+fn l3_imdct12_win(x: &[f32], window: &[f32; 36], out: &mut [f32; 36]) {
+    debug_assert!(x.len() == 18);
+
+    let cos12 = &IMDCT_COS_12;
+
+    for w in 0..3 {
+        for i in 0..12 {
+            // Apply a 12-point (N=12) IMDCT for each of the 3 short windows.
+            //
+            // The IMDCT is defined as:
+            //
+            //        (N/2)-1
+            // y[i] =   SUM   { x[k] * cos(PI/2N * (2i + 1 + N/2) * (2k + 1)) }
+            //          k=0
+            //
+            // For N=12, the IMDCT becomes:
+            //
+            //         5
+            // y[i] = SUM { x[k] * cos(PI/24 * (2i + 7) * (2k + 1)) }
+            //        k=0
+            //
+            // The value of cos(..) is easily indexable by i and k, and is therefore pre-computed 
+            // and placed in a look-up table.
+            let y = (x[w + 3*0] * cos12[i][0]) 
+                        + (x[w + 3*1] * cos12[i][1]) 
+                        + (x[w + 3*2] * cos12[i][2])
+                        + (x[w + 3*3] * cos12[i][3]) 
+                        + (x[w + 3*4] * cos12[i][4]) 
+                        + (x[w + 3*5] * cos12[i][5]);
+
+            // Each adjacent 12-point IMDCT window is overlapped and added in the output, with the 
+            // first and last 6 samples of the output are always being 0. 
+            //
+            // In the above calculation, y is the result of the 12-point IMDCT for sample i. For the
+            // following description, assume the 12-point IMDCT result is y[0..12], where the value
+            // y calculated above is y[i].
+            // 
+            // Each sample in the IMDCT is multiplied by the appropriate window function as
+            // specified in ISO/IEC 11172-3. The values of the window function are pre-computed and 
+            // given by window[0..12].
+            //
+            // Since there are 3 IMDCT windows (indexed by w), y[0..12] is calculated 3 times. 
+            // For the purpose of the diagram below, we label these IMDCT windows as: y0[0..12], 
+            // y1[0..12], and y2[0..12], for IMDCT windows 0..3 respectively.
+            //
+            // Therefore, the overlap-and-add operation can be visualized as below:
+            //
+            // 0             6           12           18           24           30            36
+            // +-------------+------------+------------+------------+------------+-------------+
+            // |      0      |  y0[..6]   |  y0[..6]   |  y1[6..]   |  y2[6..]   |      0      |
+            // |     (6)     |            |  + y1[6..] |  + y2[..6] |            |     (6)     |
+            // +-------------+------------+------------+------------+------------+-------------+
+            // .             .            .            .            .            .             .
+            // .             +-------------------------+            .            .             .
+            // .             |      IMDCT #1 (y0)      |            .            .             .
+            // .             +-------------------------+            .            .             .
+            // .             .            +-------------------------+            .             .
+            // .             .            |      IMDCT #2 (y1)      |            .             .
+            // .             .            +-------------------------+            .             .
+            // .             .            .            +-------------------------+             .
+            // .             .            .            |      IMDCT #3 (y2)      |             .
+            // .             .            .            +-------------------------+             .
+            // .             .            .            .            .            .             .
+            out[6 + 6*w + i] += y * window[i];
+        }
+    }
+}
+
 fn l3_hybrid_synthesis(
     channel: &GranuleChannel,
     overlap: &mut [f32; 576],
@@ -1998,32 +2093,68 @@ fn l3_hybrid_synthesis(
     
     let imdct_windows = &IMDCT_WINDOWS;
 
-    let win_idx = match channel.block_type {
-        BlockType::Long                      => [0; 16],
-        BlockType::Short { is_mixed: true  } => [0, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3],
-        BlockType::Short { is_mixed: false } => [3; 16],
-        BlockType::Start                     => [1; 16],
-        BlockType::End                       => [2; 16],
-    };
+    // If the block is short, the 12-point IMDCT must be used.
+    if let BlockType::Short { is_mixed } = channel.block_type {
 
-    for sb in 0..32 {
-        let start = 18 * sb;
+        // There are 32 sub-bands. If the block is mixed, then the first two sub-bands are windowed
+        // as long blocks, while the rest are windowed as short blocks. The following arrays 
+        // indicate the index of the window to use within imdct_windows. Each element is repeated
+        // twice (i.e., sub-bands 0 and 1 use win_idx[0], 2 and 3 use win_idx[1], ..).
+        let win_idx = match is_mixed {
+            true => &[0, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3],
+            _    => &[3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3],
+        };
 
-        let window = &imdct_windows[win_idx[sb]];
+        // For each of the 32 sub-bands (18 samples each)...
+        for sb in 0..32 {
+            let start = 18 * sb;
 
-        // imdct36::imdct36(&samples[start..(start + 18)], &mut output);
+            // Get the window for the sub-band since with short blocks it may change per sub-band.
+            let window = &imdct_windows[win_idx[sb >> 1]];
 
-        // Overlap the lower half of the IMDCT output (values 0..18) with the upper values of the 
-        // IMDCT (values 18..36) of the /previous/ iteration of the IMDCT, or zeros. Also apply 
-        // the window.
-        for i in (start..start + 18).step_by(2) {
-            samples[i+0] = overlap[i+0] + output[i+0];
-            overlap[i+0] = output[i+0+18];
+            // Perform the 12-point IMDCT on each of the 3 short block windows.
+            l3_imdct12_win(&samples[start..(start + 18)], window, &mut output);
 
-            samples[i+1] = overlap[i+1] + output[i+1];
-            overlap[i+1] = output[i+1+18];
+            // Overlap the lower half of the IMDCT output (values 0..18) with the upper values of 
+            // the IMDCT (values 18..36) of the /previous/ iteration of the IMDCT.
+            for i in (0..18).step_by(2) {
+                samples[start + (i+0)] = overlap[start + (i+0)] + output[i+0];
+                overlap[start + (i+0)] = output[i+0+18];
+
+                samples[start + (i+1)] = overlap[start + (i+1)] + output[i+1];
+                overlap[start + (i+1)] = output[i+1+18];
+            }
         }
+    }
+    // Otherwise, all other blocks use the 36-point IMDCT.
+    else {
+        // Select the appropriate window given the block type.
+        let window = match channel.block_type {
+            BlockType::Long  => &imdct_windows[0], 
+            BlockType::Start => &imdct_windows[1],
+            BlockType::End   => &imdct_windows[2],
+            // Short blocks are handled above.
+            _                => unreachable!(),
+        };
 
+        // For each of the 32 sub-bands (18 samples each)...
+        for sb in 0..32 {
+            let start = 18 * sb;
+
+            // Perform the 36-point on the entire long block.
+            imdct36::imdct36(&samples[start..(start + 18)], &mut output);
+
+            // Overlap the lower half of the IMDCT output (values 0..18) with the upper values of 
+            // the IMDCT (values 18..36) of the /previous/ iteration of the IMDCT. While doing this
+            // also apply the window.
+            for i in (0..18).step_by(2) {
+                samples[start + (i+0)] = overlap[start + (i+0)] + (output[i+0] * window[i+0]);
+                overlap[start + (i+0)] = output[i+0+18] * window[i+0+18];
+
+                samples[start + (i+1)] = overlap[start + (i+1)] + (output[i+1] * window[i+1]);
+                overlap[start + (i+1)] = output[i+1+18] * window[i+1+18];
+            }
+        }
     }
 }
 
@@ -2192,6 +2323,13 @@ pub fn next_frame<B: Bytestream>(reader: &mut B, resevoir: &mut BitResevoir) -> 
                 for ch in 0..header.n_channels() {
                     // Apply the anti-aliasing filter to blocks that are not short.
                     l3_antialias(&granule.channels[ch], &mut state.samples[gr][ch]);
+                    
+                    // Perform hybrid-synthesis (IMDCT and windowing).
+                    l3_hybrid_synthesis(
+                        &granule.channels[ch], 
+                        &mut state.overlap[ch],
+                        &mut state.samples[gr][ch]
+                    );
                 }
             }
 
@@ -2205,7 +2343,6 @@ pub fn next_frame<B: Bytestream>(reader: &mut B, resevoir: &mut BitResevoir) -> 
 
 
 mod imdct36 {
-
     /// Performs an Inverse Modified Discrete Cosine Transform (IMDCT) transforming 18 
     /// frequency-domain input samples, into 36 time-domain output samples.
     /// 
@@ -2217,7 +2354,7 @@ mod imdct36 {
     /// IEEE Transactions on, vol. 48, no. 10, pp. 990-994, 2001.
     /// 
     /// https://ieeexplore.ieee.org/document/974789
-    pub fn imdct36(x: &[f32; 18], y: &mut [f32; 36]) {
+    pub fn imdct36(x: &[f32], y: &mut [f32; 36]) {
         let mut t = [0f32; 18];
 
         dct_iv(x, &mut t);
@@ -2256,7 +2393,9 @@ mod imdct36 {
     /// Continutation of `imdct36`.
     /// 
     /// Step 2: Mapping N/2-point DCT-IV to N/2-point SDCT-II.
-    fn dct_iv(x: &[f32; 18], y: &mut [f32; 18]) {
+    fn dct_iv(x: &[f32], y: &mut [f32; 18]) {
+        debug_assert!(x.len() == 18);
+
         // Scale factors for input samples. Computed from (16).
         // 2 * cos(PI * (2*m + 1) / (2*36)
         const SCALE: [f32; 18] = [
