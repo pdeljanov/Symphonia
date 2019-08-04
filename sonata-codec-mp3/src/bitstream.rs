@@ -17,7 +17,7 @@ use sonata_core::io::{BufStream, BitStream, BitStreamLtr, Bytestream, huffman::{
 use super::huffman_tables::*;
 
 /// Bit-rate lookup table for MPEG version 1 layer 1.
-static BIT_RATES_MPEG1_L1: [u32; 15] = 
+static BIT_RATES_MPEG1_L1: [u32; 15] =
 [
     0,
     32_000,  64_000,  96_000, 128_000, 160_000, 192_000, 224_000,
@@ -25,7 +25,7 @@ static BIT_RATES_MPEG1_L1: [u32; 15] =
 ];
 
 /// Bit-rate lookup table for MPEG version 1 layer 2.
-static BIT_RATES_MPEG1_L2: [u32; 15] = 
+static BIT_RATES_MPEG1_L2: [u32; 15] =
 [
     0,
     32_000,  48_000,  56_000,  64_000,  80_000,  96_000, 112_000,
@@ -33,7 +33,7 @@ static BIT_RATES_MPEG1_L2: [u32; 15] =
 ];
 
 /// Bit-rate lookup table for MPEG version 1 layer 3.
-static BIT_RATES_MPEG1_L3: [u32; 15] = 
+static BIT_RATES_MPEG1_L3: [u32; 15] =
 [
     0,
     32_000,  40_000,  48_000,  56_000,  64_000,  80_000,  96_000,
@@ -56,22 +56,22 @@ static BIT_RATES_MPEG2_L23: [u32; 15] =
     64_000, 80_000, 96_000, 112_000, 128_000, 144_000, 160_000,
 ];
 
-/// Pairs of bit lengths for MPEG version 1 scale factors. For MPEG version 1, there are two 
+/// Pairs of bit lengths for MPEG version 1 scale factors. For MPEG version 1, there are two
 /// possible bit lengths for scale factors: slen1 and slen2. The first N of bands have scale factors
 /// of bit length slen1, while the remaining bands have length slen2. The value of the switch point,
 /// N, is determined by block type.
-/// 
+///
 /// This table is indexed by scalefac_compress.
-static SCALE_FACTOR_SLEN: [(u32, u32); 16] = 
+static SCALE_FACTOR_SLEN: [(u32, u32); 16] =
 [
-    (0, 0), (0, 1), (0, 2), (0, 3), (3, 0), (1, 1), (1, 2), (1, 3), 
+    (0, 0), (0, 1), (0, 2), (0, 3), (3, 0), (1, 1), (1, 2), (1, 3),
     (2, 1), (2, 2), (2, 3), (3, 1), (3, 2), (3, 3), (4, 2), (4, 3),
 ];
 
-/// For MPEG version 2, each scale factor band has a different scale factor. The length in bits of 
-/// a scale factor (slen) can be one of 4 values. The values in this table indicate the number of 
-/// scale factors that have length slen[0..4]. Slen[0..4] is calculated from scalefac_compress. 
-/// 
+/// For MPEG version 2, each scale factor band has a different scale factor. The length in bits of
+/// a scale factor (slen) can be one of 4 values. The values in this table indicate the number of
+/// scale factors that have length slen[0..4]. Slen[0..4] is calculated from scalefac_compress.
+///
 /// This table is indexed by channel_mode, scalefac_compress, and block_type.
 const SCALE_FACTOR_MPEG2_NSFB: [[[usize; 4]; 3]; 6] = [
     // Intensity stereo channel modes.
@@ -87,38 +87,38 @@ const SCALE_FACTOR_MPEG2_NSFB: [[[usize; 4]; 3]; 6] = [
 /// Startng indicies of each scale factor band at various sampling rates for long blocks.
 const SCALE_FACTOR_LONG_BANDS: [[u32; 23]; 9] = [
     // 44.1 kHz, MPEG version 1, derived from ISO/IEC 11172-3 Table B.8
-    [ 
-        0, 4, 8, 12, 16, 20, 24, 30, 36, 44, 52, 62, 74, 90, 110, 134, 
+    [
+        0, 4, 8, 12, 16, 20, 24, 30, 36, 44, 52, 62, 74, 90, 110, 134,
         162, 196, 238, 288, 342, 418, 576
     ],
     // 48 kHz
     [
-        0, 4, 8, 12, 16, 20, 24, 30, 36, 42, 50, 60, 72, 88, 106, 128, 
+        0, 4, 8, 12, 16, 20, 24, 30, 36, 42, 50, 60, 72, 88, 106, 128,
         156, 190, 230, 276, 330, 384, 576,
     ],
     // 32 kHz
     [
-        0, 4, 8, 12, 16, 20, 24, 30, 36, 44, 54, 66, 82, 102, 126, 156, 
+        0, 4, 8, 12, 16, 20, 24, 30, 36, 44, 54, 66, 82, 102, 126, 156,
         194, 240, 296, 364, 448, 550, 576,
     ],
     // 22.050 kHz, MPEG version 2, derived from ISO/IEC 13818-3 Table B.2
     [
-        0, 4, 12, 18, 24, 30, 36, 44, 54, 66, 80, 96, 116, 140, 168, 200, 
+        0, 4, 12, 18, 24, 30, 36, 44, 54, 66, 80, 96, 116, 140, 168, 200,
         238, 284, 336, 396, 464, 522, 576,
     ],
     // 24 kHz (330 should be 332?)
     [
-        0, 6, 12, 18, 24, 30, 36, 44, 54, 66, 80, 96, 114, 136, 162, 194, 
+        0, 6, 12, 18, 24, 30, 36, 44, 54, 66, 80, 96, 114, 136, 162, 194,
         232, 278, 332, 394, 464, 540, 576,
     ],
     // 16 kHz
     [
-        0, 6, 12, 18, 24, 30, 36, 44, 54, 66, 80, 96, 116, 140, 168, 200, 
+        0, 6, 12, 18, 24, 30, 36, 44, 54, 66, 80, 96, 116, 140, 168, 200,
         238, 284, 336, 396, 464, 522, 576,
     ],
     // 11.025 kHz, MPEG version 2.5
     [
-        0, 6, 12, 18, 24, 30, 36, 44, 54, 66, 80, 96, 116, 140, 168, 200, 
+        0, 6, 12, 18, 24, 30, 36, 44, 54, 66, 80, 96, 116, 140, 168, 200,
         238, 284, 336, 396, 464, 522, 576,
     ],
     // 12 kHz
@@ -128,13 +128,13 @@ const SCALE_FACTOR_LONG_BANDS: [[u32; 23]; 9] = [
     ],
     // 8 kHz
     [
-        0, 12, 24, 36, 48, 60, 72, 88, 108, 132, 160, 192, 232, 280, 336, 400, 
+        0, 12, 24, 36, 48, 60, 72, 88, 108, 132, 160, 192, 232, 280, 336, 400,
         476, 566, 568, 570, 572, 574, 576,
     ],
 ];
 
-/// Starting indicies of each scale factor band at various sampling rates for short blocks. Each 
-/// value must be multiplied by 3 since there are three equal length windows per short scale factor 
+/// Starting indicies of each scale factor band at various sampling rates for short blocks. Each
+/// value must be multiplied by 3 since there are three equal length windows per short scale factor
 /// band.
 const SCALE_FACTOR_SHORT_BANDS: [[u32; 14]; 9] = [
     // 44.1 kHz, MPEG version 1
@@ -158,7 +158,7 @@ const SCALE_FACTOR_SHORT_BANDS: [[u32; 14]; 9] = [
 ];
 
 lazy_static! {
-    /// Lookup table for computing x(i) = s(i)^(4/3) where s(i) is a decoded Huffman sample. The 
+    /// Lookup table for computing x(i) = s(i)^(4/3) where s(i) is a decoded Huffman sample. The
     /// value of s(i) is bound between 0..8207.
     static ref POW43: [f32; 8207] = {
         // It is wasteful to initialize to 0.. however, Sonata policy is to limit unsafe code to
@@ -175,19 +175,19 @@ lazy_static! {
 
 lazy_static! {
     /// Lookup table of cosine coefficients for a 12-point IMDCT.
-    /// 
+    ///
     /// The table is derived from the expression:
-    /// 
+    ///
     /// ```text
     /// cos12[k][i] = cos(PI/24.0 * (2*i + 1 + 12/2) * (2*k + 1))
     /// ```
-    /// 
+    ///
     /// This table indexed by k and i.
     static ref IMDCT_COS_12: [[f32; 6]; 12] = {
         const PI_24: f64 = f64::consts::PI / 24.0;
 
         let mut cos12 = [[0f32; 6]; 12];
-        
+
         for i in 0..12 {
             for k in 0..6 {
                 cos12[i][k] = (PI_24 * ((2*i + 7) * (2*k + 1)) as f64).cos() as f32;
@@ -200,14 +200,14 @@ lazy_static! {
 
 lazy_static! {
     /// Pair of lookup tables, CS and CA, for alias reduction.
-    /// 
+    ///
     /// As per ISO/IEC 11172-3, CS and CA are calculated as follows:
-    /// 
+    ///
     /// ```text
     /// cs[i] =  1.0 / sqrt(1.0 + c[i]^2)
     /// ca[i] = c[i] / sqrt(1.0 + c[i]^2)
     /// ```
-    /// 
+    ///
     /// where:
     /// ```text
     /// c[i] = [ -0.6, -0.535, -0.33, -0.185, -0.095, -0.041, -0.0142, -0.0037 ]
@@ -230,12 +230,12 @@ lazy_static! {
 
 lazy_static! {
     /// (Left, right) channel coefficients for decoding intensity stereo in MPEG2 bitstreams.
-    /// 
+    ///
     /// These coefficients are derived from section 2.4.3.2 of ISO/IEC 13818-3.
-    /// 
+    ///
     /// As per the specification, for a given intensity position, is_pos (0 <= is_pos < 32), the
     /// channel coefficients, k_l and k_r, may be calculated as per the table below:
-    /// 
+    ///
     /// ```text
     /// If...            | k_l                     | k_r
     /// -----------------+-------------------------+-------------------
@@ -243,18 +243,18 @@ lazy_static! {
     /// is_pos & 1 == 1  | i0 ^ [(is_pos + 1) / 2] | 1.0
     /// is_pos & 1 == 0  | 1.0                     | i0 ^ (is_pos / 2)
     /// ```
-    /// 
+    ///
     /// The value of i0 is dependant on the least significant bit of scalefac_compress.
-    /// 
+    ///
     ///  ```text
     /// scalefac_compress & 1 | i0
     /// ----------------------+---------------------
     /// 0                     | 1 / sqrt(sqrt(2.0))
     /// 1                     | 1 / sqrt(2.0)
     /// ```
-    /// 
-    /// The first dimension of this table is indexed by scalefac_compress & 1 to select i0. The 
-    /// second dimension is indexed by is_pos to obtain the channel coefficients. Note that 
+    ///
+    /// The first dimension of this table is indexed by scalefac_compress & 1 to select i0. The
+    /// second dimension is indexed by is_pos to obtain the channel coefficients. Note that
     /// is_pos == 7 is considered an invalid position, but IS included in the table.
     static ref INTENSITY_STEREO_RATIOS_MPEG2: [[(f32, f32); 32]; 2] = {
         let is_scale: [f64; 2] = [
@@ -283,23 +283,23 @@ lazy_static! {
 
 lazy_static! {
     /// (Left, right) channel coeffcients for decoding intensity stereo in MPEG1 bitstreams.
-    /// 
+    ///
     /// These coefficients are derived from section 2.4.3.4.9.3 of ISO/IEC 11172-3.
     ///
     /// As per the specification, for a given intensity position, is_pos (0 <= is_pos < 7), a ratio,
     /// is_ratio, is calculated as follows:
-    /// 
+    ///
     /// ```text
     /// is_ratio = tan(is_pos * PI/12)
     /// ```
-    /// 
+    ///
     /// Then, the channel coefficients, k_l and k_r, are calculated as follows:
-    /// 
+    ///
     /// ```text
     /// k_l = is_ratio / (1 + is_ratio)
     /// k_r =        1 / (1 + is_ratio)
     /// ```
-    /// 
+    ///
     /// This table is indexed by is_pos. Note that is_pos == 7 is invalid and is NOT included in the
     /// table.
     static ref INTENSITY_STEREO_RATIOS: [(f32, f32); 7] = {
@@ -320,33 +320,33 @@ lazy_static! {
 
 lazy_static! {
     /// Post-IMDCT window coefficients for each block type: Long, Start, End, Short, in that order.
-    /// 
+    ///
     /// For long blocks:
-    /// 
+    ///
     /// ```text
     /// W[ 0..36] = sin(PI/36.0 * (i + 0.5))
     /// ```
-    /// 
+    ///
     /// For start blocks:
-    /// 
+    ///
     /// ```text
     /// W[ 0..18] = sin(PI/36.0 * (i + 0.5))
     /// W[18..24] = 1.0
     /// W[24..30] = sin(PI/12.0 * ((i - 18) - 0.5))
     /// W[30..36] = 0.0
     /// ```
-    /// 
+    ///
     /// For end blocks:
-    /// 
+    ///
     /// ```text
     /// W[ 0..6 ] = 0.0
     /// W[ 6..12] = sin(PI/12.0 * ((i - 6) + 0.5))
     /// W[12..18] = 1.0
     /// W[18..36] = sin(PI/36.0 * (i + 0.5))
     /// ```
-    /// 
+    ///
     /// For short blocks (to be applied to each 12 sample window):
-    /// 
+    ///
     /// ```text
     /// W[ 0..12] = sin(PI/12.0 * (i + 0.5))
     /// W[12..24] = W[0..12]
@@ -357,7 +357,7 @@ lazy_static! {
         const PI_12: f64 = f64::consts::PI / 12.0;
 
         let mut windows = [[0f32; 36]; 4];
-        
+
         // Window for Long blocks.
         for i in 0..36 {
             windows[0][i] = (PI_36 * (i as f64 + 0.5)).sin() as f32;
@@ -472,7 +472,7 @@ const HUFFMAN_TABLES: [MpegHuffmanTable; 32] = [
 
 /// The MPEG audio version.
 #[derive(Copy,Clone,Debug,PartialEq)]
-enum MpegVersion { 
+enum MpegVersion {
     /// Version 2.5
     Mpeg2p5,
     /// Version 2
@@ -540,7 +540,7 @@ enum Emphasis {
 
 /// A MPEG 1, 2, or 2.5 audio frame header.
 #[derive(Debug)]
-struct FrameHeader { 
+struct FrameHeader {
     version: MpegVersion,
     layer: MpegLayer,
     bitrate: u32,
@@ -561,7 +561,7 @@ impl FrameHeader {
     fn is_mpeg1(&self) -> bool {
         self.version == MpegVersion::Mpeg1
     }
-    
+
     /// Returns true if this a MPEG2.5 frame, false otherwise.
     #[inline(always)]
     fn is_mpeg2p5(&self) -> bool {
@@ -620,10 +620,10 @@ struct FrameData {
     /// If 0, main_data begins after the side_info of this frame.
     main_data_begin: u16,
     /// Scale factor selector information, per channel. Each channel has 4 groups of bands that may
-    /// be scaled in each granule. Scale factors may optionally be used by both granules to save 
-    /// bits. Bands that share scale factors for both granules are indicated by a true. Otherwise, 
+    /// be scaled in each granule. Scale factors may optionally be used by both granules to save
+    /// bits. Bands that share scale factors for both granules are indicated by a true. Otherwise,
     /// each granule must store its own set of scale factors.
-    /// 
+    ///
     /// Mapping of array indicies to bands [0-5, 6-10, 11-15, 16-20].
     scfsi: [[bool; 4]; 2],
     /// The granules.
@@ -665,19 +665,19 @@ struct GranuleChannel {
     big_values: u16,
     /// Quantization step size.
     global_gain: u8,
-    /// Depending on the MPEG version, `scalefac_compress` determines how many bits are allocated 
+    /// Depending on the MPEG version, `scalefac_compress` determines how many bits are allocated
     /// per scale factor.
-    /// 
-    /// - For MPEG1 bitstreams, `scalefac_compress` is a 4-bit index into SCALE_FACTOR_SLEN[0..16] 
+    ///
+    /// - For MPEG1 bitstreams, `scalefac_compress` is a 4-bit index into SCALE_FACTOR_SLEN[0..16]
     /// to obtain a number of bits per scale factor pair.
-    /// 
-    /// - For MPEG2/2.5 bitstreams, `scalefac_compress` is a 9-bit value that decodes into 
+    ///
+    /// - For MPEG2/2.5 bitstreams, `scalefac_compress` is a 9-bit value that decodes into
     /// slen[0..3] (referred to as slen1-4 in the standard) for the number of bits per scale factor,
     /// and depending on which range the value falls into, for which bands.
     scalefac_compress: u16,
     /// Indicates the block type (type of window) for the channel in the granule.
     block_type: BlockType,
-    /// Gain factors for region[0..3] in big_values. Each gain factor has a maximum value of 7 
+    /// Gain factors for region[0..3] in big_values. Each gain factor has a maximum value of 7
     /// (3 bits).
     subblock_gain: [u8; 3],
     /// The Huffman table to use for decoding region[0..3] in big_values.
@@ -693,25 +693,25 @@ struct GranuleChannel {
     scalefac_scale: bool,
     /// Use Huffman table A (false) or B (true), for decoding the count1 partition.
     count1table_select: bool,
-    /// Long (scalefac_l) and short (scalefac_s) window scale factor bands. Must be interpreted 
+    /// Long (scalefac_l) and short (scalefac_s) window scale factor bands. Must be interpreted
     /// based on the block type of the granule.
-    /// 
-    /// For `block_type == BlockType::Short { is_mixed: false }`: 
+    ///
+    /// For `block_type == BlockType::Short { is_mixed: false }`:
     ///   - scalefac_s[0..36] -> scalefacs[0..36]
-    /// 
+    ///
     /// For `block_type == BlockType::Short { is_mixed: true }`:
     ///   - scalefac_l[0..8]  -> scalefacs[0..8]
     ///   - scalefac_s[0..27] -> scalefacs[8..35]
-    /// 
+    ///
     /// For `block_type != BlockType::Short { .. }`:
     ///   - scalefac_l[0..21] -> scalefacs[0..21]
-    /// 
-    /// Note: The standard doesn't explicitly call it out, but for Short blocks, there are three 
+    ///
+    /// Note: The standard doesn't explicitly call it out, but for Short blocks, there are three
     ///       additional scale factors, scalefacs[36..39], that are always 0 and are not transmitted
     ///       in the bitstream.
-    /// 
-    /// For MPEG1 and MPEG 2 without intensity stereo coding a scale factor will not exceed 4 bits 
-    /// in length (maximum value 15). For MPEG2 with intensity stereo, a scale factor will not 
+    ///
+    /// For MPEG1 and MPEG 2 without intensity stereo coding a scale factor will not exceed 4 bits
+    /// in length (maximum value 15). For MPEG2 with intensity stereo, a scale factor will not
     /// exceed 5 bits (maximum value 31).
     scalefacs: [u8; 39],
     /// The starting sample of the rzero partition.
@@ -720,7 +720,7 @@ struct GranuleChannel {
 
 impl Default for GranuleChannel {
     fn default() -> Self {
-        GranuleChannel { 
+        GranuleChannel {
             part2_3_length: 0,
             big_values: 0,
             global_gain: 0,
@@ -733,7 +733,7 @@ impl Default for GranuleChannel {
             preflag: false,
             scalefac_scale: false,
             count1table_select: false,
-            scalefacs: [0; 39], 
+            scalefacs: [0; 39],
             rzero: 0,
         }
     }
@@ -759,7 +759,7 @@ fn read_frame_header<B: Bytestream>(reader: &mut B) -> Result<FrameHeader> {
     let header = sync_frame(reader)?;
 
     // The MP3 header is structured as follows:
-    // 
+    //
     // 0b1111_1111 0b111v_vlly 0brrrr_hhpx 0bmmmm_coee
     // where:
     //     vv   = version, ll = layer      , y = crc
@@ -815,7 +815,7 @@ fn read_frame_header<B: Bytestream>(reader: &mut B) -> Result<FrameHeader> {
         (0b10,                 _) => Channels::DualMono,
         // Mono, for layers 1, 2, and 3.
         (0b11,                 _) => Channels::Mono,
-        // Joint stereo mode for layer 3 supports a combination of Mid-Side and Intensity Stereo 
+        // Joint stereo mode for layer 3 supports a combination of Mid-Side and Intensity Stereo
         // depending on the mode extension bits.
         (0b01, MpegLayer::Layer3) => Channels::JointStereo(Mode::Layer3 {
             mid_side:  header & 0x20 != 0x0,
@@ -823,7 +823,7 @@ fn read_frame_header<B: Bytestream>(reader: &mut B) -> Result<FrameHeader> {
         }),
         // Joint stereo mode for layers 1 and 2 only supports Intensity Stereo. The mode extension
         // bits indicate for which sub-bands intensity stereo coding is applied.
-        (0b01,                 _) => Channels::JointStereo(Mode::Intensity { 
+        (0b01,                 _) => Channels::JointStereo(Mode::Intensity {
             bound: (1 + (header & 0x30) >> 4) << 2,
         }),
         _                         => unreachable!(),
@@ -833,18 +833,18 @@ fn read_frame_header<B: Bytestream>(reader: &mut B) -> Result<FrameHeader> {
     // use them.
     if layer == MpegLayer::Layer2 {
         if channels == Channels::Mono {
-            if bitrate == 224_000 
-                || bitrate == 256_000 
-                || bitrate == 320_000 
+            if bitrate == 224_000
+                || bitrate == 256_000
+                || bitrate == 320_000
                 || bitrate == 384_000
             {
                 return decode_error("Invalid Layer 2 bitrate for mono channel mode.");
             }
         }
         else {
-            if bitrate == 32_000 
-                || bitrate == 48_000 
-                || bitrate == 56_000 
+            if bitrate == 32_000
+                || bitrate == 48_000
+                || bitrate == 56_000
                 || bitrate == 80_000
             {
                 return decode_error("Invalid Layer 2 bitrate for non-mono channel mode.");
@@ -871,7 +871,7 @@ fn read_frame_header<B: Bytestream>(reader: &mut B) -> Result<FrameHeader> {
     };
 
     // Calculate the size of the frame excluding this header.
-    let frame_size = 
+    let frame_size =
         (if version == MpegVersion::Mpeg1 { 144 } else { 72 } * bitrate / sample_rate) as usize
         + if has_padding { 1 } else { 0 }
         - if crc.is_some() { 2 } else { 0 }
@@ -917,7 +917,7 @@ fn read_granule_channel_side_info_l3<B: BitStream>(
     else {
         bs.read_bits_leq32(9)
     }? as u16;
-    
+
     let window_switching = bs.read_bit()?;
 
     if window_switching {
@@ -951,7 +951,7 @@ fn read_granule_channel_side_info_l3<B: BitStream>(
         // If MPEG version 2.5 specifically...
         if header.is_mpeg2p5() {
             // For MPEG2.5, the number of scale-factor bands in region0 depends on the block type.
-            // The standard indicates these values as 1 less than the actual value, therefore 1 is 
+            // The standard indicates these values as 1 less than the actual value, therefore 1 is
             // added here to both values.
             let region0_count = match channel.block_type {
                 BlockType::Short { is_mixed: false } => 5 + 1,
@@ -966,7 +966,7 @@ fn read_granule_channel_side_info_l3<B: BitStream>(
             // These bands are always [4, 4, 4, 4, 4, 4, 6, 6, ...] regardless of sample rate. These
             // bands sum to 36 samples.
             //
-            // For MPEG1 with SHORT blocks, the first 9 SHORT scale-factor bands are used for 
+            // For MPEG1 with SHORT blocks, the first 9 SHORT scale-factor bands are used for
             // region0. These band are always [4, 4, 4, 4, 4, 4, 4, 4, 4, ...] regardless of sample
             // rate. These bands also sum to 36 samples.
             //
@@ -980,12 +980,12 @@ fn read_granule_channel_side_info_l3<B: BitStream>(
         // If MPEG version 2 AND the block type is not Short...
         else {
             // For MPEG2 and LONG blocks, the first 8 LONG scale-factor bands are used for region0.
-            // These bands are always [6, 6, 6, 6, 6, 6, 8, 10, ...] regardless of sample rate. 
+            // These bands are always [6, 6, 6, 6, 6, 6, 8, 10, ...] regardless of sample rate.
             // These bands sum to 54.
             channel.region1_start = 54;
         }
 
-        // The second region, region1, spans the remaining samples. Therefore the third region, 
+        // The second region, region1, spans the remaining samples. Therefore the third region,
         // region2, isn't used.
         channel.region2_start = 576;
     }
@@ -998,14 +998,14 @@ fn read_granule_channel_side_info_l3<B: BitStream>(
         }
 
         // When window switching is not used, only LONG scale-factor bands are used for each region.
-        // The number of bands in region0 and region1 are defined in side_info. The stored value is 
+        // The number of bands in region0 and region1 are defined in side_info. The stored value is
         // 1 less than the actual value.
         let region0_count   = bs.read_bits_leq32(4)? as usize + 1;
         let region0_1_count = bs.read_bits_leq32(3)? as usize + region0_count + 1;
 
         channel.region1_start = SCALE_FACTOR_LONG_BANDS[header.sample_rate_idx][region0_count];
 
-        // The count in region0_1_count may exceed the last band (22) in the LONG bands table. 
+        // The count in region0_1_count may exceed the last band (22) in the LONG bands table.
         // Protect against this.
         channel.region2_start = match region0_1_count {
             0..=22 => SCALE_FACTOR_LONG_BANDS[header.sample_rate_idx][region0_1_count],
@@ -1013,9 +1013,9 @@ fn read_granule_channel_side_info_l3<B: BitStream>(
         };
     }
 
-    channel.preflag = if header.is_mpeg1() { 
-        bs.read_bit()? 
-    } 
+    channel.preflag = if header.is_mpeg1() {
+        bs.read_bit()?
+    }
     else {
         // Pre-flag is determined implicitly for MPEG2: ISO/IEC 13818-3 section 2.4.3.4.
         channel.scalefac_compress >= 500
@@ -1029,8 +1029,8 @@ fn read_granule_channel_side_info_l3<B: BitStream>(
 
 /// Reads the side_info for all channels in a granule from a `BitStream`.
 fn read_granule_side_info_l3<B: BitStream>(
-    bs: &mut B, 
-    granule: &mut Granule, 
+    bs: &mut B,
+    granule: &mut Granule,
     header: &FrameHeader,
 ) -> Result<()> {
     // Read the side_info for each channel in the granule.
@@ -1042,7 +1042,7 @@ fn read_granule_side_info_l3<B: BitStream>(
 
 /// Reads the side_info of a MPEG audio frame from a `BitStream` into `FrameData`.
 fn l3_read_side_info<B: Bytestream>(
-    reader: &mut B, 
+    reader: &mut B,
     header: &FrameHeader,
     frame_data: &mut FrameData
 ) -> Result<usize> {
@@ -1101,7 +1101,7 @@ fn l3_read_side_info<B: Bytestream>(
 
 /// Reads the scale factors for a single channel in a granule in a MPEG version 1 audio frame.
 fn l3_read_scale_factors_mpeg1<B: BitStream>(
-    bs: &mut B, 
+    bs: &mut B,
     gr: usize,
     ch: usize,
     frame_data: &mut FrameData,
@@ -1118,13 +1118,13 @@ fn l3_read_scale_factors_mpeg1<B: BitStream>(
     if let BlockType::Short { is_mixed } = channel.block_type {
         let data = &mut frame_data.granules[gr].channels[ch];
 
-        // If the block is mixed, there are three total scale factor partitions. The first is a long 
+        // If the block is mixed, there are three total scale factor partitions. The first is a long
         // scale factor partition for bands 0..8 (scalefacs[0..8] with each scale factor being slen1
-        // bits long. Following this is a short scale factor partition covering bands 8..11 with a 
+        // bits long. Following this is a short scale factor partition covering bands 8..11 with a
         // window of 3 (scalefacs[8..17]) and each scale factoring being slen1 bits long.
         //
         // If a block is not mixed, then there are a total of two scale factor partitions. The first
-        // is a short scale factor partition for bands 0..6 with a window length of 3 
+        // is a short scale factor partition for bands 0..6 with a window length of 3
         // (scalefacs[0..18]) and each scale factor being slen1 bits long.
         let n_sfb = if is_mixed { 8 + 3 * 3 } else { 6 * 3 };
 
@@ -1136,7 +1136,7 @@ fn l3_read_scale_factors_mpeg1<B: BitStream>(
         }
 
         // The final scale factor partition is always a a short scale factor window. It covers bands
-        // 11..17 (scalefacs[17..35]) if the block is mixed, or bands 6..12 (scalefacs[18..36]) if 
+        // 11..17 (scalefacs[17..35]) if the block is mixed, or bands 6..12 (scalefacs[18..36]) if
         // not. Each band has a window of 3 with each scale factor being slen2 bits long.
         if slen2 > 0 {
             for sfb in n_sfb..(n_sfb + (6 * 3)) {
@@ -1147,8 +1147,8 @@ fn l3_read_scale_factors_mpeg1<B: BitStream>(
     }
     // Normal (long, start, end) windows...
     else {
-        // For normal windows there are 21 scale factor bands. These bands are divivided into four 
-        // band ranges. Scale factors in the first two band ranges: [0..6], [6..11], have scale 
+        // For normal windows there are 21 scale factor bands. These bands are divivided into four
+        // band ranges. Scale factors in the first two band ranges: [0..6], [6..11], have scale
         // factors that are slen1 bits long, while the last two band ranges: [11..16], [16..21] have
         // scale factors that are slen2 bits long.
         const SCALE_FACTOR_BANDS: [(usize, usize); 4] = [(0, 6), (6, 11), (11, 16), (16, 21)];
@@ -1168,8 +1168,8 @@ fn l3_read_scale_factors_mpeg1<B: BitStream>(
                 }
                 // Otherwise, read the scale factors from the bitstream.
                 else {
-                    for sfb in *start..*end { 
-                        frame_data.granules[gr].channels[ch].scalefacs[sfb] = 
+                    for sfb in *start..*end {
+                        frame_data.granules[gr].channels[ch].scalefacs[sfb] =
                             bs.read_bits_leq32(slen)? as u8;
                     }
                     bits_read += slen as usize * (end - start);
@@ -1183,7 +1183,7 @@ fn l3_read_scale_factors_mpeg1<B: BitStream>(
 
 /// Reads the scale factors for a single channel in a granule in a MPEG version 2 audio frame.
 fn l3_read_scale_factors_mpeg2<B: BitStream>(
-    bs: &mut B, 
+    bs: &mut B,
     is_intensity_stereo: bool,
     channel: &mut GranuleChannel,
 ) -> Result<(u32)> {
@@ -1197,8 +1197,8 @@ fn l3_read_scale_factors_mpeg2<B: BitStream>(
     };
 
     let (slen_table, nsfb_table) = if is_intensity_stereo {
-        // The actual value of scalefac_compress is a 9-bit unsigned integer (0..512) for MPEG2. A 
-        // left shift reduces it to an 8-bit value (0..255). 
+        // The actual value of scalefac_compress is a 9-bit unsigned integer (0..512) for MPEG2. A
+        // left shift reduces it to an 8-bit value (0..255).
         let sfc = channel.scalefac_compress as u32 >> 1;
 
         match sfc {
@@ -1207,21 +1207,21 @@ fn l3_read_scale_factors_mpeg2<B: BitStream>(
                 (sfc % 36) / 6,
                 (sfc % 36) % 6,
                 0,
-            ], 
+            ],
             &SCALE_FACTOR_MPEG2_NSFB[0][block_index]),
             180..=243 => ([
                 ((sfc - 180) % 64) >> 4,
                 ((sfc - 180) % 16) >> 2,
                 ((sfc - 180) %  4),
                 0,
-            ], 
+            ],
             &SCALE_FACTOR_MPEG2_NSFB[1][block_index]),
             244..=255 => ([
                 (sfc - 244) / 3,
                 (sfc - 244) % 3,
                 0,
                 0,
-            ], 
+            ],
             &SCALE_FACTOR_MPEG2_NSFB[2][block_index]),
             _ => unreachable!(),
         }
@@ -1232,25 +1232,25 @@ fn l3_read_scale_factors_mpeg2<B: BitStream>(
 
         match sfc {
             0..=399   => ([
-                (sfc >> 4) / 5, 
-                (sfc >> 4) % 5, 
-                (sfc % 16) >> 2, 
+                (sfc >> 4) / 5,
+                (sfc >> 4) % 5,
+                (sfc % 16) >> 2,
                 (sfc %  4),
-            ], 
+            ],
             &SCALE_FACTOR_MPEG2_NSFB[3][block_index]),
             400..=499 => ([
                 ((sfc - 400) >> 2) / 5,
                 ((sfc - 400) >> 2) % 5,
                 (sfc - 400) % 4,
                 0,
-            ], 
+            ],
             &SCALE_FACTOR_MPEG2_NSFB[4][block_index]),
             500..=512 => ([
                 (sfc - 500) / 3,
                 (sfc - 500) % 3,
                 0,
                 0,
-            ], 
+            ],
             &SCALE_FACTOR_MPEG2_NSFB[5][block_index]),
             _ => unreachable!(),
         }
@@ -1259,7 +1259,7 @@ fn l3_read_scale_factors_mpeg2<B: BitStream>(
     let mut start = 0;
 
     for (&slen, &n_sfb) in slen_table.iter().zip(nsfb_table.iter()) {
-        // If slen > 0, read n_sfb scale factors with each scale factor being slen bits long. If 
+        // If slen > 0, read n_sfb scale factors with each scale factor being slen bits long. If
         // slen == 0, but n_sfb > 0, then the those scale factors should be set to 0. Since all
         // scalefacs are preinitialized to 0, this process may be skipped.
         if slen > 0 {
@@ -1275,11 +1275,11 @@ fn l3_read_scale_factors_mpeg2<B: BitStream>(
     Ok(bits_read)
 }
 
-/// Reads the Huffman coded spectral samples for a given channel in a granule from a `BitStream` 
+/// Reads the Huffman coded spectral samples for a given channel in a granule from a `BitStream`
 /// into a provided sample buffer. Returns the number of decoded samples (the starting index of the
 /// rzero partition).
-/// 
-/// Note, each spectral sample is raised to the (4/3)-rd power. This is not actually part of the 
+///
+/// Note, each spectral sample is raised to the (4/3)-rd power. This is not actually part of the
 /// Huffman decoding process, but, by converting the integer sample to floating point here we don't
 /// need to do pointless casting or use an extra buffer.
 fn l3_read_huffman_samples<B: BitStream>(
@@ -1297,22 +1297,22 @@ fn l3_read_huffman_samples<B: BitStream>(
         return Ok(0);
     }
 
-    // Dereference the POW43 table once per granule since there is a tiny overhead each time a 
+    // Dereference the POW43 table once per granule since there is a tiny overhead each time a
     // lazy_static is dereferenced that should be amortized over as many samples as possible.
     let pow43_table: &[f32; 8207] = &POW43;
 
     let mut bits_read = 0;
     let mut i = 0;
 
-    // There are two samples per big_value, therefore multiply big_values by 2 to get number of 
+    // There are two samples per big_value, therefore multiply big_values by 2 to get number of
     // samples in the big_value partition.
     let big_values_len = 2 * channel.big_values as usize;
 
     // There are up-to 3 regions in the big_value partition. Determine the sample index denoting the
     // end of each region (non-inclusive). Clamp to the end of the big_values partition.
     let regions: [usize; 3] = [
-        min(channel.region1_start as usize, big_values_len), 
-        min(channel.region2_start as usize, big_values_len), 
+        min(channel.region1_start as usize, big_values_len),
+        min(channel.region2_start as usize, big_values_len),
         min(                             576, big_values_len),
     ];
 
@@ -1340,14 +1340,14 @@ fn l3_read_huffman_samples<B: BitStream>(
             let (value, code_len) = bs.read_huffman(&table.huff_table, part3_bits - bits_read)?;
             bits_read += code_len;
 
-            // In the big_values partition, each Huffman code decodes to two sample, x and y. Each 
+            // In the big_values partition, each Huffman code decodes to two sample, x and y. Each
             // sample being 4-bits long.
             let mut x = (value >> 4) as usize;
             let mut y = (value & 0xf) as usize;
 
             // If the first sample, x, is not 0, further process it.
             if x > 0 {
-                // If x is saturated (it is at the maximum possible value), and the table specifies 
+                // If x is saturated (it is at the maximum possible value), and the table specifies
                 // linbits, then read linbits more bits and add it to the sample.
                 if x == 15 && table.linbits > 0 {
                     x += bs.read_bits_leq32(table.linbits)? as usize;
@@ -1355,7 +1355,7 @@ fn l3_read_huffman_samples<B: BitStream>(
                 }
 
                 // The next bit is the sign bit. The value of the sample is raised to the (4/3)
-                // power. 
+                // power.
                 buf[i] = if bs.read_bit()? { -pow43_table[x] } else { pow43_table[x] };
                 bits_read += 1;
             }
@@ -1399,11 +1399,11 @@ fn l3_read_huffman_samples<B: BitStream>(
         let (value, code_len) = bs.read_huffman(&count1_table, part3_bits - bits_read)?;
         bits_read += code_len;
 
-        // In the count1 partition, each Huffman code decodes to 4 samples: v, w, x, and y. 
+        // In the count1 partition, each Huffman code decodes to 4 samples: v, w, x, and y.
         // Each sample is 1-bit long (1 or 0).
         //
-        // For each 1-bit sample, if it is 0, then then dequantized sample value is 0 as well. If 
-        // the 1-bit sample is 1, then read the sign bit (the next bit). The dequantized sample is 
+        // For each 1-bit sample, if it is 0, then then dequantized sample value is 0 as well. If
+        // the 1-bit sample is 1, then read the sign bit (the next bit). The dequantized sample is
         // then either +/-1.0 depending on the sign bit.
         if value & 0x8 != 0 {
             buf[i] = if bs.read_bit()? { -1.0 } else { 1.0 };
@@ -1457,7 +1457,7 @@ fn l3_read_huffman_samples<B: BitStream>(
         i -= 4;
     }
 
-    // The final partition after the count1 partition is the rzero partition. Samples in this 
+    // The final partition after the count1 partition is the rzero partition. Samples in this
     // partition are all 0.
     for j in i..576 {
         buf[j] = 0.0;
@@ -1501,14 +1501,14 @@ fn l3_requantize_long(
     let mut sfb_end = sfb_indicies[sfb] as usize;
 
     for i in 0..buf.len() {
-        // The value of B is dependant on the scale factor band. Therefore, update B only when the 
+        // The value of B is dependant on the scale factor band. Therefore, update B only when the
         // scale factor band changes.
         if i == sfb_end {
             let pretab = if channel.preflag { PRE_TAB[sfb] } else { 0.0 };
 
             // Calculate 2^(-B).
             let pow2b = f64::powf(
-                2.0, 
+                2.0,
                 -scalefac_multiplier * (channel.scalefacs[sfb] as f64 + pretab)
             );
 
@@ -1598,12 +1598,12 @@ fn l3_requantize(
         BlockType::Short { is_mixed: true } => {
             eprintln!("requantize mixed block.");
             // A mixed block is a combination of a long block and short blocks. The first few scale
-            // factor bands, and thus samples, belong to a single long block, while the remaining 
-            // bands and samples belong to short blocks. Therefore, requantization for mixed blocks 
+            // factor bands, and thus samples, belong to a single long block, while the remaining
+            // bands and samples belong to short blocks. Therefore, requantization for mixed blocks
             // can be decomposed into short and long block requantizations.
             //
-            // As per ISO/IEC 11172-3, the short scale factor band at which the long block ends and 
-            // the short blocks begin is denoted by switch_point_s (3). ISO/IEC 13818-3 does not 
+            // As per ISO/IEC 11172-3, the short scale factor band at which the long block ends and
+            // the short blocks begin is denoted by switch_point_s (3). ISO/IEC 13818-3 does not
             // ammend this figure.
             //
             // TODO: Verify if this split makes sense for 8kHz MPEG2.5 bitstreams.
@@ -1618,13 +1618,13 @@ fn l3_requantize(
 
 /// Reorder samples that are part of short blocks into sub-band order.
 fn l3_reorder(
-    header: &FrameHeader, 
-    channel: &GranuleChannel, 
+    header: &FrameHeader,
+    channel: &GranuleChannel,
     buf: &mut [f32; 576]
 ) {
     // Only short blocks are reordered.
     if let BlockType::Short { is_mixed } = channel.block_type {
-        // Every short block is split into 3 equally sized windows as illustrated below (e.g. for 
+        // Every short block is split into 3 equally sized windows as illustrated below (e.g. for
         // a short scale factor band with win_len=4):
         //
         //    <- Window #1 ->  <- Window #2 ->  <- Window #3 ->
@@ -1636,12 +1636,12 @@ fn l3_reorder(
         //   [ 0 | 4 | 8 | 1 | 5 | 9 | 2 | 6 | a | 3 | 7 | b ]
         //    <----  3 * Short Scale Factor Band Width  ---->
         //
-        // Basically, reordering interleaves the 3 windows the same way 3 planar audio buffers 
+        // Basically, reordering interleaves the 3 windows the same way 3 planar audio buffers
         // would be interleaved.
         debug_assert!(channel.rzero <= 576);
 
         // TODO: Frankly, this is wasteful... Consider swapping between two internal buffers so we
-        // can avoid initializing this to 0 every frame. Again, unsafe is not allowed in codec's so 
+        // can avoid initializing this to 0 every frame. Again, unsafe is not allowed in codec's so
         // this can't be left uninitialized.
         let mut reorder_buf = [0f32; 576];
 
@@ -1702,12 +1702,12 @@ fn l3_antialias(channel: &GranuleChannel, samples: &mut [f32; 576]) {
     let (cs, ca): &([f32; 8], [f32; 8]) = &ANTIALIAS_CS_CA;
 
     // Anti-aliasing is performed using 8 butterfly calculations at the boundaries of ADJACENT
-    // sub-bands. For each calculation, there are two samples: lower and upper. For each iteration, 
-    // the lower sample index advances backwards from the boundary, while the upper sample index 
+    // sub-bands. For each calculation, there are two samples: lower and upper. For each iteration,
+    // the lower sample index advances backwards from the boundary, while the upper sample index
     // advances forward from the boundary.
     //
-    // For example, let B(li, ui) represent the butterfly calculation where li and ui are the 
-    // indicies of the lower and upper samples respectively. If j is the index of the first sample 
+    // For example, let B(li, ui) represent the butterfly calculation where li and ui are the
+    // indicies of the lower and upper samples respectively. If j is the index of the first sample
     // of a sub-band, then the iterations are as follows:
     //
     // B(j-1,j), B(j-2,j+1), B(j-3,j+2), B(j-4,j+3), B(j-5,j+4), B(j-6,j+5), B(j-7,j+6), B(j-8,j+7)
@@ -1724,7 +1724,7 @@ fn l3_antialias(channel: &GranuleChannel, samples: &mut [f32; 576]) {
     //   u0 ------o------(+)-------> u1          derived from table B.9 of ISO/IEC 11172-3.
     //             * cs[i]
     //
-    // Note that all butterfly calculations only involve two samples, and all iterations are 
+    // Note that all butterfly calculations only involve two samples, and all iterations are
     // independant of each other. This lends itself well for SIMD processing.
     for sb in (18..sb_end).step_by(18) {
         for i in 0..8 {
@@ -1749,7 +1749,7 @@ fn l3_stereo(
         return decode_error("stereo channel pair block_type mismatch");
     }
 
-    let (ch0, ch1) = { 
+    let (ch0, ch1) = {
         let (ch0, ch1) = ch.split_first_mut().unwrap();
         (ch0, &mut ch1[0])
     };
@@ -1773,7 +1773,7 @@ fn l3_stereo(
     //      m[i], and s[i] are the mid and side channels, respectively.
     //
     // In the bitstream, m[i] is transmitted in channel 0, while s[i] in channel 1. After decoding,
-    // the left channel replaces m[i] in channel 0, and the right channel replaces s[i] in channel 
+    // the left channel replaces m[i] in channel 0, and the right channel replaces s[i] in channel
     // 1.
     if mid_side {
         let end = max(granule.channels[0].rzero, granule.channels[1].rzero);
@@ -1786,14 +1786,14 @@ fn l3_stereo(
         }
     }
 
-    // If intensity stereo is used, then samples within the rzero partition are coded using 
+    // If intensity stereo is used, then samples within the rzero partition are coded using
     // intensity stereo. Intensity stereo codes both channels (left and right) into channel 0.
-    // In channel 1, the scale factors, for the scale factor bands within the rzero partition 
-    // corresponding to the intensity coded bands of channel 0, contain the intensity position. 
-    // Using the intensity position for each band, the intensity signal may be decoded into left 
+    // In channel 1, the scale factors, for the scale factor bands within the rzero partition
+    // corresponding to the intensity coded bands of channel 0, contain the intensity position.
+    // Using the intensity position for each band, the intensity signal may be decoded into left
     // and right channels.
     //
-    // As per ISO/IEC 11172-3 and ISO/IEC 13818-3, the following calculation may be performed to 
+    // As per ISO/IEC 11172-3 and ISO/IEC 13818-3, the following calculation may be performed to
     // decode the intensity coded signal into left and right channels.
     //
     //      l[i] = ch0[i] * k_l
@@ -1824,7 +1824,7 @@ fn l3_stereo(
     //      i0 = 1 / sqrt(2)        if (intensity_scale = scalefac_compress & 1) == 1
     //      i0 = 1 / sqrt(sqrt(2))  if (intensity_scale = scalefac_compress & 1) == 0
     //
-    // Note: regardless of version, pos[sfb] == 7 is forbidden and indicates intensity stereo 
+    // Note: regardless of version, pos[sfb] == 7 is forbidden and indicates intensity stereo
     //       decoding should not be used.
     if intensity {
         let ch1_rzero = granule.channels[1].rzero as u32;
@@ -1846,7 +1846,7 @@ fn l3_stereo(
                     l3_intensity_stereo_short(header, &granule.channels[1], start, ch0, ch1);
                 }
             },
-            // For mixed blocks, the first 36 samples are part of a long block, and the remaining 
+            // For mixed blocks, the first 36 samples are part of a long block, and the remaining
             // samples are part of short blocks.
             BlockType::Short { is_mixed: true } => {
                 let long_indicies = &SCALE_FACTOR_LONG_BANDS[header.sample_rate_idx as usize];
@@ -1890,12 +1890,12 @@ fn l3_stereo(
 }
 
 fn l3_intensity_stereo_short(
-    header: &FrameHeader, 
+    header: &FrameHeader,
     channel: &GranuleChannel,
     sfb_start: usize,
     ch0: &mut [f32; 576],
     ch1: &mut [f32; 576],
-) {   
+) {
     let sfb_indicies = &SCALE_FACTOR_SHORT_BANDS[header.sample_rate_idx as usize];
 
     // If MPEG1...
@@ -1905,7 +1905,7 @@ fn l3_intensity_stereo_short(
 
             let mut start = 3 * sfb_indicies[sfb] as usize;
 
-            for win in 0..3 {          
+            for win in 0..3 {
                 let is_pos = channel.scalefacs[3*sfb + win] as usize;
 
                 if is_pos < 7 {
@@ -1932,7 +1932,7 @@ fn l3_intensity_stereo_short(
 
             let mut start = 3 * sfb_indicies[sfb] as usize;
 
-            for win in 0..3 {          
+            for win in 0..3 {
                 let is_pos = channel.scalefacs[3*sfb + win] as usize;
 
                 if is_pos != 7 {
@@ -1953,7 +1953,7 @@ fn l3_intensity_stereo_short(
 }
 
 fn l3_intensity_stereo_long(
-    header: &FrameHeader, 
+    header: &FrameHeader,
     channel: &GranuleChannel,
     sfb_start: usize,
     sfb_end: usize,
@@ -1961,16 +1961,16 @@ fn l3_intensity_stereo_long(
     ch1: &mut [f32; 576],
 ) {
     let sfb_indicies = &SCALE_FACTOR_LONG_BANDS[header.sample_rate_idx as usize];
-    
+
     // If MPEG1...
     if header.is_mpeg1() {
         for sfb in sfb_start..sfb_end {
             let is_pos = channel.scalefacs[sfb] as usize;
 
             // A position of 7 is considered invalid. Additionally, for MPEG1 bitstreams, a scalefac
-            // may be up to 4-bits long. A 4 bit scalefac is clearly invalid for intensity coded 
-            // scale factor bands since the maximum value is 7, but a maliciously crafted file could 
-            // conceivably make it happen. Therefore, any position > 7 is ignored, thus protecting 
+            // may be up to 4-bits long. A 4 bit scalefac is clearly invalid for intensity coded
+            // scale factor bands since the maximum value is 7, but a maliciously crafted file could
+            // conceivably make it happen. Therefore, any position > 7 is ignored, thus protecting
             // the table look-up from going out-of-bounds.
             if is_pos < 7 {
                 let (ratio_l, ratio_r) = INTENSITY_STEREO_RATIOS[is_pos];
@@ -1990,13 +1990,13 @@ fn l3_intensity_stereo_long(
     // Otherwise, if MPEG2 or 2.5...
     else {
         let is_pos_table = &INTENSITY_STEREO_RATIOS_MPEG2[channel.scalefac_compress as usize & 0x1];
-        
+
         for sfb in sfb_start..sfb_end {
             let is_pos = channel.scalefacs[sfb] as usize;
 
             // A position of 7 is considered invalid.
             if is_pos != 7 {
-                // For MPEG2 bitstreams, a scalefac can be up to 5-bits long and may index the 
+                // For MPEG2 bitstreams, a scalefac can be up to 5-bits long and may index the
                 // intensity stereo coefficients table directly.
                 let (ratio_l, ratio_r) = is_pos_table[is_pos];
 
@@ -2037,28 +2037,28 @@ fn l3_imdct12_win(x: &[f32], window: &[f32; 36], out: &mut [f32; 36]) {
             // y[i] = SUM { x[k] * cos(PI/24 * (2i + 7) * (2k + 1)) }
             //        k=0
             //
-            // The value of cos(..) is easily indexable by i and k, and is therefore pre-computed 
+            // The value of cos(..) is easily indexable by i and k, and is therefore pre-computed
             // and placed in a look-up table.
-            let y = (x[w + 3*0] * cos12[i][0]) 
-                        + (x[w + 3*1] * cos12[i][1]) 
+            let y = (x[w + 3*0] * cos12[i][0])
+                        + (x[w + 3*1] * cos12[i][1])
                         + (x[w + 3*2] * cos12[i][2])
-                        + (x[w + 3*3] * cos12[i][3]) 
-                        + (x[w + 3*4] * cos12[i][4]) 
+                        + (x[w + 3*3] * cos12[i][3])
+                        + (x[w + 3*4] * cos12[i][4])
                         + (x[w + 3*5] * cos12[i][5]);
 
-            // Each adjacent 12-point IMDCT window is overlapped and added in the output, with the 
-            // first and last 6 samples of the output are always being 0. 
+            // Each adjacent 12-point IMDCT window is overlapped and added in the output, with the
+            // first and last 6 samples of the output are always being 0.
             //
             // In the above calculation, y is the result of the 12-point IMDCT for sample i. For the
             // following description, assume the 12-point IMDCT result is y[0..12], where the value
             // y calculated above is y[i].
-            // 
+            //
             // Each sample in the IMDCT is multiplied by the appropriate window function as
-            // specified in ISO/IEC 11172-3. The values of the window function are pre-computed and 
+            // specified in ISO/IEC 11172-3. The values of the window function are pre-computed and
             // given by window[0..12].
             //
-            // Since there are 3 IMDCT windows (indexed by w), y[0..12] is calculated 3 times. 
-            // For the purpose of the diagram below, we label these IMDCT windows as: y0[0..12], 
+            // Since there are 3 IMDCT windows (indexed by w), y[0..12] is calculated 3 times.
+            // For the purpose of the diagram below, we label these IMDCT windows as: y0[0..12],
             // y1[0..12], and y2[0..12], for IMDCT windows 0..3 respectively.
             //
             // Therefore, the overlap-and-add operation can be visualized as below:
@@ -2090,14 +2090,14 @@ fn l3_hybrid_synthesis(
     samples: &mut [f32; 576],
 ) {
     let mut output = [0f32; 36];
-    
+
     let imdct_windows = &IMDCT_WINDOWS;
 
     // If the block is short, the 12-point IMDCT must be used.
     if let BlockType::Short { is_mixed } = channel.block_type {
 
         // There are 32 sub-bands. If the block is mixed, then the first two sub-bands are windowed
-        // as long blocks, while the rest are windowed as short blocks. The following arrays 
+        // as long blocks, while the rest are windowed as short blocks. The following arrays
         // indicate the index of the window to use within imdct_windows. Each element is repeated
         // twice (i.e., sub-bands 0 and 1 use win_idx[0], 2 and 3 use win_idx[1], ..).
         let win_idx = match is_mixed {
@@ -2115,7 +2115,7 @@ fn l3_hybrid_synthesis(
             // Perform the 12-point IMDCT on each of the 3 short block windows.
             l3_imdct12_win(&samples[start..(start + 18)], window, &mut output);
 
-            // Overlap the lower half of the IMDCT output (values 0..18) with the upper values of 
+            // Overlap the lower half of the IMDCT output (values 0..18) with the upper values of
             // the IMDCT (values 18..36) of the /previous/ iteration of the IMDCT.
             for i in (0..18).step_by(2) {
                 samples[start + (i+0)] = overlap[start + (i+0)] + output[i+0];
@@ -2130,7 +2130,7 @@ fn l3_hybrid_synthesis(
     else {
         // Select the appropriate window given the block type.
         let window = match channel.block_type {
-            BlockType::Long  => &imdct_windows[0], 
+            BlockType::Long  => &imdct_windows[0],
             BlockType::Start => &imdct_windows[1],
             BlockType::End   => &imdct_windows[2],
             // Short blocks are handled above.
@@ -2144,7 +2144,7 @@ fn l3_hybrid_synthesis(
             // Perform the 36-point on the entire long block.
             imdct36::imdct36(&samples[start..(start + 18)], &mut output);
 
-            // Overlap the lower half of the IMDCT output (values 0..18) with the upper values of 
+            // Overlap the lower half of the IMDCT output (values 0..18) with the upper values of
             // the IMDCT (values 18..36) of the /previous/ iteration of the IMDCT. While doing this
             // also apply the window.
             for i in (0..18).step_by(2) {
@@ -2172,15 +2172,15 @@ fn l3_frequency_inversion(samples: &mut [f32; 576]) {
 
 /// Reads the main_data portion of a MPEG audio frame from a `BitStream` into `FrameData`.
 fn l3_read_main_data<B: BitStream>(
-    bs: &mut B, 
-    header: &FrameHeader, 
+    bs: &mut B,
+    header: &FrameHeader,
     frame_data: &mut FrameData,
     state: &mut State,
 ) -> Result<()> {
 
     for gr in 0..header.n_granules() {
         for ch in 0..header.n_channels() {
-            
+
             // Read the scale factors (part2) and get the number of bits read. For MPEG version 1...
             let part2_len = if header.is_mpeg1() {
                 l3_read_scale_factors_mpeg1(bs, gr, ch, frame_data)
@@ -2188,8 +2188,8 @@ fn l3_read_main_data<B: BitStream>(
             // For MPEG version 2...
             else {
                 l3_read_scale_factors_mpeg2(
-                    bs, 
-                    ch > 0 && header.is_intensity_stereo(), 
+                    bs,
+                    ch > 0 && header.is_intensity_stereo(),
                     &mut frame_data.granules[gr].channels[ch])
             }?;
 
@@ -2202,12 +2202,12 @@ fn l3_read_main_data<B: BitStream>(
 
             // The Huffman code length (part3).
             let part3_len = part2_3_length - part2_len;
-            
-            // Decode the Huffman coded spectral samples and get the starting index of the rzero 
+
+            // Decode the Huffman coded spectral samples and get the starting index of the rzero
             // partition.
             frame_data.granules[gr].channels[ch].rzero = l3_read_huffman_samples(
-                bs, 
-                &frame_data.granules[gr].channels[ch], 
+                bs,
+                &frame_data.granules[gr].channels[ch],
                 part3_len,
                 &mut state.samples[gr][ch],
             )?;
@@ -2218,9 +2218,9 @@ fn l3_read_main_data<B: BitStream>(
 }
 
 
-/// `BitResevoir` implements the bit resevoir mechanism for main_data. Since frames have a 
+/// `BitResevoir` implements the bit resevoir mechanism for main_data. Since frames have a
 /// deterministic length based on the bit-rate, low-complexity portions of the audio may not need
-/// every byte allocated to the frame. The bit resevoir mechanism allows these unused portions of 
+/// every byte allocated to the frame. The bit resevoir mechanism allows these unused portions of
 /// frames to be used by future frames.
 pub struct BitResevoir {
     buf: Box<[u8]>,
@@ -2236,12 +2236,12 @@ impl BitResevoir {
     }
 
     fn fill<B: Bytestream>(
-        &mut self, 
+        &mut self,
         reader: &mut B,
-        main_data_begin: usize, 
-        main_data_size: usize) -> Result<()> 
+        main_data_begin: usize,
+        main_data_size: usize) -> Result<()>
     {
-        // The value `main_data_begin` indicates the number of bytes from the previous frames to 
+        // The value `main_data_begin` indicates the number of bytes from the previous frames to
         // reuse. It must be less than or equal to the amount of bytes in the buffer.
         if main_data_begin > self.len {
             return decode_error("Invalid main_data_begin offset.");
@@ -2259,7 +2259,7 @@ impl BitResevoir {
         let main_data_end = main_data_begin + main_data_size;
         reader.read_buf_bytes(&mut self.buf[main_data_begin..main_data_end])?;
         self.len = main_data_end;
-        
+
         Ok(())
     }
 
@@ -2268,18 +2268,20 @@ impl BitResevoir {
     }
 }
 
-/// MP3 depends on the state of the previous frame to decode the next. `State` is a structure 
+/// MP3 depends on the state of the previous frame to decode the next. `State` is a structure
 /// containing all the stateful information required to decode the next frame.
 struct State {
     samples: [[[f32; 576]; 2]; 2],
     overlap: [[f32; 576]; 2],
+    synthesis: synthesis::SynthesisState,
 }
 
 impl State {
     fn new() -> Self {
-        State { 
+        State {
             samples: [[[0f32; 576]; 2]; 2],
             overlap: [[0f32; 576]; 2],
+            synthesis: Default::default(),
         }
     }
 }
@@ -2288,12 +2290,12 @@ impl State {
 pub fn next_frame<B: Bytestream>(reader: &mut B, resevoir: &mut BitResevoir) -> Result<()> {
     let header = read_frame_header(reader)?;
     eprintln!("{:#?}", &header);
-    
+
     let mut state = State::new();
 
     match header.layer {
         MpegLayer::Layer3 => {
-            // Initialize an empty FrameData to store the side_info and main_data portions of the 
+            // Initialize an empty FrameData to store the side_info and main_data portions of the
             // frame.
             let mut frame_data: FrameData = Default::default();
 
@@ -2303,12 +2305,12 @@ pub fn next_frame<B: Bytestream>(reader: &mut B, resevoir: &mut BitResevoir) -> 
 
             // Buffer main_data into the bit resevoir.
             resevoir.fill(
-                reader, 
+                reader,
                 frame_data.main_data_begin as usize,
                 header.frame_size - side_info_len
             )?;
 
-            // Read the main_data from the bit resevoir. A bit reader is required exclusively for 
+            // Read the main_data from the bit resevoir. A bit reader is required exclusively for
             // this operation, so scope it.
             {
                 let mut bs = BitStreamLtr::new(BufStream::new(resevoir.bytes_ref()));
@@ -2323,7 +2325,7 @@ pub fn next_frame<B: Bytestream>(reader: &mut B, resevoir: &mut BitResevoir) -> 
                 // Reorder any spectral samples in short blocks into sub-band order.
                 l3_reorder(&header, &granule.channels[0], &mut state.samples[gr][0]);
 
-                // If there is more than one channel: requantize and reorder the second channel, 
+                // If there is more than one channel: requantize and reorder the second channel,
                 // then apply stereo processing.
                 if header.channels != Channels::Mono {
                     l3_requantize(&header, &granule.channels[1], &mut state.samples[gr][1]);
@@ -2335,16 +2337,19 @@ pub fn next_frame<B: Bytestream>(reader: &mut B, resevoir: &mut BitResevoir) -> 
                 for ch in 0..header.n_channels() {
                     // Apply the anti-aliasing filter to blocks that are not short.
                     l3_antialias(&granule.channels[ch], &mut state.samples[gr][ch]);
-                    
+
                     // Perform hybrid-synthesis (IMDCT and windowing).
                     l3_hybrid_synthesis(
-                        &granule.channels[ch], 
+                        &granule.channels[ch],
                         &mut state.overlap[ch],
-                        &mut state.samples[gr][ch]
+                        &mut state.samples[gr][ch],
                     );
 
                     // Invert odd samples in odd sub-bands.
                     l3_frequency_inversion(&mut state.samples[gr][ch]);
+
+                    // Perform sub-band synthesis.
+                    synthesis::subband_synthesis(&mut state.samples[gr][ch], &mut state.synthesis);
                 }
             }
 
@@ -2355,19 +2360,237 @@ pub fn next_frame<B: Bytestream>(reader: &mut B, resevoir: &mut BitResevoir) -> 
     Ok(())
 }
 
+mod synthesis {
+    /// Synthesis window D[i], defined in Table B.3 of ISO/IEC 11172-3.
+    const SYNTHESIS_D: [f32; 512] = [
+         0.000000000, -0.000015259, -0.000015259, -0.000015259,
+        -0.000015259, -0.000015259, -0.000015259, -0.000030518,
+        -0.000030518, -0.000030518, -0.000030518, -0.000045776,
+        -0.000045776, -0.000061035, -0.000061035, -0.000076294,
+        -0.000076294, -0.000091553, -0.000106812, -0.000106812,
+        -0.000122070, -0.000137329, -0.000152588, -0.000167847,
+        -0.000198364, -0.000213623, -0.000244141, -0.000259399,
+        -0.000289917, -0.000320435, -0.000366211, -0.000396729,
+        -0.000442505, -0.000473022, -0.000534058, -0.000579834,
+        -0.000625610, -0.000686646, -0.000747681, -0.000808716,
+        -0.000885010, -0.000961304, -0.001037598, -0.001113892,
+        -0.001205444, -0.001296997, -0.001388550, -0.001480103,
+        -0.001586914, -0.001693726, -0.001785278, -0.001907349,
+        -0.002014160, -0.002120972, -0.002243042, -0.002349854,
+        -0.002456665, -0.002578735, -0.002685547, -0.002792358,
+        -0.002899170, -0.002990723, -0.003082275, -0.003173828,
+         0.003250122,  0.003326416,  0.003387451,  0.003433228,
+         0.003463745,  0.003479004,  0.003479004,  0.003463745,
+         0.003417969,  0.003372192,  0.003280640,  0.003173828,
+         0.003051758,  0.002883911,  0.002700806,  0.002487183,
+         0.002227783,  0.001937866,  0.001617432,  0.001266479,
+         0.000869751,  0.000442505, -0.000030518, -0.000549316,
+        -0.001098633, -0.001693726, -0.002334595, -0.003005981,
+        -0.003723145, -0.004486084, -0.005294800, -0.006118774,
+        -0.007003784, -0.007919312, -0.008865356, -0.009841919,
+        -0.010848999, -0.011886597, -0.012939453, -0.014022827,
+        -0.015121460, -0.016235352, -0.017349243, -0.018463135,
+        -0.019577026, -0.020690918, -0.021789551, -0.022857666,
+        -0.023910522, -0.024932861, -0.025909424, -0.026840210,
+        -0.027725220, -0.028533936, -0.029281616, -0.029937744,
+        -0.030532837, -0.031005859, -0.031387329, -0.031661987,
+        -0.031814575, -0.031845093, -0.031738281, -0.031478882,
+         0.031082153,  0.030517578,  0.029785156,  0.028884888,
+         0.027801514,  0.026535034,  0.025085449,  0.023422241,
+         0.021575928,  0.019531250,  0.017257690,  0.014801025,
+         0.012115479,  0.009231567,  0.006134033,  0.002822876,
+        -0.000686646, -0.004394531, -0.008316040, -0.012420654,
+        -0.016708374, -0.021179199, -0.025817871, -0.030609131,
+        -0.035552979, -0.040634155, -0.045837402, -0.051132202,
+        -0.056533813, -0.061996460, -0.067520142, -0.073059082,
+        -0.078628540, -0.084182739, -0.089706421, -0.095169067,
+        -0.100540161, -0.105819702, -0.110946655, -0.115921021,
+        -0.120697021, -0.125259399, -0.129562378, -0.133590698,
+        -0.137298584, -0.140670776, -0.143676758, -0.146255493,
+        -0.148422241, -0.150115967, -0.151306152, -0.151962280,
+        -0.152069092, -0.151596069, -0.150497437, -0.148773193,
+        -0.146362305, -0.143264771, -0.139450073, -0.134887695,
+        -0.129577637, -0.123474121, -0.116577148, -0.108856201,
+         0.100311279,  0.090927124,  0.080688477,  0.069595337,
+         0.057617187,  0.044784546,  0.031082153,  0.016510010,
+         0.001068115, -0.015228271, -0.032379150, -0.050354004,
+        -0.069168091, -0.088775635, -0.109161377, -0.130310059,
+        -0.152206421, -0.174789429, -0.198059082, -0.221984863,
+        -0.246505737, -0.271591187, -0.297210693, -0.323318481,
+        -0.349868774, -0.376800537, -0.404083252, -0.431655884,
+        -0.459472656, -0.487472534, -0.515609741, -0.543823242,
+        -0.572036743, -0.600219727, -0.628295898, -0.656219482,
+        -0.683914185, -0.711318970, -0.738372803, -0.765029907,
+        -0.791213989, -0.816864014, -0.841949463, -0.866363525,
+        -0.890090942, -0.913055420, -0.935195923, -0.956481934,
+        -0.976852417, -0.996246338, -1.014617920, -1.031936646,
+        -1.048156738, -1.063217163, -1.077117920, -1.089782715,
+        -1.101211548, -1.111373901, -1.120223999, -1.127746582,
+        -1.133926392, -1.138763428, -1.142211914, -1.144287109,
+         1.144989014,  1.144287109,  1.142211914,  1.138763428,
+         1.133926392,  1.127746582,  1.120223999,  1.111373901,
+         1.101211548,  1.089782715,  1.077117920,  1.063217163,
+         1.048156738,  1.031936646,  1.014617920,  0.996246338,
+         0.976852417,  0.956481934,  0.935195923,  0.913055420,
+         0.890090942,  0.866363525,  0.841949463,  0.816864014,
+         0.791213989,  0.765029907,  0.738372803,  0.711318970,
+         0.683914185,  0.656219482,  0.628295898,  0.600219727,
+         0.572036743,  0.543823242,  0.515609741,  0.487472534,
+         0.459472656,  0.431655884,  0.404083252,  0.376800537,
+         0.349868774,  0.323318481,  0.297210693,  0.271591187,
+         0.246505737,  0.221984863,  0.198059082,  0.174789429,
+         0.152206421,  0.130310059,  0.109161377,  0.088775635,
+         0.069168091,  0.050354004,  0.032379150,  0.015228271,
+        -0.001068115, -0.016510010, -0.031082153, -0.044784546,
+        -0.057617187, -0.069595337, -0.080688477, -0.090927124,
+         0.100311279,  0.108856201,  0.116577148,  0.123474121,
+         0.129577637,  0.134887695,  0.139450073,  0.143264771,
+         0.146362305,  0.148773193,  0.150497437,  0.151596069,
+         0.152069092,  0.151962280,  0.151306152,  0.150115967,
+         0.148422241,  0.146255493,  0.143676758,  0.140670776,
+         0.137298584,  0.133590698,  0.129562378,  0.125259399,
+         0.120697021,  0.115921021,  0.110946655,  0.105819702,
+         0.100540161,  0.095169067,  0.089706421,  0.084182739,
+         0.078628540,  0.073059082,  0.067520142,  0.061996460,
+         0.056533813,  0.051132202,  0.045837402,  0.040634155,
+         0.035552979,  0.030609131,  0.025817871,  0.021179199,
+         0.016708374,  0.012420654,  0.008316040,  0.004394531,
+         0.000686646, -0.002822876, -0.006134033, -0.009231567,
+        -0.012115479, -0.014801025, -0.017257690, -0.019531250,
+        -0.021575928, -0.023422241, -0.025085449, -0.026535034,
+        -0.027801514, -0.028884888, -0.029785156, -0.030517578,
+         0.031082153,  0.031478882,  0.031738281,  0.031845093,
+         0.031814575,  0.031661987,  0.031387329,  0.031005859,
+         0.030532837,  0.029937744,  0.029281616,  0.028533936,
+         0.027725220,  0.026840210,  0.025909424,  0.024932861,
+         0.023910522,  0.022857666,  0.021789551,  0.020690918,
+         0.019577026,  0.018463135,  0.017349243,  0.016235352,
+         0.015121460,  0.014022827,  0.012939453,  0.011886597,
+         0.010848999,  0.009841919,  0.008865356,  0.007919312,
+         0.007003784,  0.006118774,  0.005294800,  0.004486084,
+         0.003723145,  0.003005981,  0.002334595,  0.001693726,
+         0.001098633,  0.000549316,  0.000030518, -0.000442505,
+        -0.000869751, -0.001266479, -0.001617432, -0.001937866,
+        -0.002227783, -0.002487183, -0.002700806, -0.002883911,
+        -0.003051758, -0.003173828, -0.003280640, -0.003372192,
+        -0.003417969, -0.003463745, -0.003479004, -0.003479004,
+        -0.003463745, -0.003433228, -0.003387451, -0.003326416,
+         0.003250122,  0.003173828,  0.003082275,  0.002990723,
+         0.002899170,  0.002792358,  0.002685547,  0.002578735,
+         0.002456665,  0.002349854,  0.002243042,  0.002120972,
+         0.002014160,  0.001907349,  0.001785278,  0.001693726,
+         0.001586914,  0.001480103,  0.001388550,  0.001296997,
+         0.001205444,  0.001113892,  0.001037598,  0.000961304,
+         0.000885010,  0.000808716,  0.000747681,  0.000686646,
+         0.000625610,  0.000579834,  0.000534058,  0.000473022,
+         0.000442505,  0.000396729,  0.000366211,  0.000320435,
+         0.000289917,  0.000259399,  0.000244141,  0.000213623,
+         0.000198364,  0.000167847,  0.000152588,  0.000137329,
+         0.000122070,  0.000106812,  0.000106812,  0.000091553,
+         0.000076294,  0.000076294,  0.000061035,  0.000061035,
+         0.000045776,  0.000045776,  0.000030518,  0.000030518,
+         0.000030518,  0.000030518,  0.000015259,  0.000015259,
+         0.000015259,  0.000015259,  0.000015259,  0.000015259,
+    ];
 
+    /// `SynthesisState` maintains the persistant state of sub-band synthesis.
+    pub struct SynthesisState {
+        v_vec: [[f32; 64]; 16],
+        v_front: usize,
+    }
+
+    impl Default for SynthesisState {
+        fn default() -> Self {
+            SynthesisState {
+                v_vec: [[0f32; 64]; 16],
+                v_front: 15,
+            }
+        }
+    }
+
+    /// Sub-band synthesis transforms 32 sub-band blocks containing 18 time-domain samples each into
+    /// 18 blocks of 32 PCM audio samples.
+    pub fn subband_synthesis(samples: &mut [f32; 576], state: &mut SynthesisState) {
+        let mut s_vec = [0f32; 32];
+
+        // There are 18 synthesized PCM sample blocks.
+        for b in 0..18 {
+            // Advance the v_vec FIFO.
+            state.v_front = (state.v_front + 1) & 0xf;
+
+            // Get the front slot of the v_vec.
+            let v_vec = &mut state.v_vec[state.v_front];
+
+            // Select the b-th sample from each of the 32 sub-bands, and place them in the s vector.
+            for i in (0..32).step_by(4) {
+                s_vec[i+0] = samples[18*(i+0) + b];
+                s_vec[i+1] = samples[18*(i+1) + b];
+                s_vec[i+2] = samples[18*(i+2) + b];
+                s_vec[i+3] = samples[18*(i+3) + b];
+            }
+
+            // Matrixing is performed next. As per the standard, matrixing would require 2048 
+            // multiplications per sub-band! However, it is possible to achieve the same result 
+            // through the use of a 32-point DCT followed by some reconstruction.
+            dct32(&s_vec, &mut v_vec[16..32]);
+
+            // Complete the matrixing operation by mapping the result of the DCT, which is centred 
+            // in the output vector, to the entire output vector, in-place. See the diagram below
+            // for a graphical depiction of this operation.
+            //
+            //              0              16             32             48              64
+            // Before...    .               .              .              .               .
+            //              .               .              .              .               .
+            //              .               .     +--------+   +----------+               .
+            //              .               +-----|   A    | /     B      |               .
+            //              +---------------+--------------+--------------+---------------+
+            // After...     .               .              .              .               .
+            //              .               .              .              .               .
+            //              .   +-----------+              .              .               .
+            //              . /      B      |              .              .               .
+            //              +---------------+--------------+--------------+---------------+
+            //              .               |     -B     / |   -A   |-----+-----|   -A    |
+            //              .               +----------+   +--------+     .     +---------+ 
+            //              .               .              .              .               .
+            for i in 0..16 {
+                let a = -v_vec[32-i-1];
+                let b = v_vec[32+i];
+
+                v_vec[i] = b;
+                v_vec[32-i-1] = -b;
+                v_vec[32+i] = a;
+                v_vec[64-i-1] = a;
+            }
+
+
+
+        }
+    }
+
+    /// Performs a 32-point Discrete Cosine Transform (DCT) using Byeong Gi Lee's fast algorithm
+    /// published in article [1].
+    ///
+    /// [1] B.G. Lee, "A new algorithm to compute the discrete cosine transform", IEEE Transactions
+    /// on Acoustics, Speech, and Signal Processing, vol. 32, no. 6, pp. 1243-1245, 1984.
+    ///
+    /// https://ieeexplore.ieee.org/document/1164443
+    fn dct32(x: &[f32; 32], y: &mut [f32]) {
+        unimplemented!();
+    }
+
+}
 
 mod imdct36 {
-    /// Performs an Inverse Modified Discrete Cosine Transform (IMDCT) transforming 18 
+    /// Performs an Inverse Modified Discrete Cosine Transform (IMDCT) transforming 18
     /// frequency-domain input samples, into 36 time-domain output samples.
-    /// 
-    /// This is a straight-forward implementation of the IMDCT using Szu-Wei Lee's algorithm 
+    ///
+    /// This is a straight-forward implementation of the IMDCT using Szu-Wei Lee's algorithm
     /// published in article [1].
-    /// 
-    /// [1] Szu-Wei Lee, "Improved algorithm for efficient computation of the forward and backward 
-    /// MDCT in MPEG audio coder", Circuits and Systems II: Analog and Digital Signal Processing 
-    /// IEEE Transactions on, vol. 48, no. 10, pp. 990-994, 2001.
-    /// 
+    ///
+    /// [1] Szu-Wei Lee, "Improved algorithm for efficient computation of the forward and backward
+    /// MDCT in MPEG audio coder", IEEE Transactions on Circuits and Systems II: Analog and Digital
+    /// Signal Processing, vol. 48, no. 10, pp. 990-994, 2001.
+    ///
     /// https://ieeexplore.ieee.org/document/974789
     pub fn imdct36(x: &[f32], y: &mut [f32; 36]) {
         let mut t = [0f32; 18];
@@ -2406,7 +2629,7 @@ mod imdct36 {
     }
 
     /// Continutation of `imdct36`.
-    /// 
+    ///
     /// Step 2: Mapping N/2-point DCT-IV to N/2-point SDCT-II.
     fn dct_iv(x: &[f32], y: &mut [f32; 18]) {
         debug_assert!(x.len() == 18);
@@ -2469,7 +2692,7 @@ mod imdct36 {
     }
 
     /// Continutation of `imdct36`.
-    /// 
+    ///
     /// Step 3: Decompose N/2-point SDCT-II into two N/4-point SDCT-IIs.
     fn sdct_ii_18(x: &[f32; 18], y: &mut [f32; 18]) {
         // Scale factors for odd input samples. Computed from (23).
@@ -2525,7 +2748,7 @@ mod imdct36 {
     }
 
     /// Continutation of `imdct36`.
-    /// 
+    ///
     /// Step 4: Computation of 9-point (N/4) SDCT-II.
     fn sdct_ii_9(x: &[f32; 9], y: &mut [f32]) {
         const D: [f32; 7] = [
