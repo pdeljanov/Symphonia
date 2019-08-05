@@ -2507,7 +2507,7 @@ mod synthesis {
         fn default() -> Self {
             SynthesisState {
                 v_vec: [[0f32; 64]; 16],
-                v_front: 15,
+                v_front: 1,
             }
         }
     }
@@ -2520,10 +2520,14 @@ mod synthesis {
 
         // There are 18 synthesized PCM sample blocks.
         for b in 0..18 {
-            // Advance the v_vec FIFO.
-            state.v_front = (state.v_front + 1) & 0xf;
+            // Shift the v_vec FIFO. The value v_front is the index of the 64 sample slot in v_vec
+            // that will be overwritten this iteration. Conversely, that makes it the front of the 
+            // FIFO for the purpose of building u_vec later. We would like to overwrite the oldest 
+            // slot, so we subtract 1 via a wrapping addition to move the front backwards by 1 slot,
+            // effectively overwriting the oldest slot with the newest.
+            state.v_front = (state.v_front + 15) & 0xf;
 
-            // Get the front slot of the v_vec.
+            // Get the front slot of the v_vec FIFO.
             let v_vec = &mut state.v_vec[state.v_front];
 
             // Select the b-th sample from each of the 32 sub-bands, and place them in the s vector.
@@ -2567,12 +2571,30 @@ mod synthesis {
                 v_vec[64-i-1] = a;
             }
 
-            // Copy even-odd 32-sample partitions of v_vec into u_vec.
+            // Build u_vec by iterating over the 16 slots in v_vec, and copying the first 32 samples
+            // of EVEN v_vec slots, and the last 32 samples of ODD v_vec slots sequentially into 
+            // u_vec.
+            //
+            //        0   32   64   96  128  160  192  224  256           896  928   960  992 1024
+            //        +----+----+----+----+----+----+----+----+ . . . . . . +----+-----+----+----+
+            // v_vec  | a  : b  | c  : d  | e  : f  | g  | h  | . . . . . . | w  : x   | y  : z  |
+            //        +----+----+----+----+----+----+----+----+ . . . . . . +----+-----+----+----+
+            //        [ Slot 0 ][ Slot 1 ][ Slot 2 ][ Slot 3 ]  . . . . . . [ Slot 14 ][ Slot 15 ]
+            //
+            // Assuming v_front, the front of the FIFO, is slot 0, then u_vec is filled as follows:
+            //
+            //        0   32   64   96  128       448  480  512
+            //        +----+----+----+----+ . . . . +----+----+
+            // u_vec  | a  | d  | e  | h  | . . . . | w  | z  | 
+            //        +----+----+----+----+ . . . . +----+----+
+            //
             for i in 0..8 {
-                let v_start = state.v_front + i;
+                let v_start = state.v_front + (i<<1);
                 let v0 = &state.v_vec[(v_start + 0) & 0xf];
                 let v1 = &state.v_vec[(v_start + 1) & 0xf];
 
+                // Copying of the 32 samples from v_vec to u_vec for even and odd slots are unrolled
+                // into a 4x8 operation to improve vectorization.
                 for j in (0..32).step_by(4) {
                     let k = (i << 6) + j;
                     u_vec[k+0 +  0] = v0[j+0 +  0];
@@ -2589,9 +2611,24 @@ mod synthesis {
                 }
             }
 
-            // Window u_vec with D, and calculate each sample.
+            // Finally, generate the 32 sample PCM block. Assuming s[i] is sample i of the PCM 
+            // sample block, the following equation governs sample generation:
+            //
+            //         16
+            // s[i] = SUM { u_vec[32*j + i] * D[32*j + i] }    for i=0..32
+            //        j=0
+            // 
+            // where:
+            //     D[0..512] is the synthesis window provided in table B.3 of ISO/IEC 11172-3.
+            //
+            // In words, u_vec is logically partitioned into 16 slots of 32 samples each (i.e., 
+            // slot 0 spans u_vec[0..32], slot 1 spans u_vec[32..64], and so on). Then, the i-th 
+            // sample in the PCM block is the summation of the i-th sample in each of the 16 u_vec 
+            // slots after being multiplied by the synthesis window.
             for i in 0..32 {
                 let mut sum = 0.0;
+                // The 16 iterations of the summation is unrolled into a 4x4 operation to improve
+                // vectorization.
                 for j in (0..16).step_by(4) {
                     let k = (j << 5) + i;
                     sum += u_vec[k+ 0] * SYNTHESIS_D[k+ 0];
@@ -2605,8 +2642,11 @@ mod synthesis {
     }
 
     /// Performs a 32-point Discrete Cosine Transform (DCT) using Byeong Gi Lee's fast algorithm
-    /// published in article [1].
+    /// published in article [1] without inverse square-root 2 scaling.
     ///
+    /// This is a straight-forward implemention of the recursive algorithm, flattened into a single
+    /// function body to avoid the overhead of function calls and the stack.
+    /// 
     /// [1] B.G. Lee, "A new algorithm to compute the discrete cosine transform", IEEE Transactions
     /// on Acoustics, Speech, and Signal Processing, vol. 32, no. 6, pp. 1243-1245, 1984.
     ///
@@ -2620,45 +2660,45 @@ mod synthesis {
         //
         // where N = [32, 16, 8, 4, 2], for COS_16, COS8, COS_4, and COS_2, respectively.
         const COS_16: [f32; 16] = [
-             0.5006029982351963,
-             0.5054709598975436,
-             0.5154473099226246,
-             0.5310425910897841,
-             0.5531038960344445,
-             0.5829349682061339,
-             0.6225041230356648,
-             0.6748083414550057,
-             0.7445362710022986,
-             0.8393496454155268,
-             0.9725682378619608,
-             1.1694399334328847,
-             1.4841646163141662,
-             2.0577810099534108,
-             3.4076084184687190,
-            10.1900081235480329,
+             0.5006029982351963,  // i= 0
+             0.5054709598975436,  // i= 1
+             0.5154473099226246,  // i= 2
+             0.5310425910897841,  // i= 3
+             0.5531038960344445,  // i= 4
+             0.5829349682061339,  // i= 5
+             0.6225041230356648,  // i= 6
+             0.6748083414550057,  // i= 7
+             0.7445362710022986,  // i= 8
+             0.8393496454155268,  // i= 9
+             0.9725682378619608,  // i=10
+             1.1694399334328847,  // i=11
+             1.4841646163141662,  // i=12
+             2.0577810099534108,  // i=13
+             3.4076084184687190,  // i=14
+            10.1900081235480329,  // i=15
         ];
 
         const COS_8: [f32; 8] = [
-            0.5024192861881557,
-            0.5224986149396889,
-            0.5669440348163577,
-            0.6468217833599901,
-            0.7881546234512502,
-            1.0606776859903471,
-            1.7224470982383342,
-            5.1011486186891553,
+            0.5024192861881557,  // i=0
+            0.5224986149396889,  // i=1
+            0.5669440348163577,  // i=2
+            0.6468217833599901,  // i=3
+            0.7881546234512502,  // i=4
+            1.0606776859903471,  // i=5
+            1.7224470982383342,  // i=6
+            5.1011486186891553,  // i=7
         ];
 
         const COS_4: [f32; 4] = [
-            0.5097955791041592,
-            0.6013448869350453,
-            0.8999762231364156,
-            2.5629154477415055,
+            0.5097955791041592,  // i=0
+            0.6013448869350453,  // i=1
+            0.8999762231364156,  // i=2
+            2.5629154477415055,  // i=3
         ];
 
         const COS_2: [f32; 2] = [
-            0.5411961001461970,
-            1.3065629648763764,
+            0.5411961001461970,  // i=0
+            1.3065629648763764,  // i=1
         ];
 
         const COS_1: f32 = 0.7071067811865475;
