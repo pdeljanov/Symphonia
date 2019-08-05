@@ -2289,7 +2289,7 @@ impl State {
 /// Process the next MPEG audio frame from the stream.
 pub fn next_frame<B: Bytestream>(reader: &mut B, resevoir: &mut BitResevoir) -> Result<()> {
     let header = read_frame_header(reader)?;
-    eprintln!("{:#?}", &header);
+    //eprintln!("{:#?}", &header);
 
     let mut state = State::new();
 
@@ -2350,6 +2350,10 @@ pub fn next_frame<B: Bytestream>(reader: &mut B, resevoir: &mut BitResevoir) -> 
 
                     // Perform sub-band synthesis.
                     synthesis::subband_synthesis(&mut state.samples[gr][ch], &mut state.synthesis);
+
+                    for i in 0..576 {
+                        eprintln!("{}, ", state.samples[gr][ch][i]);
+                    }
                 }
             }
 
@@ -2610,47 +2614,54 @@ mod synthesis {
     fn dct32(x: &[f32; 32], y: &mut [f32]) {
         debug_assert!(y.len() == 32);
 
+        // The following tables are pre-computed values of the the following equation:
+        //
+        // c[i] = 1.0 / [2.0 * cos((PI / N) * (2*i + 1))]    for i = 0..N/2
+        //
+        // where N = [32, 16, 8, 4, 2], for COS_16, COS8, COS_4, and COS_2, respectively.
         const COS_16: [f32; 16] = [
-             1.9903694533443939,
-             1.9138806714644176,
-             1.7638425286967101,
-             1.5460209067254740,
-             1.2687865683272910,
-             0.9427934736519956,
-             0.5805693545089247,
-             0.1960342806591215,
-            -0.1960342806591213,
-            -0.5805693545089243,
-            -0.9427934736519954,
-            -1.2687865683272908,
-            -1.5460209067254740,
-            -1.7638425286967099,
-            -1.9138806714644176,
-            -1.9903694533443936,
+             0.5006029982351963,
+             0.5054709598975436,
+             0.5154473099226246,
+             0.5310425910897841,
+             0.5531038960344445,
+             0.5829349682061339,
+             0.6225041230356648,
+             0.6748083414550057,
+             0.7445362710022986,
+             0.8393496454155268,
+             0.9725682378619608,
+             1.1694399334328847,
+             1.4841646163141662,
+             2.0577810099534108,
+             3.4076084184687190,
+            10.1900081235480329,
         ];
 
         const COS_8: [f32; 8] = [
-             1.9615705608064609,
-             1.6629392246050905,
-             1.1111404660392046,
-             0.3901806440322567,
-            -0.3901806440322564,
-            -1.1111404660392039,
-            -1.6629392246050907,
-            -1.9615705608064609,
+            0.5024192861881557,
+            0.5224986149396889,
+            0.5669440348163577,
+            0.6468217833599901,
+            0.7881546234512502,
+            1.0606776859903471,
+            1.7224470982383342,
+            5.1011486186891553,
         ];
 
         const COS_4: [f32; 4] = [
-             1.8477590650225735,
-             0.7653668647301797,
-            -0.7653668647301795,
-            -1.8477590650225735,
+            0.5097955791041592,
+            0.6013448869350453,
+            0.8999762231364156,
+            2.5629154477415055,
         ];
 
         const COS_2: [f32; 2] = [
-             1.4142135623730951,
-            -1.4142135623730949,
+            0.5411961001461970,
+            1.3065629648763764,
         ];
+
+        const COS_1: f32 = 0.7071067811865475;
 
         // 16-point DCT decomposition
         let mut t0 = [
@@ -2724,12 +2735,34 @@ mod synthesis {
 
                 // 4-point DCT decomposition of t2[0..4]
                 {
-                    let t3 = [
+                    let mut t3 = [
                          t2[0] + t2[4 - 1],
                          t2[1] + t2[4 - 2],
                         (t2[0] - t2[4 - 1]) * COS_2[0],
                         (t2[1] - t2[4 - 2]) * COS_2[1],
                     ];
+
+                    // 2-point DCT decomposition of t3[0..2]
+                    {
+                        let t4 = [
+                             t3[0] + t3[2-1],
+                            (t3[0] - t3[2-1]) * COS_1,
+                        ];
+
+                        t3[0] = t4[0];
+                        t3[1] = t4[1];
+                    }
+
+                    // 2-point DCT decomposition of t3[2..4]
+                    {
+                        let t4 = [
+                             t3[2] + t3[4-1],
+                            (t3[2] - t3[4-1]) * COS_1,
+                        ];
+
+                        t3[2 + 0] = t4[0];
+                        t3[2 + 1] = t4[1];
+                    }
 
                     t2[0 + 0] = t3[0];
                     t2[0 + 1] = t3[2] + t3[3];
@@ -2739,12 +2772,34 @@ mod synthesis {
 
                 // 4-point DCT decomposition of t2[4..8]
                 {
-                    let t3 = [
+                    let mut t3 = [
                          t2[4] + t2[8 - 1],
                          t2[5] + t2[8 - 2],
                         (t2[4] - t2[8 - 1]) * COS_2[0],
                         (t2[5] - t2[8 - 2]) * COS_2[1],
                     ];
+
+                    // 2-point DCT decomposition of t3[0..2]
+                    {
+                        let t4 = [
+                             t3[0] + t3[2-1],
+                            (t3[0] - t3[2-1]) * COS_1,
+                        ];
+
+                        t3[0] = t4[0];
+                        t3[1] = t4[1];
+                    }
+
+                    // 2-point DCT decomposition of t3[2..4]
+                    {
+                        let t4 = [
+                             t3[2] + t3[4-1],
+                            (t3[2] - t3[4-1]) * COS_1,
+                        ];
+
+                        t3[2 + 0] = t4[0];
+                        t3[2 + 1] = t4[1];
+                    }
 
                     t2[4 + 0] = t3[0];
                     t2[4 + 1] = t3[2] + t3[3];
@@ -2777,12 +2832,34 @@ mod synthesis {
 
                 // 4-point DCT decomposition of t2[0..4]
                 {
-                    let t3 = [
+                    let mut t3 = [
                          t2[0] + t2[4 - 1],
                          t2[1] + t2[4 - 2],
                         (t2[0] - t2[4 - 1]) * COS_2[0],
                         (t2[1] - t2[4 - 2]) * COS_2[1],
                     ];
+
+                    // 2-point DCT decomposition of t3[0..2]
+                    {
+                        let t4 = [
+                             t3[0] + t3[2-1],
+                            (t3[0] - t3[2-1]) * COS_1,
+                        ];
+
+                        t3[0] = t4[0];
+                        t3[1] = t4[1];
+                    }
+
+                    // 2-point DCT decomposition of t3[2..4]
+                    {
+                        let t4 = [
+                             t3[2] + t3[4-1],
+                            (t3[2] - t3[4-1]) * COS_1,
+                        ];
+
+                        t3[2 + 0] = t4[0];
+                        t3[2 + 1] = t4[1];
+                    }
 
                     t2[0 + 0] = t3[0];
                     t2[0 + 1] = t3[2] + t3[3];
@@ -2792,12 +2869,34 @@ mod synthesis {
 
                 // 4-point DCT decomposition of t2[4..8]
                 {
-                    let t3 = [
+                    let mut t3 = [
                          t2[4] + t2[8 - 1],
                          t2[5] + t2[8 - 2],
                         (t2[4] - t2[8 - 1]) * COS_2[0],
                         (t2[5] - t2[8 - 2]) * COS_2[1],
                     ];
+
+                    // 2-point DCT decomposition of t3[0..2]
+                    {
+                        let t4 = [
+                             t3[0] + t3[2-1],
+                            (t3[0] - t3[2-1]) * COS_1,
+                        ];
+
+                        t3[0] = t4[0];
+                        t3[1] = t4[1];
+                    }
+
+                    // 2-point DCT decomposition of t3[2..4]
+                    {
+                        let t4 = [
+                             t3[2] + t3[4-1],
+                            (t3[2] - t3[4-1]) * COS_1,
+                        ];
+
+                        t3[2 + 0] = t4[0];
+                        t3[2 + 1] = t4[1];
+                    }
 
                     t2[4 + 0] = t3[0];
                     t2[4 + 1] = t3[2] + t3[3];
@@ -2861,12 +2960,34 @@ mod synthesis {
 
                 // 4-point DCT decomposition of t2[0..4]
                 {
-                    let t3 = [
+                    let mut t3 = [
                          t2[0] + t2[4 - 1],
                          t2[1] + t2[4 - 2],
                         (t2[0] - t2[4 - 1]) * COS_2[0],
                         (t2[1] - t2[4 - 2]) * COS_2[1],
                     ];
+
+                    // 2-point DCT decomposition of t3[0..2]
+                    {
+                        let t4 = [
+                             t3[0] + t3[2-1],
+                            (t3[0] - t3[2-1]) * COS_1,
+                        ];
+
+                        t3[0] = t4[0];
+                        t3[1] = t4[1];
+                    }
+
+                    // 2-point DCT decomposition of t3[2..4]
+                    {
+                        let t4 = [
+                             t3[2] + t3[4-1],
+                            (t3[2] - t3[4-1]) * COS_1,
+                        ];
+
+                        t3[2 + 0] = t4[0];
+                        t3[2 + 1] = t4[1];
+                    }
 
                     t2[0 + 0] = t3[0];
                     t2[0 + 1] = t3[2] + t3[3];
@@ -2876,12 +2997,34 @@ mod synthesis {
 
                 // 4-point DCT decomposition of t2[4..8]
                 {
-                    let t3 = [
+                    let mut t3 = [
                          t2[4] + t2[8 - 1],
                          t2[5] + t2[8 - 2],
                         (t2[4] - t2[8 - 1]) * COS_2[0],
                         (t2[5] - t2[8 - 2]) * COS_2[1],
                     ];
+
+                    // 2-point DCT decomposition of t3[0..2]
+                    {
+                        let t4 = [
+                             t3[0] + t3[2-1],
+                            (t3[0] - t3[2-1]) * COS_1,
+                        ];
+
+                        t3[0] = t4[0];
+                        t3[1] = t4[1];
+                    }
+
+                    // 2-point DCT decomposition of t3[2..4]
+                    {
+                        let t4 = [
+                             t3[2] + t3[4-1],
+                            (t3[2] - t3[4-1]) * COS_1,
+                        ];
+
+                        t3[2 + 0] = t4[0];
+                        t3[2 + 1] = t4[1];
+                    }
 
                     t2[4 + 0] = t3[0];
                     t2[4 + 1] = t3[2] + t3[3];
@@ -2914,12 +3057,34 @@ mod synthesis {
 
                 // 4-point DCT decomposition of t2[0..4]
                 {
-                    let t3 = [
+                    let mut t3 = [
                          t2[0] + t2[4 - 1],
                          t2[1] + t2[4 - 2],
                         (t2[0] - t2[4 - 1]) * COS_2[0],
                         (t2[1] - t2[4 - 2]) * COS_2[1],
                     ];
+
+                    // 2-point DCT decomposition of t3[0..2]
+                    {
+                        let t4 = [
+                             t3[0] + t3[2-1],
+                            (t3[0] - t3[2-1]) * COS_1,
+                        ];
+
+                        t3[0] = t4[0];
+                        t3[1] = t4[1];
+                    }
+
+                    // 2-point DCT decomposition of t3[2..4]
+                    {
+                        let t4 = [
+                             t3[2] + t3[4-1],
+                            (t3[2] - t3[4-1]) * COS_1,
+                        ];
+
+                        t3[2 + 0] = t4[0];
+                        t3[2 + 1] = t4[1];
+                    }
 
                     t2[0 + 0] = t3[0];
                     t2[0 + 1] = t3[2] + t3[3];
@@ -2929,12 +3094,34 @@ mod synthesis {
 
                 // 4-point DCT decomposition of t2[4..8]
                 {
-                    let t3 = [
+                    let mut t3 = [
                          t2[4] + t2[8 - 1],
                          t2[5] + t2[8 - 2],
                         (t2[4] - t2[8 - 1]) * COS_2[0],
                         (t2[5] - t2[8 - 2]) * COS_2[1],
                     ];
+
+                    // 2-point DCT decomposition of t3[0..2]
+                    {
+                        let t4 = [
+                             t3[0] + t3[2-1],
+                            (t3[0] - t3[2-1]) * COS_1,
+                        ];
+
+                        t3[0] = t4[0];
+                        t3[1] = t4[1];
+                    }
+
+                    // 2-point DCT decomposition of t3[2..4]
+                    {
+                        let t4 = [
+                             t3[2] + t3[4-1],
+                            (t3[2] - t3[4-1]) * COS_1,
+                        ];
+
+                        t3[2 + 0] = t4[0];
+                        t3[2 + 1] = t4[1];
+                    }
 
                     t2[4 + 0] = t3[0];
                     t2[4 + 1] = t3[2] + t3[3];
