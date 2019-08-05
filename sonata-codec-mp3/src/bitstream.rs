@@ -2350,10 +2350,6 @@ pub fn next_frame<B: Bytestream>(reader: &mut B, resevoir: &mut BitResevoir) -> 
 
                     // Perform sub-band synthesis.
                     synthesis::subband_synthesis(&mut state.samples[gr][ch], &mut state.synthesis);
-
-                    for i in 0..576 {
-                        eprintln!("{}, ", state.samples[gr][ch][i]);
-                    }
                 }
             }
 
@@ -3198,6 +3194,46 @@ mod synthesis {
         y[32 - 2] = t0[16 - 1];
         y[32 - 1] = t0[32 - 1];
     }
+
+
+    #[cfg(test)]
+    mod tests {
+        use super::dct32;
+        use std::f64;
+
+        fn dct32_analytical(x: &[f32; 32]) -> [f32; 32] {
+            const PI_32: f64 = f64::consts::PI / 32.0;
+
+            let mut result = [0f32; 32];
+            for i in 0..32 {
+                let mut sum = 0.0;
+                for j in 0..32 {
+                    sum += (x[j] as f64)* (PI_32 * (i as f64) * ((j as f64) + 0.5)).cos();
+                }
+                result[i] = sum as f32;
+            }
+            result
+        }
+
+        #[test]
+        fn verify_dct32() {
+            const TEST_VECTOR: [f32; 32] = [ 
+                0.1710, 0.1705, 0.3476, 0.1866, 0.4784, 0.6525, 0.2690, 0.9996,
+                0.1864, 0.7277, 0.1163, 0.6620, 0.0911, 0.3225, 0.1126, 0.5344,
+                0.7839, 0.9741, 0.8757, 0.5763, 0.5926, 0.2756, 0.1757, 0.6531,
+                0.7101, 0.7376, 0.1924, 0.0351, 0.8044, 0.2409, 0.9347, 0.9417,
+            ];
+
+            let mut test_result = [0f32; 32];
+            dct32(&TEST_VECTOR, &mut test_result);
+
+            let actual_result = dct32_analytical(&TEST_VECTOR);
+            for i in 0..32 {
+                assert!((actual_result[i] - test_result[i]).abs() < 0.00001);
+            }
+        }
+    }
+
 }
 
 mod imdct36 {
@@ -3429,4 +3465,44 @@ mod imdct36 {
         y[14] = a24 + m8;
         y[16] = a23 + m4;
     }
+
+
+    #[cfg(test)]
+    mod tests {
+        use super::imdct36;
+        use std::f64;
+
+        fn imdct36_analytical(x: &[f32; 18]) -> [f32; 36] {
+            let mut result = [0f32; 36];
+
+            const PI_72: f64 = f64::consts::PI / 72.0;
+
+            for i in 0..36 {
+                let mut sum = 0.0;
+                for j in 0..18 {
+                    sum += (x[j] as f64) * (PI_72 * (((2*i) + 1 + 18) * ((2*j) + 1)) as f64).cos();
+                }
+                result[i] = sum as f32;
+            }
+            result
+        }
+
+        #[test]
+        fn verify_imdct36() {
+            const TEST_VECTOR: [f32; 18] = [ 
+                0.0976, 0.9321, 0.6138, 0.0857, 0.0433, 0.4855, 0.2144, 0.8488,
+                0.6889, 0.2983, 0.1957, 0.7037, 0.0052, 0.0197, 0.3188, 0.5123,
+                0.2994, 0.7157,
+            ];
+
+            let mut test_result = [0f32; 36];
+            imdct36(&TEST_VECTOR, &mut test_result);
+
+            let actual_result = imdct36_analytical(&TEST_VECTOR);
+            for i in 0..36 {
+                assert!((actual_result[i] - test_result[i]).abs() < 0.00001);
+            }
+        }
+    }
+
 }
