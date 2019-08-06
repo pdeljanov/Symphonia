@@ -190,7 +190,7 @@ lazy_static! {
 
         for i in 0..12 {
             for k in 0..6 {
-                cos12[i][k] = (PI_24 * ((2*i + 7) * (2*k + 1)) as f64).cos() as f32;
+                cos12[i][k] = (PI_24 * ((2*i + (12 / 2) + 1) * (2*k + 1)) as f64).cos() as f32;
             }
         }
 
@@ -213,15 +213,15 @@ lazy_static! {
     /// c[i] = [ -0.6, -0.535, -0.33, -0.185, -0.095, -0.041, -0.0142, -0.0037 ]
     /// ```
     static ref ANTIALIAS_CS_CA: ([f32; 8], [f32; 8]) = {
-        const C: [f32; 8] = [ -0.6, -0.535, -0.33, -0.185, -0.095, -0.041, -0.0142, -0.0037 ];
+        const C: [f64; 8] = [ -0.6, -0.535, -0.33, -0.185, -0.095, -0.041, -0.0142, -0.0037 ];
 
         let mut cs = [0f32; 8];
         let mut ca = [0f32; 8];
 
         for i in 0..8 {
-            let sqrt = f32::sqrt(1.0 + (C[i] * C[i]));
-            cs[i] = 1.0 / sqrt;
-            ca[i] = C[i] / sqrt;
+            let sqrt = f64::sqrt(1.0 + (C[i] * C[i]));
+            cs[i] = (1.0 / sqrt) as f32;
+            ca[i] = (C[i] / sqrt) as f32;
         }
 
         (cs, ca)
@@ -386,10 +386,11 @@ lazy_static! {
         }
 
         // Window for Short blocks.
-        for win in 0..3 {
-            for i in 0..12 {
-                windows[3][12*win + i] = (PI_12 * (i as f64 + 0.5)).sin() as f32;
-            }
+        for i in 0..12 {
+            // Repeat the window 3 times over.
+            windows[3][0*12 + i] = (PI_12 * (i as f64 + 0.5)).sin() as f32;
+            windows[3][1*12 + i] = windows[3][i];
+            windows[3][2*12 + i] = windows[3][i];
         }
 
         windows
@@ -1484,17 +1485,18 @@ fn l3_requantize_long(
     //
     // Note: The samples in buf are the result of s(i)^(4/3) for each sample i.
 
-    const PRE_TAB: [f64; 22] = [
-        0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 2.0, 2.0, 3.0,
-        3.0, 3.0, 2.0, 0.0,
-    ];
+    const PRE_TAB: [i32; 22] = [ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 3, 3, 3, 2, 0 ];
 
     let sfb_indicies = &SCALE_FACTOR_LONG_BANDS[header.sample_rate_idx as usize];
 
     // Calculate 2^(0.25*A), this is constant for each granule.
-    let pow2a = f64::powf(2.0, 0.25 * (channel.global_gain as f64 - 210.0));
-    let mut pow2ab = 0.0;
+    let pow2a = f64::powf(
+        2.0, 
+        0.25 * (channel.global_gain as i32 - 210) as f64,
+    );
 
+    let mut pow2ab = 0.0;
+    
     let scalefac_multiplier = if channel.scalefac_scale { 1.0 } else { 0.5 };
 
     let mut sfb = 0;
@@ -1504,12 +1506,12 @@ fn l3_requantize_long(
         // The value of B is dependant on the scale factor band. Therefore, update B only when the
         // scale factor band changes.
         if i == sfb_end {
-            let pretab = if channel.preflag { PRE_TAB[sfb] } else { 0.0 };
+            let pretab = if channel.preflag { PRE_TAB[sfb] } else { 0 };
 
             // Calculate 2^(-B).
             let pow2b = f64::powf(
                 2.0,
-                -scalefac_multiplier * (channel.scalefacs[sfb] as f64 + pretab)
+                -scalefac_multiplier * (channel.scalefacs[sfb] as i32 + pretab) as f64,
             );
 
             // Calculate 2^(0.25*A) * 2^(-B).
@@ -1518,7 +1520,6 @@ fn l3_requantize_long(
             sfb += 1;
             sfb_end = sfb_indicies[sfb] as usize;
         }
-
         // Buf contains s(i)^(4/3), now multiply in 2^(0.25*A) * 2^(-B) to get xr(i).
         // TODO: This should lend itself well for SIMD...
         buf[i] *= pow2ab;
@@ -1547,7 +1548,8 @@ fn l3_requantize_short(
     let sfb_indicies = &SCALE_FACTOR_SHORT_BANDS[header.sample_rate_idx as usize];
 
     // Calculate the constant part of A: global_gain[gr] - 210.
-    let gain = channel.global_gain as f64 - 210.0;
+    let gain = channel.global_gain as i32 - 210;
+
     // Likweise, the scalefac_multiplier is constant for the granule.
     let scalefac_mulitplier = if channel.scalefac_scale { 1.0 } else { 0.5 };
 
@@ -1559,13 +1561,16 @@ fn l3_requantize_short(
 
         // Each scale factor band is repeated 3 times over.
         for win in 0..3 {
-            // Calculate the remaining portion of A, 2^(gain - 8*subblock_gain[gr][win]).
-            let pow2a = f64::powf(2.0, gain - 8.0 * channel.subblock_gain[win] as f64);
+            // Calculate the remaining portion of A, 2^ 0.25 * (gain - 8*subblock_gain[gr][win]).
+            let pow2a = f64::powf(
+                2.0, 
+                0.25 * (gain - (8 * channel.subblock_gain[win] as i32)) as f64,
+            );
 
             // Calculate B, scalefac_multiplier * scalefacs[gr][ch][sfb][win].
             let pow2b = f64::powf(
                 2.0,
-                scalefac_mulitplier * channel.scalefacs[3*sfb + win] as f64,
+                -scalefac_mulitplier * channel.scalefacs[3*sfb + win] as f64,
             );
 
             // Calculate 2^(0.25*A) * 2^(-B).
@@ -2089,8 +2094,6 @@ fn l3_hybrid_synthesis(
     overlap: &mut [f32; 576],
     samples: &mut [f32; 576],
 ) {
-    let mut output = [0f32; 36];
-
     let imdct_windows = &IMDCT_WINDOWS;
 
     // If the block is short, the 12-point IMDCT must be used.
@@ -2113,6 +2116,7 @@ fn l3_hybrid_synthesis(
             let window = &imdct_windows[win_idx[sb >> 1]];
 
             // Perform the 12-point IMDCT on each of the 3 short block windows.
+            let mut output = [0f32; 36];
             l3_imdct12_win(&samples[start..(start + 18)], window, &mut output);
 
             // Overlap the lower half of the IMDCT output (values 0..18) with the upper values of
@@ -2128,6 +2132,8 @@ fn l3_hybrid_synthesis(
     }
     // Otherwise, all other blocks use the 36-point IMDCT.
     else {
+        let mut output = [0f32; 36];
+
         // Select the appropriate window given the block type.
         let window = match channel.block_type {
             BlockType::Long  => &imdct_windows[0],
@@ -2160,35 +2166,54 @@ fn l3_hybrid_synthesis(
 
 /// Inverts odd samples in odd sub-bands.
 fn l3_frequency_inversion(samples: &mut [f32; 576]) {
-    for i in (32..576).step_by(32) {
-        for j in (i..i+32).step_by(8) {
+    // There are 32 sub-bands spanning 576 samples:
+    //
+    //        0    18    36    54    72    90   108       558    576
+    //        +-----+-----+-----+-----+-----+-----+ . . . . +------+
+    // s[i] = | sb0 | sb1 | sb2 | sb3 | sb4 | sb5 | . . . . | sb31 |
+    //        +-----+-----+-----+-----+-----+-----+ . . . . +------+
+    // 
+    // The odd sub-bands are thusly:
+    //
+    //      sb1  -> s[ 18.. 36]
+    //      sb3  -> s[ 54.. 72]
+    //      sb5  -> s[ 90..108]
+    //      ...
+    //      sb31 -> s[558..576]
+    // 
+    // Each odd sample in the aforementioned sub-bands must be negated.
+    for i in (18..576).step_by(36) {
+        // Sample negation is unrolled into a 2x4 + 1 (9) operation to improve vectorization.
+        for j in (i..i+16).step_by(8) {
             samples[j+1] = -samples[j+1];
             samples[j+3] = -samples[j+3];
             samples[j+5] = -samples[j+5];
             samples[j+7] = -samples[j+7];
         }
+        samples[i+18-1] = -samples[i+18-1];
     }
 }
 
 /// Reads the main_data portion of a MPEG audio frame from a `BitStream` into `FrameData`.
-fn l3_read_main_data<B: BitStream>(
-    bs: &mut B,
+fn l3_read_main_data(
     header: &FrameHeader,
     frame_data: &mut FrameData,
     state: &mut State,
 ) -> Result<()> {
+
+    let mut bs = BitStreamLtr::new(BufStream::new(state.resevoir.bytes_ref()));
 
     for gr in 0..header.n_granules() {
         for ch in 0..header.n_channels() {
 
             // Read the scale factors (part2) and get the number of bits read. For MPEG version 1...
             let part2_len = if header.is_mpeg1() {
-                l3_read_scale_factors_mpeg1(bs, gr, ch, frame_data)
+                l3_read_scale_factors_mpeg1(&mut bs, gr, ch, frame_data)
             }
             // For MPEG version 2...
             else {
                 l3_read_scale_factors_mpeg2(
-                    bs,
+                    &mut bs,
                     ch > 0 && header.is_intensity_stereo(),
                     &mut frame_data.granules[gr].channels[ch])
             }?;
@@ -2206,7 +2231,7 @@ fn l3_read_main_data<B: BitStream>(
             // Decode the Huffman coded spectral samples and get the starting index of the rzero
             // partition.
             frame_data.granules[gr].channels[ch].rzero = l3_read_huffman_samples(
-                bs,
+                &mut bs,
                 &frame_data.granules[gr].channels[ch],
                 part3_len,
                 &mut state.samples[gr][ch],
@@ -2270,28 +2295,28 @@ impl BitResevoir {
 
 /// MP3 depends on the state of the previous frame to decode the next. `State` is a structure
 /// containing all the stateful information required to decode the next frame.
-struct State {
+pub struct State {
     samples: [[[f32; 576]; 2]; 2],
     overlap: [[f32; 576]; 2],
-    synthesis: synthesis::SynthesisState,
+    synthesis: [synthesis::SynthesisState; 2],
+    resevoir: BitResevoir,
 }
 
 impl State {
-    fn new() -> Self {
+    pub fn new() -> Self {
         State {
             samples: [[[0f32; 576]; 2]; 2],
             overlap: [[0f32; 576]; 2],
             synthesis: Default::default(),
+            resevoir: BitResevoir::new(),
         }
     }
 }
 
 /// Process the next MPEG audio frame from the stream.
-pub fn next_frame<B: Bytestream>(reader: &mut B, resevoir: &mut BitResevoir) -> Result<()> {
+pub fn next_frame<B: Bytestream>(reader: &mut B, state: &mut State) -> Result<()> {
     let header = read_frame_header(reader)?;
     //eprintln!("{:#?}", &header);
-
-    let mut state = State::new();
 
     match header.layer {
         MpegLayer::Layer3 => {
@@ -2304,24 +2329,21 @@ pub fn next_frame<B: Bytestream>(reader: &mut B, resevoir: &mut BitResevoir) -> 
             let side_info_len = l3_read_side_info(reader, &header, &mut frame_data)?;
 
             // Buffer main_data into the bit resevoir.
-            resevoir.fill(
+            state.resevoir.fill(
                 reader,
                 frame_data.main_data_begin as usize,
                 header.frame_size - side_info_len
             )?;
 
-            // Read the main_data from the bit resevoir. A bit reader is required exclusively for
-            // this operation, so scope it.
-            {
-                let mut bs = BitStreamLtr::new(BufStream::new(resevoir.bytes_ref()));
-                l3_read_main_data(&mut bs, &header, &mut frame_data, &mut state)?;
-            }
+            l3_read_main_data(&header, &mut frame_data, state)?;
 
             for gr in 0..header.n_granules() {
+                
                 let granule = &frame_data.granules[gr];
 
                 // Requantize all non-zero (big_values and count1 partition) spectral samples.
                 l3_requantize(&header, &granule.channels[0], &mut state.samples[gr][0]);
+
                 // Reorder any spectral samples in short blocks into sub-band order.
                 l3_reorder(&header, &granule.channels[0], &mut state.samples[gr][0]);
 
@@ -2349,15 +2371,37 @@ pub fn next_frame<B: Bytestream>(reader: &mut B, resevoir: &mut BitResevoir) -> 
                     l3_frequency_inversion(&mut state.samples[gr][ch]);
 
                     // Perform sub-band synthesis.
-                    synthesis::subband_synthesis(&mut state.samples[gr][ch], &mut state.synthesis);
+                    synthesis::subband_synthesis(
+                        &mut state.samples[gr][ch],
+                        &mut state.synthesis[ch],
+                    );
                 }
             }
 
+            dump_samples(&state, 2);
         },
         _ => return unsupported_error("Unsupported MPEG Layer."),
     }
 
     Ok(())
+}
+
+fn dump_samples(state: &State, max_gr: usize) {
+    //eprintln!("[");
+    for gr in 0..max_gr {
+        for i in 0..576 {
+            // eprintln!(
+            //     "    {:>4}:  {:>10.5},  {:>10.5}", 
+            //     576*gr + i + 1, 
+            //     state.samples[gr][0][i], 
+            //     state.samples[gr][1][i]
+            // );
+
+            eprintln!("{:.5}\t{:.5}", state.samples[gr][0][i], state.samples[gr][1][i]);
+            //eprintln!("{:.8}", state.samples[gr][0][i]);
+        }
+    }
+    //eprintln!("]");
 }
 
 mod synthesis {
@@ -2503,7 +2547,7 @@ mod synthesis {
         fn default() -> Self {
             SynthesisState {
                 v_vec: [[0f32; 64]; 16],
-                v_front: 1,
+                v_front: 0,
             }
         }
     }
@@ -2514,24 +2558,20 @@ mod synthesis {
         let mut s_vec = [0f32; 32];
         let mut u_vec = [0f32; 512];
 
+        let mut og_samples = [0f32; 576];
+        og_samples.copy_from_slice(samples);
+
         // There are 18 synthesized PCM sample blocks.
         for b in 0..18 {
-            // Shift the v_vec FIFO. The value v_front is the index of the 64 sample slot in v_vec
-            // that will be overwritten this iteration. Conversely, that makes it the front of the 
-            // FIFO for the purpose of building u_vec later. We would like to overwrite the oldest 
-            // slot, so we subtract 1 via a wrapping addition to move the front backwards by 1 slot,
-            // effectively overwriting the oldest slot with the newest.
-            state.v_front = (state.v_front + 15) & 0xf;
-
             // Get the front slot of the v_vec FIFO.
             let v_vec = &mut state.v_vec[state.v_front];
 
             // Select the b-th sample from each of the 32 sub-bands, and place them in the s vector.
             for i in (0..32).step_by(4) {
-                s_vec[i+0] = samples[18*(i+0) + b];
-                s_vec[i+1] = samples[18*(i+1) + b];
-                s_vec[i+2] = samples[18*(i+2) + b];
-                s_vec[i+3] = samples[18*(i+3) + b];
+                s_vec[i+0] = og_samples[18*(i+0) + b];
+                s_vec[i+1] = og_samples[18*(i+1) + b];
+                s_vec[i+2] = og_samples[18*(i+2) + b];
+                s_vec[i+3] = og_samples[18*(i+3) + b];
             }
 
             // Matrixing is performed next. As per the standard, matrixing would require 2048 
@@ -2634,6 +2674,13 @@ mod synthesis {
                 }
                 samples[(b << 5) + i] = sum;
             }
+
+            // Shift the v_vec FIFO. The value v_front is the index of the 64 sample slot in v_vec
+            // that will be overwritten this iteration. Conversely, that makes it the front of the 
+            // FIFO for the purpose of building u_vec later. We would like to overwrite the oldest 
+            // slot, so we subtract 1 via a wrapping addition to move the front backwards by 1 slot,
+            // effectively overwriting the oldest slot with the newest.
+            state.v_front = (state.v_front + 15) & 0xf;
         }
     }
 
