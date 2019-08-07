@@ -259,7 +259,7 @@ lazy_static! {
     static ref INTENSITY_STEREO_RATIOS_MPEG2: [[(f32, f32); 32]; 2] = {
         let is_scale: [f64; 2] = [
             1.0 / f64::sqrt(f64::sqrt(2.0)),
-            1.0 / f64::sqrt(2.0)
+            1.0 / f64::sqrt(2.0),
         ];
 
         let mut i = 0;
@@ -687,8 +687,8 @@ struct GranuleChannel {
     region1_start: u32,
     /// The index of the first sample in region2 of big_values.
     region2_start: u32,
-    /// Indicates if the pretab for each respective scale factor band should be added to the scale
-    /// factor.
+    /// Indicates if the pre-emphasis amount for each scale factor band should be added on to each 
+    /// scale factor before requantization.
     preflag: bool,
     /// A 0.5x (false) or 1x (true) multiplier for scale factors.
     scalefac_scale: bool,
@@ -1485,19 +1485,17 @@ fn l3_requantize_long(
     //
     // Note: The samples in buf are the result of s(i)^(4/3) for each sample i.
 
-    const PRE_TAB: [i32; 22] = [ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 3, 3, 3, 2, 0 ];
+    // The preemphasis table is from table B.6 in ISO/IEC 11172-3.
+    const PRE_EMPHASIS: [i32; 22] = [ 
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+        1, 1, 1, 1, 2, 2, 3, 3, 3, 2, 0,
+    ];
 
     let sfb_indicies = &SCALE_FACTOR_LONG_BANDS[header.sample_rate_idx as usize];
 
-    // Calculate 2^(0.25*A), this is constant for each granule.
-    let pow2a = f64::powf(
-        2.0, 
-        0.25 * (channel.global_gain as i32 - 210) as f64,
-    );
-
     let mut pow2ab = 0.0;
     
-    let scalefac_multiplier = if channel.scalefac_scale { 1.0 } else { 0.5 };
+    let scalefac_multiplier = if channel.scalefac_scale { 4 } else { 2 };
 
     let mut sfb = 0;
     let mut sfb_end = sfb_indicies[sfb] as usize;
@@ -1506,22 +1504,24 @@ fn l3_requantize_long(
         // The value of B is dependant on the scale factor band. Therefore, update B only when the
         // scale factor band changes.
         if i == sfb_end {
-            let pretab = if channel.preflag { PRE_TAB[sfb] } else { 0 };
+            let pre_emphasis = if channel.preflag { PRE_EMPHASIS[sfb] } else { 0 };
 
-            // Calculate 2^(-B).
-            let pow2b = f64::powf(
-                2.0,
-                -scalefac_multiplier * (channel.scalefacs[sfb] as i32 + pretab) as f64,
-            );
+            // Calculate A.
+            let a = channel.global_gain as i32 - 210;
 
-            // Calculate 2^(0.25*A) * 2^(-B).
-            pow2ab = (pow2a * pow2b) as f32;
+            // Calculate B.
+            let b = scalefac_multiplier * (channel.scalefacs[sfb] as i32 + pre_emphasis);
+
+            // Calculate 2^(0.25*A) * 2^(-B). This can be rewritten as 2^{ 0.25 * (A - 4 * B) }.
+            // Since scalefac_multiplier was multiplied by 4 above, the final equation becomes 
+            // 2^{ 0.25 * (A - B) }.
+            pow2ab = f64::powf(2.0, 0.25 * f64::from(a - b)) as f32;
 
             sfb += 1;
             sfb_end = sfb_indicies[sfb] as usize;
         }
+
         // Buf contains s(i)^(4/3), now multiply in 2^(0.25*A) * 2^(-B) to get xr(i).
-        // TODO: This should lend itself well for SIMD...
         buf[i] *= pow2ab;
     }
 }
@@ -1548,10 +1548,12 @@ fn l3_requantize_short(
     let sfb_indicies = &SCALE_FACTOR_SHORT_BANDS[header.sample_rate_idx as usize];
 
     // Calculate the constant part of A: global_gain[gr] - 210.
-    let gain = channel.global_gain as i32 - 210;
+    let global_gain = channel.global_gain as i32 - 210;
 
-    // Likweise, the scalefac_multiplier is constant for the granule.
-    let scalefac_mulitplier = if channel.scalefac_scale { 1.0 } else { 0.5 };
+    // Likweise, the scalefac_multiplier is constant for the granule. The actual scale is multiplied
+    // by 4 combine the two pow2 operations into one by adding the exponents. The sum of the
+    // exponent is multiplied by 0.25 so B must be multiplied by 4 to counter the quartering.
+    let scalefac_mulitplier = if channel.scalefac_scale { 4 } else { 2 };
 
     let mut i = 0;
 
@@ -1561,25 +1563,20 @@ fn l3_requantize_short(
 
         // Each scale factor band is repeated 3 times over.
         for win in 0..3 {
-            // Calculate the remaining portion of A, 2^ 0.25 * (gain - 8*subblock_gain[gr][win]).
-            let pow2a = f64::powf(
-                2.0, 
-                0.25 * (gain - (8 * channel.subblock_gain[win] as i32)) as f64,
-            );
+            // Calculate A.
+            let a = global_gain - (8 * channel.subblock_gain[win] as i32);
 
-            // Calculate B, scalefac_multiplier * scalefacs[gr][ch][sfb][win].
-            let pow2b = f64::powf(
-                2.0,
-                -scalefac_mulitplier * channel.scalefacs[3*sfb + win] as f64,
-            );
+            // Calculate B.
+            let b = scalefac_mulitplier * channel.scalefacs[3*sfb + win] as i32;
 
-            // Calculate 2^(0.25*A) * 2^(-B).
-            let pow2ab = (pow2a * pow2b) as f32;
+            // Calculate 2^(0.25*A) * 2^(-B). This can be rewritten as 2^{ 0.25 * (A - 4 * B) }.
+            // Since scalefac_multiplier was multiplied by 4 above, the final equation becomes 
+            // 2^{ 0.25 * (A - B) }.
+            let pow2ab = f64::powf(2.0,  0.25 * f64::from(a - b)) as f32;
 
-            // Multiply each sample by the result of 2^(0.25*A) * 2^(-B).
-            // TODO: This should lend itself well for SIMD...
             let win_end = min(buf.len(), i + win_len);
 
+            // Buf contains s(i)^(4/3), now multiply in 2^(0.25*A) * 2^(-B) to get xr(i).
             while i < win_end {
                 buf[i] *= pow2ab;
                 i += 1;
@@ -1664,7 +1661,6 @@ fn l3_reorder(
         while i < channel.rzero {
             // Determine the scale factor band width.
             let win_len = (sfb_bands[sfb+1] - sfb_bands[sfb]) as usize;
-            sfb += 1;
 
             // Respective starting indicies of windows 0, 1, and 2.
             let mut w0 = i;
@@ -1683,6 +1679,8 @@ fn l3_reorder(
 
                 i += 3;
             }
+
+            sfb += 1;
         }
 
         // Copy reordered samples from the reorder buffer to the actual sample buffer.
@@ -1748,11 +1746,6 @@ fn l3_stereo(
     granule: &Granule,
     ch: &mut [[f32; 576]; 2],
 ) -> Result<()> {
-
-    // The block types must be the same.
-    if granule.channels[0].block_type != granule.channels[1].block_type {
-        return decode_error("stereo channel pair block_type mismatch");
-    }
 
     let (ch0, ch1) = {
         let (ch0, ch1) = ch.split_first_mut().unwrap();
@@ -1832,6 +1825,11 @@ fn l3_stereo(
     // Note: regardless of version, pos[sfb] == 7 is forbidden and indicates intensity stereo
     //       decoding should not be used.
     if intensity {
+        // The block types must be the same.
+        if granule.channels[0].block_type != granule.channels[1].block_type {
+            return decode_error("stereo channel pair block_type mismatch");
+        }
+
         let ch1_rzero = granule.channels[1].rzero as u32;
 
         // Determine which bands are entirely contained within the rzero partition. Intensity stereo
@@ -2098,7 +2096,6 @@ fn l3_hybrid_synthesis(
 
     // If the block is short, the 12-point IMDCT must be used.
     if let BlockType::Short { is_mixed } = channel.block_type {
-
         // There are 32 sub-bands. If the block is mixed, then the first two sub-bands are windowed
         // as long blocks, while the rest are windowed as short blocks. The following arrays
         // indicate the index of the window to use within imdct_windows. Each element is repeated
@@ -2227,6 +2224,8 @@ fn l3_read_main_data(
 
             // The Huffman code length (part3).
             let part3_len = part2_3_length - part2_len;
+            
+            eprintln!("G{} C{}, block_type={:?}", gr, ch, frame_data.granules[gr].channels[ch].block_type);
 
             // Decode the Huffman coded spectral samples and get the starting index of the rzero
             // partition.
@@ -2296,7 +2295,7 @@ impl BitResevoir {
 /// MP3 depends on the state of the previous frame to decode the next. `State` is a structure
 /// containing all the stateful information required to decode the next frame.
 pub struct State {
-    samples: [[[f32; 576]; 2]; 2],
+    pub samples: [[[f32; 576]; 2]; 2],
     overlap: [[f32; 576]; 2],
     synthesis: [synthesis::SynthesisState; 2],
     resevoir: BitResevoir,
@@ -2378,7 +2377,7 @@ pub fn next_frame<B: Bytestream>(reader: &mut B, state: &mut State) -> Result<()
                 }
             }
 
-            dump_samples(&state, 2);
+            //dump_samples(&state, 2);
         },
         _ => return unsupported_error("Unsupported MPEG Layer."),
     }

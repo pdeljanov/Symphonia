@@ -5,9 +5,13 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+mod bitstream;
+mod decoder;
+mod demuxer;
+mod huffman_tables;
+
 pub mod id3v1;
 pub mod id3v2;
-mod bitstream;
-pub mod decoder;
 
-mod huffman_tables;
+pub use decoder::Mp3Decoder;
+pub use demuxer::Mp3Reader;

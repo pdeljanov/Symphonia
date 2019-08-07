@@ -19,6 +19,8 @@ pub mod default {
         static ref CODEC_REGISTRY: CodecRegistry = {
             #[cfg(feature = "flac")]
             use sonata_codec_flac::FlacDecoder;
+            #[cfg(feature = "mp3")]
+            use sonata_codec_mp3::Mp3Decoder;
             #[cfg(feature = "pcm")]
             use sonata_codec_pcm::PcmDecoder;
 
@@ -26,6 +28,9 @@ pub mod default {
 
             #[cfg(feature = "flac")]
             registry.register_all::<FlacDecoder>(0);
+
+            #[cfg(feature = "pcm")]
+            registry.register_all::<Mp3Decoder>(0);
 
             #[cfg(feature = "pcm")]
             registry.register_all::<PcmDecoder>(0);
@@ -38,6 +43,8 @@ pub mod default {
         static ref FORMAT_REGISTRY: FormatRegistry = {
             #[cfg(feature = "flac")]
             use sonata_codec_flac::FlacReader;
+            #[cfg(feature = "mp3")]
+            use sonata_codec_mp3::Mp3Reader;
             #[cfg(feature = "wav")]
             use sonata_format_wav::WavReader;
 
@@ -45,6 +52,9 @@ pub mod default {
 
             #[cfg(feature = "flac")]
             registry.register_all::<FlacReader>(0);
+
+            #[cfg(feature = "mp3")]
+            registry.register_all::<Mp3Reader>(0);
 
             #[cfg(feature = "wav")]
             registry.register_all::<WavReader>(0);
