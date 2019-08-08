@@ -165,7 +165,8 @@ pub fn synthesis(samples: &mut [f32; 576], state: &mut SynthesisState) {
 
     // There are 18 synthesized PCM sample blocks.
     for b in 0..18 {
-        // Select the b-th sample from each of the 32 sub-bands, and place them in the s vector.
+        // First, select the b-th sample from each of the 32 sub-bands, and place them in the s 
+        // vector, s_vec..
         for i in (0..32).step_by(4) {
             s_vec[i+0] = og_samples[18*(i+0) + b];
             s_vec[i+1] = og_samples[18*(i+1) + b];
@@ -181,25 +182,50 @@ pub fn synthesis(samples: &mut [f32; 576], state: &mut SynthesisState) {
         // published in [1], it is possible to achieve the same result through the use of a 32-point
         // DCT followed by some reconstruction.
         //
-        // First take the 32-point DCT of s_vec and centre the result in the output vector, v_vec.
+        // It should be noted that this is a deceptively simple solution. It is instructive to 
+        // derive the algorithm before getting to the implementation to better understand what is 
+        // happening, and where the edge-cases are.
         //
-        // [1] K. Konstantinides, "Fast subband filtering in MPEG audio coding", Signal Processing 
-        // Letters IEEE, vol. 1, no. 2, pp. 26-28, 1994.
+        // First, there are a few key observations to this approach:
         //
-        // https://ieeexplore.ieee.org/abstract/document/300309
-        dct32(&s_vec, &mut v_vec[16..48]);
-
-        // Next, complete the matrixing operation by mapping the result of the DCT, which is centred 
-        // in v_vec, to the entire range of v_vec, in-place. See the diagram below for a graphical
-        // depiction of this operation.
+        //     1) The matrixing operation as per the standard is simply a 32-point MDCT. Remember
+        //        that an N-point MDCT produces a 2N-point output.
+        //
+        //     2) The output of any MDCT contains repeated blocks of values. If the result of a MDCT 
+        //        defined as is X[0..64), then: X(16..0] = X(48..32], and X[48..64) = -X[16..32).
+        //        
+        //        Corollary: Only points [16..48) of the MDCT are actually required!
+        //
+        //      3) Points [16..48) of the MDCT can be mapped from a 32-point DCT of the input 
+        //         vector thus allowing the use of an efficient DCT algorithm.
+        //
+        // The mappings above can be found graphically by plotting each row of the cosine 
+        // coefficient matricies of both the DCT and MDCT side-by side. The mapping becomes readily 
+        // apparent, and so too do the exceptions.
+        //
+        // Using the observations above, if we apply a 32-point DCT transform to the input vector, 
+        // s_vec, and place the result of that DCT in v_vec[16..48], we obtain step 1 as shown on 
+        // the plot below.
+        //
+        // Next, map the 32-point DCT to points [16..48] of the 32-point MDCT, as shown in step 2.
+        //
+        // Finally, map points [16..38] of the MDCT to points [0..16], and [48..64] of the MDCT, as 
+        // shown in step 3.
         //
         //              0              16             32             48              64
-        // Before...    .               .              .              .               .
+        // Step 1:      .               .              .              .               .
         //              .               .              .              .               .
         //              .               .     +--------+   +----------+               .
         //              .               +-----+   A    | /     B      |               .
         //              +---------------+--------------+--------------+---------------+
-        // After...     .               .              .              .               .
+        //              .               .              .              .               .
+        // Step 2:      .               .              .              .               .
+        //              .               .              .              .               .
+        //              +---------------+--------------+--------------+---------------+
+        //              .               |     -B     / |   -A   +-----+               .
+        //              .               +----------+   +--------+     .               . 
+        //              .               .              .              .               .
+        // Step 3:      .               .              .              .               .
         //              .               .              .              .               .
         //              .   +-----------+              .              .               .
         //              . /      B      |              .              .               .
@@ -207,24 +233,41 @@ pub fn synthesis(samples: &mut [f32; 576], state: &mut SynthesisState) {
         //              .               |     -B     / |   -A   +-----+-----+   -A    |
         //              .               +----------+   +--------+     .     +---------+ 
         //              .               .              .              .               .
+        //
+        // Note however that the mappings in steps 2 and 3 have exceptions for boundary cases. 
+        // These exceptions can be seen when plotting the coefficient matricies as mentioned above,
+        // but are listed below for completeness:
+        //
+        //     1) m[ 0] =  m[32]
+        //     2) m[32] = -m[32]
+        //     3) m[48] = -m[16]
+        //     4) m[16] = 0.0
+        //
+        // The final algorithm written below combines steps 2 and 3, and excludes the boundaries in
+        // the main loop.
+        //
+        // [1] K. Konstantinides, "Fast subband filtering in MPEG audio coding", Signal Processing 
+        // Letters IEEE, vol. 1, no. 2, pp. 26-28, 1994.
+        //
+        // https://ieeexplore.ieee.org/abstract/document/300309
+        dct32(&s_vec, &mut v_vec[16..48]);
+
         for i in 0..15 {
-            let a = v_vec[16+i+1];
+            let a = -v_vec[16+i+1];
             let b = v_vec[48-i-1];
-            v_vec[48-i-1] = -a;
+            v_vec[16-i-1] = b;
             v_vec[16+i+1] = -b;
+            v_vec[48-i-1] = a;
+            v_vec[48+i+1] = a;
         }
 
-        v_vec[0] = v_vec[32];
+        v_vec[ 0] = v_vec[32];
         v_vec[32] = -v_vec[32];
-        for i in 0..15 {
-            v_vec[i+1] = -v_vec[32-i-1];
-            v_vec[64-i-1] = v_vec[32+i+1];
-        }
         v_vec[48] = -v_vec[16];
         v_vec[16] = 0.0;
 
-        // Build u_vec by iterating over the 16 slots in v_vec, and copying the first 32 samples
-        // of EVEN numbered v_vec slots, and the last 32 samples of ODD numbered v_vec slots 
+        // Next, build u_vec by iterating over the 16 slots in v_vec, and copying the first 32 
+        // samples of EVEN numbered v_vec slots, and the last 32 samples of ODD numbered v_vec slots 
         // sequentially into u_vec.
         //
         // For example, given:
@@ -297,7 +340,7 @@ pub fn synthesis(samples: &mut [f32; 576], state: &mut SynthesisState) {
         // that will be overwritten next iteration. Conversely, that makes it the front of the 
         // FIFO for the purpose of building u_vec. We would like to overwrite the oldest slot,
         // so we subtract 1 via a wrapping addition to move the front backwards by 1 slot,
-        // effectively overwriting the oldest slot with the newest.
+        // effectively overwriting the oldest slot with the soon-to-be newest.
         state.v_front = (state.v_front + 15) & 0xf;
     }
 }
