@@ -70,7 +70,7 @@ impl FormatReader for Mp3Reader {
     }
 
     fn probe(&mut self, depth: ProbeDepth) -> Result<ProbeResult> {
-        id3v2::read_id3v2(&mut self.reader);
+        id3v2::read_id3v2(&mut self.reader)?;
 
         let mut params = CodecParameters::new();
 

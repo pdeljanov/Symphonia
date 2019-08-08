@@ -29,7 +29,7 @@ pub mod default {
             #[cfg(feature = "flac")]
             registry.register_all::<FlacDecoder>(0);
 
-            #[cfg(feature = "pcm")]
+            #[cfg(feature = "mp3")]
             registry.register_all::<Mp3Decoder>(0);
 
             #[cfg(feature = "pcm")]

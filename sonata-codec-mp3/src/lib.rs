@@ -9,6 +9,7 @@ mod bitstream;
 mod decoder;
 mod demuxer;
 mod huffman_tables;
+mod synthesis;
 
 pub mod id3v1;
 pub mod id3v2;
