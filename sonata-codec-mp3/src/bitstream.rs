@@ -1293,8 +1293,11 @@ fn l3_read_huffman_samples<B: BitStream>(
 
     // If there are no Huffman code bits, zero all samples and return immediately.
     if part3_bits == 0 {
-        for i in 0..576 {
-            buf[i] = 0.0;
+        for i in (0..576).step_by(4) {
+            buf[i+0] = 0.0;
+            buf[i+1] = 0.0;
+            buf[i+2] = 0.0;
+            buf[i+3] = 0.0;
         }
         return Ok(0);
     }
@@ -1385,10 +1388,6 @@ fn l3_read_huffman_samples<B: BitStream>(
         }
     }
 
-    if bits_read > part3_bits {
-        return decode_error("huffman big_values overrun")
-    }
-
     // Select the Huffman table for the count1 partition.
     let count1_table = match channel.count1table_select {
         true => QUADS_HUFFMAN_TABLE_B,
@@ -1397,8 +1396,12 @@ fn l3_read_huffman_samples<B: BitStream>(
 
     // Read the count1 partition.
     while i <= 572 && bits_read < part3_bits {
-        // Decode the next Huffman code.
-        let (value, code_len) = bs.read_huffman(&count1_table, part3_bits - bits_read)?;
+        // Decode the next Huffman code. Note that we allow the Huffman decoder a few extra bits in 
+        // case of a count1 overrun (see below for more details).
+        let (value, code_len) = bs.read_huffman(
+            &count1_table, 
+            part3_bits + count1_table.n_table_bits - bits_read
+        )?;
         bits_read += code_len;
 
         // In the count1 partition, each Huffman code decodes to 4 samples: v, w, x, and y.
@@ -1453,7 +1456,10 @@ fn l3_read_huffman_samples<B: BitStream>(
         eprintln!("ignore: {}", part3_bits - bits_read);
         bs.ignore_bits(part3_bits - bits_read)?;
     }
-    // Some encoders mess up the boundary condition for the count1 partition. Correct that here.
+    // Word on the street is that some encoders are poor at "stuffing" bits, resulting in part3_len 
+    // being ever so slightly too large. This causes the Huffman decode loop to decode the next few
+    // bits as a sample. However, this is random data and not a real sample, so erase it! The caller
+    // will be reponsible for re-aligning the bitstream reader. Candy Pop confirms this.
     else if bits_read > part3_bits {
         eprintln!("count1 overrun");
         i -= 4;
@@ -1461,8 +1467,9 @@ fn l3_read_huffman_samples<B: BitStream>(
 
     // The final partition after the count1 partition is the rzero partition. Samples in this
     // partition are all 0.
-    for j in i..576 {
-        buf[j] = 0.0;
+    for j in (i..576).step_by(2) {
+        buf[j+0] = 0.0;
+        buf[j+1] = 0.0;
     }
 
     Ok(i)
@@ -2199,10 +2206,24 @@ fn l3_read_main_data(
     state: &mut State,
 ) -> Result<()> {
 
-    let mut bs = BitStreamLtr::new(BufStream::new(state.resevoir.bytes_ref()));
+    let main_data = state.resevoir.bytes_ref();
+    let mut part2_3_begin = 0;
 
     for gr in 0..header.n_granules() {
         for ch in 0..header.n_channels() {
+            // This is an unfortunate workaround for something that should be fixed in BitStreamLtr.
+            // This code repositions the bitstream exactly at the intended start of the next part2_3
+            // data. This is to fix files that overread in the Huffman decoder.
+            //
+            // TODO: Implement a rewind on the BitStream to undo the last read.
+            let byte_index = part2_3_begin >> 3;
+            let bit_index = part2_3_begin & 0x7;
+
+            let mut bs = BitStreamLtr::new(BufStream::new(&main_data[byte_index..]));
+
+            if bit_index > 0 {
+                bs.ignore_bits(bit_index as u32)?;
+            }
 
             // Read the scale factors (part2) and get the number of bits read. For MPEG version 1...
             let part2_len = if header.is_mpeg1() {
@@ -2226,8 +2247,6 @@ fn l3_read_main_data(
             // The Huffman code length (part3).
             let part3_len = part2_3_length - part2_len;
             
-            //eprintln!("G{} C{}, block_type={:?}", gr, ch, frame_data.granules[gr].channels[ch].block_type);
-
             // Decode the Huffman coded spectral samples and get the starting index of the rzero
             // partition.
             frame_data.granules[gr].channels[ch].rzero = l3_read_huffman_samples(
@@ -2236,6 +2255,8 @@ fn l3_read_main_data(
                 part3_len,
                 &mut state.samples[gr][ch],
             )?;
+
+            part2_3_begin += part2_3_length as usize;
         }
     }
 
@@ -2316,7 +2337,7 @@ impl State {
 /// Process the next MPEG audio frame from the stream.
 pub fn next_frame<B: Bytestream>(reader: &mut B, state: &mut State) -> Result<()> {
     let header = read_frame_header(reader)?;
-    //eprintln!("{:#?}", &header);
+    // eprintln!("{:#?}", &header);
 
     match header.layer {
         MpegLayer::Layer3 => {
