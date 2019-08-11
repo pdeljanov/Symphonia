@@ -353,6 +353,7 @@ impl CodecRegistry {
     }
 }
 
+/// Convenience macro for declaring a `CodecDescriptor`.
 #[macro_export]
 macro_rules! support_codec {
     ($type:expr, $short_name:expr, $long_name:expr) => {

@@ -10,14 +10,18 @@ use crate::sample::{u24, i24};
 #[cfg(test)]
 use crate::sample::Sample;
 
-/// Converts a sample of one type and value to another type with an equivalent value.
+/// `FromSample` implements a conversion from `Sample` type `F` to `Self`.
 ///
 /// This may be a lossy conversion if converting from a sample type of higher precision to one of
-/// lower precision. No dither is applied.
+/// lower precision. No dithering is applied.
 pub trait FromSample<F> {
     fn from_sample(val: F) -> Self;
 }
 
+/// `IntoSample` implements a conversion from `Self` to `Sample` type `T`.
+/// 
+/// This may be a lossy conversion if converting from a sample type of higher precision to one of
+/// lower precision. No dithering is applied.
 pub trait IntoSample<T> {
     fn into_sample(self) -> T;
 }
@@ -29,6 +33,8 @@ impl<F, T: FromSample<F>> IntoSample<T> for F {
     }
 }
 
+/// `ConvertibleSample` is a trait that when implemented for `Self`, that `Sample` type implements
+/// bi-directional conversions between `Self` and the parameterized `Sample` type `S`.
 pub trait ConvertibleSample<S> : FromSample<S> + IntoSample<S> {}
 
 /// Clamps the given value to the [0, 255] range.

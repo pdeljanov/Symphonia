@@ -666,6 +666,7 @@ impl FormatDescriptor {
     }
 }
 
+/// Convenience macro for declaring a `FormatDescriptor`.
 #[macro_export]
 macro_rules! support_format {
     ($exts:expr, $mimes:expr, $marker:expr, $mask:expr, $len:expr) => {

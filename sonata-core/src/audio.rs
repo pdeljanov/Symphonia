@@ -680,6 +680,9 @@ impl<S: Sample + WriteSample> SampleBuffer<S> {
         &self.buf[..end]
     }
 
+    /// Copies all audio data from the source `AudioBufferRef` in planar channel order into the
+    /// `SampleBuffer`, applying the specified dither method if there is a lossy conversion.
+    /// The two buffers must be equivalent.
     pub fn copy_planar_ref(&mut self, src: AudioBufferRef, dither: Dither)
     where
         f32: IntoSample<S>,
@@ -691,6 +694,9 @@ impl<S: Sample + WriteSample> SampleBuffer<S> {
         }
     }
 
+    /// Copies all audio data from a source `AudioBuffer` that is of a different sample format type
+    /// than that of the `SampleBuffer` in planar channel order. If the conversion is lossy, the
+    /// specified dither method is applied. The two buffers must be equivalent.
     pub fn copy_planar_typed<F>(&mut self, src: &AudioBuffer<F>, dither: Dither)
     where
         F: Sample + IntoSample<S>
@@ -713,8 +719,8 @@ impl<S: Sample + WriteSample> SampleBuffer<S> {
         }
     }
 
-    /// Copies all samples from a channel from the source `AudioBuffer` to the `SampleBuffer` before
-    /// copying the next channel.
+    /// Copies all audio data from the source `AudioBuffer` to the `SampleBuffer` in planar order.
+    /// The two buffers must be equivalent.
     pub fn copy_planar(&mut self, src: &AudioBuffer<S>) {
         let n_frames = src.n_frames;
         let n_channels = src.spec.channels.len();
@@ -734,6 +740,9 @@ impl<S: Sample + WriteSample> SampleBuffer<S> {
         }
     }
 
+    /// Copies all audio data from the source `AudioBufferRef` in interleaved channel order into the
+    /// `SampleBuffer`, applying the specified dither method if there is a lossy conversion. The two
+    /// buffers must be equivalent.
     pub fn copy_interleaved_ref(&mut self, src: AudioBufferRef, dither: Dither)
     where
         f32: IntoSample<S>,
@@ -745,6 +754,9 @@ impl<S: Sample + WriteSample> SampleBuffer<S> {
         }
     }
 
+    /// Copies all audio data from a source `AudioBuffer` that is of a different sample format type
+    /// than that of the `SampleBuffer` in interleaved channel order. If the conversion is lossy,
+    /// the specified dither method is applied. The two buffers must be equivalent.
     pub fn copy_interleaved_typed<F>(&mut self, src: &AudioBuffer<F>, dither: Dither)
     where
         F: Sample + IntoSample<S>
@@ -793,8 +805,8 @@ impl<S: Sample + WriteSample> SampleBuffer<S> {
         }
     }
 
-    /// Copies one sample per channel from the source `AudioBuffer` as a set to the `SampleBuffer`
-    /// before copying the next set of samples.
+    /// Copies all audio data from the source `AudioBuffer` to the `SampleBuffer` in interleaved
+    /// channel order. The two buffers must be equivalent.
     pub fn copy_interleaved(&mut self, src: &AudioBuffer<S>) {
         let n_frames = src.n_frames;
         let n_channels = src.spec.channels.len();
