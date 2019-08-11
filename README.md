@@ -19,7 +19,7 @@ Sonata's planned features are:
 Support for individual audio codecs and media formats is provided by separate crates. By default, Sonata selects
 support for FOSS codecs and formats, but others may be included via the features option.
 
-### Formats (Mux/Demux)
+### Formats (Demux)
 
 | Format  | Status      | Feature Flag | Default | Crate                  |  
 |---------|-------------|--------------|---------|------------------------|
@@ -38,9 +38,9 @@ support for FOSS codecs and formats, but others may be included via the features
 | Hardware | -           | `hwdec`      | No      | `sonata-codec-hwdec`   |
 | MP1      | In Work     | `mp3`        | No      | `sonata-codec-mp3`     |
 | MP2      | In Work     | `mp3`        | No      | `sonata-codec-mp3`     |
-| MP3      | In Work     | `mp3`        | No      | `sonata-codec-mp3`     |
+| MP3      | Complete    | `mp3`        | No      | `sonata-codec-mp3`     |
 | Opus     | -           | `opus`       | Yes     | `sonata-codec-opus`    |
-| PCM      | Functional  | `pcm`        | Yes     | `sonata-codec-pcm`     |
+| PCM      | Complete    | `pcm`        | Yes     | `sonata-codec-pcm`     |
 | Vorbis   | -           | `vorbis`     | Yes     | `sonata-codec-vorbis`  |
 | WavPack  | -           | `wavpack`    | Yes     | `sonata-codec-wavpack` |
 
@@ -64,7 +64,7 @@ Sonata provides decoders for standard tagging formats in `sonata-core` since man
 | Format                | Status      |
 |-----------------------|-------------|
 | ID3v1                 | Complete    |
-| ID3v2                 | Functional  |
+| ID3v2                 | Complete    |
 | Vorbis comment (OGG)  | -           |
 | Vorbis comment (FLAC) | Complete    |
 | RIFF                  | Complete    |

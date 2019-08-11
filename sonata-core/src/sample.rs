@@ -30,21 +30,21 @@ pub enum SampleFormat {
     F64
 }
 
-/// `Sample` provides a common interface for manipulating sample's regardless of the 
-/// underlying data type. Additionally, `Sample` provides information regarding the 
+/// `Sample` provides a common interface for manipulating sample's regardless of the
+/// underlying data type. Additionally, `Sample` provides information regarding the
 /// format of underlying data types representing the sample when in memory, but also
 /// when exported.
 pub trait Sample : Copy + Clone + Sized {
 
-    /// The `StreamType` is the primitive data type, or fixed-size byte array, that 
+    /// The `StreamType` is the primitive data type, or fixed-size byte array, that
     /// represents the sample when exported.
     type StreamType : Copy;
 
-    /// A unique enum value representing the sample format. This constant may be used 
+    /// A unique enum value representing the sample format. This constant may be used
     /// to dynamically choose how to process the sample at runtime.
     const FORMAT: SampleFormat;
 
-    /// The mid-point value between the maximum and minimum sample value. If a sample 
+    /// The mid-point value between the maximum and minimum sample value. If a sample
     /// is set to this value, it is silent.
     const MID : Self;
 }
@@ -155,6 +155,28 @@ impl i24 {
     pub fn inner(&self) -> i32 {
         self.0
     }
+
+    #[inline]
+    pub fn to_ne_bytes(&self) -> [u8; 3] {
+        // Little endian platform
+        #[cfg(target_endian = "little")]
+        {
+            [
+                ((self.0 & 0x0000ff) >>  0) as u8,
+                ((self.0 & 0x00ff00) >>  8) as u8,
+                ((self.0 & 0xff0000) >> 16) as u8,
+            ]
+        }
+        // Big endian platform
+        #[cfg(not(target_endian = "little"))]
+        {
+            [
+                ((self.0 & 0xff0000) >> 16) as u8,
+                ((self.0 & 0x00ff00) >>  8) as u8,
+                ((self.0 & 0x0000ff) >>  0) as u8,
+            ]
+        }
+    }
 }
 
 impl From<i32> for i24 {
@@ -262,6 +284,29 @@ impl u24 {
     pub fn inner(&self) -> u32 {
         self.0
     }
+
+    #[inline]
+    pub fn to_ne_bytes(&self) -> [u8; 3] {
+        // Little endian platform
+        #[cfg(target_endian = "little")]
+        {
+            [
+                ((self.0 & 0x0000ff) >>  0) as u8,
+                ((self.0 & 0x00ff00) >>  8) as u8,
+                ((self.0 & 0xff0000) >> 16) as u8,
+            ]
+        }
+        // Big endian platform
+        #[cfg(not(target_endian = "little"))]
+        {
+            [
+                ((self.0 & 0xff0000) >> 16) as u8,
+                ((self.0 & 0x00ff00) >>  8) as u8,
+                ((self.0 & 0x0000ff) >>  0) as u8,
+            ]
+        }
+    }
+
 }
 
 impl From<u32> for u24 {

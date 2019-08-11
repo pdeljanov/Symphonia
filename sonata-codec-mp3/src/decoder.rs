@@ -1,24 +1,33 @@
-use sonata_core::audio::{AudioBuffer, Signal, SignalSpec};
+// Sonata
+// Copyright (c) 2019 The Sonata Project Developers.
+//
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+use sonata_core::audio::{AudioBuffer, AudioBufferRef, AsAudioBufferRef, Duration};
 use sonata_core::codecs::{CODEC_TYPE_MP3, CodecParameters, CodecDescriptor, Decoder, DecoderOptions};
-use sonata_core::conv::{IntoSample};
 use sonata_core::errors::Result;
 use sonata_core::formats::Packet;
 use sonata_core::support_codec;
 
-use super::bitstream::{State, next_frame};
+use super::bitstream::{State, read_frame_header, decode_frame};
 
+/// MPEG1 and MPEG2 layers 1, 2, and 3 decoder.
 pub struct Mp3Decoder {
     params: CodecParameters,
     state: State,
+    buf: AudioBuffer<f32>,
 }
 
 impl Decoder for Mp3Decoder {
 
-    fn new(params: &CodecParameters, options: &DecoderOptions) -> Self {
-        Mp3Decoder {
+    fn try_new(params: &CodecParameters, _: &DecoderOptions) -> Result<Self> {
+        Ok(Mp3Decoder {
             params: params.clone(),
             state: State::new(),
-        }
+            buf: AudioBuffer::unused(),
+        })
     }
 
     fn supported_codecs() -> &'static [CodecDescriptor] {
@@ -29,35 +38,20 @@ impl Decoder for Mp3Decoder {
         &self.params
     }
 
-    fn spec(&self) -> Option<SignalSpec> {
-        if let Some(rate) = self.params.sample_rate {
-            // Prefer the channel layout over a list of channels.
-            if let Some(layout) = self.params.channel_layout {
-                return Some(SignalSpec::new_with_layout(rate, layout));
-            }
-            else if let Some(channels) = self.params.channels {
-                return Some(SignalSpec::new(rate, channels));
-            }
-        }
-        None
-    }
-
-    fn decode(&mut self, packet: Packet<'_>, buf: &mut AudioBuffer<i32>) -> Result<()> {
+    fn decode(&mut self, packet: Packet<'_>) -> Result<AudioBufferRef<'_>> {
         let mut reader = packet.into_stream();
 
-        next_frame(&mut reader, &mut self.state)?;
+        let header = read_frame_header(&mut reader)?;
 
-        buf.render_reserved(Some(1152));
-        let (l, r) = buf.chan_pair_mut(0, 1);
-
-        for i in 0..576 {
-            l[i +   0] = self.state.samples[0][0][i].into_sample();
-            l[i + 576] = self.state.samples[1][0][i].into_sample();
-            r[i +   0] = self.state.samples[0][1][i].into_sample();
-            r[i + 576] = self.state.samples[1][1][i].into_sample();
+        // The buffer can only be created after the first frame is decoded. Technically, it can
+        // change throughout the stream as well...
+        if self.buf.is_unused() {
+            self.buf = AudioBuffer::new(Duration::Frames(1152), &header.spec());
         }
 
-        Ok(())
+        decode_frame(&mut reader, &header, &mut self.state, &mut self.buf)?;
+
+        Ok(self.buf.as_audio_buffer_ref())
     }
 
     fn close(&mut self) {

@@ -156,22 +156,22 @@ impl Default for SynthesisState {
 
 /// Sub-band synthesis transforms 32 sub-band blocks containing 18 time-domain samples each into
 /// 18 blocks of 32 PCM audio samples.
-pub fn synthesis(samples: &mut [f32; 576], state: &mut SynthesisState) {
+pub fn synthesis(in_samples: &mut [f32; 576], state: &mut SynthesisState, out: &mut [f32]) {
     let mut s_vec = [0f32; 32];
     let mut u_vec = [0f32; 512];
 
-    let mut og_samples = [0f32; 576];
-    og_samples.copy_from_slice(samples);
+    // Get a slice to 576 output samples to (hopefully) elide future bounds checking.
+    let out_samples = &mut out[0..576];
 
     // There are 18 synthesized PCM sample blocks.
     for b in 0..18 {
         // First, select the b-th sample from each of the 32 sub-bands, and place them in the s 
         // vector, s_vec..
         for i in (0..32).step_by(4) {
-            s_vec[i+0] = og_samples[18*(i+0) + b];
-            s_vec[i+1] = og_samples[18*(i+1) + b];
-            s_vec[i+2] = og_samples[18*(i+2) + b];
-            s_vec[i+3] = og_samples[18*(i+3) + b];
+            s_vec[i+0] = in_samples[18*(i+0) + b];
+            s_vec[i+1] = in_samples[18*(i+1) + b];
+            s_vec[i+2] = in_samples[18*(i+2) + b];
+            s_vec[i+3] = in_samples[18*(i+3) + b];
         }
 
         // Get the front slot of the v_vec FIFO.
@@ -333,7 +333,7 @@ pub fn synthesis(samples: &mut [f32; 576], state: &mut SynthesisState) {
                 sum += u_vec[k+64] * SYNTHESIS_D[k+64];
                 sum += u_vec[k+96] * SYNTHESIS_D[k+96];
             }
-            samples[(b << 5) + i] = sum;
+            out_samples[(b << 5) + i] = sum;
         }
 
         // Shift the v_vec FIFO. The value v_front is the index of the 64 sample slot in v_vec

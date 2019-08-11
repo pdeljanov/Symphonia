@@ -10,7 +10,7 @@ use std::fs::File;
 use std::path::Path;
 use clap::{Arg, App};
 use sonata;
-use sonata::core::errors::{Result, unsupported_error};
+use sonata::core::errors::Result;
 use sonata::core::audio::*;
 use sonata::core::codecs::DecoderOptions;
 use sonata::core::formats::{Cue, FormatReader, Hint, FormatOptions, ProbeDepth, ProbeResult, ColorMode, Visual, Stream};
@@ -92,12 +92,12 @@ fn main() {
             // Verify only mode decodes and always verifies the audio, but doese not play it.
             if matches.is_present("verify-only") {
                 let options = DecoderOptions { verify: true, ..Default::default() };
-                decode_only(reader, &options).unwrap_or_else(|err| { eprintln!("{}", err) });
+                decode_only(reader, &options).unwrap_or_else(|err| { eprintln!("Err: {}", err) });
             }
             // Decode only mode decodes the audio, but not does verify it.
             else if matches.is_present("decode-only") {
                 let options = DecoderOptions { verify: false, ..Default::default() };
-                decode_only(reader, &options).unwrap_or_else(|err| { eprintln!("{}", err) });
+                decode_only(reader, &options).unwrap_or_else(|err| { eprintln!("Err: {}", err) });
             }
             // Probe only mode prints information about the format, streams, metadata, etc.
             else if matches.is_present("probe-only") {
@@ -113,14 +113,17 @@ fn main() {
                         let pos = seek_value.parse::<f64>().unwrap();
                         reader.seek(Timestamp::Time(pos)).unwrap();
                     },
-                    None => ()
+                    None => (),
                 };
 
                 // Set the decoder options.
-                let options = DecoderOptions { verify: matches.is_present("verify"), ..Default::default() };
+                let options = DecoderOptions { 
+                    verify: matches.is_present("verify"), 
+                    ..Default::default()
+                };
 
                 // Commence playback.
-                play(reader, &options).unwrap_or_else(|err| { eprintln!("{}", err) });
+                play(reader, &options).unwrap_or_else(|err| { eprintln!("Err: {}", err) });
             }
         }
     }
@@ -132,38 +135,18 @@ fn decode_only(mut reader: Box<dyn FormatReader>, decode_options: &DecoderOption
     let stream = reader.default_stream().unwrap();
 
     // Create a decoder for the stream.
-    let mut decoder = sonata::default::get_codecs().make(&stream.codec_params, &decode_options).unwrap();
+    let mut decoder = sonata::default::get_codecs().make(&stream.codec_params, &decode_options)?;
 
-    // Get the expected signal spec from the decoder.
-    // TODO: Handle the case where the signal spec is not known until the first buffer is decoded.
-    let spec = decoder.spec().unwrap();
-
-    let duration = match stream.codec_params.max_frames_per_packet {
-        Some(frames) => Duration::Frames(frames),
-        None => return unsupported_error("Variable frames per packet are not supported."),
-    };
-
-    // Create an audio buffer of the recommended length.
-    let mut samples = AudioBuffer::<i32>::new(duration, &spec);
-
+    // Decode all packets.
     loop {
-        let packet = reader.next_packet()?;
-
-        // Reuse the buffer.
-        samples.clear();
-
-        // Try to decode more frames until an error.
-        match decoder.decode(packet, &mut samples) {
+        match decoder.decode(reader.next_packet()?) {
             Err(err) => {
                 decoder.close();
-                eprint!("Error: {}", err);
-                break;
+                return Err(err);
             },
             Ok(_) => ()
         }
     }
-
-    Ok(())
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -174,71 +157,75 @@ fn play(_: Box<dyn FormatReader>, _: &DecoderOptions) -> Result<()> {
 
 #[cfg(target_os = "linux")]
 fn play(mut reader: Box<dyn FormatReader>, decode_options: &DecoderOptions) -> Result<()> {
-
     // Get the default stream.
     // TODO: Allow stream selection.
     let stream = reader.default_stream().unwrap();
 
     // Create a decoder for the stream.
-    let mut decoder = sonata::default::get_codecs().make(&stream.codec_params, &decode_options).unwrap();
+    let mut decoder = sonata::default::get_codecs().make(&stream.codec_params, &decode_options)?;
 
-    // Get the expected signal spec from the decoder.
-    // TODO: Handle the case where the signal spec is not known until the first buffer is decoded.
-    let spec = decoder.spec().unwrap();
+    // Decode the first packet and create the PulseAudio device using the signal specification of 
+    // the buffer.
+    let (pa, mut samples) = match decoder.decode(reader.next_packet()?) {
+        Err(err) => {
+            decoder.close();
+            return Err(err);
+        },
+        Ok(decoded) => {
+            // Get the buffer spec.
+            let spec = decoded.spec();
 
-    let duration = match stream.codec_params.max_frames_per_packet {
-        Some(frames) => Duration::Frames(frames),
-        None => return unsupported_error("Variable frames per packet are not supported."),
+            // Get the buffer duration.
+            let duration = Duration::Frames(decoded.capacity() as u64);
+
+            // An interleaved buffer is required to send data to PulseAudio. Sse a SampleBuffer to
+            // move data between Sonata AudioBuffers and the byte buffers required by PulseAudio.
+            let mut samples = SampleBuffer::<i32>::new(duration, &spec);
+
+            // Create a PulseAudio stream specification.
+            let pa_spec = pulse::sample::Spec {
+                format: pulse::sample::SAMPLE_S32NE,
+                channels: spec.channels.len() as u8,
+                rate: spec.rate,
+            };
+
+            assert!(pa_spec.is_valid());
+
+            // Create a PulseAudio connection.
+            let pa = psimple::Simple::new(
+                None,                                   // Use default server
+                "Sonata Player",                        // Application name
+                pulse::stream::Direction::Playback,     // Playback stream
+                None,                                   // Default playback device
+                "Music",                                // Description of the stream
+                &pa_spec,                               // Signal specificaiton
+                None,                                   // Default channel map
+                None                                    // Default buffering attributes
+            ).unwrap();
+
+            // Interleave samples for PulseAudio into the sample buffer.
+            samples.copy_interleaved_ref(decoded, Dither::None);
+
+            // Write interleaved samples to PulseAudio.
+            pa.write(samples.as_bytes()).unwrap();
+
+            (pa, samples)
+        }
     };
 
-    // Create an audio buffer of the recommended length.
-    let mut samples = AudioBuffer::<i32>::new(duration, &spec);
-
-    // An interleaved buffer is required to send data to the OS.
-    let mut raw_samples = SampleBuffer::<i32>::new(duration, &spec);
-
-    let pulse_spec = pulse::sample::Spec {
-        format: pulse::sample::SAMPLE_S32NE,
-        channels: spec.channels.len() as u8,
-        rate: spec.rate,
-    };
-
-    assert!(pulse_spec.is_valid());
-
-    let s = psimple::Simple::new(
-        None,                                   // Use the default server
-        "Sonata Player",                        // Our application’s name
-        pulse::stream::Direction::Playback,     // We want a playback stream
-        None,                                   // Use the default device
-        "Music",                                // Description of our stream
-        &pulse_spec,                            // Our sample format
-        None,                                   // Use default channel map
-        None                                    // Use default buffering attributes
-    ).unwrap();
-
+    // Decode the remaining frames.
     loop {
-        // Reuse the buffer.
-        samples.clear();
-        
-        let packet = reader.next_packet()?;
-
-        // Try to decode more frames until an error.
-        match decoder.decode(packet, &mut samples) {
+        match decoder.decode(reader.next_packet()?) {
             Err(err) => {
                 decoder.close();
-                eprint!("Error: {}", err);
-                break;
+                return Err(err);
             },
-            Ok(_) => {
-                // Interleave samples for PulseAudio.
-                samples.copy_interleaved(&mut raw_samples);
-                // Write interleaved samples to PulseAudio.
-                s.write(raw_samples.as_bytes()).unwrap();
+            Ok(decoded) => {
+                samples.copy_interleaved_ref(decoded, Dither::None);
+                pa.write(samples.as_bytes()).unwrap();
             }
         }
     }
-
-    Ok(())
 
 }
 

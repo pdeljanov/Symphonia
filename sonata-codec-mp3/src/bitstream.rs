@@ -10,7 +10,7 @@ use std::{f32, f64};
 
 use lazy_static::lazy_static;
 
-use sonata_core::checksum::Crc16;
+use sonata_core::audio::{AudioBuffer, Signal, SignalSpec, Layout};
 use sonata_core::errors::{Result, decode_error, unsupported_error};
 use sonata_core::io::{BufStream, BitStream, BitStreamLtr, Bytestream, huffman::{H8, HuffmanTable}};
 
@@ -542,7 +542,7 @@ enum Emphasis {
 
 /// A MPEG 1, 2, or 2.5 audio frame header.
 #[derive(Debug)]
-struct FrameHeader {
+pub struct FrameHeader {
     version: MpegVersion,
     layer: MpegLayer,
     bitrate: u32,
@@ -560,32 +560,43 @@ struct FrameHeader {
 impl FrameHeader {
     /// Returns true if this a MPEG1 frame, false otherwise.
     #[inline(always)]
-    fn is_mpeg1(&self) -> bool {
+    pub fn is_mpeg1(&self) -> bool {
         self.version == MpegVersion::Mpeg1
     }
 
     /// Returns true if this a MPEG2.5 frame, false otherwise.
     #[inline(always)]
-    fn is_mpeg2p5(&self) -> bool {
+    pub fn is_mpeg2p5(&self) -> bool {
         self.version == MpegVersion::Mpeg2p5
     }
 
     /// Returns true if this is a Layer 1 frame, false otherwise.
     #[inline(always)]
-    fn is_layer1(&self) -> bool {
+    pub fn is_layer1(&self) -> bool {
         self.layer == MpegLayer::Layer1
     }
 
     /// Returns true if this is a Layer 2 frame, false otherwise.
     #[inline(always)]
-    fn is_layer2(&self) -> bool {
+    pub fn is_layer2(&self) -> bool {
         self.layer == MpegLayer::Layer2
     }
 
     /// Returns true if this is a Layer 3 frame, false otherwise.
     #[inline(always)]
-    fn is_layer3(&self) -> bool {
+    pub fn is_layer3(&self) -> bool {
         self.layer == MpegLayer::Layer3
+    }
+
+    /// Returns a signal specification for the frame.
+    pub fn spec(&self) -> SignalSpec {
+        let layout = match self.n_channels() {
+            1 => Layout::Mono,
+            2 => Layout::Stereo,
+            _ => unreachable!(),
+        };
+
+        SignalSpec::new_with_layout(self.sample_rate, layout)
     }
 
     /// Returns the number of granules in the frame.
@@ -756,7 +767,7 @@ fn sync_frame<B: Bytestream>(reader: &mut B) -> Result<u32> {
 }
 
 /// Reads a MPEG audio frame header from the stream and return it or an error.
-fn read_frame_header<B: Bytestream>(reader: &mut B) -> Result<FrameHeader> {
+pub fn read_frame_header<B: Bytestream>(reader: &mut B) -> Result<FrameHeader> {
     // Synchronize and read the frame header.
     let header = sync_frame(reader)?;
 
@@ -1833,6 +1844,7 @@ fn l3_stereo(
     // Note: regardless of version, pos[sfb] == 7 is forbidden and indicates intensity stereo
     //       decoding should not be used.
     if intensity {
+        eprintln!("INTENSITY");
         // The block types must be the same.
         if granule.channels[0].block_type != granule.channels[1].block_type {
             return decode_error("stereo channel pair block_type mismatch");
@@ -2317,7 +2329,7 @@ impl BitResevoir {
 /// MP3 depends on the state of the previous frame to decode the next. `State` is a structure
 /// containing all the stateful information required to decode the next frame.
 pub struct State {
-    pub samples: [[[f32; 576]; 2]; 2],
+    samples: [[[f32; 576]; 2]; 2],
     overlap: [[[f32; 18]; 32]; 2],
     synthesis: [synthesis::SynthesisState; 2],
     resevoir: BitResevoir,
@@ -2335,10 +2347,17 @@ impl State {
 }
 
 /// Process the next MPEG audio frame from the stream.
-pub fn next_frame<B: Bytestream>(reader: &mut B, state: &mut State) -> Result<()> {
-    let header = read_frame_header(reader)?;
-    // eprintln!("{:#?}", &header);
+pub fn decode_frame<B: Bytestream>(
+    reader: &mut B,
+    header: &FrameHeader,
+    state: &mut State,
+    out: &mut AudioBuffer<f32>,
+) -> Result<()> {
 
+    // Clear the audio output buffer.
+    out.clear();
+
+    // Choose decode steps based on layer.
     match header.layer {
         MpegLayer::Layer3 => {
             // Initialize an empty FrameData to store the side_info and main_data portions of the
@@ -2359,25 +2378,26 @@ pub fn next_frame<B: Bytestream>(reader: &mut B, state: &mut State) -> Result<()
             l3_read_main_data(&header, &mut frame_data, state)?;
 
             for gr in 0..header.n_granules() {
-                
+                // Each granule will yield 576 samples.
+                out.render_reserved(Some(576));
+
                 let granule = &frame_data.granules[gr];
 
                 // Requantize all non-zero (big_values and count1 partition) spectral samples.
                 l3_requantize(&header, &granule.channels[0], &mut state.samples[gr][0]);
 
-                // Reorder any spectral samples in short blocks into sub-band order.
-                l3_reorder(&header, &granule.channels[0], &mut state.samples[gr][0]);
-
-                // If there is more than one channel: requantize and reorder the second channel,
-                // then apply stereo processing.
+                // If there is more than one channel: requantize the second channel and then apply 
+                // joint stereo processing.
                 if header.channels != Channels::Mono {
                     l3_requantize(&header, &granule.channels[1], &mut state.samples[gr][1]);
-                    l3_reorder(&header, &granule.channels[1], &mut state.samples[gr][1]);
                     l3_stereo(&header, &granule, &mut state.samples[gr])?;
                 }
 
                 // The remaining steps are channel independant.
                 for ch in 0..header.n_channels() {
+                    // Reorder any spectral samples in short blocks into sub-band order.
+                    l3_reorder(&header, &granule.channels[ch], &mut state.samples[gr][ch]);
+
                     // Apply the anti-aliasing filter to blocks that are not short.
                     l3_antialias(&granule.channels[ch], &mut state.samples[gr][ch]);
 
@@ -2387,11 +2407,18 @@ pub fn next_frame<B: Bytestream>(reader: &mut B, state: &mut State) -> Result<()
                         &mut state.overlap[ch],
                         &mut state.samples[gr][ch],
                     );
-                    // Invert odd samples in odd sub-bands.
+
+                    // Invert to odd samples in odd sub-bands.
                     l3_frequency_inversion(&mut state.samples[gr][ch]);
 
+                    let out_ch_samples = out.chan_mut(ch as u8);
+
                     // Perform polyphase synthesis.
-                    synthesis::synthesis(&mut state.samples[gr][ch], &mut state.synthesis[ch]);
+                    synthesis::synthesis(
+                        &mut state.samples[gr][ch],
+                        &mut state.synthesis[ch],
+                        &mut out_ch_samples[(gr * 576)..((gr + 1) * 576)],
+                    );
                 }
             }
         },

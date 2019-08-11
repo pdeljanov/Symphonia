@@ -19,9 +19,9 @@ use sonata_core::io::*;
 
 use crate::id3v2;
 
-/// `Mp3Reader` (MPEG Audio Frame) Format.
+/// MPEG1 and MPEG2 audio frame reader.
 /// 
-/// `Mp3Reader` implements a demuxer for the Wave format container.
+/// `Mp3Reader` implements a demuxer for the MPEG1 and MPEG2 audio frame format.
 pub struct Mp3Reader {
     reader: MediaSourceStream,
     streams: Vec<Stream>,
@@ -73,12 +73,7 @@ impl FormatReader for Mp3Reader {
         id3v2::read_id3v2(&mut self.reader)?;
 
         let mut params = CodecParameters::new();
-
-        params.for_codec(CODEC_TYPE_MP3)
-                .with_max_frames_per_packet(1152)
-                .with_sample_rate(44_100)
-                .with_channel_layout(Layout::Stereo);
-
+        params.for_codec(CODEC_TYPE_MP3);
         self.streams.push(Stream::new(params));
 
         Ok(ProbeResult::Supported)

@@ -11,9 +11,9 @@ use crate::sample::{u24, i24};
 use crate::sample::Sample;
 
 /// Converts a sample of one type and value to another type with an equivalent value.
-/// 
-/// This may be a lossy conversion if converting from a sample type of higher precision to one of lower precision. No 
-/// dither is applied.
+///
+/// This may be a lossy conversion if converting from a sample type of higher precision to one of
+/// lower precision. No dither is applied.
 pub trait FromSample<F> {
     fn from_sample(val: F) -> Self;
 }
@@ -43,19 +43,19 @@ pub fn clamp_u8(val: u16) -> u8 {
 
 /// Clamps the given value to the [-128,127] range.
 pub fn clamp_i8(val: i16) -> i8 {
-    // Add 128 (0x80) to the given value, val, to make the i8 range of [-128,127] map to [0,255]. Valid negative numbers
-    // are now positive so all bits above the 8th bit should be 0. Check this by ANDing with 0xffffff00 (!0xff). If val
-    // wraps, the test is still valid as it'll wrap around to the other numerical limit +/- 128, which is still well 
-    // outside the limits of an i8.
+    // Add 128 (0x80) to the given value, val, to make the i8 range of [-128,127] map to [0,255].
+    // Valid negative numbers are now positive so all bits above the 8th bit should be 0. Check this
+    // by ANDing with 0xffffff00 (!0xff). If val wraps, the test is still valid as it'll wrap around
+    // to the other numerical limit +/- 128, which is still well outside the limits of an i8.
     if val.wrapping_add(0x80) & !0xff == 0 {
         val as i8
     }
     else {
-        // The given value was determined to be outside the valid numerical range of i8. 
+        // The given value was determined to be outside the valid numerical range of i8.
         //
-        // Shift right all the magnitude bits of val, leaving val to be either 0xff if val was negative (sign bit 
-        // was 1), or 0x00 if val was positive (sign bit was 0). Xor the shift value with 0x7f (the positive limit) to 
-        // obtain the appropriate numerical limit.
+        // Shift right all the magnitude bits of val, leaving val to be either 0xff if val was
+        // negative (sign bit was 1), or 0x00 if val was positive (sign bit was 0). Xor the shift
+        // value with 0x7f (the positive limit) to obtain the appropriate numerical limit.
         //
         //  E.g., 0x7f ^ 0x00 = 0x7f (127)
         //  E.g., 0x7f ^ 0xff = 0x10 (-128)
@@ -186,6 +186,7 @@ macro_rules! converter {
                 $func
             }
         }
+        impl ConvertibleSample<$to> for $from {}
     )
 }
 

@@ -5,14 +5,16 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+use std::borrow::Cow;
 use std::fmt;
-use std::vec::Vec;
+use std::marker::PhantomData;
 use std::mem;
 use std::slice;
-use std::marker::PhantomData;
+use std::vec::Vec;
 
 use bitflags::bitflags;
 
+use super::conv::IntoSample;
 use super::errors::Result;
 use super::sample::{Sample, i24, u24};
 
@@ -105,7 +107,7 @@ impl fmt::Display for Channels {
     }
 }
 
-/// Layout describes common audio channel configurations.
+/// `Layout` describes common audio channel configurations.
 #[derive(Copy, Clone, Debug)]
 pub enum Layout {
     /// Single centre channel.
@@ -118,141 +120,131 @@ pub enum Layout {
     FivePointOne,
 }
 
+impl Layout {
 
-/// SignalSpec describes the characteristics of a Signal.
-#[derive(Copy, Clone)]
+    /// Converts a channel `Layout` into a `Channels` bit mask.
+    fn into_channels(self) -> Channels {
+        match self {
+            Layout::Mono => {
+                Channels::FRONT_LEFT
+            },
+            Layout::Stereo => {
+                Channels::FRONT_LEFT | Channels::FRONT_RIGHT
+            },
+            Layout::TwoPointOne => {
+                Channels::FRONT_LEFT
+                    | Channels::FRONT_RIGHT
+                    | Channels::LFE1
+            },
+            Layout::FivePointOne => {
+                Channels::FRONT_LEFT
+                    | Channels::FRONT_RIGHT
+                    | Channels::FRONT_CENTRE
+                    | Channels::REAR_LEFT
+                    | Channels::REAR_RIGHT
+                    | Channels::LFE1
+            }
+        }
+    }
+
+}
+
+/// `SignalSpec` describes the characteristics of a Signal.
+#[derive(Copy, Clone, PartialEq)]
 pub struct SignalSpec {
     /// The signal sampling rate in hertz (Hz).
     pub rate: u32,
 
     /// The channel assignments of the signal. The order of the channels in the vector is the order
     /// in which each channel sample is stored in a frame.
-    pub channels: Channels
+    pub channels: Channels,
 }
 
 impl SignalSpec {
     pub fn new(rate: u32, channels: Channels) -> Self {
-        SignalSpec {
-            rate,
-            channels,
-        }
+        SignalSpec { rate, channels }
     }
 
     pub fn new_with_layout(rate: u32, layout: Layout) -> Self {
         SignalSpec {
             rate,
-            channels: layout_to_channels(layout),
+            channels: layout.into_channels(),
         }
     }
 }
 
-fn layout_to_channels(layout: Layout) -> Channels {
-    match layout {
-        Layout::Mono => {
-            Channels::FRONT_LEFT
-        },
-        Layout::Stereo => {
-            Channels::FRONT_LEFT | Channels::FRONT_RIGHT
-        },
-        Layout::TwoPointOne => {
-            Channels::FRONT_LEFT
-                | Channels::FRONT_RIGHT
-                | Channels::LFE1
-        },
-        Layout::FivePointOne => {
-            Channels::FRONT_LEFT
-                | Channels::FRONT_RIGHT
-                | Channels::FRONT_CENTRE
-                | Channels::REAR_LEFT
-                | Channels::REAR_RIGHT
-                | Channels::LFE1
-        }
-    }
-}
-
-
-/// `WriteSample` provides a typed interface for converting a sample from it's in-memory type to it's 
+/// `WriteSample` provides a typed interface for converting a sample from it's in-memory type to it's
 /// StreamType.
 pub trait WriteSample : Sample {
-    fn write(sample: &Self, dest: &mut SampleWriter<Self>);
+    fn write(sample: Self, dest: &mut SampleWriter<Self>);
 }
 
 impl WriteSample for u8 {
-    #[inline]
-    fn write(sample: &u8, writer: &mut SampleWriter<Self>) {
+    #[inline(always)]
+    fn write(sample: u8, writer: &mut SampleWriter<Self>) {
         writer.write(sample);
     }
 }
 
 impl WriteSample for i8 {
-    #[inline]
-    fn write(sample: &i8, writer: &mut SampleWriter<Self>) {
+    #[inline(always)]
+    fn write(sample: i8, writer: &mut SampleWriter<Self>) {
         writer.write(sample);
     }
 }
 
 impl WriteSample for u16 {
-    #[inline]
-    fn write(sample: &u16, writer: &mut SampleWriter<Self>) {
+    #[inline(always)]
+    fn write(sample: u16, writer: &mut SampleWriter<Self>) {
         writer.write(sample);
     }
 }
 
 impl WriteSample for i16 {
-    #[inline]
-    fn write(sample: &i16, writer: &mut SampleWriter<Self>) {
+    #[inline(always)]
+    fn write(sample: i16, writer: &mut SampleWriter<Self>) {
         writer.write(sample);
     }
 }
 
 impl WriteSample for u24 {
-    #[inline]
-    fn write(sample: &u24, writer: &mut SampleWriter<Self>) {
-        let bytes = [
-            ((sample.0 & 0x0000ff) >>  0) as u8,
-            ((sample.0 & 0x00ff00) >>  8) as u8,
-            ((sample.0 & 0xff0000) >> 16) as u8,
-        ];
-        writer.write(&bytes);
+    #[inline(always)]
+    fn write(sample: u24, writer: &mut SampleWriter<Self>) {
+        writer.write(sample.to_ne_bytes());
     }
 }
 
 impl WriteSample for i24 {
-    #[inline]
-    fn write(sample: &i24, writer: &mut SampleWriter<Self>) {
-        let bytes = [
-            ((sample.0 & 0x0000ff) >>  0) as u8,
-            ((sample.0 & 0x00ff00) >>  8) as u8,
-            ((sample.0 & 0xff0000) >> 16) as u8,
-        ];
-        writer.write(&bytes);
+    #[inline(always)]
+    fn write(sample: i24, writer: &mut SampleWriter<Self>) {
+        writer.write(sample.to_ne_bytes());
     }
 }
 
 impl WriteSample for u32 {
-    #[inline]
-    fn write(sample: &u32, writer: &mut SampleWriter<Self>) {
+    #[inline(always)]
+    fn write(sample: u32, writer: &mut SampleWriter<Self>) {
         writer.write(sample);
     }
 }
 
 impl WriteSample for i32 {
-    #[inline]
-    fn write(sample: &i32, writer: &mut SampleWriter<Self>) {
+    #[inline(always)]
+    fn write(sample: i32, writer: &mut SampleWriter<Self>) {
         writer.write(sample);
     }
 }
 
 impl WriteSample for f32 {
-    #[inline]
-    fn write(sample: &f32, writer: &mut SampleWriter<Self>) {
+    #[inline(always)]
+    fn write(sample: f32, writer: &mut SampleWriter<Self>) {
         writer.write(sample);
     }
 }
 
 impl WriteSample for f64 {
-    #[inline]
-    fn write(sample: &f64, writer: &mut SampleWriter<Self>) {
+    #[inline(always)]
+    fn write(sample: f64, writer: &mut SampleWriter<Self>) {
         writer.write(sample);
     }
 }
@@ -283,8 +275,18 @@ impl<'a, S : Sample> AudioPlanesMut<'a, S> {
     }
 }
 
-/// `AudioBuffer` is a container for planar audio data. An `AudioBuffer` can store upto capacity samples. It implements 
-/// the Signal trait for reading and writing audio to the buffer itself.
+/// Enumeration of dither algorithns.
+pub enum Dither {
+    /// No dithering.
+    None,
+}
+
+/// `AudioBuffer` is a container for multi-channel planar audio sample data. An `AudioBuffer` is
+/// characterized by the duration (capacity), and audio specification (channels and sample rate).
+/// The capacity of an `AudioBuffer` is the maximum number of samples the buffer may store per
+/// channel. Manipulation of samples is accomplished through the Signal trait or direct buffer
+/// manipulation.
+#[derive(Clone)]
 pub struct AudioBuffer<S : Sample> {
     buf: Vec<S>,
     spec: SignalSpec,
@@ -293,7 +295,8 @@ pub struct AudioBuffer<S : Sample> {
 }
 
 impl<S : Sample> AudioBuffer<S> {
-
+    /// Instantiate a new `AudioBuffer` using the specified signal specification and of the given
+    /// duration.
     pub fn new(duration: Duration, spec: &SignalSpec) -> Self {
         let n_capacity = match duration {
             Duration::Frames(frames) => frames,
@@ -317,20 +320,38 @@ impl<S : Sample> AudioBuffer<S> {
         }
     }
 
+    /// Instantiates an unused `AudioBuffer`. An unused `AudioBuffer` will not allocate any memory,
+    /// has a sample rate of 0, and no audio channels.
+    pub fn unused() -> Self {
+        AudioBuffer {
+            buf: Vec::with_capacity(0),
+            spec: SignalSpec::new(0, Channels::empty()),
+            n_frames: 0,
+            n_capacity: 0,
+        }
+    }
+
+    /// Returns `true` if the `AudioBuffer` is unused.
+    pub fn is_unused(&self) -> bool {
+        self.n_capacity == 0
+    }
+
     /// Gets the signal specification for the buffer.
     pub fn spec(&self) -> &SignalSpec {
         &self.spec
     }
 
-    /// Gets the total capacity of the buffer. The capacity is the maximum number of frames a buffer can store.
+    /// Gets the total capacity of the buffer. The capacity is the maximum number of frames a buffer
+    /// can store.
     pub fn capacity(&self) -> usize {
         self.n_capacity
     }
 
     /// Gets immutable references to all audio planes (channels) within the buffer.
-    /// 
-    /// Note: This is not a cheap operation. It is advisable that this call is only used when operating on batches of 
-    /// frames. Generally speaking, it is almost always better to use `chan()` to selectively choose the plane to read.
+    ///
+    /// Note: This is not a cheap operation. It is advisable that this call is only used when
+    /// operating on batches of frames. Generally speaking, it is almost always better to use
+    /// `chan()` to selectively choose the plane to read.
     pub fn planes<'a>(&'a self) -> AudioPlanes<'a, S> {
         let mut planes = AudioPlanes {
             planes: unsafe { std::mem::uninitialized() },
@@ -347,10 +368,10 @@ impl<S : Sample> AudioBuffer<S> {
     }
 
     /// Gets mutable references to all audio planes (channels) within the buffer.
-    /// 
-    /// Note: This is not a cheap operation. It is advisable that this call is only used when mutating batches of 
-    /// frames. Generally speaking, it is almost always better to use `render()`, `fill()`, `chan_mut()`, and 
-    /// `chan_pair_mut()` to mutate the buffer.
+    ///
+    /// Note: This is not a cheap operation. It is advisable that this call is only used when
+    /// mutating batches of frames. Generally speaking, it is almost always better to use
+    /// `render()`, `fill()`, `chan_mut()`, and `chan_pair_mut()` to mutate the buffer.
     pub fn planes_mut<'a>(&'a mut self) -> AudioPlanesMut<'a, S> {
         let mut planes = AudioPlanesMut {
             planes: unsafe { std::mem::uninitialized() },
@@ -372,13 +393,93 @@ impl<S : Sample> AudioBuffer<S> {
 
 }
 
+/// `AudioBufferRef` is a copy-on-write reference to an AudioBuffer of any type.
+pub enum AudioBufferRef<'a> {
+    F32(Cow<'a, AudioBuffer<f32>>),
+    S32(Cow<'a, AudioBuffer<i32>>),
+}
+
+impl<'a> AudioBufferRef<'a> {
+    pub fn spec(&self) -> &SignalSpec {
+        match self {
+            AudioBufferRef::F32(buf) => buf.spec(),
+            AudioBufferRef::S32(buf) => buf.spec(),
+        }
+    }
+
+    pub fn capacity(&self) -> usize {
+        match self {
+            AudioBufferRef::F32(buf) => buf.capacity(),
+            AudioBufferRef::S32(buf) => buf.capacity(),
+        }
+    }
+}
+
+/// `AsAudioBufferRef` is a trait implemented for `AudioBuffer`s that may be referenced in an
+/// `AudioBufferRef`.
+pub trait AsAudioBufferRef {
+    fn as_audio_buffer_ref(&self) -> AudioBufferRef;
+}
+
+impl AsAudioBufferRef for AudioBuffer<f32> {
+    fn as_audio_buffer_ref(&self) -> AudioBufferRef {
+        AudioBufferRef::F32(Cow::Borrowed(self))
+    }
+}
+
+impl AsAudioBufferRef for AudioBuffer<i32> {
+    fn as_audio_buffer_ref(&self) -> AudioBufferRef {
+        AudioBufferRef::S32(Cow::Borrowed(self))
+    }
+}
+
+/// The `ConvertibleAudioBuffer` trait is a blanket trait for all `AudioBuffer` types. It provides
+/// facilities for converting between differently typed, but equivalent, `AudioBuffer`s.
+///
+/// Two `AudioBuffer`s are considered equivalent if they have the same capacity and signal
+/// specification.
+pub trait ConvertibleAudioBuffer<S: Sample> {
+    /// Converts the contents of an `AudioBuffer` into an equivalent destination `AudioBuffer` of
+    /// a different type. If the types are the same then this is a copy operation. If the conversion
+    /// results in a loss of resolution, then the provided dither method is applied.
+    fn convert(&self, dest: &mut AudioBuffer<S>, dither: Dither);
+
+    /// Makes an equivalent `AudioBuffer` of a different type.
+    fn make_equivalent<T: Sample>(&self) -> AudioBuffer<T>;
+}
+
+impl<T: Sample, F: Sample + IntoSample<T>> ConvertibleAudioBuffer<T> for AudioBuffer<F> {
+
+    fn convert(&self, dest: &mut AudioBuffer<T>, dither: Dither) {
+        debug_assert!(dest.n_frames == self.n_frames);
+        debug_assert!(dest.n_capacity == self.n_capacity);
+        debug_assert!(dest.spec == self.spec);
+
+        for c in 0..self.spec.channels.len() {
+            let begin = c * self.n_capacity;
+            let end = begin + self.n_frames;
+
+            for (d, s) in dest.buf[begin..end].iter_mut().zip(&self.buf[begin..end]) {
+                *d = (*s).into_sample();
+            }
+        }
+
+    }
+
+    fn make_equivalent<E: Sample>(&self) -> AudioBuffer<E> {
+        AudioBuffer::<E>::new(Duration::Frames(self.n_capacity as u64), &self.spec)
+    }
+}
+
+/// The `Signal` trait provides methods for rendering and transforming contiguous buffers of audio
+/// data.
 pub trait Signal<S : Sample> {
     /// Gets the number of actual frames written to the buffer. Conversely, this also is the number
     /// of written samples in any one channel.
     fn frames(&self) -> usize;
 
-    /// Clears all written frames from the buffer. This is a cheap operation and does not zero the underlying audio 
-    /// data.
+    /// Clears all written frames from the buffer. This is a cheap operation and does not zero the
+    /// underlying audio data.
     fn clear(&mut self);
 
     /// Gets an immutable reference to all the written samples in the specified channel.
@@ -390,24 +491,27 @@ pub trait Signal<S : Sample> {
     /// Gets two mutable references to two different channels.
     fn chan_pair_mut(&mut self, first: u8, second: u8) -> (&mut [S], &mut [S]);
 
-    /// Renders a reserved number of frames. This is a cheap operation and simply advances the frame counter. The 
-    /// underlying audio data is not modified and should be overwritten through other means.
-    /// 
-    /// If `n_frames` is `None`, the remaining number of samples will be used. If `n_frames` is too large, this function
-    /// will assert.
+    /// Renders a reserved number of frames. This is a cheap operation and simply advances the frame
+    /// counter. The underlying audio data is not modified and should be overwritten through other
+    /// means.
+    ///
+    /// If `n_frames` is `None`, the remaining number of samples will be used. If `n_frames` is too
+    /// large, this function will assert.
     fn render_reserved(&mut self, n_frames: Option<usize>);
 
-    /// Renders a number of frames using the provided render function. The number of frames to render is specified by 
-    /// `n_frames`. If `n_frames` is `None`, the remaining number of frames in the buffer will be rendered. If the 
-    /// render function returns an error, the render operation is terminated prematurely.
+    /// Renders a number of frames using the provided render function. The number of frames to
+    /// render is specified by `n_frames`. If `n_frames` is `None`, the remaining number of frames
+    /// in the buffer will be rendered. If the render function returns an error, the render
+    /// operation is terminated prematurely.
     fn render<'a, F>(&'a mut self, n_frames: Option<usize>, render: F) -> Result<()>
     where
         F: FnMut(&mut AudioPlanesMut<'a, S>, usize) -> Result<()>;
 
-    /// Clears, and then renders the entire buffer using the fill function. This is a convenience wrapper around `render`
-    /// and exhibits the same behaviour as `render` in regards to the fill function.
+    /// Clears, and then renders the entire buffer using the fill function. This is a convenience
+    /// wrapper around `render` and exhibits the same behaviour as `render` in regards to the fill
+    /// function.
     #[inline]
-    fn fill<'a, F>(&'a mut self, fill: F) -> Result<()> 
+    fn fill<'a, F>(&'a mut self, fill: F) -> Result<()>
     where
         F: FnMut(&mut AudioPlanesMut<'a, S>, usize) -> Result<()>
     {
@@ -415,8 +519,8 @@ pub trait Signal<S : Sample> {
         self.render(None, fill)
     }
 
-    /// Transforms every written sample in the signal using the transformation function provided. This function does not
-    /// guarantee an order in which the samples are transformed.
+    /// Transforms every written sample in the signal using the transformation function provided.
+    /// This function does not guarantee an order in which the samples are transformed.
     fn transform<F>(&mut self, f: F)
     where
         F: Fn(S) -> S;
@@ -466,7 +570,7 @@ impl<S: Sample> Signal<S> for AudioBuffer<S> {
 
     fn render<'a, F>(&'a mut self, n_frames: Option<usize>, mut render: F) -> Result<()>
     where
-        F: FnMut(&mut AudioPlanesMut<'a, S>, usize) -> Result<()> 
+        F: FnMut(&mut AudioPlanesMut<'a, S>, usize) -> Result<()>
     {
         // Calculate the number of frames to render if it is not provided.
         let n_render_frames = n_frames.unwrap_or(self.n_capacity - self.n_frames);
@@ -488,7 +592,7 @@ impl<S: Sample> Signal<S> for AudioBuffer<S> {
                 ptr = ptr.add(self.n_capacity);
             }
         }
-        
+
         // Attempt to fill the entire buffer, exiting only if there is an error.
         while self.n_frames < end {
             render(&mut planes, self.n_frames)?;
@@ -507,7 +611,7 @@ impl<S: Sample> Signal<S> for AudioBuffer<S> {
         unsafe {
             let mut plane_start = self.buf.as_mut_ptr();
             let buffer_end = plane_start.add(self.buf.len());
-            
+
             while plane_start < buffer_end {
                 let plane_end = plane_start.add(self.n_frames);
 
@@ -524,18 +628,19 @@ impl<S: Sample> Signal<S> for AudioBuffer<S> {
 
 }
 
-
-/// A `SampleBuffer`, as the name implies, is a Sample oriented buffer. It is agnostic to the ordering/layout 
-/// of samples within the buffer. 
-pub struct SampleBuffer<S: Sample> {
+/// A `SampleBuffer`, as the name implies, is a sample oriented buffer. It is agnostic to the
+/// ordering/layout of samples within the buffer. Generally, `SampleBuffer` is mean't for safely
+/// importing and exporting sample data to and from Sonata.
+pub struct SampleBuffer<S: Sample + WriteSample> {
     buf: Vec<u8>,
     n_written: usize,
     // Might take your heart.
     sample_format: PhantomData<S>,
 }
 
-impl<S: Sample> SampleBuffer<S> {
-
+impl<S: Sample + WriteSample> SampleBuffer<S> {
+    /// Instantiate a new `SampleBuffer` using the specified signal specification and of the given
+    /// duration.
     pub fn new(duration: Duration, spec: &SignalSpec) -> SampleBuffer<S> {
         let n_frames = match duration {
             Duration::Frames(frames) => frames,
@@ -569,134 +674,90 @@ impl<S: Sample> SampleBuffer<S> {
         self.buf.len() / mem::size_of::<S>()
     }
 
-    /// Gets a mutable byte buffer from the `SampleBuffer` where samples may be written. Calls to this function will 
-    /// overwrite any previously written data since it is not known how the samples for each channel are laid out in
-    /// the buffer.
-    pub fn req_bytes_mut(&mut self, n_samples: usize) -> &mut [u8] {
-        assert!(n_samples <= self.capacity());
-
-        let end = n_samples * mem::size_of::<S::StreamType>();
-        self.n_written = n_samples;
-        &mut self.buf[..end]
-    }
-
     /// Gets an immutable slice to the bytes of the sample's written in the `SampleBuffer`.
     pub fn as_bytes(&self) -> &[u8] {
         let end = self.n_written * mem::size_of::<S::StreamType>();
         &self.buf[..end]
     }
 
-}
+    pub fn copy_planar_ref(&mut self, src: AudioBufferRef, dither: Dither)
+    where
+        f32: IntoSample<S>,
+        i32: IntoSample<S>
+    {
+        match src {
+            AudioBufferRef::F32(buf) => self.copy_planar_typed(&buf, dither),
+            AudioBufferRef::S32(buf) => self.copy_planar_typed(&buf, dither),
+        }
+    }
 
+    pub fn copy_planar_typed<F>(&mut self, src: &AudioBuffer<F>, dither: Dither)
+    where
+        F: Sample + IntoSample<S>
+    {
+        let n_frames = src.n_frames;
+        let n_channels = src.spec.channels.len();
+        let n_samples = n_frames * n_channels;
 
-/// A `SampleWriter` allows for the efficient writing of samples of a specific type to a 
-/// `SampleBuffer`. A `SampleWriter` can only be instantiated by a `StreamBuffer`.
-/// 
-/// While `SampleWriter` could simply be implemented as a byte stream writer with generic 
-/// write functions to support most use cases, this would be unsafe as it decouple's a 
-/// sample's StreamType, the data type used to allocate the `SampleBuffer`, from the amount 
-/// of data actually written to the `SampleBuffer` per Sample. Therefore, `SampleWriter` is 
-/// generic across the Sample trait and provides precisely one `write()` function that takes
-/// exactly one reference to a Sample's StreamType. The result of this means that there will
-/// never be an alignment issue, and the underlying byte vector can simply be converted to a
-/// StreamType slice. This allows the compiler to use the most efficient method of copying 
-/// the encoded sample value to the underlying buffer.
-pub struct SampleWriter<'a, S: Sample> {
-    buf: &'a mut [S::StreamType],
-    next: usize,
-}
+        // Ensure that the capacity of the sample buffer is greater than or equal to the number
+        // of samples that will be copied from the source buffer.
+        assert!(self.capacity() >= n_samples);
 
-impl<'a, S: Sample> SampleWriter<'a, S> {
+        let mut writer = SampleWriter::from_buf(n_samples, self);
 
-    fn from_buf(n_samples: usize, buf: &mut SampleBuffer<S>) -> SampleWriter<S> {
-        let bytes = buf.req_bytes_mut(n_samples);
-        unsafe {
-            SampleWriter {
-                buf: slice::from_raw_parts_mut(bytes.as_mut_ptr() as *mut S::StreamType, buf.capacity()),
-                next: 0,
+        for ch in 0..n_channels {
+            let begin = ch * src.n_capacity;
+            for sample in &src.buf[begin..(begin + n_frames)] {
+                S::write((*sample).into_sample(), &mut writer);
             }
         }
     }
 
-    pub fn write(&mut self, src: &S::StreamType) {
-        // Copy the source sample to the output buffer at the next writeable index.
-        unsafe { *self.buf.get_unchecked_mut(self.next) = *src; }
-        // Increment writeable index.
-        self.next += 1;
-    }
-
-}
-
-/// `ExportBuffer` provides the interface to copy the contents of a buffer containing 
-/// audio samples into a `SampleBuffer`. When exported, Sample's that have a StreamType 
-/// that is not the same as it's in-memory type will be encoded as the StreamType first. 
-/// If the implementor of `ExportBuffer` over-provisions samples, only the actual samples
-/// in the source will be exported.
-pub trait ExportBuffer<S: Sample + WriteSample> {
-    /// Copies all samples from a channel to the `SampleBuffer` before copying the 
-    /// next channel.
-    fn copy_planar(&self, dst: &mut SampleBuffer<S>);
-
-    /// Copies one sample per channel as a set to the `SampleBuffer` before copying
-    /// the next set.
-    fn copy_interleaved(&self, dst: &mut SampleBuffer<S>);
-}
-
-impl<S: Sample + WriteSample> ExportBuffer<S> for AudioBuffer<S> {
-
-    fn copy_planar(&self, dst: &mut SampleBuffer<S>) {
-        let n_frames = self.n_frames;
-        let n_channels = self.spec.channels.len();
+    /// Copies all samples from a channel from the source `AudioBuffer` to the `SampleBuffer` before
+    /// copying the next channel.
+    pub fn copy_planar(&mut self, src: &AudioBuffer<S>) {
+        let n_frames = src.n_frames;
+        let n_channels = src.spec.channels.len();
         let n_samples = n_frames * n_channels;
 
-        // Ensure that the capacity of the destination buffer is greater than or equal to the number of 
-        // samples that will be copied.
-        assert!(dst.capacity() >= n_samples);
+        // Ensure that the capacity of the sample buffer is greater than or equal to the number
+        // of samples that will be copied from the source buffer.
+        assert!(self.capacity() >= n_samples);
 
-        let mut writer = SampleWriter::from_buf(n_samples, dst);
+        let mut writer = SampleWriter::from_buf(n_samples, self);
 
-        // Provide slightly optimized copy algorithms for Mono and Stereo buffers.
-        match n_channels {
-            // No channels, do nothing.
-            0 => (),
-            // Mono
-            1 => {
-                for i in 0..n_frames {
-                    unsafe { S::write(self.buf.get_unchecked(i), &mut writer); }
-                }
-            },
-            // Stereo
-            2 => {
-                for i in 0..n_frames {
-                    unsafe { S::write(self.buf.get_unchecked(i), &mut writer); }
-                }
-                for i in self.n_capacity..self.n_capacity + n_frames {
-                    unsafe { S::write(self.buf.get_unchecked(i), &mut writer); }
-                }
-            },
-            // 3+ channels
-            _ => {
-                let mut k = 0;
-                for _ in 0..n_channels {
-                    for i in 0..n_frames {
-                        unsafe { S::write(self.buf.get_unchecked(k + i), &mut writer); }
-                    }
-                    // Advance the start index for the next channel by the source buffer stride.
-                    k += self.n_capacity;
-                }
+        for ch in 0..n_channels {
+            let begin = ch * src.n_capacity;
+            for sample in &src.buf[begin..(begin + n_frames)] {
+                S::write(*sample, &mut writer);
             }
         }
-
     }
 
-    fn copy_interleaved(&self, dst: &mut SampleBuffer<S>) {
-        let n_frames = self.n_frames;
-        let n_channels = self.spec.channels.len();
+    pub fn copy_interleaved_ref(&mut self, src: AudioBufferRef, dither: Dither)
+    where
+        f32: IntoSample<S>,
+        i32: IntoSample<S>
+    {
+        match src {
+            AudioBufferRef::F32(buf) => self.copy_interleaved_typed(&buf, dither),
+            AudioBufferRef::S32(buf) => self.copy_interleaved_typed(&buf, dither),
+        }
+    }
+
+    pub fn copy_interleaved_typed<F>(&mut self, src: &AudioBuffer<F>, dither: Dither)
+    where
+        F: Sample + IntoSample<S>
+    {
+        let n_frames = src.n_frames;
+        let n_channels = src.spec.channels.len();
         let n_samples = n_frames * n_channels;
 
-        let mut writer = SampleWriter::from_buf(n_samples, dst);
+        // Ensure that the capacity of the sample buffer is greater than or equal to the number
+        // of samples that will be copied from the source buffer.
+        assert!(self.capacity() >= n_samples);
 
-        let stride = self.n_capacity;
+        let mut writer = SampleWriter::from_buf(n_samples, self);
 
         // Provide slightly optimized interleave algorithms for Mono and Stereo buffers.
         match n_channels {
@@ -704,29 +765,127 @@ impl<S: Sample + WriteSample> ExportBuffer<S> for AudioBuffer<S> {
             0 => (),
             // Mono
             1=> {
-                for i in 0..n_frames {
-                    unsafe { S::write(self.buf.get_unchecked(i), &mut writer); }
+                for sample in &src.buf[0..n_frames] {
+                    S::write((*sample).into_sample(), &mut writer);
                 }
             },
             // Stereo
             2 => {
-                for i in 0..n_frames {
-                    unsafe { 
-                        S::write(self.buf.get_unchecked(i), &mut writer); 
-                        S::write(self.buf.get_unchecked(i + stride), &mut writer);
-                    }
+                let l_buf = &src.buf[0..n_frames];
+                let r_buf = &src.buf[src.n_capacity..(src.n_capacity + n_frames)];
+
+                for (l, r) in l_buf.iter().zip(r_buf) {
+                    S::write((*l).into_sample(), &mut writer);
+                    S::write((*r).into_sample(), &mut writer);
                 }
             },
             // 3+ channels
             _ => {
+                let stride = src.n_capacity;
+
                 for i in 0..n_frames {
-                    for j in 0..n_channels {
-                        unsafe { S::write(self.buf.get_unchecked(j*stride + i), &mut writer); }
+                    for ch in 0..n_channels {
+                        let sample = unsafe { src.buf.get_unchecked(ch * stride + i) };
+                        S::write((*sample).into_sample(), &mut writer);
                     }
                 }
+            },
+        }
+    }
+
+    /// Copies one sample per channel from the source `AudioBuffer` as a set to the `SampleBuffer`
+    /// before copying the next set of samples.
+    pub fn copy_interleaved(&mut self, src: &AudioBuffer<S>) {
+        let n_frames = src.n_frames;
+        let n_channels = src.spec.channels.len();
+        let n_samples = n_frames * n_channels;
+
+        // Ensure that the capacity of the sample buffer is greater than or equal to the number
+        // of samples that will be copied from the source buffer.
+        assert!(self.capacity() >= n_samples);
+
+        let mut writer = SampleWriter::from_buf(n_samples, self);
+
+        // Provide slightly optimized interleave algorithms for Mono and Stereo buffers.
+        match n_channels {
+            // No channels, do nothing.
+            0 => (),
+            // Mono
+            1=> {
+                for sample in &src.buf[0..n_frames] {
+                    S::write(*sample, &mut writer);
+                }
+            },
+            // Stereo
+            2 => {
+                let l_buf = &src.buf[0..n_frames];
+                let r_buf = &src.buf[src.n_capacity..(src.n_capacity + n_frames)];
+
+                for (l, r) in l_buf.iter().zip(r_buf) {
+                    S::write(*l, &mut writer);
+                    S::write(*r, &mut writer);
+                }
+            },
+            // 3+ channels
+            _ => {
+                let stride = src.n_capacity;
+
+                for i in 0..n_frames {
+                    for ch in 0..n_channels {
+                        unsafe { S::write(*src.buf.get_unchecked(ch * stride + i), &mut writer); }
+                    }
+                }
+            },
+        }
+    }
+
+    /// Gets a mutable byte buffer from the `SampleBuffer` where samples may be written. Calls to
+    /// this function will overwrite any previously written data since it is not known how the
+    /// samples for each channel are laid out in the buffer.
+    fn req_bytes_mut(&mut self, n_samples: usize) -> &mut [u8] {
+        assert!(n_samples <= self.capacity());
+
+        let end = n_samples * mem::size_of::<S::StreamType>();
+        self.n_written = n_samples;
+        &mut self.buf[..end]
+    }
+}
+
+/// A `SampleWriter` allows for the efficient writing of samples of a specific type to a
+/// `SampleBuffer`. A `SampleWriter` can only be instantiated by a `StreamBuffer`.
+///
+/// While `SampleWriter` could simply be implemented as a byte stream writer with generic
+/// write functions to support most use cases, this would be unsafe as it decouple's a
+/// sample's StreamType, the data type used to allocate the `SampleBuffer`, from the amount
+/// of data actually written to the `SampleBuffer` per Sample. Therefore, `SampleWriter` is
+/// generic across the Sample trait and provides precisely one `write()` function that takes
+/// exactly one reference to a Sample's StreamType. The result of this means that there will
+/// never be an alignment issue, and the underlying byte vector can simply be converted to a
+/// StreamType slice. This allows the compiler to use the most efficient method of copying
+/// the encoded sample value to the underlying buffer.
+pub struct SampleWriter<'a, S: Sample + WriteSample> {
+    buf: &'a mut [S::StreamType],
+    next: usize,
+}
+
+impl<'a, S: Sample + WriteSample> SampleWriter<'a, S> {
+
+    fn from_buf(n_samples: usize, buf: &mut SampleBuffer<S>) -> SampleWriter<S> {
+        let bytes = buf.req_bytes_mut(n_samples);
+        unsafe {
+            SampleWriter {
+                buf: slice::from_raw_parts_mut(
+                    bytes.as_mut_ptr() as *mut S::StreamType, buf.capacity()),
+                next: 0,
             }
         }
     }
 
-}
+    pub fn write(&mut self, src: S::StreamType) {
+        // Copy the source sample to the output buffer at the next writeable index.
+        unsafe { *self.buf.get_unchecked_mut(self.next) = src; }
+        // Increment writeable index.
+        self.next += 1;
+    }
 
+}

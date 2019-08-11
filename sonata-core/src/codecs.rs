@@ -9,15 +9,16 @@ use std::collections::HashMap;
 use std::default::Default;
 use std::fmt;
 
-use crate::audio::{AudioBuffer, Channels, Layout, SignalSpec};
-use crate::errors::Result;
+use crate::audio::{AudioBufferRef, Channels, Layout};
+use crate::errors::{Result, unsupported_error};
 use crate::formats::Packet;
 use crate::sample::SampleFormat;
 
-/// A `CodecType` is a unique identifier used to identify a specific codec. `CodecType` is mainly used for matching 
-/// a format's stream to a specific `Decoder`. Decoders advertisting support for a specific `CodecType` should be 
-/// interchangeable in regards to their ability to consume packets from a packet stream. This means that while support 
-/// for codec features and quality may differ, all Decoders will identically advance the packet stream.
+/// A `CodecType` is a unique identifier used to identify a specific codec. `CodecType` is mainly
+/// used for matching a format's stream to a specific `Decoder`. Decoders advertisting support for a
+/// specific `CodecType` should be interchangeable in regards to their ability to consume packets
+/// from a packet stream. This means that while support for codec features and quality may differ,
+/// all Decoders will identically advance the packet stream.
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub struct CodecType(u32);
 
@@ -119,7 +120,7 @@ pub const CODEC_TYPE_FLAC: CodecType             = CodecType(0x1000);
 pub const CODEC_TYPE_MP3: CodecType              = CodecType(0x1001);
 /// Advanced Audio Coding (AAC)
 pub const CODEC_TYPE_AAC: CodecType              = CodecType(0x1002);
-/// Vorbis 
+/// Vorbis
 pub const CODEC_TYPE_VORBIS: CodecType           = CodecType(0x1003);
 /// Opus
 pub const CODEC_TYPE_OPUS: CodecType             = CodecType(0x1004);
@@ -133,8 +134,8 @@ impl fmt::Display for CodecType {
     }
 }
 
-/// Codec parameters stored in a container format's headers and metadata may be passed to a codec using the 
-/// `CodecParameters` structure. All fields in this structure are optional.
+/// Codec parameters stored in a container format's headers and metadata may be passed to a codec
+/// using the `CodecParameters` structure. All fields in this structure are optional.
 #[derive(Clone)]
 pub struct CodecParameters {
     pub codec: CodecType,
@@ -160,10 +161,12 @@ pub struct CodecParameters {
     /// The channel layout.
     pub channel_layout: Option<Layout>,
 
-    /// The number of leading samples inserted by the encoder for padding that should be skipped during playback.
+    /// The number of leading samples inserted by the encoder for padding that should be skipped
+    /// during playback.
     pub leading_padding: Option<u32>,
 
-    /// The number of trailing samples inserted by the encoder for padding that should be skipped during playback.
+    /// The number of trailing samples inserted by the encoder for padding that should be skipped
+    /// during playback.
     pub trailing_padding: Option<u32>,
 
     /// The maximum number of samples a packet will contain.
@@ -251,18 +254,19 @@ pub struct DecoderOptions {
 }
 
 impl Default for DecoderOptions {
-    fn default() -> Self { 
+    fn default() -> Self {
         DecoderOptions {
             verify: false,
         }
     }
 }
 
-/// A `Decoder` implements a codec's decode algorithm. It consumes `Packet`s and produces `AudioBuffer`s.
+/// A `Decoder` implements a codec's decode algorithm. It consumes `Packet`s and produces
+/// `AudioBuffer`s.
 pub trait Decoder {
 
-    /// Instantiates the Decoder will the provided `CodecParameters`.
-    fn new(params: &CodecParameters, options: &DecoderOptions) -> Self
+    /// Attempts to instantiates a Decoder using the provided `CodecParameters`.
+    fn try_new(params: &CodecParameters, options: &DecoderOptions) -> Result<Self>
     where
         Self: Sized;
 
@@ -274,19 +278,18 @@ pub trait Decoder {
     /// Gets a reference to parameters the `Decoder` was instantiated with.
     fn codec_params(&self) -> &CodecParameters;
 
-    /// If it is known, gets the `SignalSpec` describing the output signal.
-    fn spec(&self) -> Option<SignalSpec>;
-
-    /// Decodes a `Packet` of audio data into the provided `AudioBuffer`.
-    fn decode(&mut self, packet: Packet<'_>, buf: &mut AudioBuffer<i32>) -> Result<()>;
+    /// Decodes a `Packet` of audio data and returns a copy-on-write generic (untyped) audio buffer
+    /// of the decoded audio.
+    fn decode(&mut self, packet: Packet<'_>) -> Result<AudioBufferRef>;
 
     /// Closes a decoder.
     fn close(&mut self);
 }
 
-/// A `CodecDescriptor` stores a description of a single logical codec. Common information such as the `CodecType`, a
-/// short name, and a long name are provided. The `CodecDescriptor` also provides an instantiation function. When the 
-/// instantiation function is called, a `Decoder` for the codec is returned.
+/// A `CodecDescriptor` stores a description of a single logical codec. Common information such as
+/// the `CodecType`, a short name, and a long name are provided. The `CodecDescriptor` also provides
+/// an instantiation function. When the instantiation function is called, a `Decoder` for the codec
+/// is returned.
 #[derive(Copy, Clone)]
 pub struct CodecDescriptor {
     /// The `CodecType` identifier.
@@ -296,11 +299,11 @@ pub struct CodecDescriptor {
     /// A longer, more descriptive, string identifying the codec.
     pub long_name: &'static str,
     // An instantiation function for the codec.
-    pub inst_func: fn(&CodecParameters, &DecoderOptions) -> Box<dyn Decoder>,
+    pub inst_func: fn(&CodecParameters, &DecoderOptions) -> Result<Box<dyn Decoder>>,
 }
 
-/// A `CodecRegistry` allows the registration of codecs, and provides a method to instantiate a `Decoder` given a  
-/// `CodecParameters` object.
+/// A `CodecRegistry` allows the registration of codecs, and provides a method to instantiate a
+/// `Decoder` given a `CodecParameters` object.
 pub struct CodecRegistry {
     codecs: HashMap<CodecType, Vec<(CodecDescriptor, u32)>>,
 }
@@ -335,25 +338,29 @@ impl CodecRegistry {
         }
     }
 
-    // Searches the registry provided codec and returns an instance if it is found. If it is not found, returns None.
-    pub fn make(&self, params: &CodecParameters, options: &DecoderOptions) 
-        -> Option<Box<dyn Decoder>> {
+    // Searches the registry for a decoder that supports the codec. If one is found, it will be
+    // instantiated with the provided `CodecParameters`. If a decoder could not be found, or the
+    // `CodecParameters` are either insufficients or invalid for the decoder, an error is returned.
+    pub fn make(&self, params: &CodecParameters, options: &DecoderOptions)
+        -> Result<Box<dyn Decoder>> {
 
         if let Some(descriptors) = self.codecs.get(&params.codec) {
-            return Some((descriptors[0].0.inst_func)(params, options));
+            Ok((descriptors[0].0.inst_func)(params, options)?)
         }
-        None
+        else {
+            unsupported_error("unsupported codec")
+        }
     }
 }
 
 #[macro_export]
 macro_rules! support_codec {
     ($type:expr, $short_name:expr, $long_name:expr) => {
-        CodecDescriptor { 
+        CodecDescriptor {
             codec: $type,
             short_name: $short_name,
             long_name: $long_name,
-            inst_func: |params, opt| { Box::new(Self::new(&params, &opt)) }
+            inst_func: |params, opt| { Ok(Box::new(Self::try_new(&params, &opt)?)) }
         }
     };
 }
