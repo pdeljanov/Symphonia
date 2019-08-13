@@ -302,26 +302,26 @@ pub(super) fn read_scale_factors_mpeg1<B: BitStream>(
         for (i, (start, end)) in SCALE_FACTOR_BANDS.iter().enumerate() {
             let slen = if i < 2 { slen1 } else { slen2 };
 
-            // Scale factors are already zeroed out, so don't do anything if slen is 0.
-            if slen > 0 {
-                // The scale factor selection information for this channel indicates that the scale
-                // factors should be copied from granule 0 for this channel.
-                if gr > 0 && frame_data.scfsi[ch][i] {
-                    let (granule0, granule1) = frame_data.granules.split_first_mut().unwrap();
+            // If this is the second granule, and the scale factor selection information for this 
+            // channel indicates that the scale factors should be copied from the first granule, 
+            // do so.
+            if gr > 0 && frame_data.scfsi[ch][i] {
+                let (granule0, granule1) = frame_data.granules.split_first_mut().unwrap();
 
-                    granule1[0].channels[ch].scalefacs[*start..*end]
-                        .copy_from_slice(&granule0.channels[ch].scalefacs[*start..*end]);
+                granule1[0].channels[ch].scalefacs[*start..*end]
+                    .copy_from_slice(&granule0.channels[ch].scalefacs[*start..*end]);
+            }
+            // Otherwise, read the scale factors from the bitstream. Since scale factors are already
+            // zeroed out by default, don't do anything is slen is 0.
+            else if slen > 0 {
+                for sfb in *start..*end {
+                    frame_data.granules[gr].channels[ch].scalefacs[sfb] =
+                        bs.read_bits_leq32(slen)? as u8;
                 }
-                // Otherwise, read the scale factors from the bitstream.
-                else {
-                    for sfb in *start..*end {
-                        frame_data.granules[gr].channels[ch].scalefacs[sfb] =
-                            bs.read_bits_leq32(slen)? as u8;
-                    }
-                    bits_read += slen as usize * (end - start);
-                }
+                bits_read += slen as usize * (end - start);
             }
         }
+
     }
 
     Ok(bits_read as u32)
