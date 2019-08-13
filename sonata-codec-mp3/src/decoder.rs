@@ -11,7 +11,7 @@ use sonata_core::errors::{Result, unsupported_error};
 use sonata_core::formats::Packet;
 use sonata_core::support_codec;
 
-use super::{common::*, bitstream, layer3};
+use super::{common::*, header, layer3};
 
 /// MPEG1 and MPEG2 layers 1, 2, and 3 decoder.
 pub struct Mp3Decoder {
@@ -41,7 +41,7 @@ impl Decoder for Mp3Decoder {
     fn decode(&mut self, packet: Packet<'_>) -> Result<AudioBufferRef<'_>> {
         let mut reader = packet.into_stream();
 
-        let header = bitstream::read_frame_header(&mut reader)?;
+        let header = header::read_frame_header(&mut reader)?;
 
         // The buffer can only be created after the first frame is decoded. Technically, it can
         // change throughout the stream as well...

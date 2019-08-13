@@ -5,10 +5,10 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-mod bitstream;
 mod common;
 mod decoder;
 mod demuxer;
+mod header;
 mod huffman_tables;
 mod layer3;
 mod synthesis;
