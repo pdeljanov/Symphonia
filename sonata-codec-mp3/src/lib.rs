@@ -6,9 +6,11 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 mod bitstream;
+mod common;
 mod decoder;
 mod demuxer;
 mod huffman_tables;
+mod layer3;
 mod synthesis;
 
 pub mod id3v1;

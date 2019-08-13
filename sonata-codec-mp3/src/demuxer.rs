@@ -9,7 +9,7 @@
 
 use sonata_core::support_format;
 
-use sonata_core::audio::{Layout, Timestamp};
+use sonata_core::audio::Timestamp;
 use sonata_core::codecs::{CodecParameters, CODEC_TYPE_MP3};
 use sonata_core::errors::Result;
 use sonata_core::formats::{FormatDescriptor, FormatOptions, FormatReader, Packet};
@@ -70,7 +70,7 @@ impl FormatReader for Mp3Reader {
     }
 
     fn probe(&mut self, depth: ProbeDepth) -> Result<ProbeResult> {
-        id3v2::read_id3v2(&mut self.reader)?;
+        self.tags.append(&mut id3v2::read_id3v2(&mut self.reader)?);
 
         let mut params = CodecParameters::new();
         params.for_codec(CODEC_TYPE_MP3);

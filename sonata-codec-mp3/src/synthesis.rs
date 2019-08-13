@@ -157,8 +157,8 @@ impl Default for SynthesisState {
 /// Sub-band synthesis transforms 32 sub-band blocks containing 18 time-domain samples each into
 /// 18 blocks of 32 PCM audio samples.
 pub fn synthesis(in_samples: &mut [f32; 576], state: &mut SynthesisState, out: &mut [f32]) {
-    let mut s_vec = [0f32; 32];
     let mut u_vec = [0f32; 512];
+    let mut s_vec = [0f32; 32];
 
     // Get a slice to 576 output samples to (hopefully) elide future bounds checking.
     let out_samples = &mut out[0..576];
@@ -286,25 +286,25 @@ pub fn synthesis(in_samples: &mut [f32; 576], state: &mut SynthesisState, out: &
         //        +----+----+----+----+ . . . . +----+----+
         //
         for i in 0..8 {
-            let v_start = state.v_front + (i<<1);
-            let v0 = &state.v_vec[(v_start + 0) & 0xf];
-            let v1 = &state.v_vec[(v_start + 1) & 0xf];
+            let v_start = state.v_front + (i << 1);
+            let v0 = &state.v_vec[(v_start + 0) & 0xf][..32];
+            let v1 = &state.v_vec[(v_start + 1) & 0xf][32..];
 
             // Copying of the 32 samples from v_vec to u_vec for even and odd slots are unrolled
             // into a 4x8 operation to improve vectorization.
             for j in (0..32).step_by(4) {
                 let k = (i << 6) + j;
-                u_vec[k+0 +  0] = v0[j+0 +  0];
-                u_vec[k+0 + 32] = v1[j+0 + 32];
+                u_vec[k+0 +  0] = v0[j+0];
+                u_vec[k+0 + 32] = v1[j+0];
 
-                u_vec[k+1 +  0] = v0[j+1 +  0];
-                u_vec[k+1 + 32] = v1[j+1 + 32];
+                u_vec[k+1 +  0] = v0[j+1];
+                u_vec[k+1 + 32] = v1[j+1];
 
-                u_vec[k+2 +  0] = v0[j+2 +  0];
-                u_vec[k+2 + 32] = v1[j+2 + 32];
+                u_vec[k+2 +  0] = v0[j+2];
+                u_vec[k+2 + 32] = v1[j+2];
 
-                u_vec[k+3 +  0] = v0[j+3 +  0];
-                u_vec[k+3 + 32] = v1[j+3 + 32];
+                u_vec[k+3 +  0] = v0[j+3];
+                u_vec[k+3 + 32] = v1[j+3];
             }
         }
 

@@ -5,13 +5,13 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use sonata_core::audio::{AudioBuffer, AudioBufferRef, AsAudioBufferRef, Duration};
+use sonata_core::audio::{AudioBuffer, AudioBufferRef, AsAudioBufferRef, Duration, Signal};
 use sonata_core::codecs::{CODEC_TYPE_MP3, CodecParameters, CodecDescriptor, Decoder, DecoderOptions};
-use sonata_core::errors::Result;
+use sonata_core::errors::{Result, unsupported_error};
 use sonata_core::formats::Packet;
 use sonata_core::support_codec;
 
-use super::bitstream::{State, read_frame_header, decode_frame};
+use super::{common::*, bitstream, layer3};
 
 /// MPEG1 and MPEG2 layers 1, 2, and 3 decoder.
 pub struct Mp3Decoder {
@@ -41,7 +41,7 @@ impl Decoder for Mp3Decoder {
     fn decode(&mut self, packet: Packet<'_>) -> Result<AudioBufferRef<'_>> {
         let mut reader = packet.into_stream();
 
-        let header = read_frame_header(&mut reader)?;
+        let header = bitstream::read_frame_header(&mut reader)?;
 
         // The buffer can only be created after the first frame is decoded. Technically, it can
         // change throughout the stream as well...
@@ -49,7 +49,16 @@ impl Decoder for Mp3Decoder {
             self.buf = AudioBuffer::new(Duration::Frames(1152), &header.spec());
         }
 
-        decode_frame(&mut reader, &header, &mut self.state, &mut self.buf)?;
+        // Clear the audio output buffer.
+        self.buf.clear();
+
+        // Choose decode step based on the MPEG layer.
+        match header.layer {
+            MpegLayer::Layer3 => {
+                layer3::decode_frame(&mut reader, &header, &mut self.state, &mut self.buf)?;
+            },
+            _ => return unsupported_error("Unsupported MPEG Layer."),
+        }
 
         Ok(self.buf.as_audio_buffer_ref())
     }
@@ -57,5 +66,4 @@ impl Decoder for Mp3Decoder {
     fn close(&mut self) {
 
     }
-
 }

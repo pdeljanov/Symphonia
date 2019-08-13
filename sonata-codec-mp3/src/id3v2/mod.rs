@@ -7,6 +7,7 @@
 
 use sonata_core::errors::{Result, decode_error, unsupported_error};
 use sonata_core::io::*;
+use sonata_core::tags::Tag;
 
 mod frames;
 mod unsync;
@@ -261,7 +262,10 @@ fn read_id3v2p4_extended_header<B: Bytestream>(reader: &mut B) -> Result<Extende
     Ok(header)
 }
 
-fn read_id3v2_body<B: Bytestream + FiniteStream>(mut reader: B, header: &Header) -> Result<()> {
+fn read_id3v2_body<B: Bytestream + FiniteStream>(
+    mut reader: B,
+    header: &Header
+) -> Result<Vec<Tag>> {
     // If there is an extended header, read and parse it based on the major version of the tag.
     if header.has_extended_header {
         let extended = match header.major_version {
@@ -273,10 +277,12 @@ fn read_id3v2_body<B: Bytestream + FiniteStream>(mut reader: B, header: &Header)
     }
 
     let min_frame_size = match header.major_version {
-        2 => 6,
+        2     => 6,
         3 | 4 => 10,
-        _ => unreachable!()
+        _     => unreachable!(),
     };
+
+    let mut tags = Vec::<Tag>::new();
 
     loop {
         // Read frames based on the major version of the tag.
@@ -291,19 +297,17 @@ fn read_id3v2_body<B: Bytestream + FiniteStream>(mut reader: B, header: &Header)
             // The padding has been reached, don't parse any further.
             FrameResult::Padding => break,
             // A frame was parsed into a tag, add it to the tag collection.
-            FrameResult::Tag(ref tag) => {
-                eprintln!("{}", tag);
+            FrameResult::Tag(tag) => {
+                tags.push(tag);
             },
             // A frame was parsed into multiple tags, add them all to the tag collection.
-            FrameResult::MultipleTags(ref tags) => {
-                for tag in tags {
-                    eprintln!("{}", tag);
-                }
+            FrameResult::MultipleTags(multi_tags) => {
+                tags.extend(multi_tags);
             },
             // An unknown frame was encountered, just ignore it.
             FrameResult::UnsupportedFrame(ref id) => {
                 eprintln!("Unsupported frame {}.", id);
-            }
+            },
         }
 
         // Read frames until there is not enough bytes available in the ID3v2 tag for another frame.
@@ -312,13 +316,12 @@ fn read_id3v2_body<B: Bytestream + FiniteStream>(mut reader: B, header: &Header)
         }
     }
 
-    Ok(())
+    Ok(tags)
 }
 
-pub fn read_id3v2<B: Bytestream>(reader: &mut B) -> Result<()> {
+pub fn read_id3v2<B: Bytestream>(reader: &mut B) -> Result<Vec<Tag>> {
     // Read the (sorta) version agnostic tag header.
     let header = read_id3v2_header(reader)?;
-    eprintln!("{:#?}", &header);
 
     // The header specified the byte length of the contents of the ID3v2 tag (excluding the header),
     // use a scoped reader to ensure we don't exceed that length, and to determine if there are no 
