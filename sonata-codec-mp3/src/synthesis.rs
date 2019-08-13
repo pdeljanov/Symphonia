@@ -287,8 +287,8 @@ pub fn synthesis(in_samples: &mut [f32; 576], state: &mut SynthesisState, out: &
         //
         for i in 0..8 {
             let v_start = state.v_front + (i << 1);
-            let v0 = &state.v_vec[(v_start + 0) & 0xf][..32];
-            let v1 = &state.v_vec[(v_start + 1) & 0xf][32..];
+            let v0 = &state.v_vec[(v_start + 0) & 0xf][ 0..32];
+            let v1 = &state.v_vec[(v_start + 1) & 0xf][32..64];
 
             // Copying of the 32 samples from v_vec to u_vec for even and odd slots are unrolled
             // into a 4x8 operation to improve vectorization.

@@ -216,7 +216,7 @@ pub(super) fn reorder(
     }
 }
 
-/// Applies the anti-aliasing filter to sub-bands that are not short blocks.
+/// Applies the anti-aliasing filter to sub-bands that are not part of short blocks.
 pub(super) fn antialias(channel: &GranuleChannel, samples: &mut [f32; 576]) {
     // The number of sub-bands to anti-aliasing depends on block type.
     let sb_end = match channel.block_type {
@@ -269,6 +269,7 @@ pub(super) fn antialias(channel: &GranuleChannel, samples: &mut [f32; 576]) {
     }
 }
 
+/// Performs hybrid synthesis (IMDCT and windowing).
 pub(super) fn hybrid_synthesis(
     channel: &GranuleChannel,
     overlap: &mut [[f32; 18]; 32],

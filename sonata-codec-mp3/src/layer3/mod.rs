@@ -30,7 +30,7 @@ struct FrameData {
     /// bits. Bands that share scale factors for both granules are indicated by a true. Otherwise,
     /// each granule must store its own set of scale factors.
     ///
-    /// Mapping of array indicies to bands [0-5, 6-10, 11-15, 16-20].
+    /// Mapping of array indicies to bands [0..6, 6..11, 11..16, 16..21].
     scfsi: [[bool; 4]; 2],
     /// The granules.
     granules: [Granule; 2],
