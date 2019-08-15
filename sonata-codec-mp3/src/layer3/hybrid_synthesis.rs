@@ -13,7 +13,8 @@ use super::{BlockType, GranuleChannel};
 use crate::common::*;
 
 lazy_static! {
-    /// Post-IMDCT window coefficients for each block type: Long, Start, End, Short, in that order.
+    /// Hybrid synthesesis IMDCT window coefficients for: Long, Start, Short, and End block, in that
+    /// order.
     ///
     /// For long blocks:
     ///
@@ -30,6 +31,13 @@ lazy_static! {
     /// W[30..36] = 0.0
     /// ```
     ///
+    /// For short blocks (to be applied to each 12 sample window):
+    ///
+    /// ```text
+    /// W[ 0..12] = sin(PI/12.0 * (i + 0.5))
+    /// W[12..36] = 0.0
+    /// ```
+    ///
     /// For end blocks:
     ///
     /// ```text
@@ -37,14 +45,6 @@ lazy_static! {
     /// W[ 6..12] = sin(PI/12.0 * ((i - 6) + 0.5))
     /// W[12..18] = 1.0
     /// W[18..36] = sin(PI/36.0 * (i + 0.5))
-    /// ```
-    ///
-    /// For short blocks (to be applied to each 12 sample window):
-    ///
-    /// ```text
-    /// W[ 0..12] = sin(PI/12.0 * (i + 0.5))
-    /// W[12..24] = W[0..12]
-    /// W[24..36] = W[0..12]
     /// ```
     static ref IMDCT_WINDOWS: [[f32; 36]; 4] = {
         const PI_36: f64 = f64::consts::PI / 36.0;
@@ -68,23 +68,20 @@ lazy_static! {
             windows[1][i] = (PI_12 * ((i - 18) as f64 + 0.5)).sin() as f32;
         }
 
-        // Window for End blocks (indicies 0..6 implicitly 0.0).
-        for i in 6..12 {
-            windows[2][i] = (PI_12 * ((i - 6) as f64 + 0.5)).sin() as f32;
-        }
-        for i in 12..18 {
-            windows[2][i] = 1.0;
-        }
-        for i in 18..36 {
-            windows[2][i] = (PI_36 * (i as f64 + 0.5)).sin() as f32;
-        }
-
         // Window for Short blocks.
         for i in 0..12 {
-            // Repeat the window 3 times over.
-            windows[3][0*12 + i] = (PI_12 * (i as f64 + 0.5)).sin() as f32;
-            windows[3][1*12 + i] = windows[3][i];
-            windows[3][2*12 + i] = windows[3][i];
+            windows[2][i] = (PI_12 * (i as f64 + 0.5)).sin() as f32;
+        }
+
+        // Window for End blocks (indicies 0..6 implicitly 0.0).
+        for i in 6..12 {
+            windows[3][i] = (PI_12 * ((i - 6) as f64 + 0.5)).sin() as f32;
+        }
+        for i in 12..18 {
+            windows[3][i] = 1.0;
+        }
+        for i in 18..36 {
+            windows[3][i] = (PI_36 * (i as f64 + 0.5)).sin() as f32;
         }
 
         windows
@@ -166,16 +163,16 @@ pub(super) fn reorder(
         //   [ 0 | 4 | 8 | 1 | 5 | 9 | 2 | 6 | a | 3 | 7 | b ]
         //    <----  3 * Short Scale Factor Band Width  ---->
         //
-        // Basically, reordering interleaves the 3 windows the same way 3 planar audio buffers
+        // Basically, reordering interleaves the 3 windows the same way that 3 planar audio buffers
         // would be interleaved.
         debug_assert!(channel.rzero <= 576);
 
-        // TODO: Frankly, this is wasteful... Consider swapping between two internal buffers so we
-        // can avoid initializing this to 0 every frame. Again, unsafe is not allowed in codec's so
-        // this can't be left uninitialized.
-        let mut reorder_buf = [0f32; 576];
-
         let sfb_bands = &SCALE_FACTOR_SHORT_BANDS[header.sample_rate_idx];
+
+        // TODO: Frankly, this is wasteful... Consider swapping between two internal buffers so we
+        // can avoid initializing this to 0 every frame. Unsafe is not allowed in codec's so this
+        // can't be left uninitialized.
+        let mut reorder_buf = [0f32; 576];
 
         // Only the short bands in a mixed block are reordered. Adjust the starting scale factor
         // band accordingly.
@@ -187,29 +184,29 @@ pub(super) fn reorder(
         let mut i = start;
 
         while i < channel.rzero {
-            // Determine the scale factor band width.
-            let win_len = (sfb_bands[sfb+1] - sfb_bands[sfb]) as usize;
+            // Determine the scale factor band length.
+            let len = (sfb_bands[sfb+1] - sfb_bands[sfb]) as usize;
 
-            // Respective starting indicies of windows 0, 1, and 2.
-            let mut w0 = i;
-            let mut w1 = i + 1 * win_len;
-            let mut w2 = i + 2 * win_len;
+            // The three short sample windows.
+            let win0 = &buf[i + 0*len..i + 1*len];
+            let win1 = &buf[i + 1*len..i + 2*len];
+            let win2 = &buf[i + 2*len..i + 3*len];
 
-            // Interleave the three windows. This is essentially a matrix transpose.
-            // TODO: This could likely be sped up with SIMD. Could this be done in-place?
-            for _ in 0..win_len {
-                reorder_buf[i+0] = buf[w0];
-                w0 += 1;
-                reorder_buf[i+1] = buf[w1];
-                w1 += 1;
-                reorder_buf[i+2] = buf[w2];
-                w2 += 1;
-
+            // Interleave the three short sample windows.
+            // TODO: This could likely be sped up with SIMD.
+            for ((w0, w1), w2) in win0.iter().zip(win1).zip(win2) {
+                reorder_buf[i+0] = *w0;
+                reorder_buf[i+1] = *w1;
+                reorder_buf[i+2] = *w2;
                 i += 3;
             }
-
+        
             sfb += 1;
         }
+
+        // TODO: It is possible for i to exceed rzero, does that make sense? Or should it simply 
+        // copy between [start..rzero]? Probably not... since an entire scale factor band /should/
+        // be processed...
 
         // Copy reordered samples from the reorder buffer to the actual sample buffer.
         buf[start..i].copy_from_slice(&reorder_buf[start..i]);
@@ -275,59 +272,31 @@ pub(super) fn hybrid_synthesis(
     overlap: &mut [[f32; 18]; 32],
     samples: &mut [f32; 576],
 ) {
-    let imdct_windows = &IMDCT_WINDOWS;
+    // Determine the number of sub-bands to process as long blocks. Short blocks process 0 sub-bands
+    // as long blocks, mixed blocks process the first 2 sub-bands as long blocks, and all other 
+    // block types (long, start, end) process all 32 sub-bands as long blocks.
+    let n_long_bands = match channel.block_type {
+        BlockType::Short { is_mixed: false } =>  0,
+        BlockType::Short { is_mixed: true  } =>  2,
+        _                                    => 32,
+    };
 
-    // If the block is short, the 12-point IMDCT must be used.
-    if let BlockType::Short { is_mixed } = channel.block_type {
-        // There are 32 sub-bands. If the block is mixed, then the first two sub-bands are windowed
-        // as long blocks, while the rest are windowed as short blocks. The following arrays
-        // indicate the index of the window to use within imdct_windows. Each element is repeated
-        // twice (i.e., sub-bands 0 and 1 use win_idx[0], 2 and 3 use win_idx[1], ..).
-        let win_idx = match is_mixed {
-            true => &[0, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3],
-            _    => &[3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3],
-        };
-
-        // For each of the 32 sub-bands (18 samples each)...
-        for sb in 0..32 {
-            let start = 18 * sb;
-
-            // Get the window for the sub-band since with short blocks it may change per sub-band.
-            let window = &imdct_windows[win_idx[sb >> 1]];
-
-            // Perform the 12-point IMDCT on each of the 3 short block windows.
-            let mut output = [0f32; 36];
-            imdct12_win(&samples[start..(start + 18)], window, &mut output);
-
-            // Overlap the lower half of the IMDCT output (values 0..18) with the upper values of
-            // the IMDCT (values 18..36) of the /previous/ iteration of the IMDCT.
-            for i in (0..18).step_by(2) {
-                samples[start + (i+0)] = overlap[sb][i+0] + output[i+0];
-                overlap[sb][i+0] = output[18 + i+0];
-
-                samples[start + (i+1)] = overlap[sb][i+1] + output[i+1];
-                overlap[sb][i+1] = output[18 + i+1];
-            }
-        }
-    }
-    // Otherwise, all other blocks use the 36-point IMDCT.
-    else {
+    // For sub-bands that are processed as long blocks, perform the 36-point IMDCT.
+    if n_long_bands > 0 {
         let mut output = [0f32; 36];
 
         // Select the appropriate window given the block type.
         let window = match channel.block_type {
-            BlockType::Long  => &imdct_windows[0],
-            BlockType::Start => &imdct_windows[1],
-            BlockType::End   => &imdct_windows[2],
-            // Short blocks are handled above.
-            _                => unreachable!(),
+            BlockType::Start => &IMDCT_WINDOWS[1],
+            BlockType::End   => &IMDCT_WINDOWS[3],
+            _                => &IMDCT_WINDOWS[0],
         };
 
         // For each of the 32 sub-bands (18 samples each)...
-        for sb in 0..32 {
+        for sb in 0..n_long_bands {
             let start = 18 * sb;
 
-            // Perform the 36-point on the entire long block.
+            // Perform the 36-point on the entire sub-band.
             imdct36::imdct36(&samples[start..(start + 18)], &mut output);
 
             // Overlap the lower half of the IMDCT output (values 0..18) with the upper values of
@@ -342,6 +311,34 @@ pub(super) fn hybrid_synthesis(
             }
         }
     }
+
+    // If there are any sub-bands remaining, process them as short blocks. For short blocks, the 
+    // 12-point IMDCT must be used on each window.
+    if n_long_bands < 32 {
+        // Select the short block window.
+        let window = &IMDCT_WINDOWS[2];
+
+        // For each of the remaining 32 sub-bands (18 samples each)...
+        for sb in n_long_bands..32 {
+            let start = 18 * sb;
+
+            // Perform the 12-point IMDCT on each of the 3 short windows within the sub-band (6 
+            // samples each).
+            let mut output = [0f32; 36];
+            imdct12_win(&samples[start..(start + 18)], window, &mut output);
+
+            // Overlap the lower half of the IMDCT output (values 0..18) with the upper values of
+            // the IMDCT (values 18..36) of the /previous/ iteration of the IMDCT.
+            for i in (0..18).step_by(2) {
+                samples[start + (i+0)] = overlap[sb][i+0] + output[i+0];
+                overlap[sb][i+0] = output[18 + i+0];
+
+                samples[start + (i+1)] = overlap[sb][i+1] + output[i+1];
+                overlap[sb][i+1] = output[18 + i+1];
+            }
+        }
+    }
+
 }
 
 /// Performs the 12-point IMDCT, and windowing for each of the 3 short windows of a short block, and
@@ -442,6 +439,76 @@ pub fn frequency_inversion(samples: &mut [f32; 576]) {
         }
         samples[i+18-1] = -samples[i+18-1];
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::IMDCT_WINDOWS;
+    use super::imdct12_win;
+    use std::f64;
+
+    fn imdct12_analytical(x: &[f32; 6]) -> [f32; 12] {
+        const PI_24: f64 = f64::consts::PI / 24.0;
+        
+        let mut result = [0f32; 12];
+
+        for i in 0..12 {
+            let mut sum = 0.0;
+            for k in 0..6 {
+                sum += (x[k] as f64) * (PI_24 * ((2*i + (12 / 2) + 1) * (2*k + 1)) as f64).cos();
+            }
+            result[i] = sum as f32;
+        }
+
+        result
+    }
+
+    #[test]
+    fn verify_imdct12_win() {
+        const TEST_VECTOR: [f32; 18] = [ 
+            0.0976, 0.9321, 0.6138, 0.0857, 0.0433, 0.4855, 0.2144, 0.8488,
+            0.6889, 0.2983, 0.1957, 0.7037, 0.0052, 0.0197, 0.3188, 0.5123,
+            0.2994, 0.7157,
+        ];
+
+        let window = &IMDCT_WINDOWS[2];
+
+        // The following block performs 3 analytical 12-point IMDCTs over the test vector, and then
+        // windows and overlaps the results to generate the final result.
+        let actual_result = {
+            let mut actual_result = [0f32; 36];
+
+            let mut x0 = [0f32; 6];
+            let mut x1 = [0f32; 6];
+            let mut x2 = [0f32; 6];
+
+            for i in 0..6 {
+                x0[i] = TEST_VECTOR[3*i + 0];
+                x1[i] = TEST_VECTOR[3*i + 1];
+                x2[i] = TEST_VECTOR[3*i + 2];
+            }
+
+            let imdct0 = imdct12_analytical(&x0);
+            let imdct1 = imdct12_analytical(&x1);
+            let imdct2 = imdct12_analytical(&x2);
+
+            for i in 0..12 {
+                actual_result[ 6 + i] += imdct0[i] * window[i];
+                actual_result[12 + i] += imdct1[i] * window[i];
+                actual_result[18 + i] += imdct2[i] * window[i];
+            }
+
+            actual_result
+        };
+
+        let mut test_result = [0f32; 36];
+        imdct12_win(&TEST_VECTOR, window , &mut test_result);
+
+        for i in 0..36 {
+            assert!((actual_result[i] - test_result[i]).abs() < 0.00001);
+        }
+    }
+
 }
 
 mod imdct36 {

@@ -77,7 +77,7 @@ fn read_granule_channel_side_info<B: BitStream>(
             0b01 => BlockType::Start,
             0b10 => BlockType::Short { is_mixed },
             0b11 => BlockType::End,
-            _ => unreachable!(),
+            _    => unreachable!(),
         };
 
         // When window switching is used, there are only two regions, therefore there are only
@@ -255,15 +255,13 @@ pub(super) fn read_scale_factors_mpeg1<B: BitStream>(
 
     let mut bits_read = 0;
 
-    let channel = &frame_data.granules[gr].channels[ch];
+    let channel = &mut frame_data.granules[gr].channels[ch];
 
     // For MPEG1, scalefac_compress is a 4-bit index into a scale factor bit length lookup table.
     let (slen1, slen2) = SCALE_FACTOR_SLEN[channel.scalefac_compress as usize];
 
     // Short or Mixed windows...
     if let BlockType::Short { is_mixed } = channel.block_type {
-        let data = &mut frame_data.granules[gr].channels[ch];
-
         // If the block is mixed, there are three total scale factor partitions. The first is a long
         // scale factor partition for bands 0..8 (scalefacs[0..8] with each scale factor being slen1
         // bits long. Following this is a short scale factor partition covering bands 8..11 with a
@@ -276,7 +274,7 @@ pub(super) fn read_scale_factors_mpeg1<B: BitStream>(
 
         if slen1 > 0 {
             for sfb in 0..n_sfb {
-                data.scalefacs[sfb] = bs.read_bits_leq32(slen1)? as u8;
+                channel.scalefacs[sfb] = bs.read_bits_leq32(slen1)? as u8;
             }
             bits_read += n_sfb * slen1 as usize;
         }
@@ -286,7 +284,7 @@ pub(super) fn read_scale_factors_mpeg1<B: BitStream>(
         // not. Each band has a window of 3 with each scale factor being slen2 bits long.
         if slen2 > 0 {
             for sfb in n_sfb..(n_sfb + (6 * 3)) {
-                data.scalefacs[sfb] = bs.read_bits_leq32(slen2)? as u8;
+                channel.scalefacs[sfb] = bs.read_bits_leq32(slen2)? as u8;
             }
             bits_read += 6 * 3 * slen2 as usize;
         }
@@ -312,7 +310,7 @@ pub(super) fn read_scale_factors_mpeg1<B: BitStream>(
                     .copy_from_slice(&granule0.channels[ch].scalefacs[*start..*end]);
             }
             // Otherwise, read the scale factors from the bitstream. Since scale factors are already
-            // zeroed out by default, don't do anything is slen is 0.
+            // zeroed out by default, don't do anything if slen is 0.
             else if slen > 0 {
                 for sfb in *start..*end {
                     frame_data.granules[gr].channels[ch].scalefacs[sfb] =

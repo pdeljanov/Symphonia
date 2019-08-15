@@ -249,6 +249,7 @@ pub fn decode_frame<B: Bytestream>(
         header.frame_size - side_info_len
     )?;
 
+    // Read main_data: scale factors and spectral samples.
     read_main_data(&header, &mut frame_data, state)?;
 
     for gr in 0..header.n_granules() {
@@ -260,19 +261,21 @@ pub fn decode_frame<B: Bytestream>(
         // Requantize all non-zero (big_values and count1 partition) spectral samples.
         requantize::requantize(&header, &granule.channels[0], &mut state.samples[gr][0]);
 
-        // If there is more than one channel: requantize the second channel and then apply 
-        // joint stereo processing.
+        // If there is a second channel...
         if header.channels != Channels::Mono {
+            // Requantize all non-zero spectral samples in the second channel.
             requantize::requantize(&header, &granule.channels[1], &mut state.samples[gr][1]);
+
+            // Apply joint stereo processing if it is used.
             stereo::stereo(&header, &granule, &mut state.samples[gr])?;
         }
 
-        // The remaining steps are channel independant.
+        // The next steps are independant of channel count.
         for ch in 0..header.n_channels() {
-            // Reorder any spectral samples in short blocks into sub-band order.
+            // Reorder the spectral samples in short blocks into sub-band order.
             hybrid_synthesis::reorder(&header, &granule.channels[ch], &mut state.samples[gr][ch]);
 
-            // Apply the anti-aliasing filter to blocks that are not short.
+            // Apply the anti-aliasing filter to all block types other than short.
             hybrid_synthesis::antialias(&granule.channels[ch], &mut state.samples[gr][ch]);
 
             // Perform hybrid-synthesis (IMDCT and windowing).
@@ -282,10 +285,11 @@ pub fn decode_frame<B: Bytestream>(
                 &mut state.samples[gr][ch],
             );
 
-            // Invert to odd samples in odd sub-bands.
+            // Invert every second sample in every second sub-band to negate the frequency inversion
+            // of the polyphase filterbank.
             hybrid_synthesis::frequency_inversion(&mut state.samples[gr][ch]);
 
-            // Perform polyphase synthesis.
+            // Perform polyphase synthesis and generate PCM samples.
             let out_ch_samples = out.chan_mut(ch as u8);
 
             synthesis::synthesis(
