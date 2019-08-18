@@ -558,6 +558,7 @@ impl<S: Sample> Signal<S> for AudioBuffer<S> {
         assert!(second_idx <self.buf.len());
 
         //FIXME:  this is instant UB, just call chan_pair_mut(0,0) and you get mutable aliasses
+        //maybe try Slice::split_at_mut()
         unsafe {
             let ptr = self.buf.as_mut_ptr();
             (slice::from_raw_parts_mut(ptr.add(first_idx), self.n_frames),

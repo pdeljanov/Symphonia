@@ -294,7 +294,7 @@ impl Bytestream for MediaSourceStream {
         // If the buffer has two bytes available, copy directly from it and skip any safety or
         // buffering checks.
         if self.pos + 2 < self.end_pos {
-            double_byte.clone_from_slice(&self.buf[self.pos..self.pos + 1]);
+            double_byte.clone_from_slice(&self.buf[self.pos..self.pos + 2]);
             self.pos += 2;
         }
         // If the by buffer does not have two bytes available, copy one byte at a time from the
