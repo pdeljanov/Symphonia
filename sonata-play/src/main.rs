@@ -10,7 +10,7 @@ use std::fs::File;
 use std::path::Path;
 use clap::{Arg, App};
 use sonata;
-use sonata::core::errors::Result;
+use sonata::core::errors::{Result, unsupported_error};
 use sonata::core::audio::*;
 use sonata::core::codecs::DecoderOptions;
 use sonata::core::formats::{Cue, FormatReader, Hint, FormatOptions, ProbeDepth, ProbeResult, ColorMode, Visual, Stream};
