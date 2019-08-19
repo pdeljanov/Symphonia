@@ -308,9 +308,8 @@ impl<S : Sample> AudioBuffer<S> {
         // Practically speaking, it is not possible to allocate more than usize samples.
         debug_assert!(n_sample_capacity <= usize::max_value() as u64);
 
-        // Allocate memory for the sample data, but zero initialize it cause uninitialized memory
-        // is ub pretty much automatically
-        let mut buf = vec![S::default(); n_sample_capacity as usize];
+        // Allocate memory for the sample data and default initialize the sample to silence.
+        let buf = vec![S::default(); n_sample_capacity as usize];
 
         AudioBuffer {
             buf,
@@ -551,14 +550,20 @@ impl<S: Sample> Signal<S> for AudioBuffer<S> {
     }
 
     fn chan_pair_mut(&mut self, first: u8, second: u8) -> (&mut [S], &mut [S]) {
+        // Both channels in the pair must be unique.
+        assert!(first != second);
+
         let first_idx = self.n_capacity * first as usize;
         let second_idx = self.n_capacity * second as usize;
 
+        // The AudioBuffer struct maintains the invariant that the underlying buffer is always 
+        // # of channels * n_capacity samples long. It also maintains the invariant that n_frames is
+        // always <= n_capacity. Therefore, so long as the first and second channel indicies are 
+        // unique and are strictly less than the AudioBuffer's channel count, it is safe to get
+        // mutable slices to each channel's respective part of the buffer.
         assert!(first_idx < self.buf.len());
         assert!(second_idx <self.buf.len());
 
-        //FIXME:  this is instant UB, just call chan_pair_mut(0,0) and you get mutable aliasses
-        //maybe try Slice::split_at_mut()
         unsafe {
             let ptr = self.buf.as_mut_ptr();
             (slice::from_raw_parts_mut(ptr.add(first_idx), self.n_frames),

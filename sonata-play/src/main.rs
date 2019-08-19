@@ -10,11 +10,14 @@ use std::fs::File;
 use std::path::Path;
 use clap::{Arg, App};
 use sonata;
-use sonata::core::errors::{Result, unsupported_error};
+use sonata::core::errors::Result;
 use sonata::core::audio::*;
 use sonata::core::codecs::DecoderOptions;
 use sonata::core::formats::{Cue, FormatReader, Hint, FormatOptions, ProbeDepth, ProbeResult, ColorMode, Visual, Stream};
 use sonata::core::tags::Tag;
+
+#[cfg(not(target_os = "linux"))]
+use sonata::core::errors::unsupported_error;
 
 #[cfg(target_os = "linux")]
 use libpulse_binding as pulse;
@@ -382,7 +385,7 @@ fn pretty_print_visuals(visuals: &[Visual]) {
 
 fn pretty_print_tag_item(idx: usize, key: &str, value: &str, indent: usize) -> String {
     let key_str = match key.len() {
-        0...28 => format!("| {:w$}[{:0>2}] {:<28} : ", "", idx, key, w = indent),
+        0..=28 => format!("| {:w$}[{:0>2}] {:<28} : ", "", idx, key, w = indent),
         _ => format!("| {:w$}[{:0>2}] {:.<28} : ", "", idx, key.split_at(26).0, w = indent),
     };
 

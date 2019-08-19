@@ -279,12 +279,12 @@ pub fn utf8_decode_be_u64<B: Bytestream>(src : &mut B) -> io::Result<Option<u64>
     // of range return None as this is either not the start of a UTF8 sequence or the prefix is
     // incorrect.
     let mask: u8 = match state {
-        0x00...0x7f => return Ok(Some(state)),
-        0xc0...0xdf => 0x1f,
-        0xe0...0xef => 0x0f,
-        0xf0...0xf7 => 0x07,
-        0xf8...0xfb => 0x03,
-        0xfc...0xfd => 0x01,
+        0x00..=0x7f => return Ok(Some(state)),
+        0xc0..=0xdf => 0x1f,
+        0xe0..=0xef => 0x0f,
+        0xf0..=0xf7 => 0x07,
+        0xf8..=0xfb => 0x03,
+        0xfc..=0xfd => 0x01,
         0xfe        => 0x00,
         _           => return Ok(None)
     };
