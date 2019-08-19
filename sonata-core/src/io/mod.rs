@@ -5,6 +5,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+use byteorder::{BigEndian, ByteOrder, LittleEndian};
 use std::io;
 use std::mem;
 
@@ -164,14 +165,14 @@ pub trait Bytestream {
     /// floating point value.
     #[inline(always)]
     fn read_f32(&mut self) -> io::Result<f32> {
-        Ok(unsafe { *(&u32::from_le_bytes(self.read_quad_bytes()?) as *const u32 as *const f32) })
+        Ok(LittleEndian::read_f32(&self.read_quad_bytes()?))
     }
 
     /// Reads four bytes from the stream and interprets them as a 32-bit big-endiann IEEE-754 
     /// floating point value.
     #[inline(always)]
     fn read_be_f32(&mut self) -> io::Result<f32> {
-        Ok(unsafe { *(&u32::from_be_bytes(self.read_quad_bytes()?) as *const u32 as *const f32) })
+        Ok(BigEndian::read_f32(&self.read_quad_bytes()?))
     }
 
     /// Reads four bytes from the stream and interprets them as a 64-bit little-endiann IEEE-754 
@@ -180,7 +181,7 @@ pub trait Bytestream {
     fn read_f64(&mut self) -> io::Result<f64> {
         let mut buf = [0u8; mem::size_of::<u64>()];
         self.read_buf_bytes(&mut buf)?;
-        Ok(unsafe { *(&u64::from_le_bytes(buf) as *const u64 as *const f64) })
+        Ok(LittleEndian::read_f64(&buf))
     }
 
     /// Reads four bytes from the stream and interprets them as a 64-bit big-endiann IEEE-754 
@@ -189,13 +190,12 @@ pub trait Bytestream {
     fn read_be_f64(&mut self) -> io::Result<f64> {
         let mut buf = [0u8; mem::size_of::<u64>()];
         self.read_buf_bytes(&mut buf)?;
-        Ok(unsafe { *(&u64::from_be_bytes(buf) as *const u64 as *const f64) })
+        Ok(BigEndian::read_f64(&buf))
     }
 
     /// Reads exactly the number of bytes requested, and returns a boxed slice of the data or an error.
     fn read_boxed_slice_bytes(&mut self, len: usize) -> io::Result<Box<[u8]>> {
-        let mut buf = Vec::<u8>::with_capacity(len);
-        unsafe { buf.set_len(len); }
+        let mut buf = vec![0u8; len];
         self.read_buf_bytes(&mut buf)?;
         Ok(buf.into_boxed_slice())
     }

@@ -81,6 +81,7 @@ impl Md5AudioValidator {
 fn slice_as_i24<'a>(hash_buf: &'a mut [u8], buf: &AudioBuffer<i32>, n_channels: usize, n_frames: usize) -> &'a [u8]{
     let frame_stride = 3 * n_channels;
 
+    //TODO: explain why this is safe
     unsafe {
         for ch in 0..n_channels {
             let mut ptr = hash_buf.as_mut_ptr().add(3 * ch);
@@ -98,6 +99,7 @@ fn slice_as_i24<'a>(hash_buf: &'a mut [u8], buf: &AudioBuffer<i32>, n_channels: 
 macro_rules! slice_as {
     ($name:ident, $type:ty) => {
         fn $name<'a>(hash_buf: &'a mut [u8], buf: &AudioBuffer<i32>, n_channels: usize, n_frames: usize) -> &'a [u8] {
+            //TODO: explain why this is safe
             unsafe {
                 let hash_slice = slice::from_raw_parts_mut(hash_buf.as_mut_ptr() as *mut $type, n_frames * n_channels);
                 

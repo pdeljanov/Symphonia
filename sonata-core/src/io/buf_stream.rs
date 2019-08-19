@@ -93,7 +93,7 @@ impl<'a> Bytestream for BufStream<'a> {
             return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "would exceed buffer"));
         }
 
-        let mut double_bytes: [u8; 2] = unsafe { std::mem::uninitialized() };
+        let mut double_bytes: [u8; 2] = [0u8; 2];
         double_bytes.copy_from_slice(&self.buf[self.pos..self.pos + 2]);
         self.pos += 2;
 
@@ -106,7 +106,7 @@ impl<'a> Bytestream for BufStream<'a> {
             return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "would exceed buffer"));
         }
 
-        let mut triple_bytes: [u8; 3] = unsafe { std::mem::uninitialized() };
+        let mut triple_bytes: [u8; 3] = [0u8; 3];
         triple_bytes.copy_from_slice(&self.buf[self.pos..self.pos + 3]);
         self.pos += 3;
 
@@ -119,7 +119,7 @@ impl<'a> Bytestream for BufStream<'a> {
             return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "would exceed buffer"));
         }
 
-        let mut quad_bytes: [u8; 4] = unsafe { std::mem::uninitialized() };
+        let mut quad_bytes: [u8; 4] = [0u8; 4];
         quad_bytes.copy_from_slice(&self.buf[self.pos..self.pos + 4]);
         self.pos += 4;
 

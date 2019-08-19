@@ -281,7 +281,7 @@ impl Bytestream for MediaSourceStream {
             self.fetch_buffer_or_eof()?;
         }
 
-        let byte = unsafe { *self.buf.get_unchecked(self.pos) };
+        let byte = self.buf[self.pos];
         self.pos += 1;
 
         Ok(byte)
@@ -289,15 +289,12 @@ impl Bytestream for MediaSourceStream {
 
     // Reads two bytes from the stream and returns them in read-order or an error.
     fn read_double_bytes(&mut self) -> io::Result<[u8; 2]> {
-        let mut double_byte: [u8; 2] = unsafe { std::mem::uninitialized() };
+        let mut double_byte: [u8; 2] = [0u8; 2];
 
         // If the buffer has two bytes available, copy directly from it and skip any safety or
         // buffering checks.
         if self.pos + 2 < self.end_pos {
-            unsafe { 
-                double_byte[0] = *self.buf.get_unchecked(self.pos + 0);
-                double_byte[1] = *self.buf.get_unchecked(self.pos + 1);
-            }
+            double_byte.clone_from_slice(&self.buf[self.pos..self.pos + 2]);
             self.pos += 2;
         }
         // If the by buffer does not have two bytes available, copy one byte at a time from the
@@ -307,7 +304,7 @@ impl Bytestream for MediaSourceStream {
                 if self.pos >= self.end_pos {
                     self.fetch_buffer_or_eof()?;
                 }
-                unsafe { *double_byte.get_unchecked_mut(i) = *self.buf.get_unchecked(self.pos) }
+                double_byte[i] = self.buf[self.pos];
                 self.pos += 1;
             }
         }
@@ -317,7 +314,7 @@ impl Bytestream for MediaSourceStream {
 
     // Reads three bytes from the stream and returns them in read-order or an error.
     fn read_triple_bytes(&mut self) -> io::Result<[u8; 3]> {
-        let mut triple_byte: [u8; 3] = unsafe { std::mem::uninitialized() };
+        let mut triple_byte: [u8; 3] = [0u8; 3];
 
         // If the buffer has three bytes available, copy directly from it and skip any safety or
         // buffering checks.
@@ -332,7 +329,7 @@ impl Bytestream for MediaSourceStream {
                 if self.pos >= self.end_pos {
                     self.fetch_buffer_or_eof()?;
                 }
-                unsafe { *triple_byte.get_unchecked_mut(i) = *self.buf.get_unchecked(self.pos) }
+                triple_byte[i] = self.buf[self.pos];
                 self.pos += 1;
             }
         }
@@ -342,7 +339,7 @@ impl Bytestream for MediaSourceStream {
 
     // Reads four bytes from the stream and returns them in read-order or an error.
     fn read_quad_bytes(&mut self) -> io::Result<[u8; 4]> {
-        let mut quad_byte: [u8; 4] = unsafe { std::mem::uninitialized() };
+        let mut quad_byte: [u8; 4] = [0u8; 4];
 
         // If the buffer has four bytes available, copy directly from it and skip any safety or
         // buffering checks.
@@ -357,7 +354,7 @@ impl Bytestream for MediaSourceStream {
                 if self.pos >= self.end_pos {
                     self.fetch_buffer_or_eof()?;
                 }
-                unsafe { *quad_byte.get_unchecked_mut(i) = *self.buf.get_unchecked(self.pos) }
+                quad_byte[i] = self.buf[self.pos];
                 self.pos += 1;
             }
         }

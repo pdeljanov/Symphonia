@@ -308,9 +308,9 @@ impl<S : Sample> AudioBuffer<S> {
         // Practically speaking, it is not possible to allocate more than usize samples.
         debug_assert!(n_sample_capacity <= usize::max_value() as u64);
 
-        // Allocate memory for the sample data, but do not zero the memory.
-        let mut buf = Vec::with_capacity(n_sample_capacity as usize);
-        unsafe { buf.set_len(n_sample_capacity as usize) };
+        // Allocate memory for the sample data, but zero initialize it cause uninitialized memory
+        // is ub pretty much automatically
+        let mut buf = vec![S::default(); n_sample_capacity as usize];
 
         AudioBuffer {
             buf,
@@ -354,6 +354,7 @@ impl<S : Sample> AudioBuffer<S> {
     /// `chan()` to selectively choose the plane to read.
     pub fn planes<'a>(&'a self) -> AudioPlanes<'a, S> {
         let mut planes = AudioPlanes {
+            // FIXME: this is UB
             planes: unsafe { std::mem::uninitialized() },
             n_planes: self.spec.channels.len(),
         };
@@ -374,6 +375,7 @@ impl<S : Sample> AudioBuffer<S> {
     /// `render()`, `fill()`, `chan_mut()`, and `chan_pair_mut()` to mutate the buffer.
     pub fn planes_mut<'a>(&'a mut self) -> AudioPlanesMut<'a, S> {
         let mut planes = AudioPlanesMut {
+            // FIXME: this is UB
             planes: unsafe { std::mem::uninitialized() },
             n_planes: self.spec.channels.len(),
         };
@@ -383,6 +385,7 @@ impl<S : Sample> AudioBuffer<S> {
 
             // Only fill the planes array up to the number of channels.
             for i in 0..planes.n_planes {
+                // FIXME: UB, indexing into uninitialized memory
                 planes.planes[i] = slice::from_raw_parts_mut(ptr as *mut S, self.n_frames);
                 ptr = ptr.add(self.n_capacity);
             }
@@ -554,6 +557,8 @@ impl<S: Sample> Signal<S> for AudioBuffer<S> {
         assert!(first_idx < self.buf.len());
         assert!(second_idx <self.buf.len());
 
+        //FIXME:  this is instant UB, just call chan_pair_mut(0,0) and you get mutable aliasses
+        //maybe try Slice::split_at_mut()
         unsafe {
             let ptr = self.buf.as_mut_ptr();
             (slice::from_raw_parts_mut(ptr.add(first_idx), self.n_frames),
@@ -588,6 +593,7 @@ impl<S: Sample> Signal<S> for AudioBuffer<S> {
 
             // Only fill the planes array up to the number of channels.
             for i in 0..planes.n_planes {
+                //FIXME: this is instant UB, you are indexing into uninitialized memory
                 planes.planes[i] = slice::from_raw_parts_mut(ptr as *mut S, n_render_frames);
                 ptr = ptr.add(self.n_capacity);
             }
@@ -607,6 +613,7 @@ impl<S: Sample> Signal<S> for AudioBuffer<S> {
         F: Fn(S) -> S
     {
         debug_assert!(self.n_frames <= self.n_capacity);
+        //TODO: document why this is actually safe
 
         unsafe {
             let mut plane_start = self.buf.as_mut_ptr();
@@ -796,9 +803,10 @@ impl<S: Sample + WriteSample> SampleBuffer<S> {
                 let stride = src.n_capacity;
 
                 for i in 0..n_frames {
+                    //TODO: possibly replace by Slice::chunks() and Iterator::step_by()
                     for ch in 0..n_channels {
-                        let sample = unsafe { src.buf.get_unchecked(ch * stride + i) };
-                        S::write((*sample).into_sample(), &mut writer);
+                        let sample = src.buf[ch * stride + i];
+                        S::write((sample).into_sample(), &mut writer);
                     }
                 }
             },
@@ -843,8 +851,9 @@ impl<S: Sample + WriteSample> SampleBuffer<S> {
                 let stride = src.n_capacity;
 
                 for i in 0..n_frames {
+                    //TODO: possibly replace by Slice::chunks() and Iterator::step_by()
                     for ch in 0..n_channels {
-                        unsafe { S::write(*src.buf.get_unchecked(ch * stride + i), &mut writer); }
+                        S::write(src.buf[ch * stride + i], &mut writer);
                     }
                 }
             },
@@ -884,6 +893,7 @@ impl<'a, S: Sample + WriteSample> SampleWriter<'a, S> {
 
     fn from_buf(n_samples: usize, buf: &mut SampleBuffer<S>) -> SampleWriter<S> {
         let bytes = buf.req_bytes_mut(n_samples);
+        //TODO: explain why this is safe
         unsafe {
             SampleWriter {
                 buf: slice::from_raw_parts_mut(
@@ -895,7 +905,7 @@ impl<'a, S: Sample + WriteSample> SampleWriter<'a, S> {
 
     pub fn write(&mut self, src: S::StreamType) {
         // Copy the source sample to the output buffer at the next writeable index.
-        unsafe { *self.buf.get_unchecked_mut(self.next) = src; }
+        self.buf[self.next] = src;
         // Increment writeable index.
         self.next += 1;
     }
