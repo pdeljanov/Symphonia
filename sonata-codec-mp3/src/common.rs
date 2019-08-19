@@ -259,15 +259,15 @@ impl BitResevoir {
         }
 
         // Shift the reused bytes to the beginning of the resevoir.
-        // TODO: For Rust 1.37, use copy_within() for more efficient overlapping copies.
-        // self.buf.copy_within(self.len - main_data_begin..self.len, 0);
-        let prev = self.len - main_data_begin;
-        for i in 0..main_data_begin {
-            self.buf[i] = self.buf[prev + i];
-        }
+        self.buf.copy_within(self.len - main_data_begin..self.len, 0);
 
         // Read the remaining amount of bytes.
         let main_data_end = main_data_begin + main_data_size;
+
+        if main_data_end > self.buf.len() {
+            return decode_error("Invalid main_data length, will exceed resevoir buffer.");
+        }
+
         reader.read_buf_bytes(&mut self.buf[main_data_begin..main_data_end])?;
         self.len = main_data_end;
 

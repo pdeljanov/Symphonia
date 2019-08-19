@@ -156,7 +156,7 @@ impl Default for SynthesisState {
 
 /// Sub-band synthesis transforms 32 sub-band blocks containing 18 time-domain samples each into
 /// 18 blocks of 32 PCM audio samples.
-pub fn synthesis(in_samples: &mut [f32; 576], state: &mut SynthesisState, out: &mut [f32]) {
+pub fn synthesis(state: &mut SynthesisState, in_samples: &mut [f32; 576], out: &mut [f32]) {
     let mut u_vec = [0f32; 512];
     let mut s_vec = [0f32; 32];
 

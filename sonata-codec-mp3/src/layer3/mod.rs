@@ -293,8 +293,8 @@ pub fn decode_frame<B: Bytestream>(
             let out_ch_samples = out.chan_mut(ch as u8);
 
             synthesis::synthesis(
-                &mut state.samples[gr][ch],
                 &mut state.synthesis[ch],
+                &mut state.samples[gr][ch],
                 &mut out_ch_samples[(gr * 576)..((gr + 1) * 576)],
             );
         }
