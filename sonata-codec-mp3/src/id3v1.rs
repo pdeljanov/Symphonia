@@ -9,7 +9,7 @@ use sonata_core::errors::{Result, unsupported_error};
 use sonata_core::tags::{StandardTagKey, Tag};
 use sonata_core::io::Bytestream;
 
-static GENRES: &'static [&'static str] = &[
+static GENRES: &[&str] = &[
     // Standard Genres as per ID3v1 specificaation
     "Blues",
     "Classic rock",

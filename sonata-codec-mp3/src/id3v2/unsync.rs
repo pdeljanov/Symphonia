@@ -18,13 +18,13 @@ pub fn read_syncsafe_leq32<B: Bytestream>(reader: &mut B, bit_width: u32) -> Res
 
     while bits_read < bit_width {
         bits_read += 7;
-        result |= ((reader.read_u8()? & 0x7f) as u32) << (bit_width - bits_read);
+        result |= u32::from(reader.read_u8()? & 0x7f) << (bit_width - bits_read);
     }
 
-    Ok(result & (0xffffffff >> (32 - bit_width)))
+    Ok(result & (0xffff_ffff >> (32 - bit_width)))
 }
 
-pub fn decode_unsynchronisation<'a>(buf: &'a mut [u8]) -> &'a mut [u8] {
+pub fn decode_unsynchronisation(buf: &mut [u8]) -> &mut [u8] {
     let len = buf.len();
     let mut src = 0;
     let mut dst = 0;

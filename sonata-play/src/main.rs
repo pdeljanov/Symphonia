@@ -111,13 +111,10 @@ fn main() {
                 pretty_print_format(&path, &reader);
 
                 // Seek to the desired timestamp if requested.
-                match matches.value_of("seek") {
-                    Some(seek_value) => {
-                        let pos = seek_value.parse::<f64>().unwrap();
-                        reader.seek(Timestamp::Time(pos)).unwrap();
-                    },
-                    None => (),
-                };
+                if let Some(seek_value) = matches.value_of("seek") {
+                    let pos = seek_value.parse::<f64>().unwrap();
+                    reader.seek(Timestamp::Time(pos)).unwrap();
+                }
 
                 // Set the decoder options.
                 let options = DecoderOptions { 
@@ -142,12 +139,9 @@ fn decode_only(mut reader: Box<dyn FormatReader>, decode_options: &DecoderOption
 
     // Decode all packets.
     loop {
-        match decoder.decode(reader.next_packet()?) {
-            Err(err) => {
-                decoder.close();
-                return Err(err);
-            },
-            Ok(_) => ()
+        if let Err(err) = decoder.decode(reader.next_packet()?) {
+            decoder.close();
+            return Err(err);
         }
     }
 }
@@ -242,7 +236,7 @@ fn pretty_print_format(path: &Path, reader: &Box<dyn FormatReader>) {
 }
 
 fn pretty_print_streams(streams: &[Stream]) {
-    if streams.len() > 0 {
+    if !streams.is_empty() {
         println!("|");
         println!("| // Streams //");
 
@@ -278,7 +272,7 @@ fn pretty_print_streams(streams: &[Stream]) {
 }
 
 fn pretty_print_cues(cues: &[Cue]) {
-    if cues.len() > 0 {
+    if !cues.is_empty() {
         println!("|");
         println!("| // Cues //");
 
@@ -287,7 +281,7 @@ fn pretty_print_cues(cues: &[Cue]) {
             println!("|          Timestamp:  {}", cue.start_ts);
 
             // Print tags associated with the Cue.
-            if cue.tags.len() > 0 {
+            if !cue.tags.is_empty() {
                 println!("|          Tags:");
 
                 for (tidx, tag) in cue.tags.iter().enumerate() {
@@ -301,14 +295,14 @@ fn pretty_print_cues(cues: &[Cue]) {
             }
 
             // Print any sub-cues.
-            if cue.points.len() > 0 {
+            if !cue.points.is_empty() {
                 println!("|          Sub-Cues:");
 
                 for (ptidx, pt) in cue.points.iter().enumerate() {
                     println!("|                      [{:0>2}] Offset:    {:?}", ptidx + 1, pt.start_offset_ts);
 
                     // Start the number of sub-cue tags, but don't print them.
-                    if pt.tags.len() > 0 {
+                    if !pt.tags.is_empty() {
                         println!("|                           Sub-Tags:  {} (not listed)", pt.tags.len());
                     }
                 }
@@ -319,7 +313,7 @@ fn pretty_print_cues(cues: &[Cue]) {
 }
 
 fn pretty_print_tags(tags: &[Tag]) {
-    if tags.len() > 0 {
+    if !tags.is_empty() {
         println!("|");
         println!("| // Tags //");
         
@@ -342,7 +336,7 @@ fn pretty_print_tags(tags: &[Tag]) {
 }
 
 fn pretty_print_visuals(visuals: &[Visual]) {
-    if visuals.len() > 0 {
+    if !visuals.is_empty() {
         println!("|");
         println!("| // Visuals //");
 
@@ -367,7 +361,7 @@ fn pretty_print_visuals(visuals: &[Visual]) {
             println!("|          Size:       {} bytes", visual.data.len());
 
             // Print out tags similar to how regular tags are printed.
-            if visual.tags.len() > 0 {
+            if !visual.tags.is_empty() {
                 println!("|          Tags:");
             }
 

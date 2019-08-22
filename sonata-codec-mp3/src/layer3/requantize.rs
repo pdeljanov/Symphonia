@@ -219,9 +219,11 @@ pub(super) fn read_huffman_samples<B: BitStream>(
     }
 
     // Select the Huffman table for the count1 partition.
-    let count1_table = match channel.count1table_select {
-        true => QUADS_HUFFMAN_TABLE_B,
-        _    => QUADS_HUFFMAN_TABLE_A,
+    let count1_table = if channel.count1table_select {
+        QUADS_HUFFMAN_TABLE_B
+    }
+    else {
+        QUADS_HUFFMAN_TABLE_A
     };
 
     // Read the count1 partition.
@@ -331,7 +333,7 @@ fn requantize_long(
     let sfb_indicies = &SCALE_FACTOR_LONG_BANDS[header.sample_rate_idx as usize];
 
     // Calculate A, it is constant for the entire requantization.
-    let a = channel.global_gain as i32 - 210;
+    let a = i32::from(channel.global_gain) - 210;
 
     let mut pow2ab = 0.0;
     
@@ -348,7 +350,7 @@ fn requantize_long(
             let pre_emphasis = if channel.preflag { PRE_EMPHASIS[sfb] } else { 0 };
 
             // Calculate B.
-            let b = ((channel.scalefacs[sfb] + pre_emphasis) << scalefac_shift) as i32;
+            let b = i32::from((channel.scalefacs[sfb] + pre_emphasis) << scalefac_shift);
 
             // Calculate 2^(0.25*A) * 2^(-B). This can be rewritten as 2^{ 0.25 * (A - 4 * B) }.
             // Since scalefac_shift was multiplies by 4 above, the final equation becomes
@@ -386,13 +388,13 @@ fn requantize_short(
     let sfb_indicies = &SCALE_FACTOR_SHORT_BANDS[header.sample_rate_idx as usize];
 
     // Calculate the window-independant part of A: global_gain[gr] - 210.
-    let gain = channel.global_gain as i32 - 210;
+    let gain = i32::from(channel.global_gain) - 210;
 
     // Calculate A for each window.
     let a = [
-        gain - (8 * channel.subblock_gain[0] as i32),
-        gain - (8 * channel.subblock_gain[1] as i32),
-        gain - (8 * channel.subblock_gain[2] as i32),
+        gain - 8 * i32::from(channel.subblock_gain[0]),
+        gain - 8 * i32::from(channel.subblock_gain[1]),
+        gain - 8 * i32::from(channel.subblock_gain[2]),
     ];
 
     // Likweise, the scalefac_multiplier is constant for the granule. The actual scale is multiplied
@@ -411,7 +413,7 @@ fn requantize_short(
         // Each scale factor band is repeated 3 times over.
         for win in 0..3 {
             // Calculate B.
-            let b = (channel.scalefacs[3*sfb + win] << scalefac_shift) as i32;
+            let b = i32::from(channel.scalefacs[3*sfb + win] << scalefac_shift);
 
             // Calculate 2^(0.25*A) * 2^(-B). This can be rewritten as 2^{ 0.25 * (A - 4 * B) }.
             // Since scalefac_shift multiplies by 4 above, the final equation becomes

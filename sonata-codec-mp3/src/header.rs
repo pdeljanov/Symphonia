@@ -57,8 +57,8 @@ fn sync_frame<B: Bytestream>(reader: &mut B) -> Result<u32> {
 
     // Synchronize stream to the next frame using the sync word. The MP3 frame header always starts
     // at a byte boundary with 0xffe (11 consecutive 1 bits.) if supporting up to MPEG version 2.5.
-    while (sync & 0xffe00000) != 0xffe00000 {
-        sync = sync.wrapping_shl(8) | reader.read_u8()? as u32;
+    while (sync & 0xffe0_0000) != 0xffe0_0000 {
+        sync = sync.wrapping_shl(8) | u32::from(reader.read_u8()?);
     }
 
     Ok(sync)
@@ -135,7 +135,7 @@ pub fn read_frame_header<B: Bytestream>(reader: &mut B) -> Result<FrameHeader> {
         // Joint stereo mode for layers 1 and 2 only supports Intensity Stereo. The mode extension
         // bits indicate for which sub-bands intensity stereo coding is applied.
         (0b01,                 _) => Channels::JointStereo(Mode::Intensity {
-            bound: (1 + (header & 0x30) >> 4) << 2,
+            bound: (1 + ((header & 0x30) >> 4)) << 2,
         }),
         _                         => unreachable!(),
     };
@@ -152,14 +152,8 @@ pub fn read_frame_header<B: Bytestream>(reader: &mut B) -> Result<FrameHeader> {
                 return decode_error("Invalid Layer 2 bitrate for mono channel mode.");
             }
         }
-        else {
-            if bitrate == 32_000
-                || bitrate == 48_000
-                || bitrate == 56_000
-                || bitrate == 80_000
-            {
-                return decode_error("Invalid Layer 2 bitrate for non-mono channel mode.");
-            }
+        else if bitrate == 32_000 || bitrate == 48_000 || bitrate == 56_000 || bitrate == 80_000 {
+            return decode_error("Invalid Layer 2 bitrate for non-mono channel mode.");
         }
     }
 

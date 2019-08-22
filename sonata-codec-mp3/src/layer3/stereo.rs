@@ -49,10 +49,9 @@ lazy_static! {
             1.0 / f64::sqrt(2.0),
         ];
 
-        let mut i = 0;
         let mut ratios = [[(0.0, 0.0); 32]; 2];
 
-        for is_pos in 0..32 {
+        for (i, is_pos) in (0..32).enumerate() {
             if is_pos & 1 != 0 {
                 ratios[0][i] = (f64::powi(is_scale[0], (is_pos + 1) >> 1) as f32, 1.0);
                 ratios[1][i] = (f64::powi(is_scale[1], (is_pos + 1) >> 1) as f32, 1.0);
@@ -61,7 +60,6 @@ lazy_static! {
                 ratios[0][i] = (1.0, f64::powi(is_scale[0], is_pos >> 1) as f32);
                 ratios[1][i] = (1.0, f64::powi(is_scale[1], is_pos >> 1) as f32);
             }
-            i += 1;
         }
 
         ratios

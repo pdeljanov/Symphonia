@@ -133,8 +133,8 @@ pub enum Channels {
 impl Channels {
     /// Gets the number of channels.
     #[inline(always)]
-    pub fn count(&self) -> usize {
-        match *self {
+    pub fn count(self) -> usize {
+        match self {
             Channels::Mono => 1,
             _              => 2,
         }

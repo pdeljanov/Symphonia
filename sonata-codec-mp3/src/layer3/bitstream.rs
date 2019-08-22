@@ -208,8 +208,8 @@ pub(super) fn read_side_info<B: Bytestream>(
 
         // Next four (or 8, if more than one channel) are the SCFSI bits.
         for scfsi in &mut frame_data.scfsi[..header.n_channels()] {
-            for i in 0..4 {
-                scfsi[i] = bs.read_bit()?;
+            for band in scfsi.iter_mut() {
+                *band = bs.read_bit()?;
             }
         }
 
@@ -343,7 +343,7 @@ pub(super) fn read_scale_factors_mpeg2<B: BitStream>(
     let (slen_table, nsfb_table) = if is_intensity_stereo {
         // The actual value of scalefac_compress is a 9-bit unsigned integer (0..512) for MPEG2. A
         // left shift reduces it to an 8-bit value (0..255).
-        let sfc = channel.scalefac_compress as u32 >> 1;
+        let sfc = u32::from(channel.scalefac_compress) >> 1;
 
         match sfc {
             0..=179   => ([
@@ -372,7 +372,7 @@ pub(super) fn read_scale_factors_mpeg2<B: BitStream>(
     }
     else {
         // The actual value of scalefac_compress is a 9-bit unsigned integer (0..512) for MPEG2.
-        let sfc = channel.scalefac_compress as u32;
+        let sfc = u32::from(channel.scalefac_compress);
 
         match sfc {
             0..=399   => ([

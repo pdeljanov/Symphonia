@@ -16,6 +16,7 @@ use frames::*;
 use unsync::{read_syncsafe_leq32, UnsyncStream};
 
 #[derive(Debug)]
+#[allow(clippy::enum_variant_names)]
 enum TagSizeRestriction {
     Max128Frames1024KiB,
     Max64Frames128KiB,
@@ -170,7 +171,7 @@ fn read_id3v2p3_extended_header<B: Bytestream>(reader: &mut B) -> Result<Extende
 
 /// Read the extended header of an ID3v2.4 tag.
 fn read_id3v2p4_extended_header<B: Bytestream>(reader: &mut B) -> Result<ExtendedHeader> {
-    let size = read_syncsafe_leq32(reader, 28)?;
+    let _size = read_syncsafe_leq32(reader, 28)?;
     
     if reader.read_u8()? != 1 {
         return decode_error("Extended flags should have a length of 1.");
@@ -326,7 +327,7 @@ pub fn read_id3v2<B: Bytestream>(reader: &mut B) -> Result<Vec<Tag>> {
     // The header specified the byte length of the contents of the ID3v2 tag (excluding the header),
     // use a scoped reader to ensure we don't exceed that length, and to determine if there are no 
     // more frames left to parse.
-    let scoped = ScopedStream::new(reader, header.size as u64);
+    let scoped = ScopedStream::new(reader, u64::from(header.size));
 
     // If the unsynchronisation flag is set in the header, all tag data must be passed through the 
     // unsynchronisation decoder before being read for verions < 4 of ID3v2.

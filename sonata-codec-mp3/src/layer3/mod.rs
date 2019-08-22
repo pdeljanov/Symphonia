@@ -200,7 +200,7 @@ fn read_main_data(
                     &mut frame_data.granules[gr].channels[ch])
             }?;
 
-            let part2_3_length = frame_data.granules[gr].channels[ch].part2_3_length as u32;
+            let part2_3_length = u32::from(frame_data.granules[gr].channels[ch].part2_3_length);
 
             // The length part2 must be less than or equal to the part2_3_length.
             if part2_len > part2_3_length {

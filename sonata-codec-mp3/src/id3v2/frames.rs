@@ -385,20 +385,20 @@ fn validate_frame_id(id: &[u8]) -> bool {
 
 /// Validates that a language code conforms to the ISO-639-2 standard. That is to say, the code is 
 /// composed of 3 characters, each character being between lowercase letters a-z.
-fn validate_lang_code(code: &[u8; 3]) -> bool {
+fn validate_lang_code(code: [u8; 3]) -> bool {
     code.iter().filter(|&c| *c < b'a' || *c > b'z').count() == 0
 }
 
 /// Finds a frame parser for "modern" ID3v2.3 or ID2v2.4 tags.
-fn find_parser(id: &[u8; 4]) -> Option<&(FrameParser, Option<StandardTagKey>)> {
-    FRAME_PARSERS.get(id)
+fn find_parser(id: [u8; 4]) -> Option<&'static (FrameParser, Option<StandardTagKey>)> {
+    FRAME_PARSERS.get(&id)
 }
 
 /// Finds a frame parser for a "legacy" ID3v2.2 tag by finding an equivalent "modern" ID3v2.3+ frame
 /// parser.
-fn find_parser_legacy(id: &[u8; 3]) -> Option<&(FrameParser, Option<StandardTagKey>)> {
-     match LEGACY_FRAME_MAP.get(id) {
-        Some(id) => find_parser(id),
+fn find_parser_legacy(id: [u8; 3]) -> Option<&'static (FrameParser, Option<StandardTagKey>)> {
+     match LEGACY_FRAME_MAP.get(&id) {
+        Some(id) => find_parser(**id),
         _        => None
     }
 }
@@ -417,11 +417,11 @@ pub fn read_id3v2p2_frame<B: Bytestream>(reader: &mut B) -> Result<FrameResult> 
         return decode_error("Invalid frame ID.");
     }
 
-    let size = reader.read_be_u24()? as u64;
+    let size = u64::from(reader.read_be_u24()?);
 
     // Find a parser for the frame. If there is none, skip over the remainder of the frame as it 
     // cannot be parsed.
-    let (parser, std_key) = match find_parser_legacy(&id) {
+    let (parser, std_key) = match find_parser_legacy(id) {
         Some(p) => p,
         None => {
             reader.ignore_bytes(size)?;
@@ -453,7 +453,7 @@ pub fn read_id3v2p3_frame<B: Bytestream>(reader: &mut B) -> Result<FrameResult> 
         return decode_error("Invalid frame ID.");
     }
 
-    let mut size = reader.read_be_u32()? as u64;
+    let mut size = u64::from(reader.read_be_u32()?);
     let flags = reader.read_be_u16()?;
 
     // Unused flag bits must be cleared.
@@ -463,7 +463,7 @@ pub fn read_id3v2p3_frame<B: Bytestream>(reader: &mut B) -> Result<FrameResult> 
 
     // Find a parser for the frame. If there is none, skip over the remainder of the frame as it 
     // cannot be parsed.
-    let (parser, std_key) = match find_parser(&id) {
+    let (parser, std_key) = match find_parser(id) {
         Some(p) => p,
         None => {
             reader.ignore_bytes(size)?;
@@ -515,7 +515,7 @@ pub fn read_id3v2p4_frame<B: Bytestream + FiniteStream>(reader: &mut B) -> Resul
         return decode_error("Invalid frame ID.");
     }
 
-    let mut size = read_syncsafe_leq32(reader, 28)? as u64;
+    let mut size = u64::from(read_syncsafe_leq32(reader, 28)?);
     let flags = reader.read_be_u16()?;
 
     // Unused flag bits must be cleared.
@@ -525,7 +525,7 @@ pub fn read_id3v2p4_frame<B: Bytestream + FiniteStream>(reader: &mut B) -> Resul
 
     // Find a parser for the frame. If there is none, skip over the remainder of the frame as it
     // cannot be parsed.
-    let (parser, std_key) = match find_parser(&id) {
+    let (parser, std_key) = match find_parser(id) {
         Some(p) => p,
         None => {
             reader.ignore_bytes(size)?;
@@ -751,7 +751,7 @@ fn read_comm_uslt_frame(
     // Encode the language into the key of the comment Tag. Since many files don't use valid 
     // ISO-639-2 language codes, we'll just skip the language code if it doesn't validate. Returning
     // an error would break far too many files to be worth it.
-    let key = if validate_lang_code(&lang) {
+    let key = if validate_lang_code(lang) {
         format!("{}!{}", id, str::from_utf8(&lang).unwrap())
     }
     else {
