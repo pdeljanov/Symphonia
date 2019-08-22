@@ -105,15 +105,13 @@ fn decorrelate_mid_side(mid: &mut [i32], side: &mut [i32]) {
 
 fn decorrelate_right_side(right: &[i32], side: &mut [i32]) {
     for (s, r) in side.iter_mut().zip(right) {
-        *s = *r + *s;
+        *s += *r;
     }
 }
 
 struct FrameHeader {
-    blocking_strategy: BlockingStrategy,
     block_sequence: BlockSequence,
     block_num_samples: u16,
-    sample_rate: Option<u32>,
     channel_assignment: ChannelAssignment,
     bits_per_sample: Option<u32>,
 }
@@ -139,20 +137,19 @@ impl PacketParser {
 
             byte_offset = reader.pos() - 2;
 
-            match read_frame_header(reader, sync) {
-                Ok(header) => break header,
-                _ => (),
+            if let Ok(header) = read_frame_header(reader, sync) {
+                break header
             }
         };
 
         let packet_ts = match header.block_sequence {
-            BlockSequence::ByFrame(seq) => seq as u64 * header.block_num_samples as u64,
+            BlockSequence::ByFrame(seq) => u64::from(seq) * u64::from(header.block_num_samples),
             BlockSequence::BySample(seq) => seq,
         };
 
         Ok(ParsedPacket {
             packet_ts,
-            n_frames: header.block_num_samples as u32,
+            n_frames: u32::from(header.block_num_samples),
             parsed_len: (reader.pos() - byte_offset) as usize,
         })
     }
@@ -324,7 +321,7 @@ fn sync_frame<B: Bytestream>(reader: &mut B) -> Result<u16> {
     // `0b11_1111_1111_1110`. This would be difficult to find on its own. Expand the search to
     // a 16-bit field of `0b1111_1111_1111_10xx` and search a word at a time.
     while (sync & 0xfffc) != 0xfff8 {
-        sync = sync.wrapping_shl(8) | reader.read_u8()? as u16;
+        sync = sync.wrapping_shl(8) | u16::from(reader.read_u8()?);
     }
 
     Ok(sync)
@@ -348,10 +345,10 @@ fn read_frame_header<B: Bytestream>(reader: &mut B, sync: u16) -> Result<FrameHe
     // fields.
     let desc = reader_crc8.read_be_u16()?;
 
-    let block_size_enc      = ((desc & 0xf000) >> 12) as u32;
-    let sample_rate_enc     = ((desc & 0x0f00) >>  8) as u32;
-    let channels_enc        = ((desc & 0x00f0) >>  4) as u32;
-    let bits_per_sample_enc = ((desc & 0x000e) >>  1) as u32;
+    let block_size_enc      = u32::from((desc & 0xf000) >> 12);
+    let sample_rate_enc     = u32::from((desc & 0x0f00) >>  8);
+    let channels_enc        = u32::from((desc & 0x00f0) >>  4);
+    let bits_per_sample_enc = u32::from((desc & 0x000e) >>  1);
 
     if (desc & 0x0001) == 1 {
         return decode_error("Frame header reserved bit is not set to mandatory value.");
@@ -368,7 +365,7 @@ fn read_frame_header<B: Bytestream>(reader: &mut B, sync: u16) -> Result<FrameHe
             // The frame number should only be 31-bits. Since it is UTF8 encoded, the actual length
             // cannot be enforced by the decoder. Return an error if the frame number exceeds the
             // maximum 31-bit value.
-            if frame > 0x7fffffff {
+            if frame > 0x7fff_ffff {
                 return decode_error("Frame sequence number exceeds 31-bits.");
             }
 
@@ -384,7 +381,7 @@ fn read_frame_header<B: Bytestream>(reader: &mut B, sync: u16) -> Result<FrameHe
             // The sample number should only be 36-bits. Since it is UTF8 encoded, the actual length
             // cannot be enforced by the decoder. Return an error if the frame number exceeds the
             // maximum 36-bit value.
-            if sample > 0xfffffffff {
+            if sample > 0xffff_fffff {
                 return decode_error("Sample sequence number exceeds 36-bits");
             }
 
@@ -395,7 +392,7 @@ fn read_frame_header<B: Bytestream>(reader: &mut B, sync: u16) -> Result<FrameHe
     let block_num_samples = match block_size_enc {
         0x1       => 192,
         0x2..=0x5 => 576 * (1 << (block_size_enc - 2)),
-        0x6       => reader_crc8.read_u8()? as u16 + 1,
+        0x6       => u16::from(reader_crc8.read_u8()?) + 1,
         0x7       => {
             let block_size = reader_crc8.read_be_u16()?;
             if block_size == 0xffff {
@@ -422,16 +419,16 @@ fn read_frame_header<B: Bytestream>(reader: &mut B, sync: u16) -> Result<FrameHe
         0x9 => Some( 44_100),
         0xa => Some( 48_000),
         0xb => Some( 96_000),
-        0xc => Some(reader_crc8.read_u8()? as u32),
-        0xd => Some(reader_crc8.read_be_u16()? as u32),
-        0xe => Some(reader_crc8.read_be_u16()? as u32 * 10),
+        0xc => Some(u32::from(reader_crc8.read_u8()?)),
+        0xd => Some(u32::from(reader_crc8.read_be_u16()?)),
+        0xe => Some(u32::from(reader_crc8.read_be_u16()?) * 10),
         _   => {
             return decode_error("Sample rate set to reserved value.");
         }
     };
 
     if let Some(rate) = sample_rate {
-        if rate < 1 || rate > 655350 {
+        if rate < 1 || rate > 655_350 {
             return decode_error("Sample rate out of bounds.");
         }
     }
@@ -469,10 +466,8 @@ fn read_frame_header<B: Bytestream>(reader: &mut B, sync: u16) -> Result<FrameHe
     }
 
     Ok(FrameHeader {
-        blocking_strategy,
         block_sequence,
         block_num_samples,
-        sample_rate,
         channel_assignment,
         bits_per_sample,
     })
@@ -498,7 +493,7 @@ enum SubFrameType {
 fn read_subframe<B: BitStream>(bs: &mut B, frame_bps: u32, buf: &mut [i32]) -> Result<()> {
 
     // First sub-frame bit must always 0.
-    if bs.read_bit()? == true {
+    if bs.read_bit()? {
         return decode_error("Subframe padding is not 0.");
     }
 
@@ -852,17 +847,17 @@ fn fixed_predict(order: u32, buf: &mut [i32]) -> Result<()> {
         // A 2nd order predictor uses the polynomial: s(i) = 2*s(i-1) - 1*s(i-2).
         2 => {
             for i in 2..buf.len() {
-                let a = Wrapping(-1) * Wrapping(buf[i - 2] as i64);
-                let b = Wrapping( 2) * Wrapping(buf[i - 1] as i64);
+                let a = Wrapping(-1) * Wrapping(i64::from(buf[i - 2]));
+                let b = Wrapping( 2) * Wrapping(i64::from(buf[i - 1]));
                 buf[i] += (a + b).0 as i32;
             }
         },
         // A 3rd order predictor uses the polynomial: s(i) = 3*s(i-1) - 3*s(i-2) + 1*s(i-3).
         3 => {
             for i in 3..buf.len() {
-                let a = Wrapping( 1) * Wrapping(buf[i - 3] as i64);
-                let b = Wrapping(-3) * Wrapping(buf[i - 2] as i64);
-                let c = Wrapping( 3) * Wrapping(buf[i - 1] as i64);
+                let a = Wrapping( 1) * Wrapping(i64::from(buf[i - 3]));
+                let b = Wrapping(-3) * Wrapping(i64::from(buf[i - 2]));
+                let c = Wrapping( 3) * Wrapping(i64::from(buf[i - 1]));
                 buf[i] += (a + b + c).0 as i32;
             }
         },
@@ -870,10 +865,10 @@ fn fixed_predict(order: u32, buf: &mut [i32]) -> Result<()> {
         // s(i) = 4*s(i-1) - 6*s(i-2) + 4*s(i-3) - 1*s(i-4).
         4 => {
             for i in 4..buf.len() {
-                let a = Wrapping(-1) * Wrapping(buf[i - 4] as i64);
-                let b = Wrapping( 4) * Wrapping(buf[i - 3] as i64);
-                let c = Wrapping(-6) * Wrapping(buf[i - 2] as i64);
-                let d = Wrapping( 4) * Wrapping(buf[i - 1] as i64);
+                let a = Wrapping(-1) * Wrapping(i64::from(buf[i - 4]));
+                let b = Wrapping( 4) * Wrapping(i64::from(buf[i - 3]));
+                let c = Wrapping(-6) * Wrapping(i64::from(buf[i - 2]));
+                let d = Wrapping( 4) * Wrapping(i64::from(buf[i - 1]));
                 buf[i] += (a + b + c + d).0 as i32;
             }
         }

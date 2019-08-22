@@ -215,7 +215,7 @@ impl BitReaderLtr {
         }
 
         self.n_bits_left -= num_bits;
-        Ok((self.bits >> self.n_bits_left) & (1 << num_bits) - 1)
+        Ok((self.bits >> self.n_bits_left) & ((1 << num_bits) - 1))
     }
 }
 
@@ -271,7 +271,7 @@ impl BitReader for BitReaderLtr {
     fn read_bits_leq32<B: Bytestream>(&mut self, src: &mut B, mut num_bits: u32) -> io::Result<u32> {
         debug_assert!(num_bits <= 32);
 
-        let mask = !(0xffffffffffffffffu64 << num_bits) as u32;
+        let mask = !(0xffff_ffff_ffff_ffffu64 << num_bits) as u32;
 
         let mut res: u32 = self.bits;
 
@@ -333,7 +333,7 @@ impl BitReader for BitReaderLtr {
                     // Count the number of valid leading zeros in bits by filling the upper unused 
                     // 24 bits with 1s and rotating right by the number of bits left. The leading 
                     // bits will then contain the number of unread bits.
-                    let byte = (self.bits | 0xffffff00).rotate_right(self.n_bits_left);
+                    let byte = (self.bits | 0xffff_ff00).rotate_right(self.n_bits_left);
                     byte.leading_zeros()
                 };
 
@@ -417,7 +417,7 @@ impl BitReader for BitReaderLtr {
             // up-to the limit and try to decode them.
             else {
                 let prefix = (self.read_bits_leq8(src, n_bits)? as usize) 
-                                << table.n_init_bits - lim_bits;
+                                << (table.n_init_bits - lim_bits);
 
                 table.data[prefix]
             }
@@ -514,7 +514,7 @@ pub struct BitStreamLtr<B: Bytestream> {
 impl<B: Bytestream> BitStreamLtr<B> {
     pub fn new(inner: B) -> BitStreamLtr<B> {
         BitStreamLtr {
-            inner: inner,
+            inner,
             reader: BitReaderLtr::new(),
         }
     }

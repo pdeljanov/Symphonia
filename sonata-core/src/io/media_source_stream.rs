@@ -309,7 +309,7 @@ impl Bytestream for MediaSourceStream {
             }
         }
 
-        return Ok(double_byte);
+        Ok(double_byte)
     }
 
     // Reads three bytes from the stream and returns them in read-order or an error.
@@ -334,7 +334,7 @@ impl Bytestream for MediaSourceStream {
             }
         }
 
-        return Ok(triple_byte);
+        Ok(triple_byte)
     }
 
     // Reads four bytes from the stream and returns them in read-order or an error.
@@ -359,7 +359,7 @@ impl Bytestream for MediaSourceStream {
             }
         }
 
-        return Ok(quad_byte);
+        Ok(quad_byte)
     }
 
     #[inline(always)]

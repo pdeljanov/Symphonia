@@ -152,7 +152,7 @@ impl i24 {
     }
 
     #[inline]
-    pub fn inner(&self) -> i32 {
+    pub fn into_i32(self) -> i32 {
         self.0
     }
 
@@ -162,18 +162,18 @@ impl i24 {
         #[cfg(target_endian = "little")]
         {
             [
-                ((self.0 & 0x0000ff) >>  0) as u8,
-                ((self.0 & 0x00ff00) >>  8) as u8,
-                ((self.0 & 0xff0000) >> 16) as u8,
+                ((self.0 & 0x00_00ff) >>  0) as u8,
+                ((self.0 & 0x00_ff00) >>  8) as u8,
+                ((self.0 & 0xff_0000) >> 16) as u8,
             ]
         }
         // Big endian platform
         #[cfg(not(target_endian = "little"))]
         {
             [
-                ((self.0 & 0xff0000) >> 16) as u8,
-                ((self.0 & 0x00ff00) >>  8) as u8,
-                ((self.0 & 0x0000ff) >>  0) as u8,
+                ((self.0 & 0xff_0000) >> 16) as u8,
+                ((self.0 & 0x00_ff00) >>  8) as u8,
+                ((self.0 & 0x00_00ff) >>  0) as u8,
             ]
         }
     }
@@ -184,11 +184,11 @@ impl From<i32> for i24 {
 }
 
 impl From<i16> for i24 {
-    fn from(val: i16) -> Self { i24(val as i32) }
+    fn from(val: i16) -> Self { i24(i32::from(val)) }
 }
 
 impl From<i8> for i24 {
-    fn from(val: i8) -> Self { i24(val as i32) }
+    fn from(val: i8) -> Self { i24(i32::from(val)) }
 }
 
 impl ::core::ops::Add<i24> for i24 {
@@ -281,7 +281,7 @@ impl u24 {
     }
 
     #[inline]
-    pub fn inner(&self) -> u32 {
+    pub fn into_u32(self) -> u32 {
         self.0
     }
 
@@ -291,18 +291,18 @@ impl u24 {
         #[cfg(target_endian = "little")]
         {
             [
-                ((self.0 & 0x0000ff) >>  0) as u8,
-                ((self.0 & 0x00ff00) >>  8) as u8,
-                ((self.0 & 0xff0000) >> 16) as u8,
+                ((self.0 & 0x00_00ff) >>  0) as u8,
+                ((self.0 & 0x00_ff00) >>  8) as u8,
+                ((self.0 & 0xff_0000) >> 16) as u8,
             ]
         }
         // Big endian platform
         #[cfg(not(target_endian = "little"))]
         {
             [
-                ((self.0 & 0xff0000) >> 16) as u8,
-                ((self.0 & 0x00ff00) >>  8) as u8,
-                ((self.0 & 0x0000ff) >>  0) as u8,
+                ((self.0 & 0xff_0000) >> 16) as u8,
+                ((self.0 & 0x00_ff00) >>  8) as u8,
+                ((self.0 & 0x00_00ff) >>  0) as u8,
             ]
         }
     }
@@ -314,11 +314,11 @@ impl From<u32> for u24 {
 }
 
 impl From<u16> for u24 {
-    fn from(val: u16) -> Self { u24(val as u32) }
+    fn from(val: u16) -> Self { u24(u32::from(val)) }
 }
 
 impl From<u8> for u24 {
-    fn from(val: u8) -> Self { u24(val as u32) }
+    fn from(val: u8) -> Self { u24(u32::from(val)) }
 }
 
 impl ::core::ops::Add<u24> for u24 {

@@ -50,7 +50,7 @@ impl FlacReader {
 
             // Create a scoped bytestream to error if the metadata block read functions exceed the stated length of the 
             // block.
-            let mut block_stream = ScopedStream::new(&mut self.reader, header.block_len as u64);
+            let mut block_stream = ScopedStream::new(&mut self.reader, u64::from(header.block_len));
 
             match header.block_type {
                 MetadataBlockType::Application => {
@@ -88,12 +88,12 @@ impl FlacReader {
                 },
                 // Padding blocks are skipped.
                 MetadataBlockType::Padding => {
-                    block_stream.ignore_bytes(header.block_len as u64)?;
+                    block_stream.ignore_bytes(u64::from(header.block_len))?;
                 },
                 // Unknown block encountered. Skip these blocks as they may be part of a future version of FLAC, but 
                 // print a message.
                 MetadataBlockType::Unknown(id) => {
-                    block_stream.ignore_bytes(header.block_len as u64)?;
+                    block_stream.ignore_bytes(u64::from(header.block_len))?;
                     eprintln!("Ignoring {} bytes of block width id={}.", header.block_len, id);
                 }
             }
@@ -161,7 +161,7 @@ impl FormatReader for FlacReader {
     }
 
     fn seek(&mut self, ts: Timestamp) -> Result<u64> {
-        if self.streams.len() < 1 {
+        if self.streams.is_empty() {
             return seek_error(SeekErrorKind::Unseekable);
         }
 
@@ -181,7 +181,7 @@ impl FormatReader for FlacReader {
                 // Use the sample rate to calculate the frame timestamp. If sample rate is not known, the seek cannot 
                 // be completed.
                 if let Some(sample_rate) = params.sample_rate {
-                    (time * sample_rate as f64) as u64
+                    (time * f64::from(sample_rate)) as u64
                 }
                 else {
                     return seek_error(SeekErrorKind::Unseekable);
@@ -241,7 +241,7 @@ impl FormatReader for FlacReader {
                 if frame_ts < packet.packet_ts {
                     end_byte_offset = mid_byte_offset;
                 }
-                else if frame_ts > packet.packet_ts && frame_ts < (packet.packet_ts + packet.n_frames as u64) {
+                else if frame_ts > packet.packet_ts && frame_ts < (packet.packet_ts + u64::from(packet.n_frames)) {
                     // Rewind the stream back to the beginning of the frame.
                     self.reader.rewind(packet.parsed_len);
 
@@ -284,7 +284,7 @@ impl FormatReader for FlacReader {
                 }
             }
             // The desired timestamp is contained within the current packet.
-            else if frame_ts >= packet.packet_ts && frame_ts < (packet.packet_ts + packet.n_frames as u64) {
+            else if frame_ts >= packet.packet_ts && frame_ts < (packet.packet_ts + u64::from(packet.n_frames)) {
                 // Rewind the stream back to the beginning of the frame.
                 self.reader.rewind(packet.parsed_len);
 
@@ -324,10 +324,9 @@ impl FormatReader for FlacReader {
                 self.first_frame_offset = self.reader.pos();
                 
                 // Make sure that there is atleast one StreamInfo block.
-                if self.streams.len() < 1 {
+                if self.streams.is_empty() {
                     return decode_error("No StreamInfo block.");
                 }
-
 
                 // Read the rest of the metadata blocks.
                 return Ok(ProbeResult::Supported);
@@ -370,7 +369,7 @@ impl FormatReader for FlacReader {
 /// Reads a StreamInfo block and populates the reader with stream information.
 fn read_stream_info_block<B : Bytestream>(block_stream: &mut B, streams: &mut Vec<Stream>) -> Result<()> {
     // Only one StreamInfo block, and therefore ony one Stream, is allowed per media source stream.
-    if streams.len() == 0 {
+    if streams.is_empty() {
         let info = StreamInfo::read(block_stream)?;
 
         // Populate the codec parameters with the information read from StreamInfo.
@@ -380,7 +379,7 @@ fn read_stream_info_block<B : Bytestream>(block_stream: &mut B, streams: &mut Ve
             .for_codec(CODEC_TYPE_FLAC)
             .with_sample_rate(info.sample_rate)
             .with_bits_per_sample(info.bits_per_sample)
-            .with_max_frames_per_packet(info.block_sample_len.1 as u64)
+            .with_max_frames_per_packet(u64::from(info.block_sample_len.1))
             .with_channels(info.channels);
         
         // Total samples (per channel) aka frames may or may not be stated in StreamInfo.

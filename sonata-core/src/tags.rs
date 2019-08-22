@@ -162,7 +162,7 @@ impl Tag {
     /// Create a new `Tag`.
     pub fn new(std_key: Option<StandardTagKey>, key: &str, value: &str) -> Tag {
         Tag {
-            std_key: std_key,
+            std_key,
             key: key.to_string(),
             value: value.to_string()
         }

@@ -142,7 +142,7 @@ impl StreamInfo {
         // Read sample rate, valid rates are [1, 655350] Hz.
         info.sample_rate = br.read_bits_leq32(reader, 20)?;
 
-        if info.sample_rate < 1 || info.sample_rate > 655350 {
+        if info.sample_rate < 1 || info.sample_rate > 655_350 {
             return decode_error("Stream sample rate out of bounds.");
         }
 
@@ -181,7 +181,7 @@ pub fn read_comment_block<B : Bytestream>(reader: &mut B, tags: &mut Vec<Tag>) -
     let vendor_length = reader.read_u32()?;
 
     // Ignore the vendor string.
-    reader.ignore_bytes(vendor_length as u64)?;
+    reader.ignore_bytes(u64::from(vendor_length))?;
 
     // Read the number of comments.
     let n_comments = reader.read_u32()? as usize;
@@ -191,8 +191,7 @@ pub fn read_comment_block<B : Bytestream>(reader: &mut B, tags: &mut Vec<Tag>) -
         let comment_length = reader.read_u32()?;
 
         // Read the comment string.
-        let mut comment_byte = Vec::<u8>::with_capacity(comment_length as usize);
-        comment_byte.resize(comment_length as usize, 0);
+        let mut comment_byte = vec![0; comment_length as usize];
         reader.read_buf_bytes(&mut comment_byte)?;
 
         // Parse comment as UTF-8 and add to list.
@@ -211,8 +210,8 @@ pub fn read_seek_table_block<B : Bytestream>(reader: &mut B, block_length: u32, 
         // A sample value of 0xFFFFFFFFFFFFFFFF is designated as a placeholder and is to be
         // ignored by decoders. The remaining 10 bytes of the seek point are undefined and must
         // still be consumed.
-        if sample != 0xffffffffffffffff {
-            table.insert(sample, reader.read_be_u64()?, reader.read_be_u16()? as u32);
+        if sample != 0xffff_ffff_ffff_ffff {
+            table.insert(sample, reader.read_be_u64()?, u32::from(reader.read_be_u16()?));
         }
         else {
             reader.ignore_bytes(10)?;
@@ -295,7 +294,7 @@ fn read_cuesheet_track<B: Bytestream>(reader: &mut B, is_cdda: bool, cues: &mut 
         return decode_error("Cuesheet track sample offset is not a multiple of 588 for CD-DA.");
     }
 
-    let number = reader.read_u8()? as u32;
+    let number = u32::from(reader.read_u8()?);
 
     // A track number of 0 is disallowed in all cases. For CD-DA cuesheets, track 0 is reserved for lead-in.
     if number == 0 {
@@ -370,12 +369,12 @@ fn read_cuesheet_track_index<B: Bytestream>(reader: &mut B, is_cdda: bool) -> Re
         return decode_error("Cuesheet track index point sample offset is not a multiple of 588 for CD-DA.");
     }
 
-    if idx_point_enc & 0x00ffffff != 0 {
+    if idx_point_enc & 0x00ff_ffff != 0 {
         return decode_error("Cuesheet track index reserved bits should be 0.");
     }
 
     // TODO: Should be 0 or 1 for the first index for CD-DA.
-    let _idx_point = ((idx_point_enc & 0xff000000) >> 24) as u8;
+    let _idx_point = ((idx_point_enc & 0xff00_0000) >> 24) as u8;
 
     Ok(CuePoint {
         start_offset_ts: n_offset_samples,
