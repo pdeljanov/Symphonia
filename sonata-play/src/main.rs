@@ -5,6 +5,11 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+// Justification: fields on DecoderOptions and FormatOptions may change at any time, but sonata-play
+// doesn't want to be updated every time those fields change, therefore always fill in the remaining
+// fields with default values.
+#![allow(clippy::needless_update)]
+
 use std::default::Default;
 use std::fs::File;
 use std::path::Path;
@@ -106,7 +111,6 @@ fn main() {
             else if matches.is_present("probe-only") {
                 pretty_print_format(&path, &reader);
             }
-            // If nothing else, decode and play the audio.
             else {
                 pretty_print_format(&path, &reader);
 
@@ -177,12 +181,12 @@ fn play(mut reader: Box<dyn FormatReader>, decode_options: &DecoderOptions) -> R
 
             // An interleaved buffer is required to send data to PulseAudio. Sse a SampleBuffer to
             // move data between Sonata AudioBuffers and the byte buffers required by PulseAudio.
-            let mut samples = SampleBuffer::<i32>::new(duration, &spec);
+            let mut samples = SampleBuffer::<i32>::new(duration, *spec);
 
             // Create a PulseAudio stream specification.
             let pa_spec = pulse::sample::Spec {
                 format: pulse::sample::SAMPLE_S32NE,
-                channels: spec.channels.len() as u8,
+                channels: spec.channels.count() as u8,
                 rate: spec.rate,
             };
 
@@ -257,7 +261,7 @@ fn pretty_print_streams(streams: &[Stream]) {
                 println!("|          Bits per Sample: {}", bits_per_sample);
             }
             if let Some(channels) = params.channels {
-                println!("|          Channel(s):      {}", channels.len());
+                println!("|          Channel(s):      {}", channels.count());
                 println!("|          Channel Map:     {}", channels);
             }
             if let Some(channel_layout) = params.channel_layout {

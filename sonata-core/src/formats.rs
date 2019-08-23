@@ -261,7 +261,7 @@ impl SeekIndex {
     /// the entire stream should be searched manually.
     pub fn search(&self, frame_ts: u64) -> SeekSearchResult {
         // The index must contain atleast one SeekPoint to return a useful result.
-        if self.points.len() > 0 {
+        if !self.points.is_empty() {
             let mut lower = 0;
             let mut upper = self.points.len() - 1;
 
@@ -588,9 +588,9 @@ impl FormatRegistry {
     pub fn register(&mut self, descriptor: &FormatDescriptor, tier: u32) {
         let pos = self.descriptors.iter()
                                   .position(|entry| entry.1 < tier)
-                                  .unwrap_or(self.descriptors.len());
+                                  .unwrap_or_else(|| self.descriptors.len());
 
-        self.descriptors.insert(pos, (descriptor.clone(), tier));
+        self.descriptors.insert(pos, (*descriptor, tier));
     }
 
 }

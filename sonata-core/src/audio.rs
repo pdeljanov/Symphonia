@@ -96,7 +96,7 @@ bitflags! {
 
 impl Channels {
     /// Gets the number of channels.
-    pub fn len(&self) -> usize {
+    pub fn count(self) -> usize {
         self.bits.count_ones() as usize
     }
 }
@@ -297,13 +297,13 @@ pub struct AudioBuffer<S : Sample> {
 impl<S : Sample> AudioBuffer<S> {
     /// Instantiate a new `AudioBuffer` using the specified signal specification and of the given
     /// duration.
-    pub fn new(duration: Duration, spec: &SignalSpec) -> Self {
+    pub fn new(duration: Duration, spec: SignalSpec) -> Self {
         let n_capacity = match duration {
             Duration::Frames(frames) => frames,
-            Duration::Seconds(time) => (time * (1f64 / spec.rate as f64)) as u64,
+            Duration::Seconds(time) => (time / f64::from(spec.rate)) as u64,
         };
 
-        let n_sample_capacity = n_capacity * spec.channels.len() as u64;
+        let n_sample_capacity = n_capacity * spec.channels.count() as u64;
 
         // Practically speaking, it is not possible to allocate more than usize samples.
         debug_assert!(n_sample_capacity <= usize::max_value() as u64);
@@ -313,7 +313,7 @@ impl<S : Sample> AudioBuffer<S> {
 
         AudioBuffer {
             buf,
-            spec: spec.clone(),
+            spec,
             n_frames: 0,
             n_capacity: n_capacity as usize,
         }
@@ -351,11 +351,11 @@ impl<S : Sample> AudioBuffer<S> {
     /// Note: This is not a cheap operation. It is advisable that this call is only used when
     /// operating on batches of frames. Generally speaking, it is almost always better to use
     /// `chan()` to selectively choose the plane to read.
-    pub fn planes<'a>(&'a self) -> AudioPlanes<'a, S> {
+    pub fn planes(&self) -> AudioPlanes<S> {
         let mut planes = AudioPlanes {
             // FIXME: this is UB
             planes: unsafe { std::mem::uninitialized() },
-            n_planes: self.spec.channels.len(),
+            n_planes: self.spec.channels.count(),
         };
 
         // Only fill the planes array up to the number of channels.
@@ -372,11 +372,11 @@ impl<S : Sample> AudioBuffer<S> {
     /// Note: This is not a cheap operation. It is advisable that this call is only used when
     /// mutating batches of frames. Generally speaking, it is almost always better to use
     /// `render()`, `fill()`, `chan_mut()`, and `chan_pair_mut()` to mutate the buffer.
-    pub fn planes_mut<'a>(&'a mut self) -> AudioPlanesMut<'a, S> {
+    pub fn planes_mut(&mut self) -> AudioPlanesMut<S> {
         let mut planes = AudioPlanesMut {
             // FIXME: this is UB
             planes: unsafe { std::mem::uninitialized() },
-            n_planes: self.spec.channels.len(),
+            n_planes: self.spec.channels.count(),
         };
 
         unsafe {
@@ -457,7 +457,7 @@ impl<T: Sample, F: Sample + IntoSample<T>> ConvertibleAudioBuffer<T> for AudioBu
         debug_assert!(dest.n_capacity == self.n_capacity);
         debug_assert!(dest.spec == self.spec);
 
-        for c in 0..self.spec.channels.len() {
+        for c in 0..self.spec.channels.count() {
             let begin = c * self.n_capacity;
             let end = begin + self.n_frames;
 
@@ -469,7 +469,7 @@ impl<T: Sample, F: Sample + IntoSample<T>> ConvertibleAudioBuffer<T> for AudioBu
     }
 
     fn make_equivalent<E: Sample>(&self) -> AudioBuffer<E> {
-        AudioBuffer::<E>::new(Duration::Frames(self.n_capacity as u64), &self.spec)
+        AudioBuffer::<E>::new(Duration::Frames(self.n_capacity as u64), self.spec)
     }
 }
 
@@ -590,7 +590,7 @@ impl<S: Sample> Signal<S> for AudioBuffer<S> {
 
         let mut planes = AudioPlanesMut {
             planes: unsafe { std::mem::uninitialized() },
-            n_planes: self.spec.channels.len(),
+            n_planes: self.spec.channels.count(),
         };
 
         unsafe {
@@ -653,13 +653,13 @@ pub struct SampleBuffer<S: Sample + WriteSample> {
 impl<S: Sample + WriteSample> SampleBuffer<S> {
     /// Instantiate a new `SampleBuffer` using the specified signal specification and of the given
     /// duration.
-    pub fn new(duration: Duration, spec: &SignalSpec) -> SampleBuffer<S> {
+    pub fn new(duration: Duration, spec: SignalSpec) -> SampleBuffer<S> {
         let n_frames = match duration {
             Duration::Frames(frames) => frames,
-            Duration::Seconds(time) => (time * (1f64 / spec.rate as f64)) as u64,
+            Duration::Seconds(time) => (time / f64::from(spec.rate)) as u64,
         };
 
-        let n_samples = n_frames * spec.channels.len() as u64;
+        let n_samples = n_frames * spec.channels.count() as u64;
 
         // Practically speaking, it is not possible to allocate more than usize samples.
         debug_assert!(n_samples <= usize::max_value() as u64);
@@ -714,7 +714,7 @@ impl<S: Sample + WriteSample> SampleBuffer<S> {
         F: Sample + IntoSample<S>
     {
         let n_frames = src.n_frames;
-        let n_channels = src.spec.channels.len();
+        let n_channels = src.spec.channels.count();
         let n_samples = n_frames * n_channels;
 
         // Ensure that the capacity of the sample buffer is greater than or equal to the number
@@ -735,7 +735,7 @@ impl<S: Sample + WriteSample> SampleBuffer<S> {
     /// The two buffers must be equivalent.
     pub fn copy_planar(&mut self, src: &AudioBuffer<S>) {
         let n_frames = src.n_frames;
-        let n_channels = src.spec.channels.len();
+        let n_channels = src.spec.channels.count();
         let n_samples = n_frames * n_channels;
 
         // Ensure that the capacity of the sample buffer is greater than or equal to the number
@@ -774,7 +774,7 @@ impl<S: Sample + WriteSample> SampleBuffer<S> {
         F: Sample + IntoSample<S>
     {
         let n_frames = src.n_frames;
-        let n_channels = src.spec.channels.len();
+        let n_channels = src.spec.channels.count();
         let n_samples = n_frames * n_channels;
 
         // Ensure that the capacity of the sample buffer is greater than or equal to the number
@@ -822,7 +822,7 @@ impl<S: Sample + WriteSample> SampleBuffer<S> {
     /// channel order. The two buffers must be equivalent.
     pub fn copy_interleaved(&mut self, src: &AudioBuffer<S>) {
         let n_frames = src.n_frames;
-        let n_channels = src.spec.channels.len();
+        let n_channels = src.spec.channels.count();
         let n_samples = n_frames * n_channels;
 
         // Ensure that the capacity of the sample buffer is greater than or equal to the number

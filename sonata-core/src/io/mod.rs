@@ -271,7 +271,7 @@ pub trait FiniteStream {
 /// of 36-bits.
 pub fn utf8_decode_be_u64<B: Bytestream>(src : &mut B) -> io::Result<Option<u64>> {
     // Read the first byte of the UTF8 encoded integer.
-    let mut state = src.read_u8()? as u64;
+    let mut state = u64::from(src.read_u8()?);
 
     // UTF8 prefixes 1s followed by a 0 to indicate the total number of bytes within the multi-byte
     // sequence. Using ranges, determine the mask that will overlap the data bits within the first
@@ -290,7 +290,7 @@ pub fn utf8_decode_be_u64<B: Bytestream>(src : &mut B) -> io::Result<Option<u64>
     };
 
     // Obtain the data bits from the first byte by using the data mask.
-    state = state & (mask as u64);
+    state &= u64::from(mask);
 
     // Read the remaining bytes within the UTF8 sequence. Since the mask 0s out the UTF8 prefix
     // of 1s which indicate the length of the multi-byte sequence in bytes, plus an additional 0
@@ -301,7 +301,7 @@ pub fn utf8_decode_be_u64<B: Bytestream>(src : &mut B) -> io::Result<Option<u64>
         // only 6 bits are useful. Append these six bits to the result by shifting the result left
         // by 6 bit positions, and appending the next subsequent byte with the first two high-order
         // bits masked out.
-        state = (state << 6) | (src.read_u8()? & 0x3f) as u64;
+        state = (state << 6) | u64::from(src.read_u8()? & 0x3f);
 
         // TODO: Validation? Invalid if the byte is greater than 0x3f.
     }

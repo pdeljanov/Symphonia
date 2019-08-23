@@ -38,7 +38,7 @@ impl<'a> BufStream<'a> {
     /// boundary. Operation is otherwise identical to `scan_bytes_ref`.
     pub fn scan_bytes_aligned_ref(&mut self, pattern: &[u8], align: usize, scan_len: usize) -> io::Result<&'a [u8]> {
         // The pattern must be atleast one byte.
-        debug_assert!(pattern.len() > 0);
+        debug_assert!(!pattern.is_empty());
 
         let start = self.pos;
         let remaining = self.buf.len() - start;

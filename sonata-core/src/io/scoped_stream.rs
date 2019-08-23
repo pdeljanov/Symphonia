@@ -41,7 +41,7 @@ impl<B: Bytestream> ScopedStream<B> {
     }
 
     /// Convert the `ScopedStream` to the inner `Bytestream`.
-    pub fn to_inner(self) -> B {
+    pub fn into_inner(self) -> B {
         self.inner
     }
 }

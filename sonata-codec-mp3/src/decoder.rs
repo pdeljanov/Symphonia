@@ -46,7 +46,7 @@ impl Decoder for Mp3Decoder {
         // The buffer can only be created after the first frame is decoded. Technically, it can
         // change throughout the stream as well...
         if self.buf.is_unused() {
-            self.buf = AudioBuffer::new(Duration::Frames(1152), &header.spec());
+            self.buf = AudioBuffer::new(Duration::Frames(1152), header.spec());
         }
 
         // Clear the audio output buffer.

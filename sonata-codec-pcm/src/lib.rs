@@ -83,7 +83,7 @@ const XLAW_SEG_SHIFT: u32 = 4;
 fn alaw_to_linear(mut a_val: u8) -> i16 {
     a_val ^= 0x55;
 
-    let mut t = ((a_val & XLAW_QUANT_MASK) << 4) as i16;
+    let mut t = i16::from((a_val & XLAW_QUANT_MASK) << 4);
     let seg = (a_val & XLAW_SEG_MASK) >> XLAW_SEG_SHIFT;
 
     match seg {
@@ -103,7 +103,7 @@ fn mulaw_to_linear(mut mu_val: u8) -> i16 {
 
     // Extract and bias the quantization bits. Then shift up by the segment number and subtract out
     // the bias.
-    let mut t = ((mu_val & XLAW_QUANT_MASK) << 3) as i16 + BIAS;
+    let mut t = i16::from((mu_val & XLAW_QUANT_MASK) << 3) + BIAS;
     t <<= (mu_val & XLAW_SEG_MASK) >> XLAW_SEG_SHIFT;
 
     if mu_val & 0x80 == 0x80 { t - BIAS } else { BIAS - t }
@@ -140,7 +140,7 @@ impl Decoder for PcmDecoder {
 
         Ok(PcmDecoder {
             params: params.clone(),
-            buf: AudioBuffer::new(Duration::Frames(frames), &spec),
+            buf: AudioBuffer::new(Duration::Frames(frames), spec),
         })
     }
 
@@ -346,8 +346,8 @@ impl Decoder for PcmDecoder {
     fn decode(&mut self, packet: Packet<'_>) -> Result<AudioBufferRef<'_>> {
         let mut stream = packet.into_stream();
 
-        let width = self.params.bits_per_coded_sample.unwrap_or(
-                        self.params.bits_per_sample.unwrap_or(0));
+        let width = self.params.bits_per_coded_sample.unwrap_or_else(
+            || self.params.bits_per_sample.unwrap_or(0));
 
         // Only A-Law and Mu-Law codecs have an implicit coded sample bit-width (8 bits), other PCM
         // codecs require atleast either bits_per_sample or bits_per_coded_sample to be declared.

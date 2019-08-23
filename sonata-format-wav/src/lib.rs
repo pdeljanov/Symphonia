@@ -113,7 +113,7 @@ impl FormatReader for WavReader {
 
     fn seek(&mut self, ts: Timestamp) -> Result<u64> {
 
-        if self.streams.len() < 1 || self.frame_len == 0 {
+        if self.streams.is_empty() || self.frame_len == 0 {
             return seek_error(SeekErrorKind::Unseekable);
         }
 
@@ -132,7 +132,7 @@ impl FormatReader for WavReader {
                 // Use the sample rate to calculate the frame timestamp. If sample rate is not known, the seek cannot 
                 // be completed.
                 if let Some(sample_rate) = params.sample_rate {
-                    (time * sample_rate as f64) as u64
+                    (time * f64::from(sample_rate)) as u64
                 }
                 else {
                     return seek_error(SeekErrorKind::Unseekable);
@@ -148,7 +148,7 @@ impl FormatReader for WavReader {
         }
 
         // Calculate the absolute byte offset of the desired audio frame.
-        let seek_pos = self.data_offset + (frame_ts * self.frame_len as u64);
+        let seek_pos = self.data_offset + (frame_ts * u64::from(self.frame_len));
 
         // If the reader supports seeking we can seek directly to the frame's offset wherever it may be.
         if self.reader.is_seekable() {
@@ -172,7 +172,7 @@ impl FormatReader for WavReader {
     fn probe(&mut self, depth: ProbeDepth) -> Result<ProbeResult> {
 
         // Search for the "RIFF" marker.
-        let marker = search_for_marker(&mut self.reader, b"RIFF", depth)?;
+        let marker = search_for_marker(&mut self.reader, *b"RIFF", depth)?;
 
         if marker.is_none() {
             return Ok(ProbeResult::Unsupported);
@@ -254,8 +254,8 @@ fn append_format_params(codec_params: &mut CodecParameters, format: &WaveFormatC
         WaveFormatData::Pcm(ref pcm) => {
             codec_params
                 .for_codec(pcm.codec)
-                .with_bits_per_coded_sample(pcm.bits_per_sample as u32)
-                .with_bits_per_sample(pcm.bits_per_sample as u32)
+                .with_bits_per_coded_sample(u32::from(pcm.bits_per_sample))
+                .with_bits_per_sample(u32::from(pcm.bits_per_sample))
                 .with_channels(pcm.channels);
         },
         WaveFormatData::IeeeFloat(ref ieee) => {
@@ -266,8 +266,8 @@ fn append_format_params(codec_params: &mut CodecParameters, format: &WaveFormatC
         WaveFormatData::Extensible(ref ext) => {
             codec_params
                 .for_codec(ext.codec)
-                .with_bits_per_coded_sample(ext.bits_per_coded_sample as u32)
-                .with_bits_per_sample(ext.bits_per_sample as u32)
+                .with_bits_per_coded_sample(u32::from(ext.bits_per_coded_sample))
+                .with_bits_per_sample(u32::from(ext.bits_per_sample))
                 .with_channels(ext.channels);
         },
         WaveFormatData::ALaw(ref alaw) => {
@@ -284,10 +284,10 @@ fn append_format_params(codec_params: &mut CodecParameters, format: &WaveFormatC
 }
 
 fn append_fact_params(codec_params: &mut CodecParameters, fact: &FactChunk) {
-    codec_params.with_n_frames(fact.n_frames as u64);
+    codec_params.with_n_frames(u64::from(fact.n_frames));
 }
 
-fn search_for_marker<B: Bytestream>(reader: &mut B, marker: &[u8; 4], depth: ProbeDepth) -> Result<Option<[u8; 4]>> {
+fn search_for_marker<B: Bytestream>(reader: &mut B, marker: [u8; 4], depth: ProbeDepth) -> Result<Option<[u8; 4]>> {
     let mut window = [0u8; 4];
 
     reader.read_buf_bytes(&mut window)?;
@@ -296,10 +296,10 @@ fn search_for_marker<B: Bytestream>(reader: &mut B, marker: &[u8; 4], depth: Pro
     let mut probed_bytes = 4usize;
 
     loop {
-        if window == *marker {
+        if window == marker {
             // Found the marker.
             eprintln!("Probe: Found stream marker @ +{} bytes.", probed_bytes - 4);
-            return Ok(Some(*marker));
+            return Ok(Some(marker));
         }
         // If the ProbeDepth is deep, continue searching for the stream marker.
         else if depth == ProbeDepth::Deep {

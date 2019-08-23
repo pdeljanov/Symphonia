@@ -5,6 +5,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+use byteorder::{NativeEndian, ByteOrder};
+
 /// SampleFormat describes the data encoding for an audio sample.
 #[derive(Copy, Clone, Debug)]
 pub enum SampleFormat {
@@ -157,25 +159,10 @@ impl i24 {
     }
 
     #[inline]
-    pub fn to_ne_bytes(&self) -> [u8; 3] {
-        // Little endian platform
-        #[cfg(target_endian = "little")]
-        {
-            [
-                ((self.0 & 0x00_00ff) >>  0) as u8,
-                ((self.0 & 0x00_ff00) >>  8) as u8,
-                ((self.0 & 0xff_0000) >> 16) as u8,
-            ]
-        }
-        // Big endian platform
-        #[cfg(not(target_endian = "little"))]
-        {
-            [
-                ((self.0 & 0xff_0000) >> 16) as u8,
-                ((self.0 & 0x00_ff00) >>  8) as u8,
-                ((self.0 & 0x00_00ff) >>  0) as u8,
-            ]
-        }
+    pub fn to_ne_bytes(self) -> [u8; 3] {
+        let mut bytes = [0u8; 3];
+        NativeEndian::write_i24(&mut bytes, self.0);
+        bytes
     }
 }
 
@@ -286,25 +273,10 @@ impl u24 {
     }
 
     #[inline]
-    pub fn to_ne_bytes(&self) -> [u8; 3] {
-        // Little endian platform
-        #[cfg(target_endian = "little")]
-        {
-            [
-                ((self.0 & 0x00_00ff) >>  0) as u8,
-                ((self.0 & 0x00_ff00) >>  8) as u8,
-                ((self.0 & 0xff_0000) >> 16) as u8,
-            ]
-        }
-        // Big endian platform
-        #[cfg(not(target_endian = "little"))]
-        {
-            [
-                ((self.0 & 0xff_0000) >> 16) as u8,
-                ((self.0 & 0x00_ff00) >>  8) as u8,
-                ((self.0 & 0x00_00ff) >>  0) as u8,
-            ]
-        }
+    pub fn to_ne_bytes(self) -> [u8; 3] {
+        let mut bytes = [0u8; 3];
+        NativeEndian::write_u24(&mut bytes, self.0);
+        bytes
     }
 
 }

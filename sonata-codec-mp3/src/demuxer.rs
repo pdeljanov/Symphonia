@@ -65,11 +65,11 @@ impl FormatReader for Mp3Reader {
         &self.streams
     }
 
-    fn seek(&mut self, ts: Timestamp) -> Result<u64> {
+    fn seek(&mut self, _ts: Timestamp) -> Result<u64> {
         unimplemented!();
     }
 
-    fn probe(&mut self, depth: ProbeDepth) -> Result<ProbeResult> {
+    fn probe(&mut self, _depth: ProbeDepth) -> Result<ProbeResult> {
         self.tags.append(&mut id3v2::read_id3v2(&mut self.reader)?);
 
         let mut params = CodecParameters::new();

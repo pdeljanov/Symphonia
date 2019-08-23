@@ -35,9 +35,9 @@ pub struct Crc8 {
 }
 
 impl Crc8 {
-    pub fn new() -> Crc8 {
+    pub fn new(initial_state: u8) -> Crc8 {
         Crc8 {
-            state: 0
+            state: initial_state,
         }
     }
 
@@ -49,7 +49,7 @@ impl Crc8 {
 
 impl Monitor for Crc8 {
     #[inline(always)]
-    fn process_byte(&mut self, byte: &u8) {
+    fn process_byte(&mut self, byte: u8) {
         self.state = CRC8_ITU_T_I_432_1[(self.state ^ byte) as usize];
     }
 
@@ -105,9 +105,9 @@ pub struct Crc16 {
 }
 
 impl Crc16 {
-    pub fn new() -> Crc16 {
+    pub fn new(initial_state: u16) -> Crc16 {
         Crc16 {
-            state: 0
+            state: initial_state,
         }
     }
 
@@ -119,7 +119,7 @@ impl Crc16 {
 
 impl Monitor for Crc16 {
     #[inline(always)]
-    fn process_byte(&mut self, byte: &u8) {
+    fn process_byte(&mut self, byte: u8) {
         self.state = (self.state << 8) ^ CRC16_ANSI[((self.state >> 8) as u8 ^ byte) as usize];
     }
 

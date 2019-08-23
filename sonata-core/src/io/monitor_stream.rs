@@ -11,21 +11,27 @@ use super::Bytestream;
 
 /// A `Monitor` provides a common interface to observe operations performed on a stream.
 pub trait Monitor {
-    fn process_byte(&mut self, byte: &u8);
+    fn process_byte(&mut self, byte: u8);
 
     #[inline(always)]
-    fn process_double_bytes(&mut self, buf: &[u8; 2]) {
-        self.process_buf_bytes(buf);
+    fn process_double_bytes(&mut self, buf: [u8; 2]) {
+        self.process_byte(buf[0]);
+        self.process_byte(buf[1]);
     }
 
     #[inline(always)]
-    fn process_triple_bytes(&mut self, buf: &[u8; 3]) {
-        self.process_buf_bytes(buf);
+    fn process_triple_bytes(&mut self, buf: [u8; 3]) {
+        self.process_byte(buf[0]);
+        self.process_byte(buf[1]);
+        self.process_byte(buf[2]);
     }
 
     #[inline(always)]
-    fn process_quad_bytes(&mut self, buf: &[u8; 4]) {
-        self.process_buf_bytes(buf);
+    fn process_quad_bytes(&mut self, buf: [u8; 4]) {
+        self.process_byte(buf[0]);
+        self.process_byte(buf[1]);
+        self.process_byte(buf[2]);
+        self.process_byte(buf[3]);
     }
 
     fn process_buf_bytes(&mut self, buf: &[u8]);
@@ -54,7 +60,7 @@ impl<B: Bytestream, M: Monitor> MonitorStream<B, M> {
         &mut self.inner
     }
 
-    pub fn to_inner(self) -> B {
+    pub fn into_inner(self) -> B {
         self.inner
     }
 
@@ -71,28 +77,28 @@ impl<B : Bytestream, M: Monitor> Bytestream for MonitorStream<B, M> {
     #[inline(always)]
     fn read_byte(&mut self) -> io::Result<u8> {
         let byte = self.inner.read_byte()?;
-        self.monitor.process_byte(&byte);
+        self.monitor.process_byte(byte);
         Ok(byte)
     }
 
     #[inline(always)]
     fn read_double_bytes(&mut self) -> io::Result<[u8; 2]> {
         let bytes = self.inner.read_double_bytes()?;
-        self.monitor.process_double_bytes(&bytes);
+        self.monitor.process_double_bytes(bytes);
         Ok(bytes)
     }
 
     #[inline(always)]
     fn read_triple_bytes(&mut self) -> io::Result<[u8; 3]> {
         let bytes = self.inner.read_triple_bytes()?;
-        self.monitor.process_triple_bytes(&bytes);
+        self.monitor.process_triple_bytes(bytes);
         Ok(bytes)
     }
 
     #[inline(always)]
     fn read_quad_bytes(&mut self) -> io::Result<[u8; 4]> {
         let bytes = self.inner.read_quad_bytes()?;
-        self.monitor.process_quad_bytes(&bytes);
+        self.monitor.process_quad_bytes(bytes);
         Ok(bytes)
     }
 
@@ -102,7 +108,11 @@ impl<B : Bytestream, M: Monitor> Bytestream for MonitorStream<B, M> {
         Ok(())
     }
 
-    fn scan_bytes_aligned<'a>(&mut self, pattern: &[u8], align: usize, buf: &'a mut [u8]) -> io::Result<&'a mut [u8]> {
+    fn scan_bytes_aligned<'a>(
+        &mut self, pattern: &[u8],
+        align: usize,
+        buf: &'a mut [u8]
+    ) -> io::Result<&'a mut [u8]> {
         let result = self.inner.scan_bytes_aligned(pattern, align, buf)?;
         self.monitor.process_buf_bytes(result);
         Ok(result)

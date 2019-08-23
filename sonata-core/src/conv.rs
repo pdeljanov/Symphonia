@@ -215,11 +215,11 @@ converter!(u8, f64, s, {
 });
 
 // Conversions to u16
-converter!(u16, u8 , s, (s as u16) << 8);
+converter!(u16, u8 , s, u16::from(s) << 8);
 converter!(u16, u16, s, s);
 converter!(u16, u24, s, ((s.into_u32() & 0xff_ffff) >> 8) as u16);
 converter!(u16, u32, s, (s >> 16) as u16);
-converter!(u16, i8 , s, ((s as u8).wrapping_add(0x80) as u16) << 8);
+converter!(u16, i8 , s, u16::from((s as u8).wrapping_add(0x80)) << 8);
 converter!(u16, i16, s, (s as u16).wrapping_add(0x8000));
 converter!(u16, i24, s, (((s.into_i32() as u32).wrapping_add(0x80_0000) & 0xff_ffff) >> 8) as u16);
 converter!(u16, i32, s, ((s as u32).wrapping_add(0x8000_0000) >> 16) as u16);
@@ -233,12 +233,12 @@ converter!(u16, f64, s, {
 });
 
 // Conversions to u24
-converter!(u24, u8 , s, u24::from((s as u32) << 16));
-converter!(u24, u16, s, u24::from((s as u32) << 8));
+converter!(u24, u8 , s, u24::from(u32::from(s) << 16));
+converter!(u24, u16, s, u24::from(u32::from(s) << 8));
 converter!(u24, u24, s, u24::from(s.into_u32() & 0xff_ffff));
 converter!(u24, u32, s, u24::from(s >> 8));
-converter!(u24, i8 , s, u24::from(((s as u8).wrapping_add(0x80) as u32) << 16));
-converter!(u24, i16, s, u24::from(((s as u16).wrapping_add(0x8000) as u32) << 8));
+converter!(u24, i8 , s, u24::from(u32::from((s as u8).wrapping_add(0x80)) << 16));
+converter!(u24, i16, s, u24::from(u32::from((s as u16).wrapping_add(0x8000)) << 8));
 converter!(u24, i24, s, u24::from((s.into_i32() as u32).wrapping_add(0x80_0000) & 0xff_ffff));
 converter!(u24, i32, s, u24::from((s as u32).wrapping_add(0x8000_0000) >> 8));
 converter!(u24, f32, s, {
@@ -251,12 +251,12 @@ converter!(u24, f64, s, {
 });
 
 // Conversions to u32
-converter!(u32, u8 , s, (s as u32) << 24);
-converter!(u32, u16, s, (s as u32) << 16);
+converter!(u32, u8 , s, u32::from(s) << 24);
+converter!(u32, u16, s, u32::from(s) << 16);
 converter!(u32, u24, s, (s.into_u32() & 0xff_ffff) << 8);
 converter!(u32, u32, s, s);
-converter!(u32, i8 , s, ((s as u8).wrapping_add(0x80) as u32) << 24);
-converter!(u32, i16, s, ((s as u16).wrapping_add(0x8000) as u32) << 16);
+converter!(u32, i8 , s, u32::from((s as u8).wrapping_add(0x80)) << 24);
+converter!(u32, i16, s, u32::from((s as u16).wrapping_add(0x8000)) << 16);
 converter!(u32, i24, s, ((s.into_i32() as u32).wrapping_add(0x80_0000) & 0xff_ffff) << 8);
 converter!(u32, i32, s, (s as u32).wrapping_add(0x8000_0000));
 converter!(u32, f32, s, {
@@ -281,11 +281,11 @@ converter!(i8, f32, s, clamp_i8((clamp_f32(s) * 128.0).round() as i16));
 converter!(i8, f64, s, clamp_i8((clamp_f64(s) * 128.0).round() as i16));
 
 // Conversions to i16
-converter!(i16, u8 , s, (s.wrapping_add(0x80) as i16) << 8);
+converter!(i16, u8 , s, i16::from(s.wrapping_add(0x80)) << 8);
 converter!(i16, u16, s, s.wrapping_add(0x8000) as i16);
 converter!(i16, u24, s, (s.into_u32().wrapping_add(0x80_0000) >> 8) as i16);
 converter!(i16, u32, s, (s.wrapping_add(0x8000_0000) >> 16) as i16);
-converter!(i16, i8 , s, (s as i16) << 8);
+converter!(i16, i8 , s, i16::from(s) << 8);
 converter!(i16, i16, s, s);
 converter!(i16, i24, s, ((s.into_i32() & 0xff_ffff) >> 8) as i16);
 converter!(i16, i32, s, (s >> 16) as i16);
@@ -293,51 +293,51 @@ converter!(i16, f32, s, clamp_i16((clamp_f32(s) * 32_768.0).round() as i32));
 converter!(i16, f64, s, clamp_i16((clamp_f64(s) * 32_768.0).round() as i32));
 
 // Conversions to i24
-converter!(i24, u8 , s, i24::from((s as i32 - 0x80) << 16));
-converter!(i24, u16, s, i24::from((s as i32 - 0x8000) << 8));
+converter!(i24, u8 , s, i24::from((i32::from(s) - 0x80) << 16));
+converter!(i24, u16, s, i24::from((i32::from(s) - 0x8000) << 8));
 converter!(i24, u24, s, i24::from((s.into_u32() & 0xff_ffff) as i32 - 0x80_0000));
 converter!(i24, u32, s, i24::from((s.wrapping_add(0x8000_0000) as i32) >> 8));
-converter!(i24, i8 , s, i24::from((s as i32) << 16));
-converter!(i24, i16, s, i24::from((s as i32) << 8));
+converter!(i24, i8 , s, i24::from(i32::from(s) << 16));
+converter!(i24, i16, s, i24::from(i32::from(s) << 8));
 converter!(i24, i24, s, s);
 converter!(i24, i32, s, i24::from(s >> 8));
 converter!(i24, f32, s, i24::from(clamp_i24((clamp_f32(s) * 16_777_216.0).round() as i32)));
 converter!(i24, f64, s, i24::from(clamp_i24((clamp_f64(s) * 16_777_216.0).round() as i32)));
 
 // Conversions to i32
-converter!(i32, u8 , s, ((s as i32 - 0x80) << 24));
-converter!(i32, u16, s, ((s as i32 - 0x8000) << 16));
+converter!(i32, u8 , s, (i32::from(s) - 0x80) << 24);
+converter!(i32, u16, s, (i32::from(s) - 0x8000) << 16);
 converter!(i32, u24, s, ((s.into_u32() & 0xff_ffff) as i32 - 0x80_0000) << 8);
 converter!(i32, u32, s, s.wrapping_add(0x8000_0000) as i32);
-converter!(i32, i8 , s, (s as i32) << 24);
-converter!(i32, i16, s, (s as i32) << 16);
+converter!(i32, i8 , s, i32::from(s) << 24);
+converter!(i32, i16, s, i32::from(s) << 16);
 converter!(i32, i24, s, (s.into_i32() & 0xff_ffff) << 8);
 converter!(i32, i32, s, s);
 converter!(i32, f32, s, clamp_i32((clamp_f32(s) * 2_147_483_648.0).round() as i64));
 converter!(i32, f64, s, clamp_i32((clamp_f64(s) * 2_147_483_648.0).round() as i64));
 
 // Conversions to f32
-converter!(f32, u8 , s, i8::from_sample(s) as f32 / 128.0);
-converter!(f32, u16, s, i16::from_sample(s) as f32 / 32_768.0);
-converter!(f32, u24, s, i24::from_sample(s).into_i32() as f32 / 16_777_216.0);
-converter!(f32, u32, s, i32::from_sample(s) as f32 / 2_147_483_648.0);
-converter!(f32, i8 , s, s as f32 / 128.0);
-converter!(f32, i16, s, s as f32 / 32_768.0);
-converter!(f32, i24, s, s.into_i32() as f32 / 16_777_216.0);
-converter!(f32, i32, s, s as f32 / 2_147_483_648.0);
+converter!(f32, u8 , s, f32::from(i8::from_sample(s)) / 128.0);
+converter!(f32, u16, s, f32::from(i16::from_sample(s)) / 32_768.0);
+converter!(f32, u24, s, (i24::from_sample(s).into_i32() as f32) / 16_777_216.0);
+converter!(f32, u32, s, (i32::from_sample(s) as f32) / 2_147_483_648.0);
+converter!(f32, i8 , s, f32::from(s) / 128.0);
+converter!(f32, i16, s, f32::from(s) / 32_768.0);
+converter!(f32, i24, s, (s.into_i32() as f32) / 16_777_216.0);
+converter!(f32, i32, s, (s as f32) / 2_147_483_648.0);
 converter!(f32, f32, s, s);
 converter!(f32, f64, s, s as f32);
 
 // Conversions to f64
-converter!(f64, u8 , s, i8::from_sample(s) as f64 / 128.0);
-converter!(f64, u16, s, i16::from_sample(s) as f64 / 32_768.0);
-converter!(f64, u24, s, i24::from_sample(s).into_i32() as f64 / 16_777_216.0);
-converter!(f64, u32, s, i32::from_sample(s) as f64 / 2_147_483_648.0);
-converter!(f64, i8 , s, s as f64 / 128.0);
-converter!(f64, i16, s, s as f64 / 32_768.0);
-converter!(f64, i24, s, s.into_i32() as f64 / 16_777_216.0);
-converter!(f64, i32, s, s as f64 / 2_147_483_648.0);
-converter!(f64, f32, s, s as f64);
+converter!(f64, u8 , s, f64::from(i8::from_sample(s)) / 128.0);
+converter!(f64, u16, s, f64::from(i16::from_sample(s)) / 32_768.0);
+converter!(f64, u24, s, f64::from(i24::from_sample(s).into_i32()) / 16_777_216.0);
+converter!(f64, u32, s, f64::from(i32::from_sample(s)) / 2_147_483_648.0);
+converter!(f64, i8 , s, f64::from(s) / 128.0);
+converter!(f64, i16, s, f64::from(s) / 32_768.0);
+converter!(f64, i24, s, f64::from(s.into_i32()) / 16_777_216.0);
+converter!(f64, i32, s, f64::from(s) / 2_147_483_648.0);
+converter!(f64, f32, s, f64::from(s));
 converter!(f64, f64, s, s);
 
 #[test]

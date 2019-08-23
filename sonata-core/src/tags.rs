@@ -292,7 +292,7 @@ pub mod vorbis {
         // ASCII 0x41 through 0x5A inclusive (A-Z) is to be considered equivalent to
         // ASCII 0x61 through 0x7A inclusive (a-z) for tag matching.
 
-        let field: Vec<&str> = tag.splitn(2, "=").collect();
+        let field: Vec<&str> = tag.splitn(2, '=').collect();
 
         // Attempt to assign a standardized tag key.
         let std_tag = match VORBIS_COMMENT_MAP.get(field[0].to_lowercase().as_str()) {

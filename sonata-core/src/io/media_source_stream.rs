@@ -61,7 +61,7 @@ impl MediaSourceStream {
     const MAX_CAPACITY:  usize = 32 * 1024;
 
     /// The initial capacity of the read-ahead buffer. Must be less than MAX_CAPACITY, and a power-of-2.
-    const INIT_CAPACITY: usize =  1 * 1024;
+    const INIT_CAPACITY: usize =      1024;
 
     pub fn new(source: Box<dyn MediaSource>) -> Self {
         MediaSourceStream {
@@ -300,11 +300,11 @@ impl Bytestream for MediaSourceStream {
         // If the by buffer does not have two bytes available, copy one byte at a time from the
         // buffer, checking if it needs to be replenished.
         else {
-            for i in 0..2 {
+            for byte in &mut double_byte {
                 if self.pos >= self.end_pos {
                     self.fetch_buffer_or_eof()?;
                 }
-                double_byte[i] = self.buf[self.pos];
+                *byte = self.buf[self.pos];
                 self.pos += 1;
             }
         }
@@ -325,11 +325,11 @@ impl Bytestream for MediaSourceStream {
         // If the by buffer does not have three bytes available, copy one byte at a time from the
         // buffer, checking if it needs to be replenished.
         else {
-            for i in 0..3 {
+            for byte in &mut triple_byte {
                 if self.pos >= self.end_pos {
                     self.fetch_buffer_or_eof()?;
                 }
-                triple_byte[i] = self.buf[self.pos];
+                *byte = self.buf[self.pos];
                 self.pos += 1;
             }
         }
@@ -350,11 +350,11 @@ impl Bytestream for MediaSourceStream {
         // If the by buffer does not have four bytes available, copy one byte at a time from the
         // buffer, checking if it needs to be replenished.
         else {
-            for i in 0..4 {
+            for byte in &mut quad_byte {
                 if self.pos >= self.end_pos {
                     self.fetch_buffer_or_eof()?;
                 }
-                quad_byte[i] = self.buf[self.pos];
+                *byte = self.buf[self.pos];
                 self.pos += 1;
             }
         }

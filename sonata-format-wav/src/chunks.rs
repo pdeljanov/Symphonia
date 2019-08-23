@@ -26,13 +26,13 @@ use sonata_core::tags::{Tag, riff};
 
 /// `ParseChunkTag` implements `parse_tag` to map between the 4-byte chunk identifier and the enumeration 
 pub trait ParseChunkTag : Sized {
-    fn parse_tag(tag: &[u8; 4], len: u32) -> Option<Self>;
+    fn parse_tag(tag: [u8; 4], len: u32) -> Option<Self>;
 }
 
 enum NullChunks {}
 
 impl ParseChunkTag for NullChunks {
-    fn parse_tag(_tag: &[u8; 4], _len: u32) -> Option<Self> { None }
+    fn parse_tag(_tag: [u8; 4], _len: u32) -> Option<Self> { None }
 }
 
 /// `ChunksReader` reads chunks from a `ByteStream`. It is generic across a type, usually an enum, implementing the 
@@ -82,12 +82,12 @@ impl<T: ParseChunkTag> ChunksReader<T> {
             // The length of the chunk has been validated, so "consume" the chunk.
             self.consumed += len;
 
-            match T::parse_tag(&tag, len) {
+            match T::parse_tag(tag, len) {
                 Some(chunk) => return Ok(Some(chunk)),
                 None => {
                     // As per the RIFF spec, unknown chunks are to be ignored.
                     eprintln!("Ignoring unknown chunk: tag={}, len={}.", String::from_utf8_lossy(&tag), len);
-                    reader.ignore_bytes(len as u64)?
+                    reader.ignore_bytes(u64::from(len))?
                 }
             }
         }
@@ -97,7 +97,7 @@ impl<T: ParseChunkTag> ChunksReader<T> {
         // If data is remaining in this chunk, skip it.
         if self.consumed < self.len {
             let remaining = self.len - self.consumed;
-            reader.ignore_bytes(remaining as u64)?;
+            reader.ignore_bytes(u64::from(remaining))?;
             self.consumed += remaining;
         }
 
@@ -267,7 +267,7 @@ impl WaveFormatChunk {
             let extra_size = reader.read_u16()?; 
 
             if extra_size > 0 {
-                reader.ignore_bytes(extra_size as u64)?;
+                reader.ignore_bytes(u64::from(extra_size))?;
             }
         }
 
@@ -423,7 +423,7 @@ impl WaveFormatChunk {
         let extra_size = reader.read_u16()?; 
 
         if extra_size > 0 {
-            reader.ignore_bytes(extra_size as u64)?;
+            reader.ignore_bytes(u64::from(extra_size))?;
         }
 
         let channels = match n_channels {
@@ -444,7 +444,7 @@ impl WaveFormatChunk {
         let extra_size = reader.read_u16()?; 
 
         if extra_size > 0 {
-            reader.ignore_bytes(extra_size as u64)?;
+            reader.ignore_bytes(u64::from(extra_size))?;
         }
 
         let channels = match n_channels {
@@ -631,11 +631,11 @@ macro_rules! parser {
 }
 
 impl ParseChunkTag for RiffWaveChunks {
-    fn parse_tag(tag: &[u8; 4], len: u32) -> Option<Self> {
-        match tag {
-            b"fmt " => parser!(RiffWaveChunks::Format, WaveFormatChunk, *tag, len),
-            b"LIST" => parser!(RiffWaveChunks::List, ListChunk, *tag, len),
-            b"fact" => parser!(RiffWaveChunks::Fact, FactChunk, *tag, len),
+    fn parse_tag(tag: [u8; 4], len: u32) -> Option<Self> {
+        match &tag {
+            b"fmt " => parser!(RiffWaveChunks::Format, WaveFormatChunk, tag, len),
+            b"LIST" => parser!(RiffWaveChunks::List, ListChunk, tag, len),
+            b"fact" => parser!(RiffWaveChunks::Fact, FactChunk, tag, len),
             b"data" => Some(RiffWaveChunks::Data),
             _ => None,
         }
@@ -647,9 +647,9 @@ pub enum RiffInfoListChunks {
 }
 
 impl ParseChunkTag for RiffInfoListChunks {
-    fn parse_tag(tag: &[u8; 4], len: u32) -> Option<Self> {
+    fn parse_tag(tag: [u8; 4], len: u32) -> Option<Self> {
         // Right now it is assumed all list chunks are INFO chunks, but that's not really guaranteed.
         // TODO: Actually validate that the chunk is an info chunk.
-        parser!(RiffInfoListChunks::Info, InfoChunk, *tag, len)
+        parser!(RiffInfoListChunks::Info, InfoChunk, tag, len)
     }
 }

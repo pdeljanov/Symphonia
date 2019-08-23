@@ -92,13 +92,13 @@ pub mod huffman {
         #[inline(always)]
         fn next_len(&self) -> u32 {
             debug_assert!(self.is_jump());
-            self.0 as u32
+            u32::from(self.0)
         }
 
         #[inline(always)]
         fn code_len(&self) -> u32 {
             debug_assert!(self.is_value());
-            (self.0 & 0x7fff) as u32
+            u32::from(self.0 & 0x7fff)
         }
 
         #[inline(always)]
@@ -210,7 +210,7 @@ impl BitReaderLtr {
         debug_assert!(num_bits <= 8);
 
         if self.n_bits_left < num_bits {
-            self.bits = (self.bits << 8) | src.read_u8()? as u32;
+            self.bits = (self.bits << 8) | u32::from(src.read_u8()?);
             self.n_bits_left += 8
         }
 
@@ -245,7 +245,7 @@ impl BitReader for BitReaderLtr {
 
             // Less than 8 bits remain to be ignored.
             if num_bits > 0 {
-                self.bits = src.read_u8()? as u32;
+                self.bits = u32::from(src.read_u8()?);
                 self.n_bits_left = 8 - num_bits;
             }
             else {
@@ -259,7 +259,7 @@ impl BitReader for BitReaderLtr {
     #[inline(always)]
     fn read_bit<B: Bytestream>(&mut self, src: &mut B) -> io::Result<bool> {
         if self.n_bits_left == 0 {
-            self.bits = src.read_u8()? as u32;
+            self.bits = u32::from(src.read_u8()?);
             self.n_bits_left = 8;
         }
         self.n_bits_left -= 1;
@@ -284,13 +284,13 @@ impl BitReader for BitReaderLtr {
 
             while num_bits >= 8 {
                 res <<= 8;
-                res |= src.read_u8()? as u32;
+                res |= u32::from(src.read_u8()?);
                 num_bits -= 8;
             }
 
             if num_bits > 0 {
                 res <<= num_bits;
-                self.bits = src.read_u8()? as u32;
+                self.bits = u32::from(src.read_u8()?);
                 self.n_bits_left = 8 - num_bits;
                 res |= self.bits >> self.n_bits_left;
             }
@@ -308,12 +308,13 @@ impl BitReader for BitReaderLtr {
 
         if num_bits > 32 {
             let shift = num_bits - 32;
-            let res = ((self.read_bits_leq32(src, 32)? as u64) << shift) 
-                        | self.read_bits_leq32(src, shift)? as u64;
-            return Ok(res);
+            let upper = u64::from(self.read_bits_leq32(src, 32)?) << shift;
+            let lower = u64::from(self.read_bits_leq32(src, shift)?);
+            Ok(upper | lower)
         }
-        
-        Ok(self.read_bits_leq32(src, num_bits)? as u64)
+        else {
+            Ok(u64::from(self.read_bits_leq32(src, num_bits)?))
+        }
     }
 
     #[inline(always)]
@@ -324,7 +325,7 @@ impl BitReader for BitReaderLtr {
 
             let zeros = 
                 if self.n_bits_left == 0 {
-                    self.bits = src.read_u8()? as u32;
+                    self.bits = u32::from(src.read_u8()?);
                     self.n_bits_left = 8;
 
                     (self.bits as u8).leading_zeros()

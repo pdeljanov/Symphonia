@@ -195,7 +195,7 @@ impl Decoder for FlacDecoder {
             params: params.clone(),
             is_validating: options.verify,
             validator: Md5AudioValidator::new(),
-            buf: AudioBuffer::new(Duration::Frames(frames), &spec),
+            buf: AudioBuffer::new(Duration::Frames(frames), spec),
         })
     }
 
@@ -215,7 +215,7 @@ impl Decoder for FlacDecoder {
 
         // The entire frame is checksummed with a CRC16, wrap the main reader in a CRC16 error
         // detection stream. Include the sync code in the CRC.
-        let mut crc16 = Crc16::new();
+        let mut crc16 = Crc16::new(0);
         crc16.process_buf_bytes(&sync.to_be_bytes());
 
         let mut reader_crc16 = MonitorStream::new(reader, crc16);
@@ -297,7 +297,7 @@ impl Decoder for FlacDecoder {
 
         // Retrieve the CRC16 before the reading the footer.
         let crc16_expected = reader_crc16.monitor().crc();
-        let crc16_computed = read_frame_footer(&mut reader_crc16.to_inner())?;
+        let crc16_computed = read_frame_footer(&mut reader_crc16.into_inner())?;
 
         if crc16_computed != crc16_expected {
             return decode_error("Computed frame CRC does not match expected CRC.");
@@ -330,7 +330,7 @@ fn sync_frame<B: Bytestream>(reader: &mut B) -> Result<u16> {
 fn read_frame_header<B: Bytestream>(reader: &mut B, sync: u16) -> Result<FrameHeader> {
 
     // The header is checksummed with a CRC8 hash. Include the sync code in this CRC.
-    let mut crc8 = Crc8::new();
+    let mut crc8 = Crc8::new(0);
     crc8.process_buf_bytes(&sync.to_be_bytes());
 
     let mut reader_crc8 = MonitorStream::new(reader, crc8);
@@ -459,7 +459,7 @@ fn read_frame_header<B: Bytestream>(reader: &mut B, sync: u16) -> Result<FrameHe
     let crc8_computed = reader_crc8.monitor().crc();
 
     // Get expected CRC8 checksum from the header.
-    let crc8_expected = reader_crc8.to_inner().read_u8()?;
+    let crc8_expected = reader_crc8.into_inner().read_u8()?;
 
     if crc8_expected != crc8_computed {
         return decode_error("Computed frame header CRC does not match expected CRC.");

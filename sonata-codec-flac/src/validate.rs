@@ -48,7 +48,7 @@ impl Md5AudioValidator {
             _ => unreachable!(),
         };
 
-        let n_channels = buf.spec().channels.len();
+        let n_channels = buf.spec().channels.count();
         let n_frames = buf.frames();
 
         // Calculate the total size of all the samples in bytes.

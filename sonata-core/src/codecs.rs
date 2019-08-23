@@ -329,7 +329,7 @@ impl CodecRegistry {
         if let Some(descriptors) = self.codecs.get_mut(&descriptor.codec) {
             let pos = descriptors.iter()
                         .position(|entry| entry.1 < tier)
-                        .unwrap_or(descriptors.len());
+                        .unwrap_or_else(|| descriptors.len());
 
             descriptors.insert(pos, (*descriptor, tier));
         }
