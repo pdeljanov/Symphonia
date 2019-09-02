@@ -5,10 +5,389 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+//! The `conv` module provides methods to convert samples between different sample types (formats).
 use crate::sample::{u24, i24};
 
 #[cfg(test)]
 use crate::sample::Sample;
+
+pub mod dither {
+    //! The `dither` module provides methods to apply a dither to a sample.
+    //!
+    //! Dithering is the process of adding noise to the least significant digits of a sample before
+    //! down-converting (quantizing) it to a smaller sample type. The purpose of dithering is to
+    //! decorrelate the quantization error of the down-conversion from the source signal.
+    //!
+    //! Dithering is only applied on lossy conversions. Therefore the `dither` module will only
+    //! apply a dither to the following down-conversions:
+    //!
+    //! * { `i32`, `u32` } to { `i24`, `u24`, `i16`, `u16`, `i8`, `u8` }
+    //! * { `i24`, `u24` } to { `i16`, `u16`, `i8`, `u8` }
+    //! * { `i16`, `u16` } to { `i8`, `u8` }
+    //!
+    //! Multiple dithering algorithms are provided, each drawing noise from a different probability
+    //! distribution. In addition to different distributions, a dithering algorithm may also shape
+    //! the noise such that the bulk of the noise is placed in an inaudible frequency range.
+
+    mod prng {
+        #[inline]
+        fn split_mix_64(x: &mut u64) -> u64 {
+            *x = x.wrapping_add(0x9e37_79b9_7f4a_7c15);
+            let mut z = *x;
+            z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+            z ^ (z >> 31)
+        }
+
+        /// `Xoshiro128pp` implements the xoshiro128++ pseudo-random number generator.
+        ///
+        /// This PRNG is the basis for all built-in dithering algorithms. It is one of, if not the
+        /// most, performant PRNGs that generate statistically valid random numbers. Note that it is
+        /// not cryptographically secure, but for dithering audio it is more than sufficient.
+        ///
+        /// `Xoshiro128pp` should be initialized with a reasonably random 64-bit seed, however the
+        /// seed will be further randomized via the SplitMix64 algorithm.
+        pub struct Xoshiro128pp {
+            s: [u32; 4],
+        }
+
+        impl Xoshiro128pp {
+            pub fn new(mut seed: u64) -> Self {
+                let a = split_mix_64(&mut seed);
+                let b = split_mix_64(&mut seed);
+
+                Xoshiro128pp {
+                    s: [
+                        (a & 0xffff_ffff) as u32, (a >> 32) as u32,
+                        (b & 0xffff_ffff) as u32, (b >> 32) as u32,
+                    ]
+                }
+            }
+
+            #[inline(always)]
+            fn rotl(x: u32, k: u32) -> u32 {
+                (x << k) | (x >> (32 - k))
+            }
+
+            #[inline]
+            pub fn next(&mut self) -> u32 {
+                let x = self.s[0].wrapping_add(self.s[3]);
+
+                let result = Xoshiro128pp::rotl(x, 7).wrapping_add(self.s[0]);
+
+                let t = self.s[1] << 9;
+
+                self.s[2] ^= self.s[0];
+                self.s[3] ^= self.s[1];
+                self.s[1] ^= self.s[2];
+                self.s[0] ^= self.s[3];
+
+                self.s[2] ^= t;
+
+                self.s[3] = Xoshiro128pp::rotl(self.s[3], 11);
+
+                result
+            }
+        }
+    }
+
+    use std::marker::PhantomData;
+    use crate::sample::{u24, i24};
+    use crate::sample::Sample;
+
+    /// `RandomNoise` represents a sample of noise of a specified length in bits.
+    ///
+    /// TODO: `RandomNoise` should be parameterized by the number of bits once const generics land.
+    #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Default)]
+    pub struct RandomNoise (pub i32);
+
+    impl RandomNoise {
+        /// Instantiate a noise sample of a certain length from a random 32-bit value.
+        pub fn from(random: u32, n_bits: u32) -> Self {
+            // Convert the random u32 into an i32, thereby randomizing the sign. Shift off the lower
+            // bits to obtain the desired bit length. For good random number generators, all bits
+            // should be "equally" random.
+            RandomNoise((random as i32) >> (32 - n_bits))
+        }
+    }
+
+    /// `IntoNoiseSample` is a trait for converting random noise into a `Sample`.
+    pub trait IntoNoiseSample<S: Sample> {
+        fn into_noise_sample(self) -> S;
+    }
+
+    macro_rules! into_noise_impl {
+        ($to:ty, $self:ident, $func:expr) => (
+            impl IntoNoiseSample<$to> for RandomNoise {
+                fn into_noise_sample($self) -> $to { $func }
+            }
+        )
+    }
+
+    into_noise_impl!(i8 , self, { self.0 as i8 });
+    into_noise_impl!(u8 , self, {
+        (self.0 as u8).wrapping_add(0x80)
+    });
+    into_noise_impl!(i16, self, { self.0 as i16 });
+    into_noise_impl!(u16, self, {
+        (self.0 as u16).wrapping_add(0x8000)
+    });
+    into_noise_impl!(i24, self, { i24::from(self.0) });
+    into_noise_impl!(u24, self, {
+        u24::from((self.0 as u32).wrapping_add(0x8000_0000) & 0xff_ffff)
+    });
+    into_noise_impl!(i32, self, { self.0 });
+    into_noise_impl!(u32, self, {
+        (self.0 as u32).wrapping_add(0x8000_0000)
+    });
+    // Dithering is not implemented for conversions to floating point, therefore noise returns 0.
+    // On a practical note, these should never actually be called if the dither tables are correct.
+    into_noise_impl!(f32, self, 0.0);
+    into_noise_impl!(f64, self, 0.0);
+
+    /// `Dither` is a trait for implementing dithering algorithms.
+    pub trait Dither<F: Sample, T: Sample> {
+        /// Dithers a `Sample` of source sample format `F` for an eventual conversion to the
+        /// destination sample format `T`.
+        fn dither(&mut self, sample: F) -> F;
+    }
+
+    /// The `Identity` dithering algorithm performs no dithering and returns the original sample.
+    pub struct Identity<F: Sample, T: Sample> {
+        from_type: PhantomData<F>,
+        to_type: PhantomData<T>,
+    }
+
+    impl<F: Sample, T: Sample> Dither<F, T> for Identity<F, T> {
+        fn dither(&mut self, sample: F) -> F { sample }
+    }
+
+    /// `Rectangular` implements a dither using uniformly distributed (white) noise without shaping.
+    pub struct Rectangular<F: Sample, T: Sample> {
+        prng: prng::Xoshiro128pp,
+        from_type: PhantomData<F>,
+        to_type: PhantomData<T>,
+    }
+
+    impl<F: Sample, T: Sample> Rectangular<F, T> {
+        pub fn new() -> Self {
+            Rectangular {
+                prng: prng::Xoshiro128pp::new(0xb2c1_01f4_425b_987e),
+                from_type: PhantomData,
+                to_type: PhantomData,
+            }
+        }
+    }
+
+    impl<F: Sample, T: Sample> Dither<F, T> for Rectangular<F, T>
+    where
+        RandomNoise : IntoNoiseSample<F>
+    {
+        fn dither(&mut self, sample: F) -> F {
+            // A dither should be applied if and only if the effective number of bits of the source
+            // sample format is greater than that of the destination sample format.
+            // assert!(F::ENOB > T::ENOB);
+
+            // The number of low-order bits being truncated by the conversion will be dithered.
+            // const TRUNC_BITS: u32 = F::ENOB - T::ENOB;
+            const TRUNC_BITS: u32 = 8;
+
+            // Add the noise to the sample.
+            let noise = RandomNoise::from(self.prng.next(), TRUNC_BITS);
+            sample + noise.into_noise_sample()
+        }
+    }
+
+    /// `Triangular` implements a dither using a triangular distribution of noise without shaping.
+    pub struct Triangular<F: Sample, T: Sample> {
+        prng: prng::Xoshiro128pp,
+        from_type: PhantomData<F>,
+        to_type: PhantomData<T>,
+    }
+
+    impl<F: Sample, T: Sample> Triangular<F, T> {
+        pub fn new() -> Self {
+            Triangular {
+                prng: prng::Xoshiro128pp::new(0xb2c1_01f4_425b_987e),
+                from_type: PhantomData,
+                to_type: PhantomData,
+            }
+        }
+    }
+
+    impl<F: Sample, T: Sample> Dither<F, T> for Triangular<F, T>
+    where
+        RandomNoise : IntoNoiseSample<F>
+    {
+        fn dither(&mut self, sample: F) -> F {
+            // assert!(F::ENOB > T::ENOB);
+
+            // const TRUNC_BITS: u32 = F::ENOB - T::ENOB;
+            const TRUNC_BITS: u32 = 8;
+
+            // Generate a triangular distribution from the uniform distribution.
+            let tpdf = self.prng.next() - self.prng.next();
+
+            // Add the noise to the sample.
+            let noise = RandomNoise::from(tpdf, TRUNC_BITS);
+            sample + noise.into_noise_sample()
+        }
+    }
+
+    /// `MaybeDither` conditionally applies a dither to a sample depending on the source and
+    /// destination sample types.
+    pub trait MaybeDither<T: Sample> : Sample {
+        const DITHERABLE: bool;
+
+        fn maybe_dither<D: Dither<Self, T>>(sample: Self, dither: &mut D) -> Self;
+    }
+
+    /// Never apply a dither for this conversion.
+    macro_rules! dither_never {
+        ($to:ty, $from:ty) => (
+            impl MaybeDither<$to> for $from {
+                const DITHERABLE: bool = false;
+                #[inline(always)]
+                fn maybe_dither<D: Dither<$from, $to>>(sample: Self, _: &mut D) -> Self {
+                    sample
+                }
+            }
+        )
+    }
+
+    /// Maybe apply a dither for this conversion.
+    macro_rules! dither_maybe {
+        ($to:ty, $from:ty) => (
+            impl MaybeDither<$to> for $from {
+                const DITHERABLE: bool = true;
+                #[inline(always)]
+                fn maybe_dither<D: Dither<$from, $to>>(sample: Self, dither: &mut D) -> Self {
+                    dither.dither(sample)
+                }
+            }
+        )
+    }
+
+    // Dither table for conversions to u8
+    dither_never!(u8, u8 );
+    dither_maybe!(u8, u16);
+    dither_maybe!(u8, u24);
+    dither_maybe!(u8, u32);
+    dither_never!(u8, i8 );
+    dither_maybe!(u8, i16);
+    dither_maybe!(u8, i24);
+    dither_maybe!(u8, i32);
+    dither_never!(u8, f32);
+    dither_never!(u8, f64);
+
+    // Dither table for conversions to u16
+    dither_never!(u16, u8 );
+    dither_never!(u16, u16);
+    dither_maybe!(u16, u24);
+    dither_maybe!(u16, u32);
+    dither_never!(u16, i8 );
+    dither_never!(u16, i16);
+    dither_maybe!(u16, i24);
+    dither_maybe!(u16, i32);
+    dither_never!(u16, f32);
+    dither_never!(u16, f64);
+
+    // Dither table for conversions to u24
+    dither_never!(u24, u8 );
+    dither_never!(u24, u16);
+    dither_never!(u24, u24);
+    dither_maybe!(u24, u32);
+    dither_never!(u24, i8 );
+    dither_never!(u24, i16);
+    dither_never!(u24, i24);
+    dither_maybe!(u24, i32);
+    dither_never!(u24, f32);
+    dither_never!(u24, f64);
+
+    // Dither table for conversions to u32
+    dither_never!(u32, u8 );
+    dither_never!(u32, u16);
+    dither_never!(u32, u24);
+    dither_never!(u32, u32);
+    dither_never!(u32, i8 );
+    dither_never!(u32, i16);
+    dither_never!(u32, i24);
+    dither_never!(u32, i32);
+    dither_never!(u32, f32);
+    dither_never!(u32, f64);
+
+    // Dither table for conversions to i8
+    dither_never!(i8, u8 );
+    dither_maybe!(i8, u16);
+    dither_maybe!(i8, u24);
+    dither_maybe!(i8, u32);
+    dither_never!(i8, i8 );
+    dither_maybe!(i8, i16);
+    dither_maybe!(i8, i24);
+    dither_maybe!(i8, i32);
+    dither_never!(i8, f32);
+    dither_never!(i8, f64);
+
+    // Dither table for conversions to i16
+    dither_never!(i16, u8 );
+    dither_never!(i16, u16);
+    dither_maybe!(i16, u24);
+    dither_maybe!(i16, u32);
+    dither_never!(i16, i8 );
+    dither_never!(i16, i16);
+    dither_maybe!(i16, i24);
+    dither_maybe!(i16, i32);
+    dither_never!(i16, f32);
+    dither_never!(i16, f64);
+
+    // Dither table for conversions to i24
+    dither_never!(i24, u8 );
+    dither_never!(i24, u16);
+    dither_never!(i24, u24);
+    dither_maybe!(i24, u32);
+    dither_never!(i24, i8 );
+    dither_never!(i24, i16);
+    dither_never!(i24, i24);
+    dither_maybe!(i24, i32);
+    dither_never!(i24, f32);
+    dither_never!(i24, f64);
+
+    // Dither table for conversions to i32
+    dither_never!(i32, u8 );
+    dither_never!(i32, u16);
+    dither_never!(i32, u24);
+    dither_never!(i32, u32);
+    dither_never!(i32, i8 );
+    dither_never!(i32, i16);
+    dither_never!(i32, i24);
+    dither_never!(i32, i32);
+    dither_never!(i32, f32);
+    dither_never!(i32, f64);
+
+    // Dither table for conversions to f32
+    dither_never!(f32, u8 );
+    dither_never!(f32, u16);
+    dither_never!(f32, u24);
+    dither_never!(f32, u32);
+    dither_never!(f32, i8 );
+    dither_never!(f32, i16);
+    dither_never!(f32, i24);
+    dither_never!(f32, i32);
+    dither_never!(f32, f32);
+    dither_never!(f32, f64);
+
+    // Dither table for conversions to f64
+    dither_never!(f64, u8 );
+    dither_never!(f64, u16);
+    dither_never!(f64, u24);
+    dither_never!(f64, u32);
+    dither_never!(f64, i8 );
+    dither_never!(f64, i16);
+    dither_never!(f64, i24);
+    dither_never!(f64, i32);
+    dither_never!(f64, f32);
+    dither_never!(f64, f64);
+}
 
 /// `FromSample` implements a conversion from `Sample` type `F` to `Self`.
 ///
@@ -38,6 +417,7 @@ impl<F, T: FromSample<F>> IntoSample<T> for F {
 pub trait ConvertibleSample<S> : FromSample<S> + IntoSample<S> {}
 
 /// Clamps the given value to the [0, 255] range.
+#[inline]
 pub fn clamp_u8(val: u16) -> u8 {
     if val & !0xff == 0 {
         val as u8
@@ -47,7 +427,8 @@ pub fn clamp_u8(val: u16) -> u8 {
     }
 }
 
-/// Clamps the given value to the [-128,127] range.
+/// Clamps the given value to the [-128, 127] range.
+#[inline]
 pub fn clamp_i8(val: i16) -> i8 {
     // Add 128 (0x80) to the given value, val, to make the i8 range of [-128,127] map to [0,255].
     // Valid negative numbers are now positive so all bits above the 8th bit should be 0. Check this
@@ -69,7 +450,8 @@ pub fn clamp_i8(val: i16) -> i8 {
     }
 }
 
-/// Clamps the given value to the [0, 65535] range.
+/// Clamps the given value to the [0, 65_535] range.
+#[inline]
 pub fn clamp_u16(val: u32) -> u16 {
     if val & !0xffff == 0 {
         val as u16
@@ -79,7 +461,8 @@ pub fn clamp_u16(val: u32) -> u16 {
     }
 }
 
-/// Clamps the given value to the [-32767,32768] range.
+/// Clamps the given value to the [-32_767, 32_768] range.
+#[inline]
 pub fn clamp_i16(val: i32) -> i16 {
     if val.wrapping_add(0x8000) & !0xffff == 0 {
         val as i16
@@ -89,7 +472,8 @@ pub fn clamp_i16(val: i32) -> i16 {
     }
 }
 
-/// Clamps the given value to the [0, 16777215] range.
+/// Clamps the given value to the [0, 16_777_215] range.
+#[inline]
 pub fn clamp_u24(val: u32) -> u32 {
     if val & !0x00ff_ffff == 0 {
         val
@@ -99,7 +483,8 @@ pub fn clamp_u24(val: u32) -> u32 {
     }
 }
 
-/// Clamps the given value to the [-8388608, 8388607] range.
+/// Clamps the given value to the [-8_388_608, 8_388_607] range.
+#[inline]
 pub fn clamp_i24(val: i32) -> i32 {
     if val.wrapping_add(0x0080_0000) & !0x00ff_ffff == 0 {
         val as i32
@@ -109,7 +494,8 @@ pub fn clamp_i24(val: i32) -> i32 {
     }
 }
 
-/// Clamps the given value to the [0, 4294967295] range.
+/// Clamps the given value to the [0, 4_294_967_295] range.
+#[inline]
 pub fn clamp_u32(val: u64) -> u32 {
     if val & !0xffff_ffff == 0 {
         val as u32
@@ -119,7 +505,8 @@ pub fn clamp_u32(val: u64) -> u32 {
     }
 }
 
-/// Clamps the given value to the [-2147483648, 2147483647] range.
+/// Clamps the given value to the [-2_147_483_648, 2_147_483_647] range.
+#[inline]
 pub fn clamp_i32(val: i64) -> i32 {
     if val.wrapping_add(0x8000_0000) & !0xffff_ffff == 0 {
         val as i32
@@ -130,33 +517,28 @@ pub fn clamp_i32(val: i64) -> i32 {
 }
 
 /// Clamps the given value to the [-1.0, 1.0] range.
+#[inline]
 pub fn clamp_f32(val: f32) -> f32 {
-    if val > 1.0 {
-        1.0
-    }
-    else if val < -1.0 {
-        -1.0
-    }
-    else {
-        val
-    }
+    // This slightly inelegant code simply returns min(max(1.0, val), -1.0). In release mode on
+    // platforms with SSE2 support, it will compile down to 4 SSE instructions with no branches,
+    // thereby making it the most performant clamping implementation for floating-point samples.
+    let mut clamped = val;
+    clamped = if clamped >  1.0 {  1.0 } else { clamped };
+    clamped = if clamped < -1.0 { -1.0 } else { clamped };
+    clamped
 }
 
 /// Clamps the given value to the [-1.0, 1.0] range.
+#[inline]
 pub fn clamp_f64(val: f64) -> f64 {
-    if val > 1.0 {
-        1.0
-    }
-    else if val < -1.0 {
-        -1.0
-    }
-    else {
-        val
-    }
+    let mut clamped = val;
+    clamped = if clamped >  1.0 {  1.0 } else { clamped };
+    clamped = if clamped < -1.0 { -1.0 } else { clamped };
+    clamped
 }
 
 #[test]
-fn test_clipping() {
+fn verify_clamp() {
     use std::{u8, i8, u16, i16, u32, i32, u64, i64};
 
     assert_eq!(clamp_u8(256u16),   u8::MAX);
@@ -182,6 +564,20 @@ fn test_clipping() {
     assert_eq!(clamp_i32(-2_147_483_649i64), i32::MIN);
     assert_eq!(clamp_i32(         i64::MAX), i32::MAX);
     assert_eq!(clamp_i32(         i64::MIN), i32::MIN);
+
+    assert_eq!(clamp_f32( 1.1),  1.0);
+    assert_eq!(clamp_f32( 5.6),  1.0);
+    assert_eq!(clamp_f32( 0.5),  0.5);
+    assert_eq!(clamp_f32(-1.1), -1.0);
+    assert_eq!(clamp_f32(-5.6), -1.0);
+    assert_eq!(clamp_f32(-0.5), -0.5);
+
+    assert_eq!(clamp_f64( 1.1),  1.0);
+    assert_eq!(clamp_f64( 5.6),  1.0);
+    assert_eq!(clamp_f64( 0.5),  0.5);
+    assert_eq!(clamp_f64(-1.1), -1.0);
+    assert_eq!(clamp_f64(-5.6), -1.0);
+    assert_eq!(clamp_f64(-0.5), -0.5);
 }
 
 macro_rules! converter {
