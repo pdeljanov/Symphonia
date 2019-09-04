@@ -138,3 +138,173 @@ pub mod bits {
         assert_eq!(mask_range(8, 2), 0b1111_1100);
     }
 }
+
+pub mod clamp {
+    /// Clamps the given value to the [0, 255] range.
+    #[inline]
+    pub fn clamp_u8(val: u16) -> u8 {
+        if val & !0xff == 0 {
+            val as u8
+        }
+        else {
+            0xff
+        }
+    }
+
+    /// Clamps the given value to the [-128, 127] range.
+    #[inline]
+    pub fn clamp_i8(val: i16) -> i8 {
+        // Add 128 (0x80) to the given value, val, to make the i8 range of [-128,127] map to [0,255].
+        // Valid negative numbers are now positive so all bits above the 8th bit should be 0. Check this
+        // by ANDing with 0xffffff00 (!0xff). If val wraps, the test is still valid as it'll wrap around
+        // to the other numerical limit +/- 128, which is still well outside the limits of an i8.
+        if val.wrapping_add(0x80) & !0xff == 0 {
+            val as i8
+        }
+        else {
+            // The given value was determined to be outside the valid numerical range of i8.
+            //
+            // Shift right all the magnitude bits of val, leaving val to be either 0xff if val was
+            // negative (sign bit was 1), or 0x00 if val was positive (sign bit was 0). Xor the shift
+            // value with 0x7f (the positive limit) to obtain the appropriate numerical limit.
+            //
+            //  E.g., 0x7f ^ 0x00 = 0x7f (127)
+            //  E.g., 0x7f ^ 0xff = 0x10 (-128)
+            0x7f ^ val.wrapping_shr(15) as i8
+        }
+    }
+
+    /// Clamps the given value to the [0, 65_535] range.
+    #[inline]
+    pub fn clamp_u16(val: u32) -> u16 {
+        if val & !0xffff == 0 {
+            val as u16
+        }
+        else {
+            0xffff
+        }
+    }
+
+    /// Clamps the given value to the [-32_767, 32_768] range.
+    #[inline]
+    pub fn clamp_i16(val: i32) -> i16 {
+        if val.wrapping_add(0x8000) & !0xffff == 0 {
+            val as i16
+        }
+        else {
+            0x7fff ^ val.wrapping_shr(31) as i16
+        }
+    }
+
+    /// Clamps the given value to the [0, 16_777_215] range.
+    #[inline]
+    pub fn clamp_u24(val: u32) -> u32 {
+        if val & !0x00ff_ffff == 0 {
+            val
+        }
+        else {
+            0x00ff_ffff
+        }
+    }
+
+    /// Clamps the given value to the [-8_388_608, 8_388_607] range.
+    #[inline]
+    pub fn clamp_i24(val: i32) -> i32 {
+        if val.wrapping_add(0x0080_0000) & !0x00ff_ffff == 0 {
+            val as i32
+        }
+        else {
+            0x007f_ffff ^ val.wrapping_shr(31) as i32
+        }
+    }
+
+    /// Clamps the given value to the [0, 4_294_967_295] range.
+    #[inline]
+    pub fn clamp_u32(val: u64) -> u32 {
+        if val & !0xffff_ffff == 0 {
+            val as u32
+        }
+        else {
+            0xffff_ffff
+        }
+    }
+
+    /// Clamps the given value to the [-2_147_483_648, 2_147_483_647] range.
+    #[inline]
+    pub fn clamp_i32(val: i64) -> i32 {
+        if val.wrapping_add(0x8000_0000) & !0xffff_ffff == 0 {
+            val as i32
+        }
+        else {
+            0x7fff_ffff ^ val.wrapping_shr(63) as i32
+        }
+    }
+
+    /// Clamps the given value to the [-1.0, 1.0] range.
+    #[inline]
+    pub fn clamp_f32(val: f32) -> f32 {
+        // This slightly inelegant code simply returns min(max(1.0, val), -1.0). In release mode on
+        // platforms with SSE2 support, it will compile down to 4 SSE instructions with no branches,
+        // thereby making it the most performant clamping implementation for floating-point samples.
+        let mut clamped = val;
+        clamped = if clamped >  1.0 {  1.0 } else { clamped };
+        clamped = if clamped < -1.0 { -1.0 } else { clamped };
+        clamped
+    }
+
+    /// Clamps the given value to the [-1.0, 1.0] range.
+    #[inline]
+    pub fn clamp_f64(val: f64) -> f64 {
+        let mut clamped = val;
+        clamped = if clamped >  1.0 {  1.0 } else { clamped };
+        clamped = if clamped < -1.0 { -1.0 } else { clamped };
+        clamped
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use std::{u8, i8, u16, i16, u32, i32, u64, i64};
+        use super::*;
+
+        #[test]
+        fn verify_clamp() {
+            assert_eq!(clamp_u8(256u16),   u8::MAX);
+            assert_eq!(clamp_u8(u16::MAX), u8::MAX);
+
+            assert_eq!(clamp_i8(  128i16), i8::MAX);
+            assert_eq!(clamp_i8( -129i16), i8::MIN);
+            assert_eq!(clamp_i8(i16::MAX), i8::MAX);
+            assert_eq!(clamp_i8(i16::MIN), i8::MIN);
+
+            assert_eq!(clamp_u16(65536u32), u16::MAX);
+            assert_eq!(clamp_u16(u32::MAX), u16::MAX);
+
+            assert_eq!(clamp_i16( 32_768i32), i16::MAX);
+            assert_eq!(clamp_i16(-32_769i32), i16::MIN);
+            assert_eq!(clamp_i16(  i32::MAX), i16::MAX);
+            assert_eq!(clamp_i16(  i32::MIN), i16::MIN);
+
+            assert_eq!(clamp_u32(4_294_967_296u64), u32::MAX);
+            assert_eq!(clamp_u32(        u64::MAX), u32::MAX);
+
+            assert_eq!(clamp_i32( 2_147_483_648i64), i32::MAX);
+            assert_eq!(clamp_i32(-2_147_483_649i64), i32::MIN);
+            assert_eq!(clamp_i32(         i64::MAX), i32::MAX);
+            assert_eq!(clamp_i32(         i64::MIN), i32::MIN);
+
+            assert_eq!(clamp_f32( 1.1),  1.0);
+            assert_eq!(clamp_f32( 5.6),  1.0);
+            assert_eq!(clamp_f32( 0.5),  0.5);
+            assert_eq!(clamp_f32(-1.1), -1.0);
+            assert_eq!(clamp_f32(-5.6), -1.0);
+            assert_eq!(clamp_f32(-0.5), -0.5);
+
+            assert_eq!(clamp_f64( 1.1),  1.0);
+            assert_eq!(clamp_f64( 5.6),  1.0);
+            assert_eq!(clamp_f64( 0.5),  0.5);
+            assert_eq!(clamp_f64(-1.1), -1.0);
+            assert_eq!(clamp_f64(-5.6), -1.0);
+            assert_eq!(clamp_f64(-0.5), -0.5);
+        }
+    }
+}

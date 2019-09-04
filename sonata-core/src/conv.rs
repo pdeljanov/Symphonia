@@ -7,9 +7,7 @@
 
 //! The `conv` module provides methods to convert samples between different sample types (formats).
 use crate::sample::{u24, i24};
-
-#[cfg(test)]
-use crate::sample::Sample;
+use crate::util::clamp::*;
 
 pub mod dither {
     //! The `dither` module provides methods to apply a dither to a sample.
@@ -28,6 +26,10 @@ pub mod dither {
     //! Multiple dithering algorithms are provided, each drawing noise from a different probability
     //! distribution. In addition to different distributions, a dithering algorithm may also shape
     //! the noise such that the bulk of the noise is placed in an inaudible frequency range.
+    use std::marker::PhantomData;
+    use super::FromSample;
+    use crate::sample::{u24, i24};
+    use crate::sample::Sample;
 
     mod prng {
         #[inline]
@@ -91,11 +93,6 @@ pub mod dither {
         }
     }
 
-    use std::marker::PhantomData;
-    use super::FromSample;
-    use crate::sample::{u24, i24};
-    use crate::sample::Sample;
-
     /// `RandomNoise` represents a sample of noise of a specified length in bits.
     ///
     /// TODO: `RandomNoise` should be parameterized by the number of bits once const generics land.
@@ -117,6 +114,7 @@ pub mod dither {
     macro_rules! add_noise_impl {
         ($sample_type:ty, $self:ident, $sample:ident, $conv:expr) => (
             impl AddNoise<$sample_type> for RandomNoise {
+                #[inline]
                 fn add_noise($self, $sample: $sample_type) -> $sample_type { $conv }
             }
         )
@@ -170,7 +168,6 @@ pub mod dither {
             }
         }
     }
-
 
     impl<F: Sample, T: Sample> Dither<F, T> for Identity<F, T> {
         fn dither(&mut self, sample: F) -> F { sample }
@@ -246,7 +243,7 @@ pub mod dither {
         }
     }
 
-    /// Enumeration of dither algorithns.
+    /// Enumeration of dither algorithms.
     pub enum DitherType {
         /// No dithering.
         Identity,
@@ -438,170 +435,6 @@ impl<F, T: FromSample<F>> IntoSample<T> for F {
 /// bi-directional conversions between `Self` and the parameterized `Sample` type `S`.
 pub trait ConvertibleSample<S> : FromSample<S> + IntoSample<S> {}
 
-/// Clamps the given value to the [0, 255] range.
-#[inline]
-pub fn clamp_u8(val: u16) -> u8 {
-    if val & !0xff == 0 {
-        val as u8
-    }
-    else {
-        0xff
-    }
-}
-
-/// Clamps the given value to the [-128, 127] range.
-#[inline]
-pub fn clamp_i8(val: i16) -> i8 {
-    // Add 128 (0x80) to the given value, val, to make the i8 range of [-128,127] map to [0,255].
-    // Valid negative numbers are now positive so all bits above the 8th bit should be 0. Check this
-    // by ANDing with 0xffffff00 (!0xff). If val wraps, the test is still valid as it'll wrap around
-    // to the other numerical limit +/- 128, which is still well outside the limits of an i8.
-    if val.wrapping_add(0x80) & !0xff == 0 {
-        val as i8
-    }
-    else {
-        // The given value was determined to be outside the valid numerical range of i8.
-        //
-        // Shift right all the magnitude bits of val, leaving val to be either 0xff if val was
-        // negative (sign bit was 1), or 0x00 if val was positive (sign bit was 0). Xor the shift
-        // value with 0x7f (the positive limit) to obtain the appropriate numerical limit.
-        //
-        //  E.g., 0x7f ^ 0x00 = 0x7f (127)
-        //  E.g., 0x7f ^ 0xff = 0x10 (-128)
-        0x7f ^ val.wrapping_shr(15) as i8
-    }
-}
-
-/// Clamps the given value to the [0, 65_535] range.
-#[inline]
-pub fn clamp_u16(val: u32) -> u16 {
-    if val & !0xffff == 0 {
-        val as u16
-    }
-    else {
-        0xffff
-    }
-}
-
-/// Clamps the given value to the [-32_767, 32_768] range.
-#[inline]
-pub fn clamp_i16(val: i32) -> i16 {
-    if val.wrapping_add(0x8000) & !0xffff == 0 {
-        val as i16
-    }
-    else {
-        0x7fff ^ val.wrapping_shr(31) as i16
-    }
-}
-
-/// Clamps the given value to the [0, 16_777_215] range.
-#[inline]
-pub fn clamp_u24(val: u32) -> u32 {
-    if val & !0x00ff_ffff == 0 {
-        val
-    }
-    else {
-        0x00ff_ffff
-    }
-}
-
-/// Clamps the given value to the [-8_388_608, 8_388_607] range.
-#[inline]
-pub fn clamp_i24(val: i32) -> i32 {
-    if val.wrapping_add(0x0080_0000) & !0x00ff_ffff == 0 {
-        val as i32
-    }
-    else {
-        0x007f_ffff ^ val.wrapping_shr(31) as i32
-    }
-}
-
-/// Clamps the given value to the [0, 4_294_967_295] range.
-#[inline]
-pub fn clamp_u32(val: u64) -> u32 {
-    if val & !0xffff_ffff == 0 {
-        val as u32
-    }
-    else {
-        0xffff_ffff
-    }
-}
-
-/// Clamps the given value to the [-2_147_483_648, 2_147_483_647] range.
-#[inline]
-pub fn clamp_i32(val: i64) -> i32 {
-    if val.wrapping_add(0x8000_0000) & !0xffff_ffff == 0 {
-        val as i32
-    }
-    else {
-        0x7fff_ffff ^ val.wrapping_shr(63) as i32
-    }
-}
-
-/// Clamps the given value to the [-1.0, 1.0] range.
-#[inline]
-pub fn clamp_f32(val: f32) -> f32 {
-    // This slightly inelegant code simply returns min(max(1.0, val), -1.0). In release mode on
-    // platforms with SSE2 support, it will compile down to 4 SSE instructions with no branches,
-    // thereby making it the most performant clamping implementation for floating-point samples.
-    let mut clamped = val;
-    clamped = if clamped >  1.0 {  1.0 } else { clamped };
-    clamped = if clamped < -1.0 { -1.0 } else { clamped };
-    clamped
-}
-
-/// Clamps the given value to the [-1.0, 1.0] range.
-#[inline]
-pub fn clamp_f64(val: f64) -> f64 {
-    let mut clamped = val;
-    clamped = if clamped >  1.0 {  1.0 } else { clamped };
-    clamped = if clamped < -1.0 { -1.0 } else { clamped };
-    clamped
-}
-
-#[test]
-fn verify_clamp() {
-    use std::{u8, i8, u16, i16, u32, i32, u64, i64};
-
-    assert_eq!(clamp_u8(256u16),   u8::MAX);
-    assert_eq!(clamp_u8(u16::MAX), u8::MAX);
-
-    assert_eq!(clamp_i8(  128i16), i8::MAX);
-    assert_eq!(clamp_i8( -129i16), i8::MIN);
-    assert_eq!(clamp_i8(i16::MAX), i8::MAX);
-    assert_eq!(clamp_i8(i16::MIN), i8::MIN);
-
-    assert_eq!(clamp_u16(65536u32), u16::MAX);
-    assert_eq!(clamp_u16(u32::MAX), u16::MAX);
-
-    assert_eq!(clamp_i16( 32_768i32), i16::MAX);
-    assert_eq!(clamp_i16(-32_769i32), i16::MIN);
-    assert_eq!(clamp_i16(  i32::MAX), i16::MAX);
-    assert_eq!(clamp_i16(  i32::MIN), i16::MIN);
-
-    assert_eq!(clamp_u32(4_294_967_296u64), u32::MAX);
-    assert_eq!(clamp_u32(        u64::MAX), u32::MAX);
-
-    assert_eq!(clamp_i32( 2_147_483_648i64), i32::MAX);
-    assert_eq!(clamp_i32(-2_147_483_649i64), i32::MIN);
-    assert_eq!(clamp_i32(         i64::MAX), i32::MAX);
-    assert_eq!(clamp_i32(         i64::MIN), i32::MIN);
-
-    assert_eq!(clamp_f32( 1.1),  1.0);
-    assert_eq!(clamp_f32( 5.6),  1.0);
-    assert_eq!(clamp_f32( 0.5),  0.5);
-    assert_eq!(clamp_f32(-1.1), -1.0);
-    assert_eq!(clamp_f32(-5.6), -1.0);
-    assert_eq!(clamp_f32(-0.5), -0.5);
-
-    assert_eq!(clamp_f64( 1.1),  1.0);
-    assert_eq!(clamp_f64( 5.6),  1.0);
-    assert_eq!(clamp_f64( 0.5),  0.5);
-    assert_eq!(clamp_f64(-1.1), -1.0);
-    assert_eq!(clamp_f64(-5.6), -1.0);
-    assert_eq!(clamp_f64(-0.5), -0.5);
-}
-
 macro_rules! converter {
     ($to:ty, $from:ty, $sample:ident, $func:expr) => (
         impl FromSample<$from> for $to {
@@ -758,453 +591,440 @@ converter!(f64, i32, s, f64::from(s) / 2_147_483_648.0);
 converter!(f64, f32, s, f64::from(s));
 converter!(f64, f64, s, s);
 
-#[test]
-fn verify_u8_from_sample() {
+#[cfg(test)]
+mod tests {
     use std::{u8, i8, u16, i16, u32, i32};
-
-    assert_eq!(u8::from_sample(u8::MAX), u8::MAX);
-    assert_eq!(u8::from_sample(u8::MID), u8::MID);
-    assert_eq!(u8::from_sample(u8::MIN), u8::MIN);
-
-    assert_eq!(u8::from_sample(u16::MAX), u8::MAX);
-    assert_eq!(u8::from_sample(u16::MID), u8::MID);
-    assert_eq!(u8::from_sample(u16::MIN), u8::MIN);
-
-    assert_eq!(u8::from_sample(u24::MAX), u8::MAX);
-    assert_eq!(u8::from_sample(u24::MID), u8::MID);
-    assert_eq!(u8::from_sample(u24::MIN), u8::MIN);
-
-    assert_eq!(u8::from_sample(u32::MAX), u8::MAX);
-    assert_eq!(u8::from_sample(u32::MID), u8::MID);
-    assert_eq!(u8::from_sample(u32::MIN), u8::MIN);
-
-    assert_eq!(u8::from_sample(i8::MAX), u8::MAX);
-    assert_eq!(u8::from_sample(i8::MID), u8::MID);
-    assert_eq!(u8::from_sample(i8::MIN), u8::MIN);
-
-    assert_eq!(u8::from_sample(i16::MAX), u8::MAX);
-    assert_eq!(u8::from_sample(i16::MID), u8::MID);
-    assert_eq!(u8::from_sample(i16::MIN), u8::MIN);
-
-    assert_eq!(u8::from_sample(i24::MAX), u8::MAX);
-    assert_eq!(u8::from_sample(i24::MID), u8::MID);
-    assert_eq!(u8::from_sample(i24::MIN), u8::MIN);
-
-    assert_eq!(u8::from_sample(i32::MAX), u8::MAX);
-    assert_eq!(u8::from_sample(i32::MID), u8::MID);
-    assert_eq!(u8::from_sample(i32::MIN), u8::MIN);
-
-    assert_eq!(u8::from_sample( 1.0f32), u8::MAX);
-    assert_eq!(u8::from_sample(   0f32), u8::MID);
-    assert_eq!(u8::from_sample(-1.0f32), u8::MIN);
-
-    assert_eq!(u8::from_sample( 1.0f64), u8::MAX);
-    assert_eq!(u8::from_sample(   0f64), u8::MID);
-    assert_eq!(u8::from_sample(-1.0f64), u8::MIN);
-}
-
-#[test]
-fn verify_u16_from_sample() {
-    use std::{u8, i8, u16, i16, u32, i32};
-
-    assert_eq!(u16::from_sample(u8::MAX), u16::MAX - 255);
-    assert_eq!(u16::from_sample(u8::MID), u16::MID);
-    assert_eq!(u16::from_sample(u8::MIN), u16::MIN);
-
-    assert_eq!(u16::from_sample(u16::MAX), u16::MAX);
-    assert_eq!(u16::from_sample(u16::MID), u16::MID);
-    assert_eq!(u16::from_sample(u16::MIN), u16::MIN);
-
-    assert_eq!(u16::from_sample(u24::MAX), u16::MAX);
-    assert_eq!(u16::from_sample(u24::MID), u16::MID);
-    assert_eq!(u16::from_sample(u24::MIN), u16::MIN);
-
-    assert_eq!(u16::from_sample(u32::MAX), u16::MAX);
-    assert_eq!(u16::from_sample(u32::MID), u16::MID);
-    assert_eq!(u16::from_sample(u32::MIN), u16::MIN);
-
-    assert_eq!(u16::from_sample(i8::MAX), u16::MAX - 255);
-    assert_eq!(u16::from_sample(i8::MID), u16::MID);
-    assert_eq!(u16::from_sample(i8::MIN), u16::MIN);
-
-    assert_eq!(u16::from_sample(i16::MAX), u16::MAX);
-    assert_eq!(u16::from_sample(i16::MID), u16::MID);
-    assert_eq!(u16::from_sample(i16::MIN), u16::MIN);
-
-    assert_eq!(u16::from_sample(i24::MAX), u16::MAX);
-    assert_eq!(u16::from_sample(i24::MID), u16::MID);
-    assert_eq!(u16::from_sample(i24::MIN), u16::MIN);
-
-    assert_eq!(u16::from_sample(i32::MAX), u16::MAX);
-    assert_eq!(u16::from_sample(i32::MID), u16::MID);
-    assert_eq!(u16::from_sample(i32::MIN), u16::MIN);
-
-    assert_eq!(u16::from_sample( 1.0f32), u16::MAX);
-    assert_eq!(u16::from_sample(   0f32), u16::MID);
-    assert_eq!(u16::from_sample(-1.0f32), u16::MIN);
-
-    assert_eq!(u16::from_sample( 1.0f64), u16::MAX);
-    assert_eq!(u16::from_sample(   0f64), u16::MID);
-    assert_eq!(u16::from_sample(-1.0f64), u16::MIN);
-}
-
-#[test]
-fn verify_u24_from_sample() {
-    use std::{u8, i8, u16, i16, u32, i32};
-
-    assert_eq!(u24::from_sample(u8::MAX), u24::MAX - u24::from(65_535u32));
-    assert_eq!(u24::from_sample(u8::MID), u24::MID);
-    assert_eq!(u24::from_sample(u8::MIN), u24::MIN);
-
-    assert_eq!(u24::from_sample(u16::MAX), u24::MAX - u24::from(255u32));
-    assert_eq!(u24::from_sample(u16::MID), u24::MID);
-    assert_eq!(u24::from_sample(u16::MIN), u24::MIN);
-
-    assert_eq!(u24::from_sample(u24::MAX), u24::MAX);
-    assert_eq!(u24::from_sample(u24::MID), u24::MID);
-    assert_eq!(u24::from_sample(u24::MIN), u24::MIN);
-
-    assert_eq!(u24::from_sample(u32::MAX), u24::MAX);
-    assert_eq!(u24::from_sample(u32::MID), u24::MID);
-    assert_eq!(u24::from_sample(u32::MIN), u24::MIN);
-
-    assert_eq!(u24::from_sample(i8::MAX), u24::MAX - u24::from(65_535u32));
-    assert_eq!(u24::from_sample(i8::MID), u24::MID);
-    assert_eq!(u24::from_sample(i8::MIN), u24::MIN);
-
-    assert_eq!(u24::from_sample(i16::MAX), u24::MAX - u24::from(255u32));
-    assert_eq!(u24::from_sample(i16::MID), u24::MID);
-    assert_eq!(u24::from_sample(i16::MIN), u24::MIN);
-
-    assert_eq!(u24::from_sample(i24::MAX), u24::MAX);
-    assert_eq!(u24::from_sample(i24::MID), u24::MID);
-    assert_eq!(u24::from_sample(i24::MIN), u24::MIN);
-
-    assert_eq!(u24::from_sample(i32::MAX), u24::MAX);
-    assert_eq!(u24::from_sample(i32::MID), u24::MID);
-    assert_eq!(u24::from_sample(i32::MIN), u24::MIN);
-
-    assert_eq!(u24::from_sample( 1.0f32), u24::MAX);
-    assert_eq!(u24::from_sample(   0f32), u24::MID);
-    assert_eq!(u24::from_sample(-1.0f32), u24::MIN);
-
-    assert_eq!(u24::from_sample( 1.0f64), u24::MAX);
-    assert_eq!(u24::from_sample(   0f64), u24::MID);
-    assert_eq!(u24::from_sample(-1.0f64), u24::MIN);
-}
-
-#[test]
-fn verify_u32_from_sample() {
-    use std::{u8, i8, u16, i16, u32, i32};
-
-    assert_eq!(u32::from_sample(u8::MAX), u32::MAX - 16_777_215);
-    assert_eq!(u32::from_sample(u8::MID), u32::MID);
-    assert_eq!(u32::from_sample(u8::MIN), u32::MIN);
-
-    assert_eq!(u32::from_sample(u16::MAX), u32::MAX - 65_535);
-    assert_eq!(u32::from_sample(u16::MID), u32::MID);
-    assert_eq!(u32::from_sample(u16::MIN), u32::MIN);
-
-    assert_eq!(u32::from_sample(u24::MAX), u32::MAX - 255);
-    assert_eq!(u32::from_sample(u24::MID), u32::MID);
-    assert_eq!(u32::from_sample(u24::MIN), u32::MIN);
-
-    assert_eq!(u32::from_sample(u32::MAX), u32::MAX);
-    assert_eq!(u32::from_sample(u32::MID), u32::MID);
-    assert_eq!(u32::from_sample(u32::MIN), u32::MIN);
-
-    assert_eq!(u32::from_sample(i8::MAX), u32::MAX - 16_777_215);
-    assert_eq!(u32::from_sample(i8::MID), u32::MID);
-    assert_eq!(u32::from_sample(i8::MIN), u32::MIN);
-
-    assert_eq!(u32::from_sample(i16::MAX), u32::MAX - 65_535);
-    assert_eq!(u32::from_sample(i16::MID), u32::MID);
-    assert_eq!(u32::from_sample(i16::MIN), u32::MIN);
-
-    assert_eq!(u32::from_sample(i24::MAX), u32::MAX - 255);
-    assert_eq!(u32::from_sample(i24::MID), u32::MID);
-    assert_eq!(u32::from_sample(i24::MIN), u32::MIN);
-
-    assert_eq!(u32::from_sample(i32::MAX), u32::MAX);
-    assert_eq!(u32::from_sample(i32::MID), u32::MID);
-    assert_eq!(u32::from_sample(i32::MIN), u32::MIN);
-
-    assert_eq!(u32::from_sample( 1.0f32), u32::MAX);
-    assert_eq!(u32::from_sample(   0f32), u32::MID);
-    assert_eq!(u32::from_sample(-1.0f32), u32::MIN);
-
-    assert_eq!(u32::from_sample( 1.0f64), u32::MAX);
-    assert_eq!(u32::from_sample(   0f64), u32::MID);
-    assert_eq!(u32::from_sample(-1.0f64), u32::MIN);
-}
-
-
-#[test]
-fn verify_i8_from_sample() {
-    use std::{u8, i8, u16, i16, u32, i32};
-
-    assert_eq!(i8::from_sample(u8::MAX), i8::MAX);
-    assert_eq!(i8::from_sample(u8::MID), i8::MID);
-    assert_eq!(i8::from_sample(u8::MIN), i8::MIN);
-
-    assert_eq!(i8::from_sample(u16::MAX), i8::MAX);
-    assert_eq!(i8::from_sample(u16::MID), i8::MID);
-    assert_eq!(i8::from_sample(u16::MIN), i8::MIN);
-
-    assert_eq!(i8::from_sample(u24::MAX), i8::MAX);
-    assert_eq!(i8::from_sample(u24::MID), i8::MID);
-    assert_eq!(i8::from_sample(u24::MIN), i8::MIN);
-
-    assert_eq!(i8::from_sample(u32::MAX), i8::MAX);
-    assert_eq!(i8::from_sample(u32::MID), i8::MID);
-    assert_eq!(i8::from_sample(u32::MIN), i8::MIN);
-
-    assert_eq!(i8::from_sample(i8::MAX), i8::MAX);
-    assert_eq!(i8::from_sample(i8::MID), i8::MID);
-    assert_eq!(i8::from_sample(i8::MIN), i8::MIN);
-
-    assert_eq!(i8::from_sample(i16::MAX), i8::MAX);
-    assert_eq!(i8::from_sample(i16::MID), i8::MID);
-    assert_eq!(i8::from_sample(i16::MIN), i8::MIN);
-
-    assert_eq!(i8::from_sample(i24::MAX), i8::MAX);
-    assert_eq!(i8::from_sample(i24::MID), i8::MID);
-    assert_eq!(i8::from_sample(i24::MIN), i8::MIN);
-
-    assert_eq!(i8::from_sample(i32::MAX), i8::MAX);
-    assert_eq!(i8::from_sample(i32::MID), i8::MID);
-    assert_eq!(i8::from_sample(i32::MIN), i8::MIN);
-
-    assert_eq!(i8::from_sample( 1.0f32), i8::MAX);
-    assert_eq!(i8::from_sample(   0f32), i8::MID);
-    assert_eq!(i8::from_sample(-1.0f32), i8::MIN);
-
-    assert_eq!(i8::from_sample( 1.0f64), i8::MAX);
-    assert_eq!(i8::from_sample(   0f64), i8::MID);
-    assert_eq!(i8::from_sample(-1.0f64), i8::MIN);
-}
-
-#[test]
-fn verify_i16_from_sample() {
-    use std::{u8, i8, u16, i16, u32, i32};
-
-    assert_eq!(i16::from_sample(u8::MAX), i16::MAX - 255);
-    assert_eq!(i16::from_sample(u8::MID), i16::MID);
-    assert_eq!(i16::from_sample(u8::MIN), i16::MIN);
-
-    assert_eq!(i16::from_sample(u16::MAX), i16::MAX);
-    assert_eq!(i16::from_sample(u16::MID), i16::MID);
-    assert_eq!(i16::from_sample(u16::MIN), i16::MIN);
-
-    assert_eq!(i16::from_sample(u24::MAX), i16::MAX);
-    assert_eq!(i16::from_sample(u24::MID), i16::MID);
-    assert_eq!(i16::from_sample(u24::MIN), i16::MIN);
-
-    assert_eq!(i16::from_sample(u32::MAX), i16::MAX);
-    assert_eq!(i16::from_sample(u32::MID), i16::MID);
-    assert_eq!(i16::from_sample(u32::MIN), i16::MIN);
-
-    assert_eq!(i16::from_sample(i8::MAX), i16::MAX - 255);
-    assert_eq!(i16::from_sample(i8::MID), i16::MID);
-    assert_eq!(i16::from_sample(i8::MIN), i16::MIN);
-
-    assert_eq!(i16::from_sample(i16::MAX), i16::MAX);
-    assert_eq!(i16::from_sample(i16::MID), i16::MID);
-    assert_eq!(i16::from_sample(i16::MIN), i16::MIN);
-
-    assert_eq!(i16::from_sample(i24::MAX), i16::MAX);
-    assert_eq!(i16::from_sample(i24::MID), i16::MID);
-    assert_eq!(i16::from_sample(i24::MIN), i16::MIN);
-
-    assert_eq!(i16::from_sample(i32::MAX), i16::MAX);
-    assert_eq!(i16::from_sample(i32::MID), i16::MID);
-    assert_eq!(i16::from_sample(i32::MIN), i16::MIN);
-
-    assert_eq!(i16::from_sample( 1.0f32), i16::MAX);
-    assert_eq!(i16::from_sample(   0f32), i16::MID);
-    assert_eq!(i16::from_sample(-1.0f32), i16::MIN);
-
-    assert_eq!(i16::from_sample( 1.0f64), i16::MAX);
-    assert_eq!(i16::from_sample(   0f64), i16::MID);
-    assert_eq!(i16::from_sample(-1.0f64), i16::MIN);
-}
-
-#[test]
-fn verify_i24_from_sample() {
-    use std::{u8, i8, u16, i16, u32, i32};
-
-    assert_eq!(i24::from_sample(u8::MAX), i24::MAX - i24::from(65_535));
-    assert_eq!(i24::from_sample(u8::MID), i24::MID);
-    assert_eq!(i24::from_sample(u8::MIN), i24::MIN);
-
-    assert_eq!(i24::from_sample(u16::MAX), i24::MAX - i24::from(255));
-    assert_eq!(i24::from_sample(u16::MID), i24::MID);
-    assert_eq!(i24::from_sample(u16::MIN), i24::MIN);
-
-    assert_eq!(i24::from_sample(u24::MAX), i24::MAX);
-    assert_eq!(i24::from_sample(u24::MID), i24::MID);
-    assert_eq!(i24::from_sample(u24::MIN), i24::MIN);
-
-    assert_eq!(i24::from_sample(u32::MAX), i24::MAX);
-    assert_eq!(i24::from_sample(u32::MID), i24::MID);
-    assert_eq!(i24::from_sample(u32::MIN), i24::MIN);
-
-    assert_eq!(i24::from_sample(i8::MAX), i24::MAX - i24::from(65_535));
-    assert_eq!(i24::from_sample(i8::MID), i24::MID);
-    assert_eq!(i24::from_sample(i8::MIN), i24::MIN);
-
-    assert_eq!(i24::from_sample(i16::MAX), i24::MAX - i24::from(255));
-    assert_eq!(i24::from_sample(i16::MID), i24::MID);
-    assert_eq!(i24::from_sample(i16::MIN), i24::MIN);
-
-    assert_eq!(i24::from_sample(i24::MAX), i24::MAX);
-    assert_eq!(i24::from_sample(i24::MID), i24::MID);
-    assert_eq!(i24::from_sample(i24::MIN), i24::MIN);
-
-    assert_eq!(i24::from_sample(i32::MAX), i24::MAX);
-    assert_eq!(i24::from_sample(i32::MID), i24::MID);
-    assert_eq!(i24::from_sample(i32::MIN), i24::MIN);
-
-    assert_eq!(i24::from_sample( 1.0f32), i24::MAX);
-    assert_eq!(i24::from_sample(   0f32), i24::MID);
-    assert_eq!(i24::from_sample(-1.0f32), i24::MIN);
-
-    assert_eq!(i24::from_sample( 1.0f64), i24::MAX);
-    assert_eq!(i24::from_sample(   0f64), i24::MID);
-    assert_eq!(i24::from_sample(-1.0f64), i24::MIN);
-}
-
-#[test]
-fn verify_i32_from_sample() {
-    use std::{u8, i8, u16, i16, u32, i32};
-
-    assert_eq!(i32::from_sample(u8::MAX), i32::MAX - 16_777_215);
-    assert_eq!(i32::from_sample(u8::MID), i32::MID);
-    assert_eq!(i32::from_sample(u8::MIN), i32::MIN);
-
-    assert_eq!(i32::from_sample(u16::MAX), i32::MAX - 65_535);
-    assert_eq!(i32::from_sample(u16::MID), i32::MID);
-    assert_eq!(i32::from_sample(u16::MIN), i32::MIN);
-
-    assert_eq!(i32::from_sample(u24::MAX), i32::MAX - 255);
-    assert_eq!(i32::from_sample(u24::MID), i32::MID);
-    assert_eq!(i32::from_sample(u24::MIN), i32::MIN);
-
-    assert_eq!(i32::from_sample(u32::MAX), i32::MAX);
-    assert_eq!(i32::from_sample(u32::MID), i32::MID);
-    assert_eq!(i32::from_sample(u32::MIN), i32::MIN);
-
-    assert_eq!(i32::from_sample(i8::MAX), i32::MAX - 16_777_215);
-    assert_eq!(i32::from_sample(i8::MID), i32::MID);
-    assert_eq!(i32::from_sample(i8::MIN), i32::MIN);
-
-    assert_eq!(i32::from_sample(i16::MAX), i32::MAX - 65_535);
-    assert_eq!(i32::from_sample(i16::MID), i32::MID);
-    assert_eq!(i32::from_sample(i16::MIN), i32::MIN);
-
-    assert_eq!(i32::from_sample(i24::MAX), i32::MAX - 255);
-    assert_eq!(i32::from_sample(i24::MID), i32::MID);
-    assert_eq!(i32::from_sample(i24::MIN), i32::MIN);
-
-    assert_eq!(i32::from_sample(i32::MAX), i32::MAX);
-    assert_eq!(i32::from_sample(i32::MID), i32::MID);
-    assert_eq!(i32::from_sample(i32::MIN), i32::MIN);
-
-    assert_eq!(i32::from_sample( 1.0f32), i32::MAX);
-    assert_eq!(i32::from_sample(   0f32), i32::MID);
-    assert_eq!(i32::from_sample(-1.0f32), i32::MIN);
-
-    assert_eq!(i32::from_sample( 1.0f64), i32::MAX);
-    assert_eq!(i32::from_sample(   0f64), i32::MID);
-    assert_eq!(i32::from_sample(-1.0f64), i32::MIN);
-}
-
-#[test]
-fn verify_f64_from_sample() {
-    use std::{u8, i8, u16, i16, u32, i32};
-
-    assert_eq!(f64::from_sample(u8::MAX),  127.0 / 128.0);
-    assert_eq!(f64::from_sample(u8::MID),  0.0);
-    assert_eq!(f64::from_sample(u8::MIN), -1.0);
-
-    assert_eq!(f64::from_sample(u16::MAX),  32_767.0 / 32_768.0);
-    assert_eq!(f64::from_sample(u16::MID),  0.0);
-    assert_eq!(f64::from_sample(u16::MIN), -1.0);
-
-    assert_eq!(f64::from_sample(u24::MAX),  8_388_607.0 / 8_388_608.0);
-    assert_eq!(f64::from_sample(u24::MID),  0.0);
-    assert_eq!(f64::from_sample(u24::MIN), -1.0);
-
-    assert_eq!(f64::from_sample(u32::MAX),  2_147_483_647.0 / 2_147_483_648.0);
-    assert_eq!(f64::from_sample(u32::MID),  0.0);
-    assert_eq!(f64::from_sample(u32::MIN), -1.0);
-
-    assert_eq!(f64::from_sample(i8::MAX),  127.0 / 128.0);
-    assert_eq!(f64::from_sample(i8::MID),  0.0);
-    assert_eq!(f64::from_sample(i8::MIN), -1.0);
-
-    assert_eq!(f64::from_sample(i16::MAX),  32_767.0 / 32_768.0);
-    assert_eq!(f64::from_sample(i16::MID),  0.0);
-    assert_eq!(f64::from_sample(i16::MIN), -1.0);
-
-    assert_eq!(f64::from_sample(i24::MAX),  8_388_607.0 / 8_388_608.0);
-    assert_eq!(f64::from_sample(i24::MID),  0.0);
-    assert_eq!(f64::from_sample(i24::MIN), -1.0);
-
-    assert_eq!(f64::from_sample(i32::MAX),  2_147_483_647.0 / 2_147_483_648.0);
-    assert_eq!(f64::from_sample(i32::MID),  0.0);
-    assert_eq!(f64::from_sample(i32::MIN), -1.0);
-
-    assert_eq!(f64::from_sample( 1.0f32),  1.0);
-    assert_eq!(f64::from_sample(   0f32),  0.0);
-    assert_eq!(f64::from_sample(-1.0f32), -1.0);
-
-    assert_eq!(f64::from_sample( 1.0f64),  1.0);
-    assert_eq!(f64::from_sample(   0f64),  0.0);
-    assert_eq!(f64::from_sample(-1.0f64), -1.0);
-}
-
-#[test]
-fn verify_f32_from_sample() {
-    use std::{u8, i8, u16, i16, u32, i32};
-
-    assert_eq!(f32::from_sample(u8::MAX),  127.0 / 128.0);
-    assert_eq!(f32::from_sample(u8::MID),  0.0);
-    assert_eq!(f32::from_sample(u8::MIN), -1.0);
-
-    assert_eq!(f32::from_sample(u16::MAX),  32_767.0 / 32_768.0);
-    assert_eq!(f32::from_sample(u16::MID),  0.0);
-    assert_eq!(f32::from_sample(u16::MIN), -1.0);
-
-    assert_eq!(f32::from_sample(u24::MAX),  8_388_607.0 / 8_388_608.0);
-    assert_eq!(f32::from_sample(u24::MID),  0.0);
-    assert_eq!(f32::from_sample(u24::MIN), -1.0);
-
-    assert_eq!(f32::from_sample(u32::MAX),  2_147_483_647.0 / 2_147_483_648.0);
-    assert_eq!(f32::from_sample(u32::MID),  0.0);
-    assert_eq!(f32::from_sample(u32::MIN), -1.0);
-
-    assert_eq!(f32::from_sample(i8::MAX),  127.0 / 128.0);
-    assert_eq!(f32::from_sample(i8::MID),  0.0);
-    assert_eq!(f32::from_sample(i8::MIN), -1.0);
-
-    assert_eq!(f32::from_sample(i16::MAX),  32_767.0 / 32_768.0);
-    assert_eq!(f32::from_sample(i16::MID),  0.0);
-    assert_eq!(f32::from_sample(i16::MIN), -1.0);
-
-    assert_eq!(f32::from_sample(i24::MAX),  8_388_607.0 / 8_388_608.0);
-    assert_eq!(f32::from_sample(i24::MID),  0.0);
-    assert_eq!(f32::from_sample(i24::MIN), -1.0);
-
-    assert_eq!(f32::from_sample(i32::MAX),  2_147_483_647.0 / 2_147_483_648.0);
-    assert_eq!(f32::from_sample(i32::MID),  0.0);
-    assert_eq!(f32::from_sample(i32::MIN), -1.0);
-
-    assert_eq!(f32::from_sample( 1.0f32),  1.0);
-    assert_eq!(f32::from_sample(   0f32),  0.0);
-    assert_eq!(f32::from_sample(-1.0f32), -1.0);
-
-    assert_eq!(f32::from_sample( 1.0f64),  1.0);
-    assert_eq!(f32::from_sample(   0f64),  0.0);
-    assert_eq!(f32::from_sample(-1.0f64), -1.0);
+    use crate::sample::{u24, i24, Sample};
+    use super::FromSample;
+
+    #[test]
+    fn verify_u8_from_sample() {
+        assert_eq!(u8::from_sample(u8::MAX), u8::MAX);
+        assert_eq!(u8::from_sample(u8::MID), u8::MID);
+        assert_eq!(u8::from_sample(u8::MIN), u8::MIN);
+
+        assert_eq!(u8::from_sample(u16::MAX), u8::MAX);
+        assert_eq!(u8::from_sample(u16::MID), u8::MID);
+        assert_eq!(u8::from_sample(u16::MIN), u8::MIN);
+
+        assert_eq!(u8::from_sample(u24::MAX), u8::MAX);
+        assert_eq!(u8::from_sample(u24::MID), u8::MID);
+        assert_eq!(u8::from_sample(u24::MIN), u8::MIN);
+
+        assert_eq!(u8::from_sample(u32::MAX), u8::MAX);
+        assert_eq!(u8::from_sample(u32::MID), u8::MID);
+        assert_eq!(u8::from_sample(u32::MIN), u8::MIN);
+
+        assert_eq!(u8::from_sample(i8::MAX), u8::MAX);
+        assert_eq!(u8::from_sample(i8::MID), u8::MID);
+        assert_eq!(u8::from_sample(i8::MIN), u8::MIN);
+
+        assert_eq!(u8::from_sample(i16::MAX), u8::MAX);
+        assert_eq!(u8::from_sample(i16::MID), u8::MID);
+        assert_eq!(u8::from_sample(i16::MIN), u8::MIN);
+
+        assert_eq!(u8::from_sample(i24::MAX), u8::MAX);
+        assert_eq!(u8::from_sample(i24::MID), u8::MID);
+        assert_eq!(u8::from_sample(i24::MIN), u8::MIN);
+
+        assert_eq!(u8::from_sample(i32::MAX), u8::MAX);
+        assert_eq!(u8::from_sample(i32::MID), u8::MID);
+        assert_eq!(u8::from_sample(i32::MIN), u8::MIN);
+
+        assert_eq!(u8::from_sample( 1.0f32), u8::MAX);
+        assert_eq!(u8::from_sample(   0f32), u8::MID);
+        assert_eq!(u8::from_sample(-1.0f32), u8::MIN);
+
+        assert_eq!(u8::from_sample( 1.0f64), u8::MAX);
+        assert_eq!(u8::from_sample(   0f64), u8::MID);
+        assert_eq!(u8::from_sample(-1.0f64), u8::MIN);
+    }
+
+    #[test]
+    fn verify_u16_from_sample() {
+        assert_eq!(u16::from_sample(u8::MAX), u16::MAX - 255);
+        assert_eq!(u16::from_sample(u8::MID), u16::MID);
+        assert_eq!(u16::from_sample(u8::MIN), u16::MIN);
+
+        assert_eq!(u16::from_sample(u16::MAX), u16::MAX);
+        assert_eq!(u16::from_sample(u16::MID), u16::MID);
+        assert_eq!(u16::from_sample(u16::MIN), u16::MIN);
+
+        assert_eq!(u16::from_sample(u24::MAX), u16::MAX);
+        assert_eq!(u16::from_sample(u24::MID), u16::MID);
+        assert_eq!(u16::from_sample(u24::MIN), u16::MIN);
+
+        assert_eq!(u16::from_sample(u32::MAX), u16::MAX);
+        assert_eq!(u16::from_sample(u32::MID), u16::MID);
+        assert_eq!(u16::from_sample(u32::MIN), u16::MIN);
+
+        assert_eq!(u16::from_sample(i8::MAX), u16::MAX - 255);
+        assert_eq!(u16::from_sample(i8::MID), u16::MID);
+        assert_eq!(u16::from_sample(i8::MIN), u16::MIN);
+
+        assert_eq!(u16::from_sample(i16::MAX), u16::MAX);
+        assert_eq!(u16::from_sample(i16::MID), u16::MID);
+        assert_eq!(u16::from_sample(i16::MIN), u16::MIN);
+
+        assert_eq!(u16::from_sample(i24::MAX), u16::MAX);
+        assert_eq!(u16::from_sample(i24::MID), u16::MID);
+        assert_eq!(u16::from_sample(i24::MIN), u16::MIN);
+
+        assert_eq!(u16::from_sample(i32::MAX), u16::MAX);
+        assert_eq!(u16::from_sample(i32::MID), u16::MID);
+        assert_eq!(u16::from_sample(i32::MIN), u16::MIN);
+
+        assert_eq!(u16::from_sample( 1.0f32), u16::MAX);
+        assert_eq!(u16::from_sample(   0f32), u16::MID);
+        assert_eq!(u16::from_sample(-1.0f32), u16::MIN);
+
+        assert_eq!(u16::from_sample( 1.0f64), u16::MAX);
+        assert_eq!(u16::from_sample(   0f64), u16::MID);
+        assert_eq!(u16::from_sample(-1.0f64), u16::MIN);
+    }
+
+    #[test]
+    fn verify_u24_from_sample() {
+        assert_eq!(u24::from_sample(u8::MAX), u24::MAX - u24::from(65_535u32));
+        assert_eq!(u24::from_sample(u8::MID), u24::MID);
+        assert_eq!(u24::from_sample(u8::MIN), u24::MIN);
+
+        assert_eq!(u24::from_sample(u16::MAX), u24::MAX - u24::from(255u32));
+        assert_eq!(u24::from_sample(u16::MID), u24::MID);
+        assert_eq!(u24::from_sample(u16::MIN), u24::MIN);
+
+        assert_eq!(u24::from_sample(u24::MAX), u24::MAX);
+        assert_eq!(u24::from_sample(u24::MID), u24::MID);
+        assert_eq!(u24::from_sample(u24::MIN), u24::MIN);
+
+        assert_eq!(u24::from_sample(u32::MAX), u24::MAX);
+        assert_eq!(u24::from_sample(u32::MID), u24::MID);
+        assert_eq!(u24::from_sample(u32::MIN), u24::MIN);
+
+        assert_eq!(u24::from_sample(i8::MAX), u24::MAX - u24::from(65_535u32));
+        assert_eq!(u24::from_sample(i8::MID), u24::MID);
+        assert_eq!(u24::from_sample(i8::MIN), u24::MIN);
+
+        assert_eq!(u24::from_sample(i16::MAX), u24::MAX - u24::from(255u32));
+        assert_eq!(u24::from_sample(i16::MID), u24::MID);
+        assert_eq!(u24::from_sample(i16::MIN), u24::MIN);
+
+        assert_eq!(u24::from_sample(i24::MAX), u24::MAX);
+        assert_eq!(u24::from_sample(i24::MID), u24::MID);
+        assert_eq!(u24::from_sample(i24::MIN), u24::MIN);
+
+        assert_eq!(u24::from_sample(i32::MAX), u24::MAX);
+        assert_eq!(u24::from_sample(i32::MID), u24::MID);
+        assert_eq!(u24::from_sample(i32::MIN), u24::MIN);
+
+        assert_eq!(u24::from_sample( 1.0f32), u24::MAX);
+        assert_eq!(u24::from_sample(   0f32), u24::MID);
+        assert_eq!(u24::from_sample(-1.0f32), u24::MIN);
+
+        assert_eq!(u24::from_sample( 1.0f64), u24::MAX);
+        assert_eq!(u24::from_sample(   0f64), u24::MID);
+        assert_eq!(u24::from_sample(-1.0f64), u24::MIN);
+    }
+
+    #[test]
+    fn verify_u32_from_sample() {
+        assert_eq!(u32::from_sample(u8::MAX), u32::MAX - 16_777_215);
+        assert_eq!(u32::from_sample(u8::MID), u32::MID);
+        assert_eq!(u32::from_sample(u8::MIN), u32::MIN);
+
+        assert_eq!(u32::from_sample(u16::MAX), u32::MAX - 65_535);
+        assert_eq!(u32::from_sample(u16::MID), u32::MID);
+        assert_eq!(u32::from_sample(u16::MIN), u32::MIN);
+
+        assert_eq!(u32::from_sample(u24::MAX), u32::MAX - 255);
+        assert_eq!(u32::from_sample(u24::MID), u32::MID);
+        assert_eq!(u32::from_sample(u24::MIN), u32::MIN);
+
+        assert_eq!(u32::from_sample(u32::MAX), u32::MAX);
+        assert_eq!(u32::from_sample(u32::MID), u32::MID);
+        assert_eq!(u32::from_sample(u32::MIN), u32::MIN);
+
+        assert_eq!(u32::from_sample(i8::MAX), u32::MAX - 16_777_215);
+        assert_eq!(u32::from_sample(i8::MID), u32::MID);
+        assert_eq!(u32::from_sample(i8::MIN), u32::MIN);
+
+        assert_eq!(u32::from_sample(i16::MAX), u32::MAX - 65_535);
+        assert_eq!(u32::from_sample(i16::MID), u32::MID);
+        assert_eq!(u32::from_sample(i16::MIN), u32::MIN);
+
+        assert_eq!(u32::from_sample(i24::MAX), u32::MAX - 255);
+        assert_eq!(u32::from_sample(i24::MID), u32::MID);
+        assert_eq!(u32::from_sample(i24::MIN), u32::MIN);
+
+        assert_eq!(u32::from_sample(i32::MAX), u32::MAX);
+        assert_eq!(u32::from_sample(i32::MID), u32::MID);
+        assert_eq!(u32::from_sample(i32::MIN), u32::MIN);
+
+        assert_eq!(u32::from_sample( 1.0f32), u32::MAX);
+        assert_eq!(u32::from_sample(   0f32), u32::MID);
+        assert_eq!(u32::from_sample(-1.0f32), u32::MIN);
+
+        assert_eq!(u32::from_sample( 1.0f64), u32::MAX);
+        assert_eq!(u32::from_sample(   0f64), u32::MID);
+        assert_eq!(u32::from_sample(-1.0f64), u32::MIN);
+    }
+
+
+    #[test]
+    fn verify_i8_from_sample() {
+        assert_eq!(i8::from_sample(u8::MAX), i8::MAX);
+        assert_eq!(i8::from_sample(u8::MID), i8::MID);
+        assert_eq!(i8::from_sample(u8::MIN), i8::MIN);
+
+        assert_eq!(i8::from_sample(u16::MAX), i8::MAX);
+        assert_eq!(i8::from_sample(u16::MID), i8::MID);
+        assert_eq!(i8::from_sample(u16::MIN), i8::MIN);
+
+        assert_eq!(i8::from_sample(u24::MAX), i8::MAX);
+        assert_eq!(i8::from_sample(u24::MID), i8::MID);
+        assert_eq!(i8::from_sample(u24::MIN), i8::MIN);
+
+        assert_eq!(i8::from_sample(u32::MAX), i8::MAX);
+        assert_eq!(i8::from_sample(u32::MID), i8::MID);
+        assert_eq!(i8::from_sample(u32::MIN), i8::MIN);
+
+        assert_eq!(i8::from_sample(i8::MAX), i8::MAX);
+        assert_eq!(i8::from_sample(i8::MID), i8::MID);
+        assert_eq!(i8::from_sample(i8::MIN), i8::MIN);
+
+        assert_eq!(i8::from_sample(i16::MAX), i8::MAX);
+        assert_eq!(i8::from_sample(i16::MID), i8::MID);
+        assert_eq!(i8::from_sample(i16::MIN), i8::MIN);
+
+        assert_eq!(i8::from_sample(i24::MAX), i8::MAX);
+        assert_eq!(i8::from_sample(i24::MID), i8::MID);
+        assert_eq!(i8::from_sample(i24::MIN), i8::MIN);
+
+        assert_eq!(i8::from_sample(i32::MAX), i8::MAX);
+        assert_eq!(i8::from_sample(i32::MID), i8::MID);
+        assert_eq!(i8::from_sample(i32::MIN), i8::MIN);
+
+        assert_eq!(i8::from_sample( 1.0f32), i8::MAX);
+        assert_eq!(i8::from_sample(   0f32), i8::MID);
+        assert_eq!(i8::from_sample(-1.0f32), i8::MIN);
+
+        assert_eq!(i8::from_sample( 1.0f64), i8::MAX);
+        assert_eq!(i8::from_sample(   0f64), i8::MID);
+        assert_eq!(i8::from_sample(-1.0f64), i8::MIN);
+    }
+
+    #[test]
+    fn verify_i16_from_sample() {
+        assert_eq!(i16::from_sample(u8::MAX), i16::MAX - 255);
+        assert_eq!(i16::from_sample(u8::MID), i16::MID);
+        assert_eq!(i16::from_sample(u8::MIN), i16::MIN);
+
+        assert_eq!(i16::from_sample(u16::MAX), i16::MAX);
+        assert_eq!(i16::from_sample(u16::MID), i16::MID);
+        assert_eq!(i16::from_sample(u16::MIN), i16::MIN);
+
+        assert_eq!(i16::from_sample(u24::MAX), i16::MAX);
+        assert_eq!(i16::from_sample(u24::MID), i16::MID);
+        assert_eq!(i16::from_sample(u24::MIN), i16::MIN);
+
+        assert_eq!(i16::from_sample(u32::MAX), i16::MAX);
+        assert_eq!(i16::from_sample(u32::MID), i16::MID);
+        assert_eq!(i16::from_sample(u32::MIN), i16::MIN);
+
+        assert_eq!(i16::from_sample(i8::MAX), i16::MAX - 255);
+        assert_eq!(i16::from_sample(i8::MID), i16::MID);
+        assert_eq!(i16::from_sample(i8::MIN), i16::MIN);
+
+        assert_eq!(i16::from_sample(i16::MAX), i16::MAX);
+        assert_eq!(i16::from_sample(i16::MID), i16::MID);
+        assert_eq!(i16::from_sample(i16::MIN), i16::MIN);
+
+        assert_eq!(i16::from_sample(i24::MAX), i16::MAX);
+        assert_eq!(i16::from_sample(i24::MID), i16::MID);
+        assert_eq!(i16::from_sample(i24::MIN), i16::MIN);
+
+        assert_eq!(i16::from_sample(i32::MAX), i16::MAX);
+        assert_eq!(i16::from_sample(i32::MID), i16::MID);
+        assert_eq!(i16::from_sample(i32::MIN), i16::MIN);
+
+        assert_eq!(i16::from_sample( 1.0f32), i16::MAX);
+        assert_eq!(i16::from_sample(   0f32), i16::MID);
+        assert_eq!(i16::from_sample(-1.0f32), i16::MIN);
+
+        assert_eq!(i16::from_sample( 1.0f64), i16::MAX);
+        assert_eq!(i16::from_sample(   0f64), i16::MID);
+        assert_eq!(i16::from_sample(-1.0f64), i16::MIN);
+    }
+
+    #[test]
+    fn verify_i24_from_sample() {
+        assert_eq!(i24::from_sample(u8::MAX), i24::MAX - i24::from(65_535));
+        assert_eq!(i24::from_sample(u8::MID), i24::MID);
+        assert_eq!(i24::from_sample(u8::MIN), i24::MIN);
+
+        assert_eq!(i24::from_sample(u16::MAX), i24::MAX - i24::from(255));
+        assert_eq!(i24::from_sample(u16::MID), i24::MID);
+        assert_eq!(i24::from_sample(u16::MIN), i24::MIN);
+
+        assert_eq!(i24::from_sample(u24::MAX), i24::MAX);
+        assert_eq!(i24::from_sample(u24::MID), i24::MID);
+        assert_eq!(i24::from_sample(u24::MIN), i24::MIN);
+
+        assert_eq!(i24::from_sample(u32::MAX), i24::MAX);
+        assert_eq!(i24::from_sample(u32::MID), i24::MID);
+        assert_eq!(i24::from_sample(u32::MIN), i24::MIN);
+
+        assert_eq!(i24::from_sample(i8::MAX), i24::MAX - i24::from(65_535));
+        assert_eq!(i24::from_sample(i8::MID), i24::MID);
+        assert_eq!(i24::from_sample(i8::MIN), i24::MIN);
+
+        assert_eq!(i24::from_sample(i16::MAX), i24::MAX - i24::from(255));
+        assert_eq!(i24::from_sample(i16::MID), i24::MID);
+        assert_eq!(i24::from_sample(i16::MIN), i24::MIN);
+
+        assert_eq!(i24::from_sample(i24::MAX), i24::MAX);
+        assert_eq!(i24::from_sample(i24::MID), i24::MID);
+        assert_eq!(i24::from_sample(i24::MIN), i24::MIN);
+
+        assert_eq!(i24::from_sample(i32::MAX), i24::MAX);
+        assert_eq!(i24::from_sample(i32::MID), i24::MID);
+        assert_eq!(i24::from_sample(i32::MIN), i24::MIN);
+
+        assert_eq!(i24::from_sample( 1.0f32), i24::MAX);
+        assert_eq!(i24::from_sample(   0f32), i24::MID);
+        assert_eq!(i24::from_sample(-1.0f32), i24::MIN);
+
+        assert_eq!(i24::from_sample( 1.0f64), i24::MAX);
+        assert_eq!(i24::from_sample(   0f64), i24::MID);
+        assert_eq!(i24::from_sample(-1.0f64), i24::MIN);
+    }
+
+    #[test]
+    fn verify_i32_from_sample() {
+        assert_eq!(i32::from_sample(u8::MAX), i32::MAX - 16_777_215);
+        assert_eq!(i32::from_sample(u8::MID), i32::MID);
+        assert_eq!(i32::from_sample(u8::MIN), i32::MIN);
+
+        assert_eq!(i32::from_sample(u16::MAX), i32::MAX - 65_535);
+        assert_eq!(i32::from_sample(u16::MID), i32::MID);
+        assert_eq!(i32::from_sample(u16::MIN), i32::MIN);
+
+        assert_eq!(i32::from_sample(u24::MAX), i32::MAX - 255);
+        assert_eq!(i32::from_sample(u24::MID), i32::MID);
+        assert_eq!(i32::from_sample(u24::MIN), i32::MIN);
+
+        assert_eq!(i32::from_sample(u32::MAX), i32::MAX);
+        assert_eq!(i32::from_sample(u32::MID), i32::MID);
+        assert_eq!(i32::from_sample(u32::MIN), i32::MIN);
+
+        assert_eq!(i32::from_sample(i8::MAX), i32::MAX - 16_777_215);
+        assert_eq!(i32::from_sample(i8::MID), i32::MID);
+        assert_eq!(i32::from_sample(i8::MIN), i32::MIN);
+
+        assert_eq!(i32::from_sample(i16::MAX), i32::MAX - 65_535);
+        assert_eq!(i32::from_sample(i16::MID), i32::MID);
+        assert_eq!(i32::from_sample(i16::MIN), i32::MIN);
+
+        assert_eq!(i32::from_sample(i24::MAX), i32::MAX - 255);
+        assert_eq!(i32::from_sample(i24::MID), i32::MID);
+        assert_eq!(i32::from_sample(i24::MIN), i32::MIN);
+
+        assert_eq!(i32::from_sample(i32::MAX), i32::MAX);
+        assert_eq!(i32::from_sample(i32::MID), i32::MID);
+        assert_eq!(i32::from_sample(i32::MIN), i32::MIN);
+
+        assert_eq!(i32::from_sample( 1.0f32), i32::MAX);
+        assert_eq!(i32::from_sample(   0f32), i32::MID);
+        assert_eq!(i32::from_sample(-1.0f32), i32::MIN);
+
+        assert_eq!(i32::from_sample( 1.0f64), i32::MAX);
+        assert_eq!(i32::from_sample(   0f64), i32::MID);
+        assert_eq!(i32::from_sample(-1.0f64), i32::MIN);
+    }
+
+    #[test]
+    fn verify_f64_from_sample() {
+        assert_eq!(f64::from_sample(u8::MAX),  127.0 / 128.0);
+        assert_eq!(f64::from_sample(u8::MID),  0.0);
+        assert_eq!(f64::from_sample(u8::MIN), -1.0);
+
+        assert_eq!(f64::from_sample(u16::MAX),  32_767.0 / 32_768.0);
+        assert_eq!(f64::from_sample(u16::MID),  0.0);
+        assert_eq!(f64::from_sample(u16::MIN), -1.0);
+
+        assert_eq!(f64::from_sample(u24::MAX),  8_388_607.0 / 8_388_608.0);
+        assert_eq!(f64::from_sample(u24::MID),  0.0);
+        assert_eq!(f64::from_sample(u24::MIN), -1.0);
+
+        assert_eq!(f64::from_sample(u32::MAX),  2_147_483_647.0 / 2_147_483_648.0);
+        assert_eq!(f64::from_sample(u32::MID),  0.0);
+        assert_eq!(f64::from_sample(u32::MIN), -1.0);
+
+        assert_eq!(f64::from_sample(i8::MAX),  127.0 / 128.0);
+        assert_eq!(f64::from_sample(i8::MID),  0.0);
+        assert_eq!(f64::from_sample(i8::MIN), -1.0);
+
+        assert_eq!(f64::from_sample(i16::MAX),  32_767.0 / 32_768.0);
+        assert_eq!(f64::from_sample(i16::MID),  0.0);
+        assert_eq!(f64::from_sample(i16::MIN), -1.0);
+
+        assert_eq!(f64::from_sample(i24::MAX),  8_388_607.0 / 8_388_608.0);
+        assert_eq!(f64::from_sample(i24::MID),  0.0);
+        assert_eq!(f64::from_sample(i24::MIN), -1.0);
+
+        assert_eq!(f64::from_sample(i32::MAX),  2_147_483_647.0 / 2_147_483_648.0);
+        assert_eq!(f64::from_sample(i32::MID),  0.0);
+        assert_eq!(f64::from_sample(i32::MIN), -1.0);
+
+        assert_eq!(f64::from_sample( 1.0f32),  1.0);
+        assert_eq!(f64::from_sample(   0f32),  0.0);
+        assert_eq!(f64::from_sample(-1.0f32), -1.0);
+
+        assert_eq!(f64::from_sample( 1.0f64),  1.0);
+        assert_eq!(f64::from_sample(   0f64),  0.0);
+        assert_eq!(f64::from_sample(-1.0f64), -1.0);
+    }
+
+    #[test]
+    fn verify_f32_from_sample() {
+        assert_eq!(f32::from_sample(u8::MAX),  127.0 / 128.0);
+        assert_eq!(f32::from_sample(u8::MID),  0.0);
+        assert_eq!(f32::from_sample(u8::MIN), -1.0);
+
+        assert_eq!(f32::from_sample(u16::MAX),  32_767.0 / 32_768.0);
+        assert_eq!(f32::from_sample(u16::MID),  0.0);
+        assert_eq!(f32::from_sample(u16::MIN), -1.0);
+
+        assert_eq!(f32::from_sample(u24::MAX),  8_388_607.0 / 8_388_608.0);
+        assert_eq!(f32::from_sample(u24::MID),  0.0);
+        assert_eq!(f32::from_sample(u24::MIN), -1.0);
+
+        assert_eq!(f32::from_sample(u32::MAX),  2_147_483_647.0 / 2_147_483_648.0);
+        assert_eq!(f32::from_sample(u32::MID),  0.0);
+        assert_eq!(f32::from_sample(u32::MIN), -1.0);
+
+        assert_eq!(f32::from_sample(i8::MAX),  127.0 / 128.0);
+        assert_eq!(f32::from_sample(i8::MID),  0.0);
+        assert_eq!(f32::from_sample(i8::MIN), -1.0);
+
+        assert_eq!(f32::from_sample(i16::MAX),  32_767.0 / 32_768.0);
+        assert_eq!(f32::from_sample(i16::MID),  0.0);
+        assert_eq!(f32::from_sample(i16::MIN), -1.0);
+
+        assert_eq!(f32::from_sample(i24::MAX),  8_388_607.0 / 8_388_608.0);
+        assert_eq!(f32::from_sample(i24::MID),  0.0);
+        assert_eq!(f32::from_sample(i24::MIN), -1.0);
+
+        assert_eq!(f32::from_sample(i32::MAX),  2_147_483_647.0 / 2_147_483_648.0);
+        assert_eq!(f32::from_sample(i32::MID),  0.0);
+        assert_eq!(f32::from_sample(i32::MIN), -1.0);
+
+        assert_eq!(f32::from_sample( 1.0f32),  1.0);
+        assert_eq!(f32::from_sample(   0f32),  0.0);
+        assert_eq!(f32::from_sample(-1.0f32), -1.0);
+
+        assert_eq!(f32::from_sample( 1.0f64),  1.0);
+        assert_eq!(f32::from_sample(   0f64),  0.0);
+        assert_eq!(f32::from_sample(-1.0f64), -1.0);
+    }
 }

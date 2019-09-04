@@ -9,6 +9,8 @@ use std::fmt;
 
 use byteorder::{NativeEndian, ByteOrder};
 
+use crate::util::clamp::{clamp_i24, clamp_u24};
+
 /// SampleFormat describes the data encoding for an audio sample.
 #[derive(Copy, Clone, Debug)]
 pub enum SampleFormat {
@@ -57,11 +59,11 @@ pub trait Sample:
     const FORMAT: SampleFormat;
 
     /// The effective number of bits of the valid (clamped) sample range. Quantifies the dynamic
-    /// range of the range of the sample format in bits.
+    /// range of the sample format in bits.
     const EFF_BITS: u32;
 
     /// The mid-point value between the maximum and minimum sample value. If a sample is set to this
-    /// value, it is silent.
+    /// value it is silent.
     const MID: Self;
 }
 
@@ -70,7 +72,7 @@ pub trait Sample:
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub struct u24 (pub u32);
 
-/// An signed 24-bit integer sample.
+/// A signed 24-bit integer sample.
 #[allow(non_camel_case_types)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub struct i24 (pub i32);
@@ -163,7 +165,7 @@ impl i24 {
 
     #[inline]
     fn saturate_overflow(self) -> Self {
-        self
+        i24(clamp_i24(self.0))
     }
 
     #[inline]
@@ -283,7 +285,7 @@ impl u24 {
 
     #[inline]
     fn saturate_overflow(self) -> Self {
-        self
+        u24(clamp_u24(self.0))
     }
 
     #[inline]
