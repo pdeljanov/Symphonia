@@ -5,6 +5,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+//! The `io` module implements composable stream-based I/O.
+
 use byteorder::{BigEndian, ByteOrder, LittleEndian};
 use std::io;
 use std::mem;
@@ -21,8 +23,8 @@ pub use media_source_stream::MediaSourceStream;
 pub use monitor_stream::{Monitor, MonitorStream};
 pub use scoped_stream::ScopedStream;
 
-/// A `MediaSource` is a composite trait of `std::io::Read` and `std::io::Seek`. Seeking is an optional capability and 
-/// support for it can be queried at runtime.
+/// A `MediaSource` is a composite trait of `std::io::Read` and `std::io::Seek`. Seeking is an
+/// optional capability and support for it can be queried at runtime.
 pub trait MediaSource: io::Read + io::Seek {
     /// Returns if the source is seekable. This may be an expensive operation.
     fn is_seekable(&self) -> bool;
@@ -34,11 +36,12 @@ pub trait MediaSource: io::Read + io::Seek {
 impl MediaSource for std::fs::File {
     /// Returns if the `std::io::File` backing the `MediaSource` is seekable.
     /// 
-    /// Note: This operation involves querying the underlying file descriptor for information and may be moderately
-    /// expensive. Therefore it is recommended to cache this value if used often.
+    /// Note: This operation involves querying the underlying file descriptor for information and
+    /// may be moderately expensive. Therefore it is recommended to cache this value if used often.
     fn is_seekable(&self) -> bool {
-        // If the file's metadata is available, and the file is a regular file (i.e., not a FIFO, etc.), then the 
-        // MediaSource will be seekable. Otherwise assume it is not. Note that metadata() follows symlinks.
+        // If the file's metadata is available, and the file is a regular file (i.e., not a FIFO,
+        // etc.), then the MediaSource will be seekable. Otherwise assume it is not. Note that
+        // metadata() follows symlinks.
         match self.metadata() {
             Ok(metadata) => metadata.is_file(),
             _ => false
@@ -47,8 +50,8 @@ impl MediaSource for std::fs::File {
 
     /// Returns the length in bytes of the `std::io::File` backing the `MediaSource`.
     /// 
-    /// Note: This operation involves querying the underlying file descriptor for information and may be moderately
-    /// expensive. Therefore it is recommended to cache this value if used often.
+    /// Note: This operation involves querying the underlying file descriptor for information and
+    /// may be moderately expensive. Therefore it is recommended to cache this value if used often.
     fn len(&self) -> Option<u64> {
         match self.metadata() {
             Ok(metadata) => Some(metadata.len()),
@@ -72,8 +75,8 @@ impl<T: std::convert::AsRef<[u8]>> MediaSource for io::Cursor<T> {
     }
 }
 
-/// A `Bytestream` provides functions to read bytes and interpret them as little- or big-endian unsigned integers or 
-/// floating point values of standard widths.
+/// A `Bytestream` provides functions to read bytes and interpret them as little- or big-endian
+/// unsigned integers or floating-point values of standard widths.
 pub trait Bytestream {
 
     /// Reads a single byte from the stream and returns it or an error.
@@ -162,21 +165,21 @@ pub trait Bytestream {
     }
 
     /// Reads four bytes from the stream and interprets them as a 32-bit little-endiann IEEE-754 
-    /// floating point value.
+    /// floating-point value.
     #[inline(always)]
     fn read_f32(&mut self) -> io::Result<f32> {
         Ok(LittleEndian::read_f32(&self.read_quad_bytes()?))
     }
 
     /// Reads four bytes from the stream and interprets them as a 32-bit big-endiann IEEE-754 
-    /// floating point value.
+    /// floating-point value.
     #[inline(always)]
     fn read_be_f32(&mut self) -> io::Result<f32> {
         Ok(BigEndian::read_f32(&self.read_quad_bytes()?))
     }
 
     /// Reads four bytes from the stream and interprets them as a 64-bit little-endiann IEEE-754 
-    /// floating point value.
+    /// floating-point value.
     #[inline(always)]
     fn read_f64(&mut self) -> io::Result<f64> {
         let mut buf = [0u8; mem::size_of::<u64>()];
@@ -185,7 +188,7 @@ pub trait Bytestream {
     }
 
     /// Reads four bytes from the stream and interprets them as a 64-bit big-endiann IEEE-754 
-    /// floating point value.
+    /// floating-point value.
     #[inline(always)]
     fn read_be_f64(&mut self) -> io::Result<f64> {
         let mut buf = [0u8; mem::size_of::<u64>()];
@@ -193,23 +196,28 @@ pub trait Bytestream {
         Ok(BigEndian::read_f64(&buf))
     }
 
-    /// Reads exactly the number of bytes requested, and returns a boxed slice of the data or an error.
+    /// Reads exactly the number of bytes requested, and returns a boxed slice of the data or an
+    /// error.
     fn read_boxed_slice_bytes(&mut self, len: usize) -> io::Result<Box<[u8]>> {
         let mut buf = vec![0u8; len];
         self.read_buf_bytes(&mut buf)?;
         Ok(buf.into_boxed_slice())
     }
 
-    /// Reads bytes from the stream into a supplied buffer until a byte pattern is matched. Returns a mutable slice to
-    /// the valid region of the provided buffer.
+    /// Reads bytes from the stream into a supplied buffer until a byte pattern is matched. Returns
+    /// a mutable slice to the valid region of the provided buffer.
     #[inline(always)]
     fn scan_bytes<'a>(&mut self, pattern: &[u8], buf: &'a mut [u8]) -> io::Result<&'a mut [u8]> {
         self.scan_bytes_aligned(pattern, 1, buf)
     }
 
-    /// Reads bytes from a stream into a supplied buffer until a byte patter is matched on an aligned byte boundary.
-    /// Returns a mutable slice to the valid region of the provided buffer.
-    fn scan_bytes_aligned<'a>(&mut self, pattern: &[u8], align: usize, buf: &'a mut [u8]) -> io::Result<&'a mut [u8]>;
+    /// Reads bytes from a stream into a supplied buffer until a byte patter is matched on an
+    /// aligned byte boundary. Returns a mutable slice to the valid region of the provided buffer.
+    fn scan_bytes_aligned<'a>(
+        &mut self, pattern: &[u8],
+        align: usize,
+        buf: &'a mut [u8]
+    ) -> io::Result<&'a mut [u8]>;
 
     /// Ignores the specified number of bytes from the stream or returns an error.
     fn ignore_bytes(&mut self, count: u64) -> io::Result<()>;
@@ -242,7 +250,12 @@ impl<'b, B: Bytestream> Bytestream for &'b mut B {
     }
 
     #[inline(always)]
-    fn scan_bytes_aligned<'a>(&mut self, pattern: &[u8], align: usize, buf: &'a mut [u8]) -> io::Result<&'a mut [u8]> {
+    fn scan_bytes_aligned<'a>(
+        &mut self,
+        pattern: &[u8],
+        align: usize,
+        buf: &'a mut [u8]
+    ) -> io::Result<&'a mut [u8]> {
         (*self).scan_bytes_aligned(pattern, align, buf)
     }
 
@@ -252,8 +265,8 @@ impl<'b, B: Bytestream> Bytestream for &'b mut B {
     }
 }
 
-/// A `FiniteStream` is a stream that has a definitive length. A `FiniteStream` therefore knows how many bytes are 
-/// available for reading, or have been previously read.
+/// A `FiniteStream` is a stream that has a definitive length. A `FiniteStream` therefore knows how
+/// many bytes are available for reading, or have been previously read.
 pub trait FiniteStream {
     /// Returns the length of the the stream.
     fn len(&self) -> u64;

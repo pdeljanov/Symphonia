@@ -24,19 +24,24 @@ impl<'a> BufStream<'a> {
         }
     }
 
-
-    /// Scans up-to `scan_len` bytes from the stream until a byte pattern is matched. A reference to scanned bytes 
-    /// including the matched pattern are returned. If `scan_len` bytes are scanned without matching the pattern, 
-    /// a reference to the scanned bytes are also returned. Likewise, if the underlying buffer is exhausted before
-    /// matching the pattern, remainder of the buffer is returned.
+    /// Scans up-to `scan_len` bytes from the stream until a byte pattern is matched. A reference to
+    /// scanned bytes including the matched pattern are returned. If `scan_len` bytes are scanned
+    /// without matching the pattern, a reference to the scanned bytes are also returned. Likewise,
+    /// if the underlying buffer is exhausted before matching the pattern, remainder of the buffer
+    /// is returned.
     #[inline(always)]
     pub fn scan_bytes_ref(&mut self, pattern: &[u8], scan_len: usize) -> io::Result<&'a [u8]> {
         self.scan_bytes_aligned_ref(pattern, 1, scan_len)
     }
 
-    /// Scans up-to `scan_len` bytes from the stream until a byte pattern is matched on the specified byte alignment 
-    /// boundary. Operation is otherwise identical to `scan_bytes_ref`.
-    pub fn scan_bytes_aligned_ref(&mut self, pattern: &[u8], align: usize, scan_len: usize) -> io::Result<&'a [u8]> {
+    /// Scans up-to `scan_len` bytes from the stream until a byte pattern is matched on the
+    /// specified byte alignment boundary. Operation is otherwise identical to `scan_bytes_ref`.
+    pub fn scan_bytes_aligned_ref(
+        &mut self,
+        pattern: &[u8],
+        align: usize,
+        scan_len: usize
+    ) -> io::Result<&'a [u8]> {
         // The pattern must be atleast one byte.
         debug_assert!(!pattern.is_empty());
 
@@ -44,9 +49,10 @@ impl<'a> BufStream<'a> {
         let remaining = self.buf.len() - start;
         let end = start + cmp::min(remaining, scan_len);
 
-        // If the pattern is longer than amount of bytes remaining, or the scan length is shorter than the pattern,
-        // then the pattern will never match. However, since unmatched patterns return the remainder of the buffer
-        // or scan_length bytes, which ever is shorter, we return that here.
+        // If the pattern is longer than amount of bytes remaining, or the scan length is shorter
+        // than the pattern, then the pattern will never match. However, since unmatched patterns
+        // return the remainder of the buffer or scan_length bytes, which ever is shorter, we return
+        // that here.
         if remaining < pattern.len() || scan_len < pattern.len() {
             return Ok(&self.buf[start..end]);
         }
@@ -139,7 +145,12 @@ impl<'a> Bytestream for BufStream<'a> {
         Ok(())
     }
 
-    fn scan_bytes_aligned<'b>(&mut self, pattern: &[u8], align: usize, buf: &'b mut [u8]) -> io::Result<&'b mut [u8]> {
+    fn scan_bytes_aligned<'b>(
+        &mut self,
+        pattern: &[u8],
+        align: usize,
+        buf: &'b mut [u8]
+    ) -> io::Result<&'b mut [u8]> {
         let result = self.scan_bytes_aligned_ref(pattern, align, buf.len())?;
         buf[..result.len()].copy_from_slice(result);
         Ok(&mut buf[..result.len()])

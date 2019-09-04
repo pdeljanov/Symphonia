@@ -37,8 +37,8 @@ pub trait Monitor {
     fn process_buf_bytes(&mut self, buf: &[u8]);
 }
 
-/// A `MonitorStream` is a passive monitoring stream which observes all operations performed on the inner stream and 
-/// forwards an immutable reference of the result to a `Monitor`.
+/// A `MonitorStream` is a passive monitoring stream which observes all operations performed on the
+/// inner stream and forwards an immutable reference of the result to a `Monitor`.
 pub struct MonitorStream<B: Bytestream, M: Monitor> {
     inner: B,
     monitor: M,

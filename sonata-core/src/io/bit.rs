@@ -507,6 +507,7 @@ pub trait BitStream {
     ) -> io::Result<(H::ValueType, u32)>;
 }
 
+/// `BitStreamLtr` wraps `BitReaderLtr` into a `BitStream`.
 pub struct BitStreamLtr<B: Bytestream> {
     inner: B,
     reader: BitReaderLtr,

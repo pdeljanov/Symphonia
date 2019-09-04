@@ -5,7 +5,14 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+//! The `util` module provides a repository of commonly used utility functions sorted into distinct
+//! categories.
+//!
+//! If a function is used all-over the codebase, and does not belong to specific top-level module,
+//! it should be placed here.
+
 pub mod bits {
+    //! Utilities for bit manipulation.
 
     /// Sign extends an arbitrary, 8-bit or less, signed two's complement integer stored within an 
     /// u8 to a full width i8.
@@ -140,6 +147,8 @@ pub mod bits {
 }
 
 pub mod clamp {
+    //! Utilities for clamping numeric values to a defined range.
+
     /// Clamps the given value to the [0, 255] range.
     #[inline]
     pub fn clamp_u8(val: u16) -> u8 {
@@ -154,10 +163,11 @@ pub mod clamp {
     /// Clamps the given value to the [-128, 127] range.
     #[inline]
     pub fn clamp_i8(val: i16) -> i8 {
-        // Add 128 (0x80) to the given value, val, to make the i8 range of [-128,127] map to [0,255].
-        // Valid negative numbers are now positive so all bits above the 8th bit should be 0. Check this
-        // by ANDing with 0xffffff00 (!0xff). If val wraps, the test is still valid as it'll wrap around
-        // to the other numerical limit +/- 128, which is still well outside the limits of an i8.
+        // Add 128 (0x80) to the given value, val, to make the i8 range of [-128,127] map to
+        // [0,255]. Valid negative numbers are now positive so all bits above the 8th bit should be
+        // 0. Check this by ANDing with 0xffffff00 (!0xff). If val wraps, the test is still valid as
+        // it'll wrap around to the other numerical limit +/- 128, which is still well outside the
+        // limits of an i8.
         if val.wrapping_add(0x80) & !0xff == 0 {
             val as i8
         }
@@ -165,8 +175,8 @@ pub mod clamp {
             // The given value was determined to be outside the valid numerical range of i8.
             //
             // Shift right all the magnitude bits of val, leaving val to be either 0xff if val was
-            // negative (sign bit was 1), or 0x00 if val was positive (sign bit was 0). Xor the shift
-            // value with 0x7f (the positive limit) to obtain the appropriate numerical limit.
+            // negative (sign bit was 1), or 0x00 if val was positive (sign bit was 0). Xor the
+            // shift value with 0x7f (the positive limit) to obtain the appropriate numerical limit.
             //
             //  E.g., 0x7f ^ 0x00 = 0x7f (127)
             //  E.g., 0x7f ^ 0xff = 0x10 (-128)

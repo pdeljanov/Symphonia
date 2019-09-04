@@ -5,6 +5,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+//! The `checksum` module provides implementations of common error-detecting codes.
 use super::io::Monitor;
 
 // Credit: This table was extracted from the FLAC reference decoder.

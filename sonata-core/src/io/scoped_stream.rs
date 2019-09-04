@@ -110,7 +110,12 @@ impl<B: Bytestream,> Bytestream for ScopedStream<B> {
     }
 
     #[inline(always)]
-    fn scan_bytes_aligned<'a>(&mut self, pattern: &[u8], align: usize, buf: &'a mut [u8]) -> io::Result<&'a mut [u8]> {
+    fn scan_bytes_aligned<'a>(
+        &mut self,
+        pattern: &[u8],
+        align: usize,
+        buf: &'a mut [u8]
+    ) -> io::Result<&'a mut [u8]> {
         if self.len - self.read < buf.len() as u64 {
             return Err(io::Error::new(io::ErrorKind::Other, "out of bounds"));
         }

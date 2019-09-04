@@ -11,20 +11,23 @@ use std::io::Read;
 
 use super::{Bytestream, MediaSource};
 
-/// A `MediaSourceStream` is the common reader type for Sonata. `MediaSourceStream` uses type erasure to mask the 
-/// inner reader from the consumer, allowing any typical source to be used.
+/// A `MediaSourceStream` is the common reader type for Sonata. `MediaSourceStream` uses type
+/// erasure to mask the inner reader from the consumer, allowing any typical source to be used.
 /// 
-/// `MediaSourceStream` is designed to provide speed and flexibility in a number of challenging IO scenarios. 
+/// `MediaSourceStream` is designed to provide speed and flexibility in a number of challenging I/O
+/// scenarios. 
 /// 
-/// First, to minimize system call overhead, dynamic dispatch overhead on the inner reader, and reduce the work-per-byte 
-/// read, `MediaSourceStream` implements an exponentially growing read-ahead buffer. The buffer read-ahead length starts
-/// at 1kB, and doubles in length as more sequential reads are performed until it reaches 32kB.
+/// First, to minimize system call overhead, dynamic dispatch overhead on the inner reader, and
+/// reduce the work-per-byte read, `MediaSourceStream` implements an exponentially growing
+/// read-ahead buffer. The buffer read-ahead length starts at 1kB, and doubles in length as more
+/// sequential reads are performed until it reaches 32kB.
 /// 
-/// Second, to better support non-seekable sources, `MediaSourceStream` implements stream rewinding. Stream 
-/// rewinding allows backtracking by up-to either the last read-ahead length or the number of bytes read, which ever is 
-/// smaller. In other words, a stream is always guaranteed to be rewindable up-to 1kB so long as 1kB has been previously
-/// read, otherwise the stream is rewindable by the amount read. The rewind buffer is simply just the last read-ahead 
-/// buffer, so if the read-ahead length has grown, so too has the maximum rewind length. The stream may be queried for 
+/// Second, to better support non-seekable sources, `MediaSourceStream` implements stream rewinding.
+/// Stream rewinding allows backtracking by up-to either the last read-ahead length or the number of
+/// bytes read, which ever is smaller. In other words, a stream is always guaranteed to be
+/// rewindable up-to 1kB so long as 1kB has been previously read, otherwise the stream is rewindable
+/// by the amount read. The rewind buffer is simply just the last read-ahead buffer, so if the
+/// read-ahead length has grown, so too has the maximum rewind length. The stream may be queried for
 /// the maximum rewindable length. The rewind buffer is invalidated after a `seek()`.
 pub struct MediaSourceStream {
     /// The source reader.
@@ -39,7 +42,8 @@ pub struct MediaSourceStream {
     /// The index last readable byte in buf.
     end_pos: usize,
 
-    /// The capacity of the read-ahead buffer at this moment. Grows exponentially as more sequential reads are serviced.
+    /// The capacity of the read-ahead buffer at this moment. Grows exponentially as more sequential
+    /// reads are serviced.
     cur_capacity: usize,
 
     /// The active partition index.
@@ -60,7 +64,8 @@ impl MediaSourceStream {
     /// The maximum capacity of the read-ahead buffer. Must be a power-of-2.
     const MAX_CAPACITY:  usize = 32 * 1024;
 
-    /// The initial capacity of the read-ahead buffer. Must be less than MAX_CAPACITY, and a power-of-2.
+    /// The initial capacity of the read-ahead buffer. Must be less than MAX_CAPACITY, and a
+    /// power-of-2.
     const INIT_CAPACITY: usize =      1024;
 
     pub fn new(source: Box<dyn MediaSource>) -> Self {
@@ -113,7 +118,8 @@ impl MediaSourceStream {
         self.pos() - cmp::min(self.part[0].base_pos, self.part[1].base_pos)
     }
 
-    /// Rewinds the stream by the specified number of bytes. Returns the number of bytes actually rewound.
+    /// Rewinds the stream by the specified number of bytes. Returns the number of bytes actually
+    /// rewound.
     pub fn rewind(&mut self, rewind_len: usize) -> usize {
         let cur_idx = self.part_idx as usize & 0x1;
         let alt_idx = cur_idx ^ 0x1;
@@ -121,7 +127,8 @@ impl MediaSourceStream {
         // Calculate the desired target position to rewind to.
         let target_pos = self.pos() - rewind_len as u64;
 
-        // The target position is within the current active buffer partition. Rewind the read position boundary.
+        // The target position is within the current active buffer partition. Rewind the read
+        // position boundary.
         if target_pos >= self.part[cur_idx].base_pos {
             self.pos -= rewind_len;
         }
@@ -149,8 +156,9 @@ impl MediaSourceStream {
             let cur_idx = self.part_idx as usize & 0x1;
             let alt_idx = cur_idx ^ 0x1;
 
-            // The active buffer partition has a base position less than the previously active buffer partition. That 
-            // means the stream was rewound. Simply increment the active buffer partition.
+            // The active buffer partition has a base position less than the previously active
+            // buffer partition. That means the stream was rewound. Simply increment the active
+            // buffer partition.
             if self.part[cur_idx].base_pos < self.part[alt_idx].base_pos {
                 // Update the read boundaries.
                 self.pos = alt_idx * Self::MAX_CAPACITY;
@@ -159,12 +167,13 @@ impl MediaSourceStream {
                 // Swap the buffer partitions.
                 self.part_idx ^= 0x1;
             }
-            // The active buffer partition has a base position greater than the previously active buffer partition. The
-            // active partition is at the front of the stream.
+            // The active buffer partition has a base position greater than the previously active
+            // buffer partition. The active partition is at the front of the stream.
             else {
-                // The fill length *may* be less than the maximum capacity of the active buffer partition. To maintain 
-                // the invariant that the rewind buffer partition is always at capacity, then the current active buffer 
-                // partition must be filled to capacity before swapping.
+                // The fill length *may* be less than the maximum capacity of the active buffer
+                // partition. To maintain the invariant that the rewind buffer partition is always
+                // at capacity, then the current active buffer partition must be filled to capacity
+                // before swapping.
                 if self.part[cur_idx].len < self.part[cur_idx].capacity {
                     let amount = self.part[cur_idx].capacity - self.part[cur_idx].len;
                     let len = self.inner.read(&mut self.buf[self.pos..self.pos + amount])?;
@@ -175,10 +184,12 @@ impl MediaSourceStream {
                     // Update the read boundary.
                     self.end_pos += len;
                 }
-                // The read-ahead buffer has been filled to capacity, and subsequently read fully. Swap the active 
-                // buffer partition with the old rewind buffer partition and read in new data from the inner reader.
+                // The read-ahead buffer has been filled to capacity, and subsequently read fully.
+                // Swap the active buffer partition with the old rewind buffer partition and read in
+                // new data from the inner reader.
                 else {
-                    // Grow the buffer partition capacity exponentially to reduce the overhead of buffering on seeking.
+                    // Grow the buffer partition capacity exponentially to reduce the overhead of
+                    // buffering on seeking.
                     let capacity = cmp::min(self.cur_capacity << 1, Self::MAX_CAPACITY);
                     
                     // Read into the active buffer partition.
@@ -247,9 +258,10 @@ impl io::Read for MediaSourceStream {
 
 impl io::Seek for MediaSourceStream {
     fn seek(&mut self, pos: io::SeekFrom) -> io::Result<u64> {
-        // The current position of the underlying reader is ahead of the current position of the MediaSourceStream by
-        // how ever many bytes have not been read from the read-ahead buffer yet. When seeking from the current position
-        // adjust the position delta to offset that difference.
+        // The current position of the underlying reader is ahead of the current position of the
+        // MediaSourceStream by how ever many bytes have not been read from the read-ahead buffer
+        // yet. When seeking from the current position adjust the position delta to offset that
+        // difference.
         let pos = match pos {
             io::SeekFrom::Current(0) => {
                 return Ok(self.pos())
@@ -367,7 +379,12 @@ impl Bytestream for MediaSourceStream {
         self.read_exact(buf)
     }
 
-    fn scan_bytes_aligned<'a>(&mut self, _: &[u8], _: usize, _: &'a mut [u8]) -> io::Result<&'a mut [u8]> {
+    fn scan_bytes_aligned<'a>(
+        &mut self,
+        _: &[u8],
+        _: usize,
+        _: &'a mut [u8]
+    ) -> io::Result<&'a mut [u8]> {
         // Intentionally left unimplemented.
         unimplemented!();
     }
