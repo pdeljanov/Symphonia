@@ -252,22 +252,31 @@ impl BitResevoir {
         main_data_begin: usize,
         main_data_size: usize
     ) -> Result<()> {
+
         // The value `main_data_begin` indicates the number of bytes from the previous frames to
-        // reuse. It must be less than or equal to the amount of bytes in the buffer.
-        if main_data_begin > self.len {
-            return decode_error("Invalid main_data_begin offset.");
-        }
-
-        // Shift the reused bytes to the beginning of the resevoir.
-        self.buf.copy_within(self.len - main_data_begin..self.len, 0);
-
-        // Read the remaining amount of bytes.
+        // reuse. It must always be less than or equal to maximum amount of bytes the resevoir can
+        // hold taking into account the additional data being added to the resevoir.
         let main_data_end = main_data_begin + main_data_size;
 
         if main_data_end > self.buf.len() {
             return decode_error("Invalid main_data length, will exceed resevoir buffer.");
         }
 
+        // If the offset is less than or equal to the amount of data in the resevoir, shift the
+        // re-used bytes to the beginning of the resevoir.
+        if main_data_begin <= self.len {
+            // Shift the reused bytes to the beginning of the resevoir.
+            self.buf.copy_within(self.len - main_data_begin..self.len, 0);
+        }
+        else {
+            // If the offset is greater than the amount of data in the resevoir, then the stream is
+            // technically malformed. However, there are ways this could happen, so simply zero out
+            // the resevoir for the offset and and pretend things are okay.
+            eprintln!("Invalid main_data_begin offset.");
+            for byte in &mut self.buf[0..main_data_begin] { *byte = 0 }
+        }
+
+        // Read the remaining amount of bytes from the stream into the resevoir.
         reader.read_buf_bytes(&mut self.buf[main_data_begin..main_data_end])?;
         self.len = main_data_end;
 
