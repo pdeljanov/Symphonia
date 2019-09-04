@@ -94,7 +94,7 @@ pub mod dither {
     use std::marker::PhantomData;
     use super::FromSample;
     use crate::sample::{u24, i24};
-    use crate::sample::{Sample};
+    use crate::sample::Sample;
 
     /// `RandomNoise` represents a sample of noise of a specified length in bits.
     ///
@@ -104,8 +104,8 @@ pub mod dither {
 
     impl RandomNoise {
         /// Instantiate a noise sample from a random 32-bit source.
-        pub fn from(random: u32, n_bits: u32) -> Self {
-            RandomNoise((random as i32) >> (32 - n_bits))
+        pub fn from(random: i32, n_bits: u32) -> Self {
+            RandomNoise(random >> (32 - n_bits))
         }
     }
 
@@ -190,13 +190,13 @@ pub mod dither {
         fn dither(&mut self, sample: F) -> F {
             // A dither should be applied if and only if the effective number of bits of the source
             // sample format is greater than that of the destination sample format.
-            assert!(F::EFF_BITS > T::EFF_BITS);
+            debug_assert!(F::EFF_BITS > T::EFF_BITS);
 
             // The number of low-order bits being truncated by the conversion will be dithered.
-            let trunc_bits = F::EFF_BITS - T::EFF_BITS;
+            let dither_bits = 32 - T::EFF_BITS;
 
             // Add the noise to the sample.
-            let noise = RandomNoise::from(self.prng.next(), trunc_bits);
+            let noise = RandomNoise::from(self.prng.next() as i32, dither_bits);
             noise.add_noise(sample)
         }
     }
@@ -223,15 +223,15 @@ pub mod dither {
         RandomNoise : AddNoise<F>
     {
         fn dither(&mut self, sample: F) -> F {
-            assert!(F::EFF_BITS > T::EFF_BITS);
+            debug_assert!(F::EFF_BITS > T::EFF_BITS);
 
-            let trunc_bits = F::EFF_BITS - T::EFF_BITS;
+            let dither_bits = 32 - T::EFF_BITS;
 
             // Generate a triangular distribution from the uniform distribution.
-            let tpdf = (self.prng.next() >> 1) + (self.prng.next() >> 1);
+            let tpdf = (self.prng.next() as i32 >> 1) + (self.prng.next() as i32 >> 1);
 
             // Add the noise to the sample.
-            let noise = RandomNoise::from(tpdf, trunc_bits);
+            let noise = RandomNoise::from(tpdf, dither_bits);
             noise.add_noise(sample)
         }
     }
@@ -699,8 +699,8 @@ converter!(i24, i8 , s, i24::from(i32::from(s) << 16));
 converter!(i24, i16, s, i24::from(i32::from(s) << 8));
 converter!(i24, i24, s, s);
 converter!(i24, i32, s, i24::from(s >> 8));
-converter!(i24, f32, s, i24::from(clamp_i24((clamp_f32(s) * 16_777_216.0).round() as i32)));
-converter!(i24, f64, s, i24::from(clamp_i24((clamp_f64(s) * 16_777_216.0).round() as i32)));
+converter!(i24, f32, s, i24::from(clamp_i24((clamp_f32(s) * 8_388_608.0).round() as i32)));
+converter!(i24, f64, s, i24::from(clamp_i24((clamp_f64(s) * 8_388_608.0).round() as i32)));
 
 // Conversions to i32
 converter!(i32, u8 , s, (i32::from(s) - 0x80) << 24);
@@ -717,11 +717,11 @@ converter!(i32, f64, s, clamp_i32((clamp_f64(s) * 2_147_483_648.0).round() as i6
 // Conversions to f32
 converter!(f32, u8 , s, f32::from(i8::from_sample(s)) / 128.0);
 converter!(f32, u16, s, f32::from(i16::from_sample(s)) / 32_768.0);
-converter!(f32, u24, s, (i24::from_sample(s).into_i32() as f32) / 16_777_216.0);
+converter!(f32, u24, s, (i24::from_sample(s).into_i32() as f32) / 8_388_608.0);
 converter!(f32, u32, s, (i32::from_sample(s) as f32) / 2_147_483_648.0);
 converter!(f32, i8 , s, f32::from(s) / 128.0);
 converter!(f32, i16, s, f32::from(s) / 32_768.0);
-converter!(f32, i24, s, (s.into_i32() as f32) / 16_777_216.0);
+converter!(f32, i24, s, (s.into_i32() as f32) / 8_388_608.0);
 converter!(f32, i32, s, (s as f32) / 2_147_483_648.0);
 converter!(f32, f32, s, s);
 converter!(f32, f64, s, s as f32);
@@ -729,11 +729,11 @@ converter!(f32, f64, s, s as f32);
 // Conversions to f64
 converter!(f64, u8 , s, f64::from(i8::from_sample(s)) / 128.0);
 converter!(f64, u16, s, f64::from(i16::from_sample(s)) / 32_768.0);
-converter!(f64, u24, s, f64::from(i24::from_sample(s).into_i32()) / 16_777_216.0);
+converter!(f64, u24, s, f64::from(i24::from_sample(s).into_i32()) / 8_388_608.0);
 converter!(f64, u32, s, f64::from(i32::from_sample(s)) / 2_147_483_648.0);
 converter!(f64, i8 , s, f64::from(s) / 128.0);
 converter!(f64, i16, s, f64::from(s) / 32_768.0);
-converter!(f64, i24, s, f64::from(s.into_i32()) / 16_777_216.0);
+converter!(f64, i24, s, f64::from(s.into_i32()) / 8_388_608.0);
 converter!(f64, i32, s, f64::from(s) / 2_147_483_648.0);
 converter!(f64, f32, s, f64::from(s));
 converter!(f64, f64, s, s);
@@ -1097,4 +1097,94 @@ fn verify_i32_from_sample() {
     assert_eq!(i32::from_sample( 1.0f64), i32::MAX);
     assert_eq!(i32::from_sample(   0f64), i32::MID);
     assert_eq!(i32::from_sample(-1.0f64), i32::MIN);
+}
+
+#[test]
+fn verify_f64_from_sample() {
+    use std::{u8, i8, u16, i16, u32, i32};
+
+    assert_eq!(f64::from_sample(u8::MAX),  127.0 / 128.0);
+    assert_eq!(f64::from_sample(u8::MID),  0.0);
+    assert_eq!(f64::from_sample(u8::MIN), -1.0);
+
+    assert_eq!(f64::from_sample(u16::MAX),  32_767.0 / 32_768.0);
+    assert_eq!(f64::from_sample(u16::MID),  0.0);
+    assert_eq!(f64::from_sample(u16::MIN), -1.0);
+
+    assert_eq!(f64::from_sample(u24::MAX),  8_388_607.0 / 8_388_608.0);
+    assert_eq!(f64::from_sample(u24::MID),  0.0);
+    assert_eq!(f64::from_sample(u24::MIN), -1.0);
+
+    assert_eq!(f64::from_sample(u32::MAX),  2_147_483_647.0 / 2_147_483_648.0);
+    assert_eq!(f64::from_sample(u32::MID),  0.0);
+    assert_eq!(f64::from_sample(u32::MIN), -1.0);
+
+    assert_eq!(f64::from_sample(i8::MAX),  127.0 / 128.0);
+    assert_eq!(f64::from_sample(i8::MID),  0.0);
+    assert_eq!(f64::from_sample(i8::MIN), -1.0);
+
+    assert_eq!(f64::from_sample(i16::MAX),  32_767.0 / 32_768.0);
+    assert_eq!(f64::from_sample(i16::MID),  0.0);
+    assert_eq!(f64::from_sample(i16::MIN), -1.0);
+
+    assert_eq!(f64::from_sample(i24::MAX),  8_388_607.0 / 8_388_608.0);
+    assert_eq!(f64::from_sample(i24::MID),  0.0);
+    assert_eq!(f64::from_sample(i24::MIN), -1.0);
+
+    assert_eq!(f64::from_sample(i32::MAX),  2_147_483_647.0 / 2_147_483_648.0);
+    assert_eq!(f64::from_sample(i32::MID),  0.0);
+    assert_eq!(f64::from_sample(i32::MIN), -1.0);
+
+    assert_eq!(f64::from_sample( 1.0f32),  1.0);
+    assert_eq!(f64::from_sample(   0f32),  0.0);
+    assert_eq!(f64::from_sample(-1.0f32), -1.0);
+
+    assert_eq!(f64::from_sample( 1.0f64),  1.0);
+    assert_eq!(f64::from_sample(   0f64),  0.0);
+    assert_eq!(f64::from_sample(-1.0f64), -1.0);
+}
+
+#[test]
+fn verify_f32_from_sample() {
+    use std::{u8, i8, u16, i16, u32, i32};
+
+    assert_eq!(f32::from_sample(u8::MAX),  127.0 / 128.0);
+    assert_eq!(f32::from_sample(u8::MID),  0.0);
+    assert_eq!(f32::from_sample(u8::MIN), -1.0);
+
+    assert_eq!(f32::from_sample(u16::MAX),  32_767.0 / 32_768.0);
+    assert_eq!(f32::from_sample(u16::MID),  0.0);
+    assert_eq!(f32::from_sample(u16::MIN), -1.0);
+
+    assert_eq!(f32::from_sample(u24::MAX),  8_388_607.0 / 8_388_608.0);
+    assert_eq!(f32::from_sample(u24::MID),  0.0);
+    assert_eq!(f32::from_sample(u24::MIN), -1.0);
+
+    assert_eq!(f32::from_sample(u32::MAX),  2_147_483_647.0 / 2_147_483_648.0);
+    assert_eq!(f32::from_sample(u32::MID),  0.0);
+    assert_eq!(f32::from_sample(u32::MIN), -1.0);
+
+    assert_eq!(f32::from_sample(i8::MAX),  127.0 / 128.0);
+    assert_eq!(f32::from_sample(i8::MID),  0.0);
+    assert_eq!(f32::from_sample(i8::MIN), -1.0);
+
+    assert_eq!(f32::from_sample(i16::MAX),  32_767.0 / 32_768.0);
+    assert_eq!(f32::from_sample(i16::MID),  0.0);
+    assert_eq!(f32::from_sample(i16::MIN), -1.0);
+
+    assert_eq!(f32::from_sample(i24::MAX),  8_388_607.0 / 8_388_608.0);
+    assert_eq!(f32::from_sample(i24::MID),  0.0);
+    assert_eq!(f32::from_sample(i24::MIN), -1.0);
+
+    assert_eq!(f32::from_sample(i32::MAX),  2_147_483_647.0 / 2_147_483_648.0);
+    assert_eq!(f32::from_sample(i32::MID),  0.0);
+    assert_eq!(f32::from_sample(i32::MIN), -1.0);
+
+    assert_eq!(f32::from_sample( 1.0f32),  1.0);
+    assert_eq!(f32::from_sample(   0f32),  0.0);
+    assert_eq!(f32::from_sample(-1.0f32), -1.0);
+
+    assert_eq!(f32::from_sample( 1.0f64),  1.0);
+    assert_eq!(f32::from_sample(   0f64),  0.0);
+    assert_eq!(f32::from_sample(-1.0f64), -1.0);
 }
