@@ -5,6 +5,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+use std::fmt;
+
 use byteorder::{NativeEndian, ByteOrder};
 
 /// SampleFormat describes the data encoding for an audio sample.
@@ -177,6 +179,12 @@ impl i24 {
     }
 }
 
+impl fmt::Display for i24 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 impl From<i32> for i24 {
     fn from(val: i32) -> Self { i24(val).saturate_overflow() }
 }
@@ -290,6 +298,12 @@ impl u24 {
         bytes
     }
 
+}
+
+impl fmt::Display for u24 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
 }
 
 impl From<u32> for u24 {
