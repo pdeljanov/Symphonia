@@ -162,6 +162,16 @@ pub mod dither {
         to_type: PhantomData<T>,
     }
 
+    impl<F: Sample, T: Sample> Identity<F, T> {
+        pub fn new() -> Self {
+            Identity {
+                from_type: PhantomData,
+                to_type: PhantomData,
+            }
+        }
+    }
+
+
     impl<F: Sample, T: Sample> Dither<F, T> for Identity<F, T> {
         fn dither(&mut self, sample: F) -> F { sample }
     }
@@ -236,12 +246,22 @@ pub mod dither {
         }
     }
 
+    /// Enumeration of dither algorithns.
+    pub enum DitherType {
+        /// No dithering.
+        Identity,
+        /// Apply rectangular dithering. See `Rectangular` for more details.
+        Rectangular,
+        /// Apply triangular dithering. See `Triangular` for more details.
+        Triangular,
+    }
+
     /// `MaybeDither` conditionally applies a dither to a sample depending on the source and
     /// destination sample types.
     pub trait MaybeDither<T: Sample> : Sample {
         const DITHERABLE: bool;
 
-        fn maybe_dither<D: Dither<Self, T>>(sample: Self, dither: &mut D) -> Self;
+        fn maybe_dither<D: Dither<Self, T>>(self, dither: &mut D) -> Self;
     }
 
     /// Never apply a dither for this conversion.
@@ -250,8 +270,8 @@ pub mod dither {
             impl MaybeDither<$to> for $from {
                 const DITHERABLE: bool = false;
                 #[inline(always)]
-                fn maybe_dither<D: Dither<$from, $to>>(sample: Self, _: &mut D) -> Self {
-                    sample
+                fn maybe_dither<D: Dither<$from, $to>>(self, _: &mut D) -> Self {
+                    self
                 }
             }
         )
@@ -263,8 +283,8 @@ pub mod dither {
             impl MaybeDither<$to> for $from {
                 const DITHERABLE: bool = true;
                 #[inline(always)]
-                fn maybe_dither<D: Dither<$from, $to>>(sample: Self, dither: &mut D) -> Self {
-                    dither.dither(sample)
+                fn maybe_dither<D: Dither<$from, $to>>(self, dither: &mut D) -> Self {
+                    dither.dither(self)
                 }
             }
         )

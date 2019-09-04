@@ -14,7 +14,7 @@ use std::vec::Vec;
 
 use bitflags::bitflags;
 
-use super::conv::IntoSample;
+use super::conv::{{dither::{Dither, DitherType, MaybeDither, Identity}}, IntoSample};
 use super::errors::Result;
 use super::sample::{Sample, i24, u24};
 
@@ -275,12 +275,6 @@ impl<'a, S : Sample> AudioPlanesMut<'a, S> {
     }
 }
 
-/// Enumeration of dither algorithns.
-pub enum Dither {
-    /// No dithering.
-    None,
-}
-
 /// `AudioBuffer` is a container for multi-channel planar audio sample data. An `AudioBuffer` is
 /// characterized by the duration (capacity), and audio specification (channels and sample rate).
 /// The capacity of an `AudioBuffer` is the maximum number of samples the buffer may store per
@@ -393,6 +387,31 @@ impl<S : Sample> AudioBuffer<S> {
         planes
     }
 
+    /// Converts the contents of an AudioBuffer into an equivalent destination AudioBuffer of a
+    /// different type. If the types are the same then this is a copy operation. If the conversion
+    /// results in a loss of dynamic range, then the provided dither method is applied.
+    pub fn convert<T: Sample, D: Dither<S, T>>(&self, dest: &mut AudioBuffer<T>, dither: &mut D)
+    where
+        S: MaybeDither<T> + IntoSample<T>
+    {
+        debug_assert!(dest.n_frames == self.n_frames);
+        debug_assert!(dest.n_capacity == self.n_capacity);
+        debug_assert!(dest.spec == self.spec);
+
+        for c in 0..self.spec.channels.count() {
+            let begin = c * self.n_capacity;
+            let end = begin + self.n_frames;
+
+            for (d, s) in dest.buf[begin..end].iter_mut().zip(&self.buf[begin..end]) {
+                *d = (*s).maybe_dither(dither).into_sample();
+            }
+        }
+    }
+
+    /// Makes an equivalent AudioBuffer of a different type.
+    pub fn make_equivalent<E: Sample>(&self) -> AudioBuffer<E> {
+        AudioBuffer::<E>::new(Duration::Frames(self.n_capacity as u64), self.spec)
+    }
 }
 
 /// `AudioBufferRef` is a copy-on-write reference to an AudioBuffer of any type.
@@ -432,44 +451,6 @@ impl AsAudioBufferRef for AudioBuffer<f32> {
 impl AsAudioBufferRef for AudioBuffer<i32> {
     fn as_audio_buffer_ref(&self) -> AudioBufferRef {
         AudioBufferRef::S32(Cow::Borrowed(self))
-    }
-}
-
-/// The `ConvertibleAudioBuffer` trait is a blanket trait for all `AudioBuffer` types. It provides
-/// facilities for converting between differently typed, but equivalent, `AudioBuffer`s.
-///
-/// Two `AudioBuffer`s are considered equivalent if they have the same capacity and signal
-/// specification.
-pub trait ConvertibleAudioBuffer<S: Sample> {
-    /// Converts the contents of an `AudioBuffer` into an equivalent destination `AudioBuffer` of
-    /// a different type. If the types are the same then this is a copy operation. If the conversion
-    /// results in a loss of resolution, then the provided dither method is applied.
-    fn convert(&self, dest: &mut AudioBuffer<S>, dither: Dither);
-
-    /// Makes an equivalent `AudioBuffer` of a different type.
-    fn make_equivalent<T: Sample>(&self) -> AudioBuffer<T>;
-}
-
-impl<T: Sample, F: Sample + IntoSample<T>> ConvertibleAudioBuffer<T> for AudioBuffer<F> {
-
-    fn convert(&self, dest: &mut AudioBuffer<T>, dither: Dither) {
-        debug_assert!(dest.n_frames == self.n_frames);
-        debug_assert!(dest.n_capacity == self.n_capacity);
-        debug_assert!(dest.spec == self.spec);
-
-        for c in 0..self.spec.channels.count() {
-            let begin = c * self.n_capacity;
-            let end = begin + self.n_frames;
-
-            for (d, s) in dest.buf[begin..end].iter_mut().zip(&self.buf[begin..end]) {
-                *d = (*s).into_sample();
-            }
-        }
-
-    }
-
-    fn make_equivalent<E: Sample>(&self) -> AudioBuffer<E> {
-        AudioBuffer::<E>::new(Duration::Frames(self.n_capacity as u64), self.spec)
     }
 }
 
@@ -695,23 +676,25 @@ impl<S: Sample + WriteSample> SampleBuffer<S> {
     /// Copies all audio data from the source `AudioBufferRef` in planar channel order into the
     /// `SampleBuffer`, applying the specified dither method if there is a lossy conversion.
     /// The two buffers must be equivalent.
-    pub fn copy_planar_ref(&mut self, src: AudioBufferRef, dither: Dither)
+    pub fn copy_planar_ref(&mut self, src: AudioBufferRef, _dither: DitherType)
     where
-        f32: IntoSample<S>,
-        i32: IntoSample<S>
+        f32: MaybeDither<S> + IntoSample<S>,
+        i32: MaybeDither<S> + IntoSample<S>
     {
         match src {
-            AudioBufferRef::F32(buf) => self.copy_planar_typed(&buf, dither),
-            AudioBufferRef::S32(buf) => self.copy_planar_typed(&buf, dither),
+            AudioBufferRef::F32(buf) =>
+                self.copy_planar_typed(&buf, &mut Identity::<f32, S>::new()),
+            AudioBufferRef::S32(buf) =>
+                self.copy_planar_typed(&buf, &mut Identity::<i32, S>::new()),
         }
     }
 
     /// Copies all audio data from a source `AudioBuffer` that is of a different sample format type
     /// than that of the `SampleBuffer` in planar channel order. If the conversion is lossy, the
     /// specified dither method is applied. The two buffers must be equivalent.
-    pub fn copy_planar_typed<F>(&mut self, src: &AudioBuffer<F>, dither: Dither)
+    pub fn copy_planar_typed<F, D: Dither<F, S>>(&mut self, src: &AudioBuffer<F>, dither: &mut D)
     where
-        F: Sample + IntoSample<S>
+        F: Sample + MaybeDither<S> + IntoSample<S>
     {
         let n_frames = src.n_frames;
         let n_channels = src.spec.channels.count();
@@ -726,7 +709,7 @@ impl<S: Sample + WriteSample> SampleBuffer<S> {
         for ch in 0..n_channels {
             let begin = ch * src.n_capacity;
             for sample in &src.buf[begin..(begin + n_frames)] {
-                S::write((*sample).into_sample(), &mut writer);
+                S::write((*sample).maybe_dither(dither).into_sample(), &mut writer);
             }
         }
     }
@@ -755,23 +738,29 @@ impl<S: Sample + WriteSample> SampleBuffer<S> {
     /// Copies all audio data from the source `AudioBufferRef` in interleaved channel order into the
     /// `SampleBuffer`, applying the specified dither method if there is a lossy conversion. The two
     /// buffers must be equivalent.
-    pub fn copy_interleaved_ref(&mut self, src: AudioBufferRef, dither: Dither)
+    pub fn copy_interleaved_ref(&mut self, src: AudioBufferRef, _dither: DitherType)
     where
-        f32: IntoSample<S>,
-        i32: IntoSample<S>
+        f32: MaybeDither<S> + IntoSample<S>,
+        i32: MaybeDither<S> + IntoSample<S>
     {
         match src {
-            AudioBufferRef::F32(buf) => self.copy_interleaved_typed(&buf, dither),
-            AudioBufferRef::S32(buf) => self.copy_interleaved_typed(&buf, dither),
+            AudioBufferRef::F32(buf) =>
+                self.copy_interleaved_typed(&buf, &mut Identity::<f32, S>::new()),
+            AudioBufferRef::S32(buf) =>
+                self.copy_interleaved_typed(&buf, &mut Identity::<i32, S>::new()),
         }
     }
 
     /// Copies all audio data from a source `AudioBuffer` that is of a different sample format type
     /// than that of the `SampleBuffer` in interleaved channel order. If the conversion is lossy,
     /// the specified dither method is applied. The two buffers must be equivalent.
-    pub fn copy_interleaved_typed<F>(&mut self, src: &AudioBuffer<F>, dither: Dither)
+    pub fn copy_interleaved_typed<F, D: Dither<F, S>>(
+        &mut self,
+        src: &AudioBuffer<F>,
+        dither: &mut D
+    )
     where
-        F: Sample + IntoSample<S>
+        F: Sample + MaybeDither<S> + IntoSample<S>
     {
         let n_frames = src.n_frames;
         let n_channels = src.spec.channels.count();
@@ -789,8 +778,8 @@ impl<S: Sample + WriteSample> SampleBuffer<S> {
             0 => (),
             // Mono
             1=> {
-                for sample in &src.buf[0..n_frames] {
-                    S::write((*sample).into_sample(), &mut writer);
+                for m in &src.buf[0..n_frames] {
+                    S::write((*m).maybe_dither(dither).into_sample(), &mut writer);
                 }
             },
             // Stereo
@@ -799,8 +788,8 @@ impl<S: Sample + WriteSample> SampleBuffer<S> {
                 let r_buf = &src.buf[src.n_capacity..(src.n_capacity + n_frames)];
 
                 for (l, r) in l_buf.iter().zip(r_buf) {
-                    S::write((*l).into_sample(), &mut writer);
-                    S::write((*r).into_sample(), &mut writer);
+                    S::write((*l).maybe_dither(dither).into_sample(), &mut writer);
+                    S::write((*r).maybe_dither(dither).into_sample(), &mut writer);
                 }
             },
             // 3+ channels
@@ -810,8 +799,8 @@ impl<S: Sample + WriteSample> SampleBuffer<S> {
                 for i in 0..n_frames {
                     //TODO: possibly replace by Slice::chunks() and Iterator::step_by()
                     for ch in 0..n_channels {
-                        let sample = src.buf[ch * stride + i];
-                        S::write((sample).into_sample(), &mut writer);
+                        let s = src.buf[ch * stride + i];
+                        S::write(s.maybe_dither(dither).into_sample(), &mut writer);
                     }
                 }
             },
@@ -837,8 +826,8 @@ impl<S: Sample + WriteSample> SampleBuffer<S> {
             0 => (),
             // Mono
             1=> {
-                for sample in &src.buf[0..n_frames] {
-                    S::write(*sample, &mut writer);
+                for m in &src.buf[0..n_frames] {
+                    S::write(*m, &mut writer);
                 }
             },
             // Stereo
