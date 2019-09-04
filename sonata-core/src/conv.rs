@@ -92,8 +92,9 @@ pub mod dither {
     }
 
     use std::marker::PhantomData;
+    use super::FromSample;
     use crate::sample::{u24, i24};
-    use crate::sample::Sample;
+    use crate::sample::{Sample};
 
     /// `RandomNoise` represents a sample of noise of a specified length in bits.
     ///
@@ -102,48 +103,51 @@ pub mod dither {
     pub struct RandomNoise (pub i32);
 
     impl RandomNoise {
-        /// Instantiate a noise sample of a certain length from a random 32-bit value.
+        /// Instantiate a noise sample from a random 32-bit source.
         pub fn from(random: u32, n_bits: u32) -> Self {
-            // Convert the random u32 into an i32, thereby randomizing the sign. Shift off the lower
-            // bits to obtain the desired bit length. For good random number generators, all bits
-            // should be "equally" random.
             RandomNoise((random as i32) >> (32 - n_bits))
         }
     }
 
-    /// `IntoNoiseSample` is a trait for converting random noise into a `Sample`.
-    pub trait IntoNoiseSample<S: Sample> {
-        fn into_noise_sample(self) -> S;
+    /// `AddNoise` is a trait for converting random noise into a `Sample`.
+    pub trait AddNoise<S: Sample> {
+        fn add_noise(self, sample: S) -> S;
     }
 
-    macro_rules! into_noise_impl {
-        ($to:ty, $self:ident, $func:expr) => (
-            impl IntoNoiseSample<$to> for RandomNoise {
-                fn into_noise_sample($self) -> $to { $func }
+    macro_rules! add_noise_impl {
+        ($sample_type:ty, $self:ident, $sample:ident, $conv:expr) => (
+            impl AddNoise<$sample_type> for RandomNoise {
+                fn add_noise($self, $sample: $sample_type) -> $sample_type { $conv }
             }
         )
     }
 
-    into_noise_impl!(i8 , self, { self.0 as i8 });
-    into_noise_impl!(u8 , self, {
-        (self.0 as u8).wrapping_add(0x80)
+    add_noise_impl!(i8 , self, s, {
+        i8::from_sample(f32::from_sample(s) + f32::from_sample(self.0))
     });
-    into_noise_impl!(i16, self, { self.0 as i16 });
-    into_noise_impl!(u16, self, {
-        (self.0 as u16).wrapping_add(0x8000)
+    add_noise_impl!(u8 , self, s, {
+        u8::from_sample(f32::from_sample(s) + f32::from_sample(self.0))
     });
-    into_noise_impl!(i24, self, { i24::from(self.0) });
-    into_noise_impl!(u24, self, {
-        u24::from((self.0 as u32).wrapping_add(0x8000_0000) & 0xff_ffff)
+    add_noise_impl!(i16, self, s, {
+        i16::from_sample(f32::from_sample(s) + f32::from_sample(self.0))
     });
-    into_noise_impl!(i32, self, { self.0 });
-    into_noise_impl!(u32, self, {
-        (self.0 as u32).wrapping_add(0x8000_0000)
+    add_noise_impl!(u16, self, s, {
+        u16::from_sample(f32::from_sample(s) + f32::from_sample(self.0))
     });
-    // Dithering is not implemented for conversions to floating point, therefore noise returns 0.
-    // On a practical note, these should never actually be called if the dither tables are correct.
-    into_noise_impl!(f32, self, 0.0);
-    into_noise_impl!(f64, self, 0.0);
+    add_noise_impl!(i24, self, s, {
+        i24::from_sample(f32::from_sample(s) + f32::from_sample(self.0))
+    });
+    add_noise_impl!(u24, self, s, {
+        u24::from_sample(f32::from_sample(s) + f32::from_sample(self.0))
+    });
+    add_noise_impl!(i32, self, s, {
+        i32::from_sample(f64::from_sample(s) + f64::from_sample(self.0))
+    });
+    add_noise_impl!(u32, self, s, {
+        u32::from_sample(f64::from_sample(s) + f64::from_sample(self.0))
+    });
+    add_noise_impl!(f32, self, s, { s + f32::from_sample(self.0) });
+    add_noise_impl!(f64, self, s, { s + f64::from_sample(self.0) });
 
     /// `Dither` is a trait for implementing dithering algorithms.
     pub trait Dither<F: Sample, T: Sample> {
@@ -181,20 +185,19 @@ pub mod dither {
 
     impl<F: Sample, T: Sample> Dither<F, T> for Rectangular<F, T>
     where
-        RandomNoise : IntoNoiseSample<F>
+        RandomNoise : AddNoise<F>
     {
         fn dither(&mut self, sample: F) -> F {
             // A dither should be applied if and only if the effective number of bits of the source
             // sample format is greater than that of the destination sample format.
-            // assert!(F::ENOB > T::ENOB);
+            assert!(F::EFF_BITS > T::EFF_BITS);
 
             // The number of low-order bits being truncated by the conversion will be dithered.
-            // const TRUNC_BITS: u32 = F::ENOB - T::ENOB;
-            const TRUNC_BITS: u32 = 8;
+            let trunc_bits = F::EFF_BITS - T::EFF_BITS;
 
             // Add the noise to the sample.
-            let noise = RandomNoise::from(self.prng.next(), TRUNC_BITS);
-            sample + noise.into_noise_sample()
+            let noise = RandomNoise::from(self.prng.next(), trunc_bits);
+            noise.add_noise(sample)
         }
     }
 
@@ -217,20 +220,19 @@ pub mod dither {
 
     impl<F: Sample, T: Sample> Dither<F, T> for Triangular<F, T>
     where
-        RandomNoise : IntoNoiseSample<F>
+        RandomNoise : AddNoise<F>
     {
         fn dither(&mut self, sample: F) -> F {
-            // assert!(F::ENOB > T::ENOB);
+            assert!(F::EFF_BITS > T::EFF_BITS);
 
-            // const TRUNC_BITS: u32 = F::ENOB - T::ENOB;
-            const TRUNC_BITS: u32 = 8;
+            let trunc_bits = F::EFF_BITS - T::EFF_BITS;
 
             // Generate a triangular distribution from the uniform distribution.
-            let tpdf = self.prng.next() - self.prng.next();
+            let tpdf = (self.prng.next() >> 1) + (self.prng.next() >> 1);
 
             // Add the noise to the sample.
-            let noise = RandomNoise::from(tpdf, TRUNC_BITS);
-            sample + noise.into_noise_sample()
+            let noise = RandomNoise::from(tpdf, trunc_bits);
+            noise.add_noise(sample)
         }
     }
 

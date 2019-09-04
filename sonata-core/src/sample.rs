@@ -10,25 +10,25 @@ use byteorder::{NativeEndian, ByteOrder};
 /// SampleFormat describes the data encoding for an audio sample.
 #[derive(Copy, Clone, Debug)]
 pub enum SampleFormat {
-    /// Unsigned 8bit integer.
+    /// Unsigned 8-bit integer.
     U8,
-    /// Unsigned 16bit integer.
+    /// Unsigned 16-bit integer.
     U16,
-    /// Unsigned 24bit integer.
+    /// Unsigned 24-bit integer.
     U24,
-    /// Unsigned 32bit integer.
+    /// Unsigned 32-bit integer.
     U32,
-    /// Signed 8bit integer.
+    /// Signed 8-bit integer.
     S8,
-    /// Signed 16bit integer.
+    /// Signed 16-bit integer.
     S16,
-    /// Signed 24bit integer.
+    /// Signed 24-bit integer.
     S24,
-    /// Signed 32bit integer.
+    /// Signed 32-bit integer.
     S32,
-    /// Floating point, 32bit.
+    /// Single prevision (32-bit) floating point.
     F32,
-    /// Floating point, 64bit.
+    /// Double precision (64-bit) floating point.
     F64
 }
 
@@ -46,18 +46,21 @@ pub trait Sample:
     + PartialEq
     + Sized
 {
-
-    /// The `StreamType` is the primitive data type, or fixed-size byte array, that
-    /// represents the sample when exported.
+    /// The `StreamType` is the primitive data type, or fixed-size byte array, that represents the
+    /// sample when exported.
     type StreamType : Copy;
 
-    /// A unique enum value representing the sample format. This constant may be used
-    /// to dynamically choose how to process the sample at runtime.
+    /// A unique enum value representing the sample format. This constant may be used to dynamically
+    /// choose how to process the sample at runtime.
     const FORMAT: SampleFormat;
 
-    /// The mid-point value between the maximum and minimum sample value. If a sample
-    /// is set to this value, it is silent.
-    const MID : Self;
+    /// The effective number of bits of the valid (clamped) sample range. Quantifies the dynamic
+    /// range of the range of the sample format in bits.
+    const EFF_BITS: u32;
+
+    /// The mid-point value between the maximum and minimum sample value. If a sample is set to this
+    /// value, it is silent.
+    const MID: Self;
 }
 
 /// An unsigned 24-bit integer sample.
@@ -74,7 +77,7 @@ impl Sample for u8 {
     type StreamType = u8;
 
     const FORMAT: SampleFormat = SampleFormat::U8;
-
+    const EFF_BITS: u32 = 8;
     const MID: u8 = 128;
 }
 
@@ -82,7 +85,7 @@ impl Sample for i8 {
     type StreamType = i8;
 
     const FORMAT: SampleFormat = SampleFormat::S8;
-
+    const EFF_BITS: u32 = 8;
     const MID: i8 = 0;
 }
 
@@ -90,7 +93,7 @@ impl Sample for u16 {
     type StreamType = u16;
 
     const FORMAT: SampleFormat = SampleFormat::U16;
-
+    const EFF_BITS: u32 = 16;
     const MID: u16 = 32_768;
 }
 
@@ -98,7 +101,7 @@ impl Sample for i16 {
     type StreamType = i16;
 
     const FORMAT: SampleFormat = SampleFormat::S16;
-
+    const EFF_BITS: u32 = 16;
     const MID: i16 = 0;
 }
 
@@ -106,7 +109,7 @@ impl Sample for u24 {
     type StreamType = [u8; 3];
 
     const FORMAT: SampleFormat = SampleFormat::U24;
-
+    const EFF_BITS: u32 = 24;
     const MID: u24 = u24(8_388_608);
 }
 
@@ -114,7 +117,7 @@ impl Sample for i24 {
     type StreamType = [u8; 3];
 
     const FORMAT: SampleFormat = SampleFormat::S24;
-
+    const EFF_BITS: u32 = 24;
     const MID: i24 = i24(0);
 }
 
@@ -122,7 +125,7 @@ impl Sample for u32 {
     type StreamType = u32;
 
     const FORMAT: SampleFormat = SampleFormat::U32;
-
+    const EFF_BITS: u32 = 32;
     const MID: u32 = 2_147_483_648;
 }
 
@@ -130,7 +133,7 @@ impl Sample for i32 {
     type StreamType = i32;
 
     const FORMAT: SampleFormat = SampleFormat::S32;
-
+    const EFF_BITS: u32 = 32;
     const MID: i32 = 0;
 }
 
@@ -138,7 +141,7 @@ impl Sample for f32 {
     type StreamType = f32;
 
     const FORMAT: SampleFormat = SampleFormat::F32;
-
+    const EFF_BITS: u32 = 24;
     const MID: f32 = 0.0;
 }
 
@@ -146,7 +149,7 @@ impl Sample for f64 {
     type StreamType = f64;
 
     const FORMAT: SampleFormat = SampleFormat::F64;
-
+    const EFF_BITS: u32 = 53;
     const MID: f64 = 0.0;
 }
 
