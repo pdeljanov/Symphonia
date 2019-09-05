@@ -158,11 +158,7 @@ impl Default for SynthesisState {
 /// Sub-band synthesis transforms 32 sub-band blocks containing 18 time-domain samples each into
 /// 18 blocks of 32 PCM audio samples.
 pub fn synthesis(state: &mut SynthesisState, in_samples: &mut [f32; 576], out: &mut [f32]) {
-    let mut u_vec = [0f32; 512];
     let mut s_vec = [0f32; 32];
-
-    // Get a slice to 576 output samples to (hopefully) elide future bounds checking.
-    let out_samples = &mut out[0..576];
 
     // There are 18 synthesized PCM sample blocks.
     for b in 0..18 {
@@ -267,9 +263,9 @@ pub fn synthesis(state: &mut SynthesisState, in_samples: &mut [f32; 576], out: &
         v_vec[48] = -v_vec[16];
         v_vec[16] = 0.0;
 
-        // Next, build u_vec by iterating over the 16 slots in v_vec, and copying the first 32 
-        // samples of EVEN numbered v_vec slots, and the last 32 samples of ODD numbered v_vec slots 
-        // sequentially into u_vec.
+        // Next, as per the specification, build a vector, u_vec, by iterating over the 16 slots in
+        // v_vec, and copying the first 32 samples of EVEN numbered v_vec slots, and the last 32
+        // samples of ODD numbered v_vec slots sequentially into u_vec.
         //
         // For example, given:
         //
@@ -286,29 +282,6 @@ pub fn synthesis(state: &mut SynthesisState, in_samples: &mut [f32; 576], out: &
         // u_vec  | a  | d  | e  | h  | . . . . | w  | z  | 
         //        +----+----+----+----+ . . . . +----+----+
         //
-        for i in 0..8 {
-            let v_start = state.v_front + (i << 1);
-            let v0 = &state.v_vec[(v_start + 0) & 0xf][ 0..32];
-            let v1 = &state.v_vec[(v_start + 1) & 0xf][32..64];
-
-            // Copying of the 32 samples from v_vec to u_vec for even and odd slots are unrolled
-            // into a 4x8 operation to improve vectorization.
-            for j in (0..32).step_by(4) {
-                let k = (i << 6) + j;
-                u_vec[k+0 +  0] = v0[j+0];
-                u_vec[k+0 + 32] = v1[j+0];
-
-                u_vec[k+1 +  0] = v0[j+1];
-                u_vec[k+1 + 32] = v1[j+1];
-
-                u_vec[k+2 +  0] = v0[j+2];
-                u_vec[k+2 + 32] = v1[j+2];
-
-                u_vec[k+3 +  0] = v0[j+3];
-                u_vec[k+3 + 32] = v1[j+3];
-            }
-        }
-
         // Finally, generate the 32 sample PCM blocks. Assuming s[i] is sample i of a PCM sample
         // block, the following equation governs sample generation:
         //
@@ -323,19 +296,31 @@ pub fn synthesis(state: &mut SynthesisState, in_samples: &mut [f32; 576], out: &
         // slot 0 spans u_vec[0..32], slot 1 spans u_vec[32..64], and so on). Then, the i-th 
         // sample in the PCM block is the summation of the i-th sample in each of the 16 u_vec 
         // slots after being multiplied by the synthesis window.
-        for i in 0..32 {
-            let mut sum = 0.0;
-            // The 16 iterations of the summation is unrolled into a 4x4 operation to improve
-            // vectorization.
-            for j in (0..16).step_by(4) {
-                let k = (j << 5) + i;
-                sum += u_vec[k+ 0] * SYNTHESIS_D[k+ 0];
-                sum += u_vec[k+32] * SYNTHESIS_D[k+32];
-                sum += u_vec[k+64] * SYNTHESIS_D[k+64];
-                sum += u_vec[k+96] * SYNTHESIS_D[k+96];
+        //
+        // But wait!
+        //
+        // If we reframe the PCM generation step such that instead of iterating j for each i, we
+        // iterate i for each j, then it becomes clear that building u_vec is useless! We can simply
+        // index into v_vec directly and accumulate the final sample value into a scratch buffer.
+        let mut o_vec = [0f32; 32];
+
+        for j in 0..8 {
+            let v_start = state.v_front + (j << 1);
+
+            let v0 = &state.v_vec[(v_start + 0) & 0xf][ 0..32];
+            let v1 = &state.v_vec[(v_start + 1) & 0xf][32..64];
+
+            let k = j << 6;
+
+            for i in 0..32 {
+                o_vec[i] += v0[i] * SYNTHESIS_D[k + i +  0];
+                o_vec[i] += v1[i] * SYNTHESIS_D[k + i + 32];
             }
-            out_samples[(b << 5) + i] = sum;
         }
+
+        // Copy PCM samples in o_vec to the output buffer.
+        let i = b << 5;
+        out[i..i + 32].copy_from_slice(&o_vec);
 
         // Shift the v_vec FIFO. The value v_front is the index of the 64 sample slot in v_vec
         // that will be overwritten next iteration. Conversely, that makes it the front of the 
