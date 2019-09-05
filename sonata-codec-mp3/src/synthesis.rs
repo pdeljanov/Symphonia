@@ -163,12 +163,9 @@ pub fn synthesis(state: &mut SynthesisState, in_samples: &mut [f32; 576], out: &
     // There are 18 synthesized PCM sample blocks.
     for b in 0..18 {
         // First, select the b-th sample from each of the 32 sub-bands, and place them in the s 
-        // vector, s_vec..
-        for i in (0..32).step_by(4) {
-            s_vec[i+0] = in_samples[18*(i+0) + b];
-            s_vec[i+1] = in_samples[18*(i+1) + b];
-            s_vec[i+2] = in_samples[18*(i+2) + b];
-            s_vec[i+3] = in_samples[18*(i+3) + b];
+        // vector, s_vec.
+        for i in 0..32 {
+            s_vec[i] = in_samples[18*i + b];
         }
 
         // Get the front slot of the v_vec FIFO.
