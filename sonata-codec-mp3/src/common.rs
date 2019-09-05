@@ -265,13 +265,12 @@ impl BitResevoir {
         // If the offset is less than or equal to the amount of data in the resevoir, shift the
         // re-used bytes to the beginning of the resevoir.
         if main_data_begin <= self.len {
-            // Shift the reused bytes to the beginning of the resevoir.
             self.buf.copy_within(self.len - main_data_begin..self.len, 0);
         }
         else {
             // If the offset is greater than the amount of data in the resevoir, then the stream is
             // technically malformed. However, there are ways this could happen, so simply zero out
-            // the resevoir for the offset and and pretend things are okay.
+            // the resevoir for the length of the offset and pretend things are okay.
             eprintln!("Invalid main_data_begin offset.");
             for byte in &mut self.buf[0..main_data_begin] { *byte = 0 }
         }

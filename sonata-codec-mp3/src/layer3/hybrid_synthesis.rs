@@ -302,12 +302,9 @@ pub(super) fn hybrid_synthesis(
             // Overlap the lower half of the IMDCT output (values 0..18) with the upper values of
             // the IMDCT (values 18..36) of the /previous/ iteration of the IMDCT. While doing this
             // also apply the window.
-            for i in (0..18).step_by(2) {
-                samples[start + (i+0)] = overlap[sb][i+0] + (output[i+0] * window[i+0]);
-                overlap[sb][i+0] = output[18 + i+0] * window[18 + i+0];
-
-                samples[start + (i+1)] = overlap[sb][i+1] + (output[i+1] * window[i+1]);
-                overlap[sb][i+1] = output[18 + i+1] * window[18 + i+1];
+            for i in 0..18 {
+                samples[start + i] = overlap[sb][i] + (output[i] * window[i]);
+                overlap[sb][i] = output[18 + i] * window[18 + i];
             }
         }
     }
@@ -329,12 +326,9 @@ pub(super) fn hybrid_synthesis(
 
             // Overlap the lower half of the IMDCT output (values 0..18) with the upper values of
             // the IMDCT (values 18..36) of the /previous/ iteration of the IMDCT.
-            for i in (0..18).step_by(2) {
-                samples[start + (i+0)] = overlap[sb][i+0] + output[i+0];
-                overlap[sb][i+0] = output[18 + i+0];
-
-                samples[start + (i+1)] = overlap[sb][i+1] + output[i+1];
-                overlap[sb][i+1] = output[18 + i+1];
+            for i in 0..18 {
+                samples[start + i] = overlap[sb][i] + output[i];
+                overlap[sb][i] = output[18 + i];
             }
         }
     }
@@ -538,24 +532,18 @@ mod imdct36 {
         // where dct[] is the DCT-IV of x.
 
         // First 9 IMDCT values are values 9..18 in the DCT-IV.
-        for i in (0..9).step_by(3) {
-            y[i+0] = t[9 + (i+0)];
-            y[i+1] = t[9 + (i+1)];
-            y[i+2] = t[9 + (i+2)];
+        for i in 0..9 {
+            y[i] = t[9 + i];
         }
 
         // Next 18 IMDCT values are negated and /reversed/ values 0..18 in the DCT-IV.
-        for i in (9..27).step_by(3) {
-            y[i+0] = -t[27 - (i+0) - 1];
-            y[i+1] = -t[27 - (i+1) - 1];
-            y[i+2] = -t[27 - (i+2) - 1];
+        for i in 9..27 {
+            y[i] = -t[27 - i - 1];
         }
 
         // Last 9 IMDCT values are negated values 0..9 in the DCT-IV.
-        for i in (27..36).step_by(3) {
-            y[i+0] = -t[(i+0) - 27];
-            y[i+1] = -t[(i+1) - 27];
-            y[i+2] = -t[(i+2) - 27];
+        for i in 27..36 {
+            y[i] = -t[i - 27];
         }
     }
 
@@ -612,12 +600,8 @@ mod imdct36 {
         sdct_ii_18(&samples, y);
 
         y[0] /= 2.0;
-        // Hopefully this is vectorized...
-        for i in (1..17).step_by(4) {
-            y[i+0] = (y[i+0] / 2.0) - y[i+0-1];
-            y[i+1] = (y[i+1] / 2.0) - y[i+1-1];
-            y[i+2] = (y[i+2] / 2.0) - y[i+2-1];
-            y[i+3] = (y[i+3] / 2.0) - y[i+3-1];
+        for i in 1..17 {
+            y[i] = (y[i] / 2.0) - y[i-1];
         }
         y[17] = (y[17] / 2.0) - y[16];
     }

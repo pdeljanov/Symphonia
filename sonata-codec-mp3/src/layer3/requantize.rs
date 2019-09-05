@@ -123,11 +123,8 @@ pub(super) fn read_huffman_samples<B: BitStream>(
 
     // If there are no Huffman code bits, zero all samples and return immediately.
     if part3_bits == 0 {
-        for i in (0..576).step_by(4) {
-            buf[i+0] = 0.0;
-            buf[i+1] = 0.0;
-            buf[i+2] = 0.0;
-            buf[i+3] = 0.0;
+        for sample in buf.iter_mut() {
+            *sample = 0.0;
         }
         return Ok(0);
     }
