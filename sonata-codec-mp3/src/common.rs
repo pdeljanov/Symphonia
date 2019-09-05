@@ -12,7 +12,7 @@ use sonata_core::io::Bytestream;
 use super::synthesis;
 
 /// Startng indicies of each scale factor band at various sampling rates for long blocks.
-pub const SCALE_FACTOR_LONG_BANDS: [[u32; 23]; 9] = [
+pub const SCALE_FACTOR_LONG_BANDS: [[usize; 23]; 9] = [
     // 44.1 kHz, MPEG version 1, derived from ISO/IEC 11172-3 Table B.8
     [
         0, 4, 8, 12, 16, 20, 24, 30, 36, 44, 52, 62, 74, 90, 110, 134,
@@ -63,7 +63,7 @@ pub const SCALE_FACTOR_LONG_BANDS: [[u32; 23]; 9] = [
 /// Starting indicies of each scale factor band at various sampling rates for short blocks. Each
 /// value must be multiplied by 3 since there are three equal length windows per short scale factor
 /// band.
-pub const SCALE_FACTOR_SHORT_BANDS: [[u32; 14]; 9] = [
+pub const SCALE_FACTOR_SHORT_BANDS: [[usize; 14]; 9] = [
     // 44.1 kHz, MPEG version 1
     [ 0, 4, 8, 12, 16, 22, 30, 40,  52,  66,  84, 106, 136, 192 ],
     // 48 kHz

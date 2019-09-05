@@ -264,6 +264,7 @@ pub(super) fn antialias(channel: &GranuleChannel, samples: &mut [f32; 576]) {
             samples[ui] = upper * cs[i] + lower * ca[i];
         }
     }
+
 }
 
 /// Performs hybrid synthesis (IMDCT and windowing).
@@ -518,13 +519,13 @@ mod imdct36 {
     ///
     /// https://ieeexplore.ieee.org/document/974789
     pub fn imdct36(x: &[f32], y: &mut [f32; 36]) {
-        let mut t = [0f32; 18];
+        let mut dct = [0f32; 18];
 
-        dct_iv(x, &mut t);
+        dct_iv(x, &mut dct);
 
         // Mapping of DCT-IV to IMDCT
         //
-        //  0            9                       18           36
+        //  0            9                       27           36
         //  +------------+------------------------+------------+
         //  | dct[9..18] | -dct[0..18].rev()      | -dct[0..9] |
         //  +------------+------------------------+------------+
@@ -533,17 +534,17 @@ mod imdct36 {
 
         // First 9 IMDCT values are values 9..18 in the DCT-IV.
         for i in 0..9 {
-            y[i] = t[9 + i];
+            y[i] = dct[9 + i];
         }
 
         // Next 18 IMDCT values are negated and /reversed/ values 0..18 in the DCT-IV.
         for i in 9..27 {
-            y[i] = -t[27 - i - 1];
+            y[i] = -dct[27 - i - 1];
         }
 
         // Last 9 IMDCT values are negated values 0..9 in the DCT-IV.
         for i in 27..36 {
-            y[i] = -t[i - 27];
+            y[i] = -dct[i - 27];
         }
     }
 

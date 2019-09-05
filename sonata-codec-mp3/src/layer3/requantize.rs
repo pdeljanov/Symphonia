@@ -304,11 +304,7 @@ pub(super) fn read_huffman_samples<B: BitStream>(
 }
 
 /// Requantize long block samples in `buf`.
-fn requantize_long(
-    header: &FrameHeader,
-    channel: &GranuleChannel,
-    buf: &mut [f32],
-) {
+fn requantize_long(header: &FrameHeader, channel: &GranuleChannel, buf: &mut [f32]) {
     // For long blocks dequantization and scaling is governed by the following equation:
     //
     //                     xr(i) = s(i)^(4/3) * 2^(0.25*A) * 2^(-B)
@@ -327,47 +323,46 @@ fn requantize_long(
         1, 1, 1, 1, 2, 2, 3, 3, 3, 2, 0,
     ];
 
-    let sfb_indicies = &SCALE_FACTOR_LONG_BANDS[header.sample_rate_idx as usize];
+    let sfb_indicies = &SCALE_FACTOR_LONG_BANDS[header.sample_rate_idx];
 
     // Calculate A, it is constant for the entire requantization.
     let a = i32::from(channel.global_gain) - 210;
-
-    let mut pow2ab = 0.0;
     
     let scalefac_shift = if channel.scalefac_scale { 2 } else { 1 };
 
-    let mut sfb = 0;
-    let mut sfb_end = sfb_indicies[sfb] as usize;
-
-    for i in 0..buf.len() {
-        // The value of B is dependant on the scale factor band. Therefore, update B only when the
-        // scale factor band changes.
-        if i == sfb_end {
-            // Lookup the pre-emphasis amount if required.
-            let pre_emphasis = if channel.preflag { PRE_EMPHASIS[sfb] } else { 0 };
-
-            // Calculate B.
-            let b = i32::from((channel.scalefacs[sfb] + pre_emphasis) << scalefac_shift);
-
-            // Calculate 2^(0.25*A) * 2^(-B). This can be rewritten as 2^{ 0.25 * (A - 4 * B) }.
-            // Since scalefac_shift was multiplies by 4 above, the final equation becomes
-            // 2^{ 0.25 * (A - B) }.
-            pow2ab = f64::powf(2.0, 0.25 * f64::from(a - b)) as f32;
-
-            sfb += 1;
-            sfb_end = sfb_indicies[sfb] as usize;
+    // Requantize each scale-factor band in buf.
+    for (sfb, sfb_start) in sfb_indicies.iter().enumerate() {
+        if *sfb_start >= buf.len() {
+            break;
         }
 
-        // Buf contains s(i)^(4/3), now multiply in 2^(0.25*A) * 2^(-B) to get xr(i).
-        buf[i] *= pow2ab;
+        // Lookup the pre-emphasis amount if required.
+        let pre_emphasis = if channel.preflag { PRE_EMPHASIS[sfb] } else { 0 };
+
+        // Calculate B.
+        let b = i32::from((channel.scalefacs[sfb] + pre_emphasis) << scalefac_shift);
+
+        // Calculate 2^(0.25*A) * 2^(-B). This can be rewritten as 2^{ 0.25 * (A - 4 * B) }.
+        // Since scalefac_shift was multiplies by 4 above, the final equation becomes
+        // 2^{ 0.25 * (A - B) }.
+        let pow2ab = f64::powf(2.0, 0.25 * f64::from(a - b)) as f32;
+
+        // Calculate the ending sample index for the scale-factor band, clamping it to the length of
+        // the sample buffer.
+        let sfb_end = min(sfb_indicies[sfb + 1], buf.len());
+
+        // The sample buffer contains s(i)^(4/3), now multiply in 2^(0.25*A) * 2^(-B) to get xr(i).
+        for sample in &mut buf[*sfb_start..sfb_end] {
+            *sample *= pow2ab;
+        }
     }
 }
 
-/// Requantize short block samples in `buf`.
+/// Requantize short block samples in `buf` starting at scale-factor band `sfb_init`.
 fn requantize_short(
     header: &FrameHeader,
     channel: &GranuleChannel,
-    mut sfb: usize,
+    sfb_init: usize,
     buf: &mut [f32],
 ) {
     // For short blocks dequantization and scaling is governed by the following equation:
@@ -382,7 +377,7 @@ fn requantize_short(
     //
     // Note: The samples in buf are the result of s(i)^(4/3) for each sample i.
 
-    let sfb_indicies = &SCALE_FACTOR_SHORT_BANDS[header.sample_rate_idx as usize];
+    let sfb_indicies = &SCALE_FACTOR_SHORT_BANDS[header.sample_rate_idx];
 
     // Calculate the window-independant part of A: global_gain[gr] - 210.
     let gain = i32::from(channel.global_gain) - 210;
@@ -401,32 +396,47 @@ fn requantize_short(
     // scalefac_shift in this case.
     let scalefac_shift = if channel.scalefac_scale { 2 } else { 1 };
 
-    let mut i = 0;
+    // Requantize each scale-factor band in buf.
+    for (sfb, sfb_div3_start) in sfb_indicies[sfb_init..].iter().enumerate() {
+        // Short scale-factor band start indicies must be multiplied by 3.
+        let sfb_start = *sfb_div3_start * 3;
 
-    while i < buf.len() {
-        // Determine the length of the window (the length of the scale factor band).
-        let win_len = (sfb_indicies[sfb+1] - sfb_indicies[sfb]) as usize;
+        if sfb_start >= buf.len() {
+            break;
+        }
 
-        // Each scale factor band is repeated 3 times over.
+        // Determine the length of the window.
+        let win_len = sfb_indicies[sfb + 1] - sfb_div3_start;
+
+        // Each scale-factor band is repeated 3 times over for the 3 short windows.
         for win in 0..3 {
+            // Calculate the starting sample index for the window.
+            let win_start = sfb_start + (win * win_len);
+
+            // If the window's starting sample index exceeds the bounds of the sample buffer then
+            // requantization is complete.
+            if win_start >= buf.len() {
+                break;
+            }
+
             // Calculate B.
-            let b = i32::from(channel.scalefacs[3*sfb + win] << scalefac_shift);
+            let b = i32::from(channel.scalefacs[3 * sfb + win] << scalefac_shift);
 
             // Calculate 2^(0.25*A) * 2^(-B). This can be rewritten as 2^{ 0.25 * (A - 4 * B) }.
             // Since scalefac_shift multiplies by 4 above, the final equation becomes
             // 2^{ 0.25 * (A - B) }.
             let pow2ab = f64::powf(2.0,  0.25 * f64::from(a[win] - b)) as f32;
 
-            let win_end = min(buf.len(), i + win_len);
+            // Calculate the ending sample index for the window, clamping it to the length of the
+            // sample buffer.
+            let win_end = min(win_start + win_len, buf.len());
 
-            // Buf contains s(i)^(4/3), now multiply in 2^(0.25*A) * 2^(-B) to get xr(i).
-            while i < win_end {
-                buf[i] *= pow2ab;
-                i += 1;
+            // The sample buffer contains s(i)^(4/3), now multiply in 2^(0.25*A) * 2^(-B) to get
+            // xr(i).
+            for sample in &mut buf[win_start..win_end] {
+                *sample *= pow2ab;
             }
         }
-
-        sfb += 1;
     }
 }
 

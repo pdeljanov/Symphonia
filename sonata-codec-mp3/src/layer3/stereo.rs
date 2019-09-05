@@ -192,7 +192,7 @@ pub(super) fn stereo(
             return decode_error("stereo channel pair block_type mismatch");
         }
 
-        let ch1_rzero = granule.channels[1].rzero as u32;
+        let ch1_rzero = granule.channels[1].rzero;
 
         // Determine which bands are entirely contained within the rzero partition. Intensity stereo
         // is applied to these bands only.
@@ -201,7 +201,7 @@ pub(super) fn stereo(
             // Multiply each band start index by 3 before checking if it is above or below the rzero
             // partition.
             BlockType::Short { is_mixed: false } => {
-                let short_indicies = &SCALE_FACTOR_SHORT_BANDS[header.sample_rate_idx as usize];
+                let short_indicies = &SCALE_FACTOR_SHORT_BANDS[header.sample_rate_idx];
 
                 let short_band = short_indicies[..13].iter()
                                                      .map(|i| 3 * i)
@@ -214,7 +214,7 @@ pub(super) fn stereo(
             // For mixed blocks, the first 36 samples are part of a long block, and the remaining
             // samples are part of short blocks.
             BlockType::Short { is_mixed: true } => {
-                let long_indicies = &SCALE_FACTOR_LONG_BANDS[header.sample_rate_idx as usize];
+                let long_indicies = &SCALE_FACTOR_LONG_BANDS[header.sample_rate_idx];
 
                 // Check is rzero begins in the long block.
                 let long_band = long_indicies[..8].iter().position(|i| *i >= ch1_rzero);
@@ -226,7 +226,7 @@ pub(super) fn stereo(
                 }
                 // Otherwise, find where rzero begins in the short blocks.
                 else {
-                    let short_indicies = &SCALE_FACTOR_SHORT_BANDS[header.sample_rate_idx as usize];
+                    let short_indicies = &SCALE_FACTOR_SHORT_BANDS[header.sample_rate_idx];
 
                     let short_band = short_indicies[3..13].iter()
                                                           .map(|i| 3 * i)
@@ -240,7 +240,7 @@ pub(super) fn stereo(
             // For long blocks, simply find the first scale factor band that is fully in the rzero
             // partition.
             _ => {
-                let long_indicies = &SCALE_FACTOR_LONG_BANDS[header.sample_rate_idx as usize];
+                let long_indicies = &SCALE_FACTOR_LONG_BANDS[header.sample_rate_idx];
 
                 let long_band = long_indicies[..22].iter().position(|i| *i >= ch1_rzero);
 
@@ -261,14 +261,14 @@ fn intensity_stereo_short(
     ch0: &mut [f32; 576],
     ch1: &mut [f32; 576],
 ) {
-    let sfb_indicies = &SCALE_FACTOR_SHORT_BANDS[header.sample_rate_idx as usize];
+    let sfb_indicies = &SCALE_FACTOR_SHORT_BANDS[header.sample_rate_idx];
 
     // If MPEG1...
     if header.is_mpeg1() {
         for sfb in sfb_start..13 {
-            let win_len = (sfb_indicies[sfb+1] - sfb_indicies[sfb]) as usize;
+            let win_len = sfb_indicies[sfb+1] - sfb_indicies[sfb];
 
-            let mut start = 3 * sfb_indicies[sfb] as usize;
+            let mut start = 3 * sfb_indicies[sfb];
 
             for win in 0..3 {
                 let is_pos = channel.scalefacs[3*sfb + win] as usize;
@@ -293,9 +293,9 @@ fn intensity_stereo_short(
         let is_pos_table = &INTENSITY_STEREO_RATIOS_MPEG2[channel.scalefac_compress as usize & 0x1];
 
         for sfb in sfb_start..13 {
-            let win_len = (sfb_indicies[sfb+1] - sfb_indicies[sfb]) as usize;
+            let win_len = sfb_indicies[sfb+1] - sfb_indicies[sfb];
 
-            let mut start = 3 * sfb_indicies[sfb] as usize;
+            let mut start = 3 * sfb_indicies[sfb];
 
             for win in 0..3 {
                 let is_pos = channel.scalefacs[3*sfb + win] as usize;
@@ -325,7 +325,7 @@ fn intensity_stereo_long(
     ch0: &mut [f32; 576],
     ch1: &mut [f32; 576],
 ) {
-    let sfb_indicies = &SCALE_FACTOR_LONG_BANDS[header.sample_rate_idx as usize];
+    let sfb_indicies = &SCALE_FACTOR_LONG_BANDS[header.sample_rate_idx];
 
     // If MPEG1...
     if header.is_mpeg1() {
@@ -341,8 +341,8 @@ fn intensity_stereo_long(
                 let (ratio_l, ratio_r) = INTENSITY_STEREO_RATIOS[is_pos];
 
                 // Process each sample within the scale factor band.
-                let start = sfb_indicies[sfb] as usize;
-                let end = sfb_indicies[sfb+1] as usize;
+                let start = sfb_indicies[sfb];
+                let end = sfb_indicies[sfb+1];
 
                 for i in start..end {
                     let is = ch0[i];
@@ -366,8 +366,8 @@ fn intensity_stereo_long(
                 let (ratio_l, ratio_r) = is_pos_table[is_pos];
 
                 // Process each sample within the scale factor band.
-                let start = sfb_indicies[sfb] as usize;
-                let end = sfb_indicies[sfb+1] as usize;
+                let start = sfb_indicies[sfb];
+                let end = sfb_indicies[sfb+1];
 
                 for i in start..end {
                     let is = ch0[i];

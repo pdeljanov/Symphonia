@@ -79,9 +79,9 @@ struct GranuleChannel {
     /// The Huffman table to use for decoding region[0..3] of big_values.
     table_select: [u8; 3],
     /// The index of the first sample in region1 of big_values.
-    region1_start: u32,
+    region1_start: usize,
     /// The index of the first sample in region2 of big_values.
-    region2_start: u32,
+    region2_start: usize,
     /// Indicates if the pre-emphasis amount for each scale factor band should be added on to each 
     /// scale factor before requantization.
     preflag: bool,
