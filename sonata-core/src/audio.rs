@@ -176,7 +176,7 @@ impl SignalSpec {
     }
 }
 
-/// `WriteSample` provides a typed interface for converting a sample from it's in-memory type to it's
+/// `WriteSample` provides a typed interface for converting a sample from it's in-memory type to its
 /// StreamType.
 pub trait WriteSample : Sample {
     fn write(sample: Self, dest: &mut SampleWriter<Self>);
@@ -602,22 +602,11 @@ impl<S: Sample> Signal<S> for AudioBuffer<S> {
         F: Fn(S) -> S
     {
         debug_assert!(self.n_frames <= self.n_capacity);
-        //TODO: document why this is actually safe
 
-        unsafe {
-            let mut plane_start = self.buf.as_mut_ptr();
-            let buffer_end = plane_start.add(self.buf.len());
-
-            while plane_start < buffer_end {
-                let plane_end = plane_start.add(self.n_frames);
-
-                let mut ptr = plane_start;
-                while ptr < plane_end {
-                    *ptr = f(*ptr);
-                    ptr = ptr.add(1);
-                }
-
-                plane_start = plane_start.add(self.n_capacity);
+        // Apply the transformation function over each sample in each plane.
+        for plane in self.buf.chunks_mut(self.n_capacity) {
+            for sample in &mut plane[0..self.n_frames] {
+                *sample = f(*sample);
             }
         }
     }

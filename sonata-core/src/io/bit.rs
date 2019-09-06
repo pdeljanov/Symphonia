@@ -211,7 +211,7 @@ impl BitReaderLtr {
 
         if self.n_bits_left < num_bits {
             self.bits = (self.bits << 8) | u32::from(src.read_u8()?);
-            self.n_bits_left += 8
+            self.n_bits_left += 8;
         }
 
         self.n_bits_left -= num_bits;

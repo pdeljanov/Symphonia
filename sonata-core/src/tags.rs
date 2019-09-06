@@ -146,11 +146,11 @@ pub enum StandardTagKey {
 
 /// A `Tag` encapsulates a key-value pair of metadata.
 pub struct Tag {
-    /// If the `Tag`'s key string is commonly associated with a typical type, meaning, or purpose, then if recognized a 
-    /// `StandardTagKey` will be assigned to this `Tag`. 
+    /// If the `Tag`'s key string is commonly associated with a typical type, meaning, or purpose,
+    /// then if recognized a `StandardTagKey` will be assigned to this `Tag`. 
     /// 
-    /// This is a best effort guess since not all metadata formats have a well defined or specified mapping. However, it
-    /// is recommended that user's use `std_key` over `key` if provided.
+    /// This is a best effort guess since not all metadata formats have a well defined or specified
+    /// mapping. However, it is recommended that user's use `std_key` over `key` if provided.
     pub std_key: Option<StandardTagKey>,
     /// A key string indicating the type, meaning, or purpose of the `Tag`s value.
     pub key: String,
@@ -168,8 +168,8 @@ impl Tag {
         }
     }
 
-    /// Returns true if the `Tag`'s key string was recognized and a `StandardTagKey` was assigned, otherwise false is 
-    /// returned.
+    /// Returns true if the `Tag`'s key string was recognized and a `StandardTagKey` was assigned,
+    /// otherwise false is returned.
     pub fn is_known(&self) -> bool {
         self.std_key.is_some()
     }
@@ -178,7 +178,14 @@ impl Tag {
 impl fmt::Display for Tag {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self.std_key {
-            Some(ref std_key) => write!(f, "{{ std_key={:?}, key=\"{}\", value=\"{}\" }}", std_key, self.key, self.value),
+            Some(ref std_key) =>
+                write!(
+                    f,
+                    "{{ std_key={:?}, key=\"{}\", value=\"{}\" }}",
+                    std_key,
+                    self.key,
+                    self.value
+                ),
             None => write!(f, "{{ key=\"{}\", value=\"{}\" }}", self.key, self.value),
         }
     }
@@ -300,7 +307,8 @@ pub mod vorbis {
             None => None,
         };
 
-        // The value field was empty so only the key field exists. Create an empty tag for the given key field.
+        // The value field was empty so only the key field exists. Create an empty tag for the given
+        // key field.
         if field.len() == 1 {
             return Tag::new(std_tag, field[0], "");
         }
@@ -360,8 +368,8 @@ pub mod riff {
         };
     }
 
-    /// Parse the RIFF INFO block into a `Tag` using the block's identifier tag and a slice containing the block's 
-    /// contents.
+    /// Parse the RIFF INFO block into a `Tag` using the block's identifier tag and a slice
+    /// containing the block's contents.
     pub fn parse(tag: [u8; 4], buf: &[u8]) -> Tag {
         // TODO: Key should be checked that it only contains ASCII characters.
         let key = String::from_utf8_lossy(&tag);

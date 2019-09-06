@@ -242,7 +242,6 @@ pub enum SeekSearchResult {
 }
 
 impl SeekIndex {
-
     /// Create an empty `SeekIndex`
     pub fn new() -> SeekIndex {
         SeekIndex {
@@ -360,17 +359,17 @@ impl Stream {
 /// information and access the streams encapsulated in the container.
 ///
 /// Most, if not all, media containers contain metadata, then a number of packetized, and
-/// interleaved media streams. Generally, the encapsulated streams are independently encoded using
-/// some codec. The allowed codecs for a container are defined in the specification of the
+/// interleaved codec bitstreams. Generally, the encapsulated bitstreams are independently encoded
+/// using some codec. The allowed codecs for a container are defined in the specification of the
 /// container format.
 ///
-/// During demuxing, packets are read one-by-one and may be discarded or decoded at the choice of
-/// the caller. The definition of a packet is ambiguous, it may be a frame of video, 1 millisecond
-/// or 1 second of audio, but a packet will never contain data from two different media streams.
+/// While demuxing, packets are read one-by-one and may be discarded or decoded at the choice of
+/// the caller. The contents of a packet is undefined, it may be a frame of video, 1 millisecond
+/// or 1 second of audio, but a packet will never contain data from two different bitstreams.
 /// Therefore the caller can be selective in what stream(s) should be decoded and consumed.
 ///
 /// `FormatReader` provides an Iterator-like interface over packets for easy consumption and
-/// filtering. Seeking will invalidate the assumed state of any decoder processing the packets from
+/// filtering. Seeking will invalidate the assumed state of any decoder processing packets from
 /// `FormatReader` and should be reset after a successful seek operation.
 pub trait FormatReader {
 
