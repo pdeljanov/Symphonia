@@ -25,7 +25,7 @@ support for FOSS codecs and formats, but others may be included via the features
 |---------|-------------|--------------|---------|------------------------|
 | ISO/MP4 | -           | `isomp4`     | No      | `sonata-format-isomp4` |
 | MKV     | -           | `mkv`        | Yes     | `sonata-format-mkv`    |
-| OGG     | -           | `ogg`        | Yes     | `sonata-format-ogg`    |
+| OGG     | Next        | `ogg`        | Yes     | `sonata-format-ogg`    |
 | Wave    | Complete    | `wav`        | Yes     | `sonata-format-wav`    |
 | WebM    | -           | `webm`       | No      | `sonata-format-webm`   |
 
@@ -38,12 +38,13 @@ support for FOSS codecs and formats, but others may be included via the features
 | Hardware | -           | `hwdec`      | No      | `sonata-codec-hwdec`   |
 | MP1      | In Work     | `mp3`        | No      | `sonata-codec-mp3`     |
 | MP2      | In Work     | `mp3`        | No      | `sonata-codec-mp3`     |
-| MP3      | Complete    | `mp3`        | No      | `sonata-codec-mp3`     |
-| Opus     | -           | `opus`       | Yes     | `sonata-codec-opus`    |
+| MP3      | Testing     | `mp3`        | No      | `sonata-codec-mp3`     |
+| Opus     | Next        | `opus`       | Yes     | `sonata-codec-opus`    |
 | PCM      | Complete    | `pcm`        | Yes     | `sonata-codec-pcm`     |
 | Vorbis   | -           | `vorbis`     | Yes     | `sonata-codec-vorbis`  |
 | WavPack  | -           | `wavpack`    | Yes     | `sonata-codec-wavpack` |
 
+<!--
 ### Codecs (Encode)
 
 Sonata does not aim to provide Rust-based encoders for codecs. This is because most encoders have undergone years of development, tweaking, and optimization. Replicating this work would be difficult and provide little benefit for safety because the input to an encoder is controlled by the developer unlike a decoder or demuxer.
@@ -56,8 +57,9 @@ Sonata plans to provide "unsafe" encoder packages that wrap traditional C-based 
 | Hardware | -           | `hwenc`      | No      | `sonata-codec-hwenc`            |
 | Opus     | -           | `libopus`    | No      | `sonata-unsafe-codec-libopus`   |
 | Vorbis   | -           | `libvorbis`  | No      | `sonata-unsafe-codec-libvorbis` |
+-->
 
-### Tags (Decode)
+### Tags (Read)
 
 Sonata provides decoders for standard tagging formats in `sonata-core` since many multimedia formats share common tagging formats.
 
@@ -65,7 +67,7 @@ Sonata provides decoders for standard tagging formats in `sonata-core` since man
 |-----------------------|-------------|
 | ID3v1                 | Complete    |
 | ID3v2                 | Complete    |
-| Vorbis comment (OGG)  | -           |
+| Vorbis comment (OGG)  | Next        |
 | Vorbis comment (FLAC) | Complete    |
 | RIFF                  | Complete    |
 | APEv1                 | -           |
@@ -82,9 +84,59 @@ In addition to the safety guarantees provided by Rust, Sonata aims to:
 * Prevent denial-of-service attacks
 * Be fuzz-tested
 
-## Speed
+## Performance
 
-Sonata aims to be equivalent in speed to C-based implementations. As Rust support for SIMD grows, Sonata will include SIMD optimizations where possible. However, safety is the number one priority.
+Sonata aims to be equivalent in speed to popular open-source C-based implementations.
+
+Sonata does not include explicit SIMD optimizations, however the auto-vectorizer is leveraged as much as possible and the results have been *excellent*. As Rust support for packed SIMD grows, Sonata will include explicit SIMD optimizations where necessary.
+
+### Benchmarks (as of Sept. 7/2019)
+
+These benchmarks compare the single-threaded decoding performance of both Sonata and FFMpeg with various audio files.
+
+The benchmarks were executed on an Arch Linux system with a Core i7 4790k and 32GB of RAM, for a minimum of 20 runs each. [Hyperfine](https://github.com/sharkdp/hyperfine) was used to execute the test. The full benchmark script is as follows:
+
+```bash
+#!/bin/bash
+IN="${1@Q}"
+
+hyperfine -m 20 "ffmpeg -threads 1 -benchmark -v 0 -i ${IN} -f null -" "sonata-play --decode-only ${IN}"
+```
+
+#### MP3, 192kbps @ 44.1kHz
+
+| Command | Mean [ms] | Min [ms] | Max [ms] | Relative |
+|:---|---:|---:|---:|---:|
+| Sonata | 306.2 ± 3.0 | 301.8 | 312.5 | 1.1 |
+| FFMPEG | 272.7 ± 4.3 | 267.6 | 285.3 | 1.0 |
+
+#### MP3, 320kbps @ 44.1kHz
+
+| Command | Mean [ms] | Min [ms] | Max [ms] | Relative |
+|:---|---:|---:|---:|---:|
+| Sonata | 355.1 ± 8.4 | 348.2 | 376.2 | 1.1 |
+| FFmpeg | 316.0 ± 3.5 | 308.8 | 322.8 | 1.0 |
+
+#### FLAC, 24-bit @ 96kHz
+
+| Decoder | Mean [ms] | Min [ms] | Max [ms] | Relative |
+|:---|---:|---:|---:|---:|
+| Sonata | 453.6 ± 2.9 | 449.3 | 462.4 | 1.0 |
+| FFMpeg | 501.9 ± 4.3 | 496.4 | 512.7 | 1.1 |
+
+#### FLAC, 24-bit @ 48kHz
+
+| Command | Mean [ms] | Min [ms] | Max [ms] | Relative |
+|:---|---:|---:|---:|---:|
+| Sonata | 324.0 ± 8.9 | 315.4 | 346.3 | 1.0 |
+| FFMpeg | 331.0 ± 7.4 | 323.6 | 354.5 | 1.0 |
+
+#### WAVE, S32LE @ 44.1kHz
+
+| Command | Mean [ms] | Min [ms] | Max [ms] | Relative |
+|:---|---:|---:|---:|---:|
+| Sonata | 84.5 ± 1.8 | 81.8 | 89.1 | 1.0 |
+| FFMpeg | 129.8 ± 3.4 | 123.4 | 136.1 | 1.5 |
 
 ## Tools
 
