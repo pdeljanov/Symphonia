@@ -180,7 +180,7 @@ fn play(mut reader: Box<dyn FormatReader>, decode_options: &DecoderOptions) -> R
             // Get the buffer duration.
             let duration = Duration::Frames(decoded.capacity() as u64);
 
-            // An interleaved buffer is required to send data to PulseAudio. Sse a SampleBuffer to
+            // An interleaved buffer is required to send data to PulseAudio. Use a SampleBuffer to
             // move data between Sonata AudioBuffers and the byte buffers required by PulseAudio.
             let mut samples = SampleBuffer::<i32>::new(duration, *spec);
 

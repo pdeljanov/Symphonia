@@ -92,7 +92,7 @@ Sonata does not include explicit SIMD optimizations, however the auto-vectorizer
 
 ### Benchmarks (as of Sept. 7/2019)
 
-These benchmarks compare the single-threaded decoding performance of both Sonata and FFMpeg with various audio files.
+These benchmarks compare the single-threaded decoding performance of both Sonata and FFmpeg with various audio files.
 
 The benchmarks were executed on an Arch Linux system with a Core i7 4790k and 32GB of RAM, for a minimum of 20 runs each. [Hyperfine](https://github.com/sharkdp/hyperfine) was used to execute the test. The full benchmark script is as follows:
 
@@ -108,7 +108,7 @@ hyperfine -m 20 "ffmpeg -threads 1 -benchmark -v 0 -i ${IN} -f null -" "sonata-p
 | Command | Mean [ms] | Min [ms] | Max [ms] | Relative |
 |:---|---:|---:|---:|---:|
 | Sonata | 306.2 ± 3.0 | 301.8 | 312.5 | 1.1 |
-| FFMPEG | 272.7 ± 4.3 | 267.6 | 285.3 | 1.0 |
+| FFmpeg | 272.7 ± 4.3 | 267.6 | 285.3 | 1.0 |
 
 #### MP3, 320kbps @ 44.1kHz
 
@@ -122,21 +122,21 @@ hyperfine -m 20 "ffmpeg -threads 1 -benchmark -v 0 -i ${IN} -f null -" "sonata-p
 | Decoder | Mean [ms] | Min [ms] | Max [ms] | Relative |
 |:---|---:|---:|---:|---:|
 | Sonata | 453.6 ± 2.9 | 449.3 | 462.4 | 1.0 |
-| FFMpeg | 501.9 ± 4.3 | 496.4 | 512.7 | 1.1 |
+| FFmpeg | 501.9 ± 4.3 | 496.4 | 512.7 | 1.1 |
 
 #### FLAC, 24-bit @ 48kHz
 
 | Command | Mean [ms] | Min [ms] | Max [ms] | Relative |
 |:---|---:|---:|---:|---:|
 | Sonata | 324.0 ± 8.9 | 315.4 | 346.3 | 1.0 |
-| FFMpeg | 331.0 ± 7.4 | 323.6 | 354.5 | 1.0 |
+| FFmpeg | 331.0 ± 7.4 | 323.6 | 354.5 | 1.0 |
 
 #### WAVE, S32LE @ 44.1kHz
 
 | Command | Mean [ms] | Min [ms] | Max [ms] | Relative |
 |:---|---:|---:|---:|---:|
 | Sonata | 84.5 ± 1.8 | 81.8 | 89.1 | 1.0 |
-| FFMpeg | 129.8 ± 3.4 | 123.4 | 136.1 | 1.5 |
+| FFmpeg | 129.8 ± 3.4 | 123.4 | 136.1 | 1.5 |
 
 ## Tools
 
