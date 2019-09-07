@@ -159,6 +159,7 @@ impl Default for SynthesisState {
 /// 18 blocks of 32 PCM audio samples.
 pub fn synthesis(state: &mut SynthesisState, in_samples: &mut [f32; 576], out: &mut [f32]) {
     let mut s_vec = [0f32; 32];
+    let mut d_vec = [0f32; 32];
 
     // There are 18 synthesized PCM sample blocks.
     for b in 0..18 {
@@ -182,83 +183,84 @@ pub fn synthesis(state: &mut SynthesisState, in_samples: &mut [f32; 576], out: &
         //
         // First, there are a few key observations to this approach:
         //
-        //     1) The matrixing operation as per the standard is simply a 32-point MDCT. Remember
-        //        that an N-point MDCT produces a 2N-point output.
+        //     1) The "matrixing" operation as per the standard is simply a 32-point MDCT. Note that
+        //        an N-point MDCT produces a 2N-point output.
         //
-        //     2) The output of any MDCT contains repeated blocks of values. If the result of a MDCT 
-        //        defined as is X[0..64), then: X(16..0] = X(48..32], and X[48..64) = -X[16..32).
-        //        
-        //        Corollary: Only points [16..48) of the MDCT are actually required!
+        //     2) The output of the MDCT contains repeated blocks of samples. If the result of a
+        //        MDCT defined as is X[0..64), then:
         //
-        //      3) Points [16..48) of the MDCT can be mapped from a 32-point DCT of the input 
+        //          1) X(16.. 0] =  X(48..32]
+        //          2) X[48..64) = -X[16..32)
+        //
+        //        Corollary: Only points [16..48) of the MDCT are actually required! All other
+        //                   points are redundant.
+        //
+        //      3) Points [16..48) of the MDCT can be mapped from a 32-point DCT of the input
         //         vector thus allowing the use of an efficient DCT algorithm.
         //
-        // The mappings above can be found graphically by plotting each row of the cosine 
+        // The mappings above can be found graphically by plotting each row of the cosine
         // coefficient matricies of both the DCT and MDCT side-by side. The mapping becomes readily 
         // apparent, and so too do the exceptions.
         //
         // Using the observations above, if we apply a 32-point DCT transform to the input vector, 
-        // s_vec, and place the result of that DCT in v_vec[16..48], we obtain step 1 as shown on 
-        // the plot below.
+        // s_vec, and place the output in the DCT output vector, d_vec, we obtain the plot labelled
+        // d_vec below.
         //
-        // Next, map the 32-point DCT to points [16..48] of the 32-point MDCT, as shown in step 2.
+        // Next, assuming the 32-point MDCT output vector is denoted v_vec. Map the samples from the
+        // 32-point DCT, d_vec[0..32], to points v_vec[0..16], v_vec[16..32], v_vec[32..48], and
+        // v_vec[48..64] of the 32-point MDCT. The result is depicted graphically in the plot
+        // labelled v_vec below.
         //
-        // Finally, map points [16..38] of the MDCT to points [0..16], and [48..64] of the MDCT, as 
-        // shown in step 3.
+        // d_vec        0              16             32
+        //              .               .              .
+        //              .     +---------+   +----------+
+        //              +-----+    A    | /     B      |
+        //              +---------------+--------------+
         //
-        //              0              16             32             48              64
-        // Step 1:      .               .              .              .               .
-        //              .               .              .              .               .
-        //              .               .     +--------+   +----------+               .
-        //              .               +-----+   A    | /     B      |               .
-        //              +---------------+--------------+--------------+---------------+
-        //              .               .              .              .               .
-        // Step 2:      .               .              .              .               .
-        //              .               .              .              .               .
-        //              +---------------+--------------+--------------+---------------+
-        //              .               |     -B     / |   -A   +-----+               .
-        //              .               +----------+   +--------+     .               . 
-        //              .               .              .              .               .
-        // Step 3:      .               .              .              .               .
+        // v_vec        0              16             32             48              64
         //              .               .              .              .               .
         //              .   +-----------+              .              .               .
         //              . /      B      |              .              .               .
         //              +---------------+--------------+--------------+---------------+
         //              .               |     -B     / |   -A   +-----+-----+   -A    |
         //              .               +----------+   +--------+     .     +---------+ 
-        //              .               .              .              .               .
         //
-        // Note however that the mappings in steps 2 and 3 have exceptions for boundary cases. 
-        // These exceptions can be seen when plotting the coefficient matricies as mentioned above,
-        // but are listed below for completeness:
+        // Note however that the mappings in the previous step have exceptions for boundary samples.
+        // These exceptions can be seen when plotting the coefficient matricies as mentioned above.
+        // The mapping for boundary samples are as follows:
         //
-        //     1) m[ 0] =  m[32]
-        //     2) m[32] = -m[32]
-        //     3) m[48] = -m[16]
-        //     4) m[16] = 0.0
+        //     1) v_vec[ 0] =  d_vec[16]
+        //     2) v_vec[32] = -d_vec[16]
+        //     3) v_vec[48] = -d_vec[ 0]
+        //     4) v_vec[16] =  0.0
         //
-        // The final algorithm written below combines steps 2 and 3, and excludes the boundaries in
-        // the main loop.
+        // The final algorithm written below performs the copy and flip operations of each 16 sample
+        // quadrant in seperate loops to assist auto-vectorization. The boundary samples are
+        // excluded from these loops and handled manually afterwards.
         //
         // [1] K. Konstantinides, "Fast subband filtering in MPEG audio coding", Signal Processing 
         // Letters IEEE, vol. 1, no. 2, pp. 26-28, 1994.
         //
         // https://ieeexplore.ieee.org/abstract/document/300309
-        dct32(&s_vec, &mut v_vec[16..48]);
+        dct32(&s_vec, &mut d_vec);
 
-        for i in 0..15 {
-            let a = -v_vec[16+i+1];
-            let b = v_vec[48-i-1];
-            v_vec[16-i-1] = b;
-            v_vec[16+i+1] = -b;
-            v_vec[48-i-1] = a;
-            v_vec[48+i+1] = a;
+        for (d, s) in v_vec[48-15..48+ 0].iter_mut().rev().zip(&d_vec[1..16]) {
+            *d = -s;
+        }
+        for (d, s) in v_vec[48+ 1..48+16].iter_mut().zip(&d_vec[1..16]) {
+            *d = -s;
+        }
+        for (d, s) in v_vec[16+ 1..16+16].iter_mut().rev().zip(&d_vec[17..32]) {
+            *d = -s;
+        }
+        for (d, s) in v_vec[1..16].iter_mut().zip(&d_vec[17..32]) {
+            *d = *s;
         }
 
-        v_vec[ 0] = v_vec[32];
-        v_vec[32] = -v_vec[32];
-        v_vec[48] = -v_vec[16];
-        v_vec[16] = 0.0;
+        v_vec[ 0] =  d_vec[16];
+        v_vec[32] = -d_vec[16];
+        v_vec[48] = -d_vec[ 0];
+        v_vec[16] =  0.0;
 
         // Next, as per the specification, build a vector, u_vec, by iterating over the 16 slots in
         // v_vec, and copying the first 32 samples of EVEN numbered v_vec slots, and the last 32
@@ -294,11 +296,16 @@ pub fn synthesis(state: &mut SynthesisState, in_samples: &mut [f32; 576], out: &
         // sample in the PCM block is the summation of the i-th sample in each of the 16 u_vec 
         // slots after being multiplied by the synthesis window.
         //
-        // But wait!
+        // But wait! This is VERY inefficient!
         //
-        // If we reframe the PCM generation step such that instead of iterating j for each i, we
-        // iterate i for each j, then it becomes clear that building u_vec is useless! We can simply
-        // index into v_vec directly and accumulate the final sample value into a scratch buffer.
+        // If PCM sample generation is reframed such that instead of iterating j for every i, i is
+        // iterated through for every j, then it is possible to iterate straight-through
+        // v_vec[j][0..32] and D[32*j..(32*j) + 32] while multiplying and accumulating the
+        // intermediary calculations in a zeroed output vector, o_vec. After iterating over every j,
+        // o_vec can be copied to the output sample buffer, out, in one block.
+        //
+        // Using this method, there is no reason to build u_vec and cache locality is greatly
+        // improved.
         let mut o_vec = [0f32; 32];
 
         for j in 0..8 {
@@ -338,9 +345,7 @@ pub fn synthesis(state: &mut SynthesisState, in_samples: &mut [f32; 576], out: &
 /// on Acoustics, Speech, and Signal Processing, vol. 32, no. 6, pp. 1243-1245, 1984.
 ///
 /// https://ieeexplore.ieee.org/document/1164443
-fn dct32(x: &[f32; 32], y: &mut [f32]) {
-    debug_assert!(y.len() == 32);
-
+fn dct32(x: &[f32; 32], y: &mut [f32; 32]) {
     // The following tables are pre-computed values of the the following equation:
     //
     // c[i] = 1.0 / [2.0 * cos((PI / N) * (2*i + 1))]    for i = 0..N/2

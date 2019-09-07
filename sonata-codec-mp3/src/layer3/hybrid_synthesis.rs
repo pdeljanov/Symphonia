@@ -519,6 +519,8 @@ mod imdct36 {
     ///
     /// https://ieeexplore.ieee.org/document/974789
     pub fn imdct36(x: &[f32], y: &mut [f32; 36]) {
+        debug_assert!(x.len() == 18);
+
         let mut dct = [0f32; 18];
 
         dct_iv(x, &mut dct);
