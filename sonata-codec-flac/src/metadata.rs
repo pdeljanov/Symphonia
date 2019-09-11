@@ -10,8 +10,10 @@ use std::num::NonZeroU32;
 use sonata_core::audio::Channels;
 use sonata_core::errors::{Result, decode_error};
 use sonata_core::formats::{Cue, CuePoint, ColorMode, SeekIndex, Size, Visual, VendorData};
-use sonata_core::tags::{StandardTagKey, Tag, id3v2, vorbis};
+use sonata_core::tags::{StandardTagKey, Tag};
 use sonata_core::io::*;
+
+use sonata_metadata::{id3v2, vorbis};
 
 pub enum MetadataBlockType {
     StreamInfo,
@@ -458,7 +460,7 @@ pub fn read_picture_block<B : Bytestream>(reader: &mut B, visuals: &mut Vec<Visu
         dimensions,
         bits_per_pixel,
         color_mode,
-        usage: id3v2::visual_key_from_apic(type_enc),
+        usage: id3v2::util::visual_key_from_apic(type_enc),
         tags,
         data,
     });

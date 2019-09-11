@@ -11,5 +11,6 @@ keywords = ["audio", "codec", "decoder", "flac"]
 edition = "2018"
 
 [dependencies]
-sonata-core = { version="*", path = "../sonata-core" }
 md5 = "0.6.1"
+sonata-core = { version="*", path = "../sonata-core" }
+sonata-metadata = { version="*", path = "../sonata-metadata" }

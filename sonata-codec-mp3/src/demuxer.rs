@@ -17,7 +17,7 @@ use sonata_core::formats::{Cue, ProbeDepth, ProbeResult, Stream, Visual};
 use sonata_core::tags::Tag;
 use sonata_core::io::*;
 
-use crate::id3v2;
+use sonata_metadata::id3v2;
 
 /// MPEG1 and MPEG2 audio frame reader.
 /// 

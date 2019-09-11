@@ -21,8 +21,5 @@ mod huffman_tables;
 mod layer3;
 mod synthesis;
 
-pub mod id3v1;
-pub mod id3v2;
-
 pub use decoder::Mp3Decoder;
 pub use demuxer::Mp3Reader;

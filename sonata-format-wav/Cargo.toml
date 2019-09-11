@@ -12,3 +12,4 @@ edition = "2018"
 
 [dependencies]
 sonata-core = { version="*", path = "../sonata-core" }
+sonata-metadata = { version="*", path = "../sonata-metadata" }

@@ -2,10 +2,11 @@
 
 members = [
     "sonata",
-    "sonata-core",
-    "sonata-codec-flac",
-    "sonata-codec-mp3",
-    "sonata-codec-pcm",
-    "sonata-format-wav",
     "sonata-play",
+    "sonata-metadata",
+    "sonata-format-wav",
+    "sonata-core",
+    "sonata-codec-pcm",
+    "sonata-codec-mp3",
+    "sonata-codec-flac",
 ]

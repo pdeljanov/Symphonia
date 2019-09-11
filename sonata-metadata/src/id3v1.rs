@@ -5,6 +5,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+//! An ID3v1 metadata reader.
+
 use sonata_core::errors::{Result, unsupported_error};
 use sonata_core::tags::{StandardTagKey, Tag};
 use sonata_core::io::Bytestream;

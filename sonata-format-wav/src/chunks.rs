@@ -22,7 +22,9 @@ use sonata_core::codecs::{
 use sonata_core::codecs::CodecType;
 use sonata_core::errors::{Result, decode_error, unsupported_error};
 use sonata_core::io::Bytestream;
-use sonata_core::tags::{Tag, riff};
+use sonata_core::tags::Tag;
+
+use sonata_metadata::riff;
 
 /// `ParseChunkTag` implements `parse_tag` to map between the 4-byte chunk identifier and the enumeration 
 pub trait ParseChunkTag : Sized {

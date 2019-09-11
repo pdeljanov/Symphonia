@@ -5,6 +5,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+//! An ID3v2 metadata reader.
+
 use sonata_core::errors::{Result, decode_error, unsupported_error};
 use sonata_core::io::*;
 use sonata_core::tags::Tag;
@@ -339,4 +341,35 @@ pub fn read_id3v2<B: Bytestream>(reader: &mut B) -> Result<Vec<Tag>> {
     else {
         read_id3v2_body(scoped, &header)
     }
+}
+
+pub mod util {
+    use sonata_core::tags::StandardVisualKey;
+
+    /// Try to get a `StandardVisualKey` from the given APIC block identifier.
+    pub fn visual_key_from_apic(apic: u32) -> Option<StandardVisualKey> {
+        match apic {
+            0x01 => Some(StandardVisualKey::FileIcon),
+            0x02 => Some(StandardVisualKey::OtherIcon),
+            0x03 => Some(StandardVisualKey::FrontCover),
+            0x04 => Some(StandardVisualKey::BackCover),
+            0x05 => Some(StandardVisualKey::Leaflet),
+            0x06 => Some(StandardVisualKey::Media),
+            0x07 => Some(StandardVisualKey::LeadArtistPerformerSoloist),
+            0x08 => Some(StandardVisualKey::ArtistPerformer),
+            0x09 => Some(StandardVisualKey::Conductor),
+            0x0a => Some(StandardVisualKey::BandOrchestra),
+            0x0b => Some(StandardVisualKey::Composer),
+            0x0c => Some(StandardVisualKey::Lyricist),
+            0x0d => Some(StandardVisualKey::RecordingLocation),
+            0x0e => Some(StandardVisualKey::RecordingSession),
+            0x0f => Some(StandardVisualKey::Performance),
+            0x10 => Some(StandardVisualKey::ScreenCapture),
+            0x12 => Some(StandardVisualKey::Illustration),
+            0x13 => Some(StandardVisualKey::BandArtistLogo),
+            0x14 => Some(StandardVisualKey::PublisherStudioLogo),
+            _ => None,
+        }
+    }
+
 }
