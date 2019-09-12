@@ -346,8 +346,8 @@ pub fn read_id3v2<B: Bytestream>(reader: &mut B) -> Result<Vec<Tag>> {
 pub mod util {
     use sonata_core::tags::StandardVisualKey;
 
-    /// Try to get a `StandardVisualKey` from the given APIC block identifier.
-    pub fn visual_key_from_apic(apic: u32) -> Option<StandardVisualKey> {
+    /// Try to get a `StandardVisualKey` from the APIC picture type identifier.
+    pub fn apic_picture_type_to_visual_key(apic: u32) -> Option<StandardVisualKey> {
         match apic {
             0x01 => Some(StandardVisualKey::FileIcon),
             0x02 => Some(StandardVisualKey::OtherIcon),

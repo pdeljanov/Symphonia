@@ -89,7 +89,8 @@ fn flac_channels_to_channels(channels: u32) -> Channels {
 pub struct StreamInfo {
     /// The minimum and maximum number of decoded samples per block of audio.
     pub block_sample_len: (u16, u16),
-    /// The minimum and maximum byte length of an encoded block (frame) of audio. May be 0 if unknown.
+    /// The minimum and maximum byte length of an encoded block (frame) of audio. Either value may
+    /// be 0 if unknown.
     pub frame_byte_len: (u32, u32),
     /// The sample rate in Hz.
     pub sample_rate: u32,
@@ -132,10 +133,13 @@ impl StreamInfo {
         // Read the frame byte length bounds.
         info.frame_byte_len = (reader.read_be_u24()?, reader.read_be_u24()?);
 
-        // Validate the maximum frame byte length is greater than or equal to the minimum frame byte length if both are 
-        // known. A value of 0 for either indicates the respective byte length is unknown. Valid values are in the 
-        // range [0, (2^24) - 1] bytes.
-        if info.frame_byte_len.0 > 0 && info.frame_byte_len.1 > 0 && info.frame_byte_len.1 < info.frame_byte_len.0 {
+        // Validate the maximum frame byte length is greater than or equal to the minimum frame byte
+        // length if both are known. A value of 0 for either indicates the respective byte length is
+        // unknown. Valid values are in the range [0, (2^24) - 1] bytes.
+        if info.frame_byte_len.0 > 0 
+            && info.frame_byte_len.1 > 0 
+            && info.frame_byte_len.1 < info.frame_byte_len.0
+        {
             return decode_error("Maximum frame length cannot be less than the minimum frame length.");
         }
 
@@ -179,31 +183,17 @@ impl StreamInfo {
 }
 
 pub fn read_comment_block<B : Bytestream>(reader: &mut B, tags: &mut Vec<Tag>) -> Result<()> {
-    // Get the vendor string length in bytes.
-    let vendor_length = reader.read_u32()?;
-
-    // Ignore the vendor string.
-    reader.ignore_bytes(u64::from(vendor_length))?;
-
-    // Read the number of comments.
-    let n_comments = reader.read_u32()? as usize;
-
-    for _ in 0..n_comments {
-        // Read the comment length in bytes.
-        let comment_length = reader.read_u32()?;
-
-        // Read the comment string.
-        let mut comment_byte = vec![0; comment_length as usize];
-        reader.read_buf_bytes(&mut comment_byte)?;
-
-        // Parse comment as UTF-8 and add to list.
-        tags.push(vorbis::parse(&String::from_utf8_lossy(&comment_byte).to_string()));
-    }
-
+    tags.append(&mut vorbis::read_comment_no_framing(reader)?);
     Ok(())
 }
 
-pub fn read_seek_table_block<B : Bytestream>(reader: &mut B, block_length: u32, table: &mut SeekIndex) -> Result<()> {
+pub fn read_seek_table_block<B : Bytestream>(
+    reader: &mut B,
+    block_length: u32,
+    table: &mut SeekIndex
+) -> Result<()> {
+    // The number of seek table entries is always the block length divided by the length of a single
+    // entry, 18 bytes.
     let count = block_length / 18;
 
     for _ in 0..count {
@@ -223,8 +213,8 @@ pub fn read_seek_table_block<B : Bytestream>(reader: &mut B, block_length: u32, 
     Ok(())
 }
 
-/// Converts a string of bytes to an ASCII string if all characters are within the printable ASCII range. If a null
-/// byte is encounted, the string terminates at that point.
+/// Converts a string of bytes to an ASCII string if all characters are within the printable ASCII
+/// range. If a null byte is encounted, the string terminates at that point.
 fn printable_ascii_to_string(bytes: &[u8]) -> Option<String> {
     let mut result = String::with_capacity(bytes.len());
 
@@ -289,8 +279,8 @@ pub fn read_cuesheet_block<B: Bytestream>(reader: &mut B, cues: &mut Vec<Cue>) -
 fn read_cuesheet_track<B: Bytestream>(reader: &mut B, is_cdda: bool, cues: &mut Vec<Cue>) -> Result<()> {
     let n_offset_samples = reader.read_be_u64()?;
 
-    // For a CD-DA cuesheet, the track sample offset is the same as the first index (INDEX 00 or INDEX 01) on the 
-    // CD. Therefore, the offset must be a multiple of 588 samples 
+    // For a CD-DA cuesheet, the track sample offset is the same as the first index (INDEX 00 or
+    // INDEX 01) on the CD. Therefore, the offset must be a multiple of 588 samples
     // (588 samples = 44100 samples/sec * 1/75th of a sec).
     if is_cdda && n_offset_samples % 588 != 0 {
         return decode_error("Cuesheet track sample offset is not a multiple of 588 for CD-DA.");
@@ -298,12 +288,14 @@ fn read_cuesheet_track<B: Bytestream>(reader: &mut B, is_cdda: bool, cues: &mut 
 
     let number = u32::from(reader.read_u8()?);
 
-    // A track number of 0 is disallowed in all cases. For CD-DA cuesheets, track 0 is reserved for lead-in.
+    // A track number of 0 is disallowed in all cases. For CD-DA cuesheets, track 0 is reserved for
+    // lead-in.
     if number == 0 {
         return decode_error("Cuesheet track number of 0 not allowed.");
     }
 
-    // For CD-DA cuesheets, only track numbers 1-99 are allowed for regular tracks and 170 for lead-out.
+    // For CD-DA cuesheets, only track numbers 1-99 are allowed for regular tracks and 170 for
+    // lead-out.
     if is_cdda && number > 99 && number != 170 {
         return decode_error("Cuesheet track numbers greater than 99 are not allowed for CD-DA.");
     }
@@ -316,8 +308,8 @@ fn read_cuesheet_track<B: Bytestream>(reader: &mut B, is_cdda: bool, cues: &mut 
         None => return decode_error("Cuesheet track ISRC contains invalid characters."),
     };
 
-    // Next 14 bytes are reserved. However, the first two bits are flags. Consume the reserved bytes in u16 chunks 
-    // a minor performance improvement.
+    // Next 14 bytes are reserved. However, the first two bits are flags. Consume the reserved bytes
+    // in u16 chunks a minor performance improvement.
     let flags = reader.read_be_u16()?;
 
     // These values are contained in the Cuesheet but have no analogue in Sonata.
@@ -385,8 +377,9 @@ fn read_cuesheet_track_index<B: Bytestream>(reader: &mut B, is_cdda: bool) -> Re
 }
 
 pub fn read_application_block<B : Bytestream>(reader: &mut B, block_length: u32) -> Result<VendorData> {
-    // Read the application identifier. Usually this is just 4 ASCII characters, but it is not limited to that. 
-    // Non-printable ASCII characters must be escaped to create a valid UTF8 string.
+    // Read the application identifier. Usually this is just 4 ASCII characters, but it is not
+    // limited to that. Non-printable ASCII characters must be escaped to create a valid UTF8
+    // string.
     let ident_buf = reader.read_quad_bytes()?;
     let ident = String::from_utf8(
         ident_buf.as_ref()
@@ -425,7 +418,9 @@ pub fn read_picture_block<B : Bytestream>(reader: &mut B, visuals: &mut Vec<Visu
 
     // Convert description bytes into a standard Vorbis DESCRIPTION tag.
     let mut tags = Vec::<Tag>::new();
-    tags.push(Tag::new(Some(StandardTagKey::Description), "DESCRIPTION", &String::from_utf8_lossy(&desc_buf)));
+    tags.push(
+        Tag::new(Some(StandardTagKey::Description), "DESCRIPTION", &String::from_utf8_lossy(&desc_buf))
+    );
 
     // Read the width, and height of the visual.
     let width = reader.read_be_u32()?;
@@ -442,8 +437,8 @@ pub fn read_picture_block<B : Bytestream>(reader: &mut B, visuals: &mut Vec<Visu
     // Read bits-per-pixel of the visual.
     let bits_per_pixel = NonZeroU32::new(reader.read_be_u32()?);
 
-    // Indexed colours is only valid for image formats that use an indexed colour palette. If it is 0, the image 
-    // does not used indexed colours.
+    // Indexed colours is only valid for image formats that use an indexed colour palette. If it is
+    // 0, the image does not used indexed colours.
     let indexed_colours_enc = reader.read_be_u32()?;
 
     let color_mode = match indexed_colours_enc {
@@ -460,7 +455,7 @@ pub fn read_picture_block<B : Bytestream>(reader: &mut B, visuals: &mut Vec<Visu
         dimensions,
         bits_per_pixel,
         color_mode,
-        usage: id3v2::util::visual_key_from_apic(type_enc),
+        usage: id3v2::util::apic_picture_type_to_visual_key(type_enc),
         tags,
         data,
     });
