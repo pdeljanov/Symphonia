@@ -8,13 +8,14 @@
 use std::default::Default;
 use std::fmt;
 use std::io;
-use std::num::NonZeroU32;
 
 use crate::audio::Timestamp;
 use crate::codecs::CodecParameters;
 use crate::errors::Result;
 use crate::io::{MediaSource, MediaSourceStream, Bytestream};
-use crate::tags::{StandardVisualKey, Tag};
+use crate::tags::Tag;
+
+pub use crate::tags::{ColorMode, Size, Visual, VendorData};
 
 /// The verbosity of log messages produced by a decoder or demuxer.
 pub enum Verbosity {
@@ -100,49 +101,6 @@ pub enum ProbeDepth {
     Deep
 }
 
-/// A 2D (width and height) size type.
-#[derive(Copy, Clone)]
-pub struct Size {
-    /// The width.
-    pub width: u32,
-    /// The height.
-    pub height: u32,
-}
-
-/// `ColorMode` indicates how the color of a pixel is encoded in a `Visual`.
-pub enum ColorMode {
-    /// Each pixel in the `Visual` stores color information.
-    Discrete,
-    /// Each pixel in the `Visual` stores an index into a color palette containing the color
-    /// information. The value stored by this variant indicates the number of colors in the color
-    /// palette.
-    Indexed(NonZeroU32),
-}
-
-/// A `Visual` is any 2D graphic that is embedded within a media format.
-pub struct Visual {
-    /// The Media Type (formerly known as the MIME Type) used to encode the `Visual`.
-    pub media_type: String,
-    /// The dimensions of the `Visual`.
-    ///
-    /// Note: This value may not be accurate as it comes from metadata, not the `Visual` itself.
-    pub dimensions: Option<Size>,
-    /// The number of bits-per-pixel (aka bit-depth) of the unencoded image.
-    ///
-    /// Note: This value may not be accurate as it comes from metadata, not the `Visual` itself.
-    pub bits_per_pixel: Option<NonZeroU32>,
-    /// The color mode of the `Visual`.
-    ///
-    /// Note: This value may not be accurate as it comes from metadata, not the `Visual` itself.
-    pub color_mode: Option<ColorMode>,
-    /// The usage and/or content of the `Visual`.
-    pub usage: Option<StandardVisualKey>,
-    /// Any tags associated with the `Visual`.
-    pub tags: Vec<Tag>,
-    /// The data of the `Visual`, encoded with the `codec` specified above.
-    pub data: Box<[u8]>,
-}
-
 /// A `Cue` is a designated point of time within a media stream.
 ///
 /// A `Cue` may be a mapping from either a source track, a chapter, cuesheet, or a timestamp
@@ -170,14 +128,6 @@ pub struct CuePoint {
     pub start_offset_ts: u64,
     /// A list of `Tag`s associated with the `CuePoint`.
     pub tags: Vec<Tag>,
-}
-
-/// `VendorData` is application specific data embedded within the media format.
-pub struct VendorData {
-    /// A text representation of the vendor's application identifier.
-    pub ident: String,
-    /// The vendor data.
-    pub data: Box<[u8]>,
 }
 
 /// A `SeekPoint` is a mapping between a sample or frame number to byte offset within a media
@@ -397,6 +347,8 @@ pub trait FormatReader {
     fn cues(&self) -> &[Cue];
 
     //fn vendor_data(&self) -> &[u8];
+
+    //fn metadata(&self) -> &MetadataRevisions;
 
     /// Seek, as closely as possible, to the timestamp requested.
     ///

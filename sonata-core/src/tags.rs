@@ -5,13 +5,17 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+use std::cell::{Ref, RefCell};
+use std::collections::VecDeque;
 use std::fmt;
+use std::num::NonZeroU32;
+use std::ops::Deref;
 
 /// `StandardVisualKey` is an enumation providing standardized keys for common visual dispositions.
 /// A demuxer may assign a `StandardVisualKey` to a `Visual` if the disposition of the attached 
 /// visual is known and can be mapped to a standard key.
 ///
-/// The visual types listed here are derived from, though do not entirely cover, the ID3v2 APIC 
+/// The visual types listed here are derived from, though do not entirely cover, the ID3v2 APIC
 /// frame specification.
 #[derive(Copy, Clone, Debug)]
 pub enum StandardVisualKey {
@@ -188,5 +192,175 @@ impl fmt::Display for Tag {
                 ),
             None => write!(f, "{{ key=\"{}\", value=\"{}\" }}", self.key, self.value),
         }
+    }
+}
+
+/// A 2 dimensional (width and height) size type.
+#[derive(Copy, Clone)]
+pub struct Size {
+    /// The width in pixels.
+    pub width: u32,
+    /// The height in pixels.
+    pub height: u32,
+}
+
+/// `ColorMode` indicates how the color of a pixel is encoded in a `Visual`.
+#[derive(Copy, Clone)]
+pub enum ColorMode {
+    /// Each pixel in the `Visual` stores its own color information.
+    Discrete,
+    /// Each pixel in the `Visual` stores an index into a color palette containing the color
+    /// information. The value stored by this variant indicates the number of colors in the color
+    /// palette.
+    Indexed(NonZeroU32),
+}
+
+/// A `Visual` is any 2 dimensional graphic.
+pub struct Visual {
+    /// The Media Type (MIME Type) used to encode the `Visual`.
+    pub media_type: String,
+    /// The dimensions of the `Visual`.
+    ///
+    /// Note: This value may not be accurate as it comes from metadata, not the embedded graphic
+    /// itself. Consider it only a hint.
+    pub dimensions: Option<Size>,
+    /// The number of bits-per-pixel (aka bit-depth) of the unencoded image.
+    ///
+    /// Note: This value may not be accurate as it comes from metadata, not the embedded graphic
+    /// itself. Consider it only a hint.
+    pub bits_per_pixel: Option<NonZeroU32>,
+    /// The color mode of the `Visual`.
+    ///
+    /// Note: This value may not be accurate as it comes from metadata, not the embedded graphic
+    /// itself. Consider it only a hint.
+    pub color_mode: Option<ColorMode>,
+    /// The usage and/or content of the `Visual`.
+    pub usage: Option<StandardVisualKey>,
+    /// Any tags associated with the `Visual`.
+    pub tags: Vec<Tag>,
+    /// The data of the `Visual`, encoded as per `media_type`.
+    pub data: Box<[u8]>,
+}
+
+/// `VendorData` is any binary metadata that is proprietary to a certain application or vendor.
+pub struct VendorData {
+    /// A text representation of the vendor's application identifier.
+    pub ident: String,
+    /// The vendor data.
+    pub data: Box<[u8]>,
+}
+
+/// `Metadata` is a container for a single discrete revision of metadata information.
+#[derive(Default)]
+pub struct Metadata {
+    tags: Vec<Tag>,
+    visuals: Vec<Visual>,
+    vendor_data: Vec<VendorData>,
+}
+
+impl Metadata {
+    /// Gets an immutable slice to the `Tag`s in this revision.
+    pub fn tags(&self) -> &[Tag] {
+        &self.tags
+    }
+
+    /// Gets an immutable slice to the `Visual`s in this revision.
+    pub fn visuals(&self) -> &[Visual] {
+        &self.visuals
+    }
+
+    /// Gets an immutable slice to the `VendorData` in this revision.
+    pub fn vendor_data(&self) -> &[VendorData] {
+        &self.vendor_data
+    }
+}
+
+/// `MetadataBuilder` is the builder for `Metadata` revisions.
+pub struct MetadataBuilder {
+    metadata: Metadata,
+}
+
+impl MetadataBuilder {
+    /// Add a `Tag` to the metadata.
+    pub fn add_tag(&mut self, tag: Tag) -> &mut Self {
+        self.metadata.tags.push(tag);
+        self
+    }
+
+    /// Add a `Visual` to the metadata.
+    pub fn add_visual(&mut self, visual: Visual) -> &mut Self {
+        self.metadata.visuals.push(visual);
+        self
+    }
+
+    /// Add `VendorData` to the metadata.
+    pub fn add_vendor_data(&mut self, vendor_data: VendorData) -> &mut Self {
+        self.metadata.vendor_data.push(vendor_data);
+        self
+    }
+
+    /// Yield the constructed `Metadata` revision.
+    pub fn metdata(self) -> Metadata {
+        self.metadata
+    }
+}
+
+/// An immutable reference to a `Metadata` revision.
+pub struct MetadataRef<'a> {
+    guard: Ref<'a, VecDeque<Metadata>>,
+}
+
+impl<'a> Deref for MetadataRef<'a> {
+    type Target = Metadata;
+
+    fn deref(&self) -> &Metadata {
+        // MetadataQueue should never instantiate a MetadataRef if there is no Metadata struct
+        // enqueued.
+        &self.guard.front().unwrap()
+    }
+}
+
+/// `MetadataQueue` is a container for time-ordered `Metadata` revisions.
+#[derive(Default)]
+pub struct MetadataQueue {
+    queue: RefCell<VecDeque<Metadata>>,
+}
+
+impl MetadataQueue {
+    /// Returns `true` if the current metadata revision is the newest, `false` otherwise.
+    pub fn is_latest(&self) -> bool {
+        self.queue.borrow().len() < 2
+    }
+
+    /// Gets an immutable reference to the current, and therefore oldest, revision of the metadata.
+    pub fn current(&self) -> Option<MetadataRef> {
+        let queue = self.queue.borrow();
+
+        if queue.len() > 0 {
+            Some(MetadataRef { guard: queue })
+        }
+        else {
+            None
+        }
+    }
+
+    /// If there are newer `Metadata` revisions, advances the `MetadataQueue` by discarding the
+    /// current revision and replacing it with the next revision, returning the discarded
+    /// `Metadata`. When there are no newer revisions, `None` is returned. As such, `pop` will never
+    /// completely empty the queue.
+    pub fn pop(&self) -> Option<Metadata> {
+        let mut queue = self.queue.borrow_mut(); 
+
+        if queue.len() > 1 {
+            queue.pop_front()
+        }
+        else {
+            None
+        }
+    }
+
+    /// Pushes a new `Metadata` revision onto the queue.
+    pub fn push(&mut self, rev: Metadata) {
+        self.queue.borrow_mut().push_back(rev);
     }
 }
