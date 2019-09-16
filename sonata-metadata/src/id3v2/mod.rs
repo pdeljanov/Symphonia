@@ -9,7 +9,7 @@
 
 use sonata_core::errors::{Result, decode_error, unsupported_error};
 use sonata_core::io::*;
-use sonata_core::tags::MetadataBuilder;
+use sonata_core::meta::MetadataBuilder;
 
 mod frames;
 mod unsync;
@@ -343,7 +343,7 @@ pub fn read_id3v2<B: Bytestream>(reader: &mut B, metadata: &mut MetadataBuilder)
 }
 
 pub mod util {
-    use sonata_core::tags::StandardVisualKey;
+    use sonata_core::meta::StandardVisualKey;
 
     /// Try to get a `StandardVisualKey` from the APIC picture type identifier.
     pub fn apic_picture_type_to_visual_key(apic: u32) -> Option<StandardVisualKey> {

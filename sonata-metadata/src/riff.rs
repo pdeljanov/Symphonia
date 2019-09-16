@@ -9,7 +9,7 @@
 
 use std::collections::HashMap;
 use lazy_static::lazy_static;
-use sonata_core::tags::{Tag, StandardTagKey};
+use sonata_core::meta::{Tag, StandardTagKey};
 
 lazy_static! {
     static ref RIFF_INFO_MAP: HashMap<&'static str, StandardTagKey> = {

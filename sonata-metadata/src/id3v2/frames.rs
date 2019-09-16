@@ -4,10 +4,6 @@
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
-use sonata_core::errors::{Result, unsupported_error, decode_error};
-use sonata_core::io::{Bytestream, BufStream, FiniteStream};
-use sonata_core::tags::{StandardTagKey, Tag};
-
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::io;
@@ -15,6 +11,10 @@ use std::str;
 
 use lazy_static::lazy_static;
 use encoding_rs::UTF_16BE;
+
+use sonata_core::errors::{Result, unsupported_error, decode_error};
+use sonata_core::io::{Bytestream, BufStream, FiniteStream};
+use sonata_core::meta::{StandardTagKey, Tag};
 
 use super::unsync::{decode_unsynchronisation, read_syncsafe_leq32};
 

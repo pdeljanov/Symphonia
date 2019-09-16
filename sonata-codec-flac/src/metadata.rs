@@ -7,11 +7,12 @@
 
 use std::ascii;
 use std::num::NonZeroU32;
+
 use sonata_core::audio::Channels;
 use sonata_core::errors::{Result, decode_error};
 use sonata_core::formats::{Cue, CuePoint, SeekIndex};
-use sonata_core::tags::{ColorMode, MetadataBuilder, Size, StandardTagKey, Tag, VendorData, Visual};
 use sonata_core::io::*;
+use sonata_core::meta::{ColorMode, MetadataBuilder, Size, StandardTagKey, Tag, VendorData, Visual};
 
 use sonata_metadata::{id3v2, vorbis};
 

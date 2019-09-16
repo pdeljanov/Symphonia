@@ -12,10 +12,10 @@ use sonata_core::support_format;
 use sonata_core::audio::Timestamp;
 use sonata_core::codecs::{CodecParameters, CODEC_TYPE_MP3};
 use sonata_core::errors::Result;
-use sonata_core::formats::{FormatDescriptor, FormatOptions, FormatReader, Packet};
 use sonata_core::formats::{Cue, ProbeDepth, ProbeResult, Stream};
-use sonata_core::tags::{MetadataQueue, MetadataBuilder};
+use sonata_core::formats::{FormatDescriptor, FormatOptions, FormatReader, Packet};
 use sonata_core::io::*;
+use sonata_core::meta::{MetadataQueue, MetadataBuilder};
 
 use sonata_metadata::id3v2;
 

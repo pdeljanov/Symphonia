@@ -20,7 +20,7 @@ use sonata::core::audio::*;
 use sonata::core::conv::dither::DitherType;
 use sonata::core::codecs::DecoderOptions;
 use sonata::core::formats::{Cue, FormatReader, Hint, FormatOptions, ProbeDepth, ProbeResult, Stream};
-use sonata::core::tags::{ColorMode, Tag, Visual};
+use sonata::core::meta::{ColorMode, Tag, Visual};
 
 #[cfg(not(target_os = "linux"))]
 use sonata::core::errors::unsupported_error;

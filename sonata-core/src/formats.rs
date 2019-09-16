@@ -5,6 +5,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+//! The `format` module provides the traits and support structures necessary to implement media
+//! demuxers.
+
 use std::default::Default;
 use std::fmt;
 use std::io;
@@ -13,7 +16,7 @@ use crate::audio::Timestamp;
 use crate::codecs::CodecParameters;
 use crate::errors::Result;
 use crate::io::{Bytestream, MediaSource, MediaSourceStream};
-use crate::tags::{MetadataQueue, Tag};
+use crate::meta::{MetadataQueue, Tag};
 
 /// The verbosity of log messages produced by a decoder or demuxer.
 pub enum Verbosity {

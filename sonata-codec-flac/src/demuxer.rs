@@ -14,10 +14,10 @@ use sonata_core::support_format;
 use sonata_core::audio::Timestamp;
 use sonata_core::codecs::{CODEC_TYPE_FLAC, CodecParameters};
 use sonata_core::errors::{Result, decode_error, seek_error, SeekErrorKind};
-use sonata_core::formats::{FormatDescriptor, FormatOptions, FormatReader, Packet};
 use sonata_core::formats::{Cue, ProbeDepth, ProbeResult, SeekIndex, SeekSearchResult, Stream};
-use sonata_core::tags::{MetadataQueue, MetadataBuilder};
+use sonata_core::formats::{FormatDescriptor, FormatOptions, FormatReader, Packet};
 use sonata_core::io::*;
+use sonata_core::meta::{MetadataQueue, MetadataBuilder};
 
 use super::decoder::PacketParser;
 use super::metadata::*;

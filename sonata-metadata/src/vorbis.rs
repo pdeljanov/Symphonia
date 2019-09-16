@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use lazy_static::lazy_static;
 use sonata_core::errors::Result;
 use sonata_core::io::Bytestream;
-use sonata_core::tags::{MetadataBuilder, StandardTagKey, Tag};
+use sonata_core::meta::{MetadataBuilder, StandardTagKey, Tag};
 
 lazy_static! {
     static ref VORBIS_COMMENT_MAP: HashMap<&'static str, StandardTagKey> = {

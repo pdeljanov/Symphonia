@@ -22,7 +22,7 @@ use sonata_core::codecs::{
 use sonata_core::codecs::CodecType;
 use sonata_core::errors::{Result, decode_error, unsupported_error};
 use sonata_core::io::Bytestream;
-use sonata_core::tags::Tag;
+use sonata_core::meta::Tag;
 
 use sonata_metadata::riff;
 

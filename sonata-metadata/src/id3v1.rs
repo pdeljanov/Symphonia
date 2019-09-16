@@ -8,8 +8,8 @@
 //! An ID3v1 metadata reader.
 
 use sonata_core::errors::{Result, unsupported_error};
-use sonata_core::tags::{MetadataBuilder, StandardTagKey, Tag};
 use sonata_core::io::Bytestream;
+use sonata_core::meta::{MetadataBuilder, StandardTagKey, Tag};
 
 static GENRES: &[&str] = &[
     // Standard Genres as per ID3v1 specificaation

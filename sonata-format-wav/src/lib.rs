@@ -14,10 +14,10 @@ use sonata_core::support_format;
 use sonata_core::audio::Timestamp;
 use sonata_core::codecs::CodecParameters;
 use sonata_core::errors::{Result, seek_error, SeekErrorKind};
-use sonata_core::formats::{FormatDescriptor, FormatOptions, FormatReader, Packet};
 use sonata_core::formats::{Cue, ProbeDepth, ProbeResult, Stream};
-use sonata_core::tags::{MetadataBuilder, MetadataQueue};
+use sonata_core::formats::{FormatDescriptor, FormatOptions, FormatReader, Packet};
 use sonata_core::io::*;
+use sonata_core::meta::{MetadataBuilder, MetadataQueue};
 
 mod chunks;
 
