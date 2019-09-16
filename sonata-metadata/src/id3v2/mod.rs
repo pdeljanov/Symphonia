@@ -9,7 +9,7 @@
 
 use sonata_core::errors::{Result, decode_error, unsupported_error};
 use sonata_core::io::*;
-use sonata_core::tags::Tag;
+use sonata_core::tags::MetadataBuilder;
 
 mod frames;
 mod unsync;
@@ -267,8 +267,9 @@ fn read_id3v2p4_extended_header<B: Bytestream>(reader: &mut B) -> Result<Extende
 
 fn read_id3v2_body<B: Bytestream + FiniteStream>(
     mut reader: B,
-    header: &Header
-) -> Result<Vec<Tag>> {
+    header: &Header,
+    metadata: &mut MetadataBuilder,
+) -> Result<()> {
     // If there is an extended header, read and parse it based on the major version of the tag.
     if header.has_extended_header {
         let extended = match header.major_version {
@@ -285,8 +286,6 @@ fn read_id3v2_body<B: Bytestream + FiniteStream>(
         _     => unreachable!(),
     };
 
-    let mut tags = Vec::<Tag>::new();
-
     loop {
         // Read frames based on the major version of the tag.
         let frame = match header.major_version {
@@ -301,11 +300,11 @@ fn read_id3v2_body<B: Bytestream + FiniteStream>(
             FrameResult::Padding => break,
             // A frame was parsed into a tag, add it to the tag collection.
             FrameResult::Tag(tag) => {
-                tags.push(tag);
+                metadata.add_tag(tag);
             },
             // A frame was parsed into multiple tags, add them all to the tag collection.
             FrameResult::MultipleTags(multi_tags) => {
-                tags.extend(multi_tags);
+                for tag in multi_tags { metadata.add_tag(tag); }
             },
             // An unknown frame was encountered, just ignore it.
             FrameResult::UnsupportedFrame(ref id) => {
@@ -319,10 +318,10 @@ fn read_id3v2_body<B: Bytestream + FiniteStream>(
         }
     }
 
-    Ok(tags)
+    Ok(())
 }
 
-pub fn read_id3v2<B: Bytestream>(reader: &mut B) -> Result<Vec<Tag>> {
+pub fn read_id3v2<B: Bytestream>(reader: &mut B, metadata: &mut MetadataBuilder) -> Result<()> {
     // Read the (sorta) version agnostic tag header.
     let header = read_id3v2_header(reader)?;
 
@@ -334,12 +333,12 @@ pub fn read_id3v2<B: Bytestream>(reader: &mut B) -> Result<Vec<Tag>> {
     // If the unsynchronisation flag is set in the header, all tag data must be passed through the 
     // unsynchronisation decoder before being read for verions < 4 of ID3v2.
     if header.unsynchronisation && header.major_version < 4 {
-        read_id3v2_body(UnsyncStream::new(scoped), &header)
+        read_id3v2_body(UnsyncStream::new(scoped), &header, metadata)
     }
     // Otherwise, read the data as-is. Individual frames may be unsynchronised for major versions 
     // >= 4.
     else {
-        read_id3v2_body(scoped, &header)
+        read_id3v2_body(scoped, &header, metadata)
     }
 }
 

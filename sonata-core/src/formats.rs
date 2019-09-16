@@ -12,10 +12,8 @@ use std::io;
 use crate::audio::Timestamp;
 use crate::codecs::CodecParameters;
 use crate::errors::Result;
-use crate::io::{MediaSource, MediaSourceStream, Bytestream};
-use crate::tags::Tag;
-
-pub use crate::tags::{ColorMode, Size, Visual, VendorData};
+use crate::io::{Bytestream, MediaSource, MediaSourceStream};
+use crate::tags::{MetadataQueue, Tag};
 
 /// The verbosity of log messages produced by a decoder or demuxer.
 pub enum Verbosity {
@@ -322,7 +320,6 @@ impl Stream {
 /// filtering. Seeking will invalidate the assumed state of any decoder processing packets from
 /// `FormatReader` and should be reset after a successful seek operation.
 pub trait FormatReader {
-
     /// Instantiates the `FormatReader` with the provided `FormatOptions`.
     fn open(source: MediaSourceStream, options: &FormatOptions) -> Self
     where
@@ -337,18 +334,11 @@ pub trait FormatReader {
     /// complexity of the probe can be set based on the caller's use-case.
     fn probe(&mut self, depth: ProbeDepth) -> Result<ProbeResult>;
 
-    /// Gets a list of all `Tag`s.
-    fn tags(&self) -> &[Tag];
-
-    /// Gets a list of all `Visual`s.
-    fn visuals(&self) -> &[Visual];
-
     /// Gets a list of all `Cue`s.
     fn cues(&self) -> &[Cue];
 
-    //fn vendor_data(&self) -> &[u8];
-
-    //fn metadata(&self) -> &MetadataRevisions;
+    /// Gets the metadata revision queue.
+    fn metadata(&self) -> &MetadataQueue;
 
     /// Seek, as closely as possible, to the timestamp requested.
     ///

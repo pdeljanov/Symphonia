@@ -15,8 +15,8 @@ use sonata_core::audio::Timestamp;
 use sonata_core::codecs::CodecParameters;
 use sonata_core::errors::{Result, seek_error, SeekErrorKind};
 use sonata_core::formats::{FormatDescriptor, FormatOptions, FormatReader, Packet};
-use sonata_core::formats::{Cue, ProbeDepth, ProbeResult, Stream, Visual};
-use sonata_core::tags::Tag;
+use sonata_core::formats::{Cue, ProbeDepth, ProbeResult, Stream};
+use sonata_core::tags::{MetadataBuilder, MetadataQueue};
 use sonata_core::io::*;
 
 mod chunks;
@@ -34,9 +34,8 @@ const WAVE_MAX_FRAMES_PER_PACKET: u64 = 4096;
 pub struct WavReader {
     reader: MediaSourceStream,
     streams: Vec<Stream>,
-    tags: Vec<Tag>,
-    visuals: Vec<Visual>,
     cues: Vec<Cue>,
+    metadata: MetadataQueue,
     frame_len: u16,
     data_offset: u64,
 }
@@ -46,22 +45,23 @@ impl WavReader {
     fn read_metadata(&mut self, len: u32) -> Result<()> {
         let mut info_list = ChunksReader::<RiffInfoListChunks>::new(len);
 
+        let mut metadata_builder = MetadataBuilder::new();
+
         loop {
             let chunk = info_list.next(&mut self.reader)?;
 
-            if chunk.is_none() {
-                break;
+            if let Some(RiffInfoListChunks::Info(info)) = chunk {
+                let parsed_info = info.parse(&mut self.reader)?;
+                metadata_builder.add_tag(parsed_info.tag); 
             }
-
-            match chunk.unwrap() {
-                RiffInfoListChunks::Info(nfo) => { 
-                    let info = nfo.parse(&mut self.reader)?;
-                    self.tags.push(info.tag); 
-                }
+            else {
+                break;
             }
         }
         
         info_list.finish(&mut self.reader)?;
+
+        self.metadata.push(metadata_builder.metadata());
 
         Ok(())
     }
@@ -74,9 +74,8 @@ impl FormatReader for WavReader {
         WavReader {
             reader: source,
             streams: Vec::new(),
-            tags: Vec::new(),
-            visuals: Vec::new(),
             cues: Vec::new(),
+            metadata: Default::default(),
             frame_len: 0,
             data_offset: 0,
         }
@@ -95,12 +94,8 @@ impl FormatReader for WavReader {
         Ok(Packet::new_direct(0, &mut self.reader))
     }
 
-    fn tags(&self) -> &[Tag] {
-        &self.tags
-    }
-
-    fn visuals(&self) -> &[Visual] {
-        &self.visuals
+    fn metadata(&self) -> &MetadataQueue {
+        &self.metadata
     }
 
     fn cues(&self) -> &[Cue] {

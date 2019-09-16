@@ -281,6 +281,13 @@ pub struct MetadataBuilder {
 }
 
 impl MetadataBuilder {
+    /// Instantiate a new `MetadataBuilder`.
+    pub fn new() -> Self {
+        MetadataBuilder {
+            metadata: Default::default(),
+        }
+    }
+
     /// Add a `Tag` to the metadata.
     pub fn add_tag(&mut self, tag: Tag) -> &mut Self {
         self.metadata.tags.push(tag);
@@ -300,7 +307,7 @@ impl MetadataBuilder {
     }
 
     /// Yield the constructed `Metadata` revision.
-    pub fn metdata(self) -> Metadata {
+    pub fn metadata(self) -> Metadata {
         self.metadata
     }
 }

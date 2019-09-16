@@ -8,7 +8,7 @@
 //! An ID3v1 metadata reader.
 
 use sonata_core::errors::{Result, unsupported_error};
-use sonata_core::tags::{StandardTagKey, Tag};
+use sonata_core::tags::{MetadataBuilder, StandardTagKey, Tag};
 use sonata_core::io::Bytestream;
 
 static GENRES: &[&str] = &[
@@ -209,7 +209,7 @@ static GENRES: &[&str] = &[
     "Psybient"
 ];
 
-pub fn read_id3v1<B: Bytestream>(reader: &mut B) -> Result<Vec<Tag>> {
+pub fn read_id3v1<B: Bytestream>(reader: &mut B, metadata: &mut MetadataBuilder) -> Result<()> {
     // Read the "TAG" header.
     let marker = reader.read_triple_bytes()?;
 
@@ -217,33 +217,31 @@ pub fn read_id3v1<B: Bytestream>(reader: &mut B) -> Result<Vec<Tag>> {
         return unsupported_error("Not an ID3v1 tag.");
     }
 
-    let mut tags = Vec::new();
-
     let buf = reader.read_boxed_slice_bytes(125)?;
 
     let title = decode_iso8859_text(&buf[0..30]);
     if !title.is_empty() {
-        tags.push(Tag::new(Some(StandardTagKey::TrackTitle), "TITLE", &title));
+        metadata.add_tag(Tag::new(Some(StandardTagKey::TrackTitle), "TITLE", &title));
     }
 
     let artist = decode_iso8859_text(&buf[30..60]);
     if !artist.is_empty() {
-        tags.push(Tag::new(Some(StandardTagKey::Artist), "ARTIST", &artist));
+        metadata.add_tag(Tag::new(Some(StandardTagKey::Artist), "ARTIST", &artist));
     }
 
     let album = decode_iso8859_text(&buf[60..90]);
     if !album.is_empty() {
-        tags.push(Tag::new(Some(StandardTagKey::Album), "ALBUM", &album));
+        metadata.add_tag(Tag::new(Some(StandardTagKey::Album), "ALBUM", &album));
     }
 
     let year = decode_iso8859_text(&buf[90..94]);
     if !year.is_empty() {
-        tags.push(Tag::new(Some(StandardTagKey::Date), "DATE", &year));
+        metadata.add_tag(Tag::new(Some(StandardTagKey::Date), "DATE", &year));
     }
 
     let comment = if buf[122] == 0 {
         let track = buf[123];
-        tags.push(Tag::new(Some(StandardTagKey::TrackNumber), "TRACK", &track.to_string()));
+        metadata.add_tag(Tag::new(Some(StandardTagKey::TrackNumber), "TRACK", &track.to_string()));
 
         decode_iso8859_text(&buf[94..122])
     }
@@ -252,7 +250,7 @@ pub fn read_id3v1<B: Bytestream>(reader: &mut B) -> Result<Vec<Tag>> {
     };
 
     if !comment.is_empty() {
-        tags.push(Tag::new(Some(StandardTagKey::Comment), "COMMENT", &comment));
+        metadata.add_tag(Tag::new(Some(StandardTagKey::Comment), "COMMENT", &comment));
     }
 
     let genre_idx = buf[124] as usize;
@@ -260,10 +258,10 @@ pub fn read_id3v1<B: Bytestream>(reader: &mut B) -> Result<Vec<Tag>> {
     // Convert the genre index to an actual genre name using the GENRES lookup table. Genre #133 is 
     // an offensive term and is excluded from Sonata.
     if genre_idx < GENRES.len() && genre_idx != 133 {
-        tags.push(Tag::new(Some(StandardTagKey::Genre), "GENRE", GENRES[genre_idx]));
+        metadata.add_tag(Tag::new(Some(StandardTagKey::Genre), "GENRE", GENRES[genre_idx]));
     }
 
-    Ok(tags)
+    Ok(())
 }
 
 fn decode_iso8859_text(data: &[u8]) -> String {

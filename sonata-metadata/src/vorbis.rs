@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use lazy_static::lazy_static;
 use sonata_core::errors::Result;
 use sonata_core::io::Bytestream;
-use sonata_core::tags::{Tag, StandardTagKey};
+use sonata_core::tags::{MetadataBuilder, StandardTagKey, Tag};
 
 lazy_static! {
     static ref VORBIS_COMMENT_MAP: HashMap<&'static str, StandardTagKey> = {
@@ -131,7 +131,10 @@ fn parse(tag: &str) -> Tag {
     Tag::new(std_tag, field[0], field[1])
 }
 
-pub fn read_comment_no_framing<B : Bytestream>(reader: &mut B) -> Result<Vec<Tag>> {
+pub fn read_comment_no_framing<B : Bytestream>(
+    reader: &mut B,
+    metadata: &mut MetadataBuilder,
+) -> Result<()> {
     // Read the vendor string length in bytes.
     let vendor_length = reader.read_u32()?;
 
@@ -140,8 +143,6 @@ pub fn read_comment_no_framing<B : Bytestream>(reader: &mut B) -> Result<Vec<Tag
 
     // Read the number of comments.
     let n_comments = reader.read_u32()? as usize;
-
-    let mut tags = Vec::new();
 
     for _ in 0..n_comments {
         // Read the comment string length in bytes.
@@ -152,10 +153,10 @@ pub fn read_comment_no_framing<B : Bytestream>(reader: &mut B) -> Result<Vec<Tag
         reader.read_buf_bytes(&mut comment_byte)?;
 
         // Parse the comment string into a Tag and insert it into the parsed tag list.
-        tags.push(
+        metadata.add_tag(
             parse(&String::from_utf8_lossy(&comment_byte))
         );
     }
 
-    Ok(tags)
+    Ok(())
 }

@@ -9,8 +9,8 @@ use std::ascii;
 use std::num::NonZeroU32;
 use sonata_core::audio::Channels;
 use sonata_core::errors::{Result, decode_error};
-use sonata_core::formats::{Cue, CuePoint, ColorMode, SeekIndex, Size, Visual, VendorData};
-use sonata_core::tags::{StandardTagKey, Tag};
+use sonata_core::formats::{Cue, CuePoint, SeekIndex};
+use sonata_core::tags::{ColorMode, MetadataBuilder, Size, StandardTagKey, Tag, VendorData, Visual};
 use sonata_core::io::*;
 
 use sonata_metadata::{id3v2, vorbis};
@@ -182,9 +182,11 @@ impl StreamInfo {
     }
 }
 
-pub fn read_comment_block<B : Bytestream>(reader: &mut B, tags: &mut Vec<Tag>) -> Result<()> {
-    tags.append(&mut vorbis::read_comment_no_framing(reader)?);
-    Ok(())
+pub fn read_comment_block<B : Bytestream>(
+    reader: &mut B,
+    metadata: &mut MetadataBuilder,
+) -> Result<()> {
+    vorbis::read_comment_no_framing(reader, metadata)
 }
 
 pub fn read_seek_table_block<B : Bytestream>(
@@ -276,7 +278,11 @@ pub fn read_cuesheet_block<B: Bytestream>(reader: &mut B, cues: &mut Vec<Cue>) -
     Ok(())
 }
 
-fn read_cuesheet_track<B: Bytestream>(reader: &mut B, is_cdda: bool, cues: &mut Vec<Cue>) -> Result<()> {
+fn read_cuesheet_track<B: Bytestream>(
+    reader: &mut B,
+    is_cdda: bool,
+    cues: &mut Vec<Cue>
+) -> Result<()> {
     let n_offset_samples = reader.read_be_u64()?;
 
     // For a CD-DA cuesheet, the track sample offset is the same as the first index (INDEX 00 or
@@ -376,7 +382,10 @@ fn read_cuesheet_track_index<B: Bytestream>(reader: &mut B, is_cdda: bool) -> Re
     })
 }
 
-pub fn read_application_block<B : Bytestream>(reader: &mut B, block_length: u32) -> Result<VendorData> {
+pub fn read_application_block<B : Bytestream>(
+    reader: &mut B,
+    block_length: u32,
+) -> Result<VendorData> {
     // Read the application identifier. Usually this is just 4 ASCII characters, but it is not
     // limited to that. Non-printable ASCII characters must be escaped to create a valid UTF8
     // string.
@@ -393,7 +402,10 @@ pub fn read_application_block<B : Bytestream>(reader: &mut B, block_length: u32)
     Ok(VendorData { ident, data })
 }
 
-pub fn read_picture_block<B : Bytestream>(reader: &mut B, visuals: &mut Vec<Visual>) -> Result<()> {
+pub fn read_picture_block<B : Bytestream>(
+    reader: &mut B,
+    metadata: &mut MetadataBuilder,
+) -> Result<()> {
     let type_enc = reader.read_be_u32()?;
     
     // Read the Media Type length in bytes.
@@ -450,7 +462,7 @@ pub fn read_picture_block<B : Bytestream>(reader: &mut B, visuals: &mut Vec<Visu
     let data_len = reader.read_be_u32()? as usize;
     let data = reader.read_boxed_slice_bytes(data_len)?;
 
-    visuals.push(Visual {
+    metadata.add_visual(Visual {
         media_type,
         dimensions,
         bits_per_pixel,

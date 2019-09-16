@@ -19,8 +19,8 @@ use sonata::core::errors::Result;
 use sonata::core::audio::*;
 use sonata::core::conv::dither::DitherType;
 use sonata::core::codecs::DecoderOptions;
-use sonata::core::formats::{Cue, FormatReader, Hint, FormatOptions, ProbeDepth, ProbeResult, ColorMode, Visual, Stream};
-use sonata::core::tags::Tag;
+use sonata::core::formats::{Cue, FormatReader, Hint, FormatOptions, ProbeDepth, ProbeResult, Stream};
+use sonata::core::tags::{ColorMode, Tag, Visual};
 
 #[cfg(not(target_os = "linux"))]
 use sonata::core::errors::unsupported_error;
@@ -234,9 +234,13 @@ fn play(mut reader: Box<dyn FormatReader>, decode_options: &DecoderOptions) -> R
 fn pretty_print_format(path: &Path, reader: &Box<dyn FormatReader>) {
     println!("+ {}", path.display());
     pretty_print_streams(reader.streams());
-    pretty_print_tags(reader.tags());
+
+    if let Some(metadata) = reader.metadata().current() {
+        pretty_print_tags(metadata.tags());
+        pretty_print_visuals(metadata.visuals());
+    }
+    
     pretty_print_cues(reader.cues());
-    pretty_print_visuals(reader.visuals());
     println!("-");
 }
 

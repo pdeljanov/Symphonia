@@ -13,8 +13,8 @@ use sonata_core::audio::Timestamp;
 use sonata_core::codecs::{CodecParameters, CODEC_TYPE_MP3};
 use sonata_core::errors::Result;
 use sonata_core::formats::{FormatDescriptor, FormatOptions, FormatReader, Packet};
-use sonata_core::formats::{Cue, ProbeDepth, ProbeResult, Stream, Visual};
-use sonata_core::tags::Tag;
+use sonata_core::formats::{Cue, ProbeDepth, ProbeResult, Stream};
+use sonata_core::tags::{MetadataQueue, MetadataBuilder};
 use sonata_core::io::*;
 
 use sonata_metadata::id3v2;
@@ -25,9 +25,8 @@ use sonata_metadata::id3v2;
 pub struct Mp3Reader {
     reader: MediaSourceStream,
     streams: Vec<Stream>,
-    tags: Vec<Tag>,
-    visuals: Vec<Visual>,
     cues: Vec<Cue>,
+    metadata: MetadataQueue,
 }
 
 impl FormatReader for Mp3Reader {
@@ -35,9 +34,8 @@ impl FormatReader for Mp3Reader {
         Mp3Reader {
             reader: source,
             streams: Vec::new(),
-            tags: Vec::new(),
-            visuals: Vec::new(),
             cues: Vec::new(),
+            metadata: Default::default(),
         }
     }
 
@@ -49,12 +47,8 @@ impl FormatReader for Mp3Reader {
         Ok(Packet::new_direct(0, &mut self.reader))
     }
 
-    fn tags(&self) -> &[Tag] {
-        &self.tags
-    }
-
-    fn visuals(&self) -> &[Visual] {
-        &self.visuals
+    fn metadata(&self) -> &MetadataQueue {
+        &self.metadata
     }
 
     fn cues(&self) -> &[Cue] {
@@ -70,7 +64,11 @@ impl FormatReader for Mp3Reader {
     }
 
     fn probe(&mut self, _depth: ProbeDepth) -> Result<ProbeResult> {
-        self.tags.append(&mut id3v2::read_id3v2(&mut self.reader)?);
+        // Read ID3v2 tags.
+        // TODO: This should not be part of the Mp3Reader.
+        let mut metadata_builder = MetadataBuilder::new();
+        id3v2::read_id3v2(&mut self.reader, &mut metadata_builder)?;
+        self.metadata.push(metadata_builder.metadata());
 
         let mut params = CodecParameters::new();
         params.for_codec(CODEC_TYPE_MP3);
