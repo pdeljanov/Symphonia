@@ -289,7 +289,7 @@ pub(super) fn read_huffman_samples<B: BitStream>(
     // bits as a sample. However, these bits are random data and not a real sample, so erase it! 
     // The caller will be reponsible for re-aligning the bitstream reader. Candy Pop confirms this.
     else if bits_read > part3_bits {
-        eprintln!("count1 overrun");
+        eprintln!("malformed bitstream: count1 overrun");
         i -= 4;
     }
 

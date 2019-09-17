@@ -7,7 +7,7 @@
 
 use sonata_core::audio::{Layout, SignalSpec};
 use sonata_core::errors::{Result, decode_error};
-use sonata_core::io::Bytestream;
+use sonata_core::io::ByteStream;
 
 use super::synthesis;
 
@@ -246,7 +246,7 @@ impl BitResevoir {
         }
     }
 
-    pub fn fill<B: Bytestream>(
+    pub fn fill<B: ByteStream>(
         &mut self,
         reader: &mut B,
         main_data_begin: usize,

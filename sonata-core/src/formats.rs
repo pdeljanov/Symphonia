@@ -15,7 +15,7 @@ use std::io;
 use crate::audio::Timestamp;
 use crate::codecs::CodecParameters;
 use crate::errors::Result;
-use crate::io::{Bytestream, MediaSource, MediaSourceStream};
+use crate::io::{ByteStream, MediaSource, MediaSourceStream};
 use crate::meta::{MetadataQueue, Tag};
 
 /// The verbosity of log messages produced by a decoder or demuxer.
@@ -373,11 +373,11 @@ pub enum PacketSource<'a> {
     Direct(&'a mut MediaSourceStream),
 }
 
-pub struct PacketStream<'a, B: Bytestream> {
+pub struct PacketStream<'a, B: ByteStream> {
     src: &'a mut B
 }
 
-impl<'a, B: Bytestream> Bytestream for PacketStream<'a, B> {
+impl<'a, B: ByteStream> ByteStream for PacketStream<'a, B> {
 
     /// Reads a single byte from the stream and returns it or an error.
     #[inline(always)]
@@ -451,8 +451,8 @@ impl<'a> Packet<'a> {
         self.len
     }
 
-    /// Converts the packet into a `Bytestream` for consumption.
-    pub fn into_stream(self) -> PacketStream<'a, impl Bytestream> {
+    /// Converts the packet into a `ByteStream` for consumption.
+    pub fn into_stream(self) -> PacketStream<'a, impl ByteStream> {
         match self.src {
             PacketSource::Direct(src) => PacketStream::<'a, MediaSourceStream> { src }
         }

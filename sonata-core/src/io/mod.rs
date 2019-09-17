@@ -75,9 +75,9 @@ impl<T: std::convert::AsRef<[u8]>> MediaSource for io::Cursor<T> {
     }
 }
 
-/// A `Bytestream` provides functions to read bytes and interpret them as little- or big-endian
+/// A `ByteStream` provides functions to read bytes and interpret them as little- or big-endian
 /// unsigned integers or floating-point values of standard widths.
-pub trait Bytestream {
+pub trait ByteStream {
 
     /// Reads a single byte from the stream and returns it or an error.
     fn read_byte(&mut self) -> io::Result<u8>;
@@ -223,7 +223,7 @@ pub trait Bytestream {
     fn ignore_bytes(&mut self, count: u64) -> io::Result<()>;
 }
 
-impl<'b, B: Bytestream> Bytestream for &'b mut B {
+impl<'b, B: ByteStream> ByteStream for &'b mut B {
     #[inline(always)]
     fn read_byte(&mut self) -> io::Result<u8> {
         (*self).read_byte()
@@ -282,7 +282,7 @@ pub trait FiniteStream {
 /// Decodes a big-endiann unsigned integers encoded via extended UTF8. In this context, extended
 /// UTF8 simply means the encoded UTF8 value may be up to 7 bytes for a maximum integer bit width
 /// of 36-bits.
-pub fn utf8_decode_be_u64<B: Bytestream>(src : &mut B) -> io::Result<Option<u64>> {
+pub fn utf8_decode_be_u64<B: ByteStream>(src : &mut B) -> io::Result<Option<u64>> {
     // Read the first byte of the UTF8 encoded integer.
     let mut state = u64::from(src.read_u8()?);
 

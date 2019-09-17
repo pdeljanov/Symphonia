@@ -10,7 +10,7 @@
 use std::collections::HashMap;
 use lazy_static::lazy_static;
 use sonata_core::errors::Result;
-use sonata_core::io::Bytestream;
+use sonata_core::io::ByteStream;
 use sonata_core::meta::{MetadataBuilder, StandardTagKey, Tag};
 
 lazy_static! {
@@ -131,7 +131,7 @@ fn parse(tag: &str) -> Tag {
     Tag::new(std_tag, field[0], field[1])
 }
 
-pub fn read_comment_no_framing<B : Bytestream>(
+pub fn read_comment_no_framing<B : ByteStream>(
     reader: &mut B,
     metadata: &mut MetadataBuilder,
 ) -> Result<()> {

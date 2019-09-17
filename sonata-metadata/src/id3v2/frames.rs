@@ -13,7 +13,7 @@ use lazy_static::lazy_static;
 use encoding_rs::UTF_16BE;
 
 use sonata_core::errors::{Result, unsupported_error, decode_error};
-use sonata_core::io::{Bytestream, BufStream, FiniteStream};
+use sonata_core::io::{ByteStream, BufStream, FiniteStream};
 use sonata_core::meta::{StandardTagKey, Tag};
 
 use super::unsync::{decode_unsynchronisation, read_syncsafe_leq32};
@@ -404,7 +404,7 @@ fn find_parser_legacy(id: [u8; 3]) -> Option<&'static (FrameParser, Option<Stand
 }
 
 /// Read an ID3v2.2 frame.
-pub fn read_id3v2p2_frame<B: Bytestream>(reader: &mut B) -> Result<FrameResult> {
+pub fn read_id3v2p2_frame<B: ByteStream>(reader: &mut B) -> Result<FrameResult> {
     let id = reader.read_triple_bytes()?;
 
     // Check if padding (all 0s) was reached.
@@ -440,7 +440,7 @@ pub fn read_id3v2p2_frame<B: Bytestream>(reader: &mut B) -> Result<FrameResult> 
 }
 
 /// Read an ID3v2.3 frame.
-pub fn read_id3v2p3_frame<B: Bytestream>(reader: &mut B) -> Result<FrameResult> {
+pub fn read_id3v2p3_frame<B: ByteStream>(reader: &mut B) -> Result<FrameResult> {
     let id = reader.read_quad_bytes()?;
 
     // Check if padding (all 0s) was reached.
@@ -502,7 +502,7 @@ pub fn read_id3v2p3_frame<B: Bytestream>(reader: &mut B) -> Result<FrameResult> 
 }
 
 /// Read an ID3v2.4 frame.
-pub fn read_id3v2p4_frame<B: Bytestream + FiniteStream>(reader: &mut B) -> Result<FrameResult> {
+pub fn read_id3v2p4_frame<B: ByteStream + FiniteStream>(reader: &mut B) -> Result<FrameResult> {
     let id = reader.read_quad_bytes()?;
 
     // Check if padding (all 0s) was reached.

@@ -28,7 +28,7 @@ use sonata_core::codecs::{CODEC_TYPE_PCM_ALAW, CODEC_TYPE_PCM_MULAW};
 use sonata_core::conv::FromSample;
 use sonata_core::errors::{Result, decode_error, unsupported_error};
 use sonata_core::formats::Packet;
-use sonata_core::io::Bytestream;
+use sonata_core::io::ByteStream;
 
 macro_rules! read_pcm_signed {
     ($buf:expr, $read:expr, $shift:expr) => {

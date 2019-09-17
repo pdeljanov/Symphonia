@@ -107,7 +107,7 @@ pub struct StreamInfo {
 
 impl StreamInfo {
 
-    pub fn read<B : Bytestream>(reader: &mut B)  -> Result<StreamInfo> {
+    pub fn read<B : ByteStream>(reader: &mut B)  -> Result<StreamInfo> {
         let mut info = StreamInfo {
             block_sample_len: (0, 0),
             frame_byte_len: (0, 0),
@@ -183,14 +183,14 @@ impl StreamInfo {
     }
 }
 
-pub fn read_comment_block<B : Bytestream>(
+pub fn read_comment_block<B : ByteStream>(
     reader: &mut B,
     metadata: &mut MetadataBuilder,
 ) -> Result<()> {
     vorbis::read_comment_no_framing(reader, metadata)
 }
 
-pub fn read_seek_table_block<B : Bytestream>(
+pub fn read_seek_table_block<B : ByteStream>(
     reader: &mut B,
     block_length: u32,
     table: &mut SeekIndex
@@ -232,7 +232,7 @@ fn printable_ascii_to_string(bytes: &[u8]) -> Option<String> {
     Some(result)
 }
 
-pub fn read_cuesheet_block<B: Bytestream>(reader: &mut B, cues: &mut Vec<Cue>) -> Result<()> {
+pub fn read_cuesheet_block<B: ByteStream>(reader: &mut B, cues: &mut Vec<Cue>) -> Result<()> {
     // Read cuesheet catalog number. The catalog number only allows printable ASCII characters.
     let mut catalog_number_buf = vec![0u8; 128];
     reader.read_buf_bytes(&mut catalog_number_buf)?;
@@ -279,7 +279,7 @@ pub fn read_cuesheet_block<B: Bytestream>(reader: &mut B, cues: &mut Vec<Cue>) -
     Ok(())
 }
 
-fn read_cuesheet_track<B: Bytestream>(
+fn read_cuesheet_track<B: ByteStream>(
     reader: &mut B,
     is_cdda: bool,
     cues: &mut Vec<Cue>
@@ -360,7 +360,7 @@ fn read_cuesheet_track<B: Bytestream>(
     Ok(())
 }
 
-fn read_cuesheet_track_index<B: Bytestream>(reader: &mut B, is_cdda: bool) -> Result<CuePoint> {
+fn read_cuesheet_track_index<B: ByteStream>(reader: &mut B, is_cdda: bool) -> Result<CuePoint> {
     let n_offset_samples = reader.read_be_u64()?;
     let idx_point_enc = reader.read_be_u32()?;
 
@@ -383,7 +383,7 @@ fn read_cuesheet_track_index<B: Bytestream>(reader: &mut B, is_cdda: bool) -> Re
     })
 }
 
-pub fn read_application_block<B : Bytestream>(
+pub fn read_application_block<B : ByteStream>(
     reader: &mut B,
     block_length: u32,
 ) -> Result<VendorData> {
@@ -403,7 +403,7 @@ pub fn read_application_block<B : Bytestream>(
     Ok(VendorData { ident, data })
 }
 
-pub fn read_picture_block<B : Bytestream>(
+pub fn read_picture_block<B : ByteStream>(
     reader: &mut B,
     metadata: &mut MetadataBuilder,
 ) -> Result<()> {
@@ -483,7 +483,7 @@ pub struct MetadataBlockHeader {
 }
 
 impl MetadataBlockHeader {
-    pub fn read<B : Bytestream>(reader: &mut B) -> Result<MetadataBlockHeader> {
+    pub fn read<B : ByteStream>(reader: &mut B) -> Result<MetadataBlockHeader> {
         let header_enc = reader.read_u8()?;
 
         // First bit of the header indicates if this is the last metadata block.

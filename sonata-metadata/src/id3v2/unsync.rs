@@ -8,9 +8,9 @@
 use std::io;
 
 use sonata_core::errors::Result;
-use sonata_core::io::{Bytestream, FiniteStream};
+use sonata_core::io::{ByteStream, FiniteStream};
 
-pub fn read_syncsafe_leq32<B: Bytestream>(reader: &mut B, bit_width: u32) -> Result<u32> {
+pub fn read_syncsafe_leq32<B: ByteStream>(reader: &mut B, bit_width: u32) -> Result<u32> {
     debug_assert!(bit_width <= 32);
 
     let mut result = 0u32;
@@ -48,12 +48,12 @@ pub fn decode_unsynchronisation(buf: &mut [u8]) -> &mut [u8] {
     &mut buf[..dst]
 }
 
-pub struct UnsyncStream<B: Bytestream + FiniteStream> {
+pub struct UnsyncStream<B: ByteStream + FiniteStream> {
     inner: B,
     byte: u8,
 }
 
-impl<B: Bytestream + FiniteStream> UnsyncStream<B> {
+impl<B: ByteStream + FiniteStream> UnsyncStream<B> {
     pub fn new(inner: B) -> Self {
         UnsyncStream {
             inner,
@@ -62,7 +62,7 @@ impl<B: Bytestream + FiniteStream> UnsyncStream<B> {
     }
 }
 
-impl<B: Bytestream + FiniteStream> FiniteStream for UnsyncStream<B> {
+impl<B: ByteStream + FiniteStream> FiniteStream for UnsyncStream<B> {
     #[inline(always)]
     fn len(&self) -> u64 {
         self.inner.len()
@@ -79,7 +79,7 @@ impl<B: Bytestream + FiniteStream> FiniteStream for UnsyncStream<B> {
     }
 }
 
-impl<B: Bytestream + FiniteStream> Bytestream for UnsyncStream<B> {
+impl<B: ByteStream + FiniteStream> ByteStream for UnsyncStream<B> {
 
     fn read_byte(&mut self) -> io::Result<u8> {
         let last = self.byte;

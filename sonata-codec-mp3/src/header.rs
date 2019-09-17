@@ -6,7 +6,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use sonata_core::errors::{Result, decode_error, unsupported_error};
-use sonata_core::io::Bytestream;
+use sonata_core::io::ByteStream;
 
 use crate::common::*;
 
@@ -52,7 +52,7 @@ static BIT_RATES_MPEG2_L23: [u32; 15] =
 
 /// Synchronize the provided reader to the end of the frame header, and return the frame header as
 /// as `u32`.
-fn sync_frame<B: Bytestream>(reader: &mut B) -> Result<u32> {
+fn sync_frame<B: ByteStream>(reader: &mut B) -> Result<u32> {
     let mut sync = 0u32;
 
     // Synchronize stream to the next frame using the sync word. The MP3 frame header always starts
@@ -65,7 +65,7 @@ fn sync_frame<B: Bytestream>(reader: &mut B) -> Result<u32> {
 }
 
 /// Reads a MPEG audio frame header from the stream and return it or an error.
-pub fn read_frame_header<B: Bytestream>(reader: &mut B) -> Result<FrameHeader> {
+pub fn read_frame_header<B: ByteStream>(reader: &mut B) -> Result<FrameHeader> {
     // Synchronize and read the frame header.
     let header = sync_frame(reader)?;
 

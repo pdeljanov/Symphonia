@@ -314,7 +314,7 @@ impl Decoder for FlacDecoder {
 
 }
 
-fn sync_frame<B: Bytestream>(reader: &mut B) -> Result<u16> {
+fn sync_frame<B: ByteStream>(reader: &mut B) -> Result<u16> {
     let mut sync = 0u16;
 
     // Synchronize stream to Frame Header. FLAC specifies a byte-aligned 14 bit sync code of
@@ -327,7 +327,7 @@ fn sync_frame<B: Bytestream>(reader: &mut B) -> Result<u16> {
     Ok(sync)
 }
 
-fn read_frame_header<B: Bytestream>(reader: &mut B, sync: u16) -> Result<FrameHeader> {
+fn read_frame_header<B: ByteStream>(reader: &mut B, sync: u16) -> Result<FrameHeader> {
 
     // The header is checksummed with a CRC8 hash. Include the sync code in this CRC.
     let mut crc8 = Crc8::new(0);
@@ -473,7 +473,7 @@ fn read_frame_header<B: Bytestream>(reader: &mut B, sync: u16) -> Result<FrameHe
     })
 }
 
-fn read_frame_footer<B: Bytestream>(reader: &mut B) -> Result<u16> {
+fn read_frame_footer<B: ByteStream>(reader: &mut B) -> Result<u16> {
     Ok(reader.read_be_u16()?)
 }
 

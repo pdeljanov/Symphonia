@@ -282,7 +282,7 @@ fn append_fact_params(codec_params: &mut CodecParameters, fact: &FactChunk) {
     codec_params.with_n_frames(u64::from(fact.n_frames));
 }
 
-fn search_for_marker<B: Bytestream>(reader: &mut B, marker: [u8; 4], depth: ProbeDepth) -> Result<Option<[u8; 4]>> {
+fn search_for_marker<B: ByteStream>(reader: &mut B, marker: [u8; 4], depth: ProbeDepth) -> Result<Option<[u8; 4]>> {
     let mut window = [0u8; 4];
 
     reader.read_buf_bytes(&mut window)?;

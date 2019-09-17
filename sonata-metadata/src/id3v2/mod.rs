@@ -87,7 +87,7 @@ struct ExtendedHeader {
 }
 
 /// Read the header of an ID3v2 (verions 2.2+) tag.
-fn read_id3v2_header<B: Bytestream>(reader: &mut B) -> Result<Header> {
+fn read_id3v2_header<B: ByteStream>(reader: &mut B) -> Result<Header> {
     let marker = reader.read_triple_bytes()?;
 
     if marker != *b"ID3" {
@@ -147,7 +147,7 @@ fn read_id3v2_header<B: Bytestream>(reader: &mut B) -> Result<Header> {
 }
 
 /// Read the extended header of an ID3v2.3 tag.
-fn read_id3v2p3_extended_header<B: Bytestream>(reader: &mut B) -> Result<ExtendedHeader> {
+fn read_id3v2p3_extended_header<B: ByteStream>(reader: &mut B) -> Result<ExtendedHeader> {
     let size = reader.read_be_u32()?;
     let flags = reader.read_be_u16()?;
     let padding_size = reader.read_be_u32()?;
@@ -172,7 +172,7 @@ fn read_id3v2p3_extended_header<B: Bytestream>(reader: &mut B) -> Result<Extende
 }
 
 /// Read the extended header of an ID3v2.4 tag.
-fn read_id3v2p4_extended_header<B: Bytestream>(reader: &mut B) -> Result<ExtendedHeader> {
+fn read_id3v2p4_extended_header<B: ByteStream>(reader: &mut B) -> Result<ExtendedHeader> {
     let _size = read_syncsafe_leq32(reader, 28)?;
     
     if reader.read_u8()? != 1 {
@@ -265,7 +265,7 @@ fn read_id3v2p4_extended_header<B: Bytestream>(reader: &mut B) -> Result<Extende
     Ok(header)
 }
 
-fn read_id3v2_body<B: Bytestream + FiniteStream>(
+fn read_id3v2_body<B: ByteStream + FiniteStream>(
     mut reader: B,
     header: &Header,
     metadata: &mut MetadataBuilder,
@@ -321,7 +321,7 @@ fn read_id3v2_body<B: Bytestream + FiniteStream>(
     Ok(())
 }
 
-pub fn read_id3v2<B: Bytestream>(reader: &mut B, metadata: &mut MetadataBuilder) -> Result<()> {
+pub fn read_id3v2<B: ByteStream>(reader: &mut B, metadata: &mut MetadataBuilder) -> Result<()> {
     // Read the (sorta) version agnostic tag header.
     let header = read_id3v2_header(reader)?;
 

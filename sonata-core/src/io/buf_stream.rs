@@ -8,7 +8,7 @@
 use std::cmp;
 use std::io;
 
-use super::{Bytestream, FiniteStream};
+use super::{ByteStream, FiniteStream};
 
 /// `BufStream` is a stream backed by a buffer.
 pub struct BufStream<'a> {
@@ -82,7 +82,7 @@ impl<'a> BufStream<'a> {
     }
 }
 
-impl<'a> Bytestream for BufStream<'a> {
+impl<'a> ByteStream for BufStream<'a> {
 
     #[inline(always)]
     fn read_byte(&mut self) -> io::Result<u8> {

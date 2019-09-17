@@ -9,7 +9,7 @@ use std::cmp;
 use std::io;
 
 use crate::util::bits::*;
-use super::Bytestream;
+use super::ByteStream;
 
 pub mod huffman {
     //! The `huffman` module provides traits and structures for implementing Huffman decoders.
@@ -124,62 +124,62 @@ macro_rules! jmp8 {
 }
 
 /// A `BitReader` provides methods to sequentially read non-byte aligned data from a source
-/// `Bytestream`.
+/// `ByteStream`.
 ///
-/// A `BitReader` will consume whole bytes from the passed `Bytestream` as required even if only
+/// A `BitReader` will consume whole bytes from the passed `ByteStream` as required even if only
 /// one bit is to be read. If less than 8 bits are used to service a read then the remaining bits
 /// will be saved for later reads. Bits saved from previous reads will be consumed before a new
-/// byte is consumed from the source `Bytestream`.
+/// byte is consumed from the source `ByteStream`.
 pub trait BitReader {
     /// Discards any saved bits and resets the `BitReader` to prepare it for a byte-aligned read
-    /// from the source `Bytestream`.
+    /// from the source `ByteStream`.
     fn realign(&mut self);
 
     /// Ignores one bit from the stream or returns an error.
     #[inline(always)]
-    fn ignore_bit<B: Bytestream>(&mut self, src: &mut B) -> io::Result<()> {
+    fn ignore_bit<B: ByteStream>(&mut self, src: &mut B) -> io::Result<()> {
         self.ignore_bits(src, 1)
     }
 
     /// Ignores the specified number of bits from the stream or returns an error.
-    fn ignore_bits<B: Bytestream>(&mut self, src: &mut B, num_bits: u32) -> io::Result<()>;
+    fn ignore_bits<B: ByteStream>(&mut self, src: &mut B, num_bits: u32) -> io::Result<()>;
 
     /// Read a single bit as a boolean value or returns an error.
-    fn read_bit<B: Bytestream>(&mut self, src: &mut B) -> io::Result<bool>;
+    fn read_bit<B: ByteStream>(&mut self, src: &mut B) -> io::Result<bool>;
 
     /// Read up to 32-bits and return them as a u32 or returns an error.
-    fn read_bits_leq32<B: Bytestream>(&mut self, src: &mut B, num_bits: u32) -> io::Result<u32>;
+    fn read_bits_leq32<B: ByteStream>(&mut self, src: &mut B, num_bits: u32) -> io::Result<u32>;
 
     /// Reads up to 32-bits and interprets them as a signed two's complement integer or returns an
     /// error.
     #[inline(always)]
-    fn read_bits_leq32_signed<B: Bytestream>(&mut self, src: &mut B, num_bits: u32) -> io::Result<i32> {
+    fn read_bits_leq32_signed<B: ByteStream>(&mut self, src: &mut B, num_bits: u32) -> io::Result<i32> {
         let value = self.read_bits_leq32(src, num_bits)?;
         Ok(sign_extend_leq32_to_i32(value, num_bits))
     }
 
     /// Read up to 64-bits and return them as a u64 or returns an error.
-    fn read_bits_leq64<B: Bytestream>(&mut self, src: &mut B, num_bits: u32) -> io::Result<u64>;
+    fn read_bits_leq64<B: ByteStream>(&mut self, src: &mut B, num_bits: u32) -> io::Result<u64>;
 
     /// Reads up to 64-bits and interprets them as a signed two's complement integer or returns an
     /// error.
     #[inline(always)]
-    fn read_bits_leq64_signed<B: Bytestream>(&mut self, src: &mut B, num_bits: u32) -> io::Result<i64> {
+    fn read_bits_leq64_signed<B: ByteStream>(&mut self, src: &mut B, num_bits: u32) -> io::Result<i64> {
         let value = self.read_bits_leq64(src, num_bits)?;
         Ok(sign_extend_leq64_to_i64(value, num_bits))
     }
 
     /// Reads a unary encoded integer up to u32 or returns an error.
-    fn read_unary<B: Bytestream>(&mut self, src: &mut B) -> io::Result<u32>;
+    fn read_unary<B: ByteStream>(&mut self, src: &mut B) -> io::Result<u32>;
 
-    /// Reads a Huffman code from the `Bytestream` using the provided `HuffmanTable` and returns the 
+    /// Reads a Huffman code from the `ByteStream` using the provided `HuffmanTable` and returns the 
     /// decoded value, or an error. 
     /// 
     /// This function efficiently operates on blocks of code bits and may read bits, and thus 
     /// potentially an extra byte, past the end of a particular code. These extra bits remain 
     /// buffered by the Bitstream for future reads, however, to prevent reading past critical byte 
     /// boundaries, `lim_bits` may be provided to limit the maximum number of bits read.
-    fn read_huffman<B: Bytestream, H: huffman::HuffmanEntry>(
+    fn read_huffman<B: ByteStream, H: huffman::HuffmanEntry>(
         &mut self, 
         src: &mut B,
         table: &huffman::HuffmanTable<H>,
@@ -206,7 +206,7 @@ impl BitReaderLtr {
     }
 
     #[inline(always)]
-    pub fn read_bits_leq8<B: Bytestream>(&mut self, src: &mut B, num_bits: u32) -> io::Result<u32> {
+    pub fn read_bits_leq8<B: ByteStream>(&mut self, src: &mut B, num_bits: u32) -> io::Result<u32> {
         debug_assert!(num_bits <= 8);
 
         if self.n_bits_left < num_bits {
@@ -226,7 +226,7 @@ impl BitReader for BitReaderLtr {
     }
 
     #[inline(always)]
-    fn ignore_bits<B: Bytestream>(&mut self, src: &mut B, mut num_bits: u32) -> io::Result<()> {
+    fn ignore_bits<B: ByteStream>(&mut self, src: &mut B, mut num_bits: u32) -> io::Result<()> {
         // If the number of bits to ignore is less than the amount left, simply reduce the amount 
         // left.
         if num_bits <= self.n_bits_left {
@@ -257,7 +257,7 @@ impl BitReader for BitReaderLtr {
     }
 
     #[inline(always)]
-    fn read_bit<B: Bytestream>(&mut self, src: &mut B) -> io::Result<bool> {
+    fn read_bit<B: ByteStream>(&mut self, src: &mut B) -> io::Result<bool> {
         if self.n_bits_left == 0 {
             self.bits = u32::from(src.read_u8()?);
             self.n_bits_left = 8;
@@ -268,7 +268,7 @@ impl BitReader for BitReaderLtr {
     }
 
     #[inline(always)]
-    fn read_bits_leq32<B: Bytestream>(&mut self, src: &mut B, mut num_bits: u32) -> io::Result<u32> {
+    fn read_bits_leq32<B: ByteStream>(&mut self, src: &mut B, mut num_bits: u32) -> io::Result<u32> {
         debug_assert!(num_bits <= 32);
 
         let mask = !(0xffff_ffff_ffff_ffffu64 << num_bits) as u32;
@@ -303,7 +303,7 @@ impl BitReader for BitReaderLtr {
     }
 
     #[inline(always)]
-    fn read_bits_leq64<B: Bytestream>(&mut self, src: &mut B, num_bits: u32) -> io::Result<u64> {
+    fn read_bits_leq64<B: ByteStream>(&mut self, src: &mut B, num_bits: u32) -> io::Result<u64> {
         debug_assert!(num_bits <= 64);
 
         if num_bits > 32 {
@@ -318,7 +318,7 @@ impl BitReader for BitReaderLtr {
     }
 
     #[inline(always)]
-    fn read_unary<B: Bytestream>(&mut self, src: &mut B) -> io::Result<u32> {
+    fn read_unary<B: ByteStream>(&mut self, src: &mut B) -> io::Result<u32> {
         let mut num = 0;
 
         loop {
@@ -357,7 +357,7 @@ impl BitReader for BitReaderLtr {
     }
 
     #[inline(always)]
-    fn read_huffman<B: Bytestream, H: huffman::HuffmanEntry>(
+    fn read_huffman<B: ByteStream, H: huffman::HuffmanEntry>(
         &mut self, 
         src: &mut B,
         table: &huffman::HuffmanTable<H>,
@@ -445,15 +445,15 @@ impl BitReader for BitReaderLtr {
 }
 
 /// A `BitStream` provides methods to sequentially read non-byte aligned data from an inner
-/// `Bytestream`.
+/// `ByteStream`.
 ///
-/// A `BitStream` will consume whole bytes from the inner `Bytestream` as required even if only
+/// A `BitStream` will consume whole bytes from the inner `ByteStream` as required even if only
 /// one bit is to be read. If less than 8 bits are used to service a read then the remaining bits
 /// will be saved for later reads. Bits saved from previous reads will be consumed before a new
-/// byte is consumed from the source `Bytestream`.
+/// byte is consumed from the source `ByteStream`.
 pub trait BitStream {
     /// Discards any saved bits and resets the `BitStream` to prepare it for a byte-aligned read
-    /// from the source `Bytestream`.
+    /// from the source `ByteStream`.
     fn realign(&mut self);
 
     /// Ignores one bit from the stream or returns an error.
@@ -508,12 +508,12 @@ pub trait BitStream {
 }
 
 /// `BitStreamLtr` wraps `BitReaderLtr` into a `BitStream`.
-pub struct BitStreamLtr<B: Bytestream> {
+pub struct BitStreamLtr<B: ByteStream> {
     inner: B,
     reader: BitReaderLtr,
 }
 
-impl<B: Bytestream> BitStreamLtr<B> {
+impl<B: ByteStream> BitStreamLtr<B> {
     pub fn new(inner: B) -> BitStreamLtr<B> {
         BitStreamLtr {
             inner,
@@ -522,7 +522,7 @@ impl<B: Bytestream> BitStreamLtr<B> {
     }
 }
 
-impl<B: Bytestream> BitStream for BitStreamLtr<B> {
+impl<B: ByteStream> BitStream for BitStreamLtr<B> {
     #[inline(always)]
     fn realign(&mut self) {
         self.reader.realign();

@@ -6,7 +6,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use sonata_core::errors::{Result, decode_error};
-use sonata_core::io::{BitStream, BitStreamLtr, Bytestream};
+use sonata_core::io::{BitStream, BitStreamLtr, ByteStream};
 
 use super::{FrameData, Granule, GranuleChannel};
 use crate::common::*;
@@ -187,7 +187,7 @@ fn read_granule_side_info<B: BitStream>(
 }
 
 /// Reads the side_info of a MPEG audio frame from a `BitStream` into `FrameData`.
-pub(super) fn read_side_info<B: Bytestream>(
+pub(super) fn read_side_info<B: ByteStream>(
     reader: &mut B,
     header: &FrameHeader,
     frame_data: &mut FrameData

@@ -376,7 +376,7 @@ impl FormatReader for FlacReader {
 }
 
 /// Reads a StreamInfo block and populates the reader with stream information.
-fn read_stream_info_block<B : Bytestream>(
+fn read_stream_info_block<B : ByteStream>(
     block_stream: &mut B,
     streams: &mut Vec<Stream>
 ) -> Result<()> {

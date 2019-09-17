@@ -21,7 +21,7 @@ use sonata_core::codecs::{
 };
 use sonata_core::codecs::CodecType;
 use sonata_core::errors::{Result, decode_error, unsupported_error};
-use sonata_core::io::Bytestream;
+use sonata_core::io::ByteStream;
 use sonata_core::meta::Tag;
 
 use sonata_metadata::riff;
@@ -56,7 +56,7 @@ impl<T: ParseChunkTag> ChunksReader<T> {
         }
     }
 
-    pub fn next<B: Bytestream>(&mut self, reader: &mut B) -> Result<Option<T>> {
+    pub fn next<B: ByteStream>(&mut self, reader: &mut B) -> Result<Option<T>> {
         // Loop until a chunk is recognized and returned, or the end of stream is reached.
         loop {
             // Align to the next 2-byte boundary if not currently aligned..
@@ -95,7 +95,7 @@ impl<T: ParseChunkTag> ChunksReader<T> {
         }
     }
 
-    pub fn finish<B: Bytestream>(&mut self, reader: &mut B) -> Result<()>{
+    pub fn finish<B: ByteStream>(&mut self, reader: &mut B) -> Result<()>{
         // If data is remaining in this chunk, skip it.
         if self.consumed < self.len {
             let remaining = self.len - self.consumed;
@@ -114,7 +114,7 @@ impl<T: ParseChunkTag> ChunksReader<T> {
 
 /// Common trait implemented for all chunks that are parsed by a `ChunkParser`.
 pub trait ParseChunk : Sized {
-    fn parse<B: Bytestream>(reader: &mut B, tag: [u8; 4], len: u32) -> Result<Self>;
+    fn parse<B: ByteStream>(reader: &mut B, tag: [u8; 4], len: u32) -> Result<Self>;
 }
 
 /// `ChunkParser` is a utility struct for unifying the parsing of chunks.
@@ -133,7 +133,7 @@ impl<P: ParseChunk> ChunkParser<P> {
         }
     }
 
-    pub fn parse<B: Bytestream>(&self, reader: &mut B) -> Result<P> {
+    pub fn parse<B: ByteStream>(&self, reader: &mut B) -> Result<P> {
         P::parse(reader, self.tag, self.len)
     }
 }
@@ -251,7 +251,7 @@ pub struct WaveFormatChunk {
 
 impl WaveFormatChunk {
 
-    fn read_pcm_fmt<B: Bytestream>(reader: &mut B, bits_per_sample: u16, n_channels: u16, len: u32) -> Result<WaveFormatData> {
+    fn read_pcm_fmt<B: ByteStream>(reader: &mut B, bits_per_sample: u16, n_channels: u16, len: u32) -> Result<WaveFormatData> {
         // WaveFormat for a PCM format /may/ be extended with an extra data length parameter followed by the 
         // extra data itself. Use the chunk length to determine if the format chunk is extended.
         let is_extended = match len {
@@ -297,7 +297,7 @@ impl WaveFormatChunk {
         Ok(WaveFormatData::Pcm(WaveFormatPcm { bits_per_sample, channels, codec }))
     }
 
-    fn read_ieee_fmt<B: Bytestream>(reader: &mut B, bits_per_sample: u16, n_channels: u16, len: u32) -> Result<WaveFormatData> {
+    fn read_ieee_fmt<B: ByteStream>(reader: &mut B, bits_per_sample: u16, n_channels: u16, len: u32) -> Result<WaveFormatData> {
         // WaveFormat for a IEEE format should not be extended, but it may still have an extra data length 
         // parameter.
         if len == 18 {
@@ -330,7 +330,7 @@ impl WaveFormatChunk {
         Ok(WaveFormatData::IeeeFloat(WaveFormatIeeeFloat { channels, codec }))
     }
 
-    fn read_ext_fmt<B: Bytestream>(reader: &mut B, bits_per_coded_sample: u16, len: u32) -> Result<WaveFormatData> {
+    fn read_ext_fmt<B: ByteStream>(reader: &mut B, bits_per_coded_sample: u16, len: u32) -> Result<WaveFormatData> {
         // WaveFormat for the extensible format must be extended to 40 bytes in length.
         if len < 40 {
             return decode_error("Malformed fmt_ext chunk.");
@@ -417,7 +417,7 @@ impl WaveFormatChunk {
             bits_per_sample, bits_per_coded_sample, channels, sub_format_guid, codec }))
     }
 
-    fn read_alaw_pcm_fmt<B: Bytestream>(reader: &mut B, n_channels: u16, len: u32) -> Result<WaveFormatData> {
+    fn read_alaw_pcm_fmt<B: ByteStream>(reader: &mut B, n_channels: u16, len: u32) -> Result<WaveFormatData> {
         if len != 18 {
             return decode_error("Malformed fmt_alaw chunk.");
         }
@@ -438,7 +438,7 @@ impl WaveFormatChunk {
 
     }
 
-    fn read_mulaw_pcm_fmt<B: Bytestream>(reader: &mut B, n_channels: u16, len: u32) -> Result<WaveFormatData> {
+    fn read_mulaw_pcm_fmt<B: ByteStream>(reader: &mut B, n_channels: u16, len: u32) -> Result<WaveFormatData> {
         if len != 18 {
             return decode_error("Malformed fmt_mulaw chunk.");
         }
@@ -460,7 +460,7 @@ impl WaveFormatChunk {
 }
 
 impl ParseChunk for WaveFormatChunk {
-    fn parse<B: Bytestream>(reader: &mut B, _tag: [u8; 4], len: u32) -> Result<WaveFormatChunk> {
+    fn parse<B: ByteStream>(reader: &mut B, _tag: [u8; 4], len: u32) -> Result<WaveFormatChunk> {
         // WaveFormat has a minimal length of 16 bytes. This may be extended with format specific data later.
         if len < 16 {
             return decode_error("Malformed fmt chunk.");
@@ -550,7 +550,7 @@ pub struct FactChunk {
 }
 
 impl ParseChunk for FactChunk {
-    fn parse<B: Bytestream>(reader: &mut B, _tag: [u8; 4], len: u32) -> Result<Self> {
+    fn parse<B: ByteStream>(reader: &mut B, _tag: [u8; 4], len: u32) -> Result<Self> {
         // A Fact chunk is exactly 4 bytes long, though there is some mystery as to whether there can be more fields
         // in the chunk.
         if len != 4 {
@@ -575,13 +575,13 @@ pub struct ListChunk {
 }
 
 impl ListChunk {
-    pub fn skip<B: Bytestream>(&self, reader: &mut B) -> Result<()> {
+    pub fn skip<B: ByteStream>(&self, reader: &mut B) -> Result<()> {
         ChunksReader::<NullChunks>::new(self.len).finish(reader)
     }
 }
 
 impl ParseChunk for ListChunk {
-    fn parse<B: Bytestream>(reader: &mut B, _tag: [u8; 4], len: u32) -> Result<Self> {
+    fn parse<B: ByteStream>(reader: &mut B, _tag: [u8; 4], len: u32) -> Result<Self> {
         // A List chunk must contain atleast the list/form identifier. However, an empty list (len = 4) is permissible.
         if len < 4 {
             return decode_error("Malformed list chunk.");
@@ -608,7 +608,7 @@ pub struct InfoChunk {
 }
 
 impl ParseChunk for InfoChunk {
-    fn parse<B: Bytestream>(reader: &mut B, tag: [u8; 4], len: u32) -> Result<InfoChunk> {
+    fn parse<B: ByteStream>(reader: &mut B, tag: [u8; 4], len: u32) -> Result<InfoChunk> {
         // TODO: Apply limit.
         let mut value_buf = vec![0u8; len as usize];
         reader.read_buf_bytes(&mut value_buf)?;

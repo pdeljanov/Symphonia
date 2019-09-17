@@ -9,7 +9,7 @@ use std::cmp;
 use std::io;
 use std::io::Read;
 
-use super::{Bytestream, MediaSource};
+use super::{ByteStream, MediaSource};
 
 /// A `MediaSourceStream` is the common reader type for Sonata. `MediaSourceStream` uses type
 /// erasure to mask the inner reader from the consumer, allowing any typical source to be used.
@@ -222,7 +222,7 @@ impl MediaSourceStream {
 
         // The returned buffer will have a length of 0 when EoF is reached. Return an
         // UnexpectedEof in this case since the caller is responsible for ensuring reading past the
-        // end of the stream does not occur when using the Bytestream interface.
+        // end of the stream does not occur when using the ByteStream interface.
         if buffer.is_empty() {
             return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "Reached end of stream."));
         }
@@ -282,7 +282,7 @@ impl io::Seek for MediaSourceStream {
 }
 
 
-impl Bytestream for MediaSourceStream {
+impl ByteStream for MediaSourceStream {
 
     #[inline(always)]
     fn read_byte(&mut self) -> io::Result<u8> {

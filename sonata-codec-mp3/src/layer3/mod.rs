@@ -8,7 +8,7 @@
 use std::fmt;
 use sonata_core::audio::{AudioBuffer, Signal};
 use sonata_core::errors::{Result, decode_error};
-use sonata_core::io::{BitStream, BitStreamLtr, BufStream, Bytestream};
+use sonata_core::io::{BitStream, BitStreamLtr, BufStream, ByteStream};
 
 use super::synthesis;
 use crate::common::*;
@@ -227,7 +227,7 @@ fn read_main_data(
 }
 
 /// Decode the MPEG audio frame into an `AudioBuffer`.
-pub fn decode_frame<B: Bytestream>(
+pub fn decode_frame<B: ByteStream>(
     reader: &mut B,
     header: &FrameHeader,
     state: &mut State,
