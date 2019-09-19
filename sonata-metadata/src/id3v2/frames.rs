@@ -155,7 +155,7 @@ pub enum FrameResult {
     MultipleTags(Vec<Tag>)
 }
 
-type FrameParser = fn(&mut BufStream, Option<StandardTagKey>, &str) -> Result<FrameResult>;
+type FrameParser = fn(&mut BufStream<'_>, Option<StandardTagKey>, &str) -> Result<FrameResult>;
 
 lazy_static! {
     static ref LEGACY_FRAME_MAP: 
@@ -603,7 +603,7 @@ pub fn read_id3v2p4_frame<B: ByteStream + FiniteStream>(reader: &mut B) -> Resul
 
 /// Reads all text frames frame except for `TXXX`.
 fn read_text_frame(
-    reader: &mut BufStream, 
+    reader: &mut BufStream<'_>, 
     std_key: Option<StandardTagKey>, 
     id: &str,
 ) -> Result<FrameResult> {
@@ -635,7 +635,7 @@ fn read_text_frame(
 
 /// Reads a `TXXX` (user defined) text frame.
 fn read_txxx_frame(
-    reader: &mut BufStream, 
+    reader: &mut BufStream<'_>, 
     _: Option<StandardTagKey>, 
     _: &str,
 ) -> Result<FrameResult> {
@@ -679,7 +679,7 @@ fn read_txxx_frame(
 
 /// Reads all URL frames except for `WXXX`.
 fn read_url_frame(
-    reader: &mut BufStream, 
+    reader: &mut BufStream<'_>, 
     std_key: Option<StandardTagKey>, 
     id: &str,
 ) -> Result<FrameResult> {
@@ -693,7 +693,7 @@ fn read_url_frame(
 
 /// Reads a `WXXX` (user defined) URL frame.
 fn read_wxxx_frame(
-    reader: &mut BufStream,
+    reader: &mut BufStream<'_>,
     std_key: Option<StandardTagKey>, 
     _: &str,
 ) -> Result<FrameResult> {
@@ -715,7 +715,7 @@ fn read_wxxx_frame(
 
 /// Reads a `PRIV` (private) frame.
 fn read_priv_frame(
-    reader: &mut BufStream,
+    reader: &mut BufStream<'_>,
     std_key: Option<StandardTagKey>,
     _: &str,
 ) -> Result<FrameResult> {
@@ -735,7 +735,7 @@ fn read_priv_frame(
 
 /// Reads a `COMM` (comment) or `USLT` (unsynchronized comment) frame.
 fn read_comm_uslt_frame(
-    reader: &mut BufStream,
+    reader: &mut BufStream<'_>,
     std_key: Option<StandardTagKey>,
     id: &str,
 ) -> Result<FrameResult> {
@@ -773,7 +773,7 @@ fn read_comm_uslt_frame(
 
 /// Reads a `PCNT` (total file play count) frame.
 fn read_pcnt_frame(
-    reader: &mut BufStream,
+    reader: &mut BufStream<'_>,
     std_key: Option<StandardTagKey>,
     id: &str,
 ) -> Result<FrameResult> {
@@ -804,7 +804,7 @@ fn read_pcnt_frame(
 
 /// Reads a `POPM` (popularimeter) frame.
 fn read_popm_frame(
-    reader: &mut BufStream,
+    reader: &mut BufStream<'_>,
     std_key: Option<StandardTagKey>,
     id: &str,
 ) -> Result<FrameResult> {
@@ -824,7 +824,7 @@ fn read_popm_frame(
 
 /// Reads a `MCDI` (music CD identifier) frame.
 fn read_mcdi_frame(
-    reader: &mut BufStream,
+    reader: &mut BufStream<'_>,
     std_key: Option<StandardTagKey>,
     id: &str,
 ) -> Result<FrameResult> {
@@ -875,7 +875,7 @@ impl Encoding {
 /// null terminator is not found, and `scan_len` is reached, or the stream is exhausted, all the 
 /// scanned bytes up-to that point are interpreted as the string.
 fn scan_text<'a>(
-    reader: &'a mut BufStream,
+    reader: &'a mut BufStream<'_>,
     encoding: Encoding,
     scan_len: usize,
 ) -> io::Result<Cow<'a, str>> {

@@ -5,6 +5,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+#![warn(rust_2018_idioms)]
+#![forbid(unsafe_code)]
+
 pub mod default {
     //! The `default` module provides common convenience functions to get an implementer up-and-running as quickly as 
     //! possible and reduce boiler-plate. Using the `default` modules is completely optional and incurs no overhead 

@@ -6,6 +6,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 #![warn(rust_2018_idioms)]
+#![forbid(unsafe_code)]
 
 use std::io::{Seek, SeekFrom};
 
