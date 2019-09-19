@@ -249,7 +249,7 @@ impl Decoder for FlacDecoder {
             // Read each subframe based on the channel assignment into a planar buffer.
             match header.channel_assignment {
                 ChannelAssignment::Independant(channels) => {
-                    for i in 0..channels as u8 {
+                    for i in 0..channels as usize {
                         read_subframe(&mut bs, bits_per_sample, self.buf.chan_mut(i))?;
                     }
                 },

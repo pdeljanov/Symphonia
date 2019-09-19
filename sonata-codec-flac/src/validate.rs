@@ -89,7 +89,7 @@ fn copy_as_i24<'a>(
         for (out, sample) in buf.chunks_exact_mut(3)
                                 .skip(ch)
                                 .step_by(n_channels)
-                                .zip(samples.chan(ch as u8))
+                                .zip(samples.chan(ch))
         {
             out.copy_from_slice(&sample.to_le_bytes()[0..3]);
         }
@@ -111,7 +111,7 @@ macro_rules! copy_as {
                 for (out, sample) in buf.chunks_exact_mut(mem::size_of::<$type>())
                                         .skip(ch)
                                         .step_by(n_channels)
-                                        .zip(samples.chan(ch as u8))
+                                        .zip(samples.chan(ch))
                 {
                     out.copy_from_slice(&(*sample as $type).to_le_bytes());
                 }

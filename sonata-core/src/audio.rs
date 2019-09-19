@@ -265,7 +265,7 @@ impl<'a, S : Sample> AudioPlanes<'a, S> {
 
     /// Gets all the audio planes.
     pub fn planes(&mut self) -> &[&'a [S]] {
-        &self.planes[..]
+        &self.planes
     }
 }
 
@@ -281,7 +281,7 @@ impl<'a, S : Sample> AudioPlanesMut<'a, S> {
 
     /// Gets all the audio planes.
     pub fn planes(&mut self) -> &mut [&'a mut [S]] {
-        &mut self.planes[..]
+        &mut self.planes
     }
 }
 
@@ -463,13 +463,13 @@ pub trait Signal<S : Sample> {
     fn clear(&mut self);
 
     /// Gets an immutable reference to all the written samples in the specified channel.
-    fn chan(&self, channel: u8) -> &[S];
+    fn chan(&self, channel: usize) -> &[S];
 
     /// Gets a mutable reference to all the written samples in the specified channel.
-    fn chan_mut(&mut self, channel: u8) -> &mut [S];
+    fn chan_mut(&mut self, channel: usize) -> &mut [S];
 
     /// Gets two mutable references to two different channels.
-    fn chan_pair_mut(&mut self, first: u8, second: u8) -> (&mut [S], &mut [S]);
+    fn chan_pair_mut(&mut self, first: usize, second: usize) -> (&mut [S], &mut [S]);
 
     /// Renders a reserved number of frames. This is a cheap operation and simply advances the frame
     /// counter. The underlying audio data is not modified and should be overwritten through other
@@ -516,22 +516,32 @@ impl<S: Sample> Signal<S> for AudioBuffer<S> {
         self.n_frames
     }
 
-    fn chan(&self, channel: u8) -> &[S]{
-        let start = channel as usize * self.n_capacity;
-        &self.buf[start..start + self.n_frames]
+    fn chan(&self, channel: usize) -> &[S]{
+        let start = channel * self.n_capacity;
+        let end = start + self.n_frames;
+
+        // Do not exceed the audio buffer.
+        assert!(end <= self.buf.len());
+
+        &self.buf[start..end]
     }
 
-    fn chan_mut(&mut self, channel: u8) -> &mut [S] {
-        let start = channel as usize * self.n_capacity;
-        &mut self.buf[start..start + self.n_frames]
+    fn chan_mut(&mut self, channel: usize) -> &mut [S] {
+        let start = channel * self.n_capacity;
+        let end = start + self.n_frames;
+
+        // Do not exceed the audio buffer.
+        assert!(end <= self.buf.len());
+
+        &mut self.buf[start..end]
     }
 
-    fn chan_pair_mut(&mut self, first: u8, second: u8) -> (&mut [S], &mut [S]) {
+    fn chan_pair_mut(&mut self, first: usize, second: usize) -> (&mut [S], &mut [S]) {
         // Both channels in the pair must be unique.
         assert!(first != second);
 
-        let first_idx = self.n_capacity * first as usize;
-        let second_idx = self.n_capacity * second as usize;
+        let first_idx = self.n_capacity * first;
+        let second_idx = self.n_capacity * second;
 
         // The AudioBuffer struct maintains the invariant that the underlying buffer is always 
         // # of channels * n_capacity samples long. It also maintains the invariant that n_frames is
@@ -550,6 +560,7 @@ impl<S: Sample> Signal<S> for AudioBuffer<S> {
 
     fn render_reserved(&mut self, n_frames: Option<usize>) {
         let n_reserved_frames = n_frames.unwrap_or(self.n_capacity - self.n_frames);
+        // Do not render past the end of the audio buffer.
         assert!(self.n_frames + n_reserved_frames <= self.n_capacity);
         self.n_frames += n_reserved_frames;
     }
@@ -562,7 +573,7 @@ impl<S: Sample> Signal<S> for AudioBuffer<S> {
         // remainder of the audio buffer.
         let n_render_frames = n_frames.unwrap_or(self.n_capacity - self.n_frames);
 
-        // Don't render past the end of the audio buffer.
+        // Do not render past the end of the audio buffer.
         let end = self.n_frames + n_render_frames;
         assert!(end <= self.n_capacity);
 

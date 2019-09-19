@@ -290,7 +290,7 @@ pub fn decode_frame<B: ByteStream>(
             hybrid_synthesis::frequency_inversion(&mut state.samples[gr][ch]);
 
             // Perform polyphase synthesis and generate PCM samples.
-            let out_ch_samples = out.chan_mut(ch as u8);
+            let out_ch_samples = out.chan_mut(ch);
 
             synthesis::synthesis(
                 &mut state.synthesis[ch],
