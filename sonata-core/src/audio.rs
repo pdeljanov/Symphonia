@@ -15,6 +15,7 @@ use std::mem;
 use std::slice;
 use std::vec::Vec;
 
+use arrayvec::ArrayVec;
 use bitflags::bitflags;
 
 use super::conv::{{dither::{Dither, DitherType, MaybeDither, Identity}}, IntoSample};
@@ -254,27 +255,33 @@ impl WriteSample for f64 {
 
 /// `AudioPlanes` provides immutable slices to each audio channel (plane) contained in a signal.
 pub struct AudioPlanes<'a, S: 'a + Sample> {
-    planes: [&'a [S]; 32],
-    n_planes: usize
+    planes: ArrayVec<[&'a [S]; 32]>,
 }
 
 impl<'a, S : Sample> AudioPlanes<'a, S> {
+    fn new() -> Self {
+        AudioPlanes { planes: ArrayVec::new() }
+    }
+
     /// Gets all the audio planes.
     pub fn planes(&mut self) -> &[&'a [S]] {
-        &self.planes[..self.n_planes]
+        &self.planes[..]
     }
 }
 
 /// `AudioPlanesMut` provides mutable slices to each audio channel (plane) contained in a signal.
 pub struct AudioPlanesMut<'a, S: 'a + Sample> {
-    planes: [&'a mut [S]; 32],
-    n_planes: usize
+    planes: ArrayVec<[&'a mut [S]; 32]>,
 }
 
 impl<'a, S : Sample> AudioPlanesMut<'a, S> {
+    fn new() -> Self {
+        AudioPlanesMut { planes: ArrayVec::new() }
+    }
+
     /// Gets all the audio planes.
     pub fn planes(&mut self) -> &mut [&'a mut [S]] {
-        &mut self.planes[..self.n_planes]
+        &mut self.planes[..]
     }
 }
 
@@ -343,22 +350,18 @@ impl<S : Sample> AudioBuffer<S> {
         self.n_capacity
     }
 
-    /// Gets immutable references to all audio planes (channels) within the buffer.
+    /// Gets immutable references to all audio planes (channels) within the audio buffer.
     ///
     /// Note: This is not a cheap operation. It is advisable that this call is only used when
     /// operating on batches of frames. Generally speaking, it is almost always better to use
     /// `chan()` to selectively choose the plane to read.
     pub fn planes(&self) -> AudioPlanes<S> {
-        let mut planes = AudioPlanes {
-            // FIXME: this is UB
-            planes: unsafe { std::mem::uninitialized() },
-            n_planes: self.spec.channels.count(),
-        };
+        // Fill the audio planes structure with references to the written portion of each audio
+        // plane.
+        let mut planes = AudioPlanes::new();
 
-        // Only fill the planes array up to the number of channels.
-        for i in 0..planes.n_planes {
-            let start = i * self.n_capacity;
-            planes.planes[i] = &self.buf[start..start + self.n_frames];
+        for channel in self.buf.chunks_exact(self.n_capacity) {
+            planes.planes.push(&channel[..self.n_frames]);
         }
 
         planes
@@ -370,21 +373,12 @@ impl<S : Sample> AudioBuffer<S> {
     /// mutating batches of frames. Generally speaking, it is almost always better to use
     /// `render()`, `fill()`, `chan_mut()`, and `chan_pair_mut()` to mutate the buffer.
     pub fn planes_mut(&mut self) -> AudioPlanesMut<S> {
-        let mut planes = AudioPlanesMut {
-            // FIXME: this is UB
-            planes: unsafe { std::mem::uninitialized() },
-            n_planes: self.spec.channels.count(),
-        };
+        // Fill the audio planes structure with references to the written portion of each audio
+        // plane.
+        let mut planes = AudioPlanesMut::new();
 
-        unsafe {
-            let mut ptr = self.buf.as_mut_ptr();
-
-            // Only fill the planes array up to the number of channels.
-            for i in 0..planes.n_planes {
-                // FIXME: UB, indexing into uninitialized memory
-                planes.planes[i] = slice::from_raw_parts_mut(ptr as *mut S, self.n_frames);
-                ptr = ptr.add(self.n_capacity);
-            }
+        for channel in self.buf.chunks_exact_mut(self.n_capacity) {
+            planes.planes.push(&mut channel[..self.n_frames]);
         }
 
         planes
@@ -527,7 +521,6 @@ impl<S: Sample> Signal<S> for AudioBuffer<S> {
         &self.buf[start..start + self.n_frames]
     }
 
-    #[inline]
     fn chan_mut(&mut self, channel: u8) -> &mut [S] {
         let start = channel as usize * self.n_capacity;
         &mut self.buf[start..start + self.n_frames]
@@ -555,7 +548,6 @@ impl<S: Sample> Signal<S> for AudioBuffer<S> {
         }
     }
 
-    #[inline]
     fn render_reserved(&mut self, n_frames: Option<usize>) {
         let n_reserved_frames = n_frames.unwrap_or(self.n_capacity - self.n_frames);
         assert!(self.n_frames + n_reserved_frames <= self.n_capacity);
@@ -566,29 +558,25 @@ impl<S: Sample> Signal<S> for AudioBuffer<S> {
     where
         F: FnMut(&mut AudioPlanesMut<'a, S>, usize) -> Result<()>
     {
-        // Calculate the number of frames to render if it is not provided.
+        // The number of frames to be rendered is the amount requested, if specified, or the
+        // remainder of the audio buffer.
         let n_render_frames = n_frames.unwrap_or(self.n_capacity - self.n_frames);
-        let end = self.n_frames + n_render_frames;
 
+        // Don't render past the end of the audio buffer.
+        let end = self.n_frames + n_render_frames;
         assert!(end <= self.n_capacity);
 
-        let mut planes = AudioPlanesMut {
-            planes: unsafe { std::mem::uninitialized() },
-            n_planes: self.spec.channels.count(),
-        };
+        // At this point, n_render_frames can be considered "reserved". Create an audio plane
+        // structure and fill each plane entry with a reference to the "reserved" samples in each
+        // channel respectively.
+        let mut planes = AudioPlanesMut::new();
 
-        unsafe {
-            let mut ptr = self.buf.as_mut_ptr().add(self.n_frames);
-
-            // Only fill the planes array up to the number of channels.
-            for i in 0..planes.n_planes {
-                //FIXME: this is instant UB, you are indexing into uninitialized memory
-                planes.planes[i] = slice::from_raw_parts_mut(ptr as *mut S, n_render_frames);
-                ptr = ptr.add(self.n_capacity);
-            }
+        for channel in self.buf.chunks_exact_mut(self.n_capacity) {
+            planes.planes.push(&mut channel[self.n_frames..end]);
         }
 
-        // Attempt to fill the entire buffer, exiting only if there is an error.
+        // Attempt to render the into the reserved frames, one-by-one, exiting only if there is an
+        // error in the render function.
         while self.n_frames < end {
             render(&mut planes, self.n_frames)?;
             self.n_frames += 1;
@@ -639,8 +627,7 @@ impl<S: Sample + WriteSample> SampleBuffer<S> {
 
         // Allocate enough memory for all the samples.
         let byte_length = n_samples as usize * mem::size_of::<S::StreamType>();
-        let mut buf = Vec::with_capacity(byte_length);
-        unsafe { buf.set_len(byte_length) };
+        let buf = vec![0u8; byte_length];
 
         SampleBuffer {
             buf,
