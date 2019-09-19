@@ -391,9 +391,9 @@ impl<S : Sample> AudioBuffer<S> {
     where
         S: MaybeDither<T> + IntoSample<T>
     {
-        debug_assert!(dest.n_frames == self.n_frames);
-        debug_assert!(dest.n_capacity == self.n_capacity);
-        debug_assert!(dest.spec == self.spec);
+        assert!(dest.n_frames == self.n_frames);
+        assert!(dest.n_capacity == self.n_capacity);
+        assert!(dest.spec == self.spec);
 
         for c in 0..self.spec.channels.count() {
             let begin = c * self.n_capacity;
