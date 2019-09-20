@@ -85,17 +85,19 @@ fn copy_as_i24<'a>(
     n_frames: usize,
 ) -> &'a [u8] {
 
+    const SIZE_OF_I24: usize = 24 / 8;
+
     for ch in 0..n_channels {
-        for (out, sample) in buf.chunks_exact_mut(3)
+        for (out, sample) in buf.chunks_exact_mut(SIZE_OF_I24)
                                 .skip(ch)
                                 .step_by(n_channels)
                                 .zip(samples.chan(ch))
         {
-            out.copy_from_slice(&sample.to_le_bytes()[0..3]);
+            out.copy_from_slice(&sample.to_le_bytes()[0..SIZE_OF_I24]);
         }
     }
 
-    &buf[..n_channels * n_frames * 3]
+    &buf[..n_channels * n_frames * SIZE_OF_I24]
 }
 
 macro_rules! copy_as {
