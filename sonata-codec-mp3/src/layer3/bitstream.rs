@@ -104,7 +104,7 @@ fn read_granule_channel_side_info<B: BitStream>(
                 _                                    => 7 + 1,
             };
 
-            channel.region1_start = SCALE_FACTOR_LONG_BANDS[header.sample_rate_idx][region0_count];
+            channel.region1_start = SFB_LONG_BANDS[header.sample_rate_idx][region0_count];
         }
         // If MPEG version 1, OR the block type is Short...
         else if header.is_mpeg1() || block_type_enc == 0b11 {
@@ -149,12 +149,12 @@ fn read_granule_channel_side_info<B: BitStream>(
         let region0_count   = bs.read_bits_leq32(4)? as usize + 1;
         let region0_1_count = bs.read_bits_leq32(3)? as usize + region0_count + 1;
 
-        channel.region1_start = SCALE_FACTOR_LONG_BANDS[header.sample_rate_idx][region0_count];
+        channel.region1_start = SFB_LONG_BANDS[header.sample_rate_idx][region0_count];
 
         // The count in region0_1_count may exceed the last band (22) in the LONG bands table.
         // Protect against this.
         channel.region2_start = match region0_1_count {
-            0..=22 => SCALE_FACTOR_LONG_BANDS[header.sample_rate_idx][region0_1_count],
+            0..=22 => SFB_LONG_BANDS[header.sample_rate_idx][region0_1_count],
             _      => 576,
         };
     }
@@ -251,7 +251,7 @@ pub(super) fn read_scale_factors_mpeg1<B: BitStream>(
     gr: usize,
     ch: usize,
     frame_data: &mut FrameData,
-) -> Result<(u32)> {
+) -> Result<u32> {
 
     let mut bits_read = 0;
 
@@ -330,7 +330,7 @@ pub(super) fn read_scale_factors_mpeg2<B: BitStream>(
     bs: &mut B,
     is_intensity_stereo: bool,
     channel: &mut GranuleChannel,
-) -> Result<(u32)> {
+) -> Result<u32> {
 
     let mut bits_read = 0;
 

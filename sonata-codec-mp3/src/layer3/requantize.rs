@@ -225,10 +225,10 @@ pub(super) fn read_huffman_samples<B: BitStream>(
 
     // Read the count1 partition.
     while i <= 572 && bits_read < part3_bits {
-        // Decode the next Huffman code. Note that we allow the Huffman decoder a few extra bits in 
+        // Decode the next Huffman code. Note that we allow the Huffman decoder a few extra bits in
         // case of a count1 overrun (see below for more details).
         let (value, code_len) = bs.read_huffman(
-            &count1_table, 
+            &count1_table,
             part3_bits + count1_table.n_table_bits - bits_read
         )?;
         bits_read += code_len;
@@ -284,9 +284,9 @@ pub(super) fn read_huffman_samples<B: BitStream>(
     if bits_read < part3_bits {
         bs.ignore_bits(part3_bits - bits_read)?;
     }
-    // Word on the street is that some encoders are poor at "stuffing" bits, resulting in part3_len 
+    // Word on the street is that some encoders are poor at "stuffing" bits, resulting in part3_len
     // being ever so slightly too large. This causes the Huffman decode loop to decode the next few
-    // bits as a sample. However, these bits are random data and not a real sample, so erase it! 
+    // bits as a sample. However, these bits are random data and not a real sample, so erase it!
     // The caller will be reponsible for re-aligning the bitstream reader. Candy Pop confirms this.
     else if bits_read > part3_bits {
         eprintln!("malformed bitstream: count1 overrun");
@@ -304,7 +304,7 @@ pub(super) fn read_huffman_samples<B: BitStream>(
 }
 
 /// Requantize long block samples in `buf`.
-fn requantize_long(header: &FrameHeader, channel: &GranuleChannel, buf: &mut [f32]) {
+fn requantize_long(channel: &GranuleChannel, bands: &[usize], buf: &mut [f32; 576]) {
     // For long blocks dequantization and scaling is governed by the following equation:
     //
     //                     xr(i) = s(i)^(4/3) * 2^(0.25*A) * 2^(-B)
@@ -316,31 +316,32 @@ fn requantize_long(header: &FrameHeader, channel: &GranuleChannel, buf: &mut [f3
     //      B = scalefac_multiplier * (scalefacs[gr][ch][sfb] + (preflag[gr] * pretab[sfb]))
     //
     // Note: The samples in buf are the result of s(i)^(4/3) for each sample i.
+    debug_assert!(bands.len() <= 22);
 
     // The preemphasis table is from table B.6 in ISO/IEC 11172-3.
     const PRE_EMPHASIS: [u8; 22] = [
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         1, 1, 1, 1, 2, 2, 3, 3, 3, 2, 0,
     ];
 
-    let sfb_indicies = &SCALE_FACTOR_LONG_BANDS[header.sample_rate_idx];
-
     // Calculate A, it is constant for the entire requantization.
     let a = i32::from(channel.global_gain) - 210;
-    
+
     let scalefac_shift = if channel.scalefac_scale { 2 } else { 1 };
 
     // Requantize each scale-factor band in buf.
-    for (sfb, sfb_start) in sfb_indicies.iter().enumerate() {
-        if *sfb_start >= buf.len() {
+    for (i, (start, end)) in bands.iter().zip(&bands[1..]).enumerate() {
+        // Do not requantize bands starting after the rzero sample since all samples from there on
+        // are 0.
+        if *start >= channel.rzero {
             break;
         }
 
         // Lookup the pre-emphasis amount if required.
-        let pre_emphasis = if channel.preflag { PRE_EMPHASIS[sfb] } else { 0 };
+        let pre_emphasis = if channel.preflag { PRE_EMPHASIS[i] } else { 0 };
 
         // Calculate B.
-        let b = i32::from((channel.scalefacs[sfb] + pre_emphasis) << scalefac_shift);
+        let b = i32::from((channel.scalefacs[i] + pre_emphasis) << scalefac_shift);
 
         // Calculate 2^(0.25*A) * 2^(-B). This can be rewritten as 2^{ 0.25 * (A - 4 * B) }.
         // Since scalefac_shift was multiplies by 4 above, the final equation becomes
@@ -349,10 +350,10 @@ fn requantize_long(header: &FrameHeader, channel: &GranuleChannel, buf: &mut [f3
 
         // Calculate the ending sample index for the scale-factor band, clamping it to the length of
         // the sample buffer.
-        let sfb_end = min(sfb_indicies[sfb + 1], buf.len());
+        let band_end = min(*end, channel.rzero);
 
         // The sample buffer contains s(i)^(4/3), now multiply in 2^(0.25*A) * 2^(-B) to get xr(i).
-        for sample in &mut buf[*sfb_start..sfb_end] {
+        for sample in &mut buf[*start..band_end] {
             *sample *= pow2ab;
         }
     }
@@ -360,10 +361,10 @@ fn requantize_long(header: &FrameHeader, channel: &GranuleChannel, buf: &mut [f3
 
 /// Requantize short block samples in `buf` starting at scale-factor band `sfb_init`.
 fn requantize_short(
-    header: &FrameHeader,
     channel: &GranuleChannel,
-    sfb_init: usize,
-    buf: &mut [f32],
+    bands: &[usize],
+    switch: usize,
+    buf: &mut [f32; 576],
 ) {
     // For short blocks dequantization and scaling is governed by the following equation:
     //
@@ -376,8 +377,7 @@ fn requantize_short(
     //      B = scalefac_multiplier * scalefacs[gr][ch][sfb][win]
     //
     // Note: The samples in buf are the result of s(i)^(4/3) for each sample i.
-
-    let sfb_indicies = &SCALE_FACTOR_SHORT_BANDS[header.sample_rate_idx];
+    debug_assert!(bands.len() <= 39);
 
     // Calculate the window-independant part of A: global_gain[gr] - 210.
     let gain = i32::from(channel.global_gain) - 210;
@@ -396,48 +396,32 @@ fn requantize_short(
     // scalefac_shift in this case.
     let scalefac_shift = if channel.scalefac_scale { 2 } else { 1 };
 
-    // Requantize each scale-factor band in buf.
-    for (sfb, sfb_div3_start) in sfb_indicies[sfb_init..].iter().enumerate() {
-        // Short scale-factor band start indicies must be multiplied by 3.
-        let sfb_start = *sfb_div3_start * 3;
-
-        if sfb_start >= buf.len() {
+    for (i, (start, end)) in bands.iter().zip(&bands[1..]).enumerate() {
+        // Do not requantize bands starting after the rzero sample since all samples from there on
+        // are 0.
+        if *start > channel.rzero {
             break;
         }
 
-        // Determine the length of the window.
-        let win_len = sfb_indicies[sfb + 1] - sfb_div3_start;
+        // Calculate B.
+        let b = i32::from(channel.scalefacs[switch + i] << scalefac_shift);
 
-        // Each scale-factor band is repeated 3 times over for the 3 short windows.
-        for win in 0..3 {
-            // Calculate the starting sample index for the window.
-            let win_start = sfb_start + (win * win_len);
+        // Calculate 2^(0.25*A) * 2^(-B). This can be rewritten as 2^{ 0.25 * (A - 4 * B) }.
+        // Since scalefac_shift multiplies by 4 above, the final equation becomes
+        // 2^{ 0.25 * (A - B) }.
+        let pow2ab = f64::powf(2.0,  0.25 * f64::from(a[i % 3] - b)) as f32;
 
-            // If the window's starting sample index exceeds the bounds of the sample buffer then
-            // requantization is complete.
-            if win_start >= buf.len() {
-                break;
-            }
+        // Clamp the ending sample index to the rzero sample index. Since samples starting from
+        // rzero are 0, there is no point in requantizing them.
+        let win_end = min(*end, channel.rzero);
 
-            // Calculate B.
-            let b = i32::from(channel.scalefacs[3 * sfb + win] << scalefac_shift);
-
-            // Calculate 2^(0.25*A) * 2^(-B). This can be rewritten as 2^{ 0.25 * (A - 4 * B) }.
-            // Since scalefac_shift multiplies by 4 above, the final equation becomes
-            // 2^{ 0.25 * (A - B) }.
-            let pow2ab = f64::powf(2.0,  0.25 * f64::from(a[win] - b)) as f32;
-
-            // Calculate the ending sample index for the window, clamping it to the length of the
-            // sample buffer.
-            let win_end = min(win_start + win_len, buf.len());
-
-            // The sample buffer contains s(i)^(4/3), now multiply in 2^(0.25*A) * 2^(-B) to get
-            // xr(i).
-            for sample in &mut buf[win_start..win_end] {
-                *sample *= pow2ab;
-            }
+        // The sample buffer contains s(i)^(4/3), now multiply in 2^(0.25*A) * 2^(-B) to get
+        // xr(i).
+        for sample in &mut buf[*start..win_end] {
+            *sample *= pow2ab;
         }
     }
+
 }
 
 /// Requantize samples in `buf` regardless of block type.
@@ -448,7 +432,7 @@ pub(super) fn requantize(
 ) {
     match channel.block_type {
         BlockType::Short { is_mixed: false } => {
-            requantize_short(header, channel, 0, &mut buf[..channel.rzero]);
+            requantize_short(channel, &SFB_SHORT_BANDS[header.sample_rate_idx], 0, buf);
         },
         BlockType::Short { is_mixed: true } => {
             // A mixed block is a combination of a long block and short blocks. The first few scale
@@ -457,15 +441,15 @@ pub(super) fn requantize(
             // can be decomposed into short and long block requantizations.
             //
             // As per ISO/IEC 11172-3, the short scale factor band at which the long block ends and
-            // the short blocks begin is denoted by switch_point_s (3). ISO/IEC 13818-3 does not
-            // ammend this figure.
-            //
-            // TODO: Verify if this split makes sense for 8kHz MPEG2.5 bitstreams.
-            requantize_long(header, channel, &mut buf[0..36]);
-            requantize_short(header, channel, 3, &mut buf[36..channel.rzero]);
+            // the short blocks begin is denoted by switch_point_s. It always begins at sample 36.
+            let bands = SFB_MIXED_BANDS[header.sample_rate_idx];
+            let switch = SFB_MIXED_SWITCH_POINT[header.sample_rate_idx];
+
+            requantize_long(channel, &bands[..switch], buf);
+            requantize_short(channel, &bands[switch..], switch, buf);
         },
         _ => {
-            requantize_long(header, channel, &mut buf[..channel.rzero]);
+            requantize_long(channel, &SFB_LONG_BANDS[header.sample_rate_idx], buf);
         },
     }
 }

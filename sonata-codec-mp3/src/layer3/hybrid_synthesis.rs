@@ -167,30 +167,34 @@ pub(super) fn reorder(
         // would be interleaved.
         debug_assert!(channel.rzero <= 576);
 
-        let sfb_bands = &SCALE_FACTOR_SHORT_BANDS[header.sample_rate_idx];
+        // In mixed blocks, only the short bands can be re-ordered. Determine the applicable bands.
+        let bands = if is_mixed {
+            let switch = SFB_MIXED_SWITCH_POINT[header.sample_rate_idx];
+            &SFB_MIXED_BANDS[header.sample_rate_idx][switch..]
+        }
+        else {
+            &SFB_SHORT_BANDS[header.sample_rate_idx]
+        };
+
+        let start = bands[0];
 
         // TODO: Frankly, this is wasteful... Consider swapping between two internal buffers so we
         // can avoid initializing this to 0 every frame. Unsafe is not allowed in codec's so this
         // can't be left uninitialized.
         let mut reorder_buf = [0f32; 576];
 
-        // Only the short bands in a mixed block are reordered. Adjust the starting scale factor
-        // band accordingly.
-        //
-        // TODO: Verify if this split makes sense for 8kHz MPEG2.5 bitstreams.
-        let mut sfb = if is_mixed { 3 } else { 0 };
-
-        let start = 3 * sfb_bands[sfb] as usize;
         let mut i = start;
 
-        while i < channel.rzero {
-            // Determine the scale factor band length.
-            let len = (sfb_bands[sfb+1] - sfb_bands[sfb]) as usize;
+        for (((s0, s1), s2), s3) in bands.iter()
+                                         .zip(&bands[1..])
+                                         .zip(&bands[2..])
+                                         .zip(&bands[3..])
+                                         .step_by(3) {
 
             // The three short sample windows.
-            let win0 = &buf[        i..i + 1*len];
-            let win1 = &buf[i + 1*len..i + 2*len];
-            let win2 = &buf[i + 2*len..i + 3*len];
+            let win0 = &buf[*s0..*s1];
+            let win1 = &buf[*s1..*s2];
+            let win2 = &buf[*s2..*s3];
 
             // Interleave the three short sample windows.
             // TODO: This could likely be sped up with SIMD.
@@ -200,11 +204,9 @@ pub(super) fn reorder(
                 reorder_buf[i+2] = *w2;
                 i += 3;
             }
-        
-            sfb += 1;
         }
 
-        // TODO: It is possible for i to exceed rzero, does that make sense? Or should it simply 
+        // TODO: It is possible for i to exceed rzero, does that make sense? Or should it simply
         // copy between [start..rzero]? Probably not... since an entire scale factor band /should/
         // be processed...
 
@@ -274,7 +276,7 @@ pub(super) fn hybrid_synthesis(
     samples: &mut [f32; 576],
 ) {
     // Determine the number of sub-bands to process as long blocks. Short blocks process 0 sub-bands
-    // as long blocks, mixed blocks process the first 2 sub-bands as long blocks, and all other 
+    // as long blocks, mixed blocks process the first 2 sub-bands as long blocks, and all other
     // block types (long, start, end) process all 32 sub-bands as long blocks.
     let n_long_bands = match channel.block_type {
         BlockType::Short { is_mixed: false } =>  0,
@@ -310,7 +312,7 @@ pub(super) fn hybrid_synthesis(
         }
     }
 
-    // If there are any sub-bands remaining, process them as short blocks. For short blocks, the 
+    // If there are any sub-bands remaining, process them as short blocks. For short blocks, the
     // 12-point IMDCT must be used on each window.
     if n_long_bands < 32 {
         // Select the short block window.
@@ -320,7 +322,7 @@ pub(super) fn hybrid_synthesis(
         for sb in n_long_bands..32 {
             let start = 18 * sb;
 
-            // Perform the 12-point IMDCT on each of the 3 short windows within the sub-band (6 
+            // Perform the 12-point IMDCT on each of the 3 short windows within the sub-band (6
             // samples each).
             let mut output = [0f32; 36];
             imdct12_win(&samples[start..(start + 18)], window, &mut output);
@@ -414,7 +416,7 @@ pub fn frequency_inversion(samples: &mut [f32; 576]) {
     //        +-----+-----+-----+-----+-----+-----+ . . . . +------+
     // s[i] = | sb0 | sb1 | sb2 | sb3 | sb4 | sb5 | . . . . | sb31 |
     //        +-----+-----+-----+-----+-----+-----+ . . . . +------+
-    // 
+    //
     // The odd sub-bands are thusly:
     //
     //      sb1  -> s[ 18.. 36]
@@ -422,7 +424,7 @@ pub fn frequency_inversion(samples: &mut [f32; 576]) {
     //      sb5  -> s[ 90..108]
     //      ...
     //      sb31 -> s[558..576]
-    // 
+    //
     // Each odd sample in the aforementioned sub-bands must be negated.
     for i in (18..576).step_by(36) {
         // Sample negation is unrolled into a 2x4 + 1 (9) operation to improve vectorization.
@@ -444,7 +446,7 @@ mod tests {
 
     fn imdct12_analytical(x: &[f32; 6]) -> [f32; 12] {
         const PI_24: f64 = f64::consts::PI / 24.0;
-        
+
         let mut result = [0f32; 12];
 
         for i in 0..12 {
@@ -460,7 +462,7 @@ mod tests {
 
     #[test]
     fn verify_imdct12_win() {
-        const TEST_VECTOR: [f32; 18] = [ 
+        const TEST_VECTOR: [f32; 18] = [
             0.0976, 0.9321, 0.6138, 0.0857, 0.0433, 0.4855, 0.2144, 0.8488,
             0.6889, 0.2983, 0.1957, 0.7037, 0.0052, 0.0197, 0.3188, 0.5123,
             0.2994, 0.7157,
@@ -751,7 +753,7 @@ mod imdct36 {
 
         #[test]
         fn verify_imdct36() {
-            const TEST_VECTOR: [f32; 18] = [ 
+            const TEST_VECTOR: [f32; 18] = [
                 0.0976, 0.9321, 0.6138, 0.0857, 0.0433, 0.4855, 0.2144, 0.8488,
                 0.6889, 0.2983, 0.1957, 0.7037, 0.0052, 0.0197, 0.3188, 0.5123,
                 0.2994, 0.7157,

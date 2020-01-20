@@ -18,9 +18,8 @@ mod hybrid_synthesis;
 mod requantize;
 mod stereo;
 
-/// `FrameData` contains the side_info and main_data portions of a MPEG audio frame. Once read from
-/// the bitstream, `FrameData` is immutable for the remainder of the decoding process.
-#[derive(Default)]
+/// `FrameData` contains the side_info and main_data portions of a MPEG audio frame.
+#[derive(Default, Debug)]
 struct FrameData {
     /// The byte offset into the bit resevoir indicating the location of the first bit of main_data.
     /// If 0, main_data begins after the side_info of this frame.
@@ -48,7 +47,7 @@ impl FrameData {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 struct Granule {
     /// Channels in the granule.
     channels: [GranuleChannel; 2],
@@ -256,7 +255,7 @@ pub fn decode_frame<B: ByteStream>(
         // Each granule will yield 576 samples.
         out.render_reserved(Some(576));
 
-        let granule = &frame_data.granules[gr];
+        let granule = &mut frame_data.granules[gr];
 
         // Requantize all non-zero (big_values and count1 partition) spectral samples.
         requantize::requantize(&header, &granule.channels[0], &mut state.samples[gr][0]);
@@ -267,7 +266,7 @@ pub fn decode_frame<B: ByteStream>(
             requantize::requantize(&header, &granule.channels[1], &mut state.samples[gr][1]);
 
             // Apply joint stereo processing if it is used.
-            stereo::stereo(&header, &granule, &mut state.samples[gr])?;
+            stereo::stereo(&header, granule, &mut state.samples[gr])?;
         }
 
         // The next steps are independant of channel count.
