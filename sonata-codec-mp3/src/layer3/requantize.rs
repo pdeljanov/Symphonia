@@ -441,7 +441,7 @@ pub(super) fn requantize(
             // can be decomposed into short and long block requantizations.
             //
             // As per ISO/IEC 11172-3, the short scale factor band at which the long block ends and
-            // the short blocks begin is denoted by switch_point_s. It always begins at sample 36.
+            // the short blocks begin is denoted by switch_point_s.
             let bands = SFB_MIXED_BANDS[header.sample_rate_idx];
             let switch = SFB_MIXED_SWITCH_POINT[header.sample_rate_idx];
 
