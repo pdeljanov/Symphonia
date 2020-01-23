@@ -9,6 +9,7 @@ use std::cmp::max;
 use std::{f64, f32};
 
 use sonata_core::errors::{Result, decode_error};
+use sonata_core::util::bits;
 
 use lazy_static::lazy_static;
 
@@ -243,7 +244,7 @@ fn process_intensity_long_block(
     // Decode intensity stereo coded bands based on bitstream version.
     if header.is_mpeg1() {
         // Iterate over each band and decode the intensity stereo coding if the band is zero.
-        for((start, end), is_pos) in bands_iter {
+        for ((start, end), is_pos) in bands_iter {
             if *start >= rzero {
                 process_intensity_mpeg1(
                     *is_pos as usize,
@@ -264,7 +265,7 @@ fn process_intensity_long_block(
         let is_pos_table =
             &INTENSITY_STEREO_RATIOS_MPEG2[granule.channels[1].scalefac_compress as usize & 0x1];
 
-        for((start, end), is_pos) in bands_iter {
+        for ((start, end), is_pos) in bands_iter {
             if *start >= rzero {
                 process_intensity_mpeg2(
                     is_pos_table,
@@ -314,9 +315,10 @@ fn process_intensity_short_block_mpeg1(
                           .zip(granule.channels[1].scalefacs.iter());
 
     // Iterate over each band and decode the intensity stereo coding if the band is zero.
-    for((start, end), is_pos) in bands_iter {
+    for ((start, end), is_pos) in bands_iter {
         // TODO: If one window is non-zero in the band, should the entire band be considered
-        // non-zero? Or could the next window be intensity stereo coded?
+        // non-zero? Or could the next window(s) be intensity stereo coded? This check only supports
+        // the latter case.
         if *start >= rzero {
             process_intensity_mpeg1(
                 *is_pos as usize,
@@ -416,37 +418,60 @@ fn process_intensity_short_block_mpeg2(
     let is_pos_table =
         &INTENSITY_STEREO_RATIOS_MPEG2[granule.channels[1].scalefac_compress as usize & 0x1];
 
+    let rzero = max(granule.channels[0].rzero, granule.channels[1].rzero);
+
     // Build a bitmap where non-zero bands and/or windows are marked with a 1.
-    let mut band_map = 0u64;
+    let mut nz_map = 0u64;
 
     for (i, (start, end)) in bands.iter().zip(&bands[1..]).enumerate() {
-        // If a band is non-zero, record it in the band map.
+        // Bands or windows starting at or beyond rzero are all 0 so there is no need to process
+        // them.
+        if *start >= rzero {
+            break;
+        }
+
+        // Check if a band is non-zero, and if so, record it in the non-zero band map.
         if ch1[*start..*end].iter().find(|&&x| x != 0.0).is_some() {
-            band_map |= 0x1 << i;
+            nz_map |= 0x1 << i;
         }
     }
+
+    // If there is a set of contiguous non-zero bands and/or windows, these will never be intensity
+    // stereo coded. They may be mid-side stereo encoded, however. Therefore, a conservative
+    // estimate of the intensity bound is the end of the last non-zero band in this set.
+    let is_bound = bits::trailing_ones_u64(nz_map) as usize;
+
+    // Consume all bands before the intensity bound.
+    nz_map >>= is_bound;
 
     // Create an iterator that yields a band start-end pair, and scale-factor.
     let bands_iter = bands.iter()
                           .zip(&bands[1..])
-                          .zip(granule.channels[1].scalefacs.iter());
+                          .zip(granule.channels[1].scalefacs.iter())
+                          .skip(is_bound);
 
     // Iterate over each band and process it accordingly.
     for ((start, end), is_pos) in bands_iter {
-        // This band only contains 0. It *may* be intensity stereo coded if the remaining bands
-        // (or windows, when applicable) are all 0 as well.
-        let do_intensity = if band_map & 1 == 0 {
+        // Bands or windows starting at or beyond rzero are all 0 so there is no need to process
+        // them.
+        if *start >= rzero {
+            break;
+        }
+
+        // This band only contains zeros. It *may* be intensity stereo coded if the remaining bands
+        // and/or windows are all zero as well.
+        let do_intensity = if nz_map & 1 == 0 {
             // If the block is mixed, and the sample index is < 36, then the current band is a long
             // band. A long band in a mixed block can only be intensity stereo coded if all the
             // remaining long and short bands are zero.
             if is_mixed && (*start < 36) {
-                band_map == 0
+                nz_map == 0
             }
             // Otherwise, the band is short (mixed block or otherwise). Short bands are composed of
-            // 3 windows. If subsequent windows in the remaining bands are zero, then this window is
-            // intensity stereo coded.
+            // 3 windows. If the corresponding windows in the remaining bands are also zero, then
+            // this window is intensity stereo coded.
             else {
-                band_map & WIN_MASK == 0
+                nz_map & WIN_MASK == 0
             }
         }
         else {
@@ -454,7 +479,7 @@ fn process_intensity_short_block_mpeg2(
             false
         };
 
-        // If the band/window was coded with intensity stereo encoding, then decode it now.
+        // If the band or window was coded with intensity stereo encoding then decode it now.
         if do_intensity {
             process_intensity_mpeg2(
                 is_pos_table,
@@ -464,20 +489,20 @@ fn process_intensity_short_block_mpeg2(
                 &mut ch1[*start..*end],
             );
         }
-        // If intensity stereo coding is not used, but mid-side stereo coding is enabled, decode the
-        // band/window's mid-side stereo coding.
+        // If intensity stereo coding was not used, but mid-side stereo coding is enabled, decode
+        // the band or window's mid-side stereo coding.
         else if mid_side {
             process_mid_side(&mut ch0[*start..*end], &mut ch1[*start..*end]);
         }
 
         // Consume the bitmap. Shifting right lets us use the same window mask for all windows in a
         // band.
-        band_map >>= 1;
+        nz_map >>= 1;
     }
 
     // Since short/mixed blocks can be sparse, mid-side stereo decoding is done on a band-by-band,
     // window-by-window basis in this case. So the intensity bound is 0.
-    0
+    bands[is_bound]
 }
 
 /// Perform joint stereo decoding on the channel pair.
@@ -487,11 +512,7 @@ pub(super) fn stereo(
     ch: &mut [[f32; 576]; 2],
 ) -> Result<()> {
 
-    let (ch0, ch1) = {
-        let (ch0, ch1) = ch.split_first_mut().unwrap();
-        (ch0, &mut ch1[0])
-    };
-
+    // Determine whether mid-side, and/or intensity stereo coding is used.
     let (mid_side, intensity) = match header.channels {
         Channels::JointStereo(Mode::Layer3 { mid_side, intensity }) => (mid_side, intensity),
         Channels::JointStereo(Mode::Intensity { .. }) => {
@@ -508,15 +529,22 @@ pub(super) fn stereo(
         return decode_error("stereo channel pair block_type mismatch");
     }
 
+    // Split the sample buffer into two channels.
+    let (ch0, ch1) = {
+        let (ch0, ch1) = ch.split_first_mut().unwrap();
+        (ch0, &mut ch1[0])
+    };
+
     // Joint stereo processing as specified in layer 3 is a combination of mid-side, and intensity
     // encoding schemes. Each scale-factor band may use either mid-side, intensity, or no stereo
     // encoding. The type of encoding used for each scale-factor band is determined by the MPEG
-    // version, the mode extension, the block type, and the content of the scale-factor bands.
+    // bitstream version, the mode extension, the block type, and the content of the scale-factor
+    // bands.
     let end = max(granule.channels[0].rzero, granule.channels[1].rzero);
 
     // Decode intensity stereo coded bands if it is enabled and get the intensity bound.
     let is_bound = if intensity {
-        // Process intensity stereo based on bitstream version and block type.
+        // Decode intensity stereo coded bands based on bitstream version and block type.
         match granule.channels[1].block_type {
             BlockType::Short { is_mixed } if header.is_mpeg1() => {
                 process_intensity_short_block_mpeg1(header, granule, is_mixed, mid_side, ch0, ch1)
@@ -541,10 +569,10 @@ pub(super) fn stereo(
         process_mid_side(&mut ch0[0..is_bound], &mut ch1[0..is_bound]);
     }
 
-    // With joint stereo encoding, there is usually a mismatch between the number of samples read
-    // for each channel. The number of non-zero samples read for each channel is the rzero index.
-    // However, after joint stereo decoding, both channels will have the same number of samples.
-    // Update the rzero of both channels with the actual number of samples now.
+    // With joint stereo encoding, there is usually a mismatch between the number of samples 
+    // initially read from the bitstream for each channel. This count is stored as the rzero sample
+    // index. However, after joint stereo decoding, both channels will have the same number of
+    // samples. Update rzero for both channels with the actual number of samples.
     if intensity || mid_side {
         granule.channels[0].rzero = end;
         granule.channels[1].rzero = end;
