@@ -87,6 +87,40 @@ pub mod bits {
         (((0xff as u32) << upper) ^ ((0xff as u32) << lower)) as u8
     }
 
+    /// Returns the number of trailing ones in an unsigned 8-bit integer.
+    #[inline(always)]
+    pub fn trailing_ones_u8(value: u8) -> u32 {
+        (!value & value.wrapping_add(1)).trailing_zeros()
+    }
+
+    /// Returns the number of trailing ones in an unsigned 16-bit integer.
+    #[inline(always)]
+    pub fn trailing_ones_u16(value: u16) -> u32 {
+        (!value & value.wrapping_add(1)).trailing_zeros()
+    }
+
+    /// Returns the number of trailing ones in an unsigned 32-bit integer.
+    #[inline(always)]
+    pub fn trailing_ones_u32(value: u32) -> u32 {
+        (!value & value.wrapping_add(1)).trailing_zeros()
+    }
+
+    /// Returns the number of trailing ones in an unsigned 64-bit integer.
+    #[inline(always)]
+    pub fn trailing_ones_u64(value: u64) -> u32 {
+        (!value & value.wrapping_add(1)).trailing_zeros()
+    }
+
+    #[test]
+    fn verify_trailing_ones() {
+        assert_eq!(trailing_ones_u32(0), 0);
+        assert_eq!(trailing_ones_u32(1), 1);
+        assert_eq!(trailing_ones_u32(2), 0);
+        assert_eq!(trailing_ones_u32(3), 2);
+        assert_eq!(trailing_ones_u32(0xf00f_7fff), 15);
+        assert_eq!(trailing_ones_u32(0xffff_ffff), 32);
+    }
+
     #[test]
     fn verify_masks() {
         assert_eq!(mask_at(0), 0b0000_0001);
