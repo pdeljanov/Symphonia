@@ -389,7 +389,7 @@ fn validate_lang_code(code: [u8; 3]) -> bool {
     code.iter().filter(|&c| *c < b'a' || *c > b'z').count() == 0
 }
 
-/// Finds a frame parser for "modern" ID3v2.3 or ID2v2.4 tags.
+/// Finds a frame parser for "modern" ID3v2.3 or ID3v2.4 tags.
 fn find_parser(id: [u8; 4]) -> Option<&'static (FrameParser, Option<StandardTagKey>)> {
     FRAME_PARSERS.get(&id)
 }
@@ -407,14 +407,17 @@ fn find_parser_legacy(id: [u8; 3]) -> Option<&'static (FrameParser, Option<Stand
 pub fn read_id3v2p2_frame<B: ByteStream>(reader: &mut B) -> Result<FrameResult> {
     let id = reader.read_triple_bytes()?;
 
-    // Check if padding (all 0s) was reached.
-    if id == [0, 0, 0] {
-        return Ok(FrameResult::Padding);
-    }
-
-    // Validate that the frame ID is legal.
+    // Check if the frame id contains valid characters. If it does not, then assume the rest of the
+    // tag is padding. As per the specification, padding should be all 0s, but there are some tags
+    // which don't obey the specification.
     if !validate_frame_id(&id) {
-        return decode_error("Invalid frame ID.");
+        // As per the specification, padding should be all 0s, but there are some tags which don't
+        // obey the specification.
+        if id != [0, 0, 0] {
+            eprintln!("id3v2: padding bytes not zero.");
+        }
+
+        return Ok(FrameResult::Padding);
     }
 
     let size = u64::from(reader.read_be_u24()?);
@@ -431,7 +434,7 @@ pub fn read_id3v2p2_frame<B: ByteStream>(reader: &mut B) -> Result<FrameResult> 
 
     // A frame must be atleast 1 byte as per the specification.
     if size == 0 {
-        return decode_error("Frame has a size of 0.");
+        eprintln!("id3v2: frame size of 0 for {}", std::str::from_utf8(&id).unwrap());
     }
 
     let data = reader.read_boxed_slice_bytes(size as usize)?;
@@ -443,14 +446,17 @@ pub fn read_id3v2p2_frame<B: ByteStream>(reader: &mut B) -> Result<FrameResult> 
 pub fn read_id3v2p3_frame<B: ByteStream>(reader: &mut B) -> Result<FrameResult> {
     let id = reader.read_quad_bytes()?;
 
-    // Check if padding (all 0s) was reached.
-    if id == [0, 0, 0, 0] {
-        return Ok(FrameResult::Padding);
-    }
-
-    // Validate that the frame ID is legal.
+    // Check if the frame id contains valid characters. If it does not, then assume the rest of the
+    // tag is padding. As per the specification, padding should be all 0s, but there are some tags
+    // which don't obey the specification.
     if !validate_frame_id(&id) {
-        return decode_error("Invalid frame ID.");
+        // As per the specification, padding should be all 0s, but there are some tags which don't
+        // obey the specification.
+        if id != [0, 0, 0, 0] {
+            eprintln!("id3v2: padding bytes not zero.");
+        }
+
+        return Ok(FrameResult::Padding);
     }
 
     let mut size = u64::from(reader.read_be_u32()?);
@@ -493,7 +499,7 @@ pub fn read_id3v2p3_frame<B: ByteStream>(reader: &mut B) -> Result<FrameResult> 
 
     // A frame must be atleast 1 byte as per the specification.
     if size == 0 {
-        return decode_error("Frame has a size of 0.");
+        eprintln!("id3v2: frame size of 0 for {}", std::str::from_utf8(&id).unwrap());
     }
 
     let data = reader.read_boxed_slice_bytes(size as usize)?;
@@ -505,14 +511,16 @@ pub fn read_id3v2p3_frame<B: ByteStream>(reader: &mut B) -> Result<FrameResult> 
 pub fn read_id3v2p4_frame<B: ByteStream + FiniteStream>(reader: &mut B) -> Result<FrameResult> {
     let id = reader.read_quad_bytes()?;
 
-    // Check if padding (all 0s) was reached.
-    if id == [0, 0, 0, 0] {
-        return Ok(FrameResult::Padding);
-    }
-
-    // Validate that the frame ID is legal.
+    // Check if the frame id contains valid characters. If it does not, then assume the rest of the
+    // tag is padding.
     if !validate_frame_id(&id) {
-        return decode_error("Invalid frame ID.");
+        // As per the specification, padding should be all 0s, but there are some tags which don't
+        // obey the specification.
+        if id != [0, 0, 0, 0] {
+            eprintln!("id3v2: padding bytes not zero.");
+        }
+
+        return Ok(FrameResult::Padding);
     }
 
     let mut size = u64::from(read_syncsafe_leq32(reader, 28)?);
@@ -564,7 +572,7 @@ pub fn read_id3v2p4_frame<B: ByteStream + FiniteStream>(reader: &mut B) -> Resul
 
     // A frame must be atleast 1 byte as per the specification.
     if size == 0 {
-        return decode_error("Frame has a size of 0.");
+        eprintln!("id3v2: frame size of 0 for {}", std::str::from_utf8(&id).unwrap());
     }
 
     // Read the frame body into a new buffer. This is, unfortunate. The original plan was to use an 
