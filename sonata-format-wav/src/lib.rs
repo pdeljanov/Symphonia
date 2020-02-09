@@ -15,17 +15,14 @@ use sonata_core::support_format;
 use sonata_core::audio::Timestamp;
 use sonata_core::codecs::CodecParameters;
 use sonata_core::errors::{Result, seek_error, SeekErrorKind};
-use sonata_core::formats::{Cue, ProbeDepth, ProbeResult, Stream};
-use sonata_core::formats::{FormatDescriptor, FormatOptions, FormatReader, Packet};
+use sonata_core::formats::{Cue, FormatOptions, FormatReader, Packet, ProbeResult, Stream};
 use sonata_core::io::*;
 use sonata_core::meta::{MetadataBuilder, MetadataQueue};
+use sonata_core::probe::{Descriptor, Instantiate, QueryDescriptor};
 
 mod chunks;
 
 use chunks::*;
-
-/// The recommended maximum number of bytes advance a stream to find the stream marker before giving up.
-const WAVE_PROBE_SEARCH_LIMIT: usize = 512 * 1024;
 
 const WAVE_MAX_FRAMES_PER_PACKET: u64 = 4096;
 
@@ -69,6 +66,25 @@ impl WavReader {
 
 }
 
+impl QueryDescriptor for WavReader {
+    fn query() -> &'static [Descriptor] {
+        &[
+            // WAVE RIFF form
+            support_format!(
+                "wave",
+                "Waveform Audio File Format",
+                &[ "wav", "wave" ], 
+                &[ "audio/vnd.wave", "audio/x-wav", "audio/wav", "audio/wave" ], 
+                &[ b"RIFF" ]
+            ),
+        ]
+    }
+
+    fn score(_context: &[u8]) -> f32 {
+        1.0
+    }
+}
+
 impl FormatReader for WavReader {
 
     fn open(source: MediaSourceStream, _options: &FormatOptions) -> Self {
@@ -80,15 +96,6 @@ impl FormatReader for WavReader {
             frame_len: 0,
             data_offset: 0,
         }
-    }
-
-    fn supported_formats() -> &'static [FormatDescriptor] {
-        &[
-            support_format!(
-                &["wav", "wave"], 
-                &["audio/vnd.wave", "audio/x-wav", "audio/wav", "audio/wave"], 
-                b"RIFF    ", 4, 0)
-        ]
     }
 
     fn next_packet(&mut self) -> Result<Packet<'_>> {
@@ -165,12 +172,11 @@ impl FormatReader for WavReader {
         Ok(frame_ts)
     }
 
-    fn probe(&mut self, depth: ProbeDepth) -> Result<ProbeResult> {
+    fn probe(&mut self) -> Result<ProbeResult> {
+        // "RIFF" marker should be present.
+        let marker = self.reader.read_quad_bytes()?;
 
-        // Search for the "RIFF" marker.
-        let marker = search_for_marker(&mut self.reader, *b"RIFF", depth)?;
-
-        if marker.is_none() {
+        if marker != *b"RIFF" {
             return Ok(ProbeResult::Unsupported);
         }
 
@@ -281,49 +287,4 @@ fn append_format_params(codec_params: &mut CodecParameters, format: &WaveFormatC
 
 fn append_fact_params(codec_params: &mut CodecParameters, fact: &FactChunk) {
     codec_params.with_n_frames(u64::from(fact.n_frames));
-}
-
-fn search_for_marker<B: ByteStream>(reader: &mut B, marker: [u8; 4], depth: ProbeDepth) -> Result<Option<[u8; 4]>> {
-    let mut window = [0u8; 4];
-
-    reader.read_buf_bytes(&mut window)?;
-
-    // Count the number of bytes read in the probe so that a limit may (optionally) be applied.
-    let mut probed_bytes = 4usize;
-
-    loop {
-        if window == marker {
-            // Found the marker.
-            eprintln!("Probe: Found stream marker @ +{} bytes.", probed_bytes - 4);
-            return Ok(Some(marker));
-        }
-        // If the ProbeDepth is deep, continue searching for the stream marker.
-        else if depth == ProbeDepth::Deep {
-            // Do not search more than the designated search limit.
-            if probed_bytes <= WAVE_PROBE_SEARCH_LIMIT {
-
-                if probed_bytes % 4096 == 0 {
-                    eprintln!("Probe: Searching for stream marker... ({} / {}) bytes.", 
-                        probed_bytes, WAVE_PROBE_SEARCH_LIMIT);
-                }
-
-                window[0] = window[1];
-                window[1] = window[2];
-                window[2] = window[3];
-                window[3] = reader.read_u8()?;
-
-                probed_bytes += 1;
-            }
-            else {
-                eprintln!("Probe: Stream marker search limit exceeded.");
-                break;
-            }
-        }
-        else {
-            break;
-        }
-    }
-
-    // Loop exited, therefore stream is unsupported.
-    Ok(None)
 }

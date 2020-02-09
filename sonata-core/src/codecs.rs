@@ -28,14 +28,8 @@ pub struct CodecType(u32);
 /// Null decoder, simply discards all data.
 pub const CODEC_TYPE_NULL: CodecType             = CodecType(0x0);
 
-// Hardware or Operating System provided codecs
-//---------------------------------------------
-
-/// Native Hardware Decoder
-pub const CODEC_TYPE_HWDEC: CodecType            = CodecType(0x1);
-
-// PCM codecs
-//-----------
+// Uncompressed PCM audio codecs
+//------------------------------
 
 /// PCM signed 32-bit little-endian interleaved
 pub const CODEC_TYPE_PCM_S32LE: CodecType        = CodecType(0x100);
@@ -114,21 +108,35 @@ pub const CODEC_TYPE_PCM_ALAW: CodecType         = CodecType(0x124);
 /// PCM Mu-law
 pub const CODEC_TYPE_PCM_MULAW: CodecType        = CodecType(0x125);
 
-// Compressed audio codecs
-//------------------------
+// Compressed lossy audio codecs
+//------------------------------
+
+/// Vorbis
+pub const CODEC_TYPE_VORBIS: CodecType           = CodecType(0x1000);
+/// MPEG Layer 1 (MP1)
+pub const CODEC_TYPE_MP1: CodecType              = CodecType(0x1001);
+/// MPEG Layer 2 (MP2)
+pub const CODEC_TYPE_MP2: CodecType              = CodecType(0x1002);
+/// MPEG Layer 3 (MP3)
+pub const CODEC_TYPE_MP3: CodecType              = CodecType(0x1003);
+/// Advanced Audio Coding (AAC)
+pub const CODEC_TYPE_AAC: CodecType              = CodecType(0x1004);
+/// Opus
+pub const CODEC_TYPE_OPUS: CodecType             = CodecType(0x1005);
+/// Musepack
+pub const CODEC_TYPE_MUSEPACK: CodecType         = CodecType(0x1006);
+
+// Compressed lossless audio codecs
+//---------------------------------
 
 /// Free Lossless Audio Codec (FLAC)
-pub const CODEC_TYPE_FLAC: CodecType             = CodecType(0x1000);
-/// MPEG Layer 1, 2, and 3 (MP1, MP2, MP3)
-pub const CODEC_TYPE_MP3: CodecType              = CodecType(0x1001);
-/// Advanced Audio Coding (AAC)
-pub const CODEC_TYPE_AAC: CodecType              = CodecType(0x1002);
-/// Vorbis
-pub const CODEC_TYPE_VORBIS: CodecType           = CodecType(0x1003);
-/// Opus
-pub const CODEC_TYPE_OPUS: CodecType             = CodecType(0x1004);
+pub const CODEC_TYPE_FLAC: CodecType             = CodecType(0x2000);
 /// WavPack
-pub const CODEC_TYPE_WAVPACK: CodecType          = CodecType(0x1005);
+pub const CODEC_TYPE_WAVPACK: CodecType          = CodecType(0x2001);
+/// Monkey's Audio (APE)
+pub const CODEC_TYPE_MONKEYS_AUDIO: CodecType    = CodecType(0x2002);
+/// Apple Lossless Audio Codec (ALAC)
+pub const CODEC_TYPE_ALAC: CodecType             = CodecType(0x2003);
 
 
 impl fmt::Display for CodecType {
@@ -138,9 +146,10 @@ impl fmt::Display for CodecType {
 }
 
 /// Codec parameters stored in a container format's headers and metadata may be passed to a codec
-/// using the `CodecParameters` structure. All fields in this structure are optional.
+/// using the `CodecParameters` structure.
 #[derive(Clone)]
 pub struct CodecParameters {
+    /// The codec type.
     pub codec: CodecType,
 
     /// The sample rate of the audio in Hz.
@@ -158,21 +167,21 @@ pub struct CodecParameters {
     /// The number of bits per one encoded audio sample.
     pub bits_per_coded_sample: Option<u32>,
 
-    /// A list of in-order channels.
+    /// A bitmask of all channels in the stream.
     pub channels: Option<Channels>,
 
     /// The channel layout.
     pub channel_layout: Option<Layout>,
 
-    /// The number of leading samples inserted by the encoder for padding that should be skipped
+    /// The number of leading frames inserted by the encoder for padding that should be skipped
     /// during playback.
     pub leading_padding: Option<u32>,
 
-    /// The number of trailing samples inserted by the encoder for padding that should be skipped
+    /// The number of trailing frames inserted by the encoder for padding that should be skipped
     /// during playback.
     pub trailing_padding: Option<u32>,
 
-    /// The maximum number of samples a packet will contain.
+    /// The maximum number of frames a packet will contain.
     pub max_frames_per_packet: Option<u64>,
 }
 

@@ -14,20 +14,17 @@ use sonata_core::support_format;
 use sonata_core::audio::Timestamp;
 use sonata_core::codecs::{CODEC_TYPE_FLAC, CodecParameters};
 use sonata_core::errors::{Result, decode_error, seek_error, SeekErrorKind};
-use sonata_core::formats::{Cue, ProbeDepth, ProbeResult, SeekIndex, SeekSearchResult, Stream};
-use sonata_core::formats::{FormatDescriptor, FormatOptions, FormatReader, Packet};
+use sonata_core::formats::{Cue, ProbeResult, SeekIndex, SeekSearchResult, Stream};
+use sonata_core::formats::{FormatOptions, FormatReader, Packet};
 use sonata_core::io::*;
 use sonata_core::meta::{MetadataQueue, MetadataBuilder};
+use sonata_core::probe::{Descriptor, Instantiate, QueryDescriptor};
 
 use super::decoder::PacketParser;
 use super::metadata::*;
 
 /// The FLAC start of stream marker: "fLaC" in ASCII.
 const FLAC_STREAM_MARKER: [u8; 4] = *b"fLaC";
-
-/// The recommended maximum number of bytes advance a stream to find the stream marker before giving
-/// up.
-const FLAC_PROBE_SEARCH_LIMIT: usize = 512 * 1024;
 
 /// `Free Lossless Audio Codec (FLAC) native frame reader.
 pub struct FlacReader {
@@ -122,6 +119,24 @@ impl FlacReader {
 
 }
 
+impl QueryDescriptor for FlacReader {
+    fn query() -> &'static [Descriptor] {
+        &[
+            support_format!(
+                "flac",
+                "Free Lossless Audio Codec Native",
+                &[ "flac" ],
+                &[ "audio/flac" ],
+                &[ b"fLaC" ]
+            ),
+        ]
+    }
+
+    fn score(_context: &[u8]) -> f32 {
+        1.0
+    }
+}
+
 impl FormatReader for FlacReader {
 
     fn open(source: MediaSourceStream, _options: &FormatOptions) -> Self {
@@ -135,9 +150,6 @@ impl FormatReader for FlacReader {
         }
     }
 
-    fn supported_formats() -> &'static [FormatDescriptor] {
-        &[ support_format!(&["flac"], &["audio/flac"], b"fLaC    ", 4, 0) ]
-    }
 
     fn next_packet(&mut self) -> Result<Packet<'_>> {
         // FLAC is not a "real" container format. FLAC frames are more-so part of the codec
@@ -244,13 +256,13 @@ impl FormatReader for FlacReader {
                 if frame_ts < packet.packet_ts {
                     end_byte_offset = mid_byte_offset;
                 }
-                else if frame_ts > packet.packet_ts 
-                    && frame_ts < (packet.packet_ts + u64::from(packet.n_frames)) 
+                else if frame_ts > packet.packet_ts
+                    && frame_ts < (packet.packet_ts + u64::from(packet.n_frames))
                 {
                     // Rewind the stream back to the beginning of the frame.
                     self.reader.rewind(packet.parsed_len);
 
-                    eprintln!("Seeked to packet_ts={} (delta={})", 
+                    eprintln!("Seeked to packet_ts={} (delta={})",
                         packet.packet_ts, packet.packet_ts as i64 - frame_ts as i64);
 
                     return Ok(packet.packet_ts);
@@ -284,20 +296,20 @@ impl FormatReader for FlacReader {
                 // Overshot a regular seek, or the stream is corrupted, not necessarily an error
                 // per-say.
                 else {
-                    eprintln!("Seeked to packet_ts={} (delta={})", 
+                    eprintln!("Seeked to packet_ts={} (delta={})",
                         packet.packet_ts, packet.packet_ts as i64 - frame_ts as i64);
 
                     return Ok(packet.packet_ts);
                 }
             }
             // The desired timestamp is contained within the current packet.
-            else if frame_ts >= packet.packet_ts 
+            else if frame_ts >= packet.packet_ts
                 && frame_ts < (packet.packet_ts + u64::from(packet.n_frames))
             {
                 // Rewind the stream back to the beginning of the frame.
                 self.reader.rewind(packet.parsed_len);
 
-                eprintln!("Seeked to packet_ts={} (delta={})", 
+                eprintln!("Seeked to packet_ts={} (delta={})",
                     packet.packet_ts, packet.packet_ts as i64 - frame_ts as i64);
 
                 return Ok(packet.packet_ts);
@@ -305,68 +317,26 @@ impl FormatReader for FlacReader {
         }
     }
 
-    fn probe(&mut self, depth: ProbeDepth) -> Result<ProbeResult> {
-        // Read the first 4 bytes of the stream. Ideally this will be the FLAC stream marker. If
-        // not, use this as a window to scroll byte-after-byte searching for the stream marker if
-        // the ProbeDepth is Deep.
-        let mut marker = [
-            self.reader.read_u8()?,
-            self.reader.read_u8()?,
-            self.reader.read_u8()?,
-            self.reader.read_u8()?,
-        ];
+    fn probe(&mut self) -> Result<ProbeResult> {
+        // Read the first 4 bytes of the stream. Ideally this will be the FLAC stream marker.
+        let marker = self.reader.read_quad_bytes()?;
 
-        // Count the number of bytes read in the probe so that a limit may (optionally) be applied.
-        let mut probed_bytes = 4usize;
+        if marker == FLAC_STREAM_MARKER {
+            // Strictly speaking, the first metadata block must be a StreamInfo block. There is
+            // no technical need for this from the reader's point of view. Additionally, if the
+            // reader is fed a stream mid-way there is no StreamInfo block. Therefore, just read
+            // all metadata blocks and handle the StreamInfo block as it comes.
+            self.read_all_metadata_blocks()?;
 
-        loop {
-            if marker == FLAC_STREAM_MARKER {
-                // Found the header. This is enough for a Superficial probe, but not enough for a
-                // Default probe.
-                eprintln!("Probe: Found FLAC header @ +{} bytes.", probed_bytes - 4);
+            self.first_frame_offset = self.reader.pos();
 
-                // Strictly speaking, the first metadata block must be a StreamInfo block. There is
-                // no technical need for this from the reader's point of view. Additionally, if the
-                // reader is fed a stream mid-way there is no StreamInfo block. Therefore, just read
-                // all metadata blocks and handle the StreamInfo block as it comes.
-                self.read_all_metadata_blocks()?;
-
-                self.first_frame_offset = self.reader.pos();
-                
-                // Make sure that there is atleast one StreamInfo block.
-                if self.streams.is_empty() {
-                    return decode_error("No StreamInfo block.");
-                }
-
-                // Read the rest of the metadata blocks.
-                return Ok(ProbeResult::Supported);
+            // Make sure that there is atleast one StreamInfo block.
+            if self.streams.is_empty() {
+                return decode_error("No StreamInfo block.");
             }
-            // If the ProbeDepth is deep, continue searching for the stream marker.
-            else if depth == ProbeDepth::Deep {
-                // Do not search more than the designated search limit.
-                // TODO: Replace with programmable limit.
-                if probed_bytes <= FLAC_PROBE_SEARCH_LIMIT {
 
-                    if probed_bytes % 4096 == 0 {
-                        eprintln!("Probe: Searching for stream marker... ({} / {}) bytes.", 
-                            probed_bytes, FLAC_PROBE_SEARCH_LIMIT);
-                    }
-
-                    marker[0] = marker[1];
-                    marker[1] = marker[2];
-                    marker[2] = marker[3];
-                    marker[3] = self.reader.read_u8()?;
-
-                    probed_bytes += 1;
-                }
-                else {
-                    eprintln!("Probe: Stream marker search limit exceeded.");
-                    break;
-                }
-            }
-            else {
-                break;
-            }
+            // Read the rest of the metadata blocks.
+            return Ok(ProbeResult::Supported);
         }
 
         // Loop exited, therefore stream is unsupported.
@@ -393,7 +363,7 @@ fn read_stream_info_block<B : ByteStream>(
             .with_bits_per_sample(info.bits_per_sample)
             .with_max_frames_per_packet(u64::from(info.block_sample_len.1))
             .with_channels(info.channels);
-        
+
         // Total samples (per channel) aka frames may or may not be stated in StreamInfo.
         if let Some(n_frames) = info.n_samples {
             codec_params.with_n_frames(n_frames);

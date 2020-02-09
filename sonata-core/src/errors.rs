@@ -47,6 +47,8 @@ pub enum Error {
     /// A default or user-defined limit was reached while decoding or demuxing the stream. Limits
     /// are used to prevent denial-of-service attacks from malicious streams.
     LimitError(&'static str, usize),
+    /// The demuxer or decoder needs to be reset before continuing.
+    ResetRequired,
 }
 
 impl fmt::Display for Error {
@@ -54,19 +56,19 @@ impl fmt::Display for Error {
         match *self {
             Error::IoError(ref err) => err.fmt(f),
             Error::DecodeError(msg) => {
-                f.write_str("Malformed stream encountered: ")?;
-                f.write_str(msg)
+                write!(f, "malformed stream: {}", msg)
             },
             Error::SeekError(ref kind) => {
-                f.write_str("Seek failed: ")?;
-                f.write_str(kind.as_str())
+                write!(f, "seek error: {}", kind.as_str())
             }
             Error::Unsupported(feature) => {
-                f.write_str("Unsupported feature encountered: ")?;
-                f.write_str(feature)
+                write!(f, "unsupported feature: {}", feature)
             },
             Error::LimitError(constraint, limit) => {
-                f.write_fmt(format_args!("Limit reached: {} ({})", constraint, limit))
+                write!(f, "limit reached: {} ({})", constraint, limit)
+            },
+            Error::ResetRequired => {
+                write!(f, "decoder needs to be reset")
             },
         }
     }
@@ -80,6 +82,7 @@ impl std::error::Error for Error {
             Error::SeekError(_) => None,
             Error::Unsupported(_) => None,
             Error::LimitError(_, _) => None,
+            Error::ResetRequired => None,
         }
     }
 }
@@ -110,4 +113,9 @@ pub fn unsupported_error<T>(feature: &'static str) -> Result<T> {
 /// Convenience function to create a limit error.
 pub fn limit_error<T>(constraint: &'static str, limit: usize) -> Result<T> {
     Err(Error::LimitError(constraint, limit))
+}
+
+/// Convenience function to create a reset required error.
+pub fn reset_error<T>() -> Result<T> {
+    Err(Error::ResetRequired)
 }

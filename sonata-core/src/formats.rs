@@ -15,7 +15,7 @@ use std::io;
 use crate::audio::Timestamp;
 use crate::codecs::CodecParameters;
 use crate::errors::Result;
-use crate::io::{ByteStream, MediaSource, MediaSourceStream};
+use crate::io::{ByteStream, MediaSourceStream};
 use crate::meta::{MetadataQueue, Tag};
 
 /// The verbosity of log messages produced by a decoder or demuxer.
@@ -32,74 +32,18 @@ pub enum Verbosity {
     Debug,
 }
 
-/// Limit defines how a `Format` or `Codec` should handle resource allocation when the amount of
-/// that resource to be allocated is dictated by the untrusted stream. Limits are used to prevent
-/// denial-of-service attacks whereby the stream requests the `Format` or `Codec` to allocate large
-/// amounts of a resource, usually memory. A limit will place an upper-bound on this allocation at
-/// the risk of breaking potentially valid streams.
-///
-/// All limits can be defaulted to a reasonable value specific to the situation. These defaults will
-/// generally not break any normal stream.
-pub enum Limit {
-    /// Do not impose any limit.
-    None,
-    /// Use the (reasonable) default specified by the `Format` or `Codec`.
-    Default,
-    /// Specify the upper limit of the resource. Units are use-case specific.
-    Maximum(usize),
-}
-
-impl Limit {
-    /// Gets the numeric limit of the limit, or default value. If there is no limit, None is
-    /// returned.
-    pub fn limit_or_default(&self, default: usize) -> Option<usize> {
-        match self {
-            Limit::None => None,
-            Limit::Default => Some(default),
-            Limit::Maximum(max) => Some(*max),
-        }
-    }
-}
-
 /// `FormatOptions` is a common set of options that all demuxers use.
 pub struct FormatOptions {
     /// Selects the logging verbosity of the demuxer.
     pub verbosity: Verbosity,
-
-    /// The maximum size limit in bytes that a tag may occupy in memory once decoded. Tags exceeding
-    /// this limit will be skipped by the demuxer. Take note that tags in-memory are stored as UTF-8
-    /// and therefore may occupy more than one byte per character.
-    pub limit_metadata_bytes: Limit,
-
-    // The maximum size limit in bytes that a visual (picture) may occupy.
-    pub limit_visual_bytes: Limit,
 }
 
 impl Default for FormatOptions {
     fn default() -> Self {
         FormatOptions {
             verbosity: Verbosity::Error,
-            limit_metadata_bytes: Limit::Default,
-            limit_visual_bytes: Limit::Default,
         }
     }
-}
-
-/// The `ProbeDepth` is how hard a `FormatReader` should try to determine if it can support a stream.
-#[derive(PartialEq)]
-pub enum ProbeDepth {
-    /// Don't probe at all. This is useful if joining a stream midway. A `FormatReader` is not
-    /// required to support this, and it may be impossible for some media formats, if so an error
-    /// may be immediately returned.
-    NoProbe,
-    /// Check if the header signature is correct. Event hooks will never fire.
-    Superficial,
-    /// Check if the header signature is correct and validate the stream playback information. Event
-    /// hooks may fire if the reader encounters relevant metadata.
-    Shallow,
-    /// Search the stream for the header if it is not immediately available, and validate the stream
-    /// playback information. Event hooks may fire if the reader encounters relevant metadata.
-    Deep
 }
 
 /// A `Cue` is a designated point of time within a media stream.
@@ -328,14 +272,8 @@ pub trait FormatReader {
     where
         Self: Sized;
 
-    /// Gets a list of `FormatDescriptor`s for the formats supported by this `FormatReader`.
-    fn supported_formats() -> &'static [FormatDescriptor]
-    where
-        Self: Sized;
-
-    /// Probes the container to check for support, contained streams, and other metadata. The
-    /// complexity of the probe can be set based on the caller's use-case.
-    fn probe(&mut self, depth: ProbeDepth) -> Result<ProbeResult>;
+    /// Probes the container to check for support, contained streams, and other metadata.
+    fn probe(&mut self) -> Result<ProbeResult>;
 
     /// Gets a list of all `Cue`s.
     fn cues(&self) -> &[Cue];
@@ -468,159 +406,3 @@ pub enum ProbeResult {
     Supported
 }
 
-/// The `FormatRegistry` allows the registration of an arbitrary number of `FormatReader`s and
-/// subsequently will guess which `FormatReader` among them is appropriate for reading a given
-/// `MediaSource`.
-///
-/// It is recommended that one `FormatRegistry` be created for the life of the application.
-pub struct FormatRegistry {
-    descriptors: Vec<(FormatDescriptor, u32)>,
-}
-
-impl FormatRegistry {
-
-    pub fn new() -> Self {
-        FormatRegistry {
-            descriptors: Vec::new(),
-        }
-    }
-
-    /// Attempts to guess and instantiate the appropriate `FormatReader` for the given source
-    /// through analysis and the provided hints.
-    ///
-    /// Note: Guessing is currently naively implemented and only uses the extension and mime-type to
-    /// choose the format.
-    pub fn guess<S>(
-        &self,
-        hint: &Hint,
-        src: Box<S>,
-        options: &FormatOptions,
-    ) -> Option<Box<dyn FormatReader>>
-    where
-        S: 'static + MediaSource
-    {
-        for descriptor in &self.descriptors {
-            let mut supported = false;
-
-            supported |= match hint.extension {
-                Some(ref extension) => descriptor.0.supports_extension(extension),
-                None => false
-            };
-
-            supported |= match hint.mime_type {
-                Some(ref mime_type) => descriptor.0.supports_mime_type(mime_type),
-                None => false
-            };
-
-            if supported {
-                let mss = MediaSourceStream::new(src);
-                return Some((descriptor.0.inst_func)(mss, options));
-            }
-        }
-
-        None
-    }
-
-    /// Registers all formats supported by the Demuxer at the provided tier.
-    pub fn register_all<F: FormatReader>(&mut self, tier: u32) {
-        for descriptor in F::supported_formats() {
-            self.register(&descriptor, tier);
-        }
-    }
-
-    /// Register a single format at the provided tier.
-    pub fn register(&mut self, descriptor: &FormatDescriptor, tier: u32) {
-        let pos = self.descriptors.iter()
-                                  .position(|entry| entry.1 < tier)
-                                  .unwrap_or_else(|| self.descriptors.len());
-
-        self.descriptors.insert(pos, (*descriptor, tier));
-    }
-
-}
-
-/// A `Hint` provides additional information and context to the `FormatRegistry` when guessing what
-/// `FormatReader` to use to open and read a piece of media.
-///
-/// For example, the `FormatRegistry` cannot examine the extension or mime-type of the media because
-/// `MediaSourceStream` abstracts away such details. However, the embedder may have this information
-/// from a file path, HTTP header, email  attachment metadata, etc. `Hint`s are optional, and won't
-/// lead the registry astray if they're wrong, but they may provide an informed initial guess and
-/// optimize the guessing process siginificantly especially as more formats are registered.
-pub struct Hint {
-    extension: Option<String>,
-    mime_type: Option<String>,
-}
-
-impl Hint {
-    /// Instantiate an empty `Hint`.
-    pub fn new() -> Self {
-        Hint {
-            extension: None,
-            mime_type: None,
-        }
-    }
-
-    /// Add a file extension `Hint`.
-    pub fn with_extension(&mut self, extension: &str) -> &mut Self {
-        self.extension = Some(extension.to_owned());
-        self
-    }
-
-    /// Add a MIME/Media-type `Hint`.
-    pub fn mime_type(&mut self, mime_type: &str) -> &mut Self {
-        self.mime_type = Some(mime_type.to_owned());
-        self
-    }
-}
-
-/// `FormatDescriptor` provides declarative information about the multimedia format that is used by
-/// the `FormatRegistry`  and related machinery to guess the appropriate `FormatReader` for a given
-/// media stream.
-#[derive(Copy, Clone)]
-pub struct FormatDescriptor {
-    /// A list of case-insensitive file extensions that are generally used by the format.
-    pub extensions: &'static [&'static str],
-    /// A list of case-insensitive MIME types that are generally used by the format.
-    pub mime_types: &'static [&'static str],
-    /// An up-to 8 byte start-of-stream marker that will be searched for within the stream.
-    pub marker: &'static [u8; 8],
-    /// A bitmask applied to the aforementioned marker and the stream data to allow for bit-aligned
-    /// start-of-stream markers. A mask of 0 disables masking.
-    pub marker_mask: u64,
-    /// The length of the marker in bytes (between 1 and 8). A length of 0 disables the marker
-    /// search.
-    pub marker_len: usize,
-    // An instantiation function for the format.
-    pub inst_func: fn(MediaSourceStream, &FormatOptions) -> Box<dyn FormatReader>,
-}
-
-impl FormatDescriptor {
-    fn supports_extension(&self, extension: &str) -> bool {
-        for supported_extension in self.extensions {
-            if supported_extension.eq_ignore_ascii_case(extension) {
-                return true
-            }
-        }
-        false
-    }
-
-    fn supports_mime_type(&self, mime_type: &str) -> bool {
-        false
-    }
-}
-
-/// Convenience macro for declaring a `FormatDescriptor`.
-#[macro_export]
-macro_rules! support_format {
-    ($exts:expr, $mimes:expr, $marker:expr, $mask:expr, $len:expr) => {
-        FormatDescriptor {
-            extensions: $exts,
-            mime_types: $mimes,
-            marker: $marker,
-            marker_mask: $mask,
-            marker_len: $len,
-            inst_func: |source, opt| { Box::new(Self::open(source, &opt)) }
-        }
-    };
-}

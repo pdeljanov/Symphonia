@@ -15,7 +15,7 @@ pub mod default {
 
     use lazy_static::lazy_static;
 
-    use sonata_core::formats::FormatRegistry;
+    use sonata_core::probe::Probe;
     use sonata_core::codecs::CodecRegistry;
 
     lazy_static! {
@@ -43,7 +43,7 @@ pub mod default {
     }
 
     lazy_static! {
-        static ref FORMAT_REGISTRY: FormatRegistry = {
+        static ref PROBE: Probe = {
             #[cfg(feature = "flac")]
             use sonata_codec_flac::FlacReader;
             #[cfg(feature = "mp3")]
@@ -51,16 +51,20 @@ pub mod default {
             #[cfg(feature = "wav")]
             use sonata_format_wav::WavReader;
 
-            let mut registry = FormatRegistry::new();
+            use sonata_metadata::id3v2::Id3v2Reader;
+
+            let mut registry: Probe = Default::default();
 
             #[cfg(feature = "flac")]
-            registry.register_all::<FlacReader>(0);
+            registry.register_all::<FlacReader>();
 
             #[cfg(feature = "mp3")]
-            registry.register_all::<Mp3Reader>(0);
+            registry.register_all::<Mp3Reader>();
 
             #[cfg(feature = "wav")]
-            registry.register_all::<WavReader>(0);
+            registry.register_all::<WavReader>();
+
+            registry.register_all::<Id3v2Reader>();
 
             registry
         };
@@ -74,12 +78,12 @@ pub mod default {
         &CODEC_REGISTRY
     }
 
-    /// Gets the default `FormatRegistry`. This registry pre-registers all the formats selected by the `feature` flags 
+    /// Gets the default `Probe`. This registry pre-registers all the formats selected by the `feature` flags 
     /// in the includer's `Cargo.toml`. If `features` is not set, the default set of Sonata formats is registered. 
     /// 
-    /// This function does not create the `FormatRegistry` until the first call to this function.
-    pub fn get_formats() -> &'static FormatRegistry {
-        &FORMAT_REGISTRY
+    /// This function does not create the `Probe` until the first call to this function.
+    pub fn get_probe() -> &'static Probe {
+        &PROBE
     }
 
 }

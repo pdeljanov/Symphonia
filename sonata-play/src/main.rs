@@ -22,8 +22,10 @@ use sonata::core::errors::Result;
 use sonata::core::audio::*;
 use sonata::core::conv::dither::DitherType;
 use sonata::core::codecs::DecoderOptions;
-use sonata::core::formats::{Cue, FormatReader, Hint, FormatOptions, ProbeDepth, ProbeResult, Stream};
-use sonata::core::meta::{ColorMode, Tag, Visual};
+use sonata::core::formats::{Cue, FormatReader, FormatOptions, ProbeResult, Stream};
+use sonata::core::meta::{ColorMode, MetadataOptions, Tag, Visual};
+use sonata::core::io::MediaSourceStream;
+use sonata::core::probe::Hint;
 
 #[cfg(not(target_os = "linux"))]
 use sonata::core::errors::unsupported_error;
@@ -73,8 +75,8 @@ fn main() {
     // Get the file path option.
     let path = Path::new(matches.value_of("FILE").unwrap());
 
-    // Create a hint to help the format registry guess what format reader is appropriate for file at the given file 
-    // path.
+    // Create a hint to help the format registry guess what format reader is appropriate for file at
+    // the given file path.
     let mut hint = Hint::new();
 
     // Use the file extension as a hint.
@@ -84,15 +86,17 @@ fn main() {
 
     // Open the given file.
     // TODO: Catch errors.
-    let file = Box::new(File::open(path).unwrap());
+    let mss = MediaSourceStream::new(Box::new(File::open(path).unwrap()));
 
-    // Use the format registry to pick a format reader for the given file and instantiate it with a default set of 
-    // options.
-    let format_options = FormatOptions { ..Default::default() };
-    let mut reader = sonata::default::get_formats().guess(&hint, file, &format_options).unwrap();
+    // Use the default options for metadata and format readers.
+    let format_opts: FormatOptions = Default::default();
+    let metadata_opts: MetadataOptions = Default::default();
+
+    // Probe the media stream for metadata and to get the format reader.
+    let mut reader = sonata::default::get_probe().format(&hint, mss, &format_opts, &metadata_opts).unwrap();
 
     // Probe the file using the format reader to verify the file is actually supported.
-    let probe_info = reader.probe(ProbeDepth::Deep).unwrap();
+    let probe_info = reader.probe().unwrap();
 
     match probe_info {
         // The file was not actually supported by the format reader.

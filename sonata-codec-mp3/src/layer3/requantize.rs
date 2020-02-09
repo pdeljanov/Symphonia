@@ -316,7 +316,7 @@ fn requantize_long(channel: &GranuleChannel, bands: &[usize], buf: &mut [f32; 57
     //      B = scalefac_multiplier * (scalefacs[gr][ch][sfb] + (preflag[gr] * pretab[sfb]))
     //
     // Note: The samples in buf are the result of s(i)^(4/3) for each sample i.
-    debug_assert!(bands.len() <= 22);
+    debug_assert!(bands.len() <= 23);
 
     // The preemphasis table is from table B.6 in ISO/IEC 11172-3.
     const PRE_EMPHASIS: [u8; 22] = [
@@ -377,7 +377,7 @@ fn requantize_short(
     //      B = scalefac_multiplier * scalefacs[gr][ch][sfb][win]
     //
     // Note: The samples in buf are the result of s(i)^(4/3) for each sample i.
-    debug_assert!(bands.len() <= 39);
+    debug_assert!(bands.len() <= 40);
 
     // Calculate the window-independant part of A: global_gain[gr] - 210.
     let gain = i32::from(channel.global_gain) - 210;

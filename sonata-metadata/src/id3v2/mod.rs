@@ -9,7 +9,10 @@
 
 use sonata_core::errors::{Result, decode_error, unsupported_error};
 use sonata_core::io::*;
-use sonata_core::meta::MetadataBuilder;
+use sonata_core::meta::{Metadata, MetadataBuilder, MetadataOptions, MetadataReader};
+use sonata_core::probe::{QueryDescriptor, Descriptor, Instantiate};
+
+use sonata_core::support_metadata;
 
 mod frames;
 mod unsync;
@@ -371,4 +374,28 @@ pub mod util {
         }
     }
 
+}
+
+pub struct Id3v2Reader;
+
+impl QueryDescriptor for Id3v2Reader {
+    fn query() -> &'static [Descriptor] {
+        &[ support_metadata!("id3v2", "ID3v2", &[], &[], &[ b"ID3" ]) ]
+    }
+
+    fn score(_context: &[u8]) -> f32 {
+        1.0
+    }
+}
+
+impl MetadataReader for Id3v2Reader {
+    fn new(_options: &MetadataOptions) -> Self {
+        Id3v2Reader { }
+    }
+
+    fn read_all(&mut self, reader: &mut MediaSourceStream) -> Result<Metadata> {
+        let mut builder = MetadataBuilder::new();
+        read_id3v2(reader, &mut builder)?;
+        Ok(builder.metadata())
+    }
 }

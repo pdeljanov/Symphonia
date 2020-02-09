@@ -13,8 +13,62 @@ use std::fmt;
 use std::num::NonZeroU32;
 use std::ops::Deref;
 
+use crate::errors::Result;
+use crate::io::MediaSourceStream;
+
+/// Limit defines how a `Format` or `Codec` should handle resource allocation when the amount of
+/// that resource to be allocated is dictated by the untrusted stream. Limits are used to prevent
+/// denial-of-service attacks whereby the stream requests the `Format` or `Codec` to allocate large
+/// amounts of a resource, usually memory. A limit will place an upper-bound on this allocation at
+/// the risk of breaking potentially valid streams.
+///
+/// All limits can be defaulted to a reasonable value specific to the situation. These defaults will
+/// generally not break any normal stream.
+#[derive(Copy, Clone)]
+pub enum Limit {
+    /// Do not impose any limit.
+    None,
+    /// Use the (reasonable) default specified by the `Format` or `Codec`.
+    Default,
+    /// Specify the upper limit of the resource. Units are use-case specific.
+    Maximum(usize),
+}
+
+impl Limit {
+    /// Gets the numeric limit of the limit, or default value. If there is no limit, None is
+    /// returned.
+    pub fn limit_or_default(&self, default: usize) -> Option<usize> {
+        match self {
+            Limit::None => None,
+            Limit::Default => Some(default),
+            Limit::Maximum(max) => Some(*max),
+        }
+    }
+}
+
+/// `MetadataOptions` is a common set of options that all metadata readers use.
+#[derive(Copy, Clone)]
+pub struct MetadataOptions {
+    /// The maximum size limit in bytes that a tag may occupy in memory once decoded. Tags exceeding
+    /// this limit will be skipped by the demuxer. Take note that tags in-memory are stored as UTF-8
+    /// and therefore may occupy more than one byte per character.
+    pub limit_metadata_bytes: Limit,
+
+    /// The maximum size limit in bytes that a visual (picture) may occupy.
+    pub limit_visual_bytes: Limit,
+}
+
+impl Default for MetadataOptions {
+    fn default() -> Self {
+        MetadataOptions {
+            limit_metadata_bytes: Limit::Default,
+            limit_visual_bytes: Limit::Default,
+        }
+    }
+}
+
 /// `StandardVisualKey` is an enumation providing standardized keys for common visual dispositions.
-/// A demuxer may assign a `StandardVisualKey` to a `Visual` if the disposition of the attached 
+/// A demuxer may assign a `StandardVisualKey` to a `Visual` if the disposition of the attached
 /// visual is known and can be mapped to a standard key.
 ///
 /// The visual types listed here are derived from, though do not entirely cover, the ID3v2 APIC
@@ -153,8 +207,8 @@ pub enum StandardTagKey {
 /// A `Tag` encapsulates a key-value pair of metadata.
 pub struct Tag {
     /// If the `Tag`'s key string is commonly associated with a typical type, meaning, or purpose,
-    /// then if recognized a `StandardTagKey` will be assigned to this `Tag`. 
-    /// 
+    /// then if recognized a `StandardTagKey` will be assigned to this `Tag`.
+    ///
     /// This is a best effort guess since not all metadata formats have a well defined or specified
     /// mapping. However, it is recommended that user's use `std_key` over `key` if provided.
     pub std_key: Option<StandardTagKey>,
@@ -358,7 +412,7 @@ impl MetadataQueue {
     /// `Metadata`. When there are no newer revisions, `None` is returned. As such, `pop` will never
     /// completely empty the queue.
     pub fn pop(&self) -> Option<Metadata> {
-        let mut queue = self.queue.borrow_mut(); 
+        let mut queue = self.queue.borrow_mut();
 
         if queue.len() > 1 {
             queue.pop_front()
@@ -372,4 +426,14 @@ impl MetadataQueue {
     pub fn push(&mut self, rev: Metadata) {
         self.queue.borrow_mut().push_back(rev);
     }
+}
+
+pub trait MetadataReader {
+    /// Instantiates the `MetadataReader` with the provided `MetadataOptions`.
+    fn new(options: &MetadataOptions) -> Self
+    where
+        Self: Sized;
+
+    /// Read all metadata and return it if successful.
+    fn read_all(&mut self, reader: &mut MediaSourceStream) -> Result<Metadata>;
 }

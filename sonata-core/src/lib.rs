@@ -13,5 +13,6 @@ pub mod errors;
 pub mod formats;
 pub mod io;
 pub mod meta;
+pub mod probe;
 pub mod sample;
 pub mod util;

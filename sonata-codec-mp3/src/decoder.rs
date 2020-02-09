@@ -6,14 +6,15 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use sonata_core::audio::{AudioBuffer, AudioBufferRef, AsAudioBufferRef, Duration, Signal};
-use sonata_core::codecs::{CODEC_TYPE_MP3, CodecParameters, CodecDescriptor, Decoder, DecoderOptions};
+use sonata_core::codecs::CODEC_TYPE_MP3;
+use sonata_core::codecs::{CodecParameters, CodecDescriptor, Decoder, DecoderOptions};
 use sonata_core::errors::{Result, unsupported_error};
 use sonata_core::formats::Packet;
 use sonata_core::support_codec;
 
 use super::{common::*, header, layer3};
 
-/// MPEG1 and MPEG2 layers 1, 2, and 3 decoder.
+/// MPEG1 and MPEG2 Layer 1, 2, and 3 decoder.
 pub struct Mp3Decoder {
     params: CodecParameters,
     state: State,
@@ -31,7 +32,11 @@ impl Decoder for Mp3Decoder {
     }
 
     fn supported_codecs() -> &'static [CodecDescriptor] {
-        &[ support_codec!(CODEC_TYPE_MP3, "mp3", "MPEG Audio Layer 3") ]
+        &[
+            // support_codec!(CODEC_TYPE_MP1, "mp1", "MPEG Audio Layer 1"),
+            // support_codec!(CODEC_TYPE_MP2, "mp2", "MPEG Audio Layer 2"),
+            support_codec!(CODEC_TYPE_MP3, "mp3", "MPEG Audio Layer 3"),
+        ]
     }
 
     fn codec_params(&self) -> &CodecParameters {

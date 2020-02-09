@@ -12,21 +12,41 @@ use sonata_core::support_format;
 use sonata_core::audio::Timestamp;
 use sonata_core::codecs::{CodecParameters, CODEC_TYPE_MP3};
 use sonata_core::errors::Result;
-use sonata_core::formats::{Cue, ProbeDepth, ProbeResult, Stream};
-use sonata_core::formats::{FormatDescriptor, FormatOptions, FormatReader, Packet};
+use sonata_core::formats::{Cue, FormatOptions, FormatReader, Packet, ProbeResult, Stream};
 use sonata_core::io::*;
-use sonata_core::meta::{MetadataQueue, MetadataBuilder};
-
-use sonata_metadata::id3v2;
+use sonata_core::meta::MetadataQueue;
+use sonata_core::probe::{Descriptor, Instantiate, QueryDescriptor};
 
 /// MPEG1 and MPEG2 audio frame reader.
-/// 
+///
 /// `Mp3Reader` implements a demuxer for the MPEG1 and MPEG2 audio frame format.
 pub struct Mp3Reader {
     reader: MediaSourceStream,
     streams: Vec<Stream>,
     cues: Vec<Cue>,
     metadata: MetadataQueue,
+}
+
+impl QueryDescriptor for Mp3Reader {
+    fn query() -> &'static [Descriptor] {
+        &[
+            // Layer 3
+            support_format!(
+                "mp3",
+                "MPEG Audio Layer 3 Native",
+                &[ "mp3" ],
+                &[ "audio/mp3" ],
+                &[
+                    &[ 0xff, 0xfa ], &[ 0xff, 0xfb ], // MPEG 1
+                    &[ 0xff, 0xf2 ], &[ 0xff, 0xf3 ], // MPEG 2
+                    &[ 0xff, 0xe2 ], &[ 0xff, 0xe3 ], // MPEG 2.5
+                ]),
+        ]
+    }
+
+    fn score(_context: &[u8]) -> f32 {
+        1.0
+    }
 }
 
 impl FormatReader for Mp3Reader {
@@ -37,10 +57,6 @@ impl FormatReader for Mp3Reader {
             cues: Vec::new(),
             metadata: Default::default(),
         }
-    }
-
-    fn supported_formats() -> &'static [FormatDescriptor] {
-        &[ support_format!(&["mp3"], &["audio/mp3"], b"MPEG    ", 4, 0) ]
     }
 
     fn next_packet(&mut self) -> Result<Packet<'_>> {
@@ -63,13 +79,8 @@ impl FormatReader for Mp3Reader {
         unimplemented!();
     }
 
-    fn probe(&mut self, _depth: ProbeDepth) -> Result<ProbeResult> {
+    fn probe(&mut self) -> Result<ProbeResult> {
         // Read ID3v2 tags.
-        // TODO: This should not be part of the Mp3Reader.
-        let mut metadata_builder = MetadataBuilder::new();
-        id3v2::read_id3v2(&mut self.reader, &mut metadata_builder)?;
-        self.metadata.push(metadata_builder.metadata());
-
         let mut params = CodecParameters::new();
         params.for_codec(CODEC_TYPE_MP3);
         self.streams.push(Stream::new(params));
