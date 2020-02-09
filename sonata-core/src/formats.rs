@@ -267,13 +267,12 @@ impl Stream {
 /// filtering. Seeking will invalidate the assumed state of any decoder processing packets from
 /// `FormatReader` and should be reset after a successful seek operation.
 pub trait FormatReader {
-    /// Instantiates the `FormatReader` with the provided `FormatOptions`.
-    fn open(source: MediaSourceStream, options: &FormatOptions) -> Self
+    /// Attempt to instantiates a `FormatReader` using the provided `FormatOptions` and
+    /// `MediaSourceStream`. The reader will probe the container to verify format support, determine
+    /// the number of contained streams, and read any metadata.
+    fn try_new(source: MediaSourceStream, options: &FormatOptions) -> Result<Self>
     where
         Self: Sized;
-
-    /// Probes the container to check for support, contained streams, and other metadata.
-    fn probe(&mut self) -> Result<ProbeResult>;
 
     /// Gets a list of all `Cue`s.
     fn cues(&self) -> &[Cue];
@@ -397,12 +396,3 @@ impl<'a> Packet<'a> {
     }
 
 }
-
-/// The result of a probe operation.
-pub enum ProbeResult {
-    /// The format is unsupported.
-    Unsupported,
-    /// The format is supported.
-    Supported
-}
-

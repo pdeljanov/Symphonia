@@ -14,20 +14,27 @@ use sonata_core::support_format;
 
 use sonata_core::audio::Timestamp;
 use sonata_core::codecs::CodecParameters;
-use sonata_core::errors::{Result, seek_error, SeekErrorKind};
-use sonata_core::formats::{Cue, FormatOptions, FormatReader, Packet, ProbeResult, Stream};
+use sonata_core::errors::{Result, seek_error, unsupported_error, SeekErrorKind};
+use sonata_core::formats::{Cue, FormatOptions, FormatReader, Packet, Stream};
 use sonata_core::io::*;
-use sonata_core::meta::{MetadataBuilder, MetadataQueue};
+use sonata_core::meta::{Metadata, MetadataBuilder, MetadataQueue};
 use sonata_core::probe::{Descriptor, Instantiate, QueryDescriptor};
 
 mod chunks;
 
 use chunks::*;
 
+/// WAVE is actually a RIFF stream, with a "RIFF" ASCII stream marker.
+const WAVE_STREAM_MARKER: [u8; 4] = *b"RIFF";
+
+/// The RIFF form is "wave".
+const WAVE_RIFF_FORM: [u8; 4] = *b"WAVE";
+
+/// The maximum number of frames that will be in a packet.
 const WAVE_MAX_FRAMES_PER_PACKET: u64 = 4096;
 
 /// `Wav` (Wave) Format.
-/// 
+///
 /// `WavReader` implements a demuxer for the Wave format container.
 pub struct WavReader {
     reader: MediaSourceStream,
@@ -38,34 +45,6 @@ pub struct WavReader {
     data_offset: u64,
 }
 
-impl WavReader {
-
-    fn read_metadata(&mut self, len: u32) -> Result<()> {
-        let mut info_list = ChunksReader::<RiffInfoListChunks>::new(len);
-
-        let mut metadata_builder = MetadataBuilder::new();
-
-        loop {
-            let chunk = info_list.next(&mut self.reader)?;
-
-            if let Some(RiffInfoListChunks::Info(info)) = chunk {
-                let parsed_info = info.parse(&mut self.reader)?;
-                metadata_builder.add_tag(parsed_info.tag); 
-            }
-            else {
-                break;
-            }
-        }
-        
-        info_list.finish(&mut self.reader)?;
-
-        self.metadata.push(metadata_builder.metadata());
-
-        Ok(())
-    }
-
-}
-
 impl QueryDescriptor for WavReader {
     fn query() -> &'static [Descriptor] {
         &[
@@ -73,8 +52,8 @@ impl QueryDescriptor for WavReader {
             support_format!(
                 "wave",
                 "Waveform Audio File Format",
-                &[ "wav", "wave" ], 
-                &[ "audio/vnd.wave", "audio/x-wav", "audio/wav", "audio/wave" ], 
+                &[ "wav", "wave" ],
+                &[ "audio/vnd.wave", "audio/x-wav", "audio/wav", "audio/wave" ],
                 &[ b"RIFF" ]
             ),
         ]
@@ -87,15 +66,88 @@ impl QueryDescriptor for WavReader {
 
 impl FormatReader for WavReader {
 
-    fn open(source: MediaSourceStream, _options: &FormatOptions) -> Self {
-        WavReader {
-            reader: source,
-            streams: Vec::new(),
-            cues: Vec::new(),
-            metadata: Default::default(),
-            frame_len: 0,
-            data_offset: 0,
+    fn try_new(mut source: MediaSourceStream, _options: &FormatOptions) -> Result<Self> {
+        // The RIFF marker should be present.
+        let marker = source.read_quad_bytes()?;
+
+        if marker != WAVE_STREAM_MARKER {
+            return unsupported_error("missing riff stream marker");
         }
+
+        // A Wave file is one large RIFF chunk, with the actual meta and audio data as sub-chunks.
+        // Therefore, the header was the chunk ID, and the next 4 bytes is the length of the RIFF
+        // chunk.
+        let riff_len = source.read_u32()?;
+        let riff_form = source.read_quad_bytes()?;
+
+        // The RIFF chunk contains WAVE data.
+        if riff_form != WAVE_RIFF_FORM {
+            eprintln!("wav: riff form is not wave ({})", std::str::from_utf8(&riff_form).unwrap());
+
+            return unsupported_error("riff form is not wave");
+        }
+
+        let mut riff_chunks = ChunksReader::<RiffWaveChunks>::new(riff_len);
+
+        let mut codec_params = CodecParameters::new();
+        let mut metadata: MetadataQueue = Default::default();
+        let mut frame_len = 0;
+
+        loop {
+            let chunk = riff_chunks.next(&mut source)?;
+
+            // The last chunk should always be a data chunk, if it is not, then the stream is
+            // unsupported.
+            if chunk.is_none() {
+                return unsupported_error("missing data chunk");
+            }
+
+            match chunk.unwrap() {
+                RiffWaveChunks::Format(fmt) => {
+                    let format = fmt.parse(&mut source)?;
+
+                    // The Format chunk contains the block_align field which indicates the size
+                    // of one full audio frame in bytes, atleast for the codecs supported by
+                    // WavReader. This value is stored to support seeking.
+                    frame_len = format.block_align;
+
+                    // Append Format chunk fields to codec parameters.
+                    append_format_params(&mut codec_params, &format);
+                },
+                RiffWaveChunks::Fact(fct) => {
+                    let fact = fct.parse(&mut source)?;
+
+                    // Append Fact chunk fields to codec parameters.
+                    append_fact_params(&mut codec_params, &fact);
+                },
+                RiffWaveChunks::List(lst) => {
+                    let list = lst.parse(&mut source)?;
+
+                    // Riff Lists can have many different forms, but WavReader only supports Info
+                    // lists.
+                    match &list.form {
+                        b"INFO" => metadata.push(read_info_chunk(&mut source, list.len)?),
+                        _       => list.skip(&mut source)?,
+                    }
+                },
+                RiffWaveChunks::Data => {
+                    // Record the offset of the Data chunk's contents to support seeking.
+                    let data_offset = source.pos();
+
+                    // Add a new stream using the collected codec parameters.
+                    return Ok(WavReader {
+                        reader: source,
+                        streams: vec![ Stream::new(codec_params) ],
+                        cues: Vec::new(),
+                        metadata,
+                        frame_len,
+                        data_offset,
+                    });
+                }
+            }
+        }
+
+        // Chunks are processed until the Data chunk is found, or an error occurs.
     }
 
     fn next_packet(&mut self) -> Result<Packet<'_>> {
@@ -132,8 +184,8 @@ impl FormatReader for WavReader {
                 if time < 0.0 {
                     return seek_error(SeekErrorKind::OutOfRange);
                 }
-                // Use the sample rate to calculate the frame timestamp. If sample rate is not known, the seek cannot 
-                // be completed.
+                // Use the sample rate to calculate the frame timestamp. If sample rate is not
+                // known, the seek cannot be completed.
                 if let Some(sample_rate) = params.sample_rate {
                     (time * f64::from(sample_rate)) as u64
                 }
@@ -143,7 +195,8 @@ impl FormatReader for WavReader {
             }
         };
 
-        // If the total number of frames in the stream is known, verify the desired frame timestamp does not exceed it.
+        // If the total number of frames in the stream is known, verify the desired frame timestamp
+        // does not exceed it.
         if let Some(n_frames) = params.n_frames {
             if frame_ts > n_frames {
                 return seek_error(SeekErrorKind::OutOfRange);
@@ -153,12 +206,13 @@ impl FormatReader for WavReader {
         // Calculate the absolute byte offset of the desired audio frame.
         let seek_pos = self.data_offset + (frame_ts * u64::from(self.frame_len));
 
-        // If the reader supports seeking we can seek directly to the frame's offset wherever it may be.
+        // If the reader supports seeking we can seek directly to the frame's offset wherever it may
+        // be.
         if self.reader.is_seekable() {
             self.reader.seek(SeekFrom::Start(seek_pos))?;
         }
-        // If the reader does not support seeking, we can only emulate forward seeks by consuming bytes. If the reader
-        // has to seek backwards, return an error.
+        // If the reader does not support seeking, we can only emulate forward seeks by consuming
+        // bytes. If the reader has to seek backwards, return an error.
         else {
             let current_pos = self.reader.pos();
             if seek_pos >= current_pos {
@@ -172,78 +226,28 @@ impl FormatReader for WavReader {
         Ok(frame_ts)
     }
 
-    fn probe(&mut self) -> Result<ProbeResult> {
-        // "RIFF" marker should be present.
-        let marker = self.reader.read_quad_bytes()?;
+}
 
-        if marker != *b"RIFF" {
-            return Ok(ProbeResult::Unsupported);
+fn read_info_chunk(source: &mut MediaSourceStream, len: u32) -> Result<Metadata> {
+    let mut info_list = ChunksReader::<RiffInfoListChunks>::new(len);
+
+    let mut metadata_builder = MetadataBuilder::new();
+
+    loop {
+        let chunk = info_list.next(source)?;
+
+        if let Some(RiffInfoListChunks::Info(info)) = chunk {
+            let parsed_info = info.parse(source)?;
+            metadata_builder.add_tag(parsed_info.tag);
         }
-
-        // A Wave file is one large RIFF chunk, with the actual meta and audio data as sub-chunks. Therefore, 
-        // the header was the chunk ID, and the next 4 bytes is the length of the RIFF chunk.
-        let riff_len = self.reader.read_u32()?;
-        let riff_form = self.reader.read_quad_bytes()?;
-
-        // The RIFF chunk contains WAVE data.
-        if riff_form != *b"wave" {
-
-            let mut riff_chunks = ChunksReader::<RiffWaveChunks>::new(riff_len);
-            
-            let mut codec_params = CodecParameters::new();
-
-            loop {
-                let chunk = riff_chunks.next(&mut self.reader)?;
-
-                // The last chunk should always be a data chunk. Probe will exit with a supported result in that case.
-                // Therefore, if there is no more chunks left, then the file is unsupported. Exit.
-                if chunk.is_none() {
-                    break;
-                }
-
-                match chunk.unwrap() {
-                    RiffWaveChunks::Format(fmt) => {
-                        let format = fmt.parse(&mut self.reader)?;
-
-                        // The Format chunk contains the block_align field which indicates the size of one full audio 
-                        // frame in bytes, atleast for the codecs supported by WavReader. This value is stored to
-                        // support seeking.
-                        self.frame_len = format.block_align;
-
-                        // Append Format chunk fields to codec parameters.
-                        append_format_params(&mut codec_params, &format);
-                    },
-                    RiffWaveChunks::Fact(fct) => {
-                        let fact = fct.parse(&mut self.reader)?;
-
-                        // Append Fact chunk fields to codec parameters.
-                        append_fact_params(&mut codec_params, &fact);
-                    },
-                    RiffWaveChunks::List(lst) => {
-                        let list = lst.parse(&mut self.reader)?;
-
-                        // Riff Lists can have many different forms, but WavReader only supports Info lists.
-                        match &list.form {
-                            b"INFO" => self.read_metadata(list.len)?,
-                            _ => list.skip(&mut self.reader)?
-                        }
-                    },
-                    RiffWaveChunks::Data => {
-                        // Record the offset of the Data chunk's contents to support seeking.
-                        self.data_offset = self.reader.pos();
-
-                        // Add a new stream using the collected codec parameters.
-                        self.streams.push(Stream::new(codec_params));
-
-                        return Ok(ProbeResult::Supported);
-                    }
-                }
-            }
+        else {
+            break;
         }
-
-        // Not supported.
-        Ok(ProbeResult::Unsupported)
     }
+
+    info_list.finish(source)?;
+
+    Ok(metadata_builder.metadata())
 }
 
 fn append_format_params(codec_params: &mut CodecParameters, format: &WaveFormatChunk) {

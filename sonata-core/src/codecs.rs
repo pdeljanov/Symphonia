@@ -277,7 +277,7 @@ impl Default for DecoderOptions {
 /// `AudioBuffer`s.
 pub trait Decoder {
 
-    /// Attempts to instantiates a Decoder using the provided `CodecParameters`.
+    /// Attempts to instantiates a `Decoder` using the provided `CodecParameters`.
     fn try_new(params: &CodecParameters, options: &DecoderOptions) -> Result<Self>
     where
         Self: Sized;
@@ -373,7 +373,9 @@ macro_rules! support_codec {
             codec: $type,
             short_name: $short_name,
             long_name: $long_name,
-            inst_func: |params, opt| { Ok(Box::new(Self::try_new(&params, &opt)?)) }
+            inst_func: |params, opt| {
+                Ok(Box::new(Self::try_new(&params, &opt)?))
+            }
         }
     };
 }

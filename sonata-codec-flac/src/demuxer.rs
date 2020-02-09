@@ -13,9 +13,9 @@ use sonata_core::support_format;
 
 use sonata_core::audio::Timestamp;
 use sonata_core::codecs::{CODEC_TYPE_FLAC, CodecParameters};
-use sonata_core::errors::{Result, decode_error, seek_error, SeekErrorKind};
-use sonata_core::formats::{Cue, ProbeResult, SeekIndex, SeekSearchResult, Stream};
-use sonata_core::formats::{FormatOptions, FormatReader, Packet};
+use sonata_core::errors::{Result, decode_error, seek_error, unsupported_error, SeekErrorKind};
+use sonata_core::formats::{Cue, FormatOptions, FormatReader, SeekIndex, SeekSearchResult, Stream};
+use sonata_core::formats::Packet;
 use sonata_core::io::*;
 use sonata_core::meta::{MetadataQueue, MetadataBuilder};
 use sonata_core::probe::{Descriptor, Instantiate, QueryDescriptor};
@@ -34,89 +34,6 @@ pub struct FlacReader {
     cues: Vec<Cue>,
     index: Option<SeekIndex>,
     first_frame_offset: u64,
-}
-
-impl FlacReader {
-
-    /// Reads all the metadata blocks.
-    fn read_all_metadata_blocks(&mut self) -> Result<()> {
-        let mut metadata_builder = MetadataBuilder::new();
-
-        loop {
-            let header = MetadataBlockHeader::read(&mut self.reader)?;
-
-            // Create a scoped bytestream to error if the metadata block read functions exceed the
-            // stated length of the block.
-            let mut block_stream = ScopedStream::new(&mut self.reader, u64::from(header.block_len));
-
-            match header.block_type {
-                MetadataBlockType::Application => {
-                    // TODO: Store vendor data.
-                    read_application_block(&mut block_stream, header.block_len)?;
-                },
-                // SeekTable blocks are parsed into a SeekIndex.
-                MetadataBlockType::SeekTable => {
-                    // Check if a SeekTable has already be parsed. If one has, then the file is
-                    // invalid, atleast for seeking. Either way, it's a violation of the
-                    // specification.
-                    if self.index.is_none() {
-                        let mut index = SeekIndex::new();
-                        read_seek_table_block(&mut block_stream, header.block_len, &mut index)?;
-                        self.index = Some(index);
-                    }
-                    else {
-                        return decode_error("Found more than one SeekTable block.");
-                    }
-                },
-                // VorbisComment blocks are parsed into Tags.
-                MetadataBlockType::VorbisComment => {
-                    read_comment_block(&mut block_stream, &mut metadata_builder)?;
-                },
-                // Cuesheet blocks are parsed into Cues.
-                MetadataBlockType::Cuesheet => {
-                    read_cuesheet_block(&mut block_stream, &mut self.cues)?;
-                },
-                // Picture blocks are read as Visuals.
-                MetadataBlockType::Picture => {
-                    read_picture_block(&mut block_stream, &mut metadata_builder)?;
-                },
-                // StreamInfo blocks are parsed into Streams.
-                MetadataBlockType::StreamInfo => {
-                    read_stream_info_block(&mut block_stream, &mut self.streams)?;
-                },
-                // Padding blocks are skipped.
-                MetadataBlockType::Padding => {
-                    block_stream.ignore_bytes(u64::from(header.block_len))?;
-                },
-                // Unknown block encountered. Skip these blocks as they may be part of a future
-                // version of FLAC, but  print a message.
-                MetadataBlockType::Unknown(id) => {
-                    block_stream.ignore_bytes(u64::from(header.block_len))?;
-                    eprintln!("Ignoring {} bytes of block width id={}.", header.block_len, id);
-                }
-            }
-
-            // If the stated block length is longer than the number of bytes from the block read,
-            // ignore the remaining unread data.
-            let block_unread_len = block_stream.bytes_available();
-
-            if block_unread_len > 0 {
-                eprintln!("Under read block by {} bytes.", block_unread_len);
-                block_stream.ignore_bytes(block_unread_len)?;
-            }
-
-            // Exit when the last header is read.
-            if header.is_last {
-                break;
-            }
-        }
-
-        // Commit any read metadata to the metadata queue.
-        self.metadata.push(metadata_builder.metadata());
-
-        Ok(())
-    }
-
 }
 
 impl QueryDescriptor for FlacReader {
@@ -139,17 +56,40 @@ impl QueryDescriptor for FlacReader {
 
 impl FormatReader for FlacReader {
 
-    fn open(source: MediaSourceStream, _options: &FormatOptions) -> Self {
-        FlacReader {
+    fn try_new(mut source: MediaSourceStream, _options: &FormatOptions) -> Result<Self> {
+        // Read the first 4 bytes of the stream. Ideally this will be the FLAC stream marker.
+        let marker = source.read_quad_bytes()?;
+
+        if marker != FLAC_STREAM_MARKER {
+            return unsupported_error("missing flac stream marker");
+        }
+
+        let mut flac = FlacReader {
             reader: source,
             streams: Vec::new(),
             cues: Vec::new(),
             metadata: Default::default(),
             index: None,
             first_frame_offset: 0,
-        }
-    }
+        };
 
+        // Strictly speaking, the first metadata block must be a StreamInfo block. There is
+        // no technical need for this from the reader's point of view. Additionally, if the
+        // reader is fed a stream mid-way there is no StreamInfo block. Therefore, just read
+        // all metadata blocks and handle the StreamInfo block as it comes.
+        read_all_metadata_blocks(&mut flac)?;
+
+        // Make sure that there is atleast one StreamInfo block.
+        if flac.streams.is_empty() {
+            return decode_error("no stream info block");
+        }
+
+        // The first frame offset is the byte offset from the beginning of the stream after all the
+        // metadata blocks have been read.
+        flac.first_frame_offset = flac.reader.pos();
+
+        Ok(flac)
+    }
 
     fn next_packet(&mut self) -> Result<Packet<'_>> {
         // FLAC is not a "real" container format. FLAC frames are more-so part of the codec
@@ -201,7 +141,7 @@ impl FormatReader for FlacReader {
             }
         };
 
-        eprintln!("Seeking to frame_ts={}", frame_ts);
+        eprintln!("flac: seeking to frame_ts={}", frame_ts);
 
         // If the total number of frames in the stream is known, verify the desired frame timestamp
         // does not exceed it.
@@ -262,7 +202,7 @@ impl FormatReader for FlacReader {
                     // Rewind the stream back to the beginning of the frame.
                     self.reader.rewind(packet.parsed_len);
 
-                    eprintln!("Seeked to packet_ts={} (delta={})",
+                    eprintln!("flac: seeked to packet_ts={} (delta={})",
                         packet.packet_ts, packet.packet_ts as i64 - frame_ts as i64);
 
                     return Ok(packet.packet_ts);
@@ -296,7 +236,7 @@ impl FormatReader for FlacReader {
                 // Overshot a regular seek, or the stream is corrupted, not necessarily an error
                 // per-say.
                 else {
-                    eprintln!("Seeked to packet_ts={} (delta={})",
+                    eprintln!("flac: seeked to packet_ts={} (delta={})",
                         packet.packet_ts, packet.packet_ts as i64 - frame_ts as i64);
 
                     return Ok(packet.packet_ts);
@@ -309,38 +249,12 @@ impl FormatReader for FlacReader {
                 // Rewind the stream back to the beginning of the frame.
                 self.reader.rewind(packet.parsed_len);
 
-                eprintln!("Seeked to packet_ts={} (delta={})",
+                eprintln!("flac: seeked to packet_ts={} (delta={})",
                     packet.packet_ts, packet.packet_ts as i64 - frame_ts as i64);
 
                 return Ok(packet.packet_ts);
             }
         }
-    }
-
-    fn probe(&mut self) -> Result<ProbeResult> {
-        // Read the first 4 bytes of the stream. Ideally this will be the FLAC stream marker.
-        let marker = self.reader.read_quad_bytes()?;
-
-        if marker == FLAC_STREAM_MARKER {
-            // Strictly speaking, the first metadata block must be a StreamInfo block. There is
-            // no technical need for this from the reader's point of view. Additionally, if the
-            // reader is fed a stream mid-way there is no StreamInfo block. Therefore, just read
-            // all metadata blocks and handle the StreamInfo block as it comes.
-            self.read_all_metadata_blocks()?;
-
-            self.first_frame_offset = self.reader.pos();
-
-            // Make sure that there is atleast one StreamInfo block.
-            if self.streams.is_empty() {
-                return decode_error("No StreamInfo block.");
-            }
-
-            // Read the rest of the metadata blocks.
-            return Ok(ProbeResult::Supported);
-        }
-
-        // Loop exited, therefore stream is unsupported.
-        Ok(ProbeResult::Unsupported)
     }
 
 }
@@ -373,8 +287,87 @@ fn read_stream_info_block<B : ByteStream>(
         streams.push(Stream::new(codec_params));
     }
     else {
-        return decode_error("Found more than one StreamInfo block.");
+        return decode_error("found more than one stream info block");
     }
+
+    Ok(())
+}
+
+/// Reads all the metadata blocks.
+fn read_all_metadata_blocks(flac: &mut FlacReader) -> Result<()> {
+    let mut metadata_builder = MetadataBuilder::new();
+
+    loop {
+        let header = MetadataBlockHeader::read(&mut flac.reader)?;
+
+        // Create a scoped bytestream to error if the metadata block read functions exceed the
+        // stated length of the block.
+        let mut block_stream = ScopedStream::new(&mut flac.reader, u64::from(header.block_len));
+
+        match header.block_type {
+            MetadataBlockType::Application => {
+                // TODO: Store vendor data.
+                read_application_block(&mut block_stream, header.block_len)?;
+            },
+            // SeekTable blocks are parsed into a SeekIndex.
+            MetadataBlockType::SeekTable => {
+                // Check if a SeekTable has already be parsed. If one has, then the file is
+                // invalid, atleast for seeking. Either way, it's a violation of the
+                // specification.
+                if flac.index.is_none() {
+                    let mut index = SeekIndex::new();
+                    read_seek_table_block(&mut block_stream, header.block_len, &mut index)?;
+                    flac.index = Some(index);
+                }
+                else {
+                    return decode_error("found more than one seek table block");
+                }
+            },
+            // VorbisComment blocks are parsed into Tags.
+            MetadataBlockType::VorbisComment => {
+                read_comment_block(&mut block_stream, &mut metadata_builder)?;
+            },
+            // Cuesheet blocks are parsed into Cues.
+            MetadataBlockType::Cuesheet => {
+                read_cuesheet_block(&mut block_stream, &mut flac.cues)?;
+            },
+            // Picture blocks are read as Visuals.
+            MetadataBlockType::Picture => {
+                read_picture_block(&mut block_stream, &mut metadata_builder)?;
+            },
+            // StreamInfo blocks are parsed into Streams.
+            MetadataBlockType::StreamInfo => {
+                read_stream_info_block(&mut block_stream, &mut flac.streams)?;
+            },
+            // Padding blocks are skipped.
+            MetadataBlockType::Padding => {
+                block_stream.ignore_bytes(u64::from(header.block_len))?;
+            },
+            // Unknown block encountered. Skip these blocks as they may be part of a future
+            // version of FLAC, but  print a message.
+            MetadataBlockType::Unknown(id) => {
+                block_stream.ignore_bytes(u64::from(header.block_len))?;
+                eprintln!("flac: ignoring {} bytes of block width id={}.", header.block_len, id);
+            }
+        }
+
+        // If the stated block length is longer than the number of bytes from the block read,
+        // ignore the remaining unread data.
+        let block_unread_len = block_stream.bytes_available();
+
+        if block_unread_len > 0 {
+            eprintln!("flac: under read block by {} bytes.", block_unread_len);
+            block_stream.ignore_bytes(block_unread_len)?;
+        }
+
+        // Exit when the last header is read.
+        if header.is_last {
+            break;
+        }
+    }
+
+    // Commit any read metadata to the metadata queue.
+    flac.metadata.push(metadata_builder.metadata());
 
     Ok(())
 }

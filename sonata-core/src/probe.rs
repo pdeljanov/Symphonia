@@ -84,7 +84,7 @@ mod bloom {
 #[derive(Copy, Clone)]
 pub enum Instantiate {
     /// Instantiation function for a `FormatReader`.
-    Format(fn(MediaSourceStream, &FormatOptions) -> Box<dyn FormatReader>),
+    Format(fn(MediaSourceStream, &FormatOptions) -> Result<Box<dyn FormatReader>>),
     /// Instantiation function for a `MetadataReader`.
     Metadata(fn(&MetadataOptions) -> Box<dyn MetadataReader>),
 }
@@ -290,7 +290,7 @@ impl Probe {
             match self.next(&mut mss)? {
                 // If a container format is found, return an instance to it's reader.
                 Instantiate::Format(fmt) => {
-                    return Ok(fmt(mss, format_opts));
+                    return fmt(mss, format_opts);
                 }
                 // If metadata was found, instantiate the metadata reader, read the metadata, and
                 // push it onto the metadata queue.
@@ -320,7 +320,9 @@ macro_rules! support_format {
             mime_types: $mimes,
             markers: $markers,
             score: Self::score,
-            inst: Instantiate::Format(|source, opt| { Box::new(Self::open(source, &opt)) })
+            inst: Instantiate::Format(|source, opt| {
+                Ok(Box::new(Self::try_new(source, &opt)?))
+            })
         }
     };
 }

@@ -12,7 +12,7 @@ use sonata_core::support_format;
 use sonata_core::audio::Timestamp;
 use sonata_core::codecs::{CodecParameters, CODEC_TYPE_MP3};
 use sonata_core::errors::Result;
-use sonata_core::formats::{Cue, FormatOptions, FormatReader, Packet, ProbeResult, Stream};
+use sonata_core::formats::{Cue, FormatOptions, FormatReader, Packet, Stream};
 use sonata_core::io::*;
 use sonata_core::meta::MetadataQueue;
 use sonata_core::probe::{Descriptor, Instantiate, QueryDescriptor};
@@ -50,13 +50,17 @@ impl QueryDescriptor for Mp3Reader {
 }
 
 impl FormatReader for Mp3Reader {
-    fn open(source: MediaSourceStream, _options: &FormatOptions) -> Self {
-        Mp3Reader {
+
+    fn try_new(source: MediaSourceStream, _options: &FormatOptions) -> Result<Self> {
+        let mut params = CodecParameters::new();
+        params.for_codec(CODEC_TYPE_MP3);
+
+        Ok(Mp3Reader {
             reader: source,
-            streams: Vec::new(),
+            streams: vec![ Stream::new(params) ],
             cues: Vec::new(),
             metadata: Default::default(),
-        }
+        })
     }
 
     fn next_packet(&mut self) -> Result<Packet<'_>> {
@@ -79,12 +83,4 @@ impl FormatReader for Mp3Reader {
         unimplemented!();
     }
 
-    fn probe(&mut self) -> Result<ProbeResult> {
-        // Read ID3v2 tags.
-        let mut params = CodecParameters::new();
-        params.for_codec(CODEC_TYPE_MP3);
-        self.streams.push(Stream::new(params));
-
-        Ok(ProbeResult::Supported)
-    }
 }

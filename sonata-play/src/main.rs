@@ -22,7 +22,7 @@ use sonata::core::errors::Result;
 use sonata::core::audio::*;
 use sonata::core::conv::dither::DitherType;
 use sonata::core::codecs::DecoderOptions;
-use sonata::core::formats::{Cue, FormatReader, FormatOptions, ProbeResult, Stream};
+use sonata::core::formats::{Cue, FormatReader, FormatOptions, Stream};
 use sonata::core::meta::{ColorMode, MetadataOptions, Tag, Visual};
 use sonata::core::io::MediaSourceStream;
 use sonata::core::probe::Hint;
@@ -93,18 +93,16 @@ fn main() {
     let metadata_opts: MetadataOptions = Default::default();
 
     // Probe the media stream for metadata and to get the format reader.
-    let mut reader = sonata::default::get_probe().format(&hint, mss, &format_opts, &metadata_opts).unwrap();
+    let reader = sonata::default::get_probe().format(&hint, mss, &format_opts, &metadata_opts);
 
     // Probe the file using the format reader to verify the file is actually supported.
-    let probe_info = reader.probe().unwrap();
-
-    match probe_info {
+    match reader {
         // The file was not actually supported by the format reader.
-        ProbeResult::Unsupported => {
-            eprintln!("File not supported!");
+        Err(err) => {
+            eprintln!("File not supported! {}", err);
         },
         // The file is supported by the format reader.
-        ProbeResult::Supported => {
+        Ok(mut reader) => {
             // Verify only mode decodes and always verifies the audio, but doese not play it.
             if matches.is_present("verify-only") {
                 let options = DecoderOptions { verify: true, ..Default::default() };
