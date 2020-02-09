@@ -29,27 +29,30 @@ mod bloom {
     }
 
     pub struct BloomFilter {
-        filter: [u64; 65536 >> 6],
+        filter: Box<[u64]>,
     }
 
     impl Default for BloomFilter {
         fn default() -> Self {
             BloomFilter {
-                filter: [0; 65536 >> 6],
+                filter: vec![0; BloomFilter::M >> 6].into_boxed_slice(),
             }
         }
     }
 
     impl BloomFilter {
+        /// The number of bits, m, used by the bloom filter. Use 16384 bits (2KiB) by default.
+        const M: usize = 2 * 1024 * 8;
+
         pub fn insert(&mut self, key: &[u8; 2]) {
             let hash = fnv1a32(key);
 
             let h0 = (hash >> 16) as u16;
             let h1 = (hash >>  0) as u16;
 
-            let i0 = h0 as usize;
-            let i1 = h0.wrapping_add(h1.wrapping_mul(1)) as usize;
-            let i2 = h0.wrapping_add(h1.wrapping_mul(2)) as usize;
+            let i0 = h0 as usize & (BloomFilter::M - 1);
+            let i1 = h0.wrapping_add(h1.wrapping_mul(1)) as usize & (BloomFilter::M - 1);
+            let i2 = h0.wrapping_add(h1.wrapping_mul(2)) as usize & (BloomFilter::M - 1);
 
             self.filter[i0 >> 6] |= 1 << (i0 & 63);
             self.filter[i1 >> 6] |= 1 << (i1 & 63);
@@ -62,9 +65,9 @@ mod bloom {
             let h0 = (hash >> 16) as u16;
             let h1 = (hash >>  0) as u16;
 
-            let i0 = h0 as usize;
-            let i1 = h0.wrapping_add(h1.wrapping_mul(1)) as usize;
-            let i2 = h0.wrapping_add(h1.wrapping_mul(2)) as usize;
+            let i0 = h0 as usize & (BloomFilter::M - 1);
+            let i1 = h0.wrapping_add(h1.wrapping_mul(1)) as usize & (BloomFilter::M - 1);
+            let i2 = h0.wrapping_add(h1.wrapping_mul(2)) as usize & (BloomFilter::M - 1);
 
             if ( self.filter[i0 >> 6] & (1 << (i0 & 63)) ) == 0 { return false; }
             if ( self.filter[i1 >> 6] & (1 << (i1 & 63)) ) == 0 { return false; }
