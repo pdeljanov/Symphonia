@@ -364,7 +364,6 @@ impl BitReader for BitReaderLtr {
         lim_bits: u32,
     ) -> io::Result<(H::ValueType, u32)> {
 
-        debug_assert!(lim_bits > 0);
         debug_assert!(!table.data.is_empty());
 
         // The most recent number of bits read from the bitstream.
