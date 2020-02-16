@@ -5,6 +5,7 @@ members = [
     "sonata-play",
     "sonata-metadata",
     "sonata-format-wav",
+    "sonata-format-ogg",
     "sonata-core",
     "sonata-codec-pcm",
     "sonata-codec-mp3",

@@ -9,9 +9,9 @@
 #![forbid(unsafe_code)]
 
 pub mod default {
-    //! The `default` module provides common convenience functions to get an implementer up-and-running as quickly as 
-    //! possible and reduce boiler-plate. Using the `default` modules is completely optional and incurs no overhead 
-    //! unless actually used.
+    //! The `default` module provides common convenience functions to get an implementer
+    //! up-and-running as quickly as possible, and to reduce boiler-plate. Using the `default` module
+    //! is completely optional and incurs no overhead unless actually used.
 
     use lazy_static::lazy_static;
 
@@ -50,6 +50,8 @@ pub mod default {
             use sonata_codec_mp3::Mp3Reader;
             #[cfg(feature = "wav")]
             use sonata_format_wav::WavReader;
+            #[cfg(feature = "ogg")]
+            use sonata_format_ogg::OggReader;
 
             use sonata_metadata::id3v2::Id3v2Reader;
 
@@ -64,24 +66,29 @@ pub mod default {
             #[cfg(feature = "wav")]
             registry.register_all::<WavReader>();
 
+            #[cfg(feature = "ogg")]
+            registry.register_all::<OggReader>();
+
             registry.register_all::<Id3v2Reader>();
 
             registry
         };
     }
 
-    /// Gets the default `CodecRegistry`. This registry pre-registers all the codecs selected by the `feature` flags in 
-    /// the includer's `Cargo.toml`. If `features` is not set, the default set of Sonata codecs is registered. 
-    /// 
-    /// This function does not create the `CodecRegistry` until the first call to this function.
+    /// Gets the default `CodecRegistry`. This registry pre-registers all the codecs selected by the
+    /// `feature` flags in the includer's `Cargo.toml`. If `features` is not set, the default set of
+    /// Sonata codecs is registered.
+    ///
+    /// This function does not instantiate the `CodecRegistry` until the first call to this function.
     pub fn get_codecs() -> &'static CodecRegistry {
         &CODEC_REGISTRY
     }
 
-    /// Gets the default `Probe`. This registry pre-registers all the formats selected by the `feature` flags 
-    /// in the includer's `Cargo.toml`. If `features` is not set, the default set of Sonata formats is registered. 
-    /// 
-    /// This function does not create the `Probe` until the first call to this function.
+    /// Gets the default `Probe`. This registry pre-registers all the formats selected by the
+    /// `feature` flags in the includer's `Cargo.toml`. If `features` is not set, the default set of
+    /// Sonata formats is registered.
+    ///
+    /// This function does not instantiate the `Probe` until the first call to this function.
     pub fn get_probe() -> &'static Probe {
         &PROBE
     }

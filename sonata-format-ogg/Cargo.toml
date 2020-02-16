@@ -1,12 +1,12 @@
 [package]
-name = "sonata-format-wav"
+name = "sonata-format-ogg"
 version = "0.1.0"
-description = "Sonata WAV demuxer"
+description = "Sonata OGG demuxer"
 authors = ["Philip Deljanov <philip.deljanov@gmail.com>"]
 license = "MPL-2.0"
 readme = "README.md"
 categories = ["multimedia::audio"]
-keywords = ["audio", "demuxer", "wav", "riff"]
+keywords = ["audio", "format", "demuxer", "xiph"]
 
 edition = "2018"
 
