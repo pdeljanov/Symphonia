@@ -18,7 +18,7 @@ use std::fs::File;
 use std::path::Path;
 use clap::{Arg, App};
 use sonata;
-use sonata::core::errors::Result;
+use sonata::core::errors::{Result, Error};
 use sonata::core::audio::*;
 use sonata::core::conv::dither::DitherType;
 use sonata::core::codecs::DecoderOptions;
@@ -133,7 +133,7 @@ fn main() {
                 };
 
                 // Commence playback.
-                play(reader, &options).unwrap_or_else(|err| { eprintln!("Err: {}", err) });
+                play(reader, &options).unwrap_or_else(|err| { eprintln!("Error: {}", err) });
             }
         }
     }
@@ -147,11 +147,18 @@ fn decode_only(mut reader: Box<dyn FormatReader>, decode_options: &DecoderOption
     // Create a decoder for the stream.
     let mut decoder = sonata::default::get_codecs().make(&stream.codec_params, &decode_options)?;
 
-    // Decode all packets.
+    // Decode all packets, ignoring decode errors.
     loop {
-        if let Err(err) = decoder.decode(reader.next_packet()?) {
-            decoder.close();
-            return Err(err);
+        match decoder.decode(reader.next_packet()?) {
+            Err(Error::DecodeError(err)) => {
+                eprintln!("Decode error: {}", err);
+                continue;
+            },
+            Err(err) => {
+                decoder.close();
+                return Err(err);
+            },
+            _ => continue,
         }
     }
 }
@@ -173,56 +180,69 @@ fn play(mut reader: Box<dyn FormatReader>, decode_options: &DecoderOptions) -> R
 
     // Decode the first packet and create the PulseAudio device using the signal specification of 
     // the buffer.
-    let (pa, mut samples) = match decoder.decode(reader.next_packet()?) {
-        Err(err) => {
-            decoder.close();
-            return Err(err);
-        },
-        Ok(decoded) => {
-            // Get the buffer spec.
-            let spec = decoded.spec();
+    let (pa, mut samples) = loop {
+        match decoder.decode(reader.next_packet()?) {
+            Err(Error::DecodeError(err)) => {
+                // Decode errors are not fatal. Print a message and try to decode the next packet as
+                // usual.
+                eprintln!("Decode error: {}", err);
+                continue;
+            },
+            Err(err) => {
+                // Errors types other than decode errors are fatal.
+                decoder.close();
+                return Err(err);
+            },
+            Ok(decoded) => {
+                // Get the buffer spec.
+                let spec = decoded.spec();
 
-            // Get the buffer duration.
-            let duration = Duration::Frames(decoded.capacity() as u64);
+                // Get the buffer duration.
+                let duration = Duration::Frames(decoded.capacity() as u64);
 
-            // An interleaved buffer is required to send data to PulseAudio. Use a SampleBuffer to
-            // move data between Sonata AudioBuffers and the byte buffers required by PulseAudio.
-            let mut samples = SampleBuffer::<i32>::new(duration, *spec);
+                // An interleaved buffer is required to send data to PulseAudio. Use a SampleBuffer to
+                // move data between Sonata AudioBuffers and the byte buffers required by PulseAudio.
+                let mut samples = SampleBuffer::<i32>::new(duration, *spec);
 
-            // Create a PulseAudio stream specification.
-            let pa_spec = pulse::sample::Spec {
-                format: pulse::sample::SAMPLE_S32NE,
-                channels: spec.channels.count() as u8,
-                rate: spec.rate,
-            };
+                // Create a PulseAudio stream specification.
+                let pa_spec = pulse::sample::Spec {
+                    format: pulse::sample::SAMPLE_S32NE,
+                    channels: spec.channels.count() as u8,
+                    rate: spec.rate,
+                };
 
-            assert!(pa_spec.is_valid());
+                assert!(pa_spec.is_valid());
 
-            // Create a PulseAudio connection.
-            let pa = psimple::Simple::new(
-                None,                                   // Use default server
-                "Sonata Player",                        // Application name
-                pulse::stream::Direction::Playback,     // Playback stream
-                None,                                   // Default playback device
-                "Music",                                // Description of the stream
-                &pa_spec,                               // Signal specificaiton
-                None,                                   // Default channel map
-                None                                    // Default buffering attributes
-            ).unwrap();
+                // Create a PulseAudio connection.
+                let pa = psimple::Simple::new(
+                    None,                                   // Use default server
+                    "Sonata Player",                        // Application name
+                    pulse::stream::Direction::Playback,     // Playback stream
+                    None,                                   // Default playback device
+                    "Music",                                // Description of the stream
+                    &pa_spec,                               // Signal specificaiton
+                    None,                                   // Default channel map
+                    None                                    // Default buffering attributes
+                ).unwrap();
 
-            // Interleave samples for PulseAudio into the sample buffer.
-            samples.copy_interleaved_ref(decoded, DitherType::Identity);
+                // Interleave samples for PulseAudio into the sample buffer.
+                samples.copy_interleaved_ref(decoded, DitherType::Identity);
 
-            // Write interleaved samples to PulseAudio.
-            pa.write(samples.as_bytes()).unwrap();
+                // Write interleaved samples to PulseAudio.
+                pa.write(samples.as_bytes()).unwrap();
 
-            (pa, samples)
+                break (pa, samples)
+            }
         }
     };
 
     // Decode the remaining frames.
     loop {
         match decoder.decode(reader.next_packet()?) {
+            Err(Error::DecodeError(err)) => {
+                eprintln!("Decode error: {}", err);
+                continue;
+            },
             Err(err) => {
                 decoder.close();
                 return Err(err);
