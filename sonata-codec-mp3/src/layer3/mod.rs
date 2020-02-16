@@ -7,7 +7,7 @@
 
 use std::fmt;
 use sonata_core::audio::{AudioBuffer, Signal};
-use sonata_core::errors::{Result, decode_error};
+use sonata_core::errors::{Result, decode_error, Error};
 use sonata_core::io::{BitStream, BitStreamLtr, BufStream, ByteStream};
 
 use super::synthesis;
@@ -211,12 +211,23 @@ fn read_main_data(
             
             // Decode the Huffman coded spectral samples and get the starting index of the rzero
             // partition.
-            frame_data.granules[gr].channels[ch].rzero = requantize::read_huffman_samples(
+            let huffman_result = requantize::read_huffman_samples(
                 &mut bs,
                 &frame_data.granules[gr].channels[ch],
                 part3_len,
                 &mut state.samples[gr][ch],
-            )?;
+            );
+
+            // Huffman decoding errors are returned as an IO error by the bit reader. IO errors are
+            // unrecoverable, which is not the case for huffman decoding errors. Convert the IO error
+            // to a decode error.
+            frame_data.granules[gr].channels[ch].rzero = match huffman_result {
+                Ok(rzero) => rzero,
+                Err(Error::IoError(e)) if e.kind() == std::io::ErrorKind::Other => {
+                    return decode_error("huffman decode overrun");
+                }
+                Err(err) => return Err(err),
+            };
 
             part2_3_begin += part2_3_length as usize;
         }

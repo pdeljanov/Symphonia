@@ -350,7 +350,7 @@ impl BitResevoir {
         let main_data_end = main_data_begin + main_data_size;
 
         if main_data_end > self.buf.len() {
-            return decode_error("Invalid main_data length, will exceed resevoir buffer.");
+            return decode_error("invalid main_data length, will exceed resevoir buffer");
         }
 
         // If the offset is less than or equal to the amount of data in the resevoir, shift the
@@ -360,10 +360,14 @@ impl BitResevoir {
         }
         else {
             // If the offset is greater than the amount of data in the resevoir, then the stream is
-            // technically malformed. However, there are ways this could happen, so simply zero out
-            // the resevoir for the length of the offset and pretend things are okay.
-            eprintln!("Invalid main_data_begin offset.");
-            for byte in &mut self.buf[0..main_data_begin] { *byte = 0 }
+            // malformed. However, there are many many ways this could happen. Shift all the data in
+            // the resevoir over by the amount of extra bytes expected and then zero the extra bytes.
+            eprintln!("mp3: invalid main_data_begin offset.");
+
+            let extra = main_data_begin - self.len;
+
+            self.buf.copy_within(0..self.len, extra);
+            for byte in &mut self.buf[0..extra] { *byte = 0 }
         }
 
         // Read the remaining amount of bytes from the stream into the resevoir.
