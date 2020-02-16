@@ -17,6 +17,10 @@ use crate::errors::Result;
 use crate::io::{BufStream, MediaSourceStream};
 use crate::meta::{MetadataQueue, Tag};
 
+pub mod prelude {
+    pub use super::{Cue, FormatOptions, FormatReader, Packet, SeekIndex, SeekSearchResult, Stream};
+}
+
 /// The verbosity of log messages produced by a decoder or demuxer.
 pub enum Verbosity {
     /// No messages are logged.
