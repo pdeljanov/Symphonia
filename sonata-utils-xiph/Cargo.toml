@@ -1,0 +1,15 @@
+[package]
+name = "sonata-utils-xiph"
+version = "0.1.0"
+description = "Sonata utilities for Xiph codecs and formats."
+authors = ["Philip Deljanov <philip.deljanov@gmail.com>"]
+license = "MPL-2.0"
+readme = "README.md"
+categories = ["multimedia"]
+keywords = ["audio", "codec", "decoder", "encoder", "format"]
+
+edition = "2018"
+
+[dependencies]
+sonata-core = { version="*", path = "../sonata-core" }
+sonata-metadata = { version="*", path = "../sonata-metadata" }

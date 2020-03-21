@@ -65,7 +65,7 @@ impl FormatReader for OggReader {
         })
     }
 
-    fn next_packet(&mut self) -> Result<Packet<'_>> {
+    fn next_packet(&mut self) -> Result<Packet> {
         Ok(Packet::new_direct(0, &mut self.reader))
     }
 

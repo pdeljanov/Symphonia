@@ -14,3 +14,4 @@ edition = "2018"
 md5 = "0.6.1"
 sonata-core = { version="*", path = "../sonata-core" }
 sonata-metadata = { version="*", path = "../sonata-metadata" }
+sonata-utils-xiph = { version="*", path = "../sonata-utils-xiph" }

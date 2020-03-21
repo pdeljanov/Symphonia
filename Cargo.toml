@@ -10,4 +10,5 @@ members = [
     "sonata-codec-pcm",
     "sonata-codec-mp3",
     "sonata-codec-flac",
+    "sonata-utils-xiph",
 ]
