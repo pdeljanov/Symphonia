@@ -11,7 +11,6 @@
 mod decoder;
 mod demuxer;
 mod frame;
-mod metadata;
 mod parser;
 mod validate;
 

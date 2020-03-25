@@ -9,8 +9,8 @@ use sonata_core::checksum::Crc16;
 use sonata_core::errors::Result;
 use sonata_core::io::{BufStream, ByteStream, Monitor};
 use sonata_core::util::bits;
+use sonata_utils_xiph::flac::metadata::StreamInfo;
 
-use super::metadata::StreamInfo;
 use super::frame::{BlockSequence, FrameHeader, is_likely_frame_header, read_frame_header};
 
 use std::cmp::min;

@@ -16,6 +16,7 @@ use sonata_core::meta::{ColorMode, MetadataBuilder, Size, StandardTagKey, Tag, V
 
 use sonata_metadata::{id3v2, vorbis};
 
+#[derive(PartialEq)]
 pub enum MetadataBlockType {
     StreamInfo,
     Padding,
