@@ -13,6 +13,9 @@ perf.data.old
 # Sample data
 sonata-codec-*/samples
 sonata-format-*/samples
+benchtest/*.wav
+benchtest/*.mp3
+benchtest/*.flac
 
 # macOS
 .DS_Store
