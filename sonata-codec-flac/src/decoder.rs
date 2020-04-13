@@ -10,12 +10,11 @@ use std::num::Wrapping;
 
 use sonata_core::audio::{AudioBuffer, AudioBufferRef, AsAudioBufferRef};
 use sonata_core::audio::{Duration, Signal, SignalSpec};
-use sonata_core::checksum::Crc16;
 use sonata_core::codecs::{CODEC_TYPE_FLAC, CodecParameters, CodecDescriptor};
 use sonata_core::codecs::{Decoder, DecoderOptions};
 use sonata_core::errors::{Result, decode_error, unsupported_error};
 use sonata_core::formats::Packet;
-use sonata_core::io::{BitStream, BitStreamLtr, Monitor, MonitorStream};
+use sonata_core::io::{BitStream, BitStreamLtr};
 use sonata_core::support_codec;
 use sonata_core::util::bits::sign_extend_leq32_to_i32;
 
@@ -110,6 +109,10 @@ impl Decoder for FlacDecoder {
             SignalSpec::new(sample_rate, channels)
         };
 
+        if !params.packet_data_integrity {
+            return unsupported_error("Packet integrity is required.");
+        }
+
         Ok(FlacDecoder {
             params: params.clone(),
             is_validating: options.verify,
@@ -132,14 +135,7 @@ impl Decoder for FlacDecoder {
         // Synchronize to a frame and get the synchronization code.
         let sync = sync_frame(&mut reader)?;
 
-        // The entire frame is checksummed with a CRC16, wrap the main reader in a CRC16 error
-        // detection stream. Include the sync code in the CRC.
-        let mut crc16 = Crc16::new(0);
-        crc16.process_buf_bytes(&sync.to_be_bytes());
-
-        let mut reader_crc16 = MonitorStream::new(reader, crc16);
-
-        let header = read_frame_header(&mut reader_crc16, sync)?;
+        let header = read_frame_header(&mut reader, sync)?;
 
         // Use the bits per sample and sample rate as stated in the frame header, falling back to
         // the stream information if provided. If neither are available, return an error.
@@ -163,7 +159,7 @@ impl Decoder for FlacDecoder {
         // Only Bitstream reading for subframes.
         {
             // Sub-frames don't have any byte-aligned content, so use a BitReader.
-            let mut bs = BitStreamLtr::new(&mut reader_crc16);
+            let mut bs = BitStreamLtr::new(&mut reader);
 
             // Read each subframe based on the channel assignment into a planar buffer.
             match header.channel_assignment {
@@ -212,14 +208,6 @@ impl Decoder for FlacDecoder {
         if bits_per_sample < 32 {
             let shift = 32 - bits_per_sample;
             self.buf.transform(| sample | sample << shift);
-        }
-
-        // Retrieve the CRC16 before the reading the footer.
-        let crc16_expected = reader_crc16.monitor().crc();
-        let crc16_computed = read_frame_footer(&mut reader_crc16.into_inner())?;
-
-        if crc16_computed != crc16_expected {
-            return decode_error("Computed frame CRC does not match expected CRC.");
         }
 
         Ok(self.buf.as_audio_buffer_ref())
