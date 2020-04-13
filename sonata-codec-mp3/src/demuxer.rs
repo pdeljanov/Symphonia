@@ -17,6 +17,8 @@ use sonata_core::io::*;
 use sonata_core::meta::MetadataQueue;
 use sonata_core::probe::{Descriptor, Instantiate, QueryDescriptor};
 
+use super::header;
+
 /// MPEG1 and MPEG2 audio frame reader.
 ///
 /// `Mp3Reader` implements a demuxer for the MPEG1 and MPEG2 audio frame format.
@@ -44,16 +46,26 @@ impl QueryDescriptor for Mp3Reader {
         ]
     }
 
-    fn score(_context: &[u8]) -> f32 {
-        1.0
+    fn score(_context: &[u8]) -> u8 {
+        255
     }
 }
 
 impl FormatReader for Mp3Reader {
 
-    fn try_new(source: MediaSourceStream, _options: &FormatOptions) -> Result<Self> {
+    fn try_new(mut source: MediaSourceStream, _options: &FormatOptions) -> Result<Self> {
+        // Try to parse the header of the first MPEG frame.
+        let header = header::parse_frame_header(source.read_be_u32()?)?;
+
+        // Use the header to populate the codec parameters.
         let mut params = CodecParameters::new();
-        params.for_codec(CODEC_TYPE_MP3);
+
+        params.for_codec(CODEC_TYPE_MP3)
+              .with_sample_rate(header.sample_rate)
+              .with_channels(header.channel_mode.channels());
+
+        // Rewind back to the start of the frame.
+        source.rewind(std::mem::size_of::<u32>());
 
         Ok(Mp3Reader {
             reader: source,
@@ -63,8 +75,19 @@ impl FormatReader for Mp3Reader {
         })
     }
 
-    fn next_packet(&mut self) -> Result<Packet<'_>> {
-        Ok(Packet::new_direct(0, &mut self.reader))
+    fn next_packet(&mut self) -> Result<Packet> {
+        // Sync to the next frame header.
+        let header_buf = header::sync_frame(&mut self.reader)?;
+
+        // Parse the header to get the calculated frame size.
+        let header = header::parse_frame_header(header_buf)?;
+
+        // Allocate a buffer for the entire MPEG frame. Prefix the buffer with the frame header.
+        let mut packet_buf = vec![0u8; header.frame_size + 4];
+        packet_buf[0..4].copy_from_slice(&header_buf.to_be_bytes());
+        self.reader.read_buf_bytes(&mut packet_buf[4..])?;
+
+        Ok(Packet::new_from_boxed_slice(0, 0, packet_buf.into_boxed_slice()))
     }
 
     fn metadata(&self) -> &MetadataQueue {

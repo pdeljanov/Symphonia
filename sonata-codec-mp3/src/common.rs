@@ -5,7 +5,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use sonata_core::audio::{Layout, SignalSpec};
+use sonata_core::audio::{Channels, Layout, SignalSpec};
 use sonata_core::errors::{Result, decode_error};
 use sonata_core::io::ByteStream;
 
@@ -210,7 +210,7 @@ pub enum Mode {
 
 /// The channel mode.
 #[derive(Copy,Clone,Debug,PartialEq)]
-pub enum Channels {
+pub enum ChannelMode {
     /// Single mono audio channel.
     Mono,
     /// Dual mono audio channels.
@@ -221,13 +221,22 @@ pub enum Channels {
     JointStereo(Mode),
 }
 
-impl Channels {
+impl ChannelMode {
     /// Gets the number of channels.
     #[inline(always)]
-    pub fn count(self) -> usize {
+    pub fn count(&self) -> usize {
         match self {
-            Channels::Mono => 1,
-            _              => 2,
+            ChannelMode::Mono => 1,
+            _                 => 2,
+        }
+    }
+
+    /// Gets the the channel map.
+    #[inline(always)]
+    pub fn channels(&self) -> Channels {
+        match self {
+            ChannelMode::Mono => Channels::FRONT_LEFT,
+            _                 => Channels::FRONT_LEFT | Channels::FRONT_RIGHT,
         }
     }
 }
@@ -251,12 +260,12 @@ pub struct FrameHeader {
     pub bitrate: u32,
     pub sample_rate: u32,
     pub sample_rate_idx: usize,
-    pub channels: Channels,
+    pub channel_mode: ChannelMode,
     pub emphasis: Emphasis,
     pub is_copyrighted: bool,
     pub is_original: bool,
     pub has_padding: bool,
-    pub crc: Option<u16>,
+    pub has_crc: bool,
     pub frame_size: usize,
 }
 
@@ -296,15 +305,15 @@ impl FrameHeader {
     /// Returns the number of channels per granule.
     #[inline(always)]
     pub fn n_channels(&self) -> usize {
-        self.channels.count()
+        self.channel_mode.count()
     }
 
     /// Returns true if Intensity Stereo encoding is used, false otherwise.
     #[inline(always)]
     pub fn is_intensity_stereo(&self) -> bool {
-        match self.channels {
-            Channels::JointStereo(Mode::Intensity { .. }) => true,
-            Channels::JointStereo(Mode::Layer3 { intensity, .. }) => intensity,
+        match self.channel_mode {
+            ChannelMode::JointStereo(Mode::Intensity { .. }) => true,
+            ChannelMode::JointStereo(Mode::Layer3 { intensity, .. }) => intensity,
             _ => false,
         }
     }

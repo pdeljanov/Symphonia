@@ -59,8 +59,8 @@ impl QueryDescriptor for WavReader {
         ]
     }
 
-    fn score(_context: &[u8]) -> f32 {
-        1.0
+    fn score(_context: &[u8]) -> u8 {
+        255
     }
 }
 
@@ -150,8 +150,13 @@ impl FormatReader for WavReader {
         // Chunks are processed until the Data chunk is found, or an error occurs.
     }
 
-    fn next_packet(&mut self) -> Result<Packet<'_>> {
-        Ok(Packet::new_direct(0, &mut self.reader))
+    fn next_packet(&mut self) -> Result<Packet> {
+        let n_frames = WAVE_MAX_FRAMES_PER_PACKET * u64::from(self.frame_len);
+
+        // TODO: This WILL fail if the stream is not exactly mod 4096 frames long.
+        let packet_buf = self.reader.read_boxed_slice_bytes(n_frames as usize)?;
+
+        Ok(Packet::new_from_boxed_slice(0, 0, packet_buf))
     }
 
     fn metadata(&self) -> &MetadataQueue {

@@ -10,12 +10,11 @@
 
 use std::default::Default;
 use std::fmt;
-use std::io;
 
 use crate::audio::Timestamp;
 use crate::codecs::CodecParameters;
 use crate::errors::Result;
-use crate::io::{ByteStream, MediaSourceStream};
+use crate::io::{BufStream, MediaSourceStream};
 use crate::meta::{MetadataQueue, Tag};
 
 /// The verbosity of log messages produced by a decoder or demuxer.
@@ -301,98 +300,52 @@ pub trait FormatReader {
         }
     }
 
-    /// Lazily get the next packet from the container.
-    fn next_packet(&mut self) -> Result<Packet<'_>>;
+    /// Get the next packet from the container.
+    fn next_packet(&mut self) -> Result<Packet>;
 }
 
-
-pub enum PacketSource<'a> {
-    Direct(&'a mut MediaSourceStream),
+/// A `Packet` contains a discrete amount of encoded data for a single codec bitstream. The exact
+/// amount of data is bounded, but not defined, and is dependant on the container and/or the
+/// encapsulated codec.
+pub struct Packet {
+    id: u32,
+    pts: u64,
+    data: Box<[u8]>,
 }
 
-pub struct PacketStream<'a, B: ByteStream> {
-    src: &'a mut B
-}
-
-impl<'a, B: ByteStream> ByteStream for PacketStream<'a, B> {
-
-    /// Reads a single byte from the stream and returns it or an error.
-    #[inline(always)]
-    fn read_byte(&mut self) -> io::Result<u8> {
-        self.src.read_byte()
+impl Packet {
+    /// Create a new `Packet` from a slice.
+    pub fn new_from_slice(id: u32, pts: u64, buf: &[u8]) -> Self {
+        Packet { id, pts, data: Box::from(buf) }
     }
 
-    // Reads two bytes from the stream and returns them in read-order or an error.
-    #[inline(always)]
-    fn read_double_bytes(&mut self) -> io::Result<[u8; 2]> {
-       self.src.read_double_bytes()
+    /// Create a new `Packet` from a boxed slice.
+    pub fn new_from_boxed_slice(id: u32, pts: u64, data: Box<[u8]>) -> Self {
+        Packet { id, pts, data }
     }
 
-    // Reads three bytes from the stream and returns them in read-order or an error.
-    #[inline(always)]
-    fn read_triple_bytes(&mut self) -> io::Result<[u8; 3]> {
-        self.src.read_triple_bytes()
+    /// The stream identifier of the stream this packet belongs to.
+    pub fn stream_id(&self) -> u32 {
+        self.id
     }
 
-    // Reads four bytes from the stream and returns them in read-order or an error.
-    #[inline(always)]
-    fn read_quad_bytes(&mut self) -> io::Result<[u8; 4]> {
-        self.src.read_quad_bytes()
+    /// Get the presentation timestamp of the packet.
+    pub fn pts(&self) -> u64 {
+        self.pts
     }
 
-    #[inline(always)]
-    fn read_buf_bytes(&mut self, buf: &mut [u8]) -> io::Result<()> {
-        self.src.read_buf_bytes(buf)
+    /// Get the length in time of the packet.
+    pub fn tlen(&self) -> u64 {
+        0
     }
 
-    #[inline(always)]
-    fn scan_bytes_aligned<'b>(
-        &mut self, pattern: &[u8],
-        align: usize,
-        buf: &'b mut [u8],
-    ) -> io::Result<&'b mut [u8]> {
-        self.src.scan_bytes_aligned(pattern, align, buf)
+    /// Get the packet data buffer as an immutable slice.
+    pub fn data(&self) -> &[u8] {
+        &self.data
     }
 
-    #[inline(always)]
-    fn ignore_bytes(&mut self, count: u64) -> io::Result<()> {
-        self.src.ignore_bytes(count)
+    /// Get a `BufStream` to read the packet data buffer sequentially.
+    pub fn as_buf_stream(&self) -> BufStream {
+        BufStream::new(&self.data)
     }
-
-}
-
-/// A `Packet` contains a discrete amount of encoded data for a single media stream. The exact
-/// amount of data is bounded, but not defined and is dependant on the container and how it was
-/// muxed.
-///
-/// Packets may be read by using the provided reader.
-pub struct Packet<'a> {
-    idx: u32,
-    len: Option<usize>,
-    src: PacketSource<'a>,
-}
-
-impl<'a> Packet<'a> {
-
-    pub fn new_direct(idx: u32, mss: &'a mut MediaSourceStream) -> Self {
-        Packet { idx, len: None, src: PacketSource::Direct(mss) }
-    }
-
-    /// The stream index for the stream this packet belongs to.
-    pub fn stream_idx(&self) -> u32 {
-        self.idx
-    }
-
-    /// The length of the packet in bytes.
-    pub fn len(&self) -> Option<usize> {
-        self.len
-    }
-
-    /// Converts the packet into a `ByteStream` for consumption.
-    pub fn into_stream(self) -> PacketStream<'a, impl ByteStream> {
-        match self.src {
-            PacketSource::Direct(src) => PacketStream::<'a, MediaSourceStream> { src }
-        }
-    }
-
 }

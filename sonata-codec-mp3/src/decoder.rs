@@ -43,8 +43,8 @@ impl Decoder for Mp3Decoder {
         &self.params
     }
 
-    fn decode(&mut self, packet: Packet<'_>) -> Result<AudioBufferRef<'_>> {
-        let mut reader = packet.into_stream();
+    fn decode(&mut self, packet: &Packet) -> Result<AudioBufferRef<'_>> {
+        let mut reader = packet.as_buf_stream();
 
         let header = header::read_frame_header(&mut reader)?;
 

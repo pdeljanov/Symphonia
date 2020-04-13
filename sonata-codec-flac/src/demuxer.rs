@@ -1,5 +1,5 @@
 // Sonata
-// Copyright (c) 2019 The Sonata Project Developers.
+// Copyright (c) 2020 The Sonata Project Developers.
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -20,8 +20,9 @@ use sonata_core::io::*;
 use sonata_core::meta::{MetadataQueue, MetadataBuilder};
 use sonata_core::probe::{Descriptor, Instantiate, QueryDescriptor};
 
-use super::decoder::PacketParser;
+use super::frame::*;
 use super::metadata::*;
+use super::parser::PacketParser;
 
 /// The FLAC start of stream marker: "fLaC" in ASCII.
 const FLAC_STREAM_MARKER: [u8; 4] = *b"fLaC";
@@ -34,6 +35,7 @@ pub struct FlacReader {
     cues: Vec<Cue>,
     index: Option<SeekIndex>,
     first_frame_offset: u64,
+    parser: PacketParser,
 }
 
 impl QueryDescriptor for FlacReader {
@@ -49,8 +51,8 @@ impl QueryDescriptor for FlacReader {
         ]
     }
 
-    fn score(_context: &[u8]) -> f32 {
-        1.0
+    fn score(_context: &[u8]) -> u8 {
+        255
     }
 }
 
@@ -71,6 +73,7 @@ impl FormatReader for FlacReader {
             metadata: Default::default(),
             index: None,
             first_frame_offset: 0,
+            parser: Default::default(),
         };
 
         // Strictly speaking, the first metadata block must be a StreamInfo block. There is
@@ -91,13 +94,9 @@ impl FormatReader for FlacReader {
         Ok(flac)
     }
 
-    fn next_packet(&mut self) -> Result<Packet<'_>> {
-        // FLAC is not a "real" container format. FLAC frames are more-so part of the codec
-        // bitstream than the actual format. In fact, it is not possible to know how long a FLAC
-        // frame is without decoding its header and practically decoding it. This is all to say that
-        // the what follows the metadata blocks is a codec bitstream. Therefore, next_packet will
-        // simply always return the reader and let the codec advance the stream.
-        Ok(Packet::new_direct(0, &mut self.reader))
+    fn next_packet(&mut self) -> Result<Packet> {
+        let data = self.parser.parse(&mut self.reader)?;
+        Ok(Packet::new_from_boxed_slice(0, 0, data))
     }
 
     fn metadata(&self) -> &MetadataQueue {
@@ -191,7 +190,7 @@ impl FormatReader for FlacReader {
                 let mid_byte_offset = (start_byte_offset + end_byte_offset) / 2;
                 self.reader.seek(SeekFrom::Start(mid_byte_offset))?;
 
-                let packet = PacketParser::parse_packet(&mut self.reader)?;
+                let packet = next_frame(&mut self.reader)?;
 
                 if frame_ts < packet.packet_ts {
                     end_byte_offset = mid_byte_offset;
@@ -222,7 +221,7 @@ impl FormatReader for FlacReader {
         // after the search range was narrowed by the binary search. It is also the ONLY way for a
         // unseekable stream to be "seeked" forward.
         loop {
-            let packet = PacketParser::parse_packet(&mut self.reader)?;
+            let packet = next_frame(&mut self.reader)?;
 
             // The desired timestamp preceeds the current packet's timestamp.
             if frame_ts < packet.packet_ts {
@@ -262,13 +261,14 @@ impl FormatReader for FlacReader {
 /// Reads a StreamInfo block and populates the reader with stream information.
 fn read_stream_info_block<B : ByteStream>(
     block_stream: &mut B,
-    streams: &mut Vec<Stream>
+    streams: &mut Vec<Stream>,
+    parser: &mut PacketParser,
 ) -> Result<()> {
     // Only one StreamInfo block, and therefore ony one Stream, is allowed per media source stream.
     if streams.is_empty() {
         let info = StreamInfo::read(block_stream)?;
 
-        // Populate the codec parameters with the information read from StreamInfo.
+        // Populate the codec parameters with the parameters from the stream information block.
         let mut codec_params = CodecParameters::new();
 
         codec_params
@@ -276,12 +276,16 @@ fn read_stream_info_block<B : ByteStream>(
             .with_sample_rate(info.sample_rate)
             .with_bits_per_sample(info.bits_per_sample)
             .with_max_frames_per_packet(u64::from(info.block_sample_len.1))
-            .with_channels(info.channels);
+            .with_channels(info.channels)
+            .with_packet_data_integrity(true);
 
         // Total samples (per channel) aka frames may or may not be stated in StreamInfo.
         if let Some(n_frames) = info.n_samples {
             codec_params.with_n_frames(n_frames);
         }
+
+        // Reset the packet parser.
+        parser.reset(info);
 
         // Add the stream.
         streams.push(Stream::new(codec_params));
@@ -337,7 +341,7 @@ fn read_all_metadata_blocks(flac: &mut FlacReader) -> Result<()> {
             },
             // StreamInfo blocks are parsed into Streams.
             MetadataBlockType::StreamInfo => {
-                read_stream_info_block(&mut block_stream, &mut flac.streams)?;
+                read_stream_info_block(&mut block_stream, &mut flac.streams, &mut flac.parser)?;
             },
             // Padding blocks are skipped.
             MetadataBlockType::Padding => {

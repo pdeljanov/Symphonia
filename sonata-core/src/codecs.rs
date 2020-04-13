@@ -183,6 +183,9 @@ pub struct CodecParameters {
 
     /// The maximum number of frames a packet will contain.
     pub max_frames_per_packet: Option<u64>,
+
+    /// The demuxer guarantees packet data integrity.
+    pub packet_data_integrity: bool,
 }
 
 impl CodecParameters {
@@ -199,6 +202,7 @@ impl CodecParameters {
             leading_padding: None,
             trailing_padding: None,
             max_frames_per_packet: None,
+            packet_data_integrity: false,
         }
     }
 
@@ -257,6 +261,11 @@ impl CodecParameters {
         self
     }
 
+    pub fn with_packet_data_integrity(&mut self, integrity: bool) -> &mut Self {
+        self.packet_data_integrity = integrity;
+        self
+    }
+
 }
 
 /// `DecoderOptions` is a common set of options that all decoders use.
@@ -292,7 +301,7 @@ pub trait Decoder {
 
     /// Decodes a `Packet` of audio data and returns a copy-on-write generic (untyped) audio buffer
     /// of the decoded audio.
-    fn decode(&mut self, packet: Packet<'_>) -> Result<AudioBufferRef>;
+    fn decode(&mut self, packet: &Packet) -> Result<AudioBufferRef>;
 
     /// Closes a decoder.
     fn close(&mut self);

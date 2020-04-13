@@ -344,8 +344,8 @@ impl Decoder for PcmDecoder {
         &self.params
     }
 
-    fn decode(&mut self, packet: Packet<'_>) -> Result<AudioBufferRef<'_>> {
-        let mut stream = packet.into_stream();
+    fn decode(&mut self, packet: &Packet) -> Result<AudioBufferRef<'_>> {
+        let mut stream = packet.as_buf_stream();
 
         let width = self.params.bits_per_coded_sample.unwrap_or_else(
             || self.params.bits_per_sample.unwrap_or(0));

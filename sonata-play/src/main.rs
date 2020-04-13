@@ -149,7 +149,7 @@ fn decode_only(mut reader: Box<dyn FormatReader>, decode_options: &DecoderOption
 
     // Decode all packets, ignoring decode errors.
     loop {
-        match decoder.decode(reader.next_packet()?) {
+        match decoder.decode(&reader.next_packet()?) {
             Err(Error::DecodeError(err)) => {
                 eprintln!("Decode error: {}", err);
                 continue;
@@ -181,7 +181,7 @@ fn play(mut reader: Box<dyn FormatReader>, decode_options: &DecoderOptions) -> R
     // Decode the first packet and create the PulseAudio device using the signal specification of 
     // the buffer.
     let (pa, mut samples) = loop {
-        match decoder.decode(reader.next_packet()?) {
+        match decoder.decode(&reader.next_packet()?) {
             Err(Error::DecodeError(err)) => {
                 // Decode errors are not fatal. Print a message and try to decode the next packet as
                 // usual.
@@ -238,7 +238,7 @@ fn play(mut reader: Box<dyn FormatReader>, decode_options: &DecoderOptions) -> R
 
     // Decode the remaining frames.
     loop {
-        match decoder.decode(reader.next_packet()?) {
+        match decoder.decode(&reader.next_packet()?) {
             Err(Error::DecodeError(err)) => {
                 eprintln!("Decode error: {}", err);
                 continue;

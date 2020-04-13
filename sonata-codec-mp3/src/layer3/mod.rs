@@ -248,6 +248,13 @@ pub fn decode_frame<B: ByteStream>(
     // frame.
     let mut frame_data: FrameData = Default::default();
 
+    let _crc = if header.has_crc {
+        Some(reader.read_be_u16()?)
+    }
+    else {
+        None
+    };
+
     // Read side_info into the frame data.
     // TODO: Use a MonitorStream to compute the CRC.
     let side_info_len = bitstream::read_side_info(reader, &header, &mut frame_data)?;
@@ -272,7 +279,7 @@ pub fn decode_frame<B: ByteStream>(
         requantize::requantize(&header, &granule.channels[0], &mut state.samples[gr][0]);
 
         // If there is a second channel...
-        if header.channels != Channels::Mono {
+        if header.channel_mode != ChannelMode::Mono {
             // Requantize all non-zero spectral samples in the second channel.
             requantize::requantize(&header, &granule.channels[1], &mut state.samples[gr][1]);
 

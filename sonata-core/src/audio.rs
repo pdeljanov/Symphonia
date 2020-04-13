@@ -42,6 +42,7 @@ pub enum Duration {
 
 bitflags! {
     /// Channels is a bit mask of all channels contained in a signal.
+    #[derive(Default)]
     pub struct Channels: u32 {
         /// Front-left (left) or the Mono channel.
         const FRONT_LEFT         = 0x0000_0001;

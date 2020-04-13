@@ -513,9 +513,9 @@ pub(super) fn stereo(
 ) -> Result<()> {
 
     // Determine whether mid-side, and/or intensity stereo coding is used.
-    let (mid_side, intensity) = match header.channels {
-        Channels::JointStereo(Mode::Layer3 { mid_side, intensity }) => (mid_side, intensity),
-        Channels::JointStereo(Mode::Intensity { .. }) => {
+    let (mid_side, intensity) = match header.channel_mode {
+        ChannelMode::JointStereo(Mode::Layer3 { mid_side, intensity }) => (mid_side, intensity),
+        ChannelMode::JointStereo(Mode::Intensity { .. }) => {
             // This function only supports decoding Layer 3 stereo encodings, it is a fundamental
             // error in the decoder logic if layer 1 or 2 stereo encodings are being decoded with
             // this function.

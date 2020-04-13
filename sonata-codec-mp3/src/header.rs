@@ -52,7 +52,7 @@ static BIT_RATES_MPEG2_L23: [u32; 15] =
 
 /// Synchronize the provided reader to the end of the frame header, and return the frame header as
 /// as `u32`.
-fn sync_frame<B: ByteStream>(reader: &mut B) -> Result<u32> {
+pub fn sync_frame<B: ByteStream>(reader: &mut B) -> Result<u32> {
     let mut sync = 0u32;
 
     // Synchronize stream to the next frame using the sync word. The MP3 frame header always starts
@@ -64,11 +64,7 @@ fn sync_frame<B: ByteStream>(reader: &mut B) -> Result<u32> {
     Ok(sync)
 }
 
-/// Reads a MPEG audio frame header from the stream and return it or an error.
-pub fn read_frame_header<B: ByteStream>(reader: &mut B) -> Result<FrameHeader> {
-    // Synchronize and read the frame header.
-    let header = sync_frame(reader)?;
-
+pub fn parse_frame_header(header: u32) -> Result<FrameHeader> {
     // The MP3 header is structured as follows:
     //
     // 0b1111_1111 0b111v_vlly 0brrrr_hhpx 0bmmmm_coee
@@ -119,22 +115,22 @@ pub fn read_frame_header<B: ByteStream>(reader: &mut B) -> Result<FrameHeader> {
         _                            => return decode_error("Invalid sample rate."),
     };
 
-    let channels = match ((header & 0xc0) >> 6, layer) {
+    let channel_mode = match ((header & 0xc0) >> 6, layer) {
         // Stereo, for layers 1, 2, and 3.
-        (0b00,                 _) => Channels::Stereo,
+        (0b00,                 _) => ChannelMode::Stereo,
         // Dual mono, for layers 1, 2, and 3.
-        (0b10,                 _) => Channels::DualMono,
+        (0b10,                 _) => ChannelMode::DualMono,
         // Mono, for layers 1, 2, and 3.
-        (0b11,                 _) => Channels::Mono,
+        (0b11,                 _) => ChannelMode::Mono,
         // Joint stereo mode for layer 3 supports a combination of Mid-Side and Intensity Stereo
         // depending on the mode extension bits.
-        (0b01, MpegLayer::Layer3) => Channels::JointStereo(Mode::Layer3 {
+        (0b01, MpegLayer::Layer3) => ChannelMode::JointStereo(Mode::Layer3 {
             mid_side:  header & 0x20 != 0x0,
             intensity: header & 0x10 != 0x0,
         }),
         // Joint stereo mode for layers 1 and 2 only supports Intensity Stereo. The mode extension
         // bits indicate for which sub-bands intensity stereo coding is applied.
-        (0b01,                 _) => Channels::JointStereo(Mode::Intensity {
+        (0b01,                 _) => ChannelMode::JointStereo(Mode::Intensity {
             bound: (1 + ((header & 0x30) >> 4)) << 2,
         }),
         _                         => unreachable!(),
@@ -143,7 +139,7 @@ pub fn read_frame_header<B: ByteStream>(reader: &mut B) -> Result<FrameHeader> {
     // Some layer 2 channel and bit-rate combinations are not allowed. Check that the frame does not
     // use them.
     if layer == MpegLayer::Layer2 {
-        if channels == Channels::Mono {
+        if channel_mode == ChannelMode::Mono {
             if bitrate == 224_000
                 || bitrate == 256_000
                 || bitrate == 320_000
@@ -168,18 +164,13 @@ pub fn read_frame_header<B: ByteStream>(reader: &mut B) -> Result<FrameHeader> {
     let is_original = header & 0x4 != 0x0;
     let has_padding = header & 0x200 != 0;
 
-    let crc = if header & 0x1_0000 == 0 {
-        Some(reader.read_be_u16()?)
-    }
-    else {
-        None
-    };
+    let has_crc = header & 0x1_0000 == 0;
 
     // Calculate the size of the frame excluding this header.
     let frame_size =
         (if version == MpegVersion::Mpeg1 { 144 } else { 72 } * bitrate / sample_rate) as usize
         + if has_padding { 1 } else { 0 }
-        - if crc.is_some() { 2 } else { 0 }
+        - if has_crc { 2 } else { 0 }
         - 4;
 
     Ok(FrameHeader{
@@ -188,12 +179,18 @@ pub fn read_frame_header<B: ByteStream>(reader: &mut B) -> Result<FrameHeader> {
         bitrate,
         sample_rate,
         sample_rate_idx,
-        channels,
+        channel_mode,
         emphasis,
         is_copyrighted,
         is_original,
         has_padding,
-        crc,
+        has_crc,
         frame_size,
     })
+}
+
+/// Reads a MPEG audio frame header from the stream and return it or an error.
+pub fn read_frame_header<B: ByteStream>(reader: &mut B) -> Result<FrameHeader> {
+    // Synchronize and parse the frame header.
+    parse_frame_header(sync_frame(reader)?)
 }

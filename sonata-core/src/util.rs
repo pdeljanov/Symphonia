@@ -75,7 +75,7 @@ pub mod bits {
     #[inline(always)]
     pub fn mask_lower(idx: u32) -> u8 {
         debug_assert!(idx <= 7);
-        ((1 << idx) - 1)
+        (1 << idx) - 1
     }
 
     /// Masks out all bits in positions less than upper, but greater than or equal to lower
@@ -109,6 +109,20 @@ pub mod bits {
     #[inline(always)]
     pub fn trailing_ones_u64(value: u64) -> u32 {
         (!value & value.wrapping_add(1)).trailing_zeros()
+    }
+
+    /// Returns true if the unsigned 32-bit integer contains one or more bytes which have all bits
+    /// set.
+    #[inline(always)]
+    pub fn contains_ones_byte_u32(value: u32) -> bool {
+        ((value & !value.wrapping_add(0x0101_0101)) & 0x8080_8080) != 0
+    }
+
+    /// Returns true if the unsigned 32-bit integer contains one or more bytes which have all bits
+    /// set.
+    #[inline(always)]
+    pub fn contains_ones_byte_u64(value: u64) -> bool {
+        ((value & !value.wrapping_add(0x0101_0101_0101_0101)) & 0x8080_8080_8080_8080) != 0
     }
 
     #[test]

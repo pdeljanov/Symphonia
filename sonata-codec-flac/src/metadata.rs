@@ -87,6 +87,7 @@ fn flac_channels_to_channels(channels: u32) -> Channels {
     }
 }
 
+#[derive(Default)]
 pub struct StreamInfo {
     /// The minimum and maximum number of decoded samples per block of audio.
     pub block_sample_len: (u16, u16),

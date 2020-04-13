@@ -383,8 +383,8 @@ impl QueryDescriptor for Id3v2Reader {
         &[ support_metadata!("id3v2", "ID3v2", &[], &[], &[ b"ID3" ]) ]
     }
 
-    fn score(_context: &[u8]) -> f32 {
-        1.0
+    fn score(_context: &[u8]) -> u8 {
+        255
     }
 }
 

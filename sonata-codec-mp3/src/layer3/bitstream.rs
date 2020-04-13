@@ -180,7 +180,7 @@ fn read_granule_side_info<B: BitStream>(
     header: &FrameHeader,
 ) -> Result<()> {
     // Read the side_info for each channel in the granule.
-    for channel in &mut granule.channels[..header.channels.count()] {
+    for channel in &mut granule.channels[..header.channel_mode.count()] {
         read_granule_channel_side_info(bs, channel, header)?;
     }
     Ok(())
@@ -201,9 +201,9 @@ pub(super) fn read_side_info<B: ByteStream>(
         frame_data.main_data_begin = bs.read_bits_leq32(9)? as u16;
 
         // Next 3 (>1 channel) or 5 (1 channel) bits are private and should be ignored.
-        match header.channels {
-            Channels::Mono => bs.ignore_bits(5)?,
-            _              => bs.ignore_bits(3)?,
+        match header.channel_mode {
+            ChannelMode::Mono => bs.ignore_bits(5)?,
+            _                 => bs.ignore_bits(3)?,
         };
 
         // Next four (or 8, if more than one channel) are the SCFSI bits.
@@ -214,9 +214,9 @@ pub(super) fn read_side_info<B: ByteStream>(
         }
 
         // The size of the side_info, fixed for layer 3.
-        match header.channels {
-            Channels::Mono => 17,
-            _              => 32,
+        match header.channel_mode {
+            ChannelMode::Mono => 17,
+            _                 => 32,
         }
     }
     // For MPEG version 2...
@@ -225,15 +225,15 @@ pub(super) fn read_side_info<B: ByteStream>(
         frame_data.main_data_begin = bs.read_bits_leq32(8)? as u16;
 
         // Next 1 (1 channel) or 2 (>1 channel) bits are private and should be ignored.
-        match header.channels {
-            Channels::Mono => bs.ignore_bits(1)?,
-            _              => bs.ignore_bits(2)?,
+        match header.channel_mode {
+            ChannelMode::Mono => bs.ignore_bits(1)?,
+            _                 => bs.ignore_bits(2)?,
         };
 
         // The size of the side_info, fixed for layer 3.
-        match header.channels {
-            Channels::Mono =>  9,
-            _              => 17,
+        match header.channel_mode {
+            ChannelMode::Mono =>  9,
+            _                 => 17,
         }
     };
 
@@ -300,8 +300,8 @@ pub(super) fn read_scale_factors_mpeg1<B: BitStream>(
         for (i, (start, end)) in SCALE_FACTOR_BANDS.iter().enumerate() {
             let slen = if i < 2 { slen1 } else { slen2 };
 
-            // If this is the second granule, and the scale factor selection information for this 
-            // channel indicates that the scale factors should be copied from the first granule, 
+            // If this is the second granule, and the scale factor selection information for this
+            // channel indicates that the scale factors should be copied from the first granule,
             // do so.
             if gr > 0 && frame_data.scfsi[ch][i] {
                 let (granule0, granule1) = frame_data.granules.split_first_mut().unwrap();

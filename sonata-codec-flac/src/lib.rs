@@ -1,5 +1,5 @@
 // Sonata
-// Copyright (c) 2019 The Sonata Project Developers.
+// Copyright (c) 2020 The Sonata Project Developers.
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -10,7 +10,9 @@
 
 mod decoder;
 mod demuxer;
+mod frame;
 mod metadata;
+mod parser;
 mod validate;
 
 pub use decoder::FlacDecoder;

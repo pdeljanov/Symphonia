@@ -104,7 +104,7 @@ pub struct Descriptor {
     /// A byte-string start-of-stream marker that will be searched for within the stream.
     pub markers: &'static [&'static [u8]],
     /// A function to score a context buffer.
-    pub score: fn(&[u8]) -> f32,
+    pub score: fn(&[u8]) -> u8,
     /// An instantiation function.
     pub inst: Instantiate,
 }
@@ -115,9 +115,9 @@ pub trait QueryDescriptor {
     /// Returns a list of descriptors.
     fn query() -> &'static [Descriptor];
 
-    /// Using the provided context buffer, score calculate and returns a value between 0.0 and 1.0
+    /// Using the provided context buffer, score calculate and returns a value between 0 and 255
     /// indicating the confidence of the reader in decoding or parsing the source stream.
-    fn score(context: &[u8]) -> f32;
+    fn score(context: &[u8]) -> u8;
 }
 
 /// A `Hint` provides additional information and context when probing a media source stream.
