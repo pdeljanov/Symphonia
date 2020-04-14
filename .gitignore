@@ -11,8 +11,11 @@ perf.data
 perf.data.old
 
 # Sample data
-sonata-codec-*/samples
-sonata-format-*/samples
+testvec/*/*.wav
+testvec/*/*.mp3
+testvec/*/*.ogg
+testvec/*/*.flac
+testvec/*/*.opus
 benchtest/*.wav
 benchtest/*.mp3
 benchtest/*.flac
