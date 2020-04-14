@@ -25,7 +25,7 @@ support for FOSS codecs and formats, but others may be included via the features
 |---------|-------------|--------------|---------|------------------------|
 | ISO/MP4 | -           | `isomp4`     | No      | `sonata-format-isomp4` |
 | MKV     | -           | `mkv`        | Yes     | `sonata-format-mkv`    |
-| OGG     | Next        | `ogg`        | Yes     | `sonata-format-ogg`    |
+| OGG     | Functional  | `ogg`        | Yes     | `sonata-format-ogg`    |
 | Wave    | Complete    | `wav`        | Yes     | `sonata-format-wav`    |
 | WebM    | -           | `webm`       | No      | `sonata-format-webm`   |
 
@@ -36,9 +36,9 @@ support for FOSS codecs and formats, but others may be included via the features
 | AAC      | -           | `aac`        | No      | `sonata-codec-aac`     |
 | Flac     | Complete    | `flac`       | Yes     | `sonata-codec-flac`    |
 | Hardware | -           | `hwdec`      | No      | `sonata-codec-hwdec`   |
-| MP1      | In Work     | `mp3`        | No      | `sonata-codec-mp3`     |
-| MP2      | In Work     | `mp3`        | No      | `sonata-codec-mp3`     |
-| MP3      | Testing     | `mp3`        | No      | `sonata-codec-mp3`     |
+| MP1      | Paused      | `mp3`        | No      | `sonata-codec-mp3`     |
+| MP2      | Paused      | `mp3`        | No      | `sonata-codec-mp3`     |
+| MP3      | Complete    | `mp3`        | No      | `sonata-codec-mp3`     |
 | Opus     | Next        | `opus`       | Yes     | `sonata-codec-opus`    |
 | PCM      | Complete    | `pcm`        | Yes     | `sonata-codec-pcm`     |
 | Vorbis   | -           | `vorbis`     | Yes     | `sonata-codec-vorbis`  |
