@@ -1,13 +1,14 @@
 [package]
 name = "sonata"
 version = "0.1.0"
-description = "Pure Rust media container and audio codec library."
+description = "Pure Rust media container and audio decoding library."
+homepage = "https://github.com/pdeljanov/Sonata"
+repository = "https://github.com/pdeljanov/Sonata"
 authors = ["Philip Deljanov <philip.deljanov@gmail.com>"]
 license = "MPL-2.0"
 readme = "README.md"
 categories = ["multimedia"]
 keywords = ["audio", "codec", "decoder", "encoder", "format"]
-
 edition = "2018"
 
 [features]
@@ -20,10 +21,10 @@ ogg = ["sonata-format-ogg"]
 
 [dependencies]
 lazy_static = "1.3.0"
-sonata-core = { version="*", path = "../sonata-core" }
-sonata-metadata = { version="*", path="../sonata-metadata" }
-sonata-codec-flac = { version = "*", path = "../sonata-codec-flac", optional = true }
-sonata-codec-mp3 = { version = "*", path = "../sonata-codec-mp3", optional = true }
-sonata-codec-pcm = { version = "*", path = "../sonata-codec-pcm", optional = true }
-sonata-format-wav = { version = "*", path = "../sonata-format-wav", optional = true }
-sonata-format-ogg = { version = "*", path = "../sonata-format-ogg", optional = true }
+sonata-core = { version = "0.1", path = "../sonata-core" }
+sonata-metadata = { version = "0.1", path = "../sonata-metadata" }
+sonata-codec-flac = { version = "0.1", path = "../sonata-codec-flac", optional = true }
+sonata-codec-mp3 = { version = "0.1", path = "../sonata-codec-mp3", optional = true }
+sonata-codec-pcm = { version = "0.1", path = "../sonata-codec-pcm", optional = true }
+sonata-format-wav = { version = "0.1", path = "../sonata-format-wav", optional = true }
+sonata-format-ogg = { version = "0.1", path = "../sonata-format-ogg", optional = true }

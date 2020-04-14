@@ -1,15 +1,16 @@
 [package]
 name = "sonata-format-wav"
 version = "0.1.0"
-description = "Sonata WAV demuxer"
+description = "Pure Rust WAV demuxer (a part of project Sonata)."
+homepage = "https://github.com/pdeljanov/Sonata"
+repository = "https://github.com/pdeljanov/Sonata"
 authors = ["Philip Deljanov <philip.deljanov@gmail.com>"]
 license = "MPL-2.0"
 readme = "README.md"
 categories = ["multimedia::audio"]
 keywords = ["audio", "demuxer", "wav", "riff"]
-
 edition = "2018"
 
 [dependencies]
-sonata-core = { version="*", path = "../sonata-core" }
-sonata-metadata = { version="*", path = "../sonata-metadata" }
+sonata-core = { version = "0.1", path = "../sonata-core" }
+sonata-metadata = { version = "0.1", path = "../sonata-metadata" }

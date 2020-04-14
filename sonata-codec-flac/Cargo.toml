@@ -1,17 +1,18 @@
 [package]
 name = "sonata-codec-flac"
 version = "0.1.0"
-description = "Pure Rust FLAC decoder."
+description = "Pure Rust FLAC demuxer and decoder (a part of project Sonata)."
+homepage = "https://github.com/pdeljanov/Sonata"
+repository = "https://github.com/pdeljanov/Sonata"
 authors = ["Philip Deljanov <philip.deljanov@gmail.com>"]
 license = "MPL-2.0"
 readme = "README.md"
 categories = ["multimedia::audio"]
 keywords = ["audio", "codec", "decoder", "flac"]
-
 edition = "2018"
 
 [dependencies]
 md5 = "0.6.1"
-sonata-core = { version="*", path = "../sonata-core" }
-sonata-metadata = { version="*", path = "../sonata-metadata" }
-sonata-utils-xiph = { version="*", path = "../sonata-utils-xiph" }
+sonata-core = { version = "0.1", path = "../sonata-core" }
+sonata-metadata = { version = "0.1", path = "../sonata-metadata" }
+sonata-utils-xiph = { version = "0.1", path = "../sonata-utils-xiph" }

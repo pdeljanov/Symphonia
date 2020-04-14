@@ -1,14 +1,15 @@
 [package]
 name = "sonata-codec-pcm"
 version = "0.1.0"
-description = "Pure Rust raw PCM decoder."
+description = "Pure Rust PCM audio decoder (a part of project Sonata)."
+homepage = "https://github.com/pdeljanov/Sonata"
+repository = "https://github.com/pdeljanov/Sonata"
 authors = ["Philip Deljanov <philip.deljanov@gmail.com>"]
 license = "MPL-2.0"
 readme = "README.md"
 categories = ["multimedia::audio"]
 keywords = ["audio", "codec", "decoder", "pcm"]
-
 edition = "2018"
 
 [dependencies]
-sonata-core = { version="*", path = "../sonata-core" }
+sonata-core = { version = "0.1", path = "../sonata-core" }

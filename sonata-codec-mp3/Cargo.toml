@@ -1,6 +1,9 @@
 [package]
 name = "sonata-codec-mp3"
 version = "0.1.0"
+description = "Pure Rust MP1, MP2, and MP3 decoder (a part of project Sonata)."
+homepage = "https://github.com/pdeljanov/Sonata"
+repository = "https://github.com/pdeljanov/Sonata"
 authors = ["Philip Deljanov <philip.deljanov@gmail.com>"]
 edition = "2018"
 license = "MPL-2.0"
@@ -11,5 +14,5 @@ keywords = ["audio", "codec", "decoder", "mp3", "mp2", "mp1", "mpeg"]
 [dependencies]
 bitflags = "1.0.4"
 lazy_static = "1.3.0"
-sonata-core = { version="*", path = "../sonata-core" }
-sonata-metadata = { version="*", path = "../sonata-metadata" }
+sonata-core = { version = "0.1", path = "../sonata-core" }
+sonata-metadata = { version = "0.1", path = "../sonata-metadata" }
