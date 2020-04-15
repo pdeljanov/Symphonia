@@ -9,6 +9,8 @@ use sonata_core::audio::{Channels, Layout, SignalSpec};
 use sonata_core::errors::{Result, decode_error};
 use sonata_core::io::ByteStream;
 
+use log::info;
+
 use super::synthesis;
 
 /// Startng indicies of each scale factor band at various sampling rates for long blocks.
@@ -371,7 +373,7 @@ impl BitResevoir {
             // If the offset is greater than the amount of data in the resevoir, then the stream is
             // malformed. However, there are many many ways this could happen. Shift all the data in
             // the resevoir over by the amount of extra bytes expected and then zero the extra bytes.
-            eprintln!("mp3: invalid main_data_begin offset.");
+            info!("invalid main_data_begin offset.");
 
             let extra = main_data_begin - self.len;
 

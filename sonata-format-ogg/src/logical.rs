@@ -10,6 +10,8 @@ use std::collections::VecDeque;
 use sonata_core::errors::Result;
 use sonata_core::io::ByteStream;
 
+use log::{debug, error, warn};
+
 use super::page::PageHeader;
 
 #[derive(Default)]
@@ -41,10 +43,10 @@ impl LogicalStream {
 
         if next_write_at >= self.buf.len() {
             let new_buf_size = next_write_at + (8 * 1024 - 1) & !(8 * 1024 - 1);
-            eprintln!("ogg: grow packet buffer to {} bytes", new_buf_size);
+            debug!("grow packet buffer to {} bytes", new_buf_size);
 
             if new_buf_size > LogicalStream::MAX_BUFFER_LEN {
-                eprintln!("ogg: packet buffer would exceed max size");
+                error!("packet buffer would exceed max size");
             }
 
             self.buf.resize(new_buf_size, Default::default());
@@ -71,7 +73,7 @@ impl LogicalStream {
         let mut packet_len = self.write_at - self.read_from;
 
         if packet_len > 0 && !page.is_continuation {
-            eprintln!("ogg: expected continuation page");
+            warn!("expected continuation page");
 
             // Expected a continuation page to complete an incomplete packet, however this page does
             // not continue a previous page, therefore the incomplete packet must be dropped.
@@ -87,12 +89,12 @@ impl LogicalStream {
             packet_len += usize::from(segment_len);
             payload_len += usize::from(segment_len);
 
-            // eprintln!("ogg:   │  ├ segment {{ len: {} }}", segment_len);
+            // trace!("  │  ├ segment {{ len: {} }}", segment_len);
 
             // A segment with a length < 255 indicates that the segment is the end of a packet.
             // Push the packet length into the packet queue for the stream.
             if segment_len < 255 {
-                // eprintln!("ogg:   ├ packet {{ len: {} }}", packet_len);
+                // trace!("  ├ packet {{ len: {} }}", packet_len);
                 self.packets.push_back(packet_len);
                 packet_len = 0;
             }

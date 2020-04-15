@@ -7,12 +7,13 @@
 
 //! An ID3v2 metadata reader.
 
+use sonata_core::support_metadata;
 use sonata_core::errors::{Result, decode_error, unsupported_error};
 use sonata_core::io::*;
 use sonata_core::meta::{Metadata, MetadataBuilder, MetadataOptions, MetadataReader};
 use sonata_core::probe::{QueryDescriptor, Descriptor, Instantiate};
 
-use sonata_core::support_metadata;
+use log::{info, trace};
 
 mod frames;
 mod unsync;
@@ -280,7 +281,7 @@ fn read_id3v2_body<B: ByteStream + FiniteStream>(
             4 => read_id3v2p4_extended_header(&mut reader)?,
             _ => unreachable!(),
         };
-        eprintln!("{:#?}", &extended);
+        trace!("{:#?}", &extended);
     }
 
     let min_frame_size = match header.major_version {
@@ -311,7 +312,7 @@ fn read_id3v2_body<B: ByteStream + FiniteStream>(
             },
             // An unknown frame was encountered, just ignore it.
             FrameResult::UnsupportedFrame(ref id) => {
-                eprintln!("Unsupported frame {}.", id);
+                info!("Unsupported frame {}.", id);
             },
         }
 

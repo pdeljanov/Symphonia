@@ -23,8 +23,9 @@ use sonata_core::codecs::CodecType;
 use sonata_core::errors::{Result, decode_error, unsupported_error};
 use sonata_core::io::ByteStream;
 use sonata_core::meta::Tag;
-
 use sonata_metadata::riff;
+
+use log::info;
 
 /// `ParseChunkTag` implements `parse_tag` to map between the 4-byte chunk identifier and the enumeration 
 pub trait ParseChunkTag : Sized {
@@ -88,7 +89,7 @@ impl<T: ParseChunkTag> ChunksReader<T> {
                 Some(chunk) => return Ok(Some(chunk)),
                 None => {
                     // As per the RIFF spec, unknown chunks are to be ignored.
-                    eprintln!("Ignoring unknown chunk: tag={}, len={}.", String::from_utf8_lossy(&tag), len);
+                    info!("Ignoring unknown chunk: tag={}, len={}.", String::from_utf8_lossy(&tag), len);
                     reader.ignore_bytes(u64::from(len))?
                 }
             }

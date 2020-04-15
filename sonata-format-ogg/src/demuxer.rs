@@ -8,13 +8,14 @@
 use std::collections::BTreeMap;
 
 use sonata_core::support_format;
-
 use sonata_core::audio::Timestamp;
 use sonata_core::errors::{Result, unsupported_error};
 use sonata_core::formats::prelude::*;
 use sonata_core::io::MediaSourceStream;
 use sonata_core::meta::MetadataQueue;
 use sonata_core::probe::{Descriptor, Instantiate, QueryDescriptor};
+
+use log::info;
 
 use super::physical::PhysicalStream;
 use super::mappings;
@@ -74,7 +75,7 @@ impl FormatReader for OggReader {
 
             physical_stream.consume_packet();
 
-            eprintln!("ogg: discovered new stream: serial={:#x}", packet.serial);
+            info!("discovered new stream: serial={:#x}", packet.serial);
 
             // If a stream mapper has been detected, the stream can be read.
             if let Some(mapper) = mappings::detect(&packet.data)? {
@@ -82,7 +83,7 @@ impl FormatReader for OggReader {
                 streams.push(Stream::new(mapper.codec().clone()));
                 mappers.insert(packet.serial, mapper);
                 
-                eprintln!("ogg: added stream: serial={:#x}", packet.serial);
+                info!("added stream: serial={:#x}", packet.serial);
             }
         }
 
@@ -117,7 +118,7 @@ impl FormatReader for OggReader {
                         return Ok(Packet::new_from_boxed_slice(0, 0, packet.data));
                     },
                     _ => {
-                        eprintln!("ogg: ignoring packet for serial={:#x}", packet.serial);
+                        info!("ignoring packet for serial={:#x}", packet.serial);
                     }
                 }
             }

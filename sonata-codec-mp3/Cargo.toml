@@ -12,6 +12,7 @@ categories = ["multimedia::audio"]
 keywords = ["audio", "codec", "decoder", "mp3", "mp2", "mp1", "mpeg"]
 
 [dependencies]
+log = "0.4"
 bitflags = "1.0.4"
 lazy_static = "1.3.0"
 sonata-core = { version = "0.1", path = "../sonata-core" }

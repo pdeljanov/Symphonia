@@ -12,4 +12,5 @@ keywords = ["audio", "codec", "decoder", "pcm"]
 edition = "2018"
 
 [dependencies]
+log = "0.4"
 sonata-core = { version = "0.1", path = "../sonata-core" }

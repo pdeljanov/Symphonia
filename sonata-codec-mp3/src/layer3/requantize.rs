@@ -12,6 +12,7 @@ use sonata_core::io::{BitStream, huffman::{H8, HuffmanTable}};
 use sonata_core::errors::Result;
 
 use lazy_static::lazy_static;
+use log::info;
 
 use crate::common::*;
 use crate::huffman_tables::*;
@@ -289,7 +290,7 @@ pub(super) fn read_huffman_samples<B: BitStream>(
     // bits as a sample. However, these bits are random data and not a real sample, so erase it!
     // The caller will be reponsible for re-aligning the bitstream reader. Candy Pop confirms this.
     else if bits_read > part3_bits {
-        eprintln!("mp3: count1 overrun, malformed bitstream");
+        info!("count1 overrun, malformed bitstream");
         i -= 4;
     }
 

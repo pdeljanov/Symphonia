@@ -13,10 +13,9 @@
 // fields with default values.
 #![allow(clippy::needless_update)]
 
-use std::default::Default;
 use std::fs::File;
 use std::path::Path;
-use clap::{Arg, App};
+
 use sonata;
 use sonata::core::errors::{Result, Error};
 use sonata::core::audio::*;
@@ -25,6 +24,10 @@ use sonata::core::formats::{Cue, FormatReader, FormatOptions, Stream};
 use sonata::core::meta::{ColorMode, MetadataOptions, Tag, Visual};
 use sonata::core::io::MediaSourceStream;
 use sonata::core::probe::Hint;
+
+use clap::{Arg, App};
+use log::{error, warn};
+use pretty_env_logger;
 
 #[cfg(not(target_os = "linux"))]
 use sonata::core::errors::unsupported_error;
@@ -35,6 +38,8 @@ use libpulse_binding as pulse;
 use libpulse_simple_binding as psimple;
 
 fn main() {
+    pretty_env_logger::init();
+
     let matches = App::new("Sonata Play")
                         .version("1.0")
                         .author("Philip Deljanov <philip.deljanov@gmail.com>")
@@ -98,19 +103,19 @@ fn main() {
     match reader {
         // The file was not actually supported by the format reader.
         Err(err) => {
-            eprintln!("File not supported! {}", err);
+            error!("file not supported. reason? {}", err);
         },
         // The file is supported by the format reader.
         Ok(mut reader) => {
             // Verify only mode decodes and always verifies the audio, but doese not play it.
             if matches.is_present("verify-only") {
                 let options = DecoderOptions { verify: true, ..Default::default() };
-                decode_only(reader, &options).unwrap_or_else(|err| { eprintln!("Err: {}", err) });
+                decode_only(reader, &options).unwrap_or_else(|err| { error!("{}", err) });
             }
             // Decode only mode decodes the audio, but not does verify it.
             else if matches.is_present("decode-only") {
                 let options = DecoderOptions { verify: false, ..Default::default() };
-                decode_only(reader, &options).unwrap_or_else(|err| { eprintln!("Err: {}", err) });
+                decode_only(reader, &options).unwrap_or_else(|err| { error!("{}", err) });
             }
             // Probe only mode prints information about the format, streams, metadata, etc.
             else if matches.is_present("probe-only") {
@@ -126,13 +131,13 @@ fn main() {
                 }
 
                 // Set the decoder options.
-                let options = DecoderOptions { 
-                    verify: matches.is_present("verify"), 
+                let options = DecoderOptions {
+                    verify: matches.is_present("verify"),
                     ..Default::default()
                 };
 
                 // Commence playback.
-                play(reader, &options).unwrap_or_else(|err| { eprintln!("Error: {}", err) });
+                play(reader, &options).unwrap_or_else(|err| { error!("{}", err) });
             }
         }
     }
@@ -150,7 +155,7 @@ fn decode_only(mut reader: Box<dyn FormatReader>, decode_options: &DecoderOption
     loop {
         match decoder.decode(&reader.next_packet()?) {
             Err(Error::DecodeError(err)) => {
-                eprintln!("Decode error: {}", err);
+                warn!("decode error: {}", err);
                 continue;
             },
             Err(err) => {
@@ -177,14 +182,14 @@ fn play(mut reader: Box<dyn FormatReader>, decode_options: &DecoderOptions) -> R
     // Create a decoder for the stream.
     let mut decoder = sonata::default::get_codecs().make(&stream.codec_params, &decode_options)?;
 
-    // Decode the first packet and create the PulseAudio device using the signal specification of 
+    // Decode the first packet and create the PulseAudio device using the signal specification of
     // the buffer.
     let (pa, mut samples) = loop {
         match decoder.decode(&reader.next_packet()?) {
             Err(Error::DecodeError(err)) => {
                 // Decode errors are not fatal. Print a message and try to decode the next packet as
                 // usual.
-                eprintln!("Decode error: {}", err);
+                warn!("decode error: {}", err);
                 continue;
             },
             Err(err) => {
@@ -239,7 +244,7 @@ fn play(mut reader: Box<dyn FormatReader>, decode_options: &DecoderOptions) -> R
     loop {
         match decoder.decode(&reader.next_packet()?) {
             Err(Error::DecodeError(err)) => {
-                eprintln!("Decode error: {}", err);
+                warn!("decode error: {}", err);
                 continue;
             },
             Err(err) => {
@@ -263,7 +268,7 @@ fn pretty_print_format(path: &Path, reader: &Box<dyn FormatReader>) {
         pretty_print_tags(metadata.tags());
         pretty_print_visuals(metadata.visuals());
     }
-    
+
     pretty_print_cues(reader.cues());
     println!("-");
 }
@@ -349,7 +354,7 @@ fn pretty_print_tags(tags: &[Tag]) {
     if !tags.is_empty() {
         println!("|");
         println!("| // Tags //");
-        
+
         let mut idx = 1;
 
         // Print tags with a standard tag key first, these are the most common tags.

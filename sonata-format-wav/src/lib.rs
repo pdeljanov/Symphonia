@@ -11,7 +11,6 @@
 use std::io::{Seek, SeekFrom};
 
 use sonata_core::support_format;
-
 use sonata_core::audio::Timestamp;
 use sonata_core::codecs::CodecParameters;
 use sonata_core::errors::{Result, seek_error, unsupported_error, SeekErrorKind};
@@ -19,6 +18,8 @@ use sonata_core::formats::{Cue, FormatOptions, FormatReader, Packet, Stream};
 use sonata_core::io::*;
 use sonata_core::meta::{Metadata, MetadataBuilder, MetadataQueue};
 use sonata_core::probe::{Descriptor, Instantiate, QueryDescriptor};
+
+use log::error;
 
 mod chunks;
 
@@ -82,7 +83,7 @@ impl FormatReader for WavReader {
 
         // The RIFF chunk contains WAVE data.
         if riff_form != WAVE_RIFF_FORM {
-            eprintln!("wav: riff form is not wave ({})", std::str::from_utf8(&riff_form).unwrap());
+            error!("riff form is not wave ({})", std::str::from_utf8(&riff_form).unwrap());
 
             return unsupported_error("riff form is not wave");
         }

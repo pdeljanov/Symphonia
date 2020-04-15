@@ -13,6 +13,8 @@ use crate::formats::{FormatOptions, FormatReader};
 use crate::io::{ByteStream, MediaSourceStream};
 use crate::meta::{MetadataReader, MetadataOptions, MetadataQueue};
 
+use log::{error, info};
+
 mod bloom {
 
     fn fnv1a32(value: &[u8; 2]) -> u32 {
@@ -211,8 +213,8 @@ impl Probe {
             count += 1;
 
             if count % 4096 == 0 {
-                eprintln!(
-                    "probe: searching for stream marker... {}+{} / {} bytes.",
+                info!(
+                    "searching for stream marker... {}+{} / {} bytes.",
                     init_pos,
                     count,
                     Probe::PROBE_SEARCH_LIMIT
@@ -228,8 +230,8 @@ impl Probe {
                 context[0..2].copy_from_slice(&win.to_be_bytes()[0..2]);
                 mss.read_buf_bytes(&mut context[2..])?;
 
-                eprintln!(
-                    "probe: found a possible stream marker within {:x?} @ {}+{} bytes.",
+                info!(
+                    "found a possible stream marker within {:x?} @ {}+{} bytes.",
                     context,
                     init_pos,
                     count,
@@ -247,8 +249,8 @@ impl Probe {
 
                             // TODO: Implement scoring.
 
-                            eprintln!(
-                                "probe: found the stream marker {:x?} @ {}+{} bytes.",
+                            info!(
+                                "found the stream marker {:x?} @ {}+{} bytes.",
                                 &context[0..len],
                                 init_pos,
                                 count,
@@ -267,7 +269,7 @@ impl Probe {
         }
 
         // Could not find any marker within the probe limit.
-        eprintln!("probe: reached probe limit of {} bytes.", Probe::PROBE_SEARCH_LIMIT);
+        error!("reached probe limit of {} bytes.", Probe::PROBE_SEARCH_LIMIT);
 
         unsupported_error("no suitable reader found")
     }
@@ -298,7 +300,7 @@ impl Probe {
                     let mut reader = meta(metadata_opts);
                     queue.push(reader.read_all(&mut mss)?);
 
-                    eprintln!("probe: chaining metadata element.");
+                    info!("chaining metadata element.");
                 }
             }
         }

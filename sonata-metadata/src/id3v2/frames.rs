@@ -9,12 +9,13 @@ use std::collections::HashMap;
 use std::io;
 use std::str;
 
-use lazy_static::lazy_static;
-use encoding_rs::UTF_16BE;
-
 use sonata_core::errors::{Result, unsupported_error, decode_error};
 use sonata_core::io::{ByteStream, BufStream, FiniteStream};
 use sonata_core::meta::{StandardTagKey, Tag};
+
+use encoding_rs::UTF_16BE;
+use lazy_static::lazy_static;
+use log::warn;
 
 use super::unsync::{decode_unsynchronisation, read_syncsafe_leq32};
 
@@ -414,7 +415,7 @@ pub fn read_id3v2p2_frame<B: ByteStream>(reader: &mut B) -> Result<FrameResult> 
         // As per the specification, padding should be all 0s, but there are some tags which don't
         // obey the specification.
         if id != [0, 0, 0] {
-            eprintln!("id3v2: padding bytes not zero.");
+            warn!("padding bytes not zero.");
         }
 
         return Ok(FrameResult::Padding);
@@ -434,7 +435,7 @@ pub fn read_id3v2p2_frame<B: ByteStream>(reader: &mut B) -> Result<FrameResult> 
 
     // A frame must be atleast 1 byte as per the specification.
     if size == 0 {
-        eprintln!("id3v2: frame size of 0 for {}", std::str::from_utf8(&id).unwrap());
+        warn!("frame size of 0 for {}", std::str::from_utf8(&id).unwrap());
     }
 
     let data = reader.read_boxed_slice_bytes(size as usize)?;
@@ -453,7 +454,7 @@ pub fn read_id3v2p3_frame<B: ByteStream>(reader: &mut B) -> Result<FrameResult> 
         // As per the specification, padding should be all 0s, but there are some tags which don't
         // obey the specification.
         if id != [0, 0, 0, 0] {
-            eprintln!("id3v2: padding bytes not zero.");
+            warn!("padding bytes not zero.");
         }
 
         return Ok(FrameResult::Padding);
@@ -499,7 +500,7 @@ pub fn read_id3v2p3_frame<B: ByteStream>(reader: &mut B) -> Result<FrameResult> 
 
     // A frame must be atleast 1 byte as per the specification.
     if size == 0 {
-        eprintln!("id3v2: frame size of 0 for {}", std::str::from_utf8(&id).unwrap());
+        warn!("frame size of 0 for {}", std::str::from_utf8(&id).unwrap());
     }
 
     let data = reader.read_boxed_slice_bytes(size as usize)?;
@@ -517,7 +518,7 @@ pub fn read_id3v2p4_frame<B: ByteStream + FiniteStream>(reader: &mut B) -> Resul
         // As per the specification, padding should be all 0s, but there are some tags which don't
         // obey the specification.
         if id != [0, 0, 0, 0] {
-            eprintln!("id3v2: padding bytes not zero.");
+            warn!("padding bytes not zero.");
         }
 
         return Ok(FrameResult::Padding);
@@ -572,7 +573,7 @@ pub fn read_id3v2p4_frame<B: ByteStream + FiniteStream>(reader: &mut B) -> Resul
 
     // A frame must be atleast 1 byte as per the specification.
     if size == 0 {
-        eprintln!("id3v2: frame size of 0 for {}", std::str::from_utf8(&id).unwrap());
+        warn!("frame size of 0 for {}", std::str::from_utf8(&id).unwrap());
     }
 
     // Read the frame body into a new buffer. This is, unfortunate. The original plan was to use an 

@@ -18,6 +18,8 @@ use sonata_core::io::{BitStream, BitStreamLtr};
 use sonata_core::support_codec;
 use sonata_core::util::bits::sign_extend_leq32_to_i32;
 
+use log::info;
+
 use super::frame::*;
 use super::validate::Md5AudioValidator;
 
@@ -145,7 +147,7 @@ impl Decoder for FlacDecoder {
                                   return decode_error("Bits per sample not provided.");
                               };
 
-        // eprintln!("Frame: [{:?}] strategy={:?}, n_samples={}, bps={}, channels={:?}",
+        // trace!("Frame: [{:?}] strategy={:?}, n_samples={}, bps={}, channels={:?}",
         //     header.block_sequence,
         //     header.blocking_strategy,
         //     header.block_num_samples,
@@ -215,7 +217,7 @@ impl Decoder for FlacDecoder {
 
     fn close(&mut self) {
         if self.is_validating {
-            eprintln!("{:?}", self.validator.finalize());
+            info!("{:?}", self.validator.finalize());
         }
     }
 
@@ -275,7 +277,7 @@ fn read_subframe<B: BitStream>(bs: &mut B, frame_bps: u32, buf: &mut [i32]) -> R
     // sub-frame and obtaining the truncated audio sub-block samples.
     let bps = frame_bps - dropped_bps;
 
-    // eprintln!("\tSubframe: type={:?}, bps={}, dropped_bps={}",
+    // trace!("\tSubframe: type={:?}, bps={}, dropped_bps={}",
     //     &subframe_type,
     //     bps,
     //     dropped_bps);
@@ -460,7 +462,7 @@ fn decode_residual<B: BitStream>(
         return decode_error("Block size is not same as encoded residual.");
     }
 
-    // eprintln!("\t\tResidual: n_partitions={}, n_partition_samples={}, n_prelude_samples={}",
+    // trace!("\t\tResidual: n_partitions={}, n_partition_samples={}, n_prelude_samples={}",
     //     n_partitions,
     //     n_partition_samples,
     //     n_prelude_samples);
@@ -506,7 +508,7 @@ fn decode_rice_partition<B: BitStream>(
     else {
         let residual_bits = bs.read_bits_leq32(5)?;
 
-        // eprintln!(
+        // trace!(
         //     "\t\t\tPartition (Binary): n_residuals={}, residual_bits={}",
         //     buf.len(),
         //     residual_bits

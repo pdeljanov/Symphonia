@@ -22,6 +22,8 @@ use sonata_core::probe::{Descriptor, Instantiate, QueryDescriptor};
 
 use sonata_utils_xiph::flac::metadata::*;
 
+use log::{debug, info};
+
 use super::frame::*;
 use super::parser::PacketParser;
 
@@ -141,7 +143,7 @@ impl FormatReader for FlacReader {
             }
         };
 
-        eprintln!("flac: seeking to frame_ts={}", frame_ts);
+        debug!("seeking to frame_ts={}", frame_ts);
 
         // If the total number of frames in the stream is known, verify the desired frame timestamp
         // does not exceed it.
@@ -202,7 +204,7 @@ impl FormatReader for FlacReader {
                     // Rewind the stream back to the beginning of the frame.
                     self.reader.rewind(packet.parsed_len);
 
-                    eprintln!("flac: seeked to packet_ts={} (delta={})",
+                    debug!("seeked to packet_ts={} (delta={})",
                         packet.packet_ts, packet.packet_ts as i64 - frame_ts as i64);
 
                     return Ok(packet.packet_ts);
@@ -236,7 +238,7 @@ impl FormatReader for FlacReader {
                 // Overshot a regular seek, or the stream is corrupted, not necessarily an error
                 // per-say.
                 else {
-                    eprintln!("flac: seeked to packet_ts={} (delta={})",
+                    debug!("seeked to packet_ts={} (delta={})",
                         packet.packet_ts, packet.packet_ts as i64 - frame_ts as i64);
 
                     return Ok(packet.packet_ts);
@@ -249,7 +251,7 @@ impl FormatReader for FlacReader {
                 // Rewind the stream back to the beginning of the frame.
                 self.reader.rewind(packet.parsed_len);
 
-                eprintln!("flac: seeked to packet_ts={} (delta={})",
+                debug!("seeked to packet_ts={} (delta={})",
                     packet.packet_ts, packet.packet_ts as i64 - frame_ts as i64);
 
                 return Ok(packet.packet_ts);
@@ -352,7 +354,7 @@ fn read_all_metadata_blocks(flac: &mut FlacReader) -> Result<()> {
             // version of FLAC, but  print a message.
             MetadataBlockType::Unknown(id) => {
                 block_stream.ignore_bytes(u64::from(header.block_len))?;
-                eprintln!("flac: ignoring {} bytes of block width id={}.", header.block_len, id);
+                info!("ignoring {} bytes of block width id={}.", header.block_len, id);
             }
         }
 
@@ -361,7 +363,7 @@ fn read_all_metadata_blocks(flac: &mut FlacReader) -> Result<()> {
         let block_unread_len = block_stream.bytes_available();
 
         if block_unread_len > 0 {
-            eprintln!("flac: under read block by {} bytes.", block_unread_len);
+            info!("under read block by {} bytes.", block_unread_len);
             block_stream.ignore_bytes(block_unread_len)?;
         }
 

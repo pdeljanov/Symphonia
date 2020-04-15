@@ -12,5 +12,6 @@ keywords = ["audio", "demuxer", "wav", "riff"]
 edition = "2018"
 
 [dependencies]
+log = "0.4"
 sonata-core = { version = "0.1", path = "../sonata-core" }
 sonata-metadata = { version = "0.1", path = "../sonata-metadata" }

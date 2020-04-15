@@ -11,6 +11,8 @@ use sonata_core::checksum::Crc32;
 use sonata_core::errors::{Result, decode_error};
 use sonata_core::io::{ByteStream, BufStream, Monitor, MonitorStream};
 
+use log::{debug, warn};
+
 use super::page::{PageHeader, read_page_header};
 use super::logical::LogicalStream;
 
@@ -40,8 +42,8 @@ impl PhysicalStream {
         // Parse the page header buffer.
         self.page = read_page_header(&mut BufStream::new(&page_header_buf))?;
 
-        // eprintln!(
-        //     "ogg: page {{ version={}, ts={}, serial={}, sequence={}, crc={:#x}, n_segments={}, \
+        // trace!(
+        //     "page {{ version={}, ts={}, serial={}, sequence={}, crc={:#x}, n_segments={}, \
         //         is_first={}, is_last={}, is_continuation={} }}",
         //     self.page.version,
         //     self.page.ts,
@@ -69,7 +71,7 @@ impl PhysicalStream {
         if !self.stream_map.contains_key(&self.page.serial) {
             // TODO: Limit maximum number of streams.
             // TODO: Streams can only be created in groups.
-            eprintln!("ogg: create packet buffer for stream with serial {}", self.page.serial);
+            debug!("create packet buffer for stream with serial {}", self.page.serial);
             self.stream_map.insert(self.page.serial, Default::default());
         }
 
@@ -81,8 +83,8 @@ impl PhysicalStream {
             let calculated_crc = reader_crc32.monitor().crc();
 
             if self.page.crc != calculated_crc {
-                eprintln!(
-                    "ogg: crc mismatch: expected {:#x}, got {:#x}",
+                warn!(
+                    "crc mismatch: expected {:#x}, got {:#x}",
                     self.page.crc,
                     calculated_crc
                 );

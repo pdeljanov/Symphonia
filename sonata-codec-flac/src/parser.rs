@@ -5,16 +5,18 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+use std::cmp::min;
+use std::collections::VecDeque;
+
 use sonata_core::checksum::Crc16;
 use sonata_core::errors::Result;
 use sonata_core::io::{BufStream, ByteStream, Monitor};
 use sonata_core::util::bits;
 use sonata_utils_xiph::flac::metadata::StreamInfo;
 
-use super::frame::{BlockSequence, FrameHeader, is_likely_frame_header, read_frame_header};
+use log::{error, trace, warn};
 
-use std::cmp::min;
-use std::collections::VecDeque;
+use super::frame::{BlockSequence, FrameHeader, is_likely_frame_header, read_frame_header};
 
 #[inline(always)]
 fn round_pow2(value: usize, pow2: usize) -> usize {
@@ -108,14 +110,14 @@ impl PacketParser {
             let new_size = round_pow2(2 * (self.buf.len() - 8), PacketParser::BLOCK_LEN);
 
             if new_size > PacketParser::MAX_BUFFER_LEN {
-                eprintln!("flac: buffer would exceed maximum size");
+                error!("buffer would exceed maximum size");
             }
 
-            // eprintln!("flac: grow buffer, new_size={}", new_size);
+            // debug!("grow buffer, new_size={}", new_size);
             self.buf.resize(new_size + 8, 0);
         }
 
-        // eprintln!("flac: fetch block, len={}", block_read_len);
+        // trace!("fetch block, len={}", block_read_len);
 
         reader.read_buf_bytes(&mut self.buf[self.block_write..new_block_write])?;
         self.block_write = new_block_write;
@@ -153,8 +155,8 @@ impl PacketParser {
                     // If there are not enough bytes in the buffer to attempt parsing a frame then
                     // no more fragments can be fetched.
                     if pos + i - 1 + PacketParser::FLAC_MAX_FRAME_HEADER_LEN >= self.block_write {
-                        // eprintln!(
-                        //     "flac: found preamble, but not enough data is buffered, pos={}",
+                        // trace!(
+                        //     "found preamble, but not enough data is buffered, pos={}",
                         //     pos + i + 1
                         // );
 
@@ -168,8 +170,8 @@ impl PacketParser {
                     // frame header in its entirety.
                     if is_likely_frame_header(buf) {
                         if let Ok(header) = read_frame_header(&mut BufStream::new(buf), sync) {
-                            // eprintln!(
-                            //     "flac: new fragment, ts={:?}, pos={}",
+                            // trace!(
+                            //     "new fragment, ts={:?}, pos={}",
                             //     header.block_sequence,
                             //     pos + i - 1
                             // );
@@ -205,7 +207,7 @@ impl PacketParser {
             fragment.pos -= len;
         }
 
-        // eprintln!("flac: compact, len={}", self.block_write - len);
+        // trace!("compact, len={}", self.block_write - len);
 
         self.buf.copy_within(len.., 0);
         self.block_write -= len;
@@ -294,10 +296,10 @@ impl PacketParser {
             (_, _, _) => first,
         };
 
-        // eprintln!("flac: indicies={:?}", &indicies);
+        // trace!("indicies={:?}", &indicies);
 
-        // eprintln!(
-        //     "flac: score_par={:#04x}, score_len={:#04x}, score_seq={:#04x}, best={:#04x}",
+        // trace!(
+        //     "score_par={:#04x}, score_len={:#04x}, score_seq={:#04x}, best={:#04x}",
         //     score_par,
         //     score_len,
         //     score_seq,
@@ -323,7 +325,7 @@ impl PacketParser {
                 while (best & 1) == 0 {
                     if let Some(_) = iter.next() {
                         self.fragments.pop_front();
-                        eprintln!("flac: discard fragment");
+                        trace!("discard fragment");
                     }
                     else {
                         break;
@@ -404,13 +406,13 @@ impl PacketParser {
 
                     // Heuristic 1.
                     if frame_len >= PacketParser::FLAC_MAX_FRAME_LEN {
-                        eprintln!("flac: rebuild failure; frame exceeds 16MB");
+                        warn!("rebuild failure; frame exceeds 16MB");
                         limit_hit = true;
                     }
                     // Heuristic 2.
                     else if best & (2 << count) != 0 {
-                        eprintln!(
-                            "flac: rebuild failure; \
+                        warn!(
+                            "rebuild failure; \
                              frame exceeds lower-bound of next-best fragment"
                         );
                         limit_hit = true;
@@ -418,8 +420,8 @@ impl PacketParser {
                     // Heuristic 3a.
                     else if self.stream_info.frame_byte_len.1 > 0 {
                         if (frame_len as u32) > self.stream_info.frame_byte_len.1 {
-                            eprintln!(
-                                "flac: rebuild failure; \
+                            warn!(
+                                "rebuild failure; \
                                  frame exceeds stream's frame length limit"
                             );
                             limit_hit = true;
@@ -433,8 +435,8 @@ impl PacketParser {
                                                 + self.frame_size_hist[3]) / 4;
 
                         if (frame_len as u32) > 2 * avg_frame_size {
-                            eprintln!(
-                                "flac: rebuild failure; \
+                            warn!(
+                                "rebuild failure; \
                                  frame exceeds 2x average historical length"
                             );
                             limit_hit = true;
@@ -442,7 +444,7 @@ impl PacketParser {
                     }
                     // Heuristic 3c.
                     else if count >= 4 {
-                        eprintln!("flac: rebuild failure; frame exceeds fragment limit");
+                        warn!("rebuild failure; frame exceeds fragment limit");
                         limit_hit = true;
                     }
 
@@ -461,7 +463,7 @@ impl PacketParser {
 
                         // Pop all fragments preceeding the second-best pick fragment.
                         while self.fragments.len() > 0 && (best & 0x1) == 0 {
-                            eprintln!("flac: discard fragment");
+                            trace!("discard fragment");
 
                             self.fragments.pop_front();
                             best >>= 1;
