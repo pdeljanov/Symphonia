@@ -170,7 +170,6 @@ pub fn parse_frame_header(header: u32) -> Result<FrameHeader> {
     let frame_size =
         (if version == MpegVersion::Mpeg1 { 144 } else { 72 } * bitrate / sample_rate) as usize
         + if has_padding { 1 } else { 0 }
-        - if has_crc { 2 } else { 0 }
         - 4;
 
     Ok(FrameHeader{

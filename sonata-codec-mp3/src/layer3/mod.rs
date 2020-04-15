@@ -260,10 +260,12 @@ pub fn decode_frame<B: ByteStream>(
     let side_info_len = bitstream::read_side_info(reader, &header, &mut frame_data)?;
 
     // Buffer main_data into the bit resevoir.
+    let main_data_len = header.frame_size - side_info_len - if header.has_crc { 2 } else { 0 };
+
     state.resevoir.fill(
         reader,
         frame_data.main_data_begin as usize,
-        header.frame_size - side_info_len
+        main_data_len
     )?;
 
     // Read main_data: scale factors and spectral samples.
