@@ -20,7 +20,6 @@ use clap::{Arg, App};
 use sonata;
 use sonata::core::errors::{Result, Error};
 use sonata::core::audio::*;
-use sonata::core::conv::dither::DitherType;
 use sonata::core::codecs::DecoderOptions;
 use sonata::core::formats::{Cue, FormatReader, FormatOptions, Stream};
 use sonata::core::meta::{ColorMode, MetadataOptions, Tag, Visual};
@@ -226,7 +225,7 @@ fn play(mut reader: Box<dyn FormatReader>, decode_options: &DecoderOptions) -> R
                 ).unwrap();
 
                 // Interleave samples for PulseAudio into the sample buffer.
-                samples.copy_interleaved_ref(decoded, DitherType::Identity);
+                samples.copy_interleaved_ref(decoded);
 
                 // Write interleaved samples to PulseAudio.
                 pa.write(samples.as_bytes()).unwrap();
@@ -248,7 +247,7 @@ fn play(mut reader: Box<dyn FormatReader>, decode_options: &DecoderOptions) -> R
                 return Err(err);
             },
             Ok(decoded) => {
-                samples.copy_interleaved_ref(decoded, DitherType::Identity);
+                samples.copy_interleaved_ref(decoded);
                 pa.write(samples.as_bytes()).unwrap();
             }
         }
