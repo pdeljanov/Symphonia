@@ -364,7 +364,7 @@ impl Decoder for PcmDecoder {
         // they cannot be shifted, so int_shift = 0.
         let int_shift = if width <= 32 { 32 - width } else { 0 };
 
-        match self.params.codec {
+        let _ = match self.params.codec {
             CODEC_TYPE_PCM_S32LE => read_pcm_signed!(self.buf,   stream.read_u32()?,    int_shift),
             CODEC_TYPE_PCM_S32BE => read_pcm_signed!(self.buf,   stream.read_be_u32()?, int_shift),
             CODEC_TYPE_PCM_S24LE => read_pcm_signed!(self.buf,   stream.read_u24()?,    int_shift),
@@ -408,7 +408,7 @@ impl Decoder for PcmDecoder {
             // CODEC_TYPE_PCM_F64LE_PLANAR =>
             // CODEC_TYPE_PCM_F64BE_PLANAR =>
             _ => return unsupported_error("pcm: codec is unsupported.")
-        }?;
+        };
 
         Ok(self.buf.as_audio_buffer_ref())
     }

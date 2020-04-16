@@ -494,7 +494,7 @@ impl ParseChunk for WaveFormatChunk {
             // The MuLaw Wave Format.
             WAVE_FORMAT_MULAW => Self::read_mulaw_pcm_fmt(reader, n_channels, len)?,
             // Unsupported format.
-            _ => return unsupported_error("Unsupported format data."),
+            _ => return unsupported_error("Unsupported wave format."),
         };
 
         Ok(WaveFormatChunk { n_channels, sample_rate, avg_bytes_per_sec, block_align, format_data })
@@ -620,11 +620,21 @@ impl ParseChunk for InfoChunk {
     }
 }
 
+pub struct DataChunk {
+    pub len: u32,
+}
+
+impl ParseChunk for DataChunk {
+    fn parse<B: ByteStream>(_: &mut B, _: [u8; 4], len: u32) -> Result<DataChunk> {
+        Ok(DataChunk { len })
+    }
+}
+
 pub enum RiffWaveChunks {
     Format(ChunkParser<WaveFormatChunk>),
     List(ChunkParser<ListChunk>),
     Fact(ChunkParser<FactChunk>),
-    Data
+    Data(ChunkParser<DataChunk>),
 }
 
 macro_rules! parser {
@@ -639,7 +649,7 @@ impl ParseChunkTag for RiffWaveChunks {
             b"fmt " => parser!(RiffWaveChunks::Format, WaveFormatChunk, tag, len),
             b"LIST" => parser!(RiffWaveChunks::List, ListChunk, tag, len),
             b"fact" => parser!(RiffWaveChunks::Fact, FactChunk, tag, len),
-            b"data" => Some(RiffWaveChunks::Data),
+            b"data" => parser!(RiffWaveChunks::Data, DataChunk, tag, len),
             _ => None,
         }
     }
