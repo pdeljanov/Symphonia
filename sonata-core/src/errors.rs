@@ -49,6 +49,8 @@ pub enum Error {
     LimitError(&'static str, usize),
     /// The demuxer or decoder needs to be reset before continuing.
     ResetRequired,
+    /// The media source stream has ended.
+    EndOfMediaStream,
 }
 
 impl fmt::Display for Error {
@@ -70,6 +72,9 @@ impl fmt::Display for Error {
             Error::ResetRequired => {
                 write!(f, "decoder needs to be reset")
             },
+            Error::EndOfMediaStream => {
+                write!(f, "end of media stream")
+            }
         }
     }
 }
@@ -83,6 +88,7 @@ impl std::error::Error for Error {
             Error::Unsupported(_) => None,
             Error::LimitError(_, _) => None,
             Error::ResetRequired => None,
+            Error::EndOfMediaStream => None,
         }
     }
 }
@@ -118,4 +124,9 @@ pub fn limit_error<T>(constraint: &'static str, limit: usize) -> Result<T> {
 /// Convenience function to create a reset required error.
 pub fn reset_error<T>() -> Result<T> {
     Err(Error::ResetRequired)
+}
+
+/// Convenience function to create an end of media stream error.
+pub fn end_of_media_stream_error<T>() -> Result<T> {
+    Err(Error::EndOfMediaStream)
 }
