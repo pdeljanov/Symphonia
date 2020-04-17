@@ -111,6 +111,13 @@ pub mod bits {
         (!value & value.wrapping_add(1)).trailing_zeros()
     }
 
+    /// Returns true if the unsigned 16-bit integer contains one or more bytes which have all bits
+    /// set.
+    #[inline(always)]
+    pub fn contains_ones_byte_u16(value: u16) -> bool {
+        ((value & !value.wrapping_add(0x0101)) & 0x8080) != 0
+    }
+
     /// Returns true if the unsigned 32-bit integer contains one or more bytes which have all bits
     /// set.
     #[inline(always)]
