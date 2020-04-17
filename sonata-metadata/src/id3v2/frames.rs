@@ -803,7 +803,7 @@ fn read_pcnt_frame(
     // The play counter is stored as an N-byte big-endian integer. Read N bytes into an 8-byte 
     // buffer, making sure the missing bytes are zeroed, and then reinterpret as a 64-bit integer.
     let mut buf = [0u8; 8];
-    reader.read_buf_bytes(&mut buf[8 - len..])?;
+    reader.read_buf_exact(&mut buf[8 - len..])?;
 
     // Create the tag.
     let tag = Tag::new(std_key, id, &u64::from_be_bytes(buf).to_string());

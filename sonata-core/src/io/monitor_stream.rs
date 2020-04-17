@@ -102,8 +102,14 @@ impl<B : ByteStream, M: Monitor> ByteStream for MonitorStream<B, M> {
         Ok(bytes)
     }
 
-    fn read_buf_bytes(&mut self, buf: &mut [u8]) -> io::Result<()> {
-        self.inner.read_buf_bytes(buf)?;
+    fn read_buf(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let len = self.inner.read_buf(buf)?;
+        self.monitor.process_buf_bytes(&buf[0..len]);
+        Ok(len)
+    }
+
+    fn read_buf_exact(&mut self, buf: &mut [u8]) -> io::Result<()> {
+        self.inner.read_buf_exact(buf)?;
         self.monitor.process_buf_bytes(&buf);
         Ok(())
     }

@@ -361,7 +361,7 @@ impl WaveFormatChunk {
         let channel_mask = reader.read_u32()?;
 
         let mut sub_format_guid = [0u8; 16];
-        reader.read_buf_bytes(&mut sub_format_guid)?;
+        reader.read_buf_exact(&mut sub_format_guid)?;
 
         // These GUIDs identifiy the format of the data chunks. These definitions can be found in ksmedia.h of the 
         // Microsoft Windows Platform SDK.
@@ -612,7 +612,7 @@ impl ParseChunk for InfoChunk {
     fn parse<B: ByteStream>(reader: &mut B, tag: [u8; 4], len: u32) -> Result<InfoChunk> {
         // TODO: Apply limit.
         let mut value_buf = vec![0u8; len as usize];
-        reader.read_buf_bytes(&mut value_buf)?;
+        reader.read_buf_exact(&mut value_buf)?;
 
         Ok(InfoChunk {
             tag: riff::parse(tag, &value_buf)

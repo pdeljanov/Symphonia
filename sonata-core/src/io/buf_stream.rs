@@ -10,6 +10,8 @@ use std::io;
 
 use super::{ByteStream, FiniteStream};
 
+const UNDERRUN_ERROR_STR: &str = "buffer underrun";
+
 /// `BufStream` is a stream backed by a buffer.
 pub struct BufStream<'a> {
     buf: &'a [u8],
@@ -75,7 +77,7 @@ impl<'a> BufStream<'a> {
     /// Returns a reference to the next `len` bytes in the buffer and advances the stream.
     pub fn read_buf_bytes_ref(&mut self, len: usize) -> io::Result<&'a [u8]> {
         if self.pos + len > self.buf.len() {
-            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "would exceed buffer"));
+            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, UNDERRUN_ERROR_STR));
         }
         self.pos += len;
         Ok(&self.buf[self.pos - len..self.pos])
@@ -86,57 +88,66 @@ impl<'a> ByteStream for BufStream<'a> {
 
     #[inline(always)]
     fn read_byte(&mut self) -> io::Result<u8> {
-        if self.pos >= self.buf.len() {
-            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "would exceed buffer"));
+        if self.buf.len() - self.pos < 1 {
+            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, UNDERRUN_ERROR_STR));
         }
+
         self.pos += 1;
         Ok(self.buf[self.pos - 1])
     }
 
     #[inline(always)]
     fn read_double_bytes(&mut self) -> io::Result<[u8; 2]> {
-        if self.pos + 2 > self.buf.len() {
-            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "would exceed buffer"));
+        if self.buf.len() - self.pos < 2 {
+            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, UNDERRUN_ERROR_STR));
         }
 
-        let mut double_bytes: [u8; 2] = [0u8; 2];
-        double_bytes.copy_from_slice(&self.buf[self.pos..self.pos + 2]);
+        let mut bytes: [u8; 2] = [0u8; 2];
+        bytes.copy_from_slice(&self.buf[self.pos..self.pos + 2]);
         self.pos += 2;
 
-        Ok(double_bytes)
+        Ok(bytes)
     }
 
     #[inline(always)]
     fn read_triple_bytes(&mut self) -> io::Result<[u8; 3]> {
-        if self.pos + 3 > self.buf.len() {
-            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "would exceed buffer"));
+        if self.buf.len() - self.pos < 3 {
+            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, UNDERRUN_ERROR_STR));
         }
 
-        let mut triple_bytes: [u8; 3] = [0u8; 3];
-        triple_bytes.copy_from_slice(&self.buf[self.pos..self.pos + 3]);
+        let mut bytes: [u8; 3] = [0u8; 3];
+        bytes.copy_from_slice(&self.buf[self.pos..self.pos + 3]);
         self.pos += 3;
 
-        Ok(triple_bytes)
+        Ok(bytes)
     }
 
     #[inline(always)]
     fn read_quad_bytes(&mut self) -> io::Result<[u8; 4]> {
-        if self.pos + 4 > self.buf.len() {
-            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "would exceed buffer"));
+        if self.buf.len() - self.pos < 4 {
+            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, UNDERRUN_ERROR_STR));
         }
 
-        let mut quad_bytes: [u8; 4] = [0u8; 4];
-        quad_bytes.copy_from_slice(&self.buf[self.pos..self.pos + 4]);
+        let mut bytes: [u8; 4] = [0u8; 4];
+        bytes.copy_from_slice(&self.buf[self.pos..self.pos + 4]);
         self.pos += 4;
 
-        Ok(quad_bytes)
+        Ok(bytes)
     }
 
-    fn read_buf_bytes(&mut self, buf: &mut [u8]) -> io::Result<()> {
+    fn read_buf(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let len = cmp::min(self.buf.len() - self.pos, buf.len());
+        buf[..len].copy_from_slice(&self.buf[self.pos..self.pos + len]);
+        self.pos += len;
+
+        Ok(len)
+    }
+
+    fn read_buf_exact(&mut self, buf: &mut [u8]) -> io::Result<()> {
         let len = buf.len();
 
-        if self.pos + len > self.buf.len() {
-            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "would exceed buffer"));
+        if self.buf.len() - self.pos < len {
+            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, UNDERRUN_ERROR_STR));
         }
 
         buf.copy_from_slice(&self.buf[self.pos..self.pos + len]);
@@ -151,15 +162,17 @@ impl<'a> ByteStream for BufStream<'a> {
         align: usize,
         buf: &'b mut [u8]
     ) -> io::Result<&'b mut [u8]> {
-        let result = self.scan_bytes_aligned_ref(pattern, align, buf.len())?;
-        buf[..result.len()].copy_from_slice(result);
-        Ok(&mut buf[..result.len()])
+        let scanned = self.scan_bytes_aligned_ref(pattern, align, buf.len())?;
+        buf[..scanned.len()].copy_from_slice(scanned);
+
+        Ok(&mut buf[..scanned.len()])
     }
 
     fn ignore_bytes(&mut self, count: u64) -> io::Result<()> {
-        if self.pos + count as usize > self.buf.len() {
-            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "would exceed buffer"));
+        if self.buf.len() - self.pos < count as usize {
+            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, UNDERRUN_ERROR_STR));
         }
+
         self.pos += count as usize;
         Ok(())
      }

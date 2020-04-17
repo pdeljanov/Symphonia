@@ -119,12 +119,17 @@ impl<B: ByteStream + FiniteStream> ByteStream for UnsyncStream<B> {
         ])
     }
 
-    fn read_buf_bytes(&mut self, buf: &mut [u8]) -> io::Result<()> {
+    fn read_buf(&mut self, _: &mut [u8]) -> io::Result<usize> {
+        // Not required.
+        unimplemented!();
+    }
+
+    fn read_buf_exact(&mut self, buf: &mut [u8]) -> io::Result<()> {
         let len = buf.len();
 
         if len > 0 { 
             // Fill the provided buffer directly from the underlying reader.
-            self.inner.read_buf_bytes(buf)?;
+            self.inner.read_buf_exact(buf)?;
 
             // If the last seen byte was 0xff, and the first byte in buf is 0x00, skip the first 
             // byte of buf.
@@ -169,7 +174,7 @@ impl<B: ByteStream + FiniteStream> ByteStream for UnsyncStream<B> {
         _: usize, 
         _: &'a mut [u8]
     ) -> io::Result<&'a mut [u8]> {
-        // Intentionally left unimplemented.
+        // Not required.
         unimplemented!();
     }
 

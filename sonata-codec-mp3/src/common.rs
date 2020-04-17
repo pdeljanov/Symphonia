@@ -382,7 +382,7 @@ impl BitResevoir {
         }
 
         // Read the remaining amount of bytes from the stream into the resevoir.
-        reader.read_buf_bytes(&mut self.buf[main_data_begin..main_data_end])?;
+        reader.read_buf_exact(&mut self.buf[main_data_begin..main_data_end])?;
         self.len = main_data_end;
 
         Ok(())

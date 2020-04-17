@@ -37,7 +37,7 @@ impl PhysicalStream {
         // Read the page header into a buffer.
         let mut page_header_buf = [0u8; 27];
 
-        reader.read_buf_bytes(&mut page_header_buf)?;
+        reader.read_buf_exact(&mut page_header_buf)?;
 
         // Parse the page header buffer.
         self.page = read_page_header(&mut BufStream::new(&page_header_buf))?;

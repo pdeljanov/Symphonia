@@ -102,7 +102,7 @@ impl LogicalStream {
 
         // Load the page's payload in the packet buffer for the stream.
         let context_slice = self.write(payload_len);
-        reader.read_buf_bytes(context_slice)?;
+        reader.read_buf_exact(context_slice)?;
 
         Ok(())
     }

@@ -289,30 +289,28 @@ impl ByteStream for MediaSourceStream {
         // This function, read_byte, is inlined for performance. To reduce code bloat, place the
         // read-ahead buffer replenishment in a seperate function. Call overhead will be negligible
         // compared to the actual underlying read.
-        if self.pos >= self.end_pos {
+        if self.end_pos - self.pos < 1 {
             self.fetch_buffer_or_eof()?;
         }
 
-        let byte = self.buf[self.pos];
         self.pos += 1;
-
-        Ok(byte)
+        Ok(self.buf[self.pos - 1])
     }
 
     // Reads two bytes from the stream and returns them in read-order or an error.
     fn read_double_bytes(&mut self) -> io::Result<[u8; 2]> {
-        let mut double_byte: [u8; 2] = [0u8; 2];
+        let mut bytes: [u8; 2] = [0u8; 2];
 
         // If the buffer has two bytes available, copy directly from it and skip any safety or
         // buffering checks.
-        if self.pos + 2 < self.end_pos {
-            double_byte.copy_from_slice(&self.buf[self.pos..self.pos + 2]);
+        if self.end_pos - self.pos < 2 {
+            bytes.copy_from_slice(&self.buf[self.pos..self.pos + 2]);
             self.pos += 2;
         }
         // If the by buffer does not have two bytes available, copy one byte at a time from the
         // buffer, checking if it needs to be replenished.
         else {
-            for byte in &mut double_byte {
+            for byte in &mut bytes {
                 if self.pos >= self.end_pos {
                     self.fetch_buffer_or_eof()?;
                 }
@@ -321,23 +319,23 @@ impl ByteStream for MediaSourceStream {
             }
         }
 
-        Ok(double_byte)
+        Ok(bytes)
     }
 
     // Reads three bytes from the stream and returns them in read-order or an error.
     fn read_triple_bytes(&mut self) -> io::Result<[u8; 3]> {
-        let mut triple_byte: [u8; 3] = [0u8; 3];
+        let mut bytes: [u8; 3] = [0u8; 3];
 
         // If the buffer has three bytes available, copy directly from it and skip any safety or
         // buffering checks.
-        if self.pos + 3 < self.end_pos {
-            triple_byte.copy_from_slice(&self.buf[self.pos..self.pos + 3]);
+        if self.end_pos - self.pos < 3 {
+            bytes.copy_from_slice(&self.buf[self.pos..self.pos + 3]);
             self.pos += 3;
         }
         // If the by buffer does not have three bytes available, copy one byte at a time from the
         // buffer, checking if it needs to be replenished.
         else {
-            for byte in &mut triple_byte {
+            for byte in &mut bytes {
                 if self.pos >= self.end_pos {
                     self.fetch_buffer_or_eof()?;
                 }
@@ -346,23 +344,23 @@ impl ByteStream for MediaSourceStream {
             }
         }
 
-        Ok(triple_byte)
+        Ok(bytes)
     }
 
     // Reads four bytes from the stream and returns them in read-order or an error.
     fn read_quad_bytes(&mut self) -> io::Result<[u8; 4]> {
-        let mut quad_byte: [u8; 4] = [0u8; 4];
+        let mut bytes: [u8; 4] = [0u8; 4];
 
         // If the buffer has four bytes available, copy directly from it and skip any safety or
         // buffering checks.
-        if self.pos + 4 < self.end_pos {
-            quad_byte.copy_from_slice(&self.buf[self.pos..self.pos + 4]);
+        if self.end_pos - self.pos < 4 {
+            bytes.copy_from_slice(&self.buf[self.pos..self.pos + 4]);
             self.pos += 4;
         }
         // If the by buffer does not have four bytes available, copy one byte at a time from the
         // buffer, checking if it needs to be replenished.
         else {
-            for byte in &mut quad_byte {
+            for byte in &mut bytes {
                 if self.pos >= self.end_pos {
                     self.fetch_buffer_or_eof()?;
                 }
@@ -371,11 +369,16 @@ impl ByteStream for MediaSourceStream {
             }
         }
 
-        Ok(quad_byte)
+        Ok(bytes)
     }
 
     #[inline(always)]
-    fn read_buf_bytes(&mut self, buf: &mut [u8]) -> io::Result<()> {
+    fn read_buf(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.read(buf)
+    }
+
+    #[inline(always)]
+    fn read_buf_exact(&mut self, buf: &mut [u8]) -> io::Result<()> {
         self.read_exact(buf)
     }
 

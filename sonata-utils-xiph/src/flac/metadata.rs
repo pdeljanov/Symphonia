@@ -179,7 +179,7 @@ impl StreamInfo {
         };
 
         // Read the decoded audio data MD5.
-        reader.read_buf_bytes(&mut info.md5)?;
+        reader.read_buf_exact(&mut info.md5)?;
 
         Ok(info)
     }
@@ -237,7 +237,7 @@ fn printable_ascii_to_string(bytes: &[u8]) -> Option<String> {
 pub fn read_cuesheet_block<B: ByteStream>(reader: &mut B, cues: &mut Vec<Cue>) -> Result<()> {
     // Read cuesheet catalog number. The catalog number only allows printable ASCII characters.
     let mut catalog_number_buf = vec![0u8; 128];
-    reader.read_buf_bytes(&mut catalog_number_buf)?;
+    reader.read_buf_exact(&mut catalog_number_buf)?;
 
     let _catalog_number = match printable_ascii_to_string(&catalog_number_buf) {
         Some(s) => s,
@@ -310,7 +310,7 @@ fn read_cuesheet_track<B: ByteStream>(
     }
 
     let mut isrc_buf = vec![0u8; 12];
-    reader.read_buf_bytes(&mut isrc_buf)?;
+    reader.read_buf_exact(&mut isrc_buf)?;
 
     let isrc = match printable_ascii_to_string(&isrc_buf) {
         Some(s) => s,
@@ -416,7 +416,7 @@ pub fn read_picture_block<B : ByteStream>(
 
     // Read the Media Type bytes
     let mut media_type_buf = vec![0u8; media_type_len];
-    reader.read_buf_bytes(&mut media_type_buf)?;
+    reader.read_buf_exact(&mut media_type_buf)?;
 
     // Convert Media Type bytes to an ASCII string. Non-printable ASCII characters are invalid.
     let media_type = match printable_ascii_to_string(&media_type_buf) {
@@ -429,7 +429,7 @@ pub fn read_picture_block<B : ByteStream>(
     
     // Read the description bytes.
     let mut desc_buf = vec![0u8; desc_len];
-    reader.read_buf_bytes(&mut desc_buf)?;
+    reader.read_buf_exact(&mut desc_buf)?;
 
     // Convert description bytes into a standard Vorbis DESCRIPTION tag.
     let mut tags = Vec::<Tag>::new();

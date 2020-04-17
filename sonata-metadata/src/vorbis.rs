@@ -150,7 +150,7 @@ pub fn read_comment_no_framing<B : ByteStream>(
 
         // Read the comment string.
         let mut comment_byte = vec![0; comment_length as usize];
-        reader.read_buf_bytes(&mut comment_byte)?;
+        reader.read_buf_exact(&mut comment_byte)?;
 
         // Parse the comment string into a Tag and insert it into the parsed tag list.
         metadata.add_tag(

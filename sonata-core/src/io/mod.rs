@@ -91,8 +91,11 @@ pub trait ByteStream {
     /// Reads four bytes from the stream and returns them in read-order or an error.
     fn read_quad_bytes(&mut self) -> io::Result<[u8; 4]>;
 
+    /// Reads up-to the number of bytes required to fill buf or returns an error.
+    fn read_buf(&mut self, buf: &mut [u8]) -> io::Result<usize>;
+
     /// Reads exactly the number of bytes required to fill be provided buffer or returns an error.
-    fn read_buf_bytes(&mut self, buf: &mut [u8]) -> io::Result<()>;
+    fn read_buf_exact(&mut self, buf: &mut [u8]) -> io::Result<()>;
 
     /// Reads a single unsigned byte from the stream and returns it or an error.
     #[inline(always)]
@@ -151,7 +154,7 @@ pub trait ByteStream {
     #[inline(always)]
     fn read_u64(&mut self) -> io::Result<u64> {
         let mut buf = [0u8; mem::size_of::<u64>()];
-        self.read_buf_bytes(&mut buf)?;
+        self.read_buf_exact(&mut buf)?;
         Ok(u64::from_le_bytes(buf))
     }
 
@@ -160,7 +163,7 @@ pub trait ByteStream {
     #[inline(always)]
     fn read_be_u64(&mut self) -> io::Result<u64> {
         let mut buf = [0u8; mem::size_of::<u64>()];
-        self.read_buf_bytes(&mut buf)?;
+        self.read_buf_exact(&mut buf)?;
         Ok(u64::from_be_bytes(buf))
     }
 
@@ -183,7 +186,7 @@ pub trait ByteStream {
     #[inline(always)]
     fn read_f64(&mut self) -> io::Result<f64> {
         let mut buf = [0u8; mem::size_of::<u64>()];
-        self.read_buf_bytes(&mut buf)?;
+        self.read_buf_exact(&mut buf)?;
         Ok(LittleEndian::read_f64(&buf))
     }
 
@@ -192,7 +195,7 @@ pub trait ByteStream {
     #[inline(always)]
     fn read_be_f64(&mut self) -> io::Result<f64> {
         let mut buf = [0u8; mem::size_of::<u64>()];
-        self.read_buf_bytes(&mut buf)?;
+        self.read_buf_exact(&mut buf)?;
         Ok(BigEndian::read_f64(&buf))
     }
 
@@ -200,7 +203,7 @@ pub trait ByteStream {
     /// error.
     fn read_boxed_slice_bytes(&mut self, len: usize) -> io::Result<Box<[u8]>> {
         let mut buf = vec![0u8; len];
-        self.read_buf_bytes(&mut buf)?;
+        self.read_buf_exact(&mut buf)?;
         Ok(buf.into_boxed_slice())
     }
 
@@ -245,8 +248,13 @@ impl<'b, B: ByteStream> ByteStream for &'b mut B {
     }
 
     #[inline(always)]
-    fn read_buf_bytes(&mut self, buf: &mut [u8]) -> io::Result<()> {
-        (*self).read_buf_bytes(buf)
+    fn read_buf(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        (*self).read_buf(buf)
+    }
+
+    #[inline(always)]
+    fn read_buf_exact(&mut self, buf: &mut [u8]) -> io::Result<()> {
+        (*self).read_buf_exact(buf)
     }
 
     #[inline(always)]

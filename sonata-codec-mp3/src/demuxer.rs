@@ -85,7 +85,7 @@ impl FormatReader for Mp3Reader {
         // Allocate a buffer for the entire MPEG frame. Prefix the buffer with the frame header.
         let mut packet_buf = vec![0u8; header.frame_size + 4];
         packet_buf[0..4].copy_from_slice(&header_buf.to_be_bytes());
-        self.reader.read_buf_bytes(&mut packet_buf[4..])?;
+        self.reader.read_buf_exact(&mut packet_buf[4..])?;
 
         Ok(Packet::new_from_boxed_slice(0, 0, packet_buf.into_boxed_slice()))
     }

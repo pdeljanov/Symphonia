@@ -119,7 +119,7 @@ impl PacketParser {
 
         // trace!("fetch block, len={}", block_read_len);
 
-        reader.read_buf_bytes(&mut self.buf[self.block_write..new_block_write])?;
+        reader.read_buf_exact(&mut self.buf[self.block_write..new_block_write])?;
         self.block_write = new_block_write;
 
         Ok(())

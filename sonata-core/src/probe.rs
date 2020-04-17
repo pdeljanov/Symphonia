@@ -228,7 +228,7 @@ impl Probe {
                 let mut context = [0u8; 16];
 
                 context[0..2].copy_from_slice(&win.to_be_bytes()[0..2]);
-                mss.read_buf_bytes(&mut context[2..])?;
+                mss.read_buf_exact(&mut context[2..])?;
 
                 info!(
                     "found a possible stream marker within {:x?} @ {}+{} bytes.",
