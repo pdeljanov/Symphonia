@@ -1,15 +1,15 @@
 # Sonata
 
-Sonata is a pure Rust audio decoding and multimedia format library.
+Sonata is a pure Rust audio decoding and media demuxing library supporting OGG, FLAC, MP3, and WAV.
 
 ## Features
 
 Sonata's planned features are:
 
 * Decode support for the most popular audio codecs
-* Reading and writing the most common media container formats
+* Reading the most common media container formats
 * Probing and guessing the correct format and decoder combination(s) for playback or inspection
-* Reading and writing metadata
+* Reading metadata
 * Providing a set of audio primitives for manipulating audio data efficiently
 * Providing a C API for integration into other languages
 * Providing a WASM API for web usage
@@ -34,8 +34,7 @@ support for FOSS codecs and formats, but others may be included via the features
 | Codec    | Status      | Feature Flag | Default | Crate                  |
 |----------|-------------|--------------|---------|------------------------|
 | AAC      | -           | `aac`        | No      | `sonata-codec-aac`     |
-| Flac     | Complete    | `flac`       | Yes     | `sonata-codec-flac`    |
-| Hardware | -           | `hwdec`      | No      | `sonata-codec-hwdec`   |
+| FLAC     | Complete    | `flac`       | Yes     | `sonata-codec-flac`    |
 | MP1      | Paused      | `mp3`        | No      | `sonata-codec-mp3`     |
 | MP2      | Paused      | `mp3`        | No      | `sonata-codec-mp3`     |
 | MP3      | Complete    | `mp3`        | No      | `sonata-codec-mp3`     |
@@ -67,7 +66,7 @@ Sonata provides decoders for standard tagging formats in `sonata-core` since man
 |-----------------------|-------------|
 | ID3v1                 | Complete    |
 | ID3v2                 | Complete    |
-| Vorbis comment (OGG)  | Next        |
+| Vorbis comment (OGG)  | In Work     |
 | Vorbis comment (FLAC) | Complete    |
 | RIFF                  | Complete    |
 | APEv1                 | -           |
@@ -79,7 +78,7 @@ In addition to the safety guarantees provided by Rust, Sonata aims to:
 
 * Decode files as well as the leading free-and-open-source software decoders
 * Provide a powerful, consistent, and easy to use API
-* Have absolutely no use of unsafe outside of `sonata-core`
+* Have absolutely no unsafe blocks outside of `sonata-core`
 * Have very minimal dependencies
 * Prevent denial-of-service attacks
 * Be fuzz-tested
