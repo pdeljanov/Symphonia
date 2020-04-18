@@ -5,7 +5,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use sonata_core::checksum::Crc8;
+use sonata_core::checksum::Crc8Ccitt;
 use sonata_core::errors::{Result, decode_error};
 use sonata_core::io::{ByteStream, MediaSourceStream, Monitor, MonitorStream, utf8_decode_be_u64};
 
@@ -68,7 +68,7 @@ pub fn sync_frame<B: ByteStream>(reader: &mut B) -> Result<u16> {
 
 pub fn read_frame_header<B: ByteStream>(reader: &mut B, sync: u16) -> Result<FrameHeader> {
     // The header is checksummed with a CRC8 hash. Include the sync code in this CRC.
-    let mut crc8 = Crc8::new(0);
+    let mut crc8 = Crc8Ccitt::new(0);
     crc8.process_buf_bytes(&sync.to_be_bytes());
 
     let mut reader_crc8 = MonitorStream::new(reader, crc8);
@@ -210,10 +210,6 @@ pub fn read_frame_header<B: ByteStream>(reader: &mut B, sync: u16) -> Result<Fra
         bits_per_sample,
         sample_rate,
     })
-}
-
-pub fn read_frame_footer<B: ByteStream>(reader: &mut B) -> Result<u16> {
-    Ok(reader.read_be_u16()?)
 }
 
 /// A very quick check if the provided buffer is likely be a FLAC frame header.

@@ -8,7 +8,7 @@
 use std::cmp::min;
 use std::collections::VecDeque;
 
-use sonata_core::checksum::Crc16;
+use sonata_core::checksum::Crc16Ansi;
 use sonata_core::errors::Result;
 use sonata_core::io::{BufStream, ByteStream, Monitor};
 use sonata_core::util::bits;
@@ -334,7 +334,7 @@ impl PacketParser {
                 }
 
                 let mut frame_len = 0;
-                let mut crc = Crc16::new(0);
+                let mut crc = Crc16Ansi::new(0);
 
                 // Attempt to merge fragments starting with the best-pick fragment. A frame is
                 // considered complete and valid when the last two bytes of a fragment (a frame's
