@@ -13,7 +13,6 @@ edition = "2018"
 
 [dependencies]
 log = "0.4"
-md5 = "0.6.1"
 sonata-core = { version = "0.1", path = "../sonata-core" }
 sonata-metadata = { version = "0.1", path = "../sonata-metadata" }
 sonata-utils-xiph = { version = "0.1", path = "../sonata-utils-xiph" }

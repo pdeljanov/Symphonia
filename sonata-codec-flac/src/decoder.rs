@@ -21,7 +21,7 @@ use sonata_core::util::bits::sign_extend_leq32_to_i32;
 use log::info;
 
 use super::frame::*;
-use super::validate::Md5AudioValidator;
+use super::validate::Validator;
 
 fn decorrelate_left_side(left: &[i32], side: &mut [i32]) {
     for (s, l) in side.iter_mut().zip(left) {
@@ -80,7 +80,7 @@ fn decorrelate_right_side(right: &[i32], side: &mut [i32]) {
 pub struct FlacDecoder {
     params: CodecParameters,
     is_validating: bool,
-    validator: Md5AudioValidator,
+    validator: Validator,
     buf: AudioBuffer<i32>,
 }
 
@@ -118,7 +118,7 @@ impl Decoder for FlacDecoder {
         Ok(FlacDecoder {
             params: params.clone(),
             is_validating: options.verify,
-            validator: Md5AudioValidator::new(),
+            validator: Default::default(),
             buf: AudioBuffer::new(Duration::Frames(frames), spec),
         })
     }
@@ -217,7 +217,7 @@ impl Decoder for FlacDecoder {
 
     fn close(&mut self) {
         if self.is_validating {
-            info!("{:?}", self.validator.finalize());
+            info!("{:?}", self.validator.md5());
         }
     }
 

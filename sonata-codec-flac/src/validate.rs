@@ -5,27 +5,24 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use std::vec::Vec;
 use std::mem;
-use md5;
-use sonata_core::audio::{AudioBuffer, Signal};
+use std::vec::Vec;
 
-/// `Md5AudioValidator` computes the MD5 checksum of an audio stream taking into account the
-/// peculiarities of FLAC's MD5 validation scheme.
-pub struct Md5AudioValidator {
-    state: md5::Context,
+use sonata_core::audio::{AudioBuffer, Signal};
+use sonata_core::checksum::Md5;
+use sonata_core::io::Monitor;
+
+/// `Validator` computes the MD5 checksum of an audio stream taking into account the peculiarities
+/// of FLAC's MD5 validation scheme.
+#[derive(Default)]
+pub struct Validator {
+    state: Md5,
     buf: Vec<u8>,
 }
 
-impl Md5AudioValidator {
+impl Validator {
 
-    pub fn new() -> Self {
-        Md5AudioValidator {
-            state: md5::Context::new(),
-            buf: Vec::new(),
-        }
-    }
-
+    /// Processes the audio buffer and updates the state of the validator.
     pub fn update(&mut self, buf: &AudioBuffer<i32>, bps: u32) {
         // The MD5 checksum is calculated on a buffer containing interleaved audio samples of the
         // correct sample width. While FLAC can encode and decode samples of arbitrary bit widths,
@@ -70,11 +67,12 @@ impl Md5AudioValidator {
         };
 
         // Update the MD5 state.
-        self.state.consume(buf_slice);
+        self.state.process_buf_bytes(buf_slice);
     }
 
-    pub fn finalize(&mut self) -> md5::Digest {
-        self.state.clone().compute()
+    /// Get the checksum.
+    pub fn md5(&mut self) -> [u32; 4] {
+        self.state.md5()
     }
 }
 
