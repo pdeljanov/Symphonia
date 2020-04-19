@@ -30,28 +30,25 @@ struct Fragment {
 
 pub struct PacketParser {
     stream_info: StreamInfo,
-    last_seq: u64,
-
     buf: Vec<u8>,
-    block_write: usize,
-
+    buf_write: usize,
+    buf_read: usize,
     fragments: VecDeque<Fragment>,
-    fragment_read: usize,
-
     frame_size_hist: [u32; 4],
     n_frames: usize,
+    last_seq: u64,
 }
 
 impl Default for PacketParser {
     fn default() -> Self {
         PacketParser {
-            buf: vec![0; (2 * PacketParser::BLOCK_LEN) + 8],
-            block_write: 0,
+            stream_info: Default::default(),
+            buf: vec![0; (2 * PacketParser::FLAC_AVG_FRAME_LEN) as usize],
+            buf_write: 0,
+            buf_read: 0,
             fragments: Default::default(),
-            fragment_read: 0,
             frame_size_hist: [PacketParser::FLAC_AVG_FRAME_LEN; 4],
             n_frames: 0,
-            stream_info: Default::default(),
             last_seq: 0,
         }
     }
@@ -60,14 +57,20 @@ impl Default for PacketParser {
 impl PacketParser {
     /// The size of the largest possible valid FLAC frame header.
     const FLAC_MAX_FRAME_HEADER_LEN: usize = 16;
+
     /// The size of the largest possible complete and valid FLAC frame.
     const FLAC_MAX_FRAME_LEN: usize = 16 * 1024 * 1024;
 
-    /// The average FLAC frame length.
+    /// The "average" FLAC frame length.
     const FLAC_AVG_FRAME_LEN: u32 = 8 * 1024;
 
-    const BLOCK_LEN: usize = 4 * 1024;
-    const MAX_BUFFER_LEN: usize = PacketParser::FLAC_MAX_FRAME_LEN + PacketParser::BLOCK_LEN;
+    /// Number of padding bytes in the buffer.
+    const BUF_PADDING: usize = 8;
+
+    /// The maximum buffer length possible.
+    const MAX_BUF_LEN: usize = PacketParser::FLAC_MAX_FRAME_LEN
+                                + PacketParser::FLAC_MAX_FRAME_HEADER_LEN
+                                + PacketParser::BUF_PADDING;
 
     // Frames:    [                           F0                          |   ..   ]
     //                                                                    :
@@ -94,48 +97,45 @@ impl PacketParser {
 
     fn fetch_block<B: ByteStream>(&mut self, reader: &mut B) -> Result<()> {
         // Calculate the average frame size.
-        let avg_frame_size = (self.frame_size_hist[0]
+        let avg_frame_size = ((self.frame_size_hist[0]
                                 + self.frame_size_hist[1]
                                 + self.frame_size_hist[2]
-                                + self.frame_size_hist[3]) / 4;
+                                + self.frame_size_hist[3]) / 4) as usize;
 
-        // Round up to the nearest block size multiple.
-        // TODO: FIX possibly truncating conversion!
-        let block_read_len = round_pow2(avg_frame_size as usize, PacketParser::BLOCK_LEN);
+        // Read average frame size bytes.
+        let new_buf_write = self.buf_write + avg_frame_size;
 
-        let new_block_write = self.block_write + block_read_len;
+        if new_buf_write >= self.buf.len() - PacketParser::BUF_PADDING {
+            // Grow buffer to 1.5x the average frame size, plus padding, rounded to the nearest
+            // multiple of 4kB.
+            let new_size = round_pow2(((6 * avg_frame_size) / 3) + PacketParser::BUF_PADDING, 4096);
 
-        if new_block_write >= self.buf.len() - 8 {
-            // Grow buffer to to twice it's existing length, rounded up to the nearest block size.
-            let new_size = round_pow2(2 * (self.buf.len() - 8), PacketParser::BLOCK_LEN);
-
-            if new_size > PacketParser::MAX_BUFFER_LEN {
+            if new_size > PacketParser::MAX_BUF_LEN {
                 error!("buffer would exceed maximum size");
             }
 
-            // debug!("grow buffer, new_size={}", new_size);
-            self.buf.resize(new_size + 8, 0);
+            // info!("grow buffer, new_size={}", new_size);
+            self.buf.resize(new_size, 0);
         }
 
         // trace!("fetch block, len={}", block_read_len);
 
-        reader.read_buf_exact(&mut self.buf[self.block_write..new_block_write])?;
-        self.block_write = new_block_write;
+        self.buf_write += reader.read_buf(&mut self.buf[self.buf_write..new_buf_write])?;
 
         Ok(())
     }
 
     fn fetch_fragments<B: ByteStream>(&mut self, reader: &mut B) -> Result<()> {
-        if self.fragment_read + PacketParser::FLAC_MAX_FRAME_HEADER_LEN >= self.block_write {
+        if self.buf_read + PacketParser::FLAC_MAX_FRAME_HEADER_LEN >= self.buf_write {
             self.fetch_block(reader)?;
         }
 
         // Scan for fragments, 8 bytes at a time.
-        for pos in (self.fragment_read..(self.block_write - 8)).step_by(8) {
+        for pos in (self.buf_read..(self.buf_write - 8)).step_by(8) {
             let mut buf = [0u8; 8];
             buf.copy_from_slice(&self.buf[pos..pos + 8]);
 
-            self.fragment_read = pos + 8;
+            self.buf_read = pos + 8;
 
             // If, within the current 8 byte window, no single byte is 0xff then there cannot be a
             // frame synchronization preamble present.
@@ -154,13 +154,13 @@ impl PacketParser {
                 if (sync & 0xfffc) == 0xfff8 {
                     // If there are not enough bytes in the buffer to attempt parsing a frame then
                     // no more fragments can be fetched.
-                    if pos + i - 1 + PacketParser::FLAC_MAX_FRAME_HEADER_LEN >= self.block_write {
+                    if pos + i - 1 + PacketParser::FLAC_MAX_FRAME_HEADER_LEN >= self.buf_write {
                         // trace!(
                         //     "found preamble, but not enough data is buffered, pos={}",
                         //     pos + i + 1
                         // );
 
-                        self.fragment_read = pos + i - 1;
+                        self.buf_read = pos + i - 1;
                         return Ok(());
                     }
 
@@ -176,10 +176,7 @@ impl PacketParser {
                             //     pos + i - 1
                             // );
 
-                            self.fragments.push_back(Fragment {
-                                pos: pos + i - 1,
-                                header,
-                            });
+                            self.fragments.push_back(Fragment { pos: pos + i - 1, header });
                         }
                     }
                 }
@@ -190,6 +187,7 @@ impl PacketParser {
     }
 
     fn remove_fragments(&mut self, to: usize) {
+        // Pop fragments starting before to.
         while let Some(fragment) = self.fragments.front() {
             if fragment.pos < to {
                 self.fragments.pop_front();
@@ -199,19 +197,17 @@ impl PacketParser {
             }
         }
 
-        self.compact(to);
-    }
-
-    fn compact(&mut self, len: usize) {
+        // Shift the position of all fragments after to by to.
         for fragment in self.fragments.iter_mut() {
-            fragment.pos -= len;
+            fragment.pos -= to;
         }
 
-        // trace!("compact, len={}", self.block_write - len);
+        // trace!("compact, len={}", self.buf_write - to);
 
-        self.buf.copy_within(len.., 0);
-        self.block_write -= len;
-        self.fragment_read -= len;
+        // Compact the data buffer.
+        self.buf.copy_within(to..self.buf_write, 0);
+        self.buf_write -= to;
+        self.buf_read -= min(to, self.buf_read);
     }
 
     /// Scores up-to 8 fragments, and returns the score, the number of fragments scored, and an
@@ -235,7 +231,7 @@ impl PacketParser {
 
         let iter = self.fragments.iter().zip(&mut indicies[0..n_fragments]).enumerate();
 
-        let is_fixed = self.stream_info.block_sample_len.0 == self.stream_info.block_sample_len.1;
+        let is_fixed = self.stream_info.block_len_min == self.stream_info.block_len_max;
 
         for (i, (fragment, index)) in iter {
             // Stream parameter scoring: The optional parameters of the stream information block
@@ -252,8 +248,8 @@ impl PacketParser {
 
             // Fragment length scoring: The fragment's sample length is within the range provided in
             // the stream information block.
-            if fragment.header.block_num_samples >= self.stream_info.block_sample_len.0
-                && fragment.header.block_num_samples <= self.stream_info.block_sample_len.1
+            if fragment.header.block_num_samples >= self.stream_info.block_len_min
+                && fragment.header.block_num_samples <= self.stream_info.block_len_max
             {
                 score_len |= 1 << i;
             }
@@ -279,7 +275,7 @@ impl PacketParser {
 
         indicies[n_fragments] = match self.fragments.get(n_fragments) {
             Some(fragment) => fragment.pos,
-            None           => self.block_write,
+            None           => self.buf_write,
         };
 
         // First, second, and third represent three descending tiers of confidence. A set bit
@@ -319,7 +315,7 @@ impl PacketParser {
             let mut limit_hit = false;
 
             if n_scored > 0 {
-                let mut iter = indicies[0..n_scored].iter().zip(&indicies[1..n_scored]);
+                let mut iter = indicies[0..n_scored].iter().zip(&indicies[1..n_scored + 1]);
 
                 // Discard any fragments that preceed the best-pick fragment.
                 while (best & 1) == 0 {
@@ -357,6 +353,8 @@ impl PacketParser {
                         // Update the frame size history.
                         self.frame_size_hist[self.n_frames % 4] = frame.len() as u32;
                         self.n_frames += 1;
+
+                        // eprintln!("{:?}", self.fragments.front().unwrap().header.block_sequence);
 
                         // Update the last sequence.
 
@@ -403,54 +401,68 @@ impl PacketParser {
                     // If none of these heuristics are met, then it is reasonable to continue to
                     // fetch more fragments and see if a complete and valid frame can be formed with
                     // the extra fragments.
-
-                    // Heuristic 1.
-                    if frame_len >= PacketParser::FLAC_MAX_FRAME_LEN {
-                        warn!("rebuild failure; frame exceeds 16MB");
-                        limit_hit = true;
-                    }
-                    // Heuristic 2.
-                    else if best & (2 << count) != 0 {
-                        warn!(
-                            "rebuild failure; \
-                             frame exceeds lower-bound of next-best fragment"
-                        );
-                        limit_hit = true;
-                    }
-                    // Heuristic 3a.
-                    else if self.stream_info.frame_byte_len.1 > 0 {
-                        if (frame_len as u32) > self.stream_info.frame_byte_len.1 {
+                    //
+                    // Heuristics only apply if there is more than 1 fragment. If there is only one
+                    // fragment there are three possibilities for the state of the fragment:
+                    //
+                    //  i)   a complete and valid frame
+                    //  ii)  a complete and valid frame + the start of another frame
+                    //  iii) a partial or corrupt frame, or random data
+                    //
+                    // In the first case, these heuristics won't be reached. In the second and third
+                    // cases, more data may be needed to properly partition the fragment into a
+                    // frame.
+                    if n_scored > 1 {
+                        // Heuristic 1.
+                        if frame_len >= PacketParser::FLAC_MAX_FRAME_LEN {
+                            warn!("rebuild failure; frame exceeds 16MB");
+                            limit_hit = true;
+                        }
+                        // Heuristic 2.
+                        else if best & (2 << count) != 0 {
                             warn!(
                                 "rebuild failure; \
-                                 frame exceeds stream's frame length limit"
+                                frame exceeds lower-bound of next-best fragment"
                             );
                             limit_hit = true;
                         }
-                    }
-                    // Heuristic 3b.
-                    else if self.n_frames >= 4 {
-                        let avg_frame_size = (self.frame_size_hist[0]
-                                                + self.frame_size_hist[1]
-                                                + self.frame_size_hist[2]
-                                                + self.frame_size_hist[3]) / 4;
+                        // Heuristic 3a.
+                        else if self.stream_info.frame_byte_len_max > 0 {
+                            if (frame_len as u32) > self.stream_info.frame_byte_len_max {
+                                warn!(
+                                    "rebuild failure; \
+                                    frame exceeds stream's frame length limit ({} > {})",
+                                    frame_len,
+                                    self.stream_info.frame_byte_len_max
+                                );
+                                limit_hit = true;
+                            }
+                        }
+                        // Heuristic 3b.
+                        else if self.n_frames >= 4 {
+                            let avg_frame_size = (self.frame_size_hist[0]
+                                                    + self.frame_size_hist[1]
+                                                    + self.frame_size_hist[2]
+                                                    + self.frame_size_hist[3]) / 4;
 
-                        if (frame_len as u32) > 2 * avg_frame_size {
-                            warn!(
-                                "rebuild failure; \
-                                 frame exceeds 2x average historical length"
-                            );
+                            if (frame_len as u32) > 2 * avg_frame_size {
+                                warn!(
+                                    "rebuild failure; \
+                                    frame exceeds 2x average historical length"
+                                );
+                                limit_hit = true;
+                            }
+                        }
+                        // Heuristic 3c.
+                        else if count >= 4 {
+                            warn!("rebuild failure; frame exceeds fragment limit");
                             limit_hit = true;
                         }
-                    }
-                    // Heuristic 3c.
-                    else if count >= 4 {
-                        warn!("rebuild failure; frame exceeds fragment limit");
-                        limit_hit = true;
-                    }
 
-                    // If a limit was hit, break out of the rebuild loop.
-                    if limit_hit {
-                        break;
+                        // If a limit was hit, break out of the rebuild loop.
+                        if limit_hit {
+                            break;
+                        }
                     }
                 }
 

@@ -217,7 +217,7 @@ impl Decoder for FlacDecoder {
 
     fn close(&mut self) {
         if self.is_validating {
-            info!("{:?}", self.validator.md5());
+            info!("output md5 = {:x?}", self.validator.md5());
         }
     }
 

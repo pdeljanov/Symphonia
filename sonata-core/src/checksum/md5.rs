@@ -192,7 +192,7 @@ impl Md5 {
     const BLOCK_LEN_MASK: u64 = 0x3f;
 
     /// Finalizes and returns the computed MD5 hash.
-    pub fn md5(&self) -> [u32; 4] {
+    pub fn md5(&self) -> [u8; 16] {
         // Finalize locally.
         let mut block = [0; Md5::BLOCK_LEN];
         let mut state = self.state;
@@ -222,7 +222,12 @@ impl Md5 {
         transform(&mut state, &block);
 
         // The message digest is in big-endian.
-        [ state[0].to_be(), state[1].to_be(), state[2].to_be(), state[3].to_be() ]
+        let mut hash = [0; 16];
+        hash[0..4].copy_from_slice(&state[0].to_le_bytes());
+        hash[4..8].copy_from_slice(&state[1].to_le_bytes());
+        hash[8..12].copy_from_slice(&state[2].to_le_bytes());
+        hash[12..16].copy_from_slice(&state[3].to_le_bytes());
+        hash
     }
 
 }
@@ -245,7 +250,7 @@ impl Monitor for Md5 {
     fn process_buf_bytes(&mut self, buf: &[u8]) {
         let mut rem = buf;
 
-        while rem.len() > 0 {
+        while !rem.is_empty() {
             let block_len = (self.len & Md5::BLOCK_LEN_MASK) as usize;
 
             let copy_len = cmp::min(rem.len(), Md5::BLOCK_LEN - block_len);

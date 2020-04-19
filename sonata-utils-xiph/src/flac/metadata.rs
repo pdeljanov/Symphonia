@@ -32,7 +32,7 @@ fn flac_channels_to_channels(channels: u32) -> Channels {
     debug_assert!(channels > 0 && channels < 9);
 
     match channels {
-        1 => { 
+        1 => {
             Channels::FRONT_LEFT
         },
         2 => {
@@ -41,7 +41,7 @@ fn flac_channels_to_channels(channels: u32) -> Channels {
         },
         3 => {
             Channels::FRONT_LEFT
-                | Channels::FRONT_RIGHT 
+                | Channels::FRONT_RIGHT
                 | Channels::FRONT_CENTRE
         },
         4 => {
@@ -91,10 +91,12 @@ fn flac_channels_to_channels(channels: u32) -> Channels {
 #[derive(Default)]
 pub struct StreamInfo {
     /// The minimum and maximum number of decoded samples per block of audio.
-    pub block_sample_len: (u16, u16),
+    pub block_len_min: u16,
+    pub block_len_max: u16,
     /// The minimum and maximum byte length of an encoded block (frame) of audio. Either value may
     /// be 0 if unknown.
-    pub frame_byte_len: (u32, u32),
+    pub frame_byte_len_min: u32,
+    pub frame_byte_len_max: u32,
     /// The sample rate in Hz.
     pub sample_rate: u32,
     /// The channel mask.
@@ -111,8 +113,10 @@ impl StreamInfo {
 
     pub fn read<B : ByteStream>(reader: &mut B)  -> Result<StreamInfo> {
         let mut info = StreamInfo {
-            block_sample_len: (0, 0),
-            frame_byte_len: (0, 0),
+            block_len_min: 0,
+            block_len_max: 0,
+            frame_byte_len_min: 0,
+            frame_byte_len_max: 0,
             sample_rate: 0,
             channels: Channels::empty(),
             bits_per_sample: 0,
@@ -121,27 +125,29 @@ impl StreamInfo {
         };
 
         // Read the block length bounds in number of samples.
-        info.block_sample_len = (reader.read_be_u16()?, reader.read_be_u16()?);
+        info.block_len_min = reader.read_be_u16()?;
+        info.block_len_max = reader.read_be_u16()?;
 
         // Validate the block length bounds are in the range [16, 65535] samples.
-        if info.block_sample_len.0 < 16 || info.block_sample_len.1 < 16{
+        if info.block_len_min < 16 || info.block_len_max < 16{
             return decode_error("Minimum block length is 16 samples.");
         }
 
         // Validate the maximum block size is greater than or equal to the minimum block size.
-        if info.block_sample_len.1 < info.block_sample_len.0 {
+        if info.block_len_max < info.block_len_min {
             return decode_error("Maximum block length cannot be less than the minimum block length.");
         }
 
         // Read the frame byte length bounds.
-        info.frame_byte_len = (reader.read_be_u24()?, reader.read_be_u24()?);
+        info.frame_byte_len_min = reader.read_be_u24()?;
+        info.frame_byte_len_max = reader.read_be_u24()?;
 
         // Validate the maximum frame byte length is greater than or equal to the minimum frame byte
         // length if both are known. A value of 0 for either indicates the respective byte length is
         // unknown. Valid values are in the range [0, (2^24) - 1] bytes.
-        if info.frame_byte_len.0 > 0 
-            && info.frame_byte_len.1 > 0 
-            && info.frame_byte_len.1 < info.frame_byte_len.0
+        if info.frame_byte_len_min > 0
+            && info.frame_byte_len_max > 0
+            && info.frame_byte_len_max < info.frame_byte_len_min
         {
             return decode_error("Maximum frame length cannot be less than the minimum frame length.");
         }
@@ -366,7 +372,7 @@ fn read_cuesheet_track_index<B: ByteStream>(reader: &mut B, is_cdda: bool) -> Re
     let n_offset_samples = reader.read_be_u64()?;
     let idx_point_enc = reader.read_be_u32()?;
 
-    // CD-DA track index points must have a sample offset that is a multiple of 588 samples 
+    // CD-DA track index points must have a sample offset that is a multiple of 588 samples
     // (588 samples = 44100 samples/sec * 1/75th of a sec).
     if is_cdda && n_offset_samples % 588 != 0 {
         return decode_error("Cuesheet track index point sample offset is not a multiple of 588 for CD-DA.");
@@ -410,7 +416,7 @@ pub fn read_picture_block<B : ByteStream>(
     metadata: &mut MetadataBuilder,
 ) -> Result<()> {
     let type_enc = reader.read_be_u32()?;
-    
+
     // Read the Media Type length in bytes.
     let media_type_len = reader.read_be_u32()? as usize;
 
@@ -426,7 +432,7 @@ pub fn read_picture_block<B : ByteStream>(
 
     // Read the description length in bytes.
     let desc_len = reader.read_be_u32()? as usize;
-    
+
     // Read the description bytes.
     let mut desc_buf = vec![0u8; desc_len];
     reader.read_buf_exact(&mut desc_buf)?;

@@ -71,7 +71,7 @@ impl Validator {
     }
 
     /// Get the checksum.
-    pub fn md5(&mut self) -> [u32; 4] {
+    pub fn md5(&mut self) -> [u8; 16] {
         self.state.md5()
     }
 }

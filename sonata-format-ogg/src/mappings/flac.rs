@@ -81,7 +81,7 @@ pub fn detect(buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> {
         .for_codec(CODEC_TYPE_FLAC)
         .with_sample_rate(stream_info.sample_rate)
         .with_bits_per_sample(stream_info.bits_per_sample)
-        .with_max_frames_per_packet(u64::from(stream_info.block_sample_len.1))
+        .with_max_frames_per_packet(u64::from(stream_info.block_len_max))
         .with_channels(stream_info.channels)
         .with_packet_data_integrity(true);
 

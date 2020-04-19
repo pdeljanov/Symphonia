@@ -271,6 +271,8 @@ fn read_stream_info_block<B : ByteStream>(
     if streams.is_empty() {
         let info = StreamInfo::read(block_stream)?;
 
+        info!("stream md5 = {:x?}", info.md5);
+
         // Populate the codec parameters with the parameters from the stream information block.
         let mut codec_params = CodecParameters::new();
 
@@ -278,7 +280,7 @@ fn read_stream_info_block<B : ByteStream>(
             .for_codec(CODEC_TYPE_FLAC)
             .with_sample_rate(info.sample_rate)
             .with_bits_per_sample(info.bits_per_sample)
-            .with_max_frames_per_packet(u64::from(info.block_sample_len.1))
+            .with_max_frames_per_packet(u64::from(info.block_len_max))
             .with_channels(info.channels)
             .with_packet_data_integrity(true);
 
