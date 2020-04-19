@@ -374,7 +374,27 @@ impl ByteStream for MediaSourceStream {
 
     #[inline(always)]
     fn read_buf(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.read(buf)
+        let mut rem = buf;
+        let mut read = 0;
+
+        while !rem.is_empty() {
+            match self.read(rem) {
+                Ok(0) => break,
+                Ok(n) => {
+                    rem = &mut rem[n..];
+                    read += n;
+                }
+                Err(ref e) if e.kind() == io::ErrorKind::Interrupted => {}
+                Err(e) => return Err(e),
+            }
+        }
+
+        if read == 0 {
+            Err(io::Error::new(io::ErrorKind::UnexpectedEof, "Reached end of stream."))
+        }
+        else {
+            Ok(read)
+        }
     }
 
     #[inline(always)]
