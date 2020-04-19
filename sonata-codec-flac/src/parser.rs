@@ -75,18 +75,14 @@ impl PacketParser {
     // Frames:    [                           F0                          |   ..   ]
     //                                                                    :
     // Fragments: [  f0   |  f1   |      f2     |    f3    |    f4   | f5 |   ..   ]
-    //                    :       :             :          :         :    :
-    // Blocks:    [           b0            |     b1     |     b2     |     b3     ]
     //
     // Frames are complete FLAC frames. Frames are composed of an integer number of fragments.
-    // Fragments are variable size, but always start with the frame header preamble.
-    // Blocks are variable size, generally equal to the average frame size rounded up to the next
-    // multiple of 4kB.
     //
-    // Blocks are read from the media source stream. Once buffered, the block is scanned for
-    // fragments. Fragments shall start with the frame header preamble that decodes to a valid
-    // FLAC header. Fragments are then be combined until a valid FLAC frame is found. A set of
-    // rules and heuristics are used to limit the recombination process to handle correupt frames.
+    // Data is buffered from the media source stream. Once buffered, the data is scanned for
+    // fragments. A fragment shall start with a FLAC frame header preamble, and decode into a valid
+    // FLAC frame header. Fragments are then be combined until a valid FLAC frame is found. A set of
+    // rules and heuristics are used to limit the number of fragments that can be recombined. This
+    // is required to detect errors.
 
     pub fn reset(&mut self, stream_info: StreamInfo) {
         self.stream_info = stream_info;
@@ -95,7 +91,7 @@ impl PacketParser {
         self.last_seq = 0;
     }
 
-    fn fetch_block<B: ByteStream>(&mut self, reader: &mut B) -> Result<()> {
+    fn buffer_data<B: ByteStream>(&mut self, reader: &mut B) -> Result<()> {
         // Calculate the average frame size.
         let avg_frame_size = ((self.frame_size_hist[0]
                                 + self.frame_size_hist[1]
@@ -103,31 +99,37 @@ impl PacketParser {
                                 + self.frame_size_hist[3]) / 4) as usize;
 
         // Read average frame size bytes.
-        let new_buf_write = self.buf_write + avg_frame_size;
+        let new_buf_write = self.buf_write + round_pow2(avg_frame_size, 4096);
 
         if new_buf_write >= self.buf.len() - PacketParser::BUF_PADDING {
-            // Grow buffer to 1.5x the average frame size, plus padding, rounded to the nearest
+            // Grow buffer to 1.25x the average frame size, plus padding, rounded to the nearest
             // multiple of 4kB.
-            let new_size = round_pow2(((6 * avg_frame_size) / 3) + PacketParser::BUF_PADDING, 4096);
+            let new_size = round_pow2(
+                ((10 * new_buf_write) / 8) + PacketParser::BUF_PADDING,
+                4096
+            );
 
             if new_size > PacketParser::MAX_BUF_LEN {
                 error!("buffer would exceed maximum size");
+                // TODO: This is a hard error.
             }
 
-            // info!("grow buffer, new_size={}", new_size);
+            // trace!("grow buffer: new_size={}", new_size);
+
             self.buf.resize(new_size, 0);
         }
 
-        // trace!("fetch block, len={}", block_read_len);
+        // trace!("fetch data: buf_write={}, new_buf_write={}", self.buf_write, new_buf_write);
 
         self.buf_write += reader.read_buf(&mut self.buf[self.buf_write..new_buf_write])?;
 
         Ok(())
     }
 
-    fn fetch_fragments<B: ByteStream>(&mut self, reader: &mut B) -> Result<()> {
-        if self.buf_read + PacketParser::FLAC_MAX_FRAME_HEADER_LEN >= self.buf_write {
-            self.fetch_block(reader)?;
+    fn read_fragments<B: ByteStream>(&mut self, reader: &mut B) -> Result<()> {
+        // Buffer more data if there is not enough to scan for fragments.
+        if self.buf_write - self.buf_read <= PacketParser::FLAC_MAX_FRAME_HEADER_LEN {
+            self.buffer_data(reader)?;
         }
 
         // Scan for fragments, 8 bytes at a time.
@@ -488,7 +490,7 @@ impl PacketParser {
             }
 
             // Nom nom, need more fragments to continue!
-            self.fetch_fragments(reader)?;
+            self.read_fragments(reader)?;
         }
     }
 
