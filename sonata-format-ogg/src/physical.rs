@@ -71,7 +71,7 @@ impl PhysicalStream {
         if !self.stream_map.contains_key(&self.page.serial) {
             // TODO: Limit maximum number of streams.
             // TODO: Streams can only be created in groups.
-            debug!("create packet buffer for stream with serial {}", self.page.serial);
+            debug!("create packet buffer for stream with serial {:#x}", self.page.serial);
             self.stream_map.insert(self.page.serial, Default::default());
         }
 

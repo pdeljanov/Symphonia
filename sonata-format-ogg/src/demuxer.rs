@@ -87,17 +87,32 @@ impl FormatReader for OggReader {
             }
         }
 
+        let mut metadata: MetadataQueue = Default::default();
+
         // Each logical stream may contain additional header packets after the identification packet
-        // that contains format-relevant information such as metadata. Parse those packets now.
-        // loop {
-        //     let packet = parser.next_packet(&mut source)?;
-        // }
+        // that contains format-relevant information such as metadata. These packets should be
+        // immediately after the indeniticication packets. As much as possible, read them now.
+        loop {
+            let packet = physical_stream.next_packet(&mut source)?;
+
+            // If the packet belongs to a logical stream, and it is a metadata packet, push the parsed
+            // metadata onto the revision queue. Exit from this loop for any other packet.
+            if let Some(mapper) = mappers.get_mut(&packet.serial) {
+                match mapper.map_packet(&packet.data)? {
+                    mappings::MapResult::Metadata(revision) => metadata.push(revision),
+                    _ => break
+                }
+            }
+
+            // Consume the packet.
+            physical_stream.consume_packet();
+        }
 
         Ok(OggReader {
             reader: source,
             streams,
             cues: Default::default(),
-            metadata: Default::default(),
+            metadata,
             physical_stream,
             mappers,
         })
@@ -116,6 +131,9 @@ impl FormatReader for OggReader {
                 match mapper.map_packet(&packet.data)? {
                     mappings::MapResult::Bitstream => {
                         return Ok(Packet::new_from_boxed_slice(0, 0, packet.data));
+                    },
+                    mappings::MapResult::Metadata(metadata) => {
+                        self.metadata.push(metadata);
                     },
                     _ => {
                         info!("ignoring packet for serial={:#x}", packet.serial);

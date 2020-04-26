@@ -7,6 +7,7 @@
 
 use sonata_core::codecs::CodecParameters;
 use sonata_core::errors::Result;
+use sonata_core::meta::Metadata;
 
 mod flac;
 mod opus;
@@ -21,10 +22,8 @@ pub fn detect(buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> {
 }
 
 pub enum MapResult {
-    Metadata,
-    SeekTable,
-    Cues,
     Bitstream,
+    Metadata(Metadata),
     Unknown,
 }
 

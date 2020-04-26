@@ -8,10 +8,12 @@
 use super::{Mapper, MapResult};
 
 use sonata_core::codecs::{CodecParameters, CODEC_TYPE_FLAC};
-use sonata_core::errors::Result;
+use sonata_core::errors::{Result, decode_error};
+use sonata_core::meta::MetadataBuilder;
 use sonata_core::io::{BufStream, ByteStream};
 
 use sonata_utils_xiph::flac::metadata::{MetadataBlockHeader, MetadataBlockType, StreamInfo};
+use sonata_utils_xiph::flac::metadata::{read_comment_block, read_picture_block};
 
 /// The expected size of the first FLAC header packet.
 const OGG_FLAC_HEADER_PACKET_SIZE: usize = 51;
@@ -110,12 +112,38 @@ impl Mapper for FlacMapper {
     }
 
     fn map_packet(&mut self, buf: &[u8]) -> Result<MapResult> {
-        // First byte is packet type.
+        // The first byte of a packet is the packet type.
         if buf[0] == 0xff {
+            // A packet-type of 0xff is a bitstream packet.
             Ok(MapResult::Bitstream)
         }
+        else if buf[0] == 0x00 || buf[0] == 0x80 {
+            // Packet types 0x00 and 0x80 are invalid in the OGG mapping.
+            decode_error("invalid packet type")
+        }
         else {
-            Ok(MapResult::Unknown)
+            // Packet types in the range 0x01 to 0x7f, and 0x81 to 0xfe are metadata blocks.
+            let mut reader = BufStream::new(&buf);
+            let header = MetadataBlockHeader::read(&mut reader)?;
+
+            match header.block_type {
+                MetadataBlockType::VorbisComment => {
+                    let mut builder = MetadataBuilder::new();
+
+                    read_comment_block(&mut reader, &mut builder)?;
+
+                    Ok(MapResult::Metadata(builder.metadata()))
+                }
+                MetadataBlockType::Picture => {
+                    let mut builder = MetadataBuilder::new();
+
+                    read_picture_block(&mut reader, &mut builder)?;
+
+                    Ok(MapResult::Metadata(builder.metadata()))
+                }
+                _ => Ok(MapResult::Unknown)
+            }
         }
     }
+
 }
