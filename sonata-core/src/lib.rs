@@ -15,4 +15,5 @@ pub mod io;
 pub mod meta;
 pub mod probe;
 pub mod sample;
+pub mod units;
 pub mod util;

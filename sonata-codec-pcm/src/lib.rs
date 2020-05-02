@@ -10,8 +10,7 @@
 
 use sonata_core::support_codec;
 
-use sonata_core::audio::{AudioBuffer, AudioBufferRef, AsAudioBufferRef};
-use sonata_core::audio::{Duration, Signal, SignalSpec};
+use sonata_core::audio::{AudioBuffer, AudioBufferRef, AsAudioBufferRef, Signal, SignalSpec};
 use sonata_core::codecs::{CodecParameters, CodecDescriptor, Decoder, DecoderOptions};
 // Signed Int PCM codecs
 use sonata_core::codecs::{CODEC_TYPE_PCM_S8, CODEC_TYPE_PCM_S16LE};
@@ -141,7 +140,7 @@ impl Decoder for PcmDecoder {
 
         Ok(PcmDecoder {
             params: params.clone(),
-            buf: AudioBuffer::new(Duration::Frames(frames), spec),
+            buf: AudioBuffer::new(frames, spec),
         })
     }
 

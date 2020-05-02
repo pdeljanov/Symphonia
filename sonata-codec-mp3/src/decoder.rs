@@ -5,7 +5,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use sonata_core::audio::{AudioBuffer, AudioBufferRef, AsAudioBufferRef, Duration, Signal};
+use sonata_core::audio::{AudioBuffer, AudioBufferRef, AsAudioBufferRef, Signal};
 use sonata_core::codecs::CODEC_TYPE_MP3;
 use sonata_core::codecs::{CodecParameters, CodecDescriptor, Decoder, DecoderOptions};
 use sonata_core::errors::{Result, unsupported_error};
@@ -51,7 +51,7 @@ impl Decoder for Mp3Decoder {
         // The buffer can only be created after the first frame is decoded. Technically, it can
         // change throughout the stream as well...
         if self.buf.is_unused() {
-            self.buf = AudioBuffer::new(Duration::Frames(1152), header.spec());
+            self.buf = AudioBuffer::new(1152, header.spec());
         }
 
         // Clear the audio output buffer.

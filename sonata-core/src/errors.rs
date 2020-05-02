@@ -46,7 +46,7 @@ pub enum Error {
     Unsupported(&'static str),
     /// A default or user-defined limit was reached while decoding or demuxing the stream. Limits
     /// are used to prevent denial-of-service attacks from malicious streams.
-    LimitError(&'static str, usize),
+    LimitError(&'static str),
     /// The demuxer or decoder needs to be reset before continuing.
     ResetRequired,
     /// The media source stream has ended.
@@ -66,8 +66,8 @@ impl fmt::Display for Error {
             Error::Unsupported(feature) => {
                 write!(f, "unsupported feature: {}", feature)
             },
-            Error::LimitError(constraint, limit) => {
-                write!(f, "limit reached: {} ({})", constraint, limit)
+            Error::LimitError(constraint) => {
+                write!(f, "limit reached: {}", constraint)
             },
             Error::ResetRequired => {
                 write!(f, "decoder needs to be reset")
@@ -86,7 +86,7 @@ impl std::error::Error for Error {
             Error::DecodeError(_) => None,
             Error::SeekError(_) => None,
             Error::Unsupported(_) => None,
-            Error::LimitError(_, _) => None,
+            Error::LimitError(_) => None,
             Error::ResetRequired => None,
             Error::EndOfMediaStream => None,
         }
@@ -117,8 +117,8 @@ pub fn unsupported_error<T>(feature: &'static str) -> Result<T> {
 }
 
 /// Convenience function to create a limit error.
-pub fn limit_error<T>(constraint: &'static str, limit: usize) -> Result<T> {
-    Err(Error::LimitError(constraint, limit))
+pub fn limit_error<T>(constraint: &'static str) -> Result<T> {
+    Err(Error::LimitError(constraint))
 }
 
 /// Convenience function to create a reset required error.

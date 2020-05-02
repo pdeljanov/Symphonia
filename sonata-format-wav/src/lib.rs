@@ -12,10 +12,9 @@ use std::cmp::min;
 use std::io::{Seek, SeekFrom};
 
 use sonata_core::support_format;
-use sonata_core::audio::Timestamp;
 use sonata_core::codecs::CodecParameters;
 use sonata_core::errors::{Result, end_of_media_stream_error, seek_error, unsupported_error, SeekErrorKind};
-use sonata_core::formats::{Cue, FormatOptions, FormatReader, Packet, Stream};
+use sonata_core::formats::prelude::*;
 use sonata_core::io::*;
 use sonata_core::meta::{Metadata, MetadataBuilder, MetadataQueue};
 use sonata_core::probe::{Descriptor, Instantiate, QueryDescriptor};
@@ -142,7 +141,7 @@ impl FormatReader for WavReader {
                     // Add a new stream using the collected codec parameters.
                     return Ok(WavReader {
                         reader: source,
-                        streams: vec![ Stream::new(codec_params) ],
+                        streams: vec![ Stream::new(0, codec_params) ],
                         cues: Vec::new(),
                         metadata,
                         frame_len,
@@ -168,7 +167,7 @@ impl FormatReader for WavReader {
 
         let packet_buf = self.reader.read_boxed_slice_bytes(n_read_len as usize)?;
 
-        Ok(Packet::new_from_boxed_slice(0, 0, packet_buf))
+        Ok(Packet::new_from_boxed_slice(0, 0, 0, packet_buf))
     }
 
     fn metadata(&self) -> &MetadataQueue {
@@ -183,7 +182,7 @@ impl FormatReader for WavReader {
         &self.streams
     }
 
-    fn seek(&mut self, ts: Timestamp) -> Result<u64> {
+    fn seek(&mut self, to: SeekTo) -> Result<SeekedTo> {
 
         if self.streams.is_empty() || self.frame_len == 0 {
             return seek_error(SeekErrorKind::Unseekable);
@@ -191,20 +190,15 @@ impl FormatReader for WavReader {
 
         let params = &self.streams[0].codec_params;
 
-        // Get the timestamp of the desired audio frame.
-        let frame_ts = match ts {
+        let ts = match to {
             // Frame timestamp given.
-            Timestamp::Frame(frame) => frame,
+            SeekTo::TimeStamp { ts, .. } => ts,
             // Time value given, calculate frame timestamp from sample rate.
-            Timestamp::Time(time) => {
-                // Ensure time value is positive.
-                if time < 0.0 {
-                    return seek_error(SeekErrorKind::OutOfRange);
-                }
+            SeekTo::Time { time } => {
                 // Use the sample rate to calculate the frame timestamp. If sample rate is not
                 // known, the seek cannot be completed.
                 if let Some(sample_rate) = params.sample_rate {
-                    (time * f64::from(sample_rate)) as u64
+                    TimeBase::new(1, sample_rate).calc_timestamp(time)
                 }
                 else {
                     return seek_error(SeekErrorKind::Unseekable);
@@ -215,13 +209,13 @@ impl FormatReader for WavReader {
         // If the total number of frames in the stream is known, verify the desired frame timestamp
         // does not exceed it.
         if let Some(n_frames) = params.n_frames {
-            if frame_ts > n_frames {
+            if ts > n_frames {
                 return seek_error(SeekErrorKind::OutOfRange);
             }
         }
 
         // Calculate the absolute byte offset of the desired audio frame.
-        let seek_pos = self.data_start_pos + (frame_ts * u64::from(self.frame_len));
+        let seek_pos = self.data_start_pos + (ts * u64::from(self.frame_len));
 
         // If the reader supports seeking we can seek directly to the frame's offset wherever it may
         // be.
@@ -240,7 +234,9 @@ impl FormatReader for WavReader {
             }
         }
 
-        Ok(frame_ts)
+        self.data_start_pos = self.reader.pos();
+
+        Ok(to)
     }
 
 }

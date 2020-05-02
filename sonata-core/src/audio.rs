@@ -18,27 +18,10 @@ use std::vec::Vec;
 use arrayvec::ArrayVec;
 use bitflags::bitflags;
 
-use super::conv::IntoSample;
-use super::errors::Result;
-use super::sample::{Sample, i24, u24};
-
-/// A `Timestamp` indicates an instantaneous moment in time.
-#[derive(Copy, Clone)]
-pub enum Timestamp {
-    /// The time is expressed by a number of frames.
-    Frame(u64),
-    /// The time is expressed by a number of seconds.
-    Time(f64),
-}
-
-/// A `Duration` indicates a span of time.
-#[derive(Copy, Clone)]
-pub enum Duration {
-    /// The duration is expressed by an amount of frames.
-    Frames(u64),
-    /// The duration is expressed by an amount of time.
-    Seconds(f64),
-}
+use crate::conv::IntoSample;
+use crate::errors::Result;
+use crate::sample::{Sample, i24, u24};
+use crate::units::Duration;
 
 bitflags! {
     /// Channels is a bit mask of all channels contained in a signal.
@@ -303,15 +286,10 @@ impl<S : Sample> AudioBuffer<S> {
     /// Instantiate a new `AudioBuffer` using the specified signal specification and of the given
     /// duration.
     pub fn new(duration: Duration, spec: SignalSpec) -> Self {
-        let n_capacity = match duration {
-            Duration::Frames(frames) => frames,
-            Duration::Seconds(time) => (time / f64::from(spec.rate)) as u64,
-        };
-
-        let n_sample_capacity = n_capacity * spec.channels.count() as u64;
+        let n_sample_capacity = duration * spec.channels.count() as u64;
 
         // Practically speaking, it is not possible to allocate more than usize samples.
-        debug_assert!(n_sample_capacity <= usize::max_value() as u64);
+        assert!(n_sample_capacity <= usize::max_value() as u64);
 
         // Allocate memory for the sample data and default initialize the sample to silence.
         let buf = vec![S::default(); n_sample_capacity as usize];
@@ -320,7 +298,7 @@ impl<S : Sample> AudioBuffer<S> {
             buf,
             spec,
             n_frames: 0,
-            n_capacity: n_capacity as usize,
+            n_capacity: duration as usize,
         }
     }
 
@@ -407,7 +385,7 @@ impl<S : Sample> AudioBuffer<S> {
 
     /// Makes an equivalent AudioBuffer of a different type.
     pub fn make_equivalent<E: Sample>(&self) -> AudioBuffer<E> {
-        AudioBuffer::<E>::new(Duration::Frames(self.n_capacity as u64), self.spec)
+        AudioBuffer::<E>::new(self.n_capacity as Duration, self.spec)
     }
 }
 
@@ -626,15 +604,10 @@ impl<S: Sample + WriteSample> SampleBuffer<S> {
     /// Instantiate a new `SampleBuffer` using the specified signal specification and of the given
     /// duration.
     pub fn new(duration: Duration, spec: SignalSpec) -> SampleBuffer<S> {
-        let n_frames = match duration {
-            Duration::Frames(frames) => frames,
-            Duration::Seconds(time) => (time / f64::from(spec.rate)) as u64,
-        };
-
-        let n_samples = n_frames * spec.channels.count() as u64;
+        let n_samples = duration * spec.channels.count() as u64;
 
         // Practically speaking, it is not possible to allocate more than usize samples.
-        debug_assert!(n_samples <= usize::max_value() as u64);
+        assert!(n_samples <= usize::max_value() as u64);
 
         // Allocate enough memory for all the samples.
         let byte_length = n_samples as usize * mem::size_of::<S::StreamType>();

@@ -20,10 +20,11 @@ use sonata;
 use sonata::core::errors::{Result, Error};
 use sonata::core::audio::*;
 use sonata::core::codecs::DecoderOptions;
-use sonata::core::formats::{Cue, FormatReader, FormatOptions, Stream};
+use sonata::core::formats::{Cue, FormatReader, FormatOptions, SeekTo, Stream};
 use sonata::core::meta::{ColorMode, MetadataOptions, Tag, Visual};
 use sonata::core::io::MediaSourceStream;
 use sonata::core::probe::Hint;
+use sonata::core::units::{Duration, Time};
 
 use clap::{Arg, App};
 use log::{error, warn};
@@ -126,8 +127,8 @@ fn main() {
 
                 // Seek to the desired timestamp if requested.
                 if let Some(seek_value) = matches.value_of("seek") {
-                    let pos = seek_value.parse::<f64>().unwrap();
-                    reader.seek(Timestamp::Time(pos)).unwrap();
+                    let pos = seek_value.parse::<f64>().unwrap_or(0.0);
+                    reader.seek(SeekTo::Time{ time: Time::from(pos) }).unwrap();
                 }
 
                 // Set the decoder options.
@@ -152,19 +153,28 @@ fn decode_only(mut reader: Box<dyn FormatReader>, decode_options: &DecoderOption
     let mut decoder = sonata::default::get_codecs().make(&stream.codec_params, &decode_options)?;
 
     // Decode all packets, ignoring decode errors.
-    loop {
-        match decoder.decode(&reader.next_packet()?) {
-            Err(Error::DecodeError(err)) => {
-                warn!("decode error: {}", err);
-                continue;
-            },
-            Err(err) => {
-                decoder.close();
-                return Err(err);
-            },
-            _ => continue,
+    let result = loop {
+        // Read the next packet.
+        match reader.next_packet() {
+            Ok(packet) => {
+                // Decode the packet.
+                match decoder.decode(&packet) {
+                    Err(Error::DecodeError(err)) => {
+                        warn!("decode error: {}", err);
+                        continue;
+                    },
+                    Err(err) => break Err(err),
+                    _        => continue,
+                }
+            }
+            Err(err) => break Err(err)
         }
-    }
+    };
+
+    // Close the decoder.
+    decoder.close();
+
+    result
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -202,7 +212,7 @@ fn play(mut reader: Box<dyn FormatReader>, decode_options: &DecoderOptions) -> R
                 let spec = decoded.spec();
 
                 // Get the buffer duration.
-                let duration = Duration::Frames(decoded.capacity() as u64);
+                let duration = Duration::from(decoded.capacity() as u64);
 
                 // An interleaved buffer is required to send data to PulseAudio. Use a SampleBuffer to
                 // move data between Sonata AudioBuffers and the byte buffers required by PulseAudio.
@@ -217,6 +227,16 @@ fn play(mut reader: Box<dyn FormatReader>, decode_options: &DecoderOptions) -> R
 
                 assert!(pa_spec.is_valid());
 
+                // Use custom buffer attributes for very short audio streams.
+                //
+                // let pa_buf_attr = pulse::def::BufferAttr {
+                //     maxlength: std::u32::MAX,
+                //     tlength: 1024,
+                //     prebuf: std::u32::MAX,
+                //     minreq: std::u32::MAX,
+                //     fragsize: std::u32::MAX,
+                // };
+
                 // Create a PulseAudio connection.
                 let pa = psimple::Simple::new(
                     None,                                   // Use default server
@@ -226,7 +246,7 @@ fn play(mut reader: Box<dyn FormatReader>, decode_options: &DecoderOptions) -> R
                     "Music",                                // Description of the stream
                     &pa_spec,                               // Signal specificaiton
                     None,                                   // Default channel map
-                    None                                    // Default buffering attributes
+                    None                                    // Custom buffering attributes
                 ).unwrap();
 
                 // Interleave samples for PulseAudio into the sample buffer.
@@ -248,6 +268,7 @@ fn play(mut reader: Box<dyn FormatReader>, decode_options: &DecoderOptions) -> R
                 continue;
             },
             Err(err) => {
+                pa.drain().unwrap();
                 decoder.close();
                 return Err(err);
             },

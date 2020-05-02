@@ -16,6 +16,7 @@ use crate::audio::{AudioBufferRef, Channels, Layout};
 use crate::errors::{Result, unsupported_error};
 use crate::formats::Packet;
 use crate::sample::SampleFormat;
+use crate::units::TimeBase;
 
 /// A `CodecType` is a unique identifier used to identify a specific codec. `CodecType` is mainly
 /// used for matching a format's stream to a specific `Decoder`. Decoders advertisting support for a
@@ -155,6 +156,9 @@ pub struct CodecParameters {
     /// The sample rate of the audio in Hz.
     pub sample_rate: Option<u32>,
 
+    /// The `TimeBase`.
+    pub time_base: Option<TimeBase>,
+
     /// The length of the encoded stream in number of frames.
     pub n_frames: Option<u64>,
 
@@ -193,6 +197,7 @@ impl CodecParameters {
         CodecParameters {
             codec: CODEC_TYPE_NULL,
             sample_rate: None,
+            time_base: None,
             n_frames: None,
             sample_format: None,
             bits_per_sample: None,
@@ -213,6 +218,11 @@ impl CodecParameters {
 
     pub fn with_sample_rate(&mut self, sample_rate: u32) -> &mut Self {
         self.sample_rate = Some(sample_rate);
+        self
+    }
+
+    pub fn with_time_base(&mut self, time_base: TimeBase) -> &mut Self {
+        self.time_base = Some(time_base);
         self
     }
 

@@ -8,44 +8,49 @@
 //! The `format` module provides the traits and support structures necessary to implement media
 //! demuxers.
 
-use std::default::Default;
 use std::fmt;
 
-use crate::audio::Timestamp;
 use crate::codecs::CodecParameters;
 use crate::errors::Result;
 use crate::io::{BufStream, MediaSourceStream};
 use crate::meta::{MetadataQueue, Tag};
+use crate::units::{Time, TimeStamp};
 
 pub mod prelude {
-    pub use super::{Cue, FormatOptions, FormatReader, Packet, SeekIndex, SeekSearchResult, Stream};
+    pub use crate::units::{Duration, TimeBase, TimeStamp};
+
+    pub use super::{
+        Cue,
+        FormatOptions,
+        FormatReader,
+        Packet,
+        SeekedTo,
+        SeekIndex,
+        SeekSearchResult,
+        SeekTo,
+        Stream,
+    };
 }
 
-/// The verbosity of log messages produced by a decoder or demuxer.
-pub enum Verbosity {
-    /// No messages are logged.
-    Silent,
-    /// Only errors are logged.
-    Error,
-    /// Everything from the Error level, and warnings are logged.
-    Warning,
-    /// Everything from the Warning level, and info messages are logged.
-    Info,
-    /// Everything from the Info level, and debugging information is logged.
-    Debug,
+/// `SeekTo` specifies a location to seek to.
+pub enum SeekTo {
+    /// Seek to an absolute `Time`.
+    Time { time: Time },
+    /// Seek to a stream's `TimeStamp`.
+    TimeStamp { ts: TimeStamp, stream: u32 },
 }
+
+/// `SeekedTo` provides the actual location seeked to.
+pub type SeekedTo = SeekTo;
 
 /// `FormatOptions` is a common set of options that all demuxers use.
 pub struct FormatOptions {
-    /// Selects the logging verbosity of the demuxer.
-    pub verbosity: Verbosity,
+
 }
 
 impl Default for FormatOptions {
     fn default() -> Self {
-        FormatOptions {
-            verbosity: Verbosity::Error,
-        }
+        FormatOptions { }
     }
 }
 
@@ -238,15 +243,18 @@ impl fmt::Display for SeekIndex {
 /// A `Stream` is an independently coded media stream. A media format may contain multiple media
 /// streams in one container. Each of those media streams are represented by one `Stream`.
 pub struct Stream {
+    /// A unique identifier for the stream.
+    pub id: u32,
     /// The parameters defining the codec for the `Stream`.
     pub codec_params: CodecParameters,
-    /// The language of the `Stream`.
+    /// The language of the `Stream`. May be unknown.
     pub language: Option<String>,
 }
 
 impl Stream {
-    pub fn new(codec_params: CodecParameters) -> Self {
+    pub fn new(id: u32, codec_params: CodecParameters) -> Self {
         Stream {
+            id,
             codec_params,
             language: None,
         }
@@ -283,19 +291,20 @@ pub trait FormatReader {
     /// Gets the metadata revision queue.
     fn metadata(&self) -> &MetadataQueue;
 
-    /// Seek, as closely as possible, to the timestamp requested.
+    /// Seek, as closely as possible, to the `Time` or stream `TimeStamp` requested. Returns the
+    /// actual `Time` or `TimeStamp` seeked to.
     ///
-    /// Note that many containers cannot seek to an exact timestamp, rather they can only seek to a
-    /// coarse location and then to the decoder must decode packets until the exact timestamp is
+    /// Note: Many container formats cannot seek to a precise frame, rather they can only seek to a
+    /// coarse location and then the decoder must decode packets until the exact location is
     /// reached.
-    fn seek(&mut self, ts: Timestamp) -> Result<u64>;
+    fn seek(&mut self, to: SeekTo) -> Result<SeekedTo>;
 
     /// Gets a list of streams in the container.
     fn streams(&self) -> &[Stream];
 
-    /// Gets the default stream. If the media container has a method of determing the default
-    /// stream, this function should return it. Otherwise, the first stream is returned. If no
-    /// streams are present, None is returned.
+    /// Gets the default stream. If the `FormatReader` has a method of determing the default stream,
+    /// this function should return it. Otherwise, the first stream is returned. If no streams are
+    /// present then None is returned.
     fn default_stream(&self) -> Option<&Stream> {
         let streams = self.streams();
         match streams.len() {
@@ -314,18 +323,19 @@ pub trait FormatReader {
 pub struct Packet {
     id: u32,
     pts: u64,
+    dur: u64,
     data: Box<[u8]>,
 }
 
 impl Packet {
     /// Create a new `Packet` from a slice.
-    pub fn new_from_slice(id: u32, pts: u64, buf: &[u8]) -> Self {
-        Packet { id, pts, data: Box::from(buf) }
+    pub fn new_from_slice(id: u32, pts: u64, dur: u64, buf: &[u8]) -> Self {
+        Packet { id, pts, dur, data: Box::from(buf) }
     }
 
     /// Create a new `Packet` from a boxed slice.
-    pub fn new_from_boxed_slice(id: u32, pts: u64, data: Box<[u8]>) -> Self {
-        Packet { id, pts, data }
+    pub fn new_from_boxed_slice(id: u32, pts: u64, dur: u64, data: Box<[u8]>) -> Self {
+        Packet { id, pts, dur, data }
     }
 
     /// The stream identifier of the stream this packet belongs to.
@@ -333,18 +343,18 @@ impl Packet {
         self.id
     }
 
-    /// Get the presentation timestamp of the packet.
+    /// Get the presentation timestamp of the packet in `TimeBase` units. May be 0 if unknown.
     pub fn pts(&self) -> u64 {
         self.pts
     }
 
-    /// Get the length in time of the packet.
-    pub fn tlen(&self) -> u64 {
-        0
+    /// Get the duration of the packet in `TimeBase` units. May be 0 if unknown.
+    pub fn duration(&self) -> u64 {
+        self.dur
     }
 
-    /// Get the packet data buffer as an immutable slice.
-    pub fn data(&self) -> &[u8] {
+    /// Get the packet buffer as an immutable slice.
+    pub fn buf(&self) -> &[u8] {
         &self.data
     }
 

@@ -9,10 +9,9 @@
 
 use sonata_core::support_format;
 
-use sonata_core::audio::Timestamp;
 use sonata_core::codecs::{CodecParameters, CODEC_TYPE_MP3};
 use sonata_core::errors::Result;
-use sonata_core::formats::{Cue, FormatOptions, FormatReader, Packet, Stream};
+use sonata_core::formats::prelude::*;
 use sonata_core::io::*;
 use sonata_core::meta::MetadataQueue;
 use sonata_core::probe::{Descriptor, Instantiate, QueryDescriptor};
@@ -69,7 +68,7 @@ impl FormatReader for Mp3Reader {
 
         Ok(Mp3Reader {
             reader: source,
-            streams: vec![ Stream::new(params) ],
+            streams: vec![ Stream::new(0, params) ],
             cues: Vec::new(),
             metadata: Default::default(),
         })
@@ -87,7 +86,7 @@ impl FormatReader for Mp3Reader {
         packet_buf[0..4].copy_from_slice(&header_buf.to_be_bytes());
         self.reader.read_buf_exact(&mut packet_buf[4..])?;
 
-        Ok(Packet::new_from_boxed_slice(0, 0, packet_buf.into_boxed_slice()))
+        Ok(Packet::new_from_boxed_slice(0, 0, 0, packet_buf.into_boxed_slice()))
     }
 
     fn metadata(&self) -> &MetadataQueue {
@@ -102,7 +101,7 @@ impl FormatReader for Mp3Reader {
         &self.streams
     }
 
-    fn seek(&mut self, _ts: Timestamp) -> Result<u64> {
+    fn seek(&mut self, _to: SeekTo) -> Result<SeekedTo> {
         unimplemented!();
     }
 

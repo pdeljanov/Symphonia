@@ -8,7 +8,6 @@
 use std::collections::BTreeMap;
 
 use sonata_core::support_format;
-use sonata_core::audio::Timestamp;
 use sonata_core::errors::{Result, unsupported_error};
 use sonata_core::formats::prelude::*;
 use sonata_core::io::MediaSourceStream;
@@ -80,7 +79,7 @@ impl FormatReader for OggReader {
             // If a stream mapper has been detected, the stream can be read.
             if let Some(mapper) = mappings::detect(&packet.data)? {
                 // Add the stream.
-                streams.push(Stream::new(mapper.codec().clone()));
+                streams.push(Stream::new(packet.serial, mapper.codec().clone()));
                 mappers.insert(packet.serial, mapper);
                 
                 info!("added stream: serial={:#x}", packet.serial);
@@ -91,7 +90,7 @@ impl FormatReader for OggReader {
 
         // Each logical stream may contain additional header packets after the identification packet
         // that contains format-relevant information such as metadata. These packets should be
-        // immediately after the indeniticication packets. As much as possible, read them now.
+        // immediately after the identification packets. As much as possible, read them now.
         loop {
             let packet = physical_stream.next_packet(&mut source)?;
 
@@ -130,7 +129,7 @@ impl FormatReader for OggReader {
                 // Determine what to do with the packet.
                 match mapper.map_packet(&packet.data)? {
                     mappings::MapResult::Bitstream => {
-                        return Ok(Packet::new_from_boxed_slice(0, 0, packet.data));
+                        return Ok(Packet::new_from_boxed_slice(packet.serial, 0, 0, packet.data));
                     },
                     mappings::MapResult::Metadata(metadata) => {
                         self.metadata.push(metadata);
@@ -155,7 +154,7 @@ impl FormatReader for OggReader {
         &self.streams
     }
 
-    fn seek(&mut self, _ts: Timestamp) -> Result<u64> {
+    fn seek(&mut self, _to: SeekTo) -> Result<SeekedTo> {
         unsupported_error("ogg seeking unsupported")
     }
 

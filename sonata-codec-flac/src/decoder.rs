@@ -9,7 +9,7 @@ use std::cmp;
 use std::num::Wrapping;
 
 use sonata_core::audio::{AudioBuffer, AudioBufferRef, AsAudioBufferRef};
-use sonata_core::audio::{Duration, Signal, SignalSpec};
+use sonata_core::audio::{Signal, SignalSpec};
 use sonata_core::codecs::{CODEC_TYPE_FLAC, CodecParameters, CodecDescriptor};
 use sonata_core::codecs::{Decoder, DecoderOptions};
 use sonata_core::errors::{Result, decode_error, unsupported_error};
@@ -119,7 +119,7 @@ impl Decoder for FlacDecoder {
             params: params.clone(),
             is_validating: options.verify,
             validator: Default::default(),
-            buf: AudioBuffer::new(Duration::Frames(frames), spec),
+            buf: AudioBuffer::new(frames, spec),
         })
     }
 
