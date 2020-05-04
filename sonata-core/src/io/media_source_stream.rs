@@ -11,17 +11,19 @@ use std::io::Read;
 
 use super::{ByteStream, MediaSource};
 
+const END_OF_STREAM_ERROR_STR: &str = "end of stream";
+
 /// A `MediaSourceStream` is the common reader type for Sonata. `MediaSourceStream` uses type
 /// erasure to mask the inner reader from the consumer, allowing any typical source to be used.
-/// 
+///
 /// `MediaSourceStream` is designed to provide speed and flexibility in a number of challenging I/O
-/// scenarios. 
-/// 
+/// scenarios.
+///
 /// First, to minimize system call overhead, dynamic dispatch overhead on the inner reader, and
 /// reduce the work-per-byte read, `MediaSourceStream` implements an exponentially growing
 /// read-ahead buffer. The buffer read-ahead length starts at 1kB, and doubles in length as more
 /// sequential reads are performed until it reaches 32kB.
-/// 
+///
 /// Second, to better support non-seekable sources, `MediaSourceStream` implements stream rewinding.
 /// Stream rewinding allows backtracking by up-to either the last read-ahead length or the number of
 /// bytes read, which ever is smaller. In other words, a stream is always guaranteed to be
@@ -73,7 +75,7 @@ impl MediaSourceStream {
             inner: source,
             cur_capacity: Self::INIT_CAPACITY,
             buf: vec![0u8; 2 * Self::MAX_CAPACITY].into_boxed_slice(),
-            pos: 0, 
+            pos: 0,
             end_pos: 0,
             part_idx: 0,
             part: [
@@ -98,7 +100,7 @@ impl MediaSourceStream {
     /// Get the position of the inner reader.
     fn inner_pos(&self) -> u64 {
         cmp::max(
-            self.part[0].base_pos + self.part[0].len as u64, 
+            self.part[0].base_pos + self.part[0].len as u64,
             self.part[1].base_pos + self.part[1].len as u64)
     }
 
@@ -191,7 +193,7 @@ impl MediaSourceStream {
                     // Grow the buffer partition capacity exponentially to reduce the overhead of
                     // buffering on seeking.
                     let capacity = cmp::min(self.cur_capacity << 1, Self::MAX_CAPACITY);
-                    
+
                     // Read into the active buffer partition.
                     let pos = alt_idx * Self::MAX_CAPACITY;
                     let len = self.inner.read(&mut self.buf[pos..pos + capacity])?;
@@ -224,7 +226,7 @@ impl MediaSourceStream {
         // UnexpectedEof in this case since the caller is responsible for ensuring reading past the
         // end of the stream does not occur when using the ByteStream interface.
         if buffer.is_empty() {
-            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "Reached end of stream."));
+            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, END_OF_STREAM_ERROR_STR));
         }
 
         Ok(())
@@ -233,6 +235,7 @@ impl MediaSourceStream {
 }
 
 impl MediaSource for MediaSourceStream {
+
     #[inline]
     fn is_seekable(&self) -> bool {
         self.inner.is_seekable()
@@ -242,21 +245,46 @@ impl MediaSource for MediaSourceStream {
     fn len(&self) -> Option<u64> {
         self.inner.len()
     }
+
 }
 
-impl io::Read for MediaSourceStream { 
+impl io::Read for MediaSourceStream {
+
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        // Fetch the latest buffer partition, and read bytes from it.
-        let len = self.fetch_buffer()?.read(buf)?;
+        let buf_len = buf.len();
 
-        // Advance the read position boundary.
-        self.pos += len;
+        let mut rem = buf;
+        let mut read = 0;
 
-        Ok(len)
+        while !rem.is_empty() {
+            // Fetch the readable portion of the MediaSourceStream read-ahead buffer, and read bytes
+            // into the remaining portion of the caller's buffer.
+            match self.fetch_buffer()?.read(rem) {
+                Ok(0) => break,
+                Ok(count) => {
+                    rem = &mut rem[count..];
+                    read += count;
+
+                    self.pos += count;
+                },
+                Err(ref e) if e.kind() == io::ErrorKind::Interrupted => { },
+                Err(e) => return Err(e),
+            }
+        }
+
+        // Return an end-of-stream error if 0 bytes were read when atleast 1 byte was requested.
+        if read == 0 && buf_len > 0 {
+            Err(io::Error::new(io::ErrorKind::UnexpectedEof, END_OF_STREAM_ERROR_STR))
+        }
+        else {
+            Ok(read)
+        }
     }
+
 }
 
 impl io::Seek for MediaSourceStream {
+
     fn seek(&mut self, pos: io::SeekFrom) -> io::Result<u64> {
         // The current position of the underlying reader is ahead of the current position of the
         // MediaSourceStream by how ever many bytes have not been read from the read-ahead buffer
@@ -274,13 +302,13 @@ impl io::Seek for MediaSourceStream {
                 self.inner.seek(pos)
             }
         }?;
-        
+
         self.invalidate(pos);
 
         Ok(pos)
     }
-}
 
+}
 
 impl ByteStream for MediaSourceStream {
 
@@ -374,31 +402,13 @@ impl ByteStream for MediaSourceStream {
 
     #[inline(always)]
     fn read_buf(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        let mut rem = buf;
-        let mut read = 0;
-
-        while !rem.is_empty() {
-            match self.read(rem) {
-                Ok(0) => break,
-                Ok(n) => {
-                    rem = &mut rem[n..];
-                    read += n;
-                }
-                Err(ref e) if e.kind() == io::ErrorKind::Interrupted => {}
-                Err(e) => return Err(e),
-            }
-        }
-
-        if read == 0 {
-            Err(io::Error::new(io::ErrorKind::UnexpectedEof, "Reached end of stream."))
-        }
-        else {
-            Ok(read)
-        }
+        // Implemented via io::Read trait.
+        self.read(buf)
     }
 
     #[inline(always)]
     fn read_buf_exact(&mut self, buf: &mut [u8]) -> io::Result<()> {
+        // Implemented via io::Read trait.
         self.read_exact(buf)
     }
 

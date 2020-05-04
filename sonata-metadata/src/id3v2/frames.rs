@@ -438,7 +438,7 @@ pub fn read_id3v2p2_frame<B: ByteStream>(reader: &mut B) -> Result<FrameResult> 
         warn!("frame size of 0 for {}", std::str::from_utf8(&id).unwrap());
     }
 
-    let data = reader.read_boxed_slice_bytes(size as usize)?;
+    let data = reader.read_boxed_slice_exact(size as usize)?;
 
     parser(&mut BufStream::new(&data), *std_key, str::from_utf8(&id).unwrap())
 }
@@ -503,7 +503,7 @@ pub fn read_id3v2p3_frame<B: ByteStream>(reader: &mut B) -> Result<FrameResult> 
         warn!("frame size of 0 for {}", std::str::from_utf8(&id).unwrap());
     }
 
-    let data = reader.read_boxed_slice_bytes(size as usize)?;
+    let data = reader.read_boxed_slice_exact(size as usize)?;
 
     parser(&mut BufStream::new(&data), *std_key, str::from_utf8(&id).unwrap())
 }
@@ -594,7 +594,7 @@ pub fn read_id3v2p4_frame<B: ByteStream + FiniteStream>(reader: &mut B) -> Resul
     // can just get references to the decoded data buffer we create here. 
     //
     // You win some, you lose some. :)
-    let mut raw_data = reader.read_boxed_slice_bytes(size as usize)?;
+    let mut raw_data = reader.read_boxed_slice_exact(size as usize)?;
 
     // The frame body is unsynchronised. Decode the unsynchronised data back to it's original form 
     // in-place before wrapping the decoded data in a BufStream for the frame parsers.

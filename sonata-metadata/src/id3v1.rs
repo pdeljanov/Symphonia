@@ -217,7 +217,7 @@ pub fn read_id3v1<B: ByteStream>(reader: &mut B, metadata: &mut MetadataBuilder)
         return unsupported_error("Not an ID3v1 tag.");
     }
 
-    let buf = reader.read_boxed_slice_bytes(125)?;
+    let buf = reader.read_boxed_slice_exact(125)?;
 
     let title = decode_iso8859_text(&buf[0..30]);
     if !title.is_empty() {

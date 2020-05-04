@@ -8,12 +8,11 @@
 #![warn(rust_2018_idioms)]
 #![forbid(unsafe_code)]
 
-use std::cmp::min;
 use std::io::{Seek, SeekFrom};
 
 use sonata_core::support_format;
 use sonata_core::codecs::CodecParameters;
-use sonata_core::errors::{Result, end_of_media_stream_error, seek_error, unsupported_error, SeekErrorKind};
+use sonata_core::errors::{Result, seek_error, unsupported_error, SeekErrorKind};
 use sonata_core::formats::prelude::*;
 use sonata_core::io::*;
 use sonata_core::meta::{Metadata, MetadataBuilder, MetadataQueue};
@@ -32,7 +31,7 @@ const WAVE_STREAM_MARKER: [u8; 4] = *b"RIFF";
 const WAVE_RIFF_FORM: [u8; 4] = *b"WAVE";
 
 /// The maximum number of frames that will be in a packet.
-const WAVE_MAX_FRAMES_PER_PACKET: u64 = 4096;
+const WAVE_MAX_FRAMES_PER_PACKET: u64 = 1152;
 
 /// `Wav` (Wave) Format.
 ///
@@ -44,7 +43,6 @@ pub struct WavReader {
     metadata: MetadataQueue,
     frame_len: u16,
     data_start_pos: u64,
-    data_len: u64,
 }
 
 impl QueryDescriptor for WavReader {
@@ -132,9 +130,7 @@ impl FormatReader for WavReader {
                         _       => list.skip(&mut source)?,
                     }
                 },
-                RiffWaveChunks::Data(dat) => {
-                    let data = dat.parse(&mut source)?;
-
+                RiffWaveChunks::Data(_) => {
                     // Record the offset of the Data chunk's contents to support seeking.
                     let data_start_pos = source.pos();
 
@@ -146,7 +142,6 @@ impl FormatReader for WavReader {
                         metadata,
                         frame_len,
                         data_start_pos,
-                        data_len: u64::from(data.len),
                     });
                 }
             }
@@ -156,16 +151,7 @@ impl FormatReader for WavReader {
     }
 
     fn next_packet(&mut self) -> Result<Packet> {
-        let n_read_len = min(
-            self.data_start_pos + self.data_len - self.reader.pos(),
-            WAVE_MAX_FRAMES_PER_PACKET * u64::from(self.frame_len)
-        );
-
-        if n_read_len < u64::from(self.frame_len) {
-            return end_of_media_stream_error();
-        }
-
-        let packet_buf = self.reader.read_boxed_slice_bytes(n_read_len as usize)?;
+        let packet_buf = self.reader.read_boxed_slice(WAVE_MAX_FRAMES_PER_PACKET as usize)?;
 
         Ok(Packet::new_from_boxed_slice(0, 0, 0, packet_buf))
     }

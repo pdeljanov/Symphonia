@@ -407,7 +407,7 @@ pub fn read_application_block<B : ByteStream>(
                  .collect()
         ).unwrap();
 
-    let data = reader.read_boxed_slice_bytes(block_length as usize - 4)?;
+    let data = reader.read_boxed_slice_exact(block_length as usize - 4)?;
     Ok(VendorData { ident, data })
 }
 
@@ -469,7 +469,7 @@ pub fn read_picture_block<B : ByteStream>(
 
     // Read the image data
     let data_len = reader.read_be_u32()? as usize;
-    let data = reader.read_boxed_slice_bytes(data_len)?;
+    let data = reader.read_boxed_slice_exact(data_len)?;
 
     metadata.add_visual(Visual {
         media_type,

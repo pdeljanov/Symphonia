@@ -199,9 +199,18 @@ pub trait ByteStream {
         Ok(BigEndian::read_f64(&buf))
     }
 
+    /// Reads up-to the number of bytes requested, and returns a boxed slice of the data or an
+    /// error.
+    fn read_boxed_slice(&mut self, len: usize) -> io::Result<Box<[u8]>> {
+        let mut buf = vec![0u8; len];
+        let actual_len = self.read_buf(&mut buf)?;
+        buf.truncate(actual_len);
+        Ok(buf.into_boxed_slice())
+    }
+
     /// Reads exactly the number of bytes requested, and returns a boxed slice of the data or an
     /// error.
-    fn read_boxed_slice_bytes(&mut self, len: usize) -> io::Result<Box<[u8]>> {
+    fn read_boxed_slice_exact(&mut self, len: usize) -> io::Result<Box<[u8]>> {
         let mut buf = vec![0u8; len];
         self.read_buf_exact(&mut buf)?;
         Ok(buf.into_boxed_slice())
