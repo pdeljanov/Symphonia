@@ -130,12 +130,12 @@ impl StreamInfo {
 
         // Validate the block length bounds are in the range [16, 65535] samples.
         if info.block_len_min < 16 || info.block_len_max < 16{
-            return decode_error("Minimum block length is 16 samples.");
+            return decode_error("minimum block length is 16 samples");
         }
 
         // Validate the maximum block size is greater than or equal to the minimum block size.
         if info.block_len_max < info.block_len_min {
-            return decode_error("Maximum block length cannot be less than the minimum block length.");
+            return decode_error("maximum block length is less than the minimum block length");
         }
 
         // Read the frame byte length bounds.
@@ -149,7 +149,7 @@ impl StreamInfo {
             && info.frame_byte_len_max > 0
             && info.frame_byte_len_max < info.frame_byte_len_min
         {
-            return decode_error("Maximum frame length cannot be less than the minimum frame length.");
+            return decode_error("maximum frame length is less than the minimum frame length");
         }
 
         let mut br = BitReaderLtr::new();
@@ -158,14 +158,14 @@ impl StreamInfo {
         info.sample_rate = br.read_bits_leq32(reader, 20)?;
 
         if info.sample_rate < 1 || info.sample_rate > 655_350 {
-            return decode_error("Stream sample rate out of bounds.");
+            return decode_error("stream sample rate out of bounds");
         }
 
         // Read number of channels minus 1. Valid number of channels are 1-8.
         let channels_enc = br.read_bits_leq32(reader, 3)? + 1;
 
         if channels_enc < 1 || channels_enc > 8 {
-            return decode_error("Stream channels are out of bounds.");
+            return decode_error("stream channels are out of bounds");
         }
 
         info.channels = flac_channels_to_channels(channels_enc);
@@ -174,7 +174,7 @@ impl StreamInfo {
         info.bits_per_sample = br.read_bits_leq32(reader, 5)? + 1;
 
         if info.bits_per_sample < 4 || info.bits_per_sample > 32 {
-            return decode_error("Stream bits per sample are out of bounds.")
+            return decode_error("stream bits per sample are out of bounds")
         }
 
         // Read the total number of samples. All values are valid. A value of 0 indiciates a stream
@@ -247,7 +247,7 @@ pub fn read_cuesheet_block<B: ByteStream>(reader: &mut B, cues: &mut Vec<Cue>) -
 
     let _catalog_number = match printable_ascii_to_string(&catalog_number_buf) {
         Some(s) => s,
-        None => return decode_error("Cuesheet catalog number contains invalid characters."),
+        None => return decode_error("cuesheet catalog number contains invalid characters"),
     };
 
     // Number of lead-in samples.
@@ -258,13 +258,13 @@ pub fn read_cuesheet_block<B: ByteStream>(reader: &mut B, cues: &mut Vec<Cue>) -
 
     // Lead-in should be non-zero only for CD-DA cuesheets.
     if !is_cdda && n_lead_in_samples > 0 {
-        return decode_error("Cuesheet lead-in samples should be zero if not CD-DA.");
+        return decode_error("cuesheet lead-in samples should be zero if not CD-DA");
     }
 
     // Next 258 bytes (read as 129 u16's) must be zero.
     for _ in 0..129 {
         if reader.read_be_u16()? != 0 {
-            return decode_error("Cuesheet reserved bits should be zero.");
+            return decode_error("cuesheet reserved bits should be zero");
         }
     }
 
@@ -272,12 +272,12 @@ pub fn read_cuesheet_block<B: ByteStream>(reader: &mut B, cues: &mut Vec<Cue>) -
 
     // There should be at-least one track in the cuesheet.
     if n_tracks == 0 {
-        return decode_error("Cuesheet must have at-least one track.");
+        return decode_error("cuesheet must have at-least one track");
     }
 
     // CD-DA cuesheets must have no more than 100 tracks (99 audio tracks + lead-out track)
     if is_cdda && n_tracks > 100 {
-        return decode_error("Cuesheets for CD-DA must not have more than 100 tracks.");
+        return decode_error("cuesheets for CD-DA must not have more than 100 tracks");
     }
 
     for _ in 0..n_tracks {
@@ -298,7 +298,7 @@ fn read_cuesheet_track<B: ByteStream>(
     // INDEX 01) on the CD. Therefore, the offset must be a multiple of 588 samples
     // (588 samples = 44100 samples/sec * 1/75th of a sec).
     if is_cdda && n_offset_samples % 588 != 0 {
-        return decode_error("Cuesheet track sample offset is not a multiple of 588 for CD-DA.");
+        return decode_error("cuesheet track sample offset is not a multiple of 588 for CD-DA");
     }
 
     let number = u32::from(reader.read_u8()?);
@@ -306,13 +306,13 @@ fn read_cuesheet_track<B: ByteStream>(
     // A track number of 0 is disallowed in all cases. For CD-DA cuesheets, track 0 is reserved for
     // lead-in.
     if number == 0 {
-        return decode_error("Cuesheet track number of 0 not allowed.");
+        return decode_error("cuesheet track number of 0 not allowed");
     }
 
     // For CD-DA cuesheets, only track numbers 1-99 are allowed for regular tracks and 170 for
     // lead-out.
     if is_cdda && number > 99 && number != 170 {
-        return decode_error("Cuesheet track numbers greater than 99 are not allowed for CD-DA.");
+        return decode_error("cuesheet track numbers greater than 99 are not allowed for CD-DA");
     }
 
     let mut isrc_buf = vec![0u8; 12];
@@ -320,7 +320,7 @@ fn read_cuesheet_track<B: ByteStream>(
 
     let isrc = match printable_ascii_to_string(&isrc_buf) {
         Some(s) => s,
-        None => return decode_error("Cuesheet track ISRC contains invalid characters."),
+        None => return decode_error("cuesheet track ISRC contains invalid characters"),
     };
 
     // Next 14 bytes are reserved. However, the first two bits are flags. Consume the reserved bytes
@@ -332,13 +332,13 @@ fn read_cuesheet_track<B: ByteStream>(
     let _use_pre_emphasis = (flags & 0x4000) == 0x4000;
 
     if flags & 0x3fff != 0 {
-        return decode_error("Cuesheet track reserved bits should be zero.");
+        return decode_error("cuesheet track reserved bits should be zero");
     }
 
     // Consume the remaining 12 bytes read in 3 u32 chunks.
     for _ in 0..3 {
         if reader.read_be_u32()? != 0 {
-            return decode_error("Cuesheet track reserved bits should be zero.");
+            return decode_error("cuesheet track reserved bits should be zero");
         }
     }
 
@@ -346,7 +346,7 @@ fn read_cuesheet_track<B: ByteStream>(
 
     // For CD-DA cuesheets, the track index cannot exceed 100 indicies.
     if is_cdda && n_indicies > 100 {
-        return decode_error("Cuesheet track indicies cannot exceed 100 for CD-DA.");
+        return decode_error("cuesheet track indicies cannot exceed 100 for CD-DA");
     }
 
     let mut cue = Cue {
@@ -375,11 +375,13 @@ fn read_cuesheet_track_index<B: ByteStream>(reader: &mut B, is_cdda: bool) -> Re
     // CD-DA track index points must have a sample offset that is a multiple of 588 samples
     // (588 samples = 44100 samples/sec * 1/75th of a sec).
     if is_cdda && n_offset_samples % 588 != 0 {
-        return decode_error("Cuesheet track index point sample offset is not a multiple of 588 for CD-DA.");
+        return decode_error(
+            "cuesheet track index point sample offset is not a multiple of 588 for CD-DA"
+        );
     }
 
     if idx_point_enc & 0x00ff_ffff != 0 {
-        return decode_error("Cuesheet track index reserved bits should be 0.");
+        return decode_error("cuesheet track index reserved bits should be 0");
     }
 
     // TODO: Should be 0 or 1 for the first index for CD-DA.
@@ -427,7 +429,7 @@ pub fn read_picture_block<B : ByteStream>(
     // Convert Media Type bytes to an ASCII string. Non-printable ASCII characters are invalid.
     let media_type = match printable_ascii_to_string(&media_type_buf) {
         Some(s) => s,
-        None => return decode_error("Picture mime-type contains invalid characters."),
+        None => return decode_error("picture mime-type contains invalid characters"),
     };
 
     // Read the description length in bytes.
@@ -440,7 +442,11 @@ pub fn read_picture_block<B : ByteStream>(
     // Convert description bytes into a standard Vorbis DESCRIPTION tag.
     let mut tags = Vec::<Tag>::new();
     tags.push(
-        Tag::new(Some(StandardTagKey::Description), "DESCRIPTION", &String::from_utf8_lossy(&desc_buf))
+        Tag::new(
+            Some(StandardTagKey::Description),
+            "DESCRIPTION",
+            &String::from_utf8_lossy(&desc_buf),
+        )
     );
 
     // Read the width, and height of the visual.

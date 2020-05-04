@@ -465,7 +465,7 @@ pub fn read_id3v2p3_frame<B: ByteStream>(reader: &mut B) -> Result<FrameResult> 
 
     // Unused flag bits must be cleared.
     if flags & 0x1f1f != 0x0 {
-        return decode_error("Unused flag bits are not cleared.");
+        return decode_error("unused flag bits are not cleared");
     }
 
     // Find a parser for the frame. If there is none, skip over the remainder of the frame as it 
@@ -482,14 +482,14 @@ pub fn read_id3v2p3_frame<B: ByteStream>(reader: &mut B) -> Result<FrameResult> 
     // TODO: Implement decompression if it is actually used in the real world.
     if flags & 0x80 != 0x0 {
         reader.ignore_bytes(size)?;
-        return unsupported_error("Compressed frames are not supported.");
+        return unsupported_error("compressed frames are not supported");
     }
 
     // Frame encryption usage flag. This will likely never be supported since encryption methods are
     // vendor-specific.
     if flags & 0x4 != 0x0 {
         reader.ignore_bytes(size)?;
-        return unsupported_error("Encrypted frames are not supported.");
+        return unsupported_error("encrypted frames are not supported");
     }
 
     // Frame group identifier byte. Used to group a set of frames. There is no analogue in Sonata.
@@ -529,7 +529,7 @@ pub fn read_id3v2p4_frame<B: ByteStream + FiniteStream>(reader: &mut B) -> Resul
 
     // Unused flag bits must be cleared.
     if flags & 0x8fb0 != 0x0 {
-        return decode_error("Unused flag bits are not cleared.");
+        return decode_error("unused flag bits are not cleared");
     }
 
     // Find a parser for the frame. If there is none, skip over the remainder of the frame as it
@@ -546,14 +546,14 @@ pub fn read_id3v2p4_frame<B: ByteStream + FiniteStream>(reader: &mut B) -> Resul
     // TODO: Implement decompression if it is actually used in the real world.
     if flags & 0x8 != 0x0 {
         reader.ignore_bytes(size)?;
-        return unsupported_error("Compressed frames are not supported.");
+        return unsupported_error("compressed frames are not supported");
     }
 
     // Frame encryption usage flag. This will likely never be supported since encryption methods are
     // vendor-specific.
     if flags & 0x4 != 0x0 {
         reader.ignore_bytes(size)?;
-        return unsupported_error("Encrypted frames are not supported.");
+        return unsupported_error("encrypted frames are not supported");
     }
 
     // Frame group identifier byte. Used to group a set of frames. There is no analogue in Sonata.
@@ -619,7 +619,7 @@ fn read_text_frame(
     // The first byte of the frame is the encoding.
     let encoding = match Encoding::parse(reader.read_byte()?) {
         Some(encoding) => encoding,
-        _              => return decode_error("Invalid text encoding.")
+        _              => return decode_error("invalid text encoding")
     };
 
     // Since a text frame can have a null-terminated list of values, and Sonata allows multiple tags
@@ -651,7 +651,7 @@ fn read_txxx_frame(
     // The first byte of the frame is the encoding.
     let encoding = match Encoding::parse(reader.read_byte()?) {
         Some(encoding) => encoding,
-        _              => return decode_error("Invalid TXXX text encoding.")
+        _              => return decode_error("invalid TXXX text encoding")
     };
 
     // Read the description string.
@@ -709,7 +709,7 @@ fn read_wxxx_frame(
     // The first byte of the WXXX frame is the encoding of the description.
     let encoding = match Encoding::parse(reader.read_byte()?) {
         Some(encoding) => encoding,
-        _              => return decode_error("Invalid WXXX URL description encoding.")
+        _              => return decode_error("invalid WXXX URL description encoding")
     };
 
     // Scan for the the description string.
@@ -751,7 +751,7 @@ fn read_comm_uslt_frame(
     // The first byte of the frame is the encoding of the description.
     let encoding = match Encoding::parse(reader.read_byte()?) {
         Some(encoding) => encoding,
-        _              => return decode_error("Invalid text encoding.")
+        _              => return decode_error("invalid text encoding")
     };
 
     // The next three bytes are the language.
@@ -790,14 +790,14 @@ fn read_pcnt_frame(
 
     // The play counter must be a minimum of 4 bytes long.
     if len < 4 {
-        return decode_error("Play counters must be a minimum of 32bits.");
+        return decode_error("play counters must be a minimum of 32bits");
     }
 
     // However it may be extended by an arbitrary amount of bytes (or so it would seem). 
     // Practically, a 4-byte (32-bit) count is way more than enough, but we'll support up-to an
     // 8-byte (64bit) count.
     if len > 8 {
-        return unsupported_error("Play counters greater than 64bits are not supported.");
+        return unsupported_error("play counters greater than 64bits are not supported");
     }
 
     // The play counter is stored as an N-byte big-endian integer. Read N bytes into an 8-byte 

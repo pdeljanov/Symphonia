@@ -77,22 +77,22 @@ pub fn parse_frame_header(header: u32) -> Result<FrameHeader> {
         0b00 => MpegVersion::Mpeg2p5,
         0b10 => MpegVersion::Mpeg2,
         0b11 => MpegVersion::Mpeg1,
-        _    => return decode_error("Invalid MPEG version."),
+        _    => return decode_error("invalid MPEG version"),
     };
 
     let layer = match (header & 0x6_0000) >> 17 {
         0b01 => MpegLayer::Layer3,
         0b10 => MpegLayer::Layer2,
         0b11 => MpegLayer::Layer1,
-        _    => return decode_error("Invalid MPEG layer."),
+        _    => return decode_error("invalid MPEG layer"),
     };
 
     let bitrate = match ((header & 0xf000) >> 12, version, layer) {
         // "Free" bit-rate. Note, this is NOT variable bit-rate and is not a mandatory feature of
         // MP3 decoders.
-        (0b0000, _, _) => return unsupported_error("Free bit-rate is not supported."),
+        (0b0000, _, _) => return unsupported_error("free bit-rate is not supported"),
         // Invalid bit-rate.
-        (0b1111, _, _) => return decode_error("Invalid bit-rate."),
+        (0b1111, _, _) => return decode_error("invalid bit-rate"),
         // MPEG 1 bit-rates.
         (i, MpegVersion::Mpeg1, MpegLayer::Layer1) => BIT_RATES_MPEG1_L1[i as usize],
         (i, MpegVersion::Mpeg1, MpegLayer::Layer2) => BIT_RATES_MPEG1_L2[i as usize],
@@ -112,7 +112,7 @@ pub fn parse_frame_header(header: u32) -> Result<FrameHeader> {
         (0b00, MpegVersion::Mpeg2p5) => (11_025, 6),
         (0b01, MpegVersion::Mpeg2p5) => (12_000, 7),
         (0b10, MpegVersion::Mpeg2p5) => ( 8_000, 8),
-        _                            => return decode_error("Invalid sample rate."),
+        _                            => return decode_error("invalid sample rate"),
     };
 
     let channel_mode = match ((header & 0xc0) >> 6, layer) {
@@ -145,11 +145,11 @@ pub fn parse_frame_header(header: u32) -> Result<FrameHeader> {
                 || bitrate == 320_000
                 || bitrate == 384_000
             {
-                return decode_error("Invalid Layer 2 bitrate for mono channel mode.");
+                return decode_error("invalid Layer 2 bitrate for mono channel mode");
             }
         }
         else if bitrate == 32_000 || bitrate == 48_000 || bitrate == 56_000 || bitrate == 80_000 {
-            return decode_error("Invalid Layer 2 bitrate for non-mono channel mode.");
+            return decode_error("invalid Layer 2 bitrate for non-mono channel mode");
         }
     }
 
@@ -157,7 +157,7 @@ pub fn parse_frame_header(header: u32) -> Result<FrameHeader> {
         0b00 => Emphasis::None,
         0b01 => Emphasis::Fifty15,
         0b11 => Emphasis::CcitJ17,
-        _    => return decode_error("Invalid emphasis."),
+        _    => return decode_error("invalid emphasis"),
     };
 
     let is_copyrighted = header & 0x8 != 0x0;

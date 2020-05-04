@@ -94,25 +94,25 @@ impl Decoder for FlacDecoder {
         // Consider supporting this.
         let frames = match params.max_frames_per_packet {
             Some(frames) => frames,
-            None => return unsupported_error("Variable frames per packet are unsupported."),
+            None => return unsupported_error("variable frames per packet are unsupported"),
         };
 
         let spec = {
             let sample_rate = match params.sample_rate {
                 Some(rate) => rate,
-                None       => return unsupported_error("Variable sample rate is unsupported."),
+                None       => return unsupported_error("variable sample rate is unsupported"),
             };
 
             let channels = match params.channels {
                 Some(channels) => channels,
-                None           => return unsupported_error("Dynamic channels are unsupported."),
+                None           => return unsupported_error("dynamic channels are unsupported"),
             };
 
             SignalSpec::new(sample_rate, channels)
         };
 
         if !params.packet_data_integrity {
-            return unsupported_error("Packet integrity is required.");
+            return unsupported_error("packet integrity is required");
         }
 
         Ok(FlacDecoder {
@@ -144,10 +144,10 @@ impl Decoder for FlacDecoder {
         let bits_per_sample = if let Some(bps) = header.bits_per_sample { bps }
                               else if let Some(bps) = self.params.bits_per_sample { bps }
                               else {
-                                  return decode_error("Bits per sample not provided.");
+                                  return decode_error("bits per sample not provided");
                               };
 
-        // trace!("Frame: [{:?}] strategy={:?}, n_samples={}, bps={}, channels={:?}",
+        // trace!("frame: [{:?}] strategy={:?}, n_samples={}, bps={}, channels={:?}",
         //     header.block_sequence,
         //     header.blocking_strategy,
         //     header.block_num_samples,
@@ -237,7 +237,7 @@ fn read_subframe<B: BitStream>(bs: &mut B, frame_bps: u32, buf: &mut [i32]) -> R
 
     // First sub-frame bit must always 0.
     if bs.read_bit()? {
-        return decode_error("Subframe padding is not 0.");
+        return decode_error("subframe padding is not 0");
     }
 
     // Next 6 bits designate the sub-frame type.
@@ -250,13 +250,13 @@ fn read_subframe<B: BitStream>(bs: &mut B, frame_bps: u32, buf: &mut [i32]) -> R
             let order = subframe_type_enc & 0x07;
             // The Fixed Predictor only supports orders between 0 and 4.
             if order > 4 {
-                return decode_error("Fixed predictor orders of greater than 4 are invalid.");
+                return decode_error("fixed predictor orders of greater than 4 are invalid");
             }
             SubFrameType::FixedLinear(order)
         },
         0x20..=0x3f => SubFrameType::Linear((subframe_type_enc & 0x1f) + 1),
         _ => {
-            return decode_error("Subframe type set to reserved value.");
+            return decode_error("subframe type set to reserved value");
         }
     };
 
@@ -277,7 +277,7 @@ fn read_subframe<B: BitStream>(bs: &mut B, frame_bps: u32, buf: &mut [i32]) -> R
     // sub-frame and obtaining the truncated audio sub-block samples.
     let bps = frame_bps - dropped_bps;
 
-    // trace!("\tSubframe: type={:?}, bps={}, dropped_bps={}",
+    // trace!("\tsubframe: type={:?}, bps={}, dropped_bps={}",
     //     &subframe_type,
     //     bps,
     //     dropped_bps);
@@ -354,7 +354,7 @@ fn decode_linear<B: BitStream>(bs: &mut B, bps: u32, order: u32, buf: &mut [i32]
     // Quantized linear predictor (QLP) coefficients precision in bits.
     let qlp_precision = bs.read_bits_leq32(4)? + 1;
     if qlp_precision > 15 {
-        return decode_error("QLP precision set to reserved value.");
+        return decode_error("QLP precision set to reserved value");
     }
 
     // QLP coefficients bit shift [-16, 15].
@@ -412,7 +412,7 @@ fn decode_linear<B: BitStream>(bs: &mut B, bps: u32, order: u32, buf: &mut [i32]
         }
     }
     else {
-        return unsupported_error("LPC shifts less than 0 are not supported.");
+        return unsupported_error("LPC shifts less than 0 are not supported");
     }
 
     Ok(())
@@ -433,7 +433,7 @@ fn decode_residual<B: BitStream>(
         0x0 => 4,
         0x1 => 5,
         _ => {
-            return decode_error("Residual method set to reserved value.");
+            return decode_error("residual method set to reserved value");
         }
     };
 
@@ -454,15 +454,15 @@ fn decode_residual<B: BitStream>(
     // minus the number of warm-up samples (which is the predictor order). Ensure the number of
     // samples in these types of partitions cannot be negative.
     if n_prelude_samples as usize > n_partition_samples {
-        return decode_error("Residual partition too small for given predictor order.");
+        return decode_error("residual partition too small for given predictor order");
     }
 
     // Ensure that the sum of all partition lengths equal the block size.
     if n_partitions * n_partition_samples != buf.len() {
-        return decode_error("Block size is not same as encoded residual.");
+        return decode_error("block size is not same as encoded residual");
     }
 
-    // trace!("\t\tResidual: n_partitions={}, n_partition_samples={}, n_prelude_samples={}",
+    // trace!("\t\tresidual: n_partitions={}, n_partition_samples={}, n_prelude_samples={}",
     //     n_partitions,
     //     n_partition_samples,
     //     n_prelude_samples);
@@ -509,7 +509,7 @@ fn decode_rice_partition<B: BitStream>(
         let residual_bits = bs.read_bits_leq32(5)?;
 
         // trace!(
-        //     "\t\t\tPartition (Binary): n_residuals={}, residual_bits={}",
+        //     "\t\t\tpartition (Binary): n_residuals={}, residual_bits={}",
         //     buf.len(),
         //     residual_bits
         // );

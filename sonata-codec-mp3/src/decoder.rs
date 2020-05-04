@@ -62,7 +62,7 @@ impl Decoder for Mp3Decoder {
             MpegLayer::Layer3 => {
                 layer3::decode_frame(&mut reader, &header, &mut self.state, &mut self.buf)?;
             },
-            _ => return unsupported_error("Unsupported MPEG Layer."),
+            _ => return unsupported_error("unsupported MPEG layer"),
         }
 
         Ok(self.buf.as_audio_buffer_ref())

@@ -52,7 +52,7 @@ fn read_granule_channel_side_info<B: BitStream>(
     // The maximum number of samples in a granule is 576. One big_value decodes to 2 samples,
     // therefore there can be no more than 288 (576/2) big_values.
     if channel.big_values > 288 {
-        return decode_error("Granule big_values > 288.");
+        return decode_error("granule big_values > 288");
     }
 
     channel.global_gain = bs.read_bits_leq32(8)? as u8;
@@ -73,7 +73,7 @@ fn read_granule_channel_side_info<B: BitStream>(
 
         channel.block_type = match block_type_enc {
             // Long block types are not allowed with window switching.
-            0b00 => return decode_error("Invalid block_type."),
+            0b00 => return decode_error("invalid block_type"),
             0b01 => BlockType::Start,
             0b10 => BlockType::Short { is_mixed },
             0b11 => BlockType::End,

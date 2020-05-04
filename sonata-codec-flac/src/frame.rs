@@ -89,7 +89,7 @@ pub fn read_frame_header<B: ByteStream>(reader: &mut B, sync: u16) -> Result<Fra
     let bits_per_sample_enc = u32::from((desc & 0x000e) >>  1);
 
     if (desc & 0x0001) == 1 {
-        return decode_error("Frame header reserved bit is not set to mandatory value.");
+        return decode_error("frame header reserved bit is not set to mandatory value");
     }
 
     let block_sequence = match blocking_strategy {
@@ -97,14 +97,14 @@ pub fn read_frame_header<B: ByteStream>(reader: &mut B, sync: u16) -> Result<Fra
         BlockingStrategy::Fixed => {
             let frame = match utf8_decode_be_u64(&mut reader_crc8)? {
                 Some(frame) => frame,
-                None => return decode_error("Frame sequence number is not valid."),
+                None => return decode_error("frame sequence number is not valid"),
             };
 
             // The frame number should only be 31-bits. Since it is UTF8 encoded, the actual length
             // cannot be enforced by the decoder. Return an error if the frame number exceeds the
             // maximum 31-bit value.
             if frame > 0x7fff_ffff {
-                return decode_error("Frame sequence number exceeds 31-bits.");
+                return decode_error("frame sequence number exceeds 31-bits");
             }
 
             BlockSequence::ByFrame(frame as u32)
@@ -113,14 +113,14 @@ pub fn read_frame_header<B: ByteStream>(reader: &mut B, sync: u16) -> Result<Fra
         BlockingStrategy::Variable => {
             let sample = match utf8_decode_be_u64(&mut reader_crc8)? {
                 Some(sample) => sample,
-                None => return decode_error("Frame sequence number is not valid."),
+                None => return decode_error("frame sequence number is not valid"),
             };
 
             // The sample number should only be 36-bits. Since it is UTF8 encoded, the actual length
             // cannot be enforced by the decoder. Return an error if the frame number exceeds the
             // maximum 36-bit value.
             if sample > 0xffff_fffff {
-                return decode_error("Sample sequence number exceeds 36-bits");
+                return decode_error("sample sequence number exceeds 36-bits");
             }
 
             BlockSequence::BySample(sample)
@@ -134,13 +134,13 @@ pub fn read_frame_header<B: ByteStream>(reader: &mut B, sync: u16) -> Result<Fra
         0x7       => {
             let block_size = reader_crc8.read_be_u16()?;
             if block_size == 0xffff {
-                return decode_error("Block size not allowed to be greater than 65535.");
+                return decode_error("block size not allowed to be greater than 65535");
             }
             block_size + 1
         },
         0x8..=0xf => 256 * (1 << (block_size_enc - 8)),
         _         => {
-            return decode_error("Block size set to reserved value.");
+            return decode_error("block size set to reserved value");
         }
     };
 
@@ -161,13 +161,13 @@ pub fn read_frame_header<B: ByteStream>(reader: &mut B, sync: u16) -> Result<Fra
         0xd => Some(u32::from(reader_crc8.read_be_u16()?)),
         0xe => Some(u32::from(reader_crc8.read_be_u16()?) * 10),
         _   => {
-            return decode_error("Sample rate set to reserved value.");
+            return decode_error("sample rate set to reserved value");
         }
     };
 
     if let Some(rate) = sample_rate {
         if rate < 1 || rate > 655_350 {
-            return decode_error("Sample rate out of bounds.");
+            return decode_error("sample rate out of bounds");
         }
     }
 
@@ -179,7 +179,7 @@ pub fn read_frame_header<B: ByteStream>(reader: &mut B, sync: u16) -> Result<Fra
         0x5 => Some(20),
         0x6 => Some(24),
         _   => {
-            return decode_error("Bits per sample set to reserved value.");
+            return decode_error("bits per sample set to reserved value");
         }
     };
 
@@ -189,7 +189,7 @@ pub fn read_frame_header<B: ByteStream>(reader: &mut B, sync: u16) -> Result<Fra
         0x9       => ChannelAssignment::RightSide,
         0xa       => ChannelAssignment::MidSide,
         _ => {
-            return decode_error("Channel assignment set to reserved value.");
+            return decode_error("channel assignment set to reserved value");
         }
     };
 
@@ -200,7 +200,7 @@ pub fn read_frame_header<B: ByteStream>(reader: &mut B, sync: u16) -> Result<Fra
     let crc8_expected = reader_crc8.into_inner().read_u8()?;
 
     if crc8_expected != crc8_computed {
-        return decode_error("Computed frame header CRC does not match expected CRC.");
+        return decode_error("computed frame header CRC does not match expected CRC");
     }
 
     Ok(FrameHeader {

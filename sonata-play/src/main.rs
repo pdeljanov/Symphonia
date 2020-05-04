@@ -180,7 +180,7 @@ fn decode_only(mut reader: Box<dyn FormatReader>, decode_options: &DecoderOption
 #[cfg(not(target_os = "linux"))]
 fn play(_: Box<dyn FormatReader>, _: &DecoderOptions) -> Result<()> {
     // TODO: Support the platform.
-    unsupported_error("Playback is not supported on your platform.")
+    unsupported_error("playback is not supported on this platform")
 }
 
 #[cfg(target_os = "linux")]
