@@ -8,8 +8,6 @@
 //! The `format` module provides the traits and support structures necessary to implement media
 //! demuxers.
 
-use std::fmt;
-
 use crate::codecs::CodecParameters;
 use crate::errors::Result;
 use crate::io::{BufStream, MediaSourceStream};
@@ -17,6 +15,8 @@ use crate::meta::{MetadataQueue, Tag};
 use crate::units::{Time, TimeStamp};
 
 pub mod prelude {
+    //! The `formats` module prelude.
+
     pub use crate::units::{Duration, TimeBase, TimeStamp};
 
     pub use super::{
@@ -25,8 +25,6 @@ pub mod prelude {
         FormatReader,
         Packet,
         SeekedTo,
-        SeekIndex,
-        SeekSearchResult,
         SeekTo,
         Stream,
     };
@@ -81,163 +79,6 @@ pub struct CuePoint {
     pub start_offset_ts: u64,
     /// A list of `Tag`s associated with the `CuePoint`.
     pub tags: Vec<Tag>,
-}
-
-/// A `SeekPoint` is a mapping between a sample or frame number to byte offset within a media
-/// stream.
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub struct SeekPoint {
-    /// The frame or sample timestamp of the `SeekPoint`.
-    pub frame_ts: u64,
-    /// The byte offset of the `SeekPoint`s timestamp relative to a format-specific location.
-    pub byte_offset: u64,
-    /// The number of frames the `SeekPoint` covers.
-    pub n_frames: u32,
-}
-
-impl SeekPoint {
-    fn new(frame_ts: u64, byte_offset: u64, n_frames: u32) -> Self {
-        SeekPoint { frame_ts, byte_offset, n_frames }
-    }
-}
-
-impl fmt::Display for SeekPoint {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{{ frame_ts={}, n_frames={}, byte_offset={} }}",
-            self.frame_ts,
-            self.n_frames,
-            self.byte_offset
-        )
-    }
-}
-
-/// A `SeekIndex` stores `SeekPoint`s (generally a sample or frame number to byte offset) within a
-/// media stream and provides methods to efficiently search for the nearest `SeekPoint`(s) given a
-/// timestamp.
-///
-/// A `SeekIndex` does not require complete coverage of the entire media stream. However, the better
-/// the coverage, the smaller the manual search range the `SeekIndex` will return.
-pub struct SeekIndex {
-    points: Vec<SeekPoint>,
-}
-
-/// `SeekSearchResult` is the return value for a search on a `SeekIndex`. It returns a range of
-/// `SeekPoint`s a `FormatReader` should search to find the desired timestamp. Ranges are
-/// lower-bound inclusive, and upper-bound exclusive.
-#[derive(Debug, PartialEq)]
-pub enum SeekSearchResult {
-    /// The `SeekIndex` is empty so the desired timestamp could not be found. The entire stream
-    /// should be searched for the desired timestamp.
-    Stream,
-    /// The desired timestamp can be found before, the `SeekPoint`. The stream should be searched
-    /// for the desired timestamp from the start of the stream up-to, but not including, the
-    /// `SeekPoint`.
-    Upper(SeekPoint),
-    /// The desired timestamp can be found at, or after, the `SeekPoint`. The stream should be
-    /// searched for the desired timestamp starting at the provided `SeekPoint` up-to the end of the
-    /// stream.
-    Lower(SeekPoint),
-    /// The desired timestamp can be found within the range. The stream should be searched for the
-    /// desired starting at the first `SeekPoint` up-to, but not-including, the second `SeekPoint`.
-    Range(SeekPoint, SeekPoint)
-}
-
-impl SeekIndex {
-    /// Create an empty `SeekIndex`
-    pub fn new() -> SeekIndex {
-        SeekIndex {
-            points: Vec::new(),
-        }
-    }
-
-    /// Insert a `SeekPoint` into the index.
-    pub fn insert(&mut self, frame: u64, byte_offset: u64, n_frames: u32) {
-        // TODO: Ensure monotonic timestamp ordering of self.points.
-        self.points.push(SeekPoint::new(frame, byte_offset, n_frames));
-    }
-
-    /// Search the index to find a bounded range of bytes, wherein the specified frame timestamp
-    /// will be contained. If the index is empty, this function simply returns a result indicating
-    /// the entire stream should be searched manually.
-    pub fn search(&self, frame_ts: u64) -> SeekSearchResult {
-        // The index must contain atleast one SeekPoint to return a useful result.
-        if !self.points.is_empty() {
-            let mut lower = 0;
-            let mut upper = self.points.len() - 1;
-
-            // If the desired timestamp is less than the first SeekPoint within the index, indicate
-            // that the stream should be searched from the beginning.
-            if frame_ts < self.points[lower].frame_ts {
-                return SeekSearchResult::Upper(self.points[lower]);
-            }
-            // If the desired timestamp is greater than or equal to the last SeekPoint within the
-            // index, indicate that the stream should be searched from the last SeekPoint.
-            else if frame_ts >= self.points[upper].frame_ts {
-                return SeekSearchResult::Lower(self.points[upper]);
-            }
-
-            // Desired timestamp is between the lower and upper indicies. Perform a binary search to
-            // find a range of SeekPoints containing the desired timestamp. The binary search exits
-            // when either two adjacent SeekPoints or a single SeekPoint is found.
-            while upper - lower > 1 {
-                let mid = (lower + upper) / 2;
-                let mid_ts = self.points[mid].frame_ts;
-
-                if frame_ts < mid_ts {
-                    upper = mid;
-                }
-                else if frame_ts >= mid_ts {
-                    lower = mid;
-                }
-            }
-
-            return SeekSearchResult::Range(self.points[lower], self.points[upper]);
-        }
-
-        // The index is empty, the stream must be searched manually.
-        SeekSearchResult::Stream
-    }
-}
-
-#[test]
-fn verify_seek_index_search() {
-    let mut index = SeekIndex::new();
-    index.insert(50 , 0,  45);
-    index.insert(120, 0,   4);
-    index.insert(320, 0, 100);
-    index.insert(421, 0,  10);
-    index.insert(500, 0,  12);
-    index.insert(600, 0,  12);
-
-    assert_eq!(index.search(25) , SeekSearchResult::Upper(SeekPoint::new(50 ,0, 45)));
-    assert_eq!(index.search(700), SeekSearchResult::Lower(SeekPoint::new(600,0, 12)));
-    assert_eq!(
-        index.search(110),
-        SeekSearchResult::Range(SeekPoint::new(50 ,0, 45),
-        SeekPoint::new(120,0,4))
-    );
-    assert_eq!(
-        index.search(340),
-        SeekSearchResult::Range(SeekPoint::new(320,0,100),
-        SeekPoint::new(421,0,10))
-    );
-    assert_eq!(
-        index.search(320),
-        SeekSearchResult::Range(SeekPoint::new(320,0,100),
-        SeekPoint::new(421,0,10))
-    );
-}
-
-impl fmt::Display for SeekIndex {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "SeekIndex [")?;
-        for point in &self.points {
-            writeln!(f, "\t{},", point)?;
-        }
-        writeln!(f, "]")
-    }
 }
 
 /// A `Stream` is an independently coded media stream. A media format may contain multiple media
@@ -362,4 +203,150 @@ impl Packet {
     pub fn as_buf_stream(&self) -> BufStream {
         BufStream::new(&self.data)
     }
+}
+
+pub mod util {
+    //! Helper utilities for implementing `FormatReader`s.
+
+    /// A `SeekPoint` is a mapping between a sample or frame number to byte offset within a media
+    /// stream.
+    #[derive(Copy, Clone, Debug, PartialEq)]
+    pub struct SeekPoint {
+        /// The frame or sample timestamp of the `SeekPoint`.
+        pub frame_ts: u64,
+        /// The byte offset of the `SeekPoint`s timestamp relative to a format-specific location.
+        pub byte_offset: u64,
+        /// The number of frames the `SeekPoint` covers.
+        pub n_frames: u32,
+    }
+
+    impl SeekPoint {
+        fn new(frame_ts: u64, byte_offset: u64, n_frames: u32) -> Self {
+            SeekPoint { frame_ts, byte_offset, n_frames }
+        }
+    }
+
+    /// A `SeekIndex` stores `SeekPoint`s (generally a sample or frame number to byte offset) within
+    //  a media stream and provides methods to efficiently search for the nearest `SeekPoint`(s)
+    // given a timestamp.
+    ///
+    /// A `SeekIndex` does not require complete coverage of the entire media stream. However, the
+    /// better the coverage, the smaller the manual search range the `SeekIndex` will return.
+    pub struct SeekIndex {
+        points: Vec<SeekPoint>,
+    }
+
+    /// `SeekSearchResult` is the return value for a search on a `SeekIndex`. It returns a range of
+    /// `SeekPoint`s a `FormatReader` should search to find the desired timestamp. Ranges are
+    /// lower-bound inclusive, and upper-bound exclusive.
+    #[derive(Debug, PartialEq)]
+    pub enum SeekSearchResult {
+        /// The `SeekIndex` is empty so the desired timestamp could not be found. The entire stream
+        /// should be searched for the desired timestamp.
+        Stream,
+        /// The desired timestamp can be found before, the `SeekPoint`. The stream should be
+        /// searched for the desired timestamp from the start of the stream up-to, but not
+        /// including, the `SeekPoint`.
+        Upper(SeekPoint),
+        /// The desired timestamp can be found at, or after, the `SeekPoint`. The stream should be
+        /// searched for the desired timestamp starting at the provided `SeekPoint` up-to the end of
+        /// the stream.
+        Lower(SeekPoint),
+        /// The desired timestamp can be found within the range. The stream should be searched for
+        /// the desired starting at the first `SeekPoint` up-to, but not-including, the second
+        /// `SeekPoint`.
+        Range(SeekPoint, SeekPoint)
+    }
+
+    impl SeekIndex {
+        /// Create an empty `SeekIndex`
+        pub fn new() -> SeekIndex {
+            SeekIndex {
+                points: Vec::new(),
+            }
+        }
+
+        /// Insert a `SeekPoint` into the index.
+        pub fn insert(&mut self, frame: u64, byte_offset: u64, n_frames: u32) {
+            // TODO: Ensure monotonic timestamp ordering of self.points.
+            self.points.push(SeekPoint::new(frame, byte_offset, n_frames));
+        }
+
+        /// Search the index to find a bounded range of bytes, wherein the specified frame timestamp
+        /// will be contained. If the index is empty, this function simply returns a result
+        /// indicating the entire stream should be searched manually.
+        pub fn search(&self, frame_ts: u64) -> SeekSearchResult {
+            // The index must contain atleast one SeekPoint to return a useful result.
+            if !self.points.is_empty() {
+                let mut lower = 0;
+                let mut upper = self.points.len() - 1;
+
+                // If the desired timestamp is less than the first SeekPoint within the index,
+                // indicate that the stream should be searched from the beginning.
+                if frame_ts < self.points[lower].frame_ts {
+                    return SeekSearchResult::Upper(self.points[lower]);
+                }
+                // If the desired timestamp is greater than or equal to the last SeekPoint within
+                // the index, indicate that the stream should be searched from the last SeekPoint.
+                else if frame_ts >= self.points[upper].frame_ts {
+                    return SeekSearchResult::Lower(self.points[upper]);
+                }
+
+                // Desired timestamp is between the lower and upper indicies. Perform a binary
+                // search to find a range of SeekPoints containing the desired timestamp. The binary
+                // search exits when either two adjacent SeekPoints or a single SeekPoint is found.
+                while upper - lower > 1 {
+                    let mid = (lower + upper) / 2;
+                    let mid_ts = self.points[mid].frame_ts;
+
+                    if frame_ts < mid_ts {
+                        upper = mid;
+                    }
+                    else if frame_ts >= mid_ts {
+                        lower = mid;
+                    }
+                }
+
+                return SeekSearchResult::Range(self.points[lower], self.points[upper]);
+            }
+
+            // The index is empty, the stream must be searched manually.
+            SeekSearchResult::Stream
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::{SeekIndex, SeekPoint, SeekSearchResult};
+
+        #[test]
+        fn verify_seek_index_search() {
+            let mut index = SeekIndex::new();
+            index.insert(50 , 0,  45);
+            index.insert(120, 0,   4);
+            index.insert(320, 0, 100);
+            index.insert(421, 0,  10);
+            index.insert(500, 0,  12);
+            index.insert(600, 0,  12);
+
+            assert_eq!(index.search(25) , SeekSearchResult::Upper(SeekPoint::new(50 ,0, 45)));
+            assert_eq!(index.search(700), SeekSearchResult::Lower(SeekPoint::new(600,0, 12)));
+            assert_eq!(
+                index.search(110),
+                SeekSearchResult::Range(SeekPoint::new(50 ,0, 45),
+                SeekPoint::new(120,0,4))
+            );
+            assert_eq!(
+                index.search(340),
+                SeekSearchResult::Range(SeekPoint::new(320,0,100),
+                SeekPoint::new(421,0,10))
+            );
+            assert_eq!(
+                index.search(320),
+                SeekSearchResult::Range(SeekPoint::new(320,0,100),
+                SeekPoint::new(421,0,10))
+            );
+        }
+    }
+
 }

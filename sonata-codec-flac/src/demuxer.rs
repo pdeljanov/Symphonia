@@ -14,6 +14,7 @@ use sonata_core::support_format;
 use sonata_core::codecs::{CODEC_TYPE_FLAC, CodecParameters};
 use sonata_core::errors::{Result, decode_error, seek_error, unsupported_error, SeekErrorKind};
 use sonata_core::formats::prelude::*;
+use sonata_core::formats::util::{SeekIndex, SeekSearchResult};
 use sonata_core::io::*;
 use sonata_core::meta::{MetadataQueue, MetadataBuilder};
 use sonata_core::probe::{Descriptor, Instantiate, QueryDescriptor};
