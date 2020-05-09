@@ -22,7 +22,7 @@ use sonata::core::audio::*;
 use sonata::core::codecs::DecoderOptions;
 use sonata::core::formats::{Cue, FormatReader, FormatOptions, SeekTo, Stream};
 use sonata::core::meta::{ColorMode, MetadataOptions, Tag, Visual};
-use sonata::core::io::MediaSourceStream;
+use sonata::core::io::{MediaSourceStream, MediaSource, ReadOnlySource};
 use sonata::core::probe::Hint;
 use sonata::core::units::{Duration, Time};
 
@@ -44,86 +44,96 @@ fn main() {
     let matches = App::new("Sonata Play")
                         .version("1.0")
                         .author("Philip Deljanov <philip.deljanov@gmail.com>")
-                        .about("Play audio files with Sonata")
+                        .about("Play audio with Sonata")
                         .arg(Arg::with_name("seek")
                             .long("seek")
                             .short("-s")
-                            .value_name("TIMESTAMP")
-                            .help("Seek to the given timestamp")
-                            .conflicts_with_all(&[ "verify", "decode-only", "verify-only", "probe-only" ]))
+                            .value_name("TIME")
+                            .help("Seek to the given time in seconds")
+                            .conflicts_with_all(
+                                &[
+                                    "verify",
+                                    "decode-only",
+                                    "verify-only",
+                                    "probe-only"
+                                ]
+                            ))
                         .arg(Arg::with_name("decode-only")
                             .long("decode-only")
-                            .help("Decodes, but does not play the audio")
+                            .help("Decode, but do not play the audio")
                             .conflicts_with_all(&[ "probe-only", "verify-only", "verify" ]))
                         .arg(Arg::with_name("probe-only")
                             .long("probe-only")
-                            .help("Only probe the file for metadata")
+                            .help("Only probe the input for metadata")
                             .conflicts_with_all(&[ "decode-only", "verify-only" ]))
                         .arg(Arg::with_name("verify-only")
                             .long("verify-only")
-                            .help("Verifies the decoded audio is valid, but does not play the audio")
+                            .help("Verify the decoded audio is valid, but do not play the audio")
                             .conflicts_with_all(&[ "verify" ]))
                         .arg(Arg::with_name("verify")
                             .long("verify")
                             .short("-V")
-                            .help("Verifies the decoded audio is valid during playback"))
+                            .help("Verify the decoded audio is valid during playback"))
                        .arg(Arg::with_name("verbose")
                             .short("v")
                             .multiple(true)
                             .help("Sets the level of verbosity"))
-                        .arg(Arg::with_name("FILE")
-                            .help("Sets the input file to use")
+                        .arg(Arg::with_name("INPUT")
+                            .help("The input file path, or specify - to use standard input")
                             .required(true)
                             .index(1))
                         .get_matches();
 
-    // Get the file path option.
-    let path = Path::new(matches.value_of("FILE").unwrap());
+    let path_str = matches.value_of("INPUT").unwrap();
 
-    // Create a hint to help the format registry guess what format reader is appropriate for file at
-    // the given file path.
+    // Create a hint to help the format registry guess what format reader is appropriate.
     let mut hint = Hint::new();
 
-    // Use the file extension as a hint.
-    if let Some(extension) = path.extension() {
-        hint.with_extension(extension.to_str().unwrap());
+    // If the path string is '-' then read from standard input.
+    let source = if path_str == "-" {
+        Box::new(ReadOnlySource::new(std::io::stdin())) as Box<dyn MediaSource>
     }
+    else {
+        // Othwerise, get a Path from the path string.
+        let path = Path::new(path_str);
 
-    // Open the given file.
-    // TODO: Catch errors.
-    let mss = MediaSourceStream::new(Box::new(File::open(path).unwrap()));
+        // Provide the file extension as a hint.
+        if let Some(extension) = path.extension() {
+            if let Some(extension_str) = extension.to_str() {
+                hint.with_extension(extension_str);
+            }
+        }
+
+        Box::new(File::open(path).unwrap())
+    };
+
+    // Create the media source stream using the boxed media source from above.
+    let mss = MediaSourceStream::new(source);
 
     // Use the default options for metadata and format readers.
     let format_opts: FormatOptions = Default::default();
     let metadata_opts: MetadataOptions = Default::default();
 
-    // Probe the media stream for metadata and to get the format reader.
-    let reader = sonata::default::get_probe().format(&hint, mss, &format_opts, &metadata_opts);
-
-    // Probe the file using the format reader to verify the file is actually supported.
-    match reader {
-        // The file was not actually supported by the format reader.
-        Err(err) => {
-            error!("file not supported. reason? {}", err);
-        },
-        // The file is supported by the format reader.
+    // Probe the media source stream for metadata and get the format reader.
+    match sonata::default::get_probe().format(&hint, mss, &format_opts, &metadata_opts) {
         Ok(mut reader) => {
-            // Verify only mode decodes and always verifies the audio, but doese not play it.
+            // Verify-only mode decodes and verifies the audio, but does not play it.
             if matches.is_present("verify-only") {
                 let options = DecoderOptions { verify: true, ..Default::default() };
                 decode_only(reader, &options).unwrap_or_else(|err| { error!("{}", err) });
             }
-            // Decode only mode decodes the audio, but not does verify it.
+            // Decode-only mode decodes the audio, but does not play or verify it.
             else if matches.is_present("decode-only") {
                 let options = DecoderOptions { verify: false, ..Default::default() };
                 decode_only(reader, &options).unwrap_or_else(|err| { error!("{}", err) });
             }
-            // Probe only mode prints information about the format, streams, metadata, etc.
+            // Probe-only mode only prints information about the format, streams, metadata, etc.
             else if matches.is_present("probe-only") {
-                pretty_print_format(&path, &reader);
+                pretty_print_format(path_str, &reader);
             }
+            // Playback mode.
             else {
-                pretty_print_format(&path, &reader);
+                pretty_print_format(path_str, &reader);
 
                 // Seek to the desired timestamp if requested.
                 if let Some(seek_value) = matches.value_of("seek") {
@@ -137,9 +147,13 @@ fn main() {
                     ..Default::default()
                 };
 
-                // Commence playback.
+                // Play it!
                 play(reader, &options).unwrap_or_else(|err| { error!("{}", err) });
             }
+        }
+        Err(err) => {
+            // The input was not supported by any format reader.
+            error!("file not supported. reason? {}", err);
         }
     }
 }
@@ -227,7 +241,8 @@ fn play(mut reader: Box<dyn FormatReader>, decode_options: &DecoderOptions) -> R
 
                 assert!(pa_spec.is_valid());
 
-                // Use custom buffer attributes for very short audio streams.
+                // PulseAudio seems to not play very short audio buffers, use thse custom buffer
+                // attributes for very short audio streams.
                 //
                 // let pa_buf_attr = pulse::def::BufferAttr {
                 //     maxlength: std::u32::MAX,
@@ -281,8 +296,8 @@ fn play(mut reader: Box<dyn FormatReader>, decode_options: &DecoderOptions) -> R
 
 }
 
-fn pretty_print_format(path: &Path, reader: &Box<dyn FormatReader>) {
-    println!("+ {}", path.display());
+fn pretty_print_format(path: &str, reader: &Box<dyn FormatReader>) {
+    println!("+ {}", path);
     pretty_print_streams(reader.streams());
 
     if let Some(metadata) = reader.metadata().current() {

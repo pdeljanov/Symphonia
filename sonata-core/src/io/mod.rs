@@ -23,8 +23,8 @@ pub use media_source_stream::MediaSourceStream;
 pub use monitor_stream::{Monitor, MonitorStream};
 pub use scoped_stream::ScopedStream;
 
-/// A `MediaSource` is a composite trait of `std::io::Read` and `std::io::Seek`. Seeking is an
-/// optional capability and support for it can be queried at runtime.
+/// A `MediaSource` is a composite trait of `std::io::Read` and `std::io::Seek`. Despite requiring
+/// the `Seek` trait, seeking is an optional capability that can be queried at runtime.
 pub trait MediaSource: io::Read + io::Seek {
     /// Returns if the source is seekable. This may be an expensive operation.
     fn is_seekable(&self) -> bool;
@@ -35,7 +35,7 @@ pub trait MediaSource: io::Read + io::Seek {
 
 impl MediaSource for std::fs::File {
     /// Returns if the `std::io::File` backing the `MediaSource` is seekable.
-    /// 
+    ///
     /// Note: This operation involves querying the underlying file descriptor for information and
     /// may be moderately expensive. Therefore it is recommended to cache this value if used often.
     fn is_seekable(&self) -> bool {
@@ -49,7 +49,7 @@ impl MediaSource for std::fs::File {
     }
 
     /// Returns the length in bytes of the `std::io::File` backing the `MediaSource`.
-    /// 
+    ///
     /// Note: This operation involves querying the underlying file descriptor for information and
     /// may be moderately expensive. Therefore it is recommended to cache this value if used often.
     fn len(&self) -> Option<u64> {
@@ -72,6 +72,57 @@ impl<T: std::convert::AsRef<[u8]>> MediaSource for io::Cursor<T> {
         let inner = self.get_ref();
         // Get slice from the underlying container, &[T], for the len() function.
         Some(inner.as_ref().len() as u64)
+    }
+}
+
+/// `ReadOnlySource` implements an unseekable `MediaSource` for any reader that implements the
+/// `std::io::Read` trait.
+pub struct ReadOnlySource<R: io::Read> {
+    inner: R,
+}
+
+impl<R: io::Read> ReadOnlySource<R> {
+    /// Instantiates a new `ReadOnlySource<R>` by taking ownership and wrapping the provided
+    /// `Read`er.
+    pub fn new(inner: R) -> Self {
+        ReadOnlySource { inner }
+    }
+
+    /// Gets a reference to the underlying reader.
+    pub fn get_ref(&self) -> &R {
+        &self.inner
+    }
+
+    /// Gets a mutable reference to the underlying reader.
+    pub fn get_mut(&mut self) -> &mut R {
+        &mut self.inner
+    }
+
+    /// Unwraps this `ReadOnlySource<R>`, returning the underlying reader.
+    pub fn into_inner(self) -> R {
+        self.inner
+    }
+}
+
+impl<R: io::Read> MediaSource for ReadOnlySource<R> {
+    fn is_seekable(&self) -> bool {
+        false
+    }
+
+    fn len(&self) -> Option<u64> {
+        None
+    }
+}
+
+impl<R: io::Read> io::Read for ReadOnlySource<R> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.inner.read(buf)
+    }
+}
+
+impl<R: io::Read> io::Seek for ReadOnlySource<R> {
+    fn seek(&mut self, _: io::SeekFrom) -> io::Result<u64> {
+        Err(io::Error::new(io::ErrorKind::Other, "source does not support seeking"))
     }
 }
 
@@ -167,21 +218,21 @@ pub trait ByteStream {
         Ok(u64::from_be_bytes(buf))
     }
 
-    /// Reads four bytes from the stream and interprets them as a 32-bit little-endiann IEEE-754 
+    /// Reads four bytes from the stream and interprets them as a 32-bit little-endiann IEEE-754
     /// floating-point value.
     #[inline(always)]
     fn read_f32(&mut self) -> io::Result<f32> {
         Ok(LittleEndian::read_f32(&self.read_quad_bytes()?))
     }
 
-    /// Reads four bytes from the stream and interprets them as a 32-bit big-endiann IEEE-754 
+    /// Reads four bytes from the stream and interprets them as a 32-bit big-endiann IEEE-754
     /// floating-point value.
     #[inline(always)]
     fn read_be_f32(&mut self) -> io::Result<f32> {
         Ok(BigEndian::read_f32(&self.read_quad_bytes()?))
     }
 
-    /// Reads four bytes from the stream and interprets them as a 64-bit little-endiann IEEE-754 
+    /// Reads four bytes from the stream and interprets them as a 64-bit little-endiann IEEE-754
     /// floating-point value.
     #[inline(always)]
     fn read_f64(&mut self) -> io::Result<f64> {
@@ -190,7 +241,7 @@ pub trait ByteStream {
         Ok(LittleEndian::read_f64(&buf))
     }
 
-    /// Reads four bytes from the stream and interprets them as a 64-bit big-endiann IEEE-754 
+    /// Reads four bytes from the stream and interprets them as a 64-bit big-endiann IEEE-754
     /// floating-point value.
     #[inline(always)]
     fn read_be_f64(&mut self) -> io::Result<f64> {
@@ -293,70 +344,4 @@ pub trait FiniteStream {
 
     /// Returns the number of bytes available for reading.
     fn bytes_available(&self) -> u64;
-}
-
-
-/// Decodes a big-endiann unsigned integers encoded via extended UTF8. In this context, extended
-/// UTF8 simply means the encoded UTF8 value may be up to 7 bytes for a maximum integer bit width
-/// of 36-bits.
-pub fn utf8_decode_be_u64<B: ByteStream>(src : &mut B) -> io::Result<Option<u64>> {
-    // Read the first byte of the UTF8 encoded integer.
-    let mut state = u64::from(src.read_u8()?);
-
-    // UTF8 prefixes 1s followed by a 0 to indicate the total number of bytes within the multi-byte
-    // sequence. Using ranges, determine the mask that will overlap the data bits within the first
-    // byte of the sequence. For values 0-128, return the value immediately. If the value falls out
-    // of range return None as this is either not the start of a UTF8 sequence or the prefix is
-    // incorrect.
-    let mask: u8 = match state {
-        0x00..=0x7f => return Ok(Some(state)),
-        0xc0..=0xdf => 0x1f,
-        0xe0..=0xef => 0x0f,
-        0xf0..=0xf7 => 0x07,
-        0xf8..=0xfb => 0x03,
-        0xfc..=0xfd => 0x01,
-        0xfe        => 0x00,
-        _           => return Ok(None)
-    };
-
-    // Obtain the data bits from the first byte by using the data mask.
-    state &= u64::from(mask);
-
-    // Read the remaining bytes within the UTF8 sequence. Since the mask 0s out the UTF8 prefix
-    // of 1s which indicate the length of the multi-byte sequence in bytes, plus an additional 0
-    // bit, the number of remaining bytes to read is the number of zeros in the mask minus 2.
-    // To avoid extra computation, simply loop from 2 to the number of zeros.
-    for _i in 2..mask.leading_zeros() {
-        // Each subsequent byte after the first in UTF8 is prefixed with 0b10xx_xxxx, therefore
-        // only 6 bits are useful. Append these six bits to the result by shifting the result left
-        // by 6 bit positions, and appending the next subsequent byte with the first two high-order
-        // bits masked out.
-        state = (state << 6) | u64::from(src.read_u8()? & 0x3f);
-
-        // TODO: Validation? Invalid if the byte is greater than 0x3f.
-    }
-
-    Ok(Some(state))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::BufStream;
-    use super::utf8_decode_be_u64;
-
-    #[test]
-    fn verify_utf8_decode_be_u64() {
-        let mut stream = BufStream::new(&[
-            0x24, 0xc2, 0xa2, 0xe0, 0xa4, 0xb9, 0xe2, 0x82,
-            0xac, 0xf0, 0x90, 0x8d, 0x88, 0xff, 0x80, 0xbf]);
-
-        assert_eq!(utf8_decode_be_u64(&mut stream).unwrap(), Some(36));
-        assert_eq!(utf8_decode_be_u64(&mut stream).unwrap(), Some(162));
-        assert_eq!(utf8_decode_be_u64(&mut stream).unwrap(), Some(2361));
-        assert_eq!(utf8_decode_be_u64(&mut stream).unwrap(), Some(8364));
-        assert_eq!(utf8_decode_be_u64(&mut stream).unwrap(), Some(66376));
-        assert_eq!(utf8_decode_be_u64(&mut stream).unwrap(), None);
-        assert_eq!(utf8_decode_be_u64(&mut stream).unwrap(), None);
-        assert_eq!(utf8_decode_be_u64(&mut stream).unwrap(), None);
-    }
 }
