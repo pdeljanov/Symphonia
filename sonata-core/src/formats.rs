@@ -227,8 +227,8 @@ pub mod util {
     }
 
     /// A `SeekIndex` stores `SeekPoint`s (generally a sample or frame number to byte offset) within
-    //  a media stream and provides methods to efficiently search for the nearest `SeekPoint`(s)
-    // given a timestamp.
+    /// a media stream and provides methods to efficiently search for the nearest `SeekPoint`(s)
+    /// given a timestamp.
     ///
     /// A `SeekIndex` does not require complete coverage of the entire media stream. However, the
     /// better the coverage, the smaller the manual search range the `SeekIndex` will return.
@@ -272,7 +272,7 @@ pub mod util {
             self.points.push(SeekPoint::new(frame, byte_offset, n_frames));
         }
 
-        /// Search the index to find a bounded range of bytes, wherein the specified frame timestamp
+        /// Search the index to find a bounded range of bytes wherein the specified frame timestamp
         /// will be contained. If the index is empty, this function simply returns a result
         /// indicating the entire stream should be searched manually.
         pub fn search(&self, frame_ts: u64) -> SeekSearchResult {
@@ -302,7 +302,7 @@ pub mod util {
                     if frame_ts < mid_ts {
                         upper = mid;
                     }
-                    else if frame_ts >= mid_ts {
+                    else {
                         lower = mid;
                     }
                 }
