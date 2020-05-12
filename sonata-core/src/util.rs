@@ -59,6 +59,7 @@ pub mod bits {
         !((1 << idx) - 1)
     }
 
+    /// Masks all bits with an index greater than idx.
     #[inline(always)]
     pub fn mask_upper(idx: u32) -> u8 {
         debug_assert!(idx <= 7);
@@ -72,6 +73,7 @@ pub mod bits {
         ((1 << idx) - 1) ^ (1 << idx)
     }
 
+    /// Masks all bits with an index less than idx.
     #[inline(always)]
     pub fn mask_lower(idx: u32) -> u8 {
         debug_assert!(idx <= 7);
@@ -125,7 +127,7 @@ pub mod bits {
         ((value & !value.wrapping_add(0x0101_0101)) & 0x8080_8080) != 0
     }
 
-    /// Returns true if the unsigned 32-bit integer contains one or more bytes which have all bits
+    /// Returns true if the unsigned 64-bit integer contains one or more bytes which have all bits
     /// set.
     #[inline(always)]
     pub fn contains_ones_byte_u64(value: u64) -> bool {
