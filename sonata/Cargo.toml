@@ -12,9 +12,10 @@ keywords = ["audio", "codec", "decoder", "encoder", "format"]
 edition = "2018"
 
 [features]
-default = ["wav", "flac", "pcm", "ogg"]
+default = ["wav", "flac", "pcm", "ogg", "opus"]
 flac = ["sonata-codec-flac"]
 mp3 = ["sonata-codec-mp3"]
+opus = ["sonata-codec-opus"]
 pcm = ["sonata-codec-pcm"]
 wav = ["sonata-format-wav"]
 ogg = ["sonata-format-ogg"]
@@ -25,6 +26,7 @@ sonata-core = { version = "0.1", path = "../sonata-core" }
 sonata-metadata = { version = "0.1", path = "../sonata-metadata" }
 sonata-codec-flac = { version = "0.1", path = "../sonata-codec-flac", optional = true }
 sonata-codec-mp3 = { version = "0.1", path = "../sonata-codec-mp3", optional = true }
+sonata-codec-opus = { version = "0.1", path = "../sonata-codec-opus", optional = true }
 sonata-codec-pcm = { version = "0.1", path = "../sonata-codec-pcm", optional = true }
 sonata-format-wav = { version = "0.1", path = "../sonata-format-wav", optional = true }
 sonata-format-ogg = { version = "0.1", path = "../sonata-format-ogg", optional = true }

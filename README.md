@@ -1,6 +1,6 @@
 # Sonata
 
-Sonata is a pure Rust audio decoding and media demuxing library supporting OGG, FLAC, MP3, and WAV.
+Sonata is a pure Rust audio decoding and media demuxing library supporting OGG, FLAC, Opus, MP3, and WAV.
 
 ## Features
 
@@ -16,29 +16,30 @@ Sonata's planned features are:
 
 ## Format and Codec Support Roadmap
 
-Support for individual audio codecs and media formats is provided by separate crates. By default, Sonata selects
-support for FOSS codecs and formats, but others may be included via the features option.
+Support for individual audio codecs and media formats is provided by separate crates. By default, Sonata only enables
+support for FOSS codecs and formats, but others may be enabled via the features option.
 
-### Formats (Demux)
+Want to implement a format or codec?! **Contributors are always welcome!**
 
-| Format  | Status      | Feature Flag | Default | Crate                  |  
-|---------|-------------|--------------|---------|------------------------|
-| ISO/MP4 | -           | `isomp4`     | No      | `sonata-format-isomp4` |
-| MKV     | -           | `mkv`        | Yes     | `sonata-format-mkv`    |
-| OGG     | Functional  | `ogg`        | Yes     | `sonata-format-ogg`    |
-| Wave    | Complete    | `wav`        | Yes     | `sonata-format-wav`    |
-| WebM    | -           | `webm`       | No      | `sonata-format-webm`   |
+### Formats (Demux-only)
 
-### Codecs (Decode)
+| Format   | Status      | Feature Flag | Default | Crate                  |  
+|----------|-------------|--------------|---------|------------------------|
+| ISO/MP4  | -           | `isomp4`     | No      | `sonata-format-isomp4` |
+| MKV/WebM | Next        | `mkv`        | Yes     | `sonata-format-mkv`    |
+| OGG      | Functional  | `ogg`        | Yes     | `sonata-format-ogg`    |
+| Wave     | Complete    | `wav`        | Yes     | `sonata-format-wav`    |
+
+### Codecs (Decode-only)
 
 | Codec    | Status      | Feature Flag | Default | Crate                  |
 |----------|-------------|--------------|---------|------------------------|
-| AAC      | -           | `aac`        | No      | `sonata-codec-aac`     |
+| AAC      | Next        | `aac`        | No      | `sonata-codec-aac`     |
 | FLAC     | Complete    | `flac`       | Yes     | `sonata-codec-flac`    |
 | MP1      | Paused      | `mp3`        | No      | `sonata-codec-mp3`     |
 | MP2      | Paused      | `mp3`        | No      | `sonata-codec-mp3`     |
 | MP3      | Complete    | `mp3`        | No      | `sonata-codec-mp3`     |
-| Opus     | Next        | `opus`       | Yes     | `sonata-codec-opus`    |
+| Opus     | In Work     | `opus`       | Yes     | `sonata-codec-opus`    |
 | PCM      | Complete    | `pcm`        | Yes     | `sonata-codec-pcm`     |
 | Vorbis   | -           | `vorbis`     | Yes     | `sonata-codec-vorbis`  |
 | WavPack  | -           | `wavpack`    | Yes     | `sonata-codec-wavpack` |

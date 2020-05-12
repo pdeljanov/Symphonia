@@ -2,13 +2,14 @@
 
 members = [
     "sonata",
+    "sonata-utils-xiph",
     "sonata-play",
     "sonata-metadata",
     "sonata-format-wav",
     "sonata-format-ogg",
     "sonata-core",
     "sonata-codec-pcm",
+    "sonata-codec-opus",
     "sonata-codec-mp3",
     "sonata-codec-flac",
-    "sonata-utils-xiph",
 ]

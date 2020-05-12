@@ -1,0 +1,19 @@
+[package]
+name = "sonata-codec-opus"
+version = "0.1.0"
+description = "Pure Opus decoder (a part of project Sonata)."
+homepage = "https://github.com/pdeljanov/Sonata"
+repository = "https://github.com/pdeljanov/Sonata"
+authors = ["Philip Deljanov <philip.deljanov@gmail.com>"]
+edition = "2018"
+license = "MPL-2.0"
+readme = "README.md"
+categories = ["multimedia::audio"]
+keywords = ["audio", "codec", "decoder", "opus"]
+
+[dependencies]
+log = "0.4"
+bitflags = "1.0.4"
+lazy_static = "1.3.0"
+sonata-core = { version = "0.1", path = "../sonata-core" }
+sonata-metadata = { version = "0.1", path = "../sonata-metadata" }

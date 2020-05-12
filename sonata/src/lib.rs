@@ -10,8 +10,8 @@
 
 pub mod default {
     //! The `default` module provides common convenience functions to get an implementer
-    //! up-and-running as quickly as possible, and to reduce boiler-plate. Using the `default` module
-    //! is completely optional and incurs no overhead unless actually used.
+    //! up-and-running as quickly as possible, and to reduce boiler-plate. Using the `default`
+    //! module is completely optional and incurs no overhead unless actually used.
 
     use lazy_static::lazy_static;
 
@@ -24,6 +24,8 @@ pub mod default {
             use sonata_codec_flac::FlacDecoder;
             #[cfg(feature = "mp3")]
             use sonata_codec_mp3::Mp3Decoder;
+            #[cfg(feature = "opus")]
+            use sonata_codec_opus::OpusDecoder;
             #[cfg(feature = "pcm")]
             use sonata_codec_pcm::PcmDecoder;
 
@@ -34,6 +36,9 @@ pub mod default {
 
             #[cfg(feature = "mp3")]
             registry.register_all::<Mp3Decoder>(0);
+
+            #[cfg(feature = "opus")]
+            registry.register_all::<OpusDecoder>(0);
 
             #[cfg(feature = "pcm")]
             registry.register_all::<PcmDecoder>(0);
@@ -79,7 +84,8 @@ pub mod default {
     /// `feature` flags in the includer's `Cargo.toml`. If `features` is not set, the default set of
     /// Sonata codecs is registered.
     ///
-    /// This function does not instantiate the `CodecRegistry` until the first call to this function.
+    /// This function does not instantiate the `CodecRegistry` until the first call to this
+    /// function.
     pub fn get_codecs() -> &'static CodecRegistry {
         &CODEC_REGISTRY
     }
