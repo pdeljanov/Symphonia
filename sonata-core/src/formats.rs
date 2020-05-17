@@ -119,9 +119,9 @@ impl Stream {
 /// filtering. Seeking will invalidate the assumed state of any decoder processing packets from
 /// `FormatReader` and should be reset after a successful seek operation.
 pub trait FormatReader {
-    /// Attempt to instantiates a `FormatReader` using the provided `FormatOptions` and
+    /// Attempt to instantiate a `FormatReader` using the provided `FormatOptions` and
     /// `MediaSourceStream`. The reader will probe the container to verify format support, determine
-    /// the number of contained streams, and read any metadata.
+    /// the number of contained streams, and read any initial metadata.
     fn try_new(source: MediaSourceStream, options: &FormatOptions) -> Result<Self>
     where
         Self: Sized;
