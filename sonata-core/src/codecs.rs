@@ -190,6 +190,9 @@ pub struct CodecParameters {
 
     /// The demuxer guarantees packet data integrity.
     pub packet_data_integrity: bool,
+
+    /// Extra data (defined by the codec).
+    pub extra_data: Option<Box<[u8]>>,
 }
 
 impl CodecParameters {
@@ -208,71 +211,91 @@ impl CodecParameters {
             trailing_padding: None,
             max_frames_per_packet: None,
             packet_data_integrity: false,
+            extra_data: None,
         }
     }
 
+    /// Provide the `CodecType`.
     pub fn for_codec(&mut self, codec: CodecType) -> &mut Self {
         self.codec = codec;
         self
     }
 
+    /// Provide the sample rate in Hz.
     pub fn with_sample_rate(&mut self, sample_rate: u32) -> &mut Self {
         self.sample_rate = Some(sample_rate);
         self
     }
 
+    /// Provide the `TimeBase`.
     pub fn with_time_base(&mut self, time_base: TimeBase) -> &mut Self {
         self.time_base = Some(time_base);
         self
     }
 
+    /// Provide the total number of frames.
     pub fn with_n_frames(&mut self, n_frames: u64) -> &mut Self {
         self.n_frames = Some(n_frames);
         self
     }
 
+    /// Provide the codec's decoded audio sample format.
     pub fn with_sample_format(&mut self, sample_format: SampleFormat) -> &mut Self {
         self.sample_format = Some(sample_format);
         self
     }
 
+    /// Provide the bit per sample of a decoded audio sample.
     pub fn with_bits_per_sample(&mut self, bits_per_sample: u32) -> &mut Self {
         self.bits_per_sample = Some(bits_per_sample);
         self
     }
 
+    /// Provide the bits per sample of an encoded audio sample.
     pub fn with_bits_per_coded_sample(&mut self, bits_per_coded_sample: u32) -> &mut Self {
         self.bits_per_coded_sample = Some(bits_per_coded_sample);
         self
     }
 
+    /// Provide the channel map.
     pub fn with_channels(&mut self, channels: Channels) -> &mut Self {
         self.channels = Some(channels);
         self
     }
 
+    /// Provide the channel layout.
     pub fn with_channel_layout(&mut self, channel_layout: Layout) -> &mut Self {
         self.channel_layout = Some(channel_layout);
         self
     }
 
+    /// Provide the number of leading frames to discard.
     pub fn with_leading_padding(&mut self, padding: u32) -> &mut Self {
         self.leading_padding = Some(padding);
         self
     }
 
+    /// Provide the number of trailing frames to discard.
     pub fn with_trailing_padding(&mut self, padding: u32) -> &mut Self {
         self.trailing_padding = Some(padding);
         self
     }
 
+    /// Provide the maximum number of frames per packet.
     pub fn with_max_frames_per_packet(&mut self, len: u64) -> &mut Self {
         self.max_frames_per_packet = Some(len);
         self
     }
 
+    /// Specify if the packet's data integrity was guaranteed.
     pub fn with_packet_data_integrity(&mut self, integrity: bool) -> &mut Self {
         self.packet_data_integrity = integrity;
+        self
+    }
+
+    /// Provide codec extra data.
+    pub fn with_extra_data(&mut self, data: Box<[u8]>) -> &mut Self {
+        self.extra_data = Some(data);
         self
     }
 
