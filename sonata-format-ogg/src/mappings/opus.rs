@@ -57,11 +57,12 @@ pub fn detect(buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> {
         return Ok(None);
     }
 
-    // The next 16-bit integer is the pre-skip padding.
+    // The next 16-bit integer is the pre-skip padding (# of samples at 48kHz to subtract from the
+    // OGG granule position to obtain the PCM sample position).
     let pre_skip = reader.read_u16()?;
 
     // The next 32-bit integer is the sample rate of the original audio.
-    let sample_rate = reader.read_u32()?;
+    let _ = reader.read_u32()?;
 
     // Next, the 16-bit gain value.
     let _ = reader.read_u16()?;
@@ -132,12 +133,14 @@ pub fn detect(buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> {
     codec_params
         .for_codec(CODEC_TYPE_OPUS)
         .with_leading_padding(u32::from(pre_skip))
-        .with_sample_rate(sample_rate)
-        .with_channels(channels);
+        .with_sample_rate(48_000)
+        .with_channels(channels)
+        .with_extra_data(Box::from(buf));
 
     // Instantiate the Opus mapper.
     let mapper = Box::new(OpusMapper {
         codec_params,
+        need_comment: true,
     });
 
     Ok(Some(mapper))
@@ -145,6 +148,7 @@ pub fn detect(buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> {
 
 struct OpusMapper {
     codec_params: CodecParameters,
+    need_comment: bool,
 }
 
 impl Mapper for OpusMapper {
@@ -154,21 +158,28 @@ impl Mapper for OpusMapper {
     }
 
     fn map_packet(&mut self, buf: &[u8]) -> Result<MapResult> {
-        // Packets starting with ASCII "Op" are invalid audio data packets.
-        if buf.len() > 2 && buf[0..1] != *b"Op" {
-            return Ok(MapResult::Bitstream);
-        }
-        else if buf.len() > 8 && buf[..8] == *OGG_OPUS_COMMENT_SIGNATURE {
-            // This packet should be a metadata packet containing a Vorbis Comment.
-            let mut reader = BufStream::new(&buf);
-            let mut builder = MetadataBuilder::new();
-            vorbis::read_comment_no_framing(&mut reader, &mut builder)?;
-
-            Ok(MapResult::Metadata(builder.metadata()))
+        // After the comment packet there should only be bitstream packets.
+        if !self.need_comment {
+            Ok(MapResult::Bitstream)
         }
         else {
-            return Ok(MapResult::Unknown);
+            // If the comment packet is still required, check if the packet is the comment packet.
+            if buf.len() >= 8 && buf[..8] == *OGG_OPUS_COMMENT_SIGNATURE {
+                // This packet should be a metadata packet containing a Vorbis Comment.
+                let mut reader = BufStream::new(&buf[8..]);
+                let mut builder = MetadataBuilder::new();
+
+                vorbis::read_comment_no_framing(&mut reader, &mut builder)?;
+
+                self.need_comment = false;
+
+                Ok(MapResult::Metadata(builder.metadata()))
+            }
+            else {
+                Ok(MapResult::Unknown)
+            }
         }
+
     }
 
 }
