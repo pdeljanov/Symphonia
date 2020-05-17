@@ -317,7 +317,15 @@ fn pretty_print_streams(streams: &[Stream]) {
         for (idx, stream) in streams.iter().enumerate() {
             let params = &stream.codec_params;
 
-            println!("|     [{:0>2}] Codec:           {}", idx + 1, params.codec);
+            print!("|     [{:0>2}] Codec:           ", idx + 1);
+
+            if let Some(codec) = sonata::default::get_codecs().get_codec(params.codec) {
+                println!("{} ({})", codec.long_name, codec.short_name);
+            }
+            else {
+                println!("Unknown (#{})", params.codec);
+            }
+
             if let Some(sample_rate) = params.sample_rate {
                 println!("|          Sample Rate:     {}", sample_rate);
             }

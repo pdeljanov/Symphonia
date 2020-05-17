@@ -30,13 +30,13 @@ pub mod default {
             let mut registry = CodecRegistry::new();
 
             #[cfg(feature = "flac")]
-            registry.register_all::<FlacDecoder>(0);
+            registry.register_all::<FlacDecoder>();
 
             #[cfg(feature = "mp3")]
-            registry.register_all::<Mp3Decoder>(0);
+            registry.register_all::<Mp3Decoder>();
 
             #[cfg(feature = "pcm")]
-            registry.register_all::<PcmDecoder>(0);
+            registry.register_all::<PcmDecoder>();
 
             registry
         };

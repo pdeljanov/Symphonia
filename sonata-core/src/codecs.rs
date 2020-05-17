@@ -359,11 +359,10 @@ pub struct CodecDescriptor {
 /// A `CodecRegistry` allows the registration of codecs, and provides a method to instantiate a
 /// `Decoder` given a `CodecParameters` object.
 pub struct CodecRegistry {
-    codecs: HashMap<CodecType, Vec<(CodecDescriptor, u32)>>,
+    codecs: HashMap<CodecType, CodecDescriptor>,
 }
 
 impl CodecRegistry {
-
     /// Instantiate a new `CodecRegistry`.
     pub fn new() -> Self {
         CodecRegistry {
@@ -371,35 +370,34 @@ impl CodecRegistry {
         }
     }
 
-    /// Registers all codecs supported by the Decoder at the provided tier.
-    pub fn register_all<D: Decoder>(&mut self, tier: u32) {
+    /// Gets the `CodecDescriptor` for a registered codec.
+    pub fn get_codec(&self, codec: CodecType) -> Option<&CodecDescriptor> {
+        self.codecs.get(&codec)
+    }
+
+    /// Registers all codecs supported by `Decoder`. If a supported codec was previously registered
+    /// by another `Decoder` it will be replaced within the registry.
+    pub fn register_all<D: Decoder>(&mut self) {
         for descriptor in D::supported_codecs() {
-            self.register(&descriptor, tier);
+            self.register(&descriptor);
         }
     }
 
-    /// Register a single codec at the provided tier.
-    pub fn register(&mut self, descriptor: &CodecDescriptor, tier: u32) {
-        if let Some(descriptors) = self.codecs.get_mut(&descriptor.codec) {
-            let pos = descriptors.iter()
-                        .position(|entry| entry.1 < tier)
-                        .unwrap_or_else(|| descriptors.len());
-
-            descriptors.insert(pos, (*descriptor, tier));
-        }
-        else {
-            self.codecs.insert(descriptor.codec, vec![(*descriptor, tier)]);
-        }
+    /// Register a single codec. If the codec was previously registered it will be replaced within
+    /// the registry.
+    pub fn register(&mut self, descriptor: &CodecDescriptor) {
+        self.codecs.insert(descriptor.codec, *descriptor);
     }
 
-    // Searches the registry for a decoder that supports the codec. If one is found, it will be
-    // instantiated with the provided `CodecParameters`. If a decoder could not be found, or the
-    // `CodecParameters` are either insufficients or invalid for the decoder, an error is returned.
+    /// Searches the registry for a `Decoder` that supports the codec. If one is found, it will be
+    /// instantiated with the provided `CodecParameters` and returned. If a `Decoder` could not be
+    /// found, or the `CodecParameters` are either insufficient or invalid for the `Decoder`, an
+    /// error will be returned.
     pub fn make(&self, params: &CodecParameters, options: &DecoderOptions)
         -> Result<Box<dyn Decoder>> {
 
-        if let Some(descriptors) = self.codecs.get(&params.codec) {
-            Ok((descriptors[0].0.inst_func)(params, options)?)
+        if let Some(descriptor) = self.codecs.get(&params.codec) {
+            Ok((descriptor.inst_func)(params, options)?)
         }
         else {
             unsupported_error("unsupported codec")
