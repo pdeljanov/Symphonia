@@ -9,5 +9,6 @@
 #![forbid(unsafe_code)]
 
 mod decoder;
+mod ident;
 
 pub use decoder::OpusDecoder;

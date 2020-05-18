@@ -38,7 +38,7 @@ pub mod default {
             registry.register_all::<Mp3Decoder>();
 
             #[cfg(feature = "opus")]
-            registry.register_all::<OpusDecoder>(0);
+            registry.register_all::<OpusDecoder>();
 
             #[cfg(feature = "pcm")]
             registry.register_all::<PcmDecoder>();

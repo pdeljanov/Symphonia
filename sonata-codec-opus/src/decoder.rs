@@ -8,21 +8,34 @@
 use sonata_core::audio::{AudioBuffer, AudioBufferRef, AsAudioBufferRef};
 use sonata_core::codecs::CODEC_TYPE_OPUS;
 use sonata_core::codecs::{CodecParameters, CodecDescriptor, Decoder, DecoderOptions};
-use sonata_core::errors::{Result};
+use sonata_core::errors::{Result, unsupported_error};
 use sonata_core::formats::Packet;
 use sonata_core::support_codec;
+
+use crate::ident::IdentHeader;
 
 /// Opus decoder.
 pub struct OpusDecoder {
     params: CodecParameters,
+    ident: IdentHeader,
     buf: AudioBuffer<f32>,
 }
 
 impl Decoder for OpusDecoder {
 
     fn try_new(params: &CodecParameters, _: &DecoderOptions) -> Result<Self> {
+        // Read the identification header from the extra data. If extra data is not provided then
+        // the codec is unsupported.
+        let ident = if let Some(extra_data) = &params.extra_data {
+            IdentHeader::parse(&extra_data)?
+        }
+        else {
+            return unsupported_error("extra_data required");
+        };
+
         Ok(OpusDecoder {
             params: params.clone(),
+            ident,
             buf: AudioBuffer::unused(),
         })
     }
