@@ -12,6 +12,7 @@ use sonata_core::errors::{Result, unsupported_error};
 use sonata_core::formats::Packet;
 use sonata_core::support_codec;
 
+use crate::bitstream;
 use crate::ident::IdentHeader;
 
 /// Opus decoder.
@@ -50,7 +51,8 @@ impl Decoder for OpusDecoder {
         &self.params
     }
 
-    fn decode(&mut self, _: &Packet) -> Result<AudioBufferRef<'_>> {
+    fn decode(&mut self, packet: &Packet) -> Result<AudioBufferRef<'_>> {
+        bitstream::read_packet(&packet.buf())?;
         Ok(self.buf.as_audio_buffer_ref())
     }
 

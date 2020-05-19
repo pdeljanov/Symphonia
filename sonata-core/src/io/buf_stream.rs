@@ -82,6 +82,10 @@ impl<'a> BufStream<'a> {
         self.pos += len;
         Ok(&self.buf[self.pos - len..self.pos])
     }
+
+    pub fn into_remainder(self) -> &'a [u8] {
+        &self.buf[self.pos..]
+    }
 }
 
 impl<'a> ByteStream for BufStream<'a> {
