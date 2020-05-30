@@ -1,14 +1,14 @@
 [workspace]
 
 members = [
-    "sonata",
-    "sonata-play",
-    "sonata-metadata",
-    "sonata-format-wav",
-    "sonata-format-ogg",
-    "sonata-core",
-    "sonata-codec-pcm",
-    "sonata-codec-mp3",
-    "sonata-codec-flac",
-    "sonata-utils-xiph",
+    "symphonia",
+    "symphonia-play",
+    "symphonia-metadata",
+    "symphonia-format-wav",
+    "symphonia-format-ogg",
+    "symphonia-core",
+    "symphonia-codec-pcm",
+    "symphonia-codec-mp3",
+    "symphonia-codec-flac",
+    "symphonia-utils-xiph",
 ]

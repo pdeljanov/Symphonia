@@ -1,0 +1,30 @@
+[package]
+name = "symphonia"
+version = "0.1.0"
+description = "Pure Rust media container and audio decoding library."
+homepage = "https://github.com/pdeljanov/Symphonia"
+repository = "https://github.com/pdeljanov/Symphonia"
+authors = ["Philip Deljanov <philip.deljanov@gmail.com>"]
+license = "MPL-2.0"
+readme = "README.md"
+categories = ["multimedia", "multimedia::audio", "multimedia::encoding"]
+keywords = ["audio", "codec", "decoder", "multimedia", "media"]
+edition = "2018"
+
+[features]
+default = ["wav", "flac", "pcm", "ogg"]
+flac = ["symphonia-codec-flac"]
+mp3 = ["symphonia-codec-mp3"]
+pcm = ["symphonia-codec-pcm"]
+wav = ["symphonia-format-wav"]
+ogg = ["symphonia-format-ogg"]
+
+[dependencies]
+lazy_static = "1.3.0"
+symphonia-core = { version = "0.1", path = "../symphonia-core" }
+symphonia-metadata = { version = "0.1", path = "../symphonia-metadata" }
+symphonia-codec-flac = { version = "0.1", path = "../symphonia-codec-flac", optional = true }
+symphonia-codec-mp3 = { version = "0.1", path = "../symphonia-codec-mp3", optional = true }
+symphonia-codec-pcm = { version = "0.1", path = "../symphonia-codec-pcm", optional = true }
+symphonia-format-wav = { version = "0.1", path = "../symphonia-format-wav", optional = true }
+symphonia-format-ogg = { version = "0.1", path = "../symphonia-format-ogg", optional = true }

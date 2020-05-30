@@ -1,0 +1,18 @@
+[package]
+name = "symphonia-core"
+version = "0.1.0"
+description = "Project Symphonia shared structs, traits, and features."
+homepage = "https://github.com/pdeljanov/Symphonia"
+repository = "https://github.com/pdeljanov/Symphonia"
+authors = ["Philip Deljanov <philip.deljanov@gmail.com>"]
+license = "MPL-2.0"
+readme = "README.md"
+categories = ["multimedia", "multimedia::audio", "multimedia::encoding"]
+keywords = ["audio", "codec", "decoder", "multimedia", "media"]
+edition = "2018"
+
+[dependencies]
+arrayvec = "0.4.11"
+bitflags = "1.0.4"
+byteorder = "1.3.2"
+log = "0.4"

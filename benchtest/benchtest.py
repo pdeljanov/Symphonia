@@ -15,17 +15,17 @@ def download_format(fmt, urls):
             print(f"Downloading {out}")
             subprocess.call(['curl', '-Lo', out, url])
 
-def benchmark_file(filepath, ffmpeg, sonata):
-    subprocess.check_call(['hyperfine', '-m', '20', f'{ffmpeg} -threads 1 -benchmark -v 0 -i {filepath} -f null -', f'{sonata} --decode-only {filepath}'])
+def benchmark_file(filepath, ffmpeg, symphonia):
+    subprocess.check_call(['hyperfine', '-m', '20', f'{ffmpeg} -threads 1 -benchmark -v 0 -i {filepath} -f null -', f'{symphonia} --decode-only {filepath}'])
 
-def benchmark_format(fmt, ffmpeg, sonata):
+def benchmark_format(fmt, ffmpeg, symphonia):
     for filepath in glob.iglob(f'*.{fmt}'):
-        benchmark_file(filepath, ffmpeg, sonata)
+        benchmark_file(filepath, ffmpeg, symphonia)
 
-parser = argparse.ArgumentParser(description='Benchtest sonata-play against ffmpeg')
+parser = argparse.ArgumentParser(description='Benchtest symphonia-play against ffmpeg')
 parser.add_argument('formats', nargs='*', default=['flac', 'mp3', 'wav'], help='formats to test')
 parser.add_argument('-f', '--ffmpeg', default='ffmpeg', help='Path to ffmpeg executable')
-parser.add_argument('-s', '--sonata', default='sonata-play', help='Path to sonata-play executable')
+parser.add_argument('-s', '--symphonia', default='symphonia-play', help='Path to symphonia-play executable')
 args = parser.parse_args()
 
 urls = [
@@ -46,5 +46,5 @@ urls = [
 
 for fmt in args.formats:
     download_format(fmt, urls)
-    benchmark_format(fmt, args.ffmpeg, args.sonata)
+    benchmark_format(fmt, args.ffmpeg, args.symphonia)
 
