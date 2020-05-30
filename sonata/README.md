@@ -1,6 +1,6 @@
 # Sonata
 
-Meta-package for the Sonata.
+Meta-package for Project Sonata.
 
 ## License
 

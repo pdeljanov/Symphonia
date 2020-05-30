@@ -5,11 +5,11 @@ description = "Pure Rust MP1, MP2, and MP3 decoder (a part of project Sonata)."
 homepage = "https://github.com/pdeljanov/Sonata"
 repository = "https://github.com/pdeljanov/Sonata"
 authors = ["Philip Deljanov <philip.deljanov@gmail.com>"]
-edition = "2018"
 license = "MPL-2.0"
 readme = "README.md"
-categories = ["multimedia::audio"]
-keywords = ["audio", "codec", "decoder", "mp3", "mp2", "mp1", "mpeg"]
+categories = ["multimedia", "multimedia::audio", "multimedia::encoding"]
+keywords = ["audio", "codec", "decoder", "mp3", "mpeg"]
+edition = "2018"
 
 [dependencies]
 log = "0.4"

@@ -7,8 +7,8 @@ repository = "https://github.com/pdeljanov/Sonata"
 authors = ["Philip Deljanov <philip.deljanov@gmail.com>"]
 license = "MPL-2.0"
 readme = "README.md"
-categories = ["multimedia"]
-keywords = ["audio", "codec", "decoder", "encoder", "format"]
+categories = ["multimedia", "multimedia::audio", "multimedia::encoding"]
+keywords = ["audio", "codec", "decoder", "multimedia", "media"]
 edition = "2018"
 
 [dependencies]
