@@ -1,4 +1,4 @@
-# Symphonia
+# Symphonia (formerly Sonata)
 
 Symphonia is a pure Rust audio decoding and media demuxing library supporting OGG, FLAC, MP3, and WAV.
 
@@ -21,8 +21,8 @@ support for FOSS codecs and formats, but others may be included via the features
 
 ### Formats (Demux)
 
-| Format  | Status      | Feature Flag | Default | Crate                  |  
-|---------|-------------|--------------|---------|------------------------|
+| Format  | Status      | Feature Flag | Default | Crate                     |  
+|---------|-------------|--------------|---------|---------------------------|
 | ISO/MP4 | -           | `isomp4`     | No      | `symphonia-format-isomp4` |
 | MKV     | -           | `mkv`        | Yes     | `symphonia-format-mkv`    |
 | OGG     | Functional  | `ogg`        | Yes     | `symphonia-format-ogg`    |
@@ -31,8 +31,8 @@ support for FOSS codecs and formats, but others may be included via the features
 
 ### Codecs (Decode)
 
-| Codec    | Status      | Feature Flag | Default | Crate                  |
-|----------|-------------|--------------|---------|------------------------|
+| Codec    | Status      | Feature Flag | Default | Crate                     |
+|----------|-------------|--------------|---------|---------------------------|
 | AAC      | -           | `aac`        | No      | `symphonia-codec-aac`     |
 | FLAC     | Complete    | `flac`       | Yes     | `symphonia-codec-flac`    |
 | MP1      | Paused      | `mp3`        | No      | `symphonia-codec-mp3`     |
@@ -161,4 +161,4 @@ Symphonia is provided under the MPL v2.0 license. Please refer to the LICENSE fi
 
 Symphonia is an open-source project and contributions are very welcome! If you would like to make a large contribution, please raise an issue ahead of time to make sure your efforts fit into the project goals, and that there's no duplication of effort. Please be aware that all contributions must also be licensed under the MPL v2.0 license to be accepted.
 
-All contributors will be credited within the CONTRIBUTORS file.
+When submitting a pull request, be sure you have included yourself in the CONTRIBUTORS file!
