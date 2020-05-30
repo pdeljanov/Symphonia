@@ -10,6 +10,7 @@ readme = "README.md"
 categories = ["multimedia", "multimedia::audio", "multimedia::encoding"]
 keywords = ["audio", "codec", "decoder", "mp3", "mpeg"]
 edition = "2018"
+exclude = ["scripts/*"]
 
 [dependencies]
 log = "0.4"
