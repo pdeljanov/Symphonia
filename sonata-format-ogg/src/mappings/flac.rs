@@ -59,7 +59,7 @@ pub fn detect(buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> {
     
     // Next, a two-byte, big-endian number signifying the number of header (non-audio) packets, not
     // including the identification packet. This number may be 0 to signify it is unknown.
-    let n_header_packets = reader.read_be_u16()?;
+    let _ = reader.read_be_u16()?;
     
     // Last, the four-byte ASCII native FLAC signature "fLaC".
     if reader.read_quad_bytes()? != FLAC_SIGNATURE {
@@ -94,7 +94,6 @@ pub fn detect(buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> {
     // Instantiate the FLAC mapper.
     let mapper = Box::new(FlacMapper {
         codec_params,
-        n_header_packets,
     });
 
     Ok(Some(mapper))
@@ -102,7 +101,6 @@ pub fn detect(buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> {
 
 struct FlacMapper {
     codec_params: CodecParameters,
-    n_header_packets: u16,
 }
 
 impl Mapper for FlacMapper {
