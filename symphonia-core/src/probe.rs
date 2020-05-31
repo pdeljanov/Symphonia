@@ -156,6 +156,15 @@ impl Hint {
     }
 }
 
+/// `ProbeResult` contains the result of a format probe operation.
+pub struct ProbeResult {
+    /// An instance of a `FormatReader` for the probed format
+    pub format: Box<dyn FormatReader>,
+    /// A queue of `Metadata` revisions read during the probe operation before the instantiation of
+    /// the `FormatReader`.
+    pub metadata: MetadataQueue
+}
+
 /// `Probe` scans a `MediaSourceStream` for metadata and container formats, and provides an
 /// iterator-like interface to instantiate readers for the formats encountered.
 pub struct Probe {
@@ -283,22 +292,24 @@ impl Probe {
         mut mss: MediaSourceStream,
         format_opts: &FormatOptions,
         metadata_opts: &MetadataOptions,
-    ) -> Result<Box<dyn FormatReader>> {
+    ) -> Result<ProbeResult> {
 
-        let mut queue: MetadataQueue = Default::default();
+        let mut metadata: MetadataQueue = Default::default();
 
         // Loop over all elements in the stream until a container format is found.
         loop {
             match self.next(&mut mss)? {
                 // If a container format is found, return an instance to it's reader.
                 Instantiate::Format(fmt) => {
-                    return fmt(mss, format_opts);
+                    let format = fmt(mss, format_opts)?;
+
+                    return Ok(ProbeResult { format, metadata });
                 }
                 // If metadata was found, instantiate the metadata reader, read the metadata, and
                 // push it onto the metadata queue.
                 Instantiate::Metadata(meta) => {
                     let mut reader = meta(metadata_opts);
-                    queue.push(reader.read_all(&mut mss)?);
+                    metadata.push(reader.read_all(&mut mss)?);
 
                     info!("chaining metadata element.");
                 }

@@ -23,11 +23,11 @@ use symphonia::core::codecs::DecoderOptions;
 use symphonia::core::formats::{Cue, FormatReader, FormatOptions, SeekTo, Stream};
 use symphonia::core::meta::{ColorMode, MetadataOptions, Tag, Visual};
 use symphonia::core::io::{MediaSourceStream, MediaSource, ReadOnlySource};
-use symphonia::core::probe::Hint;
+use symphonia::core::probe::{Hint, ProbeResult};
 use symphonia::core::units::{Duration, Time};
 
 use clap::{Arg, App};
-use log::{error, warn};
+use log::{error, info, warn};
 use pretty_env_logger;
 
 #[cfg(not(target_os = "linux"))]
@@ -116,29 +116,29 @@ fn main() {
 
     // Probe the media source stream for metadata and get the format reader.
     match symphonia::default::get_probe().format(&hint, mss, &format_opts, &metadata_opts) {
-        Ok(mut reader) => {
+        Ok(mut probed) => {
             // Verify-only mode decodes and verifies the audio, but does not play it.
             if matches.is_present("verify-only") {
                 let options = DecoderOptions { verify: true, ..Default::default() };
-                decode_only(reader, &options).unwrap_or_else(|err| { error!("{}", err) });
+                decode_only(probed.format, &options).unwrap_or_else(|err| { error!("{}", err) });
             }
             // Decode-only mode decodes the audio, but does not play or verify it.
             else if matches.is_present("decode-only") {
                 let options = DecoderOptions { verify: false, ..Default::default() };
-                decode_only(reader, &options).unwrap_or_else(|err| { error!("{}", err) });
+                decode_only(probed.format, &options).unwrap_or_else(|err| { error!("{}", err) });
             }
             // Probe-only mode only prints information about the format, streams, metadata, etc.
             else if matches.is_present("probe-only") {
-                pretty_print_format(path_str, &reader);
+                pretty_print_format(path_str, &probed);
             }
             // Playback mode.
             else {
-                pretty_print_format(path_str, &reader);
+                pretty_print_format(path_str, &probed);
 
                 // Seek to the desired timestamp if requested.
                 if let Some(seek_value) = matches.value_of("seek") {
                     let pos = seek_value.parse::<f64>().unwrap_or(0.0);
-                    reader.seek(SeekTo::Time{ time: Time::from(pos) }).unwrap();
+                    probed.format.seek(SeekTo::Time{ time: Time::from(pos) }).unwrap();
                 }
 
                 // Set the decoder options.
@@ -148,7 +148,7 @@ fn main() {
                 };
 
                 // Play it!
-                play(reader, &options).unwrap_or_else(|err| { error!("{}", err) });
+                play(probed.format, &options).unwrap_or_else(|err| { error!("{}", err) });
             }
         }
         Err(err) => {
@@ -296,16 +296,28 @@ fn play(mut reader: Box<dyn FormatReader>, decode_options: &DecoderOptions) -> R
 
 }
 
-fn pretty_print_format(path: &str, reader: &Box<dyn FormatReader>) {
+fn pretty_print_format(path: &str, probed: &ProbeResult) {
     println!("+ {}", path);
-    pretty_print_streams(reader.streams());
+    pretty_print_streams(probed.format.streams());
 
-    if let Some(metadata) = reader.metadata().current() {
+    // Prefer metadata that's provided in the container format, over other tags found during the
+    // probe operation.
+    if let Some(metadata) = probed.format.metadata().current() {
+        pretty_print_tags(metadata.tags());
+        pretty_print_visuals(metadata.visuals());
+
+        // Warn that certain tags are preferred.
+        if probed.metadata.current().is_some() {
+            info!("tags that are part of the container format are preferentially printed.");
+            info!("not printing additional tags that were found while probing.");
+        }
+    }
+    else if let Some(metadata) = probed.metadata.current() {
         pretty_print_tags(metadata.tags());
         pretty_print_visuals(metadata.visuals());
     }
 
-    pretty_print_cues(reader.cues());
+    pretty_print_cues(probed.format.cues());
     println!("-");
 }
 
