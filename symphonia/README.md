@@ -20,15 +20,15 @@ Planned future format support include: MKV, WebM, and ISO/MP4.
 
 | Codec    | Feature Flag | Default | Crate                     |
 |----------|--------------|---------|---------------------------|
-| FLAC     | `flac`       | Yes     | `symphonia-codec-flac`    |
-| MP3      | `mp3`        | No      | `symphonia-codec-mp3`     |
+| FLAC     | `flac`       | Yes     | `symphonia-bundle-flac`   |
+| MP3      | `mp3`        | No      | `symphonia-bundle-mp3`    |
 | PCM      | `pcm`        | Yes     | `symphonia-codec-pcm`     |
 
 Planned future decoders include: Opus, Vorbis, AAC, and WavPack.
 
 ### Metadata
 
-Metadata readers are provided by the `symphonia-metadata` crate and supports:
+Metadata readers are provided by the `symphonia-metadata` crate and supports the following tag formats:
 
 * ID3v1
 * ID3v2

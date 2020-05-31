@@ -21,9 +21,9 @@ pub mod default {
     lazy_static! {
         static ref CODEC_REGISTRY: CodecRegistry = {
             #[cfg(feature = "flac")]
-            use symphonia_codec_flac::FlacDecoder;
+            use symphonia_bundle_flac::FlacDecoder;
             #[cfg(feature = "mp3")]
-            use symphonia_codec_mp3::Mp3Decoder;
+            use symphonia_bundle_mp3::Mp3Decoder;
             #[cfg(feature = "pcm")]
             use symphonia_codec_pcm::PcmDecoder;
 
@@ -45,9 +45,9 @@ pub mod default {
     lazy_static! {
         static ref PROBE: Probe = {
             #[cfg(feature = "flac")]
-            use symphonia_codec_flac::FlacReader;
+            use symphonia_bundle_flac::FlacReader;
             #[cfg(feature = "mp3")]
-            use symphonia_codec_mp3::Mp3Reader;
+            use symphonia_bundle_mp3::Mp3Reader;
             #[cfg(feature = "wav")]
             use symphonia_format_wav::WavReader;
             #[cfg(feature = "ogg")]

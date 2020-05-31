@@ -31,17 +31,17 @@ support for FOSS codecs and formats, but others may be included via the features
 
 ### Codecs (Decode)
 
-| Codec    | Status      | Feature Flag | Default | Crate                     |
-|----------|-------------|--------------|---------|---------------------------|
-| AAC      | -           | `aac`        | No      | `symphonia-codec-aac`     |
-| FLAC     | Complete    | `flac`       | Yes     | `symphonia-codec-flac`    |
-| MP1      | Paused      | `mp3`        | No      | `symphonia-codec-mp3`     |
-| MP2      | Paused      | `mp3`        | No      | `symphonia-codec-mp3`     |
-| MP3      | Complete    | `mp3`        | No      | `symphonia-codec-mp3`     |
-| Opus     | Next        | `opus`       | Yes     | `symphonia-codec-opus`    |
-| PCM      | Complete    | `pcm`        | Yes     | `symphonia-codec-pcm`     |
-| Vorbis   | -           | `vorbis`     | Yes     | `symphonia-codec-vorbis`  |
-| WavPack  | -           | `wavpack`    | Yes     | `symphonia-codec-wavpack` |
+| Codec    | Status      | Feature Flag | Default | Crate                      |
+|----------|-------------|--------------|---------|----------------------------|
+| FLAC     | Complete    | `flac`       | Yes     | `symphonia-bundle-flac`    |
+| MP1      | Paused      | `mp3`        | No      | `symphonia-bundle-mp3`     |
+| MP2      | Paused      | `mp3`        | No      | `symphonia-bundle-mp3`     |
+| MP3      | Complete    | `mp3`        | No      | `symphonia-bundle-mp3`     |
+| AAC      | -           | `aac`        | No      | `symphonia-codec-aac`      |
+| Opus     | Next        | `opus`       | Yes     | `symphonia-codec-opus`     |
+| PCM      | Complete    | `pcm`        | Yes     | `symphonia-codec-pcm`      |
+| Vorbis   | -           | `vorbis`     | Yes     | `symphonia-codec-vorbis`   |
+| WavPack  | -           | `wavpack`    | Yes     | `symphonia-codec-wavpack`  |
 
 <!--
 ### Codecs (Encode)
@@ -50,17 +50,17 @@ Symphonia does not aim to provide Rust-based encoders for codecs. This is becaus
 
 Symphonia plans to provide "unsafe" encoder packages that wrap traditional C-based encoders.
 
-| Codec    | Status      | Feature Flag | Default | Crate                           |
-|----------|-------------|--------------|---------|---------------------------------|
-| Flac     | -           | `libflac`    | No      | `symphonia-unsafe-codec-libflac`   |
+| Codec    | Status      | Feature Flag | Default | Crate                              |
+|----------|-------------|--------------|---------|------------------------------------|
 | Hardware | -           | `hwenc`      | No      | `symphonia-codec-hwenc`            |
+| Flac     | -           | `libflac`    | No      | `symphonia-unsafe-codec-libflac`   |
 | Opus     | -           | `libopus`    | No      | `symphonia-unsafe-codec-libopus`   |
 | Vorbis   | -           | `libvorbis`  | No      | `symphonia-unsafe-codec-libvorbis` |
 -->
 
 ### Tags (Read)
 
-Symphonia provides decoders for standard tagging formats in `symphonia-core` since many multimedia formats share common tagging formats.
+All metadata readers are provided by the `symphonia-metadata` crate.
 
 | Format                | Status      |
 |-----------------------|-------------|

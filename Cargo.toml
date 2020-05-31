@@ -2,9 +2,9 @@
 
 members = [
     "symphonia",
+    "symphonia-bundle-flac",
+    "symphonia-bundle-mp3",
     "symphonia-codec-aac",
-    "symphonia-codec-flac",
-    "symphonia-codec-mp3",
     "symphonia-codec-opus",
     "symphonia-codec-pcm",
     "symphonia-codec-vorbis",
