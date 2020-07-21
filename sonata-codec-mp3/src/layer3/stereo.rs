@@ -112,8 +112,11 @@ lazy_static! {
 /// As per ISO/IEC 11172-3, to reconstruct the left and right channels, the following calculation
 /// is performed:
 ///
+/// ```text
 ///      l[i] = (m[i] + s[i]) / sqrt(2)
 ///      r[i] = (m[i] - s[i]) / sqrt(2)
+/// ```
+///
 /// where:
 ///      l[i], and r[i] are the left and right channels, respectively.
 ///      m[i], and s[i] are the mid and side channels, respectively.
@@ -141,8 +144,10 @@ fn process_mid_side(mid: &mut [f32], side: &mut [f32]) {
 /// As per ISO/IEC 11172-3, the following calculation may be performed to decode the intensity
 /// stereo coded signal into left and right channels.
 ///
+/// ```text
 ///      l[i] = ch0[i] * k_l
 ///      r[i] = ch0[i] * l_r
+/// ```
 ///
 /// where:
 ///      l[i], and r[i] are the left and right channels, respectively.
@@ -181,8 +186,10 @@ fn process_intensity_mpeg1(is_pos: usize, mid_side: bool, ch0: &mut [f32], ch1: 
 /// As per ISO/IEC 13818-3, the following calculation may be performed to decode the intensity
 /// stereo coded signal into left and right channels.
 ///
+/// ```text
 ///      l[i] = ch0[i] * k_l
 ///      r[i] = ch0[i] * l_r
+/// ```text
 ///
 /// where:
 ///      l[i], and r[i] are the left and right channels, respectively.
