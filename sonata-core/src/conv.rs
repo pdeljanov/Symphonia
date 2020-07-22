@@ -144,8 +144,8 @@ pub mod dither {
     add_noise_impl!(u32, self, s, {
         u32::from_sample(f64::from_sample(s) + f64::from_sample(self.0))
     });
-    add_noise_impl!(f32, self, s, { s + f32::from_sample(self.0) });
-    add_noise_impl!(f64, self, s, { s + f64::from_sample(self.0) });
+    add_noise_impl!(f32, self, s,  s + f32::from_sample(self.0) );
+    add_noise_impl!(f64, self, s,  s + f64::from_sample(self.0) );
 
     /// `Dither` is a trait for implementing dithering algorithms.
     pub trait Dither<F: Sample, T: Sample> {
