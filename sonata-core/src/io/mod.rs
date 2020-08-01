@@ -75,6 +75,57 @@ impl<T: std::convert::AsRef<[u8]>> MediaSource for io::Cursor<T> {
     }
 }
 
+/// `ReadSeekSource` implements a seekable `MediaSource` for any reader that implements the
+/// `std::io::Read` and `std::io::Seek` traits.
+pub struct ReadSeekSource<T: io::Read + io::Seek> {
+    inner: T,
+}
+
+impl<T: io::Read + io::Seek> ReadSeekSource<T> {
+    /// Instantiates a new `ReadSeekSource<T>` by taking ownership and wrapping the provided
+    /// `Read + Seek`er.
+    pub fn new(inner: T) -> Self {
+        ReadSeekSource { inner }
+    }
+
+    /// Gets a reference to the underlying reader.
+    pub fn get_ref(&self) -> &T {
+        &self.inner
+    }
+
+    /// Gets a mutable reference to the underlying reader.
+    pub fn get_mut(&mut self) -> &mut T {
+        &mut self.inner
+    }
+
+    /// Unwraps this `ReadSeekSource<T>`, returning the underlying reader.
+    pub fn into_inner(self) -> T {
+        self.inner
+    }
+}
+
+impl<T: io::Read + io::Seek> MediaSource for ReadSeekSource<T> {
+    fn is_seekable(&self) -> bool {
+        true
+    }
+
+    fn len(&self) -> Option<u64> {
+        None
+    }
+}
+
+impl<T: io::Read + io::Seek> io::Read for ReadSeekSource<T> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.inner.read(buf)
+    }
+}
+
+impl<T: io::Read + io::Seek> io::Seek for ReadSeekSource<T> {
+    fn seek(&mut self, pos: io::SeekFrom) -> io::Result<u64> {
+        self.inner.seek(pos)
+    }
+}
+
 /// `ReadOnlySource` implements an unseekable `MediaSource` for any reader that implements the
 /// `std::io::Read` trait.
 pub struct ReadOnlySource<R: io::Read> {
