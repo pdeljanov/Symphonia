@@ -156,6 +156,12 @@ impl Hint {
     }
 }
 
+impl Default for Hint {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// `Probe` scans a `MediaSourceStream` for metadata and container formats, and provides an
 /// iterator-like interface to instantiate readers for the formats encountered.
 pub struct Probe {
