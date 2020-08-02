@@ -331,7 +331,7 @@ impl ByteStream for MediaSourceStream {
 
         // If the buffer has two bytes available, copy directly from it and skip any safety or
         // buffering checks.
-        if self.end_pos - self.pos < 2 {
+        if self.end_pos - self.pos >= 2 {
             bytes.copy_from_slice(&self.buf[self.pos..self.pos + 2]);
             self.pos += 2;
         }
@@ -356,7 +356,7 @@ impl ByteStream for MediaSourceStream {
 
         // If the buffer has three bytes available, copy directly from it and skip any safety or
         // buffering checks.
-        if self.end_pos - self.pos < 3 {
+        if self.end_pos - self.pos >= 3 {
             bytes.copy_from_slice(&self.buf[self.pos..self.pos + 3]);
             self.pos += 3;
         }
@@ -381,7 +381,7 @@ impl ByteStream for MediaSourceStream {
 
         // If the buffer has four bytes available, copy directly from it and skip any safety or
         // buffering checks.
-        if self.end_pos - self.pos < 4 {
+        if self.end_pos - self.pos >= 4 {
             bytes.copy_from_slice(&self.buf[self.pos..self.pos + 4]);
             self.pos += 4;
         }
