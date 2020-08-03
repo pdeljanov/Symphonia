@@ -6,7 +6,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 //! The `conv` module provides methods to convert samples between different sample types (formats).
-use crate::sample::{u24, i24};
+use crate::sample::{Sample, u24, i24};
 use crate::util::clamp::*;
 
 pub mod dither {
@@ -416,25 +416,6 @@ pub trait FromSample<F> {
     fn from_sample(val: F) -> Self;
 }
 
-/// `IntoSample` implements a conversion from `Self` to `Sample` type `T`.
-/// 
-/// This may be a lossy conversion if converting from a sample type of higher precision to one of
-/// lower precision. No dithering is applied.
-pub trait IntoSample<T> {
-    fn into_sample(self) -> T;
-}
-
-impl<F, T: FromSample<F>> IntoSample<T> for F {
-    #[inline]
-    fn into_sample(self) -> T {
-        T::from_sample(self)
-    }
-}
-
-/// `ConvertibleSample` is a trait that when implemented for `Self`, that `Sample` type implements
-/// bi-directional conversions between `Self` and the parameterized `Sample` type `S`.
-pub trait ConvertibleSample<S> : FromSample<S> + IntoSample<S> {}
-
 macro_rules! converter {
     ($to:ty, $from:ty, $sample:ident, $func:expr) => (
         impl FromSample<$from> for $to {
@@ -443,7 +424,6 @@ macro_rules! converter {
                 $func
             }
         }
-        impl ConvertibleSample<$to> for $from {}
     )
 }
 
@@ -590,6 +570,53 @@ converter!(f64, i24, s, f64::from(s.into_i32()) / 8_388_608.0);
 converter!(f64, i32, s, f64::from(s) / 2_147_483_648.0);
 converter!(f64, f32, s, f64::from(s));
 converter!(f64, f64, s, s);
+
+/// `IntoSample` implements a conversion from `Self` to `Sample` type `T`.
+///
+/// This may be a lossy conversion if converting from a sample type of higher precision to one of
+/// lower precision. No dithering is applied.
+pub trait IntoSample<T> {
+    fn into_sample(self) -> T;
+}
+
+impl<F, T: FromSample<F>> IntoSample<T> for F {
+    #[inline]
+    fn into_sample(self) -> T {
+        T::from_sample(self)
+    }
+}
+
+/// `ReversibleSample` is a trait that when implemented for `Self`, that `Sample` type implements
+/// reversible conversions between `Self` and the parameterized `Sample` type `S`.
+pub trait ReversibleSample<S> : Sample + FromSample<S> + IntoSample<S> {}
+impl<S, T> ReversibleSample<S> for T where T: Sample + FromSample<S> + IntoSample<S> {}
+
+pub trait ConvertibleSample :
+    Sample +
+        FromSample<i8> +
+        FromSample<u8> +
+        FromSample<i16> +
+        FromSample<u16> +
+        FromSample<i24> +
+        FromSample<u24> +
+        FromSample<i32> +
+        FromSample<u32> +
+        FromSample<f32> +
+        FromSample<f64> {}
+
+impl<S> ConvertibleSample for S
+where
+    S: Sample +
+        FromSample<i8> +
+        FromSample<u8> +
+        FromSample<i16> +
+        FromSample<u16> +
+        FromSample<i24> +
+        FromSample<u24> +
+        FromSample<i32> +
+        FromSample<u32> +
+        FromSample<f32> +
+        FromSample<f64> {}
 
 #[cfg(test)]
 mod tests {

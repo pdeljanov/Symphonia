@@ -18,7 +18,7 @@ use std::vec::Vec;
 use arrayvec::ArrayVec;
 use bitflags::bitflags;
 
-use crate::conv::IntoSample;
+use crate::conv::{ConvertibleSample, IntoSample};
 use crate::errors::Result;
 use crate::sample::{Sample, i24, u24};
 use crate::units::Duration;
@@ -160,6 +160,7 @@ impl SignalSpec {
         }
     }
 }
+
 
 /// `WriteSample` provides a typed interface for converting a sample from it's in-memory type to its
 /// StreamType.
@@ -590,20 +591,135 @@ impl<S: Sample> Signal<S> for AudioBuffer<S> {
 
 }
 
-/// A `SampleBuffer`, as the name implies, is a sample oriented buffer. It is agnostic to the
-/// ordering/layout of samples within the buffer. Generally, `SampleBuffer` is mean't for safely
-/// importing and exporting sample data to and from Symphonia.
-pub struct SampleBuffer<S: Sample + WriteSample> {
+/// A `SampleBuffer`, is a sample oriented buffer. It is agnostic to the ordering/layout of samples
+/// within the buffer. `SampleBuffer` is mean't for safely importing and exporting sample data to
+/// and from Symphonia using the sample's in-memory data-type.
+pub struct SampleBuffer<S: Sample> {
+    buf: Vec<S>,
+    n_written: usize,
+}
+
+impl<S: Sample> SampleBuffer<S> {
+    /// Instantiate a new `SampleBuffer` using the specified signal specification and of the given
+    /// duration.
+    pub fn new(duration: Duration, spec: SignalSpec) -> SampleBuffer<S> {
+        let n_samples = duration * spec.channels.count() as u64;
+
+        // Practically speaking, it is not possible to allocate more than usize samples.
+        assert!(n_samples <= usize::max_value() as u64);
+
+        SampleBuffer {
+            buf: vec![S::MID; n_samples as usize],
+            n_written: 0,
+        }
+    }
+
+    /// Gets the number of written samples.
+    pub fn len(&self) -> usize {
+        self.n_written
+    }
+
+    /// Gets an immutable slice of all written samples.
+    pub fn samples(&self) -> &[S] {
+        &self.buf[..self.n_written]
+    }
+
+    /// Gets the maximum number of samples the `SampleBuffer` may store.
+    pub fn capacity(&self) -> usize {
+        self.buf.len()
+    }
+
+    /// Copies all audio data from the source `AudioBufferRef` in planar channel order into the
+    /// `SampleBuffer`. The two buffers must be equivalent.
+    pub fn copy_planar_ref(&mut self, src: AudioBufferRef)
+    where
+        S: ConvertibleSample,
+    {
+        match src {
+            AudioBufferRef::F32(buf) => self.copy_planar_typed(&buf),
+            AudioBufferRef::S32(buf) => self.copy_planar_typed(&buf),
+        }
+    }
+
+    /// Copies all audio data from a source `AudioBuffer` into the `SampleBuffer` in planar
+    /// channel order. The two buffers must be equivalent.
+    pub fn copy_planar_typed<F>(&mut self, src: &AudioBuffer<F>)
+    where
+        F: Sample + IntoSample<S>,
+    {
+        let n_frames = src.frames();
+        let n_channels = src.spec.channels.count();
+        let n_samples = n_frames * n_channels;
+
+        // Ensure that the capacity of the sample buffer is greater than or equal to the number
+        // of samples that will be copied from the source buffer.
+        assert!(self.capacity() >= n_samples);
+
+        for ch in 0..n_channels {
+            let ch_slice = src.chan(ch);
+
+            for (dst, src) in self.buf[ch * n_frames..].iter_mut().zip(ch_slice) {
+                *dst = (*src).into_sample();
+            }
+        }
+
+        // Commit the written samples.
+        self.n_written = n_samples;
+    }
+
+    /// Copies all audio data from the source `AudioBufferRef` in interleaved channel order into the
+    /// `SampleBuffer`. The two buffers must be equivalent.
+    pub fn copy_interleaved_ref(&mut self, src: AudioBufferRef)
+    where
+        S: ConvertibleSample,
+    {
+        match src {
+            AudioBufferRef::F32(buf) => self.copy_interleaved_typed(&buf),
+            AudioBufferRef::S32(buf) => self.copy_interleaved_typed(&buf),
+        }
+    }
+
+    /// Copies all audio samples from a source `AudioBuffer` into the `SampleBuffer` in interleaved
+    /// channel order. The two buffers must be equivalent.
+    pub fn copy_interleaved_typed<F>(&mut self, src: &AudioBuffer<F>)
+    where
+        F: Sample + IntoSample<S>,
+    {
+        let n_channels = src.spec.channels.count();
+        let n_samples = src.frames() * n_channels;
+
+        // Ensure that the capacity of the sample buffer is greater than or equal to the number
+        // of samples that will be copied from the source buffer.
+        assert!(self.capacity() >= n_samples);
+
+        // Interleave the source buffer channels into the sample buffer.
+        for ch in 0..n_channels {
+            let ch_slice = src.chan(ch);
+
+            for (dst, src) in self.buf[ch..].iter_mut().step_by(n_channels).zip(ch_slice) {
+                *dst = (*src).into_sample();
+            }
+        }
+
+        // Commit the written samples.
+        self.n_written = n_samples;
+    }
+}
+
+/// A `RawSampleBuffer`, is a byte-oriented sample buffer. All samples copied to this buffer are
+/// converted into their packed data-type and stored as a stream of bytes. `RawSampleBuffer` is
+/// mean't for safely importing and exporting sample data to and from Symphonia as raw bytes.
+pub struct RawSampleBuffer<S: Sample + WriteSample> {
     buf: Vec<u8>,
     n_written: usize,
     // Might take your heart.
     sample_format: PhantomData<S>,
 }
 
-impl<S: Sample + WriteSample> SampleBuffer<S> {
-    /// Instantiate a new `SampleBuffer` using the specified signal specification and of the given
+impl<S: Sample + WriteSample> RawSampleBuffer<S> {
+    /// Instantiate a new `RawSampleBuffer` using the specified signal specification and of the given
     /// duration.
-    pub fn new(duration: Duration, spec: SignalSpec) -> SampleBuffer<S> {
+    pub fn new(duration: Duration, spec: SignalSpec) -> RawSampleBuffer<S> {
         let n_samples = duration * spec.channels.count() as u64;
 
         // Practically speaking, it is not possible to allocate more than usize samples.
@@ -613,35 +729,34 @@ impl<S: Sample + WriteSample> SampleBuffer<S> {
         let byte_length = n_samples as usize * mem::size_of::<S::StreamType>();
         let buf = vec![0u8; byte_length];
 
-        SampleBuffer {
+        RawSampleBuffer {
             buf,
             n_written: 0,
             sample_format: PhantomData,
         }
     }
 
-    /// Gets the amount of valid (written) samples stored.
-    pub fn samples(&self) -> usize {
+    /// Gets the number of written samples.
+    pub fn len(&self) -> usize {
         self.n_written
     }
 
-    /// Gets the maximum number of samples the `SampleBuffer` may store.
+    /// Gets the maximum number of samples the `RawSampleBuffer` may store.
     pub fn capacity(&self) -> usize {
         self.buf.len() / mem::size_of::<S>()
     }
 
-    /// Gets an immutable slice to the bytes of the sample's written in the `SampleBuffer`.
+    /// Gets an immutable slice to the bytes of the sample's written in the `RawSampleBuffer`.
     pub fn as_bytes(&self) -> &[u8] {
         let end = self.n_written * mem::size_of::<S::StreamType>();
         &self.buf[..end]
     }
 
     /// Copies all audio data from the source `AudioBufferRef` in planar channel order into the
-    /// `SampleBuffer`. The two buffers must be equivalent.
+    /// `RawSampleBuffer`. The two buffers must be equivalent.
     pub fn copy_planar_ref(&mut self, src: AudioBufferRef)
     where
-        f32: IntoSample<S>,
-        i32: IntoSample<S>
+        S: ConvertibleSample,
     {
         match src {
             AudioBufferRef::F32(buf) => self.copy_planar_typed(&buf),
@@ -650,10 +765,10 @@ impl<S: Sample + WriteSample> SampleBuffer<S> {
     }
 
     /// Copies all audio data from a source `AudioBuffer` that is of a different sample format type
-    /// than that of the `SampleBuffer` in planar channel order. The two buffers must be equivalent.
+    /// than that of the `RawSampleBuffer` in planar channel order. The two buffers must be equivalent.
     pub fn copy_planar_typed<F>(&mut self, src: &AudioBuffer<F>)
     where
-        F: Sample + IntoSample<S>
+        F: Sample + IntoSample<S>,
     {
         let n_frames = src.n_frames;
         let n_channels = src.spec.channels.count();
@@ -673,7 +788,7 @@ impl<S: Sample + WriteSample> SampleBuffer<S> {
         }
     }
 
-    /// Copies all audio data from the source `AudioBuffer` to the `SampleBuffer` in planar order.
+    /// Copies all audio data from the source `AudioBuffer` to the `RawSampleBuffer` in planar order.
     /// The two buffers must be equivalent.
     pub fn copy_planar(&mut self, src: &AudioBuffer<S>) {
         let n_frames = src.n_frames;
@@ -695,11 +810,10 @@ impl<S: Sample + WriteSample> SampleBuffer<S> {
     }
 
     /// Copies all audio data from the source `AudioBufferRef` in interleaved channel order into the
-    /// `SampleBuffer`. The two buffers must be equivalent.
+    /// `RawSampleBuffer`. The two buffers must be equivalent.
     pub fn copy_interleaved_ref(&mut self, src: AudioBufferRef)
     where
-        f32: IntoSample<S>,
-        i32: IntoSample<S>
+        S: ConvertibleSample,
     {
         match src {
             AudioBufferRef::F32(buf) => self.copy_interleaved_typed(&buf),
@@ -708,11 +822,11 @@ impl<S: Sample + WriteSample> SampleBuffer<S> {
     }
 
     /// Copies all audio data from a source `AudioBuffer` that is of a different sample format type
-    /// than that of the `SampleBuffer` in interleaved channel order. The two buffers must be
+    /// than that of the `RawSampleBuffer` in interleaved channel order. The two buffers must be
     /// equivalent.
     pub fn copy_interleaved_typed<F>(&mut self, src: &AudioBuffer<F>)
     where
-        F: Sample + IntoSample<S>
+        F: Sample + IntoSample<S>,
     {
         let n_frames = src.n_frames;
         let n_channels = src.spec.channels.count();
@@ -759,7 +873,7 @@ impl<S: Sample + WriteSample> SampleBuffer<S> {
         }
     }
 
-    /// Copies all audio data from the source `AudioBuffer` to the `SampleBuffer` in interleaved
+    /// Copies all audio data from the source `AudioBuffer` to the `RawSampleBuffer` in interleaved
     /// channel order. The two buffers must be equivalent.
     pub fn copy_interleaved(&mut self, src: &AudioBuffer<S>) {
         let n_frames = src.n_frames;
@@ -806,7 +920,7 @@ impl<S: Sample + WriteSample> SampleBuffer<S> {
         }
     }
 
-    /// Gets a mutable byte buffer from the `SampleBuffer` where samples may be written. Calls to
+    /// Gets a mutable byte buffer from the `RawSampleBuffer` where samples may be written. Calls to
     /// this function will overwrite any previously written data since it is not known how the
     /// samples for each channel are laid out in the buffer.
     fn req_bytes_mut(&mut self, n_samples: usize) -> &mut [u8] {
@@ -819,12 +933,12 @@ impl<S: Sample + WriteSample> SampleBuffer<S> {
 }
 
 /// A `SampleWriter` allows for the efficient writing of samples of a specific type to a
-/// `SampleBuffer`. A `SampleWriter` can only be instantiated by a `StreamBuffer`.
+/// `RawSampleBuffer`. A `SampleWriter` can only be instantiated by a `StreamBuffer`.
 ///
 /// While `SampleWriter` could simply be implemented as a byte stream writer with generic
 /// write functions to support most use cases, this would be unsafe as it decouple's a
-/// sample's StreamType, the data type used to allocate the `SampleBuffer`, from the amount
-/// of data actually written to the `SampleBuffer` per Sample. Therefore, `SampleWriter` is
+/// sample's StreamType, the data type used to allocate the `RawSampleBuffer`, from the amount
+/// of data actually written to the `RawSampleBuffer` per Sample. Therefore, `SampleWriter` is
 /// generic across the Sample trait and provides precisely one `write()` function that takes
 /// exactly one reference to a Sample's StreamType. The result of this means that there will
 /// never be an alignment issue, and the underlying byte vector can simply be converted to a
@@ -837,7 +951,7 @@ pub struct SampleWriter<'a, S: Sample + WriteSample> {
 
 impl<'a, S: Sample + WriteSample> SampleWriter<'a, S> {
 
-    fn from_buf(n_samples: usize, buf: &mut SampleBuffer<S>) -> SampleWriter<S> {
+    fn from_buf(n_samples: usize, buf: &mut RawSampleBuffer<S>) -> SampleWriter<S> {
         let bytes = buf.req_bytes_mut(n_samples);
         //TODO: explain why this is safe
         unsafe {
