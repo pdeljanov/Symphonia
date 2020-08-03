@@ -18,3 +18,7 @@ symphonia = { version = "0.1", path = "../symphonia", features = [ "mp3" ] }
 [target.'cfg(target_os = "linux")'.dependencies]
 libpulse-binding = "2.5.0"
 libpulse-simple-binding = "2.5.0"
+
+# [target.'cfg(not(target_os = "linux"))'.dependencies]
+cpal = "0.12.0"
+rb = "0.3.2"

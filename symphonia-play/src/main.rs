@@ -18,7 +18,6 @@ use std::path::Path;
 
 use symphonia;
 use symphonia::core::errors::{Result, Error};
-use symphonia::core::audio::*;
 use symphonia::core::codecs::DecoderOptions;
 use symphonia::core::formats::{Cue, FormatReader, FormatOptions, SeekTo, Stream};
 use symphonia::core::meta::{ColorMode, MetadataOptions, Tag, Visual};
@@ -30,13 +29,7 @@ use clap::{Arg, App};
 use log::{error, info, warn};
 use pretty_env_logger;
 
-#[cfg(not(target_os = "linux"))]
-use symphonia::core::errors::unsupported_error;
-
-#[cfg(target_os = "linux")]
-use libpulse_binding as pulse;
-#[cfg(target_os = "linux")]
-use libpulse_simple_binding as psimple;
+mod output;
 
 fn main() {
     pretty_env_logger::init();
@@ -117,22 +110,22 @@ fn main() {
     // Probe the media source stream for metadata and get the format reader.
     match symphonia::default::get_probe().format(&hint, mss, &format_opts, &metadata_opts) {
         Ok(mut probed) => {
-            // Verify-only mode decodes and verifies the audio, but does not play it.
-            if matches.is_present("verify-only") {
-                let options = DecoderOptions { verify: true, ..Default::default() };
-                decode_only(probed.format, &options).unwrap_or_else(|err| { error!("{}", err) });
+
+            let result = if matches.is_present("verify-only") {
+                // Verify-only mode decodes and verifies the audio, but does not play it.
+                decode_only(probed.format, &DecoderOptions { verify: true, ..Default::default() })
             }
-            // Decode-only mode decodes the audio, but does not play or verify it.
             else if matches.is_present("decode-only") {
-                let options = DecoderOptions { verify: false, ..Default::default() };
-                decode_only(probed.format, &options).unwrap_or_else(|err| { error!("{}", err) });
+                // Decode-only mode decodes the audio, but does not play or verify it.
+                decode_only(probed.format, &DecoderOptions { verify: false, ..Default::default() })
             }
-            // Probe-only mode only prints information about the format, streams, metadata, etc.
             else if matches.is_present("probe-only") {
+                // Probe-only mode only prints information about the format, streams, metadata, etc.
                 pretty_print_format(path_str, &probed);
+                Ok(())
             }
-            // Playback mode.
             else {
+                // Playback mode.
                 pretty_print_format(path_str, &probed);
 
                 // Seek to the desired timestamp if requested.
@@ -148,7 +141,11 @@ fn main() {
                 };
 
                 // Play it!
-                play(probed.format, &options).unwrap_or_else(|err| { error!("{}", err) });
+                play(probed.format, &options)
+            };
+
+            if let Err(err) = result {
+                error!("error: {}", err);
             }
         }
         Err(err) => {
@@ -191,13 +188,6 @@ fn decode_only(mut reader: Box<dyn FormatReader>, decode_options: &DecoderOption
     result
 }
 
-#[cfg(not(target_os = "linux"))]
-fn play(_: Box<dyn FormatReader>, _: &DecoderOptions) -> Result<()> {
-    // TODO: Support the platform.
-    unsupported_error("playback is not supported on this platform")
-}
-
-#[cfg(target_os = "linux")]
 fn play(mut reader: Box<dyn FormatReader>, decode_options: &DecoderOptions) -> Result<()> {
     // Get the default stream.
     // TODO: Allow stream selection.
@@ -206,91 +196,56 @@ fn play(mut reader: Box<dyn FormatReader>, decode_options: &DecoderOptions) -> R
     // Create a decoder for the stream.
     let mut decoder = symphonia::default::get_codecs().make(&stream.codec_params, &decode_options)?;
 
-    // Decode the first packet and create the PulseAudio device using the signal specification of
-    // the buffer.
-    let (pa, mut samples) = loop {
+    // Decode the first packet and create the audio output using the signal specification of the
+    // buffer.
+    let mut output = loop {
         match decoder.decode(&reader.next_packet()?) {
             Err(Error::DecodeError(err)) => {
                 // Decode errors are not fatal. Print a message and try to decode the next packet as
                 // usual.
                 warn!("decode error: {}", err);
                 continue;
-            },
+            }
             Err(err) => {
-                // Errors types other than decode errors are fatal.
+                // Errors other than decode errors are fatal.
                 decoder.close();
                 return Err(err);
-            },
+            }
             Ok(decoded) => {
                 // Get the buffer spec.
-                let spec = decoded.spec();
+                let spec = *decoded.spec();
 
                 // Get the buffer duration.
                 let duration = Duration::from(decoded.capacity() as u64);
 
-                // An interleaved buffer is required to send data to PulseAudio. Use a SampleBuffer to
-                // move data between Symphonia AudioBuffers and the byte buffers required by PulseAudio.
-                let mut samples = SampleBuffer::<i32>::new(duration, *spec);
+                // Open the audio output.
+                let mut output = output::try_open(spec, duration).unwrap();
 
-                // Create a PulseAudio stream specification.
-                let pa_spec = pulse::sample::Spec {
-                    format: pulse::sample::SAMPLE_S32NE,
-                    channels: spec.channels.count() as u8,
-                    rate: spec.rate,
-                };
+                // Write the decoded audio buffer to the output.
+                output.write(decoded).unwrap();
 
-                assert!(pa_spec.is_valid());
-
-                // PulseAudio seems to not play very short audio buffers, use thse custom buffer
-                // attributes for very short audio streams.
-                //
-                // let pa_buf_attr = pulse::def::BufferAttr {
-                //     maxlength: std::u32::MAX,
-                //     tlength: 1024,
-                //     prebuf: std::u32::MAX,
-                //     minreq: std::u32::MAX,
-                //     fragsize: std::u32::MAX,
-                // };
-
-                // Create a PulseAudio connection.
-                let pa = psimple::Simple::new(
-                    None,                                   // Use default server
-                    "Symphonia Player",                        // Application name
-                    pulse::stream::Direction::Playback,     // Playback stream
-                    None,                                   // Default playback device
-                    "Music",                                // Description of the stream
-                    &pa_spec,                               // Signal specificaiton
-                    None,                                   // Default channel map
-                    None                                    // Custom buffering attributes
-                ).unwrap();
-
-                // Interleave samples for PulseAudio into the sample buffer.
-                samples.copy_interleaved_ref(decoded);
-
-                // Write interleaved samples to PulseAudio.
-                pa.write(samples.as_bytes()).unwrap();
-
-                break (pa, samples)
+                break output
             }
         }
     };
 
-    // Decode the remaining frames.
+    // Decode the remaining packets.
     loop {
         match decoder.decode(&reader.next_packet()?) {
             Err(Error::DecodeError(err)) => {
+                // Decode errors are not fatal. Print a message and try to decode the next packet as
+                // usual.
                 warn!("decode error: {}", err);
                 continue;
-            },
+            }
             Err(err) => {
-                pa.drain().unwrap();
+                // Flush the audio output (for end-of-file errors).
+                output.flush();
+                // Close the decoder.
                 decoder.close();
                 return Err(err);
-            },
-            Ok(decoded) => {
-                samples.copy_interleaved_ref(decoded);
-                pa.write(samples.as_bytes()).unwrap();
             }
+            Ok(decoded) => output.write(decoded).unwrap(),
         }
     }
 
