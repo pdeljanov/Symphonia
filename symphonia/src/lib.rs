@@ -20,6 +20,8 @@ pub mod default {
 
     lazy_static! {
         static ref CODEC_REGISTRY: CodecRegistry = {
+            #[cfg(feature = "aac")]
+            use symphonia_codec_aac::AacDecoder;
             #[cfg(feature = "flac")]
             use symphonia_bundle_flac::FlacDecoder;
             #[cfg(feature = "mp3")]
@@ -28,6 +30,9 @@ pub mod default {
             use symphonia_codec_pcm::PcmDecoder;
 
             let mut registry = CodecRegistry::new();
+
+            #[cfg(feature = "aac")]
+            registry.register_all::<AacDecoder>();
 
             #[cfg(feature = "flac")]
             registry.register_all::<FlacDecoder>();
@@ -44,6 +49,8 @@ pub mod default {
 
     lazy_static! {
         static ref PROBE: Probe = {
+            #[cfg(feature = "aac")]
+            use symphonia_codec_aac::AdtsReader;
             #[cfg(feature = "flac")]
             use symphonia_bundle_flac::FlacReader;
             #[cfg(feature = "mp3")]
@@ -56,6 +63,9 @@ pub mod default {
             use symphonia_metadata::id3v2::Id3v2Reader;
 
             let mut registry: Probe = Default::default();
+
+            #[cfg(feature = "aac")]
+            registry.register_all::<AdtsReader>();
 
             #[cfg(feature = "flac")]
             registry.register_all::<FlacReader>();

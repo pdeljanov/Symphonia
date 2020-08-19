@@ -1,8 +1,14 @@
 # Symphonia AAC Codec
 
-This is a placeholder crate for Symphonia's AAC decoder.
+Advanced Audio Coding (AAC) decoder for the Symphonia media framework.
 
-Please consider contributing!
+## Support
+
+This decoder implements the low-complexity (LC) profile as defined in ISO/IEC 14496-3.
+
+## Attribution
+
+Symphonia's AAC decoder was ported and relicensed from the [NihAV](https://nihav.org/) project with permission from the original author, Kostya Shishkov.
 
 ## License
 

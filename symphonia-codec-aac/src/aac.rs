@@ -1,0 +1,1848 @@
+// Symphonia
+// Copyright (c) 2020 The Project Symphonia Developers.
+//
+// Previous Author: Kostya Shishkov <kostya.shiskov@gmail.com>
+//
+// This source file includes code originally written for the NihAV
+// project. With the author's permission, it has been relicensed for,
+// and ported to the Symphonia project.
+//
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+use std::f32::consts;
+use std::fmt;
+
+use symphonia_core::errors::{decode_error, unsupported_error, Result};
+use symphonia_core::io::{huffman::*, BitStream, FiniteBitStream, BitStreamLtr, BufStream};
+use symphonia_core::audio::{AudioBuffer, AudioBufferRef, AsAudioBufferRef, Signal, SignalSpec};
+use symphonia_core::codecs::CODEC_TYPE_AAC;
+use symphonia_core::codecs::{CodecParameters, CodecDescriptor, Decoder, DecoderOptions};
+use symphonia_core::formats::Packet;
+use symphonia_core::support_codec;
+use symphonia_core::units::Duration;
+
+use super::common::*;
+use super::huffman_tables::*;
+use super::window::*;
+
+use log::{error, trace};
+use rustdct::{DCTplanner, mdct::MDCT};
+
+macro_rules! validate {
+    ($a:expr) => {
+        if !$a {
+            error!("check failed at {}:{}", file!(), line!());
+            return decode_error("invalid data");
+        }
+    };
+}
+
+const SPEC_TABLES: [&'static HuffmanTable<H16>; 11] = [
+    &SPEC_TABLE_1,
+    &SPEC_TABLE_2,
+    &SPEC_TABLE_3,
+    &SPEC_TABLE_4,
+    &SPEC_TABLE_5,
+    &SPEC_TABLE_6,
+    &SPEC_TABLE_7,
+    &SPEC_TABLE_8,
+    &SPEC_TABLE_9,
+    &SPEC_TABLE_10,
+    &SPEC_TABLE_11,
+];
+
+impl fmt::Display for M4AType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", M4A_TYPE_NAMES[*self as usize])
+    }
+}
+
+struct M4AInfo {
+    otype: M4AType,
+    srate: u32,
+    channels: usize,
+    samples: usize,
+    sbr_ps_info: Option<(u32, usize)>,
+    sbr_present: bool,
+    ps_present: bool,
+}
+
+impl M4AInfo {
+    fn new() -> Self {
+        Self {
+            otype: M4AType::None,
+            srate: 0,
+            channels: 0,
+            samples: 0,
+            sbr_ps_info: Option::None,
+            sbr_present: false,
+            ps_present: false,
+        }
+    }
+
+    fn read_object_type<B: BitStream>(bs: &mut B) -> Result<M4AType> {
+        let otypeidx = match bs.read_bits_leq32(5)? {
+            idx if idx < 31 => idx as usize,
+            31 => (bs.read_bits_leq32(6)? + 32) as usize,
+            _ => unreachable!(),
+        };
+
+        if otypeidx >= M4A_TYPES.len() {
+            Ok(M4AType::Unknown)
+        } else {
+            Ok(M4A_TYPES[otypeidx])
+        }
+    }
+
+    fn read_sampling_frequency<B: BitStream>(bs: &mut B) -> Result<u32> {
+        match bs.read_bits_leq32(4)? {
+            idx if idx < 15 => Ok(AAC_SAMPLE_RATES[idx as usize]),
+            _ => {
+                let srate = (0xf << 20) & bs.read_bits_leq32(20)?;
+                Ok(srate)
+            }
+        }
+    }
+
+    fn read_channel_config<B: BitStream>(bs: &mut B) -> Result<usize> {
+        let chidx = bs.read_bits_leq32(4)? as usize;
+        if chidx < AAC_CHANNELS.len() {
+            Ok(AAC_CHANNELS[chidx])
+        }
+        else {
+            Ok(chidx)
+        }
+    }
+
+    fn read(&mut self, buf: &[u8]) -> Result<()> {
+        let mut bs = BitStreamLtr::new(BufStream::new(buf));
+
+        self.otype = Self::read_object_type(&mut bs)?;
+        self.srate = Self::read_sampling_frequency(&mut bs)?;
+
+        validate!(self.srate > 0);
+
+        self.channels = Self::read_channel_config(&mut bs)?;
+
+        if (self.otype == M4AType::SBR) || (self.otype == M4AType::PS) {
+            let ext_srate = Self::read_sampling_frequency(&mut bs)?;
+            self.otype = Self::read_object_type(&mut bs)?;
+
+            let ext_chans = if self.otype == M4AType::ER_BSAC {
+                Self::read_channel_config(&mut bs)?
+            }
+            else {
+                0
+            };
+
+            self.sbr_ps_info = Some((ext_srate, ext_chans));
+        }
+
+        match self.otype {
+            M4AType::Main
+            | M4AType::LC
+            | M4AType::SSR
+            | M4AType::Scalable
+            | M4AType::TwinVQ
+            | M4AType::ER_AAC_LC
+            | M4AType::ER_AAC_LTP
+            | M4AType::ER_AAC_Scalable
+            | M4AType::ER_TwinVQ
+            | M4AType::ER_BSAC
+            | M4AType::ER_AAC_LD => {
+                // GASpecificConfig
+                let short_frame = bs.read_bit()?;
+
+                self.samples = if short_frame { 960 } else { 1024 };
+
+                let depends_on_core = bs.read_bit()?;
+
+                if depends_on_core {
+                    let _delay = bs.read_bits_leq32(14)?;
+                }
+
+                let extension_flag = bs.read_bit()?;
+
+                if self.channels == 0 {
+                    return unsupported_error("program config element");
+                }
+
+                if (self.otype == M4AType::Scalable) || (self.otype == M4AType::ER_AAC_Scalable) {
+                    let _layer = bs.read_bits_leq32(3)?;
+                }
+
+                if extension_flag {
+                    if self.otype == M4AType::ER_BSAC {
+                        let _num_subframes = bs.read_bits_leq32(5)? as usize;
+                        let _layer_length = bs.read_bits_leq32(11)?;
+                    }
+
+                    if (self.otype == M4AType::ER_AAC_LC)
+                        || (self.otype == M4AType::ER_AAC_LTP)
+                        || (self.otype == M4AType::ER_AAC_Scalable)
+                        || (self.otype == M4AType::ER_AAC_LD)
+                    {
+                        let _section_data_resilience = bs.read_bit()?;
+                        let _scalefactors_resilience = bs.read_bit()?;
+                        let _spectral_data_resilience = bs.read_bit()?;
+                    }
+
+                    let extension_flag3 = bs.read_bit()?;
+
+                    if extension_flag3 {
+                        return unsupported_error("version3 extensions");
+                    }
+                }
+            }
+            M4AType::CELP => {
+                return unsupported_error("CELP config");
+            }
+            M4AType::HVXC => {
+                return unsupported_error("HVXC config");
+            }
+            M4AType::TTSI => {
+                return unsupported_error("TTS config");
+            }
+            M4AType::MainSynth
+            | M4AType::WavetableSynth
+            | M4AType::GeneralMIDI
+            | M4AType::Algorithmic => {
+                return unsupported_error("structured audio config");
+            }
+            M4AType::ER_CELP => {
+                return unsupported_error("ER CELP config");
+            }
+            M4AType::ER_HVXC => {
+                return unsupported_error("ER HVXC config");
+            }
+            M4AType::ER_HILN | M4AType::ER_Parametric => {
+                return unsupported_error("parametric config");
+            }
+            M4AType::SSC => {
+                return unsupported_error("SSC config");
+            }
+            M4AType::MPEGSurround => {
+                // bs.ignore_bits(1)?; // sacPayloadEmbedding
+                return unsupported_error("MPEG Surround config");
+            }
+            M4AType::Layer1 | M4AType::Layer2 | M4AType::Layer3 => {
+                return unsupported_error("MPEG Layer 1/2/3 config");
+            }
+            M4AType::DST => {
+                return unsupported_error("DST config");
+            }
+            M4AType::ALS => {
+                // bs.ignore_bits(5)?; // fillBits
+                return unsupported_error("ALS config");
+            }
+            M4AType::SLS | M4AType::SLSNonCore => {
+                return unsupported_error("SLS config");
+            }
+            M4AType::ER_AAC_ELD => {
+                return unsupported_error("ELD config");
+            }
+            M4AType::SMRSimple | M4AType::SMRMain => {
+                return unsupported_error("symbolic music config");
+            }
+            _ => {}
+        };
+
+        match self.otype {
+            M4AType::ER_AAC_LC
+            | M4AType::ER_AAC_LTP
+            | M4AType::ER_AAC_Scalable
+            | M4AType::ER_TwinVQ
+            | M4AType::ER_BSAC
+            | M4AType::ER_AAC_LD
+            | M4AType::ER_CELP
+            | M4AType::ER_HVXC
+            | M4AType::ER_HILN
+            | M4AType::ER_Parametric
+            | M4AType::ER_AAC_ELD => {
+                let ep_config = bs.read_bits_leq32(2)?;
+
+                if (ep_config == 2) || (ep_config == 3) {
+                    return unsupported_error("error protection config");
+                }
+                // if ep_config == 3 {
+                //     let direct_mapping = bs.read_bit()?;
+                //     validate!(direct_mapping);
+                // }
+            }
+            _ => {}
+        };
+
+        if self.sbr_ps_info.is_some() && (bs.bits_left() >= 16) {
+            let sync = bs.read_bits_leq32(11)?;
+
+            if sync == 0x2B7 {
+                let ext_otype = Self::read_object_type(&mut bs)?;
+                if ext_otype == M4AType::SBR {
+                    self.sbr_present = bs.read_bit()?;
+                    if self.sbr_present {
+                        let _ext_srate = Self::read_sampling_frequency(&mut bs)?;
+                        if bs.bits_left() >= 12 {
+                            let sync = bs.read_bits_leq32(11)?;
+                            if sync == 0x548 {
+                                self.ps_present = bs.read_bit()?;
+                            }
+                        }
+                    }
+                }
+                if ext_otype == M4AType::PS {
+                    self.sbr_present = bs.read_bit()?;
+                    if self.sbr_present {
+                        let _ext_srate = Self::read_sampling_frequency(&mut bs)?;
+                    }
+                    let _ext_channels = bs.read_bits_leq32(4)?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl fmt::Display for M4AInfo {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "MPEG 4 Audio {}, {} Hz, {} channels, {} samples per frame",
+            self.otype, self.srate, self.channels, self.samples
+        )
+    }
+}
+
+const MAX_WINDOWS: usize = 8;
+const MAX_SFBS: usize = 64;
+
+#[derive(Clone, Copy)]
+struct ICSInfo {
+    window_sequence: u8,
+    prev_window_sequence: u8,
+    window_shape: bool,
+    prev_window_shape: bool,
+    scale_factor_grouping: [bool; MAX_WINDOWS],
+    group_start: [usize; MAX_WINDOWS],
+    window_groups: usize,
+    num_windows: usize,
+    max_sfb: usize,
+    predictor_data: Option<LTPData>,
+    long_win: bool,
+}
+
+const ONLY_LONG_SEQUENCE: u8 = 0;
+const LONG_START_SEQUENCE: u8 = 1;
+const EIGHT_SHORT_SEQUENCE: u8 = 2;
+const LONG_STOP_SEQUENCE: u8 = 3;
+
+impl ICSInfo {
+    fn new() -> Self {
+        Self {
+            window_sequence: 0,
+            prev_window_sequence: 0,
+            window_shape: false,
+            prev_window_shape: false,
+            scale_factor_grouping: [false; MAX_WINDOWS],
+            group_start: [0; MAX_WINDOWS],
+            num_windows: 0,
+            window_groups: 0,
+            max_sfb: 0,
+            predictor_data: None,
+            long_win: true,
+        }
+    }
+    fn decode_ics_info<B: BitStream>(&mut self, bs: &mut B) -> Result<()> {
+        self.prev_window_sequence = self.window_sequence;
+        self.prev_window_shape = self.window_shape;
+
+        if bs.read_bit()? {
+            return decode_error("ics reserved bit set");
+        }
+
+        self.window_sequence = bs.read_bits_leq32(2)? as u8;
+
+        match self.prev_window_sequence {
+            ONLY_LONG_SEQUENCE | LONG_STOP_SEQUENCE => {
+                validate!(
+                    (self.window_sequence == ONLY_LONG_SEQUENCE)
+                        || (self.window_sequence == LONG_START_SEQUENCE)
+                );
+            }
+            LONG_START_SEQUENCE | EIGHT_SHORT_SEQUENCE => {
+                validate!(
+                    (self.window_sequence == EIGHT_SHORT_SEQUENCE)
+                        || (self.window_sequence == LONG_STOP_SEQUENCE)
+                );
+            }
+            _ => {}
+        };
+
+        self.window_shape = bs.read_bit()?;
+        self.window_groups = 1;
+
+        if self.window_sequence == EIGHT_SHORT_SEQUENCE {
+            self.long_win = false;
+            self.num_windows = 8;
+            self.max_sfb = bs.read_bits_leq32(4)? as usize;
+
+            for i in 0..MAX_WINDOWS - 1 {
+                self.scale_factor_grouping[i] = bs.read_bit()?;
+
+                if !self.scale_factor_grouping[i] {
+                    self.group_start[self.window_groups] = i + 1;
+                    self.window_groups += 1;
+                }
+            }
+        }
+        else {
+            self.long_win = true;
+            self.num_windows = 1;
+            self.max_sfb = bs.read_bits_leq32(6)? as usize;
+            self.predictor_data = LTPData::read(bs)?;
+        }
+        Ok(())
+    }
+
+    fn get_group_start(&self, g: usize) -> usize {
+        if g == 0 {
+            0
+        } else if g >= self.window_groups {
+            if self.long_win {
+                1
+            }
+            else {
+                8
+            }
+        }
+        else {
+            self.group_start[g]
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct LTPData {}
+
+impl LTPData {
+    fn read<B: BitStream>(bs: &mut B) -> Result<Option<Self>> {
+        let predictor_data_present = bs.read_bit()?;
+        if !predictor_data_present {
+            return Ok(None);
+        }
+        return unsupported_error("predictor data");
+        /*
+                if is_main {
+                    let predictor_reset                         = bs.read_bit()?;
+                    if predictor_reset {
+                        let predictor_reset_group_number        = bs.read_bits_leq32(5)?;
+                    }
+                    for sfb in 0..max_sfb.min(PRED_SFB_MAX) {
+                        prediction_used[sfb]                    = bs.read_bit()?;
+                    }
+                }
+                else {
+                    let ltp_data_present                        = bs.read_bit()?;
+                    if ltp_data_present {
+                        //ltp data
+                    }
+                    if common_window {
+                        let ltp_data_present                    = bs.read_bit()?;
+                        if ltp_data_present {
+                            //ltp data
+                        }
+                    }
+                }
+                Ok(Some(Self { }))
+        */
+    }
+}
+
+#[derive(Clone, Copy)]
+#[allow(dead_code)]
+struct PulseData {
+    number_pulse: usize,
+    pulse_start_sfb: usize,
+    pulse_offset: [u8; 4],
+    pulse_amp: [u8; 4],
+}
+
+impl PulseData {
+    fn read<B: BitStream>(bs: &mut B) -> Result<Option<Self>> {
+        let pulse_data_present = bs.read_bit()?;
+        if !pulse_data_present {
+            return Ok(None);
+        }
+
+        let number_pulse = (bs.read_bits_leq32(2)? as usize) + 1;
+        let pulse_start_sfb = bs.read_bits_leq32(6)? as usize;
+        let mut pulse_offset: [u8; 4] = [0; 4];
+        let mut pulse_amp: [u8; 4] = [0; 4];
+        for i in 0..number_pulse {
+            pulse_offset[i] = bs.read_bits_leq32(5)? as u8;
+            pulse_amp[i] = bs.read_bits_leq32(4)? as u8;
+        }
+        Ok(Some(Self {
+            number_pulse,
+            pulse_start_sfb,
+            pulse_offset,
+            pulse_amp,
+        }))
+    }
+}
+
+const TNS_MAX_ORDER: usize = 20;
+const TNS_MAX_LONG_BANDS: [usize; 12] = [31, 31, 34, 40, 42, 51, 46, 46, 42, 42, 42, 39];
+const TNS_MAX_SHORT_BANDS: [usize; 12] = [9, 9, 10, 14, 14, 14, 14, 14, 14, 14, 14, 14];
+
+#[derive(Clone, Copy)]
+struct TNSCoeffs {
+    length: usize,
+    order: usize,
+    direction: bool,
+    compress: bool,
+    coef: [f32; TNS_MAX_ORDER + 1],
+}
+
+impl TNSCoeffs {
+    fn new() -> Self {
+        Self {
+            length: 0,
+            order: 0,
+            direction: false,
+            compress: false,
+            coef: [0.0; TNS_MAX_ORDER + 1],
+        }
+    }
+    fn read<B: BitStream>(
+        &mut self,
+        bs: &mut B,
+        long_win: bool,
+        coef_res: bool,
+        max_order: usize,
+    ) -> Result<()> {
+        self.length = bs.read_bits_leq32(if long_win { 6 } else { 4 })? as usize;
+        self.order = bs.read_bits_leq32(if long_win { 5 } else { 3 })? as usize;
+        validate!(self.order <= max_order);
+        if self.order > 0 {
+            self.direction = bs.read_bit()?;
+            self.compress = bs.read_bit()?;
+            let mut coef_bits = 3;
+            if coef_res {
+                coef_bits += 1;
+            }
+            if self.compress {
+                coef_bits -= 1;
+            }
+            let sign_mask = 1 << (coef_bits - 1);
+            let neg_mask = !(sign_mask * 2 - 1);
+
+            let fac_base = if coef_res { 1 << 3 } else { 1 << 2 } as f32;
+            let iqfac = (fac_base - 0.5) / (consts::PI / 2.0);
+            let iqfac_m = (fac_base + 0.5) / (consts::PI / 2.0);
+            let mut tmp: [f32; TNS_MAX_ORDER] = [0.0; TNS_MAX_ORDER];
+            for el in tmp.iter_mut().take(self.order) {
+                let val = bs.read_bits_leq32(coef_bits)? as i8;
+                let c = f32::from(if (val & sign_mask) != 0 {
+                    val | neg_mask
+                }
+                else {
+                    val
+                });
+                *el = (if c >= 0.0 { c / iqfac } else { c / iqfac_m }).sin();
+            }
+            // convert to LPC coefficients
+            let mut b: [f32; TNS_MAX_ORDER + 1] = [0.0; TNS_MAX_ORDER + 1];
+            for m in 1..=self.order {
+                for i in 1..m {
+                    b[i] = self.coef[i - 1] + tmp[m - 1] * self.coef[m - i - 1];
+                }
+                for i in 1..m {
+                    self.coef[i - 1] = b[i];
+                }
+                self.coef[m - 1] = tmp[m - 1];
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy)]
+#[allow(dead_code)]
+struct TNSData {
+    n_filt: [usize; MAX_WINDOWS],
+    coef_res: [bool; MAX_WINDOWS],
+    coeffs: [[TNSCoeffs; 4]; MAX_WINDOWS],
+}
+
+impl TNSData {
+    fn read<B: BitStream>(
+        bs: &mut B,
+        long_win: bool,
+        num_windows: usize,
+        max_order: usize,
+    ) -> Result<Option<Self>> {
+        let tns_data_present = bs.read_bit()?;
+        if !tns_data_present {
+            return Ok(None);
+        }
+        let mut n_filt: [usize; MAX_WINDOWS] = [0; MAX_WINDOWS];
+        let mut coef_res: [bool; MAX_WINDOWS] = [false; MAX_WINDOWS];
+        let mut coeffs: [[TNSCoeffs; 4]; MAX_WINDOWS] = [[TNSCoeffs::new(); 4]; MAX_WINDOWS];
+        for w in 0..num_windows {
+            n_filt[w] = bs.read_bits_leq32(if long_win { 2 } else { 1 })? as usize;
+            if n_filt[w] != 0 {
+                coef_res[w] = bs.read_bit()?;
+            }
+            for filt in 0..n_filt[w] {
+                coeffs[w][filt].read(bs, long_win, coef_res[w], max_order)?;
+            }
+        }
+        Ok(Some(Self {
+            n_filt,
+            coef_res,
+            coeffs,
+        }))
+    }
+}
+
+#[derive(Clone, Copy)]
+#[allow(dead_code)]
+struct GainControlData {
+    max_band: u8,
+}
+
+impl GainControlData {
+    fn read<B: BitStream>(bs: &mut B) -> Result<Option<Self>> {
+        let gain_control_data_present = bs.read_bit()?;
+        if !gain_control_data_present {
+            return Ok(None);
+        }
+        return unsupported_error("gain control data");
+        /*        self.max_band                                   = bs.read_bits_leq32(2)? as u8;
+                if window_sequence == ONLY_LONG_SEQUENCE {
+                    for bd in 0..max_band
+        ...
+                }
+                Ok(Some(Self { }))*/
+    }
+}
+
+const ZERO_HCB: u8 = 0;
+const FIRST_PAIR_HCB: u8 = 5;
+const ESC_HCB: u8 = 11;
+const RESERVED_HCB: u8 = 12;
+const NOISE_HCB: u8 = 13;
+const INTENSITY_HCB2: u8 = 14;
+const INTENSITY_HCB: u8 = 15;
+
+#[derive(Clone)]
+struct ICS {
+    global_gain: u8,
+    info: ICSInfo,
+    pulse_data: Option<PulseData>,
+    tns_data: Option<TNSData>,
+    gain_control: Option<GainControlData>,
+    sect_cb: [[u8; MAX_SFBS]; MAX_WINDOWS],
+    sect_len: [[usize; MAX_SFBS]; MAX_WINDOWS],
+    sfb_cb: [[u8; MAX_SFBS]; MAX_WINDOWS],
+    num_sec: [usize; MAX_WINDOWS],
+    scales: [[u8; MAX_SFBS]; MAX_WINDOWS],
+    sbinfo: GASubbandInfo,
+    coeffs: [f32; 1024],
+    delay: [f32; 1024],
+}
+
+const INTENSITY_SCALE_MIN: i16 = -155;
+const NOISE_SCALE_MIN: i16 = -100;
+
+impl ICS {
+    fn new(sbinfo: GASubbandInfo) -> Self {
+        Self {
+            global_gain: 0,
+            info: ICSInfo::new(),
+            pulse_data: None,
+            tns_data: None,
+            gain_control: None,
+            sect_cb: [[0; MAX_SFBS]; MAX_WINDOWS],
+            sect_len: [[0; MAX_SFBS]; MAX_WINDOWS],
+            sfb_cb: [[0; MAX_SFBS]; MAX_WINDOWS],
+            scales: [[0; MAX_SFBS]; MAX_WINDOWS],
+            num_sec: [0; MAX_WINDOWS],
+            sbinfo,
+            coeffs: [0.0; 1024],
+            delay: [0.0; 1024],
+        }
+    }
+
+    fn decode_section_data<B: BitStream>(
+        &mut self,
+        bs: &mut B
+    ) -> Result<()> {
+        let sect_bits = if self.info.long_win { 5 } else { 3 };
+        let sect_esc_val = (1 << sect_bits) - 1;
+
+        for g in 0..self.info.window_groups {
+            let mut k = 0;
+            let mut l = 0;
+
+            while k < self.info.max_sfb {
+                self.sect_cb[g][l] = bs.read_bits_leq32(4)? as u8;
+                self.sect_len[g][l] = 0;
+
+                if self.sect_cb[g][l] == RESERVED_HCB {
+                    return decode_error("invalid band type");
+                }
+
+                loop {
+                    let sect_len_incr = bs.read_bits_leq32(sect_bits)? as usize;
+
+                    self.sect_len[g][l] += sect_len_incr;
+
+                    if sect_len_incr < sect_esc_val {
+                        break;
+                    }
+                }
+
+                validate!(k + self.sect_len[g][l] <= self.info.max_sfb);
+
+                for sfb in k..k + self.sect_len[g][l] {
+                    self.sfb_cb[g][sfb] = self.sect_cb[g][l];
+                }
+
+                k += self.sect_len[g][l];
+                l += 1;
+            }
+
+            self.num_sec[g] = l;
+        }
+        Ok(())
+    }
+
+    fn is_intensity(&self, g: usize, sfb: usize) -> bool {
+        (self.sfb_cb[g][sfb] == INTENSITY_HCB) || (self.sfb_cb[g][sfb] == INTENSITY_HCB2)
+    }
+
+    fn get_intensity_dir(&self, g: usize, sfb: usize) -> bool {
+        self.sfb_cb[g][sfb] == INTENSITY_HCB
+    }
+
+    fn decode_scale_factor_data<B: BitStream>(&mut self, bs: &mut B) -> Result<()> {
+        let mut noise_pcm_flag = true;
+        let mut scf_normal = i16::from(self.global_gain);
+        let mut scf_intensity = 0i16;
+        let mut scf_noise = 0i16;
+        for g in 0..self.info.window_groups {
+            for sfb in 0..self.info.max_sfb {
+                if self.sfb_cb[g][sfb] != ZERO_HCB {
+                    if self.is_intensity(g, sfb) {
+                        // TODO: Fix lim_bits.
+                        let diff = i16::from(bs.read_huffman(&SCF_TABLE, 100)?.0) - 60;
+                        scf_intensity += diff;
+                        validate!(
+                            (scf_intensity >= INTENSITY_SCALE_MIN)
+                                && (scf_intensity < INTENSITY_SCALE_MIN + 256)
+                        );
+                        self.scales[g][sfb] = (scf_intensity - INTENSITY_SCALE_MIN) as u8;
+                    }
+                    else if self.sfb_cb[g][sfb] == NOISE_HCB {
+                        if noise_pcm_flag {
+                            noise_pcm_flag = false;
+                            scf_noise = (bs.read_bits_leq32(9)? as i16) - 256
+                                + i16::from(self.global_gain)
+                                - 90;
+                        }
+                        else {
+                            // TODO: Fix lim_bits.
+                            scf_noise += i16::from(bs.read_huffman(&SCF_TABLE, 100)?.0) - 60;
+                        }
+                        validate!(
+                            (scf_noise >= NOISE_SCALE_MIN) && (scf_noise < NOISE_SCALE_MIN + 256)
+                        );
+                        self.scales[g][sfb] = (scf_noise - NOISE_SCALE_MIN) as u8;
+                    }
+                    else {
+                        // TODO: Fix lim_bits.
+                        scf_normal += i16::from(bs.read_huffman(&SCF_TABLE, 100)?.0) - 60;
+                        validate!((scf_normal >= 0) && (scf_normal < 255));
+                        self.scales[g][sfb] = scf_normal as u8;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn get_band_start(&self, swb: usize) -> usize {
+        if self.info.long_win {
+            self.sbinfo.long_bands[swb]
+        }
+        else {
+            self.sbinfo.short_bands[swb]
+        }
+    }
+
+    fn get_num_bands(&self) -> usize {
+        if self.info.long_win {
+            self.sbinfo.long_bands.len() - 1
+        }
+        else {
+            self.sbinfo.short_bands.len() - 1
+        }
+    }
+
+    fn decode_spectrum<B: BitStream>(&mut self, bs: &mut B) -> Result<()> {
+        self.coeffs = [0.0; 1024];
+        for g in 0..self.info.window_groups {
+            let cur_w = self.info.get_group_start(g);
+            let next_w = self.info.get_group_start(g + 1);
+            for sfb in 0..self.info.max_sfb {
+                let start = self.get_band_start(sfb);
+                let end = self.get_band_start(sfb + 1);
+                let cb_idx = self.sfb_cb[g][sfb];
+                for w in cur_w..next_w {
+                    let dst = &mut self.coeffs[start + w * 128..end + w * 128];
+                    match cb_idx {
+                        ZERO_HCB => { /* zeroes */ }
+                        NOISE_HCB => { /* noise */ }
+                        INTENSITY_HCB | INTENSITY_HCB2 => { /* intensity */ }
+                        _ => {
+                            let unsigned = AAC_UNSIGNED_CODEBOOK[(cb_idx - 1) as usize];
+                            let scale = get_scale(self.scales[g][sfb]);
+
+                            let cb = SPEC_TABLES[(cb_idx - 1) as usize];
+
+                            if cb_idx < FIRST_PAIR_HCB {
+                                decode_quads(bs, cb, unsigned, scale, dst)?;
+                            }
+                            else {
+                                decode_pairs(
+                                    bs,
+                                    cb,
+                                    unsigned,
+                                    cb_idx == ESC_HCB,
+                                    AAC_CODEBOOK_MODULO[(cb_idx - FIRST_PAIR_HCB) as usize],
+                                    scale,
+                                    dst,
+                                )?;
+                            }
+                        }
+                    };
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn place_pulses(&mut self) {
+        if let Some(ref pdata) = self.pulse_data {
+            if pdata.pulse_start_sfb >= self.sbinfo.long_bands.len() - 1 {
+                return;
+            }
+
+            let mut k = self.get_band_start(pdata.pulse_start_sfb);
+
+            let mut band = pdata.pulse_start_sfb;
+
+            for pno in 0..pdata.number_pulse {
+                k += pdata.pulse_offset[pno] as usize;
+
+                if k >= 1024 {
+                    return;
+                }
+
+                while self.get_band_start(band + 1) <= k {
+                    band += 1;
+                }
+
+                let scale = get_scale(self.scales[0][band]);
+                let mut base = self.coeffs[k];
+
+                if base != 0.0 {
+                    base = requant(self.coeffs[k], scale);
+                }
+
+                if base > 0.0 {
+                    base += f32::from(pdata.pulse_amp[pno]);
+                }
+                else {
+                    base -= f32::from(pdata.pulse_amp[pno]);
+                }
+                self.coeffs[k] = iquant(base) * scale;
+            }
+        }
+    }
+
+    fn decode_ics<B: BitStream>(
+        &mut self,
+        bs: &mut B,
+        m4atype: M4AType,
+        common_window: bool
+    ) -> Result<()> {
+        self.global_gain = bs.read_bits_leq32(8)? as u8;
+
+        if !common_window {
+            self.info.decode_ics_info(bs)?;
+        }
+
+        self.decode_section_data(bs)?;
+
+        self.decode_scale_factor_data(bs)?;
+
+        self.pulse_data = PulseData::read(bs)?;
+        validate!(self.pulse_data.is_none() || self.info.long_win);
+
+        let tns_max_order = if !self.info.long_win {
+            7
+        }
+        else if m4atype == M4AType::LC {
+            12
+        }
+        else {
+            TNS_MAX_ORDER
+        };
+
+        self.tns_data =
+            TNSData::read(bs, self.info.long_win, self.info.num_windows, tns_max_order)?;
+
+        match m4atype {
+            M4AType::SSR => self.gain_control = GainControlData::read(bs)?,
+            _ => {
+                let gain_control_data_present = bs.read_bit()?;
+                validate!(!gain_control_data_present);
+            }
+        }
+
+        self.decode_spectrum(bs)?;
+        Ok(())
+    }
+
+    fn synth_channel(&mut self, dsp: &mut DSP, srate_idx: usize, dst: &mut [f32]) {
+        self.place_pulses();
+        if let Some(ref tns_data) = self.tns_data {
+
+            let tns_max_bands = (if self.info.long_win {
+                TNS_MAX_LONG_BANDS[srate_idx]
+            }
+            else {
+                TNS_MAX_SHORT_BANDS[srate_idx]
+            })
+            .min(self.info.max_sfb);
+
+            for w in 0..self.info.num_windows {
+                let mut bottom = self.get_num_bands();
+
+                for f in 0..tns_data.n_filt[w] {
+                    let top = bottom;
+
+                    bottom = if top >= tns_data.coeffs[w][f].length {
+                        top - tns_data.coeffs[w][f].length
+                    }
+                    else {
+                        0
+                    };
+
+                    let order = tns_data.coeffs[w][f].order;
+
+                    if order == 0 {
+                        continue;
+                    }
+
+                    let start = w * 128 + self.get_band_start(tns_max_bands.min(bottom));
+                    let end = w * 128 + self.get_band_start(tns_max_bands.min(top));
+                    let lpc = &tns_data.coeffs[w][f].coef;
+
+                    if !tns_data.coeffs[w][f].direction {
+                        for (m, i) in (start..end).enumerate() {
+                            for j in 0..order.min(m) {
+                                self.coeffs[i] -= self.coeffs[i - j - 1] * lpc[j];
+                            }
+                        }
+                    }
+                    else {
+                        for (m, i) in (start..end).rev().enumerate() {
+                            for j in 0..order.min(m) {
+                                self.coeffs[i] -= self.coeffs[i + j - 1] * lpc[j];
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        dsp.synth(
+            &self.coeffs,
+            &mut self.delay,
+            self.info.window_sequence,
+            self.info.window_shape,
+            self.info.prev_window_shape,
+            dst,
+        );
+    }
+}
+
+fn get_scale(scale: u8) -> f32 {
+    2.0f32.powf(0.25 * (f32::from(scale) - 100.0 - 56.0))
+}
+
+fn iquant(val: f32) -> f32 {
+    if val < 0.0 {
+        -((-val).powf(4.0 / 3.0))
+    }
+    else {
+        val.powf(4.0 / 3.0)
+    }
+}
+
+fn requant(val: f32, scale: f32) -> f32 {
+    if scale == 0.0 {
+        return 0.0;
+    }
+    let bval = val / scale;
+    if bval >= 0.0 {
+        val.powf(3.0 / 4.0)
+    }
+    else {
+        -((-val).powf(3.0 / 4.0))
+    }
+}
+
+fn decode_quads<B: BitStream>(
+    bs: &mut B,
+    cb: &'static HuffmanTable<H16>,
+    unsigned: bool,
+    scale: f32,
+    dst: &mut [f32],
+) -> Result<()> {
+    for out in dst.chunks_mut(4) {
+        // TODO: Fix lim_bits
+        let cw = bs.read_huffman(cb, 100)?.0 as usize;
+        if unsigned {
+            for i in 0..4 {
+                let val = AAC_QUADS[cw][i];
+                if val != 0 {
+                    if bs.read_bit()? {
+                        out[i] = iquant(-f32::from(val)) * scale;
+                    }
+                    else {
+                        out[i] = iquant(f32::from(val)) * scale;
+                    }
+                }
+            }
+        }
+        else {
+            for i in 0..4 {
+                out[i] = iquant(f32::from(AAC_QUADS[cw][i] - 1)) * scale;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn decode_pairs<B: BitStream>(
+    bs: &mut B,
+    cb: &'static HuffmanTable<H16>,
+    unsigned: bool,
+    escape: bool,
+    modulo: u16,
+    scale: f32,
+    dst: &mut [f32],
+) -> Result<()> {
+    for out in dst.chunks_mut(2) {
+        // TODO: Fix lim_bits
+        let cw = bs.read_huffman(cb, 100)?.0;
+
+        let mut x = (cw / modulo) as i16;
+        let mut y = (cw % modulo) as i16;
+
+        if unsigned {
+            if x != 0 && bs.read_bit()? {
+                x = -x;
+            }
+            if y != 0 && bs.read_bit()? {
+                y = -y;
+            }
+        }
+        else {
+            x -= (modulo >> 1) as i16;
+            y -= (modulo >> 1) as i16;
+        }
+
+        if escape {
+            if (x == 16) || (x == -16) {
+                x += read_escape(bs, x > 0)?;
+            }
+            if (y == 16) || (y == -16) {
+                y += read_escape(bs, y > 0)?;
+            }
+        }
+
+        out[0] = iquant(f32::from(x)) * scale;
+        out[1] = iquant(f32::from(y)) * scale;
+    }
+    Ok(())
+}
+
+fn read_escape<B: BitStream>(bs: &mut B, sign: bool) -> Result<i16> {
+    // TODO: Move into BitReaderLtr
+    let mut prefix = 0;
+    while bs.read_bit()? == true {
+        prefix += 1;
+    }
+
+    validate!(prefix < 9);
+    let bits = bs.read_bits_leq32(prefix + 4)? as i16;
+    if sign {
+        Ok(bits)
+    }
+    else {
+        Ok(-bits)
+    }
+}
+
+#[derive(Clone)]
+struct ChannelPair {
+    pair: bool,
+    channel: usize,
+    common_window: bool,
+    ms_mask_present: u8,
+    ms_used: [[bool; MAX_SFBS]; MAX_WINDOWS],
+    ics: [ICS; 2],
+}
+
+impl ChannelPair {
+    fn new(pair: bool, channel: usize, sbinfo: GASubbandInfo) -> Self {
+        Self {
+            pair,
+            channel,
+            common_window: false,
+            ms_mask_present: 0,
+            ms_used: [[false; MAX_SFBS]; MAX_WINDOWS],
+            ics: [ICS::new(sbinfo), ICS::new(sbinfo)],
+        }
+    }
+
+    fn decode_ga_sce<B: BitStream>(&mut self, bs: &mut B, m4atype: M4AType) -> Result<()> {
+        self.ics[0].decode_ics(bs, m4atype, false)?;
+        Ok(())
+    }
+
+    fn decode_ga_cpe<B: BitStream>(&mut self, bs: &mut B, m4atype: M4AType) -> Result<()> {
+        let common_window = bs.read_bit()?;
+        self.common_window = common_window;
+
+        if common_window {
+            self.ics[0].info.decode_ics_info(bs)?;
+
+            // Mid-side stereo mask decoding.
+            self.ms_mask_present = bs.read_bits_leq32(2)? as u8;
+
+            match self.ms_mask_present {
+                0 => { },
+                1 => {
+                    for g in 0..self.ics[0].info.window_groups {
+                        for sfb in 0..self.ics[0].info.max_sfb {
+                            self.ms_used[g][sfb] = bs.read_bit()?;
+                        }
+                    }
+                }
+                2 => {
+                    for g in 0..self.ics[0].info.window_groups {
+                        for sfb in 0..self.ics[0].info.max_sfb {
+                            self.ms_used[g][sfb] = true;
+                        }
+                    }
+                }
+                3 => return decode_error("invalid mid-side mask"),
+                _ => unreachable!()
+            }
+
+            self.ics[1].info = self.ics[0].info;
+        }
+
+        self.ics[0].decode_ics(bs, m4atype, common_window)?;
+        self.ics[1].decode_ics(bs, m4atype, common_window)?;
+
+        if common_window && self.ms_mask_present != 0 {
+            let mut g = 0;
+            for w in 0..self.ics[0].info.num_windows {
+
+                if w > 0 && self.ics[0].info.scale_factor_grouping[w - 1] {
+                    g += 1;
+                }
+
+                for sfb in 0..self.ics[0].info.max_sfb {
+                    let start = w * 128 + self.ics[0].get_band_start(sfb);
+                    let end = w * 128 + self.ics[0].get_band_start(sfb + 1);
+
+                    // Intensity Stereo
+                    if self.ics[0].is_intensity(g, sfb) {
+                        trace!("intensity");
+                        let invert = (self.ms_mask_present == 1) && self.ms_used[g][sfb];
+                        let dir = self.ics[0].get_intensity_dir(g, sfb) ^ invert;
+                        let scale = 0.5f32.powf(
+                            0.25 * (f32::from(self.ics[0].scales[g][sfb])
+                                + f32::from(INTENSITY_SCALE_MIN)),
+                        );
+                        if !dir {
+                            for i in start..end {
+                                self.ics[1].coeffs[i] = scale * self.ics[0].coeffs[i];
+                            }
+                        }
+                        else {
+                            for i in start..end {
+                                self.ics[1].coeffs[i] = -scale * self.ics[0].coeffs[i];
+                            }
+                        }
+                    }
+                    else if (self.ms_mask_present == 2) || self.ms_used[g][sfb] {
+                        // Mid-side stereo
+                        for i in start..end {
+                            let tmp = self.ics[0].coeffs[i] - self.ics[1].coeffs[i];
+                            self.ics[0].coeffs[i] += self.ics[1].coeffs[i];
+                            self.ics[1].coeffs[i] = tmp;
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn synth_audio(&mut self, dsp: &mut DSP, abuf: &mut AudioBuffer<f32>, srate_idx: usize) {
+        self.ics[0].synth_channel(dsp, srate_idx, abuf.chan_mut(self.channel));
+
+        if self.pair {
+            self.ics[1].synth_channel(dsp, srate_idx, abuf.chan_mut(self.channel + 1));
+        }
+    }
+}
+
+struct DSP {
+    kbd_long_win: [f32; 1024],
+    kbd_short_win: [f32; 128],
+    sine_long_win: [f32; 1024],
+    sine_short_win: [f32; 128],
+    imdct_long: std::sync::Arc<dyn MDCT<f32>>,
+    imdct_short: std::sync::Arc<dyn MDCT<f32>>,
+    tmp: [f32; 2048],
+    ew_buf: [f32; 1152],
+}
+
+const SHORT_WIN_POINT0: usize = 512 - 64;
+const SHORT_WIN_POINT1: usize = 512 + 64;
+
+impl DSP {
+    fn new() -> Self {
+        let mut kbd_long_win: [f32; 1024] = [0.0; 1024];
+        let mut kbd_short_win: [f32; 128] = [0.0; 128];
+        generate_window(
+            WindowType::KaiserBessel(4.0),
+            1.0,
+            1024,
+            true,
+            &mut kbd_long_win,
+        );
+        generate_window(
+            WindowType::KaiserBessel(6.0),
+            1.0,
+            128,
+            true,
+            &mut kbd_short_win,
+        );
+        let mut sine_long_win: [f32; 1024] = [0.0; 1024];
+        let mut sine_short_win: [f32; 128] = [0.0; 128];
+        generate_window(WindowType::Sine, 1.0, 1024, true, &mut sine_long_win);
+        generate_window(WindowType::Sine, 1.0, 128, true, &mut sine_short_win);
+
+        let mut planner = DCTplanner::<f32>::new();
+
+        Self {
+            kbd_long_win,
+            kbd_short_win,
+            sine_long_win,
+            sine_short_win,
+            imdct_long: planner.plan_mdct(1024, |size| vec![1.0 / (size as f32); size] ),
+            imdct_short: planner.plan_mdct(128, |size| vec![1.0 / (size as f32); size] ),
+            tmp: [0.0; 2048],
+            ew_buf: [0.0; 1152],
+        }
+    }
+
+    #[allow(clippy::cyclomatic_complexity)]
+    fn synth(
+        &mut self,
+        coeffs: &[f32; 1024],
+        delay: &mut [f32; 1024],
+        seq: u8,
+        window_shape: bool,
+        prev_window_shape: bool,
+        dst: &mut [f32],
+    ) {
+        let long_win = if window_shape {
+            &self.kbd_long_win
+        }
+        else {
+            &self.sine_long_win
+        };
+
+        let short_win = if window_shape {
+            &self.kbd_short_win
+        }
+        else {
+            &self.sine_short_win
+        };
+
+        let left_long_win = if prev_window_shape {
+            &self.kbd_long_win
+        }
+        else {
+            &self.sine_long_win
+        };
+
+        let left_short_win = if prev_window_shape {
+            &self.kbd_short_win
+        }
+        else {
+            &self.sine_short_win
+        };
+
+        // Zero output buffer.
+        for out in self.tmp.iter_mut() {
+            *out = 0.0;
+        }
+
+        // Inverse MDCT
+        if seq != EIGHT_SHORT_SEQUENCE {
+            self.imdct_long.process_imdct(coeffs, &mut self.tmp);
+        }
+        else {
+            for (ain, aout) in coeffs.chunks(128).zip(self.tmp.chunks_mut(256)) {
+                self.imdct_short.process_imdct(ain, aout);
+            }
+
+            self.ew_buf = [0.0; 1152];
+
+            for (w, src) in self.tmp.chunks(256).enumerate() {
+                if w > 0 {
+                    for i in 0..128 {
+                        self.ew_buf[w * 128 + i] += src[i] * short_win[i];
+                    }
+                }
+                else {
+                    // to be left-windowed
+                    for i in 0..128 {
+                        self.ew_buf[i] = src[i];
+                    }
+                }
+                for i in 0..128 {
+                    self.ew_buf[w * 128 + i + 128] += src[i + 128] * short_win[127 - i];
+                }
+            }
+        }
+
+        if seq == ONLY_LONG_SEQUENCE {
+            // should be the most common case
+            for i in 0..1024 {
+                dst[i] = delay[i] + self.tmp[i] * left_long_win[i];
+                delay[i] = self.tmp[i + 1024] * long_win[1023 - i];
+            }
+            return;
+        }
+
+        // output new data
+        match seq {
+            ONLY_LONG_SEQUENCE | LONG_START_SEQUENCE => {
+                for i in 0..1024 {
+                    dst[i] = self.tmp[i] * left_long_win[i] + delay[i];
+                }
+            }
+            EIGHT_SHORT_SEQUENCE => {
+                for i in 0..SHORT_WIN_POINT0 {
+                    dst[i] = delay[i];
+                }
+                for i in SHORT_WIN_POINT0..SHORT_WIN_POINT1 {
+                    let j = i - SHORT_WIN_POINT0;
+                    dst[i] = delay[i] + self.ew_buf[j] * left_short_win[j];
+                }
+                for i in SHORT_WIN_POINT1..1024 {
+                    let j = i - SHORT_WIN_POINT0;
+                    dst[i] = self.ew_buf[j];
+                }
+            }
+            LONG_STOP_SEQUENCE => {
+                for i in 0..SHORT_WIN_POINT0 {
+                    dst[i] = delay[i];
+                }
+                for i in SHORT_WIN_POINT0..SHORT_WIN_POINT1 {
+                    dst[i] = delay[i] + self.tmp[i] * left_short_win[i - SHORT_WIN_POINT0];
+                }
+                for i in SHORT_WIN_POINT1..1024 {
+                    dst[i] = self.tmp[i];
+                }
+            }
+            _ => unreachable!(),
+        };
+        // save delay
+        match seq {
+            ONLY_LONG_SEQUENCE | LONG_STOP_SEQUENCE => {
+                for i in 0..1024 {
+                    delay[i] = self.tmp[i + 1024] * long_win[1023 - i];
+                }
+            }
+            EIGHT_SHORT_SEQUENCE => {
+                for i in 0..SHORT_WIN_POINT1 {
+                    // last part is already windowed
+                    delay[i] = self.ew_buf[i + 512 + 64];
+                }
+                for i in SHORT_WIN_POINT1..1024 {
+                    delay[i] = 0.0;
+                }
+            }
+            LONG_START_SEQUENCE => {
+                for i in 0..SHORT_WIN_POINT0 {
+                    delay[i] = self.tmp[i + 1024];
+                }
+                for i in SHORT_WIN_POINT0..SHORT_WIN_POINT1 {
+                    delay[i] = self.tmp[i + 1024] * short_win[127 - (i - SHORT_WIN_POINT0)];
+                }
+                for i in SHORT_WIN_POINT1..1024 {
+                    delay[i] = 0.0;
+                }
+            }
+            _ => unreachable!(),
+        };
+    }
+}
+
+
+pub struct AacDecoder {
+    // info: NACodecInfoRef,
+    m4ainfo: M4AInfo,
+    pairs: Vec<ChannelPair>,
+    dsp: DSP,
+    sbinfo: GASubbandInfo,
+    params: CodecParameters,
+    buf: AudioBuffer<f32>,
+}
+
+impl AacDecoder {
+
+    fn set_pair(&mut self, pair_no: usize, channel: usize, pair: bool) -> Result<()> {
+        if self.pairs.len() <= pair_no {
+            self.pairs
+                .push(ChannelPair::new(pair, channel, self.sbinfo));
+        }
+        else {
+            validate!(self.pairs[pair_no].channel == channel);
+            validate!(self.pairs[pair_no].pair == pair);
+        }
+        validate!(if pair { channel + 1 }
+            else { channel } < self.m4ainfo.channels);
+        Ok(())
+    }
+
+    fn decode_ga<B: BitStream + FiniteBitStream>(&mut self, bs: &mut B) -> Result<()> {
+        let mut cur_pair = 0;
+        let mut cur_ch = 0;
+        while bs.bits_left() > 3 {
+            let id = bs.read_bits_leq32(3)?;
+
+            match id {
+                0 => {
+                    // ID_SCE
+                    let _tag = bs.read_bits_leq32(4)?;
+                    self.set_pair(cur_pair, cur_ch, false)?;
+                    self.pairs[cur_pair].decode_ga_sce(bs, self.m4ainfo.otype)?;
+                    cur_pair += 1;
+                    cur_ch += 1;
+                }
+                1 => {
+                    // ID_CPE
+                    let _tag = bs.read_bits_leq32(4)?;
+                    self.set_pair(cur_pair, cur_ch, true)?;
+                    self.pairs[cur_pair].decode_ga_cpe(bs, self.m4ainfo.otype)?;
+                    cur_pair += 1;
+                    cur_ch += 2;
+                }
+                2 => {
+                    // ID_CCE
+                    return unsupported_error("coupling channel element");
+                }
+                3 => {
+                    // ID_LFE
+                    let _tag = bs.read_bits_leq32(4)?;
+                    self.set_pair(cur_pair, cur_ch, false)?;
+                    self.pairs[cur_pair].decode_ga_sce(bs, self.m4ainfo.otype)?;
+                    cur_pair += 1;
+                    cur_ch += 1;
+                }
+                4 => {
+                    // ID_DSE
+                    let _id = bs.read_bits_leq32(4)?;
+                    let align = bs.read_bit()?;
+                    let mut count = bs.read_bits_leq32(8)? as u32;
+                    if count == 255 {
+                        count += bs.read_bits_leq32(8)? as u32;
+                    }
+                    if align {
+                        bs.realign(); // ????
+                    }
+                    bs.ignore_bits(count * 8)?; // no SBR payload or such
+                }
+                5 => {
+                    // ID_PCE
+                    return unsupported_error("program config");
+                }
+                6 => {
+                    // ID_FIL
+                    let mut count = bs.read_bits_leq32(4)? as usize;
+                    if count == 15 {
+                        count += bs.read_bits_leq32(8)? as usize;
+                        count -= 1;
+                    }
+                    for _ in 0..count {
+                        // ext payload
+                        bs.ignore_bits(8)?;
+                    }
+                }
+                7 => {
+                    // ID_TERM
+                    break;
+                }
+                _ => unreachable!(),
+            };
+        }
+        let srate_idx = GASubbandInfo::find_idx(self.m4ainfo.srate);
+        for pair in 0..cur_pair {
+            self.pairs[pair].synth_audio(&mut self.dsp, &mut self.buf, srate_idx);
+        }
+        Ok(())
+    }
+
+    // fn flush(&mut self) {
+    //     for pair in self.pairs.iter_mut() {
+    //         pair.ics[0].delay = [0.0; 1024];
+    //         pair.ics[1].delay = [0.0; 1024];
+    //     }
+    // }
+
+}
+
+impl Decoder for AacDecoder {
+
+    fn try_new(params: &CodecParameters, _: &DecoderOptions) -> Result<Self> {
+
+        let mut m4ainfo = M4AInfo::new();
+
+        // If extra data present, parse the audio specific config
+        if let Some(extra_data_buf) = &params.extra_data {
+            validate!(extra_data_buf.len() >= 2);
+            m4ainfo.read(extra_data_buf)?;
+        }
+        else {
+            // Otherwise, assume there is no ASC and use the codec parameters for ADTS.
+            m4ainfo.srate = params.sample_rate.unwrap();
+            m4ainfo.otype = M4AType::LC;
+            m4ainfo.samples = 1024;
+            m4ainfo.channels = params.channels.unwrap().count();
+        }
+
+        //print!("edata:"); for s in edata.iter() { print!(" {:02X}", *s);}println!("");
+
+        trace!("{}", m4ainfo);
+
+        if (m4ainfo.otype != M4AType::LC) || (m4ainfo.channels > 2) || (m4ainfo.samples != 1024) {
+            return unsupported_error("aac too complex");
+        }
+
+        let spec = SignalSpec::new(
+            m4ainfo.srate,
+            map_channels(m4ainfo.channels as u32).unwrap()
+        );
+
+        let duration = m4ainfo.samples as Duration;
+        let srate = m4ainfo.srate;
+
+        Ok(AacDecoder {
+            m4ainfo,
+            pairs: Vec::new(),
+            dsp: DSP::new(),
+            sbinfo: GASubbandInfo::find(srate),
+            params: params.clone(),
+            buf: AudioBuffer::new(duration, spec),
+        })
+    }
+
+    fn supported_codecs() -> &'static [CodecDescriptor] {
+        &[
+            support_codec!(CODEC_TYPE_AAC, "aac", "Advanced Audio Coding"),
+        ]
+    }
+
+    fn codec_params(&self) -> &CodecParameters {
+        &self.params
+    }
+
+    fn decode(&mut self, packet: &Packet) -> Result<AudioBufferRef<'_>> {
+        let reader = packet.as_buf_stream();
+
+        // Clear the audio output buffer.
+        self.buf.clear();
+        self.buf.render_reserved(None);
+
+        let mut bs = BitStreamLtr::new(reader);
+
+        // Choose decode step based on the object type.
+        match self.m4ainfo.otype {
+            M4AType::LC => self.decode_ga(&mut bs)?,
+            _           => return unsupported_error("object type"),
+        }
+
+        Ok(self.buf.as_audio_buffer_ref())
+    }
+
+    fn close(&mut self) {
+
+    }
+}
+
+const AAC_UNSIGNED_CODEBOOK: [bool; 11] = [
+    false, false, true, true, false, false, true, true, true, true, true,
+];
+
+const AAC_CODEBOOK_MODULO: [u16; 7] = [9, 9, 8, 8, 13, 13, 17];
+
+const AAC_QUADS: [[i8; 4]; 81] = [
+    [0, 0, 0, 0],
+    [0, 0, 0, 1],
+    [0, 0, 0, 2],
+    [0, 0, 1, 0],
+    [0, 0, 1, 1],
+    [0, 0, 1, 2],
+    [0, 0, 2, 0],
+    [0, 0, 2, 1],
+    [0, 0, 2, 2],
+    [0, 1, 0, 0],
+    [0, 1, 0, 1],
+    [0, 1, 0, 2],
+    [0, 1, 1, 0],
+    [0, 1, 1, 1],
+    [0, 1, 1, 2],
+    [0, 1, 2, 0],
+    [0, 1, 2, 1],
+    [0, 1, 2, 2],
+    [0, 2, 0, 0],
+    [0, 2, 0, 1],
+    [0, 2, 0, 2],
+    [0, 2, 1, 0],
+    [0, 2, 1, 1],
+    [0, 2, 1, 2],
+    [0, 2, 2, 0],
+    [0, 2, 2, 1],
+    [0, 2, 2, 2],
+    [1, 0, 0, 0],
+    [1, 0, 0, 1],
+    [1, 0, 0, 2],
+    [1, 0, 1, 0],
+    [1, 0, 1, 1],
+    [1, 0, 1, 2],
+    [1, 0, 2, 0],
+    [1, 0, 2, 1],
+    [1, 0, 2, 2],
+    [1, 1, 0, 0],
+    [1, 1, 0, 1],
+    [1, 1, 0, 2],
+    [1, 1, 1, 0],
+    [1, 1, 1, 1],
+    [1, 1, 1, 2],
+    [1, 1, 2, 0],
+    [1, 1, 2, 1],
+    [1, 1, 2, 2],
+    [1, 2, 0, 0],
+    [1, 2, 0, 1],
+    [1, 2, 0, 2],
+    [1, 2, 1, 0],
+    [1, 2, 1, 1],
+    [1, 2, 1, 2],
+    [1, 2, 2, 0],
+    [1, 2, 2, 1],
+    [1, 2, 2, 2],
+    [2, 0, 0, 0],
+    [2, 0, 0, 1],
+    [2, 0, 0, 2],
+    [2, 0, 1, 0],
+    [2, 0, 1, 1],
+    [2, 0, 1, 2],
+    [2, 0, 2, 0],
+    [2, 0, 2, 1],
+    [2, 0, 2, 2],
+    [2, 1, 0, 0],
+    [2, 1, 0, 1],
+    [2, 1, 0, 2],
+    [2, 1, 1, 0],
+    [2, 1, 1, 1],
+    [2, 1, 1, 2],
+    [2, 1, 2, 0],
+    [2, 1, 2, 1],
+    [2, 1, 2, 2],
+    [2, 2, 0, 0],
+    [2, 2, 0, 1],
+    [2, 2, 0, 2],
+    [2, 2, 1, 0],
+    [2, 2, 1, 1],
+    [2, 2, 1, 2],
+    [2, 2, 2, 0],
+    [2, 2, 2, 1],
+    [2, 2, 2, 2],
+];
+
+const SWB_OFFSET_48K_LONG: [usize; 49 + 1] = [
+    0, 4, 8, 12, 16, 20, 24, 28, 32, 36, 40, 48, 56, 64, 72, 80, 88, 96, 108, 120, 132, 144, 160,
+    176, 196, 216, 240, 264, 292, 320, 352, 384, 416, 448, 480, 512, 544, 576, 608, 640, 672, 704,
+    736, 768, 800, 832, 864, 896, 928, 1024,
+];
+
+const SWB_OFFSET_48K_SHORT: [usize; 14 + 1] =
+    [0, 4, 8, 12, 16, 20, 28, 36, 44, 56, 68, 80, 96, 112, 128];
+
+const SWB_OFFSET_32K_LONG: [usize; 51 + 1] = [
+    0, 4, 8, 12, 16, 20, 24, 28, 32, 36, 40, 48, 56, 64, 72, 80, 88, 96, 108, 120, 132, 144, 160,
+    176, 196, 216, 240, 264, 292, 320, 352, 384, 416, 448, 480, 512, 544, 576, 608, 640, 672, 704,
+    736, 768, 800, 832, 864, 896, 928, 960, 992, 1024,
+];
+
+const SWB_OFFSET_8K_LONG: [usize; 40 + 1] = [
+    0, 12, 24, 36, 48, 60, 72, 84, 96, 108, 120, 132, 144, 156, 172, 188, 204, 220, 236, 252, 268,
+    288, 308, 328, 348, 372, 396, 420, 448, 476, 508, 544, 580, 620, 664, 712, 764, 820, 880, 944,
+    1024,
+];
+
+const SWB_OFFSET_8K_SHORT: [usize; 15 + 1] = [
+    0, 4, 8, 12, 16, 20, 24, 28, 36, 44, 52, 60, 72, 88, 108, 128,
+];
+
+const SWB_OFFSET_16K_LONG: [usize; 43 + 1] = [
+    0, 8, 16, 24, 32, 40, 48, 56, 64, 72, 80, 88, 100, 112, 124, 136, 148, 160, 172, 184, 196, 212,
+    228, 244, 260, 280, 300, 320, 344, 368, 396, 424, 456, 492, 532, 572, 616, 664, 716, 772, 832,
+    896, 960, 1024,
+];
+
+const SWB_OFFSET_16K_SHORT: [usize; 15 + 1] = [
+    0, 4, 8, 12, 16, 20, 24, 28, 32, 40, 48, 60, 72, 88, 108, 128,
+];
+
+const SWB_OFFSET_24K_LONG: [usize; 47 + 1] = [
+    0, 4, 8, 12, 16, 20, 24, 28, 32, 36, 40, 44, 52, 60, 68, 76, 84, 92, 100, 108, 116, 124, 136,
+    148, 160, 172, 188, 204, 220, 240, 260, 284, 308, 336, 364, 396, 432, 468, 508, 552, 600, 652,
+    704, 768, 832, 896, 960, 1024,
+];
+
+const SWB_OFFSET_24K_SHORT: [usize; 15 + 1] = [
+    0, 4, 8, 12, 16, 20, 24, 28, 36, 44, 52, 64, 76, 92, 108, 128,
+];
+
+const SWB_OFFSET_64K_LONG: [usize; 47 + 1] = [
+    0, 4, 8, 12, 16, 20, 24, 28, 32, 36, 40, 44, 48, 52, 56, 64, 72, 80, 88, 100, 112, 124, 140,
+    156, 172, 192, 216, 240, 268, 304, 344, 384, 424, 464, 504, 544, 584, 624, 664, 704, 744, 784,
+    824, 864, 904, 944, 984, 1024,
+];
+
+const SWB_OFFSET_64K_SHORT: [usize; 12 + 1] = [0, 4, 8, 12, 16, 20, 24, 32, 40, 48, 64, 92, 128];
+
+const SWB_OFFSET_96K_LONG: [usize; 41 + 1] = [
+    0, 4, 8, 12, 16, 20, 24, 28, 32, 36, 40, 44, 48, 52, 56, 64, 72, 80, 88, 96, 108, 120, 132,
+    144, 156, 172, 188, 212, 240, 276, 320, 384, 448, 512, 576, 640, 704, 768, 832, 896, 960, 1024,
+];
+
+#[derive(Clone, Copy)]
+struct GASubbandInfo {
+    min_srate: u32,
+    long_bands: &'static [usize],
+    short_bands: &'static [usize],
+}
+
+impl GASubbandInfo {
+    fn find(srate: u32) -> GASubbandInfo {
+        for sbi in AAC_SUBBAND_INFO.iter() {
+            if srate >= sbi.min_srate {
+                return *sbi;
+            }
+        }
+        unreachable!()
+    }
+    fn find_idx(srate: u32) -> usize {
+        for (i, sbi) in AAC_SUBBAND_INFO.iter().enumerate() {
+            if srate >= sbi.min_srate {
+                return i;
+            }
+        }
+        unreachable!()
+    }
+}
+
+const AAC_SUBBAND_INFO: [GASubbandInfo; 12] = [
+    GASubbandInfo {
+        min_srate: 92017,
+        long_bands: &SWB_OFFSET_96K_LONG,
+        short_bands: &SWB_OFFSET_64K_SHORT,
+    }, //96K
+    GASubbandInfo {
+        min_srate: 75132,
+        long_bands: &SWB_OFFSET_96K_LONG,
+        short_bands: &SWB_OFFSET_64K_SHORT,
+    }, //88.2K
+    GASubbandInfo {
+        min_srate: 55426,
+        long_bands: &SWB_OFFSET_64K_LONG,
+        short_bands: &SWB_OFFSET_64K_SHORT,
+    }, //64K
+    GASubbandInfo {
+        min_srate: 46009,
+        long_bands: &SWB_OFFSET_48K_LONG,
+        short_bands: &SWB_OFFSET_48K_SHORT,
+    }, //48K
+    GASubbandInfo {
+        min_srate: 37566,
+        long_bands: &SWB_OFFSET_48K_LONG,
+        short_bands: &SWB_OFFSET_48K_SHORT,
+    }, //44.1K
+    GASubbandInfo {
+        min_srate: 27713,
+        long_bands: &SWB_OFFSET_32K_LONG,
+        short_bands: &SWB_OFFSET_48K_SHORT,
+    }, //32K
+    GASubbandInfo {
+        min_srate: 23004,
+        long_bands: &SWB_OFFSET_24K_LONG,
+        short_bands: &SWB_OFFSET_24K_SHORT,
+    }, //24K
+    GASubbandInfo {
+        min_srate: 18783,
+        long_bands: &SWB_OFFSET_24K_LONG,
+        short_bands: &SWB_OFFSET_24K_SHORT,
+    }, //22.05K
+    GASubbandInfo {
+        min_srate: 13856,
+        long_bands: &SWB_OFFSET_16K_LONG,
+        short_bands: &SWB_OFFSET_16K_SHORT,
+    }, //16K
+    GASubbandInfo {
+        min_srate: 11502,
+        long_bands: &SWB_OFFSET_16K_LONG,
+        short_bands: &SWB_OFFSET_16K_SHORT,
+    }, //12K
+    GASubbandInfo {
+        min_srate: 9391,
+        long_bands: &SWB_OFFSET_16K_LONG,
+        short_bands: &SWB_OFFSET_16K_SHORT,
+    }, //11.025K
+    GASubbandInfo {
+        min_srate: 0,
+        long_bands: &SWB_OFFSET_8K_LONG,
+        short_bands: &SWB_OFFSET_8K_SHORT,
+    }, //8K
+];
