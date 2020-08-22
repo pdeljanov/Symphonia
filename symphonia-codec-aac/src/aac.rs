@@ -649,14 +649,21 @@ struct ICS {
     sect_len: [[usize; MAX_SFBS]; MAX_WINDOWS],
     sfb_cb: [[u8; MAX_SFBS]; MAX_WINDOWS],
     num_sec: [usize; MAX_WINDOWS],
-    scales: [[u8; MAX_SFBS]; MAX_WINDOWS],
+    scales: [[f32; MAX_SFBS]; MAX_WINDOWS],
     sbinfo: GASubbandInfo,
     coeffs: [f32; 1024],
     delay: [f32; 1024],
+    lcg: Lcg,
 }
 
 const INTENSITY_SCALE_MIN: i16 = -155;
 const NOISE_SCALE_MIN: i16 = -100;
+
+fn get_scale(scale: i16) -> f32 {
+    2.0f32.powf(0.25 * f32::from(scale - 56))
+    // 2.0f32.powf(0.25 * (f32::from(scale) - 100.0 - 56.0))
+}
+
 
 impl ICS {
     fn new(sbinfo: GASubbandInfo) -> Self {
@@ -669,11 +676,12 @@ impl ICS {
             sect_cb: [[0; MAX_SFBS]; MAX_WINDOWS],
             sect_len: [[0; MAX_SFBS]; MAX_WINDOWS],
             sfb_cb: [[0; MAX_SFBS]; MAX_WINDOWS],
-            scales: [[0; MAX_SFBS]; MAX_WINDOWS],
+            scales: [[0.0; MAX_SFBS]; MAX_WINDOWS],
             num_sec: [0; MAX_WINDOWS],
             sbinfo,
             coeffs: [0.0; 1024],
             delay: [0.0; 1024],
+            lcg: Lcg::new(0x1bad1dea),
         }
     }
 
@@ -729,47 +737,55 @@ impl ICS {
         self.sfb_cb[g][sfb] == INTENSITY_HCB
     }
 
+
+
     fn decode_scale_factor_data<B: BitStream>(&mut self, bs: &mut B) -> Result<()> {
         let mut noise_pcm_flag = true;
-        let mut scf_normal = i16::from(self.global_gain);
         let mut scf_intensity = 0i16;
-        let mut scf_noise = 0i16;
+        let mut scf_noise = i16::from(self.global_gain) - 90;
+        let mut scf_normal = i16::from(self.global_gain);
+
         for g in 0..self.info.window_groups {
             for sfb in 0..self.info.max_sfb {
-                if self.sfb_cb[g][sfb] != ZERO_HCB {
-                    if self.is_intensity(g, sfb) {
-                        // TODO: Fix lim_bits.
-                        let diff = i16::from(bs.read_huffman(&SCF_TABLE, 100)?.0) - 60;
-                        scf_intensity += diff;
-                        validate!(
-                            (scf_intensity >= INTENSITY_SCALE_MIN)
-                                && (scf_intensity < INTENSITY_SCALE_MIN + 256)
-                        );
-                        self.scales[g][sfb] = (scf_intensity - INTENSITY_SCALE_MIN) as u8;
-                    }
-                    else if self.sfb_cb[g][sfb] == NOISE_HCB {
-                        if noise_pcm_flag {
-                            noise_pcm_flag = false;
-                            scf_noise = (bs.read_bits_leq32(9)? as i16) - 256
-                                + i16::from(self.global_gain)
-                                - 90;
-                        }
-                        else {
-                            // TODO: Fix lim_bits.
-                            scf_noise += i16::from(bs.read_huffman(&SCF_TABLE, 100)?.0) - 60;
-                        }
-                        validate!(
-                            (scf_noise >= NOISE_SCALE_MIN) && (scf_noise < NOISE_SCALE_MIN + 256)
-                        );
-                        self.scales[g][sfb] = (scf_noise - NOISE_SCALE_MIN) as u8;
+
+                self.scales[g][sfb] = if self.sfb_cb[g][sfb] == ZERO_HCB {
+                    0.0
+                }
+                else if self.is_intensity(g, sfb) {
+                    // TODO: Fix lim_bits.
+                    scf_intensity += i16::from(bs.read_huffman(&SCF_TABLE, 100)?.0) - 60;
+
+                    validate!(
+                        (scf_intensity >= INTENSITY_SCALE_MIN)
+                            && (scf_intensity < INTENSITY_SCALE_MIN + 256)
+                    );
+
+                    get_scale(scf_intensity)
+                }
+                else if self.sfb_cb[g][sfb] == NOISE_HCB {
+                    if noise_pcm_flag {
+                        noise_pcm_flag = false;
+                        scf_noise += (bs.read_bits_leq32(9)? as i16) - 256;
                     }
                     else {
                         // TODO: Fix lim_bits.
-                        scf_normal += i16::from(bs.read_huffman(&SCF_TABLE, 100)?.0) - 60;
-                        validate!((scf_normal >= 0) && (scf_normal < 255));
-                        self.scales[g][sfb] = scf_normal as u8;
+                        scf_noise += i16::from(bs.read_huffman(&SCF_TABLE, 100)?.0) - 60;
                     }
+
+                    validate!(
+                        (scf_noise >= NOISE_SCALE_MIN) && (scf_noise < NOISE_SCALE_MIN + 256)
+                    );
+
+                    get_scale(scf_noise)
                 }
+                else {
+                    // TODO: Fix lim_bits.
+                    scf_normal += i16::from(bs.read_huffman(&SCF_TABLE, 100)?.0) - 60;
+                    validate!((scf_normal >= 0) && (scf_normal < 255));
+
+                    get_scale(scf_normal - 100)
+                }
+
             }
         }
         Ok(())
@@ -794,6 +810,7 @@ impl ICS {
     }
 
     fn decode_spectrum<B: BitStream>(&mut self, bs: &mut B) -> Result<()> {
+        // Zero all spectral coefficients.
         self.coeffs = [0.0; 1024];
         for g in 0..self.info.window_groups {
             let cur_w = self.info.get_group_start(g);
@@ -804,13 +821,14 @@ impl ICS {
                 let cb_idx = self.sfb_cb[g][sfb];
                 for w in cur_w..next_w {
                     let dst = &mut self.coeffs[start + w * 128..end + w * 128];
+                    let scale = self.scales[g][sfb];
+
                     match cb_idx {
-                        ZERO_HCB => { /* zeroes */ }
-                        NOISE_HCB => { /* noise */ }
-                        INTENSITY_HCB | INTENSITY_HCB2 => { /* intensity */ }
+                        ZERO_HCB => (),
+                        NOISE_HCB => decode_spectrum_noise(&mut self.lcg, scale, dst),
+                        INTENSITY_HCB | INTENSITY_HCB2 => decode_spectrum_intensity(),
                         _ => {
                             let unsigned = AAC_UNSIGNED_CODEBOOK[(cb_idx - 1) as usize];
-                            let scale = get_scale(self.scales[g][sfb]);
 
                             let cb = SPEC_TABLES[(cb_idx - 1) as usize];
 
@@ -836,6 +854,8 @@ impl ICS {
         Ok(())
     }
 
+
+
     fn place_pulses(&mut self) {
         if let Some(ref pdata) = self.pulse_data {
             if pdata.pulse_start_sfb >= self.sbinfo.long_bands.len() - 1 {
@@ -857,7 +877,7 @@ impl ICS {
                     band += 1;
                 }
 
-                let scale = get_scale(self.scales[0][band]);
+                let scale = self.scales[0][band];
                 let mut base = self.coeffs[k];
 
                 if base != 0.0 {
@@ -983,8 +1003,22 @@ impl ICS {
     }
 }
 
-fn get_scale(scale: u8) -> f32 {
-    2.0f32.powf(0.25 * (f32::from(scale) - 100.0 - 56.0))
+#[derive(Clone)]
+struct Lcg {
+    state: u32,
+}
+
+impl Lcg {
+    fn new(state: u32) -> Self {
+        Lcg { state }
+    }
+
+    #[inline(always)]
+    fn next(&mut self) -> i32 {
+        // Numerical Recipes LCG parameters.
+        self.state = (self.state as u32).wrapping_mul(1664525).wrapping_add(1013904223);
+        self.state as i32
+    }
 }
 
 fn iquant(val: f32) -> f32 {
@@ -1007,6 +1041,27 @@ fn requant(val: f32, scale: f32) -> f32 {
     else {
         -((-val).powf(3.0 / 4.0))
     }
+}
+
+fn decode_spectrum_noise(lcg: &mut Lcg, sf: f32, dst: &mut [f32]) {
+    let mut energy = 0.0;
+
+    for spec in dst.iter_mut() {
+        // The random number generator outputs i32, but the largest signed
+        // integer that can convert to f32 is i16.
+        *spec = f32::from((lcg.next() >> 16) as i16);
+        energy += *spec * *spec;
+    }
+
+    let scale = sf / energy.sqrt();
+
+    for spec in dst.iter_mut() {
+        *spec = *spec * scale;
+    }
+}
+
+fn decode_spectrum_intensity() {
+    trace!("todo: intensity spectrum decode");
 }
 
 fn decode_quads<B: BitStream>(
@@ -1072,10 +1127,10 @@ fn decode_pairs<B: BitStream>(
 
         if escape {
             if (x == 16) || (x == -16) {
-                x += read_escape(bs, x > 0)?;
+                x = read_escape(bs, x > 0)?;
             }
             if (y == 16) || (y == -16) {
-                y += read_escape(bs, y > 0)?;
+                y = read_escape(bs, y > 0)?;
             }
         }
 
@@ -1085,20 +1140,23 @@ fn decode_pairs<B: BitStream>(
     Ok(())
 }
 
-fn read_escape<B: BitStream>(bs: &mut B, sign: bool) -> Result<i16> {
+fn read_escape<B: BitStream>(bs: &mut B, is_pos: bool) -> Result<i16> {
     // TODO: Move into BitReaderLtr
-    let mut prefix = 0;
+    let mut n = 0;
     while bs.read_bit()? == true {
-        prefix += 1;
+        n += 1;
     }
 
-    validate!(prefix < 9);
-    let bits = bs.read_bits_leq32(prefix + 4)? as i16;
-    if sign {
-        Ok(bits)
+    validate!(n < 9);
+
+    // The escape word is added to 2^(n + 4) to yield the unsigned value.
+    let word = (1 << (n + 4)) + bs.read_bits_leq32(n + 4)? as i16;
+
+    if is_pos {
+        Ok(word)
     }
     else {
-        Ok(-bits)
+        Ok(-word)
     }
 }
 
@@ -1179,7 +1237,6 @@ impl ChannelPair {
 
                     // Intensity Stereo
                     if self.ics[0].is_intensity(g, sfb) {
-                        trace!("intensity");
                         let invert = (self.ms_mask_present == 1) && self.ms_used[g][sfb];
                         let dir = self.ics[0].get_intensity_dir(g, sfb) ^ invert;
                         let scale = 0.5f32.powf(
