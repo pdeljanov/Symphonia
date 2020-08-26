@@ -409,7 +409,8 @@ impl ICSInfo {
     fn get_group_start(&self, g: usize) -> usize {
         if g == 0 {
             0
-        } else if g >= self.window_groups {
+        }
+        else if g >= self.window_groups {
             if self.long_win {
                 1
             }
@@ -537,23 +538,29 @@ impl TNSCoeffs {
                 coef_bits -= 1;
             }
             let sign_mask = 1 << (coef_bits - 1);
-            let neg_mask = !(sign_mask * 2 - 1);
+            let neg_mask = !(2 * sign_mask - 1);
 
             let fac_base = if coef_res { 1 << 3 } else { 1 << 2 } as f32;
             let iqfac = (fac_base - 0.5) / (consts::PI / 2.0);
             let iqfac_m = (fac_base + 0.5) / (consts::PI / 2.0);
+
             let mut tmp: [f32; TNS_MAX_ORDER] = [0.0; TNS_MAX_ORDER];
+
             for el in tmp.iter_mut().take(self.order) {
-                let val = bs.read_bits_leq32(coef_bits)? as i8;
+                let val = bs.read_bits_leq32(coef_bits)? as u8;
+
+                // Convert to signed integer.
                 let c = f32::from(if (val & sign_mask) != 0 {
-                    val | neg_mask
+                    (val | neg_mask) as i8
                 }
                 else {
-                    val
+                    val as i8
                 });
+
                 *el = (if c >= 0.0 { c / iqfac } else { c / iqfac_m }).sin();
             }
-            // convert to LPC coefficients
+
+            // Generate LPC coefficients
             let mut b: [f32; TNS_MAX_ORDER + 1] = [0.0; TNS_MAX_ORDER + 1];
             for m in 1..=self.order {
                 for i in 1..m {
@@ -565,8 +572,10 @@ impl TNSCoeffs {
                 self.coef[m - 1] = tmp[m - 1];
             }
         }
+
         Ok(())
     }
+
 }
 
 #[derive(Clone, Copy)]
@@ -659,11 +668,16 @@ struct ICS {
 const INTENSITY_SCALE_MIN: i16 = -155;
 const NOISE_SCALE_MIN: i16 = -100;
 
+#[inline(always)]
 fn get_scale(scale: i16) -> f32 {
     2.0f32.powf(0.25 * f32::from(scale - 56))
     // 2.0f32.powf(0.25 * (f32::from(scale) - 100.0 - 56.0))
 }
 
+#[inline(always)]
+fn get_intensity_scale(scale: i16) -> f32 {
+    2.0f32.powf(0.25 * f32::from(scale))
+}
 
 impl ICS {
     fn new(sbinfo: GASubbandInfo) -> Self {
@@ -729,15 +743,25 @@ impl ICS {
         Ok(())
     }
 
+    #[inline(always)]
+    fn is_zero(&self, g: usize, sfb: usize) -> bool {
+        self.sfb_cb[g][sfb] == ZERO_HCB
+    }
+
+    #[inline(always)]
     fn is_intensity(&self, g: usize, sfb: usize) -> bool {
         (self.sfb_cb[g][sfb] == INTENSITY_HCB) || (self.sfb_cb[g][sfb] == INTENSITY_HCB2)
     }
 
+    #[inline(always)]
+    fn is_noise(&self, g: usize, sfb: usize) -> bool {
+        self.sfb_cb[g][sfb] == NOISE_HCB
+    }
+
+    #[inline(always)]
     fn get_intensity_dir(&self, g: usize, sfb: usize) -> bool {
         self.sfb_cb[g][sfb] == INTENSITY_HCB
     }
-
-
 
     fn decode_scale_factor_data<B: BitStream>(&mut self, bs: &mut B) -> Result<()> {
         let mut noise_pcm_flag = true;
@@ -748,7 +772,7 @@ impl ICS {
         for g in 0..self.info.window_groups {
             for sfb in 0..self.info.max_sfb {
 
-                self.scales[g][sfb] = if self.sfb_cb[g][sfb] == ZERO_HCB {
+                self.scales[g][sfb] = if self.is_zero(g, sfb) {
                     0.0
                 }
                 else if self.is_intensity(g, sfb) {
@@ -760,9 +784,9 @@ impl ICS {
                             && (scf_intensity < INTENSITY_SCALE_MIN + 256)
                     );
 
-                    get_scale(scf_intensity)
+                    get_intensity_scale(scf_intensity)
                 }
-                else if self.sfb_cb[g][sfb] == NOISE_HCB {
+                else if self.is_noise(g, sfb) {
                     if noise_pcm_flag {
                         noise_pcm_flag = false;
                         scf_noise += (bs.read_bits_leq32(9)? as i16) - 256;
@@ -821,12 +845,13 @@ impl ICS {
                 let cb_idx = self.sfb_cb[g][sfb];
                 for w in cur_w..next_w {
                     let dst = &mut self.coeffs[start + w * 128..end + w * 128];
+
                     let scale = self.scales[g][sfb];
 
                     match cb_idx {
                         ZERO_HCB => (),
                         NOISE_HCB => decode_spectrum_noise(&mut self.lcg, scale, dst),
-                        INTENSITY_HCB | INTENSITY_HCB2 => decode_spectrum_intensity(),
+                        INTENSITY_HCB | INTENSITY_HCB2 => (),
                         _ => {
                             let unsigned = AAC_UNSIGNED_CODEBOOK[(cb_idx - 1) as usize];
 
@@ -853,8 +878,6 @@ impl ICS {
         }
         Ok(())
     }
-
-
 
     fn place_pulses(&mut self) {
         if let Some(ref pdata) = self.pulse_data {
@@ -914,6 +937,7 @@ impl ICS {
         self.pulse_data = PulseData::read(bs)?;
         validate!(self.pulse_data.is_none() || self.info.long_win);
 
+        // Table 4.156
         let tns_max_order = if !self.info.long_win {
             7
         }
@@ -941,6 +965,7 @@ impl ICS {
 
     fn synth_channel(&mut self, dsp: &mut DSP, srate_idx: usize, dst: &mut [f32]) {
         self.place_pulses();
+
         if let Some(ref tns_data) = self.tns_data {
 
             let tns_max_bands = (if self.info.long_win {
@@ -957,7 +982,7 @@ impl ICS {
                 for f in 0..tns_data.n_filt[w] {
                     let top = bottom;
 
-                    bottom = if top >= tns_data.coeffs[w][f].length {
+                    bottom = if top > tns_data.coeffs[w][f].length {
                         top - tns_data.coeffs[w][f].length
                     }
                     else {
@@ -984,7 +1009,7 @@ impl ICS {
                     else {
                         for (m, i) in (start..end).rev().enumerate() {
                             for j in 0..order.min(m) {
-                                self.coeffs[i] -= self.coeffs[i + j - 1] * lpc[j];
+                                self.coeffs[i] -= self.coeffs[i + j + 1] * lpc[j];
                             }
                         }
                     }
@@ -1058,10 +1083,6 @@ fn decode_spectrum_noise(lcg: &mut Lcg, sf: f32, dst: &mut [f32]) {
     for spec in dst.iter_mut() {
         *spec = *spec * scale;
     }
-}
-
-fn decode_spectrum_intensity() {
-    trace!("todo: intensity spectrum decode");
 }
 
 fn decode_quads<B: BitStream>(
@@ -1162,28 +1183,30 @@ fn read_escape<B: BitStream>(bs: &mut B, is_pos: bool) -> Result<i16> {
 
 #[derive(Clone)]
 struct ChannelPair {
-    pair: bool,
+    is_pair: bool,
     channel: usize,
     common_window: bool,
     ms_mask_present: u8,
     ms_used: [[bool; MAX_SFBS]; MAX_WINDOWS],
-    ics: [ICS; 2],
+    ics0: ICS,
+    ics1: ICS,
 }
 
 impl ChannelPair {
-    fn new(pair: bool, channel: usize, sbinfo: GASubbandInfo) -> Self {
+    fn new(is_pair: bool, channel: usize, sbinfo: GASubbandInfo) -> Self {
         Self {
-            pair,
+            is_pair,
             channel,
             common_window: false,
             ms_mask_present: 0,
             ms_used: [[false; MAX_SFBS]; MAX_WINDOWS],
-            ics: [ICS::new(sbinfo), ICS::new(sbinfo)],
+            ics0: ICS::new(sbinfo),
+            ics1: ICS::new(sbinfo),
         }
     }
 
     fn decode_ga_sce<B: BitStream>(&mut self, bs: &mut B, m4atype: M4AType) -> Result<()> {
-        self.ics[0].decode_ics(bs, m4atype, false)?;
+        self.ics0.decode_ics(bs, m4atype, false)?;
         Ok(())
     }
 
@@ -1192,23 +1215,23 @@ impl ChannelPair {
         self.common_window = common_window;
 
         if common_window {
-            self.ics[0].info.decode_ics_info(bs)?;
+            self.ics0.info.decode_ics_info(bs)?;
 
             // Mid-side stereo mask decoding.
             self.ms_mask_present = bs.read_bits_leq32(2)? as u8;
 
             match self.ms_mask_present {
-                0 => { },
+                0 => (),
                 1 => {
-                    for g in 0..self.ics[0].info.window_groups {
-                        for sfb in 0..self.ics[0].info.max_sfb {
+                    for g in 0..self.ics0.info.window_groups {
+                        for sfb in 0..self.ics0.info.max_sfb {
                             self.ms_used[g][sfb] = bs.read_bit()?;
                         }
                     }
                 }
                 2 => {
-                    for g in 0..self.ics[0].info.window_groups {
-                        for sfb in 0..self.ics[0].info.max_sfb {
+                    for g in 0..self.ics0.info.window_groups {
+                        for sfb in 0..self.ics0.info.max_sfb {
                             self.ms_used[g][sfb] = true;
                         }
                     }
@@ -1217,49 +1240,62 @@ impl ChannelPair {
                 _ => unreachable!()
             }
 
-            self.ics[1].info = self.ics[0].info;
+            self.ics1.info = self.ics0.info;
         }
 
-        self.ics[0].decode_ics(bs, m4atype, common_window)?;
-        self.ics[1].decode_ics(bs, m4atype, common_window)?;
+        self.ics0.decode_ics(bs, m4atype, common_window)?;
+        self.ics1.decode_ics(bs, m4atype, common_window)?;
 
+        // Joint-stereo decoding
         if common_window && self.ms_mask_present != 0 {
             let mut g = 0;
-            for w in 0..self.ics[0].info.num_windows {
+            for w in 0..self.ics0.info.num_windows {
 
-                if w > 0 && self.ics[0].info.scale_factor_grouping[w - 1] {
+                if w > 0 && !self.ics0.info.scale_factor_grouping[w - 1] {
                     g += 1;
                 }
 
-                for sfb in 0..self.ics[0].info.max_sfb {
-                    let start = w * 128 + self.ics[0].get_band_start(sfb);
-                    let end = w * 128 + self.ics[0].get_band_start(sfb + 1);
+                for sfb in 0..self.ics0.info.max_sfb {
+                    let start = w * 128 + self.ics0.get_band_start(sfb);
+                    let end = w * 128 + self.ics0.get_band_start(sfb + 1);
 
-                    // Intensity Stereo
-                    if self.ics[0].is_intensity(g, sfb) {
+                    // Intensity stereo
+                    if self.ics1.is_intensity(g, sfb) {
+                        // TODO: Invert always false for AAC Scaleable
                         let invert = (self.ms_mask_present == 1) && self.ms_used[g][sfb];
-                        let dir = self.ics[0].get_intensity_dir(g, sfb) ^ invert;
-                        let scale = 0.5f32.powf(
-                            0.25 * (f32::from(self.ics[0].scales[g][sfb])
-                                + f32::from(INTENSITY_SCALE_MIN)),
-                        );
-                        if !dir {
-                            for i in start..end {
-                                self.ics[1].coeffs[i] = scale * self.ics[0].coeffs[i];
-                            }
-                        }
-                        else {
-                            for i in start..end {
-                                self.ics[1].coeffs[i] = -scale * self.ics[0].coeffs[i];
-                            }
+                        let dir = self.ics1.get_intensity_dir(g, sfb) ^ invert;
+
+                        let scale = match dir {
+                            true => -self.ics1.scales[g][sfb],
+                            _    =>  self.ics1.scales[g][sfb],
+                        };
+
+                        let left = &self.ics0.coeffs[start..end];
+                        let right = &mut self.ics1.coeffs[start..end];
+
+                        for (l, r) in left.iter().zip(right) {
+                            *r = scale * l;
                         }
                     }
-                    else if (self.ms_mask_present == 2) || self.ms_used[g][sfb] {
+                    else if self.ics0.is_noise(g, sfb) || self.ics1.is_noise(g, sfb) {
+                        // Perceptual noise substitution
+                        //
+                        // If ms_used is true for the group and band, or ms_mask_present == 2, then
+                        // the noise vector for the band should be correlated (i.e., the same).
+                        if self.ms_mask_present == 2 || self.ms_used[g][sfb] {
+                            self.ics1.coeffs[start..end]
+                                .copy_from_slice(&self.ics0.coeffs[start..end]);
+                        }
+                    }
+                    else if self.ms_mask_present == 2 || self.ms_used[g][sfb] {
                         // Mid-side stereo
-                        for i in start..end {
-                            let tmp = self.ics[0].coeffs[i] - self.ics[1].coeffs[i];
-                            self.ics[0].coeffs[i] += self.ics[1].coeffs[i];
-                            self.ics[1].coeffs[i] = tmp;
+                        let mid = &mut self.ics0.coeffs[start..end];
+                        let side = &mut self.ics1.coeffs[start..end];
+
+                        for (m, s) in mid.iter_mut().zip(side) {
+                            let tmp = *m - *s;
+                            *m += *s;
+                            *s = tmp;
                         }
                     }
                 }
@@ -1270,10 +1306,10 @@ impl ChannelPair {
     }
 
     fn synth_audio(&mut self, dsp: &mut DSP, abuf: &mut AudioBuffer<f32>, srate_idx: usize) {
-        self.ics[0].synth_channel(dsp, srate_idx, abuf.chan_mut(self.channel));
+        self.ics0.synth_channel(dsp, srate_idx, abuf.chan_mut(self.channel));
 
-        if self.pair {
-            self.ics[1].synth_channel(dsp, srate_idx, abuf.chan_mut(self.channel + 1));
+        if self.is_pair {
+            self.ics1.synth_channel(dsp, srate_idx, abuf.chan_mut(self.channel + 1));
         }
     }
 }
@@ -1339,38 +1375,19 @@ impl DSP {
         prev_window_shape: bool,
         dst: &mut [f32],
     ) {
-        let long_win = if window_shape {
-            &self.kbd_long_win
-        }
-        else {
-            &self.sine_long_win
+
+        let (long_win, short_win) = match window_shape {
+            true  => (&self.kbd_long_win , &self.kbd_short_win ),
+            false => (&self.sine_long_win, &self.sine_short_win),
         };
 
-        let short_win = if window_shape {
-            &self.kbd_short_win
-        }
-        else {
-            &self.sine_short_win
+        let (prev_long_win, prev_short_win) = match prev_window_shape {
+            true  => (&self.kbd_long_win , &self.kbd_short_win ),
+            false => (&self.sine_long_win, &self.sine_short_win),
         };
 
-        let left_long_win = if prev_window_shape {
-            &self.kbd_long_win
-        }
-        else {
-            &self.sine_long_win
-        };
-
-        let left_short_win = if prev_window_shape {
-            &self.kbd_short_win
-        }
-        else {
-            &self.sine_short_win
-        };
-
-        // Zero output buffer.
-        for out in self.tmp.iter_mut() {
-            *out = 0.0;
-        }
+        // Zero the output buffer.
+        self.tmp = [0.0; 2048];
 
         // Inverse MDCT
         if seq != EIGHT_SHORT_SEQUENCE {
@@ -1386,48 +1403,33 @@ impl DSP {
             for (w, src) in self.tmp.chunks(256).enumerate() {
                 if w > 0 {
                     for i in 0..128 {
-                        self.ew_buf[w * 128 + i] += src[i] * short_win[i];
+                        self.ew_buf[w * 128 + i +   0] += src[i +   0] * short_win[i];
+                        self.ew_buf[w * 128 + i + 128] += src[i + 128] * short_win[127 - i];
                     }
                 }
                 else {
-                    // to be left-windowed
                     for i in 0..128 {
-                        self.ew_buf[i] = src[i];
+                        self.ew_buf[i +   0] = src[i +   0] * prev_short_win[i];
+                        self.ew_buf[i + 128] = src[i + 128] * short_win[127 - i];
                     }
                 }
-                for i in 0..128 {
-                    self.ew_buf[w * 128 + i + 128] += src[i + 128] * short_win[127 - i];
-                }
             }
-        }
-
-        if seq == ONLY_LONG_SEQUENCE {
-            // should be the most common case
-            for i in 0..1024 {
-                dst[i] = delay[i] + self.tmp[i] * left_long_win[i];
-                delay[i] = self.tmp[i + 1024] * long_win[1023 - i];
-            }
-            return;
         }
 
         // output new data
         match seq {
             ONLY_LONG_SEQUENCE | LONG_START_SEQUENCE => {
                 for i in 0..1024 {
-                    dst[i] = self.tmp[i] * left_long_win[i] + delay[i];
+                    dst[i] = delay[i] + (self.tmp[i] * prev_long_win[i]);
                 }
             }
             EIGHT_SHORT_SEQUENCE => {
                 for i in 0..SHORT_WIN_POINT0 {
                     dst[i] = delay[i];
                 }
-                for i in SHORT_WIN_POINT0..SHORT_WIN_POINT1 {
-                    let j = i - SHORT_WIN_POINT0;
-                    dst[i] = delay[i] + self.ew_buf[j] * left_short_win[j];
-                }
-                for i in SHORT_WIN_POINT1..1024 {
-                    let j = i - SHORT_WIN_POINT0;
-                    dst[i] = self.ew_buf[j];
+
+                for i in SHORT_WIN_POINT0..1024 {
+                    dst[i] = delay[i] + self.ew_buf[i - SHORT_WIN_POINT0];
                 }
             }
             LONG_STOP_SEQUENCE => {
@@ -1435,14 +1437,15 @@ impl DSP {
                     dst[i] = delay[i];
                 }
                 for i in SHORT_WIN_POINT0..SHORT_WIN_POINT1 {
-                    dst[i] = delay[i] + self.tmp[i] * left_short_win[i - SHORT_WIN_POINT0];
+                    dst[i] = delay[i] + self.tmp[i] * prev_short_win[i - SHORT_WIN_POINT0];
                 }
                 for i in SHORT_WIN_POINT1..1024 {
-                    dst[i] = self.tmp[i];
+                    dst[i] = delay[i] + self.tmp[i];
                 }
             }
             _ => unreachable!(),
         };
+
         // save delay
         match seq {
             ONLY_LONG_SEQUENCE | LONG_STOP_SEQUENCE => {
@@ -1495,7 +1498,7 @@ impl AacDecoder {
         }
         else {
             validate!(self.pairs[pair_no].channel == channel);
-            validate!(self.pairs[pair_no].pair == pair);
+            validate!(self.pairs[pair_no].is_pair == pair);
         }
         validate!(if pair { channel + 1 }
             else { channel } < self.m4ainfo.channels);
