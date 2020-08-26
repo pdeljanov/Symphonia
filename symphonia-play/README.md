@@ -2,11 +2,6 @@
 
 A quick-and-dirty audio player for testing Symphonia demuxers and decoders.
 
-## Operating System Support
-
-Symphonia Play currently only supports *audio output* on Linux with PulseAudio. All other features
-are cross-platform.
-
 ## Usage
 
 ```bash

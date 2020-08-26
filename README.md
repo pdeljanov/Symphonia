@@ -1,6 +1,6 @@
 # Symphonia (formerly Sonata)
 
-Symphonia is a pure Rust audio decoding and media demuxing library supporting OGG, FLAC, MP3, and WAV.
+Symphonia is a pure Rust audio decoding and media demuxing library supporting AAC, OGG, FLAC, MP3, and WAV.
 
 ## Features
 
@@ -37,7 +37,7 @@ support for FOSS codecs and formats, but others may be included via the features
 | MP1      | Paused      | `mp3`        | No      | `symphonia-bundle-mp3`     |
 | MP2      | Paused      | `mp3`        | No      | `symphonia-bundle-mp3`     |
 | MP3      | Complete    | `mp3`        | No      | `symphonia-bundle-mp3`     |
-| AAC      | -           | `aac`        | No      | `symphonia-codec-aac`      |
+| AAC      | Functional  | `aac`        | No      | `symphonia-codec-aac`      |
 | Opus     | Next        | `opus`       | Yes     | `symphonia-codec-opus`     |
 | PCM      | Complete    | `pcm`        | Yes     | `symphonia-codec-pcm`      |
 | Vorbis   | -           | `vorbis`     | Yes     | `symphonia-codec-vorbis`   |
@@ -152,6 +152,10 @@ Personally, this is a project to learn Rust and experiment with signal processin
 ## Authors
 
 The primary author is Philip Deljanov.
+
+## Special Thanks
+
+* Kostya Shishkov (AAC decoder contribution, see symphonia-codec-aac)
 
 ## License
 
