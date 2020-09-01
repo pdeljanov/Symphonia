@@ -284,6 +284,9 @@ pub trait ByteStream {
 
     /// Ignores the specified number of bytes from the stream or returns an error.
     fn ignore_bytes(&mut self, count: u64) -> io::Result<()>;
+
+    /// Gets the position of the stream.
+    fn pos(&self) -> u64;
 }
 
 impl<'b, B: ByteStream> ByteStream for &'b mut B {
@@ -330,6 +333,11 @@ impl<'b, B: ByteStream> ByteStream for &'b mut B {
     #[inline(always)]
     fn ignore_bytes(&mut self, count: u64) -> io::Result<()> {
         (*self).ignore_bytes(count)
+    }
+
+    #[inline(always)]
+    fn pos(&self) -> u64 {
+        (**self).pos()
     }
 }
 

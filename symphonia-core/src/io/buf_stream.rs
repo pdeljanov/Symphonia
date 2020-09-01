@@ -82,6 +82,7 @@ impl<'a> BufStream<'a> {
         self.pos += len;
         Ok(&self.buf[self.pos - len..self.pos])
     }
+
 }
 
 impl<'a> ByteStream for BufStream<'a> {
@@ -175,7 +176,12 @@ impl<'a> ByteStream for BufStream<'a> {
 
         self.pos += count as usize;
         Ok(())
-     }
+    }
+
+    #[inline(always)]
+    fn pos(&self) -> u64 {
+        self.pos as u64
+    }
 }
 
 impl<'a> FiniteStream for BufStream<'a> {

@@ -149,4 +149,9 @@ impl<B: ByteStream,> ByteStream for ScopedStream<B> {
         self.read += count;
         self.inner.ignore_bytes(count)
     }
+
+    #[inline(always)]
+    fn pos(&self) -> u64 {
+        self.inner.pos()
+    }
 }

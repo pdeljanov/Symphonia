@@ -184,4 +184,9 @@ impl<B: ByteStream + FiniteStream> ByteStream for UnsyncStream<B> {
         }
         Ok(())
     }
+
+    fn pos(&self) -> u64 {
+        // Not required.
+        unimplemented!();
+    }
 }

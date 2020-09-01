@@ -127,4 +127,9 @@ impl<B : ByteStream, M: Monitor> ByteStream for MonitorStream<B, M> {
     fn ignore_bytes(&mut self, count: u64) -> io::Result<()> {
         self.inner.ignore_bytes(count)
     }
+
+    #[inline(always)]
+    fn pos(&self) -> u64 {
+        self.inner.pos()
+    }
 }

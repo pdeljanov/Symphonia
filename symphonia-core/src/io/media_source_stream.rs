@@ -104,12 +104,6 @@ impl MediaSourceStream {
             self.part[1].base_pos + self.part[1].len as u64)
     }
 
-    /// Get the current position of the stream in the underlying source.
-    pub fn pos(&self) -> u64 {
-        let idx = self.part_idx as usize & 0x1;
-        self.part[idx].base_pos + self.part[idx].len as u64 - (self.end_pos as u64 - self.pos as u64)
-    }
-
     /// Get the number of bytes buffered but not yet read.
     pub fn buffered_bytes(&self) -> u64 {
         self.inner_pos() - self.pos()
@@ -424,12 +418,16 @@ impl ByteStream for MediaSourceStream {
 
     fn ignore_bytes(&mut self, mut count: u64) -> io::Result<()> {
         while count > 0 {
-            let buffer = self.fetch_buffer()?;
-            let discard_count = cmp::min(buffer.len() as u64, count);
+            self.fetch_buffer_or_eof()?;
+            let discard_count = cmp::min((self.end_pos - self.pos) as u64, count);
             self.pos += discard_count as usize;
             count -= discard_count;
         }
         Ok(())
     }
 
+    fn pos(&self) -> u64 {
+        let idx = self.part_idx as usize & 0x1;
+        self.part[idx].base_pos + self.part[idx].len as u64 - (self.end_pos as u64 - self.pos as u64)
+    }
 }

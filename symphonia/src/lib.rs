@@ -53,6 +53,8 @@ pub mod default {
             use symphonia_codec_aac::AdtsReader;
             #[cfg(feature = "flac")]
             use symphonia_bundle_flac::FlacReader;
+            #[cfg(feature = "isomp4")]
+            use symphonia_format_isomp4::IsoMp4Reader;
             #[cfg(feature = "mp3")]
             use symphonia_bundle_mp3::Mp3Reader;
             #[cfg(feature = "wav")]
@@ -70,6 +72,9 @@ pub mod default {
             #[cfg(feature = "flac")]
             registry.register_all::<FlacReader>();
 
+            #[cfg(feature = "isomp4")]
+            registry.register_all::<IsoMp4Reader>();
+
             #[cfg(feature = "mp3")]
             registry.register_all::<Mp3Reader>();
 
@@ -78,6 +83,7 @@ pub mod default {
 
             #[cfg(feature = "ogg")]
             registry.register_all::<OggReader>();
+
 
             registry.register_all::<Id3v2Reader>();
 
