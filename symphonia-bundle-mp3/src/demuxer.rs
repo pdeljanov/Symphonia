@@ -5,8 +5,6 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-#![warn(rust_2018_idioms)]
-
 use symphonia_core::support_format;
 
 use symphonia_core::codecs::{CodecParameters, CODEC_TYPE_MP3};
