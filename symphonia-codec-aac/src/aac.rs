@@ -27,6 +27,7 @@ use super::common::*;
 use super::huffman_tables::*;
 use super::window::*;
 
+use lazy_static::lazy_static;
 use log::{error, trace};
 use rustdct::{DCTplanner, mdct::MDCT};
 
@@ -52,6 +53,18 @@ const SPEC_TABLES: [&'static HuffmanTable<H16>; 11] = [
     &SPEC_TABLE_10,
     &SPEC_TABLE_11,
 ];
+
+lazy_static! {
+    /// Pre-computed table of y = x^(4/3).
+    static ref POW43_TABLE: [f32; 8192] = {
+        let mut pow43 = [0f32; 8192];
+        for i in 0..8192 {
+            pow43[i] = f32::powf(i as f32, 4.0 / 3.0);
+        }
+        pow43
+    };
+}
+
 
 impl fmt::Display for M4AType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -1092,25 +1105,36 @@ fn decode_quads<B: BitStream>(
     scale: f32,
     dst: &mut [f32],
 ) -> Result<()> {
+
+    let pow43_table: &[f32; 8192] = &POW43_TABLE;
+
     for out in dst.chunks_mut(4) {
         // TODO: Fix lim_bits
         let cw = bs.read_huffman(cb, 100)?.0 as usize;
         if unsigned {
             for i in 0..4 {
                 let val = AAC_QUADS[cw][i];
+
                 if val != 0 {
                     if bs.read_bit()? {
-                        out[i] = iquant(-f32::from(val)) * scale;
+                        out[i] = -pow43_table[val as usize] * scale;
                     }
                     else {
-                        out[i] = iquant(f32::from(val)) * scale;
+                        out[i] = pow43_table[val as usize] * scale;
                     }
                 }
             }
         }
         else {
             for i in 0..4 {
-                out[i] = iquant(f32::from(AAC_QUADS[cw][i] - 1)) * scale;
+                let val = AAC_QUADS[cw][i] - 1;
+
+                if val < 0 {
+                    out[i] = -pow43_table[-val as usize] * scale;
+                }
+                else {
+                    out[i] = pow43_table[val as usize] * scale;
+                }
             }
         }
     }
@@ -1126,6 +1150,9 @@ fn decode_pairs<B: BitStream>(
     scale: f32,
     dst: &mut [f32],
 ) -> Result<()> {
+
+    let pow43_table: &[f32; 8192] = &POW43_TABLE;
+
     for out in dst.chunks_mut(2) {
         // TODO: Fix lim_bits
         let cw = bs.read_huffman(cb, 100)?.0;
@@ -1155,8 +1182,8 @@ fn decode_pairs<B: BitStream>(
             }
         }
 
-        out[0] = iquant(f32::from(x)) * scale;
-        out[1] = iquant(f32::from(y)) * scale;
+        out[0] = if x < 0 { -pow43_table[-x as usize] } else { pow43_table[x as usize] } * scale;
+        out[1] = if y < 0 { -pow43_table[-y as usize] } else { pow43_table[y as usize] } * scale;
     }
     Ok(())
 }
