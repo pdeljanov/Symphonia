@@ -19,7 +19,7 @@ mod scoped_stream;
 
 pub use bit::*;
 pub use buf_stream::BufStream;
-pub use media_source_stream::MediaSourceStream;
+pub use media_source_stream::{MediaSourceStream, MediaSourceStreamOptions};
 pub use monitor_stream::{Monitor, MonitorStream};
 pub use scoped_stream::ScopedStream;
 

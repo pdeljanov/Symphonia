@@ -74,7 +74,7 @@ impl FormatReader for IsoMp4Reader {
     fn try_new(mut mss: MediaSourceStream, _options: &FormatOptions) -> Result<Self> {
 
         // To get to beginning of the atom.
-        assert!(mss.rewind(4) == 4);
+        mss.rewind(4);
 
         let is_seekable = mss.is_seekable();
 
