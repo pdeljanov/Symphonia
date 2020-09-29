@@ -9,7 +9,7 @@ use std::cmp::min;
 use std::collections::VecDeque;
 
 use symphonia_core::checksum::Crc16Ansi;
-use symphonia_core::errors::Result;
+use symphonia_core::errors::{Result, Error};
 use symphonia_core::io::{BufStream, ByteStream, Monitor};
 use symphonia_core::util::bits;
 use symphonia_utils_xiph::flac::metadata::StreamInfo;
@@ -37,6 +37,7 @@ pub struct PacketParser {
     frame_size_hist: [u32; 4],
     n_frames: usize,
     last_seq: u64,
+    last_read_err: Option<Error>,
 }
 
 impl Default for PacketParser {
@@ -50,6 +51,7 @@ impl Default for PacketParser {
             frame_size_hist: [PacketParser::FLAC_AVG_FRAME_LEN; 4],
             n_frames: 0,
             last_seq: 0,
+            last_read_err: None,
         }
     }
 }
@@ -89,6 +91,7 @@ impl PacketParser {
         self.frame_size_hist = [PacketParser::FLAC_AVG_FRAME_LEN; 4];
         self.n_frames = 0;
         self.last_seq = 0;
+        self.last_read_err = None;
     }
 
     fn buffer_data<B: ByteStream>(&mut self, reader: &mut B) -> Result<()> {
@@ -316,7 +319,9 @@ impl PacketParser {
 
             let mut limit_hit = false;
 
-            if n_scored > 0 {
+            // Scoring works best if there is more than one fragment buffered. Always try to have
+            // atleast 1 fragment buffered at a time unless there is an IO error.
+            if n_scored > 1 || self.last_read_err.is_some() {
                 let mut iter = indicies[0..n_scored].iter().zip(&indicies[1..n_scored + 1]);
 
                 // Discard any fragments that preceed the best-pick fragment.
@@ -489,8 +494,11 @@ impl PacketParser {
                 }
             }
 
-            // Nom nom, need more fragments to continue!
-            self.read_fragments(reader)?;
+            // Read more fragments if there was no pending error. Otherwise, return the error.
+            self.last_read_err = match self.last_read_err.take() {
+                None => self.read_fragments(reader).err(),
+                Some(err) => return Err(err),
+            }
         }
     }
 
