@@ -10,6 +10,7 @@ use symphonia_core::io::ByteStream;
 
 use crate::atoms::{Atom, AtomHeader};
 
+/// Edit list atom.
 #[derive(Debug)]
 pub struct ElstAtom {
     header: AtomHeader,

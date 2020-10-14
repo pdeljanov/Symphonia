@@ -10,19 +10,28 @@ use symphonia_core::io::ByteStream;
 
 use crate::atoms::{Atom, AtomHeader};
 
-/// Composition time atom.
+/// Movie fragment header atom.
 #[derive(Debug)]
-pub struct CttsAtom {
+pub struct MfhdAtom {
     /// Atom header.
     header: AtomHeader,
+    /// Sequence number associated with fragment.
+    pub sequence_number: u32,
 }
 
-impl Atom for CttsAtom {
+impl Atom for MfhdAtom {
     fn header(&self) -> AtomHeader {
         self.header
     }
 
-    fn read<B: ByteStream>(_reader: &mut B, _header: AtomHeader) -> Result<Self> {
-        todo!()
+    fn read<B: ByteStream>(reader: &mut B, header: AtomHeader) -> Result<Self> {
+        let (_, _) = AtomHeader::read_extra(reader)?;
+
+        let sequence_number = reader.read_be_u32()?;
+
+        Ok(MfhdAtom {
+            header,
+            sequence_number,
+        })
     }
 }

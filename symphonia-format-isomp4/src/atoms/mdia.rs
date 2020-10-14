@@ -24,7 +24,6 @@ impl Atom for MdiaAtom {
     }
 
     fn read<B: ByteStream>(reader: &mut B, header: AtomHeader) -> Result<Self> {
-        
         let mut iter = AtomIterator::new(reader, header);
 
         let mut mdhd = None;
@@ -33,13 +32,13 @@ impl Atom for MdiaAtom {
 
         while let Some(header) = iter.next()? {
             match header.atype {
-                AtomType::Mdhd => {
+                AtomType::MediaHeader => {
                     mdhd = Some(iter.read_atom::<MdhdAtom>()?);
                 }
-                AtomType::Hdlr => {
+                AtomType::Handler => {
                     hdlr = Some(iter.read_atom::<HdlrAtom>()?);
                 }
-                AtomType::Minf => {
+                AtomType::MediaInfo => {
                     minf = Some(iter.read_atom::<MinfAtom>()?);
                 }
                 _ => ()

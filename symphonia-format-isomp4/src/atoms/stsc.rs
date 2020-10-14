@@ -5,7 +5,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::errors::Result;
+use symphonia_core::errors::{Result, decode_error};
 use symphonia_core::io::ByteStream;
 
 use crate::atoms::{Atom, AtomHeader};
@@ -49,10 +49,28 @@ impl Atom for StscAtom {
             });
         }
 
-        for i in 0..entry_count as usize - 1 {
-            let n = entries[i + 1].first_chunk - entries[i].first_chunk;
+        // Post-process entries to check for errors and calculate the file sample.
+        if entry_count > 0 {
+            for i in 0..entry_count as usize - 1 {
+                // Validate that first_chunk is monotonic across all entries.
+                if entries[i + 1].first_chunk < entries[i].first_chunk {
+                    return decode_error("stsc entry first chunk not monotonic");
+                }
+    
+                // Validate that samples per chunk is > 0. Could the entry be ignored?
+                if entries[i].samples_per_chunk == 0 {
+                    return decode_error("stsc entry has 0 samples per chunk");
+                }
+    
+                let n = entries[i + 1].first_chunk - entries[i].first_chunk;
+    
+                entries[i + 1].first_sample = entries[i].first_sample + (n * entries[i].samples_per_chunk);
+            }
 
-            entries[i + 1].first_sample = entries[i].first_sample + (n * entries[i].samples_per_chunk);
+            // Validate that samples per chunk is > 0. Could the entry be ignored?
+            if entries[entry_count as usize - 1].samples_per_chunk == 0 {
+                return decode_error("stsc entry has 0 samples per chunk");
+            }
         }
 
         Ok(StscAtom {

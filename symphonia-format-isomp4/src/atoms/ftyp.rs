@@ -13,6 +13,7 @@ use crate::fourcc::FourCc;
 
 use log::warn;
 
+/// File type atom.
 #[derive(Debug)]
 pub struct FtypAtom {
     header: AtomHeader,

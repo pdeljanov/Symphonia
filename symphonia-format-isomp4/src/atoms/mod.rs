@@ -15,12 +15,19 @@ pub(crate) mod elst;
 pub(crate) mod esds;
 pub(crate) mod ftyp;
 pub(crate) mod hdlr;
+pub(crate) mod ilst;
 pub(crate) mod mdhd;
 pub(crate) mod mdia;
+pub(crate) mod mehd;
+pub(crate) mod meta;
+pub(crate) mod mfhd;
 pub(crate) mod minf;
+pub(crate) mod moof;
 pub(crate) mod moov;
 pub(crate) mod mp4a;
+pub(crate) mod mvex;
 pub(crate) mod mvhd;
+pub(crate) mod sidx;
 pub(crate) mod smhd;
 pub(crate) mod stbl;
 pub(crate) mod stco;
@@ -29,8 +36,13 @@ pub(crate) mod stsd;
 pub(crate) mod stss;
 pub(crate) mod stsz;
 pub(crate) mod stts;
+pub(crate) mod tfhd;
 pub(crate) mod tkhd;
+pub(crate) mod traf;
 pub(crate) mod trak;
+pub(crate) mod trex;
+pub(crate) mod trun;
+pub(crate) mod udta;
 
 pub use co64::Co64Atom;
 pub use ctts::CttsAtom;
@@ -39,12 +51,19 @@ pub use elst::ElstAtom;
 pub use esds::EsdsAtom;
 pub use ftyp::FtypAtom;
 pub use hdlr::HdlrAtom;
+pub use ilst::IlstAtom;
 pub use mdhd::MdhdAtom;
 pub use mdia::MdiaAtom;
+pub use mehd::MehdAtom;
+pub use self::meta::MetaAtom;
+pub use mfhd::MfhdAtom;
 pub use minf::MinfAtom;
+pub use moof::MoofAtom;
 pub use moov::MoovAtom;
 pub use mp4a::Mp4aAtom;
+pub use mvex::MvexAtom;
 pub use mvhd::MvhdAtom;
+pub use sidx::SidxAtom;
 pub use smhd::SmhdAtom;
 pub use stbl::StblAtom;
 pub use stco::StcoAtom;
@@ -53,74 +72,197 @@ pub use stsd::StsdAtom;
 pub use stss::StssAtom;
 pub use stsz::StszAtom;
 pub use stts::SttsAtom;
+pub use tfhd::TfhdAtom;
 pub use tkhd::TkhdAtom;
+pub use traf::TrafAtom;
 pub use trak::TrakAtom;
+pub use trex::TrexAtom;
+pub use trun::TrunAtom;
+pub use udta::UdtaAtom;
 
+/// Atom types.
 #[derive(Copy, Clone, Debug)]
 pub enum AtomType {
-    Co64,
-    Ctts,
-    Edts,
-    Elst,
-    Esds,
+    AdvisoryTag,
+    AlbumArtistTag,
+    AlbumTag,
+    ArtistLowerTag,
+    ArtistTag,
+    CategoryTag,
+    ChunkOffset,
+    ChunkOffset64,
+    CommentTag,
+    CompilationTag,
+    ComposerTag,
+    CompositionTimeToSample,
+    CopyrightTag,
+    CoverTag,
+    CustomGenreTag,
+    DateTag,
+    DescriptionTag,
+    DiskNumberTag,
+    Edit,
+    EditList,
+    ElementaryStreamDescriptor,
+    EncodedByTag,
+    EncoderTag,
+    FileType,
     Free,
-    Ftyp,
-    Hdlr,
-    Mdat,
-    Mdhd,
-    Mdia,
+    GaplessPlaybackTag,
+    GenreTag,
+    GroupingTag,
+    Handler,
+    HdVideoTag,
+    IdentPodcastTag,
+    KeywordTag,
+    LongDescriptionTag,
+    LyricsTag,
+    Media,
+    MediaData,
+    MediaHeader,
+    MediaInfo,
+    MediaTypeTag,
     Meta,
-    Minf,
-    Moof,
-    Moov,
+    MetaList,
+    MetaTagData,
+    MetaTagMeaning,
+    MetaTagName,
+    Movie,
+    MovieExtends,
+    MovieExtendsHeader,
+    MovieFragment,
+    MovieFragmentHeader,
+    MovieHeader,
     Mp4a,
-    Mvhd,
-    Sidx,
-    Smhd,
-    Stbl,
-    Stco,
-    Stsc,
-    Stsd,
-    Stss,
-    Stsz,
-    Stts,
-    Tkhd,
-    Trak,
-    Unsupported([u8; 4]),
+    OwnerTag,
+    PodcastTag,
+    PurchaseDateTag,
+    RatingTag,
+    SampleDescription,
+    SampleSize,
+    SampleTable,
+    SampleToChunk,
+    SegmentIndex,
+    Skip,
+    SortAlbumArtistTag,
+    SortAlbumTag,
+    SortArtistTag,
+    SortComposerTag,
+    SortNameTag,
+    SoundMediaHeader,
+    SyncSample,
+    TempoTag,
+    TimeToSample,
+    Track,
+    TrackExtends,
+    TrackFragment,
+    TrackFragmentHeader,
+    TrackFragmentRun,
+    TrackHeader,
+    TrackNumberTag,
+    TrackTitleTag,
+    TvEpisodeNameTag,
+    TvEpisodeNumberTag,
+    TvNetworkNameTag,
+    TvSeasonNumberTag,
+    TvShowNameTag,
+    UrlPodcastTag,
+    UserData,
+    FreeFormTag,
+    Other([u8; 4]),
 }
 
 impl From<[u8; 4]> for AtomType {
     fn from(val: [u8; 4]) -> Self {
         match &val {
-            b"co64" => AtomType::Co64,
-            b"ctts" => AtomType::Ctts,
-            b"edts" => AtomType::Edts,
-            b"elst" => AtomType::Elst,
-            b"esds" => AtomType::Esds,
+            b"co64" => AtomType::ChunkOffset64,
+            b"ctts" => AtomType::CompositionTimeToSample,
+            b"data" => AtomType::MetaTagData,
+            b"edts" => AtomType::Edit,
+            b"elst" => AtomType::EditList,
+            b"esds" => AtomType::ElementaryStreamDescriptor,
             b"free" => AtomType::Free,
-            b"ftyp" => AtomType::Ftyp,
-            b"hdlr" => AtomType::Hdlr,
-            b"mdat" => AtomType::Mdat,
-            b"mdhd" => AtomType::Mdhd,
-            b"mdia" => AtomType::Mdia,
+            b"ftyp" => AtomType::FileType,
+            b"hdlr" => AtomType::Handler,
+            b"ilst" => AtomType::MetaList,
+            b"mdat" => AtomType::MediaData,
+            b"mdhd" => AtomType::MediaHeader,
+            b"mdia" => AtomType::Media,
+            b"mean" => AtomType::MetaTagMeaning,
+            b"mehd" => AtomType::MovieExtendsHeader,
             b"meta" => AtomType::Meta,
-            b"minf" => AtomType::Minf,
-            b"moof" => AtomType::Moof,
-            b"moov" => AtomType::Moov,
+            b"mfhd" => AtomType::MovieFragmentHeader,
+            b"minf" => AtomType::MediaInfo,
+            b"moof" => AtomType::MovieFragment,
+            b"moov" => AtomType::Movie,
             b"mp4a" => AtomType::Mp4a,
-            b"mvhd" => AtomType::Mvhd,
-            b"sidx" => AtomType::Sidx,
-            b"smhd" => AtomType::Smhd,
-            b"stbl" => AtomType::Stbl,
-            b"stco" => AtomType::Stco,
-            b"stsc" => AtomType::Stsc,
-            b"stsd" => AtomType::Stsd,
-            b"stss" => AtomType::Stss,
-            b"stsz" => AtomType::Stsz,
-            b"stts" => AtomType::Stts,
-            b"tkhd" => AtomType::Tkhd,
-            b"trak" => AtomType::Trak,
-            _       => AtomType::Unsupported(val)
+            b"mvex" => AtomType::MovieExtends,
+            b"mvhd" => AtomType::MovieHeader,
+            b"name" => AtomType::MetaTagName,
+            b"sidx" => AtomType::SegmentIndex,
+            b"skip" => AtomType::Skip,
+            b"smhd" => AtomType::SoundMediaHeader,
+            b"stbl" => AtomType::SampleTable,
+            b"stco" => AtomType::ChunkOffset,
+            b"stsc" => AtomType::SampleToChunk,
+            b"stsd" => AtomType::SampleDescription,
+            b"stss" => AtomType::SyncSample,
+            b"stsz" => AtomType::SampleSize,
+            b"stts" => AtomType::TimeToSample,
+            b"tfhd" => AtomType::TrackFragmentHeader,
+            b"tkhd" => AtomType::TrackHeader,
+            b"traf" => AtomType::TrackFragment,
+            b"trak" => AtomType::Track,
+            b"trex" => AtomType::TrackExtends,
+            b"trun" => AtomType::TrackFragmentRun,
+            b"udta" => AtomType::UserData,
+            // Metadata Boxes
+            b"----" => AtomType::FreeFormTag,
+            b"aART" => AtomType::AlbumArtistTag,
+            b"catg" => AtomType::CategoryTag,
+            b"covr" => AtomType::CoverTag,
+            b"cpil" => AtomType::CompilationTag,
+            b"cprt" => AtomType::CopyrightTag,
+            b"desc" => AtomType::DescriptionTag,
+            b"disk" => AtomType::DiskNumberTag,
+            b"egid" => AtomType::IdentPodcastTag,
+            b"gnre" => AtomType::GenreTag,
+            b"hdvd" => AtomType::HdVideoTag,
+            b"keyw" => AtomType::KeywordTag,
+            b"ldes" => AtomType::LongDescriptionTag,
+            b"ownr" => AtomType::OwnerTag,
+            b"pcst" => AtomType::PodcastTag,
+            b"pgap" => AtomType::GaplessPlaybackTag,
+            b"purd" => AtomType::PurchaseDateTag,
+            b"purl" => AtomType::UrlPodcastTag,
+            b"rate" => AtomType::RatingTag,
+            b"rtng" => AtomType::AdvisoryTag,
+            b"soaa" => AtomType::SortAlbumArtistTag,
+            b"soal" => AtomType::SortAlbumTag,
+            b"soar" => AtomType::SortArtistTag,
+            b"soco" => AtomType::SortComposerTag,
+            b"sonm" => AtomType::SortNameTag,
+            b"stik" => AtomType::MediaTypeTag,
+            b"tmpo" => AtomType::TempoTag,
+            b"trkn" => AtomType::TrackNumberTag,
+            b"tven" => AtomType::TvEpisodeNameTag,
+            b"tves" => AtomType::TvEpisodeNumberTag,
+            b"tvnn" => AtomType::TvNetworkNameTag,
+            b"tvsh" => AtomType::TvShowNameTag,
+            b"tvsn" => AtomType::TvSeasonNumberTag,
+            b"\xa9alb" => AtomType::AlbumTag,
+            b"\xa9art" => AtomType::ArtistLowerTag,
+            b"\xa9ART" => AtomType::ArtistTag,
+            b"\xa9cmt" => AtomType::CommentTag,
+            b"\xa9day" => AtomType::DateTag,
+            b"\xa9enc" => AtomType::EncodedByTag,
+            b"\xa9gen" => AtomType::CustomGenreTag,
+            b"\xa9grp" => AtomType::GroupingTag,
+            b"\xa9lyr" => AtomType::LyricsTag,
+            b"\xa9nam" => AtomType::TrackTitleTag,
+            b"\xa9too" => AtomType::EncoderTag,
+            b"\xa9wrt" => AtomType::ComposerTag,
+            _       => AtomType::Other(val)
         }
     }
 }
@@ -139,6 +281,7 @@ pub struct AtomHeader {
 impl AtomHeader {
     const HEADER_SIZE: u64 = 8;
     const EXTENDED_HEADER_SIZE: u64 = AtomHeader::HEADER_SIZE + 8;
+    const EXTRA_DATA_SIZE: u64 = 4;
 
     /// Reads an atom header from the provided `ByteStream`.
     pub fn read<B: ByteStream>(reader: &mut B) -> Result<AtomHeader> {
@@ -232,6 +375,7 @@ impl<'a, B: ByteStream> AtomIterator<'a, B> {
         let cur_pos = self.reader.pos();
 
         if cur_pos < self.next_atom_pos {
+            // TODO: This needs to seek on long jumps.
             self.reader.ignore_bytes(self.next_atom_pos - cur_pos)?;
         }
         else if cur_pos > self.next_atom_pos {

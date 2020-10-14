@@ -119,3 +119,8 @@ pub fn limit_error<T>(constraint: &'static str) -> Result<T> {
 pub fn reset_error<T>() -> Result<T> {
     Err(Error::ResetRequired)
 }
+
+/// Convenience function to create an end-of-stream error.
+pub fn end_of_stream_error<T>() -> Result<T> {
+    Err(Error::IoError(io::Error::new(io::ErrorKind::UnexpectedEof, "end of stream")))
+}

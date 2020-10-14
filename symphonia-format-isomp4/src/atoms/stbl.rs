@@ -47,10 +47,10 @@ impl Atom for StblAtom {
 
         while let Some(header) = iter.next()? {
             match header.atype {
-                AtomType::Stsd => {
+                AtomType::SampleDescription => {
                     stsd = Some(iter.read_atom::<StsdAtom>()?);
                 }
-                AtomType::Stts => {
+                AtomType::TimeToSample => {
                     stts = Some(iter.read_atom::<SttsAtom>()?);
                 }
                 // AtomType::Ctts => {
@@ -60,16 +60,16 @@ impl Atom for StblAtom {
                 // AtomType::Stss => {
                 //     stss = Some(iter.read_atom::<StssAtom>()?);
                 // }
-                AtomType::Stsc => {
+                AtomType::SampleToChunk => {
                     stsc = Some(iter.read_atom::<StscAtom>()?);
                 }
-                AtomType::Stsz => {
+                AtomType::SampleSize => {
                     stsz = Some(iter.read_atom::<StszAtom>()?);
                 }
-                AtomType::Stco => {
+                AtomType::ChunkOffset => {
                     stco = Some(iter.read_atom::<StcoAtom>()?);
                 }
-                AtomType::Co64 => {
+                AtomType::ChunkOffset64 => {
                     co64 = Some(iter.read_atom::<Co64Atom>()?);
                 }
                 _ => ()
@@ -93,6 +93,7 @@ impl Atom for StblAtom {
         }
 
         if stco.is_none() && co64.is_none() {
+            // This is a spec. violation, but some m4a files appear to lack these atoms.
             warn!("missing stco or co64 atom");
         }
 

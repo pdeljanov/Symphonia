@@ -10,6 +10,7 @@ use symphonia_core::io::ByteStream;
 
 use crate::atoms::{Atom, AtomHeader, AtomIterator, AtomType, ElstAtom};
 
+/// Edits atom.
 #[derive(Debug)]
 pub struct EdtsAtom {
     header: AtomHeader,
@@ -28,7 +29,7 @@ impl Atom for EdtsAtom {
 
         while let Some(header) = iter.next()? {
             match header.atype {
-                AtomType::Elst => {
+                AtomType::EditList => {
                     // elst = Some(iter.read_atom::<ElstAtom>()?);
                 }
                 _ => ()

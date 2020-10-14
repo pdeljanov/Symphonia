@@ -11,16 +11,17 @@ use symphonia_core::io::ByteStream;
 use crate::atoms::{Atom, AtomHeader};
 
 #[derive(Debug)]
-pub struct SttsEntry {
+pub struct SampleDurationEntry {
     pub sample_count: u32,
     pub sample_delta: u32,
 }
 
+/// Time-to-sample atom.
 #[derive(Debug)]
 pub struct SttsAtom {
     /// Atom header.
     header: AtomHeader,
-    pub entries: Vec<SttsEntry>,
+    pub entries: Vec<SampleDurationEntry>,
 }
 
 impl Atom for SttsAtom {
@@ -37,7 +38,7 @@ impl Atom for SttsAtom {
         let mut entries = Vec::with_capacity(entry_count as usize);
 
         for _ in 0..entry_count {
-            entries.push(SttsEntry {
+            entries.push(SampleDurationEntry {
                 sample_count: reader.read_be_u32()?,
                 sample_delta: reader.read_be_u32()?,
             });

@@ -37,13 +37,13 @@ impl Atom for TrakAtom {
 
         while let Some(header) = iter.next()? {
             match header.atype {
-                AtomType::Tkhd => {
+                AtomType::TrackHeader => {
                     tkhd = Some(iter.read_atom::<TkhdAtom>()?);
                 }
-                AtomType::Edts => {
+                AtomType::Edit => {
                     edts = Some(iter.read_atom::<EdtsAtom>()?);
                 }
-                AtomType::Mdia => {
+                AtomType::Media => {
                     mdia = Some(iter.read_atom::<MdiaAtom>()?);
                 }
                 _ => ()

@@ -34,10 +34,10 @@ impl Atom for MinfAtom {
 
         while let Some(header) = iter.next()? {
             match header.atype {
-                AtomType::Smhd => {
+                AtomType::SoundMediaHeader => {
                     smhd = Some(iter.read_atom::<SmhdAtom>()?);
                 }
-                AtomType::Stbl => {
+                AtomType::SampleTable => {
                     stbl = Some(iter.read_atom::<StblAtom>()?);
                 }
                 _ => ()

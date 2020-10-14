@@ -9,6 +9,6 @@ mod atoms;
 mod demuxer;
 mod fourcc;
 mod fp;
-mod track;
+mod segments;
 
 pub use demuxer::IsoMp4Reader;

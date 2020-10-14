@@ -6,19 +6,32 @@ Cargo.lock
 # Ghostwriter
 *.md.backup
 
+# Visual Studio Code
+*.code-workspace
+
 # Profiling data
 perf.data
 perf.data.old
 
-# Sample data
-testvec/*/*.wav
-testvec/*/*.mp3
-testvec/*/*.ogg
+# Development Test Vectors
+testvec/*/*.aac
 testvec/*/*.flac
+testvec/*/*.m4a
+testvec/*/*.mp3
+testvec/*/*.mp4
+testvec/*/*.ogg
 testvec/*/*.opus
-benchtest/*.wav
-benchtest/*.mp3
+testvec/*/*.wav
+
+# Benchmarking Files
+benchtest/*.aac
 benchtest/*.flac
+benchtest/*.m4a
+benchtest/*.mp3
+benchtest/*.mp4
+benchtest/*.ogg
+benchtest/*.opus
+benchtest/*.wav
 
 # macOS
 .DS_Store
