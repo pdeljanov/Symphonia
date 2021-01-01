@@ -182,6 +182,42 @@ impl IsoMp4Reader {
         None
     }
 
+    fn try_read_next_segment(&mut self) -> Result<()> {
+
+        let mut iter = AtomIterator::new_root(&mut self.reader, None);
+
+        while let Some(header) = iter.next()? {
+            match header.atype {
+                AtomType::MediaData => {
+                    dbg!(header);
+                    break;
+                }
+                AtomType::MovieFragment => {
+                    dbg!(header);
+
+                    let moof = iter.read_atom::<MoofAtom>()?;
+
+                    if let Some(mvex) = &self.mvex {
+                        let mut seg = Segment::from_moof(moof, &mvex);
+
+                        if let Some(prev) = self.segs.last() {
+                            if let Some(last_run) = prev.tracks[0].runs.last() {
+                                seg.tracks[0].first_sample += prev.tracks[0].first_sample + last_run.last_sample;
+                            }
+                        }
+
+                        self.segs.push(seg);
+                    }
+                },
+                _ => {
+                    info!("skipping over atom: {:?}", header.atype);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
 }
 
 impl QueryDescriptor for IsoMp4Reader {
@@ -268,6 +304,9 @@ impl FormatReader for IsoMp4Reader {
                     }
                 }
                 AtomType::MediaData => {
+
+                    dbg!(header);
+
                     // The mdat atom contains the codec bitstream data. If the source is unseekable
                     // then the format reader cannot skip past this atom.
                     if !is_seekable {
@@ -287,6 +326,7 @@ impl FormatReader for IsoMp4Reader {
 
                 }
                 AtomType::MovieFragment => {
+                    dbg!(header);
 
                     let moof = iter.read_atom::<MoofAtom>()?;
 
@@ -295,7 +335,6 @@ impl FormatReader for IsoMp4Reader {
 
                             let mut seg = Segment::from_moof(moof, &mvex);
 
-
                             if let Some(prev) = segs.last() {
                                 if let Some(last_run) = prev.tracks[0].runs.last() {
                                     seg.tracks[0].first_sample += prev.tracks[0].first_sample + last_run.last_sample;
@@ -303,7 +342,6 @@ impl FormatReader for IsoMp4Reader {
                             }
 
                             segs.push(seg);
-
                         }
                     }
                 },
@@ -342,16 +380,13 @@ impl FormatReader for IsoMp4Reader {
 
         let mvex = moov.mvex.take();
 
-        // Non-segmented files are represented as one big segment.
-        segs.push(Segment::from_moov(moov)?);
-
         // A Movie Extends (mvex) atom is required to support segmented streams. If a mvex atom is
         // present, treat the media as segmented.
         if mvex.is_some() {
-            info!("stream is segmented");
-
             // If a Segment Index (sidx) atom was found, add the segments contained within.
             if let Some(sidx) = &sidx {
+                info!("stream is segmented and has a segment index");
+
                 let mut segment_pos = sidx.first_offset;
                 let mut earliest_pts = sidx.earliest_pts;
 
@@ -370,6 +405,13 @@ impl FormatReader for IsoMp4Reader {
                     segment_pos += segment_size;
                 }
             }
+            else {
+                info!("stream is segmented but has no segment index");
+            }
+        }
+        else {
+            // Non-segmented streams are represented as one big segment.
+            segs.push(Segment::from_moov(moov)?);
         }
 
         Ok(IsoMp4Reader {
@@ -405,8 +447,10 @@ impl FormatReader for IsoMp4Reader {
                 self.segs.push(seg);
             }
             else {
-                // End-of-stream has been reached.
-                return end_of_stream_error();
+                // No more segments. If the stream is unseekable, it may be the case that there are
+                // more segments coming. Try to iterate boxes until a new segment is found or the
+                // end-of-stream is reached.
+                self.try_read_next_segment()?;
             }
         };
 
