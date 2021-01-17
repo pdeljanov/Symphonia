@@ -23,7 +23,7 @@ support for FOSS codecs and formats, but others may be included via the features
 
 | Format  | Status      | Feature Flag | Default | Crate                     |  
 |---------|-------------|--------------|---------|---------------------------|
-| ISO/MP4 | -           | `isomp4`     | No      | `symphonia-format-isomp4` |
+| ISO/MP4 | Functional  | `isomp4`     | No      | `symphonia-format-isomp4` |
 | MKV     | -           | `mkv`        | Yes     | `symphonia-format-mkv`    |
 | OGG     | Functional  | `ogg`        | Yes     | `symphonia-format-ogg`    |
 | Wave    | Complete    | `wav`        | Yes     | `symphonia-format-wav`    |

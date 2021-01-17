@@ -136,7 +136,7 @@ impl Atom for TrunAtom {
         }
 
         if (flags & TrunAtom::SAMPLE_COMPOSITION_TIME_OFFSETS_PRESENT) != 0 {
-            warn!("ignoring sample composition time offsets");
+            warn!("ignoring sample composition time offsets.");
         }
 
         Ok(TrunAtom {

@@ -262,7 +262,7 @@ impl From<[u8; 4]> for AtomType {
             b"\xa9nam" => AtomType::TrackTitleTag,
             b"\xa9too" => AtomType::EncoderTag,
             b"\xa9wrt" => AtomType::ComposerTag,
-            _       => AtomType::Other(val)
+            _ => AtomType::Other(val)
         }
     }
 }

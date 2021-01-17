@@ -108,7 +108,7 @@ pub struct IsoMp4Reader {
 }
 
 impl IsoMp4Reader {
-    /// Idempotently gets information regarding the next sample of the medis stream. This function
+    /// Idempotently gets information regarding the next sample of the media stream. This function
     /// selects the next sample with the lowest timestamp of all tracks.
     fn next_sample_info(&self) -> Result<Option<NextSampleInfo>> {
         let mut nearest = None;
@@ -193,7 +193,7 @@ impl IsoMp4Reader {
                     // A moof segment can only be created if the mvex atom is present.
                     if let Some(mvex) = &self.mvex {
                         // Get the last segment. Note, there will always be one segment because the
-                        // moov segment is always present.
+                        // moov atom is converted into a segment when the reader is instantiated.
                         let last_seg = self.segs.last().unwrap();
 
                         // Create a new segment for the moof atom.
