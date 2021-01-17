@@ -208,8 +208,8 @@ fn add_visual_tag<B: ByteStream>(
 }
 
 fn add_advisory_tag<B: ByteStream>(
-    iter: &mut AtomIterator<B>,
-    builder: &mut MetadataBuilder,
+    _iter: &mut AtomIterator<B>,
+    _builder: &mut MetadataBuilder,
 ) -> Result<()> {
     Ok(())
 }

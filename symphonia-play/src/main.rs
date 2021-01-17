@@ -199,7 +199,13 @@ fn play(mut reader: Box<dyn FormatReader>, decode_options: &DecoderOptions) -> R
     // Decode the first packet and create the audio output using the signal specification of the
     // buffer.
     let mut output = loop {
-        match decoder.decode(&reader.next_packet()?) {
+        let packet = reader.next_packet()?;
+
+        if packet.stream_id() != 0 {
+            continue;
+        }
+
+        match decoder.decode(&packet) {
             Err(Error::DecodeError(err)) => {
                 // Decode errors are not fatal. Print a message and try to decode the next packet as
                 // usual.
@@ -231,7 +237,13 @@ fn play(mut reader: Box<dyn FormatReader>, decode_options: &DecoderOptions) -> R
 
     // Decode the remaining packets.
     loop {
-        match decoder.decode(&reader.next_packet()?) {
+        let packet = reader.next_packet()?;
+
+        if packet.stream_id() != 0 {
+            continue;
+        }
+
+        match decoder.decode(&packet) {
             Err(Error::DecodeError(err)) => {
                 // Decode errors are not fatal. Print a message and try to decode the next packet as
                 // usual.

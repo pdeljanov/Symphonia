@@ -30,7 +30,7 @@ impl Atom for EdtsAtom {
         while let Some(header) = iter.next()? {
             match header.atype {
                 AtomType::EditList => {
-                    // elst = Some(iter.read_atom::<ElstAtom>()?);
+                    elst = Some(iter.read_atom::<ElstAtom>()?);
                 }
                 _ => ()
             }

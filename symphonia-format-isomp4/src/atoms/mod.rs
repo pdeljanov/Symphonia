@@ -316,6 +316,13 @@ impl AtomHeader {
         Ok(AtomHeader { atype, atom_len, data_len })
     }
 
+    pub fn base_header_len(&self) -> u64 {
+        match self.atom_len {
+            0 => AtomHeader::HEADER_SIZE,
+            _ => (self.atom_len - self.data_len)
+        }
+    }
+
     /// For applicable atoms, reads the atom header extra data: a tuple composed of a u8 version
     /// number, and a u24 bitset of flags.
     pub fn read_extra<B: ByteStream>(reader: &mut B) -> Result<(u8, u32)> {
@@ -332,17 +339,17 @@ pub trait Atom : Sized {
     fn read<B: ByteStream>(reader: &mut B, header: AtomHeader) -> Result<Self>;
 }
 
-pub struct AtomIterator<'a, B: ByteStream> {
-    reader: &'a mut B,
+pub struct AtomIterator<B: ByteStream> {
+    reader: B,
     len: Option<u64>,
     cur_atom: Option<AtomHeader>,
     base_pos: u64,
     next_atom_pos: u64,
 }
 
-impl<'a, B: ByteStream> AtomIterator<'a, B> {
+impl<B: ByteStream> AtomIterator<B> {
 
-    pub fn new_root(reader: &'a mut B, len: Option<u64>) -> Self {
+    pub fn new_root(reader: B, len: Option<u64>) -> Self {
         let base_pos = reader.pos();
 
         AtomIterator {
@@ -354,7 +361,7 @@ impl<'a, B: ByteStream> AtomIterator<'a, B> {
         }
     }
 
-    pub fn new(reader: &'a mut B, container: AtomHeader) -> Self {
+    pub fn new(reader: B, container: AtomHeader) -> Self {
         let base_pos = reader.pos();
 
         AtomIterator {
@@ -366,8 +373,12 @@ impl<'a, B: ByteStream> AtomIterator<'a, B> {
         }
     }
 
-    pub fn inner(&self) -> &B {
-        &self.reader
+    pub fn into_inner(self) -> B {
+        self.reader
+    }
+
+    pub fn inner_mut(&mut self) -> &mut B {
+        &mut self.reader
     }
 
     pub fn next(&mut self) -> Result<Option<AtomHeader>> {
@@ -392,7 +403,7 @@ impl<'a, B: ByteStream> AtomIterator<'a, B> {
         }
 
         // Read the next atom header.
-        let atom = AtomHeader::read(self.reader)?;
+        let atom = AtomHeader::read(&mut self.reader)?;
 
         // Calculate the start position for the next atom (the exclusive end of the current atom).
         self.next_atom_pos += match atom.atom_len {
@@ -410,12 +421,25 @@ impl<'a, B: ByteStream> AtomIterator<'a, B> {
         Ok(self.cur_atom)
     }
 
+    pub fn next_no_consume(&mut self) -> Result<Option<AtomHeader>> {
+        if self.cur_atom.is_some() {
+            Ok(self.cur_atom)
+        }
+        else {
+            self.next()
+        }
+    }
+
     pub fn read_atom<A: Atom>(&mut self) -> Result<A> {
         // It is not possible to read the current atom more than once because ByteStream is not
         // seekable. Therefore, raise an assert if read_atom is called more than once between calls
         // to next, or after next returns None.
         assert!(self.cur_atom.is_some());
-        A::read(self.reader, self.cur_atom.take().unwrap())
+        A::read(&mut self.reader, self.cur_atom.take().unwrap())
+    }
+
+    pub fn consume_atom(&mut self) {
+        assert!(self.cur_atom.take().is_some());
     }
 
 }

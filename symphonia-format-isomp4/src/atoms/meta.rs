@@ -5,6 +5,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+use std::fmt::Debug;
+
 use symphonia_core::errors::Result;
 use symphonia_core::io::ByteStream;
 use symphonia_core::meta::{Metadata, MetadataQueue};
@@ -17,6 +19,12 @@ pub struct MetaAtom {
     header: AtomHeader,
     /// Metadata revision.
     pub metadata: Metadata,
+}
+
+impl Debug for MetaAtom {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "(redacted)")
+    }
 }
 
 impl MetaAtom {

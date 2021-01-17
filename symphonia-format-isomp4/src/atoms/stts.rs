@@ -22,6 +22,38 @@ pub struct SttsAtom {
     /// Atom header.
     header: AtomHeader,
     pub entries: Vec<SampleDurationEntry>,
+    pub total_duration: u64,
+}
+
+impl SttsAtom {
+
+    /// Get the timestamp for the sample indicated by `sample_num`. Note, `sample_num` is indexed
+    /// relative to the `SttsAtom`. Complexity of this function in O(N).
+    pub fn find_timestamp_for_sample(&self, sample_num: u32) -> Option<u64> {
+        let mut ts = 0;
+        let mut next_entry_first_sample = 0;
+
+        // The Stts atom compactly encodes a mapping between number of samples and sample duration.
+        // Iterate through each entry until the entry containing the next sample is found. The next
+        // packet timestamp is then the sum of the product of sample count and sample duration for
+        // the n-1 iterated entries, plus the product of the number of consumed samples in the n-th
+        // iterated entry and sample duration.
+        for entry in &self.entries {
+            next_entry_first_sample += entry.sample_count;
+
+            if sample_num < next_entry_first_sample {
+                let entry_sample_offset = sample_num + entry.sample_count - next_entry_first_sample;
+                ts += u64::from(entry.sample_delta) * u64::from(entry_sample_offset);
+
+                return Some(ts);
+            }
+
+            ts += u64::from(entry.sample_count) * u64::from(entry.sample_delta);
+        }
+
+        None
+    }
+
 }
 
 impl Atom for SttsAtom {
@@ -34,19 +66,24 @@ impl Atom for SttsAtom {
 
         let entry_count = reader.read_be_u32()?;
 
+        let mut total_duration = 0;
+
         // TODO: Limit table length.
         let mut entries = Vec::with_capacity(entry_count as usize);
 
         for _ in 0..entry_count {
-            entries.push(SampleDurationEntry {
-                sample_count: reader.read_be_u32()?,
-                sample_delta: reader.read_be_u32()?,
-            });
+            let sample_count = reader.read_be_u32()?;
+            let sample_delta = reader.read_be_u32()?;
+
+            total_duration += u64::from(sample_count) * u64::from(sample_delta);
+
+            entries.push(SampleDurationEntry { sample_count, sample_delta });
         }
 
         Ok(SttsAtom {
             header,
             entries,
+            total_duration,
         })
     }
 }

@@ -32,6 +32,10 @@ pub struct TrunAtom {
     pub sample_size: Vec<u32>,
     /// Sample flags for each sample in this run.
     pub sample_flags: Vec<u32>,
+    /// The total size of all samples in this run. 0 if the sample size flag is not set.
+    pub total_sample_size: u64,
+    /// The total duration of all samples in this run. 0 if the sample duration flag is not set.
+    pub total_sample_duration: u64,
 }
 
 impl TrunAtom {
@@ -71,7 +75,7 @@ impl Atom for TrunAtom {
         const DATA_OFFSET_PRESENT: u32 = 0x1;
         const FIRST_SAMPLE_FLAGS_PRESENT: u32 = 0x4;
 
-        let (_version, flags) = AtomHeader::read_extra(reader)?;
+        let (_, flags) = AtomHeader::read_extra(reader)?;
 
         let sample_count = reader.read_be_u32()?;
 
@@ -85,25 +89,38 @@ impl Atom for TrunAtom {
             _ => Some(reader.read_be_u32()?),
         };
 
+        // Remember to implement support for truns with first-sample-flags-present.
+        if first_sample_flags.is_some() {
+            todo!("support truns with first-sample-flags-present");
+        }
+
         // If the first-sample-flags-present flag is set, then the sample-flags-present flag should
-        // not be set.
+        // not be set. The samples after the first shall use the default sample flags defined in the
+        // tfhd or mvex atoms.
         if first_sample_flags.is_some() && (flags & TrunAtom::SAMPLE_FLAGS_PRESENT != 0) {
-            return decode_error("sample-flag-present and first-sample-flag-present flags are set")
+            return decode_error("sample-flag-present and first-sample-flags-present flags are set");
         }
 
         let mut sample_duration = Vec::new();
         let mut sample_size = Vec::new();
         let mut sample_flags = Vec::new();
 
+        let mut total_sample_size = 0;
+        let mut total_sample_duration = 0;
+
         // TODO: Apply a limit.
         for _ in 0..sample_count {
 
             if (flags & TrunAtom::SAMPLE_DURATION_PRESENT) != 0 {
-                sample_duration.push(reader.read_be_u32()?);
+                let duration = reader.read_be_u32()?;
+                total_sample_duration += u64::from(duration);
+                sample_duration.push(duration);
             }
 
             if (flags & TrunAtom::SAMPLE_SIZE_PRESENT) != 0 {
-                sample_size.push(reader.read_be_u32()?);
+                let size = reader.read_be_u32()?;
+                total_sample_size += u64::from(size);
+                sample_size.push(size);
             }
 
             if (flags & TrunAtom::SAMPLE_FLAGS_PRESENT) != 0 {
@@ -131,6 +148,8 @@ impl Atom for TrunAtom {
             sample_duration,
             sample_size,
             sample_flags,
+            total_sample_size,
+            total_sample_duration,
         })
     }
 }

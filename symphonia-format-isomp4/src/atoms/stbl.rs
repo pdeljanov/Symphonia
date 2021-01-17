@@ -9,7 +9,7 @@ use symphonia_core::errors::{Result, decode_error};
 use symphonia_core::io::ByteStream;
 
 use crate::atoms::{Atom, AtomHeader, AtomIterator, AtomType};
-use crate::atoms::{StsdAtom, SttsAtom, CttsAtom, StssAtom, StscAtom, StszAtom, StcoAtom, Co64Atom};
+use crate::atoms::{StsdAtom, SttsAtom, StscAtom, StszAtom, StcoAtom, Co64Atom};
 
 use log::warn;
 
@@ -20,8 +20,6 @@ pub struct StblAtom {
     header: AtomHeader,
     pub stsd: StsdAtom,
     pub stts: SttsAtom,
-    // pub ctts: Option<CttsAtom>,
-    // pub stss: Option<StssAtom>,
     pub stsc: StscAtom,
     pub stsz: StszAtom,
     pub stco: Option<StcoAtom>,
@@ -38,8 +36,6 @@ impl Atom for StblAtom {
 
         let mut stsd = None;
         let mut stts = None;
-        // let mut ctts = None;
-        // let mut stss = None;
         let mut stsc = None;
         let mut stsz = None;
         let mut stco = None;
@@ -53,13 +49,14 @@ impl Atom for StblAtom {
                 AtomType::TimeToSample => {
                     stts = Some(iter.read_atom::<SttsAtom>()?);
                 }
-                // AtomType::Ctts => {
-                //     ctts = Some(iter.read_atom::<CttsAtom>()?);
-                // }
-                // Sync sample box is only required for video.
-                // AtomType::Stss => {
-                //     stss = Some(iter.read_atom::<StssAtom>()?);
-                // }
+                AtomType::CompositionTimeToSample => {
+                    // Composition time to sample atom is only required for video.
+                    warn!("ignoring ctts atom.");
+                }
+                AtomType::SyncSample => {
+                    // Sync sample atom is only required for video.
+                    warn!("ignoring stss atom.");
+                }
                 AtomType::SampleToChunk => {
                     stsc = Some(iter.read_atom::<StscAtom>()?);
                 }
@@ -101,8 +98,6 @@ impl Atom for StblAtom {
             header,
             stsd: stsd.unwrap(),
             stts: stts.unwrap(),
-            // ctts,
-            // stss,
             stsc: stsc.unwrap(),
             stsz: stsz.unwrap(),
             stco,

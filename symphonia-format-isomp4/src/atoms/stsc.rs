@@ -27,6 +27,35 @@ pub struct StscAtom {
     pub entries: Vec<StscEntry>,
 }
 
+impl StscAtom {
+
+    /// Finds the `StscEntry` for the sample indicated by `sample_num`. Note, `sample_num` is indexed
+    /// relative to the `StscAtom`. Complexity is O(log2 N).
+    pub fn find_entry_for_sample(&self, sample_num: u32) -> Option<&StscEntry> {
+        let mut left = 1;
+        let mut right = self.entries.len();
+
+        while left < right {
+            let mid = left + (right - left) / 2;
+
+            let entry = self.entries.get(mid).unwrap();
+
+            if entry.first_sample < sample_num {
+                left = mid + 1;
+            } else {
+                right = mid;
+            }
+        }
+
+        // The index found above (left) is the exclusive upper bound of all entries where
+        // first_sample < sample_num. Therefore, the entry to return has an index of left-1. The
+        // index will never equal 0 so this is safe. If the table were empty, left == 1, thus calling
+        // get with an index of 0, and safely returning None.
+        self.entries.get(left - 1)
+    }
+
+}
+
 impl Atom for StscAtom {
     fn header(&self) -> AtomHeader {
         self.header
@@ -56,14 +85,14 @@ impl Atom for StscAtom {
                 if entries[i + 1].first_chunk < entries[i].first_chunk {
                     return decode_error("stsc entry first chunk not monotonic");
                 }
-    
+
                 // Validate that samples per chunk is > 0. Could the entry be ignored?
                 if entries[i].samples_per_chunk == 0 {
                     return decode_error("stsc entry has 0 samples per chunk");
                 }
-    
+
                 let n = entries[i + 1].first_chunk - entries[i].first_chunk;
-    
+
                 entries[i + 1].first_sample = entries[i].first_sample + (n * entries[i].samples_per_chunk);
             }
 

@@ -17,8 +17,10 @@ pub struct TrafAtom {
     header: AtomHeader,
     /// Track fragment header.
     pub tfhd: TfhdAtom,
-    /// Track fragment runs.
+    /// Track fragment sample runs.
     pub truns: Vec<TrunAtom>,
+    /// The total number of samples in this track fragment.
+    pub total_sample_count: u32,
 }
 
 impl Atom for TrafAtom {
@@ -32,6 +34,8 @@ impl Atom for TrafAtom {
 
         let mut iter = AtomIterator::new(reader, header);
 
+        let mut total_sample_count = 0;
+
         while let Some(header) = iter.next()? {
             match header.atype {
                 AtomType::TrackFragmentHeader => {
@@ -39,6 +43,10 @@ impl Atom for TrafAtom {
                 }
                 AtomType::TrackFragmentRun => {
                     let trun = iter.read_atom::<TrunAtom>()?;
+
+                    // Increment the total sample count.
+                    total_sample_count += trun.sample_count;
+
                     truns.push(trun);
                 }
                 _ => ()
@@ -54,6 +62,7 @@ impl Atom for TrafAtom {
             header,
             tfhd: tfhd.unwrap(),
             truns,
+            total_sample_count,
         })
     }
 }

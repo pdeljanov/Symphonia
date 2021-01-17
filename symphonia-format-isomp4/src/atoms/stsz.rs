@@ -21,6 +21,9 @@ pub enum SampleSize {
 pub struct StszAtom {
     /// Atom header.
     header: AtomHeader,
+    /// The total number of samples.
+    pub sample_count: u32,
+    /// A vector of `sample_count` sample sizes, or a constant size for all samples.
     pub sample_sizes: SampleSize,
 }
 
@@ -51,6 +54,7 @@ impl Atom for StszAtom {
 
         Ok(StszAtom {
             header,
+            sample_count,
             sample_sizes,
         })
     }

@@ -6,40 +6,40 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 
-use symphonia_core::support_format;
+use symphonia_core::{errors::end_of_stream_error, support_format};
 
 use symphonia_core::codecs::{CodecParameters, CODEC_TYPE_AAC};
-use symphonia_core::errors::{Result, end_of_stream_error, unsupported_error};
+use symphonia_core::errors::{Result, decode_error, unsupported_error};
 use symphonia_core::formats::prelude::*;
 use symphonia_core::io::{ByteStream, MediaSource, MediaSourceStream};
 use symphonia_core::meta::MetadataQueue;
 use symphonia_core::probe::{Descriptor, Instantiate, QueryDescriptor};
 
-use std::collections::VecDeque;
+use std::rc::Rc;
 use std::io::{Seek, SeekFrom};
 
 use crate::atoms::{AtomIterator, AtomType};
 use crate::atoms::{FtypAtom, MoovAtom, MoofAtom, SidxAtom, TrakAtom, MvexAtom};
-use crate::atoms::{stsz::SampleSize, stsd::SampleDescription, hdlr::TrackType};
-use crate::segments::*;
+use crate::atoms::stsd::SampleDescription;
+use crate::stream::*;
 
-use log::{info, warn};
+use log::{info, trace, warn};
 
-pub struct Track {
+pub struct TrackState {
     codec_params: CodecParameters,
-    /// The current segment index.
-    cur_seg: u32,
-    /// The current sample run index.
-    cur_sample_run: u32,
-    /// The current sample index.
-    cur_sample: u32,
-    /// The current sample position in the stream.
-    cur_sample_pos: u64,
+    /// The track number.
+    track_num: u32,
+    /// The current segment.
+    cur_seg: usize,
+    /// The current sample index relative to the stream.
+    next_sample: u32,
+    /// The current sample byte position relative to the start of the stream.
+    next_sample_pos: u64,
 }
 
-impl Track {
+impl TrackState {
 
-    pub fn new(trak: &TrakAtom) -> Self {
+    pub fn new(track_num: u32, trak: &TrakAtom) -> Self {
 
         let mut codec_params = CodecParameters::new();
 
@@ -49,18 +49,20 @@ impl Track {
             SampleDescription::Mp4a(ref mp4a) => {
                 codec_params
                     .for_codec(CODEC_TYPE_AAC)
-                    .with_sample_rate(mp4a.sound_desc.sample_rate as u32)
-                    .with_extra_data(mp4a.esds.descriptor.dec_config.dec_specific_config.extra_data.clone());
+                    .with_sample_rate(
+                        mp4a.sound_desc.sample_rate as u32)
+                    .with_extra_data(
+                        mp4a.esds.descriptor.dec_config.dec_specific_config.extra_data.clone());
             }
-            _ => (),
+            _ => ()
         }
 
         Self {
             codec_params,
+            track_num,
             cur_seg: 0,
-            cur_sample: 0,
-            cur_sample_run: 0,
-            cur_sample_pos: 0,
+            next_sample: 0,
+            next_sample_pos: 0,
         }
     }
 
@@ -69,153 +71,156 @@ impl Track {
     }
 }
 
+/// Information regarding the next sample.
+#[derive(Debug)]
+struct NextSampleInfo {
+    /// The track number of the next sample.
+    track_num: u32,
+    /// The timestamp of the next sample.
+    ts: u64,
+    /// The segment containing the next sample.
+    seg_idx: usize,
+}
+
+/// Information regarding a sample.
+#[derive(Debug)]
+struct SampleDataInfo {
+    /// The position of the sample in the stream.
+    pos: u64,
+    /// The length of the sample.
+    len: u32,
+}
+
 /// ISO Base Media File Format (MP4, M4A, MOV, etc.) demultiplexer.
 ///
 /// `IsoMp4Reader` implements a demuxer for the ISO Base Media File Format.
 pub struct IsoMp4Reader {
-    reader: MediaSourceStream,
+    iter: AtomIterator<MediaSourceStream>,
     streams: Vec<Stream>,
     cues: Vec<Cue>,
     metadata: MetadataQueue,
-    /// Segments of the movie. Sorted in ascending order by presentation timestamp.
-    segs: Vec<Segment>,
-    /// Deferred segments are segments of the movie that are to be loaded on-demand. Sorted in
-    /// ascending order by presentation timestamp.
-    deferred_segs: VecDeque<DeferredSegment>,
-    /// Tracks in the movie.
-    tracks: Vec<Track>,
-    /// Optional, movie extends atom used for loading segments.
-    mvex: Option<MvexAtom>,
+    /// Segments of the movie. Sorted in ascending order by sequence number.
+    segs: Vec<Box<dyn StreamSegment>>,
+    /// State tracker for each track.
+    tracks: Vec<TrackState>,
+    /// Optional, movie extends atom used for fragmented streams.
+    mvex: Option<Rc<MvexAtom>>,
 }
 
 impl IsoMp4Reader {
-    /// Gets a tuple containing the track index and timestamp for the next packet. This function
-    /// selects the track based with the smallest timestamp for the next sample.
-    fn next_track_for_packet(&self) -> Option<(usize, u64)> {
+    /// Idempotently gets information regarding the next sample of the medis stream. This function
+    /// selects the next sample with the lowest timestamp of all tracks.
+    fn next_sample_info(&self) -> Result<Option<NextSampleInfo>> {
         let mut nearest = None;
 
-        for (i, track) in self.tracks.iter().enumerate() {
-            // Get the next timestamp for the current track, which may be in some future segment.
-            for seg in &self.segs[track.cur_seg as usize..] {
-                // Got a timestamp in this segment.
-                if let Some(ts) = seg.tracks[i].sample_timestamp(track.cur_sample) {
-                    // Choose the smallest timestamp from all tracks.
-                    nearest = match nearest {
-                        Some((_, min_ts)) if ts >= min_ts => continue,
-                        _                                 => Some((i, ts)),
-                    };
+        for track in self.tracks.iter() {
+            // Get the next timestamp for the next sample of the current track. The next sample may
+            // be in a future segment.
+            for (seg_idx_delta, seg) in self.segs[track.cur_seg as usize..].iter().enumerate() {
 
+                // Try to get the timestamp for the next sample of the track from the segment.
+                if let Some(track_ts) = seg.sample_ts(track.track_num, track.next_sample)? {
+
+                    // Choose the smallest timestamp from all tracks.
+                    match nearest {
+                        Some(NextSampleInfo { track_num: _, ts, seg_idx: _ }) if track_ts >= ts => (),
+                        _ => {
+                            nearest = Some(NextSampleInfo{
+                                track_num: track.track_num,
+                                ts: track_ts,
+                                seg_idx: seg_idx_delta + track.cur_seg,
+                            });
+                        }
+                    }
+
+                    // Either the track had the lowest timestamp seen so far, or the track's
+                    // timestamp was greater than other previously examined tracks, but there is no
+                    // reason to check future segments.
                     break;
                 }
             }
         }
 
-        nearest
+        Ok(nearest)
     }
 
-    /// Gets the next sample for the track with index `t`.
-    fn next_sample_for_track(&mut self, t: usize) -> Option<(u64, u32)> {
-        let track = &mut self.tracks[t];
+    fn consume_next_sample(&mut self, info: &NextSampleInfo) -> Result<Option<SampleDataInfo>> {
+        // Get the track state.
+        let track = &mut self.tracks[info.track_num as usize];
 
-        let start_seg = track.cur_seg as usize;
-        let start_sample_run = track.cur_sample_run as usize;
+        // Get the segment associated with the sample.
+        let seg = &self.segs[info.seg_idx];
 
-        // The next sample may not be in the current segment or sample run. Find the appropriate
-        // segment and sample run for the next sample. These loops should almost never iterate
-        // more than once to advance the track.
-        for (seg_skip, seg) in self.segs[start_seg..].iter().enumerate() {
+        // Get the sample data descriptor.
+        let sample_data_desc = seg.sample_data(track.track_num, track.next_sample)?;
 
-            let track_seg = &seg.tracks[t];
-
-            for (run_skip, run) in track_seg.runs[start_sample_run..].iter().enumerate() {
-
-                // If the next sample is within the current run of samples, calculate the sample
-                // position and length.
-                if track.cur_sample < run.last_sample + track_seg.first_sample {
-
-                    // If the segment was advanced, increment the current segment by the amount
-                    // advanced, and reset the current sample run to 0.
-                    if seg_skip > 0 || track.cur_sample == 0 {
-                        track.cur_seg += seg_skip as u32;
-                        track.cur_sample_run = 0;
-                    }
-
-                    // If the run was advanced, increment the current sample run by the amount
-                    // advanced.
-                    if run_skip > 0 || track.cur_sample == 0 {
-                        track.cur_sample_run += run_skip as u32;
-                    }
-
-                    // If the segment or run was advanced, reset the current sample pos to the
-                    // base position of the current run.
-                    if seg_skip > 0 || run_skip > 0 || track.cur_sample == 0 {
-                        track.cur_sample_pos = run.base_pos;
-                    }
-
-                    // Get the length of the sample.
-                    let sample_len = match track_seg.sample_sizes {
-                        SampleSize::Constant(size) => size,
-                        SampleSize::Variable(ref table) => {
-                            // The current sample index is relative to the track, calculate the
-                            // sample index relative to the track segment.
-                            let offset = track.cur_sample - track_seg.first_sample;
-                            table[offset as usize]
-                        }
-                    };
-
-                    // dbg!(track.cur_seg);
-                    // dbg!(track.cur_sample_run);
-                    // dbg!(track.cur_sample_pos);
-
-                    // Calculate the position of the sample.
-                    let sample_pos = track.cur_sample_pos;
-                    track.cur_sample_pos += u64::from(sample_len);
-
-                    // dbg!(sample_pos);
-                    // dbg!(sample_len);
-
-                    return Some((sample_pos, sample_len));
-                }
-            }
+        // The sample base position in the sample data descriptor remains constant if the sample
+        // followed immediately after the previous sample. In this case, the track state's
+        // next_sample_pos is the position of the current sample. If the base position has jumped,
+        // then the base position is the position of current the sample.
+        let pos = if sample_data_desc.base_pos > track.next_sample_pos {
+            sample_data_desc.base_pos
         }
+        else {
+            track.next_sample_pos
+        };
 
-        None
+        // Advance the track's current segment to the next sample's segment.
+        track.cur_seg = info.seg_idx;
+
+        // Advance the track's next sample number and position.
+        track.next_sample += 1;
+        track.next_sample_pos = pos + u64::from(sample_data_desc.size);
+
+        Ok(Some(SampleDataInfo { pos, len: sample_data_desc.size }))
     }
 
-    fn try_read_next_segment(&mut self) -> Result<()> {
-
-        let mut iter = AtomIterator::new_root(&mut self.reader, None);
-
-        while let Some(header) = iter.next()? {
+    fn try_read_more_segments(&mut self) -> Result<()> {
+        // Continue iterating over atoms until a segment (a moof + mdat atom pair) is found. All
+        // other atoms will be ignored.
+        while let Some(header) = self.iter.next_no_consume()? {
             match header.atype {
                 AtomType::MediaData => {
-                    dbg!(header);
-                    break;
+                    // Consume the atom from the iterator so that on the next iteration a new atom
+                    // will be read.
+                    self.iter.consume_atom();
+
+                    return Ok(());
                 }
                 AtomType::MovieFragment => {
-                    dbg!(header);
+                    let moof = self.iter.read_atom::<MoofAtom>()?;
 
-                    let moof = iter.read_atom::<MoofAtom>()?;
-
+                    // A moof segment can only be created if the mvex atom is present.
                     if let Some(mvex) = &self.mvex {
-                        let mut seg = Segment::from_moof(moof, &mvex);
+                        // Get the last segment. Note, there will always be one segment because the
+                        // moov segment is always present.
+                        let last_seg = self.segs.last().unwrap();
 
-                        if let Some(prev) = self.segs.last() {
-                            if let Some(last_run) = prev.tracks[0].runs.last() {
-                                seg.tracks[0].first_sample += prev.tracks[0].first_sample + last_run.last_sample;
-                            }
+                        // Create a new segment for the moof atom.
+                        let seg = MoofSegment::new(moof, mvex.clone(), last_seg);
+
+                        // Segments should have a monotonic sequence number.
+                        if seg.sequence_num() <= last_seg.sequence_num() {
+                            warn!("moof fragment has a non-monotonic sequence number.");
                         }
 
-                        self.segs.push(seg);
+                        // Push the segment.
+                        self.segs.push(Box::new(seg));
+                    }
+                    else {
+                        // TODO: This is a fatal error.
+                        return decode_error("moof atom present without mvex atom");
                     }
                 },
                 _ => {
-                    info!("skipping over atom: {:?}", header.atype);
+                    trace!("skipping atom: {:?}.", header.atype);
+                    self.iter.consume_atom();
                 }
             }
         }
 
-        Ok(())
+        // If no atoms were returned above, then the end-of-stream has been reached.
+        end_of_stream_error()
     }
 
 }
@@ -251,15 +256,12 @@ impl FormatReader for IsoMp4Reader {
         let mut moov = None;
         let mut sidx = None;
 
-        let mut segs = Vec::<Segment>::new();
-        let mut deferred_segs = VecDeque::new();
-
         // Get the total length of the stream, if possible.
         let total_len = if is_seekable {
             let pos = mss.pos();
             let len = mss.seek(SeekFrom::End(0))?;
             mss.seek(SeekFrom::Start(pos))?;
-            info!("stream is seekable with len={} bytes", len);
+            info!("stream is seekable with len={} bytes.", len);
             Some(len)
         }
         else {
@@ -269,7 +271,7 @@ impl FormatReader for IsoMp4Reader {
         let mut metadata = MetadataQueue::default();
 
         // Parse all atoms if the stream is seekable, otherwise parse all atoms up-to the mdat atom.
-        let mut iter = AtomIterator::new_root(&mut mss, total_len);
+        let mut iter = AtomIterator::new_root(mss, total_len);
 
         while let Some(header) = iter.next()? {
             // Top-level atoms.
@@ -282,8 +284,8 @@ impl FormatReader for IsoMp4Reader {
                 }
                 AtomType::SegmentIndex => {
                     // If the stream is not seekable, then it can only be assumed that the first
-                    // segment index atom is indeed the first segment index because the format reader
-                    // cannot practically skip past this point.
+                    // segment index atom is indeed the first segment index because the format
+                    // reader cannot practically skip past this point.
                     if !is_seekable {
                         sidx = Some(iter.read_atom::<SidxAtom>()?);
                         break;
@@ -303,19 +305,19 @@ impl FormatReader for IsoMp4Reader {
                         }
                     }
                 }
-                AtomType::MediaData => {
-
-                    dbg!(header);
-
-                    // The mdat atom contains the codec bitstream data. If the source is unseekable
-                    // then the format reader cannot skip past this atom.
+                AtomType::MediaData |
+                AtomType::MovieFragment => {
+                    // The mdat atom contains the codec bitstream data. For segmented streams, a
+                    // moof + mdat pair is required for playback. If the source is unseekable then
+                    // the format reader cannot skip past these atoms without dropping samples.
                     if !is_seekable {
-                        // If the moov atom hasn't been found before the mdat atom, and the stream is
-                        // not seekable, then the mp4 is not streamable.
+                        // If the moov atom hasn't been seen before the moof and/or mdat atom, and
+                        // the stream is not seekable, then the mp4 is not streamable.
                         if moov.is_none() || ftyp.is_none() {
-                            warn!("mp4 is not streamable");
+                            warn!("mp4 is not streamable.");
                         }
 
+                        // The remainder of the stream will be read incrementally.
                         break;
                     }
                 }
@@ -325,30 +327,10 @@ impl FormatReader for IsoMp4Reader {
                 AtomType::Meta => {
 
                 }
-                AtomType::MovieFragment => {
-                    dbg!(header);
-
-                    let moof = iter.read_atom::<MoofAtom>()?;
-
-                    if let Some(moov) = &moov {
-                        if let Some(mvex) = &moov.mvex {
-
-                            let mut seg = Segment::from_moof(moof, &mvex);
-
-                            if let Some(prev) = segs.last() {
-                                if let Some(last_run) = prev.tracks[0].runs.last() {
-                                    seg.tracks[0].first_sample += prev.tracks[0].first_sample + last_run.last_sample;
-                                }
-                            }
-
-                            segs.push(seg);
-                        }
-                    }
-                },
                 AtomType::Free => (),
                 AtomType::Skip => (),
                 _ => {
-                    info!("skipping over atom: {:?}", header.atype);
+                    info!("skipping top-level atom: {:?}.", header.atype);
                 }
             }
         }
@@ -361,129 +343,103 @@ impl FormatReader for IsoMp4Reader {
             return unsupported_error("missing moov atom");
         }
 
+        // If the stream was seekable, then all atoms in the stream were scanned. Seek back to the
+        // beginning of the stream.
+        if is_seekable {
+            let mut mss = iter.into_inner();
+            mss.seek(SeekFrom::Start(0))?;
+
+            iter = AtomIterator::new_root(mss, total_len);
+        }
+
         let mut moov = moov.unwrap();
+
+        if moov.is_fragmented() {
+            // If a Segment Index (sidx) atom was found, add the segments contained within.
+            if sidx.is_some() {
+                info!("stream is segmented with a segment index.");
+            }
+            else {
+                info!("stream is segmented without a segment index.");
+            }
+        }
 
         moov.push_metadata(&mut metadata);
 
-        // Filter all media trak atoms for audio tracks and instantiate a Track for each.
+        // Filter all media trak atoms for supported audio tracks and instantiate a track state
+        // for each.
         let tracks = moov.traks.iter()
-                               .filter(|trak| trak.mdia.hdlr.track_type == TrackType::Sound)
-                               .map(|trak| Track::new(&trak))
-                               .collect::<Vec<Track>>();
+                            //    .filter(|trak| trak.mdia.hdlr.track_type == TrackType::Sound)
+                               .enumerate()
+                               .map(|(t, trak)| TrackState::new(t as u32, trak))
+                               .collect::<Vec<TrackState>>();
 
-        // Instantiate Stream(s) for all Track(s).
+        // Instantiate Stream(s) for all tracks selected above.
         let streams = tracks.iter()
-                            .enumerate()
-                            .map(|(i, track)| Stream::new(i as u32, track.codec_params()))
+                            .map(|track| Stream::new(track.track_num, track.codec_params()))
                             .collect();
 
+        // A Movie Extends (mvex) atom is required to support segmented streams. If the mvex atom is
+        // present, wrap it in an Rc so it can be shared amongst all segments.
+        let mvex = moov.mvex.take().map(|m| Rc::new(m));
 
-        let mvex = moov.mvex.take();
-
-        // A Movie Extends (mvex) atom is required to support segmented streams. If a mvex atom is
-        // present, treat the media as segmented.
-        if mvex.is_some() {
-            // If a Segment Index (sidx) atom was found, add the segments contained within.
-            if let Some(sidx) = &sidx {
-                info!("stream is segmented and has a segment index");
-
-                let mut segment_pos = sidx.first_offset;
-                let mut earliest_pts = sidx.earliest_pts;
-
-                // For each reference in the segment index...
-                for reference in &sidx.references {
-                    // The size of the segment (moof + mdat).
-                    let segment_size = u64::from(reference.reference_size);
-
-                    deferred_segs.push_back(DeferredSegment {
-                        earliest_pts,
-                        segment_pos,
-                        segment_size,
-                    });
-
-                    earliest_pts += u64::from(reference.subsegment_duration);
-                    segment_pos += segment_size;
-                }
-            }
-            else {
-                info!("stream is segmented but has no segment index");
-            }
-        }
-        else {
-            // Non-segmented streams are represented as one big segment.
-            segs.push(Segment::from_moov(moov)?);
-        }
+        let segs: Vec<Box<dyn StreamSegment>> = vec![ Box::new(MoovSegment::new(moov)) ];
 
         Ok(IsoMp4Reader {
-            reader: mss,
+            iter,
             streams,
             cues: Default::default(),
             metadata,
             tracks,
             segs,
-            deferred_segs,
             mvex,
         })
     }
 
     fn next_packet(&mut self) -> Result<Packet> {
         // Get the index of the track with the next-nearest (minimum) timestamp.
-        let (track, _ts) = loop {
-            // Try to search within the current set of segments.
-            if let Some((t, ts)) = self.next_track_for_packet() {
-                break (t, ts);
-            }
-            else if let Some(deferred_seg) = self.deferred_segs.pop_front() {
-                // The search failed within the current set of segments, but there is a deferred
-                // segment. Load the deferred segment and add it to the current set of segments.
-                let mut seg = deferred_seg.load(self.mvex.as_ref().unwrap(), &mut self.reader)?;
-
-                if let Some(prev) = self.segs.last() {
-                    if let Some(last_run) = prev.tracks[0].runs.last() {
-                        seg.tracks[0].first_sample += prev.tracks[0].first_sample + last_run.last_sample;
-                    }
-                }
-
-                self.segs.push(seg);
+        let next_sample_info = loop {
+            // Using the current set of segments, try to get the next sample info.
+            if let Some(info) = self.next_sample_info()? {
+                break info;
             }
             else {
                 // No more segments. If the stream is unseekable, it may be the case that there are
-                // more segments coming. Try to iterate boxes until a new segment is found or the
+                // more segments coming. Iterate atoms until a new segment is found or the
                 // end-of-stream is reached.
-                self.try_read_next_segment()?;
+                self.try_read_more_segments()?;
             }
         };
 
-        // Get the next sample position and length for the selected track.
-        let (sample_pos, sample_len) = self.next_sample_for_track(track).unwrap();
+        // Get the position and length information of the next sample.
+        let sample_info = self.consume_next_sample(&next_sample_info)?.unwrap();
+
+        let reader = self.iter.inner_mut();
 
         // Attempt a fast seek within the buffer cache.
-        if self.reader.seek_buffered(sample_pos) != sample_pos {
-            if self.reader.is_seekable() {
+        if reader.seek_buffered(sample_info.pos) != sample_info.pos {
+            if reader.is_seekable() {
                 // Fallback to a slow seek if the stream is seekable.
-                self.reader.seek(SeekFrom::Start(sample_pos))?;
+                reader.seek(SeekFrom::Start(sample_info.pos))?;
             }
-            else if sample_pos > self.reader.pos() {
+            else if sample_info.pos > reader.pos() {
                 // The stream is not seekable but the desired seek position is ahead of the reader's
                 // current position, thus the seek can be emulated by ignoring the bytes up to the
                 // the desired seek position.
-                self.reader.ignore_bytes(sample_pos - self.reader.pos())?;
+                reader.ignore_bytes(sample_info.pos - reader.pos())?;
             }
             else {
-                // The stream is not seekable, and the desired seek position falls outside the
-                // buffer cache lower bound. This sample cannot be read.
-                todo!();
+                // The stream is not seekable and the desired seek position falls outside the lower
+                // bound of the buffer cache. This sample cannot be read.
+                return decode_error("packet out-of-bounds for a non-seekable stream");
             }
         }
 
-        // Advance the current sample for the track.
-        self.tracks[track].cur_sample += 1;
-
         Ok(Packet::new_from_boxed_slice(
+            next_sample_info.track_num,
+            next_sample_info.ts,
             0,
-            0,
-            0,
-            self.reader.read_boxed_slice_exact(sample_len as usize)?
+            reader.read_boxed_slice_exact(sample_info.len as usize)?
         ))
     }
 

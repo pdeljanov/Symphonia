@@ -14,6 +14,7 @@ use crate::atoms::{Atom, AtomHeader, AtomIterator, AtomType, MvexAtom, MvhdAtom,
 use log::warn;
 
 /// Movie atom.
+#[derive(Debug)]
 pub struct MoovAtom {
     /// Atom header.
     header: AtomHeader,
