@@ -13,6 +13,9 @@ use log::info;
 
 use super::synthesis;
 
+/// The number of audio samples per granule.
+pub const SAMPLES_PER_GRANULE: u64 = 576;
+
 /// Startng indicies of each scale factor band at various sampling rates for long blocks.
 pub const SFB_LONG_BANDS: [[usize; 23]; 9] = [
     // 44.1 kHz, MPEG version 1, derived from ISO/IEC 11172-3 Table B.8
