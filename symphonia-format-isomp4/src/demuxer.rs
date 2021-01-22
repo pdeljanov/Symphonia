@@ -14,6 +14,7 @@ use symphonia_core::formats::prelude::*;
 use symphonia_core::io::{ByteStream, MediaSource, MediaSourceStream};
 use symphonia_core::meta::MetadataQueue;
 use symphonia_core::probe::{Descriptor, Instantiate, QueryDescriptor};
+use symphonia_core::units::Time;
 
 use std::rc::Rc;
 use std::io::{Seek, SeekFrom};
@@ -42,6 +43,8 @@ impl TrackState {
     pub fn new(track_num: u32, trak: &TrakAtom) -> Self {
 
         let mut codec_params = CodecParameters::new();
+
+        codec_params.with_time_base(TimeBase::new(1, trak.mdia.mdhd.timescale));
 
         // Add a stream for the respective codec.
         match trak.mdia.minf.stbl.stsd.sample_desc {
@@ -78,6 +81,8 @@ struct NextSampleInfo {
     track_num: u32,
     /// The timestamp of the next sample.
     ts: u64,
+    /// The timestamp expressed in seconds.
+    time: Time,
     /// The segment containing the next sample.
     seg_idx: usize,
 }
@@ -111,37 +116,57 @@ impl IsoMp4Reader {
     /// Idempotently gets information regarding the next sample of the media stream. This function
     /// selects the next sample with the lowest timestamp of all tracks.
     fn next_sample_info(&self) -> Result<Option<NextSampleInfo>> {
-        let mut nearest = None;
+        let mut earliest = None;
 
-        for track in self.tracks.iter() {
+        // TODO: Consider returning samples based on lowest byte position in the stream instead of
+        // timestamp. This may be important if video streams are ever decoded (i.e., DTS vs. PTS).
+
+        for (track, stream) in self.tracks.iter().zip(&self.streams) {
+
+            // Get the timebase of the track used to calculate the presentation time.
+            let tb = stream.codec_params.time_base.unwrap();
+
             // Get the next timestamp for the next sample of the current track. The next sample may
             // be in a future segment.
             for (seg_idx_delta, seg) in self.segs[track.cur_seg as usize..].iter().enumerate() {
 
                 // Try to get the timestamp for the next sample of the track from the segment.
-                if let Some(track_ts) = seg.sample_ts(track.track_num, track.next_sample)? {
+                if let Some(sample_ts) = seg.sample_ts(track.track_num, track.next_sample)? {
 
-                    // Choose the smallest timestamp from all tracks.
-                    match nearest {
-                        Some(NextSampleInfo { track_num: _, ts, seg_idx: _ }) if track_ts >= ts => (),
+                    // Calculate the presentation time using the timestamp.
+                    let sample_time = tb.calc_time(sample_ts);
+
+                    // Compare the presentation time of the sample from this track to other tracks,
+                    // and select the track with the earliest presentation time.
+                    match earliest {
+                        Some(NextSampleInfo { track_num: _, ts: _, time, seg_idx: _ })
+                            if time <= sample_time =>
+                        {
+                            // Earliest is less than or equal to the track's next sample presentation
+                            // time. No need to update earliest.
+                            ()
+                        }
                         _ => {
-                            nearest = Some(NextSampleInfo{
+                            // Earliest was either None, or greater than the track's next sample
+                            // presentation time. Update earliest.
+                            earliest = Some(NextSampleInfo{
                                 track_num: track.track_num,
-                                ts: track_ts,
+                                ts: sample_ts,
+                                time: sample_time,
                                 seg_idx: seg_idx_delta + track.cur_seg,
                             });
                         }
                     }
 
-                    // Either the track had the lowest timestamp seen so far, or the track's
-                    // timestamp was greater than other previously examined tracks, but there is no
-                    // reason to check future segments.
+                    // Either the next sample of the track had the earliest presentation time seen
+                    // thus far, or it was greater than those from other tracks, but there is no
+                    // reason to check samples in future segments.
                     break;
                 }
             }
         }
 
-        Ok(nearest)
+        Ok(earliest)
     }
 
     fn consume_next_sample(&mut self, info: &NextSampleInfo) -> Result<Option<SampleDataInfo>> {
