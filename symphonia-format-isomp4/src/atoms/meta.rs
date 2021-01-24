@@ -29,7 +29,7 @@ impl Debug for MetaAtom {
 
 impl MetaAtom {
     /// Consumes the metadata, and pushes it onto provided `MetadataQueue`.
-    pub fn consume_metadata(self, queue: &mut MetadataQueue) {
+    pub fn take_metadata(self, queue: &mut MetadataQueue) {
         queue.push(self.metadata);
     }
 }

@@ -29,15 +29,13 @@ pub struct MoovAtom {
 }
 
 impl MoovAtom {
-    /// Consume any metadata, and push it onto provided `MetadataQueue`.
-    pub fn push_metadata(&mut self, queue: &mut MetadataQueue) {
+    /// Consume any metadata, and pushes it onto provided `MetadataQueue`.
+    pub fn take_metadata(&mut self, queue: &mut MetadataQueue) {
         if let Some(udta) = self.udta.as_mut() {
-            udta.push_metadata(queue);
+            udta.take_metadata(queue);
         }
     }
-}
 
-impl MoovAtom {
     /// Is the movie segmented.
     pub fn is_fragmented(&self) -> bool {
         self.mvex.is_some()

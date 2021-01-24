@@ -12,6 +12,7 @@ keywords = ["audio", "media", "demuxer", "mp4", "iso"]
 edition = "2018"
 
 [dependencies]
+encoding_rs = "0.8.17"
 log = "0.4"
 symphonia-core = { version = "0.1", path = "../symphonia-core" }
 symphonia-metadata = { version = "0.1", path = "../symphonia-metadata" }

@@ -20,7 +20,7 @@ use std::rc::Rc;
 use std::io::{Seek, SeekFrom};
 
 use crate::atoms::{AtomIterator, AtomType};
-use crate::atoms::{FtypAtom, MoovAtom, MoofAtom, SidxAtom, TrakAtom, MvexAtom};
+use crate::atoms::{FtypAtom, MoovAtom, MoofAtom, SidxAtom, TrakAtom, MetaAtom, MvexAtom};
 use crate::atoms::stsd::SampleDescription;
 use crate::stream::*;
 
@@ -346,11 +346,10 @@ impl FormatReader for IsoMp4Reader {
                         break;
                     }
                 }
-                AtomType::UserData => {
-                    // let udta = iter.read_atom::<UdtaAtom>()?;
-                }
                 AtomType::Meta => {
-
+                    // Read the metadata atom and queue it.
+                    let meta = iter.read_atom::<MetaAtom>()?;
+                    meta.take_metadata(&mut metadata);
                 }
                 AtomType::Free => (),
                 AtomType::Skip => (),
@@ -389,7 +388,7 @@ impl FormatReader for IsoMp4Reader {
             }
         }
 
-        moov.push_metadata(&mut metadata);
+        moov.take_metadata(&mut metadata);
 
         // Filter all media trak atoms for supported audio tracks and instantiate a track state
         // for each.

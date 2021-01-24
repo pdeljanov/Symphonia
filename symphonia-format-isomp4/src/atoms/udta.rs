@@ -22,9 +22,9 @@ pub struct UdtaAtom {
 
 impl UdtaAtom {
     /// Consume any metadata, and push it onto provided `MetadataQueue`.
-    pub fn push_metadata(&mut self, queue: &mut MetadataQueue) {
+    pub fn take_metadata(&mut self, queue: &mut MetadataQueue) {
         if let Some(meta) = self.meta.take() {
-            meta.consume_metadata(queue);
+            meta.take_metadata(queue);
         }
     }
 }

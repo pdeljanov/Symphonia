@@ -6,6 +6,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use std::str;
+use std::borrow::Cow;
 
 use symphonia_core::errors::{Result, decode_error};
 use symphonia_core::io::{ByteStream, BufStream};
@@ -14,7 +15,11 @@ use symphonia_core::meta::{Metadata, MetadataBuilder, StandardTagKey, StandardVi
 
 use crate::atoms::{Atom, AtomHeader, AtomIterator, AtomType};
 
-#[derive(Debug)]
+use encoding_rs::{UTF_16BE, SHIFT_JIS};
+use log::warn;
+
+/// Data type enumeration for metadata value atoms as defined in the QuickTime File Format standard.
+#[derive(Debug, Copy, Clone)]
 pub enum DataType {
     AffineTransformF64,
     Bmp,
@@ -22,6 +27,7 @@ pub enum DataType {
     Float32,
     Float64,
     Jpeg,
+    /// The data type is implicit to the atom.
     NoType,
     Png,
     PointF32,
@@ -79,8 +85,170 @@ impl From<u32> for DataType {
     }
 }
 
+fn parse_no_type(data: &[u8]) -> Option<Cow<'_, str>> {
+    // Latin1, potentially null-terminated.
+    let end = data.iter().position(|&c| c == b'\0').unwrap_or(data.len());
+    Some(String::from_utf8_lossy(&data[..end]))
+}
 
-fn add_string_tag<B: ByteStream>(
+fn parse_utf8(data: &[u8]) -> Option<Cow<'_, str>> {
+    // UTF8, no null-terminator or count.
+    Some(String::from_utf8_lossy(&data))
+}
+
+fn parse_utf16(data: &[u8]) -> Option<Cow<'_, str>> {
+    // UTF16 BE
+    Some(UTF_16BE.decode(&data).0)
+}
+
+fn parse_shift_jis(data: &[u8]) -> Option<Cow<'_, str>> {
+    // Shift-JIS
+    Some(SHIFT_JIS.decode(&data).0)
+}
+
+fn parse_signed_int8(data: &[u8]) -> Option<Cow<'_, str>> {
+    match data.len() {
+        1 => {
+            let s = bits::sign_extend_leq8_to_i8(data[0], 8);
+            Some(Cow::from(s.to_string()))
+        }
+        _ => None
+    }
+}
+
+fn parse_signed_int16(data: &[u8]) -> Option<Cow<'_, str>> {
+    match data.len() {
+        2 => {
+            let u = BufStream::new(data).read_be_u16().ok()?;
+            let s = bits::sign_extend_leq16_to_i16(u, 16);
+            Some(Cow::from(s.to_string()))
+        }
+        _ => None
+    }
+}
+
+fn parse_signed_int32(data: &[u8]) -> Option<Cow<'_, str>> {
+    match data.len() {
+        4 => {
+            let u = BufStream::new(data).read_be_u32().ok()?;
+            let s = bits::sign_extend_leq32_to_i32(u, 32);
+            Some(Cow::from(s.to_string()))
+        }
+        _ => None
+    }
+}
+
+fn parse_signed_int64(data: &[u8]) -> Option<Cow<'_, str>> {
+    match data.len() {
+        8 => {
+            let u = BufStream::new(data).read_be_u64().ok()?;
+            let s = bits::sign_extend_leq64_to_i64(u, 64);
+            Some(Cow::from(s.to_string()))
+        }
+        _ => None
+    }
+}
+
+fn parse_var_signed_int(data: &[u8]) -> Option<Cow<'_, str>> {
+    match data.len() {
+        1 => parse_signed_int8(data),
+        2 => parse_signed_int16(data),
+        4 => parse_signed_int32(data),
+        _ => None,
+    }
+}
+
+fn parse_unsigned_int8(data: &[u8]) -> Option<Cow<'_, str>> {
+    match data.len() {
+        1 => Some(Cow::from(data[0].to_string())),
+        _ => None
+    }
+}
+
+fn parse_unsigned_int16(data: &[u8]) -> Option<Cow<'_, str>> {
+    match data.len() {
+        2 => {
+            let u = BufStream::new(data).read_be_u16().ok()?;
+            Some(Cow::from(u.to_string()))
+        }
+        _ => None
+    }
+}
+
+fn parse_unsigned_int32(data: &[u8]) -> Option<Cow<'_, str>> {
+    match data.len() {
+        4 => {
+            let u = BufStream::new(data).read_be_u32().ok()?;
+            Some(Cow::from(u.to_string()))
+        }
+        _ => None
+    }
+}
+
+fn parse_unsigned_int64(data: &[u8]) -> Option<Cow<'_, str>> {
+    match data.len() {
+        8 => {
+            let u = BufStream::new(data).read_be_u64().ok()?;
+            Some(Cow::from(u.to_string()))
+        }
+        _ => None
+    }
+}
+
+fn parse_var_unsigned_int(data: &[u8]) -> Option<Cow<'_, str>> {
+    match data.len() {
+        1 => parse_unsigned_int8(data),
+        2 => parse_unsigned_int16(data),
+        4 => parse_unsigned_int32(data),
+        _ => None,
+    }
+}
+
+fn parse_float32(data: &[u8]) -> Option<Cow<'_, str>> {
+    match data.len() {
+        4 => {
+            let f = BufStream::new(data).read_be_f32().ok()?;
+            Some(Cow::from(f.to_string()))
+        }
+        _ => None
+    }
+}
+
+fn parse_float64(data: &[u8]) -> Option<Cow<'_, str>> {
+    match data.len() {
+        8 => {
+            let f = BufStream::new(data).read_be_f64().ok()?;
+            Some(Cow::from(f.to_string()))
+        }
+        _ => None
+    }
+}
+
+fn parse_tag_value(data_type: DataType, data: &[u8]) -> Option<Cow<'_, str>> {
+    match data_type {
+        DataType::NoType => parse_no_type(data),
+        DataType::Utf8 | DataType::Utf8Sort => parse_utf8(data),
+        DataType::Utf16 | DataType::Utf16Sort => parse_utf16(data),
+        DataType::ShiftJis => parse_shift_jis(data),
+        DataType::UnsignedInt8 => parse_unsigned_int8(data),
+        DataType::UnsignedInt16 => parse_unsigned_int16(data),
+        DataType::UnsignedInt32 => parse_unsigned_int32(data),
+        DataType::UnsignedInt64 => parse_unsigned_int64(data),
+        DataType::UnsignedIntVariable => parse_var_unsigned_int(data),
+        DataType::SignedInt8 => parse_signed_int8(data),
+        DataType::SignedInt16 => parse_signed_int16(data),
+        DataType::SignedInt32 => parse_signed_int32(data),
+        DataType::SignedInt64 => parse_signed_int64(data),
+        DataType::SignedIntVariable => parse_var_signed_int(data),
+        DataType::Float32 => parse_float32(data),
+        DataType::Float64 => parse_float64(data),
+        _ => None,
+    }
+}
+
+/// Reads and parses a `MetaTagAtom` from the provided iterator and adds it to the `MetadataBuilder`
+/// if there are no errors.
+fn add_generic_tag<B: ByteStream>(
     iter: &mut AtomIterator<B>,
     builder: &mut MetadataBuilder,
     std_key: Option<StandardTagKey>,
@@ -88,9 +256,14 @@ fn add_string_tag<B: ByteStream>(
 
     let tag = iter.read_atom::<MetaTagAtom>()?;
 
-    // There should only be 1 value.
-    if let Some(value) = tag.values.first() {
-        builder.add_tag(Tag::new(std_key, "", str::from_utf8(&value.data).unwrap()));
+    for value_atom in tag.values.iter() {
+        // Parse the value atom data into a string, if possible.
+        if let Some(value) = parse_tag_value(value_atom.data_type, &value_atom.data) {
+            builder.add_tag(Tag::new(std_key, "", &value));
+        }
+        else {
+            warn!("unsupported data type {:?} for {:?} tag", value_atom.data_type, std_key);
+        }
     }
 
     Ok(())
@@ -104,26 +277,12 @@ fn add_var_signed_int_tag<B: ByteStream>(
 
     let tag = iter.read_atom::<MetaTagAtom>()?;
 
-    if let Some(value) = tag.values.first() {
-        let len = value.data.len();
-
-        // A variable sized big-endian signed integer may be between 1 and 4 bytes.
-        if len > 0 && len <= 4 {
-            let mut bs = BufStream::new(&value.data);
-
-            // Read the appropriately sized unsigned integer.
-            let unsigned = match len {
-                1 => bs.read_u8()?.into(),
-                2 => bs.read_be_u16()?.into(),
-                3 => bs.read_be_u24()?,
-                4 => bs.read_be_u32()?,
-                _ => unreachable!(),
-            };
-
-            // Sign extend it.
-            let signed = bits::sign_extend_leq32_to_i32(unsigned, 8 * len as u32);
-
-            builder.add_tag(Tag::new(Some(std_key), "", &signed.to_string()));
+    if let Some(value_atom) = tag.values.first() {
+        if let Some(value) = parse_var_signed_int(&value_atom.data) {
+            builder.add_tag(Tag::new(Some(std_key), "", &value));
+        }
+        else {
+            warn!("got unexpected data for {:?} tag", std_key);
         }
     }
 
@@ -135,7 +294,7 @@ fn add_boolean_tag<B: ByteStream>(
     builder: &mut MetadataBuilder,
     std_key: StandardTagKey,
 ) -> Result<()> {
-    
+
     let tag = iter.read_atom::<MetaTagAtom>()?;
 
     // There should only be 1 value.
@@ -181,7 +340,7 @@ fn add_visual_tag<B: ByteStream>(
     iter: &mut AtomIterator<B>,
     builder: &mut MetadataBuilder,
 ) -> Result<()> {
-    
+
     let tag = iter.read_atom::<MetaTagAtom>()?;
 
     // There could be more than one attached image.
@@ -250,8 +409,14 @@ fn add_freeform_tag<B: ByteStream>(
     let tag = iter.read_atom::<MetaTagAtom>()?;
 
     // A user-defined tag should only have 1 value.
-    if let Some(value) = tag.values.first() {
-        builder.add_tag(Tag::new(None, &tag.full_name(), str::from_utf8(&value.data).unwrap()));
+    for value_atom in tag.values.iter() {
+        // Parse the value atom data into a string, if possible.
+        if let Some(value) = parse_tag_value(value_atom.data_type, &value_atom.data) {
+            builder.add_tag(Tag::new(None, &tag.full_name(), &value));
+        }
+        else {
+            warn!("unsupported data type {:?} for free-form tag", value_atom.data_type);
+        }
     }
 
     Ok(())
@@ -278,16 +443,16 @@ impl Atom for MetaTagDataAtom {
 
         // For the mov brand, this a data type indicator and must always be 0 (well-known type). It
         // specifies the table in which the next 24-bit integer specifying the actual data type
-        // indexes. For iso/mp4, this is a version, and there is only one version, 0. Therefore, flags
-        // are interpreted as the actual data type index.
+        // indexes. For iso/mp4, this is a version, and there is only one version, 0. Therefore,
+        // flags are interpreted as the actual data type index.
         if version != 0 {
             return decode_error("invalid data atom version");
         }
 
         let data_type = DataType::from(flags);
 
-        // For the mov brand, the next four bytes are country and languages code. However, for iso/mp4
-        // these codes should be ignored.
+        // For the mov brand, the next four bytes are country and languages code. However, for
+        // iso/mp4 these codes should be ignored.
         let _country = reader.read_be_u16()?;
         let _language = reader.read_be_u16()?;
 
@@ -431,41 +596,41 @@ impl Atom for IlstAtom {
                     add_advisory_tag(&mut iter, &mut mb)?
                 }
                 AtomType::AlbumArtistTag => {
-                    add_string_tag(&mut iter, &mut mb, Some(StandardTagKey::AlbumArtist))?
+                    add_generic_tag(&mut iter, &mut mb, Some(StandardTagKey::AlbumArtist))?
                 }
                 AtomType::AlbumTag => {
-                    add_string_tag(&mut iter, &mut mb, Some(StandardTagKey::Album))?
+                    add_generic_tag(&mut iter, &mut mb, Some(StandardTagKey::Album))?
                 }
                 AtomType::ArtistLowerTag => (),
                 AtomType::ArtistTag => {
-                    add_string_tag(&mut iter, &mut mb, Some(StandardTagKey::Artist))?
+                    add_generic_tag(&mut iter, &mut mb, Some(StandardTagKey::Artist))?
                 }
                 AtomType::CategoryTag => {
-                    add_string_tag(&mut iter, &mut mb, Some(StandardTagKey::PodcastCategory))?
+                    add_generic_tag(&mut iter, &mut mb, Some(StandardTagKey::PodcastCategory))?
                 }
                 AtomType::CommentTag => {
-                    add_string_tag(&mut iter, &mut mb, Some(StandardTagKey::Comment))?
+                    add_generic_tag(&mut iter, &mut mb, Some(StandardTagKey::Comment))?
                 }
                 AtomType::CompilationTag => {
-                    add_string_tag(&mut iter, &mut mb, Some(StandardTagKey::Compilation))?
+                    add_generic_tag(&mut iter, &mut mb, Some(StandardTagKey::Compilation))?
                 }
                 AtomType::ComposerTag => {
-                    add_string_tag(&mut iter, &mut mb, Some(StandardTagKey::Composer))?
+                    add_generic_tag(&mut iter, &mut mb, Some(StandardTagKey::Composer))?
                 }
                 AtomType::CopyrightTag => {
-                    add_string_tag(&mut iter, &mut mb, Some(StandardTagKey::Copyright))?
+                    add_generic_tag(&mut iter, &mut mb, Some(StandardTagKey::Copyright))?
                 }
                 AtomType::CoverTag => {
                     add_visual_tag(&mut iter, &mut mb)?
                 }
                 AtomType::CustomGenreTag => {
-                    add_string_tag(&mut iter, &mut mb, Some(StandardTagKey::Genre))?
+                    add_generic_tag(&mut iter, &mut mb, Some(StandardTagKey::Genre))?
                 }
                 AtomType::DateTag => {
-                    add_string_tag(&mut iter, &mut mb, Some(StandardTagKey::Date))?
+                    add_generic_tag(&mut iter, &mut mb, Some(StandardTagKey::Date))?
                 }
                 AtomType::DescriptionTag => {
-                    add_string_tag(&mut iter, &mut mb, Some(StandardTagKey::Description))?
+                    add_generic_tag(&mut iter, &mut mb, Some(StandardTagKey::Description))?
                 }
                 AtomType::DiskNumberTag => {
                     add_m_of_n_tag(
@@ -476,63 +641,63 @@ impl Atom for IlstAtom {
                     )?
                 }
                 AtomType::EncodedByTag => {
-                    add_string_tag(&mut iter, &mut mb, Some(StandardTagKey::EncodedBy))?
+                    add_generic_tag(&mut iter, &mut mb, Some(StandardTagKey::EncodedBy))?
                 }
                 AtomType::EncoderTag => {
-                    add_string_tag(&mut iter, &mut mb, Some(StandardTagKey::Encoder))?
+                    add_generic_tag(&mut iter, &mut mb, Some(StandardTagKey::Encoder))?
                 }
                 AtomType::GaplessPlaybackTag => {
                     // TODO: Need standard tag key for gapless playback.
                     // add_boolean_tag(&mut iter, &mut mb, )?
                 }
                 AtomType::GenreTag => {
-                    add_string_tag(&mut iter, &mut mb, Some(StandardTagKey::Genre))?
+                    add_generic_tag(&mut iter, &mut mb, Some(StandardTagKey::Genre))?
                 }
                 AtomType::GroupingTag => {
-                    add_string_tag(&mut iter, &mut mb, Some(StandardTagKey::ContentGroup))?
+                    add_generic_tag(&mut iter, &mut mb, Some(StandardTagKey::ContentGroup))?
                 }
                 AtomType::HdVideoTag => (),
                 AtomType::IdentPodcastTag => {
-                    add_string_tag(&mut iter, &mut mb, Some(StandardTagKey::IdentPodcast))?
+                    add_generic_tag(&mut iter, &mut mb, Some(StandardTagKey::IdentPodcast))?
                 }
                 AtomType::KeywordTag => {
-                    add_string_tag(&mut iter, &mut mb, Some(StandardTagKey::PodcastKeywords))?
+                    add_generic_tag(&mut iter, &mut mb, Some(StandardTagKey::PodcastKeywords))?
                 }
                 AtomType::LongDescriptionTag => {
-                    add_string_tag(&mut iter, &mut mb, Some(StandardTagKey::Description))?
+                    add_generic_tag(&mut iter, &mut mb, Some(StandardTagKey::Description))?
                 }
                 AtomType::LyricsTag => {
-                    add_string_tag(&mut iter, &mut mb, Some(StandardTagKey::Lyrics))?
+                    add_generic_tag(&mut iter, &mut mb, Some(StandardTagKey::Lyrics))?
                 }
                 AtomType::MediaTypeTag => {
                     add_media_type_tag(&mut iter, &mut mb)?
                 }
                 AtomType::OwnerTag => {
-                    add_string_tag(&mut iter, &mut mb, None)?
+                    add_generic_tag(&mut iter, &mut mb, None)?
                 }
                 AtomType::PodcastTag => {
                     add_boolean_tag(&mut iter, &mut mb, StandardTagKey::Podcast)?
                 }
                 AtomType::PurchaseDateTag => {
-                    add_string_tag(&mut iter, &mut mb, None)?
+                    add_generic_tag(&mut iter, &mut mb, None)?
                 }
                 AtomType::RatingTag => {
-                    add_string_tag(&mut iter, &mut mb, Some(StandardTagKey::Rating))?
+                    add_generic_tag(&mut iter, &mut mb, Some(StandardTagKey::Rating))?
                 }
                 AtomType::SortAlbumArtistTag => {
-                    add_string_tag(&mut iter, &mut mb, Some(StandardTagKey::SortAlbumArtist))?
+                    add_generic_tag(&mut iter, &mut mb, Some(StandardTagKey::SortAlbumArtist))?
                 }
                 AtomType::SortAlbumTag => {
-                    add_string_tag(&mut iter, &mut mb, Some(StandardTagKey::SortAlbum))?
+                    add_generic_tag(&mut iter, &mut mb, Some(StandardTagKey::SortAlbum))?
                 }
                 AtomType::SortArtistTag => {
-                    add_string_tag(&mut iter, &mut mb, Some(StandardTagKey::Artist))?
+                    add_generic_tag(&mut iter, &mut mb, Some(StandardTagKey::Artist))?
                 }
                 AtomType::SortComposerTag => {
-                    add_string_tag(&mut iter, &mut mb, Some(StandardTagKey::SortComposer))?
+                    add_generic_tag(&mut iter, &mut mb, Some(StandardTagKey::SortComposer))?
                 }
                 AtomType::SortNameTag => {
-                    add_string_tag(&mut iter, &mut mb, Some(StandardTagKey::SortTrackTitle))?
+                    add_generic_tag(&mut iter, &mut mb, Some(StandardTagKey::SortTrackTitle))?
                 }
                 AtomType::TempoTag => {
                     add_var_signed_int_tag(&mut iter, &mut mb, StandardTagKey::Bpm)?
@@ -546,7 +711,7 @@ impl Atom for IlstAtom {
                     )?
                 }
                 AtomType::TrackTitleTag => {
-                    add_string_tag(&mut iter, &mut mb, Some(StandardTagKey::TrackTitle))?
+                    add_generic_tag(&mut iter, &mut mb, Some(StandardTagKey::TrackTitle))?
                 }
                 AtomType::TvEpisodeNameTag => (),
                 AtomType::TvEpisodeNumberTag => (),
@@ -554,7 +719,7 @@ impl Atom for IlstAtom {
                 AtomType::TvSeasonNumberTag => (),
                 AtomType::TvShowNameTag => (),
                 AtomType::UrlPodcastTag => {
-                    add_string_tag(&mut iter, &mut mb, Some(StandardTagKey::UrlPodcast))?
+                    add_generic_tag(&mut iter, &mut mb, Some(StandardTagKey::UrlPodcast))?
                 }
                 AtomType::FreeFormTag => add_freeform_tag(&mut iter, &mut mb)?,
                 _ => (),
