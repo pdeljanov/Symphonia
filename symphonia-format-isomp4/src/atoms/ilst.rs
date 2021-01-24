@@ -12,6 +12,7 @@ use symphonia_core::errors::{Result, decode_error};
 use symphonia_core::io::{ByteStream, BufStream};
 use symphonia_core::util::bits;
 use symphonia_core::meta::{Metadata, MetadataBuilder, StandardTagKey, StandardVisualKey, Tag, Visual};
+use symphonia_metadata::id3v1;
 
 use crate::atoms::{Atom, AtomHeader, AtomIterator, AtomType};
 
@@ -401,6 +402,29 @@ fn add_media_type_tag<B: ByteStream>(
     Ok(())
 }
 
+fn add_id3v1_genre_tag<B: ByteStream>(
+    iter: &mut AtomIterator<B>,
+    builder: &mut MetadataBuilder,
+) -> Result<()> {
+
+    let tag = iter.read_atom::<MetaTagAtom>()?;
+
+    // There should only be 1 value.
+    if let Some(value) = tag.values.first() {
+        // The ID3v1 genre is stored as a unsigned 16-bit big-endian integer.
+        let index = BufStream::new(&value.data).read_be_u16()?;
+
+        // The stored index uses 1-based indexing, but the ID3v1 genre list is 0-based.
+        if index > 0 {
+            if let Some(genre) = id3v1::util::genre_name((index - 1) as u8) {
+                builder.add_tag(Tag::new(Some(StandardTagKey::Genre), "", genre));
+            }
+        }
+    }
+
+    Ok(())
+}
+
 fn add_freeform_tag<B: ByteStream>(
     iter: &mut AtomIterator<B>,
     builder: &mut MetadataBuilder,
@@ -651,7 +675,7 @@ impl Atom for IlstAtom {
                     // add_boolean_tag(&mut iter, &mut mb, )?
                 }
                 AtomType::GenreTag => {
-                    add_generic_tag(&mut iter, &mut mb, Some(StandardTagKey::Genre))?
+                    add_id3v1_genre_tag(&mut iter, &mut mb)?
                 }
                 AtomType::GroupingTag => {
                     add_generic_tag(&mut iter, &mut mb, Some(StandardTagKey::ContentGroup))?

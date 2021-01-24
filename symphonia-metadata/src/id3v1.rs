@@ -267,3 +267,12 @@ pub fn read_id3v1<B: ByteStream>(reader: &mut B, metadata: &mut MetadataBuilder)
 fn decode_iso8859_text(data: &[u8]) -> String {
     data.iter().filter(|&b| *b > 0x1f).map(|&b| b as char).collect()
 }
+
+pub mod util {
+    use super::GENRES;
+
+    /// Try to get the genre name for the ID3v1 genre index.
+    pub fn genre_name(index: u8) -> Option<&'static &'static str> {
+        GENRES.get(usize::from(index))
+    }
+}
