@@ -12,7 +12,7 @@ use symphonia_core::errors::{Result, decode_error};
 use symphonia_core::io::{ByteStream, BufStream};
 use symphonia_core::util::bits;
 use symphonia_core::meta::{Metadata, MetadataBuilder, StandardTagKey, StandardVisualKey, Tag, Visual};
-use symphonia_metadata::id3v1;
+use symphonia_metadata::{id3v1, itunes};
 
 use crate::atoms::{Atom, AtomHeader, AtomIterator, AtomType};
 
@@ -270,6 +270,26 @@ fn add_generic_tag<B: ByteStream>(
     Ok(())
 }
 
+fn add_var_unsigned_int_tag<B: ByteStream>(
+    iter: &mut AtomIterator<B>,
+    builder: &mut MetadataBuilder,
+    std_key: StandardTagKey,
+) -> Result<()> {
+
+    let tag = iter.read_atom::<MetaTagAtom>()?;
+
+    if let Some(value_atom) = tag.values.first() {
+        if let Some(value) = parse_var_unsigned_int(&value_atom.data) {
+            builder.add_tag(Tag::new(Some(std_key), "", &value));
+        }
+        else {
+            warn!("got unexpected data for {:?} tag", std_key);
+        }
+    }
+
+    Ok(())
+}
+
 fn add_var_signed_int_tag<B: ByteStream>(
     iter: &mut AtomIterator<B>,
     builder: &mut MetadataBuilder,
@@ -436,7 +456,13 @@ fn add_freeform_tag<B: ByteStream>(
     for value_atom in tag.values.iter() {
         // Parse the value atom data into a string, if possible.
         if let Some(value) = parse_tag_value(value_atom.data_type, &value_atom.data) {
-            builder.add_tag(Tag::new(None, &tag.full_name(), &value));
+            // Gets the fully qualified tag name.
+            let full_name = tag.full_name();
+
+            // Try to map iTunes freeform tags to standard tag keys.
+            let std_key = itunes::std_key_from_tag(&full_name);
+
+            builder.add_tag(Tag::new(std_key, &full_name, &value));
         }
         else {
             warn!("unsupported data type {:?} for free-form tag", value_atom.data_type);
@@ -523,7 +549,6 @@ impl Atom for MetaTagNamespaceAtom {
         })
     }
 }
-
 
 /// A generic metadata tag atom.
 pub struct MetaTagAtom {
@@ -697,13 +722,13 @@ impl Atom for IlstAtom {
                     add_media_type_tag(&mut iter, &mut mb)?
                 }
                 AtomType::OwnerTag => {
-                    add_generic_tag(&mut iter, &mut mb, None)?
+                    add_generic_tag(&mut iter, &mut mb, Some(StandardTagKey::Owner))?
                 }
                 AtomType::PodcastTag => {
                     add_boolean_tag(&mut iter, &mut mb, StandardTagKey::Podcast)?
                 }
                 AtomType::PurchaseDateTag => {
-                    add_generic_tag(&mut iter, &mut mb, None)?
+                    add_generic_tag(&mut iter, &mut mb, Some(StandardTagKey::PurchaseDate))?
                 }
                 AtomType::RatingTag => {
                     add_generic_tag(&mut iter, &mut mb, Some(StandardTagKey::Rating))?
@@ -737,11 +762,21 @@ impl Atom for IlstAtom {
                 AtomType::TrackTitleTag => {
                     add_generic_tag(&mut iter, &mut mb, Some(StandardTagKey::TrackTitle))?
                 }
-                AtomType::TvEpisodeNameTag => (),
-                AtomType::TvEpisodeNumberTag => (),
-                AtomType::TvNetworkNameTag => (),
-                AtomType::TvSeasonNumberTag => (),
-                AtomType::TvShowNameTag => (),
+                AtomType::TvEpisodeNameTag => {
+                    add_generic_tag(&mut iter, &mut mb, Some(StandardTagKey::TvEpisodeTitle))?
+                }
+                AtomType::TvEpisodeNumberTag => {
+                    add_var_unsigned_int_tag(&mut iter, &mut mb, StandardTagKey::TvEpisode)?
+                }
+                AtomType::TvNetworkNameTag => {
+                    add_generic_tag(&mut iter, &mut mb, Some(StandardTagKey::TvNetwork))?
+                }
+                AtomType::TvSeasonNumberTag => {
+                    add_var_unsigned_int_tag(&mut iter, &mut mb, StandardTagKey::TvSeason)?
+                }
+                AtomType::TvShowNameTag => {
+                    add_generic_tag(&mut iter, &mut mb, Some(StandardTagKey::TvShowTitle))?
+                }
                 AtomType::UrlPodcastTag => {
                     add_generic_tag(&mut iter, &mut mb, Some(StandardTagKey::UrlPodcast))?
                 }
