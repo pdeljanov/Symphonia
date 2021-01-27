@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use lazy_static::lazy_static;
 use symphonia_core::errors::Result;
 use symphonia_core::io::ByteStream;
-use symphonia_core::meta::{MetadataBuilder, StandardTagKey, Tag};
+use symphonia_core::meta::{MetadataBuilder, StandardTagKey, Tag, Value};
 
 lazy_static! {
     static ref VORBIS_COMMENT_MAP: HashMap<&'static str, StandardTagKey> = {
@@ -125,10 +125,10 @@ fn parse(tag: &str) -> Tag {
     // The value field was empty so only the key field exists. Create an empty tag for the given
     // key field.
     if field.len() == 1 {
-        return Tag::new(std_tag, field[0], "");
+        return Tag::new(std_tag, field[0], Value::from(""));
     }
 
-    Tag::new(std_tag, field[0], field[1])
+    Tag::new(std_tag, field[0], Value::from(field[1]))
 }
 
 pub fn read_comment_no_framing<B : ByteStream>(

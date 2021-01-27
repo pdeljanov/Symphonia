@@ -11,7 +11,8 @@ use std::borrow::Cow;
 use symphonia_core::errors::{Result, decode_error};
 use symphonia_core::io::{ByteStream, BufStream};
 use symphonia_core::util::bits;
-use symphonia_core::meta::{Metadata, MetadataBuilder, StandardTagKey, StandardVisualKey, Tag, Visual};
+use symphonia_core::meta::{Metadata, MetadataBuilder, StandardTagKey, StandardVisualKey, Tag};
+use symphonia_core::meta::{Value, Visual};
 use symphonia_metadata::{id3v1, itunes};
 
 use crate::atoms::{Atom, AtomHeader, AtomIterator, AtomType};
@@ -86,71 +87,75 @@ impl From<u32> for DataType {
     }
 }
 
-fn parse_no_type(data: &[u8]) -> Option<Cow<'_, str>> {
+fn parse_no_type(data: &[u8]) -> Option<Value> {
     // Latin1, potentially null-terminated.
     let end = data.iter().position(|&c| c == b'\0').unwrap_or(data.len());
-    Some(String::from_utf8_lossy(&data[..end]))
+    let text = String::from_utf8_lossy(&data[..end]);
+    Some(Value::from(text))
 }
 
-fn parse_utf8(data: &[u8]) -> Option<Cow<'_, str>> {
+fn parse_utf8(data: &[u8]) -> Option<Value> {
     // UTF8, no null-terminator or count.
-    Some(String::from_utf8_lossy(&data))
+    let text = String::from_utf8_lossy(&data);
+    Some(Value::from(text))
 }
 
-fn parse_utf16(data: &[u8]) -> Option<Cow<'_, str>> {
+fn parse_utf16(data: &[u8]) -> Option<Value> {
     // UTF16 BE
-    Some(UTF_16BE.decode(&data).0)
+    let text = UTF_16BE.decode(&data).0;
+    Some(Value::from(text))
 }
 
-fn parse_shift_jis(data: &[u8]) -> Option<Cow<'_, str>> {
+fn parse_shift_jis(data: &[u8]) -> Option<Value> {
     // Shift-JIS
-    Some(SHIFT_JIS.decode(&data).0)
+    let text = SHIFT_JIS.decode(&data).0;
+    Some(Value::from(text))
 }
 
-fn parse_signed_int8(data: &[u8]) -> Option<Cow<'_, str>> {
+fn parse_signed_int8(data: &[u8]) -> Option<Value> {
     match data.len() {
         1 => {
             let s = bits::sign_extend_leq8_to_i8(data[0], 8);
-            Some(Cow::from(s.to_string()))
+            Some(Value::from(s))
         }
         _ => None
     }
 }
 
-fn parse_signed_int16(data: &[u8]) -> Option<Cow<'_, str>> {
+fn parse_signed_int16(data: &[u8]) -> Option<Value> {
     match data.len() {
         2 => {
             let u = BufStream::new(data).read_be_u16().ok()?;
             let s = bits::sign_extend_leq16_to_i16(u, 16);
-            Some(Cow::from(s.to_string()))
+            Some(Value::from(s))
         }
         _ => None
     }
 }
 
-fn parse_signed_int32(data: &[u8]) -> Option<Cow<'_, str>> {
+fn parse_signed_int32(data: &[u8]) -> Option<Value> {
     match data.len() {
         4 => {
             let u = BufStream::new(data).read_be_u32().ok()?;
             let s = bits::sign_extend_leq32_to_i32(u, 32);
-            Some(Cow::from(s.to_string()))
+            Some(Value::from(s))
         }
         _ => None
     }
 }
 
-fn parse_signed_int64(data: &[u8]) -> Option<Cow<'_, str>> {
+fn parse_signed_int64(data: &[u8]) -> Option<Value> {
     match data.len() {
         8 => {
             let u = BufStream::new(data).read_be_u64().ok()?;
             let s = bits::sign_extend_leq64_to_i64(u, 64);
-            Some(Cow::from(s.to_string()))
+            Some(Value::from(s))
         }
         _ => None
     }
 }
 
-fn parse_var_signed_int(data: &[u8]) -> Option<Cow<'_, str>> {
+fn parse_var_signed_int(data: &[u8]) -> Option<Value> {
     match data.len() {
         1 => parse_signed_int8(data),
         2 => parse_signed_int16(data),
@@ -159,44 +164,44 @@ fn parse_var_signed_int(data: &[u8]) -> Option<Cow<'_, str>> {
     }
 }
 
-fn parse_unsigned_int8(data: &[u8]) -> Option<Cow<'_, str>> {
+fn parse_unsigned_int8(data: &[u8]) -> Option<Value> {
     match data.len() {
-        1 => Some(Cow::from(data[0].to_string())),
+        1 => Some(Value::from(data[0])),
         _ => None
     }
 }
 
-fn parse_unsigned_int16(data: &[u8]) -> Option<Cow<'_, str>> {
+fn parse_unsigned_int16(data: &[u8]) -> Option<Value> {
     match data.len() {
         2 => {
             let u = BufStream::new(data).read_be_u16().ok()?;
-            Some(Cow::from(u.to_string()))
+            Some(Value::from(u))
         }
         _ => None
     }
 }
 
-fn parse_unsigned_int32(data: &[u8]) -> Option<Cow<'_, str>> {
+fn parse_unsigned_int32(data: &[u8]) -> Option<Value> {
     match data.len() {
         4 => {
             let u = BufStream::new(data).read_be_u32().ok()?;
-            Some(Cow::from(u.to_string()))
+            Some(Value::from(u))
         }
         _ => None
     }
 }
 
-fn parse_unsigned_int64(data: &[u8]) -> Option<Cow<'_, str>> {
+fn parse_unsigned_int64(data: &[u8]) -> Option<Value> {
     match data.len() {
         8 => {
             let u = BufStream::new(data).read_be_u64().ok()?;
-            Some(Cow::from(u.to_string()))
+            Some(Value::from(u))
         }
         _ => None
     }
 }
 
-fn parse_var_unsigned_int(data: &[u8]) -> Option<Cow<'_, str>> {
+fn parse_var_unsigned_int(data: &[u8]) -> Option<Value> {
     match data.len() {
         1 => parse_unsigned_int8(data),
         2 => parse_unsigned_int16(data),
@@ -205,27 +210,27 @@ fn parse_var_unsigned_int(data: &[u8]) -> Option<Cow<'_, str>> {
     }
 }
 
-fn parse_float32(data: &[u8]) -> Option<Cow<'_, str>> {
+fn parse_float32(data: &[u8]) -> Option<Value> {
     match data.len() {
         4 => {
             let f = BufStream::new(data).read_be_f32().ok()?;
-            Some(Cow::from(f.to_string()))
+            Some(Value::Float(f64::from(f)))
         }
         _ => None
     }
 }
 
-fn parse_float64(data: &[u8]) -> Option<Cow<'_, str>> {
+fn parse_float64(data: &[u8]) -> Option<Value> {
     match data.len() {
         8 => {
             let f = BufStream::new(data).read_be_f64().ok()?;
-            Some(Cow::from(f.to_string()))
+            Some(Value::Float(f))
         }
         _ => None
     }
 }
 
-fn parse_tag_value(data_type: DataType, data: &[u8]) -> Option<Cow<'_, str>> {
+fn parse_tag_value(data_type: DataType, data: &[u8]) -> Option<Value> {
     match data_type {
         DataType::NoType => parse_no_type(data),
         DataType::Utf8 | DataType::Utf8Sort => parse_utf8(data),
@@ -260,7 +265,7 @@ fn add_generic_tag<B: ByteStream>(
     for value_atom in tag.values.iter() {
         // Parse the value atom data into a string, if possible.
         if let Some(value) = parse_tag_value(value_atom.data_type, &value_atom.data) {
-            builder.add_tag(Tag::new(std_key, "", &value));
+            builder.add_tag(Tag::new(std_key, "", value));
         }
         else {
             warn!("unsupported data type {:?} for {:?} tag", value_atom.data_type, std_key);
@@ -280,7 +285,7 @@ fn add_var_unsigned_int_tag<B: ByteStream>(
 
     if let Some(value_atom) = tag.values.first() {
         if let Some(value) = parse_var_unsigned_int(&value_atom.data) {
-            builder.add_tag(Tag::new(Some(std_key), "", &value));
+            builder.add_tag(Tag::new(Some(std_key), "", value));
         }
         else {
             warn!("got unexpected data for {:?} tag", std_key);
@@ -300,7 +305,7 @@ fn add_var_signed_int_tag<B: ByteStream>(
 
     if let Some(value_atom) = tag.values.first() {
         if let Some(value) = parse_var_signed_int(&value_atom.data) {
-            builder.add_tag(Tag::new(Some(std_key), "", &value));
+            builder.add_tag(Tag::new(Some(std_key), "", value));
         }
         else {
             warn!("got unexpected data for {:?} tag", std_key);
@@ -323,8 +328,7 @@ fn add_boolean_tag<B: ByteStream>(
         // Boolean tags are just "flags", only add a tag if the boolean is true (1).
         if let Some(bool_value) = value.data.first() {
             if *bool_value == 1 {
-                builder.add_tag(Tag::new(Some(std_key), "", ""));
-
+                builder.add_tag(Tag::new(Some(std_key), "", Value::Flag));
             }
         }
     }
@@ -346,11 +350,11 @@ fn add_m_of_n_tag<B: ByteStream>(
         // The trkn and disk atoms contains an 8 byte value buffer, where the 4th and 6th bytes
         // indicate the track/disk number and total number of tracks/disks, respectively. Odd.
         if value.data.len() == 8 {
-            let m_value = value.data[3];
-            let n_value = value.data[5];
+            let m = value.data[3];
+            let n = value.data[5];
 
-            builder.add_tag(Tag::new(Some(m_key), "", &m_value.to_string()));
-            builder.add_tag(Tag::new(Some(n_key), "", &n_value.to_string()));
+            builder.add_tag(Tag::new(Some(m_key), "", Value::from(m)));
+            builder.add_tag(Tag::new(Some(n_key), "", Value::from(n)));
         }
     }
 
@@ -415,7 +419,13 @@ fn add_media_type_tag<B: ByteStream>(
                 _  => "Unknown",
             };
 
-            builder.add_tag(Tag::new(Some(StandardTagKey::MediaFormat), "", media_type.into()));
+            builder.add_tag(
+                Tag::new(
+                    Some(StandardTagKey::MediaFormat),
+                    "",
+                    Value::from(media_type)
+                )
+            );
         }
     }
 
@@ -437,7 +447,9 @@ fn add_id3v1_genre_tag<B: ByteStream>(
         // The stored index uses 1-based indexing, but the ID3v1 genre list is 0-based.
         if index > 0 {
             if let Some(genre) = id3v1::util::genre_name((index - 1) as u8) {
-                builder.add_tag(Tag::new(Some(StandardTagKey::Genre), "", genre));
+                builder.add_tag(
+                    Tag::new(Some(StandardTagKey::Genre), "", Value::from(*genre))
+                );
             }
         }
     }
@@ -462,7 +474,7 @@ fn add_freeform_tag<B: ByteStream>(
             // Try to map iTunes freeform tags to standard tag keys.
             let std_key = itunes::std_key_from_tag(&full_name);
 
-            builder.add_tag(Tag::new(std_key, &full_name, &value));
+            builder.add_tag(Tag::new(std_key, &full_name, value));
         }
         else {
             warn!("unsupported data type {:?} for free-form tag", value_atom.data_type);

@@ -20,7 +20,7 @@ use symphonia;
 use symphonia::core::errors::{Result, Error};
 use symphonia::core::codecs::DecoderOptions;
 use symphonia::core::formats::{Cue, FormatReader, FormatOptions, SeekTo, Stream};
-use symphonia::core::meta::{ColorMode, MetadataOptions, Tag, Visual};
+use symphonia::core::meta::{ColorMode, MetadataOptions, Tag, Value, Visual};
 use symphonia::core::io::{MediaSourceStream, MediaSource, ReadOnlySource};
 use symphonia::core::probe::{Hint, ProbeResult};
 use symphonia::core::units::{Duration, Time};
@@ -438,7 +438,7 @@ fn pretty_print_visuals(visuals: &[Visual]) {
     }
 }
 
-fn pretty_print_tag_item(idx: usize, key: &str, value: &str, indent: usize) -> String {
+fn pretty_print_tag_item(idx: usize, key: &str, value: &Value, indent: usize) -> String {
     let key_str = match key.len() {
         0..=28 => format!("| {:w$}[{:0>2}] {:<28} : ", "", idx, key, w = indent),
         _ => format!("| {:w$}[{:0>2}] {:.<28} : ", "", idx, key.split_at(26).0, w = indent),
@@ -451,7 +451,7 @@ fn pretty_print_tag_item(idx: usize, key: &str, value: &str, indent: usize) -> S
 
     out.push_str(&key_str);
 
-    for (wrapped, line) in value.lines().enumerate() {
+    for (wrapped, line) in value.to_string().lines().enumerate() {
         if wrapped > 0 {
             out.push_str(&line_prefix);
         }

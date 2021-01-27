@@ -9,7 +9,7 @@
 
 use symphonia_core::errors::{Result, unsupported_error};
 use symphonia_core::io::ByteStream;
-use symphonia_core::meta::{MetadataBuilder, StandardTagKey, Tag};
+use symphonia_core::meta::{MetadataBuilder, StandardTagKey, Tag, Value};
 
 static GENRES: &[&str] = &[
     // Standard Genres as per ID3v1 specificaation
@@ -221,27 +221,38 @@ pub fn read_id3v1<B: ByteStream>(reader: &mut B, metadata: &mut MetadataBuilder)
 
     let title = decode_iso8859_text(&buf[0..30]);
     if !title.is_empty() {
-        metadata.add_tag(Tag::new(Some(StandardTagKey::TrackTitle), "TITLE", &title));
+        metadata.add_tag(
+            Tag::new(Some(StandardTagKey::TrackTitle), "TITLE", Value::from(title))
+        );
     }
 
     let artist = decode_iso8859_text(&buf[30..60]);
     if !artist.is_empty() {
-        metadata.add_tag(Tag::new(Some(StandardTagKey::Artist), "ARTIST", &artist));
+        metadata.add_tag(
+            Tag::new(Some(StandardTagKey::Artist), "ARTIST", Value::from(artist))
+        );
     }
 
     let album = decode_iso8859_text(&buf[60..90]);
     if !album.is_empty() {
-        metadata.add_tag(Tag::new(Some(StandardTagKey::Album), "ALBUM", &album));
+        metadata.add_tag(
+            Tag::new(Some(StandardTagKey::Album), "ALBUM", Value::from(album))
+        );
     }
 
     let year = decode_iso8859_text(&buf[90..94]);
     if !year.is_empty() {
-        metadata.add_tag(Tag::new(Some(StandardTagKey::Date), "DATE", &year));
+        metadata.add_tag(
+            Tag::new(Some(StandardTagKey::Date), "DATE", Value::from(year))
+        );
     }
 
     let comment = if buf[122] == 0 {
         let track = buf[123];
-        metadata.add_tag(Tag::new(Some(StandardTagKey::TrackNumber), "TRACK", &track.to_string()));
+
+        metadata.add_tag(
+            Tag::new(Some(StandardTagKey::TrackNumber), "TRACK", Value::from(track))
+        );
 
         decode_iso8859_text(&buf[94..122])
     }
@@ -250,15 +261,19 @@ pub fn read_id3v1<B: ByteStream>(reader: &mut B, metadata: &mut MetadataBuilder)
     };
 
     if !comment.is_empty() {
-        metadata.add_tag(Tag::new(Some(StandardTagKey::Comment), "COMMENT", &comment));
+        metadata.add_tag(
+            Tag::new(Some(StandardTagKey::Comment), "COMMENT", Value::from(comment))
+        );
     }
 
     let genre_idx = buf[124] as usize;
 
-    // Convert the genre index to an actual genre name using the GENRES lookup table. Genre #133 is 
+    // Convert the genre index to an actual genre name using the GENRES lookup table. Genre #133 is
     // an offensive term and is excluded from Symphonia.
     if genre_idx < GENRES.len() && genre_idx != 133 {
-        metadata.add_tag(Tag::new(Some(StandardTagKey::Genre), "GENRE", GENRES[genre_idx]));
+        metadata.add_tag(
+            Tag::new(Some(StandardTagKey::Genre), "GENRE", Value::from(GENRES[genre_idx]))
+        );
     }
 
     Ok(())

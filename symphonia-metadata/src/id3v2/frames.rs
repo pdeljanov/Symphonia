@@ -11,7 +11,7 @@ use std::str;
 
 use symphonia_core::errors::{Result, unsupported_error, decode_error};
 use symphonia_core::io::{ByteStream, BufStream, FiniteStream};
-use symphonia_core::meta::{StandardTagKey, Tag};
+use symphonia_core::meta::{StandardTagKey, Tag, Value};
 
 use encoding_rs::UTF_16BE;
 use lazy_static::lazy_static;
@@ -22,10 +22,10 @@ use super::unsync::{decode_unsynchronisation, read_syncsafe_leq32};
 // The following is a list of all standardized ID3v2.x frames for all ID3v2 major versions and their
 // implementation status ("S" column) in Symphonia.
 //
-// ID3v2.2 uses 3 character frame identifiers as opposed to the 4 character identifiers used in 
+// ID3v2.2 uses 3 character frame identifiers as opposed to the 4 character identifiers used in
 // subsequent versions. This table may be used to map equivalent frames between the two versions.
 //
-// All ID3v2.3 frames are officially part of ID3v2.4 with the exception of those marked "n/a". 
+// All ID3v2.3 frames are officially part of ID3v2.4 with the exception of those marked "n/a".
 // However, it is likely that ID3v2.3-only frames appear in some real-world ID3v2.4 tags.
 //
 //   -   ----   ----    ----    ----------------    ------------------------------------------------
@@ -135,7 +135,7 @@ use super::unsync::{decode_unsynchronisation, read_syncsafe_leq32};
 //   x   TST                     SortTrackTitle     (Apple iTunes) Title sort order
 //   x   TSP                     SortArtist         (Apple iTunes) Artist order order
 //   x   TSA                     SortAlbum          (Apple iTunes) Album sort order
-//   x   TS2    TSO2             SortAlbumArtist    (Apple iTunes) Album artist sort order       
+//   x   TS2    TSO2             SortAlbumArtist    (Apple iTunes) Album artist sort order
 //   x   TSC    TSOC             SortComposer       (Apple iTunes) Composer sort order
 //
 // Information on these frames can be found at:
@@ -159,7 +159,7 @@ pub enum FrameResult {
 type FrameParser = fn(&mut BufStream<'_>, Option<StandardTagKey>, &str) -> Result<FrameResult>;
 
 lazy_static! {
-    static ref LEGACY_FRAME_MAP: 
+    static ref LEGACY_FRAME_MAP:
         HashMap<&'static [u8; 3], &'static [u8; 4]> = {
             let mut m = HashMap::new();
             m.insert(b"BUF", b"RBUF");
@@ -235,7 +235,7 @@ lazy_static! {
 }
 
 lazy_static! {
-    static ref FRAME_PARSERS: 
+    static ref FRAME_PARSERS:
         HashMap<&'static [u8; 4], (FrameParser, Option<StandardTagKey>)> = {
             let mut m = HashMap::new();
             // m.insert(b"AENC", read_null_frame);
@@ -350,7 +350,7 @@ lazy_static! {
 }
 
 lazy_static! {
-    static ref TXXX_FRAME_STD_KEYS: 
+    static ref TXXX_FRAME_STD_KEYS:
         HashMap<&'static str, StandardTagKey> = {
             let mut m = HashMap::new();
             m.insert("ACOUSTID FINGERPRINT"        , StandardTagKey::AcoustidFingerprint);
@@ -384,7 +384,7 @@ fn validate_frame_id(id: &[u8]) -> bool {
     id.iter().filter(|&b| !((*b >= b'0' && *b <= b'9') || (*b >= b'A' && *b <= b'Z'))).count() == 0
 }
 
-/// Validates that a language code conforms to the ISO-639-2 standard. That is to say, the code is 
+/// Validates that a language code conforms to the ISO-639-2 standard. That is to say, the code is
 /// composed of 3 characters, each character being between lowercase letters a-z.
 fn validate_lang_code(code: [u8; 3]) -> bool {
     code.iter().filter(|&c| *c < b'a' || *c > b'z').count() == 0
@@ -423,7 +423,7 @@ pub fn read_id3v2p2_frame<B: ByteStream>(reader: &mut B) -> Result<FrameResult> 
 
     let size = u64::from(reader.read_be_u24()?);
 
-    // Find a parser for the frame. If there is none, skip over the remainder of the frame as it 
+    // Find a parser for the frame. If there is none, skip over the remainder of the frame as it
     // cannot be parsed.
     let (parser, std_key) = match find_parser_legacy(id) {
         Some(p) => p,
@@ -468,7 +468,7 @@ pub fn read_id3v2p3_frame<B: ByteStream>(reader: &mut B) -> Result<FrameResult> 
         return decode_error("unused flag bits are not cleared");
     }
 
-    // Find a parser for the frame. If there is none, skip over the remainder of the frame as it 
+    // Find a parser for the frame. If there is none, skip over the remainder of the frame as it
     // cannot be parsed.
     let (parser, std_key) = match find_parser(id) {
         Some(p) => p,
@@ -563,10 +563,10 @@ pub fn read_id3v2p4_frame<B: ByteStream + FiniteStream>(reader: &mut B) -> Resul
     }
 
     // The data length indicator is optional in the frame header. This field indicates the original
-    // size of the frame body before compression, encryption, and/or unsynchronisation. It is 
-    // mandatory if encryption or compression are used, but only encouraged for unsynchronisation. 
+    // size of the frame body before compression, encryption, and/or unsynchronisation. It is
+    // mandatory if encryption or compression are used, but only encouraged for unsynchronisation.
     // It's not that helpful, so we just ignore it.
-    if size >= 4 && (flags & 0x1) != 0x0 { 
+    if size >= 4 && (flags & 0x1) != 0x0 {
         read_syncsafe_leq32(reader, 28)?;
         size -= 4;
     }
@@ -576,27 +576,27 @@ pub fn read_id3v2p4_frame<B: ByteStream + FiniteStream>(reader: &mut B) -> Resul
         warn!("frame size of 0 for {}", std::str::from_utf8(&id).unwrap());
     }
 
-    // Read the frame body into a new buffer. This is, unfortunate. The original plan was to use an 
-    // UnsyncStream to transparently decode the unsynchronisation stream, however, the format does 
-    // not make this easy. For one, the decoded data length field is optional. This is fine.. 
-    // sometimes. For example, text frames should have their text field terminated by 0x00 or 
-    // 0x0000, so it /should/ be possible to scan for the termination. However, despite being 
-    // mandatory per the specification, not all tags have terminated text fields. It gets even worse 
-    // when your text field is actually a list. The condition to continue scanning for terminations 
-    // is if there is more data left in the frame body. However, the frame body length is the 
-    // unsynchronised length, not the decoded length (that part is optional). If we scan for a 
+    // Read the frame body into a new buffer. This is, unfortunate. The original plan was to use an
+    // UnsyncStream to transparently decode the unsynchronisation stream, however, the format does
+    // not make this easy. For one, the decoded data length field is optional. This is fine..
+    // sometimes. For example, text frames should have their text field terminated by 0x00 or
+    // 0x0000, so it /should/ be possible to scan for the termination. However, despite being
+    // mandatory per the specification, not all tags have terminated text fields. It gets even worse
+    // when your text field is actually a list. The condition to continue scanning for terminations
+    // is if there is more data left in the frame body. However, the frame body length is the
+    // unsynchronised length, not the decoded length (that part is optional). If we scan for a
     // termination, we know the length of the /decoded/ data, not how much data we actually consumed
     //  to obtain that decoded data. Therefore we exceed the bounds of the frame. With this in mind,
-    // the easiest thing to do is just load frame body into memory, subject to a memory limit, and 
+    // the easiest thing to do is just load frame body into memory, subject to a memory limit, and
     // decode it before passing it to a parser. Therefore we always know the decoded data length and
-    // the typical algorithms work. It should be noted this isn't necessarily worse. Scanning for a 
-    // termination still would've required a buffer to scan into with the UnsyncStream, whereas we 
-    // can just get references to the decoded data buffer we create here. 
+    // the typical algorithms work. It should be noted this isn't necessarily worse. Scanning for a
+    // termination still would've required a buffer to scan into with the UnsyncStream, whereas we
+    // can just get references to the decoded data buffer we create here.
     //
     // You win some, you lose some. :)
     let mut raw_data = reader.read_boxed_slice_exact(size as usize)?;
 
-    // The frame body is unsynchronised. Decode the unsynchronised data back to it's original form 
+    // The frame body is unsynchronised. Decode the unsynchronised data back to it's original form
     // in-place before wrapping the decoded data in a BufStream for the frame parsers.
     if flags & 0x2 != 0x0 {
         let unsync_data = decode_unsynchronisation(&mut raw_data);
@@ -612,8 +612,8 @@ pub fn read_id3v2p4_frame<B: ByteStream + FiniteStream>(reader: &mut B) -> Resul
 
 /// Reads all text frames frame except for `TXXX`.
 fn read_text_frame(
-    reader: &mut BufStream<'_>, 
-    std_key: Option<StandardTagKey>, 
+    reader: &mut BufStream<'_>,
+    std_key: Option<StandardTagKey>,
     id: &str,
 ) -> Result<FrameResult> {
     // The first byte of the frame is the encoding.
@@ -632,7 +632,9 @@ fn read_text_frame(
 
         if len > 0 {
             // Scan for text, and create a Tag.
-            tags.push(Tag::new(std_key, id, &scan_text(reader, encoding, len)?));
+            let text = scan_text(reader, encoding, len)?;
+
+            tags.push(Tag::new(std_key, id, Value::from(text)));
         }
         else {
             break;
@@ -644,8 +646,8 @@ fn read_text_frame(
 
 /// Reads a `TXXX` (user defined) text frame.
 fn read_txxx_frame(
-    reader: &mut BufStream<'_>, 
-    _: Option<StandardTagKey>, 
+    reader: &mut BufStream<'_>,
+    _: Option<StandardTagKey>,
     _: &str,
 ) -> Result<FrameResult> {
     // The first byte of the frame is the encoding.
@@ -657,9 +659,9 @@ fn read_txxx_frame(
     // Read the description string.
     let desc = scan_text(reader, encoding, reader.bytes_available() as usize)?;
 
-    // Some TXXX frames may be mapped to standard keys. Check if a standard key exists for the 
+    // Some TXXX frames may be mapped to standard keys. Check if a standard key exists for the
     // description.
-    let std_key = match TXXX_FRAME_STD_KEYS.get("hh") {
+    let std_key = match TXXX_FRAME_STD_KEYS.get(desc.as_ref()) {
         Some(key) => Some(*key),
         _         => None,
     };
@@ -676,7 +678,8 @@ fn read_txxx_frame(
         let len = reader.bytes_available() as usize;
 
         if len > 0 {
-            tags.push(Tag::new(std_key, &key, &scan_text(reader, encoding, len)?));
+            let text = scan_text(reader, encoding, len)?;
+            tags.push(Tag::new(std_key, &key, Value::from(text)));
         }
         else {
             break;
@@ -688,14 +691,14 @@ fn read_txxx_frame(
 
 /// Reads all URL frames except for `WXXX`.
 fn read_url_frame(
-    reader: &mut BufStream<'_>, 
-    std_key: Option<StandardTagKey>, 
+    reader: &mut BufStream<'_>,
+    std_key: Option<StandardTagKey>,
     id: &str,
 ) -> Result<FrameResult> {
     // Scan for a ISO-8859-1 URL string.
     let url = scan_text(reader, Encoding::Iso8859_1, reader.bytes_available() as usize)?;
     // Create a Tag.
-    let tag = Tag::new(std_key, id, &url);
+    let tag = Tag::new(std_key, id, Value::from(url));
 
     Ok(FrameResult::Tag(tag))
 }
@@ -703,7 +706,7 @@ fn read_url_frame(
 /// Reads a `WXXX` (user defined) URL frame.
 fn read_wxxx_frame(
     reader: &mut BufStream<'_>,
-    std_key: Option<StandardTagKey>, 
+    std_key: Option<StandardTagKey>,
     _: &str,
 ) -> Result<FrameResult> {
     // The first byte of the WXXX frame is the encoding of the description.
@@ -717,7 +720,7 @@ fn read_wxxx_frame(
     // Scan for a ISO-8859-1 URL string.
     let url = scan_text(reader, Encoding::Iso8859_1, reader.bytes_available() as usize)?;
     // Create a Tag.
-    let tag = Tag::new(std_key, &desc, &url);
+    let tag = Tag::new(std_key, &desc, Value::from(url));
 
     Ok(FrameResult::Tag(tag))
 }
@@ -729,15 +732,14 @@ fn read_priv_frame(
     _: &str,
 ) -> Result<FrameResult> {
     // Scan for a ISO-8859-1 owner identifier.
-    let owner = format!("PRIV:{}", 
+    let owner = format!("PRIV:{}",
         &scan_text(reader, Encoding::Iso8859_1, reader.bytes_available() as usize)?);
 
     // The remainder of the frame is binary data.
     let data_buf = reader.read_buf_bytes_ref(reader.bytes_available() as usize)?;
 
     // Create a Tag.
-    // TODO: Either allow Tags to hold binary data, OR encode as base64.
-    let tag = Tag::new(std_key, &owner, &buf_to_hex_string(data_buf));
+    let tag = Tag::new(std_key, &owner, Value::from(data_buf));
 
     Ok(FrameResult::Tag(tag))
 }
@@ -757,7 +759,7 @@ fn read_comm_uslt_frame(
     // The next three bytes are the language.
     let lang = reader.read_triple_bytes()?;
 
-    // Encode the language into the key of the comment Tag. Since many files don't use valid 
+    // Encode the language into the key of the comment Tag. Since many files don't use valid
     // ISO-639-2 language codes, we'll just skip the language code if it doesn't validate. Returning
     // an error would break far too many files to be worth it.
     let key = if validate_lang_code(lang) {
@@ -767,7 +769,7 @@ fn read_comm_uslt_frame(
         id.to_string()
     };
 
-    // Short text (content description) is next, but since there is no way to represent this in 
+    // Short text (content description) is next, but since there is no way to represent this in
     // Symphonia, skip it.
     scan_text(reader, encoding, reader.bytes_available() as usize)?;
 
@@ -775,7 +777,7 @@ fn read_comm_uslt_frame(
     let text = scan_text(reader, encoding, reader.bytes_available() as usize)?;
 
     // Create the tag.
-    let tag = Tag::new(std_key, &key, &text);
+    let tag = Tag::new(std_key, &key, Value::from(text));
 
     Ok(FrameResult::Tag(tag))
 }
@@ -793,20 +795,22 @@ fn read_pcnt_frame(
         return decode_error("play counters must be a minimum of 32bits");
     }
 
-    // However it may be extended by an arbitrary amount of bytes (or so it would seem). 
+    // However it may be extended by an arbitrary amount of bytes (or so it would seem).
     // Practically, a 4-byte (32-bit) count is way more than enough, but we'll support up-to an
     // 8-byte (64bit) count.
     if len > 8 {
         return unsupported_error("play counters greater than 64bits are not supported");
     }
 
-    // The play counter is stored as an N-byte big-endian integer. Read N bytes into an 8-byte 
+    // The play counter is stored as an N-byte big-endian integer. Read N bytes into an 8-byte
     // buffer, making sure the missing bytes are zeroed, and then reinterpret as a 64-bit integer.
     let mut buf = [0u8; 8];
     reader.read_buf_exact(&mut buf[8 - len..])?;
 
+    let play_count = u64::from_be_bytes(buf);
+
     // Create the tag.
-    let tag = Tag::new(std_key, id, &u64::from_be_bytes(buf).to_string());
+    let tag = Tag::new(std_key, id, Value::from(play_count));
 
     Ok(FrameResult::Tag(tag))
 }
@@ -822,11 +826,11 @@ fn read_popm_frame(
 
     let rating = reader.read_u8()?;
 
-    // There's a personalized play counter here, but there is no analogue in Symphonia so don't do 
+    // There's a personalized play counter here, but there is no analogue in Symphonia so don't do
     // anything with it.
 
     // Create the tag.
-    let tag = Tag::new(std_key, &key, &rating.to_string());
+    let tag = Tag::new(std_key, &key, Value::from(rating));
 
     Ok(FrameResult::Tag(tag))
 }
@@ -839,9 +843,9 @@ fn read_mcdi_frame(
 ) -> Result<FrameResult> {
     // The entire frame is a binary dump of a CD-DA TOC.
     let buf = reader.read_buf_bytes_ref(reader.len() as usize)?;
+
     // Create the tag.
-    // TODO: Either allow Tags to hold binary data, OR encode as base64.
-    let tag = Tag::new(std_key, id, &buf_to_hex_string(buf));
+    let tag = Tag::new(std_key, id, Value::from(buf));
 
     Ok(FrameResult::Tag(tag))
 }
@@ -851,10 +855,10 @@ fn read_mcdi_frame(
 enum Encoding {
     /// ISO-8859-1 (aka Latin-1) characters in the range 0x20-0xFF.
     Iso8859_1,
-    /// UTF-16 (or UCS-2) with a byte-order-mark (BOM). If the BOM is missing, big-endian encoding 
+    /// UTF-16 (or UCS-2) with a byte-order-mark (BOM). If the BOM is missing, big-endian encoding
     /// is assumed.
     Utf16Bom,
-    /// UTF-16 big-endian without a byte-order-mark (BOM). 
+    /// UTF-16 big-endian without a byte-order-mark (BOM).
     Utf16Be,
     /// UTF-8.
     Utf8,
@@ -877,11 +881,11 @@ impl Encoding {
     }
 }
 
-/// Scans up-to `scan_len` bytes from the provided `BufStream` for a string that is terminated with 
-/// the appropriate null terminator for the given encoding as per the ID3v2 specification. A 
-/// copy-on-write reference to the string excluding the null terminator is returned or an error. If 
-/// the scanned string is valid UTF-8, or is equivalent to UTF-8, then no copies will occur. If a 
-/// null terminator is not found, and `scan_len` is reached, or the stream is exhausted, all the 
+/// Scans up-to `scan_len` bytes from the provided `BufStream` for a string that is terminated with
+/// the appropriate null terminator for the given encoding as per the ID3v2 specification. A
+/// copy-on-write reference to the string excluding the null terminator is returned or an error. If
+/// the scanned string is valid UTF-8, or is equivalent to UTF-8, then no copies will occur. If a
+/// null terminator is not found, and `scan_len` is reached, or the stream is exhausted, all the
 /// scanned bytes up-to that point are interpreted as the string.
 fn scan_text<'a>(
     reader: &'a mut BufStream<'_>,
@@ -900,18 +904,18 @@ fn scan_text<'a>(
     Ok(decode_text(encoding, buf))
 }
 
-/// Decodes a slice of bytes containing encoded text into a UTF-8 `str`. Trailing null terminators 
+/// Decodes a slice of bytes containing encoded text into a UTF-8 `str`. Trailing null terminators
 /// are removed, and any invalid characters are replaced with the [U+FFFD REPLACEMENT CHARACTER].
 fn decode_text(encoding: Encoding, data: &[u8]) -> Cow<'_, str> {
     let mut end = data.len();
 
     match encoding {
         Encoding::Iso8859_1 => {
-            // The ID3v2 specification says that only ISO-8859-1 characters between 0x20 to 0xFF, 
-            // inclusive, are considered valid. Any null terminator(s) (trailing 0x00 byte for 
+            // The ID3v2 specification says that only ISO-8859-1 characters between 0x20 to 0xFF,
+            // inclusive, are considered valid. Any null terminator(s) (trailing 0x00 byte for
             // ISO-8859-1) will also be removed.
             //
-            // TODO: Improve this conversion by returning a copy-on-write str sliced from data if 
+            // TODO: Improve this conversion by returning a copy-on-write str sliced from data if
             // all characters are > 0x1F and < 0x80. Fallback to the iterator approach otherwise.
             data.iter().filter(|&b| *b > 0x1f).map(|&b| b as char).collect()
         },
@@ -929,23 +933,9 @@ fn decode_text(encoding: Encoding, data: &[u8]) -> Cow<'_, str> {
                 if data[end-2] != 0x0 || data[end-1] != 0x0 { break; }
                 end -= 2;
             }
-            // Decode UTF-16 to UTF-8. If a byte-order-mark is present, UTF_16BE.decode() will use 
+            // Decode UTF-16 to UTF-8. If a byte-order-mark is present, UTF_16BE.decode() will use
             // the indicated endianness. Otherwise, big endian is assumed.
             UTF_16BE.decode(&data[..end]).0
         }
     }
-}
-
-fn buf_to_hex_string(buf: &[u8]) -> String {
-    let mut output = String::new();
-
-    for ch in buf {
-        let u = (ch & 0xf0) >> 4;
-        let l = ch & 0x0f;
-        output.push_str("\\0x");
-        output.push(if u < 10 { (b'0' + u) as char } else { (b'a' + u - 10) as char});
-        output.push(if l < 10 { (b'0' + l) as char } else { (b'a' + l - 10) as char});
-    }
-
-    output
 }

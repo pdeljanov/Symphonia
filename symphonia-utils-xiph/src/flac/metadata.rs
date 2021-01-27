@@ -13,7 +13,8 @@ use symphonia_core::errors::{Result, decode_error};
 use symphonia_core::formats::{Cue, CuePoint};
 use symphonia_core::formats::util::SeekIndex;
 use symphonia_core::io::*;
-use symphonia_core::meta::{ColorMode, MetadataBuilder, Size, StandardTagKey, Tag, VendorData, Visual};
+use symphonia_core::meta::{ColorMode, MetadataBuilder, Size, StandardTagKey, Tag, Value};
+use symphonia_core::meta::{VendorData, Visual};
 
 use symphonia_metadata::{id3v2, vorbis};
 
@@ -358,7 +359,7 @@ fn read_cuesheet_track<B: ByteStream>(
     };
 
     // Push the ISRC as a tag.
-    cue.tags.push(Tag::new(Some(StandardTagKey::IdentIsrc), "ISRC", &isrc));
+    cue.tags.push(Tag::new(Some(StandardTagKey::IdentIsrc), "ISRC", Value::from(isrc)));
 
     for _ in 0..n_indicies {
         cue.points.push(read_cuesheet_track_index(reader, is_cdda)?);
@@ -440,15 +441,11 @@ pub fn read_picture_block<B : ByteStream>(
     let mut desc_buf = vec![0u8; desc_len];
     reader.read_buf_exact(&mut desc_buf)?;
 
+    let desc = String::from_utf8_lossy(&desc_buf);
+
     // Convert description bytes into a standard Vorbis DESCRIPTION tag.
     let mut tags = Vec::<Tag>::new();
-    tags.push(
-        Tag::new(
-            Some(StandardTagKey::Description),
-            "DESCRIPTION",
-            &String::from_utf8_lossy(&desc_buf),
-        )
-    );
+    tags.push(Tag::new(Some(StandardTagKey::Description), "DESCRIPTION", Value::from(desc)));
 
     // Read the width, and height of the visual.
     let width = reader.read_be_u32()?;

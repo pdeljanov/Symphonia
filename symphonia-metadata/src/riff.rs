@@ -9,7 +9,7 @@
 
 use std::collections::HashMap;
 use lazy_static::lazy_static;
-use symphonia_core::meta::{Tag, StandardTagKey};
+use symphonia_core::meta::{StandardTagKey, Tag, Value};
 
 lazy_static! {
     static ref RIFF_INFO_MAP: HashMap<&'static str, StandardTagKey> = {
@@ -68,5 +68,5 @@ pub fn parse(tag: [u8; 4], buf: &[u8]) -> Tag {
         None => None,
     };
 
-    Tag::new(std_tag, &key, &value)
+    Tag::new(std_tag, &key, Value::from(value))
 }

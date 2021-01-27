@@ -7,8 +7,10 @@
 
 //! The `meta` module defines basic metadata elements, and management structures.
 
+use std::borrow::Cow;
 use std::cell::{Ref, RefCell};
 use std::collections::VecDeque;
+use std::convert::From;
 use std::fmt;
 use std::num::NonZeroU32;
 use std::ops::Deref;
@@ -214,6 +216,81 @@ pub enum StandardTagKey {
     Writer,
 }
 
+/// A `Tag` value. Note that the underlying data type of any particular tag may have a lesser width
+/// or encoding.
+pub enum Value {
+    /// A binary buffer.
+    Binary(Box<[u8]>),
+    /// A boolean value.
+    Boolean(bool),
+    /// A flag or indicator. A flag carries no data, but the presence of the tag has an implicit
+    /// meaning.
+    Flag,
+    /// A floating point number.
+    Float(f64),
+    /// A signed integer.
+    SignedInt(i64),
+    /// A string. This is also the catch-all type for tags with unconventional data types.
+    String(String),
+    /// An unsigned integer.
+    UnsignedInt(u64),
+}
+
+macro_rules! impl_from_for_value {
+    ($value:ident, $from:ty, $conv:expr) => {
+        impl From<$from> for Value {
+            fn from($value: $from) -> Self {
+                $conv
+            }
+        }
+    };
+}
+
+impl_from_for_value!(v, &[u8], Value::Binary(Box::from(v)));
+impl_from_for_value!(v, bool, Value::Boolean(v));
+impl_from_for_value!(v, f32, Value::Float(f64::from(v)));
+impl_from_for_value!(v, f64, Value::Float(v));
+impl_from_for_value!(v, i8 , Value::SignedInt(i64::from(v)));
+impl_from_for_value!(v, i16, Value::SignedInt(i64::from(v)));
+impl_from_for_value!(v, i32, Value::SignedInt(i64::from(v)));
+impl_from_for_value!(v, i64, Value::SignedInt(v));
+impl_from_for_value!(v, u8 , Value::UnsignedInt(u64::from(v)));
+impl_from_for_value!(v, u16, Value::UnsignedInt(u64::from(v)));
+impl_from_for_value!(v, u32, Value::UnsignedInt(u64::from(v)));
+impl_from_for_value!(v, u64, Value::UnsignedInt(v));
+impl_from_for_value!(v, &str, Value::String(String::from(v)));
+impl_from_for_value!(v, String, Value::String(v));
+impl_from_for_value!(v, Cow<'_, str>, Value::String(String::from(v)));
+
+fn buffer_to_hex_string(buf: &[u8]) -> String {
+    let mut output = String::new();
+
+    for ch in buf {
+        let u = (ch & 0xf0) >> 4;
+        let l = ch & 0x0f;
+        output.push_str("\\0x");
+        output.push(if u < 10 { (b'0' + u) as char } else { (b'a' + u - 10) as char});
+        output.push(if l < 10 { (b'0' + l) as char } else { (b'a' + l - 10) as char});
+    }
+
+    output
+}
+
+impl fmt::Display for Value {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Implement default formatters for each type.
+        match self {
+            Value::Binary(ref buf) => f.write_str(&buffer_to_hex_string(buf)),
+            Value::Boolean(boolean) => fmt::Display::fmt(boolean, f),
+            Value::Flag => write!(f, "<flag>"),
+            Value::Float(float) => fmt::Display::fmt(float, f),
+            Value::SignedInt(int) => fmt::Display::fmt(int, f),
+            Value::String(ref string) => fmt::Display::fmt(string, f),
+            Value::UnsignedInt(uint) => fmt::Display::fmt(uint, f),
+        }
+    }
+}
+
 /// A `Tag` encapsulates a key-value pair of metadata.
 pub struct Tag {
     /// If the `Tag`'s key string is commonly associated with a typical type, meaning, or purpose,
@@ -225,16 +302,16 @@ pub struct Tag {
     /// A key string indicating the type, meaning, or purpose of the `Tag`s value.
     pub key: String,
     /// The value of the `Tag`.
-    pub value: String,
+    pub value: Value,
 }
 
 impl Tag {
     /// Create a new `Tag`.
-    pub fn new(std_key: Option<StandardTagKey>, key: &str, value: &str) -> Tag {
+    pub fn new(std_key: Option<StandardTagKey>, key: &str, value: Value) -> Tag {
         Tag {
             std_key,
             key: key.to_string(),
-            value: value.to_string()
+            value,
         }
     }
 
@@ -248,15 +325,16 @@ impl Tag {
 impl fmt::Display for Tag {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self.std_key {
-            Some(ref std_key) =>
+            Some(ref std_key) => {
                 write!(
                     f,
-                    "{{ std_key={:?}, key=\"{}\", value=\"{}\" }}",
+                    "{{ std_key={:?}, key=\"{}\", value={} }}",
                     std_key,
                     self.key,
                     self.value
-                ),
-            None => write!(f, "{{ key=\"{}\", value=\"{}\" }}", self.key, self.value),
+                )
+            }
+            None => write!(f, "{{ key=\"{}\", value={} }}", self.key, self.value),
         }
     }
 }
