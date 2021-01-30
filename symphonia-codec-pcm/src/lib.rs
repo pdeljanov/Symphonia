@@ -26,7 +26,7 @@ use symphonia_core::codecs::{CODEC_TYPE_PCM_F64LE, CODEC_TYPE_PCM_F64BE};
 // G711 ALaw and MuLaw PCM cdoecs.
 use symphonia_core::codecs::{CODEC_TYPE_PCM_ALAW, CODEC_TYPE_PCM_MULAW};
 use symphonia_core::conv::FromSample;
-use symphonia_core::errors::{Result, decode_error, unsupported_error};
+use symphonia_core::errors::{Result, unsupported_error};
 use symphonia_core::formats::Packet;
 use symphonia_core::io::ByteStream;
 
@@ -112,6 +112,7 @@ fn mulaw_to_linear(mut mu_val: u8) -> i16 {
 /// `PcmDecoder` implements a decoder for all raw PCM, and log-PCM codecs.
 pub struct PcmDecoder {
     params: CodecParameters,
+    sample_width: u32,
     buf: AudioBuffer<i32>,
 }
 
@@ -138,8 +139,28 @@ impl Decoder for PcmDecoder {
             return unsupported_error("pcm: channels or channel_layout is required");
         };
 
+        // Signed and unsigned integer PCM codecs require the coded sample bit-width to be known.
+        // Try to get the bits per coded sample parameter, or, if failing that, the bits per
+        // sample parameter.
+        let sample_width = params.bits_per_coded_sample.unwrap_or_else(
+            || params.bits_per_sample.unwrap_or(0));
+
+        // If the width is not known, then the bits per coded sample may be constant and
+        // implicit to the codec.
+        if sample_width == 0 {
+            // A-Law, Mu-Law, and floating point codecs have an implicit coded sample bit-width. If
+            // the codec is none of those, then decoding is not possible.
+            match params.codec {
+                CODEC_TYPE_PCM_F32LE | CODEC_TYPE_PCM_F32BE => (),
+                CODEC_TYPE_PCM_F64LE | CODEC_TYPE_PCM_F64BE => (),
+                CODEC_TYPE_PCM_ALAW | CODEC_TYPE_PCM_MULAW => (),
+                _ => return unsupported_error("pcm: unknown bits per (coded) sample."),
+            }
+        }
+
         Ok(PcmDecoder {
             params: params.clone(),
+            sample_width,
             buf: AudioBuffer::new(frames, spec),
         })
     }
@@ -346,22 +367,10 @@ impl Decoder for PcmDecoder {
     fn decode(&mut self, packet: &Packet) -> Result<AudioBufferRef<'_>> {
         let mut stream = packet.as_buf_stream();
 
-        let width = self.params.bits_per_coded_sample.unwrap_or_else(
-            || self.params.bits_per_sample.unwrap_or(0));
-
-        // Only A-Law and Mu-Law codecs have an implicit coded sample bit-width (8 bits), other PCM
-        // codecs require atleast either bits_per_sample or bits_per_coded_sample to be declared.
-        if width == 0 &&
-           self.params.codec != CODEC_TYPE_PCM_ALAW &&
-           self.params.codec != CODEC_TYPE_PCM_MULAW
-        {
-            return decode_error("pcm: unknown bits per (coded) sample.");
-        }
-
         // Signed or unsigned integer PCM codecs must be shifted to expand the sample into the
         // entire i32 range. Only floating point samples may exceed 32 bits per coded sample, but
         // they cannot be shifted, so int_shift = 0.
-        let int_shift = if width <= 32 { 32 - width } else { 0 };
+        let int_shift = if self.sample_width <= 32 { 32 - self.sample_width } else { 0 };
 
         let _ = match self.params.codec {
             CODEC_TYPE_PCM_S32LE => read_pcm_signed!(self.buf,   stream.read_u32()?,    int_shift),
