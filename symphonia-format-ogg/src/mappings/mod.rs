@@ -17,7 +17,9 @@ mod vorbis;
 pub fn detect(buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> {
     let mapper = flac::detect(buf)?
                     .or(vorbis::detect(buf)?)
-                    .or(opus::detect(buf)?);
+                    .or(opus::detect(buf)?)
+                    .or_else(make_null_mapper);
+
     Ok(mapper)
 }
 
@@ -31,4 +33,30 @@ pub enum MapResult {
 pub trait Mapper {
     fn codec(&self) -> &CodecParameters;
     fn map_packet(&mut self, buf: &[u8]) -> Result<MapResult>;
+}
+
+fn make_null_mapper() -> Option<Box<dyn Mapper>> {
+    Some(Box::new(NullMapper::new()))
+}
+
+struct NullMapper {
+    params: CodecParameters,
+}
+
+impl NullMapper {
+    fn new() -> Self {
+        NullMapper {
+            params: CodecParameters::new(),
+        }
+    }
+}
+
+impl Mapper for NullMapper {
+    fn codec(&self) -> &CodecParameters {
+        &self.params
+    }
+
+    fn map_packet(&mut self, _: &[u8]) -> Result<MapResult> {
+        Ok(MapResult::Unknown)
+    }
 }

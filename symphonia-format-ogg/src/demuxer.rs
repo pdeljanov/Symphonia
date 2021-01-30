@@ -94,11 +94,13 @@ impl FormatReader for OggReader {
         loop {
             let packet = physical_stream.next_packet(&mut source)?;
 
-            // If the packet belongs to a logical stream, and it is a metadata packet, push the parsed
-            // metadata onto the revision queue. Exit from this loop for any other packet.
+            // If the packet belongs to a logical stream, and it is a metadata packet, push the
+            // parsed metadata onto the revision queue. If it's an unknown packet, skip it. Exit
+            // from this loop for any other packet.
             if let Some(mapper) = mappers.get_mut(&packet.serial) {
                 match mapper.map_packet(&packet.data)? {
                     mappings::MapResult::Metadata(revision) => metadata.push(revision),
+                    mappings::MapResult::Unknown => (),
                     _ => break
                 }
             }
