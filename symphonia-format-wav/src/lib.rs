@@ -130,9 +130,14 @@ impl FormatReader for WavReader {
                         _       => list.skip(&mut source)?,
                     }
                 },
-                RiffWaveChunks::Data(_) => {
+                RiffWaveChunks::Data(dat) => {
+                    let data = dat.parse(&mut source)?;
+
                     // Record the offset of the Data chunk's contents to support seeking.
                     let data_start_pos = source.pos();
+
+                    // Append Data chunk fields to codec parameters.
+                    append_data_params(&mut codec_params, &data, frame_len);
 
                     // Add a new stream using the collected codec parameters.
                     return Ok(WavReader {
@@ -290,4 +295,11 @@ fn append_format_params(codec_params: &mut CodecParameters, format: &WaveFormatC
 
 fn append_fact_params(codec_params: &mut CodecParameters, fact: &FactChunk) {
     codec_params.with_n_frames(u64::from(fact.n_frames));
+}
+
+fn append_data_params(codec_params: &mut CodecParameters, data: &DataChunk, frame_len: u16) {
+    if frame_len > 0 {
+        let n_frames = data.len / u32::from(frame_len);
+        codec_params.with_n_frames(u64::from(n_frames));
+    }
 }
