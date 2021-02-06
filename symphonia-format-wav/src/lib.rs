@@ -225,8 +225,6 @@ impl FormatReader for WavReader {
             }
         }
 
-        self.data_start_pos = self.reader.pos();
-
         Ok(to)
     }
 
