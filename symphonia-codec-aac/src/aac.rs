@@ -1416,11 +1416,11 @@ impl DSP {
 
         // Inverse MDCT
         if seq != EIGHT_SHORT_SEQUENCE {
-            self.imdct_long.imdct(coeffs, &mut self.tmp, 1.0 / 1024.0);
+            self.imdct_long.imdct(coeffs, &mut self.tmp, 1.0 / 2048.0);
         }
         else {
             for (ain, aout) in coeffs.chunks(128).zip(self.tmp.chunks_mut(256)) {
-                self.imdct_short.imdct(ain, aout, 1.0 / 128.0);
+                self.imdct_short.imdct(ain, aout, 1.0 / 256.0);
             }
 
             self.ew_buf = [0.0; 1152];
