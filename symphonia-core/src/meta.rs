@@ -69,7 +69,7 @@ impl Default for MetadataOptions {
     }
 }
 
-/// `StandardVisualKey` is an enumation providing standardized keys for common visual dispositions.
+/// `StandardVisualKey` is an enumeration providing standardized keys for common visual dispositions.
 /// A demuxer may assign a `StandardVisualKey` to a `Visual` if the disposition of the attached
 /// visual is known and can be mapped to a standard key.
 ///
@@ -98,7 +98,7 @@ pub enum StandardVisualKey {
     PublisherStudioLogo,
 }
 
-/// `StandardTagKey` is an enumation providing standardized keys for common tag types.
+/// `StandardTagKey` is an enumeration providing standardized keys for common tag types.
 /// A tag reader may assign a `StandardTagKey` to a `Tag` if the tag's key is generally
 /// accepted to map to a specific usage.
 #[derive(Copy, Clone, Debug)]
@@ -216,8 +216,11 @@ pub enum StandardTagKey {
     Writer,
 }
 
-/// A `Tag` value. Note that the underlying data type of any particular tag may have a lesser width
-/// or encoding.
+/// A `Tag` value.
+///
+/// Note: The data types in this enumeration are a generalization. Depending on the particular tag
+/// format, the actual data type a specific tag may have a lesser width or encoding than the data
+/// type in this enumeration.
 pub enum Value {
     /// A binary buffer.
     Binary(Box<[u8]>),
@@ -263,7 +266,7 @@ impl_from_for_value!(v, String, Value::String(v));
 impl_from_for_value!(v, Cow<'_, str>, Value::String(String::from(v)));
 
 fn buffer_to_hex_string(buf: &[u8]) -> String {
-    let mut output = String::new();
+    let mut output = String::with_capacity(5 * buf.len());
 
     for ch in buf {
         let u = (ch & 0xf0) >> 4;
@@ -297,9 +300,12 @@ pub struct Tag {
     /// then if recognized a `StandardTagKey` will be assigned to this `Tag`.
     ///
     /// This is a best effort guess since not all metadata formats have a well defined or specified
-    /// mapping. However, it is recommended that user's use `std_key` over `key` if provided.
+    /// tag mapping. However, it is recommended that consumers prefer `std_key` over `key`, if
+    /// provided.
     pub std_key: Option<StandardTagKey>,
     /// A key string indicating the type, meaning, or purpose of the `Tag`s value.
+    ///
+    /// Note: The meaning of `key` is dependant on the underlying metadata format.
     pub key: String,
     /// The value of the `Tag`.
     pub value: Value,
