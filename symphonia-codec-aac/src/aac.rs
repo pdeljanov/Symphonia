@@ -19,6 +19,7 @@ use symphonia_core::io::{huffman::*, BitStream, FiniteBitStream, BitStreamLtr, B
 use symphonia_core::audio::{AudioBuffer, AudioBufferRef, AsAudioBufferRef, Signal, SignalSpec};
 use symphonia_core::codecs::CODEC_TYPE_AAC;
 use symphonia_core::codecs::{CodecParameters, CodecDescriptor, Decoder, DecoderOptions};
+use symphonia_core::dsp::mdct::Imdct;
 use symphonia_core::formats::Packet;
 use symphonia_core::support_codec;
 use symphonia_core::units::Duration;
@@ -29,7 +30,6 @@ use super::window::*;
 
 use lazy_static::lazy_static;
 use log::{error, trace};
-use rustdct::{DCTplanner, mdct::MDCT};
 
 macro_rules! validate {
     ($a:expr) => {
@@ -1346,8 +1346,8 @@ struct DSP {
     kbd_short_win: [f32; 128],
     sine_long_win: [f32; 1024],
     sine_short_win: [f32; 128],
-    imdct_long: std::sync::Arc<dyn MDCT<f32>>,
-    imdct_short: std::sync::Arc<dyn MDCT<f32>>,
+    imdct_long: Imdct,
+    imdct_short: Imdct,
     tmp: [f32; 2048],
     ew_buf: [f32; 1152],
 }
@@ -1378,15 +1378,13 @@ impl DSP {
         generate_window(WindowType::Sine, 1.0, 1024, true, &mut sine_long_win);
         generate_window(WindowType::Sine, 1.0, 128, true, &mut sine_short_win);
 
-        let mut planner = DCTplanner::<f32>::new();
-
         Self {
             kbd_long_win,
             kbd_short_win,
             sine_long_win,
             sine_short_win,
-            imdct_long: planner.plan_mdct(1024, |size| vec![1.0 / (size as f32); size] ),
-            imdct_short: planner.plan_mdct(128, |size| vec![1.0 / (size as f32); size] ),
+            imdct_long: Imdct::new(1024),
+            imdct_short: Imdct::new(128),
             tmp: [0.0; 2048],
             ew_buf: [0.0; 1152],
         }
@@ -1418,11 +1416,11 @@ impl DSP {
 
         // Inverse MDCT
         if seq != EIGHT_SHORT_SEQUENCE {
-            self.imdct_long.process_imdct(coeffs, &mut self.tmp);
+            self.imdct_long.imdct(coeffs, &mut self.tmp, 1.0 / 1024.0);
         }
         else {
             for (ain, aout) in coeffs.chunks(128).zip(self.tmp.chunks_mut(256)) {
-                self.imdct_short.process_imdct(ain, aout);
+                self.imdct_short.imdct(ain, aout, 1.0 / 128.0);
             }
 
             self.ew_buf = [0.0; 1152];

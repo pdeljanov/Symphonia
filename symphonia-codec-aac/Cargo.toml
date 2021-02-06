@@ -14,5 +14,4 @@ edition = "2018"
 [dependencies]
 log = "0.4"
 lazy_static = "1.3.0"
-rustdct = "0.4.0"
 symphonia-core = { version = "0.1", path = "../symphonia-core" }
