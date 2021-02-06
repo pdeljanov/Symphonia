@@ -9,6 +9,7 @@ pub mod audio;
 pub mod checksum;
 pub mod codecs;
 pub mod conv;
+pub mod dsp;
 pub mod errors;
 pub mod formats;
 pub mod io;
