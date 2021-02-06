@@ -316,6 +316,7 @@ impl AtomHeader {
         Ok(AtomHeader { atype, atom_len, data_len })
     }
 
+    #[allow(dead_code)]
     pub fn base_header_len(&self) -> u64 {
         match self.atom_len {
             0 => AtomHeader::HEADER_SIZE,

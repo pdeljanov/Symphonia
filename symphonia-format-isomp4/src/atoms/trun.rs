@@ -55,11 +55,13 @@ impl TrunAtom {
     }
 
     /// Indicates if sample flags are provided.
+    #[allow(dead_code)]
     pub fn are_sample_flags_present(&self) -> bool {
         self.flags & TrunAtom::SAMPLE_FLAGS_PRESENT != 0
     }
 
     /// Indicates if sample composition time offsets are provided.
+    #[allow(dead_code)]
     pub fn are_sample_composition_time_offsets_present(&self) -> bool {
         self.flags & TrunAtom::SAMPLE_COMPOSITION_TIME_OFFSETS_PRESENT != 0
     }
