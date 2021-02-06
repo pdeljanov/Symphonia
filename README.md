@@ -16,61 +16,61 @@ Symphonia's planned features are:
 
 ## Format and Codec Support Roadmap
 
-Support for individual audio codecs and media formats is provided by separate crates. By default, Symphonia selects
-support for FOSS codecs and formats, but others may be included via the features option.
+Support for individual audio codecs and media formats is provided by separate crates. By default, Symphonia selects support for FOSS codecs and formats, but others may be included via the features option.
+
+The follow status classifications are used to determine the state of development for each format or codec.
+
+| Status    | Meaning                                                                                                                  |
+|-----------|--------------------------------------------------------------------------------------------------------------------------|
+| -         | No work started or planned yet.                                                                                          |
+| Next      | Is the next major work item.                                                                                             |
+| Viable    | Many media streams play. Some streams may panic, error, or produce audible glitches. Some features may not be supported. |
+| Usable    | Most media streams play. Inaudible glitches may be present. Most common features are supported.                          |
+| Compliant | All media streams play.  No audible or inaudible glitches. All required features are supported.                          |
+
+A classification of usable indicates the end of major development. Though bugs and smaller issues can occur, it would generally be safe to use in an application. Compliance testing according to standards will be delayed until most codecs and demuxers are implemented so it's expected that many will stay in the category for a while.
 
 ### Formats (Demux)
 
-| Format  | Status      | Feature Flag | Default | Crate                     |  
-|---------|-------------|--------------|---------|---------------------------|
-| ISO/MP4 | Functional  | `isomp4`     | No      | `symphonia-format-isomp4` |
-| MKV     | -           | `mkv`        | Yes     | `symphonia-format-mkv`    |
-| OGG     | Functional  | `ogg`        | Yes     | `symphonia-format-ogg`    |
-| Wave    | Complete    | `wav`        | Yes     | `symphonia-format-wav`    |
-| WebM    | -           | `webm`       | No      | `symphonia-format-webm`   |
+| Format   | Status    | Feature Flag | Default | Crate                     |
+|----------|-----------|--------------|---------|---------------------------|
+| ISO/MP4  | Usable    | `isomp4`     | No      | `symphonia-format-isomp4` |
+| MKV/WebM | -         | `mkv`        | Yes     | `symphonia-format-mkv`    |
+| OGG      | Usable    | `ogg`        | Yes     | `symphonia-format-ogg`    |
+| Wave     | Compliant | `wav`        | Yes     | `symphonia-format-wav`    |
 
 ### Codecs (Decode)
 
-| Codec    | Status      | Feature Flag | Default | Crate                      |
-|----------|-------------|--------------|---------|----------------------------|
-| FLAC     | Complete    | `flac`       | Yes     | `symphonia-bundle-flac`    |
-| MP1      | Paused      | `mp3`        | No      | `symphonia-bundle-mp3`     |
-| MP2      | Paused      | `mp3`        | No      | `symphonia-bundle-mp3`     |
-| MP3      | Complete    | `mp3`        | No      | `symphonia-bundle-mp3`     |
-| AAC      | Functional  | `aac`        | No      | `symphonia-codec-aac`      |
-| Opus     | Next        | `opus`       | Yes     | `symphonia-codec-opus`     |
-| PCM      | Complete    | `pcm`        | Yes     | `symphonia-codec-pcm`      |
-| Vorbis   | -           | `vorbis`     | Yes     | `symphonia-codec-vorbis`   |
-| WavPack  | -           | `wavpack`    | Yes     | `symphonia-codec-wavpack`  |
+| Codec                        | Status    | Feature Flag | Default | Crate                     |
+|------------------------------|-----------|--------------|---------|---------------------------|
+| AAC-LC                       | Usable    | `aac`        | No      | `symphonia-codec-aac`     |
+| HE-AAC (AAC+, aacPlus)       | -         | `aac`        | No      | `symphonia-codec-aac`     |
+| HE-AACv2 (eAAC+, aacPlus v2) | -         | `aac`        | No      | `symphonia-codec-aac`     |
+| FLAC                         | Compliant | `flac`       | Yes     | `symphonia-bundle-flac`   |
+| MP1                          | -         | `mp3`        | No      | `symphonia-bundle-mp3`    |
+| MP2                          | -         | `mp3`        | No      | `symphonia-bundle-mp3`    |
+| MP3                          | Usable    | `mp3`        | No      | `symphonia-bundle-mp3`    |
+| Opus                         | -         | `opus`       | Yes     | `symphonia-codec-opus`    |
+| PCM                          | Compliant | `pcm`        | Yes     | `symphonia-codec-pcm`     |
+| Vorbis                       | Next      | `vorbis`     | Yes     | `symphonia-codec-vorbis`  |
+| WavPack                      | -         | `wavpack`    | Yes     | `symphonia-codec-wavpack` |
 
-<!--
-### Codecs (Encode)
-
-Symphonia does not aim to provide Rust-based encoders for codecs. This is because most encoders have undergone years of development, tweaking, and optimization. Replicating this work would be difficult and provide little benefit for safety because the input to an encoder is controlled by the developer unlike a decoder or demuxer.
-
-Symphonia plans to provide "unsafe" encoder packages that wrap traditional C-based encoders.
-
-| Codec    | Status      | Feature Flag | Default | Crate                              |
-|----------|-------------|--------------|---------|------------------------------------|
-| Hardware | -           | `hwenc`      | No      | `symphonia-codec-hwenc`            |
-| Flac     | -           | `libflac`    | No      | `symphonia-unsafe-codec-libflac`   |
-| Opus     | -           | `libopus`    | No      | `symphonia-unsafe-codec-libopus`   |
-| Vorbis   | -           | `libvorbis`  | No      | `symphonia-unsafe-codec-libvorbis` |
--->
+A `symphonia-bundle-*` package is a combination of a decoder and a native bitstream demuxer.
 
 ### Tags (Read)
 
 All metadata readers are provided by the `symphonia-metadata` crate.
 
-| Format                | Status      |
-|-----------------------|-------------|
-| ID3v1                 | Complete    |
-| ID3v2                 | Complete    |
-| Vorbis comment (OGG)  | In Work     |
-| Vorbis comment (FLAC) | Complete    |
-| RIFF                  | Complete    |
-| APEv1                 | -           |
-| APEv2                 | -           |
+| Format                | Status    |
+|-----------------------|-----------|
+| APEv1                 | -         |
+| APEv2                 | -         |
+| ID3v1                 | Usable    |
+| ID3v2                 | Usable    |
+| ISO/MP4               | Usable    |
+| RIFF                  | Usable    |
+| Vorbis comment (FLAC) | Compliant |
+| Vorbis comment (OGG)  | Compliant |
 
 ## Quality
 
@@ -143,19 +143,13 @@ Symphonia provides the following tools for debugging purposes:
 
 * `symphonia-play` for probing files and playing back audio, as well as serving as a demo application
 
-## Motivation
-
-Rust makes a lot of sense for multimedia programming, particularly when accessing that media over the network. However, currently it is difficult to do something as simple as play a FLAC file. Rust does not have a library like FFMpeg, and even if one uses the FFI, FFMpeg is a difficult library to use and you'd have none of the protections afforded to you by Rust. Symphonia is therefore an attempt to fill-in that gap.
-
-Personally, this is a project to learn Rust and experiment with signal processing.
-
 ## Authors
 
 The primary author is Philip Deljanov.
 
 ## Special Thanks
 
-* Kostya Shishkov (AAC decoder contribution, see symphonia-codec-aac)
+* Kostya Shishkov (AAC-LC decoder contribution, see `symphonia-codec-aac`)
 
 ## License
 
