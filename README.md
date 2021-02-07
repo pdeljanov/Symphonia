@@ -137,6 +137,10 @@ hyperfine -m 20 "ffmpeg -threads 1 -benchmark -v 0 -i ${IN} -f null -" "symphoni
 | Symphonia | 84.5 ± 1.8 | 81.8 | 89.1 | 1.0 |
 | FFmpeg | 129.8 ± 3.4 | 123.4 | 136.1 | 1.5 |
 
+## Example Usage
+
+Please see [`symphonia-play`](https://github.com/pdeljanov/Symphonia/tree/master/symphonia-play) for a simple music player example.
+
 ## Tools
 
 Symphonia provides the following tools for debugging purposes:

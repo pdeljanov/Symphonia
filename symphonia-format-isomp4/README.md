@@ -1,8 +1,8 @@
 # Symphonia ISO/MP4 Demuxer
 
-This is a placeholder crate for Symphonia's ISO/MP4 demuxer.
+ISO/MP4 demuxer for Project Symphonia.
 
-Please consider contributing!
+:musical_note: **Note:** This crate is part of Project Symphonia. Please use the [`symphonia`](https://crates.io/crates/symphonia) crate instead of this one directly.
 
 ## License
 

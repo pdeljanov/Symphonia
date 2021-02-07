@@ -1,13 +1,8 @@
 # Symphonia Wave Codec
 
-WAV decoder for the Symphonia media framework.
+WAV decoder for Project Symphonia.
 
-## Status
-
-- [x] Container reading
-- [ ] Container writing
-- [ ] Correctness verification
-- [ ] Fuzzing
+:musical_note: **Note:** This crate is part of Symphonia. Please use the [`symphonia`](https://crates.io/crates/symphonia) crate instead of this one directly.
 
 ## License
 

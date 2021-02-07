@@ -1,6 +1,8 @@
 # Symphonia Opus Codec
 
-This is a placeholder crate for Symphonia's work-in-progress Opus decoder.
+This is a placeholder crate for Project Symphonia's work-in-progress Opus decoder.
+
+:musical_note: **Note:** This crate is part of Symphonia. Please use the [`symphonia`](https://crates.io/crates/symphonia) crate instead of this one directly.
 
 ## License
 

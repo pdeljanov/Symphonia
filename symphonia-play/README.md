@@ -1,6 +1,6 @@
 # Symphonia Play
 
-A quick-and-dirty audio player for testing Symphonia demuxers and decoders.
+A simple audio player for testing Project Symphonia demuxers and decoders.
 
 ## Usage
 
@@ -26,7 +26,7 @@ symphonia-play --decode-only /path/to/file
 # Do any of the above, but get the encoded audio from standard input by using '-' as the file path.
 cat /path/to/file | symphonia-play -
 curl -s https://radio.station.com/stream | symphonia-play -
-
+youtube-dl -f 140 <url> -o - | symphonia-play -
 ```
 
 ## License

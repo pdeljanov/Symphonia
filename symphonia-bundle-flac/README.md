@@ -2,17 +2,9 @@
 
  > Come for the fidelity, stay for the memory safety!
 
-FLAC decoder for the Symphonia media framework.
+FLAC decoder for Project Symphonia.
 
-## Status
-
-- [x] Container reading
-  - [x] Metadata parsing
-  - [x] BitStream access
-- [x] Decoding
-- [ ] Container writing
-- [ ] Correctness verification
-- [ ] Fuzzing
+:musical_note: **Note:** This crate is part of Symphonia. Please use the [`symphonia`](https://crates.io/crates/symphonia) crate instead of this one directly.
 
 ## License
 
