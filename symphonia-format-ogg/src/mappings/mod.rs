@@ -31,15 +31,29 @@ pub struct Bitstream {
 }
 
 pub enum MapResult {
+/// The packet belongs to the codec bitstream.
     Bitstream(Bitstream),
+    /// The packet contains metadata.
     Metadata(MetadataRevision),
+    /// The packet should be discarded by the demuxer. The packet may be of unknown type,
+    /// unecessary, or consumed by the mapper internally.
     Unknown,
 }
 
 /// A `Mapper` implements packet-handling for a specific `Codec`.
 pub trait Mapper: Send {
+    /// Gets the `CodecParameters` for the stream belonging to this `Mapper`. If the stream is not
+    /// ready then the set of parameters may be incomplete.
     fn codec(&self) -> &CodecParameters;
+
+    /// Maps a packet to a specific use-case.
     fn map_packet(&mut self, packet: &OggPacket) -> Result<MapResult>;
+
+    /// Returns `true` if the stream can is ready for usage. If the stream is not ready then the
+    /// mapper needs to consume more packets.
+    fn is_stream_ready(&self) -> bool {
+        true
+    }
 }
 
 fn make_null_mapper() -> Option<Box<dyn Mapper>> {

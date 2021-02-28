@@ -76,39 +76,44 @@ impl FormatReader for OggReader {
 
             info!("discovered new stream: serial={:#x}", packet.serial);
 
-            // If a stream mapper has been detected, the stream can be read.
+            // If a stream mapper has been detected, register the mapper for the stream's serial number.
             if let Some(mapper) = mappings::detect(&packet.data)? {
-                // Add the stream.
-                tracks.push(Track::new(packet.serial, mapper.codec().clone()));
                 mappers.insert(packet.serial, mapper);
-                
-                info!("added stream: serial={:#x}", packet.serial);
             }
         }
 
         let mut metadata: MetadataLog = Default::default();
 
         // Each logical stream may contain additional header packets after the identification packet
-        // that contains format-relevant information such as metadata. These packets should be
-        // immediately after the identification packets. As much as possible, read them now.
+        // that contains format-relevant information such as extra and metadata. These packets
+        // should be immediately after the identification packets. As much as possible, read them
+        // now.
         loop {
             let packet = physical_stream.next_packet(&mut source)?;
 
             // If the packet belongs to a logical stream, and it is a metadata packet, push the
-            // parsed metadata onto the revision log. If it's an unknown packet, skip it. Exit
-            // from this loop for any other packet.
+            // parsed metadata onto the revision log. If the packet was consumed by the mapper
+            // or is unknown, continute iterating. Exit from this loop for any other packet.
             if let Some(mapper) = mappers.get_mut(&packet.serial) {
                 match mapper.map_packet(&packet)? {
                     mappings::MapResult::Metadata(revision) => {
                         metadata.push(revision)
                     },
                     mappings::MapResult::Unknown => (),
-                    _ => break
+                    _ => break,
                 }
             }
 
             // Consume the packet.
             physical_stream.consume_packet();
+        }
+
+        // For streams that are ready, add them to the demuxer.
+        for (&serial, mapper) in mappers.iter() {
+            if mapper.is_stream_ready() {
+                tracks.push(Track::new(serial, mapper.codec().clone()));
+                info!("added stream: serial={:#x}", serial);
+            }
         }
 
         Ok(OggReader {

@@ -116,6 +116,7 @@ pub fn detect(buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> {
     // Instantiate the Vorbis mapper.
     let mapper = Box::new(VorbisMapper {
         codec_params,
+        has_setup_header: false,
     });
 
     Ok(Some(mapper))
@@ -123,6 +124,7 @@ pub fn detect(buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> {
 
 struct VorbisMapper {
     codec_params: CodecParameters,
+    has_setup_header: bool,
 }
 
 impl Mapper for VorbisMapper {
@@ -162,9 +164,15 @@ impl Mapper for VorbisMapper {
                     Ok(MapResult::Metadata(builder.metadata()))
                 }
                 VORBIS_PACKET_TYPE_SETUP => {
-                    // TODO: The setup headers should be added to the extra data, but for now simply
-                    // pass it to the decoder.
-                    Ok(MapResult::Bitstream(Bitstream { ts: 0, dur: 0 }))
+                    // Append the setup headers to the extra data.
+                    let mut extra_data = self.codec_params.extra_data.take().unwrap().to_vec();
+                    extra_data.extend_from_slice(&packet.data);
+
+                    self.codec_params.with_extra_data(extra_data.into_boxed_slice());
+
+                    self.has_setup_header = true;
+
+                    Ok(MapResult::Unknown)
                 }
                 _ => {
                     warn!("ogg: vorbis packet type {} unexpected", packet_type);
@@ -172,6 +180,10 @@ impl Mapper for VorbisMapper {
                 }
             }
         }
+    }
+
+    fn is_stream_ready(&self) -> bool {
+        self.has_setup_header
     }
 
 }
