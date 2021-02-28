@@ -168,7 +168,7 @@ pub(super) fn read_huffman_samples<B: BitStream>(
         }
 
         // Otherwise, read the big_values.
-        while i < *region_end {
+        while i < *region_end && bits_read < part3_bits {
             // Decode the next Huffman code.
             let (value, code_len) = bs.read_huffman(&table.huff_table, part3_bits - bits_read)?;
             bits_read += code_len;
