@@ -1,6 +1,6 @@
 [package]
 name = "symphonia-codec-aac"
-version = "0.1.0"
+version = "0.2.0"
 description = "Pure Rust AAC decoder (a part of project Symphonia)."
 homepage = "https://github.com/pdeljanov/Symphonia"
 repository = "https://github.com/pdeljanov/Symphonia"
@@ -10,8 +10,9 @@ readme = "README.md"
 categories = ["multimedia", "multimedia::audio", "multimedia::encoding"]
 keywords = ["audio", "codec", "decoder", "aac", "m4a"]
 edition = "2018"
+exclude = ["scripts/*"]
 
 [dependencies]
 log = "0.4"
 lazy_static = "1.3.0"
-symphonia-core = { version = "0.1", path = "../symphonia-core" }
+symphonia-core = { version = "0.2", path = "../symphonia-core" }

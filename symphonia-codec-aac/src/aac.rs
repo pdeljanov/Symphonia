@@ -1503,7 +1503,10 @@ impl DSP {
     }
 }
 
-
+/// Advanced Audio Coding decoder.
+///
+/// Implements a decoder for Advanced Audio Decoding Low-Complexity (AAC-LC) as defined in
+/// ISO/IEC 13818-7 and ISO/IEC 14496-3.
 pub struct AacDecoder {
     // info: NACodecInfoRef,
     m4ainfo: M4AInfo,

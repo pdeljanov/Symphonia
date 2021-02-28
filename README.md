@@ -1,4 +1,4 @@
-# Symphonia (formerly Sonata)
+# Symphonia
 
 Symphonia is a pure Rust audio decoding and media demuxing library supporting AAC, OGG, FLAC, MP3, and WAV.
 
@@ -89,7 +89,7 @@ Symphonia aims to be equivalent in speed to popular open-source C-based implemen
 
 Symphonia does not include explicit SIMD optimizations, however the auto-vectorizer is leveraged as much as possible and the results have been *excellent*. As Rust support for packed SIMD grows, Symphonia will include explicit SIMD optimizations where necessary.
 
-### Benchmarks (as of Sept. 7/2019)
+### Benchmarks (as of September 2019)
 
 These benchmarks compare the single-threaded decoding performance of both Symphonia and FFmpeg with various audio files.
 
@@ -98,7 +98,6 @@ The benchmarks were executed on an Arch Linux system with a Core i7 4790k and 32
 ```bash
 #!/bin/bash
 IN="${1@Q}"
-
 hyperfine -m 20 "ffmpeg -threads 1 -benchmark -v 0 -i ${IN} -f null -" "symphonia-play --decode-only ${IN}"
 ```
 
