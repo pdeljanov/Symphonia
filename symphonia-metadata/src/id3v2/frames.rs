@@ -303,8 +303,8 @@ lazy_static! {
             m.insert(b"TPE2", (read_text_frame, Some(StandardTagKey::AlbumArtist)));
             m.insert(b"TPE3", (read_text_frame, Some(StandardTagKey::Conductor)));
             m.insert(b"TPE4", (read_text_frame, Some(StandardTagKey::Remixer)));
-            // May be "track number / total tracks"
-            m.insert(b"TPOS", (read_text_frame, Some(StandardTagKey::TrackNumber)));
+            // May be "disc number / total discs"
+            m.insert(b"TPOS", (read_text_frame, Some(StandardTagKey::DiscNumber)));
             m.insert(b"TPRO", (read_text_frame, None));
             m.insert(b"TPUB", (read_text_frame, Some(StandardTagKey::Label)));
             // May be "track number / total tracks"
