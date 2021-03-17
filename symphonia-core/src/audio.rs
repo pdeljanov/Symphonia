@@ -249,7 +249,7 @@ impl<'a, S : Sample> AudioPlanes<'a, S> {
     }
 
     /// Gets all the audio planes.
-    pub fn planes(&mut self) -> &[&'a [S]] {
+    pub fn planes(&self) -> &[&'a [S]] {
         &self.planes
     }
 }
