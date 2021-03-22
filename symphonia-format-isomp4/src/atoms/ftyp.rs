@@ -11,8 +11,6 @@ use symphonia_core::io::ByteStream;
 use crate::atoms::{Atom, AtomHeader};
 use crate::fourcc::FourCc;
 
-use log::warn;
-
 /// File type atom.
 #[derive(Debug)]
 pub struct FtypAtom {
@@ -30,10 +28,7 @@ impl Atom for FtypAtom {
         }
     
         // Major
-        let major = match FourCc::from_bytes(reader.read_quad_bytes()?) {
-            Some(fourcc) => fourcc,
-            _            => return decode_error("illegal fourcc"),
-        };
+        let major = FourCc::new(reader.read_quad_bytes()?);
 
         // Minor
         let minor = reader.read_quad_bytes()?;
@@ -45,13 +40,7 @@ impl Atom for FtypAtom {
 
         for _ in 0..n_brands {
             let brand = reader.read_quad_bytes()?;
-
-            if let Some(fourcc) = FourCc::from_bytes(brand) {
-                compatible.push(fourcc);
-            }
-            else {
-                warn!("ignoring illegal fourcc for compatible brand");
-            }
+            compatible.push(FourCc::new(brand));
         }
 
         Ok(FtypAtom { header, major, minor, compatible })

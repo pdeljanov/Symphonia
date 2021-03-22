@@ -21,6 +21,8 @@ pub enum TrackType {
     Subtitle,
     /// Metadata track.
     Metadata,
+    /// Text track.
+    Text,
 }
 
 /// Handler atom.
@@ -50,7 +52,10 @@ impl Atom for HdlrAtom {
             b"soun" => TrackType::Sound,
             b"meta" => TrackType::Metadata,
             b"subt" => TrackType::Subtitle,
-            _       => return decode_error("illegal track type"),
+            b"text" => TrackType::Text,
+            _ => {
+                return decode_error("illegal track type")
+            }
         };
 
         // Ignore component manufacturer, flags, and flags mask.
