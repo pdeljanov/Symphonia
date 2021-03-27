@@ -42,7 +42,7 @@ dct_cos_table!(9,  DCT_COS_TABLE_512);
 dct_cos_table!(10, DCT_COS_TABLE_1024);
 dct_cos_table!(11, DCT_COS_TABLE_2048);
 dct_cos_table!(12, DCT_COS_TABLE_4096);
-dct_cos_table!(12, DCT_COS_TABLE_8192);
+dct_cos_table!(13, DCT_COS_TABLE_8192);
 
 fn dct_cos_table(n: u32) -> &'static [f32] {
     match n {
