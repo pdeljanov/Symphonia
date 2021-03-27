@@ -240,7 +240,7 @@ impl WriteSample for f64 {
 
 /// `AudioPlanes` provides immutable slices to each audio channel (plane) contained in a signal.
 pub struct AudioPlanes<'a, S: 'a + Sample> {
-    planes: ArrayVec<[&'a [S]; 32]>,
+    planes: ArrayVec<&'a [S], 32>,
 }
 
 impl<'a, S : Sample> AudioPlanes<'a, S> {
@@ -256,7 +256,7 @@ impl<'a, S : Sample> AudioPlanes<'a, S> {
 
 /// `AudioPlanesMut` provides mutable slices to each audio channel (plane) contained in a signal.
 pub struct AudioPlanesMut<'a, S: 'a + Sample> {
-    planes: ArrayVec<[&'a mut [S]; 32]>,
+    planes: ArrayVec<&'a mut [S], 32>,
 }
 
 impl<'a, S : Sample> AudioPlanesMut<'a, S> {
