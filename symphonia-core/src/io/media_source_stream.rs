@@ -255,8 +255,6 @@ impl MediaSource for MediaSourceStream {
 impl io::Read for MediaSourceStream {
 
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        let buf_len = buf.len();
-
         let mut rem = buf;
         let mut read = 0;
 
@@ -278,13 +276,7 @@ impl io::Read for MediaSourceStream {
             }
         }
 
-        // Return an end-of-stream error if 0 bytes were read when atleast 1 byte was requested.
-        if read == 0 && buf_len > 0 {
-            Err(io::Error::new(io::ErrorKind::UnexpectedEof, END_OF_STREAM_ERROR_STR))
-        }
-        else {
-            Ok(read)
-        }
+        Ok(read)
     }
 
 }
@@ -427,7 +419,7 @@ impl ByteStream for MediaSourceStream {
 
 #[cfg(test)]
 mod tests {
-    use std::io::Cursor;
+    use std::io::{Read, Cursor};
     use super::{MediaSourceStream, ByteStream};
 
     /// Generate a random vector of bytes of the specified length using a PRNG.
@@ -489,6 +481,17 @@ mod tests {
         for bytes in buf[..4 * 24 * 1024].chunks_exact(4) {
             assert_eq!(bytes, &mss.read_quad_bytes().unwrap());
         }
+    }
+
+    #[test]
+    fn verify_mss_read_to_end() {
+        let data = generate_random_bytes(5 * 96 * 1024);
+
+        let ms = Cursor::new(data.clone());
+        let mut mss = MediaSourceStream::new(Box::new(ms), Default::default());
+        let mut output: Vec<u8> = Vec::new();
+        assert_eq!(mss.read_to_end(&mut output).unwrap(), data.len());
+        assert_eq!(output.into_boxed_slice(), data);
     }
 
     #[test]
