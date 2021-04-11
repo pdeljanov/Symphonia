@@ -383,7 +383,13 @@ impl ByteStream for MediaSourceStream {
     #[inline(always)]
     fn read_buf(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         // Implemented via io::Read trait.
-        self.read(buf)
+        let read = self.read(buf)?;
+        if read == 0 && buf.len() > 0 {
+            Err(io::Error::new(io::ErrorKind::UnexpectedEof, END_OF_STREAM_ERROR_STR))
+        }
+        else {
+            Ok(read)
+        }
     }
 
     #[inline(always)]
