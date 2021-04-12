@@ -159,26 +159,25 @@ fn decode_only(mut reader: Box<dyn FormatReader>, decode_options: &DecoderOption
     // Get the default stream.
     // TODO: Allow stream selection.
     let stream = reader.default_stream().unwrap();
+    let stream_id = stream.id;
 
     // Create a decoder for the stream.
     let mut decoder = symphonia::default::get_codecs().make(&stream.codec_params, &decode_options)?;
 
-    // Decode all packets, ignoring decode errors.
+    // Decode all packets, ignoring all decode errors.
     let result = loop {
-        // Read the next packet.
-        match reader.next_packet() {
-            Ok(packet) => {
-                // Decode the packet.
-                match decoder.decode(&packet) {
-                    Err(Error::DecodeError(err)) => {
-                        warn!("decode error: {}", err);
-                        continue;
-                    },
-                    Err(err) => break Err(err),
-                    _        => continue,
-                }
-            }
-            Err(err) => break Err(err)
+        let packet = reader.next_packet()?;
+
+        // If the packet does not belong to the selected stream, skip over it.
+        if packet.stream_id() != stream_id {
+            continue;
+        }
+
+        // Decode the packet into audio samples.
+        match decoder.decode(&packet) {
+            Err(Error::DecodeError(err)) => warn!("decode error: {}", err),
+            Err(err) => break Err(err),
+            _ => continue,
         }
     };
 
@@ -189,78 +188,66 @@ fn decode_only(mut reader: Box<dyn FormatReader>, decode_options: &DecoderOption
 }
 
 fn play(mut reader: Box<dyn FormatReader>, decode_options: &DecoderOptions) -> Result<()> {
+    // The audio output device.
+    let mut audio_output = None;
+
     // Get the default stream.
     // TODO: Allow stream selection.
     let stream = reader.default_stream().unwrap();
+    let stream_id = stream.id;
 
     // Create a decoder for the stream.
     let mut decoder = symphonia::default::get_codecs().make(&stream.codec_params, &decode_options)?;
 
-    // Decode the first packet and create the audio output using the signal specification of the
-    // buffer.
-    let mut output = loop {
-        let packet = reader.next_packet()?;
-
-        if packet.stream_id() != 0 {
-            continue;
-        }
-
-        match decoder.decode(&packet) {
-            Err(Error::DecodeError(err)) => {
-                // Decode errors are not fatal. Print a message and try to decode the next packet as
-                // usual.
-                warn!("decode error: {}", err);
-                continue;
-            }
-            Err(err) => {
-                // Errors other than decode errors are fatal.
-                decoder.close();
-                return Err(err);
-            }
-            Ok(decoded) => {
-                // Get the buffer spec.
-                let spec = *decoded.spec();
-
-                // Get the buffer duration.
-                let duration = Duration::from(decoded.capacity() as u64);
-
-                // Open the audio output.
-                let mut output = output::try_open(spec, duration).unwrap();
-
-                // Write the decoded audio buffer to the output.
-                output.write(decoded).unwrap();
-
-                break output
-            }
-        }
-    };
-
-    // Decode the remaining packets.
+    // Decode and play the packets belonging to the selected stream.
     loop {
+        // Get the next packet from the media container.
         let packet = reader.next_packet()?;
 
-        if packet.stream_id() != 0 {
+        // If the packet does not belong to the selected stream, skip over it.
+        if packet.stream_id() != stream_id {
             continue;
         }
 
+        // Decode the packet into audio samples.
         match decoder.decode(&packet) {
+            Ok(decoded) => {
+                // If the audio output is not open, try to open it.
+                if audio_output.is_none() {
+                    // Get the buffer specification. This is a description of the decoded audio
+                    // buffer's sample format.
+                    let spec = decoded.spec().clone();
+
+                    // Get the duration of the decoded buffer.
+                    let duration = Duration::from(decoded.capacity() as u64);
+
+                    // Try to open the audio output.
+                    audio_output = Some(output::try_open(spec, duration).unwrap());
+                }
+
+                // Write the decoded audio samples to the audio output.
+                if let Some(audio_output) = audio_output.as_mut() {
+                    audio_output.write(decoded).unwrap()
+                }
+            }
             Err(Error::DecodeError(err)) => {
-                // Decode errors are not fatal. Print a message and try to decode the next packet as
-                // usual.
+                // Decode errors are not fatal. Print the error message and try to decode the next
+                // packet as usual.
                 warn!("decode error: {}", err);
-                continue;
             }
             Err(err) => {
-                // Flush the audio output (for end-of-file errors).
-                output.flush();
+                // Flush the audio output (i.e., for end-of-stream "errors").
+                if let Some(audio_output) = audio_output.as_mut() {
+                    audio_output.flush()
+                }
+
                 // Close the decoder.
                 decoder.close();
+
                 return Err(err);
             }
-            Ok(decoded) => output.write(decoded).unwrap(),
         }
     }
-
 }
 
 fn pretty_print_format(path: &str, probed: &ProbeResult) {
