@@ -254,29 +254,29 @@ impl MediaSource for MediaSourceStream {
 
 impl io::Read for MediaSourceStream {
 
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        let mut rem = buf;
-        let mut read = 0;
+    fn read(&mut self, mut buf: &mut [u8]) -> io::Result<usize> {
+        let read_len = buf.len();
 
-        while !rem.is_empty() {
+        while !buf.is_empty() {
+            // Refill the the buffer cache if required.
             self.fetch()?;
 
-            // Fetch the readable portion of the MediaSourceStream's buffer cache, and read bytes
-            // into the remaining portion of the caller's buffer.
-            match self.continguous_buf().read(rem) {
+            // Consume bytes from the readable portion of the buffer cache and copy them into the
+            // remaining portion of the caller's buffer.
+            match self.continguous_buf().read(buf) {
                 Ok(0) => break,
                 Ok(count) => {
-                    rem = &mut rem[count..];
-                    read += count;
-
+                    buf = &mut buf[count..];
                     self.consume(count);
                 },
-                Err(ref e) if e.kind() == io::ErrorKind::Interrupted => { },
+                Err(ref e) if e.kind() == io::ErrorKind::Interrupted => {},
                 Err(e) => return Err(e),
             }
         }
 
-        Ok(read)
+        // The actual amount read is the original length of the caller's buffer minus the amount of
+        // that buffer that is remaining.
+        Ok(read_len - buf.len())
     }
 
 }
@@ -380,11 +380,14 @@ impl ByteStream for MediaSourceStream {
         Ok(bytes)
     }
 
-    #[inline(always)]
     fn read_buf(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         // Implemented via io::Read trait.
         let read = self.read(buf)?;
-        if read == 0 && buf.len() > 0 {
+
+        // Unlike the io::Read trait, ByteStream returns an end-of-stream error when no more data
+        // can be read. If a non-zero read is requested, and 0 bytes are read, return an
+        // end-of-stream error.
+        if !buf.is_empty() && read == 0 {
             Err(io::Error::new(io::ErrorKind::UnexpectedEof, END_OF_STREAM_ERROR_STR))
         }
         else {
@@ -392,10 +395,24 @@ impl ByteStream for MediaSourceStream {
         }
     }
 
-    #[inline(always)]
-    fn read_buf_exact(&mut self, buf: &mut [u8]) -> io::Result<()> {
-        // Implemented via io::Read trait.
-        self.read_exact(buf)
+    fn read_buf_exact(&mut self, mut buf: &mut [u8]) -> io::Result<()> {
+        while !buf.is_empty() {
+            match self.read(buf) {
+                Ok(0) => break,
+                Ok(count) => {
+                    buf = &mut buf[count..];
+                }
+                Err(ref e) if e.kind() == io::ErrorKind::Interrupted => {}
+                Err(e) => return Err(e),
+            }
+        }
+
+        if !buf.is_empty() {
+            Err(io::Error::new(io::ErrorKind::UnexpectedEof, END_OF_STREAM_ERROR_STR))
+        }
+        else {
+            Ok(())
+        }
     }
 
     fn scan_bytes_aligned<'a>(
