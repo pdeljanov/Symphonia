@@ -204,7 +204,8 @@ mod cpal {
             // Output audio stream config.
             let config = cpal::StreamConfig {
                 channels: spec.channels.count() as cpal::ChannelCount,
-                sample_rate: cpal::SampleRate(spec.rate)
+                sample_rate: cpal::SampleRate(spec.rate),
+                buffer_size: cpal::BufferSize::Default,
             };
 
             // Instantiate a ring buffer capable of buffering 8K (arbitrarily chosen) samples.
