@@ -16,8 +16,8 @@ use symphonia_core::meta::MetadataQueue;
 use symphonia_core::probe::{Descriptor, Instantiate, QueryDescriptor};
 use symphonia_core::units::Time;
 
-use std::rc::Rc;
 use std::io::{Seek, SeekFrom};
+use std::sync::Arc;
 
 use crate::atoms::{AtomIterator, AtomType};
 use crate::atoms::{FtypAtom, MoovAtom, MoofAtom, SidxAtom, TrakAtom, MetaAtom, MvexAtom};
@@ -109,7 +109,7 @@ pub struct IsoMp4Reader {
     /// State tracker for each track.
     tracks: Vec<TrackState>,
     /// Optional, movie extends atom used for fragmented streams.
-    mvex: Option<Rc<MvexAtom>>,
+    mvex: Option<Arc<MvexAtom>>,
 }
 
 impl IsoMp4Reader {
@@ -405,7 +405,7 @@ impl FormatReader for IsoMp4Reader {
 
         // A Movie Extends (mvex) atom is required to support segmented streams. If the mvex atom is
         // present, wrap it in an Rc so it can be shared amongst all segments.
-        let mvex = moov.mvex.take().map(|m| Rc::new(m));
+        let mvex = moov.mvex.take().map(|m| Arc::new(m));
 
         let segs: Vec<Box<dyn StreamSegment>> = vec![ Box::new(MoovSegment::new(moov)) ];
 

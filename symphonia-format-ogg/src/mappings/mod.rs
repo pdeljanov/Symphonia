@@ -30,7 +30,7 @@ pub enum MapResult {
 }
 
 /// A `Mapper` implements packet-handling for a specific `Codec`.
-pub trait Mapper {
+pub trait Mapper: Send {
     fn codec(&self) -> &CodecParameters;
     fn map_packet(&mut self, buf: &[u8]) -> Result<MapResult>;
 }
