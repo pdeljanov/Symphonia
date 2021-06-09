@@ -157,6 +157,7 @@ pub trait FormatReader {
     /// Get the next packet from the container.
     fn next_packet(&mut self) -> Result<Packet>;
 
+    /// Destroys the `FormatReader` and returns the underlying stream
     fn into_inner(self: Box<Self>) -> MediaSourceStream;
 }
 
