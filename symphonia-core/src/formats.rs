@@ -156,6 +156,8 @@ pub trait FormatReader {
 
     /// Get the next packet from the container.
     fn next_packet(&mut self) -> Result<Packet>;
+
+    fn into_inner(self: Box<Self>) -> MediaSourceStream;
 }
 
 /// A `Packet` contains a discrete amount of encoded data for a single codec bitstream. The exact

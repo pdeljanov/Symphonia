@@ -483,4 +483,8 @@ impl FormatReader for IsoMp4Reader {
         unsupported_error("seeking unsupported")
     }
 
+    fn into_inner(self: Box<Self>) -> MediaSourceStream {
+        self.iter.into_inner()
+    }
+
 }
