@@ -173,7 +173,7 @@ impl FormatReader for WavReader {
         &self.streams
     }
 
-    fn seek(&mut self, to: SeekTo) -> Result<SeekedTo> {
+    fn seek(&mut self, _mode: SeekMode, to: SeekTo) -> Result<SeekedTo> {
 
         if self.streams.is_empty() || self.frame_len == 0 {
             return seek_error(SeekErrorKind::Unseekable);
@@ -185,7 +185,7 @@ impl FormatReader for WavReader {
             // Frame timestamp given.
             SeekTo::TimeStamp { ts, .. } => ts,
             // Time value given, calculate frame timestamp from sample rate.
-            SeekTo::Time { time } => {
+            SeekTo::Time { time, .. } => {
                 // Use the sample rate to calculate the frame timestamp. If sample rate is not
                 // known, the seek cannot be completed.
                 if let Some(sample_rate) = params.sample_rate {
@@ -225,7 +225,7 @@ impl FormatReader for WavReader {
             }
         }
 
-        Ok(to)
+        Ok(SeekedTo { stream: 0, actual_ts: ts, required_ts: ts })
     }
 
     fn into_inner(self: Box<Self>) -> MediaSourceStream {

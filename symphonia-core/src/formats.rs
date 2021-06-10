@@ -25,30 +25,77 @@ pub mod prelude {
         FormatReader,
         Packet,
         SeekedTo,
+        SeekMode,
         SeekTo,
         Stream,
     };
 }
 
-/// `SeekTo` specifies a location to seek to.
+/// `SeekTo` specifies a position to seek to.
 pub enum SeekTo {
-    /// Seek to an absolute `Time`.
-    Time { time: Time },
-    /// Seek to a stream's `TimeStamp`.
-    TimeStamp { ts: TimeStamp, stream: u32 },
+    /// Seek to a `Time` in regular time units.
+    Time {
+        /// The `Time` to seek to.
+        time: Time,
+        /// If `Some`, specifies which stream's timebase `time` is relative to. If `None`, then
+        /// `time` is relative to the container's timebase. If the container does not have a
+        /// timebase, or the container only supports a single stream, then the default stream's
+        /// timebase is used.
+        stream: Option<u32>
+    },
+    /// Seek to a stream's `TimeStamp` in that stream's timebase units.
+    TimeStamp {
+        /// The `TimeStamp` to seek to.
+        ts: TimeStamp,
+        /// Specifies which stream `ts` is relative to.
+        stream: u32
+    },
 }
 
-/// `SeekedTo` provides the actual location seeked to.
-pub type SeekedTo = SeekTo;
+/// `SeekedTo` is the result of a seek.
+pub struct SeekedTo {
+    /// The stream the seek was relative to.
+    pub stream: u32,
+    /// The `TimeStamp` required for the requested seek.
+    pub required_ts: TimeStamp,
+    /// The `TimeStamp` that was seeked to.
+    pub actual_ts: TimeStamp,
+}
+
+/// `SeekMode` selects the precision of a seek.
+pub enum SeekMode {
+    /// Coarse seek mode is a best-effort attempt to seek to the requested position. The actual
+    /// position seeked to may be before or after the requested position. Coarse seeking is an
+    /// optional performance enhancement. If a `FormatReader` does not support this mode an
+    /// accurate seek will be performed instead.
+    Coarse,
+    /// Accurate (aka sample-accurate) seek mode will be always seek to a position before the
+    /// requested position.
+    Accurate,
+}
 
 /// `FormatOptions` is a common set of options that all demuxers use.
+#[derive(Copy, Clone)]
 pub struct FormatOptions {
-
+    /// If a `FormatReader` requires a seek index, but the container does not provide one, build the
+    /// seek index during instantiation instead of building it progressively. Default: `false`.
+    pub prebuild_seek_index: bool,
+    /// If a seek index needs to be built, this value determines how often in seconds of decoded
+    /// content an entry is added to the index. Default: `20`.
+    ///
+    /// Note: This is a CPU vs. memory trade-off. A high value will increase the amount of IO
+    /// required during a seek, whereas a low value will require more memory. The default chosen is
+    /// a good compromise for casual playback of music, podcasts, movies, etc. However, for
+    /// highly-interactive applications, this value should be decreased.
+    pub seek_index_fill_rate: u16,
 }
 
 impl Default for FormatOptions {
     fn default() -> Self {
-        FormatOptions { }
+        FormatOptions {
+            prebuild_seek_index: false,
+            seek_index_fill_rate: 20,
+        }
     }
 }
 
@@ -132,13 +179,16 @@ pub trait FormatReader: Send {
     /// Gets the metadata revision queue.
     fn metadata(&self) -> &MetadataQueue;
 
-    /// Seek, as closely as possible, to the `Time` or stream `TimeStamp` requested. Returns the
-    /// actual `Time` or `TimeStamp` seeked to.
+    /// Seek, as precisely as possible depending on the mode, to the `Time` or stream `TimeStamp`
+    /// requested. Returns the requested and actual `TimeStamps` seeked to.
     ///
-    /// Note: Many container formats cannot seek to a precise frame, rather they can only seek to a
-    /// coarse location and then the decoder must decode packets until the exact location is
-    /// reached.
-    fn seek(&mut self, to: SeekTo) -> Result<SeekedTo>;
+    /// Note: The `FormatReader` by itself cannot seek to an exact audio frame, it is only capable of
+    /// seeking to the nearest `Packet`. Therefore, to seek to an exact frame, a decoder must
+    /// decode packets until the requested position is reached. When using the accurate `SeekMode`,
+    /// the seeked position will always be before the requested position. If the coarse `SeekMode` is
+    /// used, then the seek position may be after the requested position. Coarse seeking is an
+    /// optional performance enhancement, therefore, a coarse seek may sometimes be an accurate seek.
+    fn seek(&mut self, mode: SeekMode, to: SeekTo) -> Result<SeekedTo>;
 
     /// Gets a list of streams in the container.
     fn streams(&self) -> &[Stream];
@@ -235,6 +285,7 @@ pub mod util {
     ///
     /// A `SeekIndex` does not require complete coverage of the entire media stream. However, the
     /// better the coverage, the smaller the manual search range the `SeekIndex` will return.
+    #[derive(Default)]
     pub struct SeekIndex {
         points: Vec<SeekPoint>,
     }
@@ -270,9 +321,31 @@ pub mod util {
         }
 
         /// Insert a `SeekPoint` into the index.
-        pub fn insert(&mut self, frame: u64, byte_offset: u64, n_frames: u32) {
-            // TODO: Ensure monotonic timestamp ordering of self.points.
-            self.points.push(SeekPoint::new(frame, byte_offset, n_frames));
+        pub fn insert(&mut self, ts: u64, byte_offset: u64, n_frames: u32) {
+            // Create the seek point.
+            let seek_point = SeekPoint::new(ts, byte_offset, n_frames);
+
+            // Get the timestamp of the last entry in the index.
+            let last_ts = self.points.last().map_or(u64::MAX, |p| p.frame_ts);
+
+            // If the seek point has a timestamp greater-than the last entry in the index, then
+            // simply append it to the index.
+            if ts > last_ts {
+                self.points.push(seek_point)
+            }
+            else if ts < last_ts {
+                // If the seek point has a timestamp less-than the last entry in the index, then the
+                // insertion point must be found. This case should rarely occur.
+
+                // TODO: Use when Rust 1.52 is stable.
+                // let i = self.points.partition_point(|p| p.frame_ts < ts);
+
+                let i = self.points.iter()
+                                   .position(|p| p.frame_ts > ts)
+                                   .unwrap_or(self.points.len());
+
+                self.points.insert(i, seek_point);
+            }
         }
 
         /// Search the index to find a bounded range of bytes wherein the specified frame timestamp

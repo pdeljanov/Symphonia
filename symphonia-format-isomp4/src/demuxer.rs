@@ -479,7 +479,7 @@ impl FormatReader for IsoMp4Reader {
         &self.streams
     }
 
-    fn seek(&mut self, _to: SeekTo) -> Result<SeekedTo> {
+    fn seek(&mut self, _mode: SeekMode, _to: SeekTo) -> Result<SeekedTo> {
         unsupported_error("seeking unsupported")
     }
 

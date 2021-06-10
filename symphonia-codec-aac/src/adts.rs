@@ -163,7 +163,7 @@ impl FormatReader for AdtsReader {
         &self.streams
     }
 
-    fn seek(&mut self, _to: SeekTo) -> Result<SeekedTo> {
+    fn seek(&mut self, _mode: SeekMode, _to: SeekTo) -> Result<SeekedTo> {
         unimplemented!();
     }
 

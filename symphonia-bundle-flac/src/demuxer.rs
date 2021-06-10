@@ -111,7 +111,7 @@ impl FormatReader for FlacReader {
         &self.streams
     }
 
-    fn seek(&mut self, to: SeekTo) -> Result<SeekedTo> {
+    fn seek(&mut self, _mode: SeekMode, to: SeekTo) -> Result<SeekedTo> {
         if self.streams.is_empty() {
             return seek_error(SeekErrorKind::Unseekable);
         }
@@ -123,7 +123,7 @@ impl FormatReader for FlacReader {
             // Frame timestamp given.
             SeekTo::TimeStamp { ts, .. } => ts,
             // Time value given, calculate frame timestamp from sample rate.
-            SeekTo::Time { time } => {
+            SeekTo::Time { time, .. } => {
                 // Use the sample rate to calculate the frame timestamp. If sample rate is not
                 // known, the seek cannot be completed.
                 if let Some(sample_rate) = params.sample_rate {
@@ -199,7 +199,7 @@ impl FormatReader for FlacReader {
                     debug!("seeked to packet_ts={} (delta={})",
                         packet.packet_ts, packet.packet_ts as i64 - ts as i64);
 
-                    return Ok(SeekedTo::TimeStamp{ ts: packet.packet_ts, stream: 0 });
+                    return Ok(SeekedTo { stream: 0, actual_ts: packet.packet_ts, required_ts: ts });
                 }
                 else {
                     start_byte_offset = mid_byte_offset;
@@ -233,7 +233,7 @@ impl FormatReader for FlacReader {
                     debug!("seeked to packet_ts={} (delta={})",
                         packet.packet_ts, packet.packet_ts as i64 - ts as i64);
 
-                    return Ok(SeekedTo::TimeStamp{ ts: packet.packet_ts, stream: 0 });
+                    return Ok(SeekedTo { stream: 0, actual_ts: packet.packet_ts, required_ts: ts });
                 }
             }
             // The desired timestamp is contained within the current packet.
@@ -246,7 +246,7 @@ impl FormatReader for FlacReader {
                 debug!("seeked to packet_ts={} (delta={})",
                     packet.packet_ts, packet.packet_ts as i64 - ts as i64);
 
-                return Ok(SeekedTo::TimeStamp{ ts: packet.packet_ts, stream: 0 });
+                return Ok(SeekedTo { stream: 0, actual_ts: packet.packet_ts, required_ts: ts });
             }
         }
     }

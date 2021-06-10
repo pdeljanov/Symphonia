@@ -19,7 +19,7 @@ use std::path::Path;
 use symphonia;
 use symphonia::core::errors::{Result, Error};
 use symphonia::core::codecs::DecoderOptions;
-use symphonia::core::formats::{Cue, FormatReader, FormatOptions, SeekTo, Stream};
+use symphonia::core::formats::{Cue, FormatReader, FormatOptions, SeekMode, SeekTo, Stream};
 use symphonia::core::meta::{ColorMode, MetadataOptions, Tag, Value, Visual};
 use symphonia::core::io::{MediaSourceStream, MediaSource, ReadOnlySource};
 use symphonia::core::probe::{Hint, ProbeResult};
@@ -109,7 +109,7 @@ fn main() {
 
     // Probe the media source stream for metadata and get the format reader.
     match symphonia::default::get_probe().format(&hint, mss, &format_opts, &metadata_opts) {
-        Ok(mut probed) => {
+        Ok(probed) => {
 
             let result = if matches.is_present("verify-only") {
                 // Verify-only mode decodes and verifies the audio, but does not play it.
@@ -128,11 +128,8 @@ fn main() {
                 // Playback mode.
                 pretty_print_format(path_str, &probed);
 
-                // Seek to the desired timestamp if requested.
-                if let Some(seek_value) = matches.value_of("seek") {
-                    let pos = seek_value.parse::<f64>().unwrap_or(0.0);
-                    probed.format.seek(SeekTo::Time{ time: Time::from(pos) }).unwrap();
-                }
+                // If present, parse the seek argument.
+                let seek_time = matches.value_of("seek").map(|p| p.parse::<f64>().unwrap_or(0.0));
 
                 // Set the decoder options.
                 let options = DecoderOptions {
@@ -141,7 +138,7 @@ fn main() {
                 };
 
                 // Play it!
-                play(probed.format, &options)
+                play(probed.format, seek_time, &options)
             };
 
             if let Err(err) = result {
@@ -187,7 +184,7 @@ fn decode_only(mut reader: Box<dyn FormatReader>, decode_options: &DecoderOption
     result
 }
 
-fn play(mut reader: Box<dyn FormatReader>, decode_options: &DecoderOptions) -> Result<()> {
+fn play(mut reader: Box<dyn FormatReader>, seek_time: Option<f64>, decode_options: &DecoderOptions) -> Result<()> {
     // The audio output device.
     let mut audio_output = None;
 
@@ -198,6 +195,21 @@ fn play(mut reader: Box<dyn FormatReader>, decode_options: &DecoderOptions) -> R
 
     // Create a decoder for the stream.
     let mut decoder = symphonia::default::get_codecs().make(&stream.codec_params, &decode_options)?;
+
+    // If there is a seek time, seek the reader to the time specified and get the timestamp of the
+    // seeked position. All packets with a timestamp < the seeked position will not be played.
+    //
+    // Note: This is a half-baked approach to seeking! After seeking the reader, packets should be
+    // decoded and *samples* discarded up-to the exact *sample* indicated by required_ts. The current
+    // approach will discard excess samples if seeking to a sample within a packet.
+    let seek_ts = if let Some(time) = seek_time {
+        let seek_to = SeekTo::Time { time: Time::from(time), stream: None };
+        reader.seek(SeekMode::Accurate, seek_to).map_or(0, |s| s.required_ts)
+    }
+    else {
+        // If not seeking, the seek timestamp is 0.
+        0
+    };
 
     // Decode and play the packets belonging to the selected stream.
     loop {
@@ -225,9 +237,12 @@ fn play(mut reader: Box<dyn FormatReader>, decode_options: &DecoderOptions) -> R
                     audio_output = Some(output::try_open(spec, duration).unwrap());
                 }
 
-                // Write the decoded audio samples to the audio output.
-                if let Some(audio_output) = audio_output.as_mut() {
-                    audio_output.write(decoded).unwrap()
+                // Write the decoded audio samples to the audio output if the presentation timestamp
+                // for the packet is >= the seeked position (0 if not seeking).
+                if packet.pts() >= seek_ts {
+                    if let Some(audio_output) = audio_output.as_mut() {
+                        audio_output.write(decoded).unwrap()
+                    }
                 }
             }
             Err(Error::DecodeError(err)) => {
