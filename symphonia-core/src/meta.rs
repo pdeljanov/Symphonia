@@ -522,7 +522,7 @@ impl MetadataQueue {
     }
 }
 
-pub trait MetadataReader {
+pub trait MetadataReader: Send {
     /// Instantiates the `MetadataReader` with the provided `MetadataOptions`.
     fn new(options: &MetadataOptions) -> Self
     where

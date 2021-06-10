@@ -404,7 +404,7 @@ impl FormatReader for IsoMp4Reader {
                             .collect();
 
         // A Movie Extends (mvex) atom is required to support segmented streams. If the mvex atom is
-        // present, wrap it in an Rc so it can be shared amongst all segments.
+        // present, wrap it in an Arc so it can be shared amongst all segments.
         let mvex = moov.mvex.take().map(|m| Arc::new(m));
 
         let segs: Vec<Box<dyn StreamSegment>> = vec![ Box::new(MoovSegment::new(moov)) ];
