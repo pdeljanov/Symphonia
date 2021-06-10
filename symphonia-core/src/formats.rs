@@ -118,7 +118,7 @@ impl Stream {
 /// `FormatReader` provides an Iterator-like interface over packets for easy consumption and
 /// filtering. Seeking will invalidate the assumed state of any decoder processing packets from
 /// `FormatReader` and should be reset after a successful seek operation.
-pub trait FormatReader {
+pub trait FormatReader: Send {
     /// Attempt to instantiate a `FormatReader` using the provided `FormatOptions` and
     /// `MediaSourceStream`. The reader will probe the container to verify format support, determine
     /// the number of contained streams, and read any initial metadata.

@@ -317,7 +317,7 @@ impl Default for DecoderOptions {
 
 /// A `Decoder` implements a codec's decode algorithm. It consumes `Packet`s and produces
 /// `AudioBuffer`s.
-pub trait Decoder {
+pub trait Decoder: Send {
 
     /// Attempts to instantiates a `Decoder` using the provided `CodecParameters`.
     fn try_new(params: &CodecParameters, options: &DecoderOptions) -> Result<Self>
