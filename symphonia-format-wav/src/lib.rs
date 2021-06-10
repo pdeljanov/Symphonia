@@ -228,6 +228,10 @@ impl FormatReader for WavReader {
         Ok(to)
     }
 
+    fn into_inner(self: Box<Self>) -> MediaSourceStream {
+        self.reader
+    }
+
 }
 
 fn read_info_chunk(source: &mut MediaSourceStream, len: u32) -> Result<Metadata> {

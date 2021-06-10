@@ -156,6 +156,9 @@ pub trait FormatReader: Send {
 
     /// Get the next packet from the container.
     fn next_packet(&mut self) -> Result<Packet>;
+
+    /// Destroys the `FormatReader` and returns the underlying stream
+    fn into_inner(self: Box<Self>) -> MediaSourceStream;
 }
 
 /// A `Packet` contains a discrete amount of encoded data for a single codec bitstream. The exact

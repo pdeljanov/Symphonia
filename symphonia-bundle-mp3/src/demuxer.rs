@@ -192,4 +192,8 @@ impl FormatReader for Mp3Reader {
         Ok(SeekTo::TimeStamp { ts: self.next_packet_ts, stream: 0 })
     }
 
+    fn into_inner(self: Box<Self>) -> MediaSourceStream {
+        self.reader
+    }
+
 }

@@ -167,4 +167,8 @@ impl FormatReader for AdtsReader {
         unimplemented!();
     }
 
+    fn into_inner(self: Box<Self>) -> MediaSourceStream {
+        self.reader
+    }
+
 }

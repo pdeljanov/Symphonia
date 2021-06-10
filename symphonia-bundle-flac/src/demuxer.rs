@@ -251,6 +251,10 @@ impl FormatReader for FlacReader {
         }
     }
 
+    fn into_inner(self: Box<Self>) -> MediaSourceStream {
+        self.reader
+    }
+
 }
 
 /// Reads a StreamInfo block and populates the reader with stream information.

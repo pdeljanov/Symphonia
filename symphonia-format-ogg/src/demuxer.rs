@@ -160,5 +160,9 @@ impl FormatReader for OggReader {
         unsupported_error("ogg seeking unsupported")
     }
 
+    fn into_inner(self: Box<Self>) -> MediaSourceStream {
+        self.reader
+    }
+
 }
 
