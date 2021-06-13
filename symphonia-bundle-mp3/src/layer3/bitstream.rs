@@ -107,7 +107,7 @@ fn read_granule_channel_side_info<B: BitStream>(
             channel.region1_start = SFB_LONG_BANDS[header.sample_rate_idx][region0_count];
         }
         // If MPEG version 1, OR the block type is Short...
-        else if header.is_mpeg1() || block_type_enc == 0b11 {
+        else if header.is_mpeg1() || block_type_enc == 0b10 {
             // For MPEG1 with LONG blocks, the first 8 LONG scale-factor bands are used for region0.
             // These bands are always [4, 4, 4, 4, 4, 4, 6, 6, ...] regardless of sample rate. These
             // bands sum to 36 samples.
