@@ -28,6 +28,12 @@ struct Fragment {
     header: FrameHeader,
 }
 
+pub struct ParsedPacket {
+    pub buf: Box<[u8]>,
+    pub ts: u64,
+    pub dur: u64,
+}
+
 pub struct PacketParser {
     stream_info: StreamInfo,
     buf: Vec<u8>,
@@ -310,7 +316,7 @@ impl PacketParser {
         (best, n_fragments, indicies)
     }
 
-    pub fn parse<B: ByteStream>(&mut self, reader: &mut B) -> Result<Box<[u8]>> {
+    pub fn parse<B: ByteStream>(&mut self, reader: &mut B) -> Result<ParsedPacket> {
         // Given the current set of fragments, which may or may not contain whole and valid frames,
         // determine which fragment is the best-pick for the next frame. Starting from that
         // fragment, attempt to build a complete and valid frame.
@@ -355,19 +361,26 @@ impl PacketParser {
                     // If the CRC16 matches then a frame was found!
                     if crc.crc() == u16::from_be_bytes(footer_buf) {
                         // Copy the frame data into a new buffer.
-                        let frame = Box::<[u8]>::from(&self.buf[end - frame_len..end]);
+                        let buf = Box::<[u8]>::from(&self.buf[end - frame_len..end]);
 
                         // Update the frame size history.
-                        self.frame_size_hist[self.n_frames % 4] = frame.len() as u32;
+                        self.frame_size_hist[self.n_frames % 4] = buf.len() as u32;
                         self.n_frames += 1;
 
-                        // eprintln!("{:?}", self.fragments.front().unwrap().header.block_sequence);
+                        // Calculate the timestamp and duration of the complete frame.
+                        let frag = self.fragments.front().unwrap();
 
-                        // Update the last sequence.
+                        let dur = u64::from(frag.header.block_num_samples);
 
+                        let ts = match &frag.header.block_sequence {
+                            BlockSequence::BySample(sample) => *sample,
+                            BlockSequence::ByFrame(frame) => u64::from(*frame) * dur,
+                        };
+
+                        // Remove the fragments that have been consumed to parse this frame.
                         self.remove_fragments(end);
 
-                        return Ok(frame);
+                        return Ok(ParsedPacket { buf, ts, dur });
                     }
 
                     crc.process_buf_bytes(&footer_buf);

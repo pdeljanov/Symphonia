@@ -95,8 +95,9 @@ impl FormatReader for FlacReader {
     }
 
     fn next_packet(&mut self) -> Result<Packet> {
-        let data = self.parser.parse(&mut self.reader)?;
-        Ok(Packet::new_from_boxed_slice(0, 0, 0, data))
+        let parsed = self.parser.parse(&mut self.reader)?;
+
+        Ok(Packet::new_from_boxed_slice(0, parsed.ts, parsed.dur, parsed.buf))
     }
 
     fn metadata(&self) -> &MetadataQueue {

@@ -239,7 +239,7 @@ pub fn is_likely_frame_header(buf: &[u8]) -> bool {
     true
 }
 
-pub struct ParsedPacket {
+pub struct NextFrameInfo {
     /// The timestamp of the first audio frame in the packet.
     pub packet_ts: u64,
     /// The number of audio frames in the packet.
@@ -248,7 +248,7 @@ pub struct ParsedPacket {
     pub parsed_len: usize,
 }
 
-pub fn next_frame(reader: &mut MediaSourceStream) -> Result<ParsedPacket> {
+pub fn next_frame(reader: &mut MediaSourceStream) -> Result<NextFrameInfo> {
     let mut byte_offset;
 
     let header = loop {
@@ -266,7 +266,7 @@ pub fn next_frame(reader: &mut MediaSourceStream) -> Result<ParsedPacket> {
         BlockSequence::BySample(seq) => seq,
     };
 
-    Ok(ParsedPacket {
+    Ok(NextFrameInfo {
         packet_ts,
         n_frames: u32::from(header.block_num_samples),
         parsed_len: (reader.pos() - byte_offset) as usize,
