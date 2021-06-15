@@ -18,7 +18,7 @@ use symphonia_core::io::*;
 use symphonia_core::meta::{Metadata, MetadataBuilder, MetadataQueue};
 use symphonia_core::probe::{Descriptor, Instantiate, QueryDescriptor};
 
-use log::error;
+use log::{debug, error};
 
 mod chunks;
 
@@ -156,9 +156,18 @@ impl FormatReader for WavReader {
     }
 
     fn next_packet(&mut self) -> Result<Packet> {
-        let packet_buf = self.reader.read_boxed_slice(WAVE_MAX_FRAMES_PER_PACKET as usize)?;
+        // The packet timestamp is the position of the first byte of the first frame in the packet
+        // divided by the length per frame.
+        let pts = (self.reader.pos() - self.data_start_pos) / u64::from(self.frame_len);
 
-        Ok(Packet::new_from_boxed_slice(0, 0, 0, packet_buf))
+        // Read up-to WAVE_MAX_FRAMES_PER_PACKET number of frames per packet.
+        let packet_len = WAVE_MAX_FRAMES_PER_PACKET * u64::from(self.frame_len);
+        let packet_buf = self.reader.read_boxed_slice(packet_len as usize)?;
+
+        // The packet duration is the length of the packet in bytes divided by the length per frame.
+        let dur = packet_buf.len() as u64 / u64::from(self.frame_len);
+
+        Ok(Packet::new_from_boxed_slice(0, pts, dur, packet_buf))
     }
 
     fn metadata(&self) -> &MetadataQueue {
@@ -205,8 +214,18 @@ impl FormatReader for WavReader {
             }
         }
 
+        debug!("seeking to frame_ts={}", ts);
+
+        // WAVE is not internally packetized for PCM codecs. Packetization is simulated by trying to
+        // read a constant number of samples every call to next_packet. Therefore, a packet begins
+        // wherever the data stream is currently positioned. Since timestamps on packets should be
+        // determinstic, instead of seeking to the exact timestamp requested and starting the next
+        // packet there, seek to a packet boundary. In this way, packets will have have the same
+        // timestamps regardless if the stream was seeked or not.
+        let actual_ts = (ts / WAVE_MAX_FRAMES_PER_PACKET) * WAVE_MAX_FRAMES_PER_PACKET;
+
         // Calculate the absolute byte offset of the desired audio frame.
-        let seek_pos = self.data_start_pos + (ts * u64::from(self.frame_len));
+        let seek_pos = self.data_start_pos + (actual_ts * u64::from(self.frame_len));
 
         // If the reader supports seeking we can seek directly to the frame's offset wherever it may
         // be.
@@ -225,7 +244,10 @@ impl FormatReader for WavReader {
             }
         }
 
-        Ok(SeekedTo { stream: 0, actual_ts: ts, required_ts: ts })
+        debug!("seeked to packet_ts={} (delta={})",
+            actual_ts, actual_ts as i64 - ts as i64);
+
+        Ok(SeekedTo { stream: 0, actual_ts, required_ts: ts })
     }
 
     fn into_inner(self: Box<Self>) -> MediaSourceStream {
