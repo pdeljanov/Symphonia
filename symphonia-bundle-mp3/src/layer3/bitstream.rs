@@ -72,7 +72,7 @@ fn read_granule_channel_side_info<B: BitStream>(
         let is_mixed = bs.read_bit()?;
 
         channel.block_type = match block_type_enc {
-            // Long block types are not allowed with window switching.
+            // Only transitional Long blocks (Start, End) are allowed with window switching.
             0b00 => return decode_error("invalid block_type"),
             0b01 => BlockType::Start,
             0b10 => BlockType::Short { is_mixed },
@@ -108,9 +108,9 @@ fn read_granule_channel_side_info<B: BitStream>(
         }
         // If MPEG version 1, OR the block type is Short...
         else if header.is_mpeg1() || block_type_enc == 0b10 {
-            // For MPEG1 with LONG blocks, the first 8 LONG scale-factor bands are used for region0.
-            // These bands are always [4, 4, 4, 4, 4, 4, 6, 6, ...] regardless of sample rate. These
-            // bands sum to 36 samples.
+            // For MPEG1 with transitional LONG blocks, the first 8 LONG scale-factor bands are used
+            // for region0. These bands are always [4, 4, 4, 4, 4, 4, 6, 6, ...] regardless of sample
+            // rate. These bands sum to 36 samples.
             //
             // For MPEG1 with SHORT blocks, the first 9 SHORT scale-factor bands are used for
             // region0. These band are always [4, 4, 4, 4, 4, 4, 4, 4, 4, ...] regardless of sample
@@ -125,9 +125,9 @@ fn read_granule_channel_side_info<B: BitStream>(
         }
         // If MPEG version 2 AND the block type is not Short...
         else {
-            // For MPEG2 and LONG blocks, the first 8 LONG scale-factor bands are used for region0.
-            // These bands are always [6, 6, 6, 6, 6, 6, 8, 10, ...] regardless of sample rate.
-            // These bands sum to 54.
+            // For MPEG2 and transitional LONG blocks, the first 8 LONG scale-factor bands are used
+            // for region0. These bands are always [6, 6, 6, 6, 6, 6, 8, 10, ...] regardless of
+            // sample rate. These bands sum to 54.
             channel.region1_start = 54;
         }
 
