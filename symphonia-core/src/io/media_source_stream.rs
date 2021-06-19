@@ -7,7 +7,8 @@
 
 use std::cmp;
 use std::io;
-use std::io::{Read, IoSliceMut};
+use std::io::{Seek, Read, IoSliceMut};
+use std::ops::Sub;
 
 use super::{ByteStream, MediaSource};
 
@@ -426,6 +427,19 @@ impl ByteStream for MediaSourceStream {
     }
 
     fn ignore_bytes(&mut self, mut count: u64) -> io::Result<()> {
+        // If the stream is seekable and the number of bytes to ignore is large, perform a seek
+        // first. Note that ignored bytes are rewindable. Therefore, ensure the ring-buffer is
+        // full after the seek just like if bytes were ignored by consuming them instead.
+        let ring_len = self.ring.len() as u64;
+
+        // Only apply the optimization if seeking 2x or more than the ring-buffer size.
+        while count >= 2 * ring_len && self.is_seekable() {
+            let delta = count.clamp(0, i64::MAX as u64).sub(ring_len);
+            self.seek(io::SeekFrom::Current(delta as i64))?;
+            count -= delta;
+        }
+
+        // Ignore the remaining bytes be consuming samples from the ring-buffer.
         while count > 0 {
             self.fetch_or_eof()?;
             let discard_count = cmp::min(self.unread_buffer_len() as u64, count);
