@@ -9,7 +9,7 @@
 use symphonia_core::{errors::end_of_stream_error, support_format};
 
 use symphonia_core::codecs::{CodecParameters, CODEC_TYPE_AAC};
-use symphonia_core::errors::{Result, decode_error, unsupported_error};
+use symphonia_core::errors::{Result, SeekErrorKind, decode_error, seek_error, unsupported_error};
 use symphonia_core::formats::prelude::*;
 use symphonia_core::io::{ByteStream, MediaSource, MediaSourceStream};
 use symphonia_core::meta::MetadataQueue;
@@ -24,7 +24,7 @@ use crate::atoms::{FtypAtom, MoovAtom, MoofAtom, SidxAtom, TrakAtom, MetaAtom, M
 use crate::atoms::stsd::SampleDescription;
 use crate::stream::*;
 
-use log::{info, trace, warn};
+use log::{debug, info, trace, warn};
 
 pub struct TrackState {
     codec_params: CodecParameters,
@@ -177,7 +177,7 @@ impl IsoMp4Reader {
         let seg = &self.segs[info.seg_idx];
 
         // Get the sample data descriptor.
-        let sample_data_desc = seg.sample_data(track.track_num, track.next_sample)?;
+        let sample_data_desc = seg.sample_data(track.track_num, track.next_sample, false)?;
 
         // The sample base position in the sample data descriptor remains constant if the sample
         // followed immediately after the previous sample. In this case, the track state's
@@ -246,6 +246,80 @@ impl IsoMp4Reader {
 
         // If no atoms were returned above, then the end-of-stream has been reached.
         end_of_stream_error()
+    }
+
+    fn seek_track_by_time(&mut self, track_num: u32, time: Time ) -> Result<SeekedTo> {
+        // Convert time to timestamp for the track.
+        if let Some(stream) = self.streams.get(track_num as usize) {
+            let tb = stream.codec_params.time_base.unwrap();
+            self.seek_track_by_ts(track_num, tb.calc_timestamp(time))
+        }
+        else {
+            seek_error(SeekErrorKind::Unseekable)
+        }
+    }
+
+    fn seek_track_by_ts(&mut self, track_num: u32, ts: u64) -> Result<SeekedTo> {
+        debug!("seeking stream={} to frame_ts={}", track_num, ts);
+
+        struct SeekLocation {
+            seg_idx: usize,
+            sample_num: u32,
+        }
+
+        let mut seek_loc = None;
+        let mut seg_skip = 0;
+
+        loop {
+            // Iterate over all segments and attempt to find the segment and sample number that
+            // contains the desired timestamp. Skip segments already examined.
+            for (seg_idx, seg) in self.segs.iter().enumerate().skip(seg_skip) {
+                if let Some(sample_num) = seg.ts_sample(track_num, ts)? {
+                    seek_loc = Some(SeekLocation { seg_idx, sample_num });
+                    break;
+                }
+
+                // Mark the segment as examined.
+                seg_skip = seg_idx + 1;
+            }
+
+            // If a seek location is found, break.
+            if seek_loc.is_some() {
+                break;
+            }
+
+            // Otherwise, try to read more segments from the stream.
+            self.try_read_more_segments()?;
+        }
+
+
+        if let Some(seek_loc) = seek_loc {
+            let seg = &self.segs[seek_loc.seg_idx];
+
+            // Get the sample information.
+            let data_desc = seg.sample_data(track_num, seek_loc.sample_num, true)?;
+
+            // Update the track's next sample information to point to the seeked sample.
+            let track = &mut self.tracks[track_num as usize];
+
+            track.cur_seg = seek_loc.seg_idx;
+            track.next_sample = seek_loc.sample_num;
+            track.next_sample_pos = data_desc.base_pos + data_desc.offset.unwrap();
+
+            // Get the actual timestamp for this sample.
+            let actual_ts = seg.sample_ts(track_num, seek_loc.sample_num)?.unwrap();
+
+            debug!("seeked stream={} to packet_ts={} (delta={})",
+                track_num,
+                actual_ts,
+                actual_ts as i64 - ts as i64);
+
+            Ok(SeekedTo{ stream: track_num, required_ts: ts, actual_ts })
+        }
+        else {
+            // Timestamp was not found.
+            seek_error(SeekErrorKind::OutOfRange)
+        }
     }
 
 }
@@ -479,8 +553,30 @@ impl FormatReader for IsoMp4Reader {
         &self.streams
     }
 
-    fn seek(&mut self, _mode: SeekMode, _to: SeekTo) -> Result<SeekedTo> {
-        unsupported_error("seeking unsupported")
+    fn seek(&mut self, _mode: SeekMode, to: SeekTo) -> Result<SeekedTo> {
+
+        if self.streams.is_empty() {
+            return seek_error(SeekErrorKind::Unseekable);
+        }
+
+        match to {
+            SeekTo::TimeStamp { ts, stream } => {
+                self.seek_track_by_ts(stream, ts)
+            }
+            SeekTo::Time { time, stream } => {
+                if let Some(stream) = stream {
+                    self.seek_track_by_time(stream, time)
+                }
+                else {
+                    // If a stream was not specified, seek all tracks.
+                    for track_num in 0..self.tracks.len() {
+                        self.seek_track_by_time(track_num as u32, time)?;
+                    }
+
+                    Ok(SeekedTo { stream: 0, required_ts: 0, actual_ts: 0 })
+                }
+            }
+        }
     }
 
     fn into_inner(self: Box<Self>) -> MediaSourceStream {

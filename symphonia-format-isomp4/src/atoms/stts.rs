@@ -54,6 +54,26 @@ impl SttsAtom {
         None
     }
 
+    /// Get the sample that contains the timestamp indicated by `ts`. Note, the returned `sample_num`
+    /// is indexed relative to the `SttsAtom`. Complexity of this function in O(N).
+    pub fn find_sample_for_timestamp(&self, ts: u64) -> Option<u32> {
+        let mut ts_accum = 0;
+        let mut sample_num = 0;
+
+        for entry in &self.entries {
+            let delta = u64::from(entry.sample_delta) * u64::from(entry.sample_count);
+
+            if ts_accum + delta > ts {
+                sample_num += ((ts - ts_accum) / u64::from(entry.sample_delta)) as u32;
+                return Some(sample_num);
+            }
+
+            ts_accum += delta;
+            sample_num += entry.sample_count;
+        }
+
+        None
+    }
 }
 
 impl Atom for SttsAtom {

@@ -4,7 +4,7 @@
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
-use symphonia_core::errors::{Result, Error, decode_error};
+use symphonia_core::errors::{Error, Result, decode_error};
 
 use crate::atoms::{MoofAtom, MoovAtom, StcoAtom, Co64Atom, MvexAtom, stsz::SampleSize};
 
@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 pub struct SampleDataDesc {
     pub base_pos: u64,
+    pub offset: Option<u64>,
     pub size: u32,
 }
 
@@ -28,10 +29,15 @@ pub trait StreamSegment: Send {
     /// Get the timestamp for the sample indicated by `sample_num` for the track `track_num`.
     fn sample_ts(&self, track_num: u32, sample_num: u32) -> Result<Option<u64>>;
 
+    /// Get the sample number of the sample containing the timestamp indicated by `ts` for track
+    // `track_num`.
+    fn ts_sample(&self, track_num: u32, ts: u64) -> Result<Option<u32>>;
+
     /// Get the byte position and length of the sample indicated by `sample_num` for track
     /// `track_num`.
-    fn sample_data(&self, track_num: u32, sample_num: u32) -> Result<SampleDataDesc>;
+    fn sample_data(&self, track_num: u32, sample_num: u32, get_offset: bool) -> Result<SampleDataDesc>;
 }
+
 /// Track-to-stream sequencing information.
 #[derive(Debug)]
 struct SequenceInfo {
@@ -133,7 +139,62 @@ impl StreamSegment for MoofSegment {
         Ok(None)
     }
 
-    fn sample_data(&self, track_num: u32, sample_num: u32) -> Result<SampleDataDesc> {
+    fn ts_sample(&self, track_num: u32, ts: u64) -> Result<Option<u32>> {
+        // Get the track fragment associated with track_num.
+        let traf = self.moof.trafs.get(track_num as usize)
+            .ok_or(Error::DecodeError("invalid track index"))?;
+
+        let mut sample_num = self.seq[track_num as usize].first_sample;
+        let mut ts_accum = self.seq[track_num as usize].first_ts;
+
+        for trun in traf.truns.iter() {
+            // Get the total duration of this track run.
+            let trun_duration = if trun.is_sample_duration_present() {
+                trun.total_sample_duration
+            }
+            else {
+                let duration = traf.tfhd.default_sample_duration.unwrap_or(
+                    self.mvex.trexs[track_num as usize].default_sample_duration);
+
+                u64::from(trun.sample_count) * u64::from(duration)
+            };
+
+            if ts_accum + trun_duration > ts {
+                // If the sample durations are present, then each sample duration is independently
+                // stored. Sum sample durations until the delta is reached.
+                if trun.is_sample_duration_present() {
+                    let mut ts_delta = ts - ts_accum;
+
+                    for &duration in &trun.sample_duration {
+                        if u64::from(duration) > ts_delta {
+                            break;
+                        }
+
+                        ts_delta -= u64::from(duration);
+                        sample_num += 1;
+                    }
+                }
+                else {
+                    // If the sample durations are not present, then get the sample duration from
+                    // the track fragment header or track extends atom. Then, calculate the number
+                    // of samples are needed to reach the desired timestamp.
+                    let duration = traf.tfhd.default_sample_duration.unwrap_or(
+                        self.mvex.trexs[track_num as usize].default_sample_duration);
+
+                    sample_num += ((ts - ts_accum) / u64::from(duration)) as u32;
+                }
+
+                return Ok(Some(sample_num));
+            }
+
+            sample_num += trun.sample_count;
+            ts_accum += trun_duration;
+        }
+
+        Ok(None)
+    }
+
+    fn sample_data(&self, track_num: u32, sample_num: u32, get_offset: bool) -> Result<SampleDataDesc> {
         // Get the track fragment associated with track_num.
         let traf = self.moof.trafs.get(track_num as usize)
                                   .ok_or(Error::DecodeError("invalid track index"))?;
@@ -164,9 +225,8 @@ impl StreamSegment for MoofSegment {
             }
 
             if sample_num_rel < trun.sample_count {
-                // Get or calculate the position of the sample within the track fragment run.
+                // Get the size of the sample.
                 let size = if trun.is_sample_size_present() {
-                    // The size of the entire track fragment run is known.
                     trun.sample_size[sample_num_rel as usize]
                 }
                 else {
@@ -174,7 +234,20 @@ impl StreamSegment for MoofSegment {
                         self.mvex.trexs[track_num as usize].default_sample_size)
                 };
 
-                return Ok(SampleDataDesc { base_pos: trun_offset, size });
+                let offset = if get_offset {
+                    if trun.is_sample_size_present() {
+                        let sample_sizes = &trun.sample_size[..sample_num_rel as usize];
+                        Some(sample_sizes.iter().map(|&s| u64::from(s)).sum::<u64>())
+                    }
+                    else {
+                        Some(u64::from(sample_num_rel) * u64::from(size))
+                    }
+                }
+                else {
+                    None
+                };
+
+                return Ok(SampleDataDesc { base_pos: trun_offset, size, offset });
             }
 
             // Get or calculate the total size of the track fragment run.
@@ -266,7 +339,16 @@ impl StreamSegment for MoovSegment {
         Ok(trak.mdia.minf.stbl.stts.find_timestamp_for_sample(sample_num))
     }
 
-    fn sample_data(&self, track_num: u32, sample_num: u32) -> Result<SampleDataDesc> {
+    fn ts_sample(&self, track_num: u32, ts: u64) -> Result<Option<u32>> {
+        // Get the trak atom associated with track_num.
+        let trak = self.moov.traks.get(track_num as usize)
+                                  .ok_or(Error::DecodeError("invalid track index"))?;
+
+        // Find the sample timestamp. Note, complexity of O(N).
+        Ok(trak.mdia.minf.stbl.stts.find_sample_for_timestamp(ts))
+    }
+
+    fn sample_data(&self, track_num: u32, sample_num: u32, get_offset: bool) -> Result<SampleDataDesc> {
         // Get the trak atom associated with track_num.
         let trak = self.moov.traks.get(track_num as usize)
                                   .ok_or(Error::DecodeError("invalid trak index"))?;
@@ -281,20 +363,55 @@ impl StreamSegment for MoovSegment {
         let group = stsc.find_entry_for_sample(sample_num)
                         .ok_or(Error::DecodeError("invalid sample index"))?;
 
+        // Index of the sample relative to the chunk group.
+        let sample_in_group = sample_num - group.first_sample;
+
         // Index of the chunk containing the sample relative to the chunk group.
-        let chunks_in_group = (sample_num - group.first_sample) / group.samples_per_chunk;
+        let chunk_in_group = sample_in_group / group.samples_per_chunk;
 
         // Index of the chunk containing the sample relative to the entire stream.
-        let chunk_in_stream = group.first_chunk + chunks_in_group;
+        let chunk_in_stream = group.first_chunk + chunk_in_group;
 
         // Get the byte position of the first sample of the chunk containing the sample.
-        let chunk_pos = get_chunk_offset(&stco, &co64, chunk_in_stream as usize)?.unwrap();
+        let base_pos = get_chunk_offset(&stco, &co64, chunk_in_stream as usize)?.unwrap();
+
+        // Determine the absolute sample byte position if requested by calculating the offset of
+        // the sample from the base position of the chunk.
+        let offset = if get_offset {
+            // Index of the sample relative to the chunk containing the sample.
+            let sample_in_chunk = sample_in_group - (chunk_in_group * group.samples_per_chunk);
+
+            // Calculat the byte offset of the sample relative to the chunk containing it.
+            let offset = match stsz.sample_sizes {
+                SampleSize::Constant(size) => {
+                    // Constant size samples can be calculated directly.
+                    u64::from(sample_in_chunk) * u64::from(size)
+                }
+                SampleSize::Variable(ref entries) => {
+                    // For variable size samples, sum the sizes of all the samples preceeding the
+                    // desired sample in the chunk.
+                    let chunk_first_sample = (sample_num - sample_in_chunk) as usize;
+
+                    if let Some(samples) = entries.get(chunk_first_sample..sample_num as usize) {
+                        samples.iter().map(|&size| u64::from(size)).sum()
+                    }
+                    else {
+                        return decode_error("missing one or more stsz entries");
+                    }
+                }
+            };
+
+            Some(offset)
+        }
+        else {
+            None
+        };
 
         // Get the size in bytes of the sample.
         let size = match stsz.sample_sizes {
             SampleSize::Constant(size) => size,
             SampleSize::Variable(ref entries) => {
-                if let Some(size) = entries.get(sample_num as usize ) {
+                if let Some(size) = entries.get(sample_num as usize) {
                     *size
                 }
                 else {
@@ -303,7 +420,7 @@ impl StreamSegment for MoovSegment {
             }
         };
 
-        Ok(SampleDataDesc { base_pos: chunk_pos, size })
+        Ok(SampleDataDesc { base_pos, size, offset })
     }
 
     fn track_sample_range(&self, track_num: u32) -> (u32, u32) {
