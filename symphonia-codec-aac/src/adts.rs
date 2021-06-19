@@ -5,17 +5,24 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+use symphonia_core::errors::unsupported_error;
 use symphonia_core::support_format;
 
 use symphonia_core::audio::Channels;
 use symphonia_core::codecs::{CodecParameters, CODEC_TYPE_AAC};
-use symphonia_core::errors::{Result, decode_error};
+use symphonia_core::errors::{Result, SeekErrorKind, decode_error, seek_error};
 use symphonia_core::formats::prelude::*;
 use symphonia_core::io::*;
 use symphonia_core::meta::MetadataQueue;
 use symphonia_core::probe::{Descriptor, Instantiate, QueryDescriptor};
 
+use std::io::{Seek, SeekFrom};
+
 use super::common::{AAC_SAMPLE_RATES, map_channels, M4AType, M4A_TYPES};
+
+use log::debug;
+
+const SAMPLES_PER_AAC_PACKET: u64 = 1024;
 
 /// Audio Data Transport Stream (ADTS) format reader.
 ///
@@ -25,6 +32,8 @@ pub struct AdtsReader {
     streams: Vec<Stream>,
     cues: Vec<Cue>,
     metadata: MetadataQueue,
+    first_frame_pos: u64,
+    next_packet_ts: u64,
 }
 
 impl QueryDescriptor for AdtsReader {
@@ -55,6 +64,7 @@ struct AdtsHeader {
 }
 
 impl AdtsHeader {
+    const SIZE: usize = 7;
 
     fn sync<B: ByteStream>(reader: &mut B) -> Result<()> {
         let mut sync = 0u16;
@@ -95,20 +105,23 @@ impl AdtsHeader {
         // Frame length = Header size (7) + AAC frame size
         let frame_len = bs.read_bits_leq32(13)? as usize;
 
-        if frame_len < 7 {
+        if frame_len < AdtsHeader::SIZE {
             return decode_error("invalid ADTS frame length");
         }
 
         let _fullness = bs.read_bits_leq32(11)?;
         let num_aac_frames = bs.read_bits_leq32(2)? + 1;
 
-        assert!(num_aac_frames == 1);
+        // TODO: Support multiple AAC packets per ADTS packet.
+        if num_aac_frames > 1 {
+            return unsupported_error("only 1 aac frame per adts packet is supported");
+        }
 
         Ok(AdtsHeader {
             profile,
             channels,
             sample_rate,
-            frame_len: frame_len - 7,
+            frame_len: frame_len - AdtsHeader::SIZE,
         })
     }
 }
@@ -129,13 +142,17 @@ impl FormatReader for AdtsReader {
         }
 
         // Rewind back to the start of the frame.
-        source.rewind(7);
+        source.rewind(AdtsHeader::SIZE);
+
+        let first_frame_pos = source.pos();
 
         Ok(AdtsReader {
             reader: source,
             streams: vec![ Stream::new(0, params) ],
             cues: Vec::new(),
             metadata: Default::default(),
+            first_frame_pos,
+            next_packet_ts: 0,
         })
     }
 
@@ -143,10 +160,16 @@ impl FormatReader for AdtsReader {
         // Parse the header to get the calculated frame size.
         let header = AdtsHeader::read(&mut self.reader)?;
 
+        // TODO: Support multiple AAC packets per ADTS packet.
+
+        let ts = self.next_packet_ts;
+
+        self.next_packet_ts += SAMPLES_PER_AAC_PACKET;
+
         Ok(Packet::new_from_boxed_slice(
             0,
-            0,
-            0,
+            ts,
+            SAMPLES_PER_AAC_PACKET,
             self.reader.read_boxed_slice_exact(header.frame_len)?
         ))
     }
@@ -163,8 +186,78 @@ impl FormatReader for AdtsReader {
         &self.streams
     }
 
-    fn seek(&mut self, _mode: SeekMode, _to: SeekTo) -> Result<SeekedTo> {
-        unimplemented!();
+    fn seek(&mut self, _mode: SeekMode, to: SeekTo) -> Result<SeekedTo> {
+        // Get the timestamp of the desired audio frame.
+        let required_ts = match to {
+            // Frame timestamp given.
+            SeekTo::TimeStamp { ts, .. } => ts,
+            // Time value given, calculate frame timestamp from sample rate.
+            SeekTo::Time { time, .. } => {
+                // Use the sample rate to calculate the frame timestamp. If sample rate is not
+                // known, the seek cannot be completed.
+                if let Some(sample_rate) = self.streams[0].codec_params.sample_rate {
+                    TimeBase::new(1, sample_rate).calc_timestamp(time)
+                }
+                else {
+                    return seek_error(SeekErrorKind::Unseekable);
+                }
+            }
+        };
+
+        debug!("seeking to ts={}", required_ts);
+
+        // If the desired timestamp is less-than the next packet timestamp, attempt to seek
+        // to the start of the stream.
+        if required_ts < self.next_packet_ts {
+            // If the reader is not seekable then only forward seeks are possible.
+            if self.reader.is_seekable() {
+                let seeked_pos = self.reader.seek(SeekFrom::Start(self.first_frame_pos))?;
+
+                // Since the elementary stream has no timestamp information, the position seeked
+                // to must be exactly as requested.
+                if seeked_pos != self.first_frame_pos {
+                    return seek_error(SeekErrorKind::Unseekable);
+                }
+            }
+            else {
+                return seek_error(SeekErrorKind::ForwardOnly)
+            }
+
+            // Successfuly seeked to the start of the stream, reset the next packet timestamp.
+            self.next_packet_ts = 0;
+        }
+
+        // Parse frames from the stream until the frame containing the desired timestamp is
+        // reached.
+        loop {
+            // Parse the next frame header.
+            let header = AdtsHeader::read(&mut self.reader)?;
+
+            // TODO: Support multiple AAC packets per ADTS packet.
+
+            // If the next frame's timestamp would exceed the desired timestamp, rewind back to the
+            // start of this frame and end the search.
+            if self.next_packet_ts + SAMPLES_PER_AAC_PACKET > required_ts {
+                self.reader.rewind(AdtsHeader::SIZE);
+                break;
+            }
+
+            // Otherwise, ignore the frame body.
+            self.reader.ignore_bytes(header.frame_len as u64)?;
+
+            // Increment the timestamp for the next packet.
+            self.next_packet_ts += SAMPLES_PER_AAC_PACKET;
+        }
+
+        debug!("seeked to ts={} (delta={})",
+            self.next_packet_ts,
+            required_ts as i64 - self.next_packet_ts as i64);
+
+        Ok(SeekedTo {
+            stream: 0,
+            required_ts,
+            actual_ts: self.next_packet_ts,
+        })
     }
 
     fn into_inner(self: Box<Self>) -> MediaSourceStream {
