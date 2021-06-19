@@ -204,7 +204,19 @@ fn play(mut reader: Box<dyn FormatReader>, seek_time: Option<f64>, decode_option
     // approach will discard excess samples if seeking to a sample within a packet.
     let seek_ts = if let Some(time) = seek_time {
         let seek_to = SeekTo::Time { time: Time::from(time), stream: None };
-        reader.seek(SeekMode::Accurate, seek_to).map_or(0, |s| s.required_ts)
+
+        // Attempt the seek. If the seek fails, ignore the error and return a seek timestamp of 0 so
+        // that no samples are trimmed.
+        match reader.seek(SeekMode::Accurate, seek_to) {
+            Ok(seeked_to) => {
+                seeked_to.required_ts
+            }
+            Err(err) => {
+                // Don't give-up on a seek error.
+                warn!("seek error: {}", err);
+                0
+            }
+        }
     }
     else {
         // If not seeking, the seek timestamp is 0.
