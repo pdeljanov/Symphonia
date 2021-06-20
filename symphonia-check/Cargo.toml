@@ -1,0 +1,16 @@
+[package]
+name = "symphonia-check"
+version = "0.1.0"
+description = "Project Symphonia QA tool."
+homepage = "https://github.com/pdeljanov/Symphonia"
+repository = "https://github.com/pdeljanov/Symphonia"
+authors = ["Philip Deljanov <philip.deljanov@gmail.com>"]
+license = "MPL-2.0"
+edition = "2018"
+publish = false
+
+[dependencies]
+clap = "2.32.0"
+log = { version = "0.4", features = [ "release_max_level_info" ] }
+pretty_env_logger = "0.4"
+symphonia = { version = "0.2", path = "../symphonia", features = [ "aac", "mp3", "isomp4" ] }

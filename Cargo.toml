@@ -17,4 +17,5 @@ members = [
     "symphonia-metadata",
     "symphonia-play",
     "symphonia-utils-xiph",
+    "symphonia-check",
 ]
