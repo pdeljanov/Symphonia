@@ -83,11 +83,15 @@ impl<T: ParseChunkTag> ChunksReader<T> {
             // Warning: the formulation of this conditional is critical because len is untrusted
             // input, it may overflow when if added to anything.
             if self.len - self.consumed < len {
-                return decode_error("chunk length exceeds parent (list) chunk length");
+                // When ffmpeg encodes wave to stdout the riff (parent) and data chunk lengths are
+                // (2^32)-1 since the size can't be known ahead of time.
+                if !(self.len == len && len == u32::MAX) {
+                    return decode_error("chunk length exceeds parent (list) chunk length");
+                }
             }
 
             // The length of the chunk has been validated, so "consume" the chunk.
-            self.consumed += len;
+            self.consumed = self.consumed.saturating_add(len);
 
             match T::parse_tag(tag, len) {
                 Some(chunk) => return Ok(Some(chunk)),
