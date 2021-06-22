@@ -113,7 +113,7 @@ pub fn read_frame_header<B: ByteStream>(reader: &mut B, sync: u16) -> Result<Fra
         BlockingStrategy::Variable => {
             let sample = match utf8_decode_be_u64(&mut reader_crc8)? {
                 Some(sample) => sample,
-                None => return decode_error("frame sequence number is not valid"),
+                None => return decode_error("sample sequence number is not valid"),
             };
 
             // The sample number should only be 36-bits. Since it is UTF8 encoded, the actual length
