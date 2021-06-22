@@ -13,13 +13,9 @@ use symphonia_core::io::{ByteStream, BufStream, Monitor, MonitorStream};
 
 use log::{debug, warn};
 
-use super::page::{PageHeader, read_page_header};
+use super::common::OggPacket;
 use super::logical::LogicalStream;
-
-pub struct OggPacket {
-    pub serial: u32,
-    pub data: Box<[u8]>,
-}
+use super::page::{PageHeader, read_page_header};
 
 #[derive(Default)]
 pub struct PhysicalStream {
@@ -72,7 +68,7 @@ impl PhysicalStream {
             // TODO: Limit maximum number of streams.
             // TODO: Streams can only be created in groups.
             debug!("create packet buffer for stream with serial {:#x}", self.page.serial);
-            self.stream_map.insert(self.page.serial, Default::default());
+            self.stream_map.insert(self.page.serial, LogicalStream::new(self.page.serial));
         }
 
         if let Some(logical_stream) = self.stream_map.get_mut(&self.page.serial) {
@@ -108,8 +104,8 @@ impl PhysicalStream {
             let serial = self.page.serial;
 
             if let Some(logical_stream) = self.stream_map.get_mut(&serial) {
-                if let Some(data) = logical_stream.next_packet() {
-                    return Ok(OggPacket{ serial, data });
+                if let Some(packet) = logical_stream.next_packet() {
+                    return Ok(packet);
                 }
             }
 

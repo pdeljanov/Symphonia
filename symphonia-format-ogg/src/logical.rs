@@ -12,18 +12,36 @@ use symphonia_core::io::ByteStream;
 
 use log::{debug, error, warn};
 
+use super::common::OggPacket;
 use super::page::PageHeader;
 
-#[derive(Default)]
+struct OggPacketInfo {
+    base_ts: u64,
+    len: usize,
+}
+
 pub struct LogicalStream {
+    serial: u32,
     buf: Vec<u8>,
     read_from: usize,
     write_at: usize,
-    packets: VecDeque<usize>,
+    packets: VecDeque<OggPacketInfo>,
+    base_ts: u64,
 }
 
 impl LogicalStream {
     const MAX_BUFFER_LEN: usize = 256 * 1024 * 1024;
+
+    pub fn new(serial: u32) -> LogicalStream {
+        LogicalStream {
+            serial,
+            buf: Default::default(),
+            read_from: 0,
+            write_at: 0,
+            packets: Default::default(),
+            base_ts: 0,
+        }
+    }
 
     fn compact(&mut self) {
         if self.read_from > 0 {
@@ -63,6 +81,7 @@ impl LogicalStream {
     pub fn reset(&mut self) {
         self.read_from = 0;
         self.write_at = 0;
+        self.base_ts = 0;
         self.packets.clear();
     }
 
@@ -95,7 +114,7 @@ impl LogicalStream {
             // Push the packet length into the packet queue for the stream.
             if segment_len < 255 {
                 // trace!("  ├ packet {{ len: {} }}", packet_len);
-                self.packets.push_back(packet_len);
+                self.packets.push_back(OggPacketInfo { base_ts: self.base_ts, len: packet_len });
                 packet_len = 0;
             }
         }
@@ -104,15 +123,27 @@ impl LogicalStream {
         let context_slice = self.write(payload_len);
         reader.read_buf_exact(context_slice)?;
 
+        // An OGG Page timestamp is the timestamp at the *end* of all *complete* packets in the page.
+        // Therefore, save this timestamp to use as the base timestamp for the next set of packets
+        // in the next page.
+        //
+        // TODO: If no packets were completed in this page then do not update the base timestamp.
+        self.base_ts = page.ts;
+
         Ok(())
     }
 
     /// Maybe gets the next complete packet that has been read and queued from the stream.
-    pub fn next_packet(&self) -> Option<Box<[u8]>> {
+    pub fn next_packet(&self) -> Option<OggPacket> {
         match self.packets.front() {
-            Some(packet_len) => {
-                let slice = &self.buf[self.read_from..self.read_from + packet_len];
-                Some(Box::from(slice))
+            Some(packet_info) => {
+                let data = Box::from(&self.buf[self.read_from..self.read_from + packet_info.len]);
+
+                Some(OggPacket {
+                    serial: self.serial,
+                    base_ts: packet_info.base_ts,
+                    data
+                })
             },
             None => None
         }
@@ -121,8 +152,8 @@ impl LogicalStream {
     /// Maybe consumes the next complete packet.
     pub fn consume_packet(&mut self) {
         match self.packets.pop_front() {
-            Some(packet_len) => {
-                self.read_from += packet_len;
+            Some(packet_info) => {
+                self.read_from += packet_info.len;
             },
             None => ()
         }

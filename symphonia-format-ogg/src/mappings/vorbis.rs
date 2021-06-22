@@ -5,7 +5,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use super::{Mapper, MapResult};
+use crate::common::OggPacket;
+
+use super::{Bitstream, Mapper, MapResult};
 
 use symphonia_core::codecs::{CodecParameters, CODEC_TYPE_VORBIS};
 use symphonia_core::errors::{Result, decode_error};
@@ -129,15 +131,16 @@ impl Mapper for VorbisMapper {
         &self.codec_params
     }
 
-    fn map_packet(&mut self, buf: &[u8]) -> Result<MapResult> {
-        let mut reader = BufStream::new(buf);
+    fn map_packet(&mut self, packet: &OggPacket) -> Result<MapResult> {
+        let mut reader = BufStream::new(&packet.data);
 
         // All Vorbis packets indicate the packet type in the first byte.
         let packet_type = reader.read_u8()?;
 
         // An even numbered packet type is an audio packet.
         if packet_type % 2 == 0 {
-            Ok(MapResult::Bitstream)
+            // TODO: Decode the correct timestamp and duration.
+            Ok(MapResult::Bitstream(Bitstream { ts: 0, dur: 0 }))
         }
         else {
             // Odd numbered packet types are header packets.
@@ -161,7 +164,7 @@ impl Mapper for VorbisMapper {
                 VORBIS_PACKET_TYPE_SETUP => {
                     // TODO: The setup headers should be added to the extra data, but for now simply
                     // pass it to the decoder.
-                    Ok(MapResult::Bitstream)
+                    Ok(MapResult::Bitstream(Bitstream { ts: 0, dur: 0 }))
                 }
                 _ => {
                     warn!("ogg: vorbis packet type {} unexpected", packet_type);

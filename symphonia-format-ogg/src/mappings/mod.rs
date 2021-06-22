@@ -5,6 +5,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+use super::common::OggPacket;
+
 use symphonia_core::codecs::CodecParameters;
 use symphonia_core::errors::Result;
 use symphonia_core::meta::Metadata;
@@ -23,8 +25,13 @@ pub fn detect(buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> {
     Ok(mapper)
 }
 
+pub struct Bitstream {
+    pub ts: u64,
+    pub dur: u64,
+}
+
 pub enum MapResult {
-    Bitstream,
+    Bitstream(Bitstream),
     Metadata(Metadata),
     Unknown,
 }
@@ -32,7 +39,7 @@ pub enum MapResult {
 /// A `Mapper` implements packet-handling for a specific `Codec`.
 pub trait Mapper: Send {
     fn codec(&self) -> &CodecParameters;
-    fn map_packet(&mut self, buf: &[u8]) -> Result<MapResult>;
+    fn map_packet(&mut self, packet: &OggPacket) -> Result<MapResult>;
 }
 
 fn make_null_mapper() -> Option<Box<dyn Mapper>> {
@@ -56,7 +63,7 @@ impl Mapper for NullMapper {
         &self.params
     }
 
-    fn map_packet(&mut self, _: &[u8]) -> Result<MapResult> {
+    fn map_packet(&mut self, _: &OggPacket) -> Result<MapResult> {
         Ok(MapResult::Unknown)
     }
 }

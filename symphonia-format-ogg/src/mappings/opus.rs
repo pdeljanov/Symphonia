@@ -5,7 +5,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use super::{Mapper, MapResult};
+use crate::common::OggPacket;
+
+use super::{Bitstream, Mapper, MapResult};
 
 use symphonia_core::meta::MetadataBuilder;
 use symphonia_core::io::{BufStream, ByteStream};
@@ -157,16 +159,17 @@ impl Mapper for OpusMapper {
         &self.codec_params
     }
 
-    fn map_packet(&mut self, buf: &[u8]) -> Result<MapResult> {
+    fn map_packet(&mut self, packet: &OggPacket) -> Result<MapResult> {
         // After the comment packet there should only be bitstream packets.
         if !self.need_comment {
-            Ok(MapResult::Bitstream)
+            // TODO: Decode the correct timestamp and duration.
+            Ok(MapResult::Bitstream(Bitstream { ts: 0, dur: 0 }))
         }
         else {
             // If the comment packet is still required, check if the packet is the comment packet.
-            if buf.len() >= 8 && buf[..8] == *OGG_OPUS_COMMENT_SIGNATURE {
+            if packet.data.len() >= 8 && packet.data[..8] == *OGG_OPUS_COMMENT_SIGNATURE {
                 // This packet should be a metadata packet containing a Vorbis Comment.
-                let mut reader = BufStream::new(&buf[8..]);
+                let mut reader = BufStream::new(&packet.data[8..]);
                 let mut builder = MetadataBuilder::new();
 
                 vorbis::read_comment_no_framing(&mut reader, &mut builder)?;

@@ -98,7 +98,7 @@ impl FormatReader for OggReader {
             // parsed metadata onto the revision queue. If it's an unknown packet, skip it. Exit
             // from this loop for any other packet.
             if let Some(mapper) = mappers.get_mut(&packet.serial) {
-                match mapper.map_packet(&packet.data)? {
+                match mapper.map_packet(&packet)? {
                     mappings::MapResult::Metadata(revision) => metadata.push(revision),
                     mappings::MapResult::Unknown => (),
                     _ => break
@@ -123,21 +123,30 @@ impl FormatReader for OggReader {
         // Loop until a bitstream packet is read from the physical stream.
         loop {
             // Get the next packet, and consume it immediately.
-            let packet = self.physical_stream.next_packet(&mut self.reader)?;
+            let ogg_packet = self.physical_stream.next_packet(&mut self.reader)?;
             self.physical_stream.consume_packet();
 
             // If the packet belongs to a logical stream with a mapper, process it.
-            if let Some(mapper) = self.mappers.get_mut(&packet.serial) {
+            if let Some(mapper) = self.mappers.get_mut(&ogg_packet.serial) {
                 // Determine what to do with the packet.
-                match mapper.map_packet(&packet.data)? {
-                    mappings::MapResult::Bitstream => {
-                        return Ok(Packet::new_from_boxed_slice(packet.serial, 0, 0, packet.data));
-                    },
+                match mapper.map_packet(&ogg_packet)? {
+                    mappings::MapResult::Bitstream(bitstream) => {
+                        // Create a new audio data packet to return.
+                        let packet = Packet::new_from_boxed_slice(
+                            ogg_packet.serial,
+                            bitstream.ts,
+                            bitstream.dur,
+                            ogg_packet.data
+                        );
+
+                        return Ok(packet);
+                    }
                     mappings::MapResult::Metadata(metadata) => {
+                        // Push metadata onto metadata queue.
                         self.metadata.push(metadata);
-                    },
+                    }
                     _ => {
-                        info!("ignoring packet for serial={:#x}", packet.serial);
+                        info!("ignoring packet for serial={:#x}", ogg_packet.serial);
                     }
                 }
             }
