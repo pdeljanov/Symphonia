@@ -561,20 +561,40 @@ impl FormatReader for IsoMp4Reader {
 
         match to {
             SeekTo::TimeStamp { ts, stream } => {
-                self.seek_track_by_ts(stream, ts)
-            }
-            SeekTo::Time { time, stream } => {
-                if let Some(stream) = stream {
-                    self.seek_track_by_time(stream, time)
-                }
-                else {
-                    // If a stream was not specified, seek all tracks.
-                    for track_num in 0..self.tracks.len() {
-                        self.seek_track_by_time(track_num as u32, time)?;
+                // The seek timestamp is in timebase units specific to the specified (primary) track.
+                // Get the primary track and use the timebase to convert the timestamp into time
+                // units so that the other (secondary) tracks can be seeked.
+                if let Some(primary_track) = self.streams().get(stream as usize) {
+                    // Convert to time units.
+                    let time = primary_track.codec_params.time_base.unwrap().calc_time(ts);
+
+                    // Seek all tracks excluding the primary track to the desired time.
+                    for t in 0..self.tracks.len() as u32 {
+                        if t != stream {
+                            self.seek_track_by_time(t, time)?;
+                        }
                     }
 
-                    Ok(SeekedTo { stream: 0, required_ts: 0, actual_ts: 0 })
+                    // Seek the primary track and return the result.
+                    self.seek_track_by_ts(stream, ts)
                 }
+                else {
+                    seek_error(SeekErrorKind::Unseekable)
+                }
+            }
+            SeekTo::Time { time, stream } => {
+                // Select the first track if a primary track was not provided.
+                let primary_track_id = stream.unwrap_or(0);
+
+                // Seek all tracks excluding the primary track and discard the result.
+                for t in 0..self.tracks.len() as u32 {
+                    if t != primary_track_id {
+                        self.seek_track_by_time(t, time)?;
+                    }
+                }
+
+                // Seek the primary track and return the result.
+                self.seek_track_by_time(primary_track_id, time)
             }
         }
     }
@@ -582,5 +602,4 @@ impl FormatReader for IsoMp4Reader {
     fn into_inner(self: Box<Self>) -> MediaSourceStream {
         self.iter.into_inner()
     }
-
 }
