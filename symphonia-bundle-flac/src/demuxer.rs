@@ -31,7 +31,7 @@ const FLAC_STREAM_MARKER: [u8; 4] = *b"fLaC";
 pub struct FlacReader {
     reader: MediaSourceStream,
     metadata: MetadataQueue,
-    streams: Vec<Stream>,
+    tracks: Vec<Track>,
     cues: Vec<Cue>,
     index: Option<SeekIndex>,
     first_frame_offset: u64,
@@ -68,7 +68,7 @@ impl FormatReader for FlacReader {
 
         let mut flac = FlacReader {
             reader: source,
-            streams: Vec::new(),
+            tracks: Vec::new(),
             cues: Vec::new(),
             metadata: Default::default(),
             index: None,
@@ -83,7 +83,7 @@ impl FormatReader for FlacReader {
         read_all_metadata_blocks(&mut flac)?;
 
         // Make sure that there is atleast one StreamInfo block.
-        if flac.streams.is_empty() {
+        if flac.tracks.is_empty() {
             return decode_error("no stream info block");
         }
 
@@ -108,16 +108,16 @@ impl FormatReader for FlacReader {
         &self.cues
     }
 
-    fn streams(&self) -> &[Stream] {
-        &self.streams
+    fn tracks(&self) -> &[Track] {
+        &self.tracks
     }
 
     fn seek(&mut self, _mode: SeekMode, to: SeekTo) -> Result<SeekedTo> {
-        if self.streams.is_empty() {
+        if self.tracks.is_empty() {
             return seek_error(SeekErrorKind::Unseekable);
         }
 
-        let params = &self.streams[0].codec_params;
+        let params = &self.tracks[0].codec_params;
 
         // Get the timestamp of the desired audio frame.
         let ts = match to {
@@ -200,7 +200,7 @@ impl FormatReader for FlacReader {
                     debug!("seeked to packet_ts={} (delta={})",
                         packet.packet_ts, packet.packet_ts as i64 - ts as i64);
 
-                    return Ok(SeekedTo { stream: 0, actual_ts: packet.packet_ts, required_ts: ts });
+                    return Ok(SeekedTo { track_id: 0, actual_ts: packet.packet_ts, required_ts: ts });
                 }
                 else {
                     start_byte_offset = mid_byte_offset;
@@ -234,7 +234,7 @@ impl FormatReader for FlacReader {
                     debug!("seeked to packet_ts={} (delta={})",
                         packet.packet_ts, packet.packet_ts as i64 - ts as i64);
 
-                    return Ok(SeekedTo { stream: 0, actual_ts: packet.packet_ts, required_ts: ts });
+                    return Ok(SeekedTo { track_id: 0, actual_ts: packet.packet_ts, required_ts: ts });
                 }
             }
             // The desired timestamp is contained within the current packet.
@@ -247,7 +247,7 @@ impl FormatReader for FlacReader {
                 debug!("seeked to packet_ts={} (delta={})",
                     packet.packet_ts, packet.packet_ts as i64 - ts as i64);
 
-                return Ok(SeekedTo { stream: 0, actual_ts: packet.packet_ts, required_ts: ts });
+                return Ok(SeekedTo { track_id: 0, actual_ts: packet.packet_ts, required_ts: ts });
             }
         }
     }
@@ -261,11 +261,11 @@ impl FormatReader for FlacReader {
 /// Reads a StreamInfo block and populates the reader with stream information.
 fn read_stream_info_block<B : ByteStream>(
     block_stream: &mut B,
-    streams: &mut Vec<Stream>,
+    tracks: &mut Vec<Track>,
     parser: &mut PacketParser,
 ) -> Result<()> {
-    // Only one StreamInfo block, and therefore ony one Stream, is allowed per media source stream.
-    if streams.is_empty() {
+    // Only one StreamInfo block, and therefore only one Track, is allowed per media source stream.
+    if tracks.is_empty() {
         let info = StreamInfo::read(block_stream)?;
 
         info!("stream md5 = {:x?}", info.md5);
@@ -289,8 +289,8 @@ fn read_stream_info_block<B : ByteStream>(
         // Reset the packet parser.
         parser.reset(info);
 
-        // Add the stream.
-        streams.push(Stream::new(0, codec_params));
+        // Add the track.
+        tracks.push(Track::new(0, codec_params));
     }
     else {
         return decode_error("found more than one stream info block");
@@ -343,7 +343,7 @@ fn read_all_metadata_blocks(flac: &mut FlacReader) -> Result<()> {
             },
             // StreamInfo blocks are parsed into Streams.
             MetadataBlockType::StreamInfo => {
-                read_stream_info_block(&mut block_stream, &mut flac.streams, &mut flac.parser)?;
+                read_stream_info_block(&mut block_stream, &mut flac.tracks, &mut flac.parser)?;
             },
             // Padding blocks are skipped.
             MetadataBlockType::Padding => {

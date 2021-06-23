@@ -38,7 +38,7 @@ const WAVE_MAX_FRAMES_PER_PACKET: u64 = 1152;
 /// `WavReader` implements a demuxer for the Wave format container.
 pub struct WavReader {
     reader: MediaSourceStream,
-    streams: Vec<Stream>,
+    tracks: Vec<Track>,
     cues: Vec<Cue>,
     metadata: MetadataQueue,
     frame_len: u16,
@@ -139,10 +139,10 @@ impl FormatReader for WavReader {
                     // Append Data chunk fields to codec parameters.
                     append_data_params(&mut codec_params, &data, frame_len);
 
-                    // Add a new stream using the collected codec parameters.
+                    // Add a new track using the collected codec parameters.
                     return Ok(WavReader {
                         reader: source,
-                        streams: vec![ Stream::new(0, codec_params) ],
+                        tracks: vec![ Track::new(0, codec_params) ],
                         cues: Vec::new(),
                         metadata,
                         frame_len,
@@ -178,17 +178,17 @@ impl FormatReader for WavReader {
         &self.cues
     }
 
-    fn streams(&self) -> &[Stream] {
-        &self.streams
+    fn tracks(&self) -> &[Track] {
+        &self.tracks
     }
 
     fn seek(&mut self, _mode: SeekMode, to: SeekTo) -> Result<SeekedTo> {
 
-        if self.streams.is_empty() || self.frame_len == 0 {
+        if self.tracks.is_empty() || self.frame_len == 0 {
             return seek_error(SeekErrorKind::Unseekable);
         }
 
-        let params = &self.streams[0].codec_params;
+        let params = &self.tracks[0].codec_params;
 
         let ts = match to {
             // Frame timestamp given.
@@ -206,7 +206,7 @@ impl FormatReader for WavReader {
             }
         };
 
-        // If the total number of frames in the stream is known, verify the desired frame timestamp
+        // If the total number of frames in the track is known, verify the desired frame timestamp
         // does not exceed it.
         if let Some(n_frames) = params.n_frames {
             if ts > n_frames {
@@ -247,7 +247,7 @@ impl FormatReader for WavReader {
         debug!("seeked to packet_ts={} (delta={})",
             actual_ts, actual_ts as i64 - ts as i64);
 
-        Ok(SeekedTo { stream: 0, actual_ts, required_ts: ts })
+        Ok(SeekedTo { track_id: 0, actual_ts, required_ts: ts })
     }
 
     fn into_inner(self: Box<Self>) -> MediaSourceStream {

@@ -25,7 +25,7 @@ use super::{header, common::FrameHeader, common::SAMPLES_PER_GRANULE};
 /// `Mp3Reader` implements a demuxer for the MPEG1 and MPEG2 audio frame format.
 pub struct Mp3Reader {
     reader: MediaSourceStream,
-    streams: Vec<Stream>,
+    tracks: Vec<Track>,
     cues: Vec<Cue>,
     metadata: MetadataQueue,
     first_frame_pos: u64,
@@ -74,7 +74,7 @@ impl FormatReader for Mp3Reader {
 
         Ok(Mp3Reader {
             reader: source,
-            streams: vec![ Stream::new(0, params) ],
+            tracks: vec![ Track::new(0, params) ],
             cues: Vec::new(),
             metadata: Default::default(),
             first_frame_pos: first_frame_offset,
@@ -112,8 +112,8 @@ impl FormatReader for Mp3Reader {
         &self.cues
     }
 
-    fn streams(&self) -> &[Stream] {
-        &self.streams
+    fn tracks(&self) -> &[Track] {
+        &self.tracks
     }
 
     fn seek(&mut self, _mode: SeekMode, to: SeekTo) -> Result<SeekedTo> {
@@ -128,7 +128,7 @@ impl FormatReader for Mp3Reader {
             SeekTo::Time { time, .. } => {
                 // Use the sample rate to calculate the frame timestamp. If sample rate is not
                 // known, the seek cannot be completed.
-                if let Some(sample_rate) = self.streams[0].codec_params.sample_rate {
+                if let Some(sample_rate) = self.tracks[0].codec_params.sample_rate {
                     TimeBase::new(1, sample_rate).calc_timestamp(time)
                 }
                 else {
@@ -244,7 +244,7 @@ impl FormatReader for Mp3Reader {
             required_ts as i64 - self.next_packet_ts as i64);
 
         Ok(SeekedTo {
-            stream: 0,
+            track_id: 0,
             required_ts,
             actual_ts: self.next_packet_ts,
         })

@@ -29,7 +29,7 @@ const SAMPLES_PER_AAC_PACKET: u64 = 1024;
 /// `AdtsReader` implements a demuxer for ADTS (AAC native frames).
 pub struct AdtsReader {
     reader: MediaSourceStream,
-    streams: Vec<Stream>,
+    tracks: Vec<Track>,
     cues: Vec<Cue>,
     metadata: MetadataQueue,
     first_frame_pos: u64,
@@ -148,7 +148,7 @@ impl FormatReader for AdtsReader {
 
         Ok(AdtsReader {
             reader: source,
-            streams: vec![ Stream::new(0, params) ],
+            tracks: vec![ Track::new(0, params) ],
             cues: Vec::new(),
             metadata: Default::default(),
             first_frame_pos,
@@ -182,8 +182,8 @@ impl FormatReader for AdtsReader {
         &self.cues
     }
 
-    fn streams(&self) -> &[Stream] {
-        &self.streams
+    fn tracks(&self) -> &[Track] {
+        &self.tracks
     }
 
     fn seek(&mut self, _mode: SeekMode, to: SeekTo) -> Result<SeekedTo> {
@@ -195,7 +195,7 @@ impl FormatReader for AdtsReader {
             SeekTo::Time { time, .. } => {
                 // Use the sample rate to calculate the frame timestamp. If sample rate is not
                 // known, the seek cannot be completed.
-                if let Some(sample_rate) = self.streams[0].codec_params.sample_rate {
+                if let Some(sample_rate) = self.tracks[0].codec_params.sample_rate {
                     TimeBase::new(1, sample_rate).calc_timestamp(time)
                 }
                 else {
@@ -254,7 +254,7 @@ impl FormatReader for AdtsReader {
             required_ts as i64 - self.next_packet_ts as i64);
 
         Ok(SeekedTo {
-            stream: 0,
+            track_id: 0,
             required_ts,
             actual_ts: self.next_packet_ts,
         })

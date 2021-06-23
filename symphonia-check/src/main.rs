@@ -74,7 +74,7 @@ impl RefProcess {
 struct DecoderInstance {
     format: Box<dyn FormatReader>,
     decoder: Box<dyn Decoder>,
-    stream_id: u32,
+    track_id: u32,
 }
 
 impl DecoderInstance {
@@ -89,13 +89,13 @@ impl DecoderInstance {
         let probed = symphonia::default::get_probe().format(&hint, mss, &fmt_opts, &meta_opts)?;
         let format = probed.format;
 
-        let stream = format.default_stream().unwrap();
+        let track = format.default_track().unwrap();
 
-        let decoder = symphonia::default::get_codecs().make(&stream.codec_params, &dec_opts)?;
+        let decoder = symphonia::default::get_codecs().make(&track.codec_params, &dec_opts)?;
 
-        let stream_id = stream.id;
+        let track_id = track.id;
 
-        Ok(DecoderInstance { format, decoder, stream_id })
+        Ok(DecoderInstance { format, decoder, track_id })
     }
 }
 
@@ -104,8 +104,8 @@ fn get_next_audio_buf(inst: &mut DecoderInstance) -> Result<AudioBufferRef<'_>> 
         // Get next packet.
         let pkt = inst.format.next_packet()?;
 
-        // Ensure packet is from the correct stream.
-        if pkt.stream_id() == inst.stream_id {
+        // Ensure packet is from the correct track.
+        if pkt.track_id() == inst.track_id {
             break pkt;
         }
     };

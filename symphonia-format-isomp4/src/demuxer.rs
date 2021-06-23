@@ -32,9 +32,9 @@ pub struct TrackState {
     track_num: u32,
     /// The current segment.
     cur_seg: usize,
-    /// The current sample index relative to the stream.
+    /// The current sample index relative to the track.
     next_sample: u32,
-    /// The current sample byte position relative to the start of the stream.
+    /// The current sample byte position relative to the start of the track.
     next_sample_pos: u64,
 }
 
@@ -46,7 +46,7 @@ impl TrackState {
 
         codec_params.with_time_base(TimeBase::new(1, trak.mdia.mdhd.timescale));
 
-        // Add a stream for the respective codec.
+        // Add a track for the respective codec.
         match trak.mdia.minf.stbl.stsd.sample_desc {
             // MP4 audio (generally AAC)
             SampleDescription::Mp4a(ref mp4a) => {
@@ -90,7 +90,7 @@ struct NextSampleInfo {
 /// Information regarding a sample.
 #[derive(Debug)]
 struct SampleDataInfo {
-    /// The position of the sample in the stream.
+    /// The position of the sample in the track.
     pos: u64,
     /// The length of the sample.
     len: u32,
@@ -101,13 +101,13 @@ struct SampleDataInfo {
 /// `IsoMp4Reader` implements a demuxer for the ISO Base Media File Format.
 pub struct IsoMp4Reader {
     iter: AtomIterator<MediaSourceStream>,
-    streams: Vec<Stream>,
+    tracks: Vec<Track>,
     cues: Vec<Cue>,
     metadata: MetadataQueue,
     /// Segments of the movie. Sorted in ascending order by sequence number.
     segs: Vec<Box<dyn StreamSegment>>,
     /// State tracker for each track.
-    tracks: Vec<TrackState>,
+    track_states: Vec<TrackState>,
     /// Optional, movie extends atom used for fragmented streams.
     mvex: Option<Arc<MvexAtom>>,
 }
@@ -118,20 +118,20 @@ impl IsoMp4Reader {
     fn next_sample_info(&self) -> Result<Option<NextSampleInfo>> {
         let mut earliest = None;
 
-        // TODO: Consider returning samples based on lowest byte position in the stream instead of
-        // timestamp. This may be important if video streams are ever decoded (i.e., DTS vs. PTS).
+        // TODO: Consider returning samples based on lowest byte position in the track instead of
+        // timestamp. This may be important if video tracks are ever decoded (i.e., DTS vs. PTS).
 
-        for (track, stream) in self.tracks.iter().zip(&self.streams) {
+        for (state, track) in self.track_states.iter().zip(&self.tracks) {
 
             // Get the timebase of the track used to calculate the presentation time.
-            let tb = stream.codec_params.time_base.unwrap();
+            let tb = track.codec_params.time_base.unwrap();
 
             // Get the next timestamp for the next sample of the current track. The next sample may
             // be in a future segment.
-            for (seg_idx_delta, seg) in self.segs[track.cur_seg as usize..].iter().enumerate() {
+            for (seg_idx_delta, seg) in self.segs[state.cur_seg as usize..].iter().enumerate() {
 
                 // Try to get the timestamp for the next sample of the track from the segment.
-                if let Some(sample_ts) = seg.sample_ts(track.track_num, track.next_sample)? {
+                if let Some(sample_ts) = seg.sample_ts(state.track_num, state.next_sample)? {
 
                     // Calculate the presentation time using the timestamp.
                     let sample_time = tb.calc_time(sample_ts);
@@ -150,10 +150,10 @@ impl IsoMp4Reader {
                             // Earliest was either None, or greater than the track's next sample
                             // presentation time. Update earliest.
                             earliest = Some(NextSampleInfo{
-                                track_num: track.track_num,
+                                track_num: state.track_num,
                                 ts: sample_ts,
                                 time: sample_time,
-                                seg_idx: seg_idx_delta + track.cur_seg,
+                                seg_idx: seg_idx_delta + state.cur_seg,
                             });
                         }
                     }
@@ -171,7 +171,7 @@ impl IsoMp4Reader {
 
     fn consume_next_sample(&mut self, info: &NextSampleInfo) -> Result<Option<SampleDataInfo>> {
         // Get the track state.
-        let track = &mut self.tracks[info.track_num as usize];
+        let track = &mut self.track_states[info.track_num as usize];
 
         // Get the segment associated with the sample.
         let seg = &self.segs[info.seg_idx];
@@ -250,8 +250,8 @@ impl IsoMp4Reader {
 
     fn seek_track_by_time(&mut self, track_num: u32, time: Time ) -> Result<SeekedTo> {
         // Convert time to timestamp for the track.
-        if let Some(stream) = self.streams.get(track_num as usize) {
-            let tb = stream.codec_params.time_base.unwrap();
+        if let Some(track) = self.tracks.get(track_num as usize) {
+            let tb = track.codec_params.time_base.unwrap();
             self.seek_track_by_ts(track_num, tb.calc_timestamp(time))
         }
         else {
@@ -260,7 +260,7 @@ impl IsoMp4Reader {
     }
 
     fn seek_track_by_ts(&mut self, track_num: u32, ts: u64) -> Result<SeekedTo> {
-        debug!("seeking stream={} to frame_ts={}", track_num, ts);
+        debug!("seeking track={} to frame_ts={}", track_num, ts);
 
         struct SeekLocation {
             seg_idx: usize,
@@ -300,7 +300,7 @@ impl IsoMp4Reader {
             let data_desc = seg.sample_data(track_num, seek_loc.sample_num, true)?;
 
             // Update the track's next sample information to point to the seeked sample.
-            let track = &mut self.tracks[track_num as usize];
+            let track = &mut self.track_states[track_num as usize];
 
             track.cur_seg = seek_loc.seg_idx;
             track.next_sample = seek_loc.sample_num;
@@ -309,12 +309,12 @@ impl IsoMp4Reader {
             // Get the actual timestamp for this sample.
             let actual_ts = seg.sample_ts(track_num, seek_loc.sample_num)?.unwrap();
 
-            debug!("seeked stream={} to packet_ts={} (delta={})",
+            debug!("seeked track={} to packet_ts={} (delta={})",
                 track_num,
                 actual_ts,
                 actual_ts as i64 - ts as i64);
 
-            Ok(SeekedTo{ stream: track_num, required_ts: ts, actual_ts })
+            Ok(SeekedTo{ track_id: track_num, required_ts: ts, actual_ts })
         }
         else {
             // Timestamp was not found.
@@ -464,18 +464,16 @@ impl FormatReader for IsoMp4Reader {
 
         moov.take_metadata(&mut metadata);
 
-        // Filter all media trak atoms for supported audio tracks and instantiate a track state
-        // for each.
-        let tracks = moov.traks.iter()
-                            //    .filter(|trak| trak.mdia.hdlr.track_type == TrackType::Sound)
+        // Instantiate a TrackState for each track in the stream.
+        let track_states = moov.traks.iter()
                                .enumerate()
                                .map(|(t, trak)| TrackState::new(t as u32, trak))
                                .collect::<Vec<TrackState>>();
 
-        // Instantiate Stream(s) for all tracks selected above.
-        let streams = tracks.iter()
-                            .map(|track| Stream::new(track.track_num, track.codec_params()))
-                            .collect();
+        // Instantiate a Tracks for all tracks above.
+        let tracks = track_states.iter()
+                                  .map(|track| Track::new(track.track_num, track.codec_params()))
+                                  .collect();
 
         // A Movie Extends (mvex) atom is required to support segmented streams. If the mvex atom is
         // present, wrap it in an Arc so it can be shared amongst all segments.
@@ -485,10 +483,10 @@ impl FormatReader for IsoMp4Reader {
 
         Ok(IsoMp4Reader {
             iter,
-            streams,
+            tracks,
             cues: Default::default(),
             metadata,
-            tracks,
+            track_states,
             segs,
             mvex,
         })
@@ -549,45 +547,45 @@ impl FormatReader for IsoMp4Reader {
         &self.cues
     }
 
-    fn streams(&self) -> &[Stream] {
-        &self.streams
+    fn tracks(&self) -> &[Track] {
+        &self.tracks
     }
 
     fn seek(&mut self, _mode: SeekMode, to: SeekTo) -> Result<SeekedTo> {
 
-        if self.streams.is_empty() {
+        if self.tracks.is_empty() {
             return seek_error(SeekErrorKind::Unseekable);
         }
 
         match to {
-            SeekTo::TimeStamp { ts, stream } => {
+            SeekTo::TimeStamp { ts, track_id } => {
                 // The seek timestamp is in timebase units specific to the specified (primary) track.
                 // Get the primary track and use the timebase to convert the timestamp into time
                 // units so that the other (secondary) tracks can be seeked.
-                if let Some(primary_track) = self.streams().get(stream as usize) {
+                if let Some(primary_track) = self.tracks().get(track_id as usize) {
                     // Convert to time units.
                     let time = primary_track.codec_params.time_base.unwrap().calc_time(ts);
 
                     // Seek all tracks excluding the primary track to the desired time.
-                    for t in 0..self.tracks.len() as u32 {
-                        if t != stream {
+                    for t in 0..self.track_states.len() as u32 {
+                        if t != track_id {
                             self.seek_track_by_time(t, time)?;
                         }
                     }
 
                     // Seek the primary track and return the result.
-                    self.seek_track_by_ts(stream, ts)
+                    self.seek_track_by_ts(track_id, ts)
                 }
                 else {
                     seek_error(SeekErrorKind::Unseekable)
                 }
             }
-            SeekTo::Time { time, stream } => {
+            SeekTo::Time { time, track_id } => {
                 // Select the first track if a primary track was not provided.
-                let primary_track_id = stream.unwrap_or(0);
+                let primary_track_id = track_id.unwrap_or(0);
 
                 // Seek all tracks excluding the primary track and discard the result.
-                for t in 0..self.tracks.len() as u32 {
+                for t in 0..self.track_states.len() as u32 {
                     if t != primary_track_id {
                         self.seek_track_by_time(t, time)?;
                     }

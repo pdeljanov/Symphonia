@@ -24,7 +24,7 @@ use super::mappings;
 /// `OggReader` implements a demuxer for Xiph's OGG container format.
 pub struct OggReader {
     reader: MediaSourceStream,
-    streams: Vec<Stream>,
+    tracks: Vec<Track>,
     cues: Vec<Cue>,
     metadata: MetadataQueue,
     physical_stream: PhysicalStream,
@@ -54,13 +54,13 @@ impl FormatReader for OggReader {
     fn try_new(mut source: MediaSourceStream, _options: &FormatOptions) -> Result<Self> {
         let mut physical_stream: PhysicalStream = Default::default();
 
-        let mut streams = Vec::new();
+        let mut tracks = Vec::new();
         let mut mappers = BTreeMap::<u32, Box<dyn mappings::Mapper>>::new();
 
         // The first page of each logical stream, marked with the first page flag, must contain the
         // identification packet for the encapsulated codec bitstream. The first page for each
         // logical stream from the current logical stream group must appear before any other pages.
-        // That is to say, if there are N logical streams, then the first N pages must contain the
+        // That is to say, if there are N logical tracks, then the first N pages must contain the
         // identification packets for each respective stream.
         loop {
             let packet = physical_stream.next_packet(&mut source)?;
@@ -79,7 +79,7 @@ impl FormatReader for OggReader {
             // If a stream mapper has been detected, the stream can be read.
             if let Some(mapper) = mappings::detect(&packet.data)? {
                 // Add the stream.
-                streams.push(Stream::new(packet.serial, mapper.codec().clone()));
+                tracks.push(Track::new(packet.serial, mapper.codec().clone()));
                 mappers.insert(packet.serial, mapper);
                 
                 info!("added stream: serial={:#x}", packet.serial);
@@ -111,7 +111,7 @@ impl FormatReader for OggReader {
 
         Ok(OggReader {
             reader: source,
-            streams,
+            tracks,
             cues: Default::default(),
             metadata,
             physical_stream,
@@ -161,8 +161,8 @@ impl FormatReader for OggReader {
         &self.cues
     }
 
-    fn streams(&self) -> &[Stream] {
-        &self.streams
+    fn tracks(&self) -> &[Track] {
+        &self.tracks
     }
 
     fn seek(&mut self, _mode: SeekMode, _to: SeekTo) -> Result<SeekedTo> {

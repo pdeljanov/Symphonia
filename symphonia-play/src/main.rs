@@ -19,7 +19,7 @@ use std::path::Path;
 use symphonia;
 use symphonia::core::errors::{Result, Error};
 use symphonia::core::codecs::DecoderOptions;
-use symphonia::core::formats::{Cue, FormatReader, FormatOptions, SeekMode, SeekTo, Stream};
+use symphonia::core::formats::{Cue, FormatReader, FormatOptions, SeekMode, SeekTo, Track};
 use symphonia::core::meta::{ColorMode, MetadataOptions, Tag, Value, Visual};
 use symphonia::core::io::{MediaSourceStream, MediaSource, ReadOnlySource};
 use symphonia::core::probe::{Hint, ProbeResult};
@@ -110,7 +110,6 @@ fn main() {
     // Probe the media source stream for metadata and get the format reader.
     match symphonia::default::get_probe().format(&hint, mss, &format_opts, &metadata_opts) {
         Ok(probed) => {
-
             let result = if matches.is_present("verify-only") {
                 // Verify-only mode decodes and verifies the audio, but does not play it.
                 decode_only(probed.format, &DecoderOptions { verify: true, ..Default::default() })
@@ -120,7 +119,7 @@ fn main() {
                 decode_only(probed.format, &DecoderOptions { verify: false, ..Default::default() })
             }
             else if matches.is_present("probe-only") {
-                // Probe-only mode only prints information about the format, streams, metadata, etc.
+                // Probe-only mode only prints information about the format, tracks, metadata, etc.
                 pretty_print_format(path_str, &probed);
                 Ok(())
             }
@@ -153,20 +152,20 @@ fn main() {
 }
 
 fn decode_only(mut reader: Box<dyn FormatReader>, decode_options: &DecoderOptions) -> Result<()> {
-    // Get the default stream.
-    // TODO: Allow stream selection.
-    let stream = reader.default_stream().unwrap();
-    let stream_id = stream.id;
+    // Get the default track.
+    // TODO: Allow track selection.
+    let track = reader.default_track().unwrap();
+    let track_id = track.id;
 
-    // Create a decoder for the stream.
-    let mut decoder = symphonia::default::get_codecs().make(&stream.codec_params, &decode_options)?;
+    // Create a decoder for the track.
+    let mut decoder = symphonia::default::get_codecs().make(&track.codec_params, &decode_options)?;
 
     // Decode all packets, ignoring all decode errors.
     let result = loop {
         let packet = reader.next_packet()?;
 
-        // If the packet does not belong to the selected stream, skip over it.
-        if packet.stream_id() != stream_id {
+        // If the packet does not belong to the selected track, skip over it.
+        if packet.track_id() != track_id {
             continue;
         }
 
@@ -188,13 +187,13 @@ fn play(mut reader: Box<dyn FormatReader>, seek_time: Option<f64>, decode_option
     // The audio output device.
     let mut audio_output = None;
 
-    // Get the default stream.
-    // TODO: Allow stream selection.
-    let stream = reader.default_stream().unwrap();
-    let stream_id = stream.id;
+    // Get the default track.
+    // TODO: Allow track selection.
+    let track = reader.default_track().unwrap();
+    let track_id = track.id;
 
-    // Create a decoder for the stream.
-    let mut decoder = symphonia::default::get_codecs().make(&stream.codec_params, &decode_options)?;
+    // Create a decoder for the track.
+    let mut decoder = symphonia::default::get_codecs().make(&track.codec_params, &decode_options)?;
 
     // If there is a seek time, seek the reader to the time specified and get the timestamp of the
     // seeked position. All packets with a timestamp < the seeked position will not be played.
@@ -203,7 +202,7 @@ fn play(mut reader: Box<dyn FormatReader>, seek_time: Option<f64>, decode_option
     // decoded and *samples* discarded up-to the exact *sample* indicated by required_ts. The current
     // approach will discard excess samples if seeking to a sample within a packet.
     let seek_ts = if let Some(time) = seek_time {
-        let seek_to = SeekTo::Time { time: Time::from(time), stream: None };
+        let seek_to = SeekTo::Time { time: Time::from(time), track_id: None };
 
         // Attempt the seek. If the seek fails, ignore the error and return a seek timestamp of 0 so
         // that no samples are trimmed.
@@ -223,13 +222,13 @@ fn play(mut reader: Box<dyn FormatReader>, seek_time: Option<f64>, decode_option
         0
     };
 
-    // Decode and play the packets belonging to the selected stream.
+    // Decode and play the packets belonging to the selected track.
     loop {
         // Get the next packet from the media container.
         let packet = reader.next_packet()?;
 
-        // If the packet does not belong to the selected stream, skip over it.
-        if packet.stream_id() != stream_id {
+        // If the packet does not belong to the selected track, skip over it.
+        if packet.track_id() != track_id {
             continue;
         }
 
@@ -279,7 +278,7 @@ fn play(mut reader: Box<dyn FormatReader>, seek_time: Option<f64>, decode_option
 
 fn pretty_print_format(path: &str, probed: &ProbeResult) {
     println!("+ {}", path);
-    pretty_print_streams(probed.format.streams());
+    pretty_print_tracks(probed.format.tracks());
 
     // Prefer metadata that's provided in the container format, over other tags found during the
     // probe operation.
@@ -302,13 +301,13 @@ fn pretty_print_format(path: &str, probed: &ProbeResult) {
     println!("-");
 }
 
-fn pretty_print_streams(streams: &[Stream]) {
-    if !streams.is_empty() {
+fn pretty_print_tracks(tracks: &[Track]) {
+    if !tracks.is_empty() {
         println!("|");
-        println!("| // Streams //");
+        println!("| // Tracks //");
 
-        for (idx, stream) in streams.iter().enumerate() {
-            let params = &stream.codec_params;
+        for (idx, track) in tracks.iter().enumerate() {
+            let params = &track.codec_params;
 
             print!("|     [{:0>2}] Codec:           ", idx + 1);
 
@@ -338,7 +337,7 @@ fn pretty_print_streams(streams: &[Stream]) {
             if let Some(channel_layout) = params.channel_layout {
                 println!("|          Channel Layout:  {:?}", channel_layout);
             }
-            if let Some(language) = &stream.language {
+            if let Some(language) = &track.language {
                 println!("|          Language:        {}", language);
             }
 

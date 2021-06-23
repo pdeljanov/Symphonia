@@ -27,7 +27,7 @@ pub mod prelude {
         SeekedTo,
         SeekMode,
         SeekTo,
-        Stream,
+        Track,
     };
 }
 
@@ -37,24 +37,24 @@ pub enum SeekTo {
     Time {
         /// The `Time` to seek to.
         time: Time,
-        /// If `Some`, specifies which stream's timestamp should be returned after the seek. If
-        // `None`, then the default stream's timestamp is returned. If the container does not have
-        /// a default stream, then the first stream's timestamp is returned.
-        stream: Option<u32>
+        /// If `Some`, specifies which track's timestamp should be returned after the seek. If
+        /// `None`, then the default track's timestamp is returned. If the container does not have
+        /// a default track, then the first track's timestamp is returned.
+        track_id: Option<u32>
     },
-    /// Seek to a stream's `TimeStamp` in that stream's timebase units.
+    /// Seek to a track's `TimeStamp` in that track's timebase units.
     TimeStamp {
         /// The `TimeStamp` to seek to.
         ts: TimeStamp,
-        /// Specifies which stream `ts` is relative to.
-        stream: u32
+        /// Specifies which track `ts` is relative to.
+        track_id: u32
     },
 }
 
 /// `SeekedTo` is the result of a seek.
 pub struct SeekedTo {
-    /// The stream the seek was relative to.
-    pub stream: u32,
+    /// The track the seek was relative to.
+    pub track_id: u32,
     /// The `TimeStamp` required for the requested seek.
     pub required_ts: TimeStamp,
     /// The `TimeStamp` that was seeked to.
@@ -127,20 +127,20 @@ pub struct CuePoint {
     pub tags: Vec<Tag>,
 }
 
-/// A `Stream` is an independently coded media stream. A media format may contain multiple media
-/// streams in one container. Each of those media streams are represented by one `Stream`.
-pub struct Stream {
-    /// A unique identifier for the stream.
+/// A `Track` is an independently coded media bitstream. A media format may contain multiple tracks
+/// in one container. Each of those tracks are represented by one `Track`.
+pub struct Track {
+    /// A unique identifier for the track.
     pub id: u32,
-    /// The parameters defining the codec for the `Stream`.
+    /// The codec parameters for the track.
     pub codec_params: CodecParameters,
-    /// The language of the `Stream`. May be unknown.
+    /// The language of the track. May be unknown.
     pub language: Option<String>,
 }
 
-impl Stream {
+impl Track {
     pub fn new(id: u32, codec_params: CodecParameters) -> Self {
-        Stream {
+        Track {
             id,
             codec_params,
             language: None,
@@ -149,25 +149,25 @@ impl Stream {
 }
 
 /// A `FormatReader` is a container demuxer. It provides methods to probe a media container for
-/// information and access the streams encapsulated in the container.
+/// information and access the tracks encapsulated in the container.
 ///
 /// Most, if not all, media containers contain metadata, then a number of packetized, and
-/// interleaved codec bitstreams. Generally, the encapsulated bitstreams are independently encoded
-/// using some codec. The allowed codecs for a container are defined in the specification of the
-/// container format.
+/// interleaved codec bitstreams. These bitstreams are usually referred to as tracks. Generally,
+/// the encapsulated bitstreams are independently encoded using some codec. The allowed codecs for a
+/// container are defined in the specification of the container format.
 ///
 /// While demuxing, packets are read one-by-one and may be discarded or decoded at the choice of
-/// the caller. The contents of a packet is undefined, it may be a frame of video, 1 millisecond
-/// or 1 second of audio, but a packet will never contain data from two different bitstreams.
-/// Therefore the caller can be selective in what stream(s) should be decoded and consumed.
+/// the caller. The contents of a packet is undefined: it may be a frame of video, a millisecond
+/// of audio, or a subtitle, but a packet will never contain data from two different bitstreams.
+/// Therefore the caller can be selective in what tracks(s) should be decoded and consumed.
 ///
 /// `FormatReader` provides an Iterator-like interface over packets for easy consumption and
-/// filtering. Seeking will invalidate the assumed state of any decoder processing packets from
+/// filtering. Seeking will invalidate the state of any `Decoder` processing packets from the
 /// `FormatReader` and should be reset after a successful seek operation.
 pub trait FormatReader: Send {
     /// Attempt to instantiate a `FormatReader` using the provided `FormatOptions` and
     /// `MediaSourceStream`. The reader will probe the container to verify format support, determine
-    /// the number of contained streams, and read any initial metadata.
+    /// the number of tracks, and read any initial metadata.
     fn try_new(source: MediaSourceStream, options: &FormatOptions) -> Result<Self>
     where
         Self: Sized;
@@ -178,29 +178,25 @@ pub trait FormatReader: Send {
     /// Gets the metadata revision queue.
     fn metadata(&self) -> &MetadataQueue;
 
-    /// Seek, as precisely as possible depending on the mode, to the `Time` or stream `TimeStamp`
-    /// requested. Returns the requested and actual `TimeStamps` seeked to.
+    /// Seek, as precisely as possible depending on the mode, to the `Time` or track `TimeStamp`
+    /// requested. Returns the requested and actual `TimeStamps` seeked to, as well as the `Track`.
     ///
     /// Note: The `FormatReader` by itself cannot seek to an exact audio frame, it is only capable of
-    /// seeking to the nearest `Packet`. Therefore, to seek to an exact frame, a decoder must
+    /// seeking to the nearest `Packet`. Therefore, to seek to an exact frame, a `Decoder` must
     /// decode packets until the requested position is reached. When using the accurate `SeekMode`,
     /// the seeked position will always be before the requested position. If the coarse `SeekMode` is
     /// used, then the seek position may be after the requested position. Coarse seeking is an
     /// optional performance enhancement, therefore, a coarse seek may sometimes be an accurate seek.
     fn seek(&mut self, mode: SeekMode, to: SeekTo) -> Result<SeekedTo>;
 
-    /// Gets a list of streams in the container.
-    fn streams(&self) -> &[Stream];
+    /// Gets a list of tracks in the container.
+    fn tracks(&self) -> &[Track];
 
-    /// Gets the default stream. If the `FormatReader` has a method of determing the default stream,
-    /// this function should return it. Otherwise, the first stream is returned. If no streams are
+    /// Gets the default track. If the `FormatReader` has a method of determing the default track,
+    /// this function should return it. Otherwise, the first track is returned. If no tracks are
     /// present then None is returned.
-    fn default_stream(&self) -> Option<&Stream> {
-        let streams = self.streams();
-        match streams.len() {
-            0 => None,
-            _ => Some(&streams[0]),
-        }
+    fn default_track(&self) -> Option<&Track> {
+        self.tracks().first()
     }
 
     /// Get the next packet from the container.
@@ -214,7 +210,7 @@ pub trait FormatReader: Send {
 /// amount of data is bounded, but not defined, and is dependant on the container and/or the
 /// encapsulated codec.
 pub struct Packet {
-    id: u32,
+    track_id: u32,
     pts: u64,
     dur: u64,
     data: Box<[u8]>,
@@ -222,18 +218,18 @@ pub struct Packet {
 
 impl Packet {
     /// Create a new `Packet` from a slice.
-    pub fn new_from_slice(id: u32, pts: u64, dur: u64, buf: &[u8]) -> Self {
-        Packet { id, pts, dur, data: Box::from(buf) }
+    pub fn new_from_slice(track_id: u32, pts: u64, dur: u64, buf: &[u8]) -> Self {
+        Packet { track_id, pts, dur, data: Box::from(buf) }
     }
 
     /// Create a new `Packet` from a boxed slice.
-    pub fn new_from_boxed_slice(id: u32, pts: u64, dur: u64, data: Box<[u8]>) -> Self {
-        Packet { id, pts, dur, data }
+    pub fn new_from_boxed_slice(track_id: u32, pts: u64, dur: u64, data: Box<[u8]>) -> Self {
+        Packet { track_id, pts, dur, data }
     }
 
-    /// The stream identifier of the stream this packet belongs to.
-    pub fn stream_id(&self) -> u32 {
-        self.id
+    /// The track identifier of the track this packet belongs to.
+    pub fn track_id(&self) -> u32 {
+        self.track_id
     }
 
     /// Get the presentation timestamp of the packet in `TimeBase` units. May be 0 if unknown.
