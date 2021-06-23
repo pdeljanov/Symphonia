@@ -37,10 +37,9 @@ pub enum SeekTo {
     Time {
         /// The `Time` to seek to.
         time: Time,
-        /// If `Some`, specifies which stream's timebase `time` is relative to. If `None`, then
-        /// `time` is relative to the container's timebase. If the container does not have a
-        /// timebase, or the container only supports a single stream, then the default stream's
-        /// timebase is used.
+        /// If `Some`, specifies which stream's timestamp should be returned after the seek. If
+        // `None`, then the default stream's timestamp is returned. If the container does not have
+        /// a default stream, then the first stream's timestamp is returned.
         stream: Option<u32>
     },
     /// Seek to a stream's `TimeStamp` in that stream's timebase units.
