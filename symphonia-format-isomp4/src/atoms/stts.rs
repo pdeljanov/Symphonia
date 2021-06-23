@@ -27,9 +27,9 @@ pub struct SttsAtom {
 
 impl SttsAtom {
 
-    /// Get the timestamp for the sample indicated by `sample_num`. Note, `sample_num` is indexed
-    /// relative to the `SttsAtom`. Complexity of this function in O(N).
-    pub fn find_timestamp_for_sample(&self, sample_num: u32) -> Option<u64> {
+    /// Get the timestamp and duration for the sample indicated by `sample_num`. Note, `sample_num`
+    /// is indexed relative to the `SttsAtom`. Complexity of this function in O(N).
+    pub fn find_timing_for_sample(&self, sample_num: u32) -> Option<(u64, u32)> {
         let mut ts = 0;
         let mut next_entry_first_sample = 0;
 
@@ -45,7 +45,7 @@ impl SttsAtom {
                 let entry_sample_offset = sample_num + entry.sample_count - next_entry_first_sample;
                 ts += u64::from(entry.sample_delta) * u64::from(entry_sample_offset);
 
-                return Some(ts);
+                return Some((ts, entry.sample_delta));
             }
 
             ts += u64::from(entry.sample_count) * u64::from(entry.sample_delta);

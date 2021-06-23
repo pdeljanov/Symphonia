@@ -16,6 +16,11 @@ pub struct SampleDataDesc {
     pub size: u32,
 }
 
+pub struct SampleTiming {
+    pub ts: u64,
+    pub dur: u32,
+}
+
 pub trait StreamSegment: Send {
     /// Gets the sequence number of this segment.
     fn sequence_num(&self) -> u32;
@@ -26,8 +31,9 @@ pub trait StreamSegment: Send {
     /// Gets the first and last sample timestamps for the track `track_num`.
     fn track_ts_range(&self, track_num: u32) -> (u64, u64);
 
-    /// Get the timestamp for the sample indicated by `sample_num` for the track `track_num`.
-    fn sample_ts(&self, track_num: u32, sample_num: u32) -> Result<Option<u64>>;
+    /// Get the timestamp and duration for the sample indicated by `sample_num` for the track
+    /// `track_num`.
+    fn sample_timing(&self, track_num: u32, sample_num: u32) -> Result<Option<SampleTiming>>;
 
     /// Get the sample number of the sample containing the timestamp indicated by `ts` for track
     // `track_num`.
@@ -92,7 +98,7 @@ impl StreamSegment for MoofSegment {
         self.moof.mfhd.sequence_number
     }
 
-    fn sample_ts(&self, track_num: u32, sample_num: u32) -> Result<Option<u64>> {
+    fn sample_timing(&self, track_num: u32, sample_num: u32) -> Result<Option<SampleTiming>> {
         // Get the track fragment associated with track_num.
         let traf = self.moof.trafs.get(track_num as usize)
             .ok_or(Error::DecodeError("invalid track index"))?;
@@ -105,20 +111,26 @@ impl StreamSegment for MoofSegment {
             // the exact sample timestamp.
             if sample_num_rel < trun.sample_count {
 
-                let sample_ts_offset = if trun.is_sample_duration_present() {
+                let timing = if trun.is_sample_duration_present() {
                     // The size of the entire track fragment run is known.
-                    trun.sample_duration[..1 + sample_num_rel as usize].iter()
+                    let ts = trun.sample_duration[..1 + sample_num_rel as usize].iter()
                                                                        .map(|&s| u64::from(s))
-                                                                       .sum()
+                                                                       .sum::<u64>();
+
+                    let dur = trun.sample_duration[sample_num_rel as usize];
+
+                    SampleTiming { ts: trun_ts_offset + ts, dur }
                 }
                 else {
-                    let duration = traf.tfhd.default_sample_duration.unwrap_or(
+                    let dur = traf.tfhd.default_sample_duration.unwrap_or(
                         self.mvex.trexs[track_num as usize].default_sample_duration);
 
-                    u64::from(sample_num_rel) * u64::from(duration)
+                    let ts = u64::from(sample_num_rel) * u64::from(dur);
+
+                    SampleTiming { ts: trun_ts_offset + ts, dur }
                 };
 
-                return Ok(Some(trun_ts_offset + sample_ts_offset));
+                return Ok(Some(timing));
             }
 
             let trun_duration = if trun.is_sample_duration_present() {
@@ -330,13 +342,20 @@ impl StreamSegment for MoovSegment {
         0
     }
 
-    fn sample_ts(&self, track_num: u32, sample_num: u32) -> Result<Option<u64>> {
+    fn sample_timing(&self, track_num: u32, sample_num: u32) -> Result<Option<SampleTiming>> {
         // Get the trak atom associated with track_num.
         let trak = self.moov.traks.get(track_num as usize)
                                   .ok_or(Error::DecodeError("invalid track index"))?;
 
-        // Find the sample timestamp. Note, complexity of O(N).
-        Ok(trak.mdia.minf.stbl.stts.find_timestamp_for_sample(sample_num))
+        // Find the sample timing. Note, complexity of O(N).
+        let timing = trak.mdia.minf.stbl.stts.find_timing_for_sample(sample_num);
+
+        if let Some((ts, dur)) = timing {
+            Ok(Some(SampleTiming { ts, dur }))
+        }
+        else {
+            Ok(None)
+        }
     }
 
     fn ts_sample(&self, track_num: u32, ts: u64) -> Result<Option<u32>> {
