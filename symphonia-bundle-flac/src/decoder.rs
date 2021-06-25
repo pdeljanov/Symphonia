@@ -75,8 +75,7 @@ fn decorrelate_right_side(right: &[i32], side: &mut [i32]) {
     }
 }
 
-/// `FlacDecoder` implements a decoder for the FLAC codec bitstream. The decoder is compatible with
-/// OGG encapsulated FLAC.
+/// Free Lossless Audio Codec (FLAC) decoder.
 pub struct FlacDecoder {
     params: CodecParameters,
     is_validating: bool,

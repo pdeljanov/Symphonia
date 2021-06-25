@@ -27,7 +27,7 @@ use super::parser::PacketParser;
 /// The FLAC start of stream marker: "fLaC" in ASCII.
 const FLAC_STREAM_MARKER: [u8; 4] = *b"fLaC";
 
-/// `Free Lossless Audio Codec (FLAC) native frame reader.
+/// Free Lossless Audio Codec (FLAC) native frame reader.
 pub struct FlacReader {
     reader: MediaSourceStream,
     metadata: MetadataQueue,

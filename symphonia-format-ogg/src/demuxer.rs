@@ -19,7 +19,7 @@ use log::info;
 use super::physical::PhysicalStream;
 use super::mappings;
 
-/// Ogg demultiplexer.
+/// OGG demultiplexer.
 ///
 /// `OggReader` implements a demuxer for Xiph's OGG container format.
 pub struct OggReader {

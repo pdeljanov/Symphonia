@@ -33,9 +33,9 @@ const WAVE_RIFF_FORM: [u8; 4] = *b"WAVE";
 /// The maximum number of frames that will be in a packet.
 const WAVE_MAX_FRAMES_PER_PACKET: u64 = 1152;
 
-/// `Wav` (Wave) Format.
+/// WAVE (WAV) format reader.
 ///
-/// `WavReader` implements a demuxer for the Wave format container.
+/// `WavReader` implements a demuxer for the WAVE container format.
 pub struct WavReader {
     reader: MediaSourceStream,
     tracks: Vec<Track>,

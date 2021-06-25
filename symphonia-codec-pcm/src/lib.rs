@@ -109,7 +109,7 @@ fn mulaw_to_linear(mut mu_val: u8) -> i16 {
     if mu_val & 0x80 == 0x80 { t - BIAS } else { BIAS - t }
 }
 
-/// `PcmDecoder` implements a decoder for all raw PCM, and log-PCM codecs.
+/// Pulse Code Modulation (PCM) decoder for all raw PCM, and log-PCM codecs.
 pub struct PcmDecoder {
     params: CodecParameters,
     sample_width: u32,
