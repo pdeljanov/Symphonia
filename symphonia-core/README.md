@@ -2,7 +2,7 @@
 
 Core structs, traits, helpers, and more for Project Symphonia.
 
-:musical_note: **Note:** This crate should only be used if developing Project Symphonia decoders and demuxers. For other use cases please use the [`symphonia`](https://crates.io/crates/symphonia) crate.
+**Note:** This crate should only be used if developing Project Symphonia decoders and demuxers. For other use cases please use the [`symphonia`](https://crates.io/crates/symphonia) crate.
 
 ## License
 

@@ -4,7 +4,7 @@ This is a placeholder crate for Project Symphonia's MKV/WebM Demuxer.
 
 Please consider contributing!
 
-:musical_note: **Note:** This crate is part of Symphonia. Please use the [`symphonia`](https://crates.io/crates/symphonia) crate instead of this one directly.
+**Note:** This crate is part of Symphonia. Please use the [`symphonia`](https://crates.io/crates/symphonia) crate instead of this one directly.
 
 ## License
 
