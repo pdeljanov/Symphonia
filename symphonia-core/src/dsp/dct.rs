@@ -66,7 +66,7 @@ fn dct_cos_table(n: u32) -> &'static [f32] {
 /// \[1\] B.G. Lee, "A new algorithm to compute the discrete cosine transform", IEEE Transactions
 ///       on Acoustics, Speech, and Signal Processing, vol. 32, no. 6, pp. 1243-1245, 1984.
 ///
-/// https://ieeexplore.ieee.org/document/1164443
+/// <https://ieeexplore.ieee.org/document/1164443>
 pub struct Dct {
     temp: Vec<f32>,
 }
@@ -159,7 +159,7 @@ fn dct_ii_step(x: &mut [f32], t: &mut [f32]) {
 /// \[1\] B.G. Lee, "A new algorithm to compute the discrete cosine transform", IEEE Transactions
 /// on Acoustics, Speech, and Signal Processing, vol. 32, no. 6, pp. 1243-1245, 1984.
 ///
-/// https://ieeexplore.ieee.org/document/1164443
+/// <https://ieeexplore.ieee.org/document/1164443>
 fn dct_ii_32(x: &mut [f32]) {
     assert!(x.len() == 32);
 
