@@ -12,7 +12,7 @@ use symphonia_core::codecs::{CodecParameters, CODEC_TYPE_AAC};
 use symphonia_core::errors::{Result, SeekErrorKind, decode_error, seek_error, unsupported_error};
 use symphonia_core::formats::prelude::*;
 use symphonia_core::io::{ByteStream, MediaSource, MediaSourceStream};
-use symphonia_core::meta::MetadataQueue;
+use symphonia_core::meta::{Metadata, MetadataLog};
 use symphonia_core::probe::{Descriptor, Instantiate, QueryDescriptor};
 use symphonia_core::units::Time;
 
@@ -105,7 +105,7 @@ pub struct IsoMp4Reader {
     iter: AtomIterator<MediaSourceStream>,
     tracks: Vec<Track>,
     cues: Vec<Cue>,
-    metadata: MetadataQueue,
+    metadata: MetadataLog,
     /// Segments of the movie. Sorted in ascending order by sequence number.
     segs: Vec<Box<dyn StreamSegment>>,
     /// State tracker for each track.
@@ -370,7 +370,7 @@ impl FormatReader for IsoMp4Reader {
             None
         };
 
-        let mut metadata = MetadataQueue::default();
+        let mut metadata = MetadataLog::default();
 
         // Parse all atoms if the stream is seekable, otherwise parse all atoms up-to the mdat atom.
         let mut iter = AtomIterator::new_root(mss, total_len);
@@ -424,7 +424,7 @@ impl FormatReader for IsoMp4Reader {
                     }
                 }
                 AtomType::Meta => {
-                    // Read the metadata atom and queue it.
+                    // Read the metadata atom and append it to the log.
                     let meta = iter.read_atom::<MetaAtom>()?;
                     meta.take_metadata(&mut metadata);
                 }
@@ -542,8 +542,8 @@ impl FormatReader for IsoMp4Reader {
         ))
     }
 
-    fn metadata(&self) -> &MetadataQueue {
-        &self.metadata
+    fn metadata(&mut self) -> Metadata<'_> {
+        self.metadata.metadata()
     }
 
     fn cues(&self) -> &[Cue] {

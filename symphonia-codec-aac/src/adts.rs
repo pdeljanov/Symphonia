@@ -13,7 +13,7 @@ use symphonia_core::codecs::{CodecParameters, CODEC_TYPE_AAC};
 use symphonia_core::errors::{Result, SeekErrorKind, decode_error, seek_error};
 use symphonia_core::formats::prelude::*;
 use symphonia_core::io::*;
-use symphonia_core::meta::MetadataQueue;
+use symphonia_core::meta::{Metadata, MetadataLog};
 use symphonia_core::probe::{Descriptor, Instantiate, QueryDescriptor};
 
 use std::io::{Seek, SeekFrom};
@@ -31,7 +31,7 @@ pub struct AdtsReader {
     reader: MediaSourceStream,
     tracks: Vec<Track>,
     cues: Vec<Cue>,
-    metadata: MetadataQueue,
+    metadata: MetadataLog,
     first_frame_pos: u64,
     next_packet_ts: u64,
 }
@@ -174,8 +174,8 @@ impl FormatReader for AdtsReader {
         ))
     }
 
-    fn metadata(&self) -> &MetadataQueue {
-        &self.metadata
+    fn metadata(&mut self) -> Metadata<'_> {
+        self.metadata.metadata()
     }
 
     fn cues(&self) -> &[Cue] {

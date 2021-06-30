@@ -7,7 +7,7 @@
 
 use symphonia_core::errors::{Result, decode_error};
 use symphonia_core::io::ByteStream;
-use symphonia_core::meta::MetadataQueue;
+use symphonia_core::meta::MetadataLog;
 
 use crate::atoms::{Atom, AtomHeader, AtomIterator, AtomType, MvexAtom, MvhdAtom, TrakAtom, UdtaAtom};
 
@@ -29,10 +29,10 @@ pub struct MoovAtom {
 }
 
 impl MoovAtom {
-    /// Consume any metadata, and pushes it onto provided `MetadataQueue`.
-    pub fn take_metadata(&mut self, queue: &mut MetadataQueue) {
+    /// Consume any metadata, and pushes it onto provided `MetadataLog`.
+    pub fn take_metadata(&mut self, log: &mut MetadataLog) {
         if let Some(udta) = self.udta.as_mut() {
-            udta.take_metadata(queue);
+            udta.take_metadata(log)
         }
     }
 

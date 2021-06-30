@@ -11,7 +11,7 @@
 use crate::errors::{Result, unsupported_error};
 use crate::formats::{FormatOptions, FormatReader};
 use crate::io::{ByteStream, MediaSourceStream};
-use crate::meta::{MetadataReader, MetadataOptions, MetadataQueue};
+use crate::meta::{MetadataReader, MetadataOptions, MetadataLog};
 
 use log::{error, info};
 
@@ -160,13 +160,13 @@ impl Hint {
 pub struct ProbeResult {
     /// An instance of a `FormatReader` for the probed format
     pub format: Box<dyn FormatReader>,
-    /// A queue of `Metadata` revisions read during the probe operation before the instantiation of
+    /// A log of `Metadata` revisions read during the probe operation before the instantiation of
     /// the `FormatReader`. If any additional metadata was present outside of the container, this is
-    /// `Some` and the queue will have at least one item in it.
+    /// `Some` and the log will have at least one item in it.
     ///
     /// Metadata that was part of the container format itself can be read by calling `.metadata()`
     /// on `format`.
-    pub metadata: Option<MetadataQueue>,
+    pub metadata: Option<MetadataLog>,
 }
 
 /// `Probe` scans a `MediaSourceStream` for metadata and container formats, and provides an
@@ -298,7 +298,7 @@ impl Probe {
         metadata_opts: &MetadataOptions,
     ) -> Result<ProbeResult> {
 
-        let mut metadata: MetadataQueue = Default::default();
+        let mut metadata: MetadataLog = Default::default();
 
         // Loop over all elements in the stream until a container format is found.
         loop {
@@ -307,7 +307,7 @@ impl Probe {
                 Instantiate::Format(fmt) => {
                     let format = fmt(mss, format_opts)?;
 
-                    let metadata = if metadata.current().is_some() {
+                    let metadata = if metadata.metadata().current().is_some() {
                         Some(metadata)
                     }
                     else {
@@ -317,7 +317,7 @@ impl Probe {
                     return Ok(ProbeResult { format, metadata });
                 }
                 // If metadata was found, instantiate the metadata reader, read the metadata, and
-                // push it onto the metadata queue.
+                // push it onto the metadata log.
                 Instantiate::Metadata(meta) => {
                     let mut reader = meta(metadata_opts);
                     metadata.push(reader.read_all(&mut mss)?);

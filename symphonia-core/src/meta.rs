@@ -8,12 +8,10 @@
 //! The `meta` module defines basic metadata elements, and management structures.
 
 use std::borrow::Cow;
-use std::cell::{Ref, RefCell};
 use std::collections::VecDeque;
 use std::convert::From;
 use std::fmt;
 use std::num::NonZeroU32;
-use std::ops::Deref;
 
 use crate::errors::Result;
 use crate::io::MediaSourceStream;
@@ -402,13 +400,13 @@ pub struct VendorData {
 
 /// `Metadata` is a container for a single discrete revision of metadata information.
 #[derive(Default)]
-pub struct Metadata {
+pub struct MetadataRevision {
     tags: Vec<Tag>,
     visuals: Vec<Visual>,
     vendor_data: Vec<VendorData>,
 }
 
-impl Metadata {
+impl MetadataRevision {
     /// Gets an immutable slice to the `Tag`s in this revision.
     pub fn tags(&self) -> &[Tag] {
         &self.tags
@@ -427,7 +425,7 @@ impl Metadata {
 
 /// `MetadataBuilder` is the builder for `Metadata` revisions.
 pub struct MetadataBuilder {
-    metadata: Metadata,
+    metadata: MetadataRevision,
 }
 
 impl MetadataBuilder {
@@ -457,68 +455,56 @@ impl MetadataBuilder {
     }
 
     /// Yield the constructed `Metadata` revision.
-    pub fn metadata(self) -> Metadata {
+    pub fn metadata(self) -> MetadataRevision {
         self.metadata
     }
 }
 
-/// An immutable reference to a `Metadata` revision.
-pub struct MetadataRef<'a> {
-    guard: Ref<'a, VecDeque<Metadata>>,
+/// A reference to the metadata inside of a [MetadataLog].
+pub struct Metadata<'a> {
+    revisions: &'a mut VecDeque<MetadataRevision>,
 }
 
-impl<'a> Deref for MetadataRef<'a> {
-    type Target = Metadata;
-
-    fn deref(&self) -> &Metadata {
-        // MetadataQueue should never instantiate a MetadataRef if there is no Metadata struct
-        // enqueued.
-        &self.guard.front().unwrap()
-    }
-}
-
-/// `MetadataQueue` is a container for time-ordered `Metadata` revisions.
-#[derive(Default)]
-pub struct MetadataQueue {
-    queue: RefCell<VecDeque<Metadata>>,
-}
-
-impl MetadataQueue {
+impl<'a> Metadata<'a> {
     /// Returns `true` if the current metadata revision is the newest, `false` otherwise.
     pub fn is_latest(&self) -> bool {
-        self.queue.borrow().len() < 2
+        self.revisions.len() == 1
     }
 
     /// Gets an immutable reference to the current, and therefore oldest, revision of the metadata.
-    pub fn current(&self) -> Option<MetadataRef> {
-        let queue = self.queue.borrow();
-
-        if queue.len() > 0 {
-            Some(MetadataRef { guard: queue })
-        }
-        else {
-            None
-        }
+    pub fn current(&self) -> Option<&MetadataRevision> {
+        self.revisions.front()
     }
 
-    /// If there are newer `Metadata` revisions, advances the `MetadataQueue` by discarding the
+    /// If there are newer `Metadata` revisions, advances the `MetadataLog` by discarding the
     /// current revision and replacing it with the next revision, returning the discarded
     /// `Metadata`. When there are no newer revisions, `None` is returned. As such, `pop` will never
-    /// completely empty the queue.
-    pub fn pop(&self) -> Option<Metadata> {
-        let mut queue = self.queue.borrow_mut();
-
-        if queue.len() > 1 {
-            queue.pop_front()
+    /// completely empty the log.
+    pub fn pop(&mut self) -> Option<MetadataRevision> {
+        if self.revisions.len() > 1 {
+            self.revisions.pop_front()
         }
         else {
             None
         }
     }
+}
 
-    /// Pushes a new `Metadata` revision onto the queue.
-    pub fn push(&mut self, rev: Metadata) {
-        self.queue.borrow_mut().push_back(rev);
+/// `MetadataLog` is a container for time-ordered `Metadata` revisions.
+#[derive(Default)]
+pub struct MetadataLog {
+    revisions: VecDeque<MetadataRevision>,
+}
+
+impl MetadataLog {
+    /// Returns a reducable reference to the metadata inside the log.
+    pub fn metadata(&mut self) -> Metadata<'_> {
+        Metadata { revisions: &mut self.revisions }
+    }
+
+    /// Pushes a new `Metadata` revision onto the log.
+    pub fn push(&mut self, rev: MetadataRevision) {
+        self.revisions.push_back(rev);
     }
 }
 
@@ -529,5 +515,5 @@ pub trait MetadataReader: Send {
         Self: Sized;
 
     /// Read all metadata and return it if successful.
-    fn read_all(&mut self, reader: &mut MediaSourceStream) -> Result<Metadata>;
+    fn read_all(&mut self, reader: &mut MediaSourceStream) -> Result<MetadataRevision>;
 }

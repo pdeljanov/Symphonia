@@ -15,7 +15,7 @@ use symphonia_core::codecs::CodecParameters;
 use symphonia_core::errors::{Result, seek_error, unsupported_error, SeekErrorKind};
 use symphonia_core::formats::prelude::*;
 use symphonia_core::io::*;
-use symphonia_core::meta::{Metadata, MetadataBuilder, MetadataQueue};
+use symphonia_core::meta::{Metadata, MetadataRevision, MetadataBuilder, MetadataLog};
 use symphonia_core::probe::{Descriptor, Instantiate, QueryDescriptor};
 
 use log::{debug, error};
@@ -40,7 +40,7 @@ pub struct WavReader {
     reader: MediaSourceStream,
     tracks: Vec<Track>,
     cues: Vec<Cue>,
-    metadata: MetadataQueue,
+    metadata: MetadataLog,
     frame_len: u16,
     data_start_pos: u64,
 }
@@ -90,7 +90,7 @@ impl FormatReader for WavReader {
         let mut riff_chunks = ChunksReader::<RiffWaveChunks>::new(riff_len);
 
         let mut codec_params = CodecParameters::new();
-        let mut metadata: MetadataQueue = Default::default();
+        let mut metadata: MetadataLog = Default::default();
         let mut frame_len = 0;
 
         loop {
@@ -127,7 +127,7 @@ impl FormatReader for WavReader {
                     // lists.
                     match &list.form {
                         b"INFO" => metadata.push(read_info_chunk(&mut source, list.len)?),
-                        _       => list.skip(&mut source)?,
+                        _ => list.skip(&mut source)?,
                     }
                 },
                 RiffWaveChunks::Data(dat) => {
@@ -170,8 +170,8 @@ impl FormatReader for WavReader {
         Ok(Packet::new_from_boxed_slice(0, pts, dur, packet_buf))
     }
 
-    fn metadata(&self) -> &MetadataQueue {
-        &self.metadata
+    fn metadata(&mut self) -> Metadata<'_> {
+        self.metadata.metadata()
     }
 
     fn cues(&self) -> &[Cue] {
@@ -256,7 +256,7 @@ impl FormatReader for WavReader {
 
 }
 
-fn read_info_chunk(source: &mut MediaSourceStream, len: u32) -> Result<Metadata> {
+fn read_info_chunk(source: &mut MediaSourceStream, len: u32) -> Result<MetadataRevision> {
     let mut info_list = ChunksReader::<RiffInfoListChunks>::new(len);
 
     let mut metadata_builder = MetadataBuilder::new();

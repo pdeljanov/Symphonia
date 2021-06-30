@@ -8,7 +8,7 @@
 use symphonia_core::errors::{Result, decode_error};
 use symphonia_core::io::{ByteStream, BufStream};
 use symphonia_core::util::bits;
-use symphonia_core::meta::{Metadata, MetadataBuilder, StandardTagKey, StandardVisualKey, Tag};
+use symphonia_core::meta::{MetadataRevision, MetadataBuilder, StandardTagKey, StandardVisualKey, Tag};
 use symphonia_core::meta::{Value, Visual};
 use symphonia_metadata::{id3v1, itunes};
 
@@ -634,7 +634,7 @@ pub struct IlstAtom {
     /// Atom header.
     header: AtomHeader,
     /// Metadata revision.
-    pub metadata: Metadata,
+    pub metadata: MetadataRevision,
 }
 
 impl Atom for IlstAtom {
