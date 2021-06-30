@@ -161,7 +161,8 @@ pub struct ProbeResult {
     /// An instance of a `FormatReader` for the probed format
     pub format: Box<dyn FormatReader>,
     /// A queue of `Metadata` revisions read during the probe operation before the instantiation of
-    /// the `FormatReader`.
+    /// the `FormatReader`. If the container format was immediately determined, this will be empty and metadata
+    /// should be obtained by calling `.metadata()` on `format`.
     pub metadata: MetadataQueue
 }
 
