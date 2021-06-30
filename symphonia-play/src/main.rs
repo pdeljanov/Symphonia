@@ -287,12 +287,12 @@ fn pretty_print_format(path: &str, probed: &ProbeResult) {
         pretty_print_visuals(metadata.visuals());
 
         // Warn that certain tags are preferred.
-        if probed.metadata.current().is_some() {
+        if probed.metadata.as_ref().and_then(|m| m.current()).is_some() {
             info!("tags that are part of the container format are preferentially printed.");
             info!("not printing additional tags that were found while probing.");
         }
     }
-    else if let Some(metadata) = probed.metadata.current() {
+    else if let Some(metadata) = probed.metadata.as_ref().and_then(|m| m.current()) {
         pretty_print_tags(metadata.tags());
         pretty_print_visuals(metadata.visuals());
     }

@@ -161,9 +161,11 @@ pub struct ProbeResult {
     /// An instance of a `FormatReader` for the probed format
     pub format: Box<dyn FormatReader>,
     /// A queue of `Metadata` revisions read during the probe operation before the instantiation of
-    /// the `FormatReader`. If the container format was immediately determined, this will be empty and metadata
-    /// should be obtained by calling `.metadata()` on `format`.
-    pub metadata: MetadataQueue
+    /// the `FormatReader`. If any additional metadata was present outside of the container, this is `Some` and the queue will have
+    /// at least one item in it.
+    ///
+    /// Metadata that was part of the container format itself can be read by calling `.metadata()` on `format`.
+    pub metadata: Option<MetadataQueue>,
 }
 
 /// `Probe` scans a `MediaSourceStream` for metadata and container formats, and provides an
@@ -303,6 +305,12 @@ impl Probe {
                 // If a container format is found, return an instance to it's reader.
                 Instantiate::Format(fmt) => {
                     let format = fmt(mss, format_opts)?;
+
+                    let metadata = if metadata.current().is_some() {
+                        Some(metadata)
+                    } else {
+                        None
+                    };
 
                     return Ok(ProbeResult { format, metadata });
                 }
