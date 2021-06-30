@@ -53,7 +53,7 @@ mod pulseaudio {
 
             // Create a PulseAudio stream specification.
             let pa_spec = pulse::sample::Spec {
-                format: pulse::sample::SAMPLE_FLOAT32NE,
+                format: pulse::sample::Format::FLOAT32NE,
                 channels: spec.channels.count() as u8,
                 rate: spec.rate,
             };
