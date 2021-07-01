@@ -21,5 +21,5 @@ libpulse-binding = "2.5.0"
 libpulse-simple-binding = "2.5.0"
 
 [target.'cfg(not(target_os = "linux"))'.dependencies]
-cpal = "0.12.0"
+cpal = "0.13.3"
 rb = "0.3.2"
