@@ -43,6 +43,10 @@ lazy_static! {
         m.insert("discnumber"                  , StandardTagKey::DiscNumber);
         m.insert("discsubtitle"                , StandardTagKey::DiscSubtitle);
         m.insert("disctotal"                   , StandardTagKey::DiscTotal);
+        m.insert("disk"                        , StandardTagKey::DiscNumber);
+        m.insert("disknumber"                  , StandardTagKey::DiscNumber);
+        m.insert("disksubtitle"                , StandardTagKey::DiscSubtitle);
+        m.insert("disktotal"                   , StandardTagKey::DiscTotal);
         m.insert("djmixer"                     , StandardTagKey::MixDj);
         m.insert("ean/upn"                     , StandardTagKey::IdentEanUpn);
         m.insert("encoded-by"                  , StandardTagKey::EncodedBy);
