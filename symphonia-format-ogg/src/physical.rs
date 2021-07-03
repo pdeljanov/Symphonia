@@ -78,7 +78,7 @@ impl PhysicalStream {
             // Get the calculated CRC for the page.
             let calculated_crc = reader_crc32.monitor().crc();
 
-            if self.page.crc != calculated_crc {
+            if self.page.crc != calculated_crc && cfg!(not(fuzzing)) {
                 warn!(
                     "crc mismatch: expected {:#x}, got {:#x}",
                     self.page.crc,

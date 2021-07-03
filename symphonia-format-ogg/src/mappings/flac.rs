@@ -227,7 +227,7 @@ fn decode_frame_header(buf: &[u8]) -> Result<FrameHeader> {
     // Read the expected CRC-8 checksum from the frame header.
     let crc8_expected = reader_crc8.into_inner().read_u8()?;
 
-    if crc8_expected != crc8_computed {
+    if crc8_expected != crc8_computed && cfg!(not(fuzzing)) {
         return decode_error("ogg: flac computed frame header CRC does not match expected CRC");
     }
 
