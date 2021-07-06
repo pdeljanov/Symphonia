@@ -10,7 +10,7 @@
 
 use crate::errors::{Result, unsupported_error};
 use crate::formats::{FormatOptions, FormatReader};
-use crate::io::{ByteStream, MediaSourceStream};
+use crate::io::{ReadBytes, MediaSourceStream};
 use crate::meta::{MetadataReader, MetadataOptions, MetadataLog, Metadata};
 
 use log::{error, info};

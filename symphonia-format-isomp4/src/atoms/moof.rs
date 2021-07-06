@@ -6,7 +6,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use symphonia_core::errors::{Result, decode_error};
-use symphonia_core::io::ByteStream;
+use symphonia_core::io::ReadBytes;
 
 use crate::atoms::{Atom, AtomHeader, AtomIterator, AtomType, MfhdAtom, TrafAtom};
 
@@ -29,7 +29,7 @@ impl Atom for MoofAtom {
         self.header
     }
 
-    fn read<B: ByteStream>(reader: &mut B, header: AtomHeader) -> Result<Self> {
+    fn read<B: ReadBytes>(reader: &mut B, header: AtomHeader) -> Result<Self> {
         let moof_base_pos = reader.pos() - AtomHeader::HEADER_SIZE;
 
         let mut mfhd = None;

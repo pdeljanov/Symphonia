@@ -8,7 +8,7 @@
 use std::collections::VecDeque;
 
 use symphonia_core::errors::Result;
-use symphonia_core::io::ByteStream;
+use symphonia_core::io::ReadBytes;
 
 use log::{debug, error, warn};
 
@@ -87,7 +87,7 @@ impl LogicalStream {
 
     /// Read the body of a page from the provided `ByteStream` and enqueues complete packets onto
     /// the stream's packet queue.
-    pub fn read<B: ByteStream>(&mut self, reader: &mut B, page: &PageHeader) -> Result<()> {
+    pub fn read<B: ReadBytes>(&mut self, reader: &mut B, page: &PageHeader) -> Result<()> {
         let mut payload_len = 0;
         let mut packet_len = self.write_at - self.read_from;
 

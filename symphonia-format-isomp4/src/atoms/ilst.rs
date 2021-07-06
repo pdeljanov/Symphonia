@@ -6,7 +6,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use symphonia_core::errors::{Result, decode_error};
-use symphonia_core::io::{ByteStream, BufStream};
+use symphonia_core::io::{ReadBytes, BufReader};
 use symphonia_core::util::bits;
 use symphonia_core::meta::{MetadataRevision, MetadataBuilder, StandardTagKey, StandardVisualKey, Tag};
 use symphonia_core::meta::{Value, Visual};
@@ -122,7 +122,7 @@ fn parse_signed_int8(data: &[u8]) -> Option<Value> {
 fn parse_signed_int16(data: &[u8]) -> Option<Value> {
     match data.len() {
         2 => {
-            let u = BufStream::new(data).read_be_u16().ok()?;
+            let u = BufReader::new(data).read_be_u16().ok()?;
             let s = bits::sign_extend_leq16_to_i16(u, 16);
             Some(Value::from(s))
         }
@@ -133,7 +133,7 @@ fn parse_signed_int16(data: &[u8]) -> Option<Value> {
 fn parse_signed_int32(data: &[u8]) -> Option<Value> {
     match data.len() {
         4 => {
-            let u = BufStream::new(data).read_be_u32().ok()?;
+            let u = BufReader::new(data).read_be_u32().ok()?;
             let s = bits::sign_extend_leq32_to_i32(u, 32);
             Some(Value::from(s))
         }
@@ -144,7 +144,7 @@ fn parse_signed_int32(data: &[u8]) -> Option<Value> {
 fn parse_signed_int64(data: &[u8]) -> Option<Value> {
     match data.len() {
         8 => {
-            let u = BufStream::new(data).read_be_u64().ok()?;
+            let u = BufReader::new(data).read_be_u64().ok()?;
             let s = bits::sign_extend_leq64_to_i64(u, 64);
             Some(Value::from(s))
         }
@@ -171,7 +171,7 @@ fn parse_unsigned_int8(data: &[u8]) -> Option<Value> {
 fn parse_unsigned_int16(data: &[u8]) -> Option<Value> {
     match data.len() {
         2 => {
-            let u = BufStream::new(data).read_be_u16().ok()?;
+            let u = BufReader::new(data).read_be_u16().ok()?;
             Some(Value::from(u))
         }
         _ => None
@@ -181,7 +181,7 @@ fn parse_unsigned_int16(data: &[u8]) -> Option<Value> {
 fn parse_unsigned_int32(data: &[u8]) -> Option<Value> {
     match data.len() {
         4 => {
-            let u = BufStream::new(data).read_be_u32().ok()?;
+            let u = BufReader::new(data).read_be_u32().ok()?;
             Some(Value::from(u))
         }
         _ => None
@@ -191,7 +191,7 @@ fn parse_unsigned_int32(data: &[u8]) -> Option<Value> {
 fn parse_unsigned_int64(data: &[u8]) -> Option<Value> {
     match data.len() {
         8 => {
-            let u = BufStream::new(data).read_be_u64().ok()?;
+            let u = BufReader::new(data).read_be_u64().ok()?;
             Some(Value::from(u))
         }
         _ => None
@@ -210,7 +210,7 @@ fn parse_var_unsigned_int(data: &[u8]) -> Option<Value> {
 fn parse_float32(data: &[u8]) -> Option<Value> {
     match data.len() {
         4 => {
-            let f = BufStream::new(data).read_be_f32().ok()?;
+            let f = BufReader::new(data).read_be_f32().ok()?;
             Some(Value::Float(f64::from(f)))
         }
         _ => None
@@ -220,7 +220,7 @@ fn parse_float32(data: &[u8]) -> Option<Value> {
 fn parse_float64(data: &[u8]) -> Option<Value> {
     match data.len() {
         8 => {
-            let f = BufStream::new(data).read_be_f64().ok()?;
+            let f = BufReader::new(data).read_be_f64().ok()?;
             Some(Value::Float(f))
         }
         _ => None
@@ -251,7 +251,7 @@ fn parse_tag_value(data_type: DataType, data: &[u8]) -> Option<Value> {
 
 /// Reads and parses a `MetaTagAtom` from the provided iterator and adds it to the `MetadataBuilder`
 /// if there are no errors.
-fn add_generic_tag<B: ByteStream>(
+fn add_generic_tag<B: ReadBytes>(
     iter: &mut AtomIterator<B>,
     builder: &mut MetadataBuilder,
     std_key: Option<StandardTagKey>,
@@ -272,7 +272,7 @@ fn add_generic_tag<B: ByteStream>(
     Ok(())
 }
 
-fn add_var_unsigned_int_tag<B: ByteStream>(
+fn add_var_unsigned_int_tag<B: ReadBytes>(
     iter: &mut AtomIterator<B>,
     builder: &mut MetadataBuilder,
     std_key: StandardTagKey,
@@ -292,7 +292,7 @@ fn add_var_unsigned_int_tag<B: ByteStream>(
     Ok(())
 }
 
-fn add_var_signed_int_tag<B: ByteStream>(
+fn add_var_signed_int_tag<B: ReadBytes>(
     iter: &mut AtomIterator<B>,
     builder: &mut MetadataBuilder,
     std_key: StandardTagKey,
@@ -312,7 +312,7 @@ fn add_var_signed_int_tag<B: ByteStream>(
     Ok(())
 }
 
-fn add_boolean_tag<B: ByteStream>(
+fn add_boolean_tag<B: ReadBytes>(
     iter: &mut AtomIterator<B>,
     builder: &mut MetadataBuilder,
     std_key: StandardTagKey,
@@ -333,7 +333,7 @@ fn add_boolean_tag<B: ByteStream>(
     Ok(())
 }
 
-fn add_m_of_n_tag<B: ByteStream>(
+fn add_m_of_n_tag<B: ReadBytes>(
     iter: &mut AtomIterator<B>,
     builder: &mut MetadataBuilder,
     m_key: StandardTagKey,
@@ -358,7 +358,7 @@ fn add_m_of_n_tag<B: ByteStream>(
     Ok(())
 }
 
-fn add_visual_tag<B: ByteStream>(
+fn add_visual_tag<B: ReadBytes>(
     iter: &mut AtomIterator<B>,
     builder: &mut MetadataBuilder,
 ) -> Result<()> {
@@ -388,14 +388,14 @@ fn add_visual_tag<B: ByteStream>(
     Ok(())
 }
 
-fn add_advisory_tag<B: ByteStream>(
+fn add_advisory_tag<B: ReadBytes>(
     _iter: &mut AtomIterator<B>,
     _builder: &mut MetadataBuilder,
 ) -> Result<()> {
     Ok(())
 }
 
-fn add_media_type_tag<B: ByteStream>(
+fn add_media_type_tag<B: ReadBytes>(
     iter: &mut AtomIterator<B>,
     builder: &mut MetadataBuilder,
 ) -> Result<()> {
@@ -429,7 +429,7 @@ fn add_media_type_tag<B: ByteStream>(
     Ok(())
 }
 
-fn add_id3v1_genre_tag<B: ByteStream>(
+fn add_id3v1_genre_tag<B: ReadBytes>(
     iter: &mut AtomIterator<B>,
     builder: &mut MetadataBuilder,
 ) -> Result<()> {
@@ -439,7 +439,7 @@ fn add_id3v1_genre_tag<B: ByteStream>(
     // There should only be 1 value.
     if let Some(value) = tag.values.first() {
         // The ID3v1 genre is stored as a unsigned 16-bit big-endian integer.
-        let index = BufStream::new(&value.data).read_be_u16()?;
+        let index = BufReader::new(&value.data).read_be_u16()?;
 
         // The stored index uses 1-based indexing, but the ID3v1 genre list is 0-based.
         if index > 0 {
@@ -454,7 +454,7 @@ fn add_id3v1_genre_tag<B: ByteStream>(
     Ok(())
 }
 
-fn add_freeform_tag<B: ByteStream>(
+fn add_freeform_tag<B: ReadBytes>(
     iter: &mut AtomIterator<B>,
     builder: &mut MetadataBuilder,
 ) -> Result<()> {
@@ -497,7 +497,7 @@ impl Atom for MetaTagDataAtom {
         self.header
     }
 
-    fn read<B: ByteStream>(reader: &mut B, header: AtomHeader) -> Result<Self> {
+    fn read<B: ReadBytes>(reader: &mut B, header: AtomHeader) -> Result<Self> {
         let (version, flags) = AtomHeader::read_extra(reader)?;
 
         // For the mov brand, this a data type indicator and must always be 0 (well-known type). It
@@ -542,7 +542,7 @@ impl Atom for MetaTagNamespaceAtom {
         self.header
     }
 
-    fn read<B: ByteStream>(reader: &mut B, header: AtomHeader) -> Result<Self> {
+    fn read<B: ReadBytes>(reader: &mut B, header: AtomHeader) -> Result<Self> {
         let (_, _) = AtomHeader::read_extra(reader)?;
 
         let buf = reader.read_boxed_slice_exact(
@@ -598,7 +598,7 @@ impl Atom for MetaTagAtom {
         self.header
     }
 
-    fn read<B: ByteStream>(reader: &mut B, header: AtomHeader) -> Result<Self> {
+    fn read<B: ReadBytes>(reader: &mut B, header: AtomHeader) -> Result<Self> {
         let mut iter = AtomIterator::new(reader, header);
 
         let mut mean = None;
@@ -642,7 +642,7 @@ impl Atom for IlstAtom {
         self.header
     }
 
-    fn read<B: ByteStream>(reader: &mut B, header: AtomHeader) -> Result<Self> {
+    fn read<B: ReadBytes>(reader: &mut B, header: AtomHeader) -> Result<Self> {
         let mut iter = AtomIterator::new(reader, header);
 
         let mut mb = MetadataBuilder::new();

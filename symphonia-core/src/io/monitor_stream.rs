@@ -7,9 +7,10 @@
 
 use std::io;
 
-use super::ByteStream;
+use super::ReadBytes;
 
-/// A `Monitor` provides a common interface to observe operations performed on a stream.
+/// A `Monitor` provides a common interface to examine the operations observed be
+/// a [`MonitorStream`].
 pub trait Monitor {
     fn process_byte(&mut self, byte: u8);
 
@@ -37,14 +38,14 @@ pub trait Monitor {
     fn process_buf_bytes(&mut self, buf: &[u8]);
 }
 
-/// A `MonitorStream` is a passive monitoring stream which observes all operations performed on the
-/// inner stream and forwards an immutable reference of the result to a `Monitor`.
-pub struct MonitorStream<B: ByteStream, M: Monitor> {
+/// A `MonitorStream` is a passive stream that observes all operations performed on the inner
+/// stream and forwards an immutable reference of the result to a [`Monitor`].
+pub struct MonitorStream<B: ReadBytes, M: Monitor> {
     inner: B,
     monitor: M,
 }
 
-impl<B: ByteStream, M: Monitor> MonitorStream<B, M> {
+impl<B: ReadBytes, M: Monitor> MonitorStream<B, M> {
     pub fn new(inner: B, monitor: M) -> MonitorStream<B, M> {
         MonitorStream {
             inner,
@@ -73,7 +74,7 @@ impl<B: ByteStream, M: Monitor> MonitorStream<B, M> {
     }
 }
 
-impl<B : ByteStream, M: Monitor> ByteStream for MonitorStream<B, M> {
+impl<B : ReadBytes, M: Monitor> ReadBytes for MonitorStream<B, M> {
     #[inline(always)]
     fn read_byte(&mut self) -> io::Result<u8> {
         let byte = self.inner.read_byte()?;

@@ -6,7 +6,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use symphonia_core::errors::{Result, decode_error};
-use symphonia_core::io::ByteStream;
+use symphonia_core::io::ReadBytes;
 use symphonia_core::util::bits;
 
 use crate::atoms::{Atom, AtomHeader};
@@ -72,7 +72,7 @@ impl Atom for TrunAtom {
         self.header
     }
 
-    fn read<B: ByteStream>(reader: &mut B, header: AtomHeader) -> Result<Self> {
+    fn read<B: ReadBytes>(reader: &mut B, header: AtomHeader) -> Result<Self> {
         // Track fragment run atom flags.
         const DATA_OFFSET_PRESENT: u32 = 0x1;
         const FIRST_SAMPLE_FLAGS_PRESENT: u32 = 0x4;

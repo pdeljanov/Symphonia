@@ -8,18 +8,20 @@
 use std::cmp;
 use std::io;
 
-use super::{ByteStream, FiniteStream};
+use super::{ReadBytes, FiniteStream};
 
 const OUT_OF_BOUNDS_ERROR_STR: &str = "out of bounds";
 
-/// A `ScopedStream` restricts the number of bytes read to a specified limit.
-pub struct ScopedStream<B: ByteStream> {
+/// A `ScopedStream` restricts the number of bytes that may be read to an upper limit.
+pub struct ScopedStream<B: ReadBytes> {
     inner: B,
     len: u64,
     read: u64,
 }
 
-impl<B: ByteStream> ScopedStream<B> {
+impl<B: ReadBytes> ScopedStream<B> {
+    /// Instantiates a new `ScopedStream` with an upper limit on the number of bytes that can be
+    /// read from the inner source.
     pub fn new(inner: B, len: u64) -> Self {
         ScopedStream {
             inner,
@@ -49,7 +51,7 @@ impl<B: ByteStream> ScopedStream<B> {
     }
 }
 
-impl<B: ByteStream> FiniteStream for ScopedStream<B> {
+impl<B: ReadBytes> FiniteStream for ScopedStream<B> {
     /// Returns the length of the the `ScopedStream`.
     fn len(&self) -> u64 {
         self.len
@@ -66,7 +68,7 @@ impl<B: ByteStream> FiniteStream for ScopedStream<B> {
     }
 }
 
-impl<B: ByteStream,> ByteStream for ScopedStream<B> {
+impl<B: ReadBytes,> ReadBytes for ScopedStream<B> {
 
     #[inline(always)]
     fn read_byte(&mut self) -> io::Result<u8> {

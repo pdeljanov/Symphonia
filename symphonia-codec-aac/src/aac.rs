@@ -15,7 +15,7 @@ use std::f32::consts;
 use std::fmt;
 
 use symphonia_core::errors::{decode_error, unsupported_error, Result};
-use symphonia_core::io::{huffman::*, BitStream, FiniteBitStream, BitStreamLtr, BufStream};
+use symphonia_core::io::{huffman::*, ReadBitsLtr, FiniteBitStream, BitReaderLtr};
 use symphonia_core::audio::{AudioBuffer, AudioBufferRef, AsAudioBufferRef, Signal, SignalSpec};
 use symphonia_core::codecs::CODEC_TYPE_AAC;
 use symphonia_core::codecs::{CodecParameters, CodecDescriptor, Decoder, DecoderOptions};
@@ -95,7 +95,7 @@ impl M4AInfo {
         }
     }
 
-    fn read_object_type<B: BitStream>(bs: &mut B) -> Result<M4AType> {
+    fn read_object_type<B: ReadBitsLtr>(bs: &mut B) -> Result<M4AType> {
         let otypeidx = match bs.read_bits_leq32(5)? {
             idx if idx < 31 => idx as usize,
             31 => (bs.read_bits_leq32(6)? + 32) as usize,
@@ -109,7 +109,7 @@ impl M4AInfo {
         }
     }
 
-    fn read_sampling_frequency<B: BitStream>(bs: &mut B) -> Result<u32> {
+    fn read_sampling_frequency<B: ReadBitsLtr>(bs: &mut B) -> Result<u32> {
         match bs.read_bits_leq32(4)? {
             idx if idx < 15 => Ok(AAC_SAMPLE_RATES[idx as usize]),
             _ => {
@@ -119,7 +119,7 @@ impl M4AInfo {
         }
     }
 
-    fn read_channel_config<B: BitStream>(bs: &mut B) -> Result<usize> {
+    fn read_channel_config<B: ReadBitsLtr>(bs: &mut B) -> Result<usize> {
         let chidx = bs.read_bits_leq32(4)? as usize;
         if chidx < AAC_CHANNELS.len() {
             Ok(AAC_CHANNELS[chidx])
@@ -130,7 +130,7 @@ impl M4AInfo {
     }
 
     fn read(&mut self, buf: &[u8]) -> Result<()> {
-        let mut bs = BitStreamLtr::new(BufStream::new(buf));
+        let mut bs = BitReaderLtr::new(buf);
 
         self.otype = Self::read_object_type(&mut bs)?;
         self.srate = Self::read_sampling_frequency(&mut bs)?;
@@ -367,7 +367,7 @@ impl ICSInfo {
             long_win: true,
         }
     }
-    fn decode_ics_info<B: BitStream>(&mut self, bs: &mut B) -> Result<()> {
+    fn decode_ics_info<B: ReadBitsLtr>(&mut self, bs: &mut B) -> Result<()> {
         self.prev_window_sequence = self.window_sequence;
         self.prev_window_shape = self.window_shape;
 
@@ -441,7 +441,7 @@ impl ICSInfo {
 struct LTPData {}
 
 impl LTPData {
-    fn read<B: BitStream>(bs: &mut B) -> Result<Option<Self>> {
+    fn read<B: ReadBitsLtr>(bs: &mut B) -> Result<Option<Self>> {
         let predictor_data_present = bs.read_bit()?;
         if !predictor_data_present {
             return Ok(None);
@@ -484,7 +484,7 @@ struct PulseData {
 }
 
 impl PulseData {
-    fn read<B: BitStream>(bs: &mut B) -> Result<Option<Self>> {
+    fn read<B: ReadBitsLtr>(bs: &mut B) -> Result<Option<Self>> {
         let pulse_data_present = bs.read_bit()?;
         if !pulse_data_present {
             return Ok(None);
@@ -530,7 +530,7 @@ impl TNSCoeffs {
             coef: [0.0; TNS_MAX_ORDER + 1],
         }
     }
-    fn read<B: BitStream>(
+    fn read<B: ReadBitsLtr>(
         &mut self,
         bs: &mut B,
         long_win: bool,
@@ -600,7 +600,7 @@ struct TNSData {
 }
 
 impl TNSData {
-    fn read<B: BitStream>(
+    fn read<B: ReadBitsLtr>(
         bs: &mut B,
         long_win: bool,
         num_windows: usize,
@@ -637,7 +637,7 @@ struct GainControlData {
 }
 
 impl GainControlData {
-    fn read<B: BitStream>(bs: &mut B) -> Result<Option<Self>> {
+    fn read<B: ReadBitsLtr>(bs: &mut B) -> Result<Option<Self>> {
         let gain_control_data_present = bs.read_bit()?;
         if !gain_control_data_present {
             return Ok(None);
@@ -712,7 +712,7 @@ impl ICS {
         }
     }
 
-    fn decode_section_data<B: BitStream>(
+    fn decode_section_data<B: ReadBitsLtr>(
         &mut self,
         bs: &mut B
     ) -> Result<()> {
@@ -776,7 +776,7 @@ impl ICS {
         self.sfb_cb[g][sfb] == INTENSITY_HCB
     }
 
-    fn decode_scale_factor_data<B: BitStream>(&mut self, bs: &mut B) -> Result<()> {
+    fn decode_scale_factor_data<B: ReadBitsLtr>(&mut self, bs: &mut B) -> Result<()> {
         let mut noise_pcm_flag = true;
         let mut scf_intensity = 0i16;
         let mut scf_noise = i16::from(self.global_gain) - 90;
@@ -846,7 +846,7 @@ impl ICS {
         }
     }
 
-    fn decode_spectrum<B: BitStream>(&mut self, bs: &mut B) -> Result<()> {
+    fn decode_spectrum<B: ReadBitsLtr>(&mut self, bs: &mut B) -> Result<()> {
         // Zero all spectral coefficients.
         self.coeffs = [0.0; 1024];
         for g in 0..self.info.window_groups {
@@ -931,7 +931,7 @@ impl ICS {
         }
     }
 
-    fn decode_ics<B: BitStream>(
+    fn decode_ics<B: ReadBitsLtr>(
         &mut self,
         bs: &mut B,
         m4atype: M4AType,
@@ -1098,7 +1098,7 @@ fn decode_spectrum_noise(lcg: &mut Lcg, sf: f32, dst: &mut [f32]) {
     }
 }
 
-fn decode_quads<B: BitStream>(
+fn decode_quads<B: ReadBitsLtr>(
     bs: &mut B,
     cb: &'static HuffmanTable<H16>,
     unsigned: bool,
@@ -1141,7 +1141,7 @@ fn decode_quads<B: BitStream>(
     Ok(())
 }
 
-fn decode_pairs<B: BitStream>(
+fn decode_pairs<B: ReadBitsLtr>(
     bs: &mut B,
     cb: &'static HuffmanTable<H16>,
     unsigned: bool,
@@ -1188,12 +1188,8 @@ fn decode_pairs<B: BitStream>(
     Ok(())
 }
 
-fn read_escape<B: BitStream>(bs: &mut B, is_pos: bool) -> Result<i16> {
-    // TODO: Move into BitReaderLtr
-    let mut n = 0;
-    while bs.read_bit()? == true {
-        n += 1;
-    }
+fn read_escape<B: ReadBitsLtr>(bs: &mut B, is_pos: bool) -> Result<i16> {
+    let n = bs.read_unary_ones()?;
 
     validate!(n < 9);
 
@@ -1232,12 +1228,12 @@ impl ChannelPair {
         }
     }
 
-    fn decode_ga_sce<B: BitStream>(&mut self, bs: &mut B, m4atype: M4AType) -> Result<()> {
+    fn decode_ga_sce<B: ReadBitsLtr>(&mut self, bs: &mut B, m4atype: M4AType) -> Result<()> {
         self.ics0.decode_ics(bs, m4atype, false)?;
         Ok(())
     }
 
-    fn decode_ga_cpe<B: BitStream>(&mut self, bs: &mut B, m4atype: M4AType) -> Result<()> {
+    fn decode_ga_cpe<B: ReadBitsLtr>(&mut self, bs: &mut B, m4atype: M4AType) -> Result<()> {
         let common_window = bs.read_bit()?;
         self.common_window = common_window;
 
@@ -1533,7 +1529,7 @@ impl AacDecoder {
         Ok(())
     }
 
-    fn decode_ga<B: BitStream + FiniteBitStream>(&mut self, bs: &mut B) -> Result<()> {
+    fn decode_ga<B: ReadBitsLtr + FiniteBitStream>(&mut self, bs: &mut B) -> Result<()> {
         let mut cur_pair = 0;
         let mut cur_ch = 0;
         while bs.bits_left() > 3 {
@@ -1676,13 +1672,11 @@ impl Decoder for AacDecoder {
     }
 
     fn decode(&mut self, packet: &Packet) -> Result<AudioBufferRef<'_>> {
-        let reader = packet.as_buf_stream();
-
         // Clear the audio output buffer.
         self.buf.clear();
         self.buf.render_reserved(None);
 
-        let mut bs = BitStreamLtr::new(reader);
+        let mut bs = BitReaderLtr::new(packet.buf());
 
         // Choose decode step based on the object type.
         match self.m4ainfo.otype {

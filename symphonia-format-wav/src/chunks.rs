@@ -21,7 +21,7 @@ use symphonia_core::codecs::{
 };
 use symphonia_core::codecs::CodecType;
 use symphonia_core::errors::{Result, decode_error, unsupported_error};
-use symphonia_core::io::ByteStream;
+use symphonia_core::io::ReadBytes;
 use symphonia_core::meta::Tag;
 use symphonia_metadata::riff;
 
@@ -59,7 +59,7 @@ impl<T: ParseChunkTag> ChunksReader<T> {
         }
     }
 
-    pub fn next<B: ByteStream>(&mut self, reader: &mut B) -> Result<Option<T>> {
+    pub fn next<B: ReadBytes>(&mut self, reader: &mut B) -> Result<Option<T>> {
         // Loop until a chunk is recognized and returned, or the end of stream is reached.
         loop {
             // Align to the next 2-byte boundary if not currently aligned.
@@ -109,7 +109,7 @@ impl<T: ParseChunkTag> ChunksReader<T> {
         }
     }
 
-    pub fn finish<B: ByteStream>(&mut self, reader: &mut B) -> Result<()>{
+    pub fn finish<B: ReadBytes>(&mut self, reader: &mut B) -> Result<()>{
         // If data is remaining in this chunk, skip it.
         if self.consumed < self.len {
             let remaining = self.len - self.consumed;
@@ -128,7 +128,7 @@ impl<T: ParseChunkTag> ChunksReader<T> {
 
 /// Common trait implemented for all chunks that are parsed by a `ChunkParser`.
 pub trait ParseChunk : Sized {
-    fn parse<B: ByteStream>(reader: &mut B, tag: [u8; 4], len: u32) -> Result<Self>;
+    fn parse<B: ReadBytes>(reader: &mut B, tag: [u8; 4], len: u32) -> Result<Self>;
 }
 
 /// `ChunkParser` is a utility struct for unifying the parsing of chunks.
@@ -147,7 +147,7 @@ impl<P: ParseChunk> ChunkParser<P> {
         }
     }
 
-    pub fn parse<B: ByteStream>(&self, reader: &mut B) -> Result<P> {
+    pub fn parse<B: ReadBytes>(&self, reader: &mut B) -> Result<P> {
         P::parse(reader, self.tag, self.len)
     }
 }
@@ -268,7 +268,7 @@ pub struct WaveFormatChunk {
 
 impl WaveFormatChunk {
 
-    fn read_pcm_fmt<B: ByteStream>(
+    fn read_pcm_fmt<B: ReadBytes>(
         reader: &mut B,
         bits_per_sample: u16,
         n_channels: u16,
@@ -322,7 +322,7 @@ impl WaveFormatChunk {
         Ok(WaveFormatData::Pcm(WaveFormatPcm { bits_per_sample, channels, codec }))
     }
 
-    fn read_ieee_fmt<B: ByteStream>(
+    fn read_ieee_fmt<B: ReadBytes>(
         reader: &mut B,
         bits_per_sample: u16,
         n_channels: u16,
@@ -362,7 +362,7 @@ impl WaveFormatChunk {
         Ok(WaveFormatData::IeeeFloat(WaveFormatIeeeFloat { channels, codec }))
     }
 
-    fn read_ext_fmt<B: ByteStream>(
+    fn read_ext_fmt<B: ReadBytes>(
         reader: &mut B,
         bits_per_coded_sample: u16,
         len: u32,
@@ -480,7 +480,7 @@ impl WaveFormatChunk {
         }))
     }
 
-    fn read_alaw_pcm_fmt<B: ByteStream>(
+    fn read_alaw_pcm_fmt<B: ReadBytes>(
         reader: &mut B,
         n_channels: u16,
         len: u32,
@@ -504,7 +504,7 @@ impl WaveFormatChunk {
         Ok(WaveFormatData::ALaw(WaveFormatALaw{ codec: CODEC_TYPE_PCM_ALAW, channels }))
     }
 
-    fn read_mulaw_pcm_fmt<B: ByteStream>(
+    fn read_mulaw_pcm_fmt<B: ReadBytes>(
         reader: &mut B,
         n_channels: u16,
         len: u32,
@@ -530,7 +530,7 @@ impl WaveFormatChunk {
 }
 
 impl ParseChunk for WaveFormatChunk {
-    fn parse<B: ByteStream>(reader: &mut B, _tag: [u8; 4], len: u32) -> Result<WaveFormatChunk> {
+    fn parse<B: ReadBytes>(reader: &mut B, _tag: [u8; 4], len: u32) -> Result<WaveFormatChunk> {
         // WaveFormat has a minimal length of 16 bytes. This may be extended with format specific
         // data later.
         if len < 16 {
@@ -632,7 +632,7 @@ pub struct FactChunk {
 }
 
 impl ParseChunk for FactChunk {
-    fn parse<B: ByteStream>(reader: &mut B, _tag: [u8; 4], len: u32) -> Result<Self> {
+    fn parse<B: ReadBytes>(reader: &mut B, _tag: [u8; 4], len: u32) -> Result<Self> {
         // A Fact chunk is exactly 4 bytes long, though there is some mystery as to whether there
         // can be more fields in the chunk.
         if len != 4 {
@@ -657,13 +657,13 @@ pub struct ListChunk {
 }
 
 impl ListChunk {
-    pub fn skip<B: ByteStream>(&self, reader: &mut B) -> Result<()> {
+    pub fn skip<B: ReadBytes>(&self, reader: &mut B) -> Result<()> {
         ChunksReader::<NullChunks>::new(self.len).finish(reader)
     }
 }
 
 impl ParseChunk for ListChunk {
-    fn parse<B: ByteStream>(reader: &mut B, _tag: [u8; 4], len: u32) -> Result<Self> {
+    fn parse<B: ReadBytes>(reader: &mut B, _tag: [u8; 4], len: u32) -> Result<Self> {
         // A List chunk must contain atleast the list/form identifier. However, an empty list
         // (len == 4) is permissible.
         if len < 4 {
@@ -691,7 +691,7 @@ pub struct InfoChunk {
 }
 
 impl ParseChunk for InfoChunk {
-    fn parse<B: ByteStream>(reader: &mut B, tag: [u8; 4], len: u32) -> Result<InfoChunk> {
+    fn parse<B: ReadBytes>(reader: &mut B, tag: [u8; 4], len: u32) -> Result<InfoChunk> {
         // TODO: Apply limit.
         let mut value_buf = vec![0u8; len as usize];
         reader.read_buf_exact(&mut value_buf)?;
@@ -707,7 +707,7 @@ pub struct DataChunk {
 }
 
 impl ParseChunk for DataChunk {
-    fn parse<B: ByteStream>(_: &mut B, _: [u8; 4], len: u32) -> Result<DataChunk> {
+    fn parse<B: ReadBytes>(_: &mut B, _: [u8; 4], len: u32) -> Result<DataChunk> {
         Ok(DataChunk { len })
     }
 }

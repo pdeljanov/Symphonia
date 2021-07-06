@@ -44,7 +44,7 @@ impl Decoder for Mp3Decoder {
     }
 
     fn decode(&mut self, packet: &Packet) -> Result<AudioBufferRef<'_>> {
-        let mut reader = packet.as_buf_stream();
+        let mut reader = packet.as_buf_reader();
 
         let header = header::read_frame_header(&mut reader)?;
 

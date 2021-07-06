@@ -113,7 +113,7 @@ pub struct StreamInfo {
 
 impl StreamInfo {
 
-    pub fn read<B : ByteStream>(reader: &mut B)  -> Result<StreamInfo> {
+    pub fn read<B : ReadBytes>(reader: &mut B)  -> Result<StreamInfo> {
         let mut info = StreamInfo {
             block_len_min: 0,
             block_len_max: 0,
@@ -154,17 +154,17 @@ impl StreamInfo {
             return decode_error("maximum frame length is less than the minimum frame length");
         }
 
-        let mut br = BitReaderLtr::new();
+        let mut br = BitStreamLtr::new(reader);
 
         // Read sample rate, valid rates are [1, 655350] Hz.
-        info.sample_rate = br.read_bits_leq32(reader, 20)?;
+        info.sample_rate = br.read_bits_leq32(20)?;
 
         if info.sample_rate < 1 || info.sample_rate > 655_350 {
             return decode_error("stream sample rate out of bounds");
         }
 
         // Read number of channels minus 1. Valid number of channels are 1-8.
-        let channels_enc = br.read_bits_leq32(reader, 3)? + 1;
+        let channels_enc = br.read_bits_leq32(3)? + 1;
 
         if channels_enc < 1 || channels_enc > 8 {
             return decode_error("stream channels are out of bounds");
@@ -173,7 +173,7 @@ impl StreamInfo {
         info.channels = flac_channels_to_channels(channels_enc);
 
         // Read bits per sample minus 1. Valid number of bits per sample are 4-32.
-        info.bits_per_sample = br.read_bits_leq32(reader, 5)? + 1;
+        info.bits_per_sample = br.read_bits_leq32(5)? + 1;
 
         if info.bits_per_sample < 4 || info.bits_per_sample > 32 {
             return decode_error("stream bits per sample are out of bounds")
@@ -181,7 +181,7 @@ impl StreamInfo {
 
         // Read the total number of samples. All values are valid. A value of 0 indiciates a stream
         // of unknown length.
-        info.n_samples = match br.read_bits_leq64(reader, 36)? {
+        info.n_samples = match br.read_bits_leq64(36)? {
             0 => None,
             samples => Some(samples)
         };
@@ -193,14 +193,14 @@ impl StreamInfo {
     }
 }
 
-pub fn read_comment_block<B : ByteStream>(
+pub fn read_comment_block<B : ReadBytes>(
     reader: &mut B,
     metadata: &mut MetadataBuilder,
 ) -> Result<()> {
     vorbis::read_comment_no_framing(reader, metadata)
 }
 
-pub fn read_seek_table_block<B : ByteStream>(
+pub fn read_seek_table_block<B : ReadBytes>(
     reader: &mut B,
     block_length: u32,
     table: &mut SeekIndex
@@ -242,7 +242,7 @@ fn printable_ascii_to_string(bytes: &[u8]) -> Option<String> {
     Some(result)
 }
 
-pub fn read_cuesheet_block<B: ByteStream>(reader: &mut B, cues: &mut Vec<Cue>) -> Result<()> {
+pub fn read_cuesheet_block<B: ReadBytes>(reader: &mut B, cues: &mut Vec<Cue>) -> Result<()> {
     // Read cuesheet catalog number. The catalog number only allows printable ASCII characters.
     let mut catalog_number_buf = vec![0u8; 128];
     reader.read_buf_exact(&mut catalog_number_buf)?;
@@ -289,7 +289,7 @@ pub fn read_cuesheet_block<B: ByteStream>(reader: &mut B, cues: &mut Vec<Cue>) -
     Ok(())
 }
 
-fn read_cuesheet_track<B: ByteStream>(
+fn read_cuesheet_track<B: ReadBytes>(
     reader: &mut B,
     is_cdda: bool,
     cues: &mut Vec<Cue>
@@ -370,7 +370,7 @@ fn read_cuesheet_track<B: ByteStream>(
     Ok(())
 }
 
-fn read_cuesheet_track_index<B: ByteStream>(reader: &mut B, is_cdda: bool) -> Result<CuePoint> {
+fn read_cuesheet_track_index<B: ReadBytes>(reader: &mut B, is_cdda: bool) -> Result<CuePoint> {
     let n_offset_samples = reader.read_be_u64()?;
     let idx_point_enc = reader.read_be_u32()?;
 
@@ -395,7 +395,7 @@ fn read_cuesheet_track_index<B: ByteStream>(reader: &mut B, is_cdda: bool) -> Re
     })
 }
 
-pub fn read_application_block<B : ByteStream>(
+pub fn read_application_block<B : ReadBytes>(
     reader: &mut B,
     block_length: u32,
 ) -> Result<VendorData> {
@@ -415,7 +415,7 @@ pub fn read_application_block<B : ByteStream>(
     Ok(VendorData { ident, data })
 }
 
-pub fn read_picture_block<B : ByteStream>(
+pub fn read_picture_block<B : ReadBytes>(
     reader: &mut B,
     metadata: &mut MetadataBuilder,
 ) -> Result<()> {
@@ -495,7 +495,7 @@ pub struct MetadataBlockHeader {
 }
 
 impl MetadataBlockHeader {
-    pub fn read<B : ByteStream>(reader: &mut B) -> Result<MetadataBlockHeader> {
+    pub fn read<B : ReadBytes>(reader: &mut B) -> Result<MetadataBlockHeader> {
         let header_enc = reader.read_u8()?;
 
         // First bit of the header indicates if this is the last metadata block.

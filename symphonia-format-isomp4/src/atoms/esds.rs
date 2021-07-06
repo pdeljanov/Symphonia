@@ -6,7 +6,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use symphonia_core::errors::{Result, decode_error, unsupported_error};
-use symphonia_core::io::{ByteStream, FiniteStream, ScopedStream};
+use symphonia_core::io::{ReadBytes, FiniteStream, ScopedStream};
 
 use crate::atoms::{Atom, AtomHeader};
 
@@ -19,7 +19,7 @@ const SL_CONFIG_DESCRIPTOR: u8 = 0x06;
 
 const MIN_DESCRIPTOR_SIZE: u64 = 2;
 
-fn read_descriptor_header<B: ByteStream>(reader: &mut B) -> Result<(u8, u32)> {
+fn read_descriptor_header<B: ReadBytes>(reader: &mut B) -> Result<(u8, u32)> {
     let tag = reader.read_u8()?;
 
     let mut size = 0;
@@ -48,7 +48,7 @@ impl Atom for EsdsAtom {
         self.header
     }
 
-    fn read<B: ByteStream>(reader: &mut B, header: AtomHeader) -> Result<Self> {
+    fn read<B: ReadBytes>(reader: &mut B, header: AtomHeader) -> Result<Self> {
         let (_, _) = AtomHeader::read_extra(reader)?;
 
         let mut descriptor = None;
@@ -81,7 +81,7 @@ impl Atom for EsdsAtom {
 }
 
 pub trait ObjectDescriptor : Sized {
-    fn read<B: ByteStream>(reader: &mut B, len: u32) -> Result<Self>;
+    fn read<B: ReadBytes>(reader: &mut B, len: u32) -> Result<Self>;
 }
 
 /*
@@ -120,7 +120,7 @@ pub struct ESDescriptor {
 }
 
 impl ObjectDescriptor for ESDescriptor {
-    fn read<B: ByteStream>(reader: &mut B, len: u32) -> Result<Self> {
+    fn read<B: ReadBytes>(reader: &mut B, len: u32) -> Result<Self> {
 
         let es_id = reader.read_be_u16()?;
         let flags = reader.read_u8()?;
@@ -200,7 +200,7 @@ pub struct DecoderConfigDescriptor {
 }
 
 impl ObjectDescriptor for DecoderConfigDescriptor {
-    fn read<B: ByteStream>(reader: &mut B, len: u32) -> Result<Self> {
+    fn read<B: ReadBytes>(reader: &mut B, len: u32) -> Result<Self> {
         let object_type_indication = reader.read_u8()?;
 
         let (stream_type, upstream, reserved) = {
@@ -262,7 +262,7 @@ pub struct DecoderSpecificInfo {
 }
 
 impl ObjectDescriptor for DecoderSpecificInfo {
-    fn read<B: ByteStream>(reader: &mut B, len: u32) -> Result<Self> {
+    fn read<B: ReadBytes>(reader: &mut B, len: u32) -> Result<Self> {
         Ok(DecoderSpecificInfo {
             extra_data: reader.read_boxed_slice_exact(len as usize)?,
         })
@@ -311,7 +311,7 @@ pub struct SLDescriptor;
 
 impl ObjectDescriptor for SLDescriptor {
     
-    fn read<B: ByteStream>(reader: &mut B, _len: u32) -> Result<Self> {
+    fn read<B: ReadBytes>(reader: &mut B, _len: u32) -> Result<Self> {
         // const SLCONFIG_PREDEFINED_CUSTOM: u8 = 0x0;
         // const SLCONFIG_PREDEFINED_NULL: u8 = 0x1;
         const SLCONFIG_PREDEFINED_MP4: u8 = 0x2;

@@ -7,9 +7,6 @@
 
 use symphonia_core::audio::{Channels, Layout, SignalSpec};
 use symphonia_core::errors::{Result, decode_error};
-use symphonia_core::io::ByteStream;
-
-use log::info;
 
 use super::synthesis;
 
@@ -351,9 +348,9 @@ impl BitResevoir {
         }
     }
 
-    pub fn fill<B: ByteStream>(
+    pub fn fill(
         &mut self,
-        reader: &mut B,
+        pkt_main_data: &[u8],
         main_data_begin: usize,
         main_data_size: usize
     ) -> Result<()> {
@@ -368,27 +365,29 @@ impl BitResevoir {
         }
 
         // If the offset is less than or equal to the amount of data in the resevoir, shift the
-        // re-used bytes to the beginning of the resevoir.
+        // re-used bytes to the beginning of the resevoir, then copy the main data of the current
+        // packet into the resevoir.
         if main_data_begin <= self.len {
+            // Shift re-used bytes to the start of the resevoir.
             self.buf.copy_within(self.len - main_data_begin..self.len, 0);
+
+            // Copy new main data after the re-used bytes.
+            self.buf[main_data_begin..main_data_end].copy_from_slice(&pkt_main_data);
+            self.len = main_data_end;
+
+            Ok(())
         }
         else {
             // If the offset is greater than the amount of data in the resevoir, then the stream is
-            // malformed. However, there are many many ways this could happen. Shift all the data in
-            // the resevoir over by the amount of extra bytes expected and then zero the extra bytes.
-            info!("invalid main_data_begin offset.");
+            // malformed. This can occur if the decoder is starting in the middle of a stream. This
+            // is particularly common with online radio streams. In this case, copy the main data
+            // of the current packet into the resevoir, then return an error since decoding the
+            // current packet would produce a painful sound.
+            self.buf[self.len..self.len + main_data_size].copy_from_slice(&pkt_main_data);
+            self.len += main_data_size;
 
-            let extra = main_data_begin - self.len;
-
-            self.buf.copy_within(0..self.len, extra);
-            for byte in &mut self.buf[0..extra] { *byte = 0 }
+            decode_error("invalid main_data_begin")
         }
-
-        // Read the remaining amount of bytes from the stream into the resevoir.
-        reader.read_buf_exact(&mut self.buf[main_data_begin..main_data_end])?;
-        self.len = main_data_end;
-
-        Ok(())
     }
 
     pub fn bytes_ref(&self) -> &[u8] {

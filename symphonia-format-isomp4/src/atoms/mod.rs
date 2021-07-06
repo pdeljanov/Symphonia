@@ -6,7 +6,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use symphonia_core::errors::{Result, decode_error};
-use symphonia_core::io::ByteStream;
+use symphonia_core::io::ReadBytes;
 
 pub(crate) mod co64;
 pub(crate) mod ctts;
@@ -284,7 +284,7 @@ impl AtomHeader {
     const EXTRA_DATA_SIZE: u64 = 4;
 
     /// Reads an atom header from the provided `ByteStream`.
-    pub fn read<B: ByteStream>(reader: &mut B) -> Result<AtomHeader> {
+    pub fn read<B: ReadBytes>(reader: &mut B) -> Result<AtomHeader> {
         let mut atom_len = u64::from(reader.read_be_u32()?);
         let atype = AtomType::from(reader.read_quad_bytes()?);
 
@@ -326,7 +326,7 @@ impl AtomHeader {
 
     /// For applicable atoms, reads the atom header extra data: a tuple composed of a u8 version
     /// number, and a u24 bitset of flags.
-    pub fn read_extra<B: ByteStream>(reader: &mut B) -> Result<(u8, u32)> {
+    pub fn read_extra<B: ReadBytes>(reader: &mut B) -> Result<(u8, u32)> {
         Ok((
             reader.read_u8()?,
             reader.read_be_u24()?,
@@ -337,10 +337,10 @@ impl AtomHeader {
 pub trait Atom : Sized {
     fn header(&self) -> AtomHeader;
 
-    fn read<B: ByteStream>(reader: &mut B, header: AtomHeader) -> Result<Self>;
+    fn read<B: ReadBytes>(reader: &mut B, header: AtomHeader) -> Result<Self>;
 }
 
-pub struct AtomIterator<B: ByteStream> {
+pub struct AtomIterator<B: ReadBytes> {
     reader: B,
     len: Option<u64>,
     cur_atom: Option<AtomHeader>,
@@ -348,7 +348,7 @@ pub struct AtomIterator<B: ByteStream> {
     next_atom_pos: u64,
 }
 
-impl<B: ByteStream> AtomIterator<B> {
+impl<B: ReadBytes> AtomIterator<B> {
 
     pub fn new_root(reader: B, len: Option<u64>) -> Self {
         let base_pos = reader.pos();

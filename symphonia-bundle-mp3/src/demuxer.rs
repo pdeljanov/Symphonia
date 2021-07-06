@@ -262,21 +262,20 @@ struct FramePos {
 }
 
 /// Reads the main_data_begin field from the side information of a MP3 frame.
-fn read_main_data_begin<B: ByteStream>(reader: &mut B, header: &FrameHeader) -> Result<u16> {
+fn read_main_data_begin<B: ReadBytes>(reader: &mut B, header: &FrameHeader) -> Result<u16> {
     // After the head the optional CRC is present.
     if header.has_crc {
         let _crc = reader.read_be_u16()?;
     }
 
-    // Then the side-info.
-    let mut bs = BitStreamLtr::new(reader);
-
     // For MPEG version 1 the first 9 bits is main_data_begin.
-    if header.is_mpeg1() {
-        Ok(bs.read_bits_leq32(9)? as u16)
+    let main_data_begin = if header.is_mpeg1() {
+        reader.read_be_u16()? >> 7
     }
     // For MPEG version 2 the first 8 bits is main_data_begin.
     else {
-        Ok(bs.read_bits_leq32(8)? as u16)
-    }
+        u16::from(reader.read_u8()?)
+    };
+
+    Ok(main_data_begin)
 }

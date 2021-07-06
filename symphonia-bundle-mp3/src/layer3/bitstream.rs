@@ -6,7 +6,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use symphonia_core::errors::{Result, decode_error};
-use symphonia_core::io::{BitStream, BitStreamLtr, ByteStream};
+use symphonia_core::io::ReadBitsLtr;
 
 use super::{FrameData, Granule, GranuleChannel};
 use crate::common::*;
@@ -40,7 +40,7 @@ const SCALE_FACTOR_MPEG2_NSFB: [[[usize; 4]; 3]; 6] = [
 ];
 
 /// Reads the side_info for a single channel in a granule from a `BitStream`.
-fn read_granule_channel_side_info<B: BitStream>(
+fn read_granule_channel_side_info<B: ReadBitsLtr>(
     bs: &mut B,
     channel: &mut GranuleChannel,
     header: &FrameHeader,
@@ -174,7 +174,7 @@ fn read_granule_channel_side_info<B: BitStream>(
 }
 
 /// Reads the side_info for all channels in a granule from a `BitStream`.
-fn read_granule_side_info<B: BitStream>(
+fn read_granule_side_info<B: ReadBitsLtr>(
     bs: &mut B,
     granule: &mut Granule,
     header: &FrameHeader,
@@ -187,13 +187,11 @@ fn read_granule_side_info<B: BitStream>(
 }
 
 /// Reads the side_info of a MPEG audio frame from a `BitStream` into `FrameData`.
-pub(super) fn read_side_info<B: ByteStream>(
-    reader: &mut B,
+pub(super) fn read_side_info<B: ReadBitsLtr>(
+    bs: &mut B,
     header: &FrameHeader,
     frame_data: &mut FrameData
 ) -> Result<usize> {
-
-    let mut bs = BitStreamLtr::new(reader);
 
     // For MPEG version 1...
     let side_info_len = if header.is_mpeg1() {
@@ -239,14 +237,14 @@ pub(super) fn read_side_info<B: ByteStream>(
 
     // Read the side_info for each granule.
     for granule in frame_data.granules_mut(header.version) {
-        read_granule_side_info(&mut bs, granule, header)?;
+        read_granule_side_info(bs, granule, header)?;
     }
 
     Ok(side_info_len)
 }
 
 /// Reads the scale factors for a single channel in a granule in a MPEG version 1 audio frame.
-pub(super) fn read_scale_factors_mpeg1<B: BitStream>(
+pub(super) fn read_scale_factors_mpeg1<B: ReadBitsLtr>(
     bs: &mut B,
     gr: usize,
     ch: usize,
@@ -326,7 +324,7 @@ pub(super) fn read_scale_factors_mpeg1<B: BitStream>(
 }
 
 /// Reads the scale factors for a single channel in a granule in a MPEG version 2 audio frame.
-pub(super) fn read_scale_factors_mpeg2<B: BitStream>(
+pub(super) fn read_scale_factors_mpeg2<B: ReadBitsLtr>(
     bs: &mut B,
     is_intensity_stereo: bool,
     channel: &mut GranuleChannel,

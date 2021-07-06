@@ -10,7 +10,7 @@ use std::collections::VecDeque;
 
 use symphonia_core::checksum::Crc16Ansi;
 use symphonia_core::errors::{Result, Error};
-use symphonia_core::io::{BufStream, ByteStream, Monitor};
+use symphonia_core::io::{BufReader, ReadBytes, Monitor};
 use symphonia_core::util::bits;
 use symphonia_utils_xiph::flac::metadata::StreamInfo;
 
@@ -100,7 +100,7 @@ impl PacketParser {
         self.last_read_err = None;
     }
 
-    fn buffer_data<B: ByteStream>(&mut self, reader: &mut B) -> Result<()> {
+    fn buffer_data<B: ReadBytes>(&mut self, reader: &mut B) -> Result<()> {
         // Calculate the average frame size.
         let avg_frame_size = ((self.frame_size_hist[0]
                                 + self.frame_size_hist[1]
@@ -135,7 +135,7 @@ impl PacketParser {
         Ok(())
     }
 
-    fn read_fragments<B: ByteStream>(&mut self, reader: &mut B) -> Result<()> {
+    fn read_fragments<B: ReadBytes>(&mut self, reader: &mut B) -> Result<()> {
         // Buffer more data if there is not enough to scan for fragments.
         if self.buf_write - self.buf_read <= PacketParser::FLAC_MAX_FRAME_HEADER_LEN {
             self.buffer_data(reader)?;
@@ -180,7 +180,7 @@ impl PacketParser {
                     // If the header buffer passes a quick sanity check, then attempt to parse the
                     // frame header in its entirety.
                     if is_likely_frame_header(buf) {
-                        if let Ok(header) = read_frame_header(&mut BufStream::new(buf), sync) {
+                        if let Ok(header) = read_frame_header(&mut BufReader::new(buf), sync) {
                             // trace!(
                             //     "new fragment, ts={:?}, pos={}",
                             //     header.block_sequence,
@@ -316,7 +316,7 @@ impl PacketParser {
         (best, n_fragments, indicies)
     }
 
-    pub fn parse<B: ByteStream>(&mut self, reader: &mut B) -> Result<ParsedPacket> {
+    pub fn parse<B: ReadBytes>(&mut self, reader: &mut B) -> Result<ParsedPacket> {
         // Given the current set of fragments, which may or may not contain whole and valid frames,
         // determine which fragment is the best-pick for the next frame. Starting from that
         // fragment, attempt to build a complete and valid frame.

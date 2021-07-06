@@ -28,7 +28,7 @@ use symphonia_core::codecs::{CODEC_TYPE_PCM_ALAW, CODEC_TYPE_PCM_MULAW};
 use symphonia_core::conv::FromSample;
 use symphonia_core::errors::{Result, unsupported_error};
 use symphonia_core::formats::Packet;
-use symphonia_core::io::ByteStream;
+use symphonia_core::io::ReadBytes;
 
 macro_rules! read_pcm_signed {
     ($buf:expr, $read:expr, $shift:expr) => {
@@ -365,7 +365,7 @@ impl Decoder for PcmDecoder {
     }
 
     fn decode(&mut self, packet: &Packet) -> Result<AudioBufferRef<'_>> {
-        let mut stream = packet.as_buf_stream();
+        let mut stream = packet.as_buf_reader();
 
         // Signed or unsigned integer PCM codecs must be shifted to expand the sample into the
         // entire i32 range. Only floating point samples may exceed 32 bits per coded sample, but

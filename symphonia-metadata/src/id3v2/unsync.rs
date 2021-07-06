@@ -8,9 +8,9 @@
 use std::io;
 
 use symphonia_core::errors::Result;
-use symphonia_core::io::{ByteStream, FiniteStream};
+use symphonia_core::io::{ReadBytes, FiniteStream};
 
-pub fn read_syncsafe_leq32<B: ByteStream>(reader: &mut B, bit_width: u32) -> Result<u32> {
+pub fn read_syncsafe_leq32<B: ReadBytes>(reader: &mut B, bit_width: u32) -> Result<u32> {
     debug_assert!(bit_width <= 32);
 
     let mut result = 0u32;
@@ -48,12 +48,12 @@ pub fn decode_unsynchronisation(buf: &mut [u8]) -> &mut [u8] {
     &mut buf[..dst]
 }
 
-pub struct UnsyncStream<B: ByteStream + FiniteStream> {
+pub struct UnsyncStream<B: ReadBytes + FiniteStream> {
     inner: B,
     byte: u8,
 }
 
-impl<B: ByteStream + FiniteStream> UnsyncStream<B> {
+impl<B: ReadBytes + FiniteStream> UnsyncStream<B> {
     pub fn new(inner: B) -> Self {
         UnsyncStream {
             inner,
@@ -62,7 +62,7 @@ impl<B: ByteStream + FiniteStream> UnsyncStream<B> {
     }
 }
 
-impl<B: ByteStream + FiniteStream> FiniteStream for UnsyncStream<B> {
+impl<B: ReadBytes + FiniteStream> FiniteStream for UnsyncStream<B> {
     #[inline(always)]
     fn len(&self) -> u64 {
         self.inner.len()
@@ -79,7 +79,7 @@ impl<B: ByteStream + FiniteStream> FiniteStream for UnsyncStream<B> {
     }
 }
 
-impl<B: ByteStream + FiniteStream> ByteStream for UnsyncStream<B> {
+impl<B: ReadBytes + FiniteStream> ReadBytes for UnsyncStream<B> {
 
     fn read_byte(&mut self) -> io::Result<u8> {
         let last = self.byte;

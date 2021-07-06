@@ -8,7 +8,7 @@
 use std::fmt::Debug;
 
 use symphonia_core::errors::Result;
-use symphonia_core::io::ByteStream;
+use symphonia_core::io::ReadBytes;
 use symphonia_core::meta::{MetadataRevision, MetadataLog};
 
 use crate::atoms::{Atom, AtomHeader, AtomIterator, AtomType, IlstAtom};
@@ -39,7 +39,7 @@ impl Atom for MetaAtom {
         self.header
     }
 
-    fn read<B: ByteStream>(reader: &mut B, mut header: AtomHeader) -> Result<Self> {
+    fn read<B: ReadBytes>(reader: &mut B, mut header: AtomHeader) -> Result<Self> {
         let (_, _) = AtomHeader::read_extra(reader)?;
 
         // AtomIterator doesn't know the extra data was read already, so the extra data size must be

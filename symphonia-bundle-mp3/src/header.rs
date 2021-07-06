@@ -6,7 +6,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use symphonia_core::errors::{Result, decode_error, unsupported_error};
-use symphonia_core::io::ByteStream;
+use symphonia_core::io::ReadBytes;
 
 use crate::common::*;
 
@@ -52,7 +52,7 @@ static BIT_RATES_MPEG2_L23: [u32; 15] =
 
 /// Synchronize the provided reader to the end of the frame header, and return the frame header as
 /// as `u32`.
-pub fn sync_frame<B: ByteStream>(reader: &mut B) -> Result<u32> {
+pub fn sync_frame<B: ReadBytes>(reader: &mut B) -> Result<u32> {
     let mut sync = 0u32;
 
     // Synchronize stream to the next frame using the sync word. The MP3 frame header always starts
@@ -189,7 +189,7 @@ pub fn parse_frame_header(header: u32) -> Result<FrameHeader> {
 }
 
 /// Reads a MPEG audio frame header from the stream and return it or an error.
-pub fn read_frame_header<B: ByteStream>(reader: &mut B) -> Result<FrameHeader> {
+pub fn read_frame_header<B: ReadBytes>(reader: &mut B) -> Result<FrameHeader> {
     // Synchronize and parse the frame header.
     parse_frame_header(sync_frame(reader)?)
 }

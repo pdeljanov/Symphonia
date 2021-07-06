@@ -8,19 +8,20 @@
 use std::cmp;
 use std::io;
 
-use super::{ByteStream, FiniteStream};
+use super::{ReadBytes, FiniteStream};
 
 const UNDERRUN_ERROR_STR: &str = "buffer underrun";
 
-/// `BufStream` is a stream backed by a buffer.
-pub struct BufStream<'a> {
+/// A `BufReader` reads bytes from a byte buffer.
+pub struct BufReader<'a> {
     buf: &'a [u8],
     pos: usize,
 }
 
-impl<'a> BufStream<'a> {
+impl<'a> BufReader<'a> {
+    /// Instantiate a new `BufReader` with a given byte buffer.
     pub fn new(buf: &'a [u8]) -> Self {
-        BufStream {
+        BufReader {
             buf,
             pos: 0,
         }
@@ -83,9 +84,15 @@ impl<'a> BufStream<'a> {
         Ok(&self.buf[self.pos - len..self.pos])
     }
 
+    /// Returns a reference to the remaining bytes in the buffer and advances the stream to the end.
+    pub fn read_buf_bytes_available_ref(&mut self) -> &'a [u8] {
+        let pos = self.pos;
+        self.pos = self.buf.len();
+        &self.buf[pos..]
+    }
 }
 
-impl<'a> ByteStream for BufStream<'a> {
+impl<'a> ReadBytes for BufReader<'a> {
 
     #[inline(always)]
     fn read_byte(&mut self) -> io::Result<u8> {
@@ -184,7 +191,7 @@ impl<'a> ByteStream for BufStream<'a> {
     }
 }
 
-impl<'a> FiniteStream for BufStream<'a> {
+impl<'a> FiniteStream for BufReader<'a> {
     #[inline(always)]
     fn len(&self) -> u64 {
         self.buf.len() as u64

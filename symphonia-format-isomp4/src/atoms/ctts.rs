@@ -6,7 +6,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use symphonia_core::errors::Result;
-use symphonia_core::io::ByteStream;
+use symphonia_core::io::ReadBytes;
 
 use crate::atoms::{Atom, AtomHeader};
 
@@ -22,7 +22,7 @@ impl Atom for CttsAtom {
         self.header
     }
 
-    fn read<B: ByteStream>(_reader: &mut B, _header: AtomHeader) -> Result<Self> {
+    fn read<B: ReadBytes>(_reader: &mut B, _header: AtomHeader) -> Result<Self> {
         todo!()
     }
 }

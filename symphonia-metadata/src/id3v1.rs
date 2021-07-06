@@ -8,7 +8,7 @@
 //! An ID3v1 metadata reader.
 
 use symphonia_core::errors::{Result, unsupported_error};
-use symphonia_core::io::ByteStream;
+use symphonia_core::io::ReadBytes;
 use symphonia_core::meta::{MetadataBuilder, StandardTagKey, Tag, Value};
 
 static GENRES: &[&str] = &[
@@ -209,7 +209,7 @@ static GENRES: &[&str] = &[
     "Psybient"
 ];
 
-pub fn read_id3v1<B: ByteStream>(reader: &mut B, metadata: &mut MetadataBuilder) -> Result<()> {
+pub fn read_id3v1<B: ReadBytes>(reader: &mut B, metadata: &mut MetadataBuilder) -> Result<()> {
     // Read the "TAG" header.
     let marker = reader.read_triple_bytes()?;
 

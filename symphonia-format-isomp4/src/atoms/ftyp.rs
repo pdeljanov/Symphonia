@@ -6,7 +6,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use symphonia_core::errors::{Result, decode_error};
-use symphonia_core::io::ByteStream;
+use symphonia_core::io::ReadBytes;
 
 use crate::atoms::{Atom, AtomHeader};
 use crate::fourcc::FourCc;
@@ -21,7 +21,7 @@ pub struct FtypAtom {
 }
 
 impl Atom for FtypAtom {
-    fn read<B: ByteStream>(reader: &mut B, header: AtomHeader) -> Result<Self> {
+    fn read<B: ReadBytes>(reader: &mut B, header: AtomHeader) -> Result<Self> {
         // The Ftyp atom must be a multiple of 4 since it only stores FourCCs.
         if header.data_len & 0x3 != 0 {
             return decode_error("invalid ftyp data length");

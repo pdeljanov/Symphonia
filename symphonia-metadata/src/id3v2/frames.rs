@@ -10,7 +10,7 @@ use std::io;
 use std::str;
 
 use symphonia_core::errors::{Result, unsupported_error, decode_error};
-use symphonia_core::io::{ByteStream, BufStream, FiniteStream};
+use symphonia_core::io::{ReadBytes, BufReader, FiniteStream};
 use symphonia_core::meta::{StandardTagKey, Tag, Value};
 
 use encoding_rs::UTF_16BE;
@@ -156,7 +156,7 @@ pub enum FrameResult {
     MultipleTags(Vec<Tag>)
 }
 
-type FrameParser = fn(&mut BufStream<'_>, Option<StandardTagKey>, &str) -> Result<FrameResult>;
+type FrameParser = fn(&mut BufReader<'_>, Option<StandardTagKey>, &str) -> Result<FrameResult>;
 
 lazy_static! {
     static ref LEGACY_FRAME_MAP:
@@ -405,7 +405,7 @@ fn find_parser_legacy(id: [u8; 3]) -> Option<&'static (FrameParser, Option<Stand
 }
 
 /// Read an ID3v2.2 frame.
-pub fn read_id3v2p2_frame<B: ByteStream>(reader: &mut B) -> Result<FrameResult> {
+pub fn read_id3v2p2_frame<B: ReadBytes>(reader: &mut B) -> Result<FrameResult> {
     let id = reader.read_triple_bytes()?;
 
     // Check if the frame id contains valid characters. If it does not, then assume the rest of the
@@ -440,11 +440,11 @@ pub fn read_id3v2p2_frame<B: ByteStream>(reader: &mut B) -> Result<FrameResult> 
 
     let data = reader.read_boxed_slice_exact(size as usize)?;
 
-    parser(&mut BufStream::new(&data), *std_key, str::from_utf8(&id).unwrap())
+    parser(&mut BufReader::new(&data), *std_key, str::from_utf8(&id).unwrap())
 }
 
 /// Read an ID3v2.3 frame.
-pub fn read_id3v2p3_frame<B: ByteStream>(reader: &mut B) -> Result<FrameResult> {
+pub fn read_id3v2p3_frame<B: ReadBytes>(reader: &mut B) -> Result<FrameResult> {
     let id = reader.read_quad_bytes()?;
 
     // Check if the frame id contains valid characters. If it does not, then assume the rest of the
@@ -505,11 +505,11 @@ pub fn read_id3v2p3_frame<B: ByteStream>(reader: &mut B) -> Result<FrameResult> 
 
     let data = reader.read_boxed_slice_exact(size as usize)?;
 
-    parser(&mut BufStream::new(&data), *std_key, str::from_utf8(&id).unwrap())
+    parser(&mut BufReader::new(&data), *std_key, str::from_utf8(&id).unwrap())
 }
 
 /// Read an ID3v2.4 frame.
-pub fn read_id3v2p4_frame<B: ByteStream + FiniteStream>(reader: &mut B) -> Result<FrameResult> {
+pub fn read_id3v2p4_frame<B: ReadBytes + FiniteStream>(reader: &mut B) -> Result<FrameResult> {
     let id = reader.read_quad_bytes()?;
 
     // Check if the frame id contains valid characters. If it does not, then assume the rest of the
@@ -601,18 +601,18 @@ pub fn read_id3v2p4_frame<B: ByteStream + FiniteStream>(reader: &mut B) -> Resul
     if flags & 0x2 != 0x0 {
         let unsync_data = decode_unsynchronisation(&mut raw_data);
 
-        parser(&mut BufStream::new(&unsync_data), *std_key, str::from_utf8(&id).unwrap())
+        parser(&mut BufReader::new(&unsync_data), *std_key, str::from_utf8(&id).unwrap())
     }
     // The frame body has not been unsynchronised. Wrap the raw data buffer in BufStream without any
     // additional decoding.
     else {
-        parser(&mut BufStream::new(&raw_data), *std_key, str::from_utf8(&id).unwrap())
+        parser(&mut BufReader::new(&raw_data), *std_key, str::from_utf8(&id).unwrap())
     }
 }
 
 /// Reads all text frames frame except for `TXXX`.
 fn read_text_frame(
-    reader: &mut BufStream<'_>,
+    reader: &mut BufReader<'_>,
     std_key: Option<StandardTagKey>,
     id: &str,
 ) -> Result<FrameResult> {
@@ -646,7 +646,7 @@ fn read_text_frame(
 
 /// Reads a `TXXX` (user defined) text frame.
 fn read_txxx_frame(
-    reader: &mut BufStream<'_>,
+    reader: &mut BufReader<'_>,
     _: Option<StandardTagKey>,
     _: &str,
 ) -> Result<FrameResult> {
@@ -691,7 +691,7 @@ fn read_txxx_frame(
 
 /// Reads all URL frames except for `WXXX`.
 fn read_url_frame(
-    reader: &mut BufStream<'_>,
+    reader: &mut BufReader<'_>,
     std_key: Option<StandardTagKey>,
     id: &str,
 ) -> Result<FrameResult> {
@@ -705,7 +705,7 @@ fn read_url_frame(
 
 /// Reads a `WXXX` (user defined) URL frame.
 fn read_wxxx_frame(
-    reader: &mut BufStream<'_>,
+    reader: &mut BufReader<'_>,
     std_key: Option<StandardTagKey>,
     _: &str,
 ) -> Result<FrameResult> {
@@ -727,7 +727,7 @@ fn read_wxxx_frame(
 
 /// Reads a `PRIV` (private) frame.
 fn read_priv_frame(
-    reader: &mut BufStream<'_>,
+    reader: &mut BufReader<'_>,
     std_key: Option<StandardTagKey>,
     _: &str,
 ) -> Result<FrameResult> {
@@ -746,7 +746,7 @@ fn read_priv_frame(
 
 /// Reads a `COMM` (comment) or `USLT` (unsynchronized comment) frame.
 fn read_comm_uslt_frame(
-    reader: &mut BufStream<'_>,
+    reader: &mut BufReader<'_>,
     std_key: Option<StandardTagKey>,
     id: &str,
 ) -> Result<FrameResult> {
@@ -784,7 +784,7 @@ fn read_comm_uslt_frame(
 
 /// Reads a `PCNT` (total file play count) frame.
 fn read_pcnt_frame(
-    reader: &mut BufStream<'_>,
+    reader: &mut BufReader<'_>,
     std_key: Option<StandardTagKey>,
     id: &str,
 ) -> Result<FrameResult> {
@@ -817,7 +817,7 @@ fn read_pcnt_frame(
 
 /// Reads a `POPM` (popularimeter) frame.
 fn read_popm_frame(
-    reader: &mut BufStream<'_>,
+    reader: &mut BufReader<'_>,
     std_key: Option<StandardTagKey>,
     id: &str,
 ) -> Result<FrameResult> {
@@ -837,7 +837,7 @@ fn read_popm_frame(
 
 /// Reads a `MCDI` (music CD identifier) frame.
 fn read_mcdi_frame(
-    reader: &mut BufStream<'_>,
+    reader: &mut BufReader<'_>,
     std_key: Option<StandardTagKey>,
     id: &str,
 ) -> Result<FrameResult> {
@@ -888,7 +888,7 @@ impl Encoding {
 /// null terminator is not found, and `scan_len` is reached, or the stream is exhausted, all the
 /// scanned bytes up-to that point are interpreted as the string.
 fn scan_text<'a>(
-    reader: &'a mut BufStream<'_>,
+    reader: &'a mut BufReader<'_>,
     encoding: Encoding,
     scan_len: usize,
 ) -> io::Result<Cow<'a, str>> {

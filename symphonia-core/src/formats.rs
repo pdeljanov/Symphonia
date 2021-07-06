@@ -10,7 +10,7 @@
 
 use crate::codecs::CodecParameters;
 use crate::errors::Result;
-use crate::io::{BufStream, MediaSourceStream};
+use crate::io::{BufReader, MediaSourceStream};
 use crate::meta::{Metadata, Tag};
 use crate::units::{Time, TimeStamp};
 
@@ -248,8 +248,8 @@ impl Packet {
     }
 
     /// Get a `BufStream` to read the packet data buffer sequentially.
-    pub fn as_buf_stream(&self) -> BufStream {
-        BufStream::new(&self.data)
+    pub fn as_buf_reader(&self) -> BufReader {
+        BufReader::new(&self.data)
     }
 }
 

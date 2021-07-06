@@ -10,7 +10,7 @@ use crate::common::OggPacket;
 use super::{Bitstream, Mapper, MapResult};
 
 use symphonia_core::meta::MetadataBuilder;
-use symphonia_core::io::{BufStream, ByteStream};
+use symphonia_core::io::{BufReader, ReadBytes};
 use symphonia_core::errors::Result;
 use symphonia_core::codecs::{CodecParameters, CODEC_TYPE_OPUS};
 use symphonia_core::audio::Channels;
@@ -35,7 +35,7 @@ pub fn detect(buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> {
         return Ok(None);
     }
 
-    let mut reader = BufStream::new(&buf);
+    let mut reader = BufReader::new(&buf);
 
     // The first 8 bytes are the magic signature ASCII bytes.
     let mut magic = [0; 8];
@@ -169,7 +169,7 @@ impl Mapper for OpusMapper {
             // If the comment packet is still required, check if the packet is the comment packet.
             if packet.data.len() >= 8 && packet.data[..8] == *OGG_OPUS_COMMENT_SIGNATURE {
                 // This packet should be a metadata packet containing a Vorbis Comment.
-                let mut reader = BufStream::new(&packet.data[8..]);
+                let mut reader = BufReader::new(&packet.data[8..]);
                 let mut builder = MetadataBuilder::new();
 
                 vorbis::read_comment_no_framing(&mut reader, &mut builder)?;

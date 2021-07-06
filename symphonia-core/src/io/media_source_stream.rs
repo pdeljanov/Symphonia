@@ -10,7 +10,7 @@ use std::io;
 use std::io::{Seek, Read, IoSliceMut};
 use std::ops::Sub;
 
-use super::{ByteStream, MediaSource};
+use super::{ReadBytes, MediaSource};
 
 const END_OF_STREAM_ERROR_STR: &str = "end of stream";
 
@@ -28,9 +28,11 @@ impl Default for MediaSourceStreamOptions {
     }
 }
 
-/// A `MediaSourceStream` is the common `Read`er type for Symphonia. By using type erasure and
-/// dynamic dispatch, `MediaSourceStream` wraps and hides the inner reader from the consumer,
-/// allowing any typical `Read`er to be used with Symphonia in a generic way, selectable at runtime.
+/// `MediaSourceStream` is the main reader type for Symphonia.
+///
+/// By using type erasure and dynamic dispatch, `MediaSourceStream` wraps and hides the inner
+/// reader from the consumer, allowing any typical `Read`er to be used with Symphonia in a generic
+/// way, selectable at runtime.
 ///
 /// `MediaSourceStream` is designed to provide speed and flexibility in a number of challenging I/O
 /// scenarios.
@@ -309,7 +311,7 @@ impl io::Seek for MediaSourceStream {
 
 }
 
-impl ByteStream for MediaSourceStream {
+impl ReadBytes for MediaSourceStream {
 
     #[inline(always)]
     fn read_byte(&mut self) -> io::Result<u8> {
@@ -457,7 +459,7 @@ impl ByteStream for MediaSourceStream {
 #[cfg(test)]
 mod tests {
     use std::io::{Read, Cursor};
-    use super::{MediaSourceStream, ByteStream};
+    use super::{MediaSourceStream, ReadBytes};
 
     /// Generate a random vector of bytes of the specified length using a PRNG.
     fn generate_random_bytes(len: usize) -> Box<[u8]> {

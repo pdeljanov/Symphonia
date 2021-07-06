@@ -5,25 +5,40 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! The `io` module implements composable stream-based I/O.
+//! The `io` module implements composable bit- and byte-level I/O.
+//!
+//! The following nomenclature is used to denote where the data being read is sourced from:
+//!  * A `Stream` consumes any source implementing [`ReadBytes`] one byte at a time.
+//!  * A `Reader` consumes a `&[u8]`.
+//!
+//! The sole exception to this rule is [`MediaSourceStream`] which consumes sources implementing
+//! [`MediaSource`] (aka. [`std::io::Read`]).
+//!
+//! All `Reader`s and `Stream`s operating on bytes of data at a time implement the [`ReadBytes`]
+//! trait. Likewise, all `Reader`s and `Stream`s operating on bits of data at a time implement
+//! either the [`ReadBitsLtr`] or [`ReadBitsRtl`] traits depending on the order in which they
+//! consume bits.
 
 use std::io;
 use std::mem;
 
 mod bit;
-mod buf_stream;
+mod buf_reader;
 mod media_source_stream;
 mod monitor_stream;
 mod scoped_stream;
 
 pub use bit::*;
-pub use buf_stream::BufStream;
+pub use buf_reader::BufReader;
 pub use media_source_stream::{MediaSourceStream, MediaSourceStreamOptions};
 pub use monitor_stream::{Monitor, MonitorStream};
 pub use scoped_stream::ScopedStream;
 
-/// A `MediaSource` is a composite trait of `std::io::Read` and `std::io::Seek`. Despite requiring
-/// the `Seek` trait, seeking is an optional capability that can be queried at runtime.
+/// `MediaSource` is a composite trait of [`std::io::Read`] and [`std::io::Seek`]. A source *must*
+/// implement this trait to be used by [`MediaSourceStream`].
+///
+/// Despite requiring the [`std::io::Seek`] trait, seeking is an optional capability that can be
+/// queried at runtime.
 pub trait MediaSource: io::Read + io::Seek + Send {
     /// Returns if the source is seekable. This may be an expensive operation.
     fn is_seekable(&self) -> bool;
@@ -74,8 +89,8 @@ impl<T: std::convert::AsRef<[u8]> + Send> MediaSource for io::Cursor<T> {
     }
 }
 
-/// `ReadOnlySource` implements an unseekable `MediaSource` for any reader that implements the
-/// `std::io::Read` trait.
+/// `ReadOnlySource` wraps any source implementing [`std::io::Read`] in an unseekable
+/// [`MediaSource`].
 pub struct ReadOnlySource<R: io::Read> {
     inner: R,
 }
@@ -125,9 +140,9 @@ impl<R: io::Read> io::Seek for ReadOnlySource<R> {
     }
 }
 
-/// A `ByteStream` provides functions to read bytes and interpret them as little- or big-endian
+/// `ReadBytes` provides functions to read bytes and interpret them as little- or big-endian
 /// unsigned integers or floating-point values of standard widths.
-pub trait ByteStream {
+pub trait ReadBytes {
 
     /// Reads a single byte from the stream and returns it or an error.
     fn read_byte(&mut self) -> io::Result<u8>;
@@ -288,7 +303,7 @@ pub trait ByteStream {
     fn pos(&self) -> u64;
 }
 
-impl<'b, B: ByteStream> ByteStream for &'b mut B {
+impl<'b, R: ReadBytes> ReadBytes for &'b mut R {
     #[inline(always)]
     fn read_byte(&mut self) -> io::Result<u8> {
         (*self).read_byte()
@@ -340,13 +355,12 @@ impl<'b, B: ByteStream> ByteStream for &'b mut B {
     }
 }
 
-/// A `FiniteStream` is a stream that has a definitive length. A `FiniteStream` therefore knows how
-/// many bytes are available for reading, or have been previously read.
+/// A `FiniteStream` is a stream that has a known length in bytes.
 pub trait FiniteStream {
-    /// Returns the length of the the stream.
+    /// Returns the length of the the stream in bytes.
     fn len(&self) -> u64;
 
-    /// Returns the number of bytes read.
+    /// Returns the number of bytes previously read.
     fn bytes_read(&self) -> u64;
 
     /// Returns the number of bytes available for reading.

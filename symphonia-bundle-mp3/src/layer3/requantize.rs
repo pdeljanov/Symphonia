@@ -8,7 +8,7 @@
 use std::cmp::min;
 use std::{f32, f64};
 
-use symphonia_core::io::{BitStream, huffman::{H8, HuffmanTable}};
+use symphonia_core::io::{ReadBitsLtr, huffman::{H8, HuffmanTable}};
 use symphonia_core::errors::Result;
 
 use lazy_static::lazy_static;
@@ -115,7 +115,7 @@ const HUFFMAN_TABLES: [MpegHuffmanTable; 32] = [
 /// Note, each spectral sample is raised to the (4/3)-rd power. This is not actually part of the
 /// Huffman decoding process, but, by converting the integer sample to floating point here we don't
 /// need to do pointless casting or use an extra buffer.
-pub(super) fn read_huffman_samples<B: BitStream>(
+pub(super) fn read_huffman_samples<B: ReadBitsLtr>(
     bs: &mut B,
     channel: &GranuleChannel,
     part3_bits: u32,
@@ -170,7 +170,7 @@ pub(super) fn read_huffman_samples<B: BitStream>(
         // Otherwise, read the big_values.
         while i < *region_end && bits_read < part3_bits {
             // Decode the next Huffman code.
-            let (value, code_len) = bs.read_huffman(&table.huff_table, part3_bits - bits_read)?;
+            let (value, code_len) = bs.read_huffman(&table.huff_table, 0)?;
             bits_read += code_len;
 
             // In the big_values partition, each Huffman code decodes to two sample, x and y. Each
@@ -228,10 +228,7 @@ pub(super) fn read_huffman_samples<B: BitStream>(
     while i <= 572 && bits_read < part3_bits {
         // Decode the next Huffman code. Note that we allow the Huffman decoder a few extra bits in
         // case of a count1 overrun (see below for more details).
-        let (value, code_len) = bs.read_huffman(
-            &count1_table,
-            part3_bits + count1_table.n_table_bits - bits_read
-        )?;
+        let (value, code_len) = bs.read_huffman(&count1_table, 0)?;
         bits_read += code_len;
 
         // In the count1 partition, each Huffman code decodes to 4 samples: v, w, x, and y.

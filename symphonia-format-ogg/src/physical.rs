@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 
 use symphonia_core::checksum::Crc32;
 use symphonia_core::errors::{Result, decode_error};
-use symphonia_core::io::{ByteStream, BufStream, Monitor, MonitorStream};
+use symphonia_core::io::{ReadBytes, BufReader, Monitor, MonitorStream};
 
 use log::{debug, warn};
 
@@ -29,14 +29,14 @@ impl PhysicalStream {
         &self.page
     }
 
-    fn read_page<B: ByteStream>(&mut self, reader: &mut B) -> Result<()> {
+    fn read_page<B: ReadBytes>(&mut self, reader: &mut B) -> Result<()> {
         // Read the page header into a buffer.
         let mut page_header_buf = [0u8; 27];
 
         reader.read_buf_exact(&mut page_header_buf)?;
 
         // Parse the page header buffer.
-        self.page = read_page_header(&mut BufStream::new(&page_header_buf))?;
+        self.page = read_page_header(&mut BufReader::new(&page_header_buf))?;
 
         // trace!(
         //     "page {{ version={}, ts={}, serial={}, sequence={}, crc={:#x}, n_segments={}, \
@@ -97,7 +97,7 @@ impl PhysicalStream {
         Ok(())
     }
 
-    pub fn next_packet<B: ByteStream>(&mut self, reader: &mut B) -> Result<OggPacket> {
+    pub fn next_packet<B: ReadBytes>(&mut self, reader: &mut B) -> Result<OggPacket> {
         loop {
             // Read the next complete buffered packet. Complete packets can only be buffered in the
             // logical stream of the current page (if there any).

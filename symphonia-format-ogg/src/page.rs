@@ -6,7 +6,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use symphonia_core::errors::{Result, decode_error, unsupported_error};
-use symphonia_core::io::ByteStream;
+use symphonia_core::io::ReadBytes;
 
 const OGG_PAGE_MARKER: [u8; 4] = *b"OggS";
 
@@ -24,7 +24,7 @@ pub struct PageHeader {
 }
 
 /// Reads a `PageHeader` from the the provided `Bytestream`.
-pub fn read_page_header<B: ByteStream>(reader: &mut B) -> Result<PageHeader> {
+pub fn read_page_header<B: ReadBytes>(reader: &mut B) -> Result<PageHeader> {
     // The OggS marker should be present.
     let marker = reader.read_quad_bytes()?;
 

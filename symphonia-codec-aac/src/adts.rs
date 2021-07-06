@@ -66,7 +66,7 @@ struct AdtsHeader {
 impl AdtsHeader {
     const SIZE: usize = 7;
 
-    fn sync<B: ByteStream>(reader: &mut B) -> Result<()> {
+    fn sync<B: ReadBytes>(reader: &mut B) -> Result<()> {
         let mut sync = 0u16;
 
         while sync != 0xfff1 {
@@ -76,10 +76,14 @@ impl AdtsHeader {
         Ok(())
     }
 
-    fn read<B: ByteStream>(reader: &mut B) -> Result<Self> {
+    fn read<B: ReadBytes>(reader: &mut B) -> Result<Self> {
         AdtsHeader::sync(reader)?;
 
-        let mut bs = BitStreamLtr::new(reader);
+        // The header may be 5 or 7 bytes (without or with protection).
+        let mut buf = [0u8; 7];
+        reader.read_buf_exact(&mut buf[..5])?;
+
+        let mut bs = BitReaderLtr::new(&buf);
 
         // Profile
         let profile = M4A_TYPES[bs.read_bits_leq32(2)? as usize + 1];

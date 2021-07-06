@@ -11,7 +11,7 @@ use super::{Bitstream, Mapper, MapResult};
 
 use symphonia_core::codecs::{CodecParameters, CODEC_TYPE_VORBIS};
 use symphonia_core::errors::{Result, decode_error};
-use symphonia_core::io::{BufStream, ByteStream};
+use symphonia_core::io::{BufReader, ReadBytes};
 use symphonia_core::meta::MetadataBuilder;
 use symphonia_metadata::vorbis;
 
@@ -44,7 +44,7 @@ pub fn detect(buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> {
         return Ok(None);
     }
 
-    let mut reader = BufStream::new(&buf);
+    let mut reader = BufReader::new(&buf);
 
     // The packet type must be an identification header.
     let packet_type = reader.read_u8()?;
@@ -132,7 +132,7 @@ impl Mapper for VorbisMapper {
     }
 
     fn map_packet(&mut self, packet: &OggPacket) -> Result<MapResult> {
-        let mut reader = BufStream::new(&packet.data);
+        let mut reader = BufReader::new(&packet.data);
 
         // All Vorbis packets indicate the packet type in the first byte.
         let packet_type = reader.read_u8()?;

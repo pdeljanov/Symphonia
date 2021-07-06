@@ -11,7 +11,7 @@ use symphonia_core::{errors::end_of_stream_error, support_format};
 use symphonia_core::codecs::{CodecParameters, CODEC_TYPE_AAC};
 use symphonia_core::errors::{Result, SeekErrorKind, decode_error, seek_error, unsupported_error};
 use symphonia_core::formats::prelude::*;
-use symphonia_core::io::{ByteStream, MediaSource, MediaSourceStream};
+use symphonia_core::io::{ReadBytes, MediaSource, MediaSourceStream};
 use symphonia_core::meta::{Metadata, MetadataLog};
 use symphonia_core::probe::{Descriptor, Instantiate, QueryDescriptor};
 use symphonia_core::units::Time;

@@ -8,7 +8,7 @@
 use std::fmt;
 use symphonia_core::audio::{AudioBuffer, Signal};
 use symphonia_core::errors::{Result, decode_error, Error};
-use symphonia_core::io::{BitStream, BitStreamLtr, BufStream, ByteStream};
+use symphonia_core::io::{ReadBitsLtr, BitReaderLtr, BufReader, ReadBytes};
 
 use super::synthesis;
 use crate::common::*;
@@ -181,7 +181,7 @@ fn read_main_data(
             let byte_index = part2_3_begin >> 3;
             let bit_index = part2_3_begin & 0x7;
 
-            let mut bs = BitStreamLtr::new(BufStream::new(&main_data[byte_index..]));
+            let mut bs = BitReaderLtr::new(&main_data[byte_index..]);
 
             if bit_index > 0 {
                 bs.ignore_bits(bit_index as u32)?;
@@ -237,8 +237,8 @@ fn read_main_data(
 }
 
 /// Decode the MPEG audio frame into an `AudioBuffer`.
-pub fn decode_frame<B: ByteStream>(
-    reader: &mut B,
+pub fn decode_frame(
+    reader: &mut BufReader<'_>,
     header: &FrameHeader,
     state: &mut State,
     out: &mut AudioBuffer<f32>,
@@ -255,15 +255,19 @@ pub fn decode_frame<B: ByteStream>(
         None
     };
 
+    let buf = reader.read_buf_bytes_available_ref();
+
+    let mut bs = BitReaderLtr::new(buf);
+
     // Read side_info into the frame data.
     // TODO: Use a MonitorStream to compute the CRC.
-    let side_info_len = bitstream::read_side_info(reader, &header, &mut frame_data)?;
+    let side_info_len = bitstream::read_side_info(&mut bs, &header, &mut frame_data)?;
 
     // Buffer main_data into the bit resevoir.
     let main_data_len = header.frame_size - side_info_len - if header.has_crc { 2 } else { 0 };
 
     state.resevoir.fill(
-        reader,
+        &buf[side_info_len..],
         frame_data.main_data_begin as usize,
         main_data_len
     )?;

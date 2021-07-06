@@ -14,7 +14,7 @@ use symphonia_core::codecs::{CODEC_TYPE_FLAC, CodecParameters, CodecDescriptor};
 use symphonia_core::codecs::{Decoder, DecoderOptions};
 use symphonia_core::errors::{Result, decode_error, unsupported_error};
 use symphonia_core::formats::Packet;
-use symphonia_core::io::{BitStream, BitStreamLtr};
+use symphonia_core::io::{ReadBitsLtr, BitReaderLtr};
 use symphonia_core::support_codec;
 use symphonia_core::util::bits::sign_extend_leq32_to_i32;
 
@@ -131,7 +131,7 @@ impl Decoder for FlacDecoder {
     }
 
     fn decode(&mut self, packet: &Packet) -> Result<AudioBufferRef<'_>> {
-        let mut reader = packet.as_buf_stream();
+        let mut reader = packet.as_buf_reader();
 
         // Synchronize to a frame and get the synchronization code.
         let sync = sync_frame(&mut reader)?;
@@ -160,7 +160,7 @@ impl Decoder for FlacDecoder {
         // Only Bitstream reading for subframes.
         {
             // Sub-frames don't have any byte-aligned content, so use a BitReader.
-            let mut bs = BitStreamLtr::new(&mut reader);
+            let mut bs = BitReaderLtr::new(reader.read_buf_bytes_available_ref());
 
             // Read each subframe based on the channel assignment into a planar buffer.
             match header.channel_assignment {
@@ -232,7 +232,7 @@ enum SubFrameType {
     Linear(u32),
 }
 
-fn read_subframe<B: BitStream>(bs: &mut B, frame_bps: u32, buf: &mut [i32]) -> Result<()> {
+fn read_subframe<B: ReadBitsLtr>(bs: &mut B, frame_bps: u32, buf: &mut [i32]) -> Result<()> {
 
     // First sub-frame bit must always 0.
     if bs.read_bit()? {
@@ -263,7 +263,7 @@ fn read_subframe<B: BitStream>(bs: &mut B, frame_bps: u32, buf: &mut [i32]) -> R
     // bits per sample in the audio sub-block. If the bit is set, unary decode the number of
     // dropped bits per sample.
     let dropped_bps = if bs.read_bit()? {
-        bs.read_unary()? + 1
+        bs.read_unary_zeros()? + 1
     }
     else {
         0
@@ -303,7 +303,7 @@ fn samples_shl(shift: u32, buf: &mut [i32]) {
     }
 }
 
-fn decode_constant<B: BitStream>(bs: &mut B, bps: u32, buf: &mut [i32]) -> Result<()> {
+fn decode_constant<B: ReadBitsLtr>(bs: &mut B, bps: u32, buf: &mut [i32]) -> Result<()> {
     let const_sample = sign_extend_leq32_to_i32(bs.read_bits_leq32(bps)?, bps);
 
     for sample in buf.iter_mut() {
@@ -313,7 +313,7 @@ fn decode_constant<B: BitStream>(bs: &mut B, bps: u32, buf: &mut [i32]) -> Resul
     Ok(())
 }
 
-fn decode_verbatim<B: BitStream>(bs: &mut B, bps: u32, buf: &mut [i32]) -> Result<()> {
+fn decode_verbatim<B: ReadBitsLtr>(bs: &mut B, bps: u32, buf: &mut [i32]) -> Result<()> {
     for sample in buf.iter_mut() {
         *sample = sign_extend_leq32_to_i32(bs.read_bits_leq32(bps)?, bps);
     }
@@ -321,7 +321,7 @@ fn decode_verbatim<B: BitStream>(bs: &mut B, bps: u32, buf: &mut [i32]) -> Resul
     Ok(())
 }
 
-fn decode_fixed_linear<B: BitStream>(
+fn decode_fixed_linear<B: ReadBitsLtr>(
     bs: &mut B,
     bps: u32,
     order: u32,
@@ -343,7 +343,7 @@ fn decode_fixed_linear<B: BitStream>(
     Ok(())
 }
 
-fn decode_linear<B: BitStream>(bs: &mut B, bps: u32, order: u32, buf: &mut [i32]) -> Result<()> {
+fn decode_linear<B: ReadBitsLtr>(bs: &mut B, bps: u32, order: u32, buf: &mut [i32]) -> Result<()> {
     // The order of the Linear Predictor should be between 1 and 32.
     debug_assert!(order > 0 && order <= 32);
 
@@ -417,7 +417,7 @@ fn decode_linear<B: BitStream>(bs: &mut B, bps: u32, order: u32, buf: &mut [i32]
     Ok(())
 }
 
-fn decode_residual<B: BitStream>(
+fn decode_residual<B: ReadBitsLtr>(
     bs: &mut B,
     n_prelude_samples: u32,
     buf: &mut [i32]
@@ -481,7 +481,7 @@ fn decode_residual<B: BitStream>(
     Ok(())
 }
 
-fn decode_rice_partition<B: BitStream>(
+fn decode_rice_partition<B: ReadBitsLtr>(
     bs: &mut B,
     param_bit_width: u32,
     buf: &mut [i32]
@@ -499,7 +499,7 @@ fn decode_rice_partition<B: BitStream>(
 
         // Read each rice encoded residual and store in buffer.
         for sample in buf.iter_mut() {
-            let q = bs.read_unary()?;
+            let q = bs.read_unary_zeros()?;
             let r = bs.read_bits_leq32(rice_param)?;
             *sample = rice_signed_to_i32((q << rice_param) | r);
         }

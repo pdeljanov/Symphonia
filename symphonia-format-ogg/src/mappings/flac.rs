@@ -13,7 +13,7 @@ use symphonia_core::checksum::Crc8Ccitt;
 use symphonia_core::codecs::{CodecParameters, CODEC_TYPE_FLAC};
 use symphonia_core::errors::{Result, decode_error};
 use symphonia_core::meta::MetadataBuilder;
-use symphonia_core::io::{BufStream, ByteStream, MonitorStream};
+use symphonia_core::io::{BufReader, ReadBytes, MonitorStream};
 
 use symphonia_utils_xiph::flac::metadata::{MetadataBlockHeader, MetadataBlockType, StreamInfo};
 use symphonia_utils_xiph::flac::metadata::{read_comment_block, read_picture_block};
@@ -39,7 +39,7 @@ pub fn detect(buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> {
         return Ok(None);
     }
 
-    let mut reader = BufStream::new(&buf);
+    let mut reader = BufReader::new(&buf);
 
     // The first byte indicates the packet type and must be 0x7f.
     if reader.read_u8()? != OGG_FLAC_PACKET_TYPE {
@@ -103,7 +103,7 @@ pub fn detect(buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> {
 }
 
 /// Decodes a big-endian unsigned integer encoded via extended UTF8.
-fn utf8_decode_be_u64<B: ByteStream>(src : &mut B) -> Result<Option<u64>> {
+fn utf8_decode_be_u64<B: ReadBytes>(src : &mut B) -> Result<Option<u64>> {
     // NOTE: See the symphonia-bundle-flac crate for a detailed description of this function.
     let mut state = u64::from(src.read_u8()?);
 
@@ -135,7 +135,7 @@ struct FrameHeader {
 /// Try to decode a FLAC frame header from the provided buffer.
 fn decode_frame_header(buf: &[u8]) -> Result<FrameHeader> {
     // The FLAC frame header is checksummed with a CRC-8 hash.
-    let mut reader_crc8 = MonitorStream::new(BufStream::new(buf), Crc8Ccitt::new(0));
+    let mut reader_crc8 = MonitorStream::new(BufReader::new(buf), Crc8Ccitt::new(0));
 
     // Read the sync word.
     let sync = reader_crc8.read_be_u16()?;
@@ -264,7 +264,7 @@ impl Mapper for FlacMapper {
         }
         else {
             // Packet types in the range 0x01 thru 0x7f, and 0x81 thru 0xfe are metadata blocks.
-            let mut reader = BufStream::new(&packet.data);
+            let mut reader = BufReader::new(&packet.data);
             let header = MetadataBlockHeader::read(&mut reader)?;
 
             match header.block_type {

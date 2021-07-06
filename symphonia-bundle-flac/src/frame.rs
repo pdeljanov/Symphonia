@@ -7,7 +7,7 @@
 
 use symphonia_core::checksum::Crc8Ccitt;
 use symphonia_core::errors::{Result, decode_error};
-use symphonia_core::io::{ByteStream, MediaSourceStream, Monitor, MonitorStream};
+use symphonia_core::io::{ReadBytes, MediaSourceStream, Monitor, MonitorStream};
 
 #[derive(Debug)]
 enum BlockingStrategy {
@@ -53,7 +53,7 @@ pub struct FrameHeader {
     pub sample_rate: Option<u32>,
 }
 
-pub fn sync_frame<B: ByteStream>(reader: &mut B) -> Result<u16> {
+pub fn sync_frame<B: ReadBytes>(reader: &mut B) -> Result<u16> {
     let mut sync = 0u16;
 
     // Synchronize stream to Frame Header. FLAC specifies a byte-aligned 14 bit sync code of
@@ -66,7 +66,7 @@ pub fn sync_frame<B: ByteStream>(reader: &mut B) -> Result<u16> {
     Ok(sync)
 }
 
-pub fn read_frame_header<B: ByteStream>(reader: &mut B, sync: u16) -> Result<FrameHeader> {
+pub fn read_frame_header<B: ReadBytes>(reader: &mut B, sync: u16) -> Result<FrameHeader> {
     // The header is checksummed with a CRC8 hash. Include the sync code in this CRC.
     let mut crc8 = Crc8Ccitt::new(0);
     crc8.process_buf_bytes(&sync.to_be_bytes());
@@ -276,7 +276,7 @@ pub fn next_frame(reader: &mut MediaSourceStream) -> Result<NextFrameInfo> {
 /// Decodes a big-endian unsigned integer encoded via extended UTF8. In this context, extended UTF8
 /// simply means the encoded UTF8 value may be up to 7 bytes for a maximum integer bit width of
 /// 36-bits.
-fn utf8_decode_be_u64<B: ByteStream>(src : &mut B) -> Result<Option<u64>> {
+fn utf8_decode_be_u64<B: ReadBytes>(src : &mut B) -> Result<Option<u64>> {
     // Read the first byte of the UTF8 encoded integer.
     let mut state = u64::from(src.read_u8()?);
 
@@ -318,12 +318,12 @@ fn utf8_decode_be_u64<B: ByteStream>(src : &mut B) -> Result<Option<u64>> {
 
 #[cfg(test)]
 mod tests {
-    use symphonia_core::io::BufStream;
+    use symphonia_core::io::BufReader;
     use super::utf8_decode_be_u64;
 
     #[test]
     fn verify_utf8_decode_be_u64() {
-        let mut stream = BufStream::new(
+        let mut stream = BufReader::new(
             &[
                 0x24, 0xc2, 0xa2, 0xe0, 0xa4, 0xb9, 0xe2, 0x82,
                 0xac, 0xf0, 0x90, 0x8d, 0x88, 0xff, 0x80, 0xbf
