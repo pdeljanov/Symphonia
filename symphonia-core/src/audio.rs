@@ -522,18 +522,15 @@ impl<S: Sample> Signal<S> for AudioBuffer<S> {
         let first_idx = self.n_capacity * first;
         let second_idx = self.n_capacity * second;
 
-        // The AudioBuffer struct maintains the invariant that the underlying buffer is always 
-        // # of channels * n_capacity samples long. It also maintains the invariant that n_frames is
-        // always <= n_capacity. Therefore, so long as the first and second channel indicies are 
-        // unique and are strictly less than the AudioBuffer's channel count, it is safe to get
-        // mutable slices to each channel's respective part of the buffer.
-        assert!(first_idx < self.buf.len());
-        assert!(second_idx <self.buf.len());
+        if first_idx < second_idx {
+            let (a, b) = self.buf.split_at_mut(second_idx);
 
-        unsafe {
-            let ptr = self.buf.as_mut_ptr();
-            (slice::from_raw_parts_mut(ptr.add(first_idx), self.n_frames),
-             slice::from_raw_parts_mut(ptr.add(second_idx), self.n_frames))
+            (&mut a[first_idx..first_idx + self.n_frames], &mut b[..self.n_frames])
+        }
+        else {
+            let (a, b) = self.buf.split_at_mut(first_idx);
+            
+            (&mut b[..self.n_frames], &mut a[second_idx..second_idx + self.n_frames])
         }
     }
 
