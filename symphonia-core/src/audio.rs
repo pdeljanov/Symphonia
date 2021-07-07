@@ -526,7 +526,8 @@ impl<S: Sample> Signal<S> for AudioBuffer<S> {
             let (a, b) = self.buf.split_at_mut(second_idx);
 
             (&mut a[first_idx..first_idx + self.n_frames], &mut b[..self.n_frames])
-        } else {
+        }
+        else {
             let (a, b) = self.buf.split_at_mut(first_idx);
             
             (&mut b[..self.n_frames], &mut a[second_idx..second_idx + self.n_frames])
