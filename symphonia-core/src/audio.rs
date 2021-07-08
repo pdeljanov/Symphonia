@@ -743,9 +743,9 @@ impl<S: Sample + WriteSample> RawSampleBuffer<S> {
     }
 
     /// Gets an immutable slice to the bytes of the sample's written in the `RawSampleBuffer`.
-    pub fn as_bytes(&self) -> &[S::StreamType] {
+    pub fn as_bytes(&self) -> &[u8] {
         let end = self.n_written;
-        &self.buf[..end]
+        bytemuck::cast_slice(&self.buf[..end])
     }
 
     /// Copies all audio data from the source `AudioBufferRef` in planar channel order into the
