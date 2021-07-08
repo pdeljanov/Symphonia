@@ -161,10 +161,11 @@ pub struct ProbeResult {
     /// An instance of a `FormatReader` for the probed format
     pub format: Box<dyn FormatReader>,
     /// A queue of `Metadata` revisions read during the probe operation before the instantiation of
-    /// the `FormatReader`. If any additional metadata was present outside of the container, this is `Some` and the queue will have
-    /// at least one item in it.
+    /// the `FormatReader`. If any additional metadata was present outside of the container, this is
+    /// `Some` and the queue will have at least one item in it.
     ///
-    /// Metadata that was part of the container format itself can be read by calling `.metadata()` on `format`.
+    /// Metadata that was part of the container format itself can be read by calling `.metadata()`
+    /// on `format`.
     pub metadata: Option<MetadataQueue>,
 }
 
@@ -308,7 +309,8 @@ impl Probe {
 
                     let metadata = if metadata.current().is_some() {
                         Some(metadata)
-                    } else {
+                    }
+                    else {
                         None
                     };
 
