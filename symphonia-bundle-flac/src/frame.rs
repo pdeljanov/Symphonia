@@ -199,7 +199,7 @@ pub fn read_frame_header<B: ByteStream>(reader: &mut B, sync: u16) -> Result<Fra
     // Get expected CRC8 checksum from the header.
     let crc8_expected = reader_crc8.into_inner().read_u8()?;
 
-    if crc8_expected != crc8_computed {
+    if crc8_expected != crc8_computed && cfg!(not(fuzzing)) {
         return decode_error("computed frame header CRC does not match expected CRC");
     }
 
