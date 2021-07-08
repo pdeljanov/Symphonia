@@ -54,7 +54,7 @@ pub trait Sample:
 {
     /// The `StreamType` is the primitive data type, or fixed-size byte array, that represents the
     /// sample when exported.
-    type StreamType : Copy;
+    type StreamType : Copy + Default;
 
     /// A unique enum value representing the sample format. This constant may be used to dynamically
     /// choose how to process the sample at runtime.

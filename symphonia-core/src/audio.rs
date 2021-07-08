@@ -12,7 +12,6 @@ use std::borrow::Cow;
 use std::fmt;
 use std::marker::PhantomData;
 use std::mem;
-use std::slice;
 use std::vec::Vec;
 
 use arrayvec::ArrayVec;
@@ -707,7 +706,7 @@ impl<S: Sample> SampleBuffer<S> {
 /// converted into their packed data-type and stored as a stream of bytes. `RawSampleBuffer` is
 /// mean't for safely importing and exporting sample data to and from Symphonia as raw bytes.
 pub struct RawSampleBuffer<S: Sample + WriteSample> {
-    buf: Vec<u8>,
+    buf: Vec<S::StreamType>,
     n_written: usize,
     // Might take your heart.
     sample_format: PhantomData<S>,
@@ -724,7 +723,7 @@ impl<S: Sample + WriteSample> RawSampleBuffer<S> {
 
         // Allocate enough memory for all the samples.
         let byte_length = n_samples as usize * mem::size_of::<S::StreamType>();
-        let buf = vec![0u8; byte_length];
+        let buf = vec![S::StreamType::default(); byte_length];
 
         RawSampleBuffer {
             buf,
@@ -744,8 +743,8 @@ impl<S: Sample + WriteSample> RawSampleBuffer<S> {
     }
 
     /// Gets an immutable slice to the bytes of the sample's written in the `RawSampleBuffer`.
-    pub fn as_bytes(&self) -> &[u8] {
-        let end = self.n_written * mem::size_of::<S::StreamType>();
+    pub fn as_bytes(&self) -> &[S::StreamType] {
+        let end = self.n_written;
         &self.buf[..end]
     }
 
@@ -920,11 +919,11 @@ impl<S: Sample + WriteSample> RawSampleBuffer<S> {
     /// Gets a mutable byte buffer from the `RawSampleBuffer` where samples may be written. Calls to
     /// this function will overwrite any previously written data since it is not known how the
     /// samples for each channel are laid out in the buffer.
-    fn req_bytes_mut(&mut self, n_samples: usize) -> &mut [u8] {
+    fn req_bytes_mut(&mut self, n_samples: usize) -> &mut [S::StreamType] {
         assert!(n_samples <= self.capacity());
 
-        let end = n_samples * mem::size_of::<S::StreamType>();
-        self.n_written = n_samples;
+        let end = n_samples;
+        self.n_written = end;
         &mut self.buf[..end]
     }
 }
@@ -950,13 +949,10 @@ impl<'a, S: Sample + WriteSample> SampleWriter<'a, S> {
 
     fn from_buf(n_samples: usize, buf: &mut RawSampleBuffer<S>) -> SampleWriter<S> {
         let bytes = buf.req_bytes_mut(n_samples);
-        //TODO: explain why this is safe
-        unsafe {
-            SampleWriter {
-                buf: slice::from_raw_parts_mut(
-                    bytes.as_mut_ptr() as *mut S::StreamType, buf.capacity()),
-                next: 0,
-            }
+
+        SampleWriter {
+            buf: bytes,
+            next: 0,
         }
     }
 
