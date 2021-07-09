@@ -1,5 +1,7 @@
 # Symphonia FLAC Codec
 
+[![Docs](https://docs.rs/symphonia-bundle-flac/badge.svg)](https://docs.rs/symphonia-bundle-flac)
+
  > Come for the fidelity, stay for the memory safety!
 
 FLAC decoder for Project Symphonia.
