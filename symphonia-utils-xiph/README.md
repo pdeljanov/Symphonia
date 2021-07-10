@@ -1,6 +1,6 @@
 # Symphonia Xiph Utilities
 
-[![Docs](https://docs.rs/symphonia-xiph/badge.svg)](https://docs.rs/symphonia-xiph)
+[![Docs](https://docs.rs/symphonia-utils-xiph/badge.svg)](https://docs.rs/symphonia-utils-xiph)
 
 Common utilities for Xiph formats and codecs for Project Symphonia.
 

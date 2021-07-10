@@ -1,6 +1,6 @@
 # Symphonia OGG Demuxer
 
-[![Docs](https://docs.rs/symphonia-ogg/badge.svg)](https://docs.rs/symphonia-ogg)
+[![Docs](https://docs.rs/symphonia-format-ogg/badge.svg)](https://docs.rs/symphonia-format-ogg)
 
 OGG demuxer for Project Symphonia.
 
