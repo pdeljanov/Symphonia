@@ -1,5 +1,7 @@
 # Symphonia
 
+[![Docs](https://docs.rs/symphonia/badge.svg)](https://docs.rs/symphonia)
+
 Symphonia is a pure Rust audio decoding and media demuxing library supporting AAC, OGG, FLAC, MP3, and WAV.
 
 ## Features
@@ -32,30 +34,39 @@ A classification of usable indicates the end of major development. Though bugs a
 
 ### Formats (Demux)
 
-| Format   | Status    | Feature Flag | Default | Crate                     |
-|----------|-----------|--------------|---------|---------------------------|
-| ISO/MP4  | Usable    | `isomp4`     | No      | `symphonia-format-isomp4` |
-| MKV/WebM | -         | `mkv`        | Yes     | `symphonia-format-mkv`    |
-| OGG      | Usable    | `ogg`        | Yes     | `symphonia-format-ogg`    |
-| Wave     | Compliant | `wav`        | Yes     | `symphonia-format-wav`    |
+| Format   | Status    | Feature Flag | Default | Crate                       |
+|----------|-----------|--------------|---------|-----------------------------|
+| ISO/MP4  | Usable    | `isomp4`     | No      | [`symphonia-format-isomp4`] |
+| MKV/WebM | -         | `mkv`        | Yes     | `symphonia-format-mkv`      |
+| OGG      | Usable    | `ogg`        | Yes     | [`symphonia-format-ogg`]    |
+| Wave     | Compliant | `wav`        | Yes     | [`symphonia-format-wav`]    |
+
+[`symphonia-format-isomp4`]: https://docs.rs/symphonia-format-isomp4
+[`symphonia-format-ogg`]: https://docs.rs/symphonia-format-ogg
+[`symphonia-format-wav`]: https://docs.rs/symphonia-format-wav
 
 ### Codecs (Decode)
 
 | Codec                        | Status    | Feature Flag | Default | Crate                     |
 |------------------------------|-----------|--------------|---------|---------------------------|
-| AAC-LC                       | Usable    | `aac`        | No      | `symphonia-codec-aac`     |
-| HE-AAC (AAC+, aacPlus)       | -         | `aac`        | No      | `symphonia-codec-aac`     |
-| HE-AACv2 (eAAC+, aacPlus v2) | -         | `aac`        | No      | `symphonia-codec-aac`     |
-| FLAC                         | Compliant | `flac`       | Yes     | `symphonia-bundle-flac`   |
-| MP1                          | -         | `mp3`        | No      | `symphonia-bundle-mp3`    |
-| MP2                          | -         | `mp3`        | No      | `symphonia-bundle-mp3`    |
-| MP3                          | Usable    | `mp3`        | No      | `symphonia-bundle-mp3`    |
+| AAC-LC                       | Usable    | `aac`        | No      | [`symphonia-codec-aac`]   |
+| HE-AAC (AAC+, aacPlus)       | -         | `aac`        | No      | [`symphonia-codec-aac`]   |
+| HE-AACv2 (eAAC+, aacPlus v2) | -         | `aac`        | No      | [`symphonia-codec-aac`]   |
+| FLAC                         | Compliant | `flac`       | Yes     | [`symphonia-bundle-flac`] |
+| MP1                          | -         | `mp3`        | No      | [`symphonia-bundle-mp3`]  |
+| MP2                          | -         | `mp3`        | No      | [`symphonia-bundle-mp3`]  |
+| MP3                          | Usable    | `mp3`        | No      | [`symphonia-bundle-mp3`]  |
 | Opus                         | -         | `opus`       | Yes     | `symphonia-codec-opus`    |
-| PCM                          | Compliant | `pcm`        | Yes     | `symphonia-codec-pcm`     |
+| PCM                          | Compliant | `pcm`        | Yes     | [`symphonia-codec-pcm`]   |
 | Vorbis                       | Next      | `vorbis`     | Yes     | `symphonia-codec-vorbis`  |
 | WavPack                      | -         | `wavpack`    | Yes     | `symphonia-codec-wavpack` |
 
 A `symphonia-bundle-*` package is a combination of a decoder and a native bitstream demuxer.
+
+[`symphonia-codec-aac`]: https://docs.rs/symphonia-codec-aac
+[`symphonia-bundle-flac`]: https://docs.rs/symphonia-bundle-flac
+[`symphonia-bundle-mp3`]: https://docs.rs/symphonia-bundle-mp3
+[`symphonia-codec-pcm`]: https://docs.rs/symphonia-codec-pcm
 
 ### Tags (Read)
 

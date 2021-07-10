@@ -32,3 +32,7 @@ symphonia-codec-pcm = { version = "0.3", path = "../symphonia-codec-pcm", option
 symphonia-format-wav = { version = "0.3", path = "../symphonia-format-wav", optional = true }
 symphonia-format-ogg = { version = "0.3", path = "../symphonia-format-ogg", optional = true }
 symphonia-format-isomp4 = { version = "0.3", path = "../symphonia-format-isomp4", optional = true }
+
+# Show documentation with all features enabled on docs.rs
+[package.metadata.docs.rs]
+all-features = true

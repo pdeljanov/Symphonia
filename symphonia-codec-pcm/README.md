@@ -1,5 +1,7 @@
 # Symphonia PCM Codec
 
+[![Docs](https://docs.rs/symphonia-codec-pcm/badge.svg)](https://docs.rs/symphonia-codec-pcm)
+
 PCM audio decoders for Project Symphonia.
 
 **Note:** This crate is part of Symphonia. Please use the [`symphonia`](https://crates.io/crates/symphonia) crate instead of this one directly.

@@ -1,5 +1,7 @@
 # Symphonia Wave Codec
 
+[![Docs](https://docs.rs/symphonia-format-wav/badge.svg)](https://docs.rs/symphonia-format-wav)
+
 WAV decoder for Project Symphonia.
 
 **Note:** This crate is part of Symphonia. Please use the [`symphonia`](https://crates.io/crates/symphonia) crate instead of this one directly.
