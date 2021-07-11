@@ -124,7 +124,7 @@ mod cpal {
     use super::{AudioOutput, AudioOutputError, Result};
 
     use symphonia;
-    use symphonia::core::audio::{AudioBufferRef, SampleBuffer, SignalSpec, WriteSample};
+    use symphonia::core::audio::{AudioBufferRef, SampleBuffer, SignalSpec, RawSample};
     use symphonia::core::conv::ConvertibleSample;
     use symphonia::core::units::Duration;
 

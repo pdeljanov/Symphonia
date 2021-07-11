@@ -89,7 +89,7 @@ In addition to the safety guarantees provided by Rust, Symphonia aims to:
 
 * Decode files as well as the leading free-and-open-source software decoders
 * Provide a powerful, consistent, and easy to use API
-* Have absolutely no unsafe blocks outside of `symphonia-core`
+* Have absolutely no unsafe blocks
 * Have very minimal dependencies
 * Prevent denial-of-service attacks
 * Be fuzz-tested
