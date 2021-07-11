@@ -14,7 +14,6 @@ edition = "2018"
 [dependencies]
 arrayvec = "0.6.0"
 bitflags = "1.2.1"
-byteorder = "1.4.3"
 bytemuck = "1.7"
 lazy_static = "1.4.0"
 log = "0.4"

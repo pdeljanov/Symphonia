@@ -9,8 +9,6 @@
 
 use std::fmt;
 
-use byteorder::{NativeEndian, ByteOrder};
-
 use crate::util::clamp::{clamp_i24, clamp_u24};
 
 /// SampleFormat describes the data encoding for an audio sample.
@@ -153,9 +151,16 @@ impl i24 {
 
     #[inline]
     pub fn to_ne_bytes(self) -> [u8; 3] {
-        let mut bytes = [0u8; 3];
-        NativeEndian::write_i24(&mut bytes, self.0);
-        bytes
+        let b = self.0.to_ne_bytes();
+
+        if cfg!(target_endian = "little") {
+            // In little-endian the MSB is the last byte. Drop it.
+            [ b[0], b[1], b[2] ]
+        }
+        else {
+            // In big-endian the MSB is the first byte. Drop it.
+            [ b[1], b[2], b[3] ]
+        }
     }
 }
 
@@ -257,7 +262,6 @@ impl core::ops::BitXor<i24> for i24 {
 // Implementation for u24
 
 impl u24 {
-
     pub const MAX: u24 = u24(16_777_215);
     pub const MIN: u24 = u24(0);
 
@@ -273,11 +277,17 @@ impl u24 {
 
     #[inline]
     pub fn to_ne_bytes(self) -> [u8; 3] {
-        let mut bytes = [0u8; 3];
-        NativeEndian::write_u24(&mut bytes, self.0);
-        bytes
-    }
+        let b = self.0.to_ne_bytes();
 
+        if cfg!(target_endian = "little") {
+            // In little-endian the MSB is the last byte. Drop it.
+            [ b[0], b[1], b[2] ]
+        }
+        else {
+            // In big-endian the MSB is the first byte. Drop it.
+            [ b[1], b[2], b[3] ]
+        }
+    }
 }
 
 impl fmt::Display for u24 {

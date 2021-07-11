@@ -7,7 +7,6 @@
 
 //! The `io` module implements composable stream-based I/O.
 
-use byteorder::{BigEndian, ByteOrder, LittleEndian};
 use std::io;
 use std::mem;
 
@@ -222,14 +221,14 @@ pub trait ByteStream {
     /// floating-point value.
     #[inline(always)]
     fn read_f32(&mut self) -> io::Result<f32> {
-        Ok(LittleEndian::read_f32(&self.read_quad_bytes()?))
+        Ok(f32::from_le_bytes(self.read_quad_bytes()?))
     }
 
     /// Reads four bytes from the stream and interprets them as a 32-bit big-endiann IEEE-754
     /// floating-point value.
     #[inline(always)]
     fn read_be_f32(&mut self) -> io::Result<f32> {
-        Ok(BigEndian::read_f32(&self.read_quad_bytes()?))
+        Ok(f32::from_be_bytes(self.read_quad_bytes()?))
     }
 
     /// Reads four bytes from the stream and interprets them as a 64-bit little-endiann IEEE-754
@@ -238,7 +237,7 @@ pub trait ByteStream {
     fn read_f64(&mut self) -> io::Result<f64> {
         let mut buf = [0u8; mem::size_of::<u64>()];
         self.read_buf_exact(&mut buf)?;
-        Ok(LittleEndian::read_f64(&buf))
+        Ok(f64::from_le_bytes(buf))
     }
 
     /// Reads four bytes from the stream and interprets them as a 64-bit big-endiann IEEE-754
@@ -247,7 +246,7 @@ pub trait ByteStream {
     fn read_be_f64(&mut self) -> io::Result<f64> {
         let mut buf = [0u8; mem::size_of::<u64>()];
         self.read_buf_exact(&mut buf)?;
-        Ok(BigEndian::read_f64(&buf))
+        Ok(f64::from_be_bytes(buf))
     }
 
     /// Reads up-to the number of bytes requested, and returns a boxed slice of the data or an
