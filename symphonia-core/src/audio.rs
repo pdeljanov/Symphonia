@@ -246,8 +246,8 @@ impl<S : Sample> AudioBuffer<S> {
         &self.spec
     }
 
-    /// Gets the total capacity of the buffer. The capacity is the maximum number of frames a buffer
-    /// can store.
+    /// Gets the total capacity of the buffer. The capacity is the maximum number of audio frames
+    /// a buffer can store.
     pub fn capacity(&self) -> usize {
         self.n_capacity
     }
@@ -312,24 +312,51 @@ impl<S : Sample> AudioBuffer<S> {
     }
 }
 
-/// `AudioBufferRef` is a copy-on-write reference to an AudioBuffer of any type.
+/// `AudioBufferRef` is a copy-on-write reference to an `AudioBuffer` of any type.
 pub enum AudioBufferRef<'a> {
-    F32(Cow<'a, AudioBuffer<f32>>),
+    U8(Cow<'a, AudioBuffer<u8>>),
+    U16(Cow<'a, AudioBuffer<u16>>),
+    U24(Cow<'a, AudioBuffer<u24>>),
+    U32(Cow<'a, AudioBuffer<u32>>),
+    S8(Cow<'a, AudioBuffer<i8>>),
+    S16(Cow<'a, AudioBuffer<i16>>),
+    S24(Cow<'a, AudioBuffer<i24>>),
     S32(Cow<'a, AudioBuffer<i32>>),
+    F32(Cow<'a, AudioBuffer<f32>>),
+    F64(Cow<'a, AudioBuffer<f64>>),
 }
 
 impl<'a> AudioBufferRef<'a> {
+    /// Gets the signal specification for the buffer.
     pub fn spec(&self) -> &SignalSpec {
         match self {
-            AudioBufferRef::F32(buf) => buf.spec(),
+            AudioBufferRef::U8(buf)  => buf.spec(),
+            AudioBufferRef::U16(buf) => buf.spec(),
+            AudioBufferRef::U24(buf) => buf.spec(),
+            AudioBufferRef::U32(buf) => buf.spec(),
+            AudioBufferRef::S8(buf)  => buf.spec(),
+            AudioBufferRef::S16(buf) => buf.spec(),
+            AudioBufferRef::S24(buf) => buf.spec(),
             AudioBufferRef::S32(buf) => buf.spec(),
+            AudioBufferRef::F32(buf) => buf.spec(),
+            AudioBufferRef::F64(buf) => buf.spec(),
         }
     }
 
+    /// Gets the total capacity of the buffer. The capacity is the maximum number of audio frames
+    /// a buffer can store.
     pub fn capacity(&self) -> usize {
         match self {
-            AudioBufferRef::F32(buf) => buf.capacity(),
+            AudioBufferRef::U8(buf)  => buf.capacity(),
+            AudioBufferRef::U16(buf) => buf.capacity(),
+            AudioBufferRef::U24(buf) => buf.capacity(),
+            AudioBufferRef::U32(buf) => buf.capacity(),
+            AudioBufferRef::S8(buf)  => buf.capacity(),
+            AudioBufferRef::S16(buf) => buf.capacity(),
+            AudioBufferRef::S24(buf) => buf.capacity(),
             AudioBufferRef::S32(buf) => buf.capacity(),
+            AudioBufferRef::F32(buf) => buf.capacity(),
+            AudioBufferRef::F64(buf) => buf.capacity(),
         }
     }
 }
@@ -337,20 +364,30 @@ impl<'a> AudioBufferRef<'a> {
 /// `AsAudioBufferRef` is a trait implemented for `AudioBuffer`s that may be referenced in an
 /// `AudioBufferRef`.
 pub trait AsAudioBufferRef {
+    /// Get an `AudioBufferRef` reference.
     fn as_audio_buffer_ref(&self) -> AudioBufferRef;
 }
 
-impl AsAudioBufferRef for AudioBuffer<f32> {
-    fn as_audio_buffer_ref(&self) -> AudioBufferRef {
-        AudioBufferRef::F32(Cow::Borrowed(self))
-    }
+macro_rules! impl_as_audio_buffer_ref {
+    ($fmt:ty, $ref:path) => (
+        impl AsAudioBufferRef for AudioBuffer<$fmt> {
+            fn as_audio_buffer_ref(&self) -> AudioBufferRef {
+                $ref(Cow::Borrowed(self))
+            }
+        }
+    )
 }
 
-impl AsAudioBufferRef for AudioBuffer<i32> {
-    fn as_audio_buffer_ref(&self) -> AudioBufferRef {
-        AudioBufferRef::S32(Cow::Borrowed(self))
-    }
-}
+impl_as_audio_buffer_ref!(u8,  AudioBufferRef::U8);
+impl_as_audio_buffer_ref!(u16, AudioBufferRef::U16);
+impl_as_audio_buffer_ref!(u24, AudioBufferRef::U24);
+impl_as_audio_buffer_ref!(u32, AudioBufferRef::U32);
+impl_as_audio_buffer_ref!(i8,  AudioBufferRef::S8);
+impl_as_audio_buffer_ref!(i16, AudioBufferRef::S16);
+impl_as_audio_buffer_ref!(i24, AudioBufferRef::S24);
+impl_as_audio_buffer_ref!(i32, AudioBufferRef::S32);
+impl_as_audio_buffer_ref!(f32, AudioBufferRef::F32);
+impl_as_audio_buffer_ref!(f64, AudioBufferRef::F64);
 
 /// The `Signal` trait provides methods for rendering and transforming contiguous buffers of audio
 /// data.
@@ -555,8 +592,16 @@ impl<S: Sample> SampleBuffer<S> {
         S: ConvertibleSample,
     {
         match src {
-            AudioBufferRef::F32(buf) => self.copy_planar_typed(&buf),
+            AudioBufferRef::U8(buf)  => self.copy_planar_typed(&buf),
+            AudioBufferRef::U16(buf) => self.copy_planar_typed(&buf),
+            AudioBufferRef::U24(buf) => self.copy_planar_typed(&buf),
+            AudioBufferRef::U32(buf) => self.copy_planar_typed(&buf),
+            AudioBufferRef::S8(buf)  => self.copy_planar_typed(&buf),
+            AudioBufferRef::S16(buf) => self.copy_planar_typed(&buf),
+            AudioBufferRef::S24(buf) => self.copy_planar_typed(&buf),
             AudioBufferRef::S32(buf) => self.copy_planar_typed(&buf),
+            AudioBufferRef::F32(buf) => self.copy_planar_typed(&buf),
+            AudioBufferRef::F64(buf) => self.copy_planar_typed(&buf),
         }
     }
 
@@ -593,8 +638,16 @@ impl<S: Sample> SampleBuffer<S> {
         S: ConvertibleSample,
     {
         match src {
-            AudioBufferRef::F32(buf) => self.copy_interleaved_typed(&buf),
+            AudioBufferRef::U8(buf)  => self.copy_interleaved_typed(&buf),
+            AudioBufferRef::U16(buf) => self.copy_interleaved_typed(&buf),
+            AudioBufferRef::U24(buf) => self.copy_interleaved_typed(&buf),
+            AudioBufferRef::U32(buf) => self.copy_interleaved_typed(&buf),
+            AudioBufferRef::S8(buf)  => self.copy_interleaved_typed(&buf),
+            AudioBufferRef::S16(buf) => self.copy_interleaved_typed(&buf),
+            AudioBufferRef::S24(buf) => self.copy_interleaved_typed(&buf),
             AudioBufferRef::S32(buf) => self.copy_interleaved_typed(&buf),
+            AudioBufferRef::F32(buf) => self.copy_interleaved_typed(&buf),
+            AudioBufferRef::F64(buf) => self.copy_interleaved_typed(&buf),
         }
     }
 
@@ -808,8 +861,16 @@ impl<S: Sample + RawSample> RawSampleBuffer<S> {
         S: ConvertibleSample,
     {
         match src {
-            AudioBufferRef::F32(buf) => self.copy_planar_typed(&buf),
+            AudioBufferRef::U8(buf)  => self.copy_planar_typed(&buf),
+            AudioBufferRef::U16(buf) => self.copy_planar_typed(&buf),
+            AudioBufferRef::U24(buf) => self.copy_planar_typed(&buf),
+            AudioBufferRef::U32(buf) => self.copy_planar_typed(&buf),
+            AudioBufferRef::S8(buf)  => self.copy_planar_typed(&buf),
+            AudioBufferRef::S16(buf) => self.copy_planar_typed(&buf),
+            AudioBufferRef::S24(buf) => self.copy_planar_typed(&buf),
             AudioBufferRef::S32(buf) => self.copy_planar_typed(&buf),
+            AudioBufferRef::F32(buf) => self.copy_planar_typed(&buf),
+            AudioBufferRef::F64(buf) => self.copy_planar_typed(&buf),
         }
     }
 
@@ -870,8 +931,16 @@ impl<S: Sample + RawSample> RawSampleBuffer<S> {
         S: ConvertibleSample,
     {
         match src {
-            AudioBufferRef::F32(buf) => self.copy_interleaved_typed(&buf),
+            AudioBufferRef::U8(buf)  => self.copy_interleaved_typed(&buf),
+            AudioBufferRef::U16(buf) => self.copy_interleaved_typed(&buf),
+            AudioBufferRef::U24(buf) => self.copy_interleaved_typed(&buf),
+            AudioBufferRef::U32(buf) => self.copy_interleaved_typed(&buf),
+            AudioBufferRef::S8(buf)  => self.copy_interleaved_typed(&buf),
+            AudioBufferRef::S16(buf) => self.copy_interleaved_typed(&buf),
+            AudioBufferRef::S24(buf) => self.copy_interleaved_typed(&buf),
             AudioBufferRef::S32(buf) => self.copy_interleaved_typed(&buf),
+            AudioBufferRef::F32(buf) => self.copy_interleaved_typed(&buf),
+            AudioBufferRef::F64(buf) => self.copy_interleaved_typed(&buf),
         }
     }
 
@@ -978,5 +1047,4 @@ impl<S: Sample + RawSample> RawSampleBuffer<S> {
 
         self.n_written = n_samples;
     }
-
 }
