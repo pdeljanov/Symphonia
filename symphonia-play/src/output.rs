@@ -139,7 +139,7 @@ mod cpal {
     trait AudioOutputSample :
         cpal::Sample +
         ConvertibleSample +
-        WriteSample +
+        RawSample +
         std::marker::Send +
         'static {}
 
