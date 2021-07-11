@@ -1,6 +1,7 @@
 # Symphonia
 
 [![Docs](https://docs.rs/symphonia/badge.svg)](https://docs.rs/symphonia)
+[![Build Status](https://github.com/pdeljanov/Symphonia/CI/badge.svg)](https://github.com/pdeljanov/Symphonia/actions)
 
 Symphonia is a pure Rust audio decoding and media demuxing library supporting AAC, OGG, FLAC, MP3, and WAV.
 
