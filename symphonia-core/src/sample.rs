@@ -52,10 +52,6 @@ pub trait Sample:
     + PartialEq
     + Sized
 {
-    /// The `StreamType` is the primitive data type, or fixed-size byte array, that represents the
-    /// sample when exported.
-    type StreamType : Copy + Default + bytemuck::Pod;
-
     /// A unique enum value representing the sample format. This constant may be used to dynamically
     /// choose how to process the sample at runtime.
     const FORMAT: SampleFormat;
@@ -80,31 +76,24 @@ pub struct u24 (pub u32);
 pub struct i24 (pub i32);
 
 impl Sample for u8 {
-    type StreamType = u8;
-
     const FORMAT: SampleFormat = SampleFormat::U8;
     const EFF_BITS: u32 = 8;
     const MID: u8 = 128;
 }
 
 impl Sample for i8 {
-    type StreamType = i8;
-
     const FORMAT: SampleFormat = SampleFormat::S8;
     const EFF_BITS: u32 = 8;
     const MID: i8 = 0;
 }
 
 impl Sample for u16 {
-    type StreamType = u16;
-
     const FORMAT: SampleFormat = SampleFormat::U16;
     const EFF_BITS: u32 = 16;
     const MID: u16 = 32_768;
 }
 
 impl Sample for i16 {
-    type StreamType = i16;
 
     const FORMAT: SampleFormat = SampleFormat::S16;
     const EFF_BITS: u32 = 16;
@@ -112,48 +101,36 @@ impl Sample for i16 {
 }
 
 impl Sample for u24 {
-    type StreamType = [u8; 3];
-
     const FORMAT: SampleFormat = SampleFormat::U24;
     const EFF_BITS: u32 = 24;
     const MID: u24 = u24(8_388_608);
 }
 
 impl Sample for i24 {
-    type StreamType = [u8; 3];
-
     const FORMAT: SampleFormat = SampleFormat::S24;
     const EFF_BITS: u32 = 24;
     const MID: i24 = i24(0);
 }
 
 impl Sample for u32 {
-    type StreamType = u32;
-
     const FORMAT: SampleFormat = SampleFormat::U32;
     const EFF_BITS: u32 = 32;
     const MID: u32 = 2_147_483_648;
 }
 
 impl Sample for i32 {
-    type StreamType = i32;
-
     const FORMAT: SampleFormat = SampleFormat::S32;
     const EFF_BITS: u32 = 32;
     const MID: i32 = 0;
 }
 
 impl Sample for f32 {
-    type StreamType = f32;
-
     const FORMAT: SampleFormat = SampleFormat::F32;
     const EFF_BITS: u32 = 24;
     const MID: f32 = 0.0;
 }
 
 impl Sample for f64 {
-    type StreamType = f64;
-
     const FORMAT: SampleFormat = SampleFormat::F64;
     const EFF_BITS: u32 = 53;
     const MID: f64 = 0.0;

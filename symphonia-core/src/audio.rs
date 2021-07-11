@@ -160,83 +160,6 @@ impl SignalSpec {
     }
 }
 
-
-/// `WriteSample` provides a typed interface for converting a sample from it's in-memory type to its
-/// StreamType.
-pub trait WriteSample : Sample {
-    fn write(sample: Self, dest: &mut SampleWriter<Self>);
-}
-
-impl WriteSample for u8 {
-    #[inline(always)]
-    fn write(sample: u8, writer: &mut SampleWriter<Self>) {
-        writer.write(sample);
-    }
-}
-
-impl WriteSample for i8 {
-    #[inline(always)]
-    fn write(sample: i8, writer: &mut SampleWriter<Self>) {
-        writer.write(sample);
-    }
-}
-
-impl WriteSample for u16 {
-    #[inline(always)]
-    fn write(sample: u16, writer: &mut SampleWriter<Self>) {
-        writer.write(sample);
-    }
-}
-
-impl WriteSample for i16 {
-    #[inline(always)]
-    fn write(sample: i16, writer: &mut SampleWriter<Self>) {
-        writer.write(sample);
-    }
-}
-
-impl WriteSample for u24 {
-    #[inline(always)]
-    fn write(sample: u24, writer: &mut SampleWriter<Self>) {
-        writer.write(sample.to_ne_bytes());
-    }
-}
-
-impl WriteSample for i24 {
-    #[inline(always)]
-    fn write(sample: i24, writer: &mut SampleWriter<Self>) {
-        writer.write(sample.to_ne_bytes());
-    }
-}
-
-impl WriteSample for u32 {
-    #[inline(always)]
-    fn write(sample: u32, writer: &mut SampleWriter<Self>) {
-        writer.write(sample);
-    }
-}
-
-impl WriteSample for i32 {
-    #[inline(always)]
-    fn write(sample: i32, writer: &mut SampleWriter<Self>) {
-        writer.write(sample);
-    }
-}
-
-impl WriteSample for f32 {
-    #[inline(always)]
-    fn write(sample: f32, writer: &mut SampleWriter<Self>) {
-        writer.write(sample);
-    }
-}
-
-impl WriteSample for f64 {
-    #[inline(always)]
-    fn write(sample: f64, writer: &mut SampleWriter<Self>) {
-        writer.write(sample);
-    }
-}
-
 /// `AudioPlanes` provides immutable slices to each audio channel (plane) contained in a signal.
 pub struct AudioPlanes<'a, S: 'a + Sample> {
     planes: ArrayVec<&'a [S], 32>,
@@ -702,17 +625,145 @@ impl<S: Sample> SampleBuffer<S> {
     }
 }
 
+/// This non-public module contains the trait `Sealed` which is used to constrain
+/// `RawSample::RawType` with `bytemuck::Pod`. This is a trade-off to hide `bytemuck` from the public
+/// interface. The downside is that `RawSample::RawType` is locked to the types we implement
+/// `Sealed` on. To compensate, we implement `Sealed` on all primitive numeric data types, and byte
+/// arrays up to 8 bytes long.
+mod sealed {
+    pub trait Sealed : bytemuck::Pod {}
+}
+
+impl sealed::Sealed for u8 {}
+impl sealed::Sealed for i8 {}
+impl sealed::Sealed for u16 {}
+impl sealed::Sealed for i16 {}
+impl sealed::Sealed for u32 {}
+impl sealed::Sealed for i32 {}
+impl sealed::Sealed for u64 {}
+impl sealed::Sealed for i64 {}
+impl sealed::Sealed for f32 {}
+impl sealed::Sealed for f64 {}
+impl sealed::Sealed for [u8; 1] {}
+impl sealed::Sealed for [u8; 2] {}
+impl sealed::Sealed for [u8; 3] {}
+impl sealed::Sealed for [u8; 4] {}
+impl sealed::Sealed for [u8; 5] {}
+impl sealed::Sealed for [u8; 6] {}
+impl sealed::Sealed for [u8; 7] {}
+impl sealed::Sealed for [u8; 8] {}
+
+/// `RawSample` provides a typed interface for converting a `Sample` from it's in-memory data type to
+/// actual binary type.
+pub trait RawSample : Sample {
+    /// The `RawType` is a primitive data type, or fixed-size byte array, that is the final binary
+    /// representation of the sample when written out to a byte-buffer.
+    type RawType : Copy + Default + sealed::Sealed;
+
+    fn into_raw_sample(self) -> Self::RawType;
+}
+
+impl RawSample for u8 {
+    type RawType = u8;
+
+    #[inline(always)]
+    fn into_raw_sample(self) -> Self::RawType {
+        self
+    }
+}
+
+impl RawSample for i8 {
+    type RawType = i8;
+
+    #[inline(always)]
+    fn into_raw_sample(self) -> Self::RawType {
+        self
+    }
+}
+
+impl RawSample for u16 {
+    type RawType = u16;
+
+    #[inline(always)]
+    fn into_raw_sample(self) -> Self::RawType {
+        self
+    }
+}
+
+impl RawSample for i16 {
+    type RawType = i16;
+
+    #[inline(always)]
+    fn into_raw_sample(self) -> Self::RawType {
+        self
+    }
+}
+
+impl RawSample for u24 {
+    type RawType = [u8; 3];
+
+    #[inline(always)]
+    fn into_raw_sample(self) -> Self::RawType {
+        self.to_ne_bytes()
+    }
+}
+
+impl RawSample for i24 {
+    type RawType = [u8; 3];
+
+    #[inline(always)]
+    fn into_raw_sample(self) -> Self::RawType {
+        self.to_ne_bytes()
+    }
+}
+
+impl RawSample for u32 {
+    type RawType = u32;
+
+    #[inline(always)]
+    fn into_raw_sample(self) -> Self::RawType {
+        self
+    }
+}
+
+impl RawSample for i32 {
+    type RawType = i32;
+
+    #[inline(always)]
+    fn into_raw_sample(self) -> Self::RawType {
+        self
+    }
+}
+
+impl RawSample for f32 {
+    type RawType = f32;
+
+    #[inline(always)]
+    fn into_raw_sample(self) -> Self::RawType {
+        self
+    }
+}
+
+impl RawSample for f64 {
+    type RawType = f64;
+
+    #[inline(always)]
+    fn into_raw_sample(self) -> Self::RawType {
+        self
+    }
+}
+
 /// A `RawSampleBuffer`, is a byte-oriented sample buffer. All samples copied to this buffer are
 /// converted into their packed data-type and stored as a stream of bytes. `RawSampleBuffer` is
 /// mean't for safely importing and exporting sample data to and from Symphonia as raw bytes.
-pub struct RawSampleBuffer<S: Sample + WriteSample> {
-    buf: Vec<S::StreamType>,
+pub struct RawSampleBuffer<S: Sample + RawSample> {
+    buf: Vec<S::RawType>,
     n_written: usize,
     // Might take your heart.
     sample_format: PhantomData<S>,
 }
 
-impl<S: Sample + WriteSample> RawSampleBuffer<S> {
+impl<S: Sample + RawSample> RawSampleBuffer<S> {
     /// Instantiate a new `RawSampleBuffer` using the specified signal specification and of the given
     /// duration.
     pub fn new(duration: Duration, spec: SignalSpec) -> RawSampleBuffer<S> {
@@ -722,8 +773,8 @@ impl<S: Sample + WriteSample> RawSampleBuffer<S> {
         assert!(n_samples <= usize::max_value() as u64);
 
         // Allocate enough memory for all the samples.
-        let byte_length = n_samples as usize * mem::size_of::<S::StreamType>();
-        let buf = vec![S::StreamType::default(); byte_length];
+        let byte_length = n_samples as usize * mem::size_of::<S::RawType>();
+        let buf = vec![S::RawType::default(); byte_length];
 
         RawSampleBuffer {
             buf,
@@ -739,13 +790,15 @@ impl<S: Sample + WriteSample> RawSampleBuffer<S> {
 
     /// Gets the maximum number of samples the `RawSampleBuffer` may store.
     pub fn capacity(&self) -> usize {
-        self.buf.len() / mem::size_of::<S>()
+        self.buf.len()
     }
 
     /// Gets an immutable slice to the bytes of the sample's written in the `RawSampleBuffer`.
     pub fn as_bytes(&self) -> &[u8] {
-        let end = self.n_written;
-        bytemuck::cast_slice(&self.buf[..end])
+        // Get a slice to the written raw samples in the buffer, and convert from &[RawType] to
+        // &[u8]. Since &[u8] has the least strict alignment requirements, this should always be
+        // safe and therefore cast_slice should never panic.
+        bytemuck::cast_slice(&self.buf[..self.n_written])
     }
 
     /// Copies all audio data from the source `AudioBufferRef` in planar channel order into the
@@ -761,48 +814,55 @@ impl<S: Sample + WriteSample> RawSampleBuffer<S> {
     }
 
     /// Copies all audio data from a source `AudioBuffer` that is of a different sample format type
-    /// than that of the `RawSampleBuffer` in planar channel order. The two buffers must be equivalent.
+    /// than that of the `RawSampleBuffer` in planar channel order. The two buffers must be
+    /// equivalent.
     pub fn copy_planar_typed<F>(&mut self, src: &AudioBuffer<F>)
     where
         F: Sample + IntoSample<S>,
     {
-        let n_frames = src.n_frames;
         let n_channels = src.spec.channels.count();
-        let n_samples = n_frames * n_channels;
+        let n_samples = n_channels * src.n_frames;
 
         // Ensure that the capacity of the sample buffer is greater than or equal to the number
         // of samples that will be copied from the source buffer.
         assert!(self.capacity() >= n_samples);
 
-        let mut writer = SampleWriter::from_buf(n_samples, self);
+        let dst_buf = &mut self.buf[..n_samples];
 
-        for ch in 0..n_channels {
-            let begin = ch * src.n_capacity;
-            for sample in &src.buf[begin..(begin + n_frames)] {
-                S::write((*sample).into_sample(), &mut writer);
+        for (c, dst_ch) in dst_buf.chunks_exact_mut(src.n_frames).enumerate() {
+            let ch_start = c * src.n_capacity;
+            let ch_end = ch_start + src.n_frames;
+
+            for (&s, d) in src.buf[ch_start..ch_end].iter().zip(dst_ch) {
+                *d = s.into_sample().into_raw_sample();
             }
         }
+
+        self.n_written = n_samples;
     }
 
     /// Copies all audio data from the source `AudioBuffer` to the `RawSampleBuffer` in planar order.
     /// The two buffers must be equivalent.
     pub fn copy_planar(&mut self, src: &AudioBuffer<S>) {
-        let n_frames = src.n_frames;
         let n_channels = src.spec.channels.count();
-        let n_samples = n_frames * n_channels;
+        let n_samples = src.n_frames * n_channels;
 
         // Ensure that the capacity of the sample buffer is greater than or equal to the number
         // of samples that will be copied from the source buffer.
         assert!(self.capacity() >= n_samples);
 
-        let mut writer = SampleWriter::from_buf(n_samples, self);
+        let dst_buf = &mut self.buf[..n_samples];
 
-        for ch in 0..n_channels {
-            let begin = ch * src.n_capacity;
-            for sample in &src.buf[begin..(begin + n_frames)] {
-                S::write(*sample, &mut writer);
+        for (c, dst_ch) in dst_buf.chunks_exact_mut(src.n_frames).enumerate() {
+            let ch_start = c * src.n_capacity;
+            let ch_end = ch_start + src.n_frames;
+
+            for (&s, d) in src.buf[ch_start..ch_end].iter().zip(dst_ch) {
+                *d = s.into_raw_sample();
             }
         }
+
+        self.n_written = n_samples;
     }
 
     /// Copies all audio data from the source `AudioBufferRef` in interleaved channel order into the
@@ -832,7 +892,8 @@ impl<S: Sample + WriteSample> RawSampleBuffer<S> {
         // of samples that will be copied from the source buffer.
         assert!(self.capacity() >= n_samples);
 
-        let mut writer = SampleWriter::from_buf(n_samples, self);
+        // The destination buffer slice.
+        let dst_buf = &mut self.buf[..n_samples];
 
         // Provide slightly optimized interleave algorithms for Mono and Stereo buffers.
         match n_channels {
@@ -840,33 +901,33 @@ impl<S: Sample + WriteSample> RawSampleBuffer<S> {
             0 => (),
             // Mono
             1=> {
-                for m in &src.buf[0..n_frames] {
-                    S::write((*m).into_sample(), &mut writer);
+                for (&s, d) in src.buf[..n_frames].iter().zip(dst_buf) {
+                    *d = s.into_sample().into_raw_sample();
                 }
-            },
+            }
             // Stereo
             2 => {
                 let l_buf = &src.buf[0..n_frames];
                 let r_buf = &src.buf[src.n_capacity..(src.n_capacity + n_frames)];
 
-                for (l, r) in l_buf.iter().zip(r_buf) {
-                    S::write((*l).into_sample(), &mut writer);
-                    S::write((*r).into_sample(), &mut writer);
+                for ((&l, &r), d) in l_buf.iter().zip(r_buf).zip(dst_buf.chunks_exact_mut(2)) {
+                    d[0] = l.into_sample().into_raw_sample();
+                    d[1] = r.into_sample().into_raw_sample();
                 }
-            },
+            }
             // 3+ channels
             _ => {
-                let stride = src.n_capacity;
+                for (c, src_ch) in src.buf.chunks_exact(src.n_capacity).enumerate() {
+                    let dst_iter = dst_buf[c..].iter_mut().step_by(n_channels);
 
-                for i in 0..n_frames {
-                    //TODO: possibly replace by Slice::chunks() and Iterator::step_by()
-                    for ch in 0..n_channels {
-                        let s = src.buf[ch * stride + i];
-                        S::write(s.into_sample(), &mut writer);
+                    for (&s, d) in src_ch[..n_frames].iter().zip(dst_iter) {
+                        *d = s.into_sample().into_raw_sample();
                     }
                 }
-            },
+            }
         }
+
+        self.n_written = n_samples;
     }
 
     /// Copies all audio data from the source `AudioBuffer` to the `RawSampleBuffer` in interleaved
@@ -880,7 +941,8 @@ impl<S: Sample + WriteSample> RawSampleBuffer<S> {
         // of samples that will be copied from the source buffer.
         assert!(self.capacity() >= n_samples);
 
-        let mut writer = SampleWriter::from_buf(n_samples, self);
+        // The destination buffer slice.
+        let dst_buf = &mut self.buf[..n_samples];
 
         // Provide slightly optimized interleave algorithms for Mono and Stereo buffers.
         match n_channels {
@@ -888,79 +950,33 @@ impl<S: Sample + WriteSample> RawSampleBuffer<S> {
             0 => (),
             // Mono
             1=> {
-                for m in &src.buf[0..n_frames] {
-                    S::write(*m, &mut writer);
+                for (&s, d) in src.buf[..n_frames].iter().zip(dst_buf) {
+                    *d = s.into_raw_sample();
                 }
-            },
+            }
             // Stereo
             2 => {
                 let l_buf = &src.buf[0..n_frames];
                 let r_buf = &src.buf[src.n_capacity..(src.n_capacity + n_frames)];
 
-                for (l, r) in l_buf.iter().zip(r_buf) {
-                    S::write(*l, &mut writer);
-                    S::write(*r, &mut writer);
+                for ((&l, &r), d) in l_buf.iter().zip(r_buf).zip(dst_buf.chunks_exact_mut(2)) {
+                    d[0] = l.into_raw_sample();
+                    d[1] = r.into_raw_sample();
                 }
-            },
+            }
             // 3+ channels
             _ => {
-                let stride = src.n_capacity;
+                for (c, src_ch) in src.buf.chunks_exact(src.n_capacity).enumerate() {
+                    let dst_iter = dst_buf[c..].iter_mut().step_by(n_channels);
 
-                for i in 0..n_frames {
-                    //TODO: possibly replace by Slice::chunks() and Iterator::step_by()
-                    for ch in 0..n_channels {
-                        S::write(src.buf[ch * stride + i], &mut writer);
+                    for (&s, d) in src_ch[..n_frames].iter().zip(dst_iter) {
+                        *d = s.into_raw_sample();
                     }
                 }
-            },
+            }
         }
-    }
 
-    /// Gets a mutable byte buffer from the `RawSampleBuffer` where samples may be written. Calls to
-    /// this function will overwrite any previously written data since it is not known how the
-    /// samples for each channel are laid out in the buffer.
-    fn req_bytes_mut(&mut self, n_samples: usize) -> &mut [S::StreamType] {
-        assert!(n_samples <= self.capacity());
-
-        let end = n_samples;
-        self.n_written = end;
-        &mut self.buf[..end]
-    }
-}
-
-/// A `SampleWriter` allows for the efficient writing of samples of a specific type to a
-/// `RawSampleBuffer`. A `SampleWriter` can only be instantiated by a `StreamBuffer`.
-///
-/// While `SampleWriter` could simply be implemented as a byte stream writer with generic
-/// write functions to support most use cases, this would be unsafe as it decouple's a
-/// sample's StreamType, the data type used to allocate the `RawSampleBuffer`, from the amount
-/// of data actually written to the `RawSampleBuffer` per Sample. Therefore, `SampleWriter` is
-/// generic across the Sample trait and provides precisely one `write()` function that takes
-/// exactly one reference to a Sample's StreamType. The result of this means that there will
-/// never be an alignment issue, and the underlying byte vector can simply be converted to a
-/// StreamType slice. This allows the compiler to use the most efficient method of copying
-/// the encoded sample value to the underlying buffer.
-pub struct SampleWriter<'a, S: Sample + WriteSample> {
-    buf: &'a mut [S::StreamType],
-    next: usize,
-}
-
-impl<'a, S: Sample + WriteSample> SampleWriter<'a, S> {
-
-    fn from_buf(n_samples: usize, buf: &mut RawSampleBuffer<S>) -> SampleWriter<S> {
-        let bytes = buf.req_bytes_mut(n_samples);
-
-        SampleWriter {
-            buf: bytes,
-            next: 0,
-        }
-    }
-
-    pub fn write(&mut self, src: S::StreamType) {
-        // Copy the source sample to the output buffer at the next writeable index.
-        self.buf[self.next] = src;
-        // Increment writeable index.
-        self.next += 1;
+        self.n_written = n_samples;
     }
 
 }
