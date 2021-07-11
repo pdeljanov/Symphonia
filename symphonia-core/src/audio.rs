@@ -22,6 +22,10 @@ use crate::errors::Result;
 use crate::sample::{Sample, i24, u24};
 use crate::units::Duration;
 
+/// The maximum number of audio plane slices `AudioPlanes` or `AudioPlanesMut` will store on the
+/// stack before storing the slices on the heap.
+const AUDIO_PLANES_STORAGE_STACK_LIMIT: usize = 8;
+
 bitflags! {
     /// Channels is a bit mask of all channels contained in a signal.
     #[derive(Default)]
@@ -160,35 +164,97 @@ impl SignalSpec {
     }
 }
 
+/// Small-storage optimization capable storage of immutable slices of `AudioBuffer` audio planes.
+enum AudioPlaneStorage<'a, S, const N: usize> {
+    Stack(ArrayVec<&'a [S], N>),
+    Heap(Vec<&'a [S]>),
+}
+
 /// `AudioPlanes` provides immutable slices to each audio channel (plane) contained in a signal.
 pub struct AudioPlanes<'a, S: 'a + Sample> {
-    planes: ArrayVec<&'a [S], 32>,
+    planes: AudioPlaneStorage<'a, S, AUDIO_PLANES_STORAGE_STACK_LIMIT>,
 }
 
 impl<'a, S : Sample> AudioPlanes<'a, S> {
-    fn new() -> Self {
-        AudioPlanes { planes: ArrayVec::new() }
+    /// Instantiate `AudioPlanes` for the given channel configuration.
+    fn new(channels: Channels) -> Self {
+        let n_planes = channels.count();
+
+        if n_planes <= AUDIO_PLANES_STORAGE_STACK_LIMIT {
+            AudioPlanes { planes: AudioPlaneStorage::Stack(ArrayVec::new()) }
+        }
+        else {
+            AudioPlanes { planes: AudioPlaneStorage::Heap(Vec::with_capacity(n_planes)) }
+        }
     }
 
-    /// Gets all the audio planes.
-    pub fn planes(&self) -> &[&'a [S]] {
-        &self.planes
+    /// Push an immutable reference to an audio plane. This function may panic if the number of
+    /// pushed planes exceeds the number specified at instantiation.
+    fn push(&mut self, plane: &'a [S]) {
+        match &mut self.planes {
+            AudioPlaneStorage::Stack(planes) => {
+                debug_assert!(!planes.is_full());
+                planes.push(plane);
+            }
+            AudioPlaneStorage::Heap(planes) => {
+                planes.push(plane);
+            }
+        }
     }
+
+    /// Gets immutable slices of all the audio planes.
+    pub fn planes(&self) -> &[&'a [S]] {
+        match &self.planes {
+            AudioPlaneStorage::Stack(planes) => planes,
+            AudioPlaneStorage::Heap(planes) => planes,
+        }
+    }
+}
+
+/// Small-storage optimization capable storage of mutable slices of `AudioBuffer` audio planes.
+enum AudioPlaneStorageMut<'a, S, const N: usize> {
+    Stack(ArrayVec<&'a mut [S], N>),
+    Heap(Vec<&'a mut [S]>),
 }
 
 /// `AudioPlanesMut` provides mutable slices to each audio channel (plane) contained in a signal.
 pub struct AudioPlanesMut<'a, S: 'a + Sample> {
-    planes: ArrayVec<&'a mut [S], 32>,
+    planes: AudioPlaneStorageMut<'a, S, AUDIO_PLANES_STORAGE_STACK_LIMIT>,
 }
 
 impl<'a, S : Sample> AudioPlanesMut<'a, S> {
-    fn new() -> Self {
-        AudioPlanesMut { planes: ArrayVec::new() }
+    /// Instantiate `AudioPlanesMut` for the given channel configuration.
+    fn new(channels: Channels) -> Self {
+        let n_planes = channels.count();
+
+        if n_planes <= AUDIO_PLANES_STORAGE_STACK_LIMIT {
+            AudioPlanesMut { planes: AudioPlaneStorageMut::Stack(ArrayVec::new()) }
+        }
+        else {
+            AudioPlanesMut { planes: AudioPlaneStorageMut::Heap(Vec::with_capacity(n_planes)) }
+        }
     }
 
-    /// Gets all the audio planes.
+    /// Push a mutable reference to an audio plane. This function may panic if the number of
+    /// pushed planes exceeds the number specified at instantiation.
+    fn push(&mut self, plane: &'a mut [S]) {
+        match &mut self.planes {
+            AudioPlaneStorageMut::Stack(planes) => {
+                debug_assert!(!planes.is_full());
+                planes.push(plane);
+            }
+            AudioPlaneStorageMut::Heap(storage) => {
+                storage.push(plane);
+            }
+        }
+    }
+
+    /// Gets mutable slices of all the audio planes.
     pub fn planes(&mut self) -> &mut [&'a mut [S]] {
-        &mut self.planes
+        match &mut self.planes {
+            AudioPlaneStorageMut::Stack(planes) => planes,
+            AudioPlaneStorageMut::Heap(planes) => planes,
+        }
     }
 }
 
@@ -254,16 +320,16 @@ impl<S : Sample> AudioBuffer<S> {
 
     /// Gets immutable references to all audio planes (channels) within the audio buffer.
     ///
-    /// Note: This is not a cheap operation. It is advisable that this call is only used when
-    /// operating on batches of frames. Generally speaking, it is almost always better to use
-    /// `chan()` to selectively choose the plane to read.
+    /// Note: This is not a cheap operation for audio buffers with > 8 channels. It is advisable
+    /// that this call is only used when operating on large batches of frames. Generally speaking,
+    /// it is almost always better to use `chan()` to selectively choose the plane to read instead.
     pub fn planes(&self) -> AudioPlanes<S> {
         // Fill the audio planes structure with references to the written portion of each audio
         // plane.
-        let mut planes = AudioPlanes::new();
+        let mut planes = AudioPlanes::new(self.spec.channels);
 
         for channel in self.buf.chunks_exact(self.n_capacity) {
-            planes.planes.push(&channel[..self.n_frames]);
+            planes.push(&channel[..self.n_frames]);
         }
 
         planes
@@ -271,16 +337,17 @@ impl<S : Sample> AudioBuffer<S> {
 
     /// Gets mutable references to all audio planes (channels) within the buffer.
     ///
-    /// Note: This is not a cheap operation. It is advisable that this call is only used when
-    /// mutating batches of frames. Generally speaking, it is almost always better to use
-    /// `render()`, `fill()`, `chan_mut()`, and `chan_pair_mut()` to mutate the buffer.
+    /// Note: This is not a cheap operation for audio buffers with > 8 channels. It is advisable
+    /// that this call is only used when modifying large batches of frames. Generally speaking,
+    /// it is almost always better to use `render()`, `fill()`, `chan_mut()`, and `chan_pair_mut()`
+    /// to modify the buffer instead.
     pub fn planes_mut(&mut self) -> AudioPlanesMut<S> {
         // Fill the audio planes structure with references to the written portion of each audio
         // plane.
-        let mut planes = AudioPlanesMut::new();
+        let mut planes = AudioPlanesMut::new(self.spec.channels);
 
         for channel in self.buf.chunks_exact_mut(self.n_capacity) {
-            planes.planes.push(&mut channel[..self.n_frames]);
+            planes.push(&mut channel[..self.n_frames]);
         }
 
         planes
@@ -515,10 +582,10 @@ impl<S: Sample> Signal<S> for AudioBuffer<S> {
         // At this point, n_render_frames can be considered "reserved". Create an audio plane
         // structure and fill each plane entry with a reference to the "reserved" samples in each
         // channel respectively.
-        let mut planes = AudioPlanesMut::new();
+        let mut planes = AudioPlanesMut::new(self.spec.channels);
 
         for channel in self.buf.chunks_exact_mut(self.n_capacity) {
-            planes.planes.push(&mut channel[self.n_frames..end]);
+            planes.push(&mut channel[self.n_frames..end]);
         }
 
         // Attempt to render the into the reserved frames, one-by-one, exiting only if there is an
