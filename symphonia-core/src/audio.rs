@@ -451,7 +451,7 @@ impl<S: Sample> Signal<S> for AudioBuffer<S> {
         }
         else {
             let (a, b) = self.buf.split_at_mut(first_idx);
-            
+
             (&mut b[..self.n_frames], &mut a[second_idx..second_idx + self.n_frames])
         }
     }
@@ -829,11 +829,10 @@ impl<S: Sample + RawSample> RawSampleBuffer<S> {
 
         let dst_buf = &mut self.buf[..n_samples];
 
-        for (c, dst_ch) in dst_buf.chunks_exact_mut(src.n_frames).enumerate() {
-            let ch_start = c * src.n_capacity;
-            let ch_end = ch_start + src.n_frames;
+        for (ch, dst_ch) in dst_buf.chunks_exact_mut(src.n_frames).enumerate() {
+            let src_ch = src.chan(ch);
 
-            for (&s, d) in src.buf[ch_start..ch_end].iter().zip(dst_ch) {
+            for (&s, d) in src_ch.iter().zip(dst_ch) {
                 *d = s.into_sample().into_raw_sample();
             }
         }
@@ -853,11 +852,10 @@ impl<S: Sample + RawSample> RawSampleBuffer<S> {
 
         let dst_buf = &mut self.buf[..n_samples];
 
-        for (c, dst_ch) in dst_buf.chunks_exact_mut(src.n_frames).enumerate() {
-            let ch_start = c * src.n_capacity;
-            let ch_end = ch_start + src.n_frames;
+        for (ch, dst_ch) in dst_buf.chunks_exact_mut(src.n_frames).enumerate() {
+            let src_ch = src.chan(ch);
 
-            for (&s, d) in src.buf[ch_start..ch_end].iter().zip(dst_ch) {
+            for (&s, d) in src_ch.iter().zip(dst_ch) {
                 *d = s.into_raw_sample();
             }
         }
@@ -901,14 +899,14 @@ impl<S: Sample + RawSample> RawSampleBuffer<S> {
             0 => (),
             // Mono
             1=> {
-                for (&s, d) in src.buf[..n_frames].iter().zip(dst_buf) {
+                for (&s, d) in src.chan(0).iter().zip(dst_buf) {
                     *d = s.into_sample().into_raw_sample();
                 }
             }
             // Stereo
             2 => {
-                let l_buf = &src.buf[0..n_frames];
-                let r_buf = &src.buf[src.n_capacity..(src.n_capacity + n_frames)];
+                let l_buf = src.chan(0);
+                let r_buf = src.chan(1);
 
                 for ((&l, &r), d) in l_buf.iter().zip(r_buf).zip(dst_buf.chunks_exact_mut(2)) {
                     d[0] = l.into_sample().into_raw_sample();
@@ -917,10 +915,11 @@ impl<S: Sample + RawSample> RawSampleBuffer<S> {
             }
             // 3+ channels
             _ => {
-                for (c, src_ch) in src.buf.chunks_exact(src.n_capacity).enumerate() {
-                    let dst_iter = dst_buf[c..].iter_mut().step_by(n_channels);
+                for ch in 0..n_channels {
+                    let src_ch = src.chan(ch);
+                    let dst_ch_iter = dst_buf[ch..].iter_mut().step_by(n_channels);
 
-                    for (&s, d) in src_ch[..n_frames].iter().zip(dst_iter) {
+                    for (&s, d) in src_ch.iter().zip(dst_ch_iter) {
                         *d = s.into_sample().into_raw_sample();
                     }
                 }
@@ -950,14 +949,14 @@ impl<S: Sample + RawSample> RawSampleBuffer<S> {
             0 => (),
             // Mono
             1=> {
-                for (&s, d) in src.buf[..n_frames].iter().zip(dst_buf) {
+                for (&s, d) in src.chan(0).iter().zip(dst_buf) {
                     *d = s.into_raw_sample();
                 }
             }
             // Stereo
             2 => {
-                let l_buf = &src.buf[0..n_frames];
-                let r_buf = &src.buf[src.n_capacity..(src.n_capacity + n_frames)];
+                let l_buf = src.chan(0);
+                let r_buf = src.chan(1);
 
                 for ((&l, &r), d) in l_buf.iter().zip(r_buf).zip(dst_buf.chunks_exact_mut(2)) {
                     d[0] = l.into_raw_sample();
@@ -966,10 +965,11 @@ impl<S: Sample + RawSample> RawSampleBuffer<S> {
             }
             // 3+ channels
             _ => {
-                for (c, src_ch) in src.buf.chunks_exact(src.n_capacity).enumerate() {
-                    let dst_iter = dst_buf[c..].iter_mut().step_by(n_channels);
+                for ch in 0..n_channels {
+                    let src_ch = src.chan(ch);
+                    let dst_ch_iter = dst_buf[ch..].iter_mut().step_by(n_channels);
 
-                    for (&s, d) in src_ch[..n_frames].iter().zip(dst_iter) {
+                    for (&s, d) in src_ch.iter().zip(dst_ch_iter) {
                         *d = s.into_raw_sample();
                     }
                 }

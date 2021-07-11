@@ -94,7 +94,6 @@ impl Sample for u16 {
 }
 
 impl Sample for i16 {
-
     const FORMAT: SampleFormat = SampleFormat::S16;
     const EFF_BITS: u32 = 16;
     const MID: i16 = 0;
