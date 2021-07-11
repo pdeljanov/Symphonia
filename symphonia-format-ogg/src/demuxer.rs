@@ -11,7 +11,7 @@ use symphonia_core::support_format;
 use symphonia_core::errors::{Result, unsupported_error};
 use symphonia_core::formats::prelude::*;
 use symphonia_core::io::MediaSourceStream;
-use symphonia_core::meta::MetadataQueue;
+use symphonia_core::meta::{Metadata, MetadataLog};
 use symphonia_core::probe::{Descriptor, Instantiate, QueryDescriptor};
 
 use log::info;
@@ -26,7 +26,7 @@ pub struct OggReader {
     reader: MediaSourceStream,
     tracks: Vec<Track>,
     cues: Vec<Cue>,
-    metadata: MetadataQueue,
+    metadata: MetadataLog,
     physical_stream: PhysicalStream,
     mappers: BTreeMap<u32, Box<dyn mappings::Mapper>>,
 }
@@ -86,7 +86,7 @@ impl FormatReader for OggReader {
             }
         }
 
-        let mut metadata: MetadataQueue = Default::default();
+        let mut metadata: MetadataLog = Default::default();
 
         // Each logical stream may contain additional header packets after the identification packet
         // that contains format-relevant information such as metadata. These packets should be
@@ -95,11 +95,13 @@ impl FormatReader for OggReader {
             let packet = physical_stream.next_packet(&mut source)?;
 
             // If the packet belongs to a logical stream, and it is a metadata packet, push the
-            // parsed metadata onto the revision queue. If it's an unknown packet, skip it. Exit
+            // parsed metadata onto the revision log. If it's an unknown packet, skip it. Exit
             // from this loop for any other packet.
             if let Some(mapper) = mappers.get_mut(&packet.serial) {
                 match mapper.map_packet(&packet)? {
-                    mappings::MapResult::Metadata(revision) => metadata.push(revision),
+                    mappings::MapResult::Metadata(revision) => {
+                        metadata.push(revision)
+                    },
                     mappings::MapResult::Unknown => (),
                     _ => break
                 }
@@ -142,7 +144,7 @@ impl FormatReader for OggReader {
                         return Ok(packet);
                     }
                     mappings::MapResult::Metadata(metadata) => {
-                        // Push metadata onto metadata queue.
+                        // Push metadata onto the log.
                         self.metadata.push(metadata);
                     }
                     _ => {
@@ -153,8 +155,8 @@ impl FormatReader for OggReader {
         }
     }
 
-    fn metadata(&self) -> &MetadataQueue {
-        &self.metadata
+    fn metadata(&mut self) -> Metadata<'_> {
+        self.metadata.metadata()
     }
 
     fn cues(&self) -> &[Cue] {

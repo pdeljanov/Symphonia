@@ -9,7 +9,7 @@ use super::common::OggPacket;
 
 use symphonia_core::codecs::CodecParameters;
 use symphonia_core::errors::Result;
-use symphonia_core::meta::Metadata;
+use symphonia_core::meta::MetadataRevision;
 
 mod flac;
 mod opus;
@@ -32,7 +32,7 @@ pub struct Bitstream {
 
 pub enum MapResult {
     Bitstream(Bitstream),
-    Metadata(Metadata),
+    Metadata(MetadataRevision),
     Unknown,
 }
 

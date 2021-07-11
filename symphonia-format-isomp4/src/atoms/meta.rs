@@ -9,7 +9,7 @@ use std::fmt::Debug;
 
 use symphonia_core::errors::Result;
 use symphonia_core::io::ByteStream;
-use symphonia_core::meta::{Metadata, MetadataQueue};
+use symphonia_core::meta::{MetadataRevision, MetadataLog};
 
 use crate::atoms::{Atom, AtomHeader, AtomIterator, AtomType, IlstAtom};
 
@@ -18,7 +18,7 @@ pub struct MetaAtom {
     /// Atom header.
     header: AtomHeader,
     /// Metadata revision.
-    pub metadata: Metadata,
+    pub metadata: MetadataRevision,
 }
 
 impl Debug for MetaAtom {
@@ -28,9 +28,9 @@ impl Debug for MetaAtom {
 }
 
 impl MetaAtom {
-    /// Consumes the metadata, and pushes it onto provided `MetadataQueue`.
-    pub fn take_metadata(self, queue: &mut MetadataQueue) {
-        queue.push(self.metadata);
+    /// Consumes the metadata, and pushes it onto provided `MetadataLog`.
+    pub fn take_metadata(self, log: &mut MetadataLog) {
+        log.push(self.metadata)
     }
 }
 

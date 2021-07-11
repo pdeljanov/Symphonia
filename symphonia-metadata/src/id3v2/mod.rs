@@ -10,7 +10,7 @@
 use symphonia_core::support_metadata;
 use symphonia_core::errors::{Result, decode_error, unsupported_error};
 use symphonia_core::io::*;
-use symphonia_core::meta::{Metadata, MetadataBuilder, MetadataOptions, MetadataReader};
+use symphonia_core::meta::{MetadataRevision, MetadataBuilder, MetadataOptions, MetadataReader};
 use symphonia_core::probe::{QueryDescriptor, Descriptor, Instantiate};
 
 use log::{info, trace};
@@ -394,7 +394,7 @@ impl MetadataReader for Id3v2Reader {
         Id3v2Reader { }
     }
 
-    fn read_all(&mut self, reader: &mut MediaSourceStream) -> Result<Metadata> {
+    fn read_all(&mut self, reader: &mut MediaSourceStream) -> Result<MetadataRevision> {
         let mut builder = MetadataBuilder::new();
         read_id3v2(reader, &mut builder)?;
         Ok(builder.metadata())

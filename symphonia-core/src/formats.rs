@@ -11,7 +11,7 @@
 use crate::codecs::CodecParameters;
 use crate::errors::Result;
 use crate::io::{BufStream, MediaSourceStream};
-use crate::meta::{MetadataQueue, Tag};
+use crate::meta::{Metadata, Tag};
 use crate::units::{Time, TimeStamp};
 
 pub mod prelude {
@@ -175,8 +175,8 @@ pub trait FormatReader: Send {
     /// Gets a list of all `Cue`s.
     fn cues(&self) -> &[Cue];
 
-    /// Gets the metadata revision queue.
-    fn metadata(&self) -> &MetadataQueue;
+    /// Gets the metadata revision log.
+    fn metadata(&mut self) -> Metadata<'_>;
 
     /// Seek, as precisely as possible depending on the mode, to the `Time` or track `TimeStamp`
     /// requested. Returns the requested and actual `TimeStamps` seeked to, as well as the `Track`.

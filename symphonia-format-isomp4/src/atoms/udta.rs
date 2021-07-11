@@ -7,7 +7,7 @@
 
 use symphonia_core::errors::Result;
 use symphonia_core::io::ByteStream;
-use symphonia_core::meta::MetadataQueue;
+use symphonia_core::meta::MetadataLog;
 
 use crate::atoms::{Atom, AtomHeader, AtomIterator, AtomType, MetaAtom};
 
@@ -21,10 +21,10 @@ pub struct UdtaAtom {
 }
 
 impl UdtaAtom {
-    /// Consume any metadata, and push it onto provided `MetadataQueue`.
-    pub fn take_metadata(&mut self, queue: &mut MetadataQueue) {
+    /// Consume any metadata, and push it onto provided `MetadataLog`.
+    pub fn take_metadata(&mut self, log: &mut MetadataLog) {
         if let Some(meta) = self.meta.take() {
-            meta.take_metadata(queue);
+            meta.take_metadata(log)
         }
     }
 }

@@ -109,7 +109,7 @@ fn main() {
 
     // Probe the media source stream for metadata and get the format reader.
     match symphonia::default::get_probe().format(&hint, mss, &format_opts, &metadata_opts) {
-        Ok(probed) => {
+        Ok(mut probed) => {
             let result = if matches.is_present("verify-only") {
                 // Verify-only mode decodes and verifies the audio, but does not play it.
                 decode_only(probed.format, &DecoderOptions { verify: true, ..Default::default() })
@@ -120,12 +120,12 @@ fn main() {
             }
             else if matches.is_present("probe-only") {
                 // Probe-only mode only prints information about the format, tracks, metadata, etc.
-                pretty_print_format(path_str, &probed);
+                pretty_print_format(path_str, &mut probed);
                 Ok(())
             }
             else {
                 // Playback mode.
-                pretty_print_format(path_str, &probed);
+                pretty_print_format(path_str, &mut probed);
 
                 // If present, parse the seek argument.
                 let seek_time = matches.value_of("seek").map(|p| p.parse::<f64>().unwrap_or(0.0));
@@ -276,25 +276,29 @@ fn play(mut reader: Box<dyn FormatReader>, seek_time: Option<f64>, decode_option
     }
 }
 
-fn pretty_print_format(path: &str, probed: &ProbeResult) {
+fn pretty_print_format(path: &str, probed: &mut ProbeResult) {
     println!("+ {}", path);
     pretty_print_tracks(probed.format.tracks());
 
     // Prefer metadata that's provided in the container format, over other tags found during the
     // probe operation.
-    if let Some(metadata) = probed.format.metadata().current() {
-        pretty_print_tags(metadata.tags());
-        pretty_print_visuals(metadata.visuals());
+    if let Some(metadata_rev) = probed.format.metadata().current() {
+        pretty_print_tags(metadata_rev.tags());
+        pretty_print_visuals(metadata_rev.visuals());
 
         // Warn that certain tags are preferred.
-        if probed.metadata.as_ref().and_then(|m| m.current()).is_some() {
+        if probed.metadata.get().as_ref().is_some() {
             info!("tags that are part of the container format are preferentially printed.");
             info!("not printing additional tags that were found while probing.");
         }
     }
-    else if let Some(metadata) = probed.metadata.as_ref().and_then(|m| m.current()) {
-        pretty_print_tags(metadata.tags());
-        pretty_print_visuals(metadata.visuals());
+    else if let Some(metadata_rev) = probed.metadata
+        .get()
+        .as_ref()
+        .and_then(|m| m.current()) 
+    {
+        pretty_print_tags(metadata_rev.tags());
+        pretty_print_visuals(metadata_rev.visuals());
     }
 
     pretty_print_cues(probed.format.cues());
