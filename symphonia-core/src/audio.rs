@@ -892,9 +892,9 @@ impl<S: Sample + RawSample> RawSampleBuffer<S> {
         // Practically speaking, it is not possible to allocate more than usize samples.
         assert!(n_samples <= usize::max_value() as u64);
 
-        // Allocate enough memory for all the samples.
+        // Allocate enough memory for all the samples and fill the buffer with silence.
         let byte_length = n_samples as usize * mem::size_of::<S::RawType>();
-        let buf = vec![S::RawType::default(); byte_length];
+        let buf = vec![S::MID.into_raw_sample(); byte_length];
 
         RawSampleBuffer {
             buf,
