@@ -11,7 +11,7 @@
 use crate::errors::{Result, unsupported_error};
 use crate::formats::{FormatOptions, FormatReader};
 use crate::io::{ByteStream, MediaSourceStream};
-use crate::meta::{MetadataReader, MetadataOptions, MetadataLog};
+use crate::meta::{MetadataReader, MetadataOptions, MetadataLog, Metadata};
 
 use log::{error, info};
 
@@ -156,17 +156,36 @@ impl Hint {
     }
 }
 
+/// Metadata that came from the `metadata` field of [`ProbeResult`].
+pub struct ProbedMetadata {
+    metadata: Option<MetadataLog>,
+}
+
+impl ProbedMetadata {
+    /// Returns the metadata that was found during probing.
+    ///
+    /// If any additional metadata was present outside of the container, this is
+    /// `Some` and the log will have at least one item in it.
+    pub fn get(&mut self) -> Option<Metadata<'_>> {
+        self.metadata.as_mut().map(|m| m.metadata())
+    }
+
+    /// Returns the inner metadata log, if it was present.
+    pub fn into_inner(self) -> Option<MetadataLog> {
+        self.metadata
+    }
+}
+
 /// `ProbeResult` contains the result of a format probe operation.
 pub struct ProbeResult {
     /// An instance of a `FormatReader` for the probed format
     pub format: Box<dyn FormatReader>,
     /// A log of `Metadata` revisions read during the probe operation before the instantiation of
-    /// the `FormatReader`. If any additional metadata was present outside of the container, this is
-    /// `Some` and the log will have at least one item in it.
+    /// the `FormatReader`.
     ///
     /// Metadata that was part of the container format itself can be read by calling `.metadata()`
     /// on `format`.
-    pub metadata: Option<MetadataLog>,
+    pub metadata: ProbedMetadata,
 }
 
 /// `Probe` scans a `MediaSourceStream` for metadata and container formats, and provides an
@@ -314,7 +333,7 @@ impl Probe {
                         None
                     };
 
-                    return Ok(ProbeResult { format, metadata });
+                    return Ok(ProbeResult { format, metadata: ProbedMetadata { metadata } });
                 }
                 // If metadata was found, instantiate the metadata reader, read the metadata, and
                 // push it onto the metadata log.
