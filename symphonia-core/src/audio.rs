@@ -275,13 +275,19 @@ impl<S : Sample> AudioBuffer<S> {
     /// Instantiate a new `AudioBuffer` using the specified signal specification and of the given
     /// duration.
     pub fn new(duration: Duration, spec: SignalSpec) -> Self {
-        let n_sample_capacity = duration * spec.channels.count() as u64;
+        // The number of channels * duration cannot exceed u64::MAX.
+        assert!(duration <= u64::MAX / spec.channels.count() as u64, "duration too large");
 
-        // Practically speaking, it is not possible to allocate more than usize samples.
-        assert!(n_sample_capacity <= usize::max_value() as u64);
+        // The total number of samples the buffer will store.
+        let n_samples = duration * spec.channels.count() as u64;
 
-        // Allocate memory for the sample data and default initialize the sample to silence.
-        let buf = vec![S::default(); n_sample_capacity as usize];
+        // Practically speaking, it is not possible to allocate more than usize::MAX bytes of
+        // samples. This assertion ensures the potential downcast of n_samples to usize below is
+        // safe.
+        assert!(n_samples <= (usize::MAX / mem::size_of::<S>()) as u64, "duration too large");
+
+        // Allocate sample buffer and default initialize all samples to silence.
+        let buf = vec![S::MID; n_samples as usize];
 
         AudioBuffer {
             buf,
@@ -626,10 +632,16 @@ impl<S: Sample> SampleBuffer<S> {
     /// Instantiate a new `SampleBuffer` using the specified signal specification and of the given
     /// duration.
     pub fn new(duration: Duration, spec: SignalSpec) -> SampleBuffer<S> {
+        // The number of channels * duration cannot exceed u64::MAX.
+        assert!(duration <= u64::MAX / spec.channels.count() as u64, "duration too large");
+
+        // The total number of samples the buffer will store.
         let n_samples = duration * spec.channels.count() as u64;
 
-        // Practically speaking, it is not possible to allocate more than usize samples.
-        assert!(n_samples <= usize::max_value() as u64);
+        // Practically speaking, it is not possible to allocate more than usize::MAX bytes of
+        // samples. This assertion ensures the potential downcast of n_samples to usize below is
+        // safe.
+        assert!(n_samples <= (usize::MAX / mem::size_of::<S>()) as u64, "duration too large");
 
         SampleBuffer {
             buf: vec![S::MID; n_samples as usize],
@@ -887,14 +899,22 @@ impl<S: Sample + RawSample> RawSampleBuffer<S> {
     /// Instantiate a new `RawSampleBuffer` using the specified signal specification and of the given
     /// duration.
     pub fn new(duration: Duration, spec: SignalSpec) -> RawSampleBuffer<S> {
+        // The number of channels * duration cannot exceed u64::MAX.
+        assert!(duration <= u64::MAX / spec.channels.count() as u64, "duration too large");
+
+        // The total number of samples the buffer will store.
         let n_samples = duration * spec.channels.count() as u64;
 
-        // Practically speaking, it is not possible to allocate more than usize samples.
-        assert!(n_samples <= usize::max_value() as u64);
+        // Practically speaking, it is not possible to allocate more than usize::MAX bytes of raw
+        // samples. This assertion ensures the potential downcast of n_samples to usize below is
+        // safe.
+        assert!(
+            n_samples <= (usize::MAX / mem::size_of::<S::RawType>()) as u64,
+            "duration too large"
+        );
 
         // Allocate enough memory for all the samples and fill the buffer with silence.
-        let byte_length = n_samples as usize * mem::size_of::<S::RawType>();
-        let buf = vec![S::MID.into_raw_sample(); byte_length];
+        let buf = vec![S::MID.into_raw_sample(); n_samples as usize];
 
         RawSampleBuffer {
             buf,
