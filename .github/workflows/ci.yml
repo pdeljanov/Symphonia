@@ -39,12 +39,16 @@ jobs:
         args: --all --all-features --exclude symphonia-play
 
   test:
-    name: Test ${{ matrix.os }}
+    name: Test ${{ matrix.config.target }} on ${{ matrix.config.os }}
 
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.config.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest, "windows-latest"]
+        config:
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu, use-cross: false }
+          - { os: macos-latest, target: x86_64-apple-darwin, use-cross: false }
+          - { os: windows-latest, target: x86_64-pc-windows-msvc, use-cross: false }
+          - { os: ubuntu-latest, target: powerpc-unknown-linux-gnu, use-cross: true }
 
     steps:
       - name: Checkout
@@ -60,19 +64,22 @@ jobs:
         uses: actions-rs/cargo@v1
         with:
           command: test
-          args: --all --exclude symphonia-play
+          args: --target ${{ matrix.config.target }} --all --exclude symphonia-play
+          use-cross: ${{ matrix.config.use-cross }}
 
       - name: Test all features
         uses: actions-rs/cargo@v1
         with:
           command: test
-          args: --all --all-features --exclude symphonia-play
+          args: --target ${{ matrix.config.target }} --all --all-features --exclude symphonia-play
+          use-cross: ${{ matrix.config.use-cross }}
 
       - name: Test documentation
         uses: actions-rs/cargo@v1
         with:
           command: test
-          args: --all --all-features --doc --exclude symphonia-play
+          args: --target ${{ matrix.config.target }} --all --all-features --doc --exclude symphonia-play
+          use-cross: ${{ matrix.config.use-cross }}
 
 
 # Uncomment to check formatting
