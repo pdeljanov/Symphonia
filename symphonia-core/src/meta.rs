@@ -16,21 +16,20 @@ use std::num::NonZeroU32;
 use crate::errors::Result;
 use crate::io::MediaSourceStream;
 
-/// Limit defines how a `Format` or `Codec` should handle resource allocation when the amount of
-/// that resource to be allocated is dictated by the untrusted stream. Limits are used to prevent
-/// denial-of-service attacks whereby the stream requests the `Format` or `Codec` to allocate large
-/// amounts of a resource, usually memory. A limit will place an upper-bound on this allocation at
-/// the risk of breaking potentially valid streams.
+/// `Limit` defines an upper-bound on how much of a resource should be allocated when the amount to
+/// be allocated is specified by the media stream, which is untrusted. A limit will place an
+/// upper-bound on this allocation at the risk of breaking potentially valid streams. Limits are
+/// used to prevent denial-of-service attacks.
 ///
 /// All limits can be defaulted to a reasonable value specific to the situation. These defaults will
-/// generally not break any normal stream.
+/// generally not break any normal streams.
 #[derive(Copy, Clone)]
 pub enum Limit {
     /// Do not impose any limit.
     None,
-    /// Use the (reasonable) default specified by the `Format` or `Codec`.
+    /// Use the a reasonable default specified by the `FormatReader` or `Decoder` implementation.
     Default,
-    /// Specify the upper limit of the resource. Units are use-case specific.
+    /// Specify the upper limit of the resource. Units are case specific.
     Maximum(usize),
 }
 
@@ -46,8 +45,14 @@ impl Limit {
     }
 }
 
+impl Default for Limit {
+    fn default() -> Self {
+        Limit::Default
+    }
+}
+
 /// `MetadataOptions` is a common set of options that all metadata readers use.
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Default)]
 pub struct MetadataOptions {
     /// The maximum size limit in bytes that a tag may occupy in memory once decoded. Tags exceeding
     /// this limit will be skipped by the demuxer. Take note that tags in-memory are stored as UTF-8
@@ -56,15 +61,6 @@ pub struct MetadataOptions {
 
     /// The maximum size limit in bytes that a visual (picture) may occupy.
     pub limit_visual_bytes: Limit,
-}
-
-impl Default for MetadataOptions {
-    fn default() -> Self {
-        MetadataOptions {
-            limit_metadata_bytes: Limit::Default,
-            limit_visual_bytes: Limit::Default,
-        }
-    }
 }
 
 /// `StandardVisualKey` is an enumeration providing standardized keys for common visual dispositions.
