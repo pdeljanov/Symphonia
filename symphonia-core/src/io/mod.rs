@@ -232,21 +232,21 @@ pub trait ReadBytes {
         Ok(u64::from_be_bytes(buf))
     }
 
-    /// Reads four bytes from the stream and interprets them as a 32-bit little-endiann IEEE-754
+    /// Reads four bytes from the stream and interprets them as a 32-bit little-endian IEEE-754
     /// floating-point value.
     #[inline(always)]
     fn read_f32(&mut self) -> io::Result<f32> {
         Ok(f32::from_le_bytes(self.read_quad_bytes()?))
     }
 
-    /// Reads four bytes from the stream and interprets them as a 32-bit big-endiann IEEE-754
+    /// Reads four bytes from the stream and interprets them as a 32-bit big-endian IEEE-754
     /// floating-point value.
     #[inline(always)]
     fn read_be_f32(&mut self) -> io::Result<f32> {
         Ok(f32::from_be_bytes(self.read_quad_bytes()?))
     }
 
-    /// Reads four bytes from the stream and interprets them as a 64-bit little-endiann IEEE-754
+    /// Reads four bytes from the stream and interprets them as a 64-bit little-endian IEEE-754
     /// floating-point value.
     #[inline(always)]
     fn read_f64(&mut self) -> io::Result<f64> {
@@ -255,7 +255,7 @@ pub trait ReadBytes {
         Ok(f64::from_le_bytes(buf))
     }
 
-    /// Reads four bytes from the stream and interprets them as a 64-bit big-endiann IEEE-754
+    /// Reads four bytes from the stream and interprets them as a 64-bit big-endian IEEE-754
     /// floating-point value.
     #[inline(always)]
     fn read_be_f64(&mut self) -> io::Result<f64> {

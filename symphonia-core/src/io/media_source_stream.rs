@@ -469,7 +469,7 @@ mod tests {
 
         for quad in bytes.chunks_mut(4) {
             lcg = lcg.wrapping_mul(1664525).wrapping_add(1013904223);
-            for (src, dest) in quad.iter_mut().zip(&lcg.to_ne_bytes()) {
+            for (src, dest) in quad.iter_mut().zip(&lcg.to_le_bytes()) {
                 *src = *dest;
             }
         }
@@ -537,7 +537,7 @@ mod tests {
     fn verify_mss_seek_buffered() {
         let data = generate_random_bytes(1024 * 1024);
 
-        let ms = Cursor::new(data.clone());
+        let ms = Cursor::new(data);
         let mut mss = MediaSourceStream::new(Box::new(ms), Default::default());
 
         assert_eq!(mss.read_buffer_len(), 0);
@@ -561,5 +561,42 @@ mod tests {
         assert_eq!(mss.read_buffer_len(), 5122);
 
         assert_eq!(upper, mss.read_byte().unwrap());
+    }
+
+    #[test]
+    fn verify_reading_be() {
+        let data = generate_random_bytes(1024 * 1024);
+
+        let ms = Cursor::new(data);
+        let mut mss = MediaSourceStream::new(Box::new(ms), Default::default());
+
+        // For slightly cleaner floats
+        mss.ignore_bytes(2).unwrap();
+
+        assert_eq!(mss.read_be_f32().unwrap(), -72818055000000000000000000000.0);
+        assert_eq!(mss.read_be_f64().unwrap(), -0.000000000000011582640453292664);
+
+        assert_eq!(mss.read_be_u16().unwrap(), 32624);
+        assert_eq!(mss.read_be_u24().unwrap(), 6739677);
+        assert_eq!(mss.read_be_u32().unwrap(), 1569552917);
+        assert_eq!(mss.read_be_u64().unwrap(), 6091217585348000864);
+    }
+
+    #[test]
+    fn verify_reading_le() {
+        let data = generate_random_bytes(1024 * 1024);
+
+        let ms = Cursor::new(data);
+        let mut mss = MediaSourceStream::new(Box::new(ms), Default::default());
+
+        mss.ignore_bytes(1024).unwrap();
+
+        assert_eq!(mss.read_f32().unwrap(), -0.00000000000000000000000000048426285);
+        assert_eq!(mss.read_f64().unwrap(), -6444325820119113.0);
+
+        assert_eq!(mss.read_u16().unwrap(), 36195);
+        assert_eq!(mss.read_u24().unwrap(), 6710386);
+        assert_eq!(mss.read_u32().unwrap(), 2378776723);
+        assert_eq!(mss.read_u64().unwrap(), 5170196279331153683);
     }
 }
