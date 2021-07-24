@@ -354,6 +354,7 @@ impl ICSInfo {
             long_win: true,
         }
     }
+
     fn decode_ics_info<B: ReadBitsLtr>(&mut self, bs: &mut B) -> Result<()> {
         self.prev_window_sequence = self.window_sequence;
         self.prev_window_shape = self.window_shape;
@@ -697,6 +698,11 @@ impl ICS {
             delay: [0.0; 1024],
             lcg: Lcg::new(0x1bad1dea),
         }
+    }
+
+    fn reset(&mut self) {
+        self.info = ICSInfo::new();
+        self.delay = [0.0; 1024];
     }
 
     fn decode_section_data<B: ReadBitsLtr>(
@@ -1212,6 +1218,11 @@ impl ChannelPair {
         }
     }
 
+    fn reset(&mut self) {
+        self.ics0.reset();
+        self.ics1.reset();
+    }
+
     fn decode_ga_sce<B: ReadBitsLtr>(&mut self, bs: &mut B, m4atype: M4AType) -> Result<()> {
         self.ics0.decode_ics(bs, m4atype, false)?;
         Ok(())
@@ -1643,6 +1654,12 @@ impl Decoder for AacDecoder {
             params: params.clone(),
             buf: AudioBuffer::new(duration, spec),
         })
+    }
+
+    fn reset(&mut self) {
+        for pair in self.pairs.iter_mut() {
+            pair.reset();
+        }
     }
 
     fn supported_codecs() -> &'static [CodecDescriptor] {

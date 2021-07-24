@@ -361,6 +361,15 @@ pub trait Decoder: Send {
     where
         Self: Sized;
 
+    /// Reset the `Decoder`.
+    ///
+    /// A decoder must be reset when the next packet is discontinuous with respect to the last
+    /// decoded packet. Most notably, this occurs after a seek.
+    ///
+    /// For codecs that do a lot of pre-computation, reset should only reset the absolute minimum
+    /// amount of state.
+    fn reset(&mut self);
+
     /// Gets a reference to parameters the `Decoder` was instantiated with.
     fn codec_params(&self) -> &CodecParameters;
 

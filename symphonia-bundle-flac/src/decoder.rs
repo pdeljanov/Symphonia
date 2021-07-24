@@ -126,6 +126,10 @@ impl Decoder for FlacDecoder {
         &[ support_codec!(CODEC_TYPE_FLAC, "flac", "Free Lossless Audio Codec") ]
     }
 
+    fn reset(&mut self) {
+        // No state is stored between packets, therefore do nothing.
+    }
+
     fn codec_params(&self) -> &CodecParameters {
         &self.params
     }

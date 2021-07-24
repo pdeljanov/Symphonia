@@ -43,6 +43,11 @@ impl Decoder for Mp3Decoder {
         &self.params
     }
 
+    fn reset(&mut self) {
+        // Fully reset the decoder state.
+        self.state = State::new();
+    }
+
     fn decode(&mut self, packet: &Packet) -> Result<AudioBufferRef<'_>> {
         let mut reader = packet.as_buf_reader();
 
