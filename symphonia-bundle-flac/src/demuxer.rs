@@ -9,7 +9,7 @@ use std::io::{Seek, SeekFrom};
 
 use symphonia_core::support_format;
 
-use symphonia_core::codecs::{CODEC_TYPE_FLAC, CodecParameters};
+use symphonia_core::codecs::{CODEC_TYPE_FLAC, CodecParameters, VerificationCheck};
 use symphonia_core::errors::{Result, decode_error, seek_error, unsupported_error, SeekErrorKind};
 use symphonia_core::formats::prelude::*;
 use symphonia_core::formats::util::{SeekIndex, SeekSearchResult};
@@ -355,8 +355,6 @@ fn read_stream_info_block<B : ReadBytes>(
     if tracks.is_empty() {
         let info = StreamInfo::read(block_stream)?;
 
-        info!("stream md5 = {:x?}", info.md5);
-
         // Populate the codec parameters with the parameters from the stream information block.
         let mut codec_params = CodecParameters::new();
 
@@ -366,7 +364,8 @@ fn read_stream_info_block<B : ReadBytes>(
             .with_bits_per_sample(info.bits_per_sample)
             .with_max_frames_per_packet(u64::from(info.block_len_max))
             .with_channels(info.channels)
-            .with_packet_data_integrity(true);
+            .with_packet_data_integrity(true)
+            .with_verification_code(VerificationCheck::Md5(info.md5));
 
         // Total samples (per channel) aka frames may or may not be stated in StreamInfo.
         if let Some(n_frames) = info.n_samples {

@@ -18,8 +18,8 @@ use symphonia_core::errors::{decode_error, unsupported_error, Result};
 use symphonia_core::io::{ReadBitsLtr, FiniteBitStream, BitReaderLtr};
 use symphonia_core::io::vlc::{Codebook, Entry16x16};
 use symphonia_core::audio::{AudioBuffer, AudioBufferRef, AsAudioBufferRef, Signal, SignalSpec};
-use symphonia_core::codecs::CODEC_TYPE_AAC;
-use symphonia_core::codecs::{CodecParameters, CodecDescriptor, Decoder, DecoderOptions};
+use symphonia_core::codecs::{CODEC_TYPE_AAC, CodecParameters, CodecDescriptor};
+use symphonia_core::codecs::{Decoder, DecoderOptions, FinalizeResult};
 use symphonia_core::dsp::mdct::Imdct;
 use symphonia_core::formats::Packet;
 use symphonia_core::support_codec;
@@ -1671,8 +1671,8 @@ impl Decoder for AacDecoder {
         Ok(self.buf.as_audio_buffer_ref())
     }
 
-    fn close(&mut self) {
-
+    fn finalize(&mut self) -> FinalizeResult {
+        Default::default()
     }
 }
 

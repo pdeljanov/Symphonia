@@ -10,7 +10,7 @@ use crate::common::OggPacket;
 use super::{Bitstream, Mapper, MapResult};
 
 use symphonia_core::checksum::Crc8Ccitt;
-use symphonia_core::codecs::{CodecParameters, CODEC_TYPE_FLAC};
+use symphonia_core::codecs::{CODEC_TYPE_FLAC, CodecParameters, VerificationCheck};
 use symphonia_core::errors::{Result, decode_error};
 use symphonia_core::meta::MetadataBuilder;
 use symphonia_core::io::{BufReader, ReadBytes, MonitorStream};
@@ -88,7 +88,8 @@ pub fn detect(buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> {
         .with_bits_per_sample(stream_info.bits_per_sample)
         .with_max_frames_per_packet(u64::from(stream_info.block_len_max))
         .with_channels(stream_info.channels)
-        .with_packet_data_integrity(true);
+        .with_packet_data_integrity(true)
+        .with_verification_code(VerificationCheck::Md5(stream_info.md5));
 
     if let Some(n_frames) = stream_info.n_samples {
         codec_params.with_n_frames(n_frames);

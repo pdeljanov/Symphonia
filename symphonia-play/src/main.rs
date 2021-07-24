@@ -162,7 +162,10 @@ fn decode_only(mut reader: Box<dyn FormatReader>, decode_options: &DecoderOption
 
     // Decode all packets, ignoring all decode errors.
     let result = loop {
-        let packet = reader.next_packet()?;
+        let packet = match reader.next_packet() {
+            Ok(packet) => packet,
+            Err(err) => break Err(err),
+        };
 
         // If the packet does not belong to the selected track, skip over it.
         if packet.track_id() != track_id {
@@ -177,13 +180,26 @@ fn decode_only(mut reader: Box<dyn FormatReader>, decode_options: &DecoderOption
         }
     };
 
-    // Close the decoder.
-    decoder.close();
+    // Regardless of result, finalize the decoder to get the verification result.
+    let finalize_result = decoder.finalize();
+
+    if let Some(verify_ok) = finalize_result.verify_ok {
+        if verify_ok {
+            info!("verification passed");
+        }
+        else {
+            info!("verification failed");
+        }
+    }
 
     result
 }
 
-fn play(mut reader: Box<dyn FormatReader>, seek_time: Option<f64>, decode_options: &DecoderOptions) -> Result<()> {
+fn play(
+    mut reader: Box<dyn FormatReader>,
+    seek_time: Option<f64>,
+    decode_options: &DecoderOptions
+) -> Result<()> {
     // The audio output device.
     let mut audio_output = None;
 
@@ -223,9 +239,12 @@ fn play(mut reader: Box<dyn FormatReader>, seek_time: Option<f64>, decode_option
     };
 
     // Decode and play the packets belonging to the selected track.
-    loop {
+    let result = loop {
         // Get the next packet from the media container.
-        let packet = reader.next_packet()?;
+        let packet = match reader.next_packet() {
+            Ok(packet) => packet,
+            Err(err) => break Err(err),
+        };
 
         // If the packet does not belong to the selected track, skip over it.
         if packet.track_id() != track_id {
@@ -261,19 +280,28 @@ fn play(mut reader: Box<dyn FormatReader>, seek_time: Option<f64>, decode_option
                 // packet as usual.
                 warn!("decode error: {}", err);
             }
-            Err(err) => {
-                // Flush the audio output (i.e., for end-of-stream "errors").
-                if let Some(audio_output) = audio_output.as_mut() {
-                    audio_output.flush()
-                }
+            Err(err) => break Err(err),
+        }
+    };
 
-                // Close the decoder.
-                decoder.close();
+    // Flush the audio output to finish playing back any leftover samples.
+    if let Some(audio_output) = audio_output.as_mut() {
+        audio_output.flush()
+    }
 
-                return Err(err);
-            }
+    // Regardless of result, finalize the decoder to get the verification result.
+    let finalize_result = decoder.finalize();
+
+    if let Some(verify_ok) = finalize_result.verify_ok {
+        if verify_ok {
+            info!("verification passed");
+        }
+        else {
+            info!("verification failed");
         }
     }
+
+    result
 }
 
 fn pretty_print_format(path: &str, probed: &mut ProbeResult) {
@@ -295,7 +323,7 @@ fn pretty_print_format(path: &str, probed: &mut ProbeResult) {
     else if let Some(metadata_rev) = probed.metadata
         .get()
         .as_ref()
-        .and_then(|m| m.current()) 
+        .and_then(|m| m.current())
     {
         pretty_print_tags(metadata_rev.tags());
         pretty_print_visuals(metadata_rev.visuals());

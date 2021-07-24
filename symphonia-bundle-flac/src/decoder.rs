@@ -10,15 +10,15 @@ use std::num::Wrapping;
 
 use symphonia_core::audio::{AudioBuffer, AudioBufferRef, AsAudioBufferRef};
 use symphonia_core::audio::{Signal, SignalSpec};
-use symphonia_core::codecs::{CODEC_TYPE_FLAC, CodecParameters, CodecDescriptor};
-use symphonia_core::codecs::{Decoder, DecoderOptions};
+use symphonia_core::codecs::{CODEC_TYPE_FLAC, CodecParameters, CodecDescriptor, VerificationCheck};
+use symphonia_core::codecs::{Decoder, DecoderOptions, FinalizeResult};
 use symphonia_core::errors::{Result, decode_error, unsupported_error};
 use symphonia_core::formats::Packet;
 use symphonia_core::io::{ReadBitsLtr, BitReaderLtr};
 use symphonia_core::support_codec;
 use symphonia_core::util::bits::sign_extend_leq32_to_i32;
 
-use log::info;
+use log::{debug, log_enabled, warn};
 
 use super::frame::*;
 use super::validate::Validator;
@@ -214,10 +214,38 @@ impl Decoder for FlacDecoder {
         Ok(self.buf.as_audio_buffer_ref())
     }
 
-    fn close(&mut self) {
+    fn finalize(&mut self) -> FinalizeResult {
+        let mut result: FinalizeResult = Default::default();
+
+        // If verifying...
         if self.is_validating {
-            info!("output md5 = {:x?}", self.validator.md5());
+            // Try to get the expected MD5 checksum and compare it against the decoded checksum.
+            if let Some(VerificationCheck::Md5(expected)) = self.params.verification_check {
+                let decoded = self.validator.md5();
+
+                // Only generate the expected and decoded MD5 checksum strings if logging is
+                // enabled at the debug level.
+                if log_enabled!(log::Level::Debug) {
+                    use std::fmt::Write;
+
+                    let mut expected_s = String::with_capacity(32);
+                    let mut decoded_s = String::with_capacity(32);
+
+                    expected.iter().for_each(|b| write!(expected_s, "{:02x}", b).unwrap());
+                    decoded.iter().for_each(|b| write!(decoded_s, "{:02x}", b).unwrap());
+
+                    debug!("verification: expected md5 = {}", expected_s);
+                    debug!("verification: decoded md5  = {}", decoded_s);
+                }
+
+                result.verify_ok = Some(decoded == expected)
+            }
+            else {
+                warn!("verification requested but the expected md5 checksum was not provided");
+            }
         }
+
+        result
     }
 
 }

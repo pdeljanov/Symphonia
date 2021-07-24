@@ -11,7 +11,8 @@
 use symphonia_core::support_codec;
 
 use symphonia_core::audio::{AudioBuffer, AudioBufferRef, AsAudioBufferRef, Signal, SignalSpec};
-use symphonia_core::codecs::{CodecParameters, CodecDescriptor, Decoder, DecoderOptions};
+use symphonia_core::codecs::{CodecParameters, CodecDescriptor};
+use symphonia_core::codecs::{Decoder, DecoderOptions, FinalizeResult};
 // Signed Int PCM codecs
 use symphonia_core::codecs::{CODEC_TYPE_PCM_S8, CODEC_TYPE_PCM_S16LE};
 use symphonia_core::codecs::{CODEC_TYPE_PCM_S24LE, CODEC_TYPE_PCM_S32LE};
@@ -421,7 +422,7 @@ impl Decoder for PcmDecoder {
         Ok(self.buf.as_audio_buffer_ref())
     }
 
-    fn close(&mut self) {
-        // Intentionally left empty.
+    fn finalize(&mut self) -> FinalizeResult {
+        Default::default()
     }
 }

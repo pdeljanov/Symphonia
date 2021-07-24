@@ -146,6 +146,21 @@ impl fmt::Display for CodecType {
     }
 }
 
+/// A method and expected value to perform verification on the decoded audio.
+#[derive(Copy, Clone)]
+pub enum VerificationCheck {
+    /// CRC8 of interleaved PCM audio samples.
+    Crc8(u8),
+    /// CRC16 of interleaved PCM audio samples.
+    Crc16([u8; 2]),
+    /// CRC32 of interleaved PCM audio samples.
+    Crc32([u8; 4]),
+    /// MD5 of interleaved PCM audio samples.
+    Md5([u8; 16]),
+    /// Codec defined, up-to 16-byte code.
+    Other([u8; 16]),
+}
+
 /// Codec parameters stored in a container format's headers and metadata may be passed to a codec
 /// using the `CodecParameters` structure.
 #[derive(Clone)]
@@ -191,6 +206,9 @@ pub struct CodecParameters {
     /// The demuxer guarantees packet data integrity.
     pub packet_data_integrity: bool,
 
+    /// A method and expected value that may be used to perform verification on the decoded audio.
+    pub verification_check: Option<VerificationCheck>,
+
     /// Extra data (defined by the codec).
     pub extra_data: Option<Box<[u8]>>,
 }
@@ -211,6 +229,7 @@ impl CodecParameters {
             trailing_padding: None,
             max_frames_per_packet: None,
             packet_data_integrity: false,
+            verification_check: None,
             extra_data: None,
         }
     }
@@ -299,6 +318,20 @@ impl CodecParameters {
         self
     }
 
+    /// Provide a verification code of the final decoded audio.
+    pub fn with_verification_code(&mut self, code: VerificationCheck) -> &mut Self {
+        self.verification_check = Some(code);
+        self
+    }
+}
+
+/// `FinalizeResult` contains optional information that can only be found, calculated, or
+/// determined after decoding is complete.
+#[derive(Default)]
+pub struct FinalizeResult {
+    /// If verification is enabled and supported by the decoder, provides the verification result
+    /// if available.
+    pub verify_ok: Option<bool>,
 }
 
 /// `DecoderOptions` is a common set of options that all decoders use.
@@ -318,7 +351,6 @@ impl Default for DecoderOptions {
 /// A `Decoder` implements a codec's decode algorithm. It consumes `Packet`s and produces
 /// `AudioBuffer`s.
 pub trait Decoder: Send {
-
     /// Attempts to instantiates a `Decoder` using the provided `CodecParameters`.
     fn try_new(params: &CodecParameters, options: &DecoderOptions) -> Result<Self>
     where
@@ -336,8 +368,8 @@ pub trait Decoder: Send {
     /// of the decoded audio.
     fn decode(&mut self, packet: &Packet) -> Result<AudioBufferRef>;
 
-    /// Closes a decoder.
-    fn close(&mut self);
+    /// Optionally, obtain post-decode information such as the verification status.
+    fn finalize(&mut self) -> FinalizeResult;
 }
 
 /// A `CodecDescriptor` stores a description of a single logical codec. Common information such as

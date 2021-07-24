@@ -6,8 +6,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use symphonia_core::audio::{AudioBuffer, AudioBufferRef, AsAudioBufferRef, Signal};
-use symphonia_core::codecs::CODEC_TYPE_MP3;
-use symphonia_core::codecs::{CodecParameters, CodecDescriptor, Decoder, DecoderOptions};
+use symphonia_core::codecs::{CODEC_TYPE_MP3, CodecParameters, CodecDescriptor};
+use symphonia_core::codecs::{Decoder, DecoderOptions, FinalizeResult};
 use symphonia_core::errors::{Result, unsupported_error};
 use symphonia_core::formats::Packet;
 use symphonia_core::support_codec;
@@ -68,7 +68,7 @@ impl Decoder for Mp3Decoder {
         Ok(self.buf.as_audio_buffer_ref())
     }
 
-    fn close(&mut self) {
-
+    fn finalize(&mut self) -> FinalizeResult {
+        Default::default()
     }
 }
