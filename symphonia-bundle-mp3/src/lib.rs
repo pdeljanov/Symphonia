@@ -16,11 +16,11 @@
 // switched to f64.
 #![allow(clippy::excessive_precision)]
 
+mod codebooks;
 mod common;
 mod decoder;
 mod demuxer;
 mod header;
-mod huffman_tables;
 mod layer3;
 mod synthesis;
 

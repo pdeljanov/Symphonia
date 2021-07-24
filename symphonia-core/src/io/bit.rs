@@ -15,192 +15,440 @@ fn end_of_bitstream_error<T>() -> io::Result<T> {
     Err(io::Error::new(io::ErrorKind::Other, "unexpected end of bitstream"))
 }
 
-pub mod huffman {
-    //! The `huffman` module provides traits and structures for implementing Huffman decoders.
+pub mod vlc {
+    //! The `vlc` module provides support for decoding variable-length codes (VLC).
 
-    use std::marker::PhantomData;
+    use std::cmp::max;
+    use std::collections::{BTreeMap, VecDeque};
+    use std::io;
 
-    /// A `HuffmanEntry` represents a Huffman code within a table. It is used to abstract the
-    /// underlying data type of a `HuffmanTable` from the Huffman decoding algorithm.
-    ///
-    /// When a Huffman decoder reads a set of bits, those bits may be a partial Huffman code (a
-    /// prefix), or a complete code. If the code is a prefix, then the `HuffmanEntry` for that code
-    /// is a jump entry, pointing the Huffman decoder to where the next set of bits (the next part
-    /// of the Huffman code) should looked up within the `HuffmanTable`. If the code is not a
-    /// prefix, then `HuffmanEntry` is a value entry and the value will be returned by the Huffman
-    /// decoder.
-    pub trait HuffmanEntry : Copy + Clone + Sized {
-        /// The value type stored in the `HuffmanTable`.
-        type ValueType : Copy;
+    fn codebook_error<T>(desc: &'static str) -> io::Result<T> {
+        Err(io::Error::new(io::ErrorKind::Other, desc))
+    }
 
-        fn root(init_len: usize) -> Self;
+    /// `BitOrder` describes the relationship between the order of bits in the provided codewords
+    /// and the order in which bits are read.
+    #[derive(Copy, Clone)]
+    pub enum BitOrder {
+        /// The provided codewords have bits in the same order as the order in which they're being
+        /// read.
+        Verbatim,
+        /// The provided codeword have bits in the reverse order as the order in which they're
+        /// being read.
+        Reverse,
+    }
 
-        /// Returns true if the `HuffmanEntry` is a value entry.
+    /// `CodebookEntry` provides the functions required for an entry in the `Codebook`.
+    pub trait CodebookEntry : Copy + Clone + Default {
+        /// The type of a value in this entry.
+        type ValueType : Copy + From<u8>;
+        /// The type of a jump offset in this entry.
+        type OffsetType : Copy;
+
+        /// The maximum jump offset.
+        const JUMP_OFFSET_MAX: u32;
+
+        /// Creates a new value entry.
+        fn new_value(value: Self::ValueType, len: u8) -> Self;
+
+        /// Create a new jump entry.
+        fn new_jump(offset: u32, len: u8) -> Self;
+
+        /// Returns `true` if this entry is a value entry.
         fn is_value(&self) -> bool;
 
-        /// Returns true if the `HuffmanEntry` is a jump entry.
+        /// Returns `true` if this entry is a jump entry.
         fn is_jump(&self) -> bool;
 
-        /// For jump entries only, returns the base offset in the `HuffmanTable` for the jump.
+        /// Gets the value.
+        fn value(&self) -> Self::ValueType;
+
+        /// Get the length of the value in bits.
+        fn value_len(&self) -> u32;
+
+        /// Get the position in the table to jump to.
         fn jump_offset(&self) -> usize;
 
-        /// For jump entries only, returns the number of bits the Huffman decoder should read to
-        /// obtain the next part of the Huffman code.
-        fn next_len(&self) -> u32;
-
-        /// For value entries only, the length of the code.
-        fn code_len(&self) -> u32;
-
-        /// For value entries only, consumes the entry and returns the value.
-        fn into_value(self) -> Self::ValueType;
+        /// Get the number of bits to read after jumping in the table.
+        fn jump_len(&self) -> u32;
     }
 
-    /// A `HuffmanTable` is the table used to map Huffman codes to decoded values.
-    ///
-    /// A `HuffmanTable` is structured as a flattened table-of-tables. Wherein there is one table
-    /// partitioned into many sub-tables. Each sub-table is a look-up table for a portion of a
-    /// complete Huffman code word. Upon look-up, a sub-table either contains the decoded value
-    /// or indicates how many further bits should be read and the index of the sub-table to use for
-    /// the the next look-up. In this way, a tree of "prefixes" is formed where the leaf nodes are
-    /// contain decoded values.
-    ///
-    /// The maximum length of each sub-table is `2^n_init_bits - 1`. The initial look-up into the
-    /// table should be performed using a word of `n_init_bits`-bits long.
-    pub struct HuffmanTable<H: HuffmanEntry + 'static> {
-        /// The Huffman table.
-        pub data: &'static [H],
-        /// The number of bits to read for the initial lookup in the table.
-        pub n_init_bits: u32,
-        /// The maximum code length within the table in bits.
-        pub n_table_bits: u32,
+    macro_rules! decl_entry {
+        (
+            #[doc = $expr:expr]
+            $name:ident, $value_type:ty, $offset_type:ty, $offset_max:expr, $jump_flag:expr
+        ) => {
+            #[doc = $expr]
+            #[derive(Copy, Clone, Default)]
+            pub struct $name ($value_type, $offset_type);
+
+            impl CodebookEntry for $name {
+                type ValueType = $value_type;
+                type OffsetType = $offset_type;
+
+                const JUMP_OFFSET_MAX: u32 = $offset_max;
+
+                #[inline(always)]
+                fn new_value(value: Self::ValueType, len: u8) -> Self {
+                    $name (value, len.into())
+                }
+
+                #[inline(always)]
+                fn new_jump(offset: u32, len: u8) -> Self {
+                    $name (len.into(), $jump_flag | offset as Self::OffsetType)
+                }
+
+                #[inline(always)]
+                fn is_jump(&self) -> bool {
+                    self.1 & $jump_flag != 0
+                }
+
+                #[inline(always)]
+                fn is_value(&self) -> bool {
+                    self.1 & $jump_flag == 0
+                }
+
+                #[inline(always)]
+                fn value(&self) -> Self::ValueType {
+                    debug_assert!(self.is_value());
+                    self.0
+                }
+
+                #[inline(always)]
+                fn value_len(&self) -> u32 {
+                    debug_assert!(self.is_value());
+                    (self.1 & (!$jump_flag)).into()
+                }
+
+                #[inline(always)]
+                fn jump_offset(&self) -> usize {
+                    debug_assert!(self.is_jump());
+                    (self.1 & (!$jump_flag)) as usize
+                }
+
+                #[inline(always)]
+                fn jump_len(&self) -> u32 {
+                    debug_assert!(self.is_jump());
+                    self.0.into()
+                }
+            }
+        };
     }
 
-    /// `H8` is a `HuffmanEntry` type for 8-bit data values in a `HuffmanTable`.
-    pub type H8 = (u16, u16, PhantomData<u8>);
-    pub type H16 = (u16, u16, PhantomData<u16>);
+    decl_entry!(
+        /// `Entry8x8` is a codebook entry for 8-bit values with codes up-to 8-bits.
+        Entry8x8, u8, u8, 0x7f, 0x80
+    );
 
-    impl HuffmanEntry for H8 {
-        type ValueType = u8;
+    decl_entry!(
+        /// `Entry8x16` is a codebook entry for 8-bit values with codes up-to 16-bits.
+        Entry8x16, u8, u16, 0x7fff, 0x8000
+    );
 
-        #[inline(always)]
-        fn root(init_len: usize) -> Self {
-            (init_len as u16 & 0x7, 0, std::marker::PhantomData)
-        }
+    decl_entry!(
+        /// `Entry8x32` is a codebook entry for 8-bit values with codes up-to 32-bits.
+        Entry8x32, u8, u32, 0x7fff_ffff, 0x8000_0000
+    );
 
-        #[inline(always)]
-        fn is_value(&self) -> bool {
-            self.0 & 0x8000 != 0
-        }
+    decl_entry!(
+        /// `Entry16x8` is a codebook entry for 16-bit values with codes up-to 8-bits.
+        Entry16x8, u16, u8, 0x7f, 0x80
+    );
 
-        #[inline(always)]
-        fn is_jump(&self) -> bool {
-            self.0 & 0x8000 == 0
-        }
+    decl_entry!(
+        /// `Entry16x16` is a codebook entry for 16-bit values with codes up-to 16-bits.
+        Entry16x16, u16, u16, 0x7fff, 0x8000
+    );
 
-        #[inline(always)]
-        fn jump_offset(&self) -> usize {
-            debug_assert!(self.is_jump());
-            self.1 as usize
-        }
+    decl_entry!(
+        /// `Entry16x32` is a codebook entry for 16-bit values with codes up-to 32-bits.
+        Entry16x32, u16, u32, 0x7fff_ffff, 0x8000_0000
+    );
 
-        #[inline(always)]
-        fn next_len(&self) -> u32 {
-            debug_assert!(self.is_jump());
-            u32::from(self.0)
-        }
+    decl_entry!(
+        /// `Entry32x8` is a codebook entry for 32-bit values with codes up-to 8-bits.
+        Entry32x8, u32, u8, 0x7fff, 0x80
+    );
 
-        #[inline(always)]
-        fn code_len(&self) -> u32 {
-            debug_assert!(self.is_value());
-            u32::from(self.0 & 0x7fff)
-        }
+    decl_entry!(
+        /// `Entry32x16` is a codebook entry for 32-bit values with codes up-to 16-bits.
+        Entry32x16, u32, u16, 0x7fff, 0x8000
+    );
 
-        #[inline(always)]
-        fn into_value(self) -> Self::ValueType {
-            debug_assert!(self.is_value());
-            self.1 as Self::ValueType
+    decl_entry!(
+        /// `Entry32x32` is a codebook entry for 32-bit values with codes up-to 32-bits.
+        Entry32x32, u32, u32, 0x7fff_ffff, 0x8000_0000
+    );
+
+    /// `Codebook` is a variable-length code decoding table that may be used to efficiently read
+    /// symbols from a source of bits.
+    #[derive(Default)]
+    pub struct Codebook<E: CodebookEntry> {
+        pub table: Vec<E>,
+    }
+
+    impl<E: CodebookEntry> Codebook<E> {
+        /// Returns `true` if the `Codebook` is empty.
+        pub fn is_empty(&self) -> bool {
+            self.table.is_empty()
         }
     }
 
-    impl HuffmanEntry for H16 {
-        type ValueType = u16;
+    #[derive(Default)]
+    struct CodebookValue<E: CodebookEntry> {
+        prefix: u16,
+        width: u8,
+        value: E::ValueType,
+    }
 
-        #[inline(always)]
-        fn root(init_len: usize) -> Self {
-            (init_len as u16 & 0x7, 0, std::marker::PhantomData)
-        }
-
-        #[inline(always)]
-        fn is_value(&self) -> bool {
-            self.0 & 0x8000 != 0
-        }
-
-        #[inline(always)]
-        fn is_jump(&self) -> bool {
-            self.0 & 0x8000 == 0
-        }
-
-        #[inline(always)]
-        fn jump_offset(&self) -> usize {
-            debug_assert!(self.is_jump());
-            self.1 as usize
-        }
-
-        #[inline(always)]
-        fn next_len(&self) -> u32 {
-            debug_assert!(self.is_jump());
-            u32::from(self.0)
-        }
-
-        #[inline(always)]
-        fn code_len(&self) -> u32 {
-            debug_assert!(self.is_value());
-            u32::from(self.0 & 0x7fff)
-        }
-
-        #[inline(always)]
-        fn into_value(self) -> Self::ValueType {
-            debug_assert!(self.is_value());
-            self.1 as Self::ValueType
+    impl<E: CodebookEntry> CodebookValue<E> {
+        fn new(prefix: u16, width: u8, value: E::ValueType) -> Self {
+            CodebookValue { prefix, width, value }
         }
     }
 
-}
+    #[derive(Default)]
+    struct CodebookBlock<E: CodebookEntry> {
+        width: u8,
+        nodes: BTreeMap<u16, usize>,
+        values: Vec<CodebookValue<E>>,
+    }
 
-/// Convenience macro for encoding an `H8` value entry for a `HuffmanTable`. See `jmp8` for
-/// `val8`'s companion entry.
-#[macro_export]
-macro_rules! val8 {
-    ($data:expr, $len:expr) => {
-        (0x8000 | ($len & 0x7), $data & 0xff, std::marker::PhantomData)
-    };
-}
+    /// `CodebookBuilder` generates a `Codebook` using a provided codebook specification and
+    /// description.
+    pub struct CodebookBuilder {
+        max_bits_per_block: u8,
+        bit_order: BitOrder,
+    }
 
-/// Convenience macro for encoding an `H8` jump entry for a `HuffmanTable`. See `val8` for `jmp8`'s
-/// companion entry.
-#[macro_export]
-macro_rules! jmp8 {
-    ($offset:expr, $len:expr) => {
-        ($len & 0x7, $offset & 0xffff, std::marker::PhantomData)
-    };
-}
+    impl CodebookBuilder {
+        /// Instantiates a new `CodebookBuilder`.
+        ///
+        /// The `bit_order` parameter specifies if the codeword bits should be reversed when
+        /// constructing the codebook. If the `BitReader` or `BitStream` reading the constructed
+        /// codebook reads bits in an order different from the order of the provided codewords,
+        /// then this option can be used to make them compatible.
+        pub fn new(bit_order: BitOrder) -> Self {
+            CodebookBuilder { max_bits_per_block: 4, bit_order }
+        }
 
-/// Convenience macro for encoding an `H6` value entry for a `HuffmanTable`. See `jmp16` for
-/// `val16`'s companion entry.
-#[macro_export]
-macro_rules! val16 {
-    ($data:expr, $len:expr) => {
-        (0x8000 | ($len & 0x7), $data & 0xffff, std::marker::PhantomData)
-    };
-}
+        /// Specify the maximum number of bits that should be consumed from the source at a time.
+        /// This value must be within the range 1 <= `max_bits_per_read` <= 16. Values outside of
+        /// this range will cause this function to panic. If not provided, a value will be
+        /// automatically chosen.
+        pub fn bits_per_read(&mut self, max_bits_per_read: u8) -> &mut Self {
+            assert!(max_bits_per_read <= 16);
+            assert!(max_bits_per_read > 0);
+            self.max_bits_per_block = max_bits_per_read;
+            self
+        }
 
-/// Convenience macro for encoding an `H6` jump entry for a `HuffmanTable`. See `val16` for
-/// `jmp16`'s companion entry.
-#[macro_export]
-macro_rules! jmp16 {
-    ($offset:expr, $len:expr) => {
-        ($len & 0x7, $offset & 0xffff, std::marker::PhantomData)
-    };
+        fn generate_lut<E: CodebookEntry>(
+            bit_order: BitOrder,
+            blocks: &[CodebookBlock<E>]
+        ) -> io::Result<Vec<E>> {
+            // The codebook table.
+            let mut table = Vec::new();
+
+            let mut queue = VecDeque::new();
+
+            // The computed end of the table given the blocks in the queue.
+            let mut table_end = 0u32;
+
+            if !blocks.is_empty() {
+                // Start traversal at the first block.
+                queue.push_front(0);
+
+                // The first entry in the table is always a jump to the first block.
+                let block = &blocks[0];
+                table.push(CodebookEntry::new_jump(1, block.width));
+                table_end += 1 + (1 << block.width);
+            }
+
+            // Traverse the tree in breadth-first order.
+            while !queue.is_empty() {
+                // Count of the total number of entries added to the table by this block.
+                let mut entry_count = 0;
+
+                // Get the block id at the front of the queue.
+                let block_id = queue.pop_front().unwrap();
+
+                // Get the block at the front of the queue.
+                let block = &blocks[block_id];
+                let block_len = 1 << block.width;
+
+                // The starting index of the current block.
+                let table_base = table.len();
+
+                // Resize the table to accomodate all entries within the block.
+                table.resize(table_base + block_len, Default::default());
+
+                // Push child blocks onto the queue and record the jump entries in the table. Jumps
+                // will be in order of increasing prefix because of the implicit sorting provided
+                // by BTreeMap, thus traversing a level of the tree left-to-right.
+                for (&child_block_prefix, &child_block_id) in block.nodes.iter() {
+                    queue.push_back(child_block_id);
+
+                    // The width of the child block in bits.
+                    let child_block_width = blocks[child_block_id].width;
+
+                    // Verify the jump offset does not exceed the entry's jump maximum.
+                    if table_end > E::JUMP_OFFSET_MAX {
+                        return codebook_error("codebook overflow");
+                    }
+
+                    // Determine the offset into the table depending on the bit-order.
+                    let offset = match bit_order {
+                        BitOrder::Verbatim => child_block_prefix,
+                        BitOrder::Reverse => {
+                            child_block_prefix.reverse_bits().rotate_left(u32::from(block.width))
+                        }
+                    } as usize;
+
+                    // Add a jump entry to table.
+                    let jump_entry = CodebookEntry::new_jump(table_end, child_block_width);
+
+                    table[table_base + offset] = jump_entry;
+
+                    // Add the length of the child block to the end of the table.
+                    table_end += 1 << child_block_width;
+
+                    // Update the entry count.
+                    entry_count += 1;
+                }
+
+                // Add value entries into the table. If a value has a prefix width less than the
+                // block width, then do-not-care bits must added to the end of the prefix to pad it
+                // to the block width.
+                for value in block.values.iter() {
+                    // The number of do-not-care bits to add to the value's prefix.
+                    let num_dnc_bits = block.width - value.width;
+
+                    // Extend the value's prefix to the block's width.
+                    let base_prefix = (value.prefix << num_dnc_bits) as usize;
+
+                    // Using the base prefix, synthesize all prefixes for this value.
+                    let count = 1 << num_dnc_bits;
+
+                    // The value entry that will be duplicated.
+                    let value_entry = CodebookEntry::new_value(value.value, value.width);
+
+                    match bit_order {
+                        BitOrder::Verbatim => {
+                            // For verbatim bit order, the do-not-care bits are in the LSb
+                            // position.
+                            let start = table_base + base_prefix;
+                            let end = start + count;
+
+                            for entry in table[start..end].iter_mut() {
+                                *entry = value_entry;
+                            }
+                        }
+                        BitOrder::Reverse => {
+                            // For reverse bit order, the do-not-care bits are in the MSb position.
+                            let start = base_prefix;
+                            let end = start + count;
+
+                            for prefix in start..end {
+                                let offset = prefix.reverse_bits()
+                                                   .rotate_left(u32::from(block.width));
+
+                                table[table_base + offset] = value_entry;
+                            }
+                        }
+                    }
+
+                    // Update the entry count.
+                    entry_count += count;
+                }
+
+                // The number of entries added to the table should equal the block length. It is a
+                // fatal error if this is not true.
+                if entry_count != block_len {
+                    return codebook_error("codebook is incomplete");
+                }
+            }
+
+            Ok(table)
+        }
+
+        /// Construct a `Codebook` using the given codewords, their respective lengths, and values.
+        ///
+        /// This function may fail if the provided codewords do not form a complete VLC tree, or if
+        /// the `CodebookEntry` is undersized.
+        ///
+        /// This function will panic if the number of code words, code lengths, and values differ.
+        pub fn make<E: CodebookEntry>(
+            &mut self,
+            code_words: &[u32],
+            code_lens: &[u8],
+            values: &[E::ValueType]
+        ) -> io::Result<Codebook<E>> {
+            assert!(code_words.len() == code_lens.len());
+            assert!(code_words.len() == values.len());
+
+            let mut blocks = Vec::<CodebookBlock<E>>::new();
+
+            // Only attempt to generate something if there are code words.
+            if code_words.len() > 0 {
+                let prefix_mask = !(!0 << self.max_bits_per_block);
+
+                // Push a root block.
+                blocks.push(Default::default());
+
+                // Populate the tree
+                for ((&code, &code_len), &value) in code_words.iter().zip(code_lens).zip(values) {
+                    let mut parent_block_id = 0;
+                    let mut len = code_len;
+
+                    while len > self.max_bits_per_block {
+                        len -= self.max_bits_per_block;
+
+                        let prefix = ((code >> len) & prefix_mask) as u16;
+
+                        // Recurse down the tree.
+                        if let Some(&block_id) = blocks[parent_block_id].nodes.get(&prefix) {
+                            parent_block_id = block_id;
+                        }
+                        else {
+                            // Add a child block to the parent block.
+                            let block_id = blocks.len();
+
+                            let mut block = &mut blocks[parent_block_id];
+
+                            block.nodes.insert(prefix, block_id);
+
+                            // The parent's block width must accomodate the prefix of the child.
+                            // This is always max_bits_per_block bits.
+                            block.width = self.max_bits_per_block;
+
+                            // Append the new block.
+                            blocks.push(Default::default());
+
+                            parent_block_id = block_id;
+                        }
+                    }
+
+                    // The final chunk of code bits always has <= max_bits_per_block bits. Obtain
+                    // the final prefix.
+                    let prefix = code & (prefix_mask >> (self.max_bits_per_block - len));
+
+                    let mut block = &mut blocks[parent_block_id];
+
+                    // Push the value.
+                    block.values.push(CodebookValue::new(prefix as u16, len, value));
+
+                    // Update the block's width.
+                    block.width = max(block.width, len);
+                }
+            }
+
+            // Generate Codebook's lookup table.
+            let table = CodebookBuilder::generate_lut(self.bit_order, &mut blocks)?;
+
+            Ok(Codebook { table })
+        }
+    }
 }
 
 mod private {
@@ -433,20 +681,19 @@ pub trait ReadBitsLtr : private::FetchBitsLtr {
         Ok(num)
     }
 
-    /// Reads a Huffman code from the `BitStream` using the provided `HuffmanTable` and returns the
+    /// Reads a codebook value from the `BitStream` using the provided `Codebook` and returns the
     /// decoded value or an error.
-    fn read_huffman<H: huffman::HuffmanEntry>(
+    #[inline(always)]
+    fn read_codebook<E: vlc::CodebookEntry>(
         &mut self,
-        table: &huffman::HuffmanTable<H>,
-        _: u32,
-    ) -> io::Result<(H::ValueType, u32)> {
-
-        debug_assert!(!table.data.is_empty());
+        codebook: &vlc::Codebook<E>,
+    ) -> io::Result<(E::ValueType, u32)> {
+        debug_assert!(!codebook.is_empty());
 
         let mut code_len = 0;
         let mut jmp_read_len = 0;
 
-        let mut entry = H::root(table.n_init_bits as usize);
+        let mut entry = codebook.table[0];
 
         while entry.is_jump() {
             // Consume bits from the last jump.
@@ -456,21 +703,20 @@ pub trait ReadBitsLtr : private::FetchBitsLtr {
             code_len += jmp_read_len;
 
             // The length of the next run of bits to read.
-            jmp_read_len = entry.next_len();
+            jmp_read_len = entry.jump_len();
 
             let addr = self.get_bits() >> (u64::BITS - jmp_read_len);
 
             // Jump!
             let jmp_offset = entry.jump_offset();
 
-            entry = table.data[jmp_offset + addr as usize];
+            entry = codebook.table[jmp_offset + addr as usize];
 
             // The bit cache cannot fully service next lookup. Try to use the remaining bits (addr)
             // as a prefix. If it points to a value entry that has a code length that's <= the
             // remaining number of bits, then no further reads are necessary.
             if self.num_bits_left() < jmp_read_len {
-
-                if entry.is_value() && entry.code_len() <= self.num_bits_left() {
+                if entry.is_value() && entry.value_len() <= self.num_bits_left() {
                     break;
                 }
 
@@ -479,16 +725,16 @@ pub trait ReadBitsLtr : private::FetchBitsLtr {
 
                 let addr = self.get_bits() >> (u64::BITS - jmp_read_len);
 
-                entry = table.data[jmp_offset + addr as usize];
+                entry = codebook.table[jmp_offset + addr as usize];
             }
         }
 
         // Consume the bits from the value entry.
-        let entry_code_len = entry.code_len();
+        let entry_code_len = entry.value_len();
 
         self.consume_bits(entry_code_len);
 
-        Ok((entry.into_value(), code_len + entry_code_len))
+        Ok((entry.value(), code_len + entry_code_len))
     }
 }
 
@@ -822,20 +1068,19 @@ pub trait ReadBitsRtl : private::FetchBitsRtl {
         Ok(num)
     }
 
-    /// Reads a Huffman code from the `BitStream` using the provided `HuffmanTable` and returns the
+    /// Reads a codebook value from the `BitStream` using the provided `Codebook` and returns the
     /// decoded value or an error.
-    fn read_huffman<H: huffman::HuffmanEntry>(
+    #[inline(always)]
+    fn read_codebook<E: vlc::CodebookEntry>(
         &mut self,
-        table: &huffman::HuffmanTable<H>,
-        _: u32,
-    ) -> io::Result<(H::ValueType, u32)> {
-
-        debug_assert!(!table.data.is_empty());
+        codebook: &vlc::Codebook<E>,
+    ) -> io::Result<(E::ValueType, u32)> {
+        debug_assert!(!codebook.is_empty());
 
         let mut code_len = 0;
         let mut jmp_read_len = 0;
 
-        let mut entry = H::root(table.n_init_bits as usize);
+        let mut entry = codebook.table[0];
 
         while entry.is_jump() {
             // Consume bits from the last jump.
@@ -845,21 +1090,20 @@ pub trait ReadBitsRtl : private::FetchBitsRtl {
             code_len += jmp_read_len;
 
             // The length of the next run of bits to read.
-            jmp_read_len = entry.next_len();
+            jmp_read_len = entry.jump_len();
 
             let addr = self.get_bits() & ((1 << jmp_read_len) - 1);
 
             // Jump!
             let jmp_offset = entry.jump_offset();
 
-            entry = table.data[jmp_offset + addr as usize];
+            entry = codebook.table[jmp_offset + addr as usize];
 
             // The bit cache cannot fully service next lookup. Try to use the remaining bits (addr)
             // as a prefix. If it points to a value entry that has a code length that's <= the
             // remaining number of bits, then no further reads are necessary.
             if self.num_bits_left() < jmp_read_len {
-
-                if entry.is_value() && entry.code_len() <= self.num_bits_left() {
+                if entry.is_value() && entry.value_len() <= self.num_bits_left() {
                     break;
                 }
 
@@ -868,16 +1112,16 @@ pub trait ReadBitsRtl : private::FetchBitsRtl {
 
                 let addr = self.get_bits() & ((1 << jmp_read_len) - 1);
 
-                entry = table.data[jmp_offset + addr as usize];
+                entry = codebook.table[jmp_offset + addr as usize];
             }
         }
 
         // Consume the bits from the value entry.
-        let entry_code_len = entry.code_len();
+        let entry_code_len = entry.value_len();
 
         self.consume_bits(entry_code_len);
 
-        Ok((entry.into_value(), code_len + entry_code_len))
+        Ok((entry.value(), code_len + entry_code_len))
     }
 }
 
@@ -1026,7 +1270,7 @@ impl<'a> FiniteBitStream for BitReaderRtl<'a> {
 mod tests {
     use super::{BitReaderLtr, ReadBitsLtr};
     use super::{BitReaderRtl, ReadBitsRtl};
-    use super::huffman::{HuffmanTable, H8};
+    use super::vlc::{BitOrder, Codebook, CodebookBuilder, Entry8x8};
 
     #[test]
     fn verify_bitstreamltr_ignore_bits() {
@@ -1256,54 +1500,81 @@ mod tests {
         assert!(bs.read_unary_ones().is_err());
     }
 
-        #[test]
-    fn verify_bitstreamltr_read_huffman() {
-        // A simple Huffman table.
-        const TABLE: HuffmanTable<H8> = HuffmanTable {
-            data: &[
-                // 0b ... (0)
-                jmp8!(16, 2),    // 0b0000
-                jmp8!(20, 1),    // 0b0001
-                val8!(0x11, 3),    // 0b0010
-                val8!(0x11, 3),    // 0b0011
-                val8!(0x1, 3),    // 0b0100
-                val8!(0x1, 3),    // 0b0101
-                val8!(0x10, 3),    // 0b0110
-                val8!(0x10, 3),    // 0b0111
-                val8!(0x0, 1),    // 0b1000
-                val8!(0x0, 1),    // 0b1001
-                val8!(0x0, 1),    // 0b1010
-                val8!(0x0, 1),    // 0b1011
-                val8!(0x0, 1),    // 0b1100
-                val8!(0x0, 1),    // 0b1101
-                val8!(0x0, 1),    // 0b1110
-                val8!(0x0, 1),    // 0b1111
+    fn generate_codebook(bit_order: BitOrder) -> (Codebook<Entry8x8>, Vec<u8>, &'static str) {
+        // Codewords in MSb bit-order.
+        const CODE_WORDS: [u32; 25] = [
+            0b001,
+            0b111,
+            0b010,
+            0b1001,
+            0b1101,
+            0b0001,
+            0b0111,
+            0b1000,
+            0b10110,
+            0b10111,
+            0b10101,
+            0b10100,
+            0b01100,
+            0b000010,
+            0b110000,
+            0b000011,
+            0b110001,
+            0b000001,
+            0b011010,
+            0b000000,
+            0b011011,
+            0b1100111,
+            0b1100110,
+            0b1100101,
+            0b1100100,
+        ];
 
-                // 0b0000 ... (16)
-                val8!(0x22, 2),    // 0b00
-                val8!(0x2, 2),    // 0b01
-                val8!(0x12, 1),    // 0b10
-                val8!(0x12, 1),    // 0b11
+        const CODE_LENS: [u8; 25] = [
+            3, 3, 3, 4, 4, 4, 4, 4, 5, 5, 5, 5, 5, 6, 6, 6, 6, 6, 6, 6, 6, 7, 7, 7, 7,
+        ];
 
-                // 0b0001 ... (20)
-                val8!(0x21, 1),    // 0b0
-                val8!(0x20, 1),    // 0b1
-            ],
-            n_init_bits: 4,
-            n_table_bits: 8,
+        const VALUES: [u8; 25] = [
+            b'i', b' ', b'e', b't', b's', b'l', b'n', b'o', b'.', b'r', b'g', b'h', b'u',
+            b'p', b'w', b',', b'f', b'y', b'm', b'v', b'a', b'd', b'b', b'c', b'T',
+        ];
+
+        // Encoded data in MSb bit-order.
+        const DATA: [u8; 57] = [
+            0xc9, 0x43, 0xbf, 0x48, 0xa7, 0xca, 0xbe, 0x64, 0x30, 0xf5, 0xdf, 0x31, 0xd9, 0xb6,
+            0xb5, 0xbb, 0x6f, 0x9f, 0xa0, 0x15, 0xc1, 0xfa, 0x5e, 0xa2, 0xb8, 0x4a, 0xfb, 0x0f,
+            0xe1, 0x93, 0xe6, 0x8a, 0xe8, 0x3e, 0x77, 0xe0, 0xd9, 0x92, 0xf5, 0xf8, 0xc5, 0xfb,
+            0x37, 0xcc, 0x7c, 0x48, 0x8f, 0x33, 0xf0, 0x33, 0x4f, 0xb0, 0xd2, 0x9a, 0x17, 0xad,
+            0x80
+        ];
+
+        const TEXT: &'static str = "This silence belongs to us... and every single person out \
+                                    there, is waiting for us to fill it with something.";
+
+        // Reverse the bits in the data vector if testing a reverse bit-order.
+        let data = match bit_order {
+            BitOrder::Verbatim => DATA.iter().map(|&b| b).collect(),
+            BitOrder::Reverse  => DATA.iter().map(|&b| b.reverse_bits()).collect(),
         };
 
-        let mut bs = BitReaderLtr::new(
-            &[
-                0b010_00000, 0b0_00001_00, 0b0001_001_0
-            ]
-        );
+        // Construct a codebook using the tables above.
+        let mut builder = CodebookBuilder::new(bit_order);
+        let codebook = builder.make::<Entry8x8>(&CODE_WORDS, &CODE_LENS, &VALUES).unwrap();
 
-        assert_eq!(bs.read_huffman(&TABLE, 0).unwrap().0, 0x1 );
-        assert_eq!(bs.read_huffman(&TABLE, 0).unwrap().0, 0x22);
-        assert_eq!(bs.read_huffman(&TABLE, 0).unwrap().0, 0x12);
-        assert_eq!(bs.read_huffman(&TABLE, 0).unwrap().0, 0x2 );
-        assert_eq!(bs.read_huffman(&TABLE, 0).unwrap().0, 0x11);
+        (codebook, data, TEXT)
+    }
+
+    #[test]
+    fn verify_bitstreamltr_read_codebook() {
+        let (codebook, buf, text) = generate_codebook(BitOrder::Verbatim);
+
+        let mut bs = BitReaderLtr::new(&buf);
+
+        let decoded: Vec<u8> = (0..text.len()).into_iter()
+                                              .map(|_| bs.read_codebook(&codebook).unwrap().0)
+                                              .collect();
+
+        assert_eq!(text, std::str::from_utf8(&decoded).unwrap());
     }
 
     // BitStreamRtl
@@ -1542,53 +1813,17 @@ mod tests {
     }
 
     #[test]
-    fn verify_bitstreamtrl_read_huffman() {
-        // A simple Huffman table.
-        const TABLE: HuffmanTable<H8> = HuffmanTable {
-            data: &[
-                // [LSb] 0b ... (0)
-                jmp8!(16, 2),    // 0b0000
-                jmp8!(20, 1),    // 0b0001
-                val8!(0x11, 3),    // 0b0010
-                val8!(0x11, 3),    // 0b0011
-                val8!(0x1, 3),    // 0b0100
-                val8!(0x1, 3),    // 0b0101
-                val8!(0x10, 3),    // 0b0110
-                val8!(0x10, 3),    // 0b0111
-                val8!(0x0, 1),    // 0b1000
-                val8!(0x0, 1),    // 0b1001
-                val8!(0x0, 1),    // 0b1010
-                val8!(0x0, 1),    // 0b1011
-                val8!(0x0, 1),    // 0b1100
-                val8!(0x0, 1),    // 0b1101
-                val8!(0x0, 1),    // 0b1110
-                val8!(0x0, 1),    // 0b1111
+    fn verify_bitstreamrtl_read_codebook() {
+        // The codewords are in MSb bit-order, but reading the bitstream in LSb order. Therefore,
+        // use the reverse bit order.
+        let (codebook, buf, text) = generate_codebook(BitOrder::Reverse);
 
-                // [LSb] 0b0000 ... (16)
-                val8!(0x22, 2),    // 0b00
-                val8!(0x2, 2),    // 0b01
-                val8!(0x12, 1),    // 0b10
-                val8!(0x12, 1),    // 0b11
+        let mut bs = BitReaderRtl::new(&buf);
 
-                // [LSb] 0b0001 ... (20)
-                val8!(0x21, 1),    // 0b0
-                val8!(0x20, 1),    // 0b1
-            ],
-            n_init_bits: 4,
-            n_table_bits: 8,
-        };
+        let decoded: Vec<u8> = (0..text.len()).into_iter()
+                                              .map(|_| bs.read_codebook(&codebook).unwrap().0)
+                                              .collect();
 
-        let mut bs = BitReaderRtl::new(
-            &[
-                0b01_000000, 0b00000_100, 0b000100_1_0
-            ]
-        );
-
-        assert_eq!(bs.read_huffman(&TABLE, 0).unwrap().0, 0x22);
-        assert_eq!(bs.read_huffman(&TABLE, 0).unwrap().0, 0x20);
-        assert_eq!(bs.read_huffman(&TABLE, 0).unwrap().0, 0x22);
-        assert_eq!(bs.read_huffman(&TABLE, 0).unwrap().0, 0x0 );
-        assert_eq!(bs.read_huffman(&TABLE, 0).unwrap().0, 0x1 );
+        assert_eq!(text, std::str::from_utf8(&decoded).unwrap());
     }
-
 }

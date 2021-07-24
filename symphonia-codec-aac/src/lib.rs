@@ -10,8 +10,8 @@
 
 mod aac;
 mod adts;
+mod codebooks;
 mod common;
-mod huffman_tables;
 mod window;
 
 pub use aac::AacDecoder;

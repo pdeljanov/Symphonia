@@ -8,14 +8,14 @@
 use std::cmp::min;
 use std::{f32, f64};
 
-use symphonia_core::io::{ReadBitsLtr, huffman::{H8, HuffmanTable}};
 use symphonia_core::errors::Result;
+use symphonia_core::io::ReadBitsLtr;
 
 use lazy_static::lazy_static;
 use log::info;
 
 use crate::common::*;
-use crate::huffman_tables::*;
+use crate::codebooks;
 use super::GranuleChannel;
 
 lazy_static! {
@@ -33,80 +33,6 @@ lazy_static! {
         pow43
     };
 }
-
-struct MpegHuffmanTable {
-    /// The Huffman decode table.
-    huff_table: &'static HuffmanTable<H8>,
-    /// Number of extra bits to read if the decoded Huffman value is saturated.
-    linbits: u32,
-}
-
-const HUFFMAN_TABLES: [MpegHuffmanTable; 32] = [
-    // Table 0
-    MpegHuffmanTable { huff_table: &HUFFMAN_TABLE_0,  linbits:  0 },
-    // Table 1
-    MpegHuffmanTable { huff_table: &HUFFMAN_TABLE_1,  linbits:  0 },
-    // Table 2
-    MpegHuffmanTable { huff_table: &HUFFMAN_TABLE_2,  linbits:  0 },
-    // Table 3
-    MpegHuffmanTable { huff_table: &HUFFMAN_TABLE_3,  linbits:  0 },
-    // Table 4 (not used)
-    MpegHuffmanTable { huff_table: &HUFFMAN_TABLE_0,  linbits:  0 },
-    // Table 5
-    MpegHuffmanTable { huff_table: &HUFFMAN_TABLE_5,  linbits:  0 },
-    // Table 6
-    MpegHuffmanTable { huff_table: &HUFFMAN_TABLE_6,  linbits:  0 },
-    // Table 7
-    MpegHuffmanTable { huff_table: &HUFFMAN_TABLE_7,  linbits:  0 },
-    // Table 8
-    MpegHuffmanTable { huff_table: &HUFFMAN_TABLE_8,  linbits:  0 },
-    // Table 9
-    MpegHuffmanTable { huff_table: &HUFFMAN_TABLE_9,  linbits:  0 },
-    // Table 10
-    MpegHuffmanTable { huff_table: &HUFFMAN_TABLE_10, linbits:  0 },
-    // Table 11
-    MpegHuffmanTable { huff_table: &HUFFMAN_TABLE_11, linbits:  0 },
-    // Table 12
-    MpegHuffmanTable { huff_table: &HUFFMAN_TABLE_12, linbits:  0 },
-    // Table 13
-    MpegHuffmanTable { huff_table: &HUFFMAN_TABLE_13, linbits:  0 },
-    // Table 14 (not used)
-    MpegHuffmanTable { huff_table: &HUFFMAN_TABLE_0,  linbits:  0 },
-    // Table 15
-    MpegHuffmanTable { huff_table: &HUFFMAN_TABLE_15, linbits:  0 },
-    // Table 16
-    MpegHuffmanTable { huff_table: &HUFFMAN_TABLE_16, linbits:  1 },
-    // Table 17
-    MpegHuffmanTable { huff_table: &HUFFMAN_TABLE_16, linbits:  2 },
-    // Table 18
-    MpegHuffmanTable { huff_table: &HUFFMAN_TABLE_16, linbits:  3 },
-    // Table 19
-    MpegHuffmanTable { huff_table: &HUFFMAN_TABLE_16, linbits:  4 },
-    // Table 20
-    MpegHuffmanTable { huff_table: &HUFFMAN_TABLE_16, linbits:  6 },
-    // Table 21
-    MpegHuffmanTable { huff_table: &HUFFMAN_TABLE_16, linbits:  8 },
-    // Table 22
-    MpegHuffmanTable { huff_table: &HUFFMAN_TABLE_16, linbits: 10 },
-    // Table 23
-    MpegHuffmanTable { huff_table: &HUFFMAN_TABLE_16, linbits: 13 },
-    // Table 24
-    MpegHuffmanTable { huff_table: &HUFFMAN_TABLE_24, linbits:  4 },
-    // Table 25
-    MpegHuffmanTable { huff_table: &HUFFMAN_TABLE_24, linbits:  5 },
-    // Table 26
-    MpegHuffmanTable { huff_table: &HUFFMAN_TABLE_24, linbits:  6 },
-    // Table 27
-    MpegHuffmanTable { huff_table: &HUFFMAN_TABLE_24, linbits:  7 },
-    // Table 28
-    MpegHuffmanTable { huff_table: &HUFFMAN_TABLE_24, linbits:  8 },
-    // Table 29
-    MpegHuffmanTable { huff_table: &HUFFMAN_TABLE_24, linbits:  9 },
-    // Table 30
-    MpegHuffmanTable { huff_table: &HUFFMAN_TABLE_24, linbits: 11 },
-    // Table 31
-    MpegHuffmanTable { huff_table: &HUFFMAN_TABLE_24, linbits: 13 },
-];
 
 /// Reads the Huffman coded spectral samples for a given channel in a granule from a `BitStream`
 /// into a provided sample buffer. Returns the number of decoded samples (the starting index of the
@@ -151,13 +77,23 @@ pub(super) fn read_huffman_samples<B: ReadBitsLtr>(
 
     // Iterate over each region in big_values.
     for (region_idx, region_end) in regions.iter().enumerate() {
-
         // Select the Huffman table based on the region's table select value.
-        let table = &HUFFMAN_TABLES[channel.table_select[region_idx] as usize];
+        let table_select = channel.table_select[region_idx] as usize;
+
+        // Tables 0..16 are all unique, while tables 16..24 and 24..32 each use one table but
+        // differ in the number of linbits to use.
+        let codebook = match table_select {
+            0..=15  => &codebooks::CODEBOOK_TABLES[table_select],
+            16..=23 => &codebooks::CODEBOOK_TABLES[16],
+            24..=31 => &codebooks::CODEBOOK_TABLES[17],
+            _ => unreachable!(),
+        };
+
+        let linbits = codebooks::CODEBOOK_LINBITS[table_select];
 
         // If the table for a region is empty, fill the region with zeros and move on to the next
         // region.
-        if table.huff_table.data.is_empty() {
+        if codebook.is_empty() {
             while i < *region_end {
                 buf[i] = 0.0;
                 i += 1;
@@ -170,7 +106,7 @@ pub(super) fn read_huffman_samples<B: ReadBitsLtr>(
         // Otherwise, read the big_values.
         while i < *region_end && bits_read < part3_bits {
             // Decode the next Huffman code.
-            let (value, code_len) = bs.read_huffman(&table.huff_table, 0)?;
+            let (value, code_len) = bs.read_codebook(codebook)?;
             bits_read += code_len;
 
             // In the big_values partition, each Huffman code decodes to two sample, x and y. Each
@@ -182,9 +118,9 @@ pub(super) fn read_huffman_samples<B: ReadBitsLtr>(
             if x > 0 {
                 // If x is saturated (it is at the maximum possible value), and the table specifies
                 // linbits, then read linbits more bits and add it to the sample.
-                if x == 15 && table.linbits > 0 {
-                    x += bs.read_bits_leq32(table.linbits)? as usize;
-                    bits_read += table.linbits;
+                if x == 15 && linbits > 0 {
+                    x += bs.read_bits_leq32(linbits)? as usize;
+                    bits_read += linbits;
                 }
 
                 // The next bit is the sign bit. The value of the sample is raised to the (4/3)
@@ -200,9 +136,9 @@ pub(super) fn read_huffman_samples<B: ReadBitsLtr>(
 
             // Likewise, repeat the previous two steps for the second sample, y.
             if y > 0 {
-                if y == 15 && table.linbits > 0 {
-                    y += bs.read_bits_leq32(table.linbits)? as usize;
-                    bits_read += table.linbits;
+                if y == 15 && linbits > 0 {
+                    y += bs.read_bits_leq32(linbits)? as usize;
+                    bits_read += linbits;
                 }
 
                 buf[i] = if bs.read_bit()? { -pow43_table[y] } else { pow43_table[y] };
@@ -216,19 +152,12 @@ pub(super) fn read_huffman_samples<B: ReadBitsLtr>(
         }
     }
 
-    // Select the Huffman table for the count1 partition.
-    let count1_table = if channel.count1table_select {
-        QUADS_HUFFMAN_TABLE_B
-    }
-    else {
-        QUADS_HUFFMAN_TABLE_A
-    };
+    let count1_codebook = &codebooks::QUADS_CODEBOOK_TABLE[usize::from(channel.count1table_select)];
 
     // Read the count1 partition.
     while i <= 572 && bits_read < part3_bits {
-        // Decode the next Huffman code. Note that we allow the Huffman decoder a few extra bits in
-        // case of a count1 overrun (see below for more details).
-        let (value, code_len) = bs.read_huffman(&count1_table, 0)?;
+        // Decode the next Huffman code.
+        let (value, code_len) = bs.read_codebook(count1_codebook)?;
         bits_read += code_len;
 
         // In the count1 partition, each Huffman code decodes to 4 samples: v, w, x, and y.

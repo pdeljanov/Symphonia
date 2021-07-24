@@ -15,7 +15,8 @@ use std::f32::consts;
 use std::fmt;
 
 use symphonia_core::errors::{decode_error, unsupported_error, Result};
-use symphonia_core::io::{huffman::*, ReadBitsLtr, FiniteBitStream, BitReaderLtr};
+use symphonia_core::io::{ReadBitsLtr, FiniteBitStream, BitReaderLtr};
+use symphonia_core::io::vlc::{Codebook, Entry16x16};
 use symphonia_core::audio::{AudioBuffer, AudioBufferRef, AsAudioBufferRef, Signal, SignalSpec};
 use symphonia_core::codecs::CODEC_TYPE_AAC;
 use symphonia_core::codecs::{CodecParameters, CodecDescriptor, Decoder, DecoderOptions};
@@ -24,8 +25,8 @@ use symphonia_core::formats::Packet;
 use symphonia_core::support_codec;
 use symphonia_core::units::Duration;
 
+use super::codebooks;
 use super::common::*;
-use super::huffman_tables::*;
 use super::window::*;
 
 use lazy_static::lazy_static;
@@ -39,20 +40,6 @@ macro_rules! validate {
         }
     };
 }
-
-const SPEC_TABLES: [&'static HuffmanTable<H16>; 11] = [
-    &SPEC_TABLE_1,
-    &SPEC_TABLE_2,
-    &SPEC_TABLE_3,
-    &SPEC_TABLE_4,
-    &SPEC_TABLE_5,
-    &SPEC_TABLE_6,
-    &SPEC_TABLE_7,
-    &SPEC_TABLE_8,
-    &SPEC_TABLE_9,
-    &SPEC_TABLE_10,
-    &SPEC_TABLE_11,
-];
 
 lazy_static! {
     /// Pre-computed table of y = x^(4/3).
@@ -782,6 +769,8 @@ impl ICS {
         let mut scf_noise = i16::from(self.global_gain) - 90;
         let mut scf_normal = i16::from(self.global_gain);
 
+        let scf_table = &codebooks::SCF_CODEBOOK;
+
         for g in 0..self.info.window_groups {
             for sfb in 0..self.info.max_sfb {
 
@@ -789,8 +778,7 @@ impl ICS {
                     0.0
                 }
                 else if self.is_intensity(g, sfb) {
-                    // TODO: Fix lim_bits.
-                    scf_intensity += i16::from(bs.read_huffman(&SCF_TABLE, 100)?.0) - 60;
+                    scf_intensity += i16::from(bs.read_codebook(scf_table)?.0) - 60;
 
                     validate!(
                         (scf_intensity >= INTENSITY_SCALE_MIN)
@@ -805,8 +793,7 @@ impl ICS {
                         scf_noise += (bs.read_bits_leq32(9)? as i16) - 256;
                     }
                     else {
-                        // TODO: Fix lim_bits.
-                        scf_noise += i16::from(bs.read_huffman(&SCF_TABLE, 100)?.0) - 60;
+                        scf_noise += i16::from(bs.read_codebook(scf_table)?.0) - 60;
                     }
 
                     validate!(
@@ -816,8 +803,7 @@ impl ICS {
                     get_scale(scf_noise)
                 }
                 else {
-                    // TODO: Fix lim_bits.
-                    scf_normal += i16::from(bs.read_huffman(&SCF_TABLE, 100)?.0) - 60;
+                    scf_normal += i16::from(bs.read_codebook(scf_table)?.0) - 60;
                     validate!((scf_normal >= 0) && (scf_normal < 255));
 
                     get_scale(scf_normal - 100)
@@ -868,7 +854,7 @@ impl ICS {
                         _ => {
                             let unsigned = AAC_UNSIGNED_CODEBOOK[(cb_idx - 1) as usize];
 
-                            let cb = SPEC_TABLES[(cb_idx - 1) as usize];
+                            let cb = &codebooks::SPECTRUM_CODEBOOKS[(cb_idx - 1) as usize];
 
                             if cb_idx < FIRST_PAIR_HCB {
                                 decode_quads(bs, cb, unsigned, scale, dst)?;
@@ -1100,7 +1086,7 @@ fn decode_spectrum_noise(lcg: &mut Lcg, sf: f32, dst: &mut [f32]) {
 
 fn decode_quads<B: ReadBitsLtr>(
     bs: &mut B,
-    cb: &'static HuffmanTable<H16>,
+    cb: &Codebook<Entry16x16>,
     unsigned: bool,
     scale: f32,
     dst: &mut [f32],
@@ -1109,8 +1095,7 @@ fn decode_quads<B: ReadBitsLtr>(
     let pow43_table: &[f32; 8192] = &POW43_TABLE;
 
     for out in dst.chunks_mut(4) {
-        // TODO: Fix lim_bits
-        let cw = bs.read_huffman(cb, 100)?.0 as usize;
+        let cw = bs.read_codebook(cb)?.0 as usize;
         if unsigned {
             for i in 0..4 {
                 let val = AAC_QUADS[cw][i];
@@ -1143,7 +1128,7 @@ fn decode_quads<B: ReadBitsLtr>(
 
 fn decode_pairs<B: ReadBitsLtr>(
     bs: &mut B,
-    cb: &'static HuffmanTable<H16>,
+    cb: &Codebook<Entry16x16>,
     unsigned: bool,
     escape: bool,
     modulo: u16,
@@ -1154,8 +1139,7 @@ fn decode_pairs<B: ReadBitsLtr>(
     let pow43_table: &[f32; 8192] = &POW43_TABLE;
 
     for out in dst.chunks_mut(2) {
-        // TODO: Fix lim_bits
-        let cw = bs.read_huffman(cb, 100)?.0;
+        let cw = bs.read_codebook(cb)?.0;
 
         let mut x = (cw / modulo) as i16;
         let mut y = (cw % modulo) as i16;

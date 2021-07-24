@@ -168,7 +168,7 @@ fn read_granule_channel_side_info<B: ReadBitsLtr>(
     };
 
     channel.scalefac_scale = bs.read_bit()?;
-    channel.count1table_select = bs.read_bit()?;
+    channel.count1table_select = if bs.read_bit()? { 1 } else { 0 };
 
     Ok(())
 }

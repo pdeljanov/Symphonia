@@ -1,113 +1,115 @@
-#!/usr/bin/env python3
+// Symphonia
+// Copyright (c) 2021 The Project Symphonia Developers.
+//
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-# Symphonia IO BitStream Reader Huffman Table Generator
-# Copyright (c) 2019 The Project Symphonia Developers.
-#
-# This Source Code Form is subject to the terms of the Mozilla Public
-# License, v. 2.0. If a copy of the MPL was not distributed with this
-# file, You can obtain one at https://mozilla.org/MPL/2.0/.
+use symphonia_core::io::vlc::*;
 
-import collections
-import random
-import sys
+use lazy_static::lazy_static;
 
-MPEG_HUFFCODES_1 = [
+const MPEG_CODES_0: [u32; 0] = [ ];
+
+const MPEG_BITS_0: [u8; 0] = [ ];
+
+const MPEG_CODES_1: [u32; 4] = [
     0x0001, 0x0001, 0x0001, 0x0000,
-    ]
+];
 
-MPEG_HUFFBITS_1 = [
+const MPEG_BITS_1: [u8; 4] = [
     1,  3,  2,  3,
-    ]
+];
 
-MPEG_HUFFCODES_2 = [
+const MPEG_CODES_2: [u32; 9] = [
     0x0001, 0x0002, 0x0001, 0x0003, 0x0001, 0x0001, 0x0003, 0x0002,
     0x0000,
-    ]
+];
 
-MPEG_HUFFBITS_2 = [
+const MPEG_BITS_2: [u8; 9] = [
     1,  3,  6,  3,  3,  5,  5,  5,
     6,
-    ]
+];
 
-MPEG_HUFFCODES_3 = [
+const MPEG_CODES_3: [u32; 9] = [
     0x0003, 0x0002, 0x0001, 0x0001, 0x0001, 0x0001, 0x0003, 0x0002,
     0x0000,
-    ]
+];
 
-MPEG_HUFFBITS_3 = [
+const MPEG_BITS_3: [u8; 9] = [
     2,  2,  6,  3,  2,  5,  5,  5,
     6,
-    ]
+];
 
-MPEG_HUFFCODES_5 = [
+const MPEG_CODES_5: [u32; 16] = [
     0x0001, 0x0002, 0x0006, 0x0005, 0x0003, 0x0001, 0x0004, 0x0004,
     0x0007, 0x0005, 0x0007, 0x0001, 0x0006, 0x0001, 0x0001, 0x0000,
-    ]
+];
 
-MPEG_HUFFBITS_5 = [
+const MPEG_BITS_5: [u8; 16] = [
     1,  3,  6,  7,  3,  3,  6,  7,
     6,  6,  7,  8,  7,  6,  7,  8,
-    ]
+];
 
-MPEG_HUFFCODES_6 = [
+const MPEG_CODES_6: [u32; 16] = [
     0x0007, 0x0003, 0x0005, 0x0001, 0x0006, 0x0002, 0x0003, 0x0002,
     0x0005, 0x0004, 0x0004, 0x0001, 0x0003, 0x0003, 0x0002, 0x0000,
-    ]
+];
 
-MPEG_HUFFBITS_6 = [
+const MPEG_BITS_6: [u8; 16] = [
     3,  3,  5,  7,  3,  2,  4,  5,
     4,  4,  5,  6,  6,  5,  6,  7,
-    ]
+];
 
-MPEG_HUFFCODES_7 = [
+const MPEG_CODES_7: [u32; 36] = [
     0x0001, 0x0002, 0x000a, 0x0013, 0x0010, 0x000a, 0x0003, 0x0003,
     0x0007, 0x000a, 0x0005, 0x0003, 0x000b, 0x0004, 0x000d, 0x0011,
     0x0008, 0x0004, 0x000c, 0x000b, 0x0012, 0x000f, 0x000b, 0x0002,
     0x0007, 0x0006, 0x0009, 0x000e, 0x0003, 0x0001, 0x0006, 0x0004,
     0x0005, 0x0003, 0x0002, 0x0000,
-    ]
+];
 
-MPEG_HUFFBITS_7 = [
+const MPEG_BITS_7: [u8; 36] = [
     1,  3,  6,  8,  8,  9,  3,  4,
     6,  7,  7,  8,  6,  5,  7,  8,
     8,  9,  7,  7,  8,  9,  9,  9,
     7,  7,  8,  9,  9, 10,  8,  8,
     9, 10, 10, 10,
-    ]
+];
 
-MPEG_HUFFCODES_8 = [
+const MPEG_CODES_8: [u32; 36] = [
     0x0003, 0x0004, 0x0006, 0x0012, 0x000c, 0x0005, 0x0005, 0x0001,
     0x0002, 0x0010, 0x0009, 0x0003, 0x0007, 0x0003, 0x0005, 0x000e,
     0x0007, 0x0003, 0x0013, 0x0011, 0x000f, 0x000d, 0x000a, 0x0004,
     0x000d, 0x0005, 0x0008, 0x000b, 0x0005, 0x0001, 0x000c, 0x0004,
     0x0004, 0x0001, 0x0001, 0x0000,
-    ]
+];
 
-MPEG_HUFFBITS_8 = [
+const MPEG_BITS_8: [u8; 36] = [
     2,  3,  6,  8,  8,  9,  3,  2,
     4,  8,  8,  8,  6,  4,  6,  8,
     8,  9,  8,  8,  8,  9,  9, 10,
     8,  7,  8,  9, 10, 10,  9,  8,
     9,  9, 11, 11,
-    ]
+];
 
-MPEG_HUFFCODES_9 = [
+const MPEG_CODES_9: [u32; 36] = [
     0x0007, 0x0005, 0x0009, 0x000e, 0x000f, 0x0007, 0x0006, 0x0004,
     0x0005, 0x0005, 0x0006, 0x0007, 0x0007, 0x0006, 0x0008, 0x0008,
     0x0008, 0x0005, 0x000f, 0x0006, 0x0009, 0x000a, 0x0005, 0x0001,
     0x000b, 0x0007, 0x0009, 0x0006, 0x0004, 0x0001, 0x000e, 0x0004,
     0x0006, 0x0002, 0x0006, 0x0000,
-    ]
+];
 
-MPEG_HUFFBITS_9 = [
+const MPEG_BITS_9: [u8; 36] = [
     3,  3,  5,  6,  8,  9,  3,  3,
     4,  5,  6,  8,  4,  4,  5,  6,
     7,  8,  6,  5,  6,  7,  7,  8,
     7,  6,  7,  7,  8,  9,  8,  7,
     8,  8,  9,  9,
-    ]
+];
 
-MPEG_HUFFCODES_10 = [
+const MPEG_CODES_10: [u32; 64] = [
     0x0001, 0x0002, 0x000a, 0x0017, 0x0023, 0x001e, 0x000c, 0x0011,
     0x0003, 0x0003, 0x0008, 0x000c, 0x0012, 0x0015, 0x000c, 0x0007,
     0x000b, 0x0009, 0x000f, 0x0015, 0x0020, 0x0028, 0x0013, 0x0006,
@@ -116,9 +118,9 @@ MPEG_HUFFCODES_10 = [
     0x001f, 0x0016, 0x0029, 0x001a, 0x0015, 0x0014, 0x0005, 0x0003,
     0x000e, 0x000d, 0x000a, 0x000b, 0x0010, 0x0006, 0x0005, 0x0001,
     0x0009, 0x0008, 0x0007, 0x0008, 0x0004, 0x0004, 0x0002, 0x0000,
-    ]
+];
 
-MPEG_HUFFBITS_10 = [
+const MPEG_BITS_10: [u8; 64] = [
     1,  3,  6,  8,  9,  9,  9, 10,
     3,  4,  6,  7,  8,  9,  8,  8,
     6,  6,  7,  8,  9, 10,  9,  9,
@@ -127,9 +129,9 @@ MPEG_HUFFBITS_10 = [
     9,  9, 10, 10, 11, 11, 10, 11,
     8,  8,  9, 10, 10, 10, 11, 11,
     9,  8,  9, 10, 10, 11, 11, 11,
-    ]
+];
 
-MPEG_HUFFCODES_11 = [
+const MPEG_CODES_11: [u32; 64] = [
     0x0003, 0x0004, 0x000a, 0x0018, 0x0022, 0x0021, 0x0015, 0x000f,
     0x0005, 0x0003, 0x0004, 0x000a, 0x0020, 0x0011, 0x000b, 0x000a,
     0x000b, 0x0007, 0x000d, 0x0012, 0x001e, 0x001f, 0x0014, 0x0005,
@@ -138,9 +140,9 @@ MPEG_HUFFCODES_11 = [
     0x001c, 0x001a, 0x0020, 0x0013, 0x0011, 0x000f, 0x0008, 0x000e,
     0x000e, 0x000c, 0x0009, 0x000d, 0x000e, 0x0009, 0x0004, 0x0001,
     0x000b, 0x0004, 0x0006, 0x0006, 0x0006, 0x0003, 0x0002, 0x0000,
-    ]
+];
 
-MPEG_HUFFBITS_11 = [
+const MPEG_BITS_11: [u8; 64] = [
     2,  3,  5,  7,  8,  9,  8,  9,
     3,  3,  4,  6,  8,  8,  7,  8,
     5,  5,  6,  7,  8,  9,  8,  8,
@@ -149,9 +151,9 @@ MPEG_HUFFBITS_11 = [
     8,  8,  9, 10, 10, 11, 10, 11,
     8,  7,  7,  8,  9, 10, 10, 10,
     8,  7,  8,  9, 10, 10, 10, 10,
-    ]
+];
 
-MPEG_HUFFCODES_12 = [
+const MPEG_CODES_12: [u32; 64] = [
     0x0009, 0x0006, 0x0010, 0x0021, 0x0029, 0x0027, 0x0026, 0x001a,
     0x0007, 0x0005, 0x0006, 0x0009, 0x0017, 0x0010, 0x001a, 0x000b,
     0x0011, 0x0007, 0x000b, 0x000e, 0x0015, 0x001e, 0x000a, 0x0007,
@@ -160,9 +162,9 @@ MPEG_HUFFCODES_12 = [
     0x0028, 0x0011, 0x001f, 0x001d, 0x0011, 0x000d, 0x0004, 0x0002,
     0x001b, 0x000c, 0x000b, 0x000f, 0x000a, 0x0007, 0x0004, 0x0001,
     0x001b, 0x000c, 0x0008, 0x000c, 0x0006, 0x0003, 0x0001, 0x0000,
-    ]
+];
 
-MPEG_HUFFBITS_12 = [
+const MPEG_BITS_12: [u8; 64] = [
     4,  3,  5,  7,  8,  9,  9,  9,
     3,  3,  4,  5,  7,  7,  8,  8,
     5,  4,  5,  6,  7,  8,  7,  8,
@@ -171,9 +173,9 @@ MPEG_HUFFBITS_12 = [
     8,  7,  8,  8,  8,  9,  8,  9,
     8,  7,  7,  8,  8,  9,  9, 10,
     9,  8,  8,  9,  9,  9,  9, 10,
-    ]
+];
 
-MPEG_HUFFCODES_13 = [
+const MPEG_CODES_13: [u32; 256] = [
     0x0001, 0x0005, 0x000e, 0x0015, 0x0022, 0x0033, 0x002e, 0x0047,
     0x002a, 0x0034, 0x0044, 0x0034, 0x0043, 0x002c, 0x002b, 0x0013,
     0x0003, 0x0004, 0x000c, 0x0013, 0x001f, 0x001a, 0x002c, 0x0021,
@@ -206,26 +208,26 @@ MPEG_HUFFCODES_13 = [
     0x0010, 0x0017, 0x000d, 0x000a, 0x0006, 0x0001, 0x0004, 0x0002,
     0x0010, 0x000f, 0x0011, 0x001b, 0x0019, 0x0014, 0x001d, 0x000b,
     0x0011, 0x000c, 0x0010, 0x0008, 0x0001, 0x0001, 0x0000, 0x0001,
-    ]
+];
 
-MPEG_HUFFBITS_13 = [
-    1,  4,  6,  7,  8,  9,  9, 10,
-    9, 10, 11, 11, 12, 12, 13, 13,
-    3,  4,  6,  7,  8,  8,  9,  9,
-    9,  9, 10, 10, 11, 12, 12, 12,
-    6,  6,  7,  8,  9,  9, 10, 10,
-    9, 10, 10, 11, 11, 12, 13, 13,
-    7,  7,  8,  9,  9, 10, 10, 10,
+const MPEG_BITS_13: [u8; 256] = [
+     1,  4,  6,  7,  8,  9,  9, 10,
+     9, 10, 11, 11, 12, 12, 13, 13,
+     3,  4,  6,  7,  8,  8,  9,  9,
+     9,  9, 10, 10, 11, 12, 12, 12,
+     6,  6,  7,  8,  9,  9, 10, 10,
+     9, 10, 10, 11, 11, 12, 13, 13,
+     7,  7,  8,  9,  9, 10, 10, 10,
     10, 11, 11, 11, 11, 12, 13, 13,
-    8,  7,  9,  9, 10, 10, 11, 11,
+     8,  7,  9,  9, 10, 10, 11, 11,
     10, 11, 11, 12, 12, 13, 13, 14,
-    9,  8,  9, 10, 10, 10, 11, 11,
+     9,  8,  9, 10, 10, 10, 11, 11,
     11, 11, 12, 11, 13, 13, 14, 14,
-    9,  9, 10, 10, 11, 11, 11, 11,
+     9,  9, 10, 10, 11, 11, 11, 11,
     11, 12, 12, 12, 13, 13, 14, 14,
     10,  9, 10, 11, 11, 11, 12, 12,
     12, 12, 13, 13, 13, 14, 16, 16,
-    9,  8,  9, 10, 10, 11, 11, 12,
+     9,  8,  9, 10, 10, 11, 11, 12,
     12, 12, 12, 13, 13, 14, 15, 15,
     10,  9, 10, 10, 11, 11, 11, 13,
     12, 13, 13, 14, 14, 14, 16, 15,
@@ -241,9 +243,9 @@ MPEG_HUFFBITS_13 = [
     14, 17, 15, 15, 15, 17, 16, 16,
     12, 12, 13, 14, 14, 14, 15, 14,
     15, 15, 16, 16, 19, 18, 19, 16,
-    ]
+];
 
-MPEG_HUFFCODES_15 = [
+const MPEG_CODES_15: [u32; 256] = [
     0x0007, 0x000c, 0x0012, 0x0035, 0x002f, 0x004c, 0x007c, 0x006c,
     0x0059, 0x007b, 0x006c, 0x0077, 0x006b, 0x0051, 0x007a, 0x003f,
     0x000d, 0x0005, 0x0010, 0x001b, 0x002e, 0x0024, 0x003d, 0x0033,
@@ -276,28 +278,28 @@ MPEG_HUFFCODES_15 = [
     0x0025, 0x0018, 0x0011, 0x000c, 0x000f, 0x000a, 0x0002, 0x0001,
     0x0047, 0x0025, 0x0022, 0x001e, 0x001c, 0x0014, 0x0011, 0x001a,
     0x0015, 0x0010, 0x000a, 0x0006, 0x0008, 0x0006, 0x0002, 0x0000,
-    ]
+];
 
-MPEG_HUFFBITS_15 = [
-    3,  4,  5,  7,  7,  8,  9,  9,
-    9, 10, 10, 11, 11, 11, 12, 13,
-    4,  3,  5,  6,  7,  7,  8,  8,
-    8,  9,  9, 10, 10, 10, 11, 11,
-    5,  5,  5,  6,  7,  7,  8,  8,
-    8,  9,  9, 10, 10, 11, 11, 11,
-    6,  6,  6,  7,  7,  8,  8,  9,
-    9,  9, 10, 10, 10, 11, 11, 11,
-    7,  6,  7,  7,  8,  8,  9,  9,
-    9,  9, 10, 10, 10, 11, 11, 11,
-    8,  7,  7,  8,  8,  8,  9,  9,
-    9,  9, 10, 10, 11, 11, 11, 12,
-    9,  7,  8,  8,  8,  9,  9,  9,
-    9, 10, 10, 10, 11, 11, 12, 12,
-    9,  8,  8,  9,  9,  9,  9, 10,
+const MPEG_BITS_15: [u8; 256] = [
+     3,  4,  5,  7,  7,  8,  9,  9,
+     9, 10, 10, 11, 11, 11, 12, 13,
+     4,  3,  5,  6,  7,  7,  8,  8,
+     8,  9,  9, 10, 10, 10, 11, 11,
+     5,  5,  5,  6,  7,  7,  8,  8,
+     8,  9,  9, 10, 10, 11, 11, 11,
+     6,  6,  6,  7,  7,  8,  8,  9,
+     9,  9, 10, 10, 10, 11, 11, 11,
+     7,  6,  7,  7,  8,  8,  9,  9,
+     9,  9, 10, 10, 10, 11, 11, 11,
+     8,  7,  7,  8,  8,  8,  9,  9,
+     9,  9, 10, 10, 11, 11, 11, 12,
+     9,  7,  8,  8,  8,  9,  9,  9,
+     9, 10, 10, 10, 11, 11, 12, 12,
+     9,  8,  8,  9,  9,  9,  9, 10,
     10, 10, 10, 10, 11, 11, 11, 12,
-    9,  8,  8,  9,  9,  9,  9, 10,
+     9,  8,  8,  9,  9,  9,  9, 10,
     10, 10, 10, 11, 11, 12, 12, 12,
-    9,  8,  9,  9,  9,  9, 10, 10,
+     9,  8,  9,  9,  9,  9, 10, 10,
     10, 11, 11, 11, 11, 12, 12, 12,
     10,  9,  9,  9, 10, 10, 10, 10,
     10, 11, 11, 11, 11, 12, 13, 12,
@@ -311,9 +313,9 @@ MPEG_HUFFBITS_15 = [
     12, 12, 12, 12, 13, 13, 12, 13,
     12, 11, 11, 11, 11, 11, 11, 12,
     12, 12, 12, 12, 13, 13, 13, 13,
-    ]
+];
 
-MPEG_HUFFCODES_16 = [
+const MPEG_CODES_16: [u32; 256] = [
     0x0001, 0x0005, 0x000e, 0x002c, 0x004a, 0x003f, 0x006e, 0x005d,
     0x00ac, 0x0095, 0x008a, 0x00f2, 0x00e1, 0x00c3, 0x0178, 0x0011,
     0x0003, 0x0004, 0x000c, 0x0014, 0x0023, 0x003e, 0x0035, 0x002f,
@@ -346,20 +348,20 @@ MPEG_HUFFCODES_16 = [
     0x02c5, 0x0362, 0x06c6, 0x0367, 0x0d82, 0x0366, 0x01b2, 0x0000,
     0x000c, 0x000a, 0x0007, 0x000b, 0x000a, 0x0011, 0x000b, 0x0009,
     0x000d, 0x000c, 0x000a, 0x0007, 0x0005, 0x0003, 0x0001, 0x0003,
-    ]
+];
 
-MPEG_HUFFBITS_16 = [
-    1,  4,  6,  8,  9,  9, 10, 10,
+const MPEG_BITS_16: [u8; 256] = [
+     1,  4,  6,  8,  9,  9, 10, 10,
     11, 11, 11, 12, 12, 12, 13,  9,
-    3,  4,  6,  7,  8,  9,  9,  9,
+     3,  4,  6,  7,  8,  9,  9,  9,
     10, 10, 10, 11, 12, 11, 12,  8,
-    6,  6,  7,  8,  9,  9, 10, 10,
+     6,  6,  7,  8,  9,  9, 10, 10,
     11, 10, 11, 11, 11, 12, 12,  9,
-    8,  7,  8,  9,  9, 10, 10, 10,
+     8,  7,  8,  9,  9, 10, 10, 10,
     11, 11, 12, 12, 12, 13, 13, 10,
-    9,  8,  9,  9, 10, 10, 11, 11,
+     9,  8,  9,  9, 10, 10, 11, 11,
     11, 12, 12, 12, 13, 13, 13,  9,
-    9,  8,  9,  9, 10, 11, 11, 12,
+     9,  8,  9,  9, 10, 11, 11, 12,
     11, 12, 12, 13, 13, 13, 14, 10,
     10,  9,  9, 10, 11, 11, 11, 11,
     12, 12, 12, 12, 13, 13, 14, 10,
@@ -379,11 +381,11 @@ MPEG_HUFFBITS_16 = [
     14, 16, 15, 15, 15, 17, 15, 11,
     13, 13, 11, 12, 14, 14, 13, 14,
     14, 15, 16, 15, 17, 15, 14, 11,
-    9,  8,  8,  9,  9, 10, 10, 10,
+     9,  8,  8,  9,  9, 10, 10, 10,
     11, 11, 11, 11, 11, 11, 11,  8,
-    ]
+];
 
-MPEG_HUFFCODES_24 = [
+const MPEG_CODES_24: [u32; 256] = [
     0x000f, 0x000d, 0x002e, 0x0050, 0x0092, 0x0106, 0x00f8, 0x01b2,
     0x01aa, 0x029d, 0x028d, 0x0289, 0x026d, 0x0205, 0x0408, 0x0058,
     0x000e, 0x000c, 0x0015, 0x0026, 0x0047, 0x0082, 0x007a, 0x00d8,
@@ -416,27 +418,27 @@ MPEG_HUFFCODES_24 = [
     0x017a, 0x0174, 0x016f, 0x016b, 0x0168, 0x0166, 0x0164, 0x0000,
     0x002b, 0x0014, 0x0013, 0x0011, 0x000f, 0x000d, 0x000b, 0x0009,
     0x0007, 0x0006, 0x0004, 0x0007, 0x0005, 0x0003, 0x0001, 0x0003,
-    ]
+];
 
-MPEG_HUFFBITS_24 = [
-    4,  4,  6,  7,  8,  9,  9, 10,
+const MPEG_BITS_24: [u8; 256] = [
+     4,  4,  6,  7,  8,  9,  9, 10,
     10, 11, 11, 11, 11, 11, 12,  9,
-    4,  4,  5,  6,  7,  8,  8,  9,
-    9,  9, 10, 10, 10, 10, 10,  8,
-    6,  5,  6,  7,  7,  8,  8,  9,
-    9,  9,  9, 10, 10, 10, 11,  7,
-    7,  6,  7,  7,  8,  8,  8,  9,
-    9,  9,  9, 10, 10, 10, 10,  7,
-    8,  7,  7,  8,  8,  8,  8,  9,
-    9,  9, 10, 10, 10, 10, 11,  7,
-    9,  7,  8,  8,  8,  8,  9,  9,
-    9,  9, 10, 10, 10, 10, 10,  7,
-    9,  8,  8,  8,  8,  9,  9,  9,
-    9, 10, 10, 10, 10, 10, 11,  7,
+     4,  4,  5,  6,  7,  8,  8,  9,
+     9,  9, 10, 10, 10, 10, 10,  8,
+     6,  5,  6,  7,  7,  8,  8,  9,
+     9,  9,  9, 10, 10, 10, 11,  7,
+     7,  6,  7,  7,  8,  8,  8,  9,
+     9,  9,  9, 10, 10, 10, 10,  7,
+     8,  7,  7,  8,  8,  8,  8,  9,
+     9,  9, 10, 10, 10, 10, 11,  7,
+     9,  7,  8,  8,  8,  8,  9,  9,
+     9,  9, 10, 10, 10, 10, 10,  7,
+     9,  8,  8,  8,  8,  9,  9,  9,
+     9, 10, 10, 10, 10, 10, 11,  7,
     10,  8,  8,  8,  9,  9,  9,  9,
     10, 10, 10, 10, 10, 11, 11,  8,
     10,  9,  9,  9,  9,  9,  9,  9,
-    9, 10, 10, 10, 10, 11, 11,  8,
+     9, 10, 10, 10, 10, 11, 11,  8,
     10,  9,  9,  9,  9,  9,  9, 10,
     10, 10, 10, 10, 11, 11, 11,  8,
     11,  9,  9,  9,  9, 10, 10, 10,
@@ -449,259 +451,124 @@ MPEG_HUFFBITS_24 = [
     11, 11, 11, 11, 11, 11, 11,  8,
     12, 10, 10, 10, 10, 10, 10, 11,
     11, 11, 11, 11, 11, 11, 11,  8,
-    8,  7,  7,  7,  7,  7,  7,  7,
-    7,  7,  7,  8,  8,  8,  8,  4,
-    ]
+    8,   7,  7,  7,  7,  7,  7,  7,
+    7,   7,  7,  8,  8,  8,  8,  4,
+];
 
-MPEG_QUADS_HUFFCODES_A = [ 1, 5, 4, 5, 6, 5, 4, 4, 7, 3, 6, 0, 7, 2, 3, 1, ]
-MPEG_QUADS_HUFFBITS_A  = [ 1, 4, 4, 5, 4, 6, 5, 6, 4, 5, 5, 6, 5, 6, 6, 6, ]
+const MPEG_QUADS_CODES_A: [u32; 16] = [ 1, 5, 4, 5, 6, 5, 4, 4, 7, 3, 6, 0, 7, 2, 3, 1, ];
+const MPEG_QUADS_BITS_A: [u8; 16]   = [ 1, 4, 4, 5, 4, 6, 5, 6, 4, 5, 5, 6, 5, 6, 6, 6, ];
 
-MPEG_QUADS_HUFFCODES_B = [ 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0, ]
-MPEG_QUADS_HUFFBITS_B  = [  4,  4,  4,  4,  4,  4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, ]
+const MPEG_QUADS_CODES_B: [u32; 16] = [ 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0, ];
+const MPEG_QUADS_BITS_B: [u8; 16]   = [  4,  4,  4,  4,  4,  4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, ];
 
-class MpegTable:
-    def __init__(self, name, codes, code_lens, wrap):
-        assert len(codes) == len(code_lens)
+struct MpegTable {
+    codes: &'static [u32],
+    lens: &'static [u8],
+    wrap: u16,
+}
+struct MpegQuadsTable {
+    codes: &'static [u32],
+    lens: &'static [u8],
+    wrap: u16,
+}
 
-        self.name = name
-        self.codes = codes
-        self.code_lens = code_lens
+const MPEG_TABLES: [MpegTable; 18] = [
+    // Table 0
+    MpegTable { codes: &MPEG_CODES_0,  lens: &MPEG_BITS_0,  wrap: 0x0  },
+    // Table 1
+    MpegTable { codes: &MPEG_CODES_1,  lens: &MPEG_BITS_1,  wrap: 0x2  },
+    // Table 2
+    MpegTable { codes: &MPEG_CODES_2,  lens: &MPEG_BITS_2,  wrap: 0x3  },
+    // Table 3
+    MpegTable { codes: &MPEG_CODES_3,  lens: &MPEG_BITS_3,  wrap: 0x3  },
+    // Table 4 (not used)
+    MpegTable { codes: &MPEG_CODES_0,  lens: &MPEG_BITS_0,  wrap: 0x0  },
+    // Table 5
+    MpegTable { codes: &MPEG_CODES_5,  lens: &MPEG_BITS_5,  wrap: 0x4  },
+    // Table 6
+    MpegTable { codes: &MPEG_CODES_6,  lens: &MPEG_BITS_6,  wrap: 0x4  },
+    // Table 7
+    MpegTable { codes: &MPEG_CODES_7,  lens: &MPEG_BITS_7,  wrap: 0x6  },
+    // Table 8
+    MpegTable { codes: &MPEG_CODES_8,  lens: &MPEG_BITS_8,  wrap: 0x6  },
+    // Table 9
+    MpegTable { codes: &MPEG_CODES_9,  lens: &MPEG_BITS_9,  wrap: 0x6  },
+    // Table 10
+    MpegTable { codes: &MPEG_CODES_10, lens: &MPEG_BITS_10, wrap: 0x8  },
+    // Table 11
+    MpegTable { codes: &MPEG_CODES_11, lens: &MPEG_BITS_11, wrap: 0x8  },
+    // Table 12
+    MpegTable { codes: &MPEG_CODES_12, lens: &MPEG_BITS_12, wrap: 0x8  },
+    // Table 13
+    MpegTable { codes: &MPEG_CODES_13, lens: &MPEG_BITS_13, wrap: 0x10 },
+    // Table 14 (not used)
+    MpegTable { codes: &MPEG_CODES_0,  lens: &MPEG_BITS_0,  wrap: 0x0  },
+    // Table 15
+    MpegTable { codes: &MPEG_CODES_15, lens: &MPEG_BITS_15, wrap: 0x10 },
+    // Tables 16..24 (number of linbits vary)
+    MpegTable { codes: &MPEG_CODES_16, lens: &MPEG_BITS_16, wrap: 0x10 },
+    // Tables 24..32 (number of linbits vary)
+    MpegTable { codes: &MPEG_CODES_24, lens: &MPEG_BITS_24, wrap: 0x10 },
+];
 
-        # Generate the actual data values that the Huffman codes encode.
-        self.values = [ ((i // wrap) << 4) | (i % wrap) for i in range(0, len(codes)) ]
+const MPEG_QUADS_TABLES: [MpegQuadsTable; 2] = [
+    // Table A
+    MpegQuadsTable { codes: &MPEG_QUADS_CODES_A, lens: &MPEG_QUADS_BITS_A, wrap: 0x10 },
+    // Table B
+    MpegQuadsTable { codes: &MPEG_QUADS_CODES_B, lens: &MPEG_QUADS_BITS_B, wrap: 0x10 },
+];
 
-MPEG_TABLES = [
-    MpegTable( "HUFFMAN_TABLE_1",  MPEG_HUFFCODES_1,  MPEG_HUFFBITS_1, 0x2 ),
-    MpegTable( "HUFFMAN_TABLE_2",  MPEG_HUFFCODES_2,  MPEG_HUFFBITS_2, 0x3 ),
-    MpegTable( "HUFFMAN_TABLE_3",  MPEG_HUFFCODES_3,  MPEG_HUFFBITS_3, 0x3 ),
-    MpegTable( "HUFFMAN_TABLE_5",  MPEG_HUFFCODES_5,  MPEG_HUFFBITS_5, 0x4 ),
-    MpegTable( "HUFFMAN_TABLE_6",  MPEG_HUFFCODES_6,  MPEG_HUFFBITS_6, 0x4 ),
-    MpegTable( "HUFFMAN_TABLE_7",  MPEG_HUFFCODES_7,  MPEG_HUFFBITS_7, 0x6 ),
-    MpegTable( "HUFFMAN_TABLE_8",  MPEG_HUFFCODES_8,  MPEG_HUFFBITS_8, 0x6 ),
-    MpegTable( "HUFFMAN_TABLE_9",  MPEG_HUFFCODES_9,  MPEG_HUFFBITS_9, 0x6 ),
-    MpegTable("HUFFMAN_TABLE_10", MPEG_HUFFCODES_10, MPEG_HUFFBITS_10, 0x8 ),
-    MpegTable("HUFFMAN_TABLE_11", MPEG_HUFFCODES_11, MPEG_HUFFBITS_11, 0x8 ),
-    MpegTable("HUFFMAN_TABLE_12", MPEG_HUFFCODES_12, MPEG_HUFFBITS_12, 0x8 ),
-    MpegTable("HUFFMAN_TABLE_13", MPEG_HUFFCODES_13, MPEG_HUFFBITS_13, 0x10),
-    MpegTable("HUFFMAN_TABLE_15", MPEG_HUFFCODES_15, MPEG_HUFFBITS_15, 0x10),
-    MpegTable("HUFFMAN_TABLE_16", MPEG_HUFFCODES_16, MPEG_HUFFBITS_16, 0x10),
-    MpegTable("HUFFMAN_TABLE_24", MPEG_HUFFCODES_24, MPEG_HUFFBITS_24, 0x10),
-    MpegTable("QUADS_HUFFMAN_TABLE_A", MPEG_QUADS_HUFFCODES_A, MPEG_QUADS_HUFFBITS_A, 0x10),
-    MpegTable("QUADS_HUFFMAN_TABLE_B", MPEG_QUADS_HUFFCODES_B, MPEG_QUADS_HUFFBITS_B, 0x10),
-    ]
+pub const CODEBOOK_LINBITS: [u32; 32] = [
+    0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
+    1,  2,  3,  4,  6,  8, 10, 13,  4,  5,  6,  7,  8,  9, 11, 13,
+];
 
-class Node:
-    def __init__(self, prefix):
-        self.prefix = prefix
-        self.prefix_len_max = 0
-        self.offset = 0
-        self.values = []
-        self.children = {}
+fn mpeg_gen_value(i: u16, wrap: u16) -> u16 {
+    ((i / wrap) << 4) | (i % wrap)
+}
 
-def eprint(*args, **kwargs):
-    print(*args, file=sys.stderr, **kwargs)
+lazy_static! {
+    pub static ref CODEBOOK_TABLES: [Codebook<Entry16x16>; 18] = {
+        let mut codebooks: [Codebook<Entry16x16>; 18] = Default::default();
 
-def print_tree(node, depth = 0):
-    eprint("\t" * depth + "{:#0{w}b} @ {} +{}".format(
-        node.prefix, node.offset, 1<<node.prefix_len_max, w=node.prefix_len_max + 2))
+        for (codebook, table) in codebooks.iter_mut().zip(&MPEG_TABLES) {
+            assert!(table.codes.len() == table.lens.len());
 
-    depth = depth + 1
-    for value in node.values:
-        eprint("\t" * depth + "{:#0{w}b} => {:#x}".format(value[1], value[2], w=value[0] + 2))
+            let len = table.codes.len() as u16;
 
-    for child in sorted(node.children.keys()):
-        print_tree(node.children[child], depth)
+            // Generate values for the codebook.
+            let values: Vec<u16> = (0..len).into_iter()
+                                           .map(|i| mpeg_gen_value(i, table.wrap))
+                                           .collect();
 
-def synthesize(node, depth = 0):
-    synthesized_nodes = [];
+            // Generate the codebook.
+            let mut builder = CodebookBuilder::new(BitOrder::Verbatim);
+            *codebook = builder.make(table.codes, table.lens, &values).unwrap();
+        }
 
-    synth_count = 0;
+        codebooks
+    };
+}
 
-    for value in node.values:
-        # A value in this node may have a prefix less than the longest prefix length in the node.
-        # Calculate how many extra padding bits we must add to to this value's prefix.
-        extra_bits = node.prefix_len_max - value[0]
+lazy_static! {
+    pub static ref QUADS_CODEBOOK_TABLE: [Codebook<Entry16x16>; 2] = {
+        let mut codebooks: [Codebook<Entry16x16>; 2] = Default::default();
 
-        # Synthesize duplicates of this value for all combination of padding bits if there are any.
-        if extra_bits > 0:
-            # Pad the prefix with extra bits.
-            prefix = value[1] << extra_bits
+        for (codebook, table) in codebooks.iter_mut().zip(&MPEG_QUADS_TABLES) {
+            assert!(table.codes.len() == table.lens.len());
 
-            # The number of values that need to by synthesized is 2^(number of padding bits). 
-            count = 1 << extra_bits
+            let len = table.codes.len() as u16;
 
-            # However, the original value was not technically synthesized, so don't include it in
-            # the actual count.
-            synth_count += count - 1
+            // Generate values for the codebook.
+            let values: Vec<u16> = (0..len).into_iter()
+                                           .map(|i| mpeg_gen_value(i, table.wrap))
+                                           .collect();
 
-            # Synthesize the values
-            for i in range(count):
-                entry = (value[0], prefix + i, value[2])
-                synthesized_nodes.append(entry)
-        else:
-            synthesized_nodes.append(value)
+            // Generate the codebook.
+            let mut builder = CodebookBuilder::new(BitOrder::Verbatim);
+            *codebook = builder.make(table.codes, table.lens, &values).unwrap();
+        }
 
-    # Sort the synthesized values.
-    synthesized_nodes.sort(key=lambda x: x[1])
-    node.values = synthesized_nodes
-
-    max_depth = depth
-
-    # Descend into child nodes.
-    for child in node.children:
-        count, child_max_depth = synthesize(node.children[child], depth + 1)
-
-        synth_count += count
-        max_depth = max(max_depth, child_max_depth)
-
-    return (synth_count, max_depth)
-
-def assign_offsets_breadth(node):
-    queue = collections.deque([node])
-
-    count = 0
-
-    while queue:
-        node = queue.popleft()
-        node.offset = count
-
-        count = count + len(node.values) + len(node.children)
-
-        for child in sorted(node.children.keys()):
-            queue.append(node.children[child])
-
-    return count
-
-def generate_code(root, name, max_code_len):
-    print("pub const {}: HuffmanTable<H8> = HuffmanTable {{".format(name))
-    print("    data: &[")
-
-    queue = collections.deque([(root, "")])
-
-    while queue:
-        node, path = queue.popleft()
-
-        if node != root:
-            path += " "
-            print("")
-
-        entries = list(range(1 << node.prefix_len_max))
-
-        print("        // 0b{} ... ({} +{})".format(path[:-1], node.offset, len(entries)))
-
-        for value in node.values:
-            entries[value[1]] = "        val8!({:#x}, {}),    // {:#0{w}b}".format(
-                value[2], value[0], value[1], w=node.prefix_len_max + 2)
-
-        for prefix in sorted(node.children.keys()):
-            child = node.children[prefix]
-            entries[prefix] = "        jmp8!({}, {}),    // {:#0{w}b}".format(
-                child.offset, child.prefix_len_max, prefix, w=node.prefix_len_max + 2)
-
-            child_path = path + "{:0{w}b}".format(prefix, w=node.prefix_len_max)
-
-            queue.append((child, child_path))
-        
-        print('\n'.join(entries))
-        
-    print("    ],")
-    print("    n_init_bits: {},".format(root.prefix_len_max)),
-    print("    n_table_bits: {},".format(max_code_len))
-    print("};")
-    print("")
-
-def generate_table(name, codes, code_lens, values, group_len):
-    group_mask = ~((~0) << group_len)
-
-    # Zip together the Huffman code, Huffman code length in bits, and value.
-    full_table_iter = zip(codes, code_lens, values)
-    full_table = list(full_table_iter)
-
-    # Build a tree of prefixes.
-    root = Node(0)
-
-    max_code_len = 0
-
-    # Build a Trie of Huffman codes by splitting each code into group_len bit prefixes.
-    for entry in full_table:
-        node = root
-        code = entry[0] 
-        code_len = entry[1]
-
-        max_code_len = max(max_code_len, code_len)
-
-        # Split the Huffman code into chunks containg group_len bits.
-        while code_len > group_len:
-            code_len = code_len - group_len
-            # Get the prefix from the Huffman code.
-            prefix = (code >> code_len) & group_mask
-            # The prefix has already been seen, descend into the tree.
-            if prefix in node.children:
-                node = node.children[prefix]
-            # The prefix has not been seen, append it to the tree and then descend.
-            else:
-                node.children[prefix] = Node(prefix)
-                node.prefix_len_max = max(node.prefix_len_max, group_len)
-                node = node.children[prefix]
-
-        # The final chunk always has <= group_len bits. Get the final prefix.
-        prefix = code & (group_mask >> (group_len - code_len))
-        # Append the value to the node, and update the maximum prefix length
-        node.values.append((code_len, prefix, entry[2]))
-        node.prefix_len_max = max(node.prefix_len_max, code_len)
-
-    # Synthesize all possible prefixes for prefixes that must be padded within their 
-    # respective table.
-    total_synth, depth = synthesize(root)
-
-    # Assign offset values to each node in the tree (a sub-table) im breadth-first order.
-    total = assign_offsets_breadth(root)
-
-    # Generate the actual look-up table from the tree.
-    generate_code(root, name, max_code_len)
-
-    eprint("Stats for {}:".format(name))
-    eprint("  Total Rows       = {}".format(total))
-    eprint("  Synthesized Rows = {} ({:.01%})".format(total_synth, total_synth/total))
-    eprint("  Depth            = {}".format(depth + 1))
-    eprint("  Max Code Length  = {}".format(max_code_len))
-    eprint("")
-
-    # Print the tree.
-    eprint("Decode tree for {}:".format(name))
-    eprint("")
-    print_tree(root)
-    eprint("")
-
-def main(args):
-    GROUP_LEN = 4
-
-    # Print the preamble.
-    print("// Symphonia")
-    print("// Copyright (c) 2019 The Project Symphonia Developers.")
-    print("//")
-    print("// This Source Code Form is subject to the terms of the Mozilla Public")
-    print("// License, v. 2.0. If a copy of the MPL was not distributed with this")
-    print("// file, You can obtain one at https://mozilla.org/MPL/2.0/.")
-    print("")
-    print("//////////////////////////////////////////////////////////////////////")
-    print("//                             WARNING                              //")
-    print("//                                                                  //")
-    print("//         Do not edit the contents of this file manually!          //")
-    print("//                                                                  //")
-    print("// The tables within this file were automatically derived from the  //")
-    print("//          ISO/IEC 11172-3 (MPEG-1 Part 3) standard using          //")
-    print("//  mpeg_huffman_tablegen.py in <root>/src/symphonia-codec-mp3/tools.  //")
-    print("//                                                                  //")
-    print("//////////////////////////////////////////////////////////////////////")
-    print("")
-    print("use symphonia_core::{val8, jmp8};")
-    print("use symphonia_core::io::huffman::{H8, HuffmanTable};")
-    print("")
-
-    # For each Huffman table...
-    for table in MPEG_TABLES:
-        generate_table(table.name, table.codes, table.code_lens, table.values, GROUP_LEN)
-
-if __name__ == "__main__":
-    main(sys.argv[1:])
+        codebooks
+    };
+}

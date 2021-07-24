@@ -1,57 +1,24 @@
-#!/usr/bin/env python3
+// Symphonia
+// Copyright (c) 2021 The Project Symphonia Developers.
+//
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-# Symphonia IO BitStream Reader Huffman Table Generator
-# Copyright (c) 2019 The Project Symphonia Developers.
-#
-# This Source Code Form is subject to the terms of the Mozilla Public
-# License, v. 2.0. If a copy of the MPL was not distributed with this
-# file, You can obtain one at https://mozilla.org/MPL/2.0/.
+use symphonia_core::io::vlc::*;
 
-import collections
-import random
-import sys
+use lazy_static::lazy_static;
 
-
-AAC_SCF_CODEBOOK_BITS = [
-    18, 18, 18, 18, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19,
-    19, 19, 19, 18, 19, 18, 17, 17, 16, 17, 16, 16, 16, 16, 15, 15,
-    14, 14, 14, 14, 14, 14, 13, 13, 12, 12, 12, 11, 12, 11, 10, 10,
-    10,  9,  9,  8,  8,  8,  7,  6,  6,  5,  4,  3,  1,  4,  4,  5,
-     6,  6,  7,  7,  8,  8,  9,  9, 10, 10, 10, 11, 11, 11, 11, 12,
-    12, 13, 13, 13, 14, 14, 16, 15, 16, 15, 18, 19, 19, 19, 19, 19,
-    19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19,
-    19, 19, 19, 19, 19, 19, 19, 19, 19
-]
-
-AAC_SCF_CODEBOOK_CODES = [
-    0x3FFE8, 0x3FFE6, 0x3FFE7, 0x3FFE5, 0x7FFF5, 0x7FFF1, 0x7FFED, 0x7FFF6,
-    0x7FFEE, 0x7FFEF, 0x7FFF0, 0x7FFFC, 0x7FFFD, 0x7FFFF, 0x7FFFE, 0x7FFF7,
-    0x7FFF8, 0x7FFFB, 0x7FFF9, 0x3FFE4, 0x7FFFA, 0x3FFE3, 0x1FFEF, 0x1FFF0,
-    0x0FFF5, 0x1FFEE, 0x0FFF2, 0x0FFF3, 0x0FFF4, 0x0FFF1, 0x07FF6, 0x07FF7,
-    0x03FF9, 0x03FF5, 0x03FF7, 0x03FF3, 0x03FF6, 0x03FF2, 0x01FF7, 0x01FF5,
-    0x00FF9, 0x00FF7, 0x00FF6, 0x007F9, 0x00FF4, 0x007F8, 0x003F9, 0x003F7,
-    0x003F5, 0x001F8, 0x001F7, 0x000FA, 0x000F8, 0x000F6, 0x00079, 0x0003A,
-    0x00038, 0x0001A, 0x0000B, 0x00004, 0x00000, 0x0000A, 0x0000C, 0x0001B,
-    0x00039, 0x0003B, 0x00078, 0x0007A, 0x000F7, 0x000F9, 0x001F6, 0x001F9,
-    0x003F4, 0x003F6, 0x003F8, 0x007F5, 0x007F4, 0x007F6, 0x007F7, 0x00FF5,
-    0x00FF8, 0x01FF4, 0x01FF6, 0x01FF8, 0x03FF8, 0x03FF4, 0x0FFF0, 0x07FF4,
-    0x0FFF6, 0x07FF5, 0x3FFE2, 0x7FFD9, 0x7FFDA, 0x7FFDB, 0x7FFDC, 0x7FFDD,
-    0x7FFDE, 0x7FFD8, 0x7FFD2, 0x7FFD3, 0x7FFD4, 0x7FFD5, 0x7FFD6, 0x7FFF2,
-    0x7FFDF, 0x7FFE7, 0x7FFE8, 0x7FFE9, 0x7FFEA, 0x7FFEB, 0x7FFE6, 0x7FFE0,
-    0x7FFE1, 0x7FFE2, 0x7FFE3, 0x7FFE4, 0x7FFE5, 0x7FFD7, 0x7FFEC, 0x7FFF4,
-    0x7FFF3
-]
-
-AAC_SPEC_CB1_BITS = [
+const SPECTRUM_CODEBOOK1_LENS: [u8; 81] = [
     11,  9, 11, 10,  7, 10, 11,  9, 11, 10,  7, 10,  7,  5,  7,  9,
      7, 10, 11,  9, 11,  9,  7,  9, 11,  9, 11,  9,  7,  9,  7,  5,
      7,  9,  7,  9,  7,  5,  7,  5,  1,  5,  7,  5,  7,  9,  7,  9,
      7,  5,  7,  9,  7,  9, 11,  9, 11,  9,  7,  9, 11,  9, 11, 10,
      7,  9,  7,  5,  7,  9,  7, 10, 11,  9, 11, 10,  7,  9, 11,  9,
     11
-]
+];
 
-AAC_SPEC_CB1_CODES = [
+const SPECTRUM_CODEBOOK1_CODES: [u32; 81] = [
     0x7f8, 0x1f1, 0x7fd, 0x3f5, 0x068, 0x3f0, 0x7f7, 0x1ec,
     0x7f5, 0x3f1, 0x072, 0x3f4, 0x074, 0x011, 0x076, 0x1eb,
     0x06c, 0x3f6, 0x7fc, 0x1e1, 0x7f1, 0x1f0, 0x061, 0x1f6,
@@ -63,18 +30,18 @@ AAC_SPEC_CB1_CODES = [
     0x06a, 0x1e8, 0x075, 0x010, 0x073, 0x1f4, 0x06e, 0x3f7,
     0x7f6, 0x1e0, 0x7f9, 0x3f2, 0x066, 0x1f5, 0x7ff, 0x1f7,
     0x7f4
-]
+];
 
-AAC_SPEC_CB2_BITS = [
+const SPECTRUM_CODEBOOK2_LENS: [u8; 81] = [
     9, 7, 9, 8, 6, 8, 9, 8, 9, 8, 6, 7, 6, 5, 6, 7,
     6, 8, 9, 7, 8, 8, 6, 8, 9, 7, 9, 8, 6, 7, 6, 5,
     6, 7, 6, 8, 6, 5, 6, 5, 3, 5, 6, 5, 6, 8, 6, 7,
     6, 5, 6, 8, 6, 8, 9, 7, 9, 8, 6, 8, 8, 7, 9, 8,
     6, 7, 6, 4, 6, 8, 6, 7, 9, 7, 9, 7, 6, 8, 9, 7,
     9
-]
+];
 
-AAC_SPEC_CB2_CODES = [
+const SPECTRUM_CODEBOOK2_CODES: [u32; 81] = [
     0x1f3, 0x06f, 0x1fd, 0x0eb, 0x023, 0x0ea, 0x1f7, 0x0e8,
     0x1fa, 0x0f2, 0x02d, 0x070, 0x020, 0x006, 0x02b, 0x06e,
     0x028, 0x0e9, 0x1f9, 0x066, 0x0f8, 0x0e7, 0x01b, 0x0f1,
@@ -86,18 +53,18 @@ AAC_SPEC_CB2_CODES = [
     0x022, 0x065, 0x031, 0x002, 0x026, 0x0ed, 0x025, 0x06a,
     0x1fb, 0x072, 0x1fe, 0x069, 0x02e, 0x0f6, 0x1ff, 0x06d,
     0x1f6
-]
+];
 
-AAC_SPEC_CB3_BITS = [
+const SPECTRUM_CODEBOOK3_LENS: [u8; 81] = [
      1,  4,  8,  4,  5,  8,  9,  9, 10,  4,  6,  9,  6,  6,  9,  9,
      9, 10,  9, 10, 13,  9,  9, 11, 11, 10, 12,  4,  6, 10,  6,  7,
     10, 10, 10, 12,  5,  7, 11,  6,  7, 10,  9,  9, 11,  9, 10, 13,
      8,  9, 12, 10, 11, 12,  8, 10, 15,  9, 11, 15, 13, 14, 16,  8,
     10, 14,  9, 10, 14, 12, 12, 15, 11, 12, 16, 10, 11, 15, 12, 12,
     15
-]
+];
 
-AAC_SPEC_CB3_CODES = [
+const SPECTRUM_CODEBOOK3_CODES: [u32; 81] = [
     0x0000, 0x0009, 0x00ef, 0x000b, 0x0019, 0x00f0, 0x01eb, 0x01e6,
     0x03f2, 0x000a, 0x0035, 0x01ef, 0x0034, 0x0037, 0x01e9, 0x01ed,
     0x01e7, 0x03f3, 0x01ee, 0x03ed, 0x1ffa, 0x01ec, 0x01f2, 0x07f9,
@@ -109,18 +76,18 @@ AAC_SPEC_CB3_CODES = [
     0x03f0, 0x3ffc, 0x01ea, 0x03ee, 0x3ffb, 0x0ff6, 0x0ffa, 0x7ffc,
     0x07f2, 0x0ff5, 0xfffe, 0x03f4, 0x07f7, 0x7ffb, 0x0ff7, 0x0ff9,
     0x7ffa
-]
+];
 
-AAC_SPEC_CB4_BITS = [
+const SPECTRUM_CODEBOOK4_LENS: [u8; 81] = [
      4,  5,  8,  5,  4,  8,  9,  8, 11,  5,  5,  8,  5,  4,  8,  8,
      7, 10,  9,  8, 11,  8,  8, 10, 11, 10, 11,  4,  5,  8,  4,  4,
      8,  8,  8, 10,  4,  4,  8,  4,  4,  7,  8,  7,  9,  8,  8, 10,
      7,  7,  9, 10,  9, 10,  8,  8, 11,  8,  7, 10, 11, 10, 12,  8,
      7, 10,  7,  7,  9, 10,  9, 11, 11, 10, 12, 10,  9, 11, 11, 10,
     11
-]
+];
 
-AAC_SPEC_CB4_CODES = [
+const SPECTRUM_CODEBOOK4_CODES: [u32; 81] = [
     0x007, 0x016, 0x0f6, 0x018, 0x008, 0x0ef, 0x1ef, 0x0f3,
     0x7f8, 0x019, 0x017, 0x0ed, 0x015, 0x001, 0x0e2, 0x0f0,
     0x070, 0x3f0, 0x1ee, 0x0f1, 0x7fa, 0x0ee, 0x0e4, 0x3f2,
@@ -132,18 +99,18 @@ AAC_SPEC_CB4_CODES = [
     0x06d, 0x3f8, 0x06c, 0x068, 0x1f5, 0x3ee, 0x1f2, 0x7f4,
     0x7f7, 0x3f1, 0xffe, 0x3ed, 0x1f1, 0x7f5, 0x7fe, 0x3f5,
     0x7fc
-]
+];
 
-AAC_SPEC_CB5_BITS = [
+const SPECTRUM_CODEBOOK5_LENS: [u8; 81] = [
     13, 12, 11, 11, 10, 11, 11, 12, 13, 12, 11, 10,  9,  8,  9, 10,
     11, 12, 12, 10,  9,  8,  7,  8,  9, 10, 11, 11,  9,  8,  5,  4,
      5,  8,  9, 11, 10,  8,  7,  4,  1,  4,  7,  8, 11, 11,  9,  8,
      5,  4,  5,  8,  9, 11, 11, 10,  9,  8,  7,  8,  9, 10, 11, 12,
     11, 10,  9,  8,  9, 10, 11, 12, 13, 12, 12, 11, 10, 10, 11, 12,
     13
-]
+];
 
-AAC_SPEC_CB5_CODES = [
+const SPECTRUM_CODEBOOK5_CODES: [u32; 81] = [
     0x1fff, 0x0ff7, 0x07f4, 0x07e8, 0x03f1, 0x07ee, 0x07f9, 0x0ff8,
     0x1ffd, 0x0ffd, 0x07f1, 0x03e8, 0x01e8, 0x00f0, 0x01ec, 0x03ee,
     0x07f2, 0x0ffa, 0x0ff4, 0x03ef, 0x01f2, 0x00e8, 0x0070, 0x00ec,
@@ -155,18 +122,18 @@ AAC_SPEC_CB5_CODES = [
     0x07f0, 0x03e9, 0x01ed, 0x00f1, 0x01ea, 0x03ec, 0x07f8, 0x0ff9,
     0x1ffc, 0x0ffc, 0x0ff5, 0x07ea, 0x03f3, 0x03f2, 0x07f5, 0x0ffb,
     0x1ffe
-]
+];
 
-AAC_SPEC_CB6_BITS = [
+const SPECTRUM_CODEBOOK6_LENS: [u8; 81] = [
     11, 10,  9,  9,  9,  9,  9, 10, 11, 10,  9,  8,  7,  7,  7,  8,
      9, 10,  9,  8,  6,  6,  6,  6,  6,  8,  9,  9,  7,  6,  4,  4,
      4,  6,  7,  9,  9,  7,  6,  4,  4,  4,  6,  7,  9,  9,  7,  6,
      4,  4,  4,  6,  7,  9,  9,  8,  6,  6,  6,  6,  6,  8,  9, 10,
      9,  8,  7,  7,  7,  7,  8, 10, 11, 10,  9,  9,  9,  9,  9, 10,
     11
-]
+];
 
-AAC_SPEC_CB6_CODES = [
+const SPECTRUM_CODEBOOK6_CODES: [u32; 81] = [
     0x7fe, 0x3fd, 0x1f1, 0x1eb, 0x1f4, 0x1ea, 0x1f0, 0x3fc,
     0x7fd, 0x3f6, 0x1e5, 0x0ea, 0x06c, 0x071, 0x068, 0x0f0,
     0x1e6, 0x3f7, 0x1f3, 0x0ef, 0x032, 0x027, 0x028, 0x026,
@@ -178,16 +145,16 @@ AAC_SPEC_CB6_CODES = [
     0x1e4, 0x0ed, 0x06a, 0x070, 0x069, 0x074, 0x0f1, 0x3fa,
     0x7ff, 0x3f9, 0x1f6, 0x1ed, 0x1f8, 0x1e9, 0x1f5, 0x3fb,
     0x7fc
-]
+];
 
-AAC_SPEC_CB7_BITS = [
+const SPECTRUM_CODEBOOK7_LENS: [u8; 64] = [
      1,  3,  6,  7,  8,  9, 10, 11,  3,  4,  6,  7,  8,  8,  9,  9,
      6,  6,  7,  8,  8,  9,  9, 10,  7,  7,  8,  8,  9,  9, 10, 10,
      8,  8,  9,  9, 10, 10, 10, 11,  9,  8,  9,  9, 10, 10, 11, 11,
     10,  9,  9, 10, 10, 11, 12, 12, 11, 10, 10, 10, 11, 11, 12, 12
-]
+];
 
-AAC_SPEC_CB7_CODES = [
+const SPECTRUM_CODEBOOK7_CODES: [u32; 64] = [
     0x000, 0x005, 0x037, 0x074, 0x0f2, 0x1eb, 0x3ed, 0x7f7,
     0x004, 0x00c, 0x035, 0x071, 0x0ec, 0x0ee, 0x1ee, 0x1f5,
     0x036, 0x034, 0x072, 0x0ea, 0x0f1, 0x1e9, 0x1f3, 0x3f5,
@@ -196,16 +163,16 @@ AAC_SPEC_CB7_CODES = [
     0x1ed, 0x0ef, 0x1ea, 0x1f2, 0x3f3, 0x3f8, 0x7f9, 0x7fc,
     0x3ee, 0x1ec, 0x1f4, 0x3f4, 0x3f7, 0x7f8, 0xffd, 0xffe,
     0x7f6, 0x3f0, 0x3f2, 0x3f6, 0x7fa, 0x7fd, 0xffc, 0xfff
-]
+];
 
-AAC_SPEC_CB8_BITS = [
+const SPECTRUM_CODEBOOK8_LENS: [u8; 64] = [
      5,  4,  5,  6,  7,  8,  9, 10,  4,  3,  4,  5,  6,  7,  7,  8,
      5,  4,  4,  5,  6,  7,  7,  8,  6,  5,  5,  6,  6,  7,  8,  8,
      7,  6,  6,  6,  7,  7,  8,  9,  8,  7,  6,  7,  7,  8,  8, 10,
      9,  7,  7,  8,  8,  8,  9,  9, 10,  8,  8,  8,  9,  9,  9, 10
-]
+];
 
-AAC_SPEC_CB8_CODES = [
+const SPECTRUM_CODEBOOK8_CODES: [u32; 64] = [
     0x00e, 0x005, 0x010, 0x030, 0x06f, 0x0f1, 0x1fa, 0x3fe,
     0x003, 0x000, 0x004, 0x012, 0x02c, 0x06a, 0x075, 0x0f8,
     0x00f, 0x002, 0x006, 0x014, 0x02e, 0x069, 0x072, 0x0f5,
@@ -214,9 +181,9 @@ AAC_SPEC_CB8_CODES = [
     0x0ef, 0x068, 0x033, 0x06b, 0x06e, 0x0ee, 0x0f9, 0x3fc,
     0x1f8, 0x074, 0x073, 0x0ed, 0x0f0, 0x0f6, 0x1f6, 0x1fd,
     0x3fd, 0x0f3, 0x0f4, 0x0f7, 0x1f7, 0x1fb, 0x1fc, 0x3ff
-]
+];
 
-AAC_SPEC_CB9_BITS = [
+const SPECTRUM_CODEBOOK9_LENS: [u8; 169] = [
      1,  3,  6,  8,  9, 10, 10, 11, 11, 12, 12, 13, 13,  3,  4,  6,
      7,  8,  8,  9, 10, 10, 10, 11, 12, 12,  6,  6,  7,  8,  8,  9,
     10, 10, 10, 11, 12, 12, 12,  8,  7,  8,  9,  9, 10, 10, 11, 11,
@@ -228,9 +195,9 @@ AAC_SPEC_CB9_BITS = [
     14, 14, 12, 11, 11, 12, 12, 12, 13, 13, 13, 14, 14, 14, 15, 12,
     11, 12, 12, 12, 13, 13, 13, 13, 14, 14, 15, 15, 13, 12, 12, 12,
     13, 13, 13, 13, 14, 14, 14, 14, 15
-]
+];
 
-AAC_SPEC_CB9_CODES = [
+const SPECTRUM_CODEBOOK9_CODES: [u32; 169] = [
     0x0000, 0x0005, 0x0037, 0x00e7, 0x01de, 0x03ce, 0x03d9, 0x07c8,
     0x07cd, 0x0fc8, 0x0fdd, 0x1fe4, 0x1fec, 0x0004, 0x000c, 0x0035,
     0x0072, 0x00ea, 0x00ed, 0x01e2, 0x03d1, 0x03d3, 0x03e0, 0x07d8,
@@ -253,9 +220,9 @@ AAC_SPEC_CB9_CODES = [
     0x3ff9, 0x3ffb, 0x7ffd, 0x7ffe, 0x1fe7, 0x0fcc, 0x0fd6, 0x0fdf,
     0x1fde, 0x1fda, 0x1fe5, 0x1ff2, 0x3ffa, 0x3ff7, 0x3ffc, 0x3ffd,
     0x7fff
-]
+];
 
-AAC_SPEC_CB10_BITS = [
+const SPECTRUM_CODEBOOK10_LENS: [u8; 169] = [
      6,  5,  6,  6,  7,  8,  9, 10, 10, 10, 11, 11, 12,  5,  4,  4,
      5,  6,  7,  7,  8,  8,  9, 10, 10, 11,  6,  4,  5,  5,  6,  6,
      7,  8,  8,  9,  9, 10, 10,  6,  5,  5,  5,  6,  7,  7,  8,  8,
@@ -267,9 +234,9 @@ AAC_SPEC_CB10_BITS = [
     11, 12, 10,  9,  9,  9,  9, 10, 10, 10, 10, 11, 11, 11, 12, 11,
     10,  9, 10, 10, 10, 10, 10, 11, 11, 11, 11, 12, 11, 10, 10, 10,
     10, 10, 10, 11, 11, 12, 12, 12, 12
-]
+];
 
-AAC_SPEC_CB10_CODES = [
+const SPECTRUM_CODEBOOK10_CODES: [u32; 169] = [
     0x022, 0x008, 0x01d, 0x026, 0x05f, 0x0d3, 0x1cf, 0x3d0,
     0x3d7, 0x3ed, 0x7f0, 0x7f6, 0xffd, 0x007, 0x000, 0x001,
     0x009, 0x020, 0x054, 0x060, 0x0d5, 0x0dc, 0x1d4, 0x3cd,
@@ -292,9 +259,9 @@ AAC_SPEC_CB10_CODES = [
     0x7f4, 0x7f5, 0x7f7, 0xffb, 0x7fa, 0x3ec, 0x3df, 0x3e1,
     0x3e4, 0x3e6, 0x3f0, 0x7e9, 0x7ef, 0xff8, 0xffe, 0xffc,
     0xfff
-]
+];
 
-AAC_SPEC_CB11_BITS = [
+const SPECTRUM_CODEBOOK11_LENS: [u8; 289] = [
      4,  5,  6,  7,  8,  8,  9, 10, 10, 10, 11, 11, 12, 11, 12, 12,
     10,  5,  4,  5,  6,  7,  7,  8,  8,  9,  9,  9, 10, 10, 10, 10,
     11,  8,  6,  5,  5,  6,  7,  7,  8,  8,  8,  9,  9,  9, 10, 10,
@@ -314,9 +281,9 @@ AAC_SPEC_CB11_BITS = [
     10, 10, 10, 10, 10, 10, 10, 11, 11, 11, 11, 11, 11, 12, 12,  9,
      9,  8,  8,  8,  8,  8,  8,  8,  8,  8,  8,  8,  8,  8,  8,  9,
      5
-]
+];
 
-AAC_SPEC_CB11_CODES = [
+const SPECTRUM_CODEBOOK11_CODES: [u32; 289] = [
     0x000, 0x006, 0x019, 0x03d, 0x09c, 0x0c6, 0x1a7, 0x390,
     0x3c2, 0x3df, 0x7e6, 0x7f3, 0xffb, 0x7ec, 0xffa, 0xffe,
     0x38e, 0x005, 0x001, 0x008, 0x014, 0x037, 0x042, 0x092,
@@ -354,246 +321,89 @@ AAC_SPEC_CB11_CODES = [
     0x1c2, 0x0b5, 0x0a1, 0x096, 0x097, 0x095, 0x099, 0x0a0,
     0x0a2, 0x0ac, 0x0a9, 0x0b1, 0x0b3, 0x0bb, 0x0c0, 0x18f,
     0x004
-]
+];
 
-class AacTable:
-    def __init__(self, name, codes, code_lens):
-        assert len(codes) == len(code_lens)
+const SCF_CODEBOOK_LENS: [u8; 121] = [
+    18, 18, 18, 18, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19,
+    19, 19, 19, 18, 19, 18, 17, 17, 16, 17, 16, 16, 16, 16, 15, 15,
+    14, 14, 14, 14, 14, 14, 13, 13, 12, 12, 12, 11, 12, 11, 10, 10,
+    10,  9,  9,  8,  8,  8,  7,  6,  6,  5,  4,  3,  1,  4,  4,  5,
+     6,  6,  7,  7,  8,  8,  9,  9, 10, 10, 10, 11, 11, 11, 11, 12,
+    12, 13, 13, 13, 14, 14, 16, 15, 16, 15, 18, 19, 19, 19, 19, 19,
+    19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19,
+    19, 19, 19, 19, 19, 19, 19, 19, 19
+];
 
-        self.name = name
-        self.codes = codes
-        self.code_lens = code_lens
+const SCF_CODEBOOK_CODES: [u32; 121] = [
+    0x3FFE8, 0x3FFE6, 0x3FFE7, 0x3FFE5, 0x7FFF5, 0x7FFF1, 0x7FFED, 0x7FFF6,
+    0x7FFEE, 0x7FFEF, 0x7FFF0, 0x7FFFC, 0x7FFFD, 0x7FFFF, 0x7FFFE, 0x7FFF7,
+    0x7FFF8, 0x7FFFB, 0x7FFF9, 0x3FFE4, 0x7FFFA, 0x3FFE3, 0x1FFEF, 0x1FFF0,
+    0x0FFF5, 0x1FFEE, 0x0FFF2, 0x0FFF3, 0x0FFF4, 0x0FFF1, 0x07FF6, 0x07FF7,
+    0x03FF9, 0x03FF5, 0x03FF7, 0x03FF3, 0x03FF6, 0x03FF2, 0x01FF7, 0x01FF5,
+    0x00FF9, 0x00FF7, 0x00FF6, 0x007F9, 0x00FF4, 0x007F8, 0x003F9, 0x003F7,
+    0x003F5, 0x001F8, 0x001F7, 0x000FA, 0x000F8, 0x000F6, 0x00079, 0x0003A,
+    0x00038, 0x0001A, 0x0000B, 0x00004, 0x00000, 0x0000A, 0x0000C, 0x0001B,
+    0x00039, 0x0003B, 0x00078, 0x0007A, 0x000F7, 0x000F9, 0x001F6, 0x001F9,
+    0x003F4, 0x003F6, 0x003F8, 0x007F5, 0x007F4, 0x007F6, 0x007F7, 0x00FF5,
+    0x00FF8, 0x01FF4, 0x01FF6, 0x01FF8, 0x03FF8, 0x03FF4, 0x0FFF0, 0x07FF4,
+    0x0FFF6, 0x07FF5, 0x3FFE2, 0x7FFD9, 0x7FFDA, 0x7FFDB, 0x7FFDC, 0x7FFDD,
+    0x7FFDE, 0x7FFD8, 0x7FFD2, 0x7FFD3, 0x7FFD4, 0x7FFD5, 0x7FFD6, 0x7FFF2,
+    0x7FFDF, 0x7FFE7, 0x7FFE8, 0x7FFE9, 0x7FFEA, 0x7FFEB, 0x7FFE6, 0x7FFE0,
+    0x7FFE1, 0x7FFE2, 0x7FFE3, 0x7FFE4, 0x7FFE5, 0x7FFD7, 0x7FFEC, 0x7FFF4,
+    0x7FFF3
+];
 
-        # Generate the actual data values that the Huffman codes encode.
-        self.values = [ i for i in range(0, len(codes)) ]
+struct AacTable {
+    codes: &'static [u32],
+    lens: &'static [u8],
+}
 
-MPEG_TABLES = [
-    AacTable( "SPEC_TABLE_1",     AAC_SPEC_CB1_CODES,     AAC_SPEC_CB1_BITS ),
-    AacTable( "SPEC_TABLE_2",     AAC_SPEC_CB2_CODES,     AAC_SPEC_CB2_BITS ),
-    AacTable( "SPEC_TABLE_3",     AAC_SPEC_CB3_CODES,     AAC_SPEC_CB3_BITS ),
-    AacTable( "SPEC_TABLE_4",     AAC_SPEC_CB4_CODES,     AAC_SPEC_CB4_BITS ),
-    AacTable( "SPEC_TABLE_5",     AAC_SPEC_CB5_CODES,     AAC_SPEC_CB5_BITS ),
-    AacTable( "SPEC_TABLE_6",     AAC_SPEC_CB6_CODES,     AAC_SPEC_CB6_BITS ),
-    AacTable( "SPEC_TABLE_7",     AAC_SPEC_CB7_CODES,     AAC_SPEC_CB7_BITS ),
-    AacTable( "SPEC_TABLE_8",     AAC_SPEC_CB8_CODES,     AAC_SPEC_CB8_BITS ),
-    AacTable( "SPEC_TABLE_9",     AAC_SPEC_CB9_CODES,     AAC_SPEC_CB9_BITS ),
-    AacTable("SPEC_TABLE_10",    AAC_SPEC_CB10_CODES,    AAC_SPEC_CB10_BITS ),
-    AacTable("SPEC_TABLE_11",    AAC_SPEC_CB11_CODES,    AAC_SPEC_CB11_BITS ),
-    AacTable(    "SCF_TABLE", AAC_SCF_CODEBOOK_CODES, AAC_SCF_CODEBOOK_BITS ),
-    ]
+const SPECTRUM_TABLES: [AacTable; 11] = [
+    AacTable { codes: &SPECTRUM_CODEBOOK1_CODES,  lens: &SPECTRUM_CODEBOOK1_LENS  },
+    AacTable { codes: &SPECTRUM_CODEBOOK2_CODES,  lens: &SPECTRUM_CODEBOOK2_LENS  },
+    AacTable { codes: &SPECTRUM_CODEBOOK3_CODES,  lens: &SPECTRUM_CODEBOOK3_LENS  },
+    AacTable { codes: &SPECTRUM_CODEBOOK4_CODES,  lens: &SPECTRUM_CODEBOOK4_LENS  },
+    AacTable { codes: &SPECTRUM_CODEBOOK5_CODES,  lens: &SPECTRUM_CODEBOOK5_LENS  },
+    AacTable { codes: &SPECTRUM_CODEBOOK6_CODES,  lens: &SPECTRUM_CODEBOOK6_LENS  },
+    AacTable { codes: &SPECTRUM_CODEBOOK7_CODES,  lens: &SPECTRUM_CODEBOOK7_LENS  },
+    AacTable { codes: &SPECTRUM_CODEBOOK8_CODES,  lens: &SPECTRUM_CODEBOOK8_LENS  },
+    AacTable { codes: &SPECTRUM_CODEBOOK9_CODES,  lens: &SPECTRUM_CODEBOOK9_LENS  },
+    AacTable { codes: &SPECTRUM_CODEBOOK10_CODES, lens: &SPECTRUM_CODEBOOK10_LENS },
+    AacTable { codes: &SPECTRUM_CODEBOOK11_CODES, lens: &SPECTRUM_CODEBOOK11_LENS },
+];
 
-class Node:
-    def __init__(self, prefix):
-        self.prefix = prefix
-        self.prefix_len_max = 0
-        self.offset = 0
-        self.values = []
-        self.children = {}
+lazy_static! {
+    pub static ref SPECTRUM_CODEBOOKS: [Codebook<Entry16x16>; 11] = {
+        let mut codebooks: [Codebook<Entry16x16>; 11] = Default::default();
 
-def eprint(*args, **kwargs):
-    print(*args, file=sys.stderr, **kwargs)
+        for (codebook, table) in codebooks.iter_mut().zip(&SPECTRUM_TABLES) {
+            debug_assert_eq!(table.codes.len(), table.lens.len());
 
-def print_tree(node, depth = 0):
-    eprint("\t" * depth + "{:#0{w}b} @ {} +{}".format(
-        node.prefix, node.offset, 1<<node.prefix_len_max, w=node.prefix_len_max + 2))
+            let len = table.codes.len() as u16;
 
-    depth = depth + 1
-    for value in node.values:
-        eprint("\t" * depth + "{:#0{w}b} => {:#x}".format(value[1], value[2], w=value[0] + 2))
+            // Generate values for the codebook.
+            let values: Vec<u16> = (0..len).into_iter().collect();
 
-    for child in sorted(node.children.keys()):
-        print_tree(node.children[child], depth)
+            // Generate the codebook.
+            let mut builder = CodebookBuilder::new(BitOrder::Verbatim);
+            *codebook = builder.make(table.codes, table.lens, &values).unwrap();
+        }
 
-def synthesize(node, depth = 0):
-    synthesized_nodes = [];
+        codebooks
+    };
+}
 
-    synth_count = 0;
+lazy_static! {
+    pub static ref SCF_CODEBOOK: Codebook<Entry8x16> = {
+        debug_assert_eq!(SCF_CODEBOOK_CODES.len(), SCF_CODEBOOK_LENS.len());
 
-    for value in node.values:
-        # A value in this node may have a prefix less than the longest prefix length in the node.
-        # Calculate how many extra padding bits we must add to to this value's prefix.
-        extra_bits = node.prefix_len_max - value[0]
+        let len = SCF_CODEBOOK_CODES.len() as u8;
 
-        # Synthesize duplicates of this value for all combination of padding bits if there are any.
-        if extra_bits > 0:
-            # Pad the prefix with extra bits.
-            prefix = value[1] << extra_bits
+        // Generate the values for the codebook.
+        let values: Vec<u8> = (0..len).into_iter().collect();
 
-            # The number of values that need to by synthesized is 2^(number of padding bits). 
-            count = 1 << extra_bits
-
-            # However, the original value was not technically synthesized, so don't include it in
-            # the actual count.
-            synth_count += count - 1
-
-            # Synthesize the values
-            for i in range(count):
-                entry = (value[0], prefix + i, value[2])
-                synthesized_nodes.append(entry)
-        else:
-            synthesized_nodes.append(value)
-
-    # Sort the synthesized values.
-    synthesized_nodes.sort(key=lambda x: x[1])
-    node.values = synthesized_nodes
-
-    max_depth = depth
-
-    # Descend into child nodes.
-    for child in node.children:
-        count, child_max_depth = synthesize(node.children[child], depth + 1)
-
-        synth_count += count
-        max_depth = max(max_depth, child_max_depth)
-
-    return (synth_count, max_depth)
-
-def assign_offsets_breadth(node):
-    queue = collections.deque([node])
-
-    count = 0
-
-    while queue:
-        node = queue.popleft()
-        node.offset = count
-
-        count = count + len(node.values) + len(node.children)
-
-        for child in sorted(node.children.keys()):
-            queue.append(node.children[child])
-
-    return count
-
-def generate_code(root, name, max_code_len):
-    print("pub const {}: HuffmanTable<H8> = HuffmanTable {{".format(name))
-    print("    data: &[")
-
-    queue = collections.deque([(root, "")])
-
-    while queue:
-        node, path = queue.popleft()
-
-        if node != root:
-            path += " "
-            print("")
-
-        entries = list(range(1 << node.prefix_len_max))
-
-        print("        // 0b{} ... ({} +{})".format(path[:-1], node.offset, len(entries)))
-
-        for value in node.values:
-            entries[value[1]] = "        val8!({:#x}, {}),    // {:#0{w}b}".format(
-                value[2], value[0], value[1], w=node.prefix_len_max + 2)
-
-        for prefix in sorted(node.children.keys()):
-            child = node.children[prefix]
-            entries[prefix] = "        jmp8!({}, {}),    // {:#0{w}b}".format(
-                child.offset, child.prefix_len_max, prefix, w=node.prefix_len_max + 2)
-
-            child_path = path + "{:0{w}b}".format(prefix, w=node.prefix_len_max)
-
-            queue.append((child, child_path))
-        
-        print('\n'.join(entries))
-        
-    print("    ],")
-    print("    n_init_bits: {},".format(root.prefix_len_max)),
-    print("    n_table_bits: {},".format(max_code_len))
-    print("};")
-    print("")
-
-def generate_table(name, codes, code_lens, values, group_len):
-    group_mask = ~((~0) << group_len)
-
-    # Zip together the Huffman code, Huffman code length in bits, and value.
-    full_table_iter = zip(codes, code_lens, values)
-    full_table = list(full_table_iter)
-
-    # Build a tree of prefixes.
-    root = Node(0)
-
-    max_code_len = 0
-
-    # Build a Trie of Huffman codes by splitting each code into group_len bit prefixes.
-    for entry in full_table:
-        node = root
-        code = entry[0] 
-        code_len = entry[1]
-
-        max_code_len = max(max_code_len, code_len)
-
-        # Split the Huffman code into chunks containg group_len bits.
-        while code_len > group_len:
-            code_len = code_len - group_len
-            # Get the prefix from the Huffman code.
-            prefix = (code >> code_len) & group_mask
-            # The prefix has already been seen, descend into the tree.
-            if prefix in node.children:
-                node = node.children[prefix]
-            # The prefix has not been seen, append it to the tree and then descend.
-            else:
-                node.children[prefix] = Node(prefix)
-                node.prefix_len_max = max(node.prefix_len_max, group_len)
-                node = node.children[prefix]
-
-        # The final chunk always has <= group_len bits. Get the final prefix.
-        prefix = code & (group_mask >> (group_len - code_len))
-        # Append the value to the node, and update the maximum prefix length
-        node.values.append((code_len, prefix, entry[2]))
-        node.prefix_len_max = max(node.prefix_len_max, code_len)
-
-    # Synthesize all possible prefixes for prefixes that must be padded within their 
-    # respective table.
-    total_synth, depth = synthesize(root)
-
-    # Assign offset values to each node in the tree (a sub-table) im breadth-first order.
-    total = assign_offsets_breadth(root)
-
-    # Generate the actual look-up table from the tree.
-    generate_code(root, name, max_code_len)
-
-    eprint("Stats for {}:".format(name))
-    eprint("  Total Rows       = {}".format(total))
-    eprint("  Synthesized Rows = {} ({:.01%})".format(total_synth, total_synth/total))
-    eprint("  Depth            = {}".format(depth + 1))
-    eprint("  Max Code Length  = {}".format(max_code_len))
-    eprint("")
-
-    # Print the tree.
-    eprint("Decode tree for {}:".format(name))
-    eprint("")
-    print_tree(root)
-    eprint("")
-
-def main(args):
-    GROUP_LEN = 4
-
-    # Print the preamble.
-    print("// Symphonia")
-    print("// Copyright (c) 2020 The Project Symphonia Developers.")
-    print("//")
-    print("// This Source Code Form is subject to the terms of the Mozilla Public")
-    print("// License, v. 2.0. If a copy of the MPL was not distributed with this")
-    print("// file, You can obtain one at https://mozilla.org/MPL/2.0/.")
-    print("")
-    print("//////////////////////////////////////////////////////////////////////")
-    print("//                             WARNING                              //")
-    print("//                                                                  //")
-    print("//         Do not edit the contents of this file manually!          //")
-    print("//                                                                  //")
-    print("// The tables within this file were automatically derived from the  //")
-    print("//          ISO/IEC 14496-3 (MPEG-4 Part 10 standard using          //")
-    print("// aac_huffman_tablegen.py in <root>/src/symphonia-codec-aac/tools. //")
-    print("//                                                                  //")
-    print("//////////////////////////////////////////////////////////////////////")
-    print("")
-    print("use symphonia_core::{val8, jmp8};")
-    print("use symphonia_core::io::huffman::{H8, HuffmanTable};")
-    print("")
-
-    # For each Huffman table...
-    for table in MPEG_TABLES:
-        generate_table(table.name, table.codes, table.code_lens, table.values, GROUP_LEN)
-
-if __name__ == "__main__":
-    main(sys.argv[1:])
+        // Generate the codebook.
+        let mut builder = CodebookBuilder::new(BitOrder::Verbatim);
+        builder.make(&SCF_CODEBOOK_CODES, &SCF_CODEBOOK_LENS, &values).unwrap()
+    };
+}
