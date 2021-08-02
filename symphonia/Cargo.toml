@@ -12,14 +12,15 @@ keywords = ["audio", "codec", "decoder", "multimedia", "media"]
 edition = "2018"
 
 [features]
-default = ["wav", "flac", "pcm", "ogg"]
-flac = ["symphonia-bundle-flac"]
-mp3 = ["symphonia-bundle-mp3"]
+default = ["wav", "flac", "pcm", "ogg", "vorbis"]
 aac = ["symphonia-codec-aac"]
-pcm = ["symphonia-codec-pcm"]
-wav = ["symphonia-format-wav"]
-ogg = ["symphonia-format-ogg"]
+flac = ["symphonia-bundle-flac"]
 isomp4 = ["symphonia-format-isomp4"]
+mp3 = ["symphonia-bundle-mp3"]
+ogg = ["symphonia-format-ogg"]
+pcm = ["symphonia-codec-pcm"]
+vorbis = ["symphonia-codec-vorbis"]
+wav = ["symphonia-format-wav"]
 
 [dependencies]
 lazy_static = "1.4.0"
@@ -29,6 +30,7 @@ symphonia-bundle-flac = { version = "0.3", path = "../symphonia-bundle-flac", op
 symphonia-bundle-mp3 = { version = "0.3", path = "../symphonia-bundle-mp3", optional = true }
 symphonia-codec-aac = { version = "0.3", path = "../symphonia-codec-aac", optional = true }
 symphonia-codec-pcm = { version = "0.3", path = "../symphonia-codec-pcm", optional = true }
+symphonia-codec-vorbis = { version = "0.3", path = "../symphonia-codec-vorbis", optional = true }
 symphonia-format-wav = { version = "0.3", path = "../symphonia-format-wav", optional = true }
 symphonia-format-ogg = { version = "0.3", path = "../symphonia-format-ogg", optional = true }
 symphonia-format-isomp4 = { version = "0.3", path = "../symphonia-format-isomp4", optional = true }

@@ -114,6 +114,8 @@ pub mod default {
         pub use symphonia_bundle_mp3::Mp3Decoder as Mp3Decoder;
         #[cfg(feature = "pcm")]
         pub use symphonia_codec_pcm::PcmDecoder as PcmDecoder;
+        #[cfg(feature = "vorbis")]
+        pub use symphonia_codec_vorbis::VorbisDecoder as VorbisDecoder;
     }
 
     pub mod formats {
@@ -191,6 +193,9 @@ pub mod default {
 
         #[cfg(feature = "pcm")]
         registry.register_all::<codecs::PcmDecoder>();
+
+        #[cfg(feature = "vorbis")]
+        registry.register_all::<codecs::VorbisDecoder>();
     }
 
     /// Registers all the formats selected by the `feature` flags in the includer's `Cargo.toml` on
