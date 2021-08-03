@@ -98,6 +98,11 @@ mod pulseaudio {
 
     impl AudioOutput for PulseAudioOutput {
         fn write(&mut self, decoded: AudioBufferRef<'_>) -> Result<()> {
+            // Do nothing if there are no audio frames.
+            if decoded.frames() == 0 {
+                return Ok(())
+            }
+
             // Interleave samples from the audio buffer into the sample buffer.
             self.sample_buf.copy_interleaved_ref(decoded);
 
@@ -250,6 +255,11 @@ mod cpal {
     impl<T: AudioOutputSample> AudioOutput for CpalAudioOutputImpl<T>
     {
         fn write(&mut self, decoded: AudioBufferRef<'_>) -> Result<()> {
+            // Do nothing if there are no audio frames.
+            if decoded.frames() == 0 {
+                return Ok(())
+            }
+
             // Audio samples must be interleaved for cpal. Interleave the samples in the audio
             // buffer into the sample buffer.
             self.sample_buf.copy_interleaved_ref(decoded);

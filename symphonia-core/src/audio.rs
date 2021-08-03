@@ -385,6 +385,23 @@ impl<S : Sample> AudioBuffer<S> {
     }
 }
 
+macro_rules! impl_audio_buffer_ref_func {
+    ($var:expr, $buf:ident,$expr:expr) => {
+        match $var {
+            AudioBufferRef::U8($buf)  => $expr,
+            AudioBufferRef::U16($buf) => $expr,
+            AudioBufferRef::U24($buf) => $expr,
+            AudioBufferRef::U32($buf) => $expr,
+            AudioBufferRef::S8($buf)  => $expr,
+            AudioBufferRef::S16($buf) => $expr,
+            AudioBufferRef::S24($buf) => $expr,
+            AudioBufferRef::S32($buf) => $expr,
+            AudioBufferRef::F32($buf) => $expr,
+            AudioBufferRef::F64($buf) => $expr,
+        }
+    };
+}
+
 /// `AudioBufferRef` is a copy-on-write reference to an `AudioBuffer` of any type.
 pub enum AudioBufferRef<'a> {
     U8(Cow<'a, AudioBuffer<u8>>),
@@ -402,35 +419,18 @@ pub enum AudioBufferRef<'a> {
 impl<'a> AudioBufferRef<'a> {
     /// Gets the signal specification for the buffer.
     pub fn spec(&self) -> &SignalSpec {
-        match self {
-            AudioBufferRef::U8(buf)  => buf.spec(),
-            AudioBufferRef::U16(buf) => buf.spec(),
-            AudioBufferRef::U24(buf) => buf.spec(),
-            AudioBufferRef::U32(buf) => buf.spec(),
-            AudioBufferRef::S8(buf)  => buf.spec(),
-            AudioBufferRef::S16(buf) => buf.spec(),
-            AudioBufferRef::S24(buf) => buf.spec(),
-            AudioBufferRef::S32(buf) => buf.spec(),
-            AudioBufferRef::F32(buf) => buf.spec(),
-            AudioBufferRef::F64(buf) => buf.spec(),
-        }
+        impl_audio_buffer_ref_func!(self, buf, buf.spec())
     }
 
     /// Gets the total capacity of the buffer. The capacity is the maximum number of audio frames
     /// a buffer can store.
     pub fn capacity(&self) -> usize {
-        match self {
-            AudioBufferRef::U8(buf)  => buf.capacity(),
-            AudioBufferRef::U16(buf) => buf.capacity(),
-            AudioBufferRef::U24(buf) => buf.capacity(),
-            AudioBufferRef::U32(buf) => buf.capacity(),
-            AudioBufferRef::S8(buf)  => buf.capacity(),
-            AudioBufferRef::S16(buf) => buf.capacity(),
-            AudioBufferRef::S24(buf) => buf.capacity(),
-            AudioBufferRef::S32(buf) => buf.capacity(),
-            AudioBufferRef::F32(buf) => buf.capacity(),
-            AudioBufferRef::F64(buf) => buf.capacity(),
-        }
+        impl_audio_buffer_ref_func!(self, buf, buf.capacity())
+    }
+
+    /// Gets the number of frames in the buffer.
+    pub fn frames(&self) -> usize {
+        impl_audio_buffer_ref_func!(self, buf, buf.frames())
     }
 }
 
