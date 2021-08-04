@@ -51,6 +51,11 @@ fn main() {
                                     "probe-only"
                                 ]
                             ))
+                        .arg(Arg::with_name("track")
+                            .long("track")
+                            .short("t")
+                            .value_name("TRACK")
+                            .help("The track to use"))
                         .arg(Arg::with_name("decode-only")
                             .long("decode-only")
                             .help("Decode, but do not play the audio")
@@ -107,6 +112,12 @@ fn main() {
     let format_opts: FormatOptions = Default::default();
     let metadata_opts: MetadataOptions = Default::default();
 
+    // Get the track if provided.
+    let track = match matches.value_of("track") {
+        Some(track_str) => track_str.parse::<usize>().map_or(None, |t| Some(t)),
+        _ => None,
+    };
+
     // Probe the media source stream for metadata and get the format reader.
     match symphonia::default::get_probe().format(&hint, mss, &format_opts, &metadata_opts) {
         Ok(mut probed) => {
@@ -137,7 +148,7 @@ fn main() {
                 };
 
                 // Play it!
-                play(probed.format, seek_time, &options)
+                play(probed.format, track, seek_time, &options)
             };
 
             if let Err(err) = result {
@@ -197,15 +208,22 @@ fn decode_only(mut reader: Box<dyn FormatReader>, decode_options: &DecoderOption
 
 fn play(
     mut reader: Box<dyn FormatReader>,
+    play_track: Option<usize>,
     seek_time: Option<f64>,
     decode_options: &DecoderOptions
 ) -> Result<()> {
     // The audio output device.
     let mut audio_output = None;
 
-    // Get the default track.
-    // TODO: Allow track selection.
-    let track = reader.default_track().unwrap();
+    // Select the appropriate track.
+    let track = match play_track {
+        Some(t) => {
+            // If provided a track number, try to use it, otherwise select the default track.
+            reader.tracks().get(t).unwrap_or(reader.default_track().unwrap())
+        }
+        _ => reader.default_track().unwrap(),
+    };
+
     let track_id = track.id;
 
     // Create a decoder for the track.

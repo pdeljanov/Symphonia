@@ -7,14 +7,16 @@
 
 use std::f64::consts;
 
+#[derive(Copy, Clone, Debug)]
+pub struct WindowHalf {
+    pub start: usize,
+    pub end: usize,
+}
+
 #[derive(Debug)]
 pub struct Window {
-    pub left_window_start: usize,
-    pub left_window_end: usize,
-    pub left_n: usize,
-    pub right_window_start: usize,
-    pub right_window_end: usize,
-    pub right_n: usize,
+    pub left: WindowHalf,
+    pub right: WindowHalf,
     pub window: Vec<f32>,
 }
 
@@ -26,8 +28,6 @@ pub struct WindowBuilder {
 impl WindowBuilder {
     fn new(blocksize0: usize, blocksize1: usize) -> Self {
         assert!(blocksize0 < blocksize1);
-        dbg!(blocksize0);
-        dbg!(blocksize1);
         WindowBuilder { blocksize0, blocksize1 }
     }
 
@@ -38,35 +38,34 @@ impl WindowBuilder {
         // Calculate window parameters.
         let window_centre = n / 2;
 
-        let (left_window_start, left_window_end, left_n) = if block_flag && !prev_window_flag {
-            let left_window_start = (n / 4) - (self.blocksize0 / 4);
-            let left_window_end = (n / 4) + (self.blocksize0 / 4);
-            let left_n = self.blocksize0 / 2;
+        let (left, left_n) = if block_flag && !prev_window_flag {
+            let start = (n / 4) - (self.blocksize0 / 4);
+            let end = (n / 4) + (self.blocksize0 / 4);
+            let size = self.blocksize0 / 2;
 
-            (left_window_start, left_window_end, left_n)
+            (WindowHalf { start, end }, size)
         }
         else {
-            let left_window_start = 0;
-            let left_window_end = window_centre;
-            let left_n = n / 2;
+            let start = 0;
+            let end = window_centre;
+            let size = n / 2;
 
-            (left_window_start, left_window_end, left_n)
+            (WindowHalf { start, end }, size)
         };
 
-        let (right_window_start, right_window_end, right_n) = if block_flag && !next_window_flag {
-            let right_window_start = ((n * 3) / 4) - (self.blocksize0 / 4);
-            let right_window_end = ((n * 3) / 4) + (self.blocksize0 / 4);
-            let right_n = self.blocksize0 / 2;
+        let (right, right_n) = if block_flag && !next_window_flag {
+            let start = ((n * 3) / 4) - (self.blocksize0 / 4);
+            let end = ((n * 3) / 4) + (self.blocksize0 / 4);
+            let size = self.blocksize0 / 2;
 
-            (right_window_start, right_window_end, right_n)
+            (WindowHalf { start, end }, size)
         }
         else {
-            let right_window_start = window_centre;
-            let right_window_end = n;
-            let right_n = n / 2;
+            let start = window_centre;
+            let end = n;
+            let size = n / 2;
 
-            (right_window_start, right_window_end, right_n)
-
+            (WindowHalf { start, end }, size)
         };
 
         // Generate the window.
@@ -74,20 +73,19 @@ impl WindowBuilder {
 
         window.resize(n, 0.0);
 
-        for (i, w) in window[left_window_start..left_window_end].iter_mut().enumerate() {
+        for (i, w) in window[left.start..left.end].iter_mut().enumerate() {
             let a = f64::from(i as u32) + 0.5;
             let b = f64::from(left_n as u32);
             let c = consts::FRAC_PI_2 * (a / b);
 
             *w = (consts::FRAC_PI_2 * c.sin().powi(2)).sin() as f32
-
         }
 
-        for w in window[left_window_end..right_window_start].iter_mut() {
+        for w in window[left.end..right.start].iter_mut() {
             *w = 1.0;
         }
 
-        for (i, w) in window[right_window_start..right_window_end].iter_mut().enumerate() {
+        for (i, w) in window[right.start..right.end].iter_mut().enumerate() {
             let a = f64::from(i as u32) + 0.5;
             let b = f64::from(right_n as u32);
             let c = consts::FRAC_PI_2 * (a / b);
@@ -95,15 +93,7 @@ impl WindowBuilder {
             *w = (consts::FRAC_PI_2 * (consts::FRAC_PI_2 + c).sin().powi(2)).sin() as f32
         }
 
-        Window {
-            left_window_start,
-            left_window_end,
-            left_n,
-            right_window_start,
-            right_window_end,
-            right_n,
-            window
-        }
+        Window { left, right, window }
     }
 }
 

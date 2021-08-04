@@ -153,7 +153,7 @@ impl FormatReader for OggReader {
                         self.metadata.push(metadata);
                     }
                     _ => {
-                        info!("ignoring packet for serial={:#x}", ogg_packet.serial);
+                        // info!("ignoring packet for serial={:#x}", ogg_packet.serial);
                     }
                 }
             }

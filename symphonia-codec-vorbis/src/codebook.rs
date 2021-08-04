@@ -232,10 +232,6 @@ impl VorbisCodebook {
         // Ordered flag.
         let is_length_ordered = bs.read_bit()?;
 
-        // dbg!(codebook_entries);
-        // dbg!(codebook_dimensions);
-        // dbg!(is_length_ordered);
-
         let mut code_lens = Vec::<u8>::with_capacity(codebook_entries as usize);
 
         if !is_length_ordered {
@@ -300,9 +296,6 @@ impl VorbisCodebook {
         // Read and unpack vector quantization (VQ) lookup table.
         let lookup_type = bs.read_bits_leq32(4)?;
 
-        // dbg!(&code_lens);
-        // dbg!(lookup_type);
-
         let vq_vec = match lookup_type & 0xf {
             0 => None,
             1 | 2 => {
@@ -317,8 +310,6 @@ impl VorbisCodebook {
                     2 => codebook_entries * u32::from(codebook_dimensions),
                     _ => unreachable!(),
                 };
-
-                // dbg!(lookup_values);
 
                 let mut multiplicands = Vec::<u16>::new();
 
@@ -351,8 +342,6 @@ impl VorbisCodebook {
                     _ => unreachable!(),
                 };
 
-                // dbg!(&vq_lookup);
-
                 Some(vq_lookup)
             }
             _ => return decode_error("vorbis: invalid codeword lookup type"),
@@ -368,9 +357,6 @@ impl VorbisCodebook {
         // finally, generate the codebook with a reverse (LSb) bit order.
         let mut builder = CodebookBuilder::new_sparse(BitOrder::Reverse);
         let codebook = builder.make::<Entry32x32>(&code_words, &code_lens, &values)?;
-
-        // dbg!(lookup_type);
-        // dbg!(&code_words, &code_lens, &values);
 
         Ok(VorbisCodebook {
             codebook,

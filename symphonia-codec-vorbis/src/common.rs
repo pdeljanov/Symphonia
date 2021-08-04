@@ -8,37 +8,10 @@
 /// As defined in section 9.2.1 of the Vorbis I specification.
 ///
 /// The `ilog` function returns the position number (1 through n) of the highest set bit in the two’s
-/// complement integer value `x`. Values of `x` less than zero are defined to return zero.
-#[inline(always)]
-pub fn signed_ilog(x: i32) -> u32 {
-    if x <= 0 { 0 } else { ilog(x as u32) }
-}
-
-/// Same as `signed_ilog` but only for positive values of `x`.
+/// complement integer value `x`.
 #[inline(always)]
 pub fn ilog(x: u32) -> u32 {
     32 - x.leading_zeros()
-}
-
-pub struct DspChannel {
-    pub floor: Vec<f32>,
-    pub residue: Vec<f32>,
-    pub do_not_decode: bool,
-}
-
-impl DspChannel {
-    pub fn new(bs1_exp: u8) -> Self {
-        DspChannel {
-            floor: vec![0.0; (1 << bs1_exp) >> 1],
-            residue: vec![0.0; (1 << bs1_exp) >> 1],
-            do_not_decode: false,
-        }
-    }
-
-    pub fn reset(&mut self) {
-        // Reset data that is used across packets.
-        todo!();
-    }
 }
 
 pub struct BitSetIterator<'a> {
@@ -92,13 +65,13 @@ macro_rules! decl_bitset {
                 }
             }
 
-            #[inline(always)]
-            pub fn unset(&mut self, idx: usize) {
-                if self.is_set(idx) {
-                    self.bits[idx >> 5] &= !(1 << (idx & 0x1f));
-                    self.bit_count -= 1;
-                }
-            }
+            // #[inline(always)]
+            // pub fn unset(&mut self, idx: usize) {
+            //     if self.is_set(idx) {
+            //         self.bits[idx >> 5] &= !(1 << (idx & 0x1f));
+            //         self.bit_count -= 1;
+            //     }
+            // }
 
             #[inline(always)]
             pub fn is_set(&self, idx: usize) -> bool {
@@ -119,8 +92,6 @@ macro_rules! decl_bitset {
 }
 
 decl_bitset!(BitSet256, 256);
-//decl_bitset!(BitSet16, 16);
-
 
 #[cfg(test)]
 mod tests {
@@ -184,6 +155,4 @@ mod tests {
         assert_eq!(iter.next(), Some(255));
         assert_eq!(iter.next(), None);
     }
-
-
 }

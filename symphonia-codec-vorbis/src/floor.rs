@@ -8,13 +8,11 @@
 use std::cmp::min;
 use std::collections::HashSet;
 
-use symphonia_core::errors::{Result, decode_error};
+use symphonia_core::errors::{Result, decode_error, unsupported_error};
 use symphonia_core::io::{ReadBitsRtl, BitReaderRtl};
 
 use super::codebook::VorbisCodebook;
 use super::common::*;
-
-use log::debug;
 
 /// As defined in section 10.1 of the Vorbis I specification.
 #[allow(clippy::unreadable_literal)]
@@ -88,7 +86,7 @@ const FLOOR1_INVERSE_DB_TABLE: [f32; 256] = [
 pub trait Floor : Send {
     fn read_channel(&mut self, bs: &mut BitReaderRtl<'_>, codebooks: &[VorbisCodebook]) ->  Result<()>;
     fn is_unused(&self) -> bool;
-    fn synthesize(&mut self, floor: &mut [f32]) -> Result<()>;
+    fn synthesis(&mut self, bs_exp: u8, floor: &mut [f32]) -> Result<()>;
 }
 
 #[derive(Debug)]
@@ -208,8 +206,8 @@ impl Floor for FloorType0 {
         self.is_unused
     }
 
-    fn synthesize(&mut self, _floor: &mut [f32]) -> Result<()> {
-        unimplemented!()
+    fn synthesis(&mut self, _bs_exp: u8, _floor: &mut [f32]) -> Result<()> {
+        unsupported_error("vorbis: floor type 0 unsupported")
     }
 }
 
@@ -239,23 +237,33 @@ struct Floor1Setup {
     floor1_multiplier: u8,
     /// X-list.
     floor1_x_list: Vec<u32>,
+    // Precomputed x-list sort order.
+    floor1_x_list_sort_order: Vec<u8>,
+    // Precomputed x-list neighbours.
+    floor1_x_list_neighbors: Vec<(usize, usize)>,
 }
 
 #[derive(Debug)]
 pub struct Floor1 {
     setup: Floor1Setup,
     is_unused: bool,
-    floor_y: [u32; 8 * 32],
+    floor_y: Vec<u32>,
+    floor_final_y: Vec<i32>,
+    floor_step2_flag: Vec<bool>,
 }
 
 impl Floor1 {
     pub fn try_read(bs: &mut BitReaderRtl<'_>, max_codebook: u8) -> Result<Box<dyn Floor>> {
         let setup = Self::read_setup(bs, max_codebook)?;
 
+        let x_list_len = setup.floor1_x_list.len();
+
         Ok(Box::new(Floor1 {
             setup,
             is_unused: false,
-            floor_y: [0; 8 * 32]
+            floor_y: vec![0; x_list_len],
+            floor_final_y: vec![0; x_list_len],
+            floor_step2_flag: vec![false; x_list_len],
         }))
     }
 
@@ -347,15 +355,116 @@ impl Floor1 {
             }
         }
 
+        let mut floor1_x_list_neighbors = Vec::with_capacity(floor1_x_list.len());
+        let mut floor1_x_list_sort_order = Vec::with_capacity(floor1_x_list.len());
+
+        // Precompute neighbors.
+        for i in 0..floor1_x_list.len() {
+            floor1_x_list_neighbors.push(find_neighbors(&floor1_x_list, i));
+            floor1_x_list_sort_order.push(i as u8);
+        }
+
+        // Precompute sort-order.
+        floor1_x_list_sort_order.sort_by_key(|&i| floor1_x_list[i as usize] );
+
         let floor_type1 = Floor1Setup {
             floor1_partitions,
             floor1_partition_class_list,
             floor1_classes,
             floor1_multiplier,
             floor1_x_list,
+            floor1_x_list_neighbors,
+            floor1_x_list_sort_order,
         };
 
         Ok(floor_type1)
+    }
+
+    fn synthesis_step1(&mut self) {
+        // Step 1.
+        let range = get_range(self.setup.floor1_multiplier);
+
+        self.floor_step2_flag[0] = true;
+        self.floor_step2_flag[1] = true;
+
+        self.floor_final_y[0] = self.floor_y[0] as i32;
+        self.floor_final_y[1] = self.floor_y[1] as i32;
+
+        for i in 2..self.setup.floor1_x_list.len() {
+            // Find the neighbours.
+            let (low_neighbor_offset, high_neighbor_offset) = self.setup.floor1_x_list_neighbors[i];
+
+            let predicted = render_point(
+                self.setup.floor1_x_list[low_neighbor_offset],
+                self.floor_final_y[low_neighbor_offset],
+                self.setup.floor1_x_list[high_neighbor_offset],
+                self.floor_final_y[high_neighbor_offset],
+                self.setup.floor1_x_list[i]
+            );
+
+            let val = self.floor_y[i] as i32;
+            let highroom = range as i32 - predicted;
+            let lowroom = predicted;
+
+            if val != 0 {
+                let room = 2 * if highroom < lowroom { highroom } else { lowroom };
+
+                self.floor_step2_flag[low_neighbor_offset] = true;
+                self.floor_step2_flag[high_neighbor_offset] = true;
+                self.floor_step2_flag[i] = true;
+
+                self.floor_final_y[i] = if val >= room {
+                    if highroom > lowroom {
+                        val - lowroom + predicted
+                    }
+                    else {
+                        predicted - val + highroom - 1
+                    }
+                }
+                else {
+                    // If val is odd.
+                    if val & 1 == 1 {
+                        predicted - ((val + 1) / 2)
+                    }
+                    else {
+                        // If val is even.
+                        predicted + (val / 2)
+                    }
+                }
+            }
+            else {
+                self.floor_step2_flag[i] = false;
+                self.floor_final_y[i] = predicted;
+            }
+        }
+    }
+
+    fn synthesis_step2(&mut self, n: u32, floor: &mut [f32]) {
+        let multiplier = self.setup.floor1_multiplier as i32;
+
+        let floor_final_y0 = self.floor_final_y[self.setup.floor1_x_list_sort_order[0] as usize];
+
+        let mut hx = 0;
+        let mut hy = 0;
+        let mut lx = 0;
+        let mut ly = floor_final_y0 * multiplier;
+
+        // Iterate in sort-order.
+        for i in self.setup.floor1_x_list_sort_order[1..].iter().map(|i| *i as usize) {
+            if self.floor_step2_flag[i] {
+                hy = self.floor_final_y[i] * multiplier;
+                hx = self.setup.floor1_x_list[i];
+
+                render_line(lx, ly, hx, hy, n as usize, floor);
+
+                lx = hx;
+                ly = hy;
+            }
+        }
+
+        if hx < n {
+            render_line(hx, hy, n, hy, n as usize, floor);
+        }
     }
 }
 
@@ -372,13 +481,7 @@ impl Floor for Floor1 {
         }
 
         // Section 7.3.2
-        let range = match self.setup.floor1_multiplier - 1 {
-            0 => 256,
-            1 => 128,
-            2 => 86,
-            3 => 64,
-            _ => unreachable!(),
-        };
+        let range = get_range(self.setup.floor1_multiplier);
 
         // The number of bits required to represent range.
         let range_bits = ilog(range - 1);
@@ -439,7 +542,6 @@ impl Floor for Floor1 {
             offset += cdim;
         }
 
-        // dbg!(&self.floor_y[..offset]);
         Ok(())
     }
 
@@ -447,8 +549,92 @@ impl Floor for Floor1 {
         self.is_unused
     }
 
-    fn synthesize(&mut self, _floor: &mut [f32]) -> Result<()> {
-        // debug!("todo");
+    fn synthesis(&mut self, bs_exp: u8, floor: &mut [f32]) -> Result<()> {
+        self.synthesis_step1();
+        self.synthesis_step2((1 << bs_exp) >> 1, floor);
         Ok(())
+    }
+}
+
+#[inline(always)]
+fn get_range(multiplier: u8) -> u32 {
+    match multiplier - 1 {
+        0 => 256,
+        1 => 128,
+        2 => 86,
+        3 => 64,
+        _ => unreachable!(),
+    }
+}
+
+#[inline(always)]
+fn find_neighbors(vec: &[u32], x: usize) -> (usize, usize) {
+    let bound = vec[x];
+
+    let mut low = u32::MIN; // TODO: Should be -1?
+    let mut high = u32::MAX;
+
+    let mut res: (usize, usize) = (0, 0);
+
+    // Sections 9.2.4 and 9.2.5
+    for (i, &xv) in vec[..x].iter().enumerate() {
+        // low_neighbor(v,x) finds the position n in vector [v] of the greatest value scalar element
+        // for which n is less than x and vector [v] element n is less than vector [v] element [x].
+        if xv > low && xv < bound {
+            low = xv;
+            res.0 = i;
+        }
+        // high_neighbor(v,x) finds the position n in vector [v] of the lowest value scalar element
+        // for which n is less than x and vector [v] element n is greater than vector [v] element [x].
+        if xv < high && xv > bound {
+            high = xv;
+            res.1 = i;
+        }
+    }
+
+    res
+}
+
+#[inline(always)]
+fn render_point(x0: u32, y0: i32, x1: u32, y1: i32, x: u32) -> i32 {
+    let dy = y1 - y0;
+    let adx = x1 - x0;
+    let err = dy.abs() as u32 * (x - x0);
+    let off = err / adx;
+    if dy < 0 { y0 - off as i32 } else { y0 + off as i32 }
+}
+
+#[inline(always)]
+fn render_line(x0: u32, y0: i32, x1: u32, y1: i32, n: usize, v: &mut [f32] ) {
+    let dy = y1 - y0;
+    let adx = (x1 - x0) as i32;
+
+    let base = dy / adx;
+
+    let mut y = y0;
+
+    let sy = if dy < 0 { base - 1 } else { base + 1 };
+
+    let ady = dy.abs() - base.abs() * adx;
+
+    v[x0 as usize] = FLOOR1_INVERSE_DB_TABLE[y as usize];
+
+    let mut err = 0;
+
+    let x_begin = x0 as usize + 1;
+    let x_end = min(n, x1 as usize);
+
+    for v in v[x_begin..x_end].iter_mut() {
+        err += ady;
+
+        y += if err >= adx {
+            err -= adx;
+            sy
+        }
+        else {
+            base
+        };
+
+        *v = FLOOR1_INVERSE_DB_TABLE[y as usize];
     }
 }
