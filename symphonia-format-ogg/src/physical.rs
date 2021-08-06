@@ -67,7 +67,7 @@ impl PhysicalStream {
         if !self.stream_map.contains_key(&self.page.serial) {
             // TODO: Limit maximum number of streams.
             // TODO: Streams can only be created in groups.
-            debug!("create packet buffer for stream with serial {:#x}", self.page.serial);
+            debug!("create logical stream with serial {:#x}", self.page.serial);
             self.stream_map.insert(self.page.serial, LogicalStream::new(self.page.serial));
         }
 
@@ -116,10 +116,25 @@ impl PhysicalStream {
     }
 
     pub fn consume_packet(&mut self) {
-        // Consume a packet from the logical stream belonging to the current page.
-        if let Some(logical_stream) = self.stream_map.get_mut(&self.page.serial) {
+        // Consume a packet from the logical stream belonging to the current page and get the
+        // number of packets buffered.
+        let num_packets = if let Some(logical_stream) = self.stream_map.get_mut(&self.page.serial) {
             logical_stream.consume_packet();
+            logical_stream.num_packets()
+        }
+        else {
+            0
+        };
+
+        // If the current page is the last page and there are no more buffered packets, then remove
+        // the stream from the stream map since it has terminated.
+        if self.page.is_last_page && num_packets == 0 {
+            self.stream_map.remove(&self.page.serial);
         }
     }
 
+    pub fn is_complete(&self) -> bool {
+        // The phyiscal stream is complete when all the logical streams have terminated.
+        self.stream_map.is_empty()
+    }
 }

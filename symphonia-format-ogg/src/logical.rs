@@ -149,7 +149,7 @@ impl LogicalStream {
         }
     }
 
-    /// Maybe consumes the next complete packet.
+    /// Consumes the next complete packet if there is one.
     pub fn consume_packet(&mut self) {
         match self.packets.pop_front() {
             Some(packet_info) => {
@@ -159,4 +159,8 @@ impl LogicalStream {
         }
     }
 
+    /// Gets the number of buffered complete packets.
+    pub fn num_packets(&self) -> usize {
+        self.packets.len()
+    }
 }

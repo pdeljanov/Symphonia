@@ -8,7 +8,7 @@
 use std::collections::BTreeMap;
 
 use symphonia_core::support_format;
-use symphonia_core::errors::{Result, unsupported_error};
+use symphonia_core::errors::{Result, reset_error, unsupported_error};
 use symphonia_core::formats::prelude::*;
 use symphonia_core::io::MediaSourceStream;
 use symphonia_core::meta::{Metadata, MetadataLog};
@@ -52,83 +52,41 @@ impl QueryDescriptor for OggReader {
 impl FormatReader for OggReader {
 
     fn try_new(mut source: MediaSourceStream, _options: &FormatOptions) -> Result<Self> {
-        let mut physical_stream: PhysicalStream = Default::default();
-
-        let mut tracks = Vec::new();
-        let mut mappers = BTreeMap::<u32, Box<dyn mappings::Mapper>>::new();
-
-        // The first page of each logical stream, marked with the first page flag, must contain the
-        // identification packet for the encapsulated codec bitstream. The first page for each
-        // logical stream from the current logical stream group must appear before any other pages.
-        // That is to say, if there are N logical tracks, then the first N pages must contain the
-        // identification packets for each respective stream.
-        loop {
-            let packet = physical_stream.next_packet(&mut source)?;
-
-            // If the page containing packet is not the first-page of the logical stream, then the
-            // packet is not an identification packet. Don't consume the packet and exit stream
-            // discovery.
-            if !physical_stream.current_page().is_first_page {
-                break;
-            }
-
-            physical_stream.consume_packet();
-
-            info!("discovered new stream: serial={:#x}", packet.serial);
-
-            // If a stream mapper has been detected, register the mapper for the stream's serial number.
-            if let Some(mapper) = mappings::detect(&packet.data)? {
-                mappers.insert(packet.serial, mapper);
-            }
-        }
-
         let mut metadata: MetadataLog = Default::default();
 
-        // Each logical stream may contain additional header packets after the identification packet
-        // that contains format-relevant information such as extra and metadata. These packets
-        // should be immediately after the identification packets. As much as possible, read them
-        // now.
-        loop {
-            let packet = physical_stream.next_packet(&mut source)?;
-
-            // If the packet belongs to a logical stream, and it is a metadata packet, push the
-            // parsed metadata onto the revision log. If the packet was consumed by the mapper
-            // or is unknown, continute iterating. Exit from this loop for any other packet.
-            if let Some(mapper) = mappers.get_mut(&packet.serial) {
-                match mapper.map_packet(&packet)? {
-                    mappings::MapResult::Metadata(revision) => {
-                        metadata.push(revision)
-                    },
-                    mappings::MapResult::Unknown => (),
-                    _ => break,
-                }
-            }
-
-            // Consume the packet.
-            physical_stream.consume_packet();
-        }
-
-        // For streams that are ready, add them to the demuxer.
-        for (&serial, mapper) in mappers.iter() {
-            if mapper.is_stream_ready() {
-                tracks.push(Track::new(serial, mapper.codec().clone()));
-                info!("added stream: serial={:#x}", serial);
-            }
-        }
+        let data = try_start_physical_stream(&mut source, &mut metadata)?;
 
         Ok(OggReader {
             reader: source,
-            tracks,
+            tracks: data.tracks,
             cues: Default::default(),
             metadata,
-            physical_stream,
-            mappers,
+            physical_stream: data.physical_stream,
+            mappers: data.mappers,
         })
     }
 
     fn next_packet(&mut self) -> Result<Packet> {
         // Loop until a bitstream packet is read from the physical stream.
         loop {
+            // If the physical stream is complete (all logical streams have been exhausted), then
+            // try to chain a new physical stream.
+            if self.physical_stream.is_complete() {
+                info!("end of physical stream");
+
+                // Try to chain a new physical stream.
+                let data = try_start_physical_stream(&mut self.reader, &mut self.metadata)?;
+
+                // Replace the existing physical stream, track list, and mappers.
+                self.physical_stream = data.physical_stream;
+                self.tracks = data.tracks;
+                self.mappers = data.mappers;
+
+                // The set of tracks and their codecs have been completely changed. Indicate to
+                // the caller a reset is required.
+                return reset_error();
+            }
+
             // Get the next packet, and consume it immediately.
             let ogg_packet = self.physical_stream.next_packet(&mut self.reader)?;
             self.physical_stream.consume_packet();
@@ -179,6 +137,83 @@ impl FormatReader for OggReader {
     fn into_inner(self: Box<Self>) -> MediaSourceStream {
         self.reader
     }
-
 }
 
+struct PhysicalStreamData {
+    physical_stream: PhysicalStream,
+    tracks: Vec<Track>,
+    mappers: BTreeMap::<u32, Box<dyn mappings::Mapper>>,
+}
+
+fn try_start_physical_stream(
+    source: &mut MediaSourceStream,
+    metadata: &mut MetadataLog
+) -> Result<PhysicalStreamData> {
+    let mut physical_stream: PhysicalStream = Default::default();
+
+    let mut tracks = Vec::new();
+    let mut mappers = BTreeMap::<u32, Box<dyn mappings::Mapper>>::new();
+
+    // The first page of each logical stream, marked with the first page flag, must contain the
+    // identification packet for the encapsulated codec bitstream. The first page for each
+    // logical stream from the current logical stream group must appear before any other pages.
+    // That is to say, if there are N logical tracks, then the first N pages must contain the
+    // identification packets for each respective stream.
+    loop {
+        let packet = physical_stream.next_packet(source)?;
+
+        // If the page containing packet is not the first-page of the logical stream, then the
+        // packet is not an identification packet. Don't consume the packet and exit stream
+        // discovery.
+        if !physical_stream.current_page().is_first_page {
+            break;
+        }
+
+        physical_stream.consume_packet();
+
+        info!("discovered new stream: serial={:#x}", packet.serial);
+
+        // If a stream mapper has been detected, register the mapper for the stream's serial number.
+        if let Some(mapper) = mappings::detect(&packet.data)? {
+            mappers.insert(packet.serial, mapper);
+        }
+    }
+
+    // Each logical stream may contain additional header packets after the identification packet
+    // that contains format-relevant information such as extra and metadata. These packets
+    // should be immediately after the identification packets. As much as possible, read them
+    // now.
+    loop {
+        let packet = physical_stream.next_packet(source)?;
+
+        // If the packet belongs to a logical stream, and it is a metadata packet, push the
+        // parsed metadata onto the revision log. If the packet was consumed by the mapper
+        // or is unknown, continute iterating. Exit from this loop for any other packet.
+        if let Some(mapper) = mappers.get_mut(&packet.serial) {
+            match mapper.map_packet(&packet)? {
+                mappings::MapResult::Metadata(revision) => {
+                    metadata.push(revision)
+                },
+                mappings::MapResult::Unknown => (),
+                _ => break,
+            }
+        }
+
+        // Consume the packet.
+        physical_stream.consume_packet();
+    }
+
+    // For streams that are ready, add them to the demuxer.
+    for (&serial, mapper) in mappers.iter() {
+        if mapper.is_stream_ready() {
+            tracks.push(Track::new(serial, mapper.codec().clone()));
+            info!("added stream: serial={:#x}", serial);
+        }
+    }
+
+    Ok(PhysicalStreamData {
+        physical_stream,
+        tracks,
+        mappers,
+    })
+}
