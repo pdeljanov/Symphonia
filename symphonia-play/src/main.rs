@@ -224,7 +224,7 @@ fn play(
         _ => reader.default_track().unwrap(),
     };
 
-    let track_id = track.id;
+    let mut track_id = track.id;
 
     // Create a decoder for the track.
     let mut decoder = symphonia::default::get_codecs().make(&track.codec_params, &decode_options)?;
@@ -261,12 +261,35 @@ fn play(
         // Get the next packet from the media container.
         let packet = match reader.next_packet() {
             Ok(packet) => packet,
+            Err(Error::ResetRequired) => {
+                // The demuxer indicated that a reset is required. This is sometimes seen with
+                // streaming OGG (e.g., Icecast) wherein the entire contents of the container change
+                // (new tracks, codecs, metadata, etc.). Therefore, we must select a new track and
+                // recreate the decoder.
+                let track = reader.default_track().unwrap();
+                track_id = track.id;
+                decoder = symphonia::default::get_codecs().make(
+                    &track.codec_params,
+                    &decode_options
+                )?;
+                continue;
+            }
             Err(err) => break Err(err),
         };
 
         // If the packet does not belong to the selected track, skip over it.
         if packet.track_id() != track_id {
             continue;
+        }
+
+        // Print out new metadata.
+        while !reader.metadata().is_latest() {
+            reader.metadata().pop();
+
+            if let Some(rev) = reader.metadata().current() {
+                pretty_print_tags(rev.tags());
+                pretty_print_visuals(rev.visuals());
+            }
         }
 
         // Decode the packet into audio samples.

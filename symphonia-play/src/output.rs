@@ -60,7 +60,7 @@ mod pulseaudio {
 
             assert!(pa_spec.is_valid());
 
-            // PulseAudio seems to not play very short audio buffers, use thse custom buffer
+            // PulseAudio seems to not play very short audio buffers, use these custom buffer
             // attributes for very short audio streams.
             //
             // let pa_buf_attr = pulse::def::BufferAttr {
