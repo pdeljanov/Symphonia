@@ -1,8 +1,8 @@
 # Symphonia Vorbis Codec
 
-This is a placeholder crate for Project Symphonia's Vorbis decoder.
+[![Docs](https://docs.rs/symphonia-codec-vorbis/badge.svg)](https://docs.rs/symphonia-codec-vorbis)
 
-Please consider contributing!
+Vorbis decoder for Project Symphonia.
 
 **Note:** This crate is part of Symphonia. Please use the [`symphonia`](https://crates.io/crates/symphonia) crate instead of this one directly.
 
