@@ -14,6 +14,9 @@ symphonia-play --verify /path/to/file
 # Seek the audio file to the desired timestamp and then play.
 symphonia-play -s <seconds> /path/to/file
 
+# Play a specific track within the file.
+symphonia-play -t <track> /path/to/file
+
 # Probe a file for streams and metadata (tags, visuals, etc.)
 symphonia-play --probe-only /path/to/file
 
