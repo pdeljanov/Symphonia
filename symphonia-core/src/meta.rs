@@ -464,7 +464,7 @@ pub struct Metadata<'a> {
 impl<'a> Metadata<'a> {
     /// Returns `true` if the current metadata revision is the newest, `false` otherwise.
     pub fn is_latest(&self) -> bool {
-        self.revisions.len() == 1
+        self.revisions.len() <= 1
     }
 
     /// Gets an immutable reference to the current, and therefore oldest, revision of the metadata.
