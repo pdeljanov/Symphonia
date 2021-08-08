@@ -14,6 +14,6 @@ mod crc32;
 mod md5;
 
 pub use crc8::Crc8Ccitt;
-pub use crc16::Crc16Ansi;
+pub use crc16::{Crc16Ansi, Crc16AnsiLe};
 pub use crc32::Crc32;
 pub use md5::Md5;
