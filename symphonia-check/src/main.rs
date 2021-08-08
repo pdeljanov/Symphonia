@@ -53,17 +53,19 @@ struct RefProcess {
 impl RefProcess {
     fn try_spawn(path: &str) -> Result<RefProcess> {
         let mut cmd = Command::new("ffmpeg");
-        let cmd = cmd.arg("-i")     // File path.
+        let cmd = cmd.arg("-flags2") // Do not trim encoder delay.
+                     .arg("skip_manual")
+                     .arg("-i")      // File path.
                      .arg(path)
-                     .arg("-map")   // Select the first audio track.
+                     .arg("-map")    // Select the first audio track.
                      .arg("0:a:0")
-                     .arg("-c:a")   // Encode audio to pcm_s32le.
+                     .arg("-c:a")    // Encode audio to pcm_s32le.
                      .arg("pcm_f32le")
-                     .arg("-f")     // Output in WAVE format.
+                     .arg("-f")      // Output in WAVE format.
                      .arg("wav")
-                     .arg("-")      // Pipe output to stdout.
+                     .arg("-")       // Pipe output to stdout.
                      .stdout(Stdio::piped())
-                     .stderr(Stdio::null());   // Pipe errors to null.
+                     .stderr(Stdio::null());    // Pipe errors to null.
 
         let child = cmd.spawn()?;
 
