@@ -7,6 +7,7 @@
 
 use symphonia_core::support_format;
 
+use symphonia_core::checksum::Crc16AnsiLe;
 use symphonia_core::codecs::{CodecParameters, CODEC_TYPE_MP3};
 use symphonia_core::errors::{Result, SeekErrorKind, seek_error};
 use symphonia_core::formats::prelude::*;
@@ -16,9 +17,10 @@ use symphonia_core::probe::{Descriptor, Instantiate, QueryDescriptor};
 
 use std::io::{Seek, SeekFrom};
 
-use log::debug;
+use log::{debug, info};
 
-use super::{header, common::FrameHeader, common::SAMPLES_PER_GRANULE};
+use super::common::{ChannelMode, FrameHeader, MpegVersion, SAMPLES_PER_GRANULE};
+use super::header;
 
 /// MPEG1 and MPEG2 audio frame reader.
 ///
@@ -57,8 +59,8 @@ impl QueryDescriptor for Mp3Reader {
 impl FormatReader for Mp3Reader {
 
     fn try_new(mut source: MediaSourceStream, _options: &FormatOptions) -> Result<Self> {
-        // Try to parse the header of the first MPEG frame.
-        let header = header::parse_frame_header(source.read_be_u32()?)?;
+        // Try to read the first MPEG frame.
+        let (header, packet) = read_mpeg_frame(&mut source)?;
 
         // Use the header to populate the codec parameters.
         let mut params = CodecParameters::new();
@@ -67,8 +69,35 @@ impl FormatReader for Mp3Reader {
               .with_sample_rate(header.sample_rate)
               .with_channels(header.channel_mode.channels());
 
-        // Rewind back to the start of the frame.
-        source.rewind(std::mem::size_of::<u32>());
+        let audio_frames_per_mpeg_frame = SAMPLES_PER_GRANULE * header.n_granules() as u64;
+
+        // Check if there is a Xing/Info tag contained in the first frame.
+        if let Some(info_tag) = try_read_info_tag(&packet, &header) {
+            // The base Xing/Info tag may contain the number of frames.
+            if let Some(n_mpeg_frames) = info_tag.num_frames {
+                params.with_n_frames(u64::from(n_mpeg_frames) * audio_frames_per_mpeg_frame);
+            }
+
+            // The LAME tag contains ReplayGain and padding information.
+            if let Some(lame_tag) = info_tag.lame {
+                params.with_leading_padding(lame_tag.leading_padding)
+                      .with_trailing_padding(lame_tag.trailing_padding);
+            }
+        }
+        else {
+            // The first frame was not an Info header, rewind back to the start of the frame so that
+            // it may be decoded.
+            source.rewind(header.frame_size + 4);
+
+            // Likely not a VBR file, so estimate the duration if seekable.
+            if source.is_seekable() {
+                info!("estimating duration from bitrate, may be inaccurate for vbr files");
+
+                if let Some(n_mpeg_frames) = estimate_num_mpeg_frames(&mut source) {
+                    params.with_n_frames(n_mpeg_frames * audio_frames_per_mpeg_frame);
+                }
+            }
+        }
 
         let first_frame_offset = source.pos();
 
@@ -83,16 +112,7 @@ impl FormatReader for Mp3Reader {
     }
 
     fn next_packet(&mut self) -> Result<Packet> {
-        // Sync to the next frame header.
-        let header_buf = header::sync_frame(&mut self.reader)?;
-
-        // Parse the header to get the calculated frame size.
-        let header = header::parse_frame_header(header_buf)?;
-
-        // Allocate a buffer for the entire MPEG frame. Prefix the buffer with the frame header.
-        let mut packet_buf = vec![0u8; header.frame_size + 4];
-        packet_buf[0..4].copy_from_slice(&header_buf.to_be_bytes());
-        self.reader.read_buf_exact(&mut packet_buf[4..])?;
+        let (header, packet) = read_mpeg_frame(&mut self.reader)?;
 
         // Each frame contains 1 or 2 granules with each granule being exactly 576 samples long.
         let duration = SAMPLES_PER_GRANULE * header.n_granules() as u64;
@@ -101,7 +121,7 @@ impl FormatReader for Mp3Reader {
 
         self.next_packet_ts += duration;
 
-        Ok(Packet::new_from_boxed_slice(0, ts, duration, packet_buf.into_boxed_slice()))
+        Ok(Packet::new_from_boxed_slice(0, ts, duration, packet.into_boxed_slice()))
     }
 
     fn metadata(&mut self) -> Metadata<'_> {
@@ -255,6 +275,26 @@ impl FormatReader for Mp3Reader {
     }
 }
 
+/// Reads a MPEG frame and returns the header and buffer.
+#[inline(always)]
+fn read_mpeg_frame(reader: &mut MediaSourceStream) -> Result<(FrameHeader, Vec<u8>)> {
+    // Sync to the next frame header.
+    let header_val = header::sync_frame(reader)?;
+
+    // Parse the frame header.
+    let header = header::parse_frame_header(header_val)?;
+
+    // Allocate frame buffer.
+    let mut packet = vec![0u8; header.frame_size + 4];
+    packet[0..4].copy_from_slice(&header_val.to_be_bytes());
+
+    // Read the frame body.
+    reader.read_buf_exact(&mut packet[4..])?;
+
+    // Return the parsed header and packet body.
+    Ok((header, packet))
+}
+
 #[derive(Default)]
 struct FramePos {
     ts: u64,
@@ -278,4 +318,259 @@ fn read_main_data_begin<B: ReadBytes>(reader: &mut B, header: &FrameHeader) -> R
     };
 
     Ok(main_data_begin)
+}
+
+/// Estimates the total number of MPEG frames in the media source stream.
+fn estimate_num_mpeg_frames(reader: &mut MediaSourceStream) -> Option<u64> {
+    const MAX_FRAMES: u32 = 16;
+    const MAX_LEN: usize  = 16 * 1024;
+
+    // Macro to convert a Result to Option, and break a loop on exit.
+    macro_rules! break_on_err {
+        ($expr:expr) => {
+            match $expr {
+                Ok(a) => a,
+                _ => break None,
+            }
+        };
+    }
+
+    let start_pos = reader.pos();
+
+    let mut total_frame_len = 0;
+    let mut total_frames = 0;
+
+    let total_len = match reader.len() {
+        Some(len) => len - start_pos,
+        _ => return None,
+    };
+
+    let num_mpeg_frames = loop {
+        // Read the frame header.
+        let header_val = break_on_err!(reader.read_be_u32());
+
+        // Parse the frame header.
+        let header = break_on_err!(header::parse_frame_header(header_val));
+
+        // Tabulate the size.
+        total_frame_len += header.frame_size + 4;
+        total_frames += 1;
+
+        // Ignore the frame body.
+        break_on_err!(reader.ignore_bytes(header.frame_size as u64));
+
+        // Read up-to 16 frames, or 16kB, then calculate the average MPEG frame length, and from
+        // that, the total number of MPEG frames.
+        if total_frames > MAX_FRAMES || total_frame_len > MAX_LEN {
+            let avg_mpeg_frame_len = total_frame_len as f64 / total_frames as f64;
+            break Some((total_len as f64 / avg_mpeg_frame_len) as u64);
+        }
+    };
+
+    // Rewind back to the first frame seen upon entering this function.
+    reader.rewind((reader.pos() - start_pos) as usize);
+
+    num_mpeg_frames
+}
+
+/// The LAME tag is an extension to the Xing/Info tag.
+#[allow(dead_code)]
+struct LameTag {
+    encoder: String,
+    replaygain_peak: Option<f32>,
+    replaygain_radio: Option<f32>,
+    replaygain_audiophile: Option<f32>,
+    trailing_padding: u32,
+    leading_padding: u32,
+    music_crc: u16,
+}
+
+/// The Xing/Info time additional information for regarding a MP3 file.
+#[allow(dead_code)]
+struct XingInfoTag {
+    num_frames: Option<u32>,
+    num_bytes: Option<u32>,
+    toc: Option<[u8; 100]>,
+    quality: Option<u32>,
+    is_cbr: bool,
+    lame: Option<LameTag>,
+}
+
+/// Try to read a Xing/Info tag from the provided MPEG frame.
+fn try_read_info_tag(buf: &[u8], header: &FrameHeader) -> Option<XingInfoTag> {
+    // The Info header is a completely optional piece of information. Therefore, flatten an error
+    // reading the tag into a None.
+    try_read_info_tag_inner(buf, header).ok().flatten()
+}
+
+fn try_read_info_tag_inner(buf: &[u8], header: &FrameHeader) -> Result<Option<XingInfoTag>> {
+    // The Info tag is is checksummed with a CRC16 hash.
+    let offset = match (header.version, header.channel_mode) {
+        (MpegVersion::Mpeg1, ChannelMode::Mono) => 17,
+        (MpegVersion::Mpeg1, _                ) => 32,
+        (_                 , ChannelMode::Mono) => 9,
+        (_                 , _                ) => 17,
+    };
+
+    // Start the CRC with the header and side information.
+    let mut crc16 = Crc16AnsiLe::new(0);
+    crc16.process_buf_bytes(&buf[..offset + 4]);
+
+    // Start reading the Xing/Info tag after the side information.
+    let mut reader = MonitorStream::new(BufReader::new(&buf[offset + 4..]), crc16);
+
+    // Check for Xing/Info header.
+    let id = reader.read_quad_bytes()?;
+
+    if id != *b"Xing" && id != *b"Info" {
+        return Ok(None);
+    }
+
+    // The "Info" id is used for CBR files.
+    let is_cbr = id == *b"Info";
+
+    // Flags indicates what information is provided in this Xing/Info tag.
+    let flags = reader.read_be_u32()?;
+
+    let num_frames = if flags & 0x1 != 0 {
+        Some(reader.read_be_u32()?)
+    }
+    else {
+        None
+    };
+
+    let num_bytes = if flags & 0x2 != 0 {
+        Some(reader.read_be_u32()?)
+    }
+    else {
+        None
+    };
+
+    let toc = if flags & 0x4 != 0 {
+        let mut toc = [0; 100];
+        reader.read_buf_exact(&mut toc)?;
+        Some(toc)
+    }
+    else {
+        None
+    };
+
+    let quality = if flags & 0x8 != 0 {
+        Some(reader.read_be_u32()?)
+    }
+    else {
+        None
+    };
+
+    const LAME_EXTENSION_LEN: u64 = 36;
+
+    // The LAME extension may not always be present. We don't want to return an error if we try to
+    // read a frame that doesn't have the LAME extension, so ensure there is enough data to
+    // to potentially read one. Even if there are enough bytes available, it still does not
+    // guarantee what was read was a LAME tag, so the CRC will be used to make sure it was.
+    let lame = if reader.inner().bytes_available() >= LAME_EXTENSION_LEN {
+        // Encoder string.
+        let mut encoder = [0; 9];
+        reader.read_buf_exact(&mut encoder)?;
+
+        // Revision.
+        let _revision = reader.read_u8()?;
+
+        // Lowpass filter value.
+        let _lowpass = reader.read_u8()?;
+
+        // Replay gain peak in 9.23 (bit) fixed-point format.
+        let replaygain_peak = match reader.read_be_u32()? {
+            0 => None,
+            peak => Some(32767.0 * (peak as f32 / 2.0f32.powi(23))),
+        };
+
+        // Radio replay gain.
+        let replaygain_radio = parse_lame_tag_replaygain(reader.read_be_u16()?, 1);
+
+        // Audiophile replay gain.
+        let replaygain_audiophile = parse_lame_tag_replaygain(reader.read_be_u16()?, 2);
+
+        // Encoding flags & ATH type.
+        let _encoding_flags = reader.read_u8()?;
+
+        // Arbitrary bitrate.
+        let _abr = reader.read_u8()?;
+
+        let (leading_padding, trailing_padding) = {
+            let delay = reader.read_be_u24()?;
+
+            if encoder[..4] == *b"LAME" || encoder[..4] == *b"Lavf" || encoder[..4] == *b"Lavc" {
+                // These encoders always add a 529 sample delay on-top of the stated encoder delay.
+                let leading = 528 + 1 + (delay >> 12);
+                let trailing = delay & ((1 << 12) - 1);
+
+                (leading, trailing)
+            }
+            else {
+                (0, 0)
+            }
+        };
+
+        // Misc.
+        let _misc = reader.read_u8()?;
+
+        // MP3 gain.
+        let _mp3_gain = reader.read_u8()?;
+
+        // Preset and surround info.
+        let _surround_info = reader.read_be_u16()?;
+
+        // Music length.
+        let _music_len = reader.read_be_u32()?;
+
+        // Music (audio) CRC.
+        let music_crc = reader.read_be_u16()?;
+
+        // CRC (read using the inner reader to not change the computed CRC).
+        let crc = reader.inner_mut().read_be_u16()?;
+
+        if crc == reader.monitor().crc() {
+            // The CRC matched, return the LAME tag.
+            Some(LameTag {
+                encoder: String::from_utf8_lossy(&encoder).into(),
+                replaygain_peak,
+                replaygain_radio,
+                replaygain_audiophile,
+                trailing_padding,
+                leading_padding,
+                music_crc,
+            })
+        }
+        else {
+            // The CRC did not match, this is probably not a LAME tag.
+            None
+        }
+    }
+    else {
+        // Frame not large enough for a LAME tag.
+        None
+    };
+
+    Ok(Some(XingInfoTag {
+        num_frames,
+        num_bytes,
+        toc,
+        quality,
+        is_cbr,
+        lame,
+    }))
+}
+
+fn parse_lame_tag_replaygain(value: u16, expected_name: u8) -> Option<f32> {
+    // The 3 most-significant bits are the name code.
+    let name = ((value & 0xe000) >> 13) as u8;
+
+    if name == expected_name {
+        let gain = (value & 0x01ff) as f32 / 10.0;
+        Some(if value & 0x200 != 0 { -gain } else { gain })
+    }
+    else {
+        None
+    }
 }
