@@ -723,7 +723,7 @@ fn read_mode(bs: &mut BitReaderRtl<'_>, max_mapping: u8) -> Result<Mode> {
     Ok(mode)
 }
 
-pub fn mapping0_channel_count_to_channels(num_channels: u8) -> Result<Channels> {
+fn mapping0_channel_count_to_channels(num_channels: u8) -> Result<Channels> {
     let channels = match num_channels {
         0 => return unsupported_error("vorbis: no channels"),
         1 => {

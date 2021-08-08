@@ -85,8 +85,8 @@ impl FormatReader for Mp3Reader {
             }
         }
         else {
-            // The first frame was not an Info header, rewind back to the start of the frame so that
-            // it may be decoded.
+            // The first frame was not a Xing/Info header, rewind back to the start of the frame so
+            // that it may be decoded.
             source.rewind(header.frame_size + 4);
 
             // Likely not a VBR file, so estimate the duration if seekable.
@@ -99,14 +99,14 @@ impl FormatReader for Mp3Reader {
             }
         }
 
-        let first_frame_offset = source.pos();
+        let first_frame_pos = source.pos();
 
         Ok(Mp3Reader {
             reader: source,
             tracks: vec![ Track::new(0, params) ],
             cues: Vec::new(),
             metadata: Default::default(),
-            first_frame_pos: first_frame_offset,
+            first_frame_pos,
             next_packet_ts: 0,
         })
     }
@@ -404,7 +404,8 @@ fn try_read_info_tag(buf: &[u8], header: &FrameHeader) -> Option<XingInfoTag> {
 }
 
 fn try_read_info_tag_inner(buf: &[u8], header: &FrameHeader) -> Result<Option<XingInfoTag>> {
-    // The Info tag is is checksummed with a CRC16 hash.
+    // The position of the Xing/Info tag relative to the end of the header. This is equal to the
+    // side information length for the frame.
     let offset = match (header.version, header.channel_mode) {
         (MpegVersion::Mpeg1, ChannelMode::Mono) => 17,
         (MpegVersion::Mpeg1, _                ) => 32,
