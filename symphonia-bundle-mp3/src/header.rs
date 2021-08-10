@@ -50,14 +50,51 @@ static BIT_RATES_MPEG2_L23: [u32; 15] =
     64_000, 80_000, 96_000, 112_000, 128_000, 144_000, 160_000,
 ];
 
+/// Quickly check if a header sync word may be valid.
+#[inline]
+pub fn check_header(header: u32) -> bool {
+    // Version (0x1 is not allowed).
+    if (header >> 19) & 0x3 == 0x1 {
+        return false;
+    }
+    // Layer (0x0 is not allowed).
+    if (header >> 17) & 0x3 == 0x0 {
+        return false;
+    }
+    // Bitrate (0xf is not allowed).
+    if (header >> 12) & 0xf == 0xf {
+        return false;
+    }
+    // Sample rate (0x3 is not allowed).
+    if (header >> 10) & 0x3 == 0x3 {
+        return false;
+    }
+    // Emphasis (0x2 is not allowed)
+    if header & 0x3 == 0x2 {
+        return false;
+    }
+    true
+}
+
 /// Synchronize the provided reader to the end of the frame header, and return the frame header as
 /// as `u32`.
 pub fn sync_frame<B: ReadBytes>(reader: &mut B) -> Result<u32> {
     let mut sync = 0u32;
 
-    // Synchronize stream to the next frame using the sync word. The MP3 frame header always starts
-    // at a byte boundary with 0xffe (11 consecutive 1 bits.) if supporting up to MPEG version 2.5.
-    while (sync & 0xffe0_0000) != 0xffe0_0000 {
+    loop {
+        // Synchronize stream to the next frame using the sync word. The MP3 frame header always
+        // starts at a byte boundary with 0xffe (11 consecutive 1 bits.) if supporting up to MPEG
+        // version 2.5.
+        while (sync & 0xffe0_0000) != 0xffe0_0000 {
+            sync = (sync << 8) | u32::from(reader.read_u8()?);
+        }
+
+        // Random data can look like a sync word. Do a quick check to increase confidence that
+        // this is may be the start of a frame.
+        if check_header(sync) {
+            break;
+        }
+
         sync = (sync << 8) | u32::from(reader.read_u8()?);
     }
 

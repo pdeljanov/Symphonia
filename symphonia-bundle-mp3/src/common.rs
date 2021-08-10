@@ -393,6 +393,10 @@ impl BitResevoir {
     pub fn bytes_ref(&self) -> &[u8] {
         &self.buf[..self.len]
     }
+
+    pub fn clear(&mut self) {
+        self.len = 0;
+    }
 }
 
 /// MP3 depends on the state of the previous frame to decode the next. `State` is a structure

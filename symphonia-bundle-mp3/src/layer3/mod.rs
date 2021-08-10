@@ -82,7 +82,7 @@ struct GranuleChannel {
     region1_start: usize,
     /// The index of the first sample in region2 of big_values.
     region2_start: usize,
-    /// Indicates if the pre-emphasis amount for each scale factor band should be added on to each 
+    /// Indicates if the pre-emphasis amount for each scale factor band should be added on to each
     /// scale factor before requantization.
     preflag: bool,
     /// A 0.5x (false) or 1x (true) multiplier for scale factors.
@@ -110,7 +110,7 @@ struct GranuleChannel {
     /// in length (maximum value 15). For MPEG2 with intensity stereo, a scale factor will not
     /// exceed 5 bits (maximum value 31) in length.
     scalefacs: [u8; 39],
-    /// The starting sample index of the rzero partition, or the count of big_values and count1 
+    /// The starting sample index of the rzero partition, or the count of big_values and count1
     /// samples.
     rzero: usize,
 }
@@ -209,7 +209,7 @@ fn read_main_data(
 
             // The Huffman code length (part3).
             let part3_len = part2_3_length - part2_len;
-            
+
             // Decode the Huffman coded spectral samples and get the starting index of the rzero
             // partition.
             let huffman_result = requantize::read_huffman_samples(
@@ -262,7 +262,15 @@ pub fn decode_frame(
 
     // Read side_info into the frame data.
     // TODO: Use a MonitorStream to compute the CRC.
-    let side_info_len = bitstream::read_side_info(&mut bs, &header, &mut frame_data)?;
+    let side_info_len = match bitstream::read_side_info(&mut bs, &header, &mut frame_data) {
+        Ok(len) => len,
+        Err(e) => {
+            // A failure in reading this packet will cause a discontinuity in the codec bitstream.
+            // Therefore, clear the bit reservoir since it will not be valid for the next packet.
+            state.resevoir.clear();
+            return Err(e);
+        }
+    };
 
     // Buffer main_data into the bit resevoir.
     let main_data_len = header.frame_size - side_info_len - if header.has_crc { 2 } else { 0 };
@@ -274,7 +282,11 @@ pub fn decode_frame(
     )?;
 
     // Read main_data: scale factors and spectral samples.
-    read_main_data(&header, &mut frame_data, state)?;
+    if let Err(e) = read_main_data(&header, &mut frame_data, state) {
+        // The bit reservoir was likely filled with invalid data. Clear it for the next packet.
+        state.resevoir.clear();
+        return Err(e);
+    }
 
     for gr in 0..header.n_granules() {
         // Each granule will yield 576 samples.

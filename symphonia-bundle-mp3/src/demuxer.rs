@@ -17,7 +17,7 @@ use symphonia_core::probe::{Descriptor, Instantiate, QueryDescriptor};
 
 use std::io::{Seek, SeekFrom};
 
-use log::{debug, info};
+use log::{debug, info, warn};
 
 use super::common::{ChannelMode, FrameHeader, MpegVersion, SAMPLES_PER_GRANULE};
 use super::header;
@@ -278,15 +278,22 @@ impl FormatReader for Mp3Reader {
 /// Reads a MPEG frame and returns the header and buffer.
 #[inline(always)]
 fn read_mpeg_frame(reader: &mut MediaSourceStream) -> Result<(FrameHeader, Vec<u8>)> {
-    // Sync to the next frame header.
-    let header_val = header::sync_frame(reader)?;
+    let (header, header_word) = loop {
+        // Sync to the next frame header.
+        let sync = header::sync_frame(reader)?;
 
-    // Parse the frame header.
-    let header = header::parse_frame_header(header_val)?;
+        // Parse the frame header fully.
+        match header::parse_frame_header(sync) {
+            Ok(header) => break (header, sync),
+            _ => (),
+        }
+
+        warn!("invalid mpeg audio header");
+    };
 
     // Allocate frame buffer.
     let mut packet = vec![0u8; header.frame_size + 4];
-    packet[0..4].copy_from_slice(&header_val.to_be_bytes());
+    packet[0..4].copy_from_slice(&header_word.to_be_bytes());
 
     // Read the frame body.
     reader.read_buf_exact(&mut packet[4..])?;

@@ -8,7 +8,7 @@
 use symphonia_core::audio::{AudioBuffer, AudioBufferRef, AsAudioBufferRef, Signal};
 use symphonia_core::codecs::{CODEC_TYPE_MP3, CodecParameters, CodecDescriptor};
 use symphonia_core::codecs::{Decoder, DecoderOptions, FinalizeResult};
-use symphonia_core::errors::{Result, unsupported_error};
+use symphonia_core::errors::{Result, decode_error};
 use symphonia_core::formats::Packet;
 use symphonia_core::support_codec;
 
@@ -62,12 +62,13 @@ impl Decoder for Mp3Decoder {
         // Clear the audio output buffer.
         self.buf.clear();
 
-        // Choose decode step based on the MPEG layer.
+        // Choose the decode step based on the MPEG layer and the current codec type.
         match header.layer {
-            MpegLayer::Layer3 => {
+            MpegLayer::Layer3 if self.params.codec == CODEC_TYPE_MP3 => {
+                // Layer 3
                 layer3::decode_frame(&mut reader, &header, &mut self.state, &mut self.buf)?;
             },
-            _ => return unsupported_error("unsupported MPEG layer"),
+            _ => return decode_error("invalid mpeg audio layer"),
         }
 
         Ok(self.buf.as_audio_buffer_ref())
