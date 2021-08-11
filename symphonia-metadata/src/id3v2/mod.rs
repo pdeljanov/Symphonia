@@ -310,6 +310,10 @@ fn read_id3v2_body<B: ReadBytes + FiniteStream>(
             FrameResult::MultipleTags(multi_tags) => {
                 for tag in multi_tags { metadata.add_tag(tag); }
             },
+            // A frame was parsed into a visual, add it to the visual collection.
+            FrameResult::Visual(visual) => {
+                metadata.add_visual(visual);
+            },
             // An unknown frame was encountered, just ignore it.
             FrameResult::UnsupportedFrame(ref id) => {
                 info!("Unsupported frame {}.", id);

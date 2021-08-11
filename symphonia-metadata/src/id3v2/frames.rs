@@ -11,13 +11,14 @@ use std::str;
 
 use symphonia_core::errors::{Result, unsupported_error, decode_error};
 use symphonia_core::io::{ReadBytes, BufReader, FiniteStream};
-use symphonia_core::meta::{StandardTagKey, Tag, Value};
+use symphonia_core::meta::{StandardTagKey, Tag, Value, Visual};
 
 use encoding_rs::UTF_16BE;
 use lazy_static::lazy_static;
 use log::warn;
 
 use super::unsync::{decode_unsynchronisation, read_syncsafe_leq32};
+use super::util;
 
 // The following is a list of all standardized ID3v2.x frames for all ID3v2 major versions and their
 // implementation status ("S" column) in Symphonia.
@@ -33,7 +34,7 @@ use super::unsync::{decode_unsynchronisation, read_syncsafe_leq32};
 //   -   ----   ----    ----    ----------------    ------------------------------------------------
 //       CRA    AENC                                Audio encryption
 //       CRM                                        Encrypted meta frame
-//       PIC    APIC                                Attached picture
+//   x   PIC    APIC                                Attached picture
 //                      ASPI                        Audio seek point index
 //   x   COM    COMM             Comment            Comments
 //              COMR                                Commercial frame
@@ -152,6 +153,8 @@ pub enum FrameResult {
     UnsupportedFrame(String),
     /// A frame was parsed and yielded a single `Tag`.
     Tag(Tag),
+    /// A frame was parsed and yielded a single `Visual`.
+    Visual(Visual),
     /// A frame was parsed and yielded many `Tag`s.
     MultipleTags(Vec<Tag>)
 }
@@ -239,9 +242,9 @@ lazy_static! {
         HashMap<&'static [u8; 4], (FrameParser, Option<StandardTagKey>)> = {
             let mut m = HashMap::new();
             // m.insert(b"AENC", read_null_frame);
-            // m.insert(b"APIC", read_null_frame);
+            m.insert(b"APIC", (read_apic_frame as FrameParser, None));
             // m.insert(b"ASPI", read_null_frame);
-            m.insert(b"COMM", (read_comm_uslt_frame as FrameParser, Some(StandardTagKey::Comment)));
+            m.insert(b"COMM", (read_comm_uslt_frame, Some(StandardTagKey::Comment)));
             // m.insert(b"COMR", read_null_frame);
             // m.insert(b"ENCR", read_null_frame);
             // m.insert(b"EQU2", read_null_frame);
@@ -848,6 +851,50 @@ fn read_mcdi_frame(
     let tag = Tag::new(std_key, id, Value::from(buf));
 
     Ok(FrameResult::Tag(tag))
+}
+
+fn read_apic_frame(
+    reader: &mut BufReader<'_>,
+    _: Option<StandardTagKey>,
+    _: &str,
+) -> Result<FrameResult> {
+    // The first byte of the frame is the encoding of the text description.
+    let encoding = match Encoding::parse(reader.read_byte()?) {
+        Some(encoding) => encoding,
+        _              => return decode_error("invalid text encoding")
+    };
+
+    // ASCII media (MIME) type.
+    let media_type = scan_text(
+        reader,
+        Encoding::Iso8859_1,
+        reader.bytes_available() as usize
+    )?.into_owned();
+
+    // Image usage.
+    let usage = util::apic_picture_type_to_visual_key(u32::from(reader.read_u8()?));
+
+    // Textual image description.
+    let desc = scan_text(reader, encoding, reader.bytes_available() as usize)?;
+
+    let mut tags = Vec::new();
+    tags.push(Tag::new(Some(StandardTagKey::Description), "", Value::from(desc)));
+
+    // The remainder of the APIC frame is the image data.
+    // TODO: Apply a limit.
+    let data = Box::from(reader.read_buf_bytes_available_ref());
+
+    let visual = Visual {
+        media_type,
+        dimensions: None,
+        bits_per_pixel: None,
+        color_mode: None,
+        usage,
+        tags,
+        data,
+    };
+
+    Ok(FrameResult::Visual(visual))
 }
 
 /// Enumeration of valid encodings for text fields in ID3v2 tags
