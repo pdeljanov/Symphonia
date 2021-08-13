@@ -21,6 +21,8 @@ pub enum SeekErrorKind {
     ForwardOnly,
     /// The timestamp to seek to is out of range.
     OutOfRange,
+    /// The track ID provided is invalid.
+    InvalidTrack,
 }
 
 impl SeekErrorKind {
@@ -29,6 +31,7 @@ impl SeekErrorKind {
             SeekErrorKind::Unseekable => "stream is not seekable",
             SeekErrorKind::ForwardOnly => "stream can only be seeked forward",
             SeekErrorKind::OutOfRange => "requested seek timestamp is out-of-range for stream",
+            SeekErrorKind::InvalidTrack => "invalid track id",
         }
     }
 }

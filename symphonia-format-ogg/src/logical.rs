@@ -159,8 +159,7 @@ impl LogicalStream {
         }
     }
 
-    /// Gets the number of buffered complete packets.
-    pub fn num_packets(&self) -> usize {
-        self.packets.len()
+    pub fn base_ts(&self) -> u64 {
+        self.base_ts
     }
 }

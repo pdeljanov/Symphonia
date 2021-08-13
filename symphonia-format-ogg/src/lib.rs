@@ -13,6 +13,5 @@ mod demuxer;
 mod logical;
 mod mappings;
 mod page;
-mod physical;
 
 pub use demuxer::OggReader;

@@ -142,7 +142,7 @@ impl Mapper for VorbisMapper {
         // An even numbered packet type is an audio packet.
         if packet_type % 2 == 0 {
             // TODO: Decode the correct timestamp and duration.
-            Ok(MapResult::Bitstream(Bitstream { ts: 0, dur: 0 }))
+            Ok(MapResult::Bitstream(Bitstream { ts: packet.base_ts, dur: 0 }))
         }
         else {
             // Odd numbered packet types are header packets.

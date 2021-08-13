@@ -236,7 +236,7 @@ fn play(
     // decoded and *samples* discarded up-to the exact *sample* indicated by required_ts. The current
     // approach will discard excess samples if seeking to a sample within a packet.
     let seek_ts = if let Some(time) = seek_time {
-        let seek_to = SeekTo::Time { time: Time::from(time), track_id: None };
+        let seek_to = SeekTo::Time { time: Time::from(time), track_id: Some(track_id) };
 
         // Attempt the seek. If the seek fails, ignore the error and return a seek timestamp of 0 so
         // that no samples are trimmed.
