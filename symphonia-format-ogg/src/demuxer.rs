@@ -38,8 +38,10 @@ pub struct OggReader {
     mappers: BTreeMap<u32, Box<dyn mappings::Mapper>>,
     /// `LogicalStream` for each serial.
     streams: BTreeMap<u32, LogicalStream>,
+    /// The position of the first byte of the current physical stream.
     physical_stream_lower_pos: u64,
-    physical_stream_upper_pos: u64,
+    /// The position of the first byte of the next physical stream, if available.
+    physical_stream_upper_pos: Option<u64>,
 }
 
 impl OggReader {
@@ -155,8 +157,7 @@ impl OggReader {
     }
 
     pub fn consume_logical_packet(&mut self) {
-        // Consume a packet from the logical stream belonging to the current page and get the
-        // number of packets buffered.
+        // Consume a packet from the logical stream belonging to the current page.
         if let Some(logical_stream) = self.streams.get_mut(&self.page.serial) {
             logical_stream.consume_packet();
         }
@@ -168,29 +169,33 @@ impl OggReader {
         let seek_ts = if self.reader.is_seekable() {
             let original_pos = self.reader.pos();
 
-            // TODO: This should start searching AFTER the header packets for the selected stream.
-            let mut start_byte_offset = self.physical_stream_lower_pos;
-            let mut end_byte_offset = self.reader.len().unwrap();
+            // The end of the physical stream.
+            let physical_end = self.physical_stream_upper_pos.unwrap();
+
+            let mut start_byte_pos = self.physical_stream_lower_pos;
+            let mut end_byte_pos = physical_end;
+
+            let mut last_page0_pos = 0;
 
             // Bisection method.
             let bisected_loc = loop {
                 // Find the middle of the upper and lower byte search range.
-                let mid_byte_offset = (start_byte_offset + end_byte_offset) / 2;
+                let mid_byte_pos = (start_byte_pos + end_byte_pos) / 2;
 
                 // Seek to the middle of the byte range.
-                self.reader.seek(SeekFrom::Start(mid_byte_offset))?;
+                self.reader.seek(SeekFrom::Start(mid_byte_pos))?;
 
-                // Resync the first page of the stream identified by serial. If it cannot be found
-                // then the seek is out-of-range.
-                let page0 = match resync_page_serial(&mut self.reader, serial) {
-                    Ok(page0) => page0,
+                // Resync to the first page of the stream identified by serial. If it cannot be
+                // found then the seek is out-of-range.
+                let page0 = match resync_page_serial(&mut self.reader, serial, physical_end) {
+                    Some(page0) => page0,
                     _ => break seek_error(SeekErrorKind::OutOfRange),
                 };
 
                 // Read the next page after the first of the stream identified by serial so that
                 // a duration can be established for the first page.
-                let page1 = match resync_page_serial(&mut self.reader, serial) {
-                    Ok(page1) => page1,
+                let page1 = match resync_page_serial(&mut self.reader, serial, physical_end) {
+                    Some(page1) => page1,
                     _ => {
                         // If page0 has a timestamp <= the required timestamp, and there are no more
                         // pages for that stream (hence this error), then the seek is out-of-range.
@@ -203,33 +208,45 @@ impl OggReader {
                     }
                 };
 
-                // TODO: Handle the case where we enter a chained physical stream (a new serial
-                // is observed for page0 or page1).
-
-                debug!("bisect step: ts0={} ts1={}", page0.header.ts, page1.header.ts);
+                debug!(
+                    "seek: bisect step: ts0={} ts1={} byte_range=[{}..{}]",
+                    page0.header.ts,
+                    page1.header.ts,
+                    start_byte_pos,
+                    end_byte_pos,
+                );
 
                 if required_ts < page0.header.ts {
-                    // The required timestamp is less-than the timestamp of the final sample in the
-                    // last complete packet of page0. Update the upper bound and bisect again.
-                    end_byte_offset = mid_byte_offset;
+                    // The required timestamp is less-than the timestamp of the first sample in
+                    // page1. Update the upper bound and bisect again.
+                    end_byte_pos = mid_byte_pos;
                 }
                 else if required_ts > page1.header.ts {
                     // The required timestamp is greater-than the timestamp of the final sample in
-                    // the last complete packet of page1. Update the lower bound and bisect again.
-                    start_byte_offset = mid_byte_offset;
+                    // the in page1. Update the lower bound and bisect again.
+                    start_byte_pos = mid_byte_pos;
                 }
                 else {
-                    // The required timestamp is greater-than the timestamp of the final sample in
-                    // the last packet of page0, but less than the final sample of the last packet
-                    // in page1. Therefore, the actual packet to seek to is contained in either
-                    // page0 or page1.
+                    // The sample with the required timestamp is contained in page1. Return the
+                    // byte position for page0, and the timestamp of the first sample in page1, so
+                    // that when packets from page1 are read, those packets will have a non-zero
+                    // base timestamp.
                     break Ok((page0.pos, page0.header.ts));
                 }
 
-                // Protect against infinite iteration.
-                if end_byte_offset == start_byte_offset {
-                    break Ok((page0.pos, 0));
+                // If the position of the first page this iteration is the same as last iteration
+                // then abort the search, it'll iterate forever or too slowly. Instead, scan
+                // linearly from the start position instead.
+                if page0.pos == last_page0_pos {
+                    if page1.header.ts < required_ts {
+                        break seek_error(SeekErrorKind::OutOfRange);
+                    }
+                    else {
+                        break Ok((start_byte_pos, 0));
+                    }
                 }
+
+                last_page0_pos = page0.pos;
             };
 
             let bisected_ts = match bisected_loc {
@@ -298,15 +315,15 @@ impl OggReader {
         let mut mappers = BTreeMap::<u32, Box<dyn mappings::Mapper>>::new();
 
         // The start of page position.
-        let mut physical_stream_lower_pos;
+        let mut lower_pos;
 
         // The first page of each logical stream, marked with the first page flag, must contain the
         // identification packet for the encapsulated codec bitstream. The first page for each
         // logical stream from the current logical stream group must appear before any other pages.
-        // That is to say, if there are N logical tracks, then the first N pages must contain the
-        // identification packets for each respective stream.
+        // That is to say, if there are N logical streams, then the first N pages must contain the
+        // identification packets for each respective logical stream.
         loop {
-            physical_stream_lower_pos = self.reader.pos();
+            lower_pos = self.reader.pos();
 
             let packet = self.next_logical_packet()?;
 
@@ -347,7 +364,22 @@ impl OggReader {
             // Consume the packet.
             self.consume_logical_packet();
 
-            physical_stream_lower_pos = self.reader.pos();
+            lower_pos = self.reader.pos();
+        }
+
+        let mut bounds = Default::default();
+
+        // If the media source stream is seekable, then try to determine the duration of each
+        // logical stream, and the length in bytes of the physical stream.
+        if self.reader.is_seekable() {
+            if let Some(upper_pos) = self.reader.len() {
+                bounds = find_physical_stream_bounds(
+                    &mut self.reader,
+                    &mappers,
+                    lower_pos,
+                    upper_pos
+                )?;
+            }
         }
 
         // At this point it can safely be assumed that a new physical stream is starting.
@@ -358,7 +390,13 @@ impl OggReader {
 
         // Second, add a track for all mappers.
         for (&serial, mapper) in mappers.iter() {
-            self.tracks.push(Track::new(serial, mapper.codec().clone()));
+            let mut codec_params = mapper.codec().clone();
+
+            if let Some(duration) = bounds.stream_final_ts.get(&serial) {
+                codec_params.with_n_frames(*duration);
+            }
+
+            self.tracks.push(Track::new(serial, codec_params));
 
             // Warn if the track is not ready. This should not happen if the physical stream was
             // muxed properly.
@@ -375,8 +413,8 @@ impl OggReader {
         self.mappers = mappers;
 
         // Last, store the lower and upper byte boundaries of the physical stream.
-        self.physical_stream_lower_pos = physical_stream_lower_pos;
-        self.physical_stream_upper_pos = 0;
+        self.physical_stream_lower_pos = lower_pos;
+        self.physical_stream_upper_pos = bounds.upper_pos;
 
         Ok(())
     }
@@ -412,7 +450,7 @@ impl FormatReader for OggReader {
             streams: Default::default(),
             page: Default::default(),
             physical_stream_lower_pos: 0,
-            physical_stream_upper_pos: 0,
+            physical_stream_upper_pos: None,
         };
 
         ogg.start_new_physical_stream()?;
@@ -526,4 +564,112 @@ impl FormatReader for OggReader {
     fn into_inner(self: Box<Self>) -> MediaSourceStream {
         self.reader
     }
+}
+
+#[derive(Debug, Default)]
+struct PhysicalStreamBounds {
+    upper_pos: Option<u64>,
+    stream_final_ts: BTreeMap<u32, u64>,
+}
+
+fn find_physical_stream_bounds(
+    reader: &mut MediaSourceStream,
+    mappers: &BTreeMap<u32, Box<dyn mappings::Mapper>>,
+    lower_pos: u64,
+    upper_pos: u64,
+) -> Result<PhysicalStreamBounds> {
+
+    fn scan_linear(
+        reader: &mut MediaSourceStream,
+        mappers: &BTreeMap<u32, Box<dyn mappings::Mapper>>,
+        end: u64,
+    ) -> Result<PhysicalStreamBounds> {
+
+        let mut upper_pos = None;
+        let mut stream_final_ts = BTreeMap::<u32, u64>::new();
+
+        // Read pages until the provided end position or a new physical stream starts.
+        loop {
+            if reader.pos() >= end {
+                break;
+            }
+
+            // Synchronize to the next page.
+            let resync = resync_page(reader)?;
+
+            // If the page does not belong to the current physical stream, then break out, the
+            // extent of the physical stream has been found.
+            if !mappers.contains_key(&resync.header.serial) {
+                break;
+            }
+
+            // If this is the last page for the logical stream, record the timestamp.
+            stream_final_ts.insert(resync.header.serial, resync.header.ts);
+
+            // The new end of the physical stream is the position after this page.
+            upper_pos = Some(reader.pos());
+        }
+
+        Ok(PhysicalStreamBounds { upper_pos, stream_final_ts })
+    }
+
+    // Save the original position.
+    let original_pos = reader.pos();
+
+    // Number of bytes to linearly scan. We assume the OGG maximum page size for each logical
+    // stream.
+    let linear_scan_len = (mappers.len() * OGG_PAGE_MAX_SIZE) as u64;
+
+    // Optimization: Try a linear scan of the last few pages first. This will cover all
+    // non-chained physical streams, which is the majority of cases.
+    if upper_pos >= linear_scan_len && lower_pos <= upper_pos - linear_scan_len {
+        reader.seek(SeekFrom::Start(upper_pos - linear_scan_len))?;
+    }
+    else {
+        reader.seek(SeekFrom::Start(lower_pos))?;
+    }
+
+    let result = scan_linear(reader, mappers, upper_pos)?;
+
+    let is_wrong_physical_stream = result.upper_pos.is_none();
+
+    // If there are no pages belonging to the current physical stream at the end of the media
+    // source stream, then one or more physical streams are chained. Use a bisection method to find
+    // the end of the current physical stream.
+    let result = if is_wrong_physical_stream {
+        debug!("media source stream is chained, bisecting end of physical stream");
+
+        let mut start = lower_pos;
+        let mut end = upper_pos;
+
+        loop {
+            let mid = (end + start) / 2;
+            reader.seek(SeekFrom::Start(mid))?;
+
+            let resync = resync_page(reader)?;
+
+            if mappers.contains_key(&resync.header.serial) {
+                start = mid;
+            }
+            else {
+                end = mid;
+            }
+
+            if end - start < linear_scan_len {
+                break;
+            }
+        }
+
+        // Scan the last few pages of the physical stream.
+        reader.seek(SeekFrom::Start(start))?;
+        scan_linear(reader, mappers, end)?
+    }
+    else {
+        result
+    };
+
+    // Restore the original position
+    reader.seek(SeekFrom::Start(original_pos))?;
+
+    Ok(result)
 }

@@ -12,7 +12,7 @@ use symphonia_core::io::{BufReader, Monitor, MonitorStream, ReadBytes};
 pub const OGG_PAGE_MARKER: [u8; 4] = *b"OggS";
 
 pub const OGG_PAGE_HEADER_SIZE: usize = 27;
-// pub const OGG_PAGE_MAX_SIZE: usize = OGG_PAGE_HEADER_SIZE + 255 + 255 * 255;
+pub const OGG_PAGE_MAX_SIZE: usize = OGG_PAGE_HEADER_SIZE + 255 + 255 * 255;
 
 #[derive(Default)]
 pub struct PageHeader {
@@ -144,14 +144,28 @@ pub fn resync_page<B: ReadBytes>(reader: &mut B) -> Result<ResyncResult> {
 
 /// Performs the same operation as `resync_page` but synchronizes to the next OGG page with a
 /// specific serial.
-pub fn resync_page_serial<B: ReadBytes>(reader: &mut B, serial: u32) -> Result<ResyncResult> {
+pub fn resync_page_serial<B: ReadBytes>(
+    reader: &mut B,
+    serial: u32,
+    physical_stream_end: u64
+) -> Option<ResyncResult> {
     loop {
-        let resync = resync_page(reader)?;
+        // Do not exceed the end of the physical stream.
+        if reader.pos() >= physical_stream_end {
+            break
+        }
+
+        let resync = match resync_page(reader) {
+            Ok(resync) => resync,
+            _ => break,
+        };
 
         // Return if the synchronized page belongs to the logical bitstream specified by serial,
         // and it was not a continuation page (i.e., it was a fresh page).
         if resync.header.serial == serial && !resync.header.is_continuation {
-            return Ok(resync);
+            return Some(resync);
         }
     }
+
+    None
 }
