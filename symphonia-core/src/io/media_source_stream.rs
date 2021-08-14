@@ -44,9 +44,9 @@ impl Default for MediaSourceStreamOptions {
 /// excess data buffered on consecutive `seek()` calls.
 ///
 /// Second, to better support non-seekable sources, `MediaSourceStream` implements a configurable
-/// length buffer cache. The buffer caches allows backtracking by up-to the minimum of either
-/// `buffer_len - 32kB` or the total number of bytes read since instantiation or the last buffer
-/// cache invalidation. Note that regular a `seek()` will invalidate the buffer cache.
+/// length buffer cache. By default, the buffer caches allows backtracking by up-to the minimum of
+/// either `buffer_len - 32kB` or the total number of bytes read since instantiation or the last
+/// buffer cache invalidation. Note that regular a `seek()` will invalidate the buffer cache.
 pub struct MediaSourceStream {
     /// The source reader.
     inner: Box<dyn MediaSource>,
@@ -85,6 +85,48 @@ impl MediaSourceStream {
             read_block_len: Self::MIN_BLOCK_LEN,
             abs_pos: 0,
             rel_pos: 0,
+        }
+    }
+
+    /// Ensures that `len` bytes will be available for backwards seeking if `len` bytes have been
+    /// previously read.
+    pub fn ensure_seekback_buffer(&mut self, len: usize) {
+        let ring_len = self.ring.len();
+
+        // A fetch can overwrite a maximum of MAX_BLOCK_LEN bytes in the ring. Therefore, for there
+        // to always be `len` bytes available for seekback, the ring must be len + MAX_BLOCK_LEN in
+        // length. Round-up to the next power-of-2 as that is an invariant of the ring.
+        let new_ring_len = (Self::MAX_BLOCK_LEN + len).next_power_of_two();
+
+        // Only grow the ring if necessary.
+        if ring_len < new_ring_len {
+            // Allocate a new ring.
+            let mut new_ring = vec![0; new_ring_len].into_boxed_slice();
+
+            // Get the readable regions of the current ring.
+            let (vec0, vec1) = if self.write_pos >= self.read_pos {
+                (&self.ring[self.read_pos..self.write_pos], None)
+            }
+            else {
+                (&self.ring[self.read_pos..], Some(&self.ring[..self.write_pos]))
+            };
+
+            // Copy contents from the old ring into new ring.
+            let vec0_len = vec0.len();
+            new_ring[..vec0_len].copy_from_slice(vec0);
+
+            self.write_pos = if let Some(vec1) = vec1 {
+                let total_len = vec0_len + vec1.len();
+                new_ring[vec0_len..total_len].copy_from_slice(vec1);
+                total_len
+            }
+            else {
+                vec0_len
+            };
+
+            self.ring = new_ring;
+            self.ring_mask = new_ring_len - 1;
+            self.read_pos = 0;
         }
     }
 
