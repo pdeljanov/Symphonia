@@ -282,7 +282,8 @@ fn append_format_params(codec_params: &mut CodecParameters, format: &WaveFormatC
 
     codec_params
         .with_max_frames_per_packet(WAVE_MAX_FRAMES_PER_PACKET)
-        .with_sample_rate(format.sample_rate);
+        .with_sample_rate(format.sample_rate)
+        .with_time_base(TimeBase::new(1, format.sample_rate));
 
     match format.format_data {
         WaveFormatData::Pcm(ref pcm) => {

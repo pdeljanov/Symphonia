@@ -361,6 +361,7 @@ fn read_stream_info_block<B : ReadBytes>(
         codec_params
             .for_codec(CODEC_TYPE_FLAC)
             .with_sample_rate(info.sample_rate)
+            .with_time_base(TimeBase::new(1, info.sample_rate))
             .with_bits_per_sample(info.bits_per_sample)
             .with_max_frames_per_packet(u64::from(info.block_len_max))
             .with_channels(info.channels)

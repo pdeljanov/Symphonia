@@ -12,8 +12,9 @@ use super::{Bitstream, Mapper, MapResult};
 use symphonia_core::checksum::Crc8Ccitt;
 use symphonia_core::codecs::{CODEC_TYPE_FLAC, CodecParameters, VerificationCheck};
 use symphonia_core::errors::{Result, decode_error};
-use symphonia_core::meta::MetadataBuilder;
 use symphonia_core::io::{BufReader, ReadBytes, MonitorStream};
+use symphonia_core::meta::MetadataBuilder;
+use symphonia_core::units::TimeBase;
 
 use symphonia_utils_xiph::flac::metadata::{MetadataBlockHeader, MetadataBlockType, StreamInfo};
 use symphonia_utils_xiph::flac::metadata::{read_comment_block, read_picture_block};
@@ -85,6 +86,7 @@ pub fn detect(buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> {
     codec_params
         .for_codec(CODEC_TYPE_FLAC)
         .with_sample_rate(stream_info.sample_rate)
+        .with_time_base(TimeBase::new(1, stream_info.sample_rate))
         .with_bits_per_sample(stream_info.bits_per_sample)
         .with_max_frames_per_packet(u64::from(stream_info.block_len_max))
         .with_channels(stream_info.channels)

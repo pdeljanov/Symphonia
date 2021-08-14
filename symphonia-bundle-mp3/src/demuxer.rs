@@ -67,6 +67,7 @@ impl FormatReader for Mp3Reader {
 
         params.for_codec(CODEC_TYPE_MP3)
               .with_sample_rate(header.sample_rate)
+              .with_time_base(TimeBase::new(1, header.sample_rate))
               .with_channels(header.channel_mode.channels());
 
         let audio_frames_per_mpeg_frame = SAMPLES_PER_GRANULE * header.n_granules() as u64;

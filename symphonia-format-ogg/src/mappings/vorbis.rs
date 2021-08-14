@@ -13,6 +13,7 @@ use symphonia_core::codecs::{CodecParameters, CODEC_TYPE_VORBIS};
 use symphonia_core::errors::{Result, decode_error};
 use symphonia_core::io::{BufReader, ReadBytes};
 use symphonia_core::meta::MetadataBuilder;
+use symphonia_core::units::TimeBase;
 use symphonia_metadata::vorbis;
 
 use log::warn;
@@ -111,6 +112,7 @@ pub fn detect(buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> {
     codec_params
         .for_codec(CODEC_TYPE_VORBIS)
         .with_sample_rate(sample_rate)
+        .with_time_base(TimeBase::new(1, sample_rate))
         .with_extra_data(Box::from(buf));
 
     // Instantiate the Vorbis mapper.
