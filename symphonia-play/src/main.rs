@@ -23,7 +23,7 @@ use symphonia::core::formats::{Cue, FormatReader, FormatOptions, SeekMode, SeekT
 use symphonia::core::meta::{ColorMode, MetadataOptions, Tag, Value, Visual};
 use symphonia::core::io::{MediaSourceStream, MediaSource, ReadOnlySource};
 use symphonia::core::probe::{Hint, ProbeResult};
-use symphonia::core::units::{Duration, Time};
+use symphonia::core::units::{Duration, Time, TimeBase};
 
 use clap::{Arg, App};
 use log::{error, info, warn};
@@ -131,12 +131,12 @@ fn main() {
             }
             else if matches.is_present("probe-only") {
                 // Probe-only mode only prints information about the format, tracks, metadata, etc.
-                pretty_print_format(path_str, &mut probed);
+                print_format(path_str, &mut probed);
                 Ok(())
             }
             else {
                 // Playback mode.
-                pretty_print_format(path_str, &mut probed);
+                print_format(path_str, &mut probed);
 
                 // If present, parse the seek argument.
                 let seek_time = matches.value_of("seek").map(|p| p.parse::<f64>().unwrap_or(0.0));
@@ -266,6 +266,7 @@ fn play(
                 // streaming OGG (e.g., Icecast) wherein the entire contents of the container change
                 // (new tracks, codecs, metadata, etc.). Therefore, we must select a new track and
                 // recreate the decoder.
+                print_tracks(reader.tracks());
                 let track = reader.default_track().unwrap();
                 track_id = track.id;
                 decoder = symphonia::default::get_codecs().make(
@@ -287,8 +288,8 @@ fn play(
             reader.metadata().pop();
 
             if let Some(rev) = reader.metadata().current() {
-                pretty_print_tags(rev.tags());
-                pretty_print_visuals(rev.visuals());
+                print_tags(rev.tags());
+                print_visuals(rev.visuals());
             }
         }
 
@@ -345,15 +346,15 @@ fn play(
     result
 }
 
-fn pretty_print_format(path: &str, probed: &mut ProbeResult) {
+fn print_format(path: &str, probed: &mut ProbeResult) {
     println!("+ {}", path);
-    pretty_print_tracks(probed.format.tracks());
+    print_tracks(probed.format.tracks());
 
     // Prefer metadata that's provided in the container format, over other tags found during the
     // probe operation.
     if let Some(metadata_rev) = probed.format.metadata().current() {
-        pretty_print_tags(metadata_rev.tags());
-        pretty_print_visuals(metadata_rev.visuals());
+        print_tags(metadata_rev.tags());
+        print_visuals(metadata_rev.visuals());
 
         // Warn that certain tags are preferred.
         if probed.metadata.get().as_ref().is_some() {
@@ -366,15 +367,15 @@ fn pretty_print_format(path: &str, probed: &mut ProbeResult) {
         .as_ref()
         .and_then(|m| m.current())
     {
-        pretty_print_tags(metadata_rev.tags());
-        pretty_print_visuals(metadata_rev.visuals());
+        print_tags(metadata_rev.tags());
+        print_visuals(metadata_rev.visuals());
     }
 
-    pretty_print_cues(probed.format.cues());
+    print_cues(probed.format.cues());
     println!("-");
 }
 
-fn pretty_print_tracks(tracks: &[Track]) {
+fn print_tracks(tracks: &[Track]) {
     if !tracks.is_empty() {
         println!("|");
         println!("| // Tracks //");
@@ -394,8 +395,21 @@ fn pretty_print_tracks(tracks: &[Track]) {
             if let Some(sample_rate) = params.sample_rate {
                 println!("|          Sample Rate:     {}", sample_rate);
             }
+            if params.start_ts > 0 {
+                if let Some(tb) = params.time_base {
+                    println!("|          Start Time:      {} ({})", fmt_time(params.start_ts, tb), params.start_ts);
+                }
+                else {
+                    println!("|          Start Time:      {}", params.start_ts);
+                }
+            }
             if let Some(n_frames) = params.n_frames {
-                println!("|          Frames:          {}", n_frames);
+                if let Some(tb) = params.time_base {
+                    println!("|          Duration:        {} ({})", fmt_time(n_frames, tb), n_frames);
+                }
+                else {
+                    println!("|          Frames:          {}", n_frames);
+                }
             }
             if let Some(sample_format) = params.sample_format {
                 println!("|          Sample Format:   {:?}", sample_format);
@@ -418,7 +432,7 @@ fn pretty_print_tracks(tracks: &[Track]) {
     }
 }
 
-fn pretty_print_cues(cues: &[Cue]) {
+fn print_cues(cues: &[Cue]) {
     if !cues.is_empty() {
         println!("|");
         println!("| // Cues //");
@@ -433,10 +447,10 @@ fn pretty_print_cues(cues: &[Cue]) {
 
                 for (tidx, tag) in cue.tags.iter().enumerate() {
                     if let Some(std_key) = tag.std_key {
-                        println!("{}", pretty_print_tag_item(tidx + 1, &format!("{:?}", std_key), &tag.value, 21));
+                        println!("{}", print_tag_item(tidx + 1, &format!("{:?}", std_key), &tag.value, 21));
                     }
                     else {
-                        println!("{}", pretty_print_tag_item(tidx + 1, &tag.key, &tag.value, 21));
+                        println!("{}", print_tag_item(tidx + 1, &tag.key, &tag.value, 21));
                     }
                 }
             }
@@ -459,7 +473,7 @@ fn pretty_print_cues(cues: &[Cue]) {
     }
 }
 
-fn pretty_print_tags(tags: &[Tag]) {
+fn print_tags(tags: &[Tag]) {
     if !tags.is_empty() {
         println!("|");
         println!("| // Tags //");
@@ -469,20 +483,20 @@ fn pretty_print_tags(tags: &[Tag]) {
         // Print tags with a standard tag key first, these are the most common tags.
         for tag in tags.iter().filter(| tag | tag.is_known()) {
             if let Some(std_key) = tag.std_key {
-                println!("{}", pretty_print_tag_item(idx, &format!("{:?}", std_key), &tag.value, 4));
+                println!("{}", print_tag_item(idx, &format!("{:?}", std_key), &tag.value, 4));
             }
             idx += 1;
         }
 
         // Print the remaining tags with keys truncated to 26 characters.
         for tag in tags.iter().filter(| tag | !tag.is_known()) {
-            println!("{}", pretty_print_tag_item(idx, &tag.key, &tag.value, 4));
+            println!("{}", print_tag_item(idx, &tag.key, &tag.value, 4));
             idx += 1;
         }
     }
 }
 
-fn pretty_print_visuals(visuals: &[Visual]) {
+fn print_visuals(visuals: &[Visual]) {
     if !visuals.is_empty() {
         println!("|");
         println!("| // Visuals //");
@@ -514,17 +528,17 @@ fn pretty_print_visuals(visuals: &[Visual]) {
 
             for (tidx, tag) in visual.tags.iter().enumerate() {
                 if let Some(std_key) = tag.std_key {
-                    println!("{}", pretty_print_tag_item(tidx + 1, &format!("{:?}", std_key), &tag.value, 21));
+                    println!("{}", print_tag_item(tidx + 1, &format!("{:?}", std_key), &tag.value, 21));
                 }
                 else {
-                    println!("{}", pretty_print_tag_item(tidx + 1, &tag.key, &tag.value, 21));
+                    println!("{}", print_tag_item(tidx + 1, &tag.key, &tag.value, 21));
                 }
             }
         }
     }
 }
 
-fn pretty_print_tag_item(idx: usize, key: &str, value: &Value, indent: usize) -> String {
+fn print_tag_item(idx: usize, key: &str, value: &Value, indent: usize) -> String {
     let key_str = match key.len() {
         0..=28 => format!("| {:w$}[{:0>2}] {:<28} : ", "", idx, key, w = indent),
         _ => format!("| {:w$}[{:0>2}] {:.<28} : ", "", idx, key.split_at(26).0, w = indent),
@@ -552,4 +566,14 @@ fn pretty_print_tag_item(idx: usize, key: &str, value: &Value, indent: usize) ->
     }
 
     out
+}
+
+fn fmt_time(ts: u64, tb: TimeBase) -> String {
+    let time = tb.calc_time(ts);
+
+    let hours = time.seconds / (60 * 60);
+    let mins = time.seconds / 60;
+    let secs = f64::from((time.seconds % 60) as u32) + time.frac;
+
+    format!("{}:{:0>2}:{:0>6.3}", hours, mins, secs)
 }
