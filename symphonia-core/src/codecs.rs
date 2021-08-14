@@ -177,6 +177,9 @@ pub struct CodecParameters {
     /// The length of the encoded stream in number of frames.
     pub n_frames: Option<u64>,
 
+    /// The timestamp of the first frame.
+    pub start_ts: u64,
+
     /// The sample format of an audio sample.
     pub sample_format: Option<SampleFormat>,
 
@@ -220,6 +223,7 @@ impl CodecParameters {
             sample_rate: None,
             time_base: None,
             n_frames: None,
+            start_ts: 0,
             sample_format: None,
             bits_per_sample: None,
             bits_per_coded_sample: None,
@@ -255,6 +259,12 @@ impl CodecParameters {
     /// Provide the total number of frames.
     pub fn with_n_frames(&mut self, n_frames: u64) -> &mut Self {
         self.n_frames = Some(n_frames);
+        self
+    }
+
+    /// Provide the timestamp of the first frame.
+    pub fn with_start_ts(&mut self, start_ts: u64) -> &mut Self {
+        self.start_ts = start_ts;
         self
     }
 
