@@ -1,13 +1,13 @@
 // Symphonia
-// Copyright (c) 2020 The Project Symphonia Developers.
+// Copyright (c) 2021 The Project Symphonia Developers.
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use crate::common::OggPacket;
+use crate::common::SideData;
 
-use super::{Bitstream, Mapper, MapResult};
+use super::{MapResult, Mapper, PacketParser};
 
 use symphonia_core::checksum::Crc8Ccitt;
 use symphonia_core::codecs::{CODEC_TYPE_FLAC, CodecParameters, VerificationCheck};
@@ -18,6 +18,8 @@ use symphonia_core::units::TimeBase;
 
 use symphonia_utils_xiph::flac::metadata::{MetadataBlockHeader, MetadataBlockType, StreamInfo};
 use symphonia_utils_xiph::flac::metadata::{read_comment_block, read_picture_block};
+
+use log::warn;
 
 /// The expected size of the first FLAC header packet.
 const OGG_FLAC_HEADER_PACKET_SIZE: usize = 51;
@@ -130,6 +132,7 @@ fn utf8_decode_be_u64<B: ReadBytes>(src : &mut B) -> Result<Option<u64>> {
     Ok(Some(state))
 }
 
+#[allow(dead_code)]
 struct FrameHeader {
     ts: u64,
     dur: u64,
@@ -145,7 +148,7 @@ fn decode_frame_header(buf: &[u8]) -> Result<FrameHeader> {
 
     // Within an OGG packet the frame should be synchronized.
     if sync & 0xfffc != 0xfff8 {
-        return decode_error("ogg: flac header is not synchronized");
+        return decode_error("ogg (flac): header is not synchronized");
     }
 
     // Read all the standard frame description fields as one 16-bit value and extract the fields.
@@ -153,7 +156,7 @@ fn decode_frame_header(buf: &[u8]) -> Result<FrameHeader> {
 
     // Reserved bit field.
     if desc & 0x0001 == 1 {
-        return decode_error("ogg: flac frame header reserved bit is not set to 1");
+        return decode_error("ogg (flac): frame header reserved bit is not set to 1");
     }
 
     // Extract the blocking strategy from the sync word.
@@ -163,12 +166,12 @@ fn decode_frame_header(buf: &[u8]) -> Result<FrameHeader> {
         // Fixed block size stream sequence blocks by a frame number.
         let frame = match utf8_decode_be_u64(&mut reader_crc8)? {
             Some(frame) => frame,
-            None => return decode_error("ogg: flac frame sequence number is not valid"),
+            None => return decode_error("ogg (flac): frame sequence number is not valid"),
         };
 
         // The frame number should only be 31-bits.
         if frame > 0x7fff_ffff {
-            return decode_error("ogg: flac frame sequence number exceeds 31-bits");
+            return decode_error("ogg (flac): frame sequence number exceeds 31-bits");
         }
 
         frame
@@ -182,7 +185,7 @@ fn decode_frame_header(buf: &[u8]) -> Result<FrameHeader> {
 
         // The sample number should only be 36-bits.
         if sample > 0xffff_fffff {
-            return decode_error("ogg: sample sequence number exceeds 36-bits");
+            return decode_error("ogg (flac): sample sequence number exceeds 36-bits");
         }
 
         sample
@@ -198,13 +201,13 @@ fn decode_frame_header(buf: &[u8]) -> Result<FrameHeader> {
         0x7       => {
             let block_size = reader_crc8.read_be_u16()?;
             if block_size == 0xffff {
-                return decode_error("ogg: flac block size not allowed to be greater than 65535");
+                return decode_error("ogg (flac): block size not allowed to be greater than 65535");
             }
 
             u64::from(block_size) + 1
         },
         0x8..=0xf => 256 * (1 << (block_size_enc - 8)),
-        _         => return decode_error("ogg: flac block size set to reserved value"),
+        _         => return decode_error("ogg (flac): block size set to reserved value"),
     };
 
     // The sample rate is not required but should be read so checksum verification of the header
@@ -231,7 +234,7 @@ fn decode_frame_header(buf: &[u8]) -> Result<FrameHeader> {
     let crc8_expected = reader_crc8.into_inner().read_u8()?;
 
     if crc8_expected != crc8_computed && cfg!(not(fuzzing)) {
-        return decode_error("ogg: flac computed frame header CRC does not match expected CRC");
+        return decode_error("ogg (flac): computed frame header CRC does not match expected CRC");
     }
 
     let ts = if is_fixed_block_size { block_sequence * block_size } else { block_sequence };
@@ -239,35 +242,65 @@ fn decode_frame_header(buf: &[u8]) -> Result<FrameHeader> {
     Ok(FrameHeader { ts, dur: block_size })
 }
 
+struct FlacPacketParser {}
+
+impl PacketParser for FlacPacketParser {
+    fn parse_next_packet_dur(&mut self, packet: &[u8]) -> u64 {
+        match decode_frame_header(packet).ok() {
+            Some(header) => header.dur,
+            _ => 0,
+        }
+    }
+}
+
 struct FlacMapper {
     codec_params: CodecParameters,
 }
 
 impl Mapper for FlacMapper {
+    fn name(&self) -> &'static str {
+        "flac"
+    }
 
-    fn codec(&self) -> &CodecParameters {
+    fn codec_params(&self) -> &CodecParameters {
         &self.codec_params
     }
 
-    fn map_packet(&mut self, packet: &OggPacket) -> Result<MapResult> {
-        // The first byte of a packet is the packet type.
-        if packet.data[0] == 0xff {
-            // A packet-type of 0xff is a bitstream packet.
+    fn codec_params_mut(&mut self) -> &mut CodecParameters {
+        &mut self.codec_params
+    }
 
-            // The FLAC OGG encapsulation wraps an entire FLAC frame including the header into an OGG
-            // packet. This duplicates some information however it means that by decoding the FLAC
-            // frame header the timestamp and duration are readily accessible.
-            let frame_header = decode_frame_header(&packet.data)?;
+    fn make_parser(&self) -> Option<Box<dyn super::PacketParser>> {
+        Some(Box::new(FlacPacketParser {}))
+    }
 
-            Ok(MapResult::Bitstream(Bitstream { ts: frame_header.ts, dur: frame_header.dur }))
+    fn reset(&mut self) {
+        // Nothing to do.
+    }
+
+    fn map_packet(&mut self, packet: &[u8]) -> Result<MapResult> {
+        let packet_type = BufReader::new(packet).read_u8()?;
+
+        // A packet type of 0xff is an audio packet.
+        if packet_type == 0xff {
+            // Parse the packet duration.
+            let dur = match decode_frame_header(packet).ok() {
+                Some(header) => header.dur,
+                _ => 0,
+            };
+
+
+            Ok(MapResult::StreamData { dur })
         }
-        else if packet.data[0] == 0x00 || packet.data[0] == 0x80 {
-            // Packet types 0x00 and 0x80 are invalid in the OGG mapping.
-            decode_error("invalid packet type")
+        else if packet_type == 0x00 || packet_type == 0x80 {
+            // Packet types 0x00 and 0x80 are invalid.
+            warn!("ogg (flac): flac packet type {} unexpected", packet_type);
+            Ok(MapResult::Unknown)
         }
         else {
+            let mut reader = BufReader::new(packet);
+
             // Packet types in the range 0x01 thru 0x7f, and 0x81 thru 0xfe are metadata blocks.
-            let mut reader = BufReader::new(&packet.data);
             let header = MetadataBlockHeader::read(&mut reader)?;
 
             match header.block_type {
@@ -276,16 +309,18 @@ impl Mapper for FlacMapper {
 
                     read_comment_block(&mut reader, &mut builder)?;
 
-                    Ok(MapResult::Metadata(builder.metadata()))
+                    Ok(MapResult::SideData { data: SideData::Metadata(builder.metadata()) })
                 }
                 MetadataBlockType::Picture => {
                     let mut builder = MetadataBuilder::new();
 
                     read_picture_block(&mut reader, &mut builder)?;
 
-                    Ok(MapResult::Metadata(builder.metadata()))
+                    Ok(MapResult::SideData { data: SideData::Metadata(builder.metadata()) })
                 }
-                _ => Ok(MapResult::Unknown)
+                _ => {
+                    Ok(MapResult::Unknown)
+                }
             }
         }
     }

@@ -1,13 +1,13 @@
 // Symphonia
-// Copyright (c) 2020 The Project Symphonia Developers.
+// Copyright (c) 2021 The Project Symphonia Developers.
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use crate::common::OggPacket;
+use crate::common::SideData;
 
-use super::{Bitstream, Mapper, MapResult};
+use super::{Mapper, MapResult, PacketParser};
 
 use symphonia_core::meta::MetadataBuilder;
 use symphonia_core::io::{BufReader, ReadBytes};
@@ -16,6 +16,8 @@ use symphonia_core::codecs::{CodecParameters, CODEC_TYPE_OPUS};
 use symphonia_core::audio::Channels;
 
 use symphonia_metadata::vorbis;
+
+use log::warn;
 
 /// The minimum expected size of an Opus identification packet.
 const OGG_OPUS_MIN_IDENTIFICATION_PACKET_SIZE: usize = 19;
@@ -148,41 +150,67 @@ pub fn detect(buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> {
     Ok(Some(mapper))
 }
 
+pub struct OpusPacketParser {}
+
+impl PacketParser for OpusPacketParser {
+    fn parse_next_packet_dur(&mut self, _packet: &[u8]) -> u64 {
+        // TODO: Implement.
+        0
+    }
+}
+
 struct OpusMapper {
     codec_params: CodecParameters,
     need_comment: bool,
 }
 
 impl Mapper for OpusMapper {
+    fn name(&self) -> &'static str {
+        "opus"
+    }
 
-    fn codec(&self) -> &CodecParameters {
+    fn reset(&mut self) {
+        // Nothing to do.
+    }
+
+    fn codec_params(&self) -> &CodecParameters {
         &self.codec_params
     }
 
-    fn map_packet(&mut self, packet: &OggPacket) -> Result<MapResult> {
-        // After the comment packet there should only be bitstream packets.
+    fn codec_params_mut(&mut self) -> &mut CodecParameters {
+        &mut self.codec_params
+    }
+
+    fn make_parser(&self) -> Option<Box<dyn super::PacketParser>> {
+        Some(Box::new(OpusPacketParser {}))
+    }
+
+    fn map_packet(&mut self, packet: &[u8]) -> Result<MapResult> {
         if !self.need_comment {
-            // TODO: Decode the correct timestamp and duration.
-            Ok(MapResult::Bitstream(Bitstream { ts: 0, dur: 0 }))
+            Ok(MapResult::StreamData { dur: 0 })
         }
         else {
-            // If the comment packet is still required, check if the packet is the comment packet.
-            if packet.data.len() >= 8 && packet.data[..8] == *OGG_OPUS_COMMENT_SIGNATURE {
+            let mut reader = BufReader::new(packet);
+
+            // Read the header signature.
+            let mut sig = [0; 8];
+            reader.read_buf_exact(&mut sig)?;
+
+            if sig == *OGG_OPUS_COMMENT_SIGNATURE {
                 // This packet should be a metadata packet containing a Vorbis Comment.
-                let mut reader = BufReader::new(&packet.data[8..]);
                 let mut builder = MetadataBuilder::new();
 
                 vorbis::read_comment_no_framing(&mut reader, &mut builder)?;
 
                 self.need_comment = false;
 
-                Ok(MapResult::Metadata(builder.metadata()))
+                Ok(MapResult::SideData { data: SideData::Metadata(builder.metadata()) })
             }
             else {
+                warn!("ogg (opus): invalid packet type");
                 Ok(MapResult::Unknown)
             }
         }
-
     }
 
 }
