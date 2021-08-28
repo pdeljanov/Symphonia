@@ -31,7 +31,6 @@ pub type Result<T> = result::Result<T, AudioOutputError>;
 mod pulseaudio {
     use super::{AudioOutput, AudioOutputError, Result};
 
-    use symphonia;
     use symphonia::core::audio::*;
     use symphonia::core::units::Duration;
 
@@ -128,7 +127,6 @@ mod pulseaudio {
 mod cpal {
     use super::{AudioOutput, AudioOutputError, Result};
 
-    use symphonia;
     use symphonia::core::audio::{AudioBufferRef, SampleBuffer, SignalSpec, RawSample};
     use symphonia::core::conv::ConvertibleSample;
     use symphonia::core::units::Duration;

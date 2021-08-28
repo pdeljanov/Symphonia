@@ -14,20 +14,20 @@
 #![allow(clippy::needless_update)]
 
 use std::fs::File;
+use std::io::Write;
 use std::path::Path;
 
-use symphonia;
-use symphonia::core::errors::{Result, Error};
-use symphonia::core::codecs::DecoderOptions;
+use lazy_static::lazy_static;
+use symphonia::core::errors::{Error, Result};
+use symphonia::core::codecs::{CODEC_TYPE_NULL, DecoderOptions};
 use symphonia::core::formats::{Cue, FormatReader, FormatOptions, SeekMode, SeekTo, Track};
-use symphonia::core::meta::{ColorMode, MetadataOptions, Tag, Value, Visual};
+use symphonia::core::meta::{ColorMode, MetadataOptions, MetadataRevision, Tag, Value, Visual};
 use symphonia::core::io::{MediaSourceStream, MediaSource, ReadOnlySource};
 use symphonia::core::probe::{Hint, ProbeResult};
-use symphonia::core::units::{Duration, Time, TimeBase};
+use symphonia::core::units::{Time, TimeBase};
 
 use clap::{Arg, App};
 use log::{error, info, warn};
-use pretty_env_logger;
 
 mod output;
 
@@ -72,12 +72,11 @@ fn main() {
                             .long("verify")
                             .short("-V")
                             .help("Verify the decoded audio is valid during playback"))
-                       .arg(Arg::with_name("verbose")
-                            .short("v")
-                            .multiple(true)
-                            .help("Sets the level of verbosity"))
+                       .arg(Arg::with_name("no-progress")
+                            .long("no-progress")
+                            .help("Do not display playback progress"))
                         .arg(Arg::with_name("INPUT")
-                            .help("The input file path, or specify - to use standard input")
+                            .help("The input file path, or - to use standard input")
                             .required(true)
                             .index(1))
                         .get_matches();
@@ -112,11 +111,13 @@ fn main() {
     let format_opts: FormatOptions = Default::default();
     let metadata_opts: MetadataOptions = Default::default();
 
-    // Get the track if provided.
+    // Get the value of the track option, if provided.
     let track = match matches.value_of("track") {
-        Some(track_str) => track_str.parse::<usize>().map_or(None, |t| Some(t)),
+        Some(track_str) => track_str.parse::<usize>().ok(),
         _ => None,
     };
+
+    let no_progress = matches.is_present("no-progress");
 
     // Probe the media source stream for metadata and get the format reader.
     match symphonia::default::get_probe().format(&hint, mss, &format_opts, &metadata_opts) {
@@ -142,13 +143,13 @@ fn main() {
                 let seek_time = matches.value_of("seek").map(|p| p.parse::<f64>().unwrap_or(0.0));
 
                 // Set the decoder options.
-                let options = DecoderOptions {
+                let decode_opts = DecoderOptions {
                     verify: matches.is_present("verify"),
                     ..Default::default()
                 };
 
                 // Play it!
-                play(probed.format, track, seek_time, &options)
+                play(probed.format, track, seek_time, &decode_opts, no_progress)
             };
 
             if let Err(err) = result {
@@ -162,14 +163,14 @@ fn main() {
     }
 }
 
-fn decode_only(mut reader: Box<dyn FormatReader>, decode_options: &DecoderOptions) -> Result<()> {
+fn decode_only(mut reader: Box<dyn FormatReader>, decode_opts: &DecoderOptions) -> Result<()> {
     // Get the default track.
     // TODO: Allow track selection.
     let track = reader.default_track().unwrap();
     let track_id = track.id;
 
     // Create a decoder for the track.
-    let mut decoder = symphonia::default::get_codecs().make(&track.codec_params, &decode_options)?;
+    let mut decoder = symphonia::default::get_codecs().make(&track.codec_params, decode_opts)?;
 
     // Decode all packets, ignoring all decode errors.
     let result = loop {
@@ -206,35 +207,36 @@ fn decode_only(mut reader: Box<dyn FormatReader>, decode_options: &DecoderOption
     result
 }
 
+#[derive(Copy, Clone)]
+struct PlayTrackOptions {
+    track_id: u32,
+    seek_ts: u64,
+}
+
 fn play(
     mut reader: Box<dyn FormatReader>,
-    play_track: Option<usize>,
+    track_num: Option<usize>,
     seek_time: Option<f64>,
-    decode_options: &DecoderOptions
+    decode_opts: &DecoderOptions,
+    no_progress: bool,
 ) -> Result<()> {
-    // The audio output device.
-    let mut audio_output = None;
 
-    // Select the appropriate track.
-    let track = match play_track {
-        Some(t) => {
-            // If provided a track number, try to use it, otherwise select the default track.
-            reader.tracks().get(t).unwrap_or(reader.default_track().unwrap())
-        }
-        _ => reader.default_track().unwrap(),
+    // If the user provided a track number, select that track if it exists, otherwise, select the
+    // first track with a known codec.
+    let track = track_num.and_then(|t| reader.tracks().get(t))
+                         .or_else(|| first_supported_track(reader.tracks()));
+
+    let mut track_id = match track {
+        Some(track) => track.id,
+        _ => return Ok(()),
     };
-
-    let mut track_id = track.id;
-
-    // Create a decoder for the track.
-    let mut decoder = symphonia::default::get_codecs().make(&track.codec_params, &decode_options)?;
 
     // If there is a seek time, seek the reader to the time specified and get the timestamp of the
     // seeked position. All packets with a timestamp < the seeked position will not be played.
     //
     // Note: This is a half-baked approach to seeking! After seeking the reader, packets should be
-    // decoded and *samples* discarded up-to the exact *sample* indicated by required_ts. The current
-    // approach will discard excess samples if seeking to a sample within a packet.
+    // decoded and *samples* discarded up-to the exact *sample* indicated by required_ts. The
+    // current approach will discard excess samples if seeking to a sample within a packet.
     let seek_ts = if let Some(time) = seek_time {
         let seek_to = SeekTo::Time { time: Time::from(time), track_id: Some(track_id) };
 
@@ -243,6 +245,11 @@ fn play(
         match reader.seek(SeekMode::Accurate, seek_to) {
             Ok(seeked_to) => {
                 seeked_to.required_ts
+            }
+            Err(Error::ResetRequired) => {
+                print_tracks(reader.tracks());
+                track_id = first_supported_track(reader.tracks()).unwrap().id;
+                0
             }
             Err(err) => {
                 // Don't give-up on a seek error.
@@ -256,40 +263,77 @@ fn play(
         0
     };
 
-    // Decode and play the packets belonging to the selected track.
+    // The audio output device.
+    let mut audio_output = None;
+
+    let mut track_info = PlayTrackOptions { track_id, seek_ts };
+
     let result = loop {
-        // Get the next packet from the media container.
-        let packet = match reader.next_packet() {
-            Ok(packet) => packet,
+        match play_track(&mut reader, &mut audio_output, track_info, decode_opts, no_progress) {
             Err(Error::ResetRequired) => {
                 // The demuxer indicated that a reset is required. This is sometimes seen with
                 // streaming OGG (e.g., Icecast) wherein the entire contents of the container change
                 // (new tracks, codecs, metadata, etc.). Therefore, we must select a new track and
                 // recreate the decoder.
                 print_tracks(reader.tracks());
-                let track = reader.default_track().unwrap();
-                track_id = track.id;
-                decoder = symphonia::default::get_codecs().make(
-                    &track.codec_params,
-                    &decode_options
-                )?;
-                continue;
+
+                // Select the first supported track since the user's selected track number might no
+                // longer be valid or make sense.
+                let track_id = first_supported_track(reader.tracks()).unwrap().id;
+                track_info = PlayTrackOptions { track_id, seek_ts: 0 };
             }
+            res => break res,
+        }
+    };
+
+    // Flush the audio output to finish playing back any leftover samples.
+    if let Some(audio_output) = audio_output.as_mut() {
+        audio_output.flush()
+    }
+
+    result
+}
+
+fn play_track(
+    reader: &mut Box<dyn FormatReader>,
+    audio_output: &mut Option<Box<dyn output::AudioOutput>>,
+    play_opts: PlayTrackOptions,
+    decode_opts: &DecoderOptions,
+    no_progress: bool,
+) -> Result<()> {
+
+    // Get the selected track using the track ID.
+    let track = match reader.tracks().iter().find(|track| track.id == play_opts.track_id) {
+        Some(track) => track,
+        _ => return Ok(())
+    };
+
+    // Create a decoder for the track.
+    let mut decoder = symphonia::default::get_codecs().make(&track.codec_params, decode_opts)?;
+
+    // Get the selected track's timebase and duration.
+    let tb = track.codec_params.time_base;
+    let dur = track.codec_params.n_frames.map(|frames| track.codec_params.start_ts + frames);
+
+    // Decode and play the packets belonging to the selected track.
+    let result = loop {
+        // Get the next packet from the format reader.
+        let packet = match reader.next_packet() {
+            Ok(packet) => packet,
             Err(err) => break Err(err),
         };
 
-        // If the packet does not belong to the selected track, skip over it.
-        if packet.track_id() != track_id {
+        // If the packet does not belong to the selected track, skip it.
+        if packet.track_id() != play_opts.track_id {
             continue;
         }
 
-        // Print out new metadata.
+        //Print out new metadata.
         while !reader.metadata().is_latest() {
             reader.metadata().pop();
 
             if let Some(rev) = reader.metadata().current() {
-                print_tags(rev.tags());
-                print_visuals(rev.visuals());
+                print_update(rev);
             }
         }
 
@@ -298,21 +342,30 @@ fn play(
             Ok(decoded) => {
                 // If the audio output is not open, try to open it.
                 if audio_output.is_none() {
-                    // Get the buffer specification. This is a description of the decoded audio
-                    // buffer's sample format.
-                    let spec = decoded.spec().clone();
+                    // Get the audio buffer specification. This is a description of the decoded
+                    // audio buffer's sample format and sample rate.
+                    let spec = *decoded.spec();
 
-                    // Get the duration of the decoded buffer.
-                    let duration = Duration::from(decoded.capacity() as u64);
+                    // Get the capacity of the decoded buffer. Note that this is capacity, not
+                    // length! The capacity of the decoded buffer is constant for the life of the
+                    // decoder, but the length is not.
+                    let duration = decoded.capacity() as u64;
 
                     // Try to open the audio output.
-                    audio_output = Some(output::try_open(spec, duration).unwrap());
+                    audio_output.replace(output::try_open(spec, duration).unwrap());
+                }
+                else {
+                    // TODO: Check the audio spec. and duration hasn't changed.
                 }
 
                 // Write the decoded audio samples to the audio output if the presentation timestamp
                 // for the packet is >= the seeked position (0 if not seeking).
-                if packet.pts() >= seek_ts {
-                    if let Some(audio_output) = audio_output.as_mut() {
+                if packet.pts() >= play_opts.seek_ts {
+                    if !no_progress {
+                        print_progress(packet.pts(), dur, tb);
+                    }
+
+                    if let Some(audio_output) = audio_output {
                         audio_output.write(decoded).unwrap()
                     }
                 }
@@ -325,11 +378,6 @@ fn play(
             Err(err) => break Err(err),
         }
     };
-
-    // Flush the audio output to finish playing back any leftover samples.
-    if let Some(audio_output) = audio_output.as_mut() {
-        audio_output.flush()
-    }
 
     // Regardless of result, finalize the decoder to get the verification result.
     let finalize_result = decoder.finalize();
@@ -344,6 +392,10 @@ fn play(
     }
 
     result
+}
+
+fn first_supported_track(tracks: &[Track]) -> Option<&Track> {
+    tracks.iter().find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
 }
 
 fn print_format(path: &str, probed: &mut ProbeResult) {
@@ -372,7 +424,15 @@ fn print_format(path: &str, probed: &mut ProbeResult) {
     }
 
     print_cues(probed.format.cues());
-    println!("-");
+    println!(":");
+    println!();
+}
+
+fn print_update(rev: &MetadataRevision) {
+    print_tags(rev.tags());
+    print_visuals(rev.visuals());
+    println!(":");
+    println!();
 }
 
 fn print_tracks(tracks: &[Track]) {
@@ -410,6 +470,12 @@ fn print_tracks(tracks: &[Track]) {
                 else {
                     println!("|          Frames:          {}", n_frames);
                 }
+            }
+            if let Some(padding) = params.leading_padding {
+                println!("|          Start Delay:     {}", padding);
+            }
+            if let Some(padding) = params.trailing_padding {
+                println!("|          End Delay:       {}", padding);
             }
             if let Some(sample_format) = params.sample_format {
                 println!("|          Sample Format:   {:?}", sample_format);
@@ -576,4 +642,56 @@ fn fmt_time(ts: u64, tb: TimeBase) -> String {
     let secs = f64::from((time.seconds % 60) as u32) + time.frac;
 
     format!("{}:{:0>2}:{:0>6.3}", hours, mins, secs)
+}
+
+fn print_progress(ts: u64, dur: Option<u64>, tb: Option<TimeBase>) {
+    // Get a string slice containing a progress bar.
+    fn progress_bar(ts: u64, dur: u64) -> &'static str {
+        const NUM_STEPS: usize = 60;
+
+        lazy_static! {
+            static ref PROGRESS_BAR: Vec<String> = {
+                (0..NUM_STEPS + 1).map(|i| format!("[{:<60}]", str::repeat("■", i))).collect()
+            };
+        }
+
+        let i = ((NUM_STEPS as u64).saturating_mul(ts) / dur).clamp(0, NUM_STEPS as u64);
+
+        &PROGRESS_BAR[i as usize]
+    }
+
+    // Multiple print! calls would need to be made to print the progress, so instead, only lock
+    // stdout once and use write! rather then print!.
+    let stdout = std::io::stdout();
+    let mut output = stdout.lock();
+
+    if let Some(tb) = tb {
+        let t = tb.calc_time(ts);
+
+        let hours = t.seconds / (60 * 60);
+        let mins = t.seconds / 60;
+        let secs = f64::from((t.seconds % 60) as u32) + t.frac;
+
+        write!(output, "\r⏵ {}:{:0>2}:{:0>4.1}", hours, mins, secs).unwrap();
+
+        if let Some(dur) = dur {
+            let d = tb.calc_time(dur.saturating_sub(ts));
+
+            let hours = d.seconds / (60 * 60);
+            let mins = d.seconds / 60;
+            let secs = f64::from((d.seconds % 60) as u32) + d.frac;
+
+            write!(
+                output,
+                " {} -{}:{:0>2}:{:0>4.1}",
+                progress_bar(ts, dur), hours, mins, secs
+            ).unwrap();
+        }
+    }
+    else {
+        write!(output, "\r⏵ {}", ts).unwrap();
+    }
+
+    // Flush immediately since stdout is buffered.
+    output.flush().unwrap();
 }
