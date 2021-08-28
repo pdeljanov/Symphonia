@@ -17,7 +17,6 @@ use std::fs::File;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-use symphonia;
 use symphonia::core::audio::{AudioBufferRef, SampleBuffer};
 use symphonia::core::codecs::{Decoder, DecoderOptions};
 use symphonia::core::errors::{Error, Result};
@@ -25,11 +24,9 @@ use symphonia::core::formats::{FormatReader, FormatOptions};
 use symphonia::core::io::{MediaSourceStream, ReadOnlySource};
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
-use symphonia::core::units::Duration;
 
 use clap::{Arg, App};
 use log::{info, warn};
-use pretty_env_logger;
 
 #[derive(Default)]
 struct TestOptions {
@@ -118,8 +115,8 @@ fn get_next_audio_buf(inst: &mut DecoderInstance) -> Result<AudioBufferRef<'_>> 
 
 fn copy_audio_buf_to_sample_buf(src: AudioBufferRef<'_>, dst: &mut Option<SampleBuffer<f32>>) {
     if dst.is_none() {
-        let spec = src.spec().clone();
-        let duration = Duration::from(src.capacity() as u64);
+        let spec = *src.spec();
+        let duration = src.capacity() as u64;
 
         info!(
             "created target raw audio buffer with rate={}, channels={}, duration={}",
@@ -166,7 +163,7 @@ fn run_check(
         // The number of failed samples in the target packet.
         let mut n_failed_pkt_samples = 0;
 
-        while tgt_samples.len() > 0 {
+        while !tgt_samples.is_empty() {
             // Need to read a new reference packet.
             if ref_sample_pos == ref_sample_cnt {
                 // Get next reference audio buffer.
@@ -198,18 +195,16 @@ fn run_check(
                 if delta.abs() > 0.00001 {
 
                     // Print per-sample or per-packet failure nessage based on selected options.
-                    if !opts.is_quiet {
-                        if opts.is_per_sample || n_failed_pkt_samples == 0 {
-                            eprintln!(
-                                "[FAIL] packet={:>6}, sample_num={:>12} ({:>4}), dec={:+.6}, ref={:+.6} ({:+.6})",
-                                acct.n_packets,
-                                acct.n_samples,
-                                acct.n_samples - sample_num_base,
-                                t,
-                                r,
-                                r - t
-                            );
-                        }
+                    if !opts.is_quiet && (opts.is_per_sample || n_failed_pkt_samples == 0) {
+                        eprintln!(
+                            "[FAIL] packet={:>6}, sample_num={:>12} ({:>4}), dec={:+.6}, ref={:+.6} ({:+.6})",
+                            acct.n_packets,
+                            acct.n_samples,
+                            acct.n_samples - sample_num_base,
+                            t,
+                            r,
+                            r - t
+                        );
                     }
 
                     n_failed_pkt_samples += 1;
@@ -294,7 +289,7 @@ fn main() {
 
     if !opts.is_quiet {
         println!("Input Path: {}", path);
-        println!("");
+        println!();
     }
 
     match run_test(path, &opts, &mut res) {
@@ -307,15 +302,15 @@ fn main() {
     };
 
     if !opts.is_quiet {
-        println!("");
+        println!();
     }
 
     println!("Test Results");
     println!("=================================================");
-    println!("");
+    println!();
     println!("  Failed/Total Packets: {:>12}/{:>12}", res.n_failed_packets, res.n_packets);
     println!("  Failed/Total Samples: {:>12}/{:>12}", res.n_failed_samples, res.n_samples);
-    println!("");
+    println!();
 
     let ret = if res.n_failed_samples == 0 {
         println!("PASS");
