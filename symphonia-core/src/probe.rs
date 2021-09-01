@@ -303,7 +303,7 @@ impl Probe {
         // Could not find any marker within the probe limit.
         error!("reached probe limit of {} bytes.", Probe::PROBE_SEARCH_LIMIT);
 
-        unsupported_error("no suitable reader found")
+        unsupported_error("core (probe): no suitable reader found")
     }
 
     /// Searches the provided `MediaSourceStream` for a container format. Any metadata that is read

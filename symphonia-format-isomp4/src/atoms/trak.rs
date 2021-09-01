@@ -51,11 +51,11 @@ impl Atom for TrakAtom {
         }
 
         if tkhd.is_none() {
-            return decode_error("missing tkhd atom");
+            return decode_error("isomp4: missing tkhd atom");
         }
 
         if mdia.is_none() {
-            return decode_error("missing mdia atom");
+            return decode_error("isomp4: missing mdia atom");
         }
 
         Ok(TrakAtom {

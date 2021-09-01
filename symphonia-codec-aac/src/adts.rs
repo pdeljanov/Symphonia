@@ -90,7 +90,7 @@ impl AdtsHeader {
 
         // Sample rate index.
         let sample_rate = match bs.read_bits_leq32(4)? as usize {
-            15 => return decode_error("forbidden sample rate"),
+            15 => return decode_error("adts: forbidden sample rate"),
             idx => AAC_SAMPLE_RATES[idx],
         };
 
@@ -110,7 +110,7 @@ impl AdtsHeader {
         let frame_len = bs.read_bits_leq32(13)? as usize;
 
         if frame_len < AdtsHeader::SIZE {
-            return decode_error("invalid ADTS frame length");
+            return decode_error("adts: invalid adts frame length");
         }
 
         let _fullness = bs.read_bits_leq32(11)?;
@@ -118,7 +118,7 @@ impl AdtsHeader {
 
         // TODO: Support multiple AAC packets per ADTS packet.
         if num_aac_frames > 1 {
-            return unsupported_error("only 1 aac frame per adts packet is supported");
+            return unsupported_error("adts: only 1 aac frame per adts packet is supported");
         }
 
         Ok(AdtsHeader {

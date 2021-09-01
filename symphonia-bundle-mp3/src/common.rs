@@ -361,7 +361,7 @@ impl BitResevoir {
         let main_data_end = main_data_begin + main_data_size;
 
         if main_data_end > self.buf.len() {
-            return decode_error("invalid main_data length, will exceed resevoir buffer");
+            return decode_error("mp3: invalid main_data length, will exceed resevoir buffer");
         }
 
         // If the offset is less than or equal to the amount of data in the resevoir, shift the
@@ -386,7 +386,7 @@ impl BitResevoir {
             self.buf[self.len..self.len + main_data_size].copy_from_slice(&pkt_main_data);
             self.len += main_data_size;
 
-            decode_error("invalid main_data_begin")
+            decode_error("mp3: invalid main_data_begin")
         }
     }
 

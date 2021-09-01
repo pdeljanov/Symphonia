@@ -278,7 +278,7 @@ impl StreamSegment for MoofSegment {
             trun_offset += trun_size;
         }
 
-        decode_error("invalid sample index")
+        decode_error("isomp4: invalid sample index")
     }
 
     fn track_sample_range(&self, track_num: u32) -> (u32, u32) {
@@ -307,7 +307,7 @@ fn get_chunk_offset(
             Ok(Some(u64::from(*offset)))
         }
         else {
-            decode_error("missing stco entry")
+            decode_error("isomp4: missing stco entry")
         }
     }
     else if let Some(co64) = co64.as_ref() {
@@ -316,12 +316,12 @@ fn get_chunk_offset(
             Ok(Some(*offset))
         }
         else {
-            decode_error("missing co64 entry")
+            decode_error("isomp4: missing co64 entry")
         }
     }
     else {
         // This should never happen because it is mandatory to have either a stco or co64 atom.
-        decode_error("missing stco or co64 atom")
+        decode_error("isomp4: missing stco or co64 atom")
     }
 }
 
@@ -415,7 +415,7 @@ impl StreamSegment for MoovSegment {
                         samples.iter().map(|&size| u64::from(size)).sum()
                     }
                     else {
-                        return decode_error("missing one or more stsz entries");
+                        return decode_error("isomp4: missing one or more stsz entries");
                     }
                 }
             };
@@ -434,7 +434,7 @@ impl StreamSegment for MoovSegment {
                     *size
                 }
                 else {
-                    return decode_error("missing stsz entry");
+                    return decode_error("isomp4: missing stsz entry");
                 }
             }
         };

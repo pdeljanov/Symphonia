@@ -24,7 +24,7 @@ impl Atom for FtypAtom {
     fn read<B: ReadBytes>(reader: &mut B, header: AtomHeader) -> Result<Self> {
         // The Ftyp atom must be a multiple of 4 since it only stores FourCCs.
         if header.data_len & 0x3 != 0 {
-            return decode_error("invalid ftyp data length");
+            return decode_error("isomp4: invalid ftyp data length");
         }
     
         // Major

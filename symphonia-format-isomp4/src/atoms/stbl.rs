@@ -74,19 +74,19 @@ impl Atom for StblAtom {
         }
 
         if stsd.is_none() {
-            return decode_error("missing stsd atom");
+            return decode_error("isomp4: missing stsd atom");
         }
 
         if stts.is_none() {
-            return decode_error("missing stts atom");
+            return decode_error("isomp4: missing stts atom");
         }
 
         if stsc.is_none() {
-            return decode_error("missing stsc atom");
+            return decode_error("isomp4: missing stsc atom");
         }
 
         if stsz.is_none() {
-            return decode_error("missing stsz atom");
+            return decode_error("isomp4: missing stsz atom");
         }
 
         if stco.is_none() && co64.is_none() {

@@ -451,7 +451,7 @@ impl CodecRegistry {
             Ok((descriptor.inst_func)(params, options)?)
         }
         else {
-            unsupported_error("unsupported codec")
+            unsupported_error("core (codec):unsupported codec")
         }
     }
 }

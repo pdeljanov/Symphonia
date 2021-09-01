@@ -95,7 +95,7 @@ fn read_id3v2_header<B: ReadBytes>(reader: &mut B) -> Result<Header> {
     let marker = reader.read_triple_bytes()?;
 
     if marker != *b"ID3" {
-        return unsupported_error("not an ID3v2 tag");
+        return unsupported_error("id3v2: not an ID3v2 tag");
     }
 
     let major_version = reader.read_u8()?;
@@ -115,13 +115,13 @@ fn read_id3v2_header<B: ReadBytes>(reader: &mut B) -> Result<Header> {
 
     // Major and minor version numbers should never equal 0xff as per the specification. 
     if major_version == 0xff || minor_version == 0xff {
-        return decode_error("invalid version number(s)");
+        return decode_error("id3v2: invalid version number(s)");
     }
 
     // Only support versions 2.2.x (first version) to 2.4.x (latest version as of May 2019) of the 
     // specification.
     if major_version < 2 || major_version > 4 {
-        return unsupported_error("unsupported ID3v2 version");
+        return unsupported_error("id3v2: unsupported ID3v2 version");
     }
 
     // Version 2.2 of the standard specifies a compression flag bit, but does not specify a 
@@ -129,7 +129,7 @@ fn read_id3v2_header<B: ReadBytes>(reader: &mut B) -> Result<Header> {
     // bit for other features. Since there is no way to know how to handle the remaining tag data, 
     // return an unsupported error.
     if major_version == 2 && (flags & 0x40) != 0 {
-        return unsupported_error("ID3v2.2 compression is not supported");
+        return unsupported_error("id3v2: ID3v2.2 compression is not supported");
     }
 
     // With the exception of the compression flag in version 2.2, flags were added sequentially each
@@ -157,7 +157,7 @@ fn read_id3v2p3_extended_header<B: ReadBytes>(reader: &mut B) -> Result<Extended
     let padding_size = reader.read_be_u32()?;
 
     if !(size == 6 || size == 10) {
-        return decode_error("invalid extended header size");
+        return decode_error("id3v2: invalid extended header size");
     }
 
     let mut header = ExtendedHeader {
@@ -180,7 +180,7 @@ fn read_id3v2p4_extended_header<B: ReadBytes>(reader: &mut B) -> Result<Extended
     let _size = read_syncsafe_leq32(reader, 28)?;
     
     if reader.read_u8()? != 1 {
-        return decode_error("extended flags should have a length of 1");
+        return decode_error("id3v2: extended flags should have a length of 1");
     }
 
     let flags = reader.read_u8()?;
@@ -196,7 +196,7 @@ fn read_id3v2p4_extended_header<B: ReadBytes>(reader: &mut B) -> Result<Extended
     if flags & 0x40 != 0x0 {
         let len = reader.read_u8()?;
         if len != 1 {
-            return decode_error("is update extended flag has invalid size");
+            return decode_error("id3v2: is update extended flag has invalid size");
         }
 
         header.is_update = Some(true);
@@ -206,7 +206,7 @@ fn read_id3v2p4_extended_header<B: ReadBytes>(reader: &mut B) -> Result<Extended
     if flags & 0x20 != 0x0 {
         let len = reader.read_u8()?;
         if len != 5 {
-            return decode_error("CRC32 extended flag has invalid size");
+            return decode_error("id3v2: CRC32 extended flag has invalid size");
         }
 
         header.crc32 = Some(read_syncsafe_leq32(reader, 32)?);
@@ -216,7 +216,7 @@ fn read_id3v2p4_extended_header<B: ReadBytes>(reader: &mut B) -> Result<Extended
     if flags & 0x10 != 0x0 {
         let len = reader.read_u8()?;
         if len != 1 {
-            return decode_error("restrictions extended flag has invalid size");
+            return decode_error("id3v2: restrictions extended flag has invalid size");
         }
 
         let restrictions = reader.read_u8()?;

@@ -402,7 +402,7 @@ impl LogicalStream {
         if new_part_len > self.part_buf.len() {
             // Do not exceed an a certain limit to prevent unbounded memory growth.
             if new_part_len > LogicalStream::MAX_PACKET_LEN {
-                return decode_error("packet buffer would exceed max size");
+                return decode_error("ogg: packet buffer would exceed max size");
             }
 
             // New partial packet buffer size, rounded up to the nearest 8K block.

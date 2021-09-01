@@ -54,7 +54,7 @@ impl Atom for HdlrAtom {
             b"subt" => TrackType::Subtitle,
             b"text" => TrackType::Text,
             _ => {
-                return decode_error("illegal track type")
+                return decode_error("isomp4: illegal track type")
             }
         };
 

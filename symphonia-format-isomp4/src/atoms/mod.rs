@@ -297,7 +297,7 @@ impl AtomHeader {
 
                 // The atom size should be atleast the length of the header.
                 if atom_len < AtomHeader::EXTENDED_HEADER_SIZE {
-                    return decode_error("atom size is invalid");
+                    return decode_error("isomp4: atom size is invalid");
                 }
 
                 atom_len - AtomHeader::EXTENDED_HEADER_SIZE
@@ -306,7 +306,7 @@ impl AtomHeader {
                 // The atom size should be atleast the length of the header.
                 if atom_len < AtomHeader::HEADER_SIZE {
                     dbg!(atom_len);
-                    return decode_error("atom size is invalid");
+                    return decode_error("isomp4: atom size is invalid");
                 }
 
                 atom_len - AtomHeader::HEADER_SIZE
@@ -393,7 +393,7 @@ impl<B: ReadBytes> AtomIterator<B> {
         else if cur_pos > self.next_atom_pos {
             // This is very bad, either the atom's length was incorrect or the demuxer erroroneously
             // overread an atom.
-            return decode_error("overread atom");
+            return decode_error("isomp4: overread atom");
         }
 
         // If len is specified, then do not read more than len bytes.

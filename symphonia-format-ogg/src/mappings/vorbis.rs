@@ -263,7 +263,7 @@ fn read_ident_header<B: ReadBytes>(reader: &mut B) -> Result<IdentHeader> {
     let packet_type = reader.read_u8()?;
 
     if packet_type != VORBIS_PACKET_TYPE_IDENTIFICATION {
-        return decode_error("vorbis: invalid packet type for identification header");
+        return decode_error("ogg (vorbis): invalid packet type for identification header");
     }
 
     // Next, the header packet signature must be correct.
@@ -271,27 +271,27 @@ fn read_ident_header<B: ReadBytes>(reader: &mut B) -> Result<IdentHeader> {
     reader.read_buf_exact(&mut packet_sig_buf)?;
 
     if packet_sig_buf != VORBIS_HEADER_PACKET_SIGNATURE {
-        return decode_error("vorbis: invalid header signature");
+        return decode_error("ogg (vorbis): invalid header signature");
     }
 
     // Next, the Vorbis version must be 0.
     let version = reader.read_u32()?;
 
     if version != VORBIS_VERSION {
-        return unsupported_error("vorbis: only vorbis 1 is supported");
+        return unsupported_error("ogg (vorbis): only vorbis 1 is supported");
     }
 
     // Next, the number of channels and sample rate must be non-zero.
     let n_channels = reader.read_u8()?;
 
     if n_channels == 0 {
-        return decode_error("vorbis: number of channels cannot be 0");
+        return decode_error("ogg (vorbis): number of channels cannot be 0");
     }
 
     let sample_rate = reader.read_u32()?;
 
     if sample_rate == 0 {
-        return decode_error("vorbis: sample rate cannot be 0")
+        return decode_error("ogg (vorbis): sample rate cannot be 0")
     }
 
     // Read the bitrate range.
@@ -307,21 +307,21 @@ fn read_ident_header<B: ReadBytes>(reader: &mut B) -> Result<IdentHeader> {
 
     // The block sizes must not exceed the bounds.
     if bs0_exp < VORBIS_BLOCKSIZE_MIN || bs0_exp > VORBIS_BLOCKSIZE_MAX {
-        return decode_error("vorbis: blocksize_0 out-of-bounds");
+        return decode_error("ogg (vorbis): blocksize_0 out-of-bounds");
     }
 
     if bs1_exp < VORBIS_BLOCKSIZE_MIN || bs1_exp > VORBIS_BLOCKSIZE_MAX {
-        return decode_error("vorbis: blocksize_1 out-of-bounds");
+        return decode_error("ogg (vorbis): blocksize_1 out-of-bounds");
     }
 
     // Blocksize_0 must be >= blocksize_1
     if bs0_exp > bs1_exp {
-        return decode_error("vorbis: blocksize_0 exceeds blocksize_1");
+        return decode_error("ogg (vorbis): blocksize_0 exceeds blocksize_1");
     }
 
     // Framing flag must be set.
     if reader.read_u8()? != 0x1 {
-        return decode_error("vorbis: ident header framing flag unset");
+        return decode_error("ogg (vorbis): ident header framing flag unset");
     }
 
     Ok(IdentHeader {
@@ -491,7 +491,7 @@ fn skip_floor(bs: &mut BitReaderRtl<'_>) -> Result<()> {
     match floor_type {
         0 => skip_floor0_setup(bs),
         1 => skip_floor1_setup(bs),
-        _ => decode_error("vorbis: invalid floor type"),
+        _ => decode_error("ogg (vorbis): invalid floor type"),
     }
 }
 

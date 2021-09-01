@@ -71,7 +71,7 @@ impl FormatReader for WavReader {
         let marker = source.read_quad_bytes()?;
 
         if marker != WAVE_STREAM_MARKER {
-            return unsupported_error("missing riff stream marker");
+            return unsupported_error("wav: missing riff stream marker");
         }
 
         // A Wave file is one large RIFF chunk, with the actual meta and audio data as sub-chunks.
@@ -84,7 +84,7 @@ impl FormatReader for WavReader {
         if riff_form != WAVE_RIFF_FORM {
             error!("riff form is not wave ({})", std::str::from_utf8(&riff_form).unwrap());
 
-            return unsupported_error("riff form is not wave");
+            return unsupported_error("wav: riff form is not wave");
         }
 
         let mut riff_chunks = ChunksReader::<RiffWaveChunks>::new(riff_len);
@@ -99,7 +99,7 @@ impl FormatReader for WavReader {
             // The last chunk should always be a data chunk, if it is not, then the stream is
             // unsupported.
             if chunk.is_none() {
-                return unsupported_error("missing data chunk");
+                return unsupported_error("wav: missing data chunk");
             }
 
             match chunk.unwrap() {

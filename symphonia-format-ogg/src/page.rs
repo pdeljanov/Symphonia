@@ -35,21 +35,21 @@ fn read_page_header<B: ReadBytes>(reader: &mut B) -> Result<PageHeader> {
     let marker = reader.read_quad_bytes()?;
 
     if marker != OGG_PAGE_MARKER {
-        return decode_error("missing ogg stream marker");
+        return decode_error("ogg: missing ogg stream marker");
     }
 
     let version = reader.read_byte()?;
 
     // There is only one OGG version, and that is version 0.
     if version != 0 {
-        return decode_error("invalid ogg version");
+        return decode_error("ogg: invalid ogg version");
     }
 
     let flags = reader.read_byte()?;
 
     // Only the first 3 least-significant bits are used for flags.
     if flags & 0xf8 != 0 {
-        return decode_error("invalid flag bits set");
+        return decode_error("ogg: invalid flag bits set");
     }
 
     let ts = reader.read_u64()?;
@@ -246,7 +246,7 @@ impl PageReader {
             self.packet_lens.clear();
             self.page_buf_len = 0;
 
-            return decode_error("crc mismatch");
+            return decode_error("ogg: crc mismatch");
         }
 
         self.header = header;

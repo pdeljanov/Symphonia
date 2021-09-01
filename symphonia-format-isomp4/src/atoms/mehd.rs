@@ -35,7 +35,7 @@ impl Atom for MehdAtom {
                 reader.read_be_u64()?
             }
             _ => {
-                return decode_error("invalid mehd version");
+                return decode_error("isomp4: invalid mehd version");
             }
         };
 

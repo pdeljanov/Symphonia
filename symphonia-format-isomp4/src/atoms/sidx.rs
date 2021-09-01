@@ -56,7 +56,7 @@ impl Atom for SidxAtom {
             0 => ( u64::from(reader.read_be_u32()?), anchor + u64::from(reader.read_be_u32()?) ),
             1 => ( reader.read_be_u64()?, anchor + reader.read_be_u64()? ),
             _ => {
-                return decode_error("invalid sidx version");
+                return decode_error("isomp4: invalid sidx version");
             }
         };
 

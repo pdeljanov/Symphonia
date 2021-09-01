@@ -86,7 +86,7 @@ impl<T: ParseChunkTag> ChunksReader<T> {
                 // When ffmpeg encodes wave to stdout the riff (parent) and data chunk lengths are
                 // (2^32)-1 since the size can't be known ahead of time.
                 if !(self.len == len && len == u32::MAX) {
-                    return decode_error("chunk length exceeds parent (list) chunk length");
+                    return decode_error("wav: chunk length exceeds parent (list) chunk length");
                 }
             }
 
@@ -284,7 +284,7 @@ impl WaveFormatChunk {
             18 => true,
             // WaveFormatEx with extra data length field and extra data.
             40 => true,
-            _ => return decode_error("malformed fmt_pcm chunk"),
+            _ => return decode_error("wav: malformed fmt_pcm chunk"),
         };
 
         // If there is extra data, read the length, and discard the extra data.
@@ -308,7 +308,7 @@ impl WaveFormatChunk {
             16 => CODEC_TYPE_PCM_S16LE,
             24 => CODEC_TYPE_PCM_S24LE,
             32 => CODEC_TYPE_PCM_S32LE,
-            _  => return decode_error("bits per sample for fmt_pcm must be 8, 16, 24 or 32 bits"),
+            _  => return decode_error("wav: bits per sample for fmt_pcm must be 8, 16, 24 or 32 bits"),
         };
 
         // The PCM format only supports 1 or 2 channels, for mono and stereo channel layouts,
@@ -316,7 +316,7 @@ impl WaveFormatChunk {
         let channels = match n_channels {
             1 => Channels::FRONT_LEFT,
             2 => Channels::FRONT_LEFT | Channels::FRONT_RIGHT,
-            _ => return decode_error("channel layout is not stereo or mono for fmt_pcm"),
+            _ => return decode_error("wav: channel layout is not stereo or mono for fmt_pcm"),
         };
 
         Ok(WaveFormatData::Pcm(WaveFormatPcm { bits_per_sample, channels, codec }))
@@ -334,11 +334,11 @@ impl WaveFormatChunk {
             let extra_size = reader.read_u16()?;
 
             if extra_size != 0 {
-                return decode_error("extra data not expected for fmt_ieee chunk");
+                return decode_error("wav: extra data not expected for fmt_ieee chunk");
             }
         }
         else if len > 16 {
-            return decode_error("malformed fmt_ieee chunk");
+            return decode_error("wav: malformed fmt_ieee chunk");
         }
 
         // Officially, only 32-bit floats are supported, but Symphonia can handle 64-bit floats.
@@ -348,7 +348,7 @@ impl WaveFormatChunk {
         let codec = match bits_per_sample {
             32 => CODEC_TYPE_PCM_F32LE,
             64 => CODEC_TYPE_PCM_F64LE,
-            _  => return decode_error("bits per sample for fmt_ieee must be 32 or 64 bits"),
+            _  => return decode_error("wav: bits per sample for fmt_ieee must be 32 or 64 bits"),
         };
 
         // The IEEE format only supports 1 or 2 channels, for mono and stereo channel layouts,
@@ -356,7 +356,7 @@ impl WaveFormatChunk {
         let channels = match n_channels {
             1 => Channels::FRONT_LEFT,
             2 => Channels::FRONT_LEFT | Channels::FRONT_RIGHT,
-            _ => return decode_error("channel layout is not stereo or mono for fmt_ieee"),
+            _ => return decode_error("wav: channel layout is not stereo or mono for fmt_ieee"),
         };
 
         Ok(WaveFormatData::IeeeFloat(WaveFormatIeeeFloat { channels, codec }))
@@ -369,14 +369,14 @@ impl WaveFormatChunk {
     ) -> Result<WaveFormatData> {
         // WaveFormat for the extensible format must be extended to 40 bytes in length.
         if len < 40 {
-            return decode_error("malformed fmt_ext chunk");
+            return decode_error("wav: malformed fmt_ext chunk");
         }
 
         let extra_size = reader.read_u16()?;
 
         // The size of the extra data for the Extensible format is exactly 22 bytes.
         if extra_size != 22 {
-            return decode_error("extra data size not 22 bytes for fmt_ext chunk");
+            return decode_error("wav: extra data size not 22 bytes for fmt_ext chunk");
         }
 
         let bits_per_sample = reader.read_u16()?;
@@ -384,14 +384,14 @@ impl WaveFormatChunk {
         // Bits per coded sample for extensible formats is the width per sample as stored in the
         // stream. This must be a multiple of 8.
         if (bits_per_coded_sample & 0x7) != 0 {
-            return decode_error("bits per coded sample for fmt_ext must be a multiple of 8 bits");
+            return decode_error("wav: bits per coded sample for fmt_ext must be a multiple of 8");
         }
 
         // Bits per sample indicates the number of valid bits in the encoded sample. The sample is
         // encoded in a bits per coded sample width value, therefore the valid number of bits must
         // be at most bits per coded sample long.
         if bits_per_sample > bits_per_coded_sample {
-            return decode_error("bits per sample must be <= bits per coded sample for fmt_ext");
+            return decode_error("wav: bits per sample must be <= bits per coded sample for fmt_ext");
         }
 
         let channel_mask = reader.read_u32()?;
@@ -451,7 +451,7 @@ impl WaveFormatChunk {
                 // IEEE floating formats do not support truncated sample widths.
                 if bits_per_sample != bits_per_coded_sample {
                     return decode_error(
-                        "bits per sample for fmt_ext IEEE sub-type must equal bits per coded sample"
+                        "wav: bits per sample for fmt_ext IEEE sub-type must equal bits per coded sample"
                     );
                 }
 
@@ -460,13 +460,13 @@ impl WaveFormatChunk {
                     32 => CODEC_TYPE_PCM_F32LE,
                     64 => CODEC_TYPE_PCM_F64LE,
                     _ => return decode_error(
-                            "bits per sample for fmt_ext IEEE sub-type must be 32 or 64 bits"
+                            "wav: bits per sample for fmt_ext IEEE sub-type must be 32 or 64 bits"
                         ),
                 }
             }
             KSDATAFORMAT_SUBTYPE_ALAW => CODEC_TYPE_PCM_ALAW,
             KSDATAFORMAT_SUBTYPE_MULAW => CODEC_TYPE_PCM_MULAW,
-            _ => return unsupported_error("unsupported fmt_ext sub-type"),
+            _ => return unsupported_error("wav: unsupported fmt_ext sub-type"),
         };
 
         let channels = map_wave_channels(channel_mask);
@@ -486,7 +486,7 @@ impl WaveFormatChunk {
         len: u32,
     ) -> Result<WaveFormatData> {
         if len != 18 {
-            return decode_error("malformed fmt_alaw chunk");
+            return decode_error("wav: malformed fmt_alaw chunk");
         }
 
         let extra_size = reader.read_u16()?;
@@ -498,7 +498,7 @@ impl WaveFormatChunk {
         let channels = match n_channels {
             1 => Channels::FRONT_LEFT,
             2 => Channels::FRONT_LEFT | Channels::FRONT_RIGHT,
-            _ => return decode_error("channel layout is not stereo or mono for fmt_alaw")
+            _ => return decode_error("wav: channel layout is not stereo or mono for fmt_alaw")
         };
 
         Ok(WaveFormatData::ALaw(WaveFormatALaw{ codec: CODEC_TYPE_PCM_ALAW, channels }))
@@ -510,7 +510,7 @@ impl WaveFormatChunk {
         len: u32,
     ) -> Result<WaveFormatData> {
         if len != 18 {
-            return decode_error("malformed fmt_mulaw chunk");
+            return decode_error("wav: malformed fmt_mulaw chunk");
         }
 
         let extra_size = reader.read_u16()?;
@@ -522,7 +522,7 @@ impl WaveFormatChunk {
         let channels = match n_channels {
             1 => Channels::FRONT_LEFT,
             2 => Channels::FRONT_LEFT | Channels::FRONT_RIGHT,
-            _ => return decode_error("channel layout is not stereo or mono for fmt_mulaw")
+            _ => return decode_error("wav: channel layout is not stereo or mono for fmt_mulaw")
         };
 
         Ok(WaveFormatData::MuLaw(WaveFormatMuLaw{ codec: CODEC_TYPE_PCM_MULAW, channels }))
@@ -534,7 +534,7 @@ impl ParseChunk for WaveFormatChunk {
         // WaveFormat has a minimal length of 16 bytes. This may be extended with format specific
         // data later.
         if len < 16 {
-            return decode_error("malformed fmt chunk");
+            return decode_error("wav: malformed fmt chunk");
         }
 
         let format = reader.read_u16()?;
@@ -575,7 +575,7 @@ impl ParseChunk for WaveFormatChunk {
                 Self::read_mulaw_pcm_fmt(reader, n_channels, len)
             }
             // Unsupported format.
-            _ => return unsupported_error("unsupported wave format"),
+            _ => return unsupported_error("wav: unsupported wave format"),
         }?;
 
         Ok(WaveFormatChunk { n_channels, sample_rate, avg_bytes_per_sec, block_align, format_data })
@@ -636,7 +636,7 @@ impl ParseChunk for FactChunk {
         // A Fact chunk is exactly 4 bytes long, though there is some mystery as to whether there
         // can be more fields in the chunk.
         if len != 4 {
-            return decode_error("malformed fact chunk");
+            return decode_error("wav: malformed fact chunk");
         }
 
         Ok(FactChunk{ n_frames: reader.read_u32()? })
@@ -667,7 +667,7 @@ impl ParseChunk for ListChunk {
         // A List chunk must contain atleast the list/form identifier. However, an empty list
         // (len == 4) is permissible.
         if len < 4 {
-            return decode_error("malformed list chunk");
+            return decode_error("wav: malformed list chunk");
         }
 
         Ok(ListChunk{

@@ -505,7 +505,7 @@ impl Atom for MetaTagDataAtom {
         // indexes. For iso/mp4, this is a version, and there is only one version, 0. Therefore,
         // flags are interpreted as the actual data type index.
         if version != 0 {
-            return decode_error("invalid data atom version");
+            return decode_error("isomp4: invalid data atom version");
         }
 
         let data_type = DataType::from(flags);

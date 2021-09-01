@@ -75,7 +75,7 @@ impl Atom for MoovAtom {
         }
 
         if mvhd.is_none() {
-            return decode_error("missing mvhd atom");
+            return decode_error("isomp4: missing mvhd atom");
         }
 
         // If fragmented, the mvex atom should contain a trex atom for each trak atom in moov.

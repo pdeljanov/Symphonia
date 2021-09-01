@@ -55,7 +55,7 @@ impl Atom for ElstAtom {
                     )
                 }
                 _ => {
-                    return decode_error("invalid tkhd version")
+                    return decode_error("isomp4: invalid tkhd version")
                 }
             };
 

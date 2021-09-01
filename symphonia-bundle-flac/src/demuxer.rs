@@ -72,7 +72,7 @@ impl FlacReader {
                         index = Some(new_index);
                     }
                     else {
-                        return decode_error("found more than one seek table block");
+                        return decode_error("flac: found more than one seek table block");
                     }
                 },
                 // VorbisComment blocks are parsed into Tags.
@@ -160,7 +160,7 @@ impl FormatReader for FlacReader {
         let marker = source.read_quad_bytes()?;
 
         if marker != FLAC_STREAM_MARKER {
-            return unsupported_error("missing flac stream marker");
+            return unsupported_error("flac: missing flac stream marker");
         }
 
         // Strictly speaking, the first metadata block must be a StreamInfo block. There is
@@ -171,7 +171,7 @@ impl FormatReader for FlacReader {
 
         // Make sure that there is atleast one StreamInfo block.
         if flac.tracks.is_empty() {
-            return decode_error("no stream info block");
+            return decode_error("flac: no stream info block");
         }
 
         // The first frame offset is the byte offset from the beginning of the stream after all the
@@ -380,7 +380,7 @@ fn read_stream_info_block<B : ReadBytes>(
         tracks.push(Track::new(0, codec_params));
     }
     else {
-        return decode_error("found more than one stream info block");
+        return decode_error("flac: found more than one stream info block");
     }
 
     Ok(())

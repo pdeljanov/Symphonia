@@ -64,7 +64,7 @@ impl Atom for MvhdAtom {
                 mvhd.duration  = reader.read_be_u64()?;
             }
             _ => {
-                return decode_error("invalid mvhd version")
+                return decode_error("isomp4: invalid mvhd version")
             }
         }
 

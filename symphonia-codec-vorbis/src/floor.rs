@@ -348,7 +348,7 @@ impl Floor1 {
 
                 // All elements in the x list must be unique.
                 if floor1_x_list_unique.insert(x) == false {
-                    return decode_error("vorbis1: floor1, x_list is not unique");
+                    return decode_error("vorbis: floor1, x_list is not unique");
                 }
 
                 floor1_x_list.push(x);

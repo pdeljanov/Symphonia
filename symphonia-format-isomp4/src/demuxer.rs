@@ -237,7 +237,7 @@ impl IsoMp4Reader {
                     }
                     else {
                         // TODO: This is a fatal error.
-                        return decode_error("moof atom present without mvex atom");
+                        return decode_error("isomp4: moof atom present without mvex atom");
                     }
                 },
                 _ => {
@@ -437,11 +437,11 @@ impl FormatReader for IsoMp4Reader {
         }
 
         if ftyp.is_none() {
-            return unsupported_error("missing ftyp atom");
+            return unsupported_error("isomp4: missing ftyp atom");
         }
 
         if moov.is_none() {
-            return unsupported_error("missing moov atom");
+            return unsupported_error("isomp4: missing moov atom");
         }
 
         // If the stream was seekable, then all atoms in the stream were scanned. Seek back to the
@@ -530,7 +530,7 @@ impl FormatReader for IsoMp4Reader {
             else {
                 // The stream is not seekable and the desired seek position falls outside the lower
                 // bound of the buffer cache. This sample cannot be read.
-                return decode_error("packet out-of-bounds for a non-seekable stream");
+                return decode_error("isomp4: packet out-of-bounds for a non-seekable stream");
             }
         }
 

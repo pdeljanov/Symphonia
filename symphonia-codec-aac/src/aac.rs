@@ -36,7 +36,7 @@ macro_rules! validate {
     ($a:expr) => {
         if !$a {
             error!("check failed at {}:{}", file!(), line!());
-            return decode_error("invalid data");
+            return decode_error("aac: invalid data");
         }
     };
 }
@@ -166,7 +166,7 @@ impl M4AInfo {
                 let extension_flag = bs.read_bit()?;
 
                 if self.channels == 0 {
-                    return unsupported_error("program config element");
+                    return unsupported_error("aac: program config element");
                 }
 
                 if (self.otype == M4AType::Scalable) || (self.otype == M4AType::ER_AAC_Scalable) {
@@ -192,59 +192,59 @@ impl M4AInfo {
                     let extension_flag3 = bs.read_bit()?;
 
                     if extension_flag3 {
-                        return unsupported_error("version3 extensions");
+                        return unsupported_error("aac: version3 extensions");
                     }
                 }
             }
             M4AType::CELP => {
-                return unsupported_error("CELP config");
+                return unsupported_error("aac: CELP config");
             }
             M4AType::HVXC => {
-                return unsupported_error("HVXC config");
+                return unsupported_error("aac: HVXC config");
             }
             M4AType::TTSI => {
-                return unsupported_error("TTS config");
+                return unsupported_error("aac: TTS config");
             }
             M4AType::MainSynth
             | M4AType::WavetableSynth
             | M4AType::GeneralMIDI
             | M4AType::Algorithmic => {
-                return unsupported_error("structured audio config");
+                return unsupported_error("aac: structured audio config");
             }
             M4AType::ER_CELP => {
-                return unsupported_error("ER CELP config");
+                return unsupported_error("aac: ER CELP config");
             }
             M4AType::ER_HVXC => {
-                return unsupported_error("ER HVXC config");
+                return unsupported_error("aac: ER HVXC config");
             }
             M4AType::ER_HILN | M4AType::ER_Parametric => {
-                return unsupported_error("parametric config");
+                return unsupported_error("aac: parametric config");
             }
             M4AType::SSC => {
-                return unsupported_error("SSC config");
+                return unsupported_error("aac: SSC config");
             }
             M4AType::MPEGSurround => {
                 // bs.ignore_bits(1)?; // sacPayloadEmbedding
-                return unsupported_error("MPEG Surround config");
+                return unsupported_error("aac: MPEG Surround config");
             }
             M4AType::Layer1 | M4AType::Layer2 | M4AType::Layer3 => {
-                return unsupported_error("MPEG Layer 1/2/3 config");
+                return unsupported_error("aac: MPEG Layer 1/2/3 config");
             }
             M4AType::DST => {
-                return unsupported_error("DST config");
+                return unsupported_error("aac: DST config");
             }
             M4AType::ALS => {
                 // bs.ignore_bits(5)?; // fillBits
-                return unsupported_error("ALS config");
+                return unsupported_error("aac: ALS config");
             }
             M4AType::SLS | M4AType::SLSNonCore => {
-                return unsupported_error("SLS config");
+                return unsupported_error("aac: SLS config");
             }
             M4AType::ER_AAC_ELD => {
-                return unsupported_error("ELD config");
+                return unsupported_error("aac: ELD config");
             }
             M4AType::SMRSimple | M4AType::SMRMain => {
-                return unsupported_error("symbolic music config");
+                return unsupported_error("aac: symbolic music config");
             }
             _ => {}
         };
@@ -264,7 +264,7 @@ impl M4AInfo {
                 let ep_config = bs.read_bits_leq32(2)?;
 
                 if (ep_config == 2) || (ep_config == 3) {
-                    return unsupported_error("error protection config");
+                    return unsupported_error("aac: error protection config");
                 }
                 // if ep_config == 3 {
                 //     let direct_mapping = bs.read_bit()?;
@@ -360,7 +360,7 @@ impl ICSInfo {
         self.prev_window_shape = self.window_shape;
 
         if bs.read_bit()? {
-            return decode_error("ics reserved bit set");
+            return decode_error("aac: ics reserved bit set");
         }
 
         self.window_sequence = bs.read_bits_leq32(2)? as u8;
@@ -434,7 +434,7 @@ impl LTPData {
         if !predictor_data_present {
             return Ok(None);
         }
-        return unsupported_error("predictor data");
+        return unsupported_error("aac: predictor data");
         /*
                 if is_main {
                     let predictor_reset                         = bs.read_bit()?;
@@ -630,7 +630,7 @@ impl GainControlData {
         if !gain_control_data_present {
             return Ok(None);
         }
-        return unsupported_error("gain control data");
+        return unsupported_error("aac: gain control data");
         /*        self.max_band                                   = bs.read_bits_leq32(2)? as u8;
                 if window_sequence == ONLY_LONG_SEQUENCE {
                     for bd in 0..max_band
@@ -721,7 +721,7 @@ impl ICS {
                 self.sect_len[g][l] = 0;
 
                 if self.sect_cb[g][l] == RESERVED_HCB {
-                    return decode_error("invalid band type");
+                    return decode_error("aac: invalid band type");
                 }
 
                 loop {
@@ -1254,7 +1254,7 @@ impl ChannelPair {
                         }
                     }
                 }
-                3 => return decode_error("invalid mid-side mask"),
+                3 => return decode_error("aac: invalid mid-side mask"),
                 _ => unreachable!()
             }
 
@@ -1549,7 +1549,7 @@ impl AacDecoder {
                 }
                 2 => {
                     // ID_CCE
-                    return unsupported_error("coupling channel element");
+                    return unsupported_error("aac: coupling channel element");
                 }
                 3 => {
                     // ID_LFE
@@ -1574,7 +1574,7 @@ impl AacDecoder {
                 }
                 5 => {
                     // ID_PCE
-                    return unsupported_error("program config");
+                    return unsupported_error("aac: program config");
                 }
                 6 => {
                     // ID_FIL
@@ -1635,7 +1635,7 @@ impl Decoder for AacDecoder {
         trace!("{}", m4ainfo);
 
         if (m4ainfo.otype != M4AType::LC) || (m4ainfo.channels > 2) || (m4ainfo.samples != 1024) {
-            return unsupported_error("aac too complex");
+            return unsupported_error("aac: aac too complex");
         }
 
         let spec = SignalSpec::new(
@@ -1682,7 +1682,7 @@ impl Decoder for AacDecoder {
         // Choose decode step based on the object type.
         match self.m4ainfo.otype {
             M4AType::LC => self.decode_ga(&mut bs)?,
-            _           => return unsupported_error("object type"),
+            _           => return unsupported_error("aac: object type"),
         }
 
         Ok(self.buf.as_audio_buffer_ref())

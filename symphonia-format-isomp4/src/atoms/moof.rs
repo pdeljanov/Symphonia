@@ -51,7 +51,7 @@ impl Atom for MoofAtom {
         }
 
         if mfhd.is_none() {
-            return decode_error("missing mfhd atom");
+            return decode_error("isomp4: missing mfhd atom");
         }
 
         Ok(MoofAtom {

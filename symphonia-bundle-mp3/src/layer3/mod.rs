@@ -204,7 +204,7 @@ fn read_main_data(
 
             // The length part2 must be less than or equal to the part2_3_length.
             if part2_len > part2_3_length {
-                return decode_error("part2_3_length is not valid");
+                return decode_error("mp3: part2_3_length is not valid");
             }
 
             // The Huffman code length (part3).
@@ -225,7 +225,7 @@ fn read_main_data(
             frame_data.granules[gr].channels[ch].rzero = match huffman_result {
                 Ok(rzero) => rzero,
                 Err(Error::IoError(e)) if e.kind() == std::io::ErrorKind::Other => {
-                    return decode_error("huffman decode overrun");
+                    return decode_error("mp3: huffman decode overrun");
                 }
                 Err(err) => return Err(err),
             };

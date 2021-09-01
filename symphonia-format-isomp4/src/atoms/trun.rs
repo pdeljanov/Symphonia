@@ -100,7 +100,9 @@ impl Atom for TrunAtom {
         // not be set. The samples after the first shall use the default sample flags defined in the
         // tfhd or mvex atoms.
         if first_sample_flags.is_some() && (flags & TrunAtom::SAMPLE_FLAGS_PRESENT != 0) {
-            return decode_error("sample-flag-present and first-sample-flags-present flags are set");
+            return decode_error(
+                "isomp4: sample-flag-present and first-sample-flags-present flags are set"
+            );
         }
 
         let mut sample_duration = Vec::new();

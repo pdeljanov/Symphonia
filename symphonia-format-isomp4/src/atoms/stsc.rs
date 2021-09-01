@@ -83,12 +83,12 @@ impl Atom for StscAtom {
             for i in 0..entry_count as usize - 1 {
                 // Validate that first_chunk is monotonic across all entries.
                 if entries[i + 1].first_chunk < entries[i].first_chunk {
-                    return decode_error("stsc entry first chunk not monotonic");
+                    return decode_error("isomp4: stsc entry first chunk not monotonic");
                 }
 
                 // Validate that samples per chunk is > 0. Could the entry be ignored?
                 if entries[i].samples_per_chunk == 0 {
-                    return decode_error("stsc entry has 0 samples per chunk");
+                    return decode_error("isomp4: stsc entry has 0 samples per chunk");
                 }
 
                 let n = entries[i + 1].first_chunk - entries[i].first_chunk;
@@ -98,7 +98,7 @@ impl Atom for StscAtom {
 
             // Validate that samples per chunk is > 0. Could the entry be ignored?
             if entries[entry_count as usize - 1].samples_per_chunk == 0 {
-                return decode_error("stsc entry has 0 samples per chunk");
+                return decode_error("isomp4: stsc entry has 0 samples per chunk");
             }
         }
 

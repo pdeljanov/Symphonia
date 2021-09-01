@@ -127,7 +127,7 @@ impl ObjectDescriptor for ESDescriptor {
 
         // All flags must be 0.
         if flags & 0xe0 != 0 {
-            return unsupported_error("esdescriptor flags");
+            return unsupported_error("isomp4: esdescriptor flags");
         }
 
         let mut dec_config = None;
@@ -158,12 +158,12 @@ impl ObjectDescriptor for ESDescriptor {
 
         // Decoder configuration descriptor is mandatory.
         if dec_config.is_none() {
-            return decode_error("missing decoder config descriptor");
+            return decode_error("isomp4: missing decoder config descriptor");
         }
 
         // SL descriptor is mandatory.
         if sl_config.is_none() {
-            return decode_error("missing sl config descriptor");
+            return decode_error("isomp4: missing sl config descriptor");
         }
 
         Ok(ESDescriptor {
@@ -214,7 +214,7 @@ impl ObjectDescriptor for DecoderConfigDescriptor {
         };
 
         if reserved != 1 {
-            return decode_error("reserved bit not 1");
+            return decode_error("isomp4: reserved bit not 1");
         }
 
         let buffer_size = reader.read_be_u24()?;
@@ -319,7 +319,7 @@ impl ObjectDescriptor for SLDescriptor {
         let predefined = reader.read_u8()?;
 
         if predefined != SLCONFIG_PREDEFINED_MP4 {
-            return unsupported_error("sl descriptor predefined not mp4");
+            return unsupported_error("isomp4: sl descriptor predefined not mp4");
         }
 
         Ok(SLDescriptor {})

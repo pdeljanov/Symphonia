@@ -36,11 +36,11 @@ impl Atom for StsdAtom {
         let n_entries = reader.read_be_u32()?;
 
         if n_entries == 0 {
-            return decode_error("missing sample description atom");
+            return decode_error("isomp4: missing sample description atom");
         }
 
         if n_entries > 1 {
-            return unsupported_error("more than 1 sample description atoms");
+            return unsupported_error("isomp4: more than 1 sample description atoms");
         }
 
         // Get the sample description atom header.

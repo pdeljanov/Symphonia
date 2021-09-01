@@ -307,7 +307,7 @@ pub mod vlc {
 
                     // Verify the jump offset does not exceed the entry's jump maximum.
                     if table_end > E::JUMP_OFFSET_MAX {
-                        return codebook_error("codebook overflow");
+                        return codebook_error("core (io): codebook overflow");
                     }
 
                     // Determine the offset into the table depending on the bit-order.
@@ -378,7 +378,7 @@ pub mod vlc {
                 // If the decoding tree is not sparse, the number of entries added to the table
                 // should equal the block length if the. It is a fatal error if this is not true.
                 if !is_sparse && entry_count != block_len {
-                    return codebook_error("codebook is incomplete");
+                    return codebook_error("core (io): codebook is incomplete");
                 }
             }
 
@@ -421,7 +421,7 @@ pub mod vlc {
                             continue;
                         }
                         else {
-                            return codebook_error("zero length codeword");
+                            return codebook_error("core (io): zero length codeword");
                         }
                     }
 

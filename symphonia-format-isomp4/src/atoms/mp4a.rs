@@ -52,7 +52,7 @@ impl SoundSampleDescription {
                 reader.ignore_bytes(20)?;
             }
             _ => {
-                return unsupported_error("unknown sound sample description version");
+                return unsupported_error("isomp4: unknown sound sample description version");
             }
         }
 

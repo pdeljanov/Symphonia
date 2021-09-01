@@ -78,7 +78,7 @@ impl Atom for MdhdAtom {
                 mdhd.duration  = reader.read_be_u64()?;
             }
             _ => {
-                return decode_error("invalid mdhd version");
+                return decode_error("isomp4: invalid mdhd version");
             }
         }
 

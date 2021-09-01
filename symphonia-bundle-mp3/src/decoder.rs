@@ -68,7 +68,7 @@ impl Decoder for Mp3Decoder {
                 // Layer 3
                 layer3::decode_frame(&mut reader, &header, &mut self.state, &mut self.buf)?;
             },
-            _ => return decode_error("invalid mpeg audio layer"),
+            _ => return decode_error("mp3: invalid mpeg audio layer"),
         }
 
         Ok(self.buf.as_audio_buffer_ref())
