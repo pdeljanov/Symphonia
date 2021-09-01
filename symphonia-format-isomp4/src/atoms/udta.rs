@@ -34,6 +34,7 @@ impl Atom for UdtaAtom {
         self.header
     }
 
+    #[allow(clippy::single_match)]
     fn read<B: ReadBytes>(reader: &mut B, header: AtomHeader) -> Result<Self> {
         let mut iter = AtomIterator::new(reader, header);
         

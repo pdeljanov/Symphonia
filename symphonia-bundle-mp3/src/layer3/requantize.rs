@@ -27,8 +27,8 @@ lazy_static! {
         //
         // TODO: Implement generic lookup table initialization in the core library.
         let mut pow43 = [0f32; 8207];
-        for i in 0..8207 {
-            pow43[i] = f32::powf(i as f32, 4.0 / 3.0);
+        for (i, pow43) in pow43.iter_mut().enumerate() {
+            *pow43 = f32::powf(i as f32, 4.0 / 3.0);
         }
         pow43
     };

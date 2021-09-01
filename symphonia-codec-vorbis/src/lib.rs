@@ -8,6 +8,16 @@
 #![warn(rust_2018_idioms)]
 #![forbid(unsafe_code)]
 
+// The following lints are allowed in all Symphonia crates. Please see clippy.toml for their
+// justification.
+#![allow(clippy::comparison_chain)]
+#![allow(clippy::excessive_precision)]
+#![allow(clippy::identity_op)]
+#![allow(clippy::manual_range_contains)]
+
+// Disable to better express the specification.
+#![allow(clippy::collapsible_else_if)]
+
 use symphonia_core::audio::{AudioBuffer, AudioBufferRef, AsAudioBufferRef, Channels};
 use symphonia_core::audio::{Signal, SignalSpec};
 use symphonia_core::codecs::{CODEC_TYPE_VORBIS, CodecParameters, CodecDescriptor};
@@ -17,7 +27,6 @@ use symphonia_core::errors::{Result, decode_error, unsupported_error};
 use symphonia_core::formats::Packet;
 use symphonia_core::io::{ReadBitsRtl, BitReaderRtl, ReadBytes, BufReader, FiniteBitStream};
 use symphonia_core::support_codec;
-use symphonia_core::units::Duration;
 
 use log::{debug, warn};
 
@@ -91,7 +100,7 @@ impl Decoder for VorbisDecoder {
         let imdct_long = Imdct::new((1u32 << ident.bs1_exp) >> 1);
 
         // TODO: Should this be half the block size?
-        let duration = Duration::from(1u64 << ident.bs1_exp);
+        let duration = 1u64 << ident.bs1_exp;
 
         let dsp = Dsp {
             windows,
@@ -658,9 +667,7 @@ fn read_mapping_type0(
         }
     }
     else {
-        for _ in 0..audio_channels {
-            multiplex.push(0);
-        }
+        multiplex.resize(usize::from(audio_channels), 0);
     }
 
     let mut submaps = Vec::with_capacity(usize::from(num_submaps));

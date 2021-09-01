@@ -173,6 +173,12 @@ pub mod dither {
         fn dither(&mut self, sample: F) -> F { sample }
     }
 
+    impl<F: Sample, T: Sample> Default for Identity<F, T> {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
     /// `Rectangular` implements a dither using uniformly distributed (white) noise without shaping.
     pub struct Rectangular<F: Sample, T: Sample> {
         prng: prng::Xoshiro128pp,
@@ -208,6 +214,12 @@ pub mod dither {
         }
     }
 
+    impl<F: Sample, T: Sample> Default for Rectangular<F, T> {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
     /// `Triangular` implements a dither using a triangular distribution of noise without shaping.
     pub struct Triangular<F: Sample, T: Sample> {
         prng: prng::Xoshiro128pp,
@@ -240,6 +252,12 @@ pub mod dither {
             // Add the noise to the sample.
             let noise = RandomNoise::from(tpdf, dither_bits);
             noise.add_noise(sample)
+        }
+    }
+
+    impl<F: Sample, T: Sample> Default for Triangular<F, T> {
+        fn default() -> Self {
+            Self::new()
         }
     }
 

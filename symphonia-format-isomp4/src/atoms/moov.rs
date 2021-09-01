@@ -82,7 +82,7 @@ impl Atom for MoovAtom {
         if let Some(mvex) = mvex.as_ref() {
             // For each trak, find a matching trex atom using the track id.
             for trak in traks.iter() {
-                let found = mvex.trexs.iter().find(|&trex| trex.track_id == trak.tkhd.id).is_some();
+                let found = mvex.trexs.iter().any(|trex| trex.track_id == trak.tkhd.id);
 
                 if !found {
                     warn!("missing trex atom for trak with id={}", trak.tkhd.id);

@@ -59,11 +59,11 @@ impl VorbisPacketParser {
 
 impl PacketParser for VorbisPacketParser {
     fn parse_next_packet_dur(&mut self, packet: &[u8]) -> u64 {
-        let mut bs = BitReaderRtl::new(&packet);
+        let mut bs = BitReaderRtl::new(packet);
 
         // First bit must be 0 to indicate audio packet.
         match bs.read_bit() {
-            Ok(b) if b == false => (),
+            Ok(bit) if !bit => (),
             _ => return 0,
         }
 
@@ -106,7 +106,7 @@ pub fn detect(buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> {
     }
 
     // Read the identification header. Any errors cause detection to fail.
-    let ident = match read_ident_header(&mut BufReader::new(&buf)) {
+    let ident = match read_ident_header(&mut BufReader::new(buf)) {
         Ok(ident) => ident,
         _ => return Ok(None),
     };
@@ -152,9 +152,8 @@ impl Mapper for VorbisMapper {
     }
 
     fn reset(&mut self) {
-        match &mut self.parser {
-            Some(parser) => parser.reset(),
-            _ => (),
+        if let Some(parser) = &mut self.parser {
+            parser.reset()
         }
     }
 
@@ -210,10 +209,10 @@ impl Mapper for VorbisMapper {
                 VORBIS_PACKET_TYPE_SETUP => {
                     // Append the setup headers to the extra data.
                     let mut extra_data = self.codec_params.extra_data.take().unwrap().to_vec();
-                    extra_data.extend_from_slice(&packet);
+                    extra_data.extend_from_slice(packet);
 
                     // Try to read the setup header.
-                    if let Ok(modes) = read_setup(&mut BufReader::new(&packet), &self.ident) {
+                    if let Ok(modes) = read_setup(&mut BufReader::new(packet), &self.ident) {
                         let num_modes = modes.len();
                         let mut modes_block_flags = 0;
 

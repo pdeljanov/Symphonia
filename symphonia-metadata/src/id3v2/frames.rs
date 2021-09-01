@@ -604,7 +604,7 @@ pub fn read_id3v2p4_frame<B: ReadBytes + FiniteStream>(reader: &mut B) -> Result
     if flags & 0x2 != 0x0 {
         let unsync_data = decode_unsynchronisation(&mut raw_data);
 
-        parser(&mut BufReader::new(&unsync_data), *std_key, str::from_utf8(&id).unwrap())
+        parser(&mut BufReader::new(unsync_data), *std_key, str::from_utf8(&id).unwrap())
     }
     // The frame body has not been unsynchronised. Wrap the raw data buffer in BufStream without any
     // additional decoding.
@@ -664,10 +664,7 @@ fn read_txxx_frame(
 
     // Some TXXX frames may be mapped to standard keys. Check if a standard key exists for the
     // description.
-    let std_key = match TXXX_FRAME_STD_KEYS.get(desc.as_ref()) {
-        Some(key) => Some(*key),
-        _         => None,
-    };
+    let std_key = TXXX_FRAME_STD_KEYS.get(desc.as_ref()).copied();
 
     // Generate a key name using the description.
     let key = format!("TXXX:{}", desc);
@@ -791,7 +788,7 @@ fn read_pcnt_frame(
     std_key: Option<StandardTagKey>,
     id: &str,
 ) -> Result<FrameResult> {
-    let len = reader.len() as usize;
+    let len = reader.byte_len() as usize;
 
     // The play counter must be a minimum of 4 bytes long.
     if len < 4 {
@@ -845,7 +842,7 @@ fn read_mcdi_frame(
     id: &str,
 ) -> Result<FrameResult> {
     // The entire frame is a binary dump of a CD-DA TOC.
-    let buf = reader.read_buf_bytes_ref(reader.len() as usize)?;
+    let buf = reader.read_buf_bytes_ref(reader.byte_len() as usize)?;
 
     // Create the tag.
     let tag = Tag::new(std_key, id, Value::from(buf));
@@ -877,8 +874,7 @@ fn read_apic_frame(
     // Textual image description.
     let desc = scan_text(reader, encoding, reader.bytes_available() as usize)?;
 
-    let mut tags = Vec::new();
-    tags.push(Tag::new(Some(StandardTagKey::Description), "", Value::from(desc)));
+    let tags = vec![Tag::new(Some(StandardTagKey::Description), "", Value::from(desc))];
 
     // The remainder of the APIC frame is the image data.
     // TODO: Apply a limit.

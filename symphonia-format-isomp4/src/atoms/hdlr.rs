@@ -65,7 +65,7 @@ impl Atom for HdlrAtom {
         let mut buf = vec![0; (header.data_len - 24) as usize];
         reader.read_buf_exact(&mut buf)?;
 
-        let name = String::from_utf8(buf).unwrap_or(String::from("(err)"));
+        let name = String::from_utf8(buf).unwrap_or_else(|_| String::from("(err)"));
         
         Ok(HdlrAtom {
             header,

@@ -335,6 +335,12 @@ impl CodecParameters {
     }
 }
 
+impl Default for CodecParameters {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// `FinalizeResult` contains optional information that can only be found, calculated, or
 /// determined after decoding is complete.
 #[derive(Default)]
@@ -430,7 +436,7 @@ impl CodecRegistry {
     /// by another `Decoder` it will be replaced within the registry.
     pub fn register_all<D: Decoder>(&mut self) {
         for descriptor in D::supported_codecs() {
-            self.register(&descriptor);
+            self.register(descriptor);
         }
     }
 
@@ -453,6 +459,12 @@ impl CodecRegistry {
         else {
             unsupported_error("core (codec):unsupported codec")
         }
+    }
+}
+
+impl Default for CodecRegistry {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

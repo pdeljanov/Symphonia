@@ -114,7 +114,7 @@ pub const SFB_SHORT_BANDS: [[usize; 40]; 9] = [
     ],
 ];
 
-pub const SFB_MIXED_BANDS: [&'static [usize]; 9] = [
+pub const SFB_MIXED_BANDS: [&[usize]; 9] = [
     // 44.1 kHz, MPEG version 1, derived from ISO/IEC 11172-3 Table B.8
     &[
         0, 4, 8, 12, 16, 20, 24, 30,
@@ -372,7 +372,7 @@ impl BitResevoir {
             self.buf.copy_within(self.len - main_data_begin..self.len, 0);
 
             // Copy new main data after the re-used bytes.
-            self.buf[main_data_begin..main_data_end].copy_from_slice(&pkt_main_data);
+            self.buf[main_data_begin..main_data_end].copy_from_slice(pkt_main_data);
             self.len = main_data_end;
 
             Ok(())
@@ -383,7 +383,7 @@ impl BitResevoir {
             // is particularly common with online radio streams. In this case, copy the main data
             // of the current packet into the resevoir, then return an error since decoding the
             // current packet would produce a painful sound.
-            self.buf[self.len..self.len + main_data_size].copy_from_slice(&pkt_main_data);
+            self.buf[self.len..self.len + main_data_size].copy_from_slice(pkt_main_data);
             self.len += main_data_size;
 
             decode_error("mp3: invalid main_data_begin")

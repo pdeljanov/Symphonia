@@ -201,8 +201,7 @@ fn synthesize_codewords(code_lens: &[u8]) -> Result<Vec<u32>> {
     let is_underspecified = next_codeword.iter()
                                          .enumerate()
                                          .skip(1)
-                                         .find(|(i, &c)| c & (u32::MAX >> (32 - i)) != 0)
-                                         .is_some();
+                                         .any(|(i, &c)| c & (u32::MAX >> (32 - i)) != 0);
 
     // Single entry codebooks are technically invalid, but must be supported as a special-case
     // per Vorbis I specification, errate 20150226.

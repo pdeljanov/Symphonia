@@ -18,6 +18,7 @@ pub trait AudioOutput {
 }
 
 #[allow(dead_code)]
+#[allow(clippy::enum_variant_names)]
 #[derive(Debug)]
 pub enum AudioOutputError {
     OpenStreamError,

@@ -332,7 +332,7 @@ impl PacketParser {
 
                 // Discard any fragments that preceed the best-pick fragment.
                 while (best & 1) == 0 {
-                    if let Some(_) = iter.next() {
+                    if iter.next().is_some() {
                         self.fragments.pop_front();
                         trace!("discard fragment");
                     }
@@ -494,7 +494,7 @@ impl PacketParser {
                         best &= !1;
 
                         // Pop all fragments preceeding the second-best pick fragment.
-                        while self.fragments.len() > 0 && (best & 0x1) == 0 {
+                        while !self.fragments.is_empty() && (best & 0x1) == 0 {
                             trace!("discard fragment");
 
                             self.fragments.pop_front();

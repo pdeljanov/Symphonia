@@ -7,6 +7,13 @@
 
 #![warn(rust_2018_idioms)]
 
+// The following lints are allowed in all Symphonia crates. Please see clippy.toml for their
+// justification.
+#![allow(clippy::comparison_chain)]
+#![allow(clippy::excessive_precision)]
+#![allow(clippy::identity_op)]
+#![allow(clippy::manual_range_contains)]
+
 mod atoms;
 mod demuxer;
 mod fourcc;

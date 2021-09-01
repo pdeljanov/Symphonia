@@ -86,7 +86,7 @@ pub mod bits {
     pub fn mask_range(upper: u32, lower: u32) -> u8 {
         debug_assert!(upper <= 8);
         debug_assert!(lower <= 8);
-        (((0xff as u32) << upper) ^ ((0xff as u32) << lower)) as u8
+        ((0xff_u32 << upper) ^ (0xff_u32 << lower)) as u8
     }
 
     /// Returns the number of trailing ones in an unsigned 8-bit integer.

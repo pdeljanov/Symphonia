@@ -386,7 +386,7 @@ impl LogicalStream {
             let (vec0, vec1) = buf.split_at_mut(self.part_len);
 
             // Copy and consume the saved partial packet.
-            vec0.copy_from_slice(&mut self.part_buf[..self.part_len]);
+            vec0.copy_from_slice(&self.part_buf[..self.part_len]);
             self.part_len = 0;
 
             // Read the remainder of the partial packet from the page.
@@ -406,7 +406,7 @@ impl LogicalStream {
             }
 
             // New partial packet buffer size, rounded up to the nearest 8K block.
-            let new_buf_len = new_part_len + (8 * 1024 - 1) & !(8 * 1024 - 1);
+            let new_buf_len = (new_part_len + (8 * 1024 - 1)) & !(8 * 1024 - 1);
             debug!("grow packet buffer to {} bytes", new_buf_len);
 
             self.part_buf.resize(new_buf_len, Default::default());

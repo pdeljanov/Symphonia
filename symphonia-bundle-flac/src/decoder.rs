@@ -176,28 +176,28 @@ impl Decoder for FlacDecoder {
                 // For Left/Side, Mid/Side, and Right/Side channel configurations, the Side
                 // (Difference) channel requires an extra bit per sample.
                 ChannelAssignment::LeftSide => {
-                    let (mut left, mut side) = self.buf.chan_pair_mut(0, 1);
+                    let (left, side) = self.buf.chan_pair_mut(0, 1);
 
-                    read_subframe(&mut bs, bits_per_sample, &mut left)?;
-                    read_subframe(&mut bs, bits_per_sample + 1, &mut side)?;
+                    read_subframe(&mut bs, bits_per_sample, left)?;
+                    read_subframe(&mut bs, bits_per_sample + 1, side)?;
 
-                    decorrelate_left_side(&left, &mut side);
+                    decorrelate_left_side(left, side);
                 },
                 ChannelAssignment::MidSide => {
-                    let (mut mid, mut side) = self.buf.chan_pair_mut(0, 1);
+                    let (mid, side) = self.buf.chan_pair_mut(0, 1);
 
-                    read_subframe(&mut bs, bits_per_sample, &mut mid)?;
-                    read_subframe(&mut bs, bits_per_sample + 1, &mut side)?;
+                    read_subframe(&mut bs, bits_per_sample, mid)?;
+                    read_subframe(&mut bs, bits_per_sample + 1, side)?;
 
-                    decorrelate_mid_side(&mut mid, &mut side);
+                    decorrelate_mid_side(mid, side);
                 },
                 ChannelAssignment::RightSide => {
-                    let (mut side, mut right) = self.buf.chan_pair_mut(0, 1);
+                    let (side, right) = self.buf.chan_pair_mut(0, 1);
 
-                    read_subframe(&mut bs, bits_per_sample + 1, &mut side)?;
-                    read_subframe(&mut bs, bits_per_sample, &mut right)?;
+                    read_subframe(&mut bs, bits_per_sample + 1, side)?;
+                    read_subframe(&mut bs, bits_per_sample, right)?;
 
-                    decorrelate_right_side(&right, &mut side);
+                    decorrelate_right_side(right, side);
                 }
             }
         }

@@ -121,10 +121,7 @@ fn parse(tag: &str) -> Tag {
     let field: Vec<&str> = tag.splitn(2, '=').collect();
 
     // Attempt to assign a standardized tag key.
-    let std_tag = match VORBIS_COMMENT_MAP.get(field[0].to_lowercase().as_str()) {
-        Some(&tag) => Some(tag),
-        None => None,
-    };
+    let std_tag = VORBIS_COMMENT_MAP.get(field[0].to_lowercase().as_str()).copied();
 
     // The value field was empty so only the key field exists. Create an empty tag for the given
     // key field.

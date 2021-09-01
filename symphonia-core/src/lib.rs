@@ -6,6 +6,13 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #![forbid(unsafe_code)]
 
+// The following lints are allowed in all Symphonia crates. Please see clippy.toml for their
+// justification.
+#![allow(clippy::comparison_chain)]
+#![allow(clippy::excessive_precision)]
+#![allow(clippy::identity_op)]
+#![allow(clippy::manual_range_contains)]
+
 pub mod audio;
 pub mod checksum;
 pub mod codecs;

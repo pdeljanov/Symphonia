@@ -8,13 +8,12 @@
 #![warn(rust_2018_idioms)]
 #![forbid(unsafe_code)]
 
-// Justification: edentity operations are allowed to vertically align, and better illustrate 
-// complex alogrithms and vectorizations.
-#![allow(clippy::identity_op)]
-
-// Justification: excessive floating point precision is allowed in-case f32 constants should be 
-// switched to f64.
+// The following lints are allowed in all Symphonia crates. Please see clippy.toml for their
+// justification.
+#![allow(clippy::comparison_chain)]
 #![allow(clippy::excessive_precision)]
+#![allow(clippy::identity_op)]
+#![allow(clippy::manual_range_contains)]
 
 mod codebooks;
 mod common;

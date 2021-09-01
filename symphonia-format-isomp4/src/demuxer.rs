@@ -40,8 +40,8 @@ pub struct TrackState {
 
 impl TrackState {
 
+    #[allow(clippy::single_match)]
     pub fn new(track_num: u32, trak: &TrakAtom) -> Self {
-
         let mut codec_params = CodecParameters::new();
 
         codec_params.with_time_base(TimeBase::new(1, trak.mdia.mdhd.timescale));
@@ -146,7 +146,6 @@ impl IsoMp4Reader {
                         {
                             // Earliest is less than or equal to the track's next sample presentation
                             // time. No need to update earliest.
-                            ()
                         }
                         _ => {
                             // Earliest was either None, or greater than the track's next sample
@@ -225,7 +224,7 @@ impl IsoMp4Reader {
                         let last_seg = self.segs.last().unwrap();
 
                         // Create a new segment for the moof atom.
-                        let seg = MoofSegment::new(moof, mvex.clone(), last_seg);
+                        let seg = MoofSegment::new(moof, mvex.clone(), last_seg.as_ref());
 
                         // Segments should have a monotonic sequence number.
                         if seg.sequence_num() <= last_seg.sequence_num() {
@@ -480,7 +479,7 @@ impl FormatReader for IsoMp4Reader {
 
         // A Movie Extends (mvex) atom is required to support segmented streams. If the mvex atom is
         // present, wrap it in an Arc so it can be shared amongst all segments.
-        let mvex = moov.mvex.take().map(|m| Arc::new(m));
+        let mvex = moov.mvex.take().map(Arc::new);
 
         let segs: Vec<Box<dyn StreamSegment>> = vec![ Box::new(MoovSegment::new(moov)) ];
 

@@ -385,7 +385,7 @@ impl Residue {
 fn decode_classes(mut val: u32, class_words: u16, classifications: u32, out: &mut [u8]) {
     for (_, out) in (0..class_words as usize).zip(out).rev() {
         *out = (val % classifications) as u8;
-        val = val / classifications;
+        val /= classifications;
     }
 }
 

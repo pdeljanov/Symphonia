@@ -403,7 +403,7 @@ pub mod vlc {
             let mut blocks = Vec::<CodebookBlock<E>>::new();
 
             // Only attempt to generate something if there are code words.
-            if code_words.len() > 0 {
+            if !code_words.is_empty() {
                 let prefix_mask = !(!0 << self.max_bits_per_block);
 
                 // Push a root block.
@@ -468,7 +468,7 @@ pub mod vlc {
             }
 
             // Generate Codebook's lookup table.
-            let table = CodebookBuilder::generate_lut(self.bit_order, self.is_sparse, &mut blocks)?;
+            let table = CodebookBuilder::generate_lut(self.bit_order, self.is_sparse, &blocks)?;
 
             Ok(Codebook { table })
         }
@@ -1019,7 +1019,7 @@ pub trait ReadBitsRtl : private::FetchBitsRtl {
             self.consume_bits(1);
 
             // Generate the mask in two parts to prevent panicing when bit_width == 64.
-            let mask = !((!0 << bit_width - 1) << 1);
+            let mask = !((!0 << (bit_width - 1)) << 1);
 
             Ok(bits & mask)
         }

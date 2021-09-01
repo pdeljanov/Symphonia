@@ -5,6 +5,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+// Justification: Some loops are better expressed without a range loop.
+#![allow(clippy::needless_range_loop)]
+
 use std::f64;
 
 use lazy_static::lazy_static;
@@ -537,9 +540,7 @@ mod imdct36 {
         // where dct[] is the DCT-IV of x.
 
         // First 9 IMDCT values are values 9..18 in the DCT-IV.
-        for i in 0..9 {
-            y[i] = dct[9 + i];
-        }
+        y[..9].copy_from_slice(&dct[9..(9 + 9)]);
 
         // Next 18 IMDCT values are negated and /reversed/ values 0..18 in the DCT-IV.
         for i in 9..27 {

@@ -53,9 +53,6 @@ lazy_static! {
 }
 
 /// Try to map the iTunes `tag` name to a `StandardTagKey`.
-pub fn std_key_from_tag(tag: &str) -> Option<StandardTagKey> {
-    match ITUNES_TAG_MAP.get(tag) {
-        Some(key) => Some(*key),
-        _         => None,
-    }
+pub fn std_key_from_tag(key: &str) -> Option<StandardTagKey> {
+    ITUNES_TAG_MAP.get(key).copied()
 }

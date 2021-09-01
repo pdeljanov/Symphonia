@@ -387,7 +387,6 @@ impl<B: ReadBytes> AtomIterator<B> {
         let cur_pos = self.reader.pos();
 
         if cur_pos < self.next_atom_pos {
-            // TODO: This needs to seek on long jumps.
             self.reader.ignore_bytes(self.next_atom_pos - cur_pos)?;
         }
         else if cur_pos > self.next_atom_pos {

@@ -37,7 +37,7 @@ pub fn detect(buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> {
         return Ok(None);
     }
 
-    let mut reader = BufReader::new(&buf);
+    let mut reader = BufReader::new(buf);
 
     // The first 8 bytes are the magic signature ASCII bytes.
     let mut magic = [0; 8];

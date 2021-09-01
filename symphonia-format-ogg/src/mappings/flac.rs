@@ -42,7 +42,7 @@ pub fn detect(buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> {
         return Ok(None);
     }
 
-    let mut reader = BufReader::new(&buf);
+    let mut reader = BufReader::new(buf);
 
     // The first byte indicates the packet type and must be 0x7f.
     if reader.read_u8()? != OGG_FLAC_PACKET_TYPE {
@@ -184,7 +184,7 @@ fn decode_frame_header(buf: &[u8]) -> Result<FrameHeader> {
         };
 
         // The sample number should only be 36-bits.
-        if sample > 0xffff_fffff {
+        if sample > 0xff_ffff_ffff {
             return decode_error("ogg (flac): sample sequence number exceeds 36-bits");
         }
 

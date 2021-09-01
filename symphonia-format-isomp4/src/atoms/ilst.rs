@@ -93,19 +93,19 @@ fn parse_no_type(data: &[u8]) -> Option<Value> {
 
 fn parse_utf8(data: &[u8]) -> Option<Value> {
     // UTF8, no null-terminator or count.
-    let text = String::from_utf8_lossy(&data);
+    let text = String::from_utf8_lossy(data);
     Some(Value::from(text))
 }
 
 fn parse_utf16(data: &[u8]) -> Option<Value> {
     // UTF16 BE
-    let text = UTF_16BE.decode(&data).0;
+    let text = UTF_16BE.decode(data).0;
     Some(Value::from(text))
 }
 
 fn parse_shift_jis(data: &[u8]) -> Option<Value> {
     // Shift-JIS
-    let text = SHIFT_JIS.decode(&data).0;
+    let text = SHIFT_JIS.decode(data).0;
     Some(Value::from(text))
 }
 

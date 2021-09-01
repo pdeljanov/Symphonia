@@ -262,7 +262,7 @@ pub fn decode_frame(
 
     // Read side_info into the frame data.
     // TODO: Use a MonitorStream to compute the CRC.
-    let side_info_len = match bitstream::read_side_info(&mut bs, &header, &mut frame_data) {
+    let side_info_len = match bitstream::read_side_info(&mut bs, header, &mut frame_data) {
         Ok(len) => len,
         Err(e) => {
             // A failure in reading this packet will cause a discontinuity in the codec bitstream.
@@ -282,7 +282,7 @@ pub fn decode_frame(
     )?;
 
     // Read main_data: scale factors and spectral samples.
-    if let Err(e) = read_main_data(&header, &mut frame_data, state) {
+    if let Err(e) = read_main_data(header, &mut frame_data, state) {
         // The bit reservoir was likely filled with invalid data. Clear it for the next packet.
         state.resevoir.clear();
         return Err(e);
@@ -295,21 +295,21 @@ pub fn decode_frame(
         let granule = &mut frame_data.granules[gr];
 
         // Requantize all non-zero (big_values and count1 partition) spectral samples.
-        requantize::requantize(&header, &granule.channels[0], &mut state.samples[gr][0]);
+        requantize::requantize(header, &granule.channels[0], &mut state.samples[gr][0]);
 
         // If there is a second channel...
         if header.channel_mode != ChannelMode::Mono {
             // Requantize all non-zero spectral samples in the second channel.
-            requantize::requantize(&header, &granule.channels[1], &mut state.samples[gr][1]);
+            requantize::requantize(header, &granule.channels[1], &mut state.samples[gr][1]);
 
             // Apply joint stereo processing if it is used.
-            stereo::stereo(&header, granule, &mut state.samples[gr])?;
+            stereo::stereo(header, granule, &mut state.samples[gr])?;
         }
 
         // The next steps are independant of channel count.
         for ch in 0..header.n_channels() {
             // Reorder the spectral samples in short blocks into sub-band order.
-            hybrid_synthesis::reorder(&header, &granule.channels[ch], &mut state.samples[gr][ch]);
+            hybrid_synthesis::reorder(header, &granule.channels[ch], &mut state.samples[gr][ch]);
 
             // Apply the anti-aliasing filter to all block types other than short.
             hybrid_synthesis::antialias(&granule.channels[ch], &mut state.samples[gr][ch]);

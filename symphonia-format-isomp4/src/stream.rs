@@ -63,7 +63,7 @@ pub struct MoofSegment {
 
 impl MoofSegment {
     /// Instantiate a new segment from a `MoofAtom`.
-    pub fn new(moof: MoofAtom, mvex: Arc<MvexAtom>, last: &Box<dyn StreamSegment>) -> MoofSegment {
+    pub fn new(moof: MoofAtom, mvex: Arc<MvexAtom>, last: &dyn StreamSegment) -> MoofSegment {
         let mut seq = Vec::new();
 
         // Calculate the sequence information for each track of this segment.
@@ -265,7 +265,7 @@ impl StreamSegment for MoofSegment {
             // Get or calculate the total size of the track fragment run.
             let trun_size = if trun.is_sample_size_present() {
                 // The size of the entire track fragment run is known.
-                u64::from(trun.total_sample_size)
+                trun.total_sample_size
             }
             else {
                 let size = traf.tfhd.default_sample_size.unwrap_or(
@@ -392,7 +392,7 @@ impl StreamSegment for MoovSegment {
         let chunk_in_stream = group.first_chunk + chunk_in_group;
 
         // Get the byte position of the first sample of the chunk containing the sample.
-        let base_pos = get_chunk_offset(&stco, &co64, chunk_in_stream as usize)?.unwrap();
+        let base_pos = get_chunk_offset(stco, co64, chunk_in_stream as usize)?.unwrap();
 
         // Determine the absolute sample byte position if requested by calculating the offset of
         // the sample from the base position of the chunk.

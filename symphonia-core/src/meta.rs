@@ -420,6 +420,7 @@ impl MetadataRevision {
 }
 
 /// `MetadataBuilder` is the builder for `Metadata` revisions.
+#[derive(Default)]
 pub struct MetadataBuilder {
     metadata: MetadataRevision,
 }

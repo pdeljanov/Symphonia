@@ -39,6 +39,7 @@ impl Atom for MetaAtom {
         self.header
     }
 
+    #[allow(clippy::single_match)]
     fn read<B: ReadBytes>(reader: &mut B, mut header: AtomHeader) -> Result<Self> {
         let (_, _) = AtomHeader::read_extra(reader)?;
 

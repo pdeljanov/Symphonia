@@ -86,48 +86,48 @@ impl Imdct {
 
         // DCT-II to DCT-IV
         //
-        // Split dst into 4 evenly sized N/4 regions: [ a, b, c, d ]. Regions c & d contain the
-        // DCT-II transformed samples from the previous step. After this step, regions b & c will
-        // contain the DCT-II transformed samples.
-        let (a, b) = dst.split_at_mut(n4);
-        let (b, c) = b.split_at_mut(n4);
-        let (c, d) = c.split_at_mut(n4);
+        // Split dst into 4 evenly sized N/4 vectors: [ vec0, vec1, vec2, vec3 ]. Vectors 2 & 3
+        // contain the DCT-II transformed samples from the previous step. After this step,
+        // regions vec1 & vec2 will contain the DCT-II transformed samples.
+        let (vec0, vec1) = dst.split_at_mut(n4);
+        let (vec1, vec2) = vec1.split_at_mut(n4);
+        let (vec2, vec3) = vec2.split_at_mut(n4);
 
-        // Map c to b.
-        b[0] = -0.5 * c[0];
+        // Map vec2 to vec1.
+        vec1[0] = -0.5 * vec2[0];
 
         for i in 1..n4 {
-            b[i] = -1.0 * (c[i] + b[i - 1]);
+            vec1[i] = -1.0 * (vec2[i] + vec1[i - 1]);
         }
 
-        // Map d to c.
-        c[0] = d[0] + b[n4 - 1];
+        // Map vec3 to vec2.
+        vec2[0] = vec3[0] + vec1[n4 - 1];
 
         for i in 1..n4 {
-            c[i] = d[i] - c[i - 1];
+            vec2[i] = vec3[i] - vec2[i - 1];
         }
 
         // DCT-IV to IMDCT
         //
-        // Using symmetry, expand the DCT-IV to IMDCT. Multiply by the scale factor as this
-        // is done.
-        for (sa, &sc) in a.iter_mut().zip(c.iter()) {
-            // Region a is a scaled copy of region c.
-            *sa = scale * sc;
+        // Using symmetry, expand the DCT-IV to IMDCT. Multiply by the scale factor while this is
+        // done.
+        for (s0, &s2) in vec0.iter_mut().zip(vec2.iter()) {
+            // vec0 is a scaled copy of vec2.
+            *s0 = scale * s2;
         }
 
-        for ((sd, sc), &sb) in d.iter_mut().zip(c.iter_mut().rev()).zip(b.iter()) {
-            // Region d is a scaled copy of region b.
-            // Region c is a reversed and scaled copy of region b.
-            let s = scale * sb;
-            *sd = s;
-            *sc = s;
+        for ((s3, s2), &s1) in vec3.iter_mut().zip(vec2.iter_mut().rev()).zip(vec1.iter()) {
+            // vec3 is a scaled copy of vec1.
+            // vec2 is a reversed and scaled copy of vec1.
+            let s = scale * s1;
+            *s3 = s;
+            *s2 = s;
         }
 
-        for (sb, &sa) in b.iter_mut().zip(a.iter().rev()) {
-            // Region b is an inverted copy of region c. Region c was overwrittern above,
-            // but region a is a copy of the original region c.
-            *sb = -1.0 * sa;
+        for (s1, &s0) in vec1.iter_mut().zip(vec0.iter().rev()) {
+            // vec1 is an inverted copy of vec2. vec2 was overwrittern above, but vec0 is a copy of
+            // the original vec2.
+            *s1 = -1.0 * s0;
         }
     }
 }

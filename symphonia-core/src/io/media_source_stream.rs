@@ -134,14 +134,12 @@ impl MediaSourceStream {
     ///
     /// Note: this is the maximum number of bytes that can be seeked forwards within the buffer.
     pub fn unread_buffer_len(&self) -> usize {
-        let n_bytes = if self.write_pos >= self.read_pos {
+        if self.write_pos >= self.read_pos {
             self.write_pos - self.read_pos
         }
         else {
             self.write_pos + (self.ring.len() - self.read_pos)
-        };
-
-        n_bytes
+        }
     }
 
     /// Gets the number of bytes buffered and read.
@@ -291,8 +289,8 @@ impl MediaSource for MediaSourceStream {
     }
 
     #[inline]
-    fn len(&self) -> Option<u64> {
-        self.inner.len()
+    fn byte_len(&self) -> Option<u64> {
+        self.inner.byte_len()
     }
 
 }

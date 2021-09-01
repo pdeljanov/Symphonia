@@ -63,10 +63,7 @@ pub fn parse(tag: [u8; 4], buf: &[u8]) -> Tag {
     let value = String::from_utf8_lossy(buf);
 
     // Attempt to assign a standardized tag key.
-    let std_tag = match RIFF_INFO_MAP.get(key.to_lowercase().as_str()) {
-        Some(&tag) => Some(tag),
-        None => None,
-    };
+    let std_tag = RIFF_INFO_MAP.get(key.to_lowercase().as_str()).copied();
 
     Tag::new(std_tag, &key, Value::from(value))
 }

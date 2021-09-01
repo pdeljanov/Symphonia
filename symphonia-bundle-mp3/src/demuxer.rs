@@ -284,9 +284,8 @@ fn read_mpeg_frame(reader: &mut MediaSourceStream) -> Result<(FrameHeader, Vec<u
         let sync = header::sync_frame(reader)?;
 
         // Parse the frame header fully.
-        match header::parse_frame_header(sync) {
-            Ok(header) => break (header, sync),
-            _ => (),
+        if let Ok(header) = header::parse_frame_header(sync) {
+            break (header, sync);
         }
 
         warn!("invalid mpeg audio header");
@@ -348,7 +347,7 @@ fn estimate_num_mpeg_frames(reader: &mut MediaSourceStream) -> Option<u64> {
     let mut total_frame_len = 0;
     let mut total_frames = 0;
 
-    let total_len = match reader.len() {
+    let total_len = match reader.byte_len() {
         Some(len) => len - start_pos,
         _ => return None,
     };

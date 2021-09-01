@@ -53,7 +53,7 @@ impl<B: ReadBytes> ScopedStream<B> {
 
 impl<B: ReadBytes> FiniteStream for ScopedStream<B> {
     /// Returns the length of the the `ScopedStream`.
-    fn len(&self) -> u64 {
+    fn byte_len(&self) -> u64 {
         self.len
     }
 

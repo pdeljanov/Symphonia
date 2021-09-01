@@ -16,6 +16,7 @@ use super::common::*;
 
 /// As defined in section 10.1 of the Vorbis I specification.
 #[allow(clippy::unreadable_literal)]
+#[allow(clippy::excessive_precision)]
 const FLOOR1_INVERSE_DB_TABLE: [f32; 256] = [
     1.0649863e-07, 1.1341951e-07, 1.2079015e-07, 1.2863978e-07,
     1.3699951e-07, 1.4590251e-07, 1.5538408e-07, 1.6548181e-07,
@@ -289,15 +290,15 @@ impl Floor for Floor0 {
             // If order is an odd number, then there should be exactly one extra coefficient.
             let last_coeff = iter.remainder();
 
-            if last_coeff.len() > 0 {
+            if !last_coeff.is_empty() {
                 q *= last_coeff[0] - two_cos_omega;
 
-                p *= p * (1.0 - (cos_omega * cos_omega));
-                q *= q * 0.25;
+                p = p * p * (1.0 - (cos_omega * cos_omega));
+                q = q * q * 0.25;
             }
             else {
-                p *= p * ((1.0 - cos_omega) / 2.0);
-                q *= q * ((1.0 + cos_omega) / 2.0);
+                p = p * p * ((1.0 - cos_omega) / 2.0);
+                q = q * q * ((1.0 + cos_omega) / 2.0);
             }
 
             if p + q == 0.0 {
@@ -510,7 +511,7 @@ impl Floor1 {
                 let x = bs.read_bits_leq32(rangebits)?;
 
                 // All elements in the x list must be unique.
-                if floor1_x_list_unique.insert(x) == false {
+                if !floor1_x_list_unique.insert(x) {
                     return decode_error("vorbis: floor1, x_list is not unique");
                 }
 

@@ -300,7 +300,7 @@ impl OggReader {
         // If the media source stream is seekable, then try to determine the duration of each
         // logical stream, and the length in bytes of the physical stream.
         if self.reader.is_seekable() {
-            if let Some(total_len) = self.reader.len() {
+            if let Some(total_len) = self.reader.byte_len() {
                 byte_range_end = physical::probe_stream_end(
                     &mut self.reader,
                     &mut self.pages,
@@ -388,7 +388,7 @@ impl FormatReader for OggReader {
             ogg_packet.data
         );
 
-        return Ok(packet);
+        Ok(packet)
     }
 
     fn metadata(&mut self) -> Metadata<'_> {

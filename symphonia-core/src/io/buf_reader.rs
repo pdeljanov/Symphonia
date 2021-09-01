@@ -193,7 +193,7 @@ impl<'a> ReadBytes for BufReader<'a> {
 
 impl<'a> FiniteStream for BufReader<'a> {
     #[inline(always)]
-    fn len(&self) -> u64 {
+    fn byte_len(&self) -> u64 {
         self.buf.len() as u64
     }
 

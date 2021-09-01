@@ -654,6 +654,11 @@ impl<S: Sample> SampleBuffer<S> {
         self.n_written
     }
 
+    /// Returns `true` if the buffer contains no written samples.
+    pub fn is_empty(&self) -> bool {
+        self.n_written == 0
+    }
+
     /// Gets an immutable slice of all written samples.
     pub fn samples(&self) -> &[S] {
         &self.buf[..self.n_written]
@@ -926,6 +931,11 @@ impl<S: Sample + RawSample> RawSampleBuffer<S> {
     /// Gets the number of written samples.
     pub fn len(&self) -> usize {
         self.n_written
+    }
+
+    /// Returns `true` if the buffer contains no written samples.
+    pub fn is_empty(&self) -> bool {
+        self.n_written == 0
     }
 
     /// Gets the maximum number of samples the `RawSampleBuffer` may store.

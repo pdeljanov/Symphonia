@@ -64,8 +64,8 @@ impl<B: ReadBytes + FiniteStream> UnsyncStream<B> {
 
 impl<B: ReadBytes + FiniteStream> FiniteStream for UnsyncStream<B> {
     #[inline(always)]
-    fn len(&self) -> u64 {
-        self.inner.len()
+    fn byte_len(&self) -> u64 {
+        self.inner.byte_len()
     }
 
     #[inline(always)]

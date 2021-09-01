@@ -111,7 +111,7 @@ impl<B : ReadBytes, M: Monitor> ReadBytes for MonitorStream<B, M> {
 
     fn read_buf_exact(&mut self, buf: &mut [u8]) -> io::Result<()> {
         self.inner.read_buf_exact(buf)?;
-        self.monitor.process_buf_bytes(&buf);
+        self.monitor.process_buf_bytes(buf);
         Ok(())
     }
 

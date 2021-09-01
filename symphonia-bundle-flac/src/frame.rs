@@ -119,7 +119,7 @@ pub fn read_frame_header<B: ReadBytes>(reader: &mut B, sync: u16) -> Result<Fram
             // The sample number should only be 36-bits. Since it is UTF8 encoded, the actual length
             // cannot be enforced by the decoder. Return an error if the frame number exceeds the
             // maximum 36-bit value.
-            if sample > 0xffff_fffff {
+            if sample > 0x000f_ffff_ffff {
                 return decode_error("flac: sample sequence number exceeds 36-bits");
             }
 

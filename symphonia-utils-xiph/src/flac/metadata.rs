@@ -444,8 +444,7 @@ pub fn read_picture_block<B : ReadBytes>(
     let desc = String::from_utf8_lossy(&desc_buf);
 
     // Convert description bytes into a standard Vorbis DESCRIPTION tag.
-    let mut tags = Vec::<Tag>::new();
-    tags.push(Tag::new(Some(StandardTagKey::Description), "DESCRIPTION", Value::from(desc)));
+    let tags = vec![Tag::new(Some(StandardTagKey::Description), "DESCRIPTION", Value::from(desc))];
 
     // Read the width, and height of the visual.
     let width = reader.read_be_u32()?;

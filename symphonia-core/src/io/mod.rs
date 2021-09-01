@@ -44,7 +44,7 @@ pub trait MediaSource: io::Read + io::Seek + Send {
     fn is_seekable(&self) -> bool;
 
     /// Returns the length in bytes, if available. This may be an expensive operation.
-    fn len(&self) -> Option<u64>;
+    fn byte_len(&self) -> Option<u64>;
 }
 
 impl MediaSource for std::fs::File {
@@ -66,7 +66,7 @@ impl MediaSource for std::fs::File {
     ///
     /// Note: This operation involves querying the underlying file descriptor for information and
     /// may be moderately expensive. Therefore it is recommended to cache this value if used often.
-    fn len(&self) -> Option<u64> {
+    fn byte_len(&self) -> Option<u64> {
         match self.metadata() {
             Ok(metadata) => Some(metadata.len()),
             _ => None,
@@ -81,7 +81,7 @@ impl<T: std::convert::AsRef<[u8]> + Send> MediaSource for io::Cursor<T> {
     }
 
     /// Returns the length in bytes of the `io::Cursor<u8>` backing the `MediaSource`.
-    fn len(&self) -> Option<u64> {
+    fn byte_len(&self) -> Option<u64> {
         // Get the underlying container, usually &Vec<T>.
         let inner = self.get_ref();
         // Get slice from the underlying container, &[T], for the len() function.
@@ -123,7 +123,7 @@ impl<R: io::Read + Send> MediaSource for ReadOnlySource<R> {
         false
     }
 
-    fn len(&self) -> Option<u64> {
+    fn byte_len(&self) -> Option<u64> {
         None
     }
 }
@@ -143,7 +143,6 @@ impl<R: io::Read> io::Seek for ReadOnlySource<R> {
 /// `ReadBytes` provides functions to read bytes and interpret them as little- or big-endian
 /// unsigned integers or floating-point values of standard widths.
 pub trait ReadBytes {
-
     /// Reads a single byte from the stream and returns it or an error.
     fn read_byte(&mut self) -> io::Result<u8>;
 
@@ -358,9 +357,9 @@ impl<'b, R: ReadBytes> ReadBytes for &'b mut R {
 /// A `FiniteStream` is a stream that has a known length in bytes.
 pub trait FiniteStream {
     /// Returns the length of the the stream in bytes.
-    fn len(&self) -> u64;
+    fn byte_len(&self) -> u64;
 
-    /// Returns the number of bytes previously read.
+    /// Returns the number of bytes that have been read.
     fn bytes_read(&self) -> u64;
 
     /// Returns the number of bytes available for reading.

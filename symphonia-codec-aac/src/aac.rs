@@ -45,8 +45,8 @@ lazy_static! {
     /// Pre-computed table of y = x^(4/3).
     static ref POW43_TABLE: [f32; 8192] = {
         let mut pow43 = [0f32; 8192];
-        for i in 0..8192 {
-            pow43[i] = f32::powf(i as f32, 4.0 / 3.0);
+        for (i, pow43) in pow43.iter_mut().enumerate() {
+            *pow43 = f32::powf(i as f32, 4.0 / 3.0);
         }
         pow43
     };
@@ -126,7 +126,7 @@ impl M4AInfo {
 
         self.channels = Self::read_channel_config(&mut bs)?;
 
-        if (self.otype == M4AType::SBR) || (self.otype == M4AType::PS) {
+        if (self.otype == M4AType::Sbr) || (self.otype == M4AType::PS) {
             let ext_srate = Self::read_sampling_frequency(&mut bs)?;
             self.otype = Self::read_object_type(&mut bs)?;
 
@@ -142,8 +142,8 @@ impl M4AInfo {
 
         match self.otype {
             M4AType::Main
-            | M4AType::LC
-            | M4AType::SSR
+            | M4AType::Lc
+            | M4AType::Ssr
             | M4AType::Scalable
             | M4AType::TwinVQ
             | M4AType::ER_AAC_LC
@@ -196,13 +196,13 @@ impl M4AInfo {
                     }
                 }
             }
-            M4AType::CELP => {
+            M4AType::Celp => {
                 return unsupported_error("aac: CELP config");
             }
-            M4AType::HVXC => {
+            M4AType::Hvxc => {
                 return unsupported_error("aac: HVXC config");
             }
-            M4AType::TTSI => {
+            M4AType::Ttsi => {
                 return unsupported_error("aac: TTS config");
             }
             M4AType::MainSynth
@@ -220,7 +220,7 @@ impl M4AInfo {
             M4AType::ER_HILN | M4AType::ER_Parametric => {
                 return unsupported_error("aac: parametric config");
             }
-            M4AType::SSC => {
+            M4AType::Ssc => {
                 return unsupported_error("aac: SSC config");
             }
             M4AType::MPEGSurround => {
@@ -230,14 +230,14 @@ impl M4AInfo {
             M4AType::Layer1 | M4AType::Layer2 | M4AType::Layer3 => {
                 return unsupported_error("aac: MPEG Layer 1/2/3 config");
             }
-            M4AType::DST => {
+            M4AType::Dst => {
                 return unsupported_error("aac: DST config");
             }
-            M4AType::ALS => {
+            M4AType::Als => {
                 // bs.ignore_bits(5)?; // fillBits
                 return unsupported_error("aac: ALS config");
             }
-            M4AType::SLS | M4AType::SLSNonCore => {
+            M4AType::Sls | M4AType::SLSNonCore => {
                 return unsupported_error("aac: SLS config");
             }
             M4AType::ER_AAC_ELD => {
@@ -279,7 +279,7 @@ impl M4AInfo {
 
             if sync == 0x2B7 {
                 let ext_otype = Self::read_object_type(&mut bs)?;
-                if ext_otype == M4AType::SBR {
+                if ext_otype == M4AType::Sbr {
                     self.sbr_present = bs.read_bit()?;
                     if self.sbr_present {
                         let _ext_srate = Self::read_sampling_frequency(&mut bs)?;
@@ -434,7 +434,8 @@ impl LTPData {
         if !predictor_data_present {
             return Ok(None);
         }
-        return unsupported_error("aac: predictor data");
+
+        unsupported_error("aac: predictor data")
         /*
                 if is_main {
                     let predictor_reset                         = bs.read_bit()?;
@@ -567,9 +568,7 @@ impl TNSCoeffs {
                 for i in 1..m {
                     b[i] = self.coef[i - 1] + tmp[m - 1] * self.coef[m - i - 1];
                 }
-                for i in 1..m {
-                    self.coef[i - 1] = b[i];
-                }
+                self.coef[..(m - 1)].copy_from_slice(&b[1..m]);
                 self.coef[m - 1] = tmp[m - 1];
             }
         }
@@ -630,7 +629,7 @@ impl GainControlData {
         if !gain_control_data_present {
             return Ok(None);
         }
-        return unsupported_error("aac: gain control data");
+        unsupported_error("aac: gain control data")
         /*        self.max_band                                   = bs.read_bits_leq32(2)? as u8;
                 if window_sequence == ONLY_LONG_SEQUENCE {
                     for bd in 0..max_band
@@ -649,7 +648,7 @@ const INTENSITY_HCB2: u8 = 14;
 const INTENSITY_HCB: u8 = 15;
 
 #[derive(Clone)]
-struct ICS {
+struct Ics {
     global_gain: u8,
     info: ICSInfo,
     pulse_data: Option<PulseData>,
@@ -680,7 +679,7 @@ fn get_intensity_scale(scale: i16) -> f32 {
     2.0f32.powf(0.25 * f32::from(scale))
 }
 
-impl ICS {
+impl Ics {
     fn new(sbinfo: GASubbandInfo) -> Self {
         Self {
             global_gain: 0,
@@ -946,7 +945,7 @@ impl ICS {
         let tns_max_order = if !self.info.long_win {
             7
         }
-        else if m4atype == M4AType::LC {
+        else if m4atype == M4AType::Lc {
             12
         }
         else {
@@ -957,7 +956,7 @@ impl ICS {
             TNSData::read(bs, self.info.long_win, self.info.num_windows, tns_max_order)?;
 
         match m4atype {
-            M4AType::SSR => self.gain_control = GainControlData::read(bs)?,
+            M4AType::Ssr => self.gain_control = GainControlData::read(bs)?,
             _ => {
                 let gain_control_data_present = bs.read_bit()?;
                 validate!(!gain_control_data_present);
@@ -968,7 +967,7 @@ impl ICS {
         Ok(())
     }
 
-    fn synth_channel(&mut self, dsp: &mut DSP, srate_idx: usize, dst: &mut [f32]) {
+    fn synth_channel(&mut self, dsp: &mut Dsp, srate_idx: usize, dst: &mut [f32]) {
         self.place_pulses();
 
         if let Some(ref tns_data) = self.tns_data {
@@ -1086,7 +1085,7 @@ fn decode_spectrum_noise(lcg: &mut Lcg, sf: f32, dst: &mut [f32]) {
     let scale = sf / energy.sqrt();
 
     for spec in dst.iter_mut() {
-        *spec = *spec * scale;
+        *spec *= scale;
     }
 }
 
@@ -1103,28 +1102,26 @@ fn decode_quads<B: ReadBitsLtr>(
     for out in dst.chunks_mut(4) {
         let cw = bs.read_codebook(cb)?.0 as usize;
         if unsigned {
-            for i in 0..4 {
-                let val = AAC_QUADS[cw][i];
-
-                if val != 0 {
-                    if bs.read_bit()? {
-                        out[i] = -pow43_table[val as usize] * scale;
+            for (out, &quad) in out.iter_mut().zip(&AAC_QUADS[cw]) {
+                if quad != 0 {
+                    *out = if bs.read_bit()? {
+                        -pow43_table[quad as usize] * scale
                     }
                     else {
-                        out[i] = pow43_table[val as usize] * scale;
+                        pow43_table[quad as usize] * scale
                     }
                 }
             }
         }
         else {
-            for i in 0..4 {
-                let val = AAC_QUADS[cw][i] - 1;
+            for (out, &quad) in out.iter_mut().zip(&AAC_QUADS[cw]) {
+                let val = quad - 1;
 
-                if val < 0 {
-                    out[i] = -pow43_table[-val as usize] * scale;
+                *out = if val < 0 {
+                    -pow43_table[-val as usize] * scale
                 }
                 else {
-                    out[i] = pow43_table[val as usize] * scale;
+                    pow43_table[val as usize] * scale
                 }
             }
         }
@@ -1201,8 +1198,8 @@ struct ChannelPair {
     common_window: bool,
     ms_mask_present: u8,
     ms_used: [[bool; MAX_SFBS]; MAX_WINDOWS],
-    ics0: ICS,
-    ics1: ICS,
+    ics0: Ics,
+    ics1: Ics,
 }
 
 impl ChannelPair {
@@ -1213,8 +1210,8 @@ impl ChannelPair {
             common_window: false,
             ms_mask_present: 0,
             ms_used: [[false; MAX_SFBS]; MAX_WINDOWS],
-            ics0: ICS::new(sbinfo),
-            ics1: ICS::new(sbinfo),
+            ics0: Ics::new(sbinfo),
+            ics1: Ics::new(sbinfo),
         }
     }
 
@@ -1323,7 +1320,7 @@ impl ChannelPair {
         Ok(())
     }
 
-    fn synth_audio(&mut self, dsp: &mut DSP, abuf: &mut AudioBuffer<f32>, srate_idx: usize) {
+    fn synth_audio(&mut self, dsp: &mut Dsp, abuf: &mut AudioBuffer<f32>, srate_idx: usize) {
         self.ics0.synth_channel(dsp, srate_idx, abuf.chan_mut(self.channel));
 
         if self.is_pair {
@@ -1332,7 +1329,7 @@ impl ChannelPair {
     }
 }
 
-struct DSP {
+struct Dsp {
     kbd_long_win: [f32; 1024],
     kbd_short_win: [f32; 128],
     sine_long_win: [f32; 1024],
@@ -1346,7 +1343,7 @@ struct DSP {
 const SHORT_WIN_POINT0: usize = 512 - 64;
 const SHORT_WIN_POINT1: usize = 512 + 64;
 
-impl DSP {
+impl Dsp {
     fn new() -> Self {
         let mut kbd_long_win: [f32; 1024] = [0.0; 1024];
         let mut kbd_short_win: [f32; 128] = [0.0; 128];
@@ -1381,7 +1378,7 @@ impl DSP {
         }
     }
 
-    #[allow(clippy::cyclomatic_complexity)]
+    #[allow(clippy::cognitive_complexity)]
     fn synth(
         &mut self,
         coeffs: &[f32; 1024],
@@ -1440,18 +1437,15 @@ impl DSP {
                 }
             }
             EIGHT_SHORT_SEQUENCE => {
-                for i in 0..SHORT_WIN_POINT0 {
-                    dst[i] = delay[i];
-                }
+                dst[..SHORT_WIN_POINT0].copy_from_slice(&delay[..SHORT_WIN_POINT0]);
 
                 for i in SHORT_WIN_POINT0..1024 {
                     dst[i] = delay[i] + self.ew_buf[i - SHORT_WIN_POINT0];
                 }
             }
             LONG_STOP_SEQUENCE => {
-                for i in 0..SHORT_WIN_POINT0 {
-                    dst[i] = delay[i];
-                }
+                dst[..SHORT_WIN_POINT0].copy_from_slice(&delay[..SHORT_WIN_POINT0]);
+
                 for i in SHORT_WIN_POINT0..SHORT_WIN_POINT1 {
                     dst[i] = delay[i] + self.tmp[i] * prev_short_win[i - SHORT_WIN_POINT0];
                 }
@@ -1479,9 +1473,8 @@ impl DSP {
                 }
             }
             LONG_START_SEQUENCE => {
-                for i in 0..SHORT_WIN_POINT0 {
-                    delay[i] = self.tmp[i + 1024];
-                }
+                delay[..SHORT_WIN_POINT0].copy_from_slice(&self.tmp[1024..(SHORT_WIN_POINT0 + 1024)]);
+
                 for i in SHORT_WIN_POINT0..SHORT_WIN_POINT1 {
                     delay[i] = self.tmp[i + 1024] * short_win[127 - (i - SHORT_WIN_POINT0)];
                 }
@@ -1502,7 +1495,7 @@ pub struct AacDecoder {
     // info: NACodecInfoRef,
     m4ainfo: M4AInfo,
     pairs: Vec<ChannelPair>,
-    dsp: DSP,
+    dsp: Dsp,
     sbinfo: GASubbandInfo,
     params: CodecParameters,
     buf: AudioBuffer<f32>,
@@ -1625,7 +1618,7 @@ impl Decoder for AacDecoder {
         else {
             // Otherwise, assume there is no ASC and use the codec parameters for ADTS.
             m4ainfo.srate = params.sample_rate.unwrap();
-            m4ainfo.otype = M4AType::LC;
+            m4ainfo.otype = M4AType::Lc;
             m4ainfo.samples = 1024;
             m4ainfo.channels = params.channels.unwrap().count();
         }
@@ -1634,7 +1627,7 @@ impl Decoder for AacDecoder {
 
         trace!("{}", m4ainfo);
 
-        if (m4ainfo.otype != M4AType::LC) || (m4ainfo.channels > 2) || (m4ainfo.samples != 1024) {
+        if (m4ainfo.otype != M4AType::Lc) || (m4ainfo.channels > 2) || (m4ainfo.samples != 1024) {
             return unsupported_error("aac: aac too complex");
         }
 
@@ -1649,7 +1642,7 @@ impl Decoder for AacDecoder {
         Ok(AacDecoder {
             m4ainfo,
             pairs: Vec::new(),
-            dsp: DSP::new(),
+            dsp: Dsp::new(),
             sbinfo: GASubbandInfo::find(srate),
             params: params.clone(),
             buf: AudioBuffer::new(duration, spec),
@@ -1681,7 +1674,7 @@ impl Decoder for AacDecoder {
 
         // Choose decode step based on the object type.
         match self.m4ainfo.otype {
-            M4AType::LC => self.decode_ga(&mut bs)?,
+            M4AType::Lc => self.decode_ga(&mut bs)?,
             _           => return unsupported_error("aac: object type"),
         }
 

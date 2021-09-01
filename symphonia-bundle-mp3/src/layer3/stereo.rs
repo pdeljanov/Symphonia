@@ -93,9 +93,9 @@ lazy_static! {
 
         let mut ratios = [(0.0, 0.0); 7];
 
-        for is_pos in 0..6 {
-            let ratio = (PI_12 * is_pos as f64).tan();
-            ratios[is_pos] = ((ratio / (1.0 + ratio)) as f32, 1.0 / (1.0 + ratio) as f32);
+        for (is_pos, ratio) in ratios[..6].iter_mut().enumerate() {
+            let is_ratio = (PI_12 * is_pos as f64).tan();
+            *ratio = ((is_ratio / (1.0 + is_ratio)) as f32, 1.0 / (1.0 + is_ratio) as f32);
         }
 
         ratios[6] = (1.0, 0.0);
@@ -437,7 +437,7 @@ fn process_intensity_short_block_mpeg2(
         }
 
         // Check if a band is non-zero, and if so, record it in the non-zero band map.
-        if ch1[*start..*end].iter().find(|&&x| x != 0.0).is_some() {
+        if ch1[*start..*end].iter().any(|&x| x != 0.0) {
             nz_map |= 0x1 << i;
         }
     }
