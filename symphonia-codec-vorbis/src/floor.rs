@@ -8,7 +8,7 @@
 use std::cmp::min;
 use std::collections::HashSet;
 
-use symphonia_core::errors::{Result, decode_error, unsupported_error};
+use symphonia_core::errors::{Result, decode_error};
 use symphonia_core::io::{ReadBitsRtl, BitReaderRtl};
 
 use super::codebook::VorbisCodebook;
@@ -90,7 +90,7 @@ pub trait Floor : Send {
 }
 
 #[derive(Debug)]
-struct FloorType0Setup {
+struct Floor0Setup {
     floor0_order: u8,
     floor0_rate: u16,
     floor0_bark_map_size: u16,
@@ -98,40 +98,56 @@ struct FloorType0Setup {
     floor0_amplitude_offset: u8,
     floor0_number_of_books: u8,
     floor0_book_list: [u8; 16],
+    // The block size of the short Bark map.
+    floor0_map_short_bs_exp: u8,
+    // Pre-computed Bark map for short blocks.
+    floor0_map_short: Vec<i32>,
+    // Pre-computed Bark map for long blocks.
+    floor0_map_long: Vec<i32>,
 }
 
 #[derive(Debug)]
-pub struct FloorType0 {
-    setup: FloorType0Setup,
+pub struct Floor0 {
+    setup: Floor0Setup,
     is_unused: bool,
+    amplitude: u64,
     coeffs: [f32; 256],
 }
 
-impl FloorType0 {
-    pub fn try_read(bs: &mut BitReaderRtl<'_>, max_codebook: u8) -> Result<Box<dyn Floor>> {
-        let setup = Self::read_setup(bs, max_codebook)?;
+impl Floor0 {
+    pub fn try_read(
+        bs: &mut BitReaderRtl<'_>,
+        bs0_exp: u8,
+        bs1_exp: u8,
+        max_codebook: u8
+    ) -> Result<Box<dyn Floor>> {
+        let setup = Self::read_setup(bs, bs0_exp, bs1_exp, max_codebook)?;
 
-        Ok(Box::new(FloorType0 {
+        Ok(Box::new(Floor0 {
             setup,
             is_unused: false,
+            amplitude: 0,
             coeffs: [0.0; 256]
         }))
     }
 
-    fn read_setup(bs: &mut BitReaderRtl<'_>, max_codebook: u8) -> Result<FloorType0Setup> {
-        let mut floor_type0 = FloorType0Setup {
-            floor0_order: bs.read_bits_leq32(8)? as u8,
-            floor0_rate: bs.read_bits_leq32(16)? as u16,
-            floor0_bark_map_size: bs.read_bits_leq32(16)? as u16,
-            floor0_amplitude_bits: bs.read_bits_leq32(6)? as u8,
-            floor0_amplitude_offset: bs.read_bits_leq32(8)? as u8,
-            floor0_number_of_books: bs.read_bits_leq32(4)? as u8 + 1,
-            floor0_book_list: [0; 16],
-        };
+    fn read_setup(
+        bs: &mut BitReaderRtl<'_>,
+        bs0_exp: u8,
+        bs1_exp: u8,
+        max_codebook: u8
+    ) -> Result<Floor0Setup> {
+        let floor0_order = bs.read_bits_leq32(8)? as u8;
+        let floor0_rate = bs.read_bits_leq32(16)? as u16;
+        let floor0_bark_map_size = bs.read_bits_leq32(16)? as u16;
+        let floor0_amplitude_bits = bs.read_bits_leq32(6)? as u8;
+        let floor0_amplitude_offset = bs.read_bits_leq32(8)? as u8;
+        let floor0_number_of_books = bs.read_bits_leq32(4)? as u8 + 1;
+        let mut floor0_book_list = [0; 16];
 
-        let end = usize::from(floor_type0.floor0_number_of_books);
+        let end = usize::from(floor0_number_of_books);
 
-        for book in &mut floor_type0.floor0_book_list[..end] {
+        for book in &mut floor0_book_list[..end] {
             *book = bs.read_bits_leq32(8)? as u8;
 
             if *book >= max_codebook {
@@ -139,28 +155,52 @@ impl FloorType0 {
             }
         }
 
+        // Pre-compute the Bark-scale maps.
+        let floor0_map_short = bark_map(1 << (bs0_exp - 1), floor0_rate, floor0_bark_map_size);
+        let floor0_map_long = bark_map(1 << (bs1_exp - 1), floor0_rate, floor0_bark_map_size);
+
+        let floor_type0 = Floor0Setup {
+            floor0_order,
+            floor0_rate,
+            floor0_bark_map_size,
+            floor0_amplitude_bits,
+            floor0_amplitude_offset,
+            floor0_number_of_books,
+            floor0_book_list,
+            floor0_map_short_bs_exp: bs0_exp,
+            floor0_map_short,
+            floor0_map_long,
+        };
+
         Ok(floor_type0)
     }
 }
 
-impl Floor for FloorType0 {
+impl Floor for Floor0 {
     fn read_channel(
         &mut self,
         bs: &mut BitReaderRtl<'_>,
         codebooks: &[VorbisCodebook]
     ) ->  Result<()> {
-        let amplitude = bs.read_bits_leq32(u32::from(self.setup.floor0_amplitude_bits))?;
+        self.amplitude = bs.read_bits_leq64(u32::from(self.setup.floor0_amplitude_bits))?;
 
-        self.is_unused = amplitude == 0;
+        self.is_unused = self.amplitude == 0;
 
         if !self.is_unused {
-            let codebook_idx_bits = u32::from(self.setup.floor0_number_of_books);
+            // Read the index into the floor's codebook list that contains the actual codebook
+            // index.
+            let floor_book_idx_bits = ilog(u32::from(self.setup.floor0_number_of_books));
+            let floor_book_idx = bs.read_bits_leq32(floor_book_idx_bits)? as usize;
 
-            let codebook_idx = ilog(bs.read_bits_leq32(codebook_idx_bits)?) as usize;
+            // Get the actual codebook index from the floor's codebook list.
+            let codebook_idx = self.setup.floor0_book_list[floor_book_idx] as usize;
 
             if codebook_idx >= codebooks.len() {
                 return decode_error("vorbis: floor0, invalid codebook");
             }
+
+            // Get the codebook for this floor.
+            let codebook = &codebooks[codebook_idx as usize];
 
             let order = usize::from(self.setup.floor0_order);
             let mut i = 0;
@@ -168,9 +208,6 @@ impl Floor for FloorType0 {
 
             while i < order {
                 let i0 = i;
-
-                // Get the codebook for this floor.
-                let codebook = &codebooks[codebook_idx as usize];
 
                 // Read and obtain the VQ vector from the codebook.
                 let vq = if let Ok(vq) = codebook.read_vq(bs) {
@@ -185,7 +222,7 @@ impl Floor for FloorType0 {
                 // The VQ vector may be much larger (up-to 65535 scalars) than the remaining number
                 // of coefficients (up-to 255 scalars). Cap the amount of coefficients to be
                 // processed.
-                i += min(order - i, vq.len());
+                i += min(order - i0, vq.len());
 
                 // Add the value of last coefficient from the previous iteration to each scalar
                 // value read from the VQ vector and append those valeus to the coefficient vector.
@@ -197,6 +234,12 @@ impl Floor for FloorType0 {
                 // iteration.
                 last = self.coeffs[i - 1];
             }
+
+            // Pre-compute the 2 times the cosine of all coefficients.
+            for coeff in self.coeffs[..order].iter_mut() {
+                *coeff = 2.0 * coeff.cos();
+            }
+
         }
 
         Ok(())
@@ -206,9 +249,129 @@ impl Floor for FloorType0 {
         self.is_unused
     }
 
-    fn synthesis(&mut self, _bs_exp: u8, _floor: &mut [f32]) -> Result<()> {
-        unsupported_error("vorbis: floor type 0 unsupported")
+    fn synthesis(&mut self, bs_exp: u8, floor: &mut [f32]) -> Result<()> {
+        debug_assert!(!self.is_unused);
+
+        // Block size.
+        let n = (1 << bs_exp) >> 1;
+
+        // Select the correct Bark-scale map based on the block-size exponent.
+        let map = if bs_exp == self.setup.floor0_map_short_bs_exp {
+            &self.setup.floor0_map_short
+        }
+        else {
+            &self.setup.floor0_map_long
+        };
+
+        let omega_step = std::f32::consts::PI / f32::from(self.setup.floor0_bark_map_size);
+
+        let mut i = 0;
+
+        loop {
+            let iter_cond = map[i];
+
+            let omega = omega_step * iter_cond as f32;
+            let cos_omega = omega.cos();
+            let two_cos_omega = 2.0 * cos_omega;
+
+            let mut p = 1.0;
+            let mut q = 1.0;
+
+            let mut iter = self.coeffs[..usize::from(self.setup.floor0_order)].chunks_exact(2);
+
+            // Calculate p using coefficients with odd indicies, and q using coefficients with even
+            // indicies.
+            for coeffs in &mut iter {
+                p *= coeffs[1] - two_cos_omega;
+                q *= coeffs[0] - two_cos_omega;
+            }
+
+            // If order is an odd number, then there should be exactly one extra coefficient.
+            let last_coeff = iter.remainder();
+
+            if last_coeff.len() > 0 {
+                q *= last_coeff[0] - two_cos_omega;
+
+                p *= p * (1.0 - (cos_omega * cos_omega));
+                q *= q * 0.25;
+            }
+            else {
+                p *= p * ((1.0 - cos_omega) / 2.0);
+                q *= q * ((1.0 + cos_omega) / 2.0);
+            }
+
+            if p + q == 0.0 {
+                return decode_error("vorbis: invalid floor0 coefficients");
+            }
+
+            let linear_floor_value = linear_floor0_value(
+                p,
+                q,
+                self.amplitude,
+                self.setup.floor0_amplitude_bits,
+                self.setup.floor0_amplitude_offset
+            );
+
+            // Fill in the floor values where the map value is the same.
+            for (floor, &map) in floor[i..n].iter_mut().zip(&map[i..n]) {
+                if map != iter_cond {
+                    break;
+                }
+
+                *floor = linear_floor_value;
+                i += 1;
+            }
+
+            if i >= n {
+                break;
+            }
+        }
+
+        Ok(())
     }
+}
+
+/// Vorbis I specification, section 6.2.3.
+#[inline(always)]
+fn bark(x: f64) -> f64 {
+    (13.1 * (0.00074 * x).atan()) + (2.24 * (0.0000000185 * x * x).atan()) + (0.0001 * x)
+}
+
+fn bark_map(n: u32, floor0_rate: u16, floor0_bark_map_size: u16) -> Vec<i32> {
+    let mut map = Vec::with_capacity(n as usize);
+
+    let foobar_min = i32::from(floor0_bark_map_size) - 1;
+    let rate = f64::from(floor0_rate);
+    let rate_by_2n = rate / (2.0 * f64::from(n));
+
+    let c = f64::from(floor0_bark_map_size) / bark(0.5 * rate);
+
+    // Compute 0 to N-1 elements.
+    for i in 0..n {
+        let foobar = (bark(rate_by_2n * f64::from(i)) * c).floor() as i32;
+        map.push(foobar.min(foobar_min));
+    }
+
+    map
+}
+
+/// Calculate the linear floor value as per Vorbis I specification, section 6.2.3.
+#[inline(always)]
+fn linear_floor0_value(
+    p: f32,
+    q: f32,
+    amplitude: u64,
+    amplitude_bits: u8,
+    amplitude_offset: u8,
+) -> f32 {
+    // Amplitude could be up-to 63-bits, and amplitude offset 8-bits. Therefore, 71-bits is required
+    // in total. This is unreasonable since even an f64 can't represent more than 56-bits. Since
+    // large values like this shouldn't happen in practice, use wrapping arithmetic to prevent
+    // panics and truncate to 32-bits in the f32 conversion.
+    let a = amplitude.wrapping_mul(u64::from(amplitude_offset)) as f32;
+    let b = (p + q).sqrt() * ((1u64 << amplitude_bits) - 1) as f32;
+
+    (0.11512925 * ((a / b) - f32::from(amplitude_offset))).exp()
 }
 
 #[derive(Debug, Default)]
@@ -550,6 +713,7 @@ impl Floor for Floor1 {
     }
 
     fn synthesis(&mut self, bs_exp: u8, floor: &mut [f32]) -> Result<()> {
+        debug_assert!(!self.is_unused);
         self.synthesis_step1();
         self.synthesis_step2((1 << bs_exp) >> 1, floor);
         Ok(())

@@ -8,7 +8,8 @@
 #![warn(rust_2018_idioms)]
 #![forbid(unsafe_code)]
 
-use symphonia_core::audio::{AudioBuffer, AudioBufferRef, AsAudioBufferRef, Channels, Signal, SignalSpec};
+use symphonia_core::audio::{AudioBuffer, AudioBufferRef, AsAudioBufferRef, Channels};
+use symphonia_core::audio::{Signal, SignalSpec};
 use symphonia_core::codecs::{CODEC_TYPE_VORBIS, CodecParameters, CodecDescriptor};
 use symphonia_core::codecs::{Decoder, DecoderOptions, FinalizeResult};
 use symphonia_core::dsp::mdct::Imdct;
@@ -460,7 +461,7 @@ fn read_setup(reader: &mut BufReader<'_>, ident: &IdentHeader) -> Result<Setup> 
     read_time_domain_transforms(&mut bs)?;
 
     // Read floors.
-    let floors = read_floors(&mut bs, codebooks.len() as u8)?;
+    let floors = read_floors(&mut bs, ident.bs0_exp, ident.bs1_exp, codebooks.len() as u8)?;
 
     // Read residues.
     let residues = read_residues(&mut bs, codebooks.len() as u8)?;
@@ -506,16 +507,26 @@ fn read_time_domain_transforms(bs: &mut BitReaderRtl<'_>) -> Result<()> {
     Ok(())
 }
 
-fn read_floors(bs: &mut BitReaderRtl<'_>, max_codebook: u8) -> Result<Vec<Box<dyn Floor>>> {
+fn read_floors(
+    bs: &mut BitReaderRtl<'_>,
+    bs0_exp: u8,
+    bs1_exp: u8,
+    max_codebook: u8
+) -> Result<Vec<Box<dyn Floor>>> {
     let count = bs.read_bits_leq32(6)? + 1;
-    (0..count).map(|_| read_floor(bs, max_codebook)).collect()
+    (0..count).map(|_| read_floor(bs, bs0_exp, bs1_exp, max_codebook)).collect()
 }
 
-fn read_floor(bs: &mut BitReaderRtl<'_>, max_codebook: u8) -> Result<Box<dyn Floor>> {
+fn read_floor(
+    bs: &mut BitReaderRtl<'_>,
+    bs0_exp: u8,
+    bs1_exp: u8,
+    max_codebook: u8
+) -> Result<Box<dyn Floor>> {
     let floor_type = bs.read_bits_leq32(16)?;
 
     match floor_type {
-        0 => FloorType0::try_read(bs, max_codebook),
+        0 => Floor0::try_read(bs, bs0_exp, bs1_exp, max_codebook),
         1 => Floor1::try_read(bs, max_codebook),
         _ => decode_error("vorbis: invalid floor type"),
     }

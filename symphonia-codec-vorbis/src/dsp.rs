@@ -140,6 +140,13 @@ impl DspChannel {
                 *o = s;
             }
         }
+
+        // Step 5
+        //
+        // Clamp the output samples.
+        for s in buf.iter_mut() {
+            *s = s.clamp(-1.0, 1.0);
+        }
     }
 
     pub fn reset(&mut self) {
