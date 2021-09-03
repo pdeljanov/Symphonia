@@ -5,7 +5,6 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-
 use std::usize;
 
 use symphonia_core::errors::{Result, decode_error};
@@ -133,11 +132,14 @@ fn synthesize_codewords(code_lens: &[u8]) -> Result<Vec<u32>> {
 
     let mut next_codeword = [0u32; 33];
 
+    let mut num_sparse = 0;
+
     for &len in code_lens.iter() {
         // This should always be true.
         debug_assert!(len <= 32);
 
         if len == 0 {
+            num_sparse += 1;
             codewords.push(0);
             continue;
         }
@@ -202,7 +204,11 @@ fn synthesize_codewords(code_lens: &[u8]) -> Result<Vec<u32>> {
                                          .find(|(i, &c)| c & (u32::MAX >> (32 - i)) != 0)
                                          .is_some();
 
-    if is_underspecified {
+    // Single entry codebooks are technically invalid, but must be supported as a special-case
+    // per Vorbis I specification, errate 20150226.
+    let is_single_entry_codebook = code_lens.len() - num_sparse == 1;
+
+    if is_underspecified && !is_single_entry_codebook {
         return decode_error("vorbis: codebook underspecified");
     }
 

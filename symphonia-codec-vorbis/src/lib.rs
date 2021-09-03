@@ -143,7 +143,7 @@ impl Decoder for VorbisDecoder {
 
         let mode_number = bs.read_bits_leq32(common::ilog(num_modes as u32))? as usize;
 
-        if mode_number > self.modes.len() {
+        if mode_number >= self.modes.len() {
             return decode_error("vorbis: invalid packet mode number");
         }
 

@@ -27,7 +27,7 @@ pub struct WindowBuilder {
 
 impl WindowBuilder {
     fn new(blocksize0: usize, blocksize1: usize) -> Self {
-        assert!(blocksize0 < blocksize1);
+        assert!(blocksize0 <= blocksize1);
         WindowBuilder { blocksize0, blocksize1 }
     }
 
