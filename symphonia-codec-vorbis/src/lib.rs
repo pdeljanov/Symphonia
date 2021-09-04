@@ -18,7 +18,7 @@
 // Disable to better express the specification.
 #![allow(clippy::collapsible_else_if)]
 
-use symphonia_core::audio::{AudioBuffer, AudioBufferRef, AsAudioBufferRef, Channels};
+use symphonia_core::audio::{AudioBuffer, AudioBufferRef, AsAudioBufferRef};
 use symphonia_core::audio::{Signal, SignalSpec};
 use symphonia_core::codecs::{CODEC_TYPE_VORBIS, CodecParameters, CodecDescriptor};
 use symphonia_core::codecs::{Decoder, DecoderOptions, FinalizeResult};
@@ -27,6 +27,8 @@ use symphonia_core::errors::{Result, decode_error, unsupported_error};
 use symphonia_core::formats::Packet;
 use symphonia_core::io::{ReadBitsRtl, BitReaderRtl, ReadBytes, BufReader, FiniteBitStream};
 use symphonia_core::support_codec;
+
+use symphonia_utils_xiph::vorbis::*;
 
 use log::{debug, warn};
 
@@ -90,11 +92,14 @@ impl Decoder for VorbisDecoder {
         // Initialize dynamic DSP for each channel.
         let dsp_channels = (0..ident.n_channels).map(|_| DspChannel::new(ident.bs1_exp)).collect();
 
+        // Map the channels
+        let channels = match vorbis_channels_to_channels(ident.n_channels) {
+            Some(channels) => channels,
+            _ => return unsupported_error("vorbis: unknown channel map (fix me)"),
+        };
+
         // Initialize the output buffer.
-        let spec = SignalSpec::new(
-            ident.sample_rate,
-            mapping0_channel_count_to_channels(ident.n_channels)?
-        );
+        let spec = SignalSpec::new(ident.sample_rate, channels);
 
         let imdct_short = Imdct::new((1u32 << ident.bs0_exp) >> 1);
         let imdct_long = Imdct::new((1u32 << ident.bs1_exp) >> 1);
@@ -390,6 +395,11 @@ fn read_ident_header<B: ReadBytes>(reader: &mut B) -> Result<IdentHeader> {
 
     if n_channels == 0 {
         return decode_error("vorbis: number of channels cannot be 0");
+    }
+
+    // This is a Symphonia limitation.
+    if n_channels > 32 {
+        return unsupported_error("vorbis: only a maximum of 32 channels are supported");
     }
 
     let sample_rate = reader.read_u32()?;
@@ -740,65 +750,3 @@ fn read_mode(bs: &mut BitReaderRtl<'_>, max_mapping: u8) -> Result<Mode> {
 
     Ok(mode)
 }
-
-fn mapping0_channel_count_to_channels(num_channels: u8) -> Result<Channels> {
-    let channels = match num_channels {
-        0 => return unsupported_error("vorbis: no channels"),
-        1 => {
-            Channels::FRONT_LEFT
-        },
-        2 => {
-            Channels::FRONT_LEFT
-                | Channels::FRONT_RIGHT
-        },
-        3 => {
-            Channels::FRONT_LEFT
-                | Channels::FRONT_CENTRE
-                | Channels::FRONT_RIGHT
-        },
-        4 => {
-            Channels::FRONT_LEFT
-                | Channels::FRONT_RIGHT
-                | Channels::REAR_LEFT
-                | Channels::REAR_RIGHT
-        },
-        5 => {
-            Channels::FRONT_LEFT
-                | Channels::FRONT_CENTRE
-                | Channels::FRONT_RIGHT
-                | Channels::REAR_LEFT
-                | Channels::REAR_RIGHT
-        },
-        6 => {
-            Channels::FRONT_LEFT
-                | Channels::FRONT_CENTRE
-                | Channels::FRONT_RIGHT
-                | Channels::REAR_LEFT
-                | Channels::REAR_RIGHT
-                | Channels::LFE1
-        },
-        7 => {
-            Channels::FRONT_LEFT
-                | Channels::FRONT_CENTRE
-                | Channels::FRONT_RIGHT
-                | Channels::SIDE_LEFT
-                | Channels::SIDE_RIGHT
-                | Channels::REAR_CENTRE
-                | Channels::LFE1
-        },
-        8 => {
-            Channels::FRONT_LEFT
-                | Channels::FRONT_CENTRE
-                | Channels::FRONT_RIGHT
-                | Channels::SIDE_LEFT
-                | Channels::SIDE_RIGHT
-                | Channels::REAR_LEFT
-                | Channels::REAR_RIGHT
-                | Channels::LFE1
-        },
-        _ => return unsupported_error("vorbis: maximum 32 supported channels"),
-    };
-
-    Ok(channels)
-}
-

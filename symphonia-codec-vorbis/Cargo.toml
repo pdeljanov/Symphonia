@@ -14,3 +14,4 @@ edition = "2018"
 [dependencies]
 log = "0.4"
 symphonia-core = { version = "0.3", path = "../symphonia-core" }
+symphonia-utils-xiph = { version = "0.3", path = "../symphonia-utils-xiph" }

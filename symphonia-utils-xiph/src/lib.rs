@@ -13,3 +13,4 @@
 #![allow(clippy::manual_range_contains)]
 
 pub mod flac;
+pub mod vorbis;

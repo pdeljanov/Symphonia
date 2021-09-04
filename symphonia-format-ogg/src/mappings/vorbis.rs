@@ -14,7 +14,8 @@ use symphonia_core::io::{BitReaderRtl, BufReader, ReadBitsRtl, ReadBytes};
 use symphonia_core::meta::MetadataBuilder;
 use symphonia_core::units::TimeBase;
 
-use symphonia_metadata::vorbis;
+use symphonia_metadata::vorbis::*;
+use symphonia_utils_xiph::vorbis::*;
 
 use log::warn;
 
@@ -120,6 +121,10 @@ pub fn detect(buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> {
         .with_time_base(TimeBase::new(1, ident.sample_rate))
         .with_extra_data(Box::from(buf));
 
+    if let Some(channels) = vorbis_channels_to_channels(ident.n_channels) {
+        codec_params.with_channels(channels);
+    }
+
     // Instantiate the Vorbis mapper.
     let mapper = Box::new(VorbisMapper {
         codec_params,
@@ -202,7 +207,7 @@ impl Mapper for VorbisMapper {
                 VORBIS_PACKET_TYPE_COMMENT => {
                     let mut builder = MetadataBuilder::new();
 
-                    vorbis::read_comment_no_framing(&mut reader, &mut builder)?;
+                    read_comment_no_framing(&mut reader, &mut builder)?;
 
                     Ok(MapResult::SideData { data: SideData::Metadata(builder.metadata()) })
                 }
