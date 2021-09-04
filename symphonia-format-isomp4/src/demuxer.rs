@@ -52,6 +52,7 @@ impl TrackState {
             SampleDescription::Mp4a(ref mp4a) => {
                 codec_params
                     .for_codec(CODEC_TYPE_AAC)
+                    .with_n_frames(trak.tkhd.duration)
                     .with_sample_rate(
                         mp4a.sound_desc.sample_rate as u32)
                     .with_extra_data(
