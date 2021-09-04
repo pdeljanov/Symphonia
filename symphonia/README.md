@@ -23,15 +23,15 @@ Support for individual audio codecs and media formats is provided by separate cr
 
 The follow status classifications are used to determine the state of development for each format or codec.
 
-| Status       | Meaning                                                                                                                  |
-|--------------|--------------------------------------------------------------------------------------------------------------------------|
-| -            | No work started or planned yet.                                                                                          |
-| Next         | Is the next major work item.                                                                                             |
-| Good | Many media streams play. Some streams may panic, error, or produce audible glitches. Some features may not be supported. |
-| Great       | Most media streams play. Inaudible glitches may be present. Most common features are supported.                          |
-| Perfect    | All media streams play.  No audible or inaudible glitches. All required features are supported.                          |
+| Status  | Meaning                                                                                                                  |
+|---------|--------------------------------------------------------------------------------------------------------------------------|
+| -       | No work started or planned yet.                                                                                          |
+| Next    | Is the next major work item.                                                                                             |
+| Good    | Many media streams play. Some streams may panic, error, or produce audible glitches. Some features may not be supported. |
+| Great   | Most media streams play. Inaudible glitches may be present. Most common features are supported.                          |
+| Perfect | All media streams play.  No audible or inaudible glitches. All required features are supported.                          |
 
-A classification of usable indicates the end of major development. Though bugs and smaller issues can occur, it would generally be safe to use in an application. Compliance testing according to standards will be delayed until most codecs and demuxers are implemented so it's expected that many will stay in the category for a while.
+A classification of Great indicates the end of major development. Though bugs and smaller issues can occur, it would generally be safe to use in an application. Compliance testing according to standards will be delayed until most codecs and demuxers are implemented so it's expected that many will stay in the category for a while.
 
 ### Formats (Demux)
 
@@ -48,19 +48,20 @@ A classification of usable indicates the end of major development. Though bugs a
 
 ### Codecs (Decode)
 
-| Codec                        | Status  | Feature Flag | Default | Crate                     |
-|------------------------------|---------|--------------|---------|---------------------------|
-| AAC-LC                       | Good    | `aac`        | No      | [`symphonia-codec-aac`]   |
-| HE-AAC (AAC+, aacPlus)       | -       | `aac`        | No      | [`symphonia-codec-aac`]   |
-| HE-AACv2 (eAAC+, aacPlus v2) | -       | `aac`        | No      | [`symphonia-codec-aac`]   |
-| FLAC                         | Perfect | `flac`       | Yes     | [`symphonia-bundle-flac`] |
-| MP1                          | -       | `mp3`        | No      | [`symphonia-bundle-mp3`]  |
-| MP2                          | -       | `mp3`        | No      | [`symphonia-bundle-mp3`]  |
-| MP3                          | Great   | `mp3`        | No      | [`symphonia-bundle-mp3`]  |
-| Opus                         | Next    | `opus`       | Yes     | `symphonia-codec-opus`    |
-| PCM                          | Perfect | `pcm`        | Yes     | [`symphonia-codec-pcm`]   |
-| Vorbis                       | Great   | `vorbis`     | Yes     | [`symphonia-codec-vorbis`]|
-| WavPack                      | -       | `wavpack`    | Yes     | `symphonia-codec-wavpack` |
+| Codec                        | Status  | Feature Flag | Default | Crate                      |
+|------------------------------|---------|--------------|---------|----------------------------|
+| AAC-LC                       | Good    | `aac`        | No      | [`symphonia-codec-aac`]    |
+| ALAC                         | -       | `alac`       | No      | `symphonia-codec-alac`     |
+| HE-AAC (AAC+, aacPlus)       | -       | `aac`        | No      | [`symphonia-codec-aac`]    |
+| HE-AACv2 (eAAC+, aacPlus v2) | -       | `aac`        | No      | [`symphonia-codec-aac`]    |
+| FLAC                         | Perfect | `flac`       | Yes     | [`symphonia-bundle-flac`]  |
+| MP1                          | -       | `mp3`        | No      | [`symphonia-bundle-mp3`]   |
+| MP2                          | -       | `mp3`        | No      | [`symphonia-bundle-mp3`]   |
+| MP3                          | Great   | `mp3`        | No      | [`symphonia-bundle-mp3`]   |
+| Opus                         | Next    | `opus`       | Yes     | `symphonia-codec-opus`     |
+| PCM                          | Perfect | `pcm`        | Yes     | [`symphonia-codec-pcm`]    |
+| Vorbis                       | Great   | `vorbis`     | Yes     | [`symphonia-codec-vorbis`] |
+| WavPack                      | -       | `wavpack`    | Yes     | `symphonia-codec-wavpack`  |
 
 A `symphonia-bundle-*` package is a combination of a decoder and a native bitstream demuxer.
 
@@ -74,16 +75,14 @@ A `symphonia-bundle-*` package is a combination of a decoder and a native bitstr
 
 All metadata readers are provided by the `symphonia-metadata` crate.
 
-| Format                | Status  |
-|-----------------------|---------|
-| APEv1                 | -       |
-| APEv2                 | -       |
-| ID3v1                 | Great   |
-| ID3v2                 | Great   |
-| ISO/MP4               | Great   |
-| RIFF                  | Great   |
-| Vorbis comment (FLAC) | Perfect |
-| Vorbis comment (OGG)  | Perfect |
+| Format                | Status    |
+|-----------------------|-----------|
+| ID3v1                 | Great     |
+| ID3v2                 | Great     |
+| ISO/MP4               | Great     |
+| RIFF                  | Great     |
+| Vorbis comment (FLAC) | Perfect   |
+| Vorbis comment (OGG)  | Perfect   |
 
 ## Quality
 
@@ -91,7 +90,7 @@ In addition to the safety guarantees provided by Rust, Symphonia aims to:
 
 * Decode files as well as the leading free-and-open-source software decoders
 * Provide a powerful, consistent, and easy to use API
-* Have absolutely no unsafe blocks outside of `symphonia-core`
+* Be 100% safe code
 * Have very minimal dependencies
 * Prevent denial-of-service attacks
 * Be fuzz-tested

@@ -2,6 +2,7 @@
 
 [![Docs](https://docs.rs/symphonia/badge.svg)](https://docs.rs/symphonia)
 [![Build Status](https://github.com/pdeljanov/Symphonia/actions/workflows/ci.yml/badge.svg)](https://github.com/pdeljanov/Symphonia/actions/workflows/ci.yml)
+[![dependency status](https://deps.rs/repo/github/pdeljanov/symphonia/status.svg)](https://deps.rs/repo/github/pdeljanov/symphonia)
 
 Symphonia is a pure Rust audio decoding and media demuxing library supporting AAC, FLAC, MP3, MP4, OGG, Vorbis, and WAV.
 
@@ -31,7 +32,7 @@ The follow status classifications are used to determine the state of development
 | Great   | Most media streams play. Inaudible glitches may be present. Most common features are supported.                          |
 | Perfect | All media streams play.  No audible or inaudible glitches. All required features are supported.                          |
 
-A classification of usable indicates the end of major development. Though bugs and smaller issues can occur, it would generally be safe to use in an application. Compliance testing according to standards will be delayed until most codecs and demuxers are implemented so it's expected that many will stay in the category for a while.
+A classification of Great indicates the end of major development. Though bugs and smaller issues can occur, it would generally be safe to use in an application. Compliance testing according to standards will be delayed until most codecs and demuxers are implemented so it's expected that many will stay in the category for a while.
 
 ### Formats (Demux)
 
@@ -51,6 +52,7 @@ A classification of usable indicates the end of major development. Though bugs a
 | Codec                        | Status  | Feature Flag | Default | Crate                      |
 |------------------------------|---------|--------------|---------|----------------------------|
 | AAC-LC                       | Good    | `aac`        | No      | [`symphonia-codec-aac`]    |
+| ALAC                         | -       | `alac`       | No      | `symphonia-codec-alac`     |
 | HE-AAC (AAC+, aacPlus)       | -       | `aac`        | No      | [`symphonia-codec-aac`]    |
 | HE-AACv2 (eAAC+, aacPlus v2) | -       | `aac`        | No      | [`symphonia-codec-aac`]    |
 | FLAC                         | Perfect | `flac`       | Yes     | [`symphonia-bundle-flac`]  |
@@ -76,8 +78,6 @@ All metadata readers are provided by the `symphonia-metadata` crate.
 
 | Format                | Status    |
 |-----------------------|-----------|
-| APEv1                 | -         |
-| APEv2                 | -         |
 | ID3v1                 | Great     |
 | ID3v2                 | Great     |
 | ISO/MP4               | Great     |
@@ -91,7 +91,7 @@ In addition to the safety guarantees provided by Rust, Symphonia aims to:
 
 * Decode files as well as the leading free-and-open-source software decoders
 * Provide a powerful, consistent, and easy to use API
-* Have absolutely no unsafe blocks
+* Be 100% safe code
 * Have very minimal dependencies
 * Prevent denial-of-service attacks
 * Be fuzz-tested
