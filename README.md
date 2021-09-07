@@ -151,7 +151,9 @@ hyperfine -m 20 "ffmpeg -threads 1 -benchmark -v 0 -i ${IN} -f null -" "symphoni
 
 ## Example Usage
 
-Please see [`symphonia-play`](https://github.com/pdeljanov/Symphonia/tree/master/symphonia-play) for a simple music player example.
+Basic usage examples may be found in [`symphonia/examples`](https://github.com/pdeljanov/Symphonia/tree/master/symphonia/examples).
+
+For a more complete application, see [`symphonia-play`](https://github.com/pdeljanov/Symphonia/tree/master/symphonia-play), a simple music player.
 
 ## Tools
 
