@@ -395,6 +395,12 @@ pub trait Decoder: Send {
 
     /// Optionally, obtain post-decode information such as the verification status.
     fn finalize(&mut self) -> FinalizeResult;
+
+    /// Returns the audio buffer from by the last successful call to `decode`.
+    ///
+    /// If the last call to `decode` resulted in an error, then the
+    /// returned audio buffer is not guaranteed to be well-formed.
+    fn last_decoded(&self) -> Option<AudioBufferRef>;
 }
 
 /// A `CodecDescriptor` stores a description of a single logical codec. Common information such as

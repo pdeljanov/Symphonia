@@ -1684,6 +1684,14 @@ impl Decoder for AacDecoder {
     fn finalize(&mut self) -> FinalizeResult {
         Default::default()
     }
+
+    fn last_decoded(&self) -> Option<AudioBufferRef<'_>> {
+        if self.buf.frames() != 0 {
+            Some(self.buf.as_audio_buffer_ref())
+        } else {
+            None
+        }
+    }
 }
 
 const AAC_UNSIGNED_CODEBOOK: [bool; 11] = [
