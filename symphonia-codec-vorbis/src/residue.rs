@@ -174,7 +174,8 @@ impl Residue {
         // Read the residue, and ignore end-of-bitstream errors which are legal.
         match self.read_residue_inner(bs, bs_exp, codebooks, residue_channels, scratch, channels) {
             Ok(_) => (),
-            // TODO: Tighten this up since there are many types of error classified under "Other".
+            // An end-of-bitstream error is classified under ErrorKind::Other. This condition
+            // should not be treated as an error.
             Err(Error::IoError(ref e)) if e.kind() == io::ErrorKind::Other => (),
             Err(e) => return Err(e),
         };
