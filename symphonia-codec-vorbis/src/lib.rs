@@ -90,7 +90,7 @@ impl Decoder for VorbisDecoder {
         let windows = Windows::new(1 << ident.bs0_exp, 1 << ident.bs1_exp);
 
         // Initialize dynamic DSP for each channel.
-        let dsp_channels = (0..ident.n_channels).map(|_| DspChannel::new(ident.bs1_exp)).collect();
+        let dsp_channels = (0..ident.n_channels).map(|_| DspChannel::new(ident.bs0_exp, ident.bs1_exp)).collect();
 
         // Map the channels
         let channels = match vorbis_channels_to_channels(ident.n_channels) {
@@ -164,26 +164,17 @@ impl Decoder for VorbisDecoder {
         let mode = &self.modes[mode_number];
         let mapping = &self.mappings[usize::from(mode.mapping)];
 
-        let (bs_exp, imdct, window) = if mode.block_flag {
-            // This packet (block) uses a long window.
+        let (bs_exp, imdct) = if mode.block_flag {
+            // This packet (block) uses a long window. Do not use the window flags since they may
+            // be wrong.
+            let _prev_window_flag = bs.read_bit()?;
+            let _next_window_flag = bs.read_bit()?;
 
-            let prev_window_flag = bs.read_bit()?;
-            let next_window_flag = bs.read_bit()?;
-
-            // The shape of the long window depends on the type of block preceeding and following
-            // this block. Select based on the window flags.
-            let window = match (prev_window_flag, next_window_flag) {
-                (false, false) => &self.dsp.windows.short_long_short,
-                (false, true ) => &self.dsp.windows.short_long_long,
-                (true , false) => &self.dsp.windows.long_long_short,
-                (true , true ) => &self.dsp.windows.long_long_long,
-            };
-
-            (self.ident.bs1_exp, &mut self.dsp.imdct_long, window)
+            (self.ident.bs1_exp, &mut self.dsp.imdct_long)
         }
         else {
             // This packet (block) uses a short window.
-            (self.ident.bs0_exp, &mut self.dsp.imdct_short, &self.dsp.windows.short)
+            (self.ident.bs0_exp, &mut self.dsp.imdct_short)
         };
 
         // Block, and half-block size
@@ -311,27 +302,39 @@ impl Decoder for VorbisDecoder {
         // Calculate the output length and reserve space in the output buffer. If there was no
         // previous packet, then return an empty audio buffer since the decoder will need another
         // packet before being able to produce audio.
-        if let Some(prev_win) = &self.dsp.lapping_state {
-            let render_len = (prev_win.prev_block_size >> 2) + (n >> 2);
+        if let Some(lap_state) = &self.dsp.lapping_state {
+            // The previous block size.
+            let prev_block_n = if lap_state.prev_block_flag {
+                1 << self.ident.bs1_exp
+            }
+            else {
+                1 << self.ident.bs0_exp
+            };
+
+            let render_len = (prev_block_n + n) / 4;
             self.buf.render_reserved(Some(render_len));
         }
 
         // Render all the audio channels.
         for (i, channel) in self.dsp.channels.iter_mut().enumerate() {
-            // TODO: Is this correct?
             if channel.do_not_decode {
                 // Output silence on this channel.
                 for s in self.buf.chan_mut(i) { *s = 0.0; }
                 continue;
             }
 
-            channel.synth(n, &self.dsp.lapping_state, window, imdct, self.buf.chan_mut(i));
+            channel.synth(
+                mode.block_flag,
+                &self.dsp.lapping_state,
+                &self.dsp.windows,
+                imdct,
+                self.buf.chan_mut(i)
+            );
         }
 
         // Save the new lapping state.
         self.dsp.lapping_state = Some(LappingState {
-            prev_block_size: n,
-            prev_win_right: window.right
+            prev_block_flag: mode.block_flag,
         });
 
         Ok(self.buf.as_audio_buffer_ref())
