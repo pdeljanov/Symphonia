@@ -638,7 +638,7 @@ fn fmt_time(ts: u64, tb: TimeBase) -> String {
     let time = tb.calc_time(ts);
 
     let hours = time.seconds / (60 * 60);
-    let mins = time.seconds / 60;
+    let mins = (time.seconds % (60 * 60)) / 60;
     let secs = f64::from((time.seconds % 60) as u32) + time.frac;
 
     format!("{}:{:0>2}:{:0>6.3}", hours, mins, secs)
@@ -669,7 +669,7 @@ fn print_progress(ts: u64, dur: Option<u64>, tb: Option<TimeBase>) {
         let t = tb.calc_time(ts);
 
         let hours = t.seconds / (60 * 60);
-        let mins = t.seconds / 60;
+        let mins = (t.seconds % (60 * 60)) / 60;
         let secs = f64::from((t.seconds % 60) as u32) + t.frac;
 
         write!(output, "\r⏵ {}:{:0>2}:{:0>4.1}", hours, mins, secs).unwrap();
@@ -678,7 +678,7 @@ fn print_progress(ts: u64, dur: Option<u64>, tb: Option<TimeBase>) {
             let d = tb.calc_time(dur.saturating_sub(ts));
 
             let hours = d.seconds / (60 * 60);
-            let mins = d.seconds / 60;
+            let mins = (d.seconds % (60 * 60)) / 60;
             let secs = f64::from((d.seconds % 60) as u32) + d.frac;
 
             write!(
