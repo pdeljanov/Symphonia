@@ -201,12 +201,17 @@ impl Decoder for VorbisDecoder {
                 // now and save it for audio synthesis later.
                 floor.synthesis(bs_exp, &mut ch.floor)?;
             }
+            else {
+                // If the channel is unused, zero the floor vector.
+                ch.floor[..n2].fill(0.0);
+            }
         }
 
         // Section 4.3.3 - Non-zero Vector Propagate
 
-        // If within a pair of coupled channels, one channel has an used floor (i.e., no_residue
-        // is false for that channel), then both channels must have no_residue unset.
+        // If within a pair of coupled channels, one channel has an unused floor (do_not_decode
+        // is true for that channel), but the other channel is used, then both channels must have
+        // do_not_decode unset.
         for couple in &mapping.couplings {
             let magnitude_ch_idx = usize::from(couple.magnitude_ch);
             let angle_ch_idx = usize::from(couple.angle_ch);
@@ -286,7 +291,8 @@ impl Decoder for VorbisDecoder {
         // Section 4.3.6 - Dot Product
 
         for channel in self.dsp.channels.iter_mut() {
-            // TODO: Is this correct?
+            // If the channel is marked as do not decode, the floor vector is all 0. Therefore the
+            // dot product will be 0.
             if channel.do_not_decode {
                 continue;
             }
@@ -317,12 +323,6 @@ impl Decoder for VorbisDecoder {
 
         // Render all the audio channels.
         for (i, channel) in self.dsp.channels.iter_mut().enumerate() {
-            if channel.do_not_decode {
-                // Output silence on this channel.
-                for s in self.buf.chan_mut(i) { *s = 0.0; }
-                continue;
-            }
-
             channel.synth(
                 mode.block_flag,
                 &self.dsp.lapping_state,

@@ -241,7 +241,7 @@ impl Residue {
             scratch.reserve_buf(actual_size);
 
             // Zero the interleaving buffer.
-            for r in &mut scratch.buf[..actual_size] { *r = 0.0; }
+            scratch.buf[..actual_size].fill(0.0);
         }
         else {
             scratch.reserve_part_classes(parts_to_read * residue_channels.count() as usize);
@@ -255,7 +255,7 @@ impl Residue {
 
             // Zero the channel residue if not type 2.
             if !is_fmt2 {
-                for r in &mut ch.residue[..actual_size] { *r = 0.0; }
+                ch.residue[..actual_size].fill(0.0);
             }
 
             if !ch.do_not_decode {
