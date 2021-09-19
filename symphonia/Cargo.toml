@@ -1,6 +1,6 @@
 [package]
 name = "symphonia"
-version = "0.3.0"
+version = "0.4.0"
 description = "Pure Rust media container and audio decoding library."
 homepage = "https://github.com/pdeljanov/Symphonia"
 repository = "https://github.com/pdeljanov/Symphonia"
@@ -24,16 +24,16 @@ wav = ["symphonia-format-wav"]
 
 [dependencies]
 lazy_static = "1.4.0"
-symphonia-core = { version = "0.3", path = "../symphonia-core" }
-symphonia-metadata = { version = "0.3", path = "../symphonia-metadata" }
-symphonia-bundle-flac = { version = "0.3", path = "../symphonia-bundle-flac", optional = true }
-symphonia-bundle-mp3 = { version = "0.3", path = "../symphonia-bundle-mp3", optional = true }
-symphonia-codec-aac = { version = "0.3", path = "../symphonia-codec-aac", optional = true }
-symphonia-codec-pcm = { version = "0.3", path = "../symphonia-codec-pcm", optional = true }
-symphonia-codec-vorbis = { version = "0.3", path = "../symphonia-codec-vorbis", optional = true }
-symphonia-format-wav = { version = "0.3", path = "../symphonia-format-wav", optional = true }
-symphonia-format-ogg = { version = "0.3", path = "../symphonia-format-ogg", optional = true }
-symphonia-format-isomp4 = { version = "0.3", path = "../symphonia-format-isomp4", optional = true }
+symphonia-core = { version = "0.4", path = "../symphonia-core" }
+symphonia-metadata = { version = "0.4", path = "../symphonia-metadata" }
+symphonia-bundle-flac = { version = "0.4", path = "../symphonia-bundle-flac", optional = true }
+symphonia-bundle-mp3 = { version = "0.4", path = "../symphonia-bundle-mp3", optional = true }
+symphonia-codec-aac = { version = "0.4", path = "../symphonia-codec-aac", optional = true }
+symphonia-codec-pcm = { version = "0.4", path = "../symphonia-codec-pcm", optional = true }
+symphonia-codec-vorbis = { version = "0.4", path = "../symphonia-codec-vorbis", optional = true }
+symphonia-format-wav = { version = "0.4", path = "../symphonia-format-wav", optional = true }
+symphonia-format-ogg = { version = "0.4", path = "../symphonia-format-ogg", optional = true }
+symphonia-format-isomp4 = { version = "0.4", path = "../symphonia-format-isomp4", optional = true }
 
 # Show documentation with all features enabled on docs.rs
 [package.metadata.docs.rs]

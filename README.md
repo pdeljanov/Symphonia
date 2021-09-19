@@ -159,7 +159,8 @@ For a more complete application, see [`symphonia-play`](https://github.com/pdelj
 
 Symphonia provides the following tools for debugging purposes:
 
-* `symphonia-play` for probing files and playing back audio, as well as serving as a demo application
+* [`symphonia-play`](https://github.com/pdeljanov/Symphonia/tree/master/symphonia-play) for probing, decoding, validating, and playing back media streams.
+* [`symphonia-check`](https://github.com/pdeljanov/Symphonia/tree/master/symphonia-check) for validating Symphonia's decoded output against `ffmpeg`.
 
 ## Authors
 

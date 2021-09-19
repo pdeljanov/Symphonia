@@ -38,6 +38,7 @@
 //! | FLAC     | `flac`       | Yes     |
 //! | MP3      | `mp3`        | No      |
 //! | PCM      | `pcm`        | Yes     |
+//! | Vorbis   | `vorbis`     | Yes     |
 //!
 //! ## Metadata
 //!
