@@ -1616,6 +1616,9 @@ impl Decoder for AacDecoder {
             m4ainfo.read(extra_data_buf)?;
         }
         else {
+            validate!(params.sample_rate.is_some());
+            validate!(params.channels.is_some());
+
             // Otherwise, assume there is no ASC and use the codec parameters for ADTS.
             m4ainfo.srate = params.sample_rate.unwrap();
             m4ainfo.otype = M4AType::Lc;
