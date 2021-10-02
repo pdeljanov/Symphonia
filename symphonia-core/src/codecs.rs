@@ -18,15 +18,67 @@ use crate::formats::Packet;
 use crate::sample::SampleFormat;
 use crate::units::TimeBase;
 
-/// A `CodecType` is a unique identifier used to identify a specific codec. `CodecType` is mainly
-/// used for matching a format's stream to a specific `Decoder`. Decoders advertisting support for a
-/// specific `CodecType` should be interchangeable in regards to their ability to consume packets
-/// from a packet stream. This means that while support for codec features and quality may differ,
-/// all Decoders will identically advance the packet stream.
+/// A `CodecType` is a unique identifier used to identify a specific codec.
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub struct CodecType(u32);
 
-/// Null decoder, simply discards all data.
+/// Declares a new `CodecType` given a character code. A character code is an ASCII string
+/// containing a maximum of 5 alphanumeric characters.
+///
+/// Note: Due to the current limitations of const fn, this function is not able to panic on error.
+/// Therefore, if the character code contains an invalid character, then the character is dropped.
+/// Additionally, any extra characters will be truncated.
+pub const fn decl_codec_type(cc: &[u8]) -> CodecType {
+    /// Map alphanumeric ASCII characters into a 6-bit code.
+    const fn map_ascii_to_bits(cc: u8) -> u32 {
+        // The mapping is defined as:
+        //  b'0'..=b'9' maps to  1..=10
+        //  b'a'..=b'z' maps to 11..=36
+        //  b'A'..=b'Z' maps to 37..=62
+        if cc.is_ascii_digit() {
+            1 + (cc - b'0') as u32
+        }
+        else if cc.is_ascii_lowercase() {
+            11 + (cc - b'a') as u32
+        }
+        else if cc.is_ascii_uppercase() {
+            37 + (cc - b'A') as u32
+        }
+        else {
+            0
+        }
+    }
+
+    // TODO: assert!(cc.len() <= 5);
+
+    // The upper-bit indicates the user codec namespace.
+    let mut id = 0x8000_0000;
+
+    let mut i = 0;
+    let mut j = 0;
+
+    while i < cc.len() && j < 5 {
+        // TODO: When const panic is stabilized, assert that the character is alphanumeric to
+        // generate an error rather than silently dropping invalid characters.
+        // assert!(cc[i].is_ascii_alphanumeric());
+
+        // Pack the ASCII characters into the allocated 30 bits (6 bits per character) in MSb order.
+        if cc[i].is_ascii_alphanumeric() {
+            id |= map_ascii_to_bits(cc[i]) << (24 - (6 * j));
+            j += 1;
+        }
+        i += 1;
+    }
+
+    CodecType(id)
+}
+
+impl fmt::Display for CodecType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:#x}", self.0)
+    }
+}
+
 pub const CODEC_TYPE_NULL: CodecType             = CodecType(0x0);
 
 // Uncompressed PCM audio codecs
@@ -138,13 +190,6 @@ pub const CODEC_TYPE_WAVPACK: CodecType          = CodecType(0x2001);
 pub const CODEC_TYPE_MONKEYS_AUDIO: CodecType    = CodecType(0x2002);
 /// Apple Lossless Audio Codec (ALAC)
 pub const CODEC_TYPE_ALAC: CodecType             = CodecType(0x2003);
-
-
-impl fmt::Display for CodecType {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
 
 /// A method and expected value to perform verification on the decoded audio.
 #[derive(Copy, Clone)]
