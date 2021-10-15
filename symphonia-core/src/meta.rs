@@ -23,7 +23,7 @@ use crate::io::MediaSourceStream;
 ///
 /// All limits can be defaulted to a reasonable value specific to the situation. These defaults will
 /// generally not break any normal streams.
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub enum Limit {
     /// Do not impose any limit.
     None,
@@ -52,7 +52,7 @@ impl Default for Limit {
 }
 
 /// `MetadataOptions` is a common set of options that all metadata readers use.
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone, Debug, Default)]
 pub struct MetadataOptions {
     /// The maximum size limit in bytes that a tag may occupy in memory once decoded. Tags exceeding
     /// this limit will be skipped by the demuxer. Take note that tags in-memory are stored as UTF-8
@@ -215,6 +215,7 @@ pub enum StandardTagKey {
 /// Note: The data types in this enumeration are a generalization. Depending on the particular tag
 /// format, the actual data type a specific tag may have a lesser width or encoding than the data
 /// type in this enumeration.
+#[derive(Clone, Debug)]
 pub enum Value {
     /// A binary buffer.
     Binary(Box<[u8]>),
@@ -289,6 +290,7 @@ impl fmt::Display for Value {
 }
 
 /// A `Tag` encapsulates a key-value pair of metadata.
+#[derive(Clone, Debug)]
 pub struct Tag {
     /// If the `Tag`'s key string is commonly associated with a typical type, meaning, or purpose,
     /// then if recognized a `StandardTagKey` will be assigned to this `Tag`.
@@ -340,7 +342,7 @@ impl fmt::Display for Tag {
 }
 
 /// A 2 dimensional (width and height) size type.
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct Size {
     /// The width in pixels.
     pub width: u32,
@@ -349,7 +351,7 @@ pub struct Size {
 }
 
 /// `ColorMode` indicates how the color of a pixel is encoded in a `Visual`.
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub enum ColorMode {
     /// Each pixel in the `Visual` stores its own color information.
     Discrete,
@@ -360,6 +362,7 @@ pub enum ColorMode {
 }
 
 /// A `Visual` is any 2 dimensional graphic.
+#[derive(Clone, Debug)]
 pub struct Visual {
     /// The Media Type (MIME Type) used to encode the `Visual`.
     pub media_type: String,
@@ -387,6 +390,7 @@ pub struct Visual {
 }
 
 /// `VendorData` is any binary metadata that is proprietary to a certain application or vendor.
+#[derive(Clone, Debug)]
 pub struct VendorData {
     /// A text representation of the vendor's application identifier.
     pub ident: String,
@@ -395,7 +399,7 @@ pub struct VendorData {
 }
 
 /// `Metadata` is a container for a single discrete revision of metadata information.
-#[derive(Default)]
+#[derive(Clone, Debug, Default)]
 pub struct MetadataRevision {
     tags: Vec<Tag>,
     visuals: Vec<Visual>,
@@ -420,7 +424,7 @@ impl MetadataRevision {
 }
 
 /// `MetadataBuilder` is the builder for `Metadata` revisions.
-#[derive(Default)]
+#[derive(Clone, Debug, Default)]
 pub struct MetadataBuilder {
     metadata: MetadataRevision,
 }
@@ -458,6 +462,7 @@ impl MetadataBuilder {
 }
 
 /// A reference to the metadata inside of a [MetadataLog].
+#[derive(Debug)]
 pub struct Metadata<'a> {
     revisions: &'a mut VecDeque<MetadataRevision>,
 }
@@ -488,7 +493,7 @@ impl<'a> Metadata<'a> {
 }
 
 /// `MetadataLog` is a container for time-ordered `Metadata` revisions.
-#[derive(Default)]
+#[derive(Clone, Debug, Default)]
 pub struct MetadataLog {
     revisions: VecDeque<MetadataRevision>,
 }
