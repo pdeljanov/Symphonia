@@ -19,7 +19,7 @@ use crate::sample::SampleFormat;
 use crate::units::TimeBase;
 
 /// A `CodecType` is a unique identifier used to identify a specific codec.
-#[derive(Copy, Clone, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct CodecType(u32);
 
 /// Declares a new `CodecType` given a character code. A character code is an ASCII string

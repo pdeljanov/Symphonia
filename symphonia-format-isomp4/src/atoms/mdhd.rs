@@ -37,7 +37,7 @@ pub struct MdhdAtom {
     pub mtime: u64,
     /// Timescale.
     pub timescale: u32,
-    /// Duration.
+    /// Duration of the media in timescale units.
     pub duration: u64,
     /// Language.
     pub language: String,

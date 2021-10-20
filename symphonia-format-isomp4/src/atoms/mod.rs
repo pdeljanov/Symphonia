@@ -8,11 +8,13 @@
 use symphonia_core::errors::{Result, decode_error};
 use symphonia_core::io::ReadBytes;
 
+pub(crate) mod alac;
 pub(crate) mod co64;
 pub(crate) mod ctts;
 pub(crate) mod edts;
 pub(crate) mod elst;
 pub(crate) mod esds;
+pub(crate) mod flac;
 pub(crate) mod ftyp;
 pub(crate) mod hdlr;
 pub(crate) mod ilst;
@@ -24,9 +26,9 @@ pub(crate) mod mfhd;
 pub(crate) mod minf;
 pub(crate) mod moof;
 pub(crate) mod moov;
-pub(crate) mod mp4a;
 pub(crate) mod mvex;
 pub(crate) mod mvhd;
+pub(crate) mod opus;
 pub(crate) mod sidx;
 pub(crate) mod smhd;
 pub(crate) mod stbl;
@@ -43,26 +45,29 @@ pub(crate) mod trak;
 pub(crate) mod trex;
 pub(crate) mod trun;
 pub(crate) mod udta;
+pub(crate) mod wave;
 
+pub use alac::AlacAtom;
 pub use co64::Co64Atom;
 pub use ctts::CttsAtom;
 pub use edts::EdtsAtom;
 pub use elst::ElstAtom;
 pub use esds::EsdsAtom;
+pub use flac::FlacAtom;
 pub use ftyp::FtypAtom;
 pub use hdlr::HdlrAtom;
 pub use ilst::IlstAtom;
 pub use mdhd::MdhdAtom;
 pub use mdia::MdiaAtom;
 pub use mehd::MehdAtom;
-pub use self::meta::MetaAtom;
 pub use mfhd::MfhdAtom;
 pub use minf::MinfAtom;
 pub use moof::MoofAtom;
 pub use moov::MoovAtom;
-pub use mp4a::Mp4aAtom;
 pub use mvex::MvexAtom;
 pub use mvhd::MvhdAtom;
+pub use opus::OpusAtom;
+pub use self::meta::MetaAtom;
 pub use sidx::SidxAtom;
 pub use smhd::SmhdAtom;
 pub use stbl::StblAtom;
@@ -79,11 +84,15 @@ pub use trak::TrakAtom;
 pub use trex::TrexAtom;
 pub use trun::TrunAtom;
 pub use udta::UdtaAtom;
+pub use wave::WaveAtom;
 
 /// Atom types.
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub enum AtomType {
+    Ac3,
     AdvisoryTag,
+    Alac,
+    ALaw,
     AlbumArtistTag,
     AlbumTag,
     ArtistLowerTag,
@@ -103,11 +112,16 @@ pub enum AtomType {
     DiskNumberTag,
     Edit,
     EditList,
-    ElementaryStreamDescriptor,
     EncodedByTag,
     EncoderTag,
+    Esds,
+    F32SampleEntry,
+    F64SampleEntry,
     FileType,
+    Flac,
+    FlacDsConfig,
     Free,
+    FreeFormTag,
     GaplessPlaybackTag,
     GenreTag,
     GroupingTag,
@@ -116,6 +130,7 @@ pub enum AtomType {
     IdentPodcastTag,
     KeywordTag,
     LongDescriptionTag,
+    Lpcm,
     LyricsTag,
     Media,
     MediaData,
@@ -133,11 +148,20 @@ pub enum AtomType {
     MovieFragment,
     MovieFragmentHeader,
     MovieHeader,
+    Mp3,
     Mp4a,
+    MuLaw,
+    Opus,
+    OpusDsConfig,
     OwnerTag,
     PodcastTag,
     PurchaseDateTag,
+    QtWave,
     RatingTag,
+    S16BeSampleEntry,
+    S16LeSampleEntry,
+    S24SampleEntry,
+    S32SampleEntry,
     SampleDescription,
     SampleSize,
     SampleTable,
@@ -166,25 +190,37 @@ pub enum AtomType {
     TvNetworkNameTag,
     TvSeasonNumberTag,
     TvShowNameTag,
+    U8SampleEntry,
     UrlPodcastTag,
     UserData,
-    FreeFormTag,
     Other([u8; 4]),
 }
 
 impl From<[u8; 4]> for AtomType {
     fn from(val: [u8; 4]) -> Self {
         match &val {
+            b".mp3" => AtomType::Mp3,
+            b"ac-3" => AtomType::Ac3,
+            b"alac" => AtomType::Alac,
+            b"alaw" => AtomType::ALaw,
             b"co64" => AtomType::ChunkOffset64,
             b"ctts" => AtomType::CompositionTimeToSample,
             b"data" => AtomType::MetaTagData,
+            b"dfLa" => AtomType::FlacDsConfig,
+            b"dOps" => AtomType::OpusDsConfig,
             b"edts" => AtomType::Edit,
             b"elst" => AtomType::EditList,
-            b"esds" => AtomType::ElementaryStreamDescriptor,
+            b"esds" => AtomType::Esds,
+            b"fl32" => AtomType::F32SampleEntry,
+            b"fl64" => AtomType::F64SampleEntry,
+            b"fLaC" => AtomType::Flac,
             b"free" => AtomType::Free,
             b"ftyp" => AtomType::FileType,
             b"hdlr" => AtomType::Handler,
             b"ilst" => AtomType::MetaList,
+            b"in24" => AtomType::S24SampleEntry,
+            b"in32" => AtomType::S32SampleEntry,
+            b"lpcm" => AtomType::Lpcm,
             b"mdat" => AtomType::MediaData,
             b"mdhd" => AtomType::MediaHeader,
             b"mdia" => AtomType::Media,
@@ -199,9 +235,12 @@ impl From<[u8; 4]> for AtomType {
             b"mvex" => AtomType::MovieExtends,
             b"mvhd" => AtomType::MovieHeader,
             b"name" => AtomType::MetaTagName,
+            b"Opus" => AtomType::Opus,
+            b"raw " => AtomType::U8SampleEntry,
             b"sidx" => AtomType::SegmentIndex,
             b"skip" => AtomType::Skip,
             b"smhd" => AtomType::SoundMediaHeader,
+            b"sowt" => AtomType::S16LeSampleEntry,
             b"stbl" => AtomType::SampleTable,
             b"stco" => AtomType::ChunkOffset,
             b"stsc" => AtomType::SampleToChunk,
@@ -215,7 +254,10 @@ impl From<[u8; 4]> for AtomType {
             b"trak" => AtomType::Track,
             b"trex" => AtomType::TrackExtends,
             b"trun" => AtomType::TrackFragmentRun,
+            b"twos" => AtomType::S16BeSampleEntry,
             b"udta" => AtomType::UserData,
+            b"ulaw" => AtomType::MuLaw,
+            b"wave" => AtomType::QtWave,
             // Metadata Boxes
             b"----" => AtomType::FreeFormTag,
             b"aART" => AtomType::AlbumArtistTag,
