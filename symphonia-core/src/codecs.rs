@@ -79,6 +79,7 @@ impl fmt::Display for CodecType {
     }
 }
 
+/// Null codec
 pub const CODEC_TYPE_NULL: CodecType             = CodecType(0x0);
 
 // Uncompressed PCM audio codecs
@@ -156,10 +157,26 @@ pub const CODEC_TYPE_PCM_F64LE_PLANAR: CodecType = CodecType(0x121);
 pub const CODEC_TYPE_PCM_F64BE: CodecType        = CodecType(0x122);
 /// PCM 64-bit big-endian floating point planar
 pub const CODEC_TYPE_PCM_F64BE_PLANAR: CodecType = CodecType(0x123);
-/// PCM A-law
+/// PCM A-law (G.711)
 pub const CODEC_TYPE_PCM_ALAW: CodecType         = CodecType(0x124);
-/// PCM Mu-law
+/// PCM Mu-law (G.711)
 pub const CODEC_TYPE_PCM_MULAW: CodecType        = CodecType(0x125);
+
+// ADPCM audio codecs
+//-------------------
+
+/// G.722 ADPCM
+pub const CODEC_TYPE_ADPCM_G722: CodecType       = CodecType(0x200);
+/// G.726 ADPCM
+pub const CODEC_TYPE_ADPCM_G726: CodecType       = CodecType(0x201);
+/// G.726 ADPCM little-endian
+pub const CODEC_TYPE_ADPCM_G726LE: CodecType     = CodecType(0x202);
+/// Microsoft ADPCM
+pub const CODEC_TYPE_ADPCM_MS: CodecType         = CodecType(0x203);
+/// ADPCM IMA WAV
+pub const CODEC_TYPE_ADPCM_IMA_WAV: CodecType    = CodecType(0x204);
+/// ADPCM IMA QuickTime
+pub const CODEC_TYPE_ADPCM_IMA_QT: CodecType     = CodecType(0x205);
 
 // Compressed lossy audio codecs
 //------------------------------
@@ -176,8 +193,26 @@ pub const CODEC_TYPE_MP3: CodecType              = CodecType(0x1003);
 pub const CODEC_TYPE_AAC: CodecType              = CodecType(0x1004);
 /// Opus
 pub const CODEC_TYPE_OPUS: CodecType             = CodecType(0x1005);
+/// Speex
+pub const CODEC_TYPE_SPEEX: CodecType            = CodecType(0x1006);
 /// Musepack
-pub const CODEC_TYPE_MUSEPACK: CodecType         = CodecType(0x1006);
+pub const CODEC_TYPE_MUSEPACK: CodecType         = CodecType(0x1007);
+/// Adaptive Transform Acoustic Coding (ATRAC1)
+pub const CODEC_TYPE_ATRAC1: CodecType           = CodecType(0x1008);
+/// Adaptive Transform Acoustic Coding 3 (ATRAC3)
+pub const CODEC_TYPE_ATRAC3: CodecType           = CodecType(0x1009);
+/// Adaptive Transform Acoustic Coding 3+ (ATRAC3+)
+pub const CODEC_TYPE_ATRAC3PLUS: CodecType       = CodecType(0x100a);
+/// Adaptive Transform Acoustic Coding 9 (ATRAC9)
+pub const CODEC_TYPE_ATRAC9: CodecType           = CodecType(0x100b);
+/// AC-3, E-AC-3, Dolby Digital (ATSC A/52)
+pub const CODEC_TYPE_EAC3: CodecType             = CodecType(0x100c);
+/// Dolby AC-4 (ETSI TS 103 190)
+pub const CODEC_TYPE_AC4: CodecType              = CodecType(0x100d);
+/// DTS Coherent Acoustics (DCA/DTS)
+pub const CODEC_TYPE_DCA: CodecType              = CodecType(0x100e);
+/// Windows Media Audio
+pub const CODEC_TYPE_WMA: CodecType              = CodecType(0x100f);
 
 // Compressed lossless audio codecs
 //---------------------------------
@@ -190,6 +225,8 @@ pub const CODEC_TYPE_WAVPACK: CodecType          = CodecType(0x2001);
 pub const CODEC_TYPE_MONKEYS_AUDIO: CodecType    = CodecType(0x2002);
 /// Apple Lossless Audio Codec (ALAC)
 pub const CODEC_TYPE_ALAC: CodecType             = CodecType(0x2003);
+/// True Audio (TTA)
+pub const CODEC_TYPE_TTA: CodecType              = CodecType(0x2004);
 
 /// A method and expected value to perform verification on the decoded audio.
 #[derive(Copy, Clone)]
