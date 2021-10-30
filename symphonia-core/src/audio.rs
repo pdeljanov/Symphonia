@@ -403,6 +403,7 @@ macro_rules! impl_audio_buffer_ref_func {
 }
 
 /// `AudioBufferRef` is a copy-on-write reference to an `AudioBuffer` of any type.
+#[derive(Clone)]
 pub enum AudioBufferRef<'a> {
     U8(Cow<'a, AudioBuffer<u8>>),
     U16(Cow<'a, AudioBuffer<u16>>),
