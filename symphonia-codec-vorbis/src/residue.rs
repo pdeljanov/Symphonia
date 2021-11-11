@@ -112,7 +112,7 @@ impl Residue {
         for _ in 0..residue_classifications {
             let low_bits = bs.read_bits_leq32(3)? as u8;
 
-            let high_bits = if bs.read_bit()? {
+            let high_bits = if bs.read_bool()? {
                 bs.read_bits_leq32(5)? as u8
             }
             else {

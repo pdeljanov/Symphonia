@@ -149,7 +149,7 @@ impl Decoder for VorbisDecoder {
         // Section 4.3.1 - Packet Type, Mode, and Window Decode
 
         // First bit must be 0 to indicate audio packet.
-        if bs.read_bit()? {
+        if bs.read_bool()? {
             return decode_error("vorbis: not an audio packet");
         }
 
@@ -167,8 +167,8 @@ impl Decoder for VorbisDecoder {
         let (bs_exp, imdct) = if mode.block_flag {
             // This packet (block) uses a long window. Do not use the window flags since they may
             // be wrong.
-            let _prev_window_flag = bs.read_bit()?;
-            let _next_window_flag = bs.read_bit()?;
+            let _prev_window_flag = bs.read_bool()?;
+            let _next_window_flag = bs.read_bool()?;
 
             (self.ident.bs1_exp, &mut self.dsp.imdct_long)
         }
@@ -500,7 +500,7 @@ fn read_setup(reader: &mut BufReader<'_>, ident: &IdentHeader) -> Result<Setup> 
     let modes = read_modes(&mut bs, mappings.len() as u8)?;
 
     // Framing flag must be set.
-    if !bs.read_bit()? {
+    if !bs.read_bool()? {
         return decode_error("vorbis: setup header framing flag unset");
     }
 
@@ -622,7 +622,7 @@ fn read_mapping_type0(
     max_residue: u8,
 ) -> Result<Mapping> {
 
-    let num_submaps = if bs.read_bit()? {
+    let num_submaps = if bs.read_bool()? {
         bs.read_bits_leq32(4)? as u8 + 1
     }
     else {
@@ -631,7 +631,7 @@ fn read_mapping_type0(
 
     let mut couplings = Vec::new();
 
-    if bs.read_bit()? {
+    if bs.read_bool()? {
         // Number of channel couplings (up-to 256).
         let coupling_steps = bs.read_bits_leq32(8)? as u16 + 1;
 
@@ -724,7 +724,7 @@ struct Mode {
 }
 
 fn read_mode(bs: &mut BitReaderRtl<'_>, max_mapping: u8) -> Result<Mode> {
-    let block_flag = bs.read_bit()?;
+    let block_flag = bs.read_bool()?;
     let window_type = bs.read_bits_leq32(16)? as u16;
     let transform_type = bs.read_bits_leq32(16)? as u16;
     let mapping = bs.read_bits_leq32(8)? as u8;

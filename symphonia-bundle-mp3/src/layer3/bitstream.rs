@@ -64,12 +64,12 @@ fn read_granule_channel_side_info<B: ReadBitsLtr>(
         bs.read_bits_leq32(9)
     }? as u16;
 
-    let window_switching = bs.read_bit()?;
+    let window_switching = bs.read_bool()?;
 
     if window_switching {
         let block_type_enc = bs.read_bits_leq32(2)?;
 
-        let is_mixed = bs.read_bit()?;
+        let is_mixed = bs.read_bool()?;
 
         channel.block_type = match block_type_enc {
             // Only transitional Long blocks (Start, End) are allowed with window switching.
@@ -160,15 +160,15 @@ fn read_granule_channel_side_info<B: ReadBitsLtr>(
     }
 
     channel.preflag = if header.is_mpeg1() {
-        bs.read_bit()?
+        bs.read_bool()?
     }
     else {
         // Pre-flag is determined implicitly for MPEG2: ISO/IEC 13818-3 section 2.4.3.4.
         channel.scalefac_compress >= 500
     };
 
-    channel.scalefac_scale = bs.read_bit()?;
-    channel.count1table_select = if bs.read_bit()? { 1 } else { 0 };
+    channel.scalefac_scale = bs.read_bool()?;
+    channel.count1table_select = if bs.read_bool()? { 1 } else { 0 };
 
     Ok(())
 }
@@ -207,7 +207,7 @@ pub(super) fn read_side_info<B: ReadBitsLtr>(
         // Next four (or 8, if more than one channel) are the SCFSI bits.
         for scfsi in &mut frame_data.scfsi[..header.n_channels()] {
             for band in scfsi.iter_mut() {
-                *band = bs.read_bit()?;
+                *band = bs.read_bool()?;
             }
         }
 

@@ -666,7 +666,7 @@ impl Floor for Floor1 {
         self.is_unused = true;
 
         // First bit marks if this floor is used. Exit early if it is not.
-        let is_used = io_try_or_ret!(bs.read_bit());
+        let is_used = io_try_or_ret!(bs.read_bool());
 
         if !is_used {
             return Ok(());

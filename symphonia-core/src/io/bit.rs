@@ -559,7 +559,7 @@ pub trait ReadBitsLtr : private::FetchBitsLtr {
 
     /// Read a single bit as a boolean value or returns an error.
     #[inline(always)]
-    fn read_bit(&mut self) -> io::Result<bool> {
+    fn read_bool(&mut self) -> io::Result<bool> {
         if self.num_bits_left() < 1 {
             self.fetch_bits()?;
         }
@@ -568,6 +568,20 @@ pub trait ReadBitsLtr : private::FetchBitsLtr {
 
         self.consume_bits(1);
         Ok(bit)
+    }
+
+    /// Reads and returns a single bit or returns an error.
+    #[inline(always)]
+    fn read_bit(&mut self) -> io::Result<u32> {
+        if self.num_bits_left() < 1 {
+            self.fetch_bits()?;
+        }
+
+        let bit = self.get_bits() >> 63;
+
+        self.consume_bits(1);
+
+        Ok(bit as u32)
     }
 
     /// Reads and returns up to 32-bits or returns an error.
@@ -1010,7 +1024,7 @@ pub trait ReadBitsRtl : private::FetchBitsRtl {
 
     /// Read a single bit as a boolean value or returns an error.
     #[inline(always)]
-    fn read_bit(&mut self) -> io::Result<bool> {
+    fn read_bool(&mut self) -> io::Result<bool> {
         if self.num_bits_left() < 1 {
             self.fetch_bits()?;
         }
@@ -1019,6 +1033,20 @@ pub trait ReadBitsRtl : private::FetchBitsRtl {
 
         self.consume_bits(1);
         Ok(bit)
+    }
+
+    /// Reads and returns a single bit or returns an error.
+    #[inline(always)]
+    fn read_bit(&mut self) -> io::Result<u32> {
+        if self.num_bits_left() < 1 {
+            self.fetch_bits()?;
+        }
+
+        let bit = self.get_bits() & 1;
+
+        self.consume_bits(1);
+
+        Ok(bit as u32)
     }
 
     /// Reads and returns up to 32-bits or returns an error.
@@ -1441,33 +1469,33 @@ mod tests {
             ]
         );
 
-        assert_eq!(bs.read_bit().unwrap(), true);
+        assert_eq!(bs.read_bool().unwrap(), true);
 
         bs.ignore_bits(128).unwrap();
 
-        assert_eq!(bs.read_bit().unwrap(), true);
-        assert_eq!(bs.read_bit().unwrap(), false);
-        assert_eq!(bs.read_bit().unwrap(), false);
+        assert_eq!(bs.read_bool().unwrap(), true);
+        assert_eq!(bs.read_bool().unwrap(), false);
+        assert_eq!(bs.read_bool().unwrap(), false);
 
         bs.ignore_bits(7).unwrap();
 
-        assert_eq!(bs.read_bit().unwrap(), true);
+        assert_eq!(bs.read_bool().unwrap(), true);
 
         bs.ignore_bits(19).unwrap();
 
-        assert_eq!(bs.read_bit().unwrap(), true);
+        assert_eq!(bs.read_bool().unwrap(), true);
 
-        assert_eq!(bs.read_bit().unwrap(), false);
-        assert_eq!(bs.read_bit().unwrap(), false);
-        assert_eq!(bs.read_bit().unwrap(), false);
-        assert_eq!(bs.read_bit().unwrap(), false);
+        assert_eq!(bs.read_bool().unwrap(), false);
+        assert_eq!(bs.read_bool().unwrap(), false);
+        assert_eq!(bs.read_bool().unwrap(), false);
+        assert_eq!(bs.read_bool().unwrap(), false);
 
         bs.ignore_bits(24).unwrap();
 
-        assert_eq!(bs.read_bit().unwrap(), true);
-        assert_eq!(bs.read_bit().unwrap(), false);
-        assert_eq!(bs.read_bit().unwrap(), true);
-        assert_eq!(bs.read_bit().unwrap(), false);
+        assert_eq!(bs.read_bool().unwrap(), true);
+        assert_eq!(bs.read_bool().unwrap(), false);
+        assert_eq!(bs.read_bool().unwrap(), true);
+        assert_eq!(bs.read_bool().unwrap(), false);
 
         // Lower limit test.
         let mut bs = BitReaderLtr::new(&[ 0x00 ]);
@@ -1497,23 +1525,43 @@ mod tests {
     }
 
     #[test]
-    fn verify_bitstreamltr_read_bit() {
+    fn verify_bitstreamltr_read_bool() {
         // General tests.
         let mut bs = BitReaderLtr::new(&[0b1010_1010]);
 
-        assert_eq!(bs.read_bit().unwrap(), true);
-        assert_eq!(bs.read_bit().unwrap(), false);
-        assert_eq!(bs.read_bit().unwrap(), true);
-        assert_eq!(bs.read_bit().unwrap(), false);
-        assert_eq!(bs.read_bit().unwrap(), true);
-        assert_eq!(bs.read_bit().unwrap(), false);
-        assert_eq!(bs.read_bit().unwrap(), true);
-        assert_eq!(bs.read_bit().unwrap(), false);
+        assert_eq!(bs.read_bool().unwrap(), true);
+        assert_eq!(bs.read_bool().unwrap(), false);
+        assert_eq!(bs.read_bool().unwrap(), true);
+        assert_eq!(bs.read_bool().unwrap(), false);
+        assert_eq!(bs.read_bool().unwrap(), true);
+        assert_eq!(bs.read_bool().unwrap(), false);
+        assert_eq!(bs.read_bool().unwrap(), true);
+        assert_eq!(bs.read_bool().unwrap(), false);
 
         // Error test.
         let mut bs = BitReaderLtr::new(&[]);
 
-        assert!(bs.read_bit().is_err());
+        assert!(bs.read_bool().is_err());
+    }
+
+    #[test]
+    fn verify_bitstreamltr_read_bit() {
+        // General tests.
+        let mut bs = BitReaderLtr::new(&[0b1010_1010]);
+
+        assert_eq!(bs.read_bit().unwrap(), 1);
+        assert_eq!(bs.read_bit().unwrap(), 0);
+        assert_eq!(bs.read_bit().unwrap(), 1);
+        assert_eq!(bs.read_bit().unwrap(), 0);
+        assert_eq!(bs.read_bit().unwrap(), 1);
+        assert_eq!(bs.read_bit().unwrap(), 0);
+        assert_eq!(bs.read_bit().unwrap(), 1);
+        assert_eq!(bs.read_bit().unwrap(), 0);
+
+        // Error test.
+        let mut bs = BitReaderLtr::new(&[]);
+
+        assert!(bs.read_bool().is_err());
     }
 
     #[test]
@@ -1811,33 +1859,33 @@ mod tests {
             ]
         );
 
-        assert_eq!(bs.read_bit().unwrap(), true);
+        assert_eq!(bs.read_bool().unwrap(), true);
 
         bs.ignore_bits(128).unwrap();
 
-        assert_eq!(bs.read_bit().unwrap(), true);
-        assert_eq!(bs.read_bit().unwrap(), false);
-        assert_eq!(bs.read_bit().unwrap(), false);
+        assert_eq!(bs.read_bool().unwrap(), true);
+        assert_eq!(bs.read_bool().unwrap(), false);
+        assert_eq!(bs.read_bool().unwrap(), false);
 
         bs.ignore_bits(7).unwrap();
 
-        assert_eq!(bs.read_bit().unwrap(), true);
+        assert_eq!(bs.read_bool().unwrap(), true);
 
         bs.ignore_bits(19).unwrap();
 
-        assert_eq!(bs.read_bit().unwrap(), true);
+        assert_eq!(bs.read_bool().unwrap(), true);
 
-        assert_eq!(bs.read_bit().unwrap(), false);
-        assert_eq!(bs.read_bit().unwrap(), false);
-        assert_eq!(bs.read_bit().unwrap(), false);
-        assert_eq!(bs.read_bit().unwrap(), false);
+        assert_eq!(bs.read_bool().unwrap(), false);
+        assert_eq!(bs.read_bool().unwrap(), false);
+        assert_eq!(bs.read_bool().unwrap(), false);
+        assert_eq!(bs.read_bool().unwrap(), false);
 
         bs.ignore_bits(24).unwrap();
 
-        assert_eq!(bs.read_bit().unwrap(), true);
-        assert_eq!(bs.read_bit().unwrap(), false);
-        assert_eq!(bs.read_bit().unwrap(), true);
-        assert_eq!(bs.read_bit().unwrap(), false);
+        assert_eq!(bs.read_bool().unwrap(), true);
+        assert_eq!(bs.read_bool().unwrap(), false);
+        assert_eq!(bs.read_bool().unwrap(), true);
+        assert_eq!(bs.read_bool().unwrap(), false);
 
         // Lower limit test.
         let mut bs = BitReaderRtl::new(&[ 0x00 ]);
@@ -1867,18 +1915,38 @@ mod tests {
     }
 
     #[test]
+    fn verify_bitstreamrtl_read_bool() {
+        // General tests.
+        let mut bs = BitReaderRtl::new(&[0b1010_1010]);
+
+        assert_eq!(bs.read_bool().unwrap(), false);
+        assert_eq!(bs.read_bool().unwrap(), true);
+        assert_eq!(bs.read_bool().unwrap(), false);
+        assert_eq!(bs.read_bool().unwrap(), true);
+        assert_eq!(bs.read_bool().unwrap(), false);
+        assert_eq!(bs.read_bool().unwrap(), true);
+        assert_eq!(bs.read_bool().unwrap(), false);
+        assert_eq!(bs.read_bool().unwrap(), true);
+
+        // Error test.
+        let mut bs = BitReaderRtl::new(&[]);
+
+        assert!(bs.read_bool().is_err());
+    }
+
+    #[test]
     fn verify_bitstreamrtl_read_bit() {
         // General tests.
         let mut bs = BitReaderRtl::new(&[0b1010_1010]);
 
-        assert_eq!(bs.read_bit().unwrap(), false);
-        assert_eq!(bs.read_bit().unwrap(), true);
-        assert_eq!(bs.read_bit().unwrap(), false);
-        assert_eq!(bs.read_bit().unwrap(), true);
-        assert_eq!(bs.read_bit().unwrap(), false);
-        assert_eq!(bs.read_bit().unwrap(), true);
-        assert_eq!(bs.read_bit().unwrap(), false);
-        assert_eq!(bs.read_bit().unwrap(), true);
+        assert_eq!(bs.read_bit().unwrap(), 0);
+        assert_eq!(bs.read_bit().unwrap(), 1);
+        assert_eq!(bs.read_bit().unwrap(), 0);
+        assert_eq!(bs.read_bit().unwrap(), 1);
+        assert_eq!(bs.read_bit().unwrap(), 0);
+        assert_eq!(bs.read_bit().unwrap(), 1);
+        assert_eq!(bs.read_bit().unwrap(), 0);
+        assert_eq!(bs.read_bit().unwrap(), 1);
 
         // Error test.
         let mut bs = BitReaderRtl::new(&[]);
