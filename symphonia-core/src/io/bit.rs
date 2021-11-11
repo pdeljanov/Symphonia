@@ -570,8 +570,7 @@ pub trait ReadBitsLtr : private::FetchBitsLtr {
         Ok(bit)
     }
 
-    /// Reads up to 32-bits and interprets them as a signed two's complement integer or returns an
-    /// error.
+    /// Reads and returns up to 32-bits or returns an error.
     #[inline(always)]
     fn read_bits_leq32(&mut self, mut bit_width: u32) -> io::Result<u32> {
         debug_assert!(bit_width <= u32::BITS);
@@ -604,8 +603,7 @@ pub trait ReadBitsLtr : private::FetchBitsLtr {
         Ok(sign_extend_leq32_to_i32(value, bit_width))
     }
 
-    /// Reads up to 64-bits and interprets them as a signed two's complement integer or returns an
-    /// error.
+    /// Reads and returns up to 64-bits or returns an error.
     #[inline(always)]
     fn read_bits_leq64(&mut self, mut bit_width: u32) -> io::Result<u64> {
         debug_assert!(bit_width <= u64::BITS);
@@ -652,10 +650,10 @@ pub trait ReadBitsLtr : private::FetchBitsLtr {
         let mut num = 0;
 
         loop {
-            // Get the number of trailing zeros.
-            let n_zeros = self.get_bits().leading_zeros();
+            // Get the number of leading zeros.
+            let num_zeros = self.get_bits().leading_zeros();
 
-            if n_zeros >= self.num_bits_left() {
+            if num_zeros >= self.num_bits_left() {
                 // If the number of zeros exceeds the number of bits left then all the remaining
                 // bits were 0.
                 num += self.num_bits_left();
@@ -663,17 +661,54 @@ pub trait ReadBitsLtr : private::FetchBitsLtr {
             }
             else {
                 // Otherwise, a 1 bit was encountered after `n_zeros` 0 bits.
-                num += n_zeros;
+                num += num_zeros;
 
                 // Since bits are shifted off the cache after they're consumed, for there to be a
                 // 1 bit there must be atleast one extra available bit in the cache that can be
                 // consumed after the 0 bits.
-                self.consume_bits(n_zeros);
+                self.consume_bits(num_zeros);
                 self.consume_bits(1);
 
                 // Done decoding.
                 break;
             }
+        }
+
+        Ok(num)
+    }
+
+    /// Reads and returns a unary zeros encoded integer that is capped to a maximum value.
+    #[inline(always)]
+    fn read_unary_zeros_capped(&mut self, mut limit: u32) -> io::Result<u32> {
+        let mut num = 0;
+
+        loop {
+            // Get the number of leading zeros, capped to the limit.
+            let num_bits_left = self.num_bits_left();
+            let num_zeros = min(self.get_bits().leading_zeros(), num_bits_left);
+
+            if num_zeros >= limit {
+                // There are more ones than the limit. A terminator cannot be encountered.
+                num += limit;
+                self.consume_bits(limit);
+                break;
+            }
+            else {
+                // There are less ones than the limit. A terminator was encountered OR more bits
+                // are needed.
+                limit -= num_zeros;
+                num += num_zeros;
+
+                if num_zeros < num_bits_left {
+                    // There are less ones than the number of bits left in the reader. Thus, a
+                    // terminator was not encountered and not all bits have not been consumed.
+                    self.consume_bits(num_zeros);
+                    self.consume_bits(1);
+                    break;
+                }
+            }
+
+            self.fetch_bits()?;
         }
 
         Ok(num)
@@ -686,20 +721,52 @@ pub trait ReadBitsLtr : private::FetchBitsLtr {
         let mut num = 0;
 
         loop {
-            let n_ones = self.get_bits().leading_ones();
+            let num_ones = self.get_bits().leading_ones();
 
-            if n_ones >= self.num_bits_left() {
+            if num_ones >= self.num_bits_left() {
                 num += self.num_bits_left();
                 self.fetch_bits()?;
             }
             else {
-                num += n_ones;
+                num += num_ones;
 
-                self.consume_bits(n_ones);
+                self.consume_bits(num_ones);
                 self.consume_bits(1);
 
                 break;
             }
+        }
+
+        Ok(num)
+    }
+
+    /// Reads and returns a unary ones encoded integer that is capped to a maximum value.
+    #[inline(always)]
+    fn read_unary_ones_capped(&mut self, mut limit: u32) -> io::Result<u32> {
+        // Note: This algorithm is identical to read_unary_zeros_capped except flipped for 1s.
+        let mut num = 0;
+
+        loop {
+            let num_bits_left = self.num_bits_left();
+            let num_ones = min(self.get_bits().leading_ones(), num_bits_left);
+
+            if num_ones >= limit {
+                num += limit;
+                self.consume_bits(limit);
+                break;
+            }
+            else {
+                limit -= num_ones;
+                num += num_ones;
+
+                if num_ones < num_bits_left {
+                    self.consume_bits(num_ones);
+                    self.consume_bits(1);
+                    break;
+                }
+            }
+
+            self.fetch_bits()?;
         }
 
         Ok(num)
@@ -954,8 +1021,7 @@ pub trait ReadBitsRtl : private::FetchBitsRtl {
         Ok(bit)
     }
 
-    /// Reads up to 32-bits and interprets them as a signed two's complement integer or returns an
-    /// error.
+    /// Reads and returns up to 32-bits or returns an error.
     #[inline(always)]
     fn read_bits_leq32(&mut self, bit_width: u32) -> io::Result<u32> {
         debug_assert!(bit_width <= u32::BITS);
@@ -987,8 +1053,7 @@ pub trait ReadBitsRtl : private::FetchBitsRtl {
         Ok(sign_extend_leq32_to_i32(value, bit_width))
     }
 
-    /// Reads up to 64-bits and interprets them as a signed two's complement integer or returns an
-    /// error.
+    /// Reads and returns up to 64-bits or returns an error.
     #[inline(always)]
     fn read_bits_leq64(&mut self, bit_width: u32) -> io::Result<u64> {
         debug_assert!(bit_width <= u64::BITS);
@@ -1040,9 +1105,9 @@ pub trait ReadBitsRtl : private::FetchBitsRtl {
 
         loop {
             // Get the number of trailing zeros.
-            let n_zeros = self.get_bits().trailing_zeros();
+            let num_zeros = self.get_bits().trailing_zeros();
 
-            if n_zeros >= self.num_bits_left() {
+            if num_zeros >= self.num_bits_left() {
                 // If the number of zeros exceeds the number of bits left then all the remaining
                 // bits were 0.
                 num += self.num_bits_left();
@@ -1050,17 +1115,54 @@ pub trait ReadBitsRtl : private::FetchBitsRtl {
             }
             else {
                 // Otherwise, a 1 bit was encountered after `n_zeros` 0 bits.
-                num += n_zeros;
+                num += num_zeros;
 
                 // Since bits are shifted off the cache after they're consumed, for there to be a
                 // 1 bit there must be atleast one extra available bit in the cache that can be
                 // consumed after the 0 bits.
-                self.consume_bits(n_zeros);
+                self.consume_bits(num_zeros);
                 self.consume_bits(1);
 
                 // Done decoding.
                 break;
             }
+        }
+
+        Ok(num)
+    }
+
+    /// Reads and returns a unary zeros encoded integer that is capped to a maximum value.
+    #[inline(always)]
+    fn read_unary_zeros_capped(&mut self, mut limit: u32) -> io::Result<u32> {
+        let mut num = 0;
+
+        loop {
+            // Get the number of trailing zeros, capped to the limit.
+            let num_bits_left = self.num_bits_left();
+            let num_zeros = min(self.get_bits().trailing_zeros(), num_bits_left);
+
+            if num_zeros >= limit {
+                // There are more zeros than the limit. A terminator cannot be encountered.
+                num += limit;
+                self.consume_bits(limit);
+                break;
+            }
+            else {
+                // There are less zeros than the limit. A terminator was encountered OR more bits
+                // are needed.
+                limit -= num_zeros;
+                num += num_zeros;
+
+                if num_zeros < num_bits_left {
+                    // There are less zeros than the number of bits left in the reader. Thus, a
+                    // terminator was not encountered and not all bits have not been consumed.
+                    self.consume_bits(num_zeros);
+                    self.consume_bits(1);
+                    break;
+                }
+            }
+
+            self.fetch_bits()?;
         }
 
         Ok(num)
@@ -1073,16 +1175,16 @@ pub trait ReadBitsRtl : private::FetchBitsRtl {
         let mut num = 0;
 
         loop {
-            let n_ones = self.get_bits().trailing_ones();
+            let num_ones = self.get_bits().trailing_ones();
 
-            if n_ones >= self.num_bits_left() {
+            if num_ones >= self.num_bits_left() {
                 num += self.num_bits_left();
                 self.fetch_bits()?;
             }
             else {
-                num += n_ones;
+                num += num_ones;
 
-                self.consume_bits(n_ones);
+                self.consume_bits(num_ones);
                 self.consume_bits(1);
 
                 break;
@@ -1091,6 +1193,39 @@ pub trait ReadBitsRtl : private::FetchBitsRtl {
 
         Ok(num)
     }
+
+    /// Reads and returns a unary ones encoded integer or an error.
+    #[inline(always)]
+    fn read_unary_ones_capped(&mut self, mut limit: u32) -> io::Result<u32> {
+        // Note: This algorithm is identical to read_unary_zeros_capped except flipped for 1s.
+        let mut num = 0;
+
+        loop {
+            let num_bits_left = self.num_bits_left();
+            let num_ones = min(self.get_bits().trailing_ones(), num_bits_left);
+
+            if num_ones >= limit {
+                num += limit;
+                self.consume_bits(limit);
+                break;
+            }
+            else {
+                limit -= num_ones;
+                num += num_ones;
+
+                if num_ones < num_bits_left {
+                    self.consume_bits(num_ones);
+                    self.consume_bits(1);
+                    break;
+                }
+            }
+
+            self.fetch_bits()?;
+        }
+
+        Ok(num)
+    }
+
 
     /// Reads a codebook value from the `BitStream` using the provided `Codebook` and returns the
     /// decoded value or an error.
@@ -1489,6 +1624,27 @@ mod tests {
     }
 
     #[test]
+    fn verify_bitstreamltr_read_unary_zeros_capped() {
+        // Basic test
+        let mut bs = BitReaderLtr::new(&[ 0b0000_0001, 0b0000_0001 ]);
+
+        assert_eq!(bs.read_unary_zeros_capped(8).unwrap(), 7);
+        assert_eq!(bs.read_unary_zeros_capped(4).unwrap(), 4);
+
+        // Long limit test
+        let mut bs = BitReaderLtr::new(
+            &[
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            ]
+        );
+
+        assert_eq!(bs.read_unary_zeros_capped(96).unwrap(), 79);
+        assert_eq!(bs.read_unary_zeros_capped(104).unwrap(), 104);
+    }
+
+    #[test]
     fn verify_bitstreamltr_read_unary_ones() {
         // General tests
         let mut bs = BitReaderLtr::new(
@@ -1522,6 +1678,48 @@ mod tests {
         let mut bs = BitReaderLtr::new(&[0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff]);
 
         assert!(bs.read_unary_ones().is_err());
+    }
+
+    #[test]
+    fn verify_bitstreamltr_read_unary_ones_capped() {
+        // Basic test
+        let mut bs = BitReaderLtr::new(&[ 0b1111_1110, 0b1111_1110 ]);
+
+        assert_eq!(bs.read_unary_ones_capped(8).unwrap(), 7);
+        assert_eq!(bs.read_unary_ones_capped(4).unwrap(), 4);
+
+        let mut bs = BitReaderLtr::new(
+            &[
+                0b1111_1110, 0b1110_1111, 0b1111_1111, 0b0111_1111, 0b0000_0100
+            ]
+        );
+
+        assert_eq!(bs.read_unary_ones_capped(9).unwrap(), 7);
+        assert_eq!(bs.read_unary_ones_capped(9).unwrap(), 3);
+        assert_eq!(bs.read_unary_ones_capped(9).unwrap(), 9); // Limit
+        assert_eq!(bs.read_unary_ones_capped(9).unwrap(), 3);
+        assert_eq!(bs.read_unary_ones_capped(9).unwrap(), 7);
+        assert_eq!(bs.read_unary_ones_capped(9).unwrap(), 0);
+        assert_eq!(bs.read_unary_ones_capped(9).unwrap(), 0);
+        assert_eq!(bs.read_unary_ones_capped(9).unwrap(), 0);
+        assert_eq!(bs.read_unary_ones_capped(9).unwrap(), 0);
+        assert_eq!(bs.read_unary_ones_capped(9).unwrap(), 1);
+
+        // Long limit test
+        let mut bs = BitReaderLtr::new(
+            &[
+                0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+                0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+                0xff, 0xfe, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+                0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+                0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+                0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+                0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+            ]
+        );
+
+        assert_eq!(bs.read_unary_ones_capped(144).unwrap(), 143);
+        assert_eq!(bs.read_unary_ones_capped(256).unwrap(), 256);
     }
 
     fn generate_codebook(bit_order: BitOrder) -> (Codebook<Entry8x8>, Vec<u8>, &'static str) {
@@ -1801,6 +1999,29 @@ mod tests {
     }
 
     #[test]
+    fn verify_bitstreamrtl_read_unary_zeros_capped() {
+        // General tests
+        let mut bs = BitReaderRtl::new(&[ 0b1000_0000, 0b1000_0000 ]);
+
+        assert_eq!(bs.read_unary_zeros_capped(8).unwrap(), 7);
+        assert_eq!(bs.read_unary_zeros_capped(4).unwrap(), 4);
+
+        // Long limit tests
+        let mut bs = BitReaderRtl::new(
+            &[
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            ]
+        );
+
+        assert_eq!(bs.read_unary_zeros_capped(96).unwrap(), 79);
+        assert_eq!(bs.read_unary_zeros_capped(163).unwrap(), 163);
+    }
+
+    #[test]
     fn verify_bitstreamrtl_read_unary_ones() {
         // General tests
         let mut bs = BitReaderRtl::new(
@@ -1834,6 +2055,29 @@ mod tests {
         let mut bs = BitReaderRtl::new(&[0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff]);
 
         assert!(bs.read_unary_ones().is_err());
+    }
+
+    #[test]
+    fn verify_bitstreamrtl_read_unary_ones_capped() {
+        // General tests
+        let mut bs = BitReaderRtl::new(&[ 0b0111_1111, 0b0111_1111 ]);
+
+        assert_eq!(bs.read_unary_ones_capped(8).unwrap(), 7);
+        assert_eq!(bs.read_unary_ones_capped(4).unwrap(), 4);
+
+        // Long limit tests
+        let mut bs = BitReaderRtl::new(
+            &[
+                0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+                0xff, 0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+                0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+                0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+                0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+            ]
+        );
+
+        assert_eq!(bs.read_unary_ones_capped(96).unwrap(), 79);
+        assert_eq!(bs.read_unary_ones_capped(163).unwrap(), 163);
     }
 
     #[test]
