@@ -237,6 +237,9 @@ pub mod default {
         #[cfg(feature = "ogg")]
         probe.register_all::<formats::OggReader>();
 
+        #[cfg(feature = "mkv")]
+        probe.register_all::<formats::MkvReader>();
+
         // Metadata
         probe.register_all::<Id3v2Reader>();
     }
