@@ -35,6 +35,7 @@
 //! | Codec    | Feature Flag | Default |
 //! |----------|--------------|---------|
 //! | AAC-LC   | `aac`        | No      |
+//! | ALAC     | `alac`       | No      |
 //! | FLAC     | `flac`       | Yes     |
 //! | MP3      | `mp3`        | No      |
 //! | PCM      | `pcm`        | Yes     |
@@ -109,6 +110,8 @@ pub mod default {
 
         #[cfg(feature = "aac")]
         pub use symphonia_codec_aac::AacDecoder as AacDecoder;
+        #[cfg(feature = "alac")]
+        pub use symphonia_codec_alac::AlacDecoder as AlacDecoder;
         #[cfg(feature = "flac")]
         pub use symphonia_bundle_flac::FlacDecoder as FlacDecoder;
         #[cfg(feature = "mp3")]
@@ -185,6 +188,9 @@ pub mod default {
     pub fn register_enabled_codecs(registry: &mut CodecRegistry) {
         #[cfg(feature = "aac")]
         registry.register_all::<codecs::AacDecoder>();
+
+        #[cfg(feature = "alac")]
+        registry.register_all::<codecs::AlacDecoder>();
 
         #[cfg(feature = "flac")]
         registry.register_all::<codecs::FlacDecoder>();
