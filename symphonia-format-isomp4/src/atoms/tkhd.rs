@@ -24,7 +24,8 @@ pub struct TkhdAtom {
     pub mtime: u64,
     /// Track identifier.
     pub id: u32,
-    /// Track duration in timescale units.
+    /// Track duration in the timescale units specified in the movie header. This value is equal to
+    /// the sum of the durations of all the track's edits.
     pub duration: u64,
     /// Layer.
     pub layer: u16,

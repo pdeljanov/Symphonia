@@ -18,15 +18,68 @@ use crate::formats::Packet;
 use crate::sample::SampleFormat;
 use crate::units::TimeBase;
 
-/// A `CodecType` is a unique identifier used to identify a specific codec. `CodecType` is mainly
-/// used for matching a format's stream to a specific `Decoder`. Decoders advertisting support for a
-/// specific `CodecType` should be interchangeable in regards to their ability to consume packets
-/// from a packet stream. This means that while support for codec features and quality may differ,
-/// all Decoders will identically advance the packet stream.
-#[derive(Copy, Clone, PartialEq, Eq, Hash)]
+/// A `CodecType` is a unique identifier used to identify a specific codec.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct CodecType(u32);
 
-/// Null decoder, simply discards all data.
+/// Declares a new `CodecType` given a character code. A character code is an ASCII string
+/// containing a maximum of 5 alphanumeric characters.
+///
+/// Note: Due to the current limitations of const fn, this function is not able to panic on error.
+/// Therefore, if the character code contains an invalid character, then the character is dropped.
+/// Additionally, any extra characters will be truncated.
+pub const fn decl_codec_type(cc: &[u8]) -> CodecType {
+    /// Map alphanumeric ASCII characters into a 6-bit code.
+    const fn map_ascii_to_bits(cc: u8) -> u32 {
+        // The mapping is defined as:
+        //  b'0'..=b'9' maps to  1..=10
+        //  b'a'..=b'z' maps to 11..=36
+        //  b'A'..=b'Z' maps to 37..=62
+        if cc.is_ascii_digit() {
+            1 + (cc - b'0') as u32
+        }
+        else if cc.is_ascii_lowercase() {
+            11 + (cc - b'a') as u32
+        }
+        else if cc.is_ascii_uppercase() {
+            37 + (cc - b'A') as u32
+        }
+        else {
+            0
+        }
+    }
+
+    // TODO: assert!(cc.len() <= 5);
+
+    // The upper-bit indicates the user codec namespace.
+    let mut id = 0x8000_0000;
+
+    let mut i = 0;
+    let mut j = 0;
+
+    while i < cc.len() && j < 5 {
+        // TODO: When const panic is stabilized, assert that the character is alphanumeric to
+        // generate an error rather than silently dropping invalid characters.
+        // assert!(cc[i].is_ascii_alphanumeric());
+
+        // Pack the ASCII characters into the allocated 30 bits (6 bits per character) in MSb order.
+        if cc[i].is_ascii_alphanumeric() {
+            id |= map_ascii_to_bits(cc[i]) << (24 - (6 * j));
+            j += 1;
+        }
+        i += 1;
+    }
+
+    CodecType(id)
+}
+
+impl fmt::Display for CodecType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:#x}", self.0)
+    }
+}
+
+/// Null codec
 pub const CODEC_TYPE_NULL: CodecType             = CodecType(0x0);
 
 // Uncompressed PCM audio codecs
@@ -104,10 +157,26 @@ pub const CODEC_TYPE_PCM_F64LE_PLANAR: CodecType = CodecType(0x121);
 pub const CODEC_TYPE_PCM_F64BE: CodecType        = CodecType(0x122);
 /// PCM 64-bit big-endian floating point planar
 pub const CODEC_TYPE_PCM_F64BE_PLANAR: CodecType = CodecType(0x123);
-/// PCM A-law
+/// PCM A-law (G.711)
 pub const CODEC_TYPE_PCM_ALAW: CodecType         = CodecType(0x124);
-/// PCM Mu-law
+/// PCM Mu-law (G.711)
 pub const CODEC_TYPE_PCM_MULAW: CodecType        = CodecType(0x125);
+
+// ADPCM audio codecs
+//-------------------
+
+/// G.722 ADPCM
+pub const CODEC_TYPE_ADPCM_G722: CodecType       = CodecType(0x200);
+/// G.726 ADPCM
+pub const CODEC_TYPE_ADPCM_G726: CodecType       = CodecType(0x201);
+/// G.726 ADPCM little-endian
+pub const CODEC_TYPE_ADPCM_G726LE: CodecType     = CodecType(0x202);
+/// Microsoft ADPCM
+pub const CODEC_TYPE_ADPCM_MS: CodecType         = CodecType(0x203);
+/// ADPCM IMA WAV
+pub const CODEC_TYPE_ADPCM_IMA_WAV: CodecType    = CodecType(0x204);
+/// ADPCM IMA QuickTime
+pub const CODEC_TYPE_ADPCM_IMA_QT: CodecType     = CodecType(0x205);
 
 // Compressed lossy audio codecs
 //------------------------------
@@ -124,8 +193,26 @@ pub const CODEC_TYPE_MP3: CodecType              = CodecType(0x1003);
 pub const CODEC_TYPE_AAC: CodecType              = CodecType(0x1004);
 /// Opus
 pub const CODEC_TYPE_OPUS: CodecType             = CodecType(0x1005);
+/// Speex
+pub const CODEC_TYPE_SPEEX: CodecType            = CodecType(0x1006);
 /// Musepack
-pub const CODEC_TYPE_MUSEPACK: CodecType         = CodecType(0x1006);
+pub const CODEC_TYPE_MUSEPACK: CodecType         = CodecType(0x1007);
+/// Adaptive Transform Acoustic Coding (ATRAC1)
+pub const CODEC_TYPE_ATRAC1: CodecType           = CodecType(0x1008);
+/// Adaptive Transform Acoustic Coding 3 (ATRAC3)
+pub const CODEC_TYPE_ATRAC3: CodecType           = CodecType(0x1009);
+/// Adaptive Transform Acoustic Coding 3+ (ATRAC3+)
+pub const CODEC_TYPE_ATRAC3PLUS: CodecType       = CodecType(0x100a);
+/// Adaptive Transform Acoustic Coding 9 (ATRAC9)
+pub const CODEC_TYPE_ATRAC9: CodecType           = CodecType(0x100b);
+/// AC-3, E-AC-3, Dolby Digital (ATSC A/52)
+pub const CODEC_TYPE_EAC3: CodecType             = CodecType(0x100c);
+/// Dolby AC-4 (ETSI TS 103 190)
+pub const CODEC_TYPE_AC4: CodecType              = CodecType(0x100d);
+/// DTS Coherent Acoustics (DCA/DTS)
+pub const CODEC_TYPE_DCA: CodecType              = CodecType(0x100e);
+/// Windows Media Audio
+pub const CODEC_TYPE_WMA: CodecType              = CodecType(0x100f);
 
 // Compressed lossless audio codecs
 //---------------------------------
@@ -138,13 +225,8 @@ pub const CODEC_TYPE_WAVPACK: CodecType          = CodecType(0x2001);
 pub const CODEC_TYPE_MONKEYS_AUDIO: CodecType    = CodecType(0x2002);
 /// Apple Lossless Audio Codec (ALAC)
 pub const CODEC_TYPE_ALAC: CodecType             = CodecType(0x2003);
-
-
-impl fmt::Display for CodecType {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
+/// True Audio (TTA)
+pub const CODEC_TYPE_TTA: CodecType              = CodecType(0x2004);
 
 /// A method and expected value to perform verification on the decoded audio.
 #[derive(Copy, Clone)]

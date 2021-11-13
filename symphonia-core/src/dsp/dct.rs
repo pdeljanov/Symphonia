@@ -135,7 +135,7 @@ fn dct_ii_step(x: &mut [f32], t: &mut [f32]) {
         dct_ii_step(tl, xl);
         dct_ii_step(tr, xr);
 
-        for ((xsc, &tls), trsw) in x.chunks_mut(2).zip(tl.iter()).zip(tr.windows(2)) {
+        for ((xsc, &tls), trsw) in x.chunks_exact_mut(2).zip(tl.iter()).zip(tr.windows(2)) {
             xsc[0] = tls;
             xsc[1] = trsw[0] + trsw[1];
         }

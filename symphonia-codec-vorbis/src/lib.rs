@@ -90,7 +90,7 @@ impl Decoder for VorbisDecoder {
         let windows = Windows::new(1 << ident.bs0_exp, 1 << ident.bs1_exp);
 
         // Initialize dynamic DSP for each channel.
-        let dsp_channels = (0..ident.n_channels).map(|_| DspChannel::new(ident.bs1_exp)).collect();
+        let dsp_channels = (0..ident.n_channels).map(|_| DspChannel::new(ident.bs0_exp, ident.bs1_exp)).collect();
 
         // Map the channels
         let channels = match vorbis_channels_to_channels(ident.n_channels) {
@@ -149,7 +149,7 @@ impl Decoder for VorbisDecoder {
         // Section 4.3.1 - Packet Type, Mode, and Window Decode
 
         // First bit must be 0 to indicate audio packet.
-        if bs.read_bit()? {
+        if bs.read_bool()? {
             return decode_error("vorbis: not an audio packet");
         }
 
@@ -164,26 +164,17 @@ impl Decoder for VorbisDecoder {
         let mode = &self.modes[mode_number];
         let mapping = &self.mappings[usize::from(mode.mapping)];
 
-        let (bs_exp, imdct, window) = if mode.block_flag {
-            // This packet (block) uses a long window.
+        let (bs_exp, imdct) = if mode.block_flag {
+            // This packet (block) uses a long window. Do not use the window flags since they may
+            // be wrong.
+            let _prev_window_flag = bs.read_bool()?;
+            let _next_window_flag = bs.read_bool()?;
 
-            let prev_window_flag = bs.read_bit()?;
-            let next_window_flag = bs.read_bit()?;
-
-            // The shape of the long window depends on the type of block preceeding and following
-            // this block. Select based on the window flags.
-            let window = match (prev_window_flag, next_window_flag) {
-                (false, false) => &self.dsp.windows.short_long_short,
-                (false, true ) => &self.dsp.windows.short_long_long,
-                (true , false) => &self.dsp.windows.long_long_short,
-                (true , true ) => &self.dsp.windows.long_long_long,
-            };
-
-            (self.ident.bs1_exp, &mut self.dsp.imdct_long, window)
+            (self.ident.bs1_exp, &mut self.dsp.imdct_long)
         }
         else {
             // This packet (block) uses a short window.
-            (self.ident.bs0_exp, &mut self.dsp.imdct_short, &self.dsp.windows.short)
+            (self.ident.bs0_exp, &mut self.dsp.imdct_short)
         };
 
         // Block, and half-block size
@@ -210,12 +201,17 @@ impl Decoder for VorbisDecoder {
                 // now and save it for audio synthesis later.
                 floor.synthesis(bs_exp, &mut ch.floor)?;
             }
+            else {
+                // If the channel is unused, zero the floor vector.
+                ch.floor[..n2].fill(0.0);
+            }
         }
 
         // Section 4.3.3 - Non-zero Vector Propagate
 
-        // If within a pair of coupled channels, one channel has an used floor (i.e., no_residue
-        // is false for that channel), then both channels must have no_residue unset.
+        // If within a pair of coupled channels, one channel has an unused floor (do_not_decode
+        // is true for that channel), but the other channel is used, then both channels must have
+        // do_not_decode unset.
         for couple in &mapping.couplings {
             let magnitude_ch_idx = usize::from(couple.magnitude_ch);
             let angle_ch_idx = usize::from(couple.angle_ch);
@@ -295,7 +291,8 @@ impl Decoder for VorbisDecoder {
         // Section 4.3.6 - Dot Product
 
         for channel in self.dsp.channels.iter_mut() {
-            // TODO: Is this correct?
+            // If the channel is marked as do not decode, the floor vector is all 0. Therefore the
+            // dot product will be 0.
             if channel.do_not_decode {
                 continue;
             }
@@ -311,27 +308,33 @@ impl Decoder for VorbisDecoder {
         // Calculate the output length and reserve space in the output buffer. If there was no
         // previous packet, then return an empty audio buffer since the decoder will need another
         // packet before being able to produce audio.
-        if let Some(prev_win) = &self.dsp.lapping_state {
-            let render_len = (prev_win.prev_block_size >> 2) + (n >> 2);
+        if let Some(lap_state) = &self.dsp.lapping_state {
+            // The previous block size.
+            let prev_block_n = if lap_state.prev_block_flag {
+                1 << self.ident.bs1_exp
+            }
+            else {
+                1 << self.ident.bs0_exp
+            };
+
+            let render_len = (prev_block_n + n) / 4;
             self.buf.render_reserved(Some(render_len));
         }
 
         // Render all the audio channels.
         for (i, channel) in self.dsp.channels.iter_mut().enumerate() {
-            // TODO: Is this correct?
-            if channel.do_not_decode {
-                // Output silence on this channel.
-                for s in self.buf.chan_mut(i) { *s = 0.0; }
-                continue;
-            }
-
-            channel.synth(n, &self.dsp.lapping_state, window, imdct, self.buf.chan_mut(i));
+            channel.synth(
+                mode.block_flag,
+                &self.dsp.lapping_state,
+                &self.dsp.windows,
+                imdct,
+                self.buf.chan_mut(i)
+            );
         }
 
         // Save the new lapping state.
         self.dsp.lapping_state = Some(LappingState {
-            prev_block_size: n,
-            prev_win_right: window.right
+            prev_block_flag: mode.block_flag,
         });
 
         Ok(self.buf.as_audio_buffer_ref())
@@ -505,7 +508,7 @@ fn read_setup(reader: &mut BufReader<'_>, ident: &IdentHeader) -> Result<Setup> 
     let modes = read_modes(&mut bs, mappings.len() as u8)?;
 
     // Framing flag must be set.
-    if !bs.read_bit()? {
+    if !bs.read_bool()? {
         return decode_error("vorbis: setup header framing flag unset");
     }
 
@@ -627,7 +630,7 @@ fn read_mapping_type0(
     max_residue: u8,
 ) -> Result<Mapping> {
 
-    let num_submaps = if bs.read_bit()? {
+    let num_submaps = if bs.read_bool()? {
         bs.read_bits_leq32(4)? as u8 + 1
     }
     else {
@@ -636,7 +639,7 @@ fn read_mapping_type0(
 
     let mut couplings = Vec::new();
 
-    if bs.read_bit()? {
+    if bs.read_bool()? {
         // Number of channel couplings (up-to 256).
         let coupling_steps = bs.read_bits_leq32(8)? as u16 + 1;
 
@@ -729,7 +732,7 @@ struct Mode {
 }
 
 fn read_mode(bs: &mut BitReaderRtl<'_>, max_mapping: u8) -> Result<Mode> {
-    let block_flag = bs.read_bit()?;
+    let block_flag = bs.read_bool()?;
     let window_type = bs.read_bits_leq32(16)? as u16;
     let transform_type = bs.read_bits_leq32(16)? as u16;
     let mapping = bs.read_bits_leq32(8)? as u8;

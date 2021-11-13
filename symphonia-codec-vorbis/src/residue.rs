@@ -112,7 +112,7 @@ impl Residue {
         for _ in 0..residue_classifications {
             let low_bits = bs.read_bits_leq32(3)? as u8;
 
-            let high_bits = if bs.read_bit()? {
+            let high_bits = if bs.read_bool()? {
                 bs.read_bits_leq32(5)? as u8
             }
             else {
@@ -174,7 +174,8 @@ impl Residue {
         // Read the residue, and ignore end-of-bitstream errors which are legal.
         match self.read_residue_inner(bs, bs_exp, codebooks, residue_channels, scratch, channels) {
             Ok(_) => (),
-            // TODO: Tighten this up since there are many types of error classified under "Other".
+            // An end-of-bitstream error is classified under ErrorKind::Other. This condition
+            // should not be treated as an error.
             Err(Error::IoError(ref e)) if e.kind() == io::ErrorKind::Other => (),
             Err(e) => return Err(e),
         };
@@ -240,7 +241,7 @@ impl Residue {
             scratch.reserve_buf(actual_size);
 
             // Zero the interleaving buffer.
-            for r in &mut scratch.buf[..actual_size] { *r = 0.0; }
+            scratch.buf[..actual_size].fill(0.0);
         }
         else {
             scratch.reserve_part_classes(parts_to_read * residue_channels.count() as usize);
@@ -254,7 +255,7 @@ impl Residue {
 
             // Zero the channel residue if not type 2.
             if !is_fmt2 {
-                for r in &mut ch.residue[..actual_size] { *r = 0.0; }
+                ch.residue[..actual_size].fill(0.0);
             }
 
             if !ch.do_not_decode {

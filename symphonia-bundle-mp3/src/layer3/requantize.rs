@@ -125,7 +125,7 @@ pub(super) fn read_huffman_samples<B: ReadBitsLtr>(
 
                 // The next bit is the sign bit. The value of the sample is raised to the (4/3)
                 // power.
-                buf[i] = if bs.read_bit()? { -pow43_table[x] } else { pow43_table[x] };
+                buf[i] = if bs.read_bool()? { -pow43_table[x] } else { pow43_table[x] };
                 bits_read += 1;
             }
             else {
@@ -141,7 +141,7 @@ pub(super) fn read_huffman_samples<B: ReadBitsLtr>(
                     bits_read += linbits;
                 }
 
-                buf[i] = if bs.read_bit()? { -pow43_table[y] } else { pow43_table[y] };
+                buf[i] = if bs.read_bool()? { -pow43_table[y] } else { pow43_table[y] };
                 bits_read += 1;
             }
             else {
@@ -167,7 +167,7 @@ pub(super) fn read_huffman_samples<B: ReadBitsLtr>(
         // the 1-bit sample is 1, then read the sign bit (the next bit). The dequantized sample is
         // then either +/-1.0 depending on the sign bit.
         if value & 0x8 != 0 {
-            buf[i] = if bs.read_bit()? { -1.0 } else { 1.0 };
+            buf[i] = if bs.read_bool()? { -1.0 } else { 1.0 };
             bits_read += 1;
         }
         else {
@@ -177,7 +177,7 @@ pub(super) fn read_huffman_samples<B: ReadBitsLtr>(
         i += 1;
 
         if value & 0x4 != 0 {
-            buf[i] = if bs.read_bit()? { -1.0 } else { 1.0 };
+            buf[i] = if bs.read_bool()? { -1.0 } else { 1.0 };
             bits_read += 1;
         }
         else {
@@ -187,7 +187,7 @@ pub(super) fn read_huffman_samples<B: ReadBitsLtr>(
         i += 1;
 
         if value & 0x2 != 0 {
-            buf[i] = if bs.read_bit()? { -1.0 } else { 1.0 };
+            buf[i] = if bs.read_bool()? { -1.0 } else { 1.0 };
             bits_read += 1;
         }
         else {
@@ -197,7 +197,7 @@ pub(super) fn read_huffman_samples<B: ReadBitsLtr>(
         i += 1;
 
         if value & 0x1 != 0 {
-            buf[i] = if bs.read_bit()? { -1.0 } else { 1.0 };
+            buf[i] = if bs.read_bool()? { -1.0 } else { 1.0 };
             bits_read += 1;
         }
         else {

@@ -8,7 +8,7 @@
 use std::cmp::min;
 use std::collections::HashSet;
 
-use symphonia_core::errors::{Result, decode_error};
+use symphonia_core::errors::{Error, Result, decode_error};
 use symphonia_core::io::{ReadBitsRtl, BitReaderRtl};
 
 use super::codebook::VorbisCodebook;
@@ -83,6 +83,32 @@ const FLOOR1_INVERSE_DB_TABLE: [f32; 256] = [
     0.64356699,    0.68538959,    0.72993007,    0.77736504,
     0.82788260,    0.88168307,    0.9389798,     1.0,
 ];
+
+macro_rules! io_try_or_ret {
+    ($expr:expr) => {
+        match $expr {
+            Ok(val) => val,
+            // An end-of-bitstream error is classified under ErrorKind::Other. This condition
+            // should not be treated as an error, rather, it should return from the function
+            // immediately without error.
+            Err(ref e) if e.kind() == std::io::ErrorKind::Other => return Ok(()),
+            Err(e) => return Err(e.into()),
+        }
+    };
+}
+
+macro_rules! try_or_ret {
+    ($expr:expr) => {
+        match $expr {
+            Ok(val) => val,
+            // An end-of-bitstream error is classified under ErrorKind::Other. This condition
+            // should not be treated as an error, rather, it should return from the function
+            // immediately without error.
+            Err(Error::IoError(ref e)) if e.kind() == std::io::ErrorKind::Other => return Ok(()),
+            Err(e) => return Err(e),
+        }
+    };
+}
 
 pub trait Floor : Send {
     fn read_channel(&mut self, bs: &mut BitReaderRtl<'_>, codebooks: &[VorbisCodebook]) ->  Result<()>;
@@ -182,16 +208,19 @@ impl Floor for Floor0 {
         &mut self,
         bs: &mut BitReaderRtl<'_>,
         codebooks: &[VorbisCodebook]
-    ) ->  Result<()> {
-        self.amplitude = bs.read_bits_leq64(u32::from(self.setup.floor0_amplitude_bits))?;
+    ) -> Result<()> {
+        // Assume the floor is unused until it is decoded successfully.
+        self.is_unused = true;
 
-        self.is_unused = self.amplitude == 0;
+        self.amplitude = io_try_or_ret!(
+            bs.read_bits_leq64(u32::from(self.setup.floor0_amplitude_bits))
+        );
 
-        if !self.is_unused {
+        if self.amplitude != 0 {
             // Read the index into the floor's codebook list that contains the actual codebook
             // index.
             let floor_book_idx_bits = ilog(u32::from(self.setup.floor0_number_of_books));
-            let floor_book_idx = bs.read_bits_leq32(floor_book_idx_bits)? as usize;
+            let floor_book_idx = io_try_or_ret!(bs.read_bits_leq32(floor_book_idx_bits)) as usize;
 
             // Get the actual codebook index from the floor's codebook list.
             let codebook_idx = self.setup.floor0_book_list[floor_book_idx] as usize;
@@ -211,14 +240,7 @@ impl Floor for Floor0 {
                 let i0 = i;
 
                 // Read and obtain the VQ vector from the codebook.
-                let vq = if let Ok(vq) = codebook.read_vq(bs) {
-                    vq
-                }
-                else {
-                    // A read failure is a nominal condition and indicates the floor is unused.
-                    self.is_unused = true;
-                    return Ok(());
-                };
+                let vq = try_or_ret!(codebook.read_vq(bs));
 
                 // The VQ vector may be much larger (up-to 65535 scalars) than the remaining number
                 // of coefficients (up-to 255 scalars). Cap the amount of coefficients to be
@@ -240,8 +262,10 @@ impl Floor for Floor0 {
             for coeff in self.coeffs[..order].iter_mut() {
                 *coeff = 2.0 * coeff.cos();
             }
-
         }
+
+        // The floor is used if the amplitude is not 0.
+        self.is_unused = self.amplitude == 0;
 
         Ok(())
     }
@@ -637,10 +661,14 @@ impl Floor for Floor1 {
         &mut self,
         bs: &mut BitReaderRtl<'_>,
         codebooks: &[VorbisCodebook]
-    ) ->  Result<()> {
-        self.is_unused = !bs.read_bit()?;
+    ) -> Result<()> {
+        // Assume the floor is unused until it is decoded successfully.
+        self.is_unused = true;
 
-        if self.is_unused {
+        // First bit marks if this floor is used. Exit early if it is not.
+        let is_used = io_try_or_ret!(bs.read_bool());
+
+        if !is_used {
             return Ok(());
         }
 
@@ -650,8 +678,8 @@ impl Floor for Floor1 {
         // The number of bits required to represent range.
         let range_bits = ilog(range - 1);
 
-        self.floor_y[0] = bs.read_bits_leq32(range_bits)?;
-        self.floor_y[1] = bs.read_bits_leq32(range_bits)?;
+        self.floor_y[0] = io_try_or_ret!(bs.read_bits_leq32(range_bits));
+        self.floor_y[1] = io_try_or_ret!(bs.read_bits_leq32(range_bits));
 
         let mut offset = 2;
 
@@ -667,15 +695,7 @@ impl Floor for Floor1 {
 
             if cbits > 0 {
                 let mainbook_idx = class.mainbook as usize;
-
-                cval = if let Ok((cval, _)) = codebooks[mainbook_idx].read_scalar(bs) {
-                    cval
-                }
-                else {
-                    // A read failure is a nominal condition and indicates the floor is unused.
-                    self.is_unused = true;
-                    return Ok(());
-                };
+                cval = try_or_ret!(codebooks[mainbook_idx].read_scalar(bs)).0;
             }
 
             for floor_y in self.floor_y[offset..offset + cdim].iter_mut() {
@@ -688,15 +708,7 @@ impl Floor for Floor1 {
 
                 *floor_y = if is_subbook_used {
                     let subbook_idx = class.subbooks[subclass_idx as usize] as usize;
-
-                    if let Ok((val, _)) = codebooks[subbook_idx].read_scalar(bs) {
-                        val
-                    }
-                    else {
-                        // A read failure is a nominal condition and indicates the floor is unused.
-                        self.is_unused = true;
-                        return Ok(());
-                    }
+                    try_or_ret!(codebooks[subbook_idx].read_scalar(bs)).0
                 }
                 else {
                     0
@@ -705,6 +717,9 @@ impl Floor for Floor1 {
 
             offset += cdim;
         }
+
+        // If this point is reached then the floor is used.
+        self.is_unused = false;
 
         Ok(())
     }

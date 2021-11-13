@@ -153,17 +153,17 @@ impl M4AInfo {
             | M4AType::ER_BSAC
             | M4AType::ER_AAC_LD => {
                 // GASpecificConfig
-                let short_frame = bs.read_bit()?;
+                let short_frame = bs.read_bool()?;
 
                 self.samples = if short_frame { 960 } else { 1024 };
 
-                let depends_on_core = bs.read_bit()?;
+                let depends_on_core = bs.read_bool()?;
 
                 if depends_on_core {
                     let _delay = bs.read_bits_leq32(14)?;
                 }
 
-                let extension_flag = bs.read_bit()?;
+                let extension_flag = bs.read_bool()?;
 
                 if self.channels == 0 {
                     return unsupported_error("aac: program config element");
@@ -184,12 +184,12 @@ impl M4AInfo {
                         || (self.otype == M4AType::ER_AAC_Scalable)
                         || (self.otype == M4AType::ER_AAC_LD)
                     {
-                        let _section_data_resilience = bs.read_bit()?;
-                        let _scalefactors_resilience = bs.read_bit()?;
-                        let _spectral_data_resilience = bs.read_bit()?;
+                        let _section_data_resilience = bs.read_bool()?;
+                        let _scalefactors_resilience = bs.read_bool()?;
+                        let _spectral_data_resilience = bs.read_bool()?;
                     }
 
-                    let extension_flag3 = bs.read_bit()?;
+                    let extension_flag3 = bs.read_bool()?;
 
                     if extension_flag3 {
                         return unsupported_error("aac: version3 extensions");
@@ -280,19 +280,19 @@ impl M4AInfo {
             if sync == 0x2B7 {
                 let ext_otype = Self::read_object_type(&mut bs)?;
                 if ext_otype == M4AType::Sbr {
-                    self.sbr_present = bs.read_bit()?;
+                    self.sbr_present = bs.read_bool()?;
                     if self.sbr_present {
                         let _ext_srate = Self::read_sampling_frequency(&mut bs)?;
                         if bs.bits_left() >= 12 {
                             let sync = bs.read_bits_leq32(11)?;
                             if sync == 0x548 {
-                                self.ps_present = bs.read_bit()?;
+                                self.ps_present = bs.read_bool()?;
                             }
                         }
                     }
                 }
                 if ext_otype == M4AType::PS {
-                    self.sbr_present = bs.read_bit()?;
+                    self.sbr_present = bs.read_bool()?;
                     if self.sbr_present {
                         let _ext_srate = Self::read_sampling_frequency(&mut bs)?;
                     }
@@ -359,7 +359,7 @@ impl ICSInfo {
         self.prev_window_sequence = self.window_sequence;
         self.prev_window_shape = self.window_shape;
 
-        if bs.read_bit()? {
+        if bs.read_bool()? {
             return decode_error("aac: ics reserved bit set");
         }
 
@@ -381,7 +381,7 @@ impl ICSInfo {
             _ => {}
         };
 
-        self.window_shape = bs.read_bit()?;
+        self.window_shape = bs.read_bool()?;
         self.window_groups = 1;
 
         if self.window_sequence == EIGHT_SHORT_SEQUENCE {
@@ -390,7 +390,7 @@ impl ICSInfo {
             self.max_sfb = bs.read_bits_leq32(4)? as usize;
 
             for i in 0..MAX_WINDOWS - 1 {
-                self.scale_factor_grouping[i] = bs.read_bit()?;
+                self.scale_factor_grouping[i] = bs.read_bool()?;
 
                 if !self.scale_factor_grouping[i] {
                     self.group_start[self.window_groups] = i + 1;
@@ -430,7 +430,7 @@ struct LTPData {}
 
 impl LTPData {
     fn read<B: ReadBitsLtr>(bs: &mut B) -> Result<Option<Self>> {
-        let predictor_data_present = bs.read_bit()?;
+        let predictor_data_present = bs.read_bool()?;
         if !predictor_data_present {
             return Ok(None);
         }
@@ -474,7 +474,7 @@ struct PulseData {
 
 impl PulseData {
     fn read<B: ReadBitsLtr>(bs: &mut B) -> Result<Option<Self>> {
-        let pulse_data_present = bs.read_bit()?;
+        let pulse_data_present = bs.read_bool()?;
         if !pulse_data_present {
             return Ok(None);
         }
@@ -530,8 +530,8 @@ impl TNSCoeffs {
         self.order = bs.read_bits_leq32(if long_win { 5 } else { 3 })? as usize;
         validate!(self.order <= max_order);
         if self.order > 0 {
-            self.direction = bs.read_bit()?;
-            self.compress = bs.read_bit()?;
+            self.direction = bs.read_bool()?;
+            self.compress = bs.read_bool()?;
             let mut coef_bits = 3;
             if coef_res {
                 coef_bits += 1;
@@ -593,7 +593,7 @@ impl TNSData {
         num_windows: usize,
         max_order: usize,
     ) -> Result<Option<Self>> {
-        let tns_data_present = bs.read_bit()?;
+        let tns_data_present = bs.read_bool()?;
         if !tns_data_present {
             return Ok(None);
         }
@@ -603,7 +603,7 @@ impl TNSData {
         for w in 0..num_windows {
             n_filt[w] = bs.read_bits_leq32(if long_win { 2 } else { 1 })? as usize;
             if n_filt[w] != 0 {
-                coef_res[w] = bs.read_bit()?;
+                coef_res[w] = bs.read_bool()?;
             }
             for filt in 0..n_filt[w] {
                 coeffs[w][filt].read(bs, long_win, coef_res[w], max_order)?;
@@ -625,7 +625,7 @@ struct GainControlData {
 
 impl GainControlData {
     fn read<B: ReadBitsLtr>(bs: &mut B) -> Result<Option<Self>> {
-        let gain_control_data_present = bs.read_bit()?;
+        let gain_control_data_present = bs.read_bool()?;
         if !gain_control_data_present {
             return Ok(None);
         }
@@ -958,7 +958,7 @@ impl Ics {
         match m4atype {
             M4AType::Ssr => self.gain_control = GainControlData::read(bs)?,
             _ => {
-                let gain_control_data_present = bs.read_bit()?;
+                let gain_control_data_present = bs.read_bool()?;
                 validate!(!gain_control_data_present);
             }
         }
@@ -1104,7 +1104,7 @@ fn decode_quads<B: ReadBitsLtr>(
         if unsigned {
             for (out, &quad) in out.iter_mut().zip(&AAC_QUADS[cw]) {
                 if quad != 0 {
-                    *out = if bs.read_bit()? {
+                    *out = if bs.read_bool()? {
                         -pow43_table[quad as usize] * scale
                     }
                     else {
@@ -1148,10 +1148,10 @@ fn decode_pairs<B: ReadBitsLtr>(
         let mut y = (cw % modulo) as i16;
 
         if unsigned {
-            if x != 0 && bs.read_bit()? {
+            if x != 0 && bs.read_bool()? {
                 x = -x;
             }
-            if y != 0 && bs.read_bit()? {
+            if y != 0 && bs.read_bool()? {
                 y = -y;
             }
         }
@@ -1226,7 +1226,7 @@ impl ChannelPair {
     }
 
     fn decode_ga_cpe<B: ReadBitsLtr>(&mut self, bs: &mut B, m4atype: M4AType) -> Result<()> {
-        let common_window = bs.read_bit()?;
+        let common_window = bs.read_bool()?;
         self.common_window = common_window;
 
         if common_window {
@@ -1240,7 +1240,7 @@ impl ChannelPair {
                 1 => {
                     for g in 0..self.ics0.info.window_groups {
                         for sfb in 0..self.ics0.info.max_sfb {
-                            self.ms_used[g][sfb] = bs.read_bit()?;
+                            self.ms_used[g][sfb] = bs.read_bool()?;
                         }
                     }
                 }
@@ -1555,7 +1555,7 @@ impl AacDecoder {
                 4 => {
                     // ID_DSE
                     let _id = bs.read_bits_leq32(4)?;
-                    let align = bs.read_bit()?;
+                    let align = bs.read_bool()?;
                     let mut count = bs.read_bits_leq32(8)? as u32;
                     if count == 255 {
                         count += bs.read_bits_leq32(8)? as u32;
@@ -1616,6 +1616,9 @@ impl Decoder for AacDecoder {
             m4ainfo.read(extra_data_buf)?;
         }
         else {
+            validate!(params.sample_rate.is_some());
+            validate!(params.channels.is_some());
+
             // Otherwise, assume there is no ASC and use the codec parameters for ADTS.
             m4ainfo.srate = params.sample_rate.unwrap();
             m4ainfo.otype = M4AType::Lc;

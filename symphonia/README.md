@@ -3,7 +3,7 @@
 [![Docs](https://docs.rs/symphonia/badge.svg)](https://docs.rs/symphonia)
 [![Build Status](https://github.com/pdeljanov/Symphonia/actions/workflows/ci.yml/badge.svg)](https://github.com/pdeljanov/Symphonia/actions/workflows/ci.yml)
 
-Symphonia is a pure Rust audio decoding and media demuxing library supporting AAC, FLAC, MP3, MP4, OGG, Vorbis, and WAV.
+Symphonia is a pure Rust audio decoding and media demuxing library supporting AAC, ALAC, FLAC, MP3, MP4, OGG, Vorbis, and WAV.
 
 ## Features
 
@@ -51,7 +51,7 @@ A classification of Great indicates the end of major development. Though bugs an
 | Codec                        | Status  | Feature Flag | Default | Crate                      |
 |------------------------------|---------|--------------|---------|----------------------------|
 | AAC-LC                       | Good    | `aac`        | No      | [`symphonia-codec-aac`]    |
-| ALAC                         | -       | `alac`       | No      | `symphonia-codec-alac`     |
+| ALAC                         | Great   | `alac`       | No      | [`symphonia-codec-alac`]   |
 | HE-AAC (AAC+, aacPlus)       | -       | `aac`        | No      | [`symphonia-codec-aac`]    |
 | HE-AACv2 (eAAC+, aacPlus v2) | -       | `aac`        | No      | [`symphonia-codec-aac`]    |
 | FLAC                         | Perfect | `flac`       | Yes     | [`symphonia-bundle-flac`]  |
@@ -66,6 +66,7 @@ A classification of Great indicates the end of major development. Though bugs an
 A `symphonia-bundle-*` package is a combination of a decoder and a native bitstream demuxer.
 
 [`symphonia-codec-aac`]: https://docs.rs/symphonia-codec-aac
+[`symphonia-codec-alac`]: https://docs.rs/symphonia-codec-alac
 [`symphonia-bundle-flac`]: https://docs.rs/symphonia-bundle-flac
 [`symphonia-bundle-mp3`]: https://docs.rs/symphonia-bundle-mp3
 [`symphonia-codec-pcm`]: https://docs.rs/symphonia-codec-pcm
@@ -158,7 +159,8 @@ For a more complete application, see [`symphonia-play`](https://github.com/pdelj
 
 Symphonia provides the following tools for debugging purposes:
 
-* `symphonia-play` for probing files and playing back audio, as well as serving as a demo application
+* [`symphonia-play`](https://github.com/pdeljanov/Symphonia/tree/master/symphonia-play) for probing, decoding, validating, and playing back media streams.
+* [`symphonia-check`](https://github.com/pdeljanov/Symphonia/tree/master/symphonia-check) for validating Symphonia's decoded output against `ffmpeg`.
 
 ## Authors
 

@@ -8,7 +8,7 @@
 
 use symphonia_core::{errors::end_of_stream_error, support_format};
 
-use symphonia_core::codecs::{CodecParameters, CODEC_TYPE_AAC};
+use symphonia_core::codecs::CodecParameters;
 use symphonia_core::errors::{Result, SeekErrorKind, decode_error, seek_error, unsupported_error};
 use symphonia_core::formats::prelude::*;
 use symphonia_core::io::{ReadBytes, MediaSource, MediaSourceStream};
@@ -21,7 +21,6 @@ use std::sync::Arc;
 
 use crate::atoms::{AtomIterator, AtomType};
 use crate::atoms::{FtypAtom, MoovAtom, MoofAtom, SidxAtom, TrakAtom, MetaAtom, MvexAtom};
-use crate::atoms::stsd::SampleDescription;
 use crate::stream::*;
 
 use log::{debug, info, trace, warn};
@@ -39,27 +38,15 @@ pub struct TrackState {
 }
 
 impl TrackState {
-
     #[allow(clippy::single_match)]
     pub fn new(track_num: u32, trak: &TrakAtom) -> Self {
         let mut codec_params = CodecParameters::new();
 
-        codec_params.with_time_base(TimeBase::new(1, trak.mdia.mdhd.timescale));
+        codec_params.with_time_base(TimeBase::new(1, trak.mdia.mdhd.timescale))
+                    .with_n_frames(trak.mdia.mdhd.duration);
 
-        // Add a track for the respective codec.
-        match trak.mdia.minf.stbl.stsd.sample_desc {
-            // MP4 audio (generally AAC)
-            SampleDescription::Mp4a(ref mp4a) => {
-                codec_params
-                    .for_codec(CODEC_TYPE_AAC)
-                    .with_n_frames(trak.tkhd.duration)
-                    .with_sample_rate(
-                        mp4a.sound_desc.sample_rate as u32)
-                    .with_extra_data(
-                        mp4a.esds.descriptor.dec_config.dec_specific_config.extra_data.clone());
-            }
-            _ => ()
-        }
+        // Fill the codec parameters using the sample description atom.
+        trak.mdia.minf.stbl.stsd.fill_codec_params(&mut codec_params);
 
         Self {
             codec_params,

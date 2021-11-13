@@ -5,6 +5,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+use symphonia_core::codecs::{CODEC_TYPE_AAC, CODEC_TYPE_MP3, CODEC_TYPE_NULL, CodecParameters, CodecType};
 use symphonia_core::errors::{Result, decode_error, unsupported_error};
 use symphonia_core::io::{ReadBytes, FiniteStream, ScopedStream};
 
@@ -40,7 +41,7 @@ pub struct EsdsAtom {
     /// Atom header.
     header: AtomHeader,
     /// Elementary stream descriptor.
-    pub descriptor: ESDescriptor,
+    descriptor: ESDescriptor,
 }
 
 impl Atom for EsdsAtom {
@@ -53,7 +54,7 @@ impl Atom for EsdsAtom {
 
         let mut descriptor = None;
 
-        let mut scoped = ScopedStream::new(reader, header.data_len - 4);
+        let mut scoped = ScopedStream::new(reader, header.data_len - AtomHeader::EXTRA_DATA_SIZE);
 
         while scoped.bytes_available() > MIN_DESCRIPTOR_SIZE {
             let (desc, desc_len) = read_descriptor_header(&mut scoped)?;
@@ -77,6 +78,16 @@ impl Atom for EsdsAtom {
             descriptor: descriptor.unwrap(),
         })
 
+    }
+}
+
+impl EsdsAtom {
+    pub fn fill_codec_params(&self, codec_params: &mut CodecParameters) {
+        codec_params.for_codec(self.descriptor.dec_config.codec_type);
+
+        if let Some(ds_config) = &self.descriptor.dec_config.dec_specific_info {
+            codec_params.with_extra_data(ds_config.extra_data.clone());
+        }
     }
 }
 
@@ -114,20 +125,29 @@ class ES_Descriptor extends BaseDescriptor : bit(8) tag=ES_DescrTag {
 #[derive(Debug)]
 pub struct ESDescriptor {
     pub es_id: u16,
-    pub flags: u8,
     pub dec_config: DecoderConfigDescriptor,
     pub sl_config: SLDescriptor,
 }
 
 impl ObjectDescriptor for ESDescriptor {
     fn read<B: ReadBytes>(reader: &mut B, len: u32) -> Result<Self> {
-
         let es_id = reader.read_be_u16()?;
-        let flags = reader.read_u8()?;
+        let es_flags = reader.read_u8()?;
 
-        // All flags must be 0.
-        if flags & 0xe0 != 0 {
-            return unsupported_error("isomp4: esdescriptor flags");
+        // Stream dependence flag.
+        if es_flags & 0x80 != 0 {
+            let _depends_on_es_id = reader.read_u16()?;
+        }
+
+        // URL flag.
+        if es_flags & 0x40 != 0 {
+            let url_len = reader.read_u8()?;
+            reader.ignore_bytes(u64::from(url_len))?;
+        }
+
+        // OCR stream flag.
+        if es_flags & 0x20 != 0 {
+            let _ocr_es_id = reader.read_u16()?;
         }
 
         let mut dec_config = None;
@@ -168,7 +188,6 @@ impl ObjectDescriptor for ESDescriptor {
 
         Ok(ESDescriptor {
             es_id,
-            flags,
             dec_config: dec_config.unwrap(),
             sl_config: sl_config.unwrap(),
         })
@@ -188,22 +207,24 @@ class DecoderConfigDescriptor extends BaseDescriptor : bit(8) tag=DecoderConfigD
     profileLevelIndicationIndexDescriptor profileLevelIndicationIndexDescr [0..255];
 }
 */
+
 #[derive(Debug)]
 pub struct DecoderConfigDescriptor {
+    pub codec_type: CodecType,
     pub object_type_indication: u8,
-    pub stream_type: u8,
-    pub upstream: u8,
-    pub buffer_size: u32,
-    pub max_bitrate: u32,
-    pub avg_bitrate: u32,
-    pub dec_specific_config: DecoderSpecificInfo,
+    pub dec_specific_info: Option<DecoderSpecificInfo>,
 }
 
 impl ObjectDescriptor for DecoderConfigDescriptor {
+
     fn read<B: ReadBytes>(reader: &mut B, len: u32) -> Result<Self> {
+        const OBJECT_TYPE_ISO14496_3: u8 = 0x40;  // Verify: 0x41 as well?
+        const OBJECT_TYPE_ISO13818_3: u8 = 0x69;
+        const OBJECT_TYPE_ISO11172_3: u8 = 0x6b;
+
         let object_type_indication = reader.read_u8()?;
 
-        let (stream_type, upstream, reserved) = {
+        let (_stream_type, _upstream, reserved) = {
             let val = reader.read_u8()?;
 
             (
@@ -217,9 +238,9 @@ impl ObjectDescriptor for DecoderConfigDescriptor {
             return decode_error("isomp4: reserved bit not 1");
         }
 
-        let buffer_size = reader.read_be_u24()?;
-        let max_bitrate = reader.read_be_u32()?;
-        let avg_bitrate = reader.read_be_u32()?;
+        let _buffer_size = reader.read_be_u24()?;
+        let _max_bitrate = reader.read_be_u32()?;
+        let _avg_bitrate = reader.read_be_u32()?;
 
         let mut dec_specific_config = None;
 
@@ -240,19 +261,27 @@ impl ObjectDescriptor for DecoderConfigDescriptor {
             }
         }
 
+        let codec_type = match object_type_indication {
+            OBJECT_TYPE_ISO14496_3 => CODEC_TYPE_AAC,
+            OBJECT_TYPE_ISO13818_3| OBJECT_TYPE_ISO11172_3 => CODEC_TYPE_MP3,
+            _ => {
+                debug!(
+                    "unknown object type indication {:#x} for decoder config descriptor",
+                    object_type_indication
+                );
+
+                CODEC_TYPE_NULL
+            }
+        };
+
         // Consume remaining bytes.
         scoped.ignore()?;
 
         Ok(DecoderConfigDescriptor {
+            codec_type,
             object_type_indication,
-            stream_type,
-            upstream,
-            buffer_size,
-            max_bitrate,
-            avg_bitrate,
-            dec_specific_config: dec_specific_config.unwrap(),
+            dec_specific_info: dec_specific_config,
         })
-
     }
 }
 

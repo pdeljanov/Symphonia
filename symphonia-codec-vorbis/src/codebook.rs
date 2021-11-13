@@ -235,18 +235,18 @@ impl VorbisCodebook {
         let codebook_entries = bs.read_bits_leq32(24)?;
 
         // Ordered flag.
-        let is_length_ordered = bs.read_bit()?;
+        let is_length_ordered = bs.read_bool()?;
 
         let mut code_lens = Vec::<u8>::with_capacity(codebook_entries as usize);
 
         if !is_length_ordered {
             // Codeword list is not length ordered.
-            let is_sparse = bs.read_bit()?;
+            let is_sparse = bs.read_bool()?;
 
             if is_sparse {
                 // Sparsely packed codeword entry list.
                 for _ in 0..codebook_entries {
-                    let is_used = bs.read_bit()?;
+                    let is_used = bs.read_bool()?;
 
                     let code_len = if is_used {
                         // Entry is used.
@@ -307,7 +307,7 @@ impl VorbisCodebook {
                 let min_value = float32_unpack(bs.read_bits_leq32(32)?);
                 let delta_value = float32_unpack(bs.read_bits_leq32(32)?);
                 let value_bits = bs.read_bits_leq32(4)? + 1;
-                let sequence_p = bs.read_bit()?;
+                let sequence_p = bs.read_bool()?;
 
                 // Lookup type is either 1 or 2 as per outer match.
                 let lookup_values = match lookup_type {

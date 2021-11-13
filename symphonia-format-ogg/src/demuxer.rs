@@ -8,7 +8,8 @@
 use std::collections::BTreeMap;
 use std::io::{Seek, SeekFrom};
 
-use symphonia_core::errors::{Error, Result, SeekErrorKind, reset_error, seek_error};
+use symphonia_core::errors::{Error, Result, SeekErrorKind};
+use symphonia_core::errors::{reset_error, seek_error, unsupported_error};
 use symphonia_core::formats::prelude::*;
 use symphonia_core::io::{MediaSource, MediaSourceStream, ReadBytes};
 use symphonia_core::meta::{Metadata, MetadataLog};
@@ -360,6 +361,10 @@ impl FormatReader for OggReader {
 
     fn try_new(mut source: MediaSourceStream, _options: &FormatOptions) -> Result<Self> {
         let pages = PageReader::try_new(&mut source)?;
+
+        if !pages.header().is_first_page {
+            return unsupported_error("ogg: page is not marked as first");
+        }
 
         let mut ogg = OggReader {
             reader: source,

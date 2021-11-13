@@ -403,6 +403,7 @@ macro_rules! impl_audio_buffer_ref_func {
 }
 
 /// `AudioBufferRef` is a copy-on-write reference to an `AudioBuffer` of any type.
+#[derive(Clone)]
 pub enum AudioBufferRef<'a> {
     U8(Cow<'a, AudioBuffer<u8>>),
     U16(Cow<'a, AudioBuffer<u16>>),
@@ -482,11 +483,16 @@ pub trait Signal<S : Sample> {
     /// Gets two mutable references to two different channels.
     fn chan_pair_mut(&mut self, first: usize, second: usize) -> (&mut [S], &mut [S]);
 
+    /// Renders a number of silent frames.
+    ///
+    /// If `n_frames` is `None`, the remaining number of frames will be used.
+    fn render_silence(&mut self, n_frames: Option<usize>);
+
     /// Renders a reserved number of frames. This is a cheap operation and simply advances the frame
     /// counter. The underlying audio data is not modified and should be overwritten through other
     /// means.
     ///
-    /// If `n_frames` is `None`, the remaining number of samples will be used. If `n_frames` is too
+    /// If `n_frames` is `None`, the remaining number of frames will be used. If `n_frames` is too
     /// large, this function will assert.
     fn render_reserved(&mut self, n_frames: Option<usize>);
 
@@ -515,6 +521,10 @@ pub trait Signal<S : Sample> {
     fn transform<F>(&mut self, f: F)
     where
         F: Fn(S) -> S;
+
+    /// Truncates the buffer to the number of frames specified. If the number of frames in the
+    /// buffer is less-than the number of frames specified, then this function does nothing.
+    fn truncate(&mut self, n_frames: usize);
 }
 
 impl<S: Sample> Signal<S> for AudioBuffer<S> {
@@ -564,6 +574,18 @@ impl<S: Sample> Signal<S> for AudioBuffer<S> {
 
             (&mut b[..self.n_frames], &mut a[second_idx..second_idx + self.n_frames])
         }
+    }
+
+    fn render_silence(&mut self, n_frames: Option<usize>) {
+        let n_silent_frames = n_frames.unwrap_or(self.n_capacity - self.n_frames);
+
+        for channel in self.buf.chunks_exact_mut(self.n_capacity) {
+            for sample in &mut channel[self.n_frames..self.n_frames + n_silent_frames] {
+                *sample = S::MID;
+            }
+        }
+
+        self.n_frames += n_silent_frames;
     }
 
     fn render_reserved(&mut self, n_frames: Option<usize>) {
@@ -618,6 +640,11 @@ impl<S: Sample> Signal<S> for AudioBuffer<S> {
         }
     }
 
+    fn truncate(&mut self, n_frames: usize) {
+        if n_frames > self.n_frames {
+            self.n_frames = n_frames;
+        }
+    }
 }
 
 /// A `SampleBuffer`, is a sample oriented buffer. It is agnostic to the ordering/layout of samples

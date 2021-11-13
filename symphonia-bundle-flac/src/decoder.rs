@@ -274,7 +274,7 @@ enum SubFrameType {
 fn read_subframe<B: ReadBitsLtr>(bs: &mut B, frame_bps: u32, buf: &mut [i32]) -> Result<()> {
 
     // First sub-frame bit must always 0.
-    if bs.read_bit()? {
+    if bs.read_bool()? {
         return decode_error("flac: subframe padding is not 0");
     }
 
@@ -301,7 +301,7 @@ fn read_subframe<B: ReadBitsLtr>(bs: &mut B, frame_bps: u32, buf: &mut [i32]) ->
     // Bit 7 of the sub-frame header designates if there are any dropped (wasted in FLAC terms)
     // bits per sample in the audio sub-block. If the bit is set, unary decode the number of
     // dropped bits per sample.
-    let dropped_bps = if bs.read_bit()? {
+    let dropped_bps = if bs.read_bool()? {
         bs.read_unary_zeros()? + 1
     }
     else {

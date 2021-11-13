@@ -1,6 +1,6 @@
 [package]
 name = "symphonia-format-ogg"
-version = "0.3.0"
+version = "0.4.0"
 description = "Pure Rust OGG demuxer (a part of project Symphonia)."
 homepage = "https://github.com/pdeljanov/Symphonia"
 repository = "https://github.com/pdeljanov/Symphonia"
@@ -13,6 +13,6 @@ edition = "2018"
 
 [dependencies]
 log = "0.4"
-symphonia-core = { version = "0.3", path = "../symphonia-core" }
-symphonia-metadata = { version = "0.3", path = "../symphonia-metadata" }
-symphonia-utils-xiph = { version = "0.3", path = "../symphonia-utils-xiph" }
+symphonia-core = { version = "0.4", path = "../symphonia-core" }
+symphonia-metadata = { version = "0.4", path = "../symphonia-metadata" }
+symphonia-utils-xiph = { version = "0.4", path = "../symphonia-utils-xiph" }

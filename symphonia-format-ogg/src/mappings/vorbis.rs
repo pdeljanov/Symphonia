@@ -63,7 +63,7 @@ impl PacketParser for VorbisPacketParser {
         let mut bs = BitReaderRtl::new(packet);
 
         // First bit must be 0 to indicate audio packet.
-        match bs.read_bit() {
+        match bs.read_bool() {
             Ok(bit) if !bit => (),
             _ => return 0,
         }
@@ -374,7 +374,7 @@ fn read_setup(reader: &mut BufReader<'_>, ident: &IdentHeader) -> Result<Vec<Mod
     let modes = read_modes(&mut bs)?;
 
     // Framing flag must be set.
-    if !bs.read_bit()? {
+    if !bs.read_bool()? {
         return decode_error("ogg (vorbis): setup header framing flag unset");
     }
 
@@ -398,16 +398,16 @@ pub fn skip_codebook(bs: &mut BitReaderRtl<'_>) -> Result<()> {
     // Read codebook number of dimensions and entries.
     let codebook_dimensions = bs.read_bits_leq32(16)? as u16;
     let codebook_entries = bs.read_bits_leq32(24)?;
-    let is_length_ordered = bs.read_bit()?;
+    let is_length_ordered = bs.read_bool()?;
 
     if !is_length_ordered {
         // Codeword list is not length ordered.
-        let is_sparse = bs.read_bit()?;
+        let is_sparse = bs.read_bool()?;
 
         if is_sparse {
             // Sparsely packed codeword entry list.
             for _ in 0..codebook_entries {
-                if bs.read_bit()? {
+                if bs.read_bool()? {
                     let _ = bs.read_bits_leq32(5)?;
                 }
             }
@@ -452,7 +452,7 @@ pub fn skip_codebook(bs: &mut BitReaderRtl<'_>) -> Result<()> {
             let _min_value = bs.read_bits_leq32(32)?;
             let _delta_value = bs.read_bits_leq32(32)?;
             let value_bits = bs.read_bits_leq32(4)? + 1;
-            let _sequence_p = bs.read_bit()?;
+            let _sequence_p = bs.read_bool()?;
 
             // Lookup type is either 1 or 2 as per outer match.
             let lookup_values = match lookup_type {
@@ -582,7 +582,7 @@ fn skip_residue_setup(bs: &mut BitReaderRtl<'_>) -> Result<()> {
 
     for _ in 0..residue_classifications {
         let low_bits = bs.read_bits_leq32(3)? as u8;
-        let high_bits = if bs.read_bit()? { bs.read_bits_leq32(5)? as u8 } else { 0 };
+        let high_bits = if bs.read_bool()? { bs.read_bits_leq32(5)? as u8 } else { 0 };
         let is_used = (high_bits << 3) | low_bits;
         num_codebooks += is_used.count_ones();
     }
@@ -608,14 +608,14 @@ fn skip_mapping(bs: &mut BitReaderRtl<'_>, audio_channels: u8) -> Result<()> {
 }
 
 fn skip_mapping_type0_setup(bs: &mut BitReaderRtl<'_>, audio_channels: u8) -> Result<()> {
-    let num_submaps = if bs.read_bit()? {
+    let num_submaps = if bs.read_bool()? {
         bs.read_bits_leq32(4)? + 1
     }
     else {
         1
     };
 
-    if bs.read_bit()? {
+    if bs.read_bool()? {
         // Number of channel couplings (up-to 256).
         let coupling_steps = bs.read_bits_leq32(8)? as u16 + 1;
 
@@ -662,7 +662,7 @@ struct Mode {
 }
 
 fn read_mode(bs: &mut BitReaderRtl<'_>) -> Result<Mode> {
-    let block_flag = bs.read_bit()?;
+    let block_flag = bs.read_bool()?;
     let window_type = bs.read_bits_leq32(16)? as u16;
     let transform_type = bs.read_bits_leq32(16)? as u16;
     let _mapping = bs.read_bits_leq32(8)? as u8;
