@@ -539,30 +539,32 @@ impl<S: Sample> Signal<S> for AudioBuffer<S> {
 
     fn chan(&self, channel: usize) -> &[S]{
         let start = channel * self.n_capacity;
-        let end = start + self.n_frames;
 
-        // Do not exceed the audio buffer.
-        assert!(end <= self.buf.len());
+        // If the channel index is invalid the slice will be out-of-bounds.
+        assert!(start + self.n_capacity <= self.buf.len(), "invalid channel index");
 
-        &self.buf[start..end]
+        &self.buf[start..start + self.n_frames]
     }
 
     fn chan_mut(&mut self, channel: usize) -> &mut [S] {
         let start = channel * self.n_capacity;
-        let end = start + self.n_frames;
 
-        // Do not exceed the audio buffer.
-        assert!(end <= self.buf.len());
+        // If the channel index is invalid the slice will be out-of-bounds.
+        assert!(start + self.n_capacity <= self.buf.len(), "invalid channel index");
 
-        &mut self.buf[start..end]
+        &mut self.buf[start..start + self.n_frames]
     }
 
     fn chan_pair_mut(&mut self, first: usize, second: usize) -> (&mut [S], &mut [S]) {
         // Both channels in the pair must be unique.
-        assert!(first != second);
+        assert!(first != second, "channel indicies cannot be the same");
 
         let first_idx = self.n_capacity * first;
         let second_idx = self.n_capacity * second;
+
+        // If a channel index is invalid the slice will be out-of-bounds.
+        assert!(first_idx + self.n_capacity <= self.buf.len(), "invalid channel index");
+        assert!(second_idx + self.n_capacity <= self.buf.len(), "invalid channel index");
 
         if first_idx < second_idx {
             let (a, b) = self.buf.split_at_mut(second_idx);
@@ -579,6 +581,9 @@ impl<S: Sample> Signal<S> for AudioBuffer<S> {
     fn render_silence(&mut self, n_frames: Option<usize>) {
         let n_silent_frames = n_frames.unwrap_or(self.n_capacity - self.n_frames);
 
+        // Do not render past the end of the audio buffer.
+        assert!(self.n_frames + n_silent_frames <= self.capacity(), "capacity will be exceeded");
+
         for channel in self.buf.chunks_exact_mut(self.n_capacity) {
             for sample in &mut channel[self.n_frames..self.n_frames + n_silent_frames] {
                 *sample = S::MID;
@@ -591,7 +596,7 @@ impl<S: Sample> Signal<S> for AudioBuffer<S> {
     fn render_reserved(&mut self, n_frames: Option<usize>) {
         let n_reserved_frames = n_frames.unwrap_or(self.n_capacity - self.n_frames);
         // Do not render past the end of the audio buffer.
-        assert!(self.n_frames + n_reserved_frames <= self.n_capacity);
+        assert!(self.n_frames + n_reserved_frames <= self.n_capacity, "capacity will be exceeded");
         self.n_frames += n_reserved_frames;
     }
 
@@ -605,7 +610,7 @@ impl<S: Sample> Signal<S> for AudioBuffer<S> {
 
         // Do not render past the end of the audio buffer.
         let end = self.n_frames + n_render_frames;
-        assert!(end <= self.n_capacity);
+        assert!(end <= self.n_capacity, "capacity will be exceeded");
 
         // At this point, n_render_frames can be considered "reserved". Create an audio plane
         // structure and fill each plane entry with a reference to the "reserved" samples in each
