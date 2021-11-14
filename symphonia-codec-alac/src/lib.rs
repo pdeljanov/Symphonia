@@ -478,47 +478,8 @@ pub struct AlacDecoder {
     buf: AudioBuffer<i32>,
 }
 
-impl Decoder for AlacDecoder {
-    fn try_new(params: &CodecParameters, _: &DecoderOptions) -> Result<Self> {
-        // Verify codec type.
-        if params.codec != CODEC_TYPE_ALAC {
-            return unsupported_error("alac: invalid codec type");
-        }
-
-        // Read the config (magic cookie).
-        let config = if let Some(extra_data) = &params.extra_data {
-            MagicCookie::try_read(&mut BufReader::new(extra_data))?
-        }
-        else {
-            return unsupported_error("alac: missing extra data");
-        };
-
-        let spec = SignalSpec::new(config.sample_rate, config.channel_layout.channels());
-        let buf = AudioBuffer::new(u64::from(config.frame_length), spec);
-
-        let max_tail_values = min(2, config.num_channels) as usize * config.frame_length as usize;
-
-        Ok(AlacDecoder {
-            params: params.clone(),
-            tail_bits: vec![0; max_tail_values],
-            buf,
-            config,
-        })
-    }
-
-    fn reset(&mut self) {
-        // Nothing to do.
-    }
-
-    fn supported_codecs() -> &'static [CodecDescriptor] {
-        &[support_codec!(CODEC_TYPE_ALAC, "alac", "Apple Lossless Audio Codec")]
-    }
-
-    fn codec_params(&self) -> &CodecParameters {
-        &self.params
-    }
-
-    fn decode(&mut self, packet: &Packet) -> Result<AudioBufferRef<'_>> {
+impl AlacDecoder {
+    fn decode_inner(&mut self, packet: &Packet) -> Result<()> {
         let mut bs = BitReaderLtr::new(packet.buf());
 
         let channel_map = self.config.channel_layout.channel_map();
@@ -619,11 +580,65 @@ impl Decoder for AlacDecoder {
             self.buf.transform(|sample| sample << shift);
         }
 
-        Ok(self.buf.as_audio_buffer_ref())
+        Ok(())
+    }
+}
+
+impl Decoder for AlacDecoder {
+    fn try_new(params: &CodecParameters, _: &DecoderOptions) -> Result<Self> {
+        // Verify codec type.
+        if params.codec != CODEC_TYPE_ALAC {
+            return unsupported_error("alac: invalid codec type");
+        }
+
+        // Read the config (magic cookie).
+        let config = if let Some(extra_data) = &params.extra_data {
+            MagicCookie::try_read(&mut BufReader::new(extra_data))?
+        }
+        else {
+            return unsupported_error("alac: missing extra data");
+        };
+
+        let spec = SignalSpec::new(config.sample_rate, config.channel_layout.channels());
+        let buf = AudioBuffer::new(u64::from(config.frame_length), spec);
+
+        let max_tail_values = min(2, config.num_channels) as usize * config.frame_length as usize;
+
+        Ok(AlacDecoder {
+            params: params.clone(),
+            tail_bits: vec![0; max_tail_values],
+            buf,
+            config,
+        })
+    }
+
+    fn reset(&mut self) {
+        // Nothing to do.
+    }
+
+    fn supported_codecs() -> &'static [CodecDescriptor] {
+        &[support_codec!(CODEC_TYPE_ALAC, "alac", "Apple Lossless Audio Codec")]
+    }
+
+    fn codec_params(&self) -> &CodecParameters {
+        &self.params
+    }
+
+    fn decode(&mut self, packet: &Packet) -> Result<AudioBufferRef<'_>> {
+        if let Err(e) = self.decode_inner(packet) {
+            self.buf.clear();
+            Err(e)
+        } else {
+            Ok(self.buf.as_audio_buffer_ref())
+        }
     }
 
     fn finalize(&mut self) -> FinalizeResult {
         Default::default()
+    }
+
+    fn last_decoded(&self) -> AudioBufferRef<'_> {
+        self.buf.as_audio_buffer_ref()
     }
 }
 

@@ -124,6 +124,65 @@ pub struct PcmDecoder {
     buf: AudioBuffer<i32>,
 }
 
+impl PcmDecoder {
+    fn decode_inner(&mut self, packet: &Packet) -> Result<()> {
+        let mut stream = packet.as_buf_reader();
+
+        // Signed or unsigned integer PCM codecs must be shifted to expand the sample into the
+        // entire i32 range. Only floating point samples may exceed 32 bits per coded sample, but
+        // they cannot be shifted, so int_shift = 0.
+        let int_shift = if self.sample_width <= 32 { 32 - self.sample_width } else { 0 };
+
+        let _ = match self.params.codec {
+            CODEC_TYPE_PCM_S32LE => read_pcm_signed!(self.buf,   stream.read_u32()?,    int_shift),
+            CODEC_TYPE_PCM_S32BE => read_pcm_signed!(self.buf,   stream.read_be_u32()?, int_shift),
+            CODEC_TYPE_PCM_S24LE => read_pcm_signed!(self.buf,   stream.read_u24()?,    int_shift),
+            CODEC_TYPE_PCM_S24BE => read_pcm_signed!(self.buf,   stream.read_be_u24()?, int_shift),
+            CODEC_TYPE_PCM_S16LE => read_pcm_signed!(self.buf,   stream.read_u16()?,    int_shift),
+            CODEC_TYPE_PCM_S16BE => read_pcm_signed!(self.buf,   stream.read_be_u16()?, int_shift),
+            CODEC_TYPE_PCM_S8    => read_pcm_signed!(self.buf,   stream.read_u8()?,     int_shift),
+            CODEC_TYPE_PCM_U32LE => read_pcm_unsigned!(self.buf, stream.read_u32()?,    int_shift),
+            CODEC_TYPE_PCM_U32BE => read_pcm_unsigned!(self.buf, stream.read_be_u32()?, int_shift),
+            CODEC_TYPE_PCM_U24LE => read_pcm_unsigned!(self.buf, stream.read_u24()?,    int_shift),
+            CODEC_TYPE_PCM_U24BE => read_pcm_unsigned!(self.buf, stream.read_be_u24()?, int_shift),
+            CODEC_TYPE_PCM_U16LE => read_pcm_unsigned!(self.buf, stream.read_u16()?,    int_shift),
+            CODEC_TYPE_PCM_U16BE => read_pcm_unsigned!(self.buf, stream.read_be_u16()?, int_shift),
+            CODEC_TYPE_PCM_U8    => read_pcm_unsigned!(self.buf, stream.read_u8()?,     int_shift),
+            CODEC_TYPE_PCM_F32LE => read_pcm_floating!(self.buf, stream.read_f32()?),
+            CODEC_TYPE_PCM_F32BE => read_pcm_floating!(self.buf, stream.read_be_f32()?),
+            CODEC_TYPE_PCM_F64LE => read_pcm_floating!(self.buf, stream.read_f64()?),
+            CODEC_TYPE_PCM_F64BE => read_pcm_floating!(self.buf, stream.read_be_f64()?),
+            CODEC_TYPE_PCM_ALAW  => {
+                read_pcm_transfer_func!(self.buf, alaw_to_linear(stream.read_u8()?))
+            },
+            CODEC_TYPE_PCM_MULAW => {
+                read_pcm_transfer_func!(self.buf, mulaw_to_linear(stream.read_u8()?))
+            },
+            // CODEC_TYPE_PCM_S32LE_PLANAR =>
+            // CODEC_TYPE_PCM_S32BE_PLANAR =>
+            // CODEC_TYPE_PCM_S24LE_PLANAR =>
+            // CODEC_TYPE_PCM_S24BE_PLANAR =>
+            // CODEC_TYPE_PCM_S16LE_PLANAR =>
+            // CODEC_TYPE_PCM_S16BE_PLANAR =>
+            // CODEC_TYPE_PCM_S8_PLANAR    =>
+            // CODEC_TYPE_PCM_U32LE_PLANAR =>
+            // CODEC_TYPE_PCM_U32BE_PLANAR =>
+            // CODEC_TYPE_PCM_U24LE_PLANAR =>
+            // CODEC_TYPE_PCM_U24BE_PLANAR =>
+            // CODEC_TYPE_PCM_U16LE_PLANAR =>
+            // CODEC_TYPE_PCM_U16BE_PLANAR =>
+            // CODEC_TYPE_PCM_U8_PLANAR    =>
+            // CODEC_TYPE_PCM_F32LE_PLANAR =>
+            // CODEC_TYPE_PCM_F32BE_PLANAR =>
+            // CODEC_TYPE_PCM_F64LE_PLANAR =>
+            // CODEC_TYPE_PCM_F64BE_PLANAR =>
+            _ => return unsupported_error("pcm: codec is unsupported.")
+        };
+
+        Ok(())
+    }
+}
+
 impl Decoder for PcmDecoder {
 
     fn try_new(params: &CodecParameters, _options: &DecoderOptions) -> Result<Self> {
@@ -377,71 +436,19 @@ impl Decoder for PcmDecoder {
     }
 
     fn decode(&mut self, packet: &Packet) -> Result<AudioBufferRef<'_>> {
-        let mut stream = packet.as_buf_reader();
-
-        // Signed or unsigned integer PCM codecs must be shifted to expand the sample into the
-        // entire i32 range. Only floating point samples may exceed 32 bits per coded sample, but
-        // they cannot be shifted, so int_shift = 0.
-        let int_shift = if self.sample_width <= 32 { 32 - self.sample_width } else { 0 };
-
-        let _ = match self.params.codec {
-            CODEC_TYPE_PCM_S32LE => read_pcm_signed!(self.buf,   stream.read_u32()?,    int_shift),
-            CODEC_TYPE_PCM_S32BE => read_pcm_signed!(self.buf,   stream.read_be_u32()?, int_shift),
-            CODEC_TYPE_PCM_S24LE => read_pcm_signed!(self.buf,   stream.read_u24()?,    int_shift),
-            CODEC_TYPE_PCM_S24BE => read_pcm_signed!(self.buf,   stream.read_be_u24()?, int_shift),
-            CODEC_TYPE_PCM_S16LE => read_pcm_signed!(self.buf,   stream.read_u16()?,    int_shift),
-            CODEC_TYPE_PCM_S16BE => read_pcm_signed!(self.buf,   stream.read_be_u16()?, int_shift),
-            CODEC_TYPE_PCM_S8    => read_pcm_signed!(self.buf,   stream.read_u8()?,     int_shift),
-            CODEC_TYPE_PCM_U32LE => read_pcm_unsigned!(self.buf, stream.read_u32()?,    int_shift),
-            CODEC_TYPE_PCM_U32BE => read_pcm_unsigned!(self.buf, stream.read_be_u32()?, int_shift),
-            CODEC_TYPE_PCM_U24LE => read_pcm_unsigned!(self.buf, stream.read_u24()?,    int_shift),
-            CODEC_TYPE_PCM_U24BE => read_pcm_unsigned!(self.buf, stream.read_be_u24()?, int_shift),
-            CODEC_TYPE_PCM_U16LE => read_pcm_unsigned!(self.buf, stream.read_u16()?,    int_shift),
-            CODEC_TYPE_PCM_U16BE => read_pcm_unsigned!(self.buf, stream.read_be_u16()?, int_shift),
-            CODEC_TYPE_PCM_U8    => read_pcm_unsigned!(self.buf, stream.read_u8()?,     int_shift),
-            CODEC_TYPE_PCM_F32LE => read_pcm_floating!(self.buf, stream.read_f32()?),
-            CODEC_TYPE_PCM_F32BE => read_pcm_floating!(self.buf, stream.read_be_f32()?),
-            CODEC_TYPE_PCM_F64LE => read_pcm_floating!(self.buf, stream.read_f64()?),
-            CODEC_TYPE_PCM_F64BE => read_pcm_floating!(self.buf, stream.read_be_f64()?),
-            CODEC_TYPE_PCM_ALAW  => {
-                read_pcm_transfer_func!(self.buf, alaw_to_linear(stream.read_u8()?))
-            },
-            CODEC_TYPE_PCM_MULAW => {
-                read_pcm_transfer_func!(self.buf, mulaw_to_linear(stream.read_u8()?))
-            },
-            // CODEC_TYPE_PCM_S32LE_PLANAR =>
-            // CODEC_TYPE_PCM_S32BE_PLANAR =>
-            // CODEC_TYPE_PCM_S24LE_PLANAR =>
-            // CODEC_TYPE_PCM_S24BE_PLANAR =>
-            // CODEC_TYPE_PCM_S16LE_PLANAR =>
-            // CODEC_TYPE_PCM_S16BE_PLANAR =>
-            // CODEC_TYPE_PCM_S8_PLANAR    =>
-            // CODEC_TYPE_PCM_U32LE_PLANAR =>
-            // CODEC_TYPE_PCM_U32BE_PLANAR =>
-            // CODEC_TYPE_PCM_U24LE_PLANAR =>
-            // CODEC_TYPE_PCM_U24BE_PLANAR =>
-            // CODEC_TYPE_PCM_U16LE_PLANAR =>
-            // CODEC_TYPE_PCM_U16BE_PLANAR =>
-            // CODEC_TYPE_PCM_U8_PLANAR    =>
-            // CODEC_TYPE_PCM_F32LE_PLANAR =>
-            // CODEC_TYPE_PCM_F32BE_PLANAR =>
-            // CODEC_TYPE_PCM_F64LE_PLANAR =>
-            // CODEC_TYPE_PCM_F64BE_PLANAR =>
-            _ => return unsupported_error("pcm: codec is unsupported.")
-        };
-
-        Ok(self.buf.as_audio_buffer_ref())
+        if let Err(e) = self.decode_inner(packet) {
+            self.buf.clear();
+            Err(e)
+        } else {
+            Ok(self.buf.as_audio_buffer_ref())
+        }
     }
 
     fn finalize(&mut self) -> FinalizeResult {
         Default::default()
     }
 
-    fn last_decoded(&self) -> Option<AudioBufferRef<'_>> {
-        if self.buf.frames() != 0 {
-            Some(self.buf.as_audio_buffer_ref())
-        } else {
-            None
-        }
+    fn last_decoded(&self) -> AudioBufferRef<'_> {
+        self.buf.as_audio_buffer_ref()
     }
 }

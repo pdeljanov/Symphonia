@@ -83,58 +83,8 @@ pub struct FlacDecoder {
     buf: AudioBuffer<i32>,
 }
 
-impl Decoder for FlacDecoder {
-
-    fn try_new(params: &CodecParameters, options: &DecoderOptions) -> Result<Self> {
-        // Initialize the AudioBuffer.
-        //
-        // TODO: Some of the required parameters are not necessarily provided in the StreamInfo
-        // block, however, it is possible to get all the required parameters using from the packet.
-        // Consider supporting this.
-        let frames = match params.max_frames_per_packet {
-            Some(frames) => frames,
-            None => return unsupported_error("flac: variable frames per packet are unsupported"),
-        };
-
-        let spec = {
-            let sample_rate = match params.sample_rate {
-                Some(rate) => rate,
-                None => return unsupported_error("flac: variable sample rate is unsupported"),
-            };
-
-            let channels = match params.channels {
-                Some(channels) => channels,
-                None => return unsupported_error("flac: dynamic channels are unsupported"),
-            };
-
-            SignalSpec::new(sample_rate, channels)
-        };
-
-        if !params.packet_data_integrity {
-            return unsupported_error("flac: packet integrity is required");
-        }
-
-        Ok(FlacDecoder {
-            params: params.clone(),
-            is_validating: options.verify,
-            validator: Default::default(),
-            buf: AudioBuffer::new(frames, spec),
-        })
-    }
-
-    fn supported_codecs() -> &'static [CodecDescriptor] {
-        &[ support_codec!(CODEC_TYPE_FLAC, "flac", "Free Lossless Audio Codec") ]
-    }
-
-    fn reset(&mut self) {
-        // No state is stored between packets, therefore do nothing.
-    }
-
-    fn codec_params(&self) -> &CodecParameters {
-        &self.params
-    }
-
-    fn decode(&mut self, packet: &Packet) -> Result<AudioBufferRef<'_>> {
+impl FlacDecoder {
+    fn decode_inner(&mut self, packet: &Packet) -> Result<()> {
         let mut reader = packet.as_buf_reader();
 
         // Synchronize to a frame and get the synchronization code.
@@ -215,7 +165,68 @@ impl Decoder for FlacDecoder {
             self.buf.transform(| sample | sample << shift);
         }
 
-        Ok(self.buf.as_audio_buffer_ref())
+        Ok(())
+    }
+}
+
+impl Decoder for FlacDecoder {
+
+    fn try_new(params: &CodecParameters, options: &DecoderOptions) -> Result<Self> {
+        // Initialize the AudioBuffer.
+        //
+        // TODO: Some of the required parameters are not necessarily provided in the StreamInfo
+        // block, however, it is possible to get all the required parameters using from the packet.
+        // Consider supporting this.
+        let frames = match params.max_frames_per_packet {
+            Some(frames) => frames,
+            None => return unsupported_error("flac: variable frames per packet are unsupported"),
+        };
+
+        let spec = {
+            let sample_rate = match params.sample_rate {
+                Some(rate) => rate,
+                None => return unsupported_error("flac: variable sample rate is unsupported"),
+            };
+
+            let channels = match params.channels {
+                Some(channels) => channels,
+                None => return unsupported_error("flac: dynamic channels are unsupported"),
+            };
+
+            SignalSpec::new(sample_rate, channels)
+        };
+
+        if !params.packet_data_integrity {
+            return unsupported_error("flac: packet integrity is required");
+        }
+
+        Ok(FlacDecoder {
+            params: params.clone(),
+            is_validating: options.verify,
+            validator: Default::default(),
+            buf: AudioBuffer::new(frames, spec),
+        })
+    }
+
+    fn supported_codecs() -> &'static [CodecDescriptor] {
+        &[ support_codec!(CODEC_TYPE_FLAC, "flac", "Free Lossless Audio Codec") ]
+    }
+
+    fn reset(&mut self) {
+        // No state is stored between packets, therefore do nothing.
+    }
+
+    fn codec_params(&self) -> &CodecParameters {
+        &self.params
+    }
+
+    fn decode(&mut self, packet: &Packet) -> Result<AudioBufferRef<'_>> {
+        if let Err(e) = self.decode_inner(packet) {
+            self.buf.clear();
+            Err(e)
+        } else {
+            Ok(self.buf.as_audio_buffer_ref())
+        }
     }
 
     fn finalize(&mut self) -> FinalizeResult {
@@ -252,12 +263,8 @@ impl Decoder for FlacDecoder {
         result
     }
 
-    fn last_decoded(&self) -> Option<AudioBufferRef<'_>> {
-        if self.buf.frames() != 0 {
-            Some(self.buf.as_audio_buffer_ref())
-        } else {
-            None
-        }
+    fn last_decoded(&self) -> AudioBufferRef<'_> {
+        self.buf.as_audio_buffer_ref()
     }
 }
 
