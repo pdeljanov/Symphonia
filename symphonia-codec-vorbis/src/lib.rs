@@ -68,82 +68,8 @@ pub struct VorbisDecoder {
     buf: AudioBuffer<f32>,
 }
 
-impl Decoder for VorbisDecoder {
-
-    fn try_new(params: &CodecParameters, _: &DecoderOptions) -> Result<Self> {
-        // Get the extra data (mandatory).
-        let extra_data = match params.extra_data.as_ref() {
-            Some(buf) => buf,
-            _ => return unsupported_error("vorbis: missing extra data"),
-        };
-
-        // The extra data contains the identification and setup headers.
-        let mut reader = BufReader::new(extra_data);
-
-        // Read ident header.
-        let ident = read_ident_header(&mut reader)?;
-
-        // Read setup data.
-        let setup = read_setup(&mut reader, &ident)?;
-
-        // Initialize static DSP data.
-        let windows = Windows::new(1 << ident.bs0_exp, 1 << ident.bs1_exp);
-
-        // Initialize dynamic DSP for each channel.
-        let dsp_channels = (0..ident.n_channels).map(|_| DspChannel::new(ident.bs0_exp, ident.bs1_exp)).collect();
-
-        // Map the channels
-        let channels = match vorbis_channels_to_channels(ident.n_channels) {
-            Some(channels) => channels,
-            _ => return unsupported_error("vorbis: unknown channel map (fix me)"),
-        };
-
-        // Initialize the output buffer.
-        let spec = SignalSpec::new(ident.sample_rate, channels);
-
-        let imdct_short = Imdct::new((1u32 << ident.bs0_exp) >> 1);
-        let imdct_long = Imdct::new((1u32 << ident.bs1_exp) >> 1);
-
-        // TODO: Should this be half the block size?
-        let duration = 1u64 << ident.bs1_exp;
-
-        let dsp = Dsp {
-            windows,
-            channels: dsp_channels,
-            residue_scratch: Default::default(),
-            imdct_short,
-            imdct_long,
-            lapping_state: None,
-        };
-
-        Ok(VorbisDecoder {
-            params: params.clone(),
-            ident,
-            codebooks: setup.codebooks,
-            floors: setup.floors,
-            residues: setup.residues,
-            modes: setup.modes,
-            mappings: setup.mappings,
-            dsp,
-            buf: AudioBuffer::new(duration, spec),
-        })
-    }
-
-    fn reset(&mut self) {
-        self.dsp.reset();
-    }
-
-    fn supported_codecs() -> &'static [CodecDescriptor] {
-        &[
-            support_codec!(CODEC_TYPE_VORBIS, "vorbis", "Vorbis"),
-        ]
-    }
-
-    fn codec_params(&self) -> &CodecParameters {
-        &self.params
-    }
-
-    fn decode(&mut self, packet: &Packet) -> Result<AudioBufferRef<'_>> {
+impl VorbisDecoder {
+    fn decode_inner(&mut self, packet: &Packet) -> Result<()> {
         let mut bs = BitReaderRtl::new(packet.buf());
 
         // Section 4.3.1 - Packet Type, Mode, and Window Decode
@@ -337,11 +263,100 @@ impl Decoder for VorbisDecoder {
             prev_block_flag: mode.block_flag,
         });
 
-        Ok(self.buf.as_audio_buffer_ref())
+        Ok(())
+    }
+}
+
+impl Decoder for VorbisDecoder {
+
+    fn try_new(params: &CodecParameters, _: &DecoderOptions) -> Result<Self> {
+        // Get the extra data (mandatory).
+        let extra_data = match params.extra_data.as_ref() {
+            Some(buf) => buf,
+            _ => return unsupported_error("vorbis: missing extra data"),
+        };
+
+        // The extra data contains the identification and setup headers.
+        let mut reader = BufReader::new(extra_data);
+
+        // Read ident header.
+        let ident = read_ident_header(&mut reader)?;
+
+        // Read setup data.
+        let setup = read_setup(&mut reader, &ident)?;
+
+        // Initialize static DSP data.
+        let windows = Windows::new(1 << ident.bs0_exp, 1 << ident.bs1_exp);
+
+        // Initialize dynamic DSP for each channel.
+        let dsp_channels = (0..ident.n_channels).map(|_| DspChannel::new(ident.bs0_exp, ident.bs1_exp)).collect();
+
+        // Map the channels
+        let channels = match vorbis_channels_to_channels(ident.n_channels) {
+            Some(channels) => channels,
+            _ => return unsupported_error("vorbis: unknown channel map (fix me)"),
+        };
+
+        // Initialize the output buffer.
+        let spec = SignalSpec::new(ident.sample_rate, channels);
+
+        let imdct_short = Imdct::new((1u32 << ident.bs0_exp) >> 1);
+        let imdct_long = Imdct::new((1u32 << ident.bs1_exp) >> 1);
+
+        // TODO: Should this be half the block size?
+        let duration = 1u64 << ident.bs1_exp;
+
+        let dsp = Dsp {
+            windows,
+            channels: dsp_channels,
+            residue_scratch: Default::default(),
+            imdct_short,
+            imdct_long,
+            lapping_state: None,
+        };
+
+        Ok(VorbisDecoder {
+            params: params.clone(),
+            ident,
+            codebooks: setup.codebooks,
+            floors: setup.floors,
+            residues: setup.residues,
+            modes: setup.modes,
+            mappings: setup.mappings,
+            dsp,
+            buf: AudioBuffer::new(duration, spec),
+        })
+    }
+
+    fn reset(&mut self) {
+        self.dsp.reset();
+    }
+
+    fn supported_codecs() -> &'static [CodecDescriptor] {
+        &[
+            support_codec!(CODEC_TYPE_VORBIS, "vorbis", "Vorbis"),
+        ]
+    }
+
+    fn codec_params(&self) -> &CodecParameters {
+        &self.params
+    }
+
+    fn decode(&mut self, packet: &Packet) -> Result<AudioBufferRef<'_>> {
+        if let Err(e) = self.decode_inner(packet) {
+            self.buf.clear();
+            Err(e)
+        } else {
+            Ok(self.buf.as_audio_buffer_ref())
+        }
     }
 
     fn finalize(&mut self) -> FinalizeResult {
         Default::default()
+    }
+
+    fn last_decoded(&self) -> AudioBufferRef<'_> {
+        self.buf.as_audio_buffer_ref()
     }
 }
 

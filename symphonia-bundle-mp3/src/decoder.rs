@@ -21,6 +21,34 @@ pub struct Mp3Decoder {
     buf: AudioBuffer<f32>,
 }
 
+impl Mp3Decoder {
+    fn decode_inner(&mut self, packet: &Packet) -> Result<()> {
+        let mut reader = packet.as_buf_reader();
+
+        let header = header::read_frame_header(&mut reader)?;
+
+        // The buffer can only be created after the first frame is decoded. Technically, it can
+        // change throughout the stream as well...
+        if self.buf.is_unused() {
+            self.buf = AudioBuffer::new(1152, header.spec());
+        }
+
+        // Clear the audio output buffer.
+        self.buf.clear();
+
+        // Choose the decode step based on the MPEG layer and the current codec type.
+        match header.layer {
+            MpegLayer::Layer3 if self.params.codec == CODEC_TYPE_MP3 => {
+                // Layer 3
+                layer3::decode_frame(&mut reader, &header, &mut self.state, &mut self.buf)?;
+            },
+            _ => return decode_error("mp3: invalid mpeg audio layer"),
+        }
+
+        Ok(())
+    }
+}
+
 impl Decoder for Mp3Decoder {
 
     fn try_new(params: &CodecParameters, _: &DecoderOptions) -> Result<Self> {
@@ -49,32 +77,19 @@ impl Decoder for Mp3Decoder {
     }
 
     fn decode(&mut self, packet: &Packet) -> Result<AudioBufferRef<'_>> {
-        let mut reader = packet.as_buf_reader();
-
-        let header = header::read_frame_header(&mut reader)?;
-
-        // The buffer can only be created after the first frame is decoded. Technically, it can
-        // change throughout the stream as well...
-        if self.buf.is_unused() {
-            self.buf = AudioBuffer::new(1152, header.spec());
+        if let Err(e) = self.decode_inner(packet) {
+            self.buf.clear();
+            Err(e)
+        } else {
+            Ok(self.buf.as_audio_buffer_ref())
         }
-
-        // Clear the audio output buffer.
-        self.buf.clear();
-
-        // Choose the decode step based on the MPEG layer and the current codec type.
-        match header.layer {
-            MpegLayer::Layer3 if self.params.codec == CODEC_TYPE_MP3 => {
-                // Layer 3
-                layer3::decode_frame(&mut reader, &header, &mut self.state, &mut self.buf)?;
-            },
-            _ => return decode_error("mp3: invalid mpeg audio layer"),
-        }
-
-        Ok(self.buf.as_audio_buffer_ref())
     }
 
     fn finalize(&mut self) -> FinalizeResult {
         Default::default()
+    }
+
+    fn last_decoded(&self) -> AudioBufferRef<'_> {
+        self.buf.as_audio_buffer_ref()
     }
 }

@@ -473,10 +473,19 @@ pub trait Decoder: Send {
 
     /// Decodes a `Packet` of audio data and returns a copy-on-write generic (untyped) audio buffer
     /// of the decoded audio.
+    ///
+    /// Implementations *must* `clear` the internal buffer if an error occurs.
     fn decode(&mut self, packet: &Packet) -> Result<AudioBufferRef>;
 
     /// Optionally, obtain post-decode information such as the verification status.
     fn finalize(&mut self) -> FinalizeResult;
+
+    /// Allows read access to the internal audio buffer.
+    ///
+    /// After a successful call to `decode`, this will contain the audio content of the last decoded
+    /// `Packet`. If the last call to `decode` resulted in an error, then implementors *must* ensure
+    /// the returned audio buffer has zero length.
+    fn last_decoded(&self) -> AudioBufferRef;
 }
 
 /// A `CodecDescriptor` stores a description of a single logical codec. Common information such as

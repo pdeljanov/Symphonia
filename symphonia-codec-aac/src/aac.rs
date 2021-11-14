@@ -1602,6 +1602,21 @@ impl AacDecoder {
     //     }
     // }
 
+    fn decode_inner(&mut self, packet: &Packet) -> Result<()> {
+        // Clear the audio output buffer.
+        self.buf.clear();
+        self.buf.render_reserved(None);
+
+        let mut bs = BitReaderLtr::new(packet.buf());
+
+        // Choose decode step based on the object type.
+        match self.m4ainfo.otype {
+            M4AType::Lc => self.decode_ga(&mut bs)?,
+            _           => return unsupported_error("aac: object type"),
+        }
+
+        Ok(())
+    }
 }
 
 impl Decoder for AacDecoder {
@@ -1669,23 +1684,20 @@ impl Decoder for AacDecoder {
     }
 
     fn decode(&mut self, packet: &Packet) -> Result<AudioBufferRef<'_>> {
-        // Clear the audio output buffer.
-        self.buf.clear();
-        self.buf.render_reserved(None);
-
-        let mut bs = BitReaderLtr::new(packet.buf());
-
-        // Choose decode step based on the object type.
-        match self.m4ainfo.otype {
-            M4AType::Lc => self.decode_ga(&mut bs)?,
-            _           => return unsupported_error("aac: object type"),
+        if let Err(e) = self.decode_inner(packet) {
+            self.buf.clear();
+            Err(e)
+        } else {
+            Ok(self.buf.as_audio_buffer_ref())
         }
-
-        Ok(self.buf.as_audio_buffer_ref())
     }
 
     fn finalize(&mut self) -> FinalizeResult {
         Default::default()
+    }
+
+    fn last_decoded(&self) -> AudioBufferRef<'_> {
+        self.buf.as_audio_buffer_ref()
     }
 }
 
