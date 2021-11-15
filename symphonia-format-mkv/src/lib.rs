@@ -101,7 +101,22 @@ impl FormatReader for MkvReader {
     {
         let mut it = ElementIterator::new(reader);
         let header = it.read_element::<EbmlElement>()?;
-        let segment = it.read_element::<SegmentElement>()?;
+
+        let segment = loop {
+            if let Some(header) = it.read_header()? {
+                match header.etype {
+                    ElementType::Segment => break it.read_element_data::<SegmentElement>()?,
+                    ElementType::Crc32 => {
+                        // TODO: ignore crc for now
+                        continue
+                    },
+                    _ => todo!(),
+                }
+            } else {
+                todo!();
+            }
+        };
+
         reader = it.into_inner();
         reader.seek(SeekFrom::Start(segment.clusters_offset))?;
         let it = ElementIterator::new_at(reader, segment.clusters_offset);

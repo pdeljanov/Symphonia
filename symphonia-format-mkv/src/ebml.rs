@@ -214,6 +214,10 @@ impl<R: ReadBytes> ElementIterator<R> {
     pub(crate) fn read_elements<E: Element>(&mut self) -> Result<Box<[E]>> {
         let mut elements = vec![];
         while let Some(header) = self.read_header()? {
+            if header.etype == ElementType::Crc32 {
+                // TODO: ignore crc for now
+                continue;
+            }
             assert_eq!(header.etype, E::ID);
             elements.push(E::read(&mut self.reader, header)?);
         }
