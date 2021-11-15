@@ -4,9 +4,10 @@ use std::io::{Read, Seek, SeekFrom};
 use symphonia_core::errors::{Error, Result};
 use symphonia_core::io::ReadBytes;
 use symphonia_core::meta::Value;
+use symphonia_core::util::bits::sign_extend_leq64_to_i64;
 
-use crate::element_ids::{ELEMENTS, ElementType, Type};
 use crate::{EbmlHeaderElement, read_children};
+use crate::element_ids::{ELEMENTS, ElementType, Type};
 use crate::element_ids::Type::Master;
 
 /// Parses a variable size integer according to RFC8794 (4)
@@ -253,38 +254,22 @@ pub(crate) fn get_value<R: ReadBytes>(mut reader: R, header: ElementHeader) -> R
                     let len = header.data_len as usize;
                     let mut buff = [0u8; 8];
                     reader.read_buf_exact(&mut buff[8 - len..])?;
-                    let x = u64::from_be_bytes(buff);
-
-                    // based on https://stackoverflow.com/questions/42534749/signed-extension-from-24-bit-to-32-bit-in-c
-
-                    let mask = 1 << (len * 8 - 1);
-                    let value = ((x ^ mask) - mask) as i64;
-
-                    Value::SignedInt(value)
+                    let value = u64::from_be_bytes(buff);
+                    Value::SignedInt(sign_extend_leq64_to_i64(value, (len as u32) * 8));
                 }
                 Type::Float => {
                     let value = match header.data_len {
                         0 => 0.0,
-                        4 => {
-                            let mut buff = [0u8; 4];
-                            reader.read_buf_exact(&mut buff)?;
-                            f32::from_be_bytes(buff).into()
-                        }
-                        8 => {
-                            let mut buff = [0u8; 8];
-                            reader.read_buf_exact(&mut buff)?;
-                            f64::from_be_bytes(buff)
-                        }
+                        4 => reader.read_be_f32()? as f64,
+                        8 => reader.read_be_f64()?,
                         _ => return Err(Error::DecodeError("mkv: invalid float length")),
                     };
                     Value::Float(value)
                 }
-                Type::Unknown | Type::Date => {
-                    // TODO
-                    let mut v = vec![0u8; header.data_len as usize];
-                    reader.read_buf_exact(&mut v)?;
-                    Value::Binary(v.into_boxed_slice())
+                Type::Unknown => {
+                    Value::Binary(reader.read_boxed_slice_exact(header.data_len as usize)?)
                 }
+                Type::Date => todo!(),
                 Type::String => {
                     let mut v = vec![0u8; header.data_len as usize];
                     reader.read_buf_exact(&mut v)?;
@@ -292,9 +277,7 @@ pub(crate) fn get_value<R: ReadBytes>(mut reader: R, header: ElementHeader) -> R
                     Value::String(std::str::from_utf8(&s).unwrap().to_string())
                 }
                 Type::Binary => {
-                    let mut v = vec![0u8; header.data_len as usize];
-                    reader.read_buf_exact(&mut v)?;
-                    Value::Binary(v.into_boxed_slice())
+                    Value::Binary(reader.read_boxed_slice_exact(header.data_len as usize)?)
                 }
             })
         }
