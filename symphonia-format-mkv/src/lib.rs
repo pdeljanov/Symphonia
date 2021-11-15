@@ -1,6 +1,6 @@
 use std::io::{Seek, SeekFrom};
 
-use symphonia_core::audio::{Channels, Layout};
+use symphonia_core::audio::{Channels, Layout, SampleBuffer};
 use symphonia_core::codecs::{CODEC_TYPE_OPUS, CodecParameters};
 use symphonia_core::errors::{Error, Result};
 use symphonia_core::formats::{Cue, FormatOptions, FormatReader, Packet, SeekedTo, SeekMode, SeekTo, Track};
@@ -11,10 +11,12 @@ use symphonia_core::probe::Instantiate;
 use symphonia_core::sample::SampleFormat;
 use symphonia_core::support_format;
 
+use crate::codecs::codec_id_to_type;
 use crate::ebml::{EbmlElement, Element, ElementData, ElementHeader, ElementIterator, get_data};
 use crate::element_ids::ElementType;
 use crate::segment::{BlockGroupElement, EbmlHeaderElement, SegmentElement};
 
+mod codecs;
 mod element_ids;
 mod ebml;
 mod segment;
@@ -104,27 +106,42 @@ impl FormatReader for MkvReader {
         reader.seek(SeekFrom::Start(segment.clusters_offset))?;
         let it = ElementIterator::new_at(reader, segment.clusters_offset);
 
-        let tracks: Vec<_> = segment.tracks.into_vec().into_iter().map(|track| Track {
-            id: track.id as u32,
-            codec_params: CodecParameters {
-                codec: CODEC_TYPE_OPUS,
-                sample_rate: track.audio.map(|it| it.sampling_frequency.round() as u32),
-                time_base: None,
-                n_frames: None,
-                start_ts: 0,
-                sample_format: Some(SampleFormat::S16),
-                bits_per_sample: None,
-                bits_per_coded_sample: None,
-                channels: Some(Channels::SIDE_LEFT | Channels::SIDE_RIGHT),
-                channel_layout: Some(Layout::Stereo),
-                leading_padding: None,
-                trailing_padding: None,
-                max_frames_per_packet: None,
-                packet_data_integrity: false,
-                verification_check: None,
-                extra_data: track.codec_private,
-            },
-            language: None,
+        let tracks: Vec<_> = segment.tracks.into_vec().into_iter().map(|track| {
+            let mut codec_params = CodecParameters::new();
+            if let Some(codec_type) = codec_id_to_type(&track) {
+                codec_params.for_codec(codec_type);
+            }
+
+            if let Some(audio) = track.audio {
+                codec_params.with_sample_rate(audio.sampling_frequency.round() as u32);
+                let format = audio.bit_depth.and_then(|bits| match bits {
+                    8 => Some(SampleFormat::S8),
+                    16 => Some(SampleFormat::S16),
+                    24 => Some(SampleFormat::S24),
+                    32 => Some(SampleFormat::S32),
+                    _ => None,
+                });
+                if let Some(format) = format {
+                    codec_params.with_sample_format(format);
+                }
+                if let Some(bits) = audio.bit_depth {
+                    codec_params.with_bits_per_sample(bits as u32);
+                }
+                codec_params.with_channel_layout(match audio.channels {
+                    1 => Layout::Mono,
+                    2 => Layout::Stereo,
+                    _ => unimplemented!(),
+                });
+                if let Some(data) = track.codec_private {
+                    codec_params.with_extra_data(data);
+                }
+            }
+
+            Track {
+                id: track.id as u32,
+                codec_params,
+                language: None,
+            }
         }).collect();
 
         let track_states = tracks.iter().map(|track| TrackState {
@@ -186,7 +203,7 @@ impl FormatReader for MkvReader {
                 }
                 ElementType::BlockGroup => {
                     let x = self.iter.read_element_data::<BlockGroupElement>()?;
-                    return Ok(Packet::new_from_boxed_slice(0, 0, 20, x.data))
+                    return Ok(Packet::new_from_boxed_slice(0, 0, 20, x.data));
                 }
                 _ => todo!("{:?}", header),
             }

@@ -269,6 +269,13 @@ impl ElementData {
             _ => None,
         }
     }
+
+    pub fn to_str(&self) -> Option<&str> {
+        match self {
+            ElementData::String(value) => Some(value),
+            _ => None,
+        }
+    }
 }
 
 pub(crate) fn get_data<R: ReadBytes>(mut reader: R, header: ElementHeader) -> Result<Option<ElementData>> {

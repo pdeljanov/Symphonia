@@ -1,7 +1,9 @@
+use symphonia_core::codecs::CodecType;
 use symphonia_core::errors::{Error, Result};
 use symphonia_core::io::ReadBytes;
 
 use crate::{Element, ElementData, ElementHeader, ElementType, read_children};
+use crate::codecs::codec_id_to_type;
 
 #[derive(Debug)]
 pub(crate) struct SegmentElement {
@@ -60,6 +62,7 @@ impl Element for SegmentElement {
 #[derive(Debug)]
 pub(crate) struct TrackElement {
     pub(crate) id: u64,
+    pub(crate) codec_id: String,
     pub(crate) codec_private: Option<Box<[u8]>>,
     pub(crate) audio: Option<AudioElement>,
 }
@@ -71,12 +74,16 @@ impl Element for TrackElement {
         let mut codec_private = None;
         let mut track_number = None;
         let mut audio = None;
+        let mut codec_id = None;
 
         let mut it = header.children(reader);
         while let Some(header) = it.read_header()? {
             match header.etype {
                 ElementType::TrackNumber => {
                     track_number = Some(it.read_data()?.to_u64().unwrap());
+                }
+                ElementType::CodecId => {
+                    codec_id = Some(it.read_data()?.to_str().unwrap().to_owned());
                 }
                 ElementType::CodecPrivate => {
                     codec_private = Some(it.read_data()?.to_bytes().unwrap().into());
@@ -92,6 +99,7 @@ impl Element for TrackElement {
 
         Ok(Self {
             id: track_number.unwrap(),
+            codec_id: codec_id.unwrap(),
             codec_private: codec_private,
             audio: audio,
         })
@@ -101,6 +109,9 @@ impl Element for TrackElement {
 #[derive(Debug)]
 pub(crate) struct AudioElement {
     pub(crate) sampling_frequency: f64,
+    pub(crate) output_sampling_frequency: Option<f64>,
+    pub(crate) channels: u64,
+    pub(crate) bit_depth: Option<u64>,
 }
 
 impl Element for AudioElement {
@@ -108,12 +119,24 @@ impl Element for AudioElement {
 
     fn read<B: ReadBytes>(reader: &mut B, header: ElementHeader) -> Result<Self> {
         let mut sampling_frequency = None;
+        let mut output_sampling_frequency = None;
+        let mut channels = None;
+        let mut bit_depth = None;
 
         let mut it = header.children(reader);
         while let Some(header) = it.read_header()? {
             match header.etype {
                 ElementType::SamplingFrequency => {
                     sampling_frequency = Some(it.read_data()?.to_f64().unwrap());
+                }
+                ElementType::OutputSamplingFrequency => {
+                    output_sampling_frequency = Some(it.read_data()?.to_f64().unwrap());
+                }
+                ElementType::Channels => {
+                    channels = Some(it.read_data()?.to_u64().unwrap());
+                }
+                ElementType::BitDepth => {
+                    bit_depth = Some(it.read_data()?.to_u64().unwrap());
                 }
                 other => {
                     log::warn!("mkv: unexpected element {:?}", other);
@@ -123,6 +146,9 @@ impl Element for AudioElement {
 
         Ok(Self {
             sampling_frequency: sampling_frequency.unwrap_or(8000.0),
+            output_sampling_frequency: output_sampling_frequency,
+            channels: channels.unwrap_or(1),
+            bit_depth: bit_depth
         })
     }
 }
