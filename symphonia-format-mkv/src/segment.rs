@@ -1,8 +1,7 @@
 use symphonia_core::errors::{Error, Result};
 use symphonia_core::io::ReadBytes;
-use symphonia_core::meta::Value;
 
-use crate::{Element, ElementHeader, ElementType, read_children};
+use crate::{Element, ElementData, ElementHeader, ElementType, read_children};
 
 #[derive(Debug)]
 pub(crate) struct SegmentElement {
@@ -41,7 +40,7 @@ impl Element for SegmentElement {
                 ElementType::Cluster => {
                     clusters_offset = Some(reader.pos() - (header.element_len - header.data_len));
                     break;
-                },
+                }
                 other => {
                     log::warn!("mkv: ignored element {:?}", other);
                 }
@@ -77,10 +76,10 @@ impl Element for TrackElement {
         while let Some(header) = it.read_header()? {
             match header.etype {
                 ElementType::TrackNumber => {
-                    track_number = Some(it.read_value()?.to_u64().unwrap());
+                    track_number = Some(it.read_data()?.to_u64().unwrap());
                 }
                 ElementType::CodecPrivate => {
-                    codec_private = Some(it.read_value()?.to_bytes().unwrap().into());
+                    codec_private = Some(it.read_data()?.to_bytes().unwrap().into());
                 }
                 ElementType::Audio => {
                     audio = Some(it.read_element_data()?);
@@ -114,7 +113,7 @@ impl Element for AudioElement {
         while let Some(header) = it.read_header()? {
             match header.etype {
                 ElementType::SamplingFrequency => {
-                    sampling_frequency = Some(it.read_value()?.to_f64().unwrap());
+                    sampling_frequency = Some(it.read_data()?.to_f64().unwrap());
                 }
                 other => {
                     log::warn!("mkv: unexpected element {:?}", other);
@@ -162,10 +161,10 @@ impl Element for SeekElement {
         while let Some(header) = it.read_header()? {
             match header.etype {
                 ElementType::SeekId => {
-                    seek_id = Some(it.read_value()?.to_u64().unwrap());
+                    seek_id = Some(it.read_data()?.to_u64().unwrap());
                 }
                 ElementType::SeekPosition => {
-                    seek_position = Some(it.read_value()?.to_u64().unwrap());
+                    seek_position = Some(it.read_data()?.to_u64().unwrap());
                 }
                 other => {
                     log::warn!("mkv: unexpected element {:?}", other);
@@ -243,7 +242,7 @@ impl Element for CuesElement {
 
 #[derive(Debug)]
 struct CuePointElement {
-    time: Value,
+    time: ElementData,
     positions: CueTrackPositionsElement,
 }
 
@@ -258,7 +257,7 @@ impl Element for CuePointElement {
         while let Some(header) = it.read_header()? {
             match header.etype {
                 ElementType::CueTime => {
-                    time = Some(it.read_value().unwrap())
+                    time = Some(it.read_data().unwrap())
                 }
                 ElementType::CueTrackPositions => {
                     pos = Some(it.read_element_data()?);
@@ -276,8 +275,8 @@ impl Element for CuePointElement {
 
 #[derive(Debug)]
 struct CueTrackPositionsElement {
-    track: Value,
-    cluster_position: Value,
+    track: ElementData,
+    cluster_position: ElementData,
 }
 
 impl Element for CueTrackPositionsElement {
@@ -291,10 +290,10 @@ impl Element for CueTrackPositionsElement {
         while let Some(header) = it.read_header()? {
             match header.etype {
                 ElementType::CueTrack => {
-                    track = Some(it.read_value()?);
+                    track = Some(it.read_data()?);
                 }
                 ElementType::CueClusterPosition => {
-                    pos = Some(it.read_value()?);
+                    pos = Some(it.read_data()?);
                 }
                 _ => todo!(),
             }
@@ -321,10 +320,10 @@ impl Element for BlockGroupElement {
         while let Some(header) = it.read_header()? {
             match header.etype {
                 ElementType::DiscardPadding => {
-                    let nanos = it.read_value()?;
+                    let nanos = it.read_data()?;
                 }
                 ElementType::Block => {
-                    data = Some(it.read_value()?.to_bytes().unwrap().into());
+                    data = Some(it.read_data()?.to_bytes().unwrap().into());
                 }
                 _ => todo!(),
             }

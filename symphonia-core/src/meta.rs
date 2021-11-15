@@ -260,29 +260,6 @@ impl_from_for_value!(v, &str, Value::String(String::from(v)));
 impl_from_for_value!(v, String, Value::String(v));
 impl_from_for_value!(v, Cow<'_, str>, Value::String(String::from(v)));
 
-impl Value {
-    pub fn to_u64(&self) -> Option<u64> {
-        match self {
-            Value::UnsignedInt(value) => Some(*value),
-            _ => None,
-        }
-    }
-
-    pub fn to_f64(&self) -> Option<f64> {
-        match self {
-            Value::Float(value) => Some(*value),
-            _ => None,
-        }
-    }
-
-    pub fn to_bytes(&self) -> Option<&[u8]> {
-        match self {
-            Value::Binary(value) => Some(value),
-            _ => None,
-        }
-    }
-}
-
 fn buffer_to_hex_string(buf: &[u8]) -> String {
     let mut output = String::with_capacity(5 * buf.len());
 

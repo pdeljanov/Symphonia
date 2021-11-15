@@ -1,17 +1,17 @@
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{Seek, SeekFrom};
 
 use symphonia_core::audio::{Channels, Layout};
 use symphonia_core::codecs::{CODEC_TYPE_OPUS, CodecParameters};
 use symphonia_core::errors::{Error, Result};
 use symphonia_core::formats::{Cue, FormatOptions, FormatReader, Packet, SeekedTo, SeekMode, SeekTo, Track};
 use symphonia_core::io::{MediaSourceStream, ReadBytes};
-use symphonia_core::meta::{Metadata, Value};
+use symphonia_core::meta::Metadata;
 use symphonia_core::probe::{Descriptor, QueryDescriptor};
 use symphonia_core::probe::Instantiate;
 use symphonia_core::sample::SampleFormat;
 use symphonia_core::support_format;
 
-use crate::ebml::{Element, ElementHeader, get_value, ElementIterator, EbmlElement};
+use crate::ebml::{EbmlElement, Element, ElementData, ElementHeader, ElementIterator, get_data};
 use crate::element_ids::ElementType;
 use crate::segment::{BlockGroupElement, EbmlHeaderElement, SegmentElement};
 
@@ -57,27 +57,27 @@ fn read_children<B: ReadBytes>(source: &mut B, header: ElementHeader) -> Result<
 fn visit<B: ReadBytes + Seek>(mut source: &mut B, element: ElementHeader, level: usize) -> Result<()> {
     println!("{}{:?} [{}]", "  ".repeat(level), element.etype, element.data_len);
     for element in read_children(&mut source, element)?.into_vec() {
-        if let Some(val) = get_value(&mut source, element)? {
+        if let Some(val) = get_data(&mut source, element)? {
             print!("{}{:?} [{}]", "  ".repeat(level + 1), element.etype, element.data_len);
             match val {
-                Value::Binary(value) => {
+                ElementData::Binary(value) => {
                     if value.len() < 16 {
                         println!("{:02x?}", &value);
                     } else {
                         println!("{:02x?}", &value[..16]);
                     }
                 }
-                Value::Boolean(_) | Value::Flag => {}
-                Value::Float(value) => {
+                ElementData::Boolean(_) => {}
+                ElementData::Float(value) => {
                     println!("{}", value);
                 }
-                Value::SignedInt(value) => {
+                ElementData::SignedInt(value) | ElementData::Date(value) => {
                     println!("{}", value);
                 }
-                Value::String(value) => {
+                ElementData::String(value) => {
                     println!("{}", value);
                 }
-                Value::UnsignedInt(value) => {
+                ElementData::UnsignedInt(value) => {
                     println!("{}", value);
                 }
             }
@@ -173,15 +173,12 @@ impl FormatReader for MkvReader {
                 }
                 ElementType::Timestamp => {
                     if let Some(cluster) = &mut self.current_cluster {
-                        cluster.timestamp = match self.iter.read_value()? {
-                            Value::UnsignedInt(x) => Some(x),
-                            other => todo!(),
-                        };
+                        cluster.timestamp = self.iter.read_data()?.to_u64();
                     }
                 }
                 ElementType::SimpleBlock => {
-                    match self.iter.read_value()? {
-                        Value::Binary(b) => {
+                    match self.iter.read_data()? {
+                        ElementData::Binary(b) => {
                             return Ok(Packet::new_from_boxed_slice(0, 0, 20, b));
                         }
                         _ => unreachable!(),

@@ -1,14 +1,9 @@
-use std::convert::TryFrom;
-use std::io::{Read, Seek, SeekFrom};
-
 use symphonia_core::errors::{Error, Result};
 use symphonia_core::io::ReadBytes;
-use symphonia_core::meta::Value;
 use symphonia_core::util::bits::sign_extend_leq64_to_i64;
 
-use crate::{EbmlHeaderElement, read_children};
+use crate::EbmlHeaderElement;
 use crate::element_ids::{ELEMENTS, ElementType, Type};
-use crate::element_ids::Type::Master;
 
 /// Parses a variable size integer according to RFC8794 (4)
 pub(crate) fn read_vint<R: ReadBytes, const CLEAR_MARKER: bool>(mut reader: R) -> Result<u64> {
@@ -225,14 +220,58 @@ impl<R: ReadBytes> ElementIterator<R> {
         Ok(elements.into_boxed_slice())
     }
 
-    pub(crate) fn read_value(&mut self) -> Result<Value> {
+    pub(crate) fn read_data(&mut self) -> Result<ElementData> {
         let hdr = self.current.unwrap();
-        let value = get_value(&mut self.reader, hdr)?.unwrap();
+        let value = get_data(&mut self.reader, hdr)?.unwrap();
         Ok(value)
     }
 }
 
-pub(crate) fn get_value<R: ReadBytes>(mut reader: R, header: ElementHeader) -> Result<Option<Value>> {
+/// An EBML element data.
+#[derive(Clone, Debug)]
+pub(crate) enum ElementData {
+    /// A binary buffer.
+    Binary(Box<[u8]>),
+    /// A boolean value.
+    Boolean(bool),
+    /// A floating point number.
+    Float(f64),
+    /// A signed integer.
+    SignedInt(i64),
+    /// A string.
+    String(String),
+    /// An unsigned integer.
+    UnsignedInt(u64),
+    /// A point in time referenced in nanoseconds from the precise beginning
+    /// of the third millennium of the Gregorian Calendar in Coordinated Universal Time
+    /// (also known as 2001-01-01T00:00:00.000000000 UTC).
+    Date(i64),
+}
+
+impl ElementData {
+    pub fn to_u64(&self) -> Option<u64> {
+        match self {
+            ElementData::UnsignedInt(value) => Some(*value),
+            _ => None,
+        }
+    }
+
+    pub fn to_f64(&self) -> Option<f64> {
+        match self {
+            ElementData::Float(value) => Some(*value),
+            _ => None,
+        }
+    }
+
+    pub fn to_bytes(&self) -> Option<&[u8]> {
+        match self {
+            ElementData::Binary(value) => Some(value),
+            _ => None,
+        }
+    }
+}
+
+pub(crate) fn get_data<R: ReadBytes>(mut reader: R, header: ElementHeader) -> Result<Option<ElementData>> {
     Ok(match ELEMENTS.iter().find(|it| it.2 == header.etype) {
         Some((_, ty, etype)) => {
             assert_eq!(header.data_pos, reader.pos());
@@ -247,15 +286,21 @@ pub(crate) fn get_value<R: ReadBytes>(mut reader: R, header: ElementHeader) -> R
                     let offset = 8 - header.data_len as usize;
                     reader.read_buf_exact(&mut buff[offset..])?;
                     let value = u64::from_be_bytes(buff);
-                    Value::UnsignedInt(value)
+                    ElementData::UnsignedInt(value)
                 }
-                Type::Signed => {
+                Type::Signed | Type::Date => {
                     assert!(header.data_len <= 8);
                     let len = header.data_len as usize;
                     let mut buff = [0u8; 8];
                     reader.read_buf_exact(&mut buff[8 - len..])?;
                     let value = u64::from_be_bytes(buff);
-                    Value::SignedInt(sign_extend_leq64_to_i64(value, (len as u32) * 8));
+                    let value = sign_extend_leq64_to_i64(value, (len as u32) * 8);
+
+                    match ty {
+                        Type::Signed => ElementData::SignedInt(value),
+                        Type::Date => ElementData::Date(value),
+                        _ => unreachable!(),
+                    }
                 }
                 Type::Float => {
                     let value = match header.data_len {
@@ -264,20 +309,19 @@ pub(crate) fn get_value<R: ReadBytes>(mut reader: R, header: ElementHeader) -> R
                         8 => reader.read_be_f64()?,
                         _ => return Err(Error::DecodeError("mkv: invalid float length")),
                     };
-                    Value::Float(value)
+                    ElementData::Float(value)
                 }
                 Type::Unknown => {
-                    Value::Binary(reader.read_boxed_slice_exact(header.data_len as usize)?)
+                    ElementData::Binary(reader.read_boxed_slice_exact(header.data_len as usize)?)
                 }
-                Type::Date => todo!(),
                 Type::String => {
                     let mut v = vec![0u8; header.data_len as usize];
                     reader.read_buf_exact(&mut v)?;
                     let s = v.split(|b| *b == 0).next().unwrap_or(&v);
-                    Value::String(std::str::from_utf8(&s).unwrap().to_string())
+                    ElementData::String(std::str::from_utf8(&s).unwrap().to_string())
                 }
                 Type::Binary => {
-                    Value::Binary(reader.read_boxed_slice_exact(header.data_len as usize)?)
+                    ElementData::Binary(reader.read_boxed_slice_exact(header.data_len as usize)?)
                 }
             })
         }
