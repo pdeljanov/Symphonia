@@ -108,8 +108,8 @@ impl FormatReader for MkvReader {
                     ElementType::Segment => break it.read_element_data::<SegmentElement>()?,
                     ElementType::Crc32 => {
                         // TODO: ignore crc for now
-                        continue
-                    },
+                        continue;
+                    }
                     _ => todo!(),
                 }
             } else {
@@ -205,16 +205,12 @@ impl FormatReader for MkvReader {
                 }
                 ElementType::Timestamp => {
                     if let Some(cluster) = &mut self.current_cluster {
-                        cluster.timestamp = self.iter.read_data()?.to_u64();
+                        cluster.timestamp = Some(self.iter.read_u64()?);
                     }
                 }
                 ElementType::SimpleBlock => {
-                    match self.iter.read_data()? {
-                        ElementData::Binary(b) => {
-                            return Ok(Packet::new_from_boxed_slice(0, 0, 20, b));
-                        }
-                        _ => unreachable!(),
-                    }
+                    let data = self.iter.read_boxed_slice()?;
+                    return Ok(Packet::new_from_boxed_slice(0, 0, 20, data));
                 }
                 ElementType::BlockGroup => {
                     let x = self.iter.read_element_data::<BlockGroupElement>()?;

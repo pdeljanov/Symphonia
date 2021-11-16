@@ -229,6 +229,34 @@ impl<R: ReadBytes> ElementIterator<R> {
         let value = get_data(&mut self.reader, hdr)?.unwrap();
         Ok(value)
     }
+
+    pub(crate) fn read_u64(&mut self) -> Result<u64> {
+        match self.read_data()? {
+            ElementData::UnsignedInt(s) => Ok(s),
+            _ => Err(Error::DecodeError("mkv: expected u64")),
+        }
+    }
+
+    pub(crate) fn read_f64(&mut self) -> Result<f64> {
+        match self.read_data()? {
+            ElementData::Float(s) => Ok(s),
+            _ => Err(Error::DecodeError("mkv: expected f64")),
+        }
+    }
+
+    pub(crate) fn read_string(&mut self) -> Result<String> {
+        match self.read_data()? {
+            ElementData::String(s) => Ok(s),
+            _ => Err(Error::DecodeError("mkv: expected string")),
+        }
+    }
+
+    pub(crate) fn read_boxed_slice(&mut self) -> Result<Box<[u8]>> {
+        match self.read_data()? {
+            ElementData::Binary(b) => Ok(b),
+            _ => Err(Error::DecodeError("mkv: expected binary")),
+        }
+    }
 }
 
 /// An EBML element data.
@@ -250,36 +278,6 @@ pub(crate) enum ElementData {
     /// of the third millennium of the Gregorian Calendar in Coordinated Universal Time
     /// (also known as 2001-01-01T00:00:00.000000000 UTC).
     Date(i64),
-}
-
-impl ElementData {
-    pub fn to_u64(&self) -> Option<u64> {
-        match self {
-            ElementData::UnsignedInt(value) => Some(*value),
-            _ => None,
-        }
-    }
-
-    pub fn to_f64(&self) -> Option<f64> {
-        match self {
-            ElementData::Float(value) => Some(*value),
-            _ => None,
-        }
-    }
-
-    pub fn to_bytes(&self) -> Option<&[u8]> {
-        match self {
-            ElementData::Binary(value) => Some(value),
-            _ => None,
-        }
-    }
-
-    pub fn to_str(&self) -> Option<&str> {
-        match self {
-            ElementData::String(value) => Some(value),
-            _ => None,
-        }
-    }
 }
 
 pub(crate) fn get_data<R: ReadBytes>(mut reader: R, header: ElementHeader) -> Result<Option<ElementData>> {

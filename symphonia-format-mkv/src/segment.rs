@@ -80,13 +80,13 @@ impl Element for TrackElement {
         while let Some(header) = it.read_header()? {
             match header.etype {
                 ElementType::TrackNumber => {
-                    track_number = Some(it.read_data()?.to_u64().unwrap());
+                    track_number = Some(it.read_u64()?);
                 }
                 ElementType::CodecId => {
-                    codec_id = Some(it.read_data()?.to_str().unwrap().to_owned());
+                    codec_id = Some(it.read_string()?);
                 }
                 ElementType::CodecPrivate => {
-                    codec_private = Some(it.read_data()?.to_bytes().unwrap().into());
+                    codec_private = Some(it.read_boxed_slice()?);
                 }
                 ElementType::Audio => {
                     audio = Some(it.read_element_data()?);
@@ -127,16 +127,16 @@ impl Element for AudioElement {
         while let Some(header) = it.read_header()? {
             match header.etype {
                 ElementType::SamplingFrequency => {
-                    sampling_frequency = Some(it.read_data()?.to_f64().unwrap());
+                    sampling_frequency = Some(it.read_f64()?);
                 }
                 ElementType::OutputSamplingFrequency => {
-                    output_sampling_frequency = Some(it.read_data()?.to_f64().unwrap());
+                    output_sampling_frequency = Some(it.read_f64()?);
                 }
                 ElementType::Channels => {
-                    channels = Some(it.read_data()?.to_u64().unwrap());
+                    channels = Some(it.read_u64()?);
                 }
                 ElementType::BitDepth => {
-                    bit_depth = Some(it.read_data()?.to_u64().unwrap());
+                    bit_depth = Some(it.read_u64()?);
                 }
                 other => {
                     log::warn!("mkv: unexpected element {:?}", other);
@@ -187,10 +187,10 @@ impl Element for SeekElement {
         while let Some(header) = it.read_header()? {
             match header.etype {
                 ElementType::SeekId => {
-                    seek_id = Some(it.read_data()?.to_u64().unwrap());
+                    seek_id = Some(it.read_u64()?);
                 }
                 ElementType::SeekPosition => {
-                    seek_position = Some(it.read_data()?.to_u64().unwrap());
+                    seek_position = Some(it.read_u64()?);
                 }
                 other => {
                     log::warn!("mkv: unexpected element {:?}", other);
@@ -349,7 +349,7 @@ impl Element for BlockGroupElement {
                     let nanos = it.read_data()?;
                 }
                 ElementType::Block => {
-                    data = Some(it.read_data()?.to_bytes().unwrap().into());
+                    data = Some(it.read_boxed_slice()?);
                 }
                 _ => todo!(),
             }
