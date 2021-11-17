@@ -31,11 +31,21 @@ pub(crate) fn read_vint<R: ReadBytes, const CLEAR_MARKER: bool>(mut reader: R) -
     }
 }
 
+/// Parses a variable size integer according to RFC8794 (4)
+/// and converts it to a signed integer by shifting range.
+pub(crate) fn read_vint_signed<R: ReadBytes>(mut reader: R) -> Result<i64> {
+    // TODO: cleanup
+    let before = reader.pos();
+    let value = read_vint::<_, true>(&mut reader)?;
+    let after = reader.pos();
+    let len = after - before;
+    Ok(value as i64 - (i64::pow(2, (len * 7) as u32 - 1) - 1))
+}
+
 #[cfg(test)]
 mod tests {
     use symphonia_core::io::BufReader;
-
-    use super::read_vint;
+    use super::{read_vint_signed, read_vint};
 
     #[test]
     fn variable_integer_parsing() {
@@ -48,6 +58,12 @@ mod tests {
         assert_eq!(read_vint::<_, false>(BufReader::new(&[0x40, 0x02])).unwrap(), 0x4002);
         assert_eq!(read_vint::<_, false>(BufReader::new(&[0x20, 0x00, 0x02])).unwrap(), 0x200002);
         assert_eq!(read_vint::<_, false>(BufReader::new(&[0x10, 0x00, 0x00, 0x02])).unwrap(), 0x10000002);
+    }
+
+    #[test]
+    fn variable_signed_integer_parsing() {
+        assert_eq!(read_vint_signed(BufReader::new(&[0x80])).unwrap(), -63);
+        assert_eq!(read_vint_signed(BufReader::new(&[0x40, 0x00])).unwrap(), -8191);
     }
 }
 

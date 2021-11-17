@@ -10,7 +10,7 @@ pub(crate) struct SegmentElement {
     seek: Option<SeekHeadElement>,
     pub(crate) tracks: Box<[TrackElement]>,
     info: Option<InfoElement>,
-    cues: Option<CuesElement>,
+    pub(crate) cues: Option<CuesElement>,
     pub(crate) clusters_offset: u64,
 }
 
@@ -251,8 +251,8 @@ impl Element for InfoElement {
 }
 
 #[derive(Debug)]
-struct CuesElement {
-    points: Box<[CuePointElement]>,
+pub(crate) struct CuesElement {
+    pub(crate) points: Box<[CuePointElement]>,
 }
 
 impl Element for CuesElement {
@@ -267,9 +267,9 @@ impl Element for CuesElement {
 }
 
 #[derive(Debug)]
-struct CuePointElement {
-    time: ElementData,
-    positions: CueTrackPositionsElement,
+pub(crate) struct CuePointElement {
+    pub(crate) time: u64,
+    pub(crate) positions: CueTrackPositionsElement,
 }
 
 impl Element for CuePointElement {
@@ -283,9 +283,11 @@ impl Element for CuePointElement {
         while let Some(header) = it.read_header()? {
             match header.etype {
                 ElementType::CueTime => {
-                    time = Some(it.read_data().unwrap())
+                    assert!(pos.is_none());
+                    time = Some(it.read_u64()?)
                 }
                 ElementType::CueTrackPositions => {
+                    assert!(pos.is_none());
                     pos = Some(it.read_element_data()?);
                 }
                 _ => todo!(),
@@ -300,9 +302,9 @@ impl Element for CuePointElement {
 }
 
 #[derive(Debug)]
-struct CueTrackPositionsElement {
-    track: ElementData,
-    cluster_position: ElementData,
+pub(crate) struct CueTrackPositionsElement {
+    pub(crate) track: u64,
+    pub(crate) cluster_position: u64,
 }
 
 impl Element for CueTrackPositionsElement {
@@ -316,17 +318,17 @@ impl Element for CueTrackPositionsElement {
         while let Some(header) = it.read_header()? {
             match header.etype {
                 ElementType::CueTrack => {
-                    track = Some(it.read_data()?);
+                    track = Some(it.read_u64()?);
                 }
                 ElementType::CueClusterPosition => {
-                    pos = Some(it.read_data()?);
+                    pos = Some(it.read_u64()?);
                 }
                 _ => todo!(),
             }
         }
         Ok(Self {
-            track: track.unwrap().into(),
-            cluster_position: pos.unwrap().into(),
+            track: track.unwrap(),
+            cluster_position: pos.unwrap(),
         })
     }
 }
@@ -334,6 +336,7 @@ impl Element for CueTrackPositionsElement {
 #[derive(Debug)]
 pub(crate) struct BlockGroupElement {
     pub(crate) data: Box<[u8]>,
+    pub(crate) duration: u64,
 }
 
 impl Element for BlockGroupElement {
@@ -343,6 +346,7 @@ impl Element for BlockGroupElement {
         let mut it = header.children(reader);
 
         let mut data = None;
+        let mut block_duration = None;
         while let Some(header) = it.read_header()? {
             match header.etype {
                 ElementType::DiscardPadding => {
@@ -351,11 +355,15 @@ impl Element for BlockGroupElement {
                 ElementType::Block => {
                     data = Some(it.read_boxed_slice()?);
                 }
-                _ => todo!(),
+                ElementType::BlockDuration => {
+                    block_duration = Some(it.read_u64()?);
+                }
+                _ => todo!("{:?}", header),
             }
         }
         Ok(Self {
             data: data.unwrap(),
+            duration: block_duration.unwrap(),
         })
     }
 }

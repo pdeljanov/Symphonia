@@ -1,18 +1,19 @@
+use std::collections::VecDeque;
 use std::io::{Seek, SeekFrom};
 
 use symphonia_core::audio::{Channels, Layout, SampleBuffer};
 use symphonia_core::codecs::{CODEC_TYPE_OPUS, CodecParameters};
 use symphonia_core::errors::{Error, Result};
-use symphonia_core::formats::{Cue, FormatOptions, FormatReader, Packet, SeekedTo, SeekMode, SeekTo, Track};
-use symphonia_core::io::{MediaSourceStream, ReadBytes};
-use symphonia_core::meta::Metadata;
+use symphonia_core::formats::{Cue, CuePoint, FormatOptions, FormatReader, Packet, SeekedTo, SeekMode, SeekTo, Track};
+use symphonia_core::io::{BufReader, MediaSourceStream, ReadBytes};
+use symphonia_core::meta::{Metadata, MetadataLog};
 use symphonia_core::probe::{Descriptor, QueryDescriptor};
 use symphonia_core::probe::Instantiate;
 use symphonia_core::sample::SampleFormat;
 use symphonia_core::support_format;
 
 use crate::codecs::codec_id_to_type;
-use crate::ebml::{EbmlElement, Element, ElementData, ElementHeader, ElementIterator, get_data};
+use crate::ebml::{EbmlElement, Element, ElementData, ElementHeader, ElementIterator, get_data, read_vint, read_vint_signed};
 use crate::element_ids::ElementType;
 use crate::segment::{BlockGroupElement, EbmlHeaderElement, SegmentElement};
 
@@ -40,6 +41,9 @@ pub struct MkvReader {
     tracks: Vec<Track>,
     track_states: Vec<TrackState>,
     current_cluster: Option<ClusterState>,
+    metadata: MetadataLog,
+    cues: Vec<Cue>,
+    frames: VecDeque<(u32, Box<[u8]>)>,
 }
 
 fn print_all(mut reader: &mut MediaSourceStream) -> Result<()> {
@@ -92,6 +96,102 @@ fn visit<B: ReadBytes + Seek>(mut source: &mut B, element: ElementHeader, level:
 
 struct ClusterState {
     timestamp: Option<u64>,
+}
+
+enum Lacing {
+    None,
+    Xiph,
+    FixedSize,
+    Ebml,
+}
+
+fn parse_flags(flags: u8) -> Result<Lacing> {
+    match (flags >> 1) & 0b11 {
+        0b00 => Ok(Lacing::None),
+        0b01 => Ok(Lacing::Xiph),
+        0b10 => Ok(Lacing::FixedSize),
+        0b11 => Ok(Lacing::Ebml),
+        _ => unreachable!(),
+    }
+}
+
+fn read_ebml_sizes<R: ReadBytes>(mut reader: R, frames: usize) -> Result<Vec<u64>> {
+    let mut sizes = Vec::new();
+    for _ in 0..frames {
+        if let Some(last_size) = sizes.last().copied() {
+            let delta = read_vint_signed(&mut reader)?;
+            sizes.push((last_size as i64 + delta) as u64)
+        } else {
+            let size = read_vint::<_, true>(&mut reader)?;
+            sizes.push(size);
+        }
+    }
+
+    Ok(sizes)
+}
+
+fn read_xiph_sizes<R: ReadBytes>(mut reader: R, frames: usize) -> Result<Vec<u64>> {
+    let mut prefixes = 0;
+    let mut sizes = Vec::new();
+    while sizes.len() < frames as usize + 1 {
+        let byte = reader.read_byte()? as u64;
+        if byte == 255 {
+            prefixes += 1;
+        } else {
+            let size = prefixes * 255 + byte;
+            prefixes = 0;
+            sizes.push(size);
+        }
+    }
+
+    Ok(sizes)
+}
+
+fn extract_frames(block: &[u8], buffer: &mut VecDeque<(u32, Box<[u8]>)>) -> Result<()> {
+    let mut reader = BufReader::new(&block);
+    let track = read_vint::<_, true>(&mut reader)? as u32;
+    let timestamp = reader.read_be_u16()? as i16;
+    let flags = reader.read_byte()?;
+    let lacing = parse_flags(flags)?;
+    match lacing {
+        Lacing::None => {
+            let frame = reader.read_boxed_slice_exact(block.len() - reader.pos() as usize)?;
+            buffer.push_back((track, frame));
+        }
+        Lacing::Xiph | Lacing::Ebml => {
+            // Read number of stored sizes which is actually `number of frames` - 1
+            // since size of the last frame is deduced from block size.
+            let frames = reader.read_byte()? as usize;
+            let sizes = match lacing {
+                Lacing::Xiph => read_xiph_sizes(&mut reader, frames)?,
+                Lacing::Ebml => read_ebml_sizes(&mut reader, frames)?,
+                _ => unreachable!(),
+            };
+
+            for frame_size in sizes {
+                buffer.push_back((track, reader.read_boxed_slice_exact(frame_size as usize)?));
+            }
+
+            // Size of last frame is not provided so we read to the end of the block.
+            let size = block.len() - reader.pos() as usize;
+            buffer.push_back((track, reader.read_boxed_slice_exact(size)?));
+        }
+        Lacing::FixedSize => {
+            let frames = reader.read_byte()? as usize;
+            let total_size = block.len() - reader.pos() as usize;
+            if total_size % frames != 0 {
+                return Err(Error::DecodeError("mkv: invalid block size"));
+            }
+
+            let frame_size = total_size / frames;
+            for _ in 0..frames {
+                buffer.push_back((track, reader.read_boxed_slice_exact(frame_size)?));
+            }
+        }
+        _ => unreachable!(),
+    }
+
+    Ok(())
 }
 
 impl FormatReader for MkvReader {
@@ -172,15 +272,18 @@ impl FormatReader for MkvReader {
             tracks,
             track_states,
             current_cluster: None,
+            metadata: MetadataLog::default(),
+            cues: Vec::new(),
+            frames: VecDeque::new(),
         })
     }
 
     fn cues(&self) -> &[Cue] {
-        todo!()
+        &self.cues
     }
 
     fn metadata(&mut self) -> Metadata<'_> {
-        todo!()
+        self.metadata.metadata()
     }
 
     fn seek(&mut self, mode: SeekMode, to: SeekTo) -> symphonia_core::errors::Result<SeekedTo> {
@@ -193,6 +296,10 @@ impl FormatReader for MkvReader {
 
     fn next_packet(&mut self) -> Result<Packet> {
         loop {
+            if let Some((track, frame)) = self.frames.pop_front() {
+                return Ok(Packet::new_from_boxed_slice(track as u32, 0, 0, frame));
+            }
+
             let header = self.iter
                 .read_child_header()?
                 .ok_or_else(|| Error::DecodeError("mkv: invalid header"))?;
@@ -210,13 +317,14 @@ impl FormatReader for MkvReader {
                 }
                 ElementType::SimpleBlock => {
                     let data = self.iter.read_boxed_slice()?;
-                    return Ok(Packet::new_from_boxed_slice(0, 0, 20, data));
+                    extract_frames(&data, &mut self.frames)?;
                 }
                 ElementType::BlockGroup => {
-                    let x = self.iter.read_element_data::<BlockGroupElement>()?;
-                    return Ok(Packet::new_from_boxed_slice(0, 0, 20, x.data));
+                    let group = self.iter.read_element_data::<BlockGroupElement>()?;
+                    extract_frames(&group.data, &mut self.frames)?;
                 }
-                _ => todo!("{:?}", header),
+                ElementType::Void => continue,
+                _ => log::warn!("mkv: unsupported element: {:?}", header),
             }
         }
     }
