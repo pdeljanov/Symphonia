@@ -156,6 +156,8 @@ pub enum ElementType {
     TagDefault,
     TagString,
     TagBinary,
+    /// Special type for unknown tags.
+    Unknown,
 }
 
 pub(crate) const ELEMENTS: [(u32, Type, ElementType); 144] = [

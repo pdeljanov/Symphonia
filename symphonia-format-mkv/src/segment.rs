@@ -161,8 +161,8 @@ struct SeekHeadElement {
 impl Element for SeekHeadElement {
     const ID: ElementType = ElementType::SeekHead;
 
-    fn read<B: ReadBytes>(source: &mut B, header: ElementHeader) -> Result<Self> {
-        let mut it = header.children(source);
+    fn read<B: ReadBytes>(reader: &mut B, header: ElementHeader) -> Result<Self> {
+        let mut it = header.children(reader);
         // TODO
         let seeks = it.read_elements()?;
         Ok(Self { seeks })
@@ -213,8 +213,8 @@ struct TracksElement {
 impl Element for TracksElement {
     const ID: ElementType = ElementType::Tracks;
 
-    fn read<B: ReadBytes>(source: &mut B, header: ElementHeader) -> Result<Self> {
-        let mut it = header.children(source);
+    fn read<B: ReadBytes>(reader: &mut B, header: ElementHeader) -> Result<Self> {
+        let mut it = header.children(reader);
         Ok(Self {
             tracks: it.read_elements()?,
         })
@@ -228,9 +228,9 @@ pub(crate) struct EbmlHeaderElement {
 
 impl Element for EbmlHeaderElement {
     const ID: ElementType = ElementType::Ebml;
-    fn read<B: ReadBytes>(source: &mut B, header: ElementHeader) -> Result<Self> {
+    fn read<B: ReadBytes>(reader: &mut B, header: ElementHeader) -> Result<Self> {
         // FIXME
-        let children = read_children(source, header)?;
+        let children = read_children(reader, header)?;
         Ok(Self { children })
     }
 }
@@ -243,9 +243,9 @@ struct InfoElement {
 impl Element for InfoElement {
     const ID: ElementType = ElementType::Info;
 
-    fn read<B: ReadBytes>(source: &mut B, header: ElementHeader) -> Result<Self> {
+    fn read<B: ReadBytes>(reader: &mut B, header: ElementHeader) -> Result<Self> {
         // FIXME
-        let elements = read_children(source, header)?;
+        let elements = read_children(reader, header)?;
         Ok(Self { elements })
     }
 }
@@ -358,7 +358,9 @@ impl Element for BlockGroupElement {
                 ElementType::BlockDuration => {
                     block_duration = Some(it.read_u64()?);
                 }
-                _ => todo!("{:?}", header),
+                other => {
+                    log::debug!("mkv: unsupported element {:?}", header);
+                }
             }
         }
         Ok(Self {

@@ -9,12 +9,12 @@ use crate::element_ids::{ELEMENTS, ElementType, Type};
 pub(crate) fn read_vint<R: ReadBytes, const CLEAR_MARKER: bool>(mut reader: R) -> Result<u64> {
     loop {
         let byte = reader.read_byte()?;
-        let vint_width = byte.leading_zeros();
-        if vint_width == 8 {
+        if byte == 0x00 || byte == 0xFF {
             // Skip invalid data
             continue;
         }
 
+        let vint_width = byte.leading_zeros();
         let mut vint = byte as u64;
         if CLEAR_MARKER {
             // Clear VINT_MARKER bit
@@ -71,6 +71,8 @@ mod tests {
 pub struct ElementHeader {
     /// The element type.
     pub etype: ElementType,
+    /// The element's offset in the stream.
+    pub pos: u64,
     /// The total size of the element including the header.
     pub element_len: u64,
     /// The element's data offset in the stream.
@@ -96,11 +98,12 @@ impl ElementHeader {
         let header_start = reader.pos();
         let tag = read_vint::<_, false>(&mut reader)? as u32;
         let size = read_vint::<_, true>(&mut reader)?;
-
+        log::debug!("found element with tag: {:X}", tag);
         Ok(ElementHeader {
+            pos: header_start,
             etype: ELEMENTS.iter()
                 .find_map(|it| (it.0 == tag).then(|| it.2))
-                .unwrap_or(ElementType::Void),
+                .unwrap_or(ElementType::Unknown),
             element_len: reader.pos() - header_start + size,
             data_len: size,
             data_pos: reader.pos(),
@@ -242,7 +245,7 @@ impl<R: ReadBytes> ElementIterator<R> {
 
     pub(crate) fn read_data(&mut self) -> Result<ElementData> {
         let hdr = self.current.unwrap();
-        let value = get_data(&mut self.reader, hdr)?.unwrap();
+        let value = self.get_data(hdr)?.unwrap();
         Ok(value)
     }
 
@@ -273,6 +276,79 @@ impl<R: ReadBytes> ElementIterator<R> {
             _ => Err(Error::DecodeError("mkv: expected binary")),
         }
     }
+
+    fn get_data(&mut self, header: ElementHeader) -> Result<Option<ElementData>> {
+        Ok(match ELEMENTS.iter().find(|it| it.2 == header.etype) {
+            Some((_, ty, etype)) => {
+                assert_eq!(header.data_pos, self.reader.pos());
+                if let (Some(cur), Some(end)) = (self.current, self.end) {
+                    assert!(cur.pos + cur.element_len <= end);
+                }
+                Some(match ty {
+                    Type::Master => {
+                        return Ok(None);
+                    }
+                    Type::Unsigned => {
+                        assert!(header.data_len <= 8);
+
+                        let mut buff = [0u8; 8];
+                        let offset = 8 - header.data_len as usize;
+                        self.reader.read_buf_exact(&mut buff[offset..])?;
+                        let value = u64::from_be_bytes(buff);
+                        ElementData::UnsignedInt(value)
+                    }
+                    Type::Signed | Type::Date => {
+                        assert!(header.data_len <= 8);
+                        let len = header.data_len as usize;
+                        let mut buff = [0u8; 8];
+                        self.reader.read_buf_exact(&mut buff[8 - len..])?;
+                        let value = u64::from_be_bytes(buff);
+                        let value = sign_extend_leq64_to_i64(value, (len as u32) * 8);
+
+                        match ty {
+                            Type::Signed => ElementData::SignedInt(value),
+                            Type::Date => ElementData::Date(value),
+                            _ => unreachable!(),
+                        }
+                    }
+                    Type::Float => {
+                        let value = match header.data_len {
+                            0 => 0.0,
+                            4 => self.reader.read_be_f32()? as f64,
+                            8 => self.reader.read_be_f64()?,
+                            _ => return Err(Error::DecodeError("mkv: invalid float length")),
+                        };
+                        ElementData::Float(value)
+                    }
+                    Type::Unknown => {
+                        ElementData::Binary(self.reader.read_boxed_slice_exact(header.data_len as usize)?)
+                    }
+                    Type::String => {
+                        let data = self.reader.read_boxed_slice_exact(header.data_len as usize)?;
+                        let bytes = data.split(|b| *b == 0).next().unwrap_or(&data);
+                        ElementData::String(String::from_utf8_lossy(&bytes).into_owned())
+                    }
+                    Type::Binary => {
+                        ElementData::Binary(self.reader.read_boxed_slice_exact(header.data_len as usize)?)
+                    }
+                })
+            }
+            None => None,
+        })
+    }
+
+    pub(crate) fn ignore_data(&mut self) -> Result<()> {
+        if let Some(header) = self.current {
+            dbg!(header.data_len);
+            self.reader.ignore_bytes(header.data_len)?;
+            self.next_pos = header.data_pos + header.data_len;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn pos(&self) -> u64 {
+        self.reader.pos()
+    }
 }
 
 /// An EBML element data.
@@ -294,62 +370,4 @@ pub(crate) enum ElementData {
     /// of the third millennium of the Gregorian Calendar in Coordinated Universal Time
     /// (also known as 2001-01-01T00:00:00.000000000 UTC).
     Date(i64),
-}
-
-pub(crate) fn get_data<R: ReadBytes>(mut reader: R, header: ElementHeader) -> Result<Option<ElementData>> {
-    Ok(match ELEMENTS.iter().find(|it| it.2 == header.etype) {
-        Some((_, ty, etype)) => {
-            assert_eq!(header.data_pos, reader.pos());
-            Some(match ty {
-                Type::Master => {
-                    return Ok(None);
-                }
-                Type::Unsigned => {
-                    assert!(header.data_len <= 8);
-
-                    let mut buff = [0u8; 8];
-                    let offset = 8 - header.data_len as usize;
-                    reader.read_buf_exact(&mut buff[offset..])?;
-                    let value = u64::from_be_bytes(buff);
-                    ElementData::UnsignedInt(value)
-                }
-                Type::Signed | Type::Date => {
-                    assert!(header.data_len <= 8);
-                    let len = header.data_len as usize;
-                    let mut buff = [0u8; 8];
-                    reader.read_buf_exact(&mut buff[8 - len..])?;
-                    let value = u64::from_be_bytes(buff);
-                    let value = sign_extend_leq64_to_i64(value, (len as u32) * 8);
-
-                    match ty {
-                        Type::Signed => ElementData::SignedInt(value),
-                        Type::Date => ElementData::Date(value),
-                        _ => unreachable!(),
-                    }
-                }
-                Type::Float => {
-                    let value = match header.data_len {
-                        0 => 0.0,
-                        4 => reader.read_be_f32()? as f64,
-                        8 => reader.read_be_f64()?,
-                        _ => return Err(Error::DecodeError("mkv: invalid float length")),
-                    };
-                    ElementData::Float(value)
-                }
-                Type::Unknown => {
-                    ElementData::Binary(reader.read_boxed_slice_exact(header.data_len as usize)?)
-                }
-                Type::String => {
-                    let mut v = vec![0u8; header.data_len as usize];
-                    reader.read_buf_exact(&mut v)?;
-                    let s = v.split(|b| *b == 0).next().unwrap_or(&v);
-                    ElementData::String(std::str::from_utf8(&s).unwrap().to_string())
-                }
-                Type::Binary => {
-                    ElementData::Binary(reader.read_boxed_slice_exact(header.data_len as usize)?)
-                }
-            })
-        }
-        None => None,
-    })
 }

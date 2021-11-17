@@ -13,7 +13,7 @@ use symphonia_core::sample::SampleFormat;
 use symphonia_core::support_format;
 
 use crate::codecs::codec_id_to_type;
-use crate::ebml::{EbmlElement, Element, ElementData, ElementHeader, ElementIterator, get_data, read_vint, read_vint_signed};
+use crate::ebml::{EbmlElement, Element, ElementData, ElementHeader, ElementIterator, read_vint, read_vint_signed};
 use crate::element_ids::ElementType;
 use crate::segment::{BlockGroupElement, EbmlHeaderElement, SegmentElement};
 
@@ -46,56 +46,14 @@ pub struct MkvReader {
     frames: VecDeque<(u32, Box<[u8]>)>,
 }
 
-fn print_all(mut reader: &mut MediaSourceStream) -> Result<()> {
-    let mut it = ElementIterator::new(&mut reader);
-    let header = it.read_element_data::<EbmlHeaderElement>()?;
-    let hdr = ElementHeader::read(&mut reader)?;
-
-    visit(&mut reader, hdr, 0)?;
-    Ok(())
-}
-
 fn read_children<B: ReadBytes>(source: &mut B, header: ElementHeader) -> Result<Box<[ElementHeader]>> {
     let mut it = header.children(source);
     Ok(std::iter::from_fn(|| it.read_header().transpose()).collect::<Result<Vec<_>>>()?.into_boxed_slice())
 }
 
-fn visit<B: ReadBytes + Seek>(mut source: &mut B, element: ElementHeader, level: usize) -> Result<()> {
-    println!("{}{:?} [{}]", "  ".repeat(level), element.etype, element.data_len);
-    for element in read_children(&mut source, element)?.into_vec() {
-        if let Some(val) = get_data(&mut source, element)? {
-            print!("{}{:?} [{}]", "  ".repeat(level + 1), element.etype, element.data_len);
-            match val {
-                ElementData::Binary(value) => {
-                    if value.len() < 16 {
-                        println!("{:02x?}", &value);
-                    } else {
-                        println!("{:02x?}", &value[..16]);
-                    }
-                }
-                ElementData::Boolean(_) => {}
-                ElementData::Float(value) => {
-                    println!("{}", value);
-                }
-                ElementData::SignedInt(value) | ElementData::Date(value) => {
-                    println!("{}", value);
-                }
-                ElementData::String(value) => {
-                    println!("{}", value);
-                }
-                ElementData::UnsignedInt(value) => {
-                    println!("{}", value);
-                }
-            }
-        } else {
-            visit(source, element, level + 1)?;
-        }
-    }
-    Ok(())
-}
-
 struct ClusterState {
     timestamp: Option<u64>,
+    end: u64,
 }
 
 enum Lacing {
@@ -304,27 +262,45 @@ impl FormatReader for MkvReader {
                 .read_child_header()?
                 .ok_or_else(|| Error::DecodeError("mkv: invalid header"))?;
 
+            if let Some(state) = &self.current_cluster {
+                if self.iter.pos() >= state.end {
+                    log::debug!("ended cluster");
+                    self.current_cluster = None;
+                }
+            }
+
             match header.etype {
                 ElementType::Cluster => {
                     self.current_cluster = Some(ClusterState {
                         timestamp: None,
+                        end: header.pos + header.element_len,
                     });
                 }
                 ElementType::Timestamp => {
+                    assert!(self.current_cluster.is_some());
                     if let Some(cluster) = &mut self.current_cluster {
-                        cluster.timestamp = Some(self.iter.read_u64()?);
+                        cluster.timestamp = Some(self.iter.read_u64().unwrap());
                     }
                 }
                 ElementType::SimpleBlock => {
-                    let data = self.iter.read_boxed_slice()?;
-                    extract_frames(&data, &mut self.frames)?;
+                    assert!(self.current_cluster.is_some());
+                    let data = self.iter.read_boxed_slice().unwrap();
+                    extract_frames(&data, &mut self.frames).unwrap();
                 }
                 ElementType::BlockGroup => {
-                    let group = self.iter.read_element_data::<BlockGroupElement>()?;
-                    extract_frames(&group.data, &mut self.frames)?;
+                    assert!(self.current_cluster.is_some());
+                    let group = self.iter.read_element_data::<BlockGroupElement>().unwrap();
+                    extract_frames(&group.data, &mut self.frames).unwrap();
                 }
-                ElementType::Void => continue,
-                _ => log::warn!("mkv: unsupported element: {:?}", header),
+                ElementType::Void => {
+                    assert!(self.current_cluster.is_some());
+                    log::warn!("wtf");
+                    continue
+                },
+                _ => {
+                    log::warn!("mkv: unsupported element: {:?}, ignoring...", header);
+                    self.iter.ignore_data()?;
+                },
             }
         }
     }
