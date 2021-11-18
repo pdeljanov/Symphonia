@@ -146,7 +146,6 @@ fn extract_frames(block: &[u8], buffer: &mut VecDeque<(u32, Box<[u8]>)>) -> Resu
                 buffer.push_back((track, reader.read_boxed_slice_exact(frame_size)?));
             }
         }
-        _ => unreachable!(),
     }
 
     Ok(())
@@ -333,18 +332,18 @@ impl FormatReader for MkvReader {
                 ElementType::Timestamp => {
                     assert!(self.current_cluster.is_some());
                     if let Some(cluster) = &mut self.current_cluster {
-                        cluster.timestamp = Some(self.iter.read_u64().unwrap());
+                        cluster.timestamp = Some(self.iter.read_u64()?);
                     }
                 }
                 ElementType::SimpleBlock => {
                     assert!(self.current_cluster.is_some());
-                    let data = self.iter.read_boxed_slice().unwrap();
-                    extract_frames(&data, &mut self.frames).unwrap();
+                    let data = self.iter.read_boxed_slice()?;
+                    extract_frames(&data, &mut self.frames)?;
                 }
                 ElementType::BlockGroup => {
                     assert!(self.current_cluster.is_some());
-                    let group = self.iter.read_element_data::<BlockGroupElement>().unwrap();
-                    extract_frames(&group.data, &mut self.frames).unwrap();
+                    let group = self.iter.read_element_data::<BlockGroupElement>()?;
+                    extract_frames(&group.data, &mut self.frames)?;
                 }
                 ElementType::Void => {
                     assert!(self.current_cluster.is_some());
