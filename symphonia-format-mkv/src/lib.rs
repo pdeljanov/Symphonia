@@ -135,7 +135,7 @@ fn extract_frames(block: &[u8], buffer: &mut VecDeque<(u32, Box<[u8]>)>) -> Resu
             buffer.push_back((track, reader.read_boxed_slice_exact(size)?));
         }
         Lacing::FixedSize => {
-            let frames = reader.read_byte()? as usize;
+            let frames = reader.read_byte()? as usize + 1;
             let total_size = block.len() - reader.pos() as usize;
             if total_size % frames != 0 {
                 return Err(Error::DecodeError("mkv: invalid block size"));
