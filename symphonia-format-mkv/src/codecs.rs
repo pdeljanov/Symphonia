@@ -12,6 +12,7 @@ pub(crate) fn codec_id_to_type(track: &TrackElement) -> Option<CodecType> {
         "A_MPEG/L3" => Some(codecs::CODEC_TYPE_MP3),
         "A_FLAC" => Some(codecs::CODEC_TYPE_FLAC),
         "A_OPUS" => Some(codecs::CODEC_TYPE_OPUS),
+        "A_VORBIS" => Some(codecs::CODEC_TYPE_VORBIS),
         "A_AAC" => Some(codecs::CODEC_TYPE_AAC),
         "A_PCM/INT/BIG" => match bit_depth? {
             16 => Some(codecs::CODEC_TYPE_PCM_S16BE),

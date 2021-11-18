@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 use std::io::{Seek, SeekFrom};
 
 use symphonia_core::audio::{Channels, Layout, SampleBuffer};
-use symphonia_core::codecs::{CODEC_TYPE_OPUS, CodecParameters};
+use symphonia_core::codecs::{CODEC_TYPE_OPUS, CODEC_TYPE_VORBIS, CodecParameters};
 use symphonia_core::errors::{Error, Result};
 use symphonia_core::formats::{Cue, CuePoint, FormatOptions, FormatReader, Packet, SeekedTo, SeekMode, SeekTo, Track};
 use symphonia_core::io::{BufReader, MediaSourceStream, ReadBytes};
@@ -91,7 +91,7 @@ fn read_ebml_sizes<R: ReadBytes>(mut reader: R, frames: usize) -> Result<Vec<u64
 fn read_xiph_sizes<R: ReadBytes>(mut reader: R, frames: usize) -> Result<Vec<u64>> {
     let mut prefixes = 0;
     let mut sizes = Vec::new();
-    while sizes.len() < frames as usize + 1 {
+    while sizes.len() < frames as usize {
         let byte = reader.read_byte()? as u64;
         if byte == 255 {
             prefixes += 1;
@@ -152,6 +152,54 @@ fn extract_frames(block: &[u8], buffer: &mut VecDeque<(u32, Box<[u8]>)>) -> Resu
     Ok(())
 }
 
+fn convert_vorbis_data(extra: &[u8]) -> Result<Box<[u8]>> {
+    const VORBIS_PACKET_TYPE_IDENTIFICATION: u8 = 1;
+    const VORBIS_PACKET_TYPE_SETUP: u8 = 5;
+
+    // Private Data for this codec has the following layout:
+    // - 1 byte that represents number of packets minus one;
+    // - Xiph coded lengths of packets, length of the last packet must be deduced (as in Xiph lacing)
+    // - packets in order:
+    //    - The Vorbis identification header
+    //    - Vorbis comment header
+    //    - codec setup header
+
+    let mut reader = BufReader::new(&extra);
+    let packet_count = reader.read_byte()? as usize;
+    let packet_lengths = read_xiph_sizes(&mut reader, packet_count)?;
+
+    let mut packets = Vec::new();
+    for length in packet_lengths {
+        packets.push(reader.read_boxed_slice_exact(length as usize)?);
+    }
+
+    let last_packet_length = extra.len() - reader.pos() as usize;
+    packets.push(reader.read_boxed_slice_exact(last_packet_length)?);
+
+    let mut ident_header = None;
+    let mut setup_header = None;
+
+    for packet in packets {
+        match packet[0] {
+            VORBIS_PACKET_TYPE_IDENTIFICATION => {
+                ident_header = Some(packet);
+            }
+            VORBIS_PACKET_TYPE_SETUP => {
+                setup_header = Some(packet);
+            }
+            other => {
+                log::debug!("mkv: vorbis unsupported packet type");
+            }
+        }
+    }
+
+    // This is layout expected currently by Vorbis codec.
+    Ok([
+        ident_header.ok_or_else(|| Error::DecodeError("mkv: missing vorbis identification packet"))?,
+        setup_header.ok_or_else(|| Error::DecodeError("mkv: missing vorbis setup packet"))?,
+    ].concat().into_boxed_slice())
+}
+
 impl FormatReader for MkvReader {
     fn try_new(mut reader: MediaSourceStream, options: &FormatOptions) -> Result<Self>
         where
@@ -179,10 +227,16 @@ impl FormatReader for MkvReader {
         reader.seek(SeekFrom::Start(segment.clusters_offset))?;
         let it = ElementIterator::new_at(reader, segment.clusters_offset);
 
-        let tracks: Vec<_> = segment.tracks.into_vec().into_iter().map(|track| {
+        let tracks: Vec<_> = segment.tracks.into_vec().into_iter().map(|mut track| {
             let mut codec_params = CodecParameters::new();
             if let Some(codec_type) = codec_id_to_type(&track) {
                 codec_params.for_codec(codec_type);
+
+                if codec_type == CODEC_TYPE_VORBIS {
+                    if let Some(extra) = track.codec_private {
+                        track.codec_private = Some(convert_vorbis_data(&extra).unwrap());
+                    }
+                }
             }
 
             if let Some(audio) = track.audio {
