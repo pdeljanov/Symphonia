@@ -2,66 +2,71 @@
 
 [![Docs](https://docs.rs/symphonia/badge.svg)](https://docs.rs/symphonia)
 [![Build Status](https://github.com/pdeljanov/Symphonia/actions/workflows/ci.yml/badge.svg)](https://github.com/pdeljanov/Symphonia/actions/workflows/ci.yml)
+[![dependency status](https://deps.rs/repo/github/pdeljanov/symphonia/status.svg)](https://deps.rs/repo/github/pdeljanov/symphonia)
 
 Symphonia is a pure Rust audio decoding and media demuxing library supporting AAC, ALAC, FLAC, MP3, MP4, OGG, Vorbis, and WAV.
 
 ## Features
 
-Symphonia's planned features are:
-
 * Decode support for the most popular audio codecs
-* Reading the most common media container formats
-* Probing and guessing the correct format and decoder combination(s) for playback or inspection
-* Reading metadata
-* Providing a set of audio primitives for manipulating audio data efficiently
+* Demux the most common media container formats
+* Read most metadata and tagging formats
+* Automatic format and decoder detection
+* Provides a set of basic audio primitives for manipulating audio data efficiently
+* 100% safe Rust
+* Minimal dependencies
+* Fast with no compromises in performance!
+
+Additionally, planned features include:
+
 * Providing a C API for integration into other languages
 * Providing a WASM API for web usage
 
 ## Format and Codec Support Roadmap
 
-Support for individual audio codecs and media formats is provided by separate crates. By default, Symphonia selects support for FOSS codecs and formats, but others may be included via the features option.
+Support for individual audio codecs and media formats is provided by separate crates. By default, Symphonia enables support for FOSS codecs and formats, but others may be enabled via the features option.
 
 The follow status classifications are used to determine the state of development for each format or codec.
 
-| Status  | Meaning                                                                                                                  |
-|---------|--------------------------------------------------------------------------------------------------------------------------|
-| -       | No work started or planned yet.                                                                                          |
-| Next    | Is the next major work item.                                                                                             |
-| Good    | Many media streams play. Some streams may panic, error, or produce audible glitches. Some features may not be supported. |
-| Great   | Most media streams play. Inaudible glitches may be present. Most common features are supported.                          |
-| Perfect | All media streams play.  No audible or inaudible glitches. All required features are supported.                          |
+| Status    | Meaning                                                                                                                  |
+|-----------|--------------------------------------------------------------------------------------------------------------------------|
+| -         | No work started or planned yet.                                                                                          |
+| In Work   | Is in work or will be started next.                                                                                      |
+| Good      | Many media streams play. Some streams may panic, error, or produce audible glitches. Some features may not be supported. |
+| Great     | Most media streams play. Inaudible glitches may be present. Most common features are supported.                          |
+| Excellent | All media streams play.  No audible or inaudible glitches. All required features are supported.                          |
 
-A classification of Great indicates the end of major development. Though bugs and smaller issues can occur, it would generally be safe to use in an application. Compliance testing according to standards will be delayed until most codecs and demuxers are implemented so it's expected that many will stay in the category for a while.
+A status of *great* indicates that major development is complete and that the feature is in a state that would be acceptable for most applications to use. A status of *excellent* is only assigned after the feature passes all compliance tests. If no compliance tests are freely available, then a status of *excellent* will be assigned if Symphonia's implementation matches the quality of a reference implementation, or `ffmpeg`.
 
-### Formats (Demux)
+### Formats (Demuxers)
 
-| Format   | Status  | Feature Flag | Default | Crate                       |
-|----------|---------|--------------|---------|-----------------------------|
-| ISO/MP4  | Great   | `isomp4`     | No      | [`symphonia-format-isomp4`] |
-| MKV/WebM | -       | `mkv`        | Yes     | `symphonia-format-mkv`      |
-| OGG      | Great   | `ogg`        | Yes     | [`symphonia-format-ogg`]    |
-| Wave     | Perfect | `wav`        | Yes     | [`symphonia-format-wav`]    |
+| Format   | Status    | Feature Flag | Default | Crate                       |
+|----------|-----------|--------------|---------|-----------------------------|
+| ISO/MP4  | Great     | `isomp4`     | No      | [`symphonia-format-isomp4`] |
+| MKV/WebM | In Work   | `mkv`        | Yes     | `symphonia-format-mkv`      |
+| OGG      | Great     | `ogg`        | Yes     | [`symphonia-format-ogg`]    |
+| Wave     | Excellent | `wav`        | Yes     | [`symphonia-format-wav`]    |
 
 [`symphonia-format-isomp4`]: https://docs.rs/symphonia-format-isomp4
 [`symphonia-format-ogg`]: https://docs.rs/symphonia-format-ogg
 [`symphonia-format-wav`]: https://docs.rs/symphonia-format-wav
 
-### Codecs (Decode)
+### Codecs (Decoder)
 
-| Codec                        | Status  | Feature Flag | Default | Crate                      |
-|------------------------------|---------|--------------|---------|----------------------------|
-| AAC-LC                       | Good    | `aac`        | No      | [`symphonia-codec-aac`]    |
-| ALAC                         | Great   | `alac`       | No      | [`symphonia-codec-alac`]   |
-| HE-AAC (AAC+, aacPlus)       | -       | `aac`        | No      | [`symphonia-codec-aac`]    |
-| HE-AACv2 (eAAC+, aacPlus v2) | -       | `aac`        | No      | [`symphonia-codec-aac`]    |
-| FLAC                         | Perfect | `flac`       | Yes     | [`symphonia-bundle-flac`]  |
-| MP1                          | -       | `mp3`        | No      | [`symphonia-bundle-mp3`]   |
-| MP2                          | -       | `mp3`        | No      | [`symphonia-bundle-mp3`]   |
-| MP3                          | Great   | `mp3`        | No      | [`symphonia-bundle-mp3`]   |
-| Opus                         | Next    | `opus`       | Yes     | `symphonia-codec-opus`     |
-| PCM                          | Perfect | `pcm`        | Yes     | [`symphonia-codec-pcm`]    |
-| Vorbis                       | Great   | `vorbis`     | Yes     | [`symphonia-codec-vorbis`] |
-| WavPack                      | -       | `wavpack`    | Yes     | `symphonia-codec-wavpack`  |
+| Codec                        | Status    | Feature Flag | Default | Crate                      |
+|------------------------------|-----------|--------------|---------|----------------------------|
+| AAC-LC                       | Good      | `aac`        | No      | [`symphonia-codec-aac`]    |
+| ALAC                         | Great     | `alac`       | No      | [`symphonia-codec-alac`]   |
+| HE-AAC (AAC+, aacPlus)       | -         | `aac`        | No      | [`symphonia-codec-aac`]    |
+| HE-AACv2 (eAAC+, aacPlus v2) | -         | `aac`        | No      | [`symphonia-codec-aac`]    |
+| FLAC                         | Excellent | `flac`       | Yes     | [`symphonia-bundle-flac`]  |
+| MP1                          | -         | `mp3`        | No      | [`symphonia-bundle-mp3`]   |
+| MP2                          | -         | `mp3`        | No      | [`symphonia-bundle-mp3`]   |
+| MP3                          | Excellent | `mp3`        | No      | [`symphonia-bundle-mp3`]   |
+| Opus                         | In Work   | `opus`       | Yes     | `symphonia-codec-opus`     |
+| PCM                          | Excellent | `pcm`        | Yes     | [`symphonia-codec-pcm`]    |
+| Vorbis                       | Great     | `vorbis`     | Yes     | [`symphonia-codec-vorbis`] |
+| WavPack                      | -         | `wavpack`    | Yes     | `symphonia-codec-wavpack`  |
 
 A `symphonia-bundle-*` package is a combination of a decoder and a native bitstream demuxer.
 
@@ -72,7 +77,7 @@ A `symphonia-bundle-*` package is a combination of a decoder and a native bitstr
 [`symphonia-codec-pcm`]: https://docs.rs/symphonia-codec-pcm
 [`symphonia-codec-vorbis`]: https://docs.rs/symphonia-codec-vorbis
 
-### Tags (Read)
+### Tags (Readers)
 
 All metadata readers are provided by the `symphonia-metadata` crate.
 
@@ -87,20 +92,16 @@ All metadata readers are provided by the `symphonia-metadata` crate.
 
 ## Quality
 
-In addition to the safety guarantees provided by Rust, Symphonia aims to:
+In addition to the safety guarantees afforded by Rust, Symphonia aims to:
 
-* Decode files as well as the leading free-and-open-source software decoders
-* Provide a powerful, consistent, and easy to use API
-* Be 100% safe code
-* Have very minimal dependencies
+* Decode media as correctly as the leading free-and-open-source software decoders
 * Prevent denial-of-service attacks
 * Be fuzz-tested
+* Provide a powerful, consistent, and easy to use API
 
 ## Performance
 
-Symphonia aims to be equivalent in speed to popular open-source C-based implementations.
-
-Symphonia does not include explicit SIMD optimizations, however the auto-vectorizer is leveraged as much as possible and the results have been *excellent*. As Rust support for packed SIMD grows, Symphonia will include explicit SIMD optimizations where necessary.
+Symphonia aims to be comparable or better in performance to popular open-source C-based implementations. Currently, Symphonia's decoders are generally +/-15% the performance of `ffmpeg`. The exact amount will depend strongly on the codec, and which features of the codec are leveraged in the encoding.
 
 ### Benchmarks (as of September 2019)
 
