@@ -109,8 +109,8 @@ fn read_granule_channel_side_info<B: ReadBitsLtr>(
         // If MPEG version 1, OR the block type is Short...
         else if header.is_mpeg1() || block_type_enc == 0b10 {
             // For MPEG1 with transitional LONG blocks, the first 8 LONG scale-factor bands are used
-            // for region0. These bands are always [4, 4, 4, 4, 4, 4, 6, 6, ...] regardless of sample
-            // rate. These bands sum to 36 samples.
+            // for region0. These bands are always [4, 4, 4, 4, 4, 4, 6, 6, ...] regardless of
+            // sample rate. These bands sum to 36 samples.
             //
             // For MPEG1 with SHORT blocks, the first 9 SHORT scale-factor bands are used for
             // region0. These band are always [4, 4, 4, 4, 4, 4, 4, 4, 4, ...] regardless of sample
@@ -121,6 +121,8 @@ fn read_granule_channel_side_info<B: ReadBitsLtr>(
             // of sample and thus sum to 36 samples.
             //
             // In all cases, the region0_count is 36.
+            //
+            // TODO: This is not accurate for MPEG2.5 at 8kHz.
             channel.region1_start = 36;
         }
         // If MPEG version 2 AND the block type is not Short...
@@ -159,13 +161,8 @@ fn read_granule_channel_side_info<B: ReadBitsLtr>(
         };
     }
 
-    channel.preflag = if header.is_mpeg1() {
-        bs.read_bool()?
-    }
-    else {
-        // Pre-flag is determined implicitly for MPEG2: ISO/IEC 13818-3 section 2.4.3.4.
-        channel.scalefac_compress >= 500
-    };
+    // For MPEG2, preflag is determined implicitly when reading the scale factors.
+    channel.preflag = if header.is_mpeg1() { bs.read_bool()? } else { false };
 
     channel.scalefac_scale = bs.read_bool()?;
     channel.count1table_select = if bs.read_bool()? { 1 } else { 0 };
@@ -317,7 +314,6 @@ pub(super) fn read_scale_factors_mpeg1<B: ReadBitsLtr>(
                 bits_read += slen as usize * (end - start);
             }
         }
-
     }
 
     Ok(bits_read as u32)
@@ -340,7 +336,7 @@ pub(super) fn read_scale_factors_mpeg2<B: ReadBitsLtr>(
 
     let (slen_table, nsfb_table) = if is_intensity_stereo {
         // The actual value of scalefac_compress is a 9-bit unsigned integer (0..512) for MPEG2. A
-        // left shift reduces it to an 8-bit value (0..255).
+        // left shift reduces it to an 8-bit value (0..256).
         let sfc = u32::from(channel.scalefac_compress) >> 1;
 
         match sfc {
@@ -371,6 +367,10 @@ pub(super) fn read_scale_factors_mpeg2<B: ReadBitsLtr>(
     else {
         // The actual value of scalefac_compress is a 9-bit unsigned integer (0..512) for MPEG2.
         let sfc = u32::from(channel.scalefac_compress);
+
+        // Preflag is set only if scalefac_compress >= 500 and this is not the intensity stereo
+        // channel. See ISO/IEC 13818-3 section 2.4.3.4.
+        channel.preflag = sfc >= 500;
 
         match sfc {
             0..=399   => ([

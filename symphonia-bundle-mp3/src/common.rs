@@ -175,6 +175,8 @@ pub const SFB_MIXED_BANDS: [&[usize]; 9] = [
     ],
 ];
 
+/// The index of the first window in the first short band of a mixed block. All bands preceeding
+/// the switch point are long bands.
 pub const SFB_MIXED_SWITCH_POINT: [usize; 9] = [ 8, 8, 8, 6, 6, 6, 6, 6, 3 ];
 
 /// The MPEG audio version.
