@@ -326,7 +326,7 @@ impl FormatReader for MkvReader {
                 ElementType::Cluster => {
                     self.current_cluster = Some(ClusterState {
                         timestamp: None,
-                        end: header.pos + header.element_len,
+                        end: header.pos + header.len,
                     });
                 }
                 ElementType::Timestamp => {
@@ -347,13 +347,12 @@ impl FormatReader for MkvReader {
                 }
                 ElementType::Void => {
                     assert!(self.current_cluster.is_some());
-                    log::warn!("wtf");
-                    continue
-                },
+                    log::warn!("void element");
+                }
                 _ => {
                     log::warn!("mkv: unsupported element: {:?}, ignoring...", header);
                     self.iter.ignore_data()?;
-                },
+                }
             }
         }
     }

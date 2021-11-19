@@ -40,7 +40,7 @@ impl Element for SegmentElement {
                     cues = Some(it.read_element_data::<CuesElement>()?);
                 }
                 ElementType::Cluster => {
-                    clusters_offset = Some(reader.pos() - (header.element_len - header.data_len));
+                    clusters_offset = Some(reader.pos() - (header.len - header.data_len));
                     break;
                 }
                 other => {

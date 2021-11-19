@@ -69,12 +69,14 @@ mod tests {
 
 #[derive(Copy, Clone, Debug)]
 pub struct ElementHeader {
+    /// The element tag.
+    pub tag: u32,
     /// The element type.
     pub etype: ElementType,
     /// The element's offset in the stream.
     pub pos: u64,
     /// The total size of the element including the header.
-    pub element_len: u64,
+    pub len: u64,
     /// The element's data offset in the stream.
     pub data_pos: u64,
     /// The size of the payload data.
@@ -100,11 +102,10 @@ impl ElementHeader {
         let size = read_vint::<_, true>(&mut reader)?;
         log::debug!("found element with tag: {:X}", tag);
         Ok(ElementHeader {
+            tag: tag,
+            etype: ELEMENTS.get(&tag).map_or(ElementType::Unknown, |(_, etype)| *etype),
             pos: header_start,
-            etype: ELEMENTS.iter()
-                .find_map(|it| (it.0 == tag).then(|| it.2))
-                .unwrap_or(ElementType::Unknown),
-            element_len: reader.pos() - header_start + size,
+            len: reader.pos() - header_start + size,
             data_len: size,
             data_pos: reader.pos(),
         })
@@ -167,7 +168,7 @@ impl<R: ReadBytes> ElementIterator<R> {
     pub(crate) fn read_header(&mut self) -> Result<Option<ElementHeader>> {
         let mut header = self.read_header_no_consume()?;
         if let Some(header) = &mut header {
-            self.next_pos += header.element_len;
+            self.next_pos += header.len;
         }
         Ok(header)
     }
@@ -176,11 +177,15 @@ impl<R: ReadBytes> ElementIterator<R> {
     pub(crate) fn read_child_header(&mut self) -> Result<Option<ElementHeader>> {
         let mut header = self.read_header_no_consume()?;
         if let Some(header) = &mut header {
-            // FIXME
-            if let Some(Type::Master) = ELEMENTS.iter().find_map(|it| (it.2 == header.etype).then(|| it.1)) {
-                self.next_pos = header.data_pos;
-            } else {
-                self.next_pos += header.element_len;
+            match ELEMENTS.get(&header.tag).map(|it| it.0) {
+                Some(Type::Master) => {
+                    // Move to start of a child element.
+                    self.next_pos = header.data_pos;
+                }
+                _ => {
+                    // Move to next sibling.
+                    self.next_pos += header.len;
+                }
             }
         }
         Ok(header)
@@ -245,7 +250,8 @@ impl<R: ReadBytes> ElementIterator<R> {
 
     pub(crate) fn read_data(&mut self) -> Result<ElementData> {
         let hdr = self.current.unwrap();
-        let value = self.get_data(hdr)?.unwrap();
+        let value = self.get_data(hdr)?
+            .ok_or_else(|| Error::DecodeError("mkv: element has no primitive data"))?;
         Ok(value)
     }
 
@@ -278,11 +284,11 @@ impl<R: ReadBytes> ElementIterator<R> {
     }
 
     fn get_data(&mut self, header: ElementHeader) -> Result<Option<ElementData>> {
-        Ok(match ELEMENTS.iter().find(|it| it.2 == header.etype) {
-            Some((_, ty, etype)) => {
+        Ok(match ELEMENTS.get(&header.tag) {
+            Some((ty, etype)) => {
                 assert_eq!(header.data_pos, self.reader.pos());
                 if let (Some(cur), Some(end)) = (self.current, self.end) {
-                    assert!(cur.pos + cur.element_len <= end);
+                    assert!(cur.pos + cur.len <= end);
                 }
                 Some(match ty {
                     Type::Master => {
@@ -339,7 +345,7 @@ impl<R: ReadBytes> ElementIterator<R> {
 
     pub(crate) fn ignore_data(&mut self) -> Result<()> {
         if let Some(header) = self.current {
-            dbg!(header.data_len);
+            log::debug!("ignoring data of {:?} element", header.etype);
             self.reader.ignore_bytes(header.data_len)?;
             self.next_pos = header.data_pos + header.data_len;
         }
