@@ -72,6 +72,16 @@ impl RefProcess {
                      .stdout(Stdio::piped())
                      .stderr(Stdio::null());    // Pipe errors to null.
 
+        // TODO: Make the reference decoders runtime switchable.
+        // let mut cmd = Command::new("mpg123");
+        // let cmd = cmd.arg("--wav")
+        //              .arg("-")
+        //              .arg("--float")
+        //              .arg("--no-gapless")
+        //              .arg(path)
+        //              .stdout(Stdio::piped())
+        //              .stderr(Stdio::null());
+
         let child = cmd.spawn()?;
 
         Ok(RefProcess { child })
