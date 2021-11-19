@@ -28,6 +28,13 @@ use symphonia::core::probe::Hint;
 use clap::{Arg, App};
 use log::{info, warn};
 
+/// The absolute maximum allowable sample delta. Around 2^-17 (-102.4dB).
+const ABS_MAX_ALLOWABLE_SAMPLE_DELTA: f32 = 0.00001;
+
+// The absolute maximum allowable sample delta for a fully compliant MP3 decoder as specified by the
+// ISO. Around 2^-14 (-84.2dB).
+// const ABS_MAX_ALLOWABLE_SAMPLE_DELTA_MP3: f32 = 0.00006104;
+
 #[derive(Default)]
 struct TestOptions {
     is_quiet: bool,
@@ -41,6 +48,7 @@ struct TestResult {
     n_failed_samples: u64,
     n_packets: u64,
     n_failed_packets: u64,
+    abs_max_delta: f32,
 }
 
 struct RefProcess {
@@ -52,7 +60,7 @@ impl RefProcess {
         let mut cmd = Command::new("ffmpeg");
         let cmd = cmd.arg("-flags2") // Do not trim encoder delay.
                      .arg("skip_manual")
-                     .arg("-i")      // File path.
+                     .arg("-i")      // Input path.
                      .arg(path)
                      .arg("-map")    // Select the first audio track.
                      .arg("0:a:0")
@@ -189,15 +197,16 @@ fn run_check(
             for (&t, &r) in tgt_samples[..n_test_samples].iter()
                                                          .zip(&ref_samples[..n_test_samples])
             {
-                // Clamp the reference and target samples between [-1.0, 1.0] and find the difference.
+                // Clamp the reference and target samples between [-1.0, 1.0] and find the
+                // difference.
                 let delta = t.clamp(-1.0, 1.0) - r.clamp(-1.0, 1.0);
 
-                if delta.abs() > 0.00001 {
+                if delta.abs() > ABS_MAX_ALLOWABLE_SAMPLE_DELTA {
 
                     // Print per-sample or per-packet failure nessage based on selected options.
                     if !opts.is_quiet && (opts.is_per_sample || n_failed_pkt_samples == 0) {
-                        eprintln!(
-                            "[FAIL] packet={:>6}, sample_num={:>12} ({:>4}), dec={:+.6}, ref={:+.6} ({:+.6})",
+                        println!(
+                            "[FAIL] packet={:>6}, sample_num={:>12} ({:>4}), dec={:+.8}, ref={:+.8} ({:+.8})",
                             acct.n_packets,
                             acct.n_samples,
                             acct.n_samples - sample_num_base,
@@ -210,6 +219,7 @@ fn run_check(
                     n_failed_pkt_samples += 1;
                 }
 
+                acct.abs_max_delta = acct.abs_max_delta.max(delta.abs());
                 acct.n_samples += 1;
             }
 
@@ -287,17 +297,15 @@ fn main() {
 
     let mut res: TestResult = Default::default();
 
-    if !opts.is_quiet {
-        println!("Input Path: {}", path);
-        println!();
-    }
+    println!("Input Path: {}", path);
+    println!();
 
     match run_test(path, &opts, &mut res) {
         Err(Error::IoError(err)) if err.kind() == std::io::ErrorKind::UnexpectedEof => (),
         Err(err) => {
             eprintln!("Test interrupted by error: {}", err);
             std::process::exit(2);
-        },
+        }
         _ => (),
     };
 
@@ -311,6 +319,8 @@ fn main() {
     println!("  Failed/Total Packets: {:>12}/{:>12}", res.n_failed_packets, res.n_packets);
     println!("  Failed/Total Samples: {:>12}/{:>12}", res.n_failed_samples, res.n_samples);
     println!();
+    println!("  Absolute Maximum Sample Delta:       {:.8}", res.abs_max_delta);
+    println!();
 
     let ret = if res.n_failed_samples == 0 {
         println!("PASS");
@@ -320,11 +330,7 @@ fn main() {
         println!("FAIL");
         1
     };
+    println!();
 
     std::process::exit(ret);
 }
-
-
-
-
-
