@@ -240,6 +240,7 @@ impl FormatReader for MkvReader {
 
             if let Some(audio) = track.audio {
                 codec_params.with_sample_rate(audio.sampling_frequency.round() as u32);
+
                 let format = audio.bit_depth.and_then(|bits| match bits {
                     8 => Some(SampleFormat::S8),
                     16 => Some(SampleFormat::S16),
@@ -247,17 +248,30 @@ impl FormatReader for MkvReader {
                     32 => Some(SampleFormat::S32),
                     _ => None,
                 });
+
                 if let Some(format) = format {
                     codec_params.with_sample_format(format);
                 }
+
                 if let Some(bits) = audio.bit_depth {
                     codec_params.with_bits_per_sample(bits as u32);
                 }
-                codec_params.with_channel_layout(match audio.channels {
-                    1 => Layout::Mono,
-                    2 => Layout::Stereo,
-                    _ => unimplemented!(),
-                });
+
+                let layout = match audio.channels {
+                    1 => Some(Layout::Mono),
+                    2 => Some(Layout::Stereo),
+                    3 => Some(Layout::TwoPointOne),
+                    6 => Some(Layout::FivePointOne),
+                    other => {
+                        log::warn!("track #{} has custom number of channels: {}", track.id, other);
+                        None
+                    },
+                };
+
+                if let Some(layout) = layout {
+                    codec_params.with_channel_layout(layout);
+                }
+
                 if let Some(data) = track.codec_private {
                     codec_params.with_extra_data(data);
                 }
