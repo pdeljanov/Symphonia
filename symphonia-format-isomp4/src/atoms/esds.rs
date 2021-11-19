@@ -218,7 +218,11 @@ pub struct DecoderConfigDescriptor {
 impl ObjectDescriptor for DecoderConfigDescriptor {
 
     fn read<B: ReadBytes>(reader: &mut B, len: u32) -> Result<Self> {
-        const OBJECT_TYPE_ISO14496_3: u8 = 0x40;  // Verify: 0x41 as well?
+        // AAC
+        const OBJECT_TYPE_ISO14496_3: u8 = 0x40;
+        const OBJECT_TYPE_ISO13818_7_MAIN: u8 = 0x66;
+        const OBJECT_TYPE_ISO13818_7_LC: u8 = 0x67;
+        // MP3
         const OBJECT_TYPE_ISO13818_3: u8 = 0x69;
         const OBJECT_TYPE_ISO11172_3: u8 = 0x6b;
 
@@ -262,8 +266,12 @@ impl ObjectDescriptor for DecoderConfigDescriptor {
         }
 
         let codec_type = match object_type_indication {
-            OBJECT_TYPE_ISO14496_3 => CODEC_TYPE_AAC,
-            OBJECT_TYPE_ISO13818_3| OBJECT_TYPE_ISO11172_3 => CODEC_TYPE_MP3,
+            OBJECT_TYPE_ISO14496_3 | OBJECT_TYPE_ISO13818_7_LC | OBJECT_TYPE_ISO13818_7_MAIN => {
+                CODEC_TYPE_AAC
+            }
+            OBJECT_TYPE_ISO13818_3 | OBJECT_TYPE_ISO11172_3 => {
+                CODEC_TYPE_MP3
+            }
             _ => {
                 debug!(
                     "unknown object type indication {:#x} for decoder config descriptor",
