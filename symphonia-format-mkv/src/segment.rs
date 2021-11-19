@@ -2,8 +2,7 @@ use symphonia_core::codecs::CodecType;
 use symphonia_core::errors::{Error, Result};
 use symphonia_core::io::ReadBytes;
 
-use crate::{Element, ElementData, ElementHeader, ElementType, read_children};
-use crate::codecs::codec_id_to_type;
+use crate::{Element, ElementData, ElementHeader, ElementType};
 
 #[derive(Debug)]
 pub(crate) struct SegmentElement {
@@ -11,7 +10,9 @@ pub(crate) struct SegmentElement {
     pub(crate) tracks: Box<[TrackElement]>,
     info: Option<InfoElement>,
     pub(crate) cues: Option<CuesElement>,
-    pub(crate) clusters_offset: u64,
+    pub(crate) first_cluster_pos: u64,
+    pub(crate) duration: Option<u64>,
+    pub(crate) timestamp_scale: u64,
 }
 
 impl Element for SegmentElement {
@@ -22,7 +23,9 @@ impl Element for SegmentElement {
         let mut tracks = None;
         let mut info = None;
         let mut cues = None;
-        let mut clusters_offset = None;
+        let mut first_cluster_pos = None;
+        let mut duration = None;
+        let mut timestamp_scale = None;
 
         let mut it = header.children(&mut *reader);
         while let Some(header) = it.read_header()? {
@@ -39,12 +42,18 @@ impl Element for SegmentElement {
                 ElementType::Cues => {
                     cues = Some(it.read_element_data::<CuesElement>()?);
                 }
+                ElementType::TimestampScale => {
+                    timestamp_scale = Some(it.read_u64()?);
+                }
+                ElementType::Duration => {
+                    duration = Some(it.read_u64()?);
+                }
                 ElementType::Cluster => {
-                    clusters_offset = Some(reader.pos() - (header.len - header.data_len));
+                    first_cluster_pos = Some(reader.pos() - (header.len - header.data_len));
                     break;
                 }
                 other => {
-                    log::warn!("mkv: ignored element {:?}", other);
+                    log::warn!("ignored element {:?}", other);
                 }
             }
         }
@@ -54,7 +63,9 @@ impl Element for SegmentElement {
             tracks: tracks.map(|t| t.tracks).unwrap_or_default(),
             info,
             cues,
-            clusters_offset: clusters_offset.unwrap(),
+            first_cluster_pos: first_cluster_pos.unwrap(),
+            timestamp_scale: timestamp_scale.unwrap_or(1_000_000),
+            duration: duration,
         })
     }
 }
@@ -62,25 +73,32 @@ impl Element for SegmentElement {
 #[derive(Debug)]
 pub(crate) struct TrackElement {
     pub(crate) id: u64,
+    pub(crate) language: Option<String>,
     pub(crate) codec_id: String,
     pub(crate) codec_private: Option<Box<[u8]>>,
     pub(crate) audio: Option<AudioElement>,
+    pub(crate) default_duration: Option<u64>,
 }
 
 impl Element for TrackElement {
     const ID: ElementType = ElementType::TrackEntry;
 
     fn read<B: ReadBytes>(reader: &mut B, header: ElementHeader) -> Result<Self> {
-        let mut codec_private = None;
         let mut track_number = None;
+        let mut language = None;
         let mut audio = None;
+        let mut codec_private = None;
         let mut codec_id = None;
+        let mut default_duration = None;
 
         let mut it = header.children(reader);
         while let Some(header) = it.read_header()? {
             match header.etype {
                 ElementType::TrackNumber => {
                     track_number = Some(it.read_u64()?);
+                }
+                ElementType::Language => {
+                    language = Some(it.read_string()?);
                 }
                 ElementType::CodecId => {
                     codec_id = Some(it.read_string()?);
@@ -91,17 +109,22 @@ impl Element for TrackElement {
                 ElementType::Audio => {
                     audio = Some(it.read_element_data()?);
                 }
+                ElementType::DefaultDuration => {
+                    default_duration = Some(it.read_u64()?);
+                }
                 other => {
-                    log::warn!("mkv: unexpected element {:?}", other);
+                    log::warn!("ignored element {:?}", other);
                 }
             }
         }
 
         Ok(Self {
-            id: track_number.unwrap(),
-            codec_id: codec_id.unwrap(),
-            codec_private: codec_private,
-            audio: audio,
+            id: track_number.ok_or_else(|| Error::DecodeError("mkv: missing track number"))?,
+            language,
+            codec_id: codec_id.ok_or_else(|| Error::DecodeError("mkv: missing codec id"))?,
+            codec_private,
+            audio,
+            default_duration,
         })
     }
 }
@@ -139,7 +162,7 @@ impl Element for AudioElement {
                     bit_depth = Some(it.read_u64()?);
                 }
                 other => {
-                    log::warn!("mkv: unexpected element {:?}", other);
+                    log::warn!("ignored element {:?}", other);
                 }
             }
         }
@@ -148,7 +171,7 @@ impl Element for AudioElement {
             sampling_frequency: sampling_frequency.unwrap_or(8000.0),
             output_sampling_frequency: output_sampling_frequency,
             channels: channels.unwrap_or(1),
-            bit_depth: bit_depth
+            bit_depth: bit_depth,
         })
     }
 }
@@ -162,10 +185,21 @@ impl Element for SeekHeadElement {
     const ID: ElementType = ElementType::SeekHead;
 
     fn read<B: ReadBytes>(reader: &mut B, header: ElementHeader) -> Result<Self> {
+        let mut seeks = Vec::new();
+
         let mut it = header.children(reader);
-        // TODO
-        let seeks = it.read_elements()?;
-        Ok(Self { seeks })
+        while let Some(header) = it.read_header()? {
+            match header.etype {
+                ElementType::Seek => {
+                    seeks.push(it.read_element_data()?);
+                }
+                other => {
+                    log::warn!("ignored element {:?}", other);
+                }
+            }
+        }
+
+        Ok(Self { seeks: seeks.into_boxed_slice() })
     }
 }
 
@@ -193,7 +227,7 @@ impl Element for SeekElement {
                     seek_position = Some(it.read_u64()?);
                 }
                 other => {
-                    log::warn!("mkv: unexpected element {:?}", other);
+                    log::warn!("ignored element {:?}", other);
                 }
             }
         }
@@ -223,30 +257,86 @@ impl Element for TracksElement {
 
 #[derive(Debug)]
 pub(crate) struct EbmlHeaderElement {
-    children: Box<[ElementHeader]>,
+    pub(crate) version: u64,
+    pub(crate) read_version: u64,
+    pub(crate) max_id_length: u64,
+    pub(crate) max_size_length: u64,
+    pub(crate) doc_type: String,
+    pub(crate) doc_type_version: u64,
+    pub(crate) doc_type_read_version: u64,
 }
 
 impl Element for EbmlHeaderElement {
     const ID: ElementType = ElementType::Ebml;
+
     fn read<B: ReadBytes>(reader: &mut B, header: ElementHeader) -> Result<Self> {
-        // FIXME
-        let children = read_children(reader, header)?;
-        Ok(Self { children })
+        let mut version = None;
+        let mut read_version = None;
+        let mut max_id_length = None;
+        let mut max_size_length = None;
+        let mut doc_type = None;
+        let mut doc_type_version = None;
+        let mut doc_type_read_version = None;
+
+        let mut it = header.children(reader);
+        while let Some(header) = it.read_header()? {
+            match header.etype {
+                ElementType::EbmlVersion => {
+                    version = Some(it.read_u64()?);
+                }
+                ElementType::EbmlReadVersion => {
+                    read_version = Some(it.read_u64()?);
+                }
+                ElementType::EbmlMaxIdLength => {
+                    max_id_length = Some(it.read_u64()?);
+                }
+                ElementType::EbmlMaxSizeLength => {
+                    max_size_length = Some(it.read_u64()?);
+                }
+                ElementType::DocType => {
+                    doc_type = Some(it.read_string()?);
+                }
+                ElementType::DocTypeVersion => {
+                    doc_type_version = Some(it.read_u64()?);
+                }
+                ElementType::DocTypeReadVersion => {
+                    doc_type_read_version = Some(it.read_u64()?);
+                }
+                other => {
+                    log::warn!("ignored element {:?}", other);
+                }
+            }
+        }
+
+        Ok(Self {
+            version: version.unwrap_or(1),
+            read_version: read_version.unwrap_or(1),
+            max_id_length: max_id_length.unwrap_or(4),
+            max_size_length: max_size_length.unwrap_or(8),
+            doc_type: doc_type.ok_or_else(|| Error::Unsupported("mkv: invalid ebml file"))?,
+            doc_type_version: doc_type_version.unwrap_or(1),
+            doc_type_read_version: doc_type_version.unwrap_or(1),
+        })
     }
 }
 
 #[derive(Debug)]
 struct InfoElement {
-    elements: Box<[ElementHeader]>,
+    elements: Box<[(ElementHeader, Option<ElementData>)]>,
 }
 
 impl Element for InfoElement {
     const ID: ElementType = ElementType::Info;
 
     fn read<B: ReadBytes>(reader: &mut B, header: ElementHeader) -> Result<Self> {
-        // FIXME
-        let elements = read_children(reader, header)?;
-        Ok(Self { elements })
+        let mut elements = Vec::new();
+
+        let mut it = header.children(reader);
+        while let Some(header) = it.read_header()? {
+            elements.push((header, it.try_read_data(header)?));
+        }
+
+        Ok(Self { elements: elements.into_boxed_slice() })
     }
 }
 
@@ -283,20 +373,20 @@ impl Element for CuePointElement {
         while let Some(header) = it.read_header()? {
             match header.etype {
                 ElementType::CueTime => {
-                    assert!(pos.is_none());
                     time = Some(it.read_u64()?)
                 }
                 ElementType::CueTrackPositions => {
-                    assert!(pos.is_none());
                     pos = Some(it.read_element_data()?);
                 }
-                _ => todo!(),
+                other => {
+                    log::warn!("ignored element {:?}", other);
+                }
             }
         }
 
         Ok(Self {
-            time: time.unwrap().into(),
-            positions: pos.unwrap(),
+            time: time.ok_or_else(|| Error::DecodeError("mkv: missing time in cue"))?,
+            positions: pos.ok_or_else(|| Error::DecodeError("mkv: missing positions in cue"))?,
         })
     }
 }
@@ -323,12 +413,14 @@ impl Element for CueTrackPositionsElement {
                 ElementType::CueClusterPosition => {
                     pos = Some(it.read_u64()?);
                 }
-                _ => todo!(),
+                other => {
+                    log::warn!("ignored element {:?}", other);
+                }
             }
         }
         Ok(Self {
-            track: track.unwrap(),
-            cluster_position: pos.unwrap(),
+            track: track.ok_or_else(|| Error::DecodeError("mkv: missing track in cue track positions"))?,
+            cluster_position: pos.ok_or_else(|| Error::DecodeError("mkv: missing position in cue track positions"))?,
         })
     }
 }
@@ -336,7 +428,7 @@ impl Element for CueTrackPositionsElement {
 #[derive(Debug)]
 pub(crate) struct BlockGroupElement {
     pub(crate) data: Box<[u8]>,
-    pub(crate) duration: u64,
+    pub(crate) duration: Option<u64>,
 }
 
 impl Element for BlockGroupElement {
@@ -359,13 +451,13 @@ impl Element for BlockGroupElement {
                     block_duration = Some(it.read_u64()?);
                 }
                 other => {
-                    log::debug!("mkv: unsupported element {:?}", header);
+                    log::warn!("ignored element {:?}", other);
                 }
             }
         }
         Ok(Self {
-            data: data.unwrap(),
-            duration: block_duration.unwrap(),
+            data: data.ok_or_else(|| Error::DecodeError("mkv: missing block inside block group"))?,
+            duration: block_duration,
         })
     }
 }

@@ -114,7 +114,7 @@ impl ElementHeader {
 
 #[derive(Debug)]
 pub(crate) struct EbmlElement {
-    header: EbmlHeaderElement,
+    pub(crate) header: EbmlHeaderElement,
 }
 
 impl Element for EbmlElement {
@@ -175,8 +175,8 @@ impl<R: ReadBytes> ElementIterator<R> {
 
     #[track_caller]
     pub(crate) fn read_child_header(&mut self) -> Result<Option<ElementHeader>> {
-        let mut header = self.read_header_no_consume()?;
-        if let Some(header) = &mut header {
+        let header = self.read_header_no_consume()?;
+        if let Some(header) = &header {
             match ELEMENTS.get(&header.tag).map(|it| it.0) {
                 Some(Type::Master) => {
                     // Move to start of a child element.
@@ -250,7 +250,7 @@ impl<R: ReadBytes> ElementIterator<R> {
 
     pub(crate) fn read_data(&mut self) -> Result<ElementData> {
         let hdr = self.current.unwrap();
-        let value = self.get_data(hdr)?
+        let value = self.try_read_data(hdr)?
             .ok_or_else(|| Error::DecodeError("mkv: element has no primitive data"))?;
         Ok(value)
     }
@@ -283,9 +283,9 @@ impl<R: ReadBytes> ElementIterator<R> {
         }
     }
 
-    fn get_data(&mut self, header: ElementHeader) -> Result<Option<ElementData>> {
+    pub(crate) fn try_read_data(&mut self, header: ElementHeader) -> Result<Option<ElementData>> {
         Ok(match ELEMENTS.get(&header.tag) {
-            Some((ty, etype)) => {
+            Some((ty, _)) => {
                 assert_eq!(header.data_pos, self.reader.pos());
                 if let (Some(cur), Some(end)) = (self.current, self.end) {
                     assert!(cur.pos + cur.len <= end);
@@ -345,7 +345,7 @@ impl<R: ReadBytes> ElementIterator<R> {
 
     pub(crate) fn ignore_data(&mut self) -> Result<()> {
         if let Some(header) = self.current {
-            log::debug!("ignoring data of {:?} element", header.etype);
+            log::warn!("ignoring data of {:?} element", header.etype);
             self.reader.ignore_bytes(header.data_len)?;
             self.next_pos = header.data_pos + header.data_len;
         }

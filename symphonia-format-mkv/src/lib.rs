@@ -11,6 +11,7 @@ use symphonia_core::probe::{Descriptor, QueryDescriptor};
 use symphonia_core::probe::Instantiate;
 use symphonia_core::sample::SampleFormat;
 use symphonia_core::support_format;
+use symphonia_core::units::TimeBase;
 
 use crate::codecs::codec_id_to_type;
 use crate::ebml::{EbmlElement, Element, ElementData, ElementHeader, ElementIterator, read_vint, read_vint_signed};
@@ -43,12 +44,8 @@ pub struct MkvReader {
     current_cluster: Option<ClusterState>,
     metadata: MetadataLog,
     cues: Vec<Cue>,
-    frames: VecDeque<(u32, Box<[u8]>)>,
-}
-
-fn read_children<B: ReadBytes>(source: &mut B, header: ElementHeader) -> Result<Box<[ElementHeader]>> {
-    let mut it = header.children(source);
-    Ok(std::iter::from_fn(|| it.read_header().transpose()).collect::<Result<Vec<_>>>()?.into_boxed_slice())
+    frames: VecDeque<Frame>,
+    timestamp_scale: u64,
 }
 
 struct ClusterState {
@@ -105,7 +102,7 @@ fn read_xiph_sizes<R: ReadBytes>(mut reader: R, frames: usize) -> Result<Vec<u64
     Ok(sizes)
 }
 
-fn extract_frames(block: &[u8], buffer: &mut VecDeque<(u32, Box<[u8]>)>) -> Result<()> {
+fn extract_frames(block: &[u8], buffer: &mut VecDeque<Frame>) -> Result<()> {
     let mut reader = BufReader::new(&block);
     let track = read_vint::<_, true>(&mut reader)? as u32;
     let timestamp = reader.read_be_u16()? as i16;
@@ -113,8 +110,8 @@ fn extract_frames(block: &[u8], buffer: &mut VecDeque<(u32, Box<[u8]>)>) -> Resu
     let lacing = parse_flags(flags)?;
     match lacing {
         Lacing::None => {
-            let frame = reader.read_boxed_slice_exact(block.len() - reader.pos() as usize)?;
-            buffer.push_back((track, frame));
+            let data = reader.read_boxed_slice_exact(block.len() - reader.pos() as usize)?;
+            buffer.push_back(Frame { track, timestamp, data });
         }
         Lacing::Xiph | Lacing::Ebml => {
             // Read number of stored sizes which is actually `number of frames` - 1
@@ -127,12 +124,14 @@ fn extract_frames(block: &[u8], buffer: &mut VecDeque<(u32, Box<[u8]>)>) -> Resu
             };
 
             for frame_size in sizes {
-                buffer.push_back((track, reader.read_boxed_slice_exact(frame_size as usize)?));
+                let data = reader.read_boxed_slice_exact(frame_size as usize)?;
+                buffer.push_back(Frame { track, timestamp, data });
             }
 
             // Size of last frame is not provided so we read to the end of the block.
             let size = block.len() - reader.pos() as usize;
-            buffer.push_back((track, reader.read_boxed_slice_exact(size)?));
+            let data = reader.read_boxed_slice_exact(size)?;
+            buffer.push_back(Frame { track, timestamp, data });
         }
         Lacing::FixedSize => {
             let frames = reader.read_byte()? as usize + 1;
@@ -143,7 +142,8 @@ fn extract_frames(block: &[u8], buffer: &mut VecDeque<(u32, Box<[u8]>)>) -> Resu
 
             let frame_size = total_size / frames;
             for _ in 0..frames {
-                buffer.push_back((track, reader.read_boxed_slice_exact(frame_size)?));
+                let data = reader.read_boxed_slice_exact(frame_size)?;
+                buffer.push_back(Frame { track, timestamp, data });
             }
         }
     }
@@ -187,7 +187,7 @@ fn convert_vorbis_data(extra: &[u8]) -> Result<Box<[u8]>> {
                 setup_header = Some(packet);
             }
             other => {
-                log::debug!("mkv: vorbis unsupported packet type");
+                log::debug!("unsupported vorbis packet type");
             }
         }
     }
@@ -199,13 +199,25 @@ fn convert_vorbis_data(extra: &[u8]) -> Result<Box<[u8]>> {
     ].concat().into_boxed_slice())
 }
 
+struct Frame {
+    track: u32,
+    /// Frame timestamp (relative to Cluster timestamp).
+    timestamp: i16,
+    data: Box<[u8]>,
+}
+
 impl FormatReader for MkvReader {
     fn try_new(mut reader: MediaSourceStream, options: &FormatOptions) -> Result<Self>
         where
             Self: Sized
     {
         let mut it = ElementIterator::new(reader);
-        let header = it.read_element::<EbmlElement>()?;
+        let ebml = it.read_element::<EbmlElement>()?;
+        log::warn!("ebml header: {:#?}", ebml.header);
+
+        if !matches!(ebml.header.doc_type.as_str(), "matroska" | "webm") {
+            return Err(Error::Unsupported("mkv: not a matroska / webm file"));
+        }
 
         let segment = loop {
             if let Some(header) = it.read_header()? {
@@ -223,11 +235,19 @@ impl FormatReader for MkvReader {
         };
 
         reader = it.into_inner();
-        reader.seek(SeekFrom::Start(segment.clusters_offset))?;
-        let it = ElementIterator::new_at(reader, segment.clusters_offset);
+        reader.seek(SeekFrom::Start(segment.first_cluster_pos))?;
+        let it = ElementIterator::new_at(reader, segment.first_cluster_pos);
 
+        let time_base = TimeBase::new(1000, segment.timestamp_scale as u32);
+        let duration = segment.duration;
         let tracks: Vec<_> = segment.tracks.into_vec().into_iter().map(|mut track| {
             let mut codec_params = CodecParameters::new();
+            codec_params.with_time_base(time_base);
+
+            if let Some(duration) = duration {
+                codec_params.with_n_frames(duration);
+            }
+
             if let Some(codec_type) = codec_id_to_type(&track) {
                 codec_params.for_codec(codec_type);
 
@@ -265,7 +285,7 @@ impl FormatReader for MkvReader {
                     other => {
                         log::warn!("track #{} has custom number of channels: {}", track.id, other);
                         None
-                    },
+                    }
                 };
 
                 if let Some(layout) = layout {
@@ -280,13 +300,13 @@ impl FormatReader for MkvReader {
             Track {
                 id: track.id as u32,
                 codec_params,
-                language: None,
+                language: track.language,
             }
         }).collect();
 
         let track_states = tracks.iter().map(|track| TrackState {
             codec_params: track.codec_params.clone(),
-            track_num: 0,
+            track_num: track.id,
             cur_seg: 0,
             next_sample: 0,
             next_sample_pos: 0,
@@ -300,6 +320,7 @@ impl FormatReader for MkvReader {
             metadata: MetadataLog::default(),
             cues: Vec::new(),
             frames: VecDeque::new(),
+            timestamp_scale: segment.timestamp_scale,
         })
     }
 
@@ -311,7 +332,7 @@ impl FormatReader for MkvReader {
         self.metadata.metadata()
     }
 
-    fn seek(&mut self, mode: SeekMode, to: SeekTo) -> symphonia_core::errors::Result<SeekedTo> {
+    fn seek(&mut self, mode: SeekMode, to: SeekTo) -> Result<SeekedTo> {
         todo!()
     }
 
@@ -321,8 +342,13 @@ impl FormatReader for MkvReader {
 
     fn next_packet(&mut self) -> Result<Packet> {
         loop {
-            if let Some((track, frame)) = self.frames.pop_front() {
-                return Ok(Packet::new_from_boxed_slice(track as u32, 0, 0, frame));
+            if let Some(frame) = self.frames.pop_front() {
+                let timestamp = self.current_cluster.as_ref()
+                    .and_then(|c| c.timestamp)
+                    .map(|ts| (ts as i64 + frame.timestamp as i64) as u64)
+                    .unwrap_or(0);
+                return Ok(Packet::new_from_boxed_slice(
+                    frame.track as u32, timestamp, 0, frame.data));
             }
 
             let header = self.iter
@@ -364,7 +390,6 @@ impl FormatReader for MkvReader {
                     log::warn!("void element");
                 }
                 _ => {
-                    log::warn!("mkv: unsupported element: {:?}, ignoring...", header);
                     self.iter.ignore_data()?;
                 }
             }
