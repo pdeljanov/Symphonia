@@ -28,12 +28,6 @@ pub struct TrackState {
     codec_params: CodecParameters,
     /// The track number.
     track_num: u32,
-    /// The current segment.
-    cur_seg: usize,
-    /// The current sample index relative to the track.
-    next_sample: u32,
-    /// The current sample byte position relative to the start of the track.
-    next_sample_pos: u64,
 }
 
 pub struct MkvReader {
@@ -239,23 +233,17 @@ impl FormatReader for MkvReader {
         let it = ElementIterator::new_at(reader, segment.first_cluster_pos);
 
         let time_base = TimeBase::new(1000, segment.timestamp_scale as u32);
-        let duration = segment.duration;
-        let tracks: Vec<_> = segment.tracks.into_vec().into_iter().map(|mut track| {
+
+        let mut tracks = Vec::new();
+        let mut states = Vec::new();
+        for track in segment.tracks.into_vec() {
+            let codec_type = codec_id_to_type(&track);
+
             let mut codec_params = CodecParameters::new();
             codec_params.with_time_base(time_base);
 
-            if let Some(duration) = duration {
+            if let Some(duration) = segment.duration {
                 codec_params.with_n_frames(duration);
-            }
-
-            if let Some(codec_type) = codec_id_to_type(&track) {
-                codec_params.for_codec(codec_type);
-
-                if codec_type == CODEC_TYPE_VORBIS {
-                    if let Some(extra) = track.codec_private {
-                        track.codec_private = Some(convert_vorbis_data(&extra).unwrap());
-                    }
-                }
             }
 
             if let Some(audio) = track.audio {
@@ -292,30 +280,34 @@ impl FormatReader for MkvReader {
                     codec_params.with_channel_layout(layout);
                 }
 
-                if let Some(data) = track.codec_private {
-                    codec_params.with_extra_data(data);
+                if let Some(codec_type) = codec_type {
+                    codec_params.for_codec(codec_type);
+                    if let Some(codec_private) = track.codec_private {
+                        let extra_data = match codec_type {
+                            CODEC_TYPE_VORBIS => convert_vorbis_data(&codec_private)?,
+                            _ => codec_private,
+                        };
+                        codec_params.with_extra_data(extra_data);
+                    }
                 }
             }
 
-            Track {
+            tracks.push(Track {
                 id: track.id as u32,
-                codec_params,
+                codec_params: codec_params.clone(),
                 language: track.language,
-            }
-        }).collect();
+            });
 
-        let track_states = tracks.iter().map(|track| TrackState {
-            codec_params: track.codec_params.clone(),
-            track_num: track.id,
-            cur_seg: 0,
-            next_sample: 0,
-            next_sample_pos: 0,
-        }).collect();
+            states.push(TrackState {
+                codec_params: codec_params,
+                track_num: track.id as u32,
+            });
+        }
 
         Ok(Self {
             iter: it,
             tracks,
-            track_states,
+            track_states: states,
             current_cluster: None,
             metadata: MetadataLog::default(),
             cues: Vec::new(),
