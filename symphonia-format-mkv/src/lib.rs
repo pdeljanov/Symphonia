@@ -2,8 +2,8 @@ use std::collections::VecDeque;
 use std::io::{Seek, SeekFrom};
 
 use symphonia_core::audio::{Channels, Layout, SampleBuffer};
-use symphonia_core::codecs::{CODEC_TYPE_OPUS, CODEC_TYPE_VORBIS, CodecParameters};
-use symphonia_core::errors::{Error, Result};
+use symphonia_core::codecs::{CODEC_TYPE_FLAC, CODEC_TYPE_VORBIS, CodecParameters};
+use symphonia_core::errors::{Error, Result, unsupported_error};
 use symphonia_core::formats::{Cue, CuePoint, FormatOptions, FormatReader, Packet, SeekedTo, SeekMode, SeekTo, Track};
 use symphonia_core::io::{BufReader, MediaSourceStream, ReadBytes};
 use symphonia_core::meta::{Metadata, MetadataLog};
@@ -12,6 +12,7 @@ use symphonia_core::probe::Instantiate;
 use symphonia_core::sample::SampleFormat;
 use symphonia_core::support_format;
 use symphonia_core::units::TimeBase;
+use symphonia_utils_xiph::flac::metadata::{MetadataBlockHeader, MetadataBlockType};
 
 use crate::codecs::codec_id_to_type;
 use crate::ebml::{EbmlElement, Element, ElementData, ElementHeader, ElementIterator, read_vint, read_vint_signed};
@@ -193,6 +194,26 @@ fn convert_vorbis_data(extra: &[u8]) -> Result<Box<[u8]>> {
     ].concat().into_boxed_slice())
 }
 
+fn get_stream_info_from_codec_private(codec_private: &[u8]) -> Result<Box<[u8]>> {
+    let mut reader = BufReader::new(codec_private);
+
+    let marker = reader.read_quad_bytes()?;
+    if marker != *b"fLaC" {
+        return unsupported_error("mkv (flac): missing flac stream marker");
+    }
+
+    let header = MetadataBlockHeader::read(&mut reader)?;
+
+    loop {
+        match header.block_type {
+            MetadataBlockType::StreamInfo => {
+                break Ok(reader.read_boxed_slice_exact(header.block_len as usize)?);
+            }
+            _ => reader.ignore_bytes(u64::from(header.block_len))?,
+        }
+    }
+}
+
 struct Frame {
     track: u32,
     /// Frame timestamp (relative to Cluster timestamp).
@@ -210,7 +231,7 @@ impl FormatReader for MkvReader {
         log::warn!("ebml header: {:#?}", ebml.header);
 
         if !matches!(ebml.header.doc_type.as_str(), "matroska" | "webm") {
-            return Err(Error::Unsupported("mkv: not a matroska / webm file"));
+            return unsupported_error("mkv: not a matroska / webm file");
         }
 
         let segment = loop {
@@ -285,6 +306,7 @@ impl FormatReader for MkvReader {
                     if let Some(codec_private) = track.codec_private {
                         let extra_data = match codec_type {
                             CODEC_TYPE_VORBIS => convert_vorbis_data(&codec_private)?,
+                            CODEC_TYPE_FLAC => get_stream_info_from_codec_private(&codec_private)?,
                             _ => codec_private,
                         };
                         codec_params.with_extra_data(extra_data);
