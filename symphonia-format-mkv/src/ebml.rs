@@ -2,7 +2,7 @@ use symphonia_core::errors::{Error, Result};
 use symphonia_core::io::ReadBytes;
 use symphonia_core::util::bits::sign_extend_leq64_to_i64;
 
-use crate::EbmlHeaderElement;
+use crate::segment::EbmlHeaderElement;
 use crate::element_ids::{ELEMENTS, ElementType, Type};
 
 /// Parses a variable size integer according to RFC8794 (4)

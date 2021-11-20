@@ -1,8 +1,8 @@
-use symphonia_core::codecs::CodecType;
 use symphonia_core::errors::{Error, Result};
 use symphonia_core::io::ReadBytes;
 
-use crate::{Element, ElementData, ElementHeader, ElementType};
+use crate::ebml::{Element, ElementData, ElementHeader};
+use crate::element_ids::ElementType;
 
 #[derive(Debug)]
 pub(crate) struct SegmentElement {

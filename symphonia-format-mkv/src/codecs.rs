@@ -1,7 +1,7 @@
 use symphonia_core::codecs;
 use symphonia_core::codecs::CodecType;
 
-use crate::segment::{AudioElement, TrackElement};
+use crate::segment::TrackElement;
 
 pub(crate) fn codec_id_to_type(track: &TrackElement) -> Option<CodecType> {
     let bit_depth = track.audio.as_ref().and_then(|a| a.bit_depth);
