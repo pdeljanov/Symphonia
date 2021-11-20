@@ -27,7 +27,7 @@ use crate::units::Duration;
 const AUDIO_PLANES_STORAGE_STACK_LIMIT: usize = 8;
 
 bitflags! {
-    /// Channels is a bit mask of all channels contained in a signal.
+    /// A bitmask representing the audio channels in an audio buffer or signal.
     #[derive(Default)]
     pub struct Channels: u32 {
         /// Front-left (left) or the Mono channel.
@@ -85,10 +85,35 @@ bitflags! {
     }
 }
 
+/// An iterator over individual channels within a `Channels` bitmask.
+pub struct ChannelsIter {
+    channels: Channels,
+}
+
+impl Iterator for ChannelsIter {
+    type Item = Channels;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if !self.channels.is_empty() {
+            let channel = Channels::from_bits_truncate(1 << self.channels.bits.trailing_zeros());
+            self.channels ^= channel;
+            Some(channel)
+        }
+        else {
+            None
+        }
+    }
+}
+
 impl Channels {
     /// Gets the number of channels.
     pub fn count(self) -> usize {
         self.bits.count_ones() as usize
+    }
+
+    /// Gets an iterator over individual channels.
+    pub fn iter(&self) -> ChannelsIter {
+        ChannelsIter { channels: *self }
     }
 }
 
