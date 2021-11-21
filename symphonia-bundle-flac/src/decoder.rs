@@ -14,9 +14,11 @@ use symphonia_core::codecs::{CODEC_TYPE_FLAC, CodecParameters, CodecDescriptor, 
 use symphonia_core::codecs::{Decoder, DecoderOptions, FinalizeResult};
 use symphonia_core::errors::{Result, decode_error, unsupported_error};
 use symphonia_core::formats::Packet;
-use symphonia_core::io::{ReadBitsLtr, BitReaderLtr};
+use symphonia_core::io::{BufReader, ReadBitsLtr, BitReaderLtr};
 use symphonia_core::support_codec;
+use symphonia_core::units::TimeBase;
 use symphonia_core::util::bits::sign_extend_leq32_to_i32;
+use symphonia_utils_xiph::flac::metadata::StreamInfo;
 
 use log::{debug, log_enabled, warn};
 
@@ -172,39 +174,48 @@ impl FlacDecoder {
 impl Decoder for FlacDecoder {
 
     fn try_new(params: &CodecParameters, options: &DecoderOptions) -> Result<Self> {
-        // Initialize the AudioBuffer.
-        //
-        // TODO: Some of the required parameters are not necessarily provided in the StreamInfo
-        // block, however, it is possible to get all the required parameters using from the packet.
-        // Consider supporting this.
-        let frames = match params.max_frames_per_packet {
-            Some(frames) => frames,
-            None => return unsupported_error("flac: variable frames per packet are unsupported"),
-        };
-
-        let spec = {
-            let sample_rate = match params.sample_rate {
-                Some(rate) => rate,
-                None => return unsupported_error("flac: variable sample rate is unsupported"),
-            };
-
-            let channels = match params.channels {
-                Some(channels) => channels,
-                None => return unsupported_error("flac: dynamic channels are unsupported"),
-            };
-
-            SignalSpec::new(sample_rate, channels)
-        };
-
-        if !params.packet_data_integrity {
-            return unsupported_error("flac: packet integrity is required");
+        // This decoder only supports FLAC.
+        if params.codec != CODEC_TYPE_FLAC {
+            return unsupported_error("flac: invalid codec type");
         }
 
+        // Obtain the extra data.
+        let extra_data = match params.extra_data.as_ref() {
+            Some(buf) => buf,
+            _ => return unsupported_error("flac: missing extra data"),
+        };
+
+        // Read the stream information block.
+        let info = StreamInfo::read(&mut BufReader::new(extra_data))?;
+
+        // Clone the codec parameters so that the parameters can be supplemented and/or amended.
+        let mut params = params.clone();
+
+        // Amend the provided codec parameters with information from the stream information block.
+        params.with_sample_rate(info.sample_rate)
+              .with_time_base(TimeBase::new(1, info.sample_rate))
+              .with_bits_per_sample(info.bits_per_sample)
+              .with_max_frames_per_packet(u64::from(info.block_len_max))
+              .with_channels(info.channels)
+              .with_verification_code(VerificationCheck::Md5(info.md5));
+
+        if let Some(n_frames) = info.n_samples {
+            params.with_n_frames(n_frames);
+        }
+
+        let spec = SignalSpec::new(info.sample_rate, info.channels);
+        let buf = AudioBuffer::new(u64::from(info.block_len_max), spec);
+
+        // TODO: Verify packet integrity if the demuxer is not.
+        // if !params.packet_data_integrity {
+        //     return unsupported_error("flac: packet integrity is required");
+        // }
+
         Ok(FlacDecoder {
-            params: params.clone(),
+            params,
             is_validating: options.verify,
             validator: Default::default(),
-            buf: AudioBuffer::new(frames, spec),
+            buf,
         })
     }
 

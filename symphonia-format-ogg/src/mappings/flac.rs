@@ -80,19 +80,26 @@ pub fn detect(buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> {
         return Ok(None);
     }
 
-    let stream_info = StreamInfo::read(&mut reader)?;
+    // Ensure the block length is correct for a stream information block before allocating a buffer
+    // for it.
+    if !StreamInfo::is_valid_size(u64::from(header.block_len)) {
+        return Ok(None);
+    }
+
+    let extra_data = reader.read_boxed_slice_exact(header.block_len as usize)?;
+    let stream_info = StreamInfo::read(&mut BufReader::new(&extra_data))?;
 
     // Populate the codec parameters with the information read from the stream information block.
     let mut codec_params = CodecParameters::new();
 
     codec_params
         .for_codec(CODEC_TYPE_FLAC)
+        .with_packet_data_integrity(true)
+        .with_extra_data(extra_data)
         .with_sample_rate(stream_info.sample_rate)
         .with_time_base(TimeBase::new(1, stream_info.sample_rate))
         .with_bits_per_sample(stream_info.bits_per_sample)
-        .with_max_frames_per_packet(u64::from(stream_info.block_len_max))
         .with_channels(stream_info.channels)
-        .with_packet_data_integrity(true)
         .with_verification_code(VerificationCheck::Md5(stream_info.md5));
 
     if let Some(n_frames) = stream_info.n_samples {

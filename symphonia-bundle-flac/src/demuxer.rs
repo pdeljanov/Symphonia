@@ -124,7 +124,6 @@ impl FlacReader {
 
         Ok(FlacReader {
             reader,
-           
             metadata,
             tracks,
             cues,
@@ -346,29 +345,40 @@ impl FormatReader for FlacReader {
 }
 
 /// Reads a StreamInfo block and populates the reader with stream information.
-fn read_stream_info_block<B : ReadBytes>(
-    block_stream: &mut B,
+fn read_stream_info_block<B : ReadBytes + FiniteStream>(
+    reader: &mut B,
     tracks: &mut Vec<Track>,
     parser: &mut PacketParser,
 ) -> Result<()> {
     // Only one StreamInfo block, and therefore only one Track, is allowed per media source stream.
     if tracks.is_empty() {
-        let info = StreamInfo::read(block_stream)?;
+        // Ensure the block length is correct for a stream information block before allocating a
+        // buffer for it.
+        if !StreamInfo::is_valid_size(reader.byte_len()) {
+            return decode_error("flac: invalid stream info block size");
+        }
 
-        // Populate the codec parameters with the parameters from the stream information block.
+        // Read the stream information block as a boxed slice so that it may be attached as extra
+        // data on the codec parameters.
+        let extra_data = reader.read_boxed_slice_exact(reader.byte_len() as usize)?;
+
+        // Parse the stream info block.
+        let info = StreamInfo::read(&mut BufReader::new(&extra_data))?;
+
+        // Populate the codec parameters with the basic audio parameters of the track.
         let mut codec_params = CodecParameters::new();
 
         codec_params
             .for_codec(CODEC_TYPE_FLAC)
+            .with_packet_data_integrity(true)
+            .with_extra_data(extra_data)
             .with_sample_rate(info.sample_rate)
             .with_time_base(TimeBase::new(1, info.sample_rate))
             .with_bits_per_sample(info.bits_per_sample)
-            .with_max_frames_per_packet(u64::from(info.block_len_max))
             .with_channels(info.channels)
-            .with_packet_data_integrity(true)
             .with_verification_code(VerificationCheck::Md5(info.md5));
 
-        // Total samples (per channel) aka frames may or may not be stated in StreamInfo.
+        // Total samples per channel (the total number of frames) is optional.
         if let Some(n_frames) = info.n_samples {
             codec_params.with_n_frames(n_frames);
         }

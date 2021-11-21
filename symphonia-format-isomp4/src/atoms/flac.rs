@@ -7,7 +7,7 @@
 
 use symphonia_core::codecs::{CODEC_TYPE_FLAC, CodecParameters, VerificationCheck};
 use symphonia_core::errors::{Result, decode_error, unsupported_error};
-use symphonia_core::io::ReadBytes;
+use symphonia_core::io::{BufReader, ReadBytes};
 
 use symphonia_utils_xiph::flac::metadata::{MetadataBlockHeader, MetadataBlockType, StreamInfo};
 
@@ -19,6 +19,8 @@ pub struct FlacAtom {
     header: AtomHeader,
     /// FLAC stream info block.
     stream_info: StreamInfo,
+    /// FLAC extra data.
+    extra_data: Box<[u8]>,
 }
 
 impl Atom for FlacAtom {
@@ -44,11 +46,19 @@ impl Atom for FlacAtom {
             return decode_error("isomp4 (flac): first block is not stream info");
         }
 
-        let stream_info = StreamInfo::read(reader)?;
+        // Ensure the block length is correct for a stream information block before allocating a
+        // buffer for it.
+        if !StreamInfo::is_valid_size(u64::from(block_header.block_len)) {
+            return decode_error("isomp4 (flac): invalid stream info block length");
+        }
+
+        let extra_data = reader.read_boxed_slice_exact(block_header.block_len as usize)?;
+        let stream_info = StreamInfo::read(&mut BufReader::new(&extra_data))?;
 
         Ok(FlacAtom {
             header,
             stream_info,
+            extra_data,
         })
     }
 }
@@ -58,9 +68,9 @@ impl FlacAtom {
         codec_params.for_codec(CODEC_TYPE_FLAC)
                     .with_sample_rate(self.stream_info.sample_rate)
                     .with_bits_per_sample(self.stream_info.bits_per_sample)
-                    .with_max_frames_per_packet(u64::from(self.stream_info.block_len_max))
                     .with_channels(self.stream_info.channels)
                     .with_packet_data_integrity(true)
-                    .with_verification_code(VerificationCheck::Md5(self.stream_info.md5));
+                    .with_verification_code(VerificationCheck::Md5(self.stream_info.md5))
+                    .with_extra_data(self.extra_data.clone());
     }
 }

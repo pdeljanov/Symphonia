@@ -112,7 +112,7 @@ pub struct StreamInfo {
 }
 
 impl StreamInfo {
-
+    /// Try to read a stream information block.
     pub fn read<B : ReadBytes>(reader: &mut B)  -> Result<StreamInfo> {
         let mut info = StreamInfo {
             block_len_min: 0,
@@ -191,8 +191,16 @@ impl StreamInfo {
 
         Ok(info)
     }
+
+    /// Check if the size is valid for a stream information block.
+    pub fn is_valid_size(size: u64) -> bool {
+        const STREAM_INFO_BLOCK_SIZE: u64 = 34;
+
+        size == STREAM_INFO_BLOCK_SIZE
+    }
 }
 
+/// Try to read a comment block.
 pub fn read_comment_block<B : ReadBytes>(
     reader: &mut B,
     metadata: &mut MetadataBuilder,
@@ -200,6 +208,7 @@ pub fn read_comment_block<B : ReadBytes>(
     vorbis::read_comment_no_framing(reader, metadata)
 }
 
+/// Try to read a seek table block.
 pub fn read_seek_table_block<B : ReadBytes>(
     reader: &mut B,
     block_length: u32,
@@ -242,6 +251,7 @@ fn printable_ascii_to_string(bytes: &[u8]) -> Option<String> {
     Some(result)
 }
 
+/// Try to read a cuesheet block.
 pub fn read_cuesheet_block<B: ReadBytes>(reader: &mut B, cues: &mut Vec<Cue>) -> Result<()> {
     // Read cuesheet catalog number. The catalog number only allows printable ASCII characters.
     let mut catalog_number_buf = vec![0u8; 128];
@@ -395,6 +405,7 @@ fn read_cuesheet_track_index<B: ReadBytes>(reader: &mut B, is_cdda: bool) -> Res
     })
 }
 
+/// Try to read a vendor-specific application block.
 pub fn read_application_block<B : ReadBytes>(
     reader: &mut B,
     block_length: u32,
@@ -415,6 +426,7 @@ pub fn read_application_block<B : ReadBytes>(
     Ok(VendorData { ident, data })
 }
 
+/// Try to read a picture block.
 pub fn read_picture_block<B : ReadBytes>(
     reader: &mut B,
     metadata: &mut MetadataBuilder,
@@ -494,6 +506,7 @@ pub struct MetadataBlockHeader {
 }
 
 impl MetadataBlockHeader {
+    /// Read a metadata block header.
     pub fn read<B : ReadBytes>(reader: &mut B) -> Result<MetadataBlockHeader> {
         let header_enc = reader.read_u8()?;
 
