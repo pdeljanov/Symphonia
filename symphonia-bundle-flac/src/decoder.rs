@@ -220,7 +220,7 @@ impl Decoder for FlacDecoder {
     }
 
     fn supported_codecs() -> &'static [CodecDescriptor] {
-        &[ support_codec!(CODEC_TYPE_FLAC, "flac", "Free Lossless Audio Codec") ]
+        &[support_codec!(CODEC_TYPE_FLAC, "flac", "Free Lossless Audio Codec")]
     }
 
     fn reset(&mut self) {

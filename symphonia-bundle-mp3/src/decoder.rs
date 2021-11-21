@@ -8,7 +8,7 @@
 use symphonia_core::audio::{AudioBuffer, AudioBufferRef, AsAudioBufferRef, Signal};
 use symphonia_core::codecs::{CODEC_TYPE_MP3, CodecParameters, CodecDescriptor};
 use symphonia_core::codecs::{Decoder, DecoderOptions, FinalizeResult};
-use symphonia_core::errors::{Result, decode_error};
+use symphonia_core::errors::{Result, decode_error, unsupported_error};
 use symphonia_core::formats::Packet;
 use symphonia_core::support_codec;
 
@@ -52,6 +52,11 @@ impl Mp3Decoder {
 impl Decoder for Mp3Decoder {
 
     fn try_new(params: &CodecParameters, _: &DecoderOptions) -> Result<Self> {
+        // This decoder only supports MP3.
+        if params.codec != CODEC_TYPE_MP3 {
+            return unsupported_error("mp3: invalid codec type");
+        }
+
         Ok(Mp3Decoder {
             params: params.clone(),
             state: State::new(),

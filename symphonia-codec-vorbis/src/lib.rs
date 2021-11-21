@@ -270,6 +270,11 @@ impl VorbisDecoder {
 impl Decoder for VorbisDecoder {
 
     fn try_new(params: &CodecParameters, _: &DecoderOptions) -> Result<Self> {
+        // This decoder only supports Vorbis.
+        if params.codec != CODEC_TYPE_VORBIS {
+            return unsupported_error("vorbis: invalid codec type");
+        }
+
         // Get the extra data (mandatory).
         let extra_data = match params.extra_data.as_ref() {
             Some(buf) => buf,
@@ -333,9 +338,7 @@ impl Decoder for VorbisDecoder {
     }
 
     fn supported_codecs() -> &'static [CodecDescriptor] {
-        &[
-            support_codec!(CODEC_TYPE_VORBIS, "vorbis", "Vorbis"),
-        ]
+        &[support_codec!(CODEC_TYPE_VORBIS, "vorbis", "Vorbis")]
     }
 
     fn codec_params(&self) -> &CodecParameters {

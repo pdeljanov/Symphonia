@@ -18,7 +18,7 @@
 use symphonia_core::support_codec;
 
 use symphonia_core::audio::{AudioBuffer, AudioBufferRef, AsAudioBufferRef, Signal, SignalSpec};
-use symphonia_core::codecs::{CodecParameters, CodecDescriptor};
+use symphonia_core::codecs::{CodecDescriptor, CodecParameters, CodecType};
 use symphonia_core::codecs::{Decoder, DecoderOptions, FinalizeResult};
 // Signed Int PCM codecs
 use symphonia_core::codecs::{CODEC_TYPE_PCM_S8, CODEC_TYPE_PCM_S16LE};
@@ -117,6 +117,34 @@ fn mulaw_to_linear(mut mu_val: u8) -> i16 {
     if mu_val & 0x80 == 0x80 { t - BIAS } else { BIAS - t }
 }
 
+fn is_supported_pcm_codec(codec_type: CodecType) -> bool {
+    match codec_type {
+        CODEC_TYPE_PCM_S32LE
+        | CODEC_TYPE_PCM_S32BE
+        | CODEC_TYPE_PCM_S24LE
+        | CODEC_TYPE_PCM_S24BE
+        | CODEC_TYPE_PCM_S16LE
+        | CODEC_TYPE_PCM_S16BE
+        | CODEC_TYPE_PCM_S8
+        | CODEC_TYPE_PCM_U32LE
+        | CODEC_TYPE_PCM_U32BE
+        | CODEC_TYPE_PCM_U24LE
+        | CODEC_TYPE_PCM_U24BE
+        | CODEC_TYPE_PCM_U16LE
+        | CODEC_TYPE_PCM_U16BE
+        | CODEC_TYPE_PCM_U8
+        | CODEC_TYPE_PCM_F32LE
+        | CODEC_TYPE_PCM_F32BE
+        | CODEC_TYPE_PCM_F64LE
+        | CODEC_TYPE_PCM_F64BE
+        | CODEC_TYPE_PCM_ALAW
+        | CODEC_TYPE_PCM_MULAW => {
+            true
+        }
+        _ => false,
+    }
+}
+
 /// Pulse Code Modulation (PCM) decoder for all raw PCM, and log-PCM codecs.
 pub struct PcmDecoder {
     params: CodecParameters,
@@ -186,6 +214,11 @@ impl PcmDecoder {
 impl Decoder for PcmDecoder {
 
     fn try_new(params: &CodecParameters, _options: &DecoderOptions) -> Result<Self> {
+        // This decoder only supports certain PCM codecs.
+        if !is_supported_pcm_codec(params.codec) {
+            return unsupported_error("pcm: invalid codec type");
+        }
+
         let frames = match params.max_frames_per_packet {
             Some(frames) => frames,
             _            => return unsupported_error("pcm: maximum frames per packet is required"),

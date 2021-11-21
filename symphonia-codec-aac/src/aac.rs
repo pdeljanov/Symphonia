@@ -1622,6 +1622,10 @@ impl AacDecoder {
 impl Decoder for AacDecoder {
 
     fn try_new(params: &CodecParameters, _: &DecoderOptions) -> Result<Self> {
+        // This decoder only supports AAC.
+        if params.codec != CODEC_TYPE_AAC {
+            return unsupported_error("aac: invalid codec type");
+        }
 
         let mut m4ainfo = M4AInfo::new();
 
@@ -1674,9 +1678,7 @@ impl Decoder for AacDecoder {
     }
 
     fn supported_codecs() -> &'static [CodecDescriptor] {
-        &[
-            support_codec!(CODEC_TYPE_AAC, "aac", "Advanced Audio Coding"),
-        ]
+        &[support_codec!(CODEC_TYPE_AAC, "aac", "Advanced Audio Coding")]
     }
 
     fn codec_params(&self) -> &CodecParameters {
