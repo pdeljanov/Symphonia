@@ -8,6 +8,8 @@
 use symphonia_core::audio::{Channels, Layout, SignalSpec};
 use symphonia_core::errors::{Result, decode_error};
 
+use log::warn;
+
 use super::synthesis;
 
 /// The number of audio samples per granule.
@@ -355,7 +357,7 @@ impl BitResevoir {
         pkt_main_data: &[u8],
         main_data_begin: usize,
         main_data_size: usize
-    ) -> Result<()> {
+    ) -> Result<u32> {
 
         // The value `main_data_begin` indicates the number of bytes from the previous frames to
         // reuse. It must always be less than or equal to maximum amount of bytes the resevoir can
@@ -377,18 +379,22 @@ impl BitResevoir {
             self.buf[main_data_begin..main_data_end].copy_from_slice(pkt_main_data);
             self.len = main_data_end;
 
-            Ok(())
+            Ok(0)
         }
         else {
+            let underflow = (main_data_begin - self.len) as u32;
+
             // If the offset is greater than the amount of data in the resevoir, then the stream is
             // malformed. This can occur if the decoder is starting in the middle of a stream. This
             // is particularly common with online radio streams. In this case, copy the main data
-            // of the current packet into the resevoir, then return an error since decoding the
-            // current packet would produce a painful sound.
+            // of the current packet into the resevoir, then return the number of bytes that are
+            // missing.
             self.buf[self.len..self.len + main_data_size].copy_from_slice(pkt_main_data);
             self.len += main_data_size;
 
-            decode_error("mp3: invalid main_data_begin")
+            warn!("mp3: invalid main_data_begin, underflow by {} bytes", underflow);
+
+            Ok(underflow)
         }
     }
 

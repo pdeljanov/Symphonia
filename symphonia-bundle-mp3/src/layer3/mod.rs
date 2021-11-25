@@ -6,6 +6,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use std::fmt;
+
 use symphonia_core::audio::{AudioBuffer, Signal};
 use symphonia_core::errors::{Result, decode_error, Error};
 use symphonia_core::io::{ReadBitsLtr, BitReaderLtr, BufReader, ReadBytes};
@@ -165,20 +166,37 @@ impl fmt::Debug for GranuleChannel {
 /// Reads the main_data portion of a MPEG audio frame from a `BitStream` into `FrameData`.
 fn read_main_data(
     header: &FrameHeader,
+    underflow_bits: u32,
     frame_data: &mut FrameData,
     state: &mut State,
 ) -> Result<()> {
 
     let main_data = state.resevoir.bytes_ref();
     let mut part2_3_begin = 0;
+    let mut part2_3_skipped = 0;
 
     for gr in 0..header.n_granules() {
+        // If the resevoir underflowed (i.e., main_data_begin references bits not present in the
+        // resevoir) then skip the granule(s) the missing bits would belong to.
+        if part2_3_skipped < underflow_bits {
+            // Zero the samples in the granule channel(s) and sum the part2/3 bits that were
+            // skipped.
+            for ch in 0..header.n_channels() {
+                requantize::zero(&mut state.samples[gr][ch]);
+                part2_3_skipped += u32::from(frame_data.granules[gr].channels[ch].part2_3_length);
+            }
+
+            // Adjust the start position of the next granule in the buffer of main data that is
+            // available.
+            if part2_3_skipped > underflow_bits {
+                part2_3_begin = (part2_3_skipped - underflow_bits) as usize;
+            }
+
+            // Continue at the next granule.
+            continue;
+        }
+
         for ch in 0..header.n_channels() {
-            // This is an unfortunate workaround for something that should be fixed in BitStreamLtr.
-            // This code repositions the bitstream exactly at the intended start of the next part2_3
-            // data. This is to fix files that overread in the Huffman decoder.
-            //
-            // TODO: Implement a rewind on the BitStream to undo the last read.
             let byte_index = part2_3_begin >> 3;
             let bit_index = part2_3_begin & 0x7;
 
@@ -188,11 +206,10 @@ fn read_main_data(
                 bs.ignore_bits(bit_index as u32)?;
             }
 
-            // Read the scale factors (part2) and get the number of bits read. For MPEG version 1...
+            // Read the scale factors (part2) and get the number of bits read.
             let part2_len = if header.is_mpeg1() {
                 bitstream::read_scale_factors_mpeg1(&mut bs, gr, ch, frame_data)
             }
-            // For MPEG version 2...
             else {
                 bitstream::read_scale_factors_mpeg2(
                     &mut bs,
@@ -202,7 +219,7 @@ fn read_main_data(
 
             let part2_3_length = u32::from(frame_data.granules[gr].channels[ch].part2_3_length);
 
-            // The length part2 must be less than or equal to the part2_3_length.
+            // The part2 length must be less than or equal to the part2_3_length.
             if part2_len > part2_3_length {
                 return decode_error("mp3: part2_3_length is not valid");
             }
@@ -220,8 +237,8 @@ fn read_main_data(
             );
 
             // Huffman decoding errors are returned as an IO error by the bit reader. IO errors are
-            // unrecoverable, which is not the case for huffman decoding errors. Convert the IO error
-            // to a decode error.
+            // unrecoverable, which is not the case for huffman decoding errors. Convert the IO
+            // error to a decode error.
             frame_data.granules[gr].channels[ch].rzero = match huffman_result {
                 Ok(rzero) => rzero,
                 Err(Error::IoError(e)) if e.kind() == std::io::ErrorKind::Other => {
@@ -275,14 +292,14 @@ pub fn decode_frame(
     // Buffer main_data into the bit resevoir.
     let main_data_len = header.frame_size - side_info_len - if header.has_crc { 2 } else { 0 };
 
-    state.resevoir.fill(
+    let underflow = state.resevoir.fill(
         &buf[side_info_len..],
         frame_data.main_data_begin as usize,
         main_data_len
     )?;
 
     // Read main_data: scale factors and spectral samples.
-    if let Err(e) = read_main_data(header, &mut frame_data, state) {
+    if let Err(e) = read_main_data(header, 8 * underflow, &mut frame_data, state) {
         // The bit reservoir was likely filled with invalid data. Clear it for the next packet.
         state.resevoir.clear();
         return Err(e);

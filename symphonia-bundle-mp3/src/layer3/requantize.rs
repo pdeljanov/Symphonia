@@ -34,6 +34,14 @@ lazy_static! {
     };
 }
 
+/// Zero a sample buffer.
+#[inline(always)]
+pub(super) fn zero(buf: &mut [f32; 576]) {
+    for s in buf.iter_mut() {
+        *s = 0.0;
+    }
+}
+
 /// Reads the Huffman coded spectral samples for a given channel in a granule from a `BitStream`
 /// into a provided sample buffer. Returns the number of decoded samples (the starting index of the
 /// rzero partition).
@@ -50,9 +58,7 @@ pub(super) fn read_huffman_samples<B: ReadBitsLtr>(
 
     // If there are no Huffman code bits, zero all samples and return immediately.
     if part3_bits == 0 {
-        for sample in buf.iter_mut() {
-            *sample = 0.0;
-        }
+        zero(buf);
         return Ok(0);
     }
 
