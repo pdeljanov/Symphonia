@@ -40,6 +40,7 @@ struct TestOptions {
     is_quiet: bool,
     is_per_sample: bool,
     stop_after_fail: bool,
+    keep_going: bool,
 }
 
 #[derive(Default)]
@@ -131,6 +132,16 @@ fn get_next_audio_buf(inst: &mut DecoderInstance) -> Result<AudioBufferRef<'_>> 
     inst.decoder.decode(&pkt)
 }
 
+fn get_next_audio_buf_best_effort(inst: &mut DecoderInstance) -> Result<()> {
+    loop {
+        match get_next_audio_buf(inst) {
+            Ok(_) => break Ok(()),
+            Err(Error::DecodeError(err)) => warn!("{}", err),
+            Err(err) => break Err(err),
+        }
+    }
+}
+
 fn copy_audio_buf_to_sample_buf(src: AudioBufferRef<'_>, dst: &mut Option<SampleBuffer<f32>>) {
     if dst.is_none() {
         let spec = *src.spec();
@@ -167,10 +178,15 @@ fn run_check(
 
     loop {
         // Decode target's next audio buffer.
-        let tgt_audio = get_next_audio_buf(tgt_inst)?;
+        if opts.keep_going {
+            get_next_audio_buf_best_effort(tgt_inst)?;
+        }
+        else {
+            get_next_audio_buf(tgt_inst)?;
+        }
 
         // Copy to the target's audio buffer into the target sample buffer.
-        copy_audio_buf_to_sample_buf(tgt_audio, &mut tgt_sample_buf);
+        copy_audio_buf_to_sample_buf(tgt_inst.decoder.last_decoded(), &mut tgt_sample_buf);
 
         // Get a slice of the target sample buffer.
         let mut tgt_samples = tgt_sample_buf.as_mut().unwrap().samples();
@@ -185,10 +201,10 @@ fn run_check(
             // Need to read a new reference packet.
             if ref_sample_pos == ref_sample_cnt {
                 // Get next reference audio buffer.
-                let ref_audio = get_next_audio_buf(ref_inst)?;
+                get_next_audio_buf_best_effort(ref_inst)?;
 
                 // Copy to reference audio buffer to reference sample buffer.
-                copy_audio_buf_to_sample_buf(ref_audio, &mut ref_sample_buf);
+                copy_audio_buf_to_sample_buf(ref_inst.decoder.last_decoded(), &mut ref_sample_buf);
 
                 // Save number of reference samples in the sample buffer and reset the sample buffer
                 // position counter.
@@ -290,6 +306,9 @@ fn main() {
                             .long("quiet")
                             .short("q")
                             .help("Only print test results"))
+                        .arg(Arg::with_name("keep-going")
+                            .long("keep-going")
+                            .help("Continue after a decode error (may cause many failures)"))
                         .arg(Arg::with_name("INPUT")
                             .help("The input file path")
                             .required(true)
@@ -302,6 +321,7 @@ fn main() {
         is_per_sample: matches.is_present("samples"),
         is_quiet: matches.is_present("quiet"),
         stop_after_fail: matches.is_present("stop-after-fail"),
+        keep_going: matches.is_present("keep-going"),
         ..Default::default()
     };
 
