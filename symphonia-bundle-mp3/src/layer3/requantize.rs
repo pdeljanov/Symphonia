@@ -219,11 +219,17 @@ pub(super) fn read_huffman_samples<B: ReadBitsLtr>(
     }
     // Word on the street is that some encoders are poor at "stuffing" bits, resulting in part3_len
     // being ever so slightly too large. This causes the Huffman decode loop to decode the next few
-    // bits as a sample. However, these bits are random data and not a real sample, so erase it!
-    // The caller will be reponsible for re-aligning the bitstream reader. Candy Pop confirms this.
-    else if bits_read > part3_bits {
+    // bits as spectral samples. However, these bits are actually random data and are not real
+    // samples, therefore, undo them! The caller will be reponsible for re-aligning the bitstream
+    // reader. Candy Pop confirms this.
+    else if bits_read > part3_bits && i >= big_values_len {
         info!("count1 overrun, malformed bitstream");
         i -= 4;
+    }
+    else if bits_read > part3_bits {
+        // It seems that most other decoders don't undo overruns of the big values. We'll just print
+        // a message for now.
+        info!("big_values overrun, malformed bitstream");
     }
 
     // The final partition after the count1 partition is the rzero partition. Samples in this
