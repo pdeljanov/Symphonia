@@ -260,7 +260,7 @@ impl FormatReader for MkvReader {
 
             let header = self.iter
                 .read_child_header()?
-                .ok_or_else(|| Error::DecodeError("mkv: invalid header"))?;
+                .ok_or_else(|| Error::DecodeError("mkv: end of stream"))?;
 
             if let Some(state) = &self.current_cluster {
                 if self.iter.pos() >= state.end {
@@ -277,24 +277,33 @@ impl FormatReader for MkvReader {
                     });
                 }
                 ElementType::Timestamp => {
-                    assert!(self.current_cluster.is_some());
-                    if let Some(cluster) = &mut self.current_cluster {
-                        cluster.timestamp = Some(self.iter.read_u64()?);
+                    match self.current_cluster.as_mut() {
+                        Some(cluster) => {
+                            cluster.timestamp = Some(self.iter.read_u64()?);
+                        }
+                        None => {
+                            self.iter.ignore_data()?;
+                            return decode_error("mkv: timestamp element outside of a cluster");
+                        }
                     }
                 }
                 ElementType::SimpleBlock => {
-                    assert!(self.current_cluster.is_some());
+                    if self.current_cluster.is_none() {
+                        self.iter.ignore_data()?;
+                        return decode_error("mkv: simple block element outside of a cluster");
+                    }
+
                     let data = self.iter.read_boxed_slice()?;
                     extract_frames(&data, &mut self.frames)?;
                 }
                 ElementType::BlockGroup => {
-                    assert!(self.current_cluster.is_some());
+                    if self.current_cluster.is_none() {
+                        self.iter.ignore_data()?;
+                        return decode_error("mkv: block group element outside of a cluster");
+                    }
+
                     let group = self.iter.read_element_data::<BlockGroupElement>()?;
                     extract_frames(&group.data, &mut self.frames)?;
-                }
-                ElementType::Void => {
-                    assert!(self.current_cluster.is_some());
-                    log::warn!("void element");
                 }
                 _ => {
                     self.iter.ignore_data()?;
