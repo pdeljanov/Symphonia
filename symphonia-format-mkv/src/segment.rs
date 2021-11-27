@@ -1,9 +1,10 @@
 use symphonia_core::errors::{Error, Result};
-use symphonia_core::io::ReadBytes;
+use symphonia_core::io::{BufReader, ReadBytes};
 
-use crate::ebml::{Element, ElementData, ElementHeader};
+use crate::ebml::{Element, ElementData, ElementHeader, read_vint};
 use crate::element_ids::ElementType;
 
+/*
 #[derive(Debug)]
 pub(crate) struct SegmentElement {
     seek: Option<SeekHeadElement>,
@@ -69,6 +70,7 @@ impl Element for SegmentElement {
         })
     }
 }
+*/
 
 #[derive(Debug)]
 pub(crate) struct TrackElement {
@@ -177,7 +179,7 @@ impl Element for AudioElement {
 }
 
 #[derive(Debug)]
-struct SeekHeadElement {
+pub(crate) struct SeekHeadElement {
     seeks: Box<[SeekElement]>,
 }
 
@@ -205,7 +207,7 @@ impl Element for SeekHeadElement {
 
 
 #[derive(Debug)]
-struct SeekElement {
+pub(crate) struct SeekElement {
     id: u64,
     position: u64,
 }
@@ -240,8 +242,8 @@ impl Element for SeekElement {
 }
 
 #[derive(Debug)]
-struct TracksElement {
-    tracks: Box<[TrackElement]>,
+pub(crate) struct TracksElement {
+    pub(crate) tracks: Box<[TrackElement]>,
 }
 
 impl Element for TracksElement {
@@ -315,13 +317,13 @@ impl Element for EbmlHeaderElement {
             max_size_length: max_size_length.unwrap_or(8),
             doc_type: doc_type.ok_or_else(|| Error::Unsupported("mkv: invalid ebml file"))?,
             doc_type_version: doc_type_version.unwrap_or(1),
-            doc_type_read_version: doc_type_version.unwrap_or(1),
+            doc_type_read_version: doc_type_read_version.unwrap_or(1),
         })
     }
 }
 
 #[derive(Debug)]
-struct InfoElement {
+pub(crate) struct InfoElement {
     elements: Box<[(ElementHeader, Option<ElementData>)]>,
 }
 
@@ -461,3 +463,63 @@ impl Element for BlockGroupElement {
         })
     }
 }
+
+#[derive(Debug)]
+pub(crate) struct BlockElement {
+    pub(crate) track: u64,
+    pub(crate) timestamp: u64,
+    pub(crate) offset: u64,
+}
+
+#[derive(Debug)]
+pub(crate) struct ClusterElement {
+    pub(crate) timestamp: u64,
+    pub(crate) end: u64,
+    pub(crate) blocks: Box<[BlockElement]>,
+}
+
+impl Element for ClusterElement {
+    const ID: ElementType = ElementType::Cluster;
+
+    fn read<B: ReadBytes>(reader: &mut B, header: ElementHeader) -> Result<Self> {
+        let mut timestamp = None;
+        let mut blocks = Vec::new();
+
+        let mut make_block = |data: &[u8], timestamp: Option<u64>| -> Result<()> {
+            let mut reader = BufReader::new(data);
+            let track = read_vint::<_, true>(&mut reader)?;
+            let ts = reader.read_be_u16()? as i16;
+            blocks.push(BlockElement {
+                track,
+                timestamp: (timestamp.unwrap() as i64 + ts as i64) as u64,
+                offset: header.pos,
+            });
+            Ok(())
+        };
+
+        let mut it = header.children(reader);
+        while let Some(header) = it.read_header()? {
+            match header.etype {
+                ElementType::Timestamp => {
+                    timestamp = Some(it.read_u64()?);
+                }
+                ElementType::BlockGroup => {
+                    let group = it.read_element_data::<BlockGroupElement>()?;
+                    make_block(&group.data, timestamp)?;
+                }
+                ElementType::SimpleBlock => {
+                    let data = it.read_boxed_slice()?;
+                    make_block(&data, timestamp)?;
+                }
+                _ => (),
+            }
+        }
+
+        Ok(ClusterElement {
+            timestamp: timestamp.unwrap(),
+            blocks: blocks.into_boxed_slice(),
+            end: header.pos + header.len,
+        })
+    }
+}
+

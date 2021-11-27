@@ -3,9 +3,9 @@ use std::io::{Seek, SeekFrom};
 
 use symphonia_core::audio::Layout;
 use symphonia_core::codecs::{CODEC_TYPE_FLAC, CODEC_TYPE_VORBIS, CodecParameters};
-use symphonia_core::errors::{Error, Result, unsupported_error};
+use symphonia_core::errors::{decode_error, Error, Result, seek_error, SeekErrorKind, unsupported_error};
 use symphonia_core::formats::{Cue, FormatOptions, FormatReader, Packet, SeekedTo, SeekMode, SeekTo, Track};
-use symphonia_core::io::{BufReader, MediaSourceStream, ReadBytes};
+use symphonia_core::io::{BufReader, MediaSource, MediaSourceStream, ReadBytes};
 use symphonia_core::meta::{Metadata, MetadataLog};
 use symphonia_core::probe::{Descriptor, QueryDescriptor};
 use symphonia_core::probe::Instantiate;
@@ -15,10 +15,11 @@ use symphonia_core::units::TimeBase;
 use symphonia_utils_xiph::flac::metadata::{MetadataBlockHeader, MetadataBlockType};
 
 use crate::codecs::codec_id_to_type;
-use crate::ebml::{EbmlElement, Element, ElementIterator};
+use crate::ebml::{EbmlElement, ElementHeader, ElementIterator};
 use crate::element_ids::ElementType;
 use crate::lacing::{extract_frames, Frame, read_xiph_sizes};
-use crate::segment::{BlockGroupElement, SegmentElement};
+use crate::segment::{BlockGroupElement, ClusterElement, CuesElement, InfoElement, SeekHeadElement,
+                     TracksElement};
 
 pub struct TrackState {
     /// Codec parameters.
@@ -37,13 +38,14 @@ pub struct MkvReader {
     cues: Vec<Cue>,
     frames: VecDeque<Frame>,
     timestamp_scale: u64,
+    clusters: Vec<ClusterElement>,
 }
 
+#[derive(Debug)]
 struct ClusterState {
     timestamp: Option<u64>,
     end: u64,
 }
-
 
 fn convert_vorbis_data(extra: &[u8]) -> Result<Box<[u8]>> {
     const VORBIS_PACKET_TYPE_IDENTIFICATION: u8 = 1;
@@ -80,7 +82,7 @@ fn convert_vorbis_data(extra: &[u8]) -> Result<Box<[u8]>> {
             VORBIS_PACKET_TYPE_SETUP => {
                 setup_header = Some(packet);
             }
-            other => {
+            _ => {
                 log::debug!("unsupported vorbis packet type");
             }
         }
@@ -113,13 +115,70 @@ fn get_stream_info_from_codec_private(codec_private: &[u8]) -> Result<Box<[u8]>>
     }
 }
 
+impl MkvReader {
+    fn seek_track_by_ts(&mut self, track_id: u32, ts: u64) -> Result<SeekedTo> {
+        // TODO
+
+        let mut target_cluster = None;
+        for cluster in &self.clusters {
+            if cluster.timestamp > ts {
+                break;
+            }
+            target_cluster = Some(cluster);
+        }
+        let cluster = target_cluster
+            .ok_or_else(|| Error::SeekError(SeekErrorKind::OutOfRange))?;
+
+        let mut target_block = None;
+        for block in cluster.blocks.iter() {
+            if block.track as u32 != track_id {
+                continue;
+            }
+
+            if block.timestamp >= ts {
+                target_block = Some(block);
+                break;
+            }
+        }
+
+        let block = target_block
+            .ok_or_else(|| Error::SeekError(SeekErrorKind::OutOfRange))?;
+
+        self.iter.seek(block.offset)?;
+
+        // Restore cluster's metadata
+        self.current_cluster = Some(ClusterState {
+            timestamp: Some(cluster.timestamp),
+            end: cluster.end,
+        });
+
+        Ok(SeekedTo {
+            track_id,
+            required_ts: ts,
+            actual_ts: block.timestamp,
+        })
+    }
+}
 
 impl FormatReader for MkvReader {
-    fn try_new(mut reader: MediaSourceStream, options: &FormatOptions) -> Result<Self>
+    fn try_new(mut reader: MediaSourceStream, _options: &FormatOptions) -> Result<Self>
         where
             Self: Sized
     {
-        let mut it = ElementIterator::new(reader);
+        let is_seekable = reader.is_seekable();
+
+        // Get the total length of the stream, if possible.
+        let total_len = if is_seekable {
+            let pos = reader.pos();
+            let len = reader.seek(SeekFrom::End(0))?;
+            reader.seek(SeekFrom::Start(pos))?;
+            log::info!("stream is seekable with len={} bytes.", len);
+            Some(len)
+        } else {
+            None
+        };
+
+        let mut it = ElementIterator::new(reader, total_len);
         let ebml = it.read_element::<EbmlElement>()?;
         log::warn!("ebml header: {:#?}", ebml.header);
 
@@ -127,36 +186,69 @@ impl FormatReader for MkvReader {
             return unsupported_error("mkv: not a matroska / webm file");
         }
 
-        let segment = loop {
-            if let Some(header) = it.read_header()? {
-                match header.etype {
-                    ElementType::Segment => break it.read_element_data::<SegmentElement>()?,
-                    ElementType::Crc32 => {
-                        // TODO: ignore crc for now
-                        continue;
-                    }
-                    _ => todo!(),
-                }
-            } else {
-                todo!();
-            }
+        let segment_pos = match it.read_child_header()? {
+            Some(ElementHeader { etype: ElementType::Segment, data_pos, .. }) => data_pos,
+            _ => return unsupported_error("mkv: missing segment element")
         };
 
-        reader = it.into_inner();
-        reader.seek(SeekFrom::Start(segment.first_cluster_pos))?;
-        let it = ElementIterator::new_at(reader, segment.first_cluster_pos);
+        let mut seek_head = None;
+        let mut segment_tracks = None;
+        let mut info = None;
+        let mut cues = None;
+        let mut duration = None;
+        let mut timestamp_scale = None;
+        let mut clusters = Vec::new();
 
-        let time_base = TimeBase::new(1000, segment.timestamp_scale as u32);
+        while let Some(header) = it.read_header()? {
+            match header.etype {
+                ElementType::SeekHead => {
+                    seek_head = Some(it.read_element_data::<SeekHeadElement>()?);
+                }
+                ElementType::Tracks => {
+                    segment_tracks = Some(it.read_element_data::<TracksElement>()?);
+                }
+                ElementType::Info => {
+                    info = Some(it.read_element_data::<InfoElement>()?);
+                }
+                ElementType::Cues => {
+                    cues = Some(it.read_element_data::<CuesElement>()?);
+                }
+                ElementType::TimestampScale => {
+                    timestamp_scale = Some(it.read_u64()?);
+                }
+                ElementType::Duration => {
+                    duration = Some(it.read_u64()?);
+                }
+                ElementType::Cluster => {
+                    if !is_seekable {
+                        break;
+                    }
+                    clusters.push(it.read_element_data::<ClusterElement>()?);
+                }
+                other => {
+                    log::warn!("ignored element {:?}", other);
+                }
+            }
+        }
+
+        if is_seekable {
+            let mut reader = it.into_inner();
+            reader.seek(SeekFrom::Start(segment_pos))?;
+            it = ElementIterator::new(reader, total_len);
+        }
+
+        let timestamp_scale = timestamp_scale.unwrap_or(1_000_000);
+        let time_base = TimeBase::new(1000, timestamp_scale as u32);
 
         let mut tracks = Vec::new();
         let mut states = Vec::new();
-        for track in segment.tracks.into_vec() {
+        for track in segment_tracks.unwrap().tracks.into_vec() {
             let codec_type = codec_id_to_type(&track);
 
             let mut codec_params = CodecParameters::new();
             codec_params.with_time_base(time_base);
 
-            if let Some(duration) = segment.duration {
+            if let Some(duration) = duration {
                 codec_params.with_n_frames(duration);
             }
 
@@ -227,7 +319,8 @@ impl FormatReader for MkvReader {
             metadata: MetadataLog::default(),
             cues: Vec::new(),
             frames: VecDeque::new(),
-            timestamp_scale: segment.timestamp_scale,
+            timestamp_scale,
+            clusters,
         })
     }
 
@@ -239,8 +332,30 @@ impl FormatReader for MkvReader {
         self.metadata.metadata()
     }
 
-    fn seek(&mut self, mode: SeekMode, to: SeekTo) -> Result<SeekedTo> {
-        todo!()
+    fn seek(&mut self, _mode: SeekMode, to: SeekTo) -> Result<SeekedTo> {
+        if self.tracks.is_empty() {
+            return seek_error(SeekErrorKind::Unseekable);
+        }
+
+        match to {
+            SeekTo::Time { time, track_id } => {
+                let track = match track_id {
+                    Some(id) => self.tracks.iter().find(|track| track.id == id),
+                    None => self.tracks.first(),
+                };
+                let track = track.ok_or_else(|| Error::SeekError(SeekErrorKind::InvalidTrack))?;
+                let tb = track.codec_params.time_base.unwrap();
+                let ts = tb.calc_timestamp(time);
+                let track_id = track.id;
+                self.seek_track_by_ts(track_id, ts)
+            }
+            SeekTo::TimeStamp { ts, track_id } => {
+                match self.tracks.iter().find(|t| t.id == track_id) {
+                    Some(_) => self.seek_track_by_ts(track_id, ts),
+                    None => seek_error(SeekErrorKind::InvalidTrack),
+                }
+            }
+        }
     }
 
     fn tracks(&self) -> &[Track] {

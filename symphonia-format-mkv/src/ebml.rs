@@ -1,9 +1,11 @@
+use std::io::{Seek, SeekFrom};
+
 use symphonia_core::errors::{Error, Result};
 use symphonia_core::io::ReadBytes;
 use symphonia_core::util::bits::sign_extend_leq64_to_i64;
 
-use crate::segment::EbmlHeaderElement;
 use crate::element_ids::{ELEMENTS, ElementType, Type};
+use crate::segment::EbmlHeaderElement;
 
 /// Parses a variable size integer according to RFC8794 (4)
 pub(crate) fn read_vint<R: ReadBytes, const CLEAR_MARKER: bool>(mut reader: R) -> Result<u64> {
@@ -45,7 +47,8 @@ pub(crate) fn read_vint_signed<R: ReadBytes>(mut reader: R) -> Result<i64> {
 #[cfg(test)]
 mod tests {
     use symphonia_core::io::BufReader;
-    use super::{read_vint_signed, read_vint};
+
+    use super::{read_vint, read_vint_signed};
 
     #[test]
     fn variable_integer_parsing() {
@@ -84,7 +87,7 @@ pub struct ElementHeader {
 }
 
 impl ElementHeader {
-    pub(crate) fn children<R: ReadBytes>(&self, mut reader: R) -> ElementIterator<R> {
+    pub(crate) fn children<R: ReadBytes>(&self, reader: R) -> ElementIterator<R> {
         assert_eq!(reader.pos(), self.data_pos, "unexpected position");
         ElementIterator::new_of(reader, *self)
     }
@@ -137,27 +140,34 @@ pub(crate) struct ElementIterator<R: ReadBytes> {
 }
 
 impl<R: ReadBytes> ElementIterator<R> {
-    pub(crate) fn new(reader: R) -> Self {
+    pub(crate) fn new(reader: R, end: Option<u64>) -> Self {
         let pos = reader.pos();
-        Self::new_at(reader, pos)
+        Self::new_at(reader, pos, end)
     }
 
-    pub(crate) fn new_at(reader: R, offset: u64) -> Self {
+    pub(crate) fn new_at(reader: R, offset: u64, end: Option<u64>) -> Self {
         Self {
             reader,
             current: None,
             next_pos: offset,
-            end: None,
+            end,
         }
     }
 
     pub(crate) fn new_of(reader: R, parent: ElementHeader) -> Self {
         Self {
-            next_pos: parent.data_pos,
             reader,
             current: Some(parent),
+            next_pos: parent.data_pos,
             end: Some(parent.data_pos + parent.data_len),
         }
+    }
+
+    pub(crate) fn seek(&mut self, pos: u64) -> Result<()> where R: Seek {
+        self.current = None;
+        self.reader.seek(SeekFrom::Start(pos))?;
+        self.next_pos = pos;
+        Ok(())
     }
 
     pub(crate) fn into_inner(self) -> R {
@@ -345,7 +355,7 @@ impl<R: ReadBytes> ElementIterator<R> {
 
     pub(crate) fn ignore_data(&mut self) -> Result<()> {
         if let Some(header) = self.current {
-            log::warn!("ignoring data of {:?} element", header.etype);
+            log::debug!("ignoring data of {:?} element", header.etype);
             self.reader.ignore_bytes(header.data_len)?;
             self.next_pos = header.data_pos + header.data_len;
         }
@@ -362,8 +372,6 @@ impl<R: ReadBytes> ElementIterator<R> {
 pub(crate) enum ElementData {
     /// A binary buffer.
     Binary(Box<[u8]>),
-    /// A boolean value.
-    Boolean(bool),
     /// A floating point number.
     Float(f64),
     /// A signed integer.
