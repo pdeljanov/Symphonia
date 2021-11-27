@@ -396,26 +396,14 @@ impl PacketParser {
                     //
                     // 1) A frame may never exceed 16MB per the specification.
                     //
-                    // 2) If there is a second-best fragment, then discard all predecessors to it
-                    //    and try again. A second-best fragment met all the same criteria as the
-                    //    best-pick fragment except that it is sequentially after the best-pick
-                    //    fragment. In other words, we have as much confidence in the second-best
-                    //    fragment being the start of a frame as we do the best-pick fragment. Thus,
-                    //    if a second-best fragment exists, it must be the exclusive upper bound of
-                    //    the frame that starting with the best-pick fragment. Therefore, if the
-                    //    best-pick fragment failed to form a complete and valid frame when it
-                    //    reaches the second-best pick fragment, the frame itself must be corrupt
-                    //    and can be discarded.
+                    // 2a) If the stream information block defines a maximum frame size, use that
+                    //     limit to bound the frame.
                     //
-                    // 3a) If there is no second-best fragment to bound the frame starting from the
-                    //     best-pick fragment, then if the stream information block defines a
-                    //     maximum frame size, use that limit to bound the frame.
-                    //
-                    // 3b) If the stream information block does not define a maximum frame size, and
+                    // 2b) If the stream information block does not define a maximum frame size, and
                     //     if average frame length moving-average filter is filled, then use 2x the
                     //     average frame size as the limit.
                     //
-                    // 3c) If the average frame length moving-average filter has not been filled,
+                    // 2c) If the average frame length moving-average filter has not been filled,
                     //     then use 4 fragments as the limit.
                     //
                     // If none of these heuristics are met, then it is reasonable to continue to
@@ -438,15 +426,7 @@ impl PacketParser {
                             warn!("rebuild failure; frame exceeds 16MB");
                             limit_hit = true;
                         }
-                        // Heuristic 2.
-                        else if best & (2 << count) != 0 {
-                            warn!(
-                                "rebuild failure; \
-                                frame exceeds lower-bound of next-best fragment"
-                            );
-                            limit_hit = true;
-                        }
-                        // Heuristic 3a.
+                        // Heuristic 2a.
                         else if self.stream_info.frame_byte_len_max > 0 {
                             if (frame_len as u32) > self.stream_info.frame_byte_len_max {
                                 warn!(
@@ -458,7 +438,7 @@ impl PacketParser {
                                 limit_hit = true;
                             }
                         }
-                        // Heuristic 3b.
+                        // Heuristic 2b.
                         else if self.n_frames >= 4 {
                             let avg_frame_size = (self.frame_size_hist[0]
                                                     + self.frame_size_hist[1]
@@ -473,7 +453,7 @@ impl PacketParser {
                                 limit_hit = true;
                             }
                         }
-                        // Heuristic 3c.
+                        // Heuristic 2c.
                         else if count >= 4 {
                             warn!("rebuild failure; frame exceeds fragment limit");
                             limit_hit = true;
