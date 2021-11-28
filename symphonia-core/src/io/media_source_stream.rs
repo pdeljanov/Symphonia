@@ -10,6 +10,7 @@ use std::io;
 use std::io::{Seek, Read, IoSliceMut};
 use std::ops::Sub;
 
+use super::SeekBuffered;
 use super::{ReadBytes, MediaSource};
 
 const END_OF_STREAM_ERROR_STR: &str = "end of stream";
@@ -86,112 +87,6 @@ impl MediaSourceStream {
             abs_pos: 0,
             rel_pos: 0,
         }
-    }
-
-    /// Ensures that `len` bytes will be available for backwards seeking if `len` bytes have been
-    /// previously read.
-    pub fn ensure_seekback_buffer(&mut self, len: usize) {
-        let ring_len = self.ring.len();
-
-        // A fetch can overwrite a maximum of MAX_BLOCK_LEN bytes in the ring. Therefore, for there
-        // to always be `len` bytes available for seekback, the ring must be len + MAX_BLOCK_LEN in
-        // length. Round-up to the next power-of-2 as that is an invariant of the ring.
-        let new_ring_len = (Self::MAX_BLOCK_LEN + len).next_power_of_two();
-
-        // Only grow the ring if necessary.
-        if ring_len < new_ring_len {
-            // Allocate a new ring.
-            let mut new_ring = vec![0; new_ring_len].into_boxed_slice();
-
-            // Get the readable regions of the current ring.
-            let (vec0, vec1) = if self.write_pos >= self.read_pos {
-                (&self.ring[self.read_pos..self.write_pos], None)
-            }
-            else {
-                (&self.ring[self.read_pos..], Some(&self.ring[..self.write_pos]))
-            };
-
-            // Copy contents from the old ring into new ring.
-            let vec0_len = vec0.len();
-            new_ring[..vec0_len].copy_from_slice(vec0);
-
-            self.write_pos = if let Some(vec1) = vec1 {
-                let total_len = vec0_len + vec1.len();
-                new_ring[vec0_len..total_len].copy_from_slice(vec1);
-                total_len
-            }
-            else {
-                vec0_len
-            };
-
-            self.ring = new_ring;
-            self.ring_mask = new_ring_len - 1;
-            self.read_pos = 0;
-        }
-    }
-
-    /// Get the number of bytes buffered but not yet read.
-    ///
-    /// Note: this is the maximum number of bytes that can be seeked forwards within the buffer.
-    pub fn unread_buffer_len(&self) -> usize {
-        if self.write_pos >= self.read_pos {
-            self.write_pos - self.read_pos
-        }
-        else {
-            self.write_pos + (self.ring.len() - self.read_pos)
-        }
-    }
-
-    /// Gets the number of bytes buffered and read.
-    ///
-    /// Note: this is the maximum number of bytes that can be seeked backwards within the buffer.
-    pub fn read_buffer_len(&self) -> usize {
-        let unread_len = self.unread_buffer_len();
-
-        cmp::min(self.ring.len(), self.rel_pos as usize) - unread_len
-    }
-
-    /// Seek backwards with in the buffered data. This is deprecated, use `seek_buffered_rel()`
-    /// instead.
-    pub fn rewind(&mut self, len: usize) {
-        assert!(len < std::isize::MAX as usize);
-        self.seek_buffered_rel(-(len as isize));
-    }
-
-    /// Seek within the buffered data to an absolute position in the stream.
-    pub fn seek_buffered(&mut self, pos: u64) -> u64 {
-        let old_pos = self.pos();
-
-        // Forward seek.
-        let delta = if pos > old_pos {
-            assert!(pos - old_pos < std::isize::MAX as u64);
-            (pos - old_pos) as isize
-        }
-        else if pos < old_pos {
-            // Backward seek.
-            assert!(old_pos - pos < std::isize::MAX as u64);
-            -((old_pos - pos) as isize)
-        }
-        else {
-            0
-        };
-
-        self.seek_buffered_rel(delta)
-    }
-
-    /// Seek within the buffered data relative to the current position. The seekable length is
-    /// defined by the inclusive range `[ -read_buffer_len(), unread_buffer_len() ]`.
-    pub fn seek_buffered_rel(&mut self, delta: isize) -> u64 {
-        if delta < 0 {
-            let abs_delta = cmp::min((-delta) as usize, self.read_buffer_len());
-            self.read_pos = (self.read_pos + self.ring.len() - abs_delta) & self.ring_mask;
-        }
-        else if delta > 0 {
-            let abs_delta = cmp::min(delta as usize, self.unread_buffer_len());
-            self.read_pos = (self.read_pos + abs_delta) & self.ring_mask;
-        }
-
-        self.pos()
     }
 
     /// Returns if the buffer has been exhausted This is a marginally more efficient way of checking
@@ -352,7 +247,6 @@ impl io::Seek for MediaSourceStream {
 }
 
 impl ReadBytes for MediaSourceStream {
-
     #[inline(always)]
     fn read_byte(&mut self) -> io::Result<u8> {
         // This function, read_byte, is inlined for performance. To reduce code bloat, place the
@@ -368,7 +262,6 @@ impl ReadBytes for MediaSourceStream {
         Ok(value)
     }
 
-    // Reads two bytes from the stream and returns them in read-order or an error.
     fn read_double_bytes(&mut self) -> io::Result<[u8; 2]> {
         let mut bytes = [0; 2];
 
@@ -387,7 +280,6 @@ impl ReadBytes for MediaSourceStream {
         Ok(bytes)
     }
 
-    // Reads three bytes from the stream and returns them in read-order or an error.
     fn read_triple_bytes(&mut self) -> io::Result<[u8; 3]> {
         let mut bytes = [0; 3];
 
@@ -405,7 +297,6 @@ impl ReadBytes for MediaSourceStream {
         Ok(bytes)
     }
 
-    // Reads four bytes from the stream and returns them in read-order or an error.
     fn read_quad_bytes(&mut self) -> io::Result<[u8; 4]> {
         let mut bytes = [0; 4];
 
@@ -496,10 +387,100 @@ impl ReadBytes for MediaSourceStream {
     }
 }
 
+impl SeekBuffered for MediaSourceStream {
+    fn ensure_seekback_buffer(&mut self, len: usize) {
+        let ring_len = self.ring.len();
+
+        // A fetch can overwrite a maximum of MAX_BLOCK_LEN bytes in the ring. Therefore, for there
+        // to always be `len` bytes available for seekback, the ring must be len + MAX_BLOCK_LEN in
+        // length. Round-up to the next power-of-2 as that is an invariant of the ring.
+        let new_ring_len = (Self::MAX_BLOCK_LEN + len).next_power_of_two();
+
+        // Only grow the ring if necessary.
+        if ring_len < new_ring_len {
+            // Allocate a new ring.
+            let mut new_ring = vec![0; new_ring_len].into_boxed_slice();
+
+            // Get the readable regions of the current ring.
+            let (vec0, vec1) = if self.write_pos >= self.read_pos {
+                (&self.ring[self.read_pos..self.write_pos], None)
+            }
+            else {
+                (&self.ring[self.read_pos..], Some(&self.ring[..self.write_pos]))
+            };
+
+            // Copy contents from the old ring into new ring.
+            let vec0_len = vec0.len();
+            new_ring[..vec0_len].copy_from_slice(vec0);
+
+            self.write_pos = if let Some(vec1) = vec1 {
+                let total_len = vec0_len + vec1.len();
+                new_ring[vec0_len..total_len].copy_from_slice(vec1);
+                total_len
+            }
+            else {
+                vec0_len
+            };
+
+            self.ring = new_ring;
+            self.ring_mask = new_ring_len - 1;
+            self.read_pos = 0;
+        }
+    }
+
+    fn unread_buffer_len(&self) -> usize {
+        if self.write_pos >= self.read_pos {
+            self.write_pos - self.read_pos
+        }
+        else {
+            self.write_pos + (self.ring.len() - self.read_pos)
+        }
+    }
+
+    fn read_buffer_len(&self) -> usize {
+        let unread_len = self.unread_buffer_len();
+
+        cmp::min(self.ring.len(), self.rel_pos as usize) - unread_len
+    }
+
+    fn seek_buffered(&mut self, pos: u64) -> u64 {
+        let old_pos = self.pos();
+
+        // Forward seek.
+        let delta = if pos > old_pos {
+            assert!(pos - old_pos < std::isize::MAX as u64);
+            (pos - old_pos) as isize
+        }
+        else if pos < old_pos {
+            // Backward seek.
+            assert!(old_pos - pos < std::isize::MAX as u64);
+            -((old_pos - pos) as isize)
+        }
+        else {
+            0
+        };
+
+        self.seek_buffered_rel(delta)
+    }
+
+    fn seek_buffered_rel(&mut self, delta: isize) -> u64 {
+        if delta < 0 {
+            let abs_delta = cmp::min((-delta) as usize, self.read_buffer_len());
+            self.read_pos = (self.read_pos + self.ring.len() - abs_delta) & self.ring_mask;
+        }
+        else if delta > 0 {
+            let abs_delta = cmp::min(delta as usize, self.unread_buffer_len());
+            self.read_pos = (self.read_pos + abs_delta) & self.ring_mask;
+        }
+
+        self.pos()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::io::{Read, Cursor};
-    use super::{MediaSourceStream, ReadBytes};
+    use super::{MediaSourceStream, ReadBytes, SeekBuffered};
 
     /// Generate a random vector of bytes of the specified length using a PRNG.
     fn generate_random_bytes(len: usize) -> Box<[u8]> {

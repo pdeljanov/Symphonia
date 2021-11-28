@@ -11,7 +11,7 @@ use std::io::{Seek, SeekFrom};
 use symphonia_core::errors::{Error, Result, SeekErrorKind};
 use symphonia_core::errors::{reset_error, seek_error, unsupported_error};
 use symphonia_core::formats::prelude::*;
-use symphonia_core::io::{MediaSource, MediaSourceStream, ReadBytes};
+use symphonia_core::io::{MediaSource, MediaSourceStream, ReadBytes, SeekBuffered};
 use symphonia_core::meta::{Metadata, MetadataLog};
 use symphonia_core::probe::{Descriptor, Instantiate, QueryDescriptor};
 use symphonia_core::support_format;
@@ -360,6 +360,9 @@ impl QueryDescriptor for OggReader {
 impl FormatReader for OggReader {
 
     fn try_new(mut source: MediaSourceStream, _options: &FormatOptions) -> Result<Self> {
+        // A seekback buffer equal to the maximum OGG page size is required for this reader.
+        source.ensure_seekback_buffer(OGG_PAGE_MAX_SIZE);
+
         let pages = PageReader::try_new(&mut source)?;
 
         if !pages.header().is_first_page {

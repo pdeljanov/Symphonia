@@ -8,13 +8,14 @@
 use std::cmp;
 use std::io;
 
-use super::{ReadBytes, FiniteStream};
+use super::{FiniteStream, ReadBytes, SeekBuffered};
 
 const OUT_OF_BOUNDS_ERROR_STR: &str = "out of bounds";
 
 /// A `ScopedStream` restricts the number of bytes that may be read to an upper limit.
 pub struct ScopedStream<B: ReadBytes> {
     inner: B,
+    start: u64,
     len: u64,
     read: u64,
 }
@@ -24,6 +25,7 @@ impl<B: ReadBytes> ScopedStream<B> {
     /// read from the inner source.
     pub fn new(inner: B, len: u64) -> Self {
         ScopedStream {
+            start: inner.pos(),
             inner,
             len,
             read: 0,
@@ -69,7 +71,6 @@ impl<B: ReadBytes> FiniteStream for ScopedStream<B> {
 }
 
 impl<B: ReadBytes,> ReadBytes for ScopedStream<B> {
-
     #[inline(always)]
     fn read_byte(&mut self) -> io::Result<u8> {
         if self.len - self.read < 1 {
@@ -143,6 +144,7 @@ impl<B: ReadBytes,> ReadBytes for ScopedStream<B> {
         Ok(result)
     }
 
+    #[inline(always)]
     fn ignore_bytes(&mut self, count: u64) -> io::Result<()> {
         if self.len - self.read < count {
             return Err(io::Error::new(io::ErrorKind::Other, OUT_OF_BOUNDS_ERROR_STR));
@@ -155,5 +157,37 @@ impl<B: ReadBytes,> ReadBytes for ScopedStream<B> {
     #[inline(always)]
     fn pos(&self) -> u64 {
         self.inner.pos()
+    }
+}
+
+impl<B: ReadBytes + SeekBuffered> SeekBuffered for ScopedStream<B> {
+    #[inline(always)]
+    fn ensure_seekback_buffer(&mut self, len: usize) {
+        self.inner.ensure_seekback_buffer(len)
+    }
+
+    #[inline(always)]
+    fn unread_buffer_len(&self) -> usize {
+        self.inner.unread_buffer_len().min((self.len - self.read) as usize)
+    }
+
+    #[inline(always)]
+    fn read_buffer_len(&self) -> usize {
+        self.inner.read_buffer_len().min(self.read as usize)
+    }
+
+    #[inline(always)]
+    fn seek_buffered(&mut self, pos: u64) -> u64 {
+        // Clamp the seekable position to within the bounds of the ScopedStream.
+        self.inner.seek_buffered(pos.clamp(self.start, self.start + self.len))
+    }
+
+    #[inline(always)]
+    fn seek_buffered_rel(&mut self, delta: isize) -> u64 {
+        // Clamp the delta value such that the absolute position after the buffered seek will be
+        // within the bounds of the ScopedStream.
+        let max_back = self.read.min(std::isize::MAX as u64) as isize;
+        let max_forward = (self.len - self.read).min(std::isize::MAX as u64) as isize;
+        self.inner.seek_buffered_rel(delta.clamp(-max_back, max_forward))
     }
 }

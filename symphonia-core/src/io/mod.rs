@@ -140,7 +140,7 @@ impl<R: io::Read> io::Seek for ReadOnlySource<R> {
     }
 }
 
-/// `ReadBytes` provides functions to read bytes and interpret them as little- or big-endian
+/// `ReadBytes` provides methods to read bytes and interpret them as little- or big-endian
 /// unsigned integers or floating-point values of standard widths.
 pub trait ReadBytes {
     /// Reads a single byte from the stream and returns it or an error.
@@ -351,6 +351,65 @@ impl<'b, R: ReadBytes> ReadBytes for &'b mut R {
     #[inline(always)]
     fn pos(&self) -> u64 {
         (**self).pos()
+    }
+}
+
+impl<'b, S: SeekBuffered> SeekBuffered for &'b mut S {
+    fn ensure_seekback_buffer(&mut self, len: usize) {
+        (*self).ensure_seekback_buffer(len)
+    }
+
+    fn unread_buffer_len(&self) -> usize {
+        (**self).unread_buffer_len()
+    }
+
+    fn read_buffer_len(&self) -> usize {
+        (**self).read_buffer_len()
+    }
+
+    fn seek_buffered(&mut self, pos: u64) -> u64 {
+        (*self).seek_buffered(pos)
+    }
+
+    fn seek_buffered_rel(&mut self, delta: isize) -> u64 {
+        (*self).seek_buffered_rel(delta)
+    }
+}
+
+/// `SeekBuffered` provides methods to seek within the buffered portion of a stream.
+pub trait SeekBuffered {
+    /// Ensures that `len` bytes will be available for backwards seeking if `len` bytes have been
+    /// previously read.
+    fn ensure_seekback_buffer(&mut self, len: usize);
+
+    /// Get the number of bytes buffered but not yet read.
+    ///
+    /// Note: This is the maximum number of bytes that can be seeked forwards within the buffer.
+    fn unread_buffer_len(&self) -> usize;
+
+    /// Gets the number of bytes buffered and read.
+    ///
+    /// Note: This is the maximum number of bytes that can be seeked backwards within the buffer.
+    fn read_buffer_len(&self) -> usize;
+
+    /// Seek within the buffered data to an absolute position in the stream. Returns the position
+    /// seeked to.
+    fn seek_buffered(&mut self, pos: u64) -> u64;
+
+    /// Seek within the buffered data relative to the current position in the stream. Returns the
+    /// position seeked to.
+    ///
+    /// The range of `delta` is clamped to the inclusive range defined by
+    /// `-read_buffer_len()..=unread_buffer_len()`.
+    fn seek_buffered_rel(&mut self, delta: isize) -> u64;
+
+    /// Seek backwards within the buffered data.
+    ///
+    /// This function is identical to [`SeekBuffered::seek_buffered_rel`] when a negative delta is
+    /// provided.
+    fn seek_buffered_rev(&mut self, delta: usize) {
+        assert!(delta < std::isize::MAX as usize);
+        self.seek_buffered_rel(-(delta as isize));
     }
 }
 

@@ -281,7 +281,7 @@ impl FormatReader for FlacReader {
                     && ts < (packet.packet_ts + u64::from(packet.n_frames))
                 {
                     // Rewind the stream back to the beginning of the frame.
-                    self.reader.rewind(packet.parsed_len);
+                    self.reader.seek_buffered_rev(packet.parsed_len);
 
                     debug!("seeked to packet_ts={} (delta={})",
                         packet.packet_ts, packet.packet_ts as i64 - ts as i64);
@@ -308,7 +308,7 @@ impl FormatReader for FlacReader {
             // The desired timestamp preceeds the current packet's timestamp.
             if ts < packet.packet_ts {
                 // Rewind the stream back to the beginning of the frame.
-                self.reader.rewind(packet.parsed_len);
+                self.reader.seek_buffered_rev(packet.parsed_len);
 
                 // Attempted to seek backwards on an unseekable stream.
                 if !self.reader.is_seekable() {
@@ -328,7 +328,7 @@ impl FormatReader for FlacReader {
                 && ts < (packet.packet_ts + u64::from(packet.n_frames))
             {
                 // Rewind the stream back to the beginning of the frame.
-                self.reader.rewind(packet.parsed_len);
+                self.reader.seek_buffered_rev(packet.parsed_len);
 
                 debug!("seeked to packet_ts={} (delta={})",
                     packet.packet_ts, packet.packet_ts as i64 - ts as i64);

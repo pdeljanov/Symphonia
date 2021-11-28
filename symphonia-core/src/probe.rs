@@ -10,7 +10,7 @@
 
 use crate::errors::{Result, unsupported_error};
 use crate::formats::{FormatOptions, FormatReader};
-use crate::io::{ReadBytes, MediaSourceStream};
+use crate::io::{MediaSourceStream, ReadBytes, SeekBuffered};
 use crate::meta::{MetadataReader, MetadataOptions, MetadataLog, Metadata};
 
 use log::{error, info};
@@ -111,7 +111,7 @@ pub struct Descriptor {
     pub inst: Instantiate,
 }
 
-/// The `Query` trait indicates that the implementer may be registered and capable of
+/// The `QueryDescriptor` trait indicates that the implementer may be registered and capable of
 /// probing.
 pub trait QueryDescriptor {
     /// Returns a list of descriptors.
@@ -247,7 +247,7 @@ impl Probe {
 
             if count % 4096 == 0 {
                 info!(
-                    "searching for stream marker... {}+{} / {} bytes.",
+                    "searching for format marker... {}+{} / {} bytes.",
                     init_pos,
                     count,
                     Probe::PROBE_SEARCH_LIMIT
@@ -264,7 +264,7 @@ impl Probe {
                 mss.read_buf_exact(&mut context[2..])?;
 
                 info!(
-                    "found a possible stream marker within {:x?} @ {}+{} bytes.",
+                    "found a possible format marker within {:x?} @ {}+{} bytes.",
                     context,
                     init_pos,
                     count,
@@ -278,12 +278,12 @@ impl Probe {
                         // If a match is found, return the instantiate.
                         if context[0..len] == **marker {
                             // Re-align the stream to the start of the marker.
-                            mss.rewind(16);
+                            mss.seek_buffered_rev(16);
 
                             // TODO: Implement scoring.
 
                             info!(
-                                "found the stream marker {:x?} @ {}+{} bytes.",
+                                "found the format marker {:x?} @ {}+{} bytes.",
                                 &context[0..len],
                                 init_pos,
                                 count,
@@ -297,14 +297,14 @@ impl Probe {
                 // If no registered markers were matched, then the bloom filter returned a false
                 // positive. Re-align the stream to the end of the 2-byte window and continue the
                 // search.
-                mss.rewind(16 - 2);
+                mss.seek_buffered_rev(16 - 2);
             }
         }
 
         // Could not find any marker within the probe limit.
         error!("reached probe limit of {} bytes.", Probe::PROBE_SEARCH_LIMIT);
 
-        unsupported_error("core (probe): no suitable reader found")
+        unsupported_error("core (probe): no suitable format reader found")
     }
 
     /// Searches the provided `MediaSourceStream` for a container format. Any metadata that is read

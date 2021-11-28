@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Seek, SeekFrom};
 
 use symphonia_core::errors::Result;
-use symphonia_core::io::{MediaSourceStream, ReadBytes, ScopedStream};
+use symphonia_core::io::{MediaSourceStream, ReadBytes, SeekBuffered, ScopedStream};
 
 use super::logical::{InspectState, LogicalStream};
 use super::page::*;
@@ -22,9 +22,6 @@ pub fn probe_stream_start(
 ) {
     // Save the original position to jump back to.
     let original_pos = reader.pos();
-
-    // Ensure the reader has a sufficient seekback buffer.
-    reader.ensure_seekback_buffer(OGG_PAGE_MAX_SIZE);
 
     // Scope the reader the prevent overruning the seekback region.
     let mut scoped_reader = ScopedStream::new(reader, OGG_PAGE_MAX_SIZE as u64);
@@ -65,7 +62,7 @@ pub fn probe_stream_start(
         };
     }
 
-    debug_assert!(scoped_reader.inner_mut().seek_buffered(original_pos) == original_pos);
+    scoped_reader.into_inner().seek_buffered(original_pos);
 }
 
 pub fn probe_stream_end(

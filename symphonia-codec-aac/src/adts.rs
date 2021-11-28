@@ -146,7 +146,7 @@ impl FormatReader for AdtsReader {
         }
 
         // Rewind back to the start of the frame.
-        source.rewind(AdtsHeader::SIZE);
+        source.seek_buffered_rev(AdtsHeader::SIZE);
 
         let first_frame_pos = source.pos();
 
@@ -242,7 +242,7 @@ impl FormatReader for AdtsReader {
             // If the next frame's timestamp would exceed the desired timestamp, rewind back to the
             // start of this frame and end the search.
             if self.next_packet_ts + SAMPLES_PER_AAC_PACKET > required_ts {
-                self.reader.rewind(AdtsHeader::SIZE);
+                self.reader.seek_buffered_rev(AdtsHeader::SIZE);
                 break;
             }
 

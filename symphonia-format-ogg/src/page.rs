@@ -7,7 +7,7 @@
 
 use symphonia_core::checksum::Crc32;
 use symphonia_core::errors::{Error, Result, decode_error};
-use symphonia_core::io::{BufReader, Monitor, MonitorStream, ReadBytes};
+use symphonia_core::io::{BufReader, Monitor, MonitorStream, ReadBytes, SeekBuffered};
 
 use log::{debug, warn};
 
@@ -156,7 +156,10 @@ pub struct PageReader {
 }
 
 impl PageReader {
-    pub fn try_new<B: ReadBytes>(reader: &mut B) -> Result<Self> {
+    pub fn try_new<B>(reader: &mut B) -> Result<Self>
+    where
+        B: ReadBytes + SeekBuffered,
+    {
         let mut page_reader = PageReader {
             header: Default::default(),
             packet_lens: Vec::new(),
@@ -170,12 +173,19 @@ impl PageReader {
     }
 
     /// Attempts to read the next page. If the page is corrupted or invalid, returns an error.
-    pub fn try_next_page<B: ReadBytes>(&mut self, reader: &mut B) -> Result<()> {
+    pub fn try_next_page<B>(&mut self, reader: &mut B) -> Result<()>
+    where
+        B: ReadBytes + SeekBuffered,
+    {
         let mut header_buf = [0u8; OGG_PAGE_HEADER_SIZE];
         header_buf[..4].copy_from_slice(&OGG_PAGE_MARKER);
 
         // Synchronize to an OGG page capture pattern.
         sync_page(reader)?;
+
+        // Record the position immediately after synchronization. If the page is found corrupt the
+        // reader will need to seek back here to try to regain synchronization.
+        let sync_pos = reader.pos();
 
         // Read the part of the page header after the capture pattern into a buffer.
         reader.read_buf_exact(&mut header_buf[4..])?;
@@ -206,7 +216,7 @@ impl PageReader {
         crc32.process_buf_bytes(&header_buf);
 
         // The remainder of the page will be checksummed as it is read.
-        let mut reader_crc32 = MonitorStream::new(reader, crc32);
+        let mut crc32_reader = MonitorStream::new(reader, crc32);
 
         // Read segment table.
         let mut page_body_len = 0;
@@ -217,7 +227,7 @@ impl PageReader {
         self.packet_lens.clear();
 
         for _ in 0..header.n_segments {
-            let seg_len = reader_crc32.read_byte()?;
+            let seg_len = crc32_reader.read_byte()?;
 
             page_body_len += usize::from(seg_len);
             packet_len += u16::from(seg_len);
@@ -230,9 +240,9 @@ impl PageReader {
             }
         }
 
-        self.read_page_body(&mut reader_crc32, page_body_len)?;
+        self.read_page_body(&mut crc32_reader, page_body_len)?;
 
-        let calculated_crc = reader_crc32.monitor().crc();
+        let calculated_crc = crc32_reader.monitor().crc();
 
         // If the CRC for the page is incorrect, then the page is corrupt.
         if header.crc != calculated_crc {
@@ -246,6 +256,9 @@ impl PageReader {
             self.packet_lens.clear();
             self.page_buf_len = 0;
 
+            // Seek back to the immediately after the previous sync position.
+            crc32_reader.into_inner().seek_buffered(sync_pos);
+
             return decode_error("ogg: crc mismatch");
         }
 
@@ -256,7 +269,10 @@ impl PageReader {
 
     /// Reads the next page. If the next page is corrupted or invalid, the page is discarded and
     /// the reader tries again until a valid page is read or end-of-stream.
-    pub fn next_page<B: ReadBytes>(&mut self, reader: &mut B) -> Result<()> {
+    pub fn next_page<B>(&mut self, reader: &mut B) -> Result<()>
+    where
+        B: ReadBytes + SeekBuffered,
+    {
         loop {
             match self.try_next_page(reader) {
                 Ok(_) => break,
@@ -269,7 +285,10 @@ impl PageReader {
 
     /// Reads the next page with a specific serial. If the next page is corrupted or invalid, the
     /// page is discarded and the reader tries again until a valid page is read or end-of-stream.
-    pub fn next_page_for_serial<B: ReadBytes>(&mut self, reader: &mut B, serial: u32) -> Result<()> {
+    pub fn next_page_for_serial<B>(&mut self, reader: &mut B, serial: u32) -> Result<()>
+    where
+        B: ReadBytes + SeekBuffered,
+    {
         loop {
             match self.try_next_page(reader) {
                 Ok(_) => {

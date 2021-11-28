@@ -88,7 +88,7 @@ impl FormatReader for Mp3Reader {
         else {
             // The first frame was not a Xing/Info header, rewind back to the start of the frame so
             // that it may be decoded.
-            source.rewind(header.frame_size + 4);
+            source.seek_buffered_rev(header.frame_size + 4);
 
             // Likely not a VBR file, so estimate the duration if seekable.
             if source.is_seekable() {
@@ -375,7 +375,7 @@ fn estimate_num_mpeg_frames(reader: &mut MediaSourceStream) -> Option<u64> {
     };
 
     // Rewind back to the first frame seen upon entering this function.
-    reader.rewind((reader.pos() - start_pos) as usize);
+    reader.seek_buffered_rev((reader.pos() - start_pos) as usize);
 
     num_mpeg_frames
 }
