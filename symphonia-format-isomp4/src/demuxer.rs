@@ -335,7 +335,6 @@ impl QueryDescriptor for IsoMp4Reader {
 impl FormatReader for IsoMp4Reader {
 
     fn try_new(mut mss: MediaSourceStream, _options: &FormatOptions) -> Result<Self> {
-
         // To get to beginning of the atom.
         mss.seek_buffered_rel(-4);
 
@@ -394,8 +393,7 @@ impl FormatReader for IsoMp4Reader {
                         }
                     }
                 }
-                AtomType::MediaData |
-                AtomType::MovieFragment => {
+                AtomType::MediaData | AtomType::MovieFragment => {
                     // The mdat atom contains the codec bitstream data. For segmented streams, a
                     // moof + mdat pair is required for playback. If the source is unseekable then
                     // the format reader cannot skip past these atoms without dropping samples.
@@ -431,13 +429,22 @@ impl FormatReader for IsoMp4Reader {
             return unsupported_error("isomp4: missing moov atom");
         }
 
-        // If the stream was seekable, then all atoms in the stream were scanned. Seek back to the
-        // beginning of the stream.
+        // If the stream was seekable, then all atoms in the media source stream were scanned. Seek
+        // back to the first mdat atom for playback. If the stream is not seekable, then the atom
+        // iterator is currently positioned at the first mdat atom.
         if is_seekable {
             let mut mss = iter.into_inner();
             mss.seek(SeekFrom::Start(0))?;
 
             iter = AtomIterator::new_root(mss, total_len);
+
+            while let Some(header) = iter.next_no_consume()? {
+                match header.atype {
+                    AtomType::MediaData | AtomType::MovieFragment => break,
+                    _ => (),
+                }
+                iter.consume_atom();
+            }
         }
 
         let mut moov = moov.unwrap();
