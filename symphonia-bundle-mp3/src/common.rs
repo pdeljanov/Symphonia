@@ -342,6 +342,7 @@ pub enum BlockType {
 pub struct BitResevoir {
     buf: Box<[u8]>,
     len: usize,
+    consumed: usize,
 }
 
 impl BitResevoir {
@@ -349,6 +350,7 @@ impl BitResevoir {
         BitResevoir {
             buf: vec![0u8; 2048].into_boxed_slice(),
             len: 0,
+            consumed: 0,
         }
     }
 
@@ -359,7 +361,7 @@ impl BitResevoir {
         main_data_size: usize
     ) -> Result<u32> {
 
-        // The value `main_data_begin` indicates the number of bytes from the previous frames to
+        // The value `main_data_begin` indicates the number of bytes from the previous frame(s) to
         // reuse. It must always be less than or equal to maximum amount of bytes the resevoir can
         // hold taking into account the additional data being added to the resevoir.
         let main_data_end = main_data_begin + main_data_size;
@@ -368,42 +370,59 @@ impl BitResevoir {
             return decode_error("mp3: invalid main_data length, will exceed resevoir buffer");
         }
 
-        // If the offset is less than or equal to the amount of data in the resevoir, shift the
-        // re-used bytes to the beginning of the resevoir, then copy the main data of the current
-        // packet into the resevoir.
-        if main_data_begin <= self.len {
-            // Shift re-used bytes to the start of the resevoir.
+        let unread = self.len - self.consumed;
+
+        // If the offset is less-than or equal to the amount of unread data in the resevoir, shift
+        // the re-used bytes to the beginning of the resevoir, then copy the main data of the
+        // current packet into the resevoir.
+        let underflow = if main_data_begin <= unread {
+            // Shift all the re-used bytes as indicated by main_data_begin to the front of the
+            // resevoir.
             self.buf.copy_within(self.len - main_data_begin..self.len, 0);
 
-            // Copy new main data after the re-used bytes.
+            // Copy the new main data from the packet buffer after the re-used bytes.
             self.buf[main_data_begin..main_data_end].copy_from_slice(pkt_main_data);
             self.len = main_data_end;
 
-            Ok(0)
+            0
         }
         else {
-            let underflow = (main_data_begin - self.len) as u32;
+            // Shift all the unread bytes to the front of the resevoir. Since this is an underflow
+            // condition, all unread bytes will be unconditionally reused.
+            self.buf.copy_within(self.len - unread..self.len, 0);
 
             // If the offset is greater than the amount of data in the resevoir, then the stream is
             // malformed. This can occur if the decoder is starting in the middle of a stream. This
             // is particularly common with online radio streams. In this case, copy the main data
             // of the current packet into the resevoir, then return the number of bytes that are
             // missing.
-            self.buf[self.len..self.len + main_data_size].copy_from_slice(pkt_main_data);
-            self.len += main_data_size;
+            self.buf[unread..unread + main_data_size].copy_from_slice(pkt_main_data);
+            self.len = unread + main_data_size;
+
+            // The number of bytes that will be missing.
+            let underflow = (main_data_begin - unread) as u32;
 
             warn!("mp3: invalid main_data_begin, underflow by {} bytes", underflow);
 
-            Ok(underflow)
-        }
+            underflow
+        };
+
+        self.consumed = 0;
+
+        Ok(underflow)
+    }
+
+    pub fn consume(&mut self, len: usize) {
+        self.consumed = self.len.min(self.consumed + len);
     }
 
     pub fn bytes_ref(&self) -> &[u8] {
-        &self.buf[..self.len]
+        &self.buf[self.consumed..self.len]
     }
 
     pub fn clear(&mut self) {
         self.len = 0;
+        self.consumed = 0;
     }
 }
 

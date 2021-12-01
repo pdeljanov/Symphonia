@@ -169,7 +169,7 @@ fn read_main_data(
     underflow_bits: u32,
     frame_data: &mut FrameData,
     state: &mut State,
-) -> Result<()> {
+) -> Result<usize> {
 
     let main_data = state.resevoir.bytes_ref();
     let mut part2_3_begin = 0;
@@ -251,7 +251,7 @@ fn read_main_data(
         }
     }
 
-    Ok(())
+    Ok((part2_3_begin + 7) >> 3)
 }
 
 /// Decode the MPEG audio frame into an `AudioBuffer`.
@@ -289,7 +289,7 @@ pub fn decode_frame(
         }
     };
 
-    // Buffer main_data into the bit resevoir.
+    // Buffer main data into the bit resevoir.
     let main_data_len = header.frame_size - side_info_len - if header.has_crc { 2 } else { 0 };
 
     let underflow = state.resevoir.fill(
@@ -298,11 +298,17 @@ pub fn decode_frame(
         main_data_len
     )?;
 
-    // Read main_data: scale factors and spectral samples.
-    if let Err(e) = read_main_data(header, 8 * underflow, &mut frame_data, state) {
-        // The bit reservoir was likely filled with invalid data. Clear it for the next packet.
-        state.resevoir.clear();
-        return Err(e);
+    // Read the main data (scale factors and spectral samples).
+    match read_main_data(header, 8 * underflow, &mut frame_data, state) {
+        Ok(len) => {
+            // Consume the bytes of main data read from the resevoir.
+            state.resevoir.consume(len);
+        }
+        Err(e) => {
+            // The bit reservoir was likely filled with invalid data. Clear it for the next packet.
+            state.resevoir.clear();
+            return Err(e);
+        }
     }
 
     for gr in 0..header.n_granules() {
