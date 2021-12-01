@@ -222,7 +222,7 @@ pub(super) fn read_huffman_samples<B: ReadBitsLtr>(
     // bits as spectral samples. However, these bits are actually random data and are not real
     // samples, therefore, undo them! The caller will be reponsible for re-aligning the bitstream
     // reader. Candy Pop confirms this.
-    else if bits_read > part3_bits && i >= big_values_len {
+    else if bits_read > part3_bits && i > big_values_len {
         info!("count1 overrun, malformed bitstream");
         i -= 4;
     }
