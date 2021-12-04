@@ -338,7 +338,7 @@ fn requantize_short(
     for (i, (start, end)) in bands.iter().zip(&bands[1..]).enumerate() {
         // Do not requantize bands starting after the rzero sample since all samples from there on
         // are 0.
-        if *start > channel.rzero {
+        if *start >= channel.rzero {
             break;
         }
 
