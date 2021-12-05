@@ -6,6 +6,8 @@
 
 Symphonia is a pure Rust audio decoding and media demuxing library supporting AAC, ALAC, FLAC, MP3, MP4, OGG, Vorbis, and WAV.
 
+Symphonia only handles decoding. To read files from storage in a realtime safe way using Symphonia, refer to [creek](https://github.com/RustyDAW/creek).
+
 ## Features
 
 * Decode support for the most popular audio codecs
