@@ -116,47 +116,130 @@ fn get_stream_info_from_codec_private(codec_private: &[u8]) -> Result<Box<[u8]>>
 }
 
 impl MkvReader {
-    fn seek_track_by_ts(&mut self, track_id: u32, ts: u64) -> Result<SeekedTo> {
-        // TODO
+    fn cluster_timestamp(&self) -> Option<u64> {
+        Some(self.current_cluster.as_ref()?.timestamp?)
+    }
 
-        let mut target_cluster = None;
-        for cluster in &self.clusters {
-            if cluster.timestamp > ts {
-                break;
+    fn seek_track_by_ts_forward(&mut self, track_id: u32, ts: u64) -> Result<SeekedTo> {
+        let (actual_ts, frame) = 'out: loop {
+            // Skip frames from the buffer until the given timestamp
+            while let Some(frame) = self.frames.front() {
+                let ts = frame.abs_timestamp(self.cluster_timestamp().unwrap());
+                if ts + frame.duration >= ts && frame.track == track_id {
+                    break 'out (ts, frame);
+                } else {
+                    self.frames.pop_front();
+                }
             }
-            target_cluster = Some(cluster);
-        }
-        let cluster = target_cluster
-            .ok_or_else(|| Error::SeekError(SeekErrorKind::OutOfRange))?;
-
-        let mut target_block = None;
-        for block in cluster.blocks.iter() {
-            if block.track as u32 != track_id {
-                continue;
-            }
-
-            if block.timestamp >= ts {
-                target_block = Some(block);
-                break;
-            }
-        }
-
-        let block = target_block
-            .ok_or_else(|| Error::SeekError(SeekErrorKind::OutOfRange))?;
-
-        self.iter.seek(block.offset)?;
-
-        // Restore cluster's metadata
-        self.current_cluster = Some(ClusterState {
-            timestamp: Some(cluster.timestamp),
-            end: cluster.end,
-        });
+            self.next_element()?
+        };
 
         Ok(SeekedTo {
             track_id,
             required_ts: ts,
-            actual_ts: block.timestamp,
+            actual_ts,
         })
+    }
+
+    fn seek_track_by_ts(&mut self, track_id: u32, ts: u64) -> Result<SeekedTo> {
+        if self.clusters.is_empty() {
+            self.seek_track_by_ts_forward(track_id, ts)
+        } else {
+            let mut target_cluster = None;
+            for cluster in &self.clusters {
+                if cluster.timestamp > ts {
+                    break;
+                }
+                target_cluster = Some(cluster);
+            }
+            let cluster = target_cluster
+                .ok_or_else(|| Error::SeekError(SeekErrorKind::OutOfRange))?;
+
+            let mut target_block = None;
+            for block in cluster.blocks.iter() {
+                if block.track as u32 != track_id {
+                    continue;
+                }
+
+                if block.timestamp >= ts {
+                    target_block = Some(block);
+                    break;
+                }
+            }
+
+            let block = target_block
+                .ok_or_else(|| Error::SeekError(SeekErrorKind::OutOfRange))?;
+
+            self.iter.seek(block.offset)?;
+
+            // Restore cluster's metadata
+            self.current_cluster = Some(ClusterState {
+                timestamp: Some(cluster.timestamp),
+                end: cluster.end,
+            });
+
+            Ok(SeekedTo {
+                track_id,
+                required_ts: ts,
+                actual_ts: block.timestamp,
+            })
+        }
+    }
+
+    fn next_element(&mut self) -> Result<()> {
+        let header = self.iter
+            .read_child_header()?
+            .ok_or_else(|| Error::DecodeError("mkv: end of stream"))?;
+
+        if let Some(state) = &self.current_cluster {
+            if self.iter.pos() >= state.end {
+                log::debug!("ended cluster");
+                self.current_cluster = None;
+            }
+        }
+
+        match header.etype {
+            ElementType::Cluster => {
+                self.current_cluster = Some(ClusterState {
+                    timestamp: None,
+                    end: header.pos + header.len,
+                });
+            }
+            ElementType::Timestamp => {
+                match self.current_cluster.as_mut() {
+                    Some(cluster) => {
+                        cluster.timestamp = Some(self.iter.read_u64()?);
+                    }
+                    None => {
+                        self.iter.ignore_data()?;
+                        return decode_error("mkv: timestamp element outside of a cluster");
+                    }
+                }
+            }
+            ElementType::SimpleBlock => {
+                if self.current_cluster.is_none() {
+                    self.iter.ignore_data()?;
+                    return decode_error("mkv: simple block element outside of a cluster");
+                }
+
+                let data = self.iter.read_boxed_slice()?;
+                extract_frames(&data, &mut self.frames)?;
+            }
+            ElementType::BlockGroup => {
+                if self.current_cluster.is_none() {
+                    self.iter.ignore_data()?;
+                    return decode_error("mkv: block group element outside of a cluster");
+                }
+
+                let group = self.iter.read_element_data::<BlockGroupElement>()?;
+                extract_frames(&group.data, &mut self.frames)?;
+            }
+            _ => {
+                self.iter.ignore_data()?;
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -367,63 +450,13 @@ impl FormatReader for MkvReader {
             if let Some(frame) = self.frames.pop_front() {
                 let timestamp = self.current_cluster.as_ref()
                     .and_then(|c| c.timestamp)
-                    .map(|ts| (ts as i64 + frame.timestamp as i64) as u64)
+                    .map(|ts| frame.abs_timestamp(ts))
                     .unwrap_or(0);
                 return Ok(Packet::new_from_boxed_slice(
                     frame.track as u32, timestamp, 0, frame.data));
             }
 
-            let header = self.iter
-                .read_child_header()?
-                .ok_or_else(|| Error::DecodeError("mkv: end of stream"))?;
-
-            if let Some(state) = &self.current_cluster {
-                if self.iter.pos() >= state.end {
-                    log::debug!("ended cluster");
-                    self.current_cluster = None;
-                }
-            }
-
-            match header.etype {
-                ElementType::Cluster => {
-                    self.current_cluster = Some(ClusterState {
-                        timestamp: None,
-                        end: header.pos + header.len,
-                    });
-                }
-                ElementType::Timestamp => {
-                    match self.current_cluster.as_mut() {
-                        Some(cluster) => {
-                            cluster.timestamp = Some(self.iter.read_u64()?);
-                        }
-                        None => {
-                            self.iter.ignore_data()?;
-                            return decode_error("mkv: timestamp element outside of a cluster");
-                        }
-                    }
-                }
-                ElementType::SimpleBlock => {
-                    if self.current_cluster.is_none() {
-                        self.iter.ignore_data()?;
-                        return decode_error("mkv: simple block element outside of a cluster");
-                    }
-
-                    let data = self.iter.read_boxed_slice()?;
-                    extract_frames(&data, &mut self.frames)?;
-                }
-                ElementType::BlockGroup => {
-                    if self.current_cluster.is_none() {
-                        self.iter.ignore_data()?;
-                        return decode_error("mkv: block group element outside of a cluster");
-                    }
-
-                    let group = self.iter.read_element_data::<BlockGroupElement>()?;
-                    extract_frames(&group.data, &mut self.frames)?;
-                }
-                _ => {
-                    self.iter.ignore_data()?;
-                }
-            }
+            self.next_element()?;
         }
     }
 

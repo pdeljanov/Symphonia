@@ -1,6 +1,7 @@
 use std::collections::VecDeque;
+use std::convert::TryFrom;
 
-use symphonia_core::errors::{Result, decode_error};
+use symphonia_core::errors::{decode_error, Result};
 use symphonia_core::io::{BufReader, ReadBytes};
 
 use crate::ebml::{read_vint, read_vint_signed};
@@ -59,6 +60,13 @@ pub(crate) struct Frame {
     /// Frame timestamp (relative to Cluster timestamp).
     pub(crate) timestamp: i16,
     pub(crate) data: Box<[u8]>,
+    pub(crate) duration: u64,
+}
+
+impl Frame {
+    pub(crate) fn abs_timestamp(&self, cluster_ts: u64) -> u64 {
+        (i64::try_from(cluster_ts).unwrap() + i64::from(self.timestamp)) as u64
+    }
 }
 
 pub(crate) fn extract_frames(block: &[u8], buffer: &mut VecDeque<Frame>) -> Result<()> {
@@ -70,7 +78,8 @@ pub(crate) fn extract_frames(block: &[u8], buffer: &mut VecDeque<Frame>) -> Resu
     match lacing {
         Lacing::None => {
             let data = reader.read_boxed_slice_exact(block.len() - reader.pos() as usize)?;
-            buffer.push_back(Frame { track, timestamp, data });
+            // TODO: duration
+            buffer.push_back(Frame { track, timestamp, data, duration: 20 });
         }
         Lacing::Xiph | Lacing::Ebml => {
             // Read number of stored sizes which is actually `number of frames` - 1
@@ -84,13 +93,15 @@ pub(crate) fn extract_frames(block: &[u8], buffer: &mut VecDeque<Frame>) -> Resu
 
             for frame_size in sizes {
                 let data = reader.read_boxed_slice_exact(frame_size as usize)?;
-                buffer.push_back(Frame { track, timestamp, data });
+                // TODO: duration
+                buffer.push_back(Frame { track, timestamp, data, duration: 20 });
             }
 
             // Size of last frame is not provided so we read to the end of the block.
             let size = block.len() - reader.pos() as usize;
             let data = reader.read_boxed_slice_exact(size)?;
-            buffer.push_back(Frame { track, timestamp, data });
+            // TODO: duration
+            buffer.push_back(Frame { track, timestamp, data, duration: 20 });
         }
         Lacing::FixedSize => {
             let frames = reader.read_byte()? as usize + 1;
@@ -102,7 +113,8 @@ pub(crate) fn extract_frames(block: &[u8], buffer: &mut VecDeque<Frame>) -> Resu
             let frame_size = total_size / frames;
             for _ in 0..frames {
                 let data = reader.read_boxed_slice_exact(frame_size)?;
-                buffer.push_back(Frame { track, timestamp, data });
+                // TODO: duration
+                buffer.push_back(Frame { track, timestamp, data, duration: 20 });
             }
         }
     }
