@@ -19,6 +19,7 @@ flac = ["symphonia-bundle-flac"]
 isomp4 = ["symphonia-format-isomp4"]
 mp3 = ["symphonia-bundle-mp3"]
 ogg = ["symphonia-format-ogg"]
+opus = ["symphonia-codec-opus"]
 pcm = ["symphonia-codec-pcm"]
 vorbis = ["symphonia-codec-vorbis"]
 wav = ["symphonia-format-wav"]
@@ -33,6 +34,7 @@ symphonia-codec-aac = { version = "0.4", path = "../symphonia-codec-aac", option
 symphonia-codec-alac = { version = "0.4", path = "../symphonia-codec-alac", optional = true }
 symphonia-codec-pcm = { version = "0.4", path = "../symphonia-codec-pcm", optional = true }
 symphonia-codec-vorbis = { version = "0.4", path = "../symphonia-codec-vorbis", optional = true }
+symphonia-codec-opus = { version = "0.0.1", path = "../symphonia-codec-opus", optional = true }
 symphonia-format-wav = { version = "0.4", path = "../symphonia-format-wav", optional = true }
 symphonia-format-ogg = { version = "0.4", path = "../symphonia-format-ogg", optional = true }
 symphonia-format-isomp4 = { version = "0.4", path = "../symphonia-format-isomp4", optional = true }
