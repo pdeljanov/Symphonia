@@ -1,4 +1,5 @@
 use std::collections::VecDeque;
+use std::convert::TryFrom;
 use std::io::{Seek, SeekFrom};
 
 use symphonia_core::audio::Layout;
@@ -278,8 +279,6 @@ impl FormatReader for MkvReader {
         let mut segment_tracks = None;
         let mut info = None;
         let mut cues = None;
-        let mut duration = None;
-        let mut timestamp_scale = None;
         let mut clusters = Vec::new();
 
         while let Some(header) = it.read_header()? {
@@ -295,12 +294,6 @@ impl FormatReader for MkvReader {
                 }
                 ElementType::Cues => {
                     cues = Some(it.read_element_data::<CuesElement>()?);
-                }
-                ElementType::TimestampScale => {
-                    timestamp_scale = Some(it.read_u64()?);
-                }
-                ElementType::Duration => {
-                    duration = Some(it.read_u64()?);
                 }
                 ElementType::Cluster => {
                     if !is_seekable {
@@ -320,8 +313,11 @@ impl FormatReader for MkvReader {
             it = ElementIterator::new(reader, total_len);
         }
 
-        let timestamp_scale = timestamp_scale.unwrap_or(1_000_000);
-        let time_base = TimeBase::new(1000, timestamp_scale as u32);
+        let info = info.unwrap();
+        let time_base = TimeBase::new(
+            u32::try_from(info.timestamp_scale).unwrap(),
+            1_000_000_000
+        );
 
         let mut tracks = Vec::new();
         let mut states = Vec::new();
@@ -331,8 +327,8 @@ impl FormatReader for MkvReader {
             let mut codec_params = CodecParameters::new();
             codec_params.with_time_base(time_base);
 
-            if let Some(duration) = duration {
-                codec_params.with_n_frames(duration);
+            if let Some(duration) = info.duration {
+                codec_params.with_n_frames(duration as u64);
             }
 
             if let Some(audio) = track.audio {
@@ -402,7 +398,7 @@ impl FormatReader for MkvReader {
             metadata: MetadataLog::default(),
             cues: Vec::new(),
             frames: VecDeque::new(),
-            timestamp_scale,
+            timestamp_scale: info.timestamp_scale,
             clusters,
         })
     }

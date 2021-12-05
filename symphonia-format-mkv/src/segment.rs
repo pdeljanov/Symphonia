@@ -324,21 +324,54 @@ impl Element for EbmlHeaderElement {
 
 #[derive(Debug)]
 pub(crate) struct InfoElement {
-    elements: Box<[(ElementHeader, Option<ElementData>)]>,
+    pub(crate) timestamp_scale: u64,
+    pub(crate) duration: Option<f64>,
+    title: Option<Box<str>>,
+    muxing_app: Box<str>,
+    writing_app: Box<str>,
 }
 
 impl Element for InfoElement {
     const ID: ElementType = ElementType::Info;
 
     fn read<B: ReadBytes>(reader: &mut B, header: ElementHeader) -> Result<Self> {
-        let mut elements = Vec::new();
+        let mut duration = None;
+        let mut timestamp_scale = None;
+        let mut title = None;
+        let mut muxing_app = None;
+        let mut writing_app = None;
 
         let mut it = header.children(reader);
         while let Some(header) = it.read_header()? {
-            elements.push((header, it.try_read_data(header)?));
+            match header.etype {
+                ElementType::TimestampScale => {
+                    timestamp_scale = Some(it.read_u64()?);
+                }
+                ElementType::Duration => {
+                    duration = Some(it.read_f64()?);
+                }
+                ElementType::Title => {
+                    title = Some(it.read_string()?);
+                },
+                ElementType::MuxingApp => {
+                    muxing_app = Some(it.read_string()?);
+                },
+                ElementType::WritingApp => {
+                    writing_app = Some(it.read_string()?);
+                },
+                other => {
+                    log::warn!("ignored element {:?}", other);
+                }
+            }
         }
 
-        Ok(Self { elements: elements.into_boxed_slice() })
+        Ok(Self {
+            timestamp_scale: timestamp_scale.unwrap_or(1_000_000),
+            duration,
+            title: title.map(|it| it.into_boxed_str()),
+            muxing_app: muxing_app.ok_or_else(|| Error::Unsupported("mkv: missing muxing app"))?.into_boxed_str(),
+            writing_app: writing_app.ok_or_else(|| Error::Unsupported("mkv: missing muxing app"))?.into_boxed_str(),
+        })
     }
 }
 
