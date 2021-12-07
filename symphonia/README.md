@@ -43,7 +43,7 @@ A status of *great* indicates that major development is complete and that the fe
 | Format   | Status    | Feature Flag | Default | Crate                       |
 |----------|-----------|--------------|---------|-----------------------------|
 | ISO/MP4  | Great     | `isomp4`     | No      | [`symphonia-format-isomp4`] |
-| MKV/WebM | In Work   | `mkv`        | Yes     | `symphonia-format-mkv`      |
+| MKV/WebM | In Work   | none yet     | Yes     | `symphonia-format-mkv`      |
 | OGG      | Great     | `ogg`        | Yes     | [`symphonia-format-ogg`]    |
 | Wave     | Excellent | `wav`        | Yes     | [`symphonia-format-wav`]    |
 
@@ -63,7 +63,7 @@ A status of *great* indicates that major development is complete and that the fe
 | MP1                          | -         | `mp3`        | No      | [`symphonia-bundle-mp3`]   |
 | MP2                          | -         | `mp3`        | No      | [`symphonia-bundle-mp3`]   |
 | MP3                          | Excellent | `mp3`        | No      | [`symphonia-bundle-mp3`]   |
-| Opus                         | In Work   | `opus`       | Yes     | `symphonia-codec-opus`     |
+| Opus                         | In Work   | none yet     | Yes     | `symphonia-codec-opus`     |
 | PCM                          | Excellent | `pcm`        | Yes     | [`symphonia-codec-pcm`]    |
 | Vorbis                       | Great     | `vorbis`     | Yes     | [`symphonia-codec-vorbis`] |
 | WavPack                      | -         | `wavpack`    | Yes     | `symphonia-codec-wavpack`  |
