@@ -1,76 +1,8 @@
 use symphonia_core::errors::{Error, Result};
 use symphonia_core::io::{BufReader, ReadBytes};
 
-use crate::ebml::{Element, ElementData, ElementHeader, read_vint};
+use crate::ebml::{Element, ElementHeader, read_vint};
 use crate::element_ids::ElementType;
-
-/*
-#[derive(Debug)]
-pub(crate) struct SegmentElement {
-    seek: Option<SeekHeadElement>,
-    pub(crate) tracks: Box<[TrackElement]>,
-    info: Option<InfoElement>,
-    pub(crate) cues: Option<CuesElement>,
-    pub(crate) first_cluster_pos: u64,
-    pub(crate) duration: Option<u64>,
-    pub(crate) timestamp_scale: u64,
-}
-
-impl Element for SegmentElement {
-    const ID: ElementType = ElementType::Segment;
-
-    fn read<R: ReadBytes>(mut reader: &mut R, header: ElementHeader) -> Result<Self> {
-        let mut seek_head = None;
-        let mut tracks = None;
-        let mut info = None;
-        let mut cues = None;
-        let mut first_cluster_pos = None;
-        let mut duration = None;
-        let mut timestamp_scale = None;
-
-        let mut it = header.children(&mut *reader);
-        while let Some(header) = it.read_header()? {
-            match header.etype {
-                ElementType::SeekHead => {
-                    seek_head = Some(it.read_element_data::<SeekHeadElement>()?);
-                }
-                ElementType::Tracks => {
-                    tracks = Some(it.read_element_data::<TracksElement>()?);
-                }
-                ElementType::Info => {
-                    info = Some(it.read_element_data::<InfoElement>()?);
-                }
-                ElementType::Cues => {
-                    cues = Some(it.read_element_data::<CuesElement>()?);
-                }
-                ElementType::TimestampScale => {
-                    timestamp_scale = Some(it.read_u64()?);
-                }
-                ElementType::Duration => {
-                    duration = Some(it.read_u64()?);
-                }
-                ElementType::Cluster => {
-                    first_cluster_pos = Some(reader.pos() - (header.len - header.data_len));
-                    break;
-                }
-                other => {
-                    log::warn!("ignored element {:?}", other);
-                }
-            }
-        }
-
-        Ok(Self {
-            seek: seek_head,
-            tracks: tracks.map(|t| t.tracks).unwrap_or_default(),
-            info,
-            cues,
-            first_cluster_pos: first_cluster_pos.unwrap(),
-            timestamp_scale: timestamp_scale.unwrap_or(1_000_000),
-            duration: duration,
-        })
-    }
-}
-*/
 
 #[derive(Debug)]
 pub(crate) struct TrackElement {
