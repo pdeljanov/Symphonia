@@ -25,9 +25,9 @@ pub enum BlockSequence {
 /// channel those samples belong to. It is also through the `ChannelAssignment` that the decoder is
 /// instructed on how to decorrelate stereo channels.
 //
-/// For LeftSide or RightSide channel assignments, one channel is stored independantly while the
+/// For LeftSide or RightSide channel assignments, one channel is stored independently while the
 /// other stores a difference. The Difference is always stored as Left - Right. For the MidSide
-/// channel assignment, no channels are stored independantly, rather, a Mid (average) channel and a
+/// channel assignment, no channels are stored independently, rather, a Mid (average) channel and a
 /// Difference channel are stored.
 #[derive(Debug)]
 pub enum ChannelAssignment {
