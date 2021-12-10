@@ -658,7 +658,6 @@ fn read_modes(bs: &mut BitReaderRtl<'_>) -> Result<Vec<Mode>> {
 #[derive(Debug)]
 struct Mode {
     block_flag: bool,
-    window_type: u16,
 }
 
 fn read_mode(bs: &mut BitReaderRtl<'_>) -> Result<Mode> {
@@ -679,7 +678,6 @@ fn read_mode(bs: &mut BitReaderRtl<'_>) -> Result<Mode> {
 
     let mode = Mode {
         block_flag,
-        window_type,
     };
 
     Ok(mode)

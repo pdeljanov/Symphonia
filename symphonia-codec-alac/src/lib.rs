@@ -141,6 +141,7 @@ impl ChannelLayout {
 
 /// The ALAC "magic cookie" or codec specific configuration.
 #[derive(Debug)]
+#[allow(dead_code)]
 struct MagicCookie {
     frame_length: u32,
     compatible_version: u8,

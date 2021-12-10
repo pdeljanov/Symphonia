@@ -59,6 +59,7 @@ enum ImageSizeRestriction {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 struct Header {
     major_version: u8,
     minor_version: u8,
@@ -70,6 +71,7 @@ struct Header {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 struct Restrictions {
     tag_size: TagSizeRestriction,
     text_encoding: TextEncodingRestriction,
@@ -79,6 +81,7 @@ struct Restrictions {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 struct ExtendedHeader {
     /// ID3v2.3 only, the number of padding bytes.
     padding_size: Option<u32>,

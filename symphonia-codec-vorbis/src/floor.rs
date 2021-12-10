@@ -119,7 +119,6 @@ pub trait Floor : Send {
 #[derive(Debug)]
 struct Floor0Setup {
     floor0_order: u8,
-    floor0_rate: u16,
     floor0_bark_map_size: u16,
     floor0_amplitude_bits: u8,
     floor0_amplitude_offset: u8,
@@ -188,7 +187,6 @@ impl Floor0 {
 
         let floor_type0 = Floor0Setup {
             floor0_order,
-            floor0_rate,
             floor0_bark_map_size,
             floor0_amplitude_bits,
             floor0_amplitude_offset,

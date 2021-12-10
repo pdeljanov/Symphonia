@@ -13,6 +13,7 @@ use crate::atoms::{Atom, AtomHeader};
 
 /// Edit list entry.
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct ElstEntry {
     segment_duration: u64,
     media_time: i64,
@@ -22,6 +23,7 @@ pub struct ElstEntry {
 
 /// Edit list atom.
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct ElstAtom {
     header: AtomHeader,
     entries: Vec<ElstEntry>,

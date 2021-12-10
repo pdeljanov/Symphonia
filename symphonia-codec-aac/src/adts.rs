@@ -56,6 +56,7 @@ impl QueryDescriptor for AdtsReader {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 struct AdtsHeader {
     profile: M4AType,
     channels: Option<Channels>,

@@ -736,8 +736,6 @@ fn read_mapping_type0(
 #[derive(Debug)]
 struct Mode {
     block_flag: bool,
-    window_type: u16,
-    transform_type: u16,
     mapping: u8,
 }
 
@@ -764,8 +762,6 @@ fn read_mode(bs: &mut BitReaderRtl<'_>, max_mapping: u8) -> Result<Mode> {
 
     let mode = Mode {
         block_flag,
-        window_type,
-        transform_type,
         mapping,
     };
 
