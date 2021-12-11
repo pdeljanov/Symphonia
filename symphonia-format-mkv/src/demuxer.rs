@@ -16,11 +16,10 @@ use symphonia_core::units::TimeBase;
 use symphonia_utils_xiph::flac::metadata::{MetadataBlockHeader, MetadataBlockType};
 
 use crate::codecs::codec_id_to_type;
-use crate::ebml::{EbmlElement, ElementHeader, ElementIterator};
+use crate::ebml::{EbmlElement, ElementData, ElementHeader, ElementIterator};
 use crate::element_ids::ElementType;
 use crate::lacing::{extract_frames, Frame, read_xiph_sizes};
-use crate::segment::{BlockGroupElement, ClusterElement, CuesElement, InfoElement, SeekHeadElement,
-                     TracksElement};
+use crate::segment::{BlockGroupElement, ClusterElement, CuesElement, InfoElement, SeekHeadElement, TagsElement, TracksElement};
 
 pub struct TrackState {
     /// Codec parameters.
@@ -235,7 +234,12 @@ impl MkvReader {
                 let group = self.iter.read_element_data::<BlockGroupElement>()?;
                 extract_frames(&group.data, &mut self.frames)?;
             }
-            _ => {
+            ElementType::Tags => {
+                let tags =  self.iter.read_element_data::<TagsElement>()?;
+                self.metadata.push(tags.to_metadata());
+            }
+            other => {
+                log::warn!("ignored element {:?}", other);
                 self.iter.ignore_data()?;
             }
         }
@@ -280,6 +284,7 @@ impl FormatReader for MkvReader {
         let mut info = None;
         let mut cues = None;
         let mut clusters = Vec::new();
+        let mut metadata = MetadataLog::default();
 
         while let Some(header) = it.read_header()? {
             match header.etype {
@@ -294,6 +299,10 @@ impl FormatReader for MkvReader {
                 }
                 ElementType::Cues => {
                     cues = Some(it.read_element_data::<CuesElement>()?);
+                }
+                ElementType::Tags => {
+                    let tags =  it.read_element_data::<TagsElement>()?;
+                    metadata.push(tags.to_metadata());
                 }
                 ElementType::Cluster => {
                     if !is_seekable {
@@ -395,7 +404,7 @@ impl FormatReader for MkvReader {
             tracks,
             track_states: states,
             current_cluster: None,
-            metadata: MetadataLog::default(),
+            metadata,
             cues: Vec::new(),
             frames: VecDeque::new(),
             timestamp_scale: info.timestamp_scale,

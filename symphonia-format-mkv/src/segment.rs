@@ -1,7 +1,8 @@
 use symphonia_core::errors::{Error, Result};
 use symphonia_core::io::{BufReader, ReadBytes};
+use symphonia_core::meta::{MetadataBuilder, MetadataRevision, Tag, Value};
 
-use crate::ebml::{Element, ElementHeader, read_vint};
+use crate::ebml::{Element, ElementData, ElementHeader, read_vint};
 use crate::element_ids::ElementType;
 
 #[derive(Debug)]
@@ -284,13 +285,13 @@ impl Element for InfoElement {
                 }
                 ElementType::Title => {
                     title = Some(it.read_string()?);
-                },
+                }
                 ElementType::MuxingApp => {
                     muxing_app = Some(it.read_string()?);
-                },
+                }
                 ElementType::WritingApp => {
                     writing_app = Some(it.read_string()?);
-                },
+                }
                 other => {
                     log::warn!("ignored element {:?}", other);
                 }
@@ -488,3 +489,112 @@ impl Element for ClusterElement {
     }
 }
 
+#[derive(Debug)]
+pub(crate) struct TagsElement {
+    pub(crate) tags: Box<[TagElement]>,
+}
+
+impl Element for TagsElement {
+    const ID: ElementType = ElementType::Tags;
+
+    fn read<B: ReadBytes>(reader: &mut B, header: ElementHeader) -> Result<Self> {
+        let mut tags = Vec::new();
+
+        let mut it = header.children(reader);
+        while let Some(header) = it.read_header()? {
+            match header.etype {
+                ElementType::Tag => {
+                    tags.push(it.read_element_data::<TagElement>()?);
+                }
+                other => {
+                    log::warn!("ignored element {:?}", other);
+                }
+            }
+        }
+
+        Ok(Self {
+            tags: tags.into_boxed_slice()
+        })
+    }
+}
+
+impl TagsElement {
+    pub(crate) fn to_metadata(&self) -> MetadataRevision {
+        let mut metadata = MetadataBuilder::new();
+        for tag in self.tags.iter() {
+            for simple_tag in tag.simple_tags.iter() {
+                // TODO: support std_key
+                metadata.add_tag(Tag::new(None, &simple_tag.name, match &simple_tag.value {
+                    ElementData::Binary(b) => Value::Binary(b.clone()),
+                    ElementData::String(s) => Value::String(s.clone()),
+                    _ => unreachable!(),
+                }));
+            }
+        }
+        metadata.metadata()
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct TagElement {
+    pub(crate) simple_tags: Box<[SimpleTagElement]>,
+}
+
+impl Element for TagElement {
+    const ID: ElementType = ElementType::Tag;
+
+    fn read<B: ReadBytes>(reader: &mut B, header: ElementHeader) -> Result<Self> {
+        let mut simple_tags = Vec::new();
+
+        let mut it = header.children(reader);
+        while let Some(header) = it.read_header()? {
+            match header.etype {
+                ElementType::SimpleTag => {
+                    simple_tags.push(it.read_element_data::<SimpleTagElement>()?);
+                }
+                other => {
+                    log::warn!("ignored element {:?}", other);
+                }
+            }
+        }
+
+        Ok(Self {
+            simple_tags: simple_tags.into_boxed_slice()
+        })
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct SimpleTagElement {
+    pub(crate) name: Box<str>,
+    pub(crate) value: ElementData,
+}
+
+impl Element for SimpleTagElement {
+    const ID: ElementType = ElementType::SimpleTag;
+
+    fn read<B: ReadBytes>(reader: &mut B, header: ElementHeader) -> Result<Self> {
+        let mut name = None;
+        let mut value = None;
+
+        let mut it = header.children(reader);
+        while let Some(header) = it.read_header()? {
+            match header.etype {
+                ElementType::TagName => {
+                    name = Some(it.read_string()?);
+                }
+                ElementType::TagString | ElementType::TagBinary => {
+                    value = Some(it.read_data()?);
+                }
+                other => {
+                    log::warn!("ignored element {:?}", other);
+                }
+            }
+        }
+
+        Ok(Self {
+            name: name.ok_or_else(|| Error::DecodeError("mkv: missing tag name"))?.into_boxed_str(),
+            value: value.ok_or_else(|| Error::DecodeError("mkv: missing tag value"))?,
+        })
+    }
+}
