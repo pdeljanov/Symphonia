@@ -19,7 +19,8 @@ use std::io::{Seek, SeekFrom};
 
 use symphonia_core::support_format;
 use symphonia_core::codecs::CodecParameters;
-use symphonia_core::errors::{Result, seek_error, unsupported_error, SeekErrorKind};
+use symphonia_core::errors::{Result, SeekErrorKind};
+use symphonia_core::errors::{seek_error, unsupported_error, end_of_stream_error};
 use symphonia_core::formats::prelude::*;
 use symphonia_core::io::*;
 use symphonia_core::meta::{Metadata, MetadataRevision, MetadataBuilder, MetadataLog};
@@ -50,6 +51,7 @@ pub struct WavReader {
     metadata: MetadataLog,
     frame_len: u16,
     data_start_pos: u64,
+    data_end_pos: u64,
 }
 
 impl QueryDescriptor for WavReader {
@@ -140,8 +142,9 @@ impl FormatReader for WavReader {
                 RiffWaveChunks::Data(dat) => {
                     let data = dat.parse(&mut source)?;
 
-                    // Record the offset of the Data chunk's contents to support seeking.
+                    // Record the bounds of the data chunk.
                     let data_start_pos = source.pos();
+                    let data_end_pos = data_start_pos + u64::from(data.len);
 
                     // Append Data chunk fields to codec parameters.
                     append_data_params(&mut codec_params, &data, frame_len);
@@ -154,6 +157,7 @@ impl FormatReader for WavReader {
                         metadata,
                         frame_len,
                         data_start_pos,
+                        data_end_pos,
                     });
                 }
             }
@@ -163,16 +167,30 @@ impl FormatReader for WavReader {
     }
 
     fn next_packet(&mut self) -> Result<Packet> {
-        // The packet timestamp is the position of the first byte of the first frame in the packet
-        // divided by the length per frame.
-        let pts = (self.reader.pos() - self.data_start_pos) / u64::from(self.frame_len);
+        let pos = self.reader.pos();
 
-        // Read up-to WAVE_MAX_FRAMES_PER_PACKET number of frames per packet.
-        let packet_len = WAVE_MAX_FRAMES_PER_PACKET * u64::from(self.frame_len);
+        // Determine the number of complete frames remaining in the data chunk.
+        let num_frames_left = if pos < self.data_end_pos {
+            (self.data_end_pos - pos) / u64::from(self.frame_len)
+        }
+        else {
+            0
+        };
+
+        if num_frames_left == 0 {
+            return end_of_stream_error();
+        }
+
+        // Limit the duration of a packet to WAVE_MAX_FRAMES_PER_PACKET frames.
+        let dur = num_frames_left.min(WAVE_MAX_FRAMES_PER_PACKET);
+
+        // Copy the frames.
+        let packet_len = dur * u64::from(self.frame_len);
         let packet_buf = self.reader.read_boxed_slice(packet_len as usize)?;
 
-        // The packet duration is the length of the packet in bytes divided by the length per frame.
-        let dur = packet_buf.len() as u64 / u64::from(self.frame_len);
+        // The packet timestamp is the position of the first byte of the first frame in the
+        // packet relative to the start of the data chunk divided by the length per frame.
+        let pts = (pos - self.data_start_pos) / u64::from(self.frame_len);
 
         Ok(Packet::new_from_boxed_slice(0, pts, dur, packet_buf))
     }
