@@ -307,21 +307,11 @@ mod cpal {
             // buffer into the sample buffer.
             self.sample_buf.copy_interleaved_ref(decoded);
 
-            let mut i = 0;
+            // Write all the interleaved samples to the ring buffer.
+            let mut samples = self.sample_buf.samples();
 
-            // Write out all samples in the sample buffer to the ring buffer.
-            while i < self.sample_buf.len() {
-                let writeable_samples = &self.sample_buf.samples()[i..];
-
-                // Write as many samples as possible to the ring buffer. This blocks until some
-                // samples are written or the consumer has been destroyed (None is returned).
-                if let Some(written) = self.ring_buf_producer.write_blocking(writeable_samples) {
-                    i += written;
-                }
-                else {
-                    // Consumer destroyed, return an error.
-                    return Err(AudioOutputError::StreamClosedError);
-                }
+            while let Some(written) = self.ring_buf_producer.write_blocking(samples) {
+                samples = &samples[written..];
             }
 
             Ok(())
