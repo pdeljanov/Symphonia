@@ -274,26 +274,24 @@ impl WaveFormatChunk {
         n_channels: u16,
         len: u32,
     ) -> Result<WaveFormatData> {
-        // WaveFormat for a PCM format /may/ be extended with an extra data length parameter
-        // followed by the extra data itself. Use the chunk length to determine if the format chunk
-        // is extended.
-        let is_extended = match len {
-            // Minimal WavFormat struct, no extension.
-            16 => false,
-            // WaveFormatEx with exta data length field present, but not extra data.
-            18 => true,
-            // WaveFormatEx with extra data length field and extra data.
-            40 => true,
-            _ => return decode_error("wav: malformed fmt_pcm chunk"),
-        };
-
-        // If there is extra data, read the length, and discard the extra data.
-        if is_extended {
-            let extra_size = reader.read_u16()?;
-
-            if extra_size > 0 {
-                reader.ignore_bytes(u64::from(extra_size))?;
+        // WaveFormat for a PCM format may be extended with an extra data length field followed by
+        // the extension data itself. Use the chunk length to determine if the format chunk is
+        // extended.
+        match len {
+            // Basic WavFormat struct, no extension.
+            16 => (),
+            // WaveFormatEx with extension data length field present, but no extension data.
+            18 => {
+                // Extension data length should be 0.
+                let _extension_len = reader.read_be_u16()?;
             }
+            // WaveFormatEx with extension data length field present, and extension data.
+            40 => {
+                // Extension data length should be either 0 or 22 (if valid data is present).
+                let _extension_len = reader.read_u16()?;
+                reader.ignore_bytes(22)?;
+            }
+            _ => return decode_error("wav: malformed fmt_pcm chunk"),
         }
 
         // Bits per sample for PCM is both the encoded sample width, and the actual sample width.
