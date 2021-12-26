@@ -1,9 +1,10 @@
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::convert::TryFrom;
 
 use symphonia_core::errors::{decode_error, Result};
 use symphonia_core::io::{BufReader, ReadBytes};
 
+use crate::demuxer::TrackState;
 use crate::ebml::{read_vint, read_vint_signed};
 
 enum Lacing {
@@ -57,29 +58,42 @@ pub(crate) fn read_xiph_sizes<R: ReadBytes>(mut reader: R, frames: usize) -> Res
 
 pub(crate) struct Frame {
     pub(crate) track: u32,
-    /// Frame timestamp (relative to Cluster timestamp).
-    pub(crate) timestamp: i16,
-    pub(crate) data: Box<[u8]>,
+    /// Absolute frame timestamp.
+    pub(crate) timestamp: u64,
     pub(crate) duration: u64,
+    pub(crate) data: Box<[u8]>,
 }
 
-impl Frame {
-    pub(crate) fn abs_timestamp(&self, cluster_ts: u64) -> u64 {
-        (i64::try_from(cluster_ts).unwrap() + i64::from(self.timestamp)) as u64
-    }
-}
-
-pub(crate) fn extract_frames(block: &[u8], buffer: &mut VecDeque<Frame>) -> Result<()> {
+pub(crate) fn extract_frames(
+    block: &[u8],
+    block_duration: Option<u64>,
+    tracks: &HashMap<u32, TrackState>,
+    cluster_timestamp: u64,
+    timestamp_scale: u64,
+    buffer: &mut VecDeque<Frame>,
+) -> Result<()> {
     let mut reader = BufReader::new(&block);
     let track = read_vint::<_, true>(&mut reader)? as u32;
-    let timestamp = reader.read_be_u16()? as i16;
+    let rel_timestamp = reader.read_be_u16()? as i16;
     let flags = reader.read_byte()?;
     let lacing = parse_flags(flags)?;
+
+    let default_frame_duration = tracks.get(&track)
+        .and_then(|it| it.default_frame_duration)
+        .map(|it| it / timestamp_scale);
+
+    let block_timestamp = u64::try_from(i64::try_from(cluster_timestamp).unwrap()
+        + i64::from(rel_timestamp)).unwrap();
+
+    let mut timestamp = block_timestamp;
+
     match lacing {
         Lacing::None => {
             let data = reader.read_boxed_slice_exact(block.len() - reader.pos() as usize)?;
-            // TODO: duration
-            buffer.push_back(Frame { track, timestamp, data, duration: 20 });
+            let duration = block_duration
+                .or(default_frame_duration)
+                .unwrap_or(0);
+            buffer.push_back(Frame { track, timestamp, data, duration });
         }
         Lacing::Xiph | Lacing::Ebml => {
             // Read number of stored sizes which is actually `number of frames` - 1
@@ -91,17 +105,21 @@ pub(crate) fn extract_frames(block: &[u8], buffer: &mut VecDeque<Frame>) -> Resu
                 _ => unreachable!(),
             };
 
+            let frame_duration = block_duration
+                .map(|it| it / (frames + 1) as u64)
+                .or(default_frame_duration)
+                .unwrap_or(0);
+
             for frame_size in sizes {
                 let data = reader.read_boxed_slice_exact(frame_size as usize)?;
-                // TODO: duration
-                buffer.push_back(Frame { track, timestamp, data, duration: 20 });
+                buffer.push_back(Frame { track, timestamp, data, duration: frame_duration });
+                timestamp += frame_duration;
             }
 
             // Size of last frame is not provided so we read to the end of the block.
             let size = block.len() - reader.pos() as usize;
             let data = reader.read_boxed_slice_exact(size)?;
-            // TODO: duration
-            buffer.push_back(Frame { track, timestamp, data, duration: 20 });
+            buffer.push_back(Frame { track, timestamp, data, duration: frame_duration });
         }
         Lacing::FixedSize => {
             let frames = reader.read_byte()? as usize + 1;
@@ -110,11 +128,16 @@ pub(crate) fn extract_frames(block: &[u8], buffer: &mut VecDeque<Frame>) -> Resu
                 return decode_error("mkv: invalid block size");
             }
 
+            let frame_duration = block_duration
+                .map(|it| it / frames as u64)
+                .or(default_frame_duration)
+                .unwrap_or(0);
+
             let frame_size = total_size / frames;
             for _ in 0..frames {
                 let data = reader.read_boxed_slice_exact(frame_size)?;
-                // TODO: duration
-                buffer.push_back(Frame { track, timestamp, data, duration: 20 });
+                buffer.push_back(Frame { track, timestamp, data, duration: frame_duration });
+                timestamp += frame_duration;
             }
         }
     }

@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::convert::TryFrom;
 use std::io::{Seek, SeekFrom};
 
@@ -16,23 +16,25 @@ use symphonia_core::units::TimeBase;
 use symphonia_utils_xiph::flac::metadata::{MetadataBlockHeader, MetadataBlockType};
 
 use crate::codecs::codec_id_to_type;
-use crate::ebml::{EbmlElement, ElementData, ElementHeader, ElementIterator};
+use crate::ebml::{EbmlElement, ElementHeader, ElementIterator};
 use crate::element_ids::ElementType;
 use crate::lacing::{extract_frames, Frame, read_xiph_sizes};
 use crate::segment::{BlockGroupElement, ClusterElement, CuesElement, InfoElement, SeekHeadElement, TagsElement, TracksElement};
 
 pub struct TrackState {
     /// Codec parameters.
-    codec_params: CodecParameters,
+    pub(crate) codec_params: CodecParameters,
     /// The track number.
     track_num: u32,
+    /// Default frame duration in nanoseconds.
+    pub(crate) default_frame_duration: Option<u64>,
 }
 
 pub struct MkvReader {
     /// Iterator over EBML element headers
     iter: ElementIterator<MediaSourceStream>,
     tracks: Vec<Track>,
-    track_states: Vec<TrackState>,
+    track_states: HashMap<u32, TrackState>,
     current_cluster: Option<ClusterState>,
     metadata: MetadataLog,
     cues: Vec<Cue>,
@@ -121,12 +123,11 @@ impl MkvReader {
     }
 
     fn seek_track_by_ts_forward(&mut self, track_id: u32, ts: u64) -> Result<SeekedTo> {
-        let (actual_ts, frame) = 'out: loop {
+        let actual_ts = 'out: loop {
             // Skip frames from the buffer until the given timestamp
             while let Some(frame) = self.frames.front() {
-                let ts = frame.abs_timestamp(self.cluster_timestamp().unwrap());
-                if ts + frame.duration >= ts && frame.track == track_id {
-                    break 'out (ts, frame);
+                if frame.timestamp + frame.duration >= ts && frame.track == track_id {
+                    break 'out frame.timestamp;
                 } else {
                     self.frames.pop_front();
                 }
@@ -217,25 +218,39 @@ impl MkvReader {
                 }
             }
             ElementType::SimpleBlock => {
-                if self.current_cluster.is_none() {
-                    self.iter.ignore_data()?;
-                    return decode_error("mkv: simple block element outside of a cluster");
-                }
+                let cluster = match self.current_cluster.as_ref() {
+                    Some(cluster) => cluster,
+                    None => {
+                        self.iter.ignore_data()?;
+                        return decode_error("mkv: simple block element outside of a cluster");
+                    }
+                };
+
+                let timestamp = cluster.timestamp
+                    .ok_or_else(|| Error::DecodeError("mkv: missing cluster timestamp"))?;
 
                 let data = self.iter.read_boxed_slice()?;
-                extract_frames(&data, &mut self.frames)?;
+                extract_frames(&data, None, &self.track_states,
+                               timestamp, self.timestamp_scale, &mut self.frames)?;
             }
             ElementType::BlockGroup => {
-                if self.current_cluster.is_none() {
-                    self.iter.ignore_data()?;
-                    return decode_error("mkv: block group element outside of a cluster");
-                }
+                let cluster = match self.current_cluster.as_ref() {
+                    Some(cluster) => cluster,
+                    None => {
+                        self.iter.ignore_data()?;
+                        return decode_error("mkv: block group element outside of a cluster");
+                    }
+                };
+
+                let timestamp = cluster.timestamp
+                    .ok_or_else(|| Error::DecodeError("mkv: missing cluster timestamp"))?;
 
                 let group = self.iter.read_element_data::<BlockGroupElement>()?;
-                extract_frames(&group.data, &mut self.frames)?;
+                extract_frames(&group.data, group.duration, &self.track_states,
+                               timestamp, self.timestamp_scale, &mut self.frames)?;
             }
             ElementType::Tags => {
-                let tags =  self.iter.read_element_data::<TagsElement>()?;
+                let tags = self.iter.read_element_data::<TagsElement>()?;
                 self.metadata.push(tags.to_metadata());
             }
             other => {
@@ -301,7 +316,7 @@ impl FormatReader for MkvReader {
                     cues = Some(it.read_element_data::<CuesElement>()?);
                 }
                 ElementType::Tags => {
-                    let tags =  it.read_element_data::<TagsElement>()?;
+                    let tags = it.read_element_data::<TagsElement>()?;
                     metadata.push(tags.to_metadata());
                 }
                 ElementType::Cluster => {
@@ -325,11 +340,11 @@ impl FormatReader for MkvReader {
         let info = info.unwrap();
         let time_base = TimeBase::new(
             u32::try_from(info.timestamp_scale).unwrap(),
-            1_000_000_000
+            1_000_000_000,
         );
 
         let mut tracks = Vec::new();
-        let mut states = Vec::new();
+        let mut states = HashMap::new();
         for track in segment_tracks.unwrap().tracks.into_vec() {
             let codec_type = codec_id_to_type(&track);
 
@@ -387,15 +402,17 @@ impl FormatReader for MkvReader {
                 }
             }
 
+            let track_id = u32::try_from(track.id).unwrap();
             tracks.push(Track {
-                id: track.id as u32,
+                id: track_id,
                 codec_params: codec_params.clone(),
                 language: track.language,
             });
 
-            states.push(TrackState {
+            states.insert(track_id, TrackState {
                 codec_params: codec_params,
-                track_num: track.id as u32,
+                track_num: track_id,
+                default_frame_duration: track.default_duration,
             });
         }
 
@@ -453,14 +470,9 @@ impl FormatReader for MkvReader {
     fn next_packet(&mut self) -> Result<Packet> {
         loop {
             if let Some(frame) = self.frames.pop_front() {
-                let timestamp = self.current_cluster.as_ref()
-                    .and_then(|c| c.timestamp)
-                    .map(|ts| frame.abs_timestamp(ts))
-                    .unwrap_or(0);
                 return Ok(Packet::new_from_boxed_slice(
-                    frame.track as u32, timestamp, 0, frame.data));
+                    frame.track as u32, frame.timestamp, frame.duration, frame.data));
             }
-
             self.next_element()?;
         }
     }
