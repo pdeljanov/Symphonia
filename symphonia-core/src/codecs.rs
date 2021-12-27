@@ -229,7 +229,7 @@ pub const CODEC_TYPE_ALAC: CodecType             = CodecType(0x2003);
 pub const CODEC_TYPE_TTA: CodecType              = CodecType(0x2004);
 
 /// A method and expected value to perform verification on the decoded audio.
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub enum VerificationCheck {
     /// CRC8 of interleaved PCM audio samples.
     Crc8(u8),
@@ -245,7 +245,7 @@ pub enum VerificationCheck {
 
 /// Codec parameters stored in a container format's headers and metadata may be passed to a codec
 /// using the `CodecParameters` structure.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct CodecParameters {
     /// The codec type.
     pub codec: CodecType,

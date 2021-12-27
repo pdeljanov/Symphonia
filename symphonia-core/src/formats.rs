@@ -104,6 +104,7 @@ impl Default for FormatOptions {
 /// depending on the source media. A `Cue`'s duration is the difference between the `Cue`'s
 /// timestamp and the next. Each `Cue` may contain an optional index of points relative to the `Cue`
 /// that never exceed the timestamp of the next `Cue`. A `Cue` may also have associated `Tag`s.
+#[derive(Clone, Debug)]
 pub struct Cue {
     /// A unique index for the `Cue`.
     pub index: u32,
@@ -120,6 +121,7 @@ pub struct Cue {
 ///
 /// A `CuePoint` provides more precise indexing within a parent `Cue`. Additional `Tag`s may be
 /// associated with a `CuePoint`.
+#[derive(Clone, Debug)]
 pub struct CuePoint {
     /// The offset of the first frame in the `CuePoint` relative to the start of the parent `Cue`.
     pub start_offset_ts: u64,
@@ -129,6 +131,7 @@ pub struct CuePoint {
 
 /// A `Track` is an independently coded media bitstream. A media format may contain multiple tracks
 /// in one container. Each of those tracks are represented by one `Track`.
+#[derive(Clone, Debug)]
 pub struct Track {
     /// A unique identifier for the track.
     pub id: u32,
