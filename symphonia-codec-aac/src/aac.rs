@@ -11,8 +11,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use std::f32::consts;
-use std::fmt;
+use core::f32::consts;
+use core::fmt;
 
 use symphonia_core::errors::{decode_error, unsupported_error, Result};
 use symphonia_core::io::{ReadBitsLtr, FiniteBitStream, BitReaderLtr};

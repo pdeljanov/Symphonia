@@ -5,10 +5,10 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use std::cmp;
+use core::cmp;
 use std::io;
 use std::io::{Seek, Read, IoSliceMut};
-use std::ops::Sub;
+use core::ops::Sub;
 
 use super::SeekBuffered;
 use super::{ReadBytes, MediaSource};
@@ -448,12 +448,12 @@ impl SeekBuffered for MediaSourceStream {
 
         // Forward seek.
         let delta = if pos > old_pos {
-            assert!(pos - old_pos < std::isize::MAX as u64);
+            assert!(pos - old_pos < core::isize::MAX as u64);
             (pos - old_pos) as isize
         }
         else if pos < old_pos {
             // Backward seek.
-            assert!(old_pos - pos < std::isize::MAX as u64);
+            assert!(old_pos - pos < core::isize::MAX as u64);
             -((old_pos - pos) as isize)
         }
         else {

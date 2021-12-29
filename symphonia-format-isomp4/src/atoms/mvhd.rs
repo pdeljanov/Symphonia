@@ -53,7 +53,7 @@ impl Atom for MvhdAtom {
                 mvhd.timescale = reader.read_be_u32()?;
                 // 0xffff_ffff is a special case.
                 mvhd.duration  = match reader.read_be_u32()? {
-                    std::u32::MAX => std::u64::MAX,
+                    core::u32::MAX => core::u64::MAX,
                     duration      => u64::from(duration),
                 };
             }

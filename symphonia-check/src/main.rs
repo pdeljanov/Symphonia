@@ -217,7 +217,7 @@ fn run_check(
 
             // The number of samples that can be compared given the current state of the reference
             // and target sample buffers.
-            let n_test_samples = std::cmp::min(ref_samples.len(), tgt_samples.len());
+            let n_test_samples = core::cmp::min(ref_samples.len(), tgt_samples.len());
 
             // Perform the comparison.
             for (&t, &r) in tgt_samples[..n_test_samples].iter()

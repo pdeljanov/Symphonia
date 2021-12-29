@@ -4,10 +4,10 @@
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
-use std::borrow::Cow;
-use std::collections::HashMap;
+use alloc::borrow::Cow;
+use hashbrown::HashMap;
 use std::io;
-use std::str;
+use core::str;
 
 use symphonia_core::errors::{Result, unsupported_error, decode_error};
 use symphonia_core::io::{ReadBytes, BufReader, FiniteStream};
@@ -438,7 +438,7 @@ pub fn read_id3v2p2_frame<B: ReadBytes>(reader: &mut B) -> Result<FrameResult> {
 
     // A frame must be atleast 1 byte as per the specification.
     if size == 0 {
-        warn!("frame size of 0 for {}", std::str::from_utf8(&id).unwrap());
+        warn!("frame size of 0 for {}", core::str::from_utf8(&id).unwrap());
     }
 
     let data = reader.read_boxed_slice_exact(size as usize)?;
@@ -503,7 +503,7 @@ pub fn read_id3v2p3_frame<B: ReadBytes>(reader: &mut B) -> Result<FrameResult> {
 
     // A frame must be atleast 1 byte as per the specification.
     if size == 0 {
-        warn!("frame size of 0 for {}", std::str::from_utf8(&id).unwrap());
+        warn!("frame size of 0 for {}", core::str::from_utf8(&id).unwrap());
     }
 
     let data = reader.read_boxed_slice_exact(size as usize)?;
@@ -576,7 +576,7 @@ pub fn read_id3v2p4_frame<B: ReadBytes + FiniteStream>(reader: &mut B) -> Result
 
     // A frame must be atleast 1 byte as per the specification.
     if size == 0 {
-        warn!("frame size of 0 for {}", std::str::from_utf8(&id).unwrap());
+        warn!("frame size of 0 for {}", core::str::from_utf8(&id).unwrap());
     }
 
     // Read the frame body into a new buffer. This is, unfortunate. The original plan was to use an

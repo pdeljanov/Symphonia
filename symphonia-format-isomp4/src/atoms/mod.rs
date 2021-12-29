@@ -453,7 +453,7 @@ impl<B: ReadBytes> AtomIterator<B> {
                 // An atom with a length of zero is defined to span to the end of the stream. If
                 // len is available, use it for the next atom start position, otherwise, use u64 max
                 // which will trip an end of stream error on the next iteration.
-                self.len.unwrap_or(std::u64::MAX) - self.next_atom_pos
+                self.len.unwrap_or(core::u64::MAX) - self.next_atom_pos
             }
             len => len,
         };

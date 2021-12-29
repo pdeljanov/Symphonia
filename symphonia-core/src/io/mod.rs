@@ -20,7 +20,7 @@
 //! consume bits.
 
 use std::io;
-use std::mem;
+use core::mem;
 
 mod bit;
 mod buf_reader;
@@ -74,7 +74,7 @@ impl MediaSource for std::fs::File {
     }
 }
 
-impl<T: std::convert::AsRef<[u8]> + Send> MediaSource for io::Cursor<T> {
+impl<T: core::convert::AsRef<[u8]> + Send> MediaSource for io::Cursor<T> {
     /// Always returns true since a `io::Cursor<u8>` is always seekable.
     fn is_seekable(&self) -> bool {
         true
@@ -408,7 +408,7 @@ pub trait SeekBuffered {
     /// This function is identical to [`SeekBuffered::seek_buffered_rel`] when a negative delta is
     /// provided.
     fn seek_buffered_rev(&mut self, delta: usize) {
-        assert!(delta < std::isize::MAX as usize);
+        assert!(delta < core::isize::MAX as usize);
         self.seek_buffered_rel(-(delta as isize));
     }
 }

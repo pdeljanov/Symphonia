@@ -15,6 +15,8 @@
 #![allow(clippy::identity_op)]
 #![allow(clippy::manual_range_contains)]
 
+extern crate alloc;
+
 pub mod id3v1;
 pub mod id3v2;
 pub mod itunes;

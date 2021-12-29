@@ -8,7 +8,7 @@
 //! The `errors` module defines the common error type.
 
 use std::error;
-use std::fmt;
+use core::fmt;
 use std::io;
 use std::result;
 

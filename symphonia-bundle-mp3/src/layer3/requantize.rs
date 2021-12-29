@@ -5,8 +5,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use std::cmp::min;
-use std::{f32, f64};
+use core::cmp::min;
+use core::{f32, f64};
 
 use symphonia_core::errors::Result;
 use symphonia_core::io::ReadBitsLtr;

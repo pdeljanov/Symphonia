@@ -91,7 +91,7 @@ impl FormatReader for WavReader {
 
         // The RIFF chunk contains WAVE data.
         if riff_form != WAVE_RIFF_FORM {
-            error!("riff form is not wave ({})", std::str::from_utf8(&riff_form).unwrap());
+            error!("riff form is not wave ({})", core::str::from_utf8(&riff_form).unwrap());
 
             return unsupported_error("wav: riff form is not wave");
         }

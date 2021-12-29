@@ -7,7 +7,7 @@
 
 //! A Vorbic COMMENT metadata reader for FLAC or OGG formats.
 
-use std::collections::HashMap;
+use hashbrown::HashMap;
 use lazy_static::lazy_static;
 use symphonia_core::errors::Result;
 use symphonia_core::io::ReadBytes;

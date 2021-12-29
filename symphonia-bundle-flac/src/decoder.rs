@@ -5,8 +5,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use std::cmp;
-use std::num::Wrapping;
+use core::cmp;
+use core::num::Wrapping;
 
 use symphonia_core::audio::{AudioBuffer, AudioBufferRef, AsAudioBufferRef};
 use symphonia_core::audio::{Signal, SignalSpec};
@@ -252,7 +252,7 @@ impl Decoder for FlacDecoder {
                 // Only generate the expected and decoded MD5 checksum strings if logging is
                 // enabled at the debug level.
                 if log_enabled!(log::Level::Debug) {
-                    use std::fmt::Write;
+                    use core::fmt::Write;
 
                     let mut expected_s = String::with_capacity(32);
                     let mut decoded_s = String::with_capacity(32);

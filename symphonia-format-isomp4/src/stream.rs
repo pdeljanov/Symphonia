@@ -8,7 +8,7 @@ use symphonia_core::errors::{Error, Result, decode_error};
 
 use crate::atoms::{MoofAtom, MoovAtom, StcoAtom, Co64Atom, MvexAtom, stsz::SampleSize};
 
-use std::sync::Arc;
+use alloc::sync::Arc;
 
 pub struct SampleDataDesc {
     pub base_pos: u64,

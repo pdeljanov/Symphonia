@@ -10,7 +10,7 @@
 //! The (I)MDCT algorithms in this module are not general purpose and are specialized for use in
 //! typical audio compression applications. Therefore, some constraints may apply.
 
-use std::f64;
+use core::f64;
 
 use super::dct::Dct;
 
@@ -134,7 +134,7 @@ impl Imdct {
 
 #[cfg(test)]
 mod tests {
-    use std::f64;
+    use core::f64;
     use super::*;
 
     fn imdct_analytical(x: &[f32], y: &mut [f32], scale: f64) {
