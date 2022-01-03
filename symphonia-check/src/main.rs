@@ -35,8 +35,22 @@ const ABS_MAX_ALLOWABLE_SAMPLE_DELTA: f32 = 0.00001;
 // ISO. Around 2^-14 (-84.2dB).
 // const ABS_MAX_ALLOWABLE_SAMPLE_DELTA_MP3: f32 = 0.00006104;
 
+#[derive(Copy, Clone)]
+enum RefDecoder {
+    Ffmpeg,
+    Flac,
+    Mpg123,
+}
+
+impl Default for RefDecoder {
+    fn default() -> Self {
+        RefDecoder::Ffmpeg
+    }
+}
+
 #[derive(Default)]
 struct TestOptions {
+    ref_decoder: RefDecoder,
     is_quiet: bool,
     is_per_sample: bool,
     stop_after_fail: bool,
@@ -52,39 +66,66 @@ struct TestResult {
     abs_max_delta: f32,
 }
 
+fn build_ffmpeg_command(path: &str) -> Command {
+    let mut cmd = Command::new("ffmpeg");
+
+    cmd.arg("-flags2") // Do not trim encoder delay.
+        .arg("skip_manual")
+        .arg("-nostats") // Quiet command.
+        .arg("-hide_banner")
+        .arg("-i") // Input path.
+        .arg(path)
+        .arg("-map") // Select the first audio track.
+        .arg("0:a:0")
+        .arg("-c:a") // Encode audio to pcm_s32le.
+        .arg("pcm_f32le")
+        .arg("-f") // Output in WAVE format.
+        .arg("wav")
+        .arg("-") // Pipe output to stdout.
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null()); // Pipe errors to null.
+
+    cmd
+}
+
+fn build_flac_command(path: &str) -> Command {
+    let mut cmd = Command::new("flac");
+
+    cmd.arg("--stdout")
+        .arg("-d")
+        .arg(path)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+
+    cmd
+}
+
+fn build_mpg123_command(path: &str) -> Command {
+    let mut cmd = Command::new("mpg123");
+    cmd.arg("--wav")
+        .arg("-")
+        .arg("--float")
+        .arg("--no-gapless")
+        .arg(path)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+
+    cmd
+}
+
 struct RefProcess {
     child: std::process::Child,
 }
 
 impl RefProcess {
-    fn try_spawn(path: &str) -> Result<RefProcess> {
-        let mut cmd = Command::new("ffmpeg");
-        let cmd = cmd.arg("-flags2") // Do not trim encoder delay.
-                     .arg("skip_manual")
-                     .arg("-i")      // Input path.
-                     .arg(path)
-                     .arg("-map")    // Select the first audio track.
-                     .arg("0:a:0")
-                     .arg("-c:a")    // Encode audio to pcm_s32le.
-                     .arg("pcm_f32le")
-                     .arg("-f")      // Output in WAVE format.
-                     .arg("wav")
-                     .arg("-")       // Pipe output to stdout.
-                     .stdout(Stdio::piped())
-                     .stderr(Stdio::null());    // Pipe errors to null.
-
-        // TODO: Make the reference decoders runtime switchable.
-        // let mut cmd = Command::new("mpg123");
-        // let cmd = cmd.arg("--wav")
-        //              .arg("-")
-        //              .arg("--float")
-        //              .arg("--no-gapless")
-        //              .arg(path)
-        //              .stdout(Stdio::piped())
-        //              .stderr(Stdio::null());
+    fn try_spawn(decoder: RefDecoder, path: &str) -> Result<RefProcess> {
+        let mut cmd = match decoder {
+            RefDecoder::Ffmpeg => build_ffmpeg_command(path),
+            RefDecoder::Flac => build_flac_command(path),
+            RefDecoder::Mpg123 => build_mpg123_command(path),
+        };
 
         let child = cmd.spawn()?;
-
         Ok(RefProcess { child })
     }
 }
@@ -270,7 +311,7 @@ fn run_check(
 
 fn run_test(path: &str, opts: &TestOptions, result: &mut TestResult) -> Result<()> {
     // 1. Start the reference decoder process.
-    let mut ref_process = RefProcess::try_spawn(path)?;
+    let mut ref_process = RefProcess::try_spawn(opts.ref_decoder, path)?;
 
     // 2. Instantiate a Symphonia decoder for the reference process output.
     let ref_ms = Box::new(ReadOnlySource::new(ref_process.child.stdout.take().unwrap()));
@@ -292,32 +333,62 @@ fn main() {
     pretty_env_logger::init();
 
     let matches = App::new("Symphonia Check")
-                        .version("1.0")
-                        .author("Philip Deljanov <philip.deljanov@gmail.com>")
-                        .about("Check Symphonia output with a reference decoding")
-                        .arg(Arg::new("samples")
-                            .long("samples")
-                            .help("Print failures per sample"))
-                        .arg(Arg::new("stop-after-fail")
-                            .long("first-fail")
-                            .short('f')
-                            .help("Stop testing after the first failed packet"))
-                        .arg(Arg::new("quiet")
-                            .long("quiet")
-                            .short('q')
-                            .help("Only print test results"))
-                        .arg(Arg::new("keep-going")
-                            .long("keep-going")
-                            .help("Continue after a decode error (may cause many failures)"))
-                        .arg(Arg::new("INPUT")
-                            .help("The input file path")
-                            .required(true)
-                            .index(1))
-                        .get_matches();
+        .version("1.0")
+        .author("Philip Deljanov <philip.deljanov@gmail.com>")
+        .about("Check Symphonia output with a reference decoding")
+        .arg(
+            Arg::new("samples")
+                .long("samples")
+                .help("Print failures per sample"),
+        )
+        .arg(
+            Arg::new("stop-after-fail")
+                .long("first-fail")
+                .short('f')
+                .help("Stop testing after the first failed packet"),
+        )
+        .arg(
+            Arg::new("quiet")
+                .long("quiet")
+                .short('q')
+                .help("Only print test results"),
+        )
+        .arg(
+            Arg::new("keep-going")
+                .long("keep-going")
+                .help("Continue after a decode error (may cause many failures)"),
+        )
+        .arg(
+            Arg::new("decoder")
+                .long("ref")
+                .takes_value(true)
+                .possible_values(&["ffmpeg", "flac", "mpg123"])
+                .default_value("ffmpeg")
+                .help("Specify a particular decoder to be used as the reference"),
+        )
+        .arg(
+            Arg::new("INPUT")
+                .help("The input file path")
+                .required(true)
+                .index(1),
+        )
+        .get_matches();
 
     let path = matches.value_of("INPUT").unwrap();
 
+    let ref_decoder = match matches.value_of("decoder").unwrap() {
+        "ffmpeg" => RefDecoder::Ffmpeg,
+        "flac" => RefDecoder::Flac,
+        "mpg123" => RefDecoder::Mpg123,
+        _ => {
+            // This will never occur if the possible values of the argument are the same as the
+            // match arms above.
+            unreachable!()
+        }
+    };
+
     let opts = TestOptions {
+        ref_decoder,
         is_per_sample: matches.is_present("samples"),
         is_quiet: matches.is_present("quiet"),
         stop_after_fail: matches.is_present("stop-after-fail"),
