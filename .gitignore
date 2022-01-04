@@ -8,20 +8,22 @@ Cargo.lock
 
 # Visual Studio Code
 *.code-workspace
+.vscode
 
 # Profiling data
 perf.data
 perf.data.old
 
 # Development Test Vectors
-testvec/*/*.aac
-testvec/*/*.flac
-testvec/*/*.m4a
-testvec/*/*.mp3
-testvec/*/*.mp4
-testvec/*/*.ogg
-testvec/*/*.opus
-testvec/*/*.wav
+testvec/*/**/*.aac
+testvec/*/**/*.flac
+testvec/*/**/*.m4a
+testvec/*/**/*.mp3
+testvec/*/**/*.mp4
+testvec/*/**/*.ogg
+testvec/*/**/*.opus
+testvec/*/**/*.wav
+testvec/*/**/*.mov
 
 # Benchmarking Files
 benchtest/*.aac
