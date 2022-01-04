@@ -184,28 +184,34 @@ pub trait FormatReader: Send {
     /// Seek, as precisely as possible depending on the mode, to the `Time` or track `TimeStamp`
     /// requested. Returns the requested and actual `TimeStamps` seeked to, as well as the `Track`.
     ///
-    /// Note: The `FormatReader` by itself cannot seek to an exact audio frame, it is only capable of
-    /// seeking to the nearest `Packet`. Therefore, to seek to an exact frame, a `Decoder` must
+    /// After a seek, all `Decoder`s consuming packets from this reader should be reset.
+    ///
+    /// Note: The `FormatReader` by itself cannot seek to an exact audio frame, it is only capable
+    /// of seeking to the nearest `Packet`. Therefore, to seek to an exact frame, a `Decoder` must
     /// decode packets until the requested position is reached. When using the accurate `SeekMode`,
-    /// the seeked position will always be before the requested position. If the coarse `SeekMode` is
-    /// used, then the seek position may be after the requested position. Coarse seeking is an
-    /// optional performance enhancement, therefore, a coarse seek may sometimes be an accurate seek.
+    /// the seeked position will always be before the requested position. If the coarse `SeekMode`
+    /// is used, then the seek position may be after the requested position. Coarse seeking is an
+    /// optional performance enhancement, therefore, a coarse seek may sometimes be an accurate
+    /// seek.
     fn seek(&mut self, mode: SeekMode, to: SeekTo) -> Result<SeekedTo>;
 
     /// Gets a list of tracks in the container.
     fn tracks(&self) -> &[Track];
 
-    /// Gets the default track. If the `FormatReader` has a method of determing the default track,
+    /// Gets the default track. If the `FormatReader` has a method of determining the default track,
     /// this function should return it. Otherwise, the first track is returned. If no tracks are
-    /// present then None is returned.
+    /// present then `None` is returned.
     fn default_track(&self) -> Option<&Track> {
         self.tracks().first()
     }
 
     /// Get the next packet from the container.
+    ///
+    /// If `ResetRequired` is returned, then the track list must be re-examined and all `Decoder`s
+    /// re-created. All other errors are unrecoverable.
     fn next_packet(&mut self) -> Result<Packet>;
 
-    /// Destroys the `FormatReader` and returns the underlying stream
+    /// Destroys the `FormatReader` and returns the underlying media source stream
     fn into_inner(self: Box<Self>) -> MediaSourceStream;
 }
 

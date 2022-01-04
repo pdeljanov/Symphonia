@@ -468,13 +468,19 @@ pub trait Decoder: Send {
     /// amount of state.
     fn reset(&mut self);
 
-    /// Gets a reference to parameters the `Decoder` was instantiated with.
+    /// Gets a reference to an updated set of `CodecParameters` based on the parameters the
+    /// `Decoder` was instantiated with.
     fn codec_params(&self) -> &CodecParameters;
 
     /// Decodes a `Packet` of audio data and returns a copy-on-write generic (untyped) audio buffer
     /// of the decoded audio.
     ///
-    /// Implementations *must* `clear` the internal buffer if an error occurs.
+    /// If a `DecodeError` or `IoError` is returned, the packet is undecodeable and should be
+    /// discarded. Decoding may be continued with the next packet. If `ResetRequired` is returned,
+    /// consumers of the decoded audio data should expect the duration and `SignalSpec` of the
+    /// decoded audio buffer to change. All other errors are unrecoverable.
+    ///
+    /// Implementors of decoders *must* `clear` the internal buffer if an error occurs.
     fn decode(&mut self, packet: &Packet) -> Result<AudioBufferRef>;
 
     /// Optionally, obtain post-decode information such as the verification status.
