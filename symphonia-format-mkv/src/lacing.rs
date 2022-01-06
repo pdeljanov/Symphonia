@@ -5,7 +5,7 @@ use symphonia_core::errors::{decode_error, Result};
 use symphonia_core::io::{BufReader, ReadBytes};
 
 use crate::demuxer::TrackState;
-use crate::ebml::{read_vint, read_vint_signed};
+use crate::ebml::{read_unsigned_vint, read_signed_vint};
 
 enum Lacing {
     None,
@@ -28,10 +28,10 @@ fn read_ebml_sizes<R: ReadBytes>(mut reader: R, frames: usize) -> Result<Vec<u64
     let mut sizes = Vec::new();
     for _ in 0..frames {
         if let Some(last_size) = sizes.last().copied() {
-            let delta = read_vint_signed(&mut reader)?;
+            let delta = read_signed_vint(&mut reader)?;
             sizes.push((last_size as i64 + delta) as u64)
         } else {
-            let size = read_vint::<_, true>(&mut reader)?;
+            let size = read_unsigned_vint(&mut reader)?;
             sizes.push(size);
         }
     }
@@ -73,7 +73,7 @@ pub(crate) fn extract_frames(
     buffer: &mut VecDeque<Frame>,
 ) -> Result<()> {
     let mut reader = BufReader::new(&block);
-    let track = read_vint::<_, true>(&mut reader)? as u32;
+    let track = read_unsigned_vint(&mut reader)? as u32;
     let rel_timestamp = reader.read_be_u16()? as i16;
     let flags = reader.read_byte()?;
     let lacing = parse_flags(flags)?;

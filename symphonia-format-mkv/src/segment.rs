@@ -2,7 +2,7 @@ use symphonia_core::errors::{Error, Result};
 use symphonia_core::io::{BufReader, ReadBytes};
 use symphonia_core::meta::{MetadataBuilder, MetadataRevision, Tag, Value};
 
-use crate::ebml::{Element, ElementData, ElementHeader, read_vint};
+use crate::ebml::{Element, ElementData, ElementHeader, read_unsigned_vint};
 use crate::element_ids::ElementType;
 
 #[derive(Debug)]
@@ -453,7 +453,7 @@ impl Element for ClusterElement {
 
         let mut make_block = |data: &[u8], timestamp: Option<u64>| -> Result<()> {
             let mut reader = BufReader::new(data);
-            let track = read_vint::<_, true>(&mut reader)?;
+            let track = read_unsigned_vint(&mut reader)?;
             let ts = reader.read_be_u16()? as i16;
             blocks.push(BlockElement {
                 track,

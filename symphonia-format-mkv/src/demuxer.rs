@@ -188,19 +188,23 @@ impl MkvReader {
     }
 
     fn next_element(&mut self) -> Result<()> {
-        let header = self.iter
-            .read_child_header()?
-            .ok_or_else(|| Error::DecodeError("mkv: end of stream"))?;
-
         if let Some(state) = &self.current_cluster {
+            // Make sure we don't read past the current cluster.
             if self.iter.pos() >= state.end {
                 log::debug!("ended cluster");
                 self.current_cluster = None;
             }
         }
 
+        // Each Cluster is being read incrementally so we need to keep track of
+        // which cluster we are currently in.
+
+        let header = self.iter
+            .read_child_header()?
+            .ok_or_else(|| Error::DecodeError("mkv: end of stream"))?;
+
         match header.etype {
-            ElementType::Cluster => {
+            ElementType::Cluster if self.current_cluster.is_none() => {
                 self.current_cluster = Some(ClusterState {
                     timestamp: None,
                     end: header.pos + header.len,
