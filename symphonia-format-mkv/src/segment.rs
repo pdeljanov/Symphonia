@@ -451,16 +451,20 @@ impl Element for ClusterElement {
         let mut timestamp = None;
         let mut blocks = Vec::new();
 
-        let mut make_block = |data: &[u8], timestamp: Option<u64>| -> Result<()> {
+        fn read_block(data: &[u8], timestamp: u64, offset: u64) -> Result<BlockElement> {
             let mut reader = BufReader::new(data);
             let track = read_unsigned_vint(&mut reader)?;
-            let ts = reader.read_be_u16()? as i16;
-            blocks.push(BlockElement {
-                track,
-                timestamp: (timestamp.unwrap() as i64 + ts as i64) as u64,
-                offset: header.pos,
-            });
-            Ok(())
+            let ts_offset = reader.read_be_u16()? as i16;
+            let timestamp = if ts_offset < 0 {
+                timestamp - (-ts_offset) as u64
+            } else {
+                timestamp + ts_offset as u64
+            };
+            Ok(BlockElement { track, timestamp, offset })
+        }
+
+        let get_timestamp = |timestamp: Option<u64>| {
+            timestamp.ok_or_else(|| Error::DecodeError("mkv: missing timestamp for a cluster"))
         };
 
         let mut it = header.children(reader);
@@ -471,18 +475,18 @@ impl Element for ClusterElement {
                 }
                 ElementType::BlockGroup => {
                     let group = it.read_element_data::<BlockGroupElement>()?;
-                    make_block(&group.data, timestamp)?;
+                    blocks.push(read_block(&group.data, get_timestamp(timestamp)?, header.pos)?);
                 }
                 ElementType::SimpleBlock => {
                     let data = it.read_boxed_slice()?;
-                    make_block(&data, timestamp)?;
+                    blocks.push(read_block(&data, get_timestamp(timestamp)?, header.pos)?);
                 }
                 _ => (),
             }
         }
 
         Ok(ClusterElement {
-            timestamp: timestamp.unwrap(),
+            timestamp: get_timestamp(timestamp)?,
             blocks: blocks.into_boxed_slice(),
             end: header.pos + header.len,
         })

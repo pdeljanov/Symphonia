@@ -161,11 +161,10 @@ impl MkvReader {
                 if block.track as u32 != track_id {
                     continue;
                 }
-
-                if block.timestamp >= ts {
-                    target_block = Some(block);
+                if block.timestamp > ts {
                     break;
                 }
+                target_block = Some(block);
             }
 
             let block = target_block
@@ -204,7 +203,10 @@ impl MkvReader {
             .ok_or_else(|| Error::DecodeError("mkv: end of stream"))?;
 
         match header.etype {
-            ElementType::Cluster if self.current_cluster.is_none() => {
+            ElementType::Cluster => {
+                if self.current_cluster.is_some() {
+                    log::warn!("found a nested cluster. ignoring its parent");
+                }
                 self.current_cluster = Some(ClusterState {
                     timestamp: None,
                     end: header.pos + header.len,
