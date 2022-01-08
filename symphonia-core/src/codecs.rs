@@ -424,7 +424,7 @@ impl Default for CodecParameters {
 
 /// `FinalizeResult` contains optional information that can only be found, calculated, or
 /// determined after decoding is complete.
-#[derive(Default)]
+#[derive(Copy, Clone, Debug, Default)]
 pub struct FinalizeResult {
     /// If verification is enabled and supported by the decoder, provides the verification result
     /// if available.
@@ -432,6 +432,7 @@ pub struct FinalizeResult {
 }
 
 /// `DecoderOptions` is a common set of options that all decoders use.
+#[derive(Copy, Clone, Debug)]
 pub struct DecoderOptions {
     /// The decoded audio should be verified if possible during the decode process.
     pub verify: bool,

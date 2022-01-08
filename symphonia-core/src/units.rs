@@ -17,7 +17,7 @@ pub type Duration = u64;
 /// `Time` represents a duration of time in seconds, or the number of seconds since an arbitrary
 /// epoch. `Time` is stored as an integer number of seconds plus any remaining fraction of a second
 /// as a floating point value.
-#[derive(Debug, Default, Copy, Clone, PartialEq, PartialOrd)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, PartialOrd)]
 pub struct Time {
     pub seconds: u64,
     pub frac: f64,
@@ -108,8 +108,8 @@ impl From<f64> for Time {
     }
 }
 
-#[derive(Debug, Default, Copy, Clone, PartialEq)]
 /// A `TimeBase` is the conversion factor between a `TimeStamp` and real-world seconds.
+#[derive(Copy, Clone, Debug, Default, PartialEq, PartialOrd)]
 pub struct TimeBase {
     /// The numerator.
     pub numer: u32,

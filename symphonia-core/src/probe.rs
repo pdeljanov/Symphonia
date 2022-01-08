@@ -129,7 +129,7 @@ pub trait QueryDescriptor {
 /// from a file path, HTTP header, email  attachment metadata, etc. `Hint`s are optional, and won't
 /// lead the probe astray if they're wrong, but they may provide an informed initial guess and
 /// optimize the guessing process siginificantly especially as more formats are registered.
-#[derive(Default)]
+#[derive(Clone, Debug, Default)]
 pub struct Hint {
     extension: Option<String>,
     mime_type: Option<String>,

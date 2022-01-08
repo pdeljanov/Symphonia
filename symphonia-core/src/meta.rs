@@ -342,7 +342,7 @@ impl fmt::Display for Tag {
 }
 
 /// A 2 dimensional (width and height) size type.
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Default)]
 pub struct Size {
     /// The width in pixels.
     pub width: u32,

@@ -52,6 +52,7 @@ pub enum SeekTo {
 }
 
 /// `SeekedTo` is the result of a seek.
+#[derive(Copy, Clone, Debug)]
 pub struct SeekedTo {
     /// The track the seek was relative to.
     pub track_id: u32,
@@ -62,6 +63,7 @@ pub struct SeekedTo {
 }
 
 /// `SeekMode` selects the precision of a seek.
+#[derive(Copy, Clone, Debug)]
 pub enum SeekMode {
     /// Coarse seek mode is a best-effort attempt to seek to the requested position. The actual
     /// position seeked to may be before or after the requested position. Coarse seeking is an
@@ -74,7 +76,7 @@ pub enum SeekMode {
 }
 
 /// `FormatOptions` is a common set of options that all demuxers use.
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct FormatOptions {
     /// If a `FormatReader` requires a seek index, but the container does not provide one, build the
     /// seek index during instantiation instead of building it progressively. Default: `false`.
@@ -372,7 +374,7 @@ pub mod util {
     /// `SeekSearchResult` is the return value for a search on a `SeekIndex`. It returns a range of
     /// `SeekPoint`s a `FormatReader` should search to find the desired timestamp. Ranges are
     /// lower-bound inclusive, and upper-bound exclusive.
-    #[derive(Debug, PartialEq)]
+    #[derive(Copy, Clone, Debug, PartialEq)]
     pub enum SeekSearchResult {
         /// The `SeekIndex` is empty so the desired timestamp could not be found. The entire stream
         /// should be searched for the desired timestamp.
