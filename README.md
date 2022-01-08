@@ -1,10 +1,50 @@
-# Symphonia
+<div align="center">
+<h1>Symphonia</h1>
 
-[![Docs](https://docs.rs/symphonia/badge.svg)](https://docs.rs/symphonia)
-[![Build Status](https://github.com/pdeljanov/Symphonia/actions/workflows/ci.yml/badge.svg)](https://github.com/pdeljanov/Symphonia/actions/workflows/ci.yml)
-[![dependency status](https://deps.rs/repo/github/pdeljanov/symphonia/status.svg)](https://deps.rs/repo/github/pdeljanov/symphonia)
+<!--
+<p>
+    <img src="https://raw.githubusercontent.com/pdeljanov/symphonia/master/assets/logo.png" width="200px" />
+</p>
+-->
 
-Symphonia is a pure Rust audio decoding and media demuxing library supporting AAC, ALAC, FLAC, MP3, MP4, OGG, Vorbis, and WAV.
+<p>
+    <a href="https://crates.io/crates/symphonia">
+        <img alt="Crate Info" src="https://img.shields.io/crates/v/symphonia.svg"/>
+    </a>
+    <a href="https://docs.rs/symphonia/">
+        <img alt="API Docs" src="https://img.shields.io/badge/docs.rs-symphonia-brightgreen"/>
+    </a>
+    <a href="https://github.com/pdeljanov/Symphonia/actions/workflows/ci.yml">
+        <img src="https://github.com/pdeljanov/Symphonia/actions/workflows/ci.yml/badge.svg" />
+    </a>
+    <a href="https://deps.rs/repo/github/pdeljanov/symphonia">
+        <img src="https://deps.rs/repo/github/pdeljanov/symphonia/status.svg" />
+    </a>
+    <a href="https://blog.rust-lang.org/2021/03/25/Rust-1.51.0.html">
+        <img alt="Rustc Version 1.49.0+" src="https://img.shields.io/badge/rustc-1.51%2B-lightgrey.svg"/>
+    </a>
+</p>
+
+<p>
+    <strong>
+        Symphonia is a pure Rust audio decoding and media demuxing library supporting AAC, ALAC, FLAC, MP3, MP4, OGG, Vorbis, and WAV.
+    </strong>
+</p>
+
+<p>
+    <h3>
+        <a href="https://github.com/pdeljanov/Symphonia/blob/master/GETTING_STARTED.md">Getting Started</a>
+        <span> · </span>
+        <a href="https://docs.rs/symphonia">Documentation</a>
+        <span> · </span>
+        <a href="https://github.com/pdeljanov/Symphonia/tree/master/symphonia/examples">Examples</a>
+        <span> · </span>
+        <a href="https://github.com/pdeljanov/Symphonia/blob/master/BENCHMARKS.md">Benchmarks</a>
+    </h3>
+</p>
+</div>
+
+---
 
 ## Features
 
@@ -22,7 +62,7 @@ Additionally, planned features include:
 * Providing a C API for integration into other languages
 * Providing a WASM API for web usage
 
-## Format and Codec Support Roadmap
+## Roadmap
 
 Support for individual audio codecs and media formats is provided by separate crates. By default, Symphonia enables support for FOSS codecs and formats, but others may be enabled via the features option.
 
@@ -30,8 +70,7 @@ The follow status classifications are used to determine the state of development
 
 | Status    | Meaning                                                                                                                  |
 |-----------|--------------------------------------------------------------------------------------------------------------------------|
-| -         | No work started or planned yet.                                                                                          |
-| In Work   | Is in work or will be started next.                                                                                      |
+| -         | In work or not started yet.                                                                                              |
 | Good      | Many media streams play. Some streams may panic, error, or produce audible glitches. Some features may not be supported. |
 | Great     | Most media streams play. Inaudible glitches may be present. Most common features are supported.                          |
 | Excellent | All media streams play.  No audible or inaudible glitches. All required features are supported.                          |
@@ -43,7 +82,7 @@ A status of *great* indicates that major development is complete and that the fe
 | Format   | Status    | Feature Flag | Default | Crate                       |
 |----------|-----------|--------------|---------|-----------------------------|
 | ISO/MP4  | Great     | `isomp4`     | No      | [`symphonia-format-isomp4`] |
-| MKV/WebM | In Work   | `mkv`        | Yes     | `symphonia-format-mkv`      |
+| MKV/WebM | -         | `mkv`        | Yes     | `symphonia-format-mkv`      |
 | OGG      | Great     | `ogg`        | Yes     | [`symphonia-format-ogg`]    |
 | Wave     | Excellent | `wav`        | Yes     | [`symphonia-format-wav`]    |
 
@@ -55,7 +94,7 @@ A status of *great* indicates that major development is complete and that the fe
 
 | Codec                        | Status    | Feature Flag | Default | Crate                      |
 |------------------------------|-----------|--------------|---------|----------------------------|
-| AAC-LC                       | Good      | `aac`        | No      | [`symphonia-codec-aac`]    |
+| AAC-LC                       | Great     | `aac`        | No      | [`symphonia-codec-aac`]    |
 | ALAC                         | Great     | `alac`       | No      | [`symphonia-codec-alac`]   |
 | HE-AAC (AAC+, aacPlus)       | -         | `aac`        | No      | [`symphonia-codec-aac`]    |
 | HE-AACv2 (eAAC+, aacPlus v2) | -         | `aac`        | No      | [`symphonia-codec-aac`]    |
@@ -63,7 +102,7 @@ A status of *great* indicates that major development is complete and that the fe
 | MP1                          | -         | `mp3`        | No      | [`symphonia-bundle-mp3`]   |
 | MP2                          | -         | `mp3`        | No      | [`symphonia-bundle-mp3`]   |
 | MP3                          | Excellent | `mp3`        | No      | [`symphonia-bundle-mp3`]   |
-| Opus                         | In Work   | `opus`       | Yes     | `symphonia-codec-opus`     |
+| Opus                         | -         | `opus`       | Yes     | `symphonia-codec-opus`     |
 | PCM                          | Excellent | `pcm`        | Yes     | [`symphonia-codec-pcm`]    |
 | Vorbis                       | Great     | `vorbis`     | Yes     | [`symphonia-codec-vorbis`] |
 | WavPack                      | -         | `wavpack`    | Yes     | `symphonia-codec-wavpack`  |
@@ -101,58 +140,13 @@ In addition to the safety guarantees afforded by Rust, Symphonia aims to:
 
 ## Performance
 
-Symphonia aims to be comparable or better in performance to popular open-source C-based implementations. Currently, Symphonia's decoders are generally +/-15% the performance of `ffmpeg`. The exact amount will depend strongly on the codec, and which features of the codec are leveraged in the encoding.
+Symphonia aims to be comparable to, or faster than, popular open-source C-based implementations. Currently, Symphonia's decoders are generally +/-15% the performance of FFMpeg. However, the exact range will depend strongly on the codec, which features of the codec are being leveraged in the encoding, the Rust compiler version, and the CPU architecture being compiled for.
 
-### Benchmarks (as of September 2019)
+See the [benchmarks](https://github.com/pdeljanov/Symphonia/blob/master/BENCHMARKS.md) for more information.
 
-These benchmarks compare the single-threaded decoding performance of both Symphonia and FFmpeg with various audio files.
+## Examples
 
-The benchmarks were executed on an Arch Linux system with a Core i7 4790k and 32GB of RAM, for a minimum of 20 runs each. [Hyperfine](https://github.com/sharkdp/hyperfine) was used to execute the test. The full benchmark script is as follows:
-
-```bash
-#!/bin/bash
-IN="${1@Q}"
-hyperfine -m 20 "ffmpeg -threads 1 -benchmark -v 0 -i ${IN} -f null -" "symphonia-play --decode-only ${IN}"
-```
-
-#### MP3, 192kbps @ 44.1kHz
-
-| Command | Mean [ms] | Min [ms] | Max [ms] | Relative |
-|:---|---:|---:|---:|---:|
-| Symphonia | 306.2 ± 3.0 | 301.8 | 312.5 | 1.1 |
-| FFmpeg | 272.7 ± 4.3 | 267.6 | 285.3 | 1.0 |
-
-#### MP3, 320kbps @ 44.1kHz
-
-| Command | Mean [ms] | Min [ms] | Max [ms] | Relative |
-|:---|---:|---:|---:|---:|
-| Symphonia | 355.1 ± 8.4 | 348.2 | 376.2 | 1.1 |
-| FFmpeg | 316.0 ± 3.5 | 308.8 | 322.8 | 1.0 |
-
-#### FLAC, 24-bit @ 96kHz
-
-| Decoder | Mean [ms] | Min [ms] | Max [ms] | Relative |
-|:---|---:|---:|---:|---:|
-| Symphonia | 453.6 ± 2.9 | 449.3 | 462.4 | 1.0 |
-| FFmpeg | 501.9 ± 4.3 | 496.4 | 512.7 | 1.1 |
-
-#### FLAC, 24-bit @ 48kHz
-
-| Command | Mean [ms] | Min [ms] | Max [ms] | Relative |
-|:---|---:|---:|---:|---:|
-| Symphonia | 324.0 ± 8.9 | 315.4 | 346.3 | 1.0 |
-| FFmpeg | 331.0 ± 7.4 | 323.6 | 354.5 | 1.0 |
-
-#### WAVE, S32LE @ 44.1kHz
-
-| Command | Mean [ms] | Min [ms] | Max [ms] | Relative |
-|:---|---:|---:|---:|---:|
-| Symphonia | 84.5 ± 1.8 | 81.8 | 89.1 | 1.0 |
-| FFmpeg | 129.8 ± 3.4 | 123.4 | 136.1 | 1.5 |
-
-## Example Usage
-
-Basic usage examples may be found in [`symphonia/examples`](https://github.com/pdeljanov/Symphonia/tree/master/symphonia/examples).
+Basic usage examples may be found [`here`](https://github.com/pdeljanov/Symphonia/tree/master/symphonia/examples).
 
 For a more complete application, see [`symphonia-play`](https://github.com/pdeljanov/Symphonia/tree/master/symphonia-play), a simple music player.
 
@@ -161,9 +155,9 @@ For a more complete application, see [`symphonia-play`](https://github.com/pdelj
 Symphonia provides the following tools for debugging purposes:
 
 * [`symphonia-play`](https://github.com/pdeljanov/Symphonia/tree/master/symphonia-play) for probing, decoding, validating, and playing back media streams.
-* [`symphonia-check`](https://github.com/pdeljanov/Symphonia/tree/master/symphonia-check) for validating Symphonia's decoded output against `ffmpeg`.
+* [`symphonia-check`](https://github.com/pdeljanov/Symphonia/tree/master/symphonia-check) for validating Symphonia's decoded output against various decoders.
 
-## Authors
+## Author
 
 The primary author is Philip Deljanov.
 
