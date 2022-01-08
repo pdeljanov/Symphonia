@@ -8,7 +8,7 @@
 // Justification: Some loops are better expressed without a range loop.
 #![allow(clippy::needless_range_loop)]
 
-use std::f64;
+use core::f64;
 
 use lazy_static::lazy_static;
 
@@ -445,7 +445,7 @@ pub fn frequency_inversion(samples: &mut [f32; 576]) {
 mod tests {
     use super::IMDCT_WINDOWS;
     use super::imdct12_win;
-    use std::f64;
+    use core::f64;
 
     fn imdct12_analytical(x: &[f32; 6]) -> [f32; 12] {
         const PI_24: f64 = f64::consts::PI / 24.0;
@@ -623,7 +623,7 @@ mod imdct36 {
             1.931_851_652_578_136_6,  // m=1
             1.812_615_574_073_299_9,  // m=2
             1.638_304_088_577_983_6,  // m=3
-            std::f32::consts::SQRT_2, // m=4
+            core::f32::consts::SQRT_2,// m=4
             1.147_152_872_702_092_3,  // m=5
             0.845_236_523_481_398_9,  // m=6
             0.517_638_090_205_041_9,  // m=7
@@ -735,7 +735,7 @@ mod imdct36 {
     #[cfg(test)]
     mod tests {
         use super::imdct36;
-        use std::f64;
+        use core::f64;
 
         fn imdct36_analytical(x: &[f32; 18]) -> [f32; 36] {
             let mut result = [0f32; 36];

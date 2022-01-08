@@ -10,7 +10,7 @@
 //! The (I)DCT algorithms in this module are not general purpose and are specialized for use in
 //! typical audio compression applications. Therefore, some constraints may apply.
 
-use std::f64;
+use core::f64;
 
 use lazy_static::lazy_static;
 
@@ -711,7 +711,7 @@ fn dct_ii_32(x: &mut [f32]) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::f64;
+    use core::f64;
 
     fn dct_analytical(x: &[f32], y: &mut [f32]) {
         let n = x.len();

@@ -9,7 +9,7 @@
 
 use symphonia_core::meta::StandardTagKey;
 
-use std::collections::HashMap;
+use hashbrown::HashMap;
 
 use lazy_static::lazy_static;
 

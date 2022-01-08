@@ -8,11 +8,11 @@
 //! The `audio` module provides primitives for working with multi-channel audio buffers of varying
 //! sample formats.
 
-use std::borrow::Cow;
-use std::fmt;
-use std::marker::PhantomData;
-use std::mem;
-use std::vec::Vec;
+use alloc::borrow::Cow;
+use core::fmt;
+use core::marker::PhantomData;
+use core::mem;
+use alloc::vec::Vec;
 
 use arrayvec::ArrayVec;
 use bitflags::bitflags;

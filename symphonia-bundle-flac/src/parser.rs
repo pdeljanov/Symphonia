@@ -5,8 +5,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use std::cmp::min;
-use std::collections::VecDeque;
+use core::cmp::min;
+use alloc::collections::VecDeque;
 
 use symphonia_core::checksum::Crc16Ansi;
 use symphonia_core::errors::{Result, Error};

@@ -7,7 +7,7 @@
 
 //! Platform-dependant Audio Outputs
 
-use std::result;
+use core::result;
 
 use symphonia::core::audio::{AudioBufferRef, SignalSpec};
 use symphonia::core::units::Duration;
@@ -66,11 +66,11 @@ mod pulseaudio {
             // attributes for very short audio streams.
             //
             // let pa_buf_attr = pulse::def::BufferAttr {
-            //     maxlength: std::u32::MAX,
+            //     maxlength: core::u32::MAX,
             //     tlength: 1024,
-            //     prebuf: std::u32::MAX,
-            //     minreq: std::u32::MAX,
-            //     fragsize: std::u32::MAX,
+            //     prebuf: core::u32::MAX,
+            //     minreq: core::u32::MAX,
+            //     fragsize: core::u32::MAX,
             // };
 
             // Create a PulseAudio connection.
@@ -188,7 +188,7 @@ mod cpal {
         cpal::Sample +
         ConvertibleSample +
         RawSample +
-        std::marker::Send +
+        core::marker::Send +
         'static {}
 
     impl AudioOutputSample for f32 { }

@@ -26,7 +26,7 @@ pub mod dither {
     //! Multiple dithering algorithms are provided, each drawing noise from a different probability
     //! distribution. In addition to different distributions, a dithering algorithm may also shape
     //! the noise such that the bulk of the noise is placed in an inaudible frequency range.
-    use std::marker::PhantomData;
+    use core::marker::PhantomData;
     use super::FromSample;
     use crate::sample::{u24, i24};
     use crate::sample::Sample;
@@ -638,7 +638,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::{u8, i8, u16, i16, u32, i32};
+    use core::{u8, i8, u16, i16, u32, i32};
     use crate::sample::{u24, i24, Sample};
     use super::FromSample;
 

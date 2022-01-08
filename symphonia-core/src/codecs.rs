@@ -8,9 +8,9 @@
 //! The `codec` module provides the traits and support structures necessary to implement audio codec
 //! decoders.
 
-use std::collections::HashMap;
-use std::default::Default;
-use std::fmt;
+use hashbrown::HashMap;
+use core::default::Default;
+use core::fmt;
 
 use crate::audio::{AudioBufferRef, Channels, Layout};
 use crate::errors::{Result, unsupported_error};

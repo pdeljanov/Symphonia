@@ -16,7 +16,7 @@
 // Disable to better express the specification.
 #![allow(clippy::collapsible_else_if)]
 
-use std::cmp::min;
+use core::cmp::min;
 
 use symphonia_core::audio::{
     AsAudioBufferRef, AudioBuffer, AudioBufferRef, Channels, Signal, SignalSpec,

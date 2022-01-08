@@ -330,7 +330,7 @@ pub mod clamp {
 
     #[cfg(test)]
     mod tests {
-        use std::{u8, i8, u16, i16, u32, i32, u64, i64};
+        use core::{u8, i8, u16, i16, u32, i32, u64, i64};
         use super::*;
 
         #[test]

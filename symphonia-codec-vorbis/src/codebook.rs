@@ -5,7 +5,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use std::usize;
+use core::usize;
 
 use symphonia_core::errors::{Result, decode_error};
 use symphonia_core::io::{vlc::{BitOrder, Codebook, CodebookBuilder, Entry32x32}, ReadBitsRtl};
@@ -283,7 +283,7 @@ impl VorbisCodebook {
 
                 let num = bs.read_bits_leq32(num_bits)?;
 
-                code_lens.extend(std::iter::repeat(cur_len as u8).take(num as usize));
+                code_lens.extend(core::iter::repeat(cur_len as u8).take(num as usize));
 
                 cur_len += 1;
                 cur_entry += num;

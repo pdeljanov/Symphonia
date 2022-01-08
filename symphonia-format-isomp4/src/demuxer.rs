@@ -17,7 +17,7 @@ use symphonia_core::probe::{Descriptor, Instantiate, QueryDescriptor};
 use symphonia_core::units::Time;
 
 use std::io::{Seek, SeekFrom};
-use std::sync::Arc;
+use alloc::sync::Arc;
 
 use crate::atoms::{AtomIterator, AtomType};
 use crate::atoms::{FtypAtom, MoovAtom, MoofAtom, SidxAtom, TrakAtom, MetaAtom, MvexAtom};

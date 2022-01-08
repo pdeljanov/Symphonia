@@ -226,7 +226,7 @@ impl FormatReader for Mp3Reader {
             let header = header::parse_frame_header(header::sync_frame(&mut self.reader)?)?;
 
             // Position of the frame header.
-            let frame_pos = self.reader.pos() - std::mem::size_of::<u32>() as u64;
+            let frame_pos = self.reader.pos() - core::mem::size_of::<u32>() as u64;
 
             // Calculate the duration of the frame.
             let duration = SAMPLES_PER_GRANULE * header.n_granules() as u64;
@@ -261,7 +261,7 @@ impl FormatReader for Mp3Reader {
                 if main_data_begin > 0 {
                     // The maximum number of reference frames is limited to the number of frames
                     // read and the number of previous frames recorded.
-                    let max_ref_frames = std::cmp::min(n_frames, frames.len());
+                    let max_ref_frames = core::cmp::min(n_frames, frames.len());
 
                     while n_ref_frames < max_ref_frames {
                         ref_frame = &frames[(n_frames - n_ref_frames - 1) & REF_FRAMES_MASK];

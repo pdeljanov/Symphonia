@@ -5,8 +5,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use std::cmp::max;
-use std::{f64, f32};
+use core::cmp::max;
+use core::{f64, f32};
 
 use symphonia_core::errors::{Result, decode_error};
 
