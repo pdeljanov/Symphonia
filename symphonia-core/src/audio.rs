@@ -694,7 +694,7 @@ impl<S: Sample> Signal<S> for AudioBuffer<S> {
         if shift >= self.n_frames {
             self.clear();
         }
-        else {
+        else if shift > 0 {
             // Shift the samples down in each plane.
             for plane in self.buf.chunks_mut(self.n_capacity) {
                 plane.copy_within(shift..self.n_frames, 0);
