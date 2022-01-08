@@ -71,7 +71,7 @@
 //! 5.  Using the `Probe`, call [`format`][core::probe::Probe::format] and pass it the
 //!    `MediaSourceStream`.
 //! 6.  If the probe successfully detects a compatible format, a `FormatReader` will be returned.
-//!     This is an instance of a demuxer that can read and demux the provided source into 
+//!     This is an instance of a demuxer that can read and demux the provided source into
 //!     [`Packet`][core::formats::Packet]s.
 //! 7.  At this point it is possible to interrogate the `FormatReader` for general information about
 //!     the media and metadata. Examine the [`Track`][core::formats::Track] listing using
@@ -94,7 +94,12 @@
 //! An example implementation of a simple audio player (symphonia-play) can be found in the
 //! Project Symphonia git repository.
 //!
-//! # Adding support for new formats and codecs
+//! # Gapless Playback
+//!
+//! Gapless playback is disabled by default. To enable gapless playback, set
+//! [`FormatOptions::enable_gapless`][core::formats::FormatOptions::enable_gapless] to `true`.
+//!
+//! # Adding new formats and codecs
 //!
 //! Simply implement the [`Decoder`][core::codecs::Decoder] trait for a decoder or the
 //! [`FormatReader`][core::formats::FormatReader] trait for a demuxer trait and register with

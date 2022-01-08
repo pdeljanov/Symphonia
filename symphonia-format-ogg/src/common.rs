@@ -7,14 +7,6 @@
 
 use symphonia_core::meta::MetadataRevision;
 
-/// OGG packet.
-pub struct OggPacket {
-    pub serial: u32,
-    pub ts: u64,
-    pub dur: u64,
-    pub data: Box<[u8]>,
-}
-
 /// Side data variants.
 pub enum SideData {
     Metadata(MetadataRevision),

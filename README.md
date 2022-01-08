@@ -8,11 +8,11 @@ Symphonia is a pure Rust audio decoding and media demuxing library supporting AA
 
 ## Features
 
-* Decode support for the most popular audio codecs
+* Decode support for the most popular audio codecs with support for gapless playback
 * Demux the most common media container formats
 * Read most metadata and tagging formats
 * Automatic format and decoder detection
-* Provides a set of basic audio primitives for manipulating audio data efficiently
+* Basic audio primitives for manipulating audio data efficiently
 * 100% safe Rust
 * Minimal dependencies
 * Fast with no compromises in performance!

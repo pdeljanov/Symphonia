@@ -30,6 +30,7 @@ pub struct Mp3Reader {
     tracks: Vec<Track>,
     cues: Vec<Cue>,
     metadata: MetadataLog,
+    options: FormatOptions,
     first_frame_pos: u64,
     next_packet_ts: u64,
 }
@@ -58,7 +59,7 @@ impl QueryDescriptor for Mp3Reader {
 
 impl FormatReader for Mp3Reader {
 
-    fn try_new(mut source: MediaSourceStream, _options: &FormatOptions) -> Result<Self> {
+    fn try_new(mut source: MediaSourceStream, options: &FormatOptions) -> Result<Self> {
         // Try to read the first MPEG frame.
         let (header, packet) = read_mpeg_frame(&mut source)?;
 
@@ -74,15 +75,28 @@ impl FormatReader for Mp3Reader {
 
         // Check if there is a Xing/Info tag contained in the first frame.
         if let Some(info_tag) = try_read_info_tag(&packet, &header) {
-            // The base Xing/Info tag may contain the number of frames.
-            if let Some(n_mpeg_frames) = info_tag.num_frames {
-                params.with_n_frames(u64::from(n_mpeg_frames) * audio_frames_per_mpeg_frame);
-            }
-
             // The LAME tag contains ReplayGain and padding information.
-            if let Some(lame_tag) = info_tag.lame {
-                params.with_leading_padding(lame_tag.leading_padding)
-                      .with_trailing_padding(lame_tag.trailing_padding);
+            let (delay, padding) = if let Some(lame_tag) = info_tag.lame {
+                params.with_delay(lame_tag.enc_delay)
+                      .with_padding(lame_tag.enc_padding);
+
+                (lame_tag.enc_delay, lame_tag.enc_padding)
+            }
+            else {
+                (0, 0)
+            };
+
+            // The base Xing/Info tag may contain the number of frames.
+            if let Some(num_mpeg_frames) = info_tag.num_frames {
+                let num_frames = u64::from(num_mpeg_frames) * audio_frames_per_mpeg_frame;
+
+                // Adjust for gapless playback.
+                if options.enable_gapless {
+                    params.with_n_frames(num_frames - u64::from(delay) - u64::from(padding));
+                }
+                else {
+                    params.with_n_frames(num_frames);
+                }
             }
         }
         else {
@@ -107,6 +121,7 @@ impl FormatReader for Mp3Reader {
             tracks: vec![ Track::new(0, params) ],
             cues: Vec::new(),
             metadata: Default::default(),
+            options: *options,
             first_frame_pos,
             next_packet_ts: 0,
         })
@@ -116,14 +131,23 @@ impl FormatReader for Mp3Reader {
         let (header, packet) = read_mpeg_frame(&mut self.reader)?;
 
         // Each frame contains 1 or 2 granules with each granule being exactly 576 samples long.
-        let duration = SAMPLES_PER_GRANULE * header.n_granules() as u64;
-
         let ts = self.next_packet_ts;
+        let duration = SAMPLES_PER_GRANULE * header.n_granules() as u64;
 
         self.next_packet_ts += duration;
 
-        Ok(Packet::new_from_boxed_slice(0, ts, duration, packet.into_boxed_slice()))
-    }
+        let mut packet = Packet::new_from_boxed_slice(0, ts, duration, packet.into_boxed_slice());
+
+        if self.options.enable_gapless {
+            symphonia_core::formats::util::trim_packet(
+                &mut packet,
+                self.tracks[0].codec_params.delay.unwrap_or(0),
+                self.tracks[0].codec_params.n_frames
+            );
+        }
+
+        Ok(packet)
+   }
 
     fn metadata(&mut self) -> Metadata<'_> {
         self.metadata.metadata()
@@ -142,7 +166,7 @@ impl FormatReader for Mp3Reader {
         const REF_FRAMES_MASK: usize = MAX_REF_FRAMES - 1;
 
         // Get the timestamp of the desired audio frame.
-        let required_ts = match to {
+        let desired_ts = match to {
             // Frame timestamp given.
             SeekTo::TimeStamp { ts, .. } => ts,
             // Time value given, calculate frame timestamp from sample rate.
@@ -158,7 +182,18 @@ impl FormatReader for Mp3Reader {
             }
         };
 
-        debug!("seeking to ts={}", required_ts);
+        // If gapless playback is enabled, get the delay.
+        let delay = if self.options.enable_gapless {
+            u64::from(self.tracks[0].codec_params.delay.unwrap_or(0))
+        }
+        else {
+            0
+        };
+
+        // The required timestamp is offset by the delay.
+        let required_ts = desired_ts + delay;
+
+        debug!("seeking to ts={} (+{} delay = {})", desired_ts, delay, required_ts);
 
         // If the desired timestamp is less-than the next packet timestamp, attempt to seek
         // to the start of the stream.
@@ -210,7 +245,8 @@ impl FormatReader for Mp3Reader {
                 let main_data_begin = read_main_data_begin(&mut self.reader, &header)? as u64;
 
                 debug!(
-                    "found frame with ts={} @ pos={} with main_data_begin={}",
+                    "found frame with ts={} ({}) @ pos={} with main_data_begin={}",
+                    self.next_packet_ts.saturating_sub(delay),
                     self.next_packet_ts,
                     frame_pos,
                     main_data_begin
@@ -238,9 +274,10 @@ impl FormatReader for Mp3Reader {
                     }
 
                     debug!(
-                        "will seek to ts={} (-{} frames) @ pos={} (-{} bytes)",
-                        ref_frame.ts,
+                        "will seek -{} frame(s) to ts={} ({}) @ pos={} (-{} bytes)",
                         n_ref_frames,
+                        ref_frame.ts.saturating_sub(delay),
+                        ref_frame.ts,
                         ref_frame.pos,
                         frame_pos - ref_frame.pos
                     );
@@ -260,14 +297,18 @@ impl FormatReader for Mp3Reader {
             self.next_packet_ts += duration;
         }
 
-        debug!("seeked to ts={} (delta={})",
+        let actual_ts = self.next_packet_ts.saturating_sub(delay);
+
+        debug!("seeked to ts={} ({}) (delta={})",
+            actual_ts,
             self.next_packet_ts,
-            required_ts as i64 - self.next_packet_ts as i64);
+            self.next_packet_ts as i64 - required_ts as i64,
+        );
 
         Ok(SeekedTo {
             track_id: 0,
-            required_ts,
-            actual_ts: self.next_packet_ts,
+            required_ts: required_ts - delay,
+            actual_ts,
         })
     }
 
@@ -387,8 +428,8 @@ struct LameTag {
     replaygain_peak: Option<f32>,
     replaygain_radio: Option<f32>,
     replaygain_audiophile: Option<f32>,
-    trailing_padding: u32,
-    leading_padding: u32,
+    enc_delay: u32,
+    enc_padding: u32,
     music_crc: u16,
 }
 
@@ -505,15 +546,14 @@ fn try_read_info_tag_inner(buf: &[u8], header: &FrameHeader) -> Result<Option<Xi
         // Arbitrary bitrate.
         let _abr = reader.read_u8()?;
 
-        let (leading_padding, trailing_padding) = {
-            let delay = reader.read_be_u24()?;
+        let (enc_delay, enc_padding) = {
+            let trim = reader.read_be_u24()?;
 
             if encoder[..4] == *b"LAME" || encoder[..4] == *b"Lavf" || encoder[..4] == *b"Lavc" {
-                // These encoders always add a 529 sample delay on-top of the stated encoder delay.
-                let leading = 528 + 1 + (delay >> 12);
-                let trailing = delay & ((1 << 12) - 1);
+                let delay = 528 + 1 + (trim >> 12);
+                let padding = trim & ((1 << 12) - 1);
 
-                (leading, trailing)
+                (delay, padding.saturating_sub(528 + 1))
             }
             else {
                 (0, 0)
@@ -545,8 +585,8 @@ fn try_read_info_tag_inner(buf: &[u8], header: &FrameHeader) -> Result<Option<Xi
                 replaygain_peak,
                 replaygain_radio,
                 replaygain_audiophile,
-                trailing_padding,
-                leading_padding,
+                enc_delay,
+                enc_padding,
                 music_crc,
             })
         }

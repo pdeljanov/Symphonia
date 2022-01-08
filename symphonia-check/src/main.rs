@@ -55,6 +55,7 @@ struct TestOptions {
     is_per_sample: bool,
     stop_after_fail: bool,
     keep_going: bool,
+    gapless: bool,
 }
 
 #[derive(Default)]
@@ -66,12 +67,15 @@ struct TestResult {
     abs_max_delta: f32,
 }
 
-fn build_ffmpeg_command(path: &str) -> Command {
+fn build_ffmpeg_command(path: &str, gapless: bool) -> Command {
     let mut cmd = Command::new("ffmpeg");
 
-    cmd.arg("-flags2") // Do not trim encoder delay.
-        .arg("skip_manual")
-        .arg("-nostats") // Quiet command.
+    // Gapless argument must come before everything else.
+    if !gapless {
+        cmd.arg("-flags2").arg("skip_manual");
+    }
+
+    cmd.arg("-nostats") // Quiet command.
         .arg("-hide_banner")
         .arg("-i") // Input path.
         .arg(path)
@@ -100,12 +104,16 @@ fn build_flac_command(path: &str) -> Command {
     cmd
 }
 
-fn build_mpg123_command(path: &str) -> Command {
+fn build_mpg123_command(path: &str, gapless: bool) -> Command {
     let mut cmd = Command::new("mpg123");
+
+    if !gapless {
+        cmd.arg("--no-gapless");
+    }
+
     cmd.arg("--wav")
         .arg("-")
         .arg("--float")
-        .arg("--no-gapless")
         .arg(path)
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
@@ -118,11 +126,11 @@ struct RefProcess {
 }
 
 impl RefProcess {
-    fn try_spawn(decoder: RefDecoder, path: &str) -> Result<RefProcess> {
+    fn try_spawn(decoder: RefDecoder, gapless: bool, path: &str) -> Result<RefProcess> {
         let mut cmd = match decoder {
-            RefDecoder::Ffmpeg => build_ffmpeg_command(path),
+            RefDecoder::Ffmpeg => build_ffmpeg_command(path, gapless),
             RefDecoder::Flac => build_flac_command(path),
-            RefDecoder::Mpg123 => build_mpg123_command(path),
+            RefDecoder::Mpg123 => build_mpg123_command(path, gapless),
         };
 
         let child = cmd.spawn()?;
@@ -137,15 +145,14 @@ struct DecoderInstance {
 }
 
 impl DecoderInstance {
-    fn try_open(mss: MediaSourceStream) -> Result<DecoderInstance> {
+    fn try_open(mss: MediaSourceStream, fmt_opts: &FormatOptions) -> Result<DecoderInstance> {
         // Use the default options for metadata and format readers, and the decoder.
-        let fmt_opts: FormatOptions = Default::default();
         let meta_opts: MetadataOptions = Default::default();
         let dec_opts: DecoderOptions = Default::default();
 
         let hint = Hint::new();
 
-        let probed = symphonia::default::get_probe().format(&hint, mss, &fmt_opts, &meta_opts)?;
+        let probed = symphonia::default::get_probe().format(&hint, mss, fmt_opts, &meta_opts)?;
         let format = probed.format;
 
         let track = format.default_track().unwrap();
@@ -311,19 +318,21 @@ fn run_check(
 
 fn run_test(path: &str, opts: &TestOptions, result: &mut TestResult) -> Result<()> {
     // 1. Start the reference decoder process.
-    let mut ref_process = RefProcess::try_spawn(opts.ref_decoder, path)?;
+    let mut ref_process = RefProcess::try_spawn(opts.ref_decoder, opts.gapless, path)?;
 
     // 2. Instantiate a Symphonia decoder for the reference process output.
     let ref_ms = Box::new(ReadOnlySource::new(ref_process.child.stdout.take().unwrap()));
     let ref_mss = MediaSourceStream::new(ref_ms, Default::default());
 
-    let mut ref_inst = DecoderInstance::try_open(ref_mss)?;
+    let mut ref_inst = DecoderInstance::try_open(ref_mss, &Default::default())?;
 
     // 3. Instantiate a Symphonia decoder for the test target.
     let tgt_ms = Box::new(File::open(Path::new(path))?);
     let tgt_mss = MediaSourceStream::new(tgt_ms, Default::default());
 
-    let mut tgt_inst = DecoderInstance::try_open(tgt_mss)?;
+    let tgt_fmt_opts = FormatOptions { enable_gapless: opts.gapless, ..Default::default() };
+
+    let mut tgt_inst = DecoderInstance::try_open(tgt_mss, &tgt_fmt_opts)?;
 
     // 4. Begin check.
     run_check(&mut ref_inst, &mut tgt_inst, opts, result)
@@ -367,6 +376,11 @@ fn main() {
                 .help("Specify a particular decoder to be used as the reference"),
         )
         .arg(
+            Arg::new("no-gapless")
+                .long("no-gapless")
+                .help("Disable gapless decoding")
+        )
+        .arg(
             Arg::new("INPUT")
                 .help("The input file path")
                 .required(true)
@@ -393,6 +407,7 @@ fn main() {
         is_quiet: matches.is_present("quiet"),
         stop_after_fail: matches.is_present("stop-after-fail"),
         keep_going: matches.is_present("keep-going"),
+        gapless: !matches.is_present("no-gapless"),
         ..Default::default()
     };
 

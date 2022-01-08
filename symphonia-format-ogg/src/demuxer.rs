@@ -18,7 +18,7 @@ use symphonia_core::support_format;
 
 use log::{debug, info, warn};
 
-use super::common::{OggPacket, SideData};
+use super::common::SideData;
 use super::logical::LogicalStream;
 use super::mappings;
 use super::page::*;
@@ -32,6 +32,7 @@ pub struct OggReader {
     tracks: Vec<Track>,
     cues: Vec<Cue>,
     metadata: MetadataLog,
+    options: FormatOptions,
     /// The page reader.
     pages: PageReader,
     /// `LogicalStream` for each serial.
@@ -76,7 +77,7 @@ impl OggReader {
         Ok(())
     }
 
-    fn peek_logical_packet(&self) -> Option<&OggPacket> {
+    fn peek_logical_packet(&self) -> Option<&Packet> {
         let page = self.pages.page();
 
         if let Some(stream) = self.streams.get(&page.header.serial) {
@@ -96,7 +97,7 @@ impl OggReader {
         }
     }
 
-    fn next_logical_packet(&mut self) -> Result<OggPacket> {
+    fn next_logical_packet(&mut self) -> Result<Packet> {
         loop {
             let page = self.pages.page();
 
@@ -198,7 +199,7 @@ impl OggReader {
         let actual_ts = loop {
             match self.peek_logical_packet() {
                 Some(packet) => {
-                    if packet.serial == serial && packet.ts + packet.dur >= required_ts {
+                    if packet.track_id() == serial && packet.ts + packet.dur >= required_ts {
                         break packet.ts;
                     }
 
@@ -255,7 +256,8 @@ impl OggReader {
                         header.serial
                     );
 
-                    streams.insert(header.serial, LogicalStream::new(mapper));
+                    let stream = LogicalStream::new(mapper, self.options.enable_gapless);
+                    streams.insert(header.serial, stream);
                 }
             }
 
@@ -359,7 +361,7 @@ impl QueryDescriptor for OggReader {
 
 impl FormatReader for OggReader {
 
-    fn try_new(mut source: MediaSourceStream, _options: &FormatOptions) -> Result<Self> {
+    fn try_new(mut source: MediaSourceStream, options: &FormatOptions) -> Result<Self> {
         // A seekback buffer equal to the maximum OGG page size is required for this reader.
         source.ensure_seekback_buffer(OGG_PAGE_MAX_SIZE);
 
@@ -375,6 +377,7 @@ impl FormatReader for OggReader {
             cues: Default::default(),
             metadata: Default::default(),
             streams: Default::default(),
+            options: *options,
             pages,
             phys_byte_range_start: 0,
             phys_byte_range_end: None,
@@ -386,17 +389,7 @@ impl FormatReader for OggReader {
     }
 
     fn next_packet(&mut self) -> Result<Packet> {
-        // Get the next packet, and consume it immediately.
-        let ogg_packet = self.next_logical_packet()?;
-
-        let packet = Packet::new_from_boxed_slice(
-            ogg_packet.serial,
-            ogg_packet.ts,
-            ogg_packet.dur,
-            ogg_packet.data
-        );
-
-        Ok(packet)
+        self.next_logical_packet()
     }
 
     fn metadata(&mut self) -> Metadata<'_> {

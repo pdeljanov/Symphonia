@@ -136,7 +136,7 @@ pub fn detect(buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> {
 
     codec_params
         .for_codec(CODEC_TYPE_OPUS)
-        .with_leading_padding(u32::from(pre_skip))
+        .with_delay(u32::from(pre_skip))
         .with_sample_rate(48_000)
         .with_channels(channels)
         .with_extra_data(Box::from(buf));

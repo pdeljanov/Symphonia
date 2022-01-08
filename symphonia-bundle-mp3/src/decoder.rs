@@ -45,6 +45,8 @@ impl Mp3Decoder {
             _ => return decode_error("mp3: invalid mpeg audio layer"),
         }
 
+        self.buf.trim(packet.trim_start() as usize, packet.trim_end() as usize);
+
         Ok(())
     }
 }

@@ -70,11 +70,14 @@ fn main() {
                             .conflicts_with_all(&[ "verify" ]))
                         .arg(Arg::new("verify")
                             .long("verify")
-                            .short('V')
+                            .short('v')
                             .help("Verify the decoded audio is valid during playback"))
                        .arg(Arg::new("no-progress")
                             .long("no-progress")
                             .help("Do not display playback progress"))
+                        .arg(Arg::new("no-gapless")
+                            .long("no-gapless")
+                            .help("Disable gapless decoding and playback"))
                         .arg(Arg::new("INPUT")
                             .help("The input file path, or - to use standard input")
                             .required(true)
@@ -107,8 +110,13 @@ fn main() {
     // Create the media source stream using the boxed media source from above.
     let mss = MediaSourceStream::new(source, Default::default());
 
-    // Use the default options for metadata and format readers.
-    let format_opts: FormatOptions = Default::default();
+    // Use the default options for format readers other than for gapless playback.
+    let format_opts = FormatOptions {
+        enable_gapless: !matches.is_present("no-gapless"),
+        ..Default::default()
+    };
+
+    // Use the default options for metadata readers.
     let metadata_opts: MetadataOptions = Default::default();
 
     // Get the value of the track option, if provided.
@@ -169,6 +177,9 @@ fn decode_only(mut reader: Box<dyn FormatReader>, decode_opts: &DecoderOptions) 
     let track = reader.default_track().unwrap();
     let track_id = track.id;
 
+    let mut count_dur = 0;
+    let mut count_smp = 0;
+
     // Create a decoder for the track.
     let mut decoder = symphonia::default::get_codecs().make(&track.codec_params, decode_opts)?;
 
@@ -184,11 +195,27 @@ fn decode_only(mut reader: Box<dyn FormatReader>, decode_opts: &DecoderOptions) 
             continue;
         }
 
+        count_dur += packet.dur();
+
         // Decode the packet into audio samples.
         match decoder.decode(&packet) {
+            Ok(decoded) => {
+                count_smp += decoded.frames();
+
+                eprintln!(
+                    "Packet {{ ts={}, dur={} ({}), trim_start={}, trim_end={} }}; dec = {}",
+                    packet.ts(),
+                    packet.dur(),
+                    packet.block_dur(),
+                    packet.trim_start(),
+                    packet.trim_end(),
+                    decoded.frames(),
+                );
+
+                continue;
+            }
             Err(Error::DecodeError(err)) => warn!("decode error: {}", err),
             Err(err) => break Err(err),
-            _ => continue,
         }
     };
 
@@ -203,6 +230,9 @@ fn decode_only(mut reader: Box<dyn FormatReader>, decode_opts: &DecoderOptions) 
             info!("verification failed");
         }
     }
+
+    dbg!(count_dur);
+    dbg!(count_smp);
 
     result
 }
@@ -360,9 +390,9 @@ fn play_track(
 
                 // Write the decoded audio samples to the audio output if the presentation timestamp
                 // for the packet is >= the seeked position (0 if not seeking).
-                if packet.pts() >= play_opts.seek_ts {
+                if packet.ts() >= play_opts.seek_ts {
                     if !no_progress {
-                        print_progress(packet.pts(), dur, tb);
+                        print_progress(packet.ts(), dur, tb);
                     }
 
                     if let Some(audio_output) = audio_output {
@@ -471,11 +501,11 @@ fn print_tracks(tracks: &[Track]) {
                     println!("|          Frames:          {}", n_frames);
                 }
             }
-            if let Some(padding) = params.leading_padding {
-                println!("|          Start Delay:     {}", padding);
+            if let Some(padding) = params.delay {
+                println!("|          Encoder Delay:   {}", padding);
             }
-            if let Some(padding) = params.trailing_padding {
-                println!("|          End Delay:       {}", padding);
+            if let Some(padding) = params.padding {
+                println!("|          Encoder Padding: {}", padding);
             }
             if let Some(sample_format) = params.sample_format {
                 println!("|          Sample Format:   {:?}", sample_format);

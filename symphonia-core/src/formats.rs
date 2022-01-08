@@ -87,6 +87,14 @@ pub struct FormatOptions {
     /// a good compromise for casual playback of music, podcasts, movies, etc. However, for
     /// highly-interactive applications, this value should be decreased.
     pub seek_index_fill_rate: u16,
+    /// Enable support for gapless playback. Default: `false`.
+    ///
+    /// When enabled, the reader will provide trim information in packets that may be used by
+    /// decoders to trim any encoder delay or padding.
+    ///
+    /// When enabled, this option will also alter the value and interpretation of timestamps and
+    /// durations such that they are relative to the non-trimmed region.
+    pub enable_gapless: bool,
 }
 
 impl Default for FormatOptions {
@@ -94,6 +102,7 @@ impl Default for FormatOptions {
         FormatOptions {
             prebuild_seek_index: false,
             seek_index_fill_rate: 20,
+            enable_gapless: false,
         }
     }
 }
@@ -218,22 +227,63 @@ pub trait FormatReader: Send {
 /// A `Packet` contains a discrete amount of encoded data for a single codec bitstream. The exact
 /// amount of data is bounded, but not defined, and is dependant on the container and/or the
 /// encapsulated codec.
+#[derive(Clone)]
 pub struct Packet {
+    /// The track id.
     track_id: u32,
-    pts: u64,
-    dur: u64,
-    data: Box<[u8]>,
+    /// The timestamp of the packet. When gapless support is enabled, this timestamp is relative to
+    /// the end of the encoder delay.
+    ///
+    /// This timestamp is in `TimeBase` units.
+    pub ts: u64,
+    /// The duration of the packet. When gapless support is enabled, the duration does not include
+    /// the encoder delay or padding.
+    ///
+    /// The duration is in `TimeBase` units.
+    pub dur: u64,
+    /// When gapless support is enabled, this is the number of decoded frames that should be trimmed
+    /// from the start of the packet to remove the encoder delay. Must be 0 in all other cases.
+    pub trim_start: u32,
+    /// When gapless support is enabled, this is the number of decoded frames that should be trimmed
+    /// from the end of the packet to remove the encoder padding. Must be 0 in all other cases.
+    pub trim_end: u32,
+    /// The packet buffer.
+    pub data: Box<[u8]>,
 }
 
 impl Packet {
     /// Create a new `Packet` from a slice.
-    pub fn new_from_slice(track_id: u32, pts: u64, dur: u64, buf: &[u8]) -> Self {
-        Packet { track_id, pts, dur, data: Box::from(buf) }
+    pub fn new_from_slice(track_id: u32, ts: u64, dur: u64, buf: &[u8]) -> Self {
+        Packet { track_id, ts, dur, trim_start: 0, trim_end: 0, data: Box::from(buf) }
     }
 
     /// Create a new `Packet` from a boxed slice.
-    pub fn new_from_boxed_slice(track_id: u32, pts: u64, dur: u64, data: Box<[u8]>) -> Self {
-        Packet { track_id, pts, dur, data }
+    pub fn new_from_boxed_slice(track_id: u32, ts: u64, dur: u64, data: Box<[u8]>) -> Self {
+        Packet { track_id, ts, dur, trim_start: 0, trim_end: 0, data }
+    }
+
+    /// Create a new `Packet` with trimming information from a slice.
+    pub fn new_trimmed_from_slice(
+        track_id: u32,
+        ts: u64,
+        dur: u64,
+        trim_start: u32,
+        trim_end: u32,
+        buf: &[u8],
+    ) -> Self {
+        Packet { track_id, ts,  dur, trim_start, trim_end, data: Box::from(buf) }
+    }
+
+    /// Create a new `Packet` with trimming information from a boxed slice.
+    pub fn new_trimmed_from_boxed_slice(
+        track_id: u32,
+        ts: u64,
+        dur: u64,
+        trim_start: u32,
+        trim_end: u32,
+        data: Box<[u8]>,
+    ) -> Self {
+        Packet { track_id, ts, dur, trim_start, trim_end, data }
     }
 
     /// The track identifier of the track this packet belongs to.
@@ -241,17 +291,40 @@ impl Packet {
         self.track_id
     }
 
-    /// Get the presentation timestamp of the packet in `TimeBase` units. May be 0 if unknown.
-    pub fn pts(&self) -> u64 {
-        self.pts
+    /// Get the timestamp of the packet in `TimeBase` units.
+    ///
+    /// If gapless support is enabled, then this timestamp is relative to the end of the encoder
+    /// delay.
+    pub fn ts(&self) -> u64 {
+        self.ts
     }
 
-    /// Get the duration of the packet in `TimeBase` units. May be 0 if unknown.
-    pub fn duration(&self) -> u64 {
+    /// Get the duration of the packet in `TimeBase` units.
+    ///
+    /// If gapless support is enabled, then this is the duration after the encoder delay and padding
+    /// is trimmed.
+    pub fn dur(&self) -> u64 {
         self.dur
     }
 
-    /// Get the packet buffer as an immutable slice.
+    /// Get the duration of the packet in `TimeBase` units if no decoded frames are trimmed.
+    ///
+    /// If gapless support is disabled, then this is the same as the duration.
+    pub fn block_dur(&self) -> u64 {
+        self.dur + u64::from(self.trim_start) + u64::from(self.trim_end)
+    }
+
+    /// Get the number of frames to trim from the start of the decoded packet.
+    pub fn trim_start(&self) -> u32 {
+        self.trim_start
+    }
+
+    /// Get the number of frames to trim from the end of the decoded packet.
+    pub fn trim_end(&self) -> u32 {
+        self.trim_end
+    }
+
+    /// Get an immutable slice to the packet buffer.
     pub fn buf(&self) -> &[u8] {
         &self.data
     }
@@ -264,6 +337,8 @@ impl Packet {
 
 pub mod util {
     //! Helper utilities for implementing `FormatReader`s.
+
+    use super::Packet;
 
     /// A `SeekPoint` is a mapping between a sample or frame number to byte offset within a media
     /// stream.
@@ -392,6 +467,32 @@ pub mod util {
 
             // The index is empty, the stream must be searched manually.
             SeekSearchResult::Stream
+        }
+    }
+
+    /// Given a `Packet`, the encoder delay in frames, and the number of non-delay or padding
+    /// frames, adjust the packet's timestamp and duration, and populate the trim information.
+    pub fn trim_packet(packet: &mut Packet, delay: u32, num_frames: Option<u64>) {
+        packet.trim_start = if packet.ts < u64::from(delay) {
+            let trim = (u64::from(delay) - packet.ts).min(packet.dur);
+            packet.ts = 0;
+            packet.dur -= trim;
+            trim as u32
+        }
+        else {
+            packet.ts -= u64::from(delay);
+            0
+        };
+
+        if let Some(num_frames) = num_frames {
+            packet.trim_end = if packet.ts + packet.dur > num_frames {
+                let trim = (packet.ts + packet.dur - num_frames).min(packet.dur);
+                packet.dur -= trim;
+                trim as u32
+            }
+            else {
+                0
+            };
         }
     }
 

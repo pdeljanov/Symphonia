@@ -277,13 +277,12 @@ pub struct CodecParameters {
     /// The channel layout.
     pub channel_layout: Option<Layout>,
 
-    /// The number of leading frames inserted by the encoder for padding that should be skipped
-    /// during playback.
-    pub leading_padding: Option<u32>,
+    /// The number of leading frames inserted by the encoder that should be skipped during playback.
+    pub delay: Option<u32>,
 
     /// The number of trailing frames inserted by the encoder for padding that should be skipped
     /// during playback.
-    pub trailing_padding: Option<u32>,
+    pub padding: Option<u32>,
 
     /// The maximum number of frames a packet will contain.
     pub max_frames_per_packet: Option<u64>,
@@ -311,8 +310,8 @@ impl CodecParameters {
             bits_per_coded_sample: None,
             channels: None,
             channel_layout: None,
-            leading_padding: None,
-            trailing_padding: None,
+            delay: None,
+            padding: None,
             max_frames_per_packet: None,
             packet_data_integrity: false,
             verification_check: None,
@@ -380,15 +379,15 @@ impl CodecParameters {
         self
     }
 
-    /// Provide the number of leading frames to discard.
-    pub fn with_leading_padding(&mut self, padding: u32) -> &mut Self {
-        self.leading_padding = Some(padding);
+    /// Provide the number of delay frames.
+    pub fn with_delay(&mut self, delay: u32) -> &mut Self {
+        self.delay = Some(delay);
         self
     }
 
-    /// Provide the number of trailing frames to discard.
-    pub fn with_trailing_padding(&mut self, padding: u32) -> &mut Self {
-        self.trailing_padding = Some(padding);
+    /// Provide the number of padding frames.
+    pub fn with_padding(&mut self, padding: u32) -> &mut Self {
+        self.padding = Some(padding);
         self
     }
 

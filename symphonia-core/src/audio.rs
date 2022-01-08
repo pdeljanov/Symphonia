@@ -550,6 +550,20 @@ pub trait Signal<S : Sample> {
     /// Truncates the buffer to the number of frames specified. If the number of frames in the
     /// buffer is less-than the number of frames specified, then this function does nothing.
     fn truncate(&mut self, n_frames: usize);
+
+    /// Shifts the contents of the buffer back by the number of frames specified. The leading frames
+    /// are dropped from the buffer.
+    fn shift(&mut self, shift: usize);
+
+    /// Trims samples from the start and end of the buffer.
+    fn trim(&mut self, start: usize, end: usize) {
+        // First, trim the end to reduce the number of frames have to be shifted when the front is
+        // trimmed.
+        self.truncate(self.frames().saturating_sub(end));
+
+        // Second, trim the start.
+        self.shift(start);
+    }
 }
 
 impl<S: Sample> Signal<S> for AudioBuffer<S> {
@@ -671,8 +685,21 @@ impl<S: Sample> Signal<S> for AudioBuffer<S> {
     }
 
     fn truncate(&mut self, n_frames: usize) {
-        if n_frames > self.n_frames {
+        if n_frames < self.n_frames {
             self.n_frames = n_frames;
+        }
+    }
+
+    fn shift(&mut self, shift: usize) {
+        if shift >= self.n_frames {
+            self.clear();
+        }
+        else {
+            // Shift the samples down in each plane.
+            for plane in self.buf.chunks_mut(self.n_capacity) {
+                plane.copy_within(shift..self.n_frames, 0);
+            }
+            self.n_frames -= shift;
         }
     }
 }
