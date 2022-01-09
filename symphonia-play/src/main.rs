@@ -173,9 +173,6 @@ fn decode_only(mut reader: Box<dyn FormatReader>, decode_opts: &DecoderOptions) 
     let track = reader.default_track().unwrap();
     let track_id = track.id;
 
-    let mut count_dur = 0;
-    let mut count_smp = 0;
-
     // Create a decoder for the track.
     let mut decoder = symphonia::default::get_codecs().make(&track.codec_params, decode_opts)?;
 
@@ -191,25 +188,9 @@ fn decode_only(mut reader: Box<dyn FormatReader>, decode_opts: &DecoderOptions) 
             continue;
         }
 
-        count_dur += packet.dur();
-
         // Decode the packet into audio samples.
         match decoder.decode(&packet) {
-            Ok(decoded) => {
-                count_smp += decoded.frames();
-
-                eprintln!(
-                    "Packet {{ ts={}, dur={} ({}), trim_start={}, trim_end={} }}; dec = {}",
-                    packet.ts(),
-                    packet.dur(),
-                    packet.block_dur(),
-                    packet.trim_start(),
-                    packet.trim_end(),
-                    decoded.frames(),
-                );
-
-                continue;
-            }
+            Ok(_decoded) => continue,
             Err(Error::DecodeError(err)) => warn!("decode error: {}", err),
             Err(err) => break Err(err),
         }
@@ -226,9 +207,6 @@ fn decode_only(mut reader: Box<dyn FormatReader>, decode_opts: &DecoderOptions) 
             info!("verification failed");
         }
     }
-
-    dbg!(count_dur);
-    dbg!(count_smp);
 
     result
 }
