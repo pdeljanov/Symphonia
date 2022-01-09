@@ -93,8 +93,10 @@ jobs:
       - name: Setup Toolchain
         uses: actions-rs/toolchain@v1
         with:
+          profile: minimal
           toolchain: nightly
           override: true
+          components: rustfmt
 
       - name: Check formatting
         uses: actions-rs/cargo@v1
