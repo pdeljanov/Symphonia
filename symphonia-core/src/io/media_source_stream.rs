@@ -13,7 +13,10 @@ use std::ops::Sub;
 use super::SeekBuffered;
 use super::{MediaSource, ReadBytes};
 
-const END_OF_STREAM_ERROR_STR: &str = "end of stream";
+#[inline(always)]
+fn end_of_stream_error<T>() -> io::Result<T> {
+    Err(io::Error::new(io::ErrorKind::UnexpectedEof, "end of stream"))
+}
 
 /// `MediaSourceStreamOptions` specifies the buffering behaviour of a `MediaSourceStream`.
 pub struct MediaSourceStreamOptions {
@@ -138,7 +141,7 @@ impl MediaSourceStream {
         self.fetch()?;
 
         if self.is_buffer_exhausted() {
-            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, END_OF_STREAM_ERROR_STR));
+            return end_of_stream_error();
         }
 
         Ok(())
@@ -307,7 +310,7 @@ impl ReadBytes for MediaSourceStream {
         // can be read. If a non-zero read is requested, and 0 bytes are read, return an
         // end-of-stream error.
         if !buf.is_empty() && read == 0 {
-            Err(io::Error::new(io::ErrorKind::UnexpectedEof, END_OF_STREAM_ERROR_STR))
+            end_of_stream_error()
         }
         else {
             Ok(read)
@@ -327,7 +330,7 @@ impl ReadBytes for MediaSourceStream {
         }
 
         if !buf.is_empty() {
-            Err(io::Error::new(io::ErrorKind::UnexpectedEof, END_OF_STREAM_ERROR_STR))
+            end_of_stream_error()
         }
         else {
             Ok(())

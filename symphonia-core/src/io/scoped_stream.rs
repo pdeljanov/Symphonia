@@ -10,7 +10,10 @@ use std::io;
 
 use super::{FiniteStream, ReadBytes, SeekBuffered};
 
-const OUT_OF_BOUNDS_ERROR_STR: &str = "out of bounds";
+#[inline(always)]
+fn out_of_bounds_error<T>() -> io::Result<T> {
+    Err(io::Error::new(io::ErrorKind::UnexpectedEof, "out of bounds"))
+}
 
 /// A `ScopedStream` restricts the number of bytes that may be read to an upper limit.
 pub struct ScopedStream<B: ReadBytes> {
@@ -69,7 +72,7 @@ impl<B: ReadBytes> ReadBytes for ScopedStream<B> {
     #[inline(always)]
     fn read_byte(&mut self) -> io::Result<u8> {
         if self.len - self.read < 1 {
-            return Err(io::Error::new(io::ErrorKind::Other, OUT_OF_BOUNDS_ERROR_STR));
+            return out_of_bounds_error();
         }
 
         self.read += 1;
@@ -79,7 +82,7 @@ impl<B: ReadBytes> ReadBytes for ScopedStream<B> {
     #[inline(always)]
     fn read_double_bytes(&mut self) -> io::Result<[u8; 2]> {
         if self.len - self.read < 2 {
-            return Err(io::Error::new(io::ErrorKind::Other, OUT_OF_BOUNDS_ERROR_STR));
+            return out_of_bounds_error();
         }
 
         self.read += 2;
@@ -89,7 +92,7 @@ impl<B: ReadBytes> ReadBytes for ScopedStream<B> {
     #[inline(always)]
     fn read_triple_bytes(&mut self) -> io::Result<[u8; 3]> {
         if self.len - self.read < 3 {
-            return Err(io::Error::new(io::ErrorKind::Other, OUT_OF_BOUNDS_ERROR_STR));
+            return out_of_bounds_error();
         }
 
         self.read += 3;
@@ -99,7 +102,7 @@ impl<B: ReadBytes> ReadBytes for ScopedStream<B> {
     #[inline(always)]
     fn read_quad_bytes(&mut self) -> io::Result<[u8; 4]> {
         if self.len - self.read < 4 {
-            return Err(io::Error::new(io::ErrorKind::Other, OUT_OF_BOUNDS_ERROR_STR));
+            return out_of_bounds_error();
         }
 
         self.read += 4;
@@ -116,7 +119,7 @@ impl<B: ReadBytes> ReadBytes for ScopedStream<B> {
 
     fn read_buf_exact(&mut self, buf: &mut [u8]) -> io::Result<()> {
         if self.len - self.read < buf.len() as u64 {
-            return Err(io::Error::new(io::ErrorKind::Other, OUT_OF_BOUNDS_ERROR_STR));
+            return out_of_bounds_error();
         }
 
         self.read += buf.len() as u64;
@@ -131,7 +134,7 @@ impl<B: ReadBytes> ReadBytes for ScopedStream<B> {
         buf: &'a mut [u8],
     ) -> io::Result<&'a mut [u8]> {
         if self.len - self.read < buf.len() as u64 {
-            return Err(io::Error::new(io::ErrorKind::Other, OUT_OF_BOUNDS_ERROR_STR));
+            return out_of_bounds_error();
         }
 
         let result = self.inner.scan_bytes_aligned(pattern, align, buf)?;
@@ -142,7 +145,7 @@ impl<B: ReadBytes> ReadBytes for ScopedStream<B> {
     #[inline(always)]
     fn ignore_bytes(&mut self, count: u64) -> io::Result<()> {
         if self.len - self.read < count {
-            return Err(io::Error::new(io::ErrorKind::Other, OUT_OF_BOUNDS_ERROR_STR));
+            return out_of_bounds_error();
         }
 
         self.read += count;
