@@ -64,6 +64,14 @@ pub(crate) struct Frame {
     pub(crate) data: Box<[u8]>,
 }
 
+pub(crate) fn calc_abs_block_timestamp(cluster_ts: u64, rel_block_ts: i16) -> u64 {
+    if rel_block_ts < 0 {
+        cluster_ts - (-rel_block_ts) as u64
+    } else {
+        cluster_ts + rel_block_ts as u64
+    }
+}
+
 pub(crate) fn extract_frames(
     block: &[u8],
     block_duration: Option<u64>,
@@ -74,7 +82,7 @@ pub(crate) fn extract_frames(
 ) -> Result<()> {
     let mut reader = BufReader::new(&block);
     let track = read_unsigned_vint(&mut reader)? as u32;
-    let rel_timestamp = reader.read_be_u16()? as i16;
+    let rel_ts = reader.read_be_u16()? as i16;
     let flags = reader.read_byte()?;
     let lacing = parse_flags(flags)?;
 
@@ -82,10 +90,7 @@ pub(crate) fn extract_frames(
         .and_then(|it| it.default_frame_duration)
         .map(|it| it / timestamp_scale);
 
-    let block_timestamp = u64::try_from(i64::try_from(cluster_timestamp).unwrap()
-        + i64::from(rel_timestamp)).unwrap();
-
-    let mut timestamp = block_timestamp;
+    let mut timestamp = calc_abs_block_timestamp(cluster_timestamp, rel_ts);
 
     match lacing {
         Lacing::None => {

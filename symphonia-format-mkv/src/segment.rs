@@ -4,10 +4,12 @@ use symphonia_core::meta::{MetadataBuilder, MetadataRevision, Tag, Value};
 
 use crate::ebml::{Element, ElementData, ElementHeader, read_unsigned_vint};
 use crate::element_ids::ElementType;
+use crate::lacing::calc_abs_block_timestamp;
 
 #[derive(Debug)]
 pub(crate) struct TrackElement {
-    pub(crate) id: u64,
+    pub(crate) number: u64,
+    pub(crate) uid: u64,
     pub(crate) language: Option<String>,
     pub(crate) codec_id: String,
     pub(crate) codec_private: Option<Box<[u8]>>,
@@ -19,7 +21,8 @@ impl Element for TrackElement {
     const ID: ElementType = ElementType::TrackEntry;
 
     fn read<B: ReadBytes>(reader: &mut B, header: ElementHeader) -> Result<Self> {
-        let mut track_number = None;
+        let mut number = None;
+        let mut uid = None;
         let mut language = None;
         let mut audio = None;
         let mut codec_private = None;
@@ -30,7 +33,10 @@ impl Element for TrackElement {
         while let Some(header) = it.read_header()? {
             match header.etype {
                 ElementType::TrackNumber => {
-                    track_number = Some(it.read_u64()?);
+                    number = Some(it.read_u64()?);
+                }
+                ElementType::TrackUid => {
+                    uid = Some(it.read_u64()?);
                 }
                 ElementType::Language => {
                     language = Some(it.read_string()?);
@@ -54,7 +60,8 @@ impl Element for TrackElement {
         }
 
         Ok(Self {
-            id: track_number.ok_or_else(|| Error::DecodeError("mkv: missing track number"))?,
+            number: number.ok_or_else(|| Error::DecodeError("mkv: missing track number"))?,
+            uid: uid.ok_or_else(|| Error::DecodeError("mkv: missing track UID"))?,
             language,
             codec_id: codec_id.ok_or_else(|| Error::DecodeError("mkv: missing codec id"))?,
             codec_private,
@@ -137,7 +144,6 @@ impl Element for SeekHeadElement {
         Ok(Self { seeks: seeks.into_boxed_slice() })
     }
 }
-
 
 #[derive(Debug)]
 pub(crate) struct SeekElement {
@@ -454,18 +460,14 @@ impl Element for ClusterElement {
         fn read_block(data: &[u8], timestamp: u64, offset: u64) -> Result<BlockElement> {
             let mut reader = BufReader::new(data);
             let track = read_unsigned_vint(&mut reader)?;
-            let ts_offset = reader.read_be_u16()? as i16;
-            let timestamp = if ts_offset < 0 {
-                timestamp - (-ts_offset) as u64
-            } else {
-                timestamp + ts_offset as u64
-            };
+            let rel_ts = reader.read_be_u16()? as i16;
+            let timestamp = calc_abs_block_timestamp(timestamp, rel_ts);
             Ok(BlockElement { track, timestamp, offset })
         }
 
-        let get_timestamp = |timestamp: Option<u64>| {
+        fn get_timestamp(timestamp: Option<u64>) -> Result<u64> {
             timestamp.ok_or_else(|| Error::DecodeError("mkv: missing timestamp for a cluster"))
-        };
+        }
 
         let mut it = header.children(reader);
         while let Some(header) = it.read_header()? {

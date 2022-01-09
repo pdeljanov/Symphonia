@@ -386,7 +386,7 @@ impl FormatReader for MkvReader {
                     3 => Some(Layout::TwoPointOne),
                     6 => Some(Layout::FivePointOne),
                     other => {
-                        log::warn!("track #{} has custom number of channels: {}", track.id, other);
+                        log::warn!("track #{} has custom number of channels: {}", track.number, other);
                         None
                     }
                 };
@@ -408,7 +408,7 @@ impl FormatReader for MkvReader {
                 }
             }
 
-            let track_id = u32::try_from(track.id).unwrap();
+            let track_id = u32::try_from(track.number).unwrap();
             tracks.push(Track {
                 id: track_id,
                 codec_params: codec_params.clone(),
