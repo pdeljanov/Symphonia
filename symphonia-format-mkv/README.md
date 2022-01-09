@@ -1,8 +1,6 @@
 # Symphonia MKV/WebM Demuxer
 
-This is a placeholder crate for Project Symphonia's MKV/WebM Demuxer.
-
-Please consider contributing!
+MKV/WebM demuxer for Project Symphonia.
 
 **Note:** This crate is part of Symphonia. Please use the [`symphonia`](https://crates.io/crates/symphonia) crate instead of this one directly.
 

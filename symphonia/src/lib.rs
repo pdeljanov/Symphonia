@@ -142,6 +142,8 @@ pub mod default {
         pub use symphonia_format_ogg::OggReader;
         #[cfg(feature = "wav")]
         pub use symphonia_format_wav::WavReader;
+        #[cfg(feature = "mkv")]
+        pub use symphonia_format_mkv::MkvReader;
     }
 
     use lazy_static::lazy_static;
