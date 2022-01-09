@@ -13,6 +13,7 @@ use crate::ebml::{Element, ElementData, ElementHeader, read_unsigned_vint};
 use crate::element_ids::ElementType;
 use crate::lacing::calc_abs_block_timestamp;
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub(crate) struct TrackElement {
     pub(crate) number: u64,
@@ -67,10 +68,10 @@ impl Element for TrackElement {
         }
 
         Ok(Self {
-            number: number.ok_or_else(|| Error::DecodeError("mkv: missing track number"))?,
-            uid: uid.ok_or_else(|| Error::DecodeError("mkv: missing track UID"))?,
+            number: number.ok_or(Error::DecodeError("mkv: missing track number"))?,
+            uid: uid.ok_or(Error::DecodeError("mkv: missing track UID"))?,
             language,
-            codec_id: codec_id.ok_or_else(|| Error::DecodeError("mkv: missing codec id"))?,
+            codec_id: codec_id.ok_or(Error::DecodeError("mkv: missing codec id"))?,
             codec_private,
             audio,
             default_duration,
@@ -78,6 +79,7 @@ impl Element for TrackElement {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub(crate) struct AudioElement {
     pub(crate) sampling_frequency: f64,
@@ -118,13 +120,14 @@ impl Element for AudioElement {
 
         Ok(Self {
             sampling_frequency: sampling_frequency.unwrap_or(8000.0),
-            output_sampling_frequency: output_sampling_frequency,
+            output_sampling_frequency,
             channels: channels.unwrap_or(1),
-            bit_depth: bit_depth,
+            bit_depth,
         })
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub(crate) struct SeekHeadElement {
     seeks: Box<[SeekElement]>,
@@ -152,6 +155,7 @@ impl Element for SeekHeadElement {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub(crate) struct SeekElement {
     id: u64,
@@ -181,8 +185,8 @@ impl Element for SeekElement {
         }
 
         Ok(Self {
-            id: seek_id.ok_or_else(|| Error::DecodeError("mkv: missing seek track id"))?,
-            position: seek_position.ok_or_else(|| Error::DecodeError("mkv: missing seek track pos"))?,
+            id: seek_id.ok_or(Error::DecodeError("mkv: missing seek track id"))?,
+            position: seek_position.ok_or(Error::DecodeError("mkv: missing seek track pos"))?,
         })
     }
 }
@@ -203,6 +207,7 @@ impl Element for TracksElement {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub(crate) struct EbmlHeaderElement {
     pub(crate) version: u64,
@@ -261,13 +266,14 @@ impl Element for EbmlHeaderElement {
             read_version: read_version.unwrap_or(1),
             max_id_length: max_id_length.unwrap_or(4),
             max_size_length: max_size_length.unwrap_or(8),
-            doc_type: doc_type.ok_or_else(|| Error::Unsupported("mkv: invalid ebml file"))?,
+            doc_type: doc_type.ok_or(Error::Unsupported("mkv: invalid ebml file"))?,
             doc_type_version: doc_type_version.unwrap_or(1),
             doc_type_read_version: doc_type_read_version.unwrap_or(1),
         })
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub(crate) struct InfoElement {
     pub(crate) timestamp_scale: u64,
@@ -315,12 +321,13 @@ impl Element for InfoElement {
             timestamp_scale: timestamp_scale.unwrap_or(1_000_000),
             duration,
             title: title.map(|it| it.into_boxed_str()),
-            muxing_app: muxing_app.ok_or_else(|| Error::Unsupported("mkv: missing muxing app"))?.into_boxed_str(),
-            writing_app: writing_app.ok_or_else(|| Error::Unsupported("mkv: missing muxing app"))?.into_boxed_str(),
+            muxing_app: muxing_app.ok_or(Error::Unsupported("mkv: missing muxing app"))?.into_boxed_str(),
+            writing_app: writing_app.ok_or(Error::Unsupported("mkv: missing muxing app"))?.into_boxed_str(),
         })
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub(crate) struct CuesElement {
     pub(crate) points: Box<[CuePointElement]>,
@@ -337,6 +344,7 @@ impl Element for CuesElement {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub(crate) struct CuePointElement {
     pub(crate) time: u64,
@@ -366,12 +374,13 @@ impl Element for CuePointElement {
         }
 
         Ok(Self {
-            time: time.ok_or_else(|| Error::DecodeError("mkv: missing time in cue"))?,
-            positions: pos.ok_or_else(|| Error::DecodeError("mkv: missing positions in cue"))?,
+            time: time.ok_or(Error::DecodeError("mkv: missing time in cue"))?,
+            positions: pos.ok_or(Error::DecodeError("mkv: missing positions in cue"))?,
         })
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub(crate) struct CueTrackPositionsElement {
     pub(crate) track: u64,
@@ -400,8 +409,8 @@ impl Element for CueTrackPositionsElement {
             }
         }
         Ok(Self {
-            track: track.ok_or_else(|| Error::DecodeError("mkv: missing track in cue track positions"))?,
-            cluster_position: pos.ok_or_else(|| Error::DecodeError("mkv: missing position in cue track positions"))?,
+            track: track.ok_or(Error::DecodeError("mkv: missing track in cue track positions"))?,
+            cluster_position: pos.ok_or(Error::DecodeError("mkv: missing position in cue track positions"))?,
         })
     }
 }
@@ -423,7 +432,7 @@ impl Element for BlockGroupElement {
         while let Some(header) = it.read_header()? {
             match header.etype {
                 ElementType::DiscardPadding => {
-                    let nanos = it.read_data()?;
+                    let _nanos = it.read_data()?;
                 }
                 ElementType::Block => {
                     data = Some(it.read_boxed_slice()?);
@@ -437,7 +446,7 @@ impl Element for BlockGroupElement {
             }
         }
         Ok(Self {
-            data: data.ok_or_else(|| Error::DecodeError("mkv: missing block inside block group"))?,
+            data: data.ok_or(Error::DecodeError("mkv: missing block inside block group"))?,
             duration: block_duration,
         })
     }
@@ -473,7 +482,7 @@ impl Element for ClusterElement {
         }
 
         fn get_timestamp(timestamp: Option<u64>) -> Result<u64> {
-            timestamp.ok_or_else(|| Error::DecodeError("mkv: missing timestamp for a cluster"))
+            timestamp.ok_or(Error::DecodeError("mkv: missing timestamp for a cluster"))
         }
 
         let mut it = header.children(reader);
@@ -606,8 +615,8 @@ impl Element for SimpleTagElement {
         }
 
         Ok(Self {
-            name: name.ok_or_else(|| Error::DecodeError("mkv: missing tag name"))?.into_boxed_str(),
-            value: value.ok_or_else(|| Error::DecodeError("mkv: missing tag value"))?,
+            name: name.ok_or(Error::DecodeError("mkv: missing tag name"))?.into_boxed_str(),
+            value: value.ok_or(Error::DecodeError("mkv: missing tag value"))?,
         })
     }
 }

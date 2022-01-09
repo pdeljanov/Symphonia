@@ -28,6 +28,7 @@ use crate::element_ids::ElementType;
 use crate::lacing::{extract_frames, Frame, read_xiph_sizes};
 use crate::segment::{BlockGroupElement, ClusterElement, CuesElement, InfoElement, SeekHeadElement, TagsElement, TracksElement};
 
+#[allow(dead_code)]
 pub struct TrackState {
     /// Codec parameters.
     pub(crate) codec_params: CodecParameters,
@@ -68,7 +69,7 @@ fn convert_vorbis_data(extra: &[u8]) -> Result<Box<[u8]>> {
     //    - Vorbis comment header
     //    - codec setup header
 
-    let mut reader = BufReader::new(&extra);
+    let mut reader = BufReader::new(extra);
     let packet_count = reader.read_byte()? as usize;
     let packet_lengths = read_xiph_sizes(&mut reader, packet_count)?;
 
@@ -99,8 +100,8 @@ fn convert_vorbis_data(extra: &[u8]) -> Result<Box<[u8]>> {
 
     // This is layout expected currently by Vorbis codec.
     Ok([
-        ident_header.ok_or_else(|| Error::DecodeError("mkv: missing vorbis identification packet"))?,
-        setup_header.ok_or_else(|| Error::DecodeError("mkv: missing vorbis setup packet"))?,
+        ident_header.ok_or(Error::DecodeError("mkv: missing vorbis identification packet"))?,
+        setup_header.ok_or(Error::DecodeError("mkv: missing vorbis setup packet"))?,
     ].concat().into_boxed_slice())
 }
 
@@ -125,10 +126,6 @@ fn get_stream_info_from_codec_private(codec_private: &[u8]) -> Result<Box<[u8]>>
 }
 
 impl MkvReader {
-    fn cluster_timestamp(&self) -> Option<u64> {
-        Some(self.current_cluster.as_ref()?.timestamp?)
-    }
-
     fn seek_track_by_ts_forward(&mut self, track_id: u32, ts: u64) -> Result<SeekedTo> {
         let actual_ts = 'out: loop {
             // Skip frames from the buffer until the given timestamp
@@ -160,8 +157,7 @@ impl MkvReader {
                 }
                 target_cluster = Some(cluster);
             }
-            let cluster = target_cluster
-                .ok_or_else(|| Error::SeekError(SeekErrorKind::OutOfRange))?;
+            let cluster = target_cluster.ok_or(Error::SeekError(SeekErrorKind::OutOfRange))?;
 
             let mut target_block = None;
             for block in cluster.blocks.iter() {
@@ -174,8 +170,7 @@ impl MkvReader {
                 target_block = Some(block);
             }
 
-            let block = target_block
-                .ok_or_else(|| Error::SeekError(SeekErrorKind::OutOfRange))?;
+            let block = target_block.ok_or(Error::SeekError(SeekErrorKind::OutOfRange))?;
 
             self.iter.seek(block.offset)?;
 
@@ -207,7 +202,7 @@ impl MkvReader {
 
         let header = self.iter
             .read_child_header()?
-            .ok_or_else(|| Error::DecodeError("mkv: end of stream"))?;
+            .ok_or(Error::DecodeError("mkv: end of stream"))?;
 
         match header.etype {
             ElementType::Cluster => {
@@ -239,8 +234,7 @@ impl MkvReader {
                     }
                 };
 
-                let timestamp = cluster.timestamp
-                    .ok_or_else(|| Error::DecodeError("mkv: missing cluster timestamp"))?;
+                let timestamp = cluster.timestamp.ok_or(Error::DecodeError("mkv: missing cluster timestamp"))?;
 
                 let data = self.iter.read_boxed_slice()?;
                 extract_frames(&data, None, &self.track_states,
@@ -255,8 +249,7 @@ impl MkvReader {
                     }
                 };
 
-                let timestamp = cluster.timestamp
-                    .ok_or_else(|| Error::DecodeError("mkv: missing cluster timestamp"))?;
+                let timestamp = cluster.timestamp.ok_or(Error::DecodeError("mkv: missing cluster timestamp"))?;
 
                 let group = self.iter.read_element_data::<BlockGroupElement>()?;
                 extract_frames(&group.data, group.duration, &self.track_states,
@@ -307,17 +300,17 @@ impl FormatReader for MkvReader {
             _ => return unsupported_error("mkv: missing segment element")
         };
 
-        let mut seek_head = None;
+        let mut _seek_head = None;
         let mut segment_tracks = None;
         let mut info = None;
-        let mut cues = None;
+        let mut _cues = None;
         let mut clusters = Vec::new();
         let mut metadata = MetadataLog::default();
 
         while let Some(header) = it.read_header()? {
             match header.etype {
                 ElementType::SeekHead => {
-                    seek_head = Some(it.read_element_data::<SeekHeadElement>()?);
+                    _seek_head = Some(it.read_element_data::<SeekHeadElement>()?);
                 }
                 ElementType::Tracks => {
                     segment_tracks = Some(it.read_element_data::<TracksElement>()?);
@@ -326,7 +319,7 @@ impl FormatReader for MkvReader {
                     info = Some(it.read_element_data::<InfoElement>()?);
                 }
                 ElementType::Cues => {
-                    cues = Some(it.read_element_data::<CuesElement>()?);
+                    _cues = Some(it.read_element_data::<CuesElement>()?);
                 }
                 ElementType::Tags => {
                     let tags = it.read_element_data::<TagsElement>()?;
@@ -344,8 +337,7 @@ impl FormatReader for MkvReader {
             }
         }
 
-        let segment_tracks = segment_tracks
-            .ok_or_else(|| Error::DecodeError("mkv: missing Tracks element"))?;
+        let segment_tracks = segment_tracks.ok_or(Error::DecodeError("mkv: missing Tracks element"))?;
 
         if is_seekable {
             let mut reader = it.into_inner();
@@ -353,8 +345,7 @@ impl FormatReader for MkvReader {
             it = ElementIterator::new(reader, total_len);
         }
 
-        let info = info
-            .ok_or_else(|| Error::DecodeError("mkv: missing Info element"))?;
+        let info = info.ok_or(Error::DecodeError("mkv: missing Info element"))?;
 
         // TODO: remove this unwrap?
         let time_base = TimeBase::new(
@@ -467,10 +458,11 @@ impl FormatReader for MkvReader {
                     Some(id) => self.tracks.iter().find(|track| track.id == id),
                     None => self.tracks.first(),
                 };
-                let track = track.ok_or_else(|| Error::SeekError(SeekErrorKind::InvalidTrack))?;
+                let track = track.ok_or(Error::SeekError(SeekErrorKind::InvalidTrack))?;
                 let tb = track.codec_params.time_base.unwrap();
                 let ts = tb.calc_timestamp(time);
-                self.seek_track_by_ts(track.id, ts)
+                let track_id = track.id;
+                self.seek_track_by_ts(track_id, ts)
             }
             SeekTo::TimeStamp { ts, track_id } => {
                 match self.tracks.iter().find(|t| t.id == track_id) {

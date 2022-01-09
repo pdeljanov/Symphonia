@@ -14,7 +14,6 @@ pub(crate) enum Type {
     Master,
     Unsigned,
     Signed,
-    Unknown,
     Binary,
     String,
     Float,

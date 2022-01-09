@@ -6,7 +6,6 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use std::collections::{HashMap, VecDeque};
-use std::convert::TryFrom;
 
 use symphonia_core::errors::{decode_error, Result};
 use symphonia_core::io::{BufReader, ReadBytes};
@@ -87,7 +86,7 @@ pub(crate) fn extract_frames(
     timestamp_scale: u64,
     buffer: &mut VecDeque<Frame>,
 ) -> Result<()> {
-    let mut reader = BufReader::new(&block);
+    let mut reader = BufReader::new(block);
     let track = read_unsigned_vint(&mut reader)? as u32;
     let rel_ts = reader.read_be_u16()? as i16;
     let flags = reader.read_byte()?;

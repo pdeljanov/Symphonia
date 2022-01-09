@@ -261,7 +261,7 @@ impl<R: ReadBytes> ElementIterator<R> {
 
     /// Reads a single element with its data.
     pub(crate) fn read_element<E: Element>(&mut self) -> Result<E> {
-        let header = self.read_header()?;
+        let _header = self.read_header()?;
         self.read_element_data()
     }
 
@@ -301,7 +301,7 @@ impl<R: ReadBytes> ElementIterator<R> {
     pub(crate) fn read_data(&mut self) -> Result<ElementData> {
         let hdr = self.current.expect("not in an element");
         let value = self.try_read_data(hdr)?
-            .ok_or_else(|| Error::DecodeError("mkv: element has no primitive data"))?;
+            .ok_or(Error::DecodeError("mkv: element has no primitive data"))?;
         Ok(value)
     }
 
@@ -392,13 +392,10 @@ impl<R: ReadBytes> ElementIterator<R> {
                         };
                         ElementData::Float(value)
                     }
-                    Type::Unknown => {
-                        ElementData::Binary(self.reader.read_boxed_slice_exact(header.data_len as usize)?)
-                    }
                     Type::String => {
                         let data = self.reader.read_boxed_slice_exact(header.data_len as usize)?;
                         let bytes = data.split(|b| *b == 0).next().unwrap_or(&data);
-                        ElementData::String(String::from_utf8_lossy(&bytes).into_owned())
+                        ElementData::String(String::from_utf8_lossy(bytes).into_owned())
                     }
                     Type::Binary => {
                         ElementData::Binary(self.reader.read_boxed_slice_exact(header.data_len as usize)?)
