@@ -126,31 +126,30 @@ fn mulaw_to_linear(mut mu_val: u8) -> i16 {
     }
 }
 
-#[rustfmt::skip]
 fn is_supported_pcm_codec(codec_type: CodecType) -> bool {
-    match codec_type {
+    matches!(
+        codec_type,
         CODEC_TYPE_PCM_S32LE
-        | CODEC_TYPE_PCM_S32BE
-        | CODEC_TYPE_PCM_S24LE
-        | CODEC_TYPE_PCM_S24BE
-        | CODEC_TYPE_PCM_S16LE
-        | CODEC_TYPE_PCM_S16BE
-        | CODEC_TYPE_PCM_S8
-        | CODEC_TYPE_PCM_U32LE
-        | CODEC_TYPE_PCM_U32BE
-        | CODEC_TYPE_PCM_U24LE
-        | CODEC_TYPE_PCM_U24BE
-        | CODEC_TYPE_PCM_U16LE
-        | CODEC_TYPE_PCM_U16BE
-        | CODEC_TYPE_PCM_U8
-        | CODEC_TYPE_PCM_F32LE
-        | CODEC_TYPE_PCM_F32BE
-        | CODEC_TYPE_PCM_F64LE
-        | CODEC_TYPE_PCM_F64BE
-        | CODEC_TYPE_PCM_ALAW
-        | CODEC_TYPE_PCM_MULAW => true,
-        _ => false,
-    }
+            | CODEC_TYPE_PCM_S32BE
+            | CODEC_TYPE_PCM_S24LE
+            | CODEC_TYPE_PCM_S24BE
+            | CODEC_TYPE_PCM_S16LE
+            | CODEC_TYPE_PCM_S16BE
+            | CODEC_TYPE_PCM_S8
+            | CODEC_TYPE_PCM_U32LE
+            | CODEC_TYPE_PCM_U32BE
+            | CODEC_TYPE_PCM_U24LE
+            | CODEC_TYPE_PCM_U24BE
+            | CODEC_TYPE_PCM_U16LE
+            | CODEC_TYPE_PCM_U16BE
+            | CODEC_TYPE_PCM_U8
+            | CODEC_TYPE_PCM_F32LE
+            | CODEC_TYPE_PCM_F32BE
+            | CODEC_TYPE_PCM_F64LE
+            | CODEC_TYPE_PCM_F64BE
+            | CODEC_TYPE_PCM_ALAW
+            | CODEC_TYPE_PCM_MULAW
+    )
 }
 
 /// Pulse Code Modulation (PCM) decoder for all raw PCM, and log-PCM codecs.

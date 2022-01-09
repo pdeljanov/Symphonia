@@ -238,7 +238,9 @@ impl MagicCookie {
             // The number of channels stated in the mandatory part of the magic cookie should match
             // the number of channels implicit to the channel layout.
             if config.num_channels != layout.channels().count() as u8 {
-                return decode_error("alac: the number of channels differs from the channel layout");
+                return decode_error(
+                    "alac: the number of channels differs from the channel layout",
+                );
             }
 
             // The next two fields are reserved and should be 0.

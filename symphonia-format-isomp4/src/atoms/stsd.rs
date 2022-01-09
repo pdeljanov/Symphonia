@@ -83,41 +83,39 @@ impl Atom for StsdAtom {
 impl StsdAtom {
     /// Fill the provided `CodecParameters` using the sample entry.
     pub fn fill_codec_params(&self, codec_params: &mut CodecParameters) {
-        match self.sample_entry {
-            SampleEntry::Audio(ref entry) => {
-                // General audio parameters.
-                codec_params.with_sample_rate(entry.sample_rate as u32);
+        // Audio sample entry.
+        if let SampleEntry::Audio(ref entry) = self.sample_entry {
+            // General audio parameters.
+            codec_params.with_sample_rate(entry.sample_rate as u32);
 
-                // Codec-specific parameters.
-                match entry.codec_specific {
-                    Some(AudioCodecSpecific::Esds(ref esds)) => {
-                        esds.fill_codec_params(codec_params);
-                    }
-                    Some(AudioCodecSpecific::Alac(ref alac)) => {
-                        alac.fill_codec_params(codec_params);
-                    }
-                    Some(AudioCodecSpecific::Flac(ref flac)) => {
-                        flac.fill_codec_params(codec_params);
-                    }
-                    Some(AudioCodecSpecific::Opus(ref opus)) => {
-                        opus.fill_codec_params(codec_params);
-                    }
-                    Some(AudioCodecSpecific::Mp3) => {
-                        codec_params.for_codec(CODEC_TYPE_MP3);
-                    }
-                    Some(AudioCodecSpecific::Pcm(ref pcm)) => {
-                        // PCM codecs.
-                        codec_params
-                            .for_codec(pcm.codec_type)
-                            .with_bits_per_coded_sample(pcm.bits_per_coded_sample)
-                            .with_bits_per_sample(pcm.bits_per_sample)
-                            .with_max_frames_per_packet(pcm.frames_per_packet)
-                            .with_channels(pcm.channels);
-                    }
-                    _ => (),
+            // Codec-specific parameters.
+            match entry.codec_specific {
+                Some(AudioCodecSpecific::Esds(ref esds)) => {
+                    esds.fill_codec_params(codec_params);
                 }
+                Some(AudioCodecSpecific::Alac(ref alac)) => {
+                    alac.fill_codec_params(codec_params);
+                }
+                Some(AudioCodecSpecific::Flac(ref flac)) => {
+                    flac.fill_codec_params(codec_params);
+                }
+                Some(AudioCodecSpecific::Opus(ref opus)) => {
+                    opus.fill_codec_params(codec_params);
+                }
+                Some(AudioCodecSpecific::Mp3) => {
+                    codec_params.for_codec(CODEC_TYPE_MP3);
+                }
+                Some(AudioCodecSpecific::Pcm(ref pcm)) => {
+                    // PCM codecs.
+                    codec_params
+                        .for_codec(pcm.codec_type)
+                        .with_bits_per_coded_sample(pcm.bits_per_coded_sample)
+                        .with_bits_per_sample(pcm.bits_per_sample)
+                        .with_max_frames_per_packet(pcm.frames_per_packet)
+                        .with_channels(pcm.channels);
+                }
+                _ => (),
             }
-            _ => (),
         }
     }
 }

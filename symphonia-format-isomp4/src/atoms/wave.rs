@@ -30,11 +30,8 @@ impl Atom for WaveAtom {
         let mut esds = None;
 
         while let Some(header) = iter.next()? {
-            match header.atype {
-                AtomType::Esds => {
-                    esds = Some(iter.read_atom::<EsdsAtom>()?);
-                }
-                _ => (),
+            if header.atype == AtomType::Esds {
+                esds = Some(iter.read_atom::<EsdsAtom>()?);
             }
         }
 

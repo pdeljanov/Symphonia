@@ -191,15 +191,10 @@ pub struct ProbeResult {
 
 /// `Probe` scans a `MediaSourceStream` for metadata and container formats, and provides an
 /// iterator-like interface to instantiate readers for the formats encountered.
+#[derive(Default)]
 pub struct Probe {
     filter: bloom::BloomFilter,
     registered: Vec<Descriptor>,
-}
-
-impl Default for Probe {
-    fn default() -> Self {
-        Probe { filter: Default::default(), registered: Default::default() }
-    }
 }
 
 impl Probe {

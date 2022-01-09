@@ -432,16 +432,10 @@ pub struct FinalizeResult {
 }
 
 /// `DecoderOptions` is a common set of options that all decoders use.
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Default)]
 pub struct DecoderOptions {
     /// The decoded audio should be verified if possible during the decode process.
     pub verify: bool,
-}
-
-impl Default for DecoderOptions {
-    fn default() -> Self {
-        DecoderOptions { verify: false }
-    }
 }
 
 /// A `Decoder` implements a codec's decode algorithm. It consumes `Packet`s and produces
