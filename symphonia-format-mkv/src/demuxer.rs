@@ -260,7 +260,7 @@ impl MkvReader {
                 self.metadata.push(tags.to_metadata());
             }
             other => {
-                log::warn!("ignored element {:?}", other);
+                log::debug!("ignored element {:?}", other);
                 self.iter.ignore_data()?;
             }
         }
@@ -332,7 +332,7 @@ impl FormatReader for MkvReader {
                     clusters.push(it.read_element_data::<ClusterElement>()?);
                 }
                 other => {
-                    log::warn!("ignored element {:?}", other);
+                    log::debug!("ignored element {:?}", other);
                 }
             }
         }

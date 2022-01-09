@@ -62,7 +62,7 @@ impl Element for TrackElement {
                     default_duration = Some(it.read_u64()?);
                 }
                 other => {
-                    log::warn!("ignored element {:?}", other);
+                    log::debug!("ignored element {:?}", other);
                 }
             }
         }
@@ -113,7 +113,7 @@ impl Element for AudioElement {
                     bit_depth = Some(it.read_u64()?);
                 }
                 other => {
-                    log::warn!("ignored element {:?}", other);
+                    log::debug!("ignored element {:?}", other);
                 }
             }
         }
@@ -146,7 +146,7 @@ impl Element for SeekHeadElement {
                     seeks.push(it.read_element_data()?);
                 }
                 other => {
-                    log::warn!("ignored element {:?}", other);
+                    log::debug!("ignored element {:?}", other);
                 }
             }
         }
@@ -179,7 +179,7 @@ impl Element for SeekElement {
                     seek_position = Some(it.read_u64()?);
                 }
                 other => {
-                    log::warn!("ignored element {:?}", other);
+                    log::debug!("ignored element {:?}", other);
                 }
             }
         }
@@ -256,7 +256,7 @@ impl Element for EbmlHeaderElement {
                     doc_type_read_version = Some(it.read_u64()?);
                 }
                 other => {
-                    log::warn!("ignored element {:?}", other);
+                    log::debug!("ignored element {:?}", other);
                 }
             }
         }
@@ -312,7 +312,7 @@ impl Element for InfoElement {
                     writing_app = Some(it.read_string()?);
                 }
                 other => {
-                    log::warn!("ignored element {:?}", other);
+                    log::debug!("ignored element {:?}", other);
                 }
             }
         }
@@ -368,7 +368,7 @@ impl Element for CuePointElement {
                     pos = Some(it.read_element_data()?);
                 }
                 other => {
-                    log::warn!("ignored element {:?}", other);
+                    log::debug!("ignored element {:?}", other);
                 }
             }
         }
@@ -404,7 +404,7 @@ impl Element for CueTrackPositionsElement {
                     pos = Some(it.read_u64()?);
                 }
                 other => {
-                    log::warn!("ignored element {:?}", other);
+                    log::debug!("ignored element {:?}", other);
                 }
             }
         }
@@ -441,7 +441,7 @@ impl Element for BlockGroupElement {
                     block_duration = Some(it.read_u64()?);
                 }
                 other => {
-                    log::warn!("ignored element {:?}", other);
+                    log::debug!("ignored element {:?}", other);
                 }
             }
         }
@@ -529,7 +529,7 @@ impl Element for TagsElement {
                     tags.push(it.read_element_data::<TagElement>()?);
                 }
                 other => {
-                    log::warn!("ignored element {:?}", other);
+                    log::debug!("ignored element {:?}", other);
                 }
             }
         }
@@ -575,7 +575,7 @@ impl Element for TagElement {
                     simple_tags.push(it.read_element_data::<SimpleTagElement>()?);
                 }
                 other => {
-                    log::warn!("ignored element {:?}", other);
+                    log::debug!("ignored element {:?}", other);
                 }
             }
         }
@@ -609,7 +609,7 @@ impl Element for SimpleTagElement {
                     value = Some(it.read_data()?);
                 }
                 other => {
-                    log::warn!("ignored element {:?}", other);
+                    log::debug!("ignored element {:?}", other);
                 }
             }
         }
