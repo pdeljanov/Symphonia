@@ -7,25 +7,23 @@
 
 #![warn(rust_2018_idioms)]
 #![forbid(unsafe_code)]
-
 // The following lints are allowed in all Symphonia crates. Please see clippy.toml for their
 // justification.
 #![allow(clippy::comparison_chain)]
 #![allow(clippy::excessive_precision)]
 #![allow(clippy::identity_op)]
 #![allow(clippy::manual_range_contains)]
-
 // Disable to better express the specification.
 #![allow(clippy::collapsible_else_if)]
 
-use symphonia_core::audio::{AudioBuffer, AudioBufferRef, AsAudioBufferRef};
+use symphonia_core::audio::{AsAudioBufferRef, AudioBuffer, AudioBufferRef};
 use symphonia_core::audio::{Signal, SignalSpec};
-use symphonia_core::codecs::{CODEC_TYPE_VORBIS, CodecParameters, CodecDescriptor};
+use symphonia_core::codecs::{CodecDescriptor, CodecParameters, CODEC_TYPE_VORBIS};
 use symphonia_core::codecs::{Decoder, DecoderOptions, FinalizeResult};
 use symphonia_core::dsp::mdct::Imdct;
-use symphonia_core::errors::{Result, decode_error, unsupported_error};
+use symphonia_core::errors::{decode_error, unsupported_error, Result};
 use symphonia_core::formats::Packet;
-use symphonia_core::io::{ReadBitsRtl, BitReaderRtl, ReadBytes, BufReader, FiniteBitStream};
+use symphonia_core::io::{BitReaderRtl, BufReader, FiniteBitStream, ReadBitsRtl, ReadBytes};
 use symphonia_core::support_codec;
 
 use symphonia_utils_xiph::vorbis::*;
@@ -39,8 +37,8 @@ mod floor;
 mod residue;
 mod window;
 
-use common::*;
 use codebook::VorbisCodebook;
+use common::*;
 use dsp::*;
 use floor::*;
 use residue::*;
@@ -143,8 +141,8 @@ impl VorbisDecoder {
             let angle_ch_idx = usize::from(couple.angle_ch);
 
             if self.dsp.channels[magnitude_ch_idx].do_not_decode
-                != self.dsp.channels[angle_ch_idx].do_not_decode {
-
+                != self.dsp.channels[angle_ch_idx].do_not_decode
+            {
                 self.dsp.channels[magnitude_ch_idx].do_not_decode = false;
                 self.dsp.channels[angle_ch_idx].do_not_decode = false;
             }
@@ -170,7 +168,7 @@ impl VorbisDecoder {
                 &self.codebooks,
                 &residue_channels,
                 &mut self.dsp.residue_scratch,
-                &mut self.dsp.channels
+                &mut self.dsp.channels,
             )?;
         }
 
@@ -254,7 +252,7 @@ impl VorbisDecoder {
                 &self.dsp.lapping_state,
                 &self.dsp.windows,
                 imdct,
-                self.buf.chan_mut(i)
+                self.buf.chan_mut(i),
             );
         }
 
@@ -262,16 +260,13 @@ impl VorbisDecoder {
         self.buf.trim(packet.trim_start() as usize, packet.trim_end() as usize);
 
         // Save the new lapping state.
-        self.dsp.lapping_state = Some(LappingState {
-            prev_block_flag: mode.block_flag,
-        });
+        self.dsp.lapping_state = Some(LappingState { prev_block_flag: mode.block_flag });
 
         Ok(())
     }
 }
 
 impl Decoder for VorbisDecoder {
-
     fn try_new(params: &CodecParameters, _: &DecoderOptions) -> Result<Self> {
         // This decoder only supports Vorbis.
         if params.codec != CODEC_TYPE_VORBIS {
@@ -297,7 +292,8 @@ impl Decoder for VorbisDecoder {
         let windows = Windows::new(1 << ident.bs0_exp, 1 << ident.bs1_exp);
 
         // Initialize dynamic DSP for each channel.
-        let dsp_channels = (0..ident.n_channels).map(|_| DspChannel::new(ident.bs0_exp, ident.bs1_exp)).collect();
+        let dsp_channels =
+            (0..ident.n_channels).map(|_| DspChannel::new(ident.bs0_exp, ident.bs1_exp)).collect();
 
         // Map the channels
         let channels = match vorbis_channels_to_channels(ident.n_channels) {
@@ -352,7 +348,8 @@ impl Decoder for VorbisDecoder {
         if let Err(e) = self.decode_inner(packet) {
             self.buf.clear();
             Err(e)
-        } else {
+        }
+        else {
             Ok(self.buf.as_audio_buffer_ref())
         }
     }
@@ -373,7 +370,6 @@ struct IdentHeader {
     bs0_exp: u8,
     bs1_exp: u8,
 }
-
 
 /// The packet type for an identification header.
 const VORBIS_PACKET_TYPE_IDENTIFICATION: u8 = 1;
@@ -429,7 +425,7 @@ fn read_ident_header<B: ReadBytes>(reader: &mut B) -> Result<IdentHeader> {
     let sample_rate = reader.read_u32()?;
 
     if sample_rate == 0 {
-        return decode_error("vorbis: sample rate cannot be 0")
+        return decode_error("vorbis: sample rate cannot be 0");
     }
 
     // Read the bitrate range.
@@ -462,12 +458,7 @@ fn read_ident_header<B: ReadBytes>(reader: &mut B) -> Result<IdentHeader> {
         return decode_error("vorbis: ident header framing flag unset");
     }
 
-    Ok(IdentHeader {
-        n_channels,
-        sample_rate,
-        bs0_exp,
-        bs1_exp,
-    })
+    Ok(IdentHeader { n_channels, sample_rate, bs0_exp, bs1_exp })
 }
 
 struct Setup {
@@ -510,12 +501,8 @@ fn read_setup(reader: &mut BufReader<'_>, ident: &IdentHeader) -> Result<Setup> 
     let residues = read_residues(&mut bs, codebooks.len() as u8)?;
 
     // Read channel mappings.
-    let mappings = read_mappings(
-        &mut bs,
-        ident.n_channels,
-        floors.len() as u8,
-        residues.len() as u8
-    )?;
+    let mappings =
+        read_mappings(&mut bs, ident.n_channels, floors.len() as u8, residues.len() as u8)?;
 
     // Read modes.
     let modes = read_modes(&mut bs, mappings.len() as u8)?;
@@ -554,7 +541,7 @@ fn read_floors(
     bs: &mut BitReaderRtl<'_>,
     bs0_exp: u8,
     bs1_exp: u8,
-    max_codebook: u8
+    max_codebook: u8,
 ) -> Result<Vec<Box<dyn Floor>>> {
     let count = bs.read_bits_leq32(6)? + 1;
     (0..count).map(|_| read_floor(bs, bs0_exp, bs1_exp, max_codebook)).collect()
@@ -564,7 +551,7 @@ fn read_floor(
     bs: &mut BitReaderRtl<'_>,
     bs0_exp: u8,
     bs1_exp: u8,
-    max_codebook: u8
+    max_codebook: u8,
 ) -> Result<Box<dyn Floor>> {
     let floor_type = bs.read_bits_leq32(16)?;
 
@@ -589,7 +576,8 @@ fn read_residue(bs: &mut BitReaderRtl<'_>, max_codebook: u8) -> Result<Residue> 
     }
 }
 
-fn read_mappings(bs: &mut BitReaderRtl<'_>,
+fn read_mappings(
+    bs: &mut BitReaderRtl<'_>,
     audio_channels: u8,
     max_floor: u8,
     max_residue: u8,
@@ -642,13 +630,7 @@ fn read_mapping_type0(
     max_floor: u8,
     max_residue: u8,
 ) -> Result<Mapping> {
-
-    let num_submaps = if bs.read_bool()? {
-        bs.read_bits_leq32(4)? as u8 + 1
-    }
-    else {
-        1
-    };
+    let num_submaps = if bs.read_bool()? { bs.read_bits_leq32(4)? as u8 + 1 } else { 1 };
 
     let mut couplings = Vec::new();
 
@@ -677,7 +659,7 @@ fn read_mapping_type0(
                 return decode_error("vorbis: invalid channel coupling");
             }
 
-            couplings.push(ChannelCouple{ magnitude_ch, angle_ch });
+            couplings.push(ChannelCouple { magnitude_ch, angle_ch });
         }
     }
 
@@ -727,11 +709,7 @@ fn read_mapping_type0(
         submaps.push(SubMap { floor, residue });
     }
 
-    let mapping = Mapping {
-        couplings,
-        multiplex,
-        submaps
-    };
+    let mapping = Mapping { couplings, multiplex, submaps };
 
     Ok(mapping)
 }
@@ -763,10 +741,7 @@ fn read_mode(bs: &mut BitReaderRtl<'_>, max_mapping: u8) -> Result<Mode> {
         return decode_error("vorbis: invalid mode mapping");
     }
 
-    let mode = Mode {
-        block_flag,
-        mapping,
-    };
+    let mode = Mode { block_flag, mapping };
 
     Ok(mode)
 }

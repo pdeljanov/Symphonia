@@ -8,8 +8,8 @@
 use std::cmp::min;
 use std::collections::HashSet;
 
-use symphonia_core::errors::{Error, Result, decode_error};
-use symphonia_core::io::{ReadBitsRtl, BitReaderRtl};
+use symphonia_core::errors::{decode_error, Error, Result};
+use symphonia_core::io::{BitReaderRtl, ReadBitsRtl};
 
 use super::codebook::VorbisCodebook;
 use super::common::*;
@@ -17,6 +17,7 @@ use super::common::*;
 /// As defined in section 10.1 of the Vorbis I specification.
 #[allow(clippy::unreadable_literal)]
 #[allow(clippy::excessive_precision)]
+#[rustfmt::skip]
 const FLOOR1_INVERSE_DB_TABLE: [f32; 256] = [
     1.0649863e-07, 1.1341951e-07, 1.2079015e-07, 1.2863978e-07,
     1.3699951e-07, 1.4590251e-07, 1.5538408e-07, 1.6548181e-07,
@@ -110,8 +111,12 @@ macro_rules! try_or_ret {
     };
 }
 
-pub trait Floor : Send {
-    fn read_channel(&mut self, bs: &mut BitReaderRtl<'_>, codebooks: &[VorbisCodebook]) ->  Result<()>;
+pub trait Floor: Send {
+    fn read_channel(
+        &mut self,
+        bs: &mut BitReaderRtl<'_>,
+        codebooks: &[VorbisCodebook],
+    ) -> Result<()>;
     fn is_unused(&self) -> bool;
     fn synthesis(&mut self, bs_exp: u8, floor: &mut [f32]) -> Result<()>;
 }
@@ -145,23 +150,18 @@ impl Floor0 {
         bs: &mut BitReaderRtl<'_>,
         bs0_exp: u8,
         bs1_exp: u8,
-        max_codebook: u8
+        max_codebook: u8,
     ) -> Result<Box<dyn Floor>> {
         let setup = Self::read_setup(bs, bs0_exp, bs1_exp, max_codebook)?;
 
-        Ok(Box::new(Floor0 {
-            setup,
-            is_unused: false,
-            amplitude: 0,
-            coeffs: [0.0; 256]
-        }))
+        Ok(Box::new(Floor0 { setup, is_unused: false, amplitude: 0, coeffs: [0.0; 256] }))
     }
 
     fn read_setup(
         bs: &mut BitReaderRtl<'_>,
         bs0_exp: u8,
         bs1_exp: u8,
-        max_codebook: u8
+        max_codebook: u8,
     ) -> Result<Floor0Setup> {
         let floor0_order = bs.read_bits_leq32(8)? as u8;
         let floor0_rate = bs.read_bits_leq32(16)? as u16;
@@ -205,14 +205,13 @@ impl Floor for Floor0 {
     fn read_channel(
         &mut self,
         bs: &mut BitReaderRtl<'_>,
-        codebooks: &[VorbisCodebook]
+        codebooks: &[VorbisCodebook],
     ) -> Result<()> {
         // Assume the floor is unused until it is decoded successfully.
         self.is_unused = true;
 
-        self.amplitude = io_try_or_ret!(
-            bs.read_bits_leq64(u32::from(self.setup.floor0_amplitude_bits))
-        );
+        self.amplitude =
+            io_try_or_ret!(bs.read_bits_leq64(u32::from(self.setup.floor0_amplitude_bits)));
 
         if self.amplitude != 0 {
             // Read the index into the floor's codebook list that contains the actual codebook
@@ -332,7 +331,7 @@ impl Floor for Floor0 {
                 q,
                 self.amplitude,
                 self.setup.floor0_amplitude_bits,
-                self.setup.floor0_amplitude_offset
+                self.setup.floor0_amplitude_offset,
             );
 
             // Fill in the floor values where the map value is the same.
@@ -464,7 +463,7 @@ impl Floor1 {
         let mut floor1_classes: [Floor1Class; 16] = Default::default();
 
         if floor1_partitions > 0 {
-            let mut max_class = 0;  // 4-bits, 0..15
+            let mut max_class = 0; // 4-bits, 0..15
 
             // Read the partition class list.
             for class_idx in &mut floor1_partition_class_list[..floor1_partitions] {
@@ -505,7 +504,7 @@ impl Floor1 {
                             return decode_error("vorbis: floor1, invalid codebook for subclass");
                         }
 
-                        class.is_subbook_used |= 1<< i;
+                        class.is_subbook_used |= 1 << i;
                     }
                 }
             }
@@ -551,7 +550,7 @@ impl Floor1 {
         }
 
         // Precompute sort-order.
-        floor1_x_list_sort_order.sort_by_key(|&i| floor1_x_list[i as usize] );
+        floor1_x_list_sort_order.sort_by_key(|&i| floor1_x_list[i as usize]);
 
         let floor_type1 = Floor1Setup {
             floor1_partitions,
@@ -585,7 +584,7 @@ impl Floor1 {
                 self.floor_final_y[low_neighbor_offset],
                 self.setup.floor1_x_list[high_neighbor_offset],
                 self.floor_final_y[high_neighbor_offset],
-                self.setup.floor1_x_list[i]
+                self.setup.floor1_x_list[i],
             );
 
             let val = self.floor_y[i] as i32;
@@ -658,7 +657,7 @@ impl Floor for Floor1 {
     fn read_channel(
         &mut self,
         bs: &mut BitReaderRtl<'_>,
-        codebooks: &[VorbisCodebook]
+        codebooks: &[VorbisCodebook],
     ) -> Result<()> {
         // Assume the floor is unused until it is decoded successfully.
         self.is_unused = true;
@@ -779,11 +778,16 @@ fn render_point(x0: u32, y0: i32, x1: u32, y1: i32, x: u32) -> i32 {
     let adx = x1 - x0;
     let err = dy.abs() as u32 * (x - x0);
     let off = err / adx;
-    if dy < 0 { y0 - off as i32 } else { y0 + off as i32 }
+    if dy < 0 {
+        y0 - off as i32
+    }
+    else {
+        y0 + off as i32
+    }
 }
 
 #[inline(always)]
-fn render_line(x0: u32, y0: i32, x1: u32, y1: i32, n: usize, v: &mut [f32] ) {
+fn render_line(x0: u32, y0: i32, x1: u32, y1: i32, n: usize, v: &mut [f32]) {
     let dy = y1 - y0;
     let adx = (x1 - x0) as i32;
 

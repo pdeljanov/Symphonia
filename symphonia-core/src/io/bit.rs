@@ -8,8 +8,8 @@
 use std::cmp::min;
 use std::io;
 
-use crate::util::bits::*;
 use crate::io::ReadBytes;
+use crate::util::bits::*;
 
 fn end_of_bitstream_error<T>() -> io::Result<T> {
     Err(io::Error::new(io::ErrorKind::Other, "unexpected end of bitstream"))
@@ -39,11 +39,11 @@ pub mod vlc {
     }
 
     /// `CodebookEntry` provides the functions required for an entry in the `Codebook`.
-    pub trait CodebookEntry : Copy + Clone + Default {
+    pub trait CodebookEntry: Copy + Clone + Default {
         /// The type of a value in this entry.
-        type ValueType : Copy + From<u8>;
+        type ValueType: Copy + From<u8>;
         /// The type of a jump offset in this entry.
-        type OffsetType : Copy;
+        type OffsetType: Copy;
 
         /// The maximum jump offset.
         const JUMP_OFFSET_MAX: u32;
@@ -80,7 +80,7 @@ pub mod vlc {
         ) => {
             #[doc = $expr]
             #[derive(Copy, Clone, Default)]
-            pub struct $name ($value_type, $offset_type);
+            pub struct $name($value_type, $offset_type);
 
             impl CodebookEntry for $name {
                 type ValueType = $value_type;
@@ -90,12 +90,12 @@ pub mod vlc {
 
                 #[inline(always)]
                 fn new_value(value: Self::ValueType, len: u8) -> Self {
-                    $name (value, len.into())
+                    $name(value, len.into())
                 }
 
                 #[inline(always)]
                 fn new_jump(offset: u32, len: u8) -> Self {
-                    $name (len.into(), $jump_flag | offset as Self::OffsetType)
+                    $name(len.into(), $jump_flag | offset as Self::OffsetType)
                 }
 
                 #[inline(always)]
@@ -137,47 +137,83 @@ pub mod vlc {
 
     decl_entry!(
         /// `Entry8x8` is a codebook entry for 8-bit values with codes up-to 8-bits.
-        Entry8x8, u8, u8, 0x7f, 0x80
+        Entry8x8,
+        u8,
+        u8,
+        0x7f,
+        0x80
     );
 
     decl_entry!(
         /// `Entry8x16` is a codebook entry for 8-bit values with codes up-to 16-bits.
-        Entry8x16, u8, u16, 0x7fff, 0x8000
+        Entry8x16,
+        u8,
+        u16,
+        0x7fff,
+        0x8000
     );
 
     decl_entry!(
         /// `Entry8x32` is a codebook entry for 8-bit values with codes up-to 32-bits.
-        Entry8x32, u8, u32, 0x7fff_ffff, 0x8000_0000
+        Entry8x32,
+        u8,
+        u32,
+        0x7fff_ffff,
+        0x8000_0000
     );
 
     decl_entry!(
         /// `Entry16x8` is a codebook entry for 16-bit values with codes up-to 8-bits.
-        Entry16x8, u16, u8, 0x7f, 0x80
+        Entry16x8,
+        u16,
+        u8,
+        0x7f,
+        0x80
     );
 
     decl_entry!(
         /// `Entry16x16` is a codebook entry for 16-bit values with codes up-to 16-bits.
-        Entry16x16, u16, u16, 0x7fff, 0x8000
+        Entry16x16,
+        u16,
+        u16,
+        0x7fff,
+        0x8000
     );
 
     decl_entry!(
         /// `Entry16x32` is a codebook entry for 16-bit values with codes up-to 32-bits.
-        Entry16x32, u16, u32, 0x7fff_ffff, 0x8000_0000
+        Entry16x32,
+        u16,
+        u32,
+        0x7fff_ffff,
+        0x8000_0000
     );
 
     decl_entry!(
         /// `Entry32x8` is a codebook entry for 32-bit values with codes up-to 8-bits.
-        Entry32x8, u32, u8, 0x7fff, 0x80
+        Entry32x8,
+        u32,
+        u8,
+        0x7fff,
+        0x80
     );
 
     decl_entry!(
         /// `Entry32x16` is a codebook entry for 32-bit values with codes up-to 16-bits.
-        Entry32x16, u32, u16, 0x7fff, 0x8000
+        Entry32x16,
+        u32,
+        u16,
+        0x7fff,
+        0x8000
     );
 
     decl_entry!(
         /// `Entry32x32` is a codebook entry for 32-bit values with codes up-to 32-bits.
-        Entry32x32, u32, u32, 0x7fff_ffff, 0x8000_0000
+        Entry32x32,
+        u32,
+        u32,
+        0x7fff_ffff,
+        0x8000_0000
     );
 
     /// `Codebook` is a variable-length code decoding table that may be used to efficiently read
@@ -258,7 +294,7 @@ pub mod vlc {
         fn generate_lut<E: CodebookEntry>(
             bit_order: BitOrder,
             is_sparse: bool,
-            blocks: &[CodebookBlock<E>]
+            blocks: &[CodebookBlock<E>],
         ) -> io::Result<Vec<E>> {
             // The codebook table.
             let mut table = Vec::new();
@@ -363,8 +399,8 @@ pub mod vlc {
                             let end = start + count;
 
                             for prefix in start..end {
-                                let offset = prefix.reverse_bits()
-                                                   .rotate_left(u32::from(block.width));
+                                let offset =
+                                    prefix.reverse_bits().rotate_left(u32::from(block.width));
 
                                 table[table_base + offset] = value_entry;
                             }
@@ -395,7 +431,7 @@ pub mod vlc {
             &mut self,
             code_words: &[u32],
             code_lens: &[u8],
-            values: &[E::ValueType]
+            values: &[E::ValueType],
         ) -> io::Result<Codebook<E>> {
             assert!(code_words.len() == code_lens.len());
             assert!(code_words.len() == values.len());
@@ -520,7 +556,7 @@ pub trait FiniteBitStream {
 }
 
 /// `ReadBitsLtr` reads bits from most-significant to least-significant.
-pub trait ReadBitsLtr : private::FetchBitsLtr {
+pub trait ReadBitsLtr: private::FetchBitsLtr {
     /// Discards any saved bits and resets the `BitStream` to prepare it for a byte-aligned read.
     #[inline(always)]
     fn realign(&mut self) {
@@ -857,11 +893,7 @@ pub struct BitStreamLtr<'a, B: ReadBytes> {
 impl<'a, B: ReadBytes> BitStreamLtr<'a, B> {
     /// Instantiate a new `BitStreamLtr` with the given source.
     pub fn new(reader: &'a mut B) -> Self {
-        BitStreamLtr {
-            reader,
-            bits: 0,
-            n_bits_left: 0,
-        }
+        BitStreamLtr { reader, bits: 0, n_bits_left: 0 }
     }
 }
 
@@ -897,7 +929,7 @@ impl<'a, B: ReadBytes> private::FetchBitsLtr for BitStreamLtr<'a, B> {
     }
 }
 
-impl<'a, B: ReadBytes> ReadBitsLtr for BitStreamLtr<'a, B> { }
+impl<'a, B: ReadBytes> ReadBitsLtr for BitStreamLtr<'a, B> {}
 
 /// `BitReaderLtr` reads bits from most-significant to least-significant from any `&[u8]`.
 ///
@@ -912,11 +944,7 @@ pub struct BitReaderLtr<'a> {
 impl<'a> BitReaderLtr<'a> {
     /// Instantiate a new `BitReaderLtr` with the given buffer.
     pub fn new(buf: &'a [u8]) -> Self {
-        BitReaderLtr {
-            buf,
-            bits: 0,
-            n_bits_left: 0,
-        }
+        BitReaderLtr { buf, bits: 0, n_bits_left: 0 }
     }
 }
 
@@ -976,7 +1004,7 @@ impl<'a> private::FetchBitsLtr for BitReaderLtr<'a> {
     }
 }
 
-impl<'a> ReadBitsLtr for BitReaderLtr<'a> { }
+impl<'a> ReadBitsLtr for BitReaderLtr<'a> {}
 
 impl<'a> FiniteBitStream for BitReaderLtr<'a> {
     fn bits_left(&self) -> u64 {
@@ -985,7 +1013,7 @@ impl<'a> FiniteBitStream for BitReaderLtr<'a> {
 }
 
 /// `ReadBitsRtl` reads bits from least-significant to most-significant.
-pub trait ReadBitsRtl : private::FetchBitsRtl {
+pub trait ReadBitsRtl: private::FetchBitsRtl {
     /// Discards any saved bits and resets the `BitStream` to prepare it for a byte-aligned read.
     #[inline(always)]
     fn realign(&mut self) {
@@ -1254,7 +1282,6 @@ pub trait ReadBitsRtl : private::FetchBitsRtl {
         Ok(num)
     }
 
-
     /// Reads a codebook value from the `BitStream` using the provided `Codebook` and returns the
     /// decoded value or an error.
     #[inline(always)]
@@ -1326,11 +1353,7 @@ pub struct BitStreamRtl<'a, B: ReadBytes> {
 impl<'a, B: ReadBytes> BitStreamRtl<'a, B> {
     /// Instantiate a new `BitStreamRtl` with the given buffer.
     pub fn new(reader: &'a mut B) -> Self {
-        BitStreamRtl {
-            reader,
-            bits: 0,
-            n_bits_left: 0,
-        }
+        BitStreamRtl { reader, bits: 0, n_bits_left: 0 }
     }
 }
 
@@ -1366,7 +1389,7 @@ impl<'a, B: ReadBytes> private::FetchBitsRtl for BitStreamRtl<'a, B> {
     }
 }
 
-impl<'a, B: ReadBytes> ReadBitsRtl for BitStreamRtl<'a, B> { }
+impl<'a, B: ReadBytes> ReadBitsRtl for BitStreamRtl<'a, B> {}
 
 /// `BitReaderRtl` reads bits from least-significant to most-significant from any `&[u8]`.
 ///
@@ -1381,11 +1404,7 @@ pub struct BitReaderRtl<'a> {
 impl<'a> BitReaderRtl<'a> {
     /// Instantiate a new `BitReaderRtl` with the given buffer.
     pub fn new(buf: &'a [u8]) -> Self {
-        BitReaderRtl {
-            buf,
-            bits: 0,
-            n_bits_left: 0,
-        }
+        BitReaderRtl { buf, bits: 0, n_bits_left: 0 }
     }
 }
 
@@ -1445,7 +1464,7 @@ impl<'a> private::FetchBitsRtl for BitReaderRtl<'a> {
     }
 }
 
-impl<'a> ReadBitsRtl for BitReaderRtl<'a> { }
+impl<'a> ReadBitsRtl for BitReaderRtl<'a> {}
 
 impl<'a> FiniteBitStream for BitReaderRtl<'a> {
     fn bits_left(&self) -> u64 {
@@ -1455,19 +1474,17 @@ impl<'a> FiniteBitStream for BitReaderRtl<'a> {
 
 #[cfg(test)]
 mod tests {
+    use super::vlc::{BitOrder, Codebook, CodebookBuilder, Entry8x8};
     use super::{BitReaderLtr, ReadBitsLtr};
     use super::{BitReaderRtl, ReadBitsRtl};
-    use super::vlc::{BitOrder, Codebook, CodebookBuilder, Entry8x8};
 
     #[test]
     fn verify_bitstreamltr_ignore_bits() {
-        let mut bs = BitReaderLtr::new(
-            &[
-                0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-                0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-                0xc0, 0x10, 0x00, 0x01, 0x00, 0x00, 0x00, 0x0a,
-            ]
-        );
+        let mut bs = BitReaderLtr::new(&[
+            0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, //
+            0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, //
+            0xc0, 0x10, 0x00, 0x01, 0x00, 0x00, 0x00, 0x0a, //
+        ]);
 
         assert_eq!(bs.read_bool().unwrap(), true);
 
@@ -1498,7 +1515,7 @@ mod tests {
         assert_eq!(bs.read_bool().unwrap(), false);
 
         // Lower limit test.
-        let mut bs = BitReaderLtr::new(&[ 0x00 ]);
+        let mut bs = BitReaderLtr::new(&[0x00]);
 
         assert!(bs.ignore_bits(0).is_ok());
 
@@ -1508,14 +1525,12 @@ mod tests {
         assert!(bs.ignore_bits(1).is_err());
 
         // Upper limit test.
-        let mut bs = BitReaderLtr::new(
-            &[
-                0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-                0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-                0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-                0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-            ]
-        );
+        let mut bs = BitReaderLtr::new(&[
+            0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, //
+            0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, //
+            0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, //
+            0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, //
+        ]);
 
         assert!(bs.ignore_bits(64).is_ok());
         assert!(bs.ignore_bits(64).is_ok());
@@ -1567,34 +1582,30 @@ mod tests {
     #[test]
     fn verify_bitstreamltr_read_bits_leq32() {
         // General tests.
-        let mut bs = BitReaderLtr::new(
-            &[
-                0b1010_0101, 0b0111_1110, 0b1101_0011
-            ]
-        );
+        let mut bs = BitReaderLtr::new(&[0b1010_0101, 0b0111_1110, 0b1101_0011]);
 
-        assert_eq!(bs.read_bits_leq32( 4).unwrap(), 0b0000_0000_0000_1010);
-        assert_eq!(bs.read_bits_leq32( 4).unwrap(), 0b0000_0000_0000_0101);
+        assert_eq!(bs.read_bits_leq32(4).unwrap(), 0b0000_0000_0000_1010);
+        assert_eq!(bs.read_bits_leq32(4).unwrap(), 0b0000_0000_0000_0101);
         assert_eq!(bs.read_bits_leq32(13).unwrap(), 0b0000_1111_1101_1010);
-        assert_eq!(bs.read_bits_leq32( 3).unwrap(), 0b0000_0000_0000_0011);
+        assert_eq!(bs.read_bits_leq32(3).unwrap(), 0b0000_0000_0000_0011);
 
         // Lower limit test.
-        let mut bs = BitReaderLtr::new(&[ 0xff, 0xff, 0xff, 0xff ]);
+        let mut bs = BitReaderLtr::new(&[0xff, 0xff, 0xff, 0xff]);
 
         assert_eq!(bs.read_bits_leq32(0).unwrap(), 0);
 
         // Upper limit test.
-        let mut bs = BitReaderLtr::new(&[ 0xff, 0xff, 0xff, 0xff, 0x01 ]);
+        let mut bs = BitReaderLtr::new(&[0xff, 0xff, 0xff, 0xff, 0x01]);
 
         assert_eq!(bs.read_bits_leq32(32).unwrap(), u32::MAX);
-        assert_eq!(bs.read_bits_leq32( 8).unwrap(), 0x01);
+        assert_eq!(bs.read_bits_leq32(8).unwrap(), 0x01);
 
         // Cache fetch test.
-        let mut bs = BitReaderLtr::new(&[ 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01 ]);
+        let mut bs = BitReaderLtr::new(&[0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01]);
 
         assert_eq!(bs.read_bits_leq32(32).unwrap(), u32::MAX);
         assert_eq!(bs.read_bits_leq32(32).unwrap(), u32::MAX);
-        assert_eq!(bs.read_bits_leq32( 8).unwrap(), 0x01);
+        assert_eq!(bs.read_bits_leq32(8).unwrap(), 0x01);
 
         // Test error cases.
         let mut bs = BitReaderLtr::new(&[0xff]);
@@ -1605,29 +1616,27 @@ mod tests {
     #[test]
     fn verify_bitstreamltr_read_bits_leq64() {
         // General tests.
-        let mut bs = BitReaderLtr::new(
-            &[
-                0x99, 0xaa, 0x55, 0xff, 0xff, 0x55, 0xaa, 0x99,
-                0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88
-            ]
-        );
+        let mut bs = BitReaderLtr::new(&[
+            0x99, 0xaa, 0x55, 0xff, 0xff, 0x55, 0xaa, 0x99, //
+            0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, //
+        ]);
 
         assert_eq!(bs.read_bits_leq64(40).unwrap(), 0x99aa55ffff);
-        assert_eq!(bs.read_bits_leq64( 4).unwrap(), 0x05);
-        assert_eq!(bs.read_bits_leq64( 4).unwrap(), 0x05);
+        assert_eq!(bs.read_bits_leq64(4).unwrap(), 0x05);
+        assert_eq!(bs.read_bits_leq64(4).unwrap(), 0x05);
         assert_eq!(bs.read_bits_leq64(16).unwrap(), 0xaa99);
         assert_eq!(bs.read_bits_leq64(64).unwrap(), 0x1122334455667788);
 
         // Lower limit test.
-        let mut bs = BitReaderLtr::new(&[ 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff ]);
+        let mut bs = BitReaderLtr::new(&[0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff]);
 
         assert_eq!(bs.read_bits_leq64(0).unwrap(), 0);
 
         // Upper limit test.
-        let mut bs = BitReaderLtr::new(&[ 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01 ]);
+        let mut bs = BitReaderLtr::new(&[0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01]);
 
         assert_eq!(bs.read_bits_leq64(64).unwrap(), u64::MAX);
-        assert_eq!(bs.read_bits_leq64( 8).unwrap(), 0x01);
+        assert_eq!(bs.read_bits_leq64(8).unwrap(), 0x01);
 
         // Test error cases.
         let mut bs = BitReaderLtr::new(&[0xff]);
@@ -1638,22 +1647,19 @@ mod tests {
     #[test]
     fn verify_bitstreamltr_read_unary_zeros() {
         // General tests
-        let mut bs = BitReaderLtr::new(
-            &[
-                0b0000_0001, 0b0001_0000, 0b0000_0000, 0b1000_0000, 0b1111_1011
-            ]
-        );
+        let mut bs =
+            BitReaderLtr::new(&[0b0000_0001, 0b0001_0000, 0b0000_0000, 0b1000_0000, 0b1111_1011]);
 
-        assert_eq!(bs.read_unary_zeros().unwrap(),  7);
-        assert_eq!(bs.read_unary_zeros().unwrap(),  3);
+        assert_eq!(bs.read_unary_zeros().unwrap(), 7);
+        assert_eq!(bs.read_unary_zeros().unwrap(), 3);
         assert_eq!(bs.read_unary_zeros().unwrap(), 12);
-        assert_eq!(bs.read_unary_zeros().unwrap(),  7);
-        assert_eq!(bs.read_unary_zeros().unwrap(),  0);
-        assert_eq!(bs.read_unary_zeros().unwrap(),  0);
-        assert_eq!(bs.read_unary_zeros().unwrap(),  0);
-        assert_eq!(bs.read_unary_zeros().unwrap(),  0);
-        assert_eq!(bs.read_unary_zeros().unwrap(),  1);
-        assert_eq!(bs.read_unary_zeros().unwrap(),  0);
+        assert_eq!(bs.read_unary_zeros().unwrap(), 7);
+        assert_eq!(bs.read_unary_zeros().unwrap(), 0);
+        assert_eq!(bs.read_unary_zeros().unwrap(), 0);
+        assert_eq!(bs.read_unary_zeros().unwrap(), 0);
+        assert_eq!(bs.read_unary_zeros().unwrap(), 0);
+        assert_eq!(bs.read_unary_zeros().unwrap(), 1);
+        assert_eq!(bs.read_unary_zeros().unwrap(), 0);
 
         // Upper limit test
         let mut bs = BitReaderLtr::new(&[0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01]);
@@ -1674,19 +1680,17 @@ mod tests {
     #[test]
     fn verify_bitstreamltr_read_unary_zeros_capped() {
         // Basic test
-        let mut bs = BitReaderLtr::new(&[ 0b0000_0001, 0b0000_0001 ]);
+        let mut bs = BitReaderLtr::new(&[0b0000_0001, 0b0000_0001]);
 
         assert_eq!(bs.read_unary_zeros_capped(8).unwrap(), 7);
         assert_eq!(bs.read_unary_zeros_capped(4).unwrap(), 4);
 
         // Long limit test
-        let mut bs = BitReaderLtr::new(
-            &[
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            ]
-        );
+        let mut bs = BitReaderLtr::new(&[
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, //
+            0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, //
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, //
+        ]);
 
         assert_eq!(bs.read_unary_zeros_capped(96).unwrap(), 79);
         assert_eq!(bs.read_unary_zeros_capped(104).unwrap(), 104);
@@ -1695,22 +1699,19 @@ mod tests {
     #[test]
     fn verify_bitstreamltr_read_unary_ones() {
         // General tests
-        let mut bs = BitReaderLtr::new(
-            &[
-                0b1111_1110, 0b1110_1111, 0b1111_1111, 0b0111_1111, 0b0000_0100
-            ]
-        );
+        let mut bs =
+            BitReaderLtr::new(&[0b1111_1110, 0b1110_1111, 0b1111_1111, 0b0111_1111, 0b0000_0100]);
 
-        assert_eq!(bs.read_unary_ones().unwrap(),  7);
-        assert_eq!(bs.read_unary_ones().unwrap(),  3);
+        assert_eq!(bs.read_unary_ones().unwrap(), 7);
+        assert_eq!(bs.read_unary_ones().unwrap(), 3);
         assert_eq!(bs.read_unary_ones().unwrap(), 12);
-        assert_eq!(bs.read_unary_ones().unwrap(),  7);
-        assert_eq!(bs.read_unary_ones().unwrap(),  0);
-        assert_eq!(bs.read_unary_ones().unwrap(),  0);
-        assert_eq!(bs.read_unary_ones().unwrap(),  0);
-        assert_eq!(bs.read_unary_ones().unwrap(),  0);
-        assert_eq!(bs.read_unary_ones().unwrap(),  1);
-        assert_eq!(bs.read_unary_ones().unwrap(),  0);
+        assert_eq!(bs.read_unary_ones().unwrap(), 7);
+        assert_eq!(bs.read_unary_ones().unwrap(), 0);
+        assert_eq!(bs.read_unary_ones().unwrap(), 0);
+        assert_eq!(bs.read_unary_ones().unwrap(), 0);
+        assert_eq!(bs.read_unary_ones().unwrap(), 0);
+        assert_eq!(bs.read_unary_ones().unwrap(), 1);
+        assert_eq!(bs.read_unary_ones().unwrap(), 0);
 
         // Upper limit test
         let mut bs = BitReaderLtr::new(&[0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xfe]);
@@ -1731,16 +1732,13 @@ mod tests {
     #[test]
     fn verify_bitstreamltr_read_unary_ones_capped() {
         // Basic test
-        let mut bs = BitReaderLtr::new(&[ 0b1111_1110, 0b1111_1110 ]);
+        let mut bs = BitReaderLtr::new(&[0b1111_1110, 0b1111_1110]);
 
         assert_eq!(bs.read_unary_ones_capped(8).unwrap(), 7);
         assert_eq!(bs.read_unary_ones_capped(4).unwrap(), 4);
 
-        let mut bs = BitReaderLtr::new(
-            &[
-                0b1111_1110, 0b1110_1111, 0b1111_1111, 0b0111_1111, 0b0000_0100
-            ]
-        );
+        let mut bs =
+            BitReaderLtr::new(&[0b1111_1110, 0b1110_1111, 0b1111_1111, 0b0111_1111, 0b0000_0100]);
 
         assert_eq!(bs.read_unary_ones_capped(9).unwrap(), 7);
         assert_eq!(bs.read_unary_ones_capped(9).unwrap(), 3);
@@ -1754,17 +1752,12 @@ mod tests {
         assert_eq!(bs.read_unary_ones_capped(9).unwrap(), 1);
 
         // Long limit test
-        let mut bs = BitReaderLtr::new(
-            &[
-                0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-                0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-                0xff, 0xfe, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-                0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-                0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-                0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-                0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-            ]
-        );
+        let mut bs = BitReaderLtr::new(&[
+            0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+            0xff, 0xff, 0xff, 0xfe, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+            0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+            0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        ]);
 
         assert_eq!(bs.read_unary_ones_capped(144).unwrap(), 143);
         assert_eq!(bs.read_unary_ones_capped(256).unwrap(), 256);
@@ -1772,6 +1765,7 @@ mod tests {
 
     fn generate_codebook(bit_order: BitOrder) -> (Codebook<Entry8x8>, Vec<u8>, &'static str) {
         // Codewords in MSb bit-order.
+        #[rustfmt::skip]
         const CODE_WORDS: [u32; 25] = [
             0b001,
             0b111,
@@ -1800,13 +1794,12 @@ mod tests {
             0b1100100,
         ];
 
-        const CODE_LENS: [u8; 25] = [
-            3, 3, 3, 4, 4, 4, 4, 4, 5, 5, 5, 5, 5, 6, 6, 6, 6, 6, 6, 6, 6, 7, 7, 7, 7,
-        ];
+        const CODE_LENS: [u8; 25] =
+            [3, 3, 3, 4, 4, 4, 4, 4, 5, 5, 5, 5, 5, 6, 6, 6, 6, 6, 6, 6, 6, 7, 7, 7, 7];
 
         const VALUES: [u8; 25] = [
-            b'i', b' ', b'e', b't', b's', b'l', b'n', b'o', b'.', b'r', b'g', b'h', b'u',
-            b'p', b'w', b',', b'f', b'y', b'm', b'v', b'a', b'd', b'b', b'c', b'T',
+            b'i', b' ', b'e', b't', b's', b'l', b'n', b'o', b'.', b'r', b'g', b'h', b'u', b'p',
+            b'w', b',', b'f', b'y', b'm', b'v', b'a', b'd', b'b', b'c', b'T',
         ];
 
         // Encoded data in MSb bit-order.
@@ -1815,7 +1808,7 @@ mod tests {
             0xb5, 0xbb, 0x6f, 0x9f, 0xa0, 0x15, 0xc1, 0xfa, 0x5e, 0xa2, 0xb8, 0x4a, 0xfb, 0x0f,
             0xe1, 0x93, 0xe6, 0x8a, 0xe8, 0x3e, 0x77, 0xe0, 0xd9, 0x92, 0xf5, 0xf8, 0xc5, 0xfb,
             0x37, 0xcc, 0x7c, 0x48, 0x8f, 0x33, 0xf0, 0x33, 0x4f, 0xb0, 0xd2, 0x9a, 0x17, 0xad,
-            0x80
+            0x80,
         ];
 
         const TEXT: &'static str = "This silence belongs to us... and every single person out \
@@ -1824,7 +1817,7 @@ mod tests {
         // Reverse the bits in the data vector if testing a reverse bit-order.
         let data = match bit_order {
             BitOrder::Verbatim => DATA.iter().map(|&b| b).collect(),
-            BitOrder::Reverse  => DATA.iter().map(|&b| b.reverse_bits()).collect(),
+            BitOrder::Reverse => DATA.iter().map(|&b| b.reverse_bits()).collect(),
         };
 
         // Construct a codebook using the tables above.
@@ -1840,9 +1833,8 @@ mod tests {
 
         let mut bs = BitReaderLtr::new(&buf);
 
-        let decoded: Vec<u8> = (0..text.len()).into_iter()
-                                              .map(|_| bs.read_codebook(&codebook).unwrap().0)
-                                              .collect();
+        let decoded: Vec<u8> =
+            (0..text.len()).into_iter().map(|_| bs.read_codebook(&codebook).unwrap().0).collect();
 
         assert_eq!(text, std::str::from_utf8(&decoded).unwrap());
     }
@@ -1851,13 +1843,11 @@ mod tests {
 
     #[test]
     fn verify_bitstreamrtl_ignore_bits() {
-        let mut bs = BitReaderRtl::new(
-            &[
-                0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-                0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-                0x02, 0x08, 0x00, 0x80, 0x00, 0x00, 0x00, 0x50,
-            ]
-        );
+        let mut bs = BitReaderRtl::new(&[
+            0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, //
+            0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, //
+            0x02, 0x08, 0x00, 0x80, 0x00, 0x00, 0x00, 0x50, //
+        ]);
 
         assert_eq!(bs.read_bool().unwrap(), true);
 
@@ -1888,7 +1878,7 @@ mod tests {
         assert_eq!(bs.read_bool().unwrap(), false);
 
         // Lower limit test.
-        let mut bs = BitReaderRtl::new(&[ 0x00 ]);
+        let mut bs = BitReaderRtl::new(&[0x00]);
 
         assert!(bs.ignore_bits(0).is_ok());
 
@@ -1898,14 +1888,12 @@ mod tests {
         assert!(bs.ignore_bits(1).is_err());
 
         // Upper limit test.
-        let mut bs = BitReaderRtl::new(
-            &[
-                0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-                0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-                0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-                0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-            ]
-        );
+        let mut bs = BitReaderRtl::new(&[
+            0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, //
+            0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, //
+            0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, //
+            0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, //
+        ]);
 
         assert!(bs.ignore_bits(64).is_ok());
         assert!(bs.ignore_bits(64).is_ok());
@@ -1957,34 +1945,30 @@ mod tests {
     #[test]
     fn verify_bitstreamrtl_read_bits_leq32() {
         // General tests.
-        let mut bs = BitReaderRtl::new(
-            &[
-                0b1010_0101, 0b0111_1110, 0b1101_0011
-            ]
-        );
+        let mut bs = BitReaderRtl::new(&[0b1010_0101, 0b0111_1110, 0b1101_0011]);
 
-        assert_eq!(bs.read_bits_leq32( 4).unwrap(), 0b0000_0000_0000_0101);
-        assert_eq!(bs.read_bits_leq32( 4).unwrap(), 0b0000_0000_0000_1010);
+        assert_eq!(bs.read_bits_leq32(4).unwrap(), 0b0000_0000_0000_0101);
+        assert_eq!(bs.read_bits_leq32(4).unwrap(), 0b0000_0000_0000_1010);
         assert_eq!(bs.read_bits_leq32(13).unwrap(), 0b0001_0011_0111_1110);
-        assert_eq!(bs.read_bits_leq32( 3).unwrap(), 0b0000_0000_0000_0110);
+        assert_eq!(bs.read_bits_leq32(3).unwrap(), 0b0000_0000_0000_0110);
 
         // Lower limit test.
-        let mut bs = BitReaderRtl::new(&[ 0xff, 0xff, 0xff, 0xff ]);
+        let mut bs = BitReaderRtl::new(&[0xff, 0xff, 0xff, 0xff]);
 
         assert_eq!(bs.read_bits_leq32(0).unwrap(), 0);
 
         // Upper limit test.
-        let mut bs = BitReaderRtl::new(&[ 0xff, 0xff, 0xff, 0xff, 0x01 ]);
+        let mut bs = BitReaderRtl::new(&[0xff, 0xff, 0xff, 0xff, 0x01]);
 
         assert_eq!(bs.read_bits_leq32(32).unwrap(), u32::MAX);
-        assert_eq!(bs.read_bits_leq32( 8).unwrap(), 0x01);
+        assert_eq!(bs.read_bits_leq32(8).unwrap(), 0x01);
 
         // Cache fetch test.
-        let mut bs = BitReaderRtl::new(&[ 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01 ]);
+        let mut bs = BitReaderRtl::new(&[0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01]);
 
         assert_eq!(bs.read_bits_leq32(32).unwrap(), u32::MAX);
         assert_eq!(bs.read_bits_leq32(32).unwrap(), u32::MAX);
-        assert_eq!(bs.read_bits_leq32( 8).unwrap(), 0x01);
+        assert_eq!(bs.read_bits_leq32(8).unwrap(), 0x01);
 
         // Test error cases.
         let mut bs = BitReaderRtl::new(&[0xff]);
@@ -1995,33 +1979,31 @@ mod tests {
     #[test]
     fn verify_bitstreamrtl_read_bits_leq64() {
         // General tests.
-        let mut bs = BitReaderRtl::new(
-            &[
-                0x99, 0xaa, 0x55, 0xff, 0xff, 0x55, 0xaa, 0x99,
-                0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
-                0x00, 0x11, 0x22, 0x33, 0x00, 0x11, 0x22, 0x33,
-                0x44, 0x55, 0x66, 0x77,
-            ]
-        );
+        let mut bs = BitReaderRtl::new(&[
+            0x99, 0xaa, 0x55, 0xff, 0xff, 0x55, 0xaa, 0x99, //
+            0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, //
+            0x00, 0x11, 0x22, 0x33, 0x00, 0x11, 0x22, 0x33, //
+            0x44, 0x55, 0x66, 0x77,
+        ]);
 
         assert_eq!(bs.read_bits_leq64(40).unwrap(), 0xffff55aa99);
-        assert_eq!(bs.read_bits_leq64( 4).unwrap(), 0x05);
-        assert_eq!(bs.read_bits_leq64( 4).unwrap(), 0x05);
+        assert_eq!(bs.read_bits_leq64(4).unwrap(), 0x05);
+        assert_eq!(bs.read_bits_leq64(4).unwrap(), 0x05);
         assert_eq!(bs.read_bits_leq64(16).unwrap(), 0x99aa);
         assert_eq!(bs.read_bits_leq64(64).unwrap(), 0x8877665544332211);
         assert_eq!(bs.read_bits_leq64(32).unwrap(), 0x33221100);
         assert_eq!(bs.read_bits_leq64(64).unwrap(), 0x7766554433221100);
 
         // Lower limit test.
-        let mut bs = BitReaderRtl::new(&[ 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff ]);
+        let mut bs = BitReaderRtl::new(&[0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff]);
 
         assert_eq!(bs.read_bits_leq64(0).unwrap(), 0);
 
         // Upper limit test.
-        let mut bs = BitReaderRtl::new(&[ 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01 ]);
+        let mut bs = BitReaderRtl::new(&[0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01]);
 
         assert_eq!(bs.read_bits_leq64(64).unwrap(), u64::MAX);
-        assert_eq!(bs.read_bits_leq64( 8).unwrap(), 0x01);
+        assert_eq!(bs.read_bits_leq64(8).unwrap(), 0x01);
 
         // Test error cases.
         let mut bs = BitReaderRtl::new(&[0xff]);
@@ -2029,26 +2011,22 @@ mod tests {
         assert!(bs.read_bits_leq64(9).is_err());
     }
 
-
     #[test]
     fn verify_bitstreamrtl_read_unary_zeros() {
         // General tests
-        let mut bs = BitReaderRtl::new(
-            &[
-                0b1000_0000, 0b0000_1000, 0b0000_0000, 0b0000_0001, 0b1101_1111
-            ]
-        );
+        let mut bs =
+            BitReaderRtl::new(&[0b1000_0000, 0b0000_1000, 0b0000_0000, 0b0000_0001, 0b1101_1111]);
 
-        assert_eq!(bs.read_unary_zeros().unwrap(),  7);
-        assert_eq!(bs.read_unary_zeros().unwrap(),  3);
+        assert_eq!(bs.read_unary_zeros().unwrap(), 7);
+        assert_eq!(bs.read_unary_zeros().unwrap(), 3);
         assert_eq!(bs.read_unary_zeros().unwrap(), 12);
-        assert_eq!(bs.read_unary_zeros().unwrap(),  7);
-        assert_eq!(bs.read_unary_zeros().unwrap(),  0);
-        assert_eq!(bs.read_unary_zeros().unwrap(),  0);
-        assert_eq!(bs.read_unary_zeros().unwrap(),  0);
-        assert_eq!(bs.read_unary_zeros().unwrap(),  0);
-        assert_eq!(bs.read_unary_zeros().unwrap(),  1);
-        assert_eq!(bs.read_unary_zeros().unwrap(),  0);
+        assert_eq!(bs.read_unary_zeros().unwrap(), 7);
+        assert_eq!(bs.read_unary_zeros().unwrap(), 0);
+        assert_eq!(bs.read_unary_zeros().unwrap(), 0);
+        assert_eq!(bs.read_unary_zeros().unwrap(), 0);
+        assert_eq!(bs.read_unary_zeros().unwrap(), 0);
+        assert_eq!(bs.read_unary_zeros().unwrap(), 1);
+        assert_eq!(bs.read_unary_zeros().unwrap(), 0);
 
         // Upper limit test
         let mut bs = BitReaderRtl::new(&[0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80]);
@@ -2069,21 +2047,19 @@ mod tests {
     #[test]
     fn verify_bitstreamrtl_read_unary_zeros_capped() {
         // General tests
-        let mut bs = BitReaderRtl::new(&[ 0b1000_0000, 0b1000_0000 ]);
+        let mut bs = BitReaderRtl::new(&[0b1000_0000, 0b1000_0000]);
 
         assert_eq!(bs.read_unary_zeros_capped(8).unwrap(), 7);
         assert_eq!(bs.read_unary_zeros_capped(4).unwrap(), 4);
 
         // Long limit tests
-        let mut bs = BitReaderRtl::new(
-            &[
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            ]
-        );
+        let mut bs = BitReaderRtl::new(&[
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, //
+            0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, //
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, //
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, //
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, //
+        ]);
 
         assert_eq!(bs.read_unary_zeros_capped(96).unwrap(), 79);
         assert_eq!(bs.read_unary_zeros_capped(163).unwrap(), 163);
@@ -2092,22 +2068,19 @@ mod tests {
     #[test]
     fn verify_bitstreamrtl_read_unary_ones() {
         // General tests
-        let mut bs = BitReaderRtl::new(
-            &[
-                0b0111_1111, 0b1111_0111, 0b1111_1111, 0b1111_1110, 0b0010_0000
-            ]
-        );
+        let mut bs =
+            BitReaderRtl::new(&[0b0111_1111, 0b1111_0111, 0b1111_1111, 0b1111_1110, 0b0010_0000]);
 
-        assert_eq!(bs.read_unary_ones().unwrap(),  7);
-        assert_eq!(bs.read_unary_ones().unwrap(),  3);
+        assert_eq!(bs.read_unary_ones().unwrap(), 7);
+        assert_eq!(bs.read_unary_ones().unwrap(), 3);
         assert_eq!(bs.read_unary_ones().unwrap(), 12);
-        assert_eq!(bs.read_unary_ones().unwrap(),  7);
-        assert_eq!(bs.read_unary_ones().unwrap(),  0);
-        assert_eq!(bs.read_unary_ones().unwrap(),  0);
-        assert_eq!(bs.read_unary_ones().unwrap(),  0);
-        assert_eq!(bs.read_unary_ones().unwrap(),  0);
-        assert_eq!(bs.read_unary_ones().unwrap(),  1);
-        assert_eq!(bs.read_unary_ones().unwrap(),  0);
+        assert_eq!(bs.read_unary_ones().unwrap(), 7);
+        assert_eq!(bs.read_unary_ones().unwrap(), 0);
+        assert_eq!(bs.read_unary_ones().unwrap(), 0);
+        assert_eq!(bs.read_unary_ones().unwrap(), 0);
+        assert_eq!(bs.read_unary_ones().unwrap(), 0);
+        assert_eq!(bs.read_unary_ones().unwrap(), 1);
+        assert_eq!(bs.read_unary_ones().unwrap(), 0);
 
         // Upper limit test
         let mut bs = BitReaderRtl::new(&[0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x7f]);
@@ -2128,21 +2101,19 @@ mod tests {
     #[test]
     fn verify_bitstreamrtl_read_unary_ones_capped() {
         // General tests
-        let mut bs = BitReaderRtl::new(&[ 0b0111_1111, 0b0111_1111 ]);
+        let mut bs = BitReaderRtl::new(&[0b0111_1111, 0b0111_1111]);
 
         assert_eq!(bs.read_unary_ones_capped(8).unwrap(), 7);
         assert_eq!(bs.read_unary_ones_capped(4).unwrap(), 4);
 
         // Long limit tests
-        let mut bs = BitReaderRtl::new(
-            &[
-                0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-                0xff, 0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-                0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-                0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-                0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-            ]
-        );
+        let mut bs = BitReaderRtl::new(&[
+            0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, //
+            0xff, 0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, //
+            0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, //
+            0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, //
+            0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, //
+        ]);
 
         assert_eq!(bs.read_unary_ones_capped(96).unwrap(), 79);
         assert_eq!(bs.read_unary_ones_capped(163).unwrap(), 163);
@@ -2156,9 +2127,8 @@ mod tests {
 
         let mut bs = BitReaderRtl::new(&buf);
 
-        let decoded: Vec<u8> = (0..text.len()).into_iter()
-                                              .map(|_| bs.read_codebook(&codebook).unwrap().0)
-                                              .collect();
+        let decoded: Vec<u8> =
+            (0..text.len()).into_iter().map(|_| bs.read_codebook(&codebook).unwrap().0).collect();
 
         assert_eq!(text, std::str::from_utf8(&decoded).unwrap());
     }

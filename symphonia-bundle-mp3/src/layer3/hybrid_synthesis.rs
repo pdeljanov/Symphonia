@@ -147,11 +147,7 @@ lazy_static! {
 }
 
 /// Reorder samples that are part of short blocks into sub-band order.
-pub(super) fn reorder(
-    header: &FrameHeader,
-    channel: &GranuleChannel,
-    buf: &mut [f32; 576]
-) {
+pub(super) fn reorder(header: &FrameHeader, channel: &GranuleChannel, buf: &mut [f32; 576]) {
     // Only short blocks are reordered.
     if let BlockType::Short { is_mixed } = channel.block_type {
         // Every short block is split into 3 equally sized windows as illustrated below (e.g. for
@@ -188,12 +184,9 @@ pub(super) fn reorder(
 
         let mut i = start;
 
-        for (((s0, s1), s2), s3) in bands.iter()
-                                         .zip(&bands[1..])
-                                         .zip(&bands[2..])
-                                         .zip(&bands[3..])
-                                         .step_by(3) {
-
+        for (((s0, s1), s2), s3) in
+            bands.iter().zip(&bands[1..]).zip(&bands[2..]).zip(&bands[3..]).step_by(3)
+        {
             // The three short sample windows.
             let win0 = &buf[*s0..*s1];
             let win1 = &buf[*s1..*s2];
@@ -202,9 +195,9 @@ pub(super) fn reorder(
             // Interleave the three short sample windows.
             // TODO: This could likely be sped up with SIMD.
             for ((w0, w1), w2) in win0.iter().zip(win1).zip(win2) {
-                reorder_buf[i+0] = *w0;
-                reorder_buf[i+1] = *w1;
-                reorder_buf[i+2] = *w2;
+                reorder_buf[i + 0] = *w0;
+                reorder_buf[i + 1] = *w1;
+                reorder_buf[i + 2] = *w2;
                 i += 3;
             }
         }
@@ -226,9 +219,9 @@ pub(super) fn antialias(channel: &GranuleChannel, samples: &mut [f32; 576]) {
         BlockType::Short { is_mixed: false } => return,
         // Mixed blocks have a long block span the first 36 samples (2 sub-bands). Therefore, only
         // anti-alias these two sub-bands.
-        BlockType::Short { is_mixed: true  } =>  2 * 18,
+        BlockType::Short { is_mixed: true } => 2 * 18,
         // All other block types require all 32 sub-bands to be anti-aliased.
-        _                                    => 32 * 18,
+        _ => 32 * 18,
     };
 
     // Amortize the lazy_static fetch over the entire anti-aliasing operation.
@@ -269,7 +262,6 @@ pub(super) fn antialias(channel: &GranuleChannel, samples: &mut [f32; 576]) {
             samples[ui] = upper * cs[i] + lower * ca[i];
         }
     }
-
 }
 
 /// Performs hybrid synthesis (IMDCT and windowing).
@@ -282,9 +274,9 @@ pub(super) fn hybrid_synthesis(
     // as long blocks, mixed blocks process the first 2 sub-bands as long blocks, and all other
     // block types (long, start, end) process all 32 sub-bands as long blocks.
     let n_long_bands = match channel.block_type {
-        BlockType::Short { is_mixed: false } =>  0,
-        BlockType::Short { is_mixed: true  } =>  2,
-        _                                    => 32,
+        BlockType::Short { is_mixed: false } => 0,
+        BlockType::Short { is_mixed: true } => 2,
+        _ => 32,
     };
 
     // For sub-bands that are processed as long blocks, perform the 36-point IMDCT.
@@ -294,8 +286,8 @@ pub(super) fn hybrid_synthesis(
         // Select the appropriate window given the block type.
         let window = match channel.block_type {
             BlockType::Start => &IMDCT_WINDOWS[1],
-            BlockType::End   => &IMDCT_WINDOWS[3],
-            _                => &IMDCT_WINDOWS[0],
+            BlockType::End => &IMDCT_WINDOWS[3],
+            _ => &IMDCT_WINDOWS[0],
         };
 
         // For each of the 32 sub-bands (18 samples each)...
@@ -338,7 +330,6 @@ pub(super) fn hybrid_synthesis(
             }
         }
     }
-
 }
 
 /// Performs the 12-point IMDCT, and windowing for each of the 3 short windows of a short block, and
@@ -367,11 +358,11 @@ fn imdct12_win(x: &[f32], window: &[f32; 36], out: &mut [f32; 36]) {
             // The value of cos(..) is easily indexable by i and k, and is therefore pre-computed
             // and placed in a look-up table.
             let y = (x[w] * cos12[i][0])
-                        + (x[3*1 + w] * cos12[i][1])
-                        + (x[3*2 + w] * cos12[i][2])
-                        + (x[3*3 + w] * cos12[i][3])
-                        + (x[3*4 + w] * cos12[i][4])
-                        + (x[3*5 + w] * cos12[i][5]);
+                + (x[3 * 1 + w] * cos12[i][1])
+                + (x[3 * 2 + w] * cos12[i][2])
+                + (x[3 * 3 + w] * cos12[i][3])
+                + (x[3 * 4 + w] * cos12[i][4])
+                + (x[3 * 5 + w] * cos12[i][5]);
 
             // Each adjacent 12-point IMDCT window is overlapped and added in the output, with the
             // first and last 6 samples of the output are always being 0.
@@ -406,7 +397,7 @@ fn imdct12_win(x: &[f32], window: &[f32; 36], out: &mut [f32; 36]) {
             // .             .            .            |      IMDCT #3 (y2)      |             .
             // .             .            .            +-------------------------+             .
             // .             .            .            .            .            .             .
-            out[6 + 6*w + i] += y * window[i];
+            out[6 + 6 * w + i] += y * window[i];
         }
     }
 }
@@ -431,20 +422,20 @@ pub fn frequency_inversion(samples: &mut [f32; 576]) {
     // Each odd sample in the aforementioned sub-bands must be negated.
     for i in (18..576).step_by(36) {
         // Sample negation is unrolled into a 2x4 + 1 (9) operation to improve vectorization.
-        for j in (i..i+16).step_by(8) {
-            samples[j+1] = -samples[j+1];
-            samples[j+3] = -samples[j+3];
-            samples[j+5] = -samples[j+5];
-            samples[j+7] = -samples[j+7];
+        for j in (i..i + 16).step_by(8) {
+            samples[j + 1] = -samples[j + 1];
+            samples[j + 3] = -samples[j + 3];
+            samples[j + 5] = -samples[j + 5];
+            samples[j + 7] = -samples[j + 7];
         }
-        samples[i+18-1] = -samples[i+18-1];
+        samples[i + 18 - 1] = -samples[i + 18 - 1];
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::IMDCT_WINDOWS;
     use super::imdct12_win;
+    use super::IMDCT_WINDOWS;
     use std::f64;
 
     fn imdct12_analytical(x: &[f32; 6]) -> [f32; 12] {
@@ -455,7 +446,8 @@ mod tests {
         for i in 0..12 {
             let mut sum = 0.0;
             for k in 0..6 {
-                sum += (x[k] as f64) * (PI_24 * ((2*i + (12 / 2) + 1) * (2*k + 1)) as f64).cos();
+                sum +=
+                    (x[k] as f64) * (PI_24 * ((2 * i + (12 / 2) + 1) * (2 * k + 1)) as f64).cos();
             }
             result[i] = sum as f32;
         }
@@ -466,8 +458,8 @@ mod tests {
     #[test]
     fn verify_imdct12_win() {
         const TEST_VECTOR: [f32; 18] = [
-            0.0976, 0.9321, 0.6138, 0.0857, 0.0433, 0.4855, 0.2144, 0.8488,
-            0.6889, 0.2983, 0.1957, 0.7037, 0.0052, 0.0197, 0.3188, 0.5123,
+            0.0976, 0.9321, 0.6138, 0.0857, 0.0433, 0.4855, 0.2144, 0.8488, //
+            0.6889, 0.2983, 0.1957, 0.7037, 0.0052, 0.0197, 0.3188, 0.5123, //
             0.2994, 0.7157,
         ];
 
@@ -483,9 +475,9 @@ mod tests {
             let mut x2 = [0f32; 6];
 
             for i in 0..6 {
-                x0[i] = TEST_VECTOR[3*i + 0];
-                x1[i] = TEST_VECTOR[3*i + 1];
-                x2[i] = TEST_VECTOR[3*i + 2];
+                x0[i] = TEST_VECTOR[3 * i + 0];
+                x1[i] = TEST_VECTOR[3 * i + 1];
+                x2[i] = TEST_VECTOR[3 * i + 2];
             }
 
             let imdct0 = imdct12_analytical(&x0);
@@ -493,7 +485,7 @@ mod tests {
             let imdct2 = imdct12_analytical(&x2);
 
             for i in 0..12 {
-                actual_result[ 6 + i] += imdct0[i] * window[i];
+                actual_result[6 + i] += imdct0[i] * window[i];
                 actual_result[12 + i] += imdct1[i] * window[i];
                 actual_result[18 + i] += imdct2[i] * window[i];
             }
@@ -502,13 +494,12 @@ mod tests {
         };
 
         let mut test_result = [0f32; 36];
-        imdct12_win(&TEST_VECTOR, window , &mut test_result);
+        imdct12_win(&TEST_VECTOR, window, &mut test_result);
 
         for i in 0..36 {
             assert!((actual_result[i] - test_result[i]).abs() < 0.00001);
         }
     }
-
 }
 
 mod imdct36 {
@@ -562,37 +553,37 @@ mod imdct36 {
         // Scale factors for input samples. Computed from (16).
         // 2 * cos(PI * (2*m + 1) / (2*36)
         const SCALE: [f32; 18] = [
-            1.998_096_443_163_715_6,  // m=0
-            1.982_889_722_747_620_8,  // m=1
-            1.952_592_014_239_866_7,  // m=2
-            1.907_433_901_496_453_9,  // m=3
-            1.847_759_065_022_573_5,  // m=4
-            1.774_021_666_356_443_4,  // m=5
-            1.686_782_891_625_771_4,  // m=6
-            1.586_706_680_582_470_6,  // m=7
-            1.474_554_673_620_247_9,  // m=8
-            1.351_180_415_231_320_7,  // m=9
-            1.217_522_858_017_441_3,  // m=10
-            1.074_599_216_693_647_8,  // m=11
-            0.923_497_226_470_067_7,  // m=12
-            0.765_366_864_730_179_7,  // m=13
-            0.601_411_599_008_546_1,  // m=14
-            0.432_879_227_876_205_8,  // m=15
-            0.261_052_384_440_103_0,  // m=16
-            0.087_238_774_730_672_0,  // m=17
+            1.998_096_443_163_715_6, // m=0
+            1.982_889_722_747_620_8, // m=1
+            1.952_592_014_239_866_7, // m=2
+            1.907_433_901_496_453_9, // m=3
+            1.847_759_065_022_573_5, // m=4
+            1.774_021_666_356_443_4, // m=5
+            1.686_782_891_625_771_4, // m=6
+            1.586_706_680_582_470_6, // m=7
+            1.474_554_673_620_247_9, // m=8
+            1.351_180_415_231_320_7, // m=9
+            1.217_522_858_017_441_3, // m=10
+            1.074_599_216_693_647_8, // m=11
+            0.923_497_226_470_067_7, // m=12
+            0.765_366_864_730_179_7, // m=13
+            0.601_411_599_008_546_1, // m=14
+            0.432_879_227_876_205_8, // m=15
+            0.261_052_384_440_103_0, // m=16
+            0.087_238_774_730_672_0, // m=17
         ];
 
         let samples = [
-            SCALE[ 0] * x[ 0],
-            SCALE[ 1] * x[ 1],
-            SCALE[ 2] * x[ 2],
-            SCALE[ 3] * x[ 3],
-            SCALE[ 4] * x[ 4],
-            SCALE[ 5] * x[ 5],
-            SCALE[ 6] * x[ 6],
-            SCALE[ 7] * x[ 7],
-            SCALE[ 8] * x[ 8],
-            SCALE[ 9] * x[ 9],
+            SCALE[0] * x[0],
+            SCALE[1] * x[1],
+            SCALE[2] * x[2],
+            SCALE[3] * x[3],
+            SCALE[4] * x[4],
+            SCALE[5] * x[5],
+            SCALE[6] * x[6],
+            SCALE[7] * x[7],
+            SCALE[8] * x[8],
+            SCALE[9] * x[9],
             SCALE[10] * x[10],
             SCALE[11] * x[11],
             SCALE[12] * x[12],
@@ -607,7 +598,7 @@ mod imdct36 {
 
         y[0] /= 2.0;
         for i in 1..17 {
-            y[i] = (y[i] / 2.0) - y[i-1];
+            y[i] = (y[i] / 2.0) - y[i - 1];
         }
         y[17] = (y[17] / 2.0) - y[16];
     }
@@ -658,10 +649,10 @@ mod imdct36 {
 
         sdct_ii_9(&odd, &mut y[1..]);
 
-        y[ 3] -= y[ 3 - 2];
-        y[ 5] -= y[ 5 - 2];
-        y[ 7] -= y[ 7 - 2];
-        y[ 9] -= y[ 9 - 2];
+        y[3] -= y[3 - 2];
+        y[5] -= y[5 - 2];
+        y[7] -= y[7 - 2];
+        y[9] -= y[9 - 2];
         y[11] -= y[11 - 2];
         y[13] -= y[13 - 2];
         y[15] -= y[15 - 2];
@@ -673,13 +664,13 @@ mod imdct36 {
     /// Step 4: Computation of 9-point (N/4) SDCT-II.
     fn sdct_ii_9(x: &[f32; 9], y: &mut [f32]) {
         const D: [f32; 7] = [
-            -1.732_050_807_568_877_2,  // -sqrt(3.0)
-             1.879_385_241_571_816_6,  // -2.0 * cos(8.0 * PI / 9.0)
-            -0.347_296_355_333_860_8,  // -2.0 * cos(4.0 * PI / 9.0)
-            -1.532_088_886_237_956_0,  // -2.0 * cos(2.0 * PI / 9.0)
-            -0.684_040_286_651_337_8,  // -2.0 * sin(8.0 * PI / 9.0)
-            -1.969_615_506_024_416_0,  // -2.0 * sin(4.0 * PI / 9.0)
-            -1.285_575_219_373_078_5,  // -2.0 * sin(2.0 * PI / 9.0)
+            -1.732_050_807_568_877_2, // -sqrt(3.0)
+            1.879_385_241_571_816_6,  // -2.0 * cos(8.0 * PI / 9.0)
+            -0.347_296_355_333_860_8, // -2.0 * cos(4.0 * PI / 9.0)
+            -1.532_088_886_237_956_0, // -2.0 * cos(2.0 * PI / 9.0)
+            -0.684_040_286_651_337_8, // -2.0 * sin(8.0 * PI / 9.0)
+            -1.969_615_506_024_416_0, // -2.0 * sin(4.0 * PI / 9.0)
+            -1.285_575_219_373_078_5, // -2.0 * sin(2.0 * PI / 9.0)
         ];
 
         let a01 = x[3] + x[5];
@@ -710,7 +701,7 @@ mod imdct36 {
         let m4 = D[3] * a14;
         let m5 = D[0] * a16;
         let m6 = D[4] * a17;
-        let m7 = D[5] * a18;  // Note: the cited paper has an error, a1 should be a18.
+        let m7 = D[5] * a18; // Note: the cited paper has an error, a1 should be a18.
         let m8 = D[6] * a19;
 
         let a21 = a20 + m2;
@@ -720,17 +711,16 @@ mod imdct36 {
         let a25 = m1 - m6;
         let a26 = m1 + m7;
 
-        y[ 0] = a09 + a11;
-        y[ 2] = m8 - a26;
-        y[ 4] = m4 - a21;
-        y[ 6] = m5;
-        y[ 8] = a22 - m3;
+        y[0] = a09 + a11;
+        y[2] = m8 - a26;
+        y[4] = m4 - a21;
+        y[6] = m5;
+        y[8] = a22 - m3;
         y[10] = a25 - m7;
         y[12] = a11 - 2.0 * a09;
         y[14] = a24 + m8;
         y[16] = a23 + m4;
     }
-
 
     #[cfg(test)]
     mod tests {
@@ -745,7 +735,8 @@ mod imdct36 {
             for i in 0..36 {
                 let mut sum = 0.0;
                 for j in 0..18 {
-                    sum += (x[j] as f64) * (PI_72 * (((2*i) + 1 + 18) * ((2*j) + 1)) as f64).cos();
+                    sum +=
+                        (x[j] as f64) * (PI_72 * (((2 * i) + 1 + 18) * ((2 * j) + 1)) as f64).cos();
                 }
                 result[i] = sum as f32;
             }
@@ -755,8 +746,8 @@ mod imdct36 {
         #[test]
         fn verify_imdct36() {
             const TEST_VECTOR: [f32; 18] = [
-                0.0976, 0.9321, 0.6138, 0.0857, 0.0433, 0.4855, 0.2144, 0.8488,
-                0.6889, 0.2983, 0.1957, 0.7037, 0.0052, 0.0197, 0.3188, 0.5123,
+                0.0976, 0.9321, 0.6138, 0.0857, 0.0433, 0.4855, 0.2144, 0.8488, //
+                0.6889, 0.2983, 0.1957, 0.7037, 0.0052, 0.0197, 0.3188, 0.5123, //
                 0.2994, 0.7157,
             ];
 
@@ -769,5 +760,4 @@ mod imdct36 {
             }
         }
     }
-
 }

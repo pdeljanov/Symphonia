@@ -41,15 +41,10 @@ impl Atom for MvexAtom {
                     let trex = iter.read_atom::<TrexAtom>()?;
                     trexs.push(trex);
                 }
-                _ => ()
+                _ => (),
             }
         }
 
-        Ok(MvexAtom {
-            header,
-            mehd,
-            trexs,
-        })
+        Ok(MvexAtom { header, mehd, trexs })
     }
-
 }

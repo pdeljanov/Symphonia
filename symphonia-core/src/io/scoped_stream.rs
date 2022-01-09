@@ -24,12 +24,7 @@ impl<B: ReadBytes> ScopedStream<B> {
     /// Instantiates a new `ScopedStream` with an upper limit on the number of bytes that can be
     /// read from the inner source.
     pub fn new(inner: B, len: u64) -> Self {
-        ScopedStream {
-            start: inner.pos(),
-            inner,
-            len,
-            read: 0,
-        }
+        ScopedStream { start: inner.pos(), inner, len, read: 0 }
     }
 
     /// Returns an immutable reference to the inner `ByteStream`.
@@ -70,7 +65,7 @@ impl<B: ReadBytes> FiniteStream for ScopedStream<B> {
     }
 }
 
-impl<B: ReadBytes,> ReadBytes for ScopedStream<B> {
+impl<B: ReadBytes> ReadBytes for ScopedStream<B> {
     #[inline(always)]
     fn read_byte(&mut self) -> io::Result<u8> {
         if self.len - self.read < 1 {
@@ -133,7 +128,7 @@ impl<B: ReadBytes,> ReadBytes for ScopedStream<B> {
         &mut self,
         pattern: &[u8],
         align: usize,
-        buf: &'a mut [u8]
+        buf: &'a mut [u8],
     ) -> io::Result<&'a mut [u8]> {
         if self.len - self.read < buf.len() as u64 {
             return Err(io::Error::new(io::ErrorKind::Other, OUT_OF_BOUNDS_ERROR_STR));

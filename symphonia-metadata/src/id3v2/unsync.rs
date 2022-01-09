@@ -8,7 +8,7 @@
 use std::io;
 
 use symphonia_core::errors::Result;
-use symphonia_core::io::{ReadBytes, FiniteStream};
+use symphonia_core::io::{FiniteStream, ReadBytes};
 
 pub fn read_syncsafe_leq32<B: ReadBytes>(reader: &mut B, bit_width: u32) -> Result<u32> {
     debug_assert!(bit_width <= 32);
@@ -55,10 +55,7 @@ pub struct UnsyncStream<B: ReadBytes + FiniteStream> {
 
 impl<B: ReadBytes + FiniteStream> UnsyncStream<B> {
     pub fn new(inner: B) -> Self {
-        UnsyncStream {
-            inner,
-            byte: 0,
-        }
+        UnsyncStream { inner, byte: 0 }
     }
 }
 
@@ -72,7 +69,7 @@ impl<B: ReadBytes + FiniteStream> FiniteStream for UnsyncStream<B> {
     fn bytes_read(&self) -> u64 {
         self.inner.bytes_read()
     }
-    
+
     #[inline(always)]
     fn bytes_available(&self) -> u64 {
         self.inner.bytes_available()
@@ -80,13 +77,12 @@ impl<B: ReadBytes + FiniteStream> FiniteStream for UnsyncStream<B> {
 }
 
 impl<B: ReadBytes + FiniteStream> ReadBytes for UnsyncStream<B> {
-
     fn read_byte(&mut self) -> io::Result<u8> {
         let last = self.byte;
 
         self.byte = self.inner.read_byte()?;
 
-        // If the last byte was 0xff, and the current byte is 0x00, the current byte should be 
+        // If the last byte was 0xff, and the current byte is 0x00, the current byte should be
         // dropped and the next byte read instead.
         if last == 0xff && self.byte == 0x00 {
             self.byte = self.inner.read_byte()?;
@@ -96,27 +92,15 @@ impl<B: ReadBytes + FiniteStream> ReadBytes for UnsyncStream<B> {
     }
 
     fn read_double_bytes(&mut self) -> io::Result<[u8; 2]> {
-        Ok([
-            self.read_byte()?,
-            self.read_byte()?,
-        ])
+        Ok([self.read_byte()?, self.read_byte()?])
     }
 
     fn read_triple_bytes(&mut self) -> io::Result<[u8; 3]> {
-        Ok([
-            self.read_byte()?,
-            self.read_byte()?,
-            self.read_byte()?,
-        ])
+        Ok([self.read_byte()?, self.read_byte()?, self.read_byte()?])
     }
 
     fn read_quad_bytes(&mut self) -> io::Result<[u8; 4]> {
-        Ok([
-            self.read_byte()?,
-            self.read_byte()?,
-            self.read_byte()?,
-            self.read_byte()?,
-        ])
+        Ok([self.read_byte()?, self.read_byte()?, self.read_byte()?, self.read_byte()?])
     }
 
     fn read_buf(&mut self, _: &mut [u8]) -> io::Result<usize> {
@@ -127,11 +111,11 @@ impl<B: ReadBytes + FiniteStream> ReadBytes for UnsyncStream<B> {
     fn read_buf_exact(&mut self, buf: &mut [u8]) -> io::Result<()> {
         let len = buf.len();
 
-        if len > 0 { 
+        if len > 0 {
             // Fill the provided buffer directly from the underlying reader.
             self.inner.read_buf_exact(buf)?;
 
-            // If the last seen byte was 0xff, and the first byte in buf is 0x00, skip the first 
+            // If the last seen byte was 0xff, and the first byte in buf is 0x00, skip the first
             // byte of buf.
             let mut src = if self.byte == 0xff && buf[0] == 0x00 { 1 } else { 0 };
             let mut dst = 0;
@@ -150,14 +134,14 @@ impl<B: ReadBytes + FiniteStream> ReadBytes for UnsyncStream<B> {
                 }
             }
 
-            // When the final two src bytes are [ 0xff, 0x00 ], src will always equal len. 
+            // When the final two src bytes are [ 0xff, 0x00 ], src will always equal len.
             // Therefore, if src < len, then the final byte should always be copied to dst.
             if src < len {
                 buf[dst] = buf[src];
                 dst += 1;
             }
 
-            // If dst < len, then buf is not full. Read the remaining bytes manually to completely 
+            // If dst < len, then buf is not full. Read the remaining bytes manually to completely
             // fill buf.
             while dst < len {
                 buf[dst] = self.read_byte()?;
@@ -169,10 +153,10 @@ impl<B: ReadBytes + FiniteStream> ReadBytes for UnsyncStream<B> {
     }
 
     fn scan_bytes_aligned<'a>(
-        &mut self, 
-        _: &[u8], 
-        _: usize, 
-        _: &'a mut [u8]
+        &mut self,
+        _: &[u8],
+        _: usize,
+        _: &'a mut [u8],
     ) -> io::Result<&'a mut [u8]> {
         // Not required.
         unimplemented!();

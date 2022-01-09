@@ -9,18 +9,12 @@ use std::fmt;
 use std::marker::PhantomData;
 
 use symphonia_core::audio::Channels;
-use symphonia_core::codecs::{
-    CODEC_TYPE_PCM_U8,
-    CODEC_TYPE_PCM_S16LE,
-    CODEC_TYPE_PCM_S24LE,
-    CODEC_TYPE_PCM_S32LE,
-    CODEC_TYPE_PCM_F32LE,
-    CODEC_TYPE_PCM_F64LE,
-    CODEC_TYPE_PCM_ALAW,
-    CODEC_TYPE_PCM_MULAW,
-};
 use symphonia_core::codecs::CodecType;
-use symphonia_core::errors::{Result, decode_error, unsupported_error};
+use symphonia_core::codecs::{
+    CODEC_TYPE_PCM_ALAW, CODEC_TYPE_PCM_F32LE, CODEC_TYPE_PCM_F64LE, CODEC_TYPE_PCM_MULAW,
+    CODEC_TYPE_PCM_S16LE, CODEC_TYPE_PCM_S24LE, CODEC_TYPE_PCM_S32LE, CODEC_TYPE_PCM_U8,
+};
+use symphonia_core::errors::{decode_error, unsupported_error, Result};
 use symphonia_core::io::ReadBytes;
 use symphonia_core::meta::Tag;
 use symphonia_metadata::riff;
@@ -29,14 +23,16 @@ use log::info;
 
 /// `ParseChunkTag` implements `parse_tag` to map between the 4-byte chunk identifier and the
 /// enumeration
-pub trait ParseChunkTag : Sized {
+pub trait ParseChunkTag: Sized {
     fn parse_tag(tag: [u8; 4], len: u32) -> Option<Self>;
 }
 
 enum NullChunks {}
 
 impl ParseChunkTag for NullChunks {
-    fn parse_tag(_tag: [u8; 4], _len: u32) -> Option<Self> { None }
+    fn parse_tag(_tag: [u8; 4], _len: u32) -> Option<Self> {
+        None
+    }
 }
 
 /// `ChunksReader` reads chunks from a `ByteStream`. It is generic across a type, usually an enum,
@@ -52,11 +48,7 @@ pub struct ChunksReader<T: ParseChunkTag> {
 
 impl<T: ParseChunkTag> ChunksReader<T> {
     pub fn new(len: u32) -> Self {
-        ChunksReader {
-            len,
-            consumed: 0,
-            phantom: PhantomData
-        }
+        ChunksReader { len, consumed: 0, phantom: PhantomData }
     }
 
     pub fn next<B: ReadBytes>(&mut self, reader: &mut B) -> Result<Option<T>> {
@@ -109,7 +101,7 @@ impl<T: ParseChunkTag> ChunksReader<T> {
         }
     }
 
-    pub fn finish<B: ReadBytes>(&mut self, reader: &mut B) -> Result<()>{
+    pub fn finish<B: ReadBytes>(&mut self, reader: &mut B) -> Result<()> {
         // If data is remaining in this chunk, skip it.
         if self.consumed < self.len {
             let remaining = self.len - self.consumed;
@@ -127,7 +119,7 @@ impl<T: ParseChunkTag> ChunksReader<T> {
 }
 
 /// Common trait implemented for all chunks that are parsed by a `ChunkParser`.
-pub trait ParseChunk : Sized {
+pub trait ParseChunk: Sized {
     fn parse<B: ReadBytes>(reader: &mut B, tag: [u8; 4], len: u32) -> Result<Self>;
 }
 
@@ -140,11 +132,7 @@ pub struct ChunkParser<P: ParseChunk> {
 
 impl<P: ParseChunk> ChunkParser<P> {
     fn new(tag: [u8; 4], len: u32) -> Self {
-        ChunkParser {
-            tag,
-            len,
-            phantom: PhantomData,
-        }
+        ChunkParser { tag, len, phantom: PhantomData }
     }
 
     pub fn parse<B: ReadBytes>(&self, reader: &mut B) -> Result<P> {
@@ -153,45 +141,81 @@ impl<P: ParseChunk> ChunkParser<P> {
 }
 
 fn map_wave_channels(channel_mask: u32) -> Channels {
-    const SPEAKER_FRONT_LEFT: u32            = 0x1;
-    const SPEAKER_FRONT_RIGHT: u32           = 0x2;
-    const SPEAKER_FRONT_CENTER: u32          = 0x4;
-    const SPEAKER_LOW_FREQUENCY: u32         = 0x8;
-    const SPEAKER_BACK_LEFT: u32             = 0x10;
-    const SPEAKER_BACK_RIGHT: u32            = 0x20;
-    const SPEAKER_FRONT_LEFT_OF_CENTER: u32  = 0x40;
+    const SPEAKER_FRONT_LEFT: u32 = 0x1;
+    const SPEAKER_FRONT_RIGHT: u32 = 0x2;
+    const SPEAKER_FRONT_CENTER: u32 = 0x4;
+    const SPEAKER_LOW_FREQUENCY: u32 = 0x8;
+    const SPEAKER_BACK_LEFT: u32 = 0x10;
+    const SPEAKER_BACK_RIGHT: u32 = 0x20;
+    const SPEAKER_FRONT_LEFT_OF_CENTER: u32 = 0x40;
     const SPEAKER_FRONT_RIGHT_OF_CENTER: u32 = 0x80;
-    const SPEAKER_BACK_CENTER: u32           = 0x100;
-    const SPEAKER_SIDE_LEFT: u32             = 0x200;
-    const SPEAKER_SIDE_RIGHT: u32            = 0x400;
-    const SPEAKER_TOP_CENTER: u32            = 0x800;
-    const SPEAKER_TOP_FRONT_LEFT: u32        = 0x1000;
-    const SPEAKER_TOP_FRONT_CENTER: u32      = 0x2000;
-    const SPEAKER_TOP_FRONT_RIGHT: u32       = 0x4000;
-    const SPEAKER_TOP_BACK_LEFT: u32         = 0x8000;
-    const SPEAKER_TOP_BACK_CENTER: u32       = 0x10000;
-    const SPEAKER_TOP_BACK_RIGHT: u32        = 0x20000;
+    const SPEAKER_BACK_CENTER: u32 = 0x100;
+    const SPEAKER_SIDE_LEFT: u32 = 0x200;
+    const SPEAKER_SIDE_RIGHT: u32 = 0x400;
+    const SPEAKER_TOP_CENTER: u32 = 0x800;
+    const SPEAKER_TOP_FRONT_LEFT: u32 = 0x1000;
+    const SPEAKER_TOP_FRONT_CENTER: u32 = 0x2000;
+    const SPEAKER_TOP_FRONT_RIGHT: u32 = 0x4000;
+    const SPEAKER_TOP_BACK_LEFT: u32 = 0x8000;
+    const SPEAKER_TOP_BACK_CENTER: u32 = 0x10000;
+    const SPEAKER_TOP_BACK_RIGHT: u32 = 0x20000;
 
     let mut channels = Channels::empty();
 
-    if channel_mask & SPEAKER_FRONT_LEFT            != 0 { channels |= Channels::FRONT_LEFT;         }
-    if channel_mask & SPEAKER_FRONT_RIGHT           != 0 { channels |= Channels::FRONT_RIGHT;        }
-    if channel_mask & SPEAKER_FRONT_CENTER          != 0 { channels |= Channels::FRONT_CENTRE;       }
-    if channel_mask & SPEAKER_LOW_FREQUENCY         != 0 { channels |= Channels::LFE1;               }
-    if channel_mask & SPEAKER_BACK_LEFT             != 0 { channels |= Channels::REAR_LEFT;          }
-    if channel_mask & SPEAKER_BACK_RIGHT            != 0 { channels |= Channels::REAR_RIGHT;         }
-    if channel_mask & SPEAKER_FRONT_LEFT_OF_CENTER  != 0 { channels |= Channels::FRONT_LEFT_CENTRE;  }
-    if channel_mask & SPEAKER_FRONT_RIGHT_OF_CENTER != 0 { channels |= Channels::FRONT_RIGHT_CENTRE; }
-    if channel_mask & SPEAKER_BACK_CENTER           != 0 { channels |= Channels::REAR_CENTRE;        }
-    if channel_mask & SPEAKER_SIDE_LEFT             != 0 { channels |= Channels::SIDE_LEFT;          }
-    if channel_mask & SPEAKER_SIDE_RIGHT            != 0 { channels |= Channels::SIDE_RIGHT;         }
-    if channel_mask & SPEAKER_TOP_CENTER            != 0 { channels |= Channels::TOP_CENTRE;         }
-    if channel_mask & SPEAKER_TOP_FRONT_LEFT        != 0 { channels |= Channels::TOP_FRONT_LEFT;     }
-    if channel_mask & SPEAKER_TOP_FRONT_CENTER      != 0 { channels |= Channels::TOP_FRONT_CENTRE;   }
-    if channel_mask & SPEAKER_TOP_FRONT_RIGHT       != 0 { channels |= Channels::TOP_FRONT_RIGHT;    }
-    if channel_mask & SPEAKER_TOP_BACK_LEFT         != 0 { channels |= Channels::TOP_REAR_LEFT;      }
-    if channel_mask & SPEAKER_TOP_BACK_CENTER       != 0 { channels |= Channels::TOP_REAR_CENTRE;    }
-    if channel_mask & SPEAKER_TOP_BACK_RIGHT        != 0 { channels |= Channels::TOP_REAR_RIGHT;     }
+    if channel_mask & SPEAKER_FRONT_LEFT != 0 {
+        channels |= Channels::FRONT_LEFT;
+    }
+    if channel_mask & SPEAKER_FRONT_RIGHT != 0 {
+        channels |= Channels::FRONT_RIGHT;
+    }
+    if channel_mask & SPEAKER_FRONT_CENTER != 0 {
+        channels |= Channels::FRONT_CENTRE;
+    }
+    if channel_mask & SPEAKER_LOW_FREQUENCY != 0 {
+        channels |= Channels::LFE1;
+    }
+    if channel_mask & SPEAKER_BACK_LEFT != 0 {
+        channels |= Channels::REAR_LEFT;
+    }
+    if channel_mask & SPEAKER_BACK_RIGHT != 0 {
+        channels |= Channels::REAR_RIGHT;
+    }
+    if channel_mask & SPEAKER_FRONT_LEFT_OF_CENTER != 0 {
+        channels |= Channels::FRONT_LEFT_CENTRE;
+    }
+    if channel_mask & SPEAKER_FRONT_RIGHT_OF_CENTER != 0 {
+        channels |= Channels::FRONT_RIGHT_CENTRE;
+    }
+    if channel_mask & SPEAKER_BACK_CENTER != 0 {
+        channels |= Channels::REAR_CENTRE;
+    }
+    if channel_mask & SPEAKER_SIDE_LEFT != 0 {
+        channels |= Channels::SIDE_LEFT;
+    }
+    if channel_mask & SPEAKER_SIDE_RIGHT != 0 {
+        channels |= Channels::SIDE_RIGHT;
+    }
+    if channel_mask & SPEAKER_TOP_CENTER != 0 {
+        channels |= Channels::TOP_CENTRE;
+    }
+    if channel_mask & SPEAKER_TOP_FRONT_LEFT != 0 {
+        channels |= Channels::TOP_FRONT_LEFT;
+    }
+    if channel_mask & SPEAKER_TOP_FRONT_CENTER != 0 {
+        channels |= Channels::TOP_FRONT_CENTRE;
+    }
+    if channel_mask & SPEAKER_TOP_FRONT_RIGHT != 0 {
+        channels |= Channels::TOP_FRONT_RIGHT;
+    }
+    if channel_mask & SPEAKER_TOP_BACK_LEFT != 0 {
+        channels |= Channels::TOP_REAR_LEFT;
+    }
+    if channel_mask & SPEAKER_TOP_BACK_CENTER != 0 {
+        channels |= Channels::TOP_REAR_CENTRE;
+    }
+    if channel_mask & SPEAKER_TOP_BACK_RIGHT != 0 {
+        channels |= Channels::TOP_REAR_RIGHT;
+    }
 
     channels
 }
@@ -267,7 +291,6 @@ pub struct WaveFormatChunk {
 }
 
 impl WaveFormatChunk {
-
     fn read_pcm_fmt<B: ReadBytes>(
         reader: &mut B,
         bits_per_sample: u16,
@@ -302,11 +325,15 @@ impl WaveFormatChunk {
         // Select the appropriate codec using bits per sample. Samples are always interleaved and
         // little-endian encoded for the PCM format.
         let codec = match bits_per_sample {
-            8  => CODEC_TYPE_PCM_U8,
+            8 => CODEC_TYPE_PCM_U8,
             16 => CODEC_TYPE_PCM_S16LE,
             24 => CODEC_TYPE_PCM_S24LE,
             32 => CODEC_TYPE_PCM_S32LE,
-            _  => return decode_error("wav: bits per sample for fmt_pcm must be 8, 16, 24 or 32 bits"),
+            _ => {
+                return decode_error(
+                    "wav: bits per sample for fmt_pcm must be 8, 16, 24 or 32 bits",
+                )
+            }
         };
 
         // The PCM format only supports 1 or 2 channels, for mono and stereo channel layouts,
@@ -346,7 +373,7 @@ impl WaveFormatChunk {
         let codec = match bits_per_sample {
             32 => CODEC_TYPE_PCM_F32LE,
             64 => CODEC_TYPE_PCM_F64LE,
-            _  => return decode_error("wav: bits per sample for fmt_ieee must be 32 or 64 bits"),
+            _ => return decode_error("wav: bits per sample for fmt_ieee must be 32 or 64 bits"),
         };
 
         // The IEEE format only supports 1 or 2 channels, for mono and stereo channel layouts,
@@ -389,7 +416,9 @@ impl WaveFormatChunk {
         // encoded in a bits per coded sample width value, therefore the valid number of bits must
         // be at most bits per coded sample long.
         if bits_per_sample > bits_per_coded_sample {
-            return decode_error("wav: bits per sample must be <= bits per coded sample for fmt_ext");
+            return decode_error(
+                "wav: bits per sample must be <= bits per coded sample for fmt_ext",
+            );
         }
 
         let channel_mask = reader.read_u32()?;
@@ -399,31 +428,31 @@ impl WaveFormatChunk {
 
         // These GUIDs identifiy the format of the data chunks. These definitions can be found in
         // ksmedia.h of the Microsoft Windows Platform SDK.
-        const KSDATAFORMAT_SUBTYPE_PCM: [u8; 16] =
-            [
-                0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00,
-                0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71,
-            ];
-        // const KSDATAFORMAT_SUBTYPE_ADPCM: [u8; 16] =
-        //     [
-        //         0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00,
-        //         0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71,
-        //     ];
-        const KSDATAFORMAT_SUBTYPE_IEEE_FLOAT: [u8; 16] =
-            [
-                0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00,
-                0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71,
-            ];
-        const KSDATAFORMAT_SUBTYPE_ALAW: [u8; 16] =
-            [
-                0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00,
-                0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71,
-            ];
-        const KSDATAFORMAT_SUBTYPE_MULAW: [u8; 16] =
-            [
-                0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00,
-                0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71,
-            ];
+        #[rustfmt::skip]
+        const KSDATAFORMAT_SUBTYPE_PCM: [u8; 16] = [
+            0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00,
+            0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71,
+        ];
+        // #[rustfmt::skip]
+        // const KSDATAFORMAT_SUBTYPE_ADPCM: [u8; 16] = [
+        //     0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00,
+        //     0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71,
+        // ];
+        #[rustfmt::skip]
+        const KSDATAFORMAT_SUBTYPE_IEEE_FLOAT: [u8; 16] = [
+            0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00,
+            0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71,
+        ];
+        #[rustfmt::skip]
+        const KSDATAFORMAT_SUBTYPE_ALAW: [u8; 16] = [
+            0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00,
+            0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71,
+        ];
+        #[rustfmt::skip]
+        const KSDATAFORMAT_SUBTYPE_MULAW: [u8; 16] = [
+            0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00,
+            0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71,
+        ];
 
         // Verify support based on the format GUID.
         let codec = match sub_format_guid {
@@ -431,18 +460,18 @@ impl WaveFormatChunk {
                 // Only support up-to 32-bit integer samples.
                 if bits_per_coded_sample > 32 {
                     return decode_error(
-                        "bits per sample for fmt_ext PCM sub-type must be <= 32 bits"
+                        "bits per sample for fmt_ext PCM sub-type must be <= 32 bits",
                     );
                 }
 
                 // Use bits per coded sample to select the codec to use. If bits per sample is less
                 // than the bits per coded sample, the codec will expand the sample during decode.
                 match bits_per_coded_sample {
-                    8  => CODEC_TYPE_PCM_U8,
+                    8 => CODEC_TYPE_PCM_U8,
                     16 => CODEC_TYPE_PCM_S16LE,
                     24 => CODEC_TYPE_PCM_S24LE,
                     32 => CODEC_TYPE_PCM_S32LE,
-                    _ => unreachable!()
+                    _ => unreachable!(),
                 }
             }
             KSDATAFORMAT_SUBTYPE_IEEE_FLOAT => {
@@ -457,9 +486,11 @@ impl WaveFormatChunk {
                 match bits_per_coded_sample {
                     32 => CODEC_TYPE_PCM_F32LE,
                     64 => CODEC_TYPE_PCM_F64LE,
-                    _ => return decode_error(
-                            "wav: bits per sample for fmt_ext IEEE sub-type must be 32 or 64 bits"
-                        ),
+                    _ => {
+                        return decode_error(
+                            "wav: bits per sample for fmt_ext IEEE sub-type must be 32 or 64 bits",
+                        )
+                    }
                 }
             }
             KSDATAFORMAT_SUBTYPE_ALAW => CODEC_TYPE_PCM_ALAW,
@@ -474,7 +505,7 @@ impl WaveFormatChunk {
             bits_per_coded_sample,
             channels,
             sub_format_guid,
-            codec
+            codec,
         }))
     }
 
@@ -496,10 +527,10 @@ impl WaveFormatChunk {
         let channels = match n_channels {
             1 => Channels::FRONT_LEFT,
             2 => Channels::FRONT_LEFT | Channels::FRONT_RIGHT,
-            _ => return decode_error("wav: channel layout is not stereo or mono for fmt_alaw")
+            _ => return decode_error("wav: channel layout is not stereo or mono for fmt_alaw"),
         };
 
-        Ok(WaveFormatData::ALaw(WaveFormatALaw{ codec: CODEC_TYPE_PCM_ALAW, channels }))
+        Ok(WaveFormatData::ALaw(WaveFormatALaw { codec: CODEC_TYPE_PCM_ALAW, channels }))
     }
 
     fn read_mulaw_pcm_fmt<B: ReadBytes>(
@@ -520,10 +551,10 @@ impl WaveFormatChunk {
         let channels = match n_channels {
             1 => Channels::FRONT_LEFT,
             2 => Channels::FRONT_LEFT | Channels::FRONT_RIGHT,
-            _ => return decode_error("wav: channel layout is not stereo or mono for fmt_mulaw")
+            _ => return decode_error("wav: channel layout is not stereo or mono for fmt_mulaw"),
         };
 
-        Ok(WaveFormatData::MuLaw(WaveFormatMuLaw{ codec: CODEC_TYPE_PCM_MULAW, channels }))
+        Ok(WaveFormatData::MuLaw(WaveFormatMuLaw { codec: CODEC_TYPE_PCM_MULAW, channels }))
     }
 }
 
@@ -544,34 +575,24 @@ impl ParseChunk for WaveFormatChunk {
 
         // The definition of these format identifiers can be found in mmreg.h of the Microsoft
         // Windows Platform SDK.
-        const WAVE_FORMAT_PCM: u16        = 0x0001;
+        const WAVE_FORMAT_PCM: u16 = 0x0001;
         // const WAVE_FORMAT_ADPCM: u16      = 0x0002;
         const WAVE_FORMAT_IEEE_FLOAT: u16 = 0x0003;
-        const WAVE_FORMAT_ALAW: u16       = 0x0006;
-        const WAVE_FORMAT_MULAW: u16      = 0x0007;
+        const WAVE_FORMAT_ALAW: u16 = 0x0006;
+        const WAVE_FORMAT_MULAW: u16 = 0x0007;
         const WAVE_FORMAT_EXTENSIBLE: u16 = 0xfffe;
 
         let format_data = match format {
             // The PCM Wave Format
-            WAVE_FORMAT_PCM => {
-                Self::read_pcm_fmt(reader, bits_per_sample, n_channels, len)
-            }
+            WAVE_FORMAT_PCM => Self::read_pcm_fmt(reader, bits_per_sample, n_channels, len),
             // The IEEE Float Wave Format
-            WAVE_FORMAT_IEEE_FLOAT => {
-                Self::read_ieee_fmt(reader, bits_per_sample, n_channels, len)
-            }
+            WAVE_FORMAT_IEEE_FLOAT => Self::read_ieee_fmt(reader, bits_per_sample, n_channels, len),
             // The Extensible Wave Format
-            WAVE_FORMAT_EXTENSIBLE => {
-                Self::read_ext_fmt(reader, bits_per_sample, len)
-            }
+            WAVE_FORMAT_EXTENSIBLE => Self::read_ext_fmt(reader, bits_per_sample, len),
             // The Alaw Wave Format.
-            WAVE_FORMAT_ALAW => {
-                Self::read_alaw_pcm_fmt(reader, n_channels, len)
-            }
+            WAVE_FORMAT_ALAW => Self::read_alaw_pcm_fmt(reader, n_channels, len),
             // The MuLaw Wave Format.
-            WAVE_FORMAT_MULAW => {
-                Self::read_mulaw_pcm_fmt(reader, n_channels, len)
-            }
+            WAVE_FORMAT_MULAW => Self::read_mulaw_pcm_fmt(reader, n_channels, len),
             // Unsupported format.
             _ => return unsupported_error("wav: unsupported wave format"),
         }?;
@@ -594,12 +615,12 @@ impl fmt::Display for WaveFormatChunk {
                 writeln!(f, "\t\tbits_per_sample: {},", pcm.bits_per_sample)?;
                 writeln!(f, "\t\tchannels: {},", pcm.channels)?;
                 writeln!(f, "\t\tcodec: {},", pcm.codec)?;
-            },
+            }
             WaveFormatData::IeeeFloat(ref ieee) => {
                 writeln!(f, "\tformat_data: IeeeFloat {{")?;
                 writeln!(f, "\t\tchannels: {},", ieee.channels)?;
                 writeln!(f, "\t\tcodec: {},", ieee.codec)?;
-            },
+            }
             WaveFormatData::Extensible(ref ext) => {
                 writeln!(f, "\tformat_data: Extensible {{")?;
                 writeln!(f, "\t\tbits_per_sample: {},", ext.bits_per_sample)?;
@@ -607,12 +628,12 @@ impl fmt::Display for WaveFormatChunk {
                 writeln!(f, "\t\tchannels: {},", ext.channels)?;
                 writeln!(f, "\t\tsub_format_guid: {:?},", &ext.sub_format_guid)?;
                 writeln!(f, "\t\tcodec: {},", ext.codec)?;
-            },
+            }
             WaveFormatData::ALaw(ref alaw) => {
                 writeln!(f, "\tformat_data: ALaw {{")?;
                 writeln!(f, "\t\tchannels: {},", alaw.channels)?;
                 writeln!(f, "\t\tcodec: {},", alaw.codec)?;
-            },
+            }
             WaveFormatData::MuLaw(ref mulaw) => {
                 writeln!(f, "\tformat_data: MuLaw {{")?;
                 writeln!(f, "\t\tchannels: {},", mulaw.channels)?;
@@ -637,7 +658,7 @@ impl ParseChunk for FactChunk {
             return decode_error("wav: malformed fact chunk");
         }
 
-        Ok(FactChunk{ n_frames: reader.read_u32()? })
+        Ok(FactChunk { n_frames: reader.read_u32()? })
     }
 }
 
@@ -668,10 +689,7 @@ impl ParseChunk for ListChunk {
             return decode_error("wav: malformed list chunk");
         }
 
-        Ok(ListChunk{
-            form: reader.read_quad_bytes()?,
-            len: len - 4
-        })
+        Ok(ListChunk { form: reader.read_quad_bytes()?, len: len - 4 })
     }
 }
 
@@ -694,9 +712,7 @@ impl ParseChunk for InfoChunk {
         let mut value_buf = vec![0u8; len as usize];
         reader.read_buf_exact(&mut value_buf)?;
 
-        Ok(InfoChunk {
-            tag: riff::parse(tag, &value_buf)
-        })
+        Ok(InfoChunk { tag: riff::parse(tag, &value_buf) })
     }
 }
 

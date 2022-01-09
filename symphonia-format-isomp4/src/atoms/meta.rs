@@ -9,7 +9,7 @@ use std::fmt::Debug;
 
 use symphonia_core::errors::Result;
 use symphonia_core::io::ReadBytes;
-use symphonia_core::meta::{MetadataRevision, MetadataLog};
+use symphonia_core::meta::{MetadataLog, MetadataRevision};
 
 use crate::atoms::{Atom, AtomHeader, AtomIterator, AtomType, IlstAtom};
 
@@ -56,13 +56,10 @@ impl Atom for MetaAtom {
                 AtomType::MetaList => {
                     metadata = Some(iter.read_atom::<IlstAtom>()?.metadata);
                 }
-                _ => ()
+                _ => (),
             }
         }
 
-        Ok(MetaAtom {
-            header,
-            metadata: metadata.unwrap(),
-        })
+        Ok(MetaAtom { header, metadata: metadata.unwrap() })
     }
 }

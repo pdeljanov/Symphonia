@@ -238,7 +238,7 @@ impl MagicCookie {
             // The number of channels stated in the mandatory part of the magic cookie should match
             // the number of channels implicit to the channel layout.
             if config.num_channels != layout.channels().count() as u8 {
-                return decode_error("alac: the number of channels differs from the channel layout")
+                return decode_error("alac: the number of channels differs from the channel layout");
             }
 
             // The next two fields are reserved and should be 0.
@@ -422,11 +422,8 @@ impl ElementChannel {
 
             // Adjust the coefficients if the initial value of the residual was not 0.
             if res != 0 {
-                let iter = self.lpc_coeffs[..order]
-                    .iter_mut()
-                    .rev()
-                    .zip(&out[i - order..i])
-                    .enumerate();
+                let iter =
+                    self.lpc_coeffs[..order].iter_mut().rev().zip(&out[i - order..i]).enumerate();
 
                 // Note the subtle change in operations and signs for the following two cases.
                 if res > 0 {
@@ -499,13 +496,8 @@ impl AlacDecoder {
                 ALAC_ELEM_TAG_SCE | ALAC_ELEM_TAG_LFE => {
                     let out0 = self.buf.chan_mut(channel_map[next_channel] as usize);
 
-                    num_frames = decode_sce_or_cpe(
-                        &self.config,
-                        &mut bs,
-                        &mut self.tail_bits,
-                        out0,
-                        None
-                    )?;
+                    num_frames =
+                        decode_sce_or_cpe(&self.config, &mut bs, &mut self.tail_bits, out0, None)?;
 
                     next_channel += 1;
                 }
@@ -605,12 +597,7 @@ impl Decoder for AlacDecoder {
 
         let max_tail_values = min(2, config.num_channels) as usize * config.frame_length as usize;
 
-        Ok(AlacDecoder {
-            params: params.clone(),
-            tail_bits: vec![0; max_tail_values],
-            buf,
-            config,
-        })
+        Ok(AlacDecoder { params: params.clone(), tail_bits: vec![0; max_tail_values], buf, config })
     }
 
     fn reset(&mut self) {
@@ -629,7 +616,8 @@ impl Decoder for AlacDecoder {
         if let Err(e) = self.decode_inner(packet) {
             self.buf.clear();
             Err(e)
-        } else {
+        }
+        else {
             Ok(self.buf.as_audio_buffer_ref())
         }
     }
@@ -674,12 +662,8 @@ fn decode_sce_or_cpe<B: ReadBitsLtr>(
 
     // If this is a partial frame, then read the frame length from the element,
     // otherwise use the frame length in the configuration.
-    let num_samples = if is_partial_frame {
-        bs.read_bits_leq32(32)?
-    }
-    else {
-        config.frame_length
-    } as usize;
+    let num_samples =
+        if is_partial_frame { bs.read_bits_leq32(32)? } else { config.frame_length } as usize;
 
     if !is_uncompressed {
         // The number of upper sample bits that will be predicted per channel. This may be less-than
@@ -697,12 +681,8 @@ fn decode_sce_or_cpe<B: ReadBitsLtr>(
 
         // Read the headers for each channel in the element.
         let mut elem0 = ElementChannel::try_read(bs, config, pred_bits)?;
-        let mut elem1 = if is_cpe {
-            Some(ElementChannel::try_read(bs, config, pred_bits)?)
-        }
-        else {
-            None
-        };
+        let mut elem1 =
+            if is_cpe { Some(ElementChannel::try_read(bs, config, pred_bits)?) } else { None };
 
         // If there is a shift, read and save the "tail" bits that will be appended to the predicted
         // samples.

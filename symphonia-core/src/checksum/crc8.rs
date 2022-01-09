@@ -8,6 +8,7 @@
 use crate::io::Monitor;
 
 // Credit: This table was extracted from the reference FLAC decoder.
+#[rustfmt::skip]
 const CRC8_CCITT: [u8; 256] =
 [
     0x00, 0x07, 0x0e, 0x09, 0x1c, 0x1b, 0x12, 0x15, 0x38, 0x3f, 0x36, 0x31, 0x24, 0x23, 0x2a, 0x2d,
@@ -29,7 +30,7 @@ const CRC8_CCITT: [u8; 256] =
 ];
 
 /// `Crc8Ccitt` implements the CRC-8 algorithm using the CCITT polynominal.
-/// 
+///
 /// * Polynomial = 0x07
 /// * RefIn = false
 /// * RefOut = false

@@ -7,7 +7,6 @@
 
 #![warn(rust_2018_idioms)]
 #![forbid(unsafe_code)]
-
 // The following lints are allowed in all Symphonia crates. Please see clippy.toml for their
 // justification.
 #![allow(clippy::comparison_chain)]
@@ -17,14 +16,14 @@
 
 use std::io::{Seek, SeekFrom};
 
-use symphonia_core::support_format;
 use symphonia_core::codecs::CodecParameters;
+use symphonia_core::errors::{end_of_stream_error, seek_error, unsupported_error};
 use symphonia_core::errors::{Result, SeekErrorKind};
-use symphonia_core::errors::{seek_error, unsupported_error, end_of_stream_error};
 use symphonia_core::formats::prelude::*;
 use symphonia_core::io::*;
-use symphonia_core::meta::{Metadata, MetadataRevision, MetadataBuilder, MetadataLog};
+use symphonia_core::meta::{Metadata, MetadataBuilder, MetadataLog, MetadataRevision};
 use symphonia_core::probe::{Descriptor, Instantiate, QueryDescriptor};
+use symphonia_core::support_format;
 
 use log::{debug, error};
 
@@ -61,9 +60,9 @@ impl QueryDescriptor for WavReader {
             support_format!(
                 "wave",
                 "Waveform Audio File Format",
-                &[ "wav", "wave" ],
-                &[ "audio/vnd.wave", "audio/x-wav", "audio/wav", "audio/wave" ],
-                &[ b"RIFF" ]
+                &["wav", "wave"],
+                &["audio/vnd.wave", "audio/x-wav", "audio/wav", "audio/wave"],
+                &[b"RIFF"]
             ),
         ]
     }
@@ -74,7 +73,6 @@ impl QueryDescriptor for WavReader {
 }
 
 impl FormatReader for WavReader {
-
     fn try_new(mut source: MediaSourceStream, _options: &FormatOptions) -> Result<Self> {
         // The RIFF marker should be present.
         let marker = source.read_quad_bytes()?;
@@ -122,13 +120,13 @@ impl FormatReader for WavReader {
 
                     // Append Format chunk fields to codec parameters.
                     append_format_params(&mut codec_params, &format);
-                },
+                }
                 RiffWaveChunks::Fact(fct) => {
                     let fact = fct.parse(&mut source)?;
 
                     // Append Fact chunk fields to codec parameters.
                     append_fact_params(&mut codec_params, &fact);
-                },
+                }
                 RiffWaveChunks::List(lst) => {
                     let list = lst.parse(&mut source)?;
 
@@ -138,7 +136,7 @@ impl FormatReader for WavReader {
                         b"INFO" => metadata.push(read_info_chunk(&mut source, list.len)?),
                         _ => list.skip(&mut source)?,
                     }
-                },
+                }
                 RiffWaveChunks::Data(dat) => {
                     let data = dat.parse(&mut source)?;
 
@@ -152,7 +150,7 @@ impl FormatReader for WavReader {
                     // Add a new track using the collected codec parameters.
                     return Ok(WavReader {
                         reader: source,
-                        tracks: vec![ Track::new(0, codec_params) ],
+                        tracks: vec![Track::new(0, codec_params)],
                         cues: Vec::new(),
                         metadata,
                         frame_len,
@@ -208,7 +206,6 @@ impl FormatReader for WavReader {
     }
 
     fn seek(&mut self, _mode: SeekMode, to: SeekTo) -> Result<SeekedTo> {
-
         if self.tracks.is_empty() || self.frame_len == 0 {
             return seek_error(SeekErrorKind::Unseekable);
         }
@@ -265,12 +262,11 @@ impl FormatReader for WavReader {
                 self.reader.ignore_bytes(seek_pos - current_pos)?;
             }
             else {
-                return seek_error(SeekErrorKind::ForwardOnly)
+                return seek_error(SeekErrorKind::ForwardOnly);
             }
         }
 
-        debug!("seeked to packet_ts={} (delta={})",
-            actual_ts, actual_ts as i64 - ts as i64);
+        debug!("seeked to packet_ts={} (delta={})", actual_ts, actual_ts as i64 - ts as i64);
 
         Ok(SeekedTo { track_id: 0, actual_ts, required_ts: ts })
     }
@@ -278,7 +274,6 @@ impl FormatReader for WavReader {
     fn into_inner(self: Box<Self>) -> MediaSourceStream {
         self.reader
     }
-
 }
 
 fn read_info_chunk(source: &mut MediaSourceStream, len: u32) -> Result<MetadataRevision> {
@@ -304,7 +299,6 @@ fn read_info_chunk(source: &mut MediaSourceStream, len: u32) -> Result<MetadataR
 }
 
 fn append_format_params(codec_params: &mut CodecParameters, format: &WaveFormatChunk) {
-
     codec_params
         .with_max_frames_per_packet(WAVE_MAX_FRAMES_PER_PACKET)
         .with_sample_rate(format.sample_rate)
@@ -317,28 +311,22 @@ fn append_format_params(codec_params: &mut CodecParameters, format: &WaveFormatC
                 .with_bits_per_coded_sample(u32::from(pcm.bits_per_sample))
                 .with_bits_per_sample(u32::from(pcm.bits_per_sample))
                 .with_channels(pcm.channels);
-        },
+        }
         WaveFormatData::IeeeFloat(ref ieee) => {
-            codec_params
-                .for_codec(ieee.codec)
-                .with_channels(ieee.channels);
-        },
+            codec_params.for_codec(ieee.codec).with_channels(ieee.channels);
+        }
         WaveFormatData::Extensible(ref ext) => {
             codec_params
                 .for_codec(ext.codec)
                 .with_bits_per_coded_sample(u32::from(ext.bits_per_coded_sample))
                 .with_bits_per_sample(u32::from(ext.bits_per_sample))
                 .with_channels(ext.channels);
-        },
+        }
         WaveFormatData::ALaw(ref alaw) => {
-            codec_params
-                .for_codec(alaw.codec)
-                .with_channels(alaw.channels);
-        },
+            codec_params.for_codec(alaw.codec).with_channels(alaw.channels);
+        }
         WaveFormatData::MuLaw(ref mulaw) => {
-            codec_params
-                .for_codec(mulaw.codec)
-                .with_channels(mulaw.channels);
+            codec_params.for_codec(mulaw.codec).with_channels(mulaw.channels);
         }
     }
 }

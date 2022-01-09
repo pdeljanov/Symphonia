@@ -35,9 +35,6 @@ impl Atom for StcoAtom {
             chunk_offsets.push(reader.read_be_u32()?);
         }
 
-        Ok(StcoAtom {
-            header,
-            chunk_offsets,
-        })
+        Ok(StcoAtom { header, chunk_offsets })
     }
 }

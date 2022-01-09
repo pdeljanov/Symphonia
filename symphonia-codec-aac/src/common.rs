@@ -163,47 +163,38 @@ pub fn map_channels(channels: u32) -> Option<Channels> {
         1 => Some(Channels::FRONT_LEFT),
         2 => Some(Channels::FRONT_LEFT | Channels::FRONT_RIGHT),
         3 => Some(Channels::FRONT_CENTRE | Channels::FRONT_LEFT | Channels::FRONT_RIGHT),
-        4 => {
-            Some(
-                Channels::FRONT_CENTRE
+        4 => Some(
+            Channels::FRONT_CENTRE
                 | Channels::FRONT_LEFT
                 | Channels::FRONT_RIGHT
-                | Channels::REAR_CENTRE
-            )
-        }
-        5 => {
-            Some(
-                Channels::FRONT_CENTRE
+                | Channels::REAR_CENTRE,
+        ),
+        5 => Some(
+            Channels::FRONT_CENTRE
+                | Channels::FRONT_LEFT
+                | Channels::FRONT_RIGHT
+                | Channels::SIDE_LEFT
+                | Channels::SIDE_RIGHT,
+        ),
+        6 => Some(
+            Channels::FRONT_CENTRE
                 | Channels::FRONT_LEFT
                 | Channels::FRONT_RIGHT
                 | Channels::SIDE_LEFT
                 | Channels::SIDE_RIGHT
-            )
-        }
-        6 => {
-            Some(
-                Channels::FRONT_CENTRE
-                | Channels::FRONT_LEFT
-                | Channels::FRONT_RIGHT
-                | Channels::SIDE_LEFT
-                | Channels::SIDE_RIGHT
-                | Channels::LFE1
-            )
-        }
+                | Channels::LFE1,
+        ),
         7 => None,
-        8 => {
-            Some(
-                Channels::FRONT_CENTRE
+        8 => Some(
+            Channels::FRONT_CENTRE
                 | Channels::FRONT_LEFT
                 | Channels::FRONT_RIGHT
                 | Channels::SIDE_LEFT
                 | Channels::SIDE_RIGHT
                 | Channels::FRONT_LEFT_WIDE
                 | Channels::FRONT_RIGHT_WIDE
-                | Channels::LFE1
-            )
-        }
-        _ => None
+                | Channels::LFE1,
+        ),
+        _ => None,
     }
-
 }

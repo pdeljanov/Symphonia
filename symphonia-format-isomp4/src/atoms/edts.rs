@@ -5,7 +5,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::errors::{Result};
+use symphonia_core::errors::Result;
 use symphonia_core::io::ReadBytes;
 
 use crate::atoms::{Atom, AtomHeader, AtomIterator, AtomType, ElstAtom};
@@ -14,7 +14,7 @@ use crate::atoms::{Atom, AtomHeader, AtomIterator, AtomType, ElstAtom};
 #[derive(Debug)]
 pub struct EdtsAtom {
     header: AtomHeader,
-    pub elst: Option<ElstAtom>
+    pub elst: Option<ElstAtom>,
 }
 
 impl Atom for EdtsAtom {
@@ -33,7 +33,7 @@ impl Atom for EdtsAtom {
                 AtomType::EditList => {
                     elst = Some(iter.read_atom::<ElstAtom>()?);
                 }
-                _ => ()
+                _ => (),
             }
         }
 

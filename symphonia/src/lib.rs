@@ -113,41 +113,41 @@ pub mod default {
     pub mod codecs {
         //! The `codecs` module re-exports all enabled Symphonia decoders.
 
-        #[cfg(feature = "aac")]
-        pub use symphonia_codec_aac::AacDecoder as AacDecoder;
-        #[cfg(feature = "alac")]
-        pub use symphonia_codec_alac::AlacDecoder as AlacDecoder;
         #[cfg(feature = "flac")]
-        pub use symphonia_bundle_flac::FlacDecoder as FlacDecoder;
+        pub use symphonia_bundle_flac::FlacDecoder;
         #[cfg(feature = "mp3")]
-        pub use symphonia_bundle_mp3::Mp3Decoder as Mp3Decoder;
+        pub use symphonia_bundle_mp3::Mp3Decoder;
+        #[cfg(feature = "aac")]
+        pub use symphonia_codec_aac::AacDecoder;
+        #[cfg(feature = "alac")]
+        pub use symphonia_codec_alac::AlacDecoder;
         #[cfg(feature = "pcm")]
-        pub use symphonia_codec_pcm::PcmDecoder as PcmDecoder;
+        pub use symphonia_codec_pcm::PcmDecoder;
         #[cfg(feature = "vorbis")]
-        pub use symphonia_codec_vorbis::VorbisDecoder as VorbisDecoder;
+        pub use symphonia_codec_vorbis::VorbisDecoder;
     }
 
     pub mod formats {
         //! The `formats` module re-exports all enabled Symphonia format readers.
 
-        #[cfg(feature = "aac")]
-        pub use symphonia_codec_aac::AdtsReader as AdtsReader;
         #[cfg(feature = "flac")]
-        pub use symphonia_bundle_flac::FlacReader as FlacReader;
-        #[cfg(feature = "isomp4")]
-        pub use symphonia_format_isomp4::IsoMp4Reader as IsoMp4Reader;
+        pub use symphonia_bundle_flac::FlacReader;
         #[cfg(feature = "mp3")]
-        pub use symphonia_bundle_mp3::Mp3Reader as Mp3Reader;
-        #[cfg(feature = "wav")]
-        pub use symphonia_format_wav::WavReader as WavReader;
+        pub use symphonia_bundle_mp3::Mp3Reader;
+        #[cfg(feature = "aac")]
+        pub use symphonia_codec_aac::AdtsReader;
+        #[cfg(feature = "isomp4")]
+        pub use symphonia_format_isomp4::IsoMp4Reader;
         #[cfg(feature = "ogg")]
-        pub use symphonia_format_ogg::OggReader as OggReader;
+        pub use symphonia_format_ogg::OggReader;
+        #[cfg(feature = "wav")]
+        pub use symphonia_format_wav::WavReader;
     }
 
     use lazy_static::lazy_static;
 
-    use symphonia_core::probe::Probe;
     use symphonia_core::codecs::CodecRegistry;
+    use symphonia_core::probe::Probe;
 
     lazy_static! {
         static ref CODEC_REGISTRY: CodecRegistry = {

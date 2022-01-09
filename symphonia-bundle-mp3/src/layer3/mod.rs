@@ -8,8 +8,8 @@
 use std::fmt;
 
 use symphonia_core::audio::{AudioBuffer, Signal};
-use symphonia_core::errors::{Result, decode_error, Error};
-use symphonia_core::io::{ReadBitsLtr, BitReaderLtr, BufReader, ReadBytes};
+use symphonia_core::errors::{decode_error, Error, Result};
+use symphonia_core::io::{BitReaderLtr, BufReader, ReadBitsLtr, ReadBytes};
 
 use super::synthesis;
 use crate::common::*;
@@ -43,7 +43,7 @@ impl FrameData {
     fn granules_mut(&mut self, version: MpegVersion) -> &mut [Granule] {
         match version {
             MpegVersion::Mpeg1 => &mut self.granules[..2],
-            _                  => &mut self.granules[..1],
+            _ => &mut self.granules[..1],
         }
     }
 }
@@ -170,7 +170,6 @@ fn read_main_data(
     frame_data: &mut FrameData,
     state: &mut State,
 ) -> Result<usize> {
-
     let main_data = state.resevoir.bytes_ref();
     let mut part2_3_begin = 0;
     let mut part2_3_skipped = 0;
@@ -214,7 +213,8 @@ fn read_main_data(
                 bitstream::read_scale_factors_mpeg2(
                     &mut bs,
                     ch > 0 && header.is_intensity_stereo(),
-                    &mut frame_data.granules[gr].channels[ch])
+                    &mut frame_data.granules[gr].channels[ch],
+                )
             }?;
 
             let part2_3_length = u32::from(frame_data.granules[gr].channels[ch].part2_3_length);
@@ -261,17 +261,11 @@ pub fn decode_frame(
     state: &mut State,
     out: &mut AudioBuffer<f32>,
 ) -> Result<()> {
-
     // Initialize an empty FrameData to store the side_info and main_data portions of the
     // frame.
     let mut frame_data: FrameData = Default::default();
 
-    let _crc = if header.has_crc {
-        Some(reader.read_be_u16()?)
-    }
-    else {
-        None
-    };
+    let _crc = if header.has_crc { Some(reader.read_be_u16()?) } else { None };
 
     let buf = reader.read_buf_bytes_available_ref();
 
@@ -295,7 +289,7 @@ pub fn decode_frame(
     let underflow = state.resevoir.fill(
         &buf[side_info_len..],
         frame_data.main_data_begin as usize,
-        main_data_len
+        main_data_len,
     )?;
 
     // Read the main data (scale factors and spectral samples).
@@ -361,4 +355,3 @@ pub fn decode_frame(
 
     Ok(())
 }
-

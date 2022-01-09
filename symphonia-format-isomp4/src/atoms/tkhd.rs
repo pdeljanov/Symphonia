@@ -5,7 +5,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::errors::{Result, decode_error};
+use symphonia_core::errors::{decode_error, Result};
 use symphonia_core::io::ReadBytes;
 
 use crate::atoms::{Atom, AtomHeader};
@@ -58,22 +58,20 @@ impl Atom for TkhdAtom {
         // Version 0 uses 32-bit time values, verion 1 used 64-bit values.
         match version {
             0 => {
-                tkhd.ctime    = u64::from(reader.read_be_u32()?);
-                tkhd.mtime    = u64::from(reader.read_be_u32()?);
-                tkhd.id       = reader.read_be_u32()?;
-                let _         = reader.read_be_u32()?;  // Reserved
+                tkhd.ctime = u64::from(reader.read_be_u32()?);
+                tkhd.mtime = u64::from(reader.read_be_u32()?);
+                tkhd.id = reader.read_be_u32()?;
+                let _ = reader.read_be_u32()?; // Reserved
                 tkhd.duration = u64::from(reader.read_be_u32()?);
             }
             1 => {
-                tkhd.ctime    = reader.read_be_u64()?;
-                tkhd.mtime    = reader.read_be_u64()?;
-                tkhd.id       = reader.read_be_u32()?;
-                let _         = reader.read_be_u32()?;  // Reserved
+                tkhd.ctime = reader.read_be_u64()?;
+                tkhd.mtime = reader.read_be_u64()?;
+                tkhd.id = reader.read_be_u32()?;
+                let _ = reader.read_be_u32()?; // Reserved
                 tkhd.duration = reader.read_be_u64()?;
             }
-            _ => {
-                return decode_error("isomp4: invalid tkhd version")
-            }
+            _ => return decode_error("isomp4: invalid tkhd version"),
         }
 
         // Reserved
@@ -87,5 +85,4 @@ impl Atom for TkhdAtom {
 
         Ok(tkhd)
     }
-
 }

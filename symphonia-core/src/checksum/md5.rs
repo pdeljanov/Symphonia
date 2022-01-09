@@ -23,21 +23,21 @@ fn transform(state: &mut [u32; 4], buf: &[u8]) {
                 $input[$idx * 4 + 0],
                 $input[$idx * 4 + 1],
                 $input[$idx * 4 + 2],
-                $input[$idx * 4 + 3]
+                $input[$idx * 4 + 3],
             ]);
         };
     }
 
-    collect!(input, buf,  0);
-    collect!(input, buf,  1);
-    collect!(input, buf,  2);
-    collect!(input, buf,  3);
-    collect!(input, buf,  4);
-    collect!(input, buf,  5);
-    collect!(input, buf,  6);
-    collect!(input, buf,  7);
-    collect!(input, buf,  8);
-    collect!(input, buf,  9);
+    collect!(input, buf, 0);
+    collect!(input, buf, 1);
+    collect!(input, buf, 2);
+    collect!(input, buf, 3);
+    collect!(input, buf, 4);
+    collect!(input, buf, 5);
+    collect!(input, buf, 6);
+    collect!(input, buf, 7);
+    collect!(input, buf, 8);
+    collect!(input, buf, 9);
     collect!(input, buf, 10);
     collect!(input, buf, 11);
     collect!(input, buf, 12);
@@ -48,9 +48,7 @@ fn transform(state: &mut [u32; 4], buf: &[u8]) {
     // The transformation for a single step of a round: A = B + ROTL32(F + A + K[i] + M[g], S).
     macro_rules! round_step {
         ($a:ident, $b:ident, $f:expr, $m:expr, $s:expr, $k:expr) => {
-            $a = $f.wrapping_add($a)
-                   .wrapping_add($k)
-                   .wrapping_add($m);
+            $a = $f.wrapping_add($a).wrapping_add($k).wrapping_add($m);
             $a = $b.wrapping_add($a.rotate_left($s));
         };
     }
@@ -68,19 +66,19 @@ fn transform(state: &mut [u32; 4], buf: &[u8]) {
             };
         }
 
-        T!(a, b, c, d, input[ 0],  7, 0xd76aa478);
-        T!(d, a, b, c, input[ 1], 12, 0xe8c7b756);
-        T!(c, d, a, b, input[ 2], 17, 0x242070db);
-        T!(b, c, d, a, input[ 3], 22, 0xc1bdceee);
-        T!(a, b, c, d, input[ 4],  7, 0xf57c0faf);
-        T!(d, a, b, c, input[ 5], 12, 0x4787c62a);
-        T!(c, d, a, b, input[ 6], 17, 0xa8304613);
-        T!(b, c, d, a, input[ 7], 22, 0xfd469501);
-        T!(a, b, c, d, input[ 8],  7, 0x698098d8);
-        T!(d, a, b, c, input[ 9], 12, 0x8b44f7af);
+        T!(a, b, c, d, input[0], 7, 0xd76aa478);
+        T!(d, a, b, c, input[1], 12, 0xe8c7b756);
+        T!(c, d, a, b, input[2], 17, 0x242070db);
+        T!(b, c, d, a, input[3], 22, 0xc1bdceee);
+        T!(a, b, c, d, input[4], 7, 0xf57c0faf);
+        T!(d, a, b, c, input[5], 12, 0x4787c62a);
+        T!(c, d, a, b, input[6], 17, 0xa8304613);
+        T!(b, c, d, a, input[7], 22, 0xfd469501);
+        T!(a, b, c, d, input[8], 7, 0x698098d8);
+        T!(d, a, b, c, input[9], 12, 0x8b44f7af);
         T!(c, d, a, b, input[10], 17, 0xffff5bb1);
         T!(b, c, d, a, input[11], 22, 0x895cd7be);
-        T!(a, b, c, d, input[12],  7, 0x6b901122);
+        T!(a, b, c, d, input[12], 7, 0x6b901122);
         T!(d, a, b, c, input[13], 12, 0xfd987193);
         T!(c, d, a, b, input[14], 17, 0xa679438e);
         T!(b, c, d, a, input[15], 22, 0x49b40821);
@@ -94,21 +92,21 @@ fn transform(state: &mut [u32; 4], buf: &[u8]) {
             };
         }
 
-        T!(a, b, c, d, input[ 1],  5, 0xf61e2562);
-        T!(d, a, b, c, input[ 6],  9, 0xc040b340);
+        T!(a, b, c, d, input[1], 5, 0xf61e2562);
+        T!(d, a, b, c, input[6], 9, 0xc040b340);
         T!(c, d, a, b, input[11], 14, 0x265e5a51);
-        T!(b, c, d, a, input[ 0], 20, 0xe9b6c7aa);
-        T!(a, b, c, d, input[ 5],  5, 0xd62f105d);
-        T!(d, a, b, c, input[10],  9, 0x02441453);
+        T!(b, c, d, a, input[0], 20, 0xe9b6c7aa);
+        T!(a, b, c, d, input[5], 5, 0xd62f105d);
+        T!(d, a, b, c, input[10], 9, 0x02441453);
         T!(c, d, a, b, input[15], 14, 0xd8a1e681);
-        T!(b, c, d, a, input[ 4], 20, 0xe7d3fbc8);
-        T!(a, b, c, d, input[ 9],  5, 0x21e1cde6);
-        T!(d, a, b, c, input[14],  9, 0xc33707d6);
-        T!(c, d, a, b, input[ 3], 14, 0xf4d50d87);
-        T!(b, c, d, a, input[ 8], 20, 0x455a14ed);
-        T!(a, b, c, d, input[13],  5, 0xa9e3e905);
-        T!(d, a, b, c, input[ 2],  9, 0xfcefa3f8);
-        T!(c, d, a, b, input[ 7], 14, 0x676f02d9);
+        T!(b, c, d, a, input[4], 20, 0xe7d3fbc8);
+        T!(a, b, c, d, input[9], 5, 0x21e1cde6);
+        T!(d, a, b, c, input[14], 9, 0xc33707d6);
+        T!(c, d, a, b, input[3], 14, 0xf4d50d87);
+        T!(b, c, d, a, input[8], 20, 0x455a14ed);
+        T!(a, b, c, d, input[13], 5, 0xa9e3e905);
+        T!(d, a, b, c, input[2], 9, 0xfcefa3f8);
+        T!(c, d, a, b, input[7], 14, 0x676f02d9);
         T!(b, c, d, a, input[12], 20, 0x8d2a4c8a);
     }
 
@@ -120,22 +118,22 @@ fn transform(state: &mut [u32; 4], buf: &[u8]) {
             };
         }
 
-        T!(a, b, c, d, input[ 5],  4, 0xfffa3942);
-        T!(d, a, b, c, input[ 8], 11, 0x8771f681);
+        T!(a, b, c, d, input[5], 4, 0xfffa3942);
+        T!(d, a, b, c, input[8], 11, 0x8771f681);
         T!(c, d, a, b, input[11], 16, 0x6d9d6122);
         T!(b, c, d, a, input[14], 23, 0xfde5380c);
-        T!(a, b, c, d, input[ 1],  4, 0xa4beea44);
-        T!(d, a, b, c, input[ 4], 11, 0x4bdecfa9);
-        T!(c, d, a, b, input[ 7], 16, 0xf6bb4b60);
+        T!(a, b, c, d, input[1], 4, 0xa4beea44);
+        T!(d, a, b, c, input[4], 11, 0x4bdecfa9);
+        T!(c, d, a, b, input[7], 16, 0xf6bb4b60);
         T!(b, c, d, a, input[10], 23, 0xbebfbc70);
-        T!(a, b, c, d, input[13],  4, 0x289b7ec6);
-        T!(d, a, b, c, input[ 0], 11, 0xeaa127fa);
-        T!(c, d, a, b, input[ 3], 16, 0xd4ef3085);
-        T!(b, c, d, a, input[ 6], 23, 0x04881d05);
-        T!(a, b, c, d, input[ 9],  4, 0xd9d4d039);
+        T!(a, b, c, d, input[13], 4, 0x289b7ec6);
+        T!(d, a, b, c, input[0], 11, 0xeaa127fa);
+        T!(c, d, a, b, input[3], 16, 0xd4ef3085);
+        T!(b, c, d, a, input[6], 23, 0x04881d05);
+        T!(a, b, c, d, input[9], 4, 0xd9d4d039);
         T!(d, a, b, c, input[12], 11, 0xe6db99e5);
         T!(c, d, a, b, input[15], 16, 0x1fa27cf8);
-        T!(b, c, d, a, input[ 2], 23, 0xc4ac5665);
+        T!(b, c, d, a, input[2], 23, 0xc4ac5665);
     }
 
     // Round 4: I(B,C,D) = C xor (B or (not D))
@@ -146,22 +144,22 @@ fn transform(state: &mut [u32; 4], buf: &[u8]) {
             };
         }
 
-        T!(a, b, c, d, input[ 0],  6, 0xf4292244);
-        T!(d, a, b, c, input[ 7], 10, 0x432aff97);
+        T!(a, b, c, d, input[0], 6, 0xf4292244);
+        T!(d, a, b, c, input[7], 10, 0x432aff97);
         T!(c, d, a, b, input[14], 15, 0xab9423a7);
-        T!(b, c, d, a, input[ 5], 21, 0xfc93a039);
-        T!(a, b, c, d, input[12],  6, 0x655b59c3);
-        T!(d, a, b, c, input[ 3], 10, 0x8f0ccc92);
+        T!(b, c, d, a, input[5], 21, 0xfc93a039);
+        T!(a, b, c, d, input[12], 6, 0x655b59c3);
+        T!(d, a, b, c, input[3], 10, 0x8f0ccc92);
         T!(c, d, a, b, input[10], 15, 0xffeff47d);
-        T!(b, c, d, a, input[ 1], 21, 0x85845dd1);
-        T!(a, b, c, d, input[ 8],  6, 0x6fa87e4f);
+        T!(b, c, d, a, input[1], 21, 0x85845dd1);
+        T!(a, b, c, d, input[8], 6, 0x6fa87e4f);
         T!(d, a, b, c, input[15], 10, 0xfe2ce6e0);
-        T!(c, d, a, b, input[ 6], 15, 0xa3014314);
+        T!(c, d, a, b, input[6], 15, 0xa3014314);
         T!(b, c, d, a, input[13], 21, 0x4e0811a1);
-        T!(a, b, c, d, input[ 4],  6, 0xf7537e82);
+        T!(a, b, c, d, input[4], 6, 0xf7537e82);
         T!(d, a, b, c, input[11], 10, 0xbd3af235);
-        T!(c, d, a, b, input[ 2], 15, 0x2ad7d2bb);
-        T!(b, c, d, a, input[ 9], 21, 0xeb86d391);
+        T!(c, d, a, b, input[2], 15, 0x2ad7d2bb);
+        T!(b, c, d, a, input[9], 21, 0xeb86d391);
     }
 
     state[0] = state[0].wrapping_add(a);
@@ -229,7 +227,6 @@ impl Md5 {
         hash[12..16].copy_from_slice(&state[3].to_le_bytes());
         hash
     }
-
 }
 
 impl Monitor for Md5 {
@@ -274,13 +271,12 @@ impl Monitor for Md5 {
             rem = &rem[copy_len..];
         }
     }
-
 }
 
 #[cfg(test)]
 mod tests {
-    use super::Monitor;
     use super::Md5;
+    use super::Monitor;
 
     #[test]
     fn verify_md5() {
@@ -295,6 +291,7 @@ mod tests {
             b".s)cyIl?XKs}wDnLEUeZj'72=A/0!w;B[e*QUh)0{&XcGvf'xMx5Chhx_'ahg{GP|_R(0=Xe`lXQN_@MK9::",
         ];
 
+        #[rustfmt::skip]
         const HASHES: [[u8; 16]; 8] = [
             [
                 0xd4, 0x1d, 0x8c, 0xd9, 0x8f, 0x00, 0xb2, 0x04,
@@ -360,6 +357,5 @@ mod tests {
 
             assert_eq!(*hash, md5.md5());
         }
-
     }
 }

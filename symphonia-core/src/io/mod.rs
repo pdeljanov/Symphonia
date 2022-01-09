@@ -58,7 +58,7 @@ impl MediaSource for std::fs::File {
         // metadata() follows symlinks.
         match self.metadata() {
             Ok(metadata) => metadata.is_file(),
-            _ => false
+            _ => false,
         }
     }
 
@@ -290,9 +290,10 @@ pub trait ReadBytes {
     /// Reads bytes from a stream into a supplied buffer until a byte patter is matched on an
     /// aligned byte boundary. Returns a mutable slice to the valid region of the provided buffer.
     fn scan_bytes_aligned<'a>(
-        &mut self, pattern: &[u8],
+        &mut self,
+        pattern: &[u8],
         align: usize,
-        buf: &'a mut [u8]
+        buf: &'a mut [u8],
     ) -> io::Result<&'a mut [u8]>;
 
     /// Ignores the specified number of bytes from the stream or returns an error.
@@ -338,7 +339,7 @@ impl<'b, R: ReadBytes> ReadBytes for &'b mut R {
         &mut self,
         pattern: &[u8],
         align: usize,
-        buf: &'a mut [u8]
+        buf: &'a mut [u8],
     ) -> io::Result<&'a mut [u8]> {
         (*self).scan_bytes_aligned(pattern, align, buf)
     }

@@ -47,10 +47,7 @@ pub struct MonitorStream<B: ReadBytes, M: Monitor> {
 
 impl<B: ReadBytes, M: Monitor> MonitorStream<B, M> {
     pub fn new(inner: B, monitor: M) -> MonitorStream<B, M> {
-        MonitorStream {
-            inner,
-            monitor,
-        }
+        MonitorStream { inner, monitor }
     }
 
     pub fn inner(&self) -> &B {
@@ -74,7 +71,7 @@ impl<B: ReadBytes, M: Monitor> MonitorStream<B, M> {
     }
 }
 
-impl<B : ReadBytes, M: Monitor> ReadBytes for MonitorStream<B, M> {
+impl<B: ReadBytes, M: Monitor> ReadBytes for MonitorStream<B, M> {
     #[inline(always)]
     fn read_byte(&mut self) -> io::Result<u8> {
         let byte = self.inner.read_byte()?;
@@ -116,9 +113,10 @@ impl<B : ReadBytes, M: Monitor> ReadBytes for MonitorStream<B, M> {
     }
 
     fn scan_bytes_aligned<'a>(
-        &mut self, pattern: &[u8],
+        &mut self,
+        pattern: &[u8],
         align: usize,
-        buf: &'a mut [u8]
+        buf: &'a mut [u8],
     ) -> io::Result<&'a mut [u8]> {
         let result = self.inner.scan_bytes_aligned(pattern, align, buf)?;
         self.monitor.process_buf_bytes(result);

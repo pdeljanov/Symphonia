@@ -61,8 +61,8 @@ impl Time {
         }
 
         let seconds = (Time::SECONDS_PER_HOUR * u64::from(h))
-                            + (Time::SECONDS_PER_MINUTE * u64::from(m))
-                            + u64::from(s);
+            + (Time::SECONDS_PER_MINUTE * u64::from(m))
+            + u64::from(s);
 
         let frac = Time::NANOSECONDS_PER_SECOND_INV * f64::from(ns);
 
@@ -71,19 +71,27 @@ impl Time {
 }
 
 impl From<u8> for Time {
-    fn from(seconds: u8) -> Self { Time::new(u64::from(seconds), 0.0) }
+    fn from(seconds: u8) -> Self {
+        Time::new(u64::from(seconds), 0.0)
+    }
 }
 
 impl From<u16> for Time {
-    fn from(seconds: u16) -> Self { Time::new(u64::from(seconds), 0.0) }
+    fn from(seconds: u16) -> Self {
+        Time::new(u64::from(seconds), 0.0)
+    }
 }
 
 impl From<u32> for Time {
-    fn from(seconds: u32) -> Self { Time::new(u64::from(seconds), 0.0) }
+    fn from(seconds: u32) -> Self {
+        Time::new(u64::from(seconds), 0.0)
+    }
 }
 
 impl From<u64> for Time {
-    fn from(seconds: u64) -> Self { Time::new(seconds, 0.0) }
+    fn from(seconds: u64) -> Self {
+        Time::new(seconds, 0.0)
+    }
 }
 
 impl From<f32> for Time {
@@ -120,7 +128,7 @@ pub struct TimeBase {
 impl TimeBase {
     /// Creates a new `TimeBase`. Panics if either the numerator or denominator is 0.
     pub fn new(numer: u32, denom: u32) -> Self {
-        if numer == 0 || denom == 0{
+        if numer == 0 || denom == 0 {
             panic!("TimeBase cannot have 0 numerator or denominator");
         }
 
@@ -183,7 +191,7 @@ impl TimeBase {
         let a = if product > (1 << 52) {
             // Split the 96-bit product into 48-bit halves.
             let u = ((product & !0xffff_ffff_ffff) >> 48) as u64;
-            let l = ((product &  0xffff_ffff_ffff) >>  0) as u64;
+            let l = ((product & 0xffff_ffff_ffff) >> 0) as u64;
 
             let uk = (u as f64) * k;
             let ul = (l as f64) * k;
@@ -200,7 +208,6 @@ impl TimeBase {
 
         a.wrapping_add(b)
     }
-
 }
 
 impl From<TimeBase> for f64 {
@@ -231,10 +238,14 @@ mod tests {
         // Verify accuracy of time -> timestamp
         assert_eq!(tb1.calc_timestamp(Time::new(0, 0.0)), 0);
         assert_eq!(tb1.calc_timestamp(Time::new(38, 0.578125)), 12_345);
-        assert_eq!(tb1.calc_timestamp(Time::new(14_073_748_835_532, 0.796875)), 0x0f_ffff_ffff_ffff);
-        assert_eq!(tb1.calc_timestamp(Time::new(14_073_748_835_532, 0.803125)), 0x10_0000_0000_0001);
+        assert_eq!(
+            tb1.calc_timestamp(Time::new(14_073_748_835_532, 0.796875)),
+            0x0f_ffff_ffff_ffff
+        );
+        assert_eq!(
+            tb1.calc_timestamp(Time::new(14_073_748_835_532, 0.803125)),
+            0x10_0000_0000_0001
+        );
         assert_eq!(tb1.calc_timestamp(Time::new(57_646_075_230_342_348, 0.796875)), u64::MAX);
-
     }
-
 }

@@ -9,12 +9,12 @@ use std::io::{Seek, SeekFrom};
 
 use symphonia_core::support_format;
 
-use symphonia_core::codecs::{CODEC_TYPE_FLAC, CodecParameters, VerificationCheck};
-use symphonia_core::errors::{Result, decode_error, seek_error, unsupported_error, SeekErrorKind};
+use symphonia_core::codecs::{CodecParameters, VerificationCheck, CODEC_TYPE_FLAC};
+use symphonia_core::errors::{decode_error, seek_error, unsupported_error, Result, SeekErrorKind};
 use symphonia_core::formats::prelude::*;
 use symphonia_core::formats::util::{SeekIndex, SeekSearchResult};
 use symphonia_core::io::*;
-use symphonia_core::meta::{Metadata, MetadataLog, MetadataBuilder};
+use symphonia_core::meta::{Metadata, MetadataBuilder, MetadataLog};
 use symphonia_core::probe::{Descriptor, Instantiate, QueryDescriptor};
 
 use symphonia_utils_xiph::flac::metadata::*;
@@ -60,7 +60,7 @@ impl FlacReader {
                 MetadataBlockType::Application => {
                     // TODO: Store vendor data.
                     read_application_block(&mut block_stream, header.block_len)?;
-                },
+                }
                 // SeekTable blocks are parsed into a SeekIndex.
                 MetadataBlockType::SeekTable => {
                     // Check if a SeekTable has already be parsed. If one has, then the file is
@@ -74,27 +74,27 @@ impl FlacReader {
                     else {
                         return decode_error("flac: found more than one seek table block");
                     }
-                },
+                }
                 // VorbisComment blocks are parsed into Tags.
                 MetadataBlockType::VorbisComment => {
                     read_comment_block(&mut block_stream, &mut metadata_builder)?;
-                },
+                }
                 // Cuesheet blocks are parsed into Cues.
                 MetadataBlockType::Cuesheet => {
                     read_cuesheet_block(&mut block_stream, &mut cues)?;
-                },
+                }
                 // Picture blocks are read as Visuals.
                 MetadataBlockType::Picture => {
                     read_picture_block(&mut block_stream, &mut metadata_builder)?;
-                },
+                }
                 // StreamInfo blocks are parsed into Streams.
                 MetadataBlockType::StreamInfo => {
                     read_stream_info_block(&mut block_stream, &mut tracks, &mut parser)?;
-                },
+                }
                 // Padding blocks are skipped.
                 MetadataBlockType::Padding => {
                     block_stream.ignore_bytes(u64::from(header.block_len))?;
-                },
+                }
                 // Unknown block encountered. Skip these blocks as they may be part of a future
                 // version of FLAC, but  print a message.
                 MetadataBlockType::Unknown(id) => {
@@ -122,29 +122,19 @@ impl FlacReader {
         let mut metadata = MetadataLog::default();
         metadata.push(metadata_builder.metadata());
 
-        Ok(FlacReader {
-            reader,
-            metadata,
-            tracks,
-            cues,
-            index,
-            first_frame_offset: 0,
-            parser,
-        })
+        Ok(FlacReader { reader, metadata, tracks, cues, index, first_frame_offset: 0, parser })
     }
 }
 
 impl QueryDescriptor for FlacReader {
     fn query() -> &'static [Descriptor] {
-        &[
-            support_format!(
-                "flac",
-                "Free Lossless Audio Codec Native",
-                &[ "flac" ],
-                &[ "audio/flac" ],
-                &[ b"fLaC" ]
-            ),
-        ]
+        &[support_format!(
+            "flac",
+            "Free Lossless Audio Codec Native",
+            &["flac"],
+            &["audio/flac"],
+            &[b"fLaC"]
+        )]
     }
 
     fn score(_context: &[u8]) -> u8 {
@@ -153,7 +143,6 @@ impl QueryDescriptor for FlacReader {
 }
 
 impl FormatReader for FlacReader {
-
     fn try_new(mut source: MediaSourceStream, _options: &FormatOptions) -> Result<Self> {
         // Read the first 4 bytes of the stream. Ideally this will be the FLAC stream marker.
         let marker = source.read_quad_bytes()?;
@@ -249,16 +238,16 @@ impl FormatReader for FlacReader {
                     // Search from the start of stream up-to an ending point.
                     SeekSearchResult::Upper(upper) => {
                         end_byte_offset = self.first_frame_offset + upper.byte_offset;
-                    },
+                    }
                     // Search from a starting point up-to the end of the stream.
                     SeekSearchResult::Lower(lower) => {
                         start_byte_offset = self.first_frame_offset + lower.byte_offset;
-                    },
+                    }
                     // Search between two points of the stream.
                     SeekSearchResult::Range(lower, upper) => {
                         start_byte_offset = self.first_frame_offset + lower.byte_offset;
                         end_byte_offset = self.first_frame_offset + upper.byte_offset;
-                    },
+                    }
                     // Search the entire stream (default behaviour, so do nothing).
                     SeekSearchResult::Stream => (),
                 }
@@ -283,10 +272,17 @@ impl FormatReader for FlacReader {
                     // Rewind the stream back to the beginning of the frame.
                     self.reader.seek_buffered_rev(packet.parsed_len);
 
-                    debug!("seeked to packet_ts={} (delta={})",
-                        packet.packet_ts, packet.packet_ts as i64 - ts as i64);
+                    debug!(
+                        "seeked to packet_ts={} (delta={})",
+                        packet.packet_ts,
+                        packet.packet_ts as i64 - ts as i64
+                    );
 
-                    return Ok(SeekedTo { track_id: 0, actual_ts: packet.packet_ts, required_ts: ts });
+                    return Ok(SeekedTo {
+                        track_id: 0,
+                        actual_ts: packet.packet_ts,
+                        required_ts: ts,
+                    });
                 }
                 else {
                     start_byte_offset = mid_byte_offset;
@@ -317,21 +313,30 @@ impl FormatReader for FlacReader {
                 // Overshot a regular seek, or the stream is corrupted, not necessarily an error
                 // per-say.
                 else {
-                    debug!("seeked to packet_ts={} (delta={})",
-                        packet.packet_ts, packet.packet_ts as i64 - ts as i64);
+                    debug!(
+                        "seeked to packet_ts={} (delta={})",
+                        packet.packet_ts,
+                        packet.packet_ts as i64 - ts as i64
+                    );
 
-                    return Ok(SeekedTo { track_id: 0, actual_ts: packet.packet_ts, required_ts: ts });
+                    return Ok(SeekedTo {
+                        track_id: 0,
+                        actual_ts: packet.packet_ts,
+                        required_ts: ts,
+                    });
                 }
             }
             // The desired timestamp is contained within the current packet.
-            else if ts >= packet.packet_ts
-                && ts < (packet.packet_ts + u64::from(packet.n_frames))
+            else if ts >= packet.packet_ts && ts < (packet.packet_ts + u64::from(packet.n_frames))
             {
                 // Rewind the stream back to the beginning of the frame.
                 self.reader.seek_buffered_rev(packet.parsed_len);
 
-                debug!("seeked to packet_ts={} (delta={})",
-                    packet.packet_ts, packet.packet_ts as i64 - ts as i64);
+                debug!(
+                    "seeked to packet_ts={} (delta={})",
+                    packet.packet_ts,
+                    packet.packet_ts as i64 - ts as i64
+                );
 
                 return Ok(SeekedTo { track_id: 0, actual_ts: packet.packet_ts, required_ts: ts });
             }
@@ -341,11 +346,10 @@ impl FormatReader for FlacReader {
     fn into_inner(self: Box<Self>) -> MediaSourceStream {
         self.reader
     }
-
 }
 
 /// Reads a StreamInfo block and populates the reader with stream information.
-fn read_stream_info_block<B : ReadBytes + FiniteStream>(
+fn read_stream_info_block<B: ReadBytes + FiniteStream>(
     reader: &mut B,
     tracks: &mut Vec<Track>,
     parser: &mut PacketParser,

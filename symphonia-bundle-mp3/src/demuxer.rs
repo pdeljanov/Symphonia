@@ -9,7 +9,7 @@ use symphonia_core::support_format;
 
 use symphonia_core::checksum::Crc16AnsiLe;
 use symphonia_core::codecs::{CodecParameters, CODEC_TYPE_MP3};
-use symphonia_core::errors::{Result, SeekErrorKind, seek_error};
+use symphonia_core::errors::{seek_error, Result, SeekErrorKind};
 use symphonia_core::formats::prelude::*;
 use symphonia_core::io::*;
 use symphonia_core::meta::{Metadata, MetadataLog};
@@ -42,13 +42,17 @@ impl QueryDescriptor for Mp3Reader {
             support_format!(
                 "mp3",
                 "MPEG Audio Layer 3 Native",
-                &[ "mp3" ],
-                &[ "audio/mp3" ],
+                &["mp3"],
+                &["audio/mp3"],
                 &[
-                    &[ 0xff, 0xfa ], &[ 0xff, 0xfb ], // MPEG 1
-                    &[ 0xff, 0xf2 ], &[ 0xff, 0xf3 ], // MPEG 2
-                    &[ 0xff, 0xe2 ], &[ 0xff, 0xe3 ], // MPEG 2.5
-                ]),
+                    &[0xff, 0xfa],
+                    &[0xff, 0xfb], // MPEG 1
+                    &[0xff, 0xf2],
+                    &[0xff, 0xf3], // MPEG 2
+                    &[0xff, 0xe2],
+                    &[0xff, 0xe3], // MPEG 2.5
+                ]
+            ),
         ]
     }
 
@@ -58,7 +62,6 @@ impl QueryDescriptor for Mp3Reader {
 }
 
 impl FormatReader for Mp3Reader {
-
     fn try_new(mut source: MediaSourceStream, options: &FormatOptions) -> Result<Self> {
         // Try to read the first MPEG frame.
         let (header, packet) = read_mpeg_frame(&mut source)?;
@@ -66,10 +69,11 @@ impl FormatReader for Mp3Reader {
         // Use the header to populate the codec parameters.
         let mut params = CodecParameters::new();
 
-        params.for_codec(CODEC_TYPE_MP3)
-              .with_sample_rate(header.sample_rate)
-              .with_time_base(TimeBase::new(1, header.sample_rate))
-              .with_channels(header.channel_mode.channels());
+        params
+            .for_codec(CODEC_TYPE_MP3)
+            .with_sample_rate(header.sample_rate)
+            .with_time_base(TimeBase::new(1, header.sample_rate))
+            .with_channels(header.channel_mode.channels());
 
         let audio_frames_per_mpeg_frame = SAMPLES_PER_GRANULE * header.n_granules() as u64;
 
@@ -77,8 +81,7 @@ impl FormatReader for Mp3Reader {
         if let Some(info_tag) = try_read_info_tag(&packet, &header) {
             // The LAME tag contains ReplayGain and padding information.
             let (delay, padding) = if let Some(lame_tag) = info_tag.lame {
-                params.with_delay(lame_tag.enc_delay)
-                      .with_padding(lame_tag.enc_padding);
+                params.with_delay(lame_tag.enc_delay).with_padding(lame_tag.enc_padding);
 
                 (lame_tag.enc_delay, lame_tag.enc_padding)
             }
@@ -118,7 +121,7 @@ impl FormatReader for Mp3Reader {
 
         Ok(Mp3Reader {
             reader: source,
-            tracks: vec![ Track::new(0, params) ],
+            tracks: vec![Track::new(0, params)],
             cues: Vec::new(),
             metadata: Default::default(),
             options: *options,
@@ -142,12 +145,12 @@ impl FormatReader for Mp3Reader {
             symphonia_core::formats::util::trim_packet(
                 &mut packet,
                 self.tracks[0].codec_params.delay.unwrap_or(0),
-                self.tracks[0].codec_params.n_frames
+                self.tracks[0].codec_params.n_frames,
             );
         }
 
         Ok(packet)
-   }
+    }
 
     fn metadata(&mut self) -> Metadata<'_> {
         self.metadata.metadata()
@@ -209,14 +212,14 @@ impl FormatReader for Mp3Reader {
                 }
             }
             else {
-                return seek_error(SeekErrorKind::ForwardOnly)
+                return seek_error(SeekErrorKind::ForwardOnly);
             }
 
             // Successfuly seeked to the start of the stream, reset the next packet timestamp.
             self.next_packet_ts = 0;
         }
 
-        let mut frames : [FramePos; MAX_REF_FRAMES] = Default::default();
+        let mut frames: [FramePos; MAX_REF_FRAMES] = Default::default();
         let mut n_frames = 0;
 
         // Parse frames from the stream until the frame containing the desired timestamp is
@@ -232,7 +235,8 @@ impl FormatReader for Mp3Reader {
             let duration = SAMPLES_PER_GRANULE * header.n_granules() as u64;
 
             // Add the frame to the frame ring.
-            frames[n_frames & REF_FRAMES_MASK] = FramePos { pos: frame_pos, ts: self.next_packet_ts };
+            frames[n_frames & REF_FRAMES_MASK] =
+                FramePos { pos: frame_pos, ts: self.next_packet_ts };
             n_frames += 1;
 
             // If the next frame's timestamp would exceed the desired timestamp, rewind back to the
@@ -299,17 +303,14 @@ impl FormatReader for Mp3Reader {
 
         let actual_ts = self.next_packet_ts.saturating_sub(delay);
 
-        debug!("seeked to ts={} ({}) (delta={})",
+        debug!(
+            "seeked to ts={} ({}) (delta={})",
             actual_ts,
             self.next_packet_ts,
             self.next_packet_ts as i64 - required_ts as i64,
         );
 
-        Ok(SeekedTo {
-            track_id: 0,
-            required_ts: required_ts - delay,
-            actual_ts,
-        })
+        Ok(SeekedTo { track_id: 0, required_ts: required_ts - delay, actual_ts })
     }
 
     fn into_inner(self: Box<Self>) -> MediaSourceStream {
@@ -371,7 +372,7 @@ fn read_main_data_begin<B: ReadBytes>(reader: &mut B, header: &FrameHeader) -> R
 /// Estimates the total number of MPEG frames in the media source stream.
 fn estimate_num_mpeg_frames(reader: &mut MediaSourceStream) -> Option<u64> {
     const MAX_FRAMES: u32 = 16;
-    const MAX_LEN: usize  = 16 * 1024;
+    const MAX_LEN: usize = 16 * 1024;
 
     // Macro to convert a Result to Option, and break a loop on exit.
     macro_rules! break_on_err {
@@ -456,9 +457,9 @@ fn try_read_info_tag_inner(buf: &[u8], header: &FrameHeader) -> Result<Option<Xi
     // side information length for the frame.
     let offset = match (header.version, header.channel_mode) {
         (MpegVersion::Mpeg1, ChannelMode::Mono) => 17,
-        (MpegVersion::Mpeg1, _                ) => 32,
-        (_                 , ChannelMode::Mono) => 9,
-        (_                 , _                ) => 17,
+        (MpegVersion::Mpeg1, _) => 32,
+        (_, ChannelMode::Mono) => 9,
+        (_, _) => 17,
     };
 
     // Start the CRC with the header and side information.
@@ -481,19 +482,9 @@ fn try_read_info_tag_inner(buf: &[u8], header: &FrameHeader) -> Result<Option<Xi
     // Flags indicates what information is provided in this Xing/Info tag.
     let flags = reader.read_be_u32()?;
 
-    let num_frames = if flags & 0x1 != 0 {
-        Some(reader.read_be_u32()?)
-    }
-    else {
-        None
-    };
+    let num_frames = if flags & 0x1 != 0 { Some(reader.read_be_u32()?) } else { None };
 
-    let num_bytes = if flags & 0x2 != 0 {
-        Some(reader.read_be_u32()?)
-    }
-    else {
-        None
-    };
+    let num_bytes = if flags & 0x2 != 0 { Some(reader.read_be_u32()?) } else { None };
 
     let toc = if flags & 0x4 != 0 {
         let mut toc = [0; 100];
@@ -504,12 +495,7 @@ fn try_read_info_tag_inner(buf: &[u8], header: &FrameHeader) -> Result<Option<Xi
         None
     };
 
-    let quality = if flags & 0x8 != 0 {
-        Some(reader.read_be_u32()?)
-    }
-    else {
-        None
-    };
+    let quality = if flags & 0x8 != 0 { Some(reader.read_be_u32()?) } else { None };
 
     const LAME_EXTENSION_LEN: u64 = 36;
 
@@ -600,14 +586,7 @@ fn try_read_info_tag_inner(buf: &[u8], header: &FrameHeader) -> Result<Option<Xi
         None
     };
 
-    Ok(Some(XingInfoTag {
-        num_frames,
-        num_bytes,
-        toc,
-        quality,
-        is_cbr,
-        lame,
-    }))
+    Ok(Some(XingInfoTag { num_frames, num_bytes, toc, quality, is_cbr, lame }))
 }
 
 fn parse_lame_tag_replaygain(value: u16, expected_name: u8) -> Option<f32> {

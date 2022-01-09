@@ -6,7 +6,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use symphonia_core::checksum::Crc32;
-use symphonia_core::errors::{Error, Result, decode_error};
+use symphonia_core::errors::{decode_error, Error, Result};
 use symphonia_core::io::{BufReader, Monitor, MonitorStream, ReadBytes, SeekBuffered};
 
 use log::{debug, warn};
@@ -135,10 +135,7 @@ impl<'a> Page<'a> {
     /// If this page contains a partial packet, then the partial packet data may be retrieved using
     /// the `partial_packet` function of the iterator.
     pub fn packets(&self) -> PagePackets<'_> {
-        PagePackets {
-            lens: self.packet_lens.iter(),
-            data: self.page_buf,
-        }
+        PagePackets { lens: self.packet_lens.iter(), data: self.page_buf }
     }
 
     /// Gets the number of packets completed on this page.
@@ -246,11 +243,7 @@ impl PageReader {
 
         // If the CRC for the page is incorrect, then the page is corrupt.
         if header.crc != calculated_crc {
-            warn!(
-                "crc mismatch: expected {:#x}, got {:#x}",
-                header.crc,
-                calculated_crc
-            );
+            warn!("crc mismatch: expected {:#x}, got {:#x}", header.crc, calculated_crc);
 
             // Clear packet buffer.
             self.packet_lens.clear();

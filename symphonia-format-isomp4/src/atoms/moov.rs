@@ -5,11 +5,13 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::errors::{Result, decode_error};
+use symphonia_core::errors::{decode_error, Result};
 use symphonia_core::io::ReadBytes;
 use symphonia_core::meta::MetadataLog;
 
-use crate::atoms::{Atom, AtomHeader, AtomIterator, AtomType, MvexAtom, MvhdAtom, TrakAtom, UdtaAtom};
+use crate::atoms::{
+    Atom, AtomHeader, AtomIterator, AtomType, MvexAtom, MvhdAtom, TrakAtom, UdtaAtom,
+};
 
 use log::warn;
 
@@ -70,7 +72,7 @@ impl Atom for MoovAtom {
                 AtomType::UserData => {
                     udta = Some(iter.read_atom::<UdtaAtom>()?);
                 }
-                _ => ()
+                _ => (),
             }
         }
 
@@ -90,12 +92,6 @@ impl Atom for MoovAtom {
             }
         }
 
-        Ok(MoovAtom {
-            header,
-            mvhd: mvhd.unwrap(),
-            traks,
-            mvex,
-            udta,
-        })
+        Ok(MoovAtom { header, mvhd: mvhd.unwrap(), traks, mvex, udta })
     }
 }

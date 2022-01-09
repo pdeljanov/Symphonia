@@ -9,58 +9,71 @@ use symphonia_core::io::vlc::*;
 
 use lazy_static::lazy_static;
 
+#[rustfmt::skip]
 const MPEG_CODES_0: [u32; 0] = [ ];
 
+#[rustfmt::skip]
 const MPEG_BITS_0: [u8; 0] = [ ];
 
+#[rustfmt::skip]
 const MPEG_CODES_1: [u32; 4] = [
     0x0001, 0x0001, 0x0001, 0x0000,
 ];
 
+#[rustfmt::skip]
 const MPEG_BITS_1: [u8; 4] = [
     1,  3,  2,  3,
 ];
 
+#[rustfmt::skip]
 const MPEG_CODES_2: [u32; 9] = [
     0x0001, 0x0002, 0x0001, 0x0003, 0x0001, 0x0001, 0x0003, 0x0002,
     0x0000,
 ];
 
+#[rustfmt::skip]
 const MPEG_BITS_2: [u8; 9] = [
     1,  3,  6,  3,  3,  5,  5,  5,
     6,
 ];
 
+#[rustfmt::skip]
 const MPEG_CODES_3: [u32; 9] = [
     0x0003, 0x0002, 0x0001, 0x0001, 0x0001, 0x0001, 0x0003, 0x0002,
     0x0000,
 ];
 
+#[rustfmt::skip]
 const MPEG_BITS_3: [u8; 9] = [
     2,  2,  6,  3,  2,  5,  5,  5,
     6,
 ];
 
+#[rustfmt::skip]
 const MPEG_CODES_5: [u32; 16] = [
     0x0001, 0x0002, 0x0006, 0x0005, 0x0003, 0x0001, 0x0004, 0x0004,
     0x0007, 0x0005, 0x0007, 0x0001, 0x0006, 0x0001, 0x0001, 0x0000,
 ];
 
+#[rustfmt::skip]
 const MPEG_BITS_5: [u8; 16] = [
     1,  3,  6,  7,  3,  3,  6,  7,
     6,  6,  7,  8,  7,  6,  7,  8,
 ];
 
+#[rustfmt::skip]
 const MPEG_CODES_6: [u32; 16] = [
     0x0007, 0x0003, 0x0005, 0x0001, 0x0006, 0x0002, 0x0003, 0x0002,
     0x0005, 0x0004, 0x0004, 0x0001, 0x0003, 0x0003, 0x0002, 0x0000,
 ];
 
+#[rustfmt::skip]
 const MPEG_BITS_6: [u8; 16] = [
     3,  3,  5,  7,  3,  2,  4,  5,
     4,  4,  5,  6,  6,  5,  6,  7,
 ];
 
+#[rustfmt::skip]
 const MPEG_CODES_7: [u32; 36] = [
     0x0001, 0x0002, 0x000a, 0x0013, 0x0010, 0x000a, 0x0003, 0x0003,
     0x0007, 0x000a, 0x0005, 0x0003, 0x000b, 0x0004, 0x000d, 0x0011,
@@ -69,6 +82,7 @@ const MPEG_CODES_7: [u32; 36] = [
     0x0005, 0x0003, 0x0002, 0x0000,
 ];
 
+#[rustfmt::skip]
 const MPEG_BITS_7: [u8; 36] = [
     1,  3,  6,  8,  8,  9,  3,  4,
     6,  7,  7,  8,  6,  5,  7,  8,
@@ -77,6 +91,7 @@ const MPEG_BITS_7: [u8; 36] = [
     9, 10, 10, 10,
 ];
 
+#[rustfmt::skip]
 const MPEG_CODES_8: [u32; 36] = [
     0x0003, 0x0004, 0x0006, 0x0012, 0x000c, 0x0005, 0x0005, 0x0001,
     0x0002, 0x0010, 0x0009, 0x0003, 0x0007, 0x0003, 0x0005, 0x000e,
@@ -85,6 +100,7 @@ const MPEG_CODES_8: [u32; 36] = [
     0x0004, 0x0001, 0x0001, 0x0000,
 ];
 
+#[rustfmt::skip]
 const MPEG_BITS_8: [u8; 36] = [
     2,  3,  6,  8,  8,  9,  3,  2,
     4,  8,  8,  8,  6,  4,  6,  8,
@@ -93,6 +109,7 @@ const MPEG_BITS_8: [u8; 36] = [
     9,  9, 11, 11,
 ];
 
+#[rustfmt::skip]
 const MPEG_CODES_9: [u32; 36] = [
     0x0007, 0x0005, 0x0009, 0x000e, 0x000f, 0x0007, 0x0006, 0x0004,
     0x0005, 0x0005, 0x0006, 0x0007, 0x0007, 0x0006, 0x0008, 0x0008,
@@ -101,6 +118,7 @@ const MPEG_CODES_9: [u32; 36] = [
     0x0006, 0x0002, 0x0006, 0x0000,
 ];
 
+#[rustfmt::skip]
 const MPEG_BITS_9: [u8; 36] = [
     3,  3,  5,  6,  8,  9,  3,  3,
     4,  5,  6,  8,  4,  4,  5,  6,
@@ -109,6 +127,7 @@ const MPEG_BITS_9: [u8; 36] = [
     8,  8,  9,  9,
 ];
 
+#[rustfmt::skip]
 const MPEG_CODES_10: [u32; 64] = [
     0x0001, 0x0002, 0x000a, 0x0017, 0x0023, 0x001e, 0x000c, 0x0011,
     0x0003, 0x0003, 0x0008, 0x000c, 0x0012, 0x0015, 0x000c, 0x0007,
@@ -120,6 +139,7 @@ const MPEG_CODES_10: [u32; 64] = [
     0x0009, 0x0008, 0x0007, 0x0008, 0x0004, 0x0004, 0x0002, 0x0000,
 ];
 
+#[rustfmt::skip]
 const MPEG_BITS_10: [u8; 64] = [
     1,  3,  6,  8,  9,  9,  9, 10,
     3,  4,  6,  7,  8,  9,  8,  8,
@@ -131,6 +151,7 @@ const MPEG_BITS_10: [u8; 64] = [
     9,  8,  9, 10, 10, 11, 11, 11,
 ];
 
+#[rustfmt::skip]
 const MPEG_CODES_11: [u32; 64] = [
     0x0003, 0x0004, 0x000a, 0x0018, 0x0022, 0x0021, 0x0015, 0x000f,
     0x0005, 0x0003, 0x0004, 0x000a, 0x0020, 0x0011, 0x000b, 0x000a,
@@ -142,6 +163,7 @@ const MPEG_CODES_11: [u32; 64] = [
     0x000b, 0x0004, 0x0006, 0x0006, 0x0006, 0x0003, 0x0002, 0x0000,
 ];
 
+#[rustfmt::skip]
 const MPEG_BITS_11: [u8; 64] = [
     2,  3,  5,  7,  8,  9,  8,  9,
     3,  3,  4,  6,  8,  8,  7,  8,
@@ -153,6 +175,7 @@ const MPEG_BITS_11: [u8; 64] = [
     8,  7,  8,  9, 10, 10, 10, 10,
 ];
 
+#[rustfmt::skip]
 const MPEG_CODES_12: [u32; 64] = [
     0x0009, 0x0006, 0x0010, 0x0021, 0x0029, 0x0027, 0x0026, 0x001a,
     0x0007, 0x0005, 0x0006, 0x0009, 0x0017, 0x0010, 0x001a, 0x000b,
@@ -164,6 +187,7 @@ const MPEG_CODES_12: [u32; 64] = [
     0x001b, 0x000c, 0x0008, 0x000c, 0x0006, 0x0003, 0x0001, 0x0000,
 ];
 
+#[rustfmt::skip]
 const MPEG_BITS_12: [u8; 64] = [
     4,  3,  5,  7,  8,  9,  9,  9,
     3,  3,  4,  5,  7,  7,  8,  8,
@@ -175,6 +199,7 @@ const MPEG_BITS_12: [u8; 64] = [
     9,  8,  8,  9,  9,  9,  9, 10,
 ];
 
+#[rustfmt::skip]
 const MPEG_CODES_13: [u32; 256] = [
     0x0001, 0x0005, 0x000e, 0x0015, 0x0022, 0x0033, 0x002e, 0x0047,
     0x002a, 0x0034, 0x0044, 0x0034, 0x0043, 0x002c, 0x002b, 0x0013,
@@ -210,6 +235,7 @@ const MPEG_CODES_13: [u32; 256] = [
     0x0011, 0x000c, 0x0010, 0x0008, 0x0001, 0x0001, 0x0000, 0x0001,
 ];
 
+#[rustfmt::skip]
 const MPEG_BITS_13: [u8; 256] = [
      1,  4,  6,  7,  8,  9,  9, 10,
      9, 10, 11, 11, 12, 12, 13, 13,
@@ -245,6 +271,7 @@ const MPEG_BITS_13: [u8; 256] = [
     15, 15, 16, 16, 19, 18, 19, 16,
 ];
 
+#[rustfmt::skip]
 const MPEG_CODES_15: [u32; 256] = [
     0x0007, 0x000c, 0x0012, 0x0035, 0x002f, 0x004c, 0x007c, 0x006c,
     0x0059, 0x007b, 0x006c, 0x0077, 0x006b, 0x0051, 0x007a, 0x003f,
@@ -280,6 +307,7 @@ const MPEG_CODES_15: [u32; 256] = [
     0x0015, 0x0010, 0x000a, 0x0006, 0x0008, 0x0006, 0x0002, 0x0000,
 ];
 
+#[rustfmt::skip]
 const MPEG_BITS_15: [u8; 256] = [
      3,  4,  5,  7,  7,  8,  9,  9,
      9, 10, 10, 11, 11, 11, 12, 13,
@@ -315,6 +343,7 @@ const MPEG_BITS_15: [u8; 256] = [
     12, 12, 12, 12, 13, 13, 13, 13,
 ];
 
+#[rustfmt::skip]
 const MPEG_CODES_16: [u32; 256] = [
     0x0001, 0x0005, 0x000e, 0x002c, 0x004a, 0x003f, 0x006e, 0x005d,
     0x00ac, 0x0095, 0x008a, 0x00f2, 0x00e1, 0x00c3, 0x0178, 0x0011,
@@ -350,6 +379,7 @@ const MPEG_CODES_16: [u32; 256] = [
     0x000d, 0x000c, 0x000a, 0x0007, 0x0005, 0x0003, 0x0001, 0x0003,
 ];
 
+#[rustfmt::skip]
 const MPEG_BITS_16: [u8; 256] = [
      1,  4,  6,  8,  9,  9, 10, 10,
     11, 11, 11, 12, 12, 12, 13,  9,
@@ -385,6 +415,7 @@ const MPEG_BITS_16: [u8; 256] = [
     11, 11, 11, 11, 11, 11, 11,  8,
 ];
 
+#[rustfmt::skip]
 const MPEG_CODES_24: [u32; 256] = [
     0x000f, 0x000d, 0x002e, 0x0050, 0x0092, 0x0106, 0x00f8, 0x01b2,
     0x01aa, 0x029d, 0x028d, 0x0289, 0x026d, 0x0205, 0x0408, 0x0058,
@@ -420,6 +451,7 @@ const MPEG_CODES_24: [u32; 256] = [
     0x0007, 0x0006, 0x0004, 0x0007, 0x0005, 0x0003, 0x0001, 0x0003,
 ];
 
+#[rustfmt::skip]
 const MPEG_BITS_24: [u8; 256] = [
      4,  4,  6,  7,  8,  9,  9, 10,
     10, 11, 11, 11, 11, 11, 12,  9,
@@ -455,11 +487,11 @@ const MPEG_BITS_24: [u8; 256] = [
     7,   7,  7,  8,  8,  8,  8,  4,
 ];
 
-const MPEG_QUADS_CODES_A: [u32; 16] = [ 1, 5, 4, 5, 6, 5, 4, 4, 7, 3, 6, 0, 7, 2, 3, 1, ];
-const MPEG_QUADS_BITS_A: [u8; 16]   = [ 1, 4, 4, 5, 4, 6, 5, 6, 4, 5, 5, 6, 5, 6, 6, 6, ];
+const MPEG_QUADS_CODES_A: [u32; 16] = [1, 5, 4, 5, 6, 5, 4, 4, 7, 3, 6, 0, 7, 2, 3, 1];
+const MPEG_QUADS_BITS_A: [u8; 16] = [1, 4, 4, 5, 4, 6, 5, 6, 4, 5, 5, 6, 5, 6, 6, 6];
 
-const MPEG_QUADS_CODES_B: [u32; 16] = [ 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0, ];
-const MPEG_QUADS_BITS_B: [u8; 16]   = [  4,  4,  4,  4,  4,  4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, ];
+const MPEG_QUADS_CODES_B: [u32; 16] = [15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0];
+const MPEG_QUADS_BITS_B: [u8; 16] = [4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4];
 
 struct MpegTable {
     codes: &'static [u32],
@@ -474,35 +506,35 @@ struct MpegQuadsTable {
 
 const MPEG_TABLES: [MpegTable; 18] = [
     // Table 0
-    MpegTable { codes: &MPEG_CODES_0,  lens: &MPEG_BITS_0,  wrap: 0x0  },
+    MpegTable { codes: &MPEG_CODES_0, lens: &MPEG_BITS_0, wrap: 0x0 },
     // Table 1
-    MpegTable { codes: &MPEG_CODES_1,  lens: &MPEG_BITS_1,  wrap: 0x2  },
+    MpegTable { codes: &MPEG_CODES_1, lens: &MPEG_BITS_1, wrap: 0x2 },
     // Table 2
-    MpegTable { codes: &MPEG_CODES_2,  lens: &MPEG_BITS_2,  wrap: 0x3  },
+    MpegTable { codes: &MPEG_CODES_2, lens: &MPEG_BITS_2, wrap: 0x3 },
     // Table 3
-    MpegTable { codes: &MPEG_CODES_3,  lens: &MPEG_BITS_3,  wrap: 0x3  },
+    MpegTable { codes: &MPEG_CODES_3, lens: &MPEG_BITS_3, wrap: 0x3 },
     // Table 4 (not used)
-    MpegTable { codes: &MPEG_CODES_0,  lens: &MPEG_BITS_0,  wrap: 0x0  },
+    MpegTable { codes: &MPEG_CODES_0, lens: &MPEG_BITS_0, wrap: 0x0 },
     // Table 5
-    MpegTable { codes: &MPEG_CODES_5,  lens: &MPEG_BITS_5,  wrap: 0x4  },
+    MpegTable { codes: &MPEG_CODES_5, lens: &MPEG_BITS_5, wrap: 0x4 },
     // Table 6
-    MpegTable { codes: &MPEG_CODES_6,  lens: &MPEG_BITS_6,  wrap: 0x4  },
+    MpegTable { codes: &MPEG_CODES_6, lens: &MPEG_BITS_6, wrap: 0x4 },
     // Table 7
-    MpegTable { codes: &MPEG_CODES_7,  lens: &MPEG_BITS_7,  wrap: 0x6  },
+    MpegTable { codes: &MPEG_CODES_7, lens: &MPEG_BITS_7, wrap: 0x6 },
     // Table 8
-    MpegTable { codes: &MPEG_CODES_8,  lens: &MPEG_BITS_8,  wrap: 0x6  },
+    MpegTable { codes: &MPEG_CODES_8, lens: &MPEG_BITS_8, wrap: 0x6 },
     // Table 9
-    MpegTable { codes: &MPEG_CODES_9,  lens: &MPEG_BITS_9,  wrap: 0x6  },
+    MpegTable { codes: &MPEG_CODES_9, lens: &MPEG_BITS_9, wrap: 0x6 },
     // Table 10
-    MpegTable { codes: &MPEG_CODES_10, lens: &MPEG_BITS_10, wrap: 0x8  },
+    MpegTable { codes: &MPEG_CODES_10, lens: &MPEG_BITS_10, wrap: 0x8 },
     // Table 11
-    MpegTable { codes: &MPEG_CODES_11, lens: &MPEG_BITS_11, wrap: 0x8  },
+    MpegTable { codes: &MPEG_CODES_11, lens: &MPEG_BITS_11, wrap: 0x8 },
     // Table 12
-    MpegTable { codes: &MPEG_CODES_12, lens: &MPEG_BITS_12, wrap: 0x8  },
+    MpegTable { codes: &MPEG_CODES_12, lens: &MPEG_BITS_12, wrap: 0x8 },
     // Table 13
     MpegTable { codes: &MPEG_CODES_13, lens: &MPEG_BITS_13, wrap: 0x10 },
     // Table 14 (not used)
-    MpegTable { codes: &MPEG_CODES_0,  lens: &MPEG_BITS_0,  wrap: 0x0  },
+    MpegTable { codes: &MPEG_CODES_0, lens: &MPEG_BITS_0, wrap: 0x0 },
     // Table 15
     MpegTable { codes: &MPEG_CODES_15, lens: &MPEG_BITS_15, wrap: 0x10 },
     // Tables 16..24 (number of linbits vary)
@@ -519,8 +551,8 @@ const MPEG_QUADS_TABLES: [MpegQuadsTable; 2] = [
 ];
 
 pub const CODEBOOK_LINBITS: [u32; 32] = [
-    0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
-    1,  2,  3,  4,  6,  8, 10, 13,  4,  5,  6,  7,  8,  9, 11, 13,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 3, 4, 6, 8, 10, 13, 4, 5, 6, 7, 8, 9, 11,
+    13,
 ];
 
 fn mpeg_gen_value(i: u16, wrap: u16) -> u16 {

@@ -33,7 +33,7 @@ pub enum SampleFormat {
     /// Single prevision (32-bit) floating point.
     F32,
     /// Double precision (64-bit) floating point.
-    F64
+    F64,
 }
 
 /// `Sample` provides a common interface for manipulating sample's regardless of the
@@ -66,12 +66,12 @@ pub trait Sample:
 /// An unsigned 24-bit integer sample.
 #[allow(non_camel_case_types)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Default)]
-pub struct u24 (pub u32);
+pub struct u24(pub u32);
 
 /// A signed 24-bit integer sample.
 #[allow(non_camel_case_types)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Default)]
-pub struct i24 (pub i32);
+pub struct i24(pub i32);
 
 impl Sample for u8 {
     const FORMAT: SampleFormat = SampleFormat::U8;
@@ -155,11 +155,11 @@ impl i24 {
 
         if cfg!(target_endian = "little") {
             // In little-endian the MSB is the last byte. Drop it.
-            [ b[0], b[1], b[2] ]
+            [b[0], b[1], b[2]]
         }
         else {
             // In big-endian the MSB is the first byte. Drop it.
-            [ b[1], b[2], b[3] ]
+            [b[1], b[2], b[3]]
         }
     }
 }
@@ -171,92 +171,120 @@ impl fmt::Display for i24 {
 }
 
 impl From<i32> for i24 {
-    fn from(val: i32) -> Self { i24(val).saturate_overflow() }
+    fn from(val: i32) -> Self {
+        i24(val).saturate_overflow()
+    }
 }
 
 impl From<i16> for i24 {
-    fn from(val: i16) -> Self { i24(i32::from(val)) }
+    fn from(val: i16) -> Self {
+        i24(i32::from(val))
+    }
 }
 
 impl From<i8> for i24 {
-    fn from(val: i8) -> Self { i24(i32::from(val)) }
+    fn from(val: i8) -> Self {
+        i24(i32::from(val))
+    }
 }
 
 impl core::ops::Add<i24> for i24 {
     type Output = i24;
 
     #[inline]
-    fn add(self, other: Self) -> Self { i24(self.0 + other.0) }
+    fn add(self, other: Self) -> Self {
+        i24(self.0 + other.0)
+    }
 }
 
 impl core::ops::Sub<i24> for i24 {
     type Output = i24;
 
     #[inline]
-    fn sub(self, other: Self) -> Self { i24(self.0 - other.0) }
+    fn sub(self, other: Self) -> Self {
+        i24(self.0 - other.0)
+    }
 }
 
 impl core::ops::Mul<i24> for i24 {
     type Output = i24;
 
     #[inline]
-    fn mul(self, other: Self) -> Self { i24::from(self.0 * other.0) }
+    fn mul(self, other: Self) -> Self {
+        i24::from(self.0 * other.0)
+    }
 }
 
 impl core::ops::Div<i24> for i24 {
     type Output = i24;
 
     #[inline]
-    fn div(self, other: Self) -> Self { i24(self.0 / other.0) }
+    fn div(self, other: Self) -> Self {
+        i24(self.0 / other.0)
+    }
 }
 
 impl core::ops::Not for i24 {
     type Output = i24;
 
     #[inline]
-    fn not(self) -> Self { i24(!self.0) }
+    fn not(self) -> Self {
+        i24(!self.0)
+    }
 }
 
 impl core::ops::Rem<i24> for i24 {
     type Output = i24;
 
     #[inline]
-    fn rem(self, other: Self) -> Self { i24(self.0 % other.0) }
+    fn rem(self, other: Self) -> Self {
+        i24(self.0 % other.0)
+    }
 }
 
 impl core::ops::Shl<i24> for i24 {
     type Output = i24;
 
     #[inline]
-    fn shl(self, other: Self) -> Self { i24(self.0 << other.0) }
+    fn shl(self, other: Self) -> Self {
+        i24(self.0 << other.0)
+    }
 }
 
 impl core::ops::Shr<i24> for i24 {
     type Output = i24;
 
     #[inline]
-    fn shr(self, other: Self) -> Self { i24(self.0 >> other.0) }
+    fn shr(self, other: Self) -> Self {
+        i24(self.0 >> other.0)
+    }
 }
 
 impl core::ops::BitAnd<i24> for i24 {
     type Output = i24;
 
     #[inline]
-    fn bitand(self, other: Self) -> Self { i24(self.0 & other.0) }
+    fn bitand(self, other: Self) -> Self {
+        i24(self.0 & other.0)
+    }
 }
 
 impl core::ops::BitOr<i24> for i24 {
     type Output = i24;
 
     #[inline]
-    fn bitor(self, other: Self) -> Self { i24(self.0 | other.0) }
+    fn bitor(self, other: Self) -> Self {
+        i24(self.0 | other.0)
+    }
 }
 
 impl core::ops::BitXor<i24> for i24 {
     type Output = i24;
 
     #[inline]
-    fn bitxor(self, other: Self) -> Self { i24(self.0 ^ other.0) }
+    fn bitxor(self, other: Self) -> Self {
+        i24(self.0 ^ other.0)
+    }
 }
 
 // Implementation for u24
@@ -281,11 +309,11 @@ impl u24 {
 
         if cfg!(target_endian = "little") {
             // In little-endian the MSB is the last byte. Drop it.
-            [ b[0], b[1], b[2] ]
+            [b[0], b[1], b[2]]
         }
         else {
             // In big-endian the MSB is the first byte. Drop it.
-            [ b[1], b[2], b[3] ]
+            [b[1], b[2], b[3]]
         }
     }
 }
@@ -297,90 +325,118 @@ impl fmt::Display for u24 {
 }
 
 impl From<u32> for u24 {
-    fn from(val: u32) -> Self { u24(val).saturate_overflow() }
+    fn from(val: u32) -> Self {
+        u24(val).saturate_overflow()
+    }
 }
 
 impl From<u16> for u24 {
-    fn from(val: u16) -> Self { u24(u32::from(val)) }
+    fn from(val: u16) -> Self {
+        u24(u32::from(val))
+    }
 }
 
 impl From<u8> for u24 {
-    fn from(val: u8) -> Self { u24(u32::from(val)) }
+    fn from(val: u8) -> Self {
+        u24(u32::from(val))
+    }
 }
 
 impl core::ops::Add<u24> for u24 {
     type Output = u24;
 
     #[inline]
-    fn add(self, other: Self) -> Self { u24(self.0 + other.0) }
+    fn add(self, other: Self) -> Self {
+        u24(self.0 + other.0)
+    }
 }
 
 impl core::ops::Sub<u24> for u24 {
     type Output = u24;
 
     #[inline]
-    fn sub(self, other: Self) -> Self { u24(self.0 - other.0) }
+    fn sub(self, other: Self) -> Self {
+        u24(self.0 - other.0)
+    }
 }
 
 impl core::ops::Mul<u24> for u24 {
     type Output = u24;
 
     #[inline]
-    fn mul(self, other: Self) -> Self { u24::from(self.0 * other.0) }
+    fn mul(self, other: Self) -> Self {
+        u24::from(self.0 * other.0)
+    }
 }
 
 impl core::ops::Div<u24> for u24 {
     type Output = u24;
 
     #[inline]
-    fn div(self, other: Self) -> Self { u24(self.0 / other.0) }
+    fn div(self, other: Self) -> Self {
+        u24(self.0 / other.0)
+    }
 }
 
 impl core::ops::Not for u24 {
     type Output = u24;
 
     #[inline]
-    fn not(self) -> Self { u24(!self.0) }
+    fn not(self) -> Self {
+        u24(!self.0)
+    }
 }
 
 impl core::ops::Rem<u24> for u24 {
     type Output = u24;
 
     #[inline]
-    fn rem(self, other: Self) -> Self { u24(self.0 % other.0) }
+    fn rem(self, other: Self) -> Self {
+        u24(self.0 % other.0)
+    }
 }
 
 impl core::ops::Shl<u24> for u24 {
     type Output = u24;
 
     #[inline]
-    fn shl(self, other: Self) -> Self { u24(self.0 << other.0) }
+    fn shl(self, other: Self) -> Self {
+        u24(self.0 << other.0)
+    }
 }
 
 impl core::ops::Shr<u24> for u24 {
     type Output = u24;
 
     #[inline]
-    fn shr(self, other: Self) -> Self { u24(self.0 >> other.0) }
+    fn shr(self, other: Self) -> Self {
+        u24(self.0 >> other.0)
+    }
 }
 
 impl core::ops::BitAnd<u24> for u24 {
     type Output = u24;
 
     #[inline]
-    fn bitand(self, other: Self) -> Self { u24(self.0 & other.0) }
+    fn bitand(self, other: Self) -> Self {
+        u24(self.0 & other.0)
+    }
 }
 
 impl core::ops::BitOr<u24> for u24 {
     type Output = u24;
 
     #[inline]
-    fn bitor(self, other: Self) -> Self { u24(self.0 | other.0) }
+    fn bitor(self, other: Self) -> Self {
+        u24(self.0 | other.0)
+    }
 }
 
 impl core::ops::BitXor<u24> for u24 {
     type Output = u24;
 
     #[inline]
-    fn bitxor(self, other: Self) -> Self { u24(self.0 ^ other.0) }
+    fn bitxor(self, other: Self) -> Self {
+        u24(self.0 ^ other.0)
+    }
 }

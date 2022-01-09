@@ -5,7 +5,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::errors::{Result, decode_error};
+use symphonia_core::errors::{decode_error, Result};
 use symphonia_core::io::ReadBytes;
 
 use crate::atoms::{Atom, AtomHeader};
@@ -53,9 +53,7 @@ impl Atom for HdlrAtom {
             b"meta" => TrackType::Metadata,
             b"subt" => TrackType::Subtitle,
             b"text" => TrackType::Text,
-            _ => {
-                return decode_error("isomp4: illegal track type")
-            }
+            _ => return decode_error("isomp4: illegal track type"),
         };
 
         // Ignore component manufacturer, flags, and flags mask.
@@ -66,12 +64,7 @@ impl Atom for HdlrAtom {
         reader.read_buf_exact(&mut buf)?;
 
         let name = String::from_utf8(buf).unwrap_or_else(|_| String::from("(err)"));
-        
-        Ok(HdlrAtom {
-            header,
-            track_type,
-            name,
-        })
-    }
 
+        Ok(HdlrAtom { header, track_type, name })
+    }
 }

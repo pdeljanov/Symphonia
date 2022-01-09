@@ -5,7 +5,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::errors::{Result, decode_error};
+use symphonia_core::errors::{decode_error, Result};
 use symphonia_core::io::ReadBytes;
 use symphonia_core::util::bits;
 
@@ -39,7 +39,7 @@ pub struct TrunAtom {
 }
 
 impl TrunAtom {
-    const SAMPLE_DURATION_PRESENT:u32 = 0x100;
+    const SAMPLE_DURATION_PRESENT: u32 = 0x100;
     const SAMPLE_SIZE_PRESENT: u32 = 0x200;
     const SAMPLE_FLAGS_PRESENT: u32 = 0x400;
     const SAMPLE_COMPOSITION_TIME_OFFSETS_PRESENT: u32 = 0x800;
@@ -101,7 +101,7 @@ impl Atom for TrunAtom {
         // tfhd or mvex atoms.
         if first_sample_flags.is_some() && (flags & TrunAtom::SAMPLE_FLAGS_PRESENT != 0) {
             return decode_error(
-                "isomp4: sample-flag-present and first-sample-flags-present flags are set"
+                "isomp4: sample-flag-present and first-sample-flags-present flags are set",
             );
         }
 
@@ -114,7 +114,6 @@ impl Atom for TrunAtom {
 
         // TODO: Apply a limit.
         for _ in 0..sample_count {
-
             if (flags & TrunAtom::SAMPLE_DURATION_PRESENT) != 0 {
                 let duration = reader.read_be_u32()?;
                 total_sample_duration += u64::from(duration);

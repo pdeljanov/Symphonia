@@ -5,7 +5,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::errors::{Result, decode_error};
+use symphonia_core::errors::{decode_error, Result};
 use symphonia_core::io::ReadBytes;
 
 use crate::atoms::{Atom, AtomHeader};
@@ -48,24 +48,22 @@ impl Atom for MvhdAtom {
         // Version 0 uses 32-bit time values, verion 1 used 64-bit values.
         match version {
             0 => {
-                mvhd.ctime     = u64::from(reader.read_be_u32()?);
-                mvhd.mtime     = u64::from(reader.read_be_u32()?);
+                mvhd.ctime = u64::from(reader.read_be_u32()?);
+                mvhd.mtime = u64::from(reader.read_be_u32()?);
                 mvhd.timescale = reader.read_be_u32()?;
                 // 0xffff_ffff is a special case.
-                mvhd.duration  = match reader.read_be_u32()? {
+                mvhd.duration = match reader.read_be_u32()? {
                     std::u32::MAX => std::u64::MAX,
-                    duration      => u64::from(duration),
+                    duration => u64::from(duration),
                 };
             }
             1 => {
-                mvhd.ctime     = reader.read_be_u64()?;
-                mvhd.mtime     = reader.read_be_u64()?;
+                mvhd.ctime = reader.read_be_u64()?;
+                mvhd.mtime = reader.read_be_u64()?;
                 mvhd.timescale = reader.read_be_u32()?;
-                mvhd.duration  = reader.read_be_u64()?;
+                mvhd.duration = reader.read_be_u64()?;
             }
-            _ => {
-                return decode_error("isomp4: invalid mvhd version")
-            }
+            _ => return decode_error("isomp4: invalid mvhd version"),
         }
 
         // Ignore the preferred playback rate.
@@ -78,5 +76,4 @@ impl Atom for MvhdAtom {
 
         Ok(mvhd)
     }
-    
 }

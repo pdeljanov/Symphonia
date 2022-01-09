@@ -29,9 +29,6 @@ impl Atom for MfhdAtom {
 
         let sequence_number = reader.read_be_u32()?;
 
-        Ok(MfhdAtom {
-            header,
-            sequence_number,
-        })
+        Ok(MfhdAtom { header, sequence_number })
     }
 }

@@ -7,8 +7,8 @@
 
 //! A RIFF INFO metadata reader.
 
-use std::collections::HashMap;
 use lazy_static::lazy_static;
+use std::collections::HashMap;
 use symphonia_core::meta::{StandardTagKey, Tag, Value};
 
 lazy_static! {

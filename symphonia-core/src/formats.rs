@@ -19,16 +19,7 @@ pub mod prelude {
 
     pub use crate::units::{Duration, TimeBase, TimeStamp};
 
-    pub use super::{
-        Cue,
-        FormatOptions,
-        FormatReader,
-        Packet,
-        SeekedTo,
-        SeekMode,
-        SeekTo,
-        Track,
-    };
+    pub use super::{Cue, FormatOptions, FormatReader, Packet, SeekMode, SeekTo, SeekedTo, Track};
 }
 
 /// `SeekTo` specifies a position to seek to.
@@ -40,14 +31,14 @@ pub enum SeekTo {
         /// If `Some`, specifies which track's timestamp should be returned after the seek. If
         /// `None`, then the default track's timestamp is returned. If the container does not have
         /// a default track, then the first track's timestamp is returned.
-        track_id: Option<u32>
+        track_id: Option<u32>,
     },
     /// Seek to a track's `TimeStamp` in that track's timebase units.
     TimeStamp {
         /// The `TimeStamp` to seek to.
         ts: TimeStamp,
         /// Specifies which track `ts` is relative to.
-        track_id: u32
+        track_id: u32,
     },
 }
 
@@ -154,11 +145,7 @@ pub struct Track {
 
 impl Track {
     pub fn new(id: u32, codec_params: CodecParameters) -> Self {
-        Track {
-            id,
-            codec_params,
-            language: None,
-        }
+        Track { id, codec_params, language: None }
     }
 }
 
@@ -273,7 +260,7 @@ impl Packet {
         trim_end: u32,
         buf: &[u8],
     ) -> Self {
-        Packet { track_id, ts,  dur, trim_start, trim_end, data: Box::from(buf) }
+        Packet { track_id, ts, dur, trim_start, trim_end, data: Box::from(buf) }
     }
 
     /// Create a new `Packet` with trimming information from a boxed slice.
@@ -390,15 +377,13 @@ pub mod util {
         /// The desired timestamp can be found within the range. The stream should be searched for
         /// the desired starting at the first `SeekPoint` up-to, but not-including, the second
         /// `SeekPoint`.
-        Range(SeekPoint, SeekPoint)
+        Range(SeekPoint, SeekPoint),
     }
 
     impl SeekIndex {
         /// Create an empty `SeekIndex`
         pub fn new() -> SeekIndex {
-            SeekIndex {
-                points: Vec::new(),
-            }
+            SeekIndex { points: Vec::new() }
         }
 
         /// Insert a `SeekPoint` into the index.
@@ -421,9 +406,8 @@ pub mod util {
                 // TODO: Use when Rust 1.52 is stable.
                 // let i = self.points.partition_point(|p| p.frame_ts < ts);
 
-                let i = self.points.iter()
-                                   .position(|p| p.frame_ts > ts)
-                                   .unwrap_or(self.points.len());
+                let i =
+                    self.points.iter().position(|p| p.frame_ts > ts).unwrap_or(self.points.len());
 
                 self.points.insert(i, seek_point);
             }
@@ -505,31 +489,27 @@ pub mod util {
         #[test]
         fn verify_seek_index_search() {
             let mut index = SeekIndex::new();
-            index.insert(50 , 0,  45);
-            index.insert(120, 0,   4);
+            index.insert(50, 0, 45);
+            index.insert(120, 0, 4);
             index.insert(320, 0, 100);
-            index.insert(421, 0,  10);
-            index.insert(500, 0,  12);
-            index.insert(600, 0,  12);
+            index.insert(421, 0, 10);
+            index.insert(500, 0, 12);
+            index.insert(600, 0, 12);
 
-            assert_eq!(index.search(25) , SeekSearchResult::Upper(SeekPoint::new(50 ,0, 45)));
-            assert_eq!(index.search(700), SeekSearchResult::Lower(SeekPoint::new(600,0, 12)));
+            assert_eq!(index.search(25), SeekSearchResult::Upper(SeekPoint::new(50, 0, 45)));
+            assert_eq!(index.search(700), SeekSearchResult::Lower(SeekPoint::new(600, 0, 12)));
             assert_eq!(
                 index.search(110),
-                SeekSearchResult::Range(SeekPoint::new(50 ,0, 45),
-                SeekPoint::new(120,0,4))
+                SeekSearchResult::Range(SeekPoint::new(50, 0, 45), SeekPoint::new(120, 0, 4))
             );
             assert_eq!(
                 index.search(340),
-                SeekSearchResult::Range(SeekPoint::new(320,0,100),
-                SeekPoint::new(421,0,10))
+                SeekSearchResult::Range(SeekPoint::new(320, 0, 100), SeekPoint::new(421, 0, 10))
             );
             assert_eq!(
                 index.search(320),
-                SeekSearchResult::Range(SeekPoint::new(320,0,100),
-                SeekPoint::new(421,0,10))
+                SeekSearchResult::Range(SeekPoint::new(320, 0, 100), SeekPoint::new(421, 0, 10))
             );
         }
     }
-
 }

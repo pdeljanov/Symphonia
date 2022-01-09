@@ -14,14 +14,14 @@
 use std::f32::consts;
 use std::fmt;
 
-use symphonia_core::errors::{decode_error, unsupported_error, Result};
-use symphonia_core::io::{ReadBitsLtr, FiniteBitStream, BitReaderLtr};
-use symphonia_core::io::vlc::{Codebook, Entry16x16};
-use symphonia_core::audio::{AudioBuffer, AudioBufferRef, AsAudioBufferRef, Signal, SignalSpec};
-use symphonia_core::codecs::{CODEC_TYPE_AAC, CodecParameters, CodecDescriptor};
+use symphonia_core::audio::{AsAudioBufferRef, AudioBuffer, AudioBufferRef, Signal, SignalSpec};
+use symphonia_core::codecs::{CodecDescriptor, CodecParameters, CODEC_TYPE_AAC};
 use symphonia_core::codecs::{Decoder, DecoderOptions, FinalizeResult};
 use symphonia_core::dsp::mdct::Imdct;
+use symphonia_core::errors::{decode_error, unsupported_error, Result};
 use symphonia_core::formats::Packet;
+use symphonia_core::io::vlc::{Codebook, Entry16x16};
+use symphonia_core::io::{BitReaderLtr, FiniteBitStream, ReadBitsLtr};
 use symphonia_core::support_codec;
 use symphonia_core::units::Duration;
 
@@ -51,7 +51,6 @@ lazy_static! {
         pow43
     };
 }
-
 
 impl fmt::Display for M4AType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -91,7 +90,8 @@ impl M4AInfo {
 
         if otypeidx >= M4A_TYPES.len() {
             Ok(M4AType::Unknown)
-        } else {
+        }
+        else {
             Ok(M4A_TYPES[otypeidx])
         }
     }
@@ -487,12 +487,7 @@ impl PulseData {
             pulse_offset[i] = bs.read_bits_leq32(5)? as u8;
             pulse_amp[i] = bs.read_bits_leq32(4)? as u8;
         }
-        Ok(Some(Self {
-            number_pulse,
-            pulse_start_sfb,
-            pulse_offset,
-            pulse_amp,
-        }))
+        Ok(Some(Self { number_pulse, pulse_start_sfb, pulse_offset, pulse_amp }))
     }
 }
 
@@ -575,7 +570,6 @@ impl TNSCoeffs {
 
         Ok(())
     }
-
 }
 
 #[derive(Clone, Copy)]
@@ -609,11 +603,7 @@ impl TNSData {
                 coeffs[w][filt].read(bs, long_win, coef_res[w], max_order)?;
             }
         }
-        Ok(Some(Self {
-            n_filt,
-            coef_res,
-            coeffs,
-        }))
+        Ok(Some(Self { n_filt, coef_res, coeffs }))
     }
 }
 
@@ -704,10 +694,7 @@ impl Ics {
         self.delay = [0.0; 1024];
     }
 
-    fn decode_section_data<B: ReadBitsLtr>(
-        &mut self,
-        bs: &mut B
-    ) -> Result<()> {
+    fn decode_section_data<B: ReadBitsLtr>(&mut self, bs: &mut B) -> Result<()> {
         let sect_bits = if self.info.long_win { 5 } else { 3 };
         let sect_esc_val = (1 << sect_bits) - 1;
 
@@ -778,7 +765,6 @@ impl Ics {
 
         for g in 0..self.info.window_groups {
             for sfb in 0..self.info.max_sfb {
-
                 self.scales[g][sfb] = if self.is_zero(g, sfb) {
                     0.0
                 }
@@ -813,7 +799,6 @@ impl Ics {
 
                     get_scale(scf_normal - 100)
                 }
-
             }
         }
         Ok(())
@@ -926,7 +911,7 @@ impl Ics {
         &mut self,
         bs: &mut B,
         m4atype: M4AType,
-        common_window: bool
+        common_window: bool,
     ) -> Result<()> {
         self.global_gain = bs.read_bits_leq32(8)? as u8;
 
@@ -971,7 +956,6 @@ impl Ics {
         self.place_pulses();
 
         if let Some(ref tns_data) = self.tns_data {
-
             let tns_max_bands = (if self.info.long_win {
                 TNS_MAX_LONG_BANDS[srate_idx]
             }
@@ -1096,7 +1080,6 @@ fn decode_quads<B: ReadBitsLtr>(
     scale: f32,
     dst: &mut [f32],
 ) -> Result<()> {
-
     let pow43_table: &[f32; 8192] = &POW43_TABLE;
 
     for out in dst.chunks_mut(4) {
@@ -1138,7 +1121,6 @@ fn decode_pairs<B: ReadBitsLtr>(
     scale: f32,
     dst: &mut [f32],
 ) -> Result<()> {
-
     let pow43_table: &[f32; 8192] = &POW43_TABLE;
 
     for out in dst.chunks_mut(2) {
@@ -1252,7 +1234,7 @@ impl ChannelPair {
                     }
                 }
                 3 => return decode_error("aac: invalid mid-side mask"),
-                _ => unreachable!()
+                _ => unreachable!(),
             }
 
             self.ics1.info = self.ics0.info;
@@ -1265,7 +1247,6 @@ impl ChannelPair {
         if common_window && self.ms_mask_present != 0 {
             let mut g = 0;
             for w in 0..self.ics0.info.num_windows {
-
                 if w > 0 && !self.ics0.info.scale_factor_grouping[w - 1] {
                     g += 1;
                 }
@@ -1282,7 +1263,7 @@ impl ChannelPair {
 
                         let scale = match dir {
                             true => -self.ics1.scales[g][sfb],
-                            _    =>  self.ics1.scales[g][sfb],
+                            _ => self.ics1.scales[g][sfb],
                         };
 
                         let left = &self.ics0.coeffs[start..end];
@@ -1347,20 +1328,8 @@ impl Dsp {
     fn new() -> Self {
         let mut kbd_long_win: [f32; 1024] = [0.0; 1024];
         let mut kbd_short_win: [f32; 128] = [0.0; 128];
-        generate_window(
-            WindowType::KaiserBessel(4.0),
-            1.0,
-            1024,
-            true,
-            &mut kbd_long_win,
-        );
-        generate_window(
-            WindowType::KaiserBessel(6.0),
-            1.0,
-            128,
-            true,
-            &mut kbd_short_win,
-        );
+        generate_window(WindowType::KaiserBessel(4.0), 1.0, 1024, true, &mut kbd_long_win);
+        generate_window(WindowType::KaiserBessel(6.0), 1.0, 128, true, &mut kbd_short_win);
         let mut sine_long_win: [f32; 1024] = [0.0; 1024];
         let mut sine_short_win: [f32; 128] = [0.0; 128];
         generate_window(WindowType::Sine, 1.0, 1024, true, &mut sine_long_win);
@@ -1388,14 +1357,13 @@ impl Dsp {
         prev_window_shape: bool,
         dst: &mut [f32],
     ) {
-
         let (long_win, short_win) = match window_shape {
-            true  => (&self.kbd_long_win , &self.kbd_short_win ),
+            true => (&self.kbd_long_win, &self.kbd_short_win),
             false => (&self.sine_long_win, &self.sine_short_win),
         };
 
         let (prev_long_win, prev_short_win) = match prev_window_shape {
-            true  => (&self.kbd_long_win , &self.kbd_short_win ),
+            true => (&self.kbd_long_win, &self.kbd_short_win),
             false => (&self.sine_long_win, &self.sine_short_win),
         };
 
@@ -1416,13 +1384,13 @@ impl Dsp {
             for (w, src) in self.tmp.chunks(256).enumerate() {
                 if w > 0 {
                     for i in 0..128 {
-                        self.ew_buf[w * 128 + i +   0] += src[i +   0] * short_win[i];
+                        self.ew_buf[w * 128 + i + 0] += src[i + 0] * short_win[i];
                         self.ew_buf[w * 128 + i + 128] += src[i + 128] * short_win[127 - i];
                     }
                 }
                 else {
                     for i in 0..128 {
-                        self.ew_buf[i +   0] = src[i +   0] * prev_short_win[i];
+                        self.ew_buf[i + 0] = src[i + 0] * prev_short_win[i];
                         self.ew_buf[i + 128] = src[i + 128] * short_win[127 - i];
                     }
                 }
@@ -1473,7 +1441,8 @@ impl Dsp {
                 }
             }
             LONG_START_SEQUENCE => {
-                delay[..SHORT_WIN_POINT0].copy_from_slice(&self.tmp[1024..(SHORT_WIN_POINT0 + 1024)]);
+                delay[..SHORT_WIN_POINT0]
+                    .copy_from_slice(&self.tmp[1024..(SHORT_WIN_POINT0 + 1024)]);
 
                 for i in SHORT_WIN_POINT0..SHORT_WIN_POINT1 {
                     delay[i] = self.tmp[i + 1024] * short_win[127 - (i - SHORT_WIN_POINT0)];
@@ -1502,18 +1471,15 @@ pub struct AacDecoder {
 }
 
 impl AacDecoder {
-
     fn set_pair(&mut self, pair_no: usize, channel: usize, pair: bool) -> Result<()> {
         if self.pairs.len() <= pair_no {
-            self.pairs
-                .push(ChannelPair::new(pair, channel, self.sbinfo));
+            self.pairs.push(ChannelPair::new(pair, channel, self.sbinfo));
         }
         else {
             validate!(self.pairs[pair_no].channel == channel);
             validate!(self.pairs[pair_no].is_pair == pair);
         }
-        validate!(if pair { channel + 1 }
-            else { channel } < self.m4ainfo.channels);
+        validate!(if pair { channel + 1 } else { channel } < self.m4ainfo.channels);
         Ok(())
     }
 
@@ -1612,7 +1578,7 @@ impl AacDecoder {
         // Choose decode step based on the object type.
         match self.m4ainfo.otype {
             M4AType::Lc => self.decode_ga(&mut bs)?,
-            _           => return unsupported_error("aac: object type"),
+            _ => return unsupported_error("aac: object type"),
         }
 
         Ok(())
@@ -1620,7 +1586,6 @@ impl AacDecoder {
 }
 
 impl Decoder for AacDecoder {
-
     fn try_new(params: &CodecParameters, _: &DecoderOptions) -> Result<Self> {
         // This decoder only supports AAC.
         if params.codec != CODEC_TYPE_AAC {
@@ -1653,10 +1618,7 @@ impl Decoder for AacDecoder {
             return unsupported_error("aac: aac too complex");
         }
 
-        let spec = SignalSpec::new(
-            m4ainfo.srate,
-            map_channels(m4ainfo.channels as u32).unwrap()
-        );
+        let spec = SignalSpec::new(m4ainfo.srate, map_channels(m4ainfo.channels as u32).unwrap());
 
         let duration = m4ainfo.samples as Duration;
         let srate = m4ainfo.srate;
@@ -1689,7 +1651,8 @@ impl Decoder for AacDecoder {
         if let Err(e) = self.decode_inner(packet) {
             self.buf.clear();
             Err(e)
-        } else {
+        }
+        else {
             Ok(self.buf.as_audio_buffer_ref())
         }
     }
@@ -1703,9 +1666,8 @@ impl Decoder for AacDecoder {
     }
 }
 
-const AAC_UNSIGNED_CODEBOOK: [bool; 11] = [
-    false, false, true, true, false, false, true, true, true, true, true,
-];
+const AAC_UNSIGNED_CODEBOOK: [bool; 11] =
+    [false, false, true, true, false, false, true, true, true, true, true];
 
 const AAC_CODEBOOK_MODULO: [u16; 7] = [9, 9, 8, 8, 13, 13, 17];
 
@@ -1814,9 +1776,8 @@ const SWB_OFFSET_8K_LONG: [usize; 40 + 1] = [
     1024,
 ];
 
-const SWB_OFFSET_8K_SHORT: [usize; 15 + 1] = [
-    0, 4, 8, 12, 16, 20, 24, 28, 36, 44, 52, 60, 72, 88, 108, 128,
-];
+const SWB_OFFSET_8K_SHORT: [usize; 15 + 1] =
+    [0, 4, 8, 12, 16, 20, 24, 28, 36, 44, 52, 60, 72, 88, 108, 128];
 
 const SWB_OFFSET_16K_LONG: [usize; 43 + 1] = [
     0, 8, 16, 24, 32, 40, 48, 56, 64, 72, 80, 88, 100, 112, 124, 136, 148, 160, 172, 184, 196, 212,
@@ -1824,9 +1785,8 @@ const SWB_OFFSET_16K_LONG: [usize; 43 + 1] = [
     896, 960, 1024,
 ];
 
-const SWB_OFFSET_16K_SHORT: [usize; 15 + 1] = [
-    0, 4, 8, 12, 16, 20, 24, 28, 32, 40, 48, 60, 72, 88, 108, 128,
-];
+const SWB_OFFSET_16K_SHORT: [usize; 15 + 1] =
+    [0, 4, 8, 12, 16, 20, 24, 28, 32, 40, 48, 60, 72, 88, 108, 128];
 
 const SWB_OFFSET_24K_LONG: [usize; 47 + 1] = [
     0, 4, 8, 12, 16, 20, 24, 28, 32, 36, 40, 44, 52, 60, 68, 76, 84, 92, 100, 108, 116, 124, 136,
@@ -1834,9 +1794,8 @@ const SWB_OFFSET_24K_LONG: [usize; 47 + 1] = [
     704, 768, 832, 896, 960, 1024,
 ];
 
-const SWB_OFFSET_24K_SHORT: [usize; 15 + 1] = [
-    0, 4, 8, 12, 16, 20, 24, 28, 36, 44, 52, 64, 76, 92, 108, 128,
-];
+const SWB_OFFSET_24K_SHORT: [usize; 15 + 1] =
+    [0, 4, 8, 12, 16, 20, 24, 28, 36, 44, 52, 64, 76, 92, 108, 128];
 
 const SWB_OFFSET_64K_LONG: [usize; 47 + 1] = [
     0, 4, 8, 12, 16, 20, 24, 28, 32, 36, 40, 44, 48, 52, 56, 64, 72, 80, 88, 100, 112, 124, 140,

@@ -5,7 +5,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::errors::{Result, decode_error};
+use symphonia_core::errors::{decode_error, Result};
 use symphonia_core::io::ReadBytes;
 
 use crate::atoms::{Atom, AtomHeader, AtomIterator, AtomType, TfhdAtom, TrunAtom};
@@ -49,7 +49,7 @@ impl Atom for TrafAtom {
 
                     truns.push(trun);
                 }
-                _ => ()
+                _ => (),
             }
         }
 
@@ -58,11 +58,6 @@ impl Atom for TrafAtom {
             return decode_error("isomp4: missing tfhd atom");
         }
 
-        Ok(TrafAtom {
-            header,
-            tfhd: tfhd.unwrap(),
-            truns,
-            total_sample_count,
-        })
+        Ok(TrafAtom { header, tfhd: tfhd.unwrap(), truns, total_sample_count })
     }
 }

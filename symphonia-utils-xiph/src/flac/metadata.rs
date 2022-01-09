@@ -9,9 +9,9 @@ use std::ascii;
 use std::num::NonZeroU32;
 
 use symphonia_core::audio::Channels;
-use symphonia_core::errors::{Result, decode_error};
-use symphonia_core::formats::{Cue, CuePoint};
+use symphonia_core::errors::{decode_error, Result};
 use symphonia_core::formats::util::SeekIndex;
+use symphonia_core::formats::{Cue, CuePoint};
 use symphonia_core::io::*;
 use symphonia_core::meta::{ColorMode, MetadataBuilder, Size, StandardTagKey, Tag, Value};
 use symphonia_core::meta::{VendorData, Visual};
@@ -27,38 +27,29 @@ pub enum MetadataBlockType {
     VorbisComment,
     Cuesheet,
     Picture,
-    Unknown(u8)
+    Unknown(u8),
 }
 
 fn flac_channels_to_channels(channels: u32) -> Channels {
     debug_assert!(channels > 0 && channels < 9);
 
     match channels {
-        1 => {
-            Channels::FRONT_LEFT
-        },
-        2 => {
-            Channels::FRONT_LEFT
-                | Channels::FRONT_RIGHT
-        },
-        3 => {
-            Channels::FRONT_LEFT
-                | Channels::FRONT_RIGHT
-                | Channels::FRONT_CENTRE
-        },
+        1 => Channels::FRONT_LEFT,
+        2 => Channels::FRONT_LEFT | Channels::FRONT_RIGHT,
+        3 => Channels::FRONT_LEFT | Channels::FRONT_RIGHT | Channels::FRONT_CENTRE,
         4 => {
             Channels::FRONT_LEFT
                 | Channels::FRONT_RIGHT
                 | Channels::REAR_LEFT
                 | Channels::REAR_RIGHT
-        },
+        }
         5 => {
             Channels::FRONT_LEFT
                 | Channels::FRONT_RIGHT
                 | Channels::FRONT_CENTRE
                 | Channels::REAR_LEFT
                 | Channels::REAR_RIGHT
-        },
+        }
         6 => {
             Channels::FRONT_LEFT
                 | Channels::FRONT_RIGHT
@@ -66,7 +57,7 @@ fn flac_channels_to_channels(channels: u32) -> Channels {
                 | Channels::LFE1
                 | Channels::REAR_LEFT
                 | Channels::REAR_RIGHT
-        },
+        }
         7 => {
             Channels::FRONT_LEFT
                 | Channels::FRONT_RIGHT
@@ -75,7 +66,7 @@ fn flac_channels_to_channels(channels: u32) -> Channels {
                 | Channels::REAR_CENTRE
                 | Channels::REAR_LEFT
                 | Channels::REAR_RIGHT
-        },
+        }
         8 => {
             Channels::FRONT_LEFT
                 | Channels::FRONT_RIGHT
@@ -85,8 +76,8 @@ fn flac_channels_to_channels(channels: u32) -> Channels {
                 | Channels::REAR_RIGHT
                 | Channels::SIDE_LEFT
                 | Channels::SIDE_RIGHT
-        },
-        _ => unreachable!()
+        }
+        _ => unreachable!(),
     }
 }
 
@@ -113,7 +104,7 @@ pub struct StreamInfo {
 
 impl StreamInfo {
     /// Try to read a stream information block.
-    pub fn read<B : ReadBytes>(reader: &mut B)  -> Result<StreamInfo> {
+    pub fn read<B: ReadBytes>(reader: &mut B) -> Result<StreamInfo> {
         let mut info = StreamInfo {
             block_len_min: 0,
             block_len_max: 0,
@@ -131,13 +122,15 @@ impl StreamInfo {
         info.block_len_max = reader.read_be_u16()?;
 
         // Validate the block length bounds are in the range [16, 65535] samples.
-        if info.block_len_min < 16 || info.block_len_max < 16{
+        if info.block_len_min < 16 || info.block_len_max < 16 {
             return decode_error("flac: minimum block length is 16 samples");
         }
 
         // Validate the maximum block size is greater than or equal to the minimum block size.
         if info.block_len_max < info.block_len_min {
-            return decode_error("flac: maximum block length is less than the minimum block length");
+            return decode_error(
+                "flac: maximum block length is less than the minimum block length",
+            );
         }
 
         // Read the frame byte length bounds.
@@ -151,7 +144,9 @@ impl StreamInfo {
             && info.frame_byte_len_max > 0
             && info.frame_byte_len_max < info.frame_byte_len_min
         {
-            return decode_error("flac: maximum frame length is less than the minimum frame length");
+            return decode_error(
+                "flac: maximum frame length is less than the minimum frame length",
+            );
         }
 
         let mut br = BitStreamLtr::new(reader);
@@ -176,14 +171,14 @@ impl StreamInfo {
         info.bits_per_sample = br.read_bits_leq32(5)? + 1;
 
         if info.bits_per_sample < 4 || info.bits_per_sample > 32 {
-            return decode_error("flac: stream bits per sample are out of bounds")
+            return decode_error("flac: stream bits per sample are out of bounds");
         }
 
         // Read the total number of samples. All values are valid. A value of 0 indiciates a stream
         // of unknown length.
         info.n_samples = match br.read_bits_leq64(36)? {
             0 => None,
-            samples => Some(samples)
+            samples => Some(samples),
         };
 
         // Read the decoded audio data MD5.
@@ -201,7 +196,7 @@ impl StreamInfo {
 }
 
 /// Try to read a comment block.
-pub fn read_comment_block<B : ReadBytes>(
+pub fn read_comment_block<B: ReadBytes>(
     reader: &mut B,
     metadata: &mut MetadataBuilder,
 ) -> Result<()> {
@@ -209,10 +204,10 @@ pub fn read_comment_block<B : ReadBytes>(
 }
 
 /// Try to read a seek table block.
-pub fn read_seek_table_block<B : ReadBytes>(
+pub fn read_seek_table_block<B: ReadBytes>(
     reader: &mut B,
     block_length: u32,
-    table: &mut SeekIndex
+    table: &mut SeekIndex,
 ) -> Result<()> {
     // The number of seek table entries is always the block length divided by the length of a single
     // entry, 18 bytes.
@@ -242,9 +237,9 @@ fn printable_ascii_to_string(bytes: &[u8]) -> Option<String> {
 
     for c in bytes {
         match c {
-            0x00        => break,
+            0x00 => break,
             0x20..=0x7e => result.push(char::from(*c)),
-            _           => return None,
+            _ => return None,
         }
     }
 
@@ -302,7 +297,7 @@ pub fn read_cuesheet_block<B: ReadBytes>(reader: &mut B, cues: &mut Vec<Cue>) ->
 fn read_cuesheet_track<B: ReadBytes>(
     reader: &mut B,
     is_cdda: bool,
-    cues: &mut Vec<Cue>
+    cues: &mut Vec<Cue>,
 ) -> Result<()> {
     let n_offset_samples = reader.read_be_u64()?;
 
@@ -310,7 +305,9 @@ fn read_cuesheet_track<B: ReadBytes>(
     // INDEX 01) on the CD. Therefore, the offset must be a multiple of 588 samples
     // (588 samples = 44100 samples/sec * 1/75th of a sec).
     if is_cdda && n_offset_samples % 588 != 0 {
-        return decode_error("flac: cuesheet track sample offset is not a multiple of 588 for CD-DA");
+        return decode_error(
+            "flac: cuesheet track sample offset is not a multiple of 588 for CD-DA",
+        );
     }
 
     let number = u32::from(reader.read_u8()?);
@@ -324,7 +321,9 @@ fn read_cuesheet_track<B: ReadBytes>(
     // For CD-DA cuesheets, only track numbers 1-99 are allowed for regular tracks and 170 for
     // lead-out.
     if is_cdda && number > 99 && number != 170 {
-        return decode_error("flac: cuesheet track numbers greater than 99 are not allowed for CD-DA");
+        return decode_error(
+            "flac: cuesheet track numbers greater than 99 are not allowed for CD-DA",
+        );
     }
 
     let mut isrc_buf = vec![0u8; 12];
@@ -361,12 +360,8 @@ fn read_cuesheet_track<B: ReadBytes>(
         return decode_error("flac: cuesheet track indicies cannot exceed 100 for CD-DA");
     }
 
-    let mut cue = Cue {
-        index: number,
-        start_ts: n_offset_samples,
-        tags: Vec::new(),
-        points: Vec::new(),
-    };
+    let mut cue =
+        Cue { index: number, start_ts: n_offset_samples, tags: Vec::new(), points: Vec::new() };
 
     // Push the ISRC as a tag.
     cue.tags.push(Tag::new(Some(StandardTagKey::IdentIsrc), "ISRC", Value::from(isrc)));
@@ -388,7 +383,7 @@ fn read_cuesheet_track_index<B: ReadBytes>(reader: &mut B, is_cdda: bool) -> Res
     // (588 samples = 44100 samples/sec * 1/75th of a sec).
     if is_cdda && n_offset_samples % 588 != 0 {
         return decode_error(
-            "flac: cuesheet track index point sample offset is not a multiple of 588 for CD-DA"
+            "flac: cuesheet track index point sample offset is not a multiple of 588 for CD-DA",
         );
     }
 
@@ -399,14 +394,11 @@ fn read_cuesheet_track_index<B: ReadBytes>(reader: &mut B, is_cdda: bool) -> Res
     // TODO: Should be 0 or 1 for the first index for CD-DA.
     let _idx_point = ((idx_point_enc & 0xff00_0000) >> 24) as u8;
 
-    Ok(CuePoint {
-        start_offset_ts: n_offset_samples,
-        tags: Vec::new(),
-    })
+    Ok(CuePoint { start_offset_ts: n_offset_samples, tags: Vec::new() })
 }
 
 /// Try to read a vendor-specific application block.
-pub fn read_application_block<B : ReadBytes>(
+pub fn read_application_block<B: ReadBytes>(
     reader: &mut B,
     block_length: u32,
 ) -> Result<VendorData> {
@@ -415,19 +407,16 @@ pub fn read_application_block<B : ReadBytes>(
     // string.
     let ident_buf = reader.read_quad_bytes()?;
     let ident = String::from_utf8(
-        ident_buf.as_ref()
-                 .iter()
-                 .map(|b| ascii::escape_default(*b))
-                 .flatten()
-                 .collect()
-        ).unwrap();
+        ident_buf.as_ref().iter().map(|b| ascii::escape_default(*b)).flatten().collect(),
+    )
+    .unwrap();
 
     let data = reader.read_boxed_slice_exact(block_length as usize - 4)?;
     Ok(VendorData { ident, data })
 }
 
 /// Try to read a picture block.
-pub fn read_picture_block<B : ReadBytes>(
+pub fn read_picture_block<B: ReadBytes>(
     reader: &mut B,
     metadata: &mut MetadataBuilder,
 ) -> Result<()> {
@@ -463,12 +452,7 @@ pub fn read_picture_block<B : ReadBytes>(
     let height = reader.read_be_u32()?;
 
     // If either the width or height is 0, then the size is invalid.
-    let dimensions = if width > 0 && height > 0 {
-        Some(Size { width, height })
-    }
-    else {
-        None
-    };
+    let dimensions = if width > 0 && height > 0 { Some(Size { width, height }) } else { None };
 
     // Read bits-per-pixel of the visual.
     let bits_per_pixel = NonZeroU32::new(reader.read_be_u32()?);
@@ -502,12 +486,12 @@ pub fn read_picture_block<B : ReadBytes>(
 pub struct MetadataBlockHeader {
     pub is_last: bool,
     pub block_type: MetadataBlockType,
-    pub block_len: u32
+    pub block_len: u32,
 }
 
 impl MetadataBlockHeader {
     /// Read a metadata block header.
-    pub fn read<B : ReadBytes>(reader: &mut B) -> Result<MetadataBlockHeader> {
+    pub fn read<B: ReadBytes>(reader: &mut B) -> Result<MetadataBlockHeader> {
         let header_enc = reader.read_u8()?;
 
         // First bit of the header indicates if this is the last metadata block.
@@ -529,11 +513,6 @@ impl MetadataBlockHeader {
 
         let block_len = reader.read_be_u24()?;
 
-        Ok(MetadataBlockHeader {
-            is_last,
-            block_type,
-            block_len,
-        })
+        Ok(MetadataBlockHeader { is_last, block_type, block_len })
     }
 }
-

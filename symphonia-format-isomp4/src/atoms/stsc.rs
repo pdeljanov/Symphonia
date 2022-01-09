@@ -5,7 +5,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::errors::{Result, decode_error};
+use symphonia_core::errors::{decode_error, Result};
 use symphonia_core::io::ReadBytes;
 
 use crate::atoms::{Atom, AtomHeader};
@@ -28,7 +28,6 @@ pub struct StscAtom {
 }
 
 impl StscAtom {
-
     /// Finds the `StscEntry` for the sample indicated by `sample_num`. Note, `sample_num` is indexed
     /// relative to the `StscAtom`. Complexity is O(log2 N).
     pub fn find_entry_for_sample(&self, sample_num: u32) -> Option<&StscEntry> {
@@ -42,7 +41,8 @@ impl StscAtom {
 
             if entry.first_sample < sample_num {
                 left = mid + 1;
-            } else {
+            }
+            else {
                 right = mid;
             }
         }
@@ -53,7 +53,6 @@ impl StscAtom {
         // get with an index of 0, and safely returning None.
         self.entries.get(left - 1)
     }
-
 }
 
 impl Atom for StscAtom {
@@ -93,7 +92,8 @@ impl Atom for StscAtom {
 
                 let n = entries[i + 1].first_chunk - entries[i].first_chunk;
 
-                entries[i + 1].first_sample = entries[i].first_sample + (n * entries[i].samples_per_chunk);
+                entries[i + 1].first_sample =
+                    entries[i].first_sample + (n * entries[i].samples_per_chunk);
             }
 
             // Validate that samples per chunk is > 0. Could the entry be ignored?
@@ -102,9 +102,6 @@ impl Atom for StscAtom {
             }
         }
 
-        Ok(StscAtom {
-            header,
-            entries
-        })
+        Ok(StscAtom { header, entries })
     }
 }

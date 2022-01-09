@@ -5,7 +5,6 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-
 /// An unsigned 16.16-bit fixed point value.
 #[derive(Copy, Clone, Debug, Default)]
 pub struct FpU16(u32);
@@ -77,4 +76,3 @@ impl From<FpI8> for f32 {
         f32::from(fp.0) / f32::from(1u16 << 8)
     }
 }
-

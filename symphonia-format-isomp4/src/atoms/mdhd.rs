@@ -5,7 +5,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::errors::{Result, decode_error};
+use symphonia_core::errors::{decode_error, Result};
 use symphonia_core::io::ReadBytes;
 
 use crate::atoms::{Atom, AtomHeader};
@@ -18,10 +18,10 @@ fn parse_language(code: u16) -> String {
     else {
         let chars = [
             ((code >> 10) & 0x1f) as u8 + 0x60,
-            ((code >>  5) & 0x1f) as u8 + 0x60,
-            ((code >>  0) & 0x1f) as u8 + 0x60,
+            ((code >> 5) & 0x1f) as u8 + 0x60,
+            ((code >> 0) & 0x1f) as u8 + 0x60,
         ];
-    
+
         String::from_utf8_lossy(&chars).to_string()
     }
 }
@@ -62,20 +62,20 @@ impl Atom for MdhdAtom {
 
         match version {
             0 => {
-                mdhd.ctime     = u64::from(reader.read_be_u32()?);
-                mdhd.mtime     = u64::from(reader.read_be_u32()?);
+                mdhd.ctime = u64::from(reader.read_be_u32()?);
+                mdhd.mtime = u64::from(reader.read_be_u32()?);
                 mdhd.timescale = reader.read_be_u32()?;
                 // 0xffff_ffff is a special case.
-                mdhd.duration  = match reader.read_be_u32()? {
+                mdhd.duration = match reader.read_be_u32()? {
                     std::u32::MAX => std::u64::MAX,
-                    duration      => u64::from(duration),
+                    duration => u64::from(duration),
                 };
             }
             1 => {
-                mdhd.ctime     = reader.read_be_u64()?;
-                mdhd.mtime     = reader.read_be_u64()?;
+                mdhd.ctime = reader.read_be_u64()?;
+                mdhd.mtime = reader.read_be_u64()?;
                 mdhd.timescale = reader.read_be_u32()?;
-                mdhd.duration  = reader.read_be_u64()?;
+                mdhd.duration = reader.read_be_u64()?;
             }
             _ => {
                 return decode_error("isomp4: invalid mdhd version");
@@ -89,5 +89,4 @@ impl Atom for MdhdAtom {
 
         Ok(mdhd)
     }
-
 }

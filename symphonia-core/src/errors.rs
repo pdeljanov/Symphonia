@@ -60,19 +60,19 @@ impl fmt::Display for Error {
             Error::IoError(ref err) => err.fmt(f),
             Error::DecodeError(msg) => {
                 write!(f, "malformed stream: {}", msg)
-            },
+            }
             Error::SeekError(ref kind) => {
                 write!(f, "seek error: {}", kind.as_str())
             }
             Error::Unsupported(feature) => {
                 write!(f, "unsupported feature: {}", feature)
-            },
+            }
             Error::LimitError(constraint) => {
                 write!(f, "limit reached: {}", constraint)
-            },
+            }
             Error::ResetRequired => {
                 write!(f, "decoder needs to be reset")
-            },
+            }
         }
     }
 }

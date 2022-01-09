@@ -78,7 +78,7 @@ impl DspChannel {
         lap_state: &Option<LappingState>,
         windows: &Windows,
         imdct: &mut Imdct,
-        buf: &mut [f32]
+        buf: &mut [f32],
     ) {
         // Block size of the current block.
         let bs = if block_flag { self.bs1 } else { self.bs0 };
@@ -114,7 +114,8 @@ impl DspChannel {
                     &mut buf[start..],
                     &self.overlap[start..end],
                     &self.imdct[..self.bs0 / 2],
-                    win);
+                    win,
+                );
             }
             else {
                 // The previous block is short and the current block is long.
@@ -126,7 +127,7 @@ impl DspChannel {
                     &mut buf[..self.bs0 / 2],
                     &self.overlap[..self.bs0 / 2],
                     &self.imdct[start..end],
-                    win
+                    win,
                 );
 
                 // Unity samples (no overlap).

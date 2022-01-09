@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Seek, SeekFrom};
 
 use symphonia_core::errors::Result;
-use symphonia_core::io::{MediaSourceStream, ReadBytes, SeekBuffered, ScopedStream};
+use symphonia_core::io::{MediaSourceStream, ReadBytes, ScopedStream, SeekBuffered};
 
 use super::logical::{InspectState, LogicalStream};
 use super::page::*;
@@ -147,7 +147,6 @@ fn scan_stream_end(
     streams: &mut BTreeMap<u32, LogicalStream>,
     byte_range_end: u64,
 ) -> Option<u64> {
-
     let scoped_len = byte_range_end - reader.pos();
 
     let mut scoped_reader = ScopedStream::new(reader, scoped_len);

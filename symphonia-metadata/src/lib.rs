@@ -7,7 +7,6 @@
 
 #![warn(rust_2018_idioms)]
 #![forbid(unsafe_code)]
-
 // The following lints are allowed in all Symphonia crates. Please see clippy.toml for their
 // justification.
 #![allow(clippy::comparison_chain)]

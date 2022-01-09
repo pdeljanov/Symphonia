@@ -5,10 +5,10 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::audio::{AudioBuffer, AudioBufferRef, AsAudioBufferRef, Signal};
-use symphonia_core::codecs::{CODEC_TYPE_MP3, CodecParameters, CodecDescriptor};
+use symphonia_core::audio::{AsAudioBufferRef, AudioBuffer, AudioBufferRef, Signal};
+use symphonia_core::codecs::{CodecDescriptor, CodecParameters, CODEC_TYPE_MP3};
 use symphonia_core::codecs::{Decoder, DecoderOptions, FinalizeResult};
-use symphonia_core::errors::{Result, decode_error, unsupported_error};
+use symphonia_core::errors::{decode_error, unsupported_error, Result};
 use symphonia_core::formats::Packet;
 use symphonia_core::support_codec;
 
@@ -41,7 +41,7 @@ impl Mp3Decoder {
             MpegLayer::Layer3 if self.params.codec == CODEC_TYPE_MP3 => {
                 // Layer 3
                 layer3::decode_frame(&mut reader, &header, &mut self.state, &mut self.buf)?;
-            },
+            }
             _ => return decode_error("mp3: invalid mpeg audio layer"),
         }
 
@@ -52,18 +52,13 @@ impl Mp3Decoder {
 }
 
 impl Decoder for Mp3Decoder {
-
     fn try_new(params: &CodecParameters, _: &DecoderOptions) -> Result<Self> {
         // This decoder only supports MP3.
         if params.codec != CODEC_TYPE_MP3 {
             return unsupported_error("mp3: invalid codec type");
         }
 
-        Ok(Mp3Decoder {
-            params: params.clone(),
-            state: State::new(),
-            buf: AudioBuffer::unused(),
-        })
+        Ok(Mp3Decoder { params: params.clone(), state: State::new(), buf: AudioBuffer::unused() })
     }
 
     fn supported_codecs() -> &'static [CodecDescriptor] {
@@ -87,7 +82,8 @@ impl Decoder for Mp3Decoder {
         if let Err(e) = self.decode_inner(packet) {
             self.buf.clear();
             Err(e)
-        } else {
+        }
+        else {
             Ok(self.buf.as_audio_buffer_ref())
         }
     }

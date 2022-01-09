@@ -10,7 +10,7 @@ use symphonia_core::support_format;
 
 use symphonia_core::audio::Channels;
 use symphonia_core::codecs::{CodecParameters, CODEC_TYPE_AAC};
-use symphonia_core::errors::{Result, SeekErrorKind, decode_error, seek_error};
+use symphonia_core::errors::{decode_error, seek_error, Result, SeekErrorKind};
 use symphonia_core::formats::prelude::*;
 use symphonia_core::io::*;
 use symphonia_core::meta::{Metadata, MetadataLog};
@@ -18,7 +18,7 @@ use symphonia_core::probe::{Descriptor, Instantiate, QueryDescriptor};
 
 use std::io::{Seek, SeekFrom};
 
-use super::common::{AAC_SAMPLE_RATES, map_channels, M4AType, M4A_TYPES};
+use super::common::{map_channels, M4AType, AAC_SAMPLE_RATES, M4A_TYPES};
 
 use log::debug;
 
@@ -38,16 +38,13 @@ pub struct AdtsReader {
 
 impl QueryDescriptor for AdtsReader {
     fn query() -> &'static [Descriptor] {
-        &[
-            support_format!(
-                "aac",
-                "Audio Data Transport Stream (native AAC)",
-                &[ "aac" ],
-                &[ "audio/aac" ],
-                &[
-                    &[ 0xff, 0xf1 ]
-                ]),
-        ]
+        &[support_format!(
+            "aac",
+            "Audio Data Transport Stream (native AAC)",
+            &["aac"],
+            &["audio/aac"],
+            &[&[0xff, 0xf1]]
+        )]
     }
 
     fn score(_context: &[u8]) -> u8 {
@@ -100,7 +97,7 @@ impl AdtsHeader {
 
         // Channel configuration
         let channels = match bs.read_bits_leq32(3)? {
-            0   => None,
+            0 => None,
             idx => map_channels(idx),
         };
 
@@ -122,25 +119,18 @@ impl AdtsHeader {
             return unsupported_error("adts: only 1 aac frame per adts packet is supported");
         }
 
-        Ok(AdtsHeader {
-            profile,
-            channels,
-            sample_rate,
-            frame_len: frame_len - AdtsHeader::SIZE,
-        })
+        Ok(AdtsHeader { profile, channels, sample_rate, frame_len: frame_len - AdtsHeader::SIZE })
     }
 }
 
 impl FormatReader for AdtsReader {
-
     fn try_new(mut source: MediaSourceStream, _options: &FormatOptions) -> Result<Self> {
         let header = AdtsHeader::read(&mut source)?;
 
         // Use the header to populate the codec parameters.
         let mut params = CodecParameters::new();
 
-        params.for_codec(CODEC_TYPE_AAC)
-              .with_sample_rate(header.sample_rate);
+        params.for_codec(CODEC_TYPE_AAC).with_sample_rate(header.sample_rate);
 
         if let Some(channels) = header.channels {
             params.with_channels(channels);
@@ -153,7 +143,7 @@ impl FormatReader for AdtsReader {
 
         Ok(AdtsReader {
             reader: source,
-            tracks: vec![ Track::new(0, params) ],
+            tracks: vec![Track::new(0, params)],
             cues: Vec::new(),
             metadata: Default::default(),
             first_frame_pos,
@@ -175,7 +165,7 @@ impl FormatReader for AdtsReader {
             0,
             ts,
             SAMPLES_PER_AAC_PACKET,
-            self.reader.read_boxed_slice_exact(header.frame_len)?
+            self.reader.read_boxed_slice_exact(header.frame_len)?,
         ))
     }
 
@@ -225,7 +215,7 @@ impl FormatReader for AdtsReader {
                 }
             }
             else {
-                return seek_error(SeekErrorKind::ForwardOnly)
+                return seek_error(SeekErrorKind::ForwardOnly);
             }
 
             // Successfuly seeked to the start of the stream, reset the next packet timestamp.
@@ -254,19 +244,16 @@ impl FormatReader for AdtsReader {
             self.next_packet_ts += SAMPLES_PER_AAC_PACKET;
         }
 
-        debug!("seeked to ts={} (delta={})",
+        debug!(
+            "seeked to ts={} (delta={})",
             self.next_packet_ts,
-            required_ts as i64 - self.next_packet_ts as i64);
+            required_ts as i64 - self.next_packet_ts as i64
+        );
 
-        Ok(SeekedTo {
-            track_id: 0,
-            required_ts,
-            actual_ts: self.next_packet_ts,
-        })
+        Ok(SeekedTo { track_id: 0, required_ts, actual_ts: self.next_packet_ts })
     }
 
     fn into_inner(self: Box<Self>) -> MediaSourceStream {
         self.reader
     }
-
 }

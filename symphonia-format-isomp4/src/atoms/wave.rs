@@ -38,9 +38,6 @@ impl Atom for WaveAtom {
             }
         }
 
-        Ok(WaveAtom {
-            header,
-            esds,
-        })
+        Ok(WaveAtom { header, esds })
     }
 }

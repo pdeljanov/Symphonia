@@ -26,7 +26,6 @@ pub struct SttsAtom {
 }
 
 impl SttsAtom {
-
     /// Get the timestamp and duration for the sample indicated by `sample_num`. Note, `sample_num`
     /// is indexed relative to the `SttsAtom`. Complexity of this function in O(N).
     pub fn find_timing_for_sample(&self, sample_num: u32) -> Option<(u64, u32)> {
@@ -100,10 +99,6 @@ impl Atom for SttsAtom {
             entries.push(SampleDurationEntry { sample_count, sample_delta });
         }
 
-        Ok(SttsAtom {
-            header,
-            entries,
-            total_duration,
-        })
+        Ok(SttsAtom { header, entries, total_duration })
     }
 }

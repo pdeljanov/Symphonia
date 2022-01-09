@@ -21,7 +21,6 @@ pub struct Validator {
 }
 
 impl Validator {
-
     /// Processes the audio buffer and updates the state of the validator.
     pub fn update(&mut self, buf: &AudioBuffer<i32>, bps: u32) {
         // The MD5 checksum is calculated on a buffer containing interleaved audio samples of the
@@ -37,9 +36,9 @@ impl Validator {
 
         // Round the sample bit width up to the nearest byte.
         let bytes_per_sample = match bps {
-            0       => return,
-            1..=8   => 1,
-            9..=16  => 2,
+            0 => return,
+            1..=8 => 1,
+            9..=16 => 2,
             17..=24 => 3,
             25..=32 => 4,
             _ => unreachable!(),
@@ -82,14 +81,11 @@ fn copy_as_i24<'a>(
     n_channels: usize,
     n_frames: usize,
 ) -> &'a [u8] {
-
     const SIZE_OF_I24: usize = 24 / 8;
 
     for ch in 0..n_channels {
-        for (out, sample) in buf.chunks_exact_mut(SIZE_OF_I24)
-                                .skip(ch)
-                                .step_by(n_channels)
-                                .zip(samples.chan(ch))
+        for (out, sample) in
+            buf.chunks_exact_mut(SIZE_OF_I24).skip(ch).step_by(n_channels).zip(samples.chan(ch))
         {
             out.copy_from_slice(&sample.to_le_bytes()[0..SIZE_OF_I24]);
         }
@@ -106,12 +102,12 @@ macro_rules! copy_as {
             n_channels: usize,
             n_frames: usize,
         ) -> &'a [u8] {
-
             for ch in 0..n_channels {
-                for (out, sample) in buf.chunks_exact_mut(mem::size_of::<$type>())
-                                        .skip(ch)
-                                        .step_by(n_channels)
-                                        .zip(samples.chan(ch))
+                for (out, sample) in buf
+                    .chunks_exact_mut(mem::size_of::<$type>())
+                    .skip(ch)
+                    .step_by(n_channels)
+                    .zip(samples.chan(ch))
                 {
                     out.copy_from_slice(&(*sample as $type).to_le_bytes());
                 }

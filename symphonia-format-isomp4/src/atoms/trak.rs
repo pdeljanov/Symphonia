@@ -5,7 +5,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::errors::{Result, decode_error};
+use symphonia_core::errors::{decode_error, Result};
 use symphonia_core::io::ReadBytes;
 
 use crate::atoms::{Atom, AtomHeader, AtomIterator, AtomType, EdtsAtom, MdiaAtom, TkhdAtom};
@@ -46,7 +46,7 @@ impl Atom for TrakAtom {
                 AtomType::Media => {
                     mdia = Some(iter.read_atom::<MdiaAtom>()?);
                 }
-                _ => ()
+                _ => (),
             }
         }
 
@@ -58,12 +58,6 @@ impl Atom for TrakAtom {
             return decode_error("isomp4: missing mdia atom");
         }
 
-        Ok(TrakAtom {
-            header,
-            tkhd: tkhd.unwrap(),
-            edts,
-            mdia: mdia.unwrap(),
-        })        
+        Ok(TrakAtom { header, tkhd: tkhd.unwrap(), edts, mdia: mdia.unwrap() })
     }
-    
 }

@@ -8,13 +8,15 @@
 use std::cmp;
 use std::num::Wrapping;
 
-use symphonia_core::audio::{AudioBuffer, AudioBufferRef, AsAudioBufferRef};
+use symphonia_core::audio::{AsAudioBufferRef, AudioBuffer, AudioBufferRef};
 use symphonia_core::audio::{Signal, SignalSpec};
-use symphonia_core::codecs::{CODEC_TYPE_FLAC, CodecParameters, CodecDescriptor, VerificationCheck};
+use symphonia_core::codecs::{
+    CodecDescriptor, CodecParameters, VerificationCheck, CODEC_TYPE_FLAC,
+};
 use symphonia_core::codecs::{Decoder, DecoderOptions, FinalizeResult};
-use symphonia_core::errors::{Result, decode_error, unsupported_error};
+use symphonia_core::errors::{decode_error, unsupported_error, Result};
 use symphonia_core::formats::Packet;
-use symphonia_core::io::{BufReader, ReadBitsLtr, BitReaderLtr};
+use symphonia_core::io::{BitReaderLtr, BufReader, ReadBitsLtr};
 use symphonia_core::support_codec;
 use symphonia_core::units::TimeBase;
 use symphonia_core::util::bits::sign_extend_leq32_to_i32;
@@ -96,11 +98,15 @@ impl FlacDecoder {
 
         // Use the bits per sample and sample rate as stated in the frame header, falling back to
         // the stream information if provided. If neither are available, return an error.
-        let bits_per_sample = if let Some(bps) = header.bits_per_sample { bps }
-                              else if let Some(bps) = self.params.bits_per_sample { bps }
-                              else {
-                                  return decode_error("flac: bits per sample not provided");
-                              };
+        let bits_per_sample = if let Some(bps) = header.bits_per_sample {
+            bps
+        }
+        else if let Some(bps) = self.params.bits_per_sample {
+            bps
+        }
+        else {
+            return decode_error("flac: bits per sample not provided");
+        };
 
         // trace!("frame: [{:?}] strategy={:?}, n_samples={}, bps={}, channels={:?}",
         //     header.block_sequence,
@@ -124,7 +130,7 @@ impl FlacDecoder {
                     for i in 0..channels as usize {
                         read_subframe(&mut bs, bits_per_sample, self.buf.chan_mut(i))?;
                     }
-                },
+                }
                 // For Left/Side, Mid/Side, and Right/Side channel configurations, the Side
                 // (Difference) channel requires an extra bit per sample.
                 ChannelAssignment::LeftSide => {
@@ -134,7 +140,7 @@ impl FlacDecoder {
                     read_subframe(&mut bs, bits_per_sample + 1, side)?;
 
                     decorrelate_left_side(left, side);
-                },
+                }
                 ChannelAssignment::MidSide => {
                     let (mid, side) = self.buf.chan_pair_mut(0, 1);
 
@@ -142,7 +148,7 @@ impl FlacDecoder {
                     read_subframe(&mut bs, bits_per_sample + 1, side)?;
 
                     decorrelate_mid_side(mid, side);
-                },
+                }
                 ChannelAssignment::RightSide => {
                     let (side, right) = self.buf.chan_pair_mut(0, 1);
 
@@ -164,7 +170,7 @@ impl FlacDecoder {
         // so that regardless the encoded bits/sample, the output is always 32bits/sample.
         if bits_per_sample < 32 {
             let shift = 32 - bits_per_sample;
-            self.buf.transform(| sample | sample << shift);
+            self.buf.transform(|sample| sample << shift);
         }
 
         Ok(())
@@ -172,7 +178,6 @@ impl FlacDecoder {
 }
 
 impl Decoder for FlacDecoder {
-
     fn try_new(params: &CodecParameters, options: &DecoderOptions) -> Result<Self> {
         // This decoder only supports FLAC.
         if params.codec != CODEC_TYPE_FLAC {
@@ -192,12 +197,13 @@ impl Decoder for FlacDecoder {
         let mut params = params.clone();
 
         // Amend the provided codec parameters with information from the stream information block.
-        params.with_sample_rate(info.sample_rate)
-              .with_time_base(TimeBase::new(1, info.sample_rate))
-              .with_bits_per_sample(info.bits_per_sample)
-              .with_max_frames_per_packet(u64::from(info.block_len_max))
-              .with_channels(info.channels)
-              .with_verification_code(VerificationCheck::Md5(info.md5));
+        params
+            .with_sample_rate(info.sample_rate)
+            .with_time_base(TimeBase::new(1, info.sample_rate))
+            .with_bits_per_sample(info.bits_per_sample)
+            .with_max_frames_per_packet(u64::from(info.block_len_max))
+            .with_channels(info.channels)
+            .with_verification_code(VerificationCheck::Md5(info.md5));
 
         if let Some(n_frames) = info.n_samples {
             params.with_n_frames(n_frames);
@@ -235,7 +241,8 @@ impl Decoder for FlacDecoder {
         if let Err(e) = self.decode_inner(packet) {
             self.buf.clear();
             Err(e)
-        } else {
+        }
+        else {
             Ok(self.buf.as_audio_buffer_ref())
         }
     }
@@ -290,7 +297,6 @@ enum SubFrameType {
 }
 
 fn read_subframe<B: ReadBitsLtr>(bs: &mut B, frame_bps: u32, buf: &mut [i32]) -> Result<()> {
-
     // First sub-frame bit must always 0.
     if bs.read_bool()? {
         return decode_error("flac: subframe padding is not 0");
@@ -300,8 +306,8 @@ fn read_subframe<B: ReadBitsLtr>(bs: &mut B, frame_bps: u32, buf: &mut [i32]) ->
     let subframe_type_enc = bs.read_bits_leq32(6)?;
 
     let subframe_type = match subframe_type_enc {
-        0x00        => SubFrameType::Constant,
-        0x01        => SubFrameType::Verbatim,
+        0x00 => SubFrameType::Constant,
+        0x01 => SubFrameType::Verbatim,
         0x08..=0x0f => {
             let order = subframe_type_enc & 0x07;
             // The Fixed Predictor only supports orders between 0 and 4.
@@ -309,7 +315,7 @@ fn read_subframe<B: ReadBitsLtr>(bs: &mut B, frame_bps: u32, buf: &mut [i32]) ->
                 return decode_error("flac: fixed predictor orders of greater than 4 are invalid");
             }
             SubFrameType::FixedLinear(order)
-        },
+        }
         0x20..=0x3f => SubFrameType::Linear((subframe_type_enc & 0x1f) + 1),
         _ => {
             return decode_error("flac: subframe type set to reserved value");
@@ -319,12 +325,7 @@ fn read_subframe<B: ReadBitsLtr>(bs: &mut B, frame_bps: u32, buf: &mut [i32]) ->
     // Bit 7 of the sub-frame header designates if there are any dropped (wasted in FLAC terms)
     // bits per sample in the audio sub-block. If the bit is set, unary decode the number of
     // dropped bits per sample.
-    let dropped_bps = if bs.read_bool()? {
-        bs.read_unary_zeros()? + 1
-    }
-    else {
-        0
-    };
+    let dropped_bps = if bs.read_bool()? { bs.read_unary_zeros()? + 1 } else { 0 };
 
     // The bits per sample stated in the frame header is for the decoded audio sub-block samples.
     // However, it is likely that the lower order bits of all the samples are simply 0. Therefore,
@@ -339,10 +340,10 @@ fn read_subframe<B: ReadBitsLtr>(bs: &mut B, frame_bps: u32, buf: &mut [i32]) ->
     //     dropped_bps);
 
     match subframe_type {
-        SubFrameType::Constant           => decode_constant(bs, bps, buf)?,
-        SubFrameType::Verbatim           => decode_verbatim(bs, bps, buf)?,
+        SubFrameType::Constant => decode_constant(bs, bps, buf)?,
+        SubFrameType::Verbatim => decode_verbatim(bs, bps, buf)?,
         SubFrameType::FixedLinear(order) => decode_fixed_linear(bs, bps, order as u32, buf)?,
-        SubFrameType::Linear(order)      => decode_linear(bs, bps, order as u32, buf)?,
+        SubFrameType::Linear(order) => decode_linear(bs, bps, order as u32, buf)?,
     };
 
     // Shift the samples to account for the dropped bits.
@@ -382,7 +383,7 @@ fn decode_fixed_linear<B: ReadBitsLtr>(
     bs: &mut B,
     bps: u32,
     order: u32,
-    buf: &mut [i32]
+    buf: &mut [i32],
 ) -> Result<()> {
     // The first `order` samples are encoded verbatim to warm-up the LPC decoder.
     decode_verbatim(bs, bps, &mut buf[..order as usize])?;
@@ -477,7 +478,7 @@ fn decode_linear<B: ReadBitsLtr>(bs: &mut B, bps: u32, order: u32, buf: &mut [i3
 fn decode_residual<B: ReadBitsLtr>(
     bs: &mut B,
     n_prelude_samples: u32,
-    buf: &mut [i32]
+    buf: &mut [i32],
 ) -> Result<()> {
     let method_enc = bs.read_bits_leq32(2)?;
 
@@ -527,7 +528,7 @@ fn decode_residual<B: ReadBitsLtr>(
     decode_rice_partition(
         bs,
         param_bit_width,
-        &mut buf[n_prelude_samples as usize..n_partition_samples]
+        &mut buf[n_prelude_samples as usize..n_partition_samples],
     )?;
 
     // Decode the remaining partitions.
@@ -541,7 +542,7 @@ fn decode_residual<B: ReadBitsLtr>(
 fn decode_rice_partition<B: ReadBitsLtr>(
     bs: &mut B,
     param_bit_width: u32,
-    buf: &mut [i32]
+    buf: &mut [i32],
 ) -> Result<()> {
     // Read the encoding parameter, generally the Rice parameter.
     let rice_param = bs.read_bits_leq32(param_bit_width)?;
@@ -551,7 +552,6 @@ fn decode_rice_partition<B: ReadBitsLtr>(
     // binary encoded. Conversely, if the parameter is less than this value, the residuals are Rice
     // encoded.
     if rice_param < (1 << param_bit_width) - 1 {
-
         // println!("\t\t\tPartition (Rice): n_residuals={}, rice_param={}", buf.len(), rice_param);
 
         // Read each rice encoded residual and store in buffer.
@@ -610,21 +610,20 @@ fn rice_signed_to_i32(word: u32) -> i32 {
 
 #[test]
 fn verify_rice_signed_to_i32() {
-    assert_eq!(rice_signed_to_i32(0),  0);
+    assert_eq!(rice_signed_to_i32(0), 0);
     assert_eq!(rice_signed_to_i32(1), -1);
-    assert_eq!(rice_signed_to_i32(2),  1);
+    assert_eq!(rice_signed_to_i32(2), 1);
     assert_eq!(rice_signed_to_i32(3), -2);
-    assert_eq!(rice_signed_to_i32(4),  2);
+    assert_eq!(rice_signed_to_i32(4), 2);
     assert_eq!(rice_signed_to_i32(5), -3);
-    assert_eq!(rice_signed_to_i32(6),  3);
+    assert_eq!(rice_signed_to_i32(6), 3);
     assert_eq!(rice_signed_to_i32(7), -4);
-    assert_eq!(rice_signed_to_i32(8),  4);
+    assert_eq!(rice_signed_to_i32(8), 4);
     assert_eq!(rice_signed_to_i32(9), -5);
     assert_eq!(rice_signed_to_i32(10), 5);
 
     assert_eq!(rice_signed_to_i32(u32::max_value()), -2_147_483_648);
 }
-
 
 fn fixed_predict(order: u32, buf: &mut [i32]) -> Result<()> {
     debug_assert!(order <= 4);
@@ -642,36 +641,36 @@ fn fixed_predict(order: u32, buf: &mut [i32]) -> Result<()> {
             for i in 1..buf.len() {
                 buf[i] += buf[i - 1];
             }
-        },
+        }
         // A 2nd order predictor uses the polynomial: s(i) = 2*s(i-1) - 1*s(i-2).
         2 => {
             for i in 2..buf.len() {
                 let a = Wrapping(-1) * Wrapping(i64::from(buf[i - 2]));
-                let b = Wrapping( 2) * Wrapping(i64::from(buf[i - 1]));
+                let b = Wrapping(2) * Wrapping(i64::from(buf[i - 1]));
                 buf[i] += (a + b).0 as i32;
             }
-        },
+        }
         // A 3rd order predictor uses the polynomial: s(i) = 3*s(i-1) - 3*s(i-2) + 1*s(i-3).
         3 => {
             for i in 3..buf.len() {
-                let a = Wrapping( 1) * Wrapping(i64::from(buf[i - 3]));
+                let a = Wrapping(1) * Wrapping(i64::from(buf[i - 3]));
                 let b = Wrapping(-3) * Wrapping(i64::from(buf[i - 2]));
-                let c = Wrapping( 3) * Wrapping(i64::from(buf[i - 1]));
+                let c = Wrapping(3) * Wrapping(i64::from(buf[i - 1]));
                 buf[i] += (a + b + c).0 as i32;
             }
-        },
+        }
         // A 4th order predictor uses the polynomial:
         // s(i) = 4*s(i-1) - 6*s(i-2) + 4*s(i-3) - 1*s(i-4).
         4 => {
             for i in 4..buf.len() {
                 let a = Wrapping(-1) * Wrapping(i64::from(buf[i - 4]));
-                let b = Wrapping( 4) * Wrapping(i64::from(buf[i - 3]));
+                let b = Wrapping(4) * Wrapping(i64::from(buf[i - 3]));
                 let c = Wrapping(-6) * Wrapping(i64::from(buf[i - 2]));
-                let d = Wrapping( 4) * Wrapping(i64::from(buf[i - 1]));
+                let d = Wrapping(4) * Wrapping(i64::from(buf[i - 1]));
                 buf[i] += (a + b + c + d).0 as i32;
             }
         }
-        _ => unreachable!()
+        _ => unreachable!(),
     };
 
     Ok(())
@@ -688,9 +687,8 @@ macro_rules! lpc_predictor {
             order: usize,
             coeffs: &[i32; $order],
             coeff_shift: u32,
-            buf: &mut [i32]
+            buf: &mut [i32],
         ) -> Result<()> {
-
             // Order must be less than or equal to the number of coefficients.
             debug_assert!(order as usize <= coeffs.len());
 
@@ -702,10 +700,11 @@ macro_rules! lpc_predictor {
             // If the pre-fill computation filled the entire sample buffer, return immediately since
             // the main predictor requires atleast 32 samples to be present in the buffer.
             for i in order..order + n_prefill {
-                let predicted = coeffs[$order - order..$order].iter()
-                                                    .zip(&buf[i - order..i])
-                                                    .map(|(&c, &sample)| c as i64 * sample as i64)
-                                                    .sum::<i64>();
+                let predicted = coeffs[$order - order..$order]
+                    .iter()
+                    .zip(&buf[i - order..i])
+                    .map(|(&c, &sample)| c as i64 * sample as i64)
+                    .sum::<i64>();
 
                 buf[i] += (predicted >> coeff_shift) as i32;
             }
@@ -727,10 +726,10 @@ macro_rules! lpc_predictor {
                 let mut predicted = 0i64;
 
                 for j in 0..($order / 4) {
-                    let a = coeffs[4*j + 0] as i64 * s[4*j + 0] as i64;
-                    let b = coeffs[4*j + 1] as i64 * s[4*j + 1] as i64;
-                    let c = coeffs[4*j + 2] as i64 * s[4*j + 2] as i64;
-                    let d = coeffs[4*j + 3] as i64 * s[4*j + 3] as i64;
+                    let a = coeffs[4 * j + 0] as i64 * s[4 * j + 0] as i64;
+                    let b = coeffs[4 * j + 1] as i64 * s[4 * j + 1] as i64;
+                    let c = coeffs[4 * j + 2] as i64 * s[4 * j + 2] as i64;
+                    let d = coeffs[4 * j + 3] as i64 * s[4 * j + 3] as i64;
                     predicted += a + b + c + d;
                 }
 

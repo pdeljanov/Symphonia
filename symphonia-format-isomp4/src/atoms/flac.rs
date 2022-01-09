@@ -5,8 +5,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::codecs::{CODEC_TYPE_FLAC, CodecParameters, VerificationCheck};
-use symphonia_core::errors::{Result, decode_error, unsupported_error};
+use symphonia_core::codecs::{CodecParameters, VerificationCheck, CODEC_TYPE_FLAC};
+use symphonia_core::errors::{decode_error, unsupported_error, Result};
 use symphonia_core::io::{BufReader, ReadBytes};
 
 use symphonia_utils_xiph::flac::metadata::{MetadataBlockHeader, MetadataBlockType, StreamInfo};
@@ -55,22 +55,19 @@ impl Atom for FlacAtom {
         let extra_data = reader.read_boxed_slice_exact(block_header.block_len as usize)?;
         let stream_info = StreamInfo::read(&mut BufReader::new(&extra_data))?;
 
-        Ok(FlacAtom {
-            header,
-            stream_info,
-            extra_data,
-        })
+        Ok(FlacAtom { header, stream_info, extra_data })
     }
 }
 
 impl FlacAtom {
     pub fn fill_codec_params(&self, codec_params: &mut CodecParameters) {
-        codec_params.for_codec(CODEC_TYPE_FLAC)
-                    .with_sample_rate(self.stream_info.sample_rate)
-                    .with_bits_per_sample(self.stream_info.bits_per_sample)
-                    .with_channels(self.stream_info.channels)
-                    .with_packet_data_integrity(true)
-                    .with_verification_code(VerificationCheck::Md5(self.stream_info.md5))
-                    .with_extra_data(self.extra_data.clone());
+        codec_params
+            .for_codec(CODEC_TYPE_FLAC)
+            .with_sample_rate(self.stream_info.sample_rate)
+            .with_bits_per_sample(self.stream_info.bits_per_sample)
+            .with_channels(self.stream_info.channels)
+            .with_packet_data_integrity(true)
+            .with_verification_code(VerificationCheck::Md5(self.stream_info.md5))
+            .with_extra_data(self.extra_data.clone());
     }
 }

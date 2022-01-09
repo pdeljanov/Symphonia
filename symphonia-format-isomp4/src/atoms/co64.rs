@@ -35,9 +35,6 @@ impl Atom for Co64Atom {
             chunk_offsets.push(reader.read_be_u64()?);
         }
 
-        Ok(Co64Atom {
-            header,
-            chunk_offsets,
-        })
+        Ok(Co64Atom { header, chunk_offsets })
     }
 }

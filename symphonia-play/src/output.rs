@@ -82,13 +82,11 @@ mod pulseaudio {
                 "Music",                            // Description of the stream
                 &pa_spec,                           // Signal specificaiton
                 pa_ch_map.as_ref(),                 // Channel map
-                None                                // Custom buffering attributes
+                None,                               // Custom buffering attributes
             );
 
             match pa_result {
-                Ok(pa) => {
-                    Ok(Box::new(PulseAudioOutput { pa, sample_buf }))
-                }
+                Ok(pa) => Ok(Box::new(PulseAudioOutput { pa, sample_buf })),
                 Err(err) => {
                     error!("audio output stream open error: {}", err);
 
@@ -102,7 +100,7 @@ mod pulseaudio {
         fn write(&mut self, decoded: AudioBufferRef<'_>) -> Result<()> {
             // Do nothing if there are no audio frames.
             if decoded.frames() == 0 {
-                return Ok(())
+                return Ok(());
             }
 
             // Interleave samples from the audio buffer into the sample buffer.
@@ -115,7 +113,7 @@ mod pulseaudio {
 
                     Err(AudioOutputError::StreamClosedError)
                 }
-                _ => Ok(())
+                _ => Ok(()),
             }
         }
 
@@ -165,14 +163,13 @@ mod pulseaudio {
 
         Some(map)
     }
-
 }
 
 #[cfg(not(target_os = "linux"))]
 mod cpal {
     use super::{AudioOutput, AudioOutputError, Result};
 
-    use symphonia::core::audio::{AudioBufferRef, SampleBuffer, SignalSpec, RawSample};
+    use symphonia::core::audio::{AudioBufferRef, RawSample, SampleBuffer, SignalSpec};
     use symphonia::core::conv::ConvertibleSample;
     use symphonia::core::units::Duration;
 
@@ -184,16 +181,14 @@ mod cpal {
 
     pub struct CpalAudioOutput;
 
-    trait AudioOutputSample :
-        cpal::Sample +
-        ConvertibleSample +
-        RawSample +
-        std::marker::Send +
-        'static {}
+    trait AudioOutputSample:
+        cpal::Sample + ConvertibleSample + RawSample + std::marker::Send + 'static
+    {
+    }
 
-    impl AudioOutputSample for f32 { }
-    impl AudioOutputSample for i16 { }
-    impl AudioOutputSample for u16 { }
+    impl AudioOutputSample for f32 {}
+    impl AudioOutputSample for i16 {}
+    impl AudioOutputSample for u16 {}
 
     impl CpalAudioOutput {
         pub fn try_open(spec: SignalSpec, duration: Duration) -> Result<Box<dyn AudioOutput>> {
@@ -234,21 +229,19 @@ mod cpal {
 
     struct CpalAudioOutputImpl<T: AudioOutputSample>
     where
-        T: AudioOutputSample
+        T: AudioOutputSample,
     {
         ring_buf_producer: rb::Producer<T>,
         sample_buf: SampleBuffer<T>,
         stream: cpal::Stream,
     }
 
-    impl<T: AudioOutputSample> CpalAudioOutputImpl<T>
-    {
+    impl<T: AudioOutputSample> CpalAudioOutputImpl<T> {
         pub fn try_open(
             spec: SignalSpec,
             duration: Duration,
-            device: &cpal::Device
-        ) -> Result<Box<dyn AudioOutput>>
-        {
+            device: &cpal::Device,
+        ) -> Result<Box<dyn AudioOutput>> {
             // Output audio stream config.
             let config = cpal::StreamConfig {
                 channels: spec.channels.count() as cpal::ChannelCount,
@@ -269,9 +262,7 @@ mod cpal {
                     // Mute any remaining samples.
                     data[written..].iter_mut().for_each(|s| *s = T::MID);
                 },
-                move |err| {
-                    error!("audio output error: {}", err)
-                },
+                move |err| error!("audio output error: {}", err),
             );
 
             if let Err(err) = stream_result {
@@ -295,12 +286,11 @@ mod cpal {
         }
     }
 
-    impl<T: AudioOutputSample> AudioOutput for CpalAudioOutputImpl<T>
-    {
+    impl<T: AudioOutputSample> AudioOutput for CpalAudioOutputImpl<T> {
         fn write(&mut self, decoded: AudioBufferRef<'_>) -> Result<()> {
             // Do nothing if there are no audio frames.
             if decoded.frames() == 0 {
-                return Ok(())
+                return Ok(());
             }
 
             // Audio samples must be interleaved for cpal. Interleave the samples in the audio

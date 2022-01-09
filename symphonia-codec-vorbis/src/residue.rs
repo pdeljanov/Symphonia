@@ -8,8 +8,8 @@
 use std::cmp::min;
 use std::io;
 
-use symphonia_core::errors::{Error, Result, decode_error};
-use symphonia_core::io::{ReadBitsRtl, BitReaderRtl};
+use symphonia_core::errors::{decode_error, Error, Result};
+use symphonia_core::io::{BitReaderRtl, ReadBitsRtl};
 
 use super::codebook::VorbisCodebook;
 use super::common::*;
@@ -81,11 +81,10 @@ pub struct Residue {
 }
 
 impl Residue {
-
     pub fn try_read(
         bs: &mut BitReaderRtl<'_>,
         residue_type: u16,
-        max_codebook: u8
+        max_codebook: u8,
     ) -> Result<Self> {
         let setup = Self::read_setup(bs, residue_type, max_codebook)?;
 
@@ -95,7 +94,7 @@ impl Residue {
     fn read_setup(
         bs: &mut BitReaderRtl<'_>,
         residue_type: u16,
-        max_codebook: u8
+        max_codebook: u8,
     ) -> Result<ResidueSetup> {
         let residue_begin = bs.read_bits_leq32(24)?;
         let residue_end = bs.read_bits_leq32(24)?;
@@ -112,19 +111,11 @@ impl Residue {
         for _ in 0..residue_classifications {
             let low_bits = bs.read_bits_leq32(3)? as u8;
 
-            let high_bits = if bs.read_bool()? {
-                bs.read_bits_leq32(5)? as u8
-            }
-            else {
-                0
-            };
+            let high_bits = if bs.read_bool()? { bs.read_bits_leq32(5)? as u8 } else { 0 };
 
             let is_used = (high_bits << 3) | low_bits;
 
-            residue_vq_books.push(ResidueVqClass {
-                is_used,
-                books: [0; 8],
-            });
+            residue_vq_books.push(ResidueVqClass { is_used, books: [0; 8] });
         }
 
         for vq_books in &mut residue_vq_books {
@@ -145,7 +136,6 @@ impl Residue {
                     }
                 }
             }
-
         }
 
         let residue = ResidueSetup {
@@ -170,7 +160,6 @@ impl Residue {
         scratch: &mut ResidueScratch,
         channels: &mut [DspChannel],
     ) -> Result<()> {
-
         // Read the residue, and ignore end-of-bitstream errors which are legal.
         match self.read_residue_inner(bs, bs_exp, codebooks, residue_channels, scratch, channels) {
             Ok(_) => (),
@@ -191,7 +180,9 @@ impl Residue {
 
                 let iter = scratch.buf.chunks_exact(stride).map(|c| c[i]);
 
-                for (o, i) in channel.residue.iter_mut().zip(iter) { *o = i; }
+                for (o, i) in channel.residue.iter_mut().zip(iter) {
+                    *o = i;
+                }
             }
         }
 
@@ -207,7 +198,6 @@ impl Residue {
         scratch: &mut ResidueScratch,
         channels: &mut [DspChannel],
     ) -> Result<()> {
-
         let class_book = &codebooks[self.setup.residue_classbook as usize];
 
         // The actual length of the entire residue vector for a channel (formats 0 and 1), or all
@@ -318,7 +308,6 @@ impl Residue {
 
                 // Read each partitions for all the channels that are part of this residue.
                 for p in p_start..p_end {
-
                     for (i, channel_idx) in residue_channels.iter().enumerate() {
                         let ch = &mut channels[channel_idx];
 
@@ -343,26 +332,22 @@ impl Residue {
                             let offset = limit_residue_begin as usize + part_size * p;
 
                             match self.setup.residue_type {
-                                0 => {
-                                    read_residue_partition_format0(
-                                        bs,
-                                        vq_book,
-                                        &mut ch.residue[offset..offset + part_size]
-                                    )
-                                }
-                                1 => {
-                                    read_residue_partition_format1(
-                                        bs,
-                                        vq_book,
-                                        &mut ch.residue[offset..offset + part_size]
-                                    )
-                                }
+                                0 => read_residue_partition_format0(
+                                    bs,
+                                    vq_book,
+                                    &mut ch.residue[offset..offset + part_size],
+                                ),
+                                1 => read_residue_partition_format1(
+                                    bs,
+                                    vq_book,
+                                    &mut ch.residue[offset..offset + part_size],
+                                ),
                                 2 => {
                                     // Residue type 2 is implemented in term of type 1.
                                     read_residue_partition_format1(
                                         bs,
                                         vq_book,
-                                        &mut scratch.buf[offset..offset + part_size]
+                                        &mut scratch.buf[offset..offset + part_size],
                                     )
                                 }
                                 _ => unreachable!(),
@@ -395,7 +380,6 @@ fn read_residue_partition_format0(
     codebook: &VorbisCodebook,
     out: &mut [f32],
 ) -> Result<()> {
-
     let step = out.len() / codebook.dimensions() as usize;
 
     for i in 0..step {
@@ -415,7 +399,6 @@ fn read_residue_partition_format1(
     codebook: &VorbisCodebook,
     out: &mut [f32],
 ) -> Result<()> {
-
     let dimensions = codebook.dimensions() as usize;
 
     for out in out.chunks_exact_mut(dimensions) {

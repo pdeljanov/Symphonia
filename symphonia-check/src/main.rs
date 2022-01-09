@@ -7,7 +7,6 @@
 
 #![warn(rust_2018_idioms)]
 #![forbid(unsafe_code)]
-
 // Justification: Fields on DecoderOptions and FormatOptions may change at any time, but
 // symphonia-check doesn't want to be updated every time those fields change, therefore always fill
 // in the remaining fields with default values.
@@ -20,12 +19,12 @@ use std::process::{Command, Stdio};
 use symphonia::core::audio::{AudioBufferRef, SampleBuffer};
 use symphonia::core::codecs::{Decoder, DecoderOptions};
 use symphonia::core::errors::{Error, Result};
-use symphonia::core::formats::{FormatReader, FormatOptions};
+use symphonia::core::formats::{FormatOptions, FormatReader};
 use symphonia::core::io::{MediaSourceStream, ReadOnlySource};
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
 
-use clap::{Arg, App};
+use clap::{App, Arg};
 use log::{info, warn};
 
 /// The absolute maximum allowable sample delta. Around 2^-17 (-102.4dB).
@@ -95,11 +94,7 @@ fn build_ffmpeg_command(path: &str, gapless: bool) -> Command {
 fn build_flac_command(path: &str) -> Command {
     let mut cmd = Command::new("flac");
 
-    cmd.arg("--stdout")
-        .arg("-d")
-        .arg(path)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
+    cmd.arg("--stdout").arg("-d").arg(path).stdout(Stdio::piped()).stderr(Stdio::null());
 
     cmd
 }
@@ -111,12 +106,7 @@ fn build_mpg123_command(path: &str, gapless: bool) -> Command {
         cmd.arg("--no-gapless");
     }
 
-    cmd.arg("--wav")
-        .arg("-")
-        .arg("--float")
-        .arg(path)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
+    cmd.arg("--wav").arg("-").arg("--float").arg(path).stdout(Stdio::piped()).stderr(Stdio::null());
 
     cmd
 }
@@ -268,15 +258,13 @@ fn run_check(
             let n_test_samples = std::cmp::min(ref_samples.len(), tgt_samples.len());
 
             // Perform the comparison.
-            for (&t, &r) in tgt_samples[..n_test_samples].iter()
-                                                         .zip(&ref_samples[..n_test_samples])
+            for (&t, &r) in tgt_samples[..n_test_samples].iter().zip(&ref_samples[..n_test_samples])
             {
                 // Clamp the reference and target samples between [-1.0, 1.0] and find the
                 // difference.
                 let delta = t.clamp(-1.0, 1.0) - r.clamp(-1.0, 1.0);
 
                 if delta.abs() > ABS_MAX_ALLOWABLE_SAMPLE_DELTA {
-
                     // Print per-sample or per-packet failure nessage based on selected options.
                     if !opts.is_quiet && (opts.is_per_sample || n_failed_pkt_samples == 0) {
                         println!(
@@ -345,23 +333,14 @@ fn main() {
         .version("1.0")
         .author("Philip Deljanov <philip.deljanov@gmail.com>")
         .about("Check Symphonia output with a reference decoding")
-        .arg(
-            Arg::new("samples")
-                .long("samples")
-                .help("Print failures per sample"),
-        )
+        .arg(Arg::new("samples").long("samples").help("Print failures per sample"))
         .arg(
             Arg::new("stop-after-fail")
                 .long("first-fail")
                 .short('f')
                 .help("Stop testing after the first failed packet"),
         )
-        .arg(
-            Arg::new("quiet")
-                .long("quiet")
-                .short('q')
-                .help("Only print test results"),
-        )
+        .arg(Arg::new("quiet").long("quiet").short('q').help("Only print test results"))
         .arg(
             Arg::new("keep-going")
                 .long("keep-going")
@@ -375,17 +354,8 @@ fn main() {
                 .default_value("ffmpeg")
                 .help("Specify a particular decoder to be used as the reference"),
         )
-        .arg(
-            Arg::new("no-gapless")
-                .long("no-gapless")
-                .help("Disable gapless decoding")
-        )
-        .arg(
-            Arg::new("INPUT")
-                .help("The input file path")
-                .required(true)
-                .index(1),
-        )
+        .arg(Arg::new("no-gapless").long("no-gapless").help("Disable gapless decoding"))
+        .arg(Arg::new("INPUT").help("The input file path").required(true).index(1))
         .get_matches();
 
     let path = matches.value_of("INPUT").unwrap();

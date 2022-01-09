@@ -5,11 +5,11 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use crate::common::SideData;
 use super::{MapResult, Mapper, PacketParser};
+use crate::common::SideData;
 
 use symphonia_core::codecs::{CodecParameters, CODEC_TYPE_VORBIS};
-use symphonia_core::errors::{Result, decode_error, unsupported_error};
+use symphonia_core::errors::{decode_error, unsupported_error, Result};
 use symphonia_core::io::{BitReaderRtl, BufReader, ReadBitsRtl, ReadBytes};
 use symphonia_core::meta::MetadataBuilder;
 use symphonia_core::units::TimeBase;
@@ -80,7 +80,12 @@ impl PacketParser for VorbisPacketParser {
         // Determine the current block size.
         let cur_bs_exp = if mode_num < self.num_modes {
             let block_flag = (self.modes_block_flags >> mode_num) & 1;
-            if block_flag == 1 { self.bs1_exp } else { self.bs0_exp }
+            if block_flag == 1 {
+                self.bs1_exp
+            }
+            else {
+                self.bs0_exp
+            }
         }
         else {
             return 0;
@@ -126,12 +131,8 @@ pub fn detect(buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> {
     }
 
     // Instantiate the Vorbis mapper.
-    let mapper = Box::new(VorbisMapper {
-        codec_params,
-        ident,
-        parser: None,
-        has_setup_header: false,
-    });
+    let mapper =
+        Box::new(VorbisMapper { codec_params, ident, parser: None, has_setup_header: false });
 
     Ok(Some(mapper))
 }
@@ -169,7 +170,7 @@ impl Mapper for VorbisMapper {
                     base_parser.bs0_exp,
                     base_parser.bs1_exp,
                     base_parser.num_modes,
-                    base_parser.modes_block_flags
+                    base_parser.modes_block_flags,
                 ));
                 Some(parser)
             }
@@ -224,14 +225,16 @@ impl Mapper for VorbisMapper {
                         assert!(num_modes <= 64);
 
                         for (i, mode) in modes.iter().enumerate() {
-                            if mode.block_flag { modes_block_flags |= 1 << i; }
+                            if mode.block_flag {
+                                modes_block_flags |= 1 << i;
+                            }
                         }
 
                         let parser = VorbisPacketParser::new(
                             self.ident.bs0_exp,
                             self.ident.bs1_exp,
                             num_modes as u8,
-                            modes_block_flags
+                            modes_block_flags,
                         );
 
                         self.parser.replace(parser);
@@ -295,7 +298,7 @@ fn read_ident_header<B: ReadBytes>(reader: &mut B) -> Result<IdentHeader> {
     let sample_rate = reader.read_u32()?;
 
     if sample_rate == 0 {
-        return decode_error("ogg (vorbis): sample rate cannot be 0")
+        return decode_error("ogg (vorbis): sample rate cannot be 0");
     }
 
     // Read the bitrate range.
@@ -328,12 +331,7 @@ fn read_ident_header<B: ReadBytes>(reader: &mut B) -> Result<IdentHeader> {
         return decode_error("ogg (vorbis): ident header framing flag unset");
     }
 
-    Ok(IdentHeader {
-        n_channels,
-        sample_rate,
-        bs0_exp,
-        bs1_exp,
-    })
+    Ok(IdentHeader { n_channels, sample_rate, bs0_exp, bs1_exp })
 }
 
 fn read_setup(reader: &mut BufReader<'_>, ident: &IdentHeader) -> Result<Vec<Mode>> {
@@ -383,7 +381,9 @@ fn read_setup(reader: &mut BufReader<'_>, ident: &IdentHeader) -> Result<Vec<Mod
 
 fn skip_codebooks(bs: &mut BitReaderRtl<'_>) -> Result<()> {
     let count = bs.read_bits_leq32(8)? + 1;
-    for _ in 0..count { skip_codebook(bs)?; }
+    for _ in 0..count {
+        skip_codebook(bs)?;
+    }
     Ok(())
 }
 
@@ -422,12 +422,8 @@ pub fn skip_codebook(bs: &mut BitReaderRtl<'_>) -> Result<()> {
         let mut _cur_len = bs.read_bits_leq32(5)? + 1;
 
         loop {
-            let num_bits = if codebook_entries > cur_entry {
-                ilog(codebook_entries - cur_entry)
-            }
-            else {
-                0
-            };
+            let num_bits =
+                if codebook_entries > cur_entry { ilog(codebook_entries - cur_entry) } else { 0 };
 
             let num = bs.read_bits_leq32(num_bits)?;
 
@@ -485,7 +481,9 @@ fn skip_time_domain_transforms(bs: &mut BitReaderRtl<'_>) -> Result<()> {
 
 fn skip_floors(bs: &mut BitReaderRtl<'_>) -> Result<()> {
     let count = bs.read_bits_leq32(6)? + 1;
-    for _ in 0..count { skip_floor(bs)?; }
+    for _ in 0..count {
+        skip_floor(bs)?;
+    }
     Ok(())
 }
 
@@ -521,7 +519,7 @@ fn skip_floor1_setup(bs: &mut BitReaderRtl<'_>) -> Result<()> {
     let mut floor1_classes_dimensions = [0; 16];
 
     if floor1_partitions > 0 {
-        let mut max_class = 0;  // 4-bits, 0..15
+        let mut max_class = 0; // 4-bits, 0..15
 
         for class_idx in &mut floor1_partition_class_list[..floor1_partitions] {
             *class_idx = bs.read_bits_leq32(4)? as u8;
@@ -564,7 +562,7 @@ fn skip_residues(bs: &mut BitReaderRtl<'_>) -> Result<()> {
     for _ in 0..count {
         let _residue_type = bs.read_bits_leq32(16)?;
         skip_residue_setup(bs)?
-    };
+    }
     Ok(())
 }
 
@@ -594,7 +592,9 @@ fn skip_residue_setup(bs: &mut BitReaderRtl<'_>) -> Result<()> {
 
 fn skip_mappings(bs: &mut BitReaderRtl<'_>, audio_channels: u8) -> Result<()> {
     let count = bs.read_bits_leq32(6)? + 1;
-    for _ in 0..count { skip_mapping(bs, audio_channels)? }
+    for _ in 0..count {
+        skip_mapping(bs, audio_channels)?
+    }
     Ok(())
 }
 
@@ -608,12 +608,7 @@ fn skip_mapping(bs: &mut BitReaderRtl<'_>, audio_channels: u8) -> Result<()> {
 }
 
 fn skip_mapping_type0_setup(bs: &mut BitReaderRtl<'_>, audio_channels: u8) -> Result<()> {
-    let num_submaps = if bs.read_bool()? {
-        bs.read_bits_leq32(4)? + 1
-    }
-    else {
-        1
-    };
+    let num_submaps = if bs.read_bool()? { bs.read_bits_leq32(4)? + 1 } else { 1 };
 
     if bs.read_bool()? {
         // Number of channel couplings (up-to 256).
@@ -676,9 +671,7 @@ fn read_mode(bs: &mut BitReaderRtl<'_>) -> Result<Mode> {
         return decode_error("ogg (vorbis): invalid transform type for mode");
     }
 
-    let mode = Mode {
-        block_flag,
-    };
+    let mode = Mode { block_flag };
 
     Ok(mode)
 }

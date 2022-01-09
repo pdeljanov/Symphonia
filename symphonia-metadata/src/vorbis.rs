@@ -7,8 +7,8 @@
 
 //! A Vorbic COMMENT metadata reader for FLAC or OGG formats.
 
-use std::collections::HashMap;
 use lazy_static::lazy_static;
+use std::collections::HashMap;
 use symphonia_core::errors::Result;
 use symphonia_core::io::ReadBytes;
 use symphonia_core::meta::{MetadataBuilder, StandardTagKey, Tag, Value};
@@ -132,7 +132,7 @@ fn parse(tag: &str) -> Tag {
     Tag::new(std_tag, field[0], Value::from(field[1]))
 }
 
-pub fn read_comment_no_framing<B : ReadBytes>(
+pub fn read_comment_no_framing<B: ReadBytes>(
     reader: &mut B,
     metadata: &mut MetadataBuilder,
 ) -> Result<()> {
@@ -154,9 +154,7 @@ pub fn read_comment_no_framing<B : ReadBytes>(
         reader.read_buf_exact(&mut comment_byte)?;
 
         // Parse the comment string into a Tag and insert it into the parsed tag list.
-        metadata.add_tag(
-            parse(&String::from_utf8_lossy(&comment_byte))
-        );
+        metadata.add_tag(parse(&String::from_utf8_lossy(&comment_byte)));
     }
 
     Ok(())

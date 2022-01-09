@@ -44,5 +44,4 @@ impl Atom for TrexAtom {
             default_sample_flags: reader.read_be_u32()?,
         })
     }
-
 }

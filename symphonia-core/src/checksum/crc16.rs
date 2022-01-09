@@ -8,6 +8,7 @@
 use crate::io::Monitor;
 
 // Credit: This table was extracted from the reference FLAC decoder.
+#[rustfmt::skip]
 const CRC16_ANSI: [[u16; 256]; 8] =
 [
     [
@@ -320,23 +321,23 @@ impl Monitor for Crc16Ansi {
 
             let xor = self.state ^ word;
 
-            self.state = CRC16_ANSI[7][((xor >> 8) & 0xff) as usize] ^
-                         CRC16_ANSI[6][((xor >> 0) & 0xff) as usize] ^
-                         CRC16_ANSI[5][usize::from(bytes[2])] ^
-                         CRC16_ANSI[4][usize::from(bytes[3])] ^
-                         CRC16_ANSI[3][usize::from(bytes[4])] ^
-                         CRC16_ANSI[2][usize::from(bytes[5])] ^
-                         CRC16_ANSI[1][usize::from(bytes[6])] ^
-                         CRC16_ANSI[0][usize::from(bytes[7])];
+            self.state = CRC16_ANSI[7][((xor >> 8) & 0xff) as usize]
+                ^ CRC16_ANSI[6][((xor >> 0) & 0xff) as usize]
+                ^ CRC16_ANSI[5][usize::from(bytes[2])]
+                ^ CRC16_ANSI[4][usize::from(bytes[3])]
+                ^ CRC16_ANSI[3][usize::from(bytes[4])]
+                ^ CRC16_ANSI[2][usize::from(bytes[5])]
+                ^ CRC16_ANSI[1][usize::from(bytes[6])]
+                ^ CRC16_ANSI[0][usize::from(bytes[7])];
         }
 
         for byte in iter.remainder() {
             self.process_byte(*byte);
         }
     }
-
 }
 
+#[rustfmt::skip]
 const CRC16_ANSI_LE: [u16; 256] =
 [
     0x0000, 0xc0c1, 0xc181, 0x0140, 0xc301, 0x03c0, 0x0280, 0xc241,

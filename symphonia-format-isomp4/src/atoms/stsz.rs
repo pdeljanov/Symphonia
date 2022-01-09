@@ -52,10 +52,6 @@ impl Atom for StszAtom {
             SampleSize::Constant(sample_size)
         };
 
-        Ok(StszAtom {
-            header,
-            sample_count,
-            sample_sizes,
-        })
+        Ok(StszAtom { header, sample_count, sample_sizes })
     }
 }

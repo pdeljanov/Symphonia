@@ -6,14 +6,14 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use std::cmp::max;
-use std::{f64, f32};
+use std::{f32, f64};
 
-use symphonia_core::errors::{Result, decode_error};
+use symphonia_core::errors::{decode_error, Result};
 
 use lazy_static::lazy_static;
 
-use crate::common::*;
 use super::Granule;
+use crate::common::*;
 
 /// The invalid intensity position for MPEG1 bitstreams.
 const INTENSITY_INV_POS_MPEG1: u8 = 7;
@@ -223,9 +223,7 @@ fn process_intensity_long_block(
     let bands = &SFB_LONG_BANDS[header.sample_rate_idx];
 
     // Create an iterator that yields a band start-end pair, and scale-factor.
-    let bands_iter = bands.iter()
-                          .zip(&bands[1..])
-                          .zip(granule.channels[1].scalefacs.iter());
+    let bands_iter = bands.iter().zip(&bands[1..]).zip(granule.channels[1].scalefacs.iter());
 
     let mut bound = max_bound;
 
@@ -351,12 +349,14 @@ fn process_intensity_short_block(
     let mut found_bound = false;
 
     // Process the short bands.
-    for (((&s0, &s1), &s2), &s3) in short_bands.iter()
-                                         .zip(&short_bands[1..])
-                                         .zip(&short_bands[2..])
-                                         .zip(&short_bands[3..])
-                                         .step_by(3)
-                                         .rev() {
+    for (((&s0, &s1), &s2), &s3) in short_bands
+        .iter()
+        .zip(&short_bands[1..])
+        .zip(&short_bands[2..])
+        .zip(&short_bands[3..])
+        .step_by(3)
+        .rev()
+    {
         // For each short band, the following logic is repeated for each of the three windows.
         //
         // First, if the corresponding window in the previous band was zeroed, check if the
@@ -372,7 +372,7 @@ fn process_intensity_short_block(
                 is_inv_pos,
                 mid_side,
                 &mut ch0[s2..s3],
-                &mut ch1[s2..s3]
+                &mut ch1[s2..s3],
             );
         }
         else if mid_side {
@@ -393,7 +393,7 @@ fn process_intensity_short_block(
                 is_inv_pos,
                 mid_side,
                 &mut ch0[s1..s2],
-                &mut ch1[s1..s2]
+                &mut ch1[s1..s2],
             );
         }
         else if mid_side {
@@ -412,7 +412,7 @@ fn process_intensity_short_block(
                 is_inv_pos,
                 mid_side,
                 &mut ch0[s0..s1],
-                &mut ch1[s0..s1]
+                &mut ch1[s0..s1],
             );
         }
         else if mid_side {
@@ -485,7 +485,7 @@ pub(super) fn stereo(
             // error in the decoder logic if layer 1 or 2 stereo encodings are being decoded with
             // this function.
             panic!("invalid mode extension for layer 3 stereo decoding")
-        },
+        }
         _ => return Ok(()),
     };
 
@@ -514,9 +514,7 @@ pub(super) fn stereo(
             BlockType::Short { is_mixed } => {
                 process_intensity_short_block(header, granule, is_mixed, mid_side, end, ch0, ch1)
             }
-            _ => {
-                process_intensity_long_block(header, granule, mid_side, end, ch0, ch1)
-            }
+            _ => process_intensity_long_block(header, granule, mid_side, end, ch0, ch1),
         }
     }
     // If intensity stereo coding is not enabled, then all samples are processed with mid-side

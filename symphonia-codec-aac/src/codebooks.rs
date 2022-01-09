@@ -9,6 +9,7 @@ use symphonia_core::io::vlc::*;
 
 use lazy_static::lazy_static;
 
+#[rustfmt::skip]
 const SPECTRUM_CODEBOOK1_LENS: [u8; 81] = [
     11,  9, 11, 10,  7, 10, 11,  9, 11, 10,  7, 10,  7,  5,  7,  9,
      7, 10, 11,  9, 11,  9,  7,  9, 11,  9, 11,  9,  7,  9,  7,  5,
@@ -18,6 +19,7 @@ const SPECTRUM_CODEBOOK1_LENS: [u8; 81] = [
     11
 ];
 
+#[rustfmt::skip]
 const SPECTRUM_CODEBOOK1_CODES: [u32; 81] = [
     0x7f8, 0x1f1, 0x7fd, 0x3f5, 0x068, 0x3f0, 0x7f7, 0x1ec,
     0x7f5, 0x3f1, 0x072, 0x3f4, 0x074, 0x011, 0x076, 0x1eb,
@@ -32,6 +34,7 @@ const SPECTRUM_CODEBOOK1_CODES: [u32; 81] = [
     0x7f4
 ];
 
+#[rustfmt::skip]
 const SPECTRUM_CODEBOOK2_LENS: [u8; 81] = [
     9, 7, 9, 8, 6, 8, 9, 8, 9, 8, 6, 7, 6, 5, 6, 7,
     6, 8, 9, 7, 8, 8, 6, 8, 9, 7, 9, 8, 6, 7, 6, 5,
@@ -41,6 +44,7 @@ const SPECTRUM_CODEBOOK2_LENS: [u8; 81] = [
     9
 ];
 
+#[rustfmt::skip]
 const SPECTRUM_CODEBOOK2_CODES: [u32; 81] = [
     0x1f3, 0x06f, 0x1fd, 0x0eb, 0x023, 0x0ea, 0x1f7, 0x0e8,
     0x1fa, 0x0f2, 0x02d, 0x070, 0x020, 0x006, 0x02b, 0x06e,
@@ -55,6 +59,7 @@ const SPECTRUM_CODEBOOK2_CODES: [u32; 81] = [
     0x1f6
 ];
 
+#[rustfmt::skip]
 const SPECTRUM_CODEBOOK3_LENS: [u8; 81] = [
      1,  4,  8,  4,  5,  8,  9,  9, 10,  4,  6,  9,  6,  6,  9,  9,
      9, 10,  9, 10, 13,  9,  9, 11, 11, 10, 12,  4,  6, 10,  6,  7,
@@ -64,6 +69,7 @@ const SPECTRUM_CODEBOOK3_LENS: [u8; 81] = [
     15
 ];
 
+#[rustfmt::skip]
 const SPECTRUM_CODEBOOK3_CODES: [u32; 81] = [
     0x0000, 0x0009, 0x00ef, 0x000b, 0x0019, 0x00f0, 0x01eb, 0x01e6,
     0x03f2, 0x000a, 0x0035, 0x01ef, 0x0034, 0x0037, 0x01e9, 0x01ed,
@@ -78,6 +84,7 @@ const SPECTRUM_CODEBOOK3_CODES: [u32; 81] = [
     0x7ffa
 ];
 
+#[rustfmt::skip]
 const SPECTRUM_CODEBOOK4_LENS: [u8; 81] = [
      4,  5,  8,  5,  4,  8,  9,  8, 11,  5,  5,  8,  5,  4,  8,  8,
      7, 10,  9,  8, 11,  8,  8, 10, 11, 10, 11,  4,  5,  8,  4,  4,
@@ -87,6 +94,7 @@ const SPECTRUM_CODEBOOK4_LENS: [u8; 81] = [
     11
 ];
 
+#[rustfmt::skip]
 const SPECTRUM_CODEBOOK4_CODES: [u32; 81] = [
     0x007, 0x016, 0x0f6, 0x018, 0x008, 0x0ef, 0x1ef, 0x0f3,
     0x7f8, 0x019, 0x017, 0x0ed, 0x015, 0x001, 0x0e2, 0x0f0,
@@ -101,6 +109,7 @@ const SPECTRUM_CODEBOOK4_CODES: [u32; 81] = [
     0x7fc
 ];
 
+#[rustfmt::skip]
 const SPECTRUM_CODEBOOK5_LENS: [u8; 81] = [
     13, 12, 11, 11, 10, 11, 11, 12, 13, 12, 11, 10,  9,  8,  9, 10,
     11, 12, 12, 10,  9,  8,  7,  8,  9, 10, 11, 11,  9,  8,  5,  4,
@@ -110,6 +119,7 @@ const SPECTRUM_CODEBOOK5_LENS: [u8; 81] = [
     13
 ];
 
+#[rustfmt::skip]
 const SPECTRUM_CODEBOOK5_CODES: [u32; 81] = [
     0x1fff, 0x0ff7, 0x07f4, 0x07e8, 0x03f1, 0x07ee, 0x07f9, 0x0ff8,
     0x1ffd, 0x0ffd, 0x07f1, 0x03e8, 0x01e8, 0x00f0, 0x01ec, 0x03ee,
@@ -124,6 +134,7 @@ const SPECTRUM_CODEBOOK5_CODES: [u32; 81] = [
     0x1ffe
 ];
 
+#[rustfmt::skip]
 const SPECTRUM_CODEBOOK6_LENS: [u8; 81] = [
     11, 10,  9,  9,  9,  9,  9, 10, 11, 10,  9,  8,  7,  7,  7,  8,
      9, 10,  9,  8,  6,  6,  6,  6,  6,  8,  9,  9,  7,  6,  4,  4,
@@ -133,6 +144,7 @@ const SPECTRUM_CODEBOOK6_LENS: [u8; 81] = [
     11
 ];
 
+#[rustfmt::skip]
 const SPECTRUM_CODEBOOK6_CODES: [u32; 81] = [
     0x7fe, 0x3fd, 0x1f1, 0x1eb, 0x1f4, 0x1ea, 0x1f0, 0x3fc,
     0x7fd, 0x3f6, 0x1e5, 0x0ea, 0x06c, 0x071, 0x068, 0x0f0,
@@ -147,6 +159,7 @@ const SPECTRUM_CODEBOOK6_CODES: [u32; 81] = [
     0x7fc
 ];
 
+#[rustfmt::skip]
 const SPECTRUM_CODEBOOK7_LENS: [u8; 64] = [
      1,  3,  6,  7,  8,  9, 10, 11,  3,  4,  6,  7,  8,  8,  9,  9,
      6,  6,  7,  8,  8,  9,  9, 10,  7,  7,  8,  8,  9,  9, 10, 10,
@@ -154,6 +167,7 @@ const SPECTRUM_CODEBOOK7_LENS: [u8; 64] = [
     10,  9,  9, 10, 10, 11, 12, 12, 11, 10, 10, 10, 11, 11, 12, 12
 ];
 
+#[rustfmt::skip]
 const SPECTRUM_CODEBOOK7_CODES: [u32; 64] = [
     0x000, 0x005, 0x037, 0x074, 0x0f2, 0x1eb, 0x3ed, 0x7f7,
     0x004, 0x00c, 0x035, 0x071, 0x0ec, 0x0ee, 0x1ee, 0x1f5,
@@ -165,6 +179,7 @@ const SPECTRUM_CODEBOOK7_CODES: [u32; 64] = [
     0x7f6, 0x3f0, 0x3f2, 0x3f6, 0x7fa, 0x7fd, 0xffc, 0xfff
 ];
 
+#[rustfmt::skip]
 const SPECTRUM_CODEBOOK8_LENS: [u8; 64] = [
      5,  4,  5,  6,  7,  8,  9, 10,  4,  3,  4,  5,  6,  7,  7,  8,
      5,  4,  4,  5,  6,  7,  7,  8,  6,  5,  5,  6,  6,  7,  8,  8,
@@ -172,6 +187,7 @@ const SPECTRUM_CODEBOOK8_LENS: [u8; 64] = [
      9,  7,  7,  8,  8,  8,  9,  9, 10,  8,  8,  8,  9,  9,  9, 10
 ];
 
+#[rustfmt::skip]
 const SPECTRUM_CODEBOOK8_CODES: [u32; 64] = [
     0x00e, 0x005, 0x010, 0x030, 0x06f, 0x0f1, 0x1fa, 0x3fe,
     0x003, 0x000, 0x004, 0x012, 0x02c, 0x06a, 0x075, 0x0f8,
@@ -183,6 +199,7 @@ const SPECTRUM_CODEBOOK8_CODES: [u32; 64] = [
     0x3fd, 0x0f3, 0x0f4, 0x0f7, 0x1f7, 0x1fb, 0x1fc, 0x3ff
 ];
 
+#[rustfmt::skip]
 const SPECTRUM_CODEBOOK9_LENS: [u8; 169] = [
      1,  3,  6,  8,  9, 10, 10, 11, 11, 12, 12, 13, 13,  3,  4,  6,
      7,  8,  8,  9, 10, 10, 10, 11, 12, 12,  6,  6,  7,  8,  8,  9,
@@ -197,6 +214,7 @@ const SPECTRUM_CODEBOOK9_LENS: [u8; 169] = [
     13, 13, 13, 13, 14, 14, 14, 14, 15
 ];
 
+#[rustfmt::skip]
 const SPECTRUM_CODEBOOK9_CODES: [u32; 169] = [
     0x0000, 0x0005, 0x0037, 0x00e7, 0x01de, 0x03ce, 0x03d9, 0x07c8,
     0x07cd, 0x0fc8, 0x0fdd, 0x1fe4, 0x1fec, 0x0004, 0x000c, 0x0035,
@@ -222,6 +240,7 @@ const SPECTRUM_CODEBOOK9_CODES: [u32; 169] = [
     0x7fff
 ];
 
+#[rustfmt::skip]
 const SPECTRUM_CODEBOOK10_LENS: [u8; 169] = [
      6,  5,  6,  6,  7,  8,  9, 10, 10, 10, 11, 11, 12,  5,  4,  4,
      5,  6,  7,  7,  8,  8,  9, 10, 10, 11,  6,  4,  5,  5,  6,  6,
@@ -236,6 +255,7 @@ const SPECTRUM_CODEBOOK10_LENS: [u8; 169] = [
     10, 10, 10, 11, 11, 12, 12, 12, 12
 ];
 
+#[rustfmt::skip]
 const SPECTRUM_CODEBOOK10_CODES: [u32; 169] = [
     0x022, 0x008, 0x01d, 0x026, 0x05f, 0x0d3, 0x1cf, 0x3d0,
     0x3d7, 0x3ed, 0x7f0, 0x7f6, 0xffd, 0x007, 0x000, 0x001,
@@ -261,6 +281,7 @@ const SPECTRUM_CODEBOOK10_CODES: [u32; 169] = [
     0xfff
 ];
 
+#[rustfmt::skip]
 const SPECTRUM_CODEBOOK11_LENS: [u8; 289] = [
      4,  5,  6,  7,  8,  8,  9, 10, 10, 10, 11, 11, 12, 11, 12, 12,
     10,  5,  4,  5,  6,  7,  7,  8,  8,  9,  9,  9, 10, 10, 10, 10,
@@ -283,6 +304,7 @@ const SPECTRUM_CODEBOOK11_LENS: [u8; 289] = [
      5
 ];
 
+#[rustfmt::skip]
 const SPECTRUM_CODEBOOK11_CODES: [u32; 289] = [
     0x000, 0x006, 0x019, 0x03d, 0x09c, 0x0c6, 0x1a7, 0x390,
     0x3c2, 0x3df, 0x7e6, 0x7f3, 0xffb, 0x7ec, 0xffa, 0xffe,
@@ -323,6 +345,7 @@ const SPECTRUM_CODEBOOK11_CODES: [u32; 289] = [
     0x004
 ];
 
+#[rustfmt::skip]
 const SCF_CODEBOOK_LENS: [u8; 121] = [
     18, 18, 18, 18, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19,
     19, 19, 19, 18, 19, 18, 17, 17, 16, 17, 16, 16, 16, 16, 15, 15,
@@ -334,6 +357,7 @@ const SCF_CODEBOOK_LENS: [u8; 121] = [
     19, 19, 19, 19, 19, 19, 19, 19, 19
 ];
 
+#[rustfmt::skip]
 const SCF_CODEBOOK_CODES: [u32; 121] = [
     0x3FFE8, 0x3FFE6, 0x3FFE7, 0x3FFE5, 0x7FFF5, 0x7FFF1, 0x7FFED, 0x7FFF6,
     0x7FFEE, 0x7FFEF, 0x7FFF0, 0x7FFFC, 0x7FFFD, 0x7FFFF, 0x7FFFE, 0x7FFF7,
@@ -359,15 +383,15 @@ struct AacTable {
 }
 
 const SPECTRUM_TABLES: [AacTable; 11] = [
-    AacTable { codes: &SPECTRUM_CODEBOOK1_CODES,  lens: &SPECTRUM_CODEBOOK1_LENS  },
-    AacTable { codes: &SPECTRUM_CODEBOOK2_CODES,  lens: &SPECTRUM_CODEBOOK2_LENS  },
-    AacTable { codes: &SPECTRUM_CODEBOOK3_CODES,  lens: &SPECTRUM_CODEBOOK3_LENS  },
-    AacTable { codes: &SPECTRUM_CODEBOOK4_CODES,  lens: &SPECTRUM_CODEBOOK4_LENS  },
-    AacTable { codes: &SPECTRUM_CODEBOOK5_CODES,  lens: &SPECTRUM_CODEBOOK5_LENS  },
-    AacTable { codes: &SPECTRUM_CODEBOOK6_CODES,  lens: &SPECTRUM_CODEBOOK6_LENS  },
-    AacTable { codes: &SPECTRUM_CODEBOOK7_CODES,  lens: &SPECTRUM_CODEBOOK7_LENS  },
-    AacTable { codes: &SPECTRUM_CODEBOOK8_CODES,  lens: &SPECTRUM_CODEBOOK8_LENS  },
-    AacTable { codes: &SPECTRUM_CODEBOOK9_CODES,  lens: &SPECTRUM_CODEBOOK9_LENS  },
+    AacTable { codes: &SPECTRUM_CODEBOOK1_CODES, lens: &SPECTRUM_CODEBOOK1_LENS },
+    AacTable { codes: &SPECTRUM_CODEBOOK2_CODES, lens: &SPECTRUM_CODEBOOK2_LENS },
+    AacTable { codes: &SPECTRUM_CODEBOOK3_CODES, lens: &SPECTRUM_CODEBOOK3_LENS },
+    AacTable { codes: &SPECTRUM_CODEBOOK4_CODES, lens: &SPECTRUM_CODEBOOK4_LENS },
+    AacTable { codes: &SPECTRUM_CODEBOOK5_CODES, lens: &SPECTRUM_CODEBOOK5_LENS },
+    AacTable { codes: &SPECTRUM_CODEBOOK6_CODES, lens: &SPECTRUM_CODEBOOK6_LENS },
+    AacTable { codes: &SPECTRUM_CODEBOOK7_CODES, lens: &SPECTRUM_CODEBOOK7_LENS },
+    AacTable { codes: &SPECTRUM_CODEBOOK8_CODES, lens: &SPECTRUM_CODEBOOK8_LENS },
+    AacTable { codes: &SPECTRUM_CODEBOOK9_CODES, lens: &SPECTRUM_CODEBOOK9_LENS },
     AacTable { codes: &SPECTRUM_CODEBOOK10_CODES, lens: &SPECTRUM_CODEBOOK10_LENS },
     AacTable { codes: &SPECTRUM_CODEBOOK11_CODES, lens: &SPECTRUM_CODEBOOK11_LENS },
 ];

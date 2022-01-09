@@ -9,6 +9,7 @@
 
 /// Synthesis window D[i], defined in Table B.3 of ISO/IEC 11172-3.
 #[allow(clippy::unreadable_literal)]
+#[rustfmt::skip]
 const SYNTHESIS_D: [f32; 512] = [
      0.000000000, -0.000015259, -0.000015259, -0.000015259,
     -0.000015259, -0.000015259, -0.000015259, -0.000030518,
@@ -148,10 +149,7 @@ pub struct SynthesisState {
 
 impl Default for SynthesisState {
     fn default() -> Self {
-        SynthesisState {
-            v_vec: [[0f32; 64]; 16],
-            v_front: 0,
-        }
+        SynthesisState { v_vec: [[0f32; 64]; 16], v_front: 0 }
     }
 }
 
@@ -163,22 +161,22 @@ pub fn synthesis(state: &mut SynthesisState, in_samples: &mut [f32; 576], out: &
 
     // There are 18 synthesized PCM sample blocks.
     for b in 0..18 {
-        // First, select the b-th sample from each of the 32 sub-bands, and place them in the s 
+        // First, select the b-th sample from each of the 32 sub-bands, and place them in the s
         // vector, s_vec.
         for i in 0..32 {
-            s_vec[i] = in_samples[18*i + b];
+            s_vec[i] = in_samples[18 * i + b];
         }
 
         // Get the front slot of the v_vec FIFO.
         let v_vec = &mut state.v_vec[state.v_front];
 
-        // Matrixing is performed next. As per the standard, matrixing would require 2048 
-        // multiplications per sub-band! However, following the method by Konstantinides 
+        // Matrixing is performed next. As per the standard, matrixing would require 2048
+        // multiplications per sub-band! However, following the method by Konstantinides
         // published in [1], it is possible to achieve the same result through the use of a 32-point
         // DCT followed by some reconstruction.
         //
-        // It should be noted that this is a deceptively simple solution. It is instructive to 
-        // derive the algorithm before getting to the implementation to better understand what is 
+        // It should be noted that this is a deceptively simple solution. It is instructive to
+        // derive the algorithm before getting to the implementation to better understand what is
         // happening, and where the edge-cases are.
         //
         // First, there are a few key observations to this approach:
@@ -199,10 +197,10 @@ pub fn synthesis(state: &mut SynthesisState, in_samples: &mut [f32; 576], out: &
         //         vector thus allowing the use of an efficient DCT algorithm.
         //
         // The mappings above can be found graphically by plotting each row of the cosine
-        // coefficient matricies of both the DCT and MDCT side-by side. The mapping becomes readily 
+        // coefficient matricies of both the DCT and MDCT side-by side. The mapping becomes readily
         // apparent, and so too do the exceptions.
         //
-        // Using the observations above, if we apply a 32-point DCT transform to the input vector, 
+        // Using the observations above, if we apply a 32-point DCT transform to the input vector,
         // s_vec, and place the output in the DCT output vector, d_vec, we obtain the plot labelled
         // d_vec below.
         //
@@ -223,7 +221,7 @@ pub fn synthesis(state: &mut SynthesisState, in_samples: &mut [f32; 576], out: &
         //              . /      B      |              .              .               .
         //              +---------------+--------------+--------------+---------------+
         //              .               |     -B     / |   -A   +-----+-----+   -A    |
-        //              .               +----------+   +--------+     .     +---------+ 
+        //              .               +----------+   +--------+     .     +---------+
         //
         // Note however that the mappings in the previous step have exceptions for boundary samples.
         // These exceptions can be seen when plotting the coefficient matricies as mentioned above.
@@ -238,29 +236,29 @@ pub fn synthesis(state: &mut SynthesisState, in_samples: &mut [f32; 576], out: &
         // quadrant in seperate loops to assist auto-vectorization. The boundary samples are
         // excluded from these loops and handled manually afterwards.
         //
-        // [1] K. Konstantinides, "Fast subband filtering in MPEG audio coding", Signal Processing 
+        // [1] K. Konstantinides, "Fast subband filtering in MPEG audio coding", Signal Processing
         // Letters IEEE, vol. 1, no. 2, pp. 26-28, 1994.
         //
         // https://ieeexplore.ieee.org/abstract/document/300309
         dct32(&s_vec, &mut d_vec);
 
-        for (d, s) in v_vec[48-15..48+ 0].iter_mut().rev().zip(&d_vec[1..16]) {
+        for (d, s) in v_vec[48 - 15..48 + 0].iter_mut().rev().zip(&d_vec[1..16]) {
             *d = -s;
         }
-        for (d, s) in v_vec[48+ 1..48+16].iter_mut().zip(&d_vec[1..16]) {
+        for (d, s) in v_vec[48 + 1..48 + 16].iter_mut().zip(&d_vec[1..16]) {
             *d = -s;
         }
-        for (d, s) in v_vec[16+ 1..16+16].iter_mut().rev().zip(&d_vec[17..32]) {
+        for (d, s) in v_vec[16 + 1..16 + 16].iter_mut().rev().zip(&d_vec[17..32]) {
             *d = -s;
         }
         for (d, s) in v_vec[1..16].iter_mut().zip(&d_vec[17..32]) {
             *d = *s;
         }
 
-        v_vec[ 0] =  d_vec[16];
+        v_vec[0] = d_vec[16];
         v_vec[32] = -d_vec[16];
-        v_vec[48] = -d_vec[ 0];
-        v_vec[16] =  0.0;
+        v_vec[48] = -d_vec[0];
+        v_vec[16] = 0.0;
 
         // Next, as per the specification, build a vector, u_vec, by iterating over the 16 slots in
         // v_vec, and copying the first 32 samples of EVEN numbered v_vec slots, and the last 32
@@ -278,7 +276,7 @@ pub fn synthesis(state: &mut SynthesisState, in_samples: &mut [f32; 576], out: &
         //
         //        0   32   64   96  128       448  480  512
         //        +----+----+----+----+ . . . . +----+----+
-        // u_vec  | a  | d  | e  | h  | . . . . | w  | z  | 
+        // u_vec  | a  | d  | e  | h  | . . . . | w  | z  |
         //        +----+----+----+----+ . . . . +----+----+
         //
         // Finally, generate the 32 sample PCM blocks. Assuming s[i] is sample i of a PCM sample
@@ -287,13 +285,13 @@ pub fn synthesis(state: &mut SynthesisState, in_samples: &mut [f32; 576], out: &
         //         16
         // s[i] = SUM { u_vec[32*j + i] * D[32*j + i] }    for i=0..32
         //        j=0
-        // 
+        //
         // where:
         //     D[0..512] is the synthesis window provided in table B.3 of ISO/IEC 11172-3.
         //
-        // In words, u_vec is logically partitioned into 16 slots of 32 samples each (i.e., 
-        // slot 0 spans u_vec[0..32], slot 1 spans u_vec[32..64], and so on). Then, the i-th 
-        // sample in the PCM block is the summation of the i-th sample in each of the 16 u_vec 
+        // In words, u_vec is logically partitioned into 16 slots of 32 samples each (i.e.,
+        // slot 0 spans u_vec[0..32], slot 1 spans u_vec[32..64], and so on). Then, the i-th
+        // sample in the PCM block is the summation of the i-th sample in each of the 16 u_vec
         // slots after being multiplied by the synthesis window.
         //
         // But wait! This is VERY inefficient!
@@ -311,13 +309,13 @@ pub fn synthesis(state: &mut SynthesisState, in_samples: &mut [f32; 576], out: &
         for j in 0..8 {
             let v_start = state.v_front + (j << 1);
 
-            let v0 = &state.v_vec[(v_start + 0) & 0xf][ 0..32];
+            let v0 = &state.v_vec[(v_start + 0) & 0xf][0..32];
             let v1 = &state.v_vec[(v_start + 1) & 0xf][32..64];
 
             let k = j << 6;
 
             for i in 0..32 {
-                o_vec[i] += v0[i] * SYNTHESIS_D[k + i +  0];
+                o_vec[i] += v0[i] * SYNTHESIS_D[k + i + 0];
                 o_vec[i] += v1[i] * SYNTHESIS_D[k + i + 32];
             }
         }
@@ -330,7 +328,7 @@ pub fn synthesis(state: &mut SynthesisState, in_samples: &mut [f32; 576], out: &
         }
 
         // Shift the v_vec FIFO. The value v_front is the index of the 64 sample slot in v_vec
-        // that will be overwritten next iteration. Conversely, that makes it the front of the 
+        // that will be overwritten next iteration. Conversely, that makes it the front of the
         // FIFO for the purpose of building u_vec. We would like to overwrite the oldest slot,
         // so we subtract 1 via a wrapping addition to move the front backwards by 1 slot,
         // effectively overwriting the oldest slot with the soon-to-be newest.
@@ -343,7 +341,7 @@ pub fn synthesis(state: &mut SynthesisState, in_samples: &mut [f32; 576], out: &
 ///
 /// This is a straight-forward implemention of the recursive algorithm, flattened into a single
 /// function body to avoid the overhead of function calls and the stack.
-/// 
+///
 /// [1] B.G. Lee, "A new algorithm to compute the discrete cosine transform", IEEE Transactions
 /// on Acoustics, Speech, and Signal Processing, vol. 32, no. 6, pp. 1243-1245, 1984.
 ///
@@ -355,77 +353,77 @@ fn dct32(x: &[f32; 32], y: &mut [f32; 32]) {
     //
     // where N = [32, 16, 8, 4, 2], for COS_16, COS8, COS_4, and COS_2, respectively.
     const COS_16: [f32; 16] = [
-         0.500_602_998_235_196_3,  // i= 0
-         0.505_470_959_897_543_6,  // i= 1
-         0.515_447_309_922_624_6,  // i= 2
-         0.531_042_591_089_784_1,  // i= 3
-         0.553_103_896_034_444_5,  // i= 4
-         0.582_934_968_206_133_9,  // i= 5
-         0.622_504_123_035_664_8,  // i= 6
-         0.674_808_341_455_005_7,  // i= 7
-         0.744_536_271_002_298_6,  // i= 8
-         0.839_349_645_415_526_8,  // i= 9
-         0.972_568_237_861_960_8,  // i=10
-         1.169_439_933_432_884_7,  // i=11
-         1.484_164_616_314_166_2,  // i=12
-         2.057_781_009_953_410_8,  // i=13
-         3.407_608_418_468_719_0,  // i=14
-        10.190_008_123_548_032_9,  // i=15
+        0.500_602_998_235_196_3,  // i= 0
+        0.505_470_959_897_543_6,  // i= 1
+        0.515_447_309_922_624_6,  // i= 2
+        0.531_042_591_089_784_1,  // i= 3
+        0.553_103_896_034_444_5,  // i= 4
+        0.582_934_968_206_133_9,  // i= 5
+        0.622_504_123_035_664_8,  // i= 6
+        0.674_808_341_455_005_7,  // i= 7
+        0.744_536_271_002_298_6,  // i= 8
+        0.839_349_645_415_526_8,  // i= 9
+        0.972_568_237_861_960_8,  // i=10
+        1.169_439_933_432_884_7,  // i=11
+        1.484_164_616_314_166_2,  // i=12
+        2.057_781_009_953_410_8,  // i=13
+        3.407_608_418_468_719_0,  // i=14
+        10.190_008_123_548_032_9, // i=15
     ];
 
     const COS_8: [f32; 8] = [
-        0.502_419_286_188_155_7,  // i=0
-        0.522_498_614_939_688_9,  // i=1
-        0.566_944_034_816_357_7,  // i=2
-        0.646_821_783_359_990_1,  // i=3
-        0.788_154_623_451_250_2,  // i=4
-        1.060_677_685_990_347_1,  // i=5
-        1.722_447_098_238_334_2,  // i=6
-        5.101_148_618_689_155_3,  // i=7
+        0.502_419_286_188_155_7, // i=0
+        0.522_498_614_939_688_9, // i=1
+        0.566_944_034_816_357_7, // i=2
+        0.646_821_783_359_990_1, // i=3
+        0.788_154_623_451_250_2, // i=4
+        1.060_677_685_990_347_1, // i=5
+        1.722_447_098_238_334_2, // i=6
+        5.101_148_618_689_155_3, // i=7
     ];
 
     const COS_4: [f32; 4] = [
-        0.509_795_579_104_159_2,  // i=0
-        0.601_344_886_935_045_3,  // i=1
-        0.899_976_223_136_415_6,  // i=2
-        2.562_915_447_741_505_5,  // i=3
+        0.509_795_579_104_159_2, // i=0
+        0.601_344_886_935_045_3, // i=1
+        0.899_976_223_136_415_6, // i=2
+        2.562_915_447_741_505_5, // i=3
     ];
 
     const COS_2: [f32; 2] = [
-        0.541_196_100_146_197_0,  // i=0
-        1.306_562_964_876_376_4,  // i=1
+        0.541_196_100_146_197_0, // i=0
+        1.306_562_964_876_376_4, // i=1
     ];
 
     const COS_1: f32 = 0.707_106_781_186_547_5;
 
     // 16-point DCT decomposition
     let mut t0 = [
-        (x[ 0] + x[32 -  1]),
-        (x[ 1] + x[32 -  2]),
-        (x[ 2] + x[32 -  3]),
-        (x[ 3] + x[32 -  4]),
-        (x[ 4] + x[32 -  5]),
-        (x[ 5] + x[32 -  6]),
-        (x[ 6] + x[32 -  7]),
-        (x[ 7] + x[32 -  8]),
-        (x[ 8] + x[32 -  9]),
-        (x[ 9] + x[32 - 10]),
+        (x[0] + x[32 - 1]),
+        (x[1] + x[32 - 2]),
+        (x[2] + x[32 - 3]),
+        (x[3] + x[32 - 4]),
+        (x[4] + x[32 - 5]),
+        (x[5] + x[32 - 6]),
+        (x[6] + x[32 - 7]),
+        (x[7] + x[32 - 8]),
+        (x[8] + x[32 - 9]),
+        (x[9] + x[32 - 10]),
         (x[10] + x[32 - 11]),
         (x[11] + x[32 - 12]),
         (x[12] + x[32 - 13]),
         (x[13] + x[32 - 14]),
         (x[14] + x[32 - 15]),
         (x[15] + x[32 - 16]),
-        (x[ 0] - x[32 -  1]) * COS_16[0],
-        (x[ 1] - x[32 -  2]) * COS_16[1],
-        (x[ 2] - x[32 -  3]) * COS_16[2],
-        (x[ 3] - x[32 -  4]) * COS_16[3],
-        (x[ 4] - x[32 -  5]) * COS_16[4],
-        (x[ 5] - x[32 -  6]) * COS_16[5],
-        (x[ 6] - x[32 -  7]) * COS_16[6],
-        (x[ 7] - x[32 -  8]) * COS_16[7],
-        (x[ 8] - x[32 -  9]) * COS_16[8],
-        (x[ 9] - x[32 - 10]) * COS_16[9],
+        (x[0] - x[32 - 1]) * COS_16[0],
+        (x[1] - x[32 - 2]) * COS_16[1],
+        (x[2] - x[32 - 3]) * COS_16[2],
+        (x[3] - x[32 - 4]) * COS_16[3],
+        (x[4] - x[32 - 5]) * COS_16[4],
+        (x[5] - x[32 - 6]) * COS_16[5],
+        (x[6] - x[32 - 7]) * COS_16[6],
+        (x[7] - x[32 - 8]) * COS_16[7],
+        (x[8] - x[32 - 9]) * COS_16[8],
+        (x[9] - x[32 - 10]) * COS_16[9],
         (x[10] - x[32 - 11]) * COS_16[10],
         (x[11] - x[32 - 12]) * COS_16[11],
         (x[12] - x[32 - 13]) * COS_16[12],
@@ -479,10 +477,7 @@ fn dct32(x: &[f32; 32], y: &mut [f32; 32]) {
 
                 // 2-point DCT decomposition of t3[0..2]
                 {
-                    let t4 = [
-                        (t3[0] + t3[2-1]),
-                        (t3[0] - t3[2-1]) * COS_1,
-                    ];
+                    let t4 = [(t3[0] + t3[2 - 1]), (t3[0] - t3[2 - 1]) * COS_1];
 
                     t3[0] = t4[0];
                     t3[1] = t4[1];
@@ -490,10 +485,7 @@ fn dct32(x: &[f32; 32], y: &mut [f32; 32]) {
 
                 // 2-point DCT decomposition of t3[2..4]
                 {
-                    let t4 = [
-                        (t3[2] + t3[4-1]),
-                        (t3[2] - t3[4-1]) * COS_1,
-                    ];
+                    let t4 = [(t3[2] + t3[4 - 1]), (t3[2] - t3[4 - 1]) * COS_1];
 
                     t3[2 + 0] = t4[0];
                     t3[2 + 1] = t4[1];
@@ -516,10 +508,7 @@ fn dct32(x: &[f32; 32], y: &mut [f32; 32]) {
 
                 // 2-point DCT decomposition of t3[0..2]
                 {
-                    let t4 = [
-                        (t3[0] + t3[2-1]),
-                        (t3[0] - t3[2-1]) * COS_1,
-                    ];
+                    let t4 = [(t3[0] + t3[2 - 1]), (t3[0] - t3[2 - 1]) * COS_1];
 
                     t3[0] = t4[0];
                     t3[1] = t4[1];
@@ -527,10 +516,7 @@ fn dct32(x: &[f32; 32], y: &mut [f32; 32]) {
 
                 // 2-point DCT decomposition of t3[2..4]
                 {
-                    let t4 = [
-                        (t3[2] + t3[4-1]),
-                        (t3[2] - t3[4-1]) * COS_1,
-                    ];
+                    let t4 = [(t3[2] + t3[4 - 1]), (t3[2] - t3[4 - 1]) * COS_1];
 
                     t3[2 + 0] = t4[0];
                     t3[2 + 1] = t4[1];
@@ -544,8 +530,8 @@ fn dct32(x: &[f32; 32], y: &mut [f32; 32]) {
 
             // Recombine t2[0..4] and t2[4..8], overwriting t1[0..8].
             for i in 0..3 {
-                t1[(i<<1) + 0] = t2[i];
-                t1[(i<<1) + 1] = t2[4+i] + t2[4+i+1];
+                t1[(i << 1) + 0] = t2[i];
+                t1[(i << 1) + 1] = t2[4 + i] + t2[4 + i + 1];
             }
 
             t1[8 - 2] = t2[4 - 1];
@@ -555,12 +541,12 @@ fn dct32(x: &[f32; 32], y: &mut [f32; 32]) {
         // 8-point DCT decomposition of t1[8..16]
         {
             let mut t2 = [
-                (t1[ 8] + t1[16 - 1]),
-                (t1[ 9] + t1[16 - 2]),
+                (t1[8] + t1[16 - 1]),
+                (t1[9] + t1[16 - 2]),
                 (t1[10] + t1[16 - 3]),
                 (t1[11] + t1[16 - 4]),
-                (t1[ 8] - t1[16 - 1]) * COS_4[0],
-                (t1[ 9] - t1[16 - 2]) * COS_4[1],
+                (t1[8] - t1[16 - 1]) * COS_4[0],
+                (t1[9] - t1[16 - 2]) * COS_4[1],
                 (t1[10] - t1[16 - 3]) * COS_4[2],
                 (t1[11] - t1[16 - 4]) * COS_4[3],
             ];
@@ -576,10 +562,7 @@ fn dct32(x: &[f32; 32], y: &mut [f32; 32]) {
 
                 // 2-point DCT decomposition of t3[0..2]
                 {
-                    let t4 = [
-                        (t3[0] + t3[2-1]),
-                        (t3[0] - t3[2-1]) * COS_1,
-                    ];
+                    let t4 = [(t3[0] + t3[2 - 1]), (t3[0] - t3[2 - 1]) * COS_1];
 
                     t3[0] = t4[0];
                     t3[1] = t4[1];
@@ -587,10 +570,7 @@ fn dct32(x: &[f32; 32], y: &mut [f32; 32]) {
 
                 // 2-point DCT decomposition of t3[2..4]
                 {
-                    let t4 = [
-                        (t3[2] + t3[4-1]),
-                        (t3[2] - t3[4-1]) * COS_1,
-                    ];
+                    let t4 = [(t3[2] + t3[4 - 1]), (t3[2] - t3[4 - 1]) * COS_1];
 
                     t3[2 + 0] = t4[0];
                     t3[2 + 1] = t4[1];
@@ -613,10 +593,7 @@ fn dct32(x: &[f32; 32], y: &mut [f32; 32]) {
 
                 // 2-point DCT decomposition of t3[0..2]
                 {
-                    let t4 = [
-                        (t3[0] + t3[2-1]),
-                        (t3[0] - t3[2-1]) * COS_1,
-                    ];
+                    let t4 = [(t3[0] + t3[2 - 1]), (t3[0] - t3[2 - 1]) * COS_1];
 
                     t3[0] = t4[0];
                     t3[1] = t4[1];
@@ -624,10 +601,7 @@ fn dct32(x: &[f32; 32], y: &mut [f32; 32]) {
 
                 // 2-point DCT decomposition of t3[2..4]
                 {
-                    let t4 = [
-                        (t3[2] + t3[4-1]),
-                        (t3[2] - t3[4-1]) * COS_1,
-                    ];
+                    let t4 = [(t3[2] + t3[4 - 1]), (t3[2] - t3[4 - 1]) * COS_1];
 
                     t3[2 + 0] = t4[0];
                     t3[2 + 1] = t4[1];
@@ -641,8 +615,8 @@ fn dct32(x: &[f32; 32], y: &mut [f32; 32]) {
 
             // Recombine t2[0..4] and t2[4..8], overwriting t1[8..16].
             for i in 0..3 {
-                t1[8 + (i<<1) + 0] = t2[i];
-                t1[8 + (i<<1) + 1] = t2[4+i] + t2[4+i+1];
+                t1[8 + (i << 1) + 0] = t2[i];
+                t1[8 + (i << 1) + 1] = t2[4 + i] + t2[4 + i + 1];
             }
 
             t1[16 - 2] = t2[4 - 1];
@@ -651,8 +625,8 @@ fn dct32(x: &[f32; 32], y: &mut [f32; 32]) {
 
         // Recombine t1[0..8] and t1[8..16], overwriting t0[0..16].
         for i in 0..7 {
-            t0[(i<<1) + 0] = t1[i];
-            t0[(i<<1) + 1] = t1[8+i] + t1[8+i+1];
+            t0[(i << 1) + 0] = t1[i];
+            t0[(i << 1) + 1] = t1[8 + i] + t1[8 + i + 1];
         }
 
         t0[16 - 2] = t1[8 - 1];
@@ -704,10 +678,7 @@ fn dct32(x: &[f32; 32], y: &mut [f32; 32]) {
 
                 // 2-point DCT decomposition of t3[0..2]
                 {
-                    let t4 = [
-                        (t3[0] + t3[2-1]),
-                        (t3[0] - t3[2-1]) * COS_1,
-                    ];
+                    let t4 = [(t3[0] + t3[2 - 1]), (t3[0] - t3[2 - 1]) * COS_1];
 
                     t3[0] = t4[0];
                     t3[1] = t4[1];
@@ -715,10 +686,7 @@ fn dct32(x: &[f32; 32], y: &mut [f32; 32]) {
 
                 // 2-point DCT decomposition of t3[2..4]
                 {
-                    let t4 = [
-                        (t3[2] + t3[4-1]),
-                        (t3[2] - t3[4-1]) * COS_1,
-                    ];
+                    let t4 = [(t3[2] + t3[4 - 1]), (t3[2] - t3[4 - 1]) * COS_1];
 
                     t3[2 + 0] = t4[0];
                     t3[2 + 1] = t4[1];
@@ -741,10 +709,7 @@ fn dct32(x: &[f32; 32], y: &mut [f32; 32]) {
 
                 // 2-point DCT decomposition of t3[0..2]
                 {
-                    let t4 = [
-                        (t3[0] + t3[2-1]),
-                        (t3[0] - t3[2-1]) * COS_1,
-                    ];
+                    let t4 = [(t3[0] + t3[2 - 1]), (t3[0] - t3[2 - 1]) * COS_1];
 
                     t3[0] = t4[0];
                     t3[1] = t4[1];
@@ -752,10 +717,7 @@ fn dct32(x: &[f32; 32], y: &mut [f32; 32]) {
 
                 // 2-point DCT decomposition of t3[2..4]
                 {
-                    let t4 = [
-                        (t3[2] + t3[4-1]),
-                        (t3[2] - t3[4-1]) * COS_1,
-                    ];
+                    let t4 = [(t3[2] + t3[4 - 1]), (t3[2] - t3[4 - 1]) * COS_1];
 
                     t3[2 + 0] = t4[0];
                     t3[2 + 1] = t4[1];
@@ -769,8 +731,8 @@ fn dct32(x: &[f32; 32], y: &mut [f32; 32]) {
 
             // Recombine t2[0..4] and t2[4..8], overwriting t1[0..8].
             for i in 0..3 {
-                t1[(i<<1) + 0] = t2[i];
-                t1[(i<<1) + 1] = t2[4+i] + t2[4+i+1];
+                t1[(i << 1) + 0] = t2[i];
+                t1[(i << 1) + 1] = t2[4 + i] + t2[4 + i + 1];
             }
 
             t1[8 - 2] = t2[4 - 1];
@@ -780,12 +742,12 @@ fn dct32(x: &[f32; 32], y: &mut [f32; 32]) {
         // 8-point DCT decomposition of t1[8..16]
         {
             let mut t2 = [
-                (t1[ 8] + t1[16 - 1]),
-                (t1[ 9] + t1[16 - 2]),
+                (t1[8] + t1[16 - 1]),
+                (t1[9] + t1[16 - 2]),
                 (t1[10] + t1[16 - 3]),
                 (t1[11] + t1[16 - 4]),
-                (t1[ 8] - t1[16 - 1]) * COS_4[0],
-                (t1[ 9] - t1[16 - 2]) * COS_4[1],
+                (t1[8] - t1[16 - 1]) * COS_4[0],
+                (t1[9] - t1[16 - 2]) * COS_4[1],
                 (t1[10] - t1[16 - 3]) * COS_4[2],
                 (t1[11] - t1[16 - 4]) * COS_4[3],
             ];
@@ -801,10 +763,7 @@ fn dct32(x: &[f32; 32], y: &mut [f32; 32]) {
 
                 // 2-point DCT decomposition of t3[0..2]
                 {
-                    let t4 = [
-                        (t3[0] + t3[2-1]),
-                        (t3[0] - t3[2-1]) * COS_1,
-                    ];
+                    let t4 = [(t3[0] + t3[2 - 1]), (t3[0] - t3[2 - 1]) * COS_1];
 
                     t3[0] = t4[0];
                     t3[1] = t4[1];
@@ -812,10 +771,7 @@ fn dct32(x: &[f32; 32], y: &mut [f32; 32]) {
 
                 // 2-point DCT decomposition of t3[2..4]
                 {
-                    let t4 = [
-                        (t3[2] + t3[4-1]),
-                        (t3[2] - t3[4-1]) * COS_1,
-                    ];
+                    let t4 = [(t3[2] + t3[4 - 1]), (t3[2] - t3[4 - 1]) * COS_1];
 
                     t3[2 + 0] = t4[0];
                     t3[2 + 1] = t4[1];
@@ -838,10 +794,7 @@ fn dct32(x: &[f32; 32], y: &mut [f32; 32]) {
 
                 // 2-point DCT decomposition of t3[0..2]
                 {
-                    let t4 = [
-                        (t3[0] + t3[2-1]),
-                        (t3[0] - t3[2-1]) * COS_1,
-                    ];
+                    let t4 = [(t3[0] + t3[2 - 1]), (t3[0] - t3[2 - 1]) * COS_1];
 
                     t3[0] = t4[0];
                     t3[1] = t4[1];
@@ -849,10 +802,7 @@ fn dct32(x: &[f32; 32], y: &mut [f32; 32]) {
 
                 // 2-point DCT decomposition of t3[2..4]
                 {
-                    let t4 = [
-                        (t3[2] + t3[4-1]),
-                        (t3[2] - t3[4-1]) * COS_1,
-                    ];
+                    let t4 = [(t3[2] + t3[4 - 1]), (t3[2] - t3[4 - 1]) * COS_1];
 
                     t3[2 + 0] = t4[0];
                     t3[2 + 1] = t4[1];
@@ -866,8 +816,8 @@ fn dct32(x: &[f32; 32], y: &mut [f32; 32]) {
 
             // Recombine t2[0..4] and t2[4..8], overwriting t1[8..16].
             for i in 0..3 {
-                t1[8 + (i<<1) + 0] = t2[i];
-                t1[8 + (i<<1) + 1] = t2[4+i] + t2[4+i+1];
+                t1[8 + (i << 1) + 0] = t2[i];
+                t1[8 + (i << 1) + 1] = t2[4 + i] + t2[4 + i + 1];
             }
 
             t1[16 - 2] = t2[4 - 1];
@@ -876,8 +826,8 @@ fn dct32(x: &[f32; 32], y: &mut [f32; 32]) {
 
         // Recombine t1[0..8] and t1[8..16], overwriting t0[0..16].
         for i in 0..7 {
-            t0[16 + (i<<1) + 0] = t1[i];
-            t0[16 + (i<<1) + 1] = t1[8+i] + t1[8+i+1];
+            t0[16 + (i << 1) + 0] = t1[i];
+            t0[16 + (i << 1) + 1] = t1[8 + i] + t1[8 + i + 1];
         }
 
         t0[32 - 2] = t1[8 - 1];
@@ -886,14 +836,13 @@ fn dct32(x: &[f32; 32], y: &mut [f32; 32]) {
 
     // Recombine t1[0..16] and t1[16..32] into y.
     for i in 0..15 {
-        y[(i<<1) + 0] = t0[i];
-        y[(i<<1) + 1] = t0[16 + i] + t0[16 + i + 1];
+        y[(i << 1) + 0] = t0[i];
+        y[(i << 1) + 1] = t0[16 + i] + t0[16 + i + 1];
     }
 
     y[32 - 2] = t0[16 - 1];
     y[32 - 1] = t0[32 - 1];
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -907,7 +856,7 @@ mod tests {
         for i in 0..32 {
             let mut sum = 0.0;
             for j in 0..32 {
-                sum += (x[j] as f64)* (PI_32 * (i as f64) * ((j as f64) + 0.5)).cos();
+                sum += (x[j] as f64) * (PI_32 * (i as f64) * ((j as f64) + 0.5)).cos();
             }
             result[i] = sum as f32;
         }
@@ -916,11 +865,11 @@ mod tests {
 
     #[test]
     fn verify_dct32() {
-        const TEST_VECTOR: [f32; 32] = [ 
-            0.1710, 0.1705, 0.3476, 0.1866, 0.4784, 0.6525, 0.2690, 0.9996,
-            0.1864, 0.7277, 0.1163, 0.6620, 0.0911, 0.3225, 0.1126, 0.5344,
-            0.7839, 0.9741, 0.8757, 0.5763, 0.5926, 0.2756, 0.1757, 0.6531,
-            0.7101, 0.7376, 0.1924, 0.0351, 0.8044, 0.2409, 0.9347, 0.9417,
+        const TEST_VECTOR: [f32; 32] = [
+            0.1710, 0.1705, 0.3476, 0.1866, 0.4784, 0.6525, 0.2690, 0.9996, //
+            0.1864, 0.7277, 0.1163, 0.6620, 0.0911, 0.3225, 0.1126, 0.5344, //
+            0.7839, 0.9741, 0.8757, 0.5763, 0.5926, 0.2756, 0.1757, 0.6531, //
+            0.7101, 0.7376, 0.1924, 0.0351, 0.8044, 0.2409, 0.9347, 0.9417, //
         ];
 
         let mut test_result = [0f32; 32];

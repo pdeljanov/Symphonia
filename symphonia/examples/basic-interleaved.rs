@@ -31,8 +31,8 @@ fn main() {
     let decoder_opts: DecoderOptions = Default::default();
 
     // Probe the media source stream for a format.
-    let probed = symphonia::default::get_probe().format(&hint, mss, &format_opts, &metadata_opts)
-                                                .unwrap();
+    let probed =
+        symphonia::default::get_probe().format(&hint, mss, &format_opts, &metadata_opts).unwrap();
 
     // Get the format reader yielded by the probe operation.
     let mut format = probed.format;
@@ -41,8 +41,8 @@ fn main() {
     let track = format.default_track().unwrap();
 
     // Create a decoder for the track.
-    let mut decoder = symphonia::default::get_codecs().make(&track.codec_params, &decoder_opts)
-                                                      .unwrap();
+    let mut decoder =
+        symphonia::default::get_codecs().make(&track.codec_params, &decoder_opts).unwrap();
 
     // Store the track identifier, we'll use it to filter packets.
     let track_id = track.id;
@@ -55,7 +55,9 @@ fn main() {
         let packet = format.next_packet().unwrap();
 
         // If the packet does not belong to the selected track, skip it.
-        if packet.track_id() != track_id { continue; }
+        if packet.track_id() != track_id {
+            continue;
+        }
 
         // Decode the packet into audio samples, ignoring any decode errors.
         match decoder.decode(&packet) {

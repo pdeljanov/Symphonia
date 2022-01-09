@@ -7,11 +7,11 @@
 
 use std::cmp;
 use std::io;
-use std::io::{Seek, Read, IoSliceMut};
+use std::io::{IoSliceMut, Read, Seek};
 use std::ops::Sub;
 
 use super::SeekBuffered;
-use super::{ReadBytes, MediaSource};
+use super::{MediaSource, ReadBytes};
 
 const END_OF_STREAM_ERROR_STR: &str = "end of stream";
 
@@ -23,9 +23,7 @@ pub struct MediaSourceStreamOptions {
 
 impl Default for MediaSourceStreamOptions {
     fn default() -> Self {
-        MediaSourceStreamOptions {
-            buffer_len: 64 * 1024,
-        }
+        MediaSourceStreamOptions { buffer_len: 64 * 1024 }
     }
 }
 
@@ -69,7 +67,7 @@ pub struct MediaSourceStream {
 }
 
 impl MediaSourceStream {
-    const MIN_BLOCK_LEN: usize =  1 * 1024;
+    const MIN_BLOCK_LEN: usize = 1 * 1024;
     const MAX_BLOCK_LEN: usize = 32 * 1024;
 
     pub fn new(source: Box<dyn MediaSource>, options: MediaSourceStreamOptions) -> Self {
@@ -114,10 +112,7 @@ impl MediaSourceStream {
                 // Otherwise, perform a vectored read into the two contiguous region slices.
                 let rem = self.read_block_len - vec0.len();
 
-                let ring_vectors = &mut [
-                    IoSliceMut::new(vec0),
-                    IoSliceMut::new(&mut vec1[..rem]),
-                ];
+                let ring_vectors = &mut [IoSliceMut::new(vec0), IoSliceMut::new(&mut vec1[..rem])];
 
                 self.inner.read_vectored(ring_vectors)?
             };
@@ -177,7 +172,6 @@ impl MediaSourceStream {
 }
 
 impl MediaSource for MediaSourceStream {
-
     #[inline]
     fn is_seekable(&self) -> bool {
         self.inner.is_seekable()
@@ -187,11 +181,9 @@ impl MediaSource for MediaSourceStream {
     fn byte_len(&self) -> Option<u64> {
         self.inner.byte_len()
     }
-
 }
 
 impl io::Read for MediaSourceStream {
-
     fn read(&mut self, mut buf: &mut [u8]) -> io::Result<usize> {
         let read_len = buf.len();
 
@@ -206,8 +198,8 @@ impl io::Read for MediaSourceStream {
                 Ok(count) => {
                     buf = &mut buf[count..];
                     self.consume(count);
-                },
-                Err(ref e) if e.kind() == io::ErrorKind::Interrupted => {},
+                }
+                Err(ref e) if e.kind() == io::ErrorKind::Interrupted => {}
                 Err(e) => return Err(e),
             }
         }
@@ -216,34 +208,27 @@ impl io::Read for MediaSourceStream {
         // that buffer that is remaining.
         Ok(read_len - buf.len())
     }
-
 }
 
 impl io::Seek for MediaSourceStream {
-
     fn seek(&mut self, pos: io::SeekFrom) -> io::Result<u64> {
         // The current position of the underlying reader is ahead of the current position of the
         // MediaSourceStream by how ever many bytes have not been read from the read-ahead buffer
         // yet. When seeking from the current position adjust the position delta to offset that
         // difference.
         let pos = match pos {
-            io::SeekFrom::Current(0) => {
-                return Ok(self.pos())
-            },
+            io::SeekFrom::Current(0) => return Ok(self.pos()),
             io::SeekFrom::Current(delta_pos) => {
                 let delta = delta_pos - self.unread_buffer_len() as i64;
                 self.inner.seek(io::SeekFrom::Current(delta))
-            },
-            _ => {
-                self.inner.seek(pos)
             }
+            _ => self.inner.seek(pos),
         }?;
 
         self.reset(pos);
 
         Ok(pos)
     }
-
 }
 
 impl ReadBytes for MediaSourceStream {
@@ -353,7 +338,7 @@ impl ReadBytes for MediaSourceStream {
         &mut self,
         _: &[u8],
         _: usize,
-        _: &'a mut [u8]
+        _: &'a mut [u8],
     ) -> io::Result<&'a mut [u8]> {
         // Intentionally left unimplemented.
         unimplemented!();
@@ -479,8 +464,8 @@ impl SeekBuffered for MediaSourceStream {
 
 #[cfg(test)]
 mod tests {
-    use std::io::{Read, Cursor};
     use super::{MediaSourceStream, ReadBytes, SeekBuffered};
+    use std::io::{Cursor, Read};
 
     /// Generate a random vector of bytes of the specified length using a PRNG.
     fn generate_random_bytes(len: usize) -> Box<[u8]> {

@@ -1,0 +1,15 @@
+# The following rustfmt.toml requires the Nightly toolchain. Please DO NOT run with the Stable
+# toolchain.
+
+# Stable Features
+max_width = 100
+use_small_heuristics = "Max"
+hard_tabs = false
+tab_spaces = 4
+newline_style = "Unix"
+
+# Unstable Features (requires Nightly)
+unstable_features = true
+control_brace_style = "ClosingNextLine"
+# wrap_comments = true
+# comment_width = 100

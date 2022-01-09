@@ -5,7 +5,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::errors::{Result, decode_error};
+use symphonia_core::errors::{decode_error, Result};
 use symphonia_core::io::ReadBytes;
 
 pub(crate) mod alac;
@@ -47,6 +47,7 @@ pub(crate) mod trun;
 pub(crate) mod udta;
 pub(crate) mod wave;
 
+pub use self::meta::MetaAtom;
 pub use alac::AlacAtom;
 pub use co64::Co64Atom;
 pub use ctts::CttsAtom;
@@ -67,7 +68,6 @@ pub use moov::MoovAtom;
 pub use mvex::MvexAtom;
 pub use mvhd::MvhdAtom;
 pub use opus::OpusAtom;
-pub use self::meta::MetaAtom;
 pub use sidx::SidxAtom;
 pub use smhd::SmhdAtom;
 pub use stbl::StblAtom;
@@ -304,7 +304,7 @@ impl From<[u8; 4]> for AtomType {
             b"\xa9nam" => AtomType::TrackTitleTag,
             b"\xa9too" => AtomType::EncoderTag,
             b"\xa9wrt" => AtomType::ComposerTag,
-            _ => AtomType::Other(val)
+            _ => AtomType::Other(val),
         }
     }
 }
@@ -331,9 +331,7 @@ impl AtomHeader {
         let atype = AtomType::from(reader.read_quad_bytes()?);
 
         let data_len = match atom_len {
-            0 => {
-                0
-            }
+            0 => 0,
             1 => {
                 atom_len = reader.read_be_u64()?;
 
@@ -362,21 +360,18 @@ impl AtomHeader {
     pub fn base_header_len(&self) -> u64 {
         match self.atom_len {
             0 => AtomHeader::HEADER_SIZE,
-            _ => (self.atom_len - self.data_len)
+            _ => (self.atom_len - self.data_len),
         }
     }
 
     /// For applicable atoms, reads the atom header extra data: a tuple composed of a u8 version
     /// number, and a u24 bitset of flags.
     pub fn read_extra<B: ReadBytes>(reader: &mut B) -> Result<(u8, u32)> {
-        Ok((
-            reader.read_u8()?,
-            reader.read_be_u24()?,
-        ))
+        Ok((reader.read_u8()?, reader.read_be_u24()?))
     }
 }
 
-pub trait Atom : Sized {
+pub trait Atom: Sized {
     fn header(&self) -> AtomHeader;
 
     fn read<B: ReadBytes>(reader: &mut B, header: AtomHeader) -> Result<Self>;
@@ -391,17 +386,10 @@ pub struct AtomIterator<B: ReadBytes> {
 }
 
 impl<B: ReadBytes> AtomIterator<B> {
-
     pub fn new_root(reader: B, len: Option<u64>) -> Self {
         let base_pos = reader.pos();
 
-        AtomIterator {
-            reader,
-            len,
-            cur_atom: None,
-            base_pos,
-            next_atom_pos: base_pos,
-        }
+        AtomIterator { reader, len, cur_atom: None, base_pos, next_atom_pos: base_pos }
     }
 
     pub fn new(reader: B, container: AtomHeader) -> Self {
@@ -483,5 +471,4 @@ impl<B: ReadBytes> AtomIterator<B> {
     pub fn consume_atom(&mut self) {
         assert!(self.cur_atom.take().is_some());
     }
-
 }

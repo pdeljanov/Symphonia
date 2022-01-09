@@ -8,12 +8,12 @@
 use std::collections::VecDeque;
 
 use symphonia_core::codecs::CodecParameters;
-use symphonia_core::errors::{Result, decode_error};
+use symphonia_core::errors::{decode_error, Result};
 use symphonia_core::formats::Packet;
 
 use super::common::SideData;
-use super::mappings::{MapResult, PacketParser};
 use super::mappings::Mapper;
+use super::mappings::{MapResult, PacketParser};
 use super::page::Page;
 
 use log::{debug, warn};
@@ -95,7 +95,6 @@ impl LogicalStream {
             if page.header.sequence < last_ts.seq {
                 warn!("detected stream page non-monotonicity");
                 self.part_len = 0;
-
             }
             else if page.header.sequence - last_ts.seq > 1 {
                 warn!(
@@ -106,12 +105,13 @@ impl LogicalStream {
             }
         }
 
-        self.prev_page_info = Some(PageInfo { seq: page.header.sequence, absgp: page.header.absgp });
+        self.prev_page_info =
+            Some(PageInfo { seq: page.header.sequence, absgp: page.header.absgp });
 
         let mut iter = page.packets();
 
         // If there is partial packet data buffered, a continuation page is expected.
-        if !page.header.is_continuation && self.part_len > 0  {
+        if !page.header.is_continuation && self.part_len > 0 {
             warn!("expected a continuation page");
 
             // Clear partial packet data.
@@ -144,9 +144,12 @@ impl LogicalStream {
             match self.mapper.map_packet(&data) {
                 Ok(MapResult::StreamData { dur }) => {
                     // Create a packet.
-                    self.packets.push_back(
-                        Packet::new_from_boxed_slice(page.header.serial, 0, dur, data)
-                    );
+                    self.packets.push_back(Packet::new_from_boxed_slice(
+                        page.header.serial,
+                        0,
+                        dur,
+                        data,
+                    ));
                 }
                 Ok(MapResult::SideData { data }) => side_data.push(data),
                 Err(e) => {
@@ -171,8 +174,8 @@ impl LogicalStream {
 
             // Assign timestamps by first calculating the timestamp of one past the last sample in
             // in the last packet of this page, add the start delay.
-            let mut page_end_ts = self.mapper.absgp_to_ts(page.header.absgp)
-                                             .saturating_add(start_delay);
+            let mut page_end_ts =
+                self.mapper.absgp_to_ts(page.header.absgp).saturating_add(start_delay);
 
             // If this is the last page, then add the end delay to the timestamp.
             if page.header.is_last_page {
@@ -301,8 +304,10 @@ impl LogicalStream {
         let start_delay = self.start_bound.as_ref().map_or(0, |b| b.delay);
 
         // The actual page end timestamp is the absolute granule position + the start delay.
-        let page_end_ts = self.mapper.absgp_to_ts(page.header.absgp)
-                                     .saturating_add(if self.gapless { 0 } else { start_delay });
+        let page_end_ts = self
+            .mapper
+            .absgp_to_ts(page.header.absgp)
+            .saturating_add(if self.gapless { 0 } else { start_delay });
 
         // Calculate the page duration. Note that even though only the last page uses this duration,
         // it is important to feed the packet parser so that the first packet of the final page
@@ -322,7 +327,12 @@ impl LogicalStream {
                 let actual_page_end_ts = last_bound.ts.saturating_add(page_dur);
 
                 // Any samples after the stated timestamp of this page are considered delay samples.
-                if actual_page_end_ts > page_end_ts { actual_page_end_ts - page_end_ts } else { 0 }
+                if actual_page_end_ts > page_end_ts {
+                    actual_page_end_ts - page_end_ts
+                }
+                else {
+                    0
+                }
             }
             else {
                 // Don't have the timestamp of the previous page so it is not possible to

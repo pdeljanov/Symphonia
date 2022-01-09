@@ -5,9 +5,11 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::codecs::{CODEC_TYPE_AAC, CODEC_TYPE_MP3, CODEC_TYPE_NULL, CodecParameters, CodecType};
-use symphonia_core::errors::{Result, decode_error, unsupported_error};
-use symphonia_core::io::{ReadBytes, FiniteStream, ScopedStream};
+use symphonia_core::codecs::{
+    CodecParameters, CodecType, CODEC_TYPE_AAC, CODEC_TYPE_MP3, CODEC_TYPE_NULL,
+};
+use symphonia_core::errors::{decode_error, unsupported_error, Result};
+use symphonia_core::io::{FiniteStream, ReadBytes, ScopedStream};
 
 use crate::atoms::{Atom, AtomHeader};
 
@@ -73,11 +75,7 @@ impl Atom for EsdsAtom {
         // Ignore remainder of the atom.
         scoped.ignore()?;
 
-        Ok(EsdsAtom {
-            header,
-            descriptor: descriptor.unwrap(),
-        })
-
+        Ok(EsdsAtom { header, descriptor: descriptor.unwrap() })
     }
 }
 
@@ -91,7 +89,7 @@ impl EsdsAtom {
     }
 }
 
-pub trait ObjectDescriptor : Sized {
+pub trait ObjectDescriptor: Sized {
     fn read<B: ReadBytes>(reader: &mut B, len: u32) -> Result<Self>;
 }
 
@@ -186,11 +184,7 @@ impl ObjectDescriptor for ESDescriptor {
             return decode_error("isomp4: missing sl config descriptor");
         }
 
-        Ok(ESDescriptor {
-            es_id,
-            dec_config: dec_config.unwrap(),
-            sl_config: sl_config.unwrap(),
-        })
+        Ok(ESDescriptor { es_id, dec_config: dec_config.unwrap(), sl_config: sl_config.unwrap() })
     }
 }
 
@@ -216,7 +210,6 @@ pub struct DecoderConfigDescriptor {
 }
 
 impl ObjectDescriptor for DecoderConfigDescriptor {
-
     fn read<B: ReadBytes>(reader: &mut B, len: u32) -> Result<Self> {
         // AAC
         const OBJECT_TYPE_ISO14496_3: u8 = 0x40;
@@ -231,11 +224,7 @@ impl ObjectDescriptor for DecoderConfigDescriptor {
         let (_stream_type, _upstream, reserved) = {
             let val = reader.read_u8()?;
 
-            (
-                (val & 0xfc) >> 2,
-                (val & 0x02) >> 1,
-                (val & 0x01) >> 0,
-            )
+            ((val & 0xfc) >> 2, (val & 0x02) >> 1, (val & 0x01) >> 0)
         };
 
         if reserved != 1 {
@@ -269,9 +258,7 @@ impl ObjectDescriptor for DecoderConfigDescriptor {
             OBJECT_TYPE_ISO14496_3 | OBJECT_TYPE_ISO13818_7_LC | OBJECT_TYPE_ISO13818_7_MAIN => {
                 CODEC_TYPE_AAC
             }
-            OBJECT_TYPE_ISO13818_3 | OBJECT_TYPE_ISO11172_3 => {
-                CODEC_TYPE_MP3
-            }
+            OBJECT_TYPE_ISO13818_3 | OBJECT_TYPE_ISO11172_3 => CODEC_TYPE_MP3,
             _ => {
                 debug!(
                     "unknown object type indication {:#x} for decoder config descriptor",
@@ -300,9 +287,7 @@ pub struct DecoderSpecificInfo {
 
 impl ObjectDescriptor for DecoderSpecificInfo {
     fn read<B: ReadBytes>(reader: &mut B, len: u32) -> Result<Self> {
-        Ok(DecoderSpecificInfo {
-            extra_data: reader.read_boxed_slice_exact(len as usize)?,
-        })
+        Ok(DecoderSpecificInfo { extra_data: reader.read_boxed_slice_exact(len as usize)? })
     }
 }
 
@@ -347,7 +332,6 @@ timeStampLength == 0,  for predefined == 0x2
 pub struct SLDescriptor;
 
 impl ObjectDescriptor for SLDescriptor {
-    
     fn read<B: ReadBytes>(reader: &mut B, _len: u32) -> Result<Self> {
         // const SLCONFIG_PREDEFINED_CUSTOM: u8 = 0x0;
         // const SLCONFIG_PREDEFINED_NULL: u8 = 0x1;

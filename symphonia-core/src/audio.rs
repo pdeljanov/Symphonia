@@ -19,7 +19,7 @@ use bitflags::bitflags;
 
 use crate::conv::{ConvertibleSample, IntoSample};
 use crate::errors::Result;
-use crate::sample::{Sample, i24, u24};
+use crate::sample::{i24, u24, Sample};
 use crate::units::Duration;
 
 /// The maximum number of audio plane slices `AudioPlanes` or `AudioPlanesMut` will store on the
@@ -137,21 +137,12 @@ pub enum Layout {
 }
 
 impl Layout {
-
     /// Converts a channel `Layout` into a `Channels` bit mask.
     fn into_channels(self) -> Channels {
         match self {
-            Layout::Mono => {
-                Channels::FRONT_LEFT
-            },
-            Layout::Stereo => {
-                Channels::FRONT_LEFT | Channels::FRONT_RIGHT
-            },
-            Layout::TwoPointOne => {
-                Channels::FRONT_LEFT
-                    | Channels::FRONT_RIGHT
-                    | Channels::LFE1
-            },
+            Layout::Mono => Channels::FRONT_LEFT,
+            Layout::Stereo => Channels::FRONT_LEFT | Channels::FRONT_RIGHT,
+            Layout::TwoPointOne => Channels::FRONT_LEFT | Channels::FRONT_RIGHT | Channels::LFE1,
             Layout::FivePointOne => {
                 Channels::FRONT_LEFT
                     | Channels::FRONT_RIGHT
@@ -162,7 +153,6 @@ impl Layout {
             }
         }
     }
-
 }
 
 /// `SignalSpec` describes the characteristics of a Signal.
@@ -182,10 +172,7 @@ impl SignalSpec {
     }
 
     pub fn new_with_layout(rate: u32, layout: Layout) -> Self {
-        SignalSpec {
-            rate,
-            channels: layout.into_channels(),
-        }
+        SignalSpec { rate, channels: layout.into_channels() }
     }
 }
 
@@ -200,7 +187,7 @@ pub struct AudioPlanes<'a, S: 'a + Sample> {
     planes: AudioPlaneStorage<'a, S, AUDIO_PLANES_STORAGE_STACK_LIMIT>,
 }
 
-impl<'a, S : Sample> AudioPlanes<'a, S> {
+impl<'a, S: Sample> AudioPlanes<'a, S> {
     /// Instantiate `AudioPlanes` for the given channel configuration.
     fn new(channels: Channels) -> Self {
         let n_planes = channels.count();
@@ -247,7 +234,7 @@ pub struct AudioPlanesMut<'a, S: 'a + Sample> {
     planes: AudioPlaneStorageMut<'a, S, AUDIO_PLANES_STORAGE_STACK_LIMIT>,
 }
 
-impl<'a, S : Sample> AudioPlanesMut<'a, S> {
+impl<'a, S: Sample> AudioPlanesMut<'a, S> {
     /// Instantiate `AudioPlanesMut` for the given channel configuration.
     fn new(channels: Channels) -> Self {
         let n_planes = channels.count();
@@ -289,14 +276,14 @@ impl<'a, S : Sample> AudioPlanesMut<'a, S> {
 /// channel. Manipulation of samples is accomplished through the Signal trait or direct buffer
 /// manipulation.
 #[derive(Clone)]
-pub struct AudioBuffer<S : Sample> {
+pub struct AudioBuffer<S: Sample> {
     buf: Vec<S>,
     spec: SignalSpec,
     n_frames: usize,
     n_capacity: usize,
 }
 
-impl<S : Sample> AudioBuffer<S> {
+impl<S: Sample> AudioBuffer<S> {
     /// Instantiate a new `AudioBuffer` using the specified signal specification and of the given
     /// duration.
     pub fn new(duration: Duration, spec: SignalSpec) -> Self {
@@ -314,12 +301,7 @@ impl<S : Sample> AudioBuffer<S> {
         // Allocate sample buffer and default initialize all samples to silence.
         let buf = vec![S::MID; n_samples as usize];
 
-        AudioBuffer {
-            buf,
-            spec,
-            n_frames: 0,
-            n_capacity: duration as usize,
-        }
+        AudioBuffer { buf, spec, n_frames: 0, n_capacity: duration as usize }
     }
 
     /// Instantiates an unused `AudioBuffer`. An unused `AudioBuffer` will not allocate any memory,
@@ -388,7 +370,7 @@ impl<S : Sample> AudioBuffer<S> {
     /// different type. If the types are the same then this is a copy operation.
     pub fn convert<T: Sample>(&self, dest: &mut AudioBuffer<T>)
     where
-        S: IntoSample<T>
+        S: IntoSample<T>,
     {
         assert!(dest.n_frames == self.n_frames);
         assert!(dest.n_capacity == self.n_capacity);
@@ -413,11 +395,11 @@ impl<S : Sample> AudioBuffer<S> {
 macro_rules! impl_audio_buffer_ref_func {
     ($var:expr, $buf:ident,$expr:expr) => {
         match $var {
-            AudioBufferRef::U8($buf)  => $expr,
+            AudioBufferRef::U8($buf) => $expr,
             AudioBufferRef::U16($buf) => $expr,
             AudioBufferRef::U24($buf) => $expr,
             AudioBufferRef::U32($buf) => $expr,
-            AudioBufferRef::S8($buf)  => $expr,
+            AudioBufferRef::S8($buf) => $expr,
             AudioBufferRef::S16($buf) => $expr,
             AudioBufferRef::S24($buf) => $expr,
             AudioBufferRef::S32($buf) => $expr,
@@ -468,20 +450,20 @@ pub trait AsAudioBufferRef {
 }
 
 macro_rules! impl_as_audio_buffer_ref {
-    ($fmt:ty, $ref:path) => (
+    ($fmt:ty, $ref:path) => {
         impl AsAudioBufferRef for AudioBuffer<$fmt> {
             fn as_audio_buffer_ref(&self) -> AudioBufferRef {
                 $ref(Cow::Borrowed(self))
             }
         }
-    )
+    };
 }
 
-impl_as_audio_buffer_ref!(u8,  AudioBufferRef::U8);
+impl_as_audio_buffer_ref!(u8, AudioBufferRef::U8);
 impl_as_audio_buffer_ref!(u16, AudioBufferRef::U16);
 impl_as_audio_buffer_ref!(u24, AudioBufferRef::U24);
 impl_as_audio_buffer_ref!(u32, AudioBufferRef::U32);
-impl_as_audio_buffer_ref!(i8,  AudioBufferRef::S8);
+impl_as_audio_buffer_ref!(i8, AudioBufferRef::S8);
 impl_as_audio_buffer_ref!(i16, AudioBufferRef::S16);
 impl_as_audio_buffer_ref!(i24, AudioBufferRef::S24);
 impl_as_audio_buffer_ref!(i32, AudioBufferRef::S32);
@@ -490,7 +472,7 @@ impl_as_audio_buffer_ref!(f64, AudioBufferRef::F64);
 
 /// The `Signal` trait provides methods for rendering and transforming contiguous buffers of audio
 /// data.
-pub trait Signal<S : Sample> {
+pub trait Signal<S: Sample> {
     /// Gets the number of actual frames written to the buffer. Conversely, this also is the number
     /// of written samples in any one channel.
     fn frames(&self) -> usize;
@@ -535,7 +517,7 @@ pub trait Signal<S : Sample> {
     #[inline]
     fn fill<'a, F>(&'a mut self, fill: F) -> Result<()>
     where
-        F: FnMut(&mut AudioPlanesMut<'a, S>, usize) -> Result<()>
+        F: FnMut(&mut AudioPlanesMut<'a, S>, usize) -> Result<()>,
     {
         self.clear();
         self.render(None, fill)
@@ -567,7 +549,6 @@ pub trait Signal<S : Sample> {
 }
 
 impl<S: Sample> Signal<S> for AudioBuffer<S> {
-
     fn clear(&mut self) {
         self.n_frames = 0;
     }
@@ -576,7 +557,7 @@ impl<S: Sample> Signal<S> for AudioBuffer<S> {
         self.n_frames
     }
 
-    fn chan(&self, channel: usize) -> &[S]{
+    fn chan(&self, channel: usize) -> &[S] {
         let start = channel * self.n_capacity;
 
         // If the channel index is invalid the slice will be out-of-bounds.
@@ -641,7 +622,7 @@ impl<S: Sample> Signal<S> for AudioBuffer<S> {
 
     fn render<'a, F>(&'a mut self, n_frames: Option<usize>, mut render: F) -> Result<()>
     where
-        F: FnMut(&mut AudioPlanesMut<'a, S>, usize) -> Result<()>
+        F: FnMut(&mut AudioPlanesMut<'a, S>, usize) -> Result<()>,
     {
         // The number of frames to be rendered is the amount requested, if specified, or the
         // remainder of the audio buffer.
@@ -672,7 +653,7 @@ impl<S: Sample> Signal<S> for AudioBuffer<S> {
 
     fn transform<F>(&mut self, f: F)
     where
-        F: Fn(S) -> S
+        F: Fn(S) -> S,
     {
         debug_assert!(self.n_frames <= self.n_capacity);
 
@@ -727,10 +708,7 @@ impl<S: Sample> SampleBuffer<S> {
         // safe.
         assert!(n_samples <= (usize::MAX / mem::size_of::<S>()) as u64, "duration too large");
 
-        SampleBuffer {
-            buf: vec![S::MID; n_samples as usize],
-            n_written: 0,
-        }
+        SampleBuffer { buf: vec![S::MID; n_samples as usize], n_written: 0 }
     }
 
     /// Gets the number of written samples.
@@ -760,11 +738,11 @@ impl<S: Sample> SampleBuffer<S> {
         S: ConvertibleSample,
     {
         match src {
-            AudioBufferRef::U8(buf)  => self.copy_planar_typed(&buf),
+            AudioBufferRef::U8(buf) => self.copy_planar_typed(&buf),
             AudioBufferRef::U16(buf) => self.copy_planar_typed(&buf),
             AudioBufferRef::U24(buf) => self.copy_planar_typed(&buf),
             AudioBufferRef::U32(buf) => self.copy_planar_typed(&buf),
-            AudioBufferRef::S8(buf)  => self.copy_planar_typed(&buf),
+            AudioBufferRef::S8(buf) => self.copy_planar_typed(&buf),
             AudioBufferRef::S16(buf) => self.copy_planar_typed(&buf),
             AudioBufferRef::S24(buf) => self.copy_planar_typed(&buf),
             AudioBufferRef::S32(buf) => self.copy_planar_typed(&buf),
@@ -806,11 +784,11 @@ impl<S: Sample> SampleBuffer<S> {
         S: ConvertibleSample,
     {
         match src {
-            AudioBufferRef::U8(buf)  => self.copy_interleaved_typed(&buf),
+            AudioBufferRef::U8(buf) => self.copy_interleaved_typed(&buf),
             AudioBufferRef::U16(buf) => self.copy_interleaved_typed(&buf),
             AudioBufferRef::U24(buf) => self.copy_interleaved_typed(&buf),
             AudioBufferRef::U32(buf) => self.copy_interleaved_typed(&buf),
-            AudioBufferRef::S8(buf)  => self.copy_interleaved_typed(&buf),
+            AudioBufferRef::S8(buf) => self.copy_interleaved_typed(&buf),
             AudioBufferRef::S16(buf) => self.copy_interleaved_typed(&buf),
             AudioBufferRef::S24(buf) => self.copy_interleaved_typed(&buf),
             AudioBufferRef::S32(buf) => self.copy_interleaved_typed(&buf),
@@ -852,7 +830,7 @@ impl<S: Sample> SampleBuffer<S> {
 /// `Sealed` on. To compensate, we implement `Sealed` on all primitive numeric data types, and byte
 /// arrays up to 8 bytes long.
 mod sealed {
-    pub trait Sealed : bytemuck::Pod {}
+    pub trait Sealed: bytemuck::Pod {}
 }
 
 impl sealed::Sealed for u8 {}
@@ -876,10 +854,10 @@ impl sealed::Sealed for [u8; 8] {}
 
 /// `RawSample` provides a typed interface for converting a `Sample` from it's in-memory data type to
 /// actual binary type.
-pub trait RawSample : Sample {
+pub trait RawSample: Sample {
     /// The `RawType` is a primitive data type, or fixed-size byte array, that is the final binary
     /// representation of the sample when written out to a byte-buffer.
-    type RawType : Copy + Default + sealed::Sealed;
+    type RawType: Copy + Default + sealed::Sealed;
 
     fn into_raw_sample(self) -> Self::RawType;
 }
@@ -1005,11 +983,7 @@ impl<S: Sample + RawSample> RawSampleBuffer<S> {
         // Allocate enough memory for all the samples and fill the buffer with silence.
         let buf = vec![S::MID.into_raw_sample(); n_samples as usize];
 
-        RawSampleBuffer {
-            buf,
-            n_written: 0,
-            sample_format: PhantomData,
-        }
+        RawSampleBuffer { buf, n_written: 0, sample_format: PhantomData }
     }
 
     /// Gets the number of written samples.
@@ -1042,11 +1016,11 @@ impl<S: Sample + RawSample> RawSampleBuffer<S> {
         S: ConvertibleSample,
     {
         match src {
-            AudioBufferRef::U8(buf)  => self.copy_planar_typed(&buf),
+            AudioBufferRef::U8(buf) => self.copy_planar_typed(&buf),
             AudioBufferRef::U16(buf) => self.copy_planar_typed(&buf),
             AudioBufferRef::U24(buf) => self.copy_planar_typed(&buf),
             AudioBufferRef::U32(buf) => self.copy_planar_typed(&buf),
-            AudioBufferRef::S8(buf)  => self.copy_planar_typed(&buf),
+            AudioBufferRef::S8(buf) => self.copy_planar_typed(&buf),
             AudioBufferRef::S16(buf) => self.copy_planar_typed(&buf),
             AudioBufferRef::S24(buf) => self.copy_planar_typed(&buf),
             AudioBufferRef::S32(buf) => self.copy_planar_typed(&buf),
@@ -1112,11 +1086,11 @@ impl<S: Sample + RawSample> RawSampleBuffer<S> {
         S: ConvertibleSample,
     {
         match src {
-            AudioBufferRef::U8(buf)  => self.copy_interleaved_typed(&buf),
+            AudioBufferRef::U8(buf) => self.copy_interleaved_typed(&buf),
             AudioBufferRef::U16(buf) => self.copy_interleaved_typed(&buf),
             AudioBufferRef::U24(buf) => self.copy_interleaved_typed(&buf),
             AudioBufferRef::U32(buf) => self.copy_interleaved_typed(&buf),
-            AudioBufferRef::S8(buf)  => self.copy_interleaved_typed(&buf),
+            AudioBufferRef::S8(buf) => self.copy_interleaved_typed(&buf),
             AudioBufferRef::S16(buf) => self.copy_interleaved_typed(&buf),
             AudioBufferRef::S24(buf) => self.copy_interleaved_typed(&buf),
             AudioBufferRef::S32(buf) => self.copy_interleaved_typed(&buf),
@@ -1148,7 +1122,7 @@ impl<S: Sample + RawSample> RawSampleBuffer<S> {
             // No channels, do nothing.
             0 => (),
             // Mono
-            1=> {
+            1 => {
                 for (&s, d) in src.chan(0).iter().zip(dst_buf) {
                     *d = s.into_sample().into_raw_sample();
                 }
@@ -1198,7 +1172,7 @@ impl<S: Sample + RawSample> RawSampleBuffer<S> {
             // No channels, do nothing.
             0 => (),
             // Mono
-            1=> {
+            1 => {
                 for (&s, d) in src.chan(0).iter().zip(dst_buf) {
                     *d = s.into_raw_sample();
                 }

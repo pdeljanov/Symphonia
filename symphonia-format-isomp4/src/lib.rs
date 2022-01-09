@@ -6,7 +6,6 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 #![warn(rust_2018_idioms)]
-
 // The following lints are allowed in all Symphonia crates. Please see clippy.toml for their
 // justification.
 #![allow(clippy::comparison_chain)]

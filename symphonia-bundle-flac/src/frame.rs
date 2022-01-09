@@ -6,19 +6,19 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use symphonia_core::checksum::Crc8Ccitt;
-use symphonia_core::errors::{Result, decode_error};
-use symphonia_core::io::{ReadBytes, MediaSourceStream, Monitor, MonitorStream};
+use symphonia_core::errors::{decode_error, Result};
+use symphonia_core::io::{MediaSourceStream, Monitor, MonitorStream, ReadBytes};
 
 #[derive(Debug)]
 enum BlockingStrategy {
     Fixed,
-    Variable
+    Variable,
 }
 
 #[derive(Debug)]
 pub enum BlockSequence {
     BySample(u64),
-    ByFrame(u32)
+    ByFrame(u32),
 }
 
 /// `ChannelAssignment` describes the mapping between the samples decoded from a subframe and the
@@ -42,7 +42,7 @@ pub enum ChannelAssignment {
     MidSide,
     /// Channel 0 is the Difference channel, and channel 1 is the Right channel. The Left channel
     /// is restored by adding the Difference channel to the Right channel (L = R + D).
-    RightSide
+    RightSide,
 }
 
 pub struct FrameHeader {
@@ -76,17 +76,17 @@ pub fn read_frame_header<B: ReadBytes>(reader: &mut B, sync: u16) -> Result<Fram
     // Extract the blocking strategy from the expanded synchronization code.
     let blocking_strategy = match sync & 0x1 {
         0 => BlockingStrategy::Fixed,
-        _ => BlockingStrategy::Variable
+        _ => BlockingStrategy::Variable,
     };
 
     // Read all the standard frame description fields as one 16-bit value and extract the
     // fields.
     let desc = reader_crc8.read_be_u16()?;
 
-    let block_size_enc      = u32::from((desc & 0xf000) >> 12);
-    let sample_rate_enc     = u32::from((desc & 0x0f00) >>  8);
-    let channels_enc        = u32::from((desc & 0x00f0) >>  4);
-    let bits_per_sample_enc = u32::from((desc & 0x000e) >>  1);
+    let block_size_enc = u32::from((desc & 0xf000) >> 12);
+    let sample_rate_enc = u32::from((desc & 0x0f00) >> 8);
+    let channels_enc = u32::from((desc & 0x00f0) >> 4);
+    let bits_per_sample_enc = u32::from((desc & 0x000e) >> 1);
 
     if (desc & 0x0001) == 1 {
         return decode_error("flac: frame header reserved bit is not set to mandatory value");
@@ -108,7 +108,7 @@ pub fn read_frame_header<B: ReadBytes>(reader: &mut B, sync: u16) -> Result<Fram
             }
 
             BlockSequence::ByFrame(frame as u32)
-        },
+        }
         // Variable-blocksize streams sequence blocks by a sample number.
         BlockingStrategy::Variable => {
             let sample = match utf8_decode_be_u64(&mut reader_crc8)? {
@@ -128,39 +128,39 @@ pub fn read_frame_header<B: ReadBytes>(reader: &mut B, sync: u16) -> Result<Fram
     };
 
     let block_num_samples = match block_size_enc {
-        0x1       => 192,
+        0x1 => 192,
         0x2..=0x5 => 576 * (1 << (block_size_enc - 2)),
-        0x6       => u16::from(reader_crc8.read_u8()?) + 1,
-        0x7       => {
+        0x6 => u16::from(reader_crc8.read_u8()?) + 1,
+        0x7 => {
             let block_size = reader_crc8.read_be_u16()?;
             if block_size == 0xffff {
                 return decode_error("flac: block size not allowed to be greater than 65535");
             }
             block_size + 1
-        },
+        }
         0x8..=0xf => 256 * (1 << (block_size_enc - 8)),
-        _         => {
+        _ => {
             return decode_error("flac: block size set to reserved value");
         }
     };
 
     let sample_rate = match sample_rate_enc {
         0x0 => None, // Get from StreamInfo if possible.
-        0x1 => Some( 88_200),
+        0x1 => Some(88_200),
         0x2 => Some(176_400),
         0x3 => Some(192_000),
-        0x4 => Some(  8_000),
-        0x5 => Some( 16_000),
-        0x6 => Some( 22_050),
-        0x7 => Some( 24_000),
-        0x8 => Some( 32_000),
-        0x9 => Some( 44_100),
-        0xa => Some( 48_000),
-        0xb => Some( 96_000),
+        0x4 => Some(8_000),
+        0x5 => Some(16_000),
+        0x6 => Some(22_050),
+        0x7 => Some(24_000),
+        0x8 => Some(32_000),
+        0x9 => Some(44_100),
+        0xa => Some(48_000),
+        0xb => Some(96_000),
         0xc => Some(u32::from(reader_crc8.read_u8()?)),
         0xd => Some(u32::from(reader_crc8.read_be_u16()?)),
         0xe => Some(u32::from(reader_crc8.read_be_u16()?) * 10),
-        _   => {
+        _ => {
             return decode_error("flac: sample rate set to reserved value");
         }
     };
@@ -173,21 +173,21 @@ pub fn read_frame_header<B: ReadBytes>(reader: &mut B, sync: u16) -> Result<Fram
 
     let bits_per_sample = match bits_per_sample_enc {
         0x0 => None, // Get from StreamInfo if possible.
-        0x1 => Some( 8),
+        0x1 => Some(8),
         0x2 => Some(12),
         0x4 => Some(16),
         0x5 => Some(20),
         0x6 => Some(24),
-        _   => {
+        _ => {
             return decode_error("flac: bits per sample set to reserved value");
         }
     };
 
     let channel_assignment = match channels_enc {
         0x0..=0x7 => ChannelAssignment::Independant(channels_enc + 1),
-        0x8       => ChannelAssignment::LeftSide,
-        0x9       => ChannelAssignment::RightSide,
-        0xa       => ChannelAssignment::MidSide,
+        0x8 => ChannelAssignment::LeftSide,
+        0x9 => ChannelAssignment::RightSide,
+        0xa => ChannelAssignment::MidSide,
         _ => {
             return decode_error("flac: channel assignment set to reserved value");
         }
@@ -257,7 +257,7 @@ pub fn next_frame(reader: &mut MediaSourceStream) -> Result<NextFrameInfo> {
         byte_offset = reader.pos() - 2;
 
         if let Ok(header) = read_frame_header(reader, sync) {
-            break header
+            break header;
         }
     };
 
@@ -276,7 +276,7 @@ pub fn next_frame(reader: &mut MediaSourceStream) -> Result<NextFrameInfo> {
 /// Decodes a big-endian unsigned integer encoded via extended UTF8. In this context, extended UTF8
 /// simply means the encoded UTF8 value may be up to 7 bytes for a maximum integer bit width of
 /// 36-bits.
-fn utf8_decode_be_u64<B: ReadBytes>(src : &mut B) -> Result<Option<u64>> {
+fn utf8_decode_be_u64<B: ReadBytes>(src: &mut B) -> Result<Option<u64>> {
     // Read the first byte of the UTF8 encoded integer.
     let mut state = u64::from(src.read_u8()?);
 
@@ -292,8 +292,8 @@ fn utf8_decode_be_u64<B: ReadBytes>(src : &mut B) -> Result<Option<u64>> {
         0xf0..=0xf7 => 0x07,
         0xf8..=0xfb => 0x03,
         0xfc..=0xfd => 0x01,
-        0xfe        => 0x00,
-        _           => return Ok(None)
+        0xfe => 0x00,
+        _ => return Ok(None),
     };
 
     // Obtain the data bits from the first byte by using the data mask.
@@ -318,17 +318,15 @@ fn utf8_decode_be_u64<B: ReadBytes>(src : &mut B) -> Result<Option<u64>> {
 
 #[cfg(test)]
 mod tests {
-    use symphonia_core::io::BufReader;
     use super::utf8_decode_be_u64;
+    use symphonia_core::io::BufReader;
 
     #[test]
     fn verify_utf8_decode_be_u64() {
-        let mut stream = BufReader::new(
-            &[
-                0x24, 0xc2, 0xa2, 0xe0, 0xa4, 0xb9, 0xe2, 0x82,
-                0xac, 0xf0, 0x90, 0x8d, 0x88, 0xff, 0x80, 0xbf
-            ]
-        );
+        let mut stream = BufReader::new(&[
+            0x24, 0xc2, 0xa2, 0xe0, 0xa4, 0xb9, 0xe2, 0x82, //
+            0xac, 0xf0, 0x90, 0x8d, 0x88, 0xff, 0x80, 0xbf, //
+        ]);
 
         assert_eq!(utf8_decode_be_u64(&mut stream).unwrap(), Some(36));
         assert_eq!(utf8_decode_be_u64(&mut stream).unwrap(), Some(162));

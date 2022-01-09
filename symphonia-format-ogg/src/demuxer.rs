@@ -8,8 +8,8 @@
 use std::collections::BTreeMap;
 use std::io::{Seek, SeekFrom};
 
-use symphonia_core::errors::{Error, Result, SeekErrorKind};
 use symphonia_core::errors::{reset_error, seek_error, unsupported_error};
+use symphonia_core::errors::{Error, Result, SeekErrorKind};
 use symphonia_core::formats::prelude::*;
 use symphonia_core::io::{MediaSource, MediaSourceStream, ReadBytes, SeekBuffered};
 use symphonia_core::meta::{Metadata, MetadataLog};
@@ -44,7 +44,6 @@ pub struct OggReader {
 }
 
 impl OggReader {
-
     fn read_page(&mut self) -> Result<()> {
         // Try reading pages until a page is successfully read, or an IO error.
         loop {
@@ -144,11 +143,7 @@ impl OggReader {
 
                 debug!(
                     "seek: bisect step: page={{ start={}, end={} }} byte_range=[{}..{}], mid={}",
-                    start_ts,
-                    end_ts,
-                    start_byte_pos,
-                    end_byte_pos,
-                    mid_byte_pos,
+                    start_ts, end_ts, start_byte_pos, end_byte_pos, mid_byte_pos,
                 );
 
                 if required_ts < start_ts {
@@ -309,7 +304,7 @@ impl OggReader {
                     &mut self.pages,
                     &mut streams,
                     byte_range_start,
-                    total_len
+                    total_len,
                 )?;
             }
         }
@@ -343,15 +338,13 @@ impl OggReader {
 
 impl QueryDescriptor for OggReader {
     fn query() -> &'static [Descriptor] {
-        &[
-            support_format!(
-                "ogg",
-                "OGG",
-                &[ "ogg", "ogv", "oga", "ogx", "ogm", "spx", "opus" ],
-                &[ "video/ogg", "audio/ogg", "application/ogg" ],
-                &[ b"OggS" ]
-            ),
-        ]
+        &[support_format!(
+            "ogg",
+            "OGG",
+            &["ogg", "ogv", "oga", "ogx", "ogm", "spx", "opus"],
+            &["video/ogg", "audio/ogg", "application/ogg"],
+            &[b"OggS"]
+        )]
     }
 
     fn score(_context: &[u8]) -> u8 {
@@ -360,7 +353,6 @@ impl QueryDescriptor for OggReader {
 }
 
 impl FormatReader for OggReader {
-
     fn try_new(mut source: MediaSourceStream, options: &FormatOptions) -> Result<Self> {
         // A seekback buffer equal to the maximum OGG page size is required for this reader.
         source.ensure_seekback_buffer(OGG_PAGE_MAX_SIZE);

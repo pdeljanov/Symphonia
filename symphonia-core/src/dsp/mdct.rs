@@ -33,7 +33,6 @@ pub struct Imdct {
 }
 
 impl Imdct {
-
     /// Instantiate a N-point IMDCT.
     ///
     /// The value of `n` must be a power-of-2, and less-than or equal to 8192.
@@ -46,14 +45,9 @@ impl Imdct {
         let c = f64::consts::PI / f64::from(2 * 2 * n);
 
         let table: Vec<f32> =
-            (0..n).map(|i| (2.0 * (c * f64::from(2 * i + 1)).cos()) as f32)
-                    .collect();
+            (0..n).map(|i| (2.0 * (c * f64::from(2 * i + 1)).cos()) as f32).collect();
 
-        Imdct {
-            dct: Dct::new(n),
-            n,
-            table,
-        }
+        Imdct { dct: Dct::new(n), n, table }
     }
 
     /// Performs the the N-point Inverse Modified Discrete Cosine Transform.
@@ -69,7 +63,7 @@ impl Imdct {
         // The IMDCT produces 2N samples for N inputs. This algorithm defines the ouput length as
         // N.
         let n2 = self.n as usize;
-        let n  = n2 << 1;
+        let n = n2 << 1;
         let n4 = n2 >> 1;
 
         assert_eq!(dst.len(), n);
@@ -134,8 +128,8 @@ impl Imdct {
 
 #[cfg(test)]
 mod tests {
-    use std::f64;
     use super::*;
+    use std::f64;
 
     fn imdct_analytical(x: &[f32], y: &mut [f32], scale: f64) {
         assert!(y.len() == 2 * x.len());
@@ -150,7 +144,8 @@ mod tests {
             let mut accum = 0.0;
 
             for j in 0..n_in {
-                accum += f64::from(x[j]) * (pi_2n * ((2*i + 1 + n_in) * (2*j + 1)) as f64).cos();
+                accum +=
+                    f64::from(x[j]) * (pi_2n * ((2 * i + 1 + n_in) * (2 * j + 1)) as f64).cos();
             }
 
             y[i] = (scale * accum) as f32;
@@ -159,6 +154,7 @@ mod tests {
 
     #[test]
     fn verify_imdct() {
+        #[rustfmt::skip]
         const TEST_VECTOR: [f32; 32] = [
              1.0,  2.0,  3.0,  4.0,  5.0,  6.0,  7.0,  8.0,
              9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0,

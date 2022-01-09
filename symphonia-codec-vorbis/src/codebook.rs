@@ -7,8 +7,11 @@
 
 use std::usize;
 
-use symphonia_core::errors::{Result, decode_error};
-use symphonia_core::io::{vlc::{BitOrder, Codebook, CodebookBuilder, Entry32x32}, ReadBitsRtl};
+use symphonia_core::errors::{decode_error, Result};
+use symphonia_core::io::{
+    vlc::{BitOrder, Codebook, CodebookBuilder, Entry32x32},
+    ReadBitsRtl,
+};
 
 use super::common::*;
 
@@ -22,7 +25,12 @@ fn float32_unpack(x: u32) -> f32 {
     let sign = x & 0x80000000;
     let exponent = (x & 0x7fe00000) >> 21;
     let value = (mantissa as f32) * 2.0f32.powi(exponent as i32 - 788);
-    if sign == 0 { value } else { -value }
+    if sign == 0 {
+        value
+    }
+    else {
+        -value
+    }
 }
 
 /// As defined in section 9.2.3 of the Vorbis I specification.
@@ -52,7 +60,6 @@ fn unpack_vq_lookup_type1(
     codebook_dimensions: u16,
     lookup_values: u32,
 ) -> Vec<f32> {
-
     let mut vq_lookup = vec![0.0; codebook_entries as usize * codebook_dimensions as usize];
 
     for (v, value_vector) in vq_lookup.chunks_exact_mut(codebook_dimensions as usize).enumerate() {
@@ -84,13 +91,12 @@ fn unpack_vq_lookup_type2(
     delta_value: f32,
     sequence_p: bool,
     codebook_entries: u32,
-    codebook_dimensions: u16
+    codebook_dimensions: u16,
 ) -> Vec<f32> {
-
     let mut vq_lookup = vec![0.0; codebook_entries as usize * codebook_dimensions as usize];
 
-    for (lookup_offset, value_vector) in vq_lookup.chunks_exact_mut(codebook_dimensions as usize)
-                                                  .enumerate()
+    for (lookup_offset, value_vector) in
+        vq_lookup.chunks_exact_mut(codebook_dimensions as usize).enumerate()
     {
         let mut last = 0.0;
         let mut multiplicand_offset = lookup_offset * codebook_dimensions as usize;
@@ -108,8 +114,6 @@ fn unpack_vq_lookup_type2(
 
     vq_lookup
 }
-
-
 
 fn synthesize_codewords(code_lens: &[u8]) -> Result<Vec<u32>> {
     // This codeword generation algorithm works by maintaining a table of the next valid codeword for
@@ -198,10 +202,8 @@ fn synthesize_codewords(code_lens: &[u8]) -> Result<Vec<u32>> {
 
     // Check that the tree is fully specified and complete. This means that the next codeword for
     // codes of length 1 to 32, inclusive, are saturated.
-    let is_underspecified = next_codeword.iter()
-                                         .enumerate()
-                                         .skip(1)
-                                         .any(|(i, &c)| c & (u32::MAX >> (32 - i)) != 0);
+    let is_underspecified =
+        next_codeword.iter().enumerate().skip(1).any(|(i, &c)| c & (u32::MAX >> (32 - i)) != 0);
 
     // Single entry codebooks are technically invalid, but must be supported as a special-case
     // per Vorbis I specification, errate 20150226.
@@ -213,7 +215,6 @@ fn synthesize_codewords(code_lens: &[u8]) -> Result<Vec<u32>> {
 
     Ok(codewords)
 }
-
 
 pub struct VorbisCodebook {
     codebook: Codebook<Entry32x32>,
@@ -323,27 +324,23 @@ impl VorbisCodebook {
                 }
 
                 let vq_lookup = match lookup_type {
-                    1 => {
-                        unpack_vq_lookup_type1(
-                            &multiplicands,
-                            min_value,
-                            delta_value,
-                            sequence_p,
-                            codebook_entries,
-                            codebook_dimensions,
-                            lookup_values,
-                        )
-                    }
-                    2 => {
-                        unpack_vq_lookup_type2(
-                            &multiplicands,
-                            min_value,
-                            delta_value,
-                            sequence_p,
-                            codebook_entries,
-                            codebook_dimensions,
-                        )
-                    }
+                    1 => unpack_vq_lookup_type1(
+                        &multiplicands,
+                        min_value,
+                        delta_value,
+                        sequence_p,
+                        codebook_entries,
+                        codebook_dimensions,
+                        lookup_values,
+                    ),
+                    2 => unpack_vq_lookup_type2(
+                        &multiplicands,
+                        min_value,
+                        delta_value,
+                        sequence_p,
+                        codebook_entries,
+                        codebook_dimensions,
+                    ),
                     _ => unreachable!(),
                 };
 
@@ -363,11 +360,7 @@ impl VorbisCodebook {
         let mut builder = CodebookBuilder::new_sparse(BitOrder::Reverse);
         let codebook = builder.make::<Entry32x32>(&code_words, &code_lens, &values)?;
 
-        Ok(VorbisCodebook {
-            codebook,
-            dimensions: codebook_dimensions,
-            vq_vec,
-        })
+        Ok(VorbisCodebook { codebook, dimensions: codebook_dimensions, vq_vec })
     }
 
     #[inline(always)]
@@ -397,7 +390,6 @@ impl VorbisCodebook {
         self.dimensions
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -434,7 +426,7 @@ mod tests {
     #[test]
     fn verify_synthesize_codewords() {
         const CODEWORD_LENGTHS: &[u8] = &[2, 4, 4, 4, 4, 2, 3, 3];
-        const EXPECTED_CODEWORDS: &[u32] = &[ 0, 0x4, 0x5, 0x6, 0x7, 0x2, 0x6, 0x7];
+        const EXPECTED_CODEWORDS: &[u32] = &[0, 0x4, 0x5, 0x6, 0x7, 0x2, 0x6, 0x7];
         let codewords = synthesize_codewords(&CODEWORD_LENGTHS).unwrap();
         assert_eq!(&codewords, EXPECTED_CODEWORDS);
     }

@@ -8,7 +8,7 @@
 use std::cmp;
 use std::io;
 
-use super::{ReadBytes, FiniteStream};
+use super::{FiniteStream, ReadBytes};
 
 const UNDERRUN_ERROR_STR: &str = "buffer underrun";
 
@@ -21,10 +21,7 @@ pub struct BufReader<'a> {
 impl<'a> BufReader<'a> {
     /// Instantiate a new `BufReader` with a given byte buffer.
     pub fn new(buf: &'a [u8]) -> Self {
-        BufReader {
-            buf,
-            pos: 0,
-        }
+        BufReader { buf, pos: 0 }
     }
 
     /// Scans up-to `scan_len` bytes from the stream until a byte pattern is matched. A reference to
@@ -43,7 +40,7 @@ impl<'a> BufReader<'a> {
         &mut self,
         pattern: &[u8],
         align: usize,
-        scan_len: usize
+        scan_len: usize,
     ) -> io::Result<&'a [u8]> {
         // The pattern must be atleast one byte.
         debug_assert!(!pattern.is_empty());
@@ -93,7 +90,6 @@ impl<'a> BufReader<'a> {
 }
 
 impl<'a> ReadBytes for BufReader<'a> {
-
     #[inline(always)]
     fn read_byte(&mut self) -> io::Result<u8> {
         if self.buf.len() - self.pos < 1 {
@@ -168,7 +164,7 @@ impl<'a> ReadBytes for BufReader<'a> {
         &mut self,
         pattern: &[u8],
         align: usize,
-        buf: &'b mut [u8]
+        buf: &'b mut [u8],
     ) -> io::Result<&'b mut [u8]> {
         let scanned = self.scan_bytes_aligned_ref(pattern, align, buf.len())?;
         buf[..scanned.len()].copy_from_slice(scanned);

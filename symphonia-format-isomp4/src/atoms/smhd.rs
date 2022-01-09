@@ -34,9 +34,6 @@ impl Atom for SmhdAtom {
         // Reserved.
         let _ = reader.read_be_u16()?;
 
-        Ok(SmhdAtom {
-            header,
-            balance,
-        })
+        Ok(SmhdAtom { header, balance })
     }
 }
