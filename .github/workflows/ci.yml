@@ -31,7 +31,7 @@ jobs:
       with:
         command: check
         args: --all
-        
+
     - name: Check all features
       uses: actions-rs/cargo@v1
       with:
@@ -53,7 +53,7 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v1
-      
+
       - name: Setup Toolchain
         uses: actions-rs/toolchain@v1
         with:
@@ -81,25 +81,23 @@ jobs:
           args: --target ${{ matrix.config.target }} --all --all-features --doc --exclude symphonia-play
           use-cross: ${{ matrix.config.use-cross }}
 
+  fmt:
+    name: Rustfmt
 
-# Uncomment to check formatting
-  # fmt:
-  #   name: Rustfmt 
+    runs-on: ubuntu-latest
 
-  #   runs-on: ubuntu-latest
-  
-  #   steps:
-  #     - name: Checkout
-  #       uses: actions/checkout@v1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v1
 
-  #     - name: Setup Toolchain
-  #       uses: actions-rs/toolchain@v1
-  #       with:
-  #         toolchain: stable
-  #         override: true
+      - name: Setup Toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: nightly
+          override: true
 
-  #     - name: Check formatting
-  #       uses: actions-rs/cargo@v1
-  #       with:
-  #         command: fmt
-  #         args: --all -- --check
+      - name: Check formatting
+        uses: actions-rs/cargo@v1
+        with:
+          command: fmt
+          args: --all -- --check
