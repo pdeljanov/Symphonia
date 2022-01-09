@@ -344,13 +344,19 @@ impl FormatReader for MkvReader {
             }
         }
 
+        let segment_tracks = segment_tracks
+            .ok_or_else(|| Error::DecodeError("mkv: missing Tracks element"))?;
+
         if is_seekable {
             let mut reader = it.into_inner();
             reader.seek(SeekFrom::Start(segment_pos))?;
             it = ElementIterator::new(reader, total_len);
         }
 
-        let info = info.unwrap();
+        let info = info
+            .ok_or_else(|| Error::DecodeError("mkv: missing Info element"))?;
+
+        // TODO: remove this unwrap?
         let time_base = TimeBase::new(
             u32::try_from(info.timestamp_scale).unwrap(),
             1_000_000_000,
@@ -358,7 +364,7 @@ impl FormatReader for MkvReader {
 
         let mut tracks = Vec::new();
         let mut states = HashMap::new();
-        for track in segment_tracks.unwrap().tracks.into_vec() {
+        for track in segment_tracks.tracks.into_vec() {
             let codec_type = codec_id_to_type(&track);
 
             let mut codec_params = CodecParameters::new();
@@ -423,7 +429,7 @@ impl FormatReader for MkvReader {
             });
 
             states.insert(track_id, TrackState {
-                codec_params: codec_params,
+                codec_params,
                 track_num: track_id,
                 default_frame_duration: track.default_duration,
             });
@@ -464,8 +470,7 @@ impl FormatReader for MkvReader {
                 let track = track.ok_or_else(|| Error::SeekError(SeekErrorKind::InvalidTrack))?;
                 let tb = track.codec_params.time_base.unwrap();
                 let ts = tb.calc_timestamp(time);
-                let track_id = track.id;
-                self.seek_track_by_ts(track_id, ts)
+                self.seek_track_by_ts(track.id, ts)
             }
             SeekTo::TimeStamp { ts, track_id } => {
                 match self.tracks.iter().find(|t| t.id == track_id) {

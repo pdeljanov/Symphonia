@@ -299,7 +299,7 @@ impl<R: ReadBytes> ElementIterator<R> {
 
     /// Reads any primitive data inside of the current element.
     pub(crate) fn read_data(&mut self) -> Result<ElementData> {
-        let hdr = self.current.unwrap();
+        let hdr = self.current.expect("not in an element");
         let value = self.try_read_data(hdr)?
             .ok_or_else(|| Error::DecodeError("mkv: element has no primitive data"))?;
         Ok(value)
