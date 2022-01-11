@@ -57,7 +57,7 @@ struct ClusterState {
     end: u64,
 }
 
-fn convert_vorbis_data(extra: &[u8]) -> Result<Box<[u8]>> {
+fn vorbis_extra_data_from_codec_private(extra: &[u8]) -> Result<Box<[u8]>> {
     const VORBIS_PACKET_TYPE_IDENTIFICATION: u8 = 1;
     const VORBIS_PACKET_TYPE_SETUP: u8 = 5;
 
@@ -85,11 +85,11 @@ fn convert_vorbis_data(extra: &[u8]) -> Result<Box<[u8]>> {
     let mut setup_header = None;
 
     for packet in packets {
-        match packet[0] {
-            VORBIS_PACKET_TYPE_IDENTIFICATION => {
+        match packet.get(0).copied() {
+            Some(VORBIS_PACKET_TYPE_IDENTIFICATION) => {
                 ident_header = Some(packet);
             }
-            VORBIS_PACKET_TYPE_SETUP => {
+            Some(VORBIS_PACKET_TYPE_SETUP) => {
                 setup_header = Some(packet);
             }
             _ => {
@@ -105,12 +105,12 @@ fn convert_vorbis_data(extra: &[u8]) -> Result<Box<[u8]>> {
     ].concat().into_boxed_slice())
 }
 
-fn get_stream_info_from_codec_private(codec_private: &[u8]) -> Result<Box<[u8]>> {
+fn flac_extra_data_from_codec_private(codec_private: &[u8]) -> Result<Box<[u8]>> {
     let mut reader = BufReader::new(codec_private);
 
     let marker = reader.read_quad_bytes()?;
     if marker != *b"fLaC" {
-        return unsupported_error("mkv (flac): missing flac stream marker");
+        return decode_error("mkv (flac): missing flac stream marker");
     }
 
     let header = MetadataBlockHeader::read(&mut reader)?;
@@ -403,8 +403,8 @@ impl FormatReader for MkvReader {
                     codec_params.for_codec(codec_type);
                     if let Some(codec_private) = track.codec_private {
                         let extra_data = match codec_type {
-                            CODEC_TYPE_VORBIS => convert_vorbis_data(&codec_private)?,
-                            CODEC_TYPE_FLAC => get_stream_info_from_codec_private(&codec_private)?,
+                            CODEC_TYPE_VORBIS => vorbis_extra_data_from_codec_private(&codec_private)?,
+                            CODEC_TYPE_FLAC => flac_extra_data_from_codec_private(&codec_private)?,
                             _ => codec_private,
                         };
                         codec_params.with_extra_data(extra_data);
