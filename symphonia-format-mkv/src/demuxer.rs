@@ -412,7 +412,7 @@ impl FormatReader for MkvReader {
                 }
             }
 
-            let track_id = u32::try_from(track.number).unwrap();
+            let track_id = track.number as u32;
             tracks.push(Track {
                 id: track_id,
                 codec_params: codec_params.clone(),
