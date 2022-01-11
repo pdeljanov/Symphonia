@@ -272,15 +272,10 @@ impl<R: ReadBytes> ElementIterator<R> {
     /// Reads data of current element. Must be used after
     /// [Self::read_header] or [Self::read_child_header].
     pub(crate) fn read_element_data<E: Element>(&mut self) -> Result<E> {
-        let header = match self.current {
-            Some(header) => header,
-            None => {
-                let header = ElementHeader::read(&mut self.reader)?;
-                self.current = Some(header);
-                header
-            }
-        };
-        assert_eq!(header.etype, E::ID, "reading invalid element");
+        let header = self.current
+            .expect("EBML header must be read before calling this function");
+        assert_eq!(header.etype, E::ID, "EBML element type must be checked before calling this function");
+
         let element = E::read(&mut self.reader, header)?;
         // Update position to match the position element reader finished at
         self.next_pos = self.reader.pos();
