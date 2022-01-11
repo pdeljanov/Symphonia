@@ -17,7 +17,11 @@ use crate::segment::EbmlHeaderElement;
 /// Reads a single EBML element ID (as in RFC8794) from the stream
 /// and returns it or an error.
 pub(crate) fn read_tag<R: ReadBytes>(reader: R) -> Result<u32> {
-    Ok(read_vint::<R, false>(reader)?.0 as u32)
+    let (value, len) = read_vint::<R, false>(reader)?;
+    if len > 4 {
+        return decode_error("mkv: too long element ID");
+    }
+    Ok(value as u32)
 }
 
 /// Reads a single unsigned variable size integer (as in RFC8794) from the stream
