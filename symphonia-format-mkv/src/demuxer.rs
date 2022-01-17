@@ -54,7 +54,7 @@ pub struct MkvReader {
 #[derive(Debug)]
 struct ClusterState {
     timestamp: Option<u64>,
-    end: u64,
+    end: Option<u64>,
 }
 
 fn vorbis_extra_data_from_codec_private(extra: &[u8]) -> Result<Box<[u8]>> {
@@ -189,9 +189,9 @@ impl MkvReader {
     }
 
     fn next_element(&mut self) -> Result<()> {
-        if let Some(state) = &self.current_cluster {
-            // Make sure we don't read past the current cluster.
-            if self.iter.pos() >= state.end {
+        if let Some(ClusterState { end: Some(end), .. }) = &self.current_cluster {
+            // Make sure we don't read past the current cluster if its size is known.
+            if self.iter.pos() >= *end {
                 log::debug!("ended cluster");
                 self.current_cluster = None;
             }
@@ -206,12 +206,9 @@ impl MkvReader {
 
         match header.etype {
             ElementType::Cluster => {
-                if self.current_cluster.is_some() {
-                    log::warn!("found a nested cluster. ignoring its parent");
-                }
                 self.current_cluster = Some(ClusterState {
                     timestamp: None,
-                    end: header.pos + header.len,
+                    end: header.end(),
                 });
             }
             ElementType::Timestamp => {
@@ -258,6 +255,10 @@ impl MkvReader {
             ElementType::Tags => {
                 let tags = self.iter.read_element_data::<TagsElement>()?;
                 self.metadata.push(tags.to_metadata());
+                self.current_cluster = None;
+            }
+            _ if header.etype.is_top_level() => {
+                self.current_cluster = None;
             }
             other => {
                 log::debug!("ignored element {:?}", other);
@@ -307,7 +308,7 @@ impl FormatReader for MkvReader {
         let mut clusters = Vec::new();
         let mut metadata = MetadataLog::default();
 
-        while let Some(header) = it.read_header()? {
+        while let Ok(Some(header)) = it.read_header() {
             match header.etype {
                 ElementType::SeekHead => {
                     _seek_head = Some(it.read_element_data::<SeekHeadElement>()?);

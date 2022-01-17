@@ -462,7 +462,7 @@ pub(crate) struct BlockElement {
 #[derive(Debug)]
 pub(crate) struct ClusterElement {
     pub(crate) timestamp: u64,
-    pub(crate) end: u64,
+    pub(crate) end: Option<u64>,
     pub(crate) blocks: Box<[BlockElement]>,
 }
 
@@ -472,6 +472,7 @@ impl Element for ClusterElement {
     fn read<B: ReadBytes>(reader: &mut B, header: ElementHeader) -> Result<Self> {
         let mut timestamp = None;
         let mut blocks = Vec::new();
+        let has_size = header.end().is_some();
 
         fn read_block(data: &[u8], timestamp: u64, offset: u64) -> Result<BlockElement> {
             let mut reader = BufReader::new(data);
@@ -499,14 +500,17 @@ impl Element for ClusterElement {
                     let data = it.read_boxed_slice()?;
                     blocks.push(read_block(&data, get_timestamp(timestamp)?, header.pos)?);
                 }
-                _ => (),
+                _ if header.etype.is_top_level() && !has_size => break,
+                other => {
+                    log::debug!("ignored element {:?}", other);
+                }
             }
         }
 
         Ok(ClusterElement {
             timestamp: get_timestamp(timestamp)?,
             blocks: blocks.into_boxed_slice(),
-            end: header.pos + header.len,
+            end: header.end(),
         })
     }
 }

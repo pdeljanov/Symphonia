@@ -170,6 +170,18 @@ pub enum ElementType {
     Unknown,
 }
 
+impl ElementType {
+    pub(crate) fn is_top_level(&self) -> bool {
+        matches!(self,
+            ElementType::Cluster |
+            ElementType::Cues |
+            ElementType::Info |
+            ElementType::SeekHead |
+            ElementType::Tags |
+            ElementType::Tracks)
+    }
+}
+
 lazy_static! {
     pub(crate) static ref ELEMENTS: HashMap<u32, (Type, ElementType)> = HashMap::from([
         (0x1A45DFA3, (Type::Master, ElementType::Ebml)),

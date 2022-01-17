@@ -22,25 +22,24 @@ pub(crate) fn read_tag<R: ReadBytes>(mut reader: R) -> Result<(u32, u32)> {
         return Ok((value as u32, len));
     }
 
-    // Seek for next supported tag. Currently checks all possible lengths,
-    // but it should be sufficient to take only 4 byte long values
-    // since these are the top level elements (`Cluster`, `Info`, etc.)
+    // Seek to next supported tag of a top level element (`Cluster`, `Info`, etc.)
 
-    let mut buf = 0u32;
+    let mut tag = 0u32;
     loop {
-        let tag4 = buf & 0xFFFFFFFF;
-        let tag3 = buf & 0xFFFFFF;
-        let tag2 = buf & 0xFFFF;
-        let tag1 = buf & 0xFF;
-
-        for (tag, len) in [(tag4, 4), (tag3, 3), (tag2, 2), (tag1, 1)] {
-            if let Some((_, ty)) = ELEMENTS.get(&tag) {
-                log::info!("found next supported tag {:08X} ({:?})", tag, ty);
-                return Ok((tag, len));
-            }
+        if let Some((_, ty)) = ELEMENTS.get(&tag) {
+            log::info!("found next supported tag {:08X} ({:?})", tag, ty);
+            return Ok((tag, 4));
         }
-        buf = (buf << 8) | reader.read_u8()? as u32;
+        tag = (tag << 8) | reader.read_u8()? as u32;
     }
+}
+
+pub(crate) fn read_size<R: ReadBytes>(reader: R) -> Result<Option<u64>> {
+    let (size, len) = read_vint::<R, true>(reader)?;
+    if size == u64::MAX && len == 1 {
+        return Ok(None);
+    }
+    Ok(Some(size))
 }
 
 /// Reads a single unsigned variable size integer (as in RFC8794) from the stream
@@ -63,7 +62,12 @@ pub(crate) fn read_signed_vint<R: ReadBytes>(mut reader: R) -> Result<i64> {
 fn read_vint<R: ReadBytes, const CLEAR_MARKER: bool>(mut reader: R) -> Result<(u64, u32)> {
     loop {
         let byte = reader.read_byte()?;
-        if byte == 0x00 || byte == 0xFF {
+        if byte == 0xFF {
+            // Special case: unknown size elements.
+            return Ok((u64::MAX, 1));
+        }
+
+        if byte == 0x00 {
             // Skip invalid data
             continue;
         }
@@ -140,6 +144,10 @@ impl ElementHeader {
         assert_eq!(reader.pos(), self.data_pos, "unexpected position");
         ElementIterator::new_of(reader, *self)
     }
+
+    pub(crate) fn end(&self) -> Option<u64> {
+        if self.data_len == 0 { None } else { Some(self.data_pos + self.data_len) }
+    }
 }
 
 pub trait Element: Sized {
@@ -152,7 +160,11 @@ impl ElementHeader {
     pub(crate) fn read<R: ReadBytes>(mut reader: &mut R) -> Result<ElementHeader> {
         let (tag, tag_len) = read_tag(&mut reader)?;
         let header_start = reader.pos() - u64::from(tag_len);
-        let size = read_unsigned_vint(&mut reader)?;
+
+        // According to spec, elements like Segment and Cluster can have unknown size.
+        // Currently, these cases are represented as `data_len` equal to 0,
+        // but it might be worth changing it to an Option at some point.
+        let size = read_size(&mut reader)?.unwrap_or(0);
         log::debug!("found element with tag: {:X}", tag);
         Ok(ElementHeader {
             tag,
@@ -215,7 +227,7 @@ impl<R: ReadBytes> ElementIterator<R> {
             reader,
             current: Some(parent),
             next_pos: parent.data_pos,
-            end: Some(parent.data_pos + parent.data_len),
+            end: parent.end(),
         }
     }
 
