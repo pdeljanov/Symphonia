@@ -15,13 +15,32 @@ use crate::element_ids::{ELEMENTS, ElementType, Type};
 use crate::segment::EbmlHeaderElement;
 
 /// Reads a single EBML element ID (as in RFC8794) from the stream
-/// and returns it or an error.
-pub(crate) fn read_tag<R: ReadBytes>(reader: R) -> Result<u32> {
-    let (value, len) = read_vint::<R, false>(reader)?;
-    if len > 4 {
-        return decode_error("mkv: too long element ID");
+/// and returns its value and length in bytes (1-4 bytes) or an error.
+pub(crate) fn read_tag<R: ReadBytes>(mut reader: R) -> Result<(u32, u32)> {
+    let (value, len) = read_vint::<_, false>(&mut reader)?;
+    if len <= 4 {
+        return Ok((value as u32, len));
     }
-    Ok(value as u32)
+
+    // Seek for next supported tag. Currently checks all possible lengths,
+    // but it should be sufficient to take only 4 byte long values
+    // since these are the top level elements (`Cluster`, `Info`, etc.)
+
+    let mut buf = 0u32;
+    loop {
+        let tag4 = buf & 0xFFFFFFFF;
+        let tag3 = buf & 0xFFFFFF;
+        let tag2 = buf & 0xFFFF;
+        let tag1 = buf & 0xFF;
+
+        for (tag, len) in [(tag4, 4), (tag3, 3), (tag2, 2), (tag1, 1)] {
+            if let Some((_, ty)) = ELEMENTS.get(&tag) {
+                log::info!("found next supported tag {:08X} ({:?})", tag, ty);
+                return Ok((tag, len));
+            }
+        }
+        buf = (buf << 8) | reader.read_u8()? as u32;
+    }
 }
 
 /// Reads a single unsigned variable size integer (as in RFC8794) from the stream
@@ -74,10 +93,10 @@ mod tests {
 
     #[test]
     fn element_tag_parsing() {
-        assert_eq!(read_tag(BufReader::new(&[0x82])).unwrap(), 0x82);
-        assert_eq!(read_tag(BufReader::new(&[0x40, 0x02])).unwrap(), 0x4002);
-        assert_eq!(read_tag(BufReader::new(&[0x20, 0x00, 0x02])).unwrap(), 0x200002);
-        assert_eq!(read_tag(BufReader::new(&[0x10, 0x00, 0x00, 0x02])).unwrap(), 0x10000002);
+        assert_eq!(read_tag(BufReader::new(&[0x82])).unwrap(), (0x82, 1));
+        assert_eq!(read_tag(BufReader::new(&[0x40, 0x02])).unwrap(), (0x4002, 2));
+        assert_eq!(read_tag(BufReader::new(&[0x20, 0x00, 0x02])).unwrap(), (0x200002, 3));
+        assert_eq!(read_tag(BufReader::new(&[0x10, 0x00, 0x00, 0x02])).unwrap(), (0x10000002, 4));
     }
 
     #[test]
@@ -131,8 +150,8 @@ pub trait Element: Sized {
 impl ElementHeader {
     /// Reads a single EBML element header from the stream.
     pub(crate) fn read<R: ReadBytes>(mut reader: &mut R) -> Result<ElementHeader> {
-        let header_start = reader.pos();
-        let tag = read_tag(&mut reader)?;
+        let (tag, tag_len) = read_tag(&mut reader)?;
+        let header_start = reader.pos() - u64::from(tag_len);
         let size = read_unsigned_vint(&mut reader)?;
         log::debug!("found element with tag: {:X}", tag);
         Ok(ElementHeader {
