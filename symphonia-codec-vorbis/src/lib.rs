@@ -304,8 +304,8 @@ impl Decoder for VorbisDecoder {
         // Initialize the output buffer.
         let spec = SignalSpec::new(ident.sample_rate, channels);
 
-        let imdct_short = Imdct::new((1u32 << ident.bs0_exp) >> 1);
-        let imdct_long = Imdct::new((1u32 << ident.bs1_exp) >> 1);
+        let imdct_short = Imdct::new((1 << ident.bs0_exp) >> 1);
+        let imdct_long = Imdct::new((1 << ident.bs1_exp) >> 1);
 
         // TODO: Should this be half the block size?
         let duration = 1u64 << ident.bs1_exp;

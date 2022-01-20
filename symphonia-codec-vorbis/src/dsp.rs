@@ -84,7 +84,7 @@ impl DspChannel {
         let bs = if block_flag { self.bs1 } else { self.bs0 };
 
         // Perform the inverse MDCT on the audio spectrum.
-        imdct.imdct(&self.floor[..bs / 2], &mut self.imdct[..bs], 1.0);
+        imdct.imdct(&self.floor[..bs / 2], &mut self.imdct[..bs]);
 
         // Overlap-add and windowing with the previous buffer.
         if let Some(lap_state) = &lap_state {

@@ -1340,8 +1340,8 @@ impl Dsp {
             kbd_short_win,
             sine_long_win,
             sine_short_win,
-            imdct_long: Imdct::new(1024),
-            imdct_short: Imdct::new(128),
+            imdct_long: Imdct::new_scaled(1024, 1.0 / 2048.0),
+            imdct_short: Imdct::new_scaled(128, 1.0 / 256.0),
             tmp: [0.0; 2048],
             ew_buf: [0.0; 1152],
         }
@@ -1372,11 +1372,11 @@ impl Dsp {
 
         // Inverse MDCT
         if seq != EIGHT_SHORT_SEQUENCE {
-            self.imdct_long.imdct(coeffs, &mut self.tmp, 1.0 / 2048.0);
+            self.imdct_long.imdct(coeffs, &mut self.tmp);
         }
         else {
             for (ain, aout) in coeffs.chunks(128).zip(self.tmp.chunks_mut(256)) {
-                self.imdct_short.imdct(ain, aout, 1.0 / 256.0);
+                self.imdct_short.imdct(ain, aout);
             }
 
             self.ew_buf = [0.0; 1152];

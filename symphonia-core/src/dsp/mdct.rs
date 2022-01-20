@@ -7,122 +7,146 @@
 
 //! The `mdct` module implements the Modified Discrete Cosine Transform (MDCT).
 //!
-//! The (I)MDCT algorithms in this module are not general purpose and are specialized for use in
-//! typical audio compression applications. Therefore, some constraints may apply.
+//! The MDCT in this module is implemented in-terms of a forward FFT.
 
-use std::f64;
+use super::complex::Complex;
+use super::fft::*;
 
-use super::dct::Dct;
-
-/// Inverse Modified Discrete Transform (IMDCT).
-///
-/// Implements the IMDCT in-terms of a DCT-IV as described in \[1\] and \[2\].
-///
-/// \[1\] Mu-Huo Cheng and Yu-Hsin Hsu, "Fast IMDCT and MDCT algorithms - a matrix approach,"
-///       in IEEE Transactions on Signal Processing, vol. 51, no. 1, pp. 221-229, Jan. 2003,
-///       doi: 10.1109/TSP.2002.806566.
-///
-/// \[2\] Tan Li, R. Zhang, R. Yang, Heyun Huang and Fuhuei Lin, "A unified computing kernel for
-///       MDCT/IMDCT in modern audio coding standards," 2007 International Symposium on
-///       Communications and Information Technologies, Sydney, NSW, 2007, pp. 546-550,
-///       doi: 10.1109/ISCIT.2007.4392079.
+/// The Inverse Modified Discrete Transform (IMDCT).
 pub struct Imdct {
-    dct: Dct,
-    n: u32,
-    table: Vec<f32>,
+    fft: Fft,
+    fft_in: Box<[Complex]>,
+    fft_out: Box<[Complex]>,
+    twiddle: Box<[Complex]>,
 }
 
 impl Imdct {
-    /// Instantiate a N-point IMDCT.
+    /// Instantiate a N-point IMDCT with no scaling.
     ///
-    /// The value of `n` must be a power-of-2, and less-than or equal to 8192.
-    pub fn new(n: u32) -> Imdct {
-        // The algorithm implemented requires a power-of-two N.
+    /// The value of `n` is the number of spectral samples and must be a power-of-2 and less-than or
+    /// equal to `2 * Fft::MAX_SIZE`.
+    pub fn new(n: usize) -> Self {
+        Imdct::new_scaled(n, 1.0)
+    }
+
+    /// Instantiate a N-point IMDCT with scaling.
+    ///
+    /// The value of `n` is the number of spectral samples and must be a power-of-2 and less-than or
+    /// equal to `2 * Fft::MAX_SIZE`.
+    pub fn new_scaled(n: usize, scale: f64) -> Self {
+        // The FFT requires a power-of-two N.
         assert!(n.is_power_of_two(), "n must be a power of two");
-        // This limitation is somewhat arbitrary, but a limit must be set somewhere.
-        assert!(n <= 8192, "maximum of 8192-point imdct");
+        // A complex FFT of size N/2 is used to compute the IMDCT. Therefore, the maximum value of N
+        // is 2 * Fft::MAX_SIZE.
+        assert!(n <= 2 * Fft::MAX_SIZE, "maximum size exceeded");
 
-        let c = f64::consts::PI / f64::from(2 * 2 * n);
+        let n2 = n / 2;
+        let mut twiddle = Vec::with_capacity(n2);
 
-        let table: Vec<f32> =
-            (0..n).map(|i| (2.0 * (c * f64::from(2 * i + 1)).cos()) as f32).collect();
+        let alpha = 1.0 / 8.0 + if scale.is_sign_positive() { 0.0 } else { n2 as f64 };
+        let pi_n = std::f64::consts::PI / n as f64;
+        let sqrt_scale = scale.abs().sqrt();
 
-        Imdct { dct: Dct::new(n), n, table }
+        for k in 0..n2 {
+            let theta = pi_n * (alpha + k as f64);
+            let re = sqrt_scale * theta.cos();
+            let im = sqrt_scale * theta.sin();
+            twiddle.push(Complex::new(re as f32, im as f32));
+        }
+
+        let fft_in = vec![Default::default(); n2].into_boxed_slice();
+        let fft_out = vec![Default::default(); n2].into_boxed_slice();
+
+        Imdct { fft: Fft::new(n2), fft_in, fft_out, twiddle: twiddle.into_boxed_slice() }
     }
 
     /// Performs the the N-point Inverse Modified Discrete Cosine Transform.
     ///
-    /// The number of input samples in `src`, N, must equal the value `Imdct` was instantiated with.
-    /// The length of the output slice, `dst`, must equal 2N. Failing to meet these requirements
-    /// will throw an assertion.
-    ///
-    /// This function performs no windowing, but each sample will be multiplied by `scale`. Typically,
-    /// scale will equal `sqrt(1.0 / N)` where N is the number of input samples, though each
-    /// application will vary.
-    pub fn imdct(&mut self, src: &[f32], dst: &mut [f32], scale: f32) {
-        // The IMDCT produces 2N samples for N inputs. This algorithm defines the ouput length as
-        // N.
-        let n2 = self.n as usize;
-        let n = n2 << 1;
-        let n4 = n2 >> 1;
+    /// The number of input spectral samples provided by the slice `spec` must equal the value of N
+    /// that the IMDCT was instantiated with. The length of the output slice, `out`, must be of
+    /// length 2N. Failing to meet these requirements will throw an assertion.
+    pub fn imdct(&mut self, spec: &[f32], out: &mut [f32]) {
+        // Spectral length: 2x FFT size, 0.5x output length.
+        let n = self.fft.size() << 1;
+        // 1x FFT size, 0.25x output length.
+        let n2 = n >> 1;
+        // 0.5x FFT size.
+        let n4 = n >> 2;
 
-        assert_eq!(dst.len(), n);
-        assert_eq!(src.len(), n2);
+        // The spectrum length must be the same as N.
+        assert_eq!(spec.len(), n);
+        // The output length must be 2x the spectrum length.
+        assert_eq!(out.len(), 2 * n);
 
-        // Pre-process the input and place it in the second-half of dst.
-        for ((ds, &src), &cos) in dst[n2..].iter_mut().zip(src).zip(&self.table) {
-            *ds = src * cos;
+        // Pre-FFT twiddling and packing of the real input signal values into complex signal values.
+        for (((&even, &odd), &w), t) in spec
+            .iter()
+            .step_by(2)
+            .zip(spec.iter().rev().step_by(2))
+            .zip(self.twiddle.iter())
+            .zip(self.fft_in.iter_mut())
+        {
+            let re = -odd * w.im - even * w.re;
+            let im = -odd * w.re + even * w.im;
+            *t = Complex::new(re, im);
         }
 
-        // Compute the DCT-II in-place using the pre-processed samples that reside in the second-
-        // half of dst.
-        self.dct.dct_ii_inplace(&mut dst[n2..]);
+        // Do the FFT.
+        self.fft.fft(&self.fft_in, &mut self.fft_out);
 
-        // DCT-II to DCT-IV
+        // Split the output vector (2N samples) into 4 vectors (N/2 samples each).
+        let (vec0, vec1) = out.split_at_mut(n2);
+        let (vec1, vec2) = vec1.split_at_mut(n2);
+        let (vec2, vec3) = vec2.split_at_mut(n2);
+
+        // Post-FFT twiddling and processing to expand the N/2 complex output values into 2N real
+        // output samples.
+        for (i, (x, &w)) in self.fft_out[..n4].iter().zip(self.twiddle[..n4].iter()).enumerate() {
+            // The real and imaginary components of the post-twiddled FFT samples are used to
+            // generate 4 reak output samples. Using the first half of the complex FFT output,
+            // populate each of the 4 output vectors.
+            let val = w * x.conj();
+
+            // Forward and reverse order indicies that will be populated.
+            let fi = 2 * i;
+            let ri = n2 - 1 - 2 * i;
+
+            // The odd indicies in vec0 are populated reverse order.
+            vec0[ri] = -val.im;
+            // The even indicies in vec1 are populated forward order.
+            vec1[fi] = val.im;
+            // The odd indicies in vec2 are populated reverse order.
+            vec2[ri] = val.re;
+            // The even indicies in vec3 are populated forward order.
+            vec3[fi] = val.re;
+        }
+
+        for (i, (x, &w)) in self.fft_out[n4..].iter().zip(self.twiddle[n4..].iter()).enumerate() {
+            // Using the second half of the FFT output samples, finish populating each of the 4
+            // output vectors.
+            let val = w * x.conj();
+
+            // Forward and reverse order indicies that will be populated.
+            let fi = 2 * i;
+            let ri = n2 - 1 - 2 * i;
+
+            // The even indicies in vec0 are populated in forward order.
+            vec0[fi] = -val.re;
+            // The odd indicies in vec1 are populated in reverse order.
+            vec1[ri] = val.re;
+            // The even indicies in vec2 are populated in forward order.
+            vec2[fi] = val.im;
+            // The odd indicies in vec3 are populated in reverse order.
+            vec3[ri] = val.im;
+        }
+
+        // Note: As of Rust 1.58, there doesn't appear to be any measurable difference between using
+        // iterators or indexing like above. Either the bounds checks are elided above, or they are
+        // not elided using iterators. Therefore, for clarity, the indexing method is used.
         //
-        // Split dst into 4 evenly sized N/4 vectors: [ vec0, vec1, vec2, vec3 ]. Vectors 2 & 3
-        // contain the DCT-II transformed samples from the previous step. After this step,
-        // regions vec1 & vec2 will contain the DCT-II transformed samples.
-        let (vec0, vec1) = dst.split_at_mut(n4);
-        let (vec1, vec2) = vec1.split_at_mut(n4);
-        let (vec2, vec3) = vec2.split_at_mut(n4);
-
-        // Map vec2 to vec1.
-        vec1[0] = -0.5 * vec2[0];
-
-        for i in 1..n4 {
-            vec1[i] = -1.0 * (vec2[i] + vec1[i - 1]);
-        }
-
-        // Map vec3 to vec2.
-        vec2[0] = vec3[0] + vec1[n4 - 1];
-
-        for i in 1..n4 {
-            vec2[i] = vec3[i] - vec2[i - 1];
-        }
-
-        // DCT-IV to IMDCT
-        //
-        // Using symmetry, expand the DCT-IV to IMDCT. Multiply by the scale factor while this is
-        // done.
-        for (s0, &s2) in vec0.iter_mut().zip(vec2.iter()) {
-            // vec0 is a scaled copy of vec2.
-            *s0 = scale * s2;
-        }
-
-        for ((s3, s2), &s1) in vec3.iter_mut().zip(vec2.iter_mut().rev()).zip(vec1.iter()) {
-            // vec3 is a scaled copy of vec1.
-            // vec2 is a reversed and scaled copy of vec1.
-            let s = scale * s1;
-            *s3 = s;
-            *s2 = s;
-        }
-
-        for (s1, &s0) in vec1.iter_mut().zip(vec0.iter().rev()) {
-            // vec1 is an inverted copy of vec2. vec2 was overwrittern above, but vec0 is a copy of
-            // the original vec2.
-            *s1 = -1.0 * s0;
-        }
+        // Additionally, note that vectors 0 and 3 are reversed copies (+ negation for vector 0) of
+        // vectors 1 and 2, respectively. Pulling these copies out into a separate loop using
+        // iterators yielded no measureable difference either.
     }
 }
 
@@ -144,8 +168,8 @@ mod tests {
             let mut accum = 0.0;
 
             for j in 0..n_in {
-                accum +=
-                    f64::from(x[j]) * (pi_2n * ((2 * i + 1 + n_in) * (2 * j + 1)) as f64).cos();
+                let theta = pi_2n * ((2 * i + 1 + n_in) * (2 * j + 1)) as f64;
+                accum += f64::from(x[j]) * theta.cos();
             }
 
             y[i] = (scale * accum) as f32;
@@ -169,11 +193,12 @@ mod tests {
 
         imdct_analytical(&TEST_VECTOR, &mut expected, scale);
 
-        let mut mdct = Imdct::new(32);
-        mdct.imdct(&TEST_VECTOR, &mut actual, scale as f32);
+        let mut mdct = Imdct::new_scaled(32, scale);
+        mdct.imdct(&TEST_VECTOR, &mut actual);
 
         for i in 0..64 {
-            assert!((actual[i] - expected[i]).abs() < 0.00001);
+            let delta = f64::from(actual[i]) - f64::from(expected[i]);
+            assert!(delta.abs() < 0.00001);
         }
     }
 }
