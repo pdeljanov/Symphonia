@@ -251,7 +251,7 @@ impl VorbisDecoder {
                 &self.dsp.lapping_state,
                 &self.dsp.windows,
                 imdct,
-                self.buf.chan_mut(i),
+                self.buf.chan_mut(map_vorbis_channel(self.ident.n_channels, i)),
             );
         }
 
@@ -737,4 +737,27 @@ fn read_mode(bs: &mut BitReaderRtl<'_>, max_mapping: u8) -> Result<Mode> {
     let mode = Mode { block_flag, mapping };
 
     Ok(mode)
+}
+
+/// Map a Vorbis channel index to an audio buffer channel index given the channel map implied by the
+/// total number of channels.
+///
+/// See channel map as defined in section 4.3.9 of the Vorbis I specification.
+pub fn map_vorbis_channel(num_channels: u8, ch: usize) -> usize {
+    // This pre-condition should always be true.
+    assert!(ch < usize::from(num_channels));
+
+    let mapped_ch: u8 = match num_channels {
+        1 => [0][ch],                      // FL
+        2 => [0, 1][ch],                   // FL, FR
+        3 => [0, 2, 1][ch],                // FL, FC, FR
+        4 => [0, 1, 2, 3][ch],             // FL, FR, RL, RR
+        5 => [0, 2, 1, 3, 4][ch],          // FL, FC, FR, RL, RR
+        6 => [0, 2, 1, 4, 5, 3][ch],       // FL, FC, FR, RL, RR, LFE
+        7 => [0, 2, 1, 5, 6, 4, 3][ch],    // FL, FC, FR, SL, SR, RC, LFE
+        8 => [0, 2, 1, 6, 7, 4, 5, 3][ch], // FL, FC, FR, SL, SR, RL, RR, LFE
+        _ => return ch,
+    };
+
+    usize::from(mapped_ch)
 }
