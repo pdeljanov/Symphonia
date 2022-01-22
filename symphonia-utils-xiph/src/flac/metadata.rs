@@ -64,8 +64,8 @@ fn flac_channels_to_channels(channels: u32) -> Channels {
                 | Channels::FRONT_CENTRE
                 | Channels::LFE1
                 | Channels::REAR_CENTRE
-                | Channels::REAR_LEFT
-                | Channels::REAR_RIGHT
+                | Channels::SIDE_LEFT
+                | Channels::SIDE_RIGHT
         }
         8 => {
             Channels::FRONT_LEFT
