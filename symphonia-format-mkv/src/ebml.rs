@@ -15,27 +15,47 @@ use crate::element_ids::{ELEMENTS, ElementType, Type};
 use crate::segment::EbmlHeaderElement;
 
 /// Reads a single EBML element ID (as in RFC8794) from the stream
-/// and returns its value and length in bytes (1-4 bytes) or an error.
-pub(crate) fn read_tag<R: ReadBytes>(mut reader: R) -> Result<(u32, u32)> {
-    let (value, len) = read_vint::<_, false>(&mut reader)?;
-    if len <= 4 {
-        return Ok((value as u32, len));
+/// and returns its value, length in bytes (1-4 bytes)
+/// and a flag indicating whether any data was ignored, or an error.
+pub(crate) fn read_tag<R: ReadBytes>(mut reader: R) -> Result<(u32, u32, bool)> {
+    // Try to read a tag at current reader position.
+    loop {
+        let byte = reader.read_byte()?;
+        let remaining_octets = byte.leading_zeros();
+        if remaining_octets > 3 {
+            // First byte should be ignored since we know it could not start a tag.
+            // We immediately proceed to seek a first valid tag.
+            break;
+        }
+
+        // Read remaining octets
+        let mut vint = u32::from(byte);
+        for _ in 0..remaining_octets {
+            let byte = reader.read_byte()?;
+            vint = (vint << 8) | u32::from(byte);
+        }
+
+        log::debug!("element with tag: {:X}", vint);
+        return Ok((vint, remaining_octets + 1, false));
     }
 
     // Seek to next supported tag of a top level element (`Cluster`, `Info`, etc.)
-
     let mut tag = 0u32;
     loop {
-        if let Some((_, ty)) = ELEMENTS.get(&tag) {
+        let ty = ELEMENTS.get(&tag)
+            .map(|(_, ty)| ty)
+            .filter(|ty| ty.is_top_level());
+
+        if let Some(ty) = ty {
             log::info!("found next supported tag {:08X} ({:?})", tag, ty);
-            return Ok((tag, 4));
+            return Ok((tag, 4, true));
         }
-        tag = (tag << 8) | reader.read_u8()? as u32;
+        tag = (tag << 8) | u32::from(reader.read_u8()?);
     }
 }
 
 pub(crate) fn read_size<R: ReadBytes>(reader: R) -> Result<Option<u64>> {
-    let (size, len) = read_vint::<R, true>(reader)?;
+    let (size, len) = read_vint(reader)?;
     if size == u64::MAX && len == 1 {
         return Ok(None);
     }
@@ -45,13 +65,13 @@ pub(crate) fn read_size<R: ReadBytes>(reader: R) -> Result<Option<u64>> {
 /// Reads a single unsigned variable size integer (as in RFC8794) from the stream
 /// and returns it or an error.
 pub(crate) fn read_unsigned_vint<R: ReadBytes>(reader: R) -> Result<u64> {
-    Ok(read_vint::<R, true>(reader)?.0)
+    Ok(read_vint(reader)?.0)
 }
 
 /// Reads a single signed variable size integer (as in RFC8794) from the stream
 /// and returns it or an error.
 pub(crate) fn read_signed_vint<R: ReadBytes>(mut reader: R) -> Result<i64> {
-    let (value, len) = read_vint::<_, true>(&mut reader)?;
+    let (value, len) = read_vint(&mut reader)?;
     // Convert to a signed integer by range shifting.
     let half_range = i64::pow(2, (len * 7) as u32 - 1) - 1;
     Ok(value as i64 - half_range)
@@ -59,7 +79,7 @@ pub(crate) fn read_signed_vint<R: ReadBytes>(mut reader: R) -> Result<i64> {
 
 /// Reads a single unsigned variable size integer (as in RFC8794) from the stream
 /// and returns both its value and length in octects, or an error.
-fn read_vint<R: ReadBytes, const CLEAR_MARKER: bool>(mut reader: R) -> Result<(u64, u32)> {
+fn read_vint<R: ReadBytes>(mut reader: R) -> Result<(u64, u32)> {
     loop {
         let byte = reader.read_byte()?;
         if byte == 0xFF {
@@ -67,22 +87,15 @@ fn read_vint<R: ReadBytes, const CLEAR_MARKER: bool>(mut reader: R) -> Result<(u
             return Ok((u64::MAX, 1));
         }
 
-        if byte == 0x00 {
-            // Skip invalid data
-            continue;
-        }
-
         let vint_width = byte.leading_zeros();
-        let mut vint = byte as u64;
-        if CLEAR_MARKER {
-            // Clear VINT_MARKER bit
-            vint ^= 1 << (7 - vint_width);
-        }
+        let mut vint = u64::from(byte);
+        // Clear VINT_MARKER bit
+        vint ^= 1 << (7 - vint_width);
 
         // Read remaining octets
         for _ in 0..vint_width {
             let byte = reader.read_byte()?;
-            vint = (vint << 8) | byte as u64;
+            vint = (vint << 8) | u64::from(byte);
         }
 
         return Ok((vint, vint_width + 1));
@@ -97,10 +110,10 @@ mod tests {
 
     #[test]
     fn element_tag_parsing() {
-        assert_eq!(read_tag(BufReader::new(&[0x82])).unwrap(), (0x82, 1));
-        assert_eq!(read_tag(BufReader::new(&[0x40, 0x02])).unwrap(), (0x4002, 2));
-        assert_eq!(read_tag(BufReader::new(&[0x20, 0x00, 0x02])).unwrap(), (0x200002, 3));
-        assert_eq!(read_tag(BufReader::new(&[0x10, 0x00, 0x00, 0x02])).unwrap(), (0x10000002, 4));
+        assert_eq!(read_tag(BufReader::new(&[0x82])).unwrap(), (0x82, 1, false));
+        assert_eq!(read_tag(BufReader::new(&[0x40, 0x02])).unwrap(), (0x4002, 2, false));
+        assert_eq!(read_tag(BufReader::new(&[0x20, 0x00, 0x02])).unwrap(), (0x200002, 3, false));
+        assert_eq!(read_tag(BufReader::new(&[0x10, 0x00, 0x00, 0x02])).unwrap(), (0x10000002, 4, false));
     }
 
     #[test]
@@ -157,23 +170,22 @@ pub trait Element: Sized {
 
 impl ElementHeader {
     /// Reads a single EBML element header from the stream.
-    pub(crate) fn read<R: ReadBytes>(mut reader: &mut R) -> Result<ElementHeader> {
-        let (tag, tag_len) = read_tag(&mut reader)?;
+    pub(crate) fn read<R: ReadBytes>(mut reader: &mut R) -> Result<(ElementHeader, bool)> {
+        let (tag, tag_len, reset) = read_tag(&mut reader)?;
         let header_start = reader.pos() - u64::from(tag_len);
 
         // According to spec, elements like Segment and Cluster can have unknown size.
         // Currently, these cases are represented as `data_len` equal to 0,
         // but it might be worth changing it to an Option at some point.
         let size = read_size(&mut reader)?.unwrap_or(0);
-        log::debug!("found element with tag: {:X}", tag);
-        Ok(ElementHeader {
+        Ok((ElementHeader {
             tag,
             etype: ELEMENTS.get(&tag).map_or(ElementType::Unknown, |(_, etype)| *etype),
             pos: header_start,
             len: reader.pos() - header_start + size,
             data_len: size,
             data_pos: reader.pos(),
-        })
+        }, reset))
     }
 }
 
@@ -286,7 +298,13 @@ impl<R: ReadBytes> ElementIterator<R> {
         assert_eq!(self.next_pos, self.reader.pos(), "invalid position");
 
         if self.reader.pos() < self.end.unwrap_or(u64::MAX) {
-            let header = ElementHeader::read(&mut self.reader)?;
+            let (header, reset) = ElementHeader::read(&mut self.reader)?;
+            if reset {
+                // After finding a new top-level element in a broken stream
+                // it is necessary to update `next_pos` so it refers to a position
+                // of a child header.
+                self.next_pos = self.reader.pos();
+            }
             self.current = Some(header);
             return Ok(Some(header));
         }
@@ -374,7 +392,10 @@ impl<R: ReadBytes> ElementIterator<R> {
             Some((ty, _)) => {
                 assert_eq!(header.data_pos, self.reader.pos(), "invalid stream position");
                 if let (Some(cur), Some(end)) = (self.current, self.end) {
-                    assert!(cur.pos + cur.len <= end, "invalid stream position");
+                    if cur.pos + cur.len > end {
+                        log::debug!("reading element data {:?}; parent end={}", cur, end);
+                        return decode_error("mkv: attempt to read element data past master element ");
+                    }
                 }
                 Some(match ty {
                     Type::Master => {
