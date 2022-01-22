@@ -7,7 +7,6 @@
 
 use symphonia_core::dsp::mdct::Imdct;
 
-use super::residue::ResidueScratch;
 use super::window::Windows;
 
 pub struct LappingState {
@@ -17,8 +16,6 @@ pub struct LappingState {
 pub struct Dsp {
     /// DSP channels (max. 256 per-spec, but actually limited to 32 by Symphonia).
     pub channels: Vec<DspChannel>,
-    /// Residue scratch-pad.
-    pub residue_scratch: ResidueScratch,
     /// IMDCT for short-blocks.
     pub imdct_short: Imdct,
     /// IMDCT for long-blocks.

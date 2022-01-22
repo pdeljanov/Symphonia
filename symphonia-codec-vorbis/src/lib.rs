@@ -167,7 +167,6 @@ impl VorbisDecoder {
                 bs_exp,
                 &self.codebooks,
                 &residue_channels,
-                &mut self.dsp.residue_scratch,
                 &mut self.dsp.channels,
             )?;
         }
@@ -310,14 +309,8 @@ impl Decoder for VorbisDecoder {
         // TODO: Should this be half the block size?
         let duration = 1u64 << ident.bs1_exp;
 
-        let dsp = Dsp {
-            windows,
-            channels: dsp_channels,
-            residue_scratch: Default::default(),
-            imdct_short,
-            imdct_long,
-            lapping_state: None,
-        };
+        let dsp =
+            Dsp { windows, channels: dsp_channels, imdct_short, imdct_long, lapping_state: None };
 
         Ok(VorbisDecoder {
             params: params.clone(),

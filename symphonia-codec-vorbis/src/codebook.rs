@@ -364,9 +364,9 @@ impl VorbisCodebook {
     }
 
     #[inline(always)]
-    pub fn read_scalar<B: ReadBitsRtl>(&self, bs: &mut B) -> Result<(u32, u32)> {
+    pub fn read_scalar<B: ReadBitsRtl>(&self, bs: &mut B) -> Result<u32> {
         // An entry in a scalar codebook is just the value.
-        Ok(bs.read_codebook(&self.codebook)?)
+        Ok(bs.read_codebook(&self.codebook)?.0)
     }
 
     #[inline(always)]

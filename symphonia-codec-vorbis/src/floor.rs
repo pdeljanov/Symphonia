@@ -692,7 +692,7 @@ impl Floor for Floor1 {
 
             if cbits > 0 {
                 let mainbook_idx = class.mainbook as usize;
-                cval = try_or_ret!(codebooks[mainbook_idx].read_scalar(bs)).0;
+                cval = try_or_ret!(codebooks[mainbook_idx].read_scalar(bs));
             }
 
             for floor_y in self.floor_y[offset..offset + cdim].iter_mut() {
@@ -705,7 +705,7 @@ impl Floor for Floor1 {
 
                 *floor_y = if is_subbook_used {
                     let subbook_idx = class.subbooks[subclass_idx as usize] as usize;
-                    try_or_ret!(codebooks[subbook_idx].read_scalar(bs)).0
+                    try_or_ret!(codebooks[subbook_idx].read_scalar(bs))
                 }
                 else {
                     0
