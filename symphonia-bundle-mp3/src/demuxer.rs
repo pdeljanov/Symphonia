@@ -91,6 +91,8 @@ impl FormatReader for Mp3Reader {
 
             // The base Xing/Info tag may contain the number of frames.
             if let Some(num_mpeg_frames) = info_tag.num_frames {
+                info!("using xing header for duration");
+
                 let num_frames = u64::from(num_mpeg_frames) * audio_frames_per_mpeg_frame;
 
                 // Adjust for gapless playback.
@@ -101,6 +103,14 @@ impl FormatReader for Mp3Reader {
                     params.with_n_frames(num_frames);
                 }
             }
+        }
+        else if let Some(vbri_tag) = try_read_vbri_tag(&packet) {
+            info!("using vbri header for duration");
+
+            let num_frames = u64::from(vbri_tag.num_mpeg_frames) * audio_frames_per_mpeg_frame;
+
+            // Check if there is a VBRI tag.
+            params.with_n_frames(num_frames);
         }
         else {
             // The first frame was not a Xing/Info header, rewind back to the start of the frame so
@@ -587,6 +597,50 @@ fn try_read_info_tag_inner(buf: &[u8], header: &FrameHeader) -> Result<Option<Xi
     };
 
     Ok(Some(XingInfoTag { num_frames, num_bytes, toc, quality, is_cbr, lame }))
+}
+
+/// The contents of a VBRI tag.
+#[allow(dead_code)]
+struct VbriTag {
+    num_bytes: u32,
+    num_mpeg_frames: u32,
+}
+
+/// Try to read a VBRI tag from the provided MPEG frame.
+fn try_read_vbri_tag(buf: &[u8]) -> Option<VbriTag> {
+    // The VBRI header is a completely optional piece of information. Therefore, flatten an error
+    // reading the tag into a None.
+    try_read_vbri_tag_inner(buf).ok().flatten()
+}
+
+fn try_read_vbri_tag_inner(buf: &[u8]) -> Result<Option<VbriTag>> {
+    let mut reader = BufReader::new(buf);
+
+    // The VBRI tag is always 32 bytes after the header.
+    reader.ignore_bytes(4 + 32)?;
+
+    // Check for the VBRI signature.
+    let id = reader.read_quad_bytes()?;
+
+    if id != *b"VBRI" {
+        return Ok(None);
+    }
+
+    // The version is always 1.
+    let version = reader.read_be_u16()?;
+
+    if version != 1 {
+        return Ok(None);
+    }
+
+    // Delay is a 2-byte big-endiann floating point value?
+    let _delay = reader.read_be_u16()?;
+    let _quality = reader.read_be_u16()?;
+
+    let num_bytes = reader.read_be_u32()?;
+    let num_mpeg_frames = reader.read_be_u32()?;
+
+    Ok(Some(VbriTag { num_bytes, num_mpeg_frames }))
 }
 
 fn parse_lame_tag_replaygain(value: u16, expected_name: u8) -> Option<f32> {
