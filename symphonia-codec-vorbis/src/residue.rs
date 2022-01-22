@@ -368,8 +368,29 @@ impl Residue {
     }
 }
 
-fn decode_classes(mut val: u32, class_words: u16, classifications: u32, out: &mut [u8]) {
-    for (_, out) in (0..class_words as usize).zip(out).rev() {
+fn decode_classes(mut val: u32, parts_per_classword: u16, classifications: u32, out: &mut [u8]) {
+    let parts_per_classword = usize::from(parts_per_classword);
+
+    // The number of partitions that need a class assignment.
+    let num_parts = out.len();
+
+    // If the number of partitions per classword is greater than the number of partitions that need
+    // a class assignment, then the excess classes must be dropped because class assignments are
+    // assigned in reverse order.
+    let skip = if parts_per_classword > num_parts {
+        let skip = parts_per_classword - num_parts;
+
+        for _ in 0..skip {
+            val /= classifications;
+        }
+
+        skip
+    }
+    else {
+        0
+    };
+
+    for out in out[..parts_per_classword - skip].iter_mut().rev() {
         *out = (val % classifications) as u8;
         val /= classifications;
     }
