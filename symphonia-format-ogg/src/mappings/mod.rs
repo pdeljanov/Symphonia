@@ -43,7 +43,7 @@ pub trait PacketParser: Send {
 }
 
 /// A `Mapper` implements packet-handling for a specific `Codec`.
-pub trait Mapper: Send {
+pub trait Mapper: Send + Sync {
     /// Gets the name of the mapper.
     fn name(&self) -> &'static str;
 
