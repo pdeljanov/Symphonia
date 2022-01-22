@@ -140,86 +140,6 @@ impl<P: ParseChunk> ChunkParser<P> {
     }
 }
 
-fn map_wave_channels(channel_mask: u32) -> Channels {
-    const SPEAKER_FRONT_LEFT: u32 = 0x1;
-    const SPEAKER_FRONT_RIGHT: u32 = 0x2;
-    const SPEAKER_FRONT_CENTER: u32 = 0x4;
-    const SPEAKER_LOW_FREQUENCY: u32 = 0x8;
-    const SPEAKER_BACK_LEFT: u32 = 0x10;
-    const SPEAKER_BACK_RIGHT: u32 = 0x20;
-    const SPEAKER_FRONT_LEFT_OF_CENTER: u32 = 0x40;
-    const SPEAKER_FRONT_RIGHT_OF_CENTER: u32 = 0x80;
-    const SPEAKER_BACK_CENTER: u32 = 0x100;
-    const SPEAKER_SIDE_LEFT: u32 = 0x200;
-    const SPEAKER_SIDE_RIGHT: u32 = 0x400;
-    const SPEAKER_TOP_CENTER: u32 = 0x800;
-    const SPEAKER_TOP_FRONT_LEFT: u32 = 0x1000;
-    const SPEAKER_TOP_FRONT_CENTER: u32 = 0x2000;
-    const SPEAKER_TOP_FRONT_RIGHT: u32 = 0x4000;
-    const SPEAKER_TOP_BACK_LEFT: u32 = 0x8000;
-    const SPEAKER_TOP_BACK_CENTER: u32 = 0x10000;
-    const SPEAKER_TOP_BACK_RIGHT: u32 = 0x20000;
-
-    let mut channels = Channels::empty();
-
-    if channel_mask & SPEAKER_FRONT_LEFT != 0 {
-        channels |= Channels::FRONT_LEFT;
-    }
-    if channel_mask & SPEAKER_FRONT_RIGHT != 0 {
-        channels |= Channels::FRONT_RIGHT;
-    }
-    if channel_mask & SPEAKER_FRONT_CENTER != 0 {
-        channels |= Channels::FRONT_CENTRE;
-    }
-    if channel_mask & SPEAKER_LOW_FREQUENCY != 0 {
-        channels |= Channels::LFE1;
-    }
-    if channel_mask & SPEAKER_BACK_LEFT != 0 {
-        channels |= Channels::REAR_LEFT;
-    }
-    if channel_mask & SPEAKER_BACK_RIGHT != 0 {
-        channels |= Channels::REAR_RIGHT;
-    }
-    if channel_mask & SPEAKER_FRONT_LEFT_OF_CENTER != 0 {
-        channels |= Channels::FRONT_LEFT_CENTRE;
-    }
-    if channel_mask & SPEAKER_FRONT_RIGHT_OF_CENTER != 0 {
-        channels |= Channels::FRONT_RIGHT_CENTRE;
-    }
-    if channel_mask & SPEAKER_BACK_CENTER != 0 {
-        channels |= Channels::REAR_CENTRE;
-    }
-    if channel_mask & SPEAKER_SIDE_LEFT != 0 {
-        channels |= Channels::SIDE_LEFT;
-    }
-    if channel_mask & SPEAKER_SIDE_RIGHT != 0 {
-        channels |= Channels::SIDE_RIGHT;
-    }
-    if channel_mask & SPEAKER_TOP_CENTER != 0 {
-        channels |= Channels::TOP_CENTRE;
-    }
-    if channel_mask & SPEAKER_TOP_FRONT_LEFT != 0 {
-        channels |= Channels::TOP_FRONT_LEFT;
-    }
-    if channel_mask & SPEAKER_TOP_FRONT_CENTER != 0 {
-        channels |= Channels::TOP_FRONT_CENTRE;
-    }
-    if channel_mask & SPEAKER_TOP_FRONT_RIGHT != 0 {
-        channels |= Channels::TOP_FRONT_RIGHT;
-    }
-    if channel_mask & SPEAKER_TOP_BACK_LEFT != 0 {
-        channels |= Channels::TOP_REAR_LEFT;
-    }
-    if channel_mask & SPEAKER_TOP_BACK_CENTER != 0 {
-        channels |= Channels::TOP_REAR_CENTRE;
-    }
-    if channel_mask & SPEAKER_TOP_BACK_RIGHT != 0 {
-        channels |= Channels::TOP_REAR_RIGHT;
-    }
-
-    channels
-}
-
 pub enum WaveFormatData {
     Pcm(WaveFormatPcm),
     IeeeFloat(WaveFormatIeeeFloat),
@@ -498,7 +418,11 @@ impl WaveFormatChunk {
             _ => return unsupported_error("wav: unsupported fmt_ext sub-type"),
         };
 
-        let channels = map_wave_channels(channel_mask);
+        // Try to map channels.
+        let channels = match Channels::from_bits(channel_mask) {
+            Some(channels) => channels,
+            _ => return unsupported_error("wav: too many channels"),
+        };
 
         Ok(WaveFormatData::Extensible(WaveFormatExtensible {
             bits_per_sample,

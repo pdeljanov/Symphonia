@@ -28,6 +28,10 @@ const AUDIO_PLANES_STORAGE_STACK_LIMIT: usize = 8;
 
 bitflags! {
     /// A bitmask representing the audio channels in an audio buffer or signal.
+    ///
+    /// The first 18 defined channels are guaranteed to be identical to those specified by
+    /// Microsoft's WAVEFORMATEXTENSIBLE structure. Channels after 18 are defined by Symphonia and
+    /// no order is guaranteed.
     #[derive(Default)]
     pub struct Channels: u32 {
         /// Front-left (left) or the Mono channel.
@@ -36,52 +40,52 @@ bitflags! {
         const FRONT_RIGHT        = 0x0000_0002;
         /// Front-centre (centre) channel.
         const FRONT_CENTRE       = 0x0000_0004;
+        /// Low frequency channel 1.
+        const LFE1               = 0x0000_0008;
         /// Rear-left (surround rear left) channel.
-        const REAR_LEFT          = 0x0000_0008;
-        /// Rear-centre (surround rear centre) channel.
-        const REAR_CENTRE        = 0x0000_0010;
+        const REAR_LEFT          = 0x0000_0010;
         /// Rear-right (surround rear right) channel.
         const REAR_RIGHT         = 0x0000_0020;
-        /// Low frequency channel 1.
-        const LFE1               = 0x0000_0040;
         /// Front left-of-centre (left center) channel.
-        const FRONT_LEFT_CENTRE  = 0x0000_0080;
+        const FRONT_LEFT_CENTRE  = 0x0000_0040;
         /// Front right-of-centre (right center) channel.
-        const FRONT_RIGHT_CENTRE = 0x0000_0100;
-        /// Rear left-of-centre channel.
-        const REAR_LEFT_CENTRE   = 0x0000_0200;
-        /// Rear right-of-centre channel.
-        const REAR_RIGHT_CENTRE  = 0x0000_0400;
-        /// Front left-wide channel.
-        const FRONT_LEFT_WIDE    = 0x0000_0800;
-        /// Front right-wide channel.
-        const FRONT_RIGHT_WIDE   = 0x0000_1000;
-        /// Front left-high channel.
-        const FRONT_LEFT_HIGH    = 0x0000_2000;
-        /// Front centre-high channel.
-        const FRONT_CENTRE_HIGH  = 0x0000_4000;
-        /// Front right-high channel.
-        const FRONT_RIGHT_HIGH   = 0x0000_8000;
-        /// Low frequency channel 2.
-        const LFE2               = 0x0001_0000;
+        const FRONT_RIGHT_CENTRE = 0x0000_0080;
+        /// Rear-centre (surround rear centre) channel.
+        const REAR_CENTRE        = 0x0000_0100;
         /// Side left (surround left) channel.
-        const SIDE_LEFT          = 0x0002_0000;
+        const SIDE_LEFT          = 0x0000_0200;
         /// Side right (surround right) channel.
-        const SIDE_RIGHT         = 0x0004_0000;
+        const SIDE_RIGHT         = 0x0000_0400;
         /// Top centre channel.
-        const TOP_CENTRE         = 0x0008_0000;
+        const TOP_CENTRE         = 0x0000_0800;
         /// Top front-left channel.
-        const TOP_FRONT_LEFT     = 0x0010_0000;
+        const TOP_FRONT_LEFT     = 0x0000_1000;
         /// Top centre channel.
-        const TOP_FRONT_CENTRE   = 0x0020_0000;
+        const TOP_FRONT_CENTRE   = 0x0000_2000;
         /// Top front-right channel.
-        const TOP_FRONT_RIGHT    = 0x0040_0000;
+        const TOP_FRONT_RIGHT    = 0x0000_4000;
         /// Top rear-left channel.
-        const TOP_REAR_LEFT      = 0x0080_0000;
+        const TOP_REAR_LEFT      = 0x0000_8000;
         /// Top rear-centre channel.
-        const TOP_REAR_CENTRE    = 0x0100_0000;
+        const TOP_REAR_CENTRE    = 0x0001_0000;
         /// Top rear-right channel.
-        const TOP_REAR_RIGHT     = 0x0200_0000;
+        const TOP_REAR_RIGHT     = 0x0002_0000;
+        /// Rear left-of-centre channel.
+        const REAR_LEFT_CENTRE   = 0x0004_0000;
+        /// Rear right-of-centre channel.
+        const REAR_RIGHT_CENTRE  = 0x0008_0000;
+        /// Front left-wide channel.
+        const FRONT_LEFT_WIDE    = 0x0010_0000;
+        /// Front right-wide channel.
+        const FRONT_RIGHT_WIDE   = 0x0020_0000;
+        /// Front left-high channel.
+        const FRONT_LEFT_HIGH    = 0x0040_0000;
+        /// Front centre-high channel.
+        const FRONT_CENTRE_HIGH  = 0x0080_0000;
+        /// Front right-high channel.
+        const FRONT_RIGHT_HIGH   = 0x0100_0000;
+        /// Low frequency channel 2.
+        const LFE2               = 0x0200_0000;
     }
 }
 

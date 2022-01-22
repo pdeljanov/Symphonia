@@ -316,7 +316,10 @@ fn lpcm_channels(num_channels: u32) -> Result<Channels> {
     // does not have a way to represent this yet.
     let channel_mask = !((!0 << 1) << (num_channels - 1));
 
-    Ok(Channels::from_bits(channel_mask).unwrap())
+    match Channels::from_bits(channel_mask) {
+        Some(channels) => Ok(channels),
+        _ => return unsupported_error("isomp4: unsupported number of channels"),
+    }
 }
 
 fn read_audio_sample_entry<B: ReadBytes>(

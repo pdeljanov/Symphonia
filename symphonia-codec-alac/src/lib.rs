@@ -82,7 +82,7 @@ impl ChannelLayout {
             ChannelLayout::Mpeg4p0B => [2, 0, 1, 3, 0, 0, 0, 0],
             ChannelLayout::Mpeg5p0D => [2, 0, 1, 3, 4, 0, 0, 0],
             ChannelLayout::Mpeg5p1D => [2, 0, 1, 4, 5, 3, 0, 0],
-            ChannelLayout::Aac6p1 => [2, 0, 1, 5, 6, 3, 4, 0],
+            ChannelLayout::Aac6p1 => [2, 0, 1, 5, 6, 4, 3, 0],
             ChannelLayout::Mpeg7p1B => [2, 4, 5, 0, 1, 6, 7, 3],
         }
     }
