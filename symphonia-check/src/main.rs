@@ -39,6 +39,7 @@ enum RefDecoder {
     Ffmpeg,
     Flac,
     Mpg123,
+    Oggdec,
 }
 
 impl Default for RefDecoder {
@@ -111,6 +112,12 @@ fn build_mpg123_command(path: &str, gapless: bool) -> Command {
     cmd
 }
 
+fn build_oggdec_command(path: &str) -> Command {
+    let mut cmd = Command::new("oggdec");
+    cmd.arg(path).arg("-o").arg("-").stdout(Stdio::piped()).stderr(Stdio::null());
+    cmd
+}
+
 struct RefProcess {
     child: std::process::Child,
 }
@@ -121,6 +128,7 @@ impl RefProcess {
             RefDecoder::Ffmpeg => build_ffmpeg_command(path, gapless),
             RefDecoder::Flac => build_flac_command(path),
             RefDecoder::Mpg123 => build_mpg123_command(path, gapless),
+            RefDecoder::Oggdec => build_oggdec_command(path),
         };
 
         let child = cmd.spawn()?;
@@ -350,7 +358,7 @@ fn main() {
             Arg::new("decoder")
                 .long("ref")
                 .takes_value(true)
-                .possible_values(&["ffmpeg", "flac", "mpg123"])
+                .possible_values(&["ffmpeg", "flac", "mpg123", "oggdec"])
                 .default_value("ffmpeg")
                 .help("Specify a particular decoder to be used as the reference"),
         )
@@ -364,6 +372,7 @@ fn main() {
         "ffmpeg" => RefDecoder::Ffmpeg,
         "flac" => RefDecoder::Flac,
         "mpg123" => RefDecoder::Mpg123,
+        "oggdec" => RefDecoder::Oggdec,
         _ => {
             // This will never occur if the possible values of the argument are the same as the
             // match arms above.
