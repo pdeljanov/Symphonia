@@ -218,39 +218,48 @@ impl MkvReader {
                     }
                     None => {
                         self.iter.ignore_data()?;
-                        return decode_error("mkv: timestamp element outside of a cluster");
+                        log::warn!("timestamp element outside of a cluster");
+                        return Ok(());
                     }
                 }
             }
             ElementType::SimpleBlock => {
-                let cluster = match self.current_cluster.as_ref() {
-                    Some(cluster) => cluster,
+                let cluster_ts = match self.current_cluster.as_ref() {
+                    Some(ClusterState { timestamp: Some(ts), .. }) => *ts,
+                    Some(_) => {
+                        self.iter.ignore_data()?;
+                        log::warn!("missing cluster timestamp");
+                        return Ok(());
+                    }
                     None => {
                         self.iter.ignore_data()?;
-                        return decode_error("mkv: simple block element outside of a cluster");
+                        log::warn!("simple block element outside of a cluster");
+                        return Ok(());
                     }
                 };
-
-                let timestamp = cluster.timestamp.ok_or(Error::DecodeError("mkv: missing cluster timestamp"))?;
 
                 let data = self.iter.read_boxed_slice()?;
                 extract_frames(&data, None, &self.track_states,
-                               timestamp, self.timestamp_scale, &mut self.frames)?;
+                               cluster_ts, self.timestamp_scale, &mut self.frames)?;
             }
             ElementType::BlockGroup => {
-                let cluster = match self.current_cluster.as_ref() {
-                    Some(cluster) => cluster,
+                let cluster_ts = match self.current_cluster.as_ref() {
+                    Some(ClusterState { timestamp: Some(ts), .. }) => *ts,
+                    Some(_) => {
+                        self.iter.ignore_data()?;
+                        log::warn!("missing cluster timestamp");
+                        return Ok(());
+                    }
                     None => {
                         self.iter.ignore_data()?;
-                        return decode_error("mkv: block group element outside of a cluster");
+                        log::warn!("block group element outside of a cluster");
+                        return Ok(());
                     }
                 };
 
-                let timestamp = cluster.timestamp.ok_or(Error::DecodeError("mkv: missing cluster timestamp"))?;
-
                 let group = self.iter.read_element_data::<BlockGroupElement>()?;
                 extract_frames(&group.data, group.duration, &self.track_states,
-                               timestamp, self.timestamp_scale, &mut self.frames)?;
+                               cluster_ts, self.timestamp_scale, &mut self.frames)?;
             }
             ElementType::Tags => {
                 let tags = self.iter.read_element_data::<TagsElement>()?;
