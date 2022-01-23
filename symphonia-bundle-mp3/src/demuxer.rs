@@ -154,12 +154,10 @@ impl FormatReader for Mp3Reader {
                     continue;
                 }
             }
-            else if is_maybe_vbri_tag(&packet) {
-                if try_read_vbri_tag(&packet).is_some() {
-                    // Discard the packet and tag since it was not at the start of the stream.
-                    warn!("found an unexpected vbri tag, discarding");
-                    continue;
-                }
+            else if is_maybe_vbri_tag(&packet) && try_read_vbri_tag(&packet).is_some() {
+                // Discard the packet and tag since it was not at the start of the stream.
+                warn!("found an unexpected vbri tag, discarding");
+                continue;
             }
 
             break (header, packet);
@@ -654,7 +652,7 @@ fn is_maybe_info_tag(buf: &[u8], header: &FrameHeader) -> bool {
     }
 
     // The side information should be zeroed.
-    !buf[MPEG_HEADER_LEN..offset].iter().find(|&&b| b != 0).is_some()
+    !buf[MPEG_HEADER_LEN..offset].iter().any(|&b| b != 0)
 }
 
 const VBRI_TAG_ID: [u8; 4] = *b"VBRI";
@@ -722,5 +720,5 @@ fn is_maybe_vbri_tag(buf: &[u8]) -> bool {
     }
 
     // The bytes preceeding the VBRI tag (mostly the side information) should be all 0.
-    !buf[MPEG_HEADER_LEN..VBRI_TAG_OFFSET].iter().find(|&&b| b != 0).is_some()
+    !buf[MPEG_HEADER_LEN..VBRI_TAG_OFFSET].iter().any(|&b| b != 0)
 }

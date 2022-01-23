@@ -318,7 +318,7 @@ fn lpcm_channels(num_channels: u32) -> Result<Channels> {
 
     match Channels::from_bits(channel_mask) {
         Some(channels) => Ok(channels),
-        _ => return unsupported_error("isomp4: unsupported number of channels"),
+        _ => unsupported_error("isomp4: unsupported number of channels"),
     }
 }
 
