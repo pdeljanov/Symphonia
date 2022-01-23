@@ -339,7 +339,13 @@ impl<R: ReadBytes> ElementIterator<R> {
                 // TODO: ignore crc for now
                 continue;
             }
-            assert_eq!(header.etype, E::ID);
+
+            if header.etype != E::ID {
+                log::warn!("found element with invalid type {:?}", header);
+                self.ignore_data()?;
+                continue;
+            }
+
             elements.push(E::read(&mut self.reader, header)?);
         }
         Ok(elements.into_boxed_slice())
@@ -390,7 +396,10 @@ impl<R: ReadBytes> ElementIterator<R> {
     pub(crate) fn try_read_data(&mut self, header: ElementHeader) -> Result<Option<ElementData>> {
         Ok(match ELEMENTS.get(&header.tag) {
             Some((ty, _)) => {
-                assert_eq!(header.data_pos, self.reader.pos(), "invalid stream position");
+                // Position must always be valid, because this function is called
+                // after reading the element header.
+                assert_eq!(header.data_pos, self.reader.pos(),
+                           "invalid stream position");
                 if let (Some(cur), Some(end)) = (self.current, self.end) {
                     if cur.pos + cur.len > end {
                         log::debug!("reading element data {:?}; parent end={}", cur, end);
