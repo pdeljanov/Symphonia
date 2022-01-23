@@ -198,7 +198,7 @@ pub(super) fn read_side_info<B: ReadBitsLtr>(
     frame_data: &mut FrameData,
 ) -> Result<usize> {
     // For MPEG version 1...
-    let side_info_len = if header.is_mpeg1() {
+    if header.is_mpeg1() {
         // First 9 bits is main_data_begin.
         frame_data.main_data_begin = bs.read_bits_leq32(9)? as u16;
 
@@ -214,12 +214,6 @@ pub(super) fn read_side_info<B: ReadBitsLtr>(
                 *band = bs.read_bool()?;
             }
         }
-
-        // The size of the side_info, fixed for layer 3.
-        match header.channel_mode {
-            ChannelMode::Mono => 17,
-            _ => 32,
-        }
     }
     // For MPEG version 2...
     else {
@@ -230,21 +224,15 @@ pub(super) fn read_side_info<B: ReadBitsLtr>(
         match header.channel_mode {
             ChannelMode::Mono => bs.ignore_bits(1)?,
             _ => bs.ignore_bits(2)?,
-        };
-
-        // The size of the side_info, fixed for layer 3.
-        match header.channel_mode {
-            ChannelMode::Mono => 9,
-            _ => 17,
         }
-    };
+    }
 
     // Read the side_info for each granule.
     for granule in frame_data.granules_mut(header.version) {
         read_granule_side_info(bs, granule, header)?;
     }
 
-    Ok(side_info_len)
+    Ok(header.side_info_len())
 }
 
 /// Reads the scale factors for a single channel in a granule in a MPEG version 1 audio frame.

@@ -19,8 +19,9 @@ use std::io::{Seek, SeekFrom};
 
 use log::{debug, info, warn};
 
-use super::common::{ChannelMode, FrameHeader, MpegVersion, SAMPLES_PER_GRANULE};
+use super::common::{FrameHeader, SAMPLES_PER_GRANULE};
 use super::header;
+use super::header::MPEG_HEADER_LEN;
 
 /// MPEG1 and MPEG2 audio frame reader.
 ///
@@ -115,7 +116,7 @@ impl FormatReader for Mp3Reader {
         else {
             // The first frame was not a Xing/Info header, rewind back to the start of the frame so
             // that it may be decoded.
-            source.seek_buffered_rev(header.frame_size + 4);
+            source.seek_buffered_rev(MPEG_HEADER_LEN + header.frame_size);
 
             // Likely not a VBR file, so estimate the duration if seekable.
             if source.is_seekable() {
@@ -141,7 +142,28 @@ impl FormatReader for Mp3Reader {
     }
 
     fn next_packet(&mut self) -> Result<Packet> {
-        let (header, packet) = read_mpeg_frame(&mut self.reader)?;
+        let (header, packet) = loop {
+            // Read the next MPEG frame.
+            let (header, packet) = read_mpeg_frame(&mut self.reader)?;
+
+            // Check if the packet contains a Xing, Info, or VBRI tag.
+            if is_maybe_info_tag(&packet, &header) {
+                if try_read_info_tag(&packet, &header).is_some() {
+                    // Discard the packet and tag since it was not at the start of the stream.
+                    warn!("found an unexpected xing tag, discarding");
+                    continue;
+                }
+            }
+            else if is_maybe_vbri_tag(&packet) {
+                if try_read_vbri_tag(&packet).is_some() {
+                    // Discard the packet and tag since it was not at the start of the stream.
+                    warn!("found an unexpected vbri tag, discarding");
+                    continue;
+                }
+            }
+
+            break (header, packet);
+        };
 
         // Each frame contains 1 or 2 granules with each granule being exactly 576 samples long.
         let ts = self.next_packet_ts;
@@ -344,11 +366,11 @@ fn read_mpeg_frame(reader: &mut MediaSourceStream) -> Result<(FrameHeader, Vec<u
     };
 
     // Allocate frame buffer.
-    let mut packet = vec![0u8; header.frame_size + 4];
-    packet[0..4].copy_from_slice(&header_word.to_be_bytes());
+    let mut packet = vec![0u8; MPEG_HEADER_LEN + header.frame_size];
+    packet[0..MPEG_HEADER_LEN].copy_from_slice(&header_word.to_be_bytes());
 
     // Read the frame body.
-    reader.read_buf_exact(&mut packet[4..])?;
+    reader.read_buf_exact(&mut packet[MPEG_HEADER_LEN..])?;
 
     // Return the parsed header and packet body.
     Ok((header, packet))
@@ -412,7 +434,7 @@ fn estimate_num_mpeg_frames(reader: &mut MediaSourceStream) -> Option<u64> {
         let header = break_on_err!(header::parse_frame_header(header_val));
 
         // Tabulate the size.
-        total_frame_len += header.frame_size + 4;
+        total_frame_len += MPEG_HEADER_LEN + header.frame_size;
         total_frames += 1;
 
         // Ignore the frame body.
@@ -431,6 +453,9 @@ fn estimate_num_mpeg_frames(reader: &mut MediaSourceStream) -> Option<u64> {
 
     num_mpeg_frames
 }
+
+const XING_TAG_ID: [u8; 4] = *b"Xing";
+const INFO_TAG_ID: [u8; 4] = *b"Info";
 
 /// The LAME tag is an extension to the Xing/Info tag.
 #[allow(dead_code)]
@@ -465,29 +490,24 @@ fn try_read_info_tag(buf: &[u8], header: &FrameHeader) -> Option<XingInfoTag> {
 fn try_read_info_tag_inner(buf: &[u8], header: &FrameHeader) -> Result<Option<XingInfoTag>> {
     // The position of the Xing/Info tag relative to the end of the header. This is equal to the
     // side information length for the frame.
-    let offset = match (header.version, header.channel_mode) {
-        (MpegVersion::Mpeg1, ChannelMode::Mono) => 17,
-        (MpegVersion::Mpeg1, _) => 32,
-        (_, ChannelMode::Mono) => 9,
-        (_, _) => 17,
-    };
+    let offset = header.side_info_len();
 
     // Start the CRC with the header and side information.
     let mut crc16 = Crc16AnsiLe::new(0);
-    crc16.process_buf_bytes(&buf[..offset + 4]);
+    crc16.process_buf_bytes(&buf[..offset + MPEG_HEADER_LEN]);
 
     // Start reading the Xing/Info tag after the side information.
-    let mut reader = MonitorStream::new(BufReader::new(&buf[offset + 4..]), crc16);
+    let mut reader = MonitorStream::new(BufReader::new(&buf[offset + MPEG_HEADER_LEN..]), crc16);
 
     // Check for Xing/Info header.
     let id = reader.read_quad_bytes()?;
 
-    if id != *b"Xing" && id != *b"Info" {
+    if id != XING_TAG_ID && id != INFO_TAG_ID {
         return Ok(None);
     }
 
     // The "Info" id is used for CBR files.
-    let is_cbr = id == *b"Info";
+    let is_cbr = id == INFO_TAG_ID;
 
     // Flags indicates what information is provided in this Xing/Info tag.
     let flags = reader.read_be_u32()?;
@@ -599,6 +619,46 @@ fn try_read_info_tag_inner(buf: &[u8], header: &FrameHeader) -> Result<Option<Xi
     Ok(Some(XingInfoTag { num_frames, num_bytes, toc, quality, is_cbr, lame }))
 }
 
+fn parse_lame_tag_replaygain(value: u16, expected_name: u8) -> Option<f32> {
+    // The 3 most-significant bits are the name code.
+    let name = ((value & 0xe000) >> 13) as u8;
+
+    if name == expected_name {
+        let gain = (value & 0x01ff) as f32 / 10.0;
+        Some(if value & 0x200 != 0 { -gain } else { gain })
+    }
+    else {
+        None
+    }
+}
+
+/// Perform a fast check to see if the packet contains a Xing/Info tag. If this returns true, the
+/// packet should be parsed fully to ensure it is in fact a tag.
+fn is_maybe_info_tag(buf: &[u8], header: &FrameHeader) -> bool {
+    const MIN_XING_TAG_LEN: usize = 8;
+
+    // The position of the Xing/Info tag relative to the start of the packet. This is equal to the
+    // side information length for the frame.
+    let offset = header.side_info_len() + MPEG_HEADER_LEN;
+
+    // The packet must be big enough to contain a tag.
+    if buf.len() < offset + MIN_XING_TAG_LEN {
+        return false;
+    }
+
+    // The tag ID must be present and correct.
+    let id = &buf[offset..offset + 4];
+
+    if id != XING_TAG_ID && id != INFO_TAG_ID {
+        return false;
+    }
+
+    // The side information should be zeroed.
+    !buf[MPEG_HEADER_LEN..offset].iter().find(|&&b| b != 0).is_some()
+}
+
+const VBRI_TAG_ID: [u8; 4] = *b"VBRI";
+
 /// The contents of a VBRI tag.
 #[allow(dead_code)]
 struct VbriTag {
@@ -617,12 +677,12 @@ fn try_read_vbri_tag_inner(buf: &[u8]) -> Result<Option<VbriTag>> {
     let mut reader = BufReader::new(buf);
 
     // The VBRI tag is always 32 bytes after the header.
-    reader.ignore_bytes(4 + 32)?;
+    reader.ignore_bytes(MPEG_HEADER_LEN as u64 + 32)?;
 
     // Check for the VBRI signature.
     let id = reader.read_quad_bytes()?;
 
-    if id != *b"VBRI" {
+    if id != VBRI_TAG_ID {
         return Ok(None);
     }
 
@@ -643,15 +703,24 @@ fn try_read_vbri_tag_inner(buf: &[u8]) -> Result<Option<VbriTag>> {
     Ok(Some(VbriTag { num_bytes, num_mpeg_frames }))
 }
 
-fn parse_lame_tag_replaygain(value: u16, expected_name: u8) -> Option<f32> {
-    // The 3 most-significant bits are the name code.
-    let name = ((value & 0xe000) >> 13) as u8;
+/// Perform a fast check to see if the packet contains a VBRI tag. If this returns true, the
+/// packet should be parsed fully to ensure it is in fact a tag.
+fn is_maybe_vbri_tag(buf: &[u8]) -> bool {
+    const MIN_VBRI_TAG_LEN: usize = 26;
+    const VBRI_TAG_OFFSET: usize = 36;
 
-    if name == expected_name {
-        let gain = (value & 0x01ff) as f32 / 10.0;
-        Some(if value & 0x200 != 0 { -gain } else { gain })
+    // The packet must be big enough to contain a tag.
+    if buf.len() < VBRI_TAG_OFFSET + MIN_VBRI_TAG_LEN {
+        return false;
     }
-    else {
-        None
+
+    // The tag ID must be present and correct.
+    let id = &buf[VBRI_TAG_OFFSET..VBRI_TAG_OFFSET + 4];
+
+    if id != VBRI_TAG_ID {
+        return false;
     }
+
+    // The bytes preceeding the VBRI tag (mostly the side information) should be all 0.
+    !buf[MPEG_HEADER_LEN..VBRI_TAG_OFFSET].iter().find(|&&b| b != 0).is_some()
 }

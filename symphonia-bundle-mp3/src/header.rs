@@ -10,6 +10,9 @@ use symphonia_core::io::ReadBytes;
 
 use crate::common::*;
 
+/// The length of a MPEG frame header.
+pub const MPEG_HEADER_LEN: usize = 4;
+
 /// Bit-rate lookup table for MPEG version 1 layer 1.
 static BIT_RATES_MPEG1_L1: [u32; 15] = [
     0, 32_000, 64_000, 96_000, 128_000, 160_000, 192_000, 224_000, 256_000, 288_000, 320_000,

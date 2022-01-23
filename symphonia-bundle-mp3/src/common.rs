@@ -323,6 +323,17 @@ impl FrameHeader {
             _ => false,
         }
     }
+
+    /// Get the side information length.
+    #[inline(always)]
+    pub fn side_info_len(&self) -> usize {
+        match (self.version, self.channel_mode) {
+            (MpegVersion::Mpeg1, ChannelMode::Mono) => 17,
+            (MpegVersion::Mpeg1, _) => 32,
+            (_, ChannelMode::Mono) => 9,
+            (_, _) => 17,
+        }
+    }
 }
 
 #[derive(Debug, PartialEq)]
