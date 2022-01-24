@@ -464,7 +464,6 @@ struct LameTag {
     replaygain_audiophile: Option<f32>,
     enc_delay: u32,
     enc_padding: u32,
-    music_crc: u16,
 }
 
 /// The Xing/Info time additional information for regarding a MP3 file.
@@ -486,6 +485,11 @@ fn try_read_info_tag(buf: &[u8], header: &FrameHeader) -> Option<XingInfoTag> {
 }
 
 fn try_read_info_tag_inner(buf: &[u8], header: &FrameHeader) -> Result<Option<XingInfoTag>> {
+    // Do a quick check that this is a Xing/Info tag.
+    if !is_maybe_info_tag(buf, header) {
+        return Ok(None);
+    }
+
     // The position of the Xing/Info tag relative to the end of the header. This is equal to the
     // side information length for the frame.
     let offset = header.side_info_len();
@@ -525,13 +529,14 @@ fn try_read_info_tag_inner(buf: &[u8], header: &FrameHeader) -> Result<Option<Xi
 
     let quality = if flags & 0x8 != 0 { Some(reader.read_be_u32()?) } else { None };
 
-    const LAME_EXTENSION_LEN: u64 = 36;
+    /// The full LAME extension size.
+    const LAME_EXT_LEN: u64 = 36;
+    /// The minimal LAME extension size up-to the encode delay & padding fields.
+    const MIN_LAME_EXT_LEN: u64 = 24;
 
-    // The LAME extension may not always be present. We don't want to return an error if we try to
-    // read a frame that doesn't have the LAME extension, so ensure there is enough data to
-    // to potentially read one. Even if there are enough bytes available, it still does not
-    // guarantee what was read was a LAME tag, so the CRC will be used to make sure it was.
-    let lame = if reader.inner().bytes_available() >= LAME_EXTENSION_LEN {
+    // The LAME extension may not always be present, or complete. The important fields in the
+    // extension are within the first 24 bytes. Therefore, try to read those if they're available.
+    let lame = if reader.inner().bytes_available() >= MIN_LAME_EXT_LEN {
         // Encoder string.
         let mut encoder = [0; 9];
         reader.read_buf_exact(&mut encoder)?;
@@ -574,26 +579,46 @@ fn try_read_info_tag_inner(buf: &[u8], header: &FrameHeader) -> Result<Option<Xi
             }
         };
 
-        // Misc.
-        let _misc = reader.read_u8()?;
+        // If possible, attempt to read the extra fields of the extension if they weren't
+        // truncated.
+        let crc = if reader.inner().bytes_available() >= LAME_EXT_LEN - MIN_LAME_EXT_LEN {
+            // Flags.
+            let _misc = reader.read_u8()?;
 
-        // MP3 gain.
-        let _mp3_gain = reader.read_u8()?;
+            // MP3 gain.
+            let _mp3_gain = reader.read_u8()?;
 
-        // Preset and surround info.
-        let _surround_info = reader.read_be_u16()?;
+            // Preset and surround info.
+            let _surround_info = reader.read_be_u16()?;
 
-        // Music length.
-        let _music_len = reader.read_be_u32()?;
+            // Music length.
+            let _music_len = reader.read_be_u32()?;
 
-        // Music (audio) CRC.
-        let music_crc = reader.read_be_u16()?;
+            // Music (audio) CRC.
+            let _music_crc = reader.read_be_u16()?;
 
-        // CRC (read using the inner reader to not change the computed CRC).
-        let crc = reader.inner_mut().read_be_u16()?;
+            // The tag CRC. LAME always includes this CRC regardless of the protection bit, but
+            // other encoders may only do so if the protection bit is set.
+            if header.has_crc || encoder[..4] == *b"LAME" {
+                // Read the CRC using the inner reader to not change the computed CRC.
+                Some(reader.inner_mut().read_be_u16()?)
+            }
+            else {
+                // No CRC is present.
+                None
+            }
+        }
+        else {
+            // The tag is truncated. No CRC will be present.
+            info!("xing tag lame extension is truncated");
+            None
+        };
 
-        if crc == reader.monitor().crc() {
-            // The CRC matched, return the LAME tag.
+        // If there is no CRC, then assume the tag is correct. Otherwise, use the CRC.
+        let is_tag_ok = crc.map_or(true, |crc| crc == reader.monitor().crc());
+
+        if is_tag_ok {
+            // The CRC matched or is not present.
             Some(LameTag {
                 encoder: String::from_utf8_lossy(&encoder).into(),
                 replaygain_peak,
@@ -601,16 +626,17 @@ fn try_read_info_tag_inner(buf: &[u8], header: &FrameHeader) -> Result<Option<Xi
                 replaygain_audiophile,
                 enc_delay,
                 enc_padding,
-                music_crc,
             })
         }
         else {
             // The CRC did not match, this is probably not a LAME tag.
+            warn!("xing tag lame extension crc mismatch");
             None
         }
     }
     else {
         // Frame not large enough for a LAME tag.
+        info!("xing tag too small for lame extension");
         None
     };
 
@@ -672,6 +698,11 @@ fn try_read_vbri_tag(buf: &[u8]) -> Option<VbriTag> {
 }
 
 fn try_read_vbri_tag_inner(buf: &[u8]) -> Result<Option<VbriTag>> {
+    // Do a quick check that this is a VBRI tag.
+    if !is_maybe_vbri_tag(buf) {
+        return Ok(None);
+    }
+
     let mut reader = BufReader::new(buf);
 
     // The VBRI tag is always 32 bytes after the header.
