@@ -65,7 +65,7 @@ impl QueryDescriptor for Mp3Reader {
 impl FormatReader for Mp3Reader {
     fn try_new(mut source: MediaSourceStream, options: &FormatOptions) -> Result<Self> {
         // Try to read the first MPEG frame.
-        let (header, packet) = read_mpeg_frame(&mut source)?;
+        let (header, packet) = read_mpeg_frame_strict(&mut source)?;
 
         // Use the header to populate the codec parameters.
         let mut params = CodecParameters::new();
@@ -349,7 +349,6 @@ impl FormatReader for Mp3Reader {
 }
 
 /// Reads a MPEG frame and returns the header and buffer.
-#[inline(always)]
 fn read_mpeg_frame(reader: &mut MediaSourceStream) -> Result<(FrameHeader, Vec<u8>)> {
     let (header, header_word) = loop {
         // Sync to the next frame header.
@@ -372,6 +371,40 @@ fn read_mpeg_frame(reader: &mut MediaSourceStream) -> Result<(FrameHeader, Vec<u
 
     // Return the parsed header and packet body.
     Ok((header, packet))
+}
+
+/// Reads a MPEG frame and checks if the next frame begins after the packet.
+fn read_mpeg_frame_strict(reader: &mut MediaSourceStream) -> Result<(FrameHeader, Vec<u8>)> {
+    loop {
+        // Read the next MPEG frame.
+        let (header, packet) = read_mpeg_frame(reader)?;
+
+        // Get the position before trying to read the next header.
+        let pos = reader.pos();
+
+        // Read a sync word from the stream. If this read fails then the file may have ended and
+        // this check cannot be performed.
+        if let Ok(sync) = header::read_frame_header_word_no_sync(reader) {
+            // If the stream is not synced to the next frame then reject the current packet
+            // since the stream likely synced to random data.
+            if !header::is_frame_header_word_synced(sync) {
+                warn!("skipping junk at {} bytes", pos - packet.len() as u64);
+
+                // Seek back to the second byte of the rejected packet to prevent syncing to the
+                // same spot again.
+                reader.seek_buffered_rev(packet.len() + MPEG_HEADER_LEN - 1);
+                continue;
+            }
+
+            // TODO: The MPEG version, layer, and sample rate should generally not change within
+            // a stream. Consider checking if these match as well.
+        }
+
+        // Jump back to the position before the next header was read.
+        reader.seek_buffered(pos);
+
+        break Ok((header, packet));
+    }
 }
 
 #[derive(Default)]

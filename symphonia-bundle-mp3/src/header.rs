@@ -10,7 +10,7 @@ use symphonia_core::io::ReadBytes;
 
 use crate::common::*;
 
-/// The length of a MPEG frame header.
+/// The length of a MPEG frame header word.
 pub const MPEG_HEADER_LEN: usize = 4;
 
 /// Bit-rate lookup table for MPEG version 1 layer 1.
@@ -69,6 +69,12 @@ pub fn check_header(header: u32) -> bool {
     true
 }
 
+/// Returns true if the provided frame header word is synced.
+#[inline(always)]
+pub fn is_frame_header_word_synced(sync: u32) -> bool {
+    (sync & 0xffe0_0000) == 0xffe0_0000
+}
+
 /// Synchronize the provided reader to the end of the frame header, and return the frame header as
 /// as `u32`.
 pub fn sync_frame<B: ReadBytes>(reader: &mut B) -> Result<u32> {
@@ -78,7 +84,7 @@ pub fn sync_frame<B: ReadBytes>(reader: &mut B) -> Result<u32> {
         // Synchronize stream to the next frame using the sync word. The MP3 frame header always
         // starts at a byte boundary with 0xffe (11 consecutive 1 bits.) if supporting up to MPEG
         // version 2.5.
-        while (sync & 0xffe0_0000) != 0xffe0_0000 {
+        while !is_frame_header_word_synced(sync) {
             sync = (sync << 8) | u32::from(reader.read_u8()?);
         }
 
@@ -215,8 +221,17 @@ pub fn parse_frame_header(header: u32) -> Result<FrameHeader> {
     })
 }
 
-/// Reads a MPEG audio frame header from the stream and return it or an error.
+/// Synchronize the stream to the start of the next MPEG audio frame header, then read and return
+/// the frame header or an error.
+#[inline]
 pub fn read_frame_header<B: ReadBytes>(reader: &mut B) -> Result<FrameHeader> {
     // Synchronize and parse the frame header.
     parse_frame_header(sync_frame(reader)?)
+}
+
+/// Read a MPEG audio frame header word from the current location in the stream without any frame
+/// synchronization.
+#[inline]
+pub fn read_frame_header_word_no_sync<B: ReadBytes>(reader: &mut B) -> Result<u32> {
+    Ok(reader.read_be_u32()?)
 }
