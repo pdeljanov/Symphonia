@@ -345,7 +345,6 @@ impl AtomHeader {
             _ => {
                 // The atom size should be atleast the length of the header.
                 if atom_len < AtomHeader::HEADER_SIZE {
-                    dbg!(atom_len);
                     return decode_error("isomp4: atom size is invalid");
                 }
 
