@@ -222,8 +222,14 @@ fn process_intensity_long_block(
 
     let bands = &SFB_LONG_BANDS[header.sample_rate_idx];
 
+    // The intensity positions are stored in the right channel (channel 1) scalefactors. The
+    // intensity position for band 21 is not coded and is copied from band 20.
+    let mut is_pos = [0; 22];
+    is_pos.copy_from_slice(&granule.channels[1].scalefacs[..22]);
+    is_pos[21] = is_pos[20];
+
     // Create an iterator that yields a band start-end pair, and scale-factor.
-    let bands_iter = bands.iter().zip(&bands[1..]).zip(granule.channels[1].scalefacs.iter());
+    let bands_iter = bands.iter().zip(&bands[1..]).zip(is_pos.iter());
 
     let mut bound = max_bound;
 
@@ -323,12 +329,12 @@ fn process_intensity_short_block(
     let (short_bands, long_bands, mut sfi) = if is_mixed {
         let bands = SFB_MIXED_BANDS[header.sample_rate_idx];
         let switch = SFB_MIXED_SWITCH_POINT[header.sample_rate_idx];
-
+        // Variable number of short and long scalefactor bands based on the switch point.
         (&bands[switch..], Some(&bands[..switch + 1]), bands.len() - 1)
     }
     else {
-        // 13 short windows, 39 scalefactor bands.
-        (&SFB_SHORT_BANDS[header.sample_rate_idx][..], None, 39 - 1)
+        // 39 scalefactors from 13 scalefactor bands with 3 short windows per band.
+        (&SFB_SHORT_BANDS[header.sample_rate_idx][..], None, 39)
     };
 
     // Select the intensity stereo ratios table based on the bitstream version.
@@ -340,8 +346,11 @@ fn process_intensity_short_block(
         (&INTENSITY_STEREO_RATIOS_MPEG2[usize::from(is_scale)][..], INTENSITY_INV_POS_MPEG2)
     };
 
-    // The intensity positions are in the right channel (channel 1) scale-factors.
-    let is_pos = &granule.channels[1].scalefacs;
+    // The intensity position for the final band (last three short windows) is not coded and is
+    // copied from the previous band.
+    let mut is_pos = [0; 39];
+    is_pos[..36].copy_from_slice(&granule.channels[1].scalefacs[..36]);
+    is_pos[36..].copy_from_slice(&granule.channels[1].scalefacs[33..36]);
 
     let mut window_is_zero = [true; 3];
 
@@ -367,7 +376,7 @@ fn process_intensity_short_block(
         // If the window is zeroed, process it with intensity stereo.
         if window_is_zero[2] {
             process_intensity(
-                is_pos[sfi],
+                is_pos[sfi - 1],
                 is_table,
                 is_inv_pos,
                 mid_side,
@@ -388,7 +397,7 @@ fn process_intensity_short_block(
 
         if window_is_zero[1] {
             process_intensity(
-                is_pos[sfi],
+                is_pos[sfi - 1],
                 is_table,
                 is_inv_pos,
                 mid_side,
@@ -407,7 +416,7 @@ fn process_intensity_short_block(
 
         if window_is_zero[0] {
             process_intensity(
-                is_pos[sfi],
+                is_pos[sfi - 1],
                 is_table,
                 is_inv_pos,
                 mid_side,
@@ -448,7 +457,7 @@ fn process_intensity_short_block(
 
                 if is_zero_band {
                     process_intensity(
-                        is_pos[sfi],
+                        is_pos[sfi - 1],
                         is_table,
                         is_inv_pos,
                         mid_side,
