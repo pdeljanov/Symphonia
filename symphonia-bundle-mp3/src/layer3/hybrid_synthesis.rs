@@ -92,27 +92,29 @@ lazy_static! {
 }
 
 lazy_static! {
-    /// Lookup table of cosine coefficients for a 12-point IMDCT.
+    /// Lookup table of cosine coefficients for half of a 12-point IMDCT.
     ///
-    /// The table is derived from the expression:
+    /// This table is derived from the general expression:
     ///
     /// ```text
-    /// cos12[i][k] = cos(PI/24.0 * (2*i + 1 + 12/2) * (2*k + 1))
+    /// cos12[i][k] = cos(PI/24.0 * (2*i + 1 + N/2) * (2*k + 1))
     /// ```
-    ///
-    /// This table indexed by k and i.
-    static ref IMDCT_COS_12: [[f32; 6]; 12] = {
+    /// where:
+    ///     `N=12`, `i=N/4..3N/4`, and `k=0..N/2`.
+    static ref IMDCT_HALF_COS_12: [[f32; 6]; 6] = {
         const PI_24: f64 = f64::consts::PI / 24.0;
 
-        let mut cos12 = [[0f32; 6]; 12];
+        let mut cos = [[0f32; 6]; 6];
 
-        for i in 0..12 {
-            for k in 0..6 {
-                cos12[i][k] = (PI_24 * ((2*i + (12 / 2) + 1) * (2*k + 1)) as f64).cos() as f32;
+        for (i, cos_i) in cos.iter_mut().enumerate() {
+            for (k, cos_ik) in cos_i.iter_mut().enumerate() {
+                // Only compute the middle half of the cosine lookup table (i offset by 3).
+                let n = (2 * (i + 3) + (12 / 2) + 1) * (2 * k + 1);
+                *cos_ik = (PI_24 * n as f64).cos() as f32;
             }
         }
 
-        cos12
+        cos
     };
 }
 
@@ -337,13 +339,14 @@ pub(super) fn hybrid_synthesis(
 fn imdct12_win(x: &[f32], window: &[f32; 36], out: &mut [f32; 36]) {
     debug_assert!(x.len() == 18);
 
-    let cos12 = &IMDCT_COS_12;
+    let cos12 = &IMDCT_HALF_COS_12;
 
     for w in 0..3 {
-        for i in 0..12 {
-            // Apply a 12-point (N=12) IMDCT for each of the 3 short windows.
+        for i in 0..3 {
+            // Compute the 12-point IMDCT for each of the 3 short windows using a half-size IMDCT
+            // followed by post-processing.
             //
-            // The IMDCT is defined as:
+            // In general, the IMDCT is defined as:
             //
             //        (N/2)-1
             // y[i] =   SUM   { x[k] * cos(PI/2N * (2i + 1 + N/2) * (2k + 1)) }
@@ -355,27 +358,38 @@ fn imdct12_win(x: &[f32], window: &[f32; 36], out: &mut [f32; 36]) {
             // y[i] = SUM { x[k] * cos(PI/24 * (2i + 7) * (2k + 1)) }
             //        k=0
             //
-            // The value of cos(..) is easily indexable by i and k, and is therefore pre-computed
-            // and placed in a look-up table.
-            let y = (x[w] * cos12[i][0])
+            // The cosine twiddle factors are easily indexable by i and k, and are therefore
+            // pre-computed and placed into a look-up table.
+            //
+            // Further, y[3..0] = -y[3..6], and y[12..9] = y[6..9] which reduces the amount of work
+            // by half.
+            //
+            // Therefore, it is possible to split the half-size IMDCT computation into two halves.
+            // In the calculations below, yl is the left-half output of the half-size IMDCT, and yr
+            // is the right-half.
+
+            let yl = (x[w] * cos12[i][0])
                 + (x[3 * 1 + w] * cos12[i][1])
                 + (x[3 * 2 + w] * cos12[i][2])
                 + (x[3 * 3 + w] * cos12[i][3])
                 + (x[3 * 4 + w] * cos12[i][4])
                 + (x[3 * 5 + w] * cos12[i][5]);
 
-            // Each adjacent 12-point IMDCT window is overlapped and added in the output, with the
-            // first and last 6 samples of the output are always being 0.
+            let yr = (x[w] * cos12[i + 3][0])
+                + (x[3 * 1 + w] * cos12[i + 3][1])
+                + (x[3 * 2 + w] * cos12[i + 3][2])
+                + (x[3 * 3 + w] * cos12[i + 3][3])
+                + (x[3 * 4 + w] * cos12[i + 3][4])
+                + (x[3 * 5 + w] * cos12[i + 3][5]);
+
+            // Each adjacent 12-point IMDCT windows are overlapped and added in the output, with the
+            // first and last 6 samples of the output always being 0.
             //
-            // In the above calculation, y is the result of the 12-point IMDCT for sample i. For the
-            // following description, assume the 12-point IMDCT result is y[0..12], where the value
-            // y calculated above is y[i].
+            // Each sample from the 12-point IMDCT is multiplied by the appropriate window function
+            // as specified in ISO/IEC 11172-3. The values of the window function are pre-computed
+            // and given by window[0..12].
             //
-            // Each sample in the IMDCT is multiplied by the appropriate window function as
-            // specified in ISO/IEC 11172-3. The values of the window function are pre-computed and
-            // given by window[0..12].
-            //
-            // Since there are 3 IMDCT windows (indexed by w), y[0..12] is calculated 3 times.
+            // Since there are 3 IMDCT windows (indexed by w), y[0..12] is computed 3 times.
             // For the purpose of the diagram below, we label these IMDCT windows as: y0[0..12],
             // y1[0..12], and y2[0..12], for IMDCT windows 0..3 respectively.
             //
@@ -397,7 +411,15 @@ fn imdct12_win(x: &[f32], window: &[f32; 36], out: &mut [f32; 36]) {
             // .             .            .            |      IMDCT #3 (y2)      |             .
             // .             .            .            +-------------------------+             .
             // .             .            .            .            .            .             .
-            out[6 + 6 * w + i] += y * window[i];
+            //
+            // Since the 12-point IMDCT was decomposed into a half-size IMDCT and post-processing
+            // operations, and further split into left and right halves, each iteration of this loop
+            // produces 4 output samples.
+
+            out[6 + 6 * w + 3 - i - 1] += -yl * window[3 - i - 1];
+            out[6 + 6 * w + i + 3] += yl * window[i + 3];
+            out[6 + 6 * w + i + 6] += yr * window[i + 6];
+            out[6 + 6 * w + 12 - i - 1] += yr * window[12 - i - 1];
         }
     }
 }
