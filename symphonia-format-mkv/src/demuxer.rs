@@ -199,9 +199,14 @@ impl MkvReader {
         // Each Cluster is being read incrementally so we need to keep track of
         // which cluster we are currently in.
 
-        let header = self.iter
-            .read_child_header()?
-            .ok_or(Error::DecodeError("mkv: end of stream"))?;
+        let header = match self.iter.read_child_header()? {
+            Some(header) => header,
+            None => {
+                // If we reached here, it must be an end of stream.
+                self.iter.assert_end_of_stream()?;
+                unreachable!();
+            }
+        };
 
         match header.etype {
             ElementType::Cluster => {
