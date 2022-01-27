@@ -127,10 +127,9 @@ impl Element for AudioElement {
     }
 }
 
-#[allow(dead_code)]
 #[derive(Debug)]
 pub(crate) struct SeekHeadElement {
-    seeks: Box<[SeekElement]>,
+    pub(crate) seeks: Box<[SeekElement]>,
 }
 
 impl Element for SeekHeadElement {
@@ -155,11 +154,10 @@ impl Element for SeekHeadElement {
     }
 }
 
-#[allow(dead_code)]
 #[derive(Debug)]
 pub(crate) struct SeekElement {
-    id: u64,
-    position: u64,
+    pub(crate) id: u64,
+    pub(crate) position: u64,
 }
 
 impl Element for SeekElement {
@@ -456,12 +454,13 @@ impl Element for BlockGroupElement {
 pub(crate) struct BlockElement {
     pub(crate) track: u64,
     pub(crate) timestamp: u64,
-    pub(crate) offset: u64,
+    pub(crate) pos: u64,
 }
 
 #[derive(Debug)]
 pub(crate) struct ClusterElement {
     pub(crate) timestamp: u64,
+    pub(crate) pos: u64,
     pub(crate) end: Option<u64>,
     pub(crate) blocks: Box<[BlockElement]>,
 }
@@ -470,6 +469,7 @@ impl Element for ClusterElement {
     const ID: ElementType = ElementType::Cluster;
 
     fn read<B: ReadBytes>(reader: &mut B, header: ElementHeader) -> Result<Self> {
+        let pos = reader.pos();
         let mut timestamp = None;
         let mut blocks = Vec::new();
         let has_size = header.end().is_some();
@@ -479,7 +479,7 @@ impl Element for ClusterElement {
             let track = read_unsigned_vint(&mut reader)?;
             let rel_ts = reader.read_be_u16()? as i16;
             let timestamp = calc_abs_block_timestamp(timestamp, rel_ts);
-            Ok(BlockElement { track, timestamp, offset })
+            Ok(BlockElement { track, timestamp, pos: offset })
         }
 
         fn get_timestamp(timestamp: Option<u64>) -> Result<u64> {
@@ -510,6 +510,7 @@ impl Element for ClusterElement {
         Ok(ClusterElement {
             timestamp: get_timestamp(timestamp)?,
             blocks: blocks.into_boxed_slice(),
+            pos,
             end: header.end(),
         })
     }

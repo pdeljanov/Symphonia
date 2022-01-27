@@ -24,7 +24,7 @@ use symphonia_utils_xiph::flac::metadata::{MetadataBlockHeader, MetadataBlockTyp
 
 use crate::codecs::codec_id_to_type;
 use crate::ebml::{EbmlElement, ElementHeader, ElementIterator};
-use crate::element_ids::ElementType;
+use crate::element_ids::{ELEMENTS, ElementType};
 use crate::lacing::{extract_frames, Frame, read_xiph_sizes};
 use crate::segment::{BlockGroupElement, ClusterElement, CuesElement, InfoElement, SeekHeadElement, TagsElement, TracksElement};
 
@@ -170,9 +170,11 @@ impl MkvReader {
                 target_block = Some(block);
             }
 
-            let block = target_block.ok_or(Error::SeekError(SeekErrorKind::OutOfRange))?;
-
-            self.iter.seek(block.offset)?;
+            let pos = match target_block {
+                Some(block) => block.pos,
+                None => cluster.pos,
+            };
+            self.iter.seek(pos)?;
 
             // Restore cluster's metadata
             self.current_cluster = Some(ClusterState {
@@ -180,11 +182,8 @@ impl MkvReader {
                 end: cluster.end,
             });
 
-            Ok(SeekedTo {
-                track_id,
-                required_ts: ts,
-                actual_ts: block.timestamp,
-            })
+            // Seek to a specified block inside the cluster.
+            self.seek_track_by_ts_forward(track_id, ts)
         }
     }
 
@@ -310,17 +309,25 @@ impl FormatReader for MkvReader {
             _ => return unsupported_error("mkv: missing segment element")
         };
 
-        let mut _seek_head = None;
         let mut segment_tracks = None;
         let mut info = None;
-        let mut _cues = None;
         let mut clusters = Vec::new();
         let mut metadata = MetadataLog::default();
+        let mut current_cluster = None;
 
-        while let Ok(Some(header)) = it.read_header() {
+        let mut seek_positions = Vec::new();
+        while let Ok(Some(header)) = it.read_child_header() {
             match header.etype {
                 ElementType::SeekHead => {
-                    _seek_head = Some(it.read_element_data::<SeekHeadElement>()?);
+                    let seek_head = it.read_element_data::<SeekHeadElement>()?;
+                    for element in seek_head.seeks.into_vec() {
+                        let tag = element.id as u32;
+                        let etype = match ELEMENTS.get(&tag) {
+                            Some((_, etype)) => *etype,
+                            None => continue,
+                        };
+                        seek_positions.push((etype, segment_pos + element.position));
+                    }
                 }
                 ElementType::Tracks => {
                     segment_tracks = Some(it.read_element_data::<TracksElement>()?);
@@ -329,20 +336,67 @@ impl FormatReader for MkvReader {
                     info = Some(it.read_element_data::<InfoElement>()?);
                 }
                 ElementType::Cues => {
-                    _cues = Some(it.read_element_data::<CuesElement>()?);
+                    let cues = it.read_element_data::<CuesElement>()?;
+                    for cue in cues.points.into_vec() {
+                        clusters.push(ClusterElement {
+                            timestamp: cue.time,
+                            pos: segment_pos + cue.positions.cluster_position,
+                            end: None,
+                            blocks: Box::new([]),
+                        });
+                    }
                 }
                 ElementType::Tags => {
                     let tags = it.read_element_data::<TagsElement>()?;
                     metadata.push(tags.to_metadata());
                 }
                 ElementType::Cluster => {
-                    if !is_seekable {
-                        break;
-                    }
-                    clusters.push(it.read_element_data::<ClusterElement>()?);
+                    // Set state for current cluster for the first call of `next_element`.
+                    current_cluster = Some(ClusterState {
+                        timestamp: None,
+                        end: header.end(),
+                    });
+
+                    // Don't look forward into the stream since
+                    // we can't be sure that we'll find anything useful.
+                    break;
                 }
                 other => {
+                    it.ignore_data()?;
                     log::debug!("ignored element {:?}", other);
+                }
+            }
+        }
+
+        if is_seekable {
+            // Make sure we don't jump backwards unnecessarily.
+            seek_positions.sort_by_key(|sp| sp.1);
+
+            for (etype, pos) in seek_positions {
+                it.seek(pos)?;
+                match etype {
+                    ElementType::Tracks => {
+                        segment_tracks = Some(it.read_element::<TracksElement>()?);
+                    }
+                    ElementType::Info => {
+                        info = Some(it.read_element::<InfoElement>()?);
+                    }
+                    ElementType::Tags => {
+                        let tags = it.read_element::<TagsElement>()?;
+                        metadata.push(tags.to_metadata());
+                    }
+                    ElementType::Cues => {
+                        let cues = it.read_element::<CuesElement>()?;
+                        for cue in cues.points.into_vec() {
+                            clusters.push(ClusterElement {
+                                timestamp: cue.time,
+                                pos: segment_pos + cue.positions.cluster_position,
+                                end: None,
+                                blocks: Box::new([]),
+                            });
+                        }
+                    }
+                    _ => (),
                 }
             }
         }
@@ -440,7 +494,7 @@ impl FormatReader for MkvReader {
             iter: it,
             tracks,
             track_states: states,
-            current_cluster: None,
+            current_cluster,
             metadata,
             cues: Vec::new(),
             frames: VecDeque::new(),
