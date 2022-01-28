@@ -11,7 +11,7 @@ use std::io::{Seek, SeekFrom};
 
 use symphonia_core::audio::Layout;
 use symphonia_core::codecs::{CODEC_TYPE_FLAC, CODEC_TYPE_VORBIS, CodecParameters};
-use symphonia_core::errors::{decode_error, Error, Result, seek_error, SeekErrorKind, unsupported_error};
+use symphonia_core::errors::{decode_error, end_of_stream_error, Error, Result, seek_error, SeekErrorKind, unsupported_error};
 use symphonia_core::formats::{Cue, FormatOptions, FormatReader, Packet, SeekedTo, SeekMode, SeekTo, Track};
 use symphonia_core::io::{BufReader, MediaSource, MediaSourceStream, ReadBytes};
 use symphonia_core::meta::{Metadata, MetadataLog};
@@ -203,8 +203,7 @@ impl MkvReader {
             Some(header) => header,
             None => {
                 // If we reached here, it must be an end of stream.
-                self.iter.assert_end_of_stream()?;
-                unreachable!();
+                return end_of_stream_error();
             }
         };
 

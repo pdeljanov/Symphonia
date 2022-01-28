@@ -477,12 +477,6 @@ impl<R: ReadBytes> ElementIterator<R> {
         Ok(())
     }
 
-    /// Returns an `end of stream` IoError.
-    pub(crate) fn assert_end_of_stream(&mut self) -> Result<()> {
-        self.reader.ignore_bytes(u64::MAX)?;
-        Ok(())
-    }
-
     /// Gets the position of the underlying stream.
     pub(crate) fn pos(&self) -> u64 {
         self.reader.pos()
