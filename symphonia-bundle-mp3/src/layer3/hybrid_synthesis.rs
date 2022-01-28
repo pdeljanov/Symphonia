@@ -8,7 +8,7 @@
 // Justification: Some loops are better expressed without a range loop.
 #![allow(clippy::needless_range_loop)]
 
-use std::f64;
+use std::{f64, convert::TryInto};
 
 use lazy_static::lazy_static;
 
@@ -322,7 +322,7 @@ pub(super) fn hybrid_synthesis(
             // Perform the 12-point IMDCT on each of the 3 short windows within the sub-band (6
             // samples each).
             let mut output = [0f32; 36];
-            imdct12_win(&samples[start..(start + 18)], window, &mut output);
+            imdct12_win(&samples[start..(start + 18)].try_into().unwrap(), window, &mut output);
 
             // Overlap the lower half of the IMDCT output (values 0..18) with the upper values of
             // the IMDCT (values 18..36) of the /previous/ iteration of the IMDCT.
@@ -336,8 +336,7 @@ pub(super) fn hybrid_synthesis(
 
 /// Performs the 12-point IMDCT, and windowing for each of the 3 short windows of a short block, and
 /// then overlap-adds the result.
-fn imdct12_win(x: &[f32], window: &[f32; 36], out: &mut [f32; 36]) {
-    debug_assert!(x.len() == 18);
+fn imdct12_win(x: &[f32; 18], window: &[f32; 36], out: &mut [f32; 36]) {
 
     let cos12 = &IMDCT_HALF_COS_12;
 
