@@ -295,15 +295,16 @@ pub(super) fn hybrid_synthesis(
         // For each of the 32 sub-bands (18 samples each)...
         for sb in 0..n_long_bands {
             let start = 18 * sb;
+            let sub_band: &mut [f32; 18] = &mut samples[start..(start + 18)].try_into().unwrap();
 
             // Perform the 36-point on the entire sub-band.
-            imdct36::imdct36(&samples[start..(start + 18)].try_into().unwrap(), &mut output);
+            imdct36::imdct36(&sub_band, &mut output);
 
             // Overlap the lower half of the IMDCT output (values 0..18) with the upper values of
             // the IMDCT (values 18..36) of the /previous/ iteration of the IMDCT. While doing this
             // also apply the window.
             for i in 0..18 {
-                samples[start + i] = overlap[sb][i] + (output[i] * window[i]);
+                sub_band[i] = overlap[sb][i] + (output[i] * window[i]);
                 overlap[sb][i] = output[18 + i] * window[18 + i];
             }
         }
