@@ -297,7 +297,7 @@ pub(super) fn hybrid_synthesis(
             let start = 18 * sb;
 
             // Perform the 36-point on the entire sub-band.
-            imdct36::imdct36(&samples[start..(start + 18)], &mut output);
+            imdct36::imdct36(&samples[start..(start + 18)].try_into().unwrap(), &mut output);
 
             // Overlap the lower half of the IMDCT output (values 0..18) with the upper values of
             // the IMDCT (values 18..36) of the /previous/ iteration of the IMDCT. While doing this
@@ -535,8 +535,7 @@ mod imdct36 {
     /// Signal Processing, vol. 48, no. 10, pp. 990-994, 2001.
     ///
     /// https://ieeexplore.ieee.org/document/974789
-    pub fn imdct36(x: &[f32], y: &mut [f32; 36]) {
-        debug_assert!(x.len() == 18);
+    pub fn imdct36(x: &[f32; 18], y: &mut [f32; 36]) {
 
         let mut dct = [0f32; 18];
 
@@ -568,8 +567,7 @@ mod imdct36 {
     /// Continutation of `imdct36`.
     ///
     /// Step 2: Mapping N/2-point DCT-IV to N/2-point SDCT-II.
-    fn dct_iv(x: &[f32], y: &mut [f32; 18]) {
-        debug_assert!(x.len() == 18);
+    fn dct_iv(x: &[f32; 18], y: &mut [f32; 18]) {
 
         // Scale factors for input samples. Computed from (16).
         // 2 * cos(PI * (2*m + 1) / (2*36)
