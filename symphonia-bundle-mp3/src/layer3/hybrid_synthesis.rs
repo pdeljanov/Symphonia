@@ -294,6 +294,7 @@ pub(super) fn hybrid_synthesis(
 
         // For each of the 32 sub-bands (18 samples each)...
         for sb in 0..n_long_bands {
+            // casting to a know-size slice lets the compiler elide bounds checks
             let start = 18 * sb;
             let sub_band: &mut [f32; 18] = &mut samples[start..(start + 18)].try_into().unwrap();
 
