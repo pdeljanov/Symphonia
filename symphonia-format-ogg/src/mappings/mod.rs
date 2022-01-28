@@ -38,7 +38,7 @@ pub enum MapResult {
 
 /// A `PacketParser` implements a packet parser that decodes the timestamp and duration for a
 /// packet.
-pub trait PacketParser: Send {
+pub trait PacketParser: Send + Sync {
     fn parse_next_packet_dur(&mut self, packet: &[u8]) -> u64;
 }
 

@@ -498,7 +498,7 @@ impl MetadataLog {
     }
 }
 
-pub trait MetadataReader: Send {
+pub trait MetadataReader: Send + Sync {
     /// Instantiates the `MetadataReader` with the provided `MetadataOptions`.
     fn new(options: &MetadataOptions) -> Self
     where

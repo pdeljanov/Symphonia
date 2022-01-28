@@ -111,7 +111,7 @@ macro_rules! try_or_ret {
     };
 }
 
-pub trait Floor: Send {
+pub trait Floor: Send + Sync {
     fn read_channel(
         &mut self,
         bs: &mut BitReaderRtl<'_>,
