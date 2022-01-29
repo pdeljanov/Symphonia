@@ -17,7 +17,8 @@ pub fn read_syncsafe_leq32<B: ReadBytes>(reader: &mut B, bit_width: u32) -> Resu
     let mut bits_read = 0;
 
     while bits_read < bit_width {
-        bits_read += 7;
+        // Ensure bits_read never exceeds the bit width which will cause an overflow
+        bits_read = (bits_read + 7).min(bit_width);
         result |= u32::from(reader.read_u8()? & 0x7f) << (bit_width - bits_read);
     }
 
@@ -172,5 +173,20 @@ impl<B: ReadBytes + FiniteStream> ReadBytes for UnsyncStream<B> {
     fn pos(&self) -> u64 {
         // Not required.
         unimplemented!();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::read_syncsafe_leq32;
+    use symphonia_core::io::BufReader;
+
+    #[test]
+    fn verify_read_syncsafe_leq32() {
+        let mut stream = BufReader::new(&[3, 4, 80, 1, 15]);
+        assert_eq!(101875743, read_syncsafe_leq32(&mut stream, 32).unwrap());
+
+        let mut stream = BufReader::new(&[3, 4, 80, 1]);
+        assert_eq!(6367233, read_syncsafe_leq32(&mut stream, 28).unwrap());
     }
 }
