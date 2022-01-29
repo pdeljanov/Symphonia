@@ -319,8 +319,8 @@ impl Element for InfoElement {
             timestamp_scale: timestamp_scale.unwrap_or(1_000_000),
             duration,
             title: title.map(|it| it.into_boxed_str()),
-            muxing_app: muxing_app.unwrap_or_else(|| String::new()).into_boxed_str(),
-            writing_app: writing_app.unwrap_or_else(|| String::new()).into_boxed_str(),
+            muxing_app: muxing_app.unwrap_or_default().into_boxed_str(),
+            writing_app: writing_app.unwrap_or_default().into_boxed_str(),
         })
     }
 }

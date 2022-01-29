@@ -17,6 +17,7 @@ use crate::segment::EbmlHeaderElement;
 /// Reads a single EBML element ID (as in RFC8794) from the stream
 /// and returns its value, length in bytes (1-4 bytes)
 /// and a flag indicating whether any data was ignored, or an error.
+#[allow(clippy::never_loop)]
 pub(crate) fn read_tag<R: ReadBytes>(mut reader: R) -> Result<(u32, u32, bool)> {
     // Try to read a tag at current reader position.
     loop {
@@ -80,26 +81,24 @@ pub(crate) fn read_signed_vint<R: ReadBytes>(mut reader: R) -> Result<i64> {
 /// Reads a single unsigned variable size integer (as in RFC8794) from the stream
 /// and returns both its value and length in octects, or an error.
 fn read_vint<R: ReadBytes>(mut reader: R) -> Result<(u64, u32)> {
-    loop {
-        let byte = reader.read_byte()?;
-        if byte == 0xFF {
-            // Special case: unknown size elements.
-            return Ok((u64::MAX, 1));
-        }
-
-        let vint_width = byte.leading_zeros();
-        let mut vint = u64::from(byte);
-        // Clear VINT_MARKER bit
-        vint ^= 1 << (7 - vint_width);
-
-        // Read remaining octets
-        for _ in 0..vint_width {
-            let byte = reader.read_byte()?;
-            vint = (vint << 8) | u64::from(byte);
-        }
-
-        return Ok((vint, vint_width + 1));
+    let byte = reader.read_byte()?;
+    if byte == 0xFF {
+        // Special case: unknown size elements.
+        return Ok((u64::MAX, 1));
     }
+
+    let vint_width = byte.leading_zeros();
+    let mut vint = u64::from(byte);
+    // Clear VINT_MARKER bit
+    vint ^= 1 << (7 - vint_width);
+
+    // Read remaining octets
+    for _ in 0..vint_width {
+        let byte = reader.read_byte()?;
+        vint = (vint << 8) | u64::from(byte);
+    }
+
+    Ok((vint, vint_width + 1))
 }
 
 #[cfg(test)]
