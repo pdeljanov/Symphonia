@@ -17,6 +17,7 @@ aac = ["symphonia-codec-aac"]
 alac = ["symphonia-codec-alac"]
 flac = ["symphonia-bundle-flac"]
 isomp4 = ["symphonia-format-isomp4"]
+mkv = ["symphonia-format-mkv"]
 mp3 = ["symphonia-bundle-mp3"]
 ogg = ["symphonia-format-ogg"]
 pcm = ["symphonia-codec-pcm"]
@@ -36,6 +37,7 @@ symphonia-codec-vorbis = { version = "0.4", path = "../symphonia-codec-vorbis", 
 symphonia-format-wav = { version = "0.4", path = "../symphonia-format-wav", optional = true }
 symphonia-format-ogg = { version = "0.4", path = "../symphonia-format-ogg", optional = true }
 symphonia-format-isomp4 = { version = "0.4", path = "../symphonia-format-isomp4", optional = true }
+symphonia-format-mkv = { version = "0.4", path = "../symphonia-format-mkv", optional = true }
 
 # Show documentation with all features enabled on docs.rs
 [package.metadata.docs.rs]

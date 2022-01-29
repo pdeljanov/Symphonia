@@ -142,6 +142,8 @@ pub mod default {
         pub use symphonia_format_ogg::OggReader;
         #[cfg(feature = "wav")]
         pub use symphonia_format_wav::WavReader;
+        #[cfg(feature = "mkv")]
+        pub use symphonia_format_mkv::MkvReader;
     }
 
     use lazy_static::lazy_static;
@@ -236,6 +238,9 @@ pub mod default {
 
         #[cfg(feature = "ogg")]
         probe.register_all::<formats::OggReader>();
+
+        #[cfg(feature = "mkv")]
+        probe.register_all::<formats::MkvReader>();
 
         // Metadata
         probe.register_all::<Id3v2Reader>();
