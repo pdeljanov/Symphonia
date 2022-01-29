@@ -12,7 +12,7 @@ keywords = ["audio", "codec", "decoder", "multimedia", "media"]
 edition = "2018"
 
 [features]
-default = ["wav", "flac", "pcm", "ogg", "vorbis"]
+default = ["flac", "mkv", "ogg", "pcm", "vorbis", "wav"]
 aac = ["symphonia-codec-aac"]
 alac = ["symphonia-codec-alac"]
 flac = ["symphonia-bundle-flac"]

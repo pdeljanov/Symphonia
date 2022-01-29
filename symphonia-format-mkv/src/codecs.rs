@@ -41,7 +41,7 @@ pub(crate) fn codec_id_to_type(track: &TrackElement) -> Option<CodecType> {
             _ => None,
         },
         _ => {
-            log::warn!("unknown codec: {}", &track.codec_id);
+            log::info!("unknown codec: {}", &track.codec_id);
             None
         }
     }

@@ -315,7 +315,6 @@ impl FormatReader for MkvReader {
 
         let mut it = ElementIterator::new(reader, total_len);
         let ebml = it.read_element::<EbmlElement>()?;
-        log::warn!("ebml header: {:#?}", ebml.header);
 
         if !matches!(ebml.header.doc_type.as_str(), "matroska" | "webm") {
             return unsupported_error("mkv: not a matroska / webm file");

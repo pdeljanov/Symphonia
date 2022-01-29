@@ -138,12 +138,12 @@ pub mod default {
         pub use symphonia_codec_aac::AdtsReader;
         #[cfg(feature = "isomp4")]
         pub use symphonia_format_isomp4::IsoMp4Reader;
+        #[cfg(feature = "mkv")]
+        pub use symphonia_format_mkv::MkvReader;
         #[cfg(feature = "ogg")]
         pub use symphonia_format_ogg::OggReader;
         #[cfg(feature = "wav")]
         pub use symphonia_format_wav::WavReader;
-        #[cfg(feature = "mkv")]
-        pub use symphonia_format_mkv::MkvReader;
     }
 
     use lazy_static::lazy_static;
