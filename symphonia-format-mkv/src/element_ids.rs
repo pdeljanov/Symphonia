@@ -172,13 +172,15 @@ pub enum ElementType {
 
 impl ElementType {
     pub(crate) fn is_top_level(&self) -> bool {
-        matches!(self,
-            ElementType::Cluster |
-            ElementType::Cues |
-            ElementType::Info |
-            ElementType::SeekHead |
-            ElementType::Tags |
-            ElementType::Tracks)
+        matches!(
+            self,
+            ElementType::Cluster
+                | ElementType::Cues
+                | ElementType::Info
+                | ElementType::SeekHead
+                | ElementType::Tags
+                | ElementType::Tracks
+        )
     }
 }
 

@@ -11,7 +11,7 @@ use symphonia_core::errors::{decode_error, Error, Result};
 use symphonia_core::io::ReadBytes;
 use symphonia_core::util::bits::sign_extend_leq64_to_i64;
 
-use crate::element_ids::{ELEMENTS, ElementType, Type};
+use crate::element_ids::{ElementType, Type, ELEMENTS};
 use crate::segment::EbmlHeaderElement;
 
 /// Reads a single EBML element ID (as in RFC8794) from the stream
@@ -43,9 +43,7 @@ pub(crate) fn read_tag<R: ReadBytes>(mut reader: R) -> Result<(u32, u32, bool)> 
     // Seek to next supported tag of a top level element (`Cluster`, `Info`, etc.)
     let mut tag = 0u32;
     loop {
-        let ty = ELEMENTS.get(&tag)
-            .map(|(_, ty)| ty)
-            .filter(|ty| ty.is_top_level());
+        let ty = ELEMENTS.get(&tag).map(|(_, ty)| ty).filter(|ty| ty.is_top_level());
 
         if let Some(ty) = ty {
             log::info!("found next supported tag {:08X} ({:?})", tag, ty);
@@ -112,7 +110,10 @@ mod tests {
         assert_eq!(read_tag(BufReader::new(&[0x82])).unwrap(), (0x82, 1, false));
         assert_eq!(read_tag(BufReader::new(&[0x40, 0x02])).unwrap(), (0x4002, 2, false));
         assert_eq!(read_tag(BufReader::new(&[0x20, 0x00, 0x02])).unwrap(), (0x200002, 3, false));
-        assert_eq!(read_tag(BufReader::new(&[0x10, 0x00, 0x00, 0x02])).unwrap(), (0x10000002, 4, false));
+        assert_eq!(
+            read_tag(BufReader::new(&[0x10, 0x00, 0x00, 0x02])).unwrap(),
+            (0x10000002, 4, false)
+        );
     }
 
     #[test]
@@ -122,9 +123,20 @@ mod tests {
         assert_eq!(read_unsigned_vint(BufReader::new(&[0x20, 0x00, 0x02])).unwrap(), 2);
         assert_eq!(read_unsigned_vint(BufReader::new(&[0x10, 0x00, 0x00, 0x02])).unwrap(), 2);
         assert_eq!(read_unsigned_vint(BufReader::new(&[0x08, 0x00, 0x00, 0x00, 0x02])).unwrap(), 2);
-        assert_eq!(read_unsigned_vint(BufReader::new(&[0x04, 0x00, 0x00, 0x00, 0x00, 0x02])).unwrap(), 2);
-        assert_eq!(read_unsigned_vint(BufReader::new(&[0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02])).unwrap(), 2);
-        assert_eq!(read_unsigned_vint(BufReader::new(&[0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02])).unwrap(), 2);
+        assert_eq!(
+            read_unsigned_vint(BufReader::new(&[0x04, 0x00, 0x00, 0x00, 0x00, 0x02])).unwrap(),
+            2
+        );
+        assert_eq!(
+            read_unsigned_vint(BufReader::new(&[0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02]))
+                .unwrap(),
+            2
+        );
+        assert_eq!(
+            read_unsigned_vint(BufReader::new(&[0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02]))
+                .unwrap(),
+            2
+        );
     }
 
     #[test]
@@ -158,7 +170,12 @@ impl ElementHeader {
     }
 
     pub(crate) fn end(&self) -> Option<u64> {
-        if self.data_len == 0 { None } else { Some(self.data_pos + self.data_len) }
+        if self.data_len == 0 {
+            None
+        }
+        else {
+            Some(self.data_pos + self.data_len)
+        }
     }
 }
 
@@ -177,14 +194,17 @@ impl ElementHeader {
         // Currently, these cases are represented as `data_len` equal to 0,
         // but it might be worth changing it to an Option at some point.
         let size = read_size(&mut reader)?.unwrap_or(0);
-        Ok((ElementHeader {
-            tag,
-            etype: ELEMENTS.get(&tag).map_or(ElementType::Unknown, |(_, etype)| *etype),
-            pos: header_start,
-            len: reader.pos() - header_start + size,
-            data_len: size,
-            data_pos: reader.pos(),
-        }, reset))
+        Ok((
+            ElementHeader {
+                tag,
+                etype: ELEMENTS.get(&tag).map_or(ElementType::Unknown, |(_, etype)| *etype),
+                pos: header_start,
+                len: reader.pos() - header_start + size,
+                data_len: size,
+                data_pos: reader.pos(),
+            },
+            reset,
+        ))
     }
 }
 
@@ -198,9 +218,7 @@ impl Element for EbmlElement {
 
     fn read<B: ReadBytes>(reader: &mut B, header: ElementHeader) -> Result<Self> {
         let mut it = header.children(reader);
-        Ok(Self {
-            header: it.read_element_data::<EbmlHeaderElement>()?
-        })
+        Ok(Self { header: it.read_element_data::<EbmlHeaderElement>()? })
     }
 }
 
@@ -224,26 +242,19 @@ impl<R: ReadBytes> ElementIterator<R> {
 
     /// Creates a new iterator over elements starting from the given stream position.
     fn new_at(reader: R, start: u64, end: Option<u64>) -> Self {
-        Self {
-            reader,
-            current: None,
-            next_pos: start,
-            end,
-        }
+        Self { reader, current: None, next_pos: start, end }
     }
 
     /// Creates a new iterator over children of the given parent element.
     fn new_of(reader: R, parent: ElementHeader) -> Self {
-        Self {
-            reader,
-            current: Some(parent),
-            next_pos: parent.data_pos,
-            end: parent.end(),
-        }
+        Self { reader, current: Some(parent), next_pos: parent.data_pos, end: parent.end() }
     }
 
     /// Seek to a specified offset inside of the stream.
-    pub(crate) fn seek(&mut self, pos: u64) -> Result<()> where R: Seek {
+    pub(crate) fn seek(&mut self, pos: u64) -> Result<()>
+    where
+        R: Seek,
+    {
         self.current = None;
         self.reader.seek(SeekFrom::Start(pos))?;
         self.next_pos = pos;
@@ -320,9 +331,12 @@ impl<R: ReadBytes> ElementIterator<R> {
     /// Reads data of current element. Must be used after
     /// [Self::read_header] or [Self::read_child_header].
     pub(crate) fn read_element_data<E: Element>(&mut self) -> Result<E> {
-        let header = self.current
-            .expect("EBML header must be read before calling this function");
-        assert_eq!(header.etype, E::ID, "EBML element type must be checked before calling this function");
+        let header = self.current.expect("EBML header must be read before calling this function");
+        assert_eq!(
+            header.etype,
+            E::ID,
+            "EBML element type must be checked before calling this function"
+        );
 
         let element = E::read(&mut self.reader, header)?;
         // Update position to match the position element reader finished at
@@ -353,7 +367,8 @@ impl<R: ReadBytes> ElementIterator<R> {
     /// Reads any primitive data inside of the current element.
     pub(crate) fn read_data(&mut self) -> Result<ElementData> {
         let hdr = self.current.expect("not in an element");
-        let value = self.try_read_data(hdr)?
+        let value = self
+            .try_read_data(hdr)?
             .ok_or(Error::DecodeError("mkv: element has no primitive data"))?;
         Ok(value)
     }
@@ -397,12 +412,13 @@ impl<R: ReadBytes> ElementIterator<R> {
             Some((ty, _)) => {
                 // Position must always be valid, because this function is called
                 // after reading the element header.
-                assert_eq!(header.data_pos, self.reader.pos(),
-                           "invalid stream position");
+                assert_eq!(header.data_pos, self.reader.pos(), "invalid stream position");
                 if let (Some(cur), Some(end)) = (self.current, self.end) {
                     if cur.pos + cur.len > end {
                         log::debug!("reading element data {:?}; parent end={}", cur, end);
-                        return decode_error("mkv: attempt to read element data past master element ");
+                        return decode_error(
+                            "mkv: attempt to read element data past master element ",
+                        );
                     }
                 }
                 Some(match ty {
@@ -456,9 +472,9 @@ impl<R: ReadBytes> ElementIterator<R> {
                         let bytes = data.split(|b| *b == 0).next().unwrap_or(&data);
                         ElementData::String(String::from_utf8_lossy(bytes).into_owned())
                     }
-                    Type::Binary => {
-                        ElementData::Binary(self.reader.read_boxed_slice_exact(header.data_len as usize)?)
-                    }
+                    Type::Binary => ElementData::Binary(
+                        self.reader.read_boxed_slice_exact(header.data_len as usize)?,
+                    ),
                 })
             }
             None => None,

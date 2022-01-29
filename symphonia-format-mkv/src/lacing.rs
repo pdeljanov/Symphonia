@@ -11,7 +11,7 @@ use symphonia_core::errors::{decode_error, Result};
 use symphonia_core::io::{BufReader, ReadBytes};
 
 use crate::demuxer::TrackState;
-use crate::ebml::{read_unsigned_vint, read_signed_vint};
+use crate::ebml::{read_signed_vint, read_unsigned_vint};
 
 enum Lacing {
     None,
@@ -36,7 +36,8 @@ fn read_ebml_sizes<R: ReadBytes>(mut reader: R, frames: usize) -> Result<Vec<u64
         if let Some(last_size) = sizes.last().copied() {
             let delta = read_signed_vint(&mut reader)?;
             sizes.push((last_size as i64 + delta) as u64)
-        } else {
+        }
+        else {
             let size = read_unsigned_vint(&mut reader)?;
             sizes.push(size);
         }
@@ -52,7 +53,8 @@ pub(crate) fn read_xiph_sizes<R: ReadBytes>(mut reader: R, frames: usize) -> Res
         let byte = reader.read_byte()? as u64;
         if byte == 255 {
             prefixes += 1;
-        } else {
+        }
+        else {
             let size = prefixes * 255 + byte;
             prefixes = 0;
             sizes.push(size);
@@ -73,7 +75,8 @@ pub(crate) struct Frame {
 pub(crate) fn calc_abs_block_timestamp(cluster_ts: u64, rel_block_ts: i16) -> u64 {
     if rel_block_ts < 0 {
         cluster_ts - (-rel_block_ts) as u64
-    } else {
+    }
+    else {
         cluster_ts + rel_block_ts as u64
     }
 }
@@ -92,18 +95,15 @@ pub(crate) fn extract_frames(
     let flags = reader.read_byte()?;
     let lacing = parse_flags(flags)?;
 
-    let default_frame_duration = tracks.get(&track)
-        .and_then(|it| it.default_frame_duration)
-        .map(|it| it / timestamp_scale);
+    let default_frame_duration =
+        tracks.get(&track).and_then(|it| it.default_frame_duration).map(|it| it / timestamp_scale);
 
     let mut timestamp = calc_abs_block_timestamp(cluster_timestamp, rel_ts);
 
     match lacing {
         Lacing::None => {
             let data = reader.read_boxed_slice_exact(block.len() - reader.pos() as usize)?;
-            let duration = block_duration
-                .or(default_frame_duration)
-                .unwrap_or(0);
+            let duration = block_duration.or(default_frame_duration).unwrap_or(0);
             buffer.push_back(Frame { track, timestamp, data, duration });
         }
         Lacing::Xiph | Lacing::Ebml => {
@@ -139,10 +139,8 @@ pub(crate) fn extract_frames(
                 return decode_error("mkv: invalid block size");
             }
 
-            let frame_duration = block_duration
-                .map(|it| it / frames as u64)
-                .or(default_frame_duration)
-                .unwrap_or(0);
+            let frame_duration =
+                block_duration.map(|it| it / frames as u64).or(default_frame_duration).unwrap_or(0);
 
             let frame_size = total_size / frames;
             for _ in 0..frames {

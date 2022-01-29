@@ -9,7 +9,7 @@ use symphonia_core::errors::{Error, Result};
 use symphonia_core::io::{BufReader, ReadBytes};
 use symphonia_core::meta::{MetadataBuilder, MetadataRevision, Tag, Value};
 
-use crate::ebml::{Element, ElementData, ElementHeader, read_unsigned_vint};
+use crate::ebml::{read_unsigned_vint, Element, ElementData, ElementHeader};
 use crate::element_ids::ElementType;
 use crate::lacing::calc_abs_block_timestamp;
 
@@ -199,9 +199,7 @@ impl Element for TracksElement {
 
     fn read<B: ReadBytes>(reader: &mut B, header: ElementHeader) -> Result<Self> {
         let mut it = header.children(reader);
-        Ok(Self {
-            tracks: it.read_elements()?,
-        })
+        Ok(Self { tracks: it.read_elements()? })
     }
 }
 
@@ -336,9 +334,7 @@ impl Element for CuesElement {
 
     fn read<B: ReadBytes>(reader: &mut B, header: ElementHeader) -> Result<Self> {
         let mut it = header.children(reader);
-        Ok(Self {
-            points: it.read_elements()?,
-        })
+        Ok(Self { points: it.read_elements()? })
     }
 }
 
@@ -359,9 +355,7 @@ impl Element for CuePointElement {
         let mut pos = None;
         while let Some(header) = it.read_header()? {
             match header.etype {
-                ElementType::CueTime => {
-                    time = Some(it.read_u64()?)
-                }
+                ElementType::CueTime => time = Some(it.read_u64()?),
                 ElementType::CueTrackPositions => {
                     pos = Some(it.read_element_data()?);
                 }
@@ -408,7 +402,8 @@ impl Element for CueTrackPositionsElement {
         }
         Ok(Self {
             track: track.ok_or(Error::DecodeError("mkv: missing track in cue track positions"))?,
-            cluster_position: pos.ok_or(Error::DecodeError("mkv: missing position in cue track positions"))?,
+            cluster_position: pos
+                .ok_or(Error::DecodeError("mkv: missing position in cue track positions"))?,
         })
     }
 }
@@ -539,9 +534,7 @@ impl Element for TagsElement {
             }
         }
 
-        Ok(Self {
-            tags: tags.into_boxed_slice()
-        })
+        Ok(Self { tags: tags.into_boxed_slice() })
     }
 }
 
@@ -551,11 +544,15 @@ impl TagsElement {
         for tag in self.tags.iter() {
             for simple_tag in tag.simple_tags.iter() {
                 // TODO: support std_key
-                metadata.add_tag(Tag::new(None, &simple_tag.name, match &simple_tag.value {
-                    ElementData::Binary(b) => Value::Binary(b.clone()),
-                    ElementData::String(s) => Value::String(s.clone()),
-                    _ => unreachable!(),
-                }));
+                metadata.add_tag(Tag::new(
+                    None,
+                    &simple_tag.name,
+                    match &simple_tag.value {
+                        ElementData::Binary(b) => Value::Binary(b.clone()),
+                        ElementData::String(s) => Value::String(s.clone()),
+                        _ => unreachable!(),
+                    },
+                ));
             }
         }
         metadata.metadata()
@@ -585,9 +582,7 @@ impl Element for TagElement {
             }
         }
 
-        Ok(Self {
-            simple_tags: simple_tags.into_boxed_slice()
-        })
+        Ok(Self { simple_tags: simple_tags.into_boxed_slice() })
     }
 }
 

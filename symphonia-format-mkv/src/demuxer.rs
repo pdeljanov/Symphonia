@@ -10,13 +10,17 @@ use std::convert::TryFrom;
 use std::io::{Seek, SeekFrom};
 
 use symphonia_core::audio::Layout;
-use symphonia_core::codecs::{CODEC_TYPE_FLAC, CODEC_TYPE_VORBIS, CodecParameters};
-use symphonia_core::errors::{decode_error, end_of_stream_error, Error, Result, seek_error, SeekErrorKind, unsupported_error};
-use symphonia_core::formats::{Cue, FormatOptions, FormatReader, Packet, SeekedTo, SeekMode, SeekTo, Track};
+use symphonia_core::codecs::{CodecParameters, CODEC_TYPE_FLAC, CODEC_TYPE_VORBIS};
+use symphonia_core::errors::{
+    decode_error, end_of_stream_error, seek_error, unsupported_error, Error, Result, SeekErrorKind,
+};
+use symphonia_core::formats::{
+    Cue, FormatOptions, FormatReader, Packet, SeekMode, SeekTo, SeekedTo, Track,
+};
 use symphonia_core::io::{BufReader, MediaSource, MediaSourceStream, ReadBytes};
 use symphonia_core::meta::{Metadata, MetadataLog};
-use symphonia_core::probe::{Descriptor, QueryDescriptor};
 use symphonia_core::probe::Instantiate;
+use symphonia_core::probe::{Descriptor, QueryDescriptor};
 use symphonia_core::sample::SampleFormat;
 use symphonia_core::support_format;
 use symphonia_core::units::TimeBase;
@@ -24,9 +28,12 @@ use symphonia_utils_xiph::flac::metadata::{MetadataBlockHeader, MetadataBlockTyp
 
 use crate::codecs::codec_id_to_type;
 use crate::ebml::{EbmlElement, ElementHeader, ElementIterator};
-use crate::element_ids::{ELEMENTS, ElementType};
-use crate::lacing::{extract_frames, Frame, read_xiph_sizes};
-use crate::segment::{BlockGroupElement, ClusterElement, CuesElement, InfoElement, SeekHeadElement, TagsElement, TracksElement};
+use crate::element_ids::{ElementType, ELEMENTS};
+use crate::lacing::{extract_frames, read_xiph_sizes, Frame};
+use crate::segment::{
+    BlockGroupElement, ClusterElement, CuesElement, InfoElement, SeekHeadElement, TagsElement,
+    TracksElement,
+};
 
 #[allow(dead_code)]
 pub struct TrackState {
@@ -102,7 +109,9 @@ fn vorbis_extra_data_from_codec_private(extra: &[u8]) -> Result<Box<[u8]>> {
     Ok([
         ident_header.ok_or(Error::DecodeError("mkv: missing vorbis identification packet"))?,
         setup_header.ok_or(Error::DecodeError("mkv: missing vorbis setup packet"))?,
-    ].concat().into_boxed_slice())
+    ]
+    .concat()
+    .into_boxed_slice())
 }
 
 fn flac_extra_data_from_codec_private(codec_private: &[u8]) -> Result<Box<[u8]>> {
@@ -132,24 +141,22 @@ impl MkvReader {
             while let Some(frame) = self.frames.front() {
                 if frame.timestamp + frame.duration >= ts && frame.track == track_id {
                     break 'out frame.timestamp;
-                } else {
+                }
+                else {
                     self.frames.pop_front();
                 }
             }
             self.next_element()?
         };
 
-        Ok(SeekedTo {
-            track_id,
-            required_ts: ts,
-            actual_ts,
-        })
+        Ok(SeekedTo { track_id, required_ts: ts, actual_ts })
     }
 
     fn seek_track_by_ts(&mut self, track_id: u32, ts: u64) -> Result<SeekedTo> {
         if self.clusters.is_empty() {
             self.seek_track_by_ts_forward(track_id, ts)
-        } else {
+        }
+        else {
             let mut target_cluster = None;
             for cluster in &self.clusters {
                 if cluster.timestamp > ts {
@@ -177,10 +184,8 @@ impl MkvReader {
             self.iter.seek(pos)?;
 
             // Restore cluster's metadata
-            self.current_cluster = Some(ClusterState {
-                timestamp: Some(cluster.timestamp),
-                end: cluster.end,
-            });
+            self.current_cluster =
+                Some(ClusterState { timestamp: Some(cluster.timestamp), end: cluster.end });
 
             // Seek to a specified block inside the cluster.
             self.seek_track_by_ts_forward(track_id, ts)
@@ -209,23 +214,18 @@ impl MkvReader {
 
         match header.etype {
             ElementType::Cluster => {
-                self.current_cluster = Some(ClusterState {
-                    timestamp: None,
-                    end: header.end(),
-                });
+                self.current_cluster = Some(ClusterState { timestamp: None, end: header.end() });
             }
-            ElementType::Timestamp => {
-                match self.current_cluster.as_mut() {
-                    Some(cluster) => {
-                        cluster.timestamp = Some(self.iter.read_u64()?);
-                    }
-                    None => {
-                        self.iter.ignore_data()?;
-                        log::warn!("timestamp element outside of a cluster");
-                        return Ok(());
-                    }
+            ElementType::Timestamp => match self.current_cluster.as_mut() {
+                Some(cluster) => {
+                    cluster.timestamp = Some(self.iter.read_u64()?);
                 }
-            }
+                None => {
+                    self.iter.ignore_data()?;
+                    log::warn!("timestamp element outside of a cluster");
+                    return Ok(());
+                }
+            },
             ElementType::SimpleBlock => {
                 let cluster_ts = match self.current_cluster.as_ref() {
                     Some(ClusterState { timestamp: Some(ts), .. }) => *ts,
@@ -242,8 +242,14 @@ impl MkvReader {
                 };
 
                 let data = self.iter.read_boxed_slice()?;
-                extract_frames(&data, None, &self.track_states,
-                               cluster_ts, self.timestamp_scale, &mut self.frames)?;
+                extract_frames(
+                    &data,
+                    None,
+                    &self.track_states,
+                    cluster_ts,
+                    self.timestamp_scale,
+                    &mut self.frames,
+                )?;
             }
             ElementType::BlockGroup => {
                 let cluster_ts = match self.current_cluster.as_ref() {
@@ -261,8 +267,14 @@ impl MkvReader {
                 };
 
                 let group = self.iter.read_element_data::<BlockGroupElement>()?;
-                extract_frames(&group.data, group.duration, &self.track_states,
-                               cluster_ts, self.timestamp_scale, &mut self.frames)?;
+                extract_frames(
+                    &group.data,
+                    group.duration,
+                    &self.track_states,
+                    cluster_ts,
+                    self.timestamp_scale,
+                    &mut self.frames,
+                )?;
             }
             ElementType::Tags => {
                 let tags = self.iter.read_element_data::<TagsElement>()?;
@@ -284,8 +296,8 @@ impl MkvReader {
 
 impl FormatReader for MkvReader {
     fn try_new(mut reader: MediaSourceStream, _options: &FormatOptions) -> Result<Self>
-        where
-            Self: Sized
+    where
+        Self: Sized,
     {
         let is_seekable = reader.is_seekable();
 
@@ -296,7 +308,8 @@ impl FormatReader for MkvReader {
             reader.seek(SeekFrom::Start(pos))?;
             log::info!("stream is seekable with len={} bytes.", len);
             Some(len)
-        } else {
+        }
+        else {
             None
         };
 
@@ -310,7 +323,7 @@ impl FormatReader for MkvReader {
 
         let segment_pos = match it.read_child_header()? {
             Some(ElementHeader { etype: ElementType::Segment, data_pos, .. }) => data_pos,
-            _ => return unsupported_error("mkv: missing segment element")
+            _ => return unsupported_error("mkv: missing segment element"),
         };
 
         let mut segment_tracks = None;
@@ -356,10 +369,7 @@ impl FormatReader for MkvReader {
                 }
                 ElementType::Cluster => {
                     // Set state for current cluster for the first call of `next_element`.
-                    current_cluster = Some(ClusterState {
-                        timestamp: None,
-                        end: header.end(),
-                    });
+                    current_cluster = Some(ClusterState { timestamp: None, end: header.end() });
 
                     // Don't look forward into the stream since
                     // we can't be sure that we'll find anything useful.
@@ -405,7 +415,8 @@ impl FormatReader for MkvReader {
             }
         }
 
-        let segment_tracks = segment_tracks.ok_or(Error::DecodeError("mkv: missing Tracks element"))?;
+        let segment_tracks =
+            segment_tracks.ok_or(Error::DecodeError("mkv: missing Tracks element"))?;
 
         if is_seekable {
             let mut reader = it.into_inner();
@@ -416,10 +427,7 @@ impl FormatReader for MkvReader {
         let info = info.ok_or(Error::DecodeError("mkv: missing Info element"))?;
 
         // TODO: remove this unwrap?
-        let time_base = TimeBase::new(
-            u32::try_from(info.timestamp_scale).unwrap(),
-            1_000_000_000,
-        );
+        let time_base = TimeBase::new(u32::try_from(info.timestamp_scale).unwrap(), 1_000_000_000);
 
         let mut tracks = Vec::new();
         let mut states = HashMap::new();
@@ -458,7 +466,11 @@ impl FormatReader for MkvReader {
                     3 => Some(Layout::TwoPointOne),
                     6 => Some(Layout::FivePointOne),
                     other => {
-                        log::warn!("track #{} has custom number of channels: {}", track.number, other);
+                        log::warn!(
+                            "track #{} has custom number of channels: {}",
+                            track.number,
+                            other
+                        );
                         None
                     }
                 };
@@ -471,7 +483,9 @@ impl FormatReader for MkvReader {
                     codec_params.for_codec(codec_type);
                     if let Some(codec_private) = track.codec_private {
                         let extra_data = match codec_type {
-                            CODEC_TYPE_VORBIS => vorbis_extra_data_from_codec_private(&codec_private)?,
+                            CODEC_TYPE_VORBIS => {
+                                vorbis_extra_data_from_codec_private(&codec_private)?
+                            }
                             CODEC_TYPE_FLAC => flac_extra_data_from_codec_private(&codec_private)?,
                             _ => codec_private,
                         };
@@ -487,11 +501,14 @@ impl FormatReader for MkvReader {
                 language: track.language,
             });
 
-            states.insert(track_id, TrackState {
-                codec_params,
-                track_num: track_id,
-                default_frame_duration: track.default_duration,
-            });
+            states.insert(
+                track_id,
+                TrackState {
+                    codec_params,
+                    track_num: track_id,
+                    default_frame_duration: track.default_duration,
+                },
+            );
         }
 
         Ok(Self {
@@ -549,7 +566,11 @@ impl FormatReader for MkvReader {
         loop {
             if let Some(frame) = self.frames.pop_front() {
                 return Ok(Packet::new_from_boxed_slice(
-                    frame.track as u32, frame.timestamp, frame.duration, frame.data));
+                    frame.track as u32,
+                    frame.timestamp,
+                    frame.duration,
+                    frame.data,
+                ));
             }
             self.next_element()?;
         }
@@ -562,15 +583,13 @@ impl FormatReader for MkvReader {
 
 impl QueryDescriptor for MkvReader {
     fn query() -> &'static [Descriptor] {
-        &[
-            support_format!(
-                "matroska",
-                "Matroska / WebM",
-                &[ "webm", "mkv" ],
-                &[ "video/webm", "video/x-matroska" ],
-                &[ b"\x1A\x45\xDF\xA3" ] // Top-level element Ebml element
-            ),
-        ]
+        &[support_format!(
+            "matroska",
+            "Matroska / WebM",
+            &["webm", "mkv"],
+            &["video/webm", "video/x-matroska"],
+            &[b"\x1A\x45\xDF\xA3"] // Top-level element Ebml element
+        )]
     }
 
     fn score(_context: &[u8]) -> u8 {
