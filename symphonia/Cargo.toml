@@ -10,6 +10,7 @@ readme = "README.md"
 categories = ["multimedia", "multimedia::audio", "multimedia::encoding"]
 keywords = ["audio", "codec", "decoder", "multimedia", "media"]
 edition = "2018"
+rust-version = "1.53"
 
 [features]
 default = ["flac", "mkv", "ogg", "pcm", "vorbis", "wav"]

@@ -10,6 +10,7 @@ readme = "README.md"
 categories = ["multimedia", "multimedia::audio", "multimedia::encoding"]
 keywords = ["audio", "codec", "decoder", "alac"]
 edition = "2018"
+rust-version = "1.53"
 
 [dependencies]
 log = "0.4"
