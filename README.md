@@ -82,13 +82,14 @@ A status of *great* indicates that major development is complete and that the fe
 | Format   | Status    | Feature Flag | Default | Crate                       |
 |----------|-----------|--------------|---------|-----------------------------|
 | ISO/MP4  | Great     | `isomp4`     | No      | [`symphonia-format-isomp4`] |
-| MKV/WebM | -         | `mkv`        | Yes     | `symphonia-format-mkv`      |
+| MKV/WebM | Good      | `mkv`        | Yes     | [`symphonia-format-mkv`]    |
 | OGG      | Great     | `ogg`        | Yes     | [`symphonia-format-ogg`]    |
 | Wave     | Excellent | `wav`        | Yes     | [`symphonia-format-wav`]    |
 
 [`symphonia-format-isomp4`]: https://docs.rs/symphonia-format-isomp4
 [`symphonia-format-ogg`]: https://docs.rs/symphonia-format-ogg
 [`symphonia-format-wav`]: https://docs.rs/symphonia-format-wav
+[`symphonia-format-mkv`]: https://docs.rs/symphonia-format-mkv
 
 ### Codecs (Decoders)
 
@@ -104,7 +105,7 @@ A status of *great* indicates that major development is complete and that the fe
 | MP3                          | Excellent | `mp3`        | No      | [`symphonia-bundle-mp3`]   |
 | Opus                         | -         | `opus`       | Yes     | `symphonia-codec-opus`     |
 | PCM                          | Excellent | `pcm`        | Yes     | [`symphonia-codec-pcm`]    |
-| Vorbis                       | Great     | `vorbis`     | Yes     | [`symphonia-codec-vorbis`] |
+| Vorbis                       | Excellent | `vorbis`     | Yes     | [`symphonia-codec-vorbis`] |
 | WavPack                      | -         | `wavpack`    | Yes     | `symphonia-codec-wavpack`  |
 
 A `symphonia-bundle-*` package is a combination of a decoder and a native demuxer.
