@@ -39,7 +39,7 @@ pub use scoped_stream::ScopedStream;
 ///
 /// Despite requiring the [`std::io::Seek`] trait, seeking is an optional capability that can be
 /// queried at runtime.
-pub trait MediaSource: io::Read + io::Seek + Send {
+pub trait MediaSource: io::Read + io::Seek + Send + Sync {
     /// Returns if the source is seekable. This may be an expensive operation.
     fn is_seekable(&self) -> bool;
 
@@ -74,7 +74,7 @@ impl MediaSource for std::fs::File {
     }
 }
 
-impl<T: std::convert::AsRef<[u8]> + Send> MediaSource for io::Cursor<T> {
+impl<T: std::convert::AsRef<[u8]> + Send + Sync> MediaSource for io::Cursor<T> {
     /// Always returns true since a `io::Cursor<u8>` is always seekable.
     fn is_seekable(&self) -> bool {
         true
@@ -118,7 +118,7 @@ impl<R: io::Read + Send> ReadOnlySource<R> {
     }
 }
 
-impl<R: io::Read + Send> MediaSource for ReadOnlySource<R> {
+impl<R: io::Read + Send + Sync> MediaSource for ReadOnlySource<R> {
     fn is_seekable(&self) -> bool {
         false
     }

@@ -440,7 +440,7 @@ pub struct DecoderOptions {
 
 /// A `Decoder` implements a codec's decode algorithm. It consumes `Packet`s and produces
 /// `AudioBuffer`s.
-pub trait Decoder: Send {
+pub trait Decoder: Send + Sync {
     /// Attempts to instantiates a `Decoder` using the provided `CodecParameters`.
     fn try_new(params: &CodecParameters, options: &DecoderOptions) -> Result<Self>
     where

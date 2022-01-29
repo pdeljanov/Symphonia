@@ -21,7 +21,7 @@ pub struct SampleTiming {
     pub dur: u32,
 }
 
-pub trait StreamSegment: Send {
+pub trait StreamSegment: Send + Sync {
     /// Gets the sequence number of this segment.
     fn sequence_num(&self) -> u32;
 
