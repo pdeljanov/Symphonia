@@ -37,7 +37,7 @@ symphonia-codec-vorbis = { version = "0.4", path = "../symphonia-codec-vorbis", 
 symphonia-format-wav = { version = "0.4", path = "../symphonia-format-wav", optional = true }
 symphonia-format-ogg = { version = "0.4", path = "../symphonia-format-ogg", optional = true }
 symphonia-format-isomp4 = { version = "0.4", path = "../symphonia-format-isomp4", optional = true }
-symphonia-format-mkv = { version = "0.0.1", path = "../symphonia-format-mkv", optional = true }
+symphonia-format-mkv = { version = "0.4", path = "../symphonia-format-mkv", optional = true }
 
 # Show documentation with all features enabled on docs.rs
 [package.metadata.docs.rs]
