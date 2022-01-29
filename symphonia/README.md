@@ -20,14 +20,14 @@
     <a href="https://deps.rs/repo/github/pdeljanov/symphonia">
         <img src="https://deps.rs/repo/github/pdeljanov/symphonia/status.svg" />
     </a>
-    <a href="https://blog.rust-lang.org/2021/03/25/Rust-1.51.0.html">
-        <img alt="Rustc Version 1.49.0+" src="https://img.shields.io/badge/rustc-1.51%2B-lightgrey.svg"/>
+    <a href="https://blog.rust-lang.org/2021/03/25/Rust-1.53.0.html">
+        <img alt="Rustc Version 1.53.0+" src="https://img.shields.io/badge/rustc-1.53%2B-lightgrey.svg"/>
     </a>
 </p>
 
 <p>
     <strong>
-        Symphonia is a pure Rust audio decoding and media demuxing library supporting AAC, ALAC, FLAC, MP3, MP4, OGG, Vorbis, and WAV.
+        Symphonia is a pure Rust audio decoding and media demuxing library supporting AAC, ALAC, FLAC, MKV, MP3, MP4, OGG, Vorbis, WAV, and WebM.
     </strong>
 </p>
 
