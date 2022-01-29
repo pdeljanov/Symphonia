@@ -45,6 +45,9 @@ pub struct TrackState {
     pub(crate) default_frame_duration: Option<u64>,
 }
 
+/// Matroska (MKV) and WebM demultiplexer.
+///
+/// `MkvReader` implements a demuxer for the Matroska and WebM formats.
 pub struct MkvReader {
     /// Iterator over EBML element headers
     iter: ElementIterator<MediaSourceStream>,

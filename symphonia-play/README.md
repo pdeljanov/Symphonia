@@ -30,6 +30,7 @@ symphonia-play --decode-only /path/to/file
 cat /path/to/file | symphonia-play -
 curl -s https://radio.station.com/stream | symphonia-play -
 youtube-dl -f 140 <url> -o - | symphonia-play -
+yt-dlp -f 140 <url> -o - | symphonia-play -
 ```
 
 ## License

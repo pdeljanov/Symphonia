@@ -22,24 +22,27 @@
 //!
 //! The following container formats are supported.
 //!
-//! | Format   | Feature Flag | Default |
-//! |----------|--------------|---------|
-//! | ISO/MP4  | `isomp4`     | No      |
-//! | OGG      | `ogg`        | Yes     |
-//! | Wave     | `wav`        | Yes     |
+//! | Format   | Feature Flag | Gapless* | Default |
+//! |----------|--------------|----------|---------|
+//! | ISO/MP4  | `isomp4`     | No       | No      |
+//! | MKV/WebM | `mkv`        | No       | Yes     |
+//! | OGG      | `ogg`        | Yes      | Yes     |
+//! | Wave     | `wav`        | Yes      | Yes     |
+//!
+//! \* Gapless playback requires support from both the demuxer and decoder.
 //!
 //! ## Codecs
 //!
 //! The following codecs are supported.
 //!
-//! | Codec    | Feature Flag | Default |
-//! |----------|--------------|---------|
-//! | AAC-LC   | `aac`        | No      |
-//! | ALAC     | `alac`       | No      |
-//! | FLAC     | `flac`       | Yes     |
-//! | MP3      | `mp3`        | No      |
-//! | PCM      | `pcm`        | Yes     |
-//! | Vorbis   | `vorbis`     | Yes     |
+//! | Codec    | Feature Flag | Gapless | Default |
+//! |----------|--------------|---------|---------|
+//! | AAC-LC   | `aac`        | No      | No      |
+//! | ALAC     | `alac`       | Yes     | No      |
+//! | FLAC     | `flac`       | Yes     | Yes     |
+//! | MP3      | `mp3`        | Yes     | No      |
+//! | PCM      | `pcm`        | Yes     | Yes     |
+//! | Vorbis   | `vorbis`     | Yes     | Yes     |
 //!
 //! ## Metadata
 //!

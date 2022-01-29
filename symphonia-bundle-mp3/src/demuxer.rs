@@ -23,9 +23,9 @@ use super::common::{FrameHeader, SAMPLES_PER_GRANULE};
 use super::header;
 use super::header::MPEG_HEADER_LEN;
 
-/// MPEG1 and MPEG2 audio frame reader.
+/// MPEG1 and MPEG2 audio elementary stream reader.
 ///
-/// `Mp3Reader` implements a demuxer for the MPEG1 and MPEG2 audio frame format.
+/// `Mp3Reader` implements a demuxer for the MPEG1 and MPEG2 audio elementary stream.
 pub struct Mp3Reader {
     reader: MediaSourceStream,
     tracks: Vec<Track>,
