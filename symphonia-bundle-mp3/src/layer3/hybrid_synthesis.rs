@@ -299,7 +299,7 @@ pub(super) fn hybrid_synthesis(
             let sub_band: &mut [f32; 18] = (&mut samples[start..(start + 18)]).try_into().unwrap();
 
             // Perform the 36-point on the entire sub-band.
-            imdct36::imdct36(&sub_band, &mut output);
+            imdct36::imdct36(sub_band, &mut output);
 
             // Overlap the lower half of the IMDCT output (values 0..18) with the upper values of
             // the IMDCT (values 18..36) of the /previous/ iteration of the IMDCT. While doing this
@@ -326,7 +326,7 @@ pub(super) fn hybrid_synthesis(
             // Perform the 12-point IMDCT on each of the 3 short windows within the sub-band (6
             // samples each).
             let mut output = [0f32; 36];
-            imdct12_win(&sub_band, window, &mut output);
+            imdct12_win(sub_band, window, &mut output);
 
             // Overlap the lower half of the IMDCT output (values 0..18) with the upper values of
             // the IMDCT (values 18..36) of the /previous/ iteration of the IMDCT.
