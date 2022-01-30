@@ -10,18 +10,22 @@ use std::io;
 use symphonia_core::errors::Result;
 use symphonia_core::io::{FiniteStream, ReadBytes};
 
-pub fn read_syncsafe_leq32<B: ReadBytes>(reader: &mut B, bit_width: u32) -> Result<u32> {
+pub fn read_syncsafe_leq32<B: ReadBytes>(reader: &mut B, bit_width: u8) -> Result<u32> {
     debug_assert!(bit_width <= 32);
 
     let mut result = 0u32;
     let mut bits_read = 0;
 
     while bits_read < bit_width {
-        bits_read += 7;
-        result |= u32::from(reader.read_u8()? & 0x7f) << (bit_width - bits_read);
+        // Ensure bits_read never exceeds the bit width which will cause an overflow
+        let next_read = (bit_width - bits_read).min(7);
+        bits_read += next_read;
+        // The mask should have of the bits below 2 ^ nex_read set to 1
+        let mask = (1 << next_read) - 1;
+        result |= u32::from(reader.read_u8()? & mask) << (bit_width - bits_read);
     }
 
-    Ok(result & (0xffff_ffff >> (32 - bit_width)))
+    Ok(result)
 }
 
 pub fn decode_unsynchronisation(buf: &mut [u8]) -> &mut [u8] {
@@ -172,5 +176,30 @@ impl<B: ReadBytes + FiniteStream> ReadBytes for UnsyncStream<B> {
     fn pos(&self) -> u64 {
         // Not required.
         unimplemented!();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::read_syncsafe_leq32;
+    use symphonia_core::io::BufReader;
+
+    #[test]
+    fn verify_read_syncsafe_leq32() {
+        let mut stream = BufReader::new(&[3, 4, 80, 1, 15]);
+        assert_eq!(101875743, read_syncsafe_leq32(&mut stream, 32).unwrap());
+
+        // Special case: for a bit depth that is not a multiple of 7 such as 32
+        // we need to ensure the mask is correct.
+        // In this case, the final iteration should read 4 bits and have a mask of 0b0000_1111.
+        // 0b0000_1111 has a 0 in 16's place so testing mask & 16 will ensure this is working.
+        let mut stream = BufReader::new(&[16, 16, 16, 16, 16]);
+        assert_eq!(541098240, read_syncsafe_leq32(&mut stream, 32).unwrap());
+
+        let mut stream = BufReader::new(&[3, 4, 80, 1]);
+        assert_eq!(6367233, read_syncsafe_leq32(&mut stream, 28).unwrap());
+
+        let mut stream = BufReader::new(&[3, 4, 80, 1]);
+        assert_eq!(0, read_syncsafe_leq32(&mut stream, 0).unwrap());
     }
 }
