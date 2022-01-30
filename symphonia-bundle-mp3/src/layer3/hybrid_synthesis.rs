@@ -8,7 +8,7 @@
 // Justification: Some loops are better expressed without a range loop.
 #![allow(clippy::needless_range_loop)]
 
-use std::f64;
+use std::{convert::TryInto, f64};
 
 use lazy_static::lazy_static;
 
@@ -294,16 +294,18 @@ pub(super) fn hybrid_synthesis(
 
         // For each of the 32 sub-bands (18 samples each)...
         for sb in 0..n_long_bands {
+            // casting to a know-size slice lets the compiler elide bounds checks
             let start = 18 * sb;
+            let sub_band: &mut [f32; 18] = (&mut samples[start..(start + 18)]).try_into().unwrap();
 
             // Perform the 36-point on the entire sub-band.
-            imdct36::imdct36(&samples[start..(start + 18)], &mut output);
+            imdct36::imdct36(sub_band, &mut output);
 
             // Overlap the lower half of the IMDCT output (values 0..18) with the upper values of
             // the IMDCT (values 18..36) of the /previous/ iteration of the IMDCT. While doing this
             // also apply the window.
             for i in 0..18 {
-                samples[start + i] = overlap[sb][i] + (output[i] * window[i]);
+                sub_band[i] = overlap[sb][i] + (output[i] * window[i]);
                 overlap[sb][i] = output[18 + i] * window[18 + i];
             }
         }
@@ -317,17 +319,19 @@ pub(super) fn hybrid_synthesis(
 
         // For each of the remaining 32 sub-bands (18 samples each)...
         for sb in n_long_bands..32 {
+            // casting to a know-size slice lets the compiler elide bounds checks
             let start = 18 * sb;
+            let sub_band: &mut [f32; 18] = (&mut samples[start..(start + 18)]).try_into().unwrap();
 
             // Perform the 12-point IMDCT on each of the 3 short windows within the sub-band (6
             // samples each).
             let mut output = [0f32; 36];
-            imdct12_win(&samples[start..(start + 18)], window, &mut output);
+            imdct12_win(sub_band, window, &mut output);
 
             // Overlap the lower half of the IMDCT output (values 0..18) with the upper values of
             // the IMDCT (values 18..36) of the /previous/ iteration of the IMDCT.
             for i in 0..18 {
-                samples[start + i] = overlap[sb][i] + output[i];
+                sub_band[i] = overlap[sb][i] + output[i];
                 overlap[sb][i] = output[18 + i];
             }
         }
@@ -336,9 +340,7 @@ pub(super) fn hybrid_synthesis(
 
 /// Performs the 12-point IMDCT, and windowing for each of the 3 short windows of a short block, and
 /// then overlap-adds the result.
-fn imdct12_win(x: &[f32], window: &[f32; 36], out: &mut [f32; 36]) {
-    debug_assert!(x.len() == 18);
-
+fn imdct12_win(x: &[f32; 18], window: &[f32; 36], out: &mut [f32; 36]) {
     let cos12 = &IMDCT_HALF_COS_12;
 
     for w in 0..3 {
@@ -536,9 +538,7 @@ mod imdct36 {
     /// Signal Processing, vol. 48, no. 10, pp. 990-994, 2001.
     ///
     /// https://ieeexplore.ieee.org/document/974789
-    pub fn imdct36(x: &[f32], y: &mut [f32; 36]) {
-        debug_assert!(x.len() == 18);
-
+    pub fn imdct36(x: &[f32; 18], y: &mut [f32; 36]) {
         let mut dct = [0f32; 18];
 
         dct_iv(x, &mut dct);
@@ -569,9 +569,7 @@ mod imdct36 {
     /// Continutation of `imdct36`.
     ///
     /// Step 2: Mapping N/2-point DCT-IV to N/2-point SDCT-II.
-    fn dct_iv(x: &[f32], y: &mut [f32; 18]) {
-        debug_assert!(x.len() == 18);
-
+    fn dct_iv(x: &[f32; 18], y: &mut [f32; 18]) {
         // Scale factors for input samples. Computed from (16).
         // 2 * cos(PI * (2*m + 1) / (2*36)
         const SCALE: [f32; 18] = [
