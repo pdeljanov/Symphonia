@@ -189,6 +189,10 @@ mod tests {
         let mut stream = BufReader::new(&[3, 4, 80, 1, 15]);
         assert_eq!(101875743, read_syncsafe_leq32(&mut stream, 32).unwrap());
 
+        // Special case: for a bit depth that is not a multiple of 7 such as 32
+        // we need to ensure the mask is correct.
+        // In this case, the final iteration should read 4 bits and have a mask of 0x4f.
+        // 0x4f == 1001111 and has a 0 in 16's place so testing mask & 16 will ensure this is working.
         let mut stream = BufReader::new(&[16, 16, 16, 16, 16]);
         assert_eq!(541098240, read_syncsafe_leq32(&mut stream, 32).unwrap());
 
