@@ -20,12 +20,12 @@ pub fn read_syncsafe_leq32<B: ReadBytes>(reader: &mut B, bit_width: u8) -> Resul
         // Ensure bits_read never exceeds the bit width which will cause an overflow
         let next_read = (bit_width - bits_read).min(7);
         bits_read += next_read;
-        // The second-last hexadecimal digit of the mask should be equal to the number of bits read
-        let mask = 0x0f + (next_read << 4);
+        // The mask should have of the bits below 2 ^ nex_read set to 1
+        let mask = (1 << next_read) - 1;
         result |= u32::from(reader.read_u8()? & mask) << (bit_width - bits_read);
     }
 
-    Ok(result & (0xffff_ffff >> (32 - bit_width)))
+    Ok(result)
 }
 
 pub fn decode_unsynchronisation(buf: &mut [u8]) -> &mut [u8] {
@@ -191,12 +191,15 @@ mod tests {
 
         // Special case: for a bit depth that is not a multiple of 7 such as 32
         // we need to ensure the mask is correct.
-        // In this case, the final iteration should read 4 bits and have a mask of 0x4f.
-        // 0x4f == 1001111 and has a 0 in 16's place so testing mask & 16 will ensure this is working.
+        // In this case, the final iteration should read 4 bits and have a mask of 0b0000_1111.
+        // 0b0000_1111 has a 0 in 16's place so testing mask & 16 will ensure this is working.
         let mut stream = BufReader::new(&[16, 16, 16, 16, 16]);
         assert_eq!(541098240, read_syncsafe_leq32(&mut stream, 32).unwrap());
 
         let mut stream = BufReader::new(&[3, 4, 80, 1]);
         assert_eq!(6367233, read_syncsafe_leq32(&mut stream, 28).unwrap());
+
+        let mut stream = BufReader::new(&[3, 4, 80, 1]);
+        assert_eq!(0, read_syncsafe_leq32(&mut stream, 0).unwrap());
     }
 }
