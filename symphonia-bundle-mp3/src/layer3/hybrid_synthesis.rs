@@ -8,7 +8,7 @@
 // Justification: Some loops are better expressed without a range loop.
 #![allow(clippy::needless_range_loop)]
 
-use std::{f64, convert::TryInto};
+use std::{convert::TryInto, f64};
 
 use lazy_static::lazy_static;
 
@@ -341,7 +341,6 @@ pub(super) fn hybrid_synthesis(
 /// Performs the 12-point IMDCT, and windowing for each of the 3 short windows of a short block, and
 /// then overlap-adds the result.
 fn imdct12_win(x: &[f32; 18], window: &[f32; 36], out: &mut [f32; 36]) {
-
     let cos12 = &IMDCT_HALF_COS_12;
 
     for w in 0..3 {
@@ -540,7 +539,6 @@ mod imdct36 {
     ///
     /// https://ieeexplore.ieee.org/document/974789
     pub fn imdct36(x: &[f32; 18], y: &mut [f32; 36]) {
-
         let mut dct = [0f32; 18];
 
         dct_iv(x, &mut dct);
@@ -572,7 +570,6 @@ mod imdct36 {
     ///
     /// Step 2: Mapping N/2-point DCT-IV to N/2-point SDCT-II.
     fn dct_iv(x: &[f32; 18], y: &mut [f32; 18]) {
-
         // Scale factors for input samples. Computed from (16).
         // 2 * cos(PI * (2*m + 1) / (2*36)
         const SCALE: [f32; 18] = [
