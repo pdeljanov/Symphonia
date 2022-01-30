@@ -10,7 +10,7 @@ use std::io;
 use symphonia_core::errors::Result;
 use symphonia_core::io::{FiniteStream, ReadBytes};
 
-pub fn read_syncsafe_leq32<B: ReadBytes>(reader: &mut B, bit_width: u32) -> Result<u32> {
+pub fn read_syncsafe_leq32<B: ReadBytes>(reader: &mut B, bit_width: u8) -> Result<u32> {
     debug_assert!(bit_width <= 32);
 
     let mut result = 0u32;
@@ -18,8 +18,11 @@ pub fn read_syncsafe_leq32<B: ReadBytes>(reader: &mut B, bit_width: u32) -> Resu
 
     while bits_read < bit_width {
         // Ensure bits_read never exceeds the bit width which will cause an overflow
-        bits_read = (bits_read + 7).min(bit_width);
-        result |= u32::from(reader.read_u8()? & 0x7f) << (bit_width - bits_read);
+        let next_read = (bit_width - bits_read).min(7);
+        bits_read += next_read;
+        // The second-last hexadecimal digit of the mask should be equal to the number of bits read
+        let mask = 0x0f + (next_read << 4);
+        result |= u32::from(reader.read_u8()? & mask) << (bit_width - bits_read);
     }
 
     Ok(result & (0xffff_ffff >> (32 - bit_width)))
@@ -185,6 +188,9 @@ mod tests {
     fn verify_read_syncsafe_leq32() {
         let mut stream = BufReader::new(&[3, 4, 80, 1, 15]);
         assert_eq!(101875743, read_syncsafe_leq32(&mut stream, 32).unwrap());
+
+        let mut stream = BufReader::new(&[16, 16, 16, 16, 16]);
+        assert_eq!(541098240, read_syncsafe_leq32(&mut stream, 32).unwrap());
 
         let mut stream = BufReader::new(&[3, 4, 80, 1]);
         assert_eq!(6367233, read_syncsafe_leq32(&mut stream, 28).unwrap());
