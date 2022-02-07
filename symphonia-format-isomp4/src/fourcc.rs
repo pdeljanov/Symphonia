@@ -23,6 +23,9 @@ impl FourCc {
 
 impl fmt::Debug for FourCc {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        String::from_utf8_lossy(&self.val).fmt(f)
+        match std::str::from_utf8(&self.val) {
+            Ok(name) => f.write_str(name),
+            _ => write!(f, "{:x?}", self.val),
+        }
     }
 }

@@ -5,24 +5,31 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::errors::{decode_error, Result};
+use symphonia_core::errors::Result;
 use symphonia_core::io::ReadBytes;
 
-use crate::atoms::{Atom, AtomHeader};
+use crate::{
+    atoms::{Atom, AtomHeader},
+    fourcc::FourCc,
+};
 
-/// Type of track.
+use log::warn;
+
+/// Handler type.
 #[derive(Debug, PartialEq)]
-pub enum TrackType {
-    /// Video track.
+pub enum HandlerType {
+    /// Video handler.
     Video,
-    /// Audio track.
+    /// Audio handler.
     Sound,
-    /// Subtitle track.
+    /// Subtitle handler.
     Subtitle,
-    /// Metadata track.
+    /// Metadata handler.
     Metadata,
-    /// Text track.
+    /// Text handler.
     Text,
+    /// Unknown handler type.
+    Other([u8; 4]),
 }
 
 /// Handler atom.
@@ -30,9 +37,9 @@ pub enum TrackType {
 pub struct HdlrAtom {
     /// Atom header.
     header: AtomHeader,
-    /// Track type.
-    pub track_type: TrackType,
-    /// Name of component.
+    /// Handler type.
+    pub handler_type: HandlerType,
+    /// Human-readable handler name.
     pub name: String,
 }
 
@@ -44,27 +51,29 @@ impl Atom for HdlrAtom {
     fn read<B: ReadBytes>(reader: &mut B, header: AtomHeader) -> Result<Self> {
         let (_, _) = AtomHeader::read_extra(reader)?;
 
-        // Ignore the component type.
+        // Always 0 for MP4, but for Quicktime this contains the component type.
         let _ = reader.read_quad_bytes()?;
 
-        let track_type = match &reader.read_quad_bytes()? {
-            b"vide" => TrackType::Video,
-            b"soun" => TrackType::Sound,
-            b"meta" => TrackType::Metadata,
-            b"subt" => TrackType::Subtitle,
-            b"text" => TrackType::Text,
-            _ => return decode_error("isomp4: illegal track type"),
+        let handler_type = match &reader.read_quad_bytes()? {
+            b"vide" => HandlerType::Video,
+            b"soun" => HandlerType::Sound,
+            b"meta" => HandlerType::Metadata,
+            b"subt" => HandlerType::Subtitle,
+            b"text" => HandlerType::Text,
+            &hdlr => {
+                warn!("unknown handler type {:?}", FourCc::new(hdlr));
+                HandlerType::Other(hdlr)
+            }
         };
 
-        // Ignore component manufacturer, flags, and flags mask.
+        // These bytes are reserved for MP4, but for QuickTime they contain the component
+        // manufacturer, flags, and flags mask.
         reader.ignore_bytes(4 * 3)?;
 
-        // Component name occupies the remainder of the atom.
-        let mut buf = vec![0; (header.data_len - 24) as usize];
-        reader.read_buf_exact(&mut buf)?;
+        // Human readable UTF-8 string of the track type.
+        let buf = reader.read_boxed_slice_exact((header.data_len - 24) as usize)?;
+        let name = String::from_utf8_lossy(&buf).to_string();
 
-        let name = String::from_utf8(buf).unwrap_or_else(|_| String::from("(err)"));
-
-        Ok(HdlrAtom { header, track_type, name })
+        Ok(HdlrAtom { header, handler_type, name })
     }
 }
