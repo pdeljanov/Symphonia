@@ -956,20 +956,64 @@ impl RawSample for f64 {
     }
 }
 
+/// Raw Samples owned or borrowed Storage.
+enum RawSampleStorage<'a, S: Sample + RawSample> {
+    Owned(Vec<S::RawType>),
+    Borrowed(&'a mut [u8])
+}
+
+impl<'a, S: Sample + RawSample> RawSampleStorage<'a, S> {
+    /// Returns an immutable slice containing the entire storage content.
+    fn as_slice(&self) -> &[S::RawType] {
+        use RawSampleStorage::*;
+        match self {
+            Owned(owned) => owned.as_slice(),
+            Borrowed(slice) => bytemuck::cast_slice(slice),
+        }
+    }
+
+    /// Returns a mutable slice containing the entire storage content.
+    fn as_mut_slice(&mut self) -> &mut [S::RawType] {
+        use RawSampleStorage::*;
+        match self {
+            Owned(ref mut owned) => owned.as_mut_slice(),
+            Borrowed(ref mut slice) => bytemuck::cast_slice_mut(slice),
+        }
+    }
+}
+
+impl<S: Sample + RawSample> From<Vec<S::RawType>> for RawSampleStorage<'static, S> {
+    fn from(owned: Vec<S::RawType>) -> Self {
+        RawSampleStorage::Owned(owned)
+    }
+}
+
+impl<'a, S: Sample + RawSample> From<&'a mut [u8]> for RawSampleStorage<'a, S> {
+    fn from(borrowed: &'a mut [u8]) -> Self {
+        assert_eq!(
+            borrowed.len() % mem::size_of::<S::RawType>(),
+            0,
+            "inconsistent borrowed storage size",
+        );
+
+        RawSampleStorage::Borrowed(borrowed)
+    }
+}
+
 /// A `RawSampleBuffer`, is a byte-oriented sample buffer. All samples copied to this buffer are
 /// converted into their packed data-type and stored as a stream of bytes. `RawSampleBuffer` is
 /// mean't for safely importing and exporting sample data to and from Symphonia as raw bytes.
-pub struct RawSampleBuffer<S: Sample + RawSample> {
-    buf: Vec<S::RawType>,
+pub struct RawSampleBuffer<'a, S: Sample + RawSample> {
+    buf: RawSampleStorage<'a, S>,
     n_written: usize,
     // Might take your heart.
     sample_format: PhantomData<S>,
 }
 
-impl<S: Sample + RawSample> RawSampleBuffer<S> {
-    /// Instantiate a new `RawSampleBuffer` using the specified signal specification and of the given
+impl<S: Sample + RawSample> RawSampleBuffer<'static, S> {
+    /// Instantiates a new `RawSampleBuffer` using the specified signal specification and of the given
     /// duration.
-    pub fn new(duration: Duration, spec: SignalSpec) -> RawSampleBuffer<S> {
+    pub fn new(duration: Duration, spec: SignalSpec) -> RawSampleBuffer<'static, S> {
         // The number of channels * duration cannot exceed u64::MAX.
         assert!(duration <= u64::MAX / spec.channels.count() as u64, "duration too large");
 
@@ -987,9 +1031,49 @@ impl<S: Sample + RawSample> RawSampleBuffer<S> {
         // Allocate enough memory for all the samples and fill the buffer with silence.
         let buf = vec![S::MID.into_raw_sample(); n_samples as usize];
 
-        RawSampleBuffer { buf, n_written: 0, sample_format: PhantomData }
+        RawSampleBuffer { buf: buf.into(), n_written: 0, sample_format: PhantomData }
+    }
+}
+
+impl<'a, S: Sample + RawSample> RawSampleBuffer<'a, S> {
+    /// Instantiates a new `RawSampleBuffer` based on the provided storage.
+    ///
+    /// The provided `storage` must be large enough to received the target bytes stream.
+    /// See [`Self::required_raw_capacity`].
+    // FIXME duration seems more like n_frames
+    pub fn from(
+        storage: &'a mut [u8],
+        duration: Duration,
+        spec: SignalSpec,
+    ) -> RawSampleBuffer<'a, S> {
+        // FIXME another approach could be to expect an exact sized slice.
+        assert!(
+            storage.len() >= Self::required_raw_capacity(duration, spec),
+            "Insufficient capacity in storage",
+        );
+
+        RawSampleBuffer { buf: storage.into(), n_written: 0, sample_format: PhantomData }
     }
 
+    /// Computes the required capacity for a bytes slice to store the raw samples.
+    // FIXME duration seems more like n_frames
+    pub fn required_raw_capacity(duration: Duration, spec: SignalSpec) -> usize {
+        use std::convert::TryFrom;
+
+        // The number of channels * duration cannot exceed u64::MAX.
+        assert!(duration <= u64::MAX / spec.channels.count() as u64, "duration too large");
+
+        // The total number of samples the buffer will store.
+        let n_samples = duration * spec.channels.count() as u64;
+
+        // Note: we could return a `Result` so that caller would get
+        // a chance to request a shorter duration.
+        usize::try_from(n_samples * mem::size_of::<S::RawType>() as u64)
+            .expect("duration too large")
+    }
+}
+
+impl<'a, S: Sample + RawSample> RawSampleBuffer<'a, S> {
     /// Gets the number of written samples.
     pub fn len(&self) -> usize {
         self.n_written
@@ -1002,7 +1086,7 @@ impl<S: Sample + RawSample> RawSampleBuffer<S> {
 
     /// Gets the maximum number of samples the `RawSampleBuffer` may store.
     pub fn capacity(&self) -> usize {
-        self.buf.len()
+        self.buf.as_slice().len()
     }
 
     /// Gets an immutable slice to the bytes of the sample's written in the `RawSampleBuffer`.
@@ -1010,7 +1094,11 @@ impl<S: Sample + RawSample> RawSampleBuffer<S> {
         // Get a slice to the written raw samples in the buffer, and convert from &[RawType] to
         // &[u8]. Since &[u8] has the least strict alignment requirements, this should always be
         // safe and therefore cast_slice should never panic.
-        bytemuck::cast_slice(&self.buf[..self.n_written])
+        use RawSampleStorage::*;
+        match self.buf {
+            Owned(ref owned) => bytemuck::cast_slice(&owned.as_slice()[..self.n_written]),
+            Borrowed(ref slice) => &slice[..self.n_written * mem::size_of::<S::RawType>()],
+        }
     }
 
     /// Copies all audio data from the source `AudioBufferRef` in planar channel order into the
@@ -1047,7 +1135,7 @@ impl<S: Sample + RawSample> RawSampleBuffer<S> {
         // of samples that will be copied from the source buffer.
         assert!(self.capacity() >= n_samples);
 
-        let dst_buf = &mut self.buf[..n_samples];
+        let dst_buf = &mut self.buf.as_mut_slice()[..n_samples];
 
         for (ch, dst_ch) in dst_buf.chunks_exact_mut(src.n_frames).enumerate() {
             let src_ch = src.chan(ch);
@@ -1070,7 +1158,7 @@ impl<S: Sample + RawSample> RawSampleBuffer<S> {
         // of samples that will be copied from the source buffer.
         assert!(self.capacity() >= n_samples);
 
-        let dst_buf = &mut self.buf[..n_samples];
+        let dst_buf = &mut self.buf.as_mut_slice()[..n_samples];
 
         for (ch, dst_ch) in dst_buf.chunks_exact_mut(src.n_frames).enumerate() {
             let src_ch = src.chan(ch);
@@ -1119,7 +1207,7 @@ impl<S: Sample + RawSample> RawSampleBuffer<S> {
         assert!(self.capacity() >= n_samples);
 
         // The destination buffer slice.
-        let dst_buf = &mut self.buf[..n_samples];
+        let dst_buf = &mut self.buf.as_mut_slice()[..n_samples];
 
         // Provide slightly optimized interleave algorithms for Mono and Stereo buffers.
         match n_channels {
@@ -1169,7 +1257,7 @@ impl<S: Sample + RawSample> RawSampleBuffer<S> {
         assert!(self.capacity() >= n_samples);
 
         // The destination buffer slice.
-        let dst_buf = &mut self.buf[..n_samples];
+        let dst_buf = &mut self.buf.as_mut_slice()[..n_samples];
 
         // Provide slightly optimized interleave algorithms for Mono and Stereo buffers.
         match n_channels {

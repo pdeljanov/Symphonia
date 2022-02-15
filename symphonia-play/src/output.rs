@@ -42,7 +42,7 @@ mod pulseaudio {
 
     pub struct PulseAudioOutput {
         pa: psimple::Simple,
-        sample_buf: RawSampleBuffer<f32>,
+        sample_buf: RawSampleBuffer<'static, f32>,
     }
 
     impl PulseAudioOutput {
