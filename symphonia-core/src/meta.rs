@@ -466,6 +466,16 @@ impl<'a> Metadata<'a> {
         self.revisions.front()
     }
 
+    /// Skips to, and gets an immutable reference to the latest, and therefore newest, revision of the metadata.
+    pub fn skip_to_latest(&mut self) -> Option<&MetadataRevision> {
+        loop {
+            if self.pop().is_none() {
+                break;
+            }
+        }
+        self.current()
+    }
+
     /// If there are newer `Metadata` revisions, advances the `MetadataLog` by discarding the
     /// current revision and replacing it with the next revision, returning the discarded
     /// `Metadata`. When there are no newer revisions, `None` is returned. As such, `pop` will never
