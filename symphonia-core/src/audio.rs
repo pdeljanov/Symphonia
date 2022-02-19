@@ -957,18 +957,40 @@ impl RawSample for f64 {
 }
 
 /// Raw Samples owned or borrowed Storage.
-enum RawSampleStorage<'a, S: Sample + RawSample> {
+enum RawSampleStorage<'a, S: RawSample> {
     Owned(Vec<S::RawType>),
-    Borrowed(&'a mut [u8])
+    Borrowed(&'a mut [S::RawType]),
 }
 
-impl<'a, S: Sample + RawSample> RawSampleStorage<'a, S> {
+impl<'a, S: RawSample> RawSampleStorage<'a, S> {
+    /// Computes the capacity required to store the raw samples.
+    // FIXME duration seems more like n_frames
+    // FIXME we could return a Result so that caller gets a chance to
+    // to handle the error and try with a less frames.
+    fn required_capacity(duration: Duration, spec: SignalSpec) -> RequiredCapacity {
+        use std::convert::TryInto;
+
+        // The total number of samples the buffer will store.
+        let n_samples = duration
+            .try_into()
+            .ok()
+            .and_then(|dur: usize| dur.checked_mul(spec.channels.count()))
+            .expect("duration too large");
+
+        // Practically speaking, it is not possible to allocate more than usize::MAX bytes of raw
+        // samples. Make sure we won't exceed this limit.
+        let n_bytes = n_samples.checked_mul(mem::size_of::<S::RawType>())
+            .expect("duration too large");
+
+        RequiredCapacity { n_samples, n_bytes }
+    }
+
     /// Returns an immutable slice containing the entire storage content.
     fn as_slice(&self) -> &[S::RawType] {
         use RawSampleStorage::*;
         match self {
             Owned(owned) => owned.as_slice(),
-            Borrowed(slice) => bytemuck::cast_slice(slice),
+            Borrowed(slice) => slice,
         }
     }
 
@@ -977,25 +999,19 @@ impl<'a, S: Sample + RawSample> RawSampleStorage<'a, S> {
         use RawSampleStorage::*;
         match self {
             Owned(ref mut owned) => owned.as_mut_slice(),
-            Borrowed(ref mut slice) => bytemuck::cast_slice_mut(slice),
+            Borrowed(ref mut slice) => slice,
         }
     }
 }
 
-impl<S: Sample + RawSample> From<Vec<S::RawType>> for RawSampleStorage<'static, S> {
+impl<S: RawSample> From<Vec<S::RawType>> for RawSampleStorage<'static, S> {
     fn from(owned: Vec<S::RawType>) -> Self {
         RawSampleStorage::Owned(owned)
     }
 }
 
-impl<'a, S: Sample + RawSample> From<&'a mut [u8]> for RawSampleStorage<'a, S> {
-    fn from(borrowed: &'a mut [u8]) -> Self {
-        assert_eq!(
-            borrowed.len() % mem::size_of::<S::RawType>(),
-            0,
-            "inconsistent borrowed storage size",
-        );
-
+impl<'a, S: RawSample> From<&'a mut [S::RawType]> for RawSampleStorage<'a, S> {
+    fn from(borrowed: &'a mut [S::RawType]) -> Self {
         RawSampleStorage::Borrowed(borrowed)
     }
 }
@@ -1010,26 +1026,21 @@ pub struct RawSampleBuffer<'a, S: Sample + RawSample> {
     sample_format: PhantomData<S>,
 }
 
+struct RequiredCapacity {
+    n_samples: usize,
+    n_bytes: usize,
+}
+
 impl<S: Sample + RawSample> RawSampleBuffer<'static, S> {
     /// Instantiates a new `RawSampleBuffer` using the specified signal specification and of the given
     /// duration.
     pub fn new(duration: Duration, spec: SignalSpec) -> RawSampleBuffer<'static, S> {
-        // The number of channels * duration cannot exceed u64::MAX.
-        assert!(duration <= u64::MAX / spec.channels.count() as u64, "duration too large");
-
         // The total number of samples the buffer will store.
-        let n_samples = duration * spec.channels.count() as u64;
-
-        // Practically speaking, it is not possible to allocate more than usize::MAX bytes of raw
-        // samples. This assertion ensures the potential downcast of n_samples to usize below is
-        // safe.
-        assert!(
-            n_samples <= (usize::MAX / mem::size_of::<S::RawType>()) as u64,
-            "duration too large"
-        );
+        let RequiredCapacity { n_samples, .. } =
+            RawSampleStorage::<'static, S>::required_capacity(duration, spec);
 
         // Allocate enough memory for all the samples and fill the buffer with silence.
-        let buf = vec![S::MID.into_raw_sample(); n_samples as usize];
+        let buf = vec![S::MID.into_raw_sample(); n_samples];
 
         RawSampleBuffer { buf: buf.into(), n_written: 0, sample_format: PhantomData }
     }
@@ -1038,38 +1049,30 @@ impl<S: Sample + RawSample> RawSampleBuffer<'static, S> {
 impl<'a, S: Sample + RawSample> RawSampleBuffer<'a, S> {
     /// Instantiates a new `RawSampleBuffer` based on the provided storage.
     ///
-    /// The provided `storage` must be large enough to received the target bytes stream.
-    /// See [`Self::required_raw_capacity`].
+    /// The provided `storage` must be large enough to received the target samples.
+    /// See [`Self::required_byte_capacity`].
     // FIXME duration seems more like n_frames
     pub fn from(
-        storage: &'a mut [u8],
+        storage: &'a mut [S::RawType],
         duration: Duration,
         spec: SignalSpec,
     ) -> RawSampleBuffer<'a, S> {
         // FIXME another approach could be to expect an exact sized slice.
-        assert!(
-            storage.len() >= Self::required_raw_capacity(duration, spec),
-            "Insufficient capacity in storage",
-        );
+        let RequiredCapacity { n_samples, .. } =
+            RawSampleStorage::<'a, S>::required_capacity(duration, spec);
+        assert!(storage.len() >= n_samples, "Insufficient capacity in storage");
 
         RawSampleBuffer { buf: storage.into(), n_written: 0, sample_format: PhantomData }
     }
 
-    /// Computes the required capacity for a bytes slice to store the raw samples.
+    /// Computes the byte count required to store the raw samples.
     // FIXME duration seems more like n_frames
-    pub fn required_raw_capacity(duration: Duration, spec: SignalSpec) -> usize {
-        use std::convert::TryFrom;
-
-        // The number of channels * duration cannot exceed u64::MAX.
-        assert!(duration <= u64::MAX / spec.channels.count() as u64, "duration too large");
-
-        // The total number of samples the buffer will store.
-        let n_samples = duration * spec.channels.count() as u64;
-
-        // Note: we could return a `Result` so that caller would get
-        // a chance to request a shorter duration.
-        usize::try_from(n_samples * mem::size_of::<S::RawType>() as u64)
-            .expect("duration too large")
+    // FIXME we could return a Result so that caller gets a chance to
+    // to handle the error and try with a less frames.
+    pub fn required_byte_capacity(duration: Duration, spec: SignalSpec) -> usize {
+        let RequiredCapacity { n_bytes, .. } =
+            RawSampleStorage::<'a, S>::required_capacity(duration, spec);
+        n_bytes
     }
 }
 
@@ -1094,11 +1097,7 @@ impl<'a, S: Sample + RawSample> RawSampleBuffer<'a, S> {
         // Get a slice to the written raw samples in the buffer, and convert from &[RawType] to
         // &[u8]. Since &[u8] has the least strict alignment requirements, this should always be
         // safe and therefore cast_slice should never panic.
-        use RawSampleStorage::*;
-        match self.buf {
-            Owned(ref owned) => bytemuck::cast_slice(&owned.as_slice()[..self.n_written]),
-            Borrowed(ref slice) => &slice[..self.n_written * mem::size_of::<S::RawType>()],
-        }
+        bytemuck::cast_slice(&self.buf.as_slice()[..self.n_written])
     }
 
     /// Copies all audio data from the source `AudioBufferRef` in planar channel order into the
