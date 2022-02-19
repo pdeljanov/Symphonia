@@ -188,7 +188,10 @@ fn get_next_audio_buf_best_effort(inst: &mut DecoderInstance) -> Result<()> {
     }
 }
 
-fn copy_audio_buf_to_sample_buf(src: AudioBufferRef<'_>, dst: &mut Option<SampleBuffer<f32>>) {
+fn copy_audio_buf_to_sample_buf(
+    src: AudioBufferRef<'_>,
+    dst: &mut Option<SampleBuffer<'static, f32>>,
+) {
     if dst.is_none() {
         let spec = *src.spec();
         let duration = src.capacity() as u64;
