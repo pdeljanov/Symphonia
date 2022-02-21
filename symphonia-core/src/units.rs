@@ -116,7 +116,11 @@ impl From<f64> for Time {
     }
 }
 
-/// A `TimeBase` is the conversion factor between a `TimeStamp` and real-world seconds.
+/// A `TimeBase` is the conversion factor between time, expressed in seconds, and a `TimeStamp` or
+/// `Duration`.
+///
+/// In other words, a `TimeBase` is the length in seconds of one tick of a `TimeStamp` or
+/// `Duration`.
 #[derive(Copy, Clone, Debug, Default, PartialEq, PartialOrd)]
 pub struct TimeBase {
     /// The numerator.

@@ -253,10 +253,17 @@ pub struct CodecParameters {
     /// The sample rate of the audio in Hz.
     pub sample_rate: Option<u32>,
 
-    /// The `TimeBase`.
+    /// The timebase of the stream.
+    ///
+    /// The timebase is the length of time in seconds of a single tick of a timestamp or duration.
+    /// It can be used to convert any timestamp or duration related to the stream into seconds.
     pub time_base: Option<TimeBase>,
 
-    /// The length of the encoded stream in number of frames.
+    /// The length of the stream in number of frames.
+    ///
+    /// If a timebase is available, this field can be used to calculate the total duration of the
+    /// stream in seconds by using [`TimeBase::calc_time`] and passing the number of frames as the
+    /// timestamp.
     pub n_frames: Option<u64>,
 
     /// The timestamp of the first frame.
