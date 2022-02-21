@@ -16,7 +16,7 @@
 // Disable to better express the specification.
 #![allow(clippy::collapsible_else_if)]
 
-use symphonia_core::audio::AudioBufferRef;
+use symphonia_core::audio::{AsAudioBufferRef, AudioBuffer, AudioBufferRef};
 use symphonia_core::codecs::{
     CodecDescriptor, CodecParameters, Decoder, DecoderOptions, FinalizeResult, CODEC_TYPE_OPUS,
 };
@@ -29,6 +29,18 @@ use symphonia_core::support_codec;
 pub struct OpusDecoder {
     ident_header: IdentificationHeader,
     params: CodecParameters,
+    buffer: AudioBuffer<f32>,
+}
+
+/// The operating mode for the Opus Decoder.
+/// See RFC 6716 Section 3.1, https://tools.ietf.org/pdf/rfc7845.pdf.
+enum Mode {
+    /// SILK-only mode.
+    Silk,
+    /// CELT-only mode.
+    Celt,
+    /// SILK and CELT mode.
+    Hybrid,
 }
 
 impl Decoder for OpusDecoder {
@@ -41,10 +53,7 @@ impl Decoder for OpusDecoder {
         let mut reader = BufReader::new(extra_data);
 
         let ident_header = read_ident_header(&mut reader)?;
-        Ok(OpusDecoder {
-            ident_header,
-            params: params.clone(),
-        })
+        Ok(OpusDecoder { ident_header, params: params.clone(), buffer: AudioBuffer::unused() })
     }
 
     fn supported_codecs() -> &'static [CodecDescriptor] {
@@ -61,7 +70,22 @@ impl Decoder for OpusDecoder {
 
     #[allow(unused_variables)]
     fn decode(&mut self, packet: &Packet) -> Result<AudioBufferRef<'_>> {
-        unimplemented!()
+        let mut reader = packet.as_buf_reader();
+
+        // Configuring the decoder from the table of contents (toc) byte.
+        // See RFC 6716 Section 3.1, https://tools.ietf.org/pdf/rfc7845.pdf.
+        let toc = reader.read_byte()?;
+        let config = toc >> 3;
+        let mode = match config {
+            0..=11 => Mode::Silk,
+            12..=15 => Mode::Hybrid,
+            16..=31 => Mode::Celt,
+            _ => unreachable!(),
+        };
+        let stereo_flag = toc & 0b00000100;
+        let frame_count_code = toc & 0b00000011;
+
+        Ok(self.buffer.as_audio_buffer_ref())
     }
 
     fn finalize(&mut self) -> FinalizeResult {
@@ -85,12 +109,12 @@ pub struct IdentificationHeader {
     pub channel_mapping: [u8; 8],
 }
 
-/** Create an IdentificationHeader from \a reader.
- *
- * If the header is invalid, a DecodeError is returned.
- *
- * See RFC 7845 Section 5.1, https://tools.ietf.org/pdf/rfc7845.pdf.
- */
+// Create an IdentificationHeader from \a reader.
+//
+// If the header is invalid, a DecodeError is returned.
+//
+// See RFC 7845 Section 5.1, https://tools.ietf.org/pdf/rfc7845.pdf.
+//
 fn read_ident_header<B: ReadBytes>(reader: &mut B) -> Result<IdentificationHeader> {
     // The first 8 bytes are the magic signature ASCII bytes.
     const OGG_OPUS_MAGIC_SIGNATURE: &[u8] = b"OpusHead";
@@ -197,10 +221,7 @@ mod tests {
         let mut reader = BufReader::new(&bytes);
         let result = read_ident_header(&mut reader);
         assert!(result.is_err());
-        assert_eq!(
-            result.unwrap_err().to_string(),
-            "malformed stream: incorrect opus signature"
-        );
+        assert_eq!(result.unwrap_err().to_string(), "malformed stream: incorrect opus signature");
     }
 
     #[test]
@@ -212,10 +233,7 @@ mod tests {
         let mut reader = BufReader::new(&bytes);
         let result = read_ident_header(&mut reader);
         assert!(result.is_err());
-        assert_eq!(
-            result.unwrap_err().to_string(),
-            "malformed stream: incorrect opus version"
-        );
+        assert_eq!(result.unwrap_err().to_string(), "malformed stream: incorrect opus version");
     }
 
     #[test]
@@ -227,10 +245,7 @@ mod tests {
         let mut reader = BufReader::new(&bytes);
         let result = read_ident_header(&mut reader);
         assert!(result.is_err());
-        assert_eq!(
-            result.unwrap_err().to_string(),
-            "malformed stream: output channel count is 0"
-        );
+        assert_eq!(result.unwrap_err().to_string(), "malformed stream: output channel count is 0");
     }
 
     #[test]
@@ -242,10 +257,7 @@ mod tests {
         let mut reader = BufReader::new(&bytes);
         let result = read_ident_header(&mut reader);
         assert!(result.is_err());
-        assert_eq!(
-            result.unwrap_err().to_string(),
-            "malformed stream: reserved mapping family"
-        );
+        assert_eq!(result.unwrap_err().to_string(), "malformed stream: reserved mapping family");
     }
 
     #[test]
@@ -289,10 +301,7 @@ mod tests {
         let mut reader = BufReader::new(&bytes);
         let result = read_ident_header(&mut reader);
         assert!(result.is_err());
-        assert_eq!(
-            result.unwrap_err().to_string(),
-            "malformed stream: stream count is 0"
-        );
+        assert_eq!(result.unwrap_err().to_string(), "malformed stream: stream count is 0");
     }
 
     #[test]

@@ -13,7 +13,7 @@ edition = "2018"
 rust-version = "1.53"
 
 [features]
-default = ["flac", "mkv", "ogg", "pcm", "vorbis", "wav"]
+default = ["flac", "mkv", "ogg", "pcm", "vorbis", "wav", "opus"]
 aac = ["symphonia-codec-aac"]
 alac = ["symphonia-codec-alac"]
 flac = ["symphonia-bundle-flac"]
@@ -24,6 +24,7 @@ ogg = ["symphonia-format-ogg"]
 pcm = ["symphonia-codec-pcm"]
 vorbis = ["symphonia-codec-vorbis"]
 wav = ["symphonia-format-wav"]
+opus = ["symphonia-codec-opus"]
 
 [dependencies]
 lazy_static = "1.4.0"
@@ -39,6 +40,7 @@ symphonia-format-wav = { version = "0.5", path = "../symphonia-format-wav", opti
 symphonia-format-ogg = { version = "0.5", path = "../symphonia-format-ogg", optional = true }
 symphonia-format-isomp4 = { version = "0.5", path = "../symphonia-format-isomp4", optional = true }
 symphonia-format-mkv = { version = "0.5", path = "../symphonia-format-mkv", optional = true }
+symphonia-codec-opus = { version = "0.0.1", path = "../symphonia-codec-opus", optional = true }
 
 # Show documentation with all features enabled on docs.rs
 [package.metadata.docs.rs]
