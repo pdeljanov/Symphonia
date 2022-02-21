@@ -690,7 +690,7 @@ fn print_progress(ts: u64, dur: Option<u64>, tb: Option<TimeBase>) {
         let mins = (t.seconds % (60 * 60)) / 60;
         let secs = f64::from((t.seconds % 60) as u32) + t.frac;
 
-        write!(output, "\r⏵ {}:{:0>2}:{:0>4.1}", hours, mins, secs).unwrap();
+        write!(output, "\r\u{25b6}\u{fe0f}  {}:{:0>2}:{:0>4.1}", hours, mins, secs).unwrap();
 
         if let Some(dur) = dur {
             let d = tb.calc_time(dur.saturating_sub(ts));
@@ -704,7 +704,7 @@ fn print_progress(ts: u64, dur: Option<u64>, tb: Option<TimeBase>) {
         }
     }
     else {
-        write!(output, "\r⏵ {}", ts).unwrap();
+        write!(output, "\r\u{25b6}\u{fe0f}  {}", ts).unwrap();
     }
 
     // Flush immediately since stdout is buffered.
