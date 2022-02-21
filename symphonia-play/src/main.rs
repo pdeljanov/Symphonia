@@ -476,6 +476,9 @@ fn print_tracks(tracks: &[Track]) {
                     println!("|          Frames:          {}", n_frames);
                 }
             }
+            if let Some(tb) = params.time_base {
+                println!("|          Time Base:       {}", tb);
+            }
             if let Some(padding) = params.delay {
                 println!("|          Encoder Delay:   {}", padding);
             }

@@ -7,6 +7,8 @@
 
 //! The `units` module provides definitions for common units.
 
+use core::fmt;
+
 /// A `TimeStamp` represents an instantenous instant in time since the start of a stream. One
 /// `TimeStamp` "tick" is equivalent to the stream's `TimeBase` in seconds.
 pub type TimeStamp = u64;
@@ -217,6 +219,12 @@ impl TimeBase {
 impl From<TimeBase> for f64 {
     fn from(timebase: TimeBase) -> Self {
         f64::from(timebase.numer) / f64::from(timebase.denom)
+    }
+}
+
+impl fmt::Display for TimeBase {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}/{}", self.numer, self.denom)
     }
 }
 
