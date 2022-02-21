@@ -242,15 +242,19 @@ mod cpal {
             duration: Duration,
             device: &cpal::Device,
         ) -> Result<Box<dyn AudioOutput>> {
+            let num_channels = spec.channels.count();
+
             // Output audio stream config.
             let config = cpal::StreamConfig {
-                channels: spec.channels.count() as cpal::ChannelCount,
+                channels: num_channels as cpal::ChannelCount,
                 sample_rate: cpal::SampleRate(spec.rate),
                 buffer_size: cpal::BufferSize::Default,
             };
 
-            // Instantiate a ring buffer capable of buffering 8K (arbitrarily chosen) samples.
-            let ring_buf = SpscRb::new(8 * 1024);
+            // Create a ring buffer with a capacity for up-to 200ms of audio.
+            let ring_len = ((200 * spec.rate as usize) / 1000) * num_channels;
+
+            let ring_buf = SpscRb::new(ring_len);
             let (ring_buf_producer, ring_buf_consumer) = (ring_buf.producer(), ring_buf.consumer());
 
             let stream_result = device.build_output_stream(
