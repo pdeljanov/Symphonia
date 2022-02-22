@@ -24,7 +24,7 @@ use symphonia::core::io::{MediaSourceStream, ReadOnlySource};
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
 
-use clap::{App, Arg};
+use clap::Arg;
 use log::{info, warn};
 
 /// The absolute maximum allowable sample delta. Around 2^-17 (-102.4dB).
@@ -337,7 +337,7 @@ fn run_test(path: &str, opts: &TestOptions, result: &mut TestResult) -> Result<(
 fn main() {
     pretty_env_logger::init();
 
-    let matches = App::new("Symphonia Check")
+    let matches = clap::Command::new("Symphonia Check")
         .version("1.0")
         .author("Philip Deljanov <philip.deljanov@gmail.com>")
         .about("Check Symphonia output with a reference decoding")

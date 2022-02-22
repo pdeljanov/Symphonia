@@ -25,7 +25,7 @@ use symphonia::core::meta::{ColorMode, MetadataOptions, MetadataRevision, Tag, V
 use symphonia::core::probe::{Hint, ProbeResult};
 use symphonia::core::units::{Time, TimeBase};
 
-use clap::{App, Arg};
+use clap::Arg;
 use log::{error, info, warn};
 
 mod output;
@@ -33,7 +33,7 @@ mod output;
 fn main() {
     pretty_env_logger::init();
 
-    let matches = App::new("Symphonia Play")
+    let matches = clap::Command::new("Symphonia Play")
         .version("1.0")
         .author("Philip Deljanov <philip.deljanov@gmail.com>")
         .about("Play audio with Symphonia")
