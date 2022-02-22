@@ -7,7 +7,7 @@
 
 //! The `units` module provides definitions for common units.
 
-use core::fmt;
+use std::fmt;
 
 /// A `TimeStamp` represents an instantenous instant in time since the start of a stream. One
 /// `TimeStamp` "tick" is equivalent to the stream's `TimeBase` in seconds.
