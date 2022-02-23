@@ -16,7 +16,9 @@
 // Disable to better express the specification.
 #![allow(clippy::collapsible_else_if)]
 
-use symphonia_core::audio::GenericAudioBufferRef;
+use symphonia_core::audio::{
+    AsGenericAudioBufferRef, AudioBuffer, AudioSpec, Channels, GenericAudioBufferRef,
+};
 use symphonia_core::codecs::audio::well_known::CODEC_ID_OPUS;
 use symphonia_core::codecs::audio::{
     AudioCodecParameters, AudioDecoder, AudioDecoderOptions, FinalizeResult,
@@ -32,6 +34,18 @@ use symphonia_core::support_audio_codec;
 pub struct OpusDecoder {
     ident_header: IdentificationHeader,
     params: AudioCodecParameters,
+    buffer: AudioBuffer<f32>,
+}
+
+/// The operating mode for the Opus Decoder.
+/// See RFC 6716 Section 3.1, https://tools.ietf.org/pdf/rfc7845.pdf.
+enum Mode {
+    /// SILK-only mode.
+    Silk,
+    /// CELT-only mode.
+    Celt,
+    /// SILK and CELT mode.
+    Hybrid,
 }
 
 impl OpusDecoder {
@@ -44,7 +58,11 @@ impl OpusDecoder {
         let mut reader = BufReader::new(extra_data);
 
         let ident_header = read_ident_header(&mut reader)?;
-        Ok(OpusDecoder { ident_header, params: params.clone() })
+        Ok(OpusDecoder {
+            ident_header,
+            params: params.clone(),
+            buffer: AudioBuffer::new(AudioSpec::new(0, Channels::None), 0),
+        })
     }
 }
 
@@ -63,7 +81,22 @@ impl AudioDecoder for OpusDecoder {
 
     #[allow(unused_variables)]
     fn decode(&mut self, packet: &Packet) -> Result<GenericAudioBufferRef<'_>> {
-        unimplemented!()
+        let mut reader = packet.as_buf_reader();
+
+        // Configuring the decoder from the table of contents (toc) byte.
+        // See RFC 6716 Section 3.1, https://tools.ietf.org/pdf/rfc7845.pdf.
+        let toc = reader.read_byte()?;
+        let config = toc >> 3;
+        let mode = match config {
+            0..=11 => Mode::Silk,
+            12..=15 => Mode::Hybrid,
+            16..=31 => Mode::Celt,
+            _ => unreachable!(),
+        };
+        let stereo_flag = toc & 0b00000100;
+        let frame_count_code = toc & 0b00000011;
+
+        Ok(self.buffer.as_generic_audio_buffer_ref())
     }
 
     fn finalize(&mut self) -> FinalizeResult {
@@ -103,12 +136,11 @@ pub struct IdentificationHeader {
     pub channel_mapping: [u8; 8],
 }
 
-/** Create an IdentificationHeader from \a reader.
- *
- * If the header is invalid, a DecodeError is returned.
- *
- * See RFC 7845 Section 5.1, https://tools.ietf.org/pdf/rfc7845.pdf.
- */
+/// Create an IdentificationHeader from a reader.
+///
+/// If the header is invalid, a DecodeError is returned.
+///
+/// See RFC 7845 Section 5.1, https://tools.ietf.org/pdf/rfc7845.pdf.
 fn read_ident_header<B: ReadBytes>(reader: &mut B) -> Result<IdentificationHeader> {
     // The first 8 bytes are the magic signature ASCII bytes.
     const OGG_OPUS_MAGIC_SIGNATURE: &[u8] = b"OpusHead";
