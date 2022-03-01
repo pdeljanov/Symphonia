@@ -197,13 +197,22 @@ fn read_main_data(
 
         for ch in 0..header.n_channels() {
             let byte_index = part2_3_begin >> 3;
-            let bit_index = part2_3_begin & 0x7;
 
-            let mut bs = BitReaderLtr::new(&main_data[byte_index..]);
+            // Create a bit reader at the expected starting bit position.
+            let mut bs = if byte_index < main_data.len() {
+                let mut bs = BitReaderLtr::new(&main_data[byte_index..]);
 
-            if bit_index > 0 {
-                bs.ignore_bits(bit_index as u32)?;
+                let bit_index = part2_3_begin & 0x7;
+
+                if bit_index > 0 {
+                    bs.ignore_bits(bit_index as u32)?;
+                }
+
+                bs
             }
+            else {
+                return decode_error("mp3: invalid main_data offset");
+            };
 
             // Read the scale factors (part2) and get the number of bits read.
             let part2_len = if header.is_mpeg1() {
