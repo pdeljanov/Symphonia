@@ -14,7 +14,9 @@ libfuzzer-sys = "0.4"
 
 [dependencies.symphonia]
 path = ".."
-features = ["mp3", "aac"]
+default-features = false
+features = ["aac", "alac", "flac", "isomp4", "mp3", "ogg", "pcm", "vorbis", "wav"]
+
 
 # Prevent this from interfering with workspaces
 [workspace]
@@ -23,5 +25,11 @@ members = ["."]
 [[bin]]
 name = "decode_any"
 path = "fuzz_targets/decode_any.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "decode_mp3"
+path = "fuzz_targets/decode_mp3.rs"
 test = false
 doc = false
