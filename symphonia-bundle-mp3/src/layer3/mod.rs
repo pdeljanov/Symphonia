@@ -293,13 +293,8 @@ pub fn decode_frame(
     };
 
     // Buffer main data into the bit resevoir.
-    let main_data_len = header.frame_size - side_info_len - if header.has_crc { 2 } else { 0 };
-
-    let underflow = state.resevoir.fill(
-        &buf[side_info_len..],
-        frame_data.main_data_begin as usize,
-        main_data_len,
-    )?;
+    let underflow =
+        state.resevoir.fill(&buf[side_info_len..], frame_data.main_data_begin as usize)?;
 
     // Read the main data (scale factors and spectral samples).
     match read_main_data(header, 8 * underflow, &mut frame_data, state) {

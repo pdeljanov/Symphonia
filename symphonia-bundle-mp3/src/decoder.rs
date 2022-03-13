@@ -10,6 +10,7 @@ use symphonia_core::codecs::{CodecDescriptor, CodecParameters, CODEC_TYPE_MP3};
 use symphonia_core::codecs::{Decoder, DecoderOptions, FinalizeResult};
 use symphonia_core::errors::{decode_error, unsupported_error, Result};
 use symphonia_core::formats::Packet;
+use symphonia_core::io::FiniteStream;
 use symphonia_core::support_codec;
 
 use super::{common::*, header, layer3};
@@ -27,13 +28,26 @@ impl Mp3Decoder {
 
         let header = header::read_frame_header(&mut reader)?;
 
-        // The buffer can only be created after the first frame is decoded. Technically, it can
-        // change throughout the stream as well...
+        // The packet should be the size stated in the header.
+        if header.frame_size != reader.bytes_available() as usize {
+            return decode_error("mp3: invalid packet length");
+        }
+
+        // The audio buffer can only be created after the first frame is decoded.
         if self.buf.is_unused() {
             self.buf = AudioBuffer::new(1152, header.spec());
         }
+        else {
+            // Ensure the packet contains an audio frame with the same signal specification as the
+            // buffer.
+            //
+            // TODO: Is it worth it to support changing signal specifications?
+            if self.buf.spec() != &header.spec() {
+                return decode_error("mp3: invalid audio buffer signal spec for packet");
+            }
+        }
 
-        // Clear the audio output buffer.
+        // Clear the audio buffer.
         self.buf.clear();
 
         // Choose the decode step based on the MPEG layer and the current codec type.

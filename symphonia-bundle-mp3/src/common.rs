@@ -361,16 +361,13 @@ impl BitResevoir {
         BitResevoir { buf: vec![0u8; 2048].into_boxed_slice(), len: 0, consumed: 0 }
     }
 
-    pub fn fill(
-        &mut self,
-        pkt_main_data: &[u8],
-        main_data_begin: usize,
-        main_data_size: usize,
-    ) -> Result<u32> {
+    pub fn fill(&mut self, pkt_main_data: &[u8], main_data_begin: usize) -> Result<u32> {
+        let main_data_len = pkt_main_data.len();
+
         // The value `main_data_begin` indicates the number of bytes from the previous frame(s) to
         // reuse. It must always be less than or equal to maximum amount of bytes the resevoir can
         // hold taking into account the additional data being added to the resevoir.
-        let main_data_end = main_data_begin + main_data_size;
+        let main_data_end = main_data_begin + main_data_len;
 
         if main_data_end > self.buf.len() {
             return decode_error("mp3: invalid main_data length, will exceed resevoir buffer");
@@ -402,8 +399,8 @@ impl BitResevoir {
             // is particularly common with online radio streams. In this case, copy the main data
             // of the current packet into the resevoir, then return the number of bytes that are
             // missing.
-            self.buf[unread..unread + main_data_size].copy_from_slice(pkt_main_data);
-            self.len = unread + main_data_size;
+            self.buf[unread..unread + main_data_len].copy_from_slice(pkt_main_data);
+            self.len = unread + main_data_len;
 
             // The number of bytes that will be missing.
             let underflow = (main_data_begin - unread) as u32;
