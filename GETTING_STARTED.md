@@ -1,5 +1,7 @@
 # Getting Started
 
+Last updated for `v0.5.0`.
+
 ## Multimedia Basics
 
 A track of audio consists of a packetized (chunked) codec bitstream. The codec bitstream is consumed by a decoder one packet at a time to produce a stream of audio samples (PCM). The audio samples can then be played back by the audio hardware.
@@ -19,6 +21,14 @@ Likewise, a consumer of codec bitstream packets is known as a decoder and implem
 Therefore, in Symphonia, the basic process of decoding a particular audio track involves obtaining packets from a `FormatReader` and then decoding them with a `Decoder`.
 
 ## Basic Usage
+
+### Enable crate features
+
+By default, Symphonia only enables support for royalty-free or open-standard media formats (OGG, Matroska/WebM, Wave) and codecs (FLAC, Vorbis, PCM).
+
+Notably, if you want MP3 support, the `mp3` feature must be enabled. For AAC or ALAC support, enable `isomp4` (to enable the MP4/M4A container), and either `aac` or `alac` for each codec respectively.
+
+Make sure to consult the README for the latest set of features available!
 
 ### Create a media source
 
@@ -65,6 +75,8 @@ let src = ReadOnlySource::new(std::io::stdin());
 Symphonia can automatically detect the media format of a provided source and instantiate the correct format reader. Alternately, if the specific format is known beforehand, one could just instantiate the appropriate format reader manually.
 
 Automatic detection is the preferred option for most cases.
+
+> :warning: Please be aware that misdetection can occur! If you know for certain what format and codec to use, consider instantiating them manually. Enabling more format support can reduce the chances of misdetection. See [enable crate features](#enable-crate-features).
 
 To automatically detect the media format, a `symphonia::core::probe::Probe` is used. A `Probe` takes a `MediaSourceStream` and examines it to determine what the media format is, and if the format is supported, returns the appropriate reader for the format. If metadata was encountered while probing, it will also be returned with the reader.
 
@@ -320,7 +332,7 @@ match decoded {
     _ => {
         // Repeat for the different sample formats.
         unimplemented!()
-    }        
+    }
 }
 ```
 
@@ -346,7 +358,7 @@ match decoded {
     _ => {
         // Repeat for the different sample formats.
         unimplemented!()
-    }        
+    }
 }
 ```
 
