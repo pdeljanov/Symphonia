@@ -412,6 +412,7 @@ fn is_frame_header_similar(header: &FrameHeader, sync: u32) -> bool {
         if header.version == candidate.version
             && header.layer == candidate.layer
             && header.sample_rate == candidate.sample_rate
+            && header.n_channels() == candidate.n_channels()
         {
             return true;
         }
