@@ -385,9 +385,11 @@ fn read_mpeg_frame_strict(reader: &mut MediaSourceStream) -> Result<(FrameHeader
         // Read a sync word from the stream. If this read fails then the file may have ended and
         // this check cannot be performed.
         if let Ok(sync) = header::read_frame_header_word_no_sync(reader) {
-            // If the stream is not synced to the next frame then reject the current packet
-            // since the stream likely synced to random data.
-            if !header::is_frame_header_word_synced(sync) {
+            // If the stream is not synced to the next frame's sync word, or the next frame header
+            // is not parseable or similar to the current frame header, then reject the current
+            // packet since the stream likely synced to random data.
+            if !header::is_frame_header_word_synced(sync) || !is_frame_header_similar(&header, sync)
+            {
                 warn!("skipping junk at {} bytes", pos - packet.len() as u64);
 
                 // Seek back to the second byte of the rejected packet to prevent syncing to the
@@ -395,9 +397,6 @@ fn read_mpeg_frame_strict(reader: &mut MediaSourceStream) -> Result<(FrameHeader
                 reader.seek_buffered_rev(packet.len() + MPEG_HEADER_LEN - 1);
                 continue;
             }
-
-            // TODO: The MPEG version, layer, and sample rate should generally not change within
-            // a stream. Consider checking if these match as well.
         }
 
         // Jump back to the position before the next header was read.
@@ -405,6 +404,20 @@ fn read_mpeg_frame_strict(reader: &mut MediaSourceStream) -> Result<(FrameHeader
 
         break Ok((header, packet));
     }
+}
+
+/// Check if a sync word parses to a frame header that is similar to the one provided.
+fn is_frame_header_similar(header: &FrameHeader, sync: u32) -> bool {
+    if let Ok(candidate) = header::parse_frame_header(sync) {
+        if header.version == candidate.version
+            && header.layer == candidate.layer
+            && header.sample_rate == candidate.sample_rate
+        {
+            return true;
+        }
+    }
+
+    false
 }
 
 #[derive(Default)]
