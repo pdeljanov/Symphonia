@@ -25,6 +25,9 @@ use symphonia_core::formats::Packet;
 use symphonia_core::io::{BufReader, ReadBytes};
 use symphonia_core::support_codec;
 
+mod range_decoder;
+use range_decoder::RangeDecoder;
+
 #[allow(dead_code)]
 pub struct OpusDecoder {
     ident_header: IdentificationHeader,
@@ -41,6 +44,21 @@ enum Mode {
     Celt,
     /// SILK and CELT mode.
     Hybrid,
+}
+
+/// The bandwidth of the current audio packet.
+/// See RFC 6716 Section 2 Table 1 and RFC 6716 Section 4.3 Table 55.
+enum Bandwidth {
+    /// 4 kHz, index 12
+    NarrowBand,
+    /// 6 kHz, index 16
+    MediumBand,
+    /// 8 kHz, index 16
+    WideBand,
+    /// 12 kHz, index 18
+    SuperWideBand,
+    /// 20 kHz, index 20
+    FullBand,
 }
 
 impl Decoder for OpusDecoder {
@@ -82,8 +100,35 @@ impl Decoder for OpusDecoder {
             16..=31 => Mode::Celt,
             _ => unreachable!(),
         };
+        let bandwidth = match config {
+            0..=3 => Bandwidth::NarrowBand,
+            4..=7 => Bandwidth::MediumBand,
+            8..=11 => Bandwidth::WideBand,
+            12..=13 => Bandwidth::SuperWideBand,
+            14..=15 => Bandwidth::FullBand,
+            16..=19 => Bandwidth::NarrowBand,
+            20..=23 => Bandwidth::WideBand,
+            24..=27 => Bandwidth::SuperWideBand,
+            28..=31 => Bandwidth::FullBand,
+            _ => unreachable!(),
+        };
+
         let stereo_flag = toc & 0b00000100;
         let frame_count_code = toc & 0b00000011;
+
+        // RFC 7845 state that samples are counted "assumming a 48 khz decoding rate".
+        // RFC 6716 record frame sizes in milliseconds.
+        // 48000Hz == 48000/(1second) == 48000/(1000millseconds) == 48/(1millisecond).
+        // See RFC 6716 Section 3.1 Table 2 and RFC 7845 Section 4.
+        let frame_size = match config {
+            0..=11 => [10 * 48, 20 * 48, 40 * 48, 60 * 48][(config % 4) as usize],
+            12..=15 => [10 * 48, 20 * 48][(config % 2) as usize],
+            // Separate 2.5 * 48 into 2 * 48 + 0.5 * 48 to avoid float and division.
+            16..=31 => [2 * 48 + 48 >> 1, 5 * 48, 10 * 48, 20 * 48][(config % 4) as usize],
+            _ => unreachable!(),
+        };
+
+        let mut range_decoder = RangeDecoder::try_new(&mut reader);
 
         Ok(self.buffer.as_audio_buffer_ref())
     }
