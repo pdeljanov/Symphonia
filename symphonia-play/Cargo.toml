@@ -11,7 +11,7 @@ publish = false
 default-run = "symphonia-play"
 
 [dependencies]
-clap = "3.0.0"
+clap = "3.1.0"
 lazy_static = "1.4.0"
 log = { version = "0.4", features = ["release_max_level_info"] }
 pretty_env_logger = "0.4"
