@@ -676,7 +676,11 @@ fn print_progress(ts: u64, dur: Option<u64>, tb: Option<TimeBase>) {
             };
         }
 
-        let i = ((NUM_STEPS as u64).saturating_mul(ts) / dur).clamp(0, NUM_STEPS as u64);
+        let i = (NUM_STEPS as u64)
+            .saturating_mul(ts)
+            .checked_div(dur)
+            .unwrap_or(0)
+            .clamp(0, NUM_STEPS as u64);
 
         &PROGRESS_BAR[i as usize]
     }
