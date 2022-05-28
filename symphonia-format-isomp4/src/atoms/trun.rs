@@ -11,8 +11,6 @@ use symphonia_core::util::bits;
 
 use crate::atoms::{Atom, AtomHeader};
 
-use log::warn;
-
 /// Track fragment run atom.
 #[derive(Debug)]
 pub struct TrunAtom {
@@ -33,12 +31,15 @@ pub struct TrunAtom {
     /// Sample flags for each sample in this run.
     pub sample_flags: Vec<u32>,
     /// The total size of all samples in this run. 0 if the sample size flag is not set.
-    pub total_sample_size: u64,
+    total_sample_size: u64,
     /// The total duration of all samples in this run. 0 if the sample duration flag is not set.
-    pub total_sample_duration: u64,
+    total_sample_duration: u64,
 }
 
 impl TrunAtom {
+    // Track fragment run atom flags.
+    const DATA_OFFSET_PRESENT: u32 = 0x1;
+    const FIRST_SAMPLE_FLAGS_PRESENT: u32 = 0x4;
     const SAMPLE_DURATION_PRESENT: u32 = 0x100;
     const SAMPLE_SIZE_PRESENT: u32 = 0x200;
     const SAMPLE_FLAGS_PRESENT: u32 = 0x400;
@@ -49,9 +50,25 @@ impl TrunAtom {
         self.flags & TrunAtom::SAMPLE_DURATION_PRESENT != 0
     }
 
+    // Indicates if the duration of the first sample is provided.
+    pub fn is_first_sample_duration_present(&self) -> bool {
+        match self.first_sample_flags {
+            Some(flags) => flags & TrunAtom::FIRST_SAMPLE_FLAGS_PRESENT != 0,
+            None => false,
+        }
+    }
+
     /// Indicates if sample sizes are provided.
     pub fn is_sample_size_present(&self) -> bool {
         self.flags & TrunAtom::SAMPLE_SIZE_PRESENT != 0
+    }
+
+    /// Indicates if the size for the first sample is provided.
+    pub fn is_first_sample_size_present(&self) -> bool {
+        match self.first_sample_flags {
+            Some(flags) => flags & TrunAtom::SAMPLE_SIZE_PRESENT != 0,
+            None => false,
+        }
     }
 
     /// Indicates if sample flags are provided.
@@ -65,6 +82,166 @@ impl TrunAtom {
     pub fn are_sample_composition_time_offsets_present(&self) -> bool {
         self.flags & TrunAtom::SAMPLE_COMPOSITION_TIME_OFFSETS_PRESENT != 0
     }
+
+    /// Gets the total duration of all samples.
+    pub fn total_duration(&self, default_dur: u32) -> u64 {
+        if self.is_sample_duration_present() {
+            self.total_sample_duration
+        }
+        else {
+            // The duration of all samples in the track fragment are not explictly known.
+            if self.sample_count > 0 && self.is_first_sample_duration_present() {
+                // The first sample has an explictly recorded duration.
+                u64::from(self.sample_duration[0])
+                    + u64::from(self.sample_count - 1) * u64::from(default_dur)
+            }
+            else {
+                // All samples have the default duration.
+                u64::from(self.sample_count) * u64::from(default_dur)
+            }
+        }
+    }
+
+    /// Gets the total size of all samples.
+    pub fn total_size(&self, default_size: u32) -> u64 {
+        if self.is_sample_size_present() {
+            self.total_sample_size
+        }
+        else {
+            if self.sample_count > 0 && self.is_first_sample_size_present() {
+                u64::from(self.sample_size[0])
+                    + u64::from(self.sample_count - 1) * u64::from(default_size)
+            }
+            else {
+                u64::from(self.sample_count) * u64::from(default_size)
+            }
+        }
+    }
+
+    /// Get the timestamp and duration of a sample. The desired sample is specified by the
+    /// trun-relative sample number, `sample_num_rel`.
+    pub fn sample_timing(&self, sample_num_rel: u32, default_dur: u32) -> (u64, u32) {
+        debug_assert!(sample_num_rel < self.sample_count);
+
+        if self.is_sample_duration_present() {
+            // All sample durations are unique.
+            let ts = if sample_num_rel > 0 {
+                self.sample_duration[..sample_num_rel as usize]
+                    .iter()
+                    .map(|&s| u64::from(s))
+                    .sum::<u64>()
+            }
+            else {
+                0
+            };
+
+            let dur = self.sample_duration[sample_num_rel as usize];
+
+            (ts, dur)
+        }
+        else {
+            // The duration of all samples in the track fragment are not unique.
+            let ts = if sample_num_rel > 0 && self.is_first_sample_duration_present() {
+                // The first sample has a unique duration.
+                u64::from(self.sample_duration[0])
+                    + u64::from(sample_num_rel - 1) * u64::from(default_dur)
+            }
+            else {
+                // Zero or more samples with identical durations.
+                u64::from(sample_num_rel) * u64::from(default_dur)
+            };
+
+            (ts, default_dur)
+        }
+    }
+
+    /// Get the size of a sample. The desired sample is specified by the trun-relative sample
+    /// number, `sample_num_rel`.
+    pub fn sample_size(&self, sample_num_rel: u32, default_size: u32) -> u32 {
+        debug_assert!(sample_num_rel < self.sample_count);
+
+        if self.is_sample_size_present() {
+            self.sample_size[sample_num_rel as usize]
+        }
+        else if sample_num_rel == 0 && self.is_first_sample_size_present() {
+            self.sample_size[0]
+        }
+        else {
+            default_size
+        }
+    }
+
+    /// Get the byte offset and size of a sample. The desired sample is specified by the
+    /// trun-relative sample number, `sample_num_rel`.
+    pub fn sample_offset(&self, sample_num_rel: u32, default_size: u32) -> (u64, u32) {
+        debug_assert!(sample_num_rel < self.sample_count);
+
+        if self.is_sample_size_present() {
+            // All sample sizes are unique.
+            let offset = if sample_num_rel > 0 {
+                self.sample_size[..sample_num_rel as usize]
+                    .iter()
+                    .map(|&s| u64::from(s))
+                    .sum::<u64>()
+            }
+            else {
+                0
+            };
+
+            (offset, self.sample_size[sample_num_rel as usize])
+        }
+        else {
+            // The size of all samples in the track are not unique.
+            let offset = if sample_num_rel > 0 && self.is_first_sample_size_present() {
+                // The first sample has a unique size.
+                u64::from(self.sample_size[0])
+                    + u64::from(sample_num_rel - 1) * u64::from(default_size)
+            }
+            else {
+                // Zero or more identically sized samples.
+                u64::from(sample_num_rel) * u64::from(default_size)
+            };
+
+            (offset, default_size)
+        }
+    }
+
+    /// Get the sample number (relative to the trun) of the sample that contains timestamp `ts`.
+    pub fn ts_sample(&self, ts_rel: u64, default_dur: u32) -> u32 {
+        let mut sample_num = 0;
+        let mut ts_delta = ts_rel;
+
+        if self.is_sample_duration_present() {
+            // If the sample durations are present, then each sample duration is independently
+            // stored. Sum sample durations until the delta is reached.
+            for &dur in &self.sample_duration {
+                if u64::from(dur) > ts_delta {
+                    break;
+                }
+
+                ts_delta -= u64::from(dur);
+                sample_num += 1;
+            }
+        }
+        else {
+            if self.sample_count > 0 && self.is_first_sample_duration_present() {
+                // The first sample duration is unique.
+                let first_sample_dur = u64::from(self.sample_duration[0]);
+
+                if ts_delta >= first_sample_dur {
+                    ts_delta -= first_sample_dur;
+                    sample_num += 1;
+                }
+                else {
+                    ts_delta -= ts_delta;
+                }
+            }
+
+            sample_num += ts_delta.checked_div(u64::from(default_dur)).unwrap_or(0) as u32;
+        }
+
+        sample_num
+    }
 }
 
 impl Atom for TrunAtom {
@@ -73,28 +250,19 @@ impl Atom for TrunAtom {
     }
 
     fn read<B: ReadBytes>(reader: &mut B, header: AtomHeader) -> Result<Self> {
-        // Track fragment run atom flags.
-        const DATA_OFFSET_PRESENT: u32 = 0x1;
-        const FIRST_SAMPLE_FLAGS_PRESENT: u32 = 0x4;
-
         let (_, flags) = AtomHeader::read_extra(reader)?;
 
         let sample_count = reader.read_be_u32()?;
 
-        let data_offset = match flags & DATA_OFFSET_PRESENT {
+        let data_offset = match flags & TrunAtom::DATA_OFFSET_PRESENT {
             0 => None,
             _ => Some(bits::sign_extend_leq32_to_i32(reader.read_be_u32()?, 32)),
         };
 
-        let first_sample_flags = match flags & FIRST_SAMPLE_FLAGS_PRESENT {
+        let first_sample_flags = match flags & TrunAtom::FIRST_SAMPLE_FLAGS_PRESENT {
             0 => None,
             _ => Some(reader.read_be_u32()?),
         };
-
-        // Remember to implement support for truns with first-sample-flags-present.
-        if first_sample_flags.is_some() {
-            todo!("support truns with first-sample-flags-present");
-        }
 
         // If the first-sample-flags-present flag is set, then the sample-flags-present flag should
         // not be set. The samples after the first shall use the default sample flags defined in the
@@ -136,10 +304,6 @@ impl Atom for TrunAtom {
                 // For version 1, this is a i32.
                 let _ = reader.read_be_u32()?;
             }
-        }
-
-        if (flags & TrunAtom::SAMPLE_COMPOSITION_TIME_OFFSETS_PRESENT) != 0 {
-            warn!("ignoring sample composition time offsets.");
         }
 
         Ok(TrunAtom {

@@ -27,7 +27,7 @@ use log::{debug, info, trace, warn};
 pub struct TrackState {
     codec_params: CodecParameters,
     /// The track number.
-    track_num: u32,
+    track_num: usize,
     /// The current segment.
     cur_seg: usize,
     /// The current sample index relative to the track.
@@ -38,7 +38,7 @@ pub struct TrackState {
 
 impl TrackState {
     #[allow(clippy::single_match)]
-    pub fn new(track_num: u32, trak: &TrakAtom) -> Self {
+    pub fn new(track_num: usize, trak: &TrakAtom) -> Self {
         let mut codec_params = CodecParameters::new();
 
         codec_params
@@ -60,7 +60,7 @@ impl TrackState {
 #[derive(Debug)]
 struct NextSampleInfo {
     /// The track number of the next sample.
-    track_num: u32,
+    track_num: usize,
     /// The timestamp of the next sample.
     ts: u64,
     /// The timestamp expressed in seconds.
@@ -123,8 +123,8 @@ impl IsoMp4Reader {
                         Some(NextSampleInfo { track_num: _, ts: _, time, dur: _, seg_idx: _ })
                             if time <= sample_time =>
                         {
-                            // Earliest is less than or equal to the track's next sample presentation
-                            // time. No need to update earliest.
+                            // Earliest is less than or equal to the track's next sample
+                            // presentation time. No need to update earliest.
                         }
                         _ => {
                             // Earliest was either None, or greater than the track's next sample
@@ -229,7 +229,7 @@ impl IsoMp4Reader {
         end_of_stream_error()
     }
 
-    fn seek_track_by_time(&mut self, track_num: u32, time: Time) -> Result<SeekedTo> {
+    fn seek_track_by_time(&mut self, track_num: usize, time: Time) -> Result<SeekedTo> {
         // Convert time to timestamp for the track.
         if let Some(track) = self.tracks.get(track_num as usize) {
             let tb = track.codec_params.time_base.unwrap();
@@ -240,7 +240,7 @@ impl IsoMp4Reader {
         }
     }
 
-    fn seek_track_by_ts(&mut self, track_num: u32, ts: u64) -> Result<SeekedTo> {
+    fn seek_track_by_ts(&mut self, track_num: usize, ts: u64) -> Result<SeekedTo> {
         debug!("seeking track={} to frame_ts={}", track_num, ts);
 
         struct SeekLocation {
@@ -296,7 +296,7 @@ impl IsoMp4Reader {
                 timing.ts as i64 - ts as i64
             );
 
-            Ok(SeekedTo { track_id: track_num, required_ts: ts, actual_ts: timing.ts })
+            Ok(SeekedTo { track_id: track_num as u32, required_ts: ts, actual_ts: timing.ts })
         }
         else {
             // Timestamp was not found.
@@ -454,18 +454,25 @@ impl FormatReader for IsoMp4Reader {
             .traks
             .iter()
             .enumerate()
-            .map(|(t, trak)| TrackState::new(t as u32, trak))
+            .map(|(t, trak)| TrackState::new(t, trak))
             .collect::<Vec<TrackState>>();
 
         // Instantiate a Tracks for all tracks above.
         let tracks = track_states
             .iter()
-            .map(|track| Track::new(track.track_num, track.codec_params()))
+            .map(|track| Track::new(track.track_num as u32, track.codec_params()))
             .collect();
 
         // A Movie Extends (mvex) atom is required to support segmented streams. If the mvex atom is
         // present, wrap it in an Arc so it can be shared amongst all segments.
         let mvex = moov.mvex.take().map(Arc::new);
+
+        // The number of tracks specified in the moov atom must match the number in the mvex atom.
+        if let Some(mvex) = &mvex {
+            if mvex.trexs.len() != moov.traks.len() {
+                return decode_error("isomp4: mvex and moov track number mismatch");
+            }
+        }
 
         let segs: Vec<Box<dyn StreamSegment>> = vec![Box::new(MoovSegment::new(moov))];
 
@@ -520,7 +527,7 @@ impl FormatReader for IsoMp4Reader {
         }
 
         Ok(Packet::new_from_boxed_slice(
-            next_sample_info.track_num,
+            next_sample_info.track_num as u32,
             next_sample_info.ts,
             u64::from(next_sample_info.dur),
             reader.read_boxed_slice_exact(sample_info.len as usize)?,
@@ -546,40 +553,42 @@ impl FormatReader for IsoMp4Reader {
 
         match to {
             SeekTo::TimeStamp { ts, track_id } => {
-                // The seek timestamp is in timebase units specific to the specified (primary) track.
-                // Get the primary track and use the timebase to convert the timestamp into time
-                // units so that the other (secondary) tracks can be seeked.
-                if let Some(primary_track) = self.tracks().get(track_id as usize) {
+                let selected_track_id = track_id as usize;
+
+                // The seek timestamp is in timebase units specific to the selected track. Get the
+                // selected track and use the timebase to convert the timestamp into time units so
+                // that the other tracks can be seeked.
+                if let Some(selected_track) = self.tracks().get(selected_track_id) {
                     // Convert to time units.
-                    let time = primary_track.codec_params.time_base.unwrap().calc_time(ts);
+                    let time = selected_track.codec_params.time_base.unwrap().calc_time(ts);
 
                     // Seek all tracks excluding the primary track to the desired time.
-                    for t in 0..self.track_states.len() as u32 {
-                        if t != track_id {
+                    for t in 0..self.track_states.len() {
+                        if t != selected_track_id {
                             self.seek_track_by_time(t, time)?;
                         }
                     }
 
                     // Seek the primary track and return the result.
-                    self.seek_track_by_ts(track_id, ts)
+                    self.seek_track_by_ts(selected_track_id, ts)
                 }
                 else {
                     seek_error(SeekErrorKind::Unseekable)
                 }
             }
             SeekTo::Time { time, track_id } => {
-                // Select the first track if a primary track was not provided.
-                let primary_track_id = track_id.unwrap_or(0);
+                // Select the first track if a selected track was not provided.
+                let selected_track_id = track_id.unwrap_or(0) as usize;
 
-                // Seek all tracks excluding the primary track and discard the result.
-                for t in 0..self.track_states.len() as u32 {
-                    if t != primary_track_id {
+                // Seek all tracks excluding the selected track and discard the result.
+                for t in 0..self.track_states.len() {
+                    if t != selected_track_id {
                         self.seek_track_by_time(t, time)?;
                     }
                 }
 
                 // Seek the primary track and return the result.
-                self.seek_track_by_time(primary_track_id, time)
+                self.seek_track_by_time(selected_track_id, time)
             }
         }
     }
