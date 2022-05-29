@@ -735,6 +735,11 @@ impl<S: Sample> SampleBuffer<S> {
         self.buf.len()
     }
 
+    /// Clears all written samples.
+    pub fn clear(&mut self) {
+        self.n_written = 0;
+    }
+
     /// Copies all audio data from the source `AudioBufferRef` in planar channel order into the
     /// `SampleBuffer`. The two buffers must be equivalent.
     pub fn copy_planar_ref(&mut self, src: AudioBufferRef)
@@ -1003,6 +1008,11 @@ impl<S: Sample + RawSample> RawSampleBuffer<S> {
     /// Gets the maximum number of samples the `RawSampleBuffer` may store.
     pub fn capacity(&self) -> usize {
         self.buf.len()
+    }
+
+    /// Clears all written samples.
+    pub fn clear(&mut self) {
+        self.n_written = 0;
     }
 
     /// Gets an immutable slice to the bytes of the sample's written in the `RawSampleBuffer`.
