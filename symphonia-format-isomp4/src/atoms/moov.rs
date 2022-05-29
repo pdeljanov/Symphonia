@@ -7,7 +7,7 @@
 
 use symphonia_core::errors::{decode_error, Result};
 use symphonia_core::io::ReadBytes;
-use symphonia_core::meta::MetadataLog;
+use symphonia_core::meta::MetadataRevision;
 
 use crate::atoms::{
     Atom, AtomHeader, AtomIterator, AtomType, MvexAtom, MvhdAtom, TrakAtom, UdtaAtom,
@@ -31,11 +31,9 @@ pub struct MoovAtom {
 }
 
 impl MoovAtom {
-    /// Consume any metadata, and pushes it onto provided `MetadataLog`.
-    pub fn take_metadata(&mut self, log: &mut MetadataLog) {
-        if let Some(udta) = self.udta.as_mut() {
-            udta.take_metadata(log)
-        }
+    /// If metadata was read, consumes the metadata and returns it.
+    pub fn take_metadata(&mut self) -> Option<MetadataRevision> {
+        self.udta.as_mut().and_then(|udta| udta.take_metadata())
     }
 
     /// Is the movie segmented.

@@ -398,8 +398,11 @@ impl FormatReader for IsoMp4Reader {
                 }
                 AtomType::Meta => {
                     // Read the metadata atom and append it to the log.
-                    let meta = iter.read_atom::<MetaAtom>()?;
-                    meta.take_metadata(&mut metadata);
+                    let mut meta = iter.read_atom::<MetaAtom>()?;
+
+                    if let Some(rev) = meta.take_metadata() {
+                        metadata.push(rev);
+                    }
                 }
                 AtomType::Free => (),
                 AtomType::Skip => (),
@@ -447,7 +450,9 @@ impl FormatReader for IsoMp4Reader {
             }
         }
 
-        moov.take_metadata(&mut metadata);
+        if let Some(rev) = moov.take_metadata() {
+            metadata.push(rev);
+        }
 
         // Instantiate a TrackState for each track in the stream.
         let track_states = moov

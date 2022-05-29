@@ -7,7 +7,7 @@
 
 use symphonia_core::errors::Result;
 use symphonia_core::io::ReadBytes;
-use symphonia_core::meta::MetadataLog;
+use symphonia_core::meta::MetadataRevision;
 
 use crate::atoms::{Atom, AtomHeader, AtomIterator, AtomType, MetaAtom};
 
@@ -21,11 +21,9 @@ pub struct UdtaAtom {
 }
 
 impl UdtaAtom {
-    /// Consume any metadata, and push it onto provided `MetadataLog`.
-    pub fn take_metadata(&mut self, log: &mut MetadataLog) {
-        if let Some(meta) = self.meta.take() {
-            meta.take_metadata(log)
-        }
+    /// If metadata was read, consumes the metadata and returns it.
+    pub fn take_metadata(&mut self) -> Option<MetadataRevision> {
+        self.meta.as_mut().and_then(|meta| meta.take_metadata())
     }
 }
 
