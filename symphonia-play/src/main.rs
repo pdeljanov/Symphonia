@@ -714,6 +714,9 @@ fn print_progress(ts: u64, dur: Option<u64>, tb: Option<TimeBase>) {
         write!(output, "\r\u{25b6}\u{fe0f}  {}", ts).unwrap();
     }
 
+    // This extra space is a workaround for Konsole to correctly erase the previous line.
+    write!(output, " ").unwrap();
+
     // Flush immediately since stdout is buffered.
     output.flush().unwrap();
 }
