@@ -89,6 +89,7 @@ impl AdtsHeader {
         // Sample rate index.
         let sample_rate = match bs.read_bits_leq32(4)? as usize {
             15 => return decode_error("adts: forbidden sample rate"),
+            13 | 14 => return decode_error("adts: reserved sample rate"),
             idx => AAC_SAMPLE_RATES[idx],
         };
 
