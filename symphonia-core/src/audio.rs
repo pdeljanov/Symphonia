@@ -693,7 +693,7 @@ impl<S: Sample> Signal<S> for AudioBuffer<S> {
 /// within the buffer. `SampleBuffer` is mean't for safely importing and exporting sample data to
 /// and from Symphonia using the sample's in-memory data-type.
 pub struct SampleBuffer<S: Sample> {
-    buf: Vec<S>,
+    buf: Box<[S]>,
     n_written: usize,
 }
 
@@ -712,7 +712,10 @@ impl<S: Sample> SampleBuffer<S> {
         // safe.
         assert!(n_samples <= (usize::MAX / mem::size_of::<S>()) as u64, "duration too large");
 
-        SampleBuffer { buf: vec![S::MID; n_samples as usize], n_written: 0 }
+        // Allocate enough memory for all the samples and fill the buffer with silence.
+        let buf = vec![S::MID; n_samples as usize].into_boxed_slice();
+
+        SampleBuffer { buf, n_written: 0 }
     }
 
     /// Gets the number of written samples.
@@ -861,8 +864,8 @@ impl sealed::Sealed for [u8; 6] {}
 impl sealed::Sealed for [u8; 7] {}
 impl sealed::Sealed for [u8; 8] {}
 
-/// `RawSample` provides a typed interface for converting a `Sample` from it's in-memory data type to
-/// actual binary type.
+/// `RawSample` provides a typed interface for converting a `Sample` from it's in-memory data type
+/// to actual binary type.
 pub trait RawSample: Sample {
     /// The `RawType` is a primitive data type, or fixed-size byte array, that is the final binary
     /// representation of the sample when written out to a byte-buffer.
@@ -965,7 +968,7 @@ impl RawSample for f64 {
 /// converted into their packed data-type and stored as a stream of bytes. `RawSampleBuffer` is
 /// mean't for safely importing and exporting sample data to and from Symphonia as raw bytes.
 pub struct RawSampleBuffer<S: Sample + RawSample> {
-    buf: Vec<S::RawType>,
+    buf: Box<[S::RawType]>,
     n_written: usize,
     // Might take your heart.
     sample_format: PhantomData<S>,
@@ -990,7 +993,7 @@ impl<S: Sample + RawSample> RawSampleBuffer<S> {
         );
 
         // Allocate enough memory for all the samples and fill the buffer with silence.
-        let buf = vec![S::MID.into_raw_sample(); n_samples as usize];
+        let buf = vec![S::MID.into_raw_sample(); n_samples as usize].into_boxed_slice();
 
         RawSampleBuffer { buf, n_written: 0, sample_format: PhantomData }
     }
