@@ -151,12 +151,24 @@ pub enum FrameResult {
     Padding,
     /// An unknown frame was found and its body skipped.
     UnsupportedFrame(String),
+    /// The frame was invalid and its body skipped.
+    InvalidData(String),
     /// A frame was parsed and yielded a single `Tag`.
     Tag(Tag),
     /// A frame was parsed and yielded a single `Visual`.
     Visual(Visual),
     /// A frame was parsed and yielded many `Tag`s.
     MultipleTags(Vec<Tag>),
+}
+
+/// Makes a frame result for a frame containing invalid data.
+fn invalid_data(id: &[u8]) -> Result<FrameResult> {
+    Ok(FrameResult::InvalidData(as_ascii_str(id).to_string()))
+}
+
+/// Makes a frame result for an unsupported frame.
+fn unsupported_frame(id: &[u8]) -> Result<FrameResult> {
+    Ok(FrameResult::UnsupportedFrame(as_ascii_str(id).to_string()))
 }
 
 type FrameParser = fn(&mut BufReader<'_>, Option<StandardTagKey>, &str) -> Result<FrameResult>;
@@ -391,6 +403,13 @@ fn validate_lang_code(code: [u8; 3]) -> bool {
     code.iter().filter(|&c| *c < b'a' || *c > b'z').count() == 0
 }
 
+/// Gets a slice of ASCII bytes as a string slice.
+///
+/// Assumes the bytes are valid ASCII characters. Panics otherwise.
+fn as_ascii_str(id: &[u8]) -> &str {
+    std::str::from_utf8(id).unwrap()
+}
+
 /// Finds a frame parser for "modern" ID3v2.3 or ID3v2.4 tags.
 fn find_parser(id: [u8; 4]) -> Option<&'static (FrameParser, Option<StandardTagKey>)> {
     FRAME_PARSERS.get(&id)
@@ -430,18 +449,18 @@ pub fn read_id3v2p2_frame<B: ReadBytes>(reader: &mut B) -> Result<FrameResult> {
         Some(p) => p,
         None => {
             reader.ignore_bytes(size)?;
-            return Ok(FrameResult::UnsupportedFrame(str::from_utf8(&id).unwrap().to_string()));
+            return unsupported_frame(&id);
         }
     };
 
     // A frame must be atleast 1 byte as per the specification.
     if size == 0 {
-        warn!("frame size of 0 for {}", std::str::from_utf8(&id).unwrap());
+        return invalid_data(&id);
     }
 
     let data = reader.read_boxed_slice_exact(size as usize)?;
 
-    parser(&mut BufReader::new(&data), *std_key, str::from_utf8(&id).unwrap())
+    parser(&mut BufReader::new(&data), *std_key, as_ascii_str(&id))
 }
 
 /// Read an ID3v2.3 frame.
@@ -475,7 +494,7 @@ pub fn read_id3v2p3_frame<B: ReadBytes>(reader: &mut B) -> Result<FrameResult> {
         Some(p) => p,
         None => {
             reader.ignore_bytes(size)?;
-            return Ok(FrameResult::UnsupportedFrame(str::from_utf8(&id).unwrap().to_string()));
+            return unsupported_frame(&id);
         }
     };
 
@@ -502,12 +521,12 @@ pub fn read_id3v2p3_frame<B: ReadBytes>(reader: &mut B) -> Result<FrameResult> {
 
     // A frame must be atleast 1 byte as per the specification.
     if size == 0 {
-        warn!("frame size of 0 for {}", std::str::from_utf8(&id).unwrap());
+        return invalid_data(&id);
     }
 
     let data = reader.read_boxed_slice_exact(size as usize)?;
 
-    parser(&mut BufReader::new(&data), *std_key, str::from_utf8(&id).unwrap())
+    parser(&mut BufReader::new(&data), *std_key, as_ascii_str(&id))
 }
 
 /// Read an ID3v2.4 frame.
@@ -540,7 +559,7 @@ pub fn read_id3v2p4_frame<B: ReadBytes + FiniteStream>(reader: &mut B) -> Result
         Some(p) => p,
         None => {
             reader.ignore_bytes(size)?;
-            return Ok(FrameResult::UnsupportedFrame(str::from_utf8(&id).unwrap().to_string()));
+            return unsupported_frame(&id);
         }
     };
 
@@ -576,7 +595,7 @@ pub fn read_id3v2p4_frame<B: ReadBytes + FiniteStream>(reader: &mut B) -> Result
 
     // A frame must be atleast 1 byte as per the specification.
     if size == 0 {
-        warn!("frame size of 0 for {}", std::str::from_utf8(&id).unwrap());
+        return invalid_data(&id);
     }
 
     // Read the frame body into a new buffer. This is, unfortunate. The original plan was to use an
@@ -604,12 +623,12 @@ pub fn read_id3v2p4_frame<B: ReadBytes + FiniteStream>(reader: &mut B) -> Result
     if flags & 0x2 != 0x0 {
         let unsync_data = decode_unsynchronisation(&mut raw_data);
 
-        parser(&mut BufReader::new(unsync_data), *std_key, str::from_utf8(&id).unwrap())
+        parser(&mut BufReader::new(unsync_data), *std_key, as_ascii_str(&id))
     }
     // The frame body has not been unsynchronised. Wrap the raw data buffer in BufStream without any
     // additional decoding.
     else {
-        parser(&mut BufReader::new(&raw_data), *std_key, str::from_utf8(&id).unwrap())
+        parser(&mut BufReader::new(&raw_data), *std_key, as_ascii_str(&id))
     }
 }
 
@@ -765,7 +784,7 @@ fn read_comm_uslt_frame(
     // ISO-639-2 language codes, we'll just skip the language code if it doesn't validate. Returning
     // an error would break far too many files to be worth it.
     let key = if validate_lang_code(lang) {
-        format!("{}!{}", id, str::from_utf8(&lang).unwrap())
+        format!("{}!{}", id, as_ascii_str(&lang))
     }
     else {
         id.to_string()
