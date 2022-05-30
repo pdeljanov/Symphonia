@@ -273,15 +273,15 @@ fn read_id3v2p4_extended_header<B: ReadBytes>(reader: &mut B) -> Result<Extended
 }
 
 fn read_id3v2_body<B: ReadBytes + FiniteStream>(
-    mut reader: B,
+    reader: &mut B,
     header: &Header,
     metadata: &mut MetadataBuilder,
 ) -> Result<()> {
     // If there is an extended header, read and parse it based on the major version of the tag.
     if header.has_extended_header {
         let extended = match header.major_version {
-            3 => read_id3v2p3_extended_header(&mut reader)?,
-            4 => read_id3v2p4_extended_header(&mut reader)?,
+            3 => read_id3v2p3_extended_header(reader)?,
+            4 => read_id3v2p4_extended_header(reader)?,
             _ => unreachable!(),
         };
         trace!("{:#?}", &extended);
@@ -296,9 +296,9 @@ fn read_id3v2_body<B: ReadBytes + FiniteStream>(
     loop {
         // Read frames based on the major version of the tag.
         let frame = match header.major_version {
-            2 => read_id3v2p2_frame(&mut reader),
-            3 => read_id3v2p3_frame(&mut reader),
-            4 => read_id3v2p4_frame(&mut reader),
+            2 => read_id3v2p2_frame(reader),
+            3 => read_id3v2p3_frame(reader),
+            4 => read_id3v2p4_frame(reader),
             _ => break,
         }?;
 
@@ -342,21 +342,29 @@ pub fn read_id3v2<B: ReadBytes>(reader: &mut B, metadata: &mut MetadataBuilder) 
     // Read the (sorta) version agnostic tag header.
     let header = read_id3v2_header(reader)?;
 
-    // The header specified the byte length of the contents of the ID3v2 tag (excluding the header),
-    // use a scoped reader to ensure we don't exceed that length, and to determine if there are no
-    // more frames left to parse.
-    let scoped = ScopedStream::new(reader, u64::from(header.size));
-
     // If the unsynchronisation flag is set in the header, all tag data must be passed through the
     // unsynchronisation decoder before being read for verions < 4 of ID3v2.
-    if header.unsynchronisation && header.major_version < 4 {
-        read_id3v2_body(UnsyncStream::new(scoped), &header, metadata)
+    let mut scoped = if header.unsynchronisation && header.major_version < 4 {
+        let mut unsync = UnsyncStream::new(ScopedStream::new(reader, u64::from(header.size)));
+
+        read_id3v2_body(&mut unsync, &header, metadata)?;
+
+        unsync.into_inner()
     }
     // Otherwise, read the data as-is. Individual frames may be unsynchronised for major versions
     // >= 4.
     else {
-        read_id3v2_body(scoped, &header, metadata)
-    }
+        let mut scoped = ScopedStream::new(reader, u64::from(header.size));
+
+        read_id3v2_body(&mut scoped, &header, metadata)?;
+
+        scoped
+    };
+
+    // Ignore any remaining data in the tag.
+    scoped.ignore()?;
+
+    Ok(())
 }
 
 pub mod util {

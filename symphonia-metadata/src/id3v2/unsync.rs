@@ -61,6 +61,11 @@ impl<B: ReadBytes + FiniteStream> UnsyncStream<B> {
     pub fn new(inner: B) -> Self {
         UnsyncStream { inner, byte: 0 }
     }
+
+    /// Convert the `UnsyncStream` to the inner stream.
+    pub fn into_inner(self) -> B {
+        self.inner
+    }
 }
 
 impl<B: ReadBytes + FiniteStream> FiniteStream for UnsyncStream<B> {

@@ -414,6 +414,20 @@ pub trait SeekBuffered {
     }
 }
 
+impl<'b, F: FiniteStream> FiniteStream for &'b mut F {
+    fn byte_len(&self) -> u64 {
+        (**self).byte_len()
+    }
+
+    fn bytes_read(&self) -> u64 {
+        (**self).bytes_read()
+    }
+
+    fn bytes_available(&self) -> u64 {
+        (**self).bytes_available()
+    }
+}
+
 /// A `FiniteStream` is a stream that has a known length in bytes.
 pub trait FiniteStream {
     /// Returns the length of the the stream in bytes.

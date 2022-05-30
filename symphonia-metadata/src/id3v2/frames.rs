@@ -435,7 +435,7 @@ pub fn read_id3v2p2_frame<B: ReadBytes>(reader: &mut B) -> Result<FrameResult> {
         // As per the specification, padding should be all 0s, but there are some tags which don't
         // obey the specification.
         if id != [0, 0, 0] {
-            warn!("padding bytes not zero.");
+            warn!("padding bytes not zero");
         }
 
         return Ok(FrameResult::Padding);
@@ -474,7 +474,7 @@ pub fn read_id3v2p3_frame<B: ReadBytes>(reader: &mut B) -> Result<FrameResult> {
         // As per the specification, padding should be all 0s, but there are some tags which don't
         // obey the specification.
         if id != [0, 0, 0, 0] {
-            warn!("padding bytes not zero.");
+            warn!("padding bytes not zero");
         }
 
         return Ok(FrameResult::Padding);
@@ -539,7 +539,7 @@ pub fn read_id3v2p4_frame<B: ReadBytes + FiniteStream>(reader: &mut B) -> Result
         // As per the specification, padding should be all 0s, but there are some tags which don't
         // obey the specification.
         if id != [0, 0, 0, 0] {
-            warn!("padding bytes not zero.");
+            warn!("padding bytes not zero");
         }
 
         return Ok(FrameResult::Padding);

@@ -30,12 +30,12 @@ impl<B: ReadBytes> ScopedStream<B> {
         ScopedStream { start: inner.pos(), inner, len, read: 0 }
     }
 
-    /// Returns an immutable reference to the inner `ByteStream`.
+    /// Returns an immutable reference to the inner stream.
     pub fn inner(&self) -> &B {
         &self.inner
     }
 
-    /// Returns a mutable reference to the inner `ByteStream`.
+    /// Returns a mutable reference to the inner stream.
     pub fn inner_mut(&mut self) -> &mut B {
         &mut self.inner
     }
@@ -45,7 +45,7 @@ impl<B: ReadBytes> ScopedStream<B> {
         self.inner.ignore_bytes(self.len - self.read)
     }
 
-    /// Convert the `ScopedStream` to the inner `ByteStream`.
+    /// Convert the `ScopedStream` to the inner stream.
     pub fn into_inner(self) -> B {
         self.inner
     }
