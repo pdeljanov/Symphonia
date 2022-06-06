@@ -272,6 +272,9 @@ impl FormatReader for FlacReader {
                     // Rewind the stream back to the beginning of the frame.
                     self.reader.seek_buffered_rev(packet.parsed_len);
 
+                    // After a successful seek, reset the packet parser.
+                    self.parser.soft_reset();
+
                     debug!(
                         "seeked to packet_ts={} (delta={})",
                         packet.packet_ts,
@@ -298,7 +301,7 @@ impl FormatReader for FlacReader {
         // timestamp. This search is used to find the exact packet containing the desired timestamp
         // after the search range was narrowed by the binary search. It is also the ONLY way for a
         // unseekable stream to be "seeked" forward.
-        loop {
+        let packet = loop {
             let packet = next_frame(&mut self.reader)?;
 
             // The desired timestamp preceeds the current packet's timestamp.
@@ -313,17 +316,7 @@ impl FormatReader for FlacReader {
                 // Overshot a regular seek, or the stream is corrupted, not necessarily an error
                 // per-say.
                 else {
-                    debug!(
-                        "seeked to packet_ts={} (delta={})",
-                        packet.packet_ts,
-                        packet.packet_ts as i64 - ts as i64
-                    );
-
-                    return Ok(SeekedTo {
-                        track_id: 0,
-                        actual_ts: packet.packet_ts,
-                        required_ts: ts,
-                    });
+                    break packet;
                 }
             }
             // The desired timestamp is contained within the current packet.
@@ -332,15 +325,20 @@ impl FormatReader for FlacReader {
                 // Rewind the stream back to the beginning of the frame.
                 self.reader.seek_buffered_rev(packet.parsed_len);
 
-                debug!(
-                    "seeked to packet_ts={} (delta={})",
-                    packet.packet_ts,
-                    packet.packet_ts as i64 - ts as i64
-                );
-
-                return Ok(SeekedTo { track_id: 0, actual_ts: packet.packet_ts, required_ts: ts });
+                break packet;
             }
-        }
+        };
+
+        // After a successful seek, reset the packet parser.
+        self.parser.soft_reset();
+
+        debug!(
+            "seeked to packet_ts={} (delta={})",
+            packet.packet_ts,
+            packet.packet_ts as i64 - ts as i64
+        );
+
+        return Ok(SeekedTo { track_id: 0, actual_ts: packet.packet_ts, required_ts: ts });
     }
 
     fn into_inner(self: Box<Self>) -> MediaSourceStream {
@@ -388,7 +386,7 @@ fn read_stream_info_block<B: ReadBytes + FiniteStream>(
         }
 
         // Reset the packet parser.
-        parser.reset(info);
+        parser.hard_reset(info);
 
         // Add the track.
         tracks.push(Track::new(0, codec_params));

@@ -92,12 +92,21 @@ impl PacketParser {
     // rules and heuristics are used to limit the number of fragments that can be recombined. This
     // is required to detect errors.
 
-    pub fn reset(&mut self, stream_info: StreamInfo) {
+    /// Reset the packet parser for a new stream.
+    pub fn hard_reset(&mut self, stream_info: StreamInfo) {
         self.stream_info = stream_info;
+        self.soft_reset()
+    }
+
+    /// Reset the packet parser after a stream discontinuity.
+    pub fn soft_reset(&mut self) {
         self.frame_size_hist = [PacketParser::FLAC_AVG_FRAME_LEN; 4];
         self.n_frames = 0;
         self.last_seq = 0;
         self.last_read_err = None;
+        self.buf_write = 0;
+        self.buf_read = 0;
+        self.fragments.clear();
     }
 
     fn buffer_data<B: ReadBytes>(&mut self, reader: &mut B) -> Result<()> {
