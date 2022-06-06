@@ -14,6 +14,7 @@ use crate::io::{MediaSourceStream, ReadBytes, SeekBuffered};
 use crate::meta::{Metadata, MetadataLog, MetadataOptions, MetadataReader};
 
 use log::{error, info};
+use std::io::{Seek, SeekFrom};
 
 mod bloom {
 
@@ -125,6 +126,24 @@ pub trait QueryDescriptor {
     fn score(context: &[u8]) -> u8;
 }
 
+/// `ContainsOptional<T>` is a trait to define the behavior of checking whether a collection-like
+/// type contains an element which may be `None`.
+trait ContainsOptional<T>
+where
+    Self: IntoIterator,
+{
+    fn contains_optional(&self, search: &Option<T>) -> bool;
+}
+
+impl ContainsOptional<String> for &[&str] {
+    fn contains_optional(&self, search: &Option<String>) -> bool {
+        match search {
+            Some(str) => self.contains(&&str[..]),
+            None => false,
+        }
+    }
+}
+
 /// A `Hint` provides additional information and context when probing a media source stream.
 ///
 /// For example, the `Probe` cannot examine the extension or mime-type of the media because
@@ -146,14 +165,19 @@ impl Hint {
 
     /// Add a file extension `Hint`.
     pub fn with_extension(&mut self, extension: &str) -> &mut Self {
-        self.extension = Some(extension.to_owned());
+        self.extension = Some(extension.to_lowercase());
         self
     }
 
     /// Add a MIME/Media-type `Hint`.
     pub fn mime_type(&mut self, mime_type: &str) -> &mut Self {
-        self.mime_type = Some(mime_type.to_owned());
+        self.mime_type = Some(mime_type.to_lowercase());
         self
+    }
+
+    fn matches_descriptor(&self, descriptor: &Descriptor) -> bool {
+        descriptor.extensions.contains_optional(&self.extension)
+            || descriptor.mime_types.contains_optional(&self.mime_type)
     }
 }
 
@@ -225,7 +249,40 @@ impl Probe {
     }
 
     /// Searches the provided `MediaSourceStream` for metadata or a container format.
-    pub fn next(&self, mss: &mut MediaSourceStream) -> Result<Instantiate> {
+    pub fn next(&self, mss: &mut MediaSourceStream, hint: &Hint) -> Result<Instantiate> {
+        // Optimization: if a hint was provided, only attempt to find descriptors that match the supplied hint on the first pass
+        if hint.extension.is_some() || hint.mime_type.is_some() {
+            let start = mss.pos();
+
+            match self.filter_next(mss, |descriptor| hint.matches_descriptor(descriptor)) {
+                instantiate @ Ok(_) => return instantiate,
+                Err(_) => {
+                    // Didn't find any marker that matches the codecs suggested by the hint
+                    // Seek back to the previous position and try the remaining codecs
+                    mss.seek(SeekFrom::Start(start))?;
+                }
+            }
+        }
+
+        // If no hint was supplied or none of the hint's descriptors matched, search the remaining descriptors
+        match self.filter_next(mss, |descriptor| !hint.matches_descriptor(descriptor)) {
+            instantiate @ Ok(_) => instantiate,
+            err @ Err(_) => {
+                // Could not find any marker within the probe limit.
+                error!("reached probe limit of {} bytes.", Probe::PROBE_SEARCH_LIMIT);
+                err
+            }
+        }
+    }
+
+    fn filter_next<F>(
+        &self,
+        mss: &mut MediaSourceStream,
+        mut descriptor_filter: F,
+    ) -> Result<Instantiate>
+    where
+        F: FnMut(&&Descriptor) -> bool,
+    {
         let mut win = 0u16;
 
         let init_pos = mss.pos();
@@ -233,6 +290,11 @@ impl Probe {
 
         // Scan the stream byte-by-byte. Shifting each byte through a 2-byte window.
         while let Ok(byte) = mss.read_byte() {
+            if count == Probe::PROBE_SEARCH_LIMIT {
+                // Reached limit without finding a match
+                break;
+            }
+
             win = (win << 8) | u16::from(byte);
 
             count += 1;
@@ -261,7 +323,7 @@ impl Probe {
                 );
 
                 // Search for registered markers in the 16-byte window.
-                for registered in &self.registered {
+                for registered in self.registered.iter().filter(&mut descriptor_filter) {
                     for marker in registered.markers {
                         let len = marker.len();
 
@@ -291,9 +353,6 @@ impl Probe {
             }
         }
 
-        // Could not find any marker within the probe limit.
-        error!("reached probe limit of {} bytes.", Probe::PROBE_SEARCH_LIMIT);
-
         unsupported_error("core (probe): no suitable format reader found")
     }
 
@@ -302,7 +361,7 @@ impl Probe {
     /// container format is found.
     pub fn format(
         &self,
-        _hint: &Hint,
+        hint: &Hint,
         mut mss: MediaSourceStream,
         format_opts: &FormatOptions,
         metadata_opts: &MetadataOptions,
@@ -311,7 +370,7 @@ impl Probe {
 
         // Loop over all elements in the stream until a container format is found.
         loop {
-            match self.next(&mut mss)? {
+            match self.next(&mut mss, hint)? {
                 // If a container format is found, return an instance to it's reader.
                 Instantiate::Format(fmt) => {
                     let format = fmt(mss, format_opts)?;
