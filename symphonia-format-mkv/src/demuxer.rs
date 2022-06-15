@@ -184,7 +184,7 @@ impl MkvReader {
                 Some(block) => block.pos,
                 None => cluster.pos,
             };
-            self.iter.seek(pos)?;
+            self.iter.seek(pos, self.iter.inner().is_seekable())?;
 
             // Restore cluster's metadata
             self.current_cluster =
@@ -389,7 +389,7 @@ impl FormatReader for MkvReader {
             seek_positions.sort_by_key(|sp| sp.1);
 
             for (etype, pos) in seek_positions {
-                it.seek(pos)?;
+                it.seek(pos, is_seekable)?;
                 match etype {
                     ElementType::Tracks => {
                         segment_tracks = Some(it.read_element::<TracksElement>()?);
