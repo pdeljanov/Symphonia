@@ -14,6 +14,7 @@ use symphonia_core::codecs::{CodecParameters, CODEC_TYPE_OPUS};
 use symphonia_core::errors::Result;
 use symphonia_core::io::{BufReader, ReadBytes};
 use symphonia_core::meta::MetadataBuilder;
+use symphonia_core::units::TimeBase;
 
 use symphonia_metadata::vorbis;
 
@@ -136,6 +137,7 @@ pub fn detect(buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> {
         .for_codec(CODEC_TYPE_OPUS)
         .with_delay(u32::from(pre_skip))
         .with_sample_rate(48_000)
+        .with_time_base(TimeBase::new(1, 48_000))
         .with_channels(channels)
         .with_extra_data(Box::from(buf));
 
