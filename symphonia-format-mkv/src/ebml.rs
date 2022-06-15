@@ -259,9 +259,11 @@ impl<R: ReadBytes> ElementIterator<R> {
         self.current = None;
         if is_seekable {
             self.reader.seek(SeekFrom::Start(pos))?;
-        } else if pos < current_pos {
+        }
+        else if pos < current_pos {
             return seek_error(SeekErrorKind::ForwardOnly);
-        } else {
+        }
+        else {
             self.reader.ignore_bytes(pos - current_pos)?;
         }
         self.next_pos = pos;
