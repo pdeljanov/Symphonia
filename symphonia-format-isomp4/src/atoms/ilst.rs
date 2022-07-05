@@ -714,7 +714,7 @@ impl Atom for IlstAtom {
                     add_generic_tag(&mut iter, &mut mb, Some(StandardTagKey::SortAlbum))?
                 }
                 AtomType::SortArtistTag => {
-                    add_generic_tag(&mut iter, &mut mb, Some(StandardTagKey::Artist))?
+                    add_generic_tag(&mut iter, &mut mb, Some(StandardTagKey::SortArtist))?
                 }
                 AtomType::SortComposerTag => {
                     add_generic_tag(&mut iter, &mut mb, Some(StandardTagKey::SortComposer))?
