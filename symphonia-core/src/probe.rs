@@ -13,7 +13,7 @@ use crate::formats::{FormatOptions, FormatReader};
 use crate::io::{MediaSourceStream, ReadBytes, SeekBuffered};
 use crate::meta::{Metadata, MetadataLog, MetadataOptions, MetadataReader};
 
-use log::{error, info};
+use log::{debug, error, info};
 
 mod bloom {
 
@@ -238,7 +238,7 @@ impl Probe {
             count += 1;
 
             if count % 4096 == 0 {
-                info!(
+                debug!(
                     "searching for format marker... {}+{} / {} bytes.",
                     init_pos,
                     count,
@@ -255,7 +255,7 @@ impl Probe {
                 context[0..2].copy_from_slice(&win.to_be_bytes()[0..2]);
                 mss.read_buf_exact(&mut context[2..])?;
 
-                info!(
+                debug!(
                     "found a possible format marker within {:x?} @ {}+{} bytes.",
                     context, init_pos, count,
                 );
@@ -327,7 +327,7 @@ impl Probe {
                     let mut reader = meta(metadata_opts);
                     metadata.push(reader.read_all(&mut mss)?);
 
-                    info!("chaining metadata element.");
+                    debug!("chaining a metadata element.");
                 }
             }
         }
