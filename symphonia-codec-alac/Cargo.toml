@@ -1,6 +1,6 @@
 [package]
 name = "symphonia-codec-alac"
-version = "0.5.0"
+version = "0.5.1"
 description = "Pure Rust ALAC decoder (a part of project Symphonia)."
 homepage = "https://github.com/pdeljanov/Symphonia"
 repository = "https://github.com/pdeljanov/Symphonia"
