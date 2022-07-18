@@ -159,7 +159,7 @@ impl TimeBase {
 
     /// Accurately calculates a `Time` using the `TimeBase` and the provided `TimeStamp`. On
     /// overflow, the seconds field of `Time` wraps.
-    pub fn calc_time(&self, ts: TimeStamp) -> Time {
+    pub fn calc_time(self, ts: TimeStamp) -> Time {
         let [numer, denom] = self.unpack();
 
         // The dividend requires up-to 96-bits (32-bit timebase numerator * 64-bit timestamp).
@@ -196,7 +196,7 @@ impl TimeBase {
 
     /// Accurately calculates a `TimeStamp` from the given `Time` using the `TimeBase` as the
     /// conversion factor. On overflow, the `TimeStamp` wraps.
-    pub fn calc_timestamp(&self, time: Time) -> TimeStamp {
+    pub fn calc_timestamp(self, time: Time) -> TimeStamp {
         assert!(time.frac >= 0.0 && time.frac < 1.0, "Invalid range for Time fractional part.");
 
         let [numer, denom] = self.unpack();
