@@ -1813,8 +1813,8 @@ mod tests {
             0x80,
         ];
 
-        const TEXT: &'static str = "This silence belongs to us... and every single person out \
-                                    there, is waiting for us to fill it with something.";
+        const TEXT: &str = "This silence belongs to us... and every single person out \
+                            there, is waiting for us to fill it with something.";
 
         // Reverse the bits in the data vector if testing a reverse bit-order.
         let data = match bit_order {
