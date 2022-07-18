@@ -18,7 +18,7 @@ use symphonia_core::meta::{VendorData, Visual};
 
 use symphonia_metadata::{id3v2, vorbis};
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Eq)]
 pub enum MetadataBlockType {
     StreamInfo,
     Padding,

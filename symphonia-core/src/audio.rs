@@ -160,7 +160,7 @@ impl Layout {
 }
 
 /// `SignalSpec` describes the characteristics of a Signal.
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct SignalSpec {
     /// The signal sampling rate in hertz (Hz).
     pub rate: u32,

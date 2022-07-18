@@ -331,7 +331,7 @@ pub mod util {
 
     /// A `SeekPoint` is a mapping between a sample or frame number to byte offset within a media
     /// stream.
-    #[derive(Copy, Clone, Debug, PartialEq)]
+    #[derive(Copy, Clone, Debug, PartialEq, Eq)]
     pub struct SeekPoint {
         /// The frame or sample timestamp of the `SeekPoint`.
         pub frame_ts: u64,
@@ -361,7 +361,7 @@ pub mod util {
     /// `SeekSearchResult` is the return value for a search on a `SeekIndex`. It returns a range of
     /// `SeekPoint`s a `FormatReader` should search to find the desired timestamp. Ranges are
     /// lower-bound inclusive, and upper-bound exclusive.
-    #[derive(Copy, Clone, Debug, PartialEq)]
+    #[derive(Copy, Clone, Debug, PartialEq, Eq)]
     pub enum SeekSearchResult {
         /// The `SeekIndex` is empty so the desired timestamp could not be found. The entire stream
         /// should be searched for the desired timestamp.

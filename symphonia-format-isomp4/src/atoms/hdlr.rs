@@ -16,7 +16,7 @@ use crate::{
 use log::warn;
 
 /// Handler type.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum HandlerType {
     /// Video handler.
     Video,

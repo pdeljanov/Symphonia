@@ -123,7 +123,7 @@ impl From<f64> for Time {
 ///
 /// In other words, a `TimeBase` is the length in seconds of one tick of a `TimeStamp` or
 /// `Duration`.
-#[derive(Copy, Clone, Debug, Default, PartialEq, PartialOrd)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub struct TimeBase {
     /// The numerator.
     pub numer: u32,
