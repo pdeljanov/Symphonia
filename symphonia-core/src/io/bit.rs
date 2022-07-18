@@ -1818,7 +1818,7 @@ mod tests {
 
         // Reverse the bits in the data vector if testing a reverse bit-order.
         let data = match bit_order {
-            BitOrder::Verbatim => DATA.iter().map(|&b| b).collect(),
+            BitOrder::Verbatim => DATA.to_vec(),
             BitOrder::Reverse => DATA.iter().map(|&b| b.reverse_bits()).collect(),
         };
 
