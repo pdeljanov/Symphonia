@@ -399,7 +399,7 @@ fn add_media_type_tag<B: ReadBytes>(
 
     // There should only be 1 value.
     if let Some(value) = tag.values.first() {
-        if let Some(media_type_value) = value.data.get(0) {
+        if let Some(media_type_value) = value.data.first() {
             let media_type = match media_type_value {
                 0 => "Movie",
                 1 => "Normal",
