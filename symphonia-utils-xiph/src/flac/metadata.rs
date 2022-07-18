@@ -412,7 +412,7 @@ pub fn read_application_block<B: ReadBytes>(
     // string.
     let ident_buf = reader.read_quad_bytes()?;
     let ident = String::from_utf8(
-        ident_buf.as_ref().iter().map(|b| ascii::escape_default(*b)).flatten().collect(),
+        ident_buf.as_ref().iter().copied().flat_map(ascii::escape_default).collect(),
     )
     .unwrap();
 
