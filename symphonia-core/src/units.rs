@@ -7,7 +7,7 @@
 
 //! The `units` module provides definitions for common units.
 
-use std::fmt;
+use std::{fmt, num::NonZeroU32};
 
 /// A `TimeStamp` represents an instantenous instant in time since the start of a stream. One
 /// `TimeStamp` "tick" is equivalent to the stream's `TimeBase` in seconds.
@@ -135,31 +135,35 @@ impl From<Time> for std::time::Duration {
 ///
 /// In other words, a `TimeBase` is the length in seconds of one tick of a `TimeStamp` or
 /// `Duration`.
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct TimeBase {
     /// The numerator.
-    pub numer: u32,
+    pub numer: NonZeroU32,
     /// The denominator.
-    pub denom: u32,
+    pub denom: NonZeroU32,
 }
 
 impl TimeBase {
     /// Creates a new `TimeBase`. Panics if either the numerator or denominator is 0.
+    #[track_caller]
     pub fn new(numer: u32, denom: u32) -> Self {
-        if numer == 0 || denom == 0 {
-            panic!("TimeBase cannot have 0 numerator or denominator");
+        match (NonZeroU32::new(numer), NonZeroU32::new(denom)) {
+            (Some(numer), Some(denom)) => TimeBase { numer, denom },
+            _ => panic!("TimeBase cannot have 0 numerator or denominator"),
         }
+    }
 
-        TimeBase { numer, denom }
+    fn unpack(self) -> [u32; 2] {
+        [self.numer.get(), self.denom.get()]
     }
 
     /// Accurately calculates a `Time` using the `TimeBase` and the provided `TimeStamp`. On
     /// overflow, the seconds field of `Time` wraps.
     pub fn calc_time(&self, ts: TimeStamp) -> Time {
-        assert!(self.numer > 0 && self.denom > 0, "TimeBase numerator or denominator are 0.");
+        let [numer, denom] = self.unpack();
 
         // The dividend requires up-to 96-bits (32-bit timebase numerator * 64-bit timestamp).
-        let dividend = u128::from(ts) * u128::from(self.numer);
+        let dividend = u128::from(ts) * u128::from(numer);
 
         // For an accurate floating point division, both the dividend and divisor must have an
         // accurate floating point representation. A 64-bit floating point value has a mantissa of
@@ -168,23 +172,23 @@ impl TimeBase {
         // requires less than 52-bits, a straight-forward floating point division can be used to
         // calculate the time.
         if dividend < (1 << 52) {
-            let seconds = (dividend as f64) / f64::from(self.denom);
+            let seconds = (dividend as f64) / f64::from(denom);
 
             Time::new(seconds.trunc() as u64, seconds.fract())
         }
         else {
             // If the dividend requires more than 52 bits, calculate the integer portion using
             // integer arithmetic, then calculate the fractional part separately.
-            let quotient = dividend / u128::from(self.denom);
+            let quotient = dividend / u128::from(denom);
 
             // The remainder is the fractional portion before being divided by the divisor (the
             // denominator). The remainder will never equal or exceed the divisor (or else the
             // fractional part would be >= 1.0), so the remainder must fit within a u32.
-            let rem = (dividend - (quotient * u128::from(self.denom))) as u32;
+            let rem = (dividend - (quotient * u128::from(denom))) as u32;
 
             // Calculate the fractional portion. Since both the remainder and denominator are 32-bit
             // integers now, 64-bit floating point division will provide enough accuracy.
-            let frac = f64::from(rem) / f64::from(self.denom);
+            let frac = f64::from(rem) / f64::from(denom);
 
             Time::new(quotient as u64, frac)
         }
@@ -193,15 +197,16 @@ impl TimeBase {
     /// Accurately calculates a `TimeStamp` from the given `Time` using the `TimeBase` as the
     /// conversion factor. On overflow, the `TimeStamp` wraps.
     pub fn calc_timestamp(&self, time: Time) -> TimeStamp {
-        assert!(self.numer > 0 && self.denom > 0, "TimeBase numerator or denominator are 0.");
         assert!(time.frac >= 0.0 && time.frac < 1.0, "Invalid range for Time fractional part.");
 
+        let [numer, denom] = self.unpack();
+
         // The dividing factor.
-        let k = 1.0 / f64::from(self.numer);
+        let k = 1.0 / f64::from(numer);
 
         // Multiplying seconds by the denominator requires up-to 96-bits (32-bit timebase
         // denominator * 64-bit timestamp).
-        let product = u128::from(time.seconds) * u128::from(self.denom);
+        let product = u128::from(time.seconds) * u128::from(denom);
 
         // Like calc_time, a 64-bit floating-point value only has 52-bits of integer precision.
         // If the product requires more than 52-bits, split the product into upper and lower parts
@@ -222,7 +227,7 @@ impl TimeBase {
         };
 
         // The fractional portion can be calculate directly using floating point arithemtic.
-        let b = (k * f64::from(self.denom) * time.frac) as u64;
+        let b = (k * f64::from(denom) * time.frac) as u64;
 
         a.wrapping_add(b)
     }
@@ -230,7 +235,7 @@ impl TimeBase {
 
 impl From<TimeBase> for f64 {
     fn from(timebase: TimeBase) -> Self {
-        f64::from(timebase.numer) / f64::from(timebase.denom)
+        f64::from(timebase.numer.get()) / f64::from(timebase.denom.get())
     }
 }
 
