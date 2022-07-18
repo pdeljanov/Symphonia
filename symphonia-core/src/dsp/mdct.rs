@@ -164,15 +164,17 @@ mod tests {
 
         let pi_2n = f64::consts::PI / (2 * n_out) as f64;
 
-        for i in 0..n_out {
-            let mut accum = 0.0;
+        for (i, item) in y.iter_mut().enumerate().take(n_out) {
+            let accum: f64 = x
+                .iter()
+                .copied()
+                .map(f64::from)
+                .enumerate()
+                .take(n_in)
+                .map(|(j, jtem)| jtem * (pi_2n * ((2 * i + 1 + n_in) * (2 * j + 1)) as f64).cos())
+                .sum();
 
-            for j in 0..n_in {
-                let theta = pi_2n * ((2 * i + 1 + n_in) * (2 * j + 1)) as f64;
-                accum += f64::from(x[j]) * theta.cos();
-            }
-
-            y[i] = (scale * accum) as f32;
+            *item = (scale * accum) as f32;
         }
     }
 
