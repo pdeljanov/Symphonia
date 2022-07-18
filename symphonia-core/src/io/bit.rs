@@ -1479,6 +1479,7 @@ mod tests {
     use super::{BitReaderRtl, ReadBitsRtl};
 
     #[test]
+    #[allow(clippy::bool_assert_comparison)]
     fn verify_bitstreamltr_ignore_bits() {
         let mut bs = BitReaderLtr::new(&[
             0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, //
@@ -1540,6 +1541,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::bool_assert_comparison)]
     fn verify_bitstreamltr_read_bool() {
         // General tests.
         let mut bs = BitReaderLtr::new(&[0b1010_1010]);
@@ -1842,6 +1844,7 @@ mod tests {
     // BitStreamRtl
 
     #[test]
+    #[allow(clippy::bool_assert_comparison)]
     fn verify_bitstreamrtl_ignore_bits() {
         let mut bs = BitReaderRtl::new(&[
             0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, //
@@ -1903,6 +1906,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::bool_assert_comparison)]
     fn verify_bitstreamrtl_read_bool() {
         // General tests.
         let mut bs = BitReaderRtl::new(&[0b1010_1010]);
