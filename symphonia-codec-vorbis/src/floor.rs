@@ -776,7 +776,7 @@ fn find_neighbors(vec: &[u32], x: usize) -> (usize, usize) {
 fn render_point(x0: u32, y0: i32, x1: u32, y1: i32, x: u32) -> i32 {
     let dy = y1 - y0;
     let adx = x1 - x0;
-    let err = dy.abs() as u32 * (x - x0);
+    let err = dy.unsigned_abs() * (x - x0);
     let off = err / adx;
     if dy < 0 {
         y0 - off as i32
