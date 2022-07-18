@@ -107,14 +107,12 @@ impl TrunAtom {
         if self.is_sample_size_present() {
             self.total_sample_size
         }
+        else if self.sample_count > 0 && self.is_first_sample_size_present() {
+            u64::from(self.sample_size[0])
+                + u64::from(self.sample_count - 1) * u64::from(default_size)
+        }
         else {
-            if self.sample_count > 0 && self.is_first_sample_size_present() {
-                u64::from(self.sample_size[0])
-                    + u64::from(self.sample_count - 1) * u64::from(default_size)
-            }
-            else {
-                u64::from(self.sample_count) * u64::from(default_size)
-            }
+            u64::from(self.sample_count) * u64::from(default_size)
         }
     }
 

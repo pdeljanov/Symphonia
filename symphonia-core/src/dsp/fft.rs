@@ -458,12 +458,7 @@ mod tests {
     /// Returns true if both real and imaginary complex number components deviate by less than
     /// `epsilon` between the left-hand side and right-hand side.
     fn check_complex(lhs: Complex, rhs: Complex, epsilon: f32) -> bool {
-        if (lhs.re - rhs.re).abs() < epsilon {
-            if (lhs.im - rhs.im).abs() < epsilon {
-                return true;
-            }
-        }
-        false
+        (lhs.re - rhs.re).abs() < epsilon && (lhs.im - rhs.im).abs() < epsilon
     }
 
     #[rustfmt::skip]
