@@ -14,7 +14,11 @@ rust-version = "1.53"
 
 [dependencies]
 log = "0.4"
-lazy_static = "1.4.0"
+once_cell = "1"
 symphonia-core = { version = "0.5", path = "../symphonia-core" }
 symphonia-metadata = { version = "0.5", path = "../symphonia-metadata" }
 symphonia-utils-xiph = { version = "0.5", path = "../symphonia-utils-xiph" }
+
+[dependencies.phf]
+version = "0.11"
+features = ["macros"]

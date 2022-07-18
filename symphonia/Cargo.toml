@@ -26,7 +26,7 @@ vorbis = ["symphonia-codec-vorbis"]
 wav = ["symphonia-format-wav"]
 
 [dependencies]
-lazy_static = "1.4.0"
+once_cell = "1"
 symphonia-core = { version = "0.5", path = "../symphonia-core" }
 symphonia-metadata = { version = "0.5", path = "../symphonia-metadata" }
 symphonia-bundle-flac = { version = "0.5", path = "../symphonia-bundle-flac", optional = true }

@@ -149,26 +149,21 @@ pub mod default {
         pub use symphonia_format_wav::WavReader;
     }
 
-    use lazy_static::lazy_static;
-
+    use once_cell::sync::Lazy;
     use symphonia_core::codecs::CodecRegistry;
     use symphonia_core::probe::Probe;
 
-    lazy_static! {
-        static ref CODEC_REGISTRY: CodecRegistry = {
-            let mut registry = CodecRegistry::new();
-            register_enabled_codecs(&mut registry);
-            registry
-        };
-    }
+    static CODEC_REGISTRY: Lazy<CodecRegistry> = Lazy::new(|| {
+        let mut registry = CodecRegistry::new();
+        register_enabled_codecs(&mut registry);
+        registry
+    });
 
-    lazy_static! {
-        static ref PROBE: Probe = {
-            let mut probe: Probe = Default::default();
-            register_enabled_formats(&mut probe);
-            probe
-        };
-    }
+    static PROBE: Lazy<Probe> = Lazy::new(|| {
+        let mut probe: Probe = Default::default();
+        register_enabled_formats(&mut probe);
+        probe
+    });
 
     /// Gets the default `CodecRegistry`. This registry pre-registers all the codecs selected by the
     /// `feature` flags in the includer's `Cargo.toml`. If `features` is not set, the default set of

@@ -5,7 +5,6 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 use std::borrow::Cow;
-use std::collections::HashMap;
 use std::io;
 use std::str;
 
@@ -14,7 +13,6 @@ use symphonia_core::io::{BufReader, FiniteStream, ReadBytes};
 use symphonia_core::meta::{StandardTagKey, Tag, Value, Visual};
 
 use encoding_rs::UTF_16BE;
-use lazy_static::lazy_static;
 use log::warn;
 
 use super::unsync::{decode_unsynchronisation, read_syncsafe_leq32};
@@ -173,217 +171,204 @@ fn unsupported_frame(id: &[u8]) -> Result<FrameResult> {
 
 type FrameParser = fn(&mut BufReader<'_>, Option<StandardTagKey>, &str) -> Result<FrameResult>;
 
-lazy_static! {
-    static ref LEGACY_FRAME_MAP: HashMap<&'static [u8; 3], &'static [u8; 4]> = {
-        let mut m = HashMap::new();
-        m.insert(b"BUF", b"RBUF");
-        m.insert(b"CNT", b"PCNT");
-        m.insert(b"COM", b"COMM");
-        m.insert(b"CRA", b"AENC");
-        m.insert(b"EQU", b"EQUA");
-        m.insert(b"ETC", b"ETCO");
-        m.insert(b"GEO", b"GEOB");
-        m.insert(b"IPL", b"IPLS");
-        m.insert(b"LNK", b"LINK");
-        m.insert(b"MCI", b"MCDI");
-        m.insert(b"MLL", b"MLLT");
-        m.insert(b"PCS", b"PCST");
-        m.insert(b"PIC", b"APIC");
-        m.insert(b"POP", b"POPM");
-        m.insert(b"REV", b"RVRB");
-        m.insert(b"RVA", b"RVAD");
-        m.insert(b"SLT", b"SYLT");
-        m.insert(b"STC", b"SYTC");
-        m.insert(b"TAL", b"TALB");
-        m.insert(b"TBP", b"TBPM");
-        m.insert(b"TCM", b"TCOM");
-        m.insert(b"TCO", b"TCON");
-        m.insert(b"TCR", b"TCOP");
-        m.insert(b"TDA", b"TDAT");
-        m.insert(b"TDY", b"TDLY");
-        m.insert(b"TEN", b"TENC");
-        m.insert(b"TFT", b"TFLT");
-        m.insert(b"TIM", b"TIME");
-        m.insert(b"TKE", b"TKEY");
-        m.insert(b"TLA", b"TLAN");
-        m.insert(b"TLE", b"TLEN");
-        m.insert(b"TMT", b"TMED");
-        m.insert(b"TOA", b"TOPE");
-        m.insert(b"TOF", b"TOFN");
-        m.insert(b"TOL", b"TOLY");
-        m.insert(b"TOR", b"TORY");
-        m.insert(b"TOT", b"TOAL");
-        m.insert(b"TP1", b"TPE1");
-        m.insert(b"TP2", b"TPE2");
-        m.insert(b"TP3", b"TPE3");
-        m.insert(b"TP4", b"TPE4");
-        m.insert(b"TPA", b"TPOS");
-        m.insert(b"TPB", b"TPUB");
-        m.insert(b"TRC", b"TSRC");
-        m.insert(b"TRD", b"TRDA");
-        m.insert(b"TRK", b"TRCK");
-        m.insert(b"TS2", b"TSO2");
-        m.insert(b"TSA", b"TSOA");
-        m.insert(b"TSC", b"TSOC");
-        m.insert(b"TSI", b"TSIZ");
-        m.insert(b"TSP", b"TSOP");
-        m.insert(b"TSS", b"TSSE");
-        m.insert(b"TST", b"TSOT");
-        m.insert(b"TT1", b"TIT1");
-        m.insert(b"TT2", b"TIT2");
-        m.insert(b"TT3", b"TIT3");
-        m.insert(b"TXT", b"TEXT");
-        m.insert(b"TXX", b"TXXX");
-        m.insert(b"TYE", b"TYER");
-        m.insert(b"UFI", b"UFID");
-        m.insert(b"ULT", b"USLT");
-        m.insert(b"WAF", b"WOAF");
-        m.insert(b"WAR", b"WOAR");
-        m.insert(b"WAS", b"WOAS");
-        m.insert(b"WCM", b"WCOM");
-        m.insert(b"WCP", b"WCOP");
-        m.insert(b"WPB", b"WPUB");
-        m.insert(b"WXX", b"WXXX");
-        m
-    };
-}
+static LEGACY_FRAME_MAP: phf::Map<&[u8], &[u8; 4]> = phf::phf_map! {
+    b"BUF" => b"RBUF",
+    b"CNT" => b"PCNT",
+    b"COM" => b"COMM",
+    b"CRA" => b"AENC",
+    b"EQU" => b"EQUA",
+    b"ETC" => b"ETCO",
+    b"GEO" => b"GEOB",
+    b"IPL" => b"IPLS",
+    b"LNK" => b"LINK",
+    b"MCI" => b"MCDI",
+    b"MLL" => b"MLLT",
+    b"PCS" => b"PCST",
+    b"PIC" => b"APIC",
+    b"POP" => b"POPM",
+    b"REV" => b"RVRB",
+    b"RVA" => b"RVAD",
+    b"SLT" => b"SYLT",
+    b"STC" => b"SYTC",
+    b"TAL" => b"TALB",
+    b"TBP" => b"TBPM",
+    b"TCM" => b"TCOM",
+    b"TCO" => b"TCON",
+    b"TCR" => b"TCOP",
+    b"TDA" => b"TDAT",
+    b"TDY" => b"TDLY",
+    b"TEN" => b"TENC",
+    b"TFT" => b"TFLT",
+    b"TIM" => b"TIME",
+    b"TKE" => b"TKEY",
+    b"TLA" => b"TLAN",
+    b"TLE" => b"TLEN",
+    b"TMT" => b"TMED",
+    b"TOA" => b"TOPE",
+    b"TOF" => b"TOFN",
+    b"TOL" => b"TOLY",
+    b"TOR" => b"TORY",
+    b"TOT" => b"TOAL",
+    b"TP1" => b"TPE1",
+    b"TP2" => b"TPE2",
+    b"TP3" => b"TPE3",
+    b"TP4" => b"TPE4",
+    b"TPA" => b"TPOS",
+    b"TPB" => b"TPUB",
+    b"TRC" => b"TSRC",
+    b"TRD" => b"TRDA",
+    b"TRK" => b"TRCK",
+    b"TS2" => b"TSO2",
+    b"TSA" => b"TSOA",
+    b"TSC" => b"TSOC",
+    b"TSI" => b"TSIZ",
+    b"TSP" => b"TSOP",
+    b"TSS" => b"TSSE",
+    b"TST" => b"TSOT",
+    b"TT1" => b"TIT1",
+    b"TT2" => b"TIT2",
+    b"TT3" => b"TIT3",
+    b"TXT" => b"TEXT",
+    b"TXX" => b"TXXX",
+    b"TYE" => b"TYER",
+    b"UFI" => b"UFID",
+    b"ULT" => b"USLT",
+    b"WAF" => b"WOAF",
+    b"WAR" => b"WOAR",
+    b"WAS" => b"WOAS",
+    b"WCM" => b"WCOM",
+    b"WCP" => b"WCOP",
+    b"WPB" => b"WPUB",
+    b"WXX" => b"WXXX"
+};
 
-lazy_static! {
-    static ref FRAME_PARSERS:
-        HashMap<&'static [u8; 4], (FrameParser, Option<StandardTagKey>)> = {
-            let mut m = HashMap::new();
-            // m.insert(b"AENC", read_null_frame);
-            m.insert(b"APIC", (read_apic_frame as FrameParser, None));
-            // m.insert(b"ASPI", read_null_frame);
-            m.insert(b"COMM", (read_comm_uslt_frame, Some(StandardTagKey::Comment)));
-            // m.insert(b"COMR", read_null_frame);
-            // m.insert(b"ENCR", read_null_frame);
-            // m.insert(b"EQU2", read_null_frame);
-            // m.insert(b"EQUA", read_null_frame);
-            // m.insert(b"ETCO", read_null_frame);
-            // m.insert(b"GEOB", read_null_frame);
-            // m.insert(b"GRID", read_null_frame);
-            m.insert(b"IPLS", (read_text_frame, None));
-            // m.insert(b"LINK", read_null_frame);
-            m.insert(b"MCDI", (read_mcdi_frame, None));
-            // m.insert(b"MLLT", read_null_frame);
-            // m.insert(b"OWNE", read_null_frame);
-            m.insert(b"PCNT", (read_pcnt_frame, None));
-            m.insert(b"POPM", (read_popm_frame, Some(StandardTagKey::Rating)));
-            // m.insert(b"POSS", read_null_frame);
-            m.insert(b"PRIV", (read_priv_frame, None));
-            // m.insert(b"RBUF", read_null_frame);
-            // m.insert(b"RVA2", read_null_frame);
-            // m.insert(b"RVAD", read_null_frame);
-            // m.insert(b"RVRB", read_null_frame);
-            // m.insert(b"SEEK", read_null_frame);
-            // m.insert(b"SIGN", read_null_frame);
-            // m.insert(b"SYLT", read_null_frame);
-            // m.insert(b"SYTC", read_null_frame);
-            m.insert(b"TALB", (read_text_frame, Some(StandardTagKey::Album)));
-            m.insert(b"TBPM", (read_text_frame, Some(StandardTagKey::Bpm)));
-            m.insert(b"TCOM", (read_text_frame, Some(StandardTagKey::Composer)));
-            m.insert(b"TCON", (read_text_frame, Some(StandardTagKey::Genre)));
-            m.insert(b"TCOP", (read_text_frame, Some(StandardTagKey::Copyright)));
-            m.insert(b"TDAT", (read_text_frame, Some(StandardTagKey::Date)));
-            m.insert(b"TDEN", (read_text_frame, Some(StandardTagKey::EncodingDate)));
-            m.insert(b"TDLY", (read_text_frame, None));
-            m.insert(b"TDOR", (read_text_frame, Some(StandardTagKey::OriginalDate)));
-            m.insert(b"TDRC", (read_text_frame, Some(StandardTagKey::Date)));
-            m.insert(b"TDRL", (read_text_frame, Some(StandardTagKey::ReleaseDate)));
-            m.insert(b"TDTG", (read_text_frame, Some(StandardTagKey::TaggingDate)));
-            m.insert(b"TENC", (read_text_frame, Some(StandardTagKey::EncodedBy)));
-            // Also Writer?
-            m.insert(b"TEXT", (read_text_frame, Some(StandardTagKey::Writer)));
-            m.insert(b"TFLT", (read_text_frame, None));
-            m.insert(b"TIME", (read_text_frame, Some(StandardTagKey::Date)));
-            m.insert(b"TIPL", (read_text_frame, None));
-            m.insert(b"TIT1", (read_text_frame, Some(StandardTagKey::ContentGroup)));
-            m.insert(b"TIT2", (read_text_frame, Some(StandardTagKey::TrackTitle)));
-            m.insert(b"TIT3", (read_text_frame, Some(StandardTagKey::TrackSubtitle)));
-            m.insert(b"TKEY", (read_text_frame, None));
-            m.insert(b"TLAN", (read_text_frame, Some(StandardTagKey::Language)));
-            m.insert(b"TLEN", (read_text_frame, None));
-            m.insert(b"TMCL", (read_text_frame, None));
-            m.insert(b"TMED", (read_text_frame, Some(StandardTagKey::MediaFormat)));
-            m.insert(b"TMOO", (read_text_frame, Some(StandardTagKey::Mood)));
-            m.insert(b"TOAL", (read_text_frame, Some(StandardTagKey::OriginalAlbum)));
-            m.insert(b"TOFN", (read_text_frame, Some(StandardTagKey::OriginalFile)));
-            m.insert(b"TOLY", (read_text_frame, Some(StandardTagKey::OriginalWriter)));
-            m.insert(b"TOPE", (read_text_frame, Some(StandardTagKey::OriginalArtist)));
-            m.insert(b"TORY", (read_text_frame, Some(StandardTagKey::OriginalDate)));
-            m.insert(b"TOWN", (read_text_frame, None));
-            m.insert(b"TPE1", (read_text_frame, Some(StandardTagKey::Artist)));
-            m.insert(b"TPE2", (read_text_frame, Some(StandardTagKey::AlbumArtist)));
-            m.insert(b"TPE3", (read_text_frame, Some(StandardTagKey::Conductor)));
-            m.insert(b"TPE4", (read_text_frame, Some(StandardTagKey::Remixer)));
-            // May be "disc number / total discs"
-            m.insert(b"TPOS", (read_text_frame, Some(StandardTagKey::DiscNumber)));
-            m.insert(b"TPRO", (read_text_frame, None));
-            m.insert(b"TPUB", (read_text_frame, Some(StandardTagKey::Label)));
-            // May be "track number / total tracks"
-            m.insert(b"TRCK", (read_text_frame, Some(StandardTagKey::TrackNumber)));
-            m.insert(b"TRDA", (read_text_frame, Some(StandardTagKey::Date)));
-            m.insert(b"TRSN", (read_text_frame, None));
-            m.insert(b"TRSO", (read_text_frame, None));
-            m.insert(b"TSIZ", (read_text_frame, None));
-            m.insert(b"TSOA", (read_text_frame, Some(StandardTagKey::SortAlbum)));
-            m.insert(b"TSOP", (read_text_frame, Some(StandardTagKey::SortArtist)));
-            m.insert(b"TSOT", (read_text_frame, Some(StandardTagKey::SortTrackTitle)));
-            m.insert(b"TSRC", (read_text_frame, Some(StandardTagKey::IdentIsrc)));
-            m.insert(b"TSSE", (read_text_frame, Some(StandardTagKey::Encoder)));
-            m.insert(b"TSST", (read_text_frame, None));
-            m.insert(b"TXXX", (read_txxx_frame, None));
-            m.insert(b"TYER", (read_text_frame, Some(StandardTagKey::Date)));
-            // m.insert(b"UFID", read_null_frame);
-            // m.insert(b"USER", read_null_frame);
-            m.insert(b"USLT", (read_comm_uslt_frame, Some(StandardTagKey::Lyrics)));
-            m.insert(b"WCOM", (read_url_frame, Some(StandardTagKey::UrlPurchase)));
-            m.insert(b"WCOP", (read_url_frame, Some(StandardTagKey::UrlCopyright)));
-            m.insert(b"WOAF", (read_url_frame, Some(StandardTagKey::UrlOfficial)));
-            m.insert(b"WOAR", (read_url_frame, Some(StandardTagKey::UrlArtist)));
-            m.insert(b"WOAS", (read_url_frame, Some(StandardTagKey::UrlSource)));
-            m.insert(b"WORS", (read_url_frame, Some(StandardTagKey::UrlInternetRadio)));
-            m.insert(b"WPAY", (read_url_frame, Some(StandardTagKey::UrlPayment)));
-            m.insert(b"WPUB", (read_url_frame, Some(StandardTagKey::UrlLabel)));
-            m.insert(b"WXXX", (read_wxxx_frame, Some(StandardTagKey::Url)));
-            // Apple iTunes frames
-            // m.insert(b"PCST", (read_null_frame, None));
-            m.insert(b"GRP1", (read_text_frame, None));
-            m.insert(b"MVIN", (read_text_frame, Some(StandardTagKey::MovementNumber)));
-            m.insert(b"MVNM", (read_text_frame, Some(StandardTagKey::MovementName)));
-            m.insert(b"TCAT", (read_text_frame, Some(StandardTagKey::PodcastCategory)));
-            m.insert(b"TDES", (read_text_frame, Some(StandardTagKey::PodcastDescription)));
-            m.insert(b"TGID", (read_text_frame, Some(StandardTagKey::IdentPodcast)));
-            m.insert(b"TKWD", (read_text_frame, Some(StandardTagKey::PodcastKeywords)));
-            m.insert(b"TSO2", (read_text_frame, Some(StandardTagKey::SortAlbumArtist)));
-            m.insert(b"TSOC", (read_text_frame, Some(StandardTagKey::SortComposer)));
-            m.insert(b"WFED", (read_text_frame, Some(StandardTagKey::UrlPodcast)));
-            m
-        };
-}
+static FRAME_PARSERS: phf::Map<&'static [u8], (FrameParser, Option<StandardTagKey>)> = phf::phf_map! {
+    // b"AENC" => read_null_frame,
+    b"APIC" => (read_apic_frame as FrameParser, None),
+    // b"ASPI" => read_null_frame,
+    b"COMM" => (read_comm_uslt_frame, Some(StandardTagKey::Comment)),
+    // b"COMR" => read_null_frame,
+    // b"ENCR" => read_null_frame,
+    // b"EQU2" => read_null_frame,
+    // b"EQUA" => read_null_frame,
+    // b"ETCO" => read_null_frame,
+    // b"GEOB" => read_null_frame,
+    // b"GRID" => read_null_frame,
+    b"IPLS" => (read_text_frame, None),
+    // b"LINK" => read_null_frame,
+    b"MCDI" => (read_mcdi_frame, None),
+    // b"MLLT" => read_null_frame,
+    // b"OWNE" => read_null_frame,
+    b"PCNT" => (read_pcnt_frame, None),
+    b"POPM" => (read_popm_frame, Some(StandardTagKey::Rating)),
+    // b"POSS" => read_null_frame,
+    b"PRIV" => (read_priv_frame, None),
+    // b"RBUF" => read_null_frame,
+    // b"RVA2" => read_null_frame,
+    // b"RVAD" => read_null_frame,
+    // b"RVRB" => read_null_frame,
+    // b"SEEK" => read_null_frame,
+    // b"SIGN" => read_null_frame,
+    // b"SYLT" => read_null_frame,
+    // b"SYTC" => read_null_frame,
+    b"TALB" => (read_text_frame, Some(StandardTagKey::Album)),
+    b"TBPM" => (read_text_frame, Some(StandardTagKey::Bpm)),
+    b"TCOM" => (read_text_frame, Some(StandardTagKey::Composer)),
+    b"TCON" => (read_text_frame, Some(StandardTagKey::Genre)),
+    b"TCOP" => (read_text_frame, Some(StandardTagKey::Copyright)),
+    b"TDAT" => (read_text_frame, Some(StandardTagKey::Date)),
+    b"TDEN" => (read_text_frame, Some(StandardTagKey::EncodingDate,)),
+    b"TDLY" => (read_text_frame, None),
+    b"TDOR" => (read_text_frame, Some(StandardTagKey::OriginalDate,)),
+    b"TDRC" => (read_text_frame, Some(StandardTagKey::Date)),
+    b"TDRL" => (read_text_frame, Some(StandardTagKey::ReleaseDate,)),
+    b"TDTG" => (read_text_frame, Some(StandardTagKey::TaggingDate)),
+    b"TENC" => (read_text_frame, Some(StandardTagKey::EncodedBy)),
+    // Also Writer?
+    b"TEXT" => (read_text_frame, Some(StandardTagKey::Writer)),
+    b"TFLT" => (read_text_frame, None),
+    b"TIME" => (read_text_frame, Some(StandardTagKey::Date)),
+    b"TIPL" => (read_text_frame, None),
+    b"TIT1" => (read_text_frame, Some(StandardTagKey::ContentGroup)),
+    b"TIT2" => (read_text_frame, Some(StandardTagKey::TrackTitle)),
+    b"TIT3" => (read_text_frame, Some(StandardTagKey::TrackSubtitle)),
+    b"TKEY" => (read_text_frame, None),
+    b"TLAN" => (read_text_frame, Some(StandardTagKey::Language)),
+    b"TLEN" => (read_text_frame, None),
+    b"TMCL" => (read_text_frame, None),
+    b"TMED" => (read_text_frame, Some(StandardTagKey::MediaFormat)),
+    b"TMOO" => (read_text_frame, Some(StandardTagKey::Mood)),
+    b"TOAL" => (read_text_frame, Some(StandardTagKey::OriginalAlbum)),
+    b"TOFN" => (read_text_frame, Some(StandardTagKey::OriginalFile)),
+    b"TOLY" => (read_text_frame, Some(StandardTagKey::OriginalWriter)),
+    b"TOPE" => (read_text_frame, Some(StandardTagKey::OriginalArtist)),
+    b"TORY" => (read_text_frame, Some(StandardTagKey::OriginalDate)),
+    b"TOWN" => (read_text_frame, None),
+    b"TPE1" => (read_text_frame, Some(StandardTagKey::Artist)),
+    b"TPE2" => (read_text_frame, Some(StandardTagKey::AlbumArtist)),
+    b"TPE3" => (read_text_frame, Some(StandardTagKey::Conductor)),
+    b"TPE4" => (read_text_frame, Some(StandardTagKey::Remixer)),
+    // May be "disc number / total discs"
+    b"TPOS" => (read_text_frame, Some(StandardTagKey::DiscNumber)),
+    b"TPRO" => (read_text_frame, None),
+    b"TPUB" => (read_text_frame, Some(StandardTagKey::Label)),
+    // May be "track number / total tracks"
+    b"TRCK" => (read_text_frame, Some(StandardTagKey::TrackNumber)),
+    b"TRDA" => (read_text_frame, Some(StandardTagKey::Date)),
+    b"TRSN" => (read_text_frame, None),
+    b"TRSO" => (read_text_frame, None),
+    b"TSIZ" => (read_text_frame, None),
+    b"TSOA" => (read_text_frame, Some(StandardTagKey::SortAlbum)),
+    b"TSOP" => (read_text_frame, Some(StandardTagKey::SortArtist)),
+    b"TSOT" => (read_text_frame, Some(StandardTagKey::SortTrackTitle)),
+    b"TSRC" => (read_text_frame, Some(StandardTagKey::IdentIsrc)),
+    b"TSSE" => (read_text_frame, Some(StandardTagKey::Encoder)),
+    b"TSST" => (read_text_frame, None),
+    b"TXXX" => (read_txxx_frame, None),
+    b"TYER" => (read_text_frame, Some(StandardTagKey::Date)),
+    // b"UFID" => read_null_frame,
+    // b"USER" => read_null_frame,
+    b"USLT" => (read_comm_uslt_frame, Some(StandardTagKey::Lyrics)),
+    b"WCOM" => (read_url_frame, Some(StandardTagKey::UrlPurchase)),
+    b"WCOP" => (read_url_frame, Some(StandardTagKey::UrlCopyright)),
+    b"WOAF" => (read_url_frame, Some(StandardTagKey::UrlOfficial)),
+    b"WOAR" => (read_url_frame, Some(StandardTagKey::UrlArtist)),
+    b"WOAS" => (read_url_frame, Some(StandardTagKey::UrlSource)),
+    b"WORS" => (read_url_frame, Some(StandardTagKey::UrlInternetRadio)),
+    b"WPAY" => (read_url_frame, Some(StandardTagKey::UrlPayment)),
+    b"WPUB" => (read_url_frame, Some(StandardTagKey::UrlLabel)),
+    b"WXXX" => (read_wxxx_frame, Some(StandardTagKey::Url)),
+    // Apple iTunes frames
+    // b"PCST" => (read_null_frame, None),
+    b"GRP1" => (read_text_frame, None),
+    b"MVIN" => (read_text_frame, Some(StandardTagKey::MovementNumber)),
+    b"MVNM" => (read_text_frame, Some(StandardTagKey::MovementName)),
+    b"TCAT" => (read_text_frame, Some(StandardTagKey::PodcastCategory)),
+    b"TDES" => (read_text_frame, Some(StandardTagKey::PodcastDescription)),
+    b"TGID" => (read_text_frame, Some(StandardTagKey::IdentPodcast)),
+    b"TKWD" => (read_text_frame, Some(StandardTagKey::PodcastKeywords)),
+    b"TSO2" => (read_text_frame, Some(StandardTagKey::SortAlbumArtist)),
+    b"TSOC" => (read_text_frame, Some(StandardTagKey::SortComposer)),
+    b"WFED" => (read_text_frame, Some(StandardTagKey::UrlPodcast))
+};
 
-lazy_static! {
-    static ref TXXX_FRAME_STD_KEYS: HashMap<&'static str, StandardTagKey> = {
-        let mut m = HashMap::new();
-        m.insert("ACOUSTID FINGERPRINT", StandardTagKey::AcoustidFingerprint);
-        m.insert("ACOUSTID ID", StandardTagKey::AcoustidId);
-        m.insert("BARCODE", StandardTagKey::IdentBarcode);
-        m.insert("CATALOGNUMBER", StandardTagKey::IdentCatalogNumber);
-        m.insert("LICENSE", StandardTagKey::License);
-        m.insert("MUSICBRAINZ ALBUM ARTIST ID", StandardTagKey::MusicBrainzAlbumArtistId);
-        m.insert("MUSICBRAINZ ALBUM ID", StandardTagKey::MusicBrainzAlbumId);
-        m.insert("MUSICBRAINZ ARTIST ID", StandardTagKey::MusicBrainzArtistId);
-        m.insert("MUSICBRAINZ RELEASE GROUP ID", StandardTagKey::MusicBrainzReleaseGroupId);
-        m.insert("MUSICBRAINZ WORK ID", StandardTagKey::MusicBrainzWorkId);
-        m.insert("REPLAYGAIN_ALBUM_GAIN", StandardTagKey::ReplayGainAlbumGain);
-        m.insert("REPLAYGAIN_ALBUM_PEAK", StandardTagKey::ReplayGainAlbumPeak);
-        m.insert("REPLAYGAIN_TRACK_GAIN", StandardTagKey::ReplayGainTrackGain);
-        m.insert("REPLAYGAIN_TRACK_PEAK", StandardTagKey::ReplayGainTrackPeak);
-        m.insert("SCRIPT", StandardTagKey::Script);
-        m
-    };
-}
+static TXXX_FRAME_STD_KEYS: phf::Map<&'static str, StandardTagKey> = phf::phf_map! {
+    "ACOUSTID FINGERPRINT" => StandardTagKey::AcoustidFingerprint,
+    "ACOUSTID ID" => StandardTagKey::AcoustidId,
+    "BARCODE" => StandardTagKey::IdentBarcode,
+    "CATALOGNUMBER" => StandardTagKey::IdentCatalogNumber,
+    "LICENSE" => StandardTagKey::License,
+    "MUSICBRAINZ ALBUM ARTIST ID" => StandardTagKey::MusicBrainzAlbumArtistId,
+    "MUSICBRAINZ ALBUM ID" => StandardTagKey::MusicBrainzAlbumId,
+    "MUSICBRAINZ ARTIST ID" => StandardTagKey::MusicBrainzArtistId,
+    "MUSICBRAINZ RELEASE GROUP ID" => StandardTagKey::MusicBrainzReleaseGroupId,
+    "MUSICBRAINZ WORK ID" => StandardTagKey::MusicBrainzWorkId,
+    "REPLAYGAIN_ALBUM_GAIN" => StandardTagKey::ReplayGainAlbumGain,
+    "REPLAYGAIN_ALBUM_PEAK" => StandardTagKey::ReplayGainAlbumPeak,
+    "REPLAYGAIN_TRACK_GAIN" => StandardTagKey::ReplayGainTrackGain,
+    "REPLAYGAIN_TRACK_PEAK" => StandardTagKey::ReplayGainTrackPeak,
+    "SCRIPT" => StandardTagKey::Script,
+};
 
 /// Validates that a frame id only contains the uppercase letters A-Z, and digits 0-9.
 fn validate_frame_id(id: &[u8]) -> bool {

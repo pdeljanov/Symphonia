@@ -13,28 +13,26 @@
 use std::convert::TryInto;
 use std::f32;
 
-use lazy_static::lazy_static;
+use once_cell::sync::Lazy;
 
 use super::complex::Complex;
 
 macro_rules! fft_twiddle_table {
     ($bi:expr, $name:ident) => {
-        lazy_static! {
-            static ref $name: [Complex; (1 << $bi) >> 1] = {
-                const N: usize = 1 << $bi;
+        static $name: Lazy<[Complex; (1 << $bi) >> 1]> = Lazy::new(|| {
+            const N: usize = 1 << $bi;
 
-                let mut table = [Default::default(); N >> 1];
+            let mut table = [Default::default(); N >> 1];
 
-                let theta = std::f64::consts::PI / (N >> 1) as f64;
+            let theta = std::f64::consts::PI / (N >> 1) as f64;
 
-                for (k, t) in table.iter_mut().enumerate() {
-                    let angle = theta * k as f64;
-                    *t = Complex::new(angle.cos() as f32, -angle.sin() as f32);
-                }
+            for (k, t) in table.iter_mut().enumerate() {
+                let angle = theta * k as f64;
+                *t = Complex::new(angle.cos() as f32, -angle.sin() as f32);
+            }
 
-                table
-            };
-        }
+            table
+        });
     };
 }
 

@@ -8,9 +8,8 @@
 use std::cmp::max;
 use std::{f32, f64};
 
+use once_cell::sync::Lazy;
 use symphonia_core::errors::{decode_error, Result};
-
-use lazy_static::lazy_static;
 
 use super::Granule;
 use crate::common::*;
@@ -27,98 +26,88 @@ const INTENSITY_INV_POS_MPEG1: u8 = 7;
 /// to consider is_pos == 7 invalid for MPEG2 or 2.5.
 const INTENSITY_INV_POS_MPEG2: u8 = 31;
 
-lazy_static! {
-    /// (Left, right) channel coefficients for decoding intensity stereo in MPEG2 bitstreams.
-    ///
-    /// These coefficients are derived from section 2.4.3.2 of ISO/IEC 13818-3.
-    ///
-    /// As per the specification, for a given intensity position, is_pos (0 <= is_pos < 32), the
-    /// channel coefficients, k_l and k_r, may be calculated as per the table below:
-    ///
-    /// ```text
-    /// If...            | k_l                     | k_r
-    /// -----------------+-------------------------+-------------------
-    /// is_pos     == 0  | 1.0                     | 1.0
-    /// is_pos & 1 == 1  | i0 ^ [(is_pos + 1) / 2] | 1.0
-    /// is_pos & 1 == 0  | 1.0                     | i0 ^ (is_pos / 2)
-    /// ```
-    ///
-    /// The value of i0 is dependant on the least significant bit of scalefac_compress.
-    ///
-    ///  ```text
-    /// scalefac_compress & 1 | i0
-    /// ----------------------+---------------------
-    /// 0                     | 1 / sqrt(sqrt(2.0))
-    /// 1                     | 1 / sqrt(2.0)
-    /// ```
-    ///
-    /// The first dimension of this table is indexed by scalefac_compress & 1 to select i0. The
-    /// second dimension is indexed by is_pos to obtain the channel coefficients. Note that
-    /// is_pos == 31 is considered an invalid position, but IS included in the table.
-    static ref INTENSITY_STEREO_RATIOS_MPEG2: [[(f32, f32); 32]; 2] = {
-        let is_scale: [f64; 2] = [
-            1.0 / f64::sqrt(f64::consts::SQRT_2),
-            f64::consts::FRAC_1_SQRT_2,
-        ];
+/// (Left, right) channel coefficients for decoding intensity stereo in MPEG2 bitstreams.
+///
+/// These coefficients are derived from section 2.4.3.2 of ISO/IEC 13818-3.
+///
+/// As per the specification, for a given intensity position, is_pos (0 <= is_pos < 32), the
+/// channel coefficients, k_l and k_r, may be calculated as per the table below:
+///
+/// ```text
+/// If...            | k_l                     | k_r
+/// -----------------+-------------------------+-------------------
+/// is_pos     == 0  | 1.0                     | 1.0
+/// is_pos & 1 == 1  | i0 ^ [(is_pos + 1) / 2] | 1.0
+/// is_pos & 1 == 0  | 1.0                     | i0 ^ (is_pos / 2)
+/// ```
+///
+/// The value of i0 is dependant on the least significant bit of scalefac_compress.
+///
+///  ```text
+/// scalefac_compress & 1 | i0
+/// ----------------------+---------------------
+/// 0                     | 1 / sqrt(sqrt(2.0))
+/// 1                     | 1 / sqrt(2.0)
+/// ```
+///
+/// The first dimension of this table is indexed by scalefac_compress & 1 to select i0. The
+/// second dimension is indexed by is_pos to obtain the channel coefficients. Note that
+/// is_pos == 31 is considered an invalid position, but IS included in the table.
+static INTENSITY_STEREO_RATIOS_MPEG2: Lazy<[[(f32, f32); 32]; 2]> = Lazy::new(|| {
+    let is_scale: [f64; 2] = [1.0 / f64::sqrt(f64::consts::SQRT_2), f64::consts::FRAC_1_SQRT_2];
 
-        let mut ratios = [[(0.0, 0.0); 32]; 2];
+    let mut ratios = [[(0.0, 0.0); 32]; 2];
 
-        for (i, is_pos) in (0..32).enumerate() {
-            if is_pos & 1 != 0 {
-                // Odd case.
-                ratios[0][i] = (is_scale[0].powf(f64::from(is_pos + 1) / 2.0) as f32, 1.0);
-                ratios[1][i] = (is_scale[1].powf(f64::from(is_pos + 1) / 2.0) as f32, 1.0);
-            }
-            else {
-                // Even & zero case.
-                ratios[0][i] = (1.0, is_scale[0].powf(f64::from(is_pos) / 2.0) as f32);
-                ratios[1][i] = (1.0, is_scale[1].powf(f64::from(is_pos) / 2.0) as f32);
-            }
+    for (i, is_pos) in (0..32).enumerate() {
+        if is_pos & 1 != 0 {
+            // Odd case.
+            ratios[0][i] = (is_scale[0].powf(f64::from(is_pos + 1) / 2.0) as f32, 1.0);
+            ratios[1][i] = (is_scale[1].powf(f64::from(is_pos + 1) / 2.0) as f32, 1.0);
         }
-
-        ratios
-    };
-}
-
-lazy_static! {
-    /// (Left, right) channel coeffcients for decoding intensity stereo in MPEG1 bitstreams.
-    ///
-    /// These coefficients are derived from section 2.4.3.4.9.3 of ISO/IEC 11172-3.
-    ///
-    /// As per the specification, for a given intensity position, is_pos (0 <= is_pos < 7), a ratio,
-    /// is_ratio, is calculated as follows:
-    ///
-    /// ```text
-    /// is_ratio = tan(is_pos * PI/12)
-    /// ```
-    ///
-    /// Then, the channel coefficients, k_l and k_r, are calculated as follows:
-    ///
-    /// ```text
-    /// k_l = is_ratio / (1 + is_ratio)
-    /// k_r =        1 / (1 + is_ratio)
-    /// ```
-    ///
-    /// This table is indexed by is_pos. Note that is_pos == 7 is invalid and is NOT included in the
-    /// table.
-    static ref INTENSITY_STEREO_RATIOS_MPEG1: [(f32, f32); 7] = {
-        const PI_12: f64 = f64::consts::PI / 12.0;
-
-        let mut ratios = [(0.0, 0.0); 7];
-
-        for (is_pos, ratio) in ratios.iter_mut().enumerate() {
-            let is_ratio = (PI_12 * is_pos as f64).tan();
-            *ratio = (
-                (is_ratio / (1.0 + is_ratio)) as f32,
-                (1.0 / (1.0 + is_ratio)) as f32
-            );
+        else {
+            // Even & zero case.
+            ratios[0][i] = (1.0, is_scale[0].powf(f64::from(is_pos) / 2.0) as f32);
+            ratios[1][i] = (1.0, is_scale[1].powf(f64::from(is_pos) / 2.0) as f32);
         }
+    }
 
-        ratios[6] = (1.0, 0.0);
+    ratios
+});
 
-        ratios
-    };
-}
+/// (Left, right) channel coeffcients for decoding intensity stereo in MPEG1 bitstreams.
+///
+/// These coefficients are derived from section 2.4.3.4.9.3 of ISO/IEC 11172-3.
+///
+/// As per the specification, for a given intensity position, is_pos (0 <= is_pos < 7), a ratio,
+/// is_ratio, is calculated as follows:
+///
+/// ```text
+/// is_ratio = tan(is_pos * PI/12)
+/// ```
+///
+/// Then, the channel coefficients, k_l and k_r, are calculated as follows:
+///
+/// ```text
+/// k_l = is_ratio / (1 + is_ratio)
+/// k_r =        1 / (1 + is_ratio)
+/// ```
+///
+/// This table is indexed by is_pos. Note that is_pos == 7 is invalid and is NOT included in the
+/// table.
+static INTENSITY_STEREO_RATIOS_MPEG1: Lazy<[(f32, f32); 7]> = Lazy::new(|| {
+    const PI_12: f64 = f64::consts::PI / 12.0;
+
+    let mut ratios = [(0.0, 0.0); 7];
+
+    for (is_pos, ratio) in ratios.iter_mut().enumerate() {
+        let is_ratio = (PI_12 * is_pos as f64).tan();
+        *ratio = ((is_ratio / (1.0 + is_ratio)) as f32, (1.0 / (1.0 + is_ratio)) as f32);
+    }
+
+    ratios[6] = (1.0, 0.0);
+
+    ratios
+});
 
 /// Decorrelates mid and side channels into left and right channels.
 ///

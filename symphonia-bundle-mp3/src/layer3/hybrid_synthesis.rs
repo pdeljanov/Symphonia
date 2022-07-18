@@ -10,143 +10,137 @@
 
 use std::{convert::TryInto, f64};
 
-use lazy_static::lazy_static;
+use once_cell::sync::Lazy;
 
 use super::{BlockType, GranuleChannel};
 use crate::common::*;
 
-lazy_static! {
-    /// Hybrid synthesesis IMDCT window coefficients for: Long, Start, Short, and End block, in that
-    /// order.
-    ///
-    /// For long blocks:
-    ///
-    /// ```text
-    /// W[ 0..36] = sin(PI/36.0 * (i + 0.5))
-    /// ```
-    ///
-    /// For start blocks:
-    ///
-    /// ```text
-    /// W[ 0..18] = sin(PI/36.0 * (i + 0.5))
-    /// W[18..24] = 1.0
-    /// W[24..30] = sin(PI/12.0 * ((i - 18) - 0.5))
-    /// W[30..36] = 0.0
-    /// ```
-    ///
-    /// For short blocks (to be applied to each 12 sample window):
-    ///
-    /// ```text
-    /// W[ 0..12] = sin(PI/12.0 * (i + 0.5))
-    /// W[12..36] = 0.0
-    /// ```
-    ///
-    /// For end blocks:
-    ///
-    /// ```text
-    /// W[ 0..6 ] = 0.0
-    /// W[ 6..12] = sin(PI/12.0 * ((i - 6) + 0.5))
-    /// W[12..18] = 1.0
-    /// W[18..36] = sin(PI/36.0 * (i + 0.5))
-    /// ```
-    static ref IMDCT_WINDOWS: [[f32; 36]; 4] = {
-        const PI_36: f64 = f64::consts::PI / 36.0;
-        const PI_12: f64 = f64::consts::PI / 12.0;
+/// Hybrid synthesesis IMDCT window coefficients for: Long, Start, Short, and End block, in that
+/// order.
+///
+/// For long blocks:
+///
+/// ```text
+/// W[ 0..36] = sin(PI/36.0 * (i + 0.5))
+/// ```
+///
+/// For start blocks:
+///
+/// ```text
+/// W[ 0..18] = sin(PI/36.0 * (i + 0.5))
+/// W[18..24] = 1.0
+/// W[24..30] = sin(PI/12.0 * ((i - 18) - 0.5))
+/// W[30..36] = 0.0
+/// ```
+///
+/// For short blocks (to be applied to each 12 sample window):
+///
+/// ```text
+/// W[ 0..12] = sin(PI/12.0 * (i + 0.5))
+/// W[12..36] = 0.0
+/// ```
+///
+/// For end blocks:
+///
+/// ```text
+/// W[ 0..6 ] = 0.0
+/// W[ 6..12] = sin(PI/12.0 * ((i - 6) + 0.5))
+/// W[12..18] = 1.0
+/// W[18..36] = sin(PI/36.0 * (i + 0.5))
+/// ```
+static IMDCT_WINDOWS: Lazy<[[f32; 36]; 4]> = Lazy::new(|| {
+    const PI_36: f64 = f64::consts::PI / 36.0;
+    const PI_12: f64 = f64::consts::PI / 12.0;
 
-        let mut windows = [[0f32; 36]; 4];
+    let mut windows = [[0f32; 36]; 4];
 
-        // Window for Long blocks.
-        for i in 0..36 {
-            windows[0][i] = (PI_36 * (i as f64 + 0.5)).sin() as f32;
+    // Window for Long blocks.
+    for i in 0..36 {
+        windows[0][i] = (PI_36 * (i as f64 + 0.5)).sin() as f32;
+    }
+
+    // Window for Start blocks (indicies 30..36 implictly 0.0).
+    for i in 0..18 {
+        windows[1][i] = (PI_36 * (i as f64 + 0.5)).sin() as f32;
+    }
+    for i in 18..24 {
+        windows[1][i] = 1.0;
+    }
+    for i in 24..30 {
+        windows[1][i] = (PI_12 * ((i - 18) as f64 + 0.5)).sin() as f32;
+    }
+
+    // Window for Short blocks.
+    for i in 0..12 {
+        windows[2][i] = (PI_12 * (i as f64 + 0.5)).sin() as f32;
+    }
+
+    // Window for End blocks (indicies 0..6 implicitly 0.0).
+    for i in 6..12 {
+        windows[3][i] = (PI_12 * ((i - 6) as f64 + 0.5)).sin() as f32;
+    }
+    for i in 12..18 {
+        windows[3][i] = 1.0;
+    }
+    for i in 18..36 {
+        windows[3][i] = (PI_36 * (i as f64 + 0.5)).sin() as f32;
+    }
+
+    windows
+});
+
+/// Lookup table of cosine coefficients for half of a 12-point IMDCT.
+///
+/// This table is derived from the general expression:
+///
+/// ```text
+/// cos12[i][k] = cos(PI/24.0 * (2*i + 1 + N/2) * (2*k + 1))
+/// ```
+/// where:
+///     `N=12`, `i=N/4..3N/4`, and `k=0..N/2`.
+static IMDCT_HALF_COS_12: Lazy<[[f32; 6]; 6]> = Lazy::new(|| {
+    const PI_24: f64 = f64::consts::PI / 24.0;
+
+    let mut cos = [[0f32; 6]; 6];
+
+    for (i, cos_i) in cos.iter_mut().enumerate() {
+        for (k, cos_ik) in cos_i.iter_mut().enumerate() {
+            // Only compute the middle half of the cosine lookup table (i offset by 3).
+            let n = (2 * (i + 3) + (12 / 2) + 1) * (2 * k + 1);
+            *cos_ik = (PI_24 * n as f64).cos() as f32;
         }
+    }
 
-        // Window for Start blocks (indicies 30..36 implictly 0.0).
-        for i in 0..18 {
-            windows[1][i] = (PI_36 * (i as f64 + 0.5)).sin() as f32;
-        }
-        for i in 18..24 {
-            windows[1][i] = 1.0;
-        }
-        for i in 24..30 {
-            windows[1][i] = (PI_12 * ((i - 18) as f64 + 0.5)).sin() as f32;
-        }
+    cos
+});
 
-        // Window for Short blocks.
-        for i in 0..12 {
-            windows[2][i] = (PI_12 * (i as f64 + 0.5)).sin() as f32;
-        }
+/// Pair of lookup tables, CS and CA, for alias reduction.
+///
+/// As per ISO/IEC 11172-3, CS and CA are calculated as follows:
+///
+/// ```text
+/// cs[i] =  1.0 / sqrt(1.0 + c[i]^2)
+/// ca[i] = c[i] / sqrt(1.0 + c[i]^2)
+/// ```
+///
+/// where:
+/// ```text
+/// c[i] = [ -0.6, -0.535, -0.33, -0.185, -0.095, -0.041, -0.0142, -0.0037 ]
+/// ```
+static ANTIALIAS_CS_CA: Lazy<([f32; 8], [f32; 8])> = Lazy::new(|| {
+    const C: [f64; 8] = [-0.6, -0.535, -0.33, -0.185, -0.095, -0.041, -0.0142, -0.0037];
 
-        // Window for End blocks (indicies 0..6 implicitly 0.0).
-        for i in 6..12 {
-            windows[3][i] = (PI_12 * ((i - 6) as f64 + 0.5)).sin() as f32;
-        }
-        for i in 12..18 {
-            windows[3][i] = 1.0;
-        }
-        for i in 18..36 {
-            windows[3][i] = (PI_36 * (i as f64 + 0.5)).sin() as f32;
-        }
+    let mut cs = [0f32; 8];
+    let mut ca = [0f32; 8];
 
-        windows
-   };
-}
+    for i in 0..8 {
+        let sqrt = f64::sqrt(1.0 + (C[i] * C[i]));
+        cs[i] = (1.0 / sqrt) as f32;
+        ca[i] = (C[i] / sqrt) as f32;
+    }
 
-lazy_static! {
-    /// Lookup table of cosine coefficients for half of a 12-point IMDCT.
-    ///
-    /// This table is derived from the general expression:
-    ///
-    /// ```text
-    /// cos12[i][k] = cos(PI/24.0 * (2*i + 1 + N/2) * (2*k + 1))
-    /// ```
-    /// where:
-    ///     `N=12`, `i=N/4..3N/4`, and `k=0..N/2`.
-    static ref IMDCT_HALF_COS_12: [[f32; 6]; 6] = {
-        const PI_24: f64 = f64::consts::PI / 24.0;
-
-        let mut cos = [[0f32; 6]; 6];
-
-        for (i, cos_i) in cos.iter_mut().enumerate() {
-            for (k, cos_ik) in cos_i.iter_mut().enumerate() {
-                // Only compute the middle half of the cosine lookup table (i offset by 3).
-                let n = (2 * (i + 3) + (12 / 2) + 1) * (2 * k + 1);
-                *cos_ik = (PI_24 * n as f64).cos() as f32;
-            }
-        }
-
-        cos
-    };
-}
-
-lazy_static! {
-    /// Pair of lookup tables, CS and CA, for alias reduction.
-    ///
-    /// As per ISO/IEC 11172-3, CS and CA are calculated as follows:
-    ///
-    /// ```text
-    /// cs[i] =  1.0 / sqrt(1.0 + c[i]^2)
-    /// ca[i] = c[i] / sqrt(1.0 + c[i]^2)
-    /// ```
-    ///
-    /// where:
-    /// ```text
-    /// c[i] = [ -0.6, -0.535, -0.33, -0.185, -0.095, -0.041, -0.0142, -0.0037 ]
-    /// ```
-    static ref ANTIALIAS_CS_CA: ([f32; 8], [f32; 8]) = {
-        const C: [f64; 8] = [ -0.6, -0.535, -0.33, -0.185, -0.095, -0.041, -0.0142, -0.0037 ];
-
-        let mut cs = [0f32; 8];
-        let mut ca = [0f32; 8];
-
-        for i in 0..8 {
-            let sqrt = f64::sqrt(1.0 + (C[i] * C[i]));
-            cs[i] = (1.0 / sqrt) as f32;
-            ca[i] = (C[i] / sqrt) as f32;
-        }
-
-        (cs, ca)
-    };
-}
+    (cs, ca)
+});
 
 /// Reorder samples that are part of short blocks into sub-band order.
 pub(super) fn reorder(header: &FrameHeader, channel: &GranuleChannel, buf: &mut [f32; 576]) {
@@ -226,7 +220,7 @@ pub(super) fn antialias(channel: &GranuleChannel, samples: &mut [f32; 576]) {
         _ => 32 * 18,
     };
 
-    // Amortize the lazy_static fetch over the entire anti-aliasing operation.
+    // Amortize the Lazy fetch over the entire anti-aliasing operation.
     let (cs, ca): &([f32; 8], [f32; 8]) = &ANTIALIAS_CS_CA;
 
     // Anti-aliasing is performed using 8 butterfly calculations at the boundaries of ADJACENT

@@ -7,53 +7,47 @@
 
 //! A RIFF INFO metadata reader.
 
-use lazy_static::lazy_static;
-use std::collections::HashMap;
 use symphonia_core::meta::{StandardTagKey, Tag, Value};
 
-lazy_static! {
-    static ref RIFF_INFO_MAP: HashMap<&'static str, StandardTagKey> = {
-        let mut m = HashMap::new();
-        m.insert("ages", StandardTagKey::Rating);
-        m.insert("cmnt", StandardTagKey::Comment);
-        // Is this the same as a cmnt?
-        m.insert("comm", StandardTagKey::Comment);
-        m.insert("dtim", StandardTagKey::OriginalDate);
-        m.insert("genr", StandardTagKey::Genre);
-        m.insert("iart", StandardTagKey::Artist);
-        // Is this also  the same as cmnt?
-        m.insert("icmt", StandardTagKey::Comment);
-        m.insert("icop", StandardTagKey::Copyright);
-        m.insert("icrd", StandardTagKey::Date);
-        m.insert("idit", StandardTagKey::OriginalDate);
-        m.insert("ienc", StandardTagKey::EncodedBy);
-        m.insert("ieng", StandardTagKey::Engineer);
-        m.insert("ifrm", StandardTagKey::TrackTotal);
-        m.insert("ignr", StandardTagKey::Genre);
-        m.insert("ilng", StandardTagKey::Language);
-        m.insert("imus", StandardTagKey::Composer);
-        m.insert("inam", StandardTagKey::TrackTitle);
-        m.insert("iprd", StandardTagKey::Album);
-        m.insert("ipro", StandardTagKey::Producer);
-        m.insert("iprt", StandardTagKey::TrackNumber);
-        m.insert("irtd", StandardTagKey::Rating);
-        m.insert("isft", StandardTagKey::Encoder);
-        m.insert("isgn", StandardTagKey::Genre);
-        m.insert("isrf", StandardTagKey::MediaFormat);
-        m.insert("itch", StandardTagKey::EncodedBy);
-        m.insert("iwri", StandardTagKey::Writer);
-        m.insert("lang", StandardTagKey::Language);
-        m.insert("prt1", StandardTagKey::TrackNumber);
-        m.insert("prt2", StandardTagKey::TrackTotal);
-        // Same as inam?
-        m.insert("titl", StandardTagKey::TrackTitle);
-        m.insert("torg", StandardTagKey::Label);
-        m.insert("trck", StandardTagKey::TrackNumber);
-        m.insert("tver", StandardTagKey::Version);
-        m.insert("year", StandardTagKey::Date);
-        m
-    };
-}
+static RIFF_INFO_MAP: phf::Map<&'static str, StandardTagKey> = phf::phf_map! {
+    "ages" => StandardTagKey::Rating,
+    "cmnt" => StandardTagKey::Comment,
+    // Is this the same as a cmnt?
+    "comm" => StandardTagKey::Comment,
+    "dtim" => StandardTagKey::OriginalDate,
+    "genr" => StandardTagKey::Genre,
+    "iart" => StandardTagKey::Artist,
+    // Is this also  the same as cmnt?
+    "icmt" => StandardTagKey::Comment,
+    "icop" => StandardTagKey::Copyright,
+    "icrd" => StandardTagKey::Date,
+    "idit" => StandardTagKey::OriginalDate,
+    "ienc" => StandardTagKey::EncodedBy,
+    "ieng" => StandardTagKey::Engineer,
+    "ifrm" => StandardTagKey::TrackTotal,
+    "ignr" => StandardTagKey::Genre,
+    "ilng" => StandardTagKey::Language,
+    "imus" => StandardTagKey::Composer,
+    "inam" => StandardTagKey::TrackTitle,
+    "iprd" => StandardTagKey::Album,
+    "ipro" => StandardTagKey::Producer,
+    "iprt" => StandardTagKey::TrackNumber,
+    "irtd" => StandardTagKey::Rating,
+    "isft" => StandardTagKey::Encoder,
+    "isgn" => StandardTagKey::Genre,
+    "isrf" => StandardTagKey::MediaFormat,
+    "itch" => StandardTagKey::EncodedBy,
+    "iwri" => StandardTagKey::Writer,
+    "lang" => StandardTagKey::Language,
+    "prt1" => StandardTagKey::TrackNumber,
+    "prt2" => StandardTagKey::TrackTotal,
+    // Same as inam?
+    "titl" => StandardTagKey::TrackTitle,
+    "torg" => StandardTagKey::Label,
+    "trck" => StandardTagKey::TrackNumber,
+    "tver" => StandardTagKey::Version,
+    "year" => StandardTagKey::Date
+};
 
 /// Parse the RIFF INFO block into a `Tag` using the block's identifier tag and a slice
 /// containing the block's contents.

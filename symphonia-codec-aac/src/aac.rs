@@ -29,8 +29,8 @@ use super::codebooks;
 use super::common::*;
 use super::window::*;
 
-use lazy_static::lazy_static;
 use log::{error, trace};
+use once_cell::sync::Lazy;
 
 macro_rules! validate {
     ($a:expr) => {
@@ -41,16 +41,14 @@ macro_rules! validate {
     };
 }
 
-lazy_static! {
-    /// Pre-computed table of y = x^(4/3).
-    static ref POW43_TABLE: [f32; 8192] = {
-        let mut pow43 = [0f32; 8192];
-        for (i, pow43) in pow43.iter_mut().enumerate() {
-            *pow43 = f32::powf(i as f32, 4.0 / 3.0);
-        }
-        pow43
-    };
-}
+/// Pre-computed table of y = x^(4/3).
+static POW43_TABLE: Lazy<[f32; 8192]> = Lazy::new(|| {
+    let mut pow43 = [0f32; 8192];
+    for (i, pow43) in pow43.iter_mut().enumerate() {
+        *pow43 = f32::powf(i as f32, 4.0 / 3.0);
+    }
+    pow43
+});
 
 impl fmt::Display for M4AType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

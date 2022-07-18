@@ -16,7 +16,7 @@ use std::fs::File;
 use std::io::Write;
 use std::path::Path;
 
-use lazy_static::lazy_static;
+use once_cell::sync::Lazy;
 use symphonia::core::codecs::{DecoderOptions, CODEC_TYPE_NULL};
 use symphonia::core::errors::{Error, Result};
 use symphonia::core::formats::{Cue, FormatOptions, FormatReader, SeekMode, SeekTo, Track};
@@ -670,11 +670,9 @@ fn print_progress(ts: u64, dur: Option<u64>, tb: Option<TimeBase>) {
     fn progress_bar(ts: u64, dur: u64) -> &'static str {
         const NUM_STEPS: usize = 60;
 
-        lazy_static! {
-            static ref PROGRESS_BAR: Vec<String> = {
-                (0..NUM_STEPS + 1).map(|i| format!("[{:<60}]", str::repeat("■", i))).collect()
-            };
-        }
+        static PROGRESS_BAR: Lazy<Vec<String>> = Lazy::new(|| {
+            (0..NUM_STEPS + 1).map(|i| format!("[{:<60}]", str::repeat("■", i))).collect()
+        });
 
         let i = (NUM_STEPS as u64)
             .saturating_mul(ts)

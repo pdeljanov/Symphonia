@@ -5,10 +5,6 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use std::collections::HashMap;
-
-use lazy_static::lazy_static;
-
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub(crate) enum Type {
     Master,
@@ -184,153 +180,149 @@ impl ElementType {
     }
 }
 
-lazy_static! {
-    pub(crate) static ref ELEMENTS: HashMap<u32, (Type, ElementType)> = {
-        let mut elems = HashMap::new();
-        elems.insert(0x1A45DFA3, (Type::Master, ElementType::Ebml));
-        elems.insert(0x4286, (Type::Unsigned, ElementType::EbmlVersion));
-        elems.insert(0x42F7, (Type::Unsigned, ElementType::EbmlReadVersion));
-        elems.insert(0x42F2, (Type::Unsigned, ElementType::EbmlMaxIdLength));
-        elems.insert(0x42F3, (Type::Unsigned, ElementType::EbmlMaxSizeLength));
-        elems.insert(0x4282, (Type::String, ElementType::DocType));
-        elems.insert(0x4287, (Type::Unsigned, ElementType::DocTypeVersion));
-        elems.insert(0x4285, (Type::Unsigned, ElementType::DocTypeReadVersion));
-        elems.insert(0xBF, (Type::Binary, ElementType::Crc32));
-        elems.insert(0xEC, (Type::Binary, ElementType::Void));
-        elems.insert(0x18538067, (Type::Master, ElementType::Segment));
-        elems.insert(0x114D9B74, (Type::Master, ElementType::SeekHead));
-        elems.insert(0x4DBB, (Type::Master, ElementType::Seek));
-        elems.insert(0x53AB, (Type::Unsigned, ElementType::SeekId));
-        elems.insert(0x53AC, (Type::Unsigned, ElementType::SeekPosition));
-        elems.insert(0x1549A966, (Type::Master, ElementType::Info));
-        elems.insert(0x2AD7B1, (Type::Unsigned, ElementType::TimestampScale));
-        elems.insert(0x4489, (Type::Float, ElementType::Duration));
-        elems.insert(0x4461, (Type::Date, ElementType::DateUtc));
-        elems.insert(0x7BA9, (Type::String, ElementType::Title));
-        elems.insert(0x4D80, (Type::String, ElementType::MuxingApp));
-        elems.insert(0x5741, (Type::String, ElementType::WritingApp));
-        elems.insert(0x1F43B675, (Type::Master, ElementType::Cluster));
-        elems.insert(0xE7, (Type::Unsigned, ElementType::Timestamp));
-        elems.insert(0xAB, (Type::Unsigned, ElementType::PrevSize));
-        elems.insert(0xA3, (Type::Binary, ElementType::SimpleBlock));
-        elems.insert(0xA0, (Type::Master, ElementType::BlockGroup));
-        elems.insert(0xA1, (Type::Binary, ElementType::Block));
-        elems.insert(0x75A1, (Type::Master, ElementType::BlockAdditions));
-        elems.insert(0xA6, (Type::Master, ElementType::BlockMore));
-        elems.insert(0xEE, (Type::Unsigned, ElementType::BlockAddId));
-        elems.insert(0xA5, (Type::Binary, ElementType::BlockAdditional));
-        elems.insert(0x9B, (Type::Unsigned, ElementType::BlockDuration));
-        elems.insert(0xFB, (Type::Signed, ElementType::ReferenceBlock));
-        elems.insert(0x75A2, (Type::Signed, ElementType::DiscardPadding));
-        elems.insert(0x1654AE6B, (Type::Master, ElementType::Tracks));
-        elems.insert(0xAE, (Type::Master, ElementType::TrackEntry));
-        elems.insert(0xD7, (Type::Unsigned, ElementType::TrackNumber));
-        elems.insert(0x73C5, (Type::Unsigned, ElementType::TrackUid));
-        elems.insert(0x83, (Type::Unsigned, ElementType::TrackType));
-        elems.insert(0xB9, (Type::Unsigned, ElementType::FlagEnabled));
-        elems.insert(0x88, (Type::Unsigned, ElementType::FlagDefault));
-        elems.insert(0x55AA, (Type::Unsigned, ElementType::FlagForced));
-        elems.insert(0x55AB, (Type::Unsigned, ElementType::FlagHearingImpaired));
-        elems.insert(0x55AC, (Type::Unsigned, ElementType::FlagVisualImpaired));
-        elems.insert(0x55AD, (Type::Unsigned, ElementType::FlagTextDescriptions));
-        elems.insert(0x55AE, (Type::Unsigned, ElementType::FlagOriginal));
-        elems.insert(0x55AF, (Type::Unsigned, ElementType::FlagCommentary));
-        elems.insert(0x9C, (Type::Unsigned, ElementType::FlagLacing));
-        elems.insert(0x23E383, (Type::Unsigned, ElementType::DefaultDuration));
-        elems.insert(0x536E, (Type::String, ElementType::Name));
-        elems.insert(0x22B59C, (Type::String, ElementType::Language));
-        elems.insert(0x86, (Type::String, ElementType::CodecId));
-        elems.insert(0x63A2, (Type::Binary, ElementType::CodecPrivate));
-        elems.insert(0x258688, (Type::String, ElementType::CodecName));
-        elems.insert(0x56AA, (Type::Unsigned, ElementType::CodecDelay));
-        elems.insert(0x56BB, (Type::Unsigned, ElementType::SeekPreRoll));
-        elems.insert(0xE0, (Type::Master, ElementType::Video));
-        elems.insert(0x9A, (Type::Unsigned, ElementType::FlagInterlaced));
-        elems.insert(0x53B8, (Type::Unsigned, ElementType::StereoMode));
-        elems.insert(0x53C0, (Type::Unsigned, ElementType::AlphaMode));
-        elems.insert(0xB0, (Type::Unsigned, ElementType::PixelWidth));
-        elems.insert(0xBA, (Type::Unsigned, ElementType::PixelHeight));
-        elems.insert(0x54AA, (Type::Unsigned, ElementType::PixelCropBottom));
-        elems.insert(0x54BB, (Type::Unsigned, ElementType::PixelCropTop));
-        elems.insert(0x54CC, (Type::Unsigned, ElementType::PixelCropLeft));
-        elems.insert(0x54DD, (Type::Unsigned, ElementType::PixelCropRight));
-        elems.insert(0x54B0, (Type::Unsigned, ElementType::DisplayWidth));
-        elems.insert(0x54BA, (Type::Unsigned, ElementType::DisplayHeight));
-        elems.insert(0x54B2, (Type::Unsigned, ElementType::DisplayUnit));
-        elems.insert(0x54B3, (Type::Unsigned, ElementType::AspectRatioType));
-        elems.insert(0xE1, (Type::Master, ElementType::Audio));
-        elems.insert(0xB5, (Type::Float, ElementType::SamplingFrequency));
-        elems.insert(0x78B5, (Type::Float, ElementType::OutputSamplingFrequency));
-        elems.insert(0x9F, (Type::Unsigned, ElementType::Channels));
-        elems.insert(0x6264, (Type::Unsigned, ElementType::BitDepth));
-        elems.insert(0x6D80, (Type::Master, ElementType::ContentEncodings));
-        elems.insert(0x6240, (Type::Master, ElementType::ContentEncoding));
-        elems.insert(0x5031, (Type::Unsigned, ElementType::ContentEncodingOrder));
-        elems.insert(0x5032, (Type::Unsigned, ElementType::ContentEncodingScope));
-        elems.insert(0x5033, (Type::Unsigned, ElementType::ContentEncodingType));
-        elems.insert(0x5035, (Type::Master, ElementType::ContentEncryption));
-        elems.insert(0x47E1, (Type::Unsigned, ElementType::ContentEncAlgo));
-        elems.insert(0x47E2, (Type::Unsigned, ElementType::ContentEncKeyId));
-        elems.insert(0x47E7, (Type::Master, ElementType::ContentEncAesSettings));
-        elems.insert(0x47E8, (Type::Unsigned, ElementType::AesSettingsCipherMode));
-        elems.insert(0x55B0, (Type::Master, ElementType::Colour));
-        elems.insert(0x55B1, (Type::Unsigned, ElementType::MatrixCoefficients));
-        elems.insert(0x55B2, (Type::Unsigned, ElementType::BitsPerChannel));
-        elems.insert(0x55B3, (Type::Unsigned, ElementType::ChromaSubsamplingHorz));
-        elems.insert(0x55B4, (Type::Unsigned, ElementType::ChromaSubsamplingVert));
-        elems.insert(0x55B5, (Type::Unsigned, ElementType::CbSubsamplingHorz));
-        elems.insert(0x55B6, (Type::Unsigned, ElementType::CbSubsamplingVert));
-        elems.insert(0x55B7, (Type::Unsigned, ElementType::ChromaSitingHorz));
-        elems.insert(0x55B8, (Type::Unsigned, ElementType::ChromaSitingVert));
-        elems.insert(0x55B9, (Type::Unsigned, ElementType::Range));
-        elems.insert(0x55BA, (Type::Unsigned, ElementType::TransferCharacteristics));
-        elems.insert(0x55BB, (Type::Unsigned, ElementType::Primaries));
-        elems.insert(0x55BC, (Type::Unsigned, ElementType::MaxCll));
-        elems.insert(0x55BD, (Type::Unsigned, ElementType::MaxFall));
-        elems.insert(0x55D0, (Type::Master, ElementType::MasteringMetadata));
-        elems.insert(0x55D1, (Type::Float, ElementType::PrimaryRChromaticityX));
-        elems.insert(0x55D2, (Type::Float, ElementType::PrimaryRChromaticityY));
-        elems.insert(0x55D3, (Type::Float, ElementType::PrimaryGChromaticityX));
-        elems.insert(0x55D4, (Type::Float, ElementType::PrimaryGChromaticityY));
-        elems.insert(0x55D5, (Type::Float, ElementType::PrimaryBChromaticityX));
-        elems.insert(0x55D6, (Type::Float, ElementType::PrimaryBChromaticityY));
-        elems.insert(0x55D7, (Type::Float, ElementType::WhitePointChromaticityX));
-        elems.insert(0x55D8, (Type::Float, ElementType::WhitePointChromaticityY));
-        elems.insert(0x55D9, (Type::Float, ElementType::LuminanceMax));
-        elems.insert(0x55DA, (Type::Float, ElementType::LuminanceMin));
-        elems.insert(0x1C53BB6B, (Type::Master, ElementType::Cues));
-        elems.insert(0xBB, (Type::Master, ElementType::CuePoint));
-        elems.insert(0xB3, (Type::Unsigned, ElementType::CueTime));
-        elems.insert(0xB7, (Type::Master, ElementType::CueTrackPositions));
-        elems.insert(0xF7, (Type::Unsigned, ElementType::CueTrack));
-        elems.insert(0xF1, (Type::Unsigned, ElementType::CueClusterPosition));
-        elems.insert(0xF0, (Type::Unsigned, ElementType::CueRelativePosition));
-        elems.insert(0xB2, (Type::Unsigned, ElementType::CueDuration));
-        elems.insert(0x5378, (Type::Unsigned, ElementType::CueBlockNumber));
-        elems.insert(0x1043A770, (Type::Master, ElementType::Chapters));
-        elems.insert(0x45B9, (Type::Master, ElementType::EditionEntry));
-        elems.insert(0xB6, (Type::Master, ElementType::ChapterAtom));
-        elems.insert(0x73C4, (Type::Unsigned, ElementType::ChapterUid));
-        elems.insert(0x5654, (Type::String, ElementType::ChapterStringUid));
-        elems.insert(0x91, (Type::Unsigned, ElementType::ChapterTimeStart));
-        elems.insert(0x92, (Type::Unsigned, ElementType::ChapterTimeEnd));
-        elems.insert(0x80, (Type::Master, ElementType::ChapterDisplay));
-        elems.insert(0x85, (Type::String, ElementType::ChapString));
-        elems.insert(0x437C, (Type::String, ElementType::ChapLanguage));
-        elems.insert(0x437D, (Type::String, ElementType::ChapLanguageIetf));
-        elems.insert(0x437E, (Type::String, ElementType::ChapCountry));
-        elems.insert(0x1254C367, (Type::Master, ElementType::Tags));
-        elems.insert(0x7373, (Type::Master, ElementType::Tag));
-        elems.insert(0x63C0, (Type::Master, ElementType::Targets));
-        elems.insert(0x68CA, (Type::Unsigned, ElementType::TargetTypeValue));
-        elems.insert(0x63CA, (Type::String, ElementType::TargetType));
-        elems.insert(0x63C5, (Type::Unsigned, ElementType::TagTrackUid));
-        elems.insert(0x67C8, (Type::Master, ElementType::SimpleTag));
-        elems.insert(0x45A3, (Type::String, ElementType::TagName));
-        elems.insert(0x447A, (Type::String, ElementType::TagLanguage));
-        elems.insert(0x4484, (Type::Unsigned, ElementType::TagDefault));
-        elems.insert(0x4487, (Type::String, ElementType::TagString));
-        elems.insert(0x4485, (Type::Binary, ElementType::TagBinary));
-        elems
-    };
-}
+pub(crate) static ELEMENTS: phf::Map<u32, (Type, ElementType)> = phf::phf_map! {
+    0x1A45DFA3_u32 => (Type::Master, ElementType::Ebml),
+    0x4286_u32 => (Type::Unsigned, ElementType::EbmlVersion),
+    0x42F7_u32 => (Type::Unsigned, ElementType::EbmlReadVersion),
+    0x42F2_u32 => (Type::Unsigned, ElementType::EbmlMaxIdLength),
+    0x42F3_u32 => (Type::Unsigned, ElementType::EbmlMaxSizeLength),
+    0x4282_u32 => (Type::String, ElementType::DocType),
+    0x4287_u32 => (Type::Unsigned, ElementType::DocTypeVersion),
+    0x4285_u32 => (Type::Unsigned, ElementType::DocTypeReadVersion),
+    0xBF_u32 => (Type::Binary, ElementType::Crc32),
+    0xEC_u32 => (Type::Binary, ElementType::Void),
+    0x18538067_u32 => (Type::Master, ElementType::Segment),
+    0x114D9B74_u32 => (Type::Master, ElementType::SeekHead),
+    0x4DBB_u32 => (Type::Master, ElementType::Seek),
+    0x53AB_u32 => (Type::Unsigned, ElementType::SeekId),
+    0x53AC_u32 => (Type::Unsigned, ElementType::SeekPosition),
+    0x1549A966_u32 => (Type::Master, ElementType::Info),
+    0x2AD7B1_u32 => (Type::Unsigned, ElementType::TimestampScale),
+    0x4489_u32 => (Type::Float, ElementType::Duration),
+    0x4461_u32 => (Type::Date, ElementType::DateUtc),
+    0x7BA9_u32 => (Type::String, ElementType::Title),
+    0x4D80_u32 => (Type::String, ElementType::MuxingApp),
+    0x5741_u32 => (Type::String, ElementType::WritingApp),
+    0x1F43B675_u32 => (Type::Master, ElementType::Cluster),
+    0xE7_u32 => (Type::Unsigned, ElementType::Timestamp),
+    0xAB_u32 => (Type::Unsigned, ElementType::PrevSize),
+    0xA3_u32 => (Type::Binary, ElementType::SimpleBlock),
+    0xA0_u32 => (Type::Master, ElementType::BlockGroup),
+    0xA1_u32 => (Type::Binary, ElementType::Block),
+    0x75A1_u32 => (Type::Master, ElementType::BlockAdditions),
+    0xA6_u32 => (Type::Master, ElementType::BlockMore),
+    0xEE_u32 => (Type::Unsigned, ElementType::BlockAddId),
+    0xA5_u32 => (Type::Binary, ElementType::BlockAdditional),
+    0x9B_u32 => (Type::Unsigned, ElementType::BlockDuration),
+    0xFB_u32 => (Type::Signed, ElementType::ReferenceBlock),
+    0x75A2_u32 => (Type::Signed, ElementType::DiscardPadding),
+    0x1654AE6B_u32 => (Type::Master, ElementType::Tracks),
+    0xAE_u32 => (Type::Master, ElementType::TrackEntry),
+    0xD7_u32 => (Type::Unsigned, ElementType::TrackNumber),
+    0x73C5_u32 => (Type::Unsigned, ElementType::TrackUid),
+    0x83_u32 => (Type::Unsigned, ElementType::TrackType),
+    0xB9_u32 => (Type::Unsigned, ElementType::FlagEnabled),
+    0x88_u32 => (Type::Unsigned, ElementType::FlagDefault),
+    0x55AA_u32 => (Type::Unsigned, ElementType::FlagForced),
+    0x55AB_u32 => (Type::Unsigned, ElementType::FlagHearingImpaired),
+    0x55AC_u32 => (Type::Unsigned, ElementType::FlagVisualImpaired),
+    0x55AD_u32 => (Type::Unsigned, ElementType::FlagTextDescriptions),
+    0x55AE_u32 => (Type::Unsigned, ElementType::FlagOriginal),
+    0x55AF_u32 => (Type::Unsigned, ElementType::FlagCommentary),
+    0x9C_u32 => (Type::Unsigned, ElementType::FlagLacing),
+    0x23E383_u32 => (Type::Unsigned, ElementType::DefaultDuration),
+    0x536E_u32 => (Type::String, ElementType::Name),
+    0x22B59C_u32 => (Type::String, ElementType::Language),
+    0x86_u32 => (Type::String, ElementType::CodecId),
+    0x63A2_u32 => (Type::Binary, ElementType::CodecPrivate),
+    0x258688_u32 => (Type::String, ElementType::CodecName),
+    0x56AA_u32 => (Type::Unsigned, ElementType::CodecDelay),
+    0x56BB_u32 => (Type::Unsigned, ElementType::SeekPreRoll),
+    0xE0_u32 => (Type::Master, ElementType::Video),
+    0x9A_u32 => (Type::Unsigned, ElementType::FlagInterlaced),
+    0x53B8_u32 => (Type::Unsigned, ElementType::StereoMode),
+    0x53C0_u32 => (Type::Unsigned, ElementType::AlphaMode),
+    0xB0_u32 => (Type::Unsigned, ElementType::PixelWidth),
+    0xBA_u32 => (Type::Unsigned, ElementType::PixelHeight),
+    0x54AA_u32 => (Type::Unsigned, ElementType::PixelCropBottom),
+    0x54BB_u32 => (Type::Unsigned, ElementType::PixelCropTop),
+    0x54CC_u32 => (Type::Unsigned, ElementType::PixelCropLeft),
+    0x54DD_u32 => (Type::Unsigned, ElementType::PixelCropRight),
+    0x54B0_u32 => (Type::Unsigned, ElementType::DisplayWidth),
+    0x54BA_u32 => (Type::Unsigned, ElementType::DisplayHeight),
+    0x54B2_u32 => (Type::Unsigned, ElementType::DisplayUnit),
+    0x54B3_u32 => (Type::Unsigned, ElementType::AspectRatioType),
+    0xE1_u32 => (Type::Master, ElementType::Audio),
+    0xB5_u32 => (Type::Float, ElementType::SamplingFrequency),
+    0x78B5_u32 => (Type::Float, ElementType::OutputSamplingFrequency),
+    0x9F_u32 => (Type::Unsigned, ElementType::Channels),
+    0x6264_u32 => (Type::Unsigned, ElementType::BitDepth),
+    0x6D80_u32 => (Type::Master, ElementType::ContentEncodings),
+    0x6240_u32 => (Type::Master, ElementType::ContentEncoding),
+    0x5031_u32 => (Type::Unsigned, ElementType::ContentEncodingOrder),
+    0x5032_u32 => (Type::Unsigned, ElementType::ContentEncodingScope),
+    0x5033_u32 => (Type::Unsigned, ElementType::ContentEncodingType),
+    0x5035_u32 => (Type::Master, ElementType::ContentEncryption),
+    0x47E1_u32 => (Type::Unsigned, ElementType::ContentEncAlgo),
+    0x47E2_u32 => (Type::Unsigned, ElementType::ContentEncKeyId),
+    0x47E7_u32 => (Type::Master, ElementType::ContentEncAesSettings),
+    0x47E8_u32 => (Type::Unsigned, ElementType::AesSettingsCipherMode),
+    0x55B0_u32 => (Type::Master, ElementType::Colour),
+    0x55B1_u32 => (Type::Unsigned, ElementType::MatrixCoefficients),
+    0x55B2_u32 => (Type::Unsigned, ElementType::BitsPerChannel),
+    0x55B3_u32 => (Type::Unsigned, ElementType::ChromaSubsamplingHorz),
+    0x55B4_u32 => (Type::Unsigned, ElementType::ChromaSubsamplingVert),
+    0x55B5_u32 => (Type::Unsigned, ElementType::CbSubsamplingHorz),
+    0x55B6_u32 => (Type::Unsigned, ElementType::CbSubsamplingVert),
+    0x55B7_u32 => (Type::Unsigned, ElementType::ChromaSitingHorz),
+    0x55B8_u32 => (Type::Unsigned, ElementType::ChromaSitingVert),
+    0x55B9_u32 => (Type::Unsigned, ElementType::Range),
+    0x55BA_u32 => (Type::Unsigned, ElementType::TransferCharacteristics),
+    0x55BB_u32 => (Type::Unsigned, ElementType::Primaries),
+    0x55BC_u32 => (Type::Unsigned, ElementType::MaxCll),
+    0x55BD_u32 => (Type::Unsigned, ElementType::MaxFall),
+    0x55D0_u32 => (Type::Master, ElementType::MasteringMetadata),
+    0x55D1_u32 => (Type::Float, ElementType::PrimaryRChromaticityX),
+    0x55D2_u32 => (Type::Float, ElementType::PrimaryRChromaticityY),
+    0x55D3_u32 => (Type::Float, ElementType::PrimaryGChromaticityX),
+    0x55D4_u32 => (Type::Float, ElementType::PrimaryGChromaticityY),
+    0x55D5_u32 => (Type::Float, ElementType::PrimaryBChromaticityX),
+    0x55D6_u32 => (Type::Float, ElementType::PrimaryBChromaticityY),
+    0x55D7_u32 => (Type::Float, ElementType::WhitePointChromaticityX),
+    0x55D8_u32 => (Type::Float, ElementType::WhitePointChromaticityY),
+    0x55D9_u32 => (Type::Float, ElementType::LuminanceMax),
+    0x55DA_u32 => (Type::Float, ElementType::LuminanceMin),
+    0x1C53BB6B_u32 => (Type::Master, ElementType::Cues),
+    0xBB_u32 => (Type::Master, ElementType::CuePoint),
+    0xB3_u32 => (Type::Unsigned, ElementType::CueTime),
+    0xB7_u32 => (Type::Master, ElementType::CueTrackPositions),
+    0xF7_u32 => (Type::Unsigned, ElementType::CueTrack),
+    0xF1_u32 => (Type::Unsigned, ElementType::CueClusterPosition),
+    0xF0_u32 => (Type::Unsigned, ElementType::CueRelativePosition),
+    0xB2_u32 => (Type::Unsigned, ElementType::CueDuration),
+    0x5378_u32 => (Type::Unsigned, ElementType::CueBlockNumber),
+    0x1043A770_u32 => (Type::Master, ElementType::Chapters),
+    0x45B9_u32 => (Type::Master, ElementType::EditionEntry),
+    0xB6_u32 => (Type::Master, ElementType::ChapterAtom),
+    0x73C4_u32 => (Type::Unsigned, ElementType::ChapterUid),
+    0x5654_u32 => (Type::String, ElementType::ChapterStringUid),
+    0x91_u32 => (Type::Unsigned, ElementType::ChapterTimeStart),
+    0x92_u32 => (Type::Unsigned, ElementType::ChapterTimeEnd),
+    0x80_u32 => (Type::Master, ElementType::ChapterDisplay),
+    0x85_u32 => (Type::String, ElementType::ChapString),
+    0x437C_u32 => (Type::String, ElementType::ChapLanguage),
+    0x437D_u32 => (Type::String, ElementType::ChapLanguageIetf),
+    0x437E_u32 => (Type::String, ElementType::ChapCountry),
+    0x1254C367_u32 => (Type::Master, ElementType::Tags),
+    0x7373_u32 => (Type::Master, ElementType::Tag),
+    0x63C0_u32 => (Type::Master, ElementType::Targets),
+    0x68CA_u32 => (Type::Unsigned, ElementType::TargetTypeValue),
+    0x63CA_u32 => (Type::String, ElementType::TargetType),
+    0x63C5_u32 => (Type::Unsigned, ElementType::TagTrackUid),
+    0x67C8_u32 => (Type::Master, ElementType::SimpleTag),
+    0x45A3_u32 => (Type::String, ElementType::TagName),
+    0x447A_u32 => (Type::String, ElementType::TagLanguage),
+    0x4484_u32 => (Type::Unsigned, ElementType::TagDefault),
+    0x4487_u32 => (Type::String, ElementType::TagString),
+    0x4485_u32 => (Type::Binary, ElementType::TagBinary)
+};

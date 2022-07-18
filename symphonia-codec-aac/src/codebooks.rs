@@ -5,9 +5,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+use once_cell::sync::Lazy;
 use symphonia_core::io::vlc::*;
-
-use lazy_static::lazy_static;
 
 #[rustfmt::skip]
 const SPECTRUM_CODEBOOK1_LENS: [u8; 81] = [
@@ -396,38 +395,34 @@ const SPECTRUM_TABLES: [AacTable; 11] = [
     AacTable { codes: &SPECTRUM_CODEBOOK11_CODES, lens: &SPECTRUM_CODEBOOK11_LENS },
 ];
 
-lazy_static! {
-    pub static ref SPECTRUM_CODEBOOKS: [Codebook<Entry16x16>; 11] = {
-        let mut codebooks: [Codebook<Entry16x16>; 11] = Default::default();
+pub static SPECTRUM_CODEBOOKS: Lazy<[Codebook<Entry16x16>; 11]> = Lazy::new(|| {
+    let mut codebooks: [Codebook<Entry16x16>; 11] = Default::default();
 
-        for (codebook, table) in codebooks.iter_mut().zip(&SPECTRUM_TABLES) {
-            debug_assert_eq!(table.codes.len(), table.lens.len());
+    for (codebook, table) in codebooks.iter_mut().zip(&SPECTRUM_TABLES) {
+        debug_assert_eq!(table.codes.len(), table.lens.len());
 
-            let len = table.codes.len() as u16;
+        let len = table.codes.len() as u16;
 
-            // Generate values for the codebook.
-            let values: Vec<u16> = (0..len).into_iter().collect();
-
-            // Generate the codebook.
-            let mut builder = CodebookBuilder::new(BitOrder::Verbatim);
-            *codebook = builder.make(table.codes, table.lens, &values).unwrap();
-        }
-
-        codebooks
-    };
-}
-
-lazy_static! {
-    pub static ref SCF_CODEBOOK: Codebook<Entry8x16> = {
-        debug_assert_eq!(SCF_CODEBOOK_CODES.len(), SCF_CODEBOOK_LENS.len());
-
-        let len = SCF_CODEBOOK_CODES.len() as u8;
-
-        // Generate the values for the codebook.
-        let values: Vec<u8> = (0..len).into_iter().collect();
+        // Generate values for the codebook.
+        let values: Vec<u16> = (0..len).into_iter().collect();
 
         // Generate the codebook.
         let mut builder = CodebookBuilder::new(BitOrder::Verbatim);
-        builder.make(&SCF_CODEBOOK_CODES, &SCF_CODEBOOK_LENS, &values).unwrap()
-    };
-}
+        *codebook = builder.make(table.codes, table.lens, &values).unwrap();
+    }
+
+    codebooks
+});
+
+pub static SCF_CODEBOOK: Lazy<Codebook<Entry8x16>> = Lazy::new(|| {
+    debug_assert_eq!(SCF_CODEBOOK_CODES.len(), SCF_CODEBOOK_LENS.len());
+
+    let len = SCF_CODEBOOK_CODES.len() as u8;
+
+    // Generate the values for the codebook.
+    let values: Vec<u8> = (0..len).into_iter().collect();
+
+    // Generate the codebook.
+    let mut builder = CodebookBuilder::new(BitOrder::Verbatim);
+    builder.make(&SCF_CODEBOOK_CODES, &SCF_CODEBOOK_LENS, &values).unwrap()
+});

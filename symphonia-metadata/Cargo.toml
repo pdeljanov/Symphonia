@@ -13,7 +13,11 @@ edition = "2018"
 rust-version = "1.53"
 
 [dependencies]
-encoding_rs = "0.8.17"
-lazy_static = "1.4.0"
-log = "0.4"
 symphonia-core = { version = "0.5", path = "../symphonia-core" }
+encoding_rs = "0.8.17"
+once_cell = "1"
+log = "0.4"
+
+[dependencies.phf]
+version = "0.11"
+features = ["macros"]
