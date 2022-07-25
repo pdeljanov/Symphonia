@@ -733,6 +733,11 @@ impl<S: Sample> SampleBuffer<S> {
         &self.buf[..self.n_written]
     }
 
+    /// Gets a mutable slice of all written samples.
+    pub fn samples_mut(&mut self) -> &mut [S] {
+        &mut self.buf[..self.n_written]
+    }
+
     /// Gets the maximum number of samples the `SampleBuffer` may store.
     pub fn capacity(&self) -> usize {
         self.buf.len()
