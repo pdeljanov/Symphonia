@@ -161,6 +161,23 @@ pub trait ReadBytes {
     /// Reads exactly the number of bytes required to fill be provided buffer or returns an error.
     fn read_buf_exact(&mut self, buf: &mut [u8]) -> io::Result<()>;
 
+    fn read_bytes_exact(&mut self, count: usize, to: &mut Vec<u8>) -> io::Result<()> {
+        let mut buffer = vec![0_u8; count.min(1024)];
+
+        let mut bytes_left = count;
+        loop {
+            let length = self.read_buf(&mut buffer[0..(bytes_left.min(1024))])?;
+            if length == 0 {
+                return Err(io::ErrorKind::UnexpectedEof.into());
+            }
+            to.extend_from_slice(&buffer[0..length]);
+            bytes_left -= length;
+            if bytes_left == 0 {
+                return Ok(());
+            }
+        }
+    }
+
     /// Reads a single unsigned byte from the stream and returns it or an error.
     #[inline(always)]
     fn read_u8(&mut self) -> io::Result<u8> {
@@ -275,8 +292,8 @@ pub trait ReadBytes {
     /// Reads exactly the number of bytes requested, and returns a boxed slice of the data or an
     /// error.
     fn read_boxed_slice_exact(&mut self, len: usize) -> io::Result<Box<[u8]>> {
-        let mut buf = vec![0u8; len];
-        self.read_buf_exact(&mut buf)?;
+        let mut buf = Vec::new();
+        self.read_bytes_exact(len, &mut buf)?;
         Ok(buf.into_boxed_slice())
     }
 

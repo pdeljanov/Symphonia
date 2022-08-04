@@ -150,8 +150,8 @@ pub fn read_comment_no_framing<B: ReadBytes>(
         let comment_length = reader.read_u32()?;
 
         // Read the comment string.
-        let mut comment_byte = vec![0; comment_length as usize];
-        reader.read_buf_exact(&mut comment_byte)?;
+        let mut comment_byte = Vec::new();
+        reader.read_bytes_exact(comment_length as usize, &mut comment_byte)?;
 
         // Parse the comment string into a Tag and insert it into the parsed tag list.
         metadata.add_tag(parse(&String::from_utf8_lossy(&comment_byte)));

@@ -426,8 +426,8 @@ pub fn read_picture_block<B: ReadBytes>(
     let media_type_len = reader.read_be_u32()? as usize;
 
     // Read the Media Type bytes
-    let mut media_type_buf = vec![0u8; media_type_len];
-    reader.read_buf_exact(&mut media_type_buf)?;
+    let mut media_type_buf = Vec::new();
+    reader.read_bytes_exact(media_type_len, &mut media_type_buf)?;
 
     // Convert Media Type bytes to an ASCII string. Non-printable ASCII characters are invalid.
     let media_type = match printable_ascii_to_string(&media_type_buf) {
@@ -439,8 +439,8 @@ pub fn read_picture_block<B: ReadBytes>(
     let desc_len = reader.read_be_u32()? as usize;
 
     // Read the description bytes.
-    let mut desc_buf = vec![0u8; desc_len];
-    reader.read_buf_exact(&mut desc_buf)?;
+    let mut desc_buf = Vec::new();
+    reader.read_bytes_exact(desc_len, &mut desc_buf)?;
 
     let desc = String::from_utf8_lossy(&desc_buf);
 
