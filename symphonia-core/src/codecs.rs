@@ -37,14 +37,11 @@ pub const fn decl_codec_type(cc: &[u8]) -> CodecType {
         //  b'A'..=b'Z' maps to 37..=62
         if cc.is_ascii_digit() {
             1 + (cc - b'0') as u32
-        }
-        else if cc.is_ascii_lowercase() {
+        } else if cc.is_ascii_lowercase() {
             11 + (cc - b'a') as u32
-        }
-        else if cc.is_ascii_uppercase() {
+        } else if cc.is_ascii_uppercase() {
             37 + (cc - b'A') as u32
-        }
-        else {
+        } else {
             0
         }
     }
@@ -300,6 +297,9 @@ pub struct CodecParameters {
     /// A method and expected value that may be used to perform verification on the decoded audio.
     pub verification_check: Option<VerificationCheck>,
 
+    /// The number of frames per block, in case packets are seperated in multiple blocks.
+    pub frames_per_block: Option<u64>,
+
     /// Extra data (defined by the codec).
     pub extra_data: Option<Box<[u8]>>,
 }
@@ -322,6 +322,7 @@ impl CodecParameters {
             max_frames_per_packet: None,
             packet_data_integrity: false,
             verification_check: None,
+            frames_per_block: None,
             extra_data: None,
         }
     }
@@ -407,6 +408,12 @@ impl CodecParameters {
     /// Specify if the packet's data integrity was guaranteed.
     pub fn with_packet_data_integrity(&mut self, integrity: bool) -> &mut Self {
         self.packet_data_integrity = integrity;
+        self
+    }
+
+    /// Provide the maximum number of frames per packet.
+    pub fn with_frames_per_block(&mut self, len: u64) -> &mut Self {
+        self.frames_per_block = Some(len);
         self
     }
 
@@ -551,8 +558,7 @@ impl CodecRegistry {
     ) -> Result<Box<dyn Decoder>> {
         if let Some(descriptor) = self.codecs.get(&params.codec) {
             Ok((descriptor.inst_func)(params, options)?)
-        }
-        else {
+        } else {
             unsupported_error("core (codec):unsupported codec")
         }
     }

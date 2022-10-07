@@ -17,7 +17,7 @@
 use std::io::{Seek, SeekFrom};
 
 use symphonia_core::codecs::CodecParameters;
-use symphonia_core::errors::{end_of_stream_error, seek_error, unsupported_error};
+use symphonia_core::errors::{decode_error, end_of_stream_error, seek_error, unsupported_error};
 use symphonia_core::errors::{Result, SeekErrorKind};
 use symphonia_core::formats::prelude::*;
 use symphonia_core::io::*;
@@ -40,6 +40,50 @@ const WAVE_RIFF_FORM: [u8; 4] = *b"WAVE";
 /// The maximum number of frames that will be in a packet.
 const WAVE_MAX_FRAMES_PER_PACKET: u64 = 1152;
 
+/// `PacketInfo` helps to simulate packetization over a number of blocks of data.
+/// In case the codec is blockless the block size equals one full audio frame in bytes.
+pub(crate) struct PacketInfo {
+    block_size: u64,
+    frames_per_block: u64,
+    max_blocks_per_packet: u64,
+}
+
+impl PacketInfo {
+    fn with_blocks(block_size: u16, frames_per_block: u64) -> Self {
+        Self {
+            block_size: u64::from(block_size),
+            frames_per_block,
+            max_blocks_per_packet: frames_per_block.max(WAVE_MAX_FRAMES_PER_PACKET)
+                / frames_per_block,
+        }
+    }
+
+    fn without_blocks(frame_len: u16) -> Self {
+        Self {
+            block_size: u64::from(frame_len),
+            frames_per_block: 1,
+            max_blocks_per_packet: WAVE_MAX_FRAMES_PER_PACKET,
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.block_size == 0
+    }
+
+    fn get_max_frames_per_packet(&self) -> u64 {
+        self.max_blocks_per_packet * self.frames_per_block
+    }
+
+    fn get_frames(&self, data_len: u64) -> u64 {
+        data_len / self.block_size * self.frames_per_block
+    }
+
+    fn get_actual_ts(&self, ts: u64) -> u64 {
+        let max_frames_per_packet = self.get_max_frames_per_packet();
+        ts / max_frames_per_packet * max_frames_per_packet
+    }
+}
+
 /// WAVE (WAV) format reader.
 ///
 /// `WavReader` implements a demuxer for the WAVE container format.
@@ -48,7 +92,7 @@ pub struct WavReader {
     tracks: Vec<Track>,
     cues: Vec<Cue>,
     metadata: MetadataLog,
-    frame_len: u16,
+    packet_info: PacketInfo,
     data_start_pos: u64,
     data_end_pos: u64,
 }
@@ -98,7 +142,7 @@ impl FormatReader for WavReader {
 
         let mut codec_params = CodecParameters::new();
         let mut metadata: MetadataLog = Default::default();
-        let mut frame_len = 0;
+        let mut packet_info = PacketInfo::without_blocks(0);
 
         loop {
             let chunk = riff_chunks.next(&mut source)?;
@@ -113,13 +157,14 @@ impl FormatReader for WavReader {
                 RiffWaveChunks::Format(fmt) => {
                     let format = fmt.parse(&mut source)?;
 
-                    // The Format chunk contains the block_align field which indicates the size
-                    // of one full audio frame in bytes, atleast for the codecs supported by
-                    // WavReader. This value is stored to support seeking.
-                    frame_len = format.block_align;
+                    // The Format chunk contains the block_align field and possible additional information
+                    // to handle packetization and seeking.
+                    packet_info = format.packet_info();
+                    codec_params
+                        .with_max_frames_per_packet(packet_info.get_max_frames_per_packet());
 
                     // Append Format chunk fields to codec parameters.
-                    append_format_params(&mut codec_params, &format);
+                    append_format_params(&mut codec_params, format);
                 }
                 RiffWaveChunks::Fact(fct) => {
                     let fact = fct.parse(&mut source)?;
@@ -145,7 +190,7 @@ impl FormatReader for WavReader {
                     let data_end_pos = data_start_pos + u64::from(data.len);
 
                     // Append Data chunk fields to codec parameters.
-                    append_data_params(&mut codec_params, &data, frame_len);
+                    append_data_params(&mut codec_params, &data, &packet_info);
 
                     // Add a new track using the collected codec parameters.
                     return Ok(WavReader {
@@ -153,7 +198,7 @@ impl FormatReader for WavReader {
                         tracks: vec![Track::new(0, codec_params)],
                         cues: Vec::new(),
                         metadata,
-                        frame_len,
+                        packet_info,
                         data_start_pos,
                         data_end_pos,
                     });
@@ -165,30 +210,31 @@ impl FormatReader for WavReader {
     }
 
     fn next_packet(&mut self) -> Result<Packet> {
-        let pos = self.reader.pos();
-
-        // Determine the number of complete frames remaining in the data chunk.
-        let num_frames_left = if pos < self.data_end_pos {
-            (self.data_end_pos - pos) / u64::from(self.frame_len)
+        if self.tracks.is_empty() {
+            return decode_error("wav: no tracks");
         }
-        else {
-            0
-        };
 
-        if num_frames_left == 0 {
+        let pos = self.reader.pos();
+        if pos >= self.data_end_pos {
             return end_of_stream_error();
         }
 
-        // Limit the duration of a packet to WAVE_MAX_FRAMES_PER_PACKET frames.
-        let dur = num_frames_left.min(WAVE_MAX_FRAMES_PER_PACKET);
+        let num_blocks_left = (self.data_end_pos - pos) / self.packet_info.block_size;
+        if num_blocks_left == 0 {
+            return end_of_stream_error();
+        }
+
+        let blocks_per_packet = num_blocks_left.min(self.packet_info.max_blocks_per_packet);
+
+        let dur = blocks_per_packet * self.packet_info.frames_per_block;
+        let packet_len = blocks_per_packet * self.packet_info.block_size;
 
         // Copy the frames.
-        let packet_len = dur * u64::from(self.frame_len);
         let packet_buf = self.reader.read_boxed_slice(packet_len as usize)?;
 
         // The packet timestamp is the position of the first byte of the first frame in the
         // packet relative to the start of the data chunk divided by the length per frame.
-        let pts = (pos - self.data_start_pos) / u64::from(self.frame_len);
+        let pts = self.packet_info.get_frames(pos - self.data_start_pos);
 
         Ok(Packet::new_from_boxed_slice(0, pts, dur, packet_buf))
     }
@@ -206,7 +252,7 @@ impl FormatReader for WavReader {
     }
 
     fn seek(&mut self, _mode: SeekMode, to: SeekTo) -> Result<SeekedTo> {
-        if self.tracks.is_empty() || self.frame_len == 0 {
+        if self.tracks.is_empty() || self.packet_info.is_empty() {
             return seek_error(SeekErrorKind::Unseekable);
         }
 
@@ -221,8 +267,7 @@ impl FormatReader for WavReader {
                 // known, the seek cannot be completed.
                 if let Some(sample_rate) = params.sample_rate {
                     TimeBase::new(1, sample_rate).calc_timestamp(time)
-                }
-                else {
+                } else {
                     return seek_error(SeekErrorKind::Unseekable);
                 }
             }
@@ -239,15 +284,15 @@ impl FormatReader for WavReader {
         debug!("seeking to frame_ts={}", ts);
 
         // WAVE is not internally packetized for PCM codecs. Packetization is simulated by trying to
-        // read a constant number of samples every call to next_packet. Therefore, a packet begins
+        // read a constant number of samples or blocks every call to next_packet. Therefore, a packet begins
         // wherever the data stream is currently positioned. Since timestamps on packets should be
         // determinstic, instead of seeking to the exact timestamp requested and starting the next
         // packet there, seek to a packet boundary. In this way, packets will have have the same
         // timestamps regardless if the stream was seeked or not.
-        let actual_ts = (ts / WAVE_MAX_FRAMES_PER_PACKET) * WAVE_MAX_FRAMES_PER_PACKET;
+        let actual_ts = self.packet_info.get_actual_ts(ts);
 
         // Calculate the absolute byte offset of the desired audio frame.
-        let seek_pos = self.data_start_pos + (actual_ts * u64::from(self.frame_len));
+        let seek_pos = self.data_start_pos + (actual_ts * self.packet_info.block_size);
 
         // If the reader supports seeking we can seek directly to the frame's offset wherever it may
         // be.
@@ -260,8 +305,7 @@ impl FormatReader for WavReader {
             let current_pos = self.reader.pos();
             if seek_pos >= current_pos {
                 self.reader.ignore_bytes(seek_pos - current_pos)?;
-            }
-            else {
+            } else {
                 return seek_error(SeekErrorKind::ForwardOnly);
             }
         }
@@ -287,8 +331,7 @@ fn read_info_chunk(source: &mut MediaSourceStream, len: u32) -> Result<MetadataR
         if let Some(RiffInfoListChunks::Info(info)) = chunk {
             let parsed_info = info.parse(source)?;
             metadata_builder.add_tag(parsed_info.tag);
-        }
-        else {
+        } else {
             break;
         }
     }
@@ -298,34 +341,42 @@ fn read_info_chunk(source: &mut MediaSourceStream, len: u32) -> Result<MetadataR
     Ok(metadata_builder.metadata())
 }
 
-fn append_format_params(codec_params: &mut CodecParameters, format: &WaveFormatChunk) {
+fn append_format_params(codec_params: &mut CodecParameters, format: WaveFormatChunk) {
     codec_params
-        .with_max_frames_per_packet(WAVE_MAX_FRAMES_PER_PACKET)
         .with_sample_rate(format.sample_rate)
         .with_time_base(TimeBase::new(1, format.sample_rate));
 
     match format.format_data {
-        WaveFormatData::Pcm(ref pcm) => {
+        WaveFormatData::Pcm(pcm) => {
             codec_params
                 .for_codec(pcm.codec)
                 .with_bits_per_coded_sample(u32::from(pcm.bits_per_sample))
                 .with_bits_per_sample(u32::from(pcm.bits_per_sample))
                 .with_channels(pcm.channels);
         }
-        WaveFormatData::IeeeFloat(ref ieee) => {
+        WaveFormatData::Adpcm(mut adpcm) => {
+            codec_params
+                .for_codec(adpcm.codec)
+                .with_channels(adpcm.channels)
+                .with_frames_per_block(adpcm.frames_per_block);
+            if let Some(extra_data) = adpcm.extra_data.take() {
+                codec_params.with_extra_data(extra_data);
+            }
+        }
+        WaveFormatData::IeeeFloat(ieee) => {
             codec_params.for_codec(ieee.codec).with_channels(ieee.channels);
         }
-        WaveFormatData::Extensible(ref ext) => {
+        WaveFormatData::Extensible(ext) => {
             codec_params
                 .for_codec(ext.codec)
                 .with_bits_per_coded_sample(u32::from(ext.bits_per_coded_sample))
                 .with_bits_per_sample(u32::from(ext.bits_per_sample))
                 .with_channels(ext.channels);
         }
-        WaveFormatData::ALaw(ref alaw) => {
+        WaveFormatData::ALaw(alaw) => {
             codec_params.for_codec(alaw.codec).with_channels(alaw.channels);
         }
-        WaveFormatData::MuLaw(ref mulaw) => {
+        WaveFormatData::MuLaw(mulaw) => {
             codec_params.for_codec(mulaw.codec).with_channels(mulaw.channels);
         }
     }
@@ -335,9 +386,13 @@ fn append_fact_params(codec_params: &mut CodecParameters, fact: &FactChunk) {
     codec_params.with_n_frames(u64::from(fact.n_frames));
 }
 
-fn append_data_params(codec_params: &mut CodecParameters, data: &DataChunk, frame_len: u16) {
-    if frame_len > 0 {
-        let n_frames = data.len / u32::from(frame_len);
-        codec_params.with_n_frames(u64::from(n_frames));
+fn append_data_params(
+    codec_params: &mut CodecParameters,
+    data: &DataChunk,
+    packet_info: &PacketInfo,
+) {
+    if !packet_info.is_empty() {
+        let n_frames = packet_info.get_frames(u64::from(data.len));
+        codec_params.with_n_frames(n_frames);
     }
 }
