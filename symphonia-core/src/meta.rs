@@ -104,6 +104,7 @@ pub enum StandardTagKey {
     Arranger,
     Artist,
     Bpm,
+    Chapter,
     Comment,
     Compilation,
     Composer,
@@ -186,6 +187,7 @@ pub enum StandardTagKey {
     SortArtist,
     SortComposer,
     SortTrackTitle,
+    TableOfContents,
     TaggingDate,
     TrackNumber,
     TrackSubtitle,
@@ -331,6 +333,48 @@ impl fmt::Display for Tag {
     }
 }
 
+/// A description of a single chapter within an audio file.
+#[derive(Clone, Debug, Default)]
+pub struct Chapter {
+    /// The millisecond offset from the beginning of the file to the start of the chapter.
+    pub start_ms: u32,
+    /// The millisecond offset from the beginning of the file to the end of the chapter.
+    pub end_ms: u32,
+    /// The zero-based count of bytes from the beginning of the file to the first byte of the first
+    /// audio frame in the chapter. If these bytes are all set to 0xFF then the value should be
+    /// ignored and the start time value should be utilized.
+    pub start_byte: u32,
+    /// The zero-based count of bytes from the beginning of the file to the first byte of the audio
+    /// frame following the end of the chapter. If these bytes are all set to 0xFF then the value
+    /// should be ignored and the end time value should be utilized.
+    pub end_byte: u32,
+    /// The tags associated with the chapter.
+    pub tags: Vec<Tag>,
+}
+
+/// An item that belongs to a `TableOfContents`.
+#[derive(Clone, Debug)]
+pub enum TableOfContentsItem {
+    /// A `Chapter`.
+    Chapter(Chapter),
+    /// A sub-`TableOfContents`.
+    TableOfContents(TableOfContents),
+}
+
+/// `TableOfContents` describes different sections and chapters of an audio stream.
+#[derive(Clone, Debug, Default)]
+pub struct TableOfContents {
+    /// `ordered` should be set to `true` if the entries in the `items` list are ordered or set to
+    /// `false` if they not are ordered. This provides a hint as to whether the entries should be
+    /// played as a continuous ordered sequence or played individually.
+    pub ordered: bool,
+    /// The items that belong to this `TableOfContents`. They may be either a `Chapter` or a
+    /// sub-`TableOfContents`.
+    pub items: Vec<TableOfContentsItem>,
+    /// The tags associated with this `TableOfContents`.
+    pub tags: Vec<Tag>,
+}
+
 /// A 2 dimensional (width and height) size type.
 #[derive(Copy, Clone, Debug, Default)]
 pub struct Size {
@@ -392,6 +436,8 @@ pub struct VendorData {
 #[derive(Clone, Debug, Default)]
 pub struct MetadataRevision {
     tags: Vec<Tag>,
+    table_of_contents: Option<TableOfContents>,
+    extra_chapters: Vec<Chapter>,
     visuals: Vec<Visual>,
     vendor_data: Vec<VendorData>,
 }
@@ -400,6 +446,19 @@ impl MetadataRevision {
     /// Gets an immutable slice to the `Tag`s in this revision.
     pub fn tags(&self) -> &[Tag] {
         &self.tags
+    }
+
+    /// Gets an immutable reference to the base `TableOfContents` in this revision.
+    /// If there is more than one base `TableOfContents`, this returns the one that was most
+    /// recently parsed.
+    pub fn table_of_contents(&self) -> Option<&TableOfContents> {
+        self.table_of_contents.as_ref()
+    }
+
+    /// Gets an immutable slice to the `Chapters`s that are not related to any `TableOfContents` in
+    /// this revision.
+    pub fn extra_chapters(&self) -> &[Chapter] {
+        &self.extra_chapters
     }
 
     /// Gets an immutable slice to the `Visual`s in this revision.
@@ -428,6 +487,18 @@ impl MetadataBuilder {
     /// Add a `Tag` to the metadata.
     pub fn add_tag(&mut self, tag: Tag) -> &mut Self {
         self.metadata.tags.push(tag);
+        self
+    }
+
+    /// Add a `Chapter` to the metadata.
+    pub fn add_chapter(&mut self, chapter: Chapter) -> &mut Self {
+        self.metadata.extra_chapters.push(chapter);
+        self
+    }
+
+    /// Add a `TableOfContents` to the metadata.
+    pub fn add_table_of_contents(&mut self, toc: TableOfContents) -> &mut Self {
+        self.metadata.table_of_contents = Some(toc);
         self
     }
 
@@ -483,8 +554,7 @@ impl<'a> Metadata<'a> {
     pub fn pop(&mut self) -> Option<MetadataRevision> {
         if self.revisions.len() > 1 {
             self.revisions.pop_front()
-        }
-        else {
+        } else {
             None
         }
     }

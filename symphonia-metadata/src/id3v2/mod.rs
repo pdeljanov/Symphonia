@@ -7,9 +7,14 @@
 
 //! An ID3v2 metadata reader.
 
+use std::collections::HashMap;
+
 use symphonia_core::errors::{decode_error, unsupported_error, Result};
 use symphonia_core::io::*;
-use symphonia_core::meta::{MetadataBuilder, MetadataOptions, MetadataReader, MetadataRevision};
+use symphonia_core::meta::{
+    Chapter, MetadataBuilder, MetadataOptions, MetadataReader, MetadataRevision, StandardTagKey,
+    TableOfContents, TableOfContentsItem, Value,
+};
 use symphonia_core::probe::{Descriptor, Instantiate, QueryDescriptor};
 use symphonia_core::support_metadata;
 
@@ -293,6 +298,10 @@ fn read_id3v2_body<B: ReadBytes + FiniteStream>(
         _ => unreachable!(),
     };
 
+    let mut chapters = HashMap::new();
+    let mut tables_of_content = HashMap::new();
+    let mut table_of_content = None;
+
     loop {
         // Read frames based on the major version of the tag.
         let frame = match header.major_version {
@@ -307,7 +316,102 @@ fn read_id3v2_body<B: ReadBytes + FiniteStream>(
             FrameResult::Padding => break,
             // A frame was parsed into a tag, add it to the tag collection.
             FrameResult::Tag(tag) => {
-                metadata.add_tag(tag);
+                match tag.std_key {
+                    Some(StandardTagKey::TableOfContents) => {
+                        if let Value::Binary(value) = tag.value {
+                            let mut reader = BufReader::new(value.as_ref());
+                            let reader: &mut BufReader<'_> = &mut reader;
+                            // the flags
+                            // - bit 0 is the "ordered" bit
+                            // - bit 1 is the "top-level" bit
+                            let flags = reader.read_u8()?;
+                            // The number of items in this table of contents
+                            let entry_count = reader.read_u8()?;
+
+                            let mut items = vec![];
+                            for _ in 0..entry_count {
+                                let data = reader.scan_bytes_aligned_ref(
+                                    &[0x00],
+                                    1,
+                                    reader.bytes_available() as usize,
+                                )?;
+                                let name: String = data
+                                    .iter()
+                                    .filter(|&b| *b > 0x1f)
+                                    .map(|&b| b as char)
+                                    .collect();
+                                items.push(name);
+                            }
+
+                            let mut tags = vec![];
+                            while reader.bytes_available() > min_frame_size {
+                                let frame = match header.major_version {
+                                    2 => read_id3v2p2_frame(reader),
+                                    3 => read_id3v2p3_frame(reader),
+                                    4 => read_id3v2p4_frame(reader),
+                                    _ => break,
+                                }?;
+                                match frame {
+                                    FrameResult::MultipleTags(tag_list) => {
+                                        tags.extend(tag_list.into_iter())
+                                    }
+                                    FrameResult::Tag(tag) => tags.push(tag),
+                                    _ => {}
+                                }
+                            }
+                            let toc = (
+                                TableOfContents { items: vec![], ordered: flags & 1 == 1, tags },
+                                items,
+                            );
+                            if (flags >> 1) & 1 == 1 {
+                                table_of_content = Some(toc);
+                            } else {
+                                tables_of_content.insert(tag.key[5..].to_string(), toc);
+                            }
+                        } else {
+                            unreachable!()
+                        }
+                    }
+                    Some(StandardTagKey::Chapter) => {
+                        if let Value::Binary(value) = tag.value {
+                            let mut reader = BufReader::new(value.as_ref());
+                            // start_time in ms
+                            let start_ms = reader.read_be_u32()?;
+                            // end_time in ms
+                            let end_ms = reader.read_be_u32()?;
+                            // start_byte
+                            let start_byte = reader.read_be_u32()?;
+                            // end_byte
+                            let end_byte = reader.read_be_u32()?;
+
+                            let mut tags = vec![];
+                            while reader.bytes_available() > min_frame_size {
+                                let frame = match header.major_version {
+                                    2 => read_id3v2p2_frame(&mut reader),
+                                    3 => read_id3v2p3_frame(&mut reader),
+                                    4 => read_id3v2p4_frame(&mut reader),
+                                    _ => break,
+                                }?;
+                                match frame {
+                                    FrameResult::MultipleTags(tag_list) => {
+                                        tags.extend(tag_list.into_iter())
+                                    }
+                                    FrameResult::Tag(tag) => tags.push(tag),
+                                    _ => {}
+                                }
+                            }
+                            chapters.insert(
+                                tag.key[5..].to_string(),
+                                Chapter { start_ms, end_ms, start_byte, end_byte, tags },
+                            );
+                        } else {
+                            unreachable!()
+                        }
+                    }
+                    _ => {
+                        metadata.add_tag(tag);
+                    }
+                };
             }
             // A frame was parsed into multiple tags, add them all to the tag collection.
             FrameResult::MultipleTags(multi_tags) => {
@@ -333,6 +437,80 @@ fn read_id3v2_body<B: ReadBytes + FiniteStream>(
         if reader.bytes_available() < min_frame_size {
             break;
         }
+    }
+
+    // We need to fill out the table of contents items
+    // Do a depth-first search of the table of contents, rooted at the base table of contents
+    fn dfs_table_items(
+        items: &Vec<String>,
+        target: &mut Vec<TableOfContentsItem>,
+        tables_of_content: &mut HashMap<String, (TableOfContents, Vec<String>)>,
+        chapters: &mut HashMap<String, Chapter>,
+    ) -> Vec<String> {
+        // According to https://id3.org/id3v2-chapters-1.0#Notes there may be chapters that don't
+        // have a related table of contents.
+        // We can determine which chapters are not in any table of contents by keeping track of
+        // those that _are_ in any given table of contents and removing it from the total list of
+        // chapters later.
+        let mut to_remove = vec![];
+        for item in items {
+            if let Some(chapter) = chapters.get(item) {
+                to_remove.push(item.clone());
+                target.push(TableOfContentsItem::Chapter(chapter.clone()));
+                continue;
+            }
+            // We remove to prevent loops in tables of content
+            // As an example of something that we don't want to happen:
+            //    Toc1(root):
+            //      - Chap1
+            //      - Toc2
+            //      - Toc3
+            //    Toc2:
+            //      - Chap2
+            //      - Toc3
+            //      - Chap3
+            //    Toc3:
+            //      - Chap5
+            //      - Toc2
+            //      - Chap4
+            // There's nothing in the spec itself that says that such a layout isn't valid, but the
+            // issue of parsing becomes much more difficult, and we'd have to move to using `Arc`
+            // or `Rc` instead of a vector.
+            //
+            // With removal, the above tree becomes the following, as duplicate tocs are removed:
+            //    Toc1(root):
+            //      - Chap1
+            //      - Toc2
+            //    Toc2:
+            //      - Chap2
+            //      - Toc3
+            //      - Chap3
+            //    Toc3:
+            //      - Chap5
+            //      - Chap4
+            if let Some((mut toc, sub_items)) = tables_of_content.remove(item) {
+                to_remove.extend(dfs_table_items(
+                    &sub_items,
+                    &mut toc.items,
+                    tables_of_content,
+                    chapters,
+                ));
+                target.push(TableOfContentsItem::TableOfContents(toc));
+                continue;
+            }
+        }
+        to_remove
+    }
+    if let Some((mut toc, items)) = table_of_content {
+        let to_remove =
+            dfs_table_items(&items, &mut toc.items, &mut tables_of_content, &mut chapters);
+        metadata.add_table_of_contents(toc);
+        for chap in to_remove.into_iter() {
+            chapters.remove(&chap);
+        }
+    }
+    for chapter in chapters.into_values() {
+        metadata.add_chapter(chapter);
     }
 
     Ok(())
