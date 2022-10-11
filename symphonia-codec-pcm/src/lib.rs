@@ -236,6 +236,11 @@ impl Decoder for PcmDecoder {
         };
 
         let spec = if let Some(channels) = params.channels {
+            // Atleast one channel is required.
+            if channels.count() < 1 {
+                return unsupported_error("pcm: number of channels cannot be 0");
+            }
+
             SignalSpec::new(rate, channels)
         }
         else if let Some(layout) = params.channel_layout {
