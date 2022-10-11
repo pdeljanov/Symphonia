@@ -350,6 +350,8 @@ pub struct Chapter {
     pub end_byte: u32,
     /// The tags associated with the chapter.
     pub tags: Vec<Tag>,
+    /// The visuals associated with the chapter.
+    pub visuals: Vec<Visual>,
 }
 
 /// An item that belongs to a `TableOfContents`.
@@ -373,6 +375,8 @@ pub struct TableOfContents {
     pub items: Vec<TableOfContentsItem>,
     /// The tags associated with this `TableOfContents`.
     pub tags: Vec<Tag>,
+    /// The visuals associated with this `TableOfContents`.
+    pub visuals: Vec<Visual>,
 }
 
 /// A 2 dimensional (width and height) size type.

@@ -344,6 +344,7 @@ fn read_id3v2_body<B: ReadBytes + FiniteStream>(
                             }
 
                             let mut tags = vec![];
+                            let mut visuals = vec![];
                             while reader.bytes_available() > min_frame_size {
                                 let frame = match header.major_version {
                                     2 => read_id3v2p2_frame(reader),
@@ -356,11 +357,17 @@ fn read_id3v2_body<B: ReadBytes + FiniteStream>(
                                         tags.extend(tag_list.into_iter())
                                     }
                                     FrameResult::Tag(tag) => tags.push(tag),
+                                    FrameResult::Visual(visual) => visuals.push(visual),
                                     _ => {}
                                 }
                             }
                             let toc = (
-                                TableOfContents { items: vec![], ordered: flags & 1 == 1, tags },
+                                TableOfContents {
+                                    items: vec![],
+                                    ordered: flags & 1 == 1,
+                                    tags,
+                                    visuals,
+                                },
                                 items,
                             );
                             if (flags >> 1) & 1 == 1 {
@@ -385,6 +392,7 @@ fn read_id3v2_body<B: ReadBytes + FiniteStream>(
                             let end_byte = reader.read_be_u32()?;
 
                             let mut tags = vec![];
+                            let mut visuals = vec![];
                             while reader.bytes_available() > min_frame_size {
                                 let frame = match header.major_version {
                                     2 => read_id3v2p2_frame(&mut reader),
@@ -397,12 +405,13 @@ fn read_id3v2_body<B: ReadBytes + FiniteStream>(
                                         tags.extend(tag_list.into_iter())
                                     }
                                     FrameResult::Tag(tag) => tags.push(tag),
+                                    FrameResult::Visual(visual) => visuals.push(visual),
                                     _ => {}
                                 }
                             }
                             chapters.insert(
                                 tag.key[5..].to_string(),
-                                Chapter { start_ms, end_ms, start_byte, end_byte, tags },
+                                Chapter { start_ms, end_ms, start_byte, end_byte, tags, visuals },
                             );
                         } else {
                             unreachable!()
