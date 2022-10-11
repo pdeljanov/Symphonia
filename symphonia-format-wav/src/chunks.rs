@@ -310,6 +310,7 @@ impl WaveFormatChunk {
     fn read_ext_fmt<B: ReadBytes>(
         reader: &mut B,
         bits_per_coded_sample: u16,
+        n_channels: u16,
         len: u32,
     ) -> Result<WaveFormatData> {
         // WaveFormat for the extensible format must be extended to 40 bytes in length.
@@ -342,6 +343,17 @@ impl WaveFormatChunk {
         }
 
         let channel_mask = reader.read_u32()?;
+
+        // The number of ones in the channel mask should match the number of channels.
+        if channel_mask.count_ones() != u32::from(n_channels) {
+            return decode_error("wav: channel mask mismatch with number of channels for fmt_ext");
+        }
+
+        // Try to map channels.
+        let channels = match Channels::from_bits(channel_mask) {
+            Some(channels) => channels,
+            _ => return unsupported_error("wav: too many channels in mask for fmt_ext"),
+        };
 
         let mut sub_format_guid = [0u8; 16];
         reader.read_buf_exact(&mut sub_format_guid)?;
@@ -416,12 +428,6 @@ impl WaveFormatChunk {
             KSDATAFORMAT_SUBTYPE_ALAW => CODEC_TYPE_PCM_ALAW,
             KSDATAFORMAT_SUBTYPE_MULAW => CODEC_TYPE_PCM_MULAW,
             _ => return unsupported_error("wav: unsupported fmt_ext sub-type"),
-        };
-
-        // Try to map channels.
-        let channels = match Channels::from_bits(channel_mask) {
-            Some(channels) => channels,
-            _ => return unsupported_error("wav: too many channels"),
         };
 
         Ok(WaveFormatData::Extensible(WaveFormatExtensible {
@@ -512,7 +518,7 @@ impl ParseChunk for WaveFormatChunk {
             // The IEEE Float Wave Format
             WAVE_FORMAT_IEEE_FLOAT => Self::read_ieee_fmt(reader, bits_per_sample, n_channels, len),
             // The Extensible Wave Format
-            WAVE_FORMAT_EXTENSIBLE => Self::read_ext_fmt(reader, bits_per_sample, len),
+            WAVE_FORMAT_EXTENSIBLE => Self::read_ext_fmt(reader, bits_per_sample, n_channels, len),
             // The Alaw Wave Format.
             WAVE_FORMAT_ALAW => Self::read_alaw_pcm_fmt(reader, n_channels, len),
             // The MuLaw Wave Format.
