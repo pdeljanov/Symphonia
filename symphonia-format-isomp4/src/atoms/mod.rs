@@ -359,7 +359,7 @@ impl AtomHeader {
     pub fn base_header_len(&self) -> u64 {
         match self.atom_len {
             0 => AtomHeader::HEADER_SIZE,
-            _ => (self.atom_len - self.data_len),
+            _ => self.atom_len - self.data_len,
         }
     }
 
