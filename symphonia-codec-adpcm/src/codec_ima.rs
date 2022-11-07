@@ -9,7 +9,7 @@ use symphonia_core::errors::Result;
 use symphonia_core::io::ReadBytes;
 use symphonia_core::util::clamp::clamp_i16;
 
-use crate::common::{from_i16_shift, i16_to_i32, Nibble};
+use crate::common::{from_i16_shift, u16_to_i32, Nibble};
 
 #[rustfmt::skip]
 const IMA_INDEX_TABLE: [i32; 16] = [
@@ -37,8 +37,8 @@ struct AdpcmImaBlockStatus {
 }
 
 impl AdpcmImaBlockStatus {
-    fn read_preample<B: ReadBytes>(stream: &mut B) -> Result<Self> {
-        let predictor = i16_to_i32!(stream.read_u16()?);
+    fn read_preamble<B: ReadBytes>(stream: &mut B) -> Result<Self> {
+        let predictor = u16_to_i32!(stream.read_u16()?);
         let step_index = stream.read_byte()? as i32;
         //reserved byte
         let _ = stream.read_byte()?;
@@ -65,7 +65,7 @@ pub(crate) fn decode_mono<B: ReadBytes>(
     frames_per_block: usize,
 ) -> Result<()> {
     let data_bytes_per_channel = (frames_per_block - 1) / 2;
-    let mut status = AdpcmImaBlockStatus::read_preample(stream)?;
+    let mut status = AdpcmImaBlockStatus::read_preamble(stream)?;
     buffer[0] = from_i16_shift!(status.predictor);
     for byte in 0..data_bytes_per_channel {
         let nibbles = stream.read_u8()?;
@@ -82,7 +82,7 @@ pub(crate) fn decode_stereo<B: ReadBytes>(
 ) -> Result<()> {
     let data_bytes_per_channel = frames_per_block - 1;
     let mut status =
-        [AdpcmImaBlockStatus::read_preample(stream)?, AdpcmImaBlockStatus::read_preample(stream)?];
+        [AdpcmImaBlockStatus::read_preamble(stream)?, AdpcmImaBlockStatus::read_preamble(stream)?];
     buffers[0][0] = from_i16_shift!(status[0].predictor);
     buffers[1][0] = from_i16_shift!(status[1].predictor);
     for index in 0..data_bytes_per_channel {

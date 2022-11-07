@@ -9,7 +9,7 @@ use symphonia_core::errors::{unsupported_error, Result};
 use symphonia_core::io::{BufReader, ReadBytes};
 use symphonia_core::util::clamp::clamp_i16;
 
-use crate::common::{from_i16_shift, i16_to_i32, Nibble};
+use crate::common::{from_i16_shift, u16_to_i32, Nibble};
 
 #[rustfmt::skip]
 const MS_ADAPTATION_TABLE: [i32; 16] = [
@@ -57,8 +57,8 @@ impl AdpcmMsParameters {
             params.coeffs1.resize(coeff_num, 0);
             params.coeffs2.resize(coeff_num, 0);
             for i in 0..coeff_num {
-                params.coeffs1[i] = i16_to_i32!(reader.read_u16()?);
-                params.coeffs2[i] = i16_to_i32!(reader.read_u16()?);
+                params.coeffs1[i] = u16_to_i32!(reader.read_u16()?);
+                params.coeffs2[i] = u16_to_i32!(reader.read_u16()?);
             }
         }
         Ok(params)
@@ -75,7 +75,7 @@ struct AdpcmMsBlockStatus {
 }
 
 impl AdpcmMsBlockStatus {
-    fn read_mono_preample<B: ReadBytes>(
+    fn read_mono_preamble<B: ReadBytes>(
         stream: &mut B,
         params: &AdpcmMsParameters,
     ) -> Result<Self> {
@@ -84,14 +84,14 @@ impl AdpcmMsBlockStatus {
         let status = Self {
             coeff1: params.coeffs1[block_predictor],
             coeff2: params.coeffs2[block_predictor],
-            delta: i16_to_i32!(stream.read_u16()?),
-            sample1: i16_to_i32!(stream.read_u16()?),
-            sample2: i16_to_i32!(stream.read_u16()?),
+            delta: u16_to_i32!(stream.read_u16()?),
+            sample1: u16_to_i32!(stream.read_u16()?),
+            sample2: u16_to_i32!(stream.read_u16()?),
         };
         Ok(status)
     }
 
-    fn read_stereo_preample<B: ReadBytes>(
+    fn read_stereo_preamble<B: ReadBytes>(
         stream: &mut B,
         params: &AdpcmMsParameters,
     ) -> Result<(Self, Self)> {
@@ -99,12 +99,12 @@ impl AdpcmMsBlockStatus {
         check_block_predictor!(left_block_predictor, params.coeffs1.len());
         let right_block_predictor = stream.read_byte()? as usize;
         check_block_predictor!(right_block_predictor, params.coeffs1.len());
-        let left_delta = i16_to_i32!(stream.read_u16()?);
-        let right_delta = i16_to_i32!(stream.read_u16()?);
-        let left_sample1 = i16_to_i32!(stream.read_u16()?);
-        let right_sample1 = i16_to_i32!(stream.read_u16()?);
-        let left_sample2 = i16_to_i32!(stream.read_u16()?);
-        let right_sample2 = i16_to_i32!(stream.read_u16()?);
+        let left_delta = u16_to_i32!(stream.read_u16()?);
+        let right_delta = u16_to_i32!(stream.read_u16()?);
+        let left_sample1 = u16_to_i32!(stream.read_u16()?);
+        let right_sample1 = u16_to_i32!(stream.read_u16()?);
+        let left_sample2 = u16_to_i32!(stream.read_u16()?);
+        let right_sample2 = u16_to_i32!(stream.read_u16()?);
         Ok((
             Self {
                 coeff1: params.coeffs1[left_block_predictor],
@@ -142,7 +142,7 @@ pub(crate) fn decode_mono<B: ReadBytes>(
     frames_per_block: usize,
     params: &AdpcmMsParameters,
 ) -> Result<()> {
-    let mut status = AdpcmMsBlockStatus::read_mono_preample(stream, params)?;
+    let mut status = AdpcmMsBlockStatus::read_mono_preamble(stream, params)?;
     buffer[0] = from_i16_shift!(status.sample2);
     buffer[1] = from_i16_shift!(status.sample1);
     for byte in 1..(frames_per_block / 2) {
@@ -160,7 +160,7 @@ pub(crate) fn decode_stereo<B: ReadBytes>(
     params: &AdpcmMsParameters,
 ) -> Result<()> {
     let (mut left_status, mut right_status) =
-        AdpcmMsBlockStatus::read_stereo_preample(stream, params)?;
+        AdpcmMsBlockStatus::read_stereo_preamble(stream, params)?;
     buffers[0][0] = from_i16_shift!(left_status.sample2);
     buffers[0][1] = from_i16_shift!(left_status.sample1);
     buffers[1][0] = from_i16_shift!(right_status.sample2);

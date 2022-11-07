@@ -20,7 +20,7 @@ impl Nibble {
     }
 }
 
-macro_rules! i16_to_i32 {
+macro_rules! u16_to_i32 {
     ($input:expr) => {
         $input as i16 as i32
     };
@@ -33,4 +33,4 @@ macro_rules! from_i16_shift {
 }
 
 pub(crate) use from_i16_shift;
-pub(crate) use i16_to_i32;
+pub(crate) use u16_to_i32;

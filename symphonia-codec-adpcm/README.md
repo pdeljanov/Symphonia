@@ -1,6 +1,6 @@
 # Symphonia ADPCM Codec
 
-[![Docs](https://docs.rs/symphonia-codec-pcm/badge.svg)](https://docs.rs/symphonia-codec-pcm)
+[![Docs](https://docs.rs/symphonia-codec-adpcm/badge.svg)](https://docs.rs/symphonia-codec-adpcm)
 
 ADPCM audio decoders for Project Symphonia.
 
@@ -8,9 +8,9 @@ ADPCM audio decoders for Project Symphonia.
 
 ## Support
 
-The following PCM encodings are supported:
+The following ADPCM encodings are supported:
 
-* Microdoft ADPCM
+* Microsoft ADPCM
 * ADPCM IMA WAV
 
 ## License

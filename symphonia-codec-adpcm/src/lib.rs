@@ -35,7 +35,7 @@ fn is_supported_adpcm_codec(codec_type: CodecType) -> bool {
 
 enum ExtraCodecParameters {
     AdpcmMs(AdpcmMsParameters),
-    AdpcIma,
+    AdpcmIma,
 }
 
 impl ExtraCodecParameters {
@@ -49,7 +49,7 @@ impl ExtraCodecParameters {
             ExtraCodecParameters::AdpcmMs(ref ms_params) => {
                 codec_ms::decode_mono(stream, buffer, frames_per_block, ms_params)
             }
-            ExtraCodecParameters::AdpcIma => {
+            ExtraCodecParameters::AdpcmIma => {
                 codec_ima::decode_mono(stream, buffer, frames_per_block)
             }
         }
@@ -65,7 +65,7 @@ impl ExtraCodecParameters {
             ExtraCodecParameters::AdpcmMs(ref ms_params) => {
                 codec_ms::decode_stereo(stream, buffers, frames_per_block, ms_params)
             }
-            ExtraCodecParameters::AdpcIma => {
+            ExtraCodecParameters::AdpcmIma => {
                 codec_ima::decode_stereo(stream, buffers, frames_per_block)
             }
         }
@@ -152,7 +152,7 @@ impl Decoder for AdpcmDecoder {
                 let extra_params = AdpcmMsParameters::from_extra_data(&params.extra_data)?;
                 ExtraCodecParameters::AdpcmMs(extra_params)
             }
-            CODEC_TYPE_ADPCM_IMA_WAV => ExtraCodecParameters::AdpcIma,
+            CODEC_TYPE_ADPCM_IMA_WAV => ExtraCodecParameters::AdpcmIma,
             _ => unreachable!(),
         };
 
