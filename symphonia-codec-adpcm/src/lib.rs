@@ -130,7 +130,7 @@ impl Decoder for AdpcmDecoder {
             _ => return unsupported_error("adpcm: maximum frames per packet is required"),
         };
 
-        if params.frames_per_block.is_none() || params.frames_per_block.unwrap() > 0 {
+        if params.frames_per_block.is_none() || params.frames_per_block.unwrap() == 0 {
             return unsupported_error("adpcm: valid frames per block is required");
         }
 
