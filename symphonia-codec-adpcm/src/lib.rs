@@ -14,7 +14,6 @@
 #![allow(clippy::identity_op)]
 #![allow(clippy::manual_range_contains)]
 
-use codec_ms::AdpcmMsParameters;
 use symphonia_core::support_codec;
 
 use symphonia_core::audio::{AsAudioBufferRef, AudioBuffer, AudioBufferRef, Signal, SignalSpec};
@@ -33,41 +32,25 @@ fn is_supported_adpcm_codec(codec_type: CodecType) -> bool {
     matches!(codec_type, CODEC_TYPE_ADPCM_MS | CODEC_TYPE_ADPCM_IMA_WAV)
 }
 
-enum ExtraCodecParameters {
-    AdpcmMs(AdpcmMsParameters),
+enum InnerDecoder {
+    AdpcmMs,
     AdpcmIma,
 }
 
-impl ExtraCodecParameters {
-    fn decode_mono<B: ReadBytes>(
-        &self,
-        stream: &mut B,
-        buffer: &mut [i32],
-        frames_per_block: usize,
-    ) -> Result<()> {
+impl InnerDecoder {
+    fn decode_mono_fn<B: ReadBytes>(&self) -> impl Fn(&mut B, &mut [i32], usize) -> Result<()> {
         match *self {
-            ExtraCodecParameters::AdpcmMs(ref ms_params) => {
-                codec_ms::decode_mono(stream, buffer, frames_per_block, ms_params)
-            }
-            ExtraCodecParameters::AdpcmIma => {
-                codec_ima::decode_mono(stream, buffer, frames_per_block)
-            }
+            InnerDecoder::AdpcmMs => codec_ms::decode_mono,
+            InnerDecoder::AdpcmIma => codec_ima::decode_mono,
         }
     }
 
-    fn decode_stereo<B: ReadBytes>(
+    fn decode_stereo_fn<B: ReadBytes>(
         &self,
-        stream: &mut B,
-        buffers: [&mut [i32]; 2],
-        frames_per_block: usize,
-    ) -> Result<()> {
+    ) -> impl Fn(&mut B, [&mut [i32]; 2], usize) -> Result<()> {
         match *self {
-            ExtraCodecParameters::AdpcmMs(ref ms_params) => {
-                codec_ms::decode_stereo(stream, buffers, frames_per_block, ms_params)
-            }
-            ExtraCodecParameters::AdpcmIma => {
-                codec_ima::decode_stereo(stream, buffers, frames_per_block)
-            }
+            InnerDecoder::AdpcmMs => codec_ms::decode_stereo,
+            InnerDecoder::AdpcmIma => codec_ima::decode_stereo,
         }
     }
 }
@@ -75,7 +58,7 @@ impl ExtraCodecParameters {
 /// Adaptive Differential Pulse Code Modulation (ADPCM) decoder.
 pub struct AdpcmDecoder {
     params: CodecParameters,
-    extra_params: ExtraCodecParameters,
+    inner_decoder: InnerDecoder,
     buf: AudioBuffer<i32>,
 }
 
@@ -94,21 +77,23 @@ impl AdpcmDecoder {
         match channel_count {
             1 => {
                 let buffer = self.buf.chan_mut(0);
+                let decode_mono = self.inner_decoder.decode_mono_fn();
                 for block_id in 0..block_count {
                     let offset = frames_per_block * block_id;
                     let buffer_range = offset..(offset + frames_per_block);
                     let buffer = &mut buffer[buffer_range];
-                    self.extra_params.decode_mono(&mut stream, buffer, frames_per_block)?;
+                    decode_mono(&mut stream, buffer, frames_per_block)?;
                 }
             }
             2 => {
                 let buffers = self.buf.chan_pair_mut(0, 1);
+                let decode_stereo = self.inner_decoder.decode_stereo_fn();
                 for block_id in 0..block_count {
                     let offset = frames_per_block * block_id;
                     let buffer_range = offset..(offset + frames_per_block);
                     let buffers =
                         [&mut buffers.0[buffer_range.clone()], &mut buffers.1[buffer_range]];
-                    self.extra_params.decode_stereo(&mut stream, buffers, frames_per_block)?;
+                    decode_stereo(&mut stream, buffers, frames_per_block)?;
                 }
             }
             _ => unreachable!(),
@@ -147,18 +132,15 @@ impl Decoder for AdpcmDecoder {
             return unsupported_error("adpcm: channels or channel_layout is required");
         };
 
-        let extra_params = match params.codec {
-            CODEC_TYPE_ADPCM_MS => {
-                let extra_params = AdpcmMsParameters::from_extra_data(&params.extra_data)?;
-                ExtraCodecParameters::AdpcmMs(extra_params)
-            }
-            CODEC_TYPE_ADPCM_IMA_WAV => ExtraCodecParameters::AdpcmIma,
-            _ => unreachable!(),
+        let inner_decoder = match params.codec {
+            CODEC_TYPE_ADPCM_MS => InnerDecoder::AdpcmMs,
+            CODEC_TYPE_ADPCM_IMA_WAV => InnerDecoder::AdpcmIma,
+            _ => return unsupported_error("adpcm: codec is unsupported"),
         };
 
         Ok(AdpcmDecoder {
             params: params.clone(),
-            extra_params,
+            inner_decoder,
             buf: AudioBuffer::new(frames, spec),
         })
     }

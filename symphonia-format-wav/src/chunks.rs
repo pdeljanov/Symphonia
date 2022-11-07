@@ -162,14 +162,12 @@ pub struct WaveFormatPcm {
 }
 
 pub struct WaveFormatAdpcm {
-    /// The number of frames per block.
-    pub frames_per_block: u64,
+    /// The number of bits per sample. At the moment only 4bit is supported.
+    pub bits_per_sample: u16,
     /// Channel bitmask.
     pub channels: Channels,
     /// Codec type.
     pub codec: CodecType,
-    /// Extra data (defined by the codec).
-    pub extra_data: Option<Box<[u8]>>,
 }
 
 pub struct WaveFormatIeeeFloat {
@@ -298,25 +296,18 @@ impl WaveFormatChunk {
             return decode_error("wav: malformed fmt_adpcm chunk");
         }
 
-        let extra_size = reader.read_u16()? as usize;
+        let extra_size = reader.read_u16()? as u64;
 
-        let frames_per_block = reader.read_u16()? as u64;
-
-        let extra_data = match codec {
-            CODEC_TYPE_ADPCM_MS => {
-                if extra_size < 32 {
-                    return decode_error("wav: malformed fmt_adpcm chunk");
-                }
-                Some(reader.read_boxed_slice(extra_size - 2)?)
+        match codec {
+            CODEC_TYPE_ADPCM_MS if extra_size < 32 => {
+                return decode_error("wav: malformed fmt_adpcm chunk");
             }
-            CODEC_TYPE_ADPCM_IMA_WAV => {
-                if extra_size != 2 {
-                    return decode_error("wav: malformed fmt_adpcm chunk");
-                }
-                None
+            CODEC_TYPE_ADPCM_IMA_WAV if extra_size != 2 => {
+                return decode_error("wav: malformed fmt_adpcm chunk");
             }
-            _ => unreachable!(),
-        };
+            _ => (),
+        }
+        reader.ignore_bytes(extra_size)?;
 
         // The ADPCM format only supports 1 or 2 channels, for mono and stereo channel layouts,
         // respectively.
@@ -325,7 +316,7 @@ impl WaveFormatChunk {
             2 => Channels::FRONT_LEFT | Channels::FRONT_RIGHT,
             _ => return decode_error("wav: channel layout is not stereo or mono for fmt_adpcm"),
         };
-        Ok(WaveFormatData::Adpcm(WaveFormatAdpcm { frames_per_block, channels, codec, extra_data }))
+        Ok(WaveFormatData::Adpcm(WaveFormatAdpcm { bits_per_sample, channels, codec }))
     }
 
     fn read_ieee_fmt<B: ReadBytes>(
@@ -548,10 +539,25 @@ impl WaveFormatChunk {
     }
 
     pub(crate) fn packet_info(&self) -> Result<PacketInfo> {
-        if let WaveFormatData::Adpcm(ref adpcm) = self.format_data {
-            PacketInfo::with_blocks(self.block_align, adpcm.frames_per_block)
-        } else {
-            Ok(PacketInfo::without_blocks(self.block_align))
+        match self.format_data {
+            WaveFormatData::Adpcm(WaveFormatAdpcm { codec, bits_per_sample, .. })
+            //| WaveFormatData::Extensible(WaveFormatExtensible { codec, bits_per_sample, .. })
+                if codec == CODEC_TYPE_ADPCM_MS =>
+            {
+                let frames_per_block = ((((self.block_align - (7 * self.n_channels)) * 8)
+                    / (bits_per_sample * self.n_channels))
+                    + 2) as u64;
+                PacketInfo::with_blocks(self.block_align, frames_per_block)
+            }
+            WaveFormatData::Adpcm(WaveFormatAdpcm { codec, bits_per_sample, .. })
+                if codec == CODEC_TYPE_ADPCM_IMA_WAV =>
+            {
+                let frames_per_block = (((self.block_align - (4 * self.n_channels)) * 8)
+                    / (bits_per_sample * self.n_channels)
+                    + 1) as u64;
+                PacketInfo::with_blocks(self.block_align, frames_per_block)
+            }
+            _ => Ok(PacketInfo::without_blocks(self.block_align)),
         }
     }
 }
@@ -629,7 +635,7 @@ impl fmt::Display for WaveFormatChunk {
             }
             WaveFormatData::Adpcm(ref adpcm) => {
                 writeln!(f, "\tformat_data: Adpcm {{")?;
-                writeln!(f, "\t\tframes_per_packet: {},", adpcm.frames_per_block)?;
+                writeln!(f, "\t\tbits_per_sample: {},", adpcm.bits_per_sample)?;
                 writeln!(f, "\t\tchannels: {},", adpcm.channels)?;
                 writeln!(f, "\t\tcodec: {},", adpcm.codec)?;
             }

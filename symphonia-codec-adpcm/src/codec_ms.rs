@@ -6,7 +6,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use symphonia_core::errors::{unsupported_error, Result};
-use symphonia_core::io::{BufReader, ReadBytes};
+use symphonia_core::io::ReadBytes;
 use symphonia_core::util::clamp::clamp_i16;
 
 use crate::common::{from_i16_shift, u16_to_i32, Nibble};
@@ -38,33 +38,6 @@ pub fn signed_nibble(nibble: u8) -> i8 {
     }
 }
 
-/// `AdpcmMsParameters` contains the sets of coefficients used to iniialize `AdpcmMsBlockStatus`
-pub(crate) struct AdpcmMsParameters {
-    coeffs1: Vec<i32>,
-    coeffs2: Vec<i32>,
-}
-
-impl AdpcmMsParameters {
-    pub(crate) fn from_extra_data(extra_data: &Option<Box<[u8]>>) -> Result<Self> {
-        let mut params = AdpcmMsParameters {
-            coeffs1: Vec::from(MS_ADAPT_COEFFS1),
-            coeffs2: Vec::from(MS_ADAPT_COEFFS2),
-        };
-        if let Some(extra_data) = extra_data {
-            let mut reader = BufReader::new(extra_data);
-
-            let coeff_num = reader.read_u16()? as usize;
-            params.coeffs1.resize(coeff_num, 0);
-            params.coeffs2.resize(coeff_num, 0);
-            for i in 0..coeff_num {
-                params.coeffs1[i] = u16_to_i32!(reader.read_u16()?);
-                params.coeffs2[i] = u16_to_i32!(reader.read_u16()?);
-            }
-        }
-        Ok(params)
-    }
-}
-
 /// `AdpcmMsBlockStatus` contains values to decode a block
 struct AdpcmMsBlockStatus {
     coeff1: i32,
@@ -75,15 +48,12 @@ struct AdpcmMsBlockStatus {
 }
 
 impl AdpcmMsBlockStatus {
-    fn read_mono_preamble<B: ReadBytes>(
-        stream: &mut B,
-        params: &AdpcmMsParameters,
-    ) -> Result<Self> {
+    fn read_mono_preamble<B: ReadBytes>(stream: &mut B) -> Result<Self> {
         let block_predictor = stream.read_byte()? as usize;
-        check_block_predictor!(block_predictor, params.coeffs1.len());
+        check_block_predictor!(block_predictor, 6);
         let status = Self {
-            coeff1: params.coeffs1[block_predictor],
-            coeff2: params.coeffs2[block_predictor],
+            coeff1: MS_ADAPT_COEFFS1[block_predictor],
+            coeff2: MS_ADAPT_COEFFS2[block_predictor],
             delta: u16_to_i32!(stream.read_u16()?),
             sample1: u16_to_i32!(stream.read_u16()?),
             sample2: u16_to_i32!(stream.read_u16()?),
@@ -91,14 +61,11 @@ impl AdpcmMsBlockStatus {
         Ok(status)
     }
 
-    fn read_stereo_preamble<B: ReadBytes>(
-        stream: &mut B,
-        params: &AdpcmMsParameters,
-    ) -> Result<(Self, Self)> {
+    fn read_stereo_preamble<B: ReadBytes>(stream: &mut B) -> Result<(Self, Self)> {
         let left_block_predictor = stream.read_byte()? as usize;
-        check_block_predictor!(left_block_predictor, params.coeffs1.len());
+        check_block_predictor!(left_block_predictor, 6);
         let right_block_predictor = stream.read_byte()? as usize;
-        check_block_predictor!(right_block_predictor, params.coeffs1.len());
+        check_block_predictor!(right_block_predictor, 6);
         let left_delta = u16_to_i32!(stream.read_u16()?);
         let right_delta = u16_to_i32!(stream.read_u16()?);
         let left_sample1 = u16_to_i32!(stream.read_u16()?);
@@ -107,15 +74,15 @@ impl AdpcmMsBlockStatus {
         let right_sample2 = u16_to_i32!(stream.read_u16()?);
         Ok((
             Self {
-                coeff1: params.coeffs1[left_block_predictor],
-                coeff2: params.coeffs2[left_block_predictor],
+                coeff1: MS_ADAPT_COEFFS1[left_block_predictor],
+                coeff2: MS_ADAPT_COEFFS2[left_block_predictor],
                 delta: left_delta,
                 sample1: left_sample1,
                 sample2: left_sample2,
             },
             Self {
-                coeff1: params.coeffs1[right_block_predictor],
-                coeff2: params.coeffs2[right_block_predictor],
+                coeff1: MS_ADAPT_COEFFS1[right_block_predictor],
+                coeff2: MS_ADAPT_COEFFS2[right_block_predictor],
                 delta: right_delta,
                 sample1: right_sample1,
                 sample2: right_sample2,
@@ -140,9 +107,8 @@ pub(crate) fn decode_mono<B: ReadBytes>(
     stream: &mut B,
     buffer: &mut [i32],
     frames_per_block: usize,
-    params: &AdpcmMsParameters,
 ) -> Result<()> {
-    let mut status = AdpcmMsBlockStatus::read_mono_preamble(stream, params)?;
+    let mut status = AdpcmMsBlockStatus::read_mono_preamble(stream)?;
     buffer[0] = from_i16_shift!(status.sample2);
     buffer[1] = from_i16_shift!(status.sample1);
     for byte in 1..(frames_per_block / 2) {
@@ -157,10 +123,8 @@ pub(crate) fn decode_stereo<B: ReadBytes>(
     stream: &mut B,
     buffers: [&mut [i32]; 2],
     frames_per_block: usize,
-    params: &AdpcmMsParameters,
 ) -> Result<()> {
-    let (mut left_status, mut right_status) =
-        AdpcmMsBlockStatus::read_stereo_preamble(stream, params)?;
+    let (mut left_status, mut right_status) = AdpcmMsBlockStatus::read_stereo_preamble(stream)?;
     buffers[0][0] = from_i16_shift!(left_status.sample2);
     buffers[0][1] = from_i16_shift!(left_status.sample1);
     buffers[1][0] = from_i16_shift!(right_status.sample2);

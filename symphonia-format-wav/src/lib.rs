@@ -164,7 +164,8 @@ impl FormatReader for WavReader {
                     // to handle packetization and seeking.
                     packet_info = format.packet_info()?;
                     codec_params
-                        .with_max_frames_per_packet(packet_info.get_max_frames_per_packet());
+                        .with_max_frames_per_packet(packet_info.get_max_frames_per_packet())
+                        .with_frames_per_block(packet_info.frames_per_block);
 
                     // Append Format chunk fields to codec parameters.
                     append_format_params(&mut codec_params, format);
@@ -362,14 +363,8 @@ fn append_format_params(codec_params: &mut CodecParameters, format: WaveFormatCh
                 .with_bits_per_sample(u32::from(pcm.bits_per_sample))
                 .with_channels(pcm.channels);
         }
-        WaveFormatData::Adpcm(mut adpcm) => {
-            codec_params
-                .for_codec(adpcm.codec)
-                .with_channels(adpcm.channels)
-                .with_frames_per_block(adpcm.frames_per_block);
-            if let Some(extra_data) = adpcm.extra_data.take() {
-                codec_params.with_extra_data(extra_data);
-            }
+        WaveFormatData::Adpcm(adpcm) => {
+            codec_params.for_codec(adpcm.codec).with_channels(adpcm.channels);
         }
         WaveFormatData::IeeeFloat(ieee) => {
             codec_params.for_codec(ieee.codec).with_channels(ieee.channels);
