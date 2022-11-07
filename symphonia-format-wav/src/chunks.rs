@@ -547,11 +547,11 @@ impl WaveFormatChunk {
         Ok(WaveFormatData::MuLaw(WaveFormatMuLaw { codec: CODEC_TYPE_PCM_MULAW, channels }))
     }
 
-    pub(crate) fn packet_info(&self) -> PacketInfo {
+    pub(crate) fn packet_info(&self) -> Result<PacketInfo> {
         if let WaveFormatData::Adpcm(ref adpcm) = self.format_data {
             PacketInfo::with_blocks(self.block_align, adpcm.frames_per_block)
         } else {
-            PacketInfo::without_blocks(self.block_align)
+            Ok(PacketInfo::without_blocks(self.block_align))
         }
     }
 }

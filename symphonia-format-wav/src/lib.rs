@@ -49,13 +49,16 @@ pub(crate) struct PacketInfo {
 }
 
 impl PacketInfo {
-    fn with_blocks(block_size: u16, frames_per_block: u64) -> Self {
-        Self {
+    fn with_blocks(block_size: u16, frames_per_block: u64) -> Result<Self> {
+        if frames_per_block == 0 {
+            return decode_error("wav: frames per block is 0");
+        }
+        Ok(Self {
             block_size: u64::from(block_size),
             frames_per_block,
             max_blocks_per_packet: frames_per_block.max(WAVE_MAX_FRAMES_PER_PACKET)
                 / frames_per_block,
-        }
+        })
     }
 
     fn without_blocks(frame_len: u16) -> Self {
@@ -159,7 +162,7 @@ impl FormatReader for WavReader {
 
                     // The Format chunk contains the block_align field and possible additional information
                     // to handle packetization and seeking.
-                    packet_info = format.packet_info();
+                    packet_info = format.packet_info()?;
                     codec_params
                         .with_max_frames_per_packet(packet_info.get_max_frames_per_packet());
 
@@ -210,16 +213,21 @@ impl FormatReader for WavReader {
     }
 
     fn next_packet(&mut self) -> Result<Packet> {
+        let pos = self.reader.pos();
         if self.tracks.is_empty() {
             return decode_error("wav: no tracks");
         }
-
-        let pos = self.reader.pos();
-        if pos >= self.data_end_pos {
-            return end_of_stream_error();
+        if self.packet_info.is_empty() {
+            return decode_error("wav: block size is 0");
         }
 
-        let num_blocks_left = (self.data_end_pos - pos) / self.packet_info.block_size;
+        // Determine the number of complete blocks remaining in the data chunk.
+        let num_blocks_left = if pos < self.data_end_pos {
+            (self.data_end_pos - pos) / self.packet_info.block_size
+        } else {
+            0
+        };
+
         if num_blocks_left == 0 {
             return end_of_stream_error();
         }
