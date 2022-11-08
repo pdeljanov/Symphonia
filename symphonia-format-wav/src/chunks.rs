@@ -333,7 +333,8 @@ impl WaveFormatChunk {
             if extra_size != 0 {
                 return decode_error("wav: extra data not expected for fmt_ieee chunk");
             }
-        } else if len > 16 {
+        }
+        else if len > 16 {
             return decode_error("wav: malformed fmt_ieee chunk");
         }
 

@@ -126,9 +126,11 @@ impl Decoder for AdpcmDecoder {
 
         let spec = if let Some(channels) = params.channels {
             SignalSpec::new(rate, channels)
-        } else if let Some(layout) = params.channel_layout {
+        }
+        else if let Some(layout) = params.channel_layout {
             SignalSpec::new_with_layout(rate, layout)
-        } else {
+        }
+        else {
             return unsupported_error("adpcm: channels or channel_layout is required");
         };
 
@@ -164,7 +166,8 @@ impl Decoder for AdpcmDecoder {
         if let Err(e) = self.decode_inner(packet) {
             self.buf.clear();
             Err(e)
-        } else {
+        }
+        else {
             Ok(self.buf.as_audio_buffer_ref())
         }
     }

@@ -37,11 +37,14 @@ pub const fn decl_codec_type(cc: &[u8]) -> CodecType {
         //  b'A'..=b'Z' maps to 37..=62
         if cc.is_ascii_digit() {
             1 + (cc - b'0') as u32
-        } else if cc.is_ascii_lowercase() {
+        }
+        else if cc.is_ascii_lowercase() {
             11 + (cc - b'a') as u32
-        } else if cc.is_ascii_uppercase() {
+        }
+        else if cc.is_ascii_uppercase() {
             37 + (cc - b'A') as u32
-        } else {
+        }
+        else {
             0
         }
     }
@@ -558,7 +561,8 @@ impl CodecRegistry {
     ) -> Result<Box<dyn Decoder>> {
         if let Some(descriptor) = self.codecs.get(&params.codec) {
             Ok((descriptor.inst_func)(params, options)?)
-        } else {
+        }
+        else {
             unsupported_error("core (codec):unsupported codec")
         }
     }

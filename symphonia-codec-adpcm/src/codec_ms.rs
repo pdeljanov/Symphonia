@@ -33,7 +33,8 @@ macro_rules! check_block_predictor {
 pub fn signed_nibble(nibble: u8) -> i8 {
     if (nibble & 0x08) != 0 {
         nibble as i8 - 0x10
-    } else {
+    }
+    else {
         nibble as i8
     }
 }
