@@ -300,6 +300,9 @@ pub struct CodecParameters {
     /// A method and expected value that may be used to perform verification on the decoded audio.
     pub verification_check: Option<VerificationCheck>,
 
+    /// The number of frames per block, in case packets are seperated in multiple blocks.
+    pub frames_per_block: Option<u64>,
+
     /// Extra data (defined by the codec).
     pub extra_data: Option<Box<[u8]>>,
 }
@@ -322,6 +325,7 @@ impl CodecParameters {
             max_frames_per_packet: None,
             packet_data_integrity: false,
             verification_check: None,
+            frames_per_block: None,
             extra_data: None,
         }
     }
@@ -407,6 +411,12 @@ impl CodecParameters {
     /// Specify if the packet's data integrity was guaranteed.
     pub fn with_packet_data_integrity(&mut self, integrity: bool) -> &mut Self {
         self.packet_data_integrity = integrity;
+        self
+    }
+
+    /// Provide the maximum number of frames per packet.
+    pub fn with_frames_per_block(&mut self, len: u64) -> &mut Self {
+        self.frames_per_block = Some(len);
         self
     }
 

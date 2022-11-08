@@ -98,6 +98,7 @@ A status of *great* indicates that major development is complete and that the fe
 | Codec                        | Status    | Gapless | Feature Flag | Default | Crate                      |
 |------------------------------|-----------|---------|--------------|---------|----------------------------|
 | AAC-LC                       | Great     | No      | `aac`        | No      | [`symphonia-codec-aac`]    |
+| ADPCM                        | Good      | Yes     | `adpcm`      | Yes     | [`symphonia-codec-adpcm`]  |
 | ALAC                         | Great     | Yes     | `alac`       | No      | [`symphonia-codec-alac`]   |
 | HE-AAC (AAC+, aacPlus)       | -         | -       | `aac`        | No      | [`symphonia-codec-aac`]    |
 | HE-AACv2 (eAAC+, aacPlus v2) | -         | -       | `aac`        | No      | [`symphonia-codec-aac`]    |
@@ -113,6 +114,7 @@ A status of *great* indicates that major development is complete and that the fe
 A `symphonia-bundle-*` package is a combination of a decoder and a native demuxer.
 
 [`symphonia-codec-aac`]: https://docs.rs/symphonia-codec-aac
+[`symphonia-codec-adpcm`]: https://docs.rs/symphonia-codec-adpcm
 [`symphonia-codec-alac`]: https://docs.rs/symphonia-codec-alac
 [`symphonia-bundle-flac`]: https://docs.rs/symphonia-bundle-flac
 [`symphonia-bundle-mp3`]: https://docs.rs/symphonia-bundle-mp3

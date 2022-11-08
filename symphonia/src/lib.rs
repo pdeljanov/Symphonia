@@ -122,6 +122,8 @@ pub mod default {
         pub use symphonia_bundle_mp3::Mp3Decoder;
         #[cfg(feature = "aac")]
         pub use symphonia_codec_aac::AacDecoder;
+        #[cfg(feature = "adpcm")]
+        pub use symphonia_codec_adpcm::AdpcmDecoder;
         #[cfg(feature = "alac")]
         pub use symphonia_codec_alac::AlacDecoder;
         #[cfg(feature = "pcm")]
@@ -198,6 +200,9 @@ pub mod default {
     pub fn register_enabled_codecs(registry: &mut CodecRegistry) {
         #[cfg(feature = "aac")]
         registry.register_all::<codecs::AacDecoder>();
+
+        #[cfg(feature = "adpcm")]
+        registry.register_all::<codecs::AdpcmDecoder>();
 
         #[cfg(feature = "alac")]
         registry.register_all::<codecs::AlacDecoder>();

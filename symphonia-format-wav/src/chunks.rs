@@ -11,8 +11,9 @@ use std::marker::PhantomData;
 use symphonia_core::audio::Channels;
 use symphonia_core::codecs::CodecType;
 use symphonia_core::codecs::{
-    CODEC_TYPE_PCM_ALAW, CODEC_TYPE_PCM_F32LE, CODEC_TYPE_PCM_F64LE, CODEC_TYPE_PCM_MULAW,
-    CODEC_TYPE_PCM_S16LE, CODEC_TYPE_PCM_S24LE, CODEC_TYPE_PCM_S32LE, CODEC_TYPE_PCM_U8,
+    CODEC_TYPE_ADPCM_IMA_WAV, CODEC_TYPE_ADPCM_MS, CODEC_TYPE_PCM_ALAW, CODEC_TYPE_PCM_F32LE,
+    CODEC_TYPE_PCM_F64LE, CODEC_TYPE_PCM_MULAW, CODEC_TYPE_PCM_S16LE, CODEC_TYPE_PCM_S24LE,
+    CODEC_TYPE_PCM_S32LE, CODEC_TYPE_PCM_U8,
 };
 use symphonia_core::errors::{decode_error, unsupported_error, Result};
 use symphonia_core::io::ReadBytes;
@@ -20,6 +21,8 @@ use symphonia_core::meta::Tag;
 use symphonia_metadata::riff;
 
 use log::info;
+
+use crate::PacketInfo;
 
 /// `ParseChunkTag` implements `parse_tag` to map between the 4-byte chunk identifier and the
 /// enumeration
@@ -142,6 +145,7 @@ impl<P: ParseChunk> ChunkParser<P> {
 
 pub enum WaveFormatData {
     Pcm(WaveFormatPcm),
+    Adpcm(WaveFormatAdpcm),
     IeeeFloat(WaveFormatIeeeFloat),
     Extensible(WaveFormatExtensible),
     ALaw(WaveFormatALaw),
@@ -150,6 +154,15 @@ pub enum WaveFormatData {
 
 pub struct WaveFormatPcm {
     /// The number of bits per sample. In the PCM format, this is always a multiple of 8-bits.
+    pub bits_per_sample: u16,
+    /// Channel bitmask.
+    pub channels: Channels,
+    /// Codec type.
+    pub codec: CodecType,
+}
+
+pub struct WaveFormatAdpcm {
+    /// The number of bits per sample. At the moment only 4bit is supported.
     pub bits_per_sample: u16,
     /// Channel bitmask.
     pub channels: Channels,
@@ -265,6 +278,45 @@ impl WaveFormatChunk {
         };
 
         Ok(WaveFormatData::Pcm(WaveFormatPcm { bits_per_sample, channels, codec }))
+    }
+
+    fn read_adpcm_fmt<B: ReadBytes>(
+        reader: &mut B,
+        bits_per_sample: u16,
+        n_channels: u16,
+        len: u32,
+        codec: CodecType,
+    ) -> Result<WaveFormatData> {
+        if bits_per_sample != 4 {
+            return decode_error("wav: bits per sample for fmt_adpcm must be 4 bits");
+        }
+
+        // WaveFormatEx with extension data length field present and with atleast frames per block data.
+        if len < 20 {
+            return decode_error("wav: malformed fmt_adpcm chunk");
+        }
+
+        let extra_size = reader.read_u16()? as u64;
+
+        match codec {
+            CODEC_TYPE_ADPCM_MS if extra_size < 32 => {
+                return decode_error("wav: malformed fmt_adpcm chunk");
+            }
+            CODEC_TYPE_ADPCM_IMA_WAV if extra_size != 2 => {
+                return decode_error("wav: malformed fmt_adpcm chunk");
+            }
+            _ => (),
+        }
+        reader.ignore_bytes(extra_size)?;
+
+        // The ADPCM format only supports 1 or 2 channels, for mono and stereo channel layouts,
+        // respectively.
+        let channels = match n_channels {
+            1 => Channels::FRONT_LEFT,
+            2 => Channels::FRONT_LEFT | Channels::FRONT_RIGHT,
+            _ => return decode_error("wav: channel layout is not stereo or mono for fmt_adpcm"),
+        };
+        Ok(WaveFormatData::Adpcm(WaveFormatAdpcm { bits_per_sample, channels, codec }))
     }
 
     fn read_ieee_fmt<B: ReadBytes>(
@@ -486,6 +538,29 @@ impl WaveFormatChunk {
 
         Ok(WaveFormatData::MuLaw(WaveFormatMuLaw { codec: CODEC_TYPE_PCM_MULAW, channels }))
     }
+
+    pub(crate) fn packet_info(&self) -> Result<PacketInfo> {
+        match self.format_data {
+            WaveFormatData::Adpcm(WaveFormatAdpcm { codec, bits_per_sample, .. })
+            //| WaveFormatData::Extensible(WaveFormatExtensible { codec, bits_per_sample, .. })
+                if codec == CODEC_TYPE_ADPCM_MS =>
+            {
+                let frames_per_block = ((((self.block_align - (7 * self.n_channels)) * 8)
+                    / (bits_per_sample * self.n_channels))
+                    + 2) as u64;
+                PacketInfo::with_blocks(self.block_align, frames_per_block)
+            }
+            WaveFormatData::Adpcm(WaveFormatAdpcm { codec, bits_per_sample, .. })
+                if codec == CODEC_TYPE_ADPCM_IMA_WAV =>
+            {
+                let frames_per_block = (((self.block_align - (4 * self.n_channels)) * 8)
+                    / (bits_per_sample * self.n_channels)
+                    + 1) as u64;
+                PacketInfo::with_blocks(self.block_align, frames_per_block)
+            }
+            _ => Ok(PacketInfo::without_blocks(self.block_align)),
+        }
+    }
 }
 
 impl ParseChunk for WaveFormatChunk {
@@ -506,15 +581,20 @@ impl ParseChunk for WaveFormatChunk {
         // The definition of these format identifiers can be found in mmreg.h of the Microsoft
         // Windows Platform SDK.
         const WAVE_FORMAT_PCM: u16 = 0x0001;
-        // const WAVE_FORMAT_ADPCM: u16      = 0x0002;
+        const WAVE_FORMAT_ADPCM: u16 = 0x0002;
         const WAVE_FORMAT_IEEE_FLOAT: u16 = 0x0003;
         const WAVE_FORMAT_ALAW: u16 = 0x0006;
         const WAVE_FORMAT_MULAW: u16 = 0x0007;
+        const WAVE_FORMAT_ADPCM_IMA: u16 = 0x0011;
         const WAVE_FORMAT_EXTENSIBLE: u16 = 0xfffe;
 
         let format_data = match format {
             // The PCM Wave Format
             WAVE_FORMAT_PCM => Self::read_pcm_fmt(reader, bits_per_sample, n_channels, len),
+            // The Microsoft ADPCM Format
+            WAVE_FORMAT_ADPCM => {
+                Self::read_adpcm_fmt(reader, bits_per_sample, n_channels, len, CODEC_TYPE_ADPCM_MS)
+            }
             // The IEEE Float Wave Format
             WAVE_FORMAT_IEEE_FLOAT => Self::read_ieee_fmt(reader, bits_per_sample, n_channels, len),
             // The Extensible Wave Format
@@ -523,6 +603,14 @@ impl ParseChunk for WaveFormatChunk {
             WAVE_FORMAT_ALAW => Self::read_alaw_pcm_fmt(reader, n_channels, len),
             // The MuLaw Wave Format.
             WAVE_FORMAT_MULAW => Self::read_mulaw_pcm_fmt(reader, n_channels, len),
+            // The IMA ADPCM Format
+            WAVE_FORMAT_ADPCM_IMA => Self::read_adpcm_fmt(
+                reader,
+                bits_per_sample,
+                n_channels,
+                len,
+                CODEC_TYPE_ADPCM_IMA_WAV,
+            ),
             // Unsupported format.
             _ => return unsupported_error("wav: unsupported wave format"),
         }?;
@@ -545,6 +633,12 @@ impl fmt::Display for WaveFormatChunk {
                 writeln!(f, "\t\tbits_per_sample: {},", pcm.bits_per_sample)?;
                 writeln!(f, "\t\tchannels: {},", pcm.channels)?;
                 writeln!(f, "\t\tcodec: {},", pcm.codec)?;
+            }
+            WaveFormatData::Adpcm(ref adpcm) => {
+                writeln!(f, "\tformat_data: Adpcm {{")?;
+                writeln!(f, "\t\tbits_per_sample: {},", adpcm.bits_per_sample)?;
+                writeln!(f, "\t\tchannels: {},", adpcm.channels)?;
+                writeln!(f, "\t\tcodec: {},", adpcm.codec)?;
             }
             WaveFormatData::IeeeFloat(ref ieee) => {
                 writeln!(f, "\tformat_data: IeeeFloat {{")?;

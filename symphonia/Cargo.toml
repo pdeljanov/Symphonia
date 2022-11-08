@@ -13,8 +13,9 @@ edition = "2018"
 rust-version = "1.53"
 
 [features]
-default = ["flac", "mkv", "ogg", "pcm", "vorbis", "wav"]
+default = ["adpcm", "flac", "mkv", "ogg", "pcm", "vorbis", "wav"]
 aac = ["symphonia-codec-aac"]
+adpcm = ["symphonia-codec-adpcm"]
 alac = ["symphonia-codec-alac"]
 flac = ["symphonia-bundle-flac"]
 isomp4 = ["symphonia-format-isomp4"]
@@ -32,6 +33,7 @@ symphonia-metadata = { version = "0.5", path = "../symphonia-metadata" }
 symphonia-bundle-flac = { version = "0.5", path = "../symphonia-bundle-flac", optional = true }
 symphonia-bundle-mp3 = { version = "0.5", path = "../symphonia-bundle-mp3", optional = true }
 symphonia-codec-aac = { version = "0.5", path = "../symphonia-codec-aac", optional = true }
+symphonia-codec-adpcm = { version = "0.5", path = "../symphonia-codec-adpcm", optional = true }
 symphonia-codec-alac = { version = "0.5", path = "../symphonia-codec-alac", optional = true }
 symphonia-codec-pcm = { version = "0.5", path = "../symphonia-codec-pcm", optional = true }
 symphonia-codec-vorbis = { version = "0.5", path = "../symphonia-codec-vorbis", optional = true }
