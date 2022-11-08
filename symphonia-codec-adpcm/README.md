@@ -13,6 +13,8 @@ The following ADPCM encodings are supported:
 * Microsoft ADPCM
 * ADPCM IMA WAV
 
+Only 4 bits per sample and only mono and stereo channels are supported.
+
 ## License
 
 Symphonia is provided under the MPL v2.0 license. Please refer to the LICENSE file for more details.
