@@ -337,7 +337,7 @@ impl fmt::Display for M4AInfo {
 const MAX_WINDOWS: usize = 8;
 const MAX_SFBS: usize = 64;
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct ICSInfo {
     window_sequence: u8,
     prev_window_sequence: u8,
@@ -426,6 +426,17 @@ impl ICSInfo {
             self.predictor_data = LTPData::read(bs)?;
         }
         Ok(())
+    }
+
+    fn copy_from_common(&mut self, other: &ICSInfo) {
+        // Maintain the previous window sequence and shape.
+        let prev_window_sequence = self.window_sequence;
+        let prev_window_shape = self.window_shape;
+
+        *self = other.clone();
+
+        self.prev_window_sequence = prev_window_sequence;
+        self.prev_window_shape = prev_window_shape;
     }
 
     fn get_group_start(&self, g: usize) -> usize {
@@ -942,6 +953,7 @@ impl Ics {
     ) -> Result<()> {
         self.global_gain = bs.read_bits_leq32(8)? as u8;
 
+        // If a common window is used, a common ICS info was decoded previously.
         if !common_window {
             self.info.decode_ics_info(bs)?;
         }
@@ -1223,6 +1235,7 @@ impl ChannelPair {
         let common_window = bs.read_bool()?;
 
         if common_window {
+            // Decode the common ICS info block into the first channel.
             self.ics0.info.decode_ics_info(bs)?;
 
             // Mid-side stereo mask decoding.
@@ -1253,7 +1266,8 @@ impl ChannelPair {
                 _ => unreachable!(),
             }
 
-            self.ics1.info = self.ics0.info;
+            // Copy the common ICS info decoded in the first channel to the second channel.
+            self.ics1.info.copy_from_common(&self.ics0.info);
         }
 
         self.ics0.decode_ics(bs, &mut self.lcg, m4atype, common_window)?;
