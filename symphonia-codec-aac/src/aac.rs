@@ -500,20 +500,14 @@ struct TNSCoeffs {
     length: usize,
     order: usize,
     direction: bool,
-    compress: bool,
     coef: [f32; TNS_MAX_ORDER + 1],
 }
 
 impl TNSCoeffs {
     fn new() -> Self {
-        Self {
-            length: 0,
-            order: 0,
-            direction: false,
-            compress: false,
-            coef: [0.0; TNS_MAX_ORDER + 1],
-        }
+        Self { length: 0, order: 0, direction: false, coef: [0.0; TNS_MAX_ORDER + 1] }
     }
+
     fn read<B: ReadBitsLtr>(
         &mut self,
         bs: &mut B,
@@ -523,28 +517,37 @@ impl TNSCoeffs {
     ) -> Result<()> {
         self.length = bs.read_bits_leq32(if long_win { 6 } else { 4 })? as usize;
         self.order = bs.read_bits_leq32(if long_win { 5 } else { 3 })? as usize;
+
         validate!(self.order <= max_order);
+
         if self.order > 0 {
             self.direction = bs.read_bool()?;
-            self.compress = bs.read_bool()?;
-            let mut coef_bits = 3;
-            if coef_res {
-                coef_bits += 1;
-            }
-            if self.compress {
-                coef_bits -= 1;
-            }
-            let sign_mask = 1 << (coef_bits - 1);
-            let neg_mask = !(2 * sign_mask - 1);
 
-            let fac_base = if coef_res { 1 << 3 } else { 1 << 2 } as f32;
-            let iqfac = (fac_base - 0.5) / (consts::PI / 2.0);
-            let iqfac_m = (fac_base + 0.5) / (consts::PI / 2.0);
+            let coef_compress = bs.read_bool()?;
+
+            // If coef_res is true, then the transmitted resolution of the filter coefficients
+            // is 4 bits, otherwise it's 3 (4.6.9.2).
+            let mut coef_res_bits = if coef_res { 4 } else { 3 };
+
+            // If true, the most significant bit of the filter coefficient is not transmitted
+            // (4.6.9.2).
+            if coef_compress {
+                coef_res_bits -= 1;
+            }
+
+            let sign_mask = 1 << (coef_res_bits - 1);
+            let neg_mask = !((1 << coef_res_bits) - 1);
+
+            // Derived from `1 << (coef_res_bits - 1)` before compression.
+            let fac_base = if coef_res { 8.0 } else { 4.0 };
+
+            let iqfac = (fac_base - 0.5) / consts::FRAC_PI_2;
+            let iqfac_m = (fac_base + 0.5) / consts::FRAC_PI_2;
 
             let mut tmp: [f32; TNS_MAX_ORDER] = [0.0; TNS_MAX_ORDER];
 
-            for el in tmp.iter_mut().take(self.order) {
-                let val = bs.read_bits_leq32(coef_bits)? as u8;
+            for el in tmp[..self.order].iter_mut() {
+                let val = bs.read_bits_leq32(coef_res_bits)? as u8;
 
                 // Convert to signed integer.
                 let c = f32::from(if (val & sign_mask) != 0 {
@@ -559,10 +562,12 @@ impl TNSCoeffs {
 
             // Generate LPC coefficients
             let mut b: [f32; TNS_MAX_ORDER + 1] = [0.0; TNS_MAX_ORDER + 1];
+
             for m in 1..=self.order {
                 for i in 1..m {
                     b[i] = self.coef[i - 1] + tmp[m - 1] * self.coef[m - i - 1];
                 }
+
                 self.coef[..(m - 1)].copy_from_slice(&b[1..m]);
                 self.coef[m - 1] = tmp[m - 1];
             }
@@ -576,7 +581,6 @@ impl TNSCoeffs {
 #[allow(dead_code)]
 struct TNSData {
     n_filt: [usize; MAX_WINDOWS],
-    coef_res: [bool; MAX_WINDOWS],
     coeffs: [[TNSCoeffs; 4]; MAX_WINDOWS],
 }
 
@@ -588,22 +592,25 @@ impl TNSData {
         max_order: usize,
     ) -> Result<Option<Self>> {
         let tns_data_present = bs.read_bool()?;
+
         if !tns_data_present {
             return Ok(None);
         }
+
         let mut n_filt: [usize; MAX_WINDOWS] = [0; MAX_WINDOWS];
-        let mut coef_res: [bool; MAX_WINDOWS] = [false; MAX_WINDOWS];
         let mut coeffs: [[TNSCoeffs; 4]; MAX_WINDOWS] = [[TNSCoeffs::new(); 4]; MAX_WINDOWS];
+
         for w in 0..num_windows {
             n_filt[w] = bs.read_bits_leq32(if long_win { 2 } else { 1 })? as usize;
-            if n_filt[w] != 0 {
-                coef_res[w] = bs.read_bool()?;
-            }
+
+            let coef_res = if n_filt[w] != 0 { bs.read_bool()? } else { false };
+
             for filt in 0..n_filt[w] {
-                coeffs[w][filt].read(bs, long_win, coef_res[w], max_order)?;
+                coeffs[w][filt].read(bs, long_win, coef_res, max_order)?;
             }
         }
-        Ok(Some(Self { n_filt, coef_res, coeffs }))
+
+        Ok(Some(Self { n_filt, coeffs }))
     }
 }
 
@@ -983,8 +990,8 @@ impl Ics {
                         continue;
                     }
 
-                    let start = w * 128 + self.get_band_start(tns_max_bands.min(bottom));
-                    let end = w * 128 + self.get_band_start(tns_max_bands.min(top));
+                    let start = w * 128 + self.get_band_start(bottom.min(tns_max_bands));
+                    let end = w * 128 + self.get_band_start(top.min(tns_max_bands));
                     let lpc = &tns_data.coeffs[w][f].coef;
 
                     if !tns_data.coeffs[w][f].direction {
@@ -1144,10 +1151,10 @@ fn decode_pairs<B: ReadBitsLtr>(
 
         if escape {
             if (x == 16) || (x == -16) {
-                x = read_escape(bs, x > 0)?;
+                x = read_escape(bs, x.is_positive())?;
             }
             if (y == 16) || (y == -16) {
-                y = read_escape(bs, y > 0)?;
+                y = read_escape(bs, y.is_positive())?;
             }
         }
 
