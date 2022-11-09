@@ -221,15 +221,15 @@ impl ObjectDescriptor for DecoderConfigDescriptor {
 
         let object_type_indication = reader.read_u8()?;
 
-        let (_stream_type, _upstream, reserved) = {
+        let (_stream_type, _upstream) = {
             let val = reader.read_u8()?;
 
-            ((val & 0xfc) >> 2, (val & 0x02) >> 1, (val & 0x01) >> 0)
-        };
+            if val & 0x1 != 1 {
+                debug!("decoder config descriptor reserved bit is not 1");
+            }
 
-        if reserved != 1 {
-            return decode_error("isomp4: reserved bit not 1");
-        }
+            ((val & 0xfc) >> 2, (val & 0x2) >> 1)
+        };
 
         let _buffer_size = reader.read_be_u24()?;
         let _max_bitrate = reader.read_be_u32()?;
