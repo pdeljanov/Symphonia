@@ -673,7 +673,7 @@ fn get_scale(scale: i16) -> f32 {
 
 #[inline(always)]
 fn get_intensity_scale(scale: i16) -> f32 {
-    2.0f32.powf(0.25 * f32::from(scale))
+    0.5f32.powf(0.25 * f32::from(scale))
 }
 
 impl Ics {
@@ -1264,14 +1264,12 @@ impl ChannelPair {
 
                     // Intensity stereo
                     if self.ics1.is_intensity(g, sfb) {
-                        // TODO: Invert always false for AAC Scaleable
-                        let invert = (self.ms_mask_present == 1) && self.ms_used[g][sfb];
-                        let dir = self.ics1.get_intensity_dir(g, sfb) ^ invert;
+                        // Section 4.6.8.2.3
+                        let invert = self.ms_mask_present == 1 && self.ms_used[g][sfb];
+                        let dir = if self.ics1.get_intensity_dir(g, sfb) { 1.0 } else { -1.0 };
+                        let factor = if invert { -1.0 } else { 1.0 };
 
-                        let scale = match dir {
-                            true => -self.ics1.scales[g][sfb],
-                            _ => self.ics1.scales[g][sfb],
-                        };
+                        let scale = dir * factor * self.ics1.scales[g][sfb];
 
                         let left = &self.ics0.coeffs[start..end];
                         let right = &mut self.ics1.coeffs[start..end];
