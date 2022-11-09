@@ -819,7 +819,7 @@ impl Ics {
                 }
                 else {
                     scf_normal += i16::from(bs.read_codebook(scf_table)?.0) - 60;
-                    validate!((scf_normal >= 0) && (scf_normal < 255));
+                    validate!((scf_normal >= 0) && (scf_normal < 256));
 
                     get_scale(scf_normal - 100)
                 }
