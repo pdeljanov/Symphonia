@@ -30,7 +30,7 @@ use super::common::*;
 use super::window::*;
 
 use lazy_static::lazy_static;
-use log::{error, trace};
+use log::{debug, error};
 
 macro_rules! validate {
     ($a:expr) => {
@@ -386,16 +386,18 @@ impl ICSInfo {
 
         match self.prev_window_sequence {
             ONLY_LONG_SEQUENCE | LONG_STOP_SEQUENCE => {
-                validate!(
-                    (self.window_sequence == ONLY_LONG_SEQUENCE)
-                        || (self.window_sequence == LONG_START_SEQUENCE)
-                );
+                if (self.window_sequence != ONLY_LONG_SEQUENCE)
+                    && (self.window_sequence != LONG_START_SEQUENCE)
+                {
+                    debug!("previous window is invalid");
+                }
             }
             LONG_START_SEQUENCE | EIGHT_SHORT_SEQUENCE => {
-                validate!(
-                    (self.window_sequence == EIGHT_SHORT_SEQUENCE)
-                        || (self.window_sequence == LONG_STOP_SEQUENCE)
-                );
+                if (self.window_sequence != EIGHT_SHORT_SEQUENCE)
+                    && (self.window_sequence != LONG_STOP_SEQUENCE)
+                {
+                    debug!("previous window is invalid");
+                }
             }
             _ => {}
         };
@@ -1606,8 +1608,6 @@ impl Decoder for AacDecoder {
         }
 
         //print!("edata:"); for s in edata.iter() { print!(" {:02X}", *s);}println!("");
-
-        trace!("{}", m4ainfo);
 
         if (m4ainfo.otype != M4AType::Lc) || (m4ainfo.channels > 2) || (m4ainfo.samples != 1024) {
             return unsupported_error("aac: aac too complex");
