@@ -1229,8 +1229,20 @@ impl ChannelPair {
             self.ms_mask_present = bs.read_bits_leq32(2)? as u8;
 
             match self.ms_mask_present {
-                0 | 2 => (),
+                0 | 2 => {
+                    // If mid-side mask present is 0, then mid-side coding is never used. If the
+                    // value is 2, then mid-side coding is always used.
+                    let is_used = self.ms_mask_present == 2;
+
+                    for g in 0..self.ics0.info.window_groups {
+                        for sfb in 0..self.ics0.info.max_sfb {
+                            self.ms_used[g][sfb] = is_used;
+                        }
+                    }
+                }
                 1 => {
+                    // If mid-side mask present is 1, then read a bit for each band indicating if
+                    // the band uses mid-side coding.
                     for g in 0..self.ics0.info.window_groups {
                         for sfb in 0..self.ics0.info.max_sfb {
                             self.ms_used[g][sfb] = bs.read_bool()?;
@@ -1248,7 +1260,7 @@ impl ChannelPair {
         self.ics1.decode_ics(bs, &mut self.lcg, m4atype, common_window)?;
 
         // Joint-stereo decoding
-        if common_window && self.ms_mask_present != 0 {
+        if common_window {
             let mut g = 0;
 
             for w in 0..self.ics0.info.num_windows {
@@ -1280,7 +1292,7 @@ impl ChannelPair {
                         // Perceptual noise substitution, do not do joint-stereo decoding.
                         // Section 4.6.13.3
                     }
-                    else if self.ms_mask_present == 2 || self.ms_used[g][sfb] {
+                    else if self.ms_used[g][sfb] {
                         // Mid-side stereo.
                         let mid = &mut self.ics0.coeffs[start..end];
                         let side = &mut self.ics1.coeffs[start..end];
