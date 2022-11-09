@@ -41,6 +41,25 @@ macro_rules! validate {
     };
 }
 
+/// A Linear Congruential Generator (LCG) pseudo-random number generator from Numerical Recipes.
+#[derive(Clone)]
+struct Lcg {
+    state: u32,
+}
+
+impl Lcg {
+    fn new(state: u32) -> Self {
+        Lcg { state }
+    }
+
+    #[inline(always)]
+    fn next(&mut self) -> i32 {
+        // Numerical Recipes LCG parameters.
+        self.state = (self.state as u32).wrapping_mul(1664525).wrapping_add(1013904223);
+        self.state as i32
+    }
+}
+
 lazy_static! {
     /// Pre-computed table of y = x^(4/3).
     static ref POW43_TABLE: [f32; 8192] = {
@@ -659,7 +678,6 @@ struct Ics {
     sbinfo: GASubbandInfo,
     coeffs: [f32; 1024],
     delay: [f32; 1024],
-    lcg: Lcg,
 }
 
 const INTENSITY_SCALE_MIN: i16 = -155;
@@ -692,7 +710,6 @@ impl Ics {
             sbinfo,
             coeffs: [0.0; 1024],
             delay: [0.0; 1024],
-            lcg: Lcg::new(0x1bad1dea),
         }
     }
 
@@ -829,7 +846,7 @@ impl Ics {
         }
     }
 
-    fn decode_spectrum<B: ReadBitsLtr>(&mut self, bs: &mut B) -> Result<()> {
+    fn decode_spectrum<B: ReadBitsLtr>(&mut self, bs: &mut B, lcg: &mut Lcg) -> Result<()> {
         // Zero all spectral coefficients.
         self.coeffs = [0.0; 1024];
         for g in 0..self.info.window_groups {
@@ -846,7 +863,7 @@ impl Ics {
 
                     match cb_idx {
                         ZERO_HCB => (),
-                        NOISE_HCB => decode_spectrum_noise(&mut self.lcg, scale, dst),
+                        NOISE_HCB => decode_noise(lcg, scale, dst),
                         INTENSITY_HCB | INTENSITY_HCB2 => (),
                         _ => {
                             let unsigned = AAC_UNSIGNED_CODEBOOK[(cb_idx - 1) as usize];
@@ -917,6 +934,7 @@ impl Ics {
     fn decode_ics<B: ReadBitsLtr>(
         &mut self,
         bs: &mut B,
+        lcg: &mut Lcg,
         m4atype: M4AType,
         common_window: bool,
     ) -> Result<()> {
@@ -955,7 +973,7 @@ impl Ics {
             }
         }
 
-        self.decode_spectrum(bs)?;
+        self.decode_spectrum(bs, lcg)?;
         Ok(())
     }
 
@@ -1023,24 +1041,7 @@ impl Ics {
     }
 }
 
-#[derive(Clone)]
-struct Lcg {
-    state: u32,
-}
-
-impl Lcg {
-    fn new(state: u32) -> Self {
-        Lcg { state }
-    }
-
-    #[inline(always)]
-    fn next(&mut self) -> i32 {
-        // Numerical Recipes LCG parameters.
-        self.state = (self.state as u32).wrapping_mul(1664525).wrapping_add(1013904223);
-        self.state as i32
-    }
-}
-
+#[inline(always)]
 fn iquant(val: f32) -> f32 {
     if val < 0.0 {
         -((-val).powf(4.0 / 3.0))
@@ -1050,6 +1051,7 @@ fn iquant(val: f32) -> f32 {
     }
 }
 
+#[inline(always)]
 fn requant(val: f32, scale: f32) -> f32 {
     if scale == 0.0 {
         return 0.0;
@@ -1063,7 +1065,8 @@ fn requant(val: f32, scale: f32) -> f32 {
     }
 }
 
-fn decode_spectrum_noise(lcg: &mut Lcg, sf: f32, dst: &mut [f32]) {
+/// Perceptual noise substitution decode step. Section 4.6.13.3.
+fn decode_noise(lcg: &mut Lcg, sf: f32, dst: &mut [f32]) {
     let mut energy = 0.0;
 
     for spec in dst.iter_mut() {
@@ -1184,11 +1187,11 @@ fn read_escape<B: ReadBitsLtr>(bs: &mut B, is_pos: bool) -> Result<i16> {
 struct ChannelPair {
     is_pair: bool,
     channel: usize,
-    common_window: bool,
     ms_mask_present: u8,
     ms_used: [[bool; MAX_SFBS]; MAX_WINDOWS],
     ics0: Ics,
     ics1: Ics,
+    lcg: Lcg,
 }
 
 impl ChannelPair {
@@ -1196,11 +1199,11 @@ impl ChannelPair {
         Self {
             is_pair,
             channel,
-            common_window: false,
             ms_mask_present: 0,
             ms_used: [[false; MAX_SFBS]; MAX_WINDOWS],
             ics0: Ics::new(sbinfo),
             ics1: Ics::new(sbinfo),
+            lcg: Lcg::new(0x1f2e3d4c), // Use the same seed as ffmpeg for symphonia-check.
         }
     }
 
@@ -1210,13 +1213,12 @@ impl ChannelPair {
     }
 
     fn decode_ga_sce<B: ReadBitsLtr>(&mut self, bs: &mut B, m4atype: M4AType) -> Result<()> {
-        self.ics0.decode_ics(bs, m4atype, false)?;
+        self.ics0.decode_ics(bs, &mut self.lcg, m4atype, false)?;
         Ok(())
     }
 
     fn decode_ga_cpe<B: ReadBitsLtr>(&mut self, bs: &mut B, m4atype: M4AType) -> Result<()> {
         let common_window = bs.read_bool()?;
-        self.common_window = common_window;
 
         if common_window {
             self.ics0.info.decode_ics_info(bs)?;
@@ -1225,18 +1227,11 @@ impl ChannelPair {
             self.ms_mask_present = bs.read_bits_leq32(2)? as u8;
 
             match self.ms_mask_present {
-                0 => (),
+                0 | 2 => (),
                 1 => {
                     for g in 0..self.ics0.info.window_groups {
                         for sfb in 0..self.ics0.info.max_sfb {
                             self.ms_used[g][sfb] = bs.read_bool()?;
-                        }
-                    }
-                }
-                2 => {
-                    for g in 0..self.ics0.info.window_groups {
-                        for sfb in 0..self.ics0.info.max_sfb {
-                            self.ms_used[g][sfb] = true;
                         }
                     }
                 }
@@ -1247,12 +1242,13 @@ impl ChannelPair {
             self.ics1.info = self.ics0.info;
         }
 
-        self.ics0.decode_ics(bs, m4atype, common_window)?;
-        self.ics1.decode_ics(bs, m4atype, common_window)?;
+        self.ics0.decode_ics(bs, &mut self.lcg, m4atype, common_window)?;
+        self.ics1.decode_ics(bs, &mut self.lcg, m4atype, common_window)?;
 
         // Joint-stereo decoding
         if common_window && self.ms_mask_present != 0 {
             let mut g = 0;
+
             for w in 0..self.ics0.info.num_windows {
                 if w > 0 && !self.ics0.info.scale_factor_grouping[w - 1] {
                     g += 1;
@@ -1262,8 +1258,8 @@ impl ChannelPair {
                     let start = w * 128 + self.ics0.get_band_start(sfb);
                     let end = w * 128 + self.ics0.get_band_start(sfb + 1);
 
-                    // Intensity stereo
                     if self.ics1.is_intensity(g, sfb) {
+                        // Intensity stereo
                         // Section 4.6.8.2.3
                         let invert = self.ms_mask_present == 1 && self.ms_used[g][sfb];
                         let dir = if self.ics1.get_intensity_dir(g, sfb) { 1.0 } else { -1.0 };
@@ -1279,17 +1275,11 @@ impl ChannelPair {
                         }
                     }
                     else if self.ics0.is_noise(g, sfb) || self.ics1.is_noise(g, sfb) {
-                        // Perceptual noise substitution
-                        //
-                        // If ms_used is true for the group and band, or ms_mask_present == 2, then
-                        // the noise vector for the band should be correlated (i.e., the same).
-                        if self.ms_mask_present == 2 || self.ms_used[g][sfb] {
-                            self.ics1.coeffs[start..end]
-                                .copy_from_slice(&self.ics0.coeffs[start..end]);
-                        }
+                        // Perceptual noise substitution, do not do joint-stereo decoding.
+                        // Section 4.6.13.3
                     }
                     else if self.ms_mask_present == 2 || self.ms_used[g][sfb] {
-                        // Mid-side stereo
+                        // Mid-side stereo.
                         let mid = &mut self.ics0.coeffs[start..end];
                         let side = &mut self.ics1.coeffs[start..end];
 
