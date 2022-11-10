@@ -32,52 +32,143 @@ use symphonia_core::codecs::{CODEC_TYPE_PCM_F32BE, CODEC_TYPE_PCM_F32LE};
 use symphonia_core::codecs::{CODEC_TYPE_PCM_F64BE, CODEC_TYPE_PCM_F64LE};
 // G711 ALaw and MuLaw PCM cdoecs.
 use symphonia_core::codecs::{CODEC_TYPE_PCM_ALAW, CODEC_TYPE_PCM_MULAW};
-use symphonia_core::conv::FromSample;
-use symphonia_core::errors::{unsupported_error, Result};
+use symphonia_core::conv::IntoSample;
+use symphonia_core::errors::{decode_error, unsupported_error, Result};
 use symphonia_core::formats::Packet;
 use symphonia_core::io::ReadBytes;
+use symphonia_core::sample::{i24, u24, SampleFormat};
+use symphonia_core::units::Duration;
+
+macro_rules! impl_generic_audio_buffer_func {
+    ($generic:expr, $buf:ident, $expr:expr) => {
+        match $generic {
+            GenericAudioBuffer::U8($buf) => $expr,
+            GenericAudioBuffer::U16($buf) => $expr,
+            GenericAudioBuffer::U24($buf) => $expr,
+            GenericAudioBuffer::U32($buf) => $expr,
+            GenericAudioBuffer::S8($buf) => $expr,
+            GenericAudioBuffer::S16($buf) => $expr,
+            GenericAudioBuffer::S24($buf) => $expr,
+            GenericAudioBuffer::S32($buf) => $expr,
+            GenericAudioBuffer::F32($buf) => $expr,
+            GenericAudioBuffer::F64($buf) => $expr,
+        }
+    };
+}
+
+/// A generic audio buffer.
+/// TODO: Move to core library with a full API.
+pub enum GenericAudioBuffer {
+    U8(AudioBuffer<u8>),
+    U16(AudioBuffer<u16>),
+    U24(AudioBuffer<u24>),
+    U32(AudioBuffer<u32>),
+    S8(AudioBuffer<i8>),
+    S16(AudioBuffer<i16>),
+    S24(AudioBuffer<i24>),
+    S32(AudioBuffer<i32>),
+    F32(AudioBuffer<f32>),
+    F64(AudioBuffer<f64>),
+}
+
+impl GenericAudioBuffer {
+    fn new(format: SampleFormat, duration: Duration, spec: SignalSpec) -> Self {
+        match format {
+            SampleFormat::U8 => GenericAudioBuffer::U8(AudioBuffer::new(duration, spec)),
+            SampleFormat::U16 => GenericAudioBuffer::U16(AudioBuffer::new(duration, spec)),
+            SampleFormat::U24 => GenericAudioBuffer::U24(AudioBuffer::new(duration, spec)),
+            SampleFormat::U32 => GenericAudioBuffer::U32(AudioBuffer::new(duration, spec)),
+            SampleFormat::S8 => GenericAudioBuffer::S8(AudioBuffer::new(duration, spec)),
+            SampleFormat::S16 => GenericAudioBuffer::S16(AudioBuffer::new(duration, spec)),
+            SampleFormat::S24 => GenericAudioBuffer::S24(AudioBuffer::new(duration, spec)),
+            SampleFormat::S32 => GenericAudioBuffer::S32(AudioBuffer::new(duration, spec)),
+            SampleFormat::F32 => GenericAudioBuffer::F32(AudioBuffer::new(duration, spec)),
+            SampleFormat::F64 => GenericAudioBuffer::F64(AudioBuffer::new(duration, spec)),
+        }
+    }
+
+    fn clear(&mut self) {
+        impl_generic_audio_buffer_func!(self, buf, buf.clear());
+    }
+}
+
+impl AsAudioBufferRef for GenericAudioBuffer {
+    fn as_audio_buffer_ref(&self) -> AudioBufferRef<'_> {
+        impl_generic_audio_buffer_func!(self, buf, buf.as_audio_buffer_ref())
+    }
+}
 
 macro_rules! read_pcm_signed {
-    ($buf:expr, $read:expr, $shift:expr) => {
-        $buf.fill(|audio_planes, idx| -> Result<()> {
-            for plane in audio_planes.planes() {
-                plane[idx] = (($read as u32) << $shift) as i32;
+    ($buf:expr, $fmt:tt, $read:expr, $width:expr, $coded_width:expr) => {
+        // Get buffer of the correct sample format.
+        match $buf {
+            GenericAudioBuffer::$fmt(ref mut buf) => {
+                // Read samples.
+                let shift = $width - $coded_width;
+                buf.fill(|audio_planes, idx| -> Result<()> {
+                    for plane in audio_planes.planes() {
+                        plane[idx] = ($read << shift).into_sample();
+                    }
+                    Ok(())
+                })
             }
-            Ok(())
-        })
+            _ => unreachable!(),
+        }
     };
 }
 
 macro_rules! read_pcm_unsigned {
-    ($buf:expr, $read:expr, $shift:expr) => {
-        $buf.fill(|audio_planes, idx| -> Result<()> {
-            for plane in audio_planes.planes() {
-                plane[idx] = (($read as u32) << $shift).wrapping_add(0x80000000) as i32
+    ($buf:expr, $fmt:tt, $read:expr, $width:expr, $coded_width:expr) => {
+        // Get buffer of the correct sample format.
+        match $buf {
+            GenericAudioBuffer::$fmt(ref mut buf) => {
+                // Read samples.
+                let shift = $width - $coded_width;
+                buf.fill(|audio_planes, idx| -> Result<()> {
+                    for plane in audio_planes.planes() {
+                        plane[idx] = ($read << shift).into_sample();
+                    }
+                    Ok(())
+                })
             }
-            Ok(())
-        })
+            _ => unreachable!(),
+        }
     };
 }
 
 macro_rules! read_pcm_floating {
-    ($buf:expr, $read:expr) => {
-        $buf.fill(|audio_planes, idx| -> Result<()> {
-            for plane in audio_planes.planes() {
-                plane[idx] = i32::from_sample($read);
+    ($buf:expr, $fmt:tt, $read:expr) => {
+        // Get buffer of the correct sample format.
+        match $buf {
+            GenericAudioBuffer::$fmt(ref mut buf) => {
+                // Read samples.
+                buf.fill(|audio_planes, idx| -> Result<()> {
+                    for plane in audio_planes.planes() {
+                        plane[idx] = $read;
+                    }
+                    Ok(())
+                })
             }
-            Ok(())
-        })
+            _ => unreachable!(),
+        }
     };
 }
 
 macro_rules! read_pcm_transfer_func {
-    ($buf:expr, $func:expr) => {
-        $buf.fill(|audio_planes, idx| -> Result<()> {
-            for plane in audio_planes.planes() {
-                plane[idx] = i32::from_sample($func);
+    ($buf:expr, $fmt:tt, $func:expr) => {
+        // Get buffer of the correct sample format.
+        match $buf {
+            GenericAudioBuffer::$fmt(ref mut buf) => {
+                // Read samples.
+                buf.fill(|audio_planes, idx| -> Result<()> {
+                    for plane in audio_planes.planes() {
+                        plane[idx] = $func;
+                    }
+                    Ok(())
+                })
             }
-            Ok(())
-        })
+            _ => unreachable!(),
+        }
     };
 }
 
@@ -155,43 +246,74 @@ fn is_supported_pcm_codec(codec_type: CodecType) -> bool {
 /// Pulse Code Modulation (PCM) decoder for all raw PCM, and log-PCM codecs.
 pub struct PcmDecoder {
     params: CodecParameters,
-    sample_width: u32,
-    buf: AudioBuffer<i32>,
+    coded_width: u32,
+    buf: GenericAudioBuffer,
 }
 
 impl PcmDecoder {
     fn decode_inner(&mut self, packet: &Packet) -> Result<()> {
-        let mut stream = packet.as_buf_reader();
-
-        // Signed or unsigned integer PCM codecs must be shifted to expand the sample into the
-        // entire i32 range. Only floating point samples may exceed 32 bits per coded sample, but
-        // they cannot be shifted, so int_shift = 0.
-        let int_shift = if self.sample_width <= 32 { 32 - self.sample_width } else { 0 };
+        let mut reader = packet.as_buf_reader();
 
         let _ = match self.params.codec {
-            CODEC_TYPE_PCM_S32LE => read_pcm_signed!(self.buf, stream.read_u32()?, int_shift),
-            CODEC_TYPE_PCM_S32BE => read_pcm_signed!(self.buf, stream.read_be_u32()?, int_shift),
-            CODEC_TYPE_PCM_S24LE => read_pcm_signed!(self.buf, stream.read_u24()?, int_shift),
-            CODEC_TYPE_PCM_S24BE => read_pcm_signed!(self.buf, stream.read_be_u24()?, int_shift),
-            CODEC_TYPE_PCM_S16LE => read_pcm_signed!(self.buf, stream.read_u16()?, int_shift),
-            CODEC_TYPE_PCM_S16BE => read_pcm_signed!(self.buf, stream.read_be_u16()?, int_shift),
-            CODEC_TYPE_PCM_S8 => read_pcm_signed!(self.buf, stream.read_u8()?, int_shift),
-            CODEC_TYPE_PCM_U32LE => read_pcm_unsigned!(self.buf, stream.read_u32()?, int_shift),
-            CODEC_TYPE_PCM_U32BE => read_pcm_unsigned!(self.buf, stream.read_be_u32()?, int_shift),
-            CODEC_TYPE_PCM_U24LE => read_pcm_unsigned!(self.buf, stream.read_u24()?, int_shift),
-            CODEC_TYPE_PCM_U24BE => read_pcm_unsigned!(self.buf, stream.read_be_u24()?, int_shift),
-            CODEC_TYPE_PCM_U16LE => read_pcm_unsigned!(self.buf, stream.read_u16()?, int_shift),
-            CODEC_TYPE_PCM_U16BE => read_pcm_unsigned!(self.buf, stream.read_be_u16()?, int_shift),
-            CODEC_TYPE_PCM_U8 => read_pcm_unsigned!(self.buf, stream.read_u8()?, int_shift),
-            CODEC_TYPE_PCM_F32LE => read_pcm_floating!(self.buf, stream.read_f32()?),
-            CODEC_TYPE_PCM_F32BE => read_pcm_floating!(self.buf, stream.read_be_f32()?),
-            CODEC_TYPE_PCM_F64LE => read_pcm_floating!(self.buf, stream.read_f64()?),
-            CODEC_TYPE_PCM_F64BE => read_pcm_floating!(self.buf, stream.read_be_f64()?),
+            CODEC_TYPE_PCM_S32LE => {
+                read_pcm_signed!(self.buf, S32, reader.read_i32()?, 32, self.coded_width)
+            }
+            CODEC_TYPE_PCM_S32BE => {
+                read_pcm_signed!(self.buf, S32, reader.read_be_i32()?, 32, self.coded_width)
+            }
+            CODEC_TYPE_PCM_S24LE => {
+                read_pcm_signed!(self.buf, S24, reader.read_i24()? << 8, 24, self.coded_width)
+            }
+            CODEC_TYPE_PCM_S24BE => {
+                read_pcm_signed!(self.buf, S24, reader.read_be_i24()? << 8, 24, self.coded_width)
+            }
+            CODEC_TYPE_PCM_S16LE => {
+                read_pcm_signed!(self.buf, S16, reader.read_i16()?, 16, self.coded_width)
+            }
+            CODEC_TYPE_PCM_S16BE => {
+                read_pcm_signed!(self.buf, S16, reader.read_be_i16()?, 16, self.coded_width)
+            }
+            CODEC_TYPE_PCM_S8 => {
+                read_pcm_signed!(self.buf, S8, reader.read_i8()?, 8, self.coded_width)
+            }
+            CODEC_TYPE_PCM_U32LE => {
+                read_pcm_unsigned!(self.buf, U32, reader.read_u32()?, 32, self.coded_width)
+            }
+            CODEC_TYPE_PCM_U32BE => {
+                read_pcm_unsigned!(self.buf, U32, reader.read_be_u32()?, 32, self.coded_width)
+            }
+            CODEC_TYPE_PCM_U24LE => {
+                read_pcm_unsigned!(self.buf, U24, reader.read_u24()? << 8, 24, self.coded_width)
+            }
+            CODEC_TYPE_PCM_U24BE => {
+                read_pcm_unsigned!(self.buf, U24, reader.read_be_u24()? << 8, 24, self.coded_width)
+            }
+            CODEC_TYPE_PCM_U16LE => {
+                read_pcm_unsigned!(self.buf, U16, reader.read_u16()?, 16, self.coded_width)
+            }
+            CODEC_TYPE_PCM_U16BE => {
+                read_pcm_unsigned!(self.buf, U16, reader.read_be_u16()?, 16, self.coded_width)
+            }
+            CODEC_TYPE_PCM_U8 => {
+                read_pcm_unsigned!(self.buf, U8, reader.read_u8()?, 8, self.coded_width)
+            }
+            CODEC_TYPE_PCM_F32LE => {
+                read_pcm_floating!(self.buf, F32, reader.read_f32()?)
+            }
+            CODEC_TYPE_PCM_F32BE => {
+                read_pcm_floating!(self.buf, F32, reader.read_be_f32()?)
+            }
+            CODEC_TYPE_PCM_F64LE => {
+                read_pcm_floating!(self.buf, F64, reader.read_f64()?)
+            }
+            CODEC_TYPE_PCM_F64BE => {
+                read_pcm_floating!(self.buf, F64, reader.read_be_f64()?)
+            }
             CODEC_TYPE_PCM_ALAW => {
-                read_pcm_transfer_func!(self.buf, alaw_to_linear(stream.read_u8()?))
+                read_pcm_transfer_func!(self.buf, S16, alaw_to_linear(reader.read_u8()?))
             }
             CODEC_TYPE_PCM_MULAW => {
-                read_pcm_transfer_func!(self.buf, mulaw_to_linear(stream.read_u8()?))
+                read_pcm_transfer_func!(self.buf, S16, mulaw_to_linear(reader.read_u8()?))
             }
             // CODEC_TYPE_PCM_S32LE_PLANAR =>
             // CODEC_TYPE_PCM_S32BE_PLANAR =>
@@ -211,7 +333,7 @@ impl PcmDecoder {
             // CODEC_TYPE_PCM_F32BE_PLANAR =>
             // CODEC_TYPE_PCM_F64LE_PLANAR =>
             // CODEC_TYPE_PCM_F64BE_PLANAR =>
-            _ => return unsupported_error("pcm: codec is unsupported."),
+            _ => unsupported_error("pcm: codec is unsupported."),
         };
 
         Ok(())
@@ -250,15 +372,33 @@ impl Decoder for PcmDecoder {
             return unsupported_error("pcm: channels or channel_layout is required");
         };
 
-        // Signed and unsigned integer PCM codecs require the coded sample bit-width to be known.
-        // Try to get the bits per coded sample parameter, or, if failing that, the bits per
-        // sample parameter.
-        let sample_width =
+        // Determine the sample format for the audio buffer based on the codec type.
+        let (sample_format, sample_format_width) = match params.codec {
+            CODEC_TYPE_PCM_S32LE | CODEC_TYPE_PCM_S32BE => (SampleFormat::S32, 32),
+            CODEC_TYPE_PCM_S24LE | CODEC_TYPE_PCM_S24BE => (SampleFormat::S24, 24),
+            CODEC_TYPE_PCM_S16LE | CODEC_TYPE_PCM_S16BE => (SampleFormat::S16, 16),
+            CODEC_TYPE_PCM_S8 => (SampleFormat::S8, 8),
+            CODEC_TYPE_PCM_U32LE | CODEC_TYPE_PCM_U32BE => (SampleFormat::U32, 32),
+            CODEC_TYPE_PCM_U24LE | CODEC_TYPE_PCM_U24BE => (SampleFormat::U24, 24),
+            CODEC_TYPE_PCM_U16LE | CODEC_TYPE_PCM_U16BE => (SampleFormat::U16, 16),
+            CODEC_TYPE_PCM_U8 => (SampleFormat::U8, 8),
+            CODEC_TYPE_PCM_F32LE | CODEC_TYPE_PCM_F32BE => (SampleFormat::F32, 32),
+            CODEC_TYPE_PCM_F64LE | CODEC_TYPE_PCM_F64BE => (SampleFormat::F64, 64),
+            CODEC_TYPE_PCM_ALAW => (SampleFormat::S16, 16),
+            CODEC_TYPE_PCM_MULAW => (SampleFormat::S16, 16),
+            _ => unreachable!(),
+        };
+
+        // Signed and unsigned integer PCM codecs may code fewer bits per sample than the actual
+        // sample format. The number of coded bits is therefore required to shift the decoded
+        // samples into the range of the sample format. Try to get the bits per coded sample
+        // parameter, or, if failing that, the bits per sample parameter.
+        let coded_width =
             params.bits_per_coded_sample.unwrap_or_else(|| params.bits_per_sample.unwrap_or(0));
 
-        // If the width is not known, then the bits per coded sample may be constant and
+        // If the coded sample width is unknown, then the bits per coded sample may be constant and
         // implicit to the codec.
-        if sample_width == 0 {
+        if coded_width == 0 {
             // A-Law, Mu-Law, and floating point codecs have an implicit coded sample bit-width. If
             // the codec is none of those, then decoding is not possible.
             match params.codec {
@@ -268,8 +408,16 @@ impl Decoder for PcmDecoder {
                 _ => return unsupported_error("pcm: unknown bits per (coded) sample."),
             }
         }
+        else if coded_width > sample_format_width {
+            // If the coded sample width is greater than the width of the sample format, then the
+            // stream has incorrect parameters.
+            return decode_error("pcm: coded bits per sample is greater than the sample format");
+        }
 
-        Ok(PcmDecoder { params: params.clone(), sample_width, buf: AudioBuffer::new(frames, spec) })
+        // Create an audio buffer of the correct format.
+        let buf = GenericAudioBuffer::new(sample_format, frames, spec);
+
+        Ok(PcmDecoder { params: params.clone(), coded_width, buf })
     }
 
     fn supported_codecs() -> &'static [CodecDescriptor] {
