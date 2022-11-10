@@ -185,6 +185,11 @@ impl i24 {
     }
 
     #[inline]
+    pub fn clamped_i32(self) -> i32 {
+        (self.0 << 8) >> 8
+    }
+
+    #[inline]
     pub fn to_ne_bytes(self) -> [u8; 3] {
         let b = self.0.to_ne_bytes();
 
@@ -351,6 +356,11 @@ impl u24 {
     #[inline]
     pub fn into_u32(self) -> u32 {
         self.0
+    }
+
+    #[inline]
+    pub fn clamped_u32(self) -> u32 {
+        (self.0 << 8) >> 8
     }
 
     #[inline]
