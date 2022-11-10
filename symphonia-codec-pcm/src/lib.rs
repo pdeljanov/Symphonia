@@ -210,10 +210,10 @@ fn mulaw_to_linear(mut mu_val: u8) -> i16 {
     t <<= (mu_val & XLAW_SEG_MASK) >> XLAW_SEG_SHIFT;
 
     if mu_val & 0x80 == 0x80 {
-        t - BIAS
+        BIAS - t
     }
     else {
-        BIAS - t
+        t - BIAS
     }
 }
 
