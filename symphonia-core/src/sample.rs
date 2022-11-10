@@ -133,6 +133,41 @@ impl Sample for f64 {
     const MID: f64 = 0.0;
 }
 
+// Helper macros
+
+macro_rules! shl_impl {
+    ($t:path, $f:ty) => {
+        impl core::ops::Shl<$f> for $t {
+            type Output = $t;
+
+            #[inline]
+            fn shl(self, other: $f) -> $t {
+                $t(self.0 << other)
+            }
+        }
+    };
+}
+
+macro_rules! shr_impl {
+    ($t:path, $f:ty) => {
+        impl core::ops::Shr<$f> for $t {
+            type Output = $t;
+
+            #[inline]
+            fn shr(self, other: $f) -> $t {
+                $t(self.0 >> other)
+            }
+        }
+    };
+}
+
+macro_rules! impl_shifts {
+    ($t:ty, $f:ty) => {
+        shl_impl! { $t, $f }
+        shr_impl! { $t, $f }
+    };
+}
+
 // Implementation for i24
 
 impl i24 {
@@ -140,8 +175,8 @@ impl i24 {
     pub const MIN: i24 = i24(-8_388_608);
 
     #[inline]
-    fn saturate_overflow(self) -> Self {
-        i24(clamp_i24(self.0))
+    pub fn clamped_from(val: i32) -> Self {
+        i24(clamp_i24(val))
     }
 
     #[inline]
@@ -172,7 +207,8 @@ impl fmt::Display for i24 {
 
 impl From<i32> for i24 {
     fn from(val: i32) -> Self {
-        i24(val).saturate_overflow()
+        assert!(val >= i24::MIN.0 && val <= i24::MAX.0, "value of out range");
+        i24(val)
     }
 }
 
@@ -211,7 +247,7 @@ impl core::ops::Mul<i24> for i24 {
 
     #[inline]
     fn mul(self, other: Self) -> Self {
-        i24::from(self.0 * other.0)
+        i24(self.0 * other.0)
     }
 }
 
@@ -260,6 +296,20 @@ impl core::ops::Shr<i24> for i24 {
     }
 }
 
+impl_shifts! { i24, u8 }
+impl_shifts! { i24, u16 }
+impl_shifts! { i24, u32 }
+impl_shifts! { i24, u64 }
+impl_shifts! { i24, u128 }
+impl_shifts! { i24, usize }
+
+impl_shifts! { i24, i8 }
+impl_shifts! { i24, i16 }
+impl_shifts! { i24, i32 }
+impl_shifts! { i24, i64 }
+impl_shifts! { i24, i128 }
+impl_shifts! { i24, isize }
+
 impl core::ops::BitAnd<i24> for i24 {
     type Output = i24;
 
@@ -294,8 +344,8 @@ impl u24 {
     pub const MIN: u24 = u24(0);
 
     #[inline]
-    fn saturate_overflow(self) -> Self {
-        u24(clamp_u24(self.0))
+    pub fn clamped_from(val: u32) -> Self {
+        u24(clamp_u24(val))
     }
 
     #[inline]
@@ -326,7 +376,8 @@ impl fmt::Display for u24 {
 
 impl From<u32> for u24 {
     fn from(val: u32) -> Self {
-        u24(val).saturate_overflow()
+        assert!(val >= u24::MIN.0 && val <= u24::MAX.0, "value of out range");
+        u24(val)
     }
 }
 
@@ -365,7 +416,7 @@ impl core::ops::Mul<u24> for u24 {
 
     #[inline]
     fn mul(self, other: Self) -> Self {
-        u24::from(self.0 * other.0)
+        u24(self.0 * other.0)
     }
 }
 
@@ -413,6 +464,20 @@ impl core::ops::Shr<u24> for u24 {
         u24(self.0 >> other.0)
     }
 }
+
+impl_shifts! { u24, u8 }
+impl_shifts! { u24, u16 }
+impl_shifts! { u24, u32 }
+impl_shifts! { u24, u64 }
+impl_shifts! { u24, u128 }
+impl_shifts! { u24, usize }
+
+impl_shifts! { u24, i8 }
+impl_shifts! { u24, i16 }
+impl_shifts! { u24, i32 }
+impl_shifts! { u24, i64 }
+impl_shifts! { u24, i128 }
+impl_shifts! { u24, isize }
 
 impl core::ops::BitAnd<u24> for u24 {
     type Output = u24;

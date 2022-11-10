@@ -493,11 +493,11 @@ converter!(u24, i24, s, u24::from((s.into_i32() as u32).wrapping_add(0x80_0000) 
 converter!(u24, i32, s, u24::from((s as u32).wrapping_add(0x8000_0000) >> 8));
 converter!(u24, f32, s, {
     let s32 = (clamp_f32(s) * 8_388_608.0).round() as i32;
-    u24::from(clamp_u24((s32 + 0x80_0000) as u32))
+    u24::clamped_from((s32 + 0x80_0000) as u32)
 });
 converter!(u24, f64, s, {
     let s32 = (clamp_f64(s) * 8_388_608.0).round() as i32;
-    u24::from(clamp_u24((s32 + 0x80_0000) as u32))
+    u24::clamped_from((s32 + 0x80_0000) as u32)
 });
 
 // Conversions to u32
@@ -551,8 +551,8 @@ converter!(i24, i8, s, i24::from(i32::from(s) << 16));
 converter!(i24, i16, s, i24::from(i32::from(s) << 8));
 converter!(i24, i24, s, s);
 converter!(i24, i32, s, i24::from(s >> 8));
-converter!(i24, f32, s, i24::from(clamp_i24((clamp_f32(s) * 8_388_608.0).round() as i32)));
-converter!(i24, f64, s, i24::from(clamp_i24((clamp_f64(s) * 8_388_608.0).round() as i32)));
+converter!(i24, f32, s, i24::clamped_from((clamp_f32(s) * 8_388_608.0).round() as i32));
+converter!(i24, f64, s, i24::clamped_from((clamp_f64(s) * 8_388_608.0).round() as i32));
 
 // Conversions to i32
 converter!(i32, u8, s, (i32::from(s) - 0x80) << 24);
