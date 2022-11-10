@@ -38,6 +38,7 @@
 //! | Codec    | Feature Flag | Gapless | Default |
 //! |----------|--------------|---------|---------|
 //! | AAC-LC   | `aac`        | No      | No      |
+//! | ADPCM    | `adpcm`      | Yes     | Yes     |
 //! | ALAC     | `alac`       | Yes     | No      |
 //! | FLAC     | `flac`       | Yes     | Yes     |
 //! | MP3      | `mp3`        | Yes     | No      |
