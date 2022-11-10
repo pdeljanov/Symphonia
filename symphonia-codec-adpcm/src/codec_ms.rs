@@ -25,7 +25,7 @@ const DELTA_MIN: i32 = 16;
 macro_rules! check_block_predictor {
     ($block_predictor:ident, $max:expr) => {
         if $block_predictor > $max {
-            return unsupported_error("adpcm: block predictor exceeds range.");
+            return unsupported_error("adpcm: block predictor exceeds range");
         }
     };
 }

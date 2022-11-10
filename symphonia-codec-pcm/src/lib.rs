@@ -333,7 +333,7 @@ impl PcmDecoder {
             // CODEC_TYPE_PCM_F32BE_PLANAR =>
             // CODEC_TYPE_PCM_F64LE_PLANAR =>
             // CODEC_TYPE_PCM_F64BE_PLANAR =>
-            _ => unsupported_error("pcm: codec is unsupported."),
+            _ => unsupported_error("pcm: codec is unsupported"),
         };
 
         Ok(())
@@ -405,7 +405,7 @@ impl Decoder for PcmDecoder {
                 CODEC_TYPE_PCM_F32LE | CODEC_TYPE_PCM_F32BE => (),
                 CODEC_TYPE_PCM_F64LE | CODEC_TYPE_PCM_F64BE => (),
                 CODEC_TYPE_PCM_ALAW | CODEC_TYPE_PCM_MULAW => (),
-                _ => return unsupported_error("pcm: unknown bits per (coded) sample."),
+                _ => return unsupported_error("pcm: unknown bits per (coded) sample"),
             }
         }
         else if coded_width > sample_format_width {
