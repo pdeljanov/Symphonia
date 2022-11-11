@@ -9,7 +9,7 @@
 
 use std::fmt;
 
-use crate::util::clamp::{clamp_i24, clamp_u24};
+use crate::util::clamp::{clamp_f32, clamp_f64, clamp_i24, clamp_u24};
 
 /// SampleFormat describes the data encoding for an audio sample.
 #[derive(Copy, Clone, Debug)]
@@ -61,14 +61,24 @@ pub trait Sample:
     /// The mid-point value between the maximum and minimum sample value. If a sample is set to this
     /// value it is silent.
     const MID: Self;
+
+    /// If the sample format does not use the full range of the underlying data type, returns the
+    /// sample clamped to the valid range. Otherwise, returns the sample unchanged.
+    fn clamped(self) -> Self;
 }
 
-/// An unsigned 24-bit integer sample.
+/// An unsigned 24-bit integer sample with an internal unsigned 32-bit integer representation.
+///
+/// There are **no** guarantees the sample is within the valid range 24-bit range. Use the
+/// [`Sample::clamped`] function to clamp the sample to the valid range.
 #[allow(non_camel_case_types)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub struct u24(pub u32);
 
-/// A signed 24-bit integer sample.
+/// A signed 24-bit integer sample with an internal signed 32-bit integer representation.
+///
+/// There are **no** guarantees the sample is within the valid range 24-bit range. Use the
+/// [`Sample::clamped`] function to clamp the sample to the valid range.
 #[allow(non_camel_case_types)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub struct i24(pub i32);
@@ -77,60 +87,110 @@ impl Sample for u8 {
     const FORMAT: SampleFormat = SampleFormat::U8;
     const EFF_BITS: u32 = 8;
     const MID: u8 = 128;
+
+    #[inline(always)]
+    fn clamped(self) -> Self {
+        self
+    }
 }
 
 impl Sample for i8 {
     const FORMAT: SampleFormat = SampleFormat::S8;
     const EFF_BITS: u32 = 8;
     const MID: i8 = 0;
+
+    #[inline(always)]
+    fn clamped(self) -> Self {
+        self
+    }
 }
 
 impl Sample for u16 {
     const FORMAT: SampleFormat = SampleFormat::U16;
     const EFF_BITS: u32 = 16;
     const MID: u16 = 32_768;
+
+    #[inline(always)]
+    fn clamped(self) -> Self {
+        self
+    }
 }
 
 impl Sample for i16 {
     const FORMAT: SampleFormat = SampleFormat::S16;
     const EFF_BITS: u32 = 16;
     const MID: i16 = 0;
+
+    #[inline(always)]
+    fn clamped(self) -> Self {
+        self
+    }
 }
 
 impl Sample for u24 {
     const FORMAT: SampleFormat = SampleFormat::U24;
     const EFF_BITS: u32 = 24;
     const MID: u24 = u24(8_388_608);
+
+    #[inline(always)]
+    fn clamped(self) -> Self {
+        u24(clamp_u24(self.0))
+    }
 }
 
 impl Sample for i24 {
     const FORMAT: SampleFormat = SampleFormat::S24;
     const EFF_BITS: u32 = 24;
     const MID: i24 = i24(0);
+
+    #[inline(always)]
+    fn clamped(self) -> Self {
+        i24(clamp_i24(self.0))
+    }
 }
 
 impl Sample for u32 {
     const FORMAT: SampleFormat = SampleFormat::U32;
     const EFF_BITS: u32 = 32;
     const MID: u32 = 2_147_483_648;
+
+    #[inline(always)]
+    fn clamped(self) -> Self {
+        self
+    }
 }
 
 impl Sample for i32 {
     const FORMAT: SampleFormat = SampleFormat::S32;
     const EFF_BITS: u32 = 32;
     const MID: i32 = 0;
+
+    #[inline(always)]
+    fn clamped(self) -> Self {
+        self
+    }
 }
 
 impl Sample for f32 {
     const FORMAT: SampleFormat = SampleFormat::F32;
     const EFF_BITS: u32 = 24;
     const MID: f32 = 0.0;
+
+    #[inline(always)]
+    fn clamped(self) -> Self {
+        clamp_f32(self)
+    }
 }
 
 impl Sample for f64 {
     const FORMAT: SampleFormat = SampleFormat::F64;
     const EFF_BITS: u32 = 53;
     const MID: f64 = 0.0;
+
+    #[inline(always)]
+    fn clamped(self) -> Self {
+        clamp_f64(self)
+    }
 }
 
 // Helper macros
@@ -171,24 +231,25 @@ macro_rules! impl_shifts {
 // Implementation for i24
 
 impl i24 {
+    /// The largest value that can be represented by this integer type.
     pub const MAX: i24 = i24(8_388_607);
+    /// The smallest value that can be represented by this integer type..
     pub const MIN: i24 = i24(-8_388_608);
 
-    #[inline]
-    pub fn clamped_from(val: i32) -> Self {
-        i24(clamp_i24(val))
-    }
-
-    #[inline]
+    /// Get the underlying `i32` backing this `i24`.
+    #[inline(always)]
+    #[deprecated = "Superseded by `inner`."]
     pub fn into_i32(self) -> i32 {
         self.0
     }
 
-    #[inline]
-    pub fn clamped_i32(self) -> i32 {
-        (self.0 << 8) >> 8
+    /// Get the underlying `i32` backing this `i24`.
+    #[inline(always)]
+    pub fn inner(self) -> i32 {
+        self.0
     }
 
+    /// Return the memory representation of this `i24` as a byte array in native byte order.
     #[inline]
     pub fn to_ne_bytes(self) -> [u8; 3] {
         let b = self.0.to_ne_bytes();
@@ -212,8 +273,7 @@ impl fmt::Display for i24 {
 
 impl From<i32> for i24 {
     fn from(val: i32) -> Self {
-        assert!(val >= i24::MIN.0 && val <= i24::MAX.0, "value of out range");
-        i24(val)
+        i24(clamp_i24(val))
     }
 }
 
@@ -345,24 +405,25 @@ impl core::ops::BitXor<i24> for i24 {
 // Implementation for u24
 
 impl u24 {
+    /// The largest value that can be represented by this integer type.
     pub const MAX: u24 = u24(16_777_215);
+    /// The smallest value that can be represented by this integer type.
     pub const MIN: u24 = u24(0);
 
-    #[inline]
-    pub fn clamped_from(val: u32) -> Self {
-        u24(clamp_u24(val))
-    }
-
-    #[inline]
+    /// Get the underlying `u32` backing this `u24`.
+    #[inline(always)]
+    #[deprecated = "Superseded by `inner`."]
     pub fn into_u32(self) -> u32 {
         self.0
     }
 
-    #[inline]
-    pub fn clamped_u32(self) -> u32 {
-        (self.0 << 8) >> 8
+    /// Get the underlying `u32` backing this `u24`.
+    #[inline(always)]
+    pub fn inner(self) -> u32 {
+        self.0
     }
 
+    /// Return the memory representation of this `u24` as a byte array in native byte order.
     #[inline]
     pub fn to_ne_bytes(self) -> [u8; 3] {
         let b = self.0.to_ne_bytes();
@@ -386,8 +447,7 @@ impl fmt::Display for u24 {
 
 impl From<u32> for u24 {
     fn from(val: u32) -> Self {
-        assert!(val >= u24::MIN.0 && val <= u24::MAX.0, "value of out range");
-        u24(val)
+        u24(clamp_u24(val))
     }
 }
 
