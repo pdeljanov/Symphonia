@@ -202,8 +202,11 @@ impl Decoder for FlacDecoder {
             .with_time_base(TimeBase::new(1, info.sample_rate))
             .with_bits_per_sample(info.bits_per_sample)
             .with_max_frames_per_packet(u64::from(info.block_len_max))
-            .with_channels(info.channels)
-            .with_verification_code(VerificationCheck::Md5(info.md5));
+            .with_channels(info.channels);
+
+        if let Some(md5) = info.md5 {
+            params.with_verification_code(VerificationCheck::Md5(md5));
+        }
 
         if let Some(n_frames) = info.n_samples {
             params.with_n_frames(n_frames);

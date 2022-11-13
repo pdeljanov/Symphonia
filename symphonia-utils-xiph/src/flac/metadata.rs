@@ -99,7 +99,7 @@ pub struct StreamInfo {
     /// The total number of samples in the stream, if available.
     pub n_samples: Option<u64>,
     /// The MD5 hash value of the decoded audio.
-    pub md5: [u8; 16],
+    pub md5: Option<[u8; 16]>,
 }
 
 impl StreamInfo {
@@ -114,7 +114,7 @@ impl StreamInfo {
             channels: Channels::empty(),
             bits_per_sample: 0,
             n_samples: None,
-            md5: [0; 16],
+            md5: None,
         };
 
         // Read the block length bounds in number of samples.
@@ -181,8 +181,13 @@ impl StreamInfo {
             samples => Some(samples),
         };
 
-        // Read the decoded audio data MD5.
-        reader.read_buf_exact(&mut info.md5)?;
+        // Read the decoded audio data MD5. If the MD5 buffer is zeroed then no checksum is present.
+        let mut md5 = [0; 16];
+        reader.read_buf_exact(&mut md5)?;
+
+        if md5 != [0; 16] {
+            info.md5 = Some(md5);
+        }
 
         Ok(info)
     }

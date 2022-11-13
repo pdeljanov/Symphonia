@@ -67,7 +67,10 @@ impl FlacAtom {
             .with_bits_per_sample(self.stream_info.bits_per_sample)
             .with_channels(self.stream_info.channels)
             .with_packet_data_integrity(true)
-            .with_verification_code(VerificationCheck::Md5(self.stream_info.md5))
             .with_extra_data(self.extra_data.clone());
+
+        if let Some(md5) = self.stream_info.md5 {
+            codec_params.with_verification_code(VerificationCheck::Md5(md5));
+        }
     }
 }

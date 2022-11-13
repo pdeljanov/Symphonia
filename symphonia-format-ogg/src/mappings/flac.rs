@@ -99,8 +99,11 @@ pub fn detect(buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> {
         .with_sample_rate(stream_info.sample_rate)
         .with_time_base(TimeBase::new(1, stream_info.sample_rate))
         .with_bits_per_sample(stream_info.bits_per_sample)
-        .with_channels(stream_info.channels)
-        .with_verification_code(VerificationCheck::Md5(stream_info.md5));
+        .with_channels(stream_info.channels);
+
+    if let Some(md5) = stream_info.md5 {
+        codec_params.with_verification_code(VerificationCheck::Md5(md5));
+    }
 
     if let Some(n_frames) = stream_info.n_samples {
         codec_params.with_n_frames(n_frames);
