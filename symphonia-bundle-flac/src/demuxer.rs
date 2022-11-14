@@ -21,7 +21,6 @@ use symphonia_utils_xiph::flac::metadata::*;
 
 use log::{debug, info};
 
-use super::frame::*;
 use super::parser::PacketParser;
 
 /// The FLAC start of stream marker: "fLaC" in ASCII.
@@ -122,7 +121,14 @@ impl FlacReader {
         let mut metadata = MetadataLog::default();
         metadata.push(metadata_builder.metadata());
 
-        Ok(FlacReader { reader, metadata, tracks, cues, index, first_frame_offset: 0, parser })
+        // Synchronize the packet parser to the first audio frame.
+        let _ = parser.resync(&mut reader)?;
+
+        // The first frame offset is the byte offset from the beginning of the stream after all the
+        // metadata blocks have been read.
+        let first_frame_offset = reader.pos();
+
+        Ok(FlacReader { reader, metadata, tracks, cues, index, first_frame_offset, parser })
     }
 }
 
@@ -155,24 +161,18 @@ impl FormatReader for FlacReader {
         // no technical need for this from the reader's point of view. Additionally, if the
         // reader is fed a stream mid-way there is no StreamInfo block. Therefore, just read
         // all metadata blocks and handle the StreamInfo block as it comes.
-        let mut flac = Self::init_with_metadata(source)?;
+        let flac = Self::init_with_metadata(source)?;
 
         // Make sure that there is atleast one StreamInfo block.
         if flac.tracks.is_empty() {
             return decode_error("flac: no stream info block");
         }
 
-        // The first frame offset is the byte offset from the beginning of the stream after all the
-        // metadata blocks have been read.
-        flac.first_frame_offset = flac.reader.pos();
-
         Ok(flac)
     }
 
     fn next_packet(&mut self) -> Result<Packet> {
-        let parsed = self.parser.parse(&mut self.reader)?;
-
-        Ok(Packet::new_from_boxed_slice(0, parsed.ts, parsed.dur, parsed.buf))
+        self.parser.parse(&mut self.reader)
     }
 
     fn metadata(&mut self) -> Metadata<'_> {
@@ -261,31 +261,15 @@ impl FormatReader for FlacReader {
                 let mid_byte_offset = (start_byte_offset + end_byte_offset) / 2;
                 self.reader.seek(SeekFrom::Start(mid_byte_offset))?;
 
-                let packet = next_frame(&mut self.reader)?;
+                let sync = self.parser.resync(&mut self.reader)?;
 
-                if ts < packet.packet_ts {
+                if ts < sync.ts {
                     end_byte_offset = mid_byte_offset;
                 }
-                else if ts > packet.packet_ts
-                    && ts < (packet.packet_ts + u64::from(packet.n_frames))
-                {
-                    // Rewind the stream back to the beginning of the frame.
-                    self.reader.seek_buffered_rev(packet.parsed_len);
+                else if ts > sync.ts && ts < sync.ts + sync.dur {
+                    debug!("seeked to ts={} (delta={})", sync.ts, sync.ts as i64 - ts as i64);
 
-                    // After a successful seek, reset the packet parser.
-                    self.parser.soft_reset();
-
-                    debug!(
-                        "seeked to packet_ts={} (delta={})",
-                        packet.packet_ts,
-                        packet.packet_ts as i64 - ts as i64
-                    );
-
-                    return Ok(SeekedTo {
-                        track_id: 0,
-                        actual_ts: packet.packet_ts,
-                        required_ts: ts,
-                    });
+                    return Ok(SeekedTo { track_id: 0, actual_ts: sync.ts, required_ts: ts });
                 }
                 else {
                     start_byte_offset = mid_byte_offset;
@@ -302,13 +286,10 @@ impl FormatReader for FlacReader {
         // after the search range was narrowed by the binary search. It is also the ONLY way for a
         // unseekable stream to be "seeked" forward.
         let packet = loop {
-            let packet = next_frame(&mut self.reader)?;
+            let sync = self.parser.resync(&mut self.reader)?;
 
             // The desired timestamp preceeds the current packet's timestamp.
-            if ts < packet.packet_ts {
-                // Rewind the stream back to the beginning of the frame.
-                self.reader.seek_buffered_rev(packet.parsed_len);
-
+            if ts < sync.ts {
                 // Attempted to seek backwards on an unseekable stream.
                 if !self.reader.is_seekable() {
                     return seek_error(SeekErrorKind::ForwardOnly);
@@ -316,29 +297,21 @@ impl FormatReader for FlacReader {
                 // Overshot a regular seek, or the stream is corrupted, not necessarily an error
                 // per-say.
                 else {
-                    break packet;
+                    break sync;
                 }
             }
             // The desired timestamp is contained within the current packet.
-            else if ts >= packet.packet_ts && ts < (packet.packet_ts + u64::from(packet.n_frames))
-            {
-                // Rewind the stream back to the beginning of the frame.
-                self.reader.seek_buffered_rev(packet.parsed_len);
-
-                break packet;
+            else if ts >= sync.ts && ts < sync.ts + sync.dur {
+                break sync;
             }
+
+            // Advance the reader such that the next iteration will sync to a different frame.
+            self.reader.read_byte()?;
         };
 
-        // After a successful seek, reset the packet parser.
-        self.parser.soft_reset();
+        debug!("seeked to packet_ts={} (delta={})", packet.ts, packet.ts as i64 - ts as i64);
 
-        debug!(
-            "seeked to packet_ts={} (delta={})",
-            packet.packet_ts,
-            packet.packet_ts as i64 - ts as i64
-        );
-
-        return Ok(SeekedTo { track_id: 0, actual_ts: packet.packet_ts, required_ts: ts });
+        Ok(SeekedTo { track_id: 0, actual_ts: packet.ts, required_ts: ts })
     }
 
     fn into_inner(self: Box<Self>) -> MediaSourceStream {
@@ -389,7 +362,7 @@ fn read_stream_info_block<B: ReadBytes + FiniteStream>(
         }
 
         // Reset the packet parser.
-        parser.hard_reset(info);
+        parser.reset(info);
 
         // Add the track.
         tracks.push(Track::new(0, codec_params));

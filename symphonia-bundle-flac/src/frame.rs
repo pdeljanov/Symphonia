@@ -7,7 +7,15 @@
 
 use symphonia_core::checksum::Crc8Ccitt;
 use symphonia_core::errors::{decode_error, Result};
-use symphonia_core::io::{MediaSourceStream, Monitor, MonitorStream, ReadBytes};
+use symphonia_core::io::{Monitor, MonitorStream, ReadBytes};
+
+/// The minimum FLAC frame header size including the sync bytes.
+pub const FLAC_MIN_FRAME_HEADER_SIZE: usize = 6;
+/// The maximum FLAC frame header size including the sync bytes.
+pub const FLAC_MAX_FRAME_HEADER_SIZE: usize = 16;
+
+/// The maximum FLAC frame size.
+pub const FLAC_MAX_FRAME_SIZE: usize = 16 * 1024 * 1024;
 
 #[derive(Debug)]
 enum BlockingStrategy {
@@ -214,63 +222,47 @@ pub fn read_frame_header<B: ReadBytes>(reader: &mut B, sync: u16) -> Result<Fram
 
 /// A very quick check if the provided buffer is likely be a FLAC frame header.
 pub fn is_likely_frame_header(buf: &[u8]) -> bool {
-    // let is_variable = (buf[1] & 0x1) == 1;
-
-    if (buf[0] & 0xf0) == 0x00 {
+    // Minimum frame header size.
+    if buf.len() < FLAC_MIN_FRAME_HEADER_SIZE {
         return false;
     }
 
-    if (buf[0] & 0x0f) == 0x0f {
+    // First sync word.
+    if buf[0] != 0xff {
         return false;
     }
 
-    if ((buf[1] & 0xf0) >> 4) >= 0xb {
+    // Second sync word.
+    if (buf[1] & 0xfc) != 0xf8 {
         return false;
     }
 
-    if (buf[1] & 0x0e == 0x6) || (buf[1] & 0x0e == 0x0e) {
+    // Reserved block size.
+    if (buf[2] & 0xf0) == 0x00 {
         return false;
     }
 
-    if buf[1] & 0x1 == 1 {
+    // Reserved sample rate.
+    if (buf[2] & 0x0f) == 0x0f {
+        return false;
+    }
+
+    // Reserved channel assignments 0xb to 0xf.
+    if ((buf[3] & 0xf0) >> 4) >= 0xb {
+        return false;
+    }
+
+    // Reserved sample size.
+    if (buf[3] & 0x0e == 0x6) || (buf[3] & 0x0e == 0x0e) {
+        return false;
+    }
+
+    // Reserved bit.
+    if buf[3] & 0x1 == 1 {
         return false;
     }
 
     true
-}
-
-pub struct NextFrameInfo {
-    /// The timestamp of the first audio frame in the packet.
-    pub packet_ts: u64,
-    /// The number of audio frames in the packet.
-    pub n_frames: u32,
-    // The number of bytes of the packet that were consumed while parsing.
-    pub parsed_len: usize,
-}
-
-pub fn next_frame(reader: &mut MediaSourceStream) -> Result<NextFrameInfo> {
-    let mut byte_offset;
-
-    let header = loop {
-        let sync = sync_frame(reader)?;
-
-        byte_offset = reader.pos() - 2;
-
-        if let Ok(header) = read_frame_header(reader, sync) {
-            break header;
-        }
-    };
-
-    let packet_ts = match header.block_sequence {
-        BlockSequence::ByFrame(seq) => u64::from(seq) * u64::from(header.block_num_samples),
-        BlockSequence::BySample(seq) => seq,
-    };
-
-    Ok(NextFrameInfo {
-        packet_ts,
-        n_frames: u32::from(header.block_num_samples),
-        parsed_len: (reader.pos() - byte_offset) as usize,
-    })
 }
 
 /// Decodes a big-endian unsigned integer encoded via extended UTF8. In this context, extended UTF8
