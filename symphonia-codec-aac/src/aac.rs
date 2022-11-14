@@ -1623,14 +1623,24 @@ impl Decoder for AacDecoder {
             m4ainfo.read(extra_data_buf)?;
         }
         else {
-            validate!(params.sample_rate.is_some());
-            validate!(params.channels.is_some());
-
             // Otherwise, assume there is no ASC and use the codec parameters for ADTS.
-            m4ainfo.srate = params.sample_rate.unwrap();
             m4ainfo.otype = M4AType::Lc;
             m4ainfo.samples = 1024;
-            m4ainfo.channels = params.channels.unwrap().count();
+
+            m4ainfo.srate = match params.sample_rate {
+                Some(rate) => rate,
+                None => return unsupported_error("aac: sample rate is required"),
+            };
+
+            m4ainfo.channels = if let Some(channels) = params.channels {
+                channels.count()
+            }
+            else if let Some(layout) = params.channel_layout {
+                layout.into_channels().count()
+            }
+            else {
+                return unsupported_error("aac: channels or channel layout is required");
+            };
         }
 
         //print!("edata:"); for s in edata.iter() { print!(" {:02X}", *s);}println!("");

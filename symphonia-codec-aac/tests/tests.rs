@@ -31,8 +31,5 @@ fn invalid_channels_aac() {
 
     let err = test_decode(file).unwrap_err();
 
-    match err {
-        errors::Error::DecodeError("aac: invalid data") => {}
-        e => panic!("Unexpected error {:?}", e),
-    }
+    assert!(matches!(err, errors::Error::Unsupported(_)));
 }
