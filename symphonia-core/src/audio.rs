@@ -142,7 +142,7 @@ pub enum Layout {
 
 impl Layout {
     /// Converts a channel `Layout` into a `Channels` bit mask.
-    fn into_channels(self) -> Channels {
+    pub fn into_channels(self) -> Channels {
         match self {
             Layout::Mono => Channels::FRONT_LEFT,
             Layout::Stereo => Channels::FRONT_LEFT | Channels::FRONT_RIGHT,
