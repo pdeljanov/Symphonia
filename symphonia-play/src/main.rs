@@ -17,7 +17,7 @@ use std::io::Write;
 use std::path::Path;
 
 use lazy_static::lazy_static;
-use symphonia::core::codecs::{DecoderOptions, CODEC_TYPE_NULL};
+use symphonia::core::codecs::{DecoderOptions, FinalizeResult, CODEC_TYPE_NULL};
 use symphonia::core::errors::{Error, Result};
 use symphonia::core::formats::{Cue, FormatOptions, FormatReader, SeekMode, SeekTo, Track};
 use symphonia::core::io::{MediaSource, MediaSourceStream, ReadOnlySource};
@@ -25,7 +25,7 @@ use symphonia::core::meta::{ColorMode, MetadataOptions, MetadataRevision, Tag, V
 use symphonia::core::probe::{Hint, ProbeResult};
 use symphonia::core::units::{Time, TimeBase};
 
-use clap::Arg;
+use clap::{Arg, ArgMatches};
 use log::{error, info, warn};
 
 mod output;
@@ -33,7 +33,7 @@ mod output;
 fn main() {
     pretty_env_logger::init();
 
-    let matches = clap::Command::new("Symphonia Play")
+    let args = clap::Command::new("Symphonia Play")
         .version("1.0")
         .author("Philip Deljanov <philip.deljanov@gmail.com>")
         .about("Play audio with Symphonia")
@@ -84,7 +84,20 @@ fn main() {
         )
         .get_matches();
 
-    let path_str = matches.value_of("INPUT").unwrap();
+    // For any error, return an exit code -1. Otherwise return the exit code provided.
+    let code = match run(&args) {
+        Ok(code) => code,
+        Err(err) => {
+            error!("{}", err.to_string().to_lowercase());
+            -1
+        }
+    };
+
+    std::process::exit(code)
+}
+
+fn run(args: &ArgMatches) -> Result<i32> {
+    let path_str = args.value_of("INPUT").unwrap();
 
     // Create a hint to help the format registry guess what format reader is appropriate.
     let mut hint = Hint::new();
@@ -104,7 +117,7 @@ fn main() {
             }
         }
 
-        Box::new(File::open(path).unwrap())
+        Box::new(File::open(path)?)
     };
 
     // Create the media source stream using the boxed media source from above.
@@ -112,62 +125,59 @@ fn main() {
 
     // Use the default options for format readers other than for gapless playback.
     let format_opts =
-        FormatOptions { enable_gapless: !matches.is_present("no-gapless"), ..Default::default() };
+        FormatOptions { enable_gapless: !args.is_present("no-gapless"), ..Default::default() };
 
     // Use the default options for metadata readers.
     let metadata_opts: MetadataOptions = Default::default();
 
     // Get the value of the track option, if provided.
-    let track = match matches.value_of("track") {
+    let track = match args.value_of("track") {
         Some(track_str) => track_str.parse::<usize>().ok(),
         _ => None,
     };
 
-    let no_progress = matches.is_present("no-progress");
+    let no_progress = args.is_present("no-progress");
 
     // Probe the media source stream for metadata and get the format reader.
     match symphonia::default::get_probe().format(&hint, mss, &format_opts, &metadata_opts) {
         Ok(mut probed) => {
-            let result = if matches.is_present("verify-only") {
+            if args.is_present("verify-only") {
                 // Verify-only mode decodes and verifies the audio, but does not play it.
                 decode_only(probed.format, &DecoderOptions { verify: true, ..Default::default() })
             }
-            else if matches.is_present("decode-only") {
+            else if args.is_present("decode-only") {
                 // Decode-only mode decodes the audio, but does not play or verify it.
                 decode_only(probed.format, &DecoderOptions { verify: false, ..Default::default() })
             }
-            else if matches.is_present("probe-only") {
+            else if args.is_present("probe-only") {
                 // Probe-only mode only prints information about the format, tracks, metadata, etc.
                 print_format(path_str, &mut probed);
-                Ok(())
+                Ok(0)
             }
             else {
                 // Playback mode.
                 print_format(path_str, &mut probed);
 
                 // If present, parse the seek argument.
-                let seek_time = matches.value_of("seek").map(|p| p.parse::<f64>().unwrap_or(0.0));
+                let seek_time = args.value_of("seek").map(|p| p.parse::<f64>().unwrap_or(0.0));
 
                 // Set the decoder options.
                 let decode_opts =
-                    DecoderOptions { verify: matches.is_present("verify"), ..Default::default() };
+                    DecoderOptions { verify: args.is_present("verify"), ..Default::default() };
 
                 // Play it!
                 play(probed.format, track, seek_time, &decode_opts, no_progress)
-            };
-
-            if let Err(err) = result {
-                error!("error: {}", err);
             }
         }
         Err(err) => {
             // The input was not supported by any format reader.
-            error!("file not supported. reason? {}", err);
+            info!("the input is not supported");
+            Err(err)
         }
     }
 }
 
-fn decode_only(mut reader: Box<dyn FormatReader>, decode_opts: &DecoderOptions) -> Result<()> {
+fn decode_only(mut reader: Box<dyn FormatReader>, decode_opts: &DecoderOptions) -> Result<i32> {
     // Get the default track.
     // TODO: Allow track selection.
     let track = reader.default_track().unwrap();
@@ -196,19 +206,11 @@ fn decode_only(mut reader: Box<dyn FormatReader>, decode_opts: &DecoderOptions) 
         }
     };
 
-    // Regardless of result, finalize the decoder to get the verification result.
-    let finalize_result = decoder.finalize();
+    // Return if a fatal error occured.
+    ignore_end_of_stream_error(result)?;
 
-    if let Some(verify_ok) = finalize_result.verify_ok {
-        if verify_ok {
-            info!("verification passed");
-        }
-        else {
-            info!("verification failed");
-        }
-    }
-
-    result
+    // Finalize the decoder and return the verification result if it's been enabled.
+    do_verification(decoder.finalize())
 }
 
 #[derive(Copy, Clone)]
@@ -223,7 +225,7 @@ fn play(
     seek_time: Option<f64>,
     decode_opts: &DecoderOptions,
     no_progress: bool,
-) -> Result<()> {
+) -> Result<i32> {
     // If the user provided a track number, select that track if it exists, otherwise, select the
     // first track with a known codec.
     let track = track_num
@@ -232,7 +234,7 @@ fn play(
 
     let mut track_id = match track {
         Some(track) => track.id,
-        _ => return Ok(()),
+        _ => return Ok(0),
     };
 
     // If there is a seek time, seek the reader to the time specified and get the timestamp of the
@@ -302,11 +304,11 @@ fn play_track(
     play_opts: PlayTrackOptions,
     decode_opts: &DecoderOptions,
     no_progress: bool,
-) -> Result<()> {
+) -> Result<i32> {
     // Get the selected track using the track ID.
     let track = match reader.tracks().iter().find(|track| track.id == play_opts.track_id) {
         Some(track) => track,
-        _ => return Ok(()),
+        _ => return Ok(0),
     };
 
     // Create a decoder for the track.
@@ -380,23 +382,46 @@ fn play_track(
         }
     };
 
-    // Regardless of result, finalize the decoder to get the verification result.
-    let finalize_result = decoder.finalize();
-
-    if let Some(verify_ok) = finalize_result.verify_ok {
-        if verify_ok {
-            info!("verification passed");
-        }
-        else {
-            info!("verification failed");
-        }
+    if !no_progress {
+        println!("");
     }
 
-    result
+    // Return if a fatal error occured.
+    ignore_end_of_stream_error(result)?;
+
+    // Finalize the decoder and return the verification result if it's been enabled.
+    do_verification(decoder.finalize())
 }
 
 fn first_supported_track(tracks: &[Track]) -> Option<&Track> {
     tracks.iter().find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
+}
+
+fn ignore_end_of_stream_error(result: Result<()>) -> Result<()> {
+    match result {
+        Err(Error::IoError(err))
+            if err.kind() == std::io::ErrorKind::UnexpectedEof
+                && err.to_string() == "end of stream" =>
+        {
+            // Do not treat "end of stream" as a fatal error. It's the currently only way a
+            // format reader can indicate the media is complete.
+            Ok(())
+        }
+        _ => result,
+    }
+}
+
+fn do_verification(finalization: FinalizeResult) -> Result<i32> {
+    match finalization.verify_ok {
+        Some(is_ok) => {
+            // Got a verification result.
+            println!("verification: {}", if is_ok { "passed" } else { "failed" });
+
+            Ok(i32::from(!is_ok))
+        }
+        // Verification not enabled by user, or unsupported by the codec.
+        _ => Ok(0),
+    }
 }
 
 fn print_format(path: &str, probed: &mut ProbeResult) {
