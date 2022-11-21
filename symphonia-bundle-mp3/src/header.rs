@@ -81,9 +81,9 @@ pub fn sync_frame<B: ReadBytes>(reader: &mut B) -> Result<u32> {
     let mut sync = 0u32;
 
     loop {
-        // Synchronize stream to the next frame using the sync word. The MP3 frame header always
-        // starts at a byte boundary with 0xffe (11 consecutive 1 bits.) if supporting up to MPEG
-        // version 2.5.
+        // Synchronize stream to the next frame using the sync word. The MPEG audio frame header
+        // always starts at a byte boundary with 0xffe (11 consecutive 1 bits.) if supporting up to
+        // MPEG version 2.5.
         while !is_frame_header_word_synced(sync) {
             sync = (sync << 8) | u32::from(reader.read_u8()?);
         }
@@ -101,7 +101,7 @@ pub fn sync_frame<B: ReadBytes>(reader: &mut B) -> Result<u32> {
 }
 
 pub fn parse_frame_header(header: u32) -> Result<FrameHeader> {
-    // The MP3 header is structured as follows:
+    // The MPEG audio header is structured as follows:
     //
     // 0b1111_1111 0b111v_vlly 0brrrr_hhpx 0bmmmm_coee
     // where:
@@ -199,11 +199,27 @@ pub fn parse_frame_header(header: u32) -> Result<FrameHeader> {
 
     let has_crc = header & 0x1_0000 == 0;
 
-    // Calculate the size of the frame excluding this header.
-    let frame_size = (if version == MpegVersion::Mpeg1 { 144 } else { 72 } * bitrate / sample_rate)
-        as usize
-        + if has_padding { 1 } else { 0 }
-        - 4;
+    // Constants provided for size calculation in section ISO-11172 section 2.4.3.1.
+    let factor = match layer {
+        MpegLayer::Layer1 => 12,
+        MpegLayer::Layer2 => 144,
+        MpegLayer::Layer3 if version == MpegVersion::Mpeg1 => 144,
+        MpegLayer::Layer3 => 72,
+    };
+
+    // The header specifies the total frame size in "slots". For layers 2 & 3 a slot is 1 byte,
+    // however for layer 1 a slot is 4 bytes.
+    let slot_size = match layer {
+        MpegLayer::Layer1 => 4,
+        _ => 1,
+    };
+
+    // Calculate the total frame size in number of slots.
+    let frame_size_slots = (factor * bitrate / sample_rate) as usize
+        + if has_padding { 1 } else { 0 };
+
+    // Calculate the frame size in bytes, excluding the header.
+    let frame_size = (frame_size_slots * slot_size) - 4;
 
     Ok(FrameHeader {
         version,

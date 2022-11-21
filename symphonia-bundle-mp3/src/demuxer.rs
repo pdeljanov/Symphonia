@@ -8,20 +8,19 @@
 use symphonia_core::support_format;
 
 use symphonia_core::checksum::Crc16AnsiLe;
-use symphonia_core::codecs::{CodecParameters, CODEC_TYPE_MP3};
+use symphonia_core::codecs::CodecParameters;
 use symphonia_core::errors::{seek_error, Result, SeekErrorKind};
 use symphonia_core::formats::prelude::*;
 use symphonia_core::io::*;
 use symphonia_core::meta::{Metadata, MetadataLog};
 use symphonia_core::probe::{Descriptor, Instantiate, QueryDescriptor};
 
+use crate::common::{FrameHeader, MpegLayer};
+use crate::header::{self, MPEG_HEADER_LEN};
+
 use std::io::{Seek, SeekFrom};
 
 use log::{debug, info, warn};
-
-use super::common::{FrameHeader, SAMPLES_PER_GRANULE};
-use super::header;
-use super::header::MPEG_HEADER_LEN;
 
 /// MPEG1 and MPEG2 audio elementary stream reader.
 ///
@@ -39,18 +38,48 @@ pub struct Mp3Reader {
 impl QueryDescriptor for Mp3Reader {
     fn query() -> &'static [Descriptor] {
         &[
+            // Layer 1
+            support_format!(
+                "mp1",
+                "MPEG Audio Layer 1 Native",
+                &["mp1"],
+                &["audio/mpeg", "audio/mp1"],
+                &[
+                    &[0xff, 0xfe], // MPEG 1 with CRC
+                    &[0xff, 0xff], // MPEG 1
+                    &[0xff, 0xf6], // MPEG 2 with CRC
+                    &[0xff, 0xf7], // MPEG 2
+                    &[0xff, 0xe6], // MPEG 2.5 with CRC
+                    &[0xff, 0xe7], // MPEG 2.5
+                ]
+            ),
+            // Layer 2
+            support_format!(
+                "mp2",
+                "MPEG Audio Layer 2 Native",
+                &["mp2"],
+                &["audio/mpeg", "audio/mp2"],
+                &[
+                    &[0xff, 0xfc], // MPEG 1 with CRC
+                    &[0xff, 0xfd], // MPEG 1
+                    &[0xff, 0xf4], // MPEG 2 with CRC
+                    &[0xff, 0xf5], // MPEG 2
+                    &[0xff, 0xe4], // MPEG 2.5 with CRC
+                    &[0xff, 0xe5], // MPEG 2.5
+                ]
+            ),
             // Layer 3
             support_format!(
                 "mp3",
                 "MPEG Audio Layer 3 Native",
                 &["mp3"],
-                &["audio/mp3"],
+                &["audio/mpeg", "audio/mp3"],
                 &[
-                    &[0xff, 0xfa],
+                    &[0xff, 0xfa], // MPEG 1 with CRC
                     &[0xff, 0xfb], // MPEG 1
-                    &[0xff, 0xf2],
+                    &[0xff, 0xf2], // MPEG 2 with CRC
                     &[0xff, 0xf3], // MPEG 2
-                    &[0xff, 0xe2],
+                    &[0xff, 0xe2], // MPEG 2.5 with CRC
                     &[0xff, 0xe3], // MPEG 2.5
                 ]
             ),
@@ -71,12 +100,10 @@ impl FormatReader for Mp3Reader {
         let mut params = CodecParameters::new();
 
         params
-            .for_codec(CODEC_TYPE_MP3)
+            .for_codec(header.codec())
             .with_sample_rate(header.sample_rate)
             .with_time_base(TimeBase::new(1, header.sample_rate))
             .with_channels(header.channel_mode.channels());
-
-        let audio_frames_per_mpeg_frame = SAMPLES_PER_GRANULE * header.n_granules() as u64;
 
         // Check if there is a Xing/Info tag contained in the first frame.
         if let Some(info_tag) = try_read_info_tag(&packet, &header) {
@@ -94,7 +121,7 @@ impl FormatReader for Mp3Reader {
             if let Some(num_mpeg_frames) = info_tag.num_frames {
                 info!("using xing header for duration");
 
-                let num_frames = u64::from(num_mpeg_frames) * audio_frames_per_mpeg_frame;
+                let num_frames = u64::from(num_mpeg_frames) * header.duration();
 
                 // Adjust for gapless playback.
                 if options.enable_gapless {
@@ -105,10 +132,10 @@ impl FormatReader for Mp3Reader {
                 }
             }
         }
-        else if let Some(vbri_tag) = try_read_vbri_tag(&packet) {
+        else if let Some(vbri_tag) = try_read_vbri_tag(&packet, &header) {
             info!("using vbri header for duration");
 
-            let num_frames = u64::from(vbri_tag.num_mpeg_frames) * audio_frames_per_mpeg_frame;
+            let num_frames = u64::from(vbri_tag.num_mpeg_frames) * header.duration();
 
             // Check if there is a VBRI tag.
             params.with_n_frames(num_frames);
@@ -123,7 +150,7 @@ impl FormatReader for Mp3Reader {
                 info!("estimating duration from bitrate, may be inaccurate for vbr files");
 
                 if let Some(n_mpeg_frames) = estimate_num_mpeg_frames(&mut source) {
-                    params.with_n_frames(n_mpeg_frames * audio_frames_per_mpeg_frame);
+                    params.with_n_frames(n_mpeg_frames * header.duration());
                 }
             }
         }
@@ -154,10 +181,12 @@ impl FormatReader for Mp3Reader {
                     continue;
                 }
             }
-            else if is_maybe_vbri_tag(&packet) && try_read_vbri_tag(&packet).is_some() {
-                // Discard the packet and tag since it was not at the start of the stream.
-                warn!("found an unexpected vbri tag, discarding");
-                continue;
+            else if is_maybe_vbri_tag(&packet, &header) {
+                if try_read_vbri_tag(&packet, &header).is_some() {
+                    // Discard the packet and tag since it was not at the start of the stream.
+                    warn!("found an unexpected vbri tag, discarding");
+                    continue;
+                }
             }
 
             break (header, packet);
@@ -165,7 +194,7 @@ impl FormatReader for Mp3Reader {
 
         // Each frame contains 1 or 2 granules with each granule being exactly 576 samples long.
         let ts = self.next_packet_ts;
-        let duration = SAMPLES_PER_GRANULE * header.n_granules() as u64;
+        let duration = header.duration();
 
         self.next_packet_ts += duration;
 
@@ -262,7 +291,7 @@ impl FormatReader for Mp3Reader {
             let frame_pos = self.reader.pos() - std::mem::size_of::<u32>() as u64;
 
             // Calculate the duration of the frame.
-            let duration = SAMPLES_PER_GRANULE * header.n_granules() as u64;
+            let duration = header.duration();
 
             // Add the frame to the frame ring.
             frames[n_frames & REF_FRAMES_MASK] =
@@ -427,7 +456,7 @@ struct FramePos {
     pos: u64,
 }
 
-/// Reads the main_data_begin field from the side information of a MP3 frame.
+/// Reads the main_data_begin field from the side information of a MPEG audio frame.
 fn read_main_data_begin<B: ReadBytes>(reader: &mut B, header: &FrameHeader) -> Result<u16> {
     // After the head the optional CRC is present.
     if header.has_crc {
@@ -708,6 +737,11 @@ fn parse_lame_tag_replaygain(value: u16, expected_name: u8) -> Option<f32> {
 fn is_maybe_info_tag(buf: &[u8], header: &FrameHeader) -> bool {
     const MIN_XING_TAG_LEN: usize = 8;
 
+    // Only supported with layer 3 packets.
+    if header.layer != MpegLayer::Layer3 {
+        return false;
+    }
+
     // The position of the Xing/Info tag relative to the start of the packet. This is equal to the
     // side information length for the frame.
     let offset = header.side_info_len() + MPEG_HEADER_LEN;
@@ -738,15 +772,15 @@ struct VbriTag {
 }
 
 /// Try to read a VBRI tag from the provided MPEG frame.
-fn try_read_vbri_tag(buf: &[u8]) -> Option<VbriTag> {
+fn try_read_vbri_tag(buf: &[u8], header: &FrameHeader) -> Option<VbriTag> {
     // The VBRI header is a completely optional piece of information. Therefore, flatten an error
     // reading the tag into a None.
-    try_read_vbri_tag_inner(buf).ok().flatten()
+    try_read_vbri_tag_inner(buf, header).ok().flatten()
 }
 
-fn try_read_vbri_tag_inner(buf: &[u8]) -> Result<Option<VbriTag>> {
+fn try_read_vbri_tag_inner(buf: &[u8], header: &FrameHeader) -> Result<Option<VbriTag>> {
     // Do a quick check that this is a VBRI tag.
-    if !is_maybe_vbri_tag(buf) {
+    if !is_maybe_vbri_tag(buf, header) {
         return Ok(None);
     }
 
@@ -781,9 +815,14 @@ fn try_read_vbri_tag_inner(buf: &[u8]) -> Result<Option<VbriTag>> {
 
 /// Perform a fast check to see if the packet contains a VBRI tag. If this returns true, the
 /// packet should be parsed fully to ensure it is in fact a tag.
-fn is_maybe_vbri_tag(buf: &[u8]) -> bool {
+fn is_maybe_vbri_tag(buf: &[u8], header: &FrameHeader) -> bool {
     const MIN_VBRI_TAG_LEN: usize = 26;
     const VBRI_TAG_OFFSET: usize = 36;
+
+    // Only supported with layer 3 packets.
+    if header.layer != MpegLayer::Layer3 {
+        return false;
+    }
 
     // The packet must be big enough to contain a tag.
     if buf.len() < VBRI_TAG_OFFSET + MIN_VBRI_TAG_LEN {

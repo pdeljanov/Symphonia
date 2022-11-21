@@ -6,14 +6,12 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use symphonia_core::audio::{Channels, Layout, SignalSpec};
+use symphonia_core::codecs::{CodecType, CODEC_TYPE_MP1, CODEC_TYPE_MP2, CODEC_TYPE_MP3};
 use symphonia_core::errors::{decode_error, Result};
 
 use log::warn;
 
 use super::synthesis;
-
-/// The number of audio samples per granule.
-pub const SAMPLES_PER_GRANULE: u64 = 576;
 
 /// Startng indicies of each scale factor band at various sampling rates for long blocks.
 pub const SFB_LONG_BANDS: [[usize; 23]; 9] = [
@@ -288,6 +286,15 @@ impl FrameHeader {
         self.version == MpegVersion::Mpeg2p5
     }
 
+    /// Returns the codec type for the frame.
+    pub fn codec(&self) -> CodecType {
+        match self.layer {
+            MpegLayer::Layer1 => CODEC_TYPE_MP1,
+            MpegLayer::Layer2 => CODEC_TYPE_MP2,
+            MpegLayer::Layer3 => CODEC_TYPE_MP3,
+        }
+    }
+
     /// Returns a signal specification for the frame.
     pub fn spec(&self) -> SignalSpec {
         let layout = match self.n_channels() {
@@ -297,6 +304,15 @@ impl FrameHeader {
         };
 
         SignalSpec::new_with_layout(self.sample_rate, layout)
+    }
+
+    /// Returns the number of audio samples in the frame per channel.
+    pub fn duration(&self) -> u64 {
+        match self.layer {
+            MpegLayer::Layer1 => 384,
+            MpegLayer::Layer2 => 1152,
+            MpegLayer::Layer3 => 576 * self.n_granules() as u64,
+        }
     }
 
     /// Returns the number of granules in the frame.
