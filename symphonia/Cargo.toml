@@ -13,25 +13,58 @@ edition = "2018"
 rust-version = "1.53"
 
 [features]
+# Only patent and royalty free codecs and formats may be default.
+# TODO: Remove all defaults for v0.6.0. Features should be additive.
 default = ["adpcm", "flac", "mkv", "ogg", "pcm", "vorbis", "wav"]
+
+# Enable specific codecs and formats.
 aac = ["symphonia-codec-aac"]
 adpcm = ["symphonia-codec-adpcm"]
 alac = ["symphonia-codec-alac"]
 flac = ["symphonia-bundle-flac"]
 isomp4 = ["symphonia-format-isomp4"]
 mkv = ["symphonia-format-mkv"]
-mp3 = ["symphonia-bundle-mp3"]
+mp1 = ["symphonia-bundle-mp3/mp1"]
+mp2 = ["symphonia-bundle-mp3/mp2"]
+mp3 = ["symphonia-bundle-mp3/mp3"]
 ogg = ["symphonia-format-ogg"]
 pcm = ["symphonia-codec-pcm"]
 vorbis = ["symphonia-codec-vorbis"]
 wav = ["symphonia-format-wav"]
+
+# Enable all supported codecs.
+all-codecs = [
+    "aac",
+    "adpcm",
+    "alac",
+    "flac",
+    "mp1",
+    "mp2",
+    "mp3",
+    "pcm",
+    "vorbis",
+]
+
+# Enable all supported formats.
+all-formats = [
+    "isomp4",
+    "mkv",
+    "ogg",
+    "wav"
+]
+
+# Enable all supported codecs and formats.
+all = [
+    "all-codecs",
+    "all-formats",
+]
 
 [dependencies]
 lazy_static = "1.4.0"
 symphonia-core = { version = "0.5", path = "../symphonia-core" }
 symphonia-metadata = { version = "0.5", path = "../symphonia-metadata" }
 symphonia-bundle-flac = { version = "0.5", path = "../symphonia-bundle-flac", optional = true }
-symphonia-bundle-mp3 = { version = "0.5", path = "../symphonia-bundle-mp3", optional = true }
+symphonia-bundle-mp3 = { version = "0.5", path = "../symphonia-bundle-mp3", optional = true, default-features = false }
 symphonia-codec-aac = { version = "0.5", path = "../symphonia-codec-aac", optional = true }
 symphonia-codec-adpcm = { version = "0.5", path = "../symphonia-codec-adpcm", optional = true }
 symphonia-codec-alac = { version = "0.5", path = "../symphonia-codec-alac", optional = true }

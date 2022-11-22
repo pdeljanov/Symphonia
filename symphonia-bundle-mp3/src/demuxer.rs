@@ -24,8 +24,8 @@ use log::{debug, info, warn};
 
 /// MPEG1 and MPEG2 audio elementary stream reader.
 ///
-/// `Mp3Reader` implements a demuxer for the MPEG1 and MPEG2 audio elementary stream.
-pub struct Mp3Reader {
+/// `MpaReader` implements a demuxer for the MPEG1 and MPEG2 audio elementary stream.
+pub struct MpaReader {
     reader: MediaSourceStream,
     tracks: Vec<Track>,
     cues: Vec<Cue>,
@@ -35,7 +35,7 @@ pub struct Mp3Reader {
     next_packet_ts: u64,
 }
 
-impl QueryDescriptor for Mp3Reader {
+impl QueryDescriptor for MpaReader {
     fn query() -> &'static [Descriptor] {
         &[
             // Layer 1
@@ -91,7 +91,7 @@ impl QueryDescriptor for Mp3Reader {
     }
 }
 
-impl FormatReader for Mp3Reader {
+impl FormatReader for MpaReader {
     fn try_new(mut source: MediaSourceStream, options: &FormatOptions) -> Result<Self> {
         // Try to read the first MPEG frame.
         let (header, packet) = read_mpeg_frame_strict(&mut source)?;
@@ -157,7 +157,7 @@ impl FormatReader for Mp3Reader {
 
         let first_frame_pos = source.pos();
 
-        Ok(Mp3Reader {
+        Ok(MpaReader {
             reader: source,
             tracks: vec![Track::new(0, params)],
             cues: Vec::new(),

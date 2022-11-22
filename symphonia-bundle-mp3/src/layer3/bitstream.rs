@@ -8,8 +8,9 @@
 use symphonia_core::errors::{decode_error, Result};
 use symphonia_core::io::ReadBitsLtr;
 
-use super::{FrameData, Granule, GranuleChannel};
-use crate::common::*;
+use crate::common::{ChannelMode, FrameHeader};
+
+use super::{common::*, FrameData, Granule, GranuleChannel};
 
 /// Pairs of bit lengths for MPEG version 1 scale factors. For MPEG version 1, there are two
 /// possible bit lengths for scale factors: slen1 and slen2. The first N of bands have scale factors

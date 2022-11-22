@@ -5,15 +5,16 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+use symphonia_core::errors::{decode_error, Result};
+
+use crate::common::{ChannelMode, FrameHeader, Mode};
+
+use super::{common::*, Granule};
+
 use std::cmp::max;
 use std::{f32, f64};
 
-use symphonia_core::errors::{decode_error, Result};
-
 use lazy_static::lazy_static;
-
-use super::Granule;
-use crate::common::*;
 
 /// The invalid intensity position for MPEG1 bitstreams.
 const INTENSITY_INV_POS_MPEG1: u8 = 7;

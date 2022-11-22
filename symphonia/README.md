@@ -99,6 +99,7 @@ A status of *great* indicates that major development is complete and that the fe
 | AAC-LC | Great     | No      | `aac`        | No      | [`symphonia-codec-aac`]    |
 | ALAC   | Great     | Yes     | `alac`       | No      | [`symphonia-codec-alac`]   |
 | FLAC   | Excellent | Yes     | `flac`       | Yes     | [`symphonia-bundle-flac`]  |
+| MP1    | Great     | Yes     | `mp1`        | No      | [`symphonia-bundle-mp3`]   |
 | MP3    | Excellent | Yes     | `mp3`        | No      | [`symphonia-bundle-mp3`]   |
 | PCM    | Excellent | Yes     | `pcm`        | Yes     | [`symphonia-codec-pcm`]    |
 | Vorbis | Excellent | Yes     | `vorbis`     | Yes     | [`symphonia-codec-vorbis`] |

@@ -12,6 +12,12 @@ keywords = ["audio", "codec", "decoder", "mp3", "mpeg"]
 edition = "2018"
 rust-version = "1.53"
 
+[features]
+default = ["mp1", "mp2", "mp3"]
+mp1 = []
+mp2 = []
+mp3 = []
+
 [dependencies]
 log = "0.4"
 bitflags = "1.2.1"

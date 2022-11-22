@@ -5,18 +5,19 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use std::cmp::min;
-use std::{f32, f64};
-
 use symphonia_core::errors::Result;
 use symphonia_core::io::ReadBitsLtr;
 
-use lazy_static::lazy_static;
-use log::info;
+use crate::common::FrameHeader;
 
-use super::GranuleChannel;
-use crate::codebooks;
-use crate::common::*;
+use super::{codebooks, common::*, GranuleChannel};
+
+use std::cmp::min;
+use std::{f32, f64};
+
+use lazy_static::lazy_static;
+
+use log::info;
 
 lazy_static! {
     /// Lookup table for computing x(i) = s(i)^(4/3) where s(i) is a decoded Huffman sample. The

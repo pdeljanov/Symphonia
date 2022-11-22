@@ -41,6 +41,7 @@
 //! | ADPCM    | `adpcm`      | Yes     | Yes     |
 //! | ALAC     | `alac`       | Yes     | No      |
 //! | FLAC     | `flac`       | Yes     | Yes     |
+//! | MP1      | `mp1`        | Yes     | No      |
 //! | MP3      | `mp3`        | Yes     | No      |
 //! | PCM      | `pcm`        | Yes     | Yes     |
 //! | Vorbis   | `vorbis`     | Yes     | Yes     |
@@ -119,8 +120,8 @@ pub mod default {
 
         #[cfg(feature = "flac")]
         pub use symphonia_bundle_flac::FlacDecoder;
-        #[cfg(feature = "mp3")]
-        pub use symphonia_bundle_mp3::Mp3Decoder;
+        #[cfg(any(feature = "mp1", feature = "mp2", feature = "mp3"))]
+        pub use symphonia_bundle_mp3::MpaDecoder;
         #[cfg(feature = "aac")]
         pub use symphonia_codec_aac::AacDecoder;
         #[cfg(feature = "adpcm")]
@@ -131,6 +132,10 @@ pub mod default {
         pub use symphonia_codec_pcm::PcmDecoder;
         #[cfg(feature = "vorbis")]
         pub use symphonia_codec_vorbis::VorbisDecoder;
+
+        #[deprecated = "use `default::codecs::MpaDecoder` instead"]
+        #[cfg(any(feature = "mp1", feature = "mp2", feature = "mp3"))]
+        pub type Mp3Decoder = MpaDecoder;
     }
 
     pub mod formats {
@@ -138,8 +143,8 @@ pub mod default {
 
         #[cfg(feature = "flac")]
         pub use symphonia_bundle_flac::FlacReader;
-        #[cfg(feature = "mp3")]
-        pub use symphonia_bundle_mp3::Mp3Reader;
+        #[cfg(any(feature = "mp1", feature = "mp2", feature = "mp3"))]
+        pub use symphonia_bundle_mp3::MpaReader;
         #[cfg(feature = "aac")]
         pub use symphonia_codec_aac::AdtsReader;
         #[cfg(feature = "isomp4")]
@@ -150,6 +155,10 @@ pub mod default {
         pub use symphonia_format_ogg::OggReader;
         #[cfg(feature = "wav")]
         pub use symphonia_format_wav::WavReader;
+
+        #[deprecated = "use `default::formats::MpaReader` instead"]
+        #[cfg(any(feature = "mp1", feature = "mp2", feature = "mp3"))]
+        pub type Mp3Reader = MpaReader;
     }
 
     use lazy_static::lazy_static;
@@ -211,8 +220,8 @@ pub mod default {
         #[cfg(feature = "flac")]
         registry.register_all::<codecs::FlacDecoder>();
 
-        #[cfg(feature = "mp3")]
-        registry.register_all::<codecs::Mp3Decoder>();
+        #[cfg(any(feature = "mp1", feature = "mp2", feature = "mp3"))]
+        registry.register_all::<codecs::MpaDecoder>();
 
         #[cfg(feature = "pcm")]
         registry.register_all::<codecs::PcmDecoder>();
@@ -239,8 +248,8 @@ pub mod default {
         #[cfg(feature = "isomp4")]
         probe.register_all::<formats::IsoMp4Reader>();
 
-        #[cfg(feature = "mp3")]
-        probe.register_all::<formats::Mp3Reader>();
+        #[cfg(any(feature = "mp1", feature = "mp2", feature = "mp3"))]
+        probe.register_all::<formats::MpaReader>();
 
         #[cfg(feature = "wav")]
         probe.register_all::<formats::WavReader>();

@@ -215,8 +215,8 @@ pub fn parse_frame_header(header: u32) -> Result<FrameHeader> {
     };
 
     // Calculate the total frame size in number of slots.
-    let frame_size_slots = (factor * bitrate / sample_rate) as usize
-        + if has_padding { 1 } else { 0 };
+    let frame_size_slots =
+        (factor * bitrate / sample_rate) as usize + if has_padding { 1 } else { 0 };
 
     // Calculate the frame size in bytes, excluding the header.
     let frame_size = (frame_size_slots * slot_size) - 4;
@@ -240,6 +240,7 @@ pub fn parse_frame_header(header: u32) -> Result<FrameHeader> {
 /// Synchronize the stream to the start of the next MPEG audio frame header, then read and return
 /// the frame header or an error.
 #[inline]
+#[allow(dead_code)]
 pub fn read_frame_header<B: ReadBytes>(reader: &mut B) -> Result<FrameHeader> {
     // Synchronize and parse the frame header.
     parse_frame_header(sync_frame(reader)?)

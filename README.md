@@ -103,8 +103,8 @@ A status of *great* indicates that major development is complete and that the fe
 | HE-AAC (AAC+, aacPlus)       | -         | -       | `aac`        | No      | [`symphonia-codec-aac`]    |
 | HE-AACv2 (eAAC+, aacPlus v2) | -         | -       | `aac`        | No      | [`symphonia-codec-aac`]    |
 | FLAC                         | Excellent | Yes     | `flac`       | Yes     | [`symphonia-bundle-flac`]  |
-| MP1                          | -         | -       | `mp3`        | No      | [`symphonia-bundle-mp3`]   |
-| MP2                          | -         | -       | `mp3`        | No      | [`symphonia-bundle-mp3`]   |
+| MP1                          | Great     | Yes     | `mp1`        | No      | [`symphonia-bundle-mp3`]   |
+| MP2                          | -         | -       | `mp2`        | No      | [`symphonia-bundle-mp3`]   |
 | MP3                          | Excellent | Yes     | `mp3`        | No      | [`symphonia-bundle-mp3`]   |
 | Opus                         | -         | -       | `opus`       | Yes     | `symphonia-codec-opus`     |
 | PCM                          | Excellent | Yes     | `pcm`        | Yes     | [`symphonia-codec-pcm`]    |

@@ -8,12 +8,13 @@
 // Justification: Some loops are better expressed without a range loop.
 #![allow(clippy::needless_range_loop)]
 
+use crate::common::FrameHeader;
+
+use super::{common::*, GranuleChannel};
+
 use std::{convert::TryInto, f64};
 
 use lazy_static::lazy_static;
-
-use super::{BlockType, GranuleChannel};
-use crate::common::*;
 
 lazy_static! {
     /// Hybrid synthesesis IMDCT window coefficients for: Long, Start, Short, and End block, in that
