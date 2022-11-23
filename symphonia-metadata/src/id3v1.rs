@@ -11,7 +11,7 @@ use symphonia_core::errors::{unsupported_error, Result};
 use symphonia_core::io::ReadBytes;
 use symphonia_core::meta::{MetadataBuilder, StandardTagKey, Tag, Value};
 
-static GENRES: &[&str] = &[
+const GENRES: &[&str] = &[
     // Standard Genres as per ID3v1 specificaation
     "Blues",
     "Classic rock",
