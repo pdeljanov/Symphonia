@@ -501,7 +501,7 @@ pub(super) fn stereo(
 
     // The block types must be the same.
     if granule.channels[0].block_type != granule.channels[1].block_type {
-        return decode_error("mp3: stereo channel pair block_type mismatch");
+        return decode_error("mpa: stereo channel pair block_type mismatch");
     }
 
     // Split the sample buffer into two channels.

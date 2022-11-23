@@ -65,7 +65,7 @@ fn read_granule_channel_side_info<B: ReadBitsLtr>(
     // The maximum number of samples in a granule is 576. One big_value decodes to 2 samples,
     // therefore there can be no more than 288 (576/2) big_values.
     if channel.big_values > 288 {
-        return decode_error("mp3: granule big_values > 288");
+        return decode_error("mpa: granule big_values > 288");
     }
 
     channel.global_gain = bs.read_bits_leq32(8)? as u8;
@@ -82,7 +82,7 @@ fn read_granule_channel_side_info<B: ReadBitsLtr>(
 
         channel.block_type = match block_type_enc {
             // Only transitional Long blocks (Start, End) are allowed with window switching.
-            0b00 => return decode_error("mp3: invalid block_type"),
+            0b00 => return decode_error("mpa: invalid block_type"),
             0b01 => BlockType::Start,
             0b10 => BlockType::Short { is_mixed },
             0b11 => BlockType::End,

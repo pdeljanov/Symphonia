@@ -48,7 +48,7 @@ impl BitResevoir {
         let main_data_end = main_data_begin + main_data_len;
 
         if main_data_end > self.buf.len() {
-            return decode_error("mp3: invalid main_data length, will exceed resevoir buffer");
+            return decode_error("mpa: invalid main_data length, will exceed resevoir buffer");
         }
 
         let unread = self.len - self.consumed;
@@ -83,7 +83,7 @@ impl BitResevoir {
             // The number of bytes that will be missing.
             let underflow = (main_data_begin - unread) as u32;
 
-            warn!("mp3: invalid main_data_begin, underflow by {} bytes", underflow);
+            warn!("mpa: invalid main_data_begin, underflow by {} bytes", underflow);
 
             underflow
         };
@@ -317,7 +317,7 @@ impl Layer3 {
                     bs
                 }
                 else {
-                    return decode_error("mp3: invalid main_data offset");
+                    return decode_error("mpa: invalid main_data offset");
                 };
 
                 // Read the scale factors (part2) and get the number of bits read.
@@ -336,7 +336,7 @@ impl Layer3 {
 
                 // The part2 length must be less than or equal to the part2_3_length.
                 if part2_len > part2_3_length {
-                    return decode_error("mp3: part2_3_length is not valid");
+                    return decode_error("mpa: part2_3_length is not valid");
                 }
 
                 // The Huffman code length (part3).
@@ -357,7 +357,7 @@ impl Layer3 {
                 frame_data.granules[gr].channels[ch].rzero = match huffman_result {
                     Ok(rzero) => rzero,
                     Err(Error::IoError(e)) if e.kind() == std::io::ErrorKind::Other => {
-                        return decode_error("mp3: huffman decode overrun");
+                        return decode_error("mpa: huffman decode overrun");
                     }
                     Err(err) => return Err(err),
                 };
