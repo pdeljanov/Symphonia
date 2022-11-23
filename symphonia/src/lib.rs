@@ -16,7 +16,9 @@
 //!
 //! Supported formats, codecs, and metadata tags are listed below. By default Symphonia only enables
 //! royalty-free open standard media formats and codecs. Other formats and codecs must be enabled
-//! via. a feature flag.
+//! using feature flags.
+//!
+//! **Tip:** All formats and codecs can be enabled with the `all` feature flag.
 //!
 //! ## Formats
 //!
@@ -31,6 +33,8 @@
 //!
 //! \* Gapless playback requires support from both the demuxer and decoder.
 //!
+//! **Tip:** All formats can be enabled with the `all-codecs` feature flag.
+//!
 //! ## Codecs
 //!
 //! The following codecs are supported.
@@ -41,10 +45,14 @@
 //! | ADPCM    | `adpcm`      | Yes     | Yes     |
 //! | ALAC     | `alac`       | Yes     | No      |
 //! | FLAC     | `flac`       | Yes     | Yes     |
-//! | MP1      | `mp1`        | Yes     | No      |
-//! | MP3      | `mp3`        | Yes     | No      |
+//! | MP1      | `mp1`, `mpa` | No      | No      |
+//! | MP2      | `mp2`, `mpa` | No      | No      |
+//! | MP3      | `mp3`, `mpa` | Yes     | No      |
 //! | PCM      | `pcm`        | Yes     | Yes     |
 //! | Vorbis   | `vorbis`     | Yes     | Yes     |
+//!
+//! **Tip:** All codecs can be enabled with the `all-codecs` feature flag. Similarly, all MPEG
+//! audio codecs can be enabled with the `mpa` feature flag.
 //!
 //! ## Metadata
 //!

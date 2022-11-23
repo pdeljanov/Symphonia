@@ -14,19 +14,30 @@
 #![allow(clippy::identity_op)]
 #![allow(clippy::manual_range_contains)]
 
+// Shared modules.
 mod common;
+mod header;
+
+// Demuxer module.
+mod demuxer;
+
+// Decoder modules.
 #[cfg(any(feature = "mp1", feature = "mp2", feature = "mp3"))]
 mod decoder;
-mod demuxer;
-mod header;
+#[cfg(any(feature = "mp1", feature = "mp2", feature = "mp3"))]
+mod synthesis;
+
+// Shared layer 1 & 2 decoder support module.
+#[cfg(any(feature = "mp1", feature = "mp2"))]
+mod layer12;
+
+// Layer-specific decoder support modules.
 #[cfg(feature = "mp1")]
 mod layer1;
 #[cfg(feature = "mp2")]
 mod layer2;
 #[cfg(feature = "mp3")]
 mod layer3;
-#[cfg(any(feature = "mp1", feature = "mp2", feature = "mp3"))]
-mod synthesis;
 
 #[cfg(any(feature = "mp1", feature = "mp2", feature = "mp3"))]
 pub use decoder::MpaDecoder;

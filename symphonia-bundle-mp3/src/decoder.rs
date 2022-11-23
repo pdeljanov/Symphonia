@@ -112,10 +112,12 @@ impl MpaDecoder {
 
 impl Decoder for MpaDecoder {
     fn try_new(params: &CodecParameters, _: &DecoderOptions) -> Result<Self> {
-        // This decoder only supports MP1 & MP3.
+        // This decoder only supports MP1, MP2, and MP3.
         match params.codec {
             #[cfg(feature = "mp1")]
             CODEC_TYPE_MP1 => (),
+            #[cfg(feature = "mp2")]
+            CODEC_TYPE_MP2 => (),
             #[cfg(feature = "mp3")]
             CODEC_TYPE_MP3 => (),
             _ => return unsupported_error("mpa: invalid codec type"),
@@ -131,7 +133,8 @@ impl Decoder for MpaDecoder {
         &[
             #[cfg(feature = "mp1")]
             support_codec!(CODEC_TYPE_MP1, "mp1", "MPEG Audio Layer 1"),
-            // support_codec!(CODEC_TYPE_MP2, "mp2", "MPEG Audio Layer 2"),
+            #[cfg(feature = "mp2")]
+            support_codec!(CODEC_TYPE_MP2, "mp2", "MPEG Audio Layer 2"),
             #[cfg(feature = "mp3")]
             support_codec!(CODEC_TYPE_MP3, "mp3", "MPEG Audio Layer 3"),
         ]

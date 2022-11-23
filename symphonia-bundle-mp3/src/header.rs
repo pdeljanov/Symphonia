@@ -14,31 +14,31 @@ use crate::common::*;
 pub const MPEG_HEADER_LEN: usize = 4;
 
 /// Bit-rate lookup table for MPEG version 1 layer 1.
-static BIT_RATES_MPEG1_L1: [u32; 15] = [
+const BIT_RATES_MPEG1_L1: [u32; 15] = [
     0, 32_000, 64_000, 96_000, 128_000, 160_000, 192_000, 224_000, 256_000, 288_000, 320_000,
     352_000, 384_000, 416_000, 448_000,
 ];
 
 /// Bit-rate lookup table for MPEG version 1 layer 2.
-static BIT_RATES_MPEG1_L2: [u32; 15] = [
+const BIT_RATES_MPEG1_L2: [u32; 15] = [
     0, 32_000, 48_000, 56_000, 64_000, 80_000, 96_000, 112_000, 128_000, 160_000, 192_000, 224_000,
     256_000, 320_000, 384_000,
 ];
 
 /// Bit-rate lookup table for MPEG version 1 layer 3.
-static BIT_RATES_MPEG1_L3: [u32; 15] = [
+const BIT_RATES_MPEG1_L3: [u32; 15] = [
     0, 32_000, 40_000, 48_000, 56_000, 64_000, 80_000, 96_000, 112_000, 128_000, 160_000, 192_000,
     224_000, 256_000, 320_000,
 ];
 
 /// Bit-rate lookup table for MPEG version 2 & 2.5 audio layer 1.
-static BIT_RATES_MPEG2_L1: [u32; 15] = [
+const BIT_RATES_MPEG2_L1: [u32; 15] = [
     0, 32_000, 48_000, 56_000, 64_000, 80_000, 96_000, 112_000, 128_000, 144_000, 160_000, 176_000,
     192_000, 224_000, 256_000,
 ];
 
 /// Bit-rate lookup table for MPEG version 2 & 2.5 audio layers 2 & 3.
-static BIT_RATES_MPEG2_L23: [u32; 15] = [
+const BIT_RATES_MPEG2_L23: [u32; 15] = [
     0, 8_000, 16_000, 24_000, 32_000, 40_000, 48_000, 56_000, 64_000, 80_000, 96_000, 112_000,
     128_000, 144_000, 160_000,
 ];

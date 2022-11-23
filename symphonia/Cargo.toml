@@ -32,6 +32,9 @@ pcm = ["symphonia-codec-pcm"]
 vorbis = ["symphonia-codec-vorbis"]
 wav = ["symphonia-format-wav"]
 
+# MPEG audio codecs
+mpa = ["mp1", "mp2", "mp3"]
+
 # Enable all supported codecs.
 all-codecs = [
     "aac",

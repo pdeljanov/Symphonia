@@ -27,7 +27,7 @@
 
 <p>
     <strong>
-        Symphonia is a pure Rust audio decoding and media demuxing library supporting AAC, ALAC, FLAC, MKV, MP3, MP4, OGG, Vorbis, WAV, and WebM.
+        Symphonia is a pure Rust audio decoding and media demuxing library supporting AAC, ADPCM, ALAC, FLAC, MKV, MP1, MP2, MP3, MP4, OGG, Vorbis, WAV, and WebM.
     </strong>
 </p>
 
@@ -64,9 +64,13 @@ Additionally, planned features include:
 
 ## Current Support
 
-Support for individual audio codecs and media formats is provided by separate crates. By default, Symphonia enables support for FOSS codecs and formats, but others may be enabled via the features option.
+Support for individual audio codecs and media formats are provided by separate crates. By default, Symphonia only enables support royalty-free open standard codecs and formats, but others may be enabled using feature flags.
 
-The follow status classifications are used to determine the state of development for each format or codec.
+> **Tip:** All formats and codecs can be enabled with the `all` feature flag.
+
+### Status
+
+The following status classifications are used to determine the state of development for each format or codec.
 
 | Status    | Meaning                                                                                                                  |
 |-----------|--------------------------------------------------------------------------------------------------------------------------|
@@ -74,7 +78,9 @@ The follow status classifications are used to determine the state of development
 | Great     | Most media streams play. Inaudible glitches may be present. Most common features are supported.                          |
 | Excellent | All media streams play.  No audible or inaudible glitches. All required features are supported.                          |
 
-A status of *great* indicates that major development is complete and that the feature is in a state that would be acceptable for most applications to use. A status of *excellent* is only assigned after the feature passes all compliance tests. If no compliance tests are freely available, then a status of *excellent* will be assigned if Symphonia's implementation matches the quality of a reference implementation, or `ffmpeg`.
+A status of *Great* indicates that major development is complete and that the feature is in a state that would be acceptable for most applications to use.
+
+A status of *Excellent* is only assigned after the feature passes all compliance tests. If no compliance tests are readily available, then a status of *Excellent* will be assigned if Symphonia's output matches that of a reference implementation, or `ffmpeg`, over a large test corpus.
 
 ### Formats (Demuxers)
 
@@ -92,26 +98,33 @@ A status of *great* indicates that major development is complete and that the fe
 [`symphonia-format-wav`]: https://docs.rs/symphonia-format-wav
 [`symphonia-format-mkv`]: https://docs.rs/symphonia-format-mkv
 
+> **Tip:** All formats can be enabled with the `all-formats` feature flag.
+
 ### Codecs (Decoders)
 
-| Codec  | Status    | Gapless | Feature Flag | Default | Crate                      |
-|--------|-----------|---------|--------------|---------|----------------------------|
-| AAC-LC | Great     | No      | `aac`        | No      | [`symphonia-codec-aac`]    |
-| ALAC   | Great     | Yes     | `alac`       | No      | [`symphonia-codec-alac`]   |
-| FLAC   | Excellent | Yes     | `flac`       | Yes     | [`symphonia-bundle-flac`]  |
-| MP1    | Great     | Yes     | `mp1`        | No      | [`symphonia-bundle-mp3`]   |
-| MP3    | Excellent | Yes     | `mp3`        | No      | [`symphonia-bundle-mp3`]   |
-| PCM    | Excellent | Yes     | `pcm`        | Yes     | [`symphonia-codec-pcm`]    |
-| Vorbis | Excellent | Yes     | `vorbis`     | Yes     | [`symphonia-codec-vorbis`] |
+| Codec                        | Status    | Gapless | Feature Flag | Default | Crate                      |
+|------------------------------|-----------|---------|--------------|---------|----------------------------|
+| AAC-LC                       | Great     | No      | `aac`        | No      | [`symphonia-codec-aac`]    |
+| ADPCM                        | Good      | Yes     | `adpcm`      | Yes     | [`symphonia-codec-adpcm`]  |
+| ALAC                         | Great     | Yes     | `alac`       | No      | [`symphonia-codec-alac`]   |
+| FLAC                         | Excellent | Yes     | `flac`       | Yes     | [`symphonia-bundle-flac`]  |
+| MP1                          | Great     | No      | `mp1`, `mpa` | No      | [`symphonia-bundle-mp3`]   |
+| MP2                          | Great     | No      | `mp2`, `mpa` | No      | [`symphonia-bundle-mp3`]   |
+| MP3                          | Excellent | Yes     | `mp3`, `mpa` | No      | [`symphonia-bundle-mp3`]   |
+| PCM                          | Excellent | Yes     | `pcm`        | Yes     | [`symphonia-codec-pcm`]    |
+| Vorbis                       | Excellent | Yes     | `vorbis`     | Yes     | [`symphonia-codec-vorbis`] |
 
 A `symphonia-bundle-*` package is a combination of a decoder and a native demuxer.
 
 [`symphonia-codec-aac`]: https://docs.rs/symphonia-codec-aac
+[`symphonia-codec-adpcm`]: https://docs.rs/symphonia-codec-adpcm
 [`symphonia-codec-alac`]: https://docs.rs/symphonia-codec-alac
 [`symphonia-bundle-flac`]: https://docs.rs/symphonia-bundle-flac
 [`symphonia-bundle-mp3`]: https://docs.rs/symphonia-bundle-mp3
 [`symphonia-codec-pcm`]: https://docs.rs/symphonia-codec-pcm
 [`symphonia-codec-vorbis`]: https://docs.rs/symphonia-codec-vorbis
+
+> **Tip:** All codecs can be enabled with the `all-codecs` feature flag. Similarly, all MPEG audio codecs can be enabled with the `mpa` feature flag.
 
 ### Tags (Readers)
 

@@ -18,7 +18,7 @@ use super::{common::*, FrameData, Granule, GranuleChannel};
 /// N, is determined by block type.
 ///
 /// This table is indexed by scalefac_compress.
-static SCALE_FACTOR_SLEN: [(u32, u32); 16] = [
+const SCALE_FACTOR_SLEN: [(u32, u32); 16] = [
     (0, 0),
     (0, 1),
     (0, 2),
