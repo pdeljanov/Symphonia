@@ -129,9 +129,9 @@ pub(super) fn read_huffman_samples<B: ReadBitsLtr>(
                     bits_read += linbits;
                 }
 
-                // The next bit is the sign bit. The value of the sample is raised to the (4/3)
-                // power.
-                buf[i] = if bs.read_bool()? { -pow43_table[x] } else { pow43_table[x] };
+                // The next bit is the sign bit. If the sign bit is 1, then the sample should be
+                // negative. The value of the sample is raised to the (4/3) power.
+                buf[i] = (1.0 - 2.0 * bs.read_bit()? as f32) * pow43_table[x];
                 bits_read += 1;
             }
             else {
@@ -147,7 +147,7 @@ pub(super) fn read_huffman_samples<B: ReadBitsLtr>(
                     bits_read += linbits;
                 }
 
-                buf[i] = if bs.read_bool()? { -pow43_table[y] } else { pow43_table[y] };
+                buf[i] = (1.0 - 2.0 * bs.read_bit()? as f32) * pow43_table[y];
                 bits_read += 1;
             }
             else {
@@ -162,55 +162,58 @@ pub(super) fn read_huffman_samples<B: ReadBitsLtr>(
 
     // Read the count1 partition.
     while i <= 572 && bits_read < part3_bits {
+        // In the count1 partition, each Huffman code decodes to 4 samples: v, w, x, and y.
+        // Each sample is 1-bit long (1 or 0).
+        //
+        // For each 1-bit sample, if it is 0, then the dequantized sample value is 0 as well. If
+        // the 1-bit sample is 1, then a sign bit is read. The dequantized sample is then either
+        // +/-1.0 depending on the sign bit.
+
         // Decode the next Huffman code.
         let (value, code_len) = bs.read_codebook(count1_codebook)?;
         bits_read += code_len;
 
-        // In the count1 partition, each Huffman code decodes to 4 samples: v, w, x, and y.
-        // Each sample is 1-bit long (1 or 0).
-        //
-        // For each 1-bit sample, if it is 0, then then dequantized sample value is 0 as well. If
-        // the 1-bit sample is 1, then read the sign bit (the next bit). The dequantized sample is
-        // then either +/-1.0 depending on the sign bit.
-        if value & 0x8 != 0 {
-            buf[i] = if bs.read_bool()? { -1.0 } else { 1.0 };
-            bits_read += 1;
+        // The first 4 bits indicate if a sample if 0 or 1. Count the number of samples with a
+        // non-zero value.
+        let num_ones = (value & 0xf).count_ones();
+
+        // Read the sign bits for each non-zero sample in a single read.
+        let mut signs = bs.read_bits_leq32(num_ones)?;
+        bits_read += num_ones;
+
+        // Unpack the samples.
+        if value & 0x1 != 0 {
+            buf[i + 3] = 1.0 - 2.0 * (signs & 1) as f32;
+            signs >>= 1;
         }
         else {
-            buf[i] = 0.0;
+            buf[i + 3] = 0.0;
         }
-
-        i += 1;
-
-        if value & 0x4 != 0 {
-            buf[i] = if bs.read_bool()? { -1.0 } else { 1.0 };
-            bits_read += 1;
-        }
-        else {
-            buf[i] = 0.0;
-        }
-
-        i += 1;
 
         if value & 0x2 != 0 {
-            buf[i] = if bs.read_bool()? { -1.0 } else { 1.0 };
-            bits_read += 1;
+            buf[i + 2] = 1.0 - 2.0 * (signs & 1) as f32;
+            signs >>= 1;
         }
         else {
-            buf[i] = 0.0;
+            buf[i + 2] = 0.0;
         }
 
-        i += 1;
-
-        if value & 0x1 != 0 {
-            buf[i] = if bs.read_bool()? { -1.0 } else { 1.0 };
-            bits_read += 1;
+        if value & 0x4 != 0 {
+            buf[i + 1] = 1.0 - 2.0 * (signs & 1) as f32;
+            signs >>= 1;
         }
         else {
-            buf[i] = 0.0;
+            buf[i + 1] = 0.0;
         }
 
-        i += 1;
+        if value & 0x8 != 0 {
+            buf[i + 0] = 1.0 - 2.0 * (signs & 1) as f32;
+        }
+        else {
+            buf[i + 0] = 0.0;
+        }
+
+        i += 4;
     }
 
     // Ignore any extra "stuffing" bits.
