@@ -356,8 +356,12 @@ impl VorbisCodebook {
         // TODO: Should unused entries be 0 or actually the correct value?
         let values: Vec<u32> = (0..codebook_entries).into_iter().collect();
 
-        // finally, generate the codebook with a reverse (LSb) bit order.
+        // Finally, generate the codebook with a reverse (LSb) bit order.
         let mut builder = CodebookBuilder::new_sparse(BitOrder::Reverse);
+
+        // Read in 8-bit blocks.
+        builder.bits_per_read(8);
+
         let codebook = builder.make::<Entry32x32>(&code_words, &code_lens, &values)?;
 
         Ok(VorbisCodebook { codebook, dimensions: codebook_dimensions, vq_vec })
@@ -372,11 +376,11 @@ impl VorbisCodebook {
     #[inline(always)]
     pub fn read_vq<B: ReadBitsRtl>(&self, bs: &mut B) -> Result<&[f32]> {
         // An entry in a VQ codebook is the index of the VQ vector.
-        let entry = bs.read_codebook(&self.codebook)?;
+        let entry = bs.read_codebook(&self.codebook)?.0;
 
         if let Some(vq) = &self.vq_vec {
             let dim = self.dimensions as usize;
-            let start = dim * entry.0 as usize;
+            let start = dim * entry as usize;
 
             Ok(&vq[start..start + dim])
         }

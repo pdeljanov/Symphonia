@@ -6,6 +6,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use std::cmp::min;
+use std::convert::TryInto;
 use std::io;
 
 use symphonia_core::errors::{decode_error, Error, Result};
@@ -414,13 +415,42 @@ fn read_residue_partition_format1(
     codebook: &VorbisCodebook,
     out: &mut [f32],
 ) -> Result<()> {
-    let dimensions = codebook.dimensions() as usize;
+    let dim = codebook.dimensions() as usize;
 
-    for out in out.chunks_exact_mut(dimensions) {
-        let vq = codebook.read_vq(bs)?;
+    // For small dimensions it is too expensive to use iterator loops. Special case small sizes
+    // to improve performance.
+    match dim {
+        2 => {
+            for out in out.chunks_exact_mut(2) {
+                let vq = codebook.read_vq(bs)?;
 
-        for (o, &v) in out.iter_mut().zip(vq) {
-            *o += v;
+                // Amortize the cost of the bounds check.
+                let v: [f32; 2] = vq.try_into().unwrap();
+
+                out[0] += v[0];
+                out[1] += v[1];
+            }
+        }
+        4 => {
+            for out in out.chunks_exact_mut(4) {
+                let vq = codebook.read_vq(bs)?;
+
+                let v: [f32; 4] = vq.try_into().unwrap();
+
+                out[0] += v[0];
+                out[1] += v[1];
+                out[2] += v[2];
+                out[3] += v[3];
+            }
+        }
+        _ => {
+            for out in out.chunks_exact_mut(dim) {
+                let vq = codebook.read_vq(bs)?;
+
+                for (o, &v) in out.iter_mut().zip(vq) {
+                    *o += v;
+                }
+            }
         }
     }
 
