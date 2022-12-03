@@ -12,7 +12,7 @@ This decoder implements the low-complexity (LC) profile as defined in ISO/IEC 14
 
 ## Attribution
 
-Symphonia's AAC decoder was ported and relicensed from the [NihAV](https://nihav.org/) project with permission from the original author, Kostya Shishkov.
+Symphonia's AAC decoder was ported and relicensed from the [NihAV](https://nihav.org/) project with permission from the original author, Kostya Shishkov. The first commit with the original decoder is `3aeeb22`.
 
 ## License
 

@@ -14,7 +14,7 @@
 use symphonia_core::audio::Channels;
 
 #[allow(non_camel_case_types)]
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum M4AType {
     None,
     Main,
@@ -56,6 +56,12 @@ pub enum M4AType {
     SMRMain,
     Reserved,
     Unknown,
+}
+
+impl std::fmt::Display for M4AType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", M4A_TYPE_NAMES[*self as usize])
+    }
 }
 
 pub const M4A_TYPES: &[M4AType] = &[

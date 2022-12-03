@@ -18,9 +18,7 @@
 
 mod aac;
 mod adts;
-mod codebooks;
 mod common;
-mod window;
 
 pub use aac::AacDecoder;
 pub use adts::AdtsReader;
