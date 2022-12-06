@@ -5,7 +5,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::io::vlc::*;
+use symphonia_core::io::{vlc::*, ReadBitsLtr};
 
 use lazy_static::lazy_static;
 
@@ -377,49 +377,281 @@ const SCF_CODEBOOK_CODES: [u32; 121] = [
     0x7FFF3
 ];
 
-struct AacTable {
+const AAC_QUADS: [(u8, u8, u8, u8); 81] = [
+    (0, 0, 0, 0),
+    (0, 0, 0, 1),
+    (0, 0, 0, 2),
+    (0, 0, 1, 0),
+    (0, 0, 1, 1),
+    (0, 0, 1, 2),
+    (0, 0, 2, 0),
+    (0, 0, 2, 1),
+    (0, 0, 2, 2),
+    (0, 1, 0, 0),
+    (0, 1, 0, 1),
+    (0, 1, 0, 2),
+    (0, 1, 1, 0),
+    (0, 1, 1, 1),
+    (0, 1, 1, 2),
+    (0, 1, 2, 0),
+    (0, 1, 2, 1),
+    (0, 1, 2, 2),
+    (0, 2, 0, 0),
+    (0, 2, 0, 1),
+    (0, 2, 0, 2),
+    (0, 2, 1, 0),
+    (0, 2, 1, 1),
+    (0, 2, 1, 2),
+    (0, 2, 2, 0),
+    (0, 2, 2, 1),
+    (0, 2, 2, 2),
+    (1, 0, 0, 0),
+    (1, 0, 0, 1),
+    (1, 0, 0, 2),
+    (1, 0, 1, 0),
+    (1, 0, 1, 1),
+    (1, 0, 1, 2),
+    (1, 0, 2, 0),
+    (1, 0, 2, 1),
+    (1, 0, 2, 2),
+    (1, 1, 0, 0),
+    (1, 1, 0, 1),
+    (1, 1, 0, 2),
+    (1, 1, 1, 0),
+    (1, 1, 1, 1),
+    (1, 1, 1, 2),
+    (1, 1, 2, 0),
+    (1, 1, 2, 1),
+    (1, 1, 2, 2),
+    (1, 2, 0, 0),
+    (1, 2, 0, 1),
+    (1, 2, 0, 2),
+    (1, 2, 1, 0),
+    (1, 2, 1, 1),
+    (1, 2, 1, 2),
+    (1, 2, 2, 0),
+    (1, 2, 2, 1),
+    (1, 2, 2, 2),
+    (2, 0, 0, 0),
+    (2, 0, 0, 1),
+    (2, 0, 0, 2),
+    (2, 0, 1, 0),
+    (2, 0, 1, 1),
+    (2, 0, 1, 2),
+    (2, 0, 2, 0),
+    (2, 0, 2, 1),
+    (2, 0, 2, 2),
+    (2, 1, 0, 0),
+    (2, 1, 0, 1),
+    (2, 1, 0, 2),
+    (2, 1, 1, 0),
+    (2, 1, 1, 1),
+    (2, 1, 1, 2),
+    (2, 1, 2, 0),
+    (2, 1, 2, 1),
+    (2, 1, 2, 2),
+    (2, 2, 0, 0),
+    (2, 2, 0, 1),
+    (2, 2, 0, 2),
+    (2, 2, 1, 0),
+    (2, 2, 1, 1),
+    (2, 2, 1, 2),
+    (2, 2, 2, 0),
+    (2, 2, 2, 1),
+    (2, 2, 2, 2),
+];
+
+struct VlcTable {
     codes: &'static [u32],
     lens: &'static [u8],
 }
 
-const SPECTRUM_TABLES: [AacTable; 11] = [
-    AacTable { codes: &SPECTRUM_CODEBOOK1_CODES, lens: &SPECTRUM_CODEBOOK1_LENS },
-    AacTable { codes: &SPECTRUM_CODEBOOK2_CODES, lens: &SPECTRUM_CODEBOOK2_LENS },
-    AacTable { codes: &SPECTRUM_CODEBOOK3_CODES, lens: &SPECTRUM_CODEBOOK3_LENS },
-    AacTable { codes: &SPECTRUM_CODEBOOK4_CODES, lens: &SPECTRUM_CODEBOOK4_LENS },
-    AacTable { codes: &SPECTRUM_CODEBOOK5_CODES, lens: &SPECTRUM_CODEBOOK5_LENS },
-    AacTable { codes: &SPECTRUM_CODEBOOK6_CODES, lens: &SPECTRUM_CODEBOOK6_LENS },
-    AacTable { codes: &SPECTRUM_CODEBOOK7_CODES, lens: &SPECTRUM_CODEBOOK7_LENS },
-    AacTable { codes: &SPECTRUM_CODEBOOK8_CODES, lens: &SPECTRUM_CODEBOOK8_LENS },
-    AacTable { codes: &SPECTRUM_CODEBOOK9_CODES, lens: &SPECTRUM_CODEBOOK9_LENS },
-    AacTable { codes: &SPECTRUM_CODEBOOK10_CODES, lens: &SPECTRUM_CODEBOOK10_LENS },
-    AacTable { codes: &SPECTRUM_CODEBOOK11_CODES, lens: &SPECTRUM_CODEBOOK11_LENS },
+const SPECTRUM_TABLES: [VlcTable; 11] = [
+    VlcTable { codes: &SPECTRUM_CODEBOOK1_CODES, lens: &SPECTRUM_CODEBOOK1_LENS },
+    VlcTable { codes: &SPECTRUM_CODEBOOK2_CODES, lens: &SPECTRUM_CODEBOOK2_LENS },
+    VlcTable { codes: &SPECTRUM_CODEBOOK3_CODES, lens: &SPECTRUM_CODEBOOK3_LENS },
+    VlcTable { codes: &SPECTRUM_CODEBOOK4_CODES, lens: &SPECTRUM_CODEBOOK4_LENS },
+    VlcTable { codes: &SPECTRUM_CODEBOOK5_CODES, lens: &SPECTRUM_CODEBOOK5_LENS },
+    VlcTable { codes: &SPECTRUM_CODEBOOK6_CODES, lens: &SPECTRUM_CODEBOOK6_LENS },
+    VlcTable { codes: &SPECTRUM_CODEBOOK7_CODES, lens: &SPECTRUM_CODEBOOK7_LENS },
+    VlcTable { codes: &SPECTRUM_CODEBOOK8_CODES, lens: &SPECTRUM_CODEBOOK8_LENS },
+    VlcTable { codes: &SPECTRUM_CODEBOOK9_CODES, lens: &SPECTRUM_CODEBOOK9_LENS },
+    VlcTable { codes: &SPECTRUM_CODEBOOK10_CODES, lens: &SPECTRUM_CODEBOOK10_LENS },
+    VlcTable { codes: &SPECTRUM_CODEBOOK11_CODES, lens: &SPECTRUM_CODEBOOK11_LENS },
 ];
 
-lazy_static! {
-    pub static ref SPECTRUM_CODEBOOKS: [Codebook<Entry16x16>; 11] = {
-        let mut codebooks: [Codebook<Entry16x16>; 11] = Default::default();
+/// Make a codebook that returns the index of the read code.
+trait MakeBasicCodebook {
+    type ValueType;
+    fn new(codebook: Codebook<Entry16x16>) -> Self;
+}
 
-        for (codebook, table) in codebooks.iter_mut().zip(&SPECTRUM_TABLES) {
-            debug_assert_eq!(table.codes.len(), table.lens.len());
+/// Make a codebook that returns a value.
+trait MakeValueCodebook {
+    type ValueType;
+    fn new(codebook: Codebook<Entry16x16>, values: Box<[Self::ValueType]>) -> Self;
+}
 
-            let len = table.codes.len() as u16;
+/// Codebook for spectral quads.
+#[derive(Default)]
+pub struct QuadsCodebook {
+    codebook: Codebook<Entry16x16>,
+}
 
-            // Generate values for the codebook.
-            let values: Vec<u16> = (0..len).into_iter().collect();
+impl QuadsCodebook {
+    #[inline(always)]
+    pub fn read_quant<B: ReadBitsLtr>(&self, bs: &mut B) -> std::io::Result<(u8, u8, u8, u8)> {
+        bs.read_codebook(&self.codebook).map(|(cw, _)| AAC_QUADS[cw as usize])
+    }
+}
 
-            // Generate the codebook.
-            let mut builder = CodebookBuilder::new(BitOrder::Verbatim);
-            *codebook = builder.make(table.codes, table.lens, &values).unwrap();
-        }
+impl MakeBasicCodebook for QuadsCodebook {
+    type ValueType = (u8, u8, u8, u8);
 
-        codebooks
-    };
+    fn new(codebook: Codebook<Entry16x16>) -> Self {
+        Self { codebook }
+    }
+}
+
+/// Codebook for spectral pairs.
+#[derive(Default)]
+pub struct PairsCodebook {
+    codebook: Codebook<Entry16x16>,
+    values: Box<[(f32, f32)]>,
+}
+
+impl PairsCodebook {
+    #[inline(always)]
+    pub fn read_dequant<B: ReadBitsLtr>(&self, bs: &mut B) -> std::io::Result<(f32, f32)> {
+        bs.read_codebook(&self.codebook).map(|(cw, _)| self.values[cw as usize])
+    }
+}
+
+impl MakeValueCodebook for PairsCodebook {
+    type ValueType = (f32, f32);
+
+    fn new(codebook: Codebook<Entry16x16>, values: Box<[Self::ValueType]>) -> Self {
+        Self { codebook, values }
+    }
+}
+
+/// Codebook for spectral pairs with an escape code.
+pub struct EscapeCodebook {
+    codebook: Codebook<Entry16x16>,
+    values: Box<[(u16, u16)]>,
+}
+
+impl EscapeCodebook {
+    #[inline(always)]
+    pub fn read_quant<B: ReadBitsLtr>(&self, bs: &mut B) -> std::io::Result<(u16, u16)> {
+        bs.read_codebook(&self.codebook).map(|(cw, _)| self.values[cw as usize])
+    }
+}
+
+impl MakeValueCodebook for EscapeCodebook {
+    type ValueType = (u16, u16);
+
+    fn new(codebook: Codebook<Entry16x16>, values: Box<[Self::ValueType]>) -> Self {
+        Self { codebook, values }
+    }
+}
+
+/// Given an AAC table containing a list of variable length codes and the length of each code,
+/// generate a codebook.
+fn make_raw_codebook(table: &VlcTable) -> Codebook<Entry16x16> {
+    assert_eq!(table.codes.len(), table.lens.len());
+
+    let len = table.codes.len() as u16;
+
+    // Generate the indicies for each code.
+    let indicies: Vec<u16> = (0..len).into_iter().collect();
+
+    // Generate the codebook.
+    let mut builder = CodebookBuilder::new(BitOrder::Verbatim);
+
+    // Read in 8-bit blocks.
+    builder.bits_per_read(8);
+
+    builder.make(table.codes, table.lens, &indicies).unwrap()
+}
+
+/// Generate a codebook, but also generate a list of values for each variable length code using
+/// the function `f`. The function `f` maps the index of a code to a value.
+fn make_value_codebook<C, F>(table: &VlcTable, f: F) -> C
+where
+    C: MakeValueCodebook,
+    F: Fn(usize) -> C::ValueType,
+{
+    let codebook = make_raw_codebook(table);
+
+    // Generate values for the codebook.
+    let values: Vec<C::ValueType> = (0..table.codes.len()).into_iter().map(f).collect();
+
+    C::new(codebook, values.into_boxed_slice())
+}
+
+/// Generate a codebook without any stored values.
+fn make_basic_codebook<C>(table: &VlcTable) -> C
+where
+    C: MakeBasicCodebook,
+{
+    C::new(make_raw_codebook(table))
+}
+
+/// Inverse quantization.
+#[inline(always)]
+fn iquant(val: usize) -> f32 {
+    f32::powf(val as f32, 4.0 / 3.0)
+}
+
+fn signed_pair<const MOD: usize>(cw: usize) -> (f32, f32) {
+    let modulo_2 = MOD >> 1;
+
+    let a = cw / MOD;
+    let b = cw % MOD;
+
+    let x = if modulo_2 > a { -iquant(modulo_2 - a) } else { iquant(a - modulo_2) };
+    let y = if modulo_2 > b { -iquant(modulo_2 - b) } else { iquant(b - modulo_2) };
+
+    (x, y)
+}
+
+fn unsigned_pair<const MOD: usize>(cw: usize) -> (f32, f32) {
+    (iquant(cw / MOD), iquant(cw % MOD))
+}
+
+fn escape_pair<const MOD: usize>(cw: usize) -> (u16, u16) {
+    ((cw / MOD) as u16, (cw % MOD) as u16)
 }
 
 lazy_static! {
-    pub static ref SCF_CODEBOOK: Codebook<Entry8x16> = {
-        debug_assert_eq!(SCF_CODEBOOK_CODES.len(), SCF_CODEBOOK_LENS.len());
+    pub static ref QUADS: [QuadsCodebook; 4] = [
+        make_basic_codebook(&SPECTRUM_TABLES[0]),
+        make_basic_codebook(&SPECTRUM_TABLES[1]),
+        make_basic_codebook(&SPECTRUM_TABLES[2]),
+        make_basic_codebook(&SPECTRUM_TABLES[3]),
+    ];
+}
+
+lazy_static! {
+    pub static ref PAIRS: [PairsCodebook; 6] = [
+        make_value_codebook(&SPECTRUM_TABLES[4], signed_pair::<9>),
+        make_value_codebook(&SPECTRUM_TABLES[5], signed_pair::<9>),
+        make_value_codebook(&SPECTRUM_TABLES[6], unsigned_pair::<8>),
+        make_value_codebook(&SPECTRUM_TABLES[7], unsigned_pair::<8>),
+        make_value_codebook(&SPECTRUM_TABLES[8], unsigned_pair::<13>),
+        make_value_codebook(&SPECTRUM_TABLES[9], unsigned_pair::<13>),
+    ];
+}
+
+lazy_static! {
+    pub static ref ESC: EscapeCodebook =
+        make_value_codebook(&SPECTRUM_TABLES[10], escape_pair::<17>);
+}
+
+lazy_static! {
+    pub static ref SCALEFACTORS: Codebook<Entry8x16> = {
+        assert_eq!(SCF_CODEBOOK_CODES.len(), SCF_CODEBOOK_LENS.len());
 
         let len = SCF_CODEBOOK_CODES.len() as u8;
 
@@ -428,6 +660,10 @@ lazy_static! {
 
         // Generate the codebook.
         let mut builder = CodebookBuilder::new(BitOrder::Verbatim);
+
+        // Read in 8-bit blocks.
+        builder.bits_per_read(8);
+
         builder.make(&SCF_CODEBOOK_CODES, &SCF_CODEBOOK_LENS, &values).unwrap()
     };
 }

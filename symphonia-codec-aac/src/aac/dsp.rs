@@ -81,13 +81,13 @@ impl Dsp {
             self.imdct_long.imdct(coeffs, &mut self.tmp);
         }
         else {
-            for (ain, aout) in coeffs.chunks(128).zip(self.tmp.chunks_mut(256)) {
+            for (ain, aout) in coeffs.chunks_exact(128).zip(self.tmp.chunks_mut(256)) {
                 self.imdct_short.imdct(ain, aout);
             }
 
             self.ew_buf = [0.0; 1152];
 
-            for (w, src) in self.tmp.chunks(256).enumerate() {
+            for (w, src) in self.tmp.chunks_exact(256).enumerate() {
                 if w > 0 {
                     for i in 0..128 {
                         self.ew_buf[w * 128 + i + 0] += src[i + 0] * short_win[i];

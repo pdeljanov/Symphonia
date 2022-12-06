@@ -12,7 +12,6 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use symphonia_core::errors::{decode_error, Result};
-use symphonia_core::io::vlc::{Codebook, Entry16x16};
 use symphonia_core::io::ReadBitsLtr;
 
 use crate::aac::codebooks;
@@ -29,8 +28,6 @@ mod pulse;
 mod tns;
 
 const ZERO_HCB: u8 = 0;
-const FIRST_PAIR_HCB: u8 = 5;
-const ESC_HCB: u8 = 11;
 const RESERVED_HCB: u8 = 12;
 const NOISE_HCB: u8 = 13;
 const INTENSITY_HCB2: u8 = 14;
@@ -284,7 +281,7 @@ impl Ics {
         let mut scf_noise = i16::from(self.global_gain) - 90;
         let mut scf_normal = i16::from(self.global_gain);
 
-        let scf_table = &codebooks::SCF_CODEBOOK;
+        let scf_cb = &codebooks::SCALEFACTORS;
 
         for g in 0..self.info.window_groups {
             for sfb in 0..self.info.max_sfb {
@@ -292,7 +289,7 @@ impl Ics {
                     0.0
                 }
                 else if self.is_intensity(g, sfb) {
-                    scf_intensity += i16::from(bs.read_codebook(scf_table)?.0) - 60;
+                    scf_intensity += i16::from(bs.read_codebook(scf_cb)?.0) - 60;
 
                     validate!(
                         (scf_intensity >= INTENSITY_SCALE_MIN)
@@ -307,7 +304,7 @@ impl Ics {
                         scf_noise += (bs.read_bits_leq32(9)? as i16) - 256;
                     }
                     else {
-                        scf_noise += i16::from(bs.read_codebook(scf_table)?.0) - 60;
+                        scf_noise += i16::from(bs.read_codebook(scf_cb)?.0) - 60;
                     }
 
                     validate!(
@@ -317,7 +314,7 @@ impl Ics {
                     get_scale(scf_noise)
                 }
                 else {
-                    scf_normal += i16::from(bs.read_codebook(scf_table)?.0) - 60;
+                    scf_normal += i16::from(bs.read_codebook(scf_cb)?.0) - 60;
                     validate!((scf_normal >= 0) && (scf_normal < 256));
 
                     get_scale(scf_normal - 100)
@@ -350,37 +347,31 @@ impl Ics {
                 let end = bands[sfb + 1];
 
                 let cb_idx = self.sfb_cb[g][sfb];
+                let scale = self.scales[g][sfb];
 
                 for w in cur_w..next_w {
                     let dst = &mut self.coeffs[start + w * 128..end + w * 128];
 
-                    let scale = self.scales[g][sfb];
-
+                    // Derived from ISO/IEC-14496-3 Table 4.151.
                     match cb_idx {
                         ZERO_HCB => (),
+                        RESERVED_HCB => (),
                         NOISE_HCB => decode_noise(lcg, scale, dst),
-                        INTENSITY_HCB | INTENSITY_HCB2 => (),
-                        _ => {
-                            let unsigned = AAC_UNSIGNED_CODEBOOK[(cb_idx - 1) as usize];
-
-                            let cb = &codebooks::SPECTRUM_CODEBOOKS[(cb_idx - 1) as usize];
-
-                            if cb_idx < FIRST_PAIR_HCB {
-                                decode_quads(bs, cb, unsigned, scale, dst)?;
-                            }
-                            else {
-                                decode_pairs(
-                                    bs,
-                                    cb,
-                                    unsigned,
-                                    cb_idx == ESC_HCB,
-                                    AAC_CODEBOOK_MODULO[(cb_idx - FIRST_PAIR_HCB) as usize],
-                                    scale,
-                                    dst,
-                                )?;
-                            }
-                        }
-                    };
+                        INTENSITY_HCB2 => (),
+                        INTENSITY_HCB => (),
+                        1 => decode_quads_signed(bs, &codebooks::QUADS[0], scale, dst)?,
+                        2 => decode_quads_signed(bs, &codebooks::QUADS[1], scale, dst)?,
+                        3 => decode_quads_unsigned(bs, &codebooks::QUADS[2], scale, dst)?,
+                        4 => decode_quads_unsigned(bs, &codebooks::QUADS[3], scale, dst)?,
+                        5 => decode_pairs_signed(bs, &codebooks::PAIRS[0], scale, dst)?,
+                        6 => decode_pairs_signed(bs, &codebooks::PAIRS[1], scale, dst)?,
+                        7 => decode_pairs_unsigned(bs, &codebooks::PAIRS[2], scale, dst)?,
+                        8 => decode_pairs_unsigned(bs, &codebooks::PAIRS[3], scale, dst)?,
+                        9 => decode_pairs_unsigned(bs, &codebooks::PAIRS[4], scale, dst)?,
+                        10 => decode_pairs_unsigned(bs, &codebooks::PAIRS[5], scale, dst)?,
+                        11 => decode_pairs_unsigned_escape(bs, &codebooks::ESC, scale, dst)?,
+                        _ => unreachable!(),
+                    }
                 }
             }
         }
@@ -465,191 +456,125 @@ fn decode_noise(lcg: &mut Lcg, sf: f32, dst: &mut [f32]) {
     }
 }
 
-fn decode_quads<B: ReadBitsLtr>(
+#[inline(always)]
+fn decode_sign(val: u32) -> f32 {
+    1.0 - 2.0 * val as f32
+}
+
+fn decode_quads_unsigned<B: ReadBitsLtr>(
     bs: &mut B,
-    cb: &Codebook<Entry16x16>,
-    unsigned: bool,
+    cb: &codebooks::QuadsCodebook,
     scale: f32,
     dst: &mut [f32],
 ) -> Result<()> {
-    let pow43_table: &[f32; 8192] = &POW43_TABLE;
+    // Table of dequantized samples for all possible quantized values.
+    let iquant = [0.0, scale, 2.51984209978974632953 * scale];
 
-    for out in dst.chunks_mut(4) {
-        let cw = bs.read_codebook(cb)?.0 as usize;
-        if unsigned {
-            for (out, &quad) in out.iter_mut().zip(&AAC_QUADS[cw]) {
-                if quad != 0 {
-                    *out = if bs.read_bool()? {
-                        -pow43_table[quad as usize] * scale
-                    }
-                    else {
-                        pow43_table[quad as usize] * scale
-                    }
-                }
-            }
-        }
-        else {
-            for (out, &quad) in out.iter_mut().zip(&AAC_QUADS[cw]) {
-                let val = quad - 1;
+    for out in dst.chunks_exact_mut(4) {
+        let (a, b, c, d) = cb.read_quant(bs)?;
 
-                *out = if val < 0 {
-                    -pow43_table[-val as usize] * scale
-                }
-                else {
-                    pow43_table[val as usize] * scale
-                }
-            }
+        if a != 0 {
+            out[0] = decode_sign(bs.read_bit()?) * iquant[a as usize];
         }
+        if b != 0 {
+            out[1] = decode_sign(bs.read_bit()?) * iquant[b as usize];
+        }
+        if c != 0 {
+            out[2] = decode_sign(bs.read_bit()?) * iquant[c as usize];
+        }
+        if d != 0 {
+            out[3] = decode_sign(bs.read_bit()?) * iquant[d as usize];
+        }
+    }
+
+    Ok(())
+}
+
+fn decode_quads_signed<B: ReadBitsLtr>(
+    bs: &mut B,
+    cb: &codebooks::QuadsCodebook,
+    scale: f32,
+    dst: &mut [f32],
+) -> Result<()> {
+    // Table of dequantized samples for all possible quantized values.
+    let iquant = [-scale, 0.0, scale];
+
+    for out in dst.chunks_exact_mut(4) {
+        let (a, b, c, d) = cb.read_quant(bs)?;
+
+        out[0] = iquant[a as usize];
+        out[1] = iquant[b as usize];
+        out[2] = iquant[c as usize];
+        out[3] = iquant[d as usize];
     }
     Ok(())
 }
 
-fn decode_pairs<B: ReadBitsLtr>(
+fn decode_pairs_signed<B: ReadBitsLtr>(
     bs: &mut B,
-    cb: &Codebook<Entry16x16>,
-    unsigned: bool,
-    escape: bool,
-    modulo: u16,
+    cb: &codebooks::PairsCodebook,
     scale: f32,
     dst: &mut [f32],
 ) -> Result<()> {
-    let pow43_table: &[f32; 8192] = &POW43_TABLE;
+    for out in dst.chunks_exact_mut(2) {
+        let (x, y) = cb.read_dequant(bs)?;
 
-    for out in dst.chunks_mut(2) {
-        let cw = bs.read_codebook(cb)?.0;
-
-        let mut x = (cw / modulo) as i16;
-        let mut y = (cw % modulo) as i16;
-
-        if unsigned {
-            if x != 0 && bs.read_bool()? {
-                x = -x;
-            }
-            if y != 0 && bs.read_bool()? {
-                y = -y;
-            }
-        }
-        else {
-            x -= (modulo >> 1) as i16;
-            y -= (modulo >> 1) as i16;
-        }
-
-        if escape {
-            if (x == 16) || (x == -16) {
-                x = read_escape(bs, x.is_positive())?;
-            }
-            if (y == 16) || (y == -16) {
-                y = read_escape(bs, y.is_positive())?;
-            }
-        }
-
-        out[0] = if x < 0 { -pow43_table[-x as usize] } else { pow43_table[x as usize] } * scale;
-        out[1] = if y < 0 { -pow43_table[-y as usize] } else { pow43_table[y as usize] } * scale;
+        out[0] = x * scale;
+        out[1] = y * scale;
     }
     Ok(())
 }
 
-fn read_escape<B: ReadBitsLtr>(bs: &mut B, is_pos: bool) -> Result<i16> {
+fn decode_pairs_unsigned<B: ReadBitsLtr>(
+    bs: &mut B,
+    cb: &codebooks::PairsCodebook,
+    scale: f32,
+    dst: &mut [f32],
+) -> Result<()> {
+    for out in dst.chunks_exact_mut(2) {
+        let (x, y) = cb.read_dequant(bs)?;
+
+        let sign_x = if x != 0.0 { decode_sign(bs.read_bit()?) } else { 1.0 };
+        let sign_y = if y != 0.0 { decode_sign(bs.read_bit()?) } else { 1.0 };
+
+        out[0] = sign_x * x * scale;
+        out[1] = sign_y * y * scale;
+    }
+
+    Ok(())
+}
+
+fn decode_pairs_unsigned_escape<B: ReadBitsLtr>(
+    bs: &mut B,
+    cb: &codebooks::EscapeCodebook,
+    scale: f32,
+    dst: &mut [f32],
+) -> Result<()> {
+    let iquant: &[f32; 8192] = &POW43_TABLE;
+
+    for out in dst.chunks_exact_mut(2) {
+        let (a, b) = cb.read_quant(bs)?;
+
+        // Read the signs of the dequantized samples.
+        let sign_x = if a != 0 { decode_sign(bs.read_bit()?) } else { 1.0 };
+        let sign_y = if b != 0 { decode_sign(bs.read_bit()?) } else { 1.0 };
+
+        let x = iquant[if a == 16 { read_escape(bs)? } else { a } as usize];
+        let y = iquant[if b == 16 { read_escape(bs)? } else { b } as usize];
+
+        out[0] = sign_x * x * scale;
+        out[1] = sign_y * y * scale;
+    }
+    Ok(())
+}
+
+fn read_escape<B: ReadBitsLtr>(bs: &mut B) -> Result<u16> {
     let n = bs.read_unary_ones()?;
 
     validate!(n < 9);
 
     // The escape word is added to 2^(n + 4) to yield the unsigned value.
-    let word = (1 << (n + 4)) + bs.read_bits_leq32(n + 4)? as i16;
+    let word = (1 << (n + 4)) + bs.read_bits_leq32(n + 4)? as u16;
 
-    if is_pos {
-        Ok(word)
-    }
-    else {
-        Ok(-word)
-    }
+    Ok(word)
 }
-
-const AAC_UNSIGNED_CODEBOOK: [bool; 11] =
-    [false, false, true, true, false, false, true, true, true, true, true];
-
-const AAC_CODEBOOK_MODULO: [u16; 7] = [9, 9, 8, 8, 13, 13, 17];
-
-const AAC_QUADS: [[i8; 4]; 81] = [
-    [0, 0, 0, 0],
-    [0, 0, 0, 1],
-    [0, 0, 0, 2],
-    [0, 0, 1, 0],
-    [0, 0, 1, 1],
-    [0, 0, 1, 2],
-    [0, 0, 2, 0],
-    [0, 0, 2, 1],
-    [0, 0, 2, 2],
-    [0, 1, 0, 0],
-    [0, 1, 0, 1],
-    [0, 1, 0, 2],
-    [0, 1, 1, 0],
-    [0, 1, 1, 1],
-    [0, 1, 1, 2],
-    [0, 1, 2, 0],
-    [0, 1, 2, 1],
-    [0, 1, 2, 2],
-    [0, 2, 0, 0],
-    [0, 2, 0, 1],
-    [0, 2, 0, 2],
-    [0, 2, 1, 0],
-    [0, 2, 1, 1],
-    [0, 2, 1, 2],
-    [0, 2, 2, 0],
-    [0, 2, 2, 1],
-    [0, 2, 2, 2],
-    [1, 0, 0, 0],
-    [1, 0, 0, 1],
-    [1, 0, 0, 2],
-    [1, 0, 1, 0],
-    [1, 0, 1, 1],
-    [1, 0, 1, 2],
-    [1, 0, 2, 0],
-    [1, 0, 2, 1],
-    [1, 0, 2, 2],
-    [1, 1, 0, 0],
-    [1, 1, 0, 1],
-    [1, 1, 0, 2],
-    [1, 1, 1, 0],
-    [1, 1, 1, 1],
-    [1, 1, 1, 2],
-    [1, 1, 2, 0],
-    [1, 1, 2, 1],
-    [1, 1, 2, 2],
-    [1, 2, 0, 0],
-    [1, 2, 0, 1],
-    [1, 2, 0, 2],
-    [1, 2, 1, 0],
-    [1, 2, 1, 1],
-    [1, 2, 1, 2],
-    [1, 2, 2, 0],
-    [1, 2, 2, 1],
-    [1, 2, 2, 2],
-    [2, 0, 0, 0],
-    [2, 0, 0, 1],
-    [2, 0, 0, 2],
-    [2, 0, 1, 0],
-    [2, 0, 1, 1],
-    [2, 0, 1, 2],
-    [2, 0, 2, 0],
-    [2, 0, 2, 1],
-    [2, 0, 2, 2],
-    [2, 1, 0, 0],
-    [2, 1, 0, 1],
-    [2, 1, 0, 2],
-    [2, 1, 1, 0],
-    [2, 1, 1, 1],
-    [2, 1, 1, 2],
-    [2, 1, 2, 0],
-    [2, 1, 2, 1],
-    [2, 1, 2, 2],
-    [2, 2, 0, 0],
-    [2, 2, 0, 1],
-    [2, 2, 0, 2],
-    [2, 2, 1, 0],
-    [2, 2, 1, 1],
-    [2, 2, 1, 2],
-    [2, 2, 2, 0],
-    [2, 2, 2, 1],
-    [2, 2, 2, 2],
-];
