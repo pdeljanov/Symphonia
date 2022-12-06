@@ -26,8 +26,8 @@ pub struct Dsp {
     sine_short_win: [f32; 128],
     imdct_long: Imdct,
     imdct_short: Imdct,
-    tmp: [f32; 2048],
-    ew_buf: [f32; 1152],
+    pcm_long: [f32; 2048],
+    pcm_short: [f32; 1152],
 }
 
 impl Dsp {
@@ -48,8 +48,8 @@ impl Dsp {
             sine_short_win,
             imdct_long: Imdct::new_scaled(1024, 1.0 / 2048.0),
             imdct_short: Imdct::new_scaled(128, 1.0 / 256.0),
-            tmp: [0.0; 2048],
-            ew_buf: [0.0; 1152],
+            pcm_long: [0.0; 2048],
+            pcm_short: [0.0; 1152],
         }
     }
 
@@ -73,74 +73,72 @@ impl Dsp {
             false => (&self.sine_long_win, &self.sine_short_win),
         };
 
-        // Zero the output buffer.
-        self.tmp = [0.0; 2048];
-
         // Inverse MDCT
         if seq != EIGHT_SHORT_SEQUENCE {
-            self.imdct_long.imdct(coeffs, &mut self.tmp);
+            self.imdct_long.imdct(coeffs, &mut self.pcm_long);
         }
         else {
-            for (ain, aout) in coeffs.chunks_exact(128).zip(self.tmp.chunks_mut(256)) {
+            for (ain, aout) in coeffs.chunks_exact(128).zip(self.pcm_long.chunks_mut(256)) {
                 self.imdct_short.imdct(ain, aout);
             }
 
-            self.ew_buf = [0.0; 1152];
+            // Zero the eight short sequence buffer.
+            self.pcm_short = [0.0; 1152];
 
-            for (w, src) in self.tmp.chunks_exact(256).enumerate() {
+            for (w, src) in self.pcm_long.chunks_exact(256).enumerate() {
                 if w > 0 {
                     for i in 0..128 {
-                        self.ew_buf[w * 128 + i + 0] += src[i + 0] * short_win[i];
-                        self.ew_buf[w * 128 + i + 128] += src[i + 128] * short_win[127 - i];
+                        self.pcm_short[w * 128 + i] += src[i] * short_win[i];
+                        self.pcm_short[w * 128 + i + 128] += src[i + 128] * short_win[127 - i];
                     }
                 }
                 else {
                     for i in 0..128 {
-                        self.ew_buf[i + 0] = src[i + 0] * prev_short_win[i];
-                        self.ew_buf[i + 128] = src[i + 128] * short_win[127 - i];
+                        self.pcm_short[i] = src[i] * prev_short_win[i];
+                        self.pcm_short[i + 128] = src[i + 128] * short_win[127 - i];
                     }
                 }
             }
         }
 
-        // output new data
+        // Output new audio samples.
         match seq {
             ONLY_LONG_SEQUENCE | LONG_START_SEQUENCE => {
                 for i in 0..1024 {
-                    dst[i] = delay[i] + (self.tmp[i] * prev_long_win[i]);
+                    dst[i] = delay[i] + (self.pcm_long[i] * prev_long_win[i]);
                 }
             }
             EIGHT_SHORT_SEQUENCE => {
                 dst[..SHORT_WIN_POINT0].copy_from_slice(&delay[..SHORT_WIN_POINT0]);
 
                 for i in SHORT_WIN_POINT0..1024 {
-                    dst[i] = delay[i] + self.ew_buf[i - SHORT_WIN_POINT0];
+                    dst[i] = delay[i] + self.pcm_short[i - SHORT_WIN_POINT0];
                 }
             }
             LONG_STOP_SEQUENCE => {
                 dst[..SHORT_WIN_POINT0].copy_from_slice(&delay[..SHORT_WIN_POINT0]);
 
                 for i in SHORT_WIN_POINT0..SHORT_WIN_POINT1 {
-                    dst[i] = delay[i] + self.tmp[i] * prev_short_win[i - SHORT_WIN_POINT0];
+                    dst[i] = delay[i] + self.pcm_long[i] * prev_short_win[i - SHORT_WIN_POINT0];
                 }
                 for i in SHORT_WIN_POINT1..1024 {
-                    dst[i] = delay[i] + self.tmp[i];
+                    dst[i] = delay[i] + self.pcm_long[i];
                 }
             }
             _ => unreachable!(),
         };
 
-        // save delay
+        // Save delay for overlap.
         match seq {
             ONLY_LONG_SEQUENCE | LONG_STOP_SEQUENCE => {
                 for i in 0..1024 {
-                    delay[i] = self.tmp[i + 1024] * long_win[1023 - i];
+                    delay[i] = self.pcm_long[i + 1024] * long_win[1023 - i];
                 }
             }
             EIGHT_SHORT_SEQUENCE => {
                 for i in 0..SHORT_WIN_POINT1 {
-                    // last part is already windowed
-                    delay[i] = self.ew_buf[i + 512 + 64];
+                    // Last part is already windowed.
+                    delay[i] = self.pcm_short[i + 512 + 64];
                 }
                 for i in SHORT_WIN_POINT1..1024 {
                     delay[i] = 0.0;
@@ -148,10 +146,10 @@ impl Dsp {
             }
             LONG_START_SEQUENCE => {
                 delay[..SHORT_WIN_POINT0]
-                    .copy_from_slice(&self.tmp[1024..(SHORT_WIN_POINT0 + 1024)]);
+                    .copy_from_slice(&self.pcm_long[1024..(SHORT_WIN_POINT0 + 1024)]);
 
                 for i in SHORT_WIN_POINT0..SHORT_WIN_POINT1 {
-                    delay[i] = self.tmp[i + 1024] * short_win[127 - (i - SHORT_WIN_POINT0)];
+                    delay[i] = self.pcm_long[i + 1024] * short_win[127 - (i - SHORT_WIN_POINT0)];
                 }
                 for i in SHORT_WIN_POINT1..1024 {
                     delay[i] = 0.0;
