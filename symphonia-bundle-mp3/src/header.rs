@@ -10,8 +10,11 @@ use symphonia_core::io::ReadBytes;
 
 use crate::common::*;
 
-/// The length of a MPEG frame header word.
+/// The length in bytes of a MPEG frame header word.
 pub const MPEG_HEADER_LEN: usize = 4;
+
+/// The maximum length in bytes of a MPEG audio frame including the header.
+pub const MAX_MPEG_FRAME_SIZE: u64 = 2881;
 
 /// Bit-rate lookup table for MPEG version 1 layer 1.
 const BIT_RATES_MPEG1_L1: [u32; 15] = [
