@@ -29,6 +29,7 @@ use clap::{Arg, ArgMatches};
 use log::{error, info, warn};
 
 mod output;
+mod resampler;
 
 fn main() {
     pretty_env_logger::init();

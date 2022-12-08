@@ -167,6 +167,8 @@ mod pulseaudio {
 
 #[cfg(not(target_os = "linux"))]
 mod cpal {
+    use crate::resampler::Resampler;
+
     use super::{AudioOutput, AudioOutputError, Result};
 
     use symphonia::core::audio::{AudioBufferRef, RawSample, SampleBuffer, SignalSpec};
@@ -234,7 +236,7 @@ mod cpal {
         ring_buf_producer: rb::Producer<T>,
         sample_buf: SampleBuffer<T>,
         stream: cpal::Stream,
-        target_sample_rate:Option<u32>
+        resampler:Option<Resampler>
     }
 
     impl<T: AudioOutputSample> CpalAudioOutputImpl<T> {
@@ -293,13 +295,13 @@ mod cpal {
 
             let sample_buf = SampleBuffer::<T>::new(duration, spec);
 
-            let target_sample_rate:Option<u32> = if cfg!(target_os = "windows") && spec.rate != config.sample_rate.0 {
-                Some(config.sample_rate.0)
+            let resampler:Option<Resampler> = if cfg!(target_os = "windows") && spec.rate != config.sample_rate.0 {
+                Some(Resampler::new(spec, config.sample_rate.0 as usize, duration as usize))
             } else {
                 None
             };
 
-            Ok(Box::new(CpalAudioOutputImpl { ring_buf_producer, sample_buf, stream, target_sample_rate }))
+            Ok(Box::new(CpalAudioOutputImpl { ring_buf_producer, sample_buf, stream, resampler }))
         }
     }
 
@@ -310,25 +312,13 @@ mod cpal {
                 return Ok(());
             }
 
-            let spec = decoded.spec().clone();
-
-            // Audio samples must be interleaved for cpal. Interleave the samples in the audio
-            // buffer into the sample buffer.
-            self.sample_buf.copy_interleaved_ref(decoded);
-
-            // Write all the interleaved samples to the ring buffer.
-            let mut samples = self.sample_buf.samples();
-
             // Write the resampled samples instead if there is a target_sample_rate.
-            #[cfg(target_os = "windows")]
-            if let Some(target_sample_rate) = self.target_sample_rate {
-                let resampled = samplerate::convert(
-                    spec.rate,
-                    target_sample_rate,
-                    spec.channels.count(),
-                    samplerate::ConverterType::Linear,
-                    samples.iter().map(|e| e.to_f32()).collect::<Vec<f32>>().as_slice()
-                ).unwrap();
+            if let Some(resampler) = &mut self.resampler {
+                self.sample_buf.copy_planar_ref(decoded);
+                let samples = self.sample_buf.samples();
+
+                let resampled = resampler.resample(
+                    samples.iter().map(|e| e.to_f32()).collect::<Vec<f32>>().as_slice());
 
                 // Convert the resampled Vec<f32> samples to Vec<T>
                 let resampled = resampled.iter().map(|e| T::from_sample(*e))
@@ -342,6 +332,13 @@ mod cpal {
     
                 return Ok(());
             }
+
+            // Audio samples must be interleaved for cpal. Interleave the samples in the audio
+            // buffer into the sample buffer.
+            self.sample_buf.copy_interleaved_ref(decoded);
+
+            // Write all the interleaved samples to the ring buffer.
+            let mut samples = self.sample_buf.samples();
 
             while let Some(written) = self.ring_buf_producer.write_blocking(samples) {
                 samples = &samples[written..];
