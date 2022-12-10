@@ -30,7 +30,7 @@ use log::{error, info, warn};
 
 mod output;
 
-#[cfg(target_os = "windows")]
+#[cfg(not(target_os = "linux"))]
 mod resampler;
 
 fn main() {
