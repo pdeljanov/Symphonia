@@ -236,7 +236,7 @@ mod cpal {
         ring_buf_producer: rb::Producer<T>,
         sample_buf: SampleBuffer<T>,
         stream: cpal::Stream,
-        resampler:Option<Resampler>
+        resampler: Option<Resampler<T>>,
     }
 
     impl<T: AudioOutputSample> CpalAudioOutputImpl<T> {
@@ -254,9 +254,12 @@ mod cpal {
                     sample_rate: cpal::SampleRate(spec.rate),
                     buffer_size: cpal::BufferSize::Default,
                 }
-            } else {
+            }
+            else {
                 // Use the default config for Windows.
-                device.default_output_config().expect("Failed to get the default output config.")
+                device
+                    .default_output_config()
+                    .expect("Failed to get the default output config.")
                     .config()
             };
 
@@ -295,9 +298,10 @@ mod cpal {
 
             let sample_buf = SampleBuffer::<T>::new(duration, spec);
 
-            let resampler:Option<Resampler> = if cfg!(target_os = "windows") && spec.rate != config.sample_rate.0 {
-                Some(Resampler::new(spec, config.sample_rate.0 as usize, duration as usize))
-            } else {
+            let resampler = if cfg!(target_os = "windows") && spec.rate != config.sample_rate.0 {
+                Some(Resampler::new(spec, config.sample_rate.0 as usize, duration))
+            }
+            else {
                 None
             };
 
@@ -312,38 +316,19 @@ mod cpal {
                 return Ok(());
             }
 
-            // Write the resampled samples instead if there is a target_sample_rate.
-            if let Some(resampler) = &mut self.resampler {
-                self.sample_buf.copy_planar_ref(decoded);
-                let samples = self.sample_buf.samples();
-
-                let resampled = match resampler.resample(
-                    samples.iter().map(|e| e.to_f32()).collect::<Vec<f32>>().as_slice())
-                {
-                    Ok(resampled) => resampled,
-                    Err(_) => Vec::new(),
-                };
-
-                // Convert the resampled Vec<f32> samples to Vec<T>
-                let resampled = resampled.iter().map(|e| T::from_sample(*e))
-                    .collect::<Vec<T>>();
-
-                let mut resampled = resampled.as_slice();
-
-                while let Some(written) = self.ring_buf_producer.write_blocking(resampled) {
-                    resampled = &resampled[written..];
-                }
-    
-                return Ok(());
+            let mut samples = if let Some(resampler) = &mut self.resampler {
+                // Resampling is required. The resample will return interleaved samples in the
+                // correct sample format.
+                resampler.resample(&decoded)
             }
+            else {
+                // Resampling is not required. Interleave the sample for cpal using a sample buffer.
+                self.sample_buf.copy_interleaved_ref(decoded);
 
-            // Audio samples must be interleaved for cpal. Interleave the samples in the audio
-            // buffer into the sample buffer.
-            self.sample_buf.copy_interleaved_ref(decoded);
+                self.sample_buf.samples()
+            };
 
-            // Write all the interleaved samples to the ring buffer.
-            let mut samples = self.sample_buf.samples();
-
+            // Write all samples to the ring buffer.
             while let Some(written) = self.ring_buf_producer.write_blocking(samples) {
                 samples = &samples[written..];
             }

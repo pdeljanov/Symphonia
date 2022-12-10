@@ -29,6 +29,8 @@ use clap::{Arg, ArgMatches};
 use log::{error, info, warn};
 
 mod output;
+
+#[cfg(target_os = "windows")]
 mod resampler;
 
 fn main() {

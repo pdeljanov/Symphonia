@@ -1,94 +1,74 @@
-use rubato::FftFixedIn;
-use symphonia::core::audio::SignalSpec;
+// Symphonia
+// Copyright (c) 2019-2022 The Project Symphonia Developers.
+//
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-pub struct Resampler
-{
-    resampler:FftFixedIn<f32>,
-    output_buffer:Vec<Vec<f32>>,
-    num_frames:usize,
-    num_channels:usize
+use symphonia::core::audio::{AudioBuffer, AudioBufferRef, SignalSpec};
+use symphonia::core::conv::{FromSample, IntoSample};
+use symphonia::core::sample::Sample;
+
+pub struct Resampler<T> {
+    resampler: rubato::FftFixedIn<f32>,
+    input: AudioBuffer<f32>,
+    output: Vec<Vec<f32>>,
+    interleaved: Vec<T>,
 }
 
-impl Resampler
+impl<T> Resampler<T>
+where
+    T: Sample + FromSample<f32>,
 {
-    pub fn new(spec:SignalSpec, to_sample_rate:usize, num_frames:usize) -> Self
-    {
+    pub fn new(spec: SignalSpec, to_sample_rate: usize, duration: u64) -> Self {
         let num_channels = spec.channels.count();
 
-        let resampler = FftFixedIn::<f32>::new(
+        let resampler = rubato::FftFixedIn::<f32>::new(
             spec.rate as usize,
             to_sample_rate,
-            num_frames,
+            duration as usize,
             2,
-            num_channels
-        ).unwrap();
+            num_channels,
+        )
+        .unwrap();
 
-        let output_buffer = rubato::Resampler::output_buffer_allocate(&resampler);
+        let output = rubato::Resampler::output_buffer_allocate(&resampler);
 
-        Self
-        {
-            resampler,
-            output_buffer,
-            num_frames,
-            num_channels
-        }
+        let input = AudioBuffer::new(duration, spec);
+
+        Self { resampler, input, output, interleaved: Default::default() }
     }
 
     /// Resamples a planar/non-interleaved input.
-    /// 
+    ///
     /// Returns the resampled samples in an interleaved format.
-    pub fn resample(&mut self, input:&[f32]) -> Result<Vec<f32>, ResampleError>
-    {
-        if input.len() != self.num_frames * self.num_channels {
-            return Err(ResampleError::IncorrectInputSize {
-                received: input.len(),
-                expected: self.num_frames * self.num_channels
-            });
-        }
+    pub fn resample(&mut self, input: &AudioBufferRef<'_>) -> &[T] {
+        // Rubato only supports floating point samples, so convert the input buffer.
+        input.convert(&mut self.input);
 
-        // The `input` is represented like so: LLLLLLRRRRRR
-        // To resample this input, we split the channels (L, R) into 2 vectors.
-        // The input now becomes [[LLLLLL], [RRRRRR]].
-        // This is what `rubato` needs.
-        let mut planar:Vec<Vec<f32>> = vec![Vec::new(); self.num_channels];
+        // Get audio planes.
+        let planes = self.input.planes();
 
-        let mut offset = 0;
-        for channel in 0..self.num_channels
-        {
-            planar[channel] = input[offset..offset + self.num_frames].to_vec();
-            offset += self.num_frames;
-        }
-
+        // Resample.
         rubato::Resampler::process_into_buffer(
             &mut self.resampler,
-            &planar,
-            &mut self.output_buffer,
-            None
-        ).unwrap();
+            planes.planes(),
+            &mut self.output,
+            None,
+        )
+        .unwrap();
 
-        // The `interleaved` samples are represented like so: LRLRLRLRLRLR
-        let mut interleaved:Vec<f32> = vec![0.0; self.output_buffer[0].len() * self.num_channels];
+        // Interleave planar samples from Rubato.
+        let num_channels = self.output.len();
 
-        // Interleave all the samples of each channel.
-        let mut current_frame = 0;
-        for frame in interleaved.chunks_exact_mut(self.num_channels)
-        {
-            for channel in 0..self.num_channels
-            {
-                frame[channel] = self.output_buffer[channel][current_frame];
+        self.interleaved.resize(num_channels * self.output[0].len(), T::MID);
+
+        for (i, frame) in self.interleaved.chunks_exact_mut(num_channels).enumerate() {
+            for (ch, s) in frame.iter_mut().enumerate() {
+                *s = self.output[ch][i].into_sample();
             }
-
-            current_frame += 1;
         }
 
-        Ok(interleaved)
-    }
-}
-
-pub enum ResampleError
-{
-    IncorrectInputSize {
-        received:usize,
-        expected:usize
+        &self.interleaved
     }
 }
