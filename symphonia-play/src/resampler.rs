@@ -37,8 +37,15 @@ impl Resampler
     /// Resamples a planar/non-interleaved input.
     /// 
     /// Returns the resampled samples in an interleaved format.
-    pub fn resample(&mut self, input:&[f32]) -> Vec<f32>
+    pub fn resample(&mut self, input:&[f32]) -> Result<Vec<f32>, ResampleError>
     {
+        if input.len() != self.num_frames * self.num_channels {
+            return Err(ResampleError::IncorrectInputSize {
+                received: input.len(),
+                expected: self.num_frames * self.num_channels
+            });
+        }
+
         // The `input` is represented like so: LLLLLLRRRRRR
         // To resample this input, we split the channels (L, R) into 2 vectors.
         // The input now becomes [[LLLLLL], [RRRRRR]].
@@ -74,6 +81,14 @@ impl Resampler
             current_frame += 1;
         }
 
-        interleaved
+        Ok(interleaved)
+    }
+}
+
+pub enum ResampleError
+{
+    IncorrectInputSize {
+        received:usize,
+        expected:usize
     }
 }

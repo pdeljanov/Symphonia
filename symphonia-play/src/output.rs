@@ -317,8 +317,12 @@ mod cpal {
                 self.sample_buf.copy_planar_ref(decoded);
                 let samples = self.sample_buf.samples();
 
-                let resampled = resampler.resample(
-                    samples.iter().map(|e| e.to_f32()).collect::<Vec<f32>>().as_slice());
+                let resampled = match resampler.resample(
+                    samples.iter().map(|e| e.to_f32()).collect::<Vec<f32>>().as_slice())
+                {
+                    Ok(resampled) => resampled,
+                    Err(_) => Vec::new(),
+                };
 
                 // Convert the resampled Vec<f32> samples to Vec<T>
                 let resampled = resampled.iter().map(|e| T::from_sample(*e))
