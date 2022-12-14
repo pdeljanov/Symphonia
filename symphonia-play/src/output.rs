@@ -167,12 +167,14 @@ mod pulseaudio {
 
 #[cfg(not(target_os = "linux"))]
 mod cpal {
+    use std::sync::{Arc, Condvar, Mutex};
+
     use crate::resampler::Resampler;
 
     use super::{AudioOutput, AudioOutputError, Result};
 
     use symphonia::core::audio::{AudioBufferRef, RawSample, SampleBuffer, SignalSpec};
-    use symphonia::core::conv::ConvertibleSample;
+    use symphonia::core::conv::{ConvertibleSample, IntoSample};
     use symphonia::core::units::Duration;
 
     use cpal;
@@ -184,7 +186,7 @@ mod cpal {
     pub struct CpalAudioOutput;
 
     trait AudioOutputSample:
-        cpal::Sample + ConvertibleSample + RawSample + std::marker::Send + 'static
+        cpal::Sample + ConvertibleSample + IntoSample<f32> + RawSample + std::marker::Send + 'static
     {
     }
 
@@ -237,6 +239,7 @@ mod cpal {
         sample_buf: SampleBuffer<T>,
         stream: cpal::Stream,
         resampler: Option<Resampler<T>>,
+        is_stream_done: Arc<(Mutex<bool>, Condvar)>,
     }
 
     impl<T: AudioOutputSample> CpalAudioOutputImpl<T> {
@@ -269,12 +272,24 @@ mod cpal {
             let ring_buf = SpscRb::new(ring_len);
             let (ring_buf_producer, ring_buf_consumer) = (ring_buf.producer(), ring_buf.consumer());
 
+            let is_stream_done = Arc::new((Mutex::new(false), Condvar::new()));
+            let is_stream_done_clone = is_stream_done.clone();
+
             let stream_result = device.build_output_stream(
                 &config,
                 move |data: &mut [T], _: &cpal::OutputCallbackInfo| {
                     // Write out as many samples as possible from the ring buffer to the audio
                     // output.
                     let written = ring_buf_consumer.read(data).unwrap_or(0);
+
+                    // Notify that the stream was finished reading.
+                    if written == 0 {
+                        let (mutex, cvar) = &*is_stream_done_clone;
+                        *mutex.lock().unwrap() = true;
+                        cvar.notify_one();
+                        return;
+                    }
+
                     // Mute any remaining samples.
                     data[written..].iter_mut().for_each(|s| *s = T::MID);
                 },
@@ -305,7 +320,13 @@ mod cpal {
                 None
             };
 
-            Ok(Box::new(CpalAudioOutputImpl { ring_buf_producer, sample_buf, stream, resampler }))
+            Ok(Box::new(CpalAudioOutputImpl {
+                ring_buf_producer,
+                sample_buf,
+                stream,
+                resampler,
+                is_stream_done,
+            }))
         }
     }
 
@@ -317,9 +338,10 @@ mod cpal {
             }
 
             let mut samples = if let Some(resampler) = &mut self.resampler {
+                self.sample_buf.copy_planar_ref(decoded);
                 // Resampling is required. The resample will return interleaved samples in the
                 // correct sample format.
-                resampler.resample(&decoded)
+                resampler.resample(self.sample_buf.samples()).unwrap_or_default()
             }
             else {
                 // Resampling is not required. Interleave the sample for cpal using a sample buffer.
@@ -337,6 +359,20 @@ mod cpal {
         }
 
         fn flush(&mut self) {
+            // If there is a resampler, then it may need to be flushed
+            // depending on the number of samples it has.
+            if let Some(resampler) = &mut self.resampler {
+                let mut remaining_samples = resampler.flush().unwrap_or_default();
+
+                while let Some(written) = self.ring_buf_producer.write_blocking(remaining_samples) {
+                    remaining_samples = &remaining_samples[written..];
+                }
+            }
+
+            // Wait for all the samples to be read.
+            let (mutex, cvar) = &*self.is_stream_done;
+            let _ = cvar.wait(mutex.lock().unwrap());
+
             // Flush is best-effort, ignore the returned result.
             let _ = self.stream.pause();
         }
