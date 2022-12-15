@@ -5,10 +5,10 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use std::io::{Seek, SeekFrom};
+use std::io::SeekFrom;
 
-use symphonia_core::errors::{decode_error, Error, Result};
-use symphonia_core::io::ReadBytes;
+use symphonia_core::errors::{decode_error, seek_error, Error, Result, SeekErrorKind};
+use symphonia_core::io::{MediaSource, ReadBytes};
 use symphonia_core::util::bits::sign_extend_leq64_to_i64;
 
 use crate::element_ids::{ElementType, Type, ELEMENTS};
@@ -253,10 +253,19 @@ impl<R: ReadBytes> ElementIterator<R> {
     /// Seek to a specified offset inside of the stream.
     pub(crate) fn seek(&mut self, pos: u64) -> Result<()>
     where
-        R: Seek,
+        R: MediaSource,
     {
+        let current_pos = self.pos();
         self.current = None;
-        self.reader.seek(SeekFrom::Start(pos))?;
+        if self.reader.is_seekable() {
+            self.reader.seek(SeekFrom::Start(pos))?;
+        }
+        else if pos < current_pos {
+            return seek_error(SeekErrorKind::ForwardOnly);
+        }
+        else {
+            self.reader.ignore_bytes(pos - current_pos)?;
+        }
         self.next_pos = pos;
         Ok(())
     }
