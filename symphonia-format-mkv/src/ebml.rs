@@ -72,7 +72,7 @@ pub(crate) fn read_unsigned_vint<R: ReadBytes>(reader: R) -> Result<u64> {
 pub(crate) fn read_signed_vint<R: ReadBytes>(mut reader: R) -> Result<i64> {
     let (value, len) = read_vint(&mut reader)?;
     // Convert to a signed integer by range shifting.
-    let half_range = i64::pow(2, (len * 7) as u32 - 1) - 1;
+    let half_range = i64::pow(2, (len * 7) - 1) - 1;
     Ok(value as i64 - half_range)
 }
 

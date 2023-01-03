@@ -227,7 +227,7 @@ impl Floor for Floor0 {
             }
 
             // Get the codebook for this floor.
-            let codebook = &codebooks[codebook_idx as usize];
+            let codebook = &codebooks[codebook_idx];
 
             let order = usize::from(self.setup.floor0_order);
             let mut i = 0;

@@ -49,7 +49,7 @@ fn read_ebml_sizes<R: ReadBytes>(mut reader: R, frames: usize) -> Result<Vec<u64
 pub(crate) fn read_xiph_sizes<R: ReadBytes>(mut reader: R, frames: usize) -> Result<Vec<u64>> {
     let mut prefixes = 0;
     let mut sizes = Vec::new();
-    while sizes.len() < frames as usize {
+    while sizes.len() < frames {
         let byte = reader.read_byte()? as u64;
         if byte == 255 {
             prefixes += 1;

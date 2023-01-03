@@ -345,8 +345,8 @@ fn read_subframe<B: ReadBitsLtr>(bs: &mut B, frame_bps: u32, buf: &mut [i32]) ->
     match subframe_type {
         SubFrameType::Constant => decode_constant(bs, bps, buf)?,
         SubFrameType::Verbatim => decode_verbatim(bs, bps, buf)?,
-        SubFrameType::FixedLinear(order) => decode_fixed_linear(bs, bps, order as u32, buf)?,
-        SubFrameType::Linear(order) => decode_linear(bs, bps, order as u32, buf)?,
+        SubFrameType::FixedLinear(order) => decode_fixed_linear(bs, bps, order, buf)?,
+        SubFrameType::Linear(order) => decode_linear(bs, bps, order, buf)?,
     };
 
     // Shift the samples to account for the dropped bits.

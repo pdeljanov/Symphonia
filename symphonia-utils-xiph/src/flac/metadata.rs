@@ -503,7 +503,7 @@ impl MetadataBlockHeader {
         let is_last = (header_enc & 0x80) == 0x80;
 
         // The next 7 bits of the header indicates the block type.
-        let block_type_id = (header_enc & 0x7f) as u8;
+        let block_type_id = header_enc & 0x7f;
 
         let block_type = match block_type_id {
             0 => MetadataBlockType::StreamInfo,

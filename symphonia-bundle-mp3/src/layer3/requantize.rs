@@ -76,8 +76,8 @@ pub(super) fn read_huffman_samples<B: ReadBitsLtr>(
     // There are up-to 3 regions in the big_value partition. Determine the sample index denoting the
     // end of each region (non-inclusive). Clamp to the end of the big_values partition.
     let regions: [usize; 3] = [
-        min(channel.region1_start as usize, big_values_len),
-        min(channel.region2_start as usize, big_values_len),
+        min(channel.region1_start, big_values_len),
+        min(channel.region2_start, big_values_len),
         min(576, big_values_len),
     ];
 

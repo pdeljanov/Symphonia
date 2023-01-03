@@ -111,7 +111,7 @@ impl IsoMp4Reader {
 
             // Get the next timestamp for the next sample of the current track. The next sample may
             // be in a future segment.
-            for (seg_idx_delta, seg) in self.segs[state.cur_seg as usize..].iter().enumerate() {
+            for (seg_idx_delta, seg) in self.segs[state.cur_seg..].iter().enumerate() {
                 // Try to get the timestamp for the next sample of the track from the segment.
                 if let Some(timing) = seg.sample_timing(state.track_num, state.next_sample)? {
                     // Calculate the presentation time using the timestamp.
@@ -152,7 +152,7 @@ impl IsoMp4Reader {
 
     fn consume_next_sample(&mut self, info: &NextSampleInfo) -> Result<Option<SampleDataInfo>> {
         // Get the track state.
-        let track = &mut self.track_states[info.track_num as usize];
+        let track = &mut self.track_states[info.track_num];
 
         // Get the segment associated with the sample.
         let seg = &self.segs[info.seg_idx];
@@ -231,7 +231,7 @@ impl IsoMp4Reader {
 
     fn seek_track_by_time(&mut self, track_num: usize, time: Time) -> Result<SeekedTo> {
         // Convert time to timestamp for the track.
-        if let Some(track) = self.tracks.get(track_num as usize) {
+        if let Some(track) = self.tracks.get(track_num) {
             let tb = track.codec_params.time_base.unwrap();
             self.seek_track_by_ts(track_num, tb.calc_timestamp(time))
         }
@@ -280,7 +280,7 @@ impl IsoMp4Reader {
             let data_desc = seg.sample_data(track_num, seek_loc.sample_num, true)?;
 
             // Update the track's next sample information to point to the seeked sample.
-            let track = &mut self.track_states[track_num as usize];
+            let track = &mut self.track_states[track_num];
 
             track.cur_seg = seek_loc.seg_idx;
             track.next_sample = seek_loc.sample_num;

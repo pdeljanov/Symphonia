@@ -568,7 +568,7 @@ impl FormatReader for MkvReader {
         loop {
             if let Some(frame) = self.frames.pop_front() {
                 return Ok(Packet::new_from_boxed_slice(
-                    frame.track as u32,
+                    frame.track,
                     frame.timestamp,
                     frame.duration,
                     frame.data,

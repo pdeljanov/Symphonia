@@ -859,7 +859,7 @@ mod tests {
             *item = x
                 .iter()
                 .enumerate()
-                .map(|(j, &jtem)| ((jtem) * (PI_32 * (i as f32) * ((j as f32) + 0.5)).cos()) as f32)
+                .map(|(j, &jtem)| ((jtem) * (PI_32 * (i as f32) * ((j as f32) + 0.5)).cos()))
                 .sum();
         }
 
