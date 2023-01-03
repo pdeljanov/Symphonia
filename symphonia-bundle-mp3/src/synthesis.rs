@@ -852,14 +852,14 @@ mod tests {
     use std::f64;
 
     fn dct32_analytical(x: &[f32; 32]) -> [f32; 32] {
-        const PI_32: f32 = (f64::consts::PI / 32.0) as f32;
+        const PI_32: f64 = f64::consts::PI / 32.0;
 
         let mut result = [0f32; 32];
         for (i, item) in result.iter_mut().enumerate() {
             *item = x
                 .iter()
                 .enumerate()
-                .map(|(j, &jtem)| ((jtem) * (PI_32 * (i as f32) * ((j as f32) + 0.5)).cos()))
+                .map(|(j, &jtem)| jtem * (PI_32 * (i as f64) * ((j as f64) + 0.5)).cos() as f32)
                 .sum();
         }
 
