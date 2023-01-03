@@ -358,7 +358,7 @@ fn main() {
             Arg::new("decoder")
                 .long("ref")
                 .takes_value(true)
-                .possible_values(&["ffmpeg", "flac", "mpg123", "oggdec"])
+                .possible_values(["ffmpeg", "flac", "mpg123", "oggdec"])
                 .default_value("ffmpeg")
                 .help("Specify a particular decoder to be used as the reference"),
         )
