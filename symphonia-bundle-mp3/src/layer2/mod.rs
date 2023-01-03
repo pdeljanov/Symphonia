@@ -183,8 +183,8 @@ fn dequantize(bs: &mut BitReaderLtr<'_>, class: &QuantClass) -> Result<[f32; 3]>
 
         let nlevels = u32::from(class.nlevels);
 
-        for i in 0..3 {
-            raw[i] = c % nlevels;
+        for item in &mut raw {
+            *item = c % nlevels;
             c /= nlevels;
         }
 
@@ -196,8 +196,8 @@ fn dequantize(bs: &mut BitReaderLtr<'_>, class: &QuantClass) -> Result<[f32; 3]>
         // Read individial raw samples from the bitstream.
         let bits = u32::from(class.bits);
 
-        for i in 0..3 {
-            raw[i] = bs.read_bits_leq32(bits)?;
+        for item in &mut raw {
+            *item = bs.read_bits_leq32(bits)?;
         }
 
         bits
@@ -272,8 +272,8 @@ impl Layer for Layer2 {
         for sb in 0..bound {
             let nbal = find_sb_quant_info(sb_info, sb).nbal;
 
-            for ch in 0..num_channels {
-                alloc[ch][sb] = bs.read_bits_leq32(u32::from(nbal))? as u8;
+            for chan in &mut alloc[..num_channels] {
+                chan[sb] = bs.read_bits_leq32(u32::from(nbal))? as u8;
             }
         }
 
@@ -382,9 +382,9 @@ impl Layer for Layer2 {
         // infalliable.
         out.render_reserved(Some(1152));
 
-        for ch in 0..num_channels {
+        for (ch, samples) in samples.iter().enumerate().take(num_channels) {
             // Perform polyphase synthesis and generate PCM samples.
-            synthesis::synthesis(&mut self.synthesis[ch], 36, &samples[ch], out.chan_mut(ch));
+            synthesis::synthesis(&mut self.synthesis[ch], 36, samples, out.chan_mut(ch));
         }
 
         Ok(())

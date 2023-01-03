@@ -99,14 +99,14 @@ impl Layer for Layer1 {
 
         // Read bit allocations for each non-intensity coded sub-bands.
         for sb in 0..bound {
-            for ch in 0..num_channels {
+            for chan in &mut alloc {
                 let bits = bs.read_bits_leq32(4)? as u8;
 
                 if bits > 0xe {
                     return decode_error("mp1: invalid bit allocation");
                 }
 
-                alloc[ch][sb] = if bits != 0 { bits + 1 } else { 0 };
+                chan[sb] = if bits != 0 { bits + 1 } else { 0 };
             }
         }
 
@@ -182,9 +182,9 @@ impl Layer for Layer1 {
         // infalliable.
         out.render_reserved(Some(384));
 
-        for ch in 0..num_channels {
+        for (ch, samples) in samples.iter().enumerate().take(num_channels) {
             // Perform polyphase synthesis and generate PCM samples.
-            synthesis::synthesis(&mut self.synthesis[ch], 12, &samples[ch], out.chan_mut(ch));
+            synthesis::synthesis(&mut self.synthesis[ch], 12, samples, out.chan_mut(ch));
         }
 
         Ok(())

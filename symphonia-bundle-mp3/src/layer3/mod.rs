@@ -462,7 +462,7 @@ impl Layer for Layer3 {
                 synthesis::synthesis(
                     &mut self.synthesis[ch],
                     18,
-                    &mut self.samples[gr][ch],
+                    &self.samples[gr][ch],
                     &mut out_ch_samples[(gr * 576)..((gr + 1) * 576)],
                 );
             }

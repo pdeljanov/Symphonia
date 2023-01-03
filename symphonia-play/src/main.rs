@@ -383,7 +383,7 @@ fn play_track(
     };
 
     if !no_progress {
-        println!("");
+        println!();
     }
 
     // Return if a fatal error occured.

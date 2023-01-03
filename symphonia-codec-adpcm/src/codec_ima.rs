@@ -54,7 +54,7 @@ impl AdpcmImaBlockStatus {
         let diff = ((2 * delta + 1) * step) >> 3;
         let predictor = if sign { self.predictor - diff } else { self.predictor + diff };
         self.predictor = clamp_i16(predictor) as i32;
-        self.step_index = (self.step_index + IMA_INDEX_TABLE[nibble as usize]).min(88).max(0);
+        self.step_index = (self.step_index + IMA_INDEX_TABLE[nibble as usize]).clamp(0, 88);
         from_i16_shift!(self.predictor)
     }
 }

@@ -353,9 +353,9 @@ impl AacDecoder {
                     // ID_DSE
                     let _id = bs.read_bits_leq32(4)?;
                     let align = bs.read_bool()?;
-                    let mut count = bs.read_bits_leq32(8)? as u32;
+                    let mut count = bs.read_bits_leq32(8)?;
                     if count == 255 {
-                        count += bs.read_bits_leq32(8)? as u32;
+                        count += bs.read_bits_leq32(8)?;
                     }
                     if align {
                         bs.realign(); // ????

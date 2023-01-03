@@ -483,7 +483,7 @@ fn i16_to_u16(s: i16) -> u16 {
 }
 
 impl_convert!(i16, u8, s, (i16_to_u16(s) >> 8) as u8); // u8
-impl_convert!(i16, u16, s, i16_to_u16(s) as u16); // u16
+impl_convert!(i16, u16, s, i16_to_u16(s)); // u16
 impl_convert!(i16, u24, s, u24::from((i16_to_u16(s) as u32) << 8)); // u24
 impl_convert!(i16, u32, s, (i16_to_u16(s) as u32) << 16); // u32
 
@@ -510,7 +510,7 @@ impl_convert!(i24, u32, s, i24_to_u32(s)); // u32
 impl_convert!(i24, i8, s, (s.clamped().inner() >> 16) as i8); // i8
 impl_convert!(i24, i16, s, (s.clamped().inner() >> 8) as i16); // i16
 impl_convert!(i24, i24, s, s); // i24
-impl_convert!(i24, i32, s, (s.clamped().inner() as i32) << 8); // i32
+impl_convert!(i24, i32, s, (s.clamped().inner()) << 8); // i32
 
 impl_convert!(i24, f32, s, s.clamped().inner() as f32 / 8_388_608.0); // f32
 impl_convert!(i24, f64, s, s.clamped().inner() as f64 / 8_388_608.0); // f64
@@ -529,11 +529,11 @@ impl_convert!(i32, u32, s, i32_to_u32(s)); // u32
 
 impl_convert!(i32, i8, s, (s >> 24) as i8); // i8
 impl_convert!(i32, i16, s, (s >> 16) as i16); // i16
-impl_convert!(i32, i24, s, i24::from((s >> 8) as i32)); // i24
+impl_convert!(i32, i24, s, i24::from(s >> 8)); // i24
 impl_convert!(i32, i32, s, s); // i32
 
 impl_convert!(i32, f32, s, (s as f64 / 2_147_483_648.0) as f32); // f32
-impl_convert!(i32, f64, s, (s as f64 / 2_147_483_648.0) as f64); // f64
+impl_convert!(i32, f64, s, s as f64 / 2_147_483_648.0); // f64
 
 // u8 to ...
 
@@ -584,7 +584,7 @@ impl_convert!(u24, f64, s, ((s.clamped().inner() as f64) / 8_388_608.0) - 1.0); 
 
 impl_convert!(u32, u8, s, (s >> 24) as u8); // u8
 impl_convert!(u32, u16, s, (s >> 16) as u16); // u16
-impl_convert!(u32, u24, s, u24::from((s >> 8) as u32)); // u24
+impl_convert!(u32, u24, s, u24::from(s >> 8)); // u24
 impl_convert!(u32, u32, s, s); // u32
 
 impl_convert!(u32, i8, s, (s.wrapping_sub(0x8000_0000) >> 24) as i8); // i8
@@ -615,7 +615,7 @@ impl_convert!(f32, f64, s, s as f64); // f64
 impl_convert!(f64, u8, s, ((s.clamped() + 1.0) * 128.0) as u8); // u8
 impl_convert!(f64, u16, s, ((s.clamped() + 1.0) * 32_768.0) as u16); // u16
 impl_convert!(f64, u24, s, u24::from(((s.clamped() + 1.0) * 8_388_608.0) as u32)); // u24
-impl_convert!(f64, u32, s, ((s.clamped() + 1.0) as f64 * 2_147_483_648.0) as u32); // u32
+impl_convert!(f64, u32, s, (s.clamped() + 1.0 * 2_147_483_648.0) as u32); // u32
 
 impl_convert!(f64, i8, s, (s.clamped() * 128.0) as i8); // i8
 impl_convert!(f64, i16, s, (s.clamped() * 32_768.0) as i16); // i16
