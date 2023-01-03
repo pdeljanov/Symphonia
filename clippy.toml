@@ -39,3 +39,4 @@
 #   they're instructive to the reader and improve the code aesthetics.
 #
 # --------------------------------------------------------------------------------------------------
+msrv = "1.53"
