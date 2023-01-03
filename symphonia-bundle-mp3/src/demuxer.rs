@@ -181,7 +181,9 @@ impl FormatReader for MpaReader {
                     continue;
                 }
             }
-            else if is_maybe_vbri_tag(&packet, &header) && try_read_vbri_tag(&packet, &header).is_some() {
+            else if is_maybe_vbri_tag(&packet, &header)
+                && try_read_vbri_tag(&packet, &header).is_some()
+            {
                 // Discard the packet and tag since it was not at the start of the stream.
                 warn!("found an unexpected vbri tag, discarding");
                 continue;
