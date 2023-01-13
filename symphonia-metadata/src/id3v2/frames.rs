@@ -36,8 +36,10 @@ use super::util;
 //       CRM                                        Encrypted meta frame
 //   x   PIC    APIC                                Attached picture
 //                      ASPI                        Audio seek point index
+//   x          CHAP             Chapter            Chapter frame
 //   x   COM    COMM             Comment            Comments
 //              COMR                                Commercial frame
+//   x          CTOC             TableOfContents    Chapter table-of-contents frame
 //              ENCR                                Encryption method registration
 //       EQU    EQUA                                Equalisation
 //                      EQU2                        Equalisation (2)
@@ -255,8 +257,10 @@ lazy_static! {
             // m.insert(b"AENC", read_null_frame);
             m.insert(b"APIC", (read_apic_frame as FrameParser, None));
             // m.insert(b"ASPI", read_null_frame);
+            m.insert(b"CHAP", (read_chap_frame, Some(StandardTagKey::Chapter)));
             m.insert(b"COMM", (read_comm_uslt_frame, Some(StandardTagKey::Comment)));
             // m.insert(b"COMR", read_null_frame);
+            m.insert(b"CTOC", (read_ctoc_frame, Some(StandardTagKey::TableOfContents)));
             // m.insert(b"ENCR", read_null_frame);
             // m.insert(b"EQU2", read_null_frame);
             // m.insert(b"EQUA", read_null_frame);
@@ -657,8 +661,7 @@ fn read_text_frame(
             let text = scan_text(reader, encoding, len)?;
 
             tags.push(Tag::new(std_key, id, Value::from(text)));
-        }
-        else {
+        } else {
             break;
         }
     }
@@ -699,8 +702,7 @@ fn read_txxx_frame(
         if len > 0 {
             let text = scan_text(reader, encoding, len)?;
             tags.push(Tag::new(std_key, &key, Value::from(text)));
-        }
-        else {
+        } else {
             break;
         }
     }
@@ -765,6 +767,48 @@ fn read_priv_frame(
     Ok(FrameResult::Tag(tag))
 }
 
+/// Reads a `CHAP` (chapter)
+fn read_chap_frame(
+    reader: &mut BufReader<'_>,
+    std_key: Option<StandardTagKey>,
+    _id: &str,
+) -> Result<FrameResult> {
+    // Scan for the element_id
+    let element_id = format!(
+        "CHAP:{}",
+        scan_text(reader, Encoding::Iso8859_1, reader.bytes_available() as usize)?
+    );
+
+    // There is other useful chapter data, but we parse it elsewhere
+    let data_buf = reader.read_buf_bytes_ref(reader.bytes_available() as usize)?;
+
+    // Create a Tag.
+    let tag = Tag::new(std_key, &element_id, Value::from(data_buf));
+
+    Ok(FrameResult::Tag(tag))
+}
+
+/// Reads a `CTOC` (table of contents)
+fn read_ctoc_frame(
+    reader: &mut BufReader<'_>,
+    std_key: Option<StandardTagKey>,
+    _id: &str,
+) -> Result<FrameResult> {
+    // Scan for the element_id
+    let element_id = format!(
+        "CTOC:{}",
+        scan_text(reader, Encoding::Iso8859_1, reader.bytes_available() as usize)?
+    );
+
+    // There is other useful table of contents data, but we parse it elsewhere
+    let data_buf = reader.read_buf_bytes_ref(reader.bytes_available() as usize)?;
+
+    // Create a Tag.
+    let tag = Tag::new(std_key, &element_id, Value::from(data_buf));
+
+    Ok(FrameResult::Tag(tag))
+}
+
 /// Reads a `COMM` (comment) or `USLT` (unsynchronized comment) frame.
 fn read_comm_uslt_frame(
     reader: &mut BufReader<'_>,
@@ -785,8 +829,7 @@ fn read_comm_uslt_frame(
     // an error would break far too many files to be worth it.
     let key = if validate_lang_code(lang) {
         format!("{}!{}", id, as_ascii_str(&lang))
-    }
-    else {
+    } else {
         id.to_string()
     };
 
