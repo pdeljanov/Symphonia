@@ -167,8 +167,6 @@ mod pulseaudio {
 
 #[cfg(not(target_os = "linux"))]
 mod cpal {
-    use std::sync::{Arc, Condvar, Mutex};
-
     use crate::resampler::Resampler;
 
     use super::{AudioOutput, AudioOutputError, Result};
@@ -181,7 +179,7 @@ mod cpal {
     use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
     use rb::*;
 
-    use log::error;
+    use log::{error, info};
 
     pub struct CpalAudioOutput;
 
@@ -239,7 +237,6 @@ mod cpal {
         sample_buf: SampleBuffer<T>,
         stream: cpal::Stream,
         resampler: Option<Resampler<T>>,
-        is_stream_done: Arc<(Mutex<bool>, Condvar)>,
     }
 
     impl<T: AudioOutputSample> CpalAudioOutputImpl<T> {
@@ -267,13 +264,10 @@ mod cpal {
             };
 
             // Create a ring buffer with a capacity for up-to 200ms of audio.
-            let ring_len = ((200 * spec.rate as usize) / 1000) * num_channels;
+            let ring_len = ((200 * config.sample_rate.0 as usize) / 1000) * num_channels;
 
             let ring_buf = SpscRb::new(ring_len);
             let (ring_buf_producer, ring_buf_consumer) = (ring_buf.producer(), ring_buf.consumer());
-
-            let is_stream_done = Arc::new((Mutex::new(false), Condvar::new()));
-            let is_stream_done_clone = is_stream_done.clone();
 
             let stream_result = device.build_output_stream(
                 &config,
@@ -281,14 +275,6 @@ mod cpal {
                     // Write out as many samples as possible from the ring buffer to the audio
                     // output.
                     let written = ring_buf_consumer.read(data).unwrap_or(0);
-
-                    // Notify that the stream was finished reading.
-                    if written == 0 {
-                        let (mutex, cvar) = &*is_stream_done_clone;
-                        *mutex.lock().unwrap() = true;
-                        cvar.notify_one();
-                        return;
-                    }
 
                     // Mute any remaining samples.
                     data[written..].iter_mut().for_each(|s| *s = T::MID);
@@ -313,20 +299,15 @@ mod cpal {
 
             let sample_buf = SampleBuffer::<T>::new(duration, spec);
 
-            let resampler = if cfg!(target_os = "windows") && spec.rate != config.sample_rate.0 {
+            let resampler = if spec.rate != config.sample_rate.0 {
+                info!("resampling {} Hz to {} Hz", spec.rate, config.sample_rate.0);
                 Some(Resampler::new(spec, config.sample_rate.0 as usize, duration))
             }
             else {
                 None
             };
 
-            Ok(Box::new(CpalAudioOutputImpl {
-                ring_buf_producer,
-                sample_buf,
-                stream,
-                resampler,
-                is_stream_done,
-            }))
+            Ok(Box::new(CpalAudioOutputImpl { ring_buf_producer, sample_buf, stream, resampler }))
         }
     }
 
@@ -338,10 +319,12 @@ mod cpal {
             }
 
             let mut samples = if let Some(resampler) = &mut self.resampler {
-                self.sample_buf.copy_planar_ref(decoded);
-                // Resampling is required. The resample will return interleaved samples in the
+                // Resampling is required. The resampler will return interleaved samples in the
                 // correct sample format.
-                resampler.resample(self.sample_buf.samples()).unwrap_or_default()
+                match resampler.resample(decoded) {
+                    Some(resampled) => resampled,
+                    None => return Ok(()),
+                }
             }
             else {
                 // Resampling is not required. Interleave the sample for cpal using a sample buffer.
@@ -368,10 +351,6 @@ mod cpal {
                     remaining_samples = &remaining_samples[written..];
                 }
             }
-
-            // Wait for all the samples to be read.
-            let (mutex, cvar) = &*self.is_stream_done;
-            let _ = cvar.wait(mutex.lock().unwrap());
 
             // Flush is best-effort, ignore the returned result.
             let _ = self.stream.pause();
