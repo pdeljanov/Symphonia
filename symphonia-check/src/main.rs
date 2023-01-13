@@ -301,7 +301,7 @@ fn run_check(
         }
 
         acct.n_failed_samples += n_failed_pkt_samples;
-        acct.n_failed_packets += if n_failed_pkt_samples > 0 { 1 } else { 0 };
+        acct.n_failed_packets += u64::from(n_failed_pkt_samples > 0);
         acct.n_packets += 1;
 
         if opts.stop_after_fail && acct.n_failed_packets > 0 {

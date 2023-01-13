@@ -174,7 +174,7 @@ fn read_granule_channel_side_info<B: ReadBitsLtr>(
     channel.preflag = if header.is_mpeg1() { bs.read_bool()? } else { false };
 
     channel.scalefac_scale = bs.read_bool()?;
-    channel.count1table_select = if bs.read_bool()? { 1 } else { 0 };
+    channel.count1table_select = bs.read_bit()? as u8;
 
     Ok(())
 }

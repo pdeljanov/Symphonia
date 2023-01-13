@@ -155,12 +155,7 @@ fn find_sb_info(header: &FrameHeader) -> &'static SbInfo {
         else {
             // Table 3-B.2a and 3-B.2b as always used for bitrates > 80 kbit/s.
             // TODO: Free format also used this case, but we don't support it.
-            if header.sample_rate == 48_000 {
-                0
-            }
-            else {
-                1
-            }
+            usize::from(header.sample_rate != 48_000)
         }
     }
     else {

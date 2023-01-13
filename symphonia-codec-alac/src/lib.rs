@@ -671,7 +671,7 @@ fn decode_sce_or_cpe<B: ReadBitsLtr>(
         // The number of upper sample bits that will be predicted per channel. This may be less-than
         // the bit-depth if the lower sample bits will be encoded separately. If decoding a CPE,
         // each channel gets an extra bit allocated to it for mid-side encoding.
-        let pred_bits = config.bit_depth - shift + if is_cpe { 1 } else { 0 };
+        let pred_bits = config.bit_depth - shift + u8::from(is_cpe);
 
         let mid_side_shift = bs.read_bits_leq32(8)? as u8;
         let mid_side_weight = bs.read_bits_leq32_signed(8)?;

@@ -218,8 +218,7 @@ pub fn parse_frame_header(header: u32) -> Result<FrameHeader> {
     };
 
     // Calculate the total frame size in number of slots.
-    let frame_size_slots =
-        (factor * bitrate / sample_rate) as usize + if has_padding { 1 } else { 0 };
+    let frame_size_slots = (factor * bitrate / sample_rate) as usize + usize::from(has_padding);
 
     // Calculate the frame size in bytes, excluding the header.
     let frame_size = (frame_size_slots * slot_size) - 4;
