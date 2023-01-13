@@ -100,6 +100,7 @@ lazy_static! {
         m.insert("totaltracks"                 , StandardTagKey::TrackTotal);
         m.insert("tracknumber"                 , StandardTagKey::TrackNumber);
         m.insert("tracktotal"                  , StandardTagKey::TrackTotal);
+        m.insert("unsyncedlyrics"              , StandardTagKey::Lyrics);
         m.insert("upc"                         , StandardTagKey::IdentUpc);
         m.insert("version"                     , StandardTagKey::Remixer);
         m.insert("version"                     , StandardTagKey::Version);
