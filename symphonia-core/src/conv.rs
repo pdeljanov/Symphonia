@@ -615,7 +615,7 @@ impl_convert!(f32, f64, s, s as f64); // f64
 impl_convert!(f64, u8, s, ((s.clamped() + 1.0) * 128.0) as u8); // u8
 impl_convert!(f64, u16, s, ((s.clamped() + 1.0) * 32_768.0) as u16); // u16
 impl_convert!(f64, u24, s, u24::from(((s.clamped() + 1.0) * 8_388_608.0) as u32)); // u24
-impl_convert!(f64, u32, s, (s.clamped() + 1.0 * 2_147_483_648.0) as u32); // u32
+impl_convert!(f64, u32, s, ((s.clamped() + 1.0) * 2_147_483_648.0) as u32); // u32
 
 impl_convert!(f64, i8, s, (s.clamped() * 128.0) as i8); // i8
 impl_convert!(f64, i16, s, (s.clamped() * 32_768.0) as i16); // i16
