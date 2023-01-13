@@ -35,7 +35,7 @@ enum State {
     #[cfg(feature = "mp2")]
     Layer2(layer2::Layer2),
     #[cfg(feature = "mp3")]
-    Layer3(layer3::Layer3),
+    Layer3(Box<layer3::Layer3>),
 }
 
 impl State {
@@ -46,7 +46,7 @@ impl State {
             #[cfg(feature = "mp2")]
             CODEC_TYPE_MP2 => State::Layer2(layer2::Layer2::new()),
             #[cfg(feature = "mp3")]
-            CODEC_TYPE_MP3 => State::Layer3(layer3::Layer3::new()),
+            CODEC_TYPE_MP3 => State::Layer3(Box::new(layer3::Layer3::new())),
             _ => unreachable!(),
         }
     }

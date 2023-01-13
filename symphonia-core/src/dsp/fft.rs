@@ -110,7 +110,7 @@ impl Fft {
         }
 
         // Do the forward FFT.
-        self.transform(y, n);
+        Self::transform(y, n);
 
         // Output scale.
         let c = 1.0 / n as f32;
@@ -139,7 +139,7 @@ impl Fft {
         }
 
         // Do the forward FFT.
-        self.transform(x, n);
+        Self::transform(x, n);
 
         // Output scale.
         let c = 1.0 / n as f32;
@@ -170,7 +170,7 @@ impl Fft {
             4 => fft4(x.try_into().unwrap()),
             8 => fft8(x.try_into().unwrap()),
             16 => fft16(x.try_into().unwrap()),
-            _ => self.transform(x, n),
+            _ => Self::transform(x, n),
         }
     }
 
@@ -192,11 +192,11 @@ impl Fft {
             4 => fft4(y.try_into().unwrap()),
             8 => fft8(y.try_into().unwrap()),
             16 => fft16(y.try_into().unwrap()),
-            _ => self.transform(y, n),
+            _ => Self::transform(y, n),
         }
     }
 
-    fn transform(&self, x: &mut [Complex], n: usize) {
+    fn transform(x: &mut [Complex], n: usize) {
         fn to_arr(x: &mut [Complex]) -> Option<&mut [Complex; 32]> {
             x.try_into().ok()
         }
@@ -209,8 +209,8 @@ impl Fft {
 
             let (even, odd) = x.split_at_mut(n_half);
 
-            self.transform(even, n_half);
-            self.transform(odd, n_half);
+            Self::transform(even, n_half);
+            Self::transform(odd, n_half);
 
             let twiddle = fft_twiddle_factors(n);
 
@@ -458,12 +458,7 @@ mod tests {
     /// Returns true if both real and imaginary complex number components deviate by less than
     /// `epsilon` between the left-hand side and right-hand side.
     fn check_complex(lhs: Complex, rhs: Complex, epsilon: f32) -> bool {
-        if (lhs.re - rhs.re).abs() < epsilon {
-            if (lhs.im - rhs.im).abs() < epsilon {
-                return true;
-            }
-        }
-        false
+        (lhs.re - rhs.re).abs() < epsilon && (lhs.im - rhs.im).abs() < epsilon
     }
 
     #[rustfmt::skip]

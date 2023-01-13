@@ -18,7 +18,7 @@ use symphonia_core::meta::{VendorData, Visual};
 
 use symphonia_metadata::{id3v2, vorbis};
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Eq)]
 pub enum MetadataBlockType {
     StreamInfo,
     Padding,
@@ -412,7 +412,7 @@ pub fn read_application_block<B: ReadBytes>(
     // string.
     let ident_buf = reader.read_quad_bytes()?;
     let ident = String::from_utf8(
-        ident_buf.as_ref().iter().map(|b| ascii::escape_default(*b)).flatten().collect(),
+        ident_buf.as_ref().iter().copied().flat_map(ascii::escape_default).collect(),
     )
     .unwrap();
 
@@ -503,7 +503,7 @@ impl MetadataBlockHeader {
         let is_last = (header_enc & 0x80) == 0x80;
 
         // The next 7 bits of the header indicates the block type.
-        let block_type_id = (header_enc & 0x7f) as u8;
+        let block_type_id = header_enc & 0x7f;
 
         let block_type = match block_type_id {
             0 => MetadataBlockType::StreamInfo,

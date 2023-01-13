@@ -1479,6 +1479,7 @@ mod tests {
     use super::{BitReaderRtl, ReadBitsRtl};
 
     #[test]
+    #[allow(clippy::bool_assert_comparison)]
     fn verify_bitstreamltr_ignore_bits() {
         let mut bs = BitReaderLtr::new(&[
             0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, //
@@ -1540,6 +1541,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::bool_assert_comparison)]
     fn verify_bitstreamltr_read_bool() {
         // General tests.
         let mut bs = BitReaderLtr::new(&[0b1010_1010]);
@@ -1811,12 +1813,12 @@ mod tests {
             0x80,
         ];
 
-        const TEXT: &'static str = "This silence belongs to us... and every single person out \
-                                    there, is waiting for us to fill it with something.";
+        const TEXT: &str = "This silence belongs to us... and every single person out \
+                            there, is waiting for us to fill it with something.";
 
         // Reverse the bits in the data vector if testing a reverse bit-order.
         let data = match bit_order {
-            BitOrder::Verbatim => DATA.iter().map(|&b| b).collect(),
+            BitOrder::Verbatim => DATA.to_vec(),
             BitOrder::Reverse => DATA.iter().map(|&b| b.reverse_bits()).collect(),
         };
 
@@ -1842,6 +1844,7 @@ mod tests {
     // BitStreamRtl
 
     #[test]
+    #[allow(clippy::bool_assert_comparison)]
     fn verify_bitstreamrtl_ignore_bits() {
         let mut bs = BitReaderRtl::new(&[
             0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, //
@@ -1903,6 +1906,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::bool_assert_comparison)]
     fn verify_bitstreamrtl_read_bool() {
         // General tests.
         let mut bs = BitReaderRtl::new(&[0b1010_1010]);

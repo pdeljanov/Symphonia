@@ -431,7 +431,7 @@ mod tests {
     fn verify_synthesize_codewords() {
         const CODEWORD_LENGTHS: &[u8] = &[2, 4, 4, 4, 4, 2, 3, 3];
         const EXPECTED_CODEWORDS: &[u32] = &[0, 0x4, 0x5, 0x6, 0x7, 0x2, 0x6, 0x7];
-        let codewords = synthesize_codewords(&CODEWORD_LENGTHS).unwrap();
+        let codewords = synthesize_codewords(CODEWORD_LENGTHS).unwrap();
         assert_eq!(&codewords, EXPECTED_CODEWORDS);
     }
 }

@@ -90,10 +90,11 @@ impl MoofSegment {
 
         // Calculate the sequence information for each track, even if not present in the fragment.
         for (track_num, trex) in mvex.trexs.iter().enumerate() {
-            let mut info: SequenceInfo = Default::default();
-
-            info.first_sample = prev.track_sample_range(track_num).end;
-            info.first_ts = prev.track_ts_range(track_num).end;
+            let mut info = SequenceInfo {
+                first_sample: prev.track_sample_range(track_num).end,
+                first_ts: prev.track_ts_range(track_num).end,
+                ..Default::default()
+            };
 
             // Find the track fragment for the track.
             for (traf_idx, traf) in moof.trafs.iter().enumerate() {

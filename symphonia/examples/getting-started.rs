@@ -11,7 +11,7 @@ fn main() {
     let path = args.get(1).expect("file path not provided");
 
     // Open the media source.
-    let src = std::fs::File::open(&path).expect("failed to open media");
+    let src = std::fs::File::open(path).expect("failed to open media");
 
     // Create the media source stream.
     let mss = MediaSourceStream::new(Box::new(src), Default::default());

@@ -89,7 +89,7 @@ impl Lcg {
     #[inline(always)]
     pub fn next(&mut self) -> i32 {
         // Numerical Recipes LCG parameters.
-        self.state = (self.state as u32).wrapping_mul(1664525).wrapping_add(1013904223);
+        self.state = self.state.wrapping_mul(1664525).wrapping_add(1013904223);
         self.state as i32
     }
 }

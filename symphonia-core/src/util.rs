@@ -278,10 +278,10 @@ pub mod clamp {
     #[inline]
     pub fn clamp_i24(val: i32) -> i32 {
         if val.wrapping_add(0x0080_0000) & !0x00ff_ffff == 0 {
-            val as i32
+            val
         }
         else {
-            0x007f_ffff ^ val.wrapping_shr(31) as i32
+            0x007f_ffff ^ val.wrapping_shr(31)
         }
     }
 

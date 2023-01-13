@@ -95,7 +95,7 @@ fn vorbis_extra_data_from_codec_private(extra: &[u8]) -> Result<Box<[u8]>> {
     let mut setup_header = None;
 
     for packet in packets {
-        match packet.get(0).copied() {
+        match packet.first().copied() {
             Some(VORBIS_PACKET_TYPE_IDENTIFICATION) => {
                 ident_header = Some(packet);
             }
@@ -568,7 +568,7 @@ impl FormatReader for MkvReader {
         loop {
             if let Some(frame) = self.frames.pop_front() {
                 return Ok(Packet::new_from_boxed_slice(
-                    frame.track as u32,
+                    frame.track,
                     frame.timestamp,
                     frame.duration,
                     frame.data,

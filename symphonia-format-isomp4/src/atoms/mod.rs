@@ -87,7 +87,7 @@ pub use udta::UdtaAtom;
 pub use wave::WaveAtom;
 
 /// Atom types.
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum AtomType {
     Ac3,
     AdvisoryTag,

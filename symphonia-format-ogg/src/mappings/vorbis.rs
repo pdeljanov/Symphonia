@@ -574,7 +574,7 @@ fn skip_residue_setup(bs: &mut BitReaderRtl<'_>) -> Result<()> {
     let residue_classifications = bs.read_bits_leq32(6)? as u8 + 1;
 
     // residue_classbook
-    let _ = bs.ignore_bits(8)?;
+    bs.ignore_bits(8)?;
 
     let mut num_codebooks = 0;
 

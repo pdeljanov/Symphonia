@@ -12,7 +12,7 @@ use symphonia_core::errors::Result;
 use symphonia_core::io::BufReader;
 
 /// The MPEG audio version.
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum MpegVersion {
     /// Version 2.5
     Mpeg2p5,
@@ -23,7 +23,7 @@ pub enum MpegVersion {
 }
 
 /// The MPEG audio layer.
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum MpegLayer {
     /// Layer 1
     Layer1,
@@ -35,7 +35,7 @@ pub enum MpegLayer {
 
 /// For Joint Stereo channel mode, the mode extension describes the features and parameters of the
 /// stereo encoding.
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Mode {
     /// Joint Stereo in layer 3 may use both Mid-Side and Intensity encoding.
     Layer3 { mid_side: bool, intensity: bool },
@@ -45,7 +45,7 @@ pub enum Mode {
 }
 
 /// The channel mode.
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum ChannelMode {
     /// Single mono audio channel.
     Mono,
@@ -78,7 +78,7 @@ impl ChannelMode {
 }
 
 /// The emphasis applied during encoding.
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Emphasis {
     /// No emphasis
     None,
