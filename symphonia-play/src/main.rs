@@ -30,6 +30,9 @@ use log::{error, info, warn};
 
 mod output;
 
+#[cfg(not(target_os = "linux"))]
+mod resampler;
+
 fn main() {
     pretty_env_logger::init();
 

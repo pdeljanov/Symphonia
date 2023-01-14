@@ -17,7 +17,7 @@ use std::vec::Vec;
 use arrayvec::ArrayVec;
 use bitflags::bitflags;
 
-use crate::conv::{ConvertibleSample, IntoSample};
+use crate::conv::{ConvertibleSample, FromSample, IntoSample};
 use crate::errors::Result;
 use crate::sample::{i24, u24, Sample};
 use crate::units::Duration;
@@ -376,8 +376,7 @@ impl<S: Sample> AudioBuffer<S> {
     where
         S: IntoSample<T>,
     {
-        assert!(dest.n_frames == self.n_frames);
-        assert!(dest.n_capacity == self.n_capacity);
+        assert!(dest.n_capacity >= self.n_capacity);
         assert!(dest.spec == self.spec);
 
         for c in 0..self.spec.channels.count() {
@@ -388,6 +387,8 @@ impl<S: Sample> AudioBuffer<S> {
                 *d = (*s).into_sample();
             }
         }
+
+        dest.n_frames = self.n_frames;
     }
 
     /// Makes an equivalent AudioBuffer of a different type.
@@ -443,6 +444,27 @@ impl<'a> AudioBufferRef<'a> {
     /// Gets the number of frames in the buffer.
     pub fn frames(&self) -> usize {
         impl_audio_buffer_ref_func!(self, buf, buf.frames())
+    }
+
+    pub fn convert<T>(&self, dest: &mut AudioBuffer<T>)
+    where
+        T: Sample
+            + FromSample<u8>
+            + FromSample<u16>
+            + FromSample<u24>
+            + FromSample<u32>
+            + FromSample<i8>
+            + FromSample<i16>
+            + FromSample<i24>
+            + FromSample<i32>
+            + FromSample<f32>
+            + FromSample<f64>,
+    {
+        impl_audio_buffer_ref_func!(self, buf, buf.convert(dest))
+    }
+
+    pub fn make_equivalent<E: Sample>(&self) -> AudioBuffer<E> {
+        impl_audio_buffer_ref_func!(self, buf, buf.make_equivalent::<E>())
     }
 }
 
