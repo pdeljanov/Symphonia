@@ -175,7 +175,6 @@ mod cpal {
     use symphonia::core::conv::{ConvertibleSample, IntoSample};
     use symphonia::core::units::Duration;
 
-    use cpal;
     use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
     use rb::*;
 
