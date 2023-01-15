@@ -196,7 +196,7 @@ impl Sample for f64 {
 // Helper macros
 
 macro_rules! shl_impl {
-    ($t:path, $f:ty) => {
+    ($t:ident, $f:ty) => {
         impl core::ops::Shl<$f> for $t {
             type Output = $t;
 
@@ -209,7 +209,7 @@ macro_rules! shl_impl {
 }
 
 macro_rules! shr_impl {
-    ($t:path, $f:ty) => {
+    ($t:ident, $f:ty) => {
         impl core::ops::Shr<$f> for $t {
             type Output = $t;
 
@@ -222,7 +222,7 @@ macro_rules! shr_impl {
 }
 
 macro_rules! impl_shifts {
-    ($t:ty, $f:ty) => {
+    ($t:ident, $f:ty) => {
         shl_impl! { $t, $f }
         shr_impl! { $t, $f }
     };
