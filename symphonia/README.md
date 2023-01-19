@@ -20,7 +20,7 @@
     <a href="https://deps.rs/repo/github/pdeljanov/symphonia">
         <img src="https://deps.rs/repo/github/pdeljanov/symphonia/status.svg" />
     </a>
-    <a href="https://blog.rust-lang.org/2021/03/25/Rust-1.53.0.html">
+    <a href="https://blog.rust-lang.org/2021/06/17/Rust-1.53.0.html">
         <img alt="Rustc Version 1.53.0+" src="https://img.shields.io/badge/rustc-1.53%2B-lightgrey.svg"/>
     </a>
 </p>
