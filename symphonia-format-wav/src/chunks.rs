@@ -394,7 +394,12 @@ impl WaveFormatChunk {
             );
         }
 
-        let channel_mask = reader.read_u32()?;
+        let mut channel_mask = reader.read_u32()?;
+
+        // Graceful handling of "empty" channel mask value. Use the first n_channels channels.
+        if channel_mask == 0 {
+            channel_mask = (1 << n_channels) - 1;
+        }
 
         // The number of ones in the channel mask should match the number of channels.
         if channel_mask.count_ones() != u32::from(n_channels) {
