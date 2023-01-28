@@ -9,15 +9,14 @@
 //!
 //! The MDCT in this module is implemented in-terms of a forward FFT.
 
-use super::complex::Complex;
 use super::fft::*;
+use rustfft::num_complex::Complex;
 
 /// The Inverse Modified Discrete Transform (IMDCT).
 pub struct Imdct {
     fft: Fft,
-    fft_in: Box<[Complex]>,
-    fft_out: Box<[Complex]>,
-    twiddle: Box<[Complex]>,
+    scratch: Box<[Complex<f32>]>,
+    twiddle: Box<[Complex<f32>]>,
 }
 
 impl Imdct {
@@ -36,9 +35,6 @@ impl Imdct {
     pub fn new_scaled(n: usize, scale: f64) -> Self {
         // The FFT requires a power-of-two N.
         assert!(n.is_power_of_two(), "n must be a power of two");
-        // A complex FFT of size N/2 is used to compute the IMDCT. Therefore, the maximum value of N
-        // is 2 * Fft::MAX_SIZE.
-        assert!(n <= 2 * Fft::MAX_SIZE, "maximum size exceeded");
 
         let n2 = n / 2;
         let mut twiddle = Vec::with_capacity(n2);
@@ -54,10 +50,9 @@ impl Imdct {
             twiddle.push(Complex::new(re as f32, im as f32));
         }
 
-        let fft_in = vec![Default::default(); n2].into_boxed_slice();
-        let fft_out = vec![Default::default(); n2].into_boxed_slice();
+        let scratch = vec![Default::default(); n2].into_boxed_slice();
 
-        Imdct { fft: Fft::new(n2), fft_in, fft_out, twiddle: twiddle.into_boxed_slice() }
+        Imdct { fft: Fft::new(n2), scratch, twiddle: twiddle.into_boxed_slice() }
     }
 
     /// Performs the the N-point Inverse Modified Discrete Cosine Transform.
@@ -84,7 +79,7 @@ impl Imdct {
             .step_by(2)
             .zip(spec.iter().rev().step_by(2))
             .zip(self.twiddle.iter())
-            .zip(self.fft_in.iter_mut())
+            .zip(self.scratch.iter_mut())
         {
             let re = -odd * w.im - even * w.re;
             let im = -odd * w.re + even * w.im;
@@ -92,7 +87,7 @@ impl Imdct {
         }
 
         // Do the FFT.
-        self.fft.fft(&self.fft_in, &mut self.fft_out);
+        self.fft.fft_inplace(&mut self.scratch);
 
         // Split the output vector (2N samples) into 4 vectors (N/2 samples each).
         let (vec0, vec1) = out.split_at_mut(n2);
@@ -101,7 +96,7 @@ impl Imdct {
 
         // Post-FFT twiddling and processing to expand the N/2 complex output values into 2N real
         // output samples.
-        for (i, (x, &w)) in self.fft_out[..n4].iter().zip(self.twiddle[..n4].iter()).enumerate() {
+        for (i, (x, &w)) in self.scratch[..n4].iter().zip(self.twiddle[..n4].iter()).enumerate() {
             // The real and imaginary components of the post-twiddled FFT samples are used to
             // generate 4 reak output samples. Using the first half of the complex FFT output,
             // populate each of the 4 output vectors.
@@ -121,7 +116,7 @@ impl Imdct {
             vec3[fi] = val.re;
         }
 
-        for (i, (x, &w)) in self.fft_out[n4..].iter().zip(self.twiddle[n4..].iter()).enumerate() {
+        for (i, (x, &w)) in self.scratch[n4..].iter().zip(self.twiddle[n4..].iter()).enumerate() {
             // Using the second half of the FFT output samples, finish populating each of the 4
             // output vectors.
             let val = w * x.conj();
