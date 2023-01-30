@@ -41,6 +41,10 @@ impl ParseChunkTag for NullChunks {
 fn fix_channel_mask(mut channel_mask: u32, n_channels: u16) -> u32 {
     let channel_diff = n_channels as i32 - channel_mask.count_ones() as i32;
 
+    if channel_diff != 0 {
+        info!("Channel mask not set correctly, channel positions may be incorrect!");
+    }
+
     // Check that the number of ones in the channel mask match the number of channels.
     if channel_diff > 0 {
         // Too few ones in mask so add extra ones above the most significant one
