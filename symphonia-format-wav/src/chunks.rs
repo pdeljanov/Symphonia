@@ -38,6 +38,38 @@ impl ParseChunkTag for NullChunks {
     }
 }
 
+fn fix_channel_mask(mut channel_mask: u32, n_channels: u16) -> u32 {
+    let channel_diff = n_channels as i32 - channel_mask.count_ones() as i32;
+
+    // Check that the number of ones in the channel mask match the number of channels.
+    if channel_diff > 0 {
+        // Too few ones in mask so add extra ones above the most significant one
+        let shift = 32 - (!channel_mask).leading_ones();
+        channel_mask |= ((1 << channel_diff) - 1) << shift;
+    }
+    else {
+        // Too many ones in mask so remove the most significant extra ones
+        while channel_mask.count_ones() != n_channels as u32 {
+            let highest_one = 31 - (!channel_mask).leading_ones();
+            channel_mask &= !(1 << highest_one);
+        }
+    }
+
+    channel_mask
+}
+
+#[test]
+fn test_fix_channel_mask() {
+    // Too few
+    assert_eq!(fix_channel_mask(0, 9), 0b111111111);
+    assert_eq!(fix_channel_mask(0b101000, 5), 0b111101000);
+
+    // Too many
+    assert_eq!(fix_channel_mask(0b1111111, 0), 0);
+    assert_eq!(fix_channel_mask(0b101110111010, 5), 0b10111010);
+    assert_eq!(fix_channel_mask(0xFFFFFFFF, 8), 0b11111111);
+}
+
 /// `ChunksReader` reads chunks from a `ByteStream`. It is generic across a type, usually an enum,
 /// implementing the `ParseChunkTag` trait. When a new chunk is encountered in the stream,
 /// `parse_tag` on T is called to return an object capable of parsing/reading that chunk or `None`.
@@ -394,17 +426,7 @@ impl WaveFormatChunk {
             );
         }
 
-        let mut channel_mask = reader.read_u32()?;
-
-        // Graceful handling of "empty" channel mask value. Use the first n_channels channels.
-        if channel_mask == 0 {
-            channel_mask = (1 << n_channels) - 1;
-        }
-
-        // The number of ones in the channel mask should match the number of channels.
-        if channel_mask.count_ones() != u32::from(n_channels) {
-            return decode_error("wav: channel mask mismatch with number of channels for fmt_ext");
-        }
+        let channel_mask = fix_channel_mask(reader.read_u32()?, n_channels);
 
         // Try to map channels.
         let channels = match Channels::from_bits(channel_mask) {
