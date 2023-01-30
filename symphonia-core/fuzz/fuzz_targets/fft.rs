@@ -1,3 +1,6 @@
+//! Fuzz target for the FFT implementation.
+//! Doesn't perform any correctness checks, only looks for panics and memory safety bugs.
+
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
