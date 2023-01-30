@@ -1,0 +1,28 @@
+[package]
+name = "symphonia-core-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2018"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+rustfft = "6.1.0"
+
+[dependencies.symphonia-core]
+path = ".."
+
+# Prevent this from interfering with workspaces
+[workspace]
+members = ["."]
+
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "fft"
+path = "fuzz_targets/fft.rs"
+test = false
+doc = false
