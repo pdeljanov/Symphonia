@@ -88,15 +88,12 @@ impl Imdct {
         assert_eq!(out.len(), 2 * n);
 
         // Pre-FFT twiddling and packing of the real input signal values into complex signal values.
-        for (((&even, &odd), &w), t) in spec
-            .iter()
-            .step_by(2)
-            .zip(spec.iter().rev().step_by(2))
-            .zip(self.twiddle.iter())
-            .zip(self.scratch.iter_mut())
-        {
-            let re = -odd * w.im - even * w.re;
-            let im = -odd * w.re + even * w.im;
+        for (i, (&w, t)) in self.twiddle.iter().zip(self.scratch.iter_mut()).enumerate() {
+            let even = spec[i * 2];
+            let odd = -spec[n - 1 - i * 2];
+
+            let re = odd * w.im - even * w.re;
+            let im = odd * w.re + even * w.im;
             *t = Complex::new(re, im);
         }
 
