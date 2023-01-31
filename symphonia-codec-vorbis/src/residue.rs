@@ -158,13 +158,38 @@ impl Residue {
             // into the channel buffers.
             let stride = residue_channels.count();
 
-            for (i, ch) in residue_channels.iter().enumerate() {
-                let channel = &mut channels[ch];
+            match stride {
+                2 => {
+                    let (ch0, ch1) = {
+                        let mut iter = residue_channels.iter();
+                        let ch0 = iter.next().unwrap();
+                        let ch1 = iter.next().unwrap();
 
-                let iter = self.type2_buf.chunks_exact(stride).map(|c| c[i]);
+                        let (a, b) = channels.split_at_mut(ch0).1.split_at_mut(ch1);
 
-                for (o, i) in channel.residue.iter_mut().zip(iter) {
-                    *o = i;
+                        (&mut a[0], &mut b[0])
+                    };
+
+                    for ((buf, chan0), chan1) in self
+                        .type2_buf
+                        .chunks_exact(2)
+                        .zip(ch0.residue.iter_mut())
+                        .zip(ch1.residue.iter_mut())
+                    {
+                        *chan0 = buf[0];
+                        *chan1 = buf[1];
+                    }
+                }
+                _ => {
+                    for (i, ch) in residue_channels.iter().enumerate() {
+                        let channel = &mut channels[ch];
+
+                        let iter = self.type2_buf.chunks_exact(stride).map(|c| c[i]);
+
+                        for (o, i) in channel.residue.iter_mut().zip(iter) {
+                            *o = i;
+                        }
+                    }
                 }
             }
         }
