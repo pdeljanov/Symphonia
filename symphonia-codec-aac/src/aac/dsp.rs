@@ -78,12 +78,12 @@ impl Dsp {
             self.imdct_long.imdct(coeffs, &mut self.pcm_long);
         }
         else {
-            for (ain, aout) in coeffs.chunks_exact(128).zip(self.pcm_long.chunks_mut(256)) {
+            for (ain, aout) in coeffs.chunks_exact(128).zip(self.pcm_long.chunks_exact_mut(256)) {
                 self.imdct_short.imdct(ain, aout);
             }
 
             // Zero the eight short sequence buffer.
-            self.pcm_short = [0.0; 1152];
+            self.pcm_short.fill(0.0);
 
             for (w, src) in self.pcm_long.chunks_exact(256).enumerate() {
                 if w > 0 {
@@ -140,9 +140,8 @@ impl Dsp {
                     // Last part is already windowed.
                     delay[i] = self.pcm_short[i + 512 + 64];
                 }
-                for i in SHORT_WIN_POINT1..1024 {
-                    delay[i] = 0.0;
-                }
+
+                delay[SHORT_WIN_POINT1..].fill(0.0);
             }
             LONG_START_SEQUENCE => {
                 delay[..SHORT_WIN_POINT0]
@@ -151,9 +150,8 @@ impl Dsp {
                 for i in SHORT_WIN_POINT0..SHORT_WIN_POINT1 {
                     delay[i] = self.pcm_long[i + 1024] * short_win[127 - (i - SHORT_WIN_POINT0)];
                 }
-                for i in SHORT_WIN_POINT1..1024 {
-                    delay[i] = 0.0;
-                }
+
+                delay[SHORT_WIN_POINT1..].fill(0.0);
             }
             _ => unreachable!(),
         };

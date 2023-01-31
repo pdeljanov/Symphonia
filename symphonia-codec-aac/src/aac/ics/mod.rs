@@ -12,6 +12,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use symphonia_core::errors::{decode_error, Result};
+use symphonia_core::io::vlc::{Codebook, Entry8x16};
 use symphonia_core::io::ReadBitsLtr;
 
 use crate::aac::codebooks;
@@ -281,7 +282,7 @@ impl Ics {
         let mut scf_noise = i16::from(self.global_gain) - 90;
         let mut scf_normal = i16::from(self.global_gain);
 
-        let scf_cb = &codebooks::SCALEFACTORS;
+        let scf_cb: &Codebook<Entry8x16> = &codebooks::SCALEFACTORS;
 
         for g in 0..self.info.window_groups {
             for sfb in 0..self.info.max_sfb {
@@ -335,7 +336,7 @@ impl Ics {
 
     fn decode_spectrum<B: ReadBitsLtr>(&mut self, bs: &mut B, lcg: &mut Lcg) -> Result<()> {
         // Zero all spectral coefficients.
-        self.coeffs = [0.0; 1024];
+        self.coeffs.fill(0.0);
 
         let bands = self.get_bands();
 
