@@ -150,7 +150,7 @@ lazy_static! {
 }
 
 /// Reorder samples that are part of short blocks into sub-band order.
-pub(super) fn reorder(header: &FrameHeader, channel: &GranuleChannel, buf: &mut [f32; 576]) {
+pub(super) fn reorder(header: &FrameHeader, channel: &mut GranuleChannel, buf: &mut [f32; 576]) {
     // Only short blocks are reordered.
     if let BlockType::Short { is_mixed } = channel.block_type {
         // Every short block is split into 3 equally sized windows as illustrated below (e.g. for
@@ -178,25 +178,26 @@ pub(super) fn reorder(header: &FrameHeader, channel: &GranuleChannel, buf: &mut 
             &SFB_SHORT_BANDS[header.sample_rate_idx]
         };
 
-        let start = bands[0];
-
-        // TODO: Frankly, this is wasteful... Consider swapping between two internal buffers so we
-        // can avoid initializing this to 0 every frame. Unsafe is not allowed in codec's so this
-        // can't be left uninitialized.
         let mut reorder_buf = [0f32; 576];
 
+        let start = bands[0];
         let mut i = start;
 
         for (((s0, s1), s2), s3) in
             bands.iter().zip(&bands[1..]).zip(&bands[2..]).zip(&bands[3..]).step_by(3)
         {
+            // Do not reorder short blocks that begin after the rzero partition boundary since
+            // they're zeroed.
+            if *s0 >= channel.rzero {
+                break;
+            }
+
             // The three short sample windows.
             let win0 = &buf[*s0..*s1];
             let win1 = &buf[*s1..*s2];
             let win2 = &buf[*s2..*s3];
 
             // Interleave the three short sample windows.
-            // TODO: This could likely be sped up with SIMD.
             for ((w0, w1), w2) in win0.iter().zip(win1).zip(win2) {
                 reorder_buf[i + 0] = *w0;
                 reorder_buf[i + 1] = *w1;
@@ -205,30 +206,38 @@ pub(super) fn reorder(header: &FrameHeader, channel: &GranuleChannel, buf: &mut 
             }
         }
 
-        // TODO: It is possible for i to exceed rzero, does that make sense? Or should it simply
-        // copy between [start..rzero]? Probably not... since an entire scale factor band /should/
-        // be processed...
-
         // Copy reordered samples from the reorder buffer to the actual sample buffer.
         buf[start..i].copy_from_slice(&reorder_buf[start..i]);
+
+        // After reordering, the start of the rzero partition may no longer be valid. Update it.
+        channel.rzero = channel.rzero.max(i);
     }
 }
 
 /// Applies the anti-aliasing filter to sub-bands that are not part of short blocks.
-pub(super) fn antialias(channel: &GranuleChannel, samples: &mut [f32; 576]) {
-    // The number of sub-bands to anti-aliasing depends on block type.
-    let sb_end = match channel.block_type {
+pub(super) fn antialias(channel: &mut GranuleChannel, samples: &mut [f32; 576]) {
+    // The maximum number of sub-bands to anti-alias depends on block type.
+    let sb_limit = match channel.block_type {
         // Short blocks are never anti-aliased.
         BlockType::Short { is_mixed: false } => return,
         // Mixed blocks have a long block span the first 36 samples (2 sub-bands). Therefore, only
         // anti-alias these two sub-bands.
-        BlockType::Short { is_mixed: true } => 2 * 18,
+        BlockType::Short { is_mixed: true } => 2,
         // All other block types require all 32 sub-bands to be anti-aliased.
-        _ => 32 * 18,
+        _ => 32,
     };
 
     // Amortize the lazy_static fetch over the entire anti-aliasing operation.
     let (cs, ca): &([f32; 8], [f32; 8]) = &ANTIALIAS_CS_CA;
+
+    // The sub-band that intersects the start of the rzero partition. All sub-bands after this one
+    // are zeroed and do-not need anti-aliasing.
+    let sb_rzero = channel.rzero / 18;
+
+    // The anti-aliasing filter must be applied up-to the last non-zero sub-band. After
+    // anti-aliasing, the first zeroed sub-band may have non-zero values "smeared" into it.
+    // Therefore, the rzero must be updated.
+    channel.rzero = 18 * sb_limit.min(sb_rzero + 2).min(32);
 
     // Anti-aliasing is performed using 8 butterfly calculations at the boundaries of ADJACENT
     // sub-bands. For each calculation, there are two samples: lower and upper. For each iteration,
@@ -255,7 +264,7 @@ pub(super) fn antialias(channel: &GranuleChannel, samples: &mut [f32; 576]) {
     //
     // Note that all butterfly calculations only involve two samples, and all iterations are
     // independant of each other. This lends itself well for SIMD processing.
-    for sb in (18..sb_end).step_by(18) {
+    for sb in (18..channel.rzero).step_by(18) {
         for i in 0..8 {
             let li = sb - 1 - i;
             let ui = sb + i;
@@ -273,17 +282,24 @@ pub(super) fn hybrid_synthesis(
     overlap: &mut [[f32; 18]; 32],
     samples: &mut [f32; 576],
 ) {
-    // Determine the number of sub-bands to process as long blocks. Short blocks process 0 sub-bands
-    // as long blocks, mixed blocks process the first 2 sub-bands as long blocks, and all other
-    // block types (long, start, end) process all 32 sub-bands as long blocks.
-    let n_long_bands = match channel.block_type {
+    // The first sub-band after the rzero partition boundary is the sub-band limit. All sub-bands
+    // past this are zeroed.
+    let sb_limit = (channel.rzero + 17) / 18;
+
+    // Determine the split point of long and short blocks in terms of a sub-band index.
+    //
+    // Short blocks process 0 sub-bands as long blocks, mixed blocks process the first 2 sub-bands
+    // as long blocks, and all other block types (long, start, end) process all 32 sub-bands as long
+    // blocks.
+    let sb_split = match channel.block_type {
         BlockType::Short { is_mixed: false } => 0,
         BlockType::Short { is_mixed: true } => 2,
         _ => 32,
     };
 
-    // For sub-bands that are processed as long blocks, perform the 36-point IMDCT.
-    if n_long_bands > 0 {
+    // If the split point is not 0, then some sub-bands need to be processed as long blocks using
+    // the 36-point IMDCT.
+    if sb_split > 0 {
         // Select the appropriate window given the block type.
         let window: &[f32; 36] = match channel.block_type {
             BlockType::Start => &IMDCT_WINDOWS[1],
@@ -291,10 +307,13 @@ pub(super) fn hybrid_synthesis(
             _ => &IMDCT_WINDOWS[0],
         };
 
-        // For each of the 32 sub-bands (18 samples each)...
-        for sb in 0..n_long_bands {
-            // Casting to a slice of a known-size lets the compiler elide bounds checks.
+        let sb_long_end = sb_split.min(sb_limit);
+
+        // For each of the sub-bands (18 samples each) in the long block...
+        for sb in 0..sb_long_end {
             let start = 18 * sb;
+
+            // Casting to a slice of a known-size lets the compiler elide bounds checks.
             let sub_band: &mut [f32; 18] = (&mut samples[start..(start + 18)]).try_into().unwrap();
 
             // Perform the 36-point on the entire sub-band.
@@ -302,22 +321,35 @@ pub(super) fn hybrid_synthesis(
         }
     }
 
-    // If there are any sub-bands remaining, process them as short blocks. For short blocks, the
-    // 12-point IMDCT must be used on each window.
-    if n_long_bands < 32 {
+    // If the split point is less-than 32, then some sub-bands need to be processed as short blocks
+    // using the 12-point IMDCT on each of the three windows.
+    if sb_split < 32 {
         // Select the short block window.
         let window: &[f32; 36] = &IMDCT_WINDOWS[2];
 
-        // For each of the remaining 32 sub-bands (18 samples each)...
-        for sb in n_long_bands..32 {
-            // Casting to a slice of a known-size lets the compiler elide bounds checks.
+        let sb_short_begin = sb_split.min(sb_limit);
+
+        // For each of the sub-bands (18 samples each) in the short block...
+        for sb in sb_short_begin..sb_limit {
             let start = 18 * sb;
+
+            // Casting to a slice of a known-size lets the compiler elide bounds checks.
             let sub_band: &mut [f32; 18] = (&mut samples[start..(start + 18)]).try_into().unwrap();
 
             // Perform the 12-point IMDCT on each of the 3 short windows within the sub-band (6
             // samples each).
             imdct12_win(sub_band, window, &mut overlap[sb]);
         }
+    }
+
+    // Every sub-band after the the sub-band limit are zeroed, however, the overlap for that
+    // sub-band may be non-zero. Therefore, copy it over.
+    for sb in sb_limit..32 {
+        let start = 18 * sb;
+        let sub_band: &mut [f32; 18] = (&mut samples[start..(start + 18)]).try_into().unwrap();
+
+        sub_band.copy_from_slice(&overlap[sb]);
+        overlap[sb].fill(0.0);
     }
 }
 
