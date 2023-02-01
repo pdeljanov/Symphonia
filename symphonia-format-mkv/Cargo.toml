@@ -15,6 +15,7 @@ rust-version = "1.53"
 [dependencies]
 log = "0.4"
 lazy_static = "1.4.0"
+webm-iterable = { version = "0.6.2" }
 symphonia-core = { version = "0.5.4", path = "../symphonia-core" }
 symphonia-metadata = { version = "0.5.4", path = "../symphonia-metadata" }
 symphonia-utils-xiph = { version = "0.5.4", path = "../symphonia-utils-xiph" }

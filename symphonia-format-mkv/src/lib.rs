@@ -14,11 +14,8 @@
 #![allow(clippy::identity_op)]
 #![allow(clippy::manual_range_contains)]
 
-mod codecs;
+mod compression;
 mod demuxer;
-mod ebml;
-mod element_ids;
-mod lacing;
-mod segment;
+mod tags;
 
 pub use crate::demuxer::MkvReader;

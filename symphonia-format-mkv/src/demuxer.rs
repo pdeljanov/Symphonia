@@ -6,138 +6,155 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use std::collections::{HashMap, VecDeque};
-use std::convert::TryFrom;
+use std::convert::{TryFrom, TryInto};
 use std::io::{Seek, SeekFrom};
 
-use symphonia_core::audio::Layout;
-use symphonia_core::codecs::{CodecParameters, CODEC_TYPE_FLAC, CODEC_TYPE_VORBIS};
 use symphonia_core::errors::{
     decode_error, end_of_stream_error, seek_error, unsupported_error, Error, Result, SeekErrorKind,
 };
 use symphonia_core::formats::{
     Cue, FormatOptions, FormatReader, Packet, SeekMode, SeekTo, SeekedTo, Track,
 };
-use symphonia_core::io::{BufReader, MediaSource, MediaSourceStream, ReadBytes};
-use symphonia_core::meta::{Metadata, MetadataLog};
-use symphonia_core::probe::Instantiate;
-use symphonia_core::probe::{Descriptor, QueryDescriptor};
-use symphonia_core::sample::SampleFormat;
+use symphonia_core::io::{MediaSource, MediaSourceStream, ReadBytes};
+use symphonia_core::meta::{MetadataLog, MetadataBuilder, Value, Tag, MetadataRevision, Metadata};
+use symphonia_core::probe::{Descriptor, Instantiate, QueryDescriptor};
 use symphonia_core::support_format;
 use symphonia_core::units::TimeBase;
-use symphonia_utils_xiph::flac::metadata::{MetadataBlockHeader, MetadataBlockType};
+use webm_iterable::errors::TagIteratorError;
+use webm_iterable::matroska_spec::{MatroskaSpec, Master, SimpleBlock};
 
-use crate::codecs::codec_id_to_type;
-use crate::ebml::{EbmlElement, ElementHeader, ElementIterator};
-use crate::element_ids::{ElementType, ELEMENTS};
-use crate::lacing::{extract_frames, read_xiph_sizes, Frame};
-use crate::segment::{
-    BlockGroupElement, ClusterElement, CuesElement, InfoElement, SeekHeadElement, TagsElement,
-    TracksElement,
-};
+use crate::compression::{Compression, decompress};
+use crate::tags::block_group::BlockGroup;
+use crate::tags::cue_point::CuePoint;
+use crate::tags::info::Info;
+use crate::tags::track_entry::TrackEntry;
 
-#[allow(dead_code)]
-pub struct TrackState {
-    /// Codec parameters.
-    pub(crate) codec_params: CodecParameters,
-    /// The track number.
-    track_num: u32,
-    /// Default frame duration in nanoseconds.
-    pub(crate) default_frame_duration: Option<u64>,
+use webm_iterable::WebmIterator;
+
+struct Frame {
+    pub(crate) track: u32,
+    /// Absolute frame timestamp.
+    pub(crate) timestamp: u64,
+    pub(crate) duration: u64,
+    pub(crate) data: Box<[u8]>,
+}
+
+struct TrackData {
+    pub default_duration: Option<u64>,
+    pub compression: Option<(Compression, Box<[u8]>)>,
 }
 
 /// Matroska (MKV) and WebM demultiplexer.
 ///
 /// `MkvReader` implements a demuxer for the Matroska and WebM formats.
 pub struct MkvReader {
-    /// Iterator over EBML element headers
-    iter: ElementIterator<MediaSourceStream>,
+    source: Option<WebmIterator<MediaSourceStream>>,
     tracks: Vec<Track>,
-    track_states: HashMap<u32, TrackState>,
-    current_cluster: Option<ClusterState>,
+    tracks_data: HashMap<u64, TrackData>,
     metadata: MetadataLog,
-    cues: Vec<Cue>,
-    frames: VecDeque<Frame>,
     timestamp_scale: u64,
-    clusters: Vec<ClusterElement>,
+    current_cluster_timestamp: Option<u64>,
+    cues: Vec<Cue>,
+    cued_clusters: Vec<(u64,u64)>,
+    frames: VecDeque<Frame>,
 }
 
-#[derive(Debug)]
-struct ClusterState {
-    timestamp: Option<u64>,
-    end: Option<u64>,
-}
+fn extract_tag_metadata(tags: Vec<MatroskaSpec>) -> Result<MetadataRevision> {
+    let mut tags_metadata_builder = MetadataBuilder::new();
+    for tag in tags {
+        if let MatroskaSpec::Tag(Master::Full(simple_tags)) = tag {
+            for tag in simple_tags {
+                if let MatroskaSpec::SimpleTag(Master::Full(tag_values)) = tag {
+                    let mut simple_tag_name = None;
+                    let mut simple_tag_value = None;
 
-fn vorbis_extra_data_from_codec_private(extra: &[u8]) -> Result<Box<[u8]>> {
-    const VORBIS_PACKET_TYPE_IDENTIFICATION: u8 = 1;
-    const VORBIS_PACKET_TYPE_SETUP: u8 = 5;
+                    for tag in tag_values {
+                        match tag {
+                            MatroskaSpec::TagName(val) => { simple_tag_name = Some(val); },
+                            MatroskaSpec::TagString(val) => { simple_tag_value = Some(Value::String(val)); },
+                            MatroskaSpec::TagBinary(val) => { simple_tag_value = Some(Value::Binary(val.into_boxed_slice())); },
+                            other => { log::debug!("ignored element {:?}", other); }
+                        }
+                    }
 
-    // Private Data for this codec has the following layout:
-    // - 1 byte that represents number of packets minus one;
-    // - Xiph coded lengths of packets, length of the last packet must be deduced (as in Xiph lacing)
-    // - packets in order:
-    //    - The Vorbis identification header
-    //    - Vorbis comment header
-    //    - codec setup header
-
-    let mut reader = BufReader::new(extra);
-    let packet_count = reader.read_byte()? as usize;
-    let packet_lengths = read_xiph_sizes(&mut reader, packet_count)?;
-
-    let mut packets = Vec::new();
-    for length in packet_lengths {
-        packets.push(reader.read_boxed_slice_exact(length as usize)?);
-    }
-
-    let last_packet_length = extra.len() - reader.pos() as usize;
-    packets.push(reader.read_boxed_slice_exact(last_packet_length)?);
-
-    let mut ident_header = None;
-    let mut setup_header = None;
-
-    for packet in packets {
-        match packet.first().copied() {
-            Some(VORBIS_PACKET_TYPE_IDENTIFICATION) => {
-                ident_header = Some(packet);
-            }
-            Some(VORBIS_PACKET_TYPE_SETUP) => {
-                setup_header = Some(packet);
-            }
-            _ => {
-                log::debug!("unsupported vorbis packet type");
+                    tags_metadata_builder.add_tag(Tag::new(
+                        None, 
+                        &simple_tag_name.ok_or(Error::DecodeError("mkv: missing tag name"))?.into_boxed_str(), 
+                        simple_tag_value.ok_or(Error::DecodeError("mkv: missing tag value"))?
+                    ));
+                }
             }
         }
     }
-
-    // This is layout expected currently by Vorbis codec.
-    Ok([
-        ident_header.ok_or(Error::DecodeError("mkv: missing vorbis identification packet"))?,
-        setup_header.ok_or(Error::DecodeError("mkv: missing vorbis setup packet"))?,
-    ]
-    .concat()
-    .into_boxed_slice())
+    Ok(tags_metadata_builder.metadata())
 }
 
-fn flac_extra_data_from_codec_private(codec_private: &[u8]) -> Result<Box<[u8]>> {
-    let mut reader = BufReader::new(codec_private);
-
-    let marker = reader.read_quad_bytes()?;
-    if marker != *b"fLaC" {
-        return decode_error("mkv (flac): missing flac stream marker");
-    }
-
-    let header = MetadataBlockHeader::read(&mut reader)?;
-
-    loop {
-        match header.block_type {
-            MetadataBlockType::StreamInfo => {
-                break Ok(reader.read_boxed_slice_exact(header.block_len as usize)?);
-            }
-            _ => reader.ignore_bytes(u64::from(header.block_len))?,
+fn get_tracks(tags: Vec<MatroskaSpec>) -> Result<Vec<TrackEntry>> {
+    let mut tracks = vec![];
+    for tag in tags {
+        if let MatroskaSpec::TrackEntry(Master::Full(data)) = tag {
+            tracks.push(TrackEntry::try_from(data)?);
         }
     }
+    Ok(tracks)
+}
+
+fn try_recover(it: &mut WebmIterator<MediaSourceStream>) -> impl FnMut(TagIteratorError) -> core::result::Result<Option<MatroskaSpec>, TagIteratorError> + '_ {
+    move |e| {
+        if let TagIteratorError::CorruptedFileData(_) = e {
+            log::warn!("mkv: corrupted file data detected. Attempting recovery...");
+            let mut next = it.next().transpose();
+            while matches!(next, Err(TagIteratorError::CorruptedFileData(_))) {
+                it.try_recover()?;
+                next = it.next().transpose();
+            }
+            log::debug!("mkv: resuming file from {}", it.last_emitted_tag_offset());
+            next
+        } else {
+            Err(e)
+        }
+    }
+}
+
+fn map_iterator_error(e: TagIteratorError) -> Error {
+    log::debug!("mkv decode error: {}", e.to_string());
+    Error::DecodeError("mkv decode error; see debug log for details")
 }
 
 impl MkvReader {
+
+    // To be honest, I'm not a huge fan of this function living here.  It's too similar to the above `try_recover` function, only
+    // it's tailored to work in the middle of a stream by seeking a cue point.  This seems like higher-level error handling that
+    // should maybe be handled outside of the demuxing library.
+    fn recover_self(&mut self) -> impl FnMut(TagIteratorError) -> core::result::Result<Option<MatroskaSpec>, TagIteratorError> + '_ {
+        move |e| {
+            if let TagIteratorError::CorruptedFileData(_) = e {
+                let it = self.source.as_mut().expect("mkv: cannot recover without iterator");
+                log::warn!("mkv: corrupted file data detected. Attempting recovery...");
+                let mut next = it.next().transpose();
+                let original_offset = it.last_emitted_tag_offset();
+                while matches!(next, Err(TagIteratorError::CorruptedFileData(_))) {
+                    it.try_recover()?;
+                    next = it.next().transpose();
+    
+                    if it.last_emitted_tag_offset() > original_offset + 15_000 {
+                        // If we've passed 15k bytes and are still getting errors, just try seeking from a cued point
+                        // Continuing to try and read tags is slow and also likely to fail
+                        let current_ts = self.current_cluster_timestamp.unwrap_or(0);
+                        let next_cluster = self.cued_clusters.iter().find(|c| c.0 > current_ts);
+                        if let Some((ts, _)) = next_cluster {
+                            self.seek_track_by_ts(self.tracks[0].id, *ts).map_err(|_| TagIteratorError::UnexpectedEOF { tag_start: 0, tag_id: None, tag_size: None, partial_data: None })?;
+                            break;
+                        }
+                    }
+                }
+                next
+            } else {
+                Err(e)
+            }
+        }
+    }
+
     fn seek_track_by_ts_forward(&mut self, track_id: u32, ts: u64) -> Result<SeekedTo> {
         let actual_ts = 'out: loop {
             // Skip frames from the buffer until the given timestamp
@@ -156,39 +173,32 @@ impl MkvReader {
     }
 
     fn seek_track_by_ts(&mut self, track_id: u32, ts: u64) -> Result<SeekedTo> {
-        if self.clusters.is_empty() {
+        if self.cued_clusters.is_empty() {
             self.seek_track_by_ts_forward(track_id, ts)
-        }
-        else {
+        } else {
             let mut target_cluster = None;
-            for cluster in &self.clusters {
-                if cluster.timestamp > ts {
+            for cluster in &self.cued_clusters {
+                if cluster.0 > ts {
                     break;
                 }
                 target_cluster = Some(cluster);
             }
             let cluster = target_cluster.ok_or(Error::SeekError(SeekErrorKind::OutOfRange))?;
+            let pos = cluster.1;
 
-            let mut target_block = None;
-            for block in cluster.blocks.iter() {
-                if block.track as u32 != track_id {
-                    continue;
-                }
-                if block.timestamp > ts {
-                    break;
-                }
-                target_block = Some(block);
+            let mut source = self.source.take().ok_or(Error::DecodeError("mkv: iterator not available"))?.into_inner();
+            let current_pos = source.pos();
+            if source.is_seekable() {
+                source.seek(SeekFrom::Start(pos))?;
+            } else if pos < current_pos {
+                return seek_error(SeekErrorKind::ForwardOnly);
+            } else {
+                source.ignore_bytes(pos - current_pos)?;
             }
-
-            let pos = match target_block {
-                Some(block) => block.pos,
-                None => cluster.pos,
-            };
-            self.iter.seek(pos)?;
+            self.source = Some(get_iterator(source));
 
             // Restore cluster's metadata
-            self.current_cluster =
-                Some(ClusterState { timestamp: Some(cluster.timestamp), end: cluster.end });
+            self.current_cluster_timestamp = Some(cluster.0);
 
             // Seek to a specified block inside the cluster.
             self.seek_track_by_ts_forward(track_id, ts)
@@ -196,239 +206,212 @@ impl MkvReader {
     }
 
     fn next_element(&mut self) -> Result<()> {
-        if let Some(ClusterState { end: Some(end), .. }) = &self.current_cluster {
-            // Make sure we don't read past the current cluster if its size is known.
-            if self.iter.pos() >= *end {
-                // log::debug!("ended cluster");
-                self.current_cluster = None;
+        let source = self.source.as_mut().ok_or(Error::DecodeError("mkv: iterator not available"))?;
+        if let Some(tag) = source.next().transpose().or_else(self.recover_self()).map_err(map_iterator_error)? {
+            match tag {
+                MatroskaSpec::Cluster(Master::End) => {
+                    self.current_cluster_timestamp = None;
+                },
+                MatroskaSpec::Timestamp(val) => {
+                    self.current_cluster_timestamp = Some(val);
+                },
+                MatroskaSpec::SimpleBlock(data) => {
+                    let simple_block: core::result::Result<SimpleBlock<'_>,_> = data.as_slice().try_into();
+                    if let Ok(simple_block) = simple_block {
+                        if let Ok(frame_data) = simple_block.read_frame_data() {
+                            self.append_block_frames(simple_block.timestamp, None, simple_block.track, frame_data);
+                        } else {
+                            log::warn!("mkv: unable to read corrupted frame data in SimpleBlock element");
+                        }
+                    } else {
+                        log::warn!("mkv: unable to read corrupted SimpleBlock element");
+                    }
+                },
+                MatroskaSpec::BlockGroup(Master::Full(tags)) => {            
+                    if let Ok(group) = BlockGroup::try_from(&tags) {
+                        if let Ok(frame_data) = group.block.read_frame_data() {
+                            self.append_block_frames(group.block.timestamp, group.duration, group.block.track, frame_data);
+                        } else {
+                            log::warn!("mkv: unable to read corrupted frame data in BlockGroup element");
+                        }
+                    }
+                }
+                MatroskaSpec::Tags(Master::Full(tags)) => {
+                    self.metadata.push(extract_tag_metadata(tags)?);
+                },
+                other => {
+                    log::debug!("ignored element {:?}", other);
+                }
             }
+            Ok(())
+        } else {
+            end_of_stream_error()
+        }
+    }
+
+    fn append_block_frames(&mut self, rel_ts: i16, block_duration: Option<u64>, track: u64, frame_data: Vec<webm_iterable::matroska_spec::Frame<'_>>) {
+        if self.current_cluster_timestamp.is_none() {
+            log::warn!("block element with unknown cluster timestamp");
+            return;
         }
 
-        // Each Cluster is being read incrementally so we need to keep track of
-        // which cluster we are currently in.
-
-        let header = match self.iter.read_child_header()? {
-            Some(header) => header,
-            None => {
-                // If we reached here, it must be an end of stream.
-                return end_of_stream_error();
+        let mut timestamp = self.current_cluster_timestamp.map(|cluster_ts| {
+            if rel_ts < 0 {
+                cluster_ts.saturating_sub((-rel_ts) as u64)
+            } else {
+                cluster_ts + rel_ts as u64
+            }
+        }).unwrap();
+        
+        let track_data = self.tracks_data.get(&track);
+        let default_frame_duration = track_data.and_then(|it| it.default_duration.as_ref()).map(|it| it / self.timestamp_scale);
+        let frame_duration = block_duration.map(|d| d/(frame_data.len() as u64)).or(default_frame_duration).unwrap_or(0);
+        let compression = track_data.and_then(|t| t.compression.as_ref());
+        let decompress_frame = |data: &[u8]| {
+            if let Some(compression) = compression {
+                decompress(data, &compression.0, &compression.1)
+            } else {
+                data.to_vec().into_boxed_slice()
             }
         };
 
-        match header.etype {
-            ElementType::Cluster => {
-                self.current_cluster = Some(ClusterState { timestamp: None, end: header.end() });
-            }
-            ElementType::Timestamp => match self.current_cluster.as_mut() {
-                Some(cluster) => {
-                    cluster.timestamp = Some(self.iter.read_u64()?);
-                }
-                None => {
-                    self.iter.ignore_data()?;
-                    log::warn!("timestamp element outside of a cluster");
-                    return Ok(());
-                }
-            },
-            ElementType::SimpleBlock => {
-                let cluster_ts = match self.current_cluster.as_ref() {
-                    Some(ClusterState { timestamp: Some(ts), .. }) => *ts,
-                    Some(_) => {
-                        self.iter.ignore_data()?;
-                        log::warn!("missing cluster timestamp");
-                        return Ok(());
-                    }
-                    None => {
-                        self.iter.ignore_data()?;
-                        log::warn!("simple block element outside of a cluster");
-                        return Ok(());
-                    }
-                };
-
-                let data = self.iter.read_boxed_slice()?;
-                extract_frames(
-                    &data,
-                    None,
-                    &self.track_states,
-                    cluster_ts,
-                    self.timestamp_scale,
-                    &mut self.frames,
-                )?;
-            }
-            ElementType::BlockGroup => {
-                let cluster_ts = match self.current_cluster.as_ref() {
-                    Some(ClusterState { timestamp: Some(ts), .. }) => *ts,
-                    Some(_) => {
-                        self.iter.ignore_data()?;
-                        log::warn!("missing cluster timestamp");
-                        return Ok(());
-                    }
-                    None => {
-                        self.iter.ignore_data()?;
-                        log::warn!("block group element outside of a cluster");
-                        return Ok(());
-                    }
-                };
-
-                let group = self.iter.read_element_data::<BlockGroupElement>()?;
-                extract_frames(
-                    &group.data,
-                    group.duration,
-                    &self.track_states,
-                    cluster_ts,
-                    self.timestamp_scale,
-                    &mut self.frames,
-                )?;
-            }
-            ElementType::Tags => {
-                let tags = self.iter.read_element_data::<TagsElement>()?;
-                self.metadata.push(tags.to_metadata());
-                self.current_cluster = None;
-            }
-            _ if header.etype.is_top_level() => {
-                self.current_cluster = None;
-            }
-            other => {
-                log::debug!("ignored element {:?}", other);
-                self.iter.ignore_data()?;
-            }
+        for frame in frame_data {
+            self.frames.push_back(Frame { track: track as u32, timestamp, data: decompress_frame(frame.data), duration: frame_duration });
+            timestamp += frame_duration;
         }
-
-        Ok(())
     }
 }
 
+fn get_iterator(source: MediaSourceStream) -> WebmIterator<MediaSourceStream> {
+    WebmIterator::new(source, &[
+        MatroskaSpec::Ebml(Master::Start),
+        MatroskaSpec::Seek(Master::Start),
+        MatroskaSpec::Tracks(Master::Start),
+        MatroskaSpec::Info(Master::Start),
+        MatroskaSpec::CuePoint(Master::Start),
+        MatroskaSpec::Tags(Master::Start),
+        MatroskaSpec::BlockGroup(Master::Start),
+    ])
+}
+
 impl FormatReader for MkvReader {
-    fn try_new(mut reader: MediaSourceStream, _options: &FormatOptions) -> Result<Self>
+    fn try_new(reader: MediaSourceStream, _options: &FormatOptions) -> Result<Self>
     where
         Self: Sized,
     {
-        let is_seekable = reader.is_seekable();
+        let mut source = reader;
+        let is_seekable = source.is_seekable();
 
-        // Get the total length of the stream, if possible.
-        let total_len = if is_seekable {
-            let pos = reader.pos();
-            let len = reader.seek(SeekFrom::End(0))?;
-            reader.seek(SeekFrom::Start(pos))?;
-            log::info!("stream is seekable with len={} bytes.", len);
-            Some(len)
-        }
-        else {
-            None
-        };
+        let mut it = get_iterator(source);
 
-        let mut it = ElementIterator::new(reader, total_len);
-        let ebml = it.read_element::<EbmlElement>()?;
+        let ebml = it.next().map(|t| {
+            t.or_else(|_| decode_error("mkv: unable to read file"))
+        }).unwrap_or_else(|| {
+            unsupported_error("mkv: not an ebml file")
+        })?;
 
-        if !matches!(ebml.header.doc_type.as_str(), "matroska" | "webm") {
+        if !matches!(ebml, MatroskaSpec::Ebml(Master::Full(ebml_data)) if ebml_data.iter().any(|d| matches!(d, MatroskaSpec::DocType(d_type) if matches!(d_type.as_str(), "matroska" | "webm"))) ) {
             return unsupported_error("mkv: not a matroska / webm file");
         }
 
-        let segment_pos = match it.read_child_header()? {
-            Some(ElementHeader { etype: ElementType::Segment, data_pos, .. }) => data_pos,
-            _ => return unsupported_error("mkv: missing segment element"),
-        };
+        if !matches!(it.next(), Some(tag) if matches!(tag, Ok(MatroskaSpec::Segment(Master::Start)))) {
+            return unsupported_error("mkv: missing segment element");
+        }
 
-        let mut segment_tracks = None;
+        let mut segment_tracks: Option<Vec<TrackEntry>> = None;
         let mut info = None;
-        let mut clusters = Vec::new();
+        let mut cued_clusters = Vec::new();
         let mut metadata = MetadataLog::default();
-        let mut current_cluster = None;
+        let mut seeks = Vec::new();
 
-        let mut seek_positions = Vec::new();
-        while let Ok(Some(header)) = it.read_child_header() {
-            match header.etype {
-                ElementType::SeekHead => {
-                    let seek_head = it.read_element_data::<SeekHeadElement>()?;
-                    for element in seek_head.seeks.into_vec() {
-                        let tag = element.id as u32;
-                        let etype = match ELEMENTS.get(&tag) {
-                            Some((_, etype)) => *etype,
-                            None => continue,
-                        };
-                        seek_positions.push((etype, segment_pos + element.position));
-                    }
-                }
-                ElementType::Tracks => {
-                    segment_tracks = Some(it.read_element_data::<TracksElement>()?);
-                }
-                ElementType::Info => {
-                    info = Some(it.read_element_data::<InfoElement>()?);
-                }
-                ElementType::Cues => {
-                    let cues = it.read_element_data::<CuesElement>()?;
-                    for cue in cues.points.into_vec() {
-                        clusters.push(ClusterElement {
-                            timestamp: cue.time,
-                            pos: segment_pos + cue.positions.cluster_position,
-                            end: None,
-                            blocks: Box::new([]),
-                        });
-                    }
-                }
-                ElementType::Tags => {
-                    let tags = it.read_element_data::<TagsElement>()?;
-                    metadata.push(tags.to_metadata());
-                }
-                ElementType::Cluster => {
-                    // Set state for current cluster for the first call of `next_element`.
-                    current_cluster = Some(ClusterState { timestamp: None, end: header.end() });
+        let mut next_tag: Option<MatroskaSpec> = it.next().transpose().or_else(try_recover(&mut it)).map_err(map_iterator_error)?;
+        let segment_data_start = it.last_emitted_tag_offset() as u64;
 
+        while let Some(tag) = next_tag {
+            match tag {
+                MatroskaSpec::Seek(Master::Full(tags)) => {
+                    let mut tag_id = None;
+                    let mut tag_pos = None;
+                    for child in tags {
+                        match child {
+                            MatroskaSpec::SeekID(val) => { tag_id = Some(val.into_iter().fold(0u64, |a, c| (a << 8) + c as u64)); },
+                            MatroskaSpec::SeekPosition(val) => { tag_pos = Some(val); },
+                            other => {
+                                log::debug!("ignored element {:?}", other);
+                            }
+                        }
+                    }
+                    // TracksId = 0x1654AE6B, InfoId = 0x1549A966, TagsId = 0x1254C367, CuesId = 0x1C53BB6B
+                    if matches!(tag_id, Some(val) if matches!(val, 0x1654AE6B | 0x1549A966 | 0x1254C367 | 0x1C53BB6B)) {
+                        if let Some(pos) = tag_pos {
+                            seeks.push(segment_data_start + pos);
+                        }
+                    }
+                },
+                MatroskaSpec::Tracks(Master::Full(tags)) => {
+                    segment_tracks = Some(get_tracks(tags)?);
+                },
+                MatroskaSpec::Info(Master::Full(tags)) => {
+                    info = Some(Info::try_from(tags)?);
+                },
+                MatroskaSpec::CuePoint(Master::Full(tags)) => {
+                    let cue = CuePoint::try_from(tags)?;
+                    cued_clusters.push((cue.time, segment_data_start + cue.positions.cluster_position));
+                },
+                MatroskaSpec::Tags(Master::Full(tags)) => {
+                    metadata.push(extract_tag_metadata(tags)?);
+                },
+                MatroskaSpec::Cluster(Master::Start) => {
                     // Don't look forward into the stream since
                     // we can't be sure that we'll find anything useful.
                     break;
                 }
                 other => {
-                    it.ignore_data()?;
                     log::debug!("ignored element {:?}", other);
                 }
             }
+            next_tag = it.next().transpose().or_else(try_recover(&mut it)).map_err(map_iterator_error)?;
         }
 
+        
+        source = it.into_inner();
         if is_seekable {
-            // Make sure we don't jump backwards unnecessarily.
-            seek_positions.sort_by_key(|sp| sp.1);
+            seeks.sort_unstable();
+            for pos in seeks {
+                if source.seek(SeekFrom::Start(pos)).is_err() {
+                    // If we seek beyond the end of the file here it means the seeks are wrong, but we should still try to play what we can
+                    break;
+                }
+                let mut it = get_iterator(source);
 
-            for (etype, pos) in seek_positions {
-                it.seek(pos)?;
-
-                // Safety: The element type or position may be incorrect. The element iterator will
-                // validate the type (as declared in the header) of the element at the seeked
-                // position against the element type asked to be read.
-                match etype {
-                    ElementType::Tracks => {
-                        segment_tracks = Some(it.read_element::<TracksElement>()?);
-                    }
-                    ElementType::Info => {
-                        info = Some(it.read_element::<InfoElement>()?);
-                    }
-                    ElementType::Tags => {
-                        let tags = it.read_element::<TagsElement>()?;
-                        metadata.push(tags.to_metadata());
-                    }
-                    ElementType::Cues => {
-                        let cues = it.read_element::<CuesElement>()?;
-                        for cue in cues.points.into_vec() {
-                            clusters.push(ClusterElement {
-                                timestamp: cue.time,
-                                pos: segment_pos + cue.positions.cluster_position,
-                                end: None,
-                                blocks: Box::new([]),
-                            });
+                // Ignore errors here since seeks aren't strictly necessary
+                if let Some(Ok(tag)) = it.next() {
+                    match tag {
+                        MatroskaSpec::Tracks(Master::Full(tags)) => {
+                            segment_tracks = Some(get_tracks(tags)?);
+                        },
+                        MatroskaSpec::Info(Master::Full(tags)) => {
+                            info = Some(Info::try_from(tags)?);
+                        },
+                        MatroskaSpec::Tags(Master::Full(tags)) => {
+                            metadata.push(extract_tag_metadata(tags)?);
+                        },
+                        MatroskaSpec::CuePoint(Master::Full(tags)) => {
+                            let cue = CuePoint::try_from(tags)?;
+                            cued_clusters.push((cue.time, segment_data_start + cue.positions.cluster_position));
+                        },
+                        other => {
+                            log::debug!("seek ignored element {:?}", other); 
                         }
                     }
-                    _ => (),
                 }
+                source = it.into_inner();
             }
+            source.seek(SeekFrom::Start(segment_data_start))?;
         }
 
         let segment_tracks =
             segment_tracks.ok_or(Error::DecodeError("mkv: missing Tracks element"))?;
-
-        if is_seekable {
-            let mut reader = it.into_inner();
-            reader.seek(SeekFrom::Start(segment_pos))?;
-            it = ElementIterator::new(reader, total_len);
-        }
 
         let info = info.ok_or(Error::DecodeError("mkv: missing Info element"))?;
 
@@ -436,97 +419,25 @@ impl FormatReader for MkvReader {
         let time_base = TimeBase::new(u32::try_from(info.timestamp_scale).unwrap(), 1_000_000_000);
 
         let mut tracks = Vec::new();
-        let mut states = HashMap::new();
-        for track in segment_tracks.tracks.into_vec() {
-            let codec_type = codec_id_to_type(&track);
-
-            let mut codec_params = CodecParameters::new();
-            codec_params.with_time_base(time_base);
-
-            if let Some(duration) = info.duration {
-                codec_params.with_n_frames(duration as u64);
-            }
-
-            if let Some(audio) = track.audio {
-                codec_params.with_sample_rate(audio.sampling_frequency.round() as u32);
-
-                let format = audio.bit_depth.and_then(|bits| match bits {
-                    8 => Some(SampleFormat::S8),
-                    16 => Some(SampleFormat::S16),
-                    24 => Some(SampleFormat::S24),
-                    32 => Some(SampleFormat::S32),
-                    _ => None,
-                });
-
-                if let Some(format) = format {
-                    codec_params.with_sample_format(format);
-                }
-
-                if let Some(bits) = audio.bit_depth {
-                    codec_params.with_bits_per_sample(bits as u32);
-                }
-
-                let layout = match audio.channels {
-                    1 => Some(Layout::Mono),
-                    2 => Some(Layout::Stereo),
-                    3 => Some(Layout::TwoPointOne),
-                    6 => Some(Layout::FivePointOne),
-                    other => {
-                        log::warn!(
-                            "track #{} has custom number of channels: {}",
-                            track.number,
-                            other
-                        );
-                        None
-                    }
-                };
-
-                if let Some(layout) = layout {
-                    codec_params.with_channel_layout(layout);
-                }
-
-                if let Some(codec_type) = codec_type {
-                    codec_params.for_codec(codec_type);
-                    if let Some(codec_private) = track.codec_private {
-                        let extra_data = match codec_type {
-                            CODEC_TYPE_VORBIS => {
-                                vorbis_extra_data_from_codec_private(&codec_private)?
-                            }
-                            CODEC_TYPE_FLAC => flac_extra_data_from_codec_private(&codec_private)?,
-                            _ => codec_private,
-                        };
-                        codec_params.with_extra_data(extra_data);
-                    }
-                }
-            }
-
-            let track_id = track.number as u32;
-            tracks.push(Track {
-                id: track_id,
-                codec_params: codec_params.clone(),
-                language: track.language,
-            });
-
-            states.insert(
-                track_id,
-                TrackState {
-                    codec_params,
-                    track_num: track_id,
-                    default_frame_duration: track.default_duration,
-                },
+        let mut track_data = HashMap::new();
+        for track in segment_tracks {
+            tracks.push(track.to_core_track(time_base, info.duration.map(|d| d as u64))?);
+            track_data.insert(
+                track.number,
+                TrackData { default_duration: track.default_duration, compression: track.compression }
             );
         }
 
         Ok(Self {
-            iter: it,
+            source: Some(get_iterator(source)),
             tracks,
-            track_states: states,
-            current_cluster,
+            tracks_data: track_data,
+            current_cluster_timestamp: None,
             metadata,
             cues: Vec::new(),
             frames: VecDeque::new(),
             timestamp_scale: info.timestamp_scale,
-            clusters,
+            cued_clusters,
         })
     }
 
@@ -583,7 +494,7 @@ impl FormatReader for MkvReader {
     }
 
     fn into_inner(self: Box<Self>) -> MediaSourceStream {
-        self.iter.into_inner()
+        self.source.expect("mkv: source not available").into_inner()
     }
 }
 
