@@ -34,6 +34,9 @@ const NOISE_HCB: u8 = 13;
 const INTENSITY_HCB2: u8 = 14;
 const INTENSITY_HCB: u8 = 15;
 
+const INTENSITY_SCALE_MIN: i16 = -155;
+const NORMAL_SCALE_MIN: i16 = -100;
+
 lazy_static! {
     /// Pre-computed table of y = x^(4/3).
     static ref POW43_TABLE: [f32; 8192] = {
@@ -42,6 +45,32 @@ lazy_static! {
             *pow43 = f32::powf(i as f32, 4.0 / 3.0);
         }
         pow43
+    };
+}
+
+lazy_static! {
+    /// Pre-computed table of y = 2^(0.25 * (x - 156)) for decoding scale factors for normal bands.
+    /// This table is indexed relative to -100, the minimum encoded scale factor value for normal
+    /// bands. Therefore, an input of 0 corresponds to -100.
+    static ref NORMAL_SCF_TABLE: [f32; 256] = {
+        let mut table = [0f32; 256];
+        for (i, table) in table.iter_mut().enumerate() {
+            *table = 2.0f32.powf(0.25 * f32::from(i as i16 - 56 + NORMAL_SCALE_MIN))
+        }
+        table
+    };
+}
+
+lazy_static! {
+    /// Pre-computed table of y = 0.5^(0.25 * (x - 155)) for decoding scale factors for intensity
+    /// coded bands. This table is indexed relative to -155, the minimum encoded scale factor value
+    /// for intensity coded bands. Therefore, an input of 0 corresponds to -155.
+    static ref INTENSITY_SCF_TABLE: [f32; 256] = {
+        let mut table = [0f32; 256];
+        for (i, table) in table.iter_mut().enumerate() {
+            *table = 0.5f32.powf(0.25 * f32::from(i as i16 + INTENSITY_SCALE_MIN));
+        }
+        table
     };
 }
 
@@ -177,20 +206,6 @@ pub struct Ics {
     delay: [f32; 1024],
 }
 
-const INTENSITY_SCALE_MIN: i16 = -155;
-const NOISE_SCALE_MIN: i16 = -100;
-
-#[inline(always)]
-fn get_scale(scale: i16) -> f32 {
-    2.0f32.powf(0.25 * f32::from(scale - 56))
-    // 2.0f32.powf(0.25 * (f32::from(scale) - 100.0 - 56.0))
-}
-
-#[inline(always)]
-fn get_intensity_scale(scale: i16) -> f32 {
-    0.5f32.powf(0.25 * f32::from(scale))
-}
-
 impl Ics {
     pub fn new(sbinfo: GASubbandInfo) -> Self {
         Self {
@@ -278,11 +293,14 @@ impl Ics {
 
     fn decode_scale_factor_data<B: ReadBitsLtr>(&mut self, bs: &mut B) -> Result<()> {
         let mut noise_pcm_flag = true;
-        let mut scf_intensity = 0i16;
-        let mut scf_noise = i16::from(self.global_gain) - 90;
+        let mut scf_intensity = -INTENSITY_SCALE_MIN;
+        let mut scf_noise = i16::from(self.global_gain) - 90 - NORMAL_SCALE_MIN;
         let mut scf_normal = i16::from(self.global_gain);
 
         let scf_cb: &Codebook<Entry8x16> = &codebooks::SCALEFACTORS;
+
+        let table_normal_scf: &[f32; 256] = &NORMAL_SCF_TABLE;
+        let table_intensity_scf: &[f32; 256] = &INTENSITY_SCF_TABLE;
 
         for g in 0..self.info.window_groups {
             for sfb in 0..self.info.max_sfb {
@@ -292,12 +310,10 @@ impl Ics {
                 else if self.is_intensity(g, sfb) {
                     scf_intensity += i16::from(bs.read_codebook(scf_cb)?.0) - 60;
 
-                    validate!(
-                        (scf_intensity >= INTENSITY_SCALE_MIN)
-                            && (scf_intensity < INTENSITY_SCALE_MIN + 256)
-                    );
+                    // Valid range is -155 to 100. Value offset by 155 for lookup table indexing.
+                    validate!((scf_intensity >= 0) && (scf_intensity < 256));
 
-                    get_intensity_scale(scf_intensity)
+                    table_intensity_scf[scf_intensity as usize]
                 }
                 else if self.is_noise(g, sfb) {
                     if noise_pcm_flag {
@@ -308,17 +324,18 @@ impl Ics {
                         scf_noise += i16::from(bs.read_codebook(scf_cb)?.0) - 60;
                     }
 
-                    validate!(
-                        (scf_noise >= NOISE_SCALE_MIN) && (scf_noise < NOISE_SCALE_MIN + 256)
-                    );
+                    // Valid range is -100 to 155. Value offset by 100 for lookup table indexing.
+                    validate!((scf_noise >= 0) && (scf_noise < 256));
 
-                    get_scale(scf_noise)
+                    table_normal_scf[scf_noise as usize]
                 }
                 else {
                     scf_normal += i16::from(bs.read_codebook(scf_cb)?.0) - 60;
+
+                    // Valid range is -100 to 155. Value offset by 100 for lookup table indexing.
                     validate!((scf_normal >= 0) && (scf_normal < 256));
 
-                    get_scale(scf_normal - 100)
+                    table_normal_scf[scf_normal as usize]
                 }
             }
         }
