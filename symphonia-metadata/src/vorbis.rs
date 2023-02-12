@@ -73,8 +73,8 @@ lazy_static! {
         m.insert("musicbrainz_originalartistid", StandardTagKey::MusicBrainzOriginalArtistId);
         m.insert("musicbrainz_recordingid"     , StandardTagKey::MusicBrainzRecordingId);
         m.insert("musicbrainz_releasegroupid"  , StandardTagKey::MusicBrainzReleaseGroupId);
-        m.insert("musicbrainz_releasetrackid"  , StandardTagKey::MusicBrainzReleaseTrackId);
-        m.insert("musicbrainz_trackid"         , StandardTagKey::MusicBrainzTrackId);
+        m.insert("musicbrainz_trackid"         , StandardTagKey::MusicBrainzRecordingId);
+        m.insert("musicbrainz_releasetrackid"  , StandardTagKey::MusicBrainzTrackId);
         m.insert("musicbrainz_workid"          , StandardTagKey::MusicBrainzWorkId);
         m.insert("opus"                        , StandardTagKey::Opus);
         m.insert("organization"                , StandardTagKey::Label);

@@ -53,9 +53,9 @@ lazy_static! {
         );
         m.insert(
             "com.apple.iTunes:MusicBrainz Release Track Id",
-            StandardTagKey::MusicBrainzReleaseTrackId,
+            StandardTagKey::MusicBrainzTrackId,
         );
-        m.insert("com.apple.iTunes:MusicBrainz Track Id", StandardTagKey::MusicBrainzTrackId);
+        m.insert("com.apple.iTunes:MusicBrainz Track Id", StandardTagKey::MusicBrainzRecordingId);
         m.insert("com.apple.iTunes:MusicBrainz Work Id", StandardTagKey::MusicBrainzWorkId);
         m.insert("com.apple.iTunes:originaldate", StandardTagKey::OriginalDate);
         m.insert("com.apple.iTunes:PRODUCER", StandardTagKey::Producer);

@@ -152,7 +152,6 @@ pub enum StandardTagKey {
     MusicBrainzRecordingId,
     MusicBrainzReleaseGroupId,
     MusicBrainzReleaseStatus,
-    MusicBrainzReleaseTrackId,
     MusicBrainzReleaseType,
     MusicBrainzTrackId,
     MusicBrainzWorkId,
@@ -391,26 +390,9 @@ pub struct VendorData {
 /// `Metadata` is a container for a single discrete revision of metadata information.
 #[derive(Clone, Debug, Default)]
 pub struct MetadataRevision {
-    tags: Vec<Tag>,
-    visuals: Vec<Visual>,
-    vendor_data: Vec<VendorData>,
-}
-
-impl MetadataRevision {
-    /// Gets an immutable slice to the `Tag`s in this revision.
-    pub fn tags(&self) -> &[Tag] {
-        &self.tags
-    }
-
-    /// Gets an immutable slice to the `Visual`s in this revision.
-    pub fn visuals(&self) -> &[Visual] {
-        &self.visuals
-    }
-
-    /// Gets an immutable slice to the `VendorData` in this revision.
-    pub fn vendor_data(&self) -> &[VendorData] {
-        &self.vendor_data
-    }
+    pub tags: Vec<Tag>,
+    pub visuals: Vec<Visual>,
+    pub vendor_data: Vec<VendorData>,
 }
 
 /// `MetadataBuilder` is the builder for `Metadata` revisions.
@@ -462,12 +444,12 @@ impl<'a> Metadata<'a> {
     }
 
     /// Gets an immutable reference to the current, and therefore oldest, revision of the metadata.
-    pub fn current(&self) -> Option<&MetadataRevision> {
-        self.revisions.front()
+    pub fn current(&mut self) -> Option<&mut MetadataRevision> {
+        self.revisions.front_mut()
     }
 
     /// Skips to, and gets an immutable reference to the latest, and therefore newest, revision of the metadata.
-    pub fn skip_to_latest(&mut self) -> Option<&MetadataRevision> {
+    pub fn skip_to_latest(&mut self) -> Option<&mut MetadataRevision> {
         loop {
             if self.pop().is_none() {
                 break;
