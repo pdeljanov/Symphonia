@@ -17,7 +17,7 @@ members = [
     "symphonia-format-ogg",
     "symphonia-format-wav",
     "symphonia-metadata",
-    #"symphonia-play",
+    "symphonia-play",
     "symphonia-utils-xiph",
     "symphonia-check",
 ]
