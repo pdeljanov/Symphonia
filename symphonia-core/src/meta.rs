@@ -443,9 +443,14 @@ impl<'a> Metadata<'a> {
         self.revisions.len() <= 1
     }
 
-    /// Gets an immutable reference to the current, and therefore oldest, revision of the metadata.
-    pub fn current(&mut self) -> Option<&mut MetadataRevision> {
+    /// Gets a mutable reference to the current, and therefore oldest, revision of the metadata.
+    pub fn current_mut(&mut self) -> Option<&mut MetadataRevision> {
         self.revisions.front_mut()
+    }
+
+    /// Gets an immutable reference to the current, and therefore oldest, revision of the metadata.
+    pub fn current(&self) -> Option<&MetadataRevision> {
+        self.revisions.front()
     }
 
     /// Skips to, and gets an immutable reference to the latest, and therefore newest, revision of the metadata.
@@ -455,7 +460,7 @@ impl<'a> Metadata<'a> {
                 break;
             }
         }
-        self.current()
+        self.current_mut()
     }
 
     /// If there are newer `Metadata` revisions, advances the `MetadataLog` by discarding the
@@ -465,8 +470,7 @@ impl<'a> Metadata<'a> {
     pub fn pop(&mut self) -> Option<MetadataRevision> {
         if self.revisions.len() > 1 {
             self.revisions.pop_front()
-        }
-        else {
+        } else {
             None
         }
     }
