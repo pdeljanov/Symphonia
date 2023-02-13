@@ -108,7 +108,8 @@ fn run(args: &ArgMatches) -> Result<i32> {
     // If the path string is '-' then read from standard input.
     let source = if path_str == "-" {
         Box::new(ReadOnlySource::new(std::io::stdin())) as Box<dyn MediaSource>
-    } else {
+    }
+    else {
         // Othwerise, get a Path from the path string.
         let path = Path::new(path_str);
 
@@ -146,14 +147,17 @@ fn run(args: &ArgMatches) -> Result<i32> {
             if args.is_present("verify-only") {
                 // Verify-only mode decodes and verifies the audio, but does not play it.
                 decode_only(probed.format, &DecoderOptions { verify: true, ..Default::default() })
-            } else if args.is_present("decode-only") {
+            }
+            else if args.is_present("decode-only") {
                 // Decode-only mode decodes the audio, but does not play or verify it.
                 decode_only(probed.format, &DecoderOptions { verify: false, ..Default::default() })
-            } else if args.is_present("probe-only") {
+            }
+            else if args.is_present("probe-only") {
                 // Probe-only mode only prints information about the format, tracks, metadata, etc.
                 print_format(path_str, &mut probed);
                 Ok(0)
-            } else {
+            }
+            else {
                 // Playback mode.
                 print_format(path_str, &mut probed);
 
@@ -260,7 +264,8 @@ fn play(
                 0
             }
         }
-    } else {
+    }
+    else {
         // If not seeking, the seek timestamp is 0.
         0
     };
@@ -354,7 +359,8 @@ fn play_track(
 
                     // Try to open the audio output.
                     audio_output.replace(output::try_open(spec, duration).unwrap());
-                } else {
+                }
+                else {
                     // TODO: Check the audio spec. and duration hasn't changed.
                 }
 
@@ -436,7 +442,8 @@ fn print_format(path: &str, probed: &mut ProbeResult) {
             info!("tags that are part of the container format are preferentially printed.");
             info!("not printing additional tags that were found while probing.");
         }
-    } else if let Some(metadata_rev) = probed.metadata.get().as_ref().and_then(|m| m.current()) {
+    }
+    else if let Some(metadata_rev) = probed.metadata.get().as_ref().and_then(|m| m.current()) {
         print_tags(metadata_rev.tags.as_ref());
         print_visuals(metadata_rev.visuals.as_ref());
     }
@@ -465,7 +472,8 @@ fn print_tracks(tracks: &[Track]) {
 
             if let Some(codec) = symphonia::default::get_codecs().get_codec(params.codec) {
                 println!("{} ({})", codec.long_name, codec.short_name);
-            } else {
+            }
+            else {
                 println!("Unknown (#{})", params.codec);
             }
 
@@ -479,7 +487,8 @@ fn print_tracks(tracks: &[Track]) {
                         fmt_time(params.start_ts, tb),
                         params.start_ts
                     );
-                } else {
+                }
+                else {
                     println!("|          Start Time:      {}", params.start_ts);
                 }
             }
@@ -490,7 +499,8 @@ fn print_tracks(tracks: &[Track]) {
                         fmt_time(n_frames, tb),
                         n_frames
                     );
-                } else {
+                }
+                else {
                     println!("|          Frames:          {}", n_frames);
                 }
             }
@@ -542,7 +552,8 @@ fn print_cues(cues: &[Cue]) {
                             "{}",
                             print_tag_item(tidx + 1, &format!("{:?}", std_key), &tag.value, 21)
                         );
-                    } else {
+                    }
+                    else {
                         println!("{}", print_tag_item(tidx + 1, &tag.key, &tag.value, 21));
                     }
                 }
@@ -604,7 +615,8 @@ fn print_visuals(visuals: &[Visual]) {
             if let Some(usage) = visual.usage {
                 println!("|     [{:0>2}] Usage:      {:?}", idx + 1, usage);
                 println!("|          Media Type: {}", visual.media_type);
-            } else {
+            }
+            else {
                 println!("|     [{:0>2}] Media Type: {}", idx + 1, visual.media_type);
             }
             if let Some(dimensions) = visual.dimensions {
@@ -632,7 +644,8 @@ fn print_visuals(visuals: &[Visual]) {
                         "{}",
                         print_tag_item(tidx + 1, &format!("{:?}", std_key), &tag.value, 21)
                     );
-                } else {
+                }
+                else {
                     println!("{}", print_tag_item(tidx + 1, &tag.key, &tag.value, 21));
                 }
             }
@@ -724,7 +737,8 @@ fn print_progress(ts: u64, dur: Option<u64>, tb: Option<TimeBase>) {
             write!(output, " {} -{}:{:0>2}:{:0>4.1}", progress_bar(ts, dur), hours, mins, secs)
                 .unwrap();
         }
-    } else {
+    }
+    else {
         write!(output, "\r\u{25b6}\u{fe0f}  {}", ts).unwrap();
     }
 
