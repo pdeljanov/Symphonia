@@ -30,6 +30,7 @@ mp2 = ["symphonia-bundle-mp3/mp2"]
 mp3 = ["symphonia-bundle-mp3/mp3"]
 ogg = ["symphonia-format-ogg"]
 pcm = ["symphonia-codec-pcm"]
+riff = ["symphonia-format-riff"]
 vorbis = ["symphonia-codec-vorbis"]
 wav = ["symphonia-format-wav"]
 
@@ -54,6 +55,7 @@ all-formats = [
     "isomp4",
     "mkv",
     "ogg",
+    "riff",
     "wav"
 ]
 
@@ -109,6 +111,11 @@ optional = true
 [dependencies.symphonia-codec-vorbis]
 version = "0.5.2"
 path = "../symphonia-codec-vorbis"
+optional = true
+
+[dependencies.symphonia-format-riff]
+version = "0.5.2"
+path = "../symphonia-format-riff"
 optional = true
 
 [dependencies.symphonia-format-wav]
