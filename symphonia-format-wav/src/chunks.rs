@@ -15,7 +15,7 @@ use symphonia_core::codecs::{
     CODEC_TYPE_PCM_F64LE, CODEC_TYPE_PCM_MULAW, CODEC_TYPE_PCM_S16LE, CODEC_TYPE_PCM_S24LE,
     CODEC_TYPE_PCM_S32LE, CODEC_TYPE_PCM_U8,
 };
-use symphonia_core::errors::{decode_error, unsupported_error, Result};
+use symphonia_core::errors::{decode_error, unsupported_error, Error, Result};
 use symphonia_core::io::ReadBytes;
 use symphonia_core::meta::Tag;
 use symphonia_metadata::riff;
@@ -305,13 +305,8 @@ impl WaveFormatChunk {
             }
         };
 
-        // The PCM format only supports 1 or 2 channels, for mono and stereo channel layouts,
-        // respectively.
-        let channels = match n_channels {
-            1 => Channels::FRONT_LEFT,
-            2 => Channels::FRONT_LEFT | Channels::FRONT_RIGHT,
-            _ => return decode_error("wav: channel layout is not stereo or mono for fmt_pcm"),
-        };
+        let channels = Channels::from_bits((1 << n_channels) - 1)
+            .ok_or(Error::DecodeError("wav: invalid channel count"))?;
 
         Ok(WaveFormatData::Pcm(WaveFormatPcm { bits_per_sample, channels, codec }))
     }
@@ -345,13 +340,9 @@ impl WaveFormatChunk {
         }
         reader.ignore_bytes(extra_size)?;
 
-        // The ADPCM format only supports 1 or 2 channels, for mono and stereo channel layouts,
-        // respectively.
-        let channels = match n_channels {
-            1 => Channels::FRONT_LEFT,
-            2 => Channels::FRONT_LEFT | Channels::FRONT_RIGHT,
-            _ => return decode_error("wav: channel layout is not stereo or mono for fmt_adpcm"),
-        };
+        let channels = Channels::from_bits((1 << n_channels) - 1)
+            .ok_or(Error::DecodeError("wav: invalid channel count"))?;
+
         Ok(WaveFormatData::Adpcm(WaveFormatAdpcm { bits_per_sample, channels, codec }))
     }
 
@@ -384,13 +375,8 @@ impl WaveFormatChunk {
             _ => return decode_error("wav: bits per sample for fmt_ieee must be 32 or 64 bits"),
         };
 
-        // The IEEE format only supports 1 or 2 channels, for mono and stereo channel layouts,
-        // respectively.
-        let channels = match n_channels {
-            1 => Channels::FRONT_LEFT,
-            2 => Channels::FRONT_LEFT | Channels::FRONT_RIGHT,
-            _ => return decode_error("wav: channel layout is not stereo or mono for fmt_ieee"),
-        };
+        let channels = Channels::from_bits((1 << n_channels) - 1)
+            .ok_or(Error::DecodeError("wav: invalid channel count"))?;
 
         Ok(WaveFormatData::IeeeFloat(WaveFormatIeeeFloat { channels, codec }))
     }
@@ -537,11 +523,8 @@ impl WaveFormatChunk {
             reader.ignore_bytes(u64::from(extra_size))?;
         }
 
-        let channels = match n_channels {
-            1 => Channels::FRONT_LEFT,
-            2 => Channels::FRONT_LEFT | Channels::FRONT_RIGHT,
-            _ => return decode_error("wav: channel layout is not stereo or mono for fmt_alaw"),
-        };
+        let channels = Channels::from_bits((1 << n_channels) - 1)
+            .ok_or(Error::DecodeError("wav: invalid channel count"))?;
 
         Ok(WaveFormatData::ALaw(WaveFormatALaw { codec: CODEC_TYPE_PCM_ALAW, channels }))
     }
@@ -561,11 +544,8 @@ impl WaveFormatChunk {
             reader.ignore_bytes(u64::from(extra_size))?;
         }
 
-        let channels = match n_channels {
-            1 => Channels::FRONT_LEFT,
-            2 => Channels::FRONT_LEFT | Channels::FRONT_RIGHT,
-            _ => return decode_error("wav: channel layout is not stereo or mono for fmt_mulaw"),
-        };
+        let channels = Channels::from_bits((1 << n_channels) - 1)
+            .ok_or(Error::DecodeError("wav: invalid channel count"))?;
 
         Ok(WaveFormatData::MuLaw(WaveFormatMuLaw { codec: CODEC_TYPE_PCM_MULAW, channels }))
     }
