@@ -223,7 +223,8 @@ impl ParseChunk for CommonChunk {
         let sample_size = reader.read_be_i16()?;
         
         let mut sample_rate: [u8; 10] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
-        let _res = reader.read_buf(sample_rate.as_mut());
+        let _res = reader.read_buf_exact(sample_rate.as_mut())?;
+        
         let sample_rate =  Extended::from_be_bytes(sample_rate);
         let sample_rate = sample_rate.to_f64() as u32;
         
