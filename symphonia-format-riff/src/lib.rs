@@ -40,7 +40,7 @@ const AIFF_RIFF_FORM: [u8; 4] = *b"AIFF";
 const AIFC_RIFF_FORM: [u8; 4] = *b"AIFC";
 
 /// The maximum number of frames that will be in a packet.
-/// Took this from symphonia-format-wav, but I don't know if it's correct.
+/// Since there are no real packets in AIFF, this is arbitrary, used same value as MP3.
 const AIFF_MAX_FRAMES_PER_PACKET: u64 = 1152;
 
 pub(crate) struct PacketInfo {
