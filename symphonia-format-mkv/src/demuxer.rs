@@ -501,6 +501,8 @@ impl FormatReader for MkvReader {
                 id: track_id,
                 codec_params: codec_params.clone(),
                 language: track.language,
+                name: track.name,
+                ..Default::default()
             });
 
             states.insert(
