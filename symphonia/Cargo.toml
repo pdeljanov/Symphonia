@@ -30,7 +30,7 @@ mp2 = ["symphonia-bundle-mp3/mp2"]
 mp3 = ["symphonia-bundle-mp3/mp3"]
 ogg = ["symphonia-format-ogg"]
 pcm = ["symphonia-codec-pcm"]
-riff = ["symphonia-format-riff"]
+aiff = ["symphonia-format-riff"]
 vorbis = ["symphonia-codec-vorbis"]
 wav = ["symphonia-format-wav"]
 
@@ -55,7 +55,7 @@ all-formats = [
     "isomp4",
     "mkv",
     "ogg",
-    "riff",
+    "aiff",
     "wav"
 ]
 

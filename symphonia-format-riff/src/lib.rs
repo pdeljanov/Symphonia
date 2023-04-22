@@ -53,7 +53,7 @@ impl PacketInfo {
     #[allow(dead_code)]
     fn with_blocks(block_size: u16, frames_per_block: u64) -> Result<Self> {
         if frames_per_block == 0 {
-            return decode_error("riff: frames per block is 0");
+            return decode_error("aiff: frames per block is 0");
         }
         Ok(Self {
             block_size: u64::from(block_size),
@@ -89,7 +89,7 @@ impl PacketInfo {
     }
 }
 
-pub struct RiffReader {
+pub struct AiffReader {
     reader: MediaSourceStream,
     tracks: Vec<Track>,
     cues: Vec<Cue>,
@@ -99,7 +99,7 @@ pub struct RiffReader {
     data_end_pos: u64,
 }
 
-impl QueryDescriptor for RiffReader {
+impl QueryDescriptor for AiffReader {
     fn query() -> &'static [Descriptor] {
         &[
             // AIFF RIFF form
@@ -108,7 +108,7 @@ impl QueryDescriptor for RiffReader {
                 " Resource Interchange File Format",
                 &["aiff", "aif", "aifc"], 
                 &["audio/aiff", "audio/x-aiff", " sound/aiff", "audio/x-pn-aiff"], 
-                &[b"FORM"] // TODO: In v0.6 this should also support wave ("RIFF") and avi
+                &[b"FORM"]
             ),
         ]
     }
@@ -118,13 +118,12 @@ impl QueryDescriptor for RiffReader {
     }
 }
 
-impl FormatReader for RiffReader {
+impl FormatReader for AiffReader {
     fn try_new(mut source: MediaSourceStream, _options: &FormatOptions) -> Result<Self> {
         // The FORM marker should be present.
-        // TODO: in v0.6 this should also support wave and avi
         let marker = source.read_quad_bytes()?;
         if marker != AIFF_STREAM_MARKER {
-            return unsupported_error("riff: missing riff stream marker");
+            return unsupported_error("aiff: missing riff stream marker");
         }
 
         // File is basically one RIFF chunk, with the actual meta and audio data as sub-chunks (called local chunks).
@@ -133,14 +132,13 @@ impl FormatReader for RiffReader {
         let riff_len = source.read_be_u32()?;
         let riff_form = source.read_quad_bytes()?;
 
-        // TODO: in v0.6 this should also support wave and avi
         if riff_form == AIFF_RIFF_FORM {
             debug!("riff form is aiff");
         } else if riff_form == AIFC_RIFF_FORM {
-            return unsupported_error("riff: No support for aifc files");
+            return unsupported_error("aiff: No support for aifc files");
         } else {
             error!("riff form is not supported ({})", String::from_utf8_lossy(&riff_form));
-            return unsupported_error("riff: riff form is not supported");
+            return unsupported_error("aiff: riff form is not supported");
         }
 
         let mut riff_chunks = ChunksReader::<RiffAiffChunks>::new(riff_len);
@@ -150,7 +148,6 @@ impl FormatReader for RiffReader {
         let metadata: MetadataLog = Default::default();
         let mut packet_info = PacketInfo::without_blocks(0);
 
-        // TODO: in v0.6 this should also support wave and avi
         loop {
             let chunk = riff_chunks.next(&mut source)?;
 
@@ -158,7 +155,7 @@ impl FormatReader for RiffReader {
             // unsupported. 
             // TODO: According to the spec additional chunks can be added after the sound data chunk. In fact any order can be possible.
             if chunk.is_none() {
-                return unsupported_error("riff: missing data chunk");
+                return unsupported_error("aiff: missing data chunk");
             }
 
             match chunk.unwrap() {
@@ -186,7 +183,7 @@ impl FormatReader for RiffReader {
                     append_sound_params(&mut codec_params, &data, &packet_info);
 
                     // Add a new track using the collected codec parameters.
-                    return Ok(RiffReader {
+                    return Ok(AiffReader {
                         reader: source,
                         tracks: vec![Track::new(0, codec_params)],
                         cues: Vec::new(),
@@ -203,10 +200,10 @@ impl FormatReader for RiffReader {
     fn next_packet(&mut self) -> Result<Packet> {
         let pos = self.reader.pos();
         if self.tracks.is_empty() {
-            return decode_error("riff: no tracks");
+            return decode_error("aiff: no tracks");
         }
         if self.packet_info.is_empty() {
-            return decode_error("riff: block size is 0");
+            return decode_error("aiff: block size is 0");
         }
 
         // Determine the number of complete blocks remaining in the data chunk.
