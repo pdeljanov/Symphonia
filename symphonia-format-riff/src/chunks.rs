@@ -6,152 +6,19 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use std::fmt;
-use std::marker::PhantomData;
+
+use crate::{PacketInfo, FormatData, FormatPcm, ParseChunkTag, ParseChunk, ChunkParser};
 
 use symphonia_core::audio::Channels;
-use symphonia_core::codecs::CodecType;
 use symphonia_core::codecs::{
     CODEC_TYPE_PCM_S8, CODEC_TYPE_PCM_S16BE, CODEC_TYPE_PCM_S24BE, CODEC_TYPE_PCM_S32BE,
 };
 use symphonia_core::errors::{decode_error, unsupported_error, Result};
 use symphonia_core::io::ReadBytes;
 
-use log::info;
 
 use extended::Extended;
 
-use crate::PacketInfo;
-
-pub trait ParseChunkTag: Sized {
-    fn parse_tag(tag: [u8; 4], len: u32) -> Option<Self>;
-}
-
-enum NullChunks {}
-
-impl ParseChunkTag for NullChunks {
-    fn parse_tag(_tag: [u8; 4], _len: u32) -> Option<Self> {
-        None
-    }
-}
-
-/// `ChunksReader` reads chunks from a `ByteStream`. It is generic across a type, usually an enum,
-/// implementing the `ParseChunkTag` trait. When a new chunk is encountered in the stream,
-/// `parse_tag` on T is called to return an object capable of parsing/reading that chunk or `None`.
-/// This makes reading the actual chunk data lazy in that the  chunk is not read until the object is
-/// consumed.
-pub struct ChunksReader<T: ParseChunkTag> {
-    len: u32,
-    consumed: u32,
-    phantom: PhantomData<T>,
-}
-
-impl<T: ParseChunkTag> ChunksReader<T> {
-    pub fn new(len: u32) -> Self {
-        ChunksReader { len, consumed: 0, phantom: PhantomData }
-    }
-
-    pub fn next<B: ReadBytes>(&mut self, reader: &mut B) -> Result<Option<T>> {
-        // Loop until a chunk is recognized and returned, or the end of stream is reached.
-        loop {
-            // Align to the next 2-byte boundary if not currently aligned.
-            if self.consumed & 0x1 == 1 {
-                reader.read_u8()?;
-                self.consumed += 1;
-            }
-
-            // Check if there are enough bytes for another chunk, if not, there are no more chunks.
-            if self.consumed + 8 > self.len {
-                return Ok(None);
-            }
-
-            // Read tag and len, the chunk header.
-            let tag = reader.read_quad_bytes()?;
-            let len = reader.read_be_u32()?; 
-            self.consumed += 8;
-            
-            // Check if the ChunkReader has enough unread bytes to fully read the chunk.
-            //
-            // Warning: the formulation of this conditional is critical because len is untrusted
-            // input, it may overflow when if added to anything.
-            if self.len - self.consumed < len {
-                // When ffmpeg encodes to stdout the riff (parent) and data chunk lengths are
-                // (2^32)-1 since the size can't be known ahead of time.
-                if !(self.len == len && len == u32::MAX) {
-                    return decode_error("riff: chunk length exceeds parent (list) chunk length");
-                }
-            }
-
-            // The length of the chunk has been validated, so "consume" the chunk.
-            self.consumed = self.consumed.saturating_add(len);
-
-            match T::parse_tag(tag, len) {
-                Some(chunk) => return Ok(Some(chunk)),
-                None => {
-                    // As per the RIFF spec, unknown chunks are to be ignored.
-                    info!(
-                        "ignoring unknown chunk: tag={}, len={}.",
-                        String::from_utf8_lossy(&tag),
-                        len
-                    );
-
-                    reader.ignore_bytes(u64::from(len))?
-                }
-            }
-        }
-    }
-
-    #[allow(dead_code)]
-    pub fn finish<B: ReadBytes>(&mut self, reader: &mut B) -> Result<()> {
-        // If data is remaining in this chunk, skip it.
-        if self.consumed < self.len {
-            let remaining = self.len - self.consumed;
-            reader.ignore_bytes(u64::from(remaining))?;
-            self.consumed += remaining;
-        }
-
-        // Pad the chunk to the next 2-byte boundary.
-        if self.len & 0x1 == 1 {
-            reader.read_u8()?;
-        }
-
-        Ok(())
-    }
-}
-
-/// Common trait implemented for all chunks that are parsed by a `ChunkParser`.
-pub trait ParseChunk: Sized {
-    fn parse<B: ReadBytes>(reader: &mut B, tag: [u8; 4], len: u32) -> Result<Self>;
-}
-
-/// `ChunkParser` is a utility struct for unifying the parsing of chunks.
-pub struct ChunkParser<P: ParseChunk> {
-    tag: [u8; 4],
-    len: u32,
-    phantom: PhantomData<P>,
-}
-
-impl<P: ParseChunk> ChunkParser<P> {
-    fn new(tag: [u8; 4], len: u32) -> Self {
-        ChunkParser { tag, len, phantom: PhantomData }
-    }
-
-    pub fn parse<B: ReadBytes>(&self, reader: &mut B) -> Result<P> {
-        P::parse(reader, self.tag, self.len)
-    }
-}
-
-pub enum FormatData {
-    Pcm(FormatPcm),
-}
-
-pub struct FormatPcm {
-    /// The number of bits per sample. In the PCM format, this is always a multiple of 8-bits.
-    pub bits_per_sample: u16,
-    /// Channel bitmask.
-    pub channels: Channels,
-    /// Codec type.
-    pub codec: CodecType,
-}
 
 /// `CommonChunk` is a required AIFF chunk, containing metadata.
 pub struct CommonChunk {
@@ -212,6 +79,7 @@ impl CommonChunk {
                 let block_align = self.n_channels * self.sample_size / 8;
                 Ok(PacketInfo::without_blocks(block_align as u16))
             }
+            _=> todo!("other formats")
         }
     }
 }
@@ -250,7 +118,13 @@ impl fmt::Display for CommonChunk {
                 writeln!(f, "\t\tbits_per_sample: {},", pcm.bits_per_sample)?;
                 writeln!(f, "\t\tchannels: {},", pcm.channels)?;
                 writeln!(f, "\t\tcodec: {},", pcm.codec)?;
-            }
+            },
+            //TODO: this is not optimal
+           _  => {
+                //TODO: this is not optimal..
+                writeln!(f, "\tdisplay not implemented for format")?;
+           }
+            
         };
 
         writeln!(f, "\t}}")?;

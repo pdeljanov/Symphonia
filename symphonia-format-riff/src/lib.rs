@@ -17,7 +17,7 @@
 use std::io::{Seek, SeekFrom};
 
 use symphonia_core::codecs::CodecParameters;
-use symphonia_core::errors::{decode_error, end_of_stream_error, seek_error, unsupported_error};
+use symphonia_core::errors::{seek_error, unsupported_error};
 use symphonia_core::errors::{Result, SeekErrorKind};
 use symphonia_core::formats::prelude::*;
 use symphonia_core::io::*;
@@ -28,8 +28,10 @@ use symphonia_core::support_format;
 use log::{debug, error};
 
 mod chunks;
-
 use chunks::*;
+
+mod riff;
+use riff::*;
 
 /// Aiff is actually a RIFF stream, with a "FORM" ASCII stream marker.
 const AIFF_STREAM_MARKER: [u8; 4] = *b"FORM";
@@ -38,56 +40,6 @@ const AIFF_STREAM_MARKER: [u8; 4] = *b"FORM";
 const AIFF_RIFF_FORM: [u8; 4] = *b"AIFF";
 /// A possible RIFF form is "aifc", using compressed data.
 const AIFC_RIFF_FORM: [u8; 4] = *b"AIFC";
-
-/// The maximum number of frames that will be in a packet.
-/// Since there are no real packets in AIFF, this is arbitrary, used same value as MP3.
-const AIFF_MAX_FRAMES_PER_PACKET: u64 = 1152;
-
-pub(crate) struct PacketInfo {
-    block_size: u64,
-    frames_per_block: u64,
-    max_blocks_per_packet: u64,
-}
-
-impl PacketInfo {
-    #[allow(dead_code)]
-    fn with_blocks(block_size: u16, frames_per_block: u64) -> Result<Self> {
-        if frames_per_block == 0 {
-            return decode_error("aiff: frames per block is 0");
-        }
-        Ok(Self {
-            block_size: u64::from(block_size),
-            frames_per_block,
-            max_blocks_per_packet: frames_per_block.max(AIFF_MAX_FRAMES_PER_PACKET)
-                / frames_per_block,
-        })
-    }
-
-    fn without_blocks(frame_len: u16) -> Self {
-        Self {
-            block_size: u64::from(frame_len),
-            frames_per_block: 1,
-            max_blocks_per_packet: AIFF_MAX_FRAMES_PER_PACKET,
-        }
-    }
-
-    fn is_empty(&self) -> bool {
-        self.block_size == 0
-    }
-
-    fn get_max_frames_per_packet(&self) -> u64 {
-        self.max_blocks_per_packet * self.frames_per_block
-    }
-
-    fn get_frames(&self, data_len: u64) -> u64 {
-        data_len / self.block_size * self.frames_per_block
-    }
-
-    fn get_actual_ts(&self, ts: u64) -> u64 {
-        let max_frames_per_packet = self.get_max_frames_per_packet();
-        ts / max_frames_per_packet * max_frames_per_packet
-    }
-}
 
 pub struct AiffReader {
     reader: MediaSourceStream,
@@ -141,7 +93,7 @@ impl FormatReader for AiffReader {
             return unsupported_error("aiff: riff form is not supported");
         }
 
-        let mut riff_chunks = ChunksReader::<RiffAiffChunks>::new(riff_len);
+        let mut riff_chunks = ChunksReader::<RiffAiffChunks>::new(riff_len, ByteOrder::BigEndian);
 
         let mut codec_params = CodecParameters::new();
         //TODO: Chunks such as marker contain metadata, get it.
@@ -170,7 +122,7 @@ impl FormatReader for AiffReader {
                         .with_frames_per_block(packet_info.frames_per_block);
 
                     // Append Format chunk fields to codec parameters.
-                    append_common_params(&mut codec_params, common);
+                    append_format_params(&mut codec_params, &common.format_data, common.sample_rate);
                 }
                 RiffAiffChunks::Sound(dat) => {
                     let data = dat.parse(&mut source)?;
@@ -180,7 +132,7 @@ impl FormatReader for AiffReader {
                     let data_end_pos = data_start_pos + u64::from(data.len);
 
                     // Append Sound chunk fields to codec parameters.
-                    append_sound_params(&mut codec_params, &data, &packet_info);
+                    append_data_params(&mut codec_params, data.len as u64, &packet_info);
 
                     // Add a new track using the collected codec parameters.
                     return Ok(AiffReader {
@@ -198,39 +150,7 @@ impl FormatReader for AiffReader {
     }
 
     fn next_packet(&mut self) -> Result<Packet> {
-        let pos = self.reader.pos();
-        if self.tracks.is_empty() {
-            return decode_error("aiff: no tracks");
-        }
-        if self.packet_info.is_empty() {
-            return decode_error("aiff: block size is 0");
-        }
-
-        // Determine the number of complete blocks remaining in the data chunk.
-        let num_blocks_left = if pos < self.data_end_pos {
-            (self.data_end_pos - pos) / self.packet_info.block_size
-        }
-        else {
-            0
-        };
-
-        if num_blocks_left == 0 {
-            return end_of_stream_error();
-        }
-
-        let blocks_per_packet = num_blocks_left.min(self.packet_info.max_blocks_per_packet);
-
-        let dur = blocks_per_packet * self.packet_info.frames_per_block;
-        let packet_len = blocks_per_packet * self.packet_info.block_size;
-
-        // Copy the frames.
-        let packet_buf = self.reader.read_boxed_slice(packet_len as usize)?;
-
-        // The packet timestamp is the position of the first byte of the first frame in the
-        // packet relative to the start of the data chunk divided by the length per frame.
-        let pts = self.packet_info.get_frames(pos - self.data_start_pos);
-
-        Ok(Packet::new_from_boxed_slice(0, pts, dur, packet_buf))
+        next_packet(&mut self.reader, &self.packet_info, &self.tracks, self.data_start_pos, self.data_end_pos)
     }
 
     fn metadata(&mut self) -> Metadata<'_> {
@@ -313,32 +233,5 @@ impl FormatReader for AiffReader {
 
     fn into_inner(self: Box<Self>) -> MediaSourceStream {
         self.reader
-    }
-}
-
-fn append_common_params(codec_params: &mut CodecParameters, format: CommonChunk) {
-    codec_params
-        .with_sample_rate(format.sample_rate)
-        .with_time_base(TimeBase::new(1, format.sample_rate));
-
-    match format.format_data {
-        FormatData::Pcm(pcm) => {
-            codec_params
-                .for_codec(pcm.codec)
-                .with_bits_per_coded_sample(u32::from(pcm.bits_per_sample))
-                .with_bits_per_sample(u32::from(pcm.bits_per_sample))
-                .with_channels(pcm.channels);
-        }
-    }
-}
-
-fn append_sound_params(
-    codec_params: &mut CodecParameters,
-    data: &SoundChunk,
-    packet_info: &PacketInfo,
-) {
-    if !packet_info.is_empty() {
-        let n_frames = packet_info.get_frames(u64::from(data.len));
-        codec_params.with_n_frames(n_frames);
     }
 }
