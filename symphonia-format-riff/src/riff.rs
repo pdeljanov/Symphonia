@@ -19,6 +19,7 @@ use symphonia_core::io::{MediaSourceStream, ReadBytes};
 
 use log::info;
 
+#[allow(dead_code)]
 pub enum ByteOrder {
     LittleEndian,
     BigEndian,
@@ -113,6 +114,7 @@ impl<T: ParseChunkTag> ChunksReader<T> {
             }
         }
     }
+    #[allow(dead_code)]
     pub fn finish<B: ReadBytes>(&mut self, reader: &mut B) -> Result<()> {
         // If data is remaining in this chunk, skip it.
         if self.consumed < self.len {
@@ -152,6 +154,7 @@ impl<P: ParseChunk> ChunkParser<P> {
     }
 }
 
+#[allow(dead_code)]
 pub enum FormatData {
     Pcm(FormatPcm),
     Adpcm(FormatAdpcm),
@@ -222,6 +225,7 @@ pub struct PacketInfo {
 }
 
 impl PacketInfo {
+    #[allow(dead_code)]
     pub fn with_blocks(block_size: u16, frames_per_block: u64) -> Result<Self> {
         if frames_per_block == 0 {
             return decode_error("riff: frames per block is 0");
