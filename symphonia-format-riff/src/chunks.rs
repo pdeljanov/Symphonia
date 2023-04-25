@@ -63,13 +63,13 @@ impl CommonChunk {
         Ok(FormatData::Pcm(FormatPcm { bits_per_sample, channels, codec }))
     }
 
-    pub(crate) fn packet_info(&self) -> Result<PacketInfo> {
+    pub fn packet_info(&self) -> Result<PacketInfo> {
         match &self.format_data {
             FormatData::Pcm(_) => {
                 let block_align = self.n_channels * self.sample_size / 8;
                 Ok(PacketInfo::without_blocks(block_align as u16))
             }
-            _ => todo!("other formats"),
+            _ => return unsupported_error("aiff: packet info not implemented for format"),
         }
     }
 }
@@ -109,7 +109,6 @@ impl fmt::Display for CommonChunk {
                 writeln!(f, "\t\tchannels: {},", pcm.channels)?;
                 writeln!(f, "\t\tcodec: {},", pcm.codec)?;
             }
-            //TODO: this is not optimal
             _ => {
                 //TODO: this is not optimal..
                 writeln!(f, "\tdisplay not implemented for format")?;
