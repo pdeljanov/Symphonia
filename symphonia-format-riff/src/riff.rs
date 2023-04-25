@@ -7,7 +7,6 @@
 
 /// `PacketInfo` helps to simulate packetization over a number of blocks of data.
 /// In case the codec is blockless the block size equals one full audio frame in bytes.
-
 use std::marker::PhantomData;
 
 use symphonia_core::audio::Channels;
@@ -81,7 +80,7 @@ impl<T: ParseChunkTag> ChunksReader<T> {
                 ByteOrder::LittleEndian => reader.read_u32()?,
                 ByteOrder::BigEndian => reader.read_be_u32()?,
             };
-            
+
             self.consumed += 8;
 
             // Check if the ChunkReader has enough unread bytes to fully read the chunk.
@@ -233,8 +232,7 @@ impl PacketInfo {
         Ok(Self {
             block_size: u64::from(block_size),
             frames_per_block,
-            max_blocks_per_packet: frames_per_block.max(MAX_FRAMES_PER_PACKET)
-                / frames_per_block,
+            max_blocks_per_packet: frames_per_block.max(MAX_FRAMES_PER_PACKET) / frames_per_block,
         })
     }
 
@@ -265,9 +263,12 @@ impl PacketInfo {
 }
 
 pub fn next_packet(
-        reader: &mut MediaSourceStream, packet_info: &PacketInfo, tracks: &Vec<Track>, 
-        data_start_pos: u64, data_end_pos: u64
-    ) -> Result<Packet> {
+    reader: &mut MediaSourceStream,
+    packet_info: &PacketInfo,
+    tracks: &Vec<Track>,
+    data_start_pos: u64,
+    data_end_pos: u64,
+) -> Result<Packet> {
     let pos = reader.pos();
     if tracks.is_empty() {
         return decode_error("riff: no tracks");
@@ -277,12 +278,8 @@ pub fn next_packet(
     }
 
     // Determine the number of complete blocks remaining in the data chunk.
-    let num_blocks_left = if pos < data_end_pos {
-        (data_end_pos - pos) / packet_info.block_size
-    }
-    else {
-        0
-    };
+    let num_blocks_left =
+        if pos < data_end_pos { (data_end_pos - pos) / packet_info.block_size } else { 0 };
 
     if num_blocks_left == 0 {
         return end_of_stream_error();
@@ -304,10 +301,12 @@ pub fn next_packet(
 }
 
 /// TODO: format here refers to format chunk in Wave terminology, but the data being handled here is generic - find a better name, or combine with append_data_params
-pub fn append_format_params(codec_params: &mut CodecParameters, format_data: &FormatData, sample_rate: u32) {
-    codec_params
-        .with_sample_rate(sample_rate)
-        .with_time_base(TimeBase::new(1, sample_rate));
+pub fn append_format_params(
+    codec_params: &mut CodecParameters,
+    format_data: &FormatData,
+    sample_rate: u32,
+) {
+    codec_params.with_sample_rate(sample_rate).with_time_base(TimeBase::new(1, sample_rate));
 
     match format_data {
         FormatData::Pcm(pcm) => {

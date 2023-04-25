@@ -58,8 +58,8 @@ impl QueryDescriptor for AiffReader {
             support_format!(
                 "riff",
                 " Resource Interchange File Format",
-                &["aiff", "aif", "aifc"], 
-                &["audio/aiff", "audio/x-aiff", " sound/aiff", "audio/x-pn-aiff"], 
+                &["aiff", "aif", "aifc"],
+                &["audio/aiff", "audio/x-aiff", " sound/aiff", "audio/x-pn-aiff"],
                 &[b"FORM"]
             ),
         ]
@@ -86,9 +86,11 @@ impl FormatReader for AiffReader {
 
         if riff_form == AIFF_RIFF_FORM {
             debug!("riff form is aiff");
-        } else if riff_form == AIFC_RIFF_FORM {
+        }
+        else if riff_form == AIFC_RIFF_FORM {
             return unsupported_error("aiff: No support for aifc files");
-        } else {
+        }
+        else {
             error!("riff form is not supported ({})", String::from_utf8_lossy(&riff_form));
             return unsupported_error("aiff: riff form is not supported");
         }
@@ -104,7 +106,7 @@ impl FormatReader for AiffReader {
             let chunk = riff_chunks.next(&mut source)?;
 
             // The last chunk should always be a data chunk, if it is not, then the stream is
-            // unsupported. 
+            // unsupported.
             // TODO: According to the spec additional chunks can be added after the sound data chunk. In fact any order can be possible.
             if chunk.is_none() {
                 return unsupported_error("aiff: missing data chunk");
@@ -122,7 +124,11 @@ impl FormatReader for AiffReader {
                         .with_frames_per_block(packet_info.frames_per_block);
 
                     // Append Format chunk fields to codec parameters.
-                    append_format_params(&mut codec_params, &common.format_data, common.sample_rate);
+                    append_format_params(
+                        &mut codec_params,
+                        &common.format_data,
+                        common.sample_rate,
+                    );
                 }
                 RiffAiffChunks::Sound(dat) => {
                     let data = dat.parse(&mut source)?;
@@ -150,7 +156,13 @@ impl FormatReader for AiffReader {
     }
 
     fn next_packet(&mut self) -> Result<Packet> {
-        next_packet(&mut self.reader, &self.packet_info, &self.tracks, self.data_start_pos, self.data_end_pos)
+        next_packet(
+            &mut self.reader,
+            &self.packet_info,
+            &self.tracks,
+            self.data_start_pos,
+            self.data_end_pos,
+        )
     }
 
     fn metadata(&mut self) -> Metadata<'_> {
