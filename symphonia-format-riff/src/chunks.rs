@@ -14,7 +14,7 @@ use symphonia_core::codecs::{
     CODEC_TYPE_PCM_S16BE, CODEC_TYPE_PCM_S24BE, CODEC_TYPE_PCM_S32BE, CODEC_TYPE_PCM_S8,
 };
 use symphonia_core::errors::{decode_error, unsupported_error, Result};
-use symphonia_core::io::ReadBytes;
+use symphonia_core::io::{ReadBytes, MediaSourceStream};
 
 use extended::Extended;
 
@@ -30,6 +30,10 @@ pub struct CommonChunk {
     pub sample_rate: u32,
     /// Extra data associated with the format block conditional upon the format tag.
     pub format_data: FormatData,
+    /// The compression ID, only exists for aifc
+    pub compression_type: [u8; 4],
+    /// The compression name, only exists for aifc
+    pub compression_name: String,
 }
 
 impl CommonChunk {
@@ -92,7 +96,13 @@ impl ParseChunk for CommonChunk {
             Ok(data) => data,
             Err(e) => return Err(e),
         };
-        Ok(CommonChunk { n_channels, n_sample_frames, sample_size, sample_rate, format_data })
+
+        // These fields only exist for AIFC.
+        // AIFF files are threated as AIFC files with no compression
+        let compression_type = *b"NONE";
+        let compression_name = "not compressed".to_string();
+
+        Ok(CommonChunk { n_channels, n_sample_frames, sample_size, sample_rate, format_data, compression_type, compression_name })
     }
 }
 
@@ -117,6 +127,55 @@ impl fmt::Display for CommonChunk {
 
         writeln!(f, "\t}}")?;
         writeln!(f, "}}")
+    }
+}
+
+pub trait CommonChunkParser {
+    fn parse_aiff(self, source: &mut MediaSourceStream) -> Result<CommonChunk>;
+    fn parse_aifc(self, source: &mut MediaSourceStream) -> Result<CommonChunk>;
+}
+
+impl CommonChunkParser for ChunkParser<CommonChunk> {
+    fn parse_aiff(self, source: &mut MediaSourceStream) -> Result<CommonChunk> {
+        self.parse(source)
+    }
+    fn parse_aifc(self, source: &mut MediaSourceStream) -> Result<CommonChunk> {
+        let n_channels = source.read_be_i16()?;
+        let n_sample_frames = source.read_be_u32()?;
+        let sample_size = source.read_be_i16()?;
+
+        let mut sample_rate: [u8; 10] = [0; 10];
+        let _res = source.read_buf_exact(sample_rate.as_mut())?;
+
+        let sample_rate = Extended::from_be_bytes(sample_rate);
+        let sample_rate = sample_rate.to_f64() as u32;
+
+        let compression_type = source.read_quad_bytes()?;
+        let str_len = source.read_byte()?;
+        println!("{}, {}", String::from_utf8_lossy(&compression_type) , str_len);
+            
+        let mut text_buf = vec![0u8; str_len as usize];
+        source.read_buf_exact(&mut text_buf)?;
+        let compression_name : String = text_buf.iter().map(|&c| char::from(c)).collect();
+        println!("{}", compression_name);
+
+        // Pad byte is not reflected in the len
+        if str_len % 2 != 0{
+            match source.ignore_bytes(1){
+                Ok(_) => {},
+                Err(_) => {return unsupported_error("aifc: Missing data..");}
+            }
+        }
+
+        print!("Compression type: {}, Compression name: {}", String::from_utf8_lossy(&compression_type), compression_name);
+        todo!("Use different read depending on compression type");
+        let format_data = CommonChunk::read_pcm_fmt(sample_size as u16, n_channels as u16);
+
+        let format_data = match format_data {
+            Ok(data) => data,
+            Err(e) => return Err(e),
+        };
+        Ok(CommonChunk { n_channels, n_sample_frames, sample_size, sample_rate, format_data, compression_type, compression_name })
     }
 }
 
