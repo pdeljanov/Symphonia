@@ -7,14 +7,14 @@
 
 use std::fmt;
 
-use crate::{ChunkParser, FormatData, FormatPcm, PacketInfo, ParseChunk, ParseChunkTag};
-
 use symphonia_core::audio::Channels;
 use symphonia_core::codecs::{
     CODEC_TYPE_PCM_S16BE, CODEC_TYPE_PCM_S24BE, CODEC_TYPE_PCM_S32BE, CODEC_TYPE_PCM_S8,
 };
 use symphonia_core::errors::{decode_error, unsupported_error, Result};
 use symphonia_core::io::ReadBytes;
+
+use crate::{ChunkParser, FormatData, FormatPcm, PacketInfo, ParseChunk, ParseChunkTag};
 
 use extended::Extended;
 
