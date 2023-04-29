@@ -152,24 +152,32 @@ impl CommonChunkParser for ChunkParser<CommonChunk> {
 
         let compression_type = source.read_quad_bytes()?;
         let str_len = source.read_byte()?;
-        println!("{}, {}", String::from_utf8_lossy(&compression_type) , str_len);
+        //println!("{}, {}", String::from_utf8_lossy(&compression_type) , str_len);
             
-        let mut compression_name = vec![0; str_len as usize];
+        let mut compression_name = vec![0; (str_len) as usize];
         source.read_buf(compression_name.as_mut())?;
         let compression_name = String::from_utf8_lossy(&compression_name).into_owned();
-        println!("{}", compression_name);
-
+        //println!("{}", compression_name);
+        
+        // According to the spec only uneven lengths are padded with a pad byte (not reflected in str_len), 
+        // but i found only files with even lengths, and they included an additional empty byte...
+        source.ignore_bytes(1)?;
         // Pad byte is not reflected in the len
-        if str_len % 2 != 0{
-            match source.ignore_bytes(1){
-                Ok(_) => {},
-                Err(_) => {return unsupported_error("aifc: Missing data..");}
-            }
-        }
+        // if str_len % 2 != 0{
+        //     match source.ignore_bytes(1){
+        //         Ok(_) => {},
+        //         Err(_) => {return unsupported_error("aifc: Missing data..");}
+        //     }
+        // }
 
-        print!("Compression type: {}, Compression name: {}", String::from_utf8_lossy(&compression_type), compression_name);
-        todo!("Use different read depending on compression type");
-        let format_data = CommonChunk::read_pcm_fmt(sample_size as u16, n_channels as u16);
+        println!("Compression type:{}, Compression name:{}, strlen:{}", String::from_utf8_lossy(&compression_type), compression_name, str_len);
+
+        let format_data = match &compression_type {
+            b"NONE" => CommonChunk::read_pcm_fmt(sample_size as u16, n_channels as u16),
+            _ => return unsupported_error("aifc: Compression type not implemented"),
+        };
+
+        //let format_data = CommonChunk::read_pcm_fmt(sample_size as u16, n_channels as u16);
 
         let format_data = match format_data {
             Ok(data) => data,
