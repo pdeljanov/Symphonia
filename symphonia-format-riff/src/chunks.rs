@@ -154,9 +154,9 @@ impl CommonChunkParser for ChunkParser<CommonChunk> {
         let str_len = source.read_byte()?;
         println!("{}, {}", String::from_utf8_lossy(&compression_type) , str_len);
             
-        let mut text_buf = vec![0u8; str_len as usize];
-        source.read_buf_exact(&mut text_buf)?;
-        let compression_name : String = text_buf.iter().map(|&c| char::from(c)).collect();
+        let mut compression_name = vec![0; str_len as usize];
+        source.read_buf(compression_name.as_mut())?;
+        let compression_name = String::from_utf8_lossy(&compression_name).into_owned();
         println!("{}", compression_name);
 
         // Pad byte is not reflected in the len
