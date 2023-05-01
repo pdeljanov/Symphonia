@@ -161,6 +161,8 @@ pub mod default {
         pub use symphonia_format_mkv::MkvReader;
         #[cfg(feature = "ogg")]
         pub use symphonia_format_ogg::OggReader;
+        #[cfg(feature = "aiff")]
+        pub use symphonia_format_riff::AiffReader;
         #[cfg(feature = "wav")]
         pub use symphonia_format_wav::WavReader;
 
@@ -258,6 +260,9 @@ pub mod default {
 
         #[cfg(any(feature = "mp1", feature = "mp2", feature = "mp3"))]
         probe.register_all::<formats::MpaReader>();
+
+        #[cfg(feature = "aiff")]
+        probe.register_all::<formats::AiffReader>();
 
         #[cfg(feature = "wav")]
         probe.register_all::<formats::WavReader>();

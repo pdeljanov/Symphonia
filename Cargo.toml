@@ -15,6 +15,7 @@ members = [
     "symphonia-format-isomp4",
     "symphonia-format-mkv",
     "symphonia-format-ogg",
+    "symphonia-format-riff",
     "symphonia-format-wav",
     "symphonia-metadata",
     "symphonia-play",
