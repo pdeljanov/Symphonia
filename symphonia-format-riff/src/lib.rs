@@ -25,7 +25,7 @@ use symphonia_core::meta::{Metadata, MetadataLog};
 use symphonia_core::probe::{Descriptor, Instantiate, QueryDescriptor};
 use symphonia_core::support_format;
 
-use log::{debug, error};
+use log::debug;
 
 mod chunks;
 use chunks::*;
@@ -114,13 +114,9 @@ impl FormatReader for AiffReader {
 
             match chunk.unwrap() {
                 RiffAiffChunks::Common(common) => {
-                    let common = match riff_form{
-                        AiffType::Aiff => {
-                            common.parse_aiff(&mut source)?
-                        }
-                        AiffType::Aifc => {
-                            common.parse_aifc(&mut source)?
-                        }
+                    let common = match riff_form {
+                        AiffType::Aiff => common.parse_aiff(&mut source)?,
+                        AiffType::Aifc => common.parse_aifc(&mut source)?,
                     };
 
                     // The Format chunk contains the block_align field and possible additional information

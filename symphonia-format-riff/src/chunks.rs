@@ -7,14 +7,17 @@
 
 use std::fmt;
 
-use crate::{ChunkParser, FormatData, FormatPcm, PacketInfo, ParseChunk, ParseChunkTag};
+use crate::{
+    ChunkParser, FormatData, FormatMuLaw, FormatPcm, PacketInfo, ParseChunk, ParseChunkTag,
+};
 
 use symphonia_core::audio::Channels;
 use symphonia_core::codecs::{
-    CODEC_TYPE_PCM_S16BE, CODEC_TYPE_PCM_S24BE, CODEC_TYPE_PCM_S32BE, CODEC_TYPE_PCM_S8,
+    CODEC_TYPE_PCM_MULAW, CODEC_TYPE_PCM_S16BE, CODEC_TYPE_PCM_S24BE, CODEC_TYPE_PCM_S32BE,
+    CODEC_TYPE_PCM_S8,
 };
 use symphonia_core::errors::{decode_error, unsupported_error, Result};
-use symphonia_core::io::{ReadBytes, MediaSourceStream};
+use symphonia_core::io::{MediaSourceStream, ReadBytes};
 
 use extended::Extended;
 
@@ -67,10 +70,25 @@ impl CommonChunk {
         Ok(FormatData::Pcm(FormatPcm { bits_per_sample, channels, codec }))
     }
 
+    fn read_mulaw_pcm_fmt(n_channels: u16) -> Result<FormatData> {
+        let channels = match n_channels {
+            1 => Channels::FRONT_LEFT,
+            2 => Channels::FRONT_LEFT | Channels::FRONT_RIGHT,
+            _ => return decode_error("afc: channel layout is not stereo or mono for fmt_mulaw"),
+        };
+
+        Ok(FormatData::MuLaw(FormatMuLaw { codec: CODEC_TYPE_PCM_MULAW, channels }))
+    }
+
     pub fn packet_info(&self) -> Result<PacketInfo> {
         match &self.format_data {
             FormatData::Pcm(_) => {
                 let block_align = self.n_channels * self.sample_size / 8;
+                Ok(PacketInfo::without_blocks(block_align as u16))
+            }
+            FormatData::MuLaw(_) => {
+                // In mu-law encoding, each audio sample is represented by an 8-bit value that has been compressed
+                let block_align = self.n_channels;
                 Ok(PacketInfo::without_blocks(block_align as u16))
             }
             _ => return unsupported_error("aiff: packet info not implemented for format"),
@@ -102,7 +120,15 @@ impl ParseChunk for CommonChunk {
         let compression_type = *b"NONE";
         let compression_name = "not compressed".to_string();
 
-        Ok(CommonChunk { n_channels, n_sample_frames, sample_size, sample_rate, format_data, compression_type, compression_name })
+        Ok(CommonChunk {
+            n_channels,
+            n_sample_frames,
+            sample_size,
+            sample_rate,
+            format_data,
+            compression_type,
+            compression_name,
+        })
     }
 }
 
@@ -152,14 +178,13 @@ impl CommonChunkParser for ChunkParser<CommonChunk> {
 
         let compression_type = source.read_quad_bytes()?;
         let str_len = source.read_byte()?;
-        //println!("{}, {}", String::from_utf8_lossy(&compression_type) , str_len);
-            
+
         let mut compression_name = vec![0; (str_len) as usize];
-        source.read_buf(compression_name.as_mut())?;
+        source.read_buf_exact(compression_name.as_mut())?;
         let compression_name = String::from_utf8_lossy(&compression_name).into_owned();
-        //println!("{}", compression_name);
-        
-        // According to the spec only uneven lengths are padded with a pad byte (not reflected in str_len), 
+        //println!("Compression {}, {}",  String::from_utf8_lossy(&compression_type), compression_name);
+
+        // According to the spec only uneven lengths are padded with a pad byte (not reflected in str_len),
         // but i found only files with even lengths, and they included an additional empty byte...
         source.ignore_bytes(1)?;
         // Pad byte is not reflected in the len
@@ -170,20 +195,25 @@ impl CommonChunkParser for ChunkParser<CommonChunk> {
         //     }
         // }
 
-        println!("Compression type:{}, Compression name:{}, strlen:{}", String::from_utf8_lossy(&compression_type), compression_name, str_len);
-
         let format_data = match &compression_type {
             b"NONE" => CommonChunk::read_pcm_fmt(sample_size as u16, n_channels as u16),
+            b"ulaw" => CommonChunk::read_mulaw_pcm_fmt(n_channels as u16),
             _ => return unsupported_error("aifc: Compression type not implemented"),
         };
-
-        //let format_data = CommonChunk::read_pcm_fmt(sample_size as u16, n_channels as u16);
 
         let format_data = match format_data {
             Ok(data) => data,
             Err(e) => return Err(e),
         };
-        Ok(CommonChunk { n_channels, n_sample_frames, sample_size, sample_rate, format_data, compression_type, compression_name })
+        Ok(CommonChunk {
+            n_channels,
+            n_sample_frames,
+            sample_size,
+            sample_rate,
+            format_data,
+            compression_type,
+            compression_name,
+        })
     }
 }
 

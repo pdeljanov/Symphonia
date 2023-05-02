@@ -75,9 +75,7 @@ impl<T: ParseChunkTag> ChunksReader<T> {
 
             // Read tag and len, the chunk header.
             let tag = reader.read_quad_bytes()?;
-            //let debug_str =  String::from_utf8_lossy(&tag);
-            //println!("tag:{},{}", debug_str, debug_str.len());
-            
+
             // TODO: this could break on machine with big endian architecture, gotta think about it lol
             let len = match self.byte_order {
                 ByteOrder::LittleEndian => reader.read_u32()?,
@@ -142,7 +140,7 @@ pub trait ParseChunk: Sized {
 /// `ChunkParser` is a utility struct for unifying the parsing of chunks.
 pub struct ChunkParser<P: ParseChunk> {
     tag: [u8; 4],
-    len: u32,
+    pub len: u32,
     phantom: PhantomData<P>,
 }
 
@@ -319,24 +317,11 @@ pub fn append_format_params(
                 .with_bits_per_sample(u32::from(pcm.bits_per_sample))
                 .with_channels(pcm.channels);
         }
-        FormatData::Adpcm(adpcm) => {
-            codec_params.for_codec(adpcm.codec).with_channels(adpcm.channels);
-        }
-        FormatData::IeeeFloat(ieee) => {
-            codec_params.for_codec(ieee.codec).with_channels(ieee.channels);
-        }
-        FormatData::Extensible(ext) => {
-            codec_params
-                .for_codec(ext.codec)
-                .with_bits_per_coded_sample(u32::from(ext.bits_per_coded_sample))
-                .with_bits_per_sample(u32::from(ext.bits_per_sample))
-                .with_channels(ext.channels);
-        }
-        FormatData::ALaw(alaw) => {
-            codec_params.for_codec(alaw.codec).with_channels(alaw.channels);
-        }
         FormatData::MuLaw(mulaw) => {
             codec_params.for_codec(mulaw.codec).with_channels(mulaw.channels);
+        }
+        _ => {
+            unimplemented!("riff: format not supported");
         }
     }
 }
