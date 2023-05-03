@@ -9,13 +9,16 @@ use std::fmt;
 
 use symphonia_core::audio::Channels;
 use symphonia_core::codecs::{
-    CODEC_TYPE_PCM_MULAW, CODEC_TYPE_PCM_S16BE, CODEC_TYPE_PCM_S24BE, CODEC_TYPE_PCM_S32BE,
-    CODEC_TYPE_PCM_S8,
+    CODEC_TYPE_PCM_F32BE, CODEC_TYPE_PCM_F64BE, CODEC_TYPE_PCM_MULAW, CODEC_TYPE_PCM_S16BE,
+    CODEC_TYPE_PCM_S24BE, CODEC_TYPE_PCM_S32BE, CODEC_TYPE_PCM_S8,
 };
 use symphonia_core::errors::{decode_error, unsupported_error, Result};
 use symphonia_core::io::{MediaSourceStream, ReadBytes};
 
-use crate::{ChunkParser, FormatData, FormatPcm, FormatMuLaw, PacketInfo, ParseChunk, ParseChunkTag};
+use crate::{
+    ChunkParser, FormatData, FormatIeeeFloat, FormatMuLaw, FormatPcm, PacketInfo, ParseChunk,
+    ParseChunkTag,
+};
 
 use extended::Extended;
 
@@ -78,6 +81,24 @@ impl CommonChunk {
         Ok(FormatData::MuLaw(FormatMuLaw { codec: CODEC_TYPE_PCM_MULAW, channels }))
     }
 
+    fn read_ieee_fmt(bits_per_sample: u16, n_channels: u16) -> Result<FormatData> {
+        // Select the appropriate codec using bits per sample. Samples are always interleaved and
+        // little-endian encoded for the IEEE Float format.
+        let codec = match bits_per_sample {
+            32 => CODEC_TYPE_PCM_F32BE,
+            64 => CODEC_TYPE_PCM_F64BE,
+            _ => return decode_error("aifc: bits per sample for fmt_ieee must be 32 or 64 bits"),
+        };
+
+        let channels = match n_channels {
+            1 => Channels::FRONT_LEFT,
+            2 => Channels::FRONT_LEFT | Channels::FRONT_RIGHT,
+            _ => return decode_error("aifc: channel layout is not stereo or mono for fmt_ieee"),
+        };
+
+        Ok(FormatData::IeeeFloat(FormatIeeeFloat { channels, codec }))
+    }
+
     pub fn packet_info(&self) -> Result<PacketInfo> {
         match &self.format_data {
             FormatData::Pcm(_) => {
@@ -87,6 +108,10 @@ impl CommonChunk {
             FormatData::MuLaw(_) => {
                 // In mu-law encoding, each audio sample is represented by an 8-bit value that has been compressed
                 let block_align = self.n_channels;
+                Ok(PacketInfo::without_blocks(block_align as u16))
+            }
+            FormatData::IeeeFloat(_) => {
+                let block_align = self.n_channels * self.sample_size / 8;
                 Ok(PacketInfo::without_blocks(block_align as u16))
             }
             _ => return unsupported_error("aiff: packet info not implemented for format"),
@@ -182,20 +207,15 @@ impl CommonChunkParser for ChunkParser<CommonChunk> {
         let compression_name = String::from_utf8_lossy(&compression_name).into_owned();
         //println!("Compression {}, {}",  String::from_utf8_lossy(&compression_type), compression_name);
 
-        // According to the spec only uneven lengths are padded with a pad byte (not reflected in str_len),
-        // but i found only files with even lengths, and they included an additional empty byte...
-        source.ignore_bytes(1)?;
-        // Pad byte is not reflected in the len
-        // if str_len % 2 != 0{
-        //     match source.ignore_bytes(1){
-        //         Ok(_) => {},
-        //         Err(_) => {return unsupported_error("aifc: Missing data..");}
-        //     }
-        // }
+        // Total number of bytes in pascal string must be even, since len is excluded from our var, we add 1
+        if (str_len + 1) % 2 != 0 {
+            source.ignore_bytes(1)?;
+        }
 
         let format_data = match &compression_type {
             b"NONE" => CommonChunk::read_pcm_fmt(sample_size as u16, n_channels as u16),
             b"ulaw" => CommonChunk::read_mulaw_pcm_fmt(n_channels as u16),
+            b"fl32" => CommonChunk::read_ieee_fmt(sample_size as u16, n_channels as u16),
             _ => return unsupported_error("aifc: Compression type not implemented"),
         };
 

@@ -16,7 +16,7 @@ use symphonia_core::errors::{decode_error, end_of_stream_error, Result};
 use symphonia_core::formats::prelude::*;
 use symphonia_core::io::{MediaSourceStream, ReadBytes};
 
-use log::info;
+use log::{debug, info};
 
 pub enum ByteOrder {
     LittleEndian,
@@ -74,6 +74,7 @@ impl<T: ParseChunkTag> ChunksReader<T> {
 
             // Read tag and len, the chunk header.
             let tag = reader.read_quad_bytes()?;
+            //println!( "tag: {}", String::from_utf8_lossy(&tag));
 
             // TODO: this could break on machine with big endian architecture, gotta think about it lol
             let len = match self.byte_order {
@@ -91,6 +92,10 @@ impl<T: ParseChunkTag> ChunksReader<T> {
                 // When ffmpeg encodes wave to stdout the riff (parent) and data chunk lengths are
                 // (2^32)-1 since the size can't be known ahead of time.
                 if !(self.len == len && len == u32::MAX) {
+                    debug!(
+                        "chunk length of {} exceeds parent (list) chunk length",
+                        String::from_utf8_lossy(&tag)
+                    );
                     return decode_error("riff: chunk length exceeds parent (list) chunk length");
                 }
             }
@@ -315,6 +320,9 @@ pub fn append_format_params(
         }
         FormatData::MuLaw(mulaw) => {
             codec_params.for_codec(mulaw.codec).with_channels(mulaw.channels);
+        }
+        FormatData::IeeeFloat(ieee) => {
+            codec_params.for_codec(ieee.codec).with_channels(ieee.channels);
         }
         _ => {
             unimplemented!("riff: format not supported");

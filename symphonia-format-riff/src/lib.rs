@@ -49,7 +49,7 @@ const AIFC_RIFF_FORM: [u8; 4] = *b"AIFC";
 /// A possible RIFF form is "wave".
 const WAVE_RIFF_FORM: [u8; 4] = *b"WAVE";
 
-enum AiffType{
+enum AiffType {
     Aiff,
     Aifc,
 }
