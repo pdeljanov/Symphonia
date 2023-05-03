@@ -7,10 +7,6 @@
 
 use std::fmt;
 
-use crate::{
-    ChunkParser, FormatData, FormatMuLaw, FormatPcm, PacketInfo, ParseChunk, ParseChunkTag,
-};
-
 use symphonia_core::audio::Channels;
 use symphonia_core::codecs::{
     CODEC_TYPE_PCM_MULAW, CODEC_TYPE_PCM_S16BE, CODEC_TYPE_PCM_S24BE, CODEC_TYPE_PCM_S32BE,
@@ -18,6 +14,8 @@ use symphonia_core::codecs::{
 };
 use symphonia_core::errors::{decode_error, unsupported_error, Result};
 use symphonia_core::io::{MediaSourceStream, ReadBytes};
+
+use crate::{ChunkParser, FormatData, FormatPcm, FormatMuLaw, PacketInfo, ParseChunk, ParseChunkTag};
 
 use extended::Extended;
 
@@ -74,7 +72,7 @@ impl CommonChunk {
         let channels = match n_channels {
             1 => Channels::FRONT_LEFT,
             2 => Channels::FRONT_LEFT | Channels::FRONT_RIGHT,
-            _ => return decode_error("afc: channel layout is not stereo or mono for fmt_mulaw"),
+            _ => return decode_error("aifc: channel layout is not stereo or mono for fmt_mulaw"),
         };
 
         Ok(FormatData::MuLaw(FormatMuLaw { codec: CODEC_TYPE_PCM_MULAW, channels }))
