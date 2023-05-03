@@ -216,6 +216,7 @@ impl CommonChunkParser for ChunkParser<CommonChunk> {
             b"NONE" => CommonChunk::read_pcm_fmt(sample_size as u16, n_channels as u16),
             b"ulaw" => CommonChunk::read_mulaw_pcm_fmt(n_channels as u16),
             b"fl32" => CommonChunk::read_ieee_fmt(sample_size as u16, n_channels as u16),
+            b"fl64" => CommonChunk::read_ieee_fmt(sample_size as u16, n_channels as u16),
             _ => return unsupported_error("aifc: Compression type not implemented"),
         };
 
