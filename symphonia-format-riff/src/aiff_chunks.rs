@@ -168,8 +168,18 @@ impl fmt::Display for CommonChunk {
                 writeln!(f, "\t\tchannels: {},", pcm.channels)?;
                 writeln!(f, "\t\tcodec: {},", pcm.codec)?;
             }
+            FormatData::MuLaw(ref mulaw) => {
+                writeln!(f, "\tformat_data: MuLaw {{")?;
+                writeln!(f, "\t\tchannels: {},", mulaw.channels)?;
+                writeln!(f, "\t\tcodec: {},", mulaw.codec)?;
+            }
+            FormatData::IeeeFloat(ref ieee) => {
+                writeln!(f, "\tformat_data: IeeeFloat {{")?;
+                writeln!(f, "\t\tchannels: {},", ieee.channels)?;
+                writeln!(f, "\t\tcodec: {},", ieee.codec)?;
+            }
             _ => {
-                //TODO: this is not optimal..
+                //TODO: this is not optimal, but since no other aiff formats are support it should never be reached anyway..
                 writeln!(f, "\tdisplay not implemented for format")?;
             }
         };
@@ -205,7 +215,6 @@ impl CommonChunkParser for ChunkParser<CommonChunk> {
         let mut compression_name = vec![0; (str_len) as usize];
         source.read_buf_exact(compression_name.as_mut())?;
         let compression_name = String::from_utf8_lossy(&compression_name).into_owned();
-        //println!("Compression {}, {}",  String::from_utf8_lossy(&compression_type), compression_name);
 
         // Total number of bytes in pascal string must be even, since len is excluded from our var, we add 1
         if (str_len + 1) % 2 != 0 {
@@ -224,6 +233,7 @@ impl CommonChunkParser for ChunkParser<CommonChunk> {
             Ok(data) => data,
             Err(e) => return Err(e),
         };
+
         Ok(CommonChunk {
             n_channels,
             n_sample_frames,
