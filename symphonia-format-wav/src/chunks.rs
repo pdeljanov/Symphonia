@@ -74,6 +74,27 @@ fn test_fix_channel_mask() {
     assert_eq!(fix_channel_mask(0xFFFFFFFF, 8), 0b11111111);
 }
 
+fn try_channel_count_to_mask(count: u16) -> Result<Channels> {
+    (1..=32)
+        .contains(&count)
+        .then(|| Channels::from_bits(((1u64 << count) - 1) as u32))
+        .flatten()
+        .ok_or(Error::DecodeError("wav: invalid channel count"))
+}
+
+#[test]
+fn test_try_channel_count_to_mask() {
+    assert!(try_channel_count_to_mask(0).is_err());
+
+    for i in 1..27 {
+        assert!(try_channel_count_to_mask(i).is_ok());
+    }
+
+    for i in 27..u16::MAX {
+        assert!(try_channel_count_to_mask(i).is_err());
+    }
+}
+
 /// `ChunksReader` reads chunks from a `ByteStream`. It is generic across a type, usually an enum,
 /// implementing the `ParseChunkTag` trait. When a new chunk is encountered in the stream,
 /// `parse_tag` on T is called to return an object capable of parsing/reading that chunk or `None`.
@@ -305,9 +326,7 @@ impl WaveFormatChunk {
             }
         };
 
-        let channels = Channels::from_bits((1 << n_channels) - 1)
-            .ok_or(Error::DecodeError("wav: invalid channel count"))?;
-
+        let channels = try_channel_count_to_mask(n_channels)?;
         Ok(WaveFormatData::Pcm(WaveFormatPcm { bits_per_sample, channels, codec }))
     }
 
@@ -340,9 +359,7 @@ impl WaveFormatChunk {
         }
         reader.ignore_bytes(extra_size)?;
 
-        let channels = Channels::from_bits((1 << n_channels) - 1)
-            .ok_or(Error::DecodeError("wav: invalid channel count"))?;
-
+        let channels = try_channel_count_to_mask(n_channels)?;
         Ok(WaveFormatData::Adpcm(WaveFormatAdpcm { bits_per_sample, channels, codec }))
     }
 
@@ -375,9 +392,7 @@ impl WaveFormatChunk {
             _ => return decode_error("wav: bits per sample for fmt_ieee must be 32 or 64 bits"),
         };
 
-        let channels = Channels::from_bits((1 << n_channels) - 1)
-            .ok_or(Error::DecodeError("wav: invalid channel count"))?;
-
+        let channels = try_channel_count_to_mask(n_channels)?;
         Ok(WaveFormatData::IeeeFloat(WaveFormatIeeeFloat { channels, codec }))
     }
 
@@ -523,9 +538,7 @@ impl WaveFormatChunk {
             reader.ignore_bytes(u64::from(extra_size))?;
         }
 
-        let channels = Channels::from_bits((1 << n_channels) - 1)
-            .ok_or(Error::DecodeError("wav: invalid channel count"))?;
-
+        let channels = try_channel_count_to_mask(n_channels)?;
         Ok(WaveFormatData::ALaw(WaveFormatALaw { codec: CODEC_TYPE_PCM_ALAW, channels }))
     }
 
@@ -544,9 +557,7 @@ impl WaveFormatChunk {
             reader.ignore_bytes(u64::from(extra_size))?;
         }
 
-        let channels = Channels::from_bits((1 << n_channels) - 1)
-            .ok_or(Error::DecodeError("wav: invalid channel count"))?;
-
+        let channels = try_channel_count_to_mask(n_channels)?;
         Ok(WaveFormatData::MuLaw(WaveFormatMuLaw { codec: CODEC_TYPE_PCM_MULAW, channels }))
     }
 
