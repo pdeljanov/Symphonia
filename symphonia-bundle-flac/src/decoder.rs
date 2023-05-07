@@ -6,6 +6,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use std::cmp;
+use std::convert::TryInto;
 use std::num::Wrapping;
 
 use symphonia_core::audio::{AsAudioBufferRef, AudioBuffer, AudioBufferRef};
@@ -399,7 +400,7 @@ fn decode_fixed_linear<B: ReadBitsLtr>(
     // TODO: The fixed predictor uses 64-bit accumulators by default to support bps > 26. On 64-bit
     // machines, this is preferable, but on 32-bit machines if bps <= 26, run a 32-bit predictor,
     // and fallback to the 64-bit predictor if necessary (which is basically never).
-    fixed_predict(order, buf)?;
+    fixed_predict(order, buf);
 
     Ok(())
 }
@@ -411,8 +412,9 @@ fn decode_linear<B: ReadBitsLtr>(bs: &mut B, bps: u32, order: u32, buf: &mut [i3
     // The first `order` samples are encoded verbatim to warm-up the LPC decoder.
     decode_verbatim(bs, bps, &mut buf[0..order as usize])?;
 
-    // Quantized linear predictor (QLP) coefficients precision in bits.
+    // Quantized linear predictor (QLP) coefficients precision in bits (1-16).
     let qlp_precision = bs.read_bits_leq32(4)? + 1;
+
     if qlp_precision > 15 {
         return decode_error("flac: qlp precision set to reserved value");
     }
@@ -421,55 +423,34 @@ fn decode_linear<B: ReadBitsLtr>(bs: &mut B, bps: u32, order: u32, buf: &mut [i3
     let qlp_coeff_shift = sign_extend_leq32_to_i32(bs.read_bits_leq32(5)?, 5);
 
     if qlp_coeff_shift >= 0 {
-        // Pick the best sized linear predictor to use based on the order. Most if not all FLAC
-        // streams apppear to have an order <= 12. Specializing a predictor for orders <= 6 and
-        // <= 12 appears to give the best performance.
-        //
-        // TODO: Reduce code duplication here.
-        if order <= 4 {
-            let mut qlp_coeffs = [0i32; 4];
+        let mut qlp_coeffs = [0i32; 32];
 
-            for c in qlp_coeffs[4 - order as usize..4].iter_mut().rev() {
-                *c = sign_extend_leq32_to_i32(bs.read_bits_leq32(qlp_precision)?, qlp_precision);
-            }
-
-            decode_residual(bs, order, buf)?;
-
-            lpc_predict_4(order as usize, &qlp_coeffs, qlp_coeff_shift as u32, buf)?;
+        for c in qlp_coeffs.iter_mut().rev().take(order as usize) {
+            *c = sign_extend_leq32_to_i32(bs.read_bits_leq32(qlp_precision)?, qlp_precision);
         }
-        else if order <= 8 {
-            let mut qlp_coeffs = [0i32; 8];
 
-            for c in qlp_coeffs[8 - order as usize..8].iter_mut().rev() {
-                *c = sign_extend_leq32_to_i32(bs.read_bits_leq32(qlp_precision)?, qlp_precision);
-            }
+        decode_residual(bs, order, buf)?;
 
-            decode_residual(bs, order, buf)?;
-
-            lpc_predict_8(order as usize, &qlp_coeffs, qlp_coeff_shift as u32, buf)?;
+        // Helper function to dispatch to a predictor with a maximum order of N.
+        #[inline(always)]
+        fn lpc<const N: usize>(order: u32, coeffs: &[i32; 32], coeff_shift: i32, buf: &mut [i32]) {
+            let coeffs_n = (&coeffs[32 - N..32]).try_into().unwrap();
+            lpc_predict::<N>(order as usize, coeffs_n, coeff_shift as u32, buf);
         }
-        else if order <= 12 {
-            let mut qlp_coeffs = [0i32; 12];
 
-            for c in qlp_coeffs[12 - order as usize..12].iter_mut().rev() {
-                *c = sign_extend_leq32_to_i32(bs.read_bits_leq32(qlp_precision)?, qlp_precision);
-            }
-
-            decode_residual(bs, order, buf)?;
-
-            lpc_predict_12(order as usize, &qlp_coeffs, qlp_coeff_shift as u32, buf)?;
-        }
-        else {
-            let mut qlp_coeffs = [0i32; 32];
-
-            for c in qlp_coeffs[32 - order as usize..32].iter_mut().rev() {
-                *c = sign_extend_leq32_to_i32(bs.read_bits_leq32(qlp_precision)?, qlp_precision);
-            }
-
-            decode_residual(bs, order, buf)?;
-
-            lpc_predict_32(order as usize, &qlp_coeffs, qlp_coeff_shift as u32, buf)?;
-        }
+        // Pick the best length linear predictor to use based on the order. Most FLAC streams use
+        // the subset format and have an order <= 12. Therefore, for orders <= 12, dispatch to
+        // predictors that roughly match the order. If a predictor is too long for a given order,
+        // then there will be wasted computations. On the other hand, it is not worth the code bloat
+        // to specialize for every order <= 12.
+        match order {
+            0..=4 => lpc::<4>(order, &qlp_coeffs, qlp_coeff_shift, buf),
+            5..=6 => lpc::<6>(order, &qlp_coeffs, qlp_coeff_shift, buf),
+            7..=8 => lpc::<8>(order, &qlp_coeffs, qlp_coeff_shift, buf),
+            9..=10 => lpc::<10>(order, &qlp_coeffs, qlp_coeff_shift, buf),
+            11..=12 => lpc::<12>(order, &qlp_coeffs, qlp_coeff_shift, buf),
+            _ => lpc::<32>(order, &qlp_coeffs, qlp_coeff_shift, buf),
+        };
     }
     else {
         return unsupported_error("flac: lpc shifts less than 0 are not supported");
@@ -628,7 +609,7 @@ fn verify_rice_signed_to_i32() {
     assert_eq!(rice_signed_to_i32(u32::max_value()), -2_147_483_648);
 }
 
-fn fixed_predict(order: u32, buf: &mut [i32]) -> Result<()> {
+fn fixed_predict(order: u32, buf: &mut [i32]) {
     debug_assert!(order <= 4);
 
     // The Fixed Predictor is just a hard-coded version of the Linear Predictor up to order 4 and
@@ -675,76 +656,46 @@ fn fixed_predict(order: u32, buf: &mut [i32]) -> Result<()> {
         }
         _ => unreachable!(),
     };
-
-    Ok(())
 }
 
-/// Generalized Linear Predictive Coding (LPC) decoder macro for orders >= 4. The exact number of
-/// coefficients given is specified by `order`. Coefficients must be stored in reverse order in
-/// `coeffs` with the first coefficient at index 31. Coefficients at indicies less than
-/// 31 - `order` must be 0. It is expected that the first `order` samples in `buf` are warm-up
-/// samples.
-macro_rules! lpc_predictor {
-    ($func_name:ident, $order:expr) => {
-        fn $func_name(
-            order: usize,
-            coeffs: &[i32; $order],
-            coeff_shift: u32,
-            buf: &mut [i32],
-        ) -> Result<()> {
-            // Order must be less than or equal to the number of coefficients.
-            debug_assert!(order as usize <= coeffs.len());
+/// Generalized Linear Predictive Coding (LPC) decoder. The exact number of coefficients given is
+/// specified by `order`. Coefficients must be stored in reverse order in `coeffs` with the first
+/// coefficient at index 31. Coefficients at indicies less than 31 - `order` must be 0.
+/// It is expected that the first `order` samples in `buf` are warm-up samples.
+fn lpc_predict<const N: usize>(order: usize, coeffs: &[i32; N], coeff_shift: u32, buf: &mut [i32]) {
+    // Order must be less than or equal to the number of coefficients.
+    debug_assert!(order <= coeffs.len());
 
-            // Order must be less than to equal to the number of samples the buffer can hold.
-            debug_assert!(order as usize <= buf.len());
+    // Order must be less than to equal to the number of samples the buffer can hold.
+    debug_assert!(order <= buf.len());
 
-            let n_prefill = cmp::min($order, buf.len()) - order;
+    // The main, efficient, predictor loop needs N previous samples to run. Since order <= N,
+    // calculate enough samples to reach N.
+    let n_prefill = cmp::min(N, buf.len()) - order;
 
-            // If the pre-fill computation filled the entire sample buffer, return immediately since
-            // the main predictor requires atleast 32 samples to be present in the buffer.
-            for i in order..order + n_prefill {
-                let predicted = coeffs[$order - order..$order]
-                    .iter()
-                    .zip(&buf[i - order..i])
-                    .map(|(&c, &sample)| c as i64 * sample as i64)
-                    .sum::<i64>();
+    for i in order..order + n_prefill {
+        let predicted = coeffs[N - order..N]
+            .iter()
+            .zip(&buf[i - order..i])
+            .map(|(&c, &sample)| c as i64 * sample as i64)
+            .sum::<i64>();
 
-                buf[i] += (predicted >> coeff_shift) as i32;
-            }
+        buf[i] += (predicted >> coeff_shift) as i32;
+    }
 
-            if buf.len() <= $order {
-                return Ok(());
-            }
+    // If the pre-fill operation filled the entire sample buffer, return immediately.
+    if buf.len() <= N {
+        return;
+    }
 
-            for i in $order..buf.len() {
-                // Predict each sample by applying what is essentially an IIR filter.
-                //
-                // This implementation supersedes an iterator based approach where coeffs and
-                // samples were zipped together, multiplied together via map, and then summed. That
-                // implementation did not pipeline well since summing was performed before the next
-                // multiplication, introducing pipleine stalls. This unrolled approach is much
-                // faster atleast on Intel hardware.
-                let s = &buf[i - $order..i];
+    // Main predictor loop. Calculate each sample by applying what is essentially an IIR filter.
+    for i in N..buf.len() {
+        let predicted = coeffs
+            .iter()
+            .zip(&buf[i - N..i])
+            .map(|(&c, &s)| i64::from(c) * i64::from(s))
+            .sum::<i64>();
 
-                let mut predicted = 0i64;
-
-                for j in 0..($order / 4) {
-                    let a = coeffs[4 * j + 0] as i64 * s[4 * j + 0] as i64;
-                    let b = coeffs[4 * j + 1] as i64 * s[4 * j + 1] as i64;
-                    let c = coeffs[4 * j + 2] as i64 * s[4 * j + 2] as i64;
-                    let d = coeffs[4 * j + 3] as i64 * s[4 * j + 3] as i64;
-                    predicted += a + b + c + d;
-                }
-
-                buf[i] += (predicted >> coeff_shift) as i32;
-            }
-
-            Ok(())
-        }
-    };
+        buf[i] += (predicted >> coeff_shift) as i32;
+    }
 }
-
-lpc_predictor!(lpc_predict_32, 32);
-lpc_predictor!(lpc_predict_12, 12);
-lpc_predictor!(lpc_predict_8, 8);
-lpc_predictor!(lpc_predict_4, 4);

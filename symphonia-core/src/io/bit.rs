@@ -221,6 +221,8 @@ pub mod vlc {
     #[derive(Default)]
     pub struct Codebook<E: CodebookEntry> {
         pub table: Vec<E>,
+        pub max_code_len: u32,
+        pub init_block_len: u32,
     }
 
     impl<E: CodebookEntry> Codebook<E> {
@@ -438,6 +440,8 @@ pub mod vlc {
 
             let mut blocks = Vec::<CodebookBlock<E>>::new();
 
+            let mut max_code_len = 0;
+
             // Only attempt to generate something if there are code words.
             if !code_words.is_empty() {
                 let prefix_mask = !(!0 << self.max_bits_per_block);
@@ -500,13 +504,19 @@ pub mod vlc {
 
                     // Update the block's width.
                     block.width = max(block.width, len);
+
+                    // Update maximum observed codeword.
+                    max_code_len = max(max_code_len, code_len);
                 }
             }
 
-            // Generate Codebook's lookup table.
+            // Generate the codebook lookup table.
             let table = CodebookBuilder::generate_lut(self.bit_order, self.is_sparse, &blocks)?;
 
-            Ok(Codebook { table })
+            // Determine the first block length if skipping the initial jump entry.
+            let init_block_len = table.first().map(|block| block.jump_len()).unwrap_or(0);
+
+            Ok(Codebook { table, max_code_len: u32::from(max_code_len), init_block_len })
         }
     }
 }
@@ -829,53 +839,51 @@ pub trait ReadBitsLtr: private::FetchBitsLtr {
         &mut self,
         codebook: &vlc::Codebook<E>,
     ) -> io::Result<(E::ValueType, u32)> {
-        debug_assert!(!codebook.is_empty());
-
-        let mut code_len = 0;
-        let mut jmp_read_len = 0;
-
-        let mut entry = codebook.table[0];
-
-        while entry.is_jump() {
-            // Consume bits from the last jump.
-            self.consume_bits(jmp_read_len);
-
-            // Update decoded code length.
-            code_len += jmp_read_len;
-
-            // The length of the next run of bits to read.
-            jmp_read_len = entry.jump_len();
-
-            let addr = self.get_bits() >> (u64::BITS - jmp_read_len);
-
-            // Jump!
-            let jmp_offset = entry.jump_offset();
-
-            entry = codebook.table[jmp_offset + addr as usize];
-
-            // The bit cache cannot fully service next lookup. Try to use the remaining bits (addr)
-            // as a prefix. If it points to a value entry that has a code length that's <= the
-            // remaining number of bits, then no further reads are necessary.
-            if self.num_bits_left() < jmp_read_len {
-                if entry.is_value() && entry.value_len() <= self.num_bits_left() {
-                    break;
-                }
-
-                // Fetch more bits without discarding the unconsumed bits.
-                self.fetch_bits_partial()?;
-
-                let addr = self.get_bits() >> (u64::BITS - jmp_read_len);
-
-                entry = codebook.table[jmp_offset + addr as usize];
-            }
+        // Attempt refill the bit buffer with enough bits for the longest codeword in the codebook.
+        // However, this does not mean the bit buffer will have enough bits to decode a codeword.
+        if self.num_bits_left() < codebook.max_code_len {
+            self.fetch_bits_partial()?;
         }
 
-        // Consume the bits from the value entry.
-        let entry_code_len = entry.value_len();
+        // The number of bits actually buffered in the bit buffer.
+        let num_bits_left = self.num_bits_left();
 
-        self.consume_bits(entry_code_len);
+        let mut bits = self.get_bits();
 
-        Ok((entry.value(), code_len + entry_code_len))
+        let mut block_len = codebook.init_block_len;
+        let mut entry = codebook.table[(bits >> (u64::BITS - block_len)) as usize + 1];
+
+        let mut consumed = 0;
+
+        while entry.is_jump() {
+            // Consume the bits used for the initial or previous jump iteration.
+            consumed += block_len;
+            bits <<= block_len;
+
+            // Since this is a jump entry, if there are no bits left then the bitstream ended early.
+            if consumed > num_bits_left {
+                return end_of_bitstream_error();
+            }
+
+            // Prepare for the next jump.
+            block_len = entry.jump_len();
+
+            let index = bits >> (u64::BITS - block_len);
+
+            // Jump to the next entry.
+            entry = codebook.table[entry.jump_offset() + index as usize];
+        }
+
+        // The entry is always a value entry at this point. Consume the bits containing the value.
+        consumed += entry.value_len();
+
+        if consumed > num_bits_left {
+            return end_of_bitstream_error();
+        }
+
+        self.consume_bits(consumed);
+
+        Ok((entry.value(), consumed))
     }
 }
 
@@ -907,8 +915,6 @@ impl<'a, B: ReadBytes> private::FetchBitsLtr for BitStreamLtr<'a, B> {
 
     #[inline(always)]
     fn fetch_bits_partial(&mut self) -> io::Result<()> {
-        self.bits |= u64::from(self.reader.read_u8()?) << (u64::BITS - self.n_bits_left);
-        self.n_bits_left += u8::BITS;
         todo!()
     }
 
@@ -949,14 +955,11 @@ impl<'a> BitReaderLtr<'a> {
 }
 
 impl<'a> private::FetchBitsLtr for BitReaderLtr<'a> {
+    #[inline]
     fn fetch_bits_partial(&mut self) -> io::Result<()> {
         let mut buf = [0u8; std::mem::size_of::<u64>()];
 
         let read_len = min(self.buf.len(), (u64::BITS - self.n_bits_left) as usize >> 3);
-
-        if read_len == 0 {
-            return end_of_bitstream_error();
-        }
 
         buf[..read_len].copy_from_slice(&self.buf[..read_len]);
 
@@ -1282,60 +1285,54 @@ pub trait ReadBitsRtl: private::FetchBitsRtl {
         Ok(num)
     }
 
-    /// Reads a codebook value from the `BitStream` using the provided `Codebook` and returns the
-    /// decoded value or an error.
     #[inline(always)]
     fn read_codebook<E: vlc::CodebookEntry>(
         &mut self,
         codebook: &vlc::Codebook<E>,
     ) -> io::Result<(E::ValueType, u32)> {
-        debug_assert!(!codebook.is_empty());
-
-        let mut code_len = 0;
-        let mut jmp_read_len = 0;
-
-        let mut entry = codebook.table[0];
-
-        while entry.is_jump() {
-            // Consume bits from the last jump.
-            self.consume_bits(jmp_read_len);
-
-            // Update decoded code length.
-            code_len += jmp_read_len;
-
-            // The length of the next run of bits to read.
-            jmp_read_len = entry.jump_len();
-
-            let addr = self.get_bits() & ((1 << jmp_read_len) - 1);
-
-            // Jump!
-            let jmp_offset = entry.jump_offset();
-
-            entry = codebook.table[jmp_offset + addr as usize];
-
-            // The bit cache cannot fully service next lookup. Try to use the remaining bits (addr)
-            // as a prefix. If it points to a value entry that has a code length that's <= the
-            // remaining number of bits, then no further reads are necessary.
-            if self.num_bits_left() < jmp_read_len {
-                if entry.is_value() && entry.value_len() <= self.num_bits_left() {
-                    break;
-                }
-
-                // Fetch more bits without discarding the unconsumed bits.
-                self.fetch_bits_partial()?;
-
-                let addr = self.get_bits() & ((1 << jmp_read_len) - 1);
-
-                entry = codebook.table[jmp_offset + addr as usize];
-            }
+        if self.num_bits_left() < codebook.max_code_len {
+            self.fetch_bits_partial()?;
         }
 
-        // Consume the bits from the value entry.
-        let entry_code_len = entry.value_len();
+        // The number of bits actually buffered in the bit buffer.
+        let num_bits_left = self.num_bits_left();
 
-        self.consume_bits(entry_code_len);
+        let mut bits = self.get_bits();
 
-        Ok((entry.value(), code_len + entry_code_len))
+        let mut block_len = codebook.init_block_len;
+        let mut entry = codebook.table[(bits & ((1 << block_len) - 1)) as usize + 1];
+
+        let mut consumed = 0;
+
+        while entry.is_jump() {
+            // Consume the bits used for the initial or previous jump iteration.
+            consumed += block_len;
+            bits >>= block_len;
+
+            // Since this is a jump entry, if there are no bits left then the bitstream ended early.
+            if consumed > num_bits_left {
+                return end_of_bitstream_error();
+            }
+
+            // Prepare for the next jump.
+            block_len = entry.jump_len();
+
+            let index = bits & ((1 << block_len) - 1);
+
+            // Jump to the next entry.
+            entry = codebook.table[entry.jump_offset() + index as usize];
+        }
+
+        // The entry is always a value entry at this point. Consume the bits containing the value.
+        consumed += entry.value_len();
+
+        if consumed > num_bits_left {
+            return end_of_bitstream_error();
+        }
+
+        self.consume_bits(consumed);
+
+        Ok((entry.value(), consumed))
     }
 }
 
@@ -1367,8 +1364,6 @@ impl<'a, B: ReadBytes> private::FetchBitsRtl for BitStreamRtl<'a, B> {
 
     #[inline(always)]
     fn fetch_bits_partial(&mut self) -> io::Result<()> {
-        self.bits |= u64::from(self.reader.read_u8()?) << self.n_bits_left;
-        self.n_bits_left += u8::BITS;
         todo!()
     }
 
@@ -1409,14 +1404,11 @@ impl<'a> BitReaderRtl<'a> {
 }
 
 impl<'a> private::FetchBitsRtl for BitReaderRtl<'a> {
+    #[inline]
     fn fetch_bits_partial(&mut self) -> io::Result<()> {
         let mut buf = [0u8; std::mem::size_of::<u64>()];
 
         let read_len = min(self.buf.len(), (u64::BITS - self.n_bits_left) as usize >> 3);
-
-        if read_len == 0 {
-            return end_of_bitstream_error();
-        }
 
         buf[..read_len].copy_from_slice(&self.buf[..read_len]);
 

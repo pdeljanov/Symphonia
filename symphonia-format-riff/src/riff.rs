@@ -75,7 +75,6 @@ impl<T: ParseChunkTag> ChunksReader<T> {
             // Read tag and len, the chunk header.
             let tag = reader.read_quad_bytes()?;
 
-            // TODO: this could break on machine with big endian architecture, gotta think about it lol
             let len = match self.byte_order {
                 ByteOrder::LittleEndian => reader.read_u32()?,
                 ByteOrder::BigEndian => reader.read_be_u32()?,

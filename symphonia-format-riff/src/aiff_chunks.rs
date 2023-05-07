@@ -243,7 +243,7 @@ impl CommonChunkParser for ChunkParser<CommonChunk> {
         let mut compression_name = vec![0; (str_len) as usize];
         source.read_buf_exact(compression_name.as_mut())?;
         let compression_name = String::from_utf8_lossy(&compression_name).into_owned();
-        
+
         // Total number of bytes in pascal string must be even, since len is excluded from our var, we add 1
         if (str_len + 1) % 2 != 0 {
             source.ignore_bytes(1)?;

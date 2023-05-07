@@ -575,6 +575,10 @@ lazy_static! {
 
             // Generate the codebook.
             let mut builder = CodebookBuilder::new(BitOrder::Verbatim);
+
+            // Decode a maximum of 8 bits per read.
+            builder.bits_per_read(8);
+
             *codebook = builder.make(table.codes, table.lens, &values).unwrap();
         }
 
@@ -598,6 +602,10 @@ lazy_static! {
 
             // Generate the codebook.
             let mut builder = CodebookBuilder::new(BitOrder::Verbatim);
+
+            // Decode a maximum of 8 bits per read.
+            builder.bits_per_read(8);
+
             *codebook = builder.make(table.codes, table.lens, &values).unwrap();
         }
 

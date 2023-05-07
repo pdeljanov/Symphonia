@@ -440,12 +440,17 @@ impl Layer for Layer3 {
             // The next steps are independant of channel count.
             for ch in 0..header.n_channels() {
                 // Reorder the spectral samples in short blocks into sub-band order.
-                hybrid_synthesis::reorder(header, &granule.channels[ch], &mut self.samples[gr][ch]);
+                hybrid_synthesis::reorder(
+                    header,
+                    &mut granule.channels[ch],
+                    &mut self.samples[gr][ch],
+                );
 
                 // Apply the anti-aliasing filter to all block types other than short.
-                hybrid_synthesis::antialias(&granule.channels[ch], &mut self.samples[gr][ch]);
+                hybrid_synthesis::antialias(&mut granule.channels[ch], &mut self.samples[gr][ch]);
 
-                // Perform hybrid-synthesis (IMDCT and windowing).
+                // Perform hybrid-synthesis (IMDCT and windowing). After this step, rzero is invalid
+                // due to the overlap-add operation.
                 hybrid_synthesis::hybrid_synthesis(
                     &granule.channels[ch],
                     &mut self.overlap[ch],
