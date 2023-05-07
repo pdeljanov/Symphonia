@@ -117,7 +117,7 @@ impl FormatReader for AiffReader {
             // unsupported.
             // TODO: According to the spec additional chunks can be added after the sound data chunk. In fact any order can be possible.
             if chunk.is_none() {
-                return unsupported_error("aiff: missing data chunk");
+                return unsupported_error("aiff: missing sound chunk");
             }
 
             match chunk.unwrap() {
