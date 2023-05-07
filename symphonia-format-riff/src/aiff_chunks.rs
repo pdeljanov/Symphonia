@@ -9,15 +9,15 @@ use std::fmt;
 
 use symphonia_core::audio::Channels;
 use symphonia_core::codecs::{
-    CODEC_TYPE_PCM_F32BE, CODEC_TYPE_PCM_F64BE, CODEC_TYPE_PCM_MULAW, CODEC_TYPE_PCM_S16BE,
-    CODEC_TYPE_PCM_S24BE, CODEC_TYPE_PCM_S32BE, CODEC_TYPE_PCM_S8,
+    CODEC_TYPE_PCM_ALAW, CODEC_TYPE_PCM_F32BE, CODEC_TYPE_PCM_F64BE, CODEC_TYPE_PCM_MULAW,
+    CODEC_TYPE_PCM_S16BE, CODEC_TYPE_PCM_S24BE, CODEC_TYPE_PCM_S32BE, CODEC_TYPE_PCM_S8,
 };
 use symphonia_core::errors::{decode_error, unsupported_error, Result};
 use symphonia_core::io::{MediaSourceStream, ReadBytes};
 
 use crate::{
-    ChunkParser, FormatData, FormatIeeeFloat, FormatMuLaw, FormatPcm, PacketInfo, ParseChunk,
-    ParseChunkTag,
+    ChunkParser, FormatALaw, FormatData, FormatIeeeFloat, FormatMuLaw, FormatPcm, PacketInfo,
+    ParseChunk, ParseChunkTag,
 };
 
 use extended::Extended;
@@ -71,6 +71,16 @@ impl CommonChunk {
         Ok(FormatData::Pcm(FormatPcm { bits_per_sample, channels, codec }))
     }
 
+    fn read_alaw_pcm_fmt(n_channels: u16) -> Result<FormatData> {
+        let channels = match n_channels {
+            1 => Channels::FRONT_LEFT,
+            2 => Channels::FRONT_LEFT | Channels::FRONT_RIGHT,
+            _ => return decode_error("aifc: channel layout is not stereo or mono for fmt_alaw"),
+        };
+
+        Ok(FormatData::ALaw(FormatALaw { codec: CODEC_TYPE_PCM_ALAW, channels }))
+    }
+
     fn read_mulaw_pcm_fmt(n_channels: u16) -> Result<FormatData> {
         let channels = match n_channels {
             1 => Channels::FRONT_LEFT,
@@ -105,6 +115,11 @@ impl CommonChunk {
                 let block_align = self.n_channels * self.sample_size / 8;
                 Ok(PacketInfo::without_blocks(block_align as u16))
             }
+            FormatData::ALaw(_) => {
+                // In a-law encoding, each audio sample is represented by an 8-bit value that has been compressed
+                let block_align = self.n_channels;
+                Ok(PacketInfo::without_blocks(block_align as u16))
+            }
             FormatData::MuLaw(_) => {
                 // In mu-law encoding, each audio sample is represented by an 8-bit value that has been compressed
                 let block_align = self.n_channels;
@@ -114,7 +129,12 @@ impl CommonChunk {
                 let block_align = self.n_channels * self.sample_size / 8;
                 Ok(PacketInfo::without_blocks(block_align as u16))
             }
-            _ => return unsupported_error("aiff: packet info not implemented for format"),
+            FormatData::Extensible(_) => {
+                return unsupported_error("aiff: packet info not implemented for format Extensible")
+            }
+            FormatData::Adpcm(_) => {
+                return unsupported_error("aiff: packet info not implemented for format Adpcm")
+            }
         }
     }
 }
@@ -156,6 +176,7 @@ impl ParseChunk for CommonChunk {
 }
 
 impl fmt::Display for CommonChunk {
+    //TODO: perhaps place this in riff.rs to share with wave etc
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "CommonChunk {{")?;
         writeln!(f, "\tn_channels: {},", self.n_channels)?;
@@ -168,6 +189,11 @@ impl fmt::Display for CommonChunk {
                 writeln!(f, "\t\tchannels: {},", pcm.channels)?;
                 writeln!(f, "\t\tcodec: {},", pcm.codec)?;
             }
+            FormatData::ALaw(ref alaw) => {
+                writeln!(f, "\tformat_data: MuLaw {{")?;
+                writeln!(f, "\t\tchannels: {},", alaw.channels)?;
+                writeln!(f, "\t\tcodec: {},", alaw.codec)?;
+            }
             FormatData::MuLaw(ref mulaw) => {
                 writeln!(f, "\tformat_data: MuLaw {{")?;
                 writeln!(f, "\t\tchannels: {},", mulaw.channels)?;
@@ -178,9 +204,11 @@ impl fmt::Display for CommonChunk {
                 writeln!(f, "\t\tchannels: {},", ieee.channels)?;
                 writeln!(f, "\t\tcodec: {},", ieee.codec)?;
             }
-            _ => {
-                //TODO: this is not optimal, but since no other aiff formats are support it should never be reached anyway..
-                writeln!(f, "\tdisplay not implemented for format")?;
+            FormatData::Extensible(_) => {
+                writeln!(f, "\tformat_data: Extensible DISPLAY UNSUPPORTED {{")?;
+            }
+            FormatData::Adpcm(_) => {
+                writeln!(f, "\tformat_data: Adpcm DISPLAY UNSUPPORTED {{")?;
             }
         };
 
@@ -215,7 +243,7 @@ impl CommonChunkParser for ChunkParser<CommonChunk> {
         let mut compression_name = vec![0; (str_len) as usize];
         source.read_buf_exact(compression_name.as_mut())?;
         let compression_name = String::from_utf8_lossy(&compression_name).into_owned();
-
+        
         // Total number of bytes in pascal string must be even, since len is excluded from our var, we add 1
         if (str_len + 1) % 2 != 0 {
             source.ignore_bytes(1)?;
@@ -223,6 +251,7 @@ impl CommonChunkParser for ChunkParser<CommonChunk> {
 
         let format_data = match &compression_type {
             b"NONE" => CommonChunk::read_pcm_fmt(sample_size as u16, n_channels as u16),
+            b"alaw" => CommonChunk::read_alaw_pcm_fmt(n_channels as u16),
             b"ulaw" => CommonChunk::read_mulaw_pcm_fmt(n_channels as u16),
             b"fl32" => CommonChunk::read_ieee_fmt(sample_size as u16, n_channels as u16),
             b"fl64" => CommonChunk::read_ieee_fmt(sample_size as u16, n_channels as u16),

@@ -317,14 +317,20 @@ pub fn append_format_params(
                 .with_bits_per_sample(u32::from(pcm.bits_per_sample))
                 .with_channels(pcm.channels);
         }
+        FormatData::ALaw(alaw) => {
+            codec_params.for_codec(alaw.codec).with_channels(alaw.channels);
+        }
         FormatData::MuLaw(mulaw) => {
             codec_params.for_codec(mulaw.codec).with_channels(mulaw.channels);
         }
         FormatData::IeeeFloat(ieee) => {
             codec_params.for_codec(ieee.codec).with_channels(ieee.channels);
         }
-        _ => {
-            unimplemented!("riff: format not supported");
+        FormatData::Extensible(_) => {
+            unimplemented!("riff: format Extensible not supported");
+        }
+        FormatData::Adpcm(_) => {
+            unimplemented!("riff: format Adpcm not supported");
         }
     }
 }
