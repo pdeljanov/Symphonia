@@ -53,10 +53,10 @@ impl CommonChunk {
         // Select the appropriate codec using bits per sample. Samples are always interleaved and
         // little-endian encoded for the PCM format.
         let codec = match bits_per_sample {
-            8 => CODEC_TYPE_PCM_S8,
-            16 => CODEC_TYPE_PCM_S16BE,
-            24 => CODEC_TYPE_PCM_S24BE,
-            32 => CODEC_TYPE_PCM_S32BE,
+            x if x <= 8 => CODEC_TYPE_PCM_S8,
+            x if x > 8 && x <= 16 => CODEC_TYPE_PCM_S16BE,
+            x if x > 16 && x <= 24 => CODEC_TYPE_PCM_S24BE,
+            x if x > 24 && x <= 32 => CODEC_TYPE_PCM_S32BE,
             _ => return decode_error("aiff: bits per sample for pcm must be 8, 16, 24 or 32 bits"),
         };
 
