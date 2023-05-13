@@ -10,7 +10,8 @@ use std::fmt;
 use symphonia_core::audio::Channels;
 use symphonia_core::codecs::{
     CODEC_TYPE_PCM_ALAW, CODEC_TYPE_PCM_F32BE, CODEC_TYPE_PCM_F64BE, CODEC_TYPE_PCM_MULAW,
-    CODEC_TYPE_PCM_S16BE, CODEC_TYPE_PCM_S24BE, CODEC_TYPE_PCM_S32BE, CODEC_TYPE_PCM_S8,
+    CODEC_TYPE_PCM_S16BE, CODEC_TYPE_PCM_S16LE, CODEC_TYPE_PCM_S24BE, CODEC_TYPE_PCM_S32BE,
+    CODEC_TYPE_PCM_S8,
 };
 use symphonia_core::errors::{decode_error, unsupported_error, Result};
 use symphonia_core::io::{MediaSourceStream, ReadBytes};
@@ -107,6 +108,21 @@ impl CommonChunk {
         };
 
         Ok(FormatData::IeeeFloat(FormatIeeeFloat { channels, codec }))
+    }
+
+    fn read_sowt_fmt(bits_per_sample: u16, n_channels: u16) -> Result<FormatData> {
+        let codec = match bits_per_sample {
+            16 => CODEC_TYPE_PCM_S16LE,
+            _ => return decode_error("aiff: bits per sample for sowt must be 16 bits"),
+        };
+
+        let channels = match n_channels {
+            1 => Channels::FRONT_LEFT,
+            2 => Channels::FRONT_LEFT | Channels::FRONT_RIGHT,
+            _ => return decode_error("aiff: channel layout is not stereo or mono for fmt_pcm"),
+        };
+
+        Ok(FormatData::Pcm(FormatPcm { bits_per_sample, channels, codec }))
     }
 
     pub fn packet_info(&self) -> Result<PacketInfo> {
@@ -254,6 +270,7 @@ impl CommonChunkParser for ChunkParser<CommonChunk> {
             b"alaw" | b"ALAW" => CommonChunk::read_alaw_pcm_fmt(n_channels as u16),
             b"ulaw" | b"ULAW" => CommonChunk::read_mulaw_pcm_fmt(n_channels as u16),
             b"fl32" | b"fl64" => CommonChunk::read_ieee_fmt(sample_size as u16, n_channels as u16),
+            b"sowt" | b"SOWT" => CommonChunk::read_sowt_fmt(sample_size as u16, n_channels as u16),
             _ => return unsupported_error("aifc: Compression type not implemented"),
         };
 
