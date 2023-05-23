@@ -30,7 +30,7 @@ use symphonia_core::codecs::{CODEC_TYPE_PCM_U24LE, CODEC_TYPE_PCM_U32LE};
 // Floating point PCM codecs
 use symphonia_core::codecs::{CODEC_TYPE_PCM_F32BE, CODEC_TYPE_PCM_F32LE};
 use symphonia_core::codecs::{CODEC_TYPE_PCM_F64BE, CODEC_TYPE_PCM_F64LE};
-// G711 ALaw and MuLaw PCM cdoecs.
+// G711 ALaw and MuLaw PCM codecs
 use symphonia_core::codecs::{CODEC_TYPE_PCM_ALAW, CODEC_TYPE_PCM_MULAW};
 use symphonia_core::conv::IntoSample;
 use symphonia_core::errors::{decode_error, unsupported_error, Result};

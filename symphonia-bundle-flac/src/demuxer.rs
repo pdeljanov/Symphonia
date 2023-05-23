@@ -288,7 +288,7 @@ impl FormatReader for FlacReader {
         let packet = loop {
             let sync = self.parser.resync(&mut self.reader)?;
 
-            // The desired timestamp preceeds the current packet's timestamp.
+            // The desired timestamp precedes the current packet's timestamp.
             if ts < sync.ts {
                 // Attempted to seek backwards on an unseekable stream.
                 if !self.reader.is_seekable() {
