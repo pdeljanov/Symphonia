@@ -80,7 +80,7 @@ mod pulseaudio {
                 pulse::stream::Direction::Playback, // Playback stream
                 None,                               // Default playback device
                 "Music",                            // Description of the stream
-                &pa_spec,                           // Signal specificaiton
+                &pa_spec,                           // Signal specification
                 pa_ch_map.as_ref(),                 // Channel map
                 None,                               // Custom buffering attributes
             );
