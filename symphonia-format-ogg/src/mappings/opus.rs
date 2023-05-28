@@ -150,9 +150,28 @@ pub fn detect(buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> {
 pub struct OpusPacketParser {}
 
 impl PacketParser for OpusPacketParser {
-    fn parse_next_packet_dur(&mut self, _packet: &[u8]) -> u64 {
-        // TODO: Implement.
-        0
+    fn parse_next_packet_dur(&mut self, packet: &[u8]) -> u64 {
+        // Decode TOC byte
+        // https://datatracker.ietf.org/doc/html/rfc6716#section-3.1
+        let byte = packet[0];
+        let packet_duration = match byte >> 3 {
+            16 | 20 | 24 | 28 => 5 * 24, // 2.5ms
+            17 | 21 | 25 | 29 => 5 * 48,
+            0 | 4 | 8 | 12 | 14 | 18 | 22 | 26 | 30 => 10 * 48,
+            1 | 5 | 9 | 13 | 15 | 19 | 23 | 27 | 31 => 20 * 48,
+            2 | 6 | 10 => 40 * 48,
+            3 | 7 | 11 => 60 * 48,
+            _ => unreachable!(),
+        };
+        let packets = match byte & 0b11 {
+            0b00 => 1,                    // 1 frame in the packet
+            0b01 => 2,                    // 2 frames in the packet, each with equal compressed size
+            0b10 => 2,                    // 2 frames in the packet, with different compressed sizes
+            0b11 => packet[1] & 0b111111, // an arbitrary number of frames in the packet
+            _ => unreachable!(),
+        };
+
+        packet_duration * packets as u64
     }
 }
 
@@ -185,8 +204,7 @@ impl Mapper for OpusMapper {
     fn map_packet(&mut self, packet: &[u8]) -> Result<MapResult> {
         if !self.need_comment {
             Ok(MapResult::StreamData { dur: 0 })
-        }
-        else {
+        } else {
             let mut reader = BufReader::new(packet);
 
             // Read the header signature.
@@ -202,8 +220,7 @@ impl Mapper for OpusMapper {
                 self.need_comment = false;
 
                 Ok(MapResult::SideData { data: SideData::Metadata(builder.metadata()) })
-            }
-            else {
+            } else {
                 warn!("ogg (opus): invalid packet type");
                 Ok(MapResult::Unknown)
             }
