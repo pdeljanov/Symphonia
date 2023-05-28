@@ -123,14 +123,18 @@ impl OggReader {
 
             let mut start_byte_pos = self.phys_byte_range_start;
             let mut end_byte_pos = physical_end;
+            let mut first_loop = true;
 
             // Bisection method.
             loop {
-                // Find the middle of the upper and lower byte search range.
-                let mid_byte_pos = (start_byte_pos + end_byte_pos) / 2;
+                // Pick a byte to start searching from. For the first iteration,
+                // use the start byte. For each subsequent iteration, find the middle
+                // of the upper and lower byte search range.
+                let search_byte_pos =
+                    if first_loop { start_byte_pos } else { (start_byte_pos + end_byte_pos) / 2 };
 
-                // Seek to the middle of the byte range.
-                self.reader.seek(SeekFrom::Start(mid_byte_pos))?;
+                // Seek to the chosen search byte.
+                self.reader.seek(SeekFrom::Start(search_byte_pos))?;
 
                 // Read the next page.
                 match self.pages.next_page_for_serial(&mut self.reader, serial) {
@@ -142,19 +146,19 @@ impl OggReader {
                 let (start_ts, end_ts) = stream.inspect_page(&self.pages.page());
 
                 debug!(
-                    "seek: bisect step: page={{ start={}, end={} }} byte_range=[{}..{}], mid={}",
-                    start_ts, end_ts, start_byte_pos, end_byte_pos, mid_byte_pos,
+                    "seek: bisect step: page={{ start={}, end={} }} byte_range=[{}..{}], search={}",
+                    start_ts, end_ts, start_byte_pos, end_byte_pos, search_byte_pos,
                 );
 
                 if required_ts < start_ts {
                     // The required timestamp is less-than the timestamp of the first sample in
                     // page1. Update the upper bound and bisect again.
-                    end_byte_pos = mid_byte_pos;
+                    end_byte_pos = search_byte_pos;
                 }
                 else if required_ts > end_ts {
                     // The required timestamp is greater-than the timestamp of the final sample in
                     // the in page1. Update the lower bound and bisect again.
-                    start_byte_pos = mid_byte_pos;
+                    start_byte_pos = search_byte_pos;
                 }
                 else {
                     // The sample with the required timestamp is contained in page1. Return the
@@ -176,6 +180,8 @@ impl OggReader {
 
                     break;
                 }
+
+                first_loop = false;
             }
 
             // Reset all logical bitstreams since the physical stream will be reading from a new
