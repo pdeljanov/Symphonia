@@ -5,7 +5,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::errors::Result;
+use symphonia_core::errors::{decode_error, Result};
 use symphonia_core::io::ReadBytes;
 use symphonia_core::util::clamp::clamp_i16;
 
@@ -40,6 +40,9 @@ impl AdpcmImaBlockStatus {
     fn read_preamble<B: ReadBytes>(stream: &mut B) -> Result<Self> {
         let predictor = u16_to_i32!(stream.read_u16()?);
         let step_index = stream.read_byte()? as i32;
+        if step_index > 88 {
+            return decode_error("adpcm (ima): invalid step index");
+        }
         //reserved byte
         let _ = stream.read_byte()?;
         let status = Self { predictor, step_index };
