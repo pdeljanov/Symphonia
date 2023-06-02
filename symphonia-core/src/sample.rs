@@ -65,6 +65,23 @@ pub trait Sample:
     /// If the sample format does not use the full range of the underlying data type, returns the
     /// sample clamped to the valid range. Otherwise, returns the sample unchanged.
     fn clamped(self) -> Self;
+
+    /// Copy sample into buffer. This may used to pass data into raw buffer.
+    ///
+    /// # Panics
+    /// The function panics whether `buf.len()` isn't equal to sample size.
+    fn copy_to_buf(self, buf: &mut [u8]);
+}
+
+macro_rules! copy_to_buf_impl {
+    () => {
+        fn copy_to_buf(self, buf: &mut [u8]) {
+            let sample_size = Self::EFF_BITS / 8;
+            assert_eq!(sample_size, buf.len() as u32, "sample size must equal to buffer length");
+            let bytes = self.to_ne_bytes();
+            buf.copy_from_slice(&bytes[..]);
+        }
+    };
 }
 
 /// An unsigned 24-bit integer sample with an internal unsigned 32-bit integer representation.
@@ -92,6 +109,8 @@ impl Sample for u8 {
     fn clamped(self) -> Self {
         self
     }
+
+    copy_to_buf_impl! {}
 }
 
 impl Sample for i8 {
@@ -103,6 +122,8 @@ impl Sample for i8 {
     fn clamped(self) -> Self {
         self
     }
+
+    copy_to_buf_impl! {}
 }
 
 impl Sample for u16 {
@@ -114,6 +135,8 @@ impl Sample for u16 {
     fn clamped(self) -> Self {
         self
     }
+
+    copy_to_buf_impl! {}
 }
 
 impl Sample for i16 {
@@ -125,6 +148,8 @@ impl Sample for i16 {
     fn clamped(self) -> Self {
         self
     }
+
+    copy_to_buf_impl! {}
 }
 
 impl Sample for u24 {
@@ -136,6 +161,8 @@ impl Sample for u24 {
     fn clamped(self) -> Self {
         u24(clamp_u24(self.0))
     }
+
+    copy_to_buf_impl! {}
 }
 
 impl Sample for i24 {
@@ -147,6 +174,8 @@ impl Sample for i24 {
     fn clamped(self) -> Self {
         i24(clamp_i24(self.0))
     }
+
+    copy_to_buf_impl! {}
 }
 
 impl Sample for u32 {
@@ -158,6 +187,8 @@ impl Sample for u32 {
     fn clamped(self) -> Self {
         self
     }
+
+    copy_to_buf_impl! {}
 }
 
 impl Sample for i32 {
@@ -169,6 +200,8 @@ impl Sample for i32 {
     fn clamped(self) -> Self {
         self
     }
+
+    copy_to_buf_impl! {}
 }
 
 impl Sample for f32 {
@@ -180,6 +213,8 @@ impl Sample for f32 {
     fn clamped(self) -> Self {
         clamp_f32(self)
     }
+
+    copy_to_buf_impl! {}
 }
 
 impl Sample for f64 {
@@ -191,6 +226,8 @@ impl Sample for f64 {
     fn clamped(self) -> Self {
         clamp_f64(self)
     }
+
+    copy_to_buf_impl! {}
 }
 
 // Helper macros
