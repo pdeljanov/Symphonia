@@ -12,7 +12,7 @@ use std::marker::PhantomData;
 use symphonia_core::audio::Channels;
 use symphonia_core::codecs::CodecParameters;
 use symphonia_core::codecs::CodecType;
-use symphonia_core::errors::{decode_error, end_of_stream_error, Result};
+use symphonia_core::errors::{decode_error, end_of_stream_error, Error, Result};
 use symphonia_core::formats::prelude::*;
 use symphonia_core::io::{MediaSourceStream, ReadBytes};
 
@@ -38,6 +38,63 @@ pub enum NullChunks {}
 impl ParseChunkTag for NullChunks {
     fn parse_tag(_tag: [u8; 4], _len: u32) -> Option<Self> {
         None
+    }
+}
+
+pub fn fix_channel_mask(mut channel_mask: u32, n_channels: u16) -> u32 {
+    let channel_diff = n_channels as i32 - channel_mask.count_ones() as i32;
+
+    if channel_diff != 0 {
+        info!("Channel mask not set correctly, channel positions may be incorrect!");
+    }
+
+    // Check that the number of ones in the channel mask match the number of channels.
+    if channel_diff > 0 {
+        // Too few ones in mask so add extra ones above the most significant one
+        let shift = 32 - (!channel_mask).leading_ones();
+        channel_mask |= ((1 << channel_diff) - 1) << shift;
+    }
+    else {
+        // Too many ones in mask so remove the most significant extra ones
+        while channel_mask.count_ones() != n_channels as u32 {
+            let highest_one = 31 - (!channel_mask).leading_ones();
+            channel_mask &= !(1 << highest_one);
+        }
+    }
+
+    channel_mask
+}
+
+#[test]
+fn test_fix_channel_mask() {
+    // Too few
+    assert_eq!(fix_channel_mask(0, 9), 0b111111111);
+    assert_eq!(fix_channel_mask(0b101000, 5), 0b111101000);
+
+    // Too many
+    assert_eq!(fix_channel_mask(0b1111111, 0), 0);
+    assert_eq!(fix_channel_mask(0b101110111010, 5), 0b10111010);
+    assert_eq!(fix_channel_mask(0xFFFFFFFF, 8), 0b11111111);
+}
+
+pub fn try_channel_count_to_mask(count: u16) -> Result<Channels> {
+    (1..=32)
+        .contains(&count)
+        .then(|| Channels::from_bits(((1u64 << count) - 1) as u32))
+        .flatten()
+        .ok_or(Error::DecodeError("riff: invalid channel count"))
+}
+
+#[test]
+fn test_try_channel_count_to_mask() {
+    assert!(try_channel_count_to_mask(0).is_err());
+
+    for i in 1..27 {
+        assert!(try_channel_count_to_mask(i).is_ok());
+    }
+
+    for i in 27..u16::MAX {
+        assert!(try_channel_count_to_mask(i).is_err());
     }
 }
 

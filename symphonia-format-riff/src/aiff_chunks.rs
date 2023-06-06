@@ -7,7 +7,6 @@
 
 use std::fmt;
 
-use symphonia_core::audio::Channels;
 use symphonia_core::codecs::{
     CODEC_TYPE_PCM_ALAW, CODEC_TYPE_PCM_F32BE, CODEC_TYPE_PCM_F64BE, CODEC_TYPE_PCM_MULAW,
     CODEC_TYPE_PCM_S16BE, CODEC_TYPE_PCM_S16LE, CODEC_TYPE_PCM_S24BE, CODEC_TYPE_PCM_S32BE,
@@ -17,8 +16,8 @@ use symphonia_core::errors::{decode_error, unsupported_error, Result};
 use symphonia_core::io::{MediaSourceStream, ReadBytes};
 
 use crate::{
-    ChunkParser, FormatALaw, FormatData, FormatIeeeFloat, FormatMuLaw, FormatPcm, PacketInfo,
-    ParseChunk, ParseChunkTag,
+    try_channel_count_to_mask, ChunkParser, FormatALaw, FormatData, FormatIeeeFloat, FormatMuLaw,
+    FormatPcm, PacketInfo, ParseChunk, ParseChunkTag,
 };
 
 use extended::Extended;
@@ -61,34 +60,17 @@ impl CommonChunk {
             _ => return decode_error("aiff: bits per sample for pcm must be 8, 16, 24 or 32 bits"),
         };
 
-        // The PCM format only supports 1 or 2 channels, for mono and stereo channel layouts,
-        // respectively.
-        let channels = match n_channels {
-            1 => Channels::FRONT_LEFT,
-            2 => Channels::FRONT_LEFT | Channels::FRONT_RIGHT,
-            _ => return decode_error("aiff: channel layout is not stereo or mono for fmt_pcm"),
-        };
-
+        let channels = try_channel_count_to_mask(n_channels)?;
         Ok(FormatData::Pcm(FormatPcm { bits_per_sample, channels, codec }))
     }
 
     fn read_alaw_pcm_fmt(n_channels: u16) -> Result<FormatData> {
-        let channels = match n_channels {
-            1 => Channels::FRONT_LEFT,
-            2 => Channels::FRONT_LEFT | Channels::FRONT_RIGHT,
-            _ => return decode_error("aifc: channel layout is not stereo or mono for fmt_alaw"),
-        };
-
+        let channels = try_channel_count_to_mask(n_channels)?;
         Ok(FormatData::ALaw(FormatALaw { codec: CODEC_TYPE_PCM_ALAW, channels }))
     }
 
     fn read_mulaw_pcm_fmt(n_channels: u16) -> Result<FormatData> {
-        let channels = match n_channels {
-            1 => Channels::FRONT_LEFT,
-            2 => Channels::FRONT_LEFT | Channels::FRONT_RIGHT,
-            _ => return decode_error("aifc: channel layout is not stereo or mono for fmt_mulaw"),
-        };
-
+        let channels = try_channel_count_to_mask(n_channels)?;
         Ok(FormatData::MuLaw(FormatMuLaw { codec: CODEC_TYPE_PCM_MULAW, channels }))
     }
 
@@ -101,12 +83,7 @@ impl CommonChunk {
             _ => return decode_error("aifc: bits per sample for fmt_ieee must be 32 or 64 bits"),
         };
 
-        let channels = match n_channels {
-            1 => Channels::FRONT_LEFT,
-            2 => Channels::FRONT_LEFT | Channels::FRONT_RIGHT,
-            _ => return decode_error("aifc: channel layout is not stereo or mono for fmt_ieee"),
-        };
-
+        let channels = try_channel_count_to_mask(n_channels)?;
         Ok(FormatData::IeeeFloat(FormatIeeeFloat { channels, codec }))
     }
 
@@ -116,12 +93,7 @@ impl CommonChunk {
             _ => return decode_error("aiff: bits per sample for sowt must be 16 bits"),
         };
 
-        let channels = match n_channels {
-            1 => Channels::FRONT_LEFT,
-            2 => Channels::FRONT_LEFT | Channels::FRONT_RIGHT,
-            _ => return decode_error("aiff: channel layout is not stereo or mono for fmt_pcm"),
-        };
-
+        let channels = try_channel_count_to_mask(n_channels)?;
         Ok(FormatData::Pcm(FormatPcm { bits_per_sample, channels, codec }))
     }
 
