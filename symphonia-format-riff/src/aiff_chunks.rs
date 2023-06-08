@@ -34,10 +34,6 @@ pub struct CommonChunk {
     pub sample_rate: u32,
     /// Extra data associated with the format block conditional upon the format tag.
     pub format_data: FormatData,
-    /// The compression ID, only exists for aifc
-    pub compression_type: [u8; 4],
-    /// The compression name, only exists for aifc
-    pub compression_name: String,
 }
 
 impl CommonChunk {
@@ -146,19 +142,12 @@ impl ParseChunk for CommonChunk {
             Err(e) => return Err(e),
         };
 
-        // These fields only exist for AIFC.
-        // AIFF files are threated as AIFC files with no compression
-        let compression_type = *b"NONE";
-        let compression_name = "not compressed".to_string();
-
         Ok(CommonChunk {
             n_channels,
             n_sample_frames,
             sample_size,
             sample_rate,
             format_data,
-            compression_type,
-            compression_name,
         })
     }
 }
@@ -225,13 +214,12 @@ impl CommonChunkParser for ChunkParser<CommonChunk> {
         let sample_rate = Extended::from_be_bytes(sample_rate);
         let sample_rate = sample_rate.to_f64() as u32;
 
+
         let compression_type = source.read_quad_bytes()?;
+
+        // Ignore pascal string containing compression_name
         let str_len = source.read_byte()?;
-
-        let mut compression_name = vec![0; (str_len) as usize];
-        source.read_buf_exact(compression_name.as_mut())?;
-        let compression_name = String::from_utf8_lossy(&compression_name).into_owned();
-
+        source.ignore_bytes(str_len as u64)?;
         // Total number of bytes in pascal string must be even, since len is excluded from our var, we add 1
         if (str_len + 1) % 2 != 0 {
             source.ignore_bytes(1)?;
@@ -257,8 +245,6 @@ impl CommonChunkParser for ChunkParser<CommonChunk> {
             sample_size,
             sample_rate,
             format_data,
-            compression_type,
-            compression_name,
         })
     }
 }
