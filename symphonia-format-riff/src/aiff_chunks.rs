@@ -93,6 +93,16 @@ impl CommonChunk {
         Ok(FormatData::Pcm(FormatPcm { bits_per_sample, channels, codec }))
     }
 
+    fn read_twos_fmt(bits_per_sample: u16, n_channels: u16) -> Result<FormatData> {
+        let codec = match bits_per_sample {
+            16 => CODEC_TYPE_PCM_S16BE,
+            _ => return decode_error("aiff: bits per sample for twos must be 16 bits"),
+        };
+
+        let channels = try_channel_count_to_mask(n_channels)?;
+        Ok(FormatData::Pcm(FormatPcm { bits_per_sample, channels, codec }))
+    }
+
     pub fn packet_info(&self) -> Result<PacketInfo> {
         match &self.format_data {
             FormatData::Pcm(_) => {
@@ -142,13 +152,7 @@ impl ParseChunk for CommonChunk {
             Err(e) => return Err(e),
         };
 
-        Ok(CommonChunk {
-            n_channels,
-            n_sample_frames,
-            sample_size,
-            sample_rate,
-            format_data,
-        })
+        Ok(CommonChunk { n_channels, n_sample_frames, sample_size, sample_rate, format_data })
     }
 }
 
@@ -203,6 +207,7 @@ impl CommonChunkParser for ChunkParser<CommonChunk> {
     fn parse_aiff(self, source: &mut MediaSourceStream) -> Result<CommonChunk> {
         self.parse(source)
     }
+
     fn parse_aifc(self, source: &mut MediaSourceStream) -> Result<CommonChunk> {
         let n_channels = source.read_be_i16()?;
         let n_sample_frames = source.read_be_u32()?;
@@ -213,7 +218,6 @@ impl CommonChunkParser for ChunkParser<CommonChunk> {
 
         let sample_rate = Extended::from_be_bytes(sample_rate);
         let sample_rate = sample_rate.to_f64() as u32;
-
 
         let compression_type = source.read_quad_bytes()?;
 
@@ -231,6 +235,7 @@ impl CommonChunkParser for ChunkParser<CommonChunk> {
             b"ulaw" | b"ULAW" => CommonChunk::read_mulaw_pcm_fmt(n_channels as u16),
             b"fl32" | b"fl64" => CommonChunk::read_ieee_fmt(sample_size as u16, n_channels as u16),
             b"sowt" | b"SOWT" => CommonChunk::read_sowt_fmt(sample_size as u16, n_channels as u16),
+            b"twos" | b"TWOS" => CommonChunk::read_twos_fmt(sample_size as u16, n_channels as u16),
             _ => return unsupported_error("aifc: Compression type not implemented"),
         };
 
@@ -239,13 +244,7 @@ impl CommonChunkParser for ChunkParser<CommonChunk> {
             Err(e) => return Err(e),
         };
 
-        Ok(CommonChunk {
-            n_channels,
-            n_sample_frames,
-            sample_size,
-            sample_rate,
-            format_data,
-        })
+        Ok(CommonChunk { n_channels, n_sample_frames, sample_size, sample_rate, format_data })
     }
 }
 
