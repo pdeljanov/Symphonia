@@ -92,17 +92,6 @@ impl FormatReader for AiffReader {
         let riff_len = source.read_be_u32()?;
         let riff_form = source.read_quad_bytes()?;
 
-        if riff_form == AIFF_RIFF_FORM {
-            debug!("riff form is aiff");
-        }
-        else if riff_form == AIFC_RIFF_FORM {
-            return unsupported_error("aiff: No support for aifc files");
-        }
-        else {
-            error!("riff form is not supported ({})", String::from_utf8_lossy(&riff_form));
-            return unsupported_error("aiff: riff form is not supported");
-        }
-
         let mut riff_chunks = ChunksReader::<RiffAiffChunks>::new(riff_len, ByteOrder::BigEndian);
 
         let mut codec_params = CodecParameters::new();
@@ -117,12 +106,16 @@ impl FormatReader for AiffReader {
             // unsupported.
             // TODO: According to the spec additional chunks can be added after the sound data chunk. In fact any order can be possible.
             if chunk.is_none() {
-                return unsupported_error("aiff: missing data chunk");
+                return unsupported_error("aiff: missing sound chunk");
             }
 
             match chunk.unwrap() {
                 RiffAiffChunks::Common(common) => {
-                    let common = common.parse(&mut source)?;
+                    let common = match riff_form {
+                        AIFF_RIFF_FORM => common.parse_aiff(&mut source)?,
+                        AIFC_RIFF_FORM => common.parse_aifc(&mut source)?,
+                        _ => return unsupported_error("aiff: riff form is not supported"),
+                    };
 
                     // The Format chunk contains the block_align field and possible additional information
                     // to handle packetization and seeking.

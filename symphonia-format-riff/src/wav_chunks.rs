@@ -20,9 +20,9 @@ use symphonia_core::meta::{MetadataBuilder, MetadataRevision, Tag};
 use symphonia_metadata::riff;
 
 use crate::{
-    ByteOrder, ChunkParser, ChunksReader, CodecParameters, FormatALaw, FormatAdpcm, FormatData,
-    FormatExtensible, FormatIeeeFloat, FormatMuLaw, FormatPcm, MediaSourceStream, NullChunks,
-    PacketInfo, ParseChunk, ParseChunkTag,
+    fix_channel_mask, try_channel_count_to_mask, ByteOrder, ChunkParser, ChunksReader,
+    CodecParameters, FormatALaw, FormatAdpcm, FormatData, FormatExtensible, FormatIeeeFloat,
+    FormatMuLaw, FormatPcm, MediaSourceStream, NullChunks, PacketInfo, ParseChunk, ParseChunkTag,
 };
 
 pub struct WaveFormatChunk {
@@ -88,14 +88,7 @@ impl WaveFormatChunk {
             }
         };
 
-        // The PCM format only supports 1 or 2 channels, for mono and stereo channel layouts,
-        // respectively.
-        let channels = match n_channels {
-            1 => Channels::FRONT_LEFT,
-            2 => Channels::FRONT_LEFT | Channels::FRONT_RIGHT,
-            _ => return decode_error("wav: channel layout is not stereo or mono for fmt_pcm"),
-        };
-
+        let channels = try_channel_count_to_mask(n_channels)?;
         Ok(FormatData::Pcm(FormatPcm { bits_per_sample, channels, codec }))
     }
 
@@ -128,13 +121,7 @@ impl WaveFormatChunk {
         }
         reader.ignore_bytes(extra_size)?;
 
-        // The ADPCM format only supports 1 or 2 channels, for mono and stereo channel layouts,
-        // respectively.
-        let channels = match n_channels {
-            1 => Channels::FRONT_LEFT,
-            2 => Channels::FRONT_LEFT | Channels::FRONT_RIGHT,
-            _ => return decode_error("wav: channel layout is not stereo or mono for fmt_adpcm"),
-        };
+        let channels = try_channel_count_to_mask(n_channels)?;
         Ok(FormatData::Adpcm(FormatAdpcm { bits_per_sample, channels, codec }))
     }
 
@@ -167,13 +154,7 @@ impl WaveFormatChunk {
             _ => return decode_error("wav: bits per sample for fmt_ieee must be 32 or 64 bits"),
         };
 
-        // The IEEE format only supports 1 or 2 channels, for mono and stereo channel layouts,
-        // respectively.
-        let channels = match n_channels {
-            1 => Channels::FRONT_LEFT,
-            2 => Channels::FRONT_LEFT | Channels::FRONT_RIGHT,
-            _ => return decode_error("wav: channel layout is not stereo or mono for fmt_ieee"),
-        };
+        let channels = try_channel_count_to_mask(n_channels)?;
 
         Ok(FormatData::IeeeFloat(FormatIeeeFloat { channels, codec }))
     }
@@ -213,12 +194,7 @@ impl WaveFormatChunk {
             );
         }
 
-        let channel_mask = reader.read_u32()?;
-
-        // The number of ones in the channel mask should match the number of channels.
-        if channel_mask.count_ones() != u32::from(n_channels) {
-            return decode_error("wav: channel mask mismatch with number of channels for fmt_ext");
-        }
+        let channel_mask = fix_channel_mask(reader.read_u32()?, n_channels);
 
         // Try to map channels.
         let channels = match Channels::from_bits(channel_mask) {
@@ -325,12 +301,7 @@ impl WaveFormatChunk {
             reader.ignore_bytes(u64::from(extra_size))?;
         }
 
-        let channels = match n_channels {
-            1 => Channels::FRONT_LEFT,
-            2 => Channels::FRONT_LEFT | Channels::FRONT_RIGHT,
-            _ => return decode_error("wav: channel layout is not stereo or mono for fmt_alaw"),
-        };
-
+        let channels = try_channel_count_to_mask(n_channels)?;
         Ok(FormatData::ALaw(FormatALaw { codec: CODEC_TYPE_PCM_ALAW, channels }))
     }
 
@@ -349,12 +320,7 @@ impl WaveFormatChunk {
             reader.ignore_bytes(u64::from(extra_size))?;
         }
 
-        let channels = match n_channels {
-            1 => Channels::FRONT_LEFT,
-            2 => Channels::FRONT_LEFT | Channels::FRONT_RIGHT,
-            _ => return decode_error("wav: channel layout is not stereo or mono for fmt_mulaw"),
-        };
-
+        let channels = try_channel_count_to_mask(n_channels)?;
         Ok(FormatData::MuLaw(FormatMuLaw { codec: CODEC_TYPE_PCM_MULAW, channels }))
     }
 
