@@ -63,7 +63,7 @@ fn main() {
                 unimplemented!();
             }
             Err(err) => {
-                // A unrecoverable error occured, halt decoding.
+                // A unrecoverable error occurred, halt decoding.
                 panic!("{}", err);
             }
         };
@@ -95,7 +95,7 @@ fn main() {
                 continue;
             }
             Err(err) => {
-                // An unrecoverable error occured, halt decoding.
+                // An unrecoverable error occurred, halt decoding.
                 panic!("{}", err);
             }
         }
