@@ -49,11 +49,6 @@ const AIFC_RIFF_FORM: [u8; 4] = *b"AIFC";
 /// A possible RIFF form is "wave".
 const WAVE_RIFF_FORM: [u8; 4] = *b"WAVE";
 
-enum AiffType {
-    Aiff,
-    Aifc,
-}
-
 pub struct AiffReader {
     reader: MediaSourceStream,
     tracks: Vec<Track>,
@@ -97,12 +92,6 @@ impl FormatReader for AiffReader {
         let riff_len = source.read_be_u32()?;
         let riff_form = source.read_quad_bytes()?;
 
-        let riff_form = match riff_form {
-            AIFF_RIFF_FORM => AiffType::Aiff,
-            AIFC_RIFF_FORM => AiffType::Aifc,
-            _ => return unsupported_error("aiff: riff form is not supported"),
-        };
-
         let mut riff_chunks = ChunksReader::<RiffAiffChunks>::new(riff_len, ByteOrder::BigEndian);
 
         let mut codec_params = CodecParameters::new();
@@ -123,8 +112,9 @@ impl FormatReader for AiffReader {
             match chunk.unwrap() {
                 RiffAiffChunks::Common(common) => {
                     let common = match riff_form {
-                        AiffType::Aiff => common.parse_aiff(&mut source)?,
-                        AiffType::Aifc => common.parse_aifc(&mut source)?,
+                        AIFF_RIFF_FORM => common.parse_aiff(&mut source)?,
+                        AIFC_RIFF_FORM => common.parse_aifc(&mut source)?,
+                        _ => return unsupported_error("aiff: riff form is not supported"),
                     };
 
                     // The Format chunk contains the block_align field and possible additional information
