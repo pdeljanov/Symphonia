@@ -48,7 +48,7 @@ impl CommonChunk {
         // error if not a multiple of 8 or greater than 32-bits.
         //
         // It is possible though for AIFF to have a sample size not divisible by 8.
-        // Data is left justified, with the remaining bits zeroed. Currently not supported.
+        // Data is left justified, with the remaining bits zeroed.
         //
         // Select the appropriate codec using bits per sample. Samples are always interleaved and
         // little-endian encoded for the PCM format.

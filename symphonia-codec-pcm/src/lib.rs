@@ -39,6 +39,8 @@ use symphonia_core::io::ReadBytes;
 use symphonia_core::sample::{i24, u24, SampleFormat};
 use symphonia_core::units::Duration;
 
+use std::mem;
+
 macro_rules! impl_generic_audio_buffer_func {
     ($generic:expr, $buf:ident, $expr:expr) => {
         match $generic {
@@ -122,11 +124,11 @@ macro_rules! read_pcm_signed_be {
         // Get buffer of the correct sample format.
         match $buf {
             GenericAudioBuffer::$fmt(ref mut buf) => {
-                // Read samples.
-                let shift = $width - $coded_width;
+                let sample_size = mem::size_of_val(&$read) * 8;
+                let mask = !0 << (sample_size as u32 - $coded_width);
                 buf.fill(|audio_planes, idx| -> Result<()> {
                     for plane in audio_planes.planes() {
-                        plane[idx] = ($read >> shift).into_sample();
+                        plane[idx] = ($read & mask).into_sample();
                     }
                     Ok(())
                 })
@@ -160,11 +162,11 @@ macro_rules! read_pcm_unsigned_be {
         // Get buffer of the correct sample format.
         match $buf {
             GenericAudioBuffer::$fmt(ref mut buf) => {
-                // Read samples.
-                let shift = $width - $coded_width;
+                let sample_size = mem::size_of_val(&$read) * 8;
+                let mask = !0 << (sample_size as u32 - $coded_width);
                 buf.fill(|audio_planes, idx| -> Result<()> {
                     for plane in audio_planes.planes() {
-                        plane[idx] = ($read >> shift).into_sample();
+                        plane[idx] = ($read & mask).into_sample();
                     }
                     Ok(())
                 })
