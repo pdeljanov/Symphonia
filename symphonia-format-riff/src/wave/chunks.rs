@@ -8,6 +8,7 @@
 use std::fmt;
 
 use symphonia_core::audio::Channels;
+use symphonia_core::codecs::CodecParameters;
 use symphonia_core::codecs::CodecType;
 use symphonia_core::codecs::{
     CODEC_TYPE_ADPCM_IMA_WAV, CODEC_TYPE_ADPCM_MS, CODEC_TYPE_PCM_ALAW, CODEC_TYPE_PCM_F32LE,
@@ -15,14 +16,14 @@ use symphonia_core::codecs::{
     CODEC_TYPE_PCM_S32LE, CODEC_TYPE_PCM_U8,
 };
 use symphonia_core::errors::{decode_error, unsupported_error, Result};
-use symphonia_core::io::ReadBytes;
+use symphonia_core::io::{MediaSourceStream, ReadBytes};
 use symphonia_core::meta::{MetadataBuilder, MetadataRevision, Tag};
 use symphonia_metadata::riff;
 
-use crate::{
-    fix_channel_mask, try_channel_count_to_mask, ByteOrder, ChunkParser, ChunksReader,
-    CodecParameters, FormatALaw, FormatAdpcm, FormatData, FormatExtensible, FormatIeeeFloat,
-    FormatMuLaw, FormatPcm, MediaSourceStream, NullChunks, PacketInfo, ParseChunk, ParseChunkTag,
+use crate::common::{
+    fix_channel_mask, try_channel_count_to_mask, ByteOrder, ChunkParser, ChunksReader, FormatALaw,
+    FormatAdpcm, FormatData, FormatExtensible, FormatIeeeFloat, FormatMuLaw, FormatPcm, NullChunks,
+    PacketInfo, ParseChunk, ParseChunkTag,
 };
 
 pub struct WaveFormatChunk {
