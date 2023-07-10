@@ -7,7 +7,7 @@
 
 //! The `units` module provides definitions for common units.
 
-use std::fmt;
+use std::{fmt, time::Duration as StdDuration};
 
 /// A `TimeStamp` represents an instantenous instant in time since the start of a stream. One
 /// `TimeStamp` "tick" is equivalent to the stream's `TimeBase` in seconds.
@@ -70,6 +70,10 @@ impl Time {
 
         Some(Time { seconds, frac })
     }
+
+    pub fn into_duration(&self) -> StdDuration {
+        StdDuration::from_secs_f64(self.seconds as f64 + self.frac)
+    }
 }
 
 impl From<u8> for Time {
@@ -115,6 +119,13 @@ impl From<f64> for Time {
         else {
             Time::new(0, 0.0)
         }
+    }
+}
+
+impl From<StdDuration> for Time {
+    fn from(duration: StdDuration) -> Self {
+        let seconds = duration.as_secs_f64();
+        Time::new(seconds.trunc() as u64, seconds.fract())
     }
 }
 
@@ -231,6 +242,7 @@ impl fmt::Display for TimeBase {
 #[cfg(test)]
 mod tests {
     use super::{Time, TimeBase};
+    use std::time::Duration;
 
     #[test]
     fn verify_timebase() {
@@ -259,5 +271,27 @@ mod tests {
             0x10_0000_0000_0001
         );
         assert_eq!(tb1.calc_timestamp(Time::new(57_646_075_230_342_348, 0.796875)), u64::MAX);
+    }
+
+    #[test]
+    fn verify_duration_to_time() {
+        // Verify accuracy of Duration -> Time
+        let dur1 = Duration::from_secs_f64(38.578125);
+        let time1 = Time::from(dur1);
+
+        assert_eq!(time1.seconds, 38);
+        assert_eq!(time1.frac, 0.578125);
+    }
+
+    #[test]
+    fn verify_time_to_duration() {
+        // Verify accuracy of Time -> Duration
+        let time1 = Time::new(38, 0.578125);
+        let dur1 = time1.into_duration();
+
+        let seconds = dur1.as_secs_f64();
+
+        assert_eq!(seconds.trunc(), 38.0);
+        assert_eq!(seconds.fract(), 0.578125);
     }
 }
