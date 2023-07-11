@@ -124,8 +124,7 @@ impl From<f64> for Time {
 
 impl From<StdDuration> for Time {
     fn from(duration: StdDuration) -> Self {
-        let seconds = duration.as_secs_f64();
-        Time::new(seconds.trunc() as u64, seconds.fract())
+        Time::new(duration.as_secs(), f64::from(duration.subsec_nanos()) / 1_000_000_000.0)
     }
 }
 
