@@ -72,7 +72,7 @@ impl Time {
     }
 
     pub fn into_duration(&self) -> StdDuration {
-        StdDuration::from_secs_f64(self.seconds as f64 + self.frac)
+        StdDuration::new(self.seconds, (1_000_000_000.0 * self.frac) as u32)
     }
 }
 
