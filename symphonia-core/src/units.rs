@@ -7,7 +7,7 @@
 
 //! The `units` module provides definitions for common units.
 
-use std::{fmt, time::Duration as StdDuration};
+use std::fmt;
 
 /// A `TimeStamp` represents an instantenous instant in time since the start of a stream. One
 /// `TimeStamp` "tick" is equivalent to the stream's `TimeBase` in seconds.
@@ -71,8 +71,8 @@ impl Time {
         Some(Time { seconds, frac })
     }
 
-    pub fn into_duration(&self) -> StdDuration {
-        StdDuration::new(self.seconds, (1_000_000_000.0 * self.frac) as u32)
+    pub fn into_duration(&self) -> std::time::Duration {
+        std::time::Duration::new(self.seconds, (1_000_000_000.0 * self.frac) as u32)
     }
 }
 
@@ -122,8 +122,8 @@ impl From<f64> for Time {
     }
 }
 
-impl From<StdDuration> for Time {
-    fn from(duration: StdDuration) -> Self {
+impl From<std::time::Duration> for Time {
+    fn from(duration: std::time::Duration) -> Self {
         Time::new(duration.as_secs(), f64::from(duration.subsec_nanos()) / 1_000_000_000.0)
     }
 }
