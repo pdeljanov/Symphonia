@@ -70,10 +70,6 @@ impl Time {
 
         Some(Time { seconds, frac })
     }
-
-    pub fn into_duration(&self) -> std::time::Duration {
-        std::time::Duration::new(self.seconds, (1_000_000_000.0 * self.frac) as u32)
-    }
 }
 
 impl From<u8> for Time {
@@ -125,6 +121,12 @@ impl From<f64> for Time {
 impl From<std::time::Duration> for Time {
     fn from(duration: std::time::Duration) -> Self {
         Time::new(duration.as_secs(), f64::from(duration.subsec_nanos()) / 1_000_000_000.0)
+    }
+}
+
+impl From<Time> for std::time::Duration {
+    fn from(time: Time) -> Self {
+        std::time::Duration::new(time.seconds, (1_000_000_000.0 * time.frac) as u32)
     }
 }
 
@@ -286,7 +288,7 @@ mod tests {
     fn verify_time_to_duration() {
         // Verify accuracy of Time -> Duration
         let time1 = Time::new(38, 0.578125);
-        let dur1 = time1.into_duration();
+        let dur1 = Duration::from(time1);
 
         let seconds = dur1.as_secs_f64();
 
