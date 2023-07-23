@@ -15,7 +15,7 @@ use symphonia_core::codecs::{
 use symphonia_core::errors::{decode_error, unsupported_error, Result};
 use symphonia_core::io::{MediaSourceStream, ReadBytes};
 
-use crate::{
+use crate::common::{
     try_channel_count_to_mask, ChunkParser, FormatALaw, FormatData, FormatIeeeFloat, FormatMuLaw,
     FormatPcm, PacketInfo, ParseChunk, ParseChunkTag,
 };

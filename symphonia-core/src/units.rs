@@ -118,6 +118,18 @@ impl From<f64> for Time {
     }
 }
 
+impl From<std::time::Duration> for Time {
+    fn from(duration: std::time::Duration) -> Self {
+        Time::new(duration.as_secs(), f64::from(duration.subsec_nanos()) / 1_000_000_000.0)
+    }
+}
+
+impl From<Time> for std::time::Duration {
+    fn from(time: Time) -> Self {
+        std::time::Duration::new(time.seconds, (1_000_000_000.0 * time.frac) as u32)
+    }
+}
+
 /// A `TimeBase` is the conversion factor between time, expressed in seconds, and a `TimeStamp` or
 /// `Duration`.
 ///
@@ -231,6 +243,7 @@ impl fmt::Display for TimeBase {
 #[cfg(test)]
 mod tests {
     use super::{Time, TimeBase};
+    use std::time::Duration;
 
     #[test]
     fn verify_timebase() {
@@ -259,5 +272,27 @@ mod tests {
             0x10_0000_0000_0001
         );
         assert_eq!(tb1.calc_timestamp(Time::new(57_646_075_230_342_348, 0.796875)), u64::MAX);
+    }
+
+    #[test]
+    fn verify_duration_to_time() {
+        // Verify accuracy of Duration -> Time
+        let dur1 = Duration::from_secs_f64(38.578125);
+        let time1 = Time::from(dur1);
+
+        assert_eq!(time1.seconds, 38);
+        assert_eq!(time1.frac, 0.578125);
+    }
+
+    #[test]
+    fn verify_time_to_duration() {
+        // Verify accuracy of Time -> Duration
+        let time1 = Time::new(38, 0.578125);
+        let dur1 = Duration::from(time1);
+
+        let seconds = dur1.as_secs_f64();
+
+        assert_eq!(seconds.trunc(), 38.0);
+        assert_eq!(seconds.fract(), 0.578125);
     }
 }
