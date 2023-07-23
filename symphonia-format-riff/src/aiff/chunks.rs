@@ -53,7 +53,7 @@ impl CommonChunk {
             9..=16 => CODEC_TYPE_PCM_S16BE,
             17..=24 => CODEC_TYPE_PCM_S24BE,
             25..=32 => CODEC_TYPE_PCM_S32BE,
-            _ => return decode_error("aiff: bits per sample for pcm must be 8, 16, 24 or 32 bits"),
+            _ => return decode_error("aiff: bits per sample unsupported for pcm"),
         };
 
         let channels = try_channel_count_to_mask(n_channels)?;
