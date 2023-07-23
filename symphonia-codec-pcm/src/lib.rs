@@ -39,8 +39,6 @@ use symphonia_core::io::ReadBytes;
 use symphonia_core::sample::{i24, u24, SampleFormat};
 use symphonia_core::units::Duration;
 
-use std::mem;
-
 macro_rules! impl_generic_audio_buffer_func {
     ($generic:expr, $buf:ident, $expr:expr) => {
         match $generic {
@@ -124,11 +122,16 @@ macro_rules! read_pcm_signed_be {
         // Get buffer of the correct sample format.
         match $buf {
             GenericAudioBuffer::$fmt(ref mut buf) => {
-                let sample_size = mem::size_of_val(&$read) * 8;
-                let mask = !0 << (sample_size as u32 - $coded_width);
                 buf.fill(|audio_planes, idx| -> Result<()> {
                     for plane in audio_planes.planes() {
-                        plane[idx] = ($read & mask).into_sample();
+                        // To properly read a a sample with a shorter coded width,
+                        // it should be masked using (1 << ($width - $coded_width)) - 1, masking out rightmost bits.
+                        // ffpmeg seems to not do this, at least in the case for 12bit aiff PCM.
+                        // If the aiff file is offspec, by not setting padded out bits to 0,
+                        // this will fail when verifying with ffmpeg
+                        // To comply with, we will not mask the sample.
+                        // It should not make a hearable difference anyway.
+                        plane[idx] = ($read).into_sample();
                     }
                     Ok(())
                 })
@@ -162,11 +165,16 @@ macro_rules! read_pcm_unsigned_be {
         // Get buffer of the correct sample format.
         match $buf {
             GenericAudioBuffer::$fmt(ref mut buf) => {
-                let sample_size = mem::size_of_val(&$read) * 8;
-                let mask = !0 << (sample_size as u32 - $coded_width);
                 buf.fill(|audio_planes, idx| -> Result<()> {
                     for plane in audio_planes.planes() {
-                        plane[idx] = ($read & mask).into_sample();
+                        // To properly read a a sample with a shorter coded width,
+                        // it should be masked using (1 << ($width - $coded_width)) - 1, masking out rightmost bits.
+                        // ffpmeg seems to not do this, at least in the case for 12bit aiff PCM.
+                        // If the aiff file is offspec, by not setting padded out bits to 0,
+                        // this will fail when verifying with ffmpeg
+                        // To comply with, we will not mask the sample.
+                        // It should not make a hearable difference anyway.
+                        plane[idx] = ($read).into_sample();
                     }
                     Ok(())
                 })
