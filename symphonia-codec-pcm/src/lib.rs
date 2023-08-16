@@ -118,27 +118,18 @@ macro_rules! read_pcm_signed {
 }
 
 macro_rules! read_pcm_signed_be {
-    ($buf:expr, $fmt:tt, $read:expr, $width:expr, $coded_width:expr) => {
-        // Get buffer of the correct sample format.
+    ($buf:expr, $fmt:tt, $read:expr, $width:expr, $coded_width:expr) => {{
+        let mask = !((1 << ($width - $coded_width)) - 1);
         match $buf {
-            GenericAudioBuffer::$fmt(ref mut buf) => {
-                buf.fill(|audio_planes, idx| -> Result<()> {
-                    for plane in audio_planes.planes() {
-                        // To properly read a a sample with a shorter coded width,
-                        // it should be masked using (1 << ($width - $coded_width)) - 1, masking out rightmost bits.
-                        // ffpmeg seems to not do this, at least in the case for 12bit aiff PCM.
-                        // If the aiff file is offspec, by not setting padded out bits to 0,
-                        // this will fail when verifying with ffmpeg
-                        // To comply with, we will not mask the sample.
-                        // It should not make a hearable difference anyway.
-                        plane[idx] = ($read).into_sample();
-                    }
-                    Ok(())
-                })
-            }
+            GenericAudioBuffer::$fmt(ref mut buf) => buf.fill(|audio_planes, idx| -> Result<()> {
+                for plane in audio_planes.planes() {
+                    plane[idx] = ($read & mask).into_sample();
+                }
+                Ok(())
+            }),
             _ => unreachable!(),
         }
-    };
+    }};
 }
 
 macro_rules! read_pcm_unsigned {
@@ -161,27 +152,18 @@ macro_rules! read_pcm_unsigned {
 }
 
 macro_rules! read_pcm_unsigned_be {
-    ($buf:expr, $fmt:tt, $read:expr, $width:expr, $coded_width:expr) => {
-        // Get buffer of the correct sample format.
+    ($buf:expr, $fmt:tt, $read:expr, $width:expr, $coded_width:expr) => {{
+        let mask = !((1 << ($width - $coded_width)) - 1);
         match $buf {
-            GenericAudioBuffer::$fmt(ref mut buf) => {
-                buf.fill(|audio_planes, idx| -> Result<()> {
-                    for plane in audio_planes.planes() {
-                        // To properly read a a sample with a shorter coded width,
-                        // it should be masked using (1 << ($width - $coded_width)) - 1, masking out rightmost bits.
-                        // ffpmeg seems to not do this, at least in the case for 12bit aiff PCM.
-                        // If the aiff file is offspec, by not setting padded out bits to 0,
-                        // this will fail when verifying with ffmpeg
-                        // To comply with, we will not mask the sample.
-                        // It should not make a hearable difference anyway.
-                        plane[idx] = ($read).into_sample();
-                    }
-                    Ok(())
-                })
-            }
+            GenericAudioBuffer::$fmt(ref mut buf) => buf.fill(|audio_planes, idx| -> Result<()> {
+                for plane in audio_planes.planes() {
+                    plane[idx] = ($read & mask).into_sample();
+                }
+                Ok(())
+            }),
             _ => unreachable!(),
         }
-    };
+    }};
 }
 
 macro_rules! read_pcm_floating {
