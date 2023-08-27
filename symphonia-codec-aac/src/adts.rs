@@ -131,10 +131,18 @@ impl FormatReader for AdtsReader {
         // Use the header to populate the codec parameters.
         let mut params = CodecParameters::new();
 
-        params.for_codec(CODEC_TYPE_AAC).with_sample_rate(header.sample_rate);
+        params
+            .for_codec(CODEC_TYPE_AAC)
+            .with_sample_rate(header.sample_rate)
+            .with_time_base(TimeBase::new(1, header.sample_rate));
 
         if let Some(channels) = header.channels {
             params.with_channels(channels);
+        }
+
+        let n_frames = approximate_frame_count(&mut source)?;
+        if let Some(n_frames) = n_frames {
+            params.with_n_frames(n_frames);
         }
 
         // Rewind back to the start of the frame.
@@ -256,5 +264,74 @@ impl FormatReader for AdtsReader {
 
     fn into_inner(self: Box<Self>) -> MediaSourceStream {
         self.reader
+    }
+}
+
+fn approximate_frame_count(mut source: &mut MediaSourceStream) -> Result<Option<u64>> {
+    let original_pos = source.pos();
+    let total_len = match source.byte_len() {
+        Some(len) => len - original_pos,
+        _ => return Ok(None),
+    };
+
+    const ENSURED_SEEK_LEN: u64 = 1000;
+    source.ensure_seekback_buffer(ENSURED_SEEK_LEN as usize);
+    let mut scoped_stream = ScopedStream::new(&mut source, ENSURED_SEEK_LEN);
+
+    let mut parsed_n_frames = 0;
+    let mut n_bytes = 0;
+
+    loop {
+        let header = match AdtsHeader::read(&mut scoped_stream) {
+            Ok(header) => header,
+            _ => break,
+        };
+
+        if scoped_stream.ignore_bytes(header.frame_len as u64).is_err() {
+            break;
+        }
+
+        parsed_n_frames += 1;
+        n_bytes += header.frame_len + AdtsHeader::SIZE;
+    }
+    source.seek_buffered_rev((source.pos() - original_pos) as usize);
+
+    let step = total_len / 3;
+    if source.is_seekable() {
+        let mut new_pos = total_len / 2;
+
+        loop {
+            if new_pos >= total_len {
+                break;
+            }
+
+            let res = source.seek(SeekFrom::Start(new_pos));
+            if res.is_err() {
+                break;
+            }
+
+            for _ in 0..=500 {
+                let header = match AdtsHeader::read(&mut source) {
+                    Ok(header) => header,
+                    _ => break,
+                };
+
+                if source.ignore_bytes(header.frame_len as u64).is_err() {
+                    break;
+                }
+
+                parsed_n_frames += 1;
+                n_bytes += header.frame_len + AdtsHeader::SIZE;
+            }
+            new_pos += step;
+        }
+
+        let _ = source.seek(SeekFrom::Start(original_pos))?;
+    }
+    debug!("adts: Parsed {} of {} bytes to approximate duration", n_bytes, total_len);
+
+    match parsed_n_frames {
+        0 => Ok(None),
+        _ => Ok(Some(total_len / (n_bytes as u64 / parsed_n_frames) * SAMPLES_PER_AAC_PACKET)),
     }
 }
