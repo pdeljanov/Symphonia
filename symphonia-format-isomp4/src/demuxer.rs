@@ -22,7 +22,7 @@ use crate::atoms::{AtomIterator, AtomType};
 use crate::atoms::{FtypAtom, MetaAtom, MoofAtom, MoovAtom, MvexAtom, SidxAtom, TrakAtom};
 use crate::stream::*;
 
-use log::{debug, info, trace, warn};
+use log::{debug, trace, warn};
 
 pub struct TrackState {
     codec_params: CodecParameters,
@@ -166,8 +166,7 @@ impl IsoMp4Reader {
         // then the base position is the position of current the sample.
         let pos = if sample_data_desc.base_pos > track.next_sample_pos {
             sample_data_desc.base_pos
-        }
-        else {
+        } else {
             track.next_sample_pos
         };
 
@@ -212,8 +211,7 @@ impl IsoMp4Reader {
 
                         // Push the segment.
                         self.segs.push(Box::new(seg));
-                    }
-                    else {
+                    } else {
                         // TODO: This is a fatal error.
                         return decode_error("isomp4: moof atom present without mvex atom");
                     }
@@ -234,8 +232,7 @@ impl IsoMp4Reader {
         if let Some(track) = self.tracks.get(track_num) {
             let tb = track.codec_params.time_base.unwrap();
             self.seek_track_by_ts(track_num, tb.calc_timestamp(time))
-        }
-        else {
+        } else {
             seek_error(SeekErrorKind::Unseekable)
         }
     }
@@ -297,8 +294,7 @@ impl IsoMp4Reader {
             );
 
             Ok(SeekedTo { track_id: track_num as u32, required_ts: ts, actual_ts: timing.ts })
-        }
-        else {
+        } else {
             // Timestamp was not found.
             seek_error(SeekErrorKind::OutOfRange)
         }
@@ -337,10 +333,9 @@ impl FormatReader for IsoMp4Reader {
             let pos = mss.pos();
             let len = mss.seek(SeekFrom::End(0))?;
             mss.seek(SeekFrom::Start(pos))?;
-            info!("stream is seekable with len={} bytes.", len);
+            trace!("stream is seekable with len={} bytes.", len);
             Some(len)
-        }
-        else {
+        } else {
             None
         };
 
@@ -365,8 +360,7 @@ impl FormatReader for IsoMp4Reader {
                     if !is_seekable {
                         sidx = Some(iter.read_atom::<SidxAtom>()?);
                         break;
-                    }
-                    else {
+                    } else {
                         // If the stream is seekable, examine all segment indexes and select the
                         // index with the earliest presentation timestamp to be the first.
                         let new_sidx = iter.read_atom::<SidxAtom>()?;
@@ -407,7 +401,7 @@ impl FormatReader for IsoMp4Reader {
                 AtomType::Free => (),
                 AtomType::Skip => (),
                 _ => {
-                    info!("skipping top-level atom: {:?}.", header.atype);
+                    trace!("skipping top-level atom: {:?}.", header.atype);
                 }
             }
         }
@@ -443,10 +437,9 @@ impl FormatReader for IsoMp4Reader {
         if moov.is_fragmented() {
             // If a Segment Index (sidx) atom was found, add the segments contained within.
             if sidx.is_some() {
-                info!("stream is segmented with a segment index.");
-            }
-            else {
-                info!("stream is segmented without a segment index.");
+                trace!("stream is segmented with a segment index.");
+            } else {
+                trace!("stream is segmented without a segment index.");
             }
         }
 
@@ -498,8 +491,7 @@ impl FormatReader for IsoMp4Reader {
             // Using the current set of segments, try to get the next sample info.
             if let Some(info) = self.next_sample_info()? {
                 break info;
-            }
-            else {
+            } else {
                 // No more segments. If the stream is unseekable, it may be the case that there are
                 // more segments coming. Iterate atoms until a new segment is found or the
                 // end-of-stream is reached.
@@ -517,14 +509,12 @@ impl FormatReader for IsoMp4Reader {
             if reader.is_seekable() {
                 // Fallback to a slow seek if the stream is seekable.
                 reader.seek(SeekFrom::Start(sample_info.pos))?;
-            }
-            else if sample_info.pos > reader.pos() {
+            } else if sample_info.pos > reader.pos() {
                 // The stream is not seekable but the desired seek position is ahead of the reader's
                 // current position, thus the seek can be emulated by ignoring the bytes up to the
                 // the desired seek position.
                 reader.ignore_bytes(sample_info.pos - reader.pos())?;
-            }
-            else {
+            } else {
                 // The stream is not seekable and the desired seek position falls outside the lower
                 // bound of the buffer cache. This sample cannot be read.
                 return decode_error("isomp4: packet out-of-bounds for a non-seekable stream");
@@ -576,8 +566,7 @@ impl FormatReader for IsoMp4Reader {
 
                     // Seek the primary track and return the result.
                     self.seek_track_by_ts(selected_track_id, ts)
-                }
-                else {
+                } else {
                     seek_error(SeekErrorKind::Unseekable)
                 }
             }

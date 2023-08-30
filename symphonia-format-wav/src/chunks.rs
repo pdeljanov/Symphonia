@@ -20,7 +20,7 @@ use symphonia_core::io::ReadBytes;
 use symphonia_core::meta::Tag;
 use symphonia_metadata::riff;
 
-use log::info;
+use log::trace;
 
 use crate::PacketInfo;
 
@@ -42,7 +42,7 @@ fn fix_channel_mask(mut channel_mask: u32, n_channels: u16) -> u32 {
     let channel_diff = n_channels as i32 - channel_mask.count_ones() as i32;
 
     if channel_diff != 0 {
-        info!("Channel mask not set correctly, channel positions may be incorrect!");
+        trace!("Channel mask not set correctly, channel positions may be incorrect!");
     }
 
     // Check that the number of ones in the channel mask match the number of channels.
@@ -50,8 +50,7 @@ fn fix_channel_mask(mut channel_mask: u32, n_channels: u16) -> u32 {
         // Too few ones in mask so add extra ones above the most significant one
         let shift = 32 - (!channel_mask).leading_ones();
         channel_mask |= ((1 << channel_diff) - 1) << shift;
-    }
-    else {
+    } else {
         // Too many ones in mask so remove the most significant extra ones
         while channel_mask.count_ones() != n_channels as u32 {
             let highest_one = 31 - (!channel_mask).leading_ones();
@@ -149,7 +148,7 @@ impl<T: ParseChunkTag> ChunksReader<T> {
                 Some(chunk) => return Ok(Some(chunk)),
                 None => {
                     // As per the RIFF spec, unknown chunks are to be ignored.
-                    info!(
+                    trace!(
                         "ignoring unknown chunk: tag={}, len={}.",
                         String::from_utf8_lossy(&tag),
                         len
@@ -377,8 +376,7 @@ impl WaveFormatChunk {
             if extra_size != 0 {
                 return decode_error("wav: extra data not expected for fmt_ieee chunk");
             }
-        }
-        else if len > 16 {
+        } else if len > 16 {
             return decode_error("wav: malformed fmt_ieee chunk");
         }
 
