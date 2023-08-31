@@ -483,7 +483,8 @@ impl<'a> Metadata<'a> {
     pub fn pop(&mut self) -> Option<MetadataRevision> {
         if self.revisions.len() > 1 {
             self.revisions.pop_front()
-        } else {
+        }
+        else {
             None
         }
     }
