@@ -150,9 +150,29 @@ pub fn detect(buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> {
 pub struct OpusPacketParser {}
 
 impl PacketParser for OpusPacketParser {
-    fn parse_next_packet_dur(&mut self, _packet: &[u8]) -> u64 {
-        // TODO: Implement.
-        0
+    fn parse_next_packet_dur(&mut self, packet: &[u8]) -> u64 {
+        // Read TOC (Table Of Contents) byte which is the first byte in the opus data.
+        let toc_byte = packet[0];
+        // The configuration number is the 5 most significant bits. Shift out 3 least significant bits.
+        let configuration_number = toc_byte >> 3; // max 2^5-1 = 31
+
+        // The configuration number maps to packet length according to this lookup table.
+        // See https://www.rfc-editor.org/rfc/rfc6716 page 14.
+        // Numbers are in milliseconds in the rfc. Down below they are in TimeBase units, so 10ms = 10*48.
+        #[rustfmt::skip]
+        const CONFIGURATION_NUMBER_TO_FRAME_DURATION: [u32; 32] = [
+            10*48, 20*48, 40*48, 60*48,
+            10*48, 20*48, 40*48, 60*48,
+            10*48, 20*48, 40*48, 60*48,
+            10*48, 20*48,
+            10*48, 20*48,
+            (2.5*48.0) as u32, 5*48, 10*48, 20*48,
+            (2.5*48.0) as u32, 5*48, 10*48, 20*48,
+            (2.5*48.0) as u32, 5*48, 10*48, 20*48,
+            (2.5*48.0) as u32, 5*48, 10*48, 20*48,
+        ];
+        // Look up the packet length and return it.
+        CONFIGURATION_NUMBER_TO_FRAME_DURATION[configuration_number as usize] as u64
     }
 }
 
@@ -184,9 +204,8 @@ impl Mapper for OpusMapper {
 
     fn map_packet(&mut self, packet: &[u8]) -> Result<MapResult> {
         if !self.need_comment {
-            Ok(MapResult::StreamData { dur: 0 })
-        }
-        else {
+            Ok(MapResult::StreamData { dur: OpusPacketParser {}.parse_next_packet_dur(packet) })
+        } else {
             let mut reader = BufReader::new(packet);
 
             // Read the header signature.
@@ -202,8 +221,7 @@ impl Mapper for OpusMapper {
                 self.need_comment = false;
 
                 Ok(MapResult::SideData { data: SideData::Metadata(builder.metadata()) })
-            }
-            else {
+            } else {
                 warn!("ogg (opus): invalid packet type");
                 Ok(MapResult::Unknown)
             }
