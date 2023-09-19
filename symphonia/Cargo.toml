@@ -23,6 +23,7 @@ aac = ["symphonia-codec-aac"]
 adpcm = ["symphonia-codec-adpcm"]
 alac = ["symphonia-codec-alac"]
 flac = ["symphonia-bundle-flac"]
+caf = ["symphonia-format-caf"]
 isomp4 = ["symphonia-format-isomp4"]
 mkv = ["symphonia-format-mkv"]
 mp1 = ["symphonia-bundle-mp3/mp1"]
@@ -52,6 +53,7 @@ all-codecs = [
 
 # Enable all supported formats.
 all-formats = [
+    "caf",
     "isomp4",
     "mkv",
     "ogg",
@@ -145,6 +147,11 @@ optional = true
 [dependencies.symphonia-format-mkv]
 version = "0.5.2"
 path = "../symphonia-format-mkv"
+optional = true
+
+[dependencies.symphonia-format-caf]
+version = "0.5.2"
+path = "../symphonia-format-caf"
 optional = true
 
 # Show documentation with all features enabled on docs.rs

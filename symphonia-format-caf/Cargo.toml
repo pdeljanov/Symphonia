@@ -1,0 +1,18 @@
+[package]
+name = "symphonia-format-caf"
+version = "0.5.2"
+description = "Pure Rust CAF demuxer (a part of project Symphonia)."
+homepage = "https://github.com/pdeljanov/Symphonia"
+repository = "https://github.com/pdeljanov/Symphonia"
+authors = ["Philip Deljanov <philip.deljanov@gmail.com>"]
+license = "MPL-2.0"
+readme = "README.md"
+categories = ["multimedia", "multimedia::audio", "multimedia::encoding"]
+keywords = ["audio", "media", "demuxer", "caf"]
+edition = "2018"
+rust-version = "1.53"
+
+[dependencies]
+log = "0.4"
+symphonia-core = { version = "0.5.2", path = "../symphonia-core" }
+symphonia-metadata = { version = "0.5.2", path = "../symphonia-metadata" }

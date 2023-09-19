@@ -170,6 +170,8 @@ pub mod default {
         pub use symphonia_bundle_mp3::MpaReader;
         #[cfg(feature = "aac")]
         pub use symphonia_codec_aac::AdtsReader;
+        #[cfg(feature = "caf")]
+        pub use symphonia_format_caf::CafReader;
         #[cfg(feature = "isomp4")]
         pub use symphonia_format_isomp4::IsoMp4Reader;
         #[cfg(feature = "mkv")]
@@ -266,6 +268,9 @@ pub mod default {
         // Formats
         #[cfg(feature = "aac")]
         probe.register_all::<formats::AdtsReader>();
+
+        #[cfg(feature = "caf")]
+        probe.register_all::<formats::CafReader>();
 
         #[cfg(feature = "flac")]
         probe.register_all::<formats::FlacReader>();
