@@ -1,9 +1,9 @@
-use log::{debug, error, info};
-use std::{mem::size_of, str};
+use log::{debug, error, info, warn};
+use std::{fmt, mem::size_of, str};
 use symphonia_core::{
     audio::{Channels, Layout},
     codecs::*,
-    errors::{decode_error, unsupported_error, Result},
+    errors::{decode_error, unsupported_error, Error, Result},
     io::{MediaSourceStream, ReadBytes},
 };
 
@@ -12,6 +12,8 @@ pub enum Chunk {
     AudioDescription(AudioDescription),
     AudioData(AudioData),
     ChannelLayout(ChannelLayout),
+    PacketTable(PacketTable),
+    MagicCookie(Box<[u8]>),
     Free,
 }
 
@@ -23,7 +25,13 @@ impl Chunk {
     ///   - or, at the end of the file,
     ///   - or, if the chunk is the audio data chunk and the size is unknown,
     ///     then at the start of the audio data.
-    pub fn read(mut reader: &mut MediaSourceStream) -> Result<Option<Self>> {
+    ///
+    /// The first chunk read will be the AudioDescription chunk. Once it's been read, the caller
+    /// should pass it in to subsequent read calls.
+    pub fn read(
+        mut reader: &mut MediaSourceStream,
+        audio_description: &Option<AudioDescription>,
+    ) -> Result<Option<Self>> {
         let chunk_type = reader.read_quad_bytes()?;
         let chunk_size = reader.read_be_i64()?;
 
@@ -31,6 +39,8 @@ impl Chunk {
             b"desc" => Chunk::AudioDescription(AudioDescription::read(&mut reader)?),
             b"data" => Chunk::AudioData(AudioData::read(&mut reader, chunk_size)?),
             b"chan" => Chunk::ChannelLayout(ChannelLayout::read(&mut reader)?),
+            b"pakt" => Chunk::PacketTable(PacketTable::read(&mut reader, audio_description)?),
+            b"kuki" => Chunk::MagicCookie(reader.read_boxed_slice_exact(chunk_size as usize)?),
             b"free" => {
                 if chunk_size < 0 {
                     error!("invalid Free chunk size ({chunk_size})");
@@ -45,6 +55,7 @@ impl Chunk {
                     "unsupported chunk type ('{}')",
                     str::from_utf8(other.as_slice()).unwrap_or("????")
                 );
+                reader.ignore_bytes(chunk_size as u64)?;
                 return Ok(None);
             }
         };
@@ -118,6 +129,8 @@ impl AudioDescription {
             MPEGLayer2 => CODEC_TYPE_MP2,
             MPEGLayer3 => CODEC_TYPE_MP3,
             AppleLossless => CODEC_TYPE_ALAC,
+            Flac => CODEC_TYPE_FLAC,
+            Opus => CODEC_TYPE_OPUS,
             unsupported => {
                 error!("unsupported codec ({unsupported:?})");
                 return unsupported_error("unsupported codec");
@@ -128,7 +141,7 @@ impl AudioDescription {
     }
 
     pub fn format_is_compressed(&self) -> bool {
-        !matches!(self.format_id, AudioDescriptionFormatId::LinearPCM { .. })
+        self.bytes_per_packet == 0 || self.frames_per_packet == 0
     }
 }
 
@@ -175,6 +188,8 @@ pub enum AudioDescriptionFormatId {
     MPEGLayer2,
     MPEGLayer3,
     AppleLossless,
+    Flac,
+    Opus,
 }
 
 impl AudioDescriptionFormatId {
@@ -185,6 +200,7 @@ impl AudioDescriptionFormatId {
         let format_flags = reader.read_be_u32()?;
 
         let result = match &format_id {
+            // Formats mentioned in the spec
             b"lpcm" => {
                 let floating_point = format_flags & (1 << 0) != 0;
                 let little_endian = format_flags & (1 << 1) != 0;
@@ -193,8 +209,7 @@ impl AudioDescriptionFormatId {
             b"ima4" => AppleIMA4,
             b"aac " => {
                 if format_flags != 2 {
-                    error!("unsupported AAC object type ({format_flags})");
-                    return unsupported_error("unsupported AAC object type");
+                    warn!("undocumented AAC object type ({format_flags})");
                 }
                 return Ok(MPEG4AAC);
             }
@@ -206,18 +221,20 @@ impl AudioDescriptionFormatId {
             b".mp2" => MPEGLayer2,
             b".mp3" => MPEGLayer3,
             b"alac" => AppleLossless,
+            // Additional formats from CoreAudioBaseTypes.h
+            b"flac" => Flac,
+            b"opus" => Opus,
             other => {
                 error!("unsupported format id ({other:?})");
                 return unsupported_error("unsupported format id");
             }
         };
 
-        if format_flags == 0 {
-            Ok(result)
-        } else {
-            error!("format flags should be zero ({format_flags})");
-            decode_error("non-zero format flags")
+        if format_flags != 0 {
+            info!("non-zero format flags ({format_flags})");
         }
+
+        Ok(result)
     }
 }
 
@@ -333,3 +350,162 @@ const LAYOUT_TAG_MPEG_3_0_A: u32 = (113 << 16) | 3; // L R C
 const LAYOUT_TAG_MPEG_5_1_A: u32 = (121 << 16) | 6; // L R C LFE Ls Rs
 const LAYOUT_TAG_MPEG_7_1_A: u32 = (126 << 16) | 8; // L R C LFE Ls Rs Lc Rc
 const LAYOUT_TAG_DVD_10: u32 = (136 << 16) | 4; // L R C LFE
+
+pub struct PacketTable {
+    pub valid_frames: i64,
+    pub priming_frames: i32,
+    pub remainder_frames: i32,
+    pub packets: Vec<CafPacket>,
+}
+
+impl PacketTable {
+    pub fn read(reader: &mut MediaSourceStream, desc: &Option<AudioDescription>) -> Result<Self> {
+        let desc = desc.as_ref().ok_or_else(|| {
+            error!("Missing audio description");
+            Error::DecodeError("Missing audio descripton")
+        })?;
+
+        let total_packets = reader.read_be_i64()?;
+        let valid_frames = reader.read_be_i64()?;
+        let priming_frames = reader.read_be_i32()?;
+        let remainder_frames = reader.read_be_i32()?;
+
+        let mut packets = Vec::with_capacity(total_packets as usize);
+        let mut current_frame = 0;
+        let mut packet_offset = 0;
+
+        match (desc.bytes_per_packet, desc.frames_per_packet) {
+            // Variable bytes per packet, variable number of frames
+            (0, 0) => {
+                for _ in 0..total_packets {
+                    let size = read_variable_length_integer(reader)?;
+                    let frames = read_variable_length_integer(reader)?;
+                    packets.push(CafPacket {
+                        size,
+                        frames,
+                        start_frame: current_frame,
+                        data_offset: packet_offset,
+                    });
+                    current_frame += frames;
+                    packet_offset += size;
+                }
+            }
+            // Variable bytes per packet, constant number of frames
+            (0, frames_per_packet) => {
+                for _ in 0..total_packets {
+                    let size = read_variable_length_integer(reader)?;
+                    let frames = frames_per_packet as u64;
+                    packets.push(CafPacket {
+                        size,
+                        frames,
+                        start_frame: current_frame,
+                        data_offset: packet_offset,
+                    });
+                    current_frame += frames;
+                    packet_offset += size;
+                }
+            }
+            // Constant bytes per packet, variable number of frames
+            (bytes_per_packet, 0) => {
+                for _ in 0..total_packets {
+                    let size = bytes_per_packet as u64;
+                    let frames = read_variable_length_integer(reader)?;
+                    packets.push(CafPacket {
+                        size,
+                        frames,
+                        start_frame: current_frame,
+                        data_offset: packet_offset,
+                    });
+                    current_frame += frames;
+                    packet_offset += size;
+                }
+            }
+            // Constant bit rate format
+            (_, _) => {
+                if total_packets > 0 {
+                    error!(
+                        "Unexpected packet table for constant bit rate ({total_packets} packets)"
+                    );
+                    return decode_error("Unexpected packet table for constant bit rate format");
+                }
+            }
+        }
+
+        Ok(Self { valid_frames, priming_frames, remainder_frames, packets })
+    }
+}
+
+impl fmt::Debug for PacketTable {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "PacketTable")?;
+        write!(
+            f,
+            "{{ valid_frames: {}, priming_frames: {}, remainder_frames: {}, packet count: {}}}",
+            self.valid_frames,
+            self.priming_frames,
+            self.remainder_frames,
+            self.packets.len()
+        )
+    }
+}
+
+#[derive(Debug)]
+pub struct CafPacket {
+    // The packet's offset in bytes from the start of the data
+    pub data_offset: u64,
+    // The index of the first frame in the packet
+    pub start_frame: u64,
+    // The number of frames in the packet
+    // For files with a constant frames per packet this value will match frames_per_packet
+    pub frames: u64,
+    // The size in bytes of the packet
+    // For constant bit-rate files this value will match bytes_per_packet
+    pub size: u64,
+}
+
+fn read_variable_length_integer(reader: &mut MediaSourceStream) -> Result<u64> {
+    let mut result = 0;
+
+    loop {
+        let byte = reader.read_byte()?;
+
+        result |= (byte & 0x7f) as u64;
+
+        if byte & 0x80 == 0 {
+            break;
+        }
+
+        result <<= 7;
+    }
+
+    Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Cursor;
+
+    use super::*;
+
+    fn variable_length_integer_test(bytes: &[u8], expected: u64) -> Result<()> {
+        let cursor = Cursor::new(Vec::from(bytes));
+        let mut source = MediaSourceStream::new(Box::new(cursor), Default::default());
+
+        assert_eq!(read_variable_length_integer(&mut source)?, expected);
+
+        Ok(())
+    }
+
+    #[test]
+    fn variable_length_integers() -> Result<()> {
+        variable_length_integer_test(&[0x01], 1)?;
+        variable_length_integer_test(&[0x11], 17)?;
+        variable_length_integer_test(&[0x7f], 127)?;
+        variable_length_integer_test(&[0x81, 0x00], 128)?;
+        variable_length_integer_test(&[0x81, 0x02], 130)?;
+        variable_length_integer_test(&[0x82, 0x01], 257)?;
+        variable_length_integer_test(&[0xff, 0x7f], 16383)?;
+        variable_length_integer_test(&[0x81, 0x80, 0x00], 16384)?;
+        Ok(())
+    }
+}

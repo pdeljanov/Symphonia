@@ -1,16 +1,18 @@
 use crate::chunks::*;
-use log::{error, info};
+use log::{debug, error, info};
 use std::io::{Seek, SeekFrom};
 use symphonia_core::{
     audio::Channels,
     codecs::*,
-    errors::{decode_error, end_of_stream_error, unsupported_error, Result},
+    errors::{
+        decode_error, end_of_stream_error, seek_error, unsupported_error, Result, SeekErrorKind,
+    },
     formats::{Cue, FormatOptions, FormatReader, Packet, SeekMode, SeekTo, SeekedTo, Track},
     io::{MediaSource, MediaSourceStream, ReadBytes},
     meta::{Metadata, MetadataLog},
     probe::{Descriptor, Instantiate, QueryDescriptor},
     support_format,
-    units::TimeBase,
+    units::{TimeBase, TimeStamp},
 };
 
 const MAX_FRAMES_PER_PACKET: u64 = 1152;
@@ -25,8 +27,13 @@ pub struct CafReader {
     metadata: MetadataLog,
     data_start_pos: u64,
     data_len: Option<u64>,
-    bytes_per_caf_packet: u64,
-    max_frames_per_packet: u64,
+    packet_info: PacketInfo,
+}
+
+enum PacketInfo {
+    Unknown,
+    Uncompressed { bytes_per_frame: u32 },
+    Compressed { packets: Vec<CafPacket>, current_packet_index: usize },
 }
 
 impl QueryDescriptor for CafReader {
@@ -48,13 +55,11 @@ impl FormatReader for CafReader {
             metadata: MetadataLog::default(),
             data_start_pos: 0,
             data_len: None,
-            bytes_per_caf_packet: 0,
-            max_frames_per_packet: 0,
+            packet_info: PacketInfo::Unknown,
         };
 
         reader.check_file_header()?;
-        let mut codec_params = reader.read_audio_description_chunk()?;
-        reader.read_chunks(&mut codec_params)?;
+        let codec_params = reader.read_chunks()?;
 
         reader.tracks.push(Track::new(0, codec_params));
 
@@ -62,30 +67,45 @@ impl FormatReader for CafReader {
     }
 
     fn next_packet(&mut self) -> Result<Packet> {
-        if self.bytes_per_caf_packet == 0 {
-            return decode_error("missing packet info");
+        match &mut self.packet_info {
+            PacketInfo::Uncompressed { bytes_per_frame } => {
+                let pos = self.reader.pos();
+                let data_pos = pos - self.data_start_pos;
+
+                let bytes_per_frame = *bytes_per_frame as u64;
+                let max_bytes_to_read = bytes_per_frame * MAX_FRAMES_PER_PACKET;
+
+                let bytes_remaining = if let Some(data_len) = self.data_len {
+                    data_len - data_pos
+                } else {
+                    max_bytes_to_read
+                };
+
+                if bytes_remaining == 0 {
+                    return end_of_stream_error();
+                }
+
+                let bytes_to_read = max_bytes_to_read.min(bytes_remaining);
+                let packet_duration = bytes_to_read / bytes_per_frame;
+                let packet_timestamp = data_pos / bytes_per_frame;
+                let buffer = self.reader.read_boxed_slice(bytes_to_read as usize)?;
+                Ok(Packet::new_from_boxed_slice(0, packet_timestamp, packet_duration, buffer))
+            }
+            PacketInfo::Compressed { packets, ref mut current_packet_index } => {
+                if let Some(packet) = packets.get(*current_packet_index) {
+                    *current_packet_index += 1;
+                    let buffer = self.reader.read_boxed_slice(packet.size as usize)?;
+                    Ok(Packet::new_from_boxed_slice(0, packet.start_frame, packet.frames, buffer))
+                } else {
+                    if *current_packet_index == packets.len() {
+                        end_of_stream_error()
+                    } else {
+                        decode_error("Invalid packet index")
+                    }
+                }
+            }
+            PacketInfo::Unknown => decode_error("Missing packet info"),
         }
-
-        let pos = self.reader.pos();
-        let data_pos = pos - self.data_start_pos;
-
-        let max_bytes_to_read = self.bytes_per_caf_packet * self.max_frames_per_packet;
-
-        let bytes_remaining = if let Some(data_len) = self.data_len {
-            data_len - data_pos
-        } else {
-            max_bytes_to_read
-        };
-
-        if bytes_remaining == 0 {
-            return end_of_stream_error();
-        }
-
-        let bytes_to_read = max_bytes_to_read.min(bytes_remaining);
-        let packet_duration = bytes_to_read / self.bytes_per_caf_packet;
-        let packet_timestamp = data_pos / self.bytes_per_caf_packet;
-        let buffer = self.reader.read_boxed_slice(bytes_to_read as usize)?;
-        Ok(Packet::new_from_boxed_slice(0, packet_timestamp, packet_duration, buffer))
     }
 
     fn metadata(&mut self) -> Metadata<'_> {
@@ -100,8 +120,94 @@ impl FormatReader for CafReader {
         &self.tracks
     }
 
-    fn seek(&mut self, _mode: SeekMode, _to: SeekTo) -> Result<SeekedTo> {
-        unimplemented!();
+    fn seek(&mut self, _mode: SeekMode, to: SeekTo) -> Result<SeekedTo> {
+        let required_ts = match to {
+            SeekTo::TimeStamp { ts, .. } => ts,
+            SeekTo::Time { time, .. } => {
+                if let Some(time_base) = self.time_base() {
+                    time_base.calc_timestamp(time)
+                } else {
+                    return seek_error(SeekErrorKind::Unseekable);
+                }
+            }
+        };
+
+        match &mut self.packet_info {
+            PacketInfo::Uncompressed { bytes_per_frame } => {
+                // Packetization for PCM data is performed by chunking the stream into
+                // packets of MAX_FRAMES_PER_PACKET frames each.
+                // To allow for determinstic packet timestamps, we want the seek to jump to the
+                // packet boundary before the requested seek time.
+                let actual_ts = (required_ts / MAX_FRAMES_PER_PACKET) * MAX_FRAMES_PER_PACKET;
+                let seek_pos = self.data_start_pos + actual_ts * (*bytes_per_frame as u64);
+
+                if self.reader.is_seekable() {
+                    self.reader.seek(SeekFrom::Start(seek_pos))?;
+                } else {
+                    let current_pos = self.reader.pos();
+                    if seek_pos >= current_pos {
+                        self.reader.ignore_bytes(seek_pos - current_pos)?;
+                    } else {
+                        return seek_error(SeekErrorKind::ForwardOnly);
+                    }
+                }
+
+                debug!(
+                    "Seek required_ts: {}, actual_ts: {}, (difference: {})",
+                    actual_ts,
+                    required_ts,
+                    actual_ts as i64 - required_ts as i64,
+                );
+
+                Ok(SeekedTo { track_id: 0, actual_ts, required_ts })
+            }
+            PacketInfo::Compressed { packets, current_packet_index } => {
+                let current_ts = if let Some(packet) = packets.get(*current_packet_index) {
+                    TimeStamp::from(packet.start_frame)
+                } else {
+                    error!("Invalid packet index: {}", current_packet_index);
+                    return decode_error("Invalid packet index");
+                };
+
+                let search_range = if current_ts < required_ts {
+                    *current_packet_index..packets.len()
+                } else {
+                    0..*current_packet_index
+                };
+
+                let packet_after_ts = packets[search_range]
+                    .partition_point(|packet| packet.start_frame < required_ts);
+                let seek_packet_index = packet_after_ts.saturating_sub(1);
+                let seek_packet = &packets[seek_packet_index];
+
+                let seek_pos = self.data_start_pos + seek_packet.data_offset;
+
+                if self.reader.is_seekable() {
+                    self.reader.seek(SeekFrom::Start(seek_pos))?;
+                } else {
+                    let current_pos = self.reader.pos();
+                    if seek_pos >= current_pos {
+                        self.reader.ignore_bytes(seek_pos - current_pos)?;
+                    } else {
+                        return seek_error(SeekErrorKind::ForwardOnly);
+                    }
+                }
+
+                *current_packet_index = seek_packet_index;
+                let actual_ts = TimeStamp::from(seek_packet.start_frame);
+
+                debug!(
+                    "Seek required_ts: {}, actual_ts: {}, (difference: {}, packet: {})",
+                    required_ts,
+                    actual_ts,
+                    actual_ts as i64 - required_ts as i64,
+                    seek_packet_index,
+                );
+
+                Ok(SeekedTo { track_id: 0, actual_ts, required_ts })
+            }
+            PacketInfo::Unknown => decode_error("Missing packet info"),
+        }
     }
 
     fn into_inner(self: Box<Self>) -> MediaSourceStream {
@@ -110,6 +216,12 @@ impl FormatReader for CafReader {
 }
 
 impl CafReader {
+    fn time_base(&self) -> Option<TimeBase> {
+        self.tracks.first().and_then(|track| {
+            track.codec_params.sample_rate.map(|sample_rate| TimeBase::new(1, sample_rate))
+        })
+    }
+
     fn check_file_header(&mut self) -> Result<()> {
         let file_type = self.reader.read_quad_bytes()?;
         if file_type != *b"caff" {
@@ -128,72 +240,78 @@ impl CafReader {
         Ok(())
     }
 
-    fn read_audio_description_chunk(&mut self) -> Result<CodecParameters> {
-        let chunk = Chunk::read(&mut self.reader)?;
-        if let Some(Chunk::AudioDescription(desc)) = chunk {
-            let mut codec_params = CodecParameters::new();
-            codec_params
-                .for_codec(desc.codec_type()?)
-                .with_sample_rate(desc.sample_rate as u32)
-                .with_time_base(TimeBase::new(1, desc.sample_rate as u32))
-                .with_bits_per_sample(desc.bits_per_channel)
-                .with_bits_per_coded_sample((desc.bytes_per_packet * 8) / desc.channels_per_frame);
+    fn read_audio_description_chunk(
+        &mut self,
+        desc: &AudioDescription,
+        codec_params: &mut CodecParameters,
+    ) -> Result<()> {
+        codec_params
+            .for_codec(desc.codec_type()?)
+            .with_sample_rate(desc.sample_rate as u32)
+            .with_time_base(TimeBase::new(1, desc.sample_rate as u32))
+            .with_bits_per_sample(desc.bits_per_channel)
+            .with_bits_per_coded_sample((desc.bytes_per_packet * 8) / desc.channels_per_frame);
 
-            match desc.channels_per_frame {
-                0 => {
-                    return decode_error("channel count is zero");
-                }
-                1 => {
-                    codec_params.with_channels(Channels::FRONT_LEFT);
-                }
-                2 => {
-                    codec_params.with_channels(Channels::FRONT_LEFT | Channels::FRONT_RIGHT);
-                }
-                n => {
-                    // When the channel count is >2 then enable the first N channels.
-                    // This can/should be overridden when parsing the channel layout chunk.
-                    match Channels::from_bits(((1u64 << n as u64) - 1) as u32) {
-                        Some(channels) => {
-                            codec_params.with_channels(channels);
-                        }
-                        None => {
-                            return unsupported_error("unsupported channel count");
-                        }
+        match desc.channels_per_frame {
+            0 => {
+                return decode_error("channel count is zero");
+            }
+            1 => {
+                codec_params.with_channels(Channels::FRONT_LEFT);
+            }
+            2 => {
+                codec_params.with_channels(Channels::FRONT_LEFT | Channels::FRONT_RIGHT);
+            }
+            n => {
+                // When the channel count is >2 then enable the first N channels.
+                // This can/should be overridden when parsing the channel layout chunk.
+                match Channels::from_bits(((1u64 << n as u64) - 1) as u32) {
+                    Some(channels) => {
+                        codec_params.with_channels(channels);
+                    }
+                    None => {
+                        return unsupported_error("unsupported channel count");
                     }
                 }
             }
-
-            if desc.frames_per_packet > 0 && !desc.format_is_compressed() {
-                self.max_frames_per_packet = MAX_FRAMES_PER_PACKET;
-                codec_params
-                    .with_max_frames_per_packet(self.max_frames_per_packet)
-                    .with_frames_per_block(desc.frames_per_packet as u64);
-            } else {
-                return unsupported_error("compressed formats are currently unsupported");
-            }
-
-            self.bytes_per_caf_packet = desc.bytes_per_packet as u64;
-
-            Ok(codec_params)
-        } else {
-            error!("expected audio description chunk, found: {:?}", chunk);
-            decode_error("expected audio description chunk")
         }
+
+        if desc.format_is_compressed() {
+            self.packet_info =
+                PacketInfo::Compressed { packets: Vec::new(), current_packet_index: 0 };
+        } else {
+            codec_params.with_max_frames_per_packet(MAX_FRAMES_PER_PACKET).with_frames_per_block(1);
+            self.packet_info = PacketInfo::Uncompressed { bytes_per_frame: desc.bytes_per_packet }
+        };
+
+        Ok(())
     }
 
-    fn read_chunks(&mut self, codec_params: &mut CodecParameters) -> Result<()> {
+    fn read_chunks(&mut self) -> Result<CodecParameters> {
         use Chunk::*;
 
+        let mut codec_params = CodecParameters::new();
+        let mut audio_description = None;
+
         loop {
-            match Chunk::read(&mut self.reader)? {
-                Some(AudioDescription(_)) => {
-                    return decode_error("additional Audio Description chunk")
+            match Chunk::read(&mut self.reader, &audio_description)? {
+                Some(AudioDescription(desc)) => {
+                    if audio_description.is_some() {
+                        return decode_error("additional Audio Description chunk");
+                    }
+                    self.read_audio_description_chunk(&desc, &mut codec_params)?;
+                    audio_description = Some(desc);
                 }
                 Some(AudioData(data)) => {
                     self.data_start_pos = data.start_pos;
                     self.data_len = data.data_len;
                     if let Some(data_len) = self.data_len {
-                        codec_params.with_n_frames(data_len / self.bytes_per_caf_packet);
+                        match &self.packet_info {
+                            PacketInfo::Uncompressed { bytes_per_frame } => {
+                                codec_params.with_n_frames(data_len / *bytes_per_frame as u64);
+                            }
+                            _ => {}
+                        }
                     }
                 }
                 Some(ChannelLayout(layout)) => {
@@ -206,7 +324,22 @@ impl CafReader {
                         info!("couldn't convert the channel layout into a channel bitmap");
                     }
                 }
+                Some(PacketTable(table)) => match &mut self.packet_info {
+                    PacketInfo::Compressed { ref mut packets, .. } => {
+                        codec_params.with_n_frames(table.valid_frames as u64);
+                        *packets = table.packets;
+                    }
+                    _ => {}
+                },
+                Some(MagicCookie(data)) => {
+                    codec_params.with_extra_data(data);
+                }
                 Some(Free) | None => {}
+            }
+
+            if audio_description.is_none() {
+                error!("missing audio description chunk");
+                return decode_error("missing audio description chunk");
             }
 
             if let Some(byte_len) = self.reader.byte_len() {
@@ -221,6 +354,6 @@ impl CafReader {
             }
         }
 
-        Ok(())
+        Ok(codec_params)
     }
 }
