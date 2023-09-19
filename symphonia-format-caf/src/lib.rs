@@ -14,6 +14,7 @@
 #![allow(clippy::identity_op)]
 #![allow(clippy::manual_range_contains)]
 
+mod chunks;
 mod demuxer;
 
 pub use demuxer::CafReader;
