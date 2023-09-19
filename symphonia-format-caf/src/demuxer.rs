@@ -1,5 +1,5 @@
 use crate::chunks::*;
-use log::error;
+use log::{error, info};
 use std::io::{Seek, SeekFrom};
 use symphonia_core::{
     audio::Channels,
@@ -130,7 +130,7 @@ impl CafReader {
 
     fn read_audio_description_chunk(&mut self) -> Result<CodecParameters> {
         let chunk = Chunk::read(&mut self.reader)?;
-        if let Chunk::AudioDescription(desc) = chunk {
+        if let Some(Chunk::AudioDescription(desc)) = chunk {
             let mut codec_params = CodecParameters::new();
             codec_params
                 .for_codec(desc.codec_type()?)
@@ -149,7 +149,18 @@ impl CafReader {
                 2 => {
                     codec_params.with_channels(Channels::FRONT_LEFT | Channels::FRONT_RIGHT);
                 }
-                _ => {} // When the channel count is >2 then wait for the Channel Layout chunk
+                n => {
+                    // When the channel count is >2 then enable the first N channels.
+                    // This can/should be overridden when parsing the channel layout chunk.
+                    match Channels::from_bits(((1u64 << n as u64) - 1) as u32) {
+                        Some(channels) => {
+                            codec_params.with_channels(channels);
+                        }
+                        None => {
+                            return unsupported_error("unsupported channel count");
+                        }
+                    }
+                }
             }
 
             if desc.frames_per_packet > 0 && !desc.format_is_compressed() {
@@ -175,15 +186,27 @@ impl CafReader {
 
         loop {
             match Chunk::read(&mut self.reader)? {
-                AudioData(data) => {
+                Some(AudioDescription(_)) => {
+                    return decode_error("additional Audio Description chunk")
+                }
+                Some(AudioData(data)) => {
                     self.data_start_pos = data.start_pos;
                     self.data_len = data.data_len;
                     if let Some(data_len) = self.data_len {
                         codec_params.with_n_frames(data_len / self.bytes_per_caf_packet);
                     }
                 }
-                AudioDescription(_) => return decode_error("additional Audio Description chunk"),
-                Free => {}
+                Some(ChannelLayout(layout)) => {
+                    if let Some(channels) = layout.channels() {
+                        codec_params.channels = Some(channels);
+                    } else {
+                        // Don't error if the layout doesn't correspond directly to a Symphonia
+                        // layout, the channels bitmap was set after the audio description was read
+                        // to match the number of channels, and that's probably OK.
+                        info!("couldn't convert the channel layout into a channel bitmap");
+                    }
+                }
+                Some(Free) | None => {}
             }
 
             if let Some(byte_len) = self.reader.byte_len() {

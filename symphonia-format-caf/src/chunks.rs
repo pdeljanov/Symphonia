@@ -1,6 +1,7 @@
 use log::{debug, error, info};
 use std::{mem::size_of, str};
 use symphonia_core::{
+    audio::{Channels, Layout},
     codecs::*,
     errors::{decode_error, unsupported_error, Result},
     io::{MediaSourceStream, ReadBytes},
@@ -10,6 +11,7 @@ use symphonia_core::{
 pub enum Chunk {
     AudioDescription(AudioDescription),
     AudioData(AudioData),
+    ChannelLayout(ChannelLayout),
     Free,
 }
 
@@ -18,16 +20,17 @@ impl Chunk {
     ///
     /// After calling this function the reader's position will be:
     ///   - at the start of the next chunk,
-    ///   - or at the end of the file,
+    ///   - or, at the end of the file,
     ///   - or, if the chunk is the audio data chunk and the size is unknown,
     ///     then at the start of the audio data.
-    pub fn read(mut reader: &mut MediaSourceStream) -> Result<Self> {
+    pub fn read(mut reader: &mut MediaSourceStream) -> Result<Option<Self>> {
         let chunk_type = reader.read_quad_bytes()?;
         let chunk_size = reader.read_be_i64()?;
 
         let result = match &chunk_type {
-            b"data" => Chunk::AudioData(AudioData::read(&mut reader, chunk_size)?),
             b"desc" => Chunk::AudioDescription(AudioDescription::read(&mut reader)?),
+            b"data" => Chunk::AudioData(AudioData::read(&mut reader, chunk_size)?),
+            b"chan" => Chunk::ChannelLayout(ChannelLayout::read(&mut reader)?),
             b"free" => {
                 if chunk_size < 0 {
                     error!("invalid Free chunk size ({chunk_size})");
@@ -37,16 +40,17 @@ impl Chunk {
                 Chunk::Free
             }
             other => {
+                // Log unsupported chunk types but don't return an error
                 info!(
                     "unsupported chunk type ('{}')",
                     str::from_utf8(other.as_slice()).unwrap_or("????")
                 );
-                return unsupported_error("unsupported chunk type");
+                return Ok(None);
             }
         };
 
         debug!("chunk: {result:?} - size: {chunk_size}");
-        Ok(result)
+        Ok(Some(result))
     }
 }
 
@@ -216,3 +220,116 @@ impl AudioDescriptionFormatId {
         }
     }
 }
+
+#[derive(Debug)]
+pub struct ChannelLayout {
+    pub channel_layout: u32,
+    pub channel_bitmap: u32,
+    pub channel_descriptions: Vec<ChannelDescription>,
+}
+
+impl ChannelLayout {
+    pub fn read(reader: &mut MediaSourceStream) -> Result<Self> {
+        let channel_layout = reader.read_be_u32()?;
+        let channel_bitmap = reader.read_be_u32()?;
+        let channel_description_count = reader.read_be_u32()?;
+        let channel_descriptions: Vec<ChannelDescription> = (0..channel_description_count)
+            .map(|_| ChannelDescription::read(reader))
+            .collect::<Result<_>>()?;
+
+        Ok(Self { channel_layout, channel_bitmap, channel_descriptions })
+    }
+
+    pub fn channels(&self) -> Option<Channels> {
+        let channels = match self.channel_layout {
+            // Use channel descriptions
+            0 => {
+                let mut channels: u32 = 0;
+                for channel in self.channel_descriptions.iter() {
+                    match channel.channel_label {
+                        1 => channels |= Channels::FRONT_LEFT.bits(),
+                        2 => channels |= Channels::FRONT_RIGHT.bits(),
+                        3 => channels |= Channels::FRONT_CENTRE.bits(),
+                        4 => channels |= Channels::LFE1.bits(),
+                        5 => channels |= Channels::REAR_LEFT.bits(),
+                        6 => channels |= Channels::REAR_RIGHT.bits(),
+                        7 => channels |= Channels::FRONT_LEFT_CENTRE.bits(),
+                        8 => channels |= Channels::FRONT_RIGHT_CENTRE.bits(),
+                        9 => channels |= Channels::REAR_CENTRE.bits(),
+                        10 => channels |= Channels::SIDE_LEFT.bits(),
+                        11 => channels |= Channels::SIDE_RIGHT.bits(),
+                        12 => channels |= Channels::TOP_CENTRE.bits(),
+                        13 => channels |= Channels::TOP_FRONT_LEFT.bits(),
+                        14 => channels |= Channels::TOP_FRONT_CENTRE.bits(),
+                        15 => channels |= Channels::TOP_FRONT_RIGHT.bits(),
+                        16 => channels |= Channels::TOP_REAR_LEFT.bits(),
+                        17 => channels |= Channels::TOP_REAR_CENTRE.bits(),
+                        18 => channels |= Channels::TOP_REAR_RIGHT.bits(),
+                        unsupported => {
+                            info!("Unsupported channel label: {unsupported}");
+                            return None;
+                        }
+                    }
+                }
+                return Channels::from_bits(channels);
+            }
+            // Use the channel bitmap
+            1 => return Channels::from_bits(self.channel_bitmap),
+            // Layout tags which have channel roles that match the standard channel layout
+            LAYOUT_TAG_MONO => Layout::Mono.into_channels(),
+            LAYOUT_TAG_STEREO | LAYOUT_TAG_STEREO_HEADPHONES => Layout::Stereo.into_channels(),
+            LAYOUT_TAG_MPEG_3_0_A => {
+                Channels::FRONT_LEFT | Channels::FRONT_RIGHT | Channels::FRONT_CENTRE
+            }
+            LAYOUT_TAG_MPEG_5_1_A => Layout::FivePointOne.into_channels(),
+            LAYOUT_TAG_MPEG_7_1_A => {
+                Channels::FRONT_LEFT
+                    | Channels::FRONT_RIGHT
+                    | Channels::FRONT_CENTRE
+                    | Channels::LFE1
+                    | Channels::REAR_LEFT
+                    | Channels::REAR_RIGHT
+                    | Channels::FRONT_LEFT_CENTRE
+                    | Channels::FRONT_RIGHT_CENTRE
+            }
+            LAYOUT_TAG_DVD_10 => {
+                Channels::FRONT_LEFT
+                    | Channels::FRONT_RIGHT
+                    | Channels::FRONT_CENTRE
+                    | Channels::LFE1
+            }
+            unsupported => {
+                debug!("Unsupported channel layout: {unsupported}");
+                return None;
+            }
+        };
+
+        Some(channels)
+    }
+}
+
+#[derive(Debug)]
+pub struct ChannelDescription {
+    pub channel_label: u32,
+    pub channel_flags: u32,
+    pub coordinates: [f32; 3],
+}
+
+impl ChannelDescription {
+    pub fn read(reader: &mut MediaSourceStream) -> Result<Self> {
+        Ok(Self {
+            channel_label: reader.read_be_u32()?,
+            channel_flags: reader.read_be_u32()?,
+            coordinates: [reader.read_be_f32()?, reader.read_be_f32()?, reader.read_be_f32()?],
+        })
+    }
+}
+
+// Layout tags from the CAF spec that match the first N channels of a standard layout
+const LAYOUT_TAG_MONO: u32 = (100 << 16) | 1;
+const LAYOUT_TAG_STEREO: u32 = (101 << 16) | 2;
+const LAYOUT_TAG_STEREO_HEADPHONES: u32 = (102 << 16) | 2;
+const LAYOUT_TAG_MPEG_3_0_A: u32 = (113 << 16) | 3; // L R C
+const LAYOUT_TAG_MPEG_5_1_A: u32 = (121 << 16) | 6; // L R C LFE Ls Rs
+const LAYOUT_TAG_MPEG_7_1_A: u32 = (126 << 16) | 8; // L R C LFE Ls Rs Lc Rc
+const LAYOUT_TAG_DVD_10: u32 = (136 << 16) | 4; // L R C LFE
