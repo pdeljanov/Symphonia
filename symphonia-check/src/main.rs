@@ -146,13 +146,16 @@ struct FlushStats {
 }
 
 struct DecoderInstance {
-    format: Box<dyn FormatReader>,
+    format: Box<dyn FormatReader<'static>>,
     decoder: Box<dyn Decoder>,
     track_id: u32,
 }
 
 impl DecoderInstance {
-    fn try_open(mss: MediaSourceStream, fmt_opts: FormatOptions) -> Result<DecoderInstance> {
+    fn try_open(
+        mss: MediaSourceStream<'static>,
+        fmt_opts: FormatOptions,
+    ) -> Result<DecoderInstance> {
         // Use the default options for metadata and format readers, and the decoder.
         let meta_opts: MetadataOptions = Default::default();
         let dec_opts: DecoderOptions = Default::default();

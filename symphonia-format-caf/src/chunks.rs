@@ -79,7 +79,7 @@ impl Chunk {
     /// The first chunk read will be the AudioDescription chunk. Once it's been read, the caller
     /// should pass it in to subsequent read calls.
     pub fn read(
-        reader: &mut MediaSourceStream,
+        reader: &mut MediaSourceStream<'_>,
         audio_description: &Option<AudioDescription>,
     ) -> Result<Option<Self>> {
         let chunk_type = reader.read_quad_bytes()?;
@@ -140,7 +140,7 @@ pub struct AudioDescription {
 }
 
 impl AudioDescription {
-    pub fn read(reader: &mut MediaSourceStream, chunk_size: i64) -> Result<Self> {
+    pub fn read(reader: &mut MediaSourceStream<'_>, chunk_size: i64) -> Result<Self> {
         if chunk_size != 32 {
             return invalid_chunk_size_error("Audio Description", chunk_size);
         }
@@ -236,7 +236,7 @@ pub struct AudioData {
 }
 
 impl AudioData {
-    pub fn read(reader: &mut MediaSourceStream, chunk_size: i64) -> Result<Self> {
+    pub fn read(reader: &mut MediaSourceStream<'_>, chunk_size: i64) -> Result<Self> {
         let edit_count_offset = size_of::<u32>() as i64;
 
         if chunk_size != -1 && chunk_size < edit_count_offset {
@@ -275,7 +275,7 @@ pub enum AudioDescriptionFormatId {
 }
 
 impl AudioDescriptionFormatId {
-    pub fn read(reader: &mut MediaSourceStream) -> Result<Self> {
+    pub fn read(reader: &mut MediaSourceStream<'_>) -> Result<Self> {
         use AudioDescriptionFormatId::*;
 
         let format_id = reader.read_quad_bytes()?;
@@ -328,7 +328,7 @@ pub struct ChannelLayout {
 }
 
 impl ChannelLayout {
-    pub fn read(reader: &mut MediaSourceStream, chunk_size: i64) -> Result<Self> {
+    pub fn read(reader: &mut MediaSourceStream<'_>, chunk_size: i64) -> Result<Self> {
         if chunk_size < 12 {
             return invalid_chunk_size_error("Channel Layout", chunk_size);
         }
@@ -436,7 +436,7 @@ pub struct ChannelDescription {
 }
 
 impl ChannelDescription {
-    pub fn read(reader: &mut MediaSourceStream) -> Result<Self> {
+    pub fn read(reader: &mut MediaSourceStream<'_>) -> Result<Self> {
         Ok(Self {
             channel_label: reader.read_be_u32()?,
             channel_flags: reader.read_be_u32()?,
@@ -454,7 +454,7 @@ pub struct PacketTable {
 
 impl PacketTable {
     pub fn read(
-        reader: &mut MediaSourceStream,
+        reader: &mut MediaSourceStream<'_>,
         desc: &Option<AudioDescription>,
         chunk_size: i64,
     ) -> Result<Self> {
@@ -583,7 +583,7 @@ fn invalid_chunk_size_error<T>(chunk_type: &str, chunk_size: i64) -> Result<T> {
     decode_error("caf: invalid chunk size")
 }
 
-fn read_variable_length_integer(reader: &mut MediaSourceStream) -> Result<u64> {
+fn read_variable_length_integer(reader: &mut MediaSourceStream<'_>) -> Result<u64> {
     let mut result = 0;
 
     for _ in 0..9 {

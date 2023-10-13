@@ -410,7 +410,7 @@ impl Probeable for Id3v2Reader {
         &[support_metadata!(ID3V2_METADATA_INFO, &[], &[], &[b"ID3"])]
     }
 
-    fn score(_src: ScopedStream<&mut MediaSourceStream>) -> Result<Score> {
+    fn score(_src: ScopedStream<&mut MediaSourceStream<'_>>) -> Result<Score> {
         Ok(Score::Supported(255))
     }
 }
@@ -424,7 +424,7 @@ impl MetadataReader for Id3v2Reader {
         &ID3V2_METADATA_INFO
     }
 
-    fn read_all(&mut self, reader: &mut MediaSourceStream) -> Result<MetadataRevision> {
+    fn read_all(&mut self, reader: &mut MediaSourceStream<'_>) -> Result<MetadataRevision> {
         let mut builder = MetadataBuilder::new();
         read_id3v2(reader, &mut builder)?;
         Ok(builder.metadata())
