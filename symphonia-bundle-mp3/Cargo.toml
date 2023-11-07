@@ -20,7 +20,6 @@ mp3 = []
 
 [dependencies]
 log = "0.4"
-bitflags = "1.2.1"
 lazy_static = "1.4.0"
 symphonia-core = { version = "0.5.2", path = "../symphonia-core" }
 symphonia-metadata = { version = "0.5.2", path = "../symphonia-metadata" }
