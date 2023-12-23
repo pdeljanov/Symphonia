@@ -9,7 +9,7 @@
 //! decoders.
 
 use alloc::boxed::Box;
-use std::collections::HashMap;
+use alloc::collections::BTreeMap;
 use core::default::Default;
 use core::fmt;
 
@@ -20,7 +20,7 @@ use crate::sample::SampleFormat;
 use crate::units::TimeBase;
 
 /// A `CodecType` is a unique identifier used to identify a specific codec.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub struct CodecType(u32);
 
 /// Declares a new `CodecType` given a character code. A character code is an ASCII string
@@ -523,13 +523,13 @@ pub struct CodecDescriptor {
 /// A `CodecRegistry` allows the registration of codecs, and provides a method to instantiate a
 /// `Decoder` given a `CodecParameters` object.
 pub struct CodecRegistry {
-    codecs: HashMap<CodecType, CodecDescriptor>,
+    codecs: BTreeMap<CodecType, CodecDescriptor>,
 }
 
 impl CodecRegistry {
     /// Instantiate a new `CodecRegistry`.
     pub fn new() -> Self {
-        CodecRegistry { codecs: HashMap::new() }
+        CodecRegistry { codecs: BTreeMap::new() }
     }
 
     /// Gets the `CodecDescriptor` for a registered codec.

@@ -5,9 +5,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use std::io;
 
 use super::ReadBytes;
+use crate::errors::Result;
 
 /// A `Monitor` provides a common interface to examine the operations observed be
 /// a [`MonitorStream`].
@@ -73,40 +73,40 @@ impl<B: ReadBytes, M: Monitor> MonitorStream<B, M> {
 
 impl<B: ReadBytes, M: Monitor> ReadBytes for MonitorStream<B, M> {
     #[inline(always)]
-    fn read_byte(&mut self) -> io::Result<u8> {
+    fn read_byte(&mut self) -> Result<u8> {
         let byte = self.inner.read_byte()?;
         self.monitor.process_byte(byte);
         Ok(byte)
     }
 
     #[inline(always)]
-    fn read_double_bytes(&mut self) -> io::Result<[u8; 2]> {
+    fn read_double_bytes(&mut self) -> Result<[u8; 2]> {
         let bytes = self.inner.read_double_bytes()?;
         self.monitor.process_double_bytes(bytes);
         Ok(bytes)
     }
 
     #[inline(always)]
-    fn read_triple_bytes(&mut self) -> io::Result<[u8; 3]> {
+    fn read_triple_bytes(&mut self) -> Result<[u8; 3]> {
         let bytes = self.inner.read_triple_bytes()?;
         self.monitor.process_triple_bytes(bytes);
         Ok(bytes)
     }
 
     #[inline(always)]
-    fn read_quad_bytes(&mut self) -> io::Result<[u8; 4]> {
+    fn read_quad_bytes(&mut self) -> Result<[u8; 4]> {
         let bytes = self.inner.read_quad_bytes()?;
         self.monitor.process_quad_bytes(bytes);
         Ok(bytes)
     }
 
-    fn read_buf(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+    fn read_buf(&mut self, buf: &mut [u8]) -> Result<usize> {
         let len = self.inner.read_buf(buf)?;
         self.monitor.process_buf_bytes(&buf[0..len]);
         Ok(len)
     }
 
-    fn read_buf_exact(&mut self, buf: &mut [u8]) -> io::Result<()> {
+    fn read_buf_exact(&mut self, buf: &mut [u8]) -> Result<()> {
         self.inner.read_buf_exact(buf)?;
         self.monitor.process_buf_bytes(buf);
         Ok(())
@@ -117,13 +117,13 @@ impl<B: ReadBytes, M: Monitor> ReadBytes for MonitorStream<B, M> {
         pattern: &[u8],
         align: usize,
         buf: &'a mut [u8],
-    ) -> io::Result<&'a mut [u8]> {
+    ) -> Result<&'a mut [u8]> {
         let result = self.inner.scan_bytes_aligned(pattern, align, buf)?;
         self.monitor.process_buf_bytes(result);
         Ok(result)
     }
 
-    fn ignore_bytes(&mut self, count: u64) -> io::Result<()> {
+    fn ignore_bytes(&mut self, count: u64) -> Result<()> {
         self.inner.ignore_bytes(count)
     }
 

@@ -18,7 +18,6 @@ use symphonia_core::probe::{Descriptor, Instantiate, QueryDescriptor};
 use crate::common::{FrameHeader, MpegLayer};
 use crate::header::{self, MAX_MPEG_FRAME_SIZE, MPEG_HEADER_LEN};
 
-use std::io::{Seek, SeekFrom};
 
 use log::{debug, info, warn};
 

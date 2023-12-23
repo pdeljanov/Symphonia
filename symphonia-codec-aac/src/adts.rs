@@ -16,11 +16,10 @@ use symphonia_core::io::*;
 use symphonia_core::meta::{Metadata, MetadataLog};
 use symphonia_core::probe::{Descriptor, Instantiate, QueryDescriptor};
 
-use std::io::{Seek, SeekFrom};
-
 use super::common::{map_channels, M4AType, AAC_SAMPLE_RATES, M4A_TYPES};
 
 use log::debug;
+use symphonia_core::io::Seek;
 
 const SAMPLES_PER_AAC_PACKET: u64 = 1024;
 

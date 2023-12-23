@@ -86,7 +86,7 @@ fn main() {
             Ok(_decoded) => {
                 // Consume the decoded audio samples (see below).
             }
-            Err(Error::IoError(_)) => {
+            Err(Error::IoError(_, _)) => {
                 // The packet failed to decode due to an IO error, skip the packet.
                 continue;
             }

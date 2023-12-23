@@ -86,7 +86,7 @@ impl<B: ReadBytes + FiniteStream> FiniteStream for UnsyncStream<B> {
 }
 
 impl<B: ReadBytes + FiniteStream> ReadBytes for UnsyncStream<B> {
-    fn read_byte(&mut self) -> io::Result<u8> {
+    fn read_byte(&mut self) -> Result<u8> {
         let last = self.byte;
 
         self.byte = self.inner.read_byte()?;
@@ -100,24 +100,24 @@ impl<B: ReadBytes + FiniteStream> ReadBytes for UnsyncStream<B> {
         Ok(self.byte)
     }
 
-    fn read_double_bytes(&mut self) -> io::Result<[u8; 2]> {
+    fn read_double_bytes(&mut self) -> Result<[u8; 2]> {
         Ok([self.read_byte()?, self.read_byte()?])
     }
 
-    fn read_triple_bytes(&mut self) -> io::Result<[u8; 3]> {
+    fn read_triple_bytes(&mut self) -> Result<[u8; 3]> {
         Ok([self.read_byte()?, self.read_byte()?, self.read_byte()?])
     }
 
-    fn read_quad_bytes(&mut self) -> io::Result<[u8; 4]> {
+    fn read_quad_bytes(&mut self) -> Result<[u8; 4]> {
         Ok([self.read_byte()?, self.read_byte()?, self.read_byte()?, self.read_byte()?])
     }
 
-    fn read_buf(&mut self, _: &mut [u8]) -> io::Result<usize> {
+    fn read_buf(&mut self, _: &mut [u8]) -> Result<usize> {
         // Not required.
         unimplemented!();
     }
 
-    fn read_buf_exact(&mut self, buf: &mut [u8]) -> io::Result<()> {
+    fn read_buf_exact(&mut self, buf: &mut [u8]) -> Result<()> {
         let len = buf.len();
 
         if len > 0 {
@@ -166,12 +166,12 @@ impl<B: ReadBytes + FiniteStream> ReadBytes for UnsyncStream<B> {
         _: &[u8],
         _: usize,
         _: &'a mut [u8],
-    ) -> io::Result<&'a mut [u8]> {
+    ) -> Result<&'a mut [u8]> {
         // Not required.
         unimplemented!();
     }
 
-    fn ignore_bytes(&mut self, count: u64) -> io::Result<()> {
+    fn ignore_bytes(&mut self, count: u64) -> Result<()> {
         for _ in 0..count {
             self.inner.read_byte()?;
         }

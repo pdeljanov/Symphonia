@@ -8,7 +8,7 @@
 use std::fmt;
 
 use symphonia_core::audio::{AudioBuffer, Signal};
-use symphonia_core::errors::{decode_error, Error, Result};
+use symphonia_core::errors::{decode_error, Error, IoErrorKind, Result};
 use symphonia_core::io::{BitReaderLtr, BufReader, ReadBitsLtr, ReadBytes};
 
 mod bitstream;
@@ -356,7 +356,7 @@ impl Layer3 {
                 // IO error to a decode error.
                 frame_data.granules[gr].channels[ch].rzero = match huffman_result {
                     Ok(rzero) => rzero,
-                    Err(Error::IoError(e)) if e.kind() == std::io::ErrorKind::Other => {
+                    Err(Error::IoError(IoErrorKind::Other, _)) => {
                         return decode_error("mpa: huffman decode overrun");
                     }
                     Err(err) => return Err(err),

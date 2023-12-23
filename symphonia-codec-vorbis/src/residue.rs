@@ -9,7 +9,7 @@ use std::cmp::min;
 use std::convert::TryInto;
 use std::io;
 
-use symphonia_core::errors::{decode_error, Error, Result};
+use symphonia_core::errors::{decode_error, Error, IoErrorKind, Result};
 use symphonia_core::io::{BitReaderRtl, ReadBitsRtl};
 
 use super::codebook::VorbisCodebook;
@@ -155,7 +155,7 @@ impl Residue {
             Ok(_) => (),
             // An end-of-bitstream error is classified under ErrorKind::Other. This condition
             // should not be treated as an error.
-            Err(Error::IoError(ref e)) if e.kind() == io::ErrorKind::Other => (),
+            Err(Error::IoError(IoErrorKind::Other, _)) => (),
             Err(e) => return Err(e),
         };
 

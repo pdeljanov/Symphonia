@@ -14,8 +14,6 @@
 #![allow(clippy::identity_op)]
 #![allow(clippy::manual_range_contains)]
 
-use std::io::{Seek, SeekFrom};
-
 use symphonia_core::codecs::CodecParameters;
 use symphonia_core::errors::{decode_error, end_of_stream_error, seek_error, unsupported_error};
 use symphonia_core::errors::{Result, SeekErrorKind};

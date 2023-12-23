@@ -7,7 +7,6 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::convert::TryFrom;
-use std::io::{Seek, SeekFrom};
 
 use symphonia_core::audio::Layout;
 use symphonia_core::codecs::{CodecParameters, CODEC_TYPE_FLAC, CODEC_TYPE_VORBIS};
@@ -17,7 +16,7 @@ use symphonia_core::errors::{
 use symphonia_core::formats::{
     Cue, FormatOptions, FormatReader, Packet, SeekMode, SeekTo, SeekedTo, Track,
 };
-use symphonia_core::io::{BufReader, MediaSource, MediaSourceStream, ReadBytes};
+use symphonia_core::io::{BufReader, MediaSource, MediaSourceStream, ReadBytes, Seek, SeekFrom};
 use symphonia_core::meta::{Metadata, MetadataLog};
 use symphonia_core::probe::Instantiate;
 use symphonia_core::probe::{Descriptor, QueryDescriptor};

@@ -13,7 +13,11 @@
 #![allow(clippy::identity_op)]
 #![allow(clippy::manual_range_contains)]
 
+#![feature(error_in_core)]
+
 extern crate alloc;
+
+#[cfg(feature = "std")]
 extern crate std;
 
 pub mod audio;
