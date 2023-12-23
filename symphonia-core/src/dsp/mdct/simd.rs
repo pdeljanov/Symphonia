@@ -7,7 +7,10 @@
 
 //! The Modified Discrete Cosine Transform (MDCT) implemented with SIMD optimizations.
 
-use std::sync::Arc;
+use alloc::boxed::Box;
+use alloc::vec::Vec;
+use alloc::sync::Arc;
+use alloc::vec;
 
 use rustfft::num_complex::Complex;
 
@@ -42,7 +45,7 @@ impl Imdct {
         let mut twiddle = Vec::with_capacity(n2);
 
         let alpha = 1.0 / 8.0 + if scale.is_sign_positive() { 0.0 } else { n2 as f64 };
-        let pi_n = std::f64::consts::PI / n as f64;
+        let pi_n = core::f64::consts::PI / n as f64;
         let sqrt_scale = scale.abs().sqrt();
 
         for k in 0..n2 {

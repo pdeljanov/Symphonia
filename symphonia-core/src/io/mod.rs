@@ -19,8 +19,10 @@
 //! either the [`ReadBitsLtr`] or [`ReadBitsRtl`] traits depending on the order in which they
 //! consume bits.
 
+use alloc::boxed::Box;
+use alloc::vec;
 use std::io;
-use std::mem;
+use core::mem;
 
 mod bit;
 mod buf_reader;
@@ -475,7 +477,7 @@ pub trait SeekBuffered {
     /// This function is identical to [`SeekBuffered::seek_buffered_rel`] when a negative delta is
     /// provided.
     fn seek_buffered_rev(&mut self, delta: usize) {
-        assert!(delta < std::isize::MAX as usize);
+        assert!(delta < core::isize::MAX as usize);
         self.seek_buffered_rel(-(delta as isize));
     }
 }

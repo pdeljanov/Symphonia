@@ -7,11 +7,15 @@
 
 //! The `meta` module defines basic metadata elements, and management structures.
 
-use std::borrow::Cow;
-use std::collections::VecDeque;
-use std::convert::From;
-use std::fmt;
-use std::num::NonZeroU32;
+use alloc::boxed::Box;
+use alloc::string::String;
+use alloc::vec::Vec;
+use alloc::borrow::Cow;
+use alloc::collections::VecDeque;
+use core::convert::From;
+use core::fmt;
+use core::num::NonZeroU32;
+use alloc::string::ToString;
 
 use crate::errors::Result;
 use crate::io::MediaSourceStream;

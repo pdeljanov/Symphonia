@@ -7,7 +7,7 @@
 
 //! The `sample` module defines the core audio sample trait and any non-primitive sample data types.
 
-use std::fmt;
+use core::fmt;
 
 use crate::util::clamp::{clamp_f32, clamp_f64, clamp_i24, clamp_u24};
 
