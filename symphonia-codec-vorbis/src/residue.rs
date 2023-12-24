@@ -7,7 +7,6 @@
 
 use std::cmp::min;
 use std::convert::TryInto;
-use std::io;
 
 use symphonia_core::errors::{decode_error, Error, IoErrorKind, Result};
 use symphonia_core::io::{BitReaderRtl, ReadBitsRtl};

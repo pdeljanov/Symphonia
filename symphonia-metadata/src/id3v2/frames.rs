@@ -6,7 +6,6 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::io;
 use std::str;
 
 use symphonia_core::errors::{decode_error, unsupported_error, Result};

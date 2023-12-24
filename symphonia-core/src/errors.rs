@@ -9,7 +9,7 @@
 
 use core::{error, result};
 use core::fmt;
-use core::fmt::{Display, Formatter, write};
+use core::fmt::{Display, Formatter};
 
 
 /// `SeekErrorKind` is a list of generic reasons why a seek may fail.
