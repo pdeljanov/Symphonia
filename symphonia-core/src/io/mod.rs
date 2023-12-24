@@ -23,7 +23,6 @@ use alloc::boxed::Box;
 use alloc::vec;
 use alloc::vec::Vec;
 use core::mem;
-use core::ops::{Deref, DerefMut};
 use crate::errors::{Error, IoErrorKind, Result};
 
 #[cfg(feature = "std")]
@@ -91,7 +90,8 @@ fn default_slow_read_to_end<R: Read + ?Sized>(
     let mut cnt: usize = 0;
     let mut read_buf: [u8; 1024] = [0; 1024];
 
-    while let r = r.read(&mut read_buf) {
+    loop {
+        let r =  r.read(&mut read_buf);
         let n = match r {
             Ok(0) => break,
             Ok(n) => n,
@@ -608,15 +608,16 @@ pub trait FiniteStream {
     fn bytes_available(&self) -> u64;
 }
 
+#[cfg(not(feature = "std"))]
 mod no_std_compat {
-    use std::ops::{Deref, DerefMut};
+    use core::ops::{Deref, DerefMut};
 
     pub struct IoSliceMut<'a> {
         buf: &'a mut [u8],
     }
 
     impl <'a> IoSliceMut<'a> {
-        fn new(buf: &'a mut [u8]) -> IoSliceMut<'a> {
+        pub fn new(buf: &'a mut [u8]) -> IoSliceMut<'a> {
             IoSliceMut {
                 buf
             }

@@ -36,7 +36,6 @@ impl SeekErrorKind {
     }
 }
 
-//TODO figure out mapping from io::Error
 #[derive(Debug)]
 pub enum IoErrorKind {
     /// An entity was not found, often a file.
@@ -205,14 +204,6 @@ pub enum IoErrorKind {
     /// error kinds cannot be `match`ed on, and will only match a wildcard (`_`) pattern.
     /// New [`std::io::ErrorKind`]s might be added in the future for some of those.
     Other,
-
-    /// Any I/O error from the standard library that's not part of this list.
-    ///
-    /// Errors that are `Uncategorized` now may move to a different or a new
-    /// [`std::io::ErrorKind`] variant in the future. It is not recommended to match
-    /// an error against `Uncategorized`; use a wildcard match (`_`) instead.
-    #[doc(hidden)]
-    Uncategorized,
 }
 
 impl Display for IoErrorKind {
@@ -284,7 +275,30 @@ impl core::error::Error for Error {
 #[cfg(feature = "std")]
 impl From<std::io::Error> for Error {
     fn from(err: std::io::Error) -> Error {
-        Error::from(err)
+        let error_kind = match err.kind() {
+            std::io::ErrorKind::NotFound => IoErrorKind::NotFound,
+            std::io::ErrorKind::PermissionDenied => IoErrorKind::PermissionDenied,
+            std::io::ErrorKind::ConnectionRefused => IoErrorKind::ConnectionRefused,
+            std::io::ErrorKind::ConnectionReset => IoErrorKind::ConnectionReset,
+            std::io::ErrorKind::ConnectionAborted => IoErrorKind::ConnectionAborted,
+            std::io::ErrorKind::NotConnected => IoErrorKind::NotConnected,
+            std::io::ErrorKind::AddrInUse => IoErrorKind::AddrInUse,
+            std::io::ErrorKind::AddrNotAvailable => IoErrorKind::AddrNotAvailable,
+            std::io::ErrorKind::BrokenPipe => IoErrorKind::BrokenPipe,
+            std::io::ErrorKind::AlreadyExists => IoErrorKind::AlreadyExists,
+            std::io::ErrorKind::WouldBlock => IoErrorKind::WouldBlock,
+            std::io::ErrorKind::InvalidInput => IoErrorKind::InvalidInput,
+            std::io::ErrorKind::InvalidData => IoErrorKind::InvalidData,
+            std::io::ErrorKind::TimedOut => IoErrorKind::TimedOut,
+            std::io::ErrorKind::WriteZero => IoErrorKind::WriteZero,
+            std::io::ErrorKind::Interrupted => IoErrorKind::Interrupted,
+            std::io::ErrorKind::Unsupported => IoErrorKind::Unsupported,
+            std::io::ErrorKind::UnexpectedEof => IoErrorKind::UnexpectedEof,
+            std::io::ErrorKind::OutOfMemory => IoErrorKind::OutOfMemory,
+            std::io::ErrorKind::Other => IoErrorKind::Other,
+            _ => IoErrorKind::Other,
+        };
+        Error::IoError(error_kind, "")
     }
 }
 
