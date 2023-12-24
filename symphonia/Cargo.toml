@@ -15,7 +15,8 @@ rust-version = "1.53"
 [features]
 # Only royalty-free open standard codecs and formats are enabled by default.
 # TODO: Remove all defaults for v0.6.0. Features should be additive.
-default = ["adpcm", "flac", "mkv", "ogg", "pcm", "vorbis", "wav"]
+default = ["adpcm", "flac", "mkv", "ogg", "pcm", "vorbis", "wav", "std"]
+std = ["symphonia-metadata/std", "symphonia-core/std"]
 
 # Enable specific codecs and formats.
 # TODO: Use "dep:" after MSRV is raised to >= 1.60.
@@ -83,10 +84,12 @@ lazy_static = "1.4.0"
 [dependencies.symphonia-core]
 version = "0.5.2"
 path = "../symphonia-core"
+default-features = false
 
 [dependencies.symphonia-metadata]
 version = "0.5.2"
 path = "../symphonia-metadata"
+default-features = false
 
 [dependencies.symphonia-bundle-flac]
 version = "0.5.2"
