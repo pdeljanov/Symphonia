@@ -36,6 +36,7 @@ pub use media_source_stream::{MediaSourceStream, MediaSourceStreamOptions};
 pub use monitor_stream::{Monitor, MonitorStream};
 pub use scoped_stream::ScopedStream;
 use std::ops::{Deref, DerefMut};
+use alloc::vec::Vec;
 use crate::errors::{Error, IoErrorKind, Result};
 
 pub trait Seek {
@@ -89,21 +90,40 @@ impl<'a> DerefMut for IoSliceMut<'a> {
     }
 }
 
-impl <'a> Iterator for IoSliceMut<'a> {
-    type Item = u8;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        todo!()
-    }
-}
-
-
 pub trait Read {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize>;
 
     fn read_vectored(&mut self, bufs: &mut [IoSliceMut<'_>]) -> Result<usize> {
         default_read_vectored(|b| self.read(b), bufs)
     }
+
+    fn read_to_end(&mut self, buf: &mut Vec<u8>) -> Result<usize> {
+        default_slow_read_to_end(self, buf)
+    }
+}
+
+/// Warning: The default implementation in io::Read is much faster
+fn default_slow_read_to_end<R: Read + ?Sized>(
+    r: &mut R,
+    buf: &mut Vec<u8>
+) -> Result<usize> {
+
+    let mut cnt: usize = 0;
+    let mut read_buf: [u8; 1024] = [0; 1024];
+
+    while let r = r.read(&mut read_buf) {
+        let n = match r {
+            Ok(0) => break,
+            Ok(n) => n,
+            Err(Error::IoError(IoErrorKind::Interrupted, _)) => 0, // Ignored
+            Err(err) => return Err(err),
+        };
+
+        buf.extend_from_slice(&read_buf[0..n]);
+        cnt += n;
+    }
+
+    Ok(cnt)
 }
 
 fn default_read_vectored<F>(read: F, bufs: &mut [IoSliceMut<'_>]) -> Result<usize>

@@ -8,7 +8,6 @@
 use alloc::boxed::Box;
 use alloc::vec;
 use core::cmp;
-// use std::io::{IoSliceMut, Read, Seek};
 use core::ops::Sub;
 
 use super::{IoSliceMut, Read, Seek, SeekBuffered, SeekFrom};
@@ -496,7 +495,8 @@ mod tests {
     use alloc::vec;
     use alloc::vec::Vec;
     use super::{MediaSourceStream, ReadBytes, SeekBuffered};
-    use std::io::{Cursor, Read};
+    use std::io::{Cursor};
+    use crate::io::Read;
 
     /// Generate a random vector of bytes of the specified length using a PRNG.
     fn generate_random_bytes(len: usize) -> Box<[u8]> {
@@ -559,17 +559,16 @@ mod tests {
         }
     }
 
-    // TODO
-    // #[test]
-    // fn verify_mss_read_to_end() {
-    //     let data = generate_random_bytes(5 * 96 * 1024);
-    //
-    //     let ms = Cursor::new(data.clone());
-    //     let mut mss = MediaSourceStream::new(Box::new(ms), Default::default());
-    //     let mut output: Vec<u8> = Vec::new();
-    //     assert_eq!(mss.read_to_end(&mut output).unwrap(), data.len());
-    //     assert_eq!(output.into_boxed_slice(), data);
-    // }
+    #[test]
+    fn verify_mss_read_to_end() {
+        let data = generate_random_bytes(5 * 96 * 1024);
+
+        let ms = Cursor::new(data.clone());
+        let mut mss = MediaSourceStream::new(Box::new(ms), Default::default());
+        let mut output: Vec<u8> = Vec::new();
+        assert_eq!(mss.read_to_end(&mut output).unwrap(), data.len());
+        assert_eq!(output.into_boxed_slice(), data);
+    }
 
     #[test]
     fn verify_mss_seek_buffered() {
