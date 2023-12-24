@@ -4,9 +4,13 @@
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
-use std::borrow::Cow;
-use std::collections::HashMap;
-use std::str;
+use alloc::borrow::Cow;
+use alloc::{format, vec};
+use alloc::boxed::Box;
+use alloc::collections::BTreeMap;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use core::str;
 
 use symphonia_core::errors::{decode_error, unsupported_error, Result};
 use symphonia_core::io::{BufReader, FiniteStream, ReadBytes};
@@ -173,8 +177,8 @@ fn unsupported_frame(id: &[u8]) -> Result<FrameResult> {
 type FrameParser = fn(&mut BufReader<'_>, Option<StandardTagKey>, &str) -> Result<FrameResult>;
 
 lazy_static! {
-    static ref LEGACY_FRAME_MAP: HashMap<&'static [u8; 3], &'static [u8; 4]> = {
-        let mut m = HashMap::new();
+    static ref LEGACY_FRAME_MAP: BTreeMap<&'static [u8; 3], &'static [u8; 4]> = {
+        let mut m = BTreeMap::new();
         m.insert(b"BUF", b"RBUF");
         m.insert(b"CNT", b"PCNT");
         m.insert(b"COM", b"COMM");
@@ -249,8 +253,8 @@ lazy_static! {
 
 lazy_static! {
     static ref FRAME_PARSERS:
-        HashMap<&'static [u8; 4], (FrameParser, Option<StandardTagKey>)> = {
-            let mut m = HashMap::new();
+        BTreeMap<&'static [u8; 4], (FrameParser, Option<StandardTagKey>)> = {
+            let mut m = BTreeMap::new();
             // m.insert(b"AENC", read_null_frame);
             m.insert(b"APIC", (read_apic_frame as FrameParser, None));
             // m.insert(b"ASPI", read_null_frame);
@@ -363,8 +367,8 @@ lazy_static! {
 }
 
 lazy_static! {
-    static ref TXXX_FRAME_STD_KEYS: HashMap<&'static str, StandardTagKey> = {
-        let mut m = HashMap::new();
+    static ref TXXX_FRAME_STD_KEYS: BTreeMap<&'static str, StandardTagKey> = {
+        let mut m = BTreeMap::new();
         m.insert("ACOUSTID FINGERPRINT", StandardTagKey::AcoustidFingerprint);
         m.insert("ACOUSTID ID", StandardTagKey::AcoustidId);
         m.insert("BARCODE", StandardTagKey::IdentBarcode);
@@ -406,7 +410,7 @@ fn validate_lang_code(code: [u8; 3]) -> bool {
 ///
 /// Assumes the bytes are valid ASCII characters. Panics otherwise.
 fn as_ascii_str(id: &[u8]) -> &str {
-    std::str::from_utf8(id).unwrap()
+    core::str::from_utf8(id).unwrap()
 }
 
 /// Finds a frame parser for "modern" ID3v2.3 or ID3v2.4 tags.

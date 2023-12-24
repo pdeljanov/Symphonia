@@ -7,15 +7,15 @@
 
 //! iTunes metadata support.
 
+use alloc::collections::BTreeMap;
 use symphonia_core::meta::StandardTagKey;
 
-use std::collections::HashMap;
 
 use lazy_static::lazy_static;
 
 lazy_static! {
-    static ref ITUNES_TAG_MAP: HashMap<&'static str, StandardTagKey> = {
-        let mut m = HashMap::new();
+    static ref ITUNES_TAG_MAP: BTreeMap<&'static str, StandardTagKey> = {
+        let mut m = BTreeMap::new();
         m.insert("com.apple.iTunes:ARTISTS", StandardTagKey::Artist);
         m.insert("com.apple.iTunes:ASIN", StandardTagKey::IdentAsin);
         m.insert("com.apple.iTunes:BARCODE", StandardTagKey::IdentBarcode);

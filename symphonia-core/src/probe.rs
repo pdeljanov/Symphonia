@@ -370,7 +370,7 @@ macro_rules! support_metadata {
             mime_types: $mimes,
             markers: $markers,
             score: Self::score,
-            inst: Instantiate::Metadata(|opt| Box::new(Self::new(&opt))),
+            inst: Instantiate::Metadata(|opt| alloc::boxed::Box::new(Self::new(&opt))),
         }
     };
 }
