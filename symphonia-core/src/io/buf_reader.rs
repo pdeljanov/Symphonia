@@ -8,8 +8,7 @@
 use core::cmp;
 
 use super::{FiniteStream, ReadBytes};
-use crate::errors::{IoErrorKind, Result};
-use crate::errors::Error;
+use crate::errors::{IoErrorKind, Result, Error};
 
 #[inline(always)]
 fn underrun_error<T>() -> Result<T> {

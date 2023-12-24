@@ -36,6 +36,7 @@ impl SeekErrorKind {
     }
 }
 
+//TODO figure out mapping from io::Error
 #[derive(Debug)]
 pub enum IoErrorKind {
     /// An entity was not found, often a file.

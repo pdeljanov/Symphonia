@@ -21,7 +21,11 @@
 
 use alloc::boxed::Box;
 use alloc::vec;
+use alloc::vec::Vec;
 use core::mem;
+use core::ops::{Deref, DerefMut};
+
+#[cfg(feature = "std")]
 use std::io;
 
 mod bit;
@@ -35,8 +39,7 @@ pub use buf_reader::BufReader;
 pub use media_source_stream::{MediaSourceStream, MediaSourceStreamOptions};
 pub use monitor_stream::{Monitor, MonitorStream};
 pub use scoped_stream::ScopedStream;
-use std::ops::{Deref, DerefMut};
-use alloc::vec::Vec;
+
 use crate::errors::{Error, IoErrorKind, Result};
 
 pub trait Seek {
@@ -134,12 +137,14 @@ fn default_read_vectored<F>(read: F, bufs: &mut [IoSliceMut<'_>]) -> Result<usiz
     read(buf)
 }
 
+#[cfg(feature = "std")]
 impl <T: std::io::Read> Read for T {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
         self.read(buf).map_err(|e| { Error::from(e) })
     }
 }
 
+#[cfg(feature = "std")]
 impl <T: std::io::Seek> Seek for T  {
     fn seek(&mut self, from: SeekFrom) -> Result<u64> {
         let from = match from {
