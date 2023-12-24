@@ -17,3 +17,7 @@ log = "0.4"
 symphonia-core = { version = "0.5.2", path = "../symphonia-core" }
 symphonia-metadata = { version = "0.5.2", path = "../symphonia-metadata" }
 symphonia-utils-xiph = { version = "0.5.2", path = "../symphonia-utils-xiph" }
+
+[features]
+std = []
+default = ["std"]

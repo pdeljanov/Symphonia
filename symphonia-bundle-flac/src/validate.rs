@@ -5,8 +5,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use std::mem;
-use std::vec::Vec;
+use core::mem;
+use alloc::vec::Vec;
 
 use symphonia_core::audio::{AudioBuffer, Signal};
 use symphonia_core::checksum::Md5;

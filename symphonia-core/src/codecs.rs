@@ -583,7 +583,7 @@ macro_rules! support_codec {
             codec: $type,
             short_name: $short_name,
             long_name: $long_name,
-            inst_func: |params, opt| Ok(Box::new(Self::try_new(&params, &opt)?)),
+            inst_func: |params, opt| Ok(alloc::boxed::Box::new(Self::try_new(&params, &opt)?)),
         }
     };
 }
