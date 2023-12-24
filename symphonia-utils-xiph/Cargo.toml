@@ -13,5 +13,9 @@ edition = "2018"
 rust-version = "1.53"
 
 [dependencies]
-symphonia-core = { version = "0.5.2", path = "../symphonia-core" }
-symphonia-metadata = { version = "0.5.2", path = "../symphonia-metadata" }
+symphonia-core = { version = "0.5.2", path = "../symphonia-core", default-features = false }
+symphonia-metadata = { version = "0.5.2", path = "../symphonia-metadata", default-features = false }
+
+[features]
+std = ["symphonia-core/std", "symphonia-metadata/std"]
+default = ["std"]

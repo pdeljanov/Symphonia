@@ -5,8 +5,11 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use std::ascii;
-use std::num::NonZeroU32;
+use alloc::string::String;
+use alloc::vec;
+use alloc::vec::Vec;
+use core::ascii;
+use core::num::NonZeroU32;
 
 use symphonia_core::audio::Channels;
 use symphonia_core::errors::{decode_error, Result};
