@@ -24,9 +24,16 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::mem;
 use core::ops::{Deref, DerefMut};
+use crate::errors::{Error, IoErrorKind, Result};
 
 #[cfg(feature = "std")]
 use std::io;
+
+#[cfg(feature = "std")]
+use std::io::IoSliceMut;
+
+#[cfg(not(feature = "std"))]
+use no_std_compat::IoSliceMut;
 
 mod bit;
 mod buf_reader;
@@ -39,8 +46,6 @@ pub use buf_reader::BufReader;
 pub use media_source_stream::{MediaSourceStream, MediaSourceStreamOptions};
 pub use monitor_stream::{Monitor, MonitorStream};
 pub use scoped_stream::ScopedStream;
-
-use crate::errors::{Error, IoErrorKind, Result};
 
 pub trait Seek {
     fn seek(&mut self, _: SeekFrom) -> Result<u64>;
@@ -63,34 +68,6 @@ pub enum SeekFrom {
     /// It is possible to seek beyond the end of an object, but it's an error to
     /// seek before byte 0.
     Current(i64),
-}
-
-struct IoSliceMut<'a> {
-    buf: &'a mut [u8],
-}
-
-impl <'a> IoSliceMut<'a> {
-    fn new(buf: &'a mut [u8]) -> IoSliceMut<'a> {
-        IoSliceMut {
-            buf
-        }
-    }
-}
-
-impl<'a> Deref for IoSliceMut<'a> {
-    type Target = [u8];
-
-    #[inline]
-    fn deref(&self) -> &[u8] {
-        self.buf
-    }
-}
-
-impl<'a> DerefMut for IoSliceMut<'a> {
-    #[inline]
-    fn deref_mut(&mut self) -> &mut [u8] {
-        self.buf
-    }
 }
 
 pub trait Read {
@@ -629,4 +606,36 @@ pub trait FiniteStream {
 
     /// Returns the number of bytes available for reading.
     fn bytes_available(&self) -> u64;
+}
+
+mod no_std_compat {
+    use std::ops::{Deref, DerefMut};
+
+    pub struct IoSliceMut<'a> {
+        buf: &'a mut [u8],
+    }
+
+    impl <'a> IoSliceMut<'a> {
+        fn new(buf: &'a mut [u8]) -> IoSliceMut<'a> {
+            IoSliceMut {
+                buf
+            }
+        }
+    }
+
+    impl<'a> Deref for IoSliceMut<'a> {
+        type Target = [u8];
+
+        #[inline]
+        fn deref(&self) -> &[u8] {
+            self.buf
+        }
+    }
+
+    impl<'a> DerefMut for IoSliceMut<'a> {
+        #[inline]
+        fn deref_mut(&mut self) -> &mut [u8] {
+            self.buf
+        }
+    }
 }
