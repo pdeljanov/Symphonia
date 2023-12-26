@@ -94,6 +94,7 @@ default-features = false
 [dependencies.symphonia-bundle-flac]
 version = "0.5.2"
 path = "../symphonia-bundle-flac"
+default-features = false
 optional = true
 
 [dependencies.symphonia-bundle-mp3]

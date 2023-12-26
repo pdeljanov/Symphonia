@@ -14,10 +14,10 @@ rust-version = "1.53"
 
 [dependencies]
 log = "0.4"
-symphonia-core = { version = "0.5.2", path = "../symphonia-core" }
-symphonia-metadata = { version = "0.5.2", path = "../symphonia-metadata" }
-symphonia-utils-xiph = { version = "0.5.2", path = "../symphonia-utils-xiph" }
+symphonia-core = { version = "0.5.2", path = "../symphonia-core", default-features = false }
+symphonia-metadata = { version = "0.5.2", path = "../symphonia-metadata", default-features = false }
+symphonia-utils-xiph = { version = "0.5.2", path = "../symphonia-utils-xiph", default-features = false }
 
 [features]
-std = []
+std = ["symphonia-core/std", "symphonia-metadata/std", "symphonia-utils-xiph/std"]
 default = ["std"]

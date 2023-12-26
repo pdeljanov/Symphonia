@@ -13,8 +13,9 @@ edition = "2018"
 rust-version = "1.53"
 
 [features]
-default = ["std"]
-std = []
+std = ["arrayvec/std"]
+fft = ["rustfft"]
+default = ["std", "fft"]
 
 # SIMD support.
 opt-simd-sse = ["rustfft/sse"]
@@ -29,11 +30,12 @@ opt-simd = [
 ]
 
 [dependencies]
-arrayvec = "0.7.1"
+arrayvec = { version = "0.7.1", default-features = false }
 bitflags = "1.2.1"
 bytemuck = "1.7"
 lazy_static = "1.4.0"
 log = "0.4"
+libm = { version = "0.2.8" }
 
 [dependencies.rustfft]
 version = "6.1.0"

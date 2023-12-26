@@ -7,6 +7,7 @@
 
 #![warn(rust_2018_idioms)]
 #![forbid(unsafe_code)]
+#![no_std]
 
 //! # Project Symphonia
 //!

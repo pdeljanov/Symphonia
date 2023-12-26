@@ -99,7 +99,7 @@ impl From<u64> for Time {
 impl From<f32> for Time {
     fn from(seconds: f32) -> Self {
         if seconds >= 0.0 {
-            Time::new(seconds.trunc() as u64, f64::from(seconds.fract()))
+            Time::new(libm::truncf(seconds) as u64, f64::from(seconds - libm::truncf(seconds)))
         }
         else {
             Time::new(0, 0.0)
@@ -110,7 +110,7 @@ impl From<f32> for Time {
 impl From<f64> for Time {
     fn from(seconds: f64) -> Self {
         if seconds >= 0.0 {
-            Time::new(seconds.trunc() as u64, seconds.fract())
+            Time::new(libm::trunc(seconds) as u64, seconds - libm::trunc(seconds))
         }
         else {
             Time::new(0, 0.0)
@@ -170,7 +170,7 @@ impl TimeBase {
         if dividend < (1 << 52) {
             let seconds = (dividend as f64) / f64::from(self.denom);
 
-            Time::new(seconds.trunc() as u64, seconds.fract())
+            Time::new(libm::trunc(seconds) as u64, seconds - libm::trunc(seconds))
         }
         else {
             // If the dividend requires more than 52 bits, calculate the integer portion using
