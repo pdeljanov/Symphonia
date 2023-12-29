@@ -7,12 +7,18 @@
 
 #![warn(rust_2018_idioms)]
 #![forbid(unsafe_code)]
+#![no_std]
 // The following lints are allowed in all Symphonia crates. Please see clippy.toml for their
 // justification.
 #![allow(clippy::comparison_chain)]
 #![allow(clippy::excessive_precision)]
 #![allow(clippy::identity_op)]
 #![allow(clippy::manual_range_contains)]
+
+#[cfg(not(std))]
+extern crate core as std;
+
+extern crate alloc;
 
 use symphonia_core::support_codec;
 
