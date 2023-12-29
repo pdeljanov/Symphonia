@@ -19,7 +19,9 @@
 extern crate alloc;
 
 pub mod id3v1;
+#[cfg(feature = "id3v2")]
 pub mod id3v2;
+
 pub mod itunes;
 pub mod riff;
 pub mod vorbis;

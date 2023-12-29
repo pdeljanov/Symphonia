@@ -13,11 +13,12 @@ edition = "2018"
 rust-version = "1.53"
 
 [dependencies]
-encoding_rs = "0.8.17"
+encoding_rs = { version = "0.8.17", optional = true }
 lazy_static = "1.4.0"
 log = "0.4"
 symphonia-core = { version = "0.5.2", path = "../symphonia-core", default-features = false }
 
 [features]
 std = ["symphonia-core/std"]
-default = ["std"]
+default = ["std", "id3v2"]
+id3v2 = ["encoding_rs"]

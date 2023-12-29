@@ -35,6 +35,8 @@ aiff = ["symphonia-format-riff"]
 vorbis = ["symphonia-codec-vorbis"]
 wav = ["symphonia-format-wav"]
 
+id3v2 = ["symphonia-metadata/id3v2"]
+
 # MPEG audio codecs.
 mpa = ["mp1", "mp2", "mp3"]
 
