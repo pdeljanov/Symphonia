@@ -433,9 +433,9 @@ In the example shown above, metadata is consumed in an inner loop within the mai
 // While there is newer metadata.
 while !format.metadata().is_latest() {
     // Pop the old head of the metadata queue.
-    reader.metadata().pop();
+    format.metadata().pop();
 
-    if let Some(rev) = reader.metadata().current() {
+    if let Some(rev) = format.metadata().current() {
         // Consume the new metadata at the head of the metadata queue.
     }
 }
