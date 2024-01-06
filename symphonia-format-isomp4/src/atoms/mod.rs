@@ -50,6 +50,7 @@ pub(crate) mod wave;
 pub use self::meta::MetaAtom;
 pub use alac::AlacAtom;
 pub use co64::Co64Atom;
+#[allow(unused_imports)]
 pub use ctts::CttsAtom;
 pub use edts::EdtsAtom;
 pub use elst::ElstAtom;
@@ -74,6 +75,7 @@ pub use stbl::StblAtom;
 pub use stco::StcoAtom;
 pub use stsc::StscAtom;
 pub use stsd::StsdAtom;
+#[allow(unused_imports)]
 pub use stss::StssAtom;
 pub use stsz::StszAtom;
 pub use stts::SttsAtom;
