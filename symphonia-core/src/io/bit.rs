@@ -478,7 +478,7 @@ pub mod vlc {
                             // Add a child block to the parent block.
                             let block_id = blocks.len();
 
-                            let mut block = &mut blocks[parent_block_id];
+                            let block = &mut blocks[parent_block_id];
 
                             block.nodes.insert(prefix, block_id);
 
@@ -497,7 +497,7 @@ pub mod vlc {
                     // the final prefix.
                     let prefix = code & (prefix_mask >> (self.max_bits_per_block - len));
 
-                    let mut block = &mut blocks[parent_block_id];
+                    let block = &mut blocks[parent_block_id];
 
                     // Push the value.
                     block.values.push(CodebookValue::new(prefix as u16, len, value));
