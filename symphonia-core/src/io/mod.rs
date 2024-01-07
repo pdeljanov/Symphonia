@@ -139,7 +139,7 @@ impl <T: std::io::Seek> Seek for T  {
 /// Despite requiring the [`std::io::Seek`] trait, seeking is an optional capability that can be
 /// queried at runtime.
 // pub trait MediaSource: io::Read + io::Seek + Send + Sync {
-pub trait MediaSource: Read + Seek + Send + Sync {
+pub trait MediaSource: Read + Seek  {
     /// Returns if the source is seekable. This may be an expensive operation.
     fn is_seekable(&self) -> bool;
 
