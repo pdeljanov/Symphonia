@@ -105,8 +105,7 @@ impl Imdct {
 
         // Post-FFT twiddling and processing to expand the N/2 complex output values into 2N real
         // output samples.
-        for (i, (x, &w)) in self.scratch[..n4].iter().zip(self.twiddle[..n4].iter()).enumerate()
-        {
+        for (i, (x, &w)) in self.scratch[..n4].iter().zip(self.twiddle[..n4].iter()).enumerate() {
             // The real and imaginary components of the post-twiddled FFT samples are used to
             // generate 4 reak output samples. Using the first half of the complex FFT output,
             // populate each of the 4 output vectors.
@@ -126,8 +125,7 @@ impl Imdct {
             vec3[fi] = val.re;
         }
 
-        for (i, (x, &w)) in self.scratch[n4..].iter().zip(self.twiddle[n4..].iter()).enumerate()
-        {
+        for (i, (x, &w)) in self.scratch[n4..].iter().zip(self.twiddle[n4..].iter()).enumerate() {
             // Using the second half of the FFT output samples, finish populating each of the 4
             // output vectors.
             let val = w * x.conj();

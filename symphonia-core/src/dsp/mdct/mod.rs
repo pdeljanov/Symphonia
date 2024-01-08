@@ -22,7 +22,6 @@ mod no_simd;
     feature = "opt-simd-avx",
     feature = "opt-simd-neon"
 )))]
-
 pub use no_simd::*;
 
 #[cfg(test)]
