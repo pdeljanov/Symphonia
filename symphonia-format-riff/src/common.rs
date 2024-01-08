@@ -12,7 +12,8 @@ use std::marker::PhantomData;
 use symphonia_core::audio::Channels;
 use symphonia_core::codecs::CodecParameters;
 use symphonia_core::codecs::CodecType;
-use symphonia_core::errors::{decode_error, end_of_stream_error, Error, Result};
+use symphonia_core::errors::{decode_error, end_of_stream_error, Result};
+use symphonia_core::errors::SymphoniaError as Error;
 use symphonia_core::formats::prelude::*;
 use symphonia_core::io::{MediaSourceStream, ReadBytes};
 

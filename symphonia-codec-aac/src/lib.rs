@@ -16,6 +16,8 @@
 // TODO: Remove this when refactoring AAC.
 #![allow(clippy::needless_range_loop)]
 
+extern crate alloc;
+
 mod aac;
 mod adts;
 mod common;

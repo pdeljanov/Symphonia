@@ -23,7 +23,7 @@ use alloc::boxed::Box;
 use alloc::vec;
 use alloc::vec::Vec;
 use core::mem;
-use crate::errors::{Error, IoErrorKind, Result};
+use crate::errors::{SymphoniaError, Result};
 
 #[cfg(feature = "std")]
 use std::io;
@@ -95,7 +95,7 @@ fn default_slow_read_to_end<R: Read + ?Sized>(
         let n = match r {
             Ok(0) => break,
             Ok(n) => n,
-            Err(Error::IoError(IoErrorKind::Interrupted, _)) => 0, // Ignored
+            Err(SymphoniaError::IoInterruptedError(_))  => 0, // Ignored
             Err(err) => return Err(err),
         };
 
@@ -117,7 +117,7 @@ fn default_read_vectored<F>(read: F, bufs: &mut [IoSliceMut<'_>]) -> Result<usiz
 #[cfg(feature = "std")]
 impl <T: std::io::Read> Read for T {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
-        self.read(buf).map_err(|e| { Error::from(e) })
+        self.read(buf).map_err(|e| { SymphoniaError::from(e) })
     }
 }
 
@@ -129,7 +129,7 @@ impl <T: std::io::Seek> Seek for T  {
             SeekFrom::End(x) => io::SeekFrom::End(x),
             SeekFrom::Current(x) => io::SeekFrom::Current(x),
         };
-        self.seek(from).map_err(|e| { Error::from(e) })
+        self.seek(from).map_err(|e| { SymphoniaError::from(e) })
     }
 }
 
@@ -238,7 +238,7 @@ impl<R: Read> Read for ReadOnlySource<R> {
 
 impl<R: Read> Seek for ReadOnlySource<R> {
     fn seek(&mut self, _: SeekFrom) -> Result<u64> {
-        Err(Error::IoError(IoErrorKind::Other, "source does not support seeking"))
+        Err(SymphoniaError::Other("source does not support seeking"))
     }
 }
 

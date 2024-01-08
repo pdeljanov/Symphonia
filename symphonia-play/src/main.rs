@@ -18,7 +18,8 @@ use std::path::Path;
 
 use lazy_static::lazy_static;
 use symphonia::core::codecs::{DecoderOptions, FinalizeResult, CODEC_TYPE_NULL};
-use symphonia::core::errors::{Error, IoErrorKind, Result};
+use symphonia::core::errors::Result;
+use symphonia::core::errors::SymphoniaError as Error;
 use symphonia::core::formats::{Cue, FormatOptions, FormatReader, SeekMode, SeekTo, Track};
 use symphonia::core::io::{MediaSource, MediaSourceStream, ReadOnlySource};
 use symphonia::core::meta::{ColorMode, MetadataOptions, MetadataRevision, Tag, Value, Visual};
@@ -402,7 +403,7 @@ fn first_supported_track(tracks: &[Track]) -> Option<&Track> {
 
 fn ignore_end_of_stream_error(result: Result<()>) -> Result<()> {
     match result {
-        Err(Error::IoError(IoErrorKind::UnexpectedEof, "end of stream")) => {
+        Err(Error::EndOfFile) => {
             // Do not treat "end of stream" as a fatal error. It's the currently only way a
             // format reader can indicate the media is complete.
             Ok(())

@@ -8,7 +8,7 @@
 use std::collections::BTreeMap;
 
 use symphonia_core::errors::{reset_error, seek_error, unsupported_error};
-use symphonia_core::errors::{Error, Result, SeekErrorKind};
+use symphonia_core::errors::{SymphoniaError, Result, SeekErrorKind};
 use symphonia_core::formats::prelude::*;
 use symphonia_core::io::*;
 use symphonia_core::meta::{Metadata, MetadataLog};
@@ -48,7 +48,7 @@ impl OggReader {
         loop {
             match self.pages.try_next_page(&mut self.reader) {
                 Ok(_) => break,
-                Err(Error::IoError(e, desc)) => return Err(Error::IoError(e, desc)),
+                Err(SymphoniaError::IoError(e)) => return Err(SymphoniaError::IoError(e)),
                 Err(e) => {
                     warn!("{}", e);
                 }

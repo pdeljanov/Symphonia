@@ -18,7 +18,8 @@ use std::process::{Command, Stdio};
 
 use symphonia::core::audio::{AudioBufferRef, SampleBuffer};
 use symphonia::core::codecs::{Decoder, DecoderOptions};
-use symphonia::core::errors::{Error, IoErrorKind, Result};
+use symphonia::core::errors::Result;
+use symphonia::core::errors::SymphoniaError as Error;
 use symphonia::core::formats::{FormatOptions, FormatReader};
 use symphonia::core::io::{MediaSourceStream, ReadOnlySource};
 use symphonia::core::meta::MetadataOptions;
@@ -396,7 +397,7 @@ fn main() {
     println!();
 
     match run_test(path, &opts, &mut res) {
-        Err(Error::IoError(IoErrorKind::UnexpectedEof, _)) => (),
+        Err(Error::EndOfFile) => (),
         Err(err) => {
             eprintln!("Test interrupted by error: {}", err);
             std::process::exit(2);

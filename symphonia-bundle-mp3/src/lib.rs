@@ -14,6 +14,8 @@
 #![allow(clippy::identity_op)]
 #![allow(clippy::manual_range_contains)]
 
+extern crate alloc;
+
 // Shared modules.
 mod common;
 mod header;

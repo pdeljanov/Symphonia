@@ -8,11 +8,12 @@
 use core::cmp;
 
 use super::{FiniteStream, ReadBytes};
-use crate::errors::{IoErrorKind, Result, Error};
+use crate::errors::{Result};
+use crate::errors::SymphoniaError as Error;
 
 #[inline(always)]
 fn underrun_error<T>() -> Result<T> {
-    Err(Error::IoError(IoErrorKind::UnexpectedEof, "buffer underrun"))
+    Err(Error::Other("buffer underrun"))
 }
 
 /// A `BufReader` reads bytes from a byte buffer.

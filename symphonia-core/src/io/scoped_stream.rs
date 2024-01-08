@@ -6,14 +6,13 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use core::cmp;
-use crate::errors::{IoErrorKind, Result};
-use crate::errors::Error;
+use crate::errors::{Result, SymphoniaError};
 
 use super::{FiniteStream, ReadBytes, SeekBuffered};
 
 #[inline(always)]
 fn out_of_bounds_error<T>() -> Result<T> {
-    Err(Error::IoError(IoErrorKind::UnexpectedEof, "out of bounds"))
+    Err(SymphoniaError::EndOfFile)
 }
 
 /// A `ScopedStream` restricts the number of bytes that may be read to an upper limit.

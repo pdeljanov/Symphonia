@@ -8,7 +8,8 @@
 use std::cmp::min;
 use std::collections::HashSet;
 
-use symphonia_core::errors::{decode_error, Error, IoErrorKind, Result};
+use symphonia_core::errors::SymphoniaError as Error;
+use symphonia_core::errors::{decode_error, Result};
 use symphonia_core::io::{BitReaderRtl, ReadBitsRtl};
 
 use super::codebook::VorbisCodebook;
@@ -92,7 +93,7 @@ macro_rules! io_try_or_ret {
             // An end-of-bitstream error is classified under ErrorKind::Other. This condition
             // should not be treated as an error, rather, it should return from the function
             // immediately without error.
-            Err(Error::IoError(IoErrorKind::Other, _)) => return Ok(()),
+            Err(Error::EndOfFile) => return Ok(()),
             Err(e) => return Err(e.into()),
         }
     };
@@ -105,7 +106,7 @@ macro_rules! try_or_ret {
             // An end-of-bitstream error is classified under ErrorKind::Other. This condition
             // should not be treated as an error, rather, it should return from the function
             // immediately without error.
-            Err(Error::IoError(IoErrorKind::Other, _)) => return Ok(()),
+            Err(Error::EndOfFile) => return Ok(()),
             Err(e) => return Err(e),
         }
     };

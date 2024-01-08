@@ -16,9 +16,7 @@
 #![feature(error_in_core)]
 
 extern crate alloc;
-
-#[cfg(not(feature="std"))]
-extern crate core as std;
+extern crate core;
 
 #[cfg(feature = "std")]
 extern crate std;

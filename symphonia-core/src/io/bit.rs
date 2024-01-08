@@ -9,10 +9,11 @@ use core::cmp::min;
 
 use crate::io::ReadBytes;
 use crate::util::bits::*;
-use crate::errors::{Error, IoErrorKind, Result};
+use crate::errors::{Result};
+use crate::errors::SymphoniaError as Error;
 
 fn end_of_bitstream_error<T>() -> Result<T> {
-    Err(Error::IoError(IoErrorKind::Other, "unexpected end of bitstream"))
+    Err(Error::Other("unexpected end of bitstream"))
 }
 
 pub mod vlc {
@@ -21,11 +22,11 @@ pub mod vlc {
     use core::cmp::max;
     use alloc::collections::{BTreeMap, VecDeque};
     use alloc::vec::Vec;
-    use crate::errors::{IoErrorKind, Result};
-    use crate::errors::Error;
+    use crate::errors::{Result};
+    use crate::errors::SymphoniaError as Error;
 
     fn codebook_error<T>(desc: &'static str) -> Result<T> {
-        Err(Error::IoError(IoErrorKind::Other, desc))
+        Err(Error::Other(desc))
     }
 
     /// `BitOrder` describes the relationship between the order of bits in the provided codewords

@@ -11,8 +11,9 @@ use std::convert::TryFrom;
 use symphonia_core::audio::Layout;
 use symphonia_core::codecs::{CodecParameters, CODEC_TYPE_FLAC, CODEC_TYPE_VORBIS};
 use symphonia_core::errors::{
-    decode_error, end_of_stream_error, seek_error, unsupported_error, Error, Result, SeekErrorKind,
+    decode_error, end_of_stream_error, seek_error, unsupported_error, Result, SeekErrorKind,
 };
+use symphonia_core::errors::SymphoniaError as Error;
 use symphonia_core::formats::{
     Cue, FormatOptions, FormatReader, Packet, SeekMode, SeekTo, SeekedTo, Track,
 };

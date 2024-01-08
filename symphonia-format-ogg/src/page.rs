@@ -6,7 +6,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use symphonia_core::checksum::Crc32;
-use symphonia_core::errors::{decode_error, Error, Result};
+use symphonia_core::errors::{decode_error, SymphoniaError, Result};
 use symphonia_core::io::{BufReader, Monitor, MonitorStream, ReadBytes, SeekBuffered};
 
 use log::{debug, warn};
@@ -269,7 +269,7 @@ impl PageReader {
         loop {
             match self.try_next_page(reader) {
                 Ok(_) => break,
-                Err(Error::IoError(e, desc)) => return Err(Error::IoError(e, desc)),
+                Err(SymphoniaError::IoError(e)) => return Err(SymphoniaError::IoError(e)),
                 _ => (),
             }
         }
@@ -290,7 +290,7 @@ impl PageReader {
                         break;
                     }
                 }
-                Err(Error::IoError(e, desc)) => return Err(Error::IoError(e, desc)),
+                Err(SymphoniaError::IoError(e)) => return Err(SymphoniaError::IoError(e)),
                 _ => (),
             }
         }

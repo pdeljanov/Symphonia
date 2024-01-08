@@ -12,12 +12,11 @@ use core::ops::Sub;
 
 use super::{IoSliceMut, Read, Seek, SeekBuffered, SeekFrom};
 use super::{MediaSource, ReadBytes};
-use crate::errors::{IoErrorKind, Result};
-use crate::errors::Error;
+use crate::errors::{Result, SymphoniaError};
 
 #[inline(always)]
 fn end_of_stream_error<T>() -> Result<T> {
-    Err(Error::IoError(IoErrorKind::UnexpectedEof, ""))
+    Err(SymphoniaError::EndOfFile)
 }
 
 /// `MediaSourceStreamOptions` specifies the buffering behaviour of a `MediaSourceStream`.
@@ -204,7 +203,7 @@ impl Read for MediaSourceStream {
                     buf = &mut buf[count..];
                     self.consume(count);
                 }
-                Err(Error::IoError(IoErrorKind::Interrupted, _))  => {}
+                Err(SymphoniaError::IoInterruptedError(_))  => {}
                 Err(e) => return Err(e),
             }
         }
@@ -326,7 +325,7 @@ impl ReadBytes for MediaSourceStream {
                 Ok(count) => {
                     buf = &mut buf[count..];
                 }
-                Err(Error::IoError(IoErrorKind::Interrupted, _)) =>  {}
+                Err(SymphoniaError::IoInterruptedError(_))  => {}
                 Err(e) => return Err(e),
             }
         }
