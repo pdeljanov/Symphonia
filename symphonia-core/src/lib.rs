@@ -13,7 +13,7 @@
 #![allow(clippy::identity_op)]
 #![allow(clippy::manual_range_contains)]
 
-#![feature(error_in_core)]
+#![cfg_attr(not(feature = "std"), feature(error_in_core))]
 
 extern crate alloc;
 extern crate core;

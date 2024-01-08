@@ -10,10 +10,14 @@
 use core::{result};
 use core::fmt;
 use core::fmt::{Display};
-use std::error::Error;
 use alloc::boxed::Box;
-use std::io::ErrorKind;
-use std::ops::Deref;
+
+#[cfg(not(feature = "std"))]
+use core::error::Error as StdError;
+
+#[cfg(feature = "std")]
+use std::error::Error as StdError;
+use core::ops::Deref;
 
 
 /// `SeekErrorKind` is a list of generic reasons why a seek may fail.
@@ -44,9 +48,9 @@ impl SeekErrorKind {
 #[derive(Debug)]
 pub enum SymphoniaError {
     /// An IO error occurred while reading, writing, or seeking the stream.
-    IoError(Box<dyn Error>),
+    IoError(Box<dyn StdError>),
     /// An IO error occurred while reading, writing, or seeking the stream that is retryable.
-    IoInterruptedError(Box<dyn Error>),
+    IoInterruptedError(Box<dyn StdError>),
     /// The stream contained malformed data and could not be decoded or demuxed.
     DecodeError(&'static str),
     /// The stream could not be seeked.
@@ -96,8 +100,8 @@ impl fmt::Display for SymphoniaError {
     }
 }
 
-impl core::error::Error for SymphoniaError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
+impl StdError for SymphoniaError {
+    fn source(&self) -> Option<&(dyn StdError + 'static)> {
         match *self {
             SymphoniaError::IoError(ref err) => Some(err.deref()),
             SymphoniaError::IoInterruptedError(ref err) => Some(err.deref()),
@@ -110,8 +114,8 @@ impl core::error::Error for SymphoniaError {
 impl From<std::io::Error> for SymphoniaError {
     fn from(err: std::io::Error) -> SymphoniaError {
         match err.kind() {
-            ErrorKind::Interrupted => SymphoniaError::IoInterruptedError(Box::new(err)),
-            ErrorKind::UnexpectedEof => SymphoniaError::EndOfFile,
+            std::io::ErrorKind::Interrupted => SymphoniaError::IoInterruptedError(Box::new(err)),
+            std::io::ErrorKind::UnexpectedEof => SymphoniaError::EndOfFile,
             _ => SymphoniaError::IoError(Box::new(err))
         }
     }
