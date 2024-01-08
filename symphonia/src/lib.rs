@@ -64,6 +64,20 @@
 //! * RIFF
 //! * Vorbis Comment (in OGG & FLAC)
 //!
+//! ## Optimizations
+//!
+//! SIMD optimizations are **not** enabled by default. They may be enabled on a per-instruction
+//! set basis using the following feature flags. Enabling any SIMD support feature flags will pull
+//! in the `rustfft` dependency.
+//!
+//! | Instruction Set | Feature Flag    | Default |
+//! |-----------------|-----------------|---------|
+//! | SSE             | `opt-simd-sse`  | No      |
+//! | AVX             | `opt-simd-avx`  | No      |
+//! | Neon            | `opt-simd-neon` | No      |
+//!
+//! **Tip:** All SIMD optimizations can be enabled with the `opt-simd` feature flag.
+//!
 //! # Usage
 //!
 //! The following steps describe a basic usage of Symphonia:

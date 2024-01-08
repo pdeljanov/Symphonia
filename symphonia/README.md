@@ -154,6 +154,18 @@ Symphonia aims to be comparable to, or faster than, popular open-source C-based 
 
 See the [benchmarks](https://github.com/pdeljanov/Symphonia/blob/master/BENCHMARKS.md) for more information.
 
+### Optimizations
+
+At this time, SIMD optimizations are **not** enabled by default. Enabling any SIMD support feature flags will pull in the `rustfft` dependency.
+
+| Instruction Set | Feature Flag    | Default |
+|-----------------|-----------------|---------|
+| SSE             | `opt-simd-sse`  | No      |
+| AVX             | `opt-simd-avx`  | No      |
+| Neon            | `opt-simd-neon` | No      |
+
+> **Tip:** All SIMD optimizations can be enabled with the `opt-simd` feature flag.
+
 ## Examples
 
 Basic usage examples may be found [`here`](https://github.com/pdeljanov/Symphonia/tree/master/symphonia/examples).

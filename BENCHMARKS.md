@@ -12,7 +12,7 @@ These benchmarks compare the single-thread[^1] decoding performance of Symphonia
 
 The `symphonia-play` demo application is used in decode-only mode. In this mode, `symphonia-play` will decode the first audio track as fast as possible.
 
-Symphonia is built with `RUSTFLAGS="-C target-cpu=native"` and the latest Rust compiler version (currently `1.67.0`).
+Symphonia is built with `RUSTFLAGS="-C target-cpu=native"`, SIMD optimizations enabled, and the latest Rust compiler (currently `1.67.0`).
 
 `symphonia-play` can be run in decode-only mode with the following command:
 

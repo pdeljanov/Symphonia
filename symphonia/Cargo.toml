@@ -65,6 +65,18 @@ all = [
     "all-formats",
 ]
 
+# SIMD support.
+opt-simd-sse = ["symphonia-core/opt-simd-sse"]
+opt-simd-avx = ["symphonia-core/opt-simd-avx"]
+opt-simd-neon = ["symphonia-core/opt-simd-neon"]
+
+# Enable all SIMD support.
+opt-simd = [
+    "opt-simd-sse",
+    "opt-simd-avx",
+    "opt-simd-neon",
+]
+
 [dependencies]
 lazy_static = "1.4.0"
 
