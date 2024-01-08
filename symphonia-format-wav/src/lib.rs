@@ -15,15 +15,15 @@
 #![allow(clippy::identity_op)]
 #![allow(clippy::manual_range_contains)]
 
-#[cfg(not(feature="std"))]
+#[cfg(not(feature = "std"))]
 extern crate core as std;
 
 extern crate alloc;
 
-use alloc::vec;
-use alloc::vec::Vec;
 use alloc::boxed::Box;
 use alloc::string::String;
+use alloc::vec;
+use alloc::vec::Vec;
 
 use symphonia_core::codecs::CodecParameters;
 use symphonia_core::errors::{decode_error, end_of_stream_error, seek_error, unsupported_error};

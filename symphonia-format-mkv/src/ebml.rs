@@ -5,7 +5,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::errors::{decode_error, seek_error, SymphoniaError, Result, SeekErrorKind};
+use symphonia_core::errors::{decode_error, seek_error, Result, SeekErrorKind, SymphoniaError};
 use symphonia_core::io::{MediaSource, ReadBytes, SeekFrom};
 use symphonia_core::util::bits::sign_extend_leq64_to_i64;
 
@@ -469,7 +469,9 @@ impl<R: ReadBytes> ElementIterator<R> {
                             8 => self.reader.read_be_f64()?,
                             _ => {
                                 self.ignore_data()?;
-                                return Err(SymphoniaError::DecodeError("mkv: invalid float length"));
+                                return Err(SymphoniaError::DecodeError(
+                                    "mkv: invalid float length",
+                                ));
                             }
                         };
                         ElementData::Float(value)

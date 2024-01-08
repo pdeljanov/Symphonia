@@ -5,8 +5,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use alloc::vec;
 use alloc::string::String;
+use alloc::vec;
 use std::fmt;
 use std::marker::PhantomData;
 
@@ -17,8 +17,8 @@ use symphonia_core::codecs::{
     CODEC_TYPE_PCM_F64LE, CODEC_TYPE_PCM_MULAW, CODEC_TYPE_PCM_S16LE, CODEC_TYPE_PCM_S24LE,
     CODEC_TYPE_PCM_S32LE, CODEC_TYPE_PCM_U8,
 };
-use symphonia_core::errors::{decode_error, unsupported_error, Result};
 use symphonia_core::errors::SymphoniaError as Error;
+use symphonia_core::errors::{decode_error, unsupported_error, Result};
 use symphonia_core::io::ReadBytes;
 use symphonia_core::meta::Tag;
 use symphonia_metadata::riff;

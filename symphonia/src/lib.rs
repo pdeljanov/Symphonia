@@ -261,7 +261,6 @@ pub mod default {
     ///
     /// Use this function to easily populate a custom probe with all enabled formats.
     pub fn register_enabled_formats(probe: &mut Probe) {
-
         // Formats
         #[cfg(feature = "aac")]
         probe.register_all::<formats::AdtsReader>();

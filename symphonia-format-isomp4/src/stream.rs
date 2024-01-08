@@ -4,8 +4,8 @@
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
-use symphonia_core::errors::{decode_error, Result};
 use symphonia_core::errors::SymphoniaError as Error;
+use symphonia_core::errors::{decode_error, Result};
 
 use crate::atoms::{stsz::SampleSize, Co64Atom, MoofAtom, MoovAtom, MvexAtom, StcoAtom, TrafAtom};
 

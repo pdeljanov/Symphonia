@@ -8,7 +8,7 @@
 //! The `dsp` module provides efficient implementations of common signal processing algorithms.
 
 pub mod complex;
-#[cfg(feature="fft")]
+#[cfg(feature = "fft")]
 pub mod fft;
-#[cfg(feature="fft")]
+#[cfg(feature = "fft")]
 pub mod mdct;

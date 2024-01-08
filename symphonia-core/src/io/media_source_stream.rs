@@ -203,7 +203,7 @@ impl Read for MediaSourceStream {
                     buf = &mut buf[count..];
                     self.consume(count);
                 }
-                Err(SymphoniaError::IoInterruptedError(_))  => {}
+                Err(SymphoniaError::IoInterruptedError(_)) => {}
                 Err(e) => return Err(e),
             }
         }
@@ -325,7 +325,7 @@ impl ReadBytes for MediaSourceStream {
                 Ok(count) => {
                     buf = &mut buf[count..];
                 }
-                Err(SymphoniaError::IoInterruptedError(_))  => {}
+                Err(SymphoniaError::IoInterruptedError(_)) => {}
                 Err(e) => return Err(e),
             }
         }
@@ -478,7 +478,8 @@ impl Read for &[u8] {
         // for a single byte the overhead is significant.
         if amt == 1 {
             buf[0] = a[0];
-        } else {
+        }
+        else {
             buf[..amt].copy_from_slice(a);
         }
 
@@ -490,12 +491,12 @@ impl Read for &[u8] {
 #[cfg(feature = "std")]
 #[cfg(test)]
 mod tests {
+    use super::{MediaSourceStream, ReadBytes, SeekBuffered};
+    use crate::io::Read;
     use alloc::boxed::Box;
     use alloc::vec;
     use alloc::vec::Vec;
-    use super::{MediaSourceStream, ReadBytes, SeekBuffered};
-    use std::io::{Cursor};
-    use crate::io::Read;
+    use std::io::Cursor;
 
     /// Generate a random vector of bytes of the specified length using a PRNG.
     fn generate_random_bytes(len: usize) -> Box<[u8]> {

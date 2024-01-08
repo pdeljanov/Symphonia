@@ -8,9 +8,9 @@
 //! The Modified Discrete Cosine Transform (MDCT) implemented with SIMD optimizations.
 
 use alloc::boxed::Box;
-use alloc::vec::Vec;
 use alloc::sync::Arc;
 use alloc::vec;
+use alloc::vec::Vec;
 
 use rustfft::num_complex::Complex;
 

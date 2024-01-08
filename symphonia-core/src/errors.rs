@@ -7,18 +7,17 @@
 
 //! The `errors` module defines the common error type.
 
-use core::{result};
-use core::fmt;
-use core::fmt::{Display};
 use alloc::boxed::Box;
+use core::fmt;
+use core::fmt::Display;
+use core::result;
 
 #[cfg(not(feature = "std"))]
 use core::error::Error as StdError;
 
+use core::ops::Deref;
 #[cfg(feature = "std")]
 use std::error::Error as StdError;
-use core::ops::Deref;
-
 
 /// `SeekErrorKind` is a list of generic reasons why a seek may fail.
 #[derive(Debug)]
@@ -116,7 +115,7 @@ impl From<std::io::Error> for SymphoniaError {
         match err.kind() {
             std::io::ErrorKind::Interrupted => SymphoniaError::IoInterruptedError(Box::new(err)),
             std::io::ErrorKind::UnexpectedEof => SymphoniaError::EndOfFile,
-            _ => SymphoniaError::IoError(Box::new(err))
+            _ => SymphoniaError::IoError(Box::new(err)),
         }
     }
 }

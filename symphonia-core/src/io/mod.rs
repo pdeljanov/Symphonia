@@ -19,11 +19,11 @@
 //! either the [`ReadBitsLtr`] or [`ReadBitsRtl`] traits depending on the order in which they
 //! consume bits.
 
+use crate::errors::{Result, SymphoniaError};
 use alloc::boxed::Box;
 use alloc::vec;
 use alloc::vec::Vec;
 use core::mem;
-use crate::errors::{SymphoniaError, Result};
 
 #[cfg(feature = "std")]
 use std::io;
@@ -82,20 +82,16 @@ pub trait Read {
 }
 
 /// Warning: The default implementation in io::Read is much faster
-fn default_slow_read_to_end<R: Read + ?Sized>(
-    r: &mut R,
-    buf: &mut Vec<u8>
-) -> Result<usize> {
-
+fn default_slow_read_to_end<R: Read + ?Sized>(r: &mut R, buf: &mut Vec<u8>) -> Result<usize> {
     let mut cnt: usize = 0;
     let mut read_buf: [u8; 1024] = [0; 1024];
 
     loop {
-        let r =  r.read(&mut read_buf);
+        let r = r.read(&mut read_buf);
         let n = match r {
             Ok(0) => break,
             Ok(n) => n,
-            Err(SymphoniaError::IoInterruptedError(_))  => 0, // Ignored
+            Err(SymphoniaError::IoInterruptedError(_)) => 0, // Ignored
             Err(err) => return Err(err),
         };
 
@@ -107,29 +103,29 @@ fn default_slow_read_to_end<R: Read + ?Sized>(
 }
 
 fn default_read_vectored<F>(read: F, bufs: &mut [IoSliceMut<'_>]) -> Result<usize>
-    where
-        F: FnOnce(&mut [u8]) -> Result<usize>,
+where
+    F: FnOnce(&mut [u8]) -> Result<usize>,
 {
     let buf = bufs.iter_mut().find(|b| !b.is_empty()).map_or(&mut [][..], |b| &mut **b);
     read(buf)
 }
 
 #[cfg(feature = "std")]
-impl <T: std::io::Read> Read for T {
+impl<T: std::io::Read> Read for T {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
-        self.read(buf).map_err(|e| { SymphoniaError::from(e) })
+        self.read(buf).map_err(|e| SymphoniaError::from(e))
     }
 }
 
 #[cfg(feature = "std")]
-impl <T: std::io::Seek> Seek for T  {
+impl<T: std::io::Seek> Seek for T {
     fn seek(&mut self, from: SeekFrom) -> Result<u64> {
         let from = match from {
             SeekFrom::Start(x) => io::SeekFrom::Start(x),
             SeekFrom::End(x) => io::SeekFrom::End(x),
             SeekFrom::Current(x) => io::SeekFrom::Current(x),
         };
-        self.seek(from).map_err(|e| { SymphoniaError::from(e) })
+        self.seek(from).map_err(|e| SymphoniaError::from(e))
     }
 }
 
@@ -139,7 +135,7 @@ impl <T: std::io::Seek> Seek for T  {
 /// Despite requiring the [`std::io::Seek`] trait, seeking is an optional capability that can be
 /// queried at runtime.
 // pub trait MediaSource: io::Read + io::Seek + Send + Sync {
-pub trait MediaSource: Read + Seek  {
+pub trait MediaSource: Read + Seek {
     /// Returns if the source is seekable. This may be an expensive operation.
     fn is_seekable(&self) -> bool;
 
@@ -616,11 +612,9 @@ mod no_std_compat {
         buf: &'a mut [u8],
     }
 
-    impl <'a> IoSliceMut<'a> {
+    impl<'a> IoSliceMut<'a> {
         pub fn new(buf: &'a mut [u8]) -> IoSliceMut<'a> {
-            IoSliceMut {
-                buf
-            }
+            IoSliceMut { buf }
         }
     }
 

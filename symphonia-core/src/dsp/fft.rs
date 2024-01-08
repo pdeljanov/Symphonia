@@ -409,8 +409,8 @@ fn fft2(x: &mut [Complex; 2]) {
 
 #[cfg(test)]
 mod tests {
-    use alloc::vec::Vec;
     use super::*;
+    use alloc::vec::Vec;
     use core::f64;
 
     /// Compute a naive DFT.

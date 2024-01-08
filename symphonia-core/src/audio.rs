@@ -11,10 +11,10 @@
 use alloc::borrow::Cow;
 use alloc::boxed::Box;
 use alloc::vec;
+use alloc::vec::Vec;
 use core::fmt;
 use core::marker::PhantomData;
 use core::mem;
-use alloc::vec::Vec;
 
 use arrayvec::ArrayVec;
 use bitflags::bitflags;

@@ -8,8 +8,8 @@
 use std::fmt;
 
 use symphonia_core::audio::{AudioBuffer, Signal};
-use symphonia_core::errors::{decode_error, Result};
 use symphonia_core::errors::SymphoniaError as Error;
+use symphonia_core::errors::{decode_error, Result};
 use symphonia_core::io::{BitReaderLtr, BufReader, ReadBitsLtr, ReadBytes};
 
 mod bitstream;

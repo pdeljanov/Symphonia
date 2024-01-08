@@ -8,7 +8,7 @@
 use core::cmp;
 
 use super::{FiniteStream, ReadBytes};
-use crate::errors::{Result};
+use crate::errors::Result;
 use crate::errors::SymphoniaError as Error;
 
 #[inline(always)]

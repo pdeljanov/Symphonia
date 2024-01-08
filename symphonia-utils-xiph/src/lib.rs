@@ -11,7 +11,6 @@
 #![allow(clippy::excessive_precision)]
 #![allow(clippy::identity_op)]
 #![allow(clippy::manual_range_contains)]
-
 #![no_std]
 
 extern crate alloc;

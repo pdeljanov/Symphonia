@@ -7,10 +7,10 @@
 
 use core::cmp::min;
 
+use crate::errors::Result;
+use crate::errors::SymphoniaError as Error;
 use crate::io::ReadBytes;
 use crate::util::bits::*;
-use crate::errors::{Result};
-use crate::errors::SymphoniaError as Error;
 
 fn end_of_bitstream_error<T>() -> Result<T> {
     Err(Error::Other("unexpected end of bitstream"))
@@ -19,11 +19,11 @@ fn end_of_bitstream_error<T>() -> Result<T> {
 pub mod vlc {
     //! The `vlc` module provides support for decoding variable-length codes (VLC).
 
-    use core::cmp::max;
+    use crate::errors::Result;
+    use crate::errors::SymphoniaError as Error;
     use alloc::collections::{BTreeMap, VecDeque};
     use alloc::vec::Vec;
-    use crate::errors::{Result};
-    use crate::errors::SymphoniaError as Error;
+    use core::cmp::max;
 
     fn codebook_error<T>(desc: &'static str) -> Result<T> {
         Err(Error::Other(desc))
@@ -1469,10 +1469,10 @@ impl<'a> FiniteBitStream for BitReaderRtl<'a> {
 
 #[cfg(test)]
 mod tests {
-    use alloc::vec::Vec;
     use super::vlc::{BitOrder, Codebook, CodebookBuilder, Entry8x8};
     use super::{BitReaderLtr, ReadBitsLtr};
     use super::{BitReaderRtl, ReadBitsRtl};
+    use alloc::vec::Vec;
 
     #[test]
     #[allow(clippy::bool_assert_comparison)]

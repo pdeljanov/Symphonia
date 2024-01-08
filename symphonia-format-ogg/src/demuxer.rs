@@ -8,7 +8,7 @@
 use std::collections::BTreeMap;
 
 use symphonia_core::errors::{reset_error, seek_error, unsupported_error};
-use symphonia_core::errors::{SymphoniaError, Result, SeekErrorKind};
+use symphonia_core::errors::{Result, SeekErrorKind, SymphoniaError};
 use symphonia_core::formats::prelude::*;
 use symphonia_core::io::*;
 use symphonia_core::meta::{Metadata, MetadataLog};

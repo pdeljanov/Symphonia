@@ -16,7 +16,9 @@ use symphonia_core::errors::{decode_error, Result};
 use symphonia_core::formats::util::SeekIndex;
 use symphonia_core::formats::{Cue, CuePoint};
 use symphonia_core::io::*;
-use symphonia_core::meta::{ColorMode, MetadataBuilder, Size, StandardTagKey, StandardVisualKey, Tag, Value};
+use symphonia_core::meta::{
+    ColorMode, MetadataBuilder, Size, StandardTagKey, StandardVisualKey, Tag, Value,
+};
 use symphonia_core::meta::{VendorData, Visual};
 
 use symphonia_metadata::vorbis;
@@ -491,7 +493,6 @@ pub fn read_picture_block<B: ReadBytes>(
     Ok(())
 }
 
-
 /// Try to get a `StandardVisualKey` from the APIC picture type identifier.
 pub fn apic_picture_type_to_visual_key(apic: u32) -> Option<StandardVisualKey> {
     match apic {
@@ -517,7 +518,6 @@ pub fn apic_picture_type_to_visual_key(apic: u32) -> Option<StandardVisualKey> {
         _ => None,
     }
 }
-
 
 pub struct MetadataBlockHeader {
     pub is_last: bool,

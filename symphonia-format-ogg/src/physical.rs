@@ -7,7 +7,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use symphonia_core::errors::Result;
-use symphonia_core::io::{MediaSourceStream, ReadBytes, ScopedStream, SeekBuffered, SeekFrom, Seek};
+use symphonia_core::io::{
+    MediaSourceStream, ReadBytes, ScopedStream, Seek, SeekBuffered, SeekFrom,
+};
 
 use super::logical::{InspectState, LogicalStream};
 use super::page::*;
