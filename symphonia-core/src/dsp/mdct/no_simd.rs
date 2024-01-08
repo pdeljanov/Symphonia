@@ -9,6 +9,9 @@
 
 use crate::dsp::complex::Complex;
 use crate::dsp::fft::*;
+use alloc::boxed::Box;
+use alloc::vec;
+use alloc::vec::Vec;
 
 /// The Inverse Modified Discrete Transform (IMDCT).
 pub struct Imdct {
