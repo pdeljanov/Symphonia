@@ -96,12 +96,10 @@ impl FormatReader for CafReader {
                     *current_packet_index += 1;
                     let buffer = self.reader.read_boxed_slice(packet.size as usize)?;
                     Ok(Packet::new_from_boxed_slice(0, packet.start_frame, packet.frames, buffer))
+                } else if *current_packet_index == packets.len() {
+                    end_of_stream_error()
                 } else {
-                    if *current_packet_index == packets.len() {
-                        end_of_stream_error()
-                    } else {
-                        decode_error("Invalid packet index")
-                    }
+                    decode_error("Invalid packet index")
                 }
             }
             PacketInfo::Unknown => decode_error("Missing packet info"),
@@ -306,11 +304,8 @@ impl CafReader {
                     self.data_start_pos = data.start_pos;
                     self.data_len = data.data_len;
                     if let Some(data_len) = self.data_len {
-                        match &self.packet_info {
-                            PacketInfo::Uncompressed { bytes_per_frame } => {
-                                codec_params.with_n_frames(data_len / *bytes_per_frame as u64);
-                            }
-                            _ => {}
+                        if let PacketInfo::Uncompressed { bytes_per_frame } = &self.packet_info {
+                            codec_params.with_n_frames(data_len / *bytes_per_frame as u64);
                         }
                     }
                 }
@@ -324,13 +319,12 @@ impl CafReader {
                         info!("couldn't convert the channel layout into a channel bitmap");
                     }
                 }
-                Some(PacketTable(table)) => match &mut self.packet_info {
-                    PacketInfo::Compressed { ref mut packets, .. } => {
+                Some(PacketTable(table)) => {
+                    if let PacketInfo::Compressed { ref mut packets, .. } = &mut self.packet_info {
                         codec_params.with_n_frames(table.valid_frames as u64);
                         *packets = table.packets;
                     }
-                    _ => {}
-                },
+                }
                 Some(MagicCookie(data)) => {
                     codec_params.with_extra_data(data);
                 }

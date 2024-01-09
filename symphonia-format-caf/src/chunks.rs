@@ -29,17 +29,17 @@ impl Chunk {
     /// The first chunk read will be the AudioDescription chunk. Once it's been read, the caller
     /// should pass it in to subsequent read calls.
     pub fn read(
-        mut reader: &mut MediaSourceStream,
+        reader: &mut MediaSourceStream,
         audio_description: &Option<AudioDescription>,
     ) -> Result<Option<Self>> {
         let chunk_type = reader.read_quad_bytes()?;
         let chunk_size = reader.read_be_i64()?;
 
         let result = match &chunk_type {
-            b"desc" => Chunk::AudioDescription(AudioDescription::read(&mut reader)?),
-            b"data" => Chunk::AudioData(AudioData::read(&mut reader, chunk_size)?),
-            b"chan" => Chunk::ChannelLayout(ChannelLayout::read(&mut reader)?),
-            b"pakt" => Chunk::PacketTable(PacketTable::read(&mut reader, audio_description)?),
+            b"desc" => Chunk::AudioDescription(AudioDescription::read(reader)?),
+            b"data" => Chunk::AudioData(AudioData::read(reader, chunk_size)?),
+            b"chan" => Chunk::ChannelLayout(ChannelLayout::read(reader)?),
+            b"pakt" => Chunk::PacketTable(PacketTable::read(reader, audio_description)?),
             b"kuki" => Chunk::MagicCookie(reader.read_boxed_slice_exact(chunk_size as usize)?),
             b"free" => {
                 if chunk_size < 0 {
