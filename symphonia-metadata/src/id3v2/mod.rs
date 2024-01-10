@@ -13,7 +13,7 @@ use symphonia_core::meta::{MetadataBuilder, MetadataOptions, MetadataReader, Met
 use symphonia_core::probe::{Descriptor, Instantiate, QueryDescriptor};
 use symphonia_core::support_metadata;
 
-use log::{info, trace, warn};
+use log::{trace, warn};
 
 mod frames;
 mod unsync;
@@ -321,7 +321,7 @@ fn read_id3v2_body<B: ReadBytes + FiniteStream>(
             }
             // An unknown frame was encountered.
             FrameResult::UnsupportedFrame(ref id) => {
-                info!("unsupported frame {}", id);
+                trace!("unsupported frame {}", id);
             }
             // The frame contained invalid data.
             FrameResult::InvalidData(ref id) => {

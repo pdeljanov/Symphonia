@@ -46,7 +46,7 @@ pub(crate) fn read_tag<R: ReadBytes>(mut reader: R) -> Result<(u32, u32, bool)> 
         let ty = ELEMENTS.get(&tag).map(|(_, ty)| ty).filter(|ty| ty.is_top_level());
 
         if let Some(ty) = ty {
-            log::info!("found next supported tag {:08X} ({:?})", tag, ty);
+            log::trace!("found next supported tag {:08X} ({:?})", tag, ty);
             return Ok((tag, 4, true));
         }
         tag = (tag << 8) | u32::from(reader.read_u8()?);
@@ -172,8 +172,7 @@ impl ElementHeader {
     pub(crate) fn end(&self) -> Option<u64> {
         if self.data_len == 0 {
             None
-        }
-        else {
+        } else {
             Some(self.data_pos + self.data_len)
         }
     }
@@ -259,11 +258,9 @@ impl<R: ReadBytes> ElementIterator<R> {
         self.current = None;
         if self.reader.is_seekable() {
             self.reader.seek(SeekFrom::Start(pos))?;
-        }
-        else if pos < current_pos {
+        } else if pos < current_pos {
             return seek_error(SeekErrorKind::ForwardOnly);
-        }
-        else {
+        } else {
             self.reader.ignore_bytes(pos - current_pos)?;
         }
         self.next_pos = pos;

@@ -25,7 +25,7 @@ use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
 
 use clap::Arg;
-use log::{info, warn};
+use log::{trace, warn};
 
 /// The absolute maximum allowable sample delta. Around 2^-17 (-102.4dB).
 const ABS_MAX_ALLOWABLE_SAMPLE_DELTA: f32 = 0.00001;
@@ -193,7 +193,7 @@ fn copy_audio_buf_to_sample_buf(src: AudioBufferRef<'_>, dst: &mut Option<Sample
         let spec = *src.spec();
         let duration = src.capacity() as u64;
 
-        info!(
+        trace!(
             "created target raw audio buffer with rate={}, channels={}, duration={}",
             spec.rate,
             spec.channels.count(),
@@ -226,8 +226,7 @@ fn run_check(
         // Decode target's next audio buffer.
         if opts.keep_going {
             get_next_audio_buf_best_effort(tgt_inst)?;
-        }
-        else {
+        } else {
             get_next_audio_buf(tgt_inst)?;
         }
 
@@ -420,8 +419,7 @@ fn main() {
     let ret = if res.n_failed_samples == 0 {
         println!("PASS");
         0
-    }
-    else {
+    } else {
         println!("FAIL");
         1
     };
