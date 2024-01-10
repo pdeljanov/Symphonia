@@ -77,7 +77,8 @@ impl FormatReader for CafReader {
 
                 let bytes_remaining = if let Some(data_len) = self.data_len {
                     data_len - data_pos
-                } else {
+                }
+                else {
                     max_bytes_to_read
                 };
 
@@ -96,9 +97,11 @@ impl FormatReader for CafReader {
                     *current_packet_index += 1;
                     let buffer = self.reader.read_boxed_slice(packet.size as usize)?;
                     Ok(Packet::new_from_boxed_slice(0, packet.start_frame, packet.frames, buffer))
-                } else if *current_packet_index == packets.len() {
+                }
+                else if *current_packet_index == packets.len() {
                     end_of_stream_error()
-                } else {
+                }
+                else {
                     decode_error("Invalid packet index")
                 }
             }
@@ -124,7 +127,8 @@ impl FormatReader for CafReader {
             SeekTo::Time { time, .. } => {
                 if let Some(time_base) = self.time_base() {
                     time_base.calc_timestamp(time)
-                } else {
+                }
+                else {
                     return seek_error(SeekErrorKind::Unseekable);
                 }
             }
@@ -141,11 +145,13 @@ impl FormatReader for CafReader {
 
                 if self.reader.is_seekable() {
                     self.reader.seek(SeekFrom::Start(seek_pos))?;
-                } else {
+                }
+                else {
                     let current_pos = self.reader.pos();
                     if seek_pos >= current_pos {
                         self.reader.ignore_bytes(seek_pos - current_pos)?;
-                    } else {
+                    }
+                    else {
                         return seek_error(SeekErrorKind::ForwardOnly);
                     }
                 }
@@ -162,14 +168,16 @@ impl FormatReader for CafReader {
             PacketInfo::Compressed { packets, current_packet_index } => {
                 let current_ts = if let Some(packet) = packets.get(*current_packet_index) {
                     TimeStamp::from(packet.start_frame)
-                } else {
+                }
+                else {
                     error!("Invalid packet index: {}", current_packet_index);
                     return decode_error("Invalid packet index");
                 };
 
                 let search_range = if current_ts < required_ts {
                     *current_packet_index..packets.len()
-                } else {
+                }
+                else {
                     0..*current_packet_index
                 };
 
@@ -182,11 +190,13 @@ impl FormatReader for CafReader {
 
                 if self.reader.is_seekable() {
                     self.reader.seek(SeekFrom::Start(seek_pos))?;
-                } else {
+                }
+                else {
                     let current_pos = self.reader.pos();
                     if seek_pos >= current_pos {
                         self.reader.ignore_bytes(seek_pos - current_pos)?;
-                    } else {
+                    }
+                    else {
                         return seek_error(SeekErrorKind::ForwardOnly);
                     }
                 }
@@ -277,7 +287,8 @@ impl CafReader {
         if desc.format_is_compressed() {
             self.packet_info =
                 PacketInfo::Compressed { packets: Vec::new(), current_packet_index: 0 };
-        } else {
+        }
+        else {
             codec_params.with_max_frames_per_packet(MAX_FRAMES_PER_PACKET).with_frames_per_block(1);
             self.packet_info = PacketInfo::Uncompressed { bytes_per_frame: desc.bytes_per_packet }
         };
@@ -312,7 +323,8 @@ impl CafReader {
                 Some(ChannelLayout(layout)) => {
                     if let Some(channels) = layout.channels() {
                         codec_params.channels = Some(channels);
-                    } else {
+                    }
+                    else {
                         // Don't error if the layout doesn't correspond directly to a Symphonia
                         // layout, the channels bitmap was set after the audio description was read
                         // to match the number of channels, and that's probably OK.

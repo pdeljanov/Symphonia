@@ -106,7 +106,8 @@ impl AudioDescription {
                             return unsupported_error("unsupported bits per channel");
                         }
                     }
-                } else {
+                }
+                else {
                     match (self.bits_per_channel, *little_endian) {
                         (16, true) => CODEC_TYPE_PCM_S16LE,
                         (16, false) => CODEC_TYPE_PCM_S16BE,
@@ -166,7 +167,8 @@ impl AudioData {
         if chunk_size < edit_count_offset {
             error!("invalid audio data chunk size ({})", chunk_size);
             decode_error("invalid audio data chunk size")
-        } else {
+        }
+        else {
             let data_len = chunk_size - edit_count_offset;
             debug!("data_len: {data_len}");
             reader.ignore_bytes(data_len)?;
