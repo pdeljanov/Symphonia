@@ -43,23 +43,23 @@ impl Chunk {
         let chunk_size = reader.read_be_i64()?;
 
         let result = match &chunk_type {
-            b"desc" => Chunk::AudioDescription(AudioDescription::read(reader)?),
+            b"desc" => Chunk::AudioDescription(AudioDescription::read(reader, chunk_size)?),
             b"data" => Chunk::AudioData(AudioData::read(reader, chunk_size)?),
-            b"chan" => Chunk::ChannelLayout(ChannelLayout::read(reader)?),
-            b"pakt" => Chunk::PacketTable(PacketTable::read(reader, audio_description)?),
+            b"chan" => Chunk::ChannelLayout(ChannelLayout::read(reader, chunk_size)?),
+            b"pakt" => {
+                Chunk::PacketTable(PacketTable::read(reader, audio_description, chunk_size)?)
+            }
             b"kuki" => {
                 if let Ok(chunk_size) = usize::try_from(chunk_size) {
                     Chunk::MagicCookie(reader.read_boxed_slice_exact(chunk_size)?)
                 }
                 else {
-                    error!("invalid Magic Cookie chunk size ({})", chunk_size);
-                    return decode_error("caf: invalid Magic Cookie chunk size");
+                    return invalid_chunk_size_error("Magic Cookie", chunk_size);
                 }
             }
             b"free" => {
                 if chunk_size < 0 {
-                    error!("invalid Free chunk size ({})", chunk_size);
-                    return decode_error("caf: invalid Free chunk size");
+                    return invalid_chunk_size_error("Free", chunk_size);
                 }
                 reader.ignore_bytes(chunk_size as u64)?;
                 Chunk::Free
@@ -76,8 +76,7 @@ impl Chunk {
                     return Ok(None);
                 }
                 else {
-                    error!("invalid chunk size ({})", chunk_size);
-                    return decode_error("caf: invalid unsupported chunk size");
+                    return invalid_chunk_size_error("unsupported", chunk_size);
                 }
             }
         };
@@ -98,7 +97,11 @@ pub struct AudioDescription {
 }
 
 impl AudioDescription {
-    pub fn read(reader: &mut MediaSourceStream) -> Result<Self> {
+    pub fn read(reader: &mut MediaSourceStream, chunk_size: i64) -> Result<Self> {
+        if chunk_size != 32 {
+            return invalid_chunk_size_error("Audio Description", chunk_size);
+        }
+
         let sample_rate = reader.read_be_f64()?;
         if sample_rate == 0.0 {
             return decode_error("caf: sample rate must be not be zero");
@@ -195,8 +198,7 @@ impl AudioData {
         let edit_count_offset = size_of::<u32>() as u64;
 
         if chunk_size != -1 && chunk_size_u64 < edit_count_offset {
-            error!("invalid audio data chunk size ({})", chunk_size);
-            return decode_error("caf: invalid audio data chunk size");
+            return invalid_chunk_size_error("Audio Data", chunk_size);
         }
 
         let edit_count = reader.read_be_u32()?;
@@ -284,7 +286,11 @@ pub struct ChannelLayout {
 }
 
 impl ChannelLayout {
-    pub fn read(reader: &mut MediaSourceStream) -> Result<Self> {
+    pub fn read(reader: &mut MediaSourceStream, chunk_size: i64) -> Result<Self> {
+        if chunk_size < 12 {
+            return invalid_chunk_size_error("Channel Layout", chunk_size);
+        }
+
         let channel_layout = reader.read_be_u32()?;
         let channel_bitmap = reader.read_be_u32()?;
         let channel_description_count = reader.read_be_u32()?;
@@ -398,7 +404,15 @@ pub struct PacketTable {
 }
 
 impl PacketTable {
-    pub fn read(reader: &mut MediaSourceStream, desc: &Option<AudioDescription>) -> Result<Self> {
+    pub fn read(
+        reader: &mut MediaSourceStream,
+        desc: &Option<AudioDescription>,
+        chunk_size: i64,
+    ) -> Result<Self> {
+        if chunk_size < 24 {
+            return invalid_chunk_size_error("Packet Table", chunk_size);
+        }
+
         let desc = desc.as_ref().ok_or_else(|| {
             error!("missing audio description");
             Error::DecodeError("caf: missing audio descripton")
@@ -513,6 +527,11 @@ pub struct CafPacket {
     // The size in bytes of the packet
     // For constant bit-rate files this value will match bytes_per_packet
     pub size: u64,
+}
+
+fn invalid_chunk_size_error<T>(chunk_type: &str, chunk_size: i64) -> Result<T> {
+    error!("invalid {} chunk size ({})", chunk_type, chunk_size);
+    decode_error("caf: invalid chunk size")
 }
 
 fn read_variable_length_integer(reader: &mut MediaSourceStream) -> Result<u64> {
