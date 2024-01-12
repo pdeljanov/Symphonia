@@ -109,10 +109,10 @@ impl FormatReader for CafReader {
                     end_of_stream_error()
                 }
                 else {
-                    decode_error("Invalid packet index")
+                    decode_error("caf: invalid packet index")
                 }
             }
-            PacketInfo::Unknown => decode_error("Missing packet info"),
+            PacketInfo::Unknown => decode_error("caf: missing packet info"),
         }
     }
 
@@ -164,7 +164,7 @@ impl FormatReader for CafReader {
                 }
 
                 debug!(
-                    "Seek required_ts: {}, actual_ts: {}, (difference: {})",
+                    "seek required_ts: {}, actual_ts: {}, (difference: {})",
                     actual_ts,
                     required_ts,
                     actual_ts as i64 - required_ts as i64,
@@ -177,8 +177,8 @@ impl FormatReader for CafReader {
                     TimeStamp::from(packet.start_frame)
                 }
                 else {
-                    error!("Invalid packet index: {}", current_packet_index);
-                    return decode_error("Invalid packet index");
+                    error!("invalid packet index: {}", current_packet_index);
+                    return decode_error("caf: invalid packet index");
                 };
 
                 let search_range = if current_ts < required_ts {
@@ -212,7 +212,7 @@ impl FormatReader for CafReader {
                 let actual_ts = TimeStamp::from(seek_packet.start_frame);
 
                 debug!(
-                    "Seek required_ts: {}, actual_ts: {}, (difference: {}, packet: {})",
+                    "seek required_ts: {}, actual_ts: {}, (difference: {}, packet: {})",
                     required_ts,
                     actual_ts,
                     actual_ts as i64 - required_ts as i64,
@@ -221,7 +221,7 @@ impl FormatReader for CafReader {
 
                 Ok(SeekedTo { track_id: 0, actual_ts, required_ts })
             }
-            PacketInfo::Unknown => decode_error("Missing packet info"),
+            PacketInfo::Unknown => decode_error("caf: missing packet info"),
         }
     }
 
@@ -240,13 +240,13 @@ impl CafReader {
     fn check_file_header(&mut self) -> Result<()> {
         let file_type = self.reader.read_quad_bytes()?;
         if file_type != *b"caff" {
-            return unsupported_error("missing 'caff' stream marker");
+            return unsupported_error("caf: missing 'caff' stream marker");
         }
 
         let file_version = self.reader.read_be_u16()?;
         if file_version != 1 {
-            error!("unsupported file version ({file_version})");
-            return unsupported_error("unsupported file version");
+            error!("unsupported file version ({})", file_version);
+            return unsupported_error("caf: unsupported file version");
         }
 
         // Ignored in CAF v1
@@ -269,7 +269,7 @@ impl CafReader {
 
         match desc.channels_per_frame {
             0 => {
-                return decode_error("channel count is zero");
+                return decode_error("caf: channel count is zero");
             }
             1 => {
                 codec_params.with_channels(Channels::FRONT_LEFT);
@@ -285,7 +285,7 @@ impl CafReader {
                         codec_params.with_channels(channels);
                     }
                     None => {
-                        return unsupported_error("unsupported channel count");
+                        return unsupported_error("caf: unsupported channel count");
                     }
                 }
             }
@@ -313,7 +313,7 @@ impl CafReader {
             match Chunk::read(&mut self.reader, &audio_description)? {
                 Some(AudioDescription(desc)) => {
                     if audio_description.is_some() {
-                        return decode_error("additional Audio Description chunk");
+                        return decode_error("caf: additional Audio Description chunk");
                     }
                     self.read_audio_description_chunk(&desc, &mut codec_params)?;
                     audio_description = Some(desc);
@@ -352,7 +352,7 @@ impl CafReader {
 
             if audio_description.is_none() {
                 error!("missing audio description chunk");
-                return decode_error("missing audio description chunk");
+                return decode_error("caf: missing audio description chunk");
             }
 
             if let Some(byte_len) = self.reader.byte_len() {

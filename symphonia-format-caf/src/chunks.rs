@@ -50,8 +50,8 @@ impl Chunk {
             b"kuki" => Chunk::MagicCookie(reader.read_boxed_slice_exact(chunk_size as usize)?),
             b"free" => {
                 if chunk_size < 0 {
-                    error!("invalid Free chunk size ({chunk_size})");
-                    return decode_error("invalid Free chunk size");
+                    error!("invalid Free chunk size ({})", chunk_size);
+                    return decode_error("caf: invalid Free chunk size");
                 }
                 reader.ignore_bytes(chunk_size as u64)?;
                 Chunk::Free
@@ -109,8 +109,8 @@ impl AudioDescription {
                         (64, true) => CODEC_TYPE_PCM_F64LE,
                         (64, false) => CODEC_TYPE_PCM_F64BE,
                         (bits, _) => {
-                            error!("unsupported PCM floating point format (bits: {bits})");
-                            return unsupported_error("unsupported bits per channel");
+                            error!("unsupported PCM floating point format (bits: {})", bits);
+                            return unsupported_error("caf: unsupported bits per channel");
                         }
                     }
                 }
@@ -123,8 +123,8 @@ impl AudioDescription {
                         (32, true) => CODEC_TYPE_PCM_S32LE,
                         (32, false) => CODEC_TYPE_PCM_S32BE,
                         (bits, _) => {
-                            error!("unsupported PCM integer format (bits: {bits})");
-                            return unsupported_error("unsupported bits per channel");
+                            error!("unsupported PCM integer format (bits: {})", bits);
+                            return unsupported_error("caf: unsupported bits per channel");
                         }
                     }
                 }
@@ -140,8 +140,8 @@ impl AudioDescription {
             Flac => CODEC_TYPE_FLAC,
             Opus => CODEC_TYPE_OPUS,
             unsupported => {
-                error!("unsupported codec ({unsupported:?})");
-                return unsupported_error("unsupported codec");
+                error!("unsupported codec ({:?})", unsupported);
+                return unsupported_error("caf: unsupported codec");
             }
         };
 
@@ -173,11 +173,11 @@ impl AudioData {
         let chunk_size = chunk_size as u64;
         if chunk_size < edit_count_offset {
             error!("invalid audio data chunk size ({})", chunk_size);
-            decode_error("invalid audio data chunk size")
+            decode_error("caf: invalid audio data chunk size")
         }
         else {
             let data_len = chunk_size - edit_count_offset;
-            debug!("data_len: {data_len}");
+            debug!("data_len: {}", data_len);
             reader.ignore_bytes(data_len)?;
             Ok(Self { _edit_count: edit_count, start_pos, data_len: Some(data_len) })
         }
@@ -218,7 +218,7 @@ impl AudioDescriptionFormatId {
             b"ima4" => AppleIMA4,
             b"aac " => {
                 if format_flags != 2 {
-                    warn!("undocumented AAC object type ({format_flags})");
+                    warn!("undocumented AAC object type ({})", format_flags);
                 }
                 return Ok(MPEG4AAC);
             }
@@ -234,13 +234,13 @@ impl AudioDescriptionFormatId {
             b"flac" => Flac,
             b"opus" => Opus,
             other => {
-                error!("unsupported format id ({other:?})");
-                return unsupported_error("unsupported format id");
+                error!("unsupported format id ({:?})", other);
+                return unsupported_error("caf: unsupported format id");
             }
         };
 
         if format_flags != 0 {
-            info!("non-zero format flags ({format_flags})");
+            info!("non-zero format flags ({})", format_flags);
         }
 
         Ok(result)
@@ -292,7 +292,7 @@ impl ChannelLayout {
                         17 => channels |= Channels::TOP_REAR_CENTRE.bits(),
                         18 => channels |= Channels::TOP_REAR_RIGHT.bits(),
                         unsupported => {
-                            info!("Unsupported channel label: {unsupported}");
+                            info!("unsupported channel label: {}", unsupported);
                             return None;
                         }
                     }
@@ -325,7 +325,7 @@ impl ChannelLayout {
                     | Channels::LFE1
             }
             unsupported => {
-                debug!("Unsupported channel layout: {unsupported}");
+                debug!("unsupported channel layout: {}", unsupported);
                 return None;
             }
         };
@@ -371,8 +371,8 @@ pub struct PacketTable {
 impl PacketTable {
     pub fn read(reader: &mut MediaSourceStream, desc: &Option<AudioDescription>) -> Result<Self> {
         let desc = desc.as_ref().ok_or_else(|| {
-            error!("Missing audio description");
-            Error::DecodeError("Missing audio descripton")
+            error!("missing audio description");
+            Error::DecodeError("caf: missing audio descripton")
         })?;
 
         let total_packets = reader.read_be_i64()?;
@@ -434,9 +434,12 @@ impl PacketTable {
             (_, _) => {
                 if total_packets > 0 {
                     error!(
-                        "Unexpected packet table for constant bit rate ({total_packets} packets)"
+                        "unexpected packet table for constant bit rate ({} packets)",
+                        total_packets
                     );
-                    return decode_error("Unexpected packet table for constant bit rate format");
+                    return decode_error(
+                        "caf: unexpected packet table for constant bit rate format",
+                    );
                 }
             }
         }
