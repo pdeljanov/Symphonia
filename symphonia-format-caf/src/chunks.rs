@@ -100,15 +100,29 @@ pub struct AudioDescription {
 impl AudioDescription {
     pub fn read(reader: &mut MediaSourceStream) -> Result<Self> {
         let sample_rate = reader.read_be_f64()?;
+        if sample_rate == 0.0 {
+            return decode_error("caf: sample rate must be not be zero");
+        }
+
         let format_id = AudioDescriptionFormatId::read(reader)?;
+
+        let bytes_per_packet = reader.read_be_u32()?;
+        let frames_per_packet = reader.read_be_u32()?;
+
+        let channels_per_frame = reader.read_be_u32()?;
+        if channels_per_frame == 0 {
+            return decode_error("caf: channels per frame must be not be zero");
+        }
+
+        let bits_per_channel = reader.read_be_u32()?;
 
         Ok(Self {
             sample_rate,
             format_id,
-            bytes_per_packet: reader.read_be_u32()?,
-            frames_per_packet: reader.read_be_u32()?,
-            channels_per_frame: reader.read_be_u32()?,
-            bits_per_channel: reader.read_be_u32()?,
+            bytes_per_packet,
+            frames_per_packet,
+            channels_per_frame,
+            bits_per_channel,
         })
     }
 
