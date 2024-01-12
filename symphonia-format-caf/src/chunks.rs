@@ -405,7 +405,17 @@ impl PacketTable {
         })?;
 
         let total_packets = reader.read_be_i64()?;
+        if total_packets < 0 {
+            error!("invalid number of packets in the packet table ({})", total_packets);
+            return decode_error("caf: invalid number of packets in the packet table");
+        }
+
         let valid_frames = reader.read_be_i64()?;
+        if valid_frames < 0 {
+            error!("invalid number of frames in the packet table ({})", valid_frames);
+            return decode_error("caf: invalid number of frames in the packet table");
+        }
+
         let priming_frames = reader.read_be_i32()?;
         let remainder_frames = reader.read_be_i32()?;
 
