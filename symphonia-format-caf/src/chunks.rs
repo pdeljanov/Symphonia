@@ -6,7 +6,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use log::{debug, error, info, warn};
-use std::{fmt, mem::size_of, str};
+use std::{convert::TryFrom, fmt, mem::size_of, str};
 use symphonia_core::{
     audio::{Channels, Layout},
     codecs::*,
@@ -47,7 +47,15 @@ impl Chunk {
             b"data" => Chunk::AudioData(AudioData::read(reader, chunk_size)?),
             b"chan" => Chunk::ChannelLayout(ChannelLayout::read(reader)?),
             b"pakt" => Chunk::PacketTable(PacketTable::read(reader, audio_description)?),
-            b"kuki" => Chunk::MagicCookie(reader.read_boxed_slice_exact(chunk_size as usize)?),
+            b"kuki" => {
+                if let Ok(chunk_size) = usize::try_from(chunk_size) {
+                    Chunk::MagicCookie(reader.read_boxed_slice_exact(chunk_size)?)
+                }
+                else {
+                    error!("invalid Magic Cookie chunk size ({})", chunk_size);
+                    return decode_error("caf: invalid Magic Cookie chunk size");
+                }
+            }
             b"free" => {
                 if chunk_size < 0 {
                     error!("invalid Free chunk size ({})", chunk_size);
@@ -62,8 +70,15 @@ impl Chunk {
                     "unsupported chunk type ('{}')",
                     str::from_utf8(other.as_slice()).unwrap_or("????")
                 );
-                reader.ignore_bytes(chunk_size as u64)?;
-                return Ok(None);
+
+                if chunk_size >= 0 {
+                    reader.ignore_bytes(chunk_size as u64)?;
+                    return Ok(None);
+                }
+                else {
+                    error!("invalid chunk size ({})", chunk_size);
+                    return decode_error("caf: invalid unsupported chunk size");
+                }
             }
         };
 
