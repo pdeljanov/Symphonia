@@ -518,19 +518,19 @@ pub struct CafPacket {
 fn read_variable_length_integer(reader: &mut MediaSourceStream) -> Result<u64> {
     let mut result = 0;
 
-    loop {
+    for _ in 0..9 {
         let byte = reader.read_byte()?;
 
         result |= (byte & 0x7f) as u64;
 
         if byte & 0x80 == 0 {
-            break;
+            return Ok(result);
         }
 
         result <<= 7;
     }
 
-    Ok(result)
+    decode_error("caf: unterminated variable-length integer")
 }
 
 #[cfg(test)]
@@ -559,5 +559,13 @@ mod tests {
         variable_length_integer_test(&[0xff, 0x7f], 16383)?;
         variable_length_integer_test(&[0x81, 0x80, 0x00], 16384)?;
         Ok(())
+    }
+
+    #[test]
+    fn unterminated_variable_length_integer() {
+        let cursor = Cursor::new(&[0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff]);
+        let mut source = MediaSourceStream::new(Box::new(cursor), Default::default());
+
+        assert!(read_variable_length_integer(&mut source).is_err());
     }
 }
