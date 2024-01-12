@@ -191,25 +191,25 @@ pub struct AudioData {
 
 impl AudioData {
     pub fn read(reader: &mut MediaSourceStream, chunk_size: i64) -> Result<Self> {
-        let edit_count = reader.read_be_u32()?;
+        let chunk_size_u64 = chunk_size as u64;
         let edit_count_offset = size_of::<u32>() as u64;
+
+        if chunk_size != -1 && chunk_size_u64 < edit_count_offset {
+            error!("invalid audio data chunk size ({})", chunk_size);
+            return decode_error("caf: invalid audio data chunk size");
+        }
+
+        let edit_count = reader.read_be_u32()?;
         let start_pos = reader.pos();
 
         if chunk_size == -1 {
             return Ok(Self { _edit_count: edit_count, start_pos, data_len: None });
         }
 
-        let chunk_size = chunk_size as u64;
-        if chunk_size < edit_count_offset {
-            error!("invalid audio data chunk size ({})", chunk_size);
-            decode_error("caf: invalid audio data chunk size")
-        }
-        else {
-            let data_len = chunk_size - edit_count_offset;
-            debug!("data_len: {}", data_len);
-            reader.ignore_bytes(data_len)?;
-            Ok(Self { _edit_count: edit_count, start_pos, data_len: Some(data_len) })
-        }
+        let data_len = chunk_size_u64 - edit_count_offset;
+        debug!("data_len: {}", data_len);
+        reader.ignore_bytes(data_len)?;
+        Ok(Self { _edit_count: edit_count, start_pos, data_len: Some(data_len) })
     }
 }
 
