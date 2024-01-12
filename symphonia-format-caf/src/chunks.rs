@@ -300,7 +300,7 @@ impl ChannelLayout {
                 return Channels::from_bits(channels);
             }
             // Use the channel bitmap
-            1 => return Channels::from_bits(self.channel_bitmap),
+            LAYOUT_TAG_USE_CHANNEL_BITMAP => return Channels::from_bits(self.channel_bitmap),
             // Layout tags which have channel roles that match the standard channel layout
             LAYOUT_TAG_MONO => Layout::Mono.into_channels(),
             LAYOUT_TAG_STEREO | LAYOUT_TAG_STEREO_HEADPHONES => Layout::Stereo.into_channels(),
@@ -351,6 +351,7 @@ impl ChannelDescription {
     }
 }
 
+const LAYOUT_TAG_USE_CHANNEL_BITMAP: u32 = 1 << 16;
 // Layout tags from the CAF spec that match the first N channels of a standard layout
 const LAYOUT_TAG_MONO: u32 = (100 << 16) | 1;
 const LAYOUT_TAG_STEREO: u32 = (101 << 16) | 2;
