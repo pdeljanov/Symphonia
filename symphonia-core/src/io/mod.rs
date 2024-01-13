@@ -51,21 +51,8 @@ pub trait Seek {
 }
 
 pub enum SeekFrom {
-    /// Sets the offset to the provided number of bytes.
     Start(u64),
-
-    /// Sets the offset to the size of this object plus the specified number of
-    /// bytes.
-    ///
-    /// It is possible to seek beyond the end of an object, but it's an error to
-    /// seek before byte 0.
     End(i64),
-
-    /// Sets the offset to the current position plus the specified number of
-    /// bytes.
-    ///
-    /// It is possible to seek beyond the end of an object, but it's an error to
-    /// seek before byte 0.
     Current(i64),
 }
 

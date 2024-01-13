@@ -261,6 +261,8 @@ pub mod default {
     ///
     /// Use this function to easily populate a custom probe with all enabled formats.
     pub fn register_enabled_formats(probe: &mut Probe) {
+        use symphonia_metadata::id3v2::Id3v2Reader;
+
         // Formats
         #[cfg(feature = "aac")]
         probe.register_all::<formats::AdtsReader>();
@@ -287,8 +289,7 @@ pub mod default {
         probe.register_all::<formats::MkvReader>();
 
         // Metadata
-        #[cfg(feature = "id3v2")]
-        probe.register_all::<symphonia_metadata::id3v2::Id3v2Reader>();
+        probe.register_all::<Id3v2Reader>();
     }
 }
 

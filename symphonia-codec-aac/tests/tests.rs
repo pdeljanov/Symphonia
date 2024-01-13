@@ -31,5 +31,5 @@ fn invalid_channels_aac() {
 
     let err = test_decode(file).unwrap_err();
 
-    assert!(matches!(err, errors::Error::Unsupported(_)));
+    assert!(matches!(err, errors::SymphoniaError::Unsupported(_)));
 }

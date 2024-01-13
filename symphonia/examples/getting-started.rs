@@ -1,5 +1,5 @@
 use symphonia::core::codecs::{DecoderOptions, CODEC_TYPE_NULL};
-use symphonia::core::errors::Error;
+use symphonia::core::errors::SymphoniaError as Error;
 use symphonia::core::formats::FormatOptions;
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
@@ -86,7 +86,7 @@ fn main() {
             Ok(_decoded) => {
                 // Consume the decoded audio samples (see below).
             }
-            Err(Error::IoError(_, _)) => {
+            Err(Error::IoError(_)) => {
                 // The packet failed to decode due to an IO error, skip the packet.
                 continue;
             }
