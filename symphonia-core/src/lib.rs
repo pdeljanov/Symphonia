@@ -1,3 +1,4 @@
+#![no_std]
 // Symphonia
 // Copyright (c) 2019-2022 The Project Symphonia Developers.
 //
@@ -11,6 +12,13 @@
 #![allow(clippy::excessive_precision)]
 #![allow(clippy::identity_op)]
 #![allow(clippy::manual_range_contains)]
+#![cfg_attr(not(feature = "std"), feature(error_in_core))]
+
+extern crate alloc;
+extern crate core;
+
+#[cfg(feature = "std")]
+extern crate std;
 
 pub mod audio;
 pub mod checksum;

@@ -5,15 +5,20 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use std::ascii;
-use std::num::NonZeroU32;
+use alloc::string::String;
+use alloc::vec;
+use alloc::vec::Vec;
+use core::ascii;
+use core::num::NonZeroU32;
 
 use symphonia_core::audio::Channels;
 use symphonia_core::errors::{decode_error, Result};
 use symphonia_core::formats::util::SeekIndex;
 use symphonia_core::formats::{Cue, CuePoint};
 use symphonia_core::io::*;
-use symphonia_core::meta::{ColorMode, MetadataBuilder, Size, StandardTagKey, Tag, Value};
+use symphonia_core::meta::{
+    ColorMode, MetadataBuilder, Size, StandardTagKey, Tag, Value,
+};
 use symphonia_core::meta::{VendorData, Visual};
 
 use symphonia_metadata::{id3v2, vorbis};

@@ -5,10 +5,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use std::io::SeekFrom;
-
-use symphonia_core::errors::{decode_error, seek_error, Error, Result, SeekErrorKind};
-use symphonia_core::io::{MediaSource, ReadBytes};
+use symphonia_core::errors::{decode_error, seek_error, Result, SeekErrorKind, SymphoniaError};
+use symphonia_core::io::{MediaSource, ReadBytes, SeekFrom};
 use symphonia_core::util::bits::sign_extend_leq64_to_i64;
 
 use crate::element_ids::{ElementType, Type, ELEMENTS};
@@ -378,7 +376,7 @@ impl<R: ReadBytes> ElementIterator<R> {
         let hdr = self.current.expect("not in an element");
         let value = self
             .try_read_data(hdr)?
-            .ok_or(Error::DecodeError("mkv: element has no primitive data"))?;
+            .ok_or(SymphoniaError::DecodeError("mkv: element has no primitive data"))?;
         Ok(value)
     }
 
@@ -386,7 +384,7 @@ impl<R: ReadBytes> ElementIterator<R> {
     pub(crate) fn read_u64(&mut self) -> Result<u64> {
         match self.read_data()? {
             ElementData::UnsignedInt(s) => Ok(s),
-            _ => Err(Error::DecodeError("mkv: expected an unsigned int")),
+            _ => Err(SymphoniaError::DecodeError("mkv: expected an unsigned int")),
         }
     }
 
@@ -394,7 +392,7 @@ impl<R: ReadBytes> ElementIterator<R> {
     pub(crate) fn read_f64(&mut self) -> Result<f64> {
         match self.read_data()? {
             ElementData::Float(s) => Ok(s),
-            _ => Err(Error::DecodeError("mkv: expected a float")),
+            _ => Err(SymphoniaError::DecodeError("mkv: expected a float")),
         }
     }
 
@@ -402,7 +400,7 @@ impl<R: ReadBytes> ElementIterator<R> {
     pub(crate) fn read_string(&mut self) -> Result<String> {
         match self.read_data()? {
             ElementData::String(s) => Ok(s),
-            _ => Err(Error::DecodeError("mkv: expected a string")),
+            _ => Err(SymphoniaError::DecodeError("mkv: expected a string")),
         }
     }
 
@@ -410,7 +408,7 @@ impl<R: ReadBytes> ElementIterator<R> {
     pub(crate) fn read_boxed_slice(&mut self) -> Result<Box<[u8]>> {
         match self.read_data()? {
             ElementData::Binary(b) => Ok(b),
-            _ => Err(Error::DecodeError("mkv: expected binary data")),
+            _ => Err(SymphoniaError::DecodeError("mkv: expected binary data")),
         }
     }
 
@@ -471,7 +469,9 @@ impl<R: ReadBytes> ElementIterator<R> {
                             8 => self.reader.read_be_f64()?,
                             _ => {
                                 self.ignore_data()?;
-                                return Err(Error::DecodeError("mkv: invalid float length"));
+                                return Err(SymphoniaError::DecodeError(
+                                    "mkv: invalid float length",
+                                ));
                             }
                         };
                         ElementData::Float(value)

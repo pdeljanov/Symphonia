@@ -8,9 +8,10 @@
 //! The `codec` module provides the traits and support structures necessary to implement audio codec
 //! decoders.
 
-use std::collections::HashMap;
-use std::default::Default;
-use std::fmt;
+use alloc::boxed::Box;
+use alloc::collections::BTreeMap;
+use core::default::Default;
+use core::fmt;
 
 use crate::audio::{AudioBufferRef, Channels, Layout};
 use crate::errors::{unsupported_error, Result};
@@ -19,7 +20,7 @@ use crate::sample::SampleFormat;
 use crate::units::TimeBase;
 
 /// A `CodecType` is a unique identifier used to identify a specific codec.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub struct CodecType(u32);
 
 /// Declares a new `CodecType` given a character code. A character code is an ASCII string
@@ -522,13 +523,13 @@ pub struct CodecDescriptor {
 /// A `CodecRegistry` allows the registration of codecs, and provides a method to instantiate a
 /// `Decoder` given a `CodecParameters` object.
 pub struct CodecRegistry {
-    codecs: HashMap<CodecType, CodecDescriptor>,
+    codecs: BTreeMap<CodecType, CodecDescriptor>,
 }
 
 impl CodecRegistry {
     /// Instantiate a new `CodecRegistry`.
     pub fn new() -> Self {
-        CodecRegistry { codecs: HashMap::new() }
+        CodecRegistry { codecs: BTreeMap::new() }
     }
 
     /// Gets the `CodecDescriptor` for a registered codec.
@@ -582,7 +583,7 @@ macro_rules! support_codec {
             codec: $type,
             short_name: $short_name,
             long_name: $long_name,
-            inst_func: |params, opt| Ok(Box::new(Self::try_new(&params, &opt)?)),
+            inst_func: |params, opt| Ok(alloc::boxed::Box::new(Self::try_new(&params, &opt)?)),
         }
     };
 }

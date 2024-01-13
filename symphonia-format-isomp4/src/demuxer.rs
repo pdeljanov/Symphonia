@@ -10,12 +10,11 @@ use symphonia_core::{errors::end_of_stream_error, support_format};
 use symphonia_core::codecs::CodecParameters;
 use symphonia_core::errors::{decode_error, seek_error, unsupported_error, Result, SeekErrorKind};
 use symphonia_core::formats::prelude::*;
-use symphonia_core::io::{MediaSource, MediaSourceStream, ReadBytes, SeekBuffered};
+use symphonia_core::io::*;
 use symphonia_core::meta::{Metadata, MetadataLog};
 use symphonia_core::probe::{Descriptor, Instantiate, QueryDescriptor};
 use symphonia_core::units::Time;
 
-use std::io::{Seek, SeekFrom};
 use std::sync::Arc;
 
 use crate::atoms::{AtomIterator, AtomType};

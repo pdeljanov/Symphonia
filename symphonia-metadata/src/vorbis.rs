@@ -7,15 +7,18 @@
 
 //! A Vorbic COMMENT metadata reader for FLAC or OGG formats.
 
+use alloc::collections::BTreeMap;
+use alloc::string::String;
+use alloc::vec;
+use alloc::vec::Vec;
 use lazy_static::lazy_static;
-use std::collections::HashMap;
 use symphonia_core::errors::Result;
 use symphonia_core::io::ReadBytes;
 use symphonia_core::meta::{MetadataBuilder, StandardTagKey, Tag, Value};
 
 lazy_static! {
-    static ref VORBIS_COMMENT_MAP: HashMap<&'static str, StandardTagKey> = {
-        let mut m = HashMap::new();
+    static ref VORBIS_COMMENT_MAP: BTreeMap<&'static str, StandardTagKey> = {
+        let mut m = BTreeMap::new();
         m.insert("album artist"                , StandardTagKey::AlbumArtist);
         m.insert("album"                       , StandardTagKey::Album);
         m.insert("albumartist"                 , StandardTagKey::AlbumArtist);

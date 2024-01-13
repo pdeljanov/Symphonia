@@ -16,6 +16,8 @@
 // Disable to better express the specification.
 #![allow(clippy::collapsible_else_if)]
 
+extern crate alloc;
+
 use symphonia_core::audio::{AsAudioBufferRef, AudioBuffer, AudioBufferRef};
 use symphonia_core::audio::{Signal, SignalSpec};
 use symphonia_core::codecs::{CodecDescriptor, CodecParameters, CODEC_TYPE_VORBIS};

@@ -29,6 +29,8 @@ use symphonia_core::formats::Packet;
 use symphonia_core::io::{BitReaderLtr, BufReader, FiniteStream, ReadBitsLtr, ReadBytes};
 use symphonia_core::support_codec;
 
+extern crate alloc;
+
 /// Supported ALAC version.
 const ALAC_VERSION: u8 = 0;
 

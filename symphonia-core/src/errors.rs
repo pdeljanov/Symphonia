@@ -7,10 +7,17 @@
 
 //! The `errors` module defines the common error type.
 
-use std::error;
-use std::fmt;
-use std::io;
-use std::result;
+use alloc::boxed::Box;
+use core::fmt;
+use core::fmt::Display;
+use core::result;
+
+#[cfg(not(feature = "std"))]
+use core::error::Error as StdError;
+
+use core::ops::Deref;
+#[cfg(feature = "std")]
+use std::error::Error as StdError;
 
 /// `SeekErrorKind` is a list of generic reasons why a seek may fail.
 #[derive(Debug)]
@@ -38,9 +45,11 @@ impl SeekErrorKind {
 
 /// `Error` provides an enumeration of all possible errors reported by Symphonia.
 #[derive(Debug)]
-pub enum Error {
-    /// An IO error occured while reading, writing, or seeking the stream.
-    IoError(std::io::Error),
+pub enum SymphoniaError {
+    /// An IO error occurred while reading, writing, or seeking the stream.
+    IoError(Box<dyn StdError>),
+    /// An IO error occurred while reading, writing, or seeking the stream that is retryable.
+    IoInterruptedError(Box<dyn StdError>),
     /// The stream contained malformed data and could not be decoded or demuxed.
     DecodeError(&'static str),
     /// The stream could not be seeked.
@@ -52,78 +61,93 @@ pub enum Error {
     LimitError(&'static str),
     /// The demuxer or decoder needs to be reset before continuing.
     ResetRequired,
+    EndOfFile,
+    Other(&'static str),
 }
 
-impl fmt::Display for Error {
+impl Display for SymphoniaError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            Error::IoError(ref err) => err.fmt(f),
-            Error::DecodeError(msg) => {
+            SymphoniaError::IoError(ref err) => {
+                write!(f, "io error {:?}", err)
+            }
+            SymphoniaError::IoInterruptedError(ref err) => {
+                write!(f, "io error {:?}", err)
+            }
+            SymphoniaError::DecodeError(msg) => {
                 write!(f, "malformed stream: {}", msg)
             }
-            Error::SeekError(ref kind) => {
+            SymphoniaError::SeekError(ref kind) => {
                 write!(f, "seek error: {}", kind.as_str())
             }
-            Error::Unsupported(feature) => {
+            SymphoniaError::Unsupported(feature) => {
                 write!(f, "unsupported feature: {}", feature)
             }
-            Error::LimitError(constraint) => {
+            SymphoniaError::LimitError(constraint) => {
                 write!(f, "limit reached: {}", constraint)
             }
-            Error::ResetRequired => {
+            SymphoniaError::ResetRequired => {
                 write!(f, "decoder needs to be reset")
+            }
+            SymphoniaError::EndOfFile => {
+                write!(f, "unexpected end of file")
+            }
+            SymphoniaError::Other(msg) => {
+                write!(f, "other error: {}", msg)
             }
         }
     }
 }
 
-impl std::error::Error for Error {
-    fn cause(&self) -> Option<&dyn error::Error> {
+impl StdError for SymphoniaError {
+    fn source(&self) -> Option<&(dyn StdError + 'static)> {
         match *self {
-            Error::IoError(ref err) => Some(err),
-            Error::DecodeError(_) => None,
-            Error::SeekError(_) => None,
-            Error::Unsupported(_) => None,
-            Error::LimitError(_) => None,
-            Error::ResetRequired => None,
+            SymphoniaError::IoError(ref err) => Some(err.deref()),
+            SymphoniaError::IoInterruptedError(ref err) => Some(err.deref()),
+            _ => None,
         }
     }
 }
 
-impl From<io::Error> for Error {
-    fn from(err: io::Error) -> Error {
-        Error::IoError(err)
+#[cfg(feature = "std")]
+impl From<std::io::Error> for SymphoniaError {
+    fn from(err: std::io::Error) -> SymphoniaError {
+        match err.kind() {
+            std::io::ErrorKind::Interrupted => SymphoniaError::IoInterruptedError(Box::new(err)),
+            std::io::ErrorKind::UnexpectedEof => SymphoniaError::EndOfFile,
+            _ => SymphoniaError::IoError(Box::new(err)),
+        }
     }
 }
 
-pub type Result<T> = result::Result<T, Error>;
+pub type Result<T> = result::Result<T, SymphoniaError>;
 
 /// Convenience function to create a decode error.
 pub fn decode_error<T>(desc: &'static str) -> Result<T> {
-    Err(Error::DecodeError(desc))
+    Err(SymphoniaError::DecodeError(desc))
 }
 
 /// Convenience function to create a seek error.
 pub fn seek_error<T>(kind: SeekErrorKind) -> Result<T> {
-    Err(Error::SeekError(kind))
+    Err(SymphoniaError::SeekError(kind))
 }
 
 /// Convenience function to create an unsupport feature error.
 pub fn unsupported_error<T>(feature: &'static str) -> Result<T> {
-    Err(Error::Unsupported(feature))
+    Err(SymphoniaError::Unsupported(feature))
 }
 
 /// Convenience function to create a limit error.
 pub fn limit_error<T>(constraint: &'static str) -> Result<T> {
-    Err(Error::LimitError(constraint))
+    Err(SymphoniaError::LimitError(constraint))
 }
 
 /// Convenience function to create a reset required error.
 pub fn reset_error<T>() -> Result<T> {
-    Err(Error::ResetRequired)
+    Err(SymphoniaError::ResetRequired)
 }
 
 /// Convenience function to create an end-of-stream error.
 pub fn end_of_stream_error<T>() -> Result<T> {
-    Err(Error::IoError(io::Error::new(io::ErrorKind::UnexpectedEof, "end of stream")))
+    Err(SymphoniaError::EndOfFile)
 }

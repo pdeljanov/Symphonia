@@ -7,6 +7,7 @@
 
 //! An ID3v1 metadata reader.
 
+use alloc::string::String;
 use symphonia_core::errors::{unsupported_error, Result};
 use symphonia_core::io::ReadBytes;
 use symphonia_core::meta::{MetadataBuilder, StandardTagKey, Tag, Value};

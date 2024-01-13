@@ -7,7 +7,7 @@
 
 //! The `units` module provides definitions for common units.
 
-use std::fmt;
+use core::fmt;
 
 /// A `TimeStamp` represents an instantenous instant in time since the start of a stream. One
 /// `TimeStamp` "tick" is equivalent to the stream's `TimeBase` in seconds.
@@ -99,7 +99,7 @@ impl From<u64> for Time {
 impl From<f32> for Time {
     fn from(seconds: f32) -> Self {
         if seconds >= 0.0 {
-            Time::new(seconds.trunc() as u64, f64::from(seconds.fract()))
+            Time::new(libm::truncf(seconds) as u64, f64::from(seconds - libm::truncf(seconds)))
         }
         else {
             Time::new(0, 0.0)
@@ -110,7 +110,7 @@ impl From<f32> for Time {
 impl From<f64> for Time {
     fn from(seconds: f64) -> Self {
         if seconds >= 0.0 {
-            Time::new(seconds.trunc() as u64, seconds.fract())
+            Time::new(libm::trunc(seconds) as u64, seconds - libm::trunc(seconds))
         }
         else {
             Time::new(0, 0.0)
@@ -118,15 +118,15 @@ impl From<f64> for Time {
     }
 }
 
-impl From<std::time::Duration> for Time {
-    fn from(duration: std::time::Duration) -> Self {
+impl From<core::time::Duration> for Time {
+    fn from(duration: core::time::Duration) -> Self {
         Time::new(duration.as_secs(), f64::from(duration.subsec_nanos()) / 1_000_000_000.0)
     }
 }
 
-impl From<Time> for std::time::Duration {
+impl From<Time> for core::time::Duration {
     fn from(time: Time) -> Self {
-        std::time::Duration::new(time.seconds, (1_000_000_000.0 * time.frac) as u32)
+        core::time::Duration::new(time.seconds, (1_000_000_000.0 * time.frac) as u32)
     }
 }
 
@@ -170,7 +170,7 @@ impl TimeBase {
         if dividend < (1 << 52) {
             let seconds = (dividend as f64) / f64::from(self.denom);
 
-            Time::new(seconds.trunc() as u64, seconds.fract())
+            Time::new(libm::trunc(seconds) as u64, seconds - libm::trunc(seconds))
         }
         else {
             // If the dividend requires more than 52 bits, calculate the integer portion using
@@ -243,7 +243,7 @@ impl fmt::Display for TimeBase {
 #[cfg(test)]
 mod tests {
     use super::{Time, TimeBase};
-    use std::time::Duration;
+    use core::time::Duration;
 
     #[test]
     fn verify_timebase() {

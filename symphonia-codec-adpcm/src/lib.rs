@@ -24,6 +24,8 @@ use symphonia_core::errors::{unsupported_error, Result};
 use symphonia_core::formats::Packet;
 use symphonia_core::io::ReadBytes;
 
+extern crate alloc;
+
 mod codec_ima;
 mod codec_ms;
 mod common;

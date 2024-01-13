@@ -7,13 +7,14 @@
 
 //! A RIFF INFO metadata reader.
 
+use alloc::collections::BTreeMap;
+use alloc::string::String;
 use lazy_static::lazy_static;
-use std::collections::HashMap;
 use symphonia_core::meta::{StandardTagKey, Tag, Value};
 
 lazy_static! {
-    static ref RIFF_INFO_MAP: HashMap<&'static str, StandardTagKey> = {
-        let mut m = HashMap::new();
+    static ref RIFF_INFO_MAP: BTreeMap<&'static str, StandardTagKey> = {
+        let mut m = BTreeMap::new();
         m.insert("ages", StandardTagKey::Rating);
         m.insert("cmnt", StandardTagKey::Comment);
         // Is this the same as a cmnt?

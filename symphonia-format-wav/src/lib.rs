@@ -5,6 +5,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+#![no_std]
 #![warn(rust_2018_idioms)]
 #![forbid(unsafe_code)]
 // The following lints are allowed in all Symphonia crates. Please see clippy.toml for their
@@ -14,7 +15,15 @@
 #![allow(clippy::identity_op)]
 #![allow(clippy::manual_range_contains)]
 
-use std::io::{Seek, SeekFrom};
+#[cfg(not(feature = "std"))]
+extern crate core as std;
+
+extern crate alloc;
+
+use alloc::boxed::Box;
+use alloc::string::String;
+use alloc::vec;
+use alloc::vec::Vec;
 
 use symphonia_core::codecs::CodecParameters;
 use symphonia_core::errors::{decode_error, end_of_stream_error, seek_error, unsupported_error};

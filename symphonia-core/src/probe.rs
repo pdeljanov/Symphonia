@@ -12,10 +12,16 @@ use crate::errors::{unsupported_error, Result};
 use crate::formats::{FormatOptions, FormatReader};
 use crate::io::{MediaSourceStream, ReadBytes, SeekBuffered};
 use crate::meta::{Metadata, MetadataLog, MetadataOptions, MetadataReader};
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::string::String;
+use alloc::vec::Vec;
 
 use log::{debug, error, info};
 
 mod bloom {
+    use alloc::boxed::Box;
+    use alloc::vec;
 
     fn fnv1a32(value: &[u8; 2]) -> u32 {
         const INIT: u32 = 0x811c_9dc5;
@@ -364,7 +370,7 @@ macro_rules! support_metadata {
             mime_types: $mimes,
             markers: $markers,
             score: Self::score,
-            inst: Instantiate::Metadata(|opt| Box::new(Self::new(&opt))),
+            inst: Instantiate::Metadata(|opt| alloc::boxed::Box::new(Self::new(&opt))),
         }
     };
 }

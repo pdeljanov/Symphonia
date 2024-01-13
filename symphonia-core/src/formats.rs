@@ -13,6 +13,9 @@ use crate::errors::Result;
 use crate::io::{BufReader, MediaSourceStream};
 use crate::meta::{Metadata, Tag};
 use crate::units::{Time, TimeStamp};
+use alloc::boxed::Box;
+use alloc::string::String;
+use alloc::vec::Vec;
 
 pub mod prelude {
     //! The `formats` module prelude.
@@ -165,7 +168,7 @@ impl Track {
 /// `FormatReader` provides an Iterator-like interface over packets for easy consumption and
 /// filtering. Seeking will invalidate the state of any `Decoder` processing packets from the
 /// `FormatReader` and should be reset after a successful seek operation.
-pub trait FormatReader: Send + Sync {
+pub trait FormatReader {
     /// Attempt to instantiate a `FormatReader` using the provided `FormatOptions` and
     /// `MediaSourceStream`. The reader will probe the container to verify format support, determine
     /// the number of tracks, and read any initial metadata.
@@ -328,6 +331,7 @@ pub mod util {
     //! Helper utilities for implementing `FormatReader`s.
 
     use super::Packet;
+    use alloc::vec::Vec;
 
     /// A `SeekPoint` is a mapping between a sample or frame number to byte offset within a media
     /// stream.
