@@ -144,6 +144,8 @@ All metadata readers are provided by the `symphonia-metadata` crate.
 | Vorbis comment (FLAC) | Perfect   |
 | Vorbis comment (OGG)  | Perfect   |
 
+Serialization/deserialization for metadata can be anbled with the `serde` feature flag.
+
 ## Quality
 
 In addition to the safety guarantees afforded by Rust, Symphonia aims to:

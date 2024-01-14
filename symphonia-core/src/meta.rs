@@ -12,6 +12,8 @@ use std::collections::VecDeque;
 use std::convert::From;
 use std::fmt;
 use std::num::NonZeroU32;
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 
 use crate::errors::Result;
 use crate::io::MediaSourceStream;
@@ -24,6 +26,7 @@ use crate::io::MediaSourceStream;
 /// All limits can be defaulted to a reasonable value specific to the situation. These defaults will
 /// generally not break any normal streams.
 #[derive(Copy, Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum Limit {
     /// Do not impose any limit.
     None,
@@ -53,6 +56,7 @@ impl Default for Limit {
 
 /// `MetadataOptions` is a common set of options that all metadata readers use.
 #[derive(Copy, Clone, Debug, Default)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct MetadataOptions {
     /// The maximum size limit in bytes that a tag may occupy in memory once decoded. Tags exceeding
     /// this limit will be skipped by the demuxer. Take note that tags in-memory are stored as UTF-8
@@ -70,6 +74,7 @@ pub struct MetadataOptions {
 /// The visual types listed here are derived from, though do not entirely cover, the ID3v2 APIC
 /// frame specification.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum StandardVisualKey {
     FileIcon,
     OtherIcon,
@@ -96,6 +101,7 @@ pub enum StandardVisualKey {
 /// A tag reader may assign a `StandardTagKey` to a `Tag` if the tag's key is generally
 /// accepted to map to a specific usage.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum StandardTagKey {
     AcoustidFingerprint,
     AcoustidId,
@@ -216,6 +222,7 @@ pub enum StandardTagKey {
 /// format, the actual data type a specific tag may have a lesser width or encoding than the data
 /// type in this enumeration.
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum Value {
     /// A binary buffer.
     Binary(Box<[u8]>),
@@ -291,6 +298,7 @@ impl fmt::Display for Value {
 
 /// A `Tag` encapsulates a key-value pair of metadata.
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Tag {
     /// If the `Tag`'s key string is commonly associated with a typical type, meaning, or purpose,
     /// then if recognized a `StandardTagKey` will be assigned to this `Tag`.
@@ -333,6 +341,7 @@ impl fmt::Display for Tag {
 
 /// A 2 dimensional (width and height) size type.
 #[derive(Copy, Clone, Debug, Default)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Size {
     /// The width in pixels.
     pub width: u32,
@@ -342,6 +351,7 @@ pub struct Size {
 
 /// `ColorMode` indicates how the color of a pixel is encoded in a `Visual`.
 #[derive(Copy, Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum ColorMode {
     /// Each pixel in the `Visual` stores its own color information.
     Discrete,
@@ -353,6 +363,7 @@ pub enum ColorMode {
 
 /// A `Visual` is any 2 dimensional graphic.
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Visual {
     /// The Media Type (MIME Type) used to encode the `Visual`.
     pub media_type: String,
@@ -381,6 +392,7 @@ pub struct Visual {
 
 /// `VendorData` is any binary metadata that is proprietary to a certain application or vendor.
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct VendorData {
     /// A text representation of the vendor's application identifier.
     pub ident: String,
@@ -390,6 +402,7 @@ pub struct VendorData {
 
 /// `Metadata` is a container for a single discrete revision of metadata information.
 #[derive(Clone, Debug, Default)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct MetadataRevision {
     tags: Vec<Tag>,
     visuals: Vec<Visual>,
@@ -492,6 +505,7 @@ impl<'a> Metadata<'a> {
 
 /// `MetadataLog` is a container for time-ordered `Metadata` revisions.
 #[derive(Clone, Debug, Default)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct MetadataLog {
     revisions: VecDeque<MetadataRevision>,
 }
