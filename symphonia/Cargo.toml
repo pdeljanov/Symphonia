@@ -30,9 +30,9 @@ mp2 = ["symphonia-bundle-mp3/mp2"]
 mp3 = ["symphonia-bundle-mp3/mp3"]
 ogg = ["symphonia-format-ogg"]
 pcm = ["symphonia-codec-pcm"]
-aiff = ["symphonia-format-riff"]
+aiff = ["symphonia-format-riff/aiff"]
 vorbis = ["symphonia-codec-vorbis"]
-wav = ["symphonia-format-wav"]
+wav = ["symphonia-format-riff/wav"]
 
 # MPEG audio codecs.
 mpa = ["mp1", "mp2", "mp3"]
@@ -129,11 +129,8 @@ optional = true
 version = "0.5.2"
 path = "../symphonia-format-riff"
 optional = true
-
-[dependencies.symphonia-format-wav]
-version = "0.5.2"
-path = "../symphonia-format-wav"
-optional = true
+# Standalone crate enables AIFF and WAVE by default.
+default-features = false
 
 [dependencies.symphonia-format-ogg]
 version = "0.5.2"

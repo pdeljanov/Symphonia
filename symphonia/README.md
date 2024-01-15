@@ -86,17 +86,18 @@ A status of *Excellent* is only assigned after the feature passes all compliance
 
 | Format   | Status    | Gapless* | Feature Flag | Default | Crate                       |
 |----------|-----------|----------|--------------|---------|-----------------------------|
+| AIFF     | Great     | Yes      | `aiff`       | No      | [`symphonia-format-riff`]   |
 | ISO/MP4  | Great     | No       | `isomp4`     | No      | [`symphonia-format-isomp4`] |
 | MKV/WebM | Good      | No       | `mkv`        | Yes     | [`symphonia-format-mkv`]    |
 | OGG      | Great     | Yes      | `ogg`        | Yes     | [`symphonia-format-ogg`]    |
-| Wave     | Excellent | Yes      | `wav`        | Yes     | [`symphonia-format-wav`]    |
+| Wave     | Excellent | Yes      | `wav`        | Yes     | [`symphonia-format-riff`]   |
 
 \* Gapless playback requires support from both the demuxer and decoder.
 
 [`symphonia-format-isomp4`]: https://docs.rs/symphonia-format-isomp4
-[`symphonia-format-ogg`]: https://docs.rs/symphonia-format-ogg
-[`symphonia-format-wav`]: https://docs.rs/symphonia-format-wav
 [`symphonia-format-mkv`]: https://docs.rs/symphonia-format-mkv
+[`symphonia-format-ogg`]: https://docs.rs/symphonia-format-ogg
+[`symphonia-format-riff`]: https://docs.rs/symphonia-format-riff
 
 > **Tip:** All formats can be enabled with the `all-formats` feature flag.
 

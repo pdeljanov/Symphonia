@@ -31,6 +31,9 @@ const AIFF_RIFF_FORM: [u8; 4] = *b"AIFF";
 /// A possible RIFF form is "aifc", using compressed data.
 const AIFC_RIFF_FORM: [u8; 4] = *b"AIFC";
 
+/// Audio Interchange File Format (AIFF) format reader.
+///
+/// `AiffReader` implements a demuxer for the AIFF container format.
 pub struct AiffReader {
     reader: MediaSourceStream,
     tracks: Vec<Track>,

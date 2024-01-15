@@ -26,6 +26,7 @@
 //!
 //! | Format   | Feature Flag | Gapless* | Default |
 //! |----------|--------------|----------|---------|
+//! | AIFF     | `aiff`       | Yes      | No      |
 //! | ISO/MP4  | `isomp4`     | No       | No      |
 //! | MKV/WebM | `mkv`        | No       | Yes     |
 //! | OGG      | `ogg`        | Yes      | Yes     |
@@ -178,7 +179,7 @@ pub mod default {
         #[cfg(feature = "aiff")]
         pub use symphonia_format_riff::AiffReader;
         #[cfg(feature = "wav")]
-        pub use symphonia_format_wav::WavReader;
+        pub use symphonia_format_riff::WavReader;
 
         #[deprecated = "use `default::formats::MpaReader` instead"]
         #[cfg(any(feature = "mp1", feature = "mp2", feature = "mp3"))]

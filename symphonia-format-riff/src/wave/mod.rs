@@ -29,6 +29,9 @@ const WAVE_STREAM_MARKER: [u8; 4] = *b"RIFF";
 /// A possible RIFF form is "wave".
 const WAVE_RIFF_FORM: [u8; 4] = *b"WAVE";
 
+/// Waveform Audio File Format (WAV) format reader.
+///
+/// `WavReader` implements a demuxer for the WAVE container format.
 pub struct WavReader {
     reader: MediaSourceStream,
     tracks: Vec<Track>,
