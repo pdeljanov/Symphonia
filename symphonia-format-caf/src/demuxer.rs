@@ -269,7 +269,8 @@ impl CafReader {
 
         match desc.channels_per_frame {
             0 => {
-                return decode_error("caf: channel count is zero");
+                // A channel count of zero should have been rejected by the AudioDescription parser
+                unreachable!("Invalid channel count");
             }
             1 => {
                 codec_params.with_channels(Channels::FRONT_LEFT);
