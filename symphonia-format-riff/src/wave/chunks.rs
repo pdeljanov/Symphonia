@@ -134,15 +134,21 @@ impl WaveFormatChunk {
     ) -> Result<FormatData> {
         // WaveFormat for a IEEE format should not be extended, but it may still have an extra data
         // length parameter.
-        if len == 18 {
-            let extra_size = reader.read_u16()?;
-
-            if extra_size != 0 {
-                return decode_error("wav: extra data not expected for fmt_ieee chunk");
+        match len {
+            16 => (),
+            18 => {
+                let extra_size = reader.read_u16()?;
+                if extra_size != 0 {
+                    return decode_error("wav: extra data not expected for fmt_ieee chunk");
+                }
             }
-        }
-        else if len > 16 {
-            return decode_error("wav: malformed fmt_ieee chunk");
+            40 => {
+                // WAVEFORMATEXTENSIBLE is used for formats having more than two channels
+                // or higher sample resolutions than allowed by WAVEFORMATEX but for now
+                // we just ignore it
+                let _ = reader.ignore_bytes(40 - 16);
+            }
+            _ => return decode_error("wav: malformed fmt_ieee chunk"),
         }
 
         // Officially, only 32-bit floats are supported, but Symphonia can handle 64-bit floats.
