@@ -88,6 +88,7 @@ A status of *Excellent* is only assigned after the feature passes all compliance
 | Format   | Status    | Gapless* | Feature Flag | Default | Crate                       |
 |----------|-----------|----------|--------------|---------|-----------------------------|
 | AIFF     | Great     | Yes      | `aiff`       | No      | [`symphonia-format-riff`]   |
+| CAF      | Good      | No       | `caf`        | No      | [`symphonia-format-caf`]    |
 | ISO/MP4  | Great     | No       | `isomp4`     | No      | [`symphonia-format-isomp4`] |
 | MKV/WebM | Good      | No       | `mkv`        | Yes     | [`symphonia-format-mkv`]    |
 | OGG      | Great     | Yes      | `ogg`        | Yes     | [`symphonia-format-ogg`]    |
@@ -95,6 +96,7 @@ A status of *Excellent* is only assigned after the feature passes all compliance
 
 \* Gapless playback requires support from both the demuxer and decoder.
 
+[`symphonia-format-caf`]: https://docs.rs/symphonia-format-caf
 [`symphonia-format-isomp4`]: https://docs.rs/symphonia-format-isomp4
 [`symphonia-format-mkv`]: https://docs.rs/symphonia-format-mkv
 [`symphonia-format-ogg`]: https://docs.rs/symphonia-format-ogg

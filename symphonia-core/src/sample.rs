@@ -30,7 +30,7 @@ pub enum SampleFormat {
     S24,
     /// Signed 32-bit integer.
     S32,
-    /// Single prevision (32-bit) floating point.
+    /// Single precision (32-bit) floating point.
     F32,
     /// Double precision (64-bit) floating point.
     F64,
