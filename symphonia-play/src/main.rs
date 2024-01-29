@@ -455,8 +455,7 @@ fn dump_visual(visual: &Visual, file_name: &OsStr, index: usize) {
     let mut out_file_name = OsString::from(file_name);
     out_file_name.push(format!("-{:0>2}{}", index, extension));
 
-    if let Err(err) =
-        File::create(out_file_name).and_then(|mut file| file.write_all(&visual.data))
+    if let Err(err) = File::create(out_file_name).and_then(|mut file| file.write_all(&visual.data))
     {
         warn!("failed to dump visual due to error {}", err);
     }
