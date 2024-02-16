@@ -51,7 +51,7 @@ pub struct LogicalStream {
 }
 
 impl LogicalStream {
-    const MAX_PACKET_LEN: usize = 8 * 1024 * 1024;
+    const MAX_PACKET_LEN: usize = 16 * 1024 * 1024;
 
     pub fn new(mapper: Box<dyn Mapper>, gapless: bool) -> Self {
         LogicalStream {
