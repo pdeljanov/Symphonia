@@ -36,7 +36,7 @@ pub(crate) fn read_tag<R: ReadBytes>(mut reader: R) -> Result<(u32, u32, bool)> 
             vint = (vint << 8) | u32::from(byte);
         }
 
-        log::debug!("element with tag: {:X}", vint);
+        // log::debug!("element with tag: {:X}", vint);
         return Ok((vint, remaining_octets + 1, false));
     }
 

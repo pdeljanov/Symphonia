@@ -199,7 +199,7 @@ impl MkvReader {
         if let Some(ClusterState { end: Some(end), .. }) = &self.current_cluster {
             // Make sure we don't read past the current cluster if its size is known.
             if self.iter.pos() >= *end {
-                log::debug!("ended cluster");
+                // log::debug!("ended cluster");
                 self.current_cluster = None;
             }
         }
