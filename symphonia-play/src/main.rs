@@ -34,6 +34,11 @@ mod output;
 #[cfg(not(target_os = "linux"))]
 mod resampler;
 
+enum SeekPosition {
+    Time(f64),
+    Timetamp(u64),
+}
+
 fn main() {
     pretty_env_logger::init();
 
@@ -46,8 +51,28 @@ fn main() {
                 .long("seek")
                 .short('s')
                 .value_name("TIME")
-                .help("Seek to the given time in seconds")
-                .conflicts_with_all(&["verify", "decode-only", "verify-only", "probe-only"]),
+                .help("Seek to the time in seconds")
+                .conflicts_with_all(&[
+                    "seek-ts",
+                    "decode-only",
+                    "probe-only",
+                    "verify",
+                    "verify-only",
+                ]),
+        )
+        .arg(
+            Arg::new("seek-ts")
+                .long("seek-ts")
+                .short('S')
+                .value_name("TIMESTAMP")
+                .help("Seek to the timestamp in timebase units")
+                .conflicts_with_all(&[
+                    "seek",
+                    "decode-only",
+                    "probe-only",
+                    "verify",
+                    "verify-only",
+                ]),
         )
         .arg(
             Arg::new("track").long("track").short('t').value_name("TRACK").help("The track to use"),
@@ -178,14 +203,22 @@ fn run(args: &ArgMatches) -> Result<i32> {
                 print_format(path, &mut probed);
 
                 // If present, parse the seek argument.
-                let seek_time = args.value_of("seek").map(|p| p.parse::<f64>().unwrap_or(0.0));
+                let seek = if let Some(time) = args.value_of("seek") {
+                    Some(SeekPosition::Time(time.parse::<f64>().unwrap_or(0.0)))
+                }
+                else if let Some(ts) = args.value_of("seek-ts") {
+                    Some(SeekPosition::Timetamp(ts.parse::<u64>().unwrap_or(0)))
+                }
+                else {
+                    None
+                };
 
                 // Set the decoder options.
                 let decode_opts =
                     DecoderOptions { verify: args.is_present("verify"), ..Default::default() };
 
                 // Play it!
-                play(probed.format, track, seek_time, &decode_opts, no_progress)
+                play(probed.format, track, seek, &decode_opts, no_progress)
             }
         }
         Err(err) => {
@@ -241,7 +274,7 @@ struct PlayTrackOptions {
 fn play(
     mut reader: Box<dyn FormatReader>,
     track_num: Option<usize>,
-    seek_time: Option<f64>,
+    seek: Option<SeekPosition>,
     decode_opts: &DecoderOptions,
     no_progress: bool,
 ) -> Result<i32> {
@@ -256,14 +289,17 @@ fn play(
         _ => return Ok(0),
     };
 
-    // If there is a seek time, seek the reader to the time specified and get the timestamp of the
+    // If seeking, seek the reader to the time or timestamp specified and get the timestamp of the
     // seeked position. All packets with a timestamp < the seeked position will not be played.
     //
     // Note: This is a half-baked approach to seeking! After seeking the reader, packets should be
     // decoded and *samples* discarded up-to the exact *sample* indicated by required_ts. The
     // current approach will discard excess samples if seeking to a sample within a packet.
-    let seek_ts = if let Some(time) = seek_time {
-        let seek_to = SeekTo::Time { time: Time::from(time), track_id: Some(track_id) };
+    let seek_ts = if let Some(seek) = seek {
+        let seek_to = match seek {
+            SeekPosition::Time(t) => SeekTo::Time { time: Time::from(t), track_id: Some(track_id) },
+            SeekPosition::Timetamp(ts) => SeekTo::TimeStamp { ts, track_id },
+        };
 
         // Attempt the seek. If the seek fails, ignore the error and return a seek timestamp of 0 so
         // that no samples are trimmed.
