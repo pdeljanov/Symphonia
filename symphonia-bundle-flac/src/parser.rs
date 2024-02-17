@@ -459,12 +459,12 @@ impl PacketParser {
     {
         let init_pos = reader.pos();
 
-        let mut byte_offset;
+        let mut frame_pos;
 
         let header = loop {
             let sync = sync_frame(reader)?;
 
-            byte_offset = reader.pos() - 2;
+            frame_pos = reader.pos() - 2;
 
             if let Ok(header) = read_frame_header(reader, sync) {
                 // Do a strict frame header check with no previous header.
@@ -472,12 +472,16 @@ impl PacketParser {
                     break header;
                 }
             }
+
+            // If the header check failed, then seek to one byte past the start of the false frame
+            // and continue trying to resynchronize.
+            reader.seek_buffered(frame_pos + 1);
         };
 
         let sync = calc_sync_info(&self.info, &header);
 
         // Rewind reader back to the start of the frame.
-        reader.seek_buffered_rev((reader.pos() - byte_offset) as usize);
+        reader.seek_buffered(frame_pos);
 
         // If the reader was moved, soft reset the parser.
         if init_pos != reader.pos() {
