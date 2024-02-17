@@ -266,7 +266,7 @@ impl FormatReader for FlacReader {
                 if ts < sync.ts {
                     end_byte_offset = mid_byte_offset;
                 }
-                else if ts > sync.ts && ts < sync.ts + sync.dur {
+                else if ts >= sync.ts && ts < sync.ts + sync.dur {
                     debug!("seeked to ts={} (delta={})", sync.ts, sync.ts as i64 - ts as i64);
 
                     return Ok(SeekedTo { track_id: 0, actual_ts: sync.ts, required_ts: ts });
