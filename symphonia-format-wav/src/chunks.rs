@@ -475,10 +475,20 @@ impl WaveFormatChunk {
             0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00,
             0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71,
         ];
+        #[rustfmt::skip]
+        const KSDATAFORMAT_SUBTYPE_AMBISONIC_B_FORMAT_PCM: [u8; 16] = [
+            0x01, 0x00, 0x00, 0x00, 0x21, 0x07, 0xd3, 0x11,
+            0x86, 0x44, 0xc8, 0xc1, 0xca, 0x00, 0x00, 0x00,
+        ];
+        #[rustfmt::skip]
+        const KSDATAFORMAT_SUBTYPE_AMBISONIC_B_FORMAT_IEE_FLOAT: [u8; 16] = [
+            0x03, 0x00, 0x00, 0x00, 0x21, 0x07, 0xd3, 0x11,
+            0x86, 0x44, 0xc8, 0xc1, 0xca, 0x00, 0x00, 0x00,
+        ];
 
         // Verify support based on the format GUID.
         let codec = match sub_format_guid {
-            KSDATAFORMAT_SUBTYPE_PCM => {
+            KSDATAFORMAT_SUBTYPE_PCM | KSDATAFORMAT_SUBTYPE_AMBISONIC_B_FORMAT_PCM => {
                 // Only support up-to 32-bit integer samples.
                 if bits_per_coded_sample > 32 {
                     return decode_error(
@@ -496,7 +506,7 @@ impl WaveFormatChunk {
                     _ => unreachable!(),
                 }
             }
-            KSDATAFORMAT_SUBTYPE_IEEE_FLOAT => {
+            KSDATAFORMAT_SUBTYPE_IEEE_FLOAT | KSDATAFORMAT_SUBTYPE_AMBISONIC_B_FORMAT_IEE_FLOAT => {
                 // IEEE floating formats do not support truncated sample widths.
                 if bits_per_sample != bits_per_coded_sample {
                     return decode_error(
