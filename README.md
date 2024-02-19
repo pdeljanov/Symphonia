@@ -149,6 +149,8 @@ All metadata readers are provided by the `symphonia-metadata` crate.
 
 Serialization/deserialization for metadata can be enbled with the `serde` feature flag.
 
+> **Note:** Serialization/Deserialization is highly dependent on Symphonia versions. There are no guarantees of compatibility between versions.
+
 ## Quality
 
 In addition to the safety guarantees afforded by Rust, Symphonia aims to:
