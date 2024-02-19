@@ -335,7 +335,7 @@ lazy_static! {
             m.insert(b"TSST", (read_text_frame, None));
             m.insert(b"TXXX", (read_txxx_frame, None));
             m.insert(b"TYER", (read_text_frame, Some(StandardTagKey::Date)));
-            // m.insert(b"UFID", read_null_frame);
+            m.insert(b"UFID", (read_ufid_frame, None));
             // m.insert(b"USER", read_null_frame);
             m.insert(b"USLT", (read_comm_uslt_frame, Some(StandardTagKey::Lyrics)));
             m.insert(b"WCOM", (read_url_frame, Some(StandardTagKey::UrlPurchase)));
@@ -366,16 +366,21 @@ lazy_static! {
 lazy_static! {
     static ref TXXX_FRAME_STD_KEYS: HashMap<&'static str, StandardTagKey> = {
         let mut m = HashMap::new();
-        m.insert("ACOUSTID FINGERPRINT", StandardTagKey::AcoustidFingerprint);
-        m.insert("ACOUSTID ID", StandardTagKey::AcoustidId);
+        m.insert("Acoustid Fingerprint", StandardTagKey::AcoustidFingerprint);
+        m.insert("Acoustid Id", StandardTagKey::AcoustidId);
         m.insert("BARCODE", StandardTagKey::IdentBarcode);
         m.insert("CATALOGNUMBER", StandardTagKey::IdentCatalogNumber);
         m.insert("LICENSE", StandardTagKey::License);
-        m.insert("MUSICBRAINZ ALBUM ARTIST ID", StandardTagKey::MusicBrainzAlbumArtistId);
-        m.insert("MUSICBRAINZ ALBUM ID", StandardTagKey::MusicBrainzAlbumId);
-        m.insert("MUSICBRAINZ ARTIST ID", StandardTagKey::MusicBrainzArtistId);
-        m.insert("MUSICBRAINZ RELEASE GROUP ID", StandardTagKey::MusicBrainzReleaseGroupId);
-        m.insert("MUSICBRAINZ WORK ID", StandardTagKey::MusicBrainzWorkId);
+        m.insert("MusicBrainz Album Artist Id", StandardTagKey::MusicBrainzAlbumArtistId);
+        m.insert("MusicBrainz Album Id", StandardTagKey::MusicBrainzAlbumId);
+        m.insert("MusicBrainz Artist Id", StandardTagKey::MusicBrainzArtistId);
+        m.insert("MusicBrainz Disc Id", StandardTagKey::MusicBrainzDiscId);
+        m.insert("MusicBrainz Original Album Id", StandardTagKey::MusicBrainzOriginalAlbumId);
+        m.insert("MusicBrainz Original Artist Id", StandardTagKey::MusicBrainzOriginalArtistId);
+        m.insert("MusicBrainz Release Group Id", StandardTagKey::MusicBrainzReleaseGroupId);
+        m.insert("MusicBrainz Album Status", StandardTagKey::MusicBrainzReleaseStatus);
+        m.insert("MusicBrainz Release Track Id", StandardTagKey::MusicBrainzTrackId);
+        m.insert("MusicBrainz Work Id", StandardTagKey::MusicBrainzWorkId);
         m.insert("REPLAYGAIN_ALBUM_GAIN", StandardTagKey::ReplayGainAlbumGain);
         m.insert("REPLAYGAIN_ALBUM_PEAK", StandardTagKey::ReplayGainAlbumPeak);
         m.insert("REPLAYGAIN_TRACK_GAIN", StandardTagKey::ReplayGainTrackGain);
@@ -706,6 +711,40 @@ fn read_txxx_frame(
     }
 
     Ok(FrameResult::MultipleTags(tags))
+}
+
+fn read_ufid_frame(
+    reader: &mut BufReader<'_>,
+    _: Option<StandardTagKey>,
+    _: &str,
+) -> Result<FrameResult> {
+    // UFID frames are always encoded as Latin-1
+    /*
+    // The first byte of the frame is the encoding.
+    let encoding = match Encoding::parse(reader.read_byte()?) {
+        Some(encoding) => encoding,
+        _ => return decode_error("id3v2: invalid UFID text encoding"),
+    };
+    */
+
+    // Read the description string.
+    let desc = scan_text(reader, Encoding::Iso8859_1, reader.bytes_available() as usize)?;
+
+    let std_key = if desc.as_ref() == "http://musicbrainz.org" {
+        Some(StandardTagKey::MusicBrainzRecordingId)
+    }
+    else {
+        None
+    };
+
+    // Generate a key name using the description.
+    let key = format!("UFID:{}", desc);
+
+    // Read the actual tag data
+    let data = reader.read_boxed_slice_exact(reader.bytes_available() as usize).unwrap();
+    let tag = Tag::new(std_key, &key, Value::Binary(data));
+
+    Ok(FrameResult::Tag(tag))
 }
 
 /// Reads all URL frames except for `WXXX`.

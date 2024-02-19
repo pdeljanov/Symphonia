@@ -523,8 +523,8 @@ fn print_format(path: &Path, probed: &mut ProbeResult) {
     // Prefer metadata that's provided in the container format, over other tags found during the
     // probe operation.
     if let Some(metadata_rev) = probed.format.metadata().current() {
-        print_tags(metadata_rev.tags());
-        print_visuals(metadata_rev.visuals());
+        print_tags(metadata_rev.tags.as_ref());
+        print_visuals(metadata_rev.visuals.as_ref());
 
         // Warn that certain tags are preferred.
         if probed.metadata.get().as_ref().is_some() {
@@ -533,8 +533,8 @@ fn print_format(path: &Path, probed: &mut ProbeResult) {
         }
     }
     else if let Some(metadata_rev) = probed.metadata.get().as_ref().and_then(|m| m.current()) {
-        print_tags(metadata_rev.tags());
-        print_visuals(metadata_rev.visuals());
+        print_tags(metadata_rev.tags.as_ref());
+        print_visuals(metadata_rev.visuals.as_ref());
     }
 
     print_cues(probed.format.cues());
@@ -543,8 +543,8 @@ fn print_format(path: &Path, probed: &mut ProbeResult) {
 }
 
 fn print_update(rev: &MetadataRevision) {
-    print_tags(rev.tags());
-    print_visuals(rev.visuals());
+    print_tags(rev.tags.as_ref());
+    print_visuals(rev.visuals.as_ref());
     println!(":");
     println!();
 }
