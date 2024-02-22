@@ -390,6 +390,10 @@ impl FormatReader for MkvReader {
 
             for (etype, pos) in seek_positions {
                 it.seek(pos)?;
+
+                // Safety: The element type or position may be incorrect. The element iterator will
+                // validate the type (as declared in the header) of the element at the seeked
+                // position against the element type asked to be read.
                 match etype {
                     ElementType::Tracks => {
                         segment_tracks = Some(it.read_element::<TracksElement>()?);

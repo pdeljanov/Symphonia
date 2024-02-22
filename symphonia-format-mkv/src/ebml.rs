@@ -341,11 +341,11 @@ impl<R: ReadBytes> ElementIterator<R> {
     /// [Self::read_header] or [Self::read_child_header].
     pub(crate) fn read_element_data<E: Element>(&mut self) -> Result<E> {
         let header = self.current.expect("EBML header must be read before calling this function");
-        assert_eq!(
-            header.etype,
-            E::ID,
-            "EBML element type must be checked before calling this function"
-        );
+
+        // Ensure the EBML element header has the same element type as the one being read.
+        if header.etype != E::ID {
+            return decode_error("mkv: unexpected EBML element");
+        }
 
         let element = E::read(&mut self.reader, header)?;
         // Update position to match the position element reader finished at
