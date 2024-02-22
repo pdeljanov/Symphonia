@@ -160,12 +160,14 @@ impl PacketParser for OpusPacketParser {
                 return 0;
             }
         };
-        // The configuration number is the 5 most significant bits. Shift out 3 least significant bits.
+        // The configuration number is the 5 most significant bits. Shift out 3 least significant
+        // bits.
         let configuration_number = toc_byte >> 3; // max 2^5-1 = 31
 
         // The configuration number maps to packet length according to this lookup table.
         // See https://www.rfc-editor.org/rfc/rfc6716 top half of page 14.
-        // Numbers are in milliseconds in the rfc. Down below they are in TimeBase units, so 10ms = 10*48.
+        // Numbers are in milliseconds in the rfc. Down below they are in TimeBase units, so
+        // 10ms = 10*48.
         #[rustfmt::skip]
         const CONFIGURATION_NUMBER_TO_FRAME_DURATION: [u32; 32] = [
             10*48, 20*48, 40*48, 60*48,
@@ -179,7 +181,8 @@ impl PacketParser for OpusPacketParser {
             (2.5*48.0) as u32, 5*48, 10*48, 20*48,
         ];
         // Look up the frame length.
-        let frame_duration = CONFIGURATION_NUMBER_TO_FRAME_DURATION[configuration_number as usize] as u64;
+        let frame_duration =
+            CONFIGURATION_NUMBER_TO_FRAME_DURATION[configuration_number as usize] as u64;
 
         // Look up the number of frames in the packet.
         // See https://www.rfc-editor.org/rfc/rfc6716 bottom half of page 14.
@@ -192,9 +195,10 @@ impl PacketParser for OpusPacketParser {
                     // TOC byte is followed by number of frames. See page 18 section 3.2.5 code 3
                     let m = byte & 0b11111; // Note: it's actually called "M" in the rfc.
                     m as u64
-                },
+                }
                 None => {
-                    // What to do here? I'd like to return an error but this is an infalliable trait.
+                    // What to do here? I'd like to return an error but this is an infalliable
+                    // trait.
                     warn!("opus code 3 packet with no following byte containing number of frames");
                     return 0;
                 }
@@ -235,7 +239,8 @@ impl Mapper for OpusMapper {
     fn map_packet(&mut self, packet: &[u8]) -> Result<MapResult> {
         if !self.need_comment {
             Ok(MapResult::StreamData { dur: OpusPacketParser {}.parse_next_packet_dur(packet) })
-        } else {
+        }
+        else {
             let mut reader = BufReader::new(packet);
 
             // Read the header signature.
@@ -251,7 +256,8 @@ impl Mapper for OpusMapper {
                 self.need_comment = false;
 
                 Ok(MapResult::SideData { data: SideData::Metadata(builder.metadata()) })
-            } else {
+            }
+            else {
                 warn!("ogg (opus): invalid packet type");
                 Ok(MapResult::Unknown)
             }
