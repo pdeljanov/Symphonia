@@ -118,14 +118,14 @@ impl OggReader {
         if self.reader.is_seekable() {
             let stream = self.streams.get_mut(&serial).unwrap();
 
-            // The end of the physical stream.
-            let physical_end = self.phys_byte_range_end.unwrap();
-
+            // Bisection method byte ranges. When these two values are equal, the bisection has
+            // converged on the position of the correct page.
             let mut start_byte_pos = self.phys_byte_range_start;
-            let mut end_byte_pos = physical_end;
+            let mut end_byte_pos = self.phys_byte_range_end.unwrap();
 
-            // Bisection method.
-            loop {
+            // Bisect the stream while the byte range is large. For smaller ranges, a linear scan is
+            // faster than having the the binary search converge.
+            while end_byte_pos - start_byte_pos > 2 * OGG_PAGE_MAX_SIZE as u64 {
                 // Find the middle of the upper and lower byte search range.
                 let mid_byte_pos = (start_byte_pos + end_byte_pos) / 2;
 
@@ -135,46 +135,53 @@ impl OggReader {
                 // Read the next page.
                 match self.pages.next_page_for_serial(&mut self.reader, serial) {
                     Ok(_) => (),
-                    _ => return seek_error(SeekErrorKind::OutOfRange),
+                    _ => {
+                        // No more pages for the stream from the mid-point onwards.
+                        debug!(
+                            "seek: bisect step: byte_range=[{}, {}, {}]",
+                            start_byte_pos, mid_byte_pos, end_byte_pos,
+                        );
+
+                        end_byte_pos = mid_byte_pos;
+                        continue;
+                    }
                 }
 
                 // Probe the page to get the start and end timestamp.
                 let (start_ts, end_ts) = stream.inspect_page(&self.pages.page());
 
                 debug!(
-                    "seek: bisect step: page={{ start={}, end={} }} byte_range=[{}..{}], mid={}",
-                    start_ts, end_ts, start_byte_pos, end_byte_pos, mid_byte_pos,
+                    "seek: bisect step: page={{ start_ts={}, end_ts={} }} byte_range=[{}, {}, {}]",
+                    start_ts, end_ts, start_byte_pos, mid_byte_pos, end_byte_pos,
                 );
 
                 if required_ts < start_ts {
-                    // The required timestamp is less-than the timestamp of the first sample in
-                    // page1. Update the upper bound and bisect again.
+                    // The required timestamp is less-than the timestamp of the first sample in the
+                    // page. Update the upper bound and bisect again.
                     end_byte_pos = mid_byte_pos;
                 }
                 else if required_ts > end_ts {
                     // The required timestamp is greater-than the timestamp of the final sample in
-                    // the in page1. Update the lower bound and bisect again.
+                    // the in the page. Update the lower bound and bisect again.
                     start_byte_pos = mid_byte_pos;
                 }
                 else {
-                    // The sample with the required timestamp is contained in page1. Return the
-                    // byte position for page0, and the timestamp of the first sample in page1, so
-                    // that when packets from page1 are read, those packets will have a non-zero
-                    // base timestamp.
+                    // The sample with the required timestamp is contained in the page. The
+                    // bisection has converged on the correct page so stop the bisection.
+                    start_byte_pos = mid_byte_pos;
+                    end_byte_pos = mid_byte_pos;
                     break;
                 }
+            }
 
-                // Prevent infinite iteration and too many seeks when the search range is less
-                // than 2x the maximum page size.
-                if end_byte_pos - start_byte_pos <= 2 * OGG_PAGE_MAX_SIZE as u64 {
-                    self.reader.seek(SeekFrom::Start(start_byte_pos))?;
+            // If the bisection did not converge, then the linear search must continue from the
+            // lower-bound (start) position of what would've been the next iteration of bisection.
+            if start_byte_pos != end_byte_pos {
+                self.reader.seek(SeekFrom::Start(start_byte_pos))?;
 
-                    match self.pages.next_page_for_serial(&mut self.reader, serial) {
-                        Ok(_) => (),
-                        _ => return seek_error(SeekErrorKind::OutOfRange),
-                    }
-
-                    break;
+                match self.pages.next_page_for_serial(&mut self.reader, serial) {
+                    Ok(_) => (),
+                    _ => return seek_error(SeekErrorKind::OutOfRange),
                 }
             }
 
