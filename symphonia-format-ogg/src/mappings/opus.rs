@@ -153,7 +153,7 @@ impl PacketParser for OpusPacketParser {
     fn parse_next_packet_dur(&mut self, packet: &[u8]) -> u64 {
         // See https://www.rfc-editor.org/rfc/rfc6716
         // Read TOC (Table Of Contents) byte which is the first byte in the opus data.
-        let toc_byte = match packet.get(0) {
+        let toc_byte = match packet.first() {
             Some(b) => b,
             None => {
                 warn!("opus packet empty");

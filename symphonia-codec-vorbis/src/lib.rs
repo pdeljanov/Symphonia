@@ -564,7 +564,7 @@ fn read_residue(bs: &mut BitReaderRtl<'_>, max_codebook: u8) -> Result<Residue> 
     let residue_type = bs.read_bits_leq32(16)? as u16;
 
     match residue_type {
-        0 | 1 | 2 => Residue::try_read(bs, residue_type, max_codebook),
+        0..=2 => Residue::try_read(bs, residue_type, max_codebook),
         _ => decode_error("vorbis: invalid residue type"),
     }
 }

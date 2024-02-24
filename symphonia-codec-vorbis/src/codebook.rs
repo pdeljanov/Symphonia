@@ -354,7 +354,7 @@ impl VorbisCodebook {
 
         // Generate the values associated for each codeword.
         // TODO: Should unused entries be 0 or actually the correct value?
-        let values: Vec<u32> = (0..codebook_entries).into_iter().collect();
+        let values: Vec<u32> = (0..codebook_entries).collect();
 
         // Finally, generate the codebook with a reverse (LSb) bit order.
         let mut builder = CodebookBuilder::new_sparse(BitOrder::Reverse);

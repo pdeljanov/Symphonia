@@ -124,10 +124,10 @@ impl CommonChunk {
                 Ok(PacketInfo::without_blocks(block_align as u16))
             }
             FormatData::Extensible(_) => {
-                return unsupported_error("aiff: packet info not implemented for format Extensible")
+                unsupported_error("aiff: packet info not implemented for format Extensible")
             }
             FormatData::Adpcm(_) => {
-                return unsupported_error("aiff: packet info not implemented for format Adpcm")
+                unsupported_error("aiff: packet info not implemented for format Adpcm")
             }
         }
     }
@@ -140,7 +140,7 @@ impl ParseChunk for CommonChunk {
         let sample_size = reader.read_be_i16()?;
 
         let mut sample_rate: [u8; 10] = [0; 10];
-        let _res = reader.read_buf_exact(sample_rate.as_mut())?;
+        reader.read_buf_exact(sample_rate.as_mut())?;
 
         let sample_rate = Extended::from_be_bytes(sample_rate);
         let sample_rate = sample_rate.to_f64() as u32;
@@ -214,7 +214,7 @@ impl CommonChunkParser for ChunkParser<CommonChunk> {
         let sample_size = source.read_be_i16()?;
 
         let mut sample_rate: [u8; 10] = [0; 10];
-        let _res = source.read_buf_exact(sample_rate.as_mut())?;
+        source.read_buf_exact(sample_rate.as_mut())?;
 
         let sample_rate = Extended::from_be_bytes(sample_rate);
         let sample_rate = sample_rate.to_f64() as u32;

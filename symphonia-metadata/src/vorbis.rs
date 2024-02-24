@@ -118,7 +118,7 @@ lazy_static! {
 /// Parse a string containing a base64 encoded FLAC picture block into a visual.
 fn parse_base64_picture_block(encoded: &str, metadata: &mut MetadataBuilder) {
     if let Some(data) = base64_decode(encoded) {
-        if let Err(_) = flac::read_picture_block(&mut BufReader::new(&data), metadata) {
+        if flac::read_picture_block(&mut BufReader::new(&data), metadata).is_err() {
             warn!("invalid picture block data");
         }
     }

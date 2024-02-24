@@ -322,7 +322,7 @@ impl PacketInfo {
 pub fn next_packet(
     reader: &mut MediaSourceStream,
     packet_info: &PacketInfo,
-    tracks: &Vec<Track>,
+    tracks: &[Track],
     data_start_pos: u64,
     data_end_pos: u64,
 ) -> Result<Packet> {

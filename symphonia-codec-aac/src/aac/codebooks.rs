@@ -564,7 +564,7 @@ fn make_raw_codebook(table: &VlcTable) -> Codebook<Entry16x16> {
     let len = table.codes.len() as u16;
 
     // Generate the indicies for each code.
-    let indicies: Vec<u16> = (0..len).into_iter().collect();
+    let indicies: Vec<u16> = (0..len).collect();
 
     // Generate the codebook.
     let mut builder = CodebookBuilder::new(BitOrder::Verbatim);
@@ -585,7 +585,7 @@ where
     let codebook = make_raw_codebook(table);
 
     // Generate values for the codebook.
-    let values: Vec<C::ValueType> = (0..table.codes.len()).into_iter().map(f).collect();
+    let values: Vec<C::ValueType> = (0..table.codes.len()).map(f).collect();
 
     C::new(codebook, values.into_boxed_slice())
 }
@@ -656,7 +656,7 @@ lazy_static! {
         let len = SCF_CODEBOOK_CODES.len() as u8;
 
         // Generate the values for the codebook.
-        let values: Vec<u8> = (0..len).into_iter().collect();
+        let values: Vec<u8> = (0..len).collect();
 
         // Generate the codebook.
         let mut builder = CodebookBuilder::new(BitOrder::Verbatim);

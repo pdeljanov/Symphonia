@@ -181,7 +181,7 @@ fn run(args: &ArgMatches) -> Result<i32> {
                     _ => OsStr::new("NoName"),
                 };
 
-                dump_visuals(&mut probed, &name);
+                dump_visuals(&mut probed, name);
             }
 
             // Select the operating mode.
@@ -206,11 +206,9 @@ fn run(args: &ArgMatches) -> Result<i32> {
                 let seek = if let Some(time) = args.value_of("seek") {
                     Some(SeekPosition::Time(time.parse::<f64>().unwrap_or(0.0)))
                 }
-                else if let Some(ts) = args.value_of("seek-ts") {
-                    Some(SeekPosition::Timetamp(ts.parse::<u64>().unwrap_or(0)))
-                }
                 else {
-                    None
+                    args.value_of("seek-ts")
+                        .map(|ts| SeekPosition::Timetamp(ts.parse::<u64>().unwrap_or(0)))
                 };
 
                 // Set the decoder options.
