@@ -1,6 +1,6 @@
 [package]
 name = "symphonia-format-riff"
-version = "0.5.2"
+version = "0.5.4"
 description = "Pure Rust RIFF demuxer (a part of project Symphonia)."
 homepage = "https://github.com/pdeljanov/Symphonia"
 repository = "https://github.com/pdeljanov/Symphonia"
@@ -20,5 +20,5 @@ wav = []
 [dependencies]
 extended = "0.1.0"
 log = "0.4"
-symphonia-core = { version = "0.5.2", path = "../symphonia-core" }
-symphonia-metadata = { version = "0.5.2", path = "../symphonia-metadata" }
+symphonia-core = { version = "0.5.4", path = "../symphonia-core" }
+symphonia-metadata = { version = "0.5.4", path = "../symphonia-metadata" }
