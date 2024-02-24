@@ -196,6 +196,4 @@ Symphonia is provided under the MPL v2.0 license. Please refer to the LICENSE fi
 
 ## Contributing
 
-Symphonia is an open-source project and contributions are very welcome! If you would like to make a large contribution, please raise an issue ahead of time to make sure your efforts fit into the project goals, and that there's no duplication of effort. Please be aware that all contributions must also be licensed under the MPL v2.0 license to be accepted.
-
-When submitting a pull request, be sure you have included yourself in the CONTRIBUTORS file!
+Symphonia is a free and open-source project that welcomes contributions! To get started, please read our [Contribution Guidelines](https://github.com/pdeljanov/Symphonia/tree/master/CONTRIBUTING.md).
