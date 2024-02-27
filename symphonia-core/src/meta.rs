@@ -398,6 +398,9 @@ pub struct MetadataRevision {
 
 impl MetadataRevision {
     /// Gets an immutable slice to the `Tag`s in this revision.
+    ///
+    /// If a tag read from the source contained multiple values, then there will be one `Tag` item
+    /// per value, with each item having the same key and standard key.
     pub fn tags(&self) -> &[Tag] {
         &self.tags
     }
@@ -466,7 +469,8 @@ impl<'a> Metadata<'a> {
         self.revisions.front()
     }
 
-    /// Skips to, and gets an immutable reference to the latest, and therefore newest, revision of the metadata.
+    /// Skips to, and gets an immutable reference to the latest, and therefore newest, revision of
+    /// the metadata.
     pub fn skip_to_latest(&mut self) -> Option<&MetadataRevision> {
         loop {
             if self.pop().is_none() {
