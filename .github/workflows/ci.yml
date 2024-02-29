@@ -13,33 +13,48 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest, "windows-latest"]
+        os: [ubuntu-latest, macos-latest, windows-latest]
       fail-fast: false
 
     steps:
-    - name: Checkout
-      uses: actions/checkout@v1
+    - uses: actions/checkout@v4
 
     - name: Setup Toolchain
-      uses: actions-rs/toolchain@v1
-      with:
-        toolchain: stable
-        override: true
+      run: rustup install stable && rustup default stable
 
     - name: Check default features
-      uses: actions-rs/cargo@v1
-      with:
-        command: check
-        args: --all
+      run: cargo check --all
 
     - name: Check all features
-      uses: actions-rs/cargo@v1
-      with:
-        command: check
-        args: --all --all-features --exclude symphonia-play
+      run: cargo check --all --all-features --exclude symphonia-play
+
+  clippy:
+    name: Clippy ${{ matrix.os }}
+
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+      fail-fast: false
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup Toolchain
+      run: rustup install stable && rustup default stable
+
+    - name: Check default features
+      run: cargo clippy --all -- -D warnings
+
+    - name: Check all features
+      run: cargo clippy --all --all-features --exclude symphonia-play -- -D warnings
 
   test:
     name: Test ${{ matrix.config.target }} on ${{ matrix.config.os }}
+
+    env:
+      CARGO: cargo
+      CROSS_VERSION: v0.2.5
 
     runs-on: ${{ matrix.config.os }}
     strategy:
@@ -51,35 +66,22 @@ jobs:
           - { os: ubuntu-latest, target: powerpc-unknown-linux-gnu, use-cross: true }
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v1
+      - uses: actions/checkout@v4
 
       - name: Setup Toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-          override: true
+        run: rustup install stable && rustup default stable
+
+      - name: Setup Cross
+        if: matrix.config.use-cross
+        run: |
+          cargo install cross --locked
+          echo "CARGO=cross" >> $GITHUB_ENV
 
       - name: Test default features
-        uses: actions-rs/cargo@v1
-        with:
-          command: test
-          args: --target ${{ matrix.config.target }} --all --exclude symphonia-play
-          use-cross: ${{ matrix.config.use-cross }}
+        run: ${{ env.CARGO }} test --target ${{ matrix.config.target }} --all --exclude symphonia-play
 
       - name: Test all features
-        uses: actions-rs/cargo@v1
-        with:
-          command: test
-          args: --target ${{ matrix.config.target }} --all --all-features --exclude symphonia-play
-          use-cross: ${{ matrix.config.use-cross }}
-
-      - name: Test documentation
-        uses: actions-rs/cargo@v1
-        with:
-          command: test
-          args: --target ${{ matrix.config.target }} --all --all-features --doc --exclude symphonia-play
-          use-cross: ${{ matrix.config.use-cross }}
+        run: ${{ env.CARGO }} test --target ${{ matrix.config.target }} --all --all-features --exclude symphonia-play
 
   fmt:
     name: Rustfmt
@@ -87,19 +89,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v1
+      - uses: actions/checkout@v4
 
       - name: Setup Toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: nightly
-          override: true
-          components: rustfmt
+        run: rustup install nightly --profile minimal && rustup default nightly && rustup component add rustfmt
 
       - name: Check formatting
-        uses: actions-rs/cargo@v1
-        with:
-          command: fmt
-          args: --all -- --check
+        run: cargo fmt --all -- --check

@@ -46,7 +46,7 @@ lazy_static! {
     ///
     /// The value of i0 is dependant on the least significant bit of scalefac_compress.
     ///
-    ///  ```text
+    /// ```text
     /// scalefac_compress & 1 | i0
     /// ----------------------+---------------------
     /// 0                     | 1 / sqrt(sqrt(2.0))
