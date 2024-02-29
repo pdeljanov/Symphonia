@@ -29,7 +29,7 @@ jobs:
       run: cargo check --all --all-features --exclude symphonia-play
 
   clippy:
-    name: Check ${{ matrix.os }}
+    name: Clippy ${{ matrix.os }}
 
     runs-on: ${{ matrix.os }}
     strategy:
