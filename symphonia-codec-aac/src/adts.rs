@@ -296,7 +296,8 @@ fn approximate_frame_count(mut source: &mut MediaSourceStream) -> Result<Option<
             n_bytes += header.frame_len + AdtsHeader::SIZE;
         }
         source.seek_buffered_rev((source.pos() - original_pos) as usize);
-    } else {
+    }
+    else {
         let step = total_len / 3;
         for new_pos in (original_pos..total_len).step_by(step as usize).skip(1) {
             if new_pos >= total_len {
@@ -308,7 +309,7 @@ fn approximate_frame_count(mut source: &mut MediaSourceStream) -> Result<Option<
                 break;
             }
 
-            for _ in 0..=500 {
+            for _ in 0..=100 {
                 let header = match AdtsHeader::read(&mut source) {
                     Ok(header) => header,
                     _ => break,
@@ -325,7 +326,7 @@ fn approximate_frame_count(mut source: &mut MediaSourceStream) -> Result<Option<
 
         let _ = source.seek(SeekFrom::Start(original_pos))?;
     }
-    
+
     debug!("adts: Parsed {} of {} bytes to approximate duration", n_bytes, total_len);
 
     match parsed_n_frames {
