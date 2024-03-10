@@ -298,9 +298,7 @@ fn approximate_frame_count(mut source: &mut MediaSourceStream) -> Result<Option<
 
     let step = total_len / 3;
     if source.is_seekable() {
-        let mut new_pos = total_len / 2;
-
-        loop {
+        for new_pos in (original_pos..total_len).step_by(step as usize).skip(1) {
             if new_pos >= total_len {
                 break;
             }
@@ -323,7 +321,6 @@ fn approximate_frame_count(mut source: &mut MediaSourceStream) -> Result<Option<
                 parsed_n_frames += 1;
                 n_bytes += header.frame_len + AdtsHeader::SIZE;
             }
-            new_pos += step;
         }
 
         let _ = source.seek(SeekFrom::Start(original_pos))?;
