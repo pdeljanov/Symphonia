@@ -20,7 +20,7 @@ use std::io::{Seek, SeekFrom};
 
 use super::common::{map_channels, M4AType, AAC_SAMPLE_RATES, M4A_TYPES};
 
-use log::debug;
+use log::{debug, info};
 
 const SAMPLES_PER_AAC_PACKET: u64 = 1024;
 
@@ -147,6 +147,7 @@ impl FormatReader for AdtsReader {
 
         let n_frames = approximate_frame_count(&mut source)?;
         if let Some(n_frames) = n_frames {
+            info!("estimating duration from bitrate, may be inaccurate for vbr files");
             params.with_n_frames(n_frames);
         }
 
@@ -278,9 +279,11 @@ fn approximate_frame_count(mut source: &mut MediaSourceStream) -> Result<Option<
     let mut n_bytes = 0;
 
     if !source.is_seekable() {
-        const ENSURED_SEEK_LEN: u64 = 1000;
-        source.ensure_seekback_buffer(ENSURED_SEEK_LEN as usize);
-        let mut scoped_stream = ScopedStream::new(&mut source, ENSURED_SEEK_LEN);
+        // The maximum length in bytes of frames to consume from the stream to sample.
+        const MAX_LEN: u64 = 16 * 1024;
+
+        source.ensure_seekback_buffer(MAX_LEN as usize);
+        let mut scoped_stream = ScopedStream::new(&mut source, MAX_LEN);
 
         loop {
             let header = match AdtsHeader::read(&mut scoped_stream) {
@@ -295,15 +298,17 @@ fn approximate_frame_count(mut source: &mut MediaSourceStream) -> Result<Option<
             parsed_n_frames += 1;
             n_bytes += header.frame_len + AdtsHeader::SIZE;
         }
-        source.seek_buffered_rev((source.pos() - original_pos) as usize);
+
+        let _ = source.seek_buffered(original_pos);
     }
     else {
-        let step = total_len / 3;
-        for new_pos in (original_pos..total_len).step_by(step as usize).skip(1) {
-            if new_pos >= total_len {
-                break;
-            }
+        // The number of points to sample within the stream.
+        const NUM_SAMPLE_POINTS: u64 = 4;
 
+        let step = (total_len - original_pos) / NUM_SAMPLE_POINTS;
+
+        // Skip the first sample point (start of file) since it is an outlier.
+        for new_pos in (original_pos..total_len - step).step_by(step as usize).skip(1) {
             let res = source.seek(SeekFrom::Start(new_pos));
             if res.is_err() {
                 break;
