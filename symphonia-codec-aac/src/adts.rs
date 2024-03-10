@@ -274,30 +274,30 @@ fn approximate_frame_count(mut source: &mut MediaSourceStream) -> Result<Option<
         _ => return Ok(None),
     };
 
-    const ENSURED_SEEK_LEN: u64 = 1000;
-    source.ensure_seekback_buffer(ENSURED_SEEK_LEN as usize);
-    let mut scoped_stream = ScopedStream::new(&mut source, ENSURED_SEEK_LEN);
-
     let mut parsed_n_frames = 0;
     let mut n_bytes = 0;
 
-    loop {
-        let header = match AdtsHeader::read(&mut scoped_stream) {
-            Ok(header) => header,
-            _ => break,
-        };
+    if !source.is_seekable() {
+        const ENSURED_SEEK_LEN: u64 = 1000;
+        source.ensure_seekback_buffer(ENSURED_SEEK_LEN as usize);
+        let mut scoped_stream = ScopedStream::new(&mut source, ENSURED_SEEK_LEN);
 
-        if scoped_stream.ignore_bytes(header.frame_len as u64).is_err() {
-            break;
+        loop {
+            let header = match AdtsHeader::read(&mut scoped_stream) {
+                Ok(header) => header,
+                _ => break,
+            };
+
+            if scoped_stream.ignore_bytes(header.frame_len as u64).is_err() {
+                break;
+            }
+
+            parsed_n_frames += 1;
+            n_bytes += header.frame_len + AdtsHeader::SIZE;
         }
-
-        parsed_n_frames += 1;
-        n_bytes += header.frame_len + AdtsHeader::SIZE;
-    }
-    source.seek_buffered_rev((source.pos() - original_pos) as usize);
-
-    let step = total_len / 3;
-    if source.is_seekable() {
+        source.seek_buffered_rev((source.pos() - original_pos) as usize);
+    } else {
+        let step = total_len / 3;
         for new_pos in (original_pos..total_len).step_by(step as usize).skip(1) {
             if new_pos >= total_len {
                 break;
@@ -325,6 +325,7 @@ fn approximate_frame_count(mut source: &mut MediaSourceStream) -> Result<Option<
 
         let _ = source.seek(SeekFrom::Start(original_pos))?;
     }
+    
     debug!("adts: Parsed {} of {} bytes to approximate duration", n_bytes, total_len);
 
     match parsed_n_frames {
