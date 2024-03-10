@@ -110,11 +110,7 @@ impl FormatReader for AiffReader {
                         .with_frames_per_block(packet_info.frames_per_block);
 
                     // Append Format chunk fields to codec parameters.
-                    append_format_params(
-                        &mut codec_params,
-                        &common.format_data,
-                        common.sample_rate,
-                    );
+                    append_format_params(&mut codec_params, common.format_data, common.sample_rate);
                 }
                 RiffAiffChunks::Sound(dat) => {
                     let data = dat.parse(&mut source)?;

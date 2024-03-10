@@ -9,7 +9,6 @@ use std::collections::{HashMap, VecDeque};
 use std::convert::TryFrom;
 use std::io::{Seek, SeekFrom};
 
-use symphonia_core::audio::Layout;
 use symphonia_core::codecs::{CodecParameters, CODEC_TYPE_FLAC, CODEC_TYPE_VORBIS};
 use symphonia_core::errors::{
     decode_error, end_of_stream_error, seek_error, unsupported_error, Error, Result, SeekErrorKind,
@@ -464,25 +463,6 @@ impl FormatReader for MkvReader {
 
                 if let Some(bits) = audio.bit_depth {
                     codec_params.with_bits_per_sample(bits as u32);
-                }
-
-                let layout = match audio.channels {
-                    1 => Some(Layout::Mono),
-                    2 => Some(Layout::Stereo),
-                    3 => Some(Layout::TwoPointOne),
-                    6 => Some(Layout::FivePointOne),
-                    other => {
-                        log::warn!(
-                            "track #{} has custom number of channels: {}",
-                            track.number,
-                            other
-                        );
-                        None
-                    }
-                };
-
-                if let Some(layout) = layout {
-                    codec_params.with_channel_layout(layout);
                 }
 
                 if let Some(codec_type) = codec_type {

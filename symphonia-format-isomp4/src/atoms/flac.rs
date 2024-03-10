@@ -65,7 +65,7 @@ impl FlacAtom {
             .for_codec(CODEC_TYPE_FLAC)
             .with_sample_rate(self.stream_info.sample_rate)
             .with_bits_per_sample(self.stream_info.bits_per_sample)
-            .with_channels(self.stream_info.channels)
+            .with_channels(self.stream_info.channels.clone())
             .with_packet_data_integrity(true)
             .with_extra_data(self.extra_data.clone());
 

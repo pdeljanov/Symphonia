@@ -5,7 +5,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::audio::Channels;
+use symphonia_core::audio::{Channels, Position};
 use symphonia_core::codecs::{CodecParameters, CodecType, CODEC_TYPE_MP3, CODEC_TYPE_NULL};
 use symphonia_core::codecs::{CODEC_TYPE_PCM_F32BE, CODEC_TYPE_PCM_F32LE};
 use symphonia_core::codecs::{CODEC_TYPE_PCM_F64BE, CODEC_TYPE_PCM_F64LE};
@@ -112,7 +112,7 @@ impl StsdAtom {
                         .with_bits_per_coded_sample(pcm.bits_per_coded_sample)
                         .with_bits_per_sample(pcm.bits_per_sample)
                         .with_max_frames_per_packet(pcm.frames_per_packet)
-                        .with_channels(pcm.channels);
+                        .with_channels(pcm.channels.clone());
                 }
                 _ => (),
             }
@@ -296,8 +296,8 @@ fn lpcm_codec_type(bits_per_sample: u32, lpcm_flags: u32) -> CodecType {
 /// Gets the audio channels for a version 0 or 1 sample entry.
 fn pcm_channels(num_channels: u32) -> Result<Channels> {
     match num_channels {
-        1 => Ok(Channels::FRONT_LEFT),
-        2 => Ok(Channels::FRONT_LEFT | Channels::FRONT_RIGHT),
+        1 => Ok(Channels::Positioned(Position::FRONT_LEFT)),
+        2 => Ok(Channels::Positioned(Position::FRONT_LEFT | Position::FRONT_RIGHT)),
         _ => decode_error("isomp4: invalid number of channels"),
     }
 }
@@ -316,8 +316,8 @@ fn lpcm_channels(num_channels: u32) -> Result<Channels> {
     // does not have a way to represent this yet.
     let channel_mask = !((!0 << 1) << (num_channels - 1));
 
-    match Channels::from_bits(channel_mask) {
-        Some(channels) => Ok(channels),
+    match Position::from_bits(channel_mask) {
+        Some(positions) => Ok(Channels::Positioned(positions)),
         _ => unsupported_error("isomp4: unsupported number of channels"),
     }
 }

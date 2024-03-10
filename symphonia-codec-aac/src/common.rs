@@ -11,7 +11,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::audio::Channels;
+use symphonia_core::audio::{layouts, Channels};
 
 #[allow(non_camel_case_types)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -161,46 +161,21 @@ pub const AAC_SAMPLE_RATES: [u32; 16] = [
     0,
 ];
 
+/// Mapping of AAC channel configuration bits to number of channels.
 pub const AAC_CHANNELS: [usize; 8] = [0, 1, 2, 3, 4, 5, 6, 8];
 
-pub fn map_channels(channels: u32) -> Option<Channels> {
-    match channels {
-        0 => None,
-        1 => Some(Channels::FRONT_LEFT),
-        2 => Some(Channels::FRONT_LEFT | Channels::FRONT_RIGHT),
-        3 => Some(Channels::FRONT_CENTRE | Channels::FRONT_LEFT | Channels::FRONT_RIGHT),
-        4 => Some(
-            Channels::FRONT_CENTRE
-                | Channels::FRONT_LEFT
-                | Channels::FRONT_RIGHT
-                | Channels::REAR_CENTRE,
-        ),
-        5 => Some(
-            Channels::FRONT_CENTRE
-                | Channels::FRONT_LEFT
-                | Channels::FRONT_RIGHT
-                | Channels::SIDE_LEFT
-                | Channels::SIDE_RIGHT,
-        ),
-        6 => Some(
-            Channels::FRONT_CENTRE
-                | Channels::FRONT_LEFT
-                | Channels::FRONT_RIGHT
-                | Channels::SIDE_LEFT
-                | Channels::SIDE_RIGHT
-                | Channels::LFE1,
-        ),
-        7 => None,
-        8 => Some(
-            Channels::FRONT_CENTRE
-                | Channels::FRONT_LEFT
-                | Channels::FRONT_RIGHT
-                | Channels::SIDE_LEFT
-                | Channels::SIDE_RIGHT
-                | Channels::FRONT_LEFT_WIDE
-                | Channels::FRONT_RIGHT_WIDE
-                | Channels::LFE1,
-        ),
-        _ => None,
-    }
+/// Get channel mask for standard number of channels.
+pub fn map_to_channels(num_channels: usize) -> Option<Channels> {
+    let channels = match num_channels {
+        1 => layouts::CHANNEL_LAYOUT_MONO,
+        2 => layouts::CHANNEL_LAYOUT_STEREO,
+        3 => layouts::CHANNEL_LAYOUT_AAC_3P0,
+        4 => layouts::CHANNEL_LAYOUT_AAC_4P0,
+        5 => layouts::CHANNEL_LAYOUT_AAC_5P0,
+        6 => layouts::CHANNEL_LAYOUT_AAC_5P1,
+        8 => layouts::CHANNEL_LAYOUT_AAC_7P1,
+        _ => return None,
+    };
+
+    Some(channels)
 }

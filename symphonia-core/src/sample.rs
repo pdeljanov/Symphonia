@@ -5,13 +5,14 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! The `sample` module defines the core audio sample trait and any non-primitive sample data types.
+//! The `sample` module defines the audio sample trait and implements any non-primitive sample data
+//! types.
 
 use std::fmt;
 
 use crate::util::clamp::{clamp_f32, clamp_f64, clamp_i24, clamp_u24};
 
-/// SampleFormat describes the data encoding for an audio sample.
+/// An enumeration of standard sample formats.
 #[derive(Copy, Clone, Debug)]
 pub enum SampleFormat {
     /// Unsigned 8-bit integer.
@@ -36,10 +37,8 @@ pub enum SampleFormat {
     F64,
 }
 
-/// `Sample` provides a common interface for manipulating sample's regardless of the
-/// underlying data type. Additionally, `Sample` provides information regarding the
-/// format of underlying data types representing the sample when in memory, but also
-/// when exported.
+/// The sample trait defines the mandatory operations and attributes an audio sample data type must
+/// implement and provide.
 pub trait Sample:
     Copy
     + Clone
@@ -50,10 +49,6 @@ pub trait Sample:
     + PartialEq
     + Sized
 {
-    /// A unique enum value representing the sample format. This constant may be used to dynamically
-    /// choose how to process the sample at runtime.
-    const FORMAT: SampleFormat;
-
     /// The effective number of bits of the valid (clamped) sample range. Quantifies the dynamic
     /// range of the sample format in bits.
     const EFF_BITS: u32;
@@ -72,6 +67,7 @@ pub trait Sample:
 /// There are **no** guarantees the sample is within the valid range 24-bit range. Use the
 /// [`Sample::clamped`] function to clamp the sample to the valid range.
 #[allow(non_camel_case_types)]
+#[repr(transparent)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub struct u24(pub u32);
 
@@ -80,11 +76,11 @@ pub struct u24(pub u32);
 /// There are **no** guarantees the sample is within the valid range 24-bit range. Use the
 /// [`Sample::clamped`] function to clamp the sample to the valid range.
 #[allow(non_camel_case_types)]
+#[repr(transparent)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub struct i24(pub i32);
 
 impl Sample for u8 {
-    const FORMAT: SampleFormat = SampleFormat::U8;
     const EFF_BITS: u32 = 8;
     const MID: u8 = 128;
 
@@ -95,7 +91,6 @@ impl Sample for u8 {
 }
 
 impl Sample for i8 {
-    const FORMAT: SampleFormat = SampleFormat::S8;
     const EFF_BITS: u32 = 8;
     const MID: i8 = 0;
 
@@ -106,7 +101,6 @@ impl Sample for i8 {
 }
 
 impl Sample for u16 {
-    const FORMAT: SampleFormat = SampleFormat::U16;
     const EFF_BITS: u32 = 16;
     const MID: u16 = 32_768;
 
@@ -117,7 +111,6 @@ impl Sample for u16 {
 }
 
 impl Sample for i16 {
-    const FORMAT: SampleFormat = SampleFormat::S16;
     const EFF_BITS: u32 = 16;
     const MID: i16 = 0;
 
@@ -128,7 +121,6 @@ impl Sample for i16 {
 }
 
 impl Sample for u24 {
-    const FORMAT: SampleFormat = SampleFormat::U24;
     const EFF_BITS: u32 = 24;
     const MID: u24 = u24(8_388_608);
 
@@ -139,7 +131,6 @@ impl Sample for u24 {
 }
 
 impl Sample for i24 {
-    const FORMAT: SampleFormat = SampleFormat::S24;
     const EFF_BITS: u32 = 24;
     const MID: i24 = i24(0);
 
@@ -150,7 +141,6 @@ impl Sample for i24 {
 }
 
 impl Sample for u32 {
-    const FORMAT: SampleFormat = SampleFormat::U32;
     const EFF_BITS: u32 = 32;
     const MID: u32 = 2_147_483_648;
 
@@ -161,7 +151,6 @@ impl Sample for u32 {
 }
 
 impl Sample for i32 {
-    const FORMAT: SampleFormat = SampleFormat::S32;
     const EFF_BITS: u32 = 32;
     const MID: i32 = 0;
 
@@ -172,7 +161,6 @@ impl Sample for i32 {
 }
 
 impl Sample for f32 {
-    const FORMAT: SampleFormat = SampleFormat::F32;
     const EFF_BITS: u32 = 24;
     const MID: f32 = 0.0;
 
@@ -183,7 +171,6 @@ impl Sample for f32 {
 }
 
 impl Sample for f64 {
-    const FORMAT: SampleFormat = SampleFormat::F64;
     const EFF_BITS: u32 = 53;
     const MID: f64 = 0.0;
 
@@ -238,19 +225,30 @@ impl i24 {
 
     /// Get the underlying `i32` backing this `i24`.
     #[inline(always)]
-    #[deprecated = "Superseded by `inner`."]
-    pub fn into_i32(self) -> i32 {
-        self.0
-    }
-
-    /// Get the underlying `i32` backing this `i24`.
-    #[inline(always)]
     pub fn inner(self) -> i32 {
         self.0
     }
 
+    /// Return the memory representation of this `i24` as a byte array in little-endian byte order.
+    #[inline(always)]
+    pub fn to_le_bytes(self) -> [u8; 3] {
+        let b = self.0.to_le_bytes();
+
+        // In little-endian the MSB is the last byte. Drop it.
+        [b[0], b[1], b[2]]
+    }
+
+    /// Return the memory representation of this `i24` as a byte array in big-endian byte order.
+    #[inline(always)]
+    pub fn to_be_bytes(self) -> [u8; 3] {
+        let b = self.0.to_be_bytes();
+
+        // In big-endian the MSB is the first byte. Drop it.
+        [b[1], b[2], b[3]]
+    }
+
     /// Return the memory representation of this `i24` as a byte array in native byte order.
-    #[inline]
+    #[inline(always)]
     pub fn to_ne_bytes(self) -> [u8; 3] {
         let b = self.0.to_ne_bytes();
 
@@ -412,19 +410,30 @@ impl u24 {
 
     /// Get the underlying `u32` backing this `u24`.
     #[inline(always)]
-    #[deprecated = "Superseded by `inner`."]
-    pub fn into_u32(self) -> u32 {
-        self.0
-    }
-
-    /// Get the underlying `u32` backing this `u24`.
-    #[inline(always)]
     pub fn inner(self) -> u32 {
         self.0
     }
 
+    /// Return the memory representation of this `u24` as a byte array in little-endian byte order.
+    #[inline(always)]
+    pub fn to_le_bytes(self) -> [u8; 3] {
+        let b = self.0.to_le_bytes();
+
+        // In little-endian the MSB is the last byte. Drop it.
+        [b[0], b[1], b[2]]
+    }
+
+    /// Return the memory representation of this `u24` as a byte array in big-endian byte order.
+    #[inline(always)]
+    pub fn to_be_bytes(self) -> [u8; 3] {
+        let b = self.0.to_be_bytes();
+
+        // In big-endian the MSB is the first byte. Drop it.
+        [b[1], b[2], b[3]]
+    }
+
     /// Return the memory representation of this `u24` as a byte array in native byte order.
-    #[inline]
+    #[inline(always)]
     pub fn to_ne_bytes(self) -> [u8; 3] {
         let b = self.0.to_ne_bytes();
 
@@ -573,5 +582,240 @@ impl core::ops::BitXor<u24> for u24 {
     #[inline]
     fn bitxor(self, other: Self) -> Self {
         u24(self.0 ^ other.0)
+    }
+}
+
+mod sealed {
+    /// A marker trait for indicating 1-byte alignment. This trait is sealed to prevent external
+    /// misuse.
+    pub trait ByteAligned: bytemuck::Pod {}
+}
+
+impl sealed::ByteAligned for [u8; 1] {}
+impl sealed::ByteAligned for [u8; 2] {}
+impl sealed::ByteAligned for [u8; 3] {}
+impl sealed::ByteAligned for [u8; 4] {}
+impl sealed::ByteAligned for [u8; 5] {}
+impl sealed::ByteAligned for [u8; 6] {}
+impl sealed::ByteAligned for [u8; 7] {}
+impl sealed::ByteAligned for [u8; 8] {}
+impl sealed::ByteAligned for [u8; 9] {}
+impl sealed::ByteAligned for [u8; 10] {}
+impl sealed::ByteAligned for [u8; 11] {}
+impl sealed::ByteAligned for [u8; 12] {}
+impl sealed::ByteAligned for [u8; 13] {}
+impl sealed::ByteAligned for [u8; 14] {}
+impl sealed::ByteAligned for [u8; 15] {}
+impl sealed::ByteAligned for [u8; 16] {}
+// Note: DO NOT implement for any types other than [u8; N].
+
+/// `SampleBytes` provides interfaces to get the packed byte representation of a `Sample`.
+///
+/// The packed byte representation is the byte representation of a sample in its native stream
+/// format. This may differ from its in-memory working representation.
+pub trait SampleBytes: Sample {
+    /// The data type that stores the packed byte representation of the sample.
+    ///
+    /// The `sealed::ByteAligned` trait bound constrains the allowable types this may be. Only byte
+    /// array types: `[u8; N]` for `N` between 1 and 16 inclusive are allowed.
+    type RawType: sealed::ByteAligned;
+
+    /// Return the sample in its packed byte representation in the native byte order.
+    fn to_ne_sample_bytes(self) -> Self::RawType;
+
+    /// Return the sample in its packed byte representation in the little-endian byte order.
+    fn to_le_sample_bytes(self) -> Self::RawType;
+
+    /// Return the sample in its packed byte representation in the big-endian byte order.
+    fn to_be_sample_bytes(self) -> Self::RawType;
+}
+
+impl SampleBytes for u8 {
+    type RawType = [u8; 1];
+
+    #[inline(always)]
+    fn to_ne_sample_bytes(self) -> Self::RawType {
+        self.to_ne_bytes()
+    }
+
+    #[inline(always)]
+    fn to_le_sample_bytes(self) -> Self::RawType {
+        self.to_le_bytes()
+    }
+
+    #[inline(always)]
+    fn to_be_sample_bytes(self) -> Self::RawType {
+        self.to_be_bytes()
+    }
+}
+
+impl SampleBytes for u16 {
+    type RawType = [u8; 2];
+
+    #[inline(always)]
+    fn to_ne_sample_bytes(self) -> Self::RawType {
+        self.to_ne_bytes()
+    }
+
+    #[inline(always)]
+    fn to_le_sample_bytes(self) -> Self::RawType {
+        self.to_le_bytes()
+    }
+
+    #[inline(always)]
+    fn to_be_sample_bytes(self) -> Self::RawType {
+        self.to_be_bytes()
+    }
+}
+
+impl SampleBytes for u24 {
+    type RawType = [u8; 3];
+
+    #[inline(always)]
+    fn to_ne_sample_bytes(self) -> Self::RawType {
+        self.to_ne_bytes()
+    }
+
+    #[inline(always)]
+    fn to_le_sample_bytes(self) -> Self::RawType {
+        self.to_le_bytes()
+    }
+
+    #[inline(always)]
+    fn to_be_sample_bytes(self) -> Self::RawType {
+        self.to_be_bytes()
+    }
+}
+
+impl SampleBytes for u32 {
+    type RawType = [u8; 4];
+
+    #[inline(always)]
+    fn to_ne_sample_bytes(self) -> Self::RawType {
+        self.to_ne_bytes()
+    }
+
+    #[inline(always)]
+    fn to_le_sample_bytes(self) -> Self::RawType {
+        self.to_le_bytes()
+    }
+
+    #[inline(always)]
+    fn to_be_sample_bytes(self) -> Self::RawType {
+        self.to_be_bytes()
+    }
+}
+
+impl SampleBytes for i8 {
+    type RawType = [u8; 1];
+
+    #[inline(always)]
+    fn to_ne_sample_bytes(self) -> Self::RawType {
+        self.to_ne_bytes()
+    }
+
+    #[inline(always)]
+    fn to_le_sample_bytes(self) -> Self::RawType {
+        self.to_le_bytes()
+    }
+
+    #[inline(always)]
+    fn to_be_sample_bytes(self) -> Self::RawType {
+        self.to_be_bytes()
+    }
+}
+
+impl SampleBytes for i16 {
+    type RawType = [u8; 2];
+
+    #[inline(always)]
+    fn to_ne_sample_bytes(self) -> Self::RawType {
+        self.to_ne_bytes()
+    }
+
+    #[inline(always)]
+    fn to_le_sample_bytes(self) -> Self::RawType {
+        self.to_le_bytes()
+    }
+
+    #[inline(always)]
+    fn to_be_sample_bytes(self) -> Self::RawType {
+        self.to_be_bytes()
+    }
+}
+
+impl SampleBytes for i24 {
+    type RawType = [u8; 3];
+
+    #[inline(always)]
+    fn to_ne_sample_bytes(self) -> Self::RawType {
+        self.to_ne_bytes()
+    }
+
+    #[inline(always)]
+    fn to_le_sample_bytes(self) -> Self::RawType {
+        self.to_le_bytes()
+    }
+
+    #[inline(always)]
+    fn to_be_sample_bytes(self) -> Self::RawType {
+        self.to_be_bytes()
+    }
+}
+
+impl SampleBytes for i32 {
+    type RawType = [u8; 4];
+
+    #[inline(always)]
+    fn to_ne_sample_bytes(self) -> Self::RawType {
+        self.to_ne_bytes()
+    }
+
+    #[inline(always)]
+    fn to_le_sample_bytes(self) -> Self::RawType {
+        self.to_le_bytes()
+    }
+
+    #[inline(always)]
+    fn to_be_sample_bytes(self) -> Self::RawType {
+        self.to_be_bytes()
+    }
+}
+
+impl SampleBytes for f32 {
+    type RawType = [u8; 4];
+
+    #[inline(always)]
+    fn to_ne_sample_bytes(self) -> Self::RawType {
+        self.to_ne_bytes()
+    }
+
+    #[inline(always)]
+    fn to_le_sample_bytes(self) -> Self::RawType {
+        self.to_le_bytes()
+    }
+
+    #[inline(always)]
+    fn to_be_sample_bytes(self) -> Self::RawType {
+        self.to_be_bytes()
+    }
+}
+
+impl SampleBytes for f64 {
+    type RawType = [u8; 8];
+
+    #[inline(always)]
+    fn to_ne_sample_bytes(self) -> Self::RawType {
+        self.to_ne_bytes()
+    }
+
+    #[inline(always)]
+    fn to_le_sample_bytes(self) -> Self::RawType {
+        self.to_le_bytes()
+    }
+
+    #[inline(always)]
+    fn to_be_sample_bytes(self) -> Self::RawType {
+        self.to_be_bytes()
     }
 }

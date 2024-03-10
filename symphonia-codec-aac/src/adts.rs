@@ -18,7 +18,7 @@ use symphonia_core::probe::{Descriptor, Instantiate, QueryDescriptor};
 
 use std::io::{Seek, SeekFrom};
 
-use super::common::{map_channels, M4AType, AAC_SAMPLE_RATES, M4A_TYPES};
+use super::common::{map_to_channels, M4AType, AAC_CHANNELS, AAC_SAMPLE_RATES, M4A_TYPES};
 
 use log::{debug, info};
 
@@ -99,7 +99,7 @@ impl AdtsHeader {
         // Channel configuration
         let channels = match bs.read_bits_leq32(3)? {
             0 => None,
-            idx => map_channels(idx),
+            idx => map_to_channels(AAC_CHANNELS[idx as usize]),
         };
 
         // Originality, Home, Copyrighted ID bit, Copyright ID start bits. Only used for encoding.

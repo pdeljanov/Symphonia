@@ -9,7 +9,7 @@ use crate::common::SideData;
 
 use super::{MapResult, Mapper, PacketParser};
 
-use symphonia_core::audio::Channels;
+use symphonia_core::audio::{Channels, Position};
 use symphonia_core::codecs::{CodecParameters, CODEC_TYPE_OPUS};
 use symphonia_core::errors::Result;
 use symphonia_core::io::{BufReader, ReadBytes};
@@ -75,54 +75,54 @@ pub fn detect(buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> {
     // The next byte indicates the channel mapping. Most of these values are reserved.
     let channel_mapping = reader.read_byte()?;
 
-    let channels = match channel_mapping {
+    let positions = match channel_mapping {
         // RTP Mapping
-        0 if channel_count == 1 => Channels::FRONT_LEFT,
-        0 if channel_count == 2 => Channels::FRONT_LEFT | Channels::FRONT_RIGHT,
+        0 if channel_count == 1 => Position::FRONT_LEFT,
+        0 if channel_count == 2 => Position::FRONT_LEFT | Position::FRONT_RIGHT,
         // Vorbis Mapping
         1 => match channel_count {
-            1 => Channels::FRONT_LEFT,
-            2 => Channels::FRONT_LEFT | Channels::FRONT_RIGHT,
-            3 => Channels::FRONT_LEFT | Channels::FRONT_CENTRE | Channels::FRONT_RIGHT,
+            1 => Position::FRONT_LEFT,
+            2 => Position::FRONT_LEFT | Position::FRONT_RIGHT,
+            3 => Position::FRONT_LEFT | Position::FRONT_CENTER | Position::FRONT_RIGHT,
             4 => {
-                Channels::FRONT_LEFT
-                    | Channels::FRONT_RIGHT
-                    | Channels::REAR_LEFT
-                    | Channels::REAR_RIGHT
+                Position::FRONT_LEFT
+                    | Position::FRONT_RIGHT
+                    | Position::REAR_LEFT
+                    | Position::REAR_RIGHT
             }
             5 => {
-                Channels::FRONT_LEFT
-                    | Channels::FRONT_CENTRE
-                    | Channels::FRONT_RIGHT
-                    | Channels::REAR_LEFT
-                    | Channels::REAR_RIGHT
+                Position::FRONT_LEFT
+                    | Position::FRONT_CENTER
+                    | Position::FRONT_RIGHT
+                    | Position::REAR_LEFT
+                    | Position::REAR_RIGHT
             }
             6 => {
-                Channels::FRONT_LEFT
-                    | Channels::FRONT_CENTRE
-                    | Channels::FRONT_RIGHT
-                    | Channels::REAR_LEFT
-                    | Channels::REAR_RIGHT
-                    | Channels::LFE1
+                Position::FRONT_LEFT
+                    | Position::FRONT_CENTER
+                    | Position::FRONT_RIGHT
+                    | Position::REAR_LEFT
+                    | Position::REAR_RIGHT
+                    | Position::LFE1
             }
             7 => {
-                Channels::FRONT_LEFT
-                    | Channels::FRONT_CENTRE
-                    | Channels::FRONT_RIGHT
-                    | Channels::SIDE_LEFT
-                    | Channels::SIDE_RIGHT
-                    | Channels::REAR_CENTRE
-                    | Channels::LFE1
+                Position::FRONT_LEFT
+                    | Position::FRONT_CENTER
+                    | Position::FRONT_RIGHT
+                    | Position::SIDE_LEFT
+                    | Position::SIDE_RIGHT
+                    | Position::REAR_CENTER
+                    | Position::LFE1
             }
             8 => {
-                Channels::FRONT_LEFT
-                    | Channels::FRONT_CENTRE
-                    | Channels::FRONT_RIGHT
-                    | Channels::SIDE_LEFT
-                    | Channels::SIDE_RIGHT
-                    | Channels::REAR_LEFT
-                    | Channels::REAR_RIGHT
-                    | Channels::LFE1
+                Position::FRONT_LEFT
+                    | Position::FRONT_CENTER
+                    | Position::FRONT_RIGHT
+                    | Position::SIDE_LEFT
+                    | Position::SIDE_RIGHT
+                    | Position::REAR_LEFT
+                    | Position::REAR_RIGHT
+                    | Position::LFE1
             }
             _ => return Ok(None),
         },
@@ -138,7 +138,7 @@ pub fn detect(buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> {
         .with_delay(u32::from(pre_skip))
         .with_sample_rate(48_000)
         .with_time_base(TimeBase::new(1, 48_000))
-        .with_channels(channels)
+        .with_channels(Channels::Positioned(positions))
         .with_extra_data(Box::from(buf));
 
     // Instantiate the Opus mapper.

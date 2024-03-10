@@ -7,7 +7,7 @@
 
 use std::fmt;
 
-use symphonia_core::audio::{AudioBuffer, Signal};
+use symphonia_core::audio::{AudioBuffer, AudioMut};
 use symphonia_core::errors::{decode_error, Error, Result};
 use symphonia_core::io::{BitReaderLtr, BufReader, ReadBitsLtr, ReadBytes};
 
@@ -435,7 +435,7 @@ impl Layer for Layer3 {
 
             // Each granule will yield 576 samples. After reserving frames, all steps must be
             // infalliable.
-            out.render_reserved(Some(576));
+            out.render_uninit(Some(576));
 
             // The next steps are independant of channel count.
             for ch in 0..header.n_channels() {
@@ -462,7 +462,7 @@ impl Layer for Layer3 {
                 hybrid_synthesis::frequency_inversion(&mut self.samples[gr][ch]);
 
                 // Perform polyphase synthesis and generate PCM samples.
-                let out_ch_samples = out.chan_mut(ch);
+                let out_ch_samples = out.plane_mut(ch).unwrap();
 
                 synthesis::synthesis(
                     &mut self.synthesis[ch],

@@ -16,16 +16,17 @@ use std::fs::File;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-use symphonia::core::audio::{AudioBufferRef, SampleBuffer};
+use symphonia::core::audio::GenericAudioBufferRef;
 use symphonia::core::codecs::{Decoder, DecoderOptions};
 use symphonia::core::errors::{Error, Result};
 use symphonia::core::formats::{FormatOptions, FormatReader};
 use symphonia::core::io::{MediaSourceStream, ReadOnlySource};
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
+use symphonia::core::sample::Sample;
 
 use clap::Arg;
-use log::{info, warn};
+use log::warn;
 
 /// The absolute maximum allowable sample delta. Around 2^-17 (-102.4dB).
 const ABS_MAX_ALLOWABLE_SAMPLE_DELTA: f32 = 0.00001;
@@ -163,7 +164,7 @@ impl DecoderInstance {
     }
 }
 
-fn get_next_audio_buf(inst: &mut DecoderInstance) -> Result<AudioBufferRef<'_>> {
+fn get_next_audio_buf(inst: &mut DecoderInstance) -> Result<GenericAudioBufferRef<'_>> {
     let pkt = loop {
         // Get next packet.
         let pkt = inst.format.next_packet()?;
@@ -188,24 +189,9 @@ fn get_next_audio_buf_best_effort(inst: &mut DecoderInstance) -> Result<()> {
     }
 }
 
-fn copy_audio_buf_to_sample_buf(src: AudioBufferRef<'_>, dst: &mut Option<SampleBuffer<f32>>) {
-    if dst.is_none() {
-        let spec = *src.spec();
-        let duration = src.capacity() as u64;
-
-        info!(
-            "created target raw audio buffer with rate={}, channels={}, duration={}",
-            spec.rate,
-            spec.channels.count(),
-            duration
-        );
-
-        *dst = Some(SampleBuffer::<f32>::new(duration, spec));
-    }
-
-    let dst_raw_audio = dst.as_mut().unwrap();
-
-    dst_raw_audio.copy_interleaved_ref(src)
+fn copy_audio_buf_to_vec(src: GenericAudioBufferRef<'_>, dst: &mut Vec<f32>) {
+    dst.resize(src.samples_interleaved(), f32::MID);
+    src.copy_to_slice_interleaved(dst);
 }
 
 fn run_check(
@@ -215,12 +201,12 @@ fn run_check(
     acct: &mut TestResult,
 ) -> Result<()> {
     // Reference
-    let mut ref_sample_buf = None;
+    let mut ref_sample_buf: Vec<f32> = Default::default();
     let mut ref_sample_cnt = 0;
     let mut ref_sample_pos = 0;
 
     // Target
-    let mut tgt_sample_buf = None;
+    let mut tgt_sample_buf: Vec<f32> = Default::default();
 
     loop {
         // Decode target's next audio buffer.
@@ -232,10 +218,10 @@ fn run_check(
         }
 
         // Copy to the target's audio buffer into the target sample buffer.
-        copy_audio_buf_to_sample_buf(tgt_inst.decoder.last_decoded(), &mut tgt_sample_buf);
+        copy_audio_buf_to_vec(tgt_inst.decoder.last_decoded(), &mut tgt_sample_buf);
 
         // Get a slice of the target sample buffer.
-        let mut tgt_samples = tgt_sample_buf.as_mut().unwrap().samples();
+        let mut tgt_samples = &tgt_sample_buf[..];
 
         // The number of samples previously read & compared.
         let sample_num_base = acct.n_samples;
@@ -250,16 +236,16 @@ fn run_check(
                 get_next_audio_buf_best_effort(ref_inst)?;
 
                 // Copy to reference audio buffer to reference sample buffer.
-                copy_audio_buf_to_sample_buf(ref_inst.decoder.last_decoded(), &mut ref_sample_buf);
+                copy_audio_buf_to_vec(ref_inst.decoder.last_decoded(), &mut ref_sample_buf);
 
                 // Save number of reference samples in the sample buffer and reset the sample buffer
                 // position counter.
-                ref_sample_cnt = ref_sample_buf.as_ref().unwrap().len();
+                ref_sample_cnt = ref_sample_buf.len();
                 ref_sample_pos = 0;
             }
 
             // The reference sample audio buffer.
-            let ref_samples = &ref_sample_buf.as_mut().unwrap().samples()[ref_sample_pos..];
+            let ref_samples = &ref_sample_buf[ref_sample_pos..];
 
             // The number of samples that can be compared given the current state of the reference
             // and target sample buffers.

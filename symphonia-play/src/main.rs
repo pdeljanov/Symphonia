@@ -398,17 +398,12 @@ fn play_track(
             Ok(decoded) => {
                 // If the audio output is not open, try to open it.
                 if audio_output.is_none() {
-                    // Get the audio buffer specification. This is a description of the decoded
-                    // audio buffer's sample format and sample rate.
-                    let spec = *decoded.spec();
-
                     // Get the capacity of the decoded buffer. Note that this is capacity, not
-                    // length! The capacity of the decoded buffer is constant for the life of the
-                    // decoder, but the length is not.
+                    // length! The output will use this to size its internal buffers appropriately.
                     let duration = decoded.capacity() as u64;
 
                     // Try to open the audio output.
-                    audio_output.replace(output::try_open(spec, duration).unwrap());
+                    audio_output.replace(output::try_open(decoded.spec(), duration).unwrap());
                 }
                 else {
                     // TODO: Check the audio spec. and duration hasn't changed.
@@ -606,12 +601,9 @@ fn print_tracks(tracks: &[Track]) {
             if let Some(bits_per_sample) = params.bits_per_sample {
                 println!("|          Bits per Sample: {}", bits_per_sample);
             }
-            if let Some(channels) = params.channels {
+            if let Some(channels) = &params.channels {
                 println!("|          Channel(s):      {}", channels.count());
                 println!("|          Channel Map:     {}", channels);
-            }
-            if let Some(channel_layout) = params.channel_layout {
-                println!("|          Channel Layout:  {:?}", channel_layout);
             }
             if let Some(language) = &track.language {
                 println!("|          Language:        {}", language);

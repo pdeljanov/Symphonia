@@ -9,8 +9,9 @@ use std::cmp;
 use std::convert::TryInto;
 use std::num::Wrapping;
 
-use symphonia_core::audio::{AsAudioBufferRef, AudioBuffer, AudioBufferRef};
-use symphonia_core::audio::{Signal, SignalSpec};
+use symphonia_core::audio::{
+    AsGenericAudioBufferRef, AudioBuffer, AudioMut, AudioSpec, GenericAudioBufferRef,
+};
 use symphonia_core::codecs::{
     CodecDescriptor, CodecParameters, VerificationCheck, CODEC_TYPE_FLAC,
 };
@@ -118,7 +119,7 @@ impl FlacDecoder {
 
         // Reserve a writeable chunk in the buffer equal to the number of samples in the block.
         self.buf.clear();
-        self.buf.render_reserved(Some(header.block_num_samples as usize));
+        self.buf.render_uninit(Some(header.block_num_samples as usize));
 
         // Only Bitstream reading for subframes.
         {
@@ -129,13 +130,13 @@ impl FlacDecoder {
             match header.channel_assignment {
                 ChannelAssignment::Independant(channels) => {
                     for i in 0..channels as usize {
-                        read_subframe(&mut bs, bits_per_sample, self.buf.chan_mut(i))?;
+                        read_subframe(&mut bs, bits_per_sample, self.buf.plane_mut(i).unwrap())?;
                     }
                 }
                 // For Left/Side, Mid/Side, and Right/Side channel configurations, the Side
                 // (Difference) channel requires an extra bit per sample.
                 ChannelAssignment::LeftSide => {
-                    let (left, side) = self.buf.chan_pair_mut(0, 1);
+                    let (left, side) = self.buf.plane_pair_mut(0, 1).unwrap();
 
                     read_subframe(&mut bs, bits_per_sample, left)?;
                     read_subframe(&mut bs, bits_per_sample + 1, side)?;
@@ -143,7 +144,7 @@ impl FlacDecoder {
                     decorrelate_left_side(left, side);
                 }
                 ChannelAssignment::MidSide => {
-                    let (mid, side) = self.buf.chan_pair_mut(0, 1);
+                    let (mid, side) = self.buf.plane_pair_mut(0, 1).unwrap();
 
                     read_subframe(&mut bs, bits_per_sample, mid)?;
                     read_subframe(&mut bs, bits_per_sample + 1, side)?;
@@ -151,7 +152,7 @@ impl FlacDecoder {
                     decorrelate_mid_side(mid, side);
                 }
                 ChannelAssignment::RightSide => {
-                    let (side, right) = self.buf.chan_pair_mut(0, 1);
+                    let (side, right) = self.buf.plane_pair_mut(0, 1).unwrap();
 
                     read_subframe(&mut bs, bits_per_sample + 1, side)?;
                     read_subframe(&mut bs, bits_per_sample, right)?;
@@ -171,7 +172,7 @@ impl FlacDecoder {
         // so that regardless the encoded bits/sample, the output is always 32bits/sample.
         if bits_per_sample < 32 {
             let shift = 32 - bits_per_sample;
-            self.buf.transform(|sample| sample << shift);
+            self.buf.apply(|sample| sample << shift);
         }
 
         Ok(())
@@ -203,7 +204,7 @@ impl Decoder for FlacDecoder {
             .with_time_base(TimeBase::new(1, info.sample_rate))
             .with_bits_per_sample(info.bits_per_sample)
             .with_max_frames_per_packet(u64::from(info.block_len_max))
-            .with_channels(info.channels);
+            .with_channels(info.channels.clone());
 
         if let Some(md5) = info.md5 {
             params.with_verification_code(VerificationCheck::Md5(md5));
@@ -213,8 +214,8 @@ impl Decoder for FlacDecoder {
             params.with_n_frames(n_frames);
         }
 
-        let spec = SignalSpec::new(info.sample_rate, info.channels);
-        let buf = AudioBuffer::new(u64::from(info.block_len_max), spec);
+        let spec = AudioSpec::new(info.sample_rate, info.channels.clone());
+        let buf = AudioBuffer::new(spec, usize::from(info.block_len_max));
 
         // TODO: Verify packet integrity if the demuxer is not.
         // if !params.packet_data_integrity {
@@ -241,13 +242,13 @@ impl Decoder for FlacDecoder {
         &self.params
     }
 
-    fn decode(&mut self, packet: &Packet) -> Result<AudioBufferRef<'_>> {
+    fn decode(&mut self, packet: &Packet) -> Result<GenericAudioBufferRef<'_>> {
         if let Err(e) = self.decode_inner(packet) {
             self.buf.clear();
             Err(e)
         }
         else {
-            Ok(self.buf.as_audio_buffer_ref())
+            Ok(self.buf.as_generic_audio_buffer_ref())
         }
     }
 
@@ -285,8 +286,8 @@ impl Decoder for FlacDecoder {
         result
     }
 
-    fn last_decoded(&self) -> AudioBufferRef<'_> {
-        self.buf.as_audio_buffer_ref()
+    fn last_decoded(&self) -> GenericAudioBufferRef<'_> {
+        self.buf.as_generic_audio_buffer_ref()
     }
 }
 

@@ -9,7 +9,7 @@ use crate::chunks::*;
 use log::{debug, error, info};
 use std::io::{Seek, SeekFrom};
 use symphonia_core::{
-    audio::Channels,
+    audio::{Channels, Position},
     codecs::*,
     errors::{
         decode_error, end_of_stream_error, seek_error, unsupported_error, Result, SeekErrorKind,
@@ -273,17 +273,19 @@ impl CafReader {
                 unreachable!("Invalid channel count");
             }
             1 => {
-                codec_params.with_channels(Channels::FRONT_LEFT);
+                codec_params.with_channels(Channels::Positioned(Position::FRONT_LEFT));
             }
             2 => {
-                codec_params.with_channels(Channels::FRONT_LEFT | Channels::FRONT_RIGHT);
+                codec_params.with_channels(Channels::Positioned(
+                    Position::FRONT_LEFT | Position::FRONT_RIGHT,
+                ));
             }
             n => {
                 // When the channel count is >2 then enable the first N channels.
                 // This can/should be overridden when parsing the channel layout chunk.
-                match Channels::from_bits(((1u64 << n as u64) - 1) as u32) {
-                    Some(channels) => {
-                        codec_params.with_channels(channels);
+                match Position::from_count(n) {
+                    Some(positions) => {
+                        codec_params.with_channels(Channels::Positioned(positions));
                     }
                     None => {
                         return unsupported_error("caf: unsupported channel count");

@@ -16,8 +16,9 @@
 // Disable to better express the specification.
 #![allow(clippy::collapsible_else_if)]
 
-use symphonia_core::audio::{AsAudioBufferRef, AudioBuffer, AudioBufferRef};
-use symphonia_core::audio::{Signal, SignalSpec};
+use symphonia_core::audio::{
+    AsGenericAudioBufferRef, AudioBuffer, AudioMut, AudioSpec, GenericAudioBufferRef,
+};
 use symphonia_core::codecs::{CodecDescriptor, CodecParameters, CODEC_TYPE_VORBIS};
 use symphonia_core::codecs::{Decoder, DecoderOptions, FinalizeResult};
 use symphonia_core::dsp::mdct::Imdct;
@@ -241,7 +242,7 @@ impl VorbisDecoder {
             };
 
             let render_len = (prev_block_n + n) / 4;
-            self.buf.render_reserved(Some(render_len));
+            self.buf.render_uninit(Some(render_len));
         }
 
         // Render all the audio channels.
@@ -251,7 +252,7 @@ impl VorbisDecoder {
                 &self.dsp.lapping_state,
                 &self.dsp.windows,
                 imdct,
-                self.buf.chan_mut(map_vorbis_channel(self.ident.n_channels, i)),
+                self.buf.plane_mut(map_vorbis_channel(self.ident.n_channels, i)).unwrap(),
             );
         }
 
@@ -301,13 +302,13 @@ impl Decoder for VorbisDecoder {
         };
 
         // Initialize the output buffer.
-        let spec = SignalSpec::new(ident.sample_rate, channels);
+        let spec = AudioSpec::new(ident.sample_rate, channels);
 
         let imdct_short = Imdct::new((1 << ident.bs0_exp) >> 1);
         let imdct_long = Imdct::new((1 << ident.bs1_exp) >> 1);
 
         // TODO: Should this be half the block size?
-        let duration = 1u64 << ident.bs1_exp;
+        let duration = 1 << ident.bs1_exp;
 
         let dsp =
             Dsp { windows, channels: dsp_channels, imdct_short, imdct_long, lapping_state: None };
@@ -321,7 +322,7 @@ impl Decoder for VorbisDecoder {
             modes: setup.modes,
             mappings: setup.mappings,
             dsp,
-            buf: AudioBuffer::new(duration, spec),
+            buf: AudioBuffer::new(spec, duration),
         })
     }
 
@@ -337,13 +338,13 @@ impl Decoder for VorbisDecoder {
         &self.params
     }
 
-    fn decode(&mut self, packet: &Packet) -> Result<AudioBufferRef<'_>> {
+    fn decode(&mut self, packet: &Packet) -> Result<GenericAudioBufferRef<'_>> {
         if let Err(e) = self.decode_inner(packet) {
             self.buf.clear();
             Err(e)
         }
         else {
-            Ok(self.buf.as_audio_buffer_ref())
+            Ok(self.buf.as_generic_audio_buffer_ref())
         }
     }
 
@@ -351,8 +352,8 @@ impl Decoder for VorbisDecoder {
         Default::default()
     }
 
-    fn last_decoded(&self) -> AudioBufferRef<'_> {
-        self.buf.as_audio_buffer_ref()
+    fn last_decoded(&self) -> GenericAudioBufferRef<'_> {
+        self.buf.as_generic_audio_buffer_ref()
     }
 }
 

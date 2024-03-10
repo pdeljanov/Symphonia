@@ -7,7 +7,7 @@
 
 use std::ascii;
 
-use symphonia_core::audio::Channels;
+use symphonia_core::audio::{Channels, Position};
 use symphonia_core::errors::{decode_error, Result};
 use symphonia_core::formats::{util::SeekIndex, Cue, CuePoint};
 use symphonia_core::io::*;
@@ -28,52 +28,54 @@ pub enum MetadataBlockType {
 fn flac_channels_to_channels(channels: u32) -> Channels {
     debug_assert!(channels > 0 && channels < 9);
 
-    match channels {
-        1 => Channels::FRONT_LEFT,
-        2 => Channels::FRONT_LEFT | Channels::FRONT_RIGHT,
-        3 => Channels::FRONT_LEFT | Channels::FRONT_RIGHT | Channels::FRONT_CENTRE,
+    let positions = match channels {
+        1 => Position::FRONT_LEFT,
+        2 => Position::FRONT_LEFT | Position::FRONT_RIGHT,
+        3 => Position::FRONT_LEFT | Position::FRONT_RIGHT | Position::FRONT_CENTER,
         4 => {
-            Channels::FRONT_LEFT
-                | Channels::FRONT_RIGHT
-                | Channels::REAR_LEFT
-                | Channels::REAR_RIGHT
+            Position::FRONT_LEFT
+                | Position::FRONT_RIGHT
+                | Position::REAR_LEFT
+                | Position::REAR_RIGHT
         }
         5 => {
-            Channels::FRONT_LEFT
-                | Channels::FRONT_RIGHT
-                | Channels::FRONT_CENTRE
-                | Channels::REAR_LEFT
-                | Channels::REAR_RIGHT
+            Position::FRONT_LEFT
+                | Position::FRONT_RIGHT
+                | Position::FRONT_CENTER
+                | Position::REAR_LEFT
+                | Position::REAR_RIGHT
         }
         6 => {
-            Channels::FRONT_LEFT
-                | Channels::FRONT_RIGHT
-                | Channels::FRONT_CENTRE
-                | Channels::LFE1
-                | Channels::REAR_LEFT
-                | Channels::REAR_RIGHT
+            Position::FRONT_LEFT
+                | Position::FRONT_RIGHT
+                | Position::FRONT_CENTER
+                | Position::LFE1
+                | Position::REAR_LEFT
+                | Position::REAR_RIGHT
         }
         7 => {
-            Channels::FRONT_LEFT
-                | Channels::FRONT_RIGHT
-                | Channels::FRONT_CENTRE
-                | Channels::LFE1
-                | Channels::REAR_CENTRE
-                | Channels::SIDE_LEFT
-                | Channels::SIDE_RIGHT
+            Position::FRONT_LEFT
+                | Position::FRONT_RIGHT
+                | Position::FRONT_CENTER
+                | Position::LFE1
+                | Position::REAR_CENTER
+                | Position::SIDE_LEFT
+                | Position::SIDE_RIGHT
         }
         8 => {
-            Channels::FRONT_LEFT
-                | Channels::FRONT_RIGHT
-                | Channels::FRONT_CENTRE
-                | Channels::LFE1
-                | Channels::REAR_LEFT
-                | Channels::REAR_RIGHT
-                | Channels::SIDE_LEFT
-                | Channels::SIDE_RIGHT
+            Position::FRONT_LEFT
+                | Position::FRONT_RIGHT
+                | Position::FRONT_CENTER
+                | Position::LFE1
+                | Position::REAR_LEFT
+                | Position::REAR_RIGHT
+                | Position::SIDE_LEFT
+                | Position::SIDE_RIGHT
         }
         _ => unreachable!(),
-    }
+    };
+
+    Channels::Positioned(positions)
 }
 
 #[derive(Debug, Default)]
@@ -106,7 +108,7 @@ impl StreamInfo {
             frame_byte_len_min: 0,
             frame_byte_len_max: 0,
             sample_rate: 0,
-            channels: Channels::empty(),
+            channels: Channels::None,
             bits_per_sample: 0,
             n_samples: None,
             md5: None,

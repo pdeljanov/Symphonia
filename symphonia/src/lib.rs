@@ -113,11 +113,12 @@
 //! 9.  To decode a track, obtain a packet from the `FormatReader` by
 //!     calling [`next_packet`][`core::formats::FormatReader::next_packet`] and then pass the
 //!     `Packet` to the `Decoder` for that track. The [`decode`][core::codecs::Decoder::decode]
-//!     function will read a packet and return an [`AudioBufferRef`][core::audio::AudioBufferRef]
+//!     function will read a packet and return a
+//!     [`GenericAudioBufferRef`][core::audio::GenericAudioBufferRef]
 //!     (an "any-type" [`AudioBuffer`][core::audio::AudioBuffer]).
-//! 10. The `AudioBufferRef` may be used to access the decoded audio samples directly, or it can be
-//!     copied into a [`SampleBuffer`][core::audio::SampleBuffer] or
-//!     [`RawSampleBuffer`][core::audio::RawSampleBuffer] to export the audio out of Symphonia.
+//! 10. The `GenericAudioBufferRef` may be used to access the decoded audio samples directly by
+//!     matching on different `AudioBuffer` types, or the generic interfaces can be used to copy the
+//!     samples into an external slice or vector of a desired sample format.
 //! 11. Repeat step 9 and 10 until the end-of-stream error is returned.
 //!
 //! An example implementation of a simple audio player (symphonia-play) can be found in the

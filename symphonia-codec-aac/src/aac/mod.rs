@@ -11,14 +11,15 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::audio::{AsAudioBufferRef, AudioBuffer, AudioBufferRef, Signal, SignalSpec};
+use symphonia_core::audio::{
+    AsGenericAudioBufferRef, AudioBuffer, AudioSpec, GenericAudioBufferRef,
+};
 use symphonia_core::codecs::{CodecDescriptor, CodecParameters, CODEC_TYPE_AAC};
 use symphonia_core::codecs::{Decoder, DecoderOptions, FinalizeResult};
 use symphonia_core::errors::{unsupported_error, Result};
 use symphonia_core::formats::Packet;
 use symphonia_core::io::{BitReaderLtr, FiniteBitStream, ReadBitsLtr};
 use symphonia_core::support_codec;
-use symphonia_core::units::Duration;
 
 mod codebooks;
 mod common;
@@ -402,7 +403,7 @@ impl AacDecoder {
     fn decode_inner(&mut self, packet: &Packet) -> Result<()> {
         // Clear the audio output buffer.
         self.buf.clear();
-        self.buf.render_reserved(None);
+        self.buf.render_uninit(None);
 
         let mut bs = BitReaderLtr::new(packet.buf());
 
@@ -440,11 +441,8 @@ impl Decoder for AacDecoder {
                 None => return unsupported_error("aac: sample rate is required"),
             };
 
-            m4ainfo.channels = if let Some(channels) = params.channels {
+            m4ainfo.channels = if let Some(channels) = &params.channels {
                 channels.count()
-            }
-            else if let Some(layout) = params.channel_layout {
-                layout.into_channels().count()
             }
             else {
                 return unsupported_error("aac: channels or channel layout is required");
@@ -457,9 +455,9 @@ impl Decoder for AacDecoder {
             return unsupported_error("aac: aac too complex");
         }
 
-        let spec = SignalSpec::new(m4ainfo.srate, map_channels(m4ainfo.channels as u32).unwrap());
+        let spec = AudioSpec::new(m4ainfo.srate, map_to_channels(m4ainfo.channels).unwrap());
 
-        let duration = m4ainfo.samples as Duration;
+        let duration = m4ainfo.samples;
         let srate = m4ainfo.srate;
 
         Ok(AacDecoder {
@@ -468,7 +466,7 @@ impl Decoder for AacDecoder {
             dsp: dsp::Dsp::new(),
             sbinfo: GASubbandInfo::find(srate),
             params: params.clone(),
-            buf: AudioBuffer::new(duration, spec),
+            buf: AudioBuffer::new(spec, duration),
         })
     }
 
@@ -486,13 +484,13 @@ impl Decoder for AacDecoder {
         &self.params
     }
 
-    fn decode(&mut self, packet: &Packet) -> Result<AudioBufferRef<'_>> {
+    fn decode(&mut self, packet: &Packet) -> Result<GenericAudioBufferRef<'_>> {
         if let Err(e) = self.decode_inner(packet) {
             self.buf.clear();
             Err(e)
         }
         else {
-            Ok(self.buf.as_audio_buffer_ref())
+            Ok(self.buf.as_generic_audio_buffer_ref())
         }
     }
 
@@ -500,7 +498,7 @@ impl Decoder for AacDecoder {
         Default::default()
     }
 
-    fn last_decoded(&self) -> AudioBufferRef<'_> {
-        self.buf.as_audio_buffer_ref()
+    fn last_decoded(&self) -> GenericAudioBufferRef<'_> {
+        self.buf.as_generic_audio_buffer_ref()
     }
 }

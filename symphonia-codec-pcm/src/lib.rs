@@ -16,7 +16,9 @@
 
 use symphonia_core::support_codec;
 
-use symphonia_core::audio::{AsAudioBufferRef, AudioBuffer, AudioBufferRef, Signal, SignalSpec};
+use symphonia_core::audio::{
+    AsGenericAudioBufferRef, AudioSpec, GenericAudioBuffer, GenericAudioBufferRef,
+};
 use symphonia_core::codecs::{CodecDescriptor, CodecParameters, CodecType};
 use symphonia_core::codecs::{Decoder, DecoderOptions, FinalizeResult};
 // Signed Int PCM codecs
@@ -36,67 +38,7 @@ use symphonia_core::conv::IntoSample;
 use symphonia_core::errors::{decode_error, unsupported_error, Result};
 use symphonia_core::formats::Packet;
 use symphonia_core::io::ReadBytes;
-use symphonia_core::sample::{i24, u24, SampleFormat};
-use symphonia_core::units::Duration;
-
-macro_rules! impl_generic_audio_buffer_func {
-    ($generic:expr, $buf:ident, $expr:expr) => {
-        match $generic {
-            GenericAudioBuffer::U8($buf) => $expr,
-            GenericAudioBuffer::U16($buf) => $expr,
-            GenericAudioBuffer::U24($buf) => $expr,
-            GenericAudioBuffer::U32($buf) => $expr,
-            GenericAudioBuffer::S8($buf) => $expr,
-            GenericAudioBuffer::S16($buf) => $expr,
-            GenericAudioBuffer::S24($buf) => $expr,
-            GenericAudioBuffer::S32($buf) => $expr,
-            GenericAudioBuffer::F32($buf) => $expr,
-            GenericAudioBuffer::F64($buf) => $expr,
-        }
-    };
-}
-
-/// A generic audio buffer.
-/// TODO: Move to core library with a full API.
-pub enum GenericAudioBuffer {
-    U8(AudioBuffer<u8>),
-    U16(AudioBuffer<u16>),
-    U24(AudioBuffer<u24>),
-    U32(AudioBuffer<u32>),
-    S8(AudioBuffer<i8>),
-    S16(AudioBuffer<i16>),
-    S24(AudioBuffer<i24>),
-    S32(AudioBuffer<i32>),
-    F32(AudioBuffer<f32>),
-    F64(AudioBuffer<f64>),
-}
-
-impl GenericAudioBuffer {
-    fn new(format: SampleFormat, duration: Duration, spec: SignalSpec) -> Self {
-        match format {
-            SampleFormat::U8 => GenericAudioBuffer::U8(AudioBuffer::new(duration, spec)),
-            SampleFormat::U16 => GenericAudioBuffer::U16(AudioBuffer::new(duration, spec)),
-            SampleFormat::U24 => GenericAudioBuffer::U24(AudioBuffer::new(duration, spec)),
-            SampleFormat::U32 => GenericAudioBuffer::U32(AudioBuffer::new(duration, spec)),
-            SampleFormat::S8 => GenericAudioBuffer::S8(AudioBuffer::new(duration, spec)),
-            SampleFormat::S16 => GenericAudioBuffer::S16(AudioBuffer::new(duration, spec)),
-            SampleFormat::S24 => GenericAudioBuffer::S24(AudioBuffer::new(duration, spec)),
-            SampleFormat::S32 => GenericAudioBuffer::S32(AudioBuffer::new(duration, spec)),
-            SampleFormat::F32 => GenericAudioBuffer::F32(AudioBuffer::new(duration, spec)),
-            SampleFormat::F64 => GenericAudioBuffer::F64(AudioBuffer::new(duration, spec)),
-        }
-    }
-
-    fn clear(&mut self) {
-        impl_generic_audio_buffer_func!(self, buf, buf.clear());
-    }
-}
-
-impl AsAudioBufferRef for GenericAudioBuffer {
-    fn as_audio_buffer_ref(&self) -> AudioBufferRef<'_> {
-        impl_generic_audio_buffer_func!(self, buf, buf.as_audio_buffer_ref())
-    }
-}
+use symphonia_core::sample::SampleFormat;
 
 macro_rules! read_pcm_signed {
     ($buf:expr, $fmt:tt, $read:expr, $width:expr, $coded_width:expr) => {
@@ -105,8 +47,9 @@ macro_rules! read_pcm_signed {
             GenericAudioBuffer::$fmt(ref mut buf) => {
                 // Read samples.
                 let shift = $width - $coded_width;
-                buf.fill(|audio_planes, idx| -> Result<()> {
-                    for plane in audio_planes.planes() {
+
+                buf.render_with(None, |idx, audio_planes| -> Result<()> {
+                    for plane in audio_planes.iter_mut() {
                         plane[idx] = ($read << shift).into_sample();
                     }
                     Ok(())
@@ -124,8 +67,8 @@ macro_rules! read_pcm_unsigned {
             GenericAudioBuffer::$fmt(ref mut buf) => {
                 // Read samples.
                 let shift = $width - $coded_width;
-                buf.fill(|audio_planes, idx| -> Result<()> {
-                    for plane in audio_planes.planes() {
+                buf.render_with(None, |idx, audio_planes| -> Result<()> {
+                    for plane in audio_planes.iter_mut() {
                         plane[idx] = ($read << shift).into_sample();
                     }
                     Ok(())
@@ -142,8 +85,8 @@ macro_rules! read_pcm_floating {
         match $buf {
             GenericAudioBuffer::$fmt(ref mut buf) => {
                 // Read samples.
-                buf.fill(|audio_planes, idx| -> Result<()> {
-                    for plane in audio_planes.planes() {
+                buf.render_with(None, |idx, audio_planes| -> Result<()> {
+                    for plane in audio_planes.iter_mut() {
                         plane[idx] = $read;
                     }
                     Ok(())
@@ -160,8 +103,8 @@ macro_rules! read_pcm_transfer_func {
         match $buf {
             GenericAudioBuffer::$fmt(ref mut buf) => {
                 // Read samples.
-                buf.fill(|audio_planes, idx| -> Result<()> {
-                    for plane in audio_planes.planes() {
+                buf.render_with(None, |idx, audio_planes| -> Result<()> {
+                    for plane in audio_planes.iter_mut() {
                         plane[idx] = $func;
                     }
                     Ok(())
@@ -280,6 +223,8 @@ impl PcmDecoder {
     fn decode_inner(&mut self, packet: &Packet) -> Result<()> {
         let mut reader = packet.as_buf_reader();
 
+        self.buf.clear();
+
         let _ = match self.params.codec {
             CODEC_TYPE_PCM_S32LE => {
                 read_pcm_signed!(self.buf, S32, reader.read_i32()?, 32, self.coded_width)
@@ -374,7 +319,7 @@ impl Decoder for PcmDecoder {
         }
 
         let frames = match params.max_frames_per_packet {
-            Some(frames) => frames,
+            Some(frames) => frames as usize,
             _ => return unsupported_error("pcm: maximum frames per packet is required"),
         };
 
@@ -383,16 +328,13 @@ impl Decoder for PcmDecoder {
             _ => return unsupported_error("pcm: sample rate is required"),
         };
 
-        let spec = if let Some(channels) = params.channels {
+        let spec = if let Some(channels) = &params.channels {
             // Atleast one channel is required.
             if channels.count() < 1 {
                 return unsupported_error("pcm: number of channels cannot be 0");
             }
 
-            SignalSpec::new(rate, channels)
-        }
-        else if let Some(layout) = params.channel_layout {
-            SignalSpec::new_with_layout(rate, layout)
+            AudioSpec::new(rate, channels.clone())
         }
         else {
             return unsupported_error("pcm: channels or channel_layout is required");
@@ -441,7 +383,7 @@ impl Decoder for PcmDecoder {
         }
 
         // Create an audio buffer of the correct format.
-        let buf = GenericAudioBuffer::new(sample_format, frames, spec);
+        let buf = GenericAudioBuffer::new(sample_format, spec, frames);
 
         Ok(PcmDecoder { params: params.clone(), coded_width, buf })
     }
@@ -633,13 +575,13 @@ impl Decoder for PcmDecoder {
         &self.params
     }
 
-    fn decode(&mut self, packet: &Packet) -> Result<AudioBufferRef<'_>> {
+    fn decode(&mut self, packet: &Packet) -> Result<GenericAudioBufferRef<'_>> {
         if let Err(e) = self.decode_inner(packet) {
             self.buf.clear();
             Err(e)
         }
         else {
-            Ok(self.buf.as_audio_buffer_ref())
+            Ok(self.buf.as_generic_audio_buffer_ref())
         }
     }
 
@@ -647,7 +589,7 @@ impl Decoder for PcmDecoder {
         Default::default()
     }
 
-    fn last_decoded(&self) -> AudioBufferRef<'_> {
-        self.buf.as_audio_buffer_ref()
+    fn last_decoded(&self) -> GenericAudioBufferRef<'_> {
+        self.buf.as_generic_audio_buffer_ref()
     }
 }

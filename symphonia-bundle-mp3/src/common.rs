@@ -5,7 +5,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::audio::{AudioBuffer, Channels, Layout, SignalSpec};
+use symphonia_core::audio::{layouts, AudioBuffer, AudioSpec, Channels, Position};
 use symphonia_core::codecs::{CodecType, CODEC_TYPE_MP1, CODEC_TYPE_MP2, CODEC_TYPE_MP3};
 use symphonia_core::errors::Result;
 
@@ -70,10 +70,12 @@ impl ChannelMode {
     /// Gets the the channel map.
     #[inline(always)]
     pub fn channels(&self) -> Channels {
-        match self {
-            ChannelMode::Mono => Channels::FRONT_LEFT,
-            _ => Channels::FRONT_LEFT | Channels::FRONT_RIGHT,
-        }
+        let positions = match self {
+            ChannelMode::Mono => Position::FRONT_LEFT,
+            _ => Position::FRONT_LEFT | Position::FRONT_RIGHT,
+        };
+
+        Channels::Positioned(positions)
     }
 }
 
@@ -130,14 +132,14 @@ impl FrameHeader {
 
     /// Returns a signal specification for the frame.
     #[allow(dead_code)]
-    pub fn spec(&self) -> SignalSpec {
-        let layout = match self.n_channels() {
-            1 => Layout::Mono,
-            2 => Layout::Stereo,
+    pub fn spec(&self) -> AudioSpec {
+        let channels = match self.n_channels() {
+            1 => layouts::CHANNEL_LAYOUT_MONO,
+            2 => layouts::CHANNEL_LAYOUT_STEREO,
             _ => unreachable!(),
         };
 
-        SignalSpec::new_with_layout(self.sample_rate, layout)
+        AudioSpec::new(self.sample_rate, channels)
     }
 
     /// Returns the number of audio samples in the frame per channel.

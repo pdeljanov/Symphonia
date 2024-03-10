@@ -350,7 +350,7 @@ fn read_stream_info_block<B: ReadBytes + FiniteStream>(
             .with_sample_rate(info.sample_rate)
             .with_time_base(TimeBase::new(1, info.sample_rate))
             .with_bits_per_sample(info.bits_per_sample)
-            .with_channels(info.channels);
+            .with_channels(info.channels.clone());
 
         if let Some(md5) = info.md5 {
             codec_params.with_verification_code(VerificationCheck::Md5(md5));

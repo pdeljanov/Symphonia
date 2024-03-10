@@ -111,11 +111,7 @@ impl FormatReader for WavReader {
                         .with_frames_per_block(packet_info.frames_per_block);
 
                     // Append Format chunk fields to codec parameters.
-                    append_format_params(
-                        &mut codec_params,
-                        &format.format_data,
-                        format.sample_rate,
-                    );
+                    append_format_params(&mut codec_params, format.format_data, format.sample_rate);
                 }
                 RiffWaveChunks::Fact(fct) => {
                     let fact = fct.parse(&mut source)?;

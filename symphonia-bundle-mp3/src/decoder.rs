@@ -5,7 +5,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::audio::{AsAudioBufferRef, AudioBuffer, AudioBufferRef, Signal};
+use symphonia_core::audio::{AsGenericAudioBufferRef, Audio, AudioBuffer, GenericAudioBufferRef};
 use symphonia_core::codecs::{CodecDescriptor, CodecParameters, CodecType};
 use symphonia_core::codecs::{Decoder, DecoderOptions, FinalizeResult};
 use symphonia_core::errors::{decode_error, unsupported_error, Result};
@@ -72,7 +72,7 @@ impl MpaDecoder {
 
         // The audio buffer can only be created after the first frame is decoded.
         if self.buf.is_unused() {
-            self.buf = AudioBuffer::new(1152, header.spec());
+            self.buf = AudioBuffer::new(header.spec(), 1152);
         }
         else {
             // Ensure the packet contains an audio frame with the same signal specification as the
@@ -126,7 +126,7 @@ impl Decoder for MpaDecoder {
         // Create decoder state.
         let state = State::new(params.codec);
 
-        Ok(MpaDecoder { params: params.clone(), state, buf: AudioBuffer::unused() })
+        Ok(MpaDecoder { params: params.clone(), state, buf: Default::default() })
     }
 
     fn supported_codecs() -> &'static [CodecDescriptor] {
@@ -149,13 +149,13 @@ impl Decoder for MpaDecoder {
         self.state = State::new(self.params.codec);
     }
 
-    fn decode(&mut self, packet: &Packet) -> Result<AudioBufferRef<'_>> {
+    fn decode(&mut self, packet: &Packet) -> Result<GenericAudioBufferRef<'_>> {
         if let Err(e) = self.decode_inner(packet) {
             self.buf.clear();
             Err(e)
         }
         else {
-            Ok(self.buf.as_audio_buffer_ref())
+            Ok(self.buf.as_generic_audio_buffer_ref())
         }
     }
 
@@ -163,7 +163,7 @@ impl Decoder for MpaDecoder {
         Default::default()
     }
 
-    fn last_decoded(&self) -> AudioBufferRef<'_> {
-        self.buf.as_audio_buffer_ref()
+    fn last_decoded(&self) -> GenericAudioBufferRef<'_> {
+        self.buf.as_generic_audio_buffer_ref()
     }
 }

@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::default::Default;
 use std::fmt;
 
-use crate::audio::{AudioBufferRef, Channels, Layout};
+use crate::audio::{Channels, GenericAudioBufferRef};
 use crate::errors::{unsupported_error, Result};
 use crate::formats::Packet;
 use crate::sample::SampleFormat;
@@ -281,9 +281,6 @@ pub struct CodecParameters {
     /// A bitmask of all channels in the stream.
     pub channels: Option<Channels>,
 
-    /// The channel layout.
-    pub channel_layout: Option<Layout>,
-
     /// The number of leading frames inserted by the encoder that should be skipped during playback.
     pub delay: Option<u32>,
 
@@ -319,7 +316,6 @@ impl CodecParameters {
             bits_per_sample: None,
             bits_per_coded_sample: None,
             channels: None,
-            channel_layout: None,
             delay: None,
             padding: None,
             max_frames_per_packet: None,
@@ -381,12 +377,6 @@ impl CodecParameters {
     /// Provide the channel map.
     pub fn with_channels(&mut self, channels: Channels) -> &mut Self {
         self.channels = Some(channels);
-        self
-    }
-
-    /// Provide the channel layout.
-    pub fn with_channel_layout(&mut self, channel_layout: Layout) -> &mut Self {
-        self.channel_layout = Some(channel_layout);
         self
     }
 
@@ -490,7 +480,7 @@ pub trait Decoder: Send + Sync {
     /// decoded audio buffer to change. All other errors are unrecoverable.
     ///
     /// Implementors of decoders *must* `clear` the internal buffer if an error occurs.
-    fn decode(&mut self, packet: &Packet) -> Result<AudioBufferRef>;
+    fn decode(&mut self, packet: &Packet) -> Result<GenericAudioBufferRef>;
 
     /// Optionally, obtain post-decode information such as the verification status.
     fn finalize(&mut self) -> FinalizeResult;
@@ -500,7 +490,7 @@ pub trait Decoder: Send + Sync {
     /// After a successful call to `decode`, this will contain the audio content of the last decoded
     /// `Packet`. If the last call to `decode` resulted in an error, then implementors *must* ensure
     /// the returned audio buffer has zero length.
-    fn last_decoded(&self) -> AudioBufferRef;
+    fn last_decoded(&self) -> GenericAudioBufferRef;
 }
 
 /// A `CodecDescriptor` stores a description of a single logical codec. Common information such as

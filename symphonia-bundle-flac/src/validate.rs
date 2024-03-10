@@ -8,7 +8,7 @@
 use std::mem;
 use std::vec::Vec;
 
-use symphonia_core::audio::{AudioBuffer, Signal};
+use symphonia_core::audio::{Audio, AudioBuffer};
 use symphonia_core::checksum::Md5;
 use symphonia_core::io::Monitor;
 
@@ -44,7 +44,7 @@ impl Validator {
             _ => unreachable!(),
         };
 
-        let n_channels = buf.spec().channels.count();
+        let n_channels = buf.spec().channels().count();
         let n_frames = buf.frames();
 
         // Calculate the total size of all the samples in bytes.
@@ -84,8 +84,11 @@ fn copy_as_i24<'a>(
     const SIZE_OF_I24: usize = 24 / 8;
 
     for ch in 0..n_channels {
-        for (out, sample) in
-            buf.chunks_exact_mut(SIZE_OF_I24).skip(ch).step_by(n_channels).zip(samples.chan(ch))
+        for (out, sample) in buf
+            .chunks_exact_mut(SIZE_OF_I24)
+            .skip(ch)
+            .step_by(n_channels)
+            .zip(samples.plane(ch).unwrap())
         {
             out.copy_from_slice(&sample.to_le_bytes()[0..SIZE_OF_I24]);
         }
@@ -107,7 +110,7 @@ macro_rules! copy_as {
                     .chunks_exact_mut(mem::size_of::<$type>())
                     .skip(ch)
                     .step_by(n_channels)
-                    .zip(samples.chan(ch))
+                    .zip(samples.plane(ch).unwrap())
                 {
                     out.copy_from_slice(&(*sample as $type).to_le_bytes());
                 }

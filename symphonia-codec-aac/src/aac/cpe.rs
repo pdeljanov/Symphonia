@@ -11,7 +11,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::audio::{AudioBuffer, Signal};
+use symphonia_core::audio::{AudioBuffer, AudioMut};
 use symphonia_core::errors::{decode_error, Result};
 use symphonia_core::io::ReadBitsLtr;
 
@@ -155,10 +155,10 @@ impl ChannelPair {
         abuf: &mut AudioBuffer<f32>,
         rate_idx: usize,
     ) {
-        self.ics0.synth_channel(dsp, rate_idx, abuf.chan_mut(self.channel));
+        self.ics0.synth_channel(dsp, rate_idx, abuf.plane_mut(self.channel).unwrap());
 
         if self.is_pair {
-            self.ics1.synth_channel(dsp, rate_idx, abuf.chan_mut(self.channel + 1));
+            self.ics1.synth_channel(dsp, rate_idx, abuf.plane_mut(self.channel + 1).unwrap());
         }
     }
 }

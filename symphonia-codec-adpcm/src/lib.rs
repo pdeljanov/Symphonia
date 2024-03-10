@@ -16,7 +16,9 @@
 
 use symphonia_core::support_codec;
 
-use symphonia_core::audio::{AsAudioBufferRef, AudioBuffer, AudioBufferRef, Signal, SignalSpec};
+use symphonia_core::audio::{
+    AsGenericAudioBufferRef, Audio, AudioBuffer, AudioMut, AudioSpec, GenericAudioBufferRef,
+};
 use symphonia_core::codecs::{CodecDescriptor, CodecParameters, CodecType};
 use symphonia_core::codecs::{Decoder, DecoderOptions, FinalizeResult};
 use symphonia_core::codecs::{CODEC_TYPE_ADPCM_IMA_WAV, CODEC_TYPE_ADPCM_MS};
@@ -71,12 +73,12 @@ impl AdpcmDecoder {
         let block_count = packet.block_dur() as usize / frames_per_block;
 
         self.buf.clear();
-        self.buf.render_reserved(Some(block_count * frames_per_block));
+        self.buf.render_uninit(Some(block_count * frames_per_block));
 
-        let channel_count = self.buf.spec().channels.count();
+        let channel_count = self.buf.spec().channels().count();
         match channel_count {
             1 => {
-                let buffer = self.buf.chan_mut(0);
+                let buffer = self.buf.plane_mut(0).unwrap();
                 let decode_mono = self.inner_decoder.decode_mono_fn();
                 for block_id in 0..block_count {
                     let offset = frames_per_block * block_id;
@@ -86,7 +88,7 @@ impl AdpcmDecoder {
                 }
             }
             2 => {
-                let buffers = self.buf.chan_pair_mut(0, 1);
+                let buffers = self.buf.plane_pair_mut(0, 1).unwrap();
                 let decode_stereo = self.inner_decoder.decode_stereo_fn();
                 for block_id in 0..block_count {
                     let offset = frames_per_block * block_id;
@@ -111,7 +113,7 @@ impl Decoder for AdpcmDecoder {
         }
 
         let frames = match params.max_frames_per_packet {
-            Some(frames) => frames,
+            Some(frames) => frames as usize,
             _ => return unsupported_error("adpcm: maximum frames per packet is required"),
         };
 
@@ -124,11 +126,8 @@ impl Decoder for AdpcmDecoder {
             _ => return unsupported_error("adpcm: sample rate is required"),
         };
 
-        let spec = if let Some(channels) = params.channels {
-            SignalSpec::new(rate, channels)
-        }
-        else if let Some(layout) = params.channel_layout {
-            SignalSpec::new_with_layout(rate, layout)
+        let spec = if let Some(channels) = &params.channels {
+            AudioSpec::new(rate, channels.clone())
         }
         else {
             return unsupported_error("adpcm: channels or channel_layout is required");
@@ -143,7 +142,7 @@ impl Decoder for AdpcmDecoder {
         Ok(AdpcmDecoder {
             params: params.clone(),
             inner_decoder,
-            buf: AudioBuffer::new(frames, spec),
+            buf: AudioBuffer::new(spec, frames),
         })
     }
 
@@ -162,13 +161,13 @@ impl Decoder for AdpcmDecoder {
         &self.params
     }
 
-    fn decode(&mut self, packet: &Packet) -> Result<AudioBufferRef<'_>> {
+    fn decode(&mut self, packet: &Packet) -> Result<GenericAudioBufferRef<'_>> {
         if let Err(e) = self.decode_inner(packet) {
             self.buf.clear();
             Err(e)
         }
         else {
-            Ok(self.buf.as_audio_buffer_ref())
+            Ok(self.buf.as_generic_audio_buffer_ref())
         }
     }
 
@@ -176,7 +175,7 @@ impl Decoder for AdpcmDecoder {
         Default::default()
     }
 
-    fn last_decoded(&self) -> AudioBufferRef<'_> {
-        self.buf.as_audio_buffer_ref()
+    fn last_decoded(&self) -> GenericAudioBufferRef<'_> {
+        self.buf.as_generic_audio_buffer_ref()
     }
 }
