@@ -140,15 +140,15 @@ impl FormatReader for AdtsReader {
             params.with_channels(channels);
         }
 
-        let n_frames = approximate_frame_count(&mut source)?;
-        if let Some(n_frames) = n_frames {
-            params.with_n_frames(n_frames);
-        }
-
         // Rewind back to the start of the frame.
         source.seek_buffered_rev(AdtsHeader::SIZE);
 
         let first_frame_pos = source.pos();
+
+        let n_frames = approximate_frame_count(&mut source)?;
+        if let Some(n_frames) = n_frames {
+            params.with_n_frames(n_frames);
+        }
 
         Ok(AdtsReader {
             reader: source,
