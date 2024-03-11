@@ -54,7 +54,11 @@ fn main() {
     loop {
         // Get the next packet from the media format.
         let packet = match format.next_packet() {
-            Ok(packet) => packet,
+            Ok(Some(packet)) => packet,
+            Ok(None) => {
+                // Reached the end of the stream.
+                break;
+            }
             Err(Error::ResetRequired) => {
                 // The track list has been changed. Re-examine it and create a new set of decoders,
                 // then restart the decode loop. This is an advanced feature and it is not

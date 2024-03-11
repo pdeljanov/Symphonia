@@ -22,7 +22,10 @@ pub struct MvhdAtom {
     pub mtime: u64,
     /// Timescale for the movie expressed as the number of units per second.
     pub timescale: u32,
-    /// The duration of the movie in `timescale` units.
+    /// The duration of the movie in timescale units.
+    ///
+    /// This value is equal to the sum of the durations of all the longest track's edits. If there
+    /// are no edits, then this is the duration of all the longest track's samples.
     pub duration: u64,
     /// The preferred volume to play the movie.
     pub volume: FpU8,

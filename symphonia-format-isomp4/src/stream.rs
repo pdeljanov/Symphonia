@@ -6,7 +6,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 use symphonia_core::errors::{decode_error, Error, Result};
 
-use crate::atoms::{stsz::SampleSize, Co64Atom, MoofAtom, MoovAtom, MvexAtom, StcoAtom, TrafAtom};
+use crate::atoms::{stsz::SampleSize, Co64Atom, MoofAtom, MoovAtom, StcoAtom, TrafAtom};
 
 use std::ops::Range;
 use std::sync::Arc;
@@ -33,6 +33,9 @@ pub struct SampleTiming {
 pub trait StreamSegment: Send + Sync {
     /// Gets the sequence number of this segment.
     fn sequence_num(&self) -> u32;
+
+    /// Returns `true` if all tracks end in this segment.
+    fn all_tracks_ended(&self) -> bool;
 
     /// Gets the first and last sample numbers for the track `track_num`.
     fn track_sample_range(&self, track_num: usize) -> Range<u32>;
@@ -79,13 +82,15 @@ struct SequenceInfo {
 
 pub struct MoofSegment {
     moof: MoofAtom,
-    mvex: Arc<MvexAtom>,
+    moov: Arc<MoovAtom>,
     seq: Vec<SequenceInfo>,
 }
 
 impl MoofSegment {
     /// Instantiate a new segment from a `MoofAtom`.
-    pub fn new(moof: MoofAtom, mvex: Arc<MvexAtom>, prev: &dyn StreamSegment) -> MoofSegment {
+    pub fn new(moof: MoofAtom, moov: Arc<MoovAtom>, prev: &dyn StreamSegment) -> MoofSegment {
+        let mvex = moov.mvex.as_ref().expect("mvex atom present");
+
         let mut seq = Vec::with_capacity(mvex.trexs.len());
 
         // Calculate the sequence information for each track, even if not present in the fragment.
@@ -117,7 +122,7 @@ impl MoofSegment {
             seq.push(info);
         }
 
-        MoofSegment { moof, mvex, seq }
+        MoofSegment { moof, moov, seq }
     }
 
     /// Try to get the Track Fragment atom associated with the track identified by `track_num`.
@@ -130,6 +135,24 @@ impl MoofSegment {
 impl StreamSegment for MoofSegment {
     fn sequence_num(&self) -> u32 {
         self.moof.mfhd.sequence_number
+    }
+
+    fn all_tracks_ended(&self) -> bool {
+        for (trak, seq) in self.moov.traks.iter().zip(&self.seq) {
+            // If there was no track fragment for this track in this segment, then the track ended
+            // in a previous segment.
+            if seq.traf_idx.is_none() {
+                continue;
+            }
+
+            // If a track does NOT end in this segment, then this cannot be the last segment.
+            if seq.first_ts + seq.total_sample_duration < trak.mdia.mdhd.duration {
+                return false;
+            }
+        }
+
+        // All tracks ended.
+        true
     }
 
     fn sample_timing(&self, track_num: usize, sample_num: u32) -> Result<Option<SampleTiming>> {
@@ -145,7 +168,7 @@ impl StreamSegment for MoofSegment {
         let default_dur = traf
             .tfhd
             .default_sample_duration
-            .unwrap_or(self.mvex.trexs[track_num].default_sample_duration);
+            .unwrap_or(self.moov.mvex.as_ref().unwrap().trexs[track_num].default_sample_duration);
 
         for trun in traf.truns.iter() {
             // If the sample is contained within the this track run, get the timing of of the
@@ -177,7 +200,7 @@ impl StreamSegment for MoofSegment {
         let default_dur = traf
             .tfhd
             .default_sample_duration
-            .unwrap_or(self.mvex.trexs[track_num].default_sample_duration);
+            .unwrap_or(self.moov.mvex.as_ref().unwrap().trexs[track_num].default_sample_duration);
 
         for trun in traf.truns.iter() {
             // Get the total duration of this track run.
@@ -216,8 +239,10 @@ impl StreamSegment for MoofSegment {
         let mut sample_num_rel = sample_num - self.seq[track_num].first_sample;
         let mut trun_offset = traf_base_pos;
 
-        let default_size =
-            traf.tfhd.default_sample_size.unwrap_or(self.mvex.trexs[track_num].default_sample_size);
+        let default_size = traf
+            .tfhd
+            .default_sample_size
+            .unwrap_or(self.moov.mvex.as_ref().unwrap().trexs[track_num].default_sample_size);
 
         for trun in traf.truns.iter() {
             // If a data offset is present for this track fragment run, then calculate the new base
@@ -305,12 +330,12 @@ fn get_chunk_offset(
 }
 
 pub struct MoovSegment {
-    moov: MoovAtom,
+    moov: Arc<MoovAtom>,
 }
 
 impl MoovSegment {
     /// Instantiate a segment from the provide moov atom.
-    pub fn new(moov: MoovAtom) -> MoovSegment {
+    pub fn new(moov: Arc<MoovAtom>) -> MoovSegment {
         MoovSegment { moov }
     }
 }
@@ -319,6 +344,17 @@ impl StreamSegment for MoovSegment {
     fn sequence_num(&self) -> u32 {
         // The segment defined by the moov atom is always 0.
         0
+    }
+
+    fn all_tracks_ended(&self) -> bool {
+        // If a track does not end in this segment, then this cannot be the last segment.
+        for trak in &self.moov.traks {
+            if trak.mdia.minf.stbl.stts.total_duration < trak.mdia.mdhd.duration {
+                return false;
+            }
+        }
+
+        true
     }
 
     fn sample_timing(&self, track_num: usize, sample_num: u32) -> Result<Option<SampleTiming>> {

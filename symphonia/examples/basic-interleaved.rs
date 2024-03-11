@@ -50,10 +50,8 @@ fn main() {
     let mut samples: Vec<f32> = Default::default();
     let mut total_sample_count = 0;
 
-    loop {
-        // Get the next packet from the format reader.
-        let packet = format.next_packet().unwrap();
-
+    // Read and decode all packets from the format reader.
+    while let Some(packet) = format.next_packet().unwrap() {
         // If the packet does not belong to the selected track, skip it.
         if packet.track_id() != track_id {
             continue;

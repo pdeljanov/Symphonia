@@ -76,6 +76,10 @@ impl OggReader {
         Ok(())
     }
 
+    fn have_all_streams_read_last_page(&self) -> bool {
+        self.streams.iter().all(|(_, stream)| stream.has_read_last_page().unwrap_or(true))
+    }
+
     fn peek_logical_packet(&self) -> Option<&Packet> {
         let page = self.pages.page();
 
@@ -96,7 +100,7 @@ impl OggReader {
         }
     }
 
-    fn next_logical_packet(&mut self) -> Result<Packet> {
+    fn next_logical_packet(&mut self) -> Result<Option<Packet>> {
         loop {
             let page = self.pages.page();
 
@@ -104,11 +108,24 @@ impl OggReader {
             // current page.
             if let Some(stream) = self.streams.get_mut(&page.header.serial) {
                 if let Some(packet) = stream.next_packet() {
-                    return Ok(packet);
+                    return Ok(Some(packet));
                 }
             }
 
-            self.read_page()?;
+            match self.read_page() {
+                Ok(_) => (),
+                Err(Error::IoError(err)) if err.kind() == std::io::ErrorKind::UnexpectedEof => {
+                    // Check that all logical streams have read their last page.
+                    if self.have_all_streams_read_last_page() {
+                        // All streams read their last page. End of stream has been reached.
+                        return Ok(None);
+                    }
+
+                    // A stream did not reach its last page. Consider this an unexpected EOF.
+                    return Err(Error::IoError(err));
+                }
+                Err(err) => return Err(err),
+            }
         }
     }
 
@@ -207,7 +224,19 @@ impl OggReader {
 
                     self.discard_logical_packet();
                 }
-                _ => self.read_page()?,
+                _ => match self.read_page() {
+                    Ok(_) => (),
+                    Err(Error::IoError(err)) if err.kind() == std::io::ErrorKind::UnexpectedEof => {
+                        // If all streams have read their last page, then the seek was out-of-range.
+                        if self.have_all_streams_read_last_page() {
+                            return seek_error(SeekErrorKind::OutOfRange);
+                        }
+
+                        // If a stream did not read its last page then this is an unexpected EOF.
+                        return Err(Error::IoError(err));
+                    }
+                    Err(err) => return Err(err),
+                },
             }
         };
 
@@ -387,7 +416,7 @@ impl FormatReader for OggReader {
         Ok(ogg)
     }
 
-    fn next_packet(&mut self) -> Result<Packet> {
+    fn next_packet(&mut self) -> Result<Option<Packet>> {
         self.next_logical_packet()
     }
 

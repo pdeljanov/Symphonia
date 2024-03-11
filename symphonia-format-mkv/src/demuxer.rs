@@ -11,7 +11,7 @@ use std::io::{Seek, SeekFrom};
 
 use symphonia_core::codecs::{CodecParameters, CODEC_TYPE_FLAC, CODEC_TYPE_VORBIS};
 use symphonia_core::errors::{
-    decode_error, end_of_stream_error, seek_error, unsupported_error, Error, Result, SeekErrorKind,
+    decode_error, seek_error, unsupported_error, Error, Result, SeekErrorKind,
 };
 use symphonia_core::formats::{
     Cue, FormatOptions, FormatReader, Packet, SeekMode, SeekTo, SeekedTo, Track,
@@ -24,6 +24,8 @@ use symphonia_core::sample::SampleFormat;
 use symphonia_core::support_format;
 use symphonia_core::units::TimeBase;
 use symphonia_utils_xiph::flac::metadata::{MetadataBlockHeader, MetadataBlockType};
+
+use log::warn;
 
 use crate::codecs::codec_id_to_type;
 use crate::ebml::{EbmlElement, ElementHeader, ElementIterator};
@@ -148,14 +150,20 @@ impl MkvReader {
                     self.frames.pop_front();
                 }
             }
-            self.next_element()?
+
+            if !self.next_element()? {
+                // There are no more elements.
+                return Err(Error::SeekError(SeekErrorKind::OutOfRange));
+            }
         };
 
         Ok(SeekedTo { track_id, required_ts: ts, actual_ts })
     }
 
     fn seek_track_by_ts(&mut self, track_id: u32, ts: u64) -> Result<SeekedTo> {
-        if self.clusters.is_empty() {
+        let original_pos = self.iter.pos();
+
+        let result = if self.clusters.is_empty() {
             self.seek_track_by_ts_forward(track_id, ts)
         }
         else {
@@ -191,10 +199,20 @@ impl MkvReader {
 
             // Seek to a specified block inside the cluster.
             self.seek_track_by_ts_forward(track_id, ts)
+        };
+
+        // On error, attempt to rollback to the original position.
+        if result.is_err() {
+            if let Err(err) = self.iter.seek(original_pos) {
+                warn!("seek rollback failed due to {}", err)
+            }
         }
+
+        result
     }
 
-    fn next_element(&mut self) -> Result<()> {
+    /// Process the next element. Returns `true` if an element was processed, `false` otherwise.
+    fn next_element(&mut self) -> Result<bool> {
         if let Some(ClusterState { end: Some(end), .. }) = &self.current_cluster {
             // Make sure we don't read past the current cluster if its size is known.
             if self.iter.pos() >= *end {
@@ -210,7 +228,7 @@ impl MkvReader {
             Some(header) => header,
             None => {
                 // If we reached here, it must be an end of stream.
-                return end_of_stream_error();
+                return Ok(false);
             }
         };
 
@@ -225,7 +243,7 @@ impl MkvReader {
                 None => {
                     self.iter.ignore_data()?;
                     log::warn!("timestamp element outside of a cluster");
-                    return Ok(());
+                    return Ok(true);
                 }
             },
             ElementType::SimpleBlock => {
@@ -234,12 +252,12 @@ impl MkvReader {
                     Some(_) => {
                         self.iter.ignore_data()?;
                         log::warn!("missing cluster timestamp");
-                        return Ok(());
+                        return Ok(true);
                     }
                     None => {
                         self.iter.ignore_data()?;
                         log::warn!("simple block element outside of a cluster");
-                        return Ok(());
+                        return Ok(true);
                     }
                 };
 
@@ -259,12 +277,12 @@ impl MkvReader {
                     Some(_) => {
                         self.iter.ignore_data()?;
                         log::warn!("missing cluster timestamp");
-                        return Ok(());
+                        return Ok(true);
                     }
                     None => {
                         self.iter.ignore_data()?;
                         log::warn!("block group element outside of a cluster");
-                        return Ok(());
+                        return Ok(true);
                     }
                 };
 
@@ -292,7 +310,7 @@ impl MkvReader {
             }
         }
 
-        Ok(())
+        Ok(true)
     }
 }
 
@@ -548,17 +566,21 @@ impl FormatReader for MkvReader {
         &self.tracks
     }
 
-    fn next_packet(&mut self) -> Result<Packet> {
+    fn next_packet(&mut self) -> Result<Option<Packet>> {
         loop {
             if let Some(frame) = self.frames.pop_front() {
-                return Ok(Packet::new_from_boxed_slice(
+                return Ok(Some(Packet::new_from_boxed_slice(
                     frame.track,
                     frame.timestamp,
                     frame.duration,
                     frame.data,
-                ));
+                )));
             }
-            self.next_element()?;
+
+            if !self.next_element()? {
+                // Reached the end of stream.
+                return Ok(None);
+            }
         }
     }
 

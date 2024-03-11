@@ -17,9 +17,15 @@ fn test_decode(data: Vec<u8>) -> symphonia_core::errors::Result<()> {
     )?;
 
     loop {
-        let packet = reader.next_packet()?;
-        let _ = decoder.decode(&packet);
+        match reader.next_packet()? {
+            Some(packet) => {
+                let _ = decoder.decode(&packet);
+            }
+            None => break,
+        };
     }
+
+    Ok(())
 }
 
 #[test]

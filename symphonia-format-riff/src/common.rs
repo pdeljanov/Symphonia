@@ -11,7 +11,7 @@ use std::marker::PhantomData;
 
 use symphonia_core::audio::Channels;
 use symphonia_core::codecs::{CodecParameters, CodecType};
-use symphonia_core::errors::{decode_error, end_of_stream_error, Result};
+use symphonia_core::errors::{decode_error, Result};
 use symphonia_core::formats::prelude::*;
 use symphonia_core::io::{MediaSourceStream, ReadBytes};
 
@@ -267,7 +267,7 @@ pub fn next_packet(
     tracks: &[Track],
     data_start_pos: u64,
     data_end_pos: u64,
-) -> Result<Packet> {
+) -> Result<Option<Packet>> {
     let pos = reader.pos();
     if tracks.is_empty() {
         return decode_error("riff: no tracks");
@@ -281,7 +281,7 @@ pub fn next_packet(
         if pos < data_end_pos { (data_end_pos - pos) / packet_info.block_size } else { 0 };
 
     if num_blocks_left == 0 {
-        return end_of_stream_error();
+        return Ok(None);
     }
 
     let blocks_per_packet = num_blocks_left.min(packet_info.max_blocks_per_packet);
@@ -296,7 +296,7 @@ pub fn next_packet(
     // packet relative to the start of the data chunk divided by the length per frame.
     let pts = packet_info.get_frames(pos - data_start_pos);
 
-    Ok(Packet::new_from_boxed_slice(0, pts, dur, packet_buf))
+    Ok(Some(Packet::new_from_boxed_slice(0, pts, dur, packet_buf)))
 }
 
 /// TODO: format here refers to format chunk in Wave terminology, but the data being handled here is generic - find a better name, or combine with append_data_params

@@ -10,7 +10,9 @@ use std::io::{Seek, SeekFrom};
 use symphonia_core::support_format;
 
 use symphonia_core::codecs::{CodecParameters, VerificationCheck, CODEC_TYPE_FLAC};
-use symphonia_core::errors::{decode_error, seek_error, unsupported_error, Result, SeekErrorKind};
+use symphonia_core::errors::{
+    decode_error, seek_error, unsupported_error, Error, Result, SeekErrorKind,
+};
 use symphonia_core::formats::prelude::*;
 use symphonia_core::formats::util::{SeekIndex, SeekSearchResult};
 use symphonia_core::io::*;
@@ -171,7 +173,7 @@ impl FormatReader for FlacReader {
         Ok(flac)
     }
 
-    fn next_packet(&mut self) -> Result<Packet> {
+    fn next_packet(&mut self) -> Result<Option<Packet>> {
         self.parser.parse(&mut self.reader)
     }
 
@@ -286,7 +288,24 @@ impl FormatReader for FlacReader {
         // after the search range was narrowed by the binary search. It is also the ONLY way for a
         // unseekable stream to be "seeked" forward.
         let packet = loop {
-            let sync = self.parser.resync(&mut self.reader)?;
+            // Resync the FLAC frame parser.
+            //
+            // If the duration of the track is not known, then it is not possible to know if the
+            // source has been truncated or not when an UnexpectedEof error occurs. Therefore, in
+            // this case, return an out-of-range error. However, if the duration is known, then the
+            // only reason why an UnexpectedEof would occur is if the source has been truncated
+            // since the required timestamp was checked to be shorter than the duration earlier. In
+            // this case the UnexpectedEof error should be passed-on to the caller.
+            let sync = match self.parser.resync(&mut self.reader) {
+                Ok(sync) => sync,
+                Err(Error::IoError(err))
+                    if err.kind() == std::io::ErrorKind::UnexpectedEof
+                        && params.n_frames.is_none() =>
+                {
+                    return seek_error(SeekErrorKind::OutOfRange);
+                }
+                Err(err) => return Err(err),
+            };
 
             // The desired timestamp precedes the current packet's timestamp.
             if ts < sync.ts {

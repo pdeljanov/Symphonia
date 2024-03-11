@@ -237,10 +237,10 @@ fn decode_only(mut reader: Box<dyn FormatReader>, decode_opts: &DecoderOptions) 
     let mut decoder = symphonia::default::get_codecs().make(&track.codec_params, decode_opts)?;
 
     // Decode all packets, ignoring all decode errors.
-    let result = loop {
-        let packet = match reader.next_packet() {
-            Ok(packet) => packet,
-            Err(err) => break Err(err),
+    loop {
+        let packet = match reader.next_packet()? {
+            Some(packet) => packet,
+            None => break,
         };
 
         // If the packet does not belong to the selected track, skip over it.
@@ -252,12 +252,11 @@ fn decode_only(mut reader: Box<dyn FormatReader>, decode_opts: &DecoderOptions) 
         match decoder.decode(&packet) {
             Ok(_decoded) => continue,
             Err(Error::DecodeError(err)) => warn!("decode error: {}", err),
-            Err(err) => break Err(err),
+            Err(err) => return Err(err),
         }
-    };
+    }
 
-    // Return if a fatal error occured.
-    ignore_end_of_stream_error(result)?;
+    info!("end of stream");
 
     // Finalize the decoder and return the verification result if it's been enabled.
     do_verification(decoder.finalize())
@@ -372,11 +371,11 @@ fn play_track(
     let dur = track.codec_params.n_frames.map(|frames| track.codec_params.start_ts + frames);
 
     // Decode and play the packets belonging to the selected track.
-    let result = loop {
+    loop {
         // Get the next packet from the format reader.
-        let packet = match reader.next_packet() {
-            Ok(packet) => packet,
-            Err(err) => break Err(err),
+        let packet = match reader.next_packet()? {
+            Some(packet) => packet,
+            None => break,
         };
 
         // If the packet does not belong to the selected track, skip it.
@@ -426,16 +425,15 @@ fn play_track(
                 // packet as usual.
                 warn!("decode error: {}", err);
             }
-            Err(err) => break Err(err),
+            Err(err) => return Err(err),
         }
-    };
+    }
 
     if !no_progress {
         println!();
     }
 
-    // Return if a fatal error occured.
-    ignore_end_of_stream_error(result)?;
+    info!("end of stream");
 
     // Finalize the decoder and return the verification result if it's been enabled.
     do_verification(decoder.finalize())
@@ -443,20 +441,6 @@ fn play_track(
 
 fn first_supported_track(tracks: &[Track]) -> Option<&Track> {
     tracks.iter().find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
-}
-
-fn ignore_end_of_stream_error(result: Result<()>) -> Result<()> {
-    match result {
-        Err(Error::IoError(err))
-            if err.kind() == std::io::ErrorKind::UnexpectedEof
-                && err.to_string() == "end of stream" =>
-        {
-            // Do not treat "end of stream" as a fatal error. It's the currently only way a
-            // format reader can indicate the media is complete.
-            Ok(())
-        }
-        _ => result,
-    }
 }
 
 fn do_verification(finalization: FinalizeResult) -> Result<i32> {

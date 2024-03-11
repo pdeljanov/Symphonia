@@ -6,7 +6,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use symphonia_core::checksum::Crc16Ansi;
-use symphonia_core::errors::Result;
+use symphonia_core::errors::{Error, Result};
 use symphonia_core::formats::Packet;
 use symphonia_core::io::{BufReader, Monitor, ReadBytes, SeekBuffered};
 use symphonia_core::util::bits;
@@ -427,8 +427,46 @@ impl PacketParser {
         }
     }
 
+    /// Reads a fragment or handles end-of-stream using the reader. Performs resynchronization when
+    /// necessary.
+    fn read_fragment_or_eos<B>(
+        &mut self,
+        reader: &mut B,
+        avg_frame_size: usize,
+    ) -> Result<Option<Fragment>>
+    where
+        B: ReadBytes + SeekBuffered,
+    {
+        match self.read_fragment(reader, avg_frame_size) {
+            Ok(fragment) => Ok(Some(fragment)),
+            Err(Error::IoError(err)) if err.kind() == std::io::ErrorKind::UnexpectedEof => {
+                // If the required information is available, verify that atleast the expected number
+                // of audio frames were demuxed.
+                if let Some(num_total_frames) = self.info.n_samples {
+                    if let Some(header) = self.builder.last_header() {
+                        let sync = calc_sync_info(&self.info, header);
+
+                        let num_frames = sync.ts + sync.dur;
+
+                        if num_frames < num_total_frames {
+                            // Demuxed less frames than expected.
+                            warn!(
+                                "expected {} frames but only read {} before end of stream",
+                                num_total_frames, num_frames
+                            );
+                            return Err(Error::IoError(err));
+                        }
+                    }
+                }
+
+                Ok(None)
+            }
+            Err(err) => Err(err),
+        }
+    }
+
     /// Parse the next packet from the stream.
-    pub fn parse<B>(&mut self, reader: &mut B) -> Result<Packet>
+    pub fn parse<B>(&mut self, reader: &mut B) -> Result<Option<Packet>>
     where
         B: ReadBytes + SeekBuffered,
     {
@@ -439,7 +477,10 @@ impl PacketParser {
 
         // Build a packet.
         let parsed = loop {
-            let fragment = self.read_fragment(reader, avg_frame_size)?;
+            let fragment = match self.read_fragment_or_eos(reader, avg_frame_size)? {
+                Some(fragment) => fragment,
+                None => return Ok(None),
+            };
 
             if let Some(packet) = self.builder.try_build(&self.info, fragment) {
                 break packet;
@@ -449,7 +490,7 @@ impl PacketParser {
         // Update the frame size moving average.
         self.fsma.push(parsed.buf.len());
 
-        Ok(Packet::new_from_boxed_slice(0, parsed.sync.ts, parsed.sync.dur, parsed.buf))
+        Ok(Some(Packet::new_from_boxed_slice(0, parsed.sync.ts, parsed.sync.dur, parsed.buf)))
     }
 
     /// Resync the reader to the start of the next frame.

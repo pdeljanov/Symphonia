@@ -9,7 +9,7 @@ use symphonia_core::support_format;
 
 use symphonia_core::checksum::Crc16AnsiLe;
 use symphonia_core::codecs::CodecParameters;
-use symphonia_core::errors::{seek_error, Result, SeekErrorKind};
+use symphonia_core::errors::{seek_error, Error, Result, SeekErrorKind};
 use symphonia_core::formats::prelude::*;
 use symphonia_core::io::*;
 use symphonia_core::meta::{Metadata, MetadataLog};
@@ -168,10 +168,18 @@ impl FormatReader for MpaReader {
         })
     }
 
-    fn next_packet(&mut self) -> Result<Packet> {
+    fn next_packet(&mut self) -> Result<Option<Packet>> {
         let (header, packet) = loop {
             // Read the next MPEG frame.
-            let (header, packet) = read_mpeg_frame(&mut self.reader)?;
+            let (header, packet) = match read_mpeg_frame(&mut self.reader) {
+                Ok(frame) => frame,
+                Err(Error::IoError(err)) if err.kind() == std::io::ErrorKind::UnexpectedEof => {
+                    // MPEG streams have no well-defined end, so when no more frames can be read,
+                    // consider the stream ended.
+                    return Ok(None);
+                }
+                Err(err) => return Err(err),
+            };
 
             // Check if the packet contains a Xing, Info, or VBRI tag.
             if is_maybe_info_tag(&packet, &header) {
@@ -208,7 +216,7 @@ impl FormatReader for MpaReader {
             );
         }
 
-        Ok(packet)
+        Ok(Some(packet))
     }
 
     fn metadata(&mut self) -> Metadata<'_> {
@@ -252,8 +260,28 @@ impl FormatReader for MpaReader {
             0
         };
 
+        // If gapless playback is enabled, get the padding.
+        let padding = if self.options.enable_gapless {
+            u64::from(self.tracks[0].codec_params.padding.unwrap_or(0))
+        }
+        else {
+            0
+        };
+
+        // If possible, calculate the total duration of the track including delay and padding
+        // frames.
+        let duration =
+            self.tracks[0].codec_params.n_frames.map(|num_frames| num_frames + delay + padding);
+
         // The required timestamp is offset by the delay.
         let required_ts = desired_ts + delay;
+
+        // It is an error to seek past the end of the track.
+        if let Some(duration) = duration {
+            if required_ts > duration {
+                return seek_error(SeekErrorKind::OutOfRange);
+            }
+        }
 
         // If the stream is unseekable and the required timestamp in the past, then return an
         // error, it is not possible to seek to it.
@@ -274,7 +302,7 @@ impl FormatReader for MpaReader {
         // In accurate seek mode, the underlying media source stream will not be seeked unless the
         // required timestamp is in the past, in which case the stream is seeked back to the start.
         match mode {
-            SeekMode::Coarse if is_seekable => self.preseek_coarse(required_ts, delay)?,
+            SeekMode::Coarse if is_seekable => self.preseek_coarse(required_ts, duration)?,
             SeekMode::Accurate => self.preseek_accurate(required_ts)?,
             _ => (),
         };
@@ -289,8 +317,21 @@ impl FormatReader for MpaReader {
         let mut n_parsed = 0;
 
         loop {
-            // Parse the next frame header.
-            let header = header::parse_frame_header(header::sync_frame(&mut self.reader)?)?;
+            // Sync to the next frame.
+            let sync = match header::sync_frame(&mut self.reader) {
+                Ok(sync) => sync,
+                Err(Error::IoError(err)) if err.kind() == std::io::ErrorKind::UnexpectedEof => {
+                    // MPEG streams have no well-defined end, so if no more frames can be read then
+                    // assume the seek position is out-of-range. This would normally only happen if
+                    // the duration of the track is unknown, or it is was longer than the track
+                    // actually is.
+                    return seek_error(SeekErrorKind::OutOfRange);
+                }
+                Err(err) => return Err(err),
+            };
+
+            // Parse the synced frame header.
+            let header = header::parse_frame_header(sync)?;
 
             // Position of the frame header.
             let pos = self.reader.pos() - std::mem::size_of::<u32>() as u64;
@@ -384,25 +425,16 @@ impl FormatReader for MpaReader {
 impl MpaReader {
     /// Seeks the media source stream to a byte position roughly where the packet with the required
     /// timestamp should be located.
-    fn preseek_coarse(&mut self, required_ts: u64, delay: u64) -> Result<()> {
-        // If gapless playback is enabled, get the padding.
-        let padding = if self.options.enable_gapless {
-            u64::from(self.tracks[0].codec_params.padding.unwrap_or(0))
-        }
-        else {
-            0
-        };
-
+    fn preseek_coarse(&mut self, required_ts: u64, duration: Option<u64>) -> Result<()> {
         // Get the total byte length of the stream. It is not possible to seek without this.
         let total_byte_len = match self.reader.byte_len() {
             Some(byte_len) => byte_len,
             None => return seek_error(SeekErrorKind::Unseekable),
         };
 
-        // Get the total duration in audio frames of the stream, including delay and padding. It is
-        // not possible to seek without this.
-        let duration = match self.tracks[0].codec_params.n_frames {
-            Some(num_frames) => num_frames + delay + padding,
+        // It is not possible to coarse seek without the duration.
+        let duration = match duration {
+            Some(duration_ts) => duration_ts,
             None => return seek_error(SeekErrorKind::Unseekable),
         };
 

@@ -137,7 +137,7 @@ impl FormatReader for AiffReader {
         }
     }
 
-    fn next_packet(&mut self) -> Result<Packet> {
+    fn next_packet(&mut self) -> Result<Option<Packet>> {
         next_packet(
             &mut self.reader,
             &self.packet_info,

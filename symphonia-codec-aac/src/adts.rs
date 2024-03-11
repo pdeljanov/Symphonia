@@ -5,7 +5,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::errors::unsupported_error;
+use symphonia_core::errors::{unsupported_error, Error};
 use symphonia_core::support_format;
 
 use symphonia_core::audio::Channels;
@@ -161,9 +161,17 @@ impl FormatReader for AdtsReader {
         })
     }
 
-    fn next_packet(&mut self) -> Result<Packet> {
+    fn next_packet(&mut self) -> Result<Option<Packet>> {
         // Parse the header to get the calculated frame size.
-        let header = AdtsHeader::read(&mut self.reader)?;
+        let header = match AdtsHeader::read(&mut self.reader) {
+            Ok(header) => header,
+            Err(Error::IoError(err)) if err.kind() == std::io::ErrorKind::UnexpectedEof => {
+                // ADTS streams have no well-defined end, so when no more frames can be read,
+                // consider the stream ended.
+                return Ok(None);
+            }
+            Err(err) => return Err(err),
+        };
 
         // TODO: Support multiple AAC packets per ADTS packet.
 
@@ -171,12 +179,12 @@ impl FormatReader for AdtsReader {
 
         self.next_packet_ts += SAMPLES_PER_AAC_PACKET;
 
-        Ok(Packet::new_from_boxed_slice(
+        Ok(Some(Packet::new_from_boxed_slice(
             0,
             ts,
             SAMPLES_PER_AAC_PACKET,
             self.reader.read_boxed_slice_exact(header.frame_len)?,
-        ))
+        )))
     }
 
     fn metadata(&mut self) -> Metadata<'_> {
@@ -236,7 +244,15 @@ impl FormatReader for AdtsReader {
         // reached.
         loop {
             // Parse the next frame header.
-            let header = AdtsHeader::read(&mut self.reader)?;
+            let header = match AdtsHeader::read(&mut self.reader) {
+                Ok(header) => header,
+                Err(Error::IoError(err)) if err.kind() == std::io::ErrorKind::UnexpectedEof => {
+                    // ADTS streams have no well-defined end, so if no more frames can be read then
+                    // assume the seek position is out-of-range.
+                    return seek_error(SeekErrorKind::OutOfRange);
+                }
+                Err(err) => return Err(err),
+            };
 
             // TODO: Support multiple AAC packets per ADTS packet.
 

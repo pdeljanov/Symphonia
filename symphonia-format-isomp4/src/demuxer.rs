@@ -5,7 +5,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::{errors::end_of_stream_error, support_format};
+use symphonia_core::support_format;
 
 use symphonia_core::codecs::CodecParameters;
 use symphonia_core::errors::{decode_error, seek_error, unsupported_error, Result, SeekErrorKind};
@@ -19,7 +19,7 @@ use std::io::{Seek, SeekFrom};
 use std::sync::Arc;
 
 use crate::atoms::{AtomIterator, AtomType};
-use crate::atoms::{FtypAtom, MetaAtom, MoofAtom, MoovAtom, MvexAtom, SidxAtom, TrakAtom};
+use crate::atoms::{FtypAtom, MetaAtom, MoofAtom, MoovAtom, SidxAtom, TrakAtom};
 use crate::stream::*;
 
 use log::{debug, info, trace, warn};
@@ -93,7 +93,7 @@ pub struct IsoMp4Reader {
     /// State tracker for each track.
     track_states: Vec<TrackState>,
     /// Optional, movie extends atom used for fragmented streams.
-    mvex: Option<Arc<MvexAtom>>,
+    moov: Arc<MoovAtom>,
 }
 
 impl IsoMp4Reader {
@@ -181,7 +181,15 @@ impl IsoMp4Reader {
         Ok(Some(SampleDataInfo { pos, len: sample_data_desc.size }))
     }
 
-    fn try_read_more_segments(&mut self) -> Result<()> {
+    fn try_read_more_segments(&mut self) -> Result<bool> {
+        // If all tracks ended in the last segment, then do not try to read anymore segments.
+        //
+        // Note, there will always be one segment because the moov atom was converted into a segment
+        // when the reader was instantiated.
+        if self.segs.last().unwrap().all_tracks_ended() {
+            return Ok(false);
+        }
+
         // Continue iterating over atoms until a segment (a moof + mdat atom pair) is found. All
         // other atoms will be ignored.
         while let Some(header) = self.iter.next_no_consume()? {
@@ -191,19 +199,18 @@ impl IsoMp4Reader {
                     // will be read.
                     self.iter.consume_atom();
 
-                    return Ok(());
+                    return Ok(true);
                 }
                 AtomType::MovieFragment => {
                     let moof = self.iter.read_atom::<MoofAtom>()?;
 
-                    // A moof segment can only be created if the mvex atom is present.
-                    if let Some(mvex) = &self.mvex {
-                        // Get the last segment. Note, there will always be one segment because the
-                        // moov atom is converted into a segment when the reader is instantiated.
+                    // A moof segment can only be created if the media is fragmented.
+                    if self.moov.is_fragmented() {
+                        // Get the last segment.
                         let last_seg = self.segs.last().unwrap();
 
                         // Create a new segment for the moof atom.
-                        let seg = MoofSegment::new(moof, mvex.clone(), last_seg.as_ref());
+                        let seg = MoofSegment::new(moof, self.moov.clone(), last_seg.as_ref());
 
                         // Segments should have a monotonic sequence number.
                         if seg.sequence_num() <= last_seg.sequence_num() {
@@ -226,7 +233,7 @@ impl IsoMp4Reader {
         }
 
         // If no atoms were returned above, then the end-of-stream has been reached.
-        end_of_stream_error()
+        Ok(false)
     }
 
     fn seek_track_by_time(&mut self, track_num: usize, time: Time) -> Result<SeekedTo> {
@@ -270,7 +277,9 @@ impl IsoMp4Reader {
             }
 
             // Otherwise, try to read more segments from the stream.
-            self.try_read_more_segments()?;
+            if !self.try_read_more_segments()? {
+                return seek_error(SeekErrorKind::OutOfRange);
+            }
         }
 
         if let Some(seek_loc) = seek_loc {
@@ -468,18 +477,17 @@ impl FormatReader for IsoMp4Reader {
             .map(|track| Track::new(track.track_num as u32, track.codec_params()))
             .collect();
 
-        // A Movie Extends (mvex) atom is required to support segmented streams. If the mvex atom is
-        // present, wrap it in an Arc so it can be shared amongst all segments.
-        let mvex = moov.mvex.take().map(Arc::new);
-
         // The number of tracks specified in the moov atom must match the number in the mvex atom.
-        if let Some(mvex) = &mvex {
+        if let Some(mvex) = &moov.mvex {
             if mvex.trexs.len() != moov.traks.len() {
                 return decode_error("isomp4: mvex and moov track number mismatch");
             }
         }
 
-        let segs: Vec<Box<dyn StreamSegment>> = vec![Box::new(MoovSegment::new(moov))];
+        // The moov atom will be shared among all segments and the demuxer using an Arc.
+        let moov = Arc::new(moov);
+
+        let segs: Vec<Box<dyn StreamSegment>> = vec![Box::new(MoovSegment::new(moov.clone()))];
 
         Ok(IsoMp4Reader {
             iter,
@@ -488,11 +496,11 @@ impl FormatReader for IsoMp4Reader {
             metadata,
             track_states,
             segs,
-            mvex,
+            moov,
         })
     }
 
-    fn next_packet(&mut self) -> Result<Packet> {
+    fn next_packet(&mut self) -> Result<Option<Packet>> {
         // Get the index of the track with the next-nearest (minimum) timestamp.
         let next_sample_info = loop {
             // Using the current set of segments, try to get the next sample info.
@@ -503,7 +511,9 @@ impl FormatReader for IsoMp4Reader {
                 // No more segments. If the stream is unseekable, it may be the case that there are
                 // more segments coming. Iterate atoms until a new segment is found or the
                 // end-of-stream is reached.
-                self.try_read_more_segments()?;
+                if !self.try_read_more_segments()? {
+                    return Ok(None);
+                }
             }
         };
 
@@ -531,12 +541,12 @@ impl FormatReader for IsoMp4Reader {
             }
         }
 
-        Ok(Packet::new_from_boxed_slice(
+        Ok(Some(Packet::new_from_boxed_slice(
             next_sample_info.track_num as u32,
             next_sample_info.ts,
             u64::from(next_sample_info.dur),
             reader.read_boxed_slice_exact(sample_info.len as usize)?,
-        ))
+        )))
     }
 
     fn metadata(&mut self) -> Metadata<'_> {

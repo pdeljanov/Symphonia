@@ -31,6 +31,7 @@ struct Bound {
 struct PageInfo {
     seq: u32,
     absgp: u64,
+    is_last_page: bool,
 }
 
 #[derive(Default)]
@@ -84,6 +85,11 @@ impl LogicalStream {
         self.mapper.codec_params()
     }
 
+    /// If known, returns whether the logical stream read the last page.
+    pub fn has_read_last_page(&self) -> Option<bool> {
+        self.prev_page_info.map(|info| info.is_last_page)
+    }
+
     /// Reads a page.
     pub fn read_page(&mut self, page: &Page<'_>) -> Result<Vec<SideData>> {
         // Side data vector. This will not allocate unless data is pushed to it (normal case).
@@ -105,8 +111,11 @@ impl LogicalStream {
             }
         }
 
-        self.prev_page_info =
-            Some(PageInfo { seq: page.header.sequence, absgp: page.header.absgp });
+        self.prev_page_info = Some(PageInfo {
+            seq: page.header.sequence,
+            absgp: page.header.absgp,
+            is_last_page: page.header.is_last_page,
+        });
 
         let mut iter = page.packets();
 

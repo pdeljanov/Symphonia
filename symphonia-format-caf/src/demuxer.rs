@@ -11,9 +11,7 @@ use std::io::{Seek, SeekFrom};
 use symphonia_core::{
     audio::{Channels, Position},
     codecs::*,
-    errors::{
-        decode_error, end_of_stream_error, seek_error, unsupported_error, Result, SeekErrorKind,
-    },
+    errors::{decode_error, seek_error, unsupported_error, Result, SeekErrorKind},
     formats::{Cue, FormatOptions, FormatReader, Packet, SeekMode, SeekTo, SeekedTo, Track},
     io::{MediaSource, MediaSourceStream, ReadBytes},
     meta::{Metadata, MetadataLog},
@@ -73,7 +71,7 @@ impl FormatReader for CafReader {
         Ok(reader)
     }
 
-    fn next_packet(&mut self) -> Result<Packet> {
+    fn next_packet(&mut self) -> Result<Option<Packet>> {
         match &mut self.packet_info {
             PacketInfo::Uncompressed { bytes_per_frame } => {
                 let pos = self.reader.pos();
@@ -83,30 +81,35 @@ impl FormatReader for CafReader {
                 let max_bytes_to_read = bytes_per_frame * MAX_FRAMES_PER_PACKET;
 
                 let bytes_remaining = if let Some(data_len) = self.data_len {
-                    data_len - data_pos
+                    data_len.saturating_sub(data_pos)
                 }
                 else {
                     max_bytes_to_read
                 };
 
                 if bytes_remaining == 0 {
-                    return end_of_stream_error();
+                    return Ok(None);
                 }
 
                 let bytes_to_read = max_bytes_to_read.min(bytes_remaining);
                 let packet_duration = bytes_to_read / bytes_per_frame;
                 let packet_timestamp = data_pos / bytes_per_frame;
                 let buffer = self.reader.read_boxed_slice(bytes_to_read as usize)?;
-                Ok(Packet::new_from_boxed_slice(0, packet_timestamp, packet_duration, buffer))
+                Ok(Some(Packet::new_from_boxed_slice(0, packet_timestamp, packet_duration, buffer)))
             }
             PacketInfo::Compressed { packets, ref mut current_packet_index } => {
                 if let Some(packet) = packets.get(*current_packet_index) {
                     *current_packet_index += 1;
                     let buffer = self.reader.read_boxed_slice(packet.size as usize)?;
-                    Ok(Packet::new_from_boxed_slice(0, packet.start_frame, packet.frames, buffer))
+                    Ok(Some(Packet::new_from_boxed_slice(
+                        0,
+                        packet.start_frame,
+                        packet.frames,
+                        buffer,
+                    )))
                 }
                 else if *current_packet_index == packets.len() {
-                    end_of_stream_error()
+                    Ok(None)
                 }
                 else {
                     decode_error("caf: invalid packet index")
@@ -140,6 +143,12 @@ impl FormatReader for CafReader {
                 }
             }
         };
+
+        if let Some(duration) = self.duration() {
+            if duration < required_ts {
+                return seek_error(SeekErrorKind::OutOfRange);
+            }
+        }
 
         match &mut self.packet_info {
             PacketInfo::Uncompressed { bytes_per_frame } => {
@@ -235,6 +244,10 @@ impl CafReader {
         self.tracks.first().and_then(|track| {
             track.codec_params.sample_rate.map(|sample_rate| TimeBase::new(1, sample_rate))
         })
+    }
+
+    fn duration(&self) -> Option<u64> {
+        self.tracks.first().and_then(|track| track.codec_params.n_frames)
     }
 
     fn check_file_header(&mut self) -> Result<()> {

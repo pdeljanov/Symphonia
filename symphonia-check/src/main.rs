@@ -164,19 +164,22 @@ impl DecoderInstance {
     }
 }
 
-fn get_next_audio_buf(inst: &mut DecoderInstance) -> Result<GenericAudioBufferRef<'_>> {
-    let pkt = loop {
+fn get_next_audio_buf(inst: &mut DecoderInstance) -> Result<Option<GenericAudioBufferRef<'_>>> {
+    let packet = loop {
         // Get next packet.
-        let pkt = inst.format.next_packet()?;
+        let packet = match inst.format.next_packet()? {
+            Some(packet) => packet,
+            None => return Ok(None),
+        };
 
         // Ensure packet is from the correct track.
-        if pkt.track_id() == inst.track_id {
-            break pkt;
+        if packet.track_id() == inst.track_id {
+            break packet;
         }
     };
 
     // Decode packet audio.
-    inst.decoder.decode(&pkt)
+    inst.decoder.decode(&packet).map(Some)
 }
 
 fn get_next_audio_buf_best_effort(inst: &mut DecoderInstance) -> Result<()> {

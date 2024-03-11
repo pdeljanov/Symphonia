@@ -187,10 +187,10 @@ pub trait FormatReader: Send + Sync {
     /// Note: The `FormatReader` by itself cannot seek to an exact audio frame, it is only capable
     /// of seeking to the nearest `Packet`. Therefore, to seek to an exact frame, a `Decoder` must
     /// decode packets until the requested position is reached. When using the accurate `SeekMode`,
-    /// the seeked position will always be before the requested position. If the coarse `SeekMode`
-    /// is used, then the seek position may be after the requested position. Coarse seeking is an
-    /// optional performance enhancement, therefore, a coarse seek may sometimes be an accurate
-    /// seek.
+    /// the seeked position will always be at or before the requested position. If the coarse
+    /// `SeekMode` is used, then the seek position may be after the requested position. Coarse
+    /// seeking is an optional performance enhancement a reader may implement, therefore, a coarse
+    /// seek may sometimes be an accurate seek.
     fn seek(&mut self, mode: SeekMode, to: SeekTo) -> Result<SeekedTo>;
 
     /// Gets a list of tracks in the container.
@@ -203,11 +203,14 @@ pub trait FormatReader: Send + Sync {
         self.tracks().first()
     }
 
-    /// Get the next packet from the container.
+    /// Reader the next packet from the container.
     ///
-    /// If `ResetRequired` is returned, then the track list must be re-examined and all `Decoder`s
-    /// re-created. All other errors are unrecoverable.
-    fn next_packet(&mut self) -> Result<Packet>;
+    /// If `Ok(None)` is returned, the media has ended and no more packets will be produced until
+    /// the reader is seeked to a new position.
+    ///
+    /// If `Err(ResetRequired)` is returned, then the track list must be re-examined and all
+    /// `Decoder`s re-created. All other errors are unrecoverable.
+    fn next_packet(&mut self) -> Result<Option<Packet>>;
 
     /// Destroys the `FormatReader` and returns the underlying media source stream
     fn into_inner(self: Box<Self>) -> MediaSourceStream;
