@@ -455,19 +455,19 @@ impl Decoder for AacDecoder {
             return unsupported_error("aac: aac too complex");
         }
 
-        let spec = AudioSpec::new(m4ainfo.srate, map_to_channels(m4ainfo.channels).unwrap());
+        // Map channel count to a set channels.
+        let channels = map_to_channels(m4ainfo.channels).unwrap();
 
-        let duration = m4ainfo.samples;
-        let srate = m4ainfo.srate;
+        // Clone and amend the codec parameters with information from the extra data.
+        let mut params = params.clone();
 
-        Ok(AacDecoder {
-            m4ainfo,
-            pairs: Vec::new(),
-            dsp: dsp::Dsp::new(),
-            sbinfo: GASubbandInfo::find(srate),
-            params: params.clone(),
-            buf: AudioBuffer::new(spec, duration),
-        })
+        params.with_channels(channels.clone()).with_sample_rate(m4ainfo.srate);
+
+        let sbinfo = GASubbandInfo::find(m4ainfo.srate);
+
+        let buf = AudioBuffer::new(AudioSpec::new(m4ainfo.srate, channels), m4ainfo.samples);
+
+        Ok(AacDecoder { m4ainfo, pairs: Vec::new(), dsp: dsp::Dsp::new(), sbinfo, params, buf })
     }
 
     fn reset(&mut self) {
