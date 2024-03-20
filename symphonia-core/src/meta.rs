@@ -352,7 +352,7 @@ pub enum ColorMode {
 }
 
 /// A `Visual` is any 2 dimensional graphic.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Visual {
     /// The Media Type (MIME Type) used to encode the `Visual`.
     pub media_type: String,
@@ -377,6 +377,20 @@ pub struct Visual {
     pub tags: Vec<Tag>,
     /// The data of the `Visual`, encoded as per `media_type`.
     pub data: Box<[u8]>,
+}
+
+impl fmt::Debug for Visual {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Visual")
+            .field("media_type", &self.media_type)
+            .field("dimensions", &self.dimensions)
+            .field("bits_per_pixel", &self.bits_per_pixel)
+            .field("color_mode", &self.color_mode)
+            .field("usage", &self.usage)
+            .field("tags", &self.tags)
+            .field("data", &format_args!("[u8; {}]", self.data.len()))
+            .finish()
+    }
 }
 
 /// `VendorData` is any binary metadata that is proprietary to a certain application or vendor.
