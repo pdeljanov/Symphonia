@@ -30,7 +30,7 @@ pub struct MpaReader {
     tracks: Vec<Track>,
     cues: Vec<Cue>,
     metadata: MetadataLog,
-    options: FormatOptions,
+    enable_gapless: bool,
     first_packet_pos: u64,
     next_packet_ts: u64,
 }
@@ -95,7 +95,7 @@ impl Probeable for MpaReader {
 }
 
 impl FormatReader for MpaReader {
-    fn try_new(mut source: MediaSourceStream, options: &FormatOptions) -> Result<Self> {
+    fn try_new(mut source: MediaSourceStream, options: FormatOptions) -> Result<Self> {
         // Try to read the first MPEG frame.
         let (header, packet) = read_mpeg_frame_strict(&mut source)?;
 
@@ -164,8 +164,8 @@ impl FormatReader for MpaReader {
             reader: source,
             tracks: vec![Track::new(0, params)],
             cues: Vec::new(),
-            metadata: Default::default(),
-            options: *options,
+            metadata: options.metadata.unwrap_or_default(),
+            enable_gapless: options.enable_gapless,
             first_packet_pos,
             next_packet_ts: 0,
         })
@@ -211,7 +211,7 @@ impl FormatReader for MpaReader {
 
         let mut packet = Packet::new_from_boxed_slice(0, ts, duration, packet.into_boxed_slice());
 
-        if self.options.enable_gapless {
+        if self.enable_gapless {
             symphonia_core::formats::util::trim_packet(
                 &mut packet,
                 self.tracks[0].codec_params.delay.unwrap_or(0),
@@ -256,7 +256,7 @@ impl FormatReader for MpaReader {
         };
 
         // If gapless playback is enabled, get the delay.
-        let delay = if self.options.enable_gapless {
+        let delay = if self.enable_gapless {
             u64::from(self.tracks[0].codec_params.delay.unwrap_or(0))
         }
         else {
@@ -264,7 +264,7 @@ impl FormatReader for MpaReader {
         };
 
         // If gapless playback is enabled, get the padding.
-        let padding = if self.options.enable_gapless {
+        let padding = if self.enable_gapless {
             u64::from(self.tracks[0].codec_params.padding.unwrap_or(0))
         }
         else {

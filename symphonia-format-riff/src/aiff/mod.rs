@@ -65,7 +65,7 @@ impl Probeable for AiffReader {
 }
 
 impl FormatReader for AiffReader {
-    fn try_new(mut source: MediaSourceStream, _options: &FormatOptions) -> Result<Self> {
+    fn try_new(mut source: MediaSourceStream, options: FormatOptions) -> Result<Self> {
         // The FORM marker should be present.
         let marker = source.read_quad_bytes()?;
         if marker != AIFF_STREAM_MARKER {
@@ -82,7 +82,7 @@ impl FormatReader for AiffReader {
 
         let mut codec_params = CodecParameters::new();
         //TODO: Chunks such as marker contain metadata, get it.
-        let metadata: MetadataLog = Default::default();
+        let metadata = options.metadata.unwrap_or_default();
         let mut packet_info = PacketInfo::without_blocks(0);
 
         loop {

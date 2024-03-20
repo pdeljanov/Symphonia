@@ -23,7 +23,7 @@ use symphonia::core::errors::{Error, Result};
 use symphonia::core::formats::{Cue, FormatOptions, FormatReader, SeekMode, SeekTo, Track};
 use symphonia::core::io::{MediaSource, MediaSourceStream, ReadOnlySource};
 use symphonia::core::meta::{ColorMode, MetadataOptions, MetadataRevision, Tag, Value, Visual};
-use symphonia::core::probe::{Hint, ProbeResult};
+use symphonia::core::probe::Hint;
 use symphonia::core::units::{Time, TimeBase};
 
 use clap::{Arg, ArgMatches};
@@ -157,11 +157,11 @@ fn run(args: &ArgMatches) -> Result<i32> {
     let mss = MediaSourceStream::new(source, Default::default());
 
     // Use the default options for format readers other than for gapless playback.
-    let format_opts =
+    let fmt_opts =
         FormatOptions { enable_gapless: !args.is_present("no-gapless"), ..Default::default() };
 
     // Use the default options for metadata readers.
-    let metadata_opts: MetadataOptions = Default::default();
+    let meta_opts: MetadataOptions = Default::default();
 
     // Get the value of the track option, if provided.
     let track = match args.value_of("track") {
@@ -172,8 +172,8 @@ fn run(args: &ArgMatches) -> Result<i32> {
     let no_progress = args.is_present("no-progress");
 
     // Probe the media source stream for metadata and get the format reader.
-    match symphonia::default::get_probe().format(&hint, mss, &format_opts, &metadata_opts) {
-        Ok(mut probed) => {
+    match symphonia::default::get_probe().format(&hint, mss, fmt_opts, meta_opts) {
+        Ok(mut format) => {
             // Dump visuals if requested.
             if args.is_present("dump-visuals") {
                 let name = match path.file_name() {
@@ -181,26 +181,26 @@ fn run(args: &ArgMatches) -> Result<i32> {
                     _ => OsStr::new("NoName"),
                 };
 
-                dump_visuals(&mut probed, name);
+                dump_visuals(&mut format, name);
             }
 
             // Select the operating mode.
             if args.is_present("verify-only") {
                 // Verify-only mode decodes and verifies the audio, but does not play it.
-                decode_only(probed.format, &DecoderOptions { verify: true, ..Default::default() })
+                decode_only(format, &DecoderOptions { verify: true, ..Default::default() })
             }
             else if args.is_present("decode-only") {
                 // Decode-only mode decodes the audio, but does not play or verify it.
-                decode_only(probed.format, &DecoderOptions { verify: false, ..Default::default() })
+                decode_only(format, &DecoderOptions { verify: false, ..Default::default() })
             }
             else if args.is_present("probe-only") {
                 // Probe-only mode only prints information about the format, tracks, metadata, etc.
-                print_format(path, &mut probed);
+                print_format(path, &mut format);
                 Ok(0)
             }
             else {
                 // Playback mode.
-                print_format(path, &mut probed);
+                print_format(path, &mut format);
 
                 // If present, parse the seek argument.
                 let seek = if let Some(time) = args.value_of("seek") {
@@ -216,7 +216,7 @@ fn run(args: &ArgMatches) -> Result<i32> {
                     DecoderOptions { verify: args.is_present("verify"), ..Default::default() };
 
                 // Play it!
-                play(probed.format, track, seek, &decode_opts, no_progress)
+                play(format, track, seek, &decode_opts, no_progress)
             }
         }
         Err(err) => {
@@ -474,47 +474,26 @@ fn dump_visual(visual: &Visual, file_name: &OsStr, index: usize) {
     }
 }
 
-fn dump_visuals(probed: &mut ProbeResult, file_name: &OsStr) {
-    if let Some(metadata) = probed.format.metadata().current() {
-        for (i, visual) in metadata.visuals().iter().enumerate() {
-            dump_visual(visual, file_name, i);
-        }
-
-        // Warn that certain visuals are preferred.
-        if probed.metadata.get().as_ref().is_some() {
-            info!("visuals that are part of the container format are preferentially dumped.");
-            info!("not dumping additional visuals that were found while probing.");
-        }
-    }
-    else if let Some(metadata) = probed.metadata.get().as_ref().and_then(|m| m.current()) {
+fn dump_visuals(format: &mut Box<dyn FormatReader>, file_name: &OsStr) {
+    if let Some(metadata) = format.metadata().current() {
         for (i, visual) in metadata.visuals().iter().enumerate() {
             dump_visual(visual, file_name, i);
         }
     }
 }
 
-fn print_format(path: &Path, probed: &mut ProbeResult) {
+fn print_format(path: &Path, format: &mut Box<dyn FormatReader>) {
     println!("+ {}", path.display());
-    print_tracks(probed.format.tracks());
+    print_tracks(format.tracks());
 
     // Prefer metadata that's provided in the container format, over other tags found during the
     // probe operation.
-    if let Some(metadata_rev) = probed.format.metadata().current() {
-        print_tags(metadata_rev.tags());
-        print_visuals(metadata_rev.visuals());
-
-        // Warn that certain tags are preferred.
-        if probed.metadata.get().as_ref().is_some() {
-            info!("tags that are part of the container format are preferentially printed.");
-            info!("not printing additional tags that were found while probing.");
-        }
-    }
-    else if let Some(metadata_rev) = probed.metadata.get().as_ref().and_then(|m| m.current()) {
+    if let Some(metadata_rev) = format.metadata().current() {
         print_tags(metadata_rev.tags());
         print_visuals(metadata_rev.visuals());
     }
 
-    print_cues(probed.format.cues());
+    print_cues(format.cues());
     println!(":");
     println!();
 }

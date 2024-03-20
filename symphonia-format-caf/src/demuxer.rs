@@ -62,12 +62,12 @@ impl Probeable for CafReader {
 }
 
 impl FormatReader for CafReader {
-    fn try_new(source: MediaSourceStream, _options: &FormatOptions) -> Result<Self> {
+    fn try_new(source: MediaSourceStream, options: FormatOptions) -> Result<Self> {
         let mut reader = Self {
             reader: source,
             tracks: vec![],
             cues: vec![],
-            metadata: MetadataLog::default(),
+            metadata: options.metadata.unwrap_or_default(),
             data_start_pos: 0,
             data_len: None,
             packet_info: PacketInfo::Unknown,

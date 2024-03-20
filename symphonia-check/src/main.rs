@@ -152,15 +152,14 @@ struct DecoderInstance {
 }
 
 impl DecoderInstance {
-    fn try_open(mss: MediaSourceStream, fmt_opts: &FormatOptions) -> Result<DecoderInstance> {
+    fn try_open(mss: MediaSourceStream, fmt_opts: FormatOptions) -> Result<DecoderInstance> {
         // Use the default options for metadata and format readers, and the decoder.
         let meta_opts: MetadataOptions = Default::default();
         let dec_opts: DecoderOptions = Default::default();
 
         let hint = Hint::new();
 
-        let probed = symphonia::default::get_probe().format(&hint, mss, fmt_opts, &meta_opts)?;
-        let format = probed.format;
+        let format = symphonia::default::get_probe().format(&hint, mss, fmt_opts, meta_opts)?;
 
         let track = format.default_track().unwrap();
 
@@ -347,7 +346,7 @@ fn run_test(path: &str, opts: &TestOptions, result: &mut TestResult) -> Result<(
     let ref_ms = Box::new(ReadOnlySource::new(ref_process.child.stdout.take().unwrap()));
     let ref_mss = MediaSourceStream::new(ref_ms, Default::default());
 
-    let mut ref_inst = DecoderInstance::try_open(ref_mss, &Default::default())?;
+    let mut ref_inst = DecoderInstance::try_open(ref_mss, Default::default())?;
 
     // 3. Instantiate a Symphonia decoder for the test target.
     let tgt_ms = Box::new(File::open(Path::new(path))?);
@@ -355,7 +354,7 @@ fn run_test(path: &str, opts: &TestOptions, result: &mut TestResult) -> Result<(
 
     let tgt_fmt_opts = FormatOptions { enable_gapless: opts.gapless, ..Default::default() };
 
-    let mut tgt_inst = DecoderInstance::try_open(tgt_mss, &tgt_fmt_opts)?;
+    let mut tgt_inst = DecoderInstance::try_open(tgt_mss, tgt_fmt_opts)?;
 
     // 4. Begin check.
     run_check(&mut ref_inst, &mut tgt_inst, opts, result)

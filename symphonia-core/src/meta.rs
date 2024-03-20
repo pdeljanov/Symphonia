@@ -521,20 +521,38 @@ pub struct MetadataLog {
 }
 
 impl MetadataLog {
-    /// Returns a reducable reference to the metadata inside the log.
+    /// Returns a reference to the metadata revisions inside the log.
     pub fn metadata(&mut self) -> Metadata<'_> {
         Metadata { revisions: &mut self.revisions }
     }
 
-    /// Pushes a new `Metadata` revision onto the log.
+    /// Push a new metadata revision to the end of the log.
     pub fn push(&mut self, rev: MetadataRevision) {
         self.revisions.push_back(rev);
+    }
+
+    /// Moves all metadata revisions from another metadata log to the end of this log.
+    pub fn append(&mut self, other: &mut MetadataLog) {
+        self.revisions.append(&mut other.revisions);
+    }
+
+    /// Push a metadata revision to the front of the log.
+    pub fn push_front(&mut self, rev: MetadataRevision) {
+        self.revisions.push_front(rev);
+    }
+
+    /// Moves all metadata revisions from another metadata log to the front of this log.
+    pub fn append_front(&mut self, other: &mut MetadataLog) {
+        // Maintain the relative ordering.
+        while let Some(revision) = other.revisions.pop_back() {
+            self.revisions.push_front(revision)
+        }
     }
 }
 
 pub trait MetadataReader: Send + Sync {
     /// Instantiates the `MetadataReader` with the provided `MetadataOptions`.
-    fn new(options: &MetadataOptions) -> Self
+    fn new(options: MetadataOptions) -> Self
     where
         Self: Sized;
 

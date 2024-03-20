@@ -11,7 +11,7 @@
 use crate::codecs::CodecParameters;
 use crate::errors::Result;
 use crate::io::{BufReader, MediaSourceStream};
-use crate::meta::{Metadata, Tag};
+use crate::meta::{Metadata, MetadataLog, Tag};
 use crate::units::{Time, TimeStamp};
 
 pub mod prelude {
@@ -115,7 +115,7 @@ pub enum SeekMode {
 }
 
 /// `FormatOptions` is a common set of options that all demuxers use.
-#[derive(Copy, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub struct FormatOptions {
     /// If a `FormatReader` requires a seek index, but the container does not provide one, build the
     /// seek index during instantiation instead of building it progressively. Default: `false`.
@@ -136,6 +136,12 @@ pub struct FormatOptions {
     /// When enabled, this option will also alter the value and interpretation of timestamps and
     /// durations such that they are relative to the non-trimmed region.
     pub enable_gapless: bool,
+    /// Optional metadata that is external to the media container. This may be metadata that was
+    /// read before the start of the container, or provided via. some other side-channel.
+    ///
+    /// When provided, the `FormatReader` will take the metadata revisions in this log and use them
+    /// as them as the first metdata revisions for the container.
+    pub metadata: Option<MetadataLog>,
 }
 
 impl Default for FormatOptions {
@@ -144,6 +150,7 @@ impl Default for FormatOptions {
             prebuild_seek_index: false,
             seek_index_fill_rate: 20,
             enable_gapless: false,
+            metadata: None,
         }
     }
 }
@@ -217,7 +224,7 @@ pub trait FormatReader: Send + Sync {
     /// Attempt to instantiate a `FormatReader` using the provided `FormatOptions` and
     /// `MediaSourceStream`. The reader will probe the container to verify format support, determine
     /// the number of tracks, and read any initial metadata.
-    fn try_new(source: MediaSourceStream, options: &FormatOptions) -> Result<Self>
+    fn try_new(source: MediaSourceStream, options: FormatOptions) -> Result<Self>
     where
         Self: Sized;
 

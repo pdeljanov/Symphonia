@@ -73,7 +73,7 @@ impl Probeable for WavReader {
 }
 
 impl FormatReader for WavReader {
-    fn try_new(mut source: MediaSourceStream, _options: &FormatOptions) -> Result<Self> {
+    fn try_new(mut source: MediaSourceStream, options: FormatOptions) -> Result<Self> {
         // The RIFF marker should be present.
         let marker = source.read_quad_bytes()?;
 
@@ -155,7 +155,7 @@ impl FormatReader for WavReader {
                         reader: source,
                         tracks: vec![Track::new(0, codec_params)],
                         cues: Vec::new(),
-                        metadata,
+                        metadata: options.metadata.unwrap_or_default(),
                         packet_info,
                         data_start_pos,
                         data_end_pos,

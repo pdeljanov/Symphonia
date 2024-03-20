@@ -412,7 +412,7 @@ impl Probeable for Id3v2Reader {
 }
 
 impl MetadataReader for Id3v2Reader {
-    fn new(_options: &MetadataOptions) -> Self {
+    fn new(_options: MetadataOptions) -> Self {
         Id3v2Reader {}
     }
 

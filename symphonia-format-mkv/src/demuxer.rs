@@ -314,7 +314,7 @@ impl MkvReader {
 }
 
 impl FormatReader for MkvReader {
-    fn try_new(mut reader: MediaSourceStream, _options: &FormatOptions) -> Result<Self>
+    fn try_new(mut reader: MediaSourceStream, options: FormatOptions) -> Result<Self>
     where
         Self: Sized,
     {
@@ -347,7 +347,7 @@ impl FormatReader for MkvReader {
         let mut segment_tracks = None;
         let mut info = None;
         let mut clusters = Vec::new();
-        let mut metadata = MetadataLog::default();
+        let mut metadata = options.metadata.unwrap_or_default();
         let mut current_cluster = None;
 
         let mut seek_positions = Vec::new();

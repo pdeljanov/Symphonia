@@ -41,7 +41,7 @@ pub struct FlacReader {
 
 impl FlacReader {
     /// Reads all the metadata blocks, returning a fully populated `FlacReader`.
-    fn init_with_metadata(source: MediaSourceStream) -> Result<Self> {
+    fn init_with_metadata(source: MediaSourceStream, options: FormatOptions) -> Result<Self> {
         let mut metadata_builder = MetadataBuilder::new();
 
         let mut reader = source;
@@ -120,7 +120,7 @@ impl FlacReader {
         }
 
         // Commit any read metadata to the metadata log.
-        let mut metadata = MetadataLog::default();
+        let mut metadata = options.metadata.unwrap_or_default();
         metadata.push(metadata_builder.metadata());
 
         // Synchronize the packet parser to the first audio frame.
@@ -152,7 +152,7 @@ impl Probeable for FlacReader {
 }
 
 impl FormatReader for FlacReader {
-    fn try_new(mut source: MediaSourceStream, _options: &FormatOptions) -> Result<Self> {
+    fn try_new(mut source: MediaSourceStream, options: FormatOptions) -> Result<Self> {
         // Read the first 4 bytes of the stream. Ideally this will be the FLAC stream marker.
         let marker = source.read_quad_bytes()?;
 
@@ -164,7 +164,7 @@ impl FormatReader for FlacReader {
         // no technical need for this from the reader's point of view. Additionally, if the
         // reader is fed a stream mid-way there is no StreamInfo block. Therefore, just read
         // all metadata blocks and handle the StreamInfo block as it comes.
-        let flac = Self::init_with_metadata(source)?;
+        let flac = Self::init_with_metadata(source, options)?;
 
         // Make sure that there is atleast one StreamInfo block.
         if flac.tracks.is_empty() {

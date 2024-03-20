@@ -25,12 +25,9 @@ fn main() {
     let fmt_opts: FormatOptions = Default::default();
 
     // Probe the media source.
-    let probed = symphonia::default::get_probe()
-        .format(&hint, mss, &fmt_opts, &meta_opts)
+    let mut format = symphonia::default::get_probe()
+        .format(&hint, mss, fmt_opts, meta_opts)
         .expect("unsupported format");
-
-    // Get the instantiated format reader.
-    let mut format = probed.format;
 
     // Find the first audio track with a known (decodeable) codec.
     let track = format

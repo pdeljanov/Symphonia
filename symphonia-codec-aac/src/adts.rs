@@ -126,7 +126,7 @@ impl AdtsHeader {
 }
 
 impl FormatReader for AdtsReader {
-    fn try_new(mut source: MediaSourceStream, _options: &FormatOptions) -> Result<Self> {
+    fn try_new(mut source: MediaSourceStream, options: FormatOptions) -> Result<Self> {
         let header = AdtsHeader::read(&mut source)?;
 
         // Use the header to populate the codec parameters.
@@ -156,7 +156,7 @@ impl FormatReader for AdtsReader {
             reader: source,
             tracks: vec![Track::new(0, params)],
             cues: Vec::new(),
-            metadata: Default::default(),
+            metadata: options.metadata.unwrap_or_default(),
             first_frame_pos,
             next_packet_ts: 0,
         })

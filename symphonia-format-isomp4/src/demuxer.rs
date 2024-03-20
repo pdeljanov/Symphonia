@@ -332,7 +332,7 @@ impl Probeable for IsoMp4Reader {
 }
 
 impl FormatReader for IsoMp4Reader {
-    fn try_new(mut mss: MediaSourceStream, _options: &FormatOptions) -> Result<Self> {
+    fn try_new(mut mss: MediaSourceStream, options: FormatOptions) -> Result<Self> {
         // To get to beginning of the atom.
         mss.seek_buffered_rel(-4);
 
@@ -354,7 +354,7 @@ impl FormatReader for IsoMp4Reader {
             None
         };
 
-        let mut metadata = MetadataLog::default();
+        let mut metadata = options.metadata.unwrap_or_default();
 
         // Parse all atoms if the stream is seekable, otherwise parse all atoms up-to the mdat atom.
         let mut iter = AtomIterator::new_root(mss, total_len);

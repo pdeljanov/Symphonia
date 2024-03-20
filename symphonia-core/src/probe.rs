@@ -12,7 +12,7 @@ use crate::common::Tier;
 use crate::errors::{unsupported_error, Error, Result};
 use crate::formats::{FormatInfo, FormatOptions, FormatReader};
 use crate::io::{MediaSourceStream, ReadBytes, ScopedStream, SeekBuffered};
-use crate::meta::{Metadata, MetadataInfo, MetadataLog, MetadataOptions, MetadataReader};
+use crate::meta::{MetadataInfo, MetadataOptions, MetadataReader};
 
 use log::{debug, error, info};
 
@@ -93,13 +93,13 @@ pub enum ProbeCandidate {
         /// A basic description about the container format.
         info: FormatInfo,
         /// A factory function to create an instance of the format reader.
-        factory: fn(MediaSourceStream, &FormatOptions) -> Result<Box<dyn FormatReader>>,
+        factory: fn(MediaSourceStream, FormatOptions) -> Result<Box<dyn FormatReader>>,
     },
     Metadata {
         /// A basic description about the metadata format.
         info: MetadataInfo,
         /// A factory function to create an instance of the metadata reader.
-        factory: fn(&MetadataOptions) -> Box<dyn MetadataReader>,
+        factory: fn(MetadataOptions) -> Box<dyn MetadataReader>,
     },
 }
 
@@ -173,38 +173,6 @@ impl Hint {
         self.mime_type = Some(mime_type.to_owned());
         self
     }
-}
-
-/// Metadata that came from the `metadata` field of [`ProbeResult`].
-pub struct ProbedMetadata {
-    metadata: Option<MetadataLog>,
-}
-
-impl ProbedMetadata {
-    /// Returns the metadata that was found during probing.
-    ///
-    /// If any additional metadata was present outside of the container, this is
-    /// `Some` and the log will have at least one item in it.
-    pub fn get(&mut self) -> Option<Metadata<'_>> {
-        self.metadata.as_mut().map(|m| m.metadata())
-    }
-
-    /// Returns the inner metadata log, if it was present.
-    pub fn into_inner(self) -> Option<MetadataLog> {
-        self.metadata
-    }
-}
-
-/// `ProbeResult` contains the result of a format probe operation.
-pub struct ProbeResult {
-    /// An instance of a `FormatReader` for the probed format
-    pub format: Box<dyn FormatReader>,
-    /// A log of `Metadata` revisions read during the probe operation before the instantiation of
-    /// the `FormatReader`.
-    ///
-    /// Metadata that was part of the container format itself can be read by calling `.metadata()`
-    /// on `format`.
-    pub metadata: ProbedMetadata,
 }
 
 /// Options for controlling the behaviour of a `Probe`.
@@ -381,28 +349,29 @@ impl Probe {
         &self,
         _hint: &Hint,
         mut mss: MediaSourceStream,
-        format_opts: &FormatOptions,
-        metadata_opts: &MetadataOptions,
-    ) -> Result<ProbeResult> {
-        let mut metadata: MetadataLog = Default::default();
-
+        mut fmt_opts: FormatOptions,
+        meta_opts: MetadataOptions,
+    ) -> Result<Box<dyn FormatReader>> {
         // Loop over all elements in the stream until a container format is found.
         loop {
             match self.next(&mut mss)? {
                 // If a container format is found, return an instance to it's reader.
                 ProbeCandidate::Format { factory, .. } => {
-                    let format = factory(mss, format_opts)?;
-
-                    let metadata =
-                        if metadata.metadata().current().is_some() { Some(metadata) } else { None };
-
-                    return Ok(ProbeResult { format, metadata: ProbedMetadata { metadata } });
+                    // Instantiate the format reader.
+                    let format = factory(mss, fmt_opts)?;
+                    return Ok(format);
                 }
                 // If metadata was found, instantiate the metadata reader, read the metadata, and
                 // push it onto the metadata log.
                 ProbeCandidate::Metadata { factory, .. } => {
-                    let mut reader = factory(metadata_opts);
-                    metadata.push(reader.read_all(&mut mss)?);
+                    // Create the metadata reader.
+                    let mut reader = factory(meta_opts);
+
+                    // Read the metadata and get a metdata revision.
+                    let rev = reader.read_all(&mut mss)?;
+
+                    // Insert it into the metadata log.
+                    fmt_opts.metadata.get_or_insert_with(Default::default).push(rev);
 
                     debug!("chaining a metadata element.");
                 }
@@ -501,7 +470,7 @@ macro_rules! support_format {
                     short_name: $short_name,
                     long_name: $long_name,
                 },
-                factory: |source, opt| Ok(Box::new(Self::try_new(source, &opt)?)),
+                factory: |src, opts| Ok(Box::new(Self::try_new(src, opts)?)),
             },
         }
     };
@@ -522,7 +491,7 @@ macro_rules! support_metadata {
                     short_name: $short_name,
                     long_name: $long_name,
                 },
-                factory: |opt| Box::new(Self::new(&opt)),
+                factory: |opts| Box::new(Self::new(opts)),
             },
         }
     };

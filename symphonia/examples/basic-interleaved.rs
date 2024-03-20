@@ -31,11 +31,8 @@ fn main() {
     let decoder_opts: DecoderOptions = Default::default();
 
     // Probe the media source stream for a format.
-    let probed =
-        symphonia::default::get_probe().format(&hint, mss, &format_opts, &metadata_opts).unwrap();
-
-    // Get the format reader yielded by the probe operation.
-    let mut format = probed.format;
+    let mut format =
+        symphonia::default::get_probe().format(&hint, mss, format_opts, metadata_opts).unwrap();
 
     // Get the default track.
     let track = format.default_track().unwrap();

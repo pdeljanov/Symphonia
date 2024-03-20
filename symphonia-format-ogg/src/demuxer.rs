@@ -32,7 +32,7 @@ pub struct OggReader {
     tracks: Vec<Track>,
     cues: Vec<Cue>,
     metadata: MetadataLog,
-    options: FormatOptions,
+    enable_gapless: bool,
     /// The page reader.
     pages: PageReader,
     /// `LogicalStream` for each serial.
@@ -287,7 +287,7 @@ impl OggReader {
                         header.serial
                     );
 
-                    let stream = LogicalStream::new(mapper, self.options.enable_gapless);
+                    let stream = LogicalStream::new(mapper, self.enable_gapless);
                     streams.insert(header.serial, stream);
                 }
             }
@@ -390,7 +390,7 @@ impl Probeable for OggReader {
 }
 
 impl FormatReader for OggReader {
-    fn try_new(mut source: MediaSourceStream, options: &FormatOptions) -> Result<Self> {
+    fn try_new(mut source: MediaSourceStream, options: FormatOptions) -> Result<Self> {
         // A seekback buffer equal to the maximum OGG page size is required for this reader.
         source.ensure_seekback_buffer(OGG_PAGE_MAX_SIZE);
 
@@ -404,9 +404,9 @@ impl FormatReader for OggReader {
             reader: source,
             tracks: Default::default(),
             cues: Default::default(),
-            metadata: Default::default(),
+            metadata: options.metadata.unwrap_or_default(),
             streams: Default::default(),
-            options: *options,
+            enable_gapless: options.enable_gapless,
             pages,
             phys_byte_range_start: 0,
             phys_byte_range_end: None,
