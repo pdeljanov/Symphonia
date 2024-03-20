@@ -10,10 +10,10 @@ use std::io::{Seek, SeekFrom};
 use symphonia_core::codecs::CodecParameters;
 use symphonia_core::errors::{seek_error, unsupported_error};
 use symphonia_core::errors::{Result, SeekErrorKind};
-use symphonia_core::formats::prelude::*;
+use symphonia_core::formats::{prelude::*, FORMAT_TYPE_AIFF};
 use symphonia_core::io::*;
 use symphonia_core::meta::{Metadata, MetadataLog};
-use symphonia_core::probe::{Descriptor, Instantiate, QueryDescriptor};
+use symphonia_core::probe::{ProbeDescriptor, Probeable, Score};
 use symphonia_core::support_format;
 
 use log::debug;
@@ -44,11 +44,12 @@ pub struct AiffReader {
     data_end_pos: u64,
 }
 
-impl QueryDescriptor for AiffReader {
-    fn query() -> &'static [Descriptor] {
+impl Probeable for AiffReader {
+    fn probe_descriptor() -> &'static [ProbeDescriptor] {
         &[
             // AIFF RIFF form
             support_format!(
+                FORMAT_TYPE_AIFF,
                 "riff",
                 " Resource Interchange File Format",
                 &["aiff", "aif", "aifc"],
@@ -58,8 +59,8 @@ impl QueryDescriptor for AiffReader {
         ]
     }
 
-    fn score(_context: &[u8]) -> u8 {
-        255
+    fn score(_src: ScopedStream<&mut MediaSourceStream>) -> Result<Score> {
+        Ok(Score::Supported(255))
     }
 }
 

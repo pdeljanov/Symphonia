@@ -12,10 +12,13 @@ use symphonia_core::{
     audio::{Channels, Position},
     codecs::*,
     errors::{decode_error, seek_error, unsupported_error, Result, SeekErrorKind},
-    formats::{Cue, FormatOptions, FormatReader, Packet, SeekMode, SeekTo, SeekedTo, Track},
-    io::{MediaSource, MediaSourceStream, ReadBytes},
+    formats::{
+        Cue, FormatOptions, FormatReader, Packet, SeekMode, SeekTo, SeekedTo, Track,
+        FORMAT_TYPE_CAF,
+    },
+    io::*,
     meta::{Metadata, MetadataLog},
-    probe::{Descriptor, Instantiate, QueryDescriptor},
+    probe::{ProbeDescriptor, Probeable, Score},
     support_format,
     units::{TimeBase, TimeStamp},
 };
@@ -41,13 +44,20 @@ enum PacketInfo {
     Compressed { packets: Vec<CafPacket>, current_packet_index: usize },
 }
 
-impl QueryDescriptor for CafReader {
-    fn query() -> &'static [Descriptor] {
-        &[support_format!("caf", "Core Audio Format", &["caf"], &["audio/x-caf"], &[b"caff"])]
+impl Probeable for CafReader {
+    fn probe_descriptor() -> &'static [ProbeDescriptor] {
+        &[support_format!(
+            FORMAT_TYPE_CAF,
+            "caf",
+            "Core Audio Format",
+            &["caf"],
+            &["audio/x-caf"],
+            &[b"caff"]
+        )]
     }
 
-    fn score(_context: &[u8]) -> u8 {
-        255
+    fn score(_src: ScopedStream<&mut MediaSourceStream>) -> Result<Score> {
+        Ok(Score::Supported(255))
     }
 }
 

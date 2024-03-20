@@ -10,10 +10,10 @@ use std::io::{Seek, SeekFrom};
 
 use symphonia_core::errors::{reset_error, seek_error, unsupported_error};
 use symphonia_core::errors::{Error, Result, SeekErrorKind};
-use symphonia_core::formats::prelude::*;
-use symphonia_core::io::{MediaSource, MediaSourceStream, ReadBytes, SeekBuffered};
+use symphonia_core::formats::{prelude::*, FORMAT_TYPE_OGG};
+use symphonia_core::io::*;
 use symphonia_core::meta::{Metadata, MetadataLog};
-use symphonia_core::probe::{Descriptor, Instantiate, QueryDescriptor};
+use symphonia_core::probe::{ProbeDescriptor, Probeable, Score};
 use symphonia_core::support_format;
 
 use log::{debug, info, warn};
@@ -372,9 +372,10 @@ impl OggReader {
     }
 }
 
-impl QueryDescriptor for OggReader {
-    fn query() -> &'static [Descriptor] {
+impl Probeable for OggReader {
+    fn probe_descriptor() -> &'static [ProbeDescriptor] {
         &[support_format!(
+            FORMAT_TYPE_OGG,
             "ogg",
             "OGG",
             &["ogg", "ogv", "oga", "ogx", "ogm", "spx", "opus"],
@@ -383,8 +384,8 @@ impl QueryDescriptor for OggReader {
         )]
     }
 
-    fn score(_context: &[u8]) -> u8 {
-        255
+    fn score(_src: ScopedStream<&mut MediaSourceStream>) -> Result<Score> {
+        Ok(Score::Supported(255))
     }
 }
 

@@ -9,8 +9,10 @@
 
 use symphonia_core::errors::{decode_error, unsupported_error, Result};
 use symphonia_core::io::*;
-use symphonia_core::meta::{MetadataBuilder, MetadataOptions, MetadataReader, MetadataRevision};
-use symphonia_core::probe::{Descriptor, Instantiate, QueryDescriptor};
+use symphonia_core::meta::{
+    MetadataBuilder, MetadataOptions, MetadataReader, MetadataRevision, METADATA_TYPE_ID3V2,
+};
+use symphonia_core::probe::{ProbeDescriptor, Probeable, Score};
 use symphonia_core::support_metadata;
 
 use log::{info, trace, warn};
@@ -399,13 +401,13 @@ pub mod util {
 
 pub struct Id3v2Reader;
 
-impl QueryDescriptor for Id3v2Reader {
-    fn query() -> &'static [Descriptor] {
-        &[support_metadata!("id3v2", "ID3v2", &[], &[], &[b"ID3"])]
+impl Probeable for Id3v2Reader {
+    fn probe_descriptor() -> &'static [ProbeDescriptor] {
+        &[support_metadata!(METADATA_TYPE_ID3V2, "id3v2", "ID3v2", &[], &[], &[b"ID3"])]
     }
 
-    fn score(_context: &[u8]) -> u8 {
-        255
+    fn score(_src: ScopedStream<&mut MediaSourceStream>) -> Result<Score> {
+        Ok(Score::Supported(255))
     }
 }
 

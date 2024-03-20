@@ -14,12 +14,11 @@ use symphonia_core::errors::{
     decode_error, seek_error, unsupported_error, Error, Result, SeekErrorKind,
 };
 use symphonia_core::formats::{
-    Cue, FormatOptions, FormatReader, Packet, SeekMode, SeekTo, SeekedTo, Track,
+    Cue, FormatOptions, FormatReader, Packet, SeekMode, SeekTo, SeekedTo, Track, FORMAT_TYPE_MKV,
 };
-use symphonia_core::io::{BufReader, MediaSource, MediaSourceStream, ReadBytes};
+use symphonia_core::io::*;
 use symphonia_core::meta::{Metadata, MetadataLog};
-use symphonia_core::probe::Instantiate;
-use symphonia_core::probe::{Descriptor, QueryDescriptor};
+use symphonia_core::probe::{ProbeDescriptor, Probeable, Score};
 use symphonia_core::sample::SampleFormat;
 use symphonia_core::support_format;
 use symphonia_core::units::TimeBase;
@@ -589,9 +588,10 @@ impl FormatReader for MkvReader {
     }
 }
 
-impl QueryDescriptor for MkvReader {
-    fn query() -> &'static [Descriptor] {
+impl Probeable for MkvReader {
+    fn probe_descriptor() -> &'static [ProbeDescriptor] {
         &[support_format!(
+            FORMAT_TYPE_MKV,
             "matroska",
             "Matroska / WebM",
             &["webm", "mkv"],
@@ -600,7 +600,7 @@ impl QueryDescriptor for MkvReader {
         )]
     }
 
-    fn score(_context: &[u8]) -> u8 {
-        255
+    fn score(_src: ScopedStream<&mut MediaSourceStream>) -> Result<Score> {
+        Ok(Score::Supported(255))
     }
 }

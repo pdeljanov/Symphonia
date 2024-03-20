@@ -11,10 +11,10 @@ use symphonia_core::support_format;
 use symphonia_core::audio::Channels;
 use symphonia_core::codecs::{CodecParameters, CODEC_TYPE_AAC};
 use symphonia_core::errors::{decode_error, seek_error, Result, SeekErrorKind};
-use symphonia_core::formats::prelude::*;
+use symphonia_core::formats::{prelude::*, FORMAT_TYPE_ADTS};
 use symphonia_core::io::*;
 use symphonia_core::meta::{Metadata, MetadataLog};
-use symphonia_core::probe::{Descriptor, Instantiate, QueryDescriptor};
+use symphonia_core::probe::{ProbeDescriptor, Probeable, Score};
 
 use std::io::{Seek, SeekFrom};
 
@@ -36,9 +36,10 @@ pub struct AdtsReader {
     next_packet_ts: u64,
 }
 
-impl QueryDescriptor for AdtsReader {
-    fn query() -> &'static [Descriptor] {
+impl Probeable for AdtsReader {
+    fn probe_descriptor() -> &'static [ProbeDescriptor] {
         &[support_format!(
+            FORMAT_TYPE_ADTS,
             "aac",
             "Audio Data Transport Stream (native AAC)",
             &["aac"],
@@ -47,8 +48,8 @@ impl QueryDescriptor for AdtsReader {
         )]
     }
 
-    fn score(_context: &[u8]) -> u8 {
-        255
+    fn score(_src: ScopedStream<&mut MediaSourceStream>) -> Result<Score> {
+        Ok(Score::Supported(255))
     }
 }
 

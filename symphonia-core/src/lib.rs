@@ -15,6 +15,7 @@
 pub mod audio;
 pub mod checksum;
 pub mod codecs;
+pub mod common;
 pub mod conv;
 pub mod dsp;
 pub mod errors;

@@ -16,6 +16,26 @@ use std::num::NonZeroU32;
 use crate::errors::Result;
 use crate::io::MediaSourceStream;
 
+/// A `MetadataType` is a unique identifier used to identify a specific codec.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct MetadataType(u32);
+
+/// Null metadata type.
+pub const METADATA_TYPE_NULL: MetadataType = MetadataType(0x0);
+pub const METADATA_TYPE_ID3: MetadataType = MetadataType(0x1);
+pub const METADATA_TYPE_ID3V2: MetadataType = MetadataType(0x2);
+
+/// Basic information about a metadata format.
+#[derive(Copy, Clone)]
+pub struct MetadataInfo {
+    /// The `MetadataType` identifier.
+    pub metadata: MetadataType,
+    /// A short ASCII-only string identifying the format.
+    pub short_name: &'static str,
+    /// A longer, more descriptive, string identifying the format.
+    pub long_name: &'static str,
+}
+
 /// `Limit` defines an upper-bound on how much of a resource should be allocated when the amount to
 /// be allocated is specified by the media stream, which is untrusted. A limit will place an
 /// upper-bound on this allocation at the risk of breaking potentially valid streams. Limits are

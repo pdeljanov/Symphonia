@@ -10,10 +10,10 @@ use symphonia_core::support_format;
 use symphonia_core::checksum::Crc16AnsiLe;
 use symphonia_core::codecs::CodecParameters;
 use symphonia_core::errors::{seek_error, Error, Result, SeekErrorKind};
-use symphonia_core::formats::prelude::*;
+use symphonia_core::formats::{prelude::*, FORMAT_TYPE_MP1, FORMAT_TYPE_MP2, FORMAT_TYPE_MP3};
 use symphonia_core::io::*;
 use symphonia_core::meta::{Metadata, MetadataLog};
-use symphonia_core::probe::{Descriptor, Instantiate, QueryDescriptor};
+use symphonia_core::probe::{ProbeDescriptor, Probeable, Score};
 
 use crate::common::{FrameHeader, MpegLayer};
 use crate::header::{self, MAX_MPEG_FRAME_SIZE, MPEG_HEADER_LEN};
@@ -35,11 +35,12 @@ pub struct MpaReader {
     next_packet_ts: u64,
 }
 
-impl QueryDescriptor for MpaReader {
-    fn query() -> &'static [Descriptor] {
+impl Probeable for MpaReader {
+    fn probe_descriptor() -> &'static [ProbeDescriptor] {
         &[
             // Layer 1
             support_format!(
+                FORMAT_TYPE_MP1,
                 "mp1",
                 "MPEG Audio Layer 1 Native",
                 &["mp1"],
@@ -55,6 +56,7 @@ impl QueryDescriptor for MpaReader {
             ),
             // Layer 2
             support_format!(
+                FORMAT_TYPE_MP2,
                 "mp2",
                 "MPEG Audio Layer 2 Native",
                 &["mp2"],
@@ -70,6 +72,7 @@ impl QueryDescriptor for MpaReader {
             ),
             // Layer 3
             support_format!(
+                FORMAT_TYPE_MP3,
                 "mp3",
                 "MPEG Audio Layer 3 Native",
                 &["mp3"],
@@ -86,8 +89,8 @@ impl QueryDescriptor for MpaReader {
         ]
     }
 
-    fn score(_context: &[u8]) -> u8 {
-        255
+    fn score(_src: ScopedStream<&mut MediaSourceStream>) -> Result<Score> {
+        Ok(Score::Supported(255))
     }
 }
 

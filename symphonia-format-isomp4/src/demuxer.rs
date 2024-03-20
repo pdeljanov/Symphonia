@@ -9,10 +9,10 @@ use symphonia_core::support_format;
 
 use symphonia_core::codecs::CodecParameters;
 use symphonia_core::errors::{decode_error, seek_error, unsupported_error, Result, SeekErrorKind};
-use symphonia_core::formats::prelude::*;
-use symphonia_core::io::{MediaSource, MediaSourceStream, ReadBytes, SeekBuffered};
+use symphonia_core::formats::{prelude::*, FORMAT_TYPE_ISOMP4};
+use symphonia_core::io::*;
 use symphonia_core::meta::{Metadata, MetadataLog};
-use symphonia_core::probe::{Descriptor, Instantiate, QueryDescriptor};
+use symphonia_core::probe::{ProbeDescriptor, Probeable, Score};
 use symphonia_core::units::Time;
 
 use std::io::{Seek, SeekFrom};
@@ -314,9 +314,10 @@ impl IsoMp4Reader {
     }
 }
 
-impl QueryDescriptor for IsoMp4Reader {
-    fn query() -> &'static [Descriptor] {
+impl Probeable for IsoMp4Reader {
+    fn probe_descriptor() -> &'static [ProbeDescriptor] {
         &[support_format!(
+            FORMAT_TYPE_ISOMP4,
             "isomp4",
             "ISO Base Media File Format",
             &["mp4", "m4a", "m4p", "m4b", "m4r", "m4v", "mov"],
@@ -325,8 +326,8 @@ impl QueryDescriptor for IsoMp4Reader {
         )]
     }
 
-    fn score(_context: &[u8]) -> u8 {
-        255
+    fn score(_src: ScopedStream<&mut MediaSourceStream>) -> Result<Score> {
+        Ok(Score::Supported(255))
     }
 }
 

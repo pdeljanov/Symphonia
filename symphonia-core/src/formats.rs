@@ -22,6 +22,54 @@ pub mod prelude {
     pub use super::{Cue, FormatOptions, FormatReader, Packet, SeekMode, SeekTo, SeekedTo, Track};
 }
 
+/// A `FormatType` is a unique identifier used to identify a specific codec.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct FormatType(u32);
+
+/// Null format
+pub const FORMAT_TYPE_NULL: FormatType = FormatType(0x0);
+/// Waveform Audio File Format
+pub const FORMAT_TYPE_WAVE: FormatType = FormatType(0x100);
+/// Audio Interchange File Format
+pub const FORMAT_TYPE_AIFF: FormatType = FormatType(0x101);
+/// Audio Video Interleave
+pub const FORMAT_TYPE_AVI: FormatType = FormatType(0x102);
+/// Core Audio Format
+pub const FORMAT_TYPE_CAF: FormatType = FormatType(0x103);
+/// MPEG Audio Layer 1 Native
+pub const FORMAT_TYPE_MP1: FormatType = FormatType(0x104);
+/// MPEG Audio Layer 2 Native
+pub const FORMAT_TYPE_MP2: FormatType = FormatType(0x105);
+/// MPEG Audio Layer 3 Native
+pub const FORMAT_TYPE_MP3: FormatType = FormatType(0x106);
+/// Audio Data Transport Stream
+pub const FORMAT_TYPE_ADTS: FormatType = FormatType(0x107);
+/// Ogg
+pub const FORMAT_TYPE_OGG: FormatType = FormatType(0x108);
+/// Free Lossless Audio Codec Native
+pub const FORMAT_TYPE_FLAC: FormatType = FormatType(0x109);
+/// Wavepack
+pub const FORMAT_TYPE_WAVEPACK: FormatType = FormatType(0x10a);
+/// ISO Base Media File Format
+pub const FORMAT_TYPE_ISOMP4: FormatType = FormatType(0x10b);
+/// Matroska
+pub const FORMAT_TYPE_MKV: FormatType = FormatType(0x10c);
+/// WebM
+pub const FORMAT_TYPE_WEBM: FormatType = FormatType(0x10d);
+/// Flash Video
+pub const FORMAT_TYPE_FLV: FormatType = FormatType(0x10e);
+
+/// Basic information about a container format.
+#[derive(Copy, Clone)]
+pub struct FormatInfo {
+    /// The `FormatType` identifier.
+    pub format: FormatType,
+    /// A short ASCII-only string identifying the format.
+    pub short_name: &'static str,
+    /// A longer, more descriptive, string identifying the format.
+    pub long_name: &'static str,
+}
+
 /// `SeekTo` specifies a position to seek to.
 pub enum SeekTo {
     /// Seek to a `Time` in regular time units.

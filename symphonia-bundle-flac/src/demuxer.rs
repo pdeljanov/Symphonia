@@ -13,11 +13,11 @@ use symphonia_core::codecs::{CodecParameters, VerificationCheck, CODEC_TYPE_FLAC
 use symphonia_core::errors::{
     decode_error, seek_error, unsupported_error, Error, Result, SeekErrorKind,
 };
-use symphonia_core::formats::prelude::*;
 use symphonia_core::formats::util::{SeekIndex, SeekSearchResult};
+use symphonia_core::formats::{prelude::*, FORMAT_TYPE_FLAC};
 use symphonia_core::io::*;
 use symphonia_core::meta::{Metadata, MetadataBuilder, MetadataLog};
-use symphonia_core::probe::{Descriptor, Instantiate, QueryDescriptor};
+use symphonia_core::probe::{ProbeDescriptor, Probeable, Score};
 
 use symphonia_utils_xiph::flac::metadata::*;
 
@@ -134,9 +134,10 @@ impl FlacReader {
     }
 }
 
-impl QueryDescriptor for FlacReader {
-    fn query() -> &'static [Descriptor] {
+impl Probeable for FlacReader {
+    fn probe_descriptor() -> &'static [ProbeDescriptor] {
         &[support_format!(
+            FORMAT_TYPE_FLAC,
             "flac",
             "Free Lossless Audio Codec Native",
             &["flac"],
@@ -145,8 +146,8 @@ impl QueryDescriptor for FlacReader {
         )]
     }
 
-    fn score(_context: &[u8]) -> u8 {
-        255
+    fn score(_src: ScopedStream<&mut MediaSourceStream>) -> Result<Score> {
+        Ok(Score::Supported(255))
     }
 }
 

@@ -10,10 +10,10 @@ use std::io::{Seek, SeekFrom};
 use symphonia_core::codecs::CodecParameters;
 use symphonia_core::errors::{seek_error, unsupported_error};
 use symphonia_core::errors::{Result, SeekErrorKind};
-use symphonia_core::formats::prelude::*;
+use symphonia_core::formats::{prelude::*, FORMAT_TYPE_WAVE};
 use symphonia_core::io::*;
 use symphonia_core::meta::{Metadata, MetadataLog};
-use symphonia_core::probe::{Descriptor, Instantiate, QueryDescriptor};
+use symphonia_core::probe::{ProbeDescriptor, Probeable, Score};
 use symphonia_core::support_format;
 
 use log::{debug, error};
@@ -42,11 +42,12 @@ pub struct WavReader {
     data_end_pos: u64,
 }
 
-impl QueryDescriptor for WavReader {
-    fn query() -> &'static [Descriptor] {
+impl Probeable for WavReader {
+    fn probe_descriptor() -> &'static [ProbeDescriptor] {
         &[
             // WAVE RIFF form
             support_format!(
+                FORMAT_TYPE_WAVE,
                 "wave",
                 "Waveform Audio File Format",
                 &["wav", "wave"],
@@ -56,8 +57,18 @@ impl QueryDescriptor for WavReader {
         ]
     }
 
-    fn score(_context: &[u8]) -> u8 {
-        255
+    fn score(mut src: ScopedStream<&mut MediaSourceStream>) -> Result<Score> {
+        // Perform simple scoring by testing that the RIFF stream marker and RIFF form are both
+        // valid for WAVE.
+        let riff_marker = src.read_quad_bytes()?;
+        src.ignore_bytes(4)?;
+        let riff_form = src.read_quad_bytes()?;
+
+        if riff_marker != WAVE_STREAM_MARKER || riff_form != WAVE_RIFF_FORM {
+            return Ok(Score::Unsupported);
+        }
+
+        Ok(Score::Supported(255))
     }
 }
 
