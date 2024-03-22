@@ -24,6 +24,9 @@ use super::mappings;
 use super::page::*;
 use super::physical;
 
+const OGG_FORMAT_INFO: FormatInfo =
+    FormatInfo { format: FORMAT_TYPE_OGG, short_name: "ogg", long_name: "Ogg" };
+
 /// OGG demultiplexer.
 ///
 /// `OggReader` implements a demuxer for Xiph's OGG container format.
@@ -375,9 +378,7 @@ impl OggReader {
 impl Probeable for OggReader {
     fn probe_descriptor() -> &'static [ProbeDescriptor] {
         &[support_format!(
-            FORMAT_TYPE_OGG,
-            "ogg",
-            "OGG",
+            OGG_FORMAT_INFO,
             &["ogg", "ogv", "oga", "ogx", "ogm", "spx", "opus"],
             &["video/ogg", "audio/ogg", "application/ogg"],
             &[b"OggS"]
@@ -415,6 +416,10 @@ impl FormatReader for OggReader {
         ogg.start_new_physical_stream()?;
 
         Ok(ogg)
+    }
+
+    fn format_info(&self) -> &FormatInfo {
+        &OGG_FORMAT_INFO
     }
 
     fn next_packet(&mut self) -> Result<Option<Packet>> {

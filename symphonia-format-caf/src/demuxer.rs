@@ -12,10 +12,7 @@ use symphonia_core::{
     audio::{Channels, Position},
     codecs::*,
     errors::{decode_error, seek_error, unsupported_error, Result, SeekErrorKind},
-    formats::{
-        Cue, FormatOptions, FormatReader, Packet, SeekMode, SeekTo, SeekedTo, Track,
-        FORMAT_TYPE_CAF,
-    },
+    formats::{prelude::*, FORMAT_TYPE_CAF},
     io::*,
     meta::{Metadata, MetadataLog},
     probe::{ProbeDescriptor, Probeable, Score},
@@ -24,6 +21,9 @@ use symphonia_core::{
 };
 
 const MAX_FRAMES_PER_PACKET: u64 = 1152;
+
+const CAF_FORMAT_INFO: FormatInfo =
+    FormatInfo { format: FORMAT_TYPE_CAF, short_name: "caf", long_name: "Core Audio Format" };
 
 /// Core Audio Format (CAF) format reader.
 ///
@@ -46,14 +46,7 @@ enum PacketInfo {
 
 impl Probeable for CafReader {
     fn probe_descriptor() -> &'static [ProbeDescriptor] {
-        &[support_format!(
-            FORMAT_TYPE_CAF,
-            "caf",
-            "Core Audio Format",
-            &["caf"],
-            &["audio/x-caf"],
-            &[b"caff"]
-        )]
+        &[support_format!(CAF_FORMAT_INFO, &["caf"], &["audio/x-caf"], &[b"caff"])]
     }
 
     fn score(_src: ScopedStream<&mut MediaSourceStream>) -> Result<Score> {
@@ -79,6 +72,10 @@ impl FormatReader for CafReader {
         reader.tracks.push(Track::new(0, codec_params));
 
         Ok(reader)
+    }
+
+    fn format_info(&self) -> &FormatInfo {
+        &CAF_FORMAT_INFO
     }
 
     fn next_packet(&mut self) -> Result<Option<Packet>> {

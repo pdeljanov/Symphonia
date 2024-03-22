@@ -29,6 +29,12 @@ const WAVE_STREAM_MARKER: [u8; 4] = *b"RIFF";
 /// A possible RIFF form is "wave".
 const WAVE_RIFF_FORM: [u8; 4] = *b"WAVE";
 
+const WAVE_FORMAT_INFO: FormatInfo = FormatInfo {
+    format: FORMAT_TYPE_WAVE,
+    short_name: "wave",
+    long_name: "Waveform Audio File Format",
+};
+
 /// Waveform Audio File Format (WAV) format reader.
 ///
 /// `WavReader` implements a demuxer for the WAVE container format.
@@ -47,9 +53,7 @@ impl Probeable for WavReader {
         &[
             // WAVE RIFF form
             support_format!(
-                FORMAT_TYPE_WAVE,
-                "wave",
-                "Waveform Audio File Format",
+                WAVE_FORMAT_INFO,
                 &["wav", "wave"],
                 &["audio/vnd.wave", "audio/x-wav", "audio/wav", "audio/wave"],
                 &[b"RIFF"]
@@ -163,6 +167,10 @@ impl FormatReader for WavReader {
                 }
             }
         }
+    }
+
+    fn format_info(&self) -> &FormatInfo {
+        &WAVE_FORMAT_INFO
     }
 
     fn next_packet(&mut self) -> Result<Option<Packet>> {

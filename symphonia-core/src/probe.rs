@@ -470,18 +470,14 @@ fn warn_junk_bytes(pos: u64, init_pos: u64) {
 /// Convenience macro for declaring a probe `ProbeDescriptor` for a `FormatReader`.
 #[macro_export]
 macro_rules! support_format {
-    ($fmt:expr, $short_name:expr, $long_name:expr, $exts:expr, $mimes:expr, $markers:expr) => {
+    ($info:expr, $exts:expr, $mimes:expr, $markers:expr) => {
         symphonia_core::probe::ProbeDescriptor {
             extensions: $exts,
             mime_types: $mimes,
             markers: $markers,
             score: Self::score,
             candidate: symphonia_core::probe::ProbeCandidate::Format {
-                info: symphonia_core::formats::FormatInfo {
-                    format: $fmt,
-                    short_name: $short_name,
-                    long_name: $long_name,
-                },
+                info: $info,
                 factory: |src, opts| Ok(Box::new(Self::try_new(src, opts)?)),
             },
         }
@@ -491,18 +487,14 @@ macro_rules! support_format {
 /// Convenience macro for declaring a probe `ProbeDescriptor` for a `MetadataReader`.
 #[macro_export]
 macro_rules! support_metadata {
-    ($meta:expr, $short_name:expr, $long_name:expr, $exts:expr, $mimes:expr, $markers:expr) => {
+    ($info:expr, $exts:expr, $mimes:expr, $markers:expr) => {
         symphonia_core::probe::ProbeDescriptor {
             extensions: $exts,
             mime_types: $mimes,
             markers: $markers,
             score: Self::score,
             candidate: symphonia_core::probe::ProbeCandidate::Metadata {
-                info: symphonia_core::meta::MetadataInfo {
-                    metadata: $meta,
-                    short_name: $short_name,
-                    long_name: $long_name,
-                },
+                info: $info,
                 factory: |opts| Box::new(Self::new(opts)),
             },
         }

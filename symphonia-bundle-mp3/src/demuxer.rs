@@ -8,7 +8,7 @@
 use symphonia_core::support_format;
 
 use symphonia_core::checksum::Crc16AnsiLe;
-use symphonia_core::codecs::CodecParameters;
+use symphonia_core::codecs::{CodecParameters, CODEC_TYPE_MP1, CODEC_TYPE_MP2, CODEC_TYPE_MP3};
 use symphonia_core::errors::{seek_error, Error, Result, SeekErrorKind};
 use symphonia_core::formats::{prelude::*, FORMAT_TYPE_MP1, FORMAT_TYPE_MP2, FORMAT_TYPE_MP3};
 use symphonia_core::io::*;
@@ -21,6 +21,24 @@ use crate::header::{self, MAX_MPEG_FRAME_SIZE, MPEG_HEADER_LEN};
 use std::io::{Seek, SeekFrom};
 
 use log::{debug, info, warn};
+
+const MP1_FORMAT_INFO: FormatInfo = FormatInfo {
+    format: FORMAT_TYPE_MP1,
+    short_name: "mp1",
+    long_name: "MPEG Audio Layer 1 Native",
+};
+
+const MP2_FORMAT_INFO: FormatInfo = FormatInfo {
+    format: FORMAT_TYPE_MP2,
+    short_name: "mp2",
+    long_name: "MPEG Audio Layer 2 Native",
+};
+
+const MP3_FORMAT_INFO: FormatInfo = FormatInfo {
+    format: FORMAT_TYPE_MP3,
+    short_name: "mp3",
+    long_name: "MPEG Audio Layer 3 Native",
+};
 
 /// MPEG1 and MPEG2 audio elementary stream reader.
 ///
@@ -40,9 +58,7 @@ impl Probeable for MpaReader {
         &[
             // Layer 1
             support_format!(
-                FORMAT_TYPE_MP1,
-                "mp1",
-                "MPEG Audio Layer 1 Native",
+                MP1_FORMAT_INFO,
                 &["mp1"],
                 &["audio/mpeg", "audio/mp1"],
                 &[
@@ -56,9 +72,7 @@ impl Probeable for MpaReader {
             ),
             // Layer 2
             support_format!(
-                FORMAT_TYPE_MP2,
-                "mp2",
-                "MPEG Audio Layer 2 Native",
+                MP2_FORMAT_INFO,
                 &["mp2"],
                 &["audio/mpeg", "audio/mp2"],
                 &[
@@ -72,9 +86,7 @@ impl Probeable for MpaReader {
             ),
             // Layer 3
             support_format!(
-                FORMAT_TYPE_MP3,
-                "mp3",
-                "MPEG Audio Layer 3 Native",
+                MP3_FORMAT_INFO,
                 &["mp3"],
                 &["audio/mpeg", "audio/mp3"],
                 &[
@@ -195,6 +207,15 @@ impl FormatReader for MpaReader {
             first_packet_pos,
             next_packet_ts: 0,
         })
+    }
+
+    fn format_info(&self) -> &FormatInfo {
+        match self.tracks[0].codec_params.codec {
+            CODEC_TYPE_MP1 => &MP1_FORMAT_INFO,
+            CODEC_TYPE_MP2 => &MP2_FORMAT_INFO,
+            CODEC_TYPE_MP3 => &MP3_FORMAT_INFO,
+            _ => unreachable!(),
+        }
     }
 
     fn next_packet(&mut self) -> Result<Option<Packet>> {

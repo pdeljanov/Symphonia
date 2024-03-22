@@ -484,6 +484,14 @@ fn dump_visuals(format: &mut Box<dyn FormatReader>, file_name: &OsStr) {
 
 fn print_format(path: &Path, format: &mut Box<dyn FormatReader>) {
     println!("+ {}", path.display());
+
+    let format_info = format.format_info();
+
+    println!("|");
+    println!("| // Container //");
+    println!("|     Format Name:          {} ({})", format_info.long_name, format_info.short_name);
+    println!("|     Format Type:          {}", format_info.format);
+
     print_tracks(format.tracks());
 
     // Prefer metadata that's provided in the container format, over other tags found during the

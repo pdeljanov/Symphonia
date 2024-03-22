@@ -8,6 +8,8 @@
 //! The `format` module provides the traits and support structures necessary to implement media
 //! demuxers.
 
+use std::fmt;
+
 use crate::codecs::CodecParameters;
 use crate::errors::Result;
 use crate::io::{BufReader, MediaSourceStream};
@@ -19,14 +21,23 @@ pub mod prelude {
 
     pub use crate::units::{Duration, TimeBase, TimeStamp};
 
-    pub use super::{Cue, FormatOptions, FormatReader, Packet, SeekMode, SeekTo, SeekedTo, Track};
+    pub use super::{
+        Cue, FormatInfo, FormatOptions, FormatReader, FormatType, Packet, SeekMode, SeekTo,
+        SeekedTo, Track,
+    };
 }
 
-/// A `FormatType` is a unique identifier used to identify a specific codec.
+/// A `FormatType` is a unique identifier used to identify a specific container format.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct FormatType(u32);
 
-/// Null format
+impl fmt::Display for FormatType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:#x}", self.0)
+    }
+}
+
+/// Null container format
 pub const FORMAT_TYPE_NULL: FormatType = FormatType(0x0);
 /// Waveform Audio File Format
 pub const FORMAT_TYPE_WAVE: FormatType = FormatType(0x100);
@@ -48,16 +59,14 @@ pub const FORMAT_TYPE_ADTS: FormatType = FormatType(0x107);
 pub const FORMAT_TYPE_OGG: FormatType = FormatType(0x108);
 /// Free Lossless Audio Codec Native
 pub const FORMAT_TYPE_FLAC: FormatType = FormatType(0x109);
-/// Wavepack
-pub const FORMAT_TYPE_WAVEPACK: FormatType = FormatType(0x10a);
+/// WavPack
+pub const FORMAT_TYPE_WAVPACK: FormatType = FormatType(0x10a);
 /// ISO Base Media File Format
 pub const FORMAT_TYPE_ISOMP4: FormatType = FormatType(0x10b);
-/// Matroska
+/// Matroska/WebM
 pub const FORMAT_TYPE_MKV: FormatType = FormatType(0x10c);
-/// WebM
-pub const FORMAT_TYPE_WEBM: FormatType = FormatType(0x10d);
 /// Flash Video
-pub const FORMAT_TYPE_FLV: FormatType = FormatType(0x10e);
+pub const FORMAT_TYPE_FLV: FormatType = FormatType(0x10d);
 
 /// Basic information about a container format.
 #[derive(Copy, Clone)]
@@ -227,6 +236,9 @@ pub trait FormatReader: Send + Sync {
     fn try_new(source: MediaSourceStream, options: FormatOptions) -> Result<Self>
     where
         Self: Sized;
+
+    /// Get basic information about the container format.
+    fn format_info(&self) -> &FormatInfo;
 
     /// Gets a list of all `Cue`s.
     fn cues(&self) -> &[Cue];

@@ -24,6 +24,12 @@ use crate::stream::*;
 
 use log::{debug, info, trace, warn};
 
+const ISOMP4_FORMAT_INFO: FormatInfo = FormatInfo {
+    format: FORMAT_TYPE_ISOMP4,
+    short_name: "isomp4",
+    long_name: "ISO Base Media File Format",
+};
+
 pub struct TrackState {
     codec_params: CodecParameters,
     /// The track number.
@@ -317,9 +323,7 @@ impl IsoMp4Reader {
 impl Probeable for IsoMp4Reader {
     fn probe_descriptor() -> &'static [ProbeDescriptor] {
         &[support_format!(
-            FORMAT_TYPE_ISOMP4,
-            "isomp4",
-            "ISO Base Media File Format",
+            ISOMP4_FORMAT_INFO,
             &["mp4", "m4a", "m4p", "m4b", "m4r", "m4v", "mov"],
             &["video/mp4", "audio/m4a"],
             &[b"ftyp"] // Top-level atoms
@@ -499,6 +503,10 @@ impl FormatReader for IsoMp4Reader {
             segs,
             moov,
         })
+    }
+
+    fn format_info(&self) -> &FormatInfo {
+        &ISOMP4_FORMAT_INFO
     }
 
     fn next_packet(&mut self) -> Result<Option<Packet>> {

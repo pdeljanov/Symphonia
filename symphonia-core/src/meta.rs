@@ -16,14 +16,22 @@ use std::num::NonZeroU32;
 use crate::errors::Result;
 use crate::io::MediaSourceStream;
 
-/// A `MetadataType` is a unique identifier used to identify a specific codec.
+/// A `MetadataType` is a unique identifier used to identify a metadata format.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct MetadataType(u32);
 
-/// Null metadata type.
+impl fmt::Display for MetadataType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:#x}", self.0)
+    }
+}
+
+/// Null metadata format
 pub const METADATA_TYPE_NULL: MetadataType = MetadataType(0x0);
-pub const METADATA_TYPE_ID3: MetadataType = MetadataType(0x1);
-pub const METADATA_TYPE_ID3V2: MetadataType = MetadataType(0x2);
+/// ID3
+pub const METADATA_TYPE_ID3: MetadataType = MetadataType(0x100);
+/// ID3v2
+pub const METADATA_TYPE_ID3V2: MetadataType = MetadataType(0x101);
 
 /// Basic information about a metadata format.
 #[derive(Copy, Clone)]
@@ -555,6 +563,9 @@ pub trait MetadataReader: Send + Sync {
     fn new(options: MetadataOptions) -> Self
     where
         Self: Sized;
+
+    /// Get basic information about the metadata format.
+    fn metadata_info(&self) -> &MetadataInfo;
 
     /// Read all metadata and return it if successful.
     fn read_all(&mut self, reader: &mut MediaSourceStream) -> Result<MetadataRevision>;

@@ -13,9 +13,7 @@ use symphonia_core::codecs::{CodecParameters, CODEC_TYPE_FLAC, CODEC_TYPE_VORBIS
 use symphonia_core::errors::{
     decode_error, seek_error, unsupported_error, Error, Result, SeekErrorKind,
 };
-use symphonia_core::formats::{
-    Cue, FormatOptions, FormatReader, Packet, SeekMode, SeekTo, SeekedTo, Track, FORMAT_TYPE_MKV,
-};
+use symphonia_core::formats::{prelude::*, FORMAT_TYPE_MKV};
 use symphonia_core::io::*;
 use symphonia_core::meta::{Metadata, MetadataLog};
 use symphonia_core::probe::{ProbeDescriptor, Probeable, Score};
@@ -34,6 +32,9 @@ use crate::segment::{
     BlockGroupElement, ClusterElement, CuesElement, InfoElement, SeekHeadElement, TagsElement,
     TracksElement,
 };
+
+const MKV_FORMAT_INFO: FormatInfo =
+    FormatInfo { format: FORMAT_TYPE_MKV, short_name: "matroska", long_name: "Matroska / WebM" };
 
 #[allow(dead_code)]
 pub struct TrackState {
@@ -527,6 +528,10 @@ impl FormatReader for MkvReader {
         })
     }
 
+    fn format_info(&self) -> &FormatInfo {
+        &MKV_FORMAT_INFO
+    }
+
     fn cues(&self) -> &[Cue] {
         &self.cues
     }
@@ -591,9 +596,7 @@ impl FormatReader for MkvReader {
 impl Probeable for MkvReader {
     fn probe_descriptor() -> &'static [ProbeDescriptor] {
         &[support_format!(
-            FORMAT_TYPE_MKV,
-            "matroska",
-            "Matroska / WebM",
+            MKV_FORMAT_INFO,
             &["webm", "mkv"],
             &["video/webm", "video/x-matroska"],
             &[b"\x1A\x45\xDF\xA3"] // Top-level element Ebml element

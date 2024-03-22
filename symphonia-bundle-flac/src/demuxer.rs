@@ -28,6 +28,12 @@ use super::parser::PacketParser;
 /// The FLAC start of stream marker: "fLaC" in ASCII.
 const FLAC_STREAM_MARKER: [u8; 4] = *b"fLaC";
 
+const FLAC_FORMAT_INFO: FormatInfo = FormatInfo {
+    format: FORMAT_TYPE_FLAC,
+    short_name: "flac",
+    long_name: "Free Lossless Audio Codec Native",
+};
+
 /// Free Lossless Audio Codec (FLAC) native frame reader.
 pub struct FlacReader {
     reader: MediaSourceStream,
@@ -136,14 +142,7 @@ impl FlacReader {
 
 impl Probeable for FlacReader {
     fn probe_descriptor() -> &'static [ProbeDescriptor] {
-        &[support_format!(
-            FORMAT_TYPE_FLAC,
-            "flac",
-            "Free Lossless Audio Codec Native",
-            &["flac"],
-            &["audio/flac"],
-            &[b"fLaC"]
-        )]
+        &[support_format!(FLAC_FORMAT_INFO, &["flac"], &["audio/flac"], &[b"fLaC"])]
     }
 
     fn score(_src: ScopedStream<&mut MediaSourceStream>) -> Result<Score> {
@@ -172,6 +171,10 @@ impl FormatReader for FlacReader {
         }
 
         Ok(flac)
+    }
+
+    fn format_info(&self) -> &FormatInfo {
+        &FLAC_FORMAT_INFO
     }
 
     fn next_packet(&mut self) -> Result<Option<Packet>> {

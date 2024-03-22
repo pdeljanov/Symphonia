@@ -31,6 +31,12 @@ const AIFF_RIFF_FORM: [u8; 4] = *b"AIFF";
 /// A possible RIFF form is "aifc", using compressed data.
 const AIFC_RIFF_FORM: [u8; 4] = *b"AIFC";
 
+const AIFF_FORMAT_INFO: FormatInfo = FormatInfo {
+    format: FORMAT_TYPE_AIFF,
+    short_name: "aiff",
+    long_name: "Audio Interchange File Format",
+};
+
 /// Audio Interchange File Format (AIFF) format reader.
 ///
 /// `AiffReader` implements a demuxer for the AIFF container format.
@@ -49,9 +55,7 @@ impl Probeable for AiffReader {
         &[
             // AIFF RIFF form
             support_format!(
-                FORMAT_TYPE_AIFF,
-                "riff",
-                " Resource Interchange File Format",
+                AIFF_FORMAT_INFO,
                 &["aiff", "aif", "aifc"],
                 &["audio/aiff", "audio/x-aiff", " sound/aiff", "audio/x-pn-aiff"],
                 &[b"FORM"]
@@ -136,6 +140,10 @@ impl FormatReader for AiffReader {
                 }
             }
         }
+    }
+
+    fn format_info(&self) -> &FormatInfo {
+        &AIFF_FORMAT_INFO
     }
 
     fn next_packet(&mut self) -> Result<Option<Packet>> {

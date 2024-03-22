@@ -10,7 +10,8 @@
 use symphonia_core::errors::{decode_error, unsupported_error, Result};
 use symphonia_core::io::*;
 use symphonia_core::meta::{
-    MetadataBuilder, MetadataOptions, MetadataReader, MetadataRevision, METADATA_TYPE_ID3V2,
+    MetadataBuilder, MetadataInfo, MetadataOptions, MetadataReader, MetadataRevision,
+    METADATA_TYPE_ID3V2,
 };
 use symphonia_core::probe::{ProbeDescriptor, Probeable, Score};
 use symphonia_core::support_metadata;
@@ -399,11 +400,14 @@ pub mod util {
     }
 }
 
+const ID3V2_METADATA_INFO: MetadataInfo =
+    MetadataInfo { metadata: METADATA_TYPE_ID3V2, short_name: "id3v2", long_name: "ID3v2" };
+
 pub struct Id3v2Reader;
 
 impl Probeable for Id3v2Reader {
     fn probe_descriptor() -> &'static [ProbeDescriptor] {
-        &[support_metadata!(METADATA_TYPE_ID3V2, "id3v2", "ID3v2", &[], &[], &[b"ID3"])]
+        &[support_metadata!(ID3V2_METADATA_INFO, &[], &[], &[b"ID3"])]
     }
 
     fn score(_src: ScopedStream<&mut MediaSourceStream>) -> Result<Score> {
@@ -414,6 +418,10 @@ impl Probeable for Id3v2Reader {
 impl MetadataReader for Id3v2Reader {
     fn new(_options: MetadataOptions) -> Self {
         Id3v2Reader {}
+    }
+
+    fn metadata_info(&self) -> &MetadataInfo {
+        &ID3V2_METADATA_INFO
     }
 
     fn read_all(&mut self, reader: &mut MediaSourceStream) -> Result<MetadataRevision> {

@@ -24,6 +24,12 @@ use log::{debug, info};
 
 const SAMPLES_PER_AAC_PACKET: u64 = 1024;
 
+const ADTS_FORMAT_INFO: FormatInfo = FormatInfo {
+    format: FORMAT_TYPE_ADTS,
+    short_name: "aac",
+    long_name: "Audio Data Transport Stream (native AAC)",
+};
+
 /// Audio Data Transport Stream (ADTS) format reader.
 ///
 /// `AdtsReader` implements a demuxer for ADTS (AAC native frames).
@@ -39,9 +45,7 @@ pub struct AdtsReader {
 impl Probeable for AdtsReader {
     fn probe_descriptor() -> &'static [ProbeDescriptor] {
         &[support_format!(
-            FORMAT_TYPE_ADTS,
-            "aac",
-            "Audio Data Transport Stream (native AAC)",
+            ADTS_FORMAT_INFO,
             &["aac"],
             &["audio/aac"],
             &[
@@ -241,6 +245,10 @@ impl FormatReader for AdtsReader {
             first_frame_pos,
             next_packet_ts: 0,
         })
+    }
+
+    fn format_info(&self) -> &FormatInfo {
+        &ADTS_FORMAT_INFO
     }
 
     fn next_packet(&mut self) -> Result<Option<Packet>> {
