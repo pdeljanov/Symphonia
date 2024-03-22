@@ -14,7 +14,7 @@ use crate::formats::{FormatInfo, FormatOptions, FormatReader};
 use crate::io::{MediaSourceStream, ReadBytes, ScopedStream, SeekBuffered};
 use crate::meta::{MetadataInfo, MetadataOptions, MetadataReader};
 
-use log::{debug, error, info};
+use log::{debug, error, info, trace, warn};
 
 mod bloom {
 
@@ -138,8 +138,12 @@ pub trait Probeable {
     /// Using scoped access to a `MediaSourceStream`, calculate and return a value between 0 and 255
     /// indicating the confidence of the reader in decoding or parsing the stream.
     ///
-    /// If the format is definitely not supported, then score should return `Score::Unsupported`
-    /// since a score of 0 is still considered supported, however unlikely.
+    /// If the format is definitely not supported, then score should return [`Score::Unsupported`]
+    /// since a score of 0 is still considered supported, even if unlikely.
+    ///
+    /// If an error is returned, errors other than [`Error::IoError`] (excluding the unexpected EOF
+    /// kind) are treated as if [`Score::Unsupported`] was returned. All other IO errors abort
+    /// the probe operation.
     fn score(src: ScopedStream<&mut MediaSourceStream>) -> Result<Score>;
 }
 
@@ -187,7 +191,7 @@ pub struct ProbeOptions {
     /// The larger this value is, the larger the media source buffer must be, and therefore the more
     /// memory is consumed.
     ///
-    /// The default is 8 kB, the maximum is 64 kB.
+    /// The default is 16 kB, the maximum is 64 kB.
     pub max_score_depth: u16,
 }
 
@@ -195,7 +199,7 @@ impl Default for ProbeOptions {
     fn default() -> Self {
         Self {
             max_probe_depth: 1 * 1024 * 1024, // 1 MB
-            max_score_depth: 8 * 1024,        // 8 kB
+            max_score_depth: 16 * 1024,       // 16 kB
         }
     }
 }
@@ -263,7 +267,7 @@ impl Probe {
 
     /// Scans the provided `MediaSourceStream` from the current position for the best metadata or
     /// format reader. If a candidate is found, returns it.
-    pub fn next(&self, mss: &mut MediaSourceStream) -> Result<ProbeCandidate> {
+    pub fn next(&self, mss: &mut MediaSourceStream, _hint: &Hint) -> Result<ProbeCandidate> {
         let mut win = 0u16;
 
         let init_pos = mss.pos();
@@ -281,13 +285,13 @@ impl Probe {
 
             if count % 4096 == 0 {
                 debug!(
-                    "searching for format marker... {}+{} / {} bytes.",
+                    "searching for format marker... {}+{} / {} bytes",
                     init_pos, count, self.opts.max_probe_depth
                 );
             }
 
-            // Use the bloom filter to check if the the window may be a prefix of a registered
-            // marker.
+            // Use the bloom filter to check if the the 2-byte window may be a prefix of a
+            // registered marker.
             if self.filter.may_contain(&win.to_be_bytes()) {
                 // Using the 2-byte window, and a further 14 bytes, create a larger 16-byte window.
                 let mut window = [0u8; 16];
@@ -295,18 +299,14 @@ impl Probe {
                 window[0..2].copy_from_slice(&win.to_be_bytes()[0..2]);
                 mss.read_buf_exact(&mut window[2..])?;
 
-                debug!(
-                    "found a possible format marker here {:x?} @ {}+{} bytes.",
-                    window, init_pos, count,
-                );
-
-                // Re-align stream to the start of the marker.
+                // Re-align stream to the start of the marker for scoring.
                 mss.seek_buffered_rel(-16);
 
                 // Try to find a descriptor in the preferred tier.
                 if let Some(inst) =
                     find_descriptor(mss, &self.preferred, window, self.opts.max_score_depth)?
                 {
+                    warn_junk_bytes(mss.pos(), init_pos);
                     return Ok(inst);
                 }
 
@@ -314,6 +314,7 @@ impl Probe {
                 if let Some(inst) =
                     find_descriptor(mss, &self.standard, window, self.opts.max_score_depth)?
                 {
+                    warn_junk_bytes(mss.pos(), init_pos);
                     return Ok(inst);
                 }
 
@@ -321,22 +322,22 @@ impl Probe {
                 if let Some(inst) =
                     find_descriptor(mss, &self.fallback, window, self.opts.max_score_depth)?
                 {
+                    warn_junk_bytes(mss.pos(), init_pos);
                     return Ok(inst);
                 }
 
-                // If no registered markers were matched, then the bloom filter returned a false
-                // positive. Re-align the stream to the end of the 2-byte window that created the
-                // false positive.
+                // If no registered markers were matched, re-align the stream to the end of the
+                // 2-byte window, and continue probing.
                 mss.seek_buffered_rel(2);
             }
         }
 
         if count < self.opts.max_probe_depth {
-            error!("probe reached EOF at {} bytes.", count);
+            error!("probe reached EOF at {} bytes", count);
         }
         else {
             // Could not find any marker within the probe limit.
-            error!("reached probe limit of {} bytes.", self.opts.max_probe_depth);
+            error!("reached probe limit of {} bytes", self.opts.max_probe_depth);
         }
 
         unsupported_error("core (probe): no suitable format reader found")
@@ -347,14 +348,14 @@ impl Probe {
     /// container format is found.
     pub fn format(
         &self,
-        _hint: &Hint,
+        hint: &Hint,
         mut mss: MediaSourceStream,
         mut fmt_opts: FormatOptions,
         meta_opts: MetadataOptions,
     ) -> Result<Box<dyn FormatReader>> {
         // Loop over all elements in the stream until a container format is found.
         loop {
-            match self.next(&mut mss)? {
+            match self.next(&mut mss, hint)? {
                 // If a container format is found, return an instance to it's reader.
                 ProbeCandidate::Format { factory, .. } => {
                     // Instantiate the format reader.
@@ -373,7 +374,7 @@ impl Probe {
                     // Insert it into the metadata log.
                     fmt_opts.metadata.get_or_insert_with(Default::default).push(rev);
 
-                    debug!("chaining a metadata element.");
+                    debug!("chaining a metadata element");
                 }
             }
         }
@@ -399,7 +400,7 @@ fn find_descriptor(
             let is_match = win[0..marker.len()] == **marker;
 
             if is_match {
-                info!("found the marker {:x?}", &win[0..marker.len()],);
+                trace!("found the marker {:x?} @ {} bytes", &win[0..marker.len()], mss.pos());
             }
 
             is_match
@@ -423,10 +424,10 @@ fn find_descriptor(
 
             match &desc.candidate {
                 ProbeCandidate::Format { info, .. } => {
-                    info!("format reader '{}' failed scoring.", info.short_name)
+                    trace!("format reader '{}' failed scoring", info.short_name)
                 }
                 ProbeCandidate::Metadata { info, .. } => {
-                    info!("metadata reader '{}' failed scoring.", info.short_name)
+                    trace!("metadata reader '{}' failed scoring", info.short_name)
                 }
             }
         }
@@ -441,9 +442,13 @@ fn score(desc: &ProbeDescriptor, mss: &mut MediaSourceStream, max_depth: u16) ->
 
     // Perform the scoring operation.
     let result = match (desc.score)(ScopedStream::new(mss, u64::from(max_depth))) {
-        Err(Error::IoError(err)) if err.kind() == std::io::ErrorKind::UnexpectedEof => {
-            // If the score operation resulted in an unexpected end-of-file, or out-of-bounds error,
-            // then consider the format reader unsupported.
+        Err(Error::IoError(err)) if err.kind() != std::io::ErrorKind::UnexpectedEof => {
+            // IO errors that are not an unexpected end-of-file (or out-of-bounds) error, abort the
+            // entire probe operation.
+            Err(Error::IoError(err))
+        }
+        Err(_) => {
+            // All other errors are caught and return unsupported.
             Ok(Score::Unsupported)
         }
         result => result,
@@ -453,6 +458,13 @@ fn score(desc: &ProbeDescriptor, mss: &mut MediaSourceStream, max_depth: u16) ->
     mss.seek_buffered(init_pos);
 
     result
+}
+
+fn warn_junk_bytes(pos: u64, init_pos: u64) {
+    // Warn if junk bytes were skipped.
+    if pos > init_pos {
+        warn!("skipped {} bytes of junk at {}", pos - init_pos, init_pos);
+    }
 }
 
 /// Convenience macro for declaring a probe `ProbeDescriptor` for a `FormatReader`.
