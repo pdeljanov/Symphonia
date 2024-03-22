@@ -89,7 +89,33 @@ impl Probeable for MpaReader {
         ]
     }
 
-    fn score(_src: ScopedStream<&mut MediaSourceStream>) -> Result<Score> {
+    fn score(mut src: ScopedStream<&mut MediaSourceStream>) -> Result<Score> {
+        // Read the sync word for the first (assumed) MPEG frame and try to parse it into a header.
+        let sync1 = header::read_frame_header_word_no_sync(&mut src)?;
+        let hdr1 = header::parse_frame_header(sync1)?;
+
+        // Since the first header was parsed successfully, this may be a MPEG audio format. However,
+        // if there is enough data left to read the frame body and another frame header, then a
+        // higher confidence may be gained. If there is not enough data left, return a partially
+        // confident score.
+        if src.bytes_available() < (hdr1.frame_size + header::MPEG_HEADER_LEN) as u64 {
+            return Ok(Score::Supported(127));
+        }
+
+        // Skip the frame body.
+        src.ignore_bytes(hdr1.frame_size as u64)?;
+
+        // Read another sync word for the second (assumed) MPEG frame.
+        let sync2 = header::read_frame_header_word_no_sync(&mut src)?;
+
+        // The second sync word should look like a sync word.
+        if !header::is_frame_header_word_synced(sync2) {
+            return Ok(Score::Unsupported);
+        }
+
+        // Try to parse the second sync word into a header.
+        let _ = header::parse_frame_header(sync2)?;
+
         Ok(Score::Supported(255))
     }
 }
