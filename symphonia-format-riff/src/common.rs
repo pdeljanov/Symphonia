@@ -262,7 +262,7 @@ impl PacketInfo {
 }
 
 pub fn next_packet(
-    reader: &mut MediaSourceStream,
+    reader: &mut MediaSourceStream<'_>,
     packet_info: &PacketInfo,
     tracks: &[Track],
     data_start_pos: u64,

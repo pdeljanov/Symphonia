@@ -200,16 +200,16 @@ impl fmt::Display for CommonChunk {
 }
 
 pub trait CommonChunkParser {
-    fn parse_aiff(self, source: &mut MediaSourceStream) -> Result<CommonChunk>;
-    fn parse_aifc(self, source: &mut MediaSourceStream) -> Result<CommonChunk>;
+    fn parse_aiff(self, source: &mut MediaSourceStream<'_>) -> Result<CommonChunk>;
+    fn parse_aifc(self, source: &mut MediaSourceStream<'_>) -> Result<CommonChunk>;
 }
 
 impl CommonChunkParser for ChunkParser<CommonChunk> {
-    fn parse_aiff(self, source: &mut MediaSourceStream) -> Result<CommonChunk> {
+    fn parse_aiff(self, source: &mut MediaSourceStream<'_>) -> Result<CommonChunk> {
         self.parse(source)
     }
 
-    fn parse_aifc(self, source: &mut MediaSourceStream) -> Result<CommonChunk> {
+    fn parse_aifc(self, source: &mut MediaSourceStream<'_>) -> Result<CommonChunk> {
         let n_channels = source.read_be_i16()?;
         let n_sample_frames = source.read_be_u32()?;
         let sample_size = source.read_be_i16()?;

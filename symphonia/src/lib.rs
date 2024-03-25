@@ -187,7 +187,7 @@ pub mod default {
 
         #[deprecated = "use `default::formats::MpaReader` instead"]
         #[cfg(any(feature = "mp1", feature = "mp2", feature = "mp3"))]
-        pub type Mp3Reader = MpaReader;
+        pub type Mp3Reader<'s> = MpaReader<'s>;
     }
 
     use lazy_static::lazy_static;
@@ -269,31 +269,31 @@ pub mod default {
 
         // Formats
         #[cfg(feature = "aac")]
-        probe.register_all::<formats::AdtsReader>();
+        probe.register_all::<formats::AdtsReader<'_>>();
 
         #[cfg(feature = "caf")]
-        probe.register_all::<formats::CafReader>();
+        probe.register_all::<formats::CafReader<'_>>();
 
         #[cfg(feature = "flac")]
-        probe.register_all::<formats::FlacReader>();
+        probe.register_all::<formats::FlacReader<'_>>();
 
         #[cfg(feature = "isomp4")]
-        probe.register_all::<formats::IsoMp4Reader>();
+        probe.register_all::<formats::IsoMp4Reader<'_>>();
 
         #[cfg(any(feature = "mp1", feature = "mp2", feature = "mp3"))]
-        probe.register_all::<formats::MpaReader>();
+        probe.register_all::<formats::MpaReader<'_>>();
 
         #[cfg(feature = "aiff")]
-        probe.register_all::<formats::AiffReader>();
+        probe.register_all::<formats::AiffReader<'_>>();
 
         #[cfg(feature = "wav")]
-        probe.register_all::<formats::WavReader>();
+        probe.register_all::<formats::WavReader<'_>>();
 
         #[cfg(feature = "ogg")]
-        probe.register_all::<formats::OggReader>();
+        probe.register_all::<formats::OggReader<'_>>();
 
         #[cfg(feature = "mkv")]
-        probe.register_all::<formats::MkvReader>();
+        probe.register_all::<formats::MkvReader<'_>>();
 
         // Metadata
         probe.register_all::<Id3v2Reader>();

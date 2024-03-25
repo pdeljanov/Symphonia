@@ -229,11 +229,11 @@ impl Track {
 /// `FormatReader` provides an Iterator-like interface over packets for easy consumption and
 /// filtering. Seeking will invalidate the state of any `Decoder` processing packets from the
 /// `FormatReader` and should be reset after a successful seek operation.
-pub trait FormatReader: Send + Sync {
+pub trait FormatReader<'s>: Send + Sync {
     /// Attempt to instantiate a `FormatReader` using the provided `FormatOptions` and
     /// `MediaSourceStream`. The reader will probe the container to verify format support, determine
     /// the number of tracks, and read any initial metadata.
-    fn try_new(source: MediaSourceStream, options: FormatOptions) -> Result<Self>
+    fn try_new(source: MediaSourceStream<'s>, options: FormatOptions) -> Result<Self>
     where
         Self: Sized;
 
@@ -280,7 +280,7 @@ pub trait FormatReader: Send + Sync {
     fn next_packet(&mut self) -> Result<Option<Packet>>;
 
     /// Destroys the `FormatReader` and returns the underlying media source stream
-    fn into_inner(self: Box<Self>) -> MediaSourceStream;
+    fn into_inner(self: Box<Self>) -> MediaSourceStream<'s>;
 }
 
 /// A `Packet` contains a discrete amount of encoded data for a single codec bitstream. The exact

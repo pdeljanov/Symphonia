@@ -227,7 +227,7 @@ fn run(args: &ArgMatches) -> Result<i32> {
     }
 }
 
-fn decode_only(mut reader: Box<dyn FormatReader>, decode_opts: &DecoderOptions) -> Result<i32> {
+fn decode_only(mut reader: Box<dyn FormatReader<'_>>, decode_opts: &DecoderOptions) -> Result<i32> {
     // Get the default track.
     // TODO: Allow track selection.
     let track = reader.default_track().unwrap();
@@ -269,7 +269,7 @@ struct PlayTrackOptions {
 }
 
 fn play(
-    mut reader: Box<dyn FormatReader>,
+    mut reader: Box<dyn FormatReader<'_>>,
     track_num: Option<usize>,
     seek: Option<SeekPosition>,
     decode_opts: &DecoderOptions,
@@ -351,7 +351,7 @@ fn play(
 }
 
 fn play_track(
-    reader: &mut Box<dyn FormatReader>,
+    reader: &mut Box<dyn FormatReader<'_>>,
     audio_output: &mut Option<Box<dyn output::AudioOutput>>,
     play_opts: PlayTrackOptions,
     decode_opts: &DecoderOptions,
@@ -474,7 +474,7 @@ fn dump_visual(visual: &Visual, file_name: &OsStr, index: usize) {
     }
 }
 
-fn dump_visuals(format: &mut Box<dyn FormatReader>, file_name: &OsStr) {
+fn dump_visuals(format: &mut Box<dyn FormatReader<'_>>, file_name: &OsStr) {
     if let Some(metadata) = format.metadata().current() {
         for (i, visual) in metadata.visuals().iter().enumerate() {
             dump_visual(visual, file_name, i);
@@ -482,7 +482,7 @@ fn dump_visuals(format: &mut Box<dyn FormatReader>, file_name: &OsStr) {
     }
 }
 
-fn print_format(path: &Path, format: &mut Box<dyn FormatReader>) {
+fn print_format(path: &Path, format: &mut Box<dyn FormatReader<'_>>) {
     println!("+ {}", path.display());
 
     let format_info = format.format_info();

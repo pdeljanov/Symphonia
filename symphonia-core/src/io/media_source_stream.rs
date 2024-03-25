@@ -49,9 +49,9 @@ impl Default for MediaSourceStreamOptions {
 /// length buffer cache. By default, the buffer caches allows backtracking by up-to the minimum of
 /// either `buffer_len - 32kB` or the total number of bytes read since instantiation or the last
 /// buffer cache invalidation. Note that regular a `seek()` will invalidate the buffer cache.
-pub struct MediaSourceStream {
+pub struct MediaSourceStream<'s> {
     /// The source reader.
-    inner: Box<dyn MediaSource>,
+    inner: Box<dyn MediaSource + 's>,
     /// The ring buffer.
     ring: Box<[u8]>,
     /// The ring buffer's wrap-around mask.
@@ -69,11 +69,11 @@ pub struct MediaSourceStream {
     rel_pos: u64,
 }
 
-impl MediaSourceStream {
+impl<'s> MediaSourceStream<'s> {
     const MIN_BLOCK_LEN: usize = 1 * 1024;
     const MAX_BLOCK_LEN: usize = 32 * 1024;
 
-    pub fn new(source: Box<dyn MediaSource>, options: MediaSourceStreamOptions) -> Self {
+    pub fn new(source: Box<dyn MediaSource + 's>, options: MediaSourceStreamOptions) -> Self {
         // The buffer length must be a power of 2, and > the maximum read block length.
         assert!(options.buffer_len.count_ones() == 1);
         assert!(options.buffer_len > Self::MAX_BLOCK_LEN);
@@ -174,7 +174,7 @@ impl MediaSourceStream {
     }
 }
 
-impl MediaSource for MediaSourceStream {
+impl MediaSource for MediaSourceStream<'_> {
     #[inline]
     fn is_seekable(&self) -> bool {
         self.inner.is_seekable()
@@ -186,7 +186,7 @@ impl MediaSource for MediaSourceStream {
     }
 }
 
-impl io::Read for MediaSourceStream {
+impl io::Read for MediaSourceStream<'_> {
     fn read(&mut self, mut buf: &mut [u8]) -> io::Result<usize> {
         let read_len = buf.len();
 
@@ -213,7 +213,7 @@ impl io::Read for MediaSourceStream {
     }
 }
 
-impl io::Seek for MediaSourceStream {
+impl io::Seek for MediaSourceStream<'_> {
     fn seek(&mut self, pos: io::SeekFrom) -> io::Result<u64> {
         // The current position of the underlying reader is ahead of the current position of the
         // MediaSourceStream by how ever many bytes have not been read from the read-ahead buffer
@@ -234,7 +234,7 @@ impl io::Seek for MediaSourceStream {
     }
 }
 
-impl ReadBytes for MediaSourceStream {
+impl ReadBytes for MediaSourceStream<'_> {
     #[inline(always)]
     fn read_byte(&mut self) -> io::Result<u8> {
         // This function, read_byte, is inlined for performance. To reduce code bloat, place the
@@ -375,7 +375,7 @@ impl ReadBytes for MediaSourceStream {
     }
 }
 
-impl SeekBuffered for MediaSourceStream {
+impl SeekBuffered for MediaSourceStream<'_> {
     fn ensure_seekback_buffer(&mut self, len: usize) {
         let ring_len = self.ring.len();
 

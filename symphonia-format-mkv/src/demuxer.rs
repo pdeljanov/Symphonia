@@ -49,9 +49,9 @@ pub struct TrackState {
 /// Matroska (MKV) and WebM demultiplexer.
 ///
 /// `MkvReader` implements a demuxer for the Matroska and WebM formats.
-pub struct MkvReader {
+pub struct MkvReader<'s> {
     /// Iterator over EBML element headers
-    iter: ElementIterator<MediaSourceStream>,
+    iter: ElementIterator<MediaSourceStream<'s>>,
     tracks: Vec<Track>,
     track_states: HashMap<u32, TrackState>,
     current_cluster: Option<ClusterState>,
@@ -138,7 +138,7 @@ fn flac_extra_data_from_codec_private(codec_private: &[u8]) -> Result<Box<[u8]>>
     }
 }
 
-impl MkvReader {
+impl MkvReader<'_> {
     fn seek_track_by_ts_forward(&mut self, track_id: u32, ts: u64) -> Result<SeekedTo> {
         let actual_ts = 'out: loop {
             // Skip frames from the buffer until the given timestamp
@@ -314,8 +314,8 @@ impl MkvReader {
     }
 }
 
-impl FormatReader for MkvReader {
-    fn try_new(mut reader: MediaSourceStream, options: FormatOptions) -> Result<Self>
+impl<'s> FormatReader<'s> for MkvReader<'s> {
+    fn try_new(mut reader: MediaSourceStream<'s>, options: FormatOptions) -> Result<Self>
     where
         Self: Sized,
     {
@@ -588,14 +588,15 @@ impl FormatReader for MkvReader {
         }
     }
 
-    fn into_inner(self: Box<Self>) -> MediaSourceStream {
+    fn into_inner(self: Box<Self>) -> MediaSourceStream<'s> {
         self.iter.into_inner()
     }
 }
 
-impl Probeable for MkvReader {
+impl Probeable for MkvReader<'_> {
     fn probe_descriptor() -> &'static [ProbeDescriptor] {
         &[support_format!(
+            MkvReader<'_>,
             MKV_FORMAT_INFO,
             &["webm", "mkv"],
             &["video/webm", "video/x-matroska"],
@@ -603,7 +604,7 @@ impl Probeable for MkvReader {
         )]
     }
 
-    fn score(_src: ScopedStream<&mut MediaSourceStream>) -> Result<Score> {
+    fn score(_src: ScopedStream<&mut MediaSourceStream<'_>>) -> Result<Score> {
         Ok(Score::Supported(255))
     }
 }

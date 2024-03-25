@@ -38,8 +38,8 @@ const WAVE_FORMAT_INFO: FormatInfo = FormatInfo {
 /// Waveform Audio File Format (WAV) format reader.
 ///
 /// `WavReader` implements a demuxer for the WAVE container format.
-pub struct WavReader {
-    reader: MediaSourceStream,
+pub struct WavReader<'s> {
+    reader: MediaSourceStream<'s>,
     tracks: Vec<Track>,
     cues: Vec<Cue>,
     metadata: MetadataLog,
@@ -48,11 +48,12 @@ pub struct WavReader {
     data_end_pos: u64,
 }
 
-impl Probeable for WavReader {
+impl Probeable for WavReader<'_> {
     fn probe_descriptor() -> &'static [ProbeDescriptor] {
         &[
             // WAVE RIFF form
             support_format!(
+                WavReader<'_>,
                 WAVE_FORMAT_INFO,
                 &["wav", "wave"],
                 &["audio/vnd.wave", "audio/x-wav", "audio/wav", "audio/wave"],
@@ -61,7 +62,7 @@ impl Probeable for WavReader {
         ]
     }
 
-    fn score(mut src: ScopedStream<&mut MediaSourceStream>) -> Result<Score> {
+    fn score(mut src: ScopedStream<&mut MediaSourceStream<'_>>) -> Result<Score> {
         // Perform simple scoring by testing that the RIFF stream marker and RIFF form are both
         // valid for WAVE.
         let riff_marker = src.read_quad_bytes()?;
@@ -76,8 +77,8 @@ impl Probeable for WavReader {
     }
 }
 
-impl FormatReader for WavReader {
-    fn try_new(mut source: MediaSourceStream, options: FormatOptions) -> Result<Self> {
+impl<'s> FormatReader<'s> for WavReader<'s> {
+    fn try_new(mut source: MediaSourceStream<'s>, options: FormatOptions) -> Result<Self> {
         // The RIFF marker should be present.
         let marker = source.read_quad_bytes()?;
 
@@ -261,7 +262,7 @@ impl FormatReader for WavReader {
         Ok(SeekedTo { track_id: 0, actual_ts, required_ts: ts })
     }
 
-    fn into_inner(self: Box<Self>) -> MediaSourceStream {
+    fn into_inner(self: Box<Self>) -> MediaSourceStream<'s> {
         self.reader
     }
 }

@@ -49,4 +49,4 @@ pub use demuxer::MpaReader;
 pub type Mp3Decoder = MpaDecoder;
 
 #[deprecated = "use `symphonia_bundle_mp3::MpaReader` instead"]
-pub type Mp3Reader = MpaReader;
+pub type Mp3Reader<'s> = MpaReader<'s>;

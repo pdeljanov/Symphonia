@@ -28,8 +28,8 @@ const CAF_FORMAT_INFO: FormatInfo =
 /// Core Audio Format (CAF) format reader.
 ///
 /// `CafReader` implements a demuxer for Core Audio Format containers.
-pub struct CafReader {
-    reader: MediaSourceStream,
+pub struct CafReader<'s> {
+    reader: MediaSourceStream<'s>,
     tracks: Vec<Track>,
     cues: Vec<Cue>,
     metadata: MetadataLog,
@@ -44,18 +44,18 @@ enum PacketInfo {
     Compressed { packets: Vec<CafPacket>, current_packet_index: usize },
 }
 
-impl Probeable for CafReader {
+impl Probeable for CafReader<'_> {
     fn probe_descriptor() -> &'static [ProbeDescriptor] {
-        &[support_format!(CAF_FORMAT_INFO, &["caf"], &["audio/x-caf"], &[b"caff"])]
+        &[support_format!(CafReader<'_>, CAF_FORMAT_INFO, &["caf"], &["audio/x-caf"], &[b"caff"])]
     }
 
-    fn score(_src: ScopedStream<&mut MediaSourceStream>) -> Result<Score> {
+    fn score(_src: ScopedStream<&mut MediaSourceStream<'_>>) -> Result<Score> {
         Ok(Score::Supported(255))
     }
 }
 
-impl FormatReader for CafReader {
-    fn try_new(source: MediaSourceStream, options: FormatOptions) -> Result<Self> {
+impl<'s> FormatReader<'s> for CafReader<'s> {
+    fn try_new(source: MediaSourceStream<'s>, options: FormatOptions) -> Result<Self> {
         let mut reader = Self {
             reader: source,
             tracks: vec![],
@@ -241,12 +241,12 @@ impl FormatReader for CafReader {
         }
     }
 
-    fn into_inner(self: Box<Self>) -> MediaSourceStream {
+    fn into_inner(self: Box<Self>) -> MediaSourceStream<'s> {
         self.reader
     }
 }
 
-impl CafReader {
+impl CafReader<'_> {
     fn time_base(&self) -> Option<TimeBase> {
         self.tracks.first().and_then(|track| {
             track.codec_params.sample_rate.map(|sample_rate| TimeBase::new(1, sample_rate))
