@@ -391,7 +391,7 @@ impl Probeable for OggReader<'_> {
     }
 }
 
-impl<'s> FormatReader<'s> for OggReader<'s> {
+impl<'s> BuildFormatReader<'s> for OggReader<'s> {
     fn try_new(mut source: MediaSourceStream<'s>, options: FormatOptions) -> Result<Self> {
         // A seekback buffer equal to the maximum OGG page size is required for this reader.
         source.ensure_seekback_buffer(OGG_PAGE_MAX_SIZE);
@@ -418,7 +418,9 @@ impl<'s> FormatReader<'s> for OggReader<'s> {
 
         Ok(ogg)
     }
+}
 
+impl FormatReader for OggReader<'_> {
     fn format_info(&self) -> &FormatInfo {
         &OGG_FORMAT_INFO
     }
@@ -521,7 +523,10 @@ impl<'s> FormatReader<'s> for OggReader<'s> {
         self.do_seek(serial, required_ts)
     }
 
-    fn into_inner(self: Box<Self>) -> MediaSourceStream<'s> {
+    fn into_inner<'s>(self: Box<Self>) -> MediaSourceStream<'s>
+    where
+        Self: 's,
+    {
         self.reader
     }
 }

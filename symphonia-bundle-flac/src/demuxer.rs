@@ -150,7 +150,7 @@ impl Probeable for FlacReader<'_> {
     }
 }
 
-impl<'s> FormatReader<'s> for FlacReader<'s> {
+impl<'s> BuildFormatReader<'s> for FlacReader<'s> {
     fn try_new(mut source: MediaSourceStream<'s>, options: FormatOptions) -> Result<Self> {
         // Read the first 4 bytes of the stream. Ideally this will be the FLAC stream marker.
         let marker = source.read_quad_bytes()?;
@@ -172,7 +172,9 @@ impl<'s> FormatReader<'s> for FlacReader<'s> {
 
         Ok(flac)
     }
+}
 
+impl FormatReader for FlacReader<'_> {
     fn format_info(&self) -> &FormatInfo {
         &FLAC_FORMAT_INFO
     }
@@ -337,7 +339,10 @@ impl<'s> FormatReader<'s> for FlacReader<'s> {
         Ok(SeekedTo { track_id: 0, actual_ts: packet.ts, required_ts: ts })
     }
 
-    fn into_inner(self: Box<Self>) -> MediaSourceStream<'s> {
+    fn into_inner<'s>(self: Box<Self>) -> MediaSourceStream<'s>
+    where
+        Self: 's,
+    {
         self.reader
     }
 }

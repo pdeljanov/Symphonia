@@ -314,7 +314,7 @@ impl MkvReader<'_> {
     }
 }
 
-impl<'s> FormatReader<'s> for MkvReader<'s> {
+impl<'s> BuildFormatReader<'s> for MkvReader<'s> {
     fn try_new(mut reader: MediaSourceStream<'s>, options: FormatOptions) -> Result<Self>
     where
         Self: Sized,
@@ -527,7 +527,9 @@ impl<'s> FormatReader<'s> for MkvReader<'s> {
             clusters,
         })
     }
+}
 
+impl FormatReader for MkvReader<'_> {
     fn format_info(&self) -> &FormatInfo {
         &MKV_FORMAT_INFO
     }
@@ -588,7 +590,10 @@ impl<'s> FormatReader<'s> for MkvReader<'s> {
         }
     }
 
-    fn into_inner(self: Box<Self>) -> MediaSourceStream<'s> {
+    fn into_inner<'s>(self: Box<Self>) -> MediaSourceStream<'s>
+    where
+        Self: 's,
+    {
         self.iter.into_inner()
     }
 }

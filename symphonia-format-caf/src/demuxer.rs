@@ -54,7 +54,7 @@ impl Probeable for CafReader<'_> {
     }
 }
 
-impl<'s> FormatReader<'s> for CafReader<'s> {
+impl<'s> BuildFormatReader<'s> for CafReader<'s> {
     fn try_new(source: MediaSourceStream<'s>, options: FormatOptions) -> Result<Self> {
         let mut reader = Self {
             reader: source,
@@ -73,7 +73,9 @@ impl<'s> FormatReader<'s> for CafReader<'s> {
 
         Ok(reader)
     }
+}
 
+impl FormatReader for CafReader<'_> {
     fn format_info(&self) -> &FormatInfo {
         &CAF_FORMAT_INFO
     }
@@ -241,7 +243,10 @@ impl<'s> FormatReader<'s> for CafReader<'s> {
         }
     }
 
-    fn into_inner(self: Box<Self>) -> MediaSourceStream<'s> {
+    fn into_inner<'s>(self: Box<Self>) -> MediaSourceStream<'s>
+    where
+        Self: 's,
+    {
         self.reader
     }
 }

@@ -93,10 +93,8 @@ pub enum ProbeCandidate {
         /// A basic description about the container format.
         info: FormatInfo,
         /// A factory function to create an instance of the format reader.
-        factory: for<'s> fn(
-            MediaSourceStream<'s>,
-            FormatOptions,
-        ) -> Result<Box<dyn FormatReader<'s> + 's>>,
+        factory:
+            for<'s> fn(MediaSourceStream<'s>, FormatOptions) -> Result<Box<dyn FormatReader + 's>>,
     },
     Metadata {
         /// A basic description about the metadata format.
@@ -355,7 +353,7 @@ impl Probe {
         mut mss: MediaSourceStream<'s>,
         mut fmt_opts: FormatOptions,
         meta_opts: MetadataOptions,
-    ) -> Result<Box<dyn FormatReader<'s> + 's>> {
+    ) -> Result<Box<dyn FormatReader + 's>> {
         // Loop over all elements in the stream until a container format is found.
         loop {
             match self.next(&mut mss, hint)? {

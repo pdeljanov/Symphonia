@@ -212,7 +212,7 @@ impl AdtsHeader {
     }
 }
 
-impl<'s> FormatReader<'s> for AdtsReader<'s> {
+impl<'s> BuildFormatReader<'s> for AdtsReader<'s> {
     fn try_new(mut source: MediaSourceStream<'s>, options: FormatOptions) -> Result<Self> {
         let header = AdtsHeader::read(&mut source)?;
 
@@ -247,7 +247,9 @@ impl<'s> FormatReader<'s> for AdtsReader<'s> {
             next_packet_ts: 0,
         })
     }
+}
 
+impl FormatReader for AdtsReader<'_> {
     fn format_info(&self) -> &FormatInfo {
         &ADTS_FORMAT_INFO
     }
@@ -370,7 +372,10 @@ impl<'s> FormatReader<'s> for AdtsReader<'s> {
         Ok(SeekedTo { track_id: 0, required_ts, actual_ts: self.next_packet_ts })
     }
 
-    fn into_inner(self: Box<Self>) -> MediaSourceStream<'s> {
+    fn into_inner<'s>(self: Box<Self>) -> MediaSourceStream<'s>
+    where
+        Self: 's,
+    {
         self.reader
     }
 }

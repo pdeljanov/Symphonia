@@ -146,7 +146,7 @@ struct FlushStats {
 }
 
 struct DecoderInstance {
-    format: Box<dyn FormatReader<'static>>,
+    format: Box<dyn FormatReader>,
     decoder: Box<dyn Decoder>,
     track_id: u32,
 }

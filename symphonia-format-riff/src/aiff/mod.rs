@@ -69,7 +69,7 @@ impl Probeable for AiffReader<'_> {
     }
 }
 
-impl<'s> FormatReader<'s> for AiffReader<'s> {
+impl<'s> BuildFormatReader<'s> for AiffReader<'s> {
     fn try_new(mut source: MediaSourceStream<'s>, options: FormatOptions) -> Result<Self> {
         // The FORM marker should be present.
         let marker = source.read_quad_bytes()?;
@@ -142,7 +142,9 @@ impl<'s> FormatReader<'s> for AiffReader<'s> {
             }
         }
     }
+}
 
+impl FormatReader for AiffReader<'_> {
     fn format_info(&self) -> &FormatInfo {
         &AIFF_FORMAT_INFO
     }
@@ -235,7 +237,10 @@ impl<'s> FormatReader<'s> for AiffReader<'s> {
         Ok(SeekedTo { track_id: 0, actual_ts, required_ts: ts })
     }
 
-    fn into_inner(self: Box<Self>) -> MediaSourceStream<'s> {
+    fn into_inner<'s>(self: Box<Self>) -> MediaSourceStream<'s>
+    where
+        Self: 's,
+    {
         self.reader
     }
 }

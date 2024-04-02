@@ -77,7 +77,7 @@ impl Probeable for WavReader<'_> {
     }
 }
 
-impl<'s> FormatReader<'s> for WavReader<'s> {
+impl<'s> BuildFormatReader<'s> for WavReader<'s> {
     fn try_new(mut source: MediaSourceStream<'s>, options: FormatOptions) -> Result<Self> {
         // The RIFF marker should be present.
         let marker = source.read_quad_bytes()?;
@@ -169,7 +169,9 @@ impl<'s> FormatReader<'s> for WavReader<'s> {
             }
         }
     }
+}
 
+impl FormatReader for WavReader<'_> {
     fn format_info(&self) -> &FormatInfo {
         &WAVE_FORMAT_INFO
     }
@@ -262,7 +264,10 @@ impl<'s> FormatReader<'s> for WavReader<'s> {
         Ok(SeekedTo { track_id: 0, actual_ts, required_ts: ts })
     }
 
-    fn into_inner(self: Box<Self>) -> MediaSourceStream<'s> {
+    fn into_inner<'s>(self: Box<Self>) -> MediaSourceStream<'s>
+    where
+        Self: 's,
+    {
         self.reader
     }
 }

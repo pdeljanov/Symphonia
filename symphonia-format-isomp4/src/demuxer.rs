@@ -336,7 +336,7 @@ impl Probeable for IsoMp4Reader<'_> {
     }
 }
 
-impl<'s> FormatReader<'s> for IsoMp4Reader<'s> {
+impl<'s> BuildFormatReader<'s> for IsoMp4Reader<'s> {
     fn try_new(mut mss: MediaSourceStream<'s>, options: FormatOptions) -> Result<Self> {
         // To get to beginning of the atom.
         mss.seek_buffered_rel(-4);
@@ -505,7 +505,9 @@ impl<'s> FormatReader<'s> for IsoMp4Reader<'s> {
             moov,
         })
     }
+}
 
+impl FormatReader for IsoMp4Reader<'_> {
     fn format_info(&self) -> &FormatInfo {
         &ISOMP4_FORMAT_INFO
     }
@@ -618,7 +620,10 @@ impl<'s> FormatReader<'s> for IsoMp4Reader<'s> {
         }
     }
 
-    fn into_inner(self: Box<Self>) -> MediaSourceStream<'s> {
+    fn into_inner<'s>(self: Box<Self>) -> MediaSourceStream<'s>
+    where
+        Self: 's,
+    {
         self.iter.into_inner()
     }
 }

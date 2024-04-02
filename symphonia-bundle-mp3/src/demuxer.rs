@@ -135,7 +135,7 @@ impl Probeable for MpaReader<'_> {
     }
 }
 
-impl<'s> FormatReader<'s> for MpaReader<'s> {
+impl<'s> BuildFormatReader<'s> for MpaReader<'s> {
     fn try_new(mut source: MediaSourceStream<'s>, options: FormatOptions) -> Result<Self> {
         // Try to read the first MPEG frame.
         let (header, packet) = read_mpeg_frame_strict(&mut source)?;
@@ -211,7 +211,9 @@ impl<'s> FormatReader<'s> for MpaReader<'s> {
             next_packet_ts: 0,
         })
     }
+}
 
+impl FormatReader for MpaReader<'_> {
     fn format_info(&self) -> &FormatInfo {
         match self.tracks[0].codec_params.codec {
             CODEC_TYPE_MP1 => &MP1_FORMAT_INFO,
@@ -470,7 +472,10 @@ impl<'s> FormatReader<'s> for MpaReader<'s> {
         Ok(SeekedTo { track_id: 0, required_ts: required_ts - delay, actual_ts })
     }
 
-    fn into_inner(self: Box<Self>) -> MediaSourceStream<'s> {
+    fn into_inner<'s>(self: Box<Self>) -> MediaSourceStream<'s>
+    where
+        Self: 's,
+    {
         self.reader
     }
 }
