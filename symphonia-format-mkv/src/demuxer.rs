@@ -352,7 +352,9 @@ impl FormatReader for MkvReader {
                     segment_tracks = Some(it.read_element_data::<TracksElement>()?);
                 }
                 ElementType::Info => {
-                    info = Some(it.read_element_data::<InfoElement>()?);
+                    let raw_info = it.read_element_data::<InfoElement>()?;
+                    raw_info.copy_metadata_into(&mut metadata);
+                    info = Some(raw_info);
                 }
                 ElementType::Cues => {
                     let cues = it.read_element_data::<CuesElement>()?;
