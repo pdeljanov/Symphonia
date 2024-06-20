@@ -53,7 +53,7 @@ where
 
         for (i, frame) in self.interleaved.chunks_exact_mut(num_channels).enumerate() {
             for (ch, s) in frame.iter_mut().enumerate() {
-                *s = self.output.get(ch).map(|x|x[i].into_sample()).unwrap_or(T::MID);
+                *s = self.output.get(ch).map(|x| x[i].into_sample()).unwrap_or(T::MID);
             }
         }
 
@@ -65,7 +65,12 @@ impl<T> Resampler<T>
 where
     T: Sample + FromSample<f32> + IntoSample<f32>,
 {
-    pub fn new(spec: SignalSpec, to_sample_rate: usize, duration: u64, output_channels: usize) -> Self {
+    pub fn new(
+        spec: SignalSpec,
+        to_sample_rate: usize,
+        duration: u64,
+        output_channels: usize,
+    ) -> Self {
         assert!(output_channels > 0);
         let duration = duration as usize;
         let num_channels = spec.channels.count();
@@ -83,7 +88,14 @@ where
 
         let input = vec![Vec::with_capacity(duration); num_channels];
 
-        Self { resampler, input, output, duration, interleaved: Default::default(), output_channels }
+        Self {
+            resampler,
+            input,
+            output,
+            duration,
+            interleaved: Default::default(),
+            output_channels,
+        }
     }
 
     /// Resamples a planar/non-interleaved input.

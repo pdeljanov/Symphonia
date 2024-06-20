@@ -298,9 +298,22 @@ mod cpal {
             }
 
             let sample_buf = SampleBuffer::<T>::new(duration, spec);
-            let resampler = if spec.rate != config.sample_rate.0 || spec.channels.count() != config.channels as usize {
-                info!("resampling {} Hz ({} channels) to {} Hz ({} channels)", spec.rate, spec.channels.count(), config.sample_rate.0, config.channels);
-                Some(Resampler::new(spec, config.sample_rate.0 as usize, duration, config.channels as usize))
+            let resampler = if spec.rate != config.sample_rate.0
+                || spec.channels.count() != config.channels as usize
+            {
+                info!(
+                    "resampling {} Hz ({} channels) to {} Hz ({} channels)",
+                    spec.rate,
+                    spec.channels.count(),
+                    config.sample_rate.0,
+                    config.channels
+                );
+                Some(Resampler::new(
+                    spec,
+                    config.sample_rate.0 as usize,
+                    duration,
+                    config.channels as usize,
+                ))
             }
             else {
                 None
