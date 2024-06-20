@@ -256,6 +256,7 @@ mod cpal {
             }
             else {
                 // Use the default config for Windows.
+                // We can't control amount of channels or sample rate in received default config, so process case of difference later.
                 device
                     .default_output_config()
                     .expect("Failed to get the default output config.")
@@ -297,10 +298,9 @@ mod cpal {
             }
 
             let sample_buf = SampleBuffer::<T>::new(duration, spec);
-
-            let resampler = if spec.rate != config.sample_rate.0 {
-                info!("resampling {} Hz to {} Hz", spec.rate, config.sample_rate.0);
-                Some(Resampler::new(spec, config.sample_rate.0 as usize, duration))
+            let resampler = if spec.rate != config.sample_rate.0 || spec.channels.count() != config.channels as usize {
+                info!("resampling {} Hz ({} channels) to {} Hz ({} channels)", spec.rate, spec.channels.count(), config.sample_rate.0, config.channels);
+                Some(Resampler::new(spec, config.sample_rate.0 as usize, duration, config.channels as usize))
             }
             else {
                 None
