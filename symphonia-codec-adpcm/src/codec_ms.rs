@@ -94,11 +94,11 @@ impl AdpcmMsBlockStatus {
     fn expand_nibble(&mut self, byte: u8, nibble: Nibble) -> i32 {
         let nibble = nibble.get_nibble(byte);
         let signed_nibble = signed_nibble(nibble) as i32;
-        let predictor = ((self.sample1 * self.coeff1) + (self.sample2 * self.coeff2)) / 256
-            + signed_nibble * self.delta;
+        let predictor = ((self.sample1 * self.coeff1) + (self.sample2 * self.coeff2))
+            >> 8 + signed_nibble * self.delta;
         self.sample2 = self.sample1;
         self.sample1 = clamp_i16(predictor) as i32;
-        self.delta = (MS_ADAPTATION_TABLE[nibble as usize] * self.delta) / 256;
+        self.delta = (MS_ADAPTATION_TABLE[nibble as usize] * self.delta) >> 8;
         self.delta = self.delta.max(DELTA_MIN);
         from_i16_shift!(self.sample1)
     }
