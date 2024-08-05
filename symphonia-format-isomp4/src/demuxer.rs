@@ -89,8 +89,8 @@ struct SampleDataInfo {
 /// ISO Base Media File Format (MP4, M4A, MOV, etc.) demultiplexer.
 ///
 /// `IsoMp4Reader` implements a demuxer for the ISO Base Media File Format.
-pub struct IsoMp4Reader {
-    iter: AtomIterator<MediaSourceStream>,
+pub struct IsoMp4Reader<'s> {
+    iter: AtomIterator<MediaSourceStream<'s>>,
     tracks: Vec<Track>,
     cues: Vec<Cue>,
     metadata: MetadataLog,
@@ -102,7 +102,7 @@ pub struct IsoMp4Reader {
     moov: Arc<MoovAtom>,
 }
 
-impl IsoMp4Reader {
+impl IsoMp4Reader<'_> {
     /// Idempotently gets information regarding the next sample of the media stream. This function
     /// selects the next sample with the lowest timestamp of all tracks.
     fn next_sample_info(&self) -> Result<Option<NextSampleInfo>> {
@@ -320,9 +320,10 @@ impl IsoMp4Reader {
     }
 }
 
-impl Probeable for IsoMp4Reader {
+impl Probeable for IsoMp4Reader<'_> {
     fn probe_descriptor() -> &'static [ProbeDescriptor] {
         &[support_format!(
+            IsoMp4Reader<'_>,
             ISOMP4_FORMAT_INFO,
             &["mp4", "m4a", "m4p", "m4b", "m4r", "m4v", "mov"],
             &["video/mp4", "audio/m4a"],
@@ -330,13 +331,13 @@ impl Probeable for IsoMp4Reader {
         )]
     }
 
-    fn score(_src: ScopedStream<&mut MediaSourceStream>) -> Result<Score> {
+    fn score(_src: ScopedStream<&mut MediaSourceStream<'_>>) -> Result<Score> {
         Ok(Score::Supported(255))
     }
 }
 
-impl FormatReader for IsoMp4Reader {
-    fn try_new(mut mss: MediaSourceStream, options: FormatOptions) -> Result<Self> {
+impl<'s> BuildFormatReader<'s> for IsoMp4Reader<'s> {
+    fn try_new(mut mss: MediaSourceStream<'s>, options: FormatOptions) -> Result<Self> {
         // To get to beginning of the atom.
         mss.seek_buffered_rel(-4);
 
@@ -504,7 +505,9 @@ impl FormatReader for IsoMp4Reader {
             moov,
         })
     }
+}
 
+impl FormatReader for IsoMp4Reader<'_> {
     fn format_info(&self) -> &FormatInfo {
         &ISOMP4_FORMAT_INFO
     }
@@ -617,7 +620,10 @@ impl FormatReader for IsoMp4Reader {
         }
     }
 
-    fn into_inner(self: Box<Self>) -> MediaSourceStream {
+    fn into_inner<'s>(self: Box<Self>) -> MediaSourceStream<'s>
+    where
+        Self: 's,
+    {
         self.iter.into_inner()
     }
 }

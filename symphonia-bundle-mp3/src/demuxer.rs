@@ -43,8 +43,8 @@ const MP3_FORMAT_INFO: FormatInfo = FormatInfo {
 /// MPEG1 and MPEG2 audio elementary stream reader.
 ///
 /// `MpaReader` implements a demuxer for the MPEG1 and MPEG2 audio elementary stream.
-pub struct MpaReader {
-    reader: MediaSourceStream,
+pub struct MpaReader<'s> {
+    reader: MediaSourceStream<'s>,
     tracks: Vec<Track>,
     cues: Vec<Cue>,
     metadata: MetadataLog,
@@ -53,11 +53,12 @@ pub struct MpaReader {
     next_packet_ts: u64,
 }
 
-impl Probeable for MpaReader {
+impl Probeable for MpaReader<'_> {
     fn probe_descriptor() -> &'static [ProbeDescriptor] {
         &[
             // Layer 1
             support_format!(
+                MpaReader<'_>,
                 MP1_FORMAT_INFO,
                 &["mp1"],
                 &["audio/mpeg", "audio/mp1"],
@@ -72,6 +73,7 @@ impl Probeable for MpaReader {
             ),
             // Layer 2
             support_format!(
+                MpaReader<'_>,
                 MP2_FORMAT_INFO,
                 &["mp2"],
                 &["audio/mpeg", "audio/mp2"],
@@ -86,6 +88,7 @@ impl Probeable for MpaReader {
             ),
             // Layer 3
             support_format!(
+                MpaReader<'_>,
                 MP3_FORMAT_INFO,
                 &["mp3"],
                 &["audio/mpeg", "audio/mp3"],
@@ -101,7 +104,7 @@ impl Probeable for MpaReader {
         ]
     }
 
-    fn score(mut src: ScopedStream<&mut MediaSourceStream>) -> Result<Score> {
+    fn score(mut src: ScopedStream<&mut MediaSourceStream<'_>>) -> Result<Score> {
         // Read the sync word for the first (assumed) MPEG frame and try to parse it into a header.
         let sync1 = header::read_frame_header_word_no_sync(&mut src)?;
         let hdr1 = header::parse_frame_header(sync1)?;
@@ -132,8 +135,8 @@ impl Probeable for MpaReader {
     }
 }
 
-impl FormatReader for MpaReader {
-    fn try_new(mut source: MediaSourceStream, options: FormatOptions) -> Result<Self> {
+impl<'s> BuildFormatReader<'s> for MpaReader<'s> {
+    fn try_new(mut source: MediaSourceStream<'s>, options: FormatOptions) -> Result<Self> {
         // Try to read the first MPEG frame.
         let (header, packet) = read_mpeg_frame_strict(&mut source)?;
 
@@ -208,7 +211,9 @@ impl FormatReader for MpaReader {
             next_packet_ts: 0,
         })
     }
+}
 
+impl FormatReader for MpaReader<'_> {
     fn format_info(&self) -> &FormatInfo {
         match self.tracks[0].codec_params.codec {
             CODEC_TYPE_MP1 => &MP1_FORMAT_INFO,
@@ -467,12 +472,15 @@ impl FormatReader for MpaReader {
         Ok(SeekedTo { track_id: 0, required_ts: required_ts - delay, actual_ts })
     }
 
-    fn into_inner(self: Box<Self>) -> MediaSourceStream {
+    fn into_inner<'s>(self: Box<Self>) -> MediaSourceStream<'s>
+    where
+        Self: 's,
+    {
         self.reader
     }
 }
 
-impl MpaReader {
+impl MpaReader<'_> {
     /// Seeks the media source stream to a byte position roughly where the packet with the required
     /// timestamp should be located.
     fn preseek_coarse(&mut self, required_ts: u64, duration: Option<u64>) -> Result<()> {
@@ -542,7 +550,7 @@ impl MpaReader {
 }
 
 /// Reads a MPEG frame and returns the header and buffer.
-fn read_mpeg_frame(reader: &mut MediaSourceStream) -> Result<(FrameHeader, Vec<u8>)> {
+fn read_mpeg_frame(reader: &mut MediaSourceStream<'_>) -> Result<(FrameHeader, Vec<u8>)> {
     let (header, header_word) = loop {
         // Sync to the next frame header.
         let sync = header::sync_frame(reader)?;
@@ -567,7 +575,7 @@ fn read_mpeg_frame(reader: &mut MediaSourceStream) -> Result<(FrameHeader, Vec<u
 }
 
 /// Reads a MPEG frame and checks if the next frame begins after the packet.
-fn read_mpeg_frame_strict(reader: &mut MediaSourceStream) -> Result<(FrameHeader, Vec<u8>)> {
+fn read_mpeg_frame_strict(reader: &mut MediaSourceStream<'_>) -> Result<(FrameHeader, Vec<u8>)> {
     loop {
         // Read the next MPEG frame.
         let (header, packet) = read_mpeg_frame(reader)?;
@@ -640,7 +648,7 @@ fn read_main_data_begin<B: ReadBytes>(reader: &mut B, header: &FrameHeader) -> R
 }
 
 /// Estimates the total number of MPEG frames in the media source stream.
-fn estimate_num_mpeg_frames(reader: &mut MediaSourceStream) -> Option<u64> {
+fn estimate_num_mpeg_frames(reader: &mut MediaSourceStream<'_>) -> Option<u64> {
     const MAX_FRAMES: u32 = 16;
     const MAX_LEN: usize = 16 * 1024;
 

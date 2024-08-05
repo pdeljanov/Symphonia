@@ -30,8 +30,8 @@ const OGG_FORMAT_INFO: FormatInfo =
 /// OGG demultiplexer.
 ///
 /// `OggReader` implements a demuxer for Xiph's OGG container format.
-pub struct OggReader {
-    reader: MediaSourceStream,
+pub struct OggReader<'s> {
+    reader: MediaSourceStream<'s>,
     tracks: Vec<Track>,
     cues: Vec<Cue>,
     metadata: MetadataLog,
@@ -46,7 +46,7 @@ pub struct OggReader {
     phys_byte_range_end: Option<u64>,
 }
 
-impl OggReader {
+impl OggReader<'_> {
     fn read_page(&mut self) -> Result<()> {
         // Try reading pages until a page is successfully read, or an IO error.
         loop {
@@ -375,9 +375,10 @@ impl OggReader {
     }
 }
 
-impl Probeable for OggReader {
+impl Probeable for OggReader<'_> {
     fn probe_descriptor() -> &'static [ProbeDescriptor] {
         &[support_format!(
+            OggReader<'_>,
             OGG_FORMAT_INFO,
             &["ogg", "ogv", "oga", "ogx", "ogm", "spx", "opus"],
             &["video/ogg", "audio/ogg", "application/ogg"],
@@ -385,13 +386,13 @@ impl Probeable for OggReader {
         )]
     }
 
-    fn score(_src: ScopedStream<&mut MediaSourceStream>) -> Result<Score> {
+    fn score(_src: ScopedStream<&mut MediaSourceStream<'_>>) -> Result<Score> {
         Ok(Score::Supported(255))
     }
 }
 
-impl FormatReader for OggReader {
-    fn try_new(mut source: MediaSourceStream, options: FormatOptions) -> Result<Self> {
+impl<'s> BuildFormatReader<'s> for OggReader<'s> {
+    fn try_new(mut source: MediaSourceStream<'s>, options: FormatOptions) -> Result<Self> {
         // A seekback buffer equal to the maximum OGG page size is required for this reader.
         source.ensure_seekback_buffer(OGG_PAGE_MAX_SIZE);
 
@@ -417,7 +418,9 @@ impl FormatReader for OggReader {
 
         Ok(ogg)
     }
+}
 
+impl FormatReader for OggReader<'_> {
     fn format_info(&self) -> &FormatInfo {
         &OGG_FORMAT_INFO
     }
@@ -520,7 +523,10 @@ impl FormatReader for OggReader {
         self.do_seek(serial, required_ts)
     }
 
-    fn into_inner(self: Box<Self>) -> MediaSourceStream {
+    fn into_inner<'s>(self: Box<Self>) -> MediaSourceStream<'s>
+    where
+        Self: 's,
+    {
         self.reader
     }
 }

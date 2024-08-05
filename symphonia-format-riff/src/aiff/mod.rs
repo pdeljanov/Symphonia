@@ -40,8 +40,8 @@ const AIFF_FORMAT_INFO: FormatInfo = FormatInfo {
 /// Audio Interchange File Format (AIFF) format reader.
 ///
 /// `AiffReader` implements a demuxer for the AIFF container format.
-pub struct AiffReader {
-    reader: MediaSourceStream,
+pub struct AiffReader<'s> {
+    reader: MediaSourceStream<'s>,
     tracks: Vec<Track>,
     cues: Vec<Cue>,
     metadata: MetadataLog,
@@ -50,11 +50,12 @@ pub struct AiffReader {
     data_end_pos: u64,
 }
 
-impl Probeable for AiffReader {
+impl Probeable for AiffReader<'_> {
     fn probe_descriptor() -> &'static [ProbeDescriptor] {
         &[
             // AIFF RIFF form
             support_format!(
+                AiffReader<'_>,
                 AIFF_FORMAT_INFO,
                 &["aiff", "aif", "aifc"],
                 &["audio/aiff", "audio/x-aiff", " sound/aiff", "audio/x-pn-aiff"],
@@ -63,13 +64,13 @@ impl Probeable for AiffReader {
         ]
     }
 
-    fn score(_src: ScopedStream<&mut MediaSourceStream>) -> Result<Score> {
+    fn score(_src: ScopedStream<&mut MediaSourceStream<'_>>) -> Result<Score> {
         Ok(Score::Supported(255))
     }
 }
 
-impl FormatReader for AiffReader {
-    fn try_new(mut source: MediaSourceStream, options: FormatOptions) -> Result<Self> {
+impl<'s> BuildFormatReader<'s> for AiffReader<'s> {
+    fn try_new(mut source: MediaSourceStream<'s>, options: FormatOptions) -> Result<Self> {
         // The FORM marker should be present.
         let marker = source.read_quad_bytes()?;
         if marker != AIFF_STREAM_MARKER {
@@ -141,7 +142,9 @@ impl FormatReader for AiffReader {
             }
         }
     }
+}
 
+impl FormatReader for AiffReader<'_> {
     fn format_info(&self) -> &FormatInfo {
         &AIFF_FORMAT_INFO
     }
@@ -234,7 +237,10 @@ impl FormatReader for AiffReader {
         Ok(SeekedTo { track_id: 0, actual_ts, required_ts: ts })
     }
 
-    fn into_inner(self: Box<Self>) -> MediaSourceStream {
+    fn into_inner<'s>(self: Box<Self>) -> MediaSourceStream<'s>
+    where
+        Self: 's,
+    {
         self.reader
     }
 }

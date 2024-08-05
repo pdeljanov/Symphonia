@@ -33,8 +33,8 @@ const ADTS_FORMAT_INFO: FormatInfo = FormatInfo {
 /// Audio Data Transport Stream (ADTS) format reader.
 ///
 /// `AdtsReader` implements a demuxer for ADTS (AAC native frames).
-pub struct AdtsReader {
-    reader: MediaSourceStream,
+pub struct AdtsReader<'s> {
+    reader: MediaSourceStream<'s>,
     tracks: Vec<Track>,
     cues: Vec<Cue>,
     metadata: MetadataLog,
@@ -42,9 +42,10 @@ pub struct AdtsReader {
     next_packet_ts: u64,
 }
 
-impl Probeable for AdtsReader {
+impl Probeable for AdtsReader<'_> {
     fn probe_descriptor() -> &'static [ProbeDescriptor] {
         &[support_format!(
+            AdtsReader<'_>,
             ADTS_FORMAT_INFO,
             &["aac"],
             &["audio/aac"],
@@ -57,7 +58,7 @@ impl Probeable for AdtsReader {
         )]
     }
 
-    fn score(mut src: ScopedStream<&mut MediaSourceStream>) -> Result<Score> {
+    fn score(mut src: ScopedStream<&mut MediaSourceStream<'_>>) -> Result<Score> {
         // Read the first (assumed) ADTS header.
         let hdr1 = AdtsHeader::read_no_resync(&mut src)?;
 
@@ -211,8 +212,8 @@ impl AdtsHeader {
     }
 }
 
-impl FormatReader for AdtsReader {
-    fn try_new(mut source: MediaSourceStream, options: FormatOptions) -> Result<Self> {
+impl<'s> BuildFormatReader<'s> for AdtsReader<'s> {
+    fn try_new(mut source: MediaSourceStream<'s>, options: FormatOptions) -> Result<Self> {
         let header = AdtsHeader::read(&mut source)?;
 
         // Rewind back to the start of the frame.
@@ -246,7 +247,9 @@ impl FormatReader for AdtsReader {
             next_packet_ts: 0,
         })
     }
+}
 
+impl FormatReader for AdtsReader<'_> {
     fn format_info(&self) -> &FormatInfo {
         &ADTS_FORMAT_INFO
     }
@@ -369,12 +372,15 @@ impl FormatReader for AdtsReader {
         Ok(SeekedTo { track_id: 0, required_ts, actual_ts: self.next_packet_ts })
     }
 
-    fn into_inner(self: Box<Self>) -> MediaSourceStream {
+    fn into_inner<'s>(self: Box<Self>) -> MediaSourceStream<'s>
+    where
+        Self: 's,
+    {
         self.reader
     }
 }
 
-fn approximate_frame_count(mut source: &mut MediaSourceStream) -> Result<Option<u64>> {
+fn approximate_frame_count(mut source: &mut MediaSourceStream<'_>) -> Result<Option<u64>> {
     let original_pos = source.pos();
     let total_len = match source.byte_len() {
         Some(len) => len - original_pos,

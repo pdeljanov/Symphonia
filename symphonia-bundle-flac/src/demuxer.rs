@@ -35,8 +35,8 @@ const FLAC_FORMAT_INFO: FormatInfo = FormatInfo {
 };
 
 /// Free Lossless Audio Codec (FLAC) native frame reader.
-pub struct FlacReader {
-    reader: MediaSourceStream,
+pub struct FlacReader<'s> {
+    reader: MediaSourceStream<'s>,
     metadata: MetadataLog,
     tracks: Vec<Track>,
     cues: Vec<Cue>,
@@ -45,9 +45,9 @@ pub struct FlacReader {
     parser: PacketParser,
 }
 
-impl FlacReader {
+impl<'s> FlacReader<'s> {
     /// Reads all the metadata blocks, returning a fully populated `FlacReader`.
-    fn init_with_metadata(source: MediaSourceStream, options: FormatOptions) -> Result<Self> {
+    fn init_with_metadata(source: MediaSourceStream<'s>, options: FormatOptions) -> Result<Self> {
         let mut metadata_builder = MetadataBuilder::new();
 
         let mut reader = source;
@@ -140,18 +140,18 @@ impl FlacReader {
     }
 }
 
-impl Probeable for FlacReader {
+impl Probeable for FlacReader<'_> {
     fn probe_descriptor() -> &'static [ProbeDescriptor] {
-        &[support_format!(FLAC_FORMAT_INFO, &["flac"], &["audio/flac"], &[b"fLaC"])]
+        &[support_format!(FlacReader<'_>, FLAC_FORMAT_INFO, &["flac"], &["audio/flac"], &[b"fLaC"])]
     }
 
-    fn score(_src: ScopedStream<&mut MediaSourceStream>) -> Result<Score> {
+    fn score(_src: ScopedStream<&mut MediaSourceStream<'_>>) -> Result<Score> {
         Ok(Score::Supported(255))
     }
 }
 
-impl FormatReader for FlacReader {
-    fn try_new(mut source: MediaSourceStream, options: FormatOptions) -> Result<Self> {
+impl<'s> BuildFormatReader<'s> for FlacReader<'s> {
+    fn try_new(mut source: MediaSourceStream<'s>, options: FormatOptions) -> Result<Self> {
         // Read the first 4 bytes of the stream. Ideally this will be the FLAC stream marker.
         let marker = source.read_quad_bytes()?;
 
@@ -172,7 +172,9 @@ impl FormatReader for FlacReader {
 
         Ok(flac)
     }
+}
 
+impl FormatReader for FlacReader<'_> {
     fn format_info(&self) -> &FormatInfo {
         &FLAC_FORMAT_INFO
     }
@@ -337,7 +339,10 @@ impl FormatReader for FlacReader {
         Ok(SeekedTo { track_id: 0, actual_ts: packet.ts, required_ts: ts })
     }
 
-    fn into_inner(self: Box<Self>) -> MediaSourceStream {
+    fn into_inner<'s>(self: Box<Self>) -> MediaSourceStream<'s>
+    where
+        Self: 's,
+    {
         self.reader
     }
 }

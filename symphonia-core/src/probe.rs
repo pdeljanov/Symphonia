@@ -93,7 +93,8 @@ pub enum ProbeCandidate {
         /// A basic description about the container format.
         info: FormatInfo,
         /// A factory function to create an instance of the format reader.
-        factory: fn(MediaSourceStream, FormatOptions) -> Result<Box<dyn FormatReader>>,
+        factory:
+            for<'s> fn(MediaSourceStream<'s>, FormatOptions) -> Result<Box<dyn FormatReader + 's>>,
     },
     Metadata {
         /// A basic description about the metadata format.
@@ -115,7 +116,7 @@ pub struct ProbeDescriptor {
     pub markers: &'static [&'static [u8]],
     /// A function to assign a likelyhood score that the media source, readable with scoped access
     /// via. the provided stream, is the start of a metadate or container format
-    pub score: fn(ScopedStream<&mut MediaSourceStream>) -> Result<Score>,
+    pub score: fn(ScopedStream<&mut MediaSourceStream<'_>>) -> Result<Score>,
     /// If the probe descriptor matches the byte stream, then the probe candidate describes the
     /// metadata or container format reader, and provides a factory function to instantiate it.
     pub candidate: ProbeCandidate,
@@ -144,7 +145,7 @@ pub trait Probeable {
     /// If an error is returned, errors other than [`Error::IoError`] (excluding the unexpected EOF
     /// kind) are treated as if [`Score::Unsupported`] was returned. All other IO errors abort
     /// the probe operation.
-    fn score(src: ScopedStream<&mut MediaSourceStream>) -> Result<Score>;
+    fn score(src: ScopedStream<&mut MediaSourceStream<'_>>) -> Result<Score>;
 }
 
 /// A `Hint` provides additional information and context when probing a media source stream.
@@ -346,13 +347,13 @@ impl Probe {
     /// Searches the provided `MediaSourceStream` for a container format. Any metadata that is read
     /// during the search will be queued and attached to the `FormatReader` instance once a
     /// container format is found.
-    pub fn format(
+    pub fn format<'s>(
         &self,
         hint: &Hint,
-        mut mss: MediaSourceStream,
+        mut mss: MediaSourceStream<'s>,
         mut fmt_opts: FormatOptions,
         meta_opts: MetadataOptions,
-    ) -> Result<Box<dyn FormatReader>> {
+    ) -> Result<Box<dyn FormatReader + 's>> {
         // Loop over all elements in the stream until a container format is found.
         loop {
             match self.next(&mut mss, hint)? {
@@ -470,7 +471,7 @@ fn warn_junk_bytes(pos: u64, init_pos: u64) {
 /// Convenience macro for declaring a probe `ProbeDescriptor` for a `FormatReader`.
 #[macro_export]
 macro_rules! support_format {
-    ($info:expr, $exts:expr, $mimes:expr, $markers:expr) => {
+    ($typ:ty, $info:expr, $exts:expr, $mimes:expr, $markers:expr) => {
         symphonia_core::probe::ProbeDescriptor {
             extensions: $exts,
             mime_types: $mimes,
@@ -478,7 +479,7 @@ macro_rules! support_format {
             score: Self::score,
             candidate: symphonia_core::probe::ProbeCandidate::Format {
                 info: $info,
-                factory: |src, opts| Ok(Box::new(Self::try_new(src, opts)?)),
+                factory: |src, opts| Ok(Box::new(<$typ>::try_new(src, opts)?)),
             },
         }
     };

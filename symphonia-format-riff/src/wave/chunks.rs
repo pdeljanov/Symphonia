@@ -617,7 +617,7 @@ pub fn append_fact_params(codec_params: &mut CodecParameters, fact: &FactChunk) 
     codec_params.with_n_frames(u64::from(fact.n_frames));
 }
 
-pub fn read_info_chunk(source: &mut MediaSourceStream, len: u32) -> Result<MetadataRevision> {
+pub fn read_info_chunk(source: &mut MediaSourceStream<'_>, len: u32) -> Result<MetadataRevision> {
     let mut info_list = ChunksReader::<RiffInfoListChunks>::new(len, ByteOrder::LittleEndian);
 
     let mut metadata_builder = MetadataBuilder::new();

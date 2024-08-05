@@ -1,7 +1,7 @@
 use symphonia_codec_aac::{AacDecoder, AdtsReader};
 use symphonia_core::codecs::{CodecParameters, Decoder, DecoderOptions, CODEC_TYPE_AAC};
 use symphonia_core::errors;
-use symphonia_core::formats::FormatReader;
+use symphonia_core::formats::{BuildFormatReader, FormatReader};
 use symphonia_core::io::MediaSourceStream;
 
 fn test_decode(data: Vec<u8>) -> symphonia_core::errors::Result<()> {
