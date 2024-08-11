@@ -559,14 +559,14 @@ impl MetadataLog {
 }
 
 pub trait MetadataReader: Send + Sync {
-    /// Instantiates the `MetadataReader` with the provided `MetadataOptions`.
-    fn new(options: MetadataOptions) -> Self
-    where
-        Self: Sized;
-
     /// Get basic information about the metadata format.
     fn metadata_info(&self) -> &MetadataInfo;
 
     /// Read all metadata and return it if successful.
-    fn read_all(&mut self, reader: &mut MediaSourceStream) -> Result<MetadataRevision>;
+    fn read_all(&mut self) -> Result<MetadataRevision>;
+
+    /// Consumes the `MetadataReader` and returns the underlying media source stream
+    fn into_inner<'s>(self: Box<Self>) -> MediaSourceStream<'s>
+    where
+        Self: 's;
 }

@@ -22,8 +22,8 @@ pub mod prelude {
     pub use crate::units::{Duration, TimeBase, TimeStamp};
 
     pub use super::{
-        BuildFormatReader, Cue, FormatInfo, FormatOptions, FormatReader, FormatType, Packet,
-        SeekMode, SeekTo, SeekedTo, Track,
+        Cue, FormatInfo, FormatOptions, FormatReader, FormatType, Packet, SeekMode, SeekTo,
+        SeekedTo, Track,
     };
 }
 
@@ -213,13 +213,6 @@ impl Track {
     }
 }
 
-pub trait BuildFormatReader<'s>: FormatReader + Sized {
-    /// Attempt to instantiate a `FormatReader` using the provided `FormatOptions` and
-    /// `MediaSourceStream`. The reader will probe the container to verify format support, determine
-    /// the number of tracks, and read any initial metadata.
-    fn try_new(source: MediaSourceStream<'s>, options: FormatOptions) -> Result<Self>;
-}
-
 /// A `FormatReader` is a container demuxer. It provides methods to probe a media container for
 /// information and access the tracks encapsulated in the container.
 ///
@@ -279,7 +272,7 @@ pub trait FormatReader: Send + Sync {
     /// `Decoder`s re-created. All other errors are unrecoverable.
     fn next_packet(&mut self) -> Result<Option<Packet>>;
 
-    /// Destroys the `FormatReader` and returns the underlying media source stream
+    /// Consumes the `FormatReader` and returns the underlying media source stream
     fn into_inner<'s>(self: Box<Self>) -> MediaSourceStream<'s>
     where
         Self: 's;

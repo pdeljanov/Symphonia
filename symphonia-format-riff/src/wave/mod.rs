@@ -13,7 +13,7 @@ use symphonia_core::errors::{Result, SeekErrorKind};
 use symphonia_core::formats::{prelude::*, FORMAT_TYPE_WAVE};
 use symphonia_core::io::*;
 use symphonia_core::meta::{Metadata, MetadataLog};
-use symphonia_core::probe::{ProbeDescriptor, Probeable, Score};
+use symphonia_core::probe::{ProbeFormatData, ProbeableFormat, Score, Scoreable};
 use symphonia_core::support_format;
 
 use log::{debug, error};
@@ -48,39 +48,10 @@ pub struct WavReader<'s> {
     data_end_pos: u64,
 }
 
-impl Probeable for WavReader<'_> {
-    fn probe_descriptor() -> &'static [ProbeDescriptor] {
-        &[
-            // WAVE RIFF form
-            support_format!(
-                WavReader<'_>,
-                WAVE_FORMAT_INFO,
-                &["wav", "wave"],
-                &["audio/vnd.wave", "audio/x-wav", "audio/wav", "audio/wave"],
-                &[b"RIFF"]
-            ),
-        ]
-    }
-
-    fn score(mut src: ScopedStream<&mut MediaSourceStream<'_>>) -> Result<Score> {
-        // Perform simple scoring by testing that the RIFF stream marker and RIFF form are both
-        // valid for WAVE.
-        let riff_marker = src.read_quad_bytes()?;
-        src.ignore_bytes(4)?;
-        let riff_form = src.read_quad_bytes()?;
-
-        if riff_marker != WAVE_STREAM_MARKER || riff_form != WAVE_RIFF_FORM {
-            return Ok(Score::Unsupported);
-        }
-
-        Ok(Score::Supported(255))
-    }
-}
-
-impl<'s> BuildFormatReader<'s> for WavReader<'s> {
-    fn try_new(mut source: MediaSourceStream<'s>, options: FormatOptions) -> Result<Self> {
+impl<'s> WavReader<'s> {
+    pub fn try_new(mut mss: MediaSourceStream<'s>, opts: FormatOptions) -> Result<Self> {
         // The RIFF marker should be present.
-        let marker = source.read_quad_bytes()?;
+        let marker = mss.read_quad_bytes()?;
 
         if marker != WAVE_STREAM_MARKER {
             return unsupported_error("wav: missing riff stream marker");
@@ -89,8 +60,8 @@ impl<'s> BuildFormatReader<'s> for WavReader<'s> {
         // A Wave file is one large RIFF chunk, with the actual meta and audio data as sub-chunks.
         // Therefore, the header was the chunk ID, and the next 4 bytes is the length of the RIFF
         // chunk.
-        let riff_len = source.read_u32()?;
-        let riff_form = source.read_quad_bytes()?;
+        let riff_len = mss.read_u32()?;
+        let riff_form = mss.read_quad_bytes()?;
 
         // The RIFF chunk contains WAVE data.
         if riff_form != WAVE_RIFF_FORM {
@@ -107,7 +78,7 @@ impl<'s> BuildFormatReader<'s> for WavReader<'s> {
         let mut packet_info = PacketInfo::without_blocks(0);
 
         loop {
-            let chunk = riff_chunks.next(&mut source)?;
+            let chunk = riff_chunks.next(&mut mss)?;
 
             // The last chunk should always be a data chunk, if it is not, then the stream is
             // unsupported.
@@ -117,7 +88,7 @@ impl<'s> BuildFormatReader<'s> for WavReader<'s> {
 
             match chunk.unwrap() {
                 RiffWaveChunks::Format(fmt) => {
-                    let format = fmt.parse(&mut source)?;
+                    let format = fmt.parse(&mut mss)?;
 
                     // The Format chunk contains the block_align field and possible additional information
                     // to handle packetization and seeking.
@@ -130,26 +101,26 @@ impl<'s> BuildFormatReader<'s> for WavReader<'s> {
                     append_format_params(&mut codec_params, format.format_data, format.sample_rate);
                 }
                 RiffWaveChunks::Fact(fct) => {
-                    let fact = fct.parse(&mut source)?;
+                    let fact = fct.parse(&mut mss)?;
 
                     // Append Fact chunk fields to codec parameters.
                     append_fact_params(&mut codec_params, &fact);
                 }
                 RiffWaveChunks::List(lst) => {
-                    let list = lst.parse(&mut source)?;
+                    let list = lst.parse(&mut mss)?;
 
                     // Riff Lists can have many different forms, but WavReader only supports Info
                     // lists.
                     match &list.form {
-                        b"INFO" => metadata.push(read_info_chunk(&mut source, list.len)?),
-                        _ => list.skip(&mut source)?,
+                        b"INFO" => metadata.push(read_info_chunk(&mut mss, list.len)?),
+                        _ => list.skip(&mut mss)?,
                     }
                 }
                 RiffWaveChunks::Data(dat) => {
-                    let data = dat.parse(&mut source)?;
+                    let data = dat.parse(&mut mss)?;
 
                     // Record the bounds of the data chunk.
-                    let data_start_pos = source.pos();
+                    let data_start_pos = mss.pos();
                     let data_end_pos = data_start_pos + u64::from(data.len);
 
                     // Append Data chunk fields to codec parameters.
@@ -157,10 +128,10 @@ impl<'s> BuildFormatReader<'s> for WavReader<'s> {
 
                     // Add a new track using the collected codec parameters.
                     return Ok(WavReader {
-                        reader: source,
+                        reader: mss,
                         tracks: vec![Track::new(0, codec_params)],
                         cues: Vec::new(),
-                        metadata: options.metadata.unwrap_or_default(),
+                        metadata: opts.metadata.unwrap_or_default(),
                         packet_info,
                         data_start_pos,
                         data_end_pos,
@@ -168,6 +139,43 @@ impl<'s> BuildFormatReader<'s> for WavReader<'s> {
                 }
             }
         }
+    }
+}
+
+impl Scoreable for WavReader<'_> {
+    fn score(mut src: ScopedStream<&mut MediaSourceStream<'_>>) -> Result<Score> {
+        // Perform simple scoring by testing that the RIFF stream marker and RIFF form are both
+        // valid for WAVE.
+        let riff_marker = src.read_quad_bytes()?;
+        src.ignore_bytes(4)?;
+        let riff_form = src.read_quad_bytes()?;
+
+        if riff_marker != WAVE_STREAM_MARKER || riff_form != WAVE_RIFF_FORM {
+            return Ok(Score::Unsupported);
+        }
+
+        Ok(Score::Supported(255))
+    }
+}
+
+impl ProbeableFormat<'_> for WavReader<'_> {
+    fn try_probe_new(
+        mss: MediaSourceStream<'_>,
+        opts: FormatOptions,
+    ) -> Result<Box<dyn FormatReader + '_>> {
+        Ok(Box::new(WavReader::try_new(mss, opts)?))
+    }
+
+    fn probe_data() -> &'static [ProbeFormatData] {
+        &[
+            // WAVE RIFF form
+            support_format!(
+                WAVE_FORMAT_INFO,
+                &["wav", "wave"],
+                &["audio/vnd.wave", "audio/x-wav", "audio/wav", "audio/wave"],
+                &[b"RIFF"]
+            ),
+        ]
     }
 }
 

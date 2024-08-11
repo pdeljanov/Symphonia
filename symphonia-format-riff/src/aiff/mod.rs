@@ -13,7 +13,7 @@ use symphonia_core::errors::{Result, SeekErrorKind};
 use symphonia_core::formats::{prelude::*, FORMAT_TYPE_AIFF};
 use symphonia_core::io::*;
 use symphonia_core::meta::{Metadata, MetadataLog};
-use symphonia_core::probe::{ProbeDescriptor, Probeable, Score};
+use symphonia_core::probe::{ProbeFormatData, ProbeableFormat, Score, Scoreable};
 use symphonia_core::support_format;
 
 use log::debug;
@@ -50,29 +50,10 @@ pub struct AiffReader<'s> {
     data_end_pos: u64,
 }
 
-impl Probeable for AiffReader<'_> {
-    fn probe_descriptor() -> &'static [ProbeDescriptor] {
-        &[
-            // AIFF RIFF form
-            support_format!(
-                AiffReader<'_>,
-                AIFF_FORMAT_INFO,
-                &["aiff", "aif", "aifc"],
-                &["audio/aiff", "audio/x-aiff", " sound/aiff", "audio/x-pn-aiff"],
-                &[b"FORM"]
-            ),
-        ]
-    }
-
-    fn score(_src: ScopedStream<&mut MediaSourceStream<'_>>) -> Result<Score> {
-        Ok(Score::Supported(255))
-    }
-}
-
-impl<'s> BuildFormatReader<'s> for AiffReader<'s> {
-    fn try_new(mut source: MediaSourceStream<'s>, options: FormatOptions) -> Result<Self> {
+impl<'s> AiffReader<'s> {
+    pub fn try_new(mut mss: MediaSourceStream<'s>, opts: FormatOptions) -> Result<Self> {
         // The FORM marker should be present.
-        let marker = source.read_quad_bytes()?;
+        let marker = mss.read_quad_bytes()?;
         if marker != AIFF_STREAM_MARKER {
             return unsupported_error("aiff: missing riff stream marker");
         }
@@ -80,18 +61,18 @@ impl<'s> BuildFormatReader<'s> for AiffReader<'s> {
         // File is basically one RIFF chunk, with the actual meta and audio data as sub-chunks (called local chunks).
         // Therefore, the header was the chunk ID, and the next 4 bytes is the length of the RIFF
         // chunk.
-        let riff_len = source.read_be_u32()?;
-        let riff_form = source.read_quad_bytes()?;
+        let riff_len = mss.read_be_u32()?;
+        let riff_form = mss.read_quad_bytes()?;
 
         let mut riff_chunks = ChunksReader::<RiffAiffChunks>::new(riff_len, ByteOrder::BigEndian);
 
         let mut codec_params = CodecParameters::new();
         //TODO: Chunks such as marker contain metadata, get it.
-        let metadata = options.metadata.unwrap_or_default();
+        let metadata = opts.metadata.unwrap_or_default();
         let mut packet_info = PacketInfo::without_blocks(0);
 
         loop {
-            let chunk = riff_chunks.next(&mut source)?;
+            let chunk = riff_chunks.next(&mut mss)?;
 
             // The last chunk should always be a data chunk, if it is not, then the stream is
             // unsupported.
@@ -103,8 +84,8 @@ impl<'s> BuildFormatReader<'s> for AiffReader<'s> {
             match chunk.unwrap() {
                 RiffAiffChunks::Common(common) => {
                     let common = match riff_form {
-                        AIFF_RIFF_FORM => common.parse_aiff(&mut source)?,
-                        AIFC_RIFF_FORM => common.parse_aifc(&mut source)?,
+                        AIFF_RIFF_FORM => common.parse_aiff(&mut mss)?,
+                        AIFC_RIFF_FORM => common.parse_aifc(&mut mss)?,
                         _ => return unsupported_error("aiff: riff form is not supported"),
                     };
 
@@ -119,10 +100,10 @@ impl<'s> BuildFormatReader<'s> for AiffReader<'s> {
                     append_format_params(&mut codec_params, common.format_data, common.sample_rate);
                 }
                 RiffAiffChunks::Sound(dat) => {
-                    let data = dat.parse(&mut source)?;
+                    let data = dat.parse(&mut mss)?;
 
                     // Record the bounds of the data chunk.
-                    let data_start_pos = source.pos();
+                    let data_start_pos = mss.pos();
                     let data_end_pos = data_start_pos + u64::from(data.len);
 
                     // Append Sound chunk fields to codec parameters.
@@ -130,7 +111,7 @@ impl<'s> BuildFormatReader<'s> for AiffReader<'s> {
 
                     // Add a new track using the collected codec parameters.
                     return Ok(AiffReader {
-                        reader: source,
+                        reader: mss,
                         tracks: vec![Track::new(0, codec_params)],
                         cues: Vec::new(),
                         metadata,
@@ -141,6 +122,33 @@ impl<'s> BuildFormatReader<'s> for AiffReader<'s> {
                 }
             }
         }
+    }
+}
+
+impl Scoreable for AiffReader<'_> {
+    fn score(_src: ScopedStream<&mut MediaSourceStream<'_>>) -> Result<Score> {
+        Ok(Score::Supported(255))
+    }
+}
+
+impl ProbeableFormat<'_> for AiffReader<'_> {
+    fn try_probe_new(
+        mss: MediaSourceStream<'_>,
+        opts: FormatOptions,
+    ) -> Result<Box<dyn FormatReader + '_>> {
+        Ok(Box::new(AiffReader::try_new(mss, opts)?))
+    }
+
+    fn probe_data() -> &'static [ProbeFormatData] {
+        &[
+            // AIFF RIFF form
+            support_format!(
+                AIFF_FORMAT_INFO,
+                &["aiff", "aif", "aifc"],
+                &["audio/aiff", "audio/x-aiff", " sound/aiff", "audio/x-pn-aiff"],
+                &[b"FORM"]
+            ),
+        ]
     }
 }
 

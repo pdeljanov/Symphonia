@@ -85,44 +85,84 @@ mod bloom {
     }
 }
 
-/// A probe candidate provides a description of a metadata or container format reader, and a method
-/// to instantiate it.
+/// The probe match specification provides declarative information that is used by a `Probe` to
+/// detect the presence of a specific container or metadata format while scanning a
+/// `MediaSourceStream`.
 #[derive(Copy, Clone)]
-pub enum ProbeCandidate {
-    Format {
-        /// A basic description about the container format.
-        info: FormatInfo,
-        /// A factory function to create an instance of the format reader.
-        factory:
-            for<'s> fn(MediaSourceStream<'s>, FormatOptions) -> Result<Box<dyn FormatReader + 's>>,
-    },
-    Metadata {
-        /// A basic description about the metadata format.
-        info: MetadataInfo,
-        /// A factory function to create an instance of the metadata reader.
-        factory: fn(MetadataOptions) -> Box<dyn MetadataReader>,
-    },
-}
-
-/// A probe descriptor provides declarative information that may be used by `Probe` to detect the
-/// presence of a specific metadata or container format while scanning a `MediaSourceStream`.
-#[derive(Copy, Clone)]
-pub struct ProbeDescriptor {
+pub struct ProbeDataMatchSpec {
     /// A list of case-insensitive file extensions that are generally used by the format.
     pub extensions: &'static [&'static str],
     /// A list of case-insensitive MIME types that are generally used by the format.
     pub mime_types: &'static [&'static str],
-    /// A byte-string start-of-stream marker that will be searched for within the stream.
+    /// A byte-string start-of-format marker that will be searched for within the stream. Typically
+    /// some magic numbers associated with start of the container or metadata format.
     pub markers: &'static [&'static [u8]],
-    /// A function to assign a likelyhood score that the media source, readable with scoped access
-    /// via. the provided stream, is the start of a metadate or container format
-    pub score: fn(ScopedStream<&mut MediaSourceStream<'_>>) -> Result<Score>,
-    /// If the probe descriptor matches the byte stream, then the probe candidate describes the
-    /// metadata or container format reader, and provides a factory function to instantiate it.
-    pub candidate: ProbeCandidate,
 }
 
-/// The result of a score.
+/// Container format-specific probe data.
+#[derive(Copy, Clone)]
+pub struct ProbeFormatData {
+    /// The match specification used by the probe to match against the media source stream.
+    pub spec: ProbeDataMatchSpec,
+    /// A description of the container format and reader if a match with the basic probe data is
+    /// found.
+    pub info: FormatInfo,
+}
+
+/// Metadata format-specific probe data.
+#[derive(Copy, Clone)]
+pub struct ProbeMetadataData {
+    /// The match specification used by the probe to match against the media source stream.
+    pub spec: ProbeDataMatchSpec,
+    /// A description of the metadata format and reader if a match with the basic probe data is
+    /// found.
+    pub info: MetadataInfo,
+}
+
+/// `FormatReader` probe factory function. Creates a boxed `FormatReader`.
+pub type FormatFactoryFn =
+    for<'s> fn(MediaSourceStream<'s>, FormatOptions) -> Result<Box<dyn FormatReader + 's>>;
+
+/// `MetadataReader` probe factory function. Creates a boxed `MetadataReader`.
+pub type MetadataFactoryFn =
+    for<'s> fn(MediaSourceStream<'s>, MetadataOptions) -> Result<Box<dyn MetadataReader + 's>>;
+
+/// A probe match is the result of one probe iteration on a given media source stream.
+///
+/// A probe match provides a basic description of the matching container or metadata format, and a
+/// factory function to instantiate it.
+#[derive(Copy, Clone)]
+pub enum ProbeMatch {
+    Format {
+        /// A basic description about the container format.
+        info: FormatInfo,
+        /// A factory function to create an instance of the matching format reader.
+        factory: FormatFactoryFn,
+    },
+    Metadata {
+        /// A basic description about the metadata format.
+        info: MetadataInfo,
+        /// A factory function to create an instance of the matching metadata reader.
+        factory: MetadataFactoryFn,
+    },
+}
+
+/// A function pointer to the score function of the registered probeable.
+type ScoreFn = fn(ScopedStream<&mut MediaSourceStream<'_>>) -> Result<Score>;
+
+/// Private/internal generalized representation of a probeable format or metadata reader.
+#[derive(Copy, Clone)]
+struct GenericProbeMatch {
+    /// The match specification.
+    spec: ProbeDataMatchSpec,
+    /// A function to assign a likelyhood score that the media source, readable with scoped access
+    /// via. the provided stream, is the start of a metadate or container format
+    score: ScoreFn,
+    /// Format or metadata reader specific match information.
+    specific: ProbeMatch,
+}
+
+/// The result of a scoring operation.
 pub enum Score {
     /// The format is not supported.
     Unsupported,
@@ -131,11 +171,9 @@ pub enum Score {
     Supported(u8),
 }
 
-/// The `Probeable` trait indicates that the reader that implements it may be
-pub trait Probeable {
-    /// Returns a list of probe descriptors that `Probe` will use to determine
-    fn probe_descriptor() -> &'static [ProbeDescriptor];
-
+/// The `Scoreable` trait defines the scoring functionality a reader must implement to support
+/// probing for a container or metadata format.
+pub trait Scoreable {
     /// Using scoped access to a `MediaSourceStream`, calculate and return a value between 0 and 255
     /// indicating the confidence of the reader in decoding or parsing the stream.
     ///
@@ -148,11 +186,41 @@ pub trait Probeable {
     fn score(src: ScopedStream<&mut MediaSourceStream<'_>>) -> Result<Score>;
 }
 
+/// To support probing, a `FormatReader` must implement the `ProbeableFormat` trait.
+pub trait ProbeableFormat<'s>: FormatReader + Scoreable {
+    /// Create an instance of the format reader.
+    fn try_probe_new(
+        mss: MediaSourceStream<'s>,
+        opts: FormatOptions,
+    ) -> Result<Box<dyn FormatReader + 's>>
+    where
+        Self: Sized;
+
+    /// Returns a list of probe data that a [`Probe`] will use to determine if the reader
+    /// implementing this trait may support the media source stream.
+    fn probe_data() -> &'static [ProbeFormatData];
+}
+
+/// To support probing, a `MetadataReader` must implement the `ProbeableMetadata` trait.
+pub trait ProbeableMetadata<'s>: MetadataReader + Scoreable {
+    /// Create an instance of the metadata reader.
+    fn try_probe_new(
+        mss: MediaSourceStream<'s>,
+        opts: MetadataOptions,
+    ) -> Result<Box<dyn MetadataReader + 's>>
+    where
+        Self: Sized;
+
+    /// Returns a list of probe data that a [`Probe`] will use to determine if the reader
+    /// implementing this trait may support the media source stream.
+    fn probe_data() -> &'static [ProbeMetadataData];
+}
+
 /// A `Hint` provides additional information and context when probing a media source stream.
 ///
 /// For example, the `Probe` cannot examine the extension or mime-type of the media because
 /// `MediaSourceStream` abstracts away such details. However, the embedder may have this information
-/// from a file path, HTTP header, email  attachment metadata, etc. `Hint`s are optional, and won't
+/// from a file path, HTTP header, email attachment metadata, etc. `Hint`s are optional, and won't
 /// lead the probe astray if they're wrong, but they may provide an informed initial guess and
 /// optimize the guessing process siginificantly especially as more formats are registered.
 #[derive(Clone, Debug, Default)]
@@ -210,9 +278,9 @@ impl Default for ProbeOptions {
 #[derive(Default)]
 pub struct Probe {
     filter: bloom::BloomFilter,
-    preferred: Vec<ProbeDescriptor>,
-    standard: Vec<ProbeDescriptor>,
-    fallback: Vec<ProbeDescriptor>,
+    preferred: Vec<GenericProbeMatch>,
+    standard: Vec<GenericProbeMatch>,
+    fallback: Vec<GenericProbeMatch>,
     opts: ProbeOptions,
 }
 
@@ -227,27 +295,65 @@ impl Probe {
         Probe { opts: *opts, ..Default::default() }
     }
 
-    /// Register all `Descriptor`s supported by the parameterized reader at the standard tier.
-    pub fn register_all<Q: Probeable>(&mut self) {
-        self.register_all_at_tier::<Q>(Tier::Standard);
+    /// Register the parameterized format reader at the standard tier.
+    pub fn register_format<P>(&mut self)
+    where
+        for<'a> P: ProbeableFormat<'a>,
+    {
+        self.register_format_at_tier::<P>(Tier::Standard);
     }
 
-    /// Register all `Descriptor`s supported by the parameterized reader at a specific tier.
-    pub fn register_all_at_tier<Q: Probeable>(&mut self, tier: Tier) {
-        for descriptor in Q::probe_descriptor() {
-            self.register_at_tier(tier, descriptor);
+    /// Register the parameterized metadata reader at the standard tier.
+    pub fn register_metadata<P>(&mut self)
+    where
+        for<'a> P: ProbeableMetadata<'a>,
+    {
+        self.register_metadata_at_tier::<P>(Tier::Standard);
+    }
+
+    /// Register the parameterized format reader at a specific tier.
+    pub fn register_format_at_tier<P>(&mut self, tier: Tier)
+    where
+        for<'a> P: ProbeableFormat<'a>,
+    {
+        for data in P::probe_data() {
+            // Build a generic format probe candidate.
+            let candidate = GenericProbeMatch {
+                spec: data.spec,
+                score: P::score,
+                specific: ProbeMatch::Format {
+                    info: data.info,
+                    factory: |mss, opts| Ok(P::try_probe_new(mss, opts)?),
+                },
+            };
+
+            self.register(tier, candidate);
         }
     }
 
-    /// Register a single `Descriptor` at the standard tier.
-    pub fn register(&mut self, desc: &ProbeDescriptor) {
-        self.register_at_tier(Tier::Standard, desc);
+    /// Register the parameterized metadata reader at a specific tier.
+    pub fn register_metadata_at_tier<P>(&mut self, tier: Tier)
+    where
+        for<'a> P: ProbeableMetadata<'a>,
+    {
+        for data in P::probe_data() {
+            // Build a generic metadata probe candidate.
+            let candidate = GenericProbeMatch {
+                spec: data.spec,
+                score: P::score,
+                specific: ProbeMatch::Metadata {
+                    info: data.info,
+                    factory: |mss, opts| Ok(P::try_probe_new(mss, opts)?),
+                },
+            };
+
+            self.register(tier, candidate);
+        }
     }
 
-    /// Register a single `Descriptor` at a specific tier.
-    pub fn register_at_tier(&mut self, tier: Tier, desc: &ProbeDescriptor) {
+    fn register(&mut self, tier: Tier, candidate: GenericProbeMatch) {
         // Insert 2-byte prefixes for each marker into the bloom filter.
-        for marker in desc.markers {
+        for marker in candidate.spec.markers {
             let mut prefix = [0u8; 2];
 
             match marker.len() {
@@ -260,15 +366,15 @@ impl Probe {
 
         // Register at the desired tier.
         match tier {
-            Tier::Preferred => self.preferred.push(*desc),
-            Tier::Standard => self.standard.push(*desc),
-            Tier::Fallback => self.fallback.push(*desc),
+            Tier::Preferred => self.preferred.push(candidate),
+            Tier::Standard => self.standard.push(candidate),
+            Tier::Fallback => self.fallback.push(candidate),
         }
     }
 
-    /// Scans the provided `MediaSourceStream` from the current position for the best metadata or
-    /// format reader. If a candidate is found, returns it.
-    pub fn next(&self, mss: &mut MediaSourceStream, _hint: &Hint) -> Result<ProbeCandidate> {
+    /// Scans the provided `MediaSourceStream` from the current position for the best next metadata
+    /// or format reader. If a match is found, returns it.
+    pub fn next<'s>(&self, mss: &mut MediaSourceStream<'s>, _hint: &Hint) -> Result<ProbeMatch> {
         let mut win = 0u16;
 
         let init_pos = mss.pos();
@@ -358,19 +464,22 @@ impl Probe {
         loop {
             match self.next(&mut mss, hint)? {
                 // If a container format is found, return an instance to it's reader.
-                ProbeCandidate::Format { factory, .. } => {
+                ProbeMatch::Format { factory, .. } => {
                     // Instantiate the format reader.
                     let format = factory(mss, fmt_opts)?;
                     return Ok(format);
                 }
                 // If metadata was found, instantiate the metadata reader, read the metadata, and
                 // push it onto the metadata log.
-                ProbeCandidate::Metadata { factory, .. } => {
+                ProbeMatch::Metadata { factory, .. } => {
                     // Create the metadata reader.
-                    let mut reader = factory(meta_opts);
+                    let mut reader = factory(mss, meta_opts)?;
 
-                    // Read the metadata and get a metdata revision.
-                    let rev = reader.read_all(&mut mss)?;
+                    // Read all metadata and get a metdata revision.
+                    let rev = reader.read_all()?;
+
+                    // Consume the metadata reader and get the media source stream.
+                    mss = reader.into_inner();
 
                     // Insert it into the metadata log.
                     fmt_opts.metadata.get_or_insert_with(Default::default).push(rev);
@@ -387,17 +496,17 @@ impl Probe {
 
 fn find_descriptor(
     mss: &mut MediaSourceStream,
-    descs: &[ProbeDescriptor],
+    descs: &[GenericProbeMatch],
     win: [u8; 16],
     max_depth: u16,
-) -> Result<Option<ProbeCandidate>> {
+) -> Result<Option<ProbeMatch>> {
     // Ensure the seekback buffer can satisfy the maximum amount of bytes a score operation may
     // consume.
     mss.ensure_seekback_buffer(usize::from(max_depth));
 
     for desc in descs {
         // If any format descriptor marker matches, then the format should be scored.
-        let should_score = desc.markers.iter().any(|marker| {
+        let should_score = desc.spec.markers.iter().any(|marker| {
             let is_match = win[0..marker.len()] == **marker;
 
             if is_match {
@@ -411,23 +520,23 @@ fn find_descriptor(
         if should_score {
             // If supported, return the instantiate.
             if let Score::Supported(score) = score(desc, mss, max_depth)? {
-                match &desc.candidate {
-                    ProbeCandidate::Format { info, .. } => {
+                match &desc.specific {
+                    ProbeMatch::Format { info, .. } => {
                         info!("selected format reader '{}' with score {}", info.short_name, score)
                     }
-                    ProbeCandidate::Metadata { info, .. } => {
+                    ProbeMatch::Metadata { info, .. } => {
                         info!("selected metadata reader '{}' with score {}", info.short_name, score)
                     }
                 }
 
-                return Ok(Some(desc.candidate));
+                return Ok(Some(desc.specific));
             }
 
-            match &desc.candidate {
-                ProbeCandidate::Format { info, .. } => {
+            match &desc.specific {
+                ProbeMatch::Format { info, .. } => {
                     trace!("format reader '{}' failed scoring", info.short_name)
                 }
-                ProbeCandidate::Metadata { info, .. } => {
+                ProbeMatch::Metadata { info, .. } => {
                     trace!("metadata reader '{}' failed scoring", info.short_name)
                 }
             }
@@ -437,12 +546,16 @@ fn find_descriptor(
     Ok(None)
 }
 
-fn score(desc: &ProbeDescriptor, mss: &mut MediaSourceStream, max_depth: u16) -> Result<Score> {
+fn score(
+    candidate: &GenericProbeMatch,
+    mss: &mut MediaSourceStream,
+    max_depth: u16,
+) -> Result<Score> {
     // Save the initial position to rewind back to after scoring is complete.
     let init_pos = mss.pos();
 
     // Perform the scoring operation.
-    let result = match (desc.score)(ScopedStream::new(mss, u64::from(max_depth))) {
+    let result = match (candidate.score)(ScopedStream::new(mss, u64::from(max_depth))) {
         Err(Error::IoError(err)) if err.kind() != std::io::ErrorKind::UnexpectedEof => {
             // IO errors that are not an unexpected end-of-file (or out-of-bounds) error, abort the
             // entire probe operation.
@@ -468,36 +581,32 @@ fn warn_junk_bytes(pos: u64, init_pos: u64) {
     }
 }
 
-/// Convenience macro for declaring a probe `ProbeDescriptor` for a `FormatReader`.
+/// Convenience macro for declaring a `ProbeData` for a `FormatReader`.
 #[macro_export]
 macro_rules! support_format {
-    ($typ:ty, $info:expr, $exts:expr, $mimes:expr, $markers:expr) => {
-        symphonia_core::probe::ProbeDescriptor {
-            extensions: $exts,
-            mime_types: $mimes,
-            markers: $markers,
-            score: Self::score,
-            candidate: symphonia_core::probe::ProbeCandidate::Format {
-                info: $info,
-                factory: |src, opts| Ok(Box::new(<$typ>::try_new(src, opts)?)),
+    ($info:expr, $exts:expr, $mimes:expr, $markers:expr) => {
+        symphonia_core::probe::ProbeFormatData {
+            spec: symphonia_core::probe::ProbeDataMatchSpec {
+                extensions: $exts,
+                mime_types: $mimes,
+                markers: $markers,
             },
+            info: $info,
         }
     };
 }
 
-/// Convenience macro for declaring a probe `ProbeDescriptor` for a `MetadataReader`.
+/// Convenience macro for declaring a `ProbeData` for a `MetadataReader`.
 #[macro_export]
 macro_rules! support_metadata {
     ($info:expr, $exts:expr, $mimes:expr, $markers:expr) => {
-        symphonia_core::probe::ProbeDescriptor {
-            extensions: $exts,
-            mime_types: $mimes,
-            markers: $markers,
-            score: Self::score,
-            candidate: symphonia_core::probe::ProbeCandidate::Metadata {
-                info: $info,
-                factory: |opts| Box::new(Self::new(opts)),
+        symphonia_core::probe::ProbeMetadataData {
+            spec: symphonia_core::probe::ProbeDataMatchSpec {
+                extensions: $exts,
+                mime_types: $mimes,
+                markers: $markers,
             },
+            info: $info,
         }
     };
 }

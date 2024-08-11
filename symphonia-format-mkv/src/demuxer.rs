@@ -16,7 +16,7 @@ use symphonia_core::errors::{
 use symphonia_core::formats::{prelude::*, FORMAT_TYPE_MKV};
 use symphonia_core::io::*;
 use symphonia_core::meta::{Metadata, MetadataLog};
-use symphonia_core::probe::{ProbeDescriptor, Probeable, Score};
+use symphonia_core::probe::{ProbeFormatData, ProbeableFormat, Score, Scoreable};
 use symphonia_core::sample::SampleFormat;
 use symphonia_core::support_format;
 use symphonia_core::units::TimeBase;
@@ -138,194 +138,15 @@ fn flac_extra_data_from_codec_private(codec_private: &[u8]) -> Result<Box<[u8]>>
     }
 }
 
-impl MkvReader<'_> {
-    fn seek_track_by_ts_forward(&mut self, track_id: u32, ts: u64) -> Result<SeekedTo> {
-        let actual_ts = 'out: loop {
-            // Skip frames from the buffer until the given timestamp
-            while let Some(frame) = self.frames.front() {
-                if frame.timestamp + frame.duration >= ts && frame.track == track_id {
-                    break 'out frame.timestamp;
-                }
-                else {
-                    self.frames.pop_front();
-                }
-            }
-
-            if !self.next_element()? {
-                // There are no more elements.
-                return Err(Error::SeekError(SeekErrorKind::OutOfRange));
-            }
-        };
-
-        Ok(SeekedTo { track_id, required_ts: ts, actual_ts })
-    }
-
-    fn seek_track_by_ts(&mut self, track_id: u32, ts: u64) -> Result<SeekedTo> {
-        let original_pos = self.iter.pos();
-
-        let result = if self.clusters.is_empty() {
-            self.seek_track_by_ts_forward(track_id, ts)
-        }
-        else {
-            let mut target_cluster = None;
-            for cluster in &self.clusters {
-                if cluster.timestamp > ts {
-                    break;
-                }
-                target_cluster = Some(cluster);
-            }
-            let cluster = target_cluster.ok_or(Error::SeekError(SeekErrorKind::OutOfRange))?;
-
-            let mut target_block = None;
-            for block in cluster.blocks.iter() {
-                if block.track as u32 != track_id {
-                    continue;
-                }
-                if block.timestamp > ts {
-                    break;
-                }
-                target_block = Some(block);
-            }
-
-            let pos = match target_block {
-                Some(block) => block.pos,
-                None => cluster.pos,
-            };
-            self.iter.seek(pos)?;
-
-            // Restore cluster's metadata
-            self.current_cluster =
-                Some(ClusterState { timestamp: Some(cluster.timestamp), end: cluster.end });
-
-            // Seek to a specified block inside the cluster.
-            self.seek_track_by_ts_forward(track_id, ts)
-        };
-
-        // On error, attempt to rollback to the original position.
-        if result.is_err() {
-            if let Err(err) = self.iter.seek(original_pos) {
-                warn!("seek rollback failed due to {}", err)
-            }
-        }
-
-        result
-    }
-
-    /// Process the next element. Returns `true` if an element was processed, `false` otherwise.
-    fn next_element(&mut self) -> Result<bool> {
-        if let Some(ClusterState { end: Some(end), .. }) = &self.current_cluster {
-            // Make sure we don't read past the current cluster if its size is known.
-            if self.iter.pos() >= *end {
-                // log::debug!("ended cluster");
-                self.current_cluster = None;
-            }
-        }
-
-        // Each Cluster is being read incrementally so we need to keep track of
-        // which cluster we are currently in.
-
-        let header = match self.iter.read_child_header()? {
-            Some(header) => header,
-            None => {
-                // If we reached here, it must be an end of stream.
-                return Ok(false);
-            }
-        };
-
-        match header.etype {
-            ElementType::Cluster => {
-                self.current_cluster = Some(ClusterState { timestamp: None, end: header.end() });
-            }
-            ElementType::Timestamp => match self.current_cluster.as_mut() {
-                Some(cluster) => {
-                    cluster.timestamp = Some(self.iter.read_u64()?);
-                }
-                None => {
-                    self.iter.ignore_data()?;
-                    log::warn!("timestamp element outside of a cluster");
-                    return Ok(true);
-                }
-            },
-            ElementType::SimpleBlock => {
-                let cluster_ts = match self.current_cluster.as_ref() {
-                    Some(ClusterState { timestamp: Some(ts), .. }) => *ts,
-                    Some(_) => {
-                        self.iter.ignore_data()?;
-                        log::warn!("missing cluster timestamp");
-                        return Ok(true);
-                    }
-                    None => {
-                        self.iter.ignore_data()?;
-                        log::warn!("simple block element outside of a cluster");
-                        return Ok(true);
-                    }
-                };
-
-                let data = self.iter.read_boxed_slice()?;
-                extract_frames(
-                    &data,
-                    None,
-                    &self.track_states,
-                    cluster_ts,
-                    self.timestamp_scale,
-                    &mut self.frames,
-                )?;
-            }
-            ElementType::BlockGroup => {
-                let cluster_ts = match self.current_cluster.as_ref() {
-                    Some(ClusterState { timestamp: Some(ts), .. }) => *ts,
-                    Some(_) => {
-                        self.iter.ignore_data()?;
-                        log::warn!("missing cluster timestamp");
-                        return Ok(true);
-                    }
-                    None => {
-                        self.iter.ignore_data()?;
-                        log::warn!("block group element outside of a cluster");
-                        return Ok(true);
-                    }
-                };
-
-                let group = self.iter.read_element_data::<BlockGroupElement>()?;
-                extract_frames(
-                    &group.data,
-                    group.duration,
-                    &self.track_states,
-                    cluster_ts,
-                    self.timestamp_scale,
-                    &mut self.frames,
-                )?;
-            }
-            ElementType::Tags => {
-                let tags = self.iter.read_element_data::<TagsElement>()?;
-                self.metadata.push(tags.to_metadata());
-                self.current_cluster = None;
-            }
-            _ if header.etype.is_top_level() => {
-                self.current_cluster = None;
-            }
-            other => {
-                log::debug!("ignored element {:?}", other);
-                self.iter.ignore_data()?;
-            }
-        }
-
-        Ok(true)
-    }
-}
-
-impl<'s> BuildFormatReader<'s> for MkvReader<'s> {
-    fn try_new(mut reader: MediaSourceStream<'s>, options: FormatOptions) -> Result<Self>
-    where
-        Self: Sized,
-    {
-        let is_seekable = reader.is_seekable();
+impl<'s> MkvReader<'s> {
+    pub fn try_new(mut mss: MediaSourceStream<'s>, opts: FormatOptions) -> Result<Self> {
+        let is_seekable = mss.is_seekable();
 
         // Get the total length of the stream, if possible.
         let total_len = if is_seekable {
-            let pos = reader.pos();
-            let len = reader.seek(SeekFrom::End(0))?;
-            reader.seek(SeekFrom::Start(pos))?;
+            let pos = mss.pos();
+            let len = mss.seek(SeekFrom::End(0))?;
+            mss.seek(SeekFrom::Start(pos))?;
             log::info!("stream is seekable with len={} bytes.", len);
             Some(len)
         }
@@ -333,7 +154,7 @@ impl<'s> BuildFormatReader<'s> for MkvReader<'s> {
             None
         };
 
-        let mut it = ElementIterator::new(reader, total_len);
+        let mut it = ElementIterator::new(mss, total_len);
         let ebml = it.read_element::<EbmlElement>()?;
 
         if !matches!(ebml.header.doc_type.as_str(), "matroska" | "webm") {
@@ -348,7 +169,7 @@ impl<'s> BuildFormatReader<'s> for MkvReader<'s> {
         let mut segment_tracks = None;
         let mut info = None;
         let mut clusters = Vec::new();
-        let mut metadata = options.metadata.unwrap_or_default();
+        let mut metadata = opts.metadata.unwrap_or_default();
         let mut current_cluster = None;
 
         let mut seek_positions = Vec::new();
@@ -527,6 +348,201 @@ impl<'s> BuildFormatReader<'s> for MkvReader<'s> {
             clusters,
         })
     }
+
+    fn seek_track_by_ts_forward(&mut self, track_id: u32, ts: u64) -> Result<SeekedTo> {
+        let actual_ts = 'out: loop {
+            // Skip frames from the buffer until the given timestamp
+            while let Some(frame) = self.frames.front() {
+                if frame.timestamp + frame.duration >= ts && frame.track == track_id {
+                    break 'out frame.timestamp;
+                }
+                else {
+                    self.frames.pop_front();
+                }
+            }
+
+            if !self.next_element()? {
+                // There are no more elements.
+                return Err(Error::SeekError(SeekErrorKind::OutOfRange));
+            }
+        };
+
+        Ok(SeekedTo { track_id, required_ts: ts, actual_ts })
+    }
+
+    fn seek_track_by_ts(&mut self, track_id: u32, ts: u64) -> Result<SeekedTo> {
+        let original_pos = self.iter.pos();
+
+        let result = if self.clusters.is_empty() {
+            self.seek_track_by_ts_forward(track_id, ts)
+        }
+        else {
+            let mut target_cluster = None;
+            for cluster in &self.clusters {
+                if cluster.timestamp > ts {
+                    break;
+                }
+                target_cluster = Some(cluster);
+            }
+            let cluster = target_cluster.ok_or(Error::SeekError(SeekErrorKind::OutOfRange))?;
+
+            let mut target_block = None;
+            for block in cluster.blocks.iter() {
+                if block.track as u32 != track_id {
+                    continue;
+                }
+                if block.timestamp > ts {
+                    break;
+                }
+                target_block = Some(block);
+            }
+
+            let pos = match target_block {
+                Some(block) => block.pos,
+                None => cluster.pos,
+            };
+            self.iter.seek(pos)?;
+
+            // Restore cluster's metadata
+            self.current_cluster =
+                Some(ClusterState { timestamp: Some(cluster.timestamp), end: cluster.end });
+
+            // Seek to a specified block inside the cluster.
+            self.seek_track_by_ts_forward(track_id, ts)
+        };
+
+        // On error, attempt to rollback to the original position.
+        if result.is_err() {
+            if let Err(err) = self.iter.seek(original_pos) {
+                warn!("seek rollback failed due to {}", err)
+            }
+        }
+
+        result
+    }
+
+    /// Process the next element. Returns `true` if an element was processed, `false` otherwise.
+    fn next_element(&mut self) -> Result<bool> {
+        if let Some(ClusterState { end: Some(end), .. }) = &self.current_cluster {
+            // Make sure we don't read past the current cluster if its size is known.
+            if self.iter.pos() >= *end {
+                // log::debug!("ended cluster");
+                self.current_cluster = None;
+            }
+        }
+
+        // Each Cluster is being read incrementally so we need to keep track of
+        // which cluster we are currently in.
+
+        let header = match self.iter.read_child_header()? {
+            Some(header) => header,
+            None => {
+                // If we reached here, it must be an end of stream.
+                return Ok(false);
+            }
+        };
+
+        match header.etype {
+            ElementType::Cluster => {
+                self.current_cluster = Some(ClusterState { timestamp: None, end: header.end() });
+            }
+            ElementType::Timestamp => match self.current_cluster.as_mut() {
+                Some(cluster) => {
+                    cluster.timestamp = Some(self.iter.read_u64()?);
+                }
+                None => {
+                    self.iter.ignore_data()?;
+                    log::warn!("timestamp element outside of a cluster");
+                    return Ok(true);
+                }
+            },
+            ElementType::SimpleBlock => {
+                let cluster_ts = match self.current_cluster.as_ref() {
+                    Some(ClusterState { timestamp: Some(ts), .. }) => *ts,
+                    Some(_) => {
+                        self.iter.ignore_data()?;
+                        log::warn!("missing cluster timestamp");
+                        return Ok(true);
+                    }
+                    None => {
+                        self.iter.ignore_data()?;
+                        log::warn!("simple block element outside of a cluster");
+                        return Ok(true);
+                    }
+                };
+
+                let data = self.iter.read_boxed_slice()?;
+                extract_frames(
+                    &data,
+                    None,
+                    &self.track_states,
+                    cluster_ts,
+                    self.timestamp_scale,
+                    &mut self.frames,
+                )?;
+            }
+            ElementType::BlockGroup => {
+                let cluster_ts = match self.current_cluster.as_ref() {
+                    Some(ClusterState { timestamp: Some(ts), .. }) => *ts,
+                    Some(_) => {
+                        self.iter.ignore_data()?;
+                        log::warn!("missing cluster timestamp");
+                        return Ok(true);
+                    }
+                    None => {
+                        self.iter.ignore_data()?;
+                        log::warn!("block group element outside of a cluster");
+                        return Ok(true);
+                    }
+                };
+
+                let group = self.iter.read_element_data::<BlockGroupElement>()?;
+                extract_frames(
+                    &group.data,
+                    group.duration,
+                    &self.track_states,
+                    cluster_ts,
+                    self.timestamp_scale,
+                    &mut self.frames,
+                )?;
+            }
+            ElementType::Tags => {
+                let tags = self.iter.read_element_data::<TagsElement>()?;
+                self.metadata.push(tags.to_metadata());
+                self.current_cluster = None;
+            }
+            _ if header.etype.is_top_level() => {
+                self.current_cluster = None;
+            }
+            other => {
+                log::debug!("ignored element {:?}", other);
+                self.iter.ignore_data()?;
+            }
+        }
+
+        Ok(true)
+    }
+}
+
+impl ProbeableFormat<'_> for MkvReader<'_> {
+    fn try_probe_new(
+        mss: MediaSourceStream<'_>,
+        opts: FormatOptions,
+    ) -> Result<Box<dyn FormatReader + '_>>
+    where
+        Self: Sized,
+    {
+        Ok(Box::new(MkvReader::try_new(mss, opts)?))
+    }
+
+    fn probe_data() -> &'static [ProbeFormatData] {
+        &[support_format!(
+            MKV_FORMAT_INFO,
+            &["webm", "mkv"],
+            &["video/webm", "video/x-matroska"],
+            &[b"\x1A\x45\xDF\xA3"] // Top-level element Ebml element
+        )]
+    }
 }
 
 impl FormatReader for MkvReader<'_> {
@@ -598,17 +614,7 @@ impl FormatReader for MkvReader<'_> {
     }
 }
 
-impl Probeable for MkvReader<'_> {
-    fn probe_descriptor() -> &'static [ProbeDescriptor] {
-        &[support_format!(
-            MkvReader<'_>,
-            MKV_FORMAT_INFO,
-            &["webm", "mkv"],
-            &["video/webm", "video/x-matroska"],
-            &[b"\x1A\x45\xDF\xA3"] // Top-level element Ebml element
-        )]
-    }
-
+impl Scoreable for MkvReader<'_> {
     fn score(_src: ScopedStream<&mut MediaSourceStream<'_>>) -> Result<Score> {
         Ok(Score::Supported(255))
     }

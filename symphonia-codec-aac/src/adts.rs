@@ -14,7 +14,7 @@ use symphonia_core::errors::{decode_error, seek_error, Result, SeekErrorKind};
 use symphonia_core::formats::{prelude::*, FORMAT_TYPE_ADTS};
 use symphonia_core::io::*;
 use symphonia_core::meta::{Metadata, MetadataLog};
-use symphonia_core::probe::{ProbeDescriptor, Probeable, Score};
+use symphonia_core::probe::{ProbeFormatData, ProbeableFormat, Score, Scoreable};
 
 use std::io::{Seek, SeekFrom};
 
@@ -42,22 +42,44 @@ pub struct AdtsReader<'s> {
     next_packet_ts: u64,
 }
 
-impl Probeable for AdtsReader<'_> {
-    fn probe_descriptor() -> &'static [ProbeDescriptor] {
-        &[support_format!(
-            AdtsReader<'_>,
-            ADTS_FORMAT_INFO,
-            &["aac"],
-            &["audio/aac"],
-            &[
-                &[0xff, 0xf1], // MPEG 4 without CRC
-                &[0xff, 0xf0], // MPEG 4 with CRC
-                &[0xff, 0xf9], // MPEG 2 without CRC
-                &[0xff, 0xf8], // MPEG 2 with CRC
-            ]
-        )]
-    }
+impl<'s> AdtsReader<'s> {
+    pub fn try_new(mut mss: MediaSourceStream<'s>, opts: FormatOptions) -> Result<Self> {
+        let header = AdtsHeader::read(&mut mss)?;
 
+        // Rewind back to the start of the frame.
+        mss.seek_buffered_rev(usize::from(header.header_len()));
+
+        // Use the header to populate the codec parameters.
+        let mut params = CodecParameters::new();
+
+        params
+            .for_codec(CODEC_TYPE_AAC)
+            .with_sample_rate(header.sample_rate)
+            .with_time_base(TimeBase::new(1, header.sample_rate));
+
+        if let Some(channels) = header.channels {
+            params.with_channels(channels);
+        }
+
+        let first_frame_pos = mss.pos();
+
+        if let Some(n_frames) = approximate_frame_count(&mut mss)? {
+            info!("estimating duration from bitrate, may be inaccurate for vbr files");
+            params.with_n_frames(n_frames);
+        }
+
+        Ok(AdtsReader {
+            reader: mss,
+            tracks: vec![Track::new(0, params)],
+            cues: Vec::new(),
+            metadata: opts.metadata.unwrap_or_default(),
+            first_frame_pos,
+            next_packet_ts: 0,
+        })
+    }
+}
+
+impl Scoreable for AdtsReader<'_> {
     fn score(mut src: ScopedStream<&mut MediaSourceStream<'_>>) -> Result<Score> {
         // Read the first (assumed) ADTS header.
         let hdr1 = AdtsHeader::read_no_resync(&mut src)?;
@@ -212,40 +234,26 @@ impl AdtsHeader {
     }
 }
 
-impl<'s> BuildFormatReader<'s> for AdtsReader<'s> {
-    fn try_new(mut source: MediaSourceStream<'s>, options: FormatOptions) -> Result<Self> {
-        let header = AdtsHeader::read(&mut source)?;
+impl ProbeableFormat<'_> for AdtsReader<'_> {
+    fn try_probe_new(
+        mss: MediaSourceStream<'_>,
+        opts: FormatOptions,
+    ) -> Result<Box<dyn FormatReader + '_>> {
+        Ok(Box::new(AdtsReader::try_new(mss, opts)?))
+    }
 
-        // Rewind back to the start of the frame.
-        source.seek_buffered_rev(usize::from(header.header_len()));
-
-        // Use the header to populate the codec parameters.
-        let mut params = CodecParameters::new();
-
-        params
-            .for_codec(CODEC_TYPE_AAC)
-            .with_sample_rate(header.sample_rate)
-            .with_time_base(TimeBase::new(1, header.sample_rate));
-
-        if let Some(channels) = header.channels {
-            params.with_channels(channels);
-        }
-
-        let first_frame_pos = source.pos();
-
-        if let Some(n_frames) = approximate_frame_count(&mut source)? {
-            info!("estimating duration from bitrate, may be inaccurate for vbr files");
-            params.with_n_frames(n_frames);
-        }
-
-        Ok(AdtsReader {
-            reader: source,
-            tracks: vec![Track::new(0, params)],
-            cues: Vec::new(),
-            metadata: options.metadata.unwrap_or_default(),
-            first_frame_pos,
-            next_packet_ts: 0,
-        })
+    fn probe_data() -> &'static [ProbeFormatData] {
+        &[support_format!(
+            ADTS_FORMAT_INFO,
+            &["aac"],
+            &["audio/aac"],
+            &[
+                &[0xff, 0xf1], // MPEG 4 without CRC
+                &[0xff, 0xf0], // MPEG 4 with CRC
+                &[0xff, 0xf9], // MPEG 2 without CRC
+                &[0xff, 0xf8], // MPEG 2 with CRC
+            ]
+        )]
     }
 }
 

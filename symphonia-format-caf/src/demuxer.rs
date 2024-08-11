@@ -15,7 +15,7 @@ use symphonia_core::{
     formats::{prelude::*, FORMAT_TYPE_CAF},
     io::*,
     meta::{Metadata, MetadataLog},
-    probe::{ProbeDescriptor, Probeable, Score},
+    probe::{ProbeFormatData, ProbeableFormat, Score, Scoreable},
     support_format,
     units::{TimeBase, TimeStamp},
 };
@@ -44,34 +44,22 @@ enum PacketInfo {
     Compressed { packets: Vec<CafPacket>, current_packet_index: usize },
 }
 
-impl Probeable for CafReader<'_> {
-    fn probe_descriptor() -> &'static [ProbeDescriptor] {
-        &[support_format!(CafReader<'_>, CAF_FORMAT_INFO, &["caf"], &["audio/x-caf"], &[b"caff"])]
-    }
-
+impl Scoreable for CafReader<'_> {
     fn score(_src: ScopedStream<&mut MediaSourceStream<'_>>) -> Result<Score> {
         Ok(Score::Supported(255))
     }
 }
 
-impl<'s> BuildFormatReader<'s> for CafReader<'s> {
-    fn try_new(source: MediaSourceStream<'s>, options: FormatOptions) -> Result<Self> {
-        let mut reader = Self {
-            reader: source,
-            tracks: vec![],
-            cues: vec![],
-            metadata: options.metadata.unwrap_or_default(),
-            data_start_pos: 0,
-            data_len: None,
-            packet_info: PacketInfo::Unknown,
-        };
+impl ProbeableFormat<'_> for CafReader<'_> {
+    fn try_probe_new(
+        mss: MediaSourceStream<'_>,
+        opts: FormatOptions,
+    ) -> Result<Box<dyn FormatReader + '_>> {
+        Ok(Box::new(CafReader::try_new(mss, opts)?))
+    }
 
-        reader.check_file_header()?;
-        let codec_params = reader.read_chunks()?;
-
-        reader.tracks.push(Track::new(0, codec_params));
-
-        Ok(reader)
+    fn probe_data() -> &'static [ProbeFormatData] {
+        &[support_format!(CAF_FORMAT_INFO, &["caf"], &["audio/x-caf"], &[b"caff"])]
     }
 }
 
@@ -251,7 +239,26 @@ impl FormatReader for CafReader<'_> {
     }
 }
 
-impl CafReader<'_> {
+impl<'s> CafReader<'s> {
+    pub fn try_new(mss: MediaSourceStream<'s>, opts: FormatOptions) -> Result<Self> {
+        let mut reader = Self {
+            reader: mss,
+            tracks: vec![],
+            cues: vec![],
+            metadata: opts.metadata.unwrap_or_default(),
+            data_start_pos: 0,
+            data_len: None,
+            packet_info: PacketInfo::Unknown,
+        };
+
+        reader.check_file_header()?;
+        let codec_params = reader.read_chunks()?;
+
+        reader.tracks.push(Track::new(0, codec_params));
+
+        Ok(reader)
+    }
+
     fn time_base(&self) -> Option<TimeBase> {
         self.tracks.first().and_then(|track| {
             track.codec_params.sample_rate.map(|sample_rate| TimeBase::new(1, sample_rate))

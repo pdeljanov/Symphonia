@@ -13,7 +13,7 @@ use symphonia_core::errors::{seek_error, Error, Result, SeekErrorKind};
 use symphonia_core::formats::{prelude::*, FORMAT_TYPE_MP1, FORMAT_TYPE_MP2, FORMAT_TYPE_MP3};
 use symphonia_core::io::*;
 use symphonia_core::meta::{Metadata, MetadataLog};
-use symphonia_core::probe::{ProbeDescriptor, Probeable, Score};
+use symphonia_core::probe::{ProbeFormatData, ProbeableFormat, Score, Scoreable};
 
 use crate::common::{FrameHeader, MpegLayer};
 use crate::header::{self, MAX_MPEG_FRAME_SIZE, MPEG_HEADER_LEN};
@@ -53,57 +53,7 @@ pub struct MpaReader<'s> {
     next_packet_ts: u64,
 }
 
-impl Probeable for MpaReader<'_> {
-    fn probe_descriptor() -> &'static [ProbeDescriptor] {
-        &[
-            // Layer 1
-            support_format!(
-                MpaReader<'_>,
-                MP1_FORMAT_INFO,
-                &["mp1"],
-                &["audio/mpeg", "audio/mp1"],
-                &[
-                    &[0xff, 0xfe], // MPEG 1 with CRC
-                    &[0xff, 0xff], // MPEG 1
-                    &[0xff, 0xf6], // MPEG 2 with CRC
-                    &[0xff, 0xf7], // MPEG 2
-                    &[0xff, 0xe6], // MPEG 2.5 with CRC
-                    &[0xff, 0xe7], // MPEG 2.5
-                ]
-            ),
-            // Layer 2
-            support_format!(
-                MpaReader<'_>,
-                MP2_FORMAT_INFO,
-                &["mp2"],
-                &["audio/mpeg", "audio/mp2"],
-                &[
-                    &[0xff, 0xfc], // MPEG 1 with CRC
-                    &[0xff, 0xfd], // MPEG 1
-                    &[0xff, 0xf4], // MPEG 2 with CRC
-                    &[0xff, 0xf5], // MPEG 2
-                    &[0xff, 0xe4], // MPEG 2.5 with CRC
-                    &[0xff, 0xe5], // MPEG 2.5
-                ]
-            ),
-            // Layer 3
-            support_format!(
-                MpaReader<'_>,
-                MP3_FORMAT_INFO,
-                &["mp3"],
-                &["audio/mpeg", "audio/mp3"],
-                &[
-                    &[0xff, 0xfa], // MPEG 1 with CRC
-                    &[0xff, 0xfb], // MPEG 1
-                    &[0xff, 0xf2], // MPEG 2 with CRC
-                    &[0xff, 0xf3], // MPEG 2
-                    &[0xff, 0xe2], // MPEG 2.5 with CRC
-                    &[0xff, 0xe3], // MPEG 2.5
-                ]
-            ),
-        ]
-    }
-
+impl Scoreable for MpaReader<'_> {
     fn score(mut src: ScopedStream<&mut MediaSourceStream<'_>>) -> Result<Score> {
         // Read the sync word for the first (assumed) MPEG frame and try to parse it into a header.
         let sync1 = header::read_frame_header_word_no_sync(&mut src)?;
@@ -135,81 +85,59 @@ impl Probeable for MpaReader<'_> {
     }
 }
 
-impl<'s> BuildFormatReader<'s> for MpaReader<'s> {
-    fn try_new(mut source: MediaSourceStream<'s>, options: FormatOptions) -> Result<Self> {
-        // Try to read the first MPEG frame.
-        let (header, packet) = read_mpeg_frame_strict(&mut source)?;
+impl ProbeableFormat<'_> for MpaReader<'_> {
+    fn try_probe_new(
+        mss: MediaSourceStream<'_>,
+        opts: FormatOptions,
+    ) -> Result<Box<dyn FormatReader + '_>> {
+        Ok(Box::new(MpaReader::try_new(mss, opts)?))
+    }
 
-        // Use the header to populate the codec parameters.
-        let mut params = CodecParameters::new();
-
-        params
-            .for_codec(header.codec())
-            .with_sample_rate(header.sample_rate)
-            .with_time_base(TimeBase::new(1, header.sample_rate))
-            .with_channels(header.channel_mode.channels());
-
-        // Check if there is a Xing/Info tag contained in the first frame.
-        if let Some(info_tag) = try_read_info_tag(&packet, &header) {
-            // The LAME tag contains ReplayGain and padding information.
-            let (delay, padding) = if let Some(lame_tag) = info_tag.lame {
-                params.with_delay(lame_tag.enc_delay).with_padding(lame_tag.enc_padding);
-
-                (lame_tag.enc_delay, lame_tag.enc_padding)
-            }
-            else {
-                (0, 0)
-            };
-
-            // The base Xing/Info tag may contain the number of frames.
-            if let Some(num_mpeg_frames) = info_tag.num_frames {
-                info!("using xing header for duration");
-
-                let num_frames = u64::from(num_mpeg_frames) * header.duration();
-
-                // Adjust for gapless playback.
-                if options.enable_gapless {
-                    params.with_n_frames(num_frames - u64::from(delay) - u64::from(padding));
-                }
-                else {
-                    params.with_n_frames(num_frames);
-                }
-            }
-        }
-        else if let Some(vbri_tag) = try_read_vbri_tag(&packet, &header) {
-            info!("using vbri header for duration");
-
-            let num_frames = u64::from(vbri_tag.num_mpeg_frames) * header.duration();
-
-            // Check if there is a VBRI tag.
-            params.with_n_frames(num_frames);
-        }
-        else {
-            // The first frame was not a Xing/Info header, rewind back to the start of the frame so
-            // that it may be decoded.
-            source.seek_buffered_rev(MPEG_HEADER_LEN + header.frame_size);
-
-            // Likely not a VBR file, so estimate the duration if seekable.
-            if source.is_seekable() {
-                info!("estimating duration from bitrate, may be inaccurate for vbr files");
-
-                if let Some(n_mpeg_frames) = estimate_num_mpeg_frames(&mut source) {
-                    params.with_n_frames(n_mpeg_frames * header.duration());
-                }
-            }
-        }
-
-        let first_packet_pos = source.pos();
-
-        Ok(MpaReader {
-            reader: source,
-            tracks: vec![Track::new(0, params)],
-            cues: Vec::new(),
-            metadata: options.metadata.unwrap_or_default(),
-            enable_gapless: options.enable_gapless,
-            first_packet_pos,
-            next_packet_ts: 0,
-        })
+    fn probe_data() -> &'static [ProbeFormatData] {
+        &[
+            // Layer 1
+            support_format!(
+                MP1_FORMAT_INFO,
+                &["mp1"],
+                &["audio/mpeg", "audio/mp1"],
+                &[
+                    &[0xff, 0xfe], // MPEG 1 with CRC
+                    &[0xff, 0xff], // MPEG 1
+                    &[0xff, 0xf6], // MPEG 2 with CRC
+                    &[0xff, 0xf7], // MPEG 2
+                    &[0xff, 0xe6], // MPEG 2.5 with CRC
+                    &[0xff, 0xe7], // MPEG 2.5
+                ]
+            ),
+            // Layer 2
+            support_format!(
+                MP2_FORMAT_INFO,
+                &["mp2"],
+                &["audio/mpeg", "audio/mp2"],
+                &[
+                    &[0xff, 0xfc], // MPEG 1 with CRC
+                    &[0xff, 0xfd], // MPEG 1
+                    &[0xff, 0xf4], // MPEG 2 with CRC
+                    &[0xff, 0xf5], // MPEG 2
+                    &[0xff, 0xe4], // MPEG 2.5 with CRC
+                    &[0xff, 0xe5], // MPEG 2.5
+                ]
+            ),
+            // Layer 3
+            support_format!(
+                MP3_FORMAT_INFO,
+                &["mp3"],
+                &["audio/mpeg", "audio/mp3"],
+                &[
+                    &[0xff, 0xfa], // MPEG 1 with CRC
+                    &[0xff, 0xfb], // MPEG 1
+                    &[0xff, 0xf2], // MPEG 2 with CRC
+                    &[0xff, 0xf3], // MPEG 2
+                    &[0xff, 0xe2], // MPEG 2.5 with CRC
+                    &[0xff, 0xe3], // MPEG 2.5
+                ]
+            ),
+        ]
     }
 }
 
@@ -480,7 +408,83 @@ impl FormatReader for MpaReader<'_> {
     }
 }
 
-impl MpaReader<'_> {
+impl<'s> MpaReader<'s> {
+    pub fn try_new(mut mss: MediaSourceStream<'s>, opts: FormatOptions) -> Result<Self> {
+        // Try to read the first MPEG frame.
+        let (header, packet) = read_mpeg_frame_strict(&mut mss)?;
+
+        // Use the header to populate the codec parameters.
+        let mut params = CodecParameters::new();
+
+        params
+            .for_codec(header.codec())
+            .with_sample_rate(header.sample_rate)
+            .with_time_base(TimeBase::new(1, header.sample_rate))
+            .with_channels(header.channel_mode.channels());
+
+        // Check if there is a Xing/Info tag contained in the first frame.
+        if let Some(info_tag) = try_read_info_tag(&packet, &header) {
+            // The LAME tag contains ReplayGain and padding information.
+            let (delay, padding) = if let Some(lame_tag) = info_tag.lame {
+                params.with_delay(lame_tag.enc_delay).with_padding(lame_tag.enc_padding);
+
+                (lame_tag.enc_delay, lame_tag.enc_padding)
+            }
+            else {
+                (0, 0)
+            };
+
+            // The base Xing/Info tag may contain the number of frames.
+            if let Some(num_mpeg_frames) = info_tag.num_frames {
+                info!("using xing header for duration");
+
+                let num_frames = u64::from(num_mpeg_frames) * header.duration();
+
+                // Adjust for gapless playback.
+                if opts.enable_gapless {
+                    params.with_n_frames(num_frames - u64::from(delay) - u64::from(padding));
+                }
+                else {
+                    params.with_n_frames(num_frames);
+                }
+            }
+        }
+        else if let Some(vbri_tag) = try_read_vbri_tag(&packet, &header) {
+            info!("using vbri header for duration");
+
+            let num_frames = u64::from(vbri_tag.num_mpeg_frames) * header.duration();
+
+            // Check if there is a VBRI tag.
+            params.with_n_frames(num_frames);
+        }
+        else {
+            // The first frame was not a Xing/Info header, rewind back to the start of the frame so
+            // that it may be decoded.
+            mss.seek_buffered_rev(MPEG_HEADER_LEN + header.frame_size);
+
+            // Likely not a VBR file, so estimate the duration if seekable.
+            if mss.is_seekable() {
+                info!("estimating duration from bitrate, may be inaccurate for vbr files");
+
+                if let Some(n_mpeg_frames) = estimate_num_mpeg_frames(&mut mss) {
+                    params.with_n_frames(n_mpeg_frames * header.duration());
+                }
+            }
+        }
+
+        let first_packet_pos = mss.pos();
+
+        Ok(MpaReader {
+            reader: mss,
+            tracks: vec![Track::new(0, params)],
+            cues: Vec::new(),
+            metadata: opts.metadata.unwrap_or_default(),
+            enable_gapless: opts.enable_gapless,
+            first_packet_pos,
+            next_packet_ts: 0,
+        })
+    }
+
     /// Seeks the media source stream to a byte position roughly where the packet with the required
     /// timestamp should be located.
     fn preseek_coarse(&mut self, required_ts: u64, duration: Option<u64>) -> Result<()> {

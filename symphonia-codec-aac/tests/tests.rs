@@ -1,15 +1,15 @@
 use symphonia_codec_aac::{AacDecoder, AdtsReader};
 use symphonia_core::codecs::{CodecParameters, Decoder, DecoderOptions, CODEC_TYPE_AAC};
 use symphonia_core::errors;
-use symphonia_core::formats::{BuildFormatReader, FormatReader};
 use symphonia_core::io::MediaSourceStream;
+use symphonia_core::probe::ProbeableFormat;
 
 fn test_decode(data: Vec<u8>) -> symphonia_core::errors::Result<()> {
     let data = std::io::Cursor::new(data);
 
-    let source = MediaSourceStream::new(Box::new(data), Default::default());
+    let mss = MediaSourceStream::new(Box::new(data), Default::default());
 
-    let mut reader = AdtsReader::try_new(source, Default::default())?;
+    let mut reader = AdtsReader::try_probe_new(mss, Default::default())?;
 
     let mut decoder = AacDecoder::try_new(
         CodecParameters::new().for_codec(CODEC_TYPE_AAC),

@@ -13,7 +13,7 @@ use symphonia_core::errors::{Error, Result, SeekErrorKind};
 use symphonia_core::formats::{prelude::*, FORMAT_TYPE_OGG};
 use symphonia_core::io::*;
 use symphonia_core::meta::{Metadata, MetadataLog};
-use symphonia_core::probe::{ProbeDescriptor, Probeable, Score};
+use symphonia_core::probe::{ProbeFormatData, ProbeableFormat, Score, Scoreable};
 use symphonia_core::support_format;
 
 use log::{debug, info, warn};
@@ -46,7 +46,34 @@ pub struct OggReader<'s> {
     phys_byte_range_end: Option<u64>,
 }
 
-impl OggReader<'_> {
+impl<'s> OggReader<'s> {
+    pub fn try_new(mut mss: MediaSourceStream<'s>, opts: FormatOptions) -> Result<Self> {
+        // A seekback buffer equal to the maximum OGG page size is required for this reader.
+        mss.ensure_seekback_buffer(OGG_PAGE_MAX_SIZE);
+
+        let pages = PageReader::try_new(&mut mss)?;
+
+        if !pages.header().is_first_page {
+            return unsupported_error("ogg: page is not marked as first");
+        }
+
+        let mut ogg = OggReader {
+            reader: mss,
+            tracks: Default::default(),
+            cues: Default::default(),
+            metadata: opts.metadata.unwrap_or_default(),
+            streams: Default::default(),
+            enable_gapless: opts.enable_gapless,
+            pages,
+            phys_byte_range_start: 0,
+            phys_byte_range_end: None,
+        };
+
+        ogg.start_new_physical_stream()?;
+
+        Ok(ogg)
+    }
+
     fn read_page(&mut self) -> Result<()> {
         // Try reading pages until a page is successfully read, or an IO error.
         loop {
@@ -375,48 +402,27 @@ impl OggReader<'_> {
     }
 }
 
-impl Probeable for OggReader<'_> {
-    fn probe_descriptor() -> &'static [ProbeDescriptor] {
-        &[support_format!(
-            OggReader<'_>,
-            OGG_FORMAT_INFO,
-            &["ogg", "ogv", "oga", "ogx", "ogm", "spx", "opus"],
-            &["video/ogg", "audio/ogg", "application/ogg"],
-            &[b"OggS"]
-        )]
-    }
-
+impl Scoreable for OggReader<'_> {
     fn score(_src: ScopedStream<&mut MediaSourceStream<'_>>) -> Result<Score> {
         Ok(Score::Supported(255))
     }
 }
 
-impl<'s> BuildFormatReader<'s> for OggReader<'s> {
-    fn try_new(mut source: MediaSourceStream<'s>, options: FormatOptions) -> Result<Self> {
-        // A seekback buffer equal to the maximum OGG page size is required for this reader.
-        source.ensure_seekback_buffer(OGG_PAGE_MAX_SIZE);
+impl ProbeableFormat<'_> for OggReader<'_> {
+    fn try_probe_new(
+        mss: MediaSourceStream<'_>,
+        opts: FormatOptions,
+    ) -> Result<Box<dyn FormatReader + '_>> {
+        Ok(Box::new(OggReader::try_new(mss, opts)?))
+    }
 
-        let pages = PageReader::try_new(&mut source)?;
-
-        if !pages.header().is_first_page {
-            return unsupported_error("ogg: page is not marked as first");
-        }
-
-        let mut ogg = OggReader {
-            reader: source,
-            tracks: Default::default(),
-            cues: Default::default(),
-            metadata: options.metadata.unwrap_or_default(),
-            streams: Default::default(),
-            enable_gapless: options.enable_gapless,
-            pages,
-            phys_byte_range_start: 0,
-            phys_byte_range_end: None,
-        };
-
-        ogg.start_new_physical_stream()?;
-
-        Ok(ogg)
+    fn probe_data() -> &'static [ProbeFormatData] {
+        &[support_format!(
+            OGG_FORMAT_INFO,
+            &["ogg", "ogv", "oga", "ogx", "ogm", "spx", "opus"],
+            &["video/ogg", "audio/ogg", "application/ogg"],
+            &[b"OggS"]
+        )]
     }
 }
 

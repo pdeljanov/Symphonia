@@ -13,7 +13,7 @@ use symphonia_core::meta::{
     MetadataBuilder, MetadataInfo, MetadataOptions, MetadataReader, MetadataRevision,
     METADATA_TYPE_ID3V2,
 };
-use symphonia_core::probe::{ProbeDescriptor, Probeable, Score};
+use symphonia_core::probe::{ProbeMetadataData, ProbeableMetadata, Score, Scoreable};
 use symphonia_core::support_metadata;
 
 use log::{info, trace, warn};
@@ -403,30 +403,53 @@ pub mod util {
 const ID3V2_METADATA_INFO: MetadataInfo =
     MetadataInfo { metadata: METADATA_TYPE_ID3V2, short_name: "id3v2", long_name: "ID3v2" };
 
-pub struct Id3v2Reader;
+pub struct Id3v2Reader<'s> {
+    reader: MediaSourceStream<'s>,
+}
 
-impl Probeable for Id3v2Reader {
-    fn probe_descriptor() -> &'static [ProbeDescriptor] {
-        &[support_metadata!(ID3V2_METADATA_INFO, &[], &[], &[b"ID3"])]
+impl<'s> Id3v2Reader<'s> {
+    pub fn try_new(mss: MediaSourceStream<'s>, _opts: MetadataOptions) -> Result<Self> {
+        Ok(Self { reader: mss })
     }
+}
 
+impl Scoreable for Id3v2Reader<'_> {
     fn score(_src: ScopedStream<&mut MediaSourceStream<'_>>) -> Result<Score> {
         Ok(Score::Supported(255))
     }
 }
 
-impl MetadataReader for Id3v2Reader {
-    fn new(_options: MetadataOptions) -> Self {
-        Id3v2Reader {}
+impl ProbeableMetadata<'_> for Id3v2Reader<'_> {
+    fn try_probe_new(
+        mss: MediaSourceStream<'_>,
+        opts: MetadataOptions,
+    ) -> Result<Box<dyn MetadataReader + '_>>
+    where
+        Self: Sized,
+    {
+        Ok(Box::new(Id3v2Reader::try_new(mss, opts)?))
     }
 
+    fn probe_data() -> &'static [ProbeMetadataData] {
+        &[support_metadata!(ID3V2_METADATA_INFO, &[], &[], &[b"ID3"])]
+    }
+}
+
+impl MetadataReader for Id3v2Reader<'_> {
     fn metadata_info(&self) -> &MetadataInfo {
         &ID3V2_METADATA_INFO
     }
 
-    fn read_all(&mut self, reader: &mut MediaSourceStream<'_>) -> Result<MetadataRevision> {
+    fn read_all(&mut self) -> Result<MetadataRevision> {
         let mut builder = MetadataBuilder::new();
-        read_id3v2(reader, &mut builder)?;
+        read_id3v2(&mut self.reader, &mut builder)?;
         Ok(builder.metadata())
+    }
+
+    fn into_inner<'s>(self: Box<Self>) -> MediaSourceStream<'s>
+    where
+        Self: 's,
+    {
+        self.reader
     }
 }

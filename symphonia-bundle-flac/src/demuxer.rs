@@ -17,7 +17,7 @@ use symphonia_core::formats::util::{SeekIndex, SeekSearchResult};
 use symphonia_core::formats::{prelude::*, FORMAT_TYPE_FLAC};
 use symphonia_core::io::*;
 use symphonia_core::meta::{Metadata, MetadataBuilder, MetadataLog};
-use symphonia_core::probe::{ProbeDescriptor, Probeable, Score};
+use symphonia_core::probe::{ProbeFormatData, ProbeableFormat, Score, Scoreable};
 
 use symphonia_utils_xiph::flac::metadata::*;
 
@@ -46,11 +46,33 @@ pub struct FlacReader<'s> {
 }
 
 impl<'s> FlacReader<'s> {
+    pub fn try_new(mut mss: MediaSourceStream<'s>, opts: FormatOptions) -> Result<Self> {
+        // Read the first 4 bytes of the stream. Ideally this will be the FLAC stream marker.
+        let marker = mss.read_quad_bytes()?;
+
+        if marker != FLAC_STREAM_MARKER {
+            return unsupported_error("flac: missing flac stream marker");
+        }
+
+        // Strictly speaking, the first metadata block must be a StreamInfo block. There is
+        // no technical need for this from the reader's point of view. Additionally, if the
+        // reader is fed a stream mid-way there is no StreamInfo block. Therefore, just read
+        // all metadata blocks and handle the StreamInfo block as it comes.
+        let flac = FlacReader::init_with_metadata(mss, opts)?;
+
+        // Make sure that there is atleast one StreamInfo block.
+        if flac.tracks.is_empty() {
+            return decode_error("flac: no stream info block");
+        }
+
+        Ok(flac)
+    }
+
     /// Reads all the metadata blocks, returning a fully populated `FlacReader`.
-    fn init_with_metadata(source: MediaSourceStream<'s>, options: FormatOptions) -> Result<Self> {
+    fn init_with_metadata(mss: MediaSourceStream<'s>, opts: FormatOptions) -> Result<Self> {
         let mut metadata_builder = MetadataBuilder::new();
 
-        let mut reader = source;
+        let mut reader = mss;
         let mut tracks = Vec::new();
         let mut cues = Vec::new();
         let mut index = None;
@@ -126,7 +148,7 @@ impl<'s> FlacReader<'s> {
         }
 
         // Commit any read metadata to the metadata log.
-        let mut metadata = options.metadata.unwrap_or_default();
+        let mut metadata = opts.metadata.unwrap_or_default();
         metadata.push(metadata_builder.metadata());
 
         // Synchronize the packet parser to the first audio frame.
@@ -140,37 +162,22 @@ impl<'s> FlacReader<'s> {
     }
 }
 
-impl Probeable for FlacReader<'_> {
-    fn probe_descriptor() -> &'static [ProbeDescriptor] {
-        &[support_format!(FlacReader<'_>, FLAC_FORMAT_INFO, &["flac"], &["audio/flac"], &[b"fLaC"])]
-    }
-
+impl Scoreable for FlacReader<'_> {
     fn score(_src: ScopedStream<&mut MediaSourceStream<'_>>) -> Result<Score> {
         Ok(Score::Supported(255))
     }
 }
 
-impl<'s> BuildFormatReader<'s> for FlacReader<'s> {
-    fn try_new(mut source: MediaSourceStream<'s>, options: FormatOptions) -> Result<Self> {
-        // Read the first 4 bytes of the stream. Ideally this will be the FLAC stream marker.
-        let marker = source.read_quad_bytes()?;
+impl ProbeableFormat<'_> for FlacReader<'_> {
+    fn try_probe_new(
+        mss: MediaSourceStream<'_>,
+        opts: FormatOptions,
+    ) -> Result<Box<dyn FormatReader + '_>> {
+        Ok(Box::new(FlacReader::try_new(mss, opts)?))
+    }
 
-        if marker != FLAC_STREAM_MARKER {
-            return unsupported_error("flac: missing flac stream marker");
-        }
-
-        // Strictly speaking, the first metadata block must be a StreamInfo block. There is
-        // no technical need for this from the reader's point of view. Additionally, if the
-        // reader is fed a stream mid-way there is no StreamInfo block. Therefore, just read
-        // all metadata blocks and handle the StreamInfo block as it comes.
-        let flac = Self::init_with_metadata(source, options)?;
-
-        // Make sure that there is atleast one StreamInfo block.
-        if flac.tracks.is_empty() {
-            return decode_error("flac: no stream info block");
-        }
-
-        Ok(flac)
+    fn probe_data() -> &'static [ProbeFormatData] {
+        &[support_format!(FLAC_FORMAT_INFO, &["flac"], &["audio/flac"], &[b"fLaC"])]
     }
 }
 

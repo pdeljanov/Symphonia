@@ -12,7 +12,7 @@ use symphonia_core::errors::{decode_error, seek_error, unsupported_error, Result
 use symphonia_core::formats::{prelude::*, FORMAT_TYPE_ISOMP4};
 use symphonia_core::io::*;
 use symphonia_core::meta::{Metadata, MetadataLog};
-use symphonia_core::probe::{ProbeDescriptor, Probeable, Score};
+use symphonia_core::probe::{ProbeFormatData, ProbeableFormat, Score, Scoreable};
 use symphonia_core::units::Time;
 
 use std::io::{Seek, SeekFrom};
@@ -102,7 +102,176 @@ pub struct IsoMp4Reader<'s> {
     moov: Arc<MoovAtom>,
 }
 
-impl IsoMp4Reader<'_> {
+impl<'s> IsoMp4Reader<'s> {
+    pub fn try_new(mut mss: MediaSourceStream<'s>, opts: FormatOptions) -> Result<Self> {
+        // To get to beginning of the atom.
+        mss.seek_buffered_rel(-4);
+
+        let is_seekable = mss.is_seekable();
+
+        let mut ftyp = None;
+        let mut moov = None;
+        let mut sidx = None;
+
+        // Get the total length of the stream, if possible.
+        let total_len = if is_seekable {
+            let pos = mss.pos();
+            let len = mss.seek(SeekFrom::End(0))?;
+            mss.seek(SeekFrom::Start(pos))?;
+            info!("stream is seekable with len={} bytes.", len);
+            Some(len)
+        }
+        else {
+            None
+        };
+
+        let mut metadata = opts.metadata.unwrap_or_default();
+
+        // Parse all atoms if the stream is seekable, otherwise parse all atoms up-to the mdat atom.
+        let mut iter = AtomIterator::new_root(mss, total_len);
+
+        while let Some(header) = iter.next()? {
+            // Top-level atoms.
+            match header.atype {
+                AtomType::FileType => {
+                    ftyp = Some(iter.read_atom::<FtypAtom>()?);
+                }
+                AtomType::Movie => {
+                    moov = Some(iter.read_atom::<MoovAtom>()?);
+                }
+                AtomType::SegmentIndex => {
+                    // If the stream is not seekable, then it can only be assumed that the first
+                    // segment index atom is indeed the first segment index because the format
+                    // reader cannot practically skip past this point.
+                    if !is_seekable {
+                        sidx = Some(iter.read_atom::<SidxAtom>()?);
+                        break;
+                    }
+                    else {
+                        // If the stream is seekable, examine all segment indexes and select the
+                        // index with the earliest presentation timestamp to be the first.
+                        let new_sidx = iter.read_atom::<SidxAtom>()?;
+
+                        let is_earlier = match &sidx {
+                            Some(sidx) => new_sidx.earliest_pts < sidx.earliest_pts,
+                            _ => true,
+                        };
+
+                        if is_earlier {
+                            sidx = Some(new_sidx);
+                        }
+                    }
+                }
+                AtomType::MediaData | AtomType::MovieFragment => {
+                    // The mdat atom contains the codec bitstream data. For segmented streams, a
+                    // moof + mdat pair is required for playback. If the source is unseekable then
+                    // the format reader cannot skip past these atoms without dropping samples.
+                    if !is_seekable {
+                        // If the moov atom hasn't been seen before the moof and/or mdat atom, and
+                        // the stream is not seekable, then the mp4 is not streamable.
+                        if moov.is_none() || ftyp.is_none() {
+                            warn!("mp4 is not streamable.");
+                        }
+
+                        // The remainder of the stream will be read incrementally.
+                        break;
+                    }
+                }
+                AtomType::Meta => {
+                    // Read the metadata atom and append it to the log.
+                    let mut meta = iter.read_atom::<MetaAtom>()?;
+
+                    if let Some(rev) = meta.take_metadata() {
+                        metadata.push(rev);
+                    }
+                }
+                AtomType::Free => (),
+                AtomType::Skip => (),
+                _ => {
+                    info!("skipping top-level atom: {:?}.", header.atype);
+                }
+            }
+        }
+
+        if ftyp.is_none() {
+            return unsupported_error("isomp4: missing ftyp atom");
+        }
+
+        if moov.is_none() {
+            return unsupported_error("isomp4: missing moov atom");
+        }
+
+        // If the stream was seekable, then all atoms in the media source stream were scanned. Seek
+        // back to the first mdat atom for playback. If the stream is not seekable, then the atom
+        // iterator is currently positioned at the first mdat atom.
+        if is_seekable {
+            let mut mss = iter.into_inner();
+            mss.seek(SeekFrom::Start(0))?;
+
+            iter = AtomIterator::new_root(mss, total_len);
+
+            while let Some(header) = iter.next_no_consume()? {
+                match header.atype {
+                    AtomType::MediaData | AtomType::MovieFragment => break,
+                    _ => (),
+                }
+                iter.consume_atom();
+            }
+        }
+
+        let mut moov = moov.unwrap();
+
+        if moov.is_fragmented() {
+            // If a Segment Index (sidx) atom was found, add the segments contained within.
+            if sidx.is_some() {
+                info!("stream is segmented with a segment index.");
+            }
+            else {
+                info!("stream is segmented without a segment index.");
+            }
+        }
+
+        if let Some(rev) = moov.take_metadata() {
+            metadata.push(rev);
+        }
+
+        // Instantiate a TrackState for each track in the stream.
+        let track_states = moov
+            .traks
+            .iter()
+            .enumerate()
+            .map(|(t, trak)| TrackState::new(t, trak))
+            .collect::<Vec<TrackState>>();
+
+        // Instantiate a Tracks for all tracks above.
+        let tracks = track_states
+            .iter()
+            .map(|track| Track::new(track.track_num as u32, track.codec_params()))
+            .collect();
+
+        // The number of tracks specified in the moov atom must match the number in the mvex atom.
+        if let Some(mvex) = &moov.mvex {
+            if mvex.trexs.len() != moov.traks.len() {
+                return decode_error("isomp4: mvex and moov track number mismatch");
+            }
+        }
+
+        // The moov atom will be shared among all segments and the demuxer using an Arc.
+        let moov = Arc::new(moov);
+
+        let segs: Vec<Box<dyn StreamSegment>> = vec![Box::new(MoovSegment::new(moov.clone()))];
+
+        Ok(IsoMp4Reader {
+            iter,
+            tracks,
+            cues: Default::default(),
+            metadata,
+            track_states,
+            segs,
+            moov,
+        })
+    }
+
     /// Idempotently gets information regarding the next sample of the media stream. This function
     /// selects the next sample with the lowest timestamp of all tracks.
     fn next_sample_info(&self) -> Result<Option<NextSampleInfo>> {
@@ -320,190 +489,27 @@ impl IsoMp4Reader<'_> {
     }
 }
 
-impl Probeable for IsoMp4Reader<'_> {
-    fn probe_descriptor() -> &'static [ProbeDescriptor] {
-        &[support_format!(
-            IsoMp4Reader<'_>,
-            ISOMP4_FORMAT_INFO,
-            &["mp4", "m4a", "m4p", "m4b", "m4r", "m4v", "mov"],
-            &["video/mp4", "audio/m4a"],
-            &[b"ftyp"] // Top-level atoms
-        )]
-    }
-
+impl Scoreable for IsoMp4Reader<'_> {
     fn score(_src: ScopedStream<&mut MediaSourceStream<'_>>) -> Result<Score> {
         Ok(Score::Supported(255))
     }
 }
 
-impl<'s> BuildFormatReader<'s> for IsoMp4Reader<'s> {
-    fn try_new(mut mss: MediaSourceStream<'s>, options: FormatOptions) -> Result<Self> {
-        // To get to beginning of the atom.
-        mss.seek_buffered_rel(-4);
+impl ProbeableFormat<'_> for IsoMp4Reader<'_> {
+    fn try_probe_new(
+        mss: MediaSourceStream<'_>,
+        opts: FormatOptions,
+    ) -> Result<Box<dyn FormatReader + '_>> {
+        Ok(Box::new(IsoMp4Reader::try_new(mss, opts)?))
+    }
 
-        let is_seekable = mss.is_seekable();
-
-        let mut ftyp = None;
-        let mut moov = None;
-        let mut sidx = None;
-
-        // Get the total length of the stream, if possible.
-        let total_len = if is_seekable {
-            let pos = mss.pos();
-            let len = mss.seek(SeekFrom::End(0))?;
-            mss.seek(SeekFrom::Start(pos))?;
-            info!("stream is seekable with len={} bytes.", len);
-            Some(len)
-        }
-        else {
-            None
-        };
-
-        let mut metadata = options.metadata.unwrap_or_default();
-
-        // Parse all atoms if the stream is seekable, otherwise parse all atoms up-to the mdat atom.
-        let mut iter = AtomIterator::new_root(mss, total_len);
-
-        while let Some(header) = iter.next()? {
-            // Top-level atoms.
-            match header.atype {
-                AtomType::FileType => {
-                    ftyp = Some(iter.read_atom::<FtypAtom>()?);
-                }
-                AtomType::Movie => {
-                    moov = Some(iter.read_atom::<MoovAtom>()?);
-                }
-                AtomType::SegmentIndex => {
-                    // If the stream is not seekable, then it can only be assumed that the first
-                    // segment index atom is indeed the first segment index because the format
-                    // reader cannot practically skip past this point.
-                    if !is_seekable {
-                        sidx = Some(iter.read_atom::<SidxAtom>()?);
-                        break;
-                    }
-                    else {
-                        // If the stream is seekable, examine all segment indexes and select the
-                        // index with the earliest presentation timestamp to be the first.
-                        let new_sidx = iter.read_atom::<SidxAtom>()?;
-
-                        let is_earlier = match &sidx {
-                            Some(sidx) => new_sidx.earliest_pts < sidx.earliest_pts,
-                            _ => true,
-                        };
-
-                        if is_earlier {
-                            sidx = Some(new_sidx);
-                        }
-                    }
-                }
-                AtomType::MediaData | AtomType::MovieFragment => {
-                    // The mdat atom contains the codec bitstream data. For segmented streams, a
-                    // moof + mdat pair is required for playback. If the source is unseekable then
-                    // the format reader cannot skip past these atoms without dropping samples.
-                    if !is_seekable {
-                        // If the moov atom hasn't been seen before the moof and/or mdat atom, and
-                        // the stream is not seekable, then the mp4 is not streamable.
-                        if moov.is_none() || ftyp.is_none() {
-                            warn!("mp4 is not streamable.");
-                        }
-
-                        // The remainder of the stream will be read incrementally.
-                        break;
-                    }
-                }
-                AtomType::Meta => {
-                    // Read the metadata atom and append it to the log.
-                    let mut meta = iter.read_atom::<MetaAtom>()?;
-
-                    if let Some(rev) = meta.take_metadata() {
-                        metadata.push(rev);
-                    }
-                }
-                AtomType::Free => (),
-                AtomType::Skip => (),
-                _ => {
-                    info!("skipping top-level atom: {:?}.", header.atype);
-                }
-            }
-        }
-
-        if ftyp.is_none() {
-            return unsupported_error("isomp4: missing ftyp atom");
-        }
-
-        if moov.is_none() {
-            return unsupported_error("isomp4: missing moov atom");
-        }
-
-        // If the stream was seekable, then all atoms in the media source stream were scanned. Seek
-        // back to the first mdat atom for playback. If the stream is not seekable, then the atom
-        // iterator is currently positioned at the first mdat atom.
-        if is_seekable {
-            let mut mss = iter.into_inner();
-            mss.seek(SeekFrom::Start(0))?;
-
-            iter = AtomIterator::new_root(mss, total_len);
-
-            while let Some(header) = iter.next_no_consume()? {
-                match header.atype {
-                    AtomType::MediaData | AtomType::MovieFragment => break,
-                    _ => (),
-                }
-                iter.consume_atom();
-            }
-        }
-
-        let mut moov = moov.unwrap();
-
-        if moov.is_fragmented() {
-            // If a Segment Index (sidx) atom was found, add the segments contained within.
-            if sidx.is_some() {
-                info!("stream is segmented with a segment index.");
-            }
-            else {
-                info!("stream is segmented without a segment index.");
-            }
-        }
-
-        if let Some(rev) = moov.take_metadata() {
-            metadata.push(rev);
-        }
-
-        // Instantiate a TrackState for each track in the stream.
-        let track_states = moov
-            .traks
-            .iter()
-            .enumerate()
-            .map(|(t, trak)| TrackState::new(t, trak))
-            .collect::<Vec<TrackState>>();
-
-        // Instantiate a Tracks for all tracks above.
-        let tracks = track_states
-            .iter()
-            .map(|track| Track::new(track.track_num as u32, track.codec_params()))
-            .collect();
-
-        // The number of tracks specified in the moov atom must match the number in the mvex atom.
-        if let Some(mvex) = &moov.mvex {
-            if mvex.trexs.len() != moov.traks.len() {
-                return decode_error("isomp4: mvex and moov track number mismatch");
-            }
-        }
-
-        // The moov atom will be shared among all segments and the demuxer using an Arc.
-        let moov = Arc::new(moov);
-
-        let segs: Vec<Box<dyn StreamSegment>> = vec![Box::new(MoovSegment::new(moov.clone()))];
-
-        Ok(IsoMp4Reader {
-            iter,
-            tracks,
-            cues: Default::default(),
-            metadata,
-            track_states,
-            segs,
-            moov,
-        })
+    fn probe_data() -> &'static [ProbeFormatData] {
+        &[support_format!(
+            ISOMP4_FORMAT_INFO,
+            &["mp4", "m4a", "m4p", "m4b", "m4r", "m4v", "mov"],
+            &["video/mp4", "audio/m4a"],
+            &[b"ftyp"] // Top-level atoms
+        )]
     }
 }
 
