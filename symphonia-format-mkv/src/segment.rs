@@ -328,7 +328,7 @@ impl Element for InfoElement {
 
 impl InfoElement {
     pub fn copy_metadata_into(&self, metadata_log: &mut MetadataLog) {
-        match self.title.clone() {
+        match &self.title {
             Some(title) => {
                 let mut metadata = MetadataBuilder::new();
                 metadata.add_tag(Tag::new(Some(TrackTitle), "TITLE", Value::String(title.to_string())));
