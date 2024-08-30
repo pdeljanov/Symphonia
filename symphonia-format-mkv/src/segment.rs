@@ -13,6 +13,8 @@ use crate::ebml::{read_unsigned_vint, Element, ElementData, ElementHeader};
 use crate::element_ids::ElementType;
 use crate::lacing::calc_abs_block_timestamp;
 
+use symphonia_core::meta::StandardTagKey::TrackTitle;
+
 #[allow(dead_code)]
 #[derive(Debug)]
 pub(crate) struct TrackElement {
@@ -329,7 +331,7 @@ impl InfoElement {
         match self.title.clone() {
             Some(title) => {
                 let mut metadata = MetadataBuilder::new();
-                metadata.add_tag(Tag::new(None, "TITLE", Value::String(title.to_string())));
+                metadata.add_tag(Tag::new(Some(TrackTitle), "TITLE", Value::String(title.to_string())));
                 metadata_log.push(metadata.metadata());
             }
             None => return,
