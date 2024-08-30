@@ -7,13 +7,13 @@
 
 use symphonia_core::errors::{Error, Result};
 use symphonia_core::io::{BufReader, ReadBytes};
-use symphonia_core::meta::{MetadataBuilder, MetadataLog, MetadataRevision, Tag, Value};
+use symphonia_core::meta::{
+    MetadataBuilder, MetadataLog, MetadataRevision, StandardTagKey, Tag, Value,
+};
 
 use crate::ebml::{read_unsigned_vint, Element, ElementData, ElementHeader};
 use crate::element_ids::ElementType;
 use crate::lacing::calc_abs_block_timestamp;
-
-use symphonia_core::meta::StandardTagKey::TrackTitle;
 
 #[allow(dead_code)]
 #[derive(Debug)]
@@ -331,7 +331,11 @@ impl InfoElement {
         match &self.title {
             Some(title) => {
                 let mut metadata = MetadataBuilder::new();
-                metadata.add_tag(Tag::new(Some(TrackTitle), "TITLE", Value::String(title.to_string())));
+                metadata.add_tag(Tag::new(
+                    Some(StandardTagKey::TrackTitle),
+                    "TITLE",
+                    Value::String(title.to_string()),
+                ));
                 metadata_log.push(metadata.metadata());
             }
             None => return,
