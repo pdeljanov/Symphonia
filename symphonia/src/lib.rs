@@ -35,7 +35,7 @@
 //!
 //! \* Gapless playback requires support from both the demuxer and decoder.
 //!
-//! **Tip:** All formats can be enabled with the `all-codecs` feature flag.
+//! **Tip:** All formats can be enabled with the `all-formats` feature flag.
 //!
 //! ## Codecs
 //!
