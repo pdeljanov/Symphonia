@@ -9,13 +9,7 @@ use std::collections::{HashMap, VecDeque};
 use std::convert::TryFrom;
 use std::io::{Seek, SeekFrom};
 
-use symphonia_core::audio::sample::SampleFormat;
-use symphonia_core::codecs::audio::well_known::{CODEC_ID_FLAC, CODEC_ID_VORBIS};
-use symphonia_core::codecs::audio::AudioCodecParameters;
-use symphonia_core::codecs::CodecParameters;
-use symphonia_core::errors::{
-    decode_error, seek_error, unsupported_error, Error, Result, SeekErrorKind,
-};
+use symphonia_core::errors::{seek_error, unsupported_error, Error, Result, SeekErrorKind};
 use symphonia_core::formats::prelude::*;
 use symphonia_core::formats::probe::{ProbeFormatData, ProbeableFormat, Score, Scoreable};
 use symphonia_core::formats::well_known::FORMAT_ID_MKV;
@@ -23,14 +17,13 @@ use symphonia_core::io::*;
 use symphonia_core::meta::{Metadata, MetadataLog};
 use symphonia_core::support_format;
 use symphonia_core::units::TimeBase;
-use symphonia_utils_xiph::flac::metadata::{MetadataBlockHeader, MetadataBlockType};
 
 use log::warn;
 
-use crate::codecs::codec_id_to_type;
+use crate::codecs::make_track_codec_params;
 use crate::ebml::{EbmlElement, ElementHeader, ElementIterator};
 use crate::element_ids::{ElementType, ELEMENTS};
-use crate::lacing::{extract_frames, read_xiph_sizes, Frame};
+use crate::lacing::{extract_frames, Frame};
 use crate::segment::{
     BlockGroupElement, ClusterElement, CuesElement, InfoElement, SeekHeadElement, TagsElement,
     TracksElement,
@@ -67,76 +60,6 @@ pub struct MkvReader<'s> {
 struct ClusterState {
     timestamp: Option<u64>,
     end: Option<u64>,
-}
-
-fn vorbis_extra_data_from_codec_private(extra: &[u8]) -> Result<Box<[u8]>> {
-    const VORBIS_PACKET_TYPE_IDENTIFICATION: u8 = 1;
-    const VORBIS_PACKET_TYPE_SETUP: u8 = 5;
-
-    // Private Data for this codec has the following layout:
-    // - 1 byte that represents number of packets minus one;
-    // - Xiph coded lengths of packets, length of the last packet must be deduced (as in Xiph lacing)
-    // - packets in order:
-    //    - The Vorbis identification header
-    //    - Vorbis comment header
-    //    - codec setup header
-
-    let mut reader = BufReader::new(extra);
-    let packet_count = reader.read_byte()? as usize;
-    let packet_lengths = read_xiph_sizes(&mut reader, packet_count)?;
-
-    let mut packets = Vec::new();
-    for length in packet_lengths {
-        packets.push(reader.read_boxed_slice_exact(length as usize)?);
-    }
-
-    let last_packet_length = extra.len() - reader.pos() as usize;
-    packets.push(reader.read_boxed_slice_exact(last_packet_length)?);
-
-    let mut ident_header = None;
-    let mut setup_header = None;
-
-    for packet in packets {
-        match packet.first().copied() {
-            Some(VORBIS_PACKET_TYPE_IDENTIFICATION) => {
-                ident_header = Some(packet);
-            }
-            Some(VORBIS_PACKET_TYPE_SETUP) => {
-                setup_header = Some(packet);
-            }
-            _ => {
-                log::debug!("unsupported vorbis packet type");
-            }
-        }
-    }
-
-    // This is layout expected currently by Vorbis codec.
-    Ok([
-        ident_header.ok_or(Error::DecodeError("mkv: missing vorbis identification packet"))?,
-        setup_header.ok_or(Error::DecodeError("mkv: missing vorbis setup packet"))?,
-    ]
-    .concat()
-    .into_boxed_slice())
-}
-
-fn flac_extra_data_from_codec_private(codec_private: &[u8]) -> Result<Box<[u8]>> {
-    let mut reader = BufReader::new(codec_private);
-
-    let marker = reader.read_quad_bytes()?;
-    if marker != *b"fLaC" {
-        return decode_error("mkv (flac): missing flac stream marker");
-    }
-
-    let header = MetadataBlockHeader::read(&mut reader)?;
-
-    loop {
-        match header.block_type {
-            MetadataBlockType::StreamInfo => {
-                break Ok(reader.read_boxed_slice_exact(header.block_len as usize)?);
-            }
-            _ => reader.ignore_bytes(u64::from(header.block_len))?,
-        }
-    }
 }
 
 impl<'s> MkvReader<'s> {
@@ -276,11 +199,16 @@ impl<'s> MkvReader<'s> {
 
         let mut tracks = Vec::new();
         let mut states = HashMap::new();
+
         for track in segment_tracks.tracks {
-            let codec_id = codec_id_to_type(&track);
+            // Create the track state.
+            let state = TrackState {
+                track_num: track.number as u32,
+                default_frame_duration: track.default_duration,
+            };
 
             // Create the track.
-            let mut tr = Track::new(track.number as u32);
+            let mut tr = Track::new(state.track_num);
 
             tr.with_time_base(time_base);
 
@@ -288,58 +216,16 @@ impl<'s> MkvReader<'s> {
                 tr.with_num_frames(duration as u64);
             }
 
-            if let Some(language) = track.language {
-                tr.with_language(&language);
+            if let Some(language) = &track.language {
+                tr.with_language(language);
             }
 
-            if let Some(audio) = track.audio {
-                let mut codec_params = AudioCodecParameters::new();
-
-                codec_params.with_sample_rate(audio.sampling_frequency.round() as u32);
-
-                let format = audio.bit_depth.and_then(|bits| match bits {
-                    8 => Some(SampleFormat::S8),
-                    16 => Some(SampleFormat::S16),
-                    24 => Some(SampleFormat::S24),
-                    32 => Some(SampleFormat::S32),
-                    _ => None,
-                });
-
-                if let Some(format) = format {
-                    codec_params.with_sample_format(format);
-                }
-
-                if let Some(bits) = audio.bit_depth {
-                    codec_params.with_bits_per_sample(bits as u32);
-                }
-
-                if let Some(codec_id) = codec_id {
-                    codec_params.for_codec(codec_id);
-                    if let Some(codec_private) = track.codec_private {
-                        let extra_data = match codec_id {
-                            CODEC_ID_VORBIS => {
-                                vorbis_extra_data_from_codec_private(&codec_private)?
-                            }
-                            CODEC_ID_FLAC => flac_extra_data_from_codec_private(&codec_private)?,
-                            _ => codec_private,
-                        };
-                        codec_params.with_extra_data(extra_data);
-                    }
-                }
-
-                // Add the codec parameters.
-                tr.with_codec_params(CodecParameters::Audio(codec_params));
+            if let Some(codec_params) = make_track_codec_params(track)? {
+                tr.with_codec_params(codec_params);
             }
 
             tracks.push(tr);
-
-            states.insert(
-                track.number as u32,
-                TrackState {
-                    track_num: track.number as u32,
-                    default_frame_duration: track.default_duration,
-                },
-            );
+            states.insert(state.track_num, state);
         }
 
         Ok(Self {

@@ -22,6 +22,7 @@ pub(crate) struct TrackElement {
     pub(crate) codec_id: String,
     pub(crate) codec_private: Option<Box<[u8]>>,
     pub(crate) audio: Option<AudioElement>,
+    pub(crate) video: Option<VideoElement>,
     pub(crate) default_duration: Option<u64>,
 }
 
@@ -33,6 +34,7 @@ impl Element for TrackElement {
         let mut uid = None;
         let mut language = None;
         let mut audio = None;
+        let mut video = None;
         let mut codec_private = None;
         let mut codec_id = None;
         let mut default_duration = None;
@@ -58,6 +60,9 @@ impl Element for TrackElement {
                 ElementType::Audio => {
                     audio = Some(it.read_element_data()?);
                 }
+                ElementType::Video => {
+                    video = Some(it.read_element_data()?);
+                }
                 ElementType::DefaultDuration => {
                     default_duration = Some(it.read_u64()?);
                 }
@@ -74,6 +79,7 @@ impl Element for TrackElement {
             codec_id: codec_id.ok_or(Error::DecodeError("mkv: missing codec id"))?,
             codec_private,
             audio,
+            video,
             default_duration,
         })
     }
@@ -124,6 +130,39 @@ impl Element for AudioElement {
             channels: channels.unwrap_or(1),
             bit_depth,
         })
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Debug)]
+pub(crate) struct VideoElement {
+    pub(crate) pixel_width: u16,
+    pub(crate) pixel_height: u16,
+}
+
+impl Element for VideoElement {
+    const ID: ElementType = ElementType::Video;
+
+    fn read<B: ReadBytes>(reader: &mut B, header: ElementHeader) -> Result<Self> {
+        let mut pixel_width = None;
+        let mut pixel_height = None;
+
+        let mut it = header.children(reader);
+        while let Some(header) = it.read_header()? {
+            match header.etype {
+                ElementType::PixelWidth => {
+                    pixel_width = Some(it.read_u64()? as u16);
+                }
+                ElementType::PixelHeight => {
+                    pixel_height = Some(it.read_u64()? as u16);
+                }
+                other => {
+                    log::debug!("ignored element {:?}", other);
+                }
+            }
+        }
+
+        Ok(Self { pixel_width: pixel_width.unwrap_or(0), pixel_height: pixel_height.unwrap_or(0) })
     }
 }
 
