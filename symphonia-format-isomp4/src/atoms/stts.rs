@@ -17,10 +17,9 @@ pub struct SampleDurationEntry {
 }
 
 /// Time-to-sample atom.
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct SttsAtom {
-    /// Atom header.
-    header: AtomHeader,
     pub entries: Vec<SampleDurationEntry>,
     pub total_duration: u64,
 }
@@ -76,12 +75,8 @@ impl SttsAtom {
 }
 
 impl Atom for SttsAtom {
-    fn header(&self) -> AtomHeader {
-        self.header
-    }
-
-    fn read<B: ReadBytes>(reader: &mut B, header: AtomHeader) -> Result<Self> {
-        let (_, _) = AtomHeader::read_extra(reader)?;
+    fn read<B: ReadBytes>(reader: &mut B, mut header: AtomHeader) -> Result<Self> {
+        let (_, _) = header.read_extended_header(reader)?;
 
         let entry_count = reader.read_be_u32()?;
 
@@ -99,6 +94,6 @@ impl Atom for SttsAtom {
             entries.push(SampleDurationEntry { sample_count, sample_delta });
         }
 
-        Ok(SttsAtom { header, entries, total_duration })
+        Ok(SttsAtom { entries, total_duration })
     }
 }

@@ -10,17 +10,11 @@ use symphonia_core::io::ReadBytes;
 
 use crate::atoms::{Atom, AtomHeader};
 
+#[allow(dead_code)]
 #[derive(Debug)]
-pub struct StssAtom {
-    /// Atom header.
-    header: AtomHeader,
-}
+pub struct StssAtom {}
 
 impl Atom for StssAtom {
-    fn header(&self) -> AtomHeader {
-        self.header
-    }
-
     fn read<B: ReadBytes>(_reader: &mut B, _header: AtomHeader) -> Result<Self> {
         todo!()
     }

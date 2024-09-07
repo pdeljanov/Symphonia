@@ -5,7 +5,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::errors::{decode_error, Result};
+use symphonia_core::errors::{decode_error, Error, Result};
 use symphonia_core::io::ReadBytes;
 
 use crate::atoms::{Atom, AtomHeader};
@@ -16,6 +16,7 @@ pub enum ReferenceType {
     Media,
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct SidxReference {
     pub reference_type: ReferenceType,
@@ -27,10 +28,9 @@ pub struct SidxReference {
 }
 
 /// Segment index atom.
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct SidxAtom {
-    /// Atom header.
-    header: AtomHeader,
     pub reference_id: u32,
     pub timescale: u32,
     pub earliest_pts: u64,
@@ -39,18 +39,17 @@ pub struct SidxAtom {
 }
 
 impl Atom for SidxAtom {
-    fn header(&self) -> AtomHeader {
-        self.header
-    }
-
-    fn read<B: ReadBytes>(reader: &mut B, header: AtomHeader) -> Result<Self> {
-        // The anchor point for segment offsets is the first byte after this atom.
-        let anchor = reader.pos() + header.data_len;
-
-        let (version, _) = AtomHeader::read_extra(reader)?;
+    fn read<B: ReadBytes>(reader: &mut B, mut header: AtomHeader) -> Result<Self> {
+        let (version, _) = header.read_extended_header(reader)?;
 
         let reference_id = reader.read_be_u32()?;
         let timescale = reader.read_be_u32()?;
+
+        // The anchor point for segment offsets is the first byte after this atom.
+        let anchor = header
+            .atom_len()
+            .map(|atom_len| header.atom_pos() + atom_len.get())
+            .ok_or_else(|| Error::DecodeError("isomp4 (sidx): expected atom size to be known"))?;
 
         let (earliest_pts, first_offset) = match version {
             0 => (u64::from(reader.read_be_u32()?), anchor + u64::from(reader.read_be_u32()?)),
@@ -82,6 +81,6 @@ impl Atom for SidxAtom {
             references.push(SidxReference { reference_type, reference_size, subsegment_duration });
         }
 
-        Ok(SidxAtom { header, reference_id, timescale, earliest_pts, first_offset, references })
+        Ok(SidxAtom { reference_id, timescale, earliest_pts, first_offset, references })
     }
 }

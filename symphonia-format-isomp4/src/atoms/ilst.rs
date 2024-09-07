@@ -5,7 +5,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::errors::{decode_error, Result};
+use symphonia_core::errors::{decode_error, Error, Result};
 use symphonia_core::io::{BufReader, ReadBytes};
 use symphonia_core::meta::{
     MetadataBuilder, MetadataRevision, StandardTagKey, StandardVisualKey, Tag,
@@ -49,6 +49,7 @@ pub enum DataType {
     Utf16Sort,
     Utf8,
     Utf8Sort,
+    #[allow(dead_code)]
     Unknown(u32),
 }
 
@@ -472,9 +473,8 @@ fn add_freeform_tag<B: ReadBytes>(
 }
 
 /// Metadata tag data atom.
+#[allow(dead_code)]
 pub struct MetaTagDataAtom {
-    /// Atom header.
-    header: AtomHeader,
     /// Tag data.
     pub data: Box<[u8]>,
     /// The data type contained in buf.
@@ -482,12 +482,8 @@ pub struct MetaTagDataAtom {
 }
 
 impl Atom for MetaTagDataAtom {
-    fn header(&self) -> AtomHeader {
-        self.header
-    }
-
-    fn read<B: ReadBytes>(reader: &mut B, header: AtomHeader) -> Result<Self> {
-        let (version, flags) = AtomHeader::read_extra(reader)?;
+    fn read<B: ReadBytes>(reader: &mut B, mut header: AtomHeader) -> Result<Self> {
+        let (version, flags) = header.read_extended_header(reader)?;
 
         // For the mov brand, this a data type indicator and must always be 0 (well-known type). It
         // specifies the table in which the next 24-bit integer specifying the actual data type
@@ -506,43 +502,45 @@ impl Atom for MetaTagDataAtom {
 
         // The data payload is the remainder of the atom.
         // TODO: Apply a limit.
-        let data = reader
-            .read_boxed_slice_exact((header.data_len - AtomHeader::EXTRA_DATA_SIZE - 4) as usize)?;
+        let data = {
+            let size = header.data_unread_at(reader.pos()).ok_or_else(|| {
+                Error::DecodeError("isomp4 (ilst): expected atom size to be known")
+            })?;
 
-        Ok(MetaTagDataAtom { header, data, data_type })
+            reader.read_boxed_slice_exact(size as usize)?
+        };
+
+        Ok(MetaTagDataAtom { data, data_type })
     }
 }
 
 /// Metadata tag name and mean atom.
+#[allow(dead_code)]
 pub struct MetaTagNamespaceAtom {
-    /// Atom header.
-    header: AtomHeader,
     /// For 'mean' atoms, this is the key namespace. For 'name' atom, this is the key name.
     pub value: String,
 }
 
 impl Atom for MetaTagNamespaceAtom {
-    fn header(&self) -> AtomHeader {
-        self.header
-    }
+    fn read<B: ReadBytes>(reader: &mut B, mut header: AtomHeader) -> Result<Self> {
+        let (_, _) = header.read_extended_header(reader)?;
 
-    fn read<B: ReadBytes>(reader: &mut B, header: AtomHeader) -> Result<Self> {
-        let (_, _) = AtomHeader::read_extra(reader)?;
+        let size = header
+            .data_len()
+            .ok_or_else(|| Error::DecodeError("isomp4 (ilst): expected atom size to be known"))?;
 
-        let buf = reader
-            .read_boxed_slice_exact((header.data_len - AtomHeader::EXTRA_DATA_SIZE) as usize)?;
+        let buf = reader.read_boxed_slice_exact(size as usize)?;
 
         // Do a lossy conversion because metadata should not prevent the demuxer from working.
         let value = String::from_utf8_lossy(&buf).to_string();
 
-        Ok(MetaTagNamespaceAtom { header, value })
+        Ok(MetaTagNamespaceAtom { value })
     }
 }
 
 /// A generic metadata tag atom.
+#[allow(dead_code)]
 pub struct MetaTagAtom {
-    /// Atom header.
-    header: AtomHeader,
     /// Tag value(s).
     pub values: Vec<MetaTagDataAtom>,
     /// Optional, tag key namespace.
@@ -574,10 +572,6 @@ impl MetaTagAtom {
 }
 
 impl Atom for MetaTagAtom {
-    fn header(&self) -> AtomHeader {
-        self.header
-    }
-
     fn read<B: ReadBytes>(reader: &mut B, header: AtomHeader) -> Result<Self> {
         let mut iter = AtomIterator::new(reader, header);
 
@@ -586,7 +580,7 @@ impl Atom for MetaTagAtom {
         let mut values = Vec::new();
 
         while let Some(header) = iter.next()? {
-            match header.atype {
+            match header.atom_type {
                 AtomType::MetaTagData => {
                     values.push(iter.read_atom::<MetaTagDataAtom>()?);
                 }
@@ -600,23 +594,18 @@ impl Atom for MetaTagAtom {
             }
         }
 
-        Ok(MetaTagAtom { header, values, mean, name })
+        Ok(MetaTagAtom { values, mean, name })
     }
 }
 
 /// User data atom.
+#[allow(dead_code)]
 pub struct IlstAtom {
-    /// Atom header.
-    header: AtomHeader,
     /// Metadata revision.
     pub metadata: MetadataRevision,
 }
 
 impl Atom for IlstAtom {
-    fn header(&self) -> AtomHeader {
-        self.header
-    }
-
     fn read<B: ReadBytes>(reader: &mut B, header: AtomHeader) -> Result<Self> {
         let mut iter = AtomIterator::new(reader, header);
 
@@ -624,7 +613,7 @@ impl Atom for IlstAtom {
 
         while let Some(header) = iter.next()? {
             // Ignore standard atoms, check if other is a metadata atom.
-            match &header.atype {
+            match &header.atom_type {
                 AtomType::AdvisoryTag => add_advisory_tag(&mut iter, &mut mb)?,
                 AtomType::AlbumArtistTag => {
                     add_generic_tag(&mut iter, &mut mb, Some(StandardTagKey::AlbumArtist))?
@@ -757,6 +746,6 @@ impl Atom for IlstAtom {
             }
         }
 
-        Ok(IlstAtom { header, metadata: mb.metadata() })
+        Ok(IlstAtom { metadata: mb.metadata() })
     }
 }

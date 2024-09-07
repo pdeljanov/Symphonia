@@ -11,10 +11,9 @@ use symphonia_core::io::ReadBytes;
 use crate::atoms::{Atom, AtomHeader, AtomIterator, AtomType, EdtsAtom, MdiaAtom, TkhdAtom};
 
 /// Track atom.
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct TrakAtom {
-    /// Atom header.
-    header: AtomHeader,
     /// Track header atom.
     pub tkhd: TkhdAtom,
     /// Optional, edit list atom.
@@ -24,10 +23,6 @@ pub struct TrakAtom {
 }
 
 impl Atom for TrakAtom {
-    fn header(&self) -> AtomHeader {
-        self.header
-    }
-
     fn read<B: ReadBytes>(reader: &mut B, header: AtomHeader) -> Result<Self> {
         let mut iter = AtomIterator::new(reader, header);
 
@@ -36,7 +31,7 @@ impl Atom for TrakAtom {
         let mut mdia = None;
 
         while let Some(header) = iter.next()? {
-            match header.atype {
+            match header.atom_type {
                 AtomType::TrackHeader => {
                     tkhd = Some(iter.read_atom::<TkhdAtom>()?);
                 }
@@ -58,6 +53,6 @@ impl Atom for TrakAtom {
             return decode_error("isomp4: missing mdia atom");
         }
 
-        Ok(TrakAtom { header, tkhd: tkhd.unwrap(), edts, mdia: mdia.unwrap() })
+        Ok(TrakAtom { tkhd: tkhd.unwrap(), edts, mdia: mdia.unwrap() })
     }
 }

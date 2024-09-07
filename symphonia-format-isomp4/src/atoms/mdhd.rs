@@ -27,10 +27,9 @@ fn parse_language(code: u16) -> String {
 }
 
 /// Media header atom.
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct MdhdAtom {
-    /// Atom header.
-    header: AtomHeader,
     /// Creation time.
     pub ctime: u64,
     /// Modification time.
@@ -44,21 +43,11 @@ pub struct MdhdAtom {
 }
 
 impl Atom for MdhdAtom {
-    fn header(&self) -> AtomHeader {
-        self.header
-    }
+    fn read<B: ReadBytes>(reader: &mut B, mut header: AtomHeader) -> Result<Self> {
+        let (version, _) = header.read_extended_header(reader)?;
 
-    fn read<B: ReadBytes>(reader: &mut B, header: AtomHeader) -> Result<Self> {
-        let (version, _) = AtomHeader::read_extra(reader)?;
-
-        let mut mdhd = MdhdAtom {
-            header,
-            ctime: 0,
-            mtime: 0,
-            timescale: 0,
-            duration: 0,
-            language: String::new(),
-        };
+        let mut mdhd =
+            MdhdAtom { ctime: 0, mtime: 0, timescale: 0, duration: 0, language: String::new() };
 
         match version {
             0 => {

@@ -16,10 +16,9 @@ use crate::atoms::{
 use log::warn;
 
 /// Movie atom.
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct MoovAtom {
-    /// Atom header.
-    header: AtomHeader,
     /// Movie header atom.
     pub mvhd: MvhdAtom,
     /// Trak atoms.
@@ -43,10 +42,6 @@ impl MoovAtom {
 }
 
 impl Atom for MoovAtom {
-    fn header(&self) -> AtomHeader {
-        self.header
-    }
-
     fn read<B: ReadBytes>(reader: &mut B, header: AtomHeader) -> Result<Self> {
         let mut iter = AtomIterator::new(reader, header);
 
@@ -56,7 +51,7 @@ impl Atom for MoovAtom {
         let mut udta = None;
 
         while let Some(header) = iter.next()? {
-            match header.atype {
+            match header.atom_type {
                 AtomType::MovieHeader => {
                     mvhd = Some(iter.read_atom::<MvhdAtom>()?);
                 }
@@ -90,6 +85,6 @@ impl Atom for MoovAtom {
             }
         }
 
-        Ok(MoovAtom { header, mvhd: mvhd.unwrap(), traks, mvex, udta })
+        Ok(MoovAtom { mvhd: mvhd.unwrap(), traks, mvex, udta })
     }
 }

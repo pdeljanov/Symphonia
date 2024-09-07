@@ -14,10 +14,9 @@ use crate::atoms::{Co64Atom, StcoAtom, StscAtom, StsdAtom, StszAtom, SttsAtom};
 use log::warn;
 
 /// Sample table atom.
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct StblAtom {
-    /// Atom header.
-    header: AtomHeader,
     pub stsd: StsdAtom,
     pub stts: SttsAtom,
     pub stsc: StscAtom,
@@ -27,10 +26,6 @@ pub struct StblAtom {
 }
 
 impl Atom for StblAtom {
-    fn header(&self) -> AtomHeader {
-        self.header
-    }
-
     fn read<B: ReadBytes>(reader: &mut B, header: AtomHeader) -> Result<Self> {
         let mut iter = AtomIterator::new(reader, header);
 
@@ -42,7 +37,7 @@ impl Atom for StblAtom {
         let mut co64 = None;
 
         while let Some(header) = iter.next()? {
-            match header.atype {
+            match header.atom_type {
                 AtomType::SampleDescription => {
                     stsd = Some(iter.read_atom::<StsdAtom>()?);
                 }
@@ -95,7 +90,6 @@ impl Atom for StblAtom {
         }
 
         Ok(StblAtom {
-            header,
             stsd: stsd.unwrap(),
             stts: stts.unwrap(),
             stsc: stsc.unwrap(),

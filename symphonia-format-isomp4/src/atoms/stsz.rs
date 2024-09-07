@@ -17,10 +17,9 @@ pub enum SampleSize {
 }
 
 /// Sample Size Atom
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct StszAtom {
-    /// Atom header.
-    header: AtomHeader,
     /// The total number of samples.
     pub sample_count: u32,
     /// A vector of `sample_count` sample sizes, or a constant size for all samples.
@@ -28,12 +27,8 @@ pub struct StszAtom {
 }
 
 impl Atom for StszAtom {
-    fn header(&self) -> AtomHeader {
-        self.header
-    }
-
-    fn read<B: ReadBytes>(reader: &mut B, header: AtomHeader) -> Result<Self> {
-        let (_, _) = AtomHeader::read_extra(reader)?;
+    fn read<B: ReadBytes>(reader: &mut B, mut header: AtomHeader) -> Result<Self> {
+        let (_, _) = header.read_extended_header(reader)?;
 
         let sample_size = reader.read_be_u32()?;
         let sample_count = reader.read_be_u32()?;
@@ -52,6 +47,6 @@ impl Atom for StszAtom {
             SampleSize::Constant(sample_size)
         };
 
-        Ok(StszAtom { header, sample_count, sample_sizes })
+        Ok(StszAtom { sample_count, sample_sizes })
     }
 }

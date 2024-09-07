@@ -12,10 +12,9 @@ use crate::atoms::{Atom, AtomHeader};
 use crate::fp::FpU8;
 
 /// Movie header atom.
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct MvhdAtom {
-    /// Atom header.
-    pub header: AtomHeader,
     /// The creation time.
     pub ctime: u64,
     /// The modification time.
@@ -32,21 +31,11 @@ pub struct MvhdAtom {
 }
 
 impl Atom for MvhdAtom {
-    fn header(&self) -> AtomHeader {
-        self.header
-    }
+    fn read<B: ReadBytes>(reader: &mut B, mut header: AtomHeader) -> Result<Self> {
+        let (version, _) = header.read_extended_header(reader)?;
 
-    fn read<B: ReadBytes>(reader: &mut B, header: AtomHeader) -> Result<Self> {
-        let (version, _) = AtomHeader::read_extra(reader)?;
-
-        let mut mvhd = MvhdAtom {
-            header,
-            ctime: 0,
-            mtime: 0,
-            timescale: 0,
-            duration: 0,
-            volume: Default::default(),
-        };
+        let mut mvhd =
+            MvhdAtom { ctime: 0, mtime: 0, timescale: 0, duration: 0, volume: Default::default() };
 
         // Version 0 uses 32-bit time values, verion 1 used 64-bit values.
         match version {

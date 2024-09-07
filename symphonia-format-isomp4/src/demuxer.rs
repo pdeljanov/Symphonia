@@ -132,7 +132,7 @@ impl<'s> IsoMp4Reader<'s> {
 
         while let Some(header) = iter.next()? {
             // Top-level atoms.
-            match header.atype {
+            match header.atom_type() {
                 AtomType::FileType => {
                     ftyp = Some(iter.read_atom::<FtypAtom>()?);
                 }
@@ -188,7 +188,7 @@ impl<'s> IsoMp4Reader<'s> {
                 AtomType::Free => (),
                 AtomType::Skip => (),
                 _ => {
-                    info!("skipping top-level atom: {:?}.", header.atype);
+                    info!("skipping top-level atom: {:?}.", header.atom_type());
                 }
             }
         }
@@ -211,7 +211,7 @@ impl<'s> IsoMp4Reader<'s> {
             iter = AtomIterator::new_root(mss, total_len);
 
             while let Some(header) = iter.next_no_consume()? {
-                match header.atype {
+                match header.atom_type() {
                     AtomType::MediaData | AtomType::MovieFragment => break,
                     _ => (),
                 }
@@ -365,7 +365,7 @@ impl<'s> IsoMp4Reader<'s> {
         // Continue iterating over atoms until a segment (a moof + mdat atom pair) is found. All
         // other atoms will be ignored.
         while let Some(header) = self.iter.next_no_consume()? {
-            match header.atype {
+            match header.atom_type() {
                 AtomType::MediaData => {
                     // Consume the atom from the iterator so that on the next iteration a new atom
                     // will be read.
@@ -398,7 +398,7 @@ impl<'s> IsoMp4Reader<'s> {
                     }
                 }
                 _ => {
-                    trace!("skipping atom: {:?}.", header.atype);
+                    trace!("skipping atom: {:?}.", header.atom_type());
                     self.iter.consume_atom();
                 }
             }

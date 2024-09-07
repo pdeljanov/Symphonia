@@ -11,10 +11,9 @@ use symphonia_core::io::ReadBytes;
 use crate::atoms::{Atom, AtomHeader};
 
 /// Track fragment header atom.
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct TfhdAtom {
-    /// Atom header.
-    header: AtomHeader,
     pub track_id: u32,
     pub base_data_offset: Option<u64>,
     pub sample_desc_idx: Option<u32>,
@@ -29,12 +28,8 @@ pub struct TfhdAtom {
 }
 
 impl Atom for TfhdAtom {
-    fn header(&self) -> AtomHeader {
-        self.header
-    }
-
-    fn read<B: ReadBytes>(reader: &mut B, header: AtomHeader) -> Result<Self> {
-        let (_, flags) = AtomHeader::read_extra(reader)?;
+    fn read<B: ReadBytes>(reader: &mut B, mut header: AtomHeader) -> Result<Self> {
+        let (_, flags) = header.read_extended_header(reader)?;
 
         let track_id = reader.read_be_u32()?;
 
@@ -69,7 +64,6 @@ impl Atom for TfhdAtom {
         let default_base_is_moof = (flags & 0x1 == 0) && (flags & 0x2_0000 != 0);
 
         Ok(TfhdAtom {
-            header,
             track_id,
             base_data_offset,
             sample_desc_idx,

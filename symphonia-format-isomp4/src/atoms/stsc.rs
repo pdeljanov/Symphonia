@@ -15,14 +15,14 @@ pub struct StscEntry {
     pub first_chunk: u32,
     pub first_sample: u32,
     pub samples_per_chunk: u32,
+    #[allow(dead_code)]
     pub sample_desc_index: u32,
 }
 
 /// Sample to Chunk Atom
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct StscAtom {
-    /// Atom header.
-    header: AtomHeader,
     /// Entries.
     pub entries: Vec<StscEntry>,
 }
@@ -56,12 +56,8 @@ impl StscAtom {
 }
 
 impl Atom for StscAtom {
-    fn header(&self) -> AtomHeader {
-        self.header
-    }
-
-    fn read<B: ReadBytes>(reader: &mut B, header: AtomHeader) -> Result<Self> {
-        let (_, _) = AtomHeader::read_extra(reader)?;
+    fn read<B: ReadBytes>(reader: &mut B, mut header: AtomHeader) -> Result<Self> {
+        let (_, _) = header.read_extended_header(reader)?;
 
         let entry_count = reader.read_be_u32()?;
 
@@ -102,6 +98,6 @@ impl Atom for StscAtom {
             }
         }
 
-        Ok(StscAtom { header, entries })
+        Ok(StscAtom { entries })
     }
 }

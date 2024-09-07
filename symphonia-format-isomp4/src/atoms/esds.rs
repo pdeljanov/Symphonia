@@ -5,9 +5,10 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::codecs::audio::well_known::{CODEC_ID_AAC, CODEC_ID_MP3};
-use symphonia_core::codecs::audio::{AudioCodecId, AudioCodecParameters, CODEC_ID_NULL};
-use symphonia_core::errors::{decode_error, unsupported_error, Result};
+use symphonia_core::codecs::audio::AudioCodecParameters;
+use symphonia_core::codecs::video::VideoCodecParameters;
+use symphonia_core::codecs::CodecId;
+use symphonia_core::errors::{decode_error, unsupported_error, Error, Result};
 use symphonia_core::io::{FiniteStream, ReadBytes, ScopedStream};
 
 use crate::atoms::{Atom, AtomHeader};
@@ -37,25 +38,26 @@ fn read_descriptor_header<B: ReadBytes>(reader: &mut B) -> Result<(u8, u32)> {
     Ok((tag, size))
 }
 
+/// Elementary stream descriptor atom.
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct EsdsAtom {
-    /// Atom header.
-    header: AtomHeader,
     /// Elementary stream descriptor.
     descriptor: ESDescriptor,
 }
 
 impl Atom for EsdsAtom {
-    fn header(&self) -> AtomHeader {
-        self.header
-    }
+    fn read<B: ReadBytes>(reader: &mut B, mut header: AtomHeader) -> Result<Self> {
+        let (_, _) = header.read_extended_header(reader)?;
 
-    fn read<B: ReadBytes>(reader: &mut B, header: AtomHeader) -> Result<Self> {
-        let (_, _) = AtomHeader::read_extra(reader)?;
+        // The ES descriptors occupy the rest of the atom.
+        let ds_size = header
+            .data_len()
+            .ok_or_else(|| Error::DecodeError("isomp4 (esds): expected atom size to be known"))?;
+
+        let mut scoped = ScopedStream::new(reader, ds_size);
 
         let mut descriptor = None;
-
-        let mut scoped = ScopedStream::new(reader, header.data_len - AtomHeader::EXTRA_DATA_SIZE);
 
         while scoped.bytes_available() > MIN_DESCRIPTOR_SIZE {
             let (desc, desc_len) = read_descriptor_header(&mut scoped)?;
@@ -74,18 +76,124 @@ impl Atom for EsdsAtom {
         // Ignore remainder of the atom.
         scoped.ignore()?;
 
-        Ok(EsdsAtom { header, descriptor: descriptor.unwrap() })
+        Ok(EsdsAtom { descriptor: descriptor.unwrap() })
     }
 }
 
 impl EsdsAtom {
-    pub fn fill_codec_params(&self, codec_params: &mut AudioCodecParameters) {
-        codec_params.for_codec(self.descriptor.dec_config.codec_id);
+    /// If the elementary stream descriptor describes an audio stream, populate the provided
+    /// audio codec parameters.
+    pub fn fill_audio_codec_params(&self, codec_params: &mut AudioCodecParameters) -> Result<()> {
+        use symphonia_core::codecs::audio::CODEC_ID_NULL;
+
+        match get_codec_id_from_object_type(self.descriptor.dec_config.object_type_indication) {
+            Some(CodecId::Audio(id)) => {
+                // Object type indication identified an audio codec.
+                codec_params.for_codec(id);
+            }
+            Some(_) => {
+                // Object type indication identified a non-audio codec. This is unexpected.
+                return decode_error("isomp4 (esds): expected an audio codec type");
+            }
+            None => {
+                // Unknown object type indication.
+                codec_params.for_codec(CODEC_ID_NULL);
+            }
+        }
 
         if let Some(ds_config) = &self.descriptor.dec_config.dec_specific_info {
             codec_params.with_extra_data(ds_config.extra_data.clone());
         }
+
+        Ok(())
     }
+
+    /// If the elementary stream descriptor describes an video stream, populate the provided
+    /// video codec parameters.
+    pub fn fill_video_codec_params(&self, codec_params: &mut VideoCodecParameters) -> Result<()> {
+        use symphonia_core::codecs::video::CODEC_ID_NULL;
+
+        match get_codec_id_from_object_type(self.descriptor.dec_config.object_type_indication) {
+            Some(CodecId::Video(id)) => {
+                // Object type indication identified an audio codec.
+                codec_params.for_codec(id);
+            }
+            Some(_) => {
+                // Object type indication identified a non-audio codec. This is unexpected.
+                return decode_error("isomp4 (esds): expected a video codec type");
+            }
+            None => {
+                // Unknown object type indication.
+                codec_params.for_codec(CODEC_ID_NULL);
+            }
+        }
+
+        if let Some(ds_config) = &self.descriptor.dec_config.dec_specific_info {
+            codec_params.with_extra_data(ds_config.extra_data.clone());
+        }
+
+        Ok(())
+    }
+}
+
+/// Try to get a codec ID from from an object type indication.
+fn get_codec_id_from_object_type(obj_type: u8) -> Option<CodecId> {
+    use symphonia_core::codecs::audio::well_known::{CODEC_ID_AAC, CODEC_ID_MP3};
+    use symphonia_core::codecs::video::well_known::{
+        CODEC_ID_H264, CODEC_ID_HEVC, CODEC_ID_MPEG2, CODEC_ID_MPEG4, CODEC_ID_VP9,
+    };
+
+    // AAC
+    const OBJ_TYPE_AUDIO_MPEG4_3: u8 = 0x40; // Audio ISO/IEC 14496-3
+    const OBJ_TYPE_AUDIO_MPEG2_7_MAIN: u8 = 0x66; // Audio ISO/IEC 13818-7 Main Profile
+    const OBJ_TYPE_AUDIO_MPEG2_7_LC: u8 = 0x67; // Audio ISO/IEC 13818-7 Low Complexity
+
+    // MP3
+    const OBJ_TYPE_AUDIO_MPEG2_3: u8 = 0x69; // Audio ISO/IEC 13818-3 (MP3)
+    const OBJ_TYPE_AUDIO_MPEG1_3: u8 = 0x6b; // Audio ISO/IEC 11172-3 (MP3)
+
+    // MPEG2 video
+    const OBJ_TYPE_VISUAL_MPEG2_2_SP: u8 = 0x60; // Visual ISO/IEC 13818-2 Simple Profile
+    const OBJ_TYPE_VISUAL_MPEG2_2_MP: u8 = 0x61; // Visual ISO/IEC 13818-2 Main Profile
+    const OBJ_TYPE_VISUAL_MPEG2_2_SNR: u8 = 0x62; // Visual ISO/IEC 13818-2 SNR Profile
+    const OBJ_TYPE_VISUAL_MPEG2_2_SPATIAL: u8 = 0x63; // Visual ISO/IEC 13818-2 Spatial Profile
+    const OBJ_TYPE_VISUAL_MPEG2_2_HP: u8 = 0x64; // Visual ISO/IEC 13818-2 High Profile
+    const OBJ_TYPE_VISUAL_MPEG2_2_422: u8 = 0x65; // Visual ISO/IEC 13818-2 422 Profile
+
+    // MPEG4 video
+    const OBJ_TYPE_VISUAL_MPEG4_2: u8 = 0x20; // Visual ISO/IEC 14496-2
+
+    // H264
+    const OBJ_TYPE_VISUAL_AVC1: u8 = 0x21; // ISO/IEC 14496-10
+
+    // HEVC
+    const OBJ_TYPE_VISUAL_HEVC1: u8 = 0x23; // Visual ISO/IEC 23008-2
+
+    // VP9
+    const OBJ_TYPE_VISUAL_VP09: u8 = 0xb1;
+
+    let codec_id = match obj_type {
+        OBJ_TYPE_AUDIO_MPEG4_3 | OBJ_TYPE_AUDIO_MPEG2_7_LC | OBJ_TYPE_AUDIO_MPEG2_7_MAIN => {
+            CodecId::Audio(CODEC_ID_AAC)
+        }
+        OBJ_TYPE_AUDIO_MPEG2_3 | OBJ_TYPE_AUDIO_MPEG1_3 => CodecId::Audio(CODEC_ID_MP3),
+        OBJ_TYPE_VISUAL_MPEG2_2_SP
+        | OBJ_TYPE_VISUAL_MPEG2_2_MP
+        | OBJ_TYPE_VISUAL_MPEG2_2_SNR
+        | OBJ_TYPE_VISUAL_MPEG2_2_SPATIAL
+        | OBJ_TYPE_VISUAL_MPEG2_2_HP
+        | OBJ_TYPE_VISUAL_MPEG2_2_422 => CodecId::Video(CODEC_ID_MPEG2),
+        OBJ_TYPE_VISUAL_MPEG4_2 => CodecId::Video(CODEC_ID_MPEG4),
+        OBJ_TYPE_VISUAL_AVC1 => CodecId::Video(CODEC_ID_H264),
+        OBJ_TYPE_VISUAL_HEVC1 => CodecId::Video(CODEC_ID_HEVC),
+        OBJ_TYPE_VISUAL_VP09 => CodecId::Video(CODEC_ID_VP9),
+        _ => {
+            debug!("unknown object type indication {:#x} for decoder config descriptor", obj_type);
+            return None;
+        }
+    };
+
+    Some(codec_id)
 }
 
 pub trait ObjectDescriptor: Sized {
@@ -119,6 +227,7 @@ class ES_Descriptor extends BaseDescriptor : bit(8) tag=ES_DescrTag {
 }
 */
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct ESDescriptor {
     pub es_id: u16,
@@ -201,23 +310,15 @@ class DecoderConfigDescriptor extends BaseDescriptor : bit(8) tag=DecoderConfigD
 }
 */
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct DecoderConfigDescriptor {
-    pub codec_id: AudioCodecId,
     pub object_type_indication: u8,
     pub dec_specific_info: Option<DecoderSpecificInfo>,
 }
 
 impl ObjectDescriptor for DecoderConfigDescriptor {
     fn read<B: ReadBytes>(reader: &mut B, len: u32) -> Result<Self> {
-        // AAC
-        const OBJECT_TYPE_ISO14496_3: u8 = 0x40;
-        const OBJECT_TYPE_ISO13818_7_MAIN: u8 = 0x66;
-        const OBJECT_TYPE_ISO13818_7_LC: u8 = 0x67;
-        // MP3
-        const OBJECT_TYPE_ISO13818_3: u8 = 0x69;
-        const OBJECT_TYPE_ISO11172_3: u8 = 0x6b;
-
         let object_type_indication = reader.read_u8()?;
 
         let (_stream_type, _upstream) = {
@@ -253,26 +354,10 @@ impl ObjectDescriptor for DecoderConfigDescriptor {
             }
         }
 
-        let codec_id = match object_type_indication {
-            OBJECT_TYPE_ISO14496_3 | OBJECT_TYPE_ISO13818_7_LC | OBJECT_TYPE_ISO13818_7_MAIN => {
-                CODEC_ID_AAC
-            }
-            OBJECT_TYPE_ISO13818_3 | OBJECT_TYPE_ISO11172_3 => CODEC_ID_MP3,
-            _ => {
-                debug!(
-                    "unknown object type indication {:#x} for decoder config descriptor",
-                    object_type_indication
-                );
-
-                CODEC_ID_NULL
-            }
-        };
-
         // Consume remaining bytes.
         scoped.ignore()?;
 
         Ok(DecoderConfigDescriptor {
-            codec_id,
             object_type_indication,
             dec_specific_info: dec_specific_config,
         })

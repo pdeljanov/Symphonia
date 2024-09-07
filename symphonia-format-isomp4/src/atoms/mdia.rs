@@ -10,19 +10,15 @@ use symphonia_core::io::ReadBytes;
 
 use crate::atoms::{Atom, AtomHeader, AtomIterator, AtomType, HdlrAtom, MdhdAtom, MinfAtom};
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct MdiaAtom {
-    header: AtomHeader,
     pub mdhd: MdhdAtom,
     pub hdlr: HdlrAtom,
     pub minf: MinfAtom,
 }
 
 impl Atom for MdiaAtom {
-    fn header(&self) -> AtomHeader {
-        self.header
-    }
-
     fn read<B: ReadBytes>(reader: &mut B, header: AtomHeader) -> Result<Self> {
         let mut iter = AtomIterator::new(reader, header);
 
@@ -31,7 +27,7 @@ impl Atom for MdiaAtom {
         let mut minf = None;
 
         while let Some(header) = iter.next()? {
-            match header.atype {
+            match header.atom_type {
                 AtomType::MediaHeader => {
                     mdhd = Some(iter.read_atom::<MdhdAtom>()?);
                 }
@@ -57,6 +53,6 @@ impl Atom for MdiaAtom {
             return decode_error("isomp4: missing minf atom");
         }
 
-        Ok(MdiaAtom { header, mdhd: mdhd.unwrap(), hdlr: hdlr.unwrap(), minf: minf.unwrap() })
+        Ok(MdiaAtom { mdhd: mdhd.unwrap(), hdlr: hdlr.unwrap(), minf: minf.unwrap() })
     }
 }

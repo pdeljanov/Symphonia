@@ -6,7 +6,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use symphonia_core::common::FourCc;
-use symphonia_core::errors::Result;
+use symphonia_core::errors::{Error, Result};
 use symphonia_core::io::ReadBytes;
 
 use crate::atoms::{Atom, AtomHeader};
@@ -31,10 +31,9 @@ pub enum HandlerType {
 }
 
 /// Handler atom.
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct HdlrAtom {
-    /// Atom header.
-    header: AtomHeader,
     /// Handler type.
     pub handler_type: HandlerType,
     /// Human-readable handler name.
@@ -42,12 +41,8 @@ pub struct HdlrAtom {
 }
 
 impl Atom for HdlrAtom {
-    fn header(&self) -> AtomHeader {
-        self.header
-    }
-
-    fn read<B: ReadBytes>(reader: &mut B, header: AtomHeader) -> Result<Self> {
-        let (_, _) = AtomHeader::read_extra(reader)?;
+    fn read<B: ReadBytes>(reader: &mut B, mut header: AtomHeader) -> Result<Self> {
+        let (_, _) = header.read_extended_header(reader)?;
 
         // Always 0 for MP4, but for Quicktime this contains the component type.
         let _ = reader.read_quad_bytes()?;
@@ -69,9 +64,14 @@ impl Atom for HdlrAtom {
         reader.ignore_bytes(4 * 3)?;
 
         // Human readable UTF-8 string of the track type.
-        let buf = reader.read_boxed_slice_exact((header.data_len - 24) as usize)?;
-        let name = String::from_utf8_lossy(&buf).to_string();
+        let name = {
+            let size = header.data_unread_at(reader.pos()).ok_or_else(|| {
+                Error::DecodeError("isomp4 (hdlr): expected atom size to be known")
+            })?;
+            let buf = reader.read_boxed_slice_exact(size as usize)?;
+            String::from_utf8_lossy(&buf).to_string()
+        };
 
-        Ok(HdlrAtom { header, handler_type, name })
+        Ok(HdlrAtom { handler_type, name })
     }
 }

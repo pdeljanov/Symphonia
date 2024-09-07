@@ -14,10 +14,10 @@ use symphonia_utils_xiph::flac::metadata::{MetadataBlockHeader, MetadataBlockTyp
 
 use crate::atoms::{Atom, AtomHeader};
 
+/// FLAC atom.
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct FlacAtom {
-    /// Atom header.
-    header: AtomHeader,
     /// FLAC stream info block.
     stream_info: StreamInfo,
     /// FLAC extra data.
@@ -25,12 +25,8 @@ pub struct FlacAtom {
 }
 
 impl Atom for FlacAtom {
-    fn header(&self) -> AtomHeader {
-        self.header
-    }
-
-    fn read<B: ReadBytes>(reader: &mut B, header: AtomHeader) -> Result<Self> {
-        let (version, flags) = AtomHeader::read_extra(reader)?;
+    fn read<B: ReadBytes>(reader: &mut B, mut header: AtomHeader) -> Result<Self> {
+        let (version, flags) = header.read_extended_header(reader)?;
 
         if version != 0 {
             return unsupported_error("isomp4 (flac): unsupported flac version");
@@ -56,7 +52,7 @@ impl Atom for FlacAtom {
         let extra_data = reader.read_boxed_slice_exact(block_header.block_len as usize)?;
         let stream_info = StreamInfo::read(&mut BufReader::new(&extra_data))?;
 
-        Ok(FlacAtom { header, stream_info, extra_data })
+        Ok(FlacAtom { stream_info, extra_data })
     }
 }
 

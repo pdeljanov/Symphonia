@@ -11,20 +11,15 @@ use symphonia_core::io::ReadBytes;
 use crate::atoms::{Atom, AtomHeader};
 
 /// Chunk offset atom (32-bit version).
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct StcoAtom {
-    /// Atom header.
-    header: AtomHeader,
     pub chunk_offsets: Vec<u32>,
 }
 
 impl Atom for StcoAtom {
-    fn header(&self) -> AtomHeader {
-        self.header
-    }
-
-    fn read<B: ReadBytes>(reader: &mut B, header: AtomHeader) -> Result<Self> {
-        let (_, _) = AtomHeader::read_extra(reader)?;
+    fn read<B: ReadBytes>(reader: &mut B, mut header: AtomHeader) -> Result<Self> {
+        let (_, _) = header.read_extended_header(reader)?;
 
         let entry_count = reader.read_be_u32()?;
 
@@ -35,6 +30,6 @@ impl Atom for StcoAtom {
             chunk_offsets.push(reader.read_be_u32()?);
         }
 
-        Ok(StcoAtom { header, chunk_offsets })
+        Ok(StcoAtom { chunk_offsets })
     }
 }

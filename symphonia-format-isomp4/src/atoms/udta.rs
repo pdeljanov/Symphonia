@@ -12,10 +12,9 @@ use symphonia_core::meta::MetadataRevision;
 use crate::atoms::{Atom, AtomHeader, AtomIterator, AtomType, MetaAtom};
 
 /// User data atom.
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct UdtaAtom {
-    /// Atom header.
-    header: AtomHeader,
     /// Metadata atom.
     pub meta: Option<MetaAtom>,
 }
@@ -28,10 +27,6 @@ impl UdtaAtom {
 }
 
 impl Atom for UdtaAtom {
-    fn header(&self) -> AtomHeader {
-        self.header
-    }
-
     #[allow(clippy::single_match)]
     fn read<B: ReadBytes>(reader: &mut B, header: AtomHeader) -> Result<Self> {
         let mut iter = AtomIterator::new(reader, header);
@@ -39,7 +34,7 @@ impl Atom for UdtaAtom {
         let mut meta = None;
 
         while let Some(header) = iter.next()? {
-            match header.atype {
+            match header.atom_type {
                 AtomType::Meta => {
                     meta = Some(iter.read_atom::<MetaAtom>()?);
                 }
@@ -47,6 +42,6 @@ impl Atom for UdtaAtom {
             }
         }
 
-        Ok(UdtaAtom { header, meta })
+        Ok(UdtaAtom { meta })
     }
 }

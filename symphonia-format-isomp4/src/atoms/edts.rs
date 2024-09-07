@@ -11,17 +11,13 @@ use symphonia_core::io::ReadBytes;
 use crate::atoms::{Atom, AtomHeader, AtomIterator, AtomType, ElstAtom};
 
 /// Edits atom.
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct EdtsAtom {
-    header: AtomHeader,
     pub elst: Option<ElstAtom>,
 }
 
 impl Atom for EdtsAtom {
-    fn header(&self) -> AtomHeader {
-        self.header
-    }
-
     #[allow(clippy::single_match)]
     fn read<B: ReadBytes>(reader: &mut B, header: AtomHeader) -> Result<Self> {
         let mut iter = AtomIterator::new(reader, header);
@@ -29,7 +25,7 @@ impl Atom for EdtsAtom {
         let mut elst = None;
 
         while let Some(header) = iter.next()? {
-            match header.atype {
+            match header.atom_type {
                 AtomType::EditList => {
                     elst = Some(iter.read_atom::<ElstAtom>()?);
                 }
@@ -37,6 +33,6 @@ impl Atom for EdtsAtom {
             }
         }
 
-        Ok(EdtsAtom { header, elst })
+        Ok(EdtsAtom { elst })
     }
 }

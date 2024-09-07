@@ -14,9 +14,8 @@ use symphonia_core::meta::MetadataRevision;
 use crate::atoms::{Atom, AtomHeader, AtomIterator, AtomType, IlstAtom};
 
 /// User data atom.
+#[allow(dead_code)]
 pub struct MetaAtom {
-    /// Atom header.
-    header: AtomHeader,
     /// Metadata revision.
     pub metadata: Option<MetadataRevision>,
 }
@@ -35,24 +34,16 @@ impl MetaAtom {
 }
 
 impl Atom for MetaAtom {
-    fn header(&self) -> AtomHeader {
-        self.header
-    }
-
     #[allow(clippy::single_match)]
     fn read<B: ReadBytes>(reader: &mut B, mut header: AtomHeader) -> Result<Self> {
-        let (_, _) = AtomHeader::read_extra(reader)?;
-
-        // AtomIterator doesn't know the extra data was read already, so the extra data size must be
-        // subtrated from the atom's data length.
-        header.data_len -= AtomHeader::EXTRA_DATA_SIZE;
+        let (_, _) = header.read_extended_header(reader)?;
 
         let mut iter = AtomIterator::new(reader, header);
 
         let mut metadata = None;
 
         while let Some(header) = iter.next()? {
-            match header.atype {
+            match header.atom_type {
                 AtomType::MetaList => {
                     metadata = Some(iter.read_atom::<IlstAtom>()?.metadata);
                 }
@@ -60,6 +51,6 @@ impl Atom for MetaAtom {
             }
         }
 
-        Ok(MetaAtom { header, metadata })
+        Ok(MetaAtom { metadata })
     }
 }

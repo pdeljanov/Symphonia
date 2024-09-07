@@ -11,21 +11,16 @@ use symphonia_core::io::ReadBytes;
 use crate::atoms::{Atom, AtomHeader};
 
 /// Movie extends header atom.
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct MehdAtom {
-    /// Atom header.
-    header: AtomHeader,
     /// Fragment duration.
     pub fragment_duration: u64,
 }
 
 impl Atom for MehdAtom {
-    fn header(&self) -> AtomHeader {
-        self.header
-    }
-
-    fn read<B: ReadBytes>(reader: &mut B, header: AtomHeader) -> Result<Self> {
-        let (version, _) = AtomHeader::read_extra(reader)?;
+    fn read<B: ReadBytes>(reader: &mut B, mut header: AtomHeader) -> Result<Self> {
+        let (version, _) = header.read_extended_header(reader)?;
 
         let fragment_duration = match version {
             0 => u64::from(reader.read_be_u32()?),
@@ -35,6 +30,6 @@ impl Atom for MehdAtom {
             }
         };
 
-        Ok(MehdAtom { header, fragment_duration })
+        Ok(MehdAtom { fragment_duration })
     }
 }

@@ -12,10 +12,9 @@ use crate::atoms::{Atom, AtomHeader};
 use crate::fp::FpU8;
 
 /// Track header atom.
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct TkhdAtom {
-    /// Atom header.
-    header: AtomHeader,
     /// Track header flags.
     pub flags: u32,
     /// Creation time.
@@ -38,15 +37,10 @@ pub struct TkhdAtom {
 }
 
 impl Atom for TkhdAtom {
-    fn header(&self) -> AtomHeader {
-        self.header
-    }
-
-    fn read<B: ReadBytes>(reader: &mut B, header: AtomHeader) -> Result<Self> {
-        let (version, flags) = AtomHeader::read_extra(reader)?;
+    fn read<B: ReadBytes>(reader: &mut B, mut header: AtomHeader) -> Result<Self> {
+        let (version, flags) = header.read_extended_header(reader)?;
 
         let mut tkhd = TkhdAtom {
-            header,
             flags,
             ctime: 0,
             mtime: 0,

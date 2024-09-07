@@ -11,10 +11,9 @@ use symphonia_core::io::ReadBytes;
 use crate::atoms::{Atom, AtomHeader, AtomIterator, AtomType, MehdAtom, TrexAtom};
 
 /// Movie extends atom.
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct MvexAtom {
-    /// Atom header.
-    pub header: AtomHeader,
     /// Movie extends header, optional.
     pub mehd: Option<MehdAtom>,
     /// Track extends box, one per track.
@@ -22,10 +21,6 @@ pub struct MvexAtom {
 }
 
 impl Atom for MvexAtom {
-    fn header(&self) -> AtomHeader {
-        self.header
-    }
-
     fn read<B: ReadBytes>(reader: &mut B, header: AtomHeader) -> Result<Self> {
         let mut iter = AtomIterator::new(reader, header);
 
@@ -33,7 +28,7 @@ impl Atom for MvexAtom {
         let mut trexs = Vec::new();
 
         while let Some(header) = iter.next()? {
-            match header.atype {
+            match header.atom_type {
                 AtomType::MovieExtendsHeader => {
                     mehd = Some(iter.read_atom::<MehdAtom>()?);
                 }
@@ -45,6 +40,6 @@ impl Atom for MvexAtom {
             }
         }
 
-        Ok(MvexAtom { header, mehd, trexs })
+        Ok(MvexAtom { mehd, trexs })
     }
 }

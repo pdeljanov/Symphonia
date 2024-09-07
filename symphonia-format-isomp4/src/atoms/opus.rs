@@ -6,24 +6,20 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use symphonia_core::codecs::audio::{well_known::CODEC_ID_OPUS, AudioCodecParameters};
-use symphonia_core::errors::{decode_error, unsupported_error, Result};
+use symphonia_core::errors::{decode_error, unsupported_error, Error, Result};
 use symphonia_core::io::ReadBytes;
 
 use crate::atoms::{Atom, AtomHeader};
 
+/// Opus atom.
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct OpusAtom {
-    /// Atom header.
-    header: AtomHeader,
     /// Opus extra data (identification header).
     extra_data: Box<[u8]>,
 }
 
 impl Atom for OpusAtom {
-    fn header(&self) -> AtomHeader {
-        self.header
-    }
-
     fn read<B: ReadBytes>(reader: &mut B, header: AtomHeader) -> Result<Self> {
         const OPUS_MAGIC: &[u8] = b"OpusHead";
         const OPUS_MAGIC_LEN: usize = OPUS_MAGIC.len();
@@ -37,7 +33,10 @@ impl Atom for OpusAtom {
         // The dops atom contains an Opus identification header excluding the OpusHead magic
         // signature. Therefore, the atom data length should be atleast as long as the shortest
         // Opus identification header.
-        let data_len = header.data_len as usize;
+        let data_len = header
+            .data_len()
+            .ok_or_else(|| Error::DecodeError("isomp4 (opus): expected atom size to be known"))?
+            as usize;
 
         if data_len < MIN_OPUS_EXTRA_DATA_SIZE - OPUS_MAGIC_LEN {
             return decode_error("isomp4 (opus): opus identification header too short");
@@ -60,7 +59,7 @@ impl Atom for OpusAtom {
             return unsupported_error("isomp4 (opus): unsupported opus version");
         }
 
-        Ok(OpusAtom { header, extra_data })
+        Ok(OpusAtom { extra_data })
     }
 }
 

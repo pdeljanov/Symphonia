@@ -11,10 +11,9 @@ use symphonia_core::io::ReadBytes;
 use crate::atoms::{Atom, AtomHeader};
 
 /// Track extends atom.
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct TrexAtom {
-    /// Atom header.
-    header: AtomHeader,
     /// Track this atom describes.
     pub track_id: u32,
     /// Default sample description index.
@@ -28,15 +27,10 @@ pub struct TrexAtom {
 }
 
 impl Atom for TrexAtom {
-    fn header(&self) -> AtomHeader {
-        self.header
-    }
-
-    fn read<B: ReadBytes>(reader: &mut B, header: AtomHeader) -> Result<Self> {
-        let (_, _) = AtomHeader::read_extra(reader)?;
+    fn read<B: ReadBytes>(reader: &mut B, mut header: AtomHeader) -> Result<Self> {
+        let (_, _) = header.read_extended_header(reader)?;
 
         Ok(TrexAtom {
-            header,
             track_id: reader.read_be_u32()?,
             default_sample_desc_idx: reader.read_be_u32()?,
             default_sample_duration: reader.read_be_u32()?,

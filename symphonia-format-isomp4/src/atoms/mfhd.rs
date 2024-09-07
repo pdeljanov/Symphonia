@@ -11,24 +11,19 @@ use symphonia_core::io::ReadBytes;
 use crate::atoms::{Atom, AtomHeader};
 
 /// Movie fragment header atom.
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct MfhdAtom {
-    /// Atom header.
-    header: AtomHeader,
     /// Sequence number associated with fragment.
     pub sequence_number: u32,
 }
 
 impl Atom for MfhdAtom {
-    fn header(&self) -> AtomHeader {
-        self.header
-    }
-
-    fn read<B: ReadBytes>(reader: &mut B, header: AtomHeader) -> Result<Self> {
-        let (_, _) = AtomHeader::read_extra(reader)?;
+    fn read<B: ReadBytes>(reader: &mut B, mut header: AtomHeader) -> Result<Self> {
+        let (_, _) = header.read_extended_header(reader)?;
 
         let sequence_number = reader.read_be_u32()?;
 
-        Ok(MfhdAtom { header, sequence_number })
+        Ok(MfhdAtom { sequence_number })
     }
 }
