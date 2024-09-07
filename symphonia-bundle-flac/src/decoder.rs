@@ -12,15 +12,15 @@ use std::num::Wrapping;
 use symphonia_core::audio::{
     AsGenericAudioBufferRef, AudioBuffer, AudioMut, AudioSpec, GenericAudioBufferRef,
 };
-use symphonia_core::codecs::{
-    CodecDescriptor, CodecParameters, VerificationCheck, CODEC_TYPE_FLAC,
-};
-use symphonia_core::codecs::{Decoder, DecoderOptions, FinalizeResult};
+use symphonia_core::codecs::audio::well_known::CODEC_ID_FLAC;
+use symphonia_core::codecs::audio::{AudioCodecParameters, AudioDecoderOptions};
+use symphonia_core::codecs::audio::{AudioDecoder, FinalizeResult, VerificationCheck};
+use symphonia_core::codecs::registry::{RegisterableAudioDecoder, SupportedAudioCodec};
+use symphonia_core::codecs::CodecInfo;
 use symphonia_core::errors::{decode_error, unsupported_error, Result};
 use symphonia_core::formats::Packet;
 use symphonia_core::io::{BitReaderLtr, BufReader, ReadBitsLtr};
-use symphonia_core::support_codec;
-use symphonia_core::units::TimeBase;
+use symphonia_core::support_audio_codec;
 use symphonia_core::util::bits::sign_extend_leq32_to_i32;
 use symphonia_utils_xiph::flac::metadata::StreamInfo;
 
@@ -83,13 +83,58 @@ fn decorrelate_right_side(right: &[i32], side: &mut [i32]) {
 
 /// Free Lossless Audio Codec (FLAC) decoder.
 pub struct FlacDecoder {
-    params: CodecParameters,
+    params: AudioCodecParameters,
     is_validating: bool,
     validator: Validator,
     buf: AudioBuffer<i32>,
 }
 
 impl FlacDecoder {
+    pub fn try_new(params: &AudioCodecParameters, options: &AudioDecoderOptions) -> Result<Self> {
+        // This decoder only supports FLAC.
+        if params.codec != CODEC_ID_FLAC {
+            return unsupported_error("flac: invalid codec");
+        }
+
+        // Obtain the extra data.
+        let extra_data = match params.extra_data.as_ref() {
+            Some(buf) => buf,
+            _ => return unsupported_error("flac: missing extra data"),
+        };
+
+        // Read the stream information block.
+        let info = StreamInfo::read(&mut BufReader::new(extra_data))?;
+
+        // Clone the codec parameters so that the parameters can be supplemented and/or amended.
+        let mut params = params.clone();
+
+        // Amend the provided codec parameters with information from the stream information block.
+        params
+            .with_sample_rate(info.sample_rate)
+            .with_bits_per_sample(info.bits_per_sample)
+            .with_max_frames_per_packet(u64::from(info.block_len_max))
+            .with_channels(info.channels.clone());
+
+        if let Some(md5) = info.md5 {
+            params.with_verification_code(VerificationCheck::Md5(md5));
+        }
+
+        let spec = AudioSpec::new(info.sample_rate, info.channels.clone());
+        let buf = AudioBuffer::new(spec, usize::from(info.block_len_max));
+
+        // TODO: Verify packet integrity if the demuxer is not.
+        // if !params.packet_data_integrity {
+        //     return unsupported_error("flac: packet integrity is required");
+        // }
+
+        Ok(FlacDecoder {
+            params,
+            is_validating: options.verify,
+            validator: Default::default(),
+            buf,
+        })
+    }
+
     fn decode_inner(&mut self, packet: &Packet) -> Result<()> {
         let mut reader = packet.as_buf_reader();
 
@@ -179,66 +224,17 @@ impl FlacDecoder {
     }
 }
 
-impl Decoder for FlacDecoder {
-    fn try_new(params: &CodecParameters, options: &DecoderOptions) -> Result<Self> {
-        // This decoder only supports FLAC.
-        if params.codec != CODEC_TYPE_FLAC {
-            return unsupported_error("flac: invalid codec type");
-        }
-
-        // Obtain the extra data.
-        let extra_data = match params.extra_data.as_ref() {
-            Some(buf) => buf,
-            _ => return unsupported_error("flac: missing extra data"),
-        };
-
-        // Read the stream information block.
-        let info = StreamInfo::read(&mut BufReader::new(extra_data))?;
-
-        // Clone the codec parameters so that the parameters can be supplemented and/or amended.
-        let mut params = params.clone();
-
-        // Amend the provided codec parameters with information from the stream information block.
-        params
-            .with_sample_rate(info.sample_rate)
-            .with_time_base(TimeBase::new(1, info.sample_rate))
-            .with_bits_per_sample(info.bits_per_sample)
-            .with_max_frames_per_packet(u64::from(info.block_len_max))
-            .with_channels(info.channels.clone());
-
-        if let Some(md5) = info.md5 {
-            params.with_verification_code(VerificationCheck::Md5(md5));
-        }
-
-        if let Some(n_frames) = info.n_samples {
-            params.with_n_frames(n_frames);
-        }
-
-        let spec = AudioSpec::new(info.sample_rate, info.channels.clone());
-        let buf = AudioBuffer::new(spec, usize::from(info.block_len_max));
-
-        // TODO: Verify packet integrity if the demuxer is not.
-        // if !params.packet_data_integrity {
-        //     return unsupported_error("flac: packet integrity is required");
-        // }
-
-        Ok(FlacDecoder {
-            params,
-            is_validating: options.verify,
-            validator: Default::default(),
-            buf,
-        })
-    }
-
-    fn supported_codecs() -> &'static [CodecDescriptor] {
-        &[support_codec!(CODEC_TYPE_FLAC, "flac", "Free Lossless Audio Codec")]
+impl AudioDecoder for FlacDecoder {
+    fn codec_info(&self) -> &CodecInfo {
+        // Only one codec is supported.
+        &Self::supported_codecs().first().unwrap().info
     }
 
     fn reset(&mut self) {
         // No state is stored between packets, therefore do nothing.
     }
 
-    fn codec_params(&self) -> &CodecParameters {
+    fn codec_params(&self) -> &AudioCodecParameters {
         &self.params
     }
 
@@ -288,6 +284,22 @@ impl Decoder for FlacDecoder {
 
     fn last_decoded(&self) -> GenericAudioBufferRef<'_> {
         self.buf.as_generic_audio_buffer_ref()
+    }
+}
+
+impl RegisterableAudioDecoder for FlacDecoder {
+    fn try_registry_new(
+        params: &AudioCodecParameters,
+        opts: &AudioDecoderOptions,
+    ) -> Result<Box<dyn AudioDecoder>>
+    where
+        Self: Sized,
+    {
+        Ok(Box::new(FlacDecoder::try_new(params, opts)?))
+    }
+
+    fn supported_codecs() -> &'static [SupportedAudioCodec] {
+        &[support_audio_codec!(CODEC_ID_FLAC, "flac", "Free Lossless Audio Codec")]
     }
 }
 

@@ -8,11 +8,13 @@
 use super::{MapResult, Mapper, PacketParser};
 use crate::common::SideData;
 
-use symphonia_core::codecs::{CodecParameters, CODEC_TYPE_VORBIS};
+use symphonia_core::codecs::audio::well_known::CODEC_ID_VORBIS;
+use symphonia_core::codecs::audio::AudioCodecParameters;
+use symphonia_core::codecs::CodecParameters;
 use symphonia_core::errors::{decode_error, unsupported_error, Result};
+use symphonia_core::formats::Track;
 use symphonia_core::io::{BitReaderRtl, BufReader, ReadBitsRtl, ReadBytes};
 use symphonia_core::meta::MetadataBuilder;
-use symphonia_core::units::TimeBase;
 
 use symphonia_metadata::vorbis::*;
 use symphonia_utils_xiph::vorbis::*;
@@ -105,7 +107,7 @@ impl PacketParser for VorbisPacketParser {
     }
 }
 
-pub fn detect(buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> {
+pub fn detect(serial: u32, buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> {
     // The identification header packet must be the correct size.
     if buf.len() != VORBIS_IDENTIFICATION_HEADER_SIZE {
         return Ok(None);
@@ -118,27 +120,30 @@ pub fn detect(buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> {
     };
 
     // Populate the codec parameters with the information above.
-    let mut codec_params = CodecParameters::new();
+    let mut codec_params = AudioCodecParameters::new();
 
     codec_params
-        .for_codec(CODEC_TYPE_VORBIS)
+        .for_codec(CODEC_ID_VORBIS)
         .with_sample_rate(ident.sample_rate)
-        .with_time_base(TimeBase::new(1, ident.sample_rate))
         .with_extra_data(Box::from(buf));
 
     if let Some(channels) = vorbis_channels_to_channels(ident.n_channels) {
         codec_params.with_channels(channels);
     }
 
+    // Create the track.
+    let mut track = Track::new(serial);
+
+    track.with_codec_params(CodecParameters::Audio(codec_params));
+
     // Instantiate the Vorbis mapper.
-    let mapper =
-        Box::new(VorbisMapper { codec_params, ident, parser: None, has_setup_header: false });
+    let mapper = Box::new(VorbisMapper { track, ident, parser: None, has_setup_header: false });
 
     Ok(Some(mapper))
 }
 
 struct VorbisMapper {
-    codec_params: CodecParameters,
+    track: Track,
     ident: IdentHeader,
     parser: Option<VorbisPacketParser>,
     has_setup_header: bool,
@@ -149,12 +154,12 @@ impl Mapper for VorbisMapper {
         "vorbis"
     }
 
-    fn codec_params(&self) -> &CodecParameters {
-        &self.codec_params
+    fn track(&self) -> &Track {
+        &self.track
     }
 
-    fn codec_params_mut(&mut self) -> &mut CodecParameters {
-        &mut self.codec_params
+    fn track_mut(&mut self) -> &mut Track {
+        &mut self.track
     }
 
     fn reset(&mut self) {
@@ -213,8 +218,21 @@ impl Mapper for VorbisMapper {
                     Ok(MapResult::SideData { data: SideData::Metadata(builder.metadata()) })
                 }
                 VORBIS_PACKET_TYPE_SETUP => {
+                    // Safety: Audio codec parameters are always available if mapper is
+                    // instantiated.
+                    let mut extra_data = self
+                        .track
+                        .codec_params
+                        .as_mut()
+                        .unwrap()
+                        .audio_mut()
+                        .unwrap()
+                        .extra_data
+                        .take()
+                        .unwrap()
+                        .into_vec();
+
                     // Append the setup headers to the extra data.
-                    let mut extra_data = self.codec_params.extra_data.take().unwrap().to_vec();
                     extra_data.extend_from_slice(packet);
 
                     // Try to read the setup header.
@@ -240,7 +258,16 @@ impl Mapper for VorbisMapper {
                         self.parser.replace(parser);
                     }
 
-                    self.codec_params.with_extra_data(extra_data.into_boxed_slice());
+                    // Safety: Audio codec parameters are always available if mapper is
+                    // instantiated.
+                    self.track
+                        .codec_params
+                        .as_mut()
+                        .unwrap()
+                        .audio_mut()
+                        .unwrap()
+                        .with_extra_data(extra_data.into_boxed_slice());
+
                     self.has_setup_header = true;
 
                     Ok(MapResult::Setup)

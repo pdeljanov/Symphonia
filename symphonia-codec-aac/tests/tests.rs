@@ -1,5 +1,7 @@
 use symphonia_codec_aac::{AacDecoder, AdtsReader};
-use symphonia_core::codecs::{CodecParameters, Decoder, DecoderOptions, CODEC_TYPE_AAC};
+use symphonia_core::codecs::audio::{
+    well_known::CODEC_ID_AAC, AudioCodecParameters, AudioDecoder, AudioDecoderOptions,
+};
 use symphonia_core::errors;
 use symphonia_core::io::MediaSourceStream;
 use symphonia_core::probe::ProbeableFormat;
@@ -12,8 +14,8 @@ fn test_decode(data: Vec<u8>) -> symphonia_core::errors::Result<()> {
     let mut reader = AdtsReader::try_probe_new(mss, Default::default())?;
 
     let mut decoder = AacDecoder::try_new(
-        CodecParameters::new().for_codec(CODEC_TYPE_AAC),
-        &DecoderOptions::default(),
+        AudioCodecParameters::new().for_codec(CODEC_ID_AAC),
+        &AudioDecoderOptions::default(),
     )?;
 
     loop {

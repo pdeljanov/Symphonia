@@ -10,7 +10,8 @@ use log::{debug, error, info};
 use std::io::{Seek, SeekFrom};
 use symphonia_core::{
     audio::{Channels, Position},
-    codecs::*,
+    codecs::audio::*,
+    codecs::CodecParameters,
     errors::{decode_error, seek_error, unsupported_error, Result, SeekErrorKind},
     formats::{prelude::*, FORMAT_TYPE_CAF},
     io::*,
@@ -252,21 +253,19 @@ impl<'s> CafReader<'s> {
         };
 
         reader.check_file_header()?;
-        let codec_params = reader.read_chunks()?;
+        let track = reader.read_chunks()?;
 
-        reader.tracks.push(Track::new(0, codec_params));
+        reader.tracks.push(track);
 
         Ok(reader)
     }
 
     fn time_base(&self) -> Option<TimeBase> {
-        self.tracks.first().and_then(|track| {
-            track.codec_params.sample_rate.map(|sample_rate| TimeBase::new(1, sample_rate))
-        })
+        self.tracks.first().and_then(|track| track.time_base)
     }
 
     fn duration(&self) -> Option<u64> {
-        self.tracks.first().and_then(|track| track.codec_params.n_frames)
+        self.tracks.first().and_then(|track| track.num_frames)
     }
 
     fn check_file_header(&mut self) -> Result<()> {
@@ -290,12 +289,11 @@ impl<'s> CafReader<'s> {
     fn read_audio_description_chunk(
         &mut self,
         desc: &AudioDescription,
-        codec_params: &mut CodecParameters,
+        codec_params: &mut AudioCodecParameters,
     ) -> Result<()> {
         codec_params
-            .for_codec(desc.codec_type()?)
+            .for_codec(desc.codec_id()?)
             .with_sample_rate(desc.sample_rate as u32)
-            .with_time_base(TimeBase::new(1, desc.sample_rate as u32))
             .with_bits_per_sample(desc.bits_per_channel)
             .with_bits_per_coded_sample((desc.bytes_per_packet * 8) / desc.channels_per_frame);
 
@@ -338,27 +336,28 @@ impl<'s> CafReader<'s> {
         Ok(())
     }
 
-    fn read_chunks(&mut self) -> Result<CodecParameters> {
+    fn read_chunks(&mut self) -> Result<Track> {
         use Chunk::*;
 
-        let mut codec_params = CodecParameters::new();
-        let mut audio_description = None;
+        let mut codec_params = AudioCodecParameters::new();
+        let mut audio_desc = None;
+        let mut num_frames = None;
 
         loop {
-            match Chunk::read(&mut self.reader, &audio_description)? {
+            match Chunk::read(&mut self.reader, &audio_desc)? {
                 Some(AudioDescription(desc)) => {
-                    if audio_description.is_some() {
+                    if audio_desc.is_some() {
                         return decode_error("caf: additional Audio Description chunk");
                     }
                     self.read_audio_description_chunk(&desc, &mut codec_params)?;
-                    audio_description = Some(desc);
+                    audio_desc = Some(desc);
                 }
                 Some(AudioData(data)) => {
                     self.data_start_pos = data.start_pos;
                     self.data_len = data.data_len;
                     if let Some(data_len) = self.data_len {
                         if let PacketInfo::Uncompressed { bytes_per_frame } = &self.packet_info {
-                            codec_params.with_n_frames(data_len / *bytes_per_frame as u64);
+                            num_frames = Some(data_len / *bytes_per_frame as u64);
                         }
                     }
                 }
@@ -375,7 +374,7 @@ impl<'s> CafReader<'s> {
                 }
                 Some(PacketTable(table)) => {
                     if let PacketInfo::Compressed { ref mut packets, .. } = &mut self.packet_info {
-                        codec_params.with_n_frames(table.valid_frames as u64);
+                        num_frames = Some(table.valid_frames as u64);
                         *packets = table.packets;
                     }
                 }
@@ -385,7 +384,7 @@ impl<'s> CafReader<'s> {
                 Some(Free) | None => {}
             }
 
-            if audio_description.is_none() {
+            if audio_desc.is_none() {
                 error!("missing audio description chunk");
                 return decode_error("caf: missing audio description chunk");
             }
@@ -402,6 +401,14 @@ impl<'s> CafReader<'s> {
             }
         }
 
-        Ok(codec_params)
+        let mut track = Track::new(0);
+
+        track.with_codec_params(CodecParameters::Audio(codec_params));
+
+        if let Some(num_frames) = num_frames {
+            track.with_num_frames(num_frames);
+        }
+
+        Ok(track)
     }
 }

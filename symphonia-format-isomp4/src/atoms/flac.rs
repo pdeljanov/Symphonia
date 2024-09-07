@@ -5,7 +5,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::codecs::{CodecParameters, VerificationCheck, CODEC_TYPE_FLAC};
+use symphonia_core::codecs::audio::well_known::CODEC_ID_FLAC;
+use symphonia_core::codecs::audio::{AudioCodecParameters, VerificationCheck};
 use symphonia_core::errors::{decode_error, unsupported_error, Result};
 use symphonia_core::io::{BufReader, ReadBytes};
 
@@ -60,13 +61,12 @@ impl Atom for FlacAtom {
 }
 
 impl FlacAtom {
-    pub fn fill_codec_params(&self, codec_params: &mut CodecParameters) {
+    pub fn fill_codec_params(&self, codec_params: &mut AudioCodecParameters) {
         codec_params
-            .for_codec(CODEC_TYPE_FLAC)
+            .for_codec(CODEC_ID_FLAC)
             .with_sample_rate(self.stream_info.sample_rate)
             .with_bits_per_sample(self.stream_info.bits_per_sample)
             .with_channels(self.stream_info.channels.clone())
-            .with_packet_data_integrity(true)
             .with_extra_data(self.extra_data.clone());
 
         if let Some(md5) = self.stream_info.md5 {

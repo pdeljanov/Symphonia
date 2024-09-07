@@ -9,7 +9,9 @@ use symphonia_core::errors::{unsupported_error, Error};
 use symphonia_core::support_format;
 
 use symphonia_core::audio::Channels;
-use symphonia_core::codecs::{CodecParameters, CODEC_TYPE_AAC};
+use symphonia_core::codecs::audio::well_known::CODEC_ID_AAC;
+use symphonia_core::codecs::audio::AudioCodecParameters;
+use symphonia_core::codecs::CodecParameters;
 use symphonia_core::errors::{decode_error, seek_error, Result, SeekErrorKind};
 use symphonia_core::formats::{prelude::*, FORMAT_TYPE_ADTS};
 use symphonia_core::io::*;
@@ -50,27 +52,28 @@ impl<'s> AdtsReader<'s> {
         mss.seek_buffered_rev(usize::from(header.header_len()));
 
         // Use the header to populate the codec parameters.
-        let mut params = CodecParameters::new();
+        let mut codec_params = AudioCodecParameters::new();
 
-        params
-            .for_codec(CODEC_TYPE_AAC)
-            .with_sample_rate(header.sample_rate)
-            .with_time_base(TimeBase::new(1, header.sample_rate));
+        codec_params.for_codec(CODEC_ID_AAC).with_sample_rate(header.sample_rate);
 
         if let Some(channels) = header.channels {
-            params.with_channels(channels);
+            codec_params.with_channels(channels);
         }
+
+        // Populat the track.
+        let mut track = Track::new(0);
+        track.with_codec_params(CodecParameters::Audio(codec_params));
 
         let first_frame_pos = mss.pos();
 
         if let Some(n_frames) = approximate_frame_count(&mut mss)? {
             info!("estimating duration from bitrate, may be inaccurate for vbr files");
-            params.with_n_frames(n_frames);
+            track.with_num_frames(n_frames);
         }
 
         Ok(AdtsReader {
             reader: mss,
-            tracks: vec![Track::new(0, params)],
+            tracks: vec![track],
             cues: Vec::new(),
             metadata: opts.metadata.unwrap_or_default(),
             first_frame_pos,
@@ -305,12 +308,12 @@ impl FormatReader for AdtsReader<'_> {
         let required_ts = match to {
             // Frame timestamp given.
             SeekTo::TimeStamp { ts, .. } => ts,
-            // Time value given, calculate frame timestamp from sample rate.
+            // Time value given, calculate frame timestamp using the timebase.
             SeekTo::Time { time, .. } => {
-                // Use the sample rate to calculate the frame timestamp. If sample rate is not
-                // known, the seek cannot be completed.
-                if let Some(sample_rate) = self.tracks[0].codec_params.sample_rate {
-                    TimeBase::new(1, sample_rate).calc_timestamp(time)
+                // Use the timebase to calculate the frame timestamp. If timebase is not known, the
+                // seek cannot be completed.
+                if let Some(tb) = self.tracks[0].time_base {
+                    tb.calc_timestamp(time)
                 }
                 else {
                     return seek_error(SeekErrorKind::Unseekable);

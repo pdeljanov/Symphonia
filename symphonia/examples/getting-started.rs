@@ -1,9 +1,10 @@
-use symphonia::core::codecs::{DecoderOptions, CODEC_TYPE_NULL};
+use symphonia::core::codecs::audio::AudioDecoderOptions;
 use symphonia::core::errors::Error;
 use symphonia::core::formats::FormatOptions;
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
+use symphonia_core::formats::TrackType;
 
 fn main() {
     // Get the first command line argument.
@@ -30,18 +31,17 @@ fn main() {
         .expect("unsupported format");
 
     // Find the first audio track with a known (decodeable) codec.
-    let track = format
-        .tracks()
-        .iter()
-        .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
-        .expect("no supported audio tracks");
+    let track = format.default_track(TrackType::Audio).expect("no audio track");
 
     // Use the default options for the decoder.
-    let dec_opts: DecoderOptions = Default::default();
+    let dec_opts: AudioDecoderOptions = Default::default();
 
     // Create a decoder for the track.
     let mut decoder = symphonia::default::get_codecs()
-        .make(&track.codec_params, &dec_opts)
+        .make_audio_decoder(
+            track.codec_params.as_ref().expect("codec parameters missing").audio().unwrap(),
+            &dec_opts,
+        )
         .expect("unsupported codec");
 
     // Store the track identifier, it will be used to filter packets.

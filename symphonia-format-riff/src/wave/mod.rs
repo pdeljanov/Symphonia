@@ -7,6 +7,7 @@
 
 use std::io::{Seek, SeekFrom};
 
+use symphonia_core::codecs::audio::AudioCodecParameters;
 use symphonia_core::codecs::CodecParameters;
 use symphonia_core::errors::{seek_error, unsupported_error};
 use symphonia_core::errors::{Result, SeekErrorKind};
@@ -73,9 +74,10 @@ impl<'s> WavReader<'s> {
         let mut riff_chunks =
             ChunksReader::<RiffWaveChunks>::new(riff_len, ByteOrder::LittleEndian);
 
-        let mut codec_params = CodecParameters::new();
+        let mut codec_params = AudioCodecParameters::new();
         let mut metadata: MetadataLog = Default::default();
         let mut packet_info = PacketInfo::without_blocks(0);
+        let mut fact = None;
 
         loop {
             let chunk = riff_chunks.next(&mut mss)?;
@@ -101,10 +103,7 @@ impl<'s> WavReader<'s> {
                     append_format_params(&mut codec_params, format.format_data, format.sample_rate);
                 }
                 RiffWaveChunks::Fact(fct) => {
-                    let fact = fct.parse(&mut mss)?;
-
-                    // Append Fact chunk fields to codec parameters.
-                    append_fact_params(&mut codec_params, &fact);
+                    fact = Some(fct.parse(&mut mss)?);
                 }
                 RiffWaveChunks::List(lst) => {
                     let list = lst.parse(&mut mss)?;
@@ -123,13 +122,23 @@ impl<'s> WavReader<'s> {
                     let data_start_pos = mss.pos();
                     let data_end_pos = data_start_pos + u64::from(data.len);
 
-                    // Append Data chunk fields to codec parameters.
-                    append_data_params(&mut codec_params, data.len as u64, &packet_info);
+                    // Create the track.
+                    let mut track = Track::new(0);
 
-                    // Add a new track using the collected codec parameters.
+                    track.with_codec_params(CodecParameters::Audio(codec_params));
+
+                    // Append Fact chunk fields to track.
+                    if let Some(fact) = &fact {
+                        append_fact_params(&mut track, fact);
+                    }
+
+                    // Append Data chunk fields to track.
+                    append_data_params(&mut track, data.len as u64, &packet_info);
+
+                    // Instantiate the reader.
                     return Ok(WavReader {
                         reader: mss,
-                        tracks: vec![Track::new(0, codec_params)],
+                        tracks: vec![track],
                         cues: Vec::new(),
                         metadata: opts.metadata.unwrap_or_default(),
                         packet_info,
@@ -211,17 +220,17 @@ impl FormatReader for WavReader<'_> {
             return seek_error(SeekErrorKind::Unseekable);
         }
 
-        let params = &self.tracks[0].codec_params;
+        let track = &self.tracks[0];
 
         let ts = match to {
             // Frame timestamp given.
             SeekTo::TimeStamp { ts, .. } => ts,
-            // Time value given, calculate frame timestamp from sample rate.
+            // Time value given, calculate frame timestamp using the time base.
             SeekTo::Time { time, .. } => {
-                // Use the sample rate to calculate the frame timestamp. If sample rate is not
+                // Use the time base to calculate the frame timestamp. If time base is not
                 // known, the seek cannot be completed.
-                if let Some(sample_rate) = params.sample_rate {
-                    TimeBase::new(1, sample_rate).calc_timestamp(time)
+                if let Some(tb) = track.time_base {
+                    tb.calc_timestamp(time)
                 }
                 else {
                     return seek_error(SeekErrorKind::Unseekable);
@@ -231,8 +240,8 @@ impl FormatReader for WavReader<'_> {
 
         // If the total number of frames in the track is known, verify the desired frame timestamp
         // does not exceed it.
-        if let Some(n_frames) = params.n_frames {
-            if ts > n_frames {
+        if let Some(num_frames) = track.num_frames {
+            if ts > num_frames {
                 return seek_error(SeekErrorKind::OutOfRange);
             }
         }

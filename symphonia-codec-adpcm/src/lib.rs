@@ -14,14 +14,16 @@
 #![allow(clippy::identity_op)]
 #![allow(clippy::manual_range_contains)]
 
-use symphonia_core::support_codec;
+use symphonia_core::codecs::registry::{RegisterableAudioDecoder, SupportedAudioCodec};
+use symphonia_core::codecs::CodecInfo;
+use symphonia_core::support_audio_codec;
 
 use symphonia_core::audio::{
     AsGenericAudioBufferRef, Audio, AudioBuffer, AudioMut, AudioSpec, GenericAudioBufferRef,
 };
-use symphonia_core::codecs::{CodecDescriptor, CodecParameters, CodecType};
-use symphonia_core::codecs::{Decoder, DecoderOptions, FinalizeResult};
-use symphonia_core::codecs::{CODEC_TYPE_ADPCM_IMA_WAV, CODEC_TYPE_ADPCM_MS};
+use symphonia_core::codecs::audio::well_known::{CODEC_ID_ADPCM_IMA_WAV, CODEC_ID_ADPCM_MS};
+use symphonia_core::codecs::audio::{AudioCodecId, AudioCodecParameters, AudioDecoderOptions};
+use symphonia_core::codecs::audio::{AudioDecoder, FinalizeResult};
 use symphonia_core::errors::{unsupported_error, Result};
 use symphonia_core::formats::Packet;
 use symphonia_core::io::ReadBytes;
@@ -30,8 +32,8 @@ mod codec_ima;
 mod codec_ms;
 mod common;
 
-fn is_supported_adpcm_codec(codec_type: CodecType) -> bool {
-    matches!(codec_type, CODEC_TYPE_ADPCM_MS | CODEC_TYPE_ADPCM_IMA_WAV)
+fn is_supported_adpcm_codec(codec_id: AudioCodecId) -> bool {
+    matches!(codec_id, CODEC_ID_ADPCM_MS | CODEC_ID_ADPCM_IMA_WAV)
 }
 
 enum InnerDecoder {
@@ -59,12 +61,52 @@ impl InnerDecoder {
 
 /// Adaptive Differential Pulse Code Modulation (ADPCM) decoder.
 pub struct AdpcmDecoder {
-    params: CodecParameters,
+    params: AudioCodecParameters,
     inner_decoder: InnerDecoder,
     buf: AudioBuffer<i32>,
 }
 
 impl AdpcmDecoder {
+    pub fn try_new(params: &AudioCodecParameters, _opts: &AudioDecoderOptions) -> Result<Self> {
+        // This decoder only supports certain ADPCM codecs.
+        if !is_supported_adpcm_codec(params.codec) {
+            return unsupported_error("adpcm: invalid codec");
+        }
+
+        let frames = match params.max_frames_per_packet {
+            Some(frames) => frames as usize,
+            _ => return unsupported_error("adpcm: maximum frames per packet is required"),
+        };
+
+        if params.frames_per_block.is_none() || params.frames_per_block.unwrap() == 0 {
+            return unsupported_error("adpcm: valid frames per block is required");
+        }
+
+        let rate = match params.sample_rate {
+            Some(rate) => rate,
+            _ => return unsupported_error("adpcm: sample rate is required"),
+        };
+
+        let spec = if let Some(channels) = &params.channels {
+            AudioSpec::new(rate, channels.clone())
+        }
+        else {
+            return unsupported_error("adpcm: channels or channel_layout is required");
+        };
+
+        let inner_decoder = match params.codec {
+            CODEC_ID_ADPCM_MS => InnerDecoder::AdpcmMs,
+            CODEC_ID_ADPCM_IMA_WAV => InnerDecoder::AdpcmIma,
+            _ => return unsupported_error("adpcm: codec is unsupported"),
+        };
+
+        Ok(AdpcmDecoder {
+            params: params.clone(),
+            inner_decoder,
+            buf: AudioBuffer::new(spec, frames),
+        })
+    }
+
     fn decode_inner(&mut self, packet: &Packet) -> Result<()> {
         let mut stream = packet.as_buf_reader();
 
@@ -105,59 +147,17 @@ impl AdpcmDecoder {
     }
 }
 
-impl Decoder for AdpcmDecoder {
-    fn try_new(params: &CodecParameters, _options: &DecoderOptions) -> Result<Self> {
-        // This decoder only supports certain ADPCM codecs.
-        if !is_supported_adpcm_codec(params.codec) {
-            return unsupported_error("adpcm: invalid codec type");
-        }
-
-        let frames = match params.max_frames_per_packet {
-            Some(frames) => frames as usize,
-            _ => return unsupported_error("adpcm: maximum frames per packet is required"),
-        };
-
-        if params.frames_per_block.is_none() || params.frames_per_block.unwrap() == 0 {
-            return unsupported_error("adpcm: valid frames per block is required");
-        }
-
-        let rate = match params.sample_rate {
-            Some(rate) => rate,
-            _ => return unsupported_error("adpcm: sample rate is required"),
-        };
-
-        let spec = if let Some(channels) = &params.channels {
-            AudioSpec::new(rate, channels.clone())
-        }
-        else {
-            return unsupported_error("adpcm: channels or channel_layout is required");
-        };
-
-        let inner_decoder = match params.codec {
-            CODEC_TYPE_ADPCM_MS => InnerDecoder::AdpcmMs,
-            CODEC_TYPE_ADPCM_IMA_WAV => InnerDecoder::AdpcmIma,
-            _ => return unsupported_error("adpcm: codec is unsupported"),
-        };
-
-        Ok(AdpcmDecoder {
-            params: params.clone(),
-            inner_decoder,
-            buf: AudioBuffer::new(spec, frames),
-        })
-    }
-
-    fn supported_codecs() -> &'static [CodecDescriptor] {
-        &[
-            support_codec!(CODEC_TYPE_ADPCM_MS, "adpcm_ms", "Microsoft ADPCM"),
-            support_codec!(CODEC_TYPE_ADPCM_IMA_WAV, "adpcm_ima_wav", "ADPCM IMA WAV"),
-        ]
-    }
-
+impl AudioDecoder for AdpcmDecoder {
     fn reset(&mut self) {
         // No state is stored between packets, therefore do nothing.
     }
 
-    fn codec_params(&self) -> &CodecParameters {
+    fn codec_info(&self) -> &CodecInfo {
+        // Return the codec that's in-use.
+        &Self::supported_codecs().iter().find(|desc| desc.id == self.params.codec).unwrap().info
+    }
+
+    fn codec_params(&self) -> &AudioCodecParameters {
         &self.params
     }
 
@@ -177,5 +177,24 @@ impl Decoder for AdpcmDecoder {
 
     fn last_decoded(&self) -> GenericAudioBufferRef<'_> {
         self.buf.as_generic_audio_buffer_ref()
+    }
+}
+
+impl RegisterableAudioDecoder for AdpcmDecoder {
+    fn try_registry_new(
+        params: &AudioCodecParameters,
+        opts: &AudioDecoderOptions,
+    ) -> Result<Box<dyn AudioDecoder>>
+    where
+        Self: Sized,
+    {
+        Ok(Box::new(AdpcmDecoder::try_new(params, opts)?))
+    }
+
+    fn supported_codecs() -> &'static [SupportedAudioCodec] {
+        &[
+            support_audio_codec!(CODEC_ID_ADPCM_MS, "adpcm_ms", "Microsoft ADPCM"),
+            support_audio_codec!(CODEC_ID_ADPCM_IMA_WAV, "adpcm_ima_wav", "ADPCM IMA WAV"),
+        ]
     }
 }

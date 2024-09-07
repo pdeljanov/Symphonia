@@ -10,11 +10,11 @@
 
 use std::fmt;
 
-use crate::codecs::CodecParameters;
+use crate::codecs::{audio, subtitle, video, CodecParameters};
 use crate::errors::Result;
 use crate::io::{BufReader, MediaSourceStream};
 use crate::meta::{Metadata, MetadataLog, Tag};
-use crate::units::{Time, TimeStamp};
+use crate::units::{Time, TimeBase, TimeStamp};
 
 pub mod prelude {
     //! The `formats` module prelude.
@@ -195,21 +195,122 @@ pub struct CuePoint {
     pub tags: Vec<Tag>,
 }
 
+/// The track type.
+#[non_exhaustive]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum TrackType {
+    /// An audio track.
+    Audio,
+    /// A video track.
+    Video,
+    /// A subtitle track.
+    Subtitle,
+}
+
 /// A `Track` is an independently coded media bitstream. A media format may contain multiple tracks
 /// in one container. Each of those tracks are represented by one `Track`.
 #[derive(Clone, Debug)]
 pub struct Track {
     /// A unique identifier for the track.
+    ///
+    /// For most formats this is usually the zero-based index of the track, however, some more
+    /// complex formats set this differently.
     pub id: u32,
     /// The codec parameters for the track.
-    pub codec_params: CodecParameters,
-    /// The language of the track. May be unknown.
+    ///
+    /// If `None`, the format reader was unable to determine the codec parameters and the track will
+    /// be unplayable.
+    pub codec_params: Option<CodecParameters>,
+    /// The language of the track. May be unknown or not set.
     pub language: Option<String>,
+    /// The timebase of the track.
+    ///
+    /// The timebase is the length of time in seconds of a single tick of a timestamp or duration.
+    /// It can be used to convert any timestamp or duration related to the track into seconds.
+    pub time_base: Option<TimeBase>,
+    /// The length of the track in number of frames.
+    ///
+    /// If a timebase is available, this field can be used to calculate the total duration of the
+    /// track in seconds by using [`TimeBase::calc_time`] and passing the number of frames as the
+    /// timestamp.
+    pub num_frames: Option<u64>,
+    /// The timestamp of the first frame.
+    pub start_ts: u64,
+    /// The number of leading frames inserted by the encoder that should be skipped during playback.
+    pub delay: Option<u32>,
+    /// The number of trailing frames inserted by the encoder for padding that should be skipped
+    /// during playback.
+    pub padding: Option<u32>,
 }
 
 impl Track {
-    pub fn new(id: u32, codec_params: CodecParameters) -> Self {
-        Track { id, codec_params, language: None }
+    /// Instantiate a new track with a given ID.
+    pub fn new(id: u32) -> Self {
+        Track {
+            id,
+            codec_params: None,
+            language: None,
+            time_base: None,
+            num_frames: None,
+            start_ts: 0,
+            delay: None,
+            padding: None,
+        }
+    }
+
+    /// Provide the codec parameters.
+    ///
+    /// Note: If the codec parameters contains a sample or frame rate, a default timebase will be
+    /// derived.
+    pub fn with_codec_params(&mut self, codec_params: CodecParameters) -> &mut Self {
+        // Derive a timebase from the sample/frame rate if one is not already set.
+        if self.time_base.is_none() {
+            self.time_base = match &codec_params {
+                CodecParameters::Audio(params) => {
+                    params.sample_rate.map(|rate| TimeBase::new(1, rate))
+                }
+                _ => None,
+            };
+        }
+
+        self.codec_params = Some(codec_params);
+        self
+    }
+
+    /// Provide the track language.
+    pub fn with_language(&mut self, language: &str) -> &mut Self {
+        self.language = Some(language.to_string());
+        self
+    }
+
+    /// Provide the `TimeBase`.
+    pub fn with_time_base(&mut self, time_base: TimeBase) -> &mut Self {
+        self.time_base = Some(time_base);
+        self
+    }
+
+    /// Provide the total number of frames.
+    pub fn with_num_frames(&mut self, num_frames: u64) -> &mut Self {
+        self.num_frames = Some(num_frames);
+        self
+    }
+
+    /// Provide the timestamp of the first frame.
+    pub fn with_start_ts(&mut self, start_ts: u64) -> &mut Self {
+        self.start_ts = start_ts;
+        self
+    }
+
+    /// Provide the number of delay frames.
+    pub fn with_delay(&mut self, delay: u32) -> &mut Self {
+        self.delay = Some(delay);
+        self
+    }
+
+    /// Provide the number of padding frames.
+    pub fn with_padding(&mut self, padding: u32) -> &mut Self {
+        self.padding = Some(padding);
+        self
     }
 }
 
@@ -256,11 +357,39 @@ pub trait FormatReader: Send + Sync {
     /// Gets a list of tracks in the container.
     fn tracks(&self) -> &[Track];
 
-    /// Gets the default track. If the `FormatReader` has a method of determining the default track,
-    /// this function should return it. Otherwise, the first track is returned. If no tracks are
-    /// present then `None` is returned.
-    fn default_track(&self) -> Option<&Track> {
-        self.tracks().first()
+    /// Get the first track of a certain track type.
+    fn first_track(&self, track_type: TrackType) -> Option<&Track> {
+        // Find the first track matching the desired track type.
+        self.tracks().iter().find(|track| match track.codec_params {
+            Some(CodecParameters::Audio(_)) if track_type == TrackType::Audio => true,
+            Some(CodecParameters::Video(_)) if track_type == TrackType::Video => true,
+            Some(CodecParameters::Subtitle(_)) if track_type == TrackType::Subtitle => true,
+            _ => false,
+        })
+    }
+
+    /// Get the default track of a certain track type.
+    ///
+    /// # For Implementations
+    ///
+    /// If the container format has the capability to designate a default track, this function
+    /// should return it. Otherwise, the default implementation will return the first track of the
+    /// desired track type with a non-null codec ID. If no tracks are present then `None` is
+    /// returned.
+    fn default_track(&self, track_type: TrackType) -> Option<&Track> {
+        // Find the first track matching the desired track type with a known codec.
+        self.tracks().iter().find(|track| match &track.codec_params {
+            Some(CodecParameters::Audio(params)) if track_type == TrackType::Audio => {
+                params.codec != audio::CODEC_ID_NULL
+            }
+            Some(CodecParameters::Video(params)) if track_type == TrackType::Video => {
+                params.codec != video::CODEC_ID_NULL
+            }
+            Some(CodecParameters::Subtitle(params)) if track_type == TrackType::Subtitle => {
+                params.codec != subtitle::CODEC_ID_NULL
+            }
+            _ => false,
+        })
     }
 
     /// Reader the next packet from the container.
@@ -283,7 +412,7 @@ pub trait FormatReader: Send + Sync {
 /// encapsulated codec.
 #[derive(Clone)]
 pub struct Packet {
-    /// The track id.
+    /// The track ID.
     track_id: u32,
     /// The timestamp of the packet. When gapless support is enabled, this timestamp is relative to
     /// the end of the encoder delay.

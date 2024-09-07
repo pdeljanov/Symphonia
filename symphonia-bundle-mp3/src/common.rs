@@ -6,7 +6,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use symphonia_core::audio::{layouts, AudioBuffer, AudioSpec, Channels, Position};
-use symphonia_core::codecs::{CodecType, CODEC_TYPE_MP1, CODEC_TYPE_MP2, CODEC_TYPE_MP3};
+use symphonia_core::codecs::audio::well_known::{CODEC_ID_MP1, CODEC_ID_MP2, CODEC_ID_MP3};
+use symphonia_core::codecs::audio::AudioCodecId;
 use symphonia_core::errors::Result;
 
 use symphonia_core::io::BufReader;
@@ -121,12 +122,12 @@ impl FrameHeader {
         self.version == MpegVersion::Mpeg2p5
     }
 
-    /// Returns the codec type for the frame.
-    pub fn codec(&self) -> CodecType {
+    /// Returns the codec ID for the frame.
+    pub fn codec(&self) -> AudioCodecId {
         match self.layer {
-            MpegLayer::Layer1 => CODEC_TYPE_MP1,
-            MpegLayer::Layer2 => CODEC_TYPE_MP2,
-            MpegLayer::Layer3 => CODEC_TYPE_MP3,
+            MpegLayer::Layer1 => CODEC_ID_MP1,
+            MpegLayer::Layer2 => CODEC_ID_MP2,
+            MpegLayer::Layer3 => CODEC_ID_MP3,
         }
     }
 

@@ -9,7 +9,7 @@ use log::{debug, error, info, warn};
 use std::{convert::TryFrom, fmt, mem::size_of, str};
 use symphonia_core::{
     audio::{layouts, AmbisonicBFormat, ChannelLabel, Channels, Position},
-    codecs::*,
+    codecs::audio::{well_known::*, AudioCodecId},
     errors::{decode_error, unsupported_error, Error, Result},
     io::{MediaSourceStream, ReadBytes},
 };
@@ -172,17 +172,17 @@ impl AudioDescription {
         })
     }
 
-    pub fn codec_type(&self) -> Result<CodecType> {
+    pub fn codec_id(&self) -> Result<AudioCodecId> {
         use AudioDescriptionFormatId::*;
 
         let result = match &self.format_id {
             LinearPCM { floating_point, little_endian } => {
                 if *floating_point {
                     match (self.bits_per_channel, *little_endian) {
-                        (32, true) => CODEC_TYPE_PCM_F32LE,
-                        (32, false) => CODEC_TYPE_PCM_F32BE,
-                        (64, true) => CODEC_TYPE_PCM_F64LE,
-                        (64, false) => CODEC_TYPE_PCM_F64BE,
+                        (32, true) => CODEC_ID_PCM_F32LE,
+                        (32, false) => CODEC_ID_PCM_F32BE,
+                        (64, true) => CODEC_ID_PCM_F64LE,
+                        (64, false) => CODEC_ID_PCM_F64BE,
                         (bits, _) => {
                             error!("unsupported PCM floating point format (bits: {})", bits);
                             return unsupported_error("caf: unsupported bits per channel");
@@ -191,12 +191,12 @@ impl AudioDescription {
                 }
                 else {
                     match (self.bits_per_channel, *little_endian) {
-                        (16, true) => CODEC_TYPE_PCM_S16LE,
-                        (16, false) => CODEC_TYPE_PCM_S16BE,
-                        (24, true) => CODEC_TYPE_PCM_S24LE,
-                        (24, false) => CODEC_TYPE_PCM_S24BE,
-                        (32, true) => CODEC_TYPE_PCM_S32LE,
-                        (32, false) => CODEC_TYPE_PCM_S32BE,
+                        (16, true) => CODEC_ID_PCM_S16LE,
+                        (16, false) => CODEC_ID_PCM_S16BE,
+                        (24, true) => CODEC_ID_PCM_S24LE,
+                        (24, false) => CODEC_ID_PCM_S24BE,
+                        (32, true) => CODEC_ID_PCM_S32LE,
+                        (32, false) => CODEC_ID_PCM_S32BE,
                         (bits, _) => {
                             error!("unsupported PCM integer format (bits: {})", bits);
                             return unsupported_error("caf: unsupported bits per channel");
@@ -204,16 +204,16 @@ impl AudioDescription {
                     }
                 }
             }
-            AppleIMA4 => CODEC_TYPE_ADPCM_IMA_WAV,
-            MPEG4AAC => CODEC_TYPE_AAC,
-            ULaw => CODEC_TYPE_PCM_MULAW,
-            ALaw => CODEC_TYPE_PCM_ALAW,
-            MPEGLayer1 => CODEC_TYPE_MP1,
-            MPEGLayer2 => CODEC_TYPE_MP2,
-            MPEGLayer3 => CODEC_TYPE_MP3,
-            AppleLossless => CODEC_TYPE_ALAC,
-            Flac => CODEC_TYPE_FLAC,
-            Opus => CODEC_TYPE_OPUS,
+            AppleIMA4 => CODEC_ID_ADPCM_IMA_WAV,
+            MPEG4AAC => CODEC_ID_AAC,
+            ULaw => CODEC_ID_PCM_MULAW,
+            ALaw => CODEC_ID_PCM_ALAW,
+            MPEGLayer1 => CODEC_ID_MP1,
+            MPEGLayer2 => CODEC_ID_MP2,
+            MPEGLayer3 => CODEC_ID_MP3,
+            AppleLossless => CODEC_ID_ALAC,
+            Flac => CODEC_ID_FLAC,
+            Opus => CODEC_ID_OPUS,
             unsupported => {
                 error!("unsupported codec ({:?})", unsupported);
                 return unsupported_error("caf: unsupported codec");

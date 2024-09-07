@@ -7,6 +7,7 @@
 
 use std::io::{Seek, SeekFrom};
 
+use symphonia_core::codecs::audio::AudioCodecParameters;
 use symphonia_core::codecs::CodecParameters;
 use symphonia_core::errors::{seek_error, unsupported_error};
 use symphonia_core::errors::{Result, SeekErrorKind};
@@ -66,7 +67,7 @@ impl<'s> AiffReader<'s> {
 
         let mut riff_chunks = ChunksReader::<RiffAiffChunks>::new(riff_len, ByteOrder::BigEndian);
 
-        let mut codec_params = CodecParameters::new();
+        let mut codec_params = AudioCodecParameters::new();
         //TODO: Chunks such as marker contain metadata, get it.
         let metadata = opts.metadata.unwrap_or_default();
         let mut packet_info = PacketInfo::without_blocks(0);
@@ -106,13 +107,18 @@ impl<'s> AiffReader<'s> {
                     let data_start_pos = mss.pos();
                     let data_end_pos = data_start_pos + u64::from(data.len);
 
-                    // Append Sound chunk fields to codec parameters.
-                    append_data_params(&mut codec_params, data.len as u64, &packet_info);
+                    // Create a new track using the collected codec parameters.
+                    let mut track = Track::new(0);
 
-                    // Add a new track using the collected codec parameters.
+                    track.with_codec_params(CodecParameters::Audio(codec_params));
+
+                    // Append Sound chunk fields to track.
+                    append_data_params(&mut track, data.len as u64, &packet_info);
+
+                    // Instantiate the AIFF reader.
                     return Ok(AiffReader {
                         reader: mss,
-                        tracks: vec![Track::new(0, codec_params)],
+                        tracks: vec![track],
                         cues: Vec::new(),
                         metadata,
                         packet_info,
@@ -184,17 +190,17 @@ impl FormatReader for AiffReader<'_> {
             return seek_error(SeekErrorKind::Unseekable);
         }
 
-        let params = &self.tracks[0].codec_params;
+        let track = &self.tracks[0];
 
         let ts = match to {
             // Frame timestamp given.
             SeekTo::TimeStamp { ts, .. } => ts,
-            // Time value given, calculate frame timestamp from sample rate.
+            // Time value given, calculate frame timestamp using the timebase.
             SeekTo::Time { time, .. } => {
-                // Use the sample rate to calculate the frame timestamp. If sample rate is not
+                // Use the timebase to calculate the frame timestamp. If timebase is not
                 // known, the seek cannot be completed.
-                if let Some(sample_rate) = params.sample_rate {
-                    TimeBase::new(1, sample_rate).calc_timestamp(time)
+                if let Some(tb) = track.time_base {
+                    tb.calc_timestamp(time)
                 }
                 else {
                     return seek_error(SeekErrorKind::Unseekable);
@@ -204,7 +210,7 @@ impl FormatReader for AiffReader<'_> {
 
         // If the total number of frames in the track is known, verify the desired frame timestamp
         // does not exceed it.
-        if let Some(n_frames) = params.n_frames {
+        if let Some(n_frames) = track.num_frames {
             if ts > n_frames {
                 return seek_error(SeekErrorKind::OutOfRange);
             }

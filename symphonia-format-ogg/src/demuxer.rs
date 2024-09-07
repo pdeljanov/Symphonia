@@ -310,7 +310,7 @@ impl<'s> OggReader<'s> {
             // There should only be a single packet, the identification packet, in the first page.
             if let Some(pkt) = self.pages.first_packet() {
                 // If a stream mapper has been detected, create a logical stream with it.
-                if let Some(mapper) = mappings::detect(pkt)? {
+                if let Some(mapper) = mappings::detect(header.serial, pkt)? {
                     info!(
                         "selected {} mapper for stream with serial={:#x}",
                         mapper.name(),
@@ -388,7 +388,7 @@ impl<'s> OggReader<'s> {
                 warn!("track for serial={:#x} may not be ready", serial);
             }
 
-            self.tracks.push(Track::new(serial, stream.codec_params().clone()));
+            self.tracks.push(stream.track().clone());
         }
 
         // Third, replace all logical streams with the new set.
@@ -454,16 +454,16 @@ impl FormatReader for OggReader<'_> {
             SeekTo::TimeStamp { ts, track_id } => {
                 // Check if the user provided an invalid track ID.
                 if let Some(stream) = self.streams.get(&track_id) {
-                    let params = stream.codec_params();
+                    let track = stream.track();
 
                     // Timestamp lower-bound out-of-range.
-                    if ts < params.start_ts {
+                    if ts < track.start_ts {
                         return seek_error(SeekErrorKind::OutOfRange);
                     }
 
                     // Timestamp upper-bound out-of-range.
-                    if let Some(dur) = params.n_frames {
-                        if ts > dur + params.start_ts {
+                    if let Some(dur) = track.num_frames {
+                        if ts > dur + track.start_ts {
                             return seek_error(SeekErrorKind::OutOfRange);
                         }
                     }
@@ -480,8 +480,8 @@ impl FormatReader for OggReader<'_> {
                 let serial = if let Some(serial) = track_id {
                     serial
                 }
-                else if let Some(default_track) = self.default_track() {
-                    default_track.id
+                else if let Some(first_track) = self.tracks.first() {
+                    first_track.id
                 }
                 else {
                     // No tracks.
@@ -490,10 +490,10 @@ impl FormatReader for OggReader<'_> {
 
                 // Convert the time to a timestamp.
                 let ts = if let Some(stream) = self.streams.get(&serial) {
-                    let params = stream.codec_params();
+                    let track = stream.track();
 
-                    let ts = if let Some(sample_rate) = params.sample_rate {
-                        TimeBase::new(1, sample_rate).calc_timestamp(time)
+                    let ts = if let Some(tb) = track.time_base {
+                        tb.calc_timestamp(time)
                     }
                     else {
                         // No sample rate. This should never happen.
@@ -501,13 +501,13 @@ impl FormatReader for OggReader<'_> {
                     };
 
                     // Timestamp lower-bound out-of-range.
-                    if ts < params.start_ts {
+                    if ts < track.start_ts {
                         return seek_error(SeekErrorKind::OutOfRange);
                     }
 
                     // Timestamp upper-bound out-of-range.
-                    if let Some(dur) = params.n_frames {
-                        if ts > dur + params.start_ts {
+                    if let Some(dur) = track.num_frames {
+                        if ts > dur + track.start_ts {
                             return seek_error(SeekErrorKind::OutOfRange);
                         }
                     }

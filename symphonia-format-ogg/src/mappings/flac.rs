@@ -10,11 +10,13 @@ use crate::common::SideData;
 use super::{MapResult, Mapper, PacketParser};
 
 use symphonia_core::checksum::Crc8Ccitt;
-use symphonia_core::codecs::{CodecParameters, VerificationCheck, CODEC_TYPE_FLAC};
+use symphonia_core::codecs::audio::well_known::CODEC_ID_FLAC;
+use symphonia_core::codecs::audio::{AudioCodecParameters, VerificationCheck};
+use symphonia_core::codecs::CodecParameters;
 use symphonia_core::errors::{decode_error, Result};
+use symphonia_core::formats::Track;
 use symphonia_core::io::{BufReader, MonitorStream, ReadBytes};
 use symphonia_core::meta::MetadataBuilder;
-use symphonia_core::units::TimeBase;
 
 use symphonia_utils_xiph::flac::metadata::{read_comment_block, read_picture_block};
 use symphonia_utils_xiph::flac::metadata::{MetadataBlockHeader, MetadataBlockType, StreamInfo};
@@ -36,7 +38,7 @@ const OGG_FLAC_PACKET_TYPE: u8 = 0x7f;
 /// The native FLAC signature.
 const FLAC_SIGNATURE: &[u8] = b"fLaC";
 
-pub fn detect(buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> {
+pub fn detect(serial: u32, buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> {
     // The packet shall be exactly the expected length.
     if buf.len() != OGG_FLAC_HEADER_PACKET_SIZE {
         return Ok(None);
@@ -90,14 +92,12 @@ pub fn detect(buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> {
     let stream_info = StreamInfo::read(&mut BufReader::new(&extra_data))?;
 
     // Populate the codec parameters with the information read from the stream information block.
-    let mut codec_params = CodecParameters::new();
+    let mut codec_params = AudioCodecParameters::new();
 
     codec_params
-        .for_codec(CODEC_TYPE_FLAC)
-        .with_packet_data_integrity(true)
+        .for_codec(CODEC_ID_FLAC)
         .with_extra_data(extra_data)
         .with_sample_rate(stream_info.sample_rate)
-        .with_time_base(TimeBase::new(1, stream_info.sample_rate))
         .with_bits_per_sample(stream_info.bits_per_sample)
         .with_channels(stream_info.channels);
 
@@ -105,12 +105,17 @@ pub fn detect(buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> {
         codec_params.with_verification_code(VerificationCheck::Md5(md5));
     }
 
-    if let Some(n_frames) = stream_info.n_samples {
-        codec_params.with_n_frames(n_frames);
+    // Create the track.
+    let mut track = Track::new(serial);
+
+    if let Some(num_frames) = stream_info.n_samples {
+        track.with_num_frames(num_frames);
     }
 
+    track.with_codec_params(CodecParameters::Audio(codec_params));
+
     // Instantiate the FLAC mapper.
-    let mapper = Box::new(FlacMapper { codec_params });
+    let mapper = Box::new(FlacMapper { track });
 
     Ok(Some(mapper))
 }
@@ -262,7 +267,7 @@ impl PacketParser for FlacPacketParser {
 }
 
 struct FlacMapper {
-    codec_params: CodecParameters,
+    track: Track,
 }
 
 impl Mapper for FlacMapper {
@@ -270,12 +275,12 @@ impl Mapper for FlacMapper {
         "flac"
     }
 
-    fn codec_params(&self) -> &CodecParameters {
-        &self.codec_params
+    fn track(&self) -> &Track {
+        &self.track
     }
 
-    fn codec_params_mut(&mut self) -> &mut CodecParameters {
-        &mut self.codec_params
+    fn track_mut(&mut self) -> &mut Track {
+        &mut self.track
     }
 
     fn make_parser(&self) -> Option<Box<dyn super::PacketParser>> {

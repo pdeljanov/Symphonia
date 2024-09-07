@@ -2,13 +2,14 @@ use std::env;
 use std::fs::File;
 use std::path::Path;
 
-use symphonia::core::codecs::DecoderOptions;
+use symphonia::core::codecs::audio::AudioDecoderOptions;
 use symphonia::core::errors::Error;
 use symphonia::core::formats::FormatOptions;
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
 use symphonia::core::sample::Sample;
+use symphonia_core::formats::TrackType;
 
 fn main() {
     // Get command line arguments.
@@ -26,20 +27,21 @@ fn main() {
     let hint = Hint::new();
 
     // Use the default options when reading and decoding.
-    let format_opts: FormatOptions = Default::default();
-    let metadata_opts: MetadataOptions = Default::default();
-    let decoder_opts: DecoderOptions = Default::default();
+    let fmt_opts: FormatOptions = Default::default();
+    let meta_opts: MetadataOptions = Default::default();
+    let dec_opts: AudioDecoderOptions = Default::default();
 
     // Probe the media source stream for a format.
     let mut format =
-        symphonia::default::get_probe().format(&hint, mss, format_opts, metadata_opts).unwrap();
+        symphonia::default::get_probe().format(&hint, mss, fmt_opts, meta_opts).unwrap();
 
-    // Get the default track.
-    let track = format.default_track().unwrap();
+    // Get the default audio track.
+    let track = format.default_track(TrackType::Audio).unwrap();
 
     // Create a decoder for the track.
-    let mut decoder =
-        symphonia::default::get_codecs().make(&track.codec_params, &decoder_opts).unwrap();
+    let mut decoder = symphonia::default::get_codecs()
+        .make_audio_decoder(track.codec_params.as_ref().unwrap().audio().unwrap(), &dec_opts)
+        .unwrap();
 
     // Store the track identifier, we'll use it to filter packets.
     let track_id = track.id;

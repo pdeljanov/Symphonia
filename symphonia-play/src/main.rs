@@ -18,9 +18,12 @@ use std::io::Write;
 use std::path::Path;
 
 use lazy_static::lazy_static;
-use symphonia::core::codecs::{DecoderOptions, FinalizeResult, CODEC_TYPE_NULL};
+use symphonia::core::codecs::audio::{AudioDecoderOptions, FinalizeResult};
+use symphonia::core::codecs::{CodecInfo, CodecParameters, CodecProfile};
 use symphonia::core::errors::{Error, Result};
-use symphonia::core::formats::{Cue, FormatOptions, FormatReader, SeekMode, SeekTo, Track};
+use symphonia::core::formats::{
+    Cue, FormatOptions, FormatReader, SeekMode, SeekTo, Track, TrackType,
+};
 use symphonia::core::io::{MediaSource, MediaSourceStream, ReadOnlySource};
 use symphonia::core::meta::{ColorMode, MetadataOptions, MetadataRevision, Tag, Value, Visual};
 use symphonia::core::probe::Hint;
@@ -187,11 +190,11 @@ fn run(args: &ArgMatches) -> Result<i32> {
             // Select the operating mode.
             if args.is_present("verify-only") {
                 // Verify-only mode decodes and verifies the audio, but does not play it.
-                decode_only(format, &DecoderOptions { verify: true, ..Default::default() })
+                decode_only(format, &AudioDecoderOptions { verify: true, ..Default::default() })
             }
             else if args.is_present("decode-only") {
                 // Decode-only mode decodes the audio, but does not play or verify it.
-                decode_only(format, &DecoderOptions { verify: false, ..Default::default() })
+                decode_only(format, &AudioDecoderOptions { verify: false, ..Default::default() })
             }
             else if args.is_present("probe-only") {
                 // Probe-only mode only prints information about the format, tracks, metadata, etc.
@@ -213,7 +216,7 @@ fn run(args: &ArgMatches) -> Result<i32> {
 
                 // Set the decoder options.
                 let decode_opts =
-                    DecoderOptions { verify: args.is_present("verify"), ..Default::default() };
+                    AudioDecoderOptions { verify: args.is_present("verify"), ..Default::default() };
 
                 // Play it!
                 play(format, track, seek, &decode_opts, no_progress)
@@ -227,14 +230,18 @@ fn run(args: &ArgMatches) -> Result<i32> {
     }
 }
 
-fn decode_only(mut reader: Box<dyn FormatReader>, decode_opts: &DecoderOptions) -> Result<i32> {
-    // Get the default track.
+fn decode_only(
+    mut reader: Box<dyn FormatReader>,
+    decode_opts: &AudioDecoderOptions,
+) -> Result<i32> {
+    // Get the default audio track.
     // TODO: Allow track selection.
-    let track = reader.default_track().unwrap();
+    let track = reader.default_track(TrackType::Audio).unwrap();
     let track_id = track.id;
 
     // Create a decoder for the track.
-    let mut decoder = symphonia::default::get_codecs().make(&track.codec_params, decode_opts)?;
+    let mut decoder = symphonia::default::get_codecs()
+        .make_audio_decoder(track.codec_params.as_ref().unwrap().audio().unwrap(), decode_opts)?;
 
     // Decode all packets, ignoring all decode errors.
     loop {
@@ -272,14 +279,14 @@ fn play(
     mut reader: Box<dyn FormatReader>,
     track_num: Option<usize>,
     seek: Option<SeekPosition>,
-    decode_opts: &DecoderOptions,
+    decode_opts: &AudioDecoderOptions,
     no_progress: bool,
 ) -> Result<i32> {
     // If the user provided a track number, select that track if it exists, otherwise, select the
-    // first track with a known codec.
+    // default audio track.
     let track = track_num
         .and_then(|t| reader.tracks().get(t))
-        .or_else(|| first_supported_track(reader.tracks()));
+        .or_else(|| reader.default_track(TrackType::Audio));
 
     let mut track_id = match track {
         Some(track) => track.id,
@@ -304,7 +311,7 @@ fn play(
             Ok(seeked_to) => seeked_to.required_ts,
             Err(Error::ResetRequired) => {
                 print_tracks(reader.tracks());
-                track_id = first_supported_track(reader.tracks()).unwrap().id;
+                track_id = reader.default_track(TrackType::Audio).unwrap().id;
                 0
             }
             Err(err) => {
@@ -335,7 +342,7 @@ fn play(
 
                 // Select the first supported track since the user's selected track number might no
                 // longer be valid or make sense.
-                let track_id = first_supported_track(reader.tracks()).unwrap().id;
+                let track_id = reader.default_track(TrackType::Audio).unwrap().id;
                 track_info = PlayTrackOptions { track_id, seek_ts: 0 };
             }
             res => break res,
@@ -354,7 +361,7 @@ fn play_track(
     reader: &mut Box<dyn FormatReader>,
     audio_output: &mut Option<Box<dyn output::AudioOutput>>,
     play_opts: PlayTrackOptions,
-    decode_opts: &DecoderOptions,
+    decode_opts: &AudioDecoderOptions,
     no_progress: bool,
 ) -> Result<i32> {
     // Get the selected track using the track ID.
@@ -364,11 +371,12 @@ fn play_track(
     };
 
     // Create a decoder for the track.
-    let mut decoder = symphonia::default::get_codecs().make(&track.codec_params, decode_opts)?;
+    let mut decoder = symphonia::default::get_codecs()
+        .make_audio_decoder(track.codec_params.as_ref().unwrap().audio().unwrap(), decode_opts)?;
 
     // Get the selected track's timebase and duration.
-    let tb = track.codec_params.time_base;
-    let dur = track.codec_params.n_frames.map(|frames| track.codec_params.start_ts + frames);
+    let tb = track.time_base;
+    let dur = track.num_frames.map(|frames| track.start_ts + frames);
 
     // Decode and play the packets belonging to the selected track.
     loop {
@@ -437,10 +445,6 @@ fn play_track(
 
     // Finalize the decoder and return the verification result if it's been enabled.
     do_verification(decoder.finalize())
-}
-
-fn first_supported_track(tracks: &[Track]) -> Option<&Track> {
-    tracks.iter().find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
 }
 
 fn do_verification(finalization: FinalizeResult) -> Result<i32> {
@@ -515,67 +519,115 @@ fn print_update(rev: &MetadataRevision) {
 
 fn print_tracks(tracks: &[Track]) {
     if !tracks.is_empty() {
+        // Default codec registry.
+        let reg = symphonia::default::get_codecs();
+
         println!("|");
         println!("| // Tracks //");
 
         for (idx, track) in tracks.iter().enumerate() {
-            let params = &track.codec_params;
+            match &track.codec_params {
+                Some(CodecParameters::Audio(params)) => {
+                    let codec_info = reg.get_audio_decoder(params.codec).map(|d| &d.codec.info);
 
-            print!("|     [{:0>2}] Codec:           ", idx + 1);
+                    println!("|     [{:0>2}] Track Type:      Audio", idx + 1);
+                    println!("|          Codec Name:      {}", fmt_codec_name(codec_info));
+                    println!("|          Codec ID:        {}", params.codec);
+                    if let Some(profile) = params.profile {
+                        println!(
+                            "|          Profile:         {}",
+                            fmt_codec_profile(profile, codec_info)
+                        );
+                    }
+                    if let Some(sample_rate) = params.sample_rate {
+                        println!("|          Sample Rate:     {}", sample_rate);
+                    }
+                    if let Some(sample_format) = params.sample_format {
+                        println!("|          Sample Format:   {:?}", sample_format);
+                    }
+                    if let Some(bits_per_sample) = params.bits_per_sample {
+                        println!("|          Bits per Sample: {}", bits_per_sample);
+                    }
+                    if let Some(channels) = &params.channels {
+                        println!("|          Channel(s):      {}", channels.count());
+                        println!("|          Channel Map:     {}", channels);
+                    }
+                }
+                Some(CodecParameters::Video(params)) => {
+                    let codec_info = reg.get_video_decoder(params.codec).map(|d| &d.codec.info);
 
-            if let Some(codec) = symphonia::default::get_codecs().get_codec(params.codec) {
-                println!("{} ({})", codec.long_name, codec.short_name);
-            }
-            else {
-                println!("Unknown (#{})", params.codec);
-            }
-
-            if let Some(sample_rate) = params.sample_rate {
-                println!("|          Sample Rate:     {}", sample_rate);
-            }
-            if params.start_ts > 0 {
-                if let Some(tb) = params.time_base {
+                    println!("|     [{:0>2}] Track Type:      Video", idx + 1);
+                    println!("|          Codec Name:      {}", fmt_codec_name(codec_info));
+                    println!("|          Codec ID:        {}", params.codec);
+                    if let Some(profile) = params.profile {
+                        println!(
+                            "|          Profile:         {}",
+                            fmt_codec_profile(profile, codec_info)
+                        );
+                    }
+                    if let Some(level) = params.level {
+                        println!("|          Level:           {}", level);
+                    }
+                    if let Some(width) = params.width {
+                        println!("|          Width:           {}", width);
+                    }
+                    if let Some(height) = params.height {
+                        println!("|          Height:          {}", height);
+                    }
+                }
+                Some(CodecParameters::Subtitle(params)) => {
+                    println!("|     [{:0>2}] Track Type:      Subtitle", idx + 1);
                     println!(
-                        "|          Start Time:      {} ({})",
-                        fmt_time(params.start_ts, tb),
-                        params.start_ts
+                        "|          Codec Name:      {}",
+                        fmt_codec_name(
+                            reg.get_subtitle_decoder(params.codec).map(|d| &d.codec.info)
+                        )
                     );
+                    println!("|          Codec ID:        {}", params.codec);
                 }
-                else {
-                    println!("|          Start Time:      {}", params.start_ts);
+                _ => {
+                    println!("|     [{:0>2}] Track Type:      *Unsupported*", idx + 1);
                 }
             }
-            if let Some(n_frames) = params.n_frames {
-                if let Some(tb) = params.time_base {
-                    println!(
-                        "|          Duration:        {} ({})",
-                        fmt_time(n_frames, tb),
-                        n_frames
-                    );
-                }
-                else {
-                    println!("|          Frames:          {}", n_frames);
-                }
-            }
-            if let Some(tb) = params.time_base {
+
+            if let Some(tb) = track.time_base {
                 println!("|          Time Base:       {}", tb);
             }
-            if let Some(padding) = params.delay {
+
+            if track.start_ts > 0 {
+                if let Some(tb) = track.time_base {
+                    println!(
+                        "|          Start Time:      {} ({})",
+                        fmt_time(track.start_ts, tb),
+                        track.start_ts
+                    );
+                }
+                else {
+                    println!("|          Start Time:      {}", track.start_ts);
+                }
+            }
+
+            if let Some(num_frames) = track.num_frames {
+                if let Some(tb) = track.time_base {
+                    println!(
+                        "|          Duration:        {} ({})",
+                        fmt_time(num_frames, tb),
+                        num_frames
+                    );
+                }
+                else {
+                    println!("|          Frames:          {}", num_frames);
+                }
+            }
+
+            if let Some(padding) = track.delay {
                 println!("|          Encoder Delay:   {}", padding);
             }
-            if let Some(padding) = params.padding {
+
+            if let Some(padding) = track.padding {
                 println!("|          Encoder Padding: {}", padding);
             }
-            if let Some(sample_format) = params.sample_format {
-                println!("|          Sample Format:   {:?}", sample_format);
-            }
-            if let Some(bits_per_sample) = params.bits_per_sample {
-                println!("|          Bits per Sample: {}", bits_per_sample);
-            }
-            if let Some(channels) = &params.channels {
-                println!("|          Channel(s):      {}", channels.count());
-                println!("|          Channel Map:     {}", channels);
-            }
+
             if let Some(language) = &track.language {
                 println!("|          Language:        {}", language);
             }
@@ -731,6 +783,25 @@ fn print_tag_item(idx: usize, key: &str, value: &Value, indent: usize) -> String
     }
 
     out
+}
+
+fn fmt_codec_name(info: Option<&CodecInfo>) -> String {
+    match info {
+        Some(info) => format!("{} ({})", info.long_name, info.short_name),
+        None => "*Unknown*".to_string(),
+    }
+}
+
+fn fmt_codec_profile(profile: CodecProfile, info: Option<&CodecInfo>) -> String {
+    // Try to find the codec profile information.
+    let profile_info = info
+        .map(|codec_info| codec_info.profiles)
+        .and_then(|profiles| profiles.iter().find(|profile_info| profile_info.profile == profile));
+
+    match profile_info {
+        Some(info) => format!("{} ({}) [{}]", info.long_name, info.short_name, profile.get()),
+        None => format!("{}", profile.get()),
+    }
 }
 
 fn fmt_time(ts: u64, tb: TimeBase) -> String {

@@ -9,7 +9,10 @@ use std::io::{Seek, SeekFrom};
 
 use symphonia_core::support_format;
 
-use symphonia_core::codecs::{CodecParameters, VerificationCheck, CODEC_TYPE_FLAC};
+use symphonia_core::codecs::audio::{
+    well_known::CODEC_ID_FLAC, AudioCodecParameters, VerificationCheck,
+};
+use symphonia_core::codecs::CodecParameters;
 use symphonia_core::errors::{
     decode_error, seek_error, unsupported_error, Error, Result, SeekErrorKind,
 };
@@ -207,18 +210,18 @@ impl FormatReader for FlacReader<'_> {
             return seek_error(SeekErrorKind::Unseekable);
         }
 
-        let params = &self.tracks[0].codec_params;
+        let track = &self.tracks[0];
 
         // Get the timestamp of the desired audio frame.
         let ts = match to {
             // Frame timestamp given.
             SeekTo::TimeStamp { ts, .. } => ts,
-            // Time value given, calculate frame timestamp from sample rate.
+            // Time value given, calculate frame timestamp using the track's timebase.
             SeekTo::Time { time, .. } => {
-                // Use the sample rate to calculate the frame timestamp. If sample rate is not
-                // known, the seek cannot be completed.
-                if let Some(sample_rate) = params.sample_rate {
-                    TimeBase::new(1, sample_rate).calc_timestamp(time)
+                // Use the timebase to calculate the frame timestamp. If timebase is not known, the
+                // seek cannot be completed.
+                if let Some(tb) = track.time_base {
+                    tb.calc_timestamp(time)
                 }
                 else {
                     return seek_error(SeekErrorKind::Unseekable);
@@ -230,8 +233,8 @@ impl FormatReader for FlacReader<'_> {
 
         // If the total number of frames in the stream is known, verify the desired frame timestamp
         // does not exceed it.
-        if let Some(n_frames) = params.n_frames {
-            if ts > n_frames {
+        if let Some(num_frames) = track.num_frames {
+            if ts > num_frames {
                 return seek_error(SeekErrorKind::OutOfRange);
             }
         }
@@ -313,7 +316,7 @@ impl FormatReader for FlacReader<'_> {
                 Ok(sync) => sync,
                 Err(Error::IoError(err))
                     if err.kind() == std::io::ErrorKind::UnexpectedEof
-                        && params.n_frames.is_none() =>
+                        && track.num_frames.is_none() =>
                 {
                     return seek_error(SeekErrorKind::OutOfRange);
                 }
@@ -376,14 +379,12 @@ fn read_stream_info_block<B: ReadBytes + FiniteStream>(
         let info = StreamInfo::read(&mut BufReader::new(&extra_data))?;
 
         // Populate the codec parameters with the basic audio parameters of the track.
-        let mut codec_params = CodecParameters::new();
+        let mut codec_params = AudioCodecParameters::new();
 
         codec_params
-            .for_codec(CODEC_TYPE_FLAC)
-            .with_packet_data_integrity(true)
+            .for_codec(CODEC_ID_FLAC)
             .with_extra_data(extra_data)
             .with_sample_rate(info.sample_rate)
-            .with_time_base(TimeBase::new(1, info.sample_rate))
             .with_bits_per_sample(info.bits_per_sample)
             .with_channels(info.channels.clone());
 
@@ -391,16 +392,21 @@ fn read_stream_info_block<B: ReadBytes + FiniteStream>(
             codec_params.with_verification_code(VerificationCheck::Md5(md5));
         }
 
-        // Total samples per channel (the total number of frames) is optional.
-        if let Some(n_frames) = info.n_samples {
-            codec_params.with_n_frames(n_frames);
+        // Populate the track.
+        let mut track = Track::new(0);
+
+        track.with_codec_params(CodecParameters::Audio(codec_params));
+
+        // Total samples per channel (also the total number of frames) is optional.
+        if let Some(num_frames) = info.n_samples {
+            track.with_num_frames(num_frames);
         }
 
         // Reset the packet parser.
         parser.reset(info);
 
         // Add the track.
-        tracks.push(Track::new(0, codec_params));
+        tracks.push(track);
     }
     else {
         return decode_error("flac: found more than one stream info block");

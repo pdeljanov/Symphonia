@@ -10,7 +10,7 @@
 use std::marker::PhantomData;
 
 use symphonia_core::audio::Channels;
-use symphonia_core::codecs::{CodecParameters, CodecType};
+use symphonia_core::codecs::audio::{AudioCodecId, AudioCodecParameters};
 use symphonia_core::errors::{decode_error, Result};
 use symphonia_core::formats::prelude::*;
 use symphonia_core::io::{MediaSourceStream, ReadBytes};
@@ -168,8 +168,8 @@ pub struct FormatPcm {
     pub bits_per_sample: u16,
     /// Channel bitmask.
     pub channels: Channels,
-    /// Codec type.
-    pub codec: CodecType,
+    /// Codec ID.
+    pub codec: AudioCodecId,
 }
 
 pub struct FormatAdpcm {
@@ -177,15 +177,15 @@ pub struct FormatAdpcm {
     pub bits_per_sample: u16,
     /// Channel bitmask.
     pub channels: Channels,
-    /// Codec type.
-    pub codec: CodecType,
+    /// Codec ID.
+    pub codec: AudioCodecId,
 }
 
 pub struct FormatIeeeFloat {
     /// Channel bitmask.
     pub channels: Channels,
-    /// Codec type.
-    pub codec: CodecType,
+    /// Codec ID.
+    pub codec: AudioCodecId,
 }
 
 pub struct FormatExtensible {
@@ -199,22 +199,22 @@ pub struct FormatExtensible {
     pub channels: Channels,
     /// Globally unique identifier of the format.
     pub sub_format_guid: [u8; 16],
-    /// Codec type.
-    pub codec: CodecType,
+    /// Codec ID.
+    pub codec: AudioCodecId,
 }
 
 pub struct FormatALaw {
     /// Channel bitmask.
     pub channels: Channels,
-    /// Codec type.
-    pub codec: CodecType,
+    /// Codec ID.
+    pub codec: AudioCodecId,
 }
 
 pub struct FormatMuLaw {
     /// Channel bitmask.
     pub channels: Channels,
-    /// Codec type.
-    pub codec: CodecType,
+    /// Codec ID.
+    pub codec: AudioCodecId,
 }
 
 pub struct PacketInfo {
@@ -301,11 +301,11 @@ pub fn next_packet(
 
 /// TODO: format here refers to format chunk in Wave terminology, but the data being handled here is generic - find a better name, or combine with append_data_params
 pub fn append_format_params(
-    codec_params: &mut CodecParameters,
+    codec_params: &mut AudioCodecParameters,
     format_data: FormatData,
     sample_rate: u32,
 ) {
-    codec_params.with_sample_rate(sample_rate).with_time_base(TimeBase::new(1, sample_rate));
+    codec_params.with_sample_rate(sample_rate);
 
     match format_data {
         FormatData::Pcm(pcm) => {
@@ -337,15 +337,11 @@ pub fn append_format_params(
     }
 }
 
-/// TODO: format here refers to format chunk in Wave terminology, but the data being handled here is generic - find a better name, or combine with append_data_params append_format_params
-pub fn append_data_params(
-    codec_params: &mut CodecParameters,
-    data_len: u64,
-    packet_info: &PacketInfo,
-) {
+/// TODO: format here refers to format chunk in Wave terminology, but the data being handled here is
+/// generic - find a better name, or combine with append_data_params append_format_params
+pub fn append_data_params(track: &mut Track, data_len: u64, packet_info: &PacketInfo) {
     if !packet_info.is_empty() {
-        //let n_frames = packet_info.get_frames(u64::from(data.len));
-        let n_frames = packet_info.get_frames(data_len);
-        codec_params.with_n_frames(n_frames);
+        let num_frames = packet_info.get_frames(data_len);
+        track.with_num_frames(num_frames);
     }
 }

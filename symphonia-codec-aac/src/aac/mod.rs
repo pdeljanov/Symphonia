@@ -14,12 +14,15 @@
 use symphonia_core::audio::{
     AsGenericAudioBufferRef, AudioBuffer, AudioSpec, GenericAudioBufferRef,
 };
-use symphonia_core::codecs::{CodecDescriptor, CodecParameters, CODEC_TYPE_AAC};
-use symphonia_core::codecs::{Decoder, DecoderOptions, FinalizeResult};
+use symphonia_core::codecs::audio::well_known::CODEC_ID_AAC;
+use symphonia_core::codecs::audio::{AudioCodecParameters, AudioDecoderOptions};
+use symphonia_core::codecs::audio::{AudioDecoder, FinalizeResult};
+use symphonia_core::codecs::registry::{RegisterableAudioDecoder, SupportedAudioCodec};
+use symphonia_core::codecs::CodecInfo;
 use symphonia_core::errors::{unsupported_error, Result};
 use symphonia_core::formats::Packet;
 use symphonia_core::io::{BitReaderLtr, FiniteBitStream, ReadBitsLtr};
-use symphonia_core::support_codec;
+use symphonia_core::{codec_profile, support_audio_codec};
 
 mod codebooks;
 mod common;
@@ -298,11 +301,63 @@ pub struct AacDecoder {
     pairs: Vec<cpe::ChannelPair>,
     dsp: dsp::Dsp,
     sbinfo: GASubbandInfo,
-    params: CodecParameters,
+    params: AudioCodecParameters,
     buf: AudioBuffer<f32>,
 }
 
 impl AacDecoder {
+    pub fn try_new(params: &AudioCodecParameters, _opts: &AudioDecoderOptions) -> Result<Self> {
+        // This decoder only supports AAC.
+        if params.codec != CODEC_ID_AAC {
+            return unsupported_error("aac: invalid codec");
+        }
+
+        let mut m4ainfo = M4AInfo::new();
+
+        // If extra data present, parse the audio specific config
+        if let Some(extra_data_buf) = &params.extra_data {
+            validate!(extra_data_buf.len() >= 2);
+            m4ainfo.read(extra_data_buf)?;
+        }
+        else {
+            // Otherwise, assume there is no ASC and use the codec parameters for ADTS.
+            m4ainfo.otype = M4AType::Lc;
+            m4ainfo.samples = 1024;
+
+            m4ainfo.srate = match params.sample_rate {
+                Some(rate) => rate,
+                None => return unsupported_error("aac: sample rate is required"),
+            };
+
+            m4ainfo.channels = if let Some(channels) = &params.channels {
+                channels.count()
+            }
+            else {
+                return unsupported_error("aac: channels or channel layout is required");
+            };
+        }
+
+        //print!("edata:"); for s in edata.iter() { print!(" {:02X}", *s);}println!("");
+
+        if (m4ainfo.otype != M4AType::Lc) || (m4ainfo.channels > 2) || (m4ainfo.samples != 1024) {
+            return unsupported_error("aac: aac too complex");
+        }
+
+        // Map channel count to a set channels.
+        let channels = map_to_channels(m4ainfo.channels).unwrap();
+
+        // Clone and amend the codec parameters with information from the extra data.
+        let mut params = params.clone();
+
+        params.with_channels(channels.clone()).with_sample_rate(m4ainfo.srate);
+
+        let sbinfo = GASubbandInfo::find(m4ainfo.srate);
+
+        let buf = AudioBuffer::new(AudioSpec::new(m4ainfo.srate, channels), m4ainfo.samples);
+
+        Ok(AacDecoder { m4ainfo, pairs: Vec::new(), dsp: dsp::Dsp::new(), sbinfo, params, buf })
+    }
+
     fn set_pair(&mut self, pair_no: usize, channel: usize, pair: bool) -> Result<()> {
         if self.pairs.len() <= pair_no {
             self.pairs.push(cpe::ChannelPair::new(pair, channel, self.sbinfo));
@@ -417,70 +472,19 @@ impl AacDecoder {
     }
 }
 
-impl Decoder for AacDecoder {
-    fn try_new(params: &CodecParameters, _: &DecoderOptions) -> Result<Self> {
-        // This decoder only supports AAC.
-        if params.codec != CODEC_TYPE_AAC {
-            return unsupported_error("aac: invalid codec type");
-        }
-
-        let mut m4ainfo = M4AInfo::new();
-
-        // If extra data present, parse the audio specific config
-        if let Some(extra_data_buf) = &params.extra_data {
-            validate!(extra_data_buf.len() >= 2);
-            m4ainfo.read(extra_data_buf)?;
-        }
-        else {
-            // Otherwise, assume there is no ASC and use the codec parameters for ADTS.
-            m4ainfo.otype = M4AType::Lc;
-            m4ainfo.samples = 1024;
-
-            m4ainfo.srate = match params.sample_rate {
-                Some(rate) => rate,
-                None => return unsupported_error("aac: sample rate is required"),
-            };
-
-            m4ainfo.channels = if let Some(channels) = &params.channels {
-                channels.count()
-            }
-            else {
-                return unsupported_error("aac: channels or channel layout is required");
-            };
-        }
-
-        //print!("edata:"); for s in edata.iter() { print!(" {:02X}", *s);}println!("");
-
-        if (m4ainfo.otype != M4AType::Lc) || (m4ainfo.channels > 2) || (m4ainfo.samples != 1024) {
-            return unsupported_error("aac: aac too complex");
-        }
-
-        // Map channel count to a set channels.
-        let channels = map_to_channels(m4ainfo.channels).unwrap();
-
-        // Clone and amend the codec parameters with information from the extra data.
-        let mut params = params.clone();
-
-        params.with_channels(channels.clone()).with_sample_rate(m4ainfo.srate);
-
-        let sbinfo = GASubbandInfo::find(m4ainfo.srate);
-
-        let buf = AudioBuffer::new(AudioSpec::new(m4ainfo.srate, channels), m4ainfo.samples);
-
-        Ok(AacDecoder { m4ainfo, pairs: Vec::new(), dsp: dsp::Dsp::new(), sbinfo, params, buf })
-    }
-
+impl AudioDecoder for AacDecoder {
     fn reset(&mut self) {
         for pair in self.pairs.iter_mut() {
             pair.reset();
         }
     }
 
-    fn supported_codecs() -> &'static [CodecDescriptor] {
-        &[support_codec!(CODEC_TYPE_AAC, "aac", "Advanced Audio Coding")]
+    fn codec_info(&self) -> &CodecInfo {
+        // Only one codec is supported.
+        &Self::supported_codecs().first().unwrap().info
     }
 
-    fn codec_params(&self) -> &CodecParameters {
+    fn codec_params(&self) -> &AudioCodecParameters {
         &self.params
     }
 
@@ -500,5 +504,28 @@ impl Decoder for AacDecoder {
 
     fn last_decoded(&self) -> GenericAudioBufferRef<'_> {
         self.buf.as_generic_audio_buffer_ref()
+    }
+}
+
+impl RegisterableAudioDecoder for AacDecoder {
+    fn try_registry_new(
+        params: &AudioCodecParameters,
+        opts: &AudioDecoderOptions,
+    ) -> Result<Box<dyn AudioDecoder>>
+    where
+        Self: Sized,
+    {
+        Ok(Box::new(AacDecoder::try_new(params, opts)?))
+    }
+
+    fn supported_codecs() -> &'static [SupportedAudioCodec] {
+        use symphonia_core::codecs::audio::well_known::profiles::CODEC_PROFILE_AAC_LC;
+
+        &[support_audio_codec!(
+            CODEC_ID_AAC,
+            "aac",
+            "Advanced Audio Coding",
+            &[codec_profile!(CODEC_PROFILE_AAC_LC, "aac-lc", "Low Complexity"),]
+        )]
     }
 }

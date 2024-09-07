@@ -9,7 +9,9 @@ use std::collections::{HashMap, VecDeque};
 use std::convert::TryFrom;
 use std::io::{Seek, SeekFrom};
 
-use symphonia_core::codecs::{CodecParameters, CODEC_TYPE_FLAC, CODEC_TYPE_VORBIS};
+use symphonia_core::codecs::audio::well_known::{CODEC_ID_FLAC, CODEC_ID_VORBIS};
+use symphonia_core::codecs::audio::AudioCodecParameters;
+use symphonia_core::codecs::CodecParameters;
 use symphonia_core::errors::{
     decode_error, seek_error, unsupported_error, Error, Result, SeekErrorKind,
 };
@@ -38,8 +40,6 @@ const MKV_FORMAT_INFO: FormatInfo =
 
 #[allow(dead_code)]
 pub struct TrackState {
-    /// Codec parameters.
-    pub(crate) codec_params: CodecParameters,
     /// The track number.
     track_num: u32,
     /// Default frame duration in nanoseconds.
@@ -275,17 +275,25 @@ impl<'s> MkvReader<'s> {
 
         let mut tracks = Vec::new();
         let mut states = HashMap::new();
-        for track in segment_tracks.tracks.into_vec() {
-            let codec_type = codec_id_to_type(&track);
+        for track in segment_tracks.tracks {
+            let codec_id = codec_id_to_type(&track);
 
-            let mut codec_params = CodecParameters::new();
-            codec_params.with_time_base(time_base);
+            // Create the track.
+            let mut tr = Track::new(track.number as u32);
+
+            tr.with_time_base(time_base);
 
             if let Some(duration) = info.duration {
-                codec_params.with_n_frames(duration as u64);
+                tr.with_num_frames(duration as u64);
+            }
+
+            if let Some(language) = track.language {
+                tr.with_language(&language);
             }
 
             if let Some(audio) = track.audio {
+                let mut codec_params = AudioCodecParameters::new();
+
                 codec_params.with_sample_rate(audio.sampling_frequency.round() as u32);
 
                 let format = audio.bit_depth.and_then(|bits| match bits {
@@ -304,33 +312,30 @@ impl<'s> MkvReader<'s> {
                     codec_params.with_bits_per_sample(bits as u32);
                 }
 
-                if let Some(codec_type) = codec_type {
-                    codec_params.for_codec(codec_type);
+                if let Some(codec_id) = codec_id {
+                    codec_params.for_codec(codec_id);
                     if let Some(codec_private) = track.codec_private {
-                        let extra_data = match codec_type {
-                            CODEC_TYPE_VORBIS => {
+                        let extra_data = match codec_id {
+                            CODEC_ID_VORBIS => {
                                 vorbis_extra_data_from_codec_private(&codec_private)?
                             }
-                            CODEC_TYPE_FLAC => flac_extra_data_from_codec_private(&codec_private)?,
+                            CODEC_ID_FLAC => flac_extra_data_from_codec_private(&codec_private)?,
                             _ => codec_private,
                         };
                         codec_params.with_extra_data(extra_data);
                     }
                 }
+
+                // Add the codec parameters.
+                tr.with_codec_params(CodecParameters::Audio(codec_params));
             }
 
-            let track_id = track.number as u32;
-            tracks.push(Track {
-                id: track_id,
-                codec_params: codec_params.clone(),
-                language: track.language,
-            });
+            tracks.push(tr);
 
             states.insert(
-                track_id,
+                track.number as u32,
                 TrackState {
-                    codec_params,
-                    track_num: track_id,
+                    track_num: track.number as u32,
                     default_frame_duration: track.default_duration,
                 },
             );
@@ -570,7 +575,7 @@ impl FormatReader for MkvReader<'_> {
                     None => self.tracks.first(),
                 };
                 let track = track.ok_or(Error::SeekError(SeekErrorKind::InvalidTrack))?;
-                let tb = track.codec_params.time_base.unwrap();
+                let tb = track.time_base.unwrap();
                 let ts = tb.calc_timestamp(time);
                 let track_id = track.id;
                 self.seek_track_by_ts(track_id, ts)

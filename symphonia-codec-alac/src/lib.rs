@@ -22,13 +22,15 @@ use symphonia_core::audio::{
     layouts, AsGenericAudioBufferRef, AudioBuffer, AudioMut, AudioSpec, Channels,
     GenericAudioBufferRef,
 };
-use symphonia_core::codecs::{
-    CodecDescriptor, CodecParameters, Decoder, DecoderOptions, FinalizeResult, CODEC_TYPE_ALAC,
-};
+use symphonia_core::codecs::audio::well_known::CODEC_ID_ALAC;
+use symphonia_core::codecs::audio::{AudioCodecParameters, AudioDecoderOptions};
+use symphonia_core::codecs::audio::{AudioDecoder, FinalizeResult};
+use symphonia_core::codecs::registry::{RegisterableAudioDecoder, SupportedAudioCodec};
+use symphonia_core::codecs::CodecInfo;
 use symphonia_core::errors::{decode_error, unsupported_error, Result};
 use symphonia_core::formats::Packet;
 use symphonia_core::io::{BitReaderLtr, BufReader, FiniteStream, ReadBitsLtr, ReadBytes};
-use symphonia_core::support_codec;
+use symphonia_core::support_audio_codec;
 
 /// Supported ALAC version.
 const ALAC_VERSION: u8 = 0;
@@ -395,7 +397,7 @@ impl ElementChannel {
 /// Apple Lossless Audio Codec (ALAC) decoder.
 pub struct AlacDecoder {
     /// Codec paramters.
-    params: CodecParameters,
+    params: AudioCodecParameters,
     /// A temporary buffer to store the tail bits while decoding an element with a bit-shift > 0. If
     /// `config.num_channels` > 1, then this buffer must be 2x the frame length.
     tail_bits: Vec<u16>,
@@ -406,6 +408,28 @@ pub struct AlacDecoder {
 }
 
 impl AlacDecoder {
+    pub fn try_new(params: &AudioCodecParameters, _opts: &AudioDecoderOptions) -> Result<Self> {
+        // Verify codec ID.
+        if params.codec != CODEC_ID_ALAC {
+            return unsupported_error("alac: invalid codec");
+        }
+
+        // Read the config (magic cookie).
+        let config = if let Some(extra_data) = &params.extra_data {
+            MagicCookie::try_read(&mut BufReader::new(extra_data))?
+        }
+        else {
+            return unsupported_error("alac: missing extra data");
+        };
+
+        let spec = AudioSpec::new(config.sample_rate, config.channels.clone());
+        let buf = AudioBuffer::new(spec, config.frame_length as usize);
+
+        let max_tail_values = min(2, config.num_channels) as usize * config.frame_length as usize;
+
+        Ok(AlacDecoder { params: params.clone(), tail_bits: vec![0; max_tail_values], buf, config })
+    }
+
     fn decode_inner(&mut self, packet: &Packet) -> Result<()> {
         let mut bs = BitReaderLtr::new(packet.buf());
 
@@ -512,38 +536,17 @@ impl AlacDecoder {
     }
 }
 
-impl Decoder for AlacDecoder {
-    fn try_new(params: &CodecParameters, _: &DecoderOptions) -> Result<Self> {
-        // Verify codec type.
-        if params.codec != CODEC_TYPE_ALAC {
-            return unsupported_error("alac: invalid codec type");
-        }
-
-        // Read the config (magic cookie).
-        let config = if let Some(extra_data) = &params.extra_data {
-            MagicCookie::try_read(&mut BufReader::new(extra_data))?
-        }
-        else {
-            return unsupported_error("alac: missing extra data");
-        };
-
-        let spec = AudioSpec::new(config.sample_rate, config.channels.clone());
-        let buf = AudioBuffer::new(spec, config.frame_length as usize);
-
-        let max_tail_values = min(2, config.num_channels) as usize * config.frame_length as usize;
-
-        Ok(AlacDecoder { params: params.clone(), tail_bits: vec![0; max_tail_values], buf, config })
-    }
-
+impl AudioDecoder for AlacDecoder {
     fn reset(&mut self) {
         // Nothing to do.
     }
 
-    fn supported_codecs() -> &'static [CodecDescriptor] {
-        &[support_codec!(CODEC_TYPE_ALAC, "alac", "Apple Lossless Audio Codec")]
+    fn codec_info(&self) -> &CodecInfo {
+        // Only one codec is supported.
+        &Self::supported_codecs().first().unwrap().info
     }
 
-    fn codec_params(&self) -> &CodecParameters {
+    fn codec_params(&self) -> &AudioCodecParameters {
         &self.params
     }
 
@@ -563,6 +566,22 @@ impl Decoder for AlacDecoder {
 
     fn last_decoded(&self) -> GenericAudioBufferRef<'_> {
         self.buf.as_generic_audio_buffer_ref()
+    }
+}
+
+impl RegisterableAudioDecoder for AlacDecoder {
+    fn try_registry_new(
+        params: &AudioCodecParameters,
+        opts: &AudioDecoderOptions,
+    ) -> Result<Box<dyn AudioDecoder>>
+    where
+        Self: Sized,
+    {
+        Ok(Box::new(AlacDecoder::try_new(params, opts)?))
+    }
+
+    fn supported_codecs() -> &'static [SupportedAudioCodec] {
+        &[support_audio_codec!(CODEC_ID_ALAC, "alac", "Apple Lossless Audio Codec")]
     }
 }
 

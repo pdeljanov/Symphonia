@@ -14,26 +14,33 @@
 #![allow(clippy::identity_op)]
 #![allow(clippy::manual_range_contains)]
 
-use symphonia_core::support_codec;
+use symphonia_core::codecs::registry::{RegisterableAudioDecoder, SupportedAudioCodec};
+use symphonia_core::codecs::CodecInfo;
+use symphonia_core::support_audio_codec;
 
 use symphonia_core::audio::{
     AsGenericAudioBufferRef, AudioSpec, GenericAudioBuffer, GenericAudioBufferRef,
 };
-use symphonia_core::codecs::{CodecDescriptor, CodecParameters, CodecType};
-use symphonia_core::codecs::{Decoder, DecoderOptions, FinalizeResult};
+use symphonia_core::codecs::audio::{
+    AudioCodecId, AudioCodecParameters, AudioDecoder, AudioDecoderOptions, FinalizeResult,
+};
 // Signed Int PCM codecs
-use symphonia_core::codecs::{CODEC_TYPE_PCM_S16BE, CODEC_TYPE_PCM_S24BE, CODEC_TYPE_PCM_S32BE};
-use symphonia_core::codecs::{CODEC_TYPE_PCM_S16LE, CODEC_TYPE_PCM_S8};
-use symphonia_core::codecs::{CODEC_TYPE_PCM_S24LE, CODEC_TYPE_PCM_S32LE};
+use symphonia_core::codecs::audio::well_known::{
+    CODEC_ID_PCM_S16BE, CODEC_ID_PCM_S24BE, CODEC_ID_PCM_S32BE,
+};
+use symphonia_core::codecs::audio::well_known::{CODEC_ID_PCM_S16LE, CODEC_ID_PCM_S8};
+use symphonia_core::codecs::audio::well_known::{CODEC_ID_PCM_S24LE, CODEC_ID_PCM_S32LE};
 // Unsigned Int PCM codecs
-use symphonia_core::codecs::{CODEC_TYPE_PCM_U16BE, CODEC_TYPE_PCM_U24BE, CODEC_TYPE_PCM_U32BE};
-use symphonia_core::codecs::{CODEC_TYPE_PCM_U16LE, CODEC_TYPE_PCM_U8};
-use symphonia_core::codecs::{CODEC_TYPE_PCM_U24LE, CODEC_TYPE_PCM_U32LE};
+use symphonia_core::codecs::audio::well_known::{
+    CODEC_ID_PCM_U16BE, CODEC_ID_PCM_U24BE, CODEC_ID_PCM_U32BE,
+};
+use symphonia_core::codecs::audio::well_known::{CODEC_ID_PCM_U16LE, CODEC_ID_PCM_U8};
+use symphonia_core::codecs::audio::well_known::{CODEC_ID_PCM_U24LE, CODEC_ID_PCM_U32LE};
 // Floating point PCM codecs
-use symphonia_core::codecs::{CODEC_TYPE_PCM_F32BE, CODEC_TYPE_PCM_F32LE};
-use symphonia_core::codecs::{CODEC_TYPE_PCM_F64BE, CODEC_TYPE_PCM_F64LE};
+use symphonia_core::codecs::audio::well_known::{CODEC_ID_PCM_F32BE, CODEC_ID_PCM_F32LE};
+use symphonia_core::codecs::audio::well_known::{CODEC_ID_PCM_F64BE, CODEC_ID_PCM_F64LE};
 // G711 ALaw and MuLaw PCM codecs
-use symphonia_core::codecs::{CODEC_TYPE_PCM_ALAW, CODEC_TYPE_PCM_MULAW};
+use symphonia_core::codecs::audio::well_known::{CODEC_ID_PCM_ALAW, CODEC_ID_PCM_MULAW};
 use symphonia_core::conv::IntoSample;
 use symphonia_core::errors::{decode_error, unsupported_error, Result};
 use symphonia_core::formats::Packet;
@@ -186,136 +193,44 @@ fn mulaw_to_linear(mut mu_val: u8) -> i16 {
     }
 }
 
-fn is_supported_pcm_codec(codec_type: CodecType) -> bool {
+fn is_supported_pcm_codec(codec_id: AudioCodecId) -> bool {
     matches!(
-        codec_type,
-        CODEC_TYPE_PCM_S32LE
-            | CODEC_TYPE_PCM_S32BE
-            | CODEC_TYPE_PCM_S24LE
-            | CODEC_TYPE_PCM_S24BE
-            | CODEC_TYPE_PCM_S16LE
-            | CODEC_TYPE_PCM_S16BE
-            | CODEC_TYPE_PCM_S8
-            | CODEC_TYPE_PCM_U32LE
-            | CODEC_TYPE_PCM_U32BE
-            | CODEC_TYPE_PCM_U24LE
-            | CODEC_TYPE_PCM_U24BE
-            | CODEC_TYPE_PCM_U16LE
-            | CODEC_TYPE_PCM_U16BE
-            | CODEC_TYPE_PCM_U8
-            | CODEC_TYPE_PCM_F32LE
-            | CODEC_TYPE_PCM_F32BE
-            | CODEC_TYPE_PCM_F64LE
-            | CODEC_TYPE_PCM_F64BE
-            | CODEC_TYPE_PCM_ALAW
-            | CODEC_TYPE_PCM_MULAW
+        codec_id,
+        CODEC_ID_PCM_S32LE
+            | CODEC_ID_PCM_S32BE
+            | CODEC_ID_PCM_S24LE
+            | CODEC_ID_PCM_S24BE
+            | CODEC_ID_PCM_S16LE
+            | CODEC_ID_PCM_S16BE
+            | CODEC_ID_PCM_S8
+            | CODEC_ID_PCM_U32LE
+            | CODEC_ID_PCM_U32BE
+            | CODEC_ID_PCM_U24LE
+            | CODEC_ID_PCM_U24BE
+            | CODEC_ID_PCM_U16LE
+            | CODEC_ID_PCM_U16BE
+            | CODEC_ID_PCM_U8
+            | CODEC_ID_PCM_F32LE
+            | CODEC_ID_PCM_F32BE
+            | CODEC_ID_PCM_F64LE
+            | CODEC_ID_PCM_F64BE
+            | CODEC_ID_PCM_ALAW
+            | CODEC_ID_PCM_MULAW
     )
 }
 
 /// Pulse Code Modulation (PCM) decoder for all raw PCM, and log-PCM codecs.
 pub struct PcmDecoder {
-    params: CodecParameters,
+    params: AudioCodecParameters,
     coded_width: u32,
     buf: GenericAudioBuffer,
 }
 
 impl PcmDecoder {
-    fn decode_inner(&mut self, packet: &Packet) -> Result<()> {
-        let mut reader = packet.as_buf_reader();
-
-        self.buf.clear();
-
-        let _ = match self.params.codec {
-            CODEC_TYPE_PCM_S32LE => {
-                read_pcm_signed!(self.buf, S32, reader.read_i32()?, 32, self.coded_width)
-            }
-            CODEC_TYPE_PCM_S32BE => {
-                read_pcm_signed!(self.buf, S32, reader.read_be_i32()?, 32, self.coded_width)
-            }
-            CODEC_TYPE_PCM_S24LE => {
-                read_pcm_signed!(self.buf, S24, reader.read_i24()? << 8, 24, self.coded_width)
-            }
-            CODEC_TYPE_PCM_S24BE => {
-                read_pcm_signed!(self.buf, S24, reader.read_be_i24()? << 8, 24, self.coded_width)
-            }
-            CODEC_TYPE_PCM_S16LE => {
-                read_pcm_signed!(self.buf, S16, reader.read_i16()?, 16, self.coded_width)
-            }
-            CODEC_TYPE_PCM_S16BE => {
-                read_pcm_signed!(self.buf, S16, reader.read_be_i16()?, 16, self.coded_width)
-            }
-            CODEC_TYPE_PCM_S8 => {
-                read_pcm_signed!(self.buf, S8, reader.read_i8()?, 8, self.coded_width)
-            }
-            CODEC_TYPE_PCM_U32LE => {
-                read_pcm_unsigned!(self.buf, U32, reader.read_u32()?, 32, self.coded_width)
-            }
-            CODEC_TYPE_PCM_U32BE => {
-                read_pcm_unsigned!(self.buf, U32, reader.read_be_u32()?, 32, self.coded_width)
-            }
-            CODEC_TYPE_PCM_U24LE => {
-                read_pcm_unsigned!(self.buf, U24, reader.read_u24()? << 8, 24, self.coded_width)
-            }
-            CODEC_TYPE_PCM_U24BE => {
-                read_pcm_unsigned!(self.buf, U24, reader.read_be_u24()? << 8, 24, self.coded_width)
-            }
-            CODEC_TYPE_PCM_U16LE => {
-                read_pcm_unsigned!(self.buf, U16, reader.read_u16()?, 16, self.coded_width)
-            }
-            CODEC_TYPE_PCM_U16BE => {
-                read_pcm_unsigned!(self.buf, U16, reader.read_be_u16()?, 16, self.coded_width)
-            }
-            CODEC_TYPE_PCM_U8 => {
-                read_pcm_unsigned!(self.buf, U8, reader.read_u8()?, 8, self.coded_width)
-            }
-            CODEC_TYPE_PCM_F32LE => {
-                read_pcm_floating!(self.buf, F32, reader.read_f32()?)
-            }
-            CODEC_TYPE_PCM_F32BE => {
-                read_pcm_floating!(self.buf, F32, reader.read_be_f32()?)
-            }
-            CODEC_TYPE_PCM_F64LE => {
-                read_pcm_floating!(self.buf, F64, reader.read_f64()?)
-            }
-            CODEC_TYPE_PCM_F64BE => {
-                read_pcm_floating!(self.buf, F64, reader.read_be_f64()?)
-            }
-            CODEC_TYPE_PCM_ALAW => {
-                read_pcm_transfer_func!(self.buf, S16, alaw_to_linear(reader.read_u8()?))
-            }
-            CODEC_TYPE_PCM_MULAW => {
-                read_pcm_transfer_func!(self.buf, S16, mulaw_to_linear(reader.read_u8()?))
-            }
-            // CODEC_TYPE_PCM_S32LE_PLANAR =>
-            // CODEC_TYPE_PCM_S32BE_PLANAR =>
-            // CODEC_TYPE_PCM_S24LE_PLANAR =>
-            // CODEC_TYPE_PCM_S24BE_PLANAR =>
-            // CODEC_TYPE_PCM_S16LE_PLANAR =>
-            // CODEC_TYPE_PCM_S16BE_PLANAR =>
-            // CODEC_TYPE_PCM_S8_PLANAR    =>
-            // CODEC_TYPE_PCM_U32LE_PLANAR =>
-            // CODEC_TYPE_PCM_U32BE_PLANAR =>
-            // CODEC_TYPE_PCM_U24LE_PLANAR =>
-            // CODEC_TYPE_PCM_U24BE_PLANAR =>
-            // CODEC_TYPE_PCM_U16LE_PLANAR =>
-            // CODEC_TYPE_PCM_U16BE_PLANAR =>
-            // CODEC_TYPE_PCM_U8_PLANAR    =>
-            // CODEC_TYPE_PCM_F32LE_PLANAR =>
-            // CODEC_TYPE_PCM_F32BE_PLANAR =>
-            // CODEC_TYPE_PCM_F64LE_PLANAR =>
-            // CODEC_TYPE_PCM_F64BE_PLANAR =>
-            _ => unsupported_error("pcm: codec is unsupported"),
-        };
-
-        Ok(())
-    }
-}
-
-impl Decoder for PcmDecoder {
-    fn try_new(params: &CodecParameters, _options: &DecoderOptions) -> Result<Self> {
+    pub fn try_new(params: &AudioCodecParameters, _opts: &AudioDecoderOptions) -> Result<Self> {
         // This decoder only supports certain PCM codecs.
         if !is_supported_pcm_codec(params.codec) {
-            return unsupported_error("pcm: invalid codec type");
+            return unsupported_error("pcm: invalid codec");
         }
 
         let frames = match params.max_frames_per_packet {
@@ -340,20 +255,20 @@ impl Decoder for PcmDecoder {
             return unsupported_error("pcm: channels or channel_layout is required");
         };
 
-        // Determine the sample format for the audio buffer based on the codec type.
+        // Determine the sample format for the audio buffer based on the codec ID.
         let (sample_format, sample_format_width) = match params.codec {
-            CODEC_TYPE_PCM_S32LE | CODEC_TYPE_PCM_S32BE => (SampleFormat::S32, 32),
-            CODEC_TYPE_PCM_S24LE | CODEC_TYPE_PCM_S24BE => (SampleFormat::S24, 24),
-            CODEC_TYPE_PCM_S16LE | CODEC_TYPE_PCM_S16BE => (SampleFormat::S16, 16),
-            CODEC_TYPE_PCM_S8 => (SampleFormat::S8, 8),
-            CODEC_TYPE_PCM_U32LE | CODEC_TYPE_PCM_U32BE => (SampleFormat::U32, 32),
-            CODEC_TYPE_PCM_U24LE | CODEC_TYPE_PCM_U24BE => (SampleFormat::U24, 24),
-            CODEC_TYPE_PCM_U16LE | CODEC_TYPE_PCM_U16BE => (SampleFormat::U16, 16),
-            CODEC_TYPE_PCM_U8 => (SampleFormat::U8, 8),
-            CODEC_TYPE_PCM_F32LE | CODEC_TYPE_PCM_F32BE => (SampleFormat::F32, 32),
-            CODEC_TYPE_PCM_F64LE | CODEC_TYPE_PCM_F64BE => (SampleFormat::F64, 64),
-            CODEC_TYPE_PCM_ALAW => (SampleFormat::S16, 16),
-            CODEC_TYPE_PCM_MULAW => (SampleFormat::S16, 16),
+            CODEC_ID_PCM_S32LE | CODEC_ID_PCM_S32BE => (SampleFormat::S32, 32),
+            CODEC_ID_PCM_S24LE | CODEC_ID_PCM_S24BE => (SampleFormat::S24, 24),
+            CODEC_ID_PCM_S16LE | CODEC_ID_PCM_S16BE => (SampleFormat::S16, 16),
+            CODEC_ID_PCM_S8 => (SampleFormat::S8, 8),
+            CODEC_ID_PCM_U32LE | CODEC_ID_PCM_U32BE => (SampleFormat::U32, 32),
+            CODEC_ID_PCM_U24LE | CODEC_ID_PCM_U24BE => (SampleFormat::U24, 24),
+            CODEC_ID_PCM_U16LE | CODEC_ID_PCM_U16BE => (SampleFormat::U16, 16),
+            CODEC_ID_PCM_U8 => (SampleFormat::U8, 8),
+            CODEC_ID_PCM_F32LE | CODEC_ID_PCM_F32BE => (SampleFormat::F32, 32),
+            CODEC_ID_PCM_F64LE | CODEC_ID_PCM_F64BE => (SampleFormat::F64, 64),
+            CODEC_ID_PCM_ALAW => (SampleFormat::S16, 16),
+            CODEC_ID_PCM_MULAW => (SampleFormat::S16, 16),
             _ => unreachable!(),
         };
 
@@ -370,9 +285,9 @@ impl Decoder for PcmDecoder {
             // A-Law, Mu-Law, and floating point codecs have an implicit coded sample bit-width. If
             // the codec is none of those, then decoding is not possible.
             match params.codec {
-                CODEC_TYPE_PCM_F32LE | CODEC_TYPE_PCM_F32BE => (),
-                CODEC_TYPE_PCM_F64LE | CODEC_TYPE_PCM_F64BE => (),
-                CODEC_TYPE_PCM_ALAW | CODEC_TYPE_PCM_MULAW => (),
+                CODEC_ID_PCM_F32LE | CODEC_ID_PCM_F32BE => (),
+                CODEC_ID_PCM_F64LE | CODEC_ID_PCM_F64BE => (),
+                CODEC_ID_PCM_ALAW | CODEC_ID_PCM_MULAW => (),
                 _ => return unsupported_error("pcm: unknown bits per (coded) sample"),
             }
         }
@@ -388,190 +303,108 @@ impl Decoder for PcmDecoder {
         Ok(PcmDecoder { params: params.clone(), coded_width, buf })
     }
 
-    fn supported_codecs() -> &'static [CodecDescriptor] {
-        &[
-            support_codec!(
-                CODEC_TYPE_PCM_S32LE,
-                "pcm_s32le",
-                "PCM Signed 32-bit Little-Endian Interleaved"
-            ),
-            support_codec!(
-                CODEC_TYPE_PCM_S32BE,
-                "pcm_s32be",
-                "PCM Signed 32-bit Big-Endian Interleaved"
-            ),
-            support_codec!(
-                CODEC_TYPE_PCM_S24LE,
-                "pcm_s24le",
-                "PCM Signed 24-bit Little-Endian Interleaved"
-            ),
-            support_codec!(
-                CODEC_TYPE_PCM_S24BE,
-                "pcm_s24be",
-                "PCM Signed 24-bit Big-Endian Interleaved"
-            ),
-            support_codec!(
-                CODEC_TYPE_PCM_S16LE,
-                "pcm_s16le",
-                "PCM Signed 16-bit Little-Endian Interleaved"
-            ),
-            support_codec!(
-                CODEC_TYPE_PCM_S16BE,
-                "pcm_s16be",
-                "PCM Signed 16-bit Big-Endian Interleaved"
-            ),
-            support_codec!(CODEC_TYPE_PCM_S8, "pcm_s8", "PCM Signed 8-bit Interleaved"),
-            support_codec!(
-                CODEC_TYPE_PCM_U32LE,
-                "pcm_u32le",
-                "PCM Unsigned 32-bit Little-Endian Interleaved"
-            ),
-            support_codec!(
-                CODEC_TYPE_PCM_U32BE,
-                "pcm_u32be",
-                "PCM Unsigned 32-bit Big-Endian Interleaved"
-            ),
-            support_codec!(
-                CODEC_TYPE_PCM_U24LE,
-                "pcm_u24le",
-                "PCM Unsigned 24-bit Little-Endian Interleaved"
-            ),
-            support_codec!(
-                CODEC_TYPE_PCM_U24BE,
-                "pcm_u24be",
-                "PCM Unsigned 24-bit Big-Endian Interleaved"
-            ),
-            support_codec!(
-                CODEC_TYPE_PCM_U16LE,
-                "pcm_u16le",
-                "PCM Unsigned 16-bit Little-Endian Interleaved"
-            ),
-            support_codec!(
-                CODEC_TYPE_PCM_U16BE,
-                "pcm_u16be",
-                "PCM Unsigned 16-bit Big-Endian Interleaved"
-            ),
-            support_codec!(CODEC_TYPE_PCM_U8, "pcm_u8", "PCM Unsigned 8-bit Interleaved"),
-            support_codec!(
-                CODEC_TYPE_PCM_F32LE,
-                "pcm_f32le",
-                "PCM 32-bit Little-Endian Floating Point Interleaved"
-            ),
-            support_codec!(
-                CODEC_TYPE_PCM_F32BE,
-                "pcm_f32be",
-                "PCM 32-bit Big-Endian Floating Point Interleaved"
-            ),
-            support_codec!(
-                CODEC_TYPE_PCM_F64LE,
-                "pcm_f64le",
-                "PCM 64-bit Little-Endian Floating Point Interleaved"
-            ),
-            support_codec!(
-                CODEC_TYPE_PCM_F64BE,
-                "pcm_f64be",
-                "PCM 64-bit Big-Endian Floating Point Interleaved"
-            ),
-            support_codec!(CODEC_TYPE_PCM_ALAW, "pcm_alaw", "PCM A-law"),
-            support_codec!(CODEC_TYPE_PCM_MULAW, "pcm_mulaw", "PCM Mu-law"),
-            // support_codec!(
-            //     CODEC_TYPE_PCM_S32LE_PLANAR,
-            //     "pcm_s32le_planar",
-            //     "PCM Signed 32-bit Little-Endian Planar"
-            // ),
-            // support_codec!(
-            //     CODEC_TYPE_PCM_S32BE_PLANAR,
-            //     "pcm_s32be_planar",
-            //     "PCM Signed 32-bit Big-Endian Planar"
-            // ),
-            // support_codec!(
-            //     CODEC_TYPE_PCM_S24LE_PLANAR,
-            //     "pcm_s24le_planar",
-            //     "PCM Signed 24-bit Little-Endian Planar"
-            // ),
-            // support_codec!(
-            //     CODEC_TYPE_PCM_S24BE_PLANAR,
-            //     "pcm_s24be_planar",
-            //     "PCM Signed 24-bit Big-Endian Planar"
-            // ),
-            // support_codec!(
-            //     CODEC_TYPE_PCM_S16LE_PLANAR,
-            //     "pcm_s16le_planar",
-            //     "PCM Signed 16-bit Little-Endian Planar"
-            // ),
-            // support_codec!(
-            //     CODEC_TYPE_PCM_S16BE_PLANAR,
-            //     "pcm_s16be_planar",
-            //     "PCM Signed 16-bit Big-Endian Planar"
-            // ),
-            // support_codec!(
-            //     CODEC_TYPE_PCM_S8_PLANAR   ,
-            //     "pcm_s8_planar"   ,
-            //     "PCM Signed 8-bit Planar"
-            // ),
-            // support_codec!(
-            //     CODEC_TYPE_PCM_U32LE_PLANAR,
-            //     "pcm_u32le_planar",
-            //     "PCM Unsigned 32-bit Little-Endian Planar"
-            // ),
-            // support_codec!(
-            //     CODEC_TYPE_PCM_U32BE_PLANAR,
-            //     "pcm_u32be_planar",
-            //     "PCM Unsigned 32-bit Big-Endian Planar"
-            // ),
-            // support_codec!(
-            //     CODEC_TYPE_PCM_U24LE_PLANAR,
-            //     "pcm_u24le_planar",
-            //     "PCM Unsigned 24-bit Little-Endian Planar"
-            // ),
-            // support_codec!(
-            //     CODEC_TYPE_PCM_U24BE_PLANAR,
-            //     "pcm_u24be_planar",
-            //     "PCM Unsigned 24-bit Big-Endian Planar"
-            // ),
-            // support_codec!(
-            //     CODEC_TYPE_PCM_U16LE_PLANAR,
-            //     "pcm_u16le_planar",
-            //     "PCM Unsigned 16-bit Little-Endian Planar"
-            // ),
-            // support_codec!(
-            //     CODEC_TYPE_PCM_U16BE_PLANAR,
-            //     "pcm_u16be_planar",
-            //     "PCM Unsigned 16-bit Big-Endian Planar"
-            // ),
-            // support_codec!(
-            //     CODEC_TYPE_PCM_U8_PLANAR   ,
-            //     "pcm_u8_planar"   ,
-            //     "PCM Unsigned 8-bit Planar"
-            // ),
-            // support_codec!(
-            //     CODEC_TYPE_PCM_F32LE_PLANAR,
-            //     "pcm_f32le_planar",
-            //     "PCM 32-bit Little-Endian Floating Point Planar"
-            // ),
-            // support_codec!(
-            //     CODEC_TYPE_PCM_F32BE_PLANAR,
-            //     "pcm_f32be_planar",
-            //     "PCM 32-bit Big-Endian Floating Point Planar"
-            // ),
-            // support_codec!(
-            //     CODEC_TYPE_PCM_F64LE_PLANAR,
-            //     "pcm_f64le_planar",
-            //     "PCM 64-bit Little-Endian Floating Point Planar"
-            // ),
-            // support_codec!(
-            //     CODEC_TYPE_PCM_F64BE_PLANAR,
-            //     "pcm_f64be_planar",
-            //     "PCM 64-bit Big-Endian Floating Point Planar"
-            // ),
-        ]
-    }
+    fn decode_inner(&mut self, packet: &Packet) -> Result<()> {
+        let mut reader = packet.as_buf_reader();
 
+        self.buf.clear();
+
+        let _ = match self.params.codec {
+            CODEC_ID_PCM_S32LE => {
+                read_pcm_signed!(self.buf, S32, reader.read_i32()?, 32, self.coded_width)
+            }
+            CODEC_ID_PCM_S32BE => {
+                read_pcm_signed!(self.buf, S32, reader.read_be_i32()?, 32, self.coded_width)
+            }
+            CODEC_ID_PCM_S24LE => {
+                read_pcm_signed!(self.buf, S24, reader.read_i24()? << 8, 24, self.coded_width)
+            }
+            CODEC_ID_PCM_S24BE => {
+                read_pcm_signed!(self.buf, S24, reader.read_be_i24()? << 8, 24, self.coded_width)
+            }
+            CODEC_ID_PCM_S16LE => {
+                read_pcm_signed!(self.buf, S16, reader.read_i16()?, 16, self.coded_width)
+            }
+            CODEC_ID_PCM_S16BE => {
+                read_pcm_signed!(self.buf, S16, reader.read_be_i16()?, 16, self.coded_width)
+            }
+            CODEC_ID_PCM_S8 => {
+                read_pcm_signed!(self.buf, S8, reader.read_i8()?, 8, self.coded_width)
+            }
+            CODEC_ID_PCM_U32LE => {
+                read_pcm_unsigned!(self.buf, U32, reader.read_u32()?, 32, self.coded_width)
+            }
+            CODEC_ID_PCM_U32BE => {
+                read_pcm_unsigned!(self.buf, U32, reader.read_be_u32()?, 32, self.coded_width)
+            }
+            CODEC_ID_PCM_U24LE => {
+                read_pcm_unsigned!(self.buf, U24, reader.read_u24()? << 8, 24, self.coded_width)
+            }
+            CODEC_ID_PCM_U24BE => {
+                read_pcm_unsigned!(self.buf, U24, reader.read_be_u24()? << 8, 24, self.coded_width)
+            }
+            CODEC_ID_PCM_U16LE => {
+                read_pcm_unsigned!(self.buf, U16, reader.read_u16()?, 16, self.coded_width)
+            }
+            CODEC_ID_PCM_U16BE => {
+                read_pcm_unsigned!(self.buf, U16, reader.read_be_u16()?, 16, self.coded_width)
+            }
+            CODEC_ID_PCM_U8 => {
+                read_pcm_unsigned!(self.buf, U8, reader.read_u8()?, 8, self.coded_width)
+            }
+            CODEC_ID_PCM_F32LE => {
+                read_pcm_floating!(self.buf, F32, reader.read_f32()?)
+            }
+            CODEC_ID_PCM_F32BE => {
+                read_pcm_floating!(self.buf, F32, reader.read_be_f32()?)
+            }
+            CODEC_ID_PCM_F64LE => {
+                read_pcm_floating!(self.buf, F64, reader.read_f64()?)
+            }
+            CODEC_ID_PCM_F64BE => {
+                read_pcm_floating!(self.buf, F64, reader.read_be_f64()?)
+            }
+            CODEC_ID_PCM_ALAW => {
+                read_pcm_transfer_func!(self.buf, S16, alaw_to_linear(reader.read_u8()?))
+            }
+            CODEC_ID_PCM_MULAW => {
+                read_pcm_transfer_func!(self.buf, S16, mulaw_to_linear(reader.read_u8()?))
+            }
+            // CODEC_ID_PCM_S32LE_PLANAR =>
+            // CODEC_ID_PCM_S32BE_PLANAR =>
+            // CODEC_ID_PCM_S24LE_PLANAR =>
+            // CODEC_ID_PCM_S24BE_PLANAR =>
+            // CODEC_ID_PCM_S16LE_PLANAR =>
+            // CODEC_ID_PCM_S16BE_PLANAR =>
+            // CODEC_ID_PCM_S8_PLANAR    =>
+            // CODEC_ID_PCM_U32LE_PLANAR =>
+            // CODEC_ID_PCM_U32BE_PLANAR =>
+            // CODEC_ID_PCM_U24LE_PLANAR =>
+            // CODEC_ID_PCM_U24BE_PLANAR =>
+            // CODEC_ID_PCM_U16LE_PLANAR =>
+            // CODEC_ID_PCM_U16BE_PLANAR =>
+            // CODEC_ID_PCM_U8_PLANAR    =>
+            // CODEC_ID_PCM_F32LE_PLANAR =>
+            // CODEC_ID_PCM_F32BE_PLANAR =>
+            // CODEC_ID_PCM_F64LE_PLANAR =>
+            // CODEC_ID_PCM_F64BE_PLANAR =>
+            _ => unsupported_error("pcm: codec is unsupported"),
+        };
+
+        Ok(())
+    }
+}
+
+impl AudioDecoder for PcmDecoder {
     fn reset(&mut self) {
         // No state is stored between packets, therefore do nothing.
     }
 
-    fn codec_params(&self) -> &CodecParameters {
+    fn codec_info(&self) -> &CodecInfo {
+        // Return the codec that's in-use.
+        &Self::supported_codecs().iter().find(|desc| desc.id == self.params.codec).unwrap().info
+    }
+
+    fn codec_params(&self) -> &AudioCodecParameters {
         &self.params
     }
 
@@ -591,5 +424,196 @@ impl Decoder for PcmDecoder {
 
     fn last_decoded(&self) -> GenericAudioBufferRef<'_> {
         self.buf.as_generic_audio_buffer_ref()
+    }
+}
+
+impl RegisterableAudioDecoder for PcmDecoder {
+    fn try_registry_new(
+        params: &AudioCodecParameters,
+        opts: &AudioDecoderOptions,
+    ) -> Result<Box<dyn AudioDecoder>>
+    where
+        Self: Sized,
+    {
+        Ok(Box::new(PcmDecoder::try_new(params, opts)?))
+    }
+
+    fn supported_codecs() -> &'static [SupportedAudioCodec] {
+        &[
+            support_audio_codec!(
+                CODEC_ID_PCM_S32LE,
+                "pcm_s32le",
+                "PCM Signed 32-bit Little-Endian Interleaved"
+            ),
+            support_audio_codec!(
+                CODEC_ID_PCM_S32BE,
+                "pcm_s32be",
+                "PCM Signed 32-bit Big-Endian Interleaved"
+            ),
+            support_audio_codec!(
+                CODEC_ID_PCM_S24LE,
+                "pcm_s24le",
+                "PCM Signed 24-bit Little-Endian Interleaved"
+            ),
+            support_audio_codec!(
+                CODEC_ID_PCM_S24BE,
+                "pcm_s24be",
+                "PCM Signed 24-bit Big-Endian Interleaved"
+            ),
+            support_audio_codec!(
+                CODEC_ID_PCM_S16LE,
+                "pcm_s16le",
+                "PCM Signed 16-bit Little-Endian Interleaved"
+            ),
+            support_audio_codec!(
+                CODEC_ID_PCM_S16BE,
+                "pcm_s16be",
+                "PCM Signed 16-bit Big-Endian Interleaved"
+            ),
+            support_audio_codec!(CODEC_ID_PCM_S8, "pcm_s8", "PCM Signed 8-bit Interleaved"),
+            support_audio_codec!(
+                CODEC_ID_PCM_U32LE,
+                "pcm_u32le",
+                "PCM Unsigned 32-bit Little-Endian Interleaved"
+            ),
+            support_audio_codec!(
+                CODEC_ID_PCM_U32BE,
+                "pcm_u32be",
+                "PCM Unsigned 32-bit Big-Endian Interleaved"
+            ),
+            support_audio_codec!(
+                CODEC_ID_PCM_U24LE,
+                "pcm_u24le",
+                "PCM Unsigned 24-bit Little-Endian Interleaved"
+            ),
+            support_audio_codec!(
+                CODEC_ID_PCM_U24BE,
+                "pcm_u24be",
+                "PCM Unsigned 24-bit Big-Endian Interleaved"
+            ),
+            support_audio_codec!(
+                CODEC_ID_PCM_U16LE,
+                "pcm_u16le",
+                "PCM Unsigned 16-bit Little-Endian Interleaved"
+            ),
+            support_audio_codec!(
+                CODEC_ID_PCM_U16BE,
+                "pcm_u16be",
+                "PCM Unsigned 16-bit Big-Endian Interleaved"
+            ),
+            support_audio_codec!(CODEC_ID_PCM_U8, "pcm_u8", "PCM Unsigned 8-bit Interleaved"),
+            support_audio_codec!(
+                CODEC_ID_PCM_F32LE,
+                "pcm_f32le",
+                "PCM 32-bit Little-Endian Floating Point Interleaved"
+            ),
+            support_audio_codec!(
+                CODEC_ID_PCM_F32BE,
+                "pcm_f32be",
+                "PCM 32-bit Big-Endian Floating Point Interleaved"
+            ),
+            support_audio_codec!(
+                CODEC_ID_PCM_F64LE,
+                "pcm_f64le",
+                "PCM 64-bit Little-Endian Floating Point Interleaved"
+            ),
+            support_audio_codec!(
+                CODEC_ID_PCM_F64BE,
+                "pcm_f64be",
+                "PCM 64-bit Big-Endian Floating Point Interleaved"
+            ),
+            support_audio_codec!(CODEC_ID_PCM_ALAW, "pcm_alaw", "PCM A-law"),
+            support_audio_codec!(CODEC_ID_PCM_MULAW, "pcm_mulaw", "PCM Mu-law"),
+            // support_audio_codec!(
+            //     CODEC_ID_PCM_S32LE_PLANAR,
+            //     "pcm_s32le_planar",
+            //     "PCM Signed 32-bit Little-Endian Planar"
+            // ),
+            // support_audio_codec!(
+            //     CODEC_ID_PCM_S32BE_PLANAR,
+            //     "pcm_s32be_planar",
+            //     "PCM Signed 32-bit Big-Endian Planar"
+            // ),
+            // support_audio_codec!(
+            //     CODEC_ID_PCM_S24LE_PLANAR,
+            //     "pcm_s24le_planar",
+            //     "PCM Signed 24-bit Little-Endian Planar"
+            // ),
+            // support_audio_codec!(
+            //     CODEC_ID_PCM_S24BE_PLANAR,
+            //     "pcm_s24be_planar",
+            //     "PCM Signed 24-bit Big-Endian Planar"
+            // ),
+            // support_audio_codec!(
+            //     CODEC_ID_PCM_S16LE_PLANAR,
+            //     "pcm_s16le_planar",
+            //     "PCM Signed 16-bit Little-Endian Planar"
+            // ),
+            // support_audio_codec!(
+            //     CODEC_ID_PCM_S16BE_PLANAR,
+            //     "pcm_s16be_planar",
+            //     "PCM Signed 16-bit Big-Endian Planar"
+            // ),
+            // support_audio_codec!(
+            //     CODEC_ID_PCM_S8_PLANAR   ,
+            //     "pcm_s8_planar"   ,
+            //     "PCM Signed 8-bit Planar"
+            // ),
+            // support_audio_codec!(
+            //     CODEC_ID_PCM_U32LE_PLANAR,
+            //     "pcm_u32le_planar",
+            //     "PCM Unsigned 32-bit Little-Endian Planar"
+            // ),
+            // support_audio_codec!(
+            //     CODEC_ID_PCM_U32BE_PLANAR,
+            //     "pcm_u32be_planar",
+            //     "PCM Unsigned 32-bit Big-Endian Planar"
+            // ),
+            // support_audio_codec!(
+            //     CODEC_ID_PCM_U24LE_PLANAR,
+            //     "pcm_u24le_planar",
+            //     "PCM Unsigned 24-bit Little-Endian Planar"
+            // ),
+            // support_audio_codec!(
+            //     CODEC_ID_PCM_U24BE_PLANAR,
+            //     "pcm_u24be_planar",
+            //     "PCM Unsigned 24-bit Big-Endian Planar"
+            // ),
+            // support_audio_codec!(
+            //     CODEC_ID_PCM_U16LE_PLANAR,
+            //     "pcm_u16le_planar",
+            //     "PCM Unsigned 16-bit Little-Endian Planar"
+            // ),
+            // support_audio_codec!(
+            //     CODEC_ID_PCM_U16BE_PLANAR,
+            //     "pcm_u16be_planar",
+            //     "PCM Unsigned 16-bit Big-Endian Planar"
+            // ),
+            // support_audio_codec!(
+            //     CODEC_ID_PCM_U8_PLANAR   ,
+            //     "pcm_u8_planar"   ,
+            //     "PCM Unsigned 8-bit Planar"
+            // ),
+            // support_audio_codec!(
+            //     CODEC_ID_PCM_F32LE_PLANAR,
+            //     "pcm_f32le_planar",
+            //     "PCM 32-bit Little-Endian Floating Point Planar"
+            // ),
+            // support_audio_codec!(
+            //     CODEC_ID_PCM_F32BE_PLANAR,
+            //     "pcm_f32be_planar",
+            //     "PCM 32-bit Big-Endian Floating Point Planar"
+            // ),
+            // support_audio_codec!(
+            //     CODEC_ID_PCM_F64LE_PLANAR,
+            //     "pcm_f64le_planar",
+            //     "PCM 64-bit Little-Endian Floating Point Planar"
+            // ),
+            // support_audio_codec!(
+            //     CODEC_ID_PCM_F64BE_PLANAR,
+            //     "pcm_f64be_planar",
+            //     "PCM 64-bit Big-Endian Floating Point Planar"
+            // ),
+        ]
     }
 }

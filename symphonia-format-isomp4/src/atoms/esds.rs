@@ -5,9 +5,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::codecs::{
-    CodecParameters, CodecType, CODEC_TYPE_AAC, CODEC_TYPE_MP3, CODEC_TYPE_NULL,
-};
+use symphonia_core::codecs::audio::well_known::{CODEC_ID_AAC, CODEC_ID_MP3};
+use symphonia_core::codecs::audio::{AudioCodecId, AudioCodecParameters, CODEC_ID_NULL};
 use symphonia_core::errors::{decode_error, unsupported_error, Result};
 use symphonia_core::io::{FiniteStream, ReadBytes, ScopedStream};
 
@@ -80,8 +79,8 @@ impl Atom for EsdsAtom {
 }
 
 impl EsdsAtom {
-    pub fn fill_codec_params(&self, codec_params: &mut CodecParameters) {
-        codec_params.for_codec(self.descriptor.dec_config.codec_type);
+    pub fn fill_codec_params(&self, codec_params: &mut AudioCodecParameters) {
+        codec_params.for_codec(self.descriptor.dec_config.codec_id);
 
         if let Some(ds_config) = &self.descriptor.dec_config.dec_specific_info {
             codec_params.with_extra_data(ds_config.extra_data.clone());
@@ -204,7 +203,7 @@ class DecoderConfigDescriptor extends BaseDescriptor : bit(8) tag=DecoderConfigD
 
 #[derive(Debug)]
 pub struct DecoderConfigDescriptor {
-    pub codec_type: CodecType,
+    pub codec_id: AudioCodecId,
     pub object_type_indication: u8,
     pub dec_specific_info: Option<DecoderSpecificInfo>,
 }
@@ -254,18 +253,18 @@ impl ObjectDescriptor for DecoderConfigDescriptor {
             }
         }
 
-        let codec_type = match object_type_indication {
+        let codec_id = match object_type_indication {
             OBJECT_TYPE_ISO14496_3 | OBJECT_TYPE_ISO13818_7_LC | OBJECT_TYPE_ISO13818_7_MAIN => {
-                CODEC_TYPE_AAC
+                CODEC_ID_AAC
             }
-            OBJECT_TYPE_ISO13818_3 | OBJECT_TYPE_ISO11172_3 => CODEC_TYPE_MP3,
+            OBJECT_TYPE_ISO13818_3 | OBJECT_TYPE_ISO11172_3 => CODEC_ID_MP3,
             _ => {
                 debug!(
                     "unknown object type indication {:#x} for decoder config descriptor",
                     object_type_indication
                 );
 
-                CODEC_TYPE_NULL
+                CODEC_ID_NULL
             }
         };
 
@@ -273,7 +272,7 @@ impl ObjectDescriptor for DecoderConfigDescriptor {
         scoped.ignore()?;
 
         Ok(DecoderConfigDescriptor {
-            codec_type,
+            codec_id,
             object_type_indication,
             dec_specific_info: dec_specific_config,
         })

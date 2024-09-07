@@ -17,9 +17,10 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 
 use symphonia::core::audio::GenericAudioBufferRef;
-use symphonia::core::codecs::{Decoder, DecoderOptions};
+use symphonia::core::codecs::audio::{AudioDecoder, AudioDecoderOptions};
+use symphonia::core::codecs::CodecParameters;
 use symphonia::core::errors::{unsupported_error, Error, Result};
-use symphonia::core::formats::{FormatOptions, FormatReader};
+use symphonia::core::formats::{FormatOptions, FormatReader, TrackType};
 use symphonia::core::io::{MediaSourceStream, ReadOnlySource};
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
@@ -147,7 +148,7 @@ struct FlushStats {
 
 struct DecoderInstance {
     format: Box<dyn FormatReader>,
-    decoder: Box<dyn Decoder>,
+    decoder: Box<dyn AudioDecoder>,
     track_id: u32,
 }
 
@@ -158,15 +159,21 @@ impl DecoderInstance {
     ) -> Result<DecoderInstance> {
         // Use the default options for metadata and format readers, and the decoder.
         let meta_opts: MetadataOptions = Default::default();
-        let dec_opts: DecoderOptions = Default::default();
+        let dec_opts: AudioDecoderOptions = Default::default();
 
         let hint = Hint::new();
 
         let format = symphonia::default::get_probe().format(&hint, mss, fmt_opts, meta_opts)?;
 
-        let track = format.default_track().unwrap();
+        let track = format.default_track(TrackType::Audio).unwrap();
 
-        let decoder = symphonia::default::get_codecs().make(&track.codec_params, &dec_opts)?;
+        let codec_params = match &track.codec_params {
+            Some(CodecParameters::Audio(params)) => params,
+            _ => return unsupported_error("only audio tracks are supported"),
+        };
+
+        let decoder =
+            symphonia::default::get_codecs().make_audio_decoder(codec_params, &dec_opts)?;
 
         let track_id = track.id;
 

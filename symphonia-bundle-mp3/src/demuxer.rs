@@ -8,7 +8,9 @@
 use symphonia_core::support_format;
 
 use symphonia_core::checksum::Crc16AnsiLe;
-use symphonia_core::codecs::{CodecParameters, CODEC_TYPE_MP1, CODEC_TYPE_MP2, CODEC_TYPE_MP3};
+use symphonia_core::codecs::audio::well_known::{CODEC_ID_MP1, CODEC_ID_MP2, CODEC_ID_MP3};
+use symphonia_core::codecs::audio::AudioCodecParameters;
+use symphonia_core::codecs::CodecParameters;
 use symphonia_core::errors::{seek_error, Error, Result, SeekErrorKind};
 use symphonia_core::formats::{prelude::*, FORMAT_TYPE_MP1, FORMAT_TYPE_MP2, FORMAT_TYPE_MP3};
 use symphonia_core::io::*;
@@ -143,10 +145,11 @@ impl ProbeableFormat<'_> for MpaReader<'_> {
 
 impl FormatReader for MpaReader<'_> {
     fn format_info(&self) -> &FormatInfo {
-        match self.tracks[0].codec_params.codec {
-            CODEC_TYPE_MP1 => &MP1_FORMAT_INFO,
-            CODEC_TYPE_MP2 => &MP2_FORMAT_INFO,
-            CODEC_TYPE_MP3 => &MP3_FORMAT_INFO,
+        // Safety: MpaReader only supports/has audio tracks.
+        match self.tracks[0].codec_params.as_ref().unwrap().audio().unwrap().codec {
+            CODEC_ID_MP1 => &MP1_FORMAT_INFO,
+            CODEC_ID_MP2 => &MP2_FORMAT_INFO,
+            CODEC_ID_MP3 => &MP3_FORMAT_INFO,
             _ => unreachable!(),
         }
     }
@@ -194,8 +197,8 @@ impl FormatReader for MpaReader<'_> {
         if self.enable_gapless {
             symphonia_core::formats::util::trim_packet(
                 &mut packet,
-                self.tracks[0].codec_params.delay.unwrap_or(0),
-                self.tracks[0].codec_params.n_frames,
+                self.tracks[0].delay.unwrap_or(0),
+                self.tracks[0].num_frames,
             );
         }
 
@@ -222,12 +225,12 @@ impl FormatReader for MpaReader<'_> {
         let desired_ts = match to {
             // Frame timestamp given.
             SeekTo::TimeStamp { ts, .. } => ts,
-            // Time value given, calculate frame timestamp from sample rate.
+            // Time value given, calculate frame timestamp using the timebase.
             SeekTo::Time { time, .. } => {
-                // Use the sample rate to calculate the frame timestamp. If sample rate is not
-                // known, the seek cannot be completed.
-                if let Some(sample_rate) = self.tracks[0].codec_params.sample_rate {
-                    TimeBase::new(1, sample_rate).calc_timestamp(time)
+                // Use the timebase to calculate the frame timestamp. If timebase is not known, the
+                // seek cannot be completed.
+                if let Some(tb) = self.tracks[0].time_base {
+                    tb.calc_timestamp(time)
                 }
                 else {
                     return seek_error(SeekErrorKind::Unseekable);
@@ -236,25 +239,16 @@ impl FormatReader for MpaReader<'_> {
         };
 
         // If gapless playback is enabled, get the delay.
-        let delay = if self.enable_gapless {
-            u64::from(self.tracks[0].codec_params.delay.unwrap_or(0))
-        }
-        else {
-            0
-        };
+        let delay =
+            if self.enable_gapless { u64::from(self.tracks[0].delay.unwrap_or(0)) } else { 0 };
 
         // If gapless playback is enabled, get the padding.
-        let padding = if self.enable_gapless {
-            u64::from(self.tracks[0].codec_params.padding.unwrap_or(0))
-        }
-        else {
-            0
-        };
+        let padding =
+            if self.enable_gapless { u64::from(self.tracks[0].padding.unwrap_or(0)) } else { 0 };
 
         // If possible, calculate the total duration of the track including delay and padding
         // frames.
-        let duration =
-            self.tracks[0].codec_params.n_frames.map(|num_frames| num_frames + delay + padding);
+        let duration = self.tracks[0].num_frames.map(|num_frames| num_frames + delay + padding);
 
         // The required timestamp is offset by the delay.
         let required_ts = desired_ts + delay;
@@ -414,19 +408,23 @@ impl<'s> MpaReader<'s> {
         let (header, packet) = read_mpeg_frame_strict(&mut mss)?;
 
         // Use the header to populate the codec parameters.
-        let mut params = CodecParameters::new();
+        let mut codec_params = AudioCodecParameters::new();
 
-        params
+        codec_params
             .for_codec(header.codec())
             .with_sample_rate(header.sample_rate)
-            .with_time_base(TimeBase::new(1, header.sample_rate))
             .with_channels(header.channel_mode.channels());
+
+        // Create the track.
+        let mut track = Track::new(0);
+
+        track.with_codec_params(CodecParameters::Audio(codec_params));
 
         // Check if there is a Xing/Info tag contained in the first frame.
         if let Some(info_tag) = try_read_info_tag(&packet, &header) {
             // The LAME tag contains ReplayGain and padding information.
             let (delay, padding) = if let Some(lame_tag) = info_tag.lame {
-                params.with_delay(lame_tag.enc_delay).with_padding(lame_tag.enc_padding);
+                track.with_delay(lame_tag.enc_delay).with_padding(lame_tag.enc_padding);
 
                 (lame_tag.enc_delay, lame_tag.enc_padding)
             }
@@ -442,10 +440,10 @@ impl<'s> MpaReader<'s> {
 
                 // Adjust for gapless playback.
                 if opts.enable_gapless {
-                    params.with_n_frames(num_frames - u64::from(delay) - u64::from(padding));
+                    track.with_num_frames(num_frames - u64::from(delay) - u64::from(padding));
                 }
                 else {
-                    params.with_n_frames(num_frames);
+                    track.with_num_frames(num_frames);
                 }
             }
         }
@@ -455,7 +453,7 @@ impl<'s> MpaReader<'s> {
             let num_frames = u64::from(vbri_tag.num_mpeg_frames) * header.duration();
 
             // Check if there is a VBRI tag.
-            params.with_n_frames(num_frames);
+            track.with_num_frames(num_frames);
         }
         else {
             // The first frame was not a Xing/Info header, rewind back to the start of the frame so
@@ -467,7 +465,7 @@ impl<'s> MpaReader<'s> {
                 info!("estimating duration from bitrate, may be inaccurate for vbr files");
 
                 if let Some(n_mpeg_frames) = estimate_num_mpeg_frames(&mut mss) {
-                    params.with_n_frames(n_mpeg_frames * header.duration());
+                    track.with_num_frames(n_mpeg_frames * header.duration());
                 }
             }
         }
@@ -476,7 +474,7 @@ impl<'s> MpaReader<'s> {
 
         Ok(MpaReader {
             reader: mss,
-            tracks: vec![Track::new(0, params)],
+            tracks: vec![track],
             cues: Vec::new(),
             metadata: opts.metadata.unwrap_or_default(),
             enable_gapless: opts.enable_gapless,

@@ -192,7 +192,7 @@ pub mod default {
 
     use lazy_static::lazy_static;
 
-    use symphonia_core::codecs::CodecRegistry;
+    use symphonia_core::codecs::registry::CodecRegistry;
     use symphonia_core::probe::Probe;
 
     lazy_static! {
@@ -238,25 +238,25 @@ pub mod default {
     /// Use this function to easily populate a custom registry with all enabled codecs.
     pub fn register_enabled_codecs(registry: &mut CodecRegistry) {
         #[cfg(feature = "aac")]
-        registry.register_all::<codecs::AacDecoder>();
+        registry.register_audio_decoder::<codecs::AacDecoder>();
 
         #[cfg(feature = "adpcm")]
-        registry.register_all::<codecs::AdpcmDecoder>();
+        registry.register_audio_decoder::<codecs::AdpcmDecoder>();
 
         #[cfg(feature = "alac")]
-        registry.register_all::<codecs::AlacDecoder>();
+        registry.register_audio_decoder::<codecs::AlacDecoder>();
 
         #[cfg(feature = "flac")]
-        registry.register_all::<codecs::FlacDecoder>();
+        registry.register_audio_decoder::<codecs::FlacDecoder>();
 
         #[cfg(any(feature = "mp1", feature = "mp2", feature = "mp3"))]
-        registry.register_all::<codecs::MpaDecoder>();
+        registry.register_audio_decoder::<codecs::MpaDecoder>();
 
         #[cfg(feature = "pcm")]
-        registry.register_all::<codecs::PcmDecoder>();
+        registry.register_audio_decoder::<codecs::PcmDecoder>();
 
         #[cfg(feature = "vorbis")]
-        registry.register_all::<codecs::VorbisDecoder>();
+        registry.register_audio_decoder::<codecs::VorbisDecoder>();
     }
 
     /// Registers all the formats selected by the `feature` flags in the includer's `Cargo.toml` on

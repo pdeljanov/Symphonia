@@ -7,9 +7,8 @@
 
 use std::collections::VecDeque;
 
-use symphonia_core::codecs::CodecParameters;
 use symphonia_core::errors::{decode_error, Result};
-use symphonia_core::formats::Packet;
+use symphonia_core::formats::{Packet, Track};
 
 use super::common::SideData;
 use super::mappings::Mapper;
@@ -80,9 +79,9 @@ impl LogicalStream {
         self.mapper.is_ready()
     }
 
-    /// Get the `CodecParameters` for the logical stream.
-    pub fn codec_params(&self) -> &CodecParameters {
-        self.mapper.codec_params()
+    /// Get the `Track` for the logical stream.
+    pub fn track(&self) -> &Track {
+        self.mapper.track()
     }
 
     /// If known, returns whether the logical stream read the last page.
@@ -272,12 +271,12 @@ impl LogicalStream {
         };
 
         // Update codec parameters.
-        let codec_params = self.mapper.codec_params_mut();
+        let track = self.mapper.track_mut();
 
-        codec_params.with_start_ts(bound.ts);
+        track.with_start_ts(bound.ts);
 
         if bound.delay > 0 {
-            codec_params.with_delay(bound.delay as u32);
+            track.with_delay(bound.delay as u32);
         }
 
         // Update start bound.
@@ -358,17 +357,17 @@ impl LogicalStream {
 
         // If this is the last page, update the codec parameters.
         if page.header.is_last_page {
-            let codec_params = self.mapper.codec_params_mut();
+            let track = self.mapper.track_mut();
 
             // Do not report the end delay if gapless is enabled.
             let block_end_ts = bound.ts + if self.gapless { 0 } else { bound.delay };
 
-            if block_end_ts > codec_params.start_ts {
-                codec_params.with_n_frames(block_end_ts - codec_params.start_ts);
+            if block_end_ts > track.start_ts {
+                track.with_num_frames(block_end_ts - track.start_ts);
             }
 
             if bound.delay > 0 {
-                codec_params.with_padding(bound.delay as u32);
+                track.with_padding(bound.delay as u32);
             }
 
             self.end_bound = Some(bound)

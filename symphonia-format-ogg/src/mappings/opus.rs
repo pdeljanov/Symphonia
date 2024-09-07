@@ -10,11 +10,13 @@ use crate::common::SideData;
 use super::{MapResult, Mapper, PacketParser};
 
 use symphonia_core::audio::{Channels, Position};
-use symphonia_core::codecs::{CodecParameters, CODEC_TYPE_OPUS};
+use symphonia_core::codecs::audio::well_known::CODEC_ID_OPUS;
+use symphonia_core::codecs::audio::AudioCodecParameters;
+use symphonia_core::codecs::CodecParameters;
 use symphonia_core::errors::Result;
+use symphonia_core::formats::Track;
 use symphonia_core::io::{BufReader, ReadBytes};
 use symphonia_core::meta::MetadataBuilder;
-use symphonia_core::units::TimeBase;
 
 use symphonia_metadata::vorbis;
 
@@ -32,7 +34,7 @@ const OGG_OPUS_COMMENT_SIGNATURE: &[u8] = b"OpusTags";
 /// The maximum support Opus OGG mapping version.
 const OGG_OPUS_MAPPING_VERSION_MAX: u8 = 0x0f;
 
-pub fn detect(buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> {
+pub fn detect(serial: u32, buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> {
     // The identification packet for Opus must be a minimum size.
     if buf.len() < OGG_OPUS_MIN_IDENTIFICATION_PACKET_SIZE {
         return Ok(None);
@@ -131,18 +133,21 @@ pub fn detect(buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> {
     };
 
     // Populate the codec parameters with the information read from identification header.
-    let mut codec_params = CodecParameters::new();
+    let mut codec_params = AudioCodecParameters::new();
 
     codec_params
-        .for_codec(CODEC_TYPE_OPUS)
-        .with_delay(u32::from(pre_skip))
+        .for_codec(CODEC_ID_OPUS)
         .with_sample_rate(48_000)
-        .with_time_base(TimeBase::new(1, 48_000))
         .with_channels(Channels::Positioned(positions))
         .with_extra_data(Box::from(buf));
 
+    // Create the track.
+    let mut track = Track::new(serial);
+
+    track.with_codec_params(CodecParameters::Audio(codec_params)).with_delay(u32::from(pre_skip));
+
     // Instantiate the Opus mapper.
-    let mapper = Box::new(OpusMapper { codec_params, need_comment: true });
+    let mapper = Box::new(OpusMapper { track, need_comment: true });
 
     Ok(Some(mapper))
 }
@@ -211,7 +216,7 @@ impl PacketParser for OpusPacketParser {
 }
 
 struct OpusMapper {
-    codec_params: CodecParameters,
+    track: Track,
     need_comment: bool,
 }
 
@@ -224,12 +229,12 @@ impl Mapper for OpusMapper {
         // Nothing to do.
     }
 
-    fn codec_params(&self) -> &CodecParameters {
-        &self.codec_params
+    fn track(&self) -> &Track {
+        &self.track
     }
 
-    fn codec_params_mut(&mut self) -> &mut CodecParameters {
-        &mut self.codec_params
+    fn track_mut(&mut self) -> &mut Track {
+        &mut self.track
     }
 
     fn make_parser(&self) -> Option<Box<dyn super::PacketParser>> {

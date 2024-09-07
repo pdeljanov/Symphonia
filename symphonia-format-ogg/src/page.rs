@@ -18,6 +18,7 @@ pub const OGG_PAGE_MAX_SIZE: usize = OGG_PAGE_HEADER_SIZE + 255 + 255 * 255;
 
 #[derive(Copy, Clone, Default)]
 pub struct PageHeader {
+    #[allow(dead_code)]
     pub version: u8,
     pub absgp: u64,
     pub serial: u32,

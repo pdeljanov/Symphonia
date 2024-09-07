@@ -8,10 +8,10 @@
 use std::fmt;
 
 use symphonia_core::audio::{layouts, Channels};
-use symphonia_core::codecs::{
-    CODEC_TYPE_PCM_ALAW, CODEC_TYPE_PCM_F32BE, CODEC_TYPE_PCM_F64BE, CODEC_TYPE_PCM_MULAW,
-    CODEC_TYPE_PCM_S16BE, CODEC_TYPE_PCM_S16LE, CODEC_TYPE_PCM_S24BE, CODEC_TYPE_PCM_S32BE,
-    CODEC_TYPE_PCM_S8,
+use symphonia_core::codecs::audio::well_known::{
+    CODEC_ID_PCM_ALAW, CODEC_ID_PCM_F32BE, CODEC_ID_PCM_F64BE, CODEC_ID_PCM_MULAW,
+    CODEC_ID_PCM_S16BE, CODEC_ID_PCM_S16LE, CODEC_ID_PCM_S24BE, CODEC_ID_PCM_S32BE,
+    CODEC_ID_PCM_S8,
 };
 use symphonia_core::errors::{decode_error, unsupported_error, Result};
 use symphonia_core::io::{MediaSourceStream, ReadBytes};
@@ -50,10 +50,10 @@ impl CommonChunk {
         // Select the appropriate codec using bits per sample. Samples are always interleaved and
         // little-endian encoded for the PCM format.
         let codec = match bits_per_sample {
-            8 => CODEC_TYPE_PCM_S8,
-            16 => CODEC_TYPE_PCM_S16BE,
-            24 => CODEC_TYPE_PCM_S24BE,
-            32 => CODEC_TYPE_PCM_S32BE,
+            8 => CODEC_ID_PCM_S8,
+            16 => CODEC_ID_PCM_S16BE,
+            24 => CODEC_ID_PCM_S24BE,
+            32 => CODEC_ID_PCM_S32BE,
             _ => return decode_error("aiff: bits per sample for pcm must be 8, 16, 24 or 32 bits"),
         };
 
@@ -63,20 +63,20 @@ impl CommonChunk {
 
     fn read_alaw_pcm_fmt(n_channels: u16) -> Result<FormatData> {
         let channels = map_aiff_channel_count(n_channels)?;
-        Ok(FormatData::ALaw(FormatALaw { codec: CODEC_TYPE_PCM_ALAW, channels }))
+        Ok(FormatData::ALaw(FormatALaw { codec: CODEC_ID_PCM_ALAW, channels }))
     }
 
     fn read_mulaw_pcm_fmt(n_channels: u16) -> Result<FormatData> {
         let channels = map_aiff_channel_count(n_channels)?;
-        Ok(FormatData::MuLaw(FormatMuLaw { codec: CODEC_TYPE_PCM_MULAW, channels }))
+        Ok(FormatData::MuLaw(FormatMuLaw { codec: CODEC_ID_PCM_MULAW, channels }))
     }
 
     fn read_ieee_fmt(bits_per_sample: u16, n_channels: u16) -> Result<FormatData> {
         // Select the appropriate codec using bits per sample. Samples are always interleaved and
         // little-endian encoded for the IEEE Float format.
         let codec = match bits_per_sample {
-            32 => CODEC_TYPE_PCM_F32BE,
-            64 => CODEC_TYPE_PCM_F64BE,
+            32 => CODEC_ID_PCM_F32BE,
+            64 => CODEC_ID_PCM_F64BE,
             _ => return decode_error("aifc: bits per sample for fmt_ieee must be 32 or 64 bits"),
         };
 
@@ -86,7 +86,7 @@ impl CommonChunk {
 
     fn read_sowt_fmt(bits_per_sample: u16, n_channels: u16) -> Result<FormatData> {
         let codec = match bits_per_sample {
-            16 => CODEC_TYPE_PCM_S16LE,
+            16 => CODEC_ID_PCM_S16LE,
             _ => return decode_error("aiff: bits per sample for sowt must be 16 bits"),
         };
 
@@ -96,7 +96,7 @@ impl CommonChunk {
 
     fn read_twos_fmt(bits_per_sample: u16, n_channels: u16) -> Result<FormatData> {
         let codec = match bits_per_sample {
-            16 => CODEC_TYPE_PCM_S16BE,
+            16 => CODEC_ID_PCM_S16BE,
             _ => return decode_error("aiff: bits per sample for twos must be 16 bits"),
         };
 

@@ -5,7 +5,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::codecs::{CodecParameters, CODEC_TYPE_ALAC};
+use symphonia_core::codecs::audio::well_known::CODEC_ID_ALAC;
+use symphonia_core::codecs::audio::AudioCodecParameters;
 use symphonia_core::errors::{decode_error, unsupported_error, Result};
 use symphonia_core::io::ReadBytes;
 
@@ -53,7 +54,7 @@ impl Atom for AlacAtom {
 }
 
 impl AlacAtom {
-    pub fn fill_codec_params(&self, codec_params: &mut CodecParameters) {
-        codec_params.for_codec(CODEC_TYPE_ALAC).with_extra_data(self.extra_data.clone());
+    pub fn fill_codec_params(&self, codec_params: &mut AudioCodecParameters) {
+        codec_params.for_codec(CODEC_ID_ALAC).with_extra_data(self.extra_data.clone());
     }
 }

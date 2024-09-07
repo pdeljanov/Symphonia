@@ -7,7 +7,6 @@
 
 use symphonia_core::support_format;
 
-use symphonia_core::codecs::CodecParameters;
 use symphonia_core::errors::{decode_error, seek_error, unsupported_error, Result, SeekErrorKind};
 use symphonia_core::formats::{prelude::*, FORMAT_TYPE_ISOMP4};
 use symphonia_core::io::*;
@@ -31,7 +30,6 @@ const ISOMP4_FORMAT_INFO: FormatInfo = FormatInfo {
 };
 
 pub struct TrackState {
-    codec_params: CodecParameters,
     /// The track number.
     track_num: usize,
     /// The current segment.
@@ -43,22 +41,23 @@ pub struct TrackState {
 }
 
 impl TrackState {
-    #[allow(clippy::single_match)]
-    pub fn new(track_num: usize, trak: &TrakAtom) -> Self {
-        let mut codec_params = CodecParameters::new();
-
-        codec_params
-            .with_time_base(TimeBase::new(1, trak.mdia.mdhd.timescale))
-            .with_n_frames(trak.mdia.mdhd.duration);
-
-        // Fill the codec parameters using the sample description atom.
-        trak.mdia.minf.stbl.stsd.fill_codec_params(&mut codec_params);
-
-        Self { codec_params, track_num, cur_seg: 0, next_sample: 0, next_sample_pos: 0 }
+    pub fn new(track_num: usize) -> Self {
+        Self { track_num, cur_seg: 0, next_sample: 0, next_sample_pos: 0 }
     }
 
-    pub fn codec_params(&self) -> CodecParameters {
-        self.codec_params.clone()
+    pub fn make_track(&self, trak: &TrakAtom) -> Track {
+        let mut track = Track::new(self.track_num as u32);
+
+        // Create the codec parameters using the sample description atom.
+        if let Some(codec_params) = trak.mdia.minf.stbl.stsd.make_codec_params() {
+            track.with_codec_params(codec_params);
+        }
+
+        track
+            .with_time_base(TimeBase::new(1, trak.mdia.mdhd.timescale))
+            .with_num_frames(trak.mdia.mdhd.duration);
+
+        track
     }
 }
 
@@ -235,18 +234,15 @@ impl<'s> IsoMp4Reader<'s> {
             metadata.push(rev);
         }
 
-        // Instantiate a TrackState for each track in the stream.
-        let track_states = moov
-            .traks
-            .iter()
-            .enumerate()
-            .map(|(t, trak)| TrackState::new(t, trak))
-            .collect::<Vec<TrackState>>();
+        // Instantiate a `TrackState` for each track in the media.
+        let track_states =
+            (0..moov.traks.len()).map(|t| TrackState::new(t)).collect::<Vec<TrackState>>();
 
-        // Instantiate a Tracks for all tracks above.
+        // Instantiate a `Track` for all track states above.
         let tracks = track_states
             .iter()
-            .map(|track| Track::new(track.track_num as u32, track.codec_params()))
+            .zip(&moov.traks)
+            .map(|(state, trak)| state.make_track(trak))
             .collect();
 
         // The number of tracks specified in the moov atom must match the number in the mvex atom.
@@ -282,7 +278,7 @@ impl<'s> IsoMp4Reader<'s> {
 
         for (state, track) in self.track_states.iter().zip(&self.tracks) {
             // Get the timebase of the track used to calculate the presentation time.
-            let tb = track.codec_params.time_base.unwrap();
+            let tb = track.time_base.unwrap();
 
             // Get the next timestamp for the next sample of the current track. The next sample may
             // be in a future segment.
@@ -414,7 +410,7 @@ impl<'s> IsoMp4Reader<'s> {
     fn seek_track_by_time(&mut self, track_num: usize, time: Time) -> Result<SeekedTo> {
         // Convert time to timestamp for the track.
         if let Some(track) = self.tracks.get(track_num) {
-            let tb = track.codec_params.time_base.unwrap();
+            let tb = track.time_base.unwrap();
             self.seek_track_by_ts(track_num, tb.calc_timestamp(time))
         }
         else {
@@ -593,7 +589,7 @@ impl FormatReader for IsoMp4Reader<'_> {
                 // that the other tracks can be seeked.
                 if let Some(selected_track) = self.tracks().get(selected_track_id) {
                     // Convert to time units.
-                    let time = selected_track.codec_params.time_base.unwrap().calc_time(ts);
+                    let time = selected_track.time_base.unwrap().calc_time(ts);
 
                     // Seek all tracks excluding the primary track to the desired time.
                     for t in 0..self.track_states.len() {
