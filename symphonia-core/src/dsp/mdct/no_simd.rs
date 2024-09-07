@@ -13,9 +13,9 @@ use crate::dsp::fft::*;
 /// The Inverse Modified Discrete Transform (IMDCT).
 pub struct Imdct {
     fft: Fft,
-    fft_in: Box<[Complex]>,
-    fft_out: Box<[Complex]>,
-    twiddle: Box<[Complex]>,
+    fft_in: Box<[Complex<f32>]>,
+    fft_out: Box<[Complex<f32>]>,
+    twiddle: Box<[Complex<f32>]>,
 }
 
 impl Imdct {

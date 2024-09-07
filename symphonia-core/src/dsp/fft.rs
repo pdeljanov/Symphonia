@@ -20,7 +20,7 @@ use super::complex::Complex;
 macro_rules! fft_twiddle_table {
     ($bi:expr, $name:ident) => {
         lazy_static! {
-            static ref $name: [Complex; (1 << $bi) >> 1] = {
+            static ref $name: [Complex<f32>; (1 << $bi) >> 1] = {
                 const N: usize = 1 << $bi;
 
                 let mut table = [Default::default(); N >> 1];
@@ -51,7 +51,7 @@ fft_twiddle_table!(15, FFT_TWIDDLE_TABLE_32768);
 fft_twiddle_table!(16, FFT_TWIDDLE_TABLE_65536);
 
 /// Get the twiddle factors for a FFT of size `n`.
-fn fft_twiddle_factors(n: usize) -> &'static [Complex] {
+fn fft_twiddle_factors(n: usize) -> &'static [Complex<f32>] {
     // FFT sizes <= 32 use unrolled FFT implementations with hard-coded twiddle factors.
     match n {
         64 => FFT_TWIDDLE_TABLE_64.as_ref(),
@@ -99,7 +99,7 @@ impl Fft {
     }
 
     /// Calculate the inverse FFT.
-    pub fn ifft(&self, x: &[Complex], y: &mut [Complex]) {
+    pub fn ifft(&self, x: &[Complex<f32>], y: &mut [Complex<f32>]) {
         let n = x.len();
         assert_eq!(n, y.len());
         assert_eq!(n, self.perm.len());
@@ -121,7 +121,7 @@ impl Fft {
     }
 
     /// Calculate the inverse FFT in-place.
-    pub fn ifft_inplace(&self, x: &mut [Complex]) {
+    pub fn ifft_inplace(&self, x: &mut [Complex<f32>]) {
         let n = x.len();
         assert_eq!(n, self.perm.len());
 
@@ -150,7 +150,7 @@ impl Fft {
     }
 
     /// Calculate the FFT in-place.
-    pub fn fft_inplace(&self, x: &mut [Complex]) {
+    pub fn fft_inplace(&self, x: &mut [Complex<f32>]) {
         let n = x.len();
         assert_eq!(n, x.len());
         assert_eq!(n, self.perm.len());
@@ -175,7 +175,7 @@ impl Fft {
     }
 
     /// Calculate the FFT.
-    pub fn fft(&self, x: &[Complex], y: &mut [Complex]) {
+    pub fn fft(&self, x: &[Complex<f32>], y: &mut [Complex<f32>]) {
         let n = x.len();
         assert_eq!(n, y.len());
         assert_eq!(n, self.perm.len());
@@ -196,8 +196,8 @@ impl Fft {
         }
     }
 
-    fn transform(x: &mut [Complex], n: usize) {
-        fn to_arr(x: &mut [Complex]) -> Option<&mut [Complex; 32]> {
+    fn transform(x: &mut [Complex<f32>], n: usize) {
+        fn to_arr(x: &mut [Complex<f32>]) -> Option<&mut [Complex<f32>; 32]> {
             x.try_into().ok()
         }
 
@@ -239,7 +239,7 @@ macro_rules! complex {
     };
 }
 
-fn fft32(x: &mut [Complex; 32]) {
+fn fft32(x: &mut [Complex<f32>; 32]) {
     let mut x0 = [
         x[0], x[1], x[2], x[3], x[4], x[5], x[6], x[7], x[8], x[9], x[10], x[11], x[12], x[13],
         x[14], x[15],
@@ -312,7 +312,7 @@ fn fft32(x: &mut [Complex; 32]) {
 }
 
 #[inline(always)]
-fn fft16(x: &mut [Complex; 16]) {
+fn fft16(x: &mut [Complex<f32>; 16]) {
     let mut x0 = [x[0], x[1], x[2], x[3], x[4], x[5], x[6], x[7]];
     let mut x1 = [x[8], x[9], x[10], x[11], x[12], x[13], x[14], x[15]];
 
@@ -355,7 +355,7 @@ fn fft16(x: &mut [Complex; 16]) {
 }
 
 #[inline(always)]
-fn fft8(x: &mut [Complex; 8]) {
+fn fft8(x: &mut [Complex<f32>; 8]) {
     let mut x0 = [x[0], x[1], x[2], x[3]];
     let mut x1 = [x[4], x[5], x[6], x[7]];
 
@@ -386,7 +386,7 @@ fn fft8(x: &mut [Complex; 8]) {
 }
 
 #[inline(always)]
-fn fft4(x: &mut [Complex; 4]) {
+fn fft4(x: &mut [Complex<f32>; 4]) {
     let x0 = [x[0] + x[1], x[0] - x[1]];
     let x1 = [x[2] + x[3], x[2] - x[3]];
 
@@ -400,7 +400,7 @@ fn fft4(x: &mut [Complex; 4]) {
 }
 
 #[inline(always)]
-fn fft2(x: &mut [Complex; 2]) {
+fn fft2(x: &mut [Complex<f32>; 2]) {
     let x0 = x[0];
     x[0] = x0 + x[1];
     x[1] = x0 - x[1];
@@ -412,7 +412,7 @@ mod tests {
     use std::f64;
 
     /// Compute a naive DFT.
-    fn dft_naive(x: &[Complex], y: &mut [Complex]) {
+    fn dft_naive(x: &[Complex<f32>], y: &mut [Complex<f32>]) {
         assert_eq!(x.len(), y.len());
 
         let n = x.len() as u64;
@@ -441,10 +441,10 @@ mod tests {
     }
 
     /// Compute a naive IDFT.
-    fn idft_naive(x: &[Complex], y: &mut [Complex]) {
+    fn idft_naive(x: &[Complex<f32>], y: &mut [Complex<f32>]) {
         let n = x.len() as u64;
 
-        let z = x.iter().map(|x| Complex { re: x.im, im: x.re }).collect::<Vec<Complex>>();
+        let z = x.iter().map(|x| Complex { re: x.im, im: x.re }).collect::<Vec<Complex<f32>>>();
 
         dft_naive(&z, y);
 
@@ -457,12 +457,12 @@ mod tests {
 
     /// Returns true if both real and imaginary complex number components deviate by less than
     /// `epsilon` between the left-hand side and right-hand side.
-    fn check_complex(lhs: Complex, rhs: Complex, epsilon: f32) -> bool {
+    fn check_complex(lhs: Complex<f32>, rhs: Complex<f32>, epsilon: f32) -> bool {
         (lhs.re - rhs.re).abs() < epsilon && (lhs.im - rhs.im).abs() < epsilon
     }
 
     #[rustfmt::skip]
-    const TEST_VECTOR: [Complex; 64] = [
+    const TEST_VECTOR: [Complex<f32>; 64] = [
         Complex { re: -1.82036, im: -0.72591 },
         Complex { re: 1.21002, im: 0.75897 },
         Complex { re: 1.31084, im: -0.51285 },

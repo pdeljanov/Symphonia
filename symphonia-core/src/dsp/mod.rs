@@ -7,6 +7,7 @@
 
 //! The `dsp` module provides efficient implementations of common signal processing algorithms.
 
-pub mod complex;
 pub mod fft;
 pub mod mdct;
+
+pub use num_complex as complex;
