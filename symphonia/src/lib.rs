@@ -193,7 +193,7 @@ pub mod default {
     use lazy_static::lazy_static;
 
     use symphonia_core::codecs::registry::CodecRegistry;
-    use symphonia_core::probe::Probe;
+    use symphonia_core::formats::probe::Probe;
 
     lazy_static! {
         static ref CODEC_REGISTRY: CodecRegistry = {

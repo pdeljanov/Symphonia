@@ -3,8 +3,8 @@ use symphonia_core::codecs::audio::{
     well_known::CODEC_ID_AAC, AudioCodecParameters, AudioDecoder, AudioDecoderOptions,
 };
 use symphonia_core::errors;
+use symphonia_core::formats::probe::ProbeableFormat;
 use symphonia_core::io::MediaSourceStream;
-use symphonia_core::probe::ProbeableFormat;
 
 fn test_decode(data: Vec<u8>) -> symphonia_core::errors::Result<()> {
     let data = std::io::Cursor::new(data);

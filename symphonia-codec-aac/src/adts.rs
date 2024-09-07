@@ -13,10 +13,11 @@ use symphonia_core::codecs::audio::well_known::CODEC_ID_AAC;
 use symphonia_core::codecs::audio::AudioCodecParameters;
 use symphonia_core::codecs::CodecParameters;
 use symphonia_core::errors::{decode_error, seek_error, Result, SeekErrorKind};
-use symphonia_core::formats::{prelude::*, FORMAT_TYPE_ADTS};
+use symphonia_core::formats::prelude::*;
+use symphonia_core::formats::probe::{ProbeFormatData, ProbeableFormat, Score, Scoreable};
+use symphonia_core::formats::well_known::FORMAT_ID_ADTS;
 use symphonia_core::io::*;
 use symphonia_core::meta::{Metadata, MetadataLog};
-use symphonia_core::probe::{ProbeFormatData, ProbeableFormat, Score, Scoreable};
 
 use std::io::{Seek, SeekFrom};
 
@@ -27,7 +28,7 @@ use log::{debug, info};
 const SAMPLES_PER_AAC_PACKET: u64 = 1024;
 
 const ADTS_FORMAT_INFO: FormatInfo = FormatInfo {
-    format: FORMAT_TYPE_ADTS,
+    format: FORMAT_ID_ADTS,
     short_name: "aac",
     long_name: "Audio Data Transport Stream (native AAC)",
 };

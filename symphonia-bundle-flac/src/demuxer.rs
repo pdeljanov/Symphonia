@@ -16,11 +16,12 @@ use symphonia_core::codecs::CodecParameters;
 use symphonia_core::errors::{
     decode_error, seek_error, unsupported_error, Error, Result, SeekErrorKind,
 };
+use symphonia_core::formats::prelude::*;
+use symphonia_core::formats::probe::{ProbeFormatData, ProbeableFormat, Score, Scoreable};
 use symphonia_core::formats::util::{SeekIndex, SeekSearchResult};
-use symphonia_core::formats::{prelude::*, FORMAT_TYPE_FLAC};
+use symphonia_core::formats::well_known::FORMAT_ID_FLAC;
 use symphonia_core::io::*;
 use symphonia_core::meta::{Metadata, MetadataBuilder, MetadataLog};
-use symphonia_core::probe::{ProbeFormatData, ProbeableFormat, Score, Scoreable};
 
 use symphonia_utils_xiph::flac::metadata::*;
 
@@ -32,7 +33,7 @@ use super::parser::PacketParser;
 const FLAC_STREAM_MARKER: [u8; 4] = *b"fLaC";
 
 const FLAC_FORMAT_INFO: FormatInfo = FormatInfo {
-    format: FORMAT_TYPE_FLAC,
+    format: FORMAT_ID_FLAC,
     short_name: "flac",
     long_name: "Free Lossless Audio Codec Native",
 };

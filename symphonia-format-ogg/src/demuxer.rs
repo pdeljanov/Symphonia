@@ -10,10 +10,11 @@ use std::io::{Seek, SeekFrom};
 
 use symphonia_core::errors::{reset_error, seek_error, unsupported_error};
 use symphonia_core::errors::{Error, Result, SeekErrorKind};
-use symphonia_core::formats::{prelude::*, FORMAT_TYPE_OGG};
+use symphonia_core::formats::prelude::*;
+use symphonia_core::formats::probe::{ProbeFormatData, ProbeableFormat, Score, Scoreable};
+use symphonia_core::formats::well_known::FORMAT_ID_OGG;
 use symphonia_core::io::*;
 use symphonia_core::meta::{Metadata, MetadataLog};
-use symphonia_core::probe::{ProbeFormatData, ProbeableFormat, Score, Scoreable};
 use symphonia_core::support_format;
 
 use log::{debug, info, warn};
@@ -25,7 +26,7 @@ use super::page::*;
 use super::physical;
 
 const OGG_FORMAT_INFO: FormatInfo =
-    FormatInfo { format: FORMAT_TYPE_OGG, short_name: "ogg", long_name: "Ogg" };
+    FormatInfo { format: FORMAT_ID_OGG, short_name: "ogg", long_name: "Ogg" };
 
 /// OGG demultiplexer.
 ///

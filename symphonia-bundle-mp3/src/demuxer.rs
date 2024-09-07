@@ -12,10 +12,11 @@ use symphonia_core::codecs::audio::well_known::{CODEC_ID_MP1, CODEC_ID_MP2, CODE
 use symphonia_core::codecs::audio::AudioCodecParameters;
 use symphonia_core::codecs::CodecParameters;
 use symphonia_core::errors::{seek_error, Error, Result, SeekErrorKind};
-use symphonia_core::formats::{prelude::*, FORMAT_TYPE_MP1, FORMAT_TYPE_MP2, FORMAT_TYPE_MP3};
+use symphonia_core::formats::prelude::*;
+use symphonia_core::formats::probe::{ProbeFormatData, ProbeableFormat, Score, Scoreable};
+use symphonia_core::formats::well_known::{FORMAT_ID_MP1, FORMAT_ID_MP2, FORMAT_ID_MP3};
 use symphonia_core::io::*;
 use symphonia_core::meta::{Metadata, MetadataLog};
-use symphonia_core::probe::{ProbeFormatData, ProbeableFormat, Score, Scoreable};
 
 use crate::common::{FrameHeader, MpegLayer};
 use crate::header::{self, MAX_MPEG_FRAME_SIZE, MPEG_HEADER_LEN};
@@ -24,23 +25,14 @@ use std::io::{Seek, SeekFrom};
 
 use log::{debug, info, warn};
 
-const MP1_FORMAT_INFO: FormatInfo = FormatInfo {
-    format: FORMAT_TYPE_MP1,
-    short_name: "mp1",
-    long_name: "MPEG Audio Layer 1 Native",
-};
+const MP1_FORMAT_INFO: FormatInfo =
+    FormatInfo { format: FORMAT_ID_MP1, short_name: "mp1", long_name: "MPEG Audio Layer 1 Native" };
 
-const MP2_FORMAT_INFO: FormatInfo = FormatInfo {
-    format: FORMAT_TYPE_MP2,
-    short_name: "mp2",
-    long_name: "MPEG Audio Layer 2 Native",
-};
+const MP2_FORMAT_INFO: FormatInfo =
+    FormatInfo { format: FORMAT_ID_MP2, short_name: "mp2", long_name: "MPEG Audio Layer 2 Native" };
 
-const MP3_FORMAT_INFO: FormatInfo = FormatInfo {
-    format: FORMAT_TYPE_MP3,
-    short_name: "mp3",
-    long_name: "MPEG Audio Layer 3 Native",
-};
+const MP3_FORMAT_INFO: FormatInfo =
+    FormatInfo { format: FORMAT_ID_MP3, short_name: "mp3", long_name: "MPEG Audio Layer 3 Native" };
 
 /// MPEG1 and MPEG2 audio elementary stream reader.
 ///

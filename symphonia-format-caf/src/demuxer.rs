@@ -13,10 +13,11 @@ use symphonia_core::{
     codecs::audio::*,
     codecs::CodecParameters,
     errors::{decode_error, seek_error, unsupported_error, Result, SeekErrorKind},
-    formats::{prelude::*, FORMAT_TYPE_CAF},
+    formats::prelude::*,
+    formats::probe::{ProbeFormatData, ProbeableFormat, Score, Scoreable},
+    formats::well_known::FORMAT_ID_CAF,
     io::*,
     meta::{Metadata, MetadataLog},
-    probe::{ProbeFormatData, ProbeableFormat, Score, Scoreable},
     support_format,
     units::{TimeBase, TimeStamp},
 };
@@ -24,7 +25,7 @@ use symphonia_core::{
 const MAX_FRAMES_PER_PACKET: u64 = 1152;
 
 const CAF_FORMAT_INFO: FormatInfo =
-    FormatInfo { format: FORMAT_TYPE_CAF, short_name: "caf", long_name: "Core Audio Format" };
+    FormatInfo { format: FORMAT_ID_CAF, short_name: "caf", long_name: "Core Audio Format" };
 
 /// Core Audio Format (CAF) format reader.
 ///

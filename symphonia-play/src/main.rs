@@ -21,12 +21,12 @@ use lazy_static::lazy_static;
 use symphonia::core::codecs::audio::{AudioDecoderOptions, FinalizeResult};
 use symphonia::core::codecs::{CodecInfo, CodecParameters, CodecProfile};
 use symphonia::core::errors::{Error, Result};
+use symphonia::core::formats::probe::Hint;
 use symphonia::core::formats::{
     Cue, FormatOptions, FormatReader, SeekMode, SeekTo, Track, TrackType,
 };
 use symphonia::core::io::{MediaSource, MediaSourceStream, ReadOnlySource};
 use symphonia::core::meta::{ColorMode, MetadataOptions, MetadataRevision, Tag, Value, Visual};
-use symphonia::core::probe::Hint;
 use symphonia::core::units::{Time, TimeBase};
 
 use clap::{Arg, ArgMatches};

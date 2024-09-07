@@ -15,10 +15,11 @@ use symphonia_core::codecs::CodecParameters;
 use symphonia_core::errors::{
     decode_error, seek_error, unsupported_error, Error, Result, SeekErrorKind,
 };
-use symphonia_core::formats::{prelude::*, FORMAT_TYPE_MKV};
+use symphonia_core::formats::prelude::*;
+use symphonia_core::formats::probe::{ProbeFormatData, ProbeableFormat, Score, Scoreable};
+use symphonia_core::formats::well_known::FORMAT_ID_MKV;
 use symphonia_core::io::*;
 use symphonia_core::meta::{Metadata, MetadataLog};
-use symphonia_core::probe::{ProbeFormatData, ProbeableFormat, Score, Scoreable};
 use symphonia_core::sample::SampleFormat;
 use symphonia_core::support_format;
 use symphonia_core::units::TimeBase;
@@ -36,7 +37,7 @@ use crate::segment::{
 };
 
 const MKV_FORMAT_INFO: FormatInfo =
-    FormatInfo { format: FORMAT_TYPE_MKV, short_name: "matroska", long_name: "Matroska / WebM" };
+    FormatInfo { format: FORMAT_ID_MKV, short_name: "matroska", long_name: "Matroska / WebM" };
 
 #[allow(dead_code)]
 pub struct TrackState {

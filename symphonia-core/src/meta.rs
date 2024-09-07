@@ -13,31 +13,42 @@ use std::convert::From;
 use std::fmt;
 use std::num::NonZeroU32;
 
+use crate::common::FourCc;
 use crate::errors::Result;
 use crate::io::MediaSourceStream;
 
 /// A `MetadataType` is a unique identifier used to identify a metadata format.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-pub struct MetadataType(u32);
+pub struct MetadataId(u32);
 
-impl fmt::Display for MetadataType {
+impl MetadataId {
+    /// Create a new metadata ID from a FourCC.
+    pub const fn new(cc: FourCc) -> MetadataId {
+        // A FourCc always only contains ASCII characters. Therefore, the upper bits are always 0.
+        Self(0x8000_0000 | u32::from_be_bytes(cc.get()))
+    }
+}
+
+impl From<FourCc> for MetadataId {
+    fn from(value: FourCc) -> Self {
+        MetadataId::new(value)
+    }
+}
+
+impl fmt::Display for MetadataId {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{:#x}", self.0)
     }
 }
 
 /// Null metadata format
-pub const METADATA_TYPE_NULL: MetadataType = MetadataType(0x0);
-/// ID3
-pub const METADATA_TYPE_ID3: MetadataType = MetadataType(0x100);
-/// ID3v2
-pub const METADATA_TYPE_ID3V2: MetadataType = MetadataType(0x101);
+pub const METADATA_ID_NULL: MetadataId = MetadataId(0x0);
 
 /// Basic information about a metadata format.
 #[derive(Copy, Clone)]
 pub struct MetadataInfo {
     /// The `MetadataType` identifier.
-    pub metadata: MetadataType,
+    pub metadata: MetadataId,
     /// A short ASCII-only string identifying the format.
     pub short_name: &'static str,
     /// A longer, more descriptive, string identifying the format.
@@ -569,4 +580,25 @@ pub trait MetadataReader: Send + Sync {
     fn into_inner<'s>(self: Box<Self>) -> MediaSourceStream<'s>
     where
         Self: 's;
+}
+
+/// IDs for well-known metadata formats.
+pub mod well_known {
+    use super::MetadataId;
+
+    // ID3 tags
+    //---------
+
+    /// ID3
+    pub const METADATA_ID_ID3: MetadataId = MetadataId(0x100);
+    /// ID3v2
+    pub const METADATA_ID_ID3V2: MetadataId = MetadataId(0x101);
+
+    // APE tags
+    //---------
+
+    /// APEv1
+    pub const METADATA_ID_APEV1: MetadataId = MetadataId(0x200);
+    /// APEv2
+    pub const METADATA_ID_APEV2: MetadataId = MetadataId(0x201);
 }

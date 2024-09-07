@@ -585,8 +585,8 @@ fn warn_junk_bytes(pos: u64, init_pos: u64) {
 #[macro_export]
 macro_rules! support_format {
     ($info:expr, $exts:expr, $mimes:expr, $markers:expr) => {
-        symphonia_core::probe::ProbeFormatData {
-            spec: symphonia_core::probe::ProbeDataMatchSpec {
+        symphonia_core::formats::probe::ProbeFormatData {
+            spec: symphonia_core::formats::probe::ProbeDataMatchSpec {
                 extensions: $exts,
                 mime_types: $mimes,
                 markers: $markers,
@@ -600,8 +600,8 @@ macro_rules! support_format {
 #[macro_export]
 macro_rules! support_metadata {
     ($info:expr, $exts:expr, $mimes:expr, $markers:expr) => {
-        symphonia_core::probe::ProbeMetadataData {
-            spec: symphonia_core::probe::ProbeDataMatchSpec {
+        symphonia_core::formats::probe::ProbeMetadataData {
+            spec: symphonia_core::formats::probe::ProbeDataMatchSpec {
                 extensions: $exts,
                 mime_types: $mimes,
                 markers: $markers,

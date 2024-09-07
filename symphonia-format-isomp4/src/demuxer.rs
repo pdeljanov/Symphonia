@@ -8,10 +8,11 @@
 use symphonia_core::support_format;
 
 use symphonia_core::errors::{decode_error, seek_error, unsupported_error, Result, SeekErrorKind};
-use symphonia_core::formats::{prelude::*, FORMAT_TYPE_ISOMP4};
+use symphonia_core::formats::prelude::*;
+use symphonia_core::formats::probe::{ProbeFormatData, ProbeableFormat, Score, Scoreable};
+use symphonia_core::formats::well_known::FORMAT_ID_ISOMP4;
 use symphonia_core::io::*;
 use symphonia_core::meta::{Metadata, MetadataLog};
-use symphonia_core::probe::{ProbeFormatData, ProbeableFormat, Score, Scoreable};
 use symphonia_core::units::Time;
 
 use std::io::{Seek, SeekFrom};
@@ -24,7 +25,7 @@ use crate::stream::*;
 use log::{debug, info, trace, warn};
 
 const ISOMP4_FORMAT_INFO: FormatInfo = FormatInfo {
-    format: FORMAT_TYPE_ISOMP4,
+    format: FORMAT_ID_ISOMP4,
     short_name: "isomp4",
     long_name: "ISO Base Media File Format",
 };

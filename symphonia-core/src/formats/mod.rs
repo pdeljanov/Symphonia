@@ -11,6 +11,7 @@
 use std::fmt;
 
 use crate::codecs::{audio, subtitle, video, CodecParameters};
+use crate::common::FourCc;
 use crate::errors::Result;
 use crate::io::{BufReader, MediaSourceStream};
 use crate::meta::{Metadata, MetadataLog, Tag};
@@ -22,57 +23,45 @@ pub mod prelude {
     pub use crate::units::{Duration, TimeBase, TimeStamp};
 
     pub use super::{
-        Cue, FormatInfo, FormatOptions, FormatReader, FormatType, Packet, SeekMode, SeekTo,
-        SeekedTo, Track,
+        Cue, FormatId, FormatInfo, FormatOptions, FormatReader, Packet, SeekMode, SeekTo, SeekedTo,
+        Track,
     };
 }
 
-/// A `FormatType` is a unique identifier used to identify a specific container format.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-pub struct FormatType(u32);
+pub mod probe;
 
-impl fmt::Display for FormatType {
+/// A `FormatId` is a unique identifier used to identify a specific container format.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct FormatId(u32);
+
+impl FormatId {
+    /// Create a new format ID from a FourCC.
+    pub const fn new(cc: FourCc) -> FormatId {
+        // A FourCc always only contains ASCII characters. Therefore, the upper bits are always 0.
+        Self(0x8000_0000 | u32::from_be_bytes(cc.get()))
+    }
+}
+
+impl From<FourCc> for FormatId {
+    fn from(value: FourCc) -> Self {
+        FormatId::new(value)
+    }
+}
+
+impl fmt::Display for FormatId {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{:#x}", self.0)
     }
 }
 
 /// Null container format
-pub const FORMAT_TYPE_NULL: FormatType = FormatType(0x0);
-/// Waveform Audio File Format
-pub const FORMAT_TYPE_WAVE: FormatType = FormatType(0x100);
-/// Audio Interchange File Format
-pub const FORMAT_TYPE_AIFF: FormatType = FormatType(0x101);
-/// Audio Video Interleave
-pub const FORMAT_TYPE_AVI: FormatType = FormatType(0x102);
-/// Core Audio Format
-pub const FORMAT_TYPE_CAF: FormatType = FormatType(0x103);
-/// MPEG Audio Layer 1 Native
-pub const FORMAT_TYPE_MP1: FormatType = FormatType(0x104);
-/// MPEG Audio Layer 2 Native
-pub const FORMAT_TYPE_MP2: FormatType = FormatType(0x105);
-/// MPEG Audio Layer 3 Native
-pub const FORMAT_TYPE_MP3: FormatType = FormatType(0x106);
-/// Audio Data Transport Stream
-pub const FORMAT_TYPE_ADTS: FormatType = FormatType(0x107);
-/// Ogg
-pub const FORMAT_TYPE_OGG: FormatType = FormatType(0x108);
-/// Free Lossless Audio Codec Native
-pub const FORMAT_TYPE_FLAC: FormatType = FormatType(0x109);
-/// WavPack
-pub const FORMAT_TYPE_WAVPACK: FormatType = FormatType(0x10a);
-/// ISO Base Media File Format
-pub const FORMAT_TYPE_ISOMP4: FormatType = FormatType(0x10b);
-/// Matroska/WebM
-pub const FORMAT_TYPE_MKV: FormatType = FormatType(0x10c);
-/// Flash Video
-pub const FORMAT_TYPE_FLV: FormatType = FormatType(0x10d);
+pub const FORMAT_ID_NULL: FormatId = FormatId(0x0);
 
 /// Basic information about a container format.
 #[derive(Copy, Clone)]
 pub struct FormatInfo {
-    /// The `FormatType` identifier.
-    pub format: FormatType,
+    /// The `FormatId` identifier.
+    pub format: FormatId,
     /// A short ASCII-only string identifying the format.
     pub short_name: &'static str,
     /// A longer, more descriptive, string identifying the format.
@@ -706,4 +695,38 @@ pub mod util {
             );
         }
     }
+}
+
+/// IDs for well-known container formats.
+pub mod well_known {
+    use super::FormatId;
+
+    /// Waveform Audio File Format
+    pub const FORMAT_ID_WAVE: FormatId = FormatId(0x100);
+    /// Audio Interchange File Format
+    pub const FORMAT_ID_AIFF: FormatId = FormatId(0x101);
+    /// Audio Video Interleave
+    pub const FORMAT_ID_AVI: FormatId = FormatId(0x102);
+    /// Core Audio Format
+    pub const FORMAT_ID_CAF: FormatId = FormatId(0x103);
+    /// MPEG Audio Layer 1 Native
+    pub const FORMAT_ID_MP1: FormatId = FormatId(0x104);
+    /// MPEG Audio Layer 2 Native
+    pub const FORMAT_ID_MP2: FormatId = FormatId(0x105);
+    /// MPEG Audio Layer 3 Native
+    pub const FORMAT_ID_MP3: FormatId = FormatId(0x106);
+    /// Audio Data Transport Stream
+    pub const FORMAT_ID_ADTS: FormatId = FormatId(0x107);
+    /// Ogg
+    pub const FORMAT_ID_OGG: FormatId = FormatId(0x108);
+    /// Free Lossless Audio Codec Native
+    pub const FORMAT_ID_FLAC: FormatId = FormatId(0x109);
+    /// WavPack
+    pub const FORMAT_ID_WAVPACK: FormatId = FormatId(0x10a);
+    /// ISO Base Media File Format
+    pub const FORMAT_ID_ISOMP4: FormatId = FormatId(0x10b);
+    /// Matroska/WebM
+    pub const FORMAT_ID_MKV: FormatId = FormatId(0x10c);
+    /// Flash Video
+    pub const FORMAT_ID_FLV: FormatId = FormatId(0x10d);
 }

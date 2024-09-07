@@ -8,12 +8,12 @@
 //! An ID3v2 metadata reader.
 
 use symphonia_core::errors::{decode_error, unsupported_error, Result};
+use symphonia_core::formats::probe::{ProbeMetadataData, ProbeableMetadata, Score, Scoreable};
 use symphonia_core::io::*;
+use symphonia_core::meta::well_known::METADATA_ID_ID3V2;
 use symphonia_core::meta::{
     MetadataBuilder, MetadataInfo, MetadataOptions, MetadataReader, MetadataRevision,
-    METADATA_TYPE_ID3V2,
 };
-use symphonia_core::probe::{ProbeMetadataData, ProbeableMetadata, Score, Scoreable};
 use symphonia_core::support_metadata;
 
 use log::{info, trace, warn};
@@ -401,7 +401,7 @@ pub mod util {
 }
 
 const ID3V2_METADATA_INFO: MetadataInfo =
-    MetadataInfo { metadata: METADATA_TYPE_ID3V2, short_name: "id3v2", long_name: "ID3v2" };
+    MetadataInfo { metadata: METADATA_ID_ID3V2, short_name: "id3v2", long_name: "ID3v2" };
 
 pub struct Id3v2Reader<'s> {
     reader: MediaSourceStream<'s>,

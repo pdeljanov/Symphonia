@@ -11,10 +11,11 @@ use symphonia_core::codecs::audio::AudioCodecParameters;
 use symphonia_core::codecs::CodecParameters;
 use symphonia_core::errors::{seek_error, unsupported_error};
 use symphonia_core::errors::{Result, SeekErrorKind};
-use symphonia_core::formats::{prelude::*, FORMAT_TYPE_AIFF};
+use symphonia_core::formats::prelude::*;
+use symphonia_core::formats::probe::{ProbeFormatData, ProbeableFormat, Score, Scoreable};
+use symphonia_core::formats::well_known::FORMAT_ID_AIFF;
 use symphonia_core::io::*;
 use symphonia_core::meta::{Metadata, MetadataLog};
-use symphonia_core::probe::{ProbeFormatData, ProbeableFormat, Score, Scoreable};
 use symphonia_core::support_format;
 
 use log::debug;
@@ -33,7 +34,7 @@ const AIFF_RIFF_FORM: [u8; 4] = *b"AIFF";
 const AIFC_RIFF_FORM: [u8; 4] = *b"AIFC";
 
 const AIFF_FORMAT_INFO: FormatInfo = FormatInfo {
-    format: FORMAT_TYPE_AIFF,
+    format: FORMAT_ID_AIFF,
     short_name: "aiff",
     long_name: "Audio Interchange File Format",
 };
