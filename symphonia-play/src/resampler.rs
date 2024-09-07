@@ -8,9 +8,9 @@
 use std::marker::PhantomData;
 
 use rubato::VecResampler;
+use symphonia::core::audio::conv::{FromSample, IntoSample};
+use symphonia::core::audio::sample::Sample;
 use symphonia::core::audio::{Audio, AudioBuffer, AudioMut, AudioSpec, GenericAudioBufferRef};
-use symphonia::core::conv::{FromSample, IntoSample};
-use symphonia::core::sample::Sample;
 
 pub struct Resampler<T> {
     resampler: rubato::FftFixedIn<f32>,

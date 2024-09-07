@@ -40,12 +40,12 @@ use symphonia_core::codecs::audio::well_known::{CODEC_ID_PCM_U24LE, CODEC_ID_PCM
 use symphonia_core::codecs::audio::well_known::{CODEC_ID_PCM_F32BE, CODEC_ID_PCM_F32LE};
 use symphonia_core::codecs::audio::well_known::{CODEC_ID_PCM_F64BE, CODEC_ID_PCM_F64LE};
 // G711 ALaw and MuLaw PCM codecs
+use symphonia_core::audio::conv::IntoSample;
+use symphonia_core::audio::sample::SampleFormat;
 use symphonia_core::codecs::audio::well_known::{CODEC_ID_PCM_ALAW, CODEC_ID_PCM_MULAW};
-use symphonia_core::conv::IntoSample;
 use symphonia_core::errors::{decode_error, unsupported_error, Result};
 use symphonia_core::formats::Packet;
 use symphonia_core::io::ReadBytes;
-use symphonia_core::sample::SampleFormat;
 
 macro_rules! read_pcm_signed {
     ($buf:expr, $fmt:tt, $read:expr, $width:expr, $coded_width:expr) => {

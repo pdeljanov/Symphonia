@@ -7,8 +7,8 @@
 
 use std::ops::{Bound, Range, RangeBounds};
 
-use crate::conv::{FromSample, IntoSample};
-use crate::sample::{Sample, SampleBytes};
+use crate::audio::conv::{FromSample, IntoSample};
+use crate::audio::sample::{Sample, SampleBytes};
 
 /// Get a pair of planes.
 pub fn plane_pair_by_buffer_index<S: Sample>(

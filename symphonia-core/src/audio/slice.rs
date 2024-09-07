@@ -7,8 +7,8 @@
 
 use std::ops::{Range, RangeBounds};
 
-use crate::conv::FromSample;
-use crate::sample::{Sample, SampleBytes};
+use crate::audio::conv::FromSample;
+use crate::audio::sample::{Sample, SampleBytes};
 
 use super::util::*;
 use super::{

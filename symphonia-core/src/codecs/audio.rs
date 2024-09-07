@@ -9,12 +9,12 @@
 
 use std::fmt;
 
+use crate::audio::sample::SampleFormat;
 use crate::audio::{Channels, GenericAudioBufferRef};
 use crate::codecs::{CodecInfo, CodecProfile};
 use crate::common::FourCc;
 use crate::errors::Result;
 use crate::formats::Packet;
-use crate::sample::SampleFormat;
 
 /// An `AudioCodecId` is a unique identifier used to identify a specific audio codec.
 ///

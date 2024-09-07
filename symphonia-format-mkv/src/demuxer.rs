@@ -9,6 +9,7 @@ use std::collections::{HashMap, VecDeque};
 use std::convert::TryFrom;
 use std::io::{Seek, SeekFrom};
 
+use symphonia_core::audio::sample::SampleFormat;
 use symphonia_core::codecs::audio::well_known::{CODEC_ID_FLAC, CODEC_ID_VORBIS};
 use symphonia_core::codecs::audio::AudioCodecParameters;
 use symphonia_core::codecs::CodecParameters;
@@ -20,7 +21,6 @@ use symphonia_core::formats::probe::{ProbeFormatData, ProbeableFormat, Score, Sc
 use symphonia_core::formats::well_known::FORMAT_ID_MKV;
 use symphonia_core::io::*;
 use symphonia_core::meta::{Metadata, MetadataLog};
-use symphonia_core::sample::SampleFormat;
 use symphonia_core::support_format;
 use symphonia_core::units::TimeBase;
 use symphonia_utils_xiph::flac::metadata::{MetadataBlockHeader, MetadataBlockType};

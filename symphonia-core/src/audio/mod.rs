@@ -17,16 +17,14 @@
 //! `i32`, `f32`, and `f64`.
 use std::ops::Range;
 
-use crate::{
-    conv::FromSample,
-    sample::{Sample, SampleBytes},
-};
-
 mod buf;
 mod channels;
 mod generic;
 mod slice;
 mod util;
+
+pub mod conv;
+pub mod sample;
 
 pub use buf::*;
 pub use channels::*;
@@ -35,6 +33,9 @@ pub use slice::*;
 
 // Utilities are internal use-only.
 use util::*;
+
+use conv::FromSample;
+use sample::{Sample, SampleBytes};
 
 /// A specification defining the core characteristics of some audio.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

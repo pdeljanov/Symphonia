@@ -250,8 +250,8 @@ mod cpal {
 
     use super::{AudioOutput, AudioOutputError, Result};
 
+    use symphonia::core::audio::conv::{ConvertibleSample, IntoSample};
     use symphonia::core::audio::{AudioSpec, GenericAudioBufferRef};
-    use symphonia::core::conv::{ConvertibleSample, IntoSample};
     use symphonia::core::units::Duration;
 
     use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};

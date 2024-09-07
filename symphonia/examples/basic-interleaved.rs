@@ -2,13 +2,13 @@ use std::env;
 use std::fs::File;
 use std::path::Path;
 
+use symphonia::core::audio::sample::Sample;
 use symphonia::core::codecs::audio::AudioDecoderOptions;
 use symphonia::core::errors::Error;
 use symphonia::core::formats::probe::Hint;
 use symphonia::core::formats::FormatOptions;
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
-use symphonia::core::sample::Sample;
 use symphonia_core::formats::TrackType;
 
 fn main() {

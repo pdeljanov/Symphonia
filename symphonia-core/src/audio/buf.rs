@@ -9,9 +9,9 @@ use std::ops::{Deref, DerefMut, Range, RangeBounds};
 
 use smallvec::SmallVec;
 
-use crate::conv::FromSample;
+use crate::audio::conv::FromSample;
+use crate::audio::sample::{Sample, SampleBytes};
 use crate::errors::Result;
-use crate::sample::{Sample, SampleBytes};
 
 use super::{util::*, AudioPlanes, AudioPlanesMut};
 use super::{

@@ -6,7 +6,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 //! The `conv` module provides methods to convert samples between different sample types (formats).
-use crate::sample::{i24, u24, Sample};
+use crate::audio::sample::{i24, u24, Sample};
 
 pub mod dither {
     //! The `dither` module provides methods to apply a dither to a sample.
@@ -26,8 +26,8 @@ pub mod dither {
     //! distribution. In addition to different distributions, a dithering algorithm may also shape
     //! the noise such that the bulk of the noise is placed in an inaudible frequency range.
     use super::FromSample;
-    use crate::sample::Sample;
-    use crate::sample::{i24, u24};
+    use crate::audio::sample::Sample;
+    use crate::audio::sample::{i24, u24};
     use std::marker::PhantomData;
 
     mod prng {
@@ -678,7 +678,7 @@ impl<S> ConvertibleSample for S where
 #[cfg(test)]
 mod tests {
     use super::FromSample;
-    use crate::sample::{i24, u24, Sample};
+    use crate::audio::sample::{i24, u24, Sample};
     use std::{i16, i32, i8, u16, u32, u8};
 
     #[test]
