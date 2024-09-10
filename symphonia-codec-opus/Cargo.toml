@@ -1,7 +1,10 @@
 [package]
 name = "symphonia-codec-opus"
 description = "Pure Opus decoder (a part of project Symphonia)."
-authors = ["Philip Deljanov <philip.deljanov@gmail.com>"]
+homepage = "https://github.com/pdeljanov/Symphonia"
+repository = "https://github.com/pdeljanov/Symphonia"
+authors = ["Philip Deljanov <philip.deljanov@gmail.com>", "Yevhen Bilyk, <jiztastamablastamarang@gmail.com>"]
+license = "MPL-2.0"
 readme = "README.md"
 categories = ["multimedia", "multimedia::audio", "multimedia::encoding"]
 keywords = ["audio", "codec", "decoder", "opus"]
@@ -14,8 +17,8 @@ rust-version.workspace = true
 version.workspace = true
 
 [dependencies]
-log = { workspace = true }
-symphonia-core = { version = "0.6.1", path = "../symphonia-core" }
+log = "0.4"
+symphonia-core = { version = "0.5.4", path = "../symphonia-core" }
 
-[lints]
-workspace = true
+[lints.clippy]
+needless_return = "allow"
