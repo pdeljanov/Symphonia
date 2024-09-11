@@ -16,6 +16,7 @@ rust-version = "1.53"
 log = "0.4"
 symphonia-core = { version = "0.5.4", path = "../symphonia-core" }
 once_cell = "1.19.0"
+lazy_static = "1.5.0"
 
 [lints.clippy]
 needless_return = "allow"

@@ -1,41 +1,42 @@
+use once_cell::sync::Lazy;
 use symphonia_core::errors::{Error, Result};
 use symphonia_core::io::ReadBytes;
-use once_cell::sync::Lazy;
 
 const LOOKUP_TABLE_SIZE: usize = 256;
+static NORMALIZE_TABLES: Lazy<NormalizeTables> = Lazy::new(NormalizeTables::new);
 
-/// LookupTable implements optimizations for common range coder operations.
-struct LookupTable {
-    normalize_shift: [u8; LOOKUP_TABLE_SIZE],
-    normalize_add: [u32; LOOKUP_TABLE_SIZE],
+
+struct NormalizeTables {
+    shift: [u8; LOOKUP_TABLE_SIZE],
+    add: [u32; LOOKUP_TABLE_SIZE],
 }
 
-impl LookupTable {
-    const fn new() -> Self {
-        let mut normalize_shift = [0; LOOKUP_TABLE_SIZE];
-        let mut normalize_add = [0; LOOKUP_TABLE_SIZE];
-        let mut i = 0;
-        while i < LOOKUP_TABLE_SIZE {
-            let mut shift = 0;
-            let mut add = 0;
+impl NormalizeTables {
+    fn new() -> Self {
+        let mut shift = [0u8; LOOKUP_TABLE_SIZE];
+        let mut add = [0u32; LOOKUP_TABLE_SIZE];
+
+        for i in 0..LOOKUP_TABLE_SIZE {
+            let mut s = 0u8;
+            let mut a = 0u32;
             let mut v = i;
+
             while v < 128 {
                 v <<= 1;
-                shift += 1;
-                add = (add << 1) | 1;
+                s = s.saturating_add(1);
+                if a == 0x7FFFFFFF {
+                    break;
+                }
+                a = (a << 1) | 1;
             }
-            normalize_shift[i] = shift;
-            normalize_add[i] = add;
-            i += 1;
+
+            shift[i] = s;
+            add[i] = a;
         }
-        return LookupTable {
-            normalize_shift,
-            normalize_add,
-        };
+
+        return NormalizeTables { shift, add };
     }
 }
-
-static LOOKUP: Lazy<LookupTable> = Lazy::new(LookupTable::new);
 
 /// Decoder implements rfc6716#section-4.1
 /// Opus uses an entropy coder based on range coding [RANGE-CODING]
@@ -65,14 +66,19 @@ impl<'a, B: ReadBytes> Decoder<'a, B> {
     pub fn new(buf: &'a mut B) -> Result<Self> {
         let mut decoder = Decoder {
             buf,
-            range: 128,
+            range: 128 << 23,
             value: 0,
             bits_read: 0,
             current_byte: 0,
         };
-        decoder.value = 127 - decoder.get_bits(7)?;
+
+        decoder.value = match decoder.get_bits(8) {
+            Ok(bits) => 127 - (bits >> 1),
+            Err(err) => return Err(err),
+        };
+
         decoder.normalize()?;
-        
+
         return Ok(decoder);
     }
 
@@ -80,17 +86,34 @@ impl<'a, B: ReadBytes> Decoder<'a, B> {
     ///
     /// https://datatracker.ietf.org/doc/html/rfc6716#section-4.1.3.3
     pub fn decode_symbol_with_icdf(&mut self, cdf: &[u32]) -> Result<u32> {
+        if cdf.len() < 2 {
+            return Err(Error::DecodeError("Invalid CDF"));
+        }
+
         let ft = cdf[0];
+        if ft == 0 || ft > 32768 {
+            return Err(Error::DecodeError("Invalid CDF total frequency"));
+        }
+
         let scale = self.range / ft;
-        let threshold = self.value / scale;
+        let mut symbol = self.value / scale;
+
+        symbol = ft - u32::min(symbol, ft);
 
         let (k, fl, fh) = cdf.windows(2)
             .enumerate()
-            .find(|(_, window)| window[1] > threshold)
+            .find(|(_, window)| window[1] > symbol)
             .map(|(i, window)| (i, window[0], window[1]))
             .unwrap_or((cdf.len() - 1, cdf[cdf.len() - 2], cdf[cdf.len() - 1]));
 
-        self.update(scale, fl, fh, ft)?;
+        self.value -= scale * (ft - fh);
+        if fl > 0 {
+            self.range = scale * (fh - fl);
+        } else {
+            self.range -= scale * (ft - fh);
+        }
+
+        self.normalize()?;
 
         return Ok(k as u32);
     }
@@ -102,7 +125,11 @@ impl<'a, B: ReadBytes> Decoder<'a, B> {
     ///
     /// https://datatracker.ietf.org/doc/html/rfc6716#section-4.1.3.2
     pub fn decode_symbol_log_p(&mut self, logp: u32) -> Result<bool> {
-        let scale = self.range >> logp;
+        if logp > 31 {
+            return Err(Error::DecodeError("Invalid logp value"));
+        }
+
+        let scale = if logp == 0 { self.range } else { self.range >> logp };
         let bit = self.value >= scale;
 
         if bit {
@@ -113,7 +140,7 @@ impl<'a, B: ReadBytes> Decoder<'a, B> {
         }
 
         self.normalize()?;
-        
+
         return Ok(bit);
     }
 
@@ -126,41 +153,38 @@ impl<'a, B: ReadBytes> Decoder<'a, B> {
     /// for the initialization used to process the first byte. 
     /// Then, it sets val = ((val<<8) + (255-sym)) & 0x7FFFFFFF
     fn normalize(&mut self) -> Result<()> {
-        const MIN_RANGE: u32 = 1 << 23;
-        const MAX_VALUE: u32 = (1 << 31) - 1;
-
-        while self.range <= MIN_RANGE {
-            let shift = LOOKUP.normalize_shift[(self.range >> 23) as usize];
-            self.range <<= shift;
-            let byte = self.get_bits(8)?;
-            let add = LOOKUP.normalize_add[shift as usize];
-            self.value = ((self.value << shift) + (add - byte)) & MAX_VALUE;
+        while self.range <= 0x00FFFFFF {
+            self.range <<= 8;
+            self.value = (self.value << 8) | (self.get_bits(8)? as u32);
         }
-
+        
         return Ok(());
     }
 
-    fn update(&mut self, scale: u32, fl: u32, fh: u32, ft: u32) -> Result<()> {
-        self.value -= scale * (ft - fh);
-        self.range = if fl > 0 {
-            scale * (fh - fl)
-        } else {
-            self.range - scale * (ft - fh)
-        };
-
-        return self.normalize();
-    }
-
     fn get_bits(&mut self, n: u32) -> Result<u32> {
-        return (0..n).try_fold(0, |acc, _| {
-            self.get_bit().map(|bit| (acc << 1) | bit)
-        });
+        match n {
+            0 => return Ok(0),
+            n if n > 32 => return Err(Error::DecodeError("Invalid number of bits requested")),
+            _ => {}
+        }
+
+        (0..n).try_fold(0u32, |acc, _| {
+            match self.get_bit() {
+                Ok(bit) => Ok((acc << 1) | bit),
+                Err(Error::IoError(ref err)) if err.kind() == std::io::ErrorKind::UnexpectedEof => {
+                    Ok(acc << 1)  // Pad with 0 if we've reached the end of the buffer
+                }
+                Err(err) => Err(err),
+            }
+        })
     }
 
     fn get_bit(&mut self) -> Result<u32> {
         if self.bits_read % 8 == 0 {
-            let byte = self.buf.read_byte()?;
-            self.current_byte = byte;
+            match self.buf.read_byte() {
+                Ok(byte) => self.current_byte = byte,
+                Err(err) => return Err(Error::IoError(err)),
+            }
         }
 
         let bit = (self.current_byte >> (7 - self.bits_read % 8)) & 1;
@@ -174,6 +198,7 @@ impl<'a, B: ReadBytes> Decoder<'a, B> {
 mod tests {
     use super::*;
     use std::io;
+
 
     const SILK_MODEL_FRAME_TYPE_INACTIVE: &[u32] = &[256, 26, 256];
 
@@ -258,6 +283,42 @@ mod tests {
         &[256, 2, 3, 9, 36, 94, 150, 189, 214, 228, 238, 244, 247, 250, 252, 253, 254, 256, 256],
     ];
 
+    #[test]
+    fn decode_symbol_with_icdf_empty_cdf() -> Result<()> {
+        let data = [0xFF];
+        let mut reader = TestReader { data: &data, position: 0 };
+        let mut decoder = Decoder::new(&mut reader)?;
+
+        let result = decoder.decode_symbol_with_icdf(&[]);
+        assert!(result.is_err());
+
+        return Ok(());
+    }
+
+    #[test]
+    fn decode_symbol_log_p_edge_cases() -> Result<()> {
+        let data = [0xFF, 0xFF];
+        let mut reader = TestReader { data: &data, position: 0 };
+        let mut decoder = Decoder::new(&mut reader)?;
+
+        assert!(decoder.decode_symbol_log_p(0)?);
+        assert!(decoder.decode_symbol_log_p(31)?);
+        assert!(decoder.decode_symbol_log_p(32).is_err());
+
+        return Ok(());
+    }
+
+
+    #[test]
+    fn get_bits_zero() -> Result<()> {
+        let data = [0xFF];
+        let mut reader = TestReader { data: &data, position: 0 };
+        let mut decoder = Decoder::new(&mut reader)?;
+
+        assert_eq!(decoder.get_bits(0)?, 0);
+        return Ok(());
+    }
+
     struct TestReader<'a> {
         data: &'a [u8],
         position: usize,
@@ -270,10 +331,11 @@ mod tests {
                 self.position += 1;
                 return Ok(byte);
             }
-            
+
             return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "EOF"));
         }
-        
+
+
         fn read_double_bytes(&mut self) -> io::Result<[u8; 2]> {
             let mut buf = [0u8; 2];
             buf[0] = self.read_byte()?;
@@ -302,7 +364,7 @@ mod tests {
             for (i, byte) in buf.iter_mut().enumerate() {
                 match self.read_byte() {
                     Ok(b) => *byte = b,
-                    Err(e) => return Ok(i),
+                    Err(err) => return Ok(i),
                 }
             }
             return Ok(buf.len());
@@ -330,44 +392,45 @@ mod tests {
     }
 
     #[test]
-    fn test_decoder() -> Result<()> {
+    fn decoder() -> Result<()> {
         let data = [0x0b, 0xe4, 0xc1, 0x36, 0xec, 0xc5, 0x80];
         let mut reader = TestReader { data: &data, position: 0 };
-        let mut decoder = Decoder::new(&mut reader)?; // Lazy instance has previously been poisoned !!!! 
+        let mut decoder = Decoder::new(&mut reader)?;
 
-
-        assert!(!decoder.decode_symbol_log_p(0x1)?, "DecodeSymbolLogP failed");
-        assert!(!decoder.decode_symbol_log_p(0x1)?,  "DecodeSymbolLogP failed");
-        assert_eq!(decoder.decode_symbol_with_icdf(SILK_MODEL_FRAME_TYPE_INACTIVE)?, 1, "DecodeSymbolWithICDF failed for SILK_MODEL_FRAME_TYPE_INACTIVE");
-        assert_eq!(decoder.decode_symbol_with_icdf(SILK_MODEL_GAIN_HIGHBITS[0])?, 0, "DecodeSymbolWithICDF failed for SILK_MODEL_GAIN_HIGHBITS[0]");
-        assert_eq!(decoder.decode_symbol_with_icdf(SILK_MODEL_GAIN_LOWBITS)?, 6, "DecodeSymbolWithICDF failed for SILK_MODEL_GAIN_LOWBITS");
-        assert_eq!(decoder.decode_symbol_with_icdf(SILK_MODEL_GAIN_DELTA)?, 0, "DecodeSymbolWithICDF failed for SILK_MODEL_GAIN_DELTA");
-        assert_eq!(decoder.decode_symbol_with_icdf(SILK_MODEL_GAIN_DELTA)?, 3, "DecodeSymbolWithICDF failed for SILK_MODEL_GAIN_DELTA");
-        assert_eq!(decoder.decode_symbol_with_icdf(SILK_MODEL_GAIN_DELTA)?, 4, "DecodeSymbolWithICDF failed for SILK_MODEL_GAIN_DELTA");
-        assert_eq!(decoder.decode_symbol_with_icdf(SILK_MODEL_LSF_S1[1][0])?, 9, "DecodeSymbolWithICDF failed for SILK_MODEL_LSF_S1[1][0]");
-        assert_eq!(decoder.decode_symbol_with_icdf(SILK_MODEL_LSF_S2[10])?, 5, "DecodeSymbolWithICDF failed for SILK_MODEL_LSF_S2[10]");
-        assert_eq!(decoder.decode_symbol_with_icdf(SILK_MODEL_LSF_S2[9])?, 4, "DecodeSymbolWithICDF failed for SILK_MODEL_LSF_S2[9]");
+        assert!(!decoder.decode_symbol_log_p(1)?, "DecodeSymbolLogP failed");
+        assert!(!decoder.decode_symbol_log_p(1)?, "DecodeSymbolLogP failed");
+        assert_eq!(decoder.decode_symbol_with_icdf(SILK_MODEL_FRAME_TYPE_INACTIVE)?, 1);
+        assert_eq!(decoder.decode_symbol_with_icdf(SILK_MODEL_GAIN_HIGHBITS[0])?, 0);
+        assert_eq!(decoder.decode_symbol_with_icdf(SILK_MODEL_GAIN_LOWBITS)?, 6);
+        assert_eq!(decoder.decode_symbol_with_icdf(SILK_MODEL_GAIN_DELTA)?, 0);
+        assert_eq!(decoder.decode_symbol_with_icdf(SILK_MODEL_GAIN_DELTA)?, 3);
+        assert_eq!(decoder.decode_symbol_with_icdf(SILK_MODEL_GAIN_DELTA)?, 4);
+        assert_eq!(decoder.decode_symbol_with_icdf(SILK_MODEL_LSF_S1[1][0])?, 9);
+        assert_eq!(decoder.decode_symbol_with_icdf(SILK_MODEL_LSF_S2[10])?, 5);
+        assert_eq!(decoder.decode_symbol_with_icdf(SILK_MODEL_LSF_S2[9])?, 4);
 
         for _ in 0..12 {
-            assert_eq!(decoder.decode_symbol_with_icdf(SILK_MODEL_LSF_S2[8])?, 4, "DecodeSymbolWithICDF failed for SILK_MODEL_LSF_S2[8]");
+            assert_eq!(decoder.decode_symbol_with_icdf(SILK_MODEL_LSF_S2[8])?, 4);
         }
 
         assert_eq!(decoder.decode_symbol_with_icdf(SILK_MODEL_LSF_INTERPOLATION_OFFSET)?, 4);
         assert_eq!(decoder.decode_symbol_with_icdf(SILK_MODEL_LCG_SEED)?, 2);
         assert_eq!(decoder.decode_symbol_with_icdf(SILK_MODEL_EXC_RATE[0])?, 0);
 
-        for _ in 0..20 { assert_eq!(decoder.decode_symbol_with_icdf(SILK_MODEL_PULSE_COUNT[0])?, 0); }
+        for _ in 0..20 {
+            assert_eq!(decoder.decode_symbol_with_icdf(SILK_MODEL_PULSE_COUNT[0])?, 0);
+        }
 
         return Ok(());
     }
 
-    #[test]
-    fn test_decoder_error_handling() -> Result<()> {
-        let data = [0x0b]; // Insufficient data
-        let mut reader = TestReader { data: &data, position: 0 };
-        let mut decoder = Decoder::new(&mut reader)?; // Lazy instance has previously been poisoned ????
 
-        // This should fail due to insufficient data
+    #[test]
+    fn decoder_error_handling() -> Result<()> {
+        let data = [0x0b];
+        let mut reader = TestReader { data: &data, position: 0 };
+        let mut decoder = Decoder::new(&mut reader)?;
+
         let result = decoder.decode_symbol_with_icdf(SILK_MODEL_FRAME_TYPE_INACTIVE);
         assert!(result.is_err(), "Expected an error due to insufficient data");
 
@@ -375,35 +438,62 @@ mod tests {
     }
 
     #[test]
-    fn test_decoder_edge_cases() -> Result<()> {
-        let data = [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]; // All bits set
+    fn decoder_edge_cases() -> Result<()> {
+        let data = [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF];
         let mut reader = TestReader { data: &data, position: 0 };
-        let mut decoder = Decoder::new(&mut reader)?; // Lazy instance has previously been poisoned !!!!!
+        let mut decoder = Decoder::new(&mut reader)?;
 
-        // Test with edge case ICDFs
         let edge_icdf = &[256, 255, 256];
-        assert_eq!(decoder.decode_symbol_with_icdf(edge_icdf)?, 1, "DecodeSymbolWithICDF failed for edge case ICDF");
+        assert_eq!(decoder.decode_symbol_with_icdf(edge_icdf)?, 1);
 
-        // Test with maximum logp value
-        assert!(decoder.decode_symbol_log_p(31)?, "DecodeSymbolLogP failed for maximum logp value");
+        assert!(decoder.decode_symbol_log_p(31)?);
+        assert!(decoder.decode_symbol_log_p(0)?);
+        assert!(decoder.decode_symbol_log_p(32).is_err());
 
         return Ok(());
     }
 
     #[test]
-    fn test_decoder_consistency() -> Result<()> {
+    fn decoder_consistency() -> Result<()> {
         let data = [0x0b, 0xe4, 0xc1, 0x36, 0xec, 0xc5, 0x80];
         let mut reader1 = TestReader { data: &data, position: 0 };
         let mut reader2 = TestReader { data: &data, position: 0 };
-        let mut decoder1 = Decoder::new(&mut reader1)?; // Lazy instance has previously been poisoned!!! 
+        let mut decoder1 = Decoder::new(&mut reader1)?;
         let mut decoder2 = Decoder::new(&mut reader2)?;
 
-        // Perform the same operations on both decoders
         for _ in 0..10 {
             let result1 = decoder1.decode_symbol_with_icdf(SILK_MODEL_FRAME_TYPE_INACTIVE)?;
             let result2 = decoder2.decode_symbol_with_icdf(SILK_MODEL_FRAME_TYPE_INACTIVE)?;
             assert_eq!(result1, result2, "Inconsistent results between decoders");
         }
+
+        return Ok(());
+    }
+
+    #[test]
+    fn get_bits() -> Result<()> {
+        let data = [0xA5, 0x5A];
+        let mut reader = TestReader { data: &data, position: 0 };
+        let mut decoder = Decoder::new(&mut reader)?;
+
+        assert_eq!(decoder.get_bits(0)?, 0);
+        assert_eq!(decoder.get_bits(1)?, 1);
+        assert_eq!(decoder.get_bits(7)?, 0x25);
+        assert_eq!(decoder.get_bits(8)?, 0x5A);
+        assert!(decoder.get_bits(33).is_err());
+
+        return Ok(());
+    }
+
+    #[test]
+    fn normalize() -> Result<()> {
+        let data = [0xFF, 0xFF, 0xFF, 0xFF];
+        let mut reader = TestReader { data: &data, position: 0 };
+        let mut decoder = Decoder::new(&mut reader)?;
+
+        decoder.range = 0x00FFFFFF;
+        decoder.normalize()?;
+        assert!(decoder.range > 0x00FFFFFF);
 
         return Ok(());
     }
