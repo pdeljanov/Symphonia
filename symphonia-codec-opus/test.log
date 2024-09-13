@@ -1,0 +1,309 @@
+   Compiling symphonia-codec-opus v0.0.1 (/eugene/dev/symphonia/symphonia-codec-opus)
+warning: unnecessary parentheses around assigned value
+  --> symphonia-codec-opus/src/range.rs:72:25
+   |
+72 |             self.rng *= (32768 - p as u32);
+   |                         ^                ^
+   |
+   = note: `#[warn(unused_parens)]` on by default
+help: remove these parentheses
+   |
+72 -             self.rng *= (32768 - p as u32);
+72 +             self.rng *= 32768 - p as u32;
+   |
+
+warning: unused import: `range`
+ --> symphonia-codec-opus/src/decoder.rs:4:19
+  |
+4 | use crate::{celt, range, silk};
+  |                   ^^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default
+
+warning: unused import: `Error`
+ --> symphonia-codec-opus/src/range_decoder.rs:1:30
+  |
+1 | use symphonia_core::errors::{Error, Result};
+  |                              ^^^^^
+
+warning: unused import: `std::fmt::Debug`
+ --> symphonia-codec-opus/src/range_decoder.rs:3:5
+  |
+3 | use std::fmt::Debug;
+  |     ^^^^^^^^^^^^^^^
+
+warning: unused imports: `AudioBufferRef`, `Signal`, and `formats::Packet`
+  --> symphonia-codec-opus/src/lib.rs:12:13
+   |
+12 |     audio::{AudioBufferRef, Signal},
+   |             ^^^^^^^^^^^^^^  ^^^^^^
+13 |     errors::Result,
+14 |     formats::Packet,
+   |     ^^^^^^^^^^^^^^^
+
+warning: variable does not need to be mutable
+  --> symphonia-codec-opus/src/range.rs:13:16
+   |
+13 |     pub fn new(mut reader: R) -> Result<Self> {
+   |                ----^^^^^^
+   |                |
+   |                help: remove this `mut`
+   |
+   = note: `#[warn(unused_mut)]` on by default
+
+warning: unused variable: `params`
+  --> symphonia-codec-opus/src/decoder.rs:47:16
+   |
+47 |     fn try_new(params: &CodecParameters, options: &DecoderOptions) -> symphonia_core::errors::Result<Self>
+   |                ^^^^^^ help: if this is intentional, prefix it with an underscore: `_params`
+   |
+   = note: `#[warn(unused_variables)]` on by default
+
+warning: unused variable: `options`
+  --> symphonia-codec-opus/src/decoder.rs:47:42
+   |
+47 |     fn try_new(params: &CodecParameters, options: &DecoderOptions) -> symphonia_core::errors::Result<Self>
+   |                                          ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_options`
+
+warning: unused variable: `packet`
+  --> symphonia-codec-opus/src/decoder.rs:69:26
+   |
+69 |     fn decode(&mut self, packet: &Packet) -> symphonia_core::errors::Result<AudioBufferRef> {
+   |                          ^^^^^^ help: if this is intentional, prefix it with an underscore: `_packet`
+
+warning: struct `Decoder` is never constructed
+ --> symphonia-codec-opus/src/range.rs:4:12
+  |
+4 | pub struct Decoder<R: ReadBytes> {
+  |            ^^^^^^^
+  |
+  = note: `#[warn(dead_code)]` on by default
+
+warning: associated items `new`, `normalize`, `decode`, `update`, and `decode_bit` are never used
+  --> symphonia-codec-opus/src/range.rs:13:12
+   |
+12 | impl<R: ReadBytes> Decoder<R> {
+   | ----------------------------- associated items in this implementation
+13 |     pub fn new(mut reader: R) -> Result<Self> {
+   |            ^^^
+...
+27 |     fn normalize(&mut self) -> Result<()> {
+   |        ^^^^^^^^^
+...
+46 |     pub fn decode(&mut self, ft: u32) -> Result<u32> {
+   |            ^^^^^^
+...
+57 |     pub fn update(&mut self, fl: u32, fh: u32, ft: u32) -> Result<()> {
+   |            ^^^^^^
+...
+66 |     pub fn decode_bit(&mut self, p: u16) -> Result<bool> {
+   |            ^^^^^^^^^^
+
+warning: constant `OPUS_FRAME_SIZES` is never used
+ --> symphonia-codec-opus/src/decoder.rs:7:7
+  |
+7 | const OPUS_FRAME_SIZES: [usize; 5] = [120, 240, 480, 960, 1920];
+  |       ^^^^^^^^^^^^^^^^
+
+warning: constant `MAX_FRAME_SIZE_MS` is never used
+ --> symphonia-codec-opus/src/decoder.rs:8:7
+  |
+8 | const MAX_FRAME_SIZE_MS: usize = 60;
+  |       ^^^^^^^^^^^^^^^^^
+
+warning: constant `MAX_PACKET_DURATION_MS` is never used
+ --> symphonia-codec-opus/src/decoder.rs:9:7
+  |
+9 | const MAX_PACKET_DURATION_MS: usize = 120;
+  |       ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: constant `SILK_INTERNAL_SAMPLE_RATE` is never used
+  --> symphonia-codec-opus/src/decoder.rs:10:7
+   |
+10 | const SILK_INTERNAL_SAMPLE_RATE: u32 = 16000;
+   |       ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: constant `CELT_INTERNAL_SAMPLE_RATE` is never used
+  --> symphonia-codec-opus/src/decoder.rs:11:7
+   |
+11 | const CELT_INTERNAL_SAMPLE_RATE: u32 = 48000;
+   |       ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: enum `Mode` is never used
+  --> symphonia-codec-opus/src/decoder.rs:15:6
+   |
+15 | enum Mode {
+   |      ^^^^
+
+warning: enum `Bandwidth` is never used
+  --> symphonia-codec-opus/src/decoder.rs:22:6
+   |
+22 | enum Bandwidth {
+   |      ^^^^^^^^^
+
+warning: struct `Frame` is never constructed
+  --> symphonia-codec-opus/src/decoder.rs:30:8
+   |
+30 | struct Frame {
+   |        ^^^^^
+
+warning: fields `params`, `buf`, `silk_decoder`, and `celt_decoder` are never read
+  --> symphonia-codec-opus/src/decoder.rs:38:5
+   |
+37 | pub struct OpusDecoder {
+   |            ----------- fields in this struct
+38 |     params: CodecParameters,
+   |     ^^^^^^
+39 |     buf: AudioBuffer<f32>,
+   |     ^^^
+40 |     silk_decoder: Option<silk::Decoder>,
+   |     ^^^^^^^^^^^^
+41 |     celt_decoder: Option<celt::Decoder>,
+   |     ^^^^^^^^^^^^
+
+warning: struct `Decoder` is never constructed
+ --> symphonia-codec-opus/src/range_decoder.rs:5:12
+  |
+5 | pub struct Decoder {
+  |            ^^^^^^^
+
+warning: associated items `new`, `initialize`, `normalize`, `decode_symbol_with_icdf`, `update`, and `decode_bit_logp` are never used
+  --> symphonia-codec-opus/src/range_decoder.rs:12:12
+   |
+11 | impl Decoder {
+   | ------------ associated items in this implementation
+12 |     pub fn new(reader: BitReaderRtl<'static>) -> Result<Self> {
+   |            ^^^
+...
+23 |     fn initialize(&mut self) -> Result<()> {
+   |        ^^^^^^^^^^
+...
+31 |     fn normalize(&mut self) -> Result<()> {
+   |        ^^^^^^^^^
+...
+40 |     pub fn decode_symbol_with_icdf(&mut self, icdf: &[u32]) -> Result<usize> {
+   |            ^^^^^^^^^^^^^^^^^^^^^^^
+...
+64 |     fn update(&mut self, low: u32, high: u32, total: u32) -> Result<()> {
+   |        ^^^^^^
+...
+74 |     pub fn decode_bit_logp(&mut self, logp: u32) -> Result<bool> {
+   |            ^^^^^^^^^^^^^^^
+
+warning: `symphonia-codec-opus` (lib) generated 22 warnings (run `cargo fix --lib -p symphonia-codec-opus` to apply 6 suggestions)
+warning: constant `OPUS_FRAME_SIZES` is never used
+ --> symphonia-codec-opus/src/decoder.rs:7:7
+  |
+7 | const OPUS_FRAME_SIZES: [usize; 5] = [120, 240, 480, 960, 1920];
+  |       ^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(dead_code)]` on by default
+
+warning: `symphonia-codec-opus` (lib test) generated 17 warnings (16 duplicates)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.92s
+     Running unittests src/lib.rs (/eugene/dev/symphonia/target/debug/deps/symphonia_codec_opus-ab6884a8bd083325)
+
+running 8 tests
+test range::tests::decoding_bit_handles_false_case ... FAILED
+test range::tests::decoding_bit_handles_true_case ... FAILED
+test range::tests::decoding_symbol_updates_state_correctly ... FAILED
+test range::tests::initialization_sets_correct_initial_state ... FAILED
+test range::tests::updating_range_adjusts_state_properly ... FAILED
+test range_decoder::tests::test_decode_bit_logp ... FAILED
+test range_decoder::tests::test_decode_multiple_symbols ... FAILED
+test range_decoder::tests::test_decode_symbol_with_icdf ... FAILED
+
+failures:
+
+---- range::tests::decoding_bit_handles_false_case stdout ----
+thread 'range::tests::decoding_bit_handles_false_case' panicked at symphonia-codec-opus/src/range.rs:134:9:
+Expected false, got true
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- range::tests::decoding_bit_handles_true_case stdout ----
+thread 'range::tests::decoding_bit_handles_true_case' panicked at symphonia-codec-opus/src/range.rs:92:9:
+assertion `left == right` failed: Unexpected value for val
+  left: 16711422
+ right: 2147483264
+
+---- range::tests::decoding_symbol_updates_state_correctly stdout ----
+thread 'range::tests::decoding_symbol_updates_state_correctly' panicked at symphonia-codec-opus/src/range.rs:108:9:
+assertion `left == right` failed: Decoded incorrect symbol
+  left: 0
+ right: 127
+
+---- range::tests::initialization_sets_correct_initial_state stdout ----
+thread 'range::tests::initialization_sets_correct_initial_state' panicked at symphonia-codec-opus/src/range.rs:92:9:
+assertion `left == right` failed: Unexpected value for val
+  left: 16711422
+ right: 2147483264
+
+---- range::tests::updating_range_adjusts_state_properly stdout ----
+thread 'range::tests::updating_range_adjusts_state_properly' panicked at symphonia-codec-opus/src/range.rs:59:18:
+attempt to multiply with overflow
+
+---- range_decoder::tests::test_decode_bit_logp stdout ----
+Initial state: range = 128, value = 2048605897
+After normalization: range = 32768, value = 457099539
+decode_bit_logp: logp = 1
+Before calculation: range = 32768, value = 457099539
+After calculation: range = 16384, value = 457083155, bit = true
+After normalization: range = 4194304, value = 1049170746
+decode_bit_logp: logp = 1
+Before calculation: range = 4194304, value = 1049170746
+After calculation: range = 2097152, value = 1047073594, bit = true
+thread 'range_decoder::tests::test_decode_bit_logp' panicked at symphonia-codec-opus/src/range_decoder.rs:144:9:
+First bit should be 0
+
+---- range_decoder::tests::test_decode_multiple_symbols stdout ----
+Initial state: range = 128, value = 2048605897
+After normalization: range = 32768, value = 457099539
+ICDF total: 256
+Before calculation: range = 32768, value = 457099539
+Calculated s: 1053364992
+Comparing s (1053364992) with t (256)
+Comparing s (1053364992) with t (26)
+Selected k: 2, low: 26, high: 256
+Update: low = 26, high = 256, total = 256
+Before update: range = 32768, value = 457099539
+After update: range = 29440, value = 457096211
+After normalization: range = 29440, value = 457096211
+After normalization: range = 29440, value = 457096211
+ICDF total: 256
+Before calculation: range = 29440, value = 457096211
+thread 'range_decoder::tests::test_decode_multiple_symbols' panicked at symphonia-codec-opus/src/range_decoder.rs:46:17:
+attempt to divide by zero
+
+---- range_decoder::tests::test_decode_symbol_with_icdf stdout ----
+Testing case: TestCase { name: "frame_type", input: [11, 228, 193, 54, 236, 197, 128], icdf: [256, 26, 256], expected: 1 }
+Initial state: range = 128, value = 2048605897
+After normalization: range = 32768, value = 457099539
+ICDF total: 256
+Before calculation: range = 32768, value = 457099539
+Calculated s: 1053364992
+Comparing s (1053364992) with t (256)
+Comparing s (1053364992) with t (26)
+Selected k: 2, low: 26, high: 256
+Update: low = 26, high = 256, total = 256
+Before update: range = 32768, value = 457099539
+After update: range = 29440, value = 457096211
+After normalization: range = 29440, value = 457096211
+thread 'range_decoder::tests::test_decode_symbol_with_icdf' panicked at symphonia-codec-opus/src/range_decoder.rs:131:13:
+assertion `left == right` failed: Failed to decode frame_type
+  left: 2
+ right: 1
+
+
+failures:
+    range::tests::decoding_bit_handles_false_case
+    range::tests::decoding_bit_handles_true_case
+    range::tests::decoding_symbol_updates_state_correctly
+    range::tests::initialization_sets_correct_initial_state
+    range::tests::updating_range_adjusts_state_properly
+    range_decoder::tests::test_decode_bit_logp
+    range_decoder::tests::test_decode_multiple_symbols
+    range_decoder::tests::test_decode_symbol_with_icdf
+
+test result: FAILED. 0 passed; 8 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--lib`
