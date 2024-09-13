@@ -1,10 +1,8 @@
-mod common;
 mod range;
 mod decoder;
 mod header;
 mod silk;
 mod celt;
-mod parameters;
 
 use symphonia_core::codecs::*;
 use symphonia_core::errors::Result;
@@ -29,5 +27,5 @@ static OPUS_CODEC_DESCRIPTOR: Lazy<CodecDescriptor> = Lazy::new(|| {
 
 /// Register the Opus decoder with Symphonia
 pub fn get_codecs() -> &'static [CodecDescriptor] {
-   return std::slice::from_ref(&*OPUS_CODEC_DESCRIPTOR)
+    return std::slice::from_ref(&*OPUS_CODEC_DESCRIPTOR);
 }
