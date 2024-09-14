@@ -3,6 +3,7 @@ mod decoder;
 mod header;
 mod silk;
 mod celt;
+mod range_new;
 
 use symphonia_core::codecs::*;
 use symphonia_core::errors::Result;
