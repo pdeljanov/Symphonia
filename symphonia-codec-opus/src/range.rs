@@ -1,5 +1,5 @@
-// SPDX-FileCopyrightText: 2023 The Pion community <https://pion.ly>
-// SPDX-License-Identifier: MIT
+use symphonia_core::io::{BitReaderLtr, FiniteBitStream, ReadBitsLtr};
+use symphonia_core::errors::{Error, Result};
 
 /// Decoder implements rfc6716#section-4.1
 /// Opus uses an entropy coder based on range coding [RANGE-CODING]
@@ -17,7 +17,7 @@
 /// as corruption in the raw bits will not desynchronize the decoding
 /// process, unlike corruption in the input to the range decoder. Raw
 /// bits are only used in the CELT layer.
-///
+///```text
 ///      0                   1                   2                   3
 ///      0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
 ///     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
@@ -37,7 +37,7 @@
 ///
 ///          Figure 12: Illustrative Example of Packing Range Coder
 ///                             and Raw Bits Data
-///
+///```
 /// Each symbol coded by the range coder is drawn from a finite alphabet
 /// and coded in a separate "context", which describes the size of the
 /// alphabet and the relative frequency of each symbol in that alphabet.
@@ -52,13 +52,13 @@
 /// those are not updated as symbols are decoded. Let f[i] be the
 /// frequency of symbol i. Then, the three-tuple corresponding to symbol
 /// k is given by the following:
-///
+///```text
 ///         k-1                                   n-1
 ///         __                                    __
 /// fl[k] = \  f[i],  fh[k] = fl[k] + f[k],  ft = \  f[i]
 ///         /_                                    /_
 ///         i=0                                   i=0
-///
+///```
 /// The range decoder extracts the symbols and integers encoded using the
 /// range encoder in Section 5.1. The range decoder maintains an
 /// internal state vector composed of the two-tuple (val, rng), where val
@@ -67,16 +67,14 @@
 /// the current range. Both val and rng are 32-bit unsigned integer
 /// values.
 
-pub struct Decoder {
-    data: Vec<u8>,
-    bits_read: usize,
-
-    range_size: u32,               // rng in RFC 6716
-    high_and_coded_difference: u32, // val in RFC 6716
+pub struct Decoder<'buf> {
+    reader: BitReaderLtr<'buf>,
+    range_size: u32,
+    high_and_coded_difference: u32,
 }
 
-impl Decoder {
-    /// Initializes the decoder state.
+impl<'buf> Decoder<'buf> {
+    /// Creates new decoder with initial state.
     ///
     /// Let b0 be an 8-bit unsigned integer containing first input byte (or
     /// containing zero if there are no bytes in this Opus frame). The
@@ -89,45 +87,51 @@ impl Decoder {
     /// establish the invariant that `rng > 2**23`.
     ///
     /// https://datatracker.ietf.org/doc/html/rfc6716#section-4.1.1
-    pub fn init(&mut self, data: Vec<u8>) {
-        self.data = data;
-        self.bits_read = 0;
+    pub fn new(data: &'buf [u8]) -> Result<Self> {
+        let mut decoder = Self {
+            reader: BitReaderLtr::new(data),
+            range_size: 128,
+            high_and_coded_difference: 127,
+        };
 
-        self.range_size = 128;
-        self.high_and_coded_difference = 127 - self.get_bits(7);
-        self.normalize();
+        decoder.high_and_coded_difference -= decoder.get_bits(7)?;
+
+        decoder.normalize()?;
+
+        return Ok(decoder);
     }
 
-    /// Decodes a single symbol with a table-based context of up to 8 bits.
+    /// Decodes a single symbol with a table-based context of up to 8 bits
+    /// using an inverse cumulative distribution function (ICDF) and
+    /// returns the decoded symbol index.
     ///
     /// https://datatracker.ietf.org/doc/html/rfc6716#section-4.1.3.3
-    pub fn decode_symbol_with_icdf(&mut self, cumulative_distribution_table: &[u32]) -> u32 {
-        let total = cumulative_distribution_table[0];
-        let cdt = &cumulative_distribution_table[1..];
+    pub fn decode_symbol_with_icdf(&mut self, cumulative_distribution_table: &[u32]) -> Result<u32> {
+        let total = cumulative_distribution_table.first().copied().ok_or_else(|| Error::DecodeError("cumulative_distribution_table is empty"))?;
+        let cdt = cumulative_distribution_table.get(1..).ok_or_else(|| Error::DecodeError("cumulative_distribution_table is empty"))?;
 
         let scale = self.range_size / total;
-        let mut symbol = self.high_and_coded_difference / scale + 1;
-        symbol = total - std::cmp::min(symbol, total);
 
-        let mut k = 0;
-        while cdt[k] <= symbol {
-            k += 1;
-        }
+        let symbol = self.high_and_coded_difference / scale;
+
+        let symbol = total - std::cmp::min(symbol, total);
+
+        let k = cdt.iter().position(|&x| x > symbol).unwrap_or(cdt.len());
 
         let high = cdt[k];
         let low = if k != 0 { cdt[k - 1] } else { 0 };
 
-        self.update(scale, low, high, total);
-        k as u32
+        self.update(scale, low, high, total)?;
+
+        Ok(k as u32)
     }
 
     /// Decodes a single binary symbol.
     /// The context is described by a single parameter, `logp`, which
-    /// is the absolute value of the base-2 logarithm of the probability of a
-    /// "1".
+    /// is the absolute value of the base-2 logarithm of the probability of a "1".
     ///
     /// https://datatracker.ietf.org/doc/html/rfc6716#section-4.1.3.2
-    pub fn decode_symbol_logp(&mut self, logp: u32) -> u32 {
+    pub fn decode_symbol_logp(&mut self, logp: u32) -> Result<u32> {
         let scale = self.range_size >> logp;
 
         let k = if self.high_and_coded_difference >= scale {
@@ -138,32 +142,9 @@ impl Decoder {
             self.range_size = scale;
             1
         };
-        self.normalize();
+        self.normalize()?;
 
-        k
-    }
-
-    fn get_bit(&mut self) -> u32 {
-        let index = self.bits_read / 8;
-        let offset = self.bits_read % 8;
-
-        self.bits_read += 1;
-
-        if index >= self.data.len() {
-            0
-        } else {
-            ((self.data[index] >> (7 - offset)) & 1) as u32
-        }
-    }
-
-    fn get_bits(&mut self, n: usize) -> u32 {
-        let mut bits = 0u32;
-
-        for _ in 0..n {
-            bits = (bits << 1) | self.get_bit();
-        }
-
-        bits
+        return Ok(k);
     }
 
     const MIN_RANGE_SIZE: u32 = 1 << 23;
@@ -171,15 +152,16 @@ impl Decoder {
     /// Normalizes the range to ensure `rng > 2**23`.
     ///
     /// https://datatracker.ietf.org/doc/html/rfc6716#section-4.1.2.1
-    fn normalize(&mut self) {
+    fn normalize(&mut self) -> Result<()> {
         while self.range_size <= Self::MIN_RANGE_SIZE {
             self.range_size <<= 8;
-            self.high_and_coded_difference =
-                ((self.high_and_coded_difference << 8) + (255 - self.get_bits(8))) & 0x7FFFFFFF;
+            self.high_and_coded_difference = ((self.high_and_coded_difference << 8) + (255 - self.get_bits(8)?)) & 0x7FFFFFFF;
         }
+
+        return Ok(());
     }
 
-    fn update(&mut self, scale: u32, low: u32, high: u32, total: u32) {
+    fn update(&mut self, scale: u32, low: u32, high: u32, total: u32) -> Result<()> {
         self.high_and_coded_difference -= scale * (total - high);
         if low != 0 {
             self.range_size = scale * (high - low);
@@ -187,21 +169,19 @@ impl Decoder {
             self.range_size -= scale * (total - high);
         }
 
-        self.normalize();
+        return self.normalize();
     }
 
-    /// Used when testing to set internal decoder values.
-    pub fn set_internal_values(
-        &mut self,
-        data: Vec<u8>,
-        bits_read: usize,
-        range_size: u32,
-        high_and_coded_difference: u32,
-    ) {
-        self.data = data;
-        self.bits_read = bits_read;
-        self.range_size = range_size;
-        self.high_and_coded_difference = high_and_coded_difference;
+    fn get_bits(&mut self, n: u32) -> Result<u32> {
+        if n > 32 {
+            return Err(Error::DecodeError("unsupported bit count"));
+        }
+
+        if n as u64 > self.reader.bits_left() {
+            return Ok(0);
+        }
+
+        return Ok(self.reader.read_bits_leq32(n)?);
     }
 }
 
@@ -209,23 +189,23 @@ impl Decoder {
 mod tests {
     use super::*;
 
-    static SILK_MODEL_FRAME_TYPE_INACTIVE: [u32; 3] = [256, 26, 256];
+    const SILK_MODEL_FRAME_TYPE_INACTIVE: [u32; 3] = [256, 26, 256];
 
-    static SILK_MODEL_GAIN_HIGHBITS: [[u32; 9]; 3] = [
+    const SILK_MODEL_GAIN_HIGH_BITS: [[u32; 9]; 3] = [
         [256, 32, 144, 212, 241, 253, 254, 255, 256],
         [256, 2, 19, 64, 124, 186, 233, 252, 256],
         [256, 1, 4, 30, 101, 195, 245, 254, 256],
     ];
 
-    static SILK_MODEL_GAIN_LOWBITS: [u32; 9] = [256, 32, 64, 96, 128, 160, 192, 224, 256];
+    const SILK_MODEL_GAIN_LOW_BITS: [u32; 9] = [256, 32, 64, 96, 128, 160, 192, 224, 256];
 
-    static SILK_MODEL_GAIN_DELTA: [u32; 42] = [
+    const SILK_MODEL_GAIN_DELTA: [u32; 42] = [
         256, 6, 11, 22, 53, 185, 206, 214, 218, 221, 223, 225, 227, 228,
         229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242,
         243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255, 256,
     ];
 
-    static SILK_MODEL_LSF_S1: [[[u32; 33]; 2]; 2] = [
+    const SILK_MODEL_LSF_S1: [[[u32; 33]; 2]; 2] = [
         [
             [
                 256, 44, 78, 108, 127, 148, 160, 171, 174, 177, 179, 195, 197, 199, 200, 205, 207,
@@ -248,7 +228,7 @@ mod tests {
         ],
     ];
 
-    static SILK_MODEL_LSF_S2: [[u32; 10]; 16] = [
+    const SILK_MODEL_LSF_S2: [[u32; 10]; 16] = [
         [256, 1, 2, 3, 18, 242, 253, 254, 255, 256],
         [256, 1, 2, 4, 38, 221, 253, 254, 255, 256],
         [256, 1, 2, 6, 48, 197, 252, 254, 255, 256],
@@ -267,133 +247,58 @@ mod tests {
         [256, 1, 8, 29, 79, 156, 237, 254, 255, 256],
     ];
 
-    static SILK_MODEL_LSF_INTERPOLATION_OFFSET: [u32; 6] = [256, 13, 35, 64, 75, 256];
+    const SILK_MODEL_LSF_INTERPOLATION_OFFSET: [u32; 6] = [256, 13, 35, 64, 75, 256];
 
-    static SILK_MODEL_LCG_SEED: [u32; 5] = [256, 64, 128, 192, 256];
+    const SILK_MODEL_LCG_SEED: [u32; 5] = [256, 64, 128, 192, 256];
 
-    static SILK_MODEL_EXC_RATE: [[u32; 10]; 2] = [
+    const SILK_MODEL_EXC_RATE: [[u32; 10]; 2] = [
         [256, 15, 66, 78, 124, 169, 182, 215, 242, 256],
         [256, 33, 63, 99, 116, 150, 199, 217, 238, 256],
     ];
 
-    static SILK_MODEL_PULSE_COUNT: [[u32; 19]; 11] = [
-        [
-            256, 131, 205, 230, 238, 241, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254,
-            255, 256,
-        ],
-        [
-            256, 58, 151, 211, 234, 241, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254,
-            255, 256,
-        ],
-        [
-            256, 43, 94, 140, 173, 197, 213, 224, 232, 238, 241, 244, 247, 249, 250, 251, 253,
-            254, 256,
-        ],
-        [
-            256, 17, 69, 140, 197, 228, 240, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254,
-            255, 256,
-        ],
-        [
-            256, 6, 27, 68, 121, 170, 205, 226, 237, 243, 246, 248, 250, 251, 252, 253, 254,
-            255, 256,
-        ],
-        [
-            256, 7, 21, 43, 71, 100, 128, 153, 173, 190, 203, 214, 223, 230, 235, 239, 243,
-            246, 256,
-        ],
-        [
-            256, 2, 7, 21, 50, 92, 138, 179, 210, 229, 240, 246, 249, 251, 252, 253, 254, 255,
-            256,
-        ],
-        [
-            256, 1, 3, 7, 17, 36, 65, 100, 137, 171, 199, 219, 233, 241, 246, 250, 252, 254,
-            256,
-        ],
-        [
-            256, 1, 3, 5, 10, 19, 33, 53, 77, 104, 132, 158, 181, 201, 216, 227, 235, 241,
-            256,
-        ],
-        [
-            256, 1, 2, 3, 9, 36, 94, 150, 189, 214, 228, 238, 244, 247, 250, 252, 253, 254,
-            256,
-        ],
-        [
-            256, 2, 3, 9, 36, 94, 150, 189, 214, 228, 238, 244, 247, 250, 252, 253, 254, 255,
-            256,
-        ],
+    const SILK_MODEL_PULSE_COUNT: [[u32; 19]; 11] = [
+        [256, 131, 205, 230, 238, 241, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255, 256],
+        [256, 58, 151, 211, 234, 241, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255, 256],
+        [256, 43, 94, 140, 173, 197, 213, 224, 232, 238, 241, 244, 247, 249, 250, 251, 253, 254, 256],
+        [256, 17, 69, 140, 197, 228, 240, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255, 256],
+        [256, 6, 27, 68, 121, 170, 205, 226, 237, 243, 246, 248, 250, 251, 252, 253, 254, 255, 256],
+        [256, 7, 21, 43, 71, 100, 128, 153, 173, 190, 203, 214, 223, 230, 235, 239, 243, 246, 256],
+        [256, 2, 7, 21, 50, 92, 138, 179, 210, 229, 240, 246, 249, 251, 252, 253, 254, 255, 256],
+        [256, 1, 3, 7, 17, 36, 65, 100, 137, 171, 199, 219, 233, 241, 246, 250, 252, 254, 256],
+        [256, 1, 3, 5, 10, 19, 33, 53, 77, 104, 132, 158, 181, 201, 216, 227, 235, 241, 256],
+        [256, 1, 2, 3, 9, 36, 94, 150, 189, 214, 228, 238, 244, 247, 250, 252, 253, 254, 256],
+        [256, 2, 3, 9, 36, 94, 150, 189, 214, 228, 238, 244, 247, 250, 252, 253, 254, 255, 256],
     ];
 
-    #[test]
-    fn test_decoder() {
-        let mut d = Decoder {
-            data: vec![],
-            bits_read: 0,
-            range_size: 0,
-            high_and_coded_difference: 0,
-        };
-        d.init(vec![0x0b, 0xe4, 0xc1, 0x36, 0xec, 0xc5, 0x80]);
+    macro_rules! check {
+        ($decoder: ident, $method:ident, $table: expr, $expected: expr) => {
+            match $decoder.$method($table) {
+               Ok(result) => assert_eq!(result, $expected, "Mismatch for table {:?}", stringify!($table)),
+                Err(err) => panic!("Decoding table {:?}: {:?}", stringify!($table), err),
+            }
+        }
+    }
 
-        assert_eq!(d.decode_symbol_logp(0x1), 0);
-        assert_eq!(d.decode_symbol_logp(0x1), 0);
-        assert_eq!(
-            d.decode_symbol_with_icdf(&SILK_MODEL_FRAME_TYPE_INACTIVE),
-            1
-        );
-        assert_eq!(
-            d.decode_symbol_with_icdf(&SILK_MODEL_GAIN_HIGHBITS[0]),
-            0
-        );
-        assert_eq!(
-            d.decode_symbol_with_icdf(&SILK_MODEL_GAIN_LOWBITS),
-            6
-        );
-        assert_eq!(
-            d.decode_symbol_with_icdf(&SILK_MODEL_GAIN_DELTA),
-            0
-        );
-        assert_eq!(
-            d.decode_symbol_with_icdf(&SILK_MODEL_GAIN_DELTA),
-            3
-        );
-        assert_eq!(
-            d.decode_symbol_with_icdf(&SILK_MODEL_GAIN_DELTA),
-            4
-        );
-        assert_eq!(
-            d.decode_symbol_with_icdf(&SILK_MODEL_LSF_S1[1][0]),
-            9
-        );
-        assert_eq!(
-            d.decode_symbol_with_icdf(&SILK_MODEL_LSF_S2[10]),
-            5
-        );
-        assert_eq!(
-            d.decode_symbol_with_icdf(&SILK_MODEL_LSF_S2[9]),
-            4
-        );
-        for _ in 0..11 {
-            assert_eq!(
-                d.decode_symbol_with_icdf(&SILK_MODEL_LSF_S2[8]),
-                4
-            );
-        }
-        assert_eq!(
-            d.decode_symbol_with_icdf(&SILK_MODEL_LSF_INTERPOLATION_OFFSET),
-            4
-        );
-        assert_eq!( //FAIL: assertion `left == right` failed left: 1 right: 2 
-                    d.decode_symbol_with_icdf(&SILK_MODEL_LCG_SEED),
-                    2
-        );
-        assert_eq!(
-            d.decode_symbol_with_icdf(&SILK_MODEL_EXC_RATE[0]),
-            0
-        );
-        for _ in 0..22 {
-            assert_eq!(
-                d.decode_symbol_with_icdf(&SILK_MODEL_PULSE_COUNT[0]),
-                0
-            );
-        }
+    #[test]
+    fn decoder() {
+        env_logger::init();
+        let mut dec = Decoder::new(&[0x0b, 0xe4, 0xc1, 0x36, 0xec, 0xc5, 0x80]).unwrap();
+
+        check!(dec, decode_symbol_logp, 0x1, 0);
+        check!(dec,decode_symbol_logp, 0x1, 0);
+        check!(dec, decode_symbol_with_icdf, &SILK_MODEL_FRAME_TYPE_INACTIVE, 1);
+        check!(dec, decode_symbol_with_icdf, &SILK_MODEL_GAIN_HIGH_BITS[0], 0);
+        check!(dec, decode_symbol_with_icdf, &SILK_MODEL_GAIN_LOW_BITS, 6);
+        check!(dec, decode_symbol_with_icdf, &SILK_MODEL_GAIN_DELTA, 0);
+        check!(dec, decode_symbol_with_icdf, &SILK_MODEL_GAIN_DELTA, 3);
+        check!(dec, decode_symbol_with_icdf, &SILK_MODEL_GAIN_DELTA, 4);
+        check!(dec, decode_symbol_with_icdf, &SILK_MODEL_LSF_S1[1][0], 9);
+        check!(dec, decode_symbol_with_icdf, &SILK_MODEL_LSF_S2[10], 5);
+        check!(dec, decode_symbol_with_icdf, &SILK_MODEL_LSF_S2[9], 4);
+        for _ in 0..14 { check!(dec, decode_symbol_with_icdf, &SILK_MODEL_LSF_S2[8], 4); }
+        check!(dec, decode_symbol_with_icdf, &SILK_MODEL_LSF_INTERPOLATION_OFFSET, 4);
+        check!(dec, decode_symbol_with_icdf, &SILK_MODEL_LCG_SEED, 2);
+        check!(dec, decode_symbol_with_icdf, &SILK_MODEL_EXC_RATE[0], 0);
+        for _ in 0..20 { check!(dec, decode_symbol_with_icdf, &SILK_MODEL_PULSE_COUNT[0], 0); }
     }
 }
