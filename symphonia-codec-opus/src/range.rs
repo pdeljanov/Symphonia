@@ -69,8 +69,8 @@ use symphonia_core::errors::{Error, Result};
 
 pub struct Decoder<'buf> {
     reader: BitReaderLtr<'buf>,
-    range_size: u32,
-    high_and_coded_difference: u32,
+    rng: u32,
+    val: u32,
 }
 
 impl<'buf> Decoder<'buf> {
@@ -88,13 +88,13 @@ impl<'buf> Decoder<'buf> {
     ///
     /// https://datatracker.ietf.org/doc/html/rfc6716#section-4.1.1
     pub fn new(data: &'buf [u8]) -> Result<Self> {
-        let mut decoder = Self {
-            reader: BitReaderLtr::new(data),
-            range_size: 128,
-            high_and_coded_difference: 127,
-        };
+        let mut reader = BitReaderLtr::new(data);
+        
+        let rng = 128;
+        
+        let val = 127 - reader.read_bits_leq32(7)?;
 
-        decoder.high_and_coded_difference -= decoder.get_bits(7)?;
+        let mut decoder = Self { reader, rng, val };
 
         decoder.normalize()?;
 
@@ -106,24 +106,25 @@ impl<'buf> Decoder<'buf> {
     /// returns the decoded symbol index.
     ///
     /// https://datatracker.ietf.org/doc/html/rfc6716#section-4.1.3.3
-    pub fn decode_symbol_with_icdf(&mut self, cumulative_distribution_table: &[u32]) -> Result<u32> {
-        let total = cumulative_distribution_table.first().copied().ok_or_else(|| Error::DecodeError("cumulative_distribution_table is empty"))?;
-        let cdt = cumulative_distribution_table.get(1..).ok_or_else(|| Error::DecodeError("cumulative_distribution_table is empty"))?;
+    pub fn decode_symbol_with_icdf(&mut self, table: &[u32]) -> Result<u32> {
+        let total = table.first().copied().ok_or_else(|| Error::DecodeError("cumulative_distribution_table is empty"))?;
+        
+        let table = table.get(1..).ok_or_else(|| Error::DecodeError("cumulative_distribution_table has less than 2 elements"))?;
 
-        let scale = self.range_size / total;
+        let scale = self.rng / total;
 
-        let symbol = self.high_and_coded_difference / scale;
+        let symbol = self.val / scale;
 
         let symbol = total - std::cmp::min(symbol, total);
 
-        let k = cdt.iter().position(|&x| x > symbol).unwrap_or(cdt.len());
+        let k = table.iter().position(|&x| x > symbol).unwrap_or(table.len());
 
-        let high = cdt[k];
-        let low = if k != 0 { cdt[k - 1] } else { 0 };
+        let high = table[k];
+        let low = if k != 0 { table[k - 1] } else { 0 };
 
         self.update(scale, low, high, total)?;
 
-        Ok(k as u32)
+        return Ok(k as u32)
     }
 
     /// Decodes a single binary symbol.
@@ -132,14 +133,14 @@ impl<'buf> Decoder<'buf> {
     ///
     /// https://datatracker.ietf.org/doc/html/rfc6716#section-4.1.3.2
     pub fn decode_symbol_logp(&mut self, logp: u32) -> Result<u32> {
-        let scale = self.range_size >> logp;
+        let scale = self.rng >> logp;
 
-        let k = if self.high_and_coded_difference >= scale {
-            self.high_and_coded_difference -= scale;
-            self.range_size -= scale;
+        let k = if self.val >= scale {
+            self.val -= scale;
+            self.rng -= scale;
             0
         } else {
-            self.range_size = scale;
+            self.rng = scale;
             1
         };
         self.normalize()?;
@@ -150,23 +151,26 @@ impl<'buf> Decoder<'buf> {
     const MIN_RANGE_SIZE: u32 = 1 << 23;
 
     /// Normalizes the range to ensure `rng > 2**23`.
+    /// ```text
+    /// val = ((val<<8) + (255-sym)) & 0x7FFFFFFF 
+    /// ```
     ///
     /// https://datatracker.ietf.org/doc/html/rfc6716#section-4.1.2.1
     fn normalize(&mut self) -> Result<()> {
-        while self.range_size <= Self::MIN_RANGE_SIZE {
-            self.range_size <<= 8;
-            self.high_and_coded_difference = ((self.high_and_coded_difference << 8) + (255 - self.get_bits(8)?)) & 0x7FFFFFFF;
+        while self.rng <= Self::MIN_RANGE_SIZE {
+            self.rng <<= 8;
+            self.val = ((self.val << 8) + (255 - self.get_bits(8)?)) & 0x7FFFFFFF;
         }
 
         return Ok(());
     }
 
     fn update(&mut self, scale: u32, low: u32, high: u32, total: u32) -> Result<()> {
-        self.high_and_coded_difference -= scale * (total - high);
+        self.val -= scale * (total - high);
         if low != 0 {
-            self.range_size = scale * (high - low);
+            self.rng = scale * (high - low);
         } else {
-            self.range_size -= scale * (total - high);
+            self.rng -= scale * (total - high);
         }
 
         return self.normalize();
