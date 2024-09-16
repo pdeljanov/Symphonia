@@ -279,11 +279,14 @@ mod tests {
         }
     }
 
+    fn setup_decoder() -> Decoder<'static> {
+        env_logger::init();
+        Decoder::new(&[0x0b, 0xe4, 0xc1, 0x36, 0xec, 0xc5, 0x80]).unwrap()
+    }
+
     #[test]
     fn decoder() {
-        env_logger::init();
-        let mut dec = Decoder::new(&[0x0b, 0xe4, 0xc1, 0x36, 0xec, 0xc5, 0x80]).unwrap();
-
+        let mut dec = setup_decoder();
         check!(dec, decode_symbol_logp, 0x1, 0);
         check!(dec,decode_symbol_logp, 0x1, 0);
         check!(dec, decode_symbol_with_icdf, &SILK_MODEL_FRAME_TYPE_INACTIVE, 1);
