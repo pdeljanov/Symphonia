@@ -44,7 +44,7 @@ pub struct OpusDecoder {
 
 
 impl Decoder for OpusDecoder {
-    fn try_new(params: &CodecParameters, options: &DecoderOptions) -> symphonia_core::errors::Result<Self>
+    fn try_new(_params: &CodecParameters, _options: &DecoderOptions) -> symphonia_core::errors::Result<Self>
     where
         Self: Sized,
     {
@@ -66,7 +66,7 @@ impl Decoder for OpusDecoder {
         todo!()
     }
 
-    fn decode(&mut self, packet: &Packet) -> symphonia_core::errors::Result<AudioBufferRef> {
+    fn decode(&mut self, _packet: &Packet) -> symphonia_core::errors::Result<AudioBufferRef> {
         todo!()
     }
 
