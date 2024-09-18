@@ -1,10 +1,12 @@
 use symphonia_core::io::{BitReaderLtr, FiniteBitStream, ReadBitsLtr};
 use symphonia_core::errors::{Error, Result};
 
-/// Decoder implements rfc6716#section-4.1
-/// Opus uses an entropy coder based on range coding [RANGE-CODING]
-/// [MARTIN79], which is itself a rediscovery of the FIFO arithmetic code
-/// introduced by [CODING-THESIS]. It is very similar to arithmetic
+/// Opus uses an entropy coder based on range coding 
+/// [RANGE-CODING](https://datatracker.ietf.org/doc/html/rfc6716#ref-RANGE-CODING)
+/// [MARTIN79](https://datatracker.ietf.org/doc/html/rfc6716#ref-MARTIN79), 
+/// which is itself a rediscovery of the FIFO arithmetic code
+/// introduced by [CODING-THESIS](https://datatracker.ietf.org/doc/html/rfc6716#ref-CODING-THESIS). 
+/// It is very similar to arithmetic
 /// encoding, except that encoding is done with digits in any base
 /// instead of with bits, so it is faster when using larger bases (i.e.,
 /// a byte). All of the calculations in the range coder must use bit-
@@ -66,6 +68,8 @@ use symphonia_core::errors::{Error, Result};
 /// and the actual coded value, minus one, and rng represents the size of
 /// the current range. Both val and rng are 32-bit unsigned integer
 /// values.
+/// 
+/// https://datatracker.ietf.org/doc/html/rfc6716#section-4.1
 
 pub struct Decoder<'buf> {
     reader: BitReaderLtr<'buf>,
