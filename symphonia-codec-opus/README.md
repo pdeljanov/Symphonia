@@ -42,3 +42,26 @@ Symphonia is provided under the MPL v2.0 license. Please refer to the LICENSE fi
 ## Contributing
 
 Symphonia is a free and open-source project that welcomes contributions! To get started, please read our [Contribution Guidelines](https://github.com/pdeljanov/Symphonia/tree/master/CONTRIBUTING.md).
+
+## Flowchart
+```mermaid 
+graph TD;
+    A[Ogg Stream] --> B[ID Header Parsing]
+    B --> C[Set Channel Count, Pre-skip, etc.]
+    A --> D[Comment Header Parsing]
+    A --> E[Audio Data Packet Parsing]
+    E --> F[TOC Parsing]
+    F --> G[Range Decoder]
+    G --> H{TOC Mode}
+    H --> I[SILK Decoder]
+    H --> J[CELT Decoder]
+    H --> K[Hybrid Decoder]
+    I --> L[Low-bitrate Speech Output]
+    J --> M[High-quality Music Output]
+    K --> N[Hybrid Speech/Music Output]
+    L --> O[Sample Reassembly]
+    M --> O
+    N --> O
+    O --> P[Apply Pre-skip, Gain Adjustments]
+    P --> Q[Audio Output]
+```
