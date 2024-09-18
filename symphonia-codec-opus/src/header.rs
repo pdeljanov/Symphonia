@@ -1,3 +1,12 @@
+//! All the heavy lifting is done symphonia-format-ogg which
+//! already handles parsing the ID Header and Comment Header during OGG demuxing,
+//! however it omits Input Sample Rate (it is just metadata), 
+//! and Output Gain that should be applied during decoding.
+//! The extra_data field in CodecParameters after demuxing ogg
+//! is storing the raw Opus Identification Header packet that could be used by this module,
+//! or it could be integrated into the demuxing process and be used during meatadata parsing.
+//! TODO: Extract Output Gain from CodecParameters adapt  this module as documentation.
+//!
 //! Opus header parsing implementation.
 //!
 //! This module provides functionality to parse Opus headers as specified in RFC 7845.
@@ -188,9 +197,9 @@ impl ID {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChannelMappingFamily {
     /// Family 0: Mono or stereo (1 or 2 channels).
-    Zero,
+    Rtp,
     /// Family 1: Vorbis mapping (1-8 channels with Vorbis channel order).
-    One,
+    Vorbis,
     /// Reserved values for future use (2-254).
     Reserved(u8),
     /// Family 255: Reserved for undefined mappings (unidentified channels).
@@ -202,8 +211,8 @@ impl TryFrom<u8> for ChannelMappingFamily {
 
     fn try_from(value: u8) -> Result<Self, Self::Error> {
         match value {
-            0 => Ok(Self::Zero),
-            1 => Ok(Self::One),
+            0 => Ok(Self::Rtp),
+            1 => Ok(Self::Vorbis),
             2..=254 => Ok(Self::Reserved(value)),
             255 => Ok(Self::Undefined),
             _ => Err(Error::InvalidChannelMappingFamily(value)) // unreachable!(),
@@ -251,15 +260,15 @@ impl ChannelMappingTable {
         match channel_mapping_family {
             // MUST be omitted when the channel mapping family is 0, but is REQUIRED otherwise,
             // however Reserved and Undefined have no meaningful channel mapping.
-            ChannelMappingFamily::Zero
+            ChannelMappingFamily::Rtp
             | ChannelMappingFamily::Reserved(_)
             | ChannelMappingFamily::Undefined => Ok(None),
 
-            ChannelMappingFamily::One => Self::parse_family_one(reader, channel_count).map(Some),
+            ChannelMappingFamily::Vorbis => Self::parse_rtp(reader, channel_count).map(Some),
         }
     }
 
-    fn parse_family_one<R: ReadBytes>(reader: &mut R, channel_count: u8) -> Result<Self, Error> {
+    fn parse_rtp<R: ReadBytes>(reader: &mut R, channel_count: u8) -> Result<Self, Error> {
         let stream_count = reader.read_u8()?;
         if stream_count == 0 {
             return Err(Error::InvalidStreamCount(stream_count));
@@ -425,7 +434,7 @@ mod tests {
             assert_eq!(parsed_header.pre_skip, 312);
             assert_eq!(parsed_header.input_sample_rate, 48000);
             assert_eq!(parsed_header.output_gain, 0);
-            assert_eq!(parsed_header.mapping_family, ChannelMappingFamily::Zero);
+            assert_eq!(parsed_header.mapping_family, ChannelMappingFamily::Rtp);
             assert!(parsed_header.channel_mapping_table.is_none());
         }
 
@@ -467,7 +476,7 @@ mod tests {
 
             let reader = BufReader::new(&header);
             let parsed_header = ID::parse(reader).unwrap();
-            assert_eq!(parsed_header.mapping_family, ChannelMappingFamily::One);
+            assert_eq!(parsed_header.mapping_family, ChannelMappingFamily::Vorbis);
 
             let table = ChannelMappingTable { stream_count, coupled_count, channel_mapping };
             assert_eq!(parsed_header.channel_mapping_table, Some(table));
@@ -508,7 +517,7 @@ mod tests {
 
             if let Ok(parsed) = result {
                 assert_eq!(parsed.channel_count, 3);
-                assert_eq!(parsed.mapping_family, ChannelMappingFamily::One);
+                assert_eq!(parsed.mapping_family, ChannelMappingFamily::Vorbis);
                 assert_eq!(parsed.channel_mapping_table, Some(ChannelMappingTable {
                     stream_count: 2,
                     coupled_count: 1,
