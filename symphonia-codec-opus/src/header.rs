@@ -2,10 +2,10 @@
 //! already handles parsing the ID Header and Comment Header during OGG demuxing,
 //! however it omits Input Sample Rate (it is just metadata), 
 //! and Output Gain that should be applied during decoding.
+//! and The channel mapping table for complex setups (e.g., 5.1 surround)
 //! The extra_data field in CodecParameters after demuxing ogg
 //! is storing the raw Opus Identification Header packet that could be used by this module,
 //! or it could be integrated into the demuxing process and be used during meatadata parsing.
-//! TODO: Extract Output Gain from CodecParameters adapt  this module as documentation.
 //!
 //! Opus header parsing implementation.
 //!
@@ -215,7 +215,7 @@ impl TryFrom<u8> for ChannelMappingFamily {
             1 => Ok(Self::Vorbis),
             2..=254 => Ok(Self::Reserved(value)),
             255 => Ok(Self::Undefined),
-            _ => Err(Error::InvalidChannelMappingFamily(value)) // unreachable!(),
+            _ => unreachable!(),
         }
     }
 }

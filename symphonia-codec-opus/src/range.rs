@@ -71,13 +71,19 @@ use symphonia_core::errors::{Error, Result};
 /// 
 /// https://datatracker.ietf.org/doc/html/rfc6716#section-4.1
 
-pub struct Decoder<'buf> {
-    reader: BitReaderLtr<'buf>,
+const INITIAL_RANGE: u32 = 128;
+const INITIAL_VALUE_OFFSET: u32 = 127;
+const MIN_RANGE_SIZE: u32 = 1 << 23;
+const MAX_RANGE_VALUE: u32 = 0x7FFFFFFF;
+const BYTE_BITS: u32 = 8;
+
+pub struct Decoder<R> {
+    reader: R,
     rng: u32,
     val: u32,
 }
 
-impl<'buf> Decoder<'buf> {
+impl<R: ReadBitsLtr + FiniteBitStream> Decoder<R> {
     /// Creates new decoder with initial state.
     ///
     /// Let b0 be an 8-bit unsigned integer containing first input byte (or
@@ -91,12 +97,9 @@ impl<'buf> Decoder<'buf> {
     /// establish the invariant that `rng > 2**23`.
     ///
     /// https://datatracker.ietf.org/doc/html/rfc6716#section-4.1.1
-    pub fn new(data: &'buf [u8]) -> Result<Self> {
-        let mut reader = BitReaderLtr::new(data);
-        
-        let rng = 128;
-        
-        let val = 127 - reader.read_bits_leq32(7)?;
+    pub fn new(mut reader: R) -> Result<Self> {
+        let rng = INITIAL_RANGE;
+        let val = INITIAL_VALUE_OFFSET - reader.read_bits_leq32(BYTE_BITS - 1)?;
 
         let mut decoder = Self { reader, rng, val };
 
@@ -111,24 +114,34 @@ impl<'buf> Decoder<'buf> {
     ///
     /// https://datatracker.ietf.org/doc/html/rfc6716#section-4.1.3.3
     pub fn decode_symbol_with_icdf(&mut self, table: &[u32]) -> Result<u32> {
-        let total = table.first().copied().ok_or_else(|| Error::DecodeError("cumulative_distribution_table is empty"))?;
-        
-        let table = table.get(1..).ok_or_else(|| Error::DecodeError("cumulative_distribution_table has less than 2 elements"))?;
+        let (total, table) = table.split_first()
+            .ok_or_else(|| Error::DecodeError("cumulative distribution table is empty"))?;
 
         let scale = self.rng / total;
-
         let symbol = self.val / scale;
+        let sym = total.saturating_sub(std::cmp::min(symbol, *total));
 
-        let symbol = total - std::cmp::min(symbol, total);
+        let i = table.iter()
+            .position(|&x| x > sym)
+            .unwrap_or(table.len());
 
-        let k = table.iter().position(|&x| x > symbol).unwrap_or(table.len());
+        let low = i.checked_sub(1)
+            .and_then(|i| table.get(i))
+            .copied()
+            .unwrap_or(0);
 
-        let high = table[k];
-        let low = if k != 0 { table[k - 1] } else { 0 };
+        let high = table.get(i).unwrap_or(total);
 
-        self.update(scale, low, high, total)?;
+        self.val -= scale * (total - high);
 
-        return Ok(k as u32)
+        match low {
+            0 => self.rng -= scale * (total - high),
+            _ => self.rng = scale * (high - low),
+        }
+
+        self.normalize()?;
+
+        return Ok(i as u32);
     }
 
     /// Decodes a single binary symbol.
@@ -139,7 +152,7 @@ impl<'buf> Decoder<'buf> {
     pub fn decode_symbol_logp(&mut self, logp: u32) -> Result<u32> {
         let scale = self.rng >> logp;
 
-        let k = if self.val >= scale {
+        let i = if self.val >= scale {
             self.val -= scale;
             self.rng -= scale;
             0
@@ -149,43 +162,33 @@ impl<'buf> Decoder<'buf> {
         };
         self.normalize()?;
 
-        return Ok(k);
+        return Ok(i);
     }
 
-    const MIN_RANGE_SIZE: u32 = 1 << 23;
 
     /// Normalizes the range to ensure `rng > 2**23`.
     /// ```text
-    /// val = ((val<<8) + (255-sym)) & 0x7FFFFFFF 
+    /// val = ((val<<8) + (255-sym)) & 0x7FFFFFFF
     /// ```
     ///
     /// https://datatracker.ietf.org/doc/html/rfc6716#section-4.1.2.1
     fn normalize(&mut self) -> Result<()> {
-        while self.rng <= Self::MIN_RANGE_SIZE {
-            self.rng <<= 8;
-            self.val = ((self.val << 8) + (255 - self.get_bits(8)?)) & 0x7FFFFFFF;
+        while self.rng <= MIN_RANGE_SIZE {
+            self.rng <<= BYTE_BITS;
+            let sym = self.get_bits(BYTE_BITS)?;
+            self.val = ((self.val << BYTE_BITS) + (u8::MAX as u32 - sym)) & MAX_RANGE_VALUE;
         }
 
         return Ok(());
     }
 
-    fn update(&mut self, scale: u32, low: u32, high: u32, total: u32) -> Result<()> {
-        self.val -= scale * (total - high);
-        if low != 0 {
-            self.rng = scale * (high - low);
-        } else {
-            self.rng -= scale * (total - high);
-        }
-
-        return self.normalize();
-    }
-
     fn get_bits(&mut self, n: u32) -> Result<u32> {
-        if n > 32 {
+        const MAX_BITS: u32 = 32;
+        if n > MAX_BITS {
             return Err(Error::DecodeError("unsupported bit count"));
         }
 
-        if n as u64 > self.reader.bits_left() {
+        if u64::from(n) > self.reader.bits_left() {
             return Ok(0);
         }
 
@@ -287,9 +290,9 @@ mod tests {
         }
     }
 
-    fn setup_decoder() -> Decoder<'static> {
+    fn setup_decoder() -> Decoder<impl ReadBitsLtr + FiniteBitStream> {
         env_logger::init();
-        Decoder::new(&[0x0b, 0xe4, 0xc1, 0x36, 0xec, 0xc5, 0x80]).unwrap()
+        Decoder::new(BitReaderLtr::new(&[0x0b, 0xe4, 0xc1, 0x36, 0xec, 0xc5, 0x80])).unwrap()
     }
 
     #[test]
