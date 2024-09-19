@@ -19,7 +19,7 @@ once_cell = "1.19.0"
 lazy_static = "1.5.0"
 env_logger = "0.11.5"
 thiserror = "1"
-byteorder = "1.5.0"
+itertools = "0.13"
 
 [lints.clippy]
 needless_return = "allow"
