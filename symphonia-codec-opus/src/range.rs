@@ -1,7 +1,7 @@
 use symphonia_core::io::{BitReaderLtr, FiniteBitStream, ReadBitsLtr};
 use symphonia_core::errors::{Error, Result};
 
-/// Opus uses an entropy coder based on range coding 
+/// Opus uses an entropy coder based on range coding
 /// [RANGE-CODING](https://datatracker.ietf.org/doc/html/rfc6716#ref-RANGE-CODING)
 /// [MARTIN79](https://datatracker.ietf.org/doc/html/rfc6716#ref-MARTIN79), 
 /// which is itself a rediscovery of the FIFO arithmetic code
