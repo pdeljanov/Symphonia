@@ -558,7 +558,7 @@ mod tests {
         }
 
         #[test]
-        fn check_valid_comment_header_parsing() {
+        fn valid_comment_header_parsing() {
             let comment_header = create_valid_comment_header();
             let reader = BufReader::new(&comment_header);
             let parsed_header = Comment::parse(reader).unwrap();
@@ -570,7 +570,7 @@ mod tests {
         }
 
         #[test]
-        fn check_invalid_magic_signature() {
+        fn invalid_magic_signature() {
             let mut invalid_header = create_valid_comment_header();
             invalid_header[7] = b'S'; // Change last byte of signature
 
@@ -580,7 +580,7 @@ mod tests {
         }
 
         #[test]
-        fn check_empty_vendor_string() {
+        fn empty_vendor_string() {
             let mut header = create_valid_comment_header();
             header[8..12].copy_from_slice(&[0, 0, 0, 0]); // Set vendor string length to 0
             header.drain(12..23); // Remove vendor string
@@ -591,7 +591,7 @@ mod tests {
         }
 
         #[test]
-        fn check_no_user_comments() {
+        fn no_user_comments() {
             let mut header = create_valid_comment_header();
             header[23..27].copy_from_slice(&[0, 0, 0, 0]); // Set user comment list length to 0
             header.truncate(27); // Remove user comments
@@ -602,7 +602,7 @@ mod tests {
         }
 
         #[test]
-        fn check_invalid_utf8() {
+        fn invalid_utf8() {
             let mut header = create_valid_comment_header();
             header[12] = 0xFF; // Replace first byte of vendor string with invalid UTF-8
 
@@ -612,7 +612,7 @@ mod tests {
         }
 
         #[test]
-        fn check_unexpected_eof() {
+        fn unexpected_eof() {
             let header = create_valid_comment_header();
             let truncated_header = &header[..header.len() - 1]; // Remove last byte
 
