@@ -4,6 +4,7 @@ mod header;
 mod silk;
 mod celt;
 mod packet;
+mod toc;
 
 use symphonia_core::codecs::*;
 use symphonia_core::errors::Result;
