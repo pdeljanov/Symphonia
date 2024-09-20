@@ -97,9 +97,8 @@ pub struct Toc {
 }
 
 impl Toc {
-    pub fn new(data: &[u8]) -> Result<Self> {
-        let toc_byte = *data.first().ok_or(Error::DecodeError("Empty Opus packet"))?;
-        let buf = [toc_byte];
+    pub fn new(byte: u8) -> Result<Self> {
+        let buf = [byte];
         let mut reader = BitReaderLtr::new(&buf);
 
         // 'config' field (bits 0-4).
@@ -132,7 +131,7 @@ impl Toc {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct Parameters {
     pub audio_mode: AudioMode,
     pub bandwidth: Bandwidth,
@@ -153,7 +152,7 @@ impl Parameters {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AudioMode {
     Silk,
     Hybrid,
@@ -173,7 +172,7 @@ impl TryFrom<u8> for AudioMode {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Bandwidth {
     NarrowBand,
     MediumBand,
@@ -242,7 +241,7 @@ impl TryFrom<u8> for FrameSize {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FrameCount {
     One,
     TwoEqual,
@@ -264,3 +263,181 @@ impl TryFrom<u8> for FrameCount {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SILK_NB_MONO_10MS: u8 = 0b00000000;
+    const SILK_MB_STEREO_20MS: u8 = 0b00101101;
+
+    const HYBRID_SWB_MONO_10MS: u8 = 0b01100000;
+    const CELT_FB_STEREO_2_5MS: u8 = 0b11100101;
+
+    #[test]
+    fn parse_silk_nb_mono_10ms() {
+        let toc = Toc::new(SILK_NB_MONO_10MS).unwrap();
+        assert!(!toc.is_stereo());
+        assert!(matches!(toc.frame_count(), FrameCount::One));
+
+        let params = toc.params().unwrap();
+        assert!(matches!(params.audio_mode, AudioMode::Silk));
+        assert!(matches!(params.bandwidth, Bandwidth::NarrowBand));
+        assert!(matches!(params.frame_size, FrameSize::Ms10));
+    }
+
+    #[test]
+    fn silk_mb_stereo_20ms() {
+        let toc = Toc::new(SILK_MB_STEREO_20MS).unwrap();
+        assert!(toc.is_stereo());
+        assert!(matches!(toc.frame_count(), FrameCount::TwoEqual));
+
+        let params = toc.params().unwrap();
+        assert_eq!(params.audio_mode, AudioMode::Silk);
+        assert_eq!(params.bandwidth, Bandwidth::MediumBand);
+        assert_eq!(params.frame_size, FrameSize::Ms20);
+    }
+
+    #[test]
+    fn hybrid_swb_mono_10ms() {
+        let toc = Toc::new(HYBRID_SWB_MONO_10MS).unwrap();
+        assert!(!toc.is_stereo());
+        assert!(matches!(toc.frame_count(), FrameCount::One));
+
+        let params = toc.params().unwrap();
+        assert_eq!(params.audio_mode, AudioMode::Hybrid);
+        assert_eq!(params.bandwidth, Bandwidth::SuperWideBand);
+        assert_eq!(params.frame_size, FrameSize::Ms10);
+    }
+
+    #[test]
+    fn celt_fb_stereo_2_5ms() {
+        let toc = Toc::new(CELT_FB_STEREO_2_5MS).unwrap();
+        assert!(toc.is_stereo());
+        assert!(matches!(toc.frame_count(), FrameCount::TwoEqual));
+
+        let params = toc.params().unwrap();
+        assert_eq!(params.audio_mode, AudioMode::Celt);
+        assert_eq!(params.bandwidth, Bandwidth::FullBand);
+        assert_eq!(params.frame_size, FrameSize::Ms2_5);
+    }
+
+    #[test]
+    fn frame_count_codes() {
+        let frame_counts = [
+            (0b00000000, FrameCount::One),
+            (0b00000001, FrameCount::TwoEqual),
+            (0b00000010, FrameCount::TwoUnequal),
+            (0b00000011, FrameCount::Arbitrary),
+        ];
+
+        for (byte, expected) in frame_counts.iter() {
+            let toc = Toc::new(*byte).unwrap();
+            assert_eq!(toc.frame_count(), *expected);
+        }
+    }
+
+    #[test]
+    fn audio_mode_boundaries() {
+        let audio_modes = [
+            (0, AudioMode::Silk),
+            (11, AudioMode::Silk),
+            (12, AudioMode::Hybrid),
+            (15, AudioMode::Hybrid),
+            (16, AudioMode::Celt),
+            (31, AudioMode::Celt),
+        ];
+
+        for (config, expected) in audio_modes.iter() {
+            let params = Parameters::new(*config).unwrap();
+            assert_eq!(params.audio_mode, *expected);
+        };
+    }
+
+    #[test]
+    fn bandwidth_transitions() {
+        let bandwidths = [
+            (0, Bandwidth::NarrowBand),
+            (4, Bandwidth::MediumBand),
+            (8, Bandwidth::WideBand),
+            (12, Bandwidth::SuperWideBand),
+            (14, Bandwidth::FullBand),
+            (16, Bandwidth::NarrowBand),
+            (20, Bandwidth::WideBand),
+            (24, Bandwidth::SuperWideBand),
+            (28, Bandwidth::FullBand),
+        ];
+
+        for (config, expected) in bandwidths.iter() {
+            let params = Parameters::new(*config).unwrap();
+            assert_eq!(params.bandwidth, *expected);
+        }
+    }
+
+    #[test]
+    fn frame_size_variations() {
+        let frame_sizes = [
+            (0, FrameSize::Ms10),
+            (1, FrameSize::Ms20),
+            (2, FrameSize::Ms40),
+            (3, FrameSize::Ms60),
+            (12, FrameSize::Ms10),
+            (13, FrameSize::Ms20),
+            (16, FrameSize::Ms2_5),
+            (17, FrameSize::Ms5),
+            (18, FrameSize::Ms10),
+            (19, FrameSize::Ms20),
+        ];
+
+        for (config, expected) in frame_sizes.iter() {
+            let params = Parameters::new(*config).unwrap();
+            assert_eq!(params.frame_size, *expected);
+        }
+    }
+
+    #[test]
+    fn invalid_toc_byte() {
+        Toc::new(42).unwrap();
+    }
+
+    #[test]
+    fn invalid_config_value() {
+        assert!(matches!(Parameters::new(32), Err(Error::DecodeError(_))));
+    }
+
+    #[test]
+    fn frame_size_to_duration() {
+        assert_eq!(Duration::from(FrameSize::Ms2_5), Duration::from_nanos(2_500_000));
+        assert_eq!(Duration::from(FrameSize::Ms5), Duration::from_nanos(5_000_000));
+        assert_eq!(Duration::from(FrameSize::Ms10), Duration::from_nanos(10_000_000));
+        assert_eq!(Duration::from(FrameSize::Ms20), Duration::from_nanos(20_000_000));
+        assert_eq!(Duration::from(FrameSize::Ms40), Duration::from_nanos(40_000_000));
+        assert_eq!(Duration::from(FrameSize::Ms60), Duration::from_nanos(60_000_000));
+    }
+
+    #[test]
+    fn toc_byte_parsing() {
+        let toc = Toc::new(0b11010110).unwrap();
+        assert_eq!(toc.config, 0b11010);
+        assert!(toc.is_stereo());
+        assert!(matches!(toc.frame_count(), FrameCount::TwoUnequal));
+    }
+
+    #[test]
+    fn all_frame_sizes() {
+        let configs = [
+            (0, FrameSize::Ms10), (1, FrameSize::Ms20), (2, FrameSize::Ms40), (3, FrameSize::Ms60),
+            (4, FrameSize::Ms10), (5, FrameSize::Ms20), (6, FrameSize::Ms40), (7, FrameSize::Ms60),
+            (8, FrameSize::Ms10), (9, FrameSize::Ms20), (10, FrameSize::Ms40), (11, FrameSize::Ms60),
+            (12, FrameSize::Ms10), (13, FrameSize::Ms20), (14, FrameSize::Ms10), (15, FrameSize::Ms20),
+            (16, FrameSize::Ms2_5), (17, FrameSize::Ms5), (18, FrameSize::Ms10), (19, FrameSize::Ms20),
+            (20, FrameSize::Ms2_5), (21, FrameSize::Ms5), (22, FrameSize::Ms10), (23, FrameSize::Ms20),
+            (24, FrameSize::Ms2_5), (25, FrameSize::Ms5), (26, FrameSize::Ms10), (27, FrameSize::Ms20),
+            (28, FrameSize::Ms2_5), (29, FrameSize::Ms5), (30, FrameSize::Ms10), (31, FrameSize::Ms20),
+        ];
+
+        for (config, expected) in configs.iter() {
+            let params = Parameters::new(*config).unwrap();
+            assert_eq!(params.frame_size, *expected, "Config {} should be {:?}", config, expected);
+        }
+    }
+}

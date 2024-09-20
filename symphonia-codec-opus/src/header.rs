@@ -371,7 +371,8 @@ impl Comment {
         if magic != Self::MAGIC_SIGNATURE {
             return Err(Error::InvalidMagicSignature);
         }
-        Ok(())
+
+        return Ok(());
     }
 
     fn parse_vendor_string<R: ReadBytes>(reader: &mut R) -> Result<String, Error> {
@@ -391,7 +392,7 @@ impl Comment {
             user_comments.push(comment);
         }
 
-        Ok(user_comments)
+        return Ok(user_comments);
     }
 
     fn parse_single_comment<R: ReadBytes>(reader: &mut R) -> Result<String, Error> {
