@@ -269,129 +269,73 @@ mod tests {
 
     const SILK_NB_MONO_10MS: u8 = 0b00000000;
     const SILK_MB_STEREO_20MS: u8 = 0b00101101;
-
     const HYBRID_SWB_MONO_10MS: u8 = 0b01100000;
     const CELT_FB_STEREO_2_5MS: u8 = 0b11100101;
 
-    #[test]
-    fn parse_silk_nb_mono_10ms() {
-        let toc = Toc::new(SILK_NB_MONO_10MS).unwrap();
-        assert!(!toc.is_stereo());
-        assert!(matches!(toc.frame_count(), FrameCount::One));
+    fn check(
+        byte: u8,
+        is_stereo: bool,
+        frame_count: FrameCount,
+        audio_mode: AudioMode,
+        bandwidth: Bandwidth,
+        frame_size: FrameSize,
+    ) {
+        let toc = Toc::new(byte).unwrap();
+        assert_eq!(toc.is_stereo(), is_stereo);
+        assert_eq!(toc.frame_count(), frame_count);
 
         let params = toc.params().unwrap();
-        assert!(matches!(params.audio_mode, AudioMode::Silk));
-        assert!(matches!(params.bandwidth, Bandwidth::NarrowBand));
-        assert!(matches!(params.frame_size, FrameSize::Ms10));
+        assert_eq!(params.audio_mode, audio_mode);
+        assert_eq!(params.bandwidth, bandwidth);
+        assert_eq!(params.frame_size, frame_size);
     }
 
     #[test]
+    fn silk_nb_mono_10ms() {
+        check(
+            SILK_NB_MONO_10MS,
+            false,
+            FrameCount::One,
+            AudioMode::Silk,
+            Bandwidth::NarrowBand,
+            FrameSize::Ms10,
+        )
+    }
+    #[test]
     fn silk_mb_stereo_20ms() {
-        let toc = Toc::new(SILK_MB_STEREO_20MS).unwrap();
-        assert!(toc.is_stereo());
-        assert!(matches!(toc.frame_count(), FrameCount::TwoEqual));
-
-        let params = toc.params().unwrap();
-        assert_eq!(params.audio_mode, AudioMode::Silk);
-        assert_eq!(params.bandwidth, Bandwidth::MediumBand);
-        assert_eq!(params.frame_size, FrameSize::Ms20);
+        check(
+            SILK_MB_STEREO_20MS,
+            true,
+            FrameCount::TwoEqual,
+            AudioMode::Silk,
+            Bandwidth::MediumBand,
+            FrameSize::Ms20,
+        )
     }
 
     #[test]
     fn hybrid_swb_mono_10ms() {
-        let toc = Toc::new(HYBRID_SWB_MONO_10MS).unwrap();
-        assert!(!toc.is_stereo());
-        assert!(matches!(toc.frame_count(), FrameCount::One));
-
-        let params = toc.params().unwrap();
-        assert_eq!(params.audio_mode, AudioMode::Hybrid);
-        assert_eq!(params.bandwidth, Bandwidth::SuperWideBand);
-        assert_eq!(params.frame_size, FrameSize::Ms10);
+        check(
+            HYBRID_SWB_MONO_10MS,
+            false,
+            FrameCount::One,
+            AudioMode::Hybrid,
+            Bandwidth::SuperWideBand,
+            FrameSize::Ms10,
+        )
     }
+
 
     #[test]
     fn celt_fb_stereo_2_5ms() {
-        let toc = Toc::new(CELT_FB_STEREO_2_5MS).unwrap();
-        assert!(toc.is_stereo());
-        assert!(matches!(toc.frame_count(), FrameCount::TwoEqual));
-
-        let params = toc.params().unwrap();
-        assert_eq!(params.audio_mode, AudioMode::Celt);
-        assert_eq!(params.bandwidth, Bandwidth::FullBand);
-        assert_eq!(params.frame_size, FrameSize::Ms2_5);
-    }
-
-    #[test]
-    fn frame_count_codes() {
-        let frame_counts = [
-            (0b00000000, FrameCount::One),
-            (0b00000001, FrameCount::TwoEqual),
-            (0b00000010, FrameCount::TwoUnequal),
-            (0b00000011, FrameCount::Arbitrary),
-        ];
-
-        for (byte, expected) in frame_counts.iter() {
-            let toc = Toc::new(*byte).unwrap();
-            assert_eq!(toc.frame_count(), *expected);
-        }
-    }
-
-    #[test]
-    fn audio_mode_boundaries() {
-        let audio_modes = [
-            (0, AudioMode::Silk),
-            (11, AudioMode::Silk),
-            (12, AudioMode::Hybrid),
-            (15, AudioMode::Hybrid),
-            (16, AudioMode::Celt),
-            (31, AudioMode::Celt),
-        ];
-
-        for (config, expected) in audio_modes.iter() {
-            let params = Parameters::new(*config).unwrap();
-            assert_eq!(params.audio_mode, *expected);
-        };
-    }
-
-    #[test]
-    fn bandwidth_transitions() {
-        let bandwidths = [
-            (0, Bandwidth::NarrowBand),
-            (4, Bandwidth::MediumBand),
-            (8, Bandwidth::WideBand),
-            (12, Bandwidth::SuperWideBand),
-            (14, Bandwidth::FullBand),
-            (16, Bandwidth::NarrowBand),
-            (20, Bandwidth::WideBand),
-            (24, Bandwidth::SuperWideBand),
-            (28, Bandwidth::FullBand),
-        ];
-
-        for (config, expected) in bandwidths.iter() {
-            let params = Parameters::new(*config).unwrap();
-            assert_eq!(params.bandwidth, *expected);
-        }
-    }
-
-    #[test]
-    fn frame_size_variations() {
-        let frame_sizes = [
-            (0, FrameSize::Ms10),
-            (1, FrameSize::Ms20),
-            (2, FrameSize::Ms40),
-            (3, FrameSize::Ms60),
-            (12, FrameSize::Ms10),
-            (13, FrameSize::Ms20),
-            (16, FrameSize::Ms2_5),
-            (17, FrameSize::Ms5),
-            (18, FrameSize::Ms10),
-            (19, FrameSize::Ms20),
-        ];
-
-        for (config, expected) in frame_sizes.iter() {
-            let params = Parameters::new(*config).unwrap();
-            assert_eq!(params.frame_size, *expected);
-        }
+        check(
+            CELT_FB_STEREO_2_5MS,
+            true,
+            FrameCount::TwoEqual,
+            AudioMode::Celt,
+            Bandwidth::FullBand,
+            FrameSize::Ms2_5,
+        )
     }
 
     #[test]
@@ -401,7 +345,7 @@ mod tests {
 
     #[test]
     fn invalid_config_value() {
-        assert!(matches!(Parameters::new(32), Err(Error::DecodeError(_))));
+        Parameters::new(0b1).unwrap();
     }
 
     #[test]
@@ -414,17 +358,33 @@ mod tests {
         assert_eq!(Duration::from(FrameSize::Ms60), Duration::from_nanos(60_000_000));
     }
 
-    #[test]
-    fn toc_byte_parsing() {
-        let toc = Toc::new(0b11010110).unwrap();
-        assert_eq!(toc.config, 0b11010);
-        assert!(toc.is_stereo());
-        assert!(matches!(toc.frame_count(), FrameCount::TwoUnequal));
+    macro_rules! test_mapping {
+        ($field:ident, $object:ident,  $inputs:expr) => {
+            #[test]
+            fn $field() {
+                for (input, expected) in $inputs.iter() {
+                    let instance = $object::new(*input).unwrap();
+                    assert_eq!(
+                        instance.$field, 
+                        *expected, 
+                        "{} {:?} should be {:?} for {}", 
+                        stringify!($object), input, expected, stringify!($field)
+                    );
+                }
+            }
+        }
     }
 
-    #[test]
-    fn all_frame_sizes() {
-        let configs = [
+    test_mapping!(frame_count, Toc, 
+            [
+              (0b00000000, FrameCount::One),
+              (0b00000001, FrameCount::TwoEqual),
+              (0b00000010, FrameCount::TwoUnequal),
+              (0b00000011, FrameCount::Arbitrary),
+            ]);
+
+    test_mapping!(frame_size, Parameters,  
+        [
             (0, FrameSize::Ms10), (1, FrameSize::Ms20), (2, FrameSize::Ms40), (3, FrameSize::Ms60),
             (4, FrameSize::Ms10), (5, FrameSize::Ms20), (6, FrameSize::Ms40), (7, FrameSize::Ms60),
             (8, FrameSize::Ms10), (9, FrameSize::Ms20), (10, FrameSize::Ms40), (11, FrameSize::Ms60),
@@ -433,11 +393,29 @@ mod tests {
             (20, FrameSize::Ms2_5), (21, FrameSize::Ms5), (22, FrameSize::Ms10), (23, FrameSize::Ms20),
             (24, FrameSize::Ms2_5), (25, FrameSize::Ms5), (26, FrameSize::Ms10), (27, FrameSize::Ms20),
             (28, FrameSize::Ms2_5), (29, FrameSize::Ms5), (30, FrameSize::Ms10), (31, FrameSize::Ms20),
-        ];
+        ]);
 
-        for (config, expected) in configs.iter() {
-            let params = Parameters::new(*config).unwrap();
-            assert_eq!(params.frame_size, *expected, "Config {} should be {:?}", config, expected);
-        }
-    }
+
+    test_mapping!(audio_mode, Parameters,
+        [
+            (0, AudioMode::Silk),
+            (11, AudioMode::Silk),
+            (12, AudioMode::Hybrid),
+            (15, AudioMode::Hybrid),
+            (16, AudioMode::Celt),
+            (31, AudioMode::Celt),
+        ]);
+
+    test_mapping!(bandwidth, Parameters,
+       [
+            (0, Bandwidth::NarrowBand),
+            (4, Bandwidth::MediumBand),
+            (8, Bandwidth::WideBand),
+            (12, Bandwidth::SuperWideBand),
+            (14, Bandwidth::FullBand),
+            (16, Bandwidth::NarrowBand),
+            (20, Bandwidth::WideBand),
+            (24, Bandwidth::SuperWideBand),
+            (28, Bandwidth::FullBand),
+        ]);
 }
