@@ -37,6 +37,7 @@ enum Mode {
     Hybrid,
 }
 
+
 #[derive(Debug, Clone, Copy)]
 enum Bandwidth {
     NarrowBand,
@@ -50,12 +51,11 @@ struct Frame {
     mode: Mode,
     bandwidth: Bandwidth,
     frame_size: usize,
-    data: Vec<u8>,
+    data: Box<u8>,
 }
 
 pub struct OpusDecoder {
     params: CodecParameters,
-    // TODO: extend if needed according to https://datatracker.ietf.org/doc/html/rfc6716
     buf: AudioBuffer<f32>,
     silk_decoder: Option<silk::Decoder>,
     celt_decoder: Option<celt::Decoder>,
