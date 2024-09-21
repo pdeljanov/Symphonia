@@ -1,12 +1,71 @@
 use crate::toc::{FrameCount, Toc};
 use std::num::NonZeroU8;
 use std::time::Duration;
-use symphonia_core::errors::{Error, Result};
-use symphonia_core::io::{BitReaderLtr, ReadBitsLtr};
+use symphonia_core::errors::Result;
+use symphonia_core::io::{BitReaderRtl, BitReaderLtr, ReadBitsLtr};
+use thiserror::Error;
 
-const MAX_FRAME_LENGTH: usize = 255 * 4 + 255;
+#[derive(Error, Debug)]
+pub enum Error {
+    #[error("Packet is too short")]
+    PacketTooShort,
+
+    #[error("Empty frame data")]
+    EmptyFrameData,
+
+    #[error("Invalid packet length")]
+    InvalidCode1PacketLength,
+
+    #[error("First frame length exceeds available data")]
+    FirstFrameLengthExceedsData,
+
+    #[error("Number of frames can't be zero")]
+    ZeroFrameCount,
+
+    #[error("Insufficient data after accounting for padding")]
+    InsufficientDataAfterPadding,
+
+    #[error("Frame length exceeds data size")]
+    FrameLengthExceedsDataSize,
+
+    #[error("Invalid frame length for CBR")]
+    InvalidCbrFrameLength,
+
+    #[error("Padding length overflow")]
+    PaddingLengthOverflow,
+
+    #[error("Insufficient data for frame length")]
+    InsufficientDataForFrameLength,
+
+    #[error("Insufficient data for extended frame length")]
+    InsufficientDataForExtendedFrameLength,
+
+    #[error("Total duration overflow")]
+    TotalDurationOverflow,
+
+    #[error("Total audio duration exceeds 120 ms")]
+    ExcessiveTotalDuration,
+
+    #[error("Frame length exceeds maximum allowed size")]
+    FrameLengthExceedsMaximum,
+
+    #[error("Symphonia error: {0}")]
+    CoreError(#[from] symphonia_core::errors::Error),
+
+    #[error("TOC error: {0}")]
+    Toc(#[from] crate::toc::Error),
+}
+
+
+impl From<Error> for symphonia_core::errors::Error {
+    fn from(err: Error) -> Self {
+        return symphonia_core::errors::Error::DecodeError(err.to_string().leak());
+    }
+}
+
+const MAX_FRAME_LENGTH: usize = 255 * 4 + 255; // 1275 
 const MAX_TOTAL_DURATION_MS: u128 = 120;
-const MAX_PADDING_VALUE: usize = 254;
+const MAX_PADDING_VALUE: u8 = 254;
 
 pub struct FramePacket<'a> {
     toc: Toc,
@@ -15,81 +74,24 @@ pub struct FramePacket<'a> {
 }
 
 impl<'a> FramePacket<'a> {
-    /// ## 3.2 Frame Packing
-    ///
-    /// This section describes how frames are packed according to each
-    /// possible value of "c" in the TOC byte.
-    ///
     pub fn new(buf: &'a [u8]) -> Result<Self> {
-        let (toc_byte, frames) = buf.split_first()
-            .ok_or_else(|| Error::DecodeError("Packet is too short"))?;
+        let (toc_byte, data) = buf.split_first().ok_or(Error::PacketTooShort)?;
 
-        if frames.is_empty() {
-            return Err(Error::DecodeError("Empty frame"));
+        if data.is_empty() {
+            return Err(Error::EmptyFrameData.into());
         }
 
-        let toc = Toc::new(*toc_byte)?;
+        let toc = Toc::new(*toc_byte).map_err(Error::Toc)?;
 
-        match toc.frame_count() {
-            FrameCount::One => Self::one(frames, toc),
-            FrameCount::TwoEqual => Self::two_equal(frames, toc),
-            FrameCount::TwoDifferent => Self::two_different(frames, toc),
-            FrameCount::Arbitrary => Self::arbitrary(frames, toc),
-        }
+        return match toc.frame_count() {
+            FrameCount::One => Self::one(data, toc),
+            FrameCount::TwoEqual => Self::two_equal(data, toc),
+            FrameCount::TwoDifferent => Self::two_different(data, toc),
+            FrameCount::Arbitrary => Self::arbitrary(data, toc),
+        };
     }
-    /// ### 3.2.1 Frame Length Coding
-    ///
-    /// When a packet contains multiple VBR frames (i.e., code 2 or 3), the
-    /// compressed length of one or more of these frames is indicated with a
-    /// one- or two-byte sequence, with the meaning of the first byte as
-    /// follows:
-    ///
-    /// - `0`: No frame (Discontinuous Transmission (DTX) or lost packet)
-    ///
-    /// - `1...251`: Length of the frame in bytes
-    ///
-    /// - `252...255`: A second byte is needed. The total length is
-    ///   `(second_byte * 4) + first_byte`
-    ///
-    /// The special length `0` indicates that no frame is available, either
-    /// because it was dropped during transmission by some intermediary or
-    /// because the encoder chose not to transmit it. Any Opus frame in any
-    /// mode MAY have a length of `0`.
-    ///
-    /// The maximum representable length is `255 * 4 + 255 = 1275` bytes. For
-    /// 20 ms frames, this represents a bitrate of 510 kbit/s, which is
-    /// approximately the highest useful rate for lossily compressed fullband
-    /// stereo music. Beyond this point, lossless codecs are more
-    /// appropriate. It is also roughly the maximum useful rate of the MDCT
-    /// layer as, shortly thereafter, quality no longer improves with
-    /// additional bits due to limitations on the codebook sizes.
-    ///
-    /// No length is transmitted for the last frame in a VBR packet, or for
-    /// any of the frames in a CBR packet, as it can be inferred from the
-    /// total size of the packet and the size of all other data in the
-    /// packet. However, the length of any individual frame MUST NOT exceed
-    /// 1275 bytes to allow for repacketization by gateways, conference
-    /// bridges, or other software.
-    pub fn frame_length_coding() {}
 
-    /// ### 3.2.2 Code 0: One Frame in the Packet
-    ///
-    /// For code `0` packets, the TOC byte is immediately followed by `N-1` bytes
-    /// of compressed data for a single frame (where `N` is the size of the
-    /// packet), as illustrated in Figure 2.
-    ///
-    /// ```text
-    ///    0                   1                   2                   3
-    ///    0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
-    ///   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-    ///   | config  |s|0|0|                                               |
-    ///   +-+-+-+-+-+-+-+-+                                               |
-    ///   |                    Compressed frame 1 (N-1 bytes)...          :
-    ///   :                                                               |
-    ///   |                                                               |
-    ///   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-    /// ```
-    pub fn one(data: &'a [u8], toc: Toc) -> Result<Self> {
+    fn one(data: &'a [u8], toc: Toc) -> Result<Self> {
         Self::check_frame_size(data.len())?;
 
         return Ok(Self {
@@ -99,151 +101,81 @@ impl<'a> FramePacket<'a> {
         });
     }
 
-    /// ### 3.2.3 Code 1: Two Frames in the Packet, Each with Equal Compressed Size
-    ///
-    /// For code `1` packets, the TOC byte is immediately followed by the
-    /// `(N-1)/2` bytes of compressed data for the first frame, followed by
-    /// `(N-1)/2` bytes of compressed data for the second frame, as illustrated
-    /// in Figure 3. The number of payload bytes available for compressed
-    /// data, `N-1`, MUST be even for all code `1` packets.
-    ///
-    /// ```text
-    ///    0                   1                   2                   3
-    ///    0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
-    ///   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-    ///   | config  |s|0|1|                                               |
-    ///   +-+-+-+-+-+-+-+-+                                               :
-    ///   |             Compressed frame 1 ((N-1)/2 bytes)...             |
-    ///   :                               +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-    ///   |                               |                               |
-    ///   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+                               :
-    ///   |             Compressed frame 2 ((N-1)/2 bytes)...             |
-    ///   :                                               +-+-+-+-+-+-+-+-+
-    ///   |                                               |
-    ///   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-    /// ```
-    pub fn two_equal(data: &'a [u8], toc: Toc) -> Result<Self> {
+    fn two_equal(data: &'a [u8], toc: Toc) -> Result<Self> {
         if data.len() % 2 != 0 {
-            return Err(Error::DecodeError("Invalid packet length"));
+            return Err(Error::InvalidCode1PacketLength.into());
         }
 
         let frame_size = data.len() / 2;
         Self::check_frame_size(frame_size)?;
 
-        let frames = data
-            .chunks(frame_size)
-            .collect::<Vec<&'a [u8]>>();
-
-        return Ok(
-            Self {
-                toc,
-                frames,
-                padding: None,
-            }
-        );
-    }
-
-
-    /// ### 3.2.4 Code 2: Two Frames in the Packet, with Different Compressed Sizes
-    ///
-    /// For code `2` packets, the TOC byte is followed by a one- or two-byte
-    /// sequence indicating the length of the first frame (marked `N1` in
-    /// Figure 4), followed by `N1` bytes of compressed data for the first
-    /// frame. The remaining `N-N1-2` or `N-N1-3` bytes are the compressed data
-    /// for the second frame. This is illustrated in Figure 4. A code `2`
-    /// packet MUST contain enough bytes to represent a valid length.
-    ///
-    /// ```text
-    ///    0                   1                   2                   3
-    ///    0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
-    ///   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-    ///   | config  |s|1|0| N1 (1-2 bytes):                               |
-    ///   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+                               :
-    ///   |               Compressed frame 1 (N1 bytes)...                |
-    ///   :                               +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-    ///   |                               |                               |
-    ///   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+                               |
-    ///   |                     Compressed frame 2...                     :
-    ///   :                                                               |
-    ///   |                                                               |
-    ///   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-    /// ```
-    pub fn two_different(data: &'a [u8], toc: Toc) -> Result<Self> {
-        let (n1, offset) = Self::get_frame_length(data)?;
-
-        if data.len() < offset + n1 {
-            return Err(Error::DecodeError("First frame length exceeds available data"));
-        }
-
-        let frame_1_end = offset + n1;
-        let frame_1 = &data[offset..frame_1_end];
-        let frame_2 = &data[frame_1_end..];
-
-        let frames = vec![frame_1, frame_2];
-
-        Self::check_frame_size(frame_1.len())?;
-        Self::check_frame_size(frame_2.len())?;
-
         return Ok(Self {
             toc,
-            frames,
+            frames: data.chunks(frame_size).collect(),
             padding: None,
         });
     }
 
-    /// ### 3.2.5 Code 3: A Signaled Number of Frames in the Packet
-    ///
-    /// Code `3` packets signal the number of frames, as well as additional
-    /// padding, called "Opus padding" to indicate that this padding is added
-    /// at the Opus layer rather than at the transport layer. Code `3` packets
-    /// MUST have at least 2 bytes. The TOC byte is followed by a
-    /// byte encoding the number of frames in the packet in bits 2 to 7
-    /// (marked `M` in Figure 5), with bit 1 indicating whether or not Opus
-    /// padding is inserted (marked `p` in Figure 5), and bit 0 indicating
-    /// VBR (marked `v` in Figure 5). `M` MUST NOT be zero, and the audio
-    /// duration contained within a packet MUST NOT exceed 120 ms. This
-    /// limits the maximum frame count for any frame size to 48 (for 2.5 ms
-    /// frames), with lower limits for longer frame sizes. Figure 5
-    /// illustrates the layout of the frame count byte.
-    ///
-    /// ```text
-    ///                         0
-    ///                         0 1 2 3 4 5 6 7
-    ///                        +-+-+-+-+-+-+-+-+
-    ///                        |v|p|     M     |
-    ///                        +-+-+-+-+-+-+-+-+
-    /// ```
-    pub fn arbitrary(data: &'a [u8], toc: Toc) -> Result<Self> {
-        let frame_count_byte = data.first()
-            .ok_or_else(|| Error::DecodeError("Failed to read frame count byte"))?;
+    fn two_different(data: &'a [u8], toc: Toc) -> Result<Self> {
+        let (n1, offset) = Self::get_frame_length(data)?;
+
+        if data.len() < offset + n1 {
+            return Err(Error::FirstFrameLengthExceedsData.into());
+        }
+
+        let frame1_end = offset + n1;
+        let frame1 = &data[offset..frame1_end];
+        let frame2 = &data[frame1_end..];
+
+        Self::check_frame_size(frame1.len())?;
+        Self::check_frame_size(frame2.len())?;
+
+        return Ok(Self {
+            toc,
+            frames: vec![frame1, frame2],
+            padding: None,
+        });
+    }
+
+    fn arbitrary(data: &'a [u8], toc: Toc) -> Result<Self> {
+        let (frame_count_byte, rest) = data.split_first().ok_or(Error::PacketTooShort)?;
 
         let buf = [*frame_count_byte];
         let mut reader = BitReaderLtr::new(&buf);
 
-        let vbr = reader.read_bit()? != 0;
-        let padding_flag = reader.read_bit()? != 0;
+        let vbr = reader.read_bool()?;
+        let padding_flag = reader.read_bool()?;
         let m = reader.read_bits_leq32(6)? as u8;
 
-        Self::check_total_duration(m, &toc)?;
+        let frame_count = NonZeroU8::new(m).ok_or(Error::ZeroFrameCount)?;
 
-        let mut offset = 1;
+        Self::check_total_duration(frame_count.get(), &toc)?;
+
+        let mut offset = 0;
 
         let (padding_length, padding_offset) = if padding_flag {
-            Self::get_padding_length(&data[offset..])?
+            Self::get_padding_length(&rest[offset..])?
         } else {
-            (0usize, 0usize)
+            (0, 0)
         };
 
         offset += padding_offset;
 
-        let data_end = data.len().checked_sub(padding_length)
-            .ok_or_else(|| Error::DecodeError("Insufficient data after accounting for padding"))?;
+        if rest.len() < offset + padding_length {
+            return Err(Error::InsufficientDataAfterPadding.into());
+        }
 
-        let frames_data = &data[offset..data_end];
+        let padding_data = if padding_length > 0 {
+            let padding_start = offset;
+            let padding_end = offset + padding_length;
+            let padding_data = &rest[padding_start..padding_end];
+            offset = padding_end; 
+            Some(padding_data)
+        } else {
+            None
+        };
 
-
-        let frame_count = NonZeroU8::new(m)
-            .ok_or_else(|| Error::DecodeError("Number of frames can't be zero"))?;
+        let frames_data = &rest[offset..];
 
         let frames = if vbr {
             Self::get_vbr_frames(frames_data, frame_count.get())?
@@ -251,68 +183,62 @@ impl<'a> FramePacket<'a> {
             Self::get_cbr_frames(frames_data, frame_count)?
         };
 
-        let padding = if padding_length > 0 {
-            Some(&data[data_end..])
-        } else {
-            None
-        };
-
-        Ok(Self {
+        return  Ok(Self {
             toc,
             frames,
-            padding,
+            padding: padding_data,
         })
     }
 
     fn get_vbr_frames(data: &'a [u8], frame_count: u8) -> Result<Vec<&'a [u8]>> {
         let mut frames = Vec::with_capacity(frame_count as usize);
-        let mut offset = 0usize;
+        let mut offset = 0;
 
-        let mut frame_lengths = Vec::with_capacity((frame_count - 1) as usize);
-        for _ in 0..(frame_count - 1) {
-            let (frame_len, len_offset) = Self::get_frame_length(&data[offset..])?;
-            offset += len_offset;
-            frame_lengths.push(frame_len);
-        }
+        for i in 0..frame_count {
+            let (frame_len, len_offset) = if i == frame_count - 1 {
+                (data.len() - offset, 0)
+            } else {
+                let (frame_len, len_offset) = Self::get_frame_length(&data[offset..])?;
+                (frame_len, len_offset)
+            };
 
-        for frame_len in frame_lengths {
-            let frame_end = offset + frame_len;
-            let frame = data.get(offset..frame_end)
-                .ok_or_else(|| Error::DecodeError("Frame length exceeds data size [R7]"))?;
+            let frame_start = offset + len_offset;
+            let frame_end = frame_start + frame_len;
+
+            let frame = data.get(frame_start..frame_end).ok_or(Error::FrameLengthExceedsDataSize)?;
+
             Self::check_frame_size(frame.len())?;
             frames.push(frame);
             offset = frame_end;
         }
 
-        let last_frame = data.get(offset..)
-            .ok_or_else(|| Error::DecodeError("No data for last frame"))?;
-        Self::check_frame_size(last_frame.len())?;
-        frames.push(last_frame);
-
         return Ok(frames);
     }
-    fn get_cbr_frames(data: &'a [u8], frame_count: NonZeroU8) -> Result<Vec<&'a [u8]>> {
-        let frame_count_usize = frame_count.get() as usize;
-        let total_length = data.len();
 
-        let frame_size = Self::calculate_frame_size(total_length, frame_count_usize)?;
+
+    fn get_cbr_frames(data: &'a [u8], frame_count: NonZeroU8) -> Result<Vec<&'a [u8]>> {
+        let frame_count = frame_count.get() as usize;
+        let frame_size = data.len() / frame_count;
+
+        if frame_size * frame_count != data.len() {
+            return Err(Error::InvalidCbrFrameLength.into());
+        }
+
         Self::check_frame_size(frame_size)?;
 
-        return data.chunks_exact(frame_size).map(Ok).collect();
+        return Ok(data.chunks_exact(frame_size).collect());
     }
 
-    fn get_padding_length(data: &'a [u8]) -> Result<(usize, usize)> {
-        let mut total_padding = 0usize;
-        let mut offset = 0usize;
+    fn get_padding_length(data: &[u8]) -> Result<(usize, usize)> {
+        let mut total_padding: usize = 0;
+        let mut offset: usize = 0;
 
         for &byte in data {
             offset += 1;
-            if byte == u8::MAX {
-                total_padding = total_padding.checked_add(MAX_PADDING_VALUE)
-                    .ok_or_else(|| Error::DecodeError("Padding length overflow"))?;
-            } else {
-                total_padding = total_padding.checked_add(byte as usize)
-                    .ok_or_else(|| Error::DecodeError("Padding length overflow"))?;
+
+            total_padding = total_padding.checked_add(byte as usize).ok_or(Error::PaddingLengthOverflow)?;
+
+            if byte != 255 {
                 break;
             }
         }
@@ -320,44 +246,31 @@ impl<'a> FramePacket<'a> {
         return Ok((total_padding, offset));
     }
 
-    fn get_frame_length(data: &'a [u8]) -> Result<(usize, usize)> {
-        let (first_byte, mut offset) = Self::consume_byte(data)?;
+    fn get_frame_length(data: &[u8]) -> Result<(usize, usize)> {
+        let (&first_byte, rest) = data.split_first()
+            .ok_or(Error::InsufficientDataForFrameLength)?;
 
         return match first_byte {
-            0 => Ok((0, offset)),
-            1..=251 => Ok((first_byte as usize, offset)),
+            0 => Ok((0, 1)),
+            1..=251 => Ok((first_byte as usize, 1)),
             252..=255 => {
-                let (second_byte, second_offset) = Self::consume_byte(&data[offset..])?;
-                offset += second_offset;
-                let length = ((second_byte as usize) * 4) + (first_byte as usize);
-                Ok((length, offset))
+                let &second_byte = rest.first()
+                    .ok_or(Error::InsufficientDataForExtendedFrameLength)?;
+                let length = (second_byte as usize * 4) + (first_byte as usize);
+                Ok((length, 2))
             }
             _ => unreachable!()
         };
     }
 
-    fn consume_byte(data: &'a [u8]) -> Result<(u8, usize)> {
-        return data.split_first()
-            .map(|(&byte, _)| (byte, 1))
-            .ok_or_else(|| Error::DecodeError("Insufficient data"));
-    }
-
-    fn calculate_frame_size(total_length: usize, frame_count: usize) -> Result<usize> {
-        return total_length
-            .checked_div(frame_count)
-            .filter(|&size| size * frame_count == total_length)
-            .ok_or_else(|| Error::DecodeError("Invalid frame length"));
-    }
-
     fn check_total_duration(frame_count: u8, toc: &Toc) -> Result<()> {
-        let params = toc.params()?;
-
+        let params = toc.params().map_err(Error::Toc)?;
         let total_duration_ms = Duration::from(params.frame_size).as_millis()
             .checked_mul(frame_count as u128)
-            .ok_or_else(|| Error::DecodeError("Total duration overflow"))?;
+            .ok_or(Error::TotalDurationOverflow)?;
 
         if total_duration_ms > MAX_TOTAL_DURATION_MS {
-            return Err(Error::DecodeError("Total audio duration exceeds 120 ms [R5]"));
+            return Err(Error::ExcessiveTotalDuration.into());
         }
 
         return Ok(());
@@ -365,25 +278,163 @@ impl<'a> FramePacket<'a> {
 
     fn check_frame_size(size: usize) -> Result<()> {
         if size > MAX_FRAME_LENGTH {
-            return Err(Error::DecodeError("Frame length exceeds maximum allowed size [R2]"));
+            return Err(Error::FrameLengthExceedsMaximum.into());
         }
-
         return Ok(());
     }
-    /// Returns the parsed TOC.
+
     pub fn toc(&self) -> Toc {
         return self.toc;
     }
 
-    /// Returns the vector of frames.
-    pub fn frames(&self) -> &Vec<&'a [u8]> {
+    pub fn frames(&self) -> &[&'a [u8]] {
         return &self.frames;
     }
 
-    /// Returns the padding data, if any.
     pub fn padding(&self) -> Option<&'a [u8]> {
         return self.padding;
     }
 }
 
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn parse_single_frame_packet() {
+        let toc_byte = 0b0000_0000;
+        let frame_data = [0xAA, 0xBB, 0xCC];
+
+        let packet_data = [toc_byte].iter().chain(&frame_data).cloned().collect::<Vec<u8>>();
+        let packet = FramePacket::new(&packet_data).expect("Failed to parse single frame packet");
+
+        assert_eq!(packet.frames.len(), 1);
+        assert_eq!(packet.frames[0], &frame_data[..]);
+        assert!(packet.padding.is_none());
+    }
+
+    #[test]
+    fn parse_two_equal_frames_packet() {
+        let toc_byte = 0b0000_0001;
+        let frame_data = [0xAA, 0xBB, 0xCC, 0xDD];
+
+        let packet_data = [toc_byte].iter().chain(&frame_data).cloned().collect::<Vec<u8>>();
+        let packet = FramePacket::new(&packet_data).expect("Failed to parse two equal frames packet");
+
+        assert_eq!(packet.frames.len(), 2);
+        assert_eq!(packet.frames[0], &frame_data[0..2]);
+        assert_eq!(packet.frames[1], &frame_data[2..4]);
+        assert!(packet.padding.is_none());
+    }
+
+    #[test]
+    fn parse_two_different_frames_packet() {
+        let toc_byte = 0b0000_0010;
+        let frame1 = [0xAA, 0xBB];
+        let frame2 = [0xCC, 0xDD, 0xEE];
+
+        let frame1_length = [0x02];
+        let frame_data = frame1_length.iter().chain(&frame1).chain(&frame2).cloned().collect::<Vec<u8>>();
+
+        let packet_data = [toc_byte].iter().chain(&frame_data).cloned().collect::<Vec<u8>>();
+        let packet = FramePacket::new(&packet_data).expect("Failed to parse two different frames packet");
+
+        assert_eq!(packet.frames.len(), 2);
+        assert_eq!(packet.frames[0], &frame1[..]);
+        assert_eq!(packet.frames[1], &frame2[..]);
+        assert!(packet.padding.is_none());
+    }
+
+    #[test]
+    fn parse_arbitrary_frames_cbr_packet() {
+        let toc_byte = 0b0000_0011;
+        let frame_count_byte = 0b0000_0011;
+        let frame1 = [0xAA, 0xBB];
+        let frame2 = [0xCC, 0xDD];
+        let frame3 = [0xEE, 0xFF];
+        let frame_data = [frame1, frame2, frame3].concat();
+
+        let packet_data = [toc_byte, frame_count_byte].iter().chain(&frame_data).cloned().collect::<Vec<u8>>();
+        let packet = FramePacket::new(&packet_data).expect("Failed to parse arbitrary frames CBR packet");
+
+        assert_eq!(packet.frames.len(), 3);
+        assert_eq!(packet.frames[0], &frame1[..]);
+        assert_eq!(packet.frames[1], &frame2[..]);
+        assert_eq!(packet.frames[2], &frame3[..]);
+        assert!(packet.padding.is_none());
+    }
+
+    #[test]
+    fn parse_arbitrary_frames_vbr_packet() {
+        let toc_byte = 0b0000_0011;
+        let frame_count_byte = 0b1000_0010;
+        let frame1_length = [0x02];
+        let frame1 = [0xAA, 0xBB];
+        let frame2 = [0xCC, 0xDD, 0xEE];
+        let frame_data = frame1_length.iter()
+            .chain(&frame1)
+            .chain(&frame2)
+            .cloned()
+            .collect::<Vec<u8>>();
+
+        let packet_data = [toc_byte, frame_count_byte]
+            .iter()
+            .chain(&frame_data)
+            .cloned()
+            .collect::<Vec<u8>>();
+
+        let packet = FramePacket::new(&packet_data).expect("Failed to parse arbitrary frames VBR packet");
+
+        assert_eq!(packet.frames.len(), 2);
+        assert_eq!(packet.frames[0], &frame1[..]);
+        assert_eq!(packet.frames[1], &frame2[..]);
+        assert!(packet.padding.is_none());
+    }
+
+    #[test]
+    fn parse_packet_with_padding() {
+        let toc_byte = 0b0000_0011;
+        let frame_count_byte = 0b0100_0001;
+        let padding_length = [0x02];
+        let padding_data = [0x00, 0x00];
+        let frame = [0xAA, 0xBB, 0xCC];
+
+        let packet_data = [toc_byte, frame_count_byte]
+            .iter()
+            .chain(&padding_length)
+            .chain(&padding_data)
+            .chain(&frame)
+            .cloned()
+            .collect::<Vec<u8>>();
+
+        let packet = FramePacket::new(&packet_data).expect("Failed to parse packet with padding");
+
+        assert_eq!(packet.frames.len(), 1); // FAILED: assertion `left == right` failed left: [0, 0, 170] right: [170, 187, 204] 
+        assert_eq!(packet.frames[0], &frame[..]);
+
+        let padding_start = 2; 
+        let padding_end = padding_start + padding_length[0] as usize;
+
+        assert_eq!(packet.padding.unwrap(), &packet_data[padding_start..padding_end]);
+    }
+
+    #[test]
+    fn handle_invalid_packet_length() {
+        let toc_byte = 0b0000_0001;
+        let frame_data = [0xAA, 0xBB, 0xCC];
+
+        let packet_data = [toc_byte].iter().chain(&frame_data).cloned().collect::<Vec<u8>>();
+        let result = FramePacket::new(&packet_data);
+
+        assert!(result.is_err());
+        match result {
+            Err(err) => match err {
+                symphonia_core::errors::Error::DecodeError(msg) => {
+                    assert_eq!(msg, "Invalid packet length");
+                }
+                _ => panic!("Unexpected error type"),
+            },
+            _ => panic!("Expected an error"),
+        }
+    }
+}

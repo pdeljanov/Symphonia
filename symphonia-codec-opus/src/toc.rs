@@ -85,8 +85,27 @@
 
 use std::convert::TryFrom;
 use std::time::Duration;
-use symphonia_core::errors::{Error, Result};
+use thiserror::Error;
 use symphonia_core::io::{BitReaderLtr, ReadBitsLtr};
+
+
+#[derive(Debug, Error)]
+pub enum Error {
+    #[error("I/O error: {0}")]
+    Io(#[from] std::io::Error),
+    
+    #[error("Invalid audio mode")]
+    InvalidAudioMode,
+    
+    #[error("Invalid band width")]
+    InvalidBandwidth,
+    
+    #[error("Invalid frame size")]
+    InvalidFrameSize,
+    
+    #[error("Invalid frame count code")]
+    InvalidFrameCountCode,
+}
 
 /// Represents the Table of Contents (TOC) byte of an Opus packet.
 #[derive(Debug, Clone, Copy)]
@@ -97,18 +116,18 @@ pub struct Toc {
 }
 
 impl Toc {
-    pub fn new(byte: u8) -> Result<Self> {
+    pub fn new(byte: u8) -> Result<Self, Error> {
         let buf = [byte];
         let mut reader = BitReaderLtr::new(&buf);
 
         // 'config' field (bits 0-4).
-        let config = reader.read_bits_leq32(5)? as u8;
+        let config = reader.read_bits_leq32(5).map_err(Error::Io)? as u8;
 
         // 's' (stereo) flag (bit 5).
-        let stereo = reader.read_bool()?;
+        let stereo = reader.read_bool().map_err(Error::Io)?;
 
         // 'c' (frame count code) field (bits 6-7).
-        let frame_count_code = reader.read_bits_leq32(2)? as u8;
+        let frame_count_code = reader.read_bits_leq32(2).map_err(Error::Io)? as u8;
         let frame_count = FrameCount::try_from(frame_count_code)?;
 
         return Ok(Toc {
@@ -118,7 +137,7 @@ impl Toc {
         });
     }
 
-    pub fn params(&self) -> Result<Parameters> {
+    pub fn params(&self) -> Result<Parameters, Error> {
         Parameters::new(self.config)
     }
 
@@ -139,7 +158,7 @@ pub struct Parameters {
 }
 
 impl Parameters {
-    pub fn new(config: u8) -> Result<Self> {
+    pub fn new(config: u8) -> Result<Self, Error> {
         let audio_mode = AudioMode::try_from(config)?;
         let bandwidth = Bandwidth::try_from(config)?;
         let frame_size = FrameSize::try_from(config)?;
@@ -162,12 +181,12 @@ pub enum AudioMode {
 impl TryFrom<u8> for AudioMode {
     type Error = Error;
 
-    fn try_from(config: u8) -> Result<Self> {
+    fn try_from(config: u8) -> Result<Self, Error> {
         match config {
             0..=11 => Ok(AudioMode::Silk),
             12..=15 => Ok(AudioMode::Hybrid),
             16..=31 => Ok(AudioMode::Celt),
-            _ => Err(Error::DecodeError("Invalid audio mode")),
+            _ => Err(Error::InvalidAudioMode),
         }
     }
 }
@@ -184,7 +203,7 @@ pub enum Bandwidth {
 impl TryFrom<u8> for Bandwidth {
     type Error = Error;
 
-    fn try_from(config: u8) -> Result<Self> {
+    fn try_from(config: u8) -> Result<Self, Error> {
         return match config {
             0..=3 => Ok(Bandwidth::NarrowBand),
             4..=7 => Ok(Bandwidth::MediumBand),
@@ -195,7 +214,7 @@ impl TryFrom<u8> for Bandwidth {
             20..=23 => Ok(Bandwidth::WideBand),
             24..=27 => Ok(Bandwidth::SuperWideBand),
             28..=31 => Ok(Bandwidth::FullBand),
-            _ => Err(Error::DecodeError("Invalid bandwidth")),
+            _ => Err(Error::InvalidBandwidth),
         };
     }
 }
@@ -221,7 +240,7 @@ impl From<FrameSize> for Duration {
 impl TryFrom<u8> for FrameSize {
     type Error = Error;
 
-    fn try_from(config: u8) -> Result<Self> {
+    fn try_from(config: u8) -> Result<Self, Error> {
         return match config {
             // SILK modes (configs 0..11)
             0 | 4 | 8 => Ok(FrameSize::Ms10),
@@ -236,7 +255,7 @@ impl TryFrom<u8> for FrameSize {
             17 | 21 | 25 | 29 => Ok(FrameSize::Ms5),
             18 | 22 | 26 | 30 => Ok(FrameSize::Ms10),
             19 | 23 | 27 | 31 => Ok(FrameSize::Ms20),
-            _ => Err(Error::DecodeError("Invalid frame size")),
+            _ => Err(Error::InvalidFrameSize),
         };
     }
 }
@@ -252,13 +271,13 @@ pub enum FrameCount {
 impl TryFrom<u8> for FrameCount {
     type Error = Error;
 
-    fn try_from(code: u8) -> Result<Self> {
+    fn try_from(code: u8) -> Result<Self, Error> {
         return match code {
             0 => Ok(FrameCount::One),
             1 => Ok(FrameCount::TwoEqual),
             2 => Ok(FrameCount::TwoDifferent),
             3 => Ok(FrameCount::Arbitrary),
-            _ => Err(Error::DecodeError("Invalid frame count code")),
+            _ => Err(Error::InvalidFrameCountCode),
         };
     }
 }
