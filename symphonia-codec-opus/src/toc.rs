@@ -245,18 +245,18 @@ impl TryFrom<u8> for FrameSize {
 pub enum FrameCount {
     One,
     TwoEqual,
-    TwoUnequal,
+    TwoDifferent,
     Arbitrary,
 }
 
 impl TryFrom<u8> for FrameCount {
     type Error = Error;
 
-    fn try_from(value: u8) -> Result<Self> {
-        return match value {
+    fn try_from(code: u8) -> Result<Self> {
+        return match code {
             0 => Ok(FrameCount::One),
             1 => Ok(FrameCount::TwoEqual),
-            2 => Ok(FrameCount::TwoUnequal),
+            2 => Ok(FrameCount::TwoDifferent),
             3 => Ok(FrameCount::Arbitrary),
             _ => Err(Error::DecodeError("Invalid frame count code")),
         };
@@ -419,7 +419,7 @@ mod tests {
             [
               (0b00000000, FrameCount::One),
               (0b00000001, FrameCount::TwoEqual),
-              (0b00000010, FrameCount::TwoUnequal),
+              (0b00000010, FrameCount::TwoDifferent),
               (0b00000011, FrameCount::Arbitrary),
             ]);
 
