@@ -3,8 +3,8 @@ mod decoder;
 mod header;
 mod silk;
 mod celt;
-mod packet;
 mod toc;
+mod packet;
 
 use symphonia_core::codecs::*;
 use symphonia_core::errors::Result;
