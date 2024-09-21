@@ -267,75 +267,115 @@ impl TryFrom<u8> for FrameCount {
 mod tests {
     use super::*;
 
-    const SILK_NB_MONO_10MS: u8 = 0b00000000;
-    const SILK_MB_STEREO_20MS: u8 = 0b00101101;
-    const HYBRID_SWB_MONO_10MS: u8 = 0b01100000;
-    const CELT_FB_STEREO_2_5MS: u8 = 0b11100101;
-
-    fn check(
-        byte: u8,
+    #[derive(Debug)]
+    struct TestCase {
+        toc_byte: u8,
         is_stereo: bool,
         frame_count: FrameCount,
         audio_mode: AudioMode,
         bandwidth: Bandwidth,
         frame_size: FrameSize,
-    ) {
-        let toc = Toc::new(byte).unwrap();
-        assert_eq!(toc.is_stereo(), is_stereo);
-        assert_eq!(toc.frame_count(), frame_count);
+    }
 
-        let params = toc.params().unwrap();
-        assert_eq!(params.audio_mode, audio_mode);
-        assert_eq!(params.bandwidth, bandwidth);
-        assert_eq!(params.frame_size, frame_size);
+    impl TestCase {
+        fn check(&self) {
+            let toc = Toc::new(self.toc_byte).expect("Failed to create Toc from byte");
+
+            assert_eq!(
+                toc.is_stereo(),
+                self.is_stereo,
+                "TOC byte: {:#010b}, expected stereo: {}, got: {}",
+                self.toc_byte,
+                self.is_stereo,
+                toc.is_stereo()
+            );
+
+            assert_eq!(
+                toc.frame_count(),
+                self.frame_count,
+                "TOC byte: {:#010b}, expected frame count: {:?}, got: {:?}",
+                self.toc_byte,
+                self.frame_count,
+                toc.frame_count()
+            );
+
+            let params = toc.params().expect("Failed to get parameters from TOC");
+
+            assert_eq!(
+                params.audio_mode,
+                self.audio_mode,
+                "TOC byte: {:#010b}, expected audio mode: {:?}, got: {:?}",
+                self.toc_byte,
+                self.audio_mode,
+                params.audio_mode
+            );
+
+            assert_eq!(
+                params.bandwidth,
+                self.bandwidth,
+                "TOC byte: {:#010b}, expected bandwidth: {:?}, got: {:?}",
+                self.toc_byte,
+                self.bandwidth,
+                params.bandwidth
+            );
+
+            assert_eq!(
+                params.frame_size,
+                self.frame_size,
+                "TOC byte: {:#010b}, expected frame size: {:?}, got: {:?}",
+                self.toc_byte,
+                self.frame_size,
+                params.frame_size
+            );
+        }
+    }
+
+    fn populate_test_table() -> Vec<TestCase> {
+        vec![
+            TestCase { toc_byte: 0b00000000, is_stereo: false, frame_count: FrameCount::One, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::NarrowBand, frame_size: FrameSize::Ms10 },
+            TestCase { toc_byte: 0b00000001, is_stereo: false, frame_count: FrameCount::TwoEqual, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::NarrowBand, frame_size: FrameSize::Ms10 },
+            TestCase { toc_byte: 0b00000100, is_stereo: true, frame_count: FrameCount::One, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::NarrowBand, frame_size: FrameSize::Ms10 },
+            TestCase { toc_byte: 0b00000101, is_stereo: true, frame_count: FrameCount::TwoEqual, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::NarrowBand, frame_size: FrameSize::Ms10 },
+            TestCase { toc_byte: 0b00010000, is_stereo: false, frame_count: FrameCount::One, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::NarrowBand, frame_size: FrameSize::Ms40 },
+            TestCase { toc_byte: 0b00010001, is_stereo: false, frame_count: FrameCount::TwoEqual, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::NarrowBand, frame_size: FrameSize::Ms40 },
+            TestCase { toc_byte: 0b00010100, is_stereo: true, frame_count: FrameCount::One, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::NarrowBand, frame_size: FrameSize::Ms40 },
+            TestCase { toc_byte: 0b00010101, is_stereo: true, frame_count: FrameCount::TwoEqual, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::NarrowBand, frame_size: FrameSize::Ms40 },
+            TestCase { toc_byte: 0b00011100, is_stereo: true, frame_count: FrameCount::One, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::NarrowBand, frame_size: FrameSize::Ms60 },
+            TestCase { toc_byte: 0b00011101, is_stereo: true, frame_count: FrameCount::TwoEqual, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::NarrowBand, frame_size: FrameSize::Ms60 },
+            TestCase { toc_byte: 0b00100000, is_stereo: false, frame_count: FrameCount::One, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::MediumBand, frame_size: FrameSize::Ms10 },
+            TestCase { toc_byte: 0b00100001, is_stereo: false, frame_count: FrameCount::TwoEqual, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::MediumBand, frame_size: FrameSize::Ms10 },
+            TestCase { toc_byte: 0b00100100, is_stereo: true, frame_count: FrameCount::One, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::MediumBand, frame_size: FrameSize::Ms10 },
+            TestCase { toc_byte: 0b00100101, is_stereo: true, frame_count: FrameCount::TwoEqual, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::MediumBand, frame_size: FrameSize::Ms10 },
+            TestCase { toc_byte: 0b00101100, is_stereo: true, frame_count: FrameCount::One, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::MediumBand, frame_size: FrameSize::Ms20 },
+            TestCase { toc_byte: 0b00101101, is_stereo: true, frame_count: FrameCount::TwoEqual, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::MediumBand, frame_size: FrameSize::Ms20 },
+            TestCase { toc_byte: 0b00110000, is_stereo: false, frame_count: FrameCount::One, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::MediumBand, frame_size: FrameSize::Ms40 },
+            TestCase { toc_byte: 0b00110001, is_stereo: false, frame_count: FrameCount::TwoEqual, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::MediumBand, frame_size: FrameSize::Ms40 },
+            TestCase { toc_byte: 0b00110100, is_stereo: true, frame_count: FrameCount::One, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::MediumBand, frame_size: FrameSize::Ms40 },
+            TestCase { toc_byte: 0b00110101, is_stereo: true, frame_count: FrameCount::TwoEqual, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::MediumBand, frame_size: FrameSize::Ms40 },
+            TestCase { toc_byte: 0b00111100, is_stereo: true, frame_count: FrameCount::One, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::MediumBand, frame_size: FrameSize::Ms60 },
+            TestCase { toc_byte: 0b00111101, is_stereo: true, frame_count: FrameCount::TwoEqual, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::MediumBand, frame_size: FrameSize::Ms60 },
+            TestCase { toc_byte: 0b01001000, is_stereo: false, frame_count: FrameCount::One, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::WideBand, frame_size: FrameSize::Ms20 },
+            TestCase { toc_byte: 0b01001001, is_stereo: false, frame_count: FrameCount::TwoEqual, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::WideBand, frame_size: FrameSize::Ms20 },
+            TestCase { toc_byte: 0b01001100, is_stereo: true, frame_count: FrameCount::One, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::WideBand, frame_size: FrameSize::Ms20 },
+            TestCase { toc_byte: 0b01001101, is_stereo: true, frame_count: FrameCount::TwoEqual, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::WideBand, frame_size: FrameSize::Ms20 },
+            TestCase { toc_byte: 0b01100000, is_stereo: false, frame_count: FrameCount::One, audio_mode: AudioMode::Hybrid, bandwidth: Bandwidth::SuperWideBand, frame_size: FrameSize::Ms10 },
+            TestCase { toc_byte: 0b01100001, is_stereo: false, frame_count: FrameCount::TwoEqual, audio_mode: AudioMode::Hybrid, bandwidth: Bandwidth::SuperWideBand, frame_size: FrameSize::Ms10 },
+            TestCase { toc_byte: 0b01100100, is_stereo: true, frame_count: FrameCount::One, audio_mode: AudioMode::Hybrid, bandwidth: Bandwidth::SuperWideBand, frame_size: FrameSize::Ms10 },
+            TestCase { toc_byte: 0b01100101, is_stereo: true, frame_count: FrameCount::TwoEqual, audio_mode: AudioMode::Hybrid, bandwidth: Bandwidth::SuperWideBand, frame_size: FrameSize::Ms10 },
+            TestCase { toc_byte: 0b10000000, is_stereo: false, frame_count: FrameCount::One, audio_mode: AudioMode::Celt, bandwidth: Bandwidth::NarrowBand, frame_size: FrameSize::Ms2_5 },
+            TestCase { toc_byte: 0b10000001, is_stereo: false, frame_count: FrameCount::TwoEqual, audio_mode: AudioMode::Celt, bandwidth: Bandwidth::NarrowBand, frame_size: FrameSize::Ms2_5 },
+            TestCase { toc_byte: 0b10000100, is_stereo: true, frame_count: FrameCount::One, audio_mode: AudioMode::Celt, bandwidth: Bandwidth::NarrowBand, frame_size: FrameSize::Ms2_5 },
+            TestCase { toc_byte: 0b10000101, is_stereo: true, frame_count: FrameCount::TwoEqual, audio_mode: AudioMode::Celt, bandwidth: Bandwidth::NarrowBand, frame_size: FrameSize::Ms2_5 },
+            TestCase { toc_byte: 0b10001000, is_stereo: false, frame_count: FrameCount::One, audio_mode: AudioMode::Celt, bandwidth: Bandwidth::NarrowBand, frame_size: FrameSize::Ms5 },
+            TestCase { toc_byte: 0b10001001, is_stereo: false, frame_count: FrameCount::TwoEqual, audio_mode: AudioMode::Celt, bandwidth: Bandwidth::NarrowBand, frame_size: FrameSize::Ms5 },
+        ]
     }
 
     #[test]
-    fn silk_nb_mono_10ms() {
-        check(
-            SILK_NB_MONO_10MS,
-            false,
-            FrameCount::One,
-            AudioMode::Silk,
-            Bandwidth::NarrowBand,
-            FrameSize::Ms10,
-        )
-    }
-    #[test]
-    fn silk_mb_stereo_20ms() {
-        check(
-            SILK_MB_STEREO_20MS,
-            true,
-            FrameCount::TwoEqual,
-            AudioMode::Silk,
-            Bandwidth::MediumBand,
-            FrameSize::Ms20,
-        )
-    }
-
-    #[test]
-    fn hybrid_swb_mono_10ms() {
-        check(
-            HYBRID_SWB_MONO_10MS,
-            false,
-            FrameCount::One,
-            AudioMode::Hybrid,
-            Bandwidth::SuperWideBand,
-            FrameSize::Ms10,
-        )
-    }
-
-
-    #[test]
-    fn celt_fb_stereo_2_5ms() {
-        check(
-            CELT_FB_STEREO_2_5MS,
-            true,
-            FrameCount::TwoEqual,
-            AudioMode::Celt,
-            Bandwidth::FullBand,
-            FrameSize::Ms2_5,
-        )
+    fn run_all_cases() {
+        let _ = populate_test_table()
+            .iter()
+            .map(|t| t.check());
     }
 
     #[test]
