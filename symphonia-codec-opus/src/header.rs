@@ -1,6 +1,6 @@
 //! All the heavy lifting is done symphonia-format-ogg which
 //! already handles parsing the ID Header and Comment Header during OGG demuxing,
-//! however it omits Input Sample Rate (it is just metadata), 
+//! however it omits Input Sample Rate (it is just metadata),
 //! and Output Gain that should be applied during decoding.
 //! and The channel mapping table for complex setups (e.g., 5.1 surround)
 //! The extra_data field in CodecParameters after demuxing ogg
@@ -89,7 +89,7 @@ pub enum Error {
 }
 
 /// Identification Header
-///```text 
+///```text
 ///       0                   1                   2                   3
 ///       0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
 ///      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
@@ -107,10 +107,10 @@ pub enum Error {
 ///      :               Optional Channel Mapping Table...               :
 ///      |                                                               |
 ///      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-/// 
-///                         Figure 2: ID Header Packet 
+///
+///                         Figure 2: ID Header Packet
 ///```
-/// 
+///
 /// https://datatracker.ietf.org/doc/html/rfc7845#section-5.1
 #[derive(Debug, Clone, PartialEq)]
 pub struct ID {
@@ -339,10 +339,10 @@ impl ChannelInterpretation {
 ///      |                 User Comment #1 String Length                 |
 ///      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 ///      :                                                               :
-/// 
+///
 ///                      Figure 10: Comment Header Packet
 ///```
-/// 
+///
 /// https://datatracker.ietf.org/doc/html/rfc7845#section-5.2
 #[derive(Debug, Clone, PartialEq)]
 pub struct Comment {
