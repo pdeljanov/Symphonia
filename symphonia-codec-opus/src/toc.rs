@@ -85,6 +85,7 @@
 
 use std::convert::TryFrom;
 use std::time::Duration;
+use log::debug;
 use thiserror::Error;
 use symphonia_core::io::{BitReaderLtr, ReadBitsLtr};
 
@@ -93,41 +94,48 @@ use symphonia_core::io::{BitReaderLtr, ReadBitsLtr};
 pub enum Error {
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
-    
+
     #[error("Invalid audio mode")]
     InvalidAudioMode,
-    
+
     #[error("Invalid band width")]
     InvalidBandwidth,
-    
+
     #[error("Invalid frame size")]
     InvalidFrameSize,
-    
+
     #[error("Invalid frame count code")]
     InvalidFrameCountCode,
 }
 
 /// Represents the Table of Contents (TOC) byte of an Opus packet.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Toc {
     config: u8,
     stereo: bool,
     frame_count: FrameCount,
 }
 
+
 impl Toc {
     pub fn new(byte: u8) -> Result<Self, Error> {
+        debug!("TOC byte: {:08b}", byte);
+
         let buf = [byte];
         let mut reader = BitReaderLtr::new(&buf);
 
         // 'config' field (bits 0-4).
         let config = reader.read_bits_leq32(5).map_err(Error::Io)? as u8;
+        debug!("config: {config:#05b}" );
 
         // 's' (stereo) flag (bit 5).
         let stereo = reader.read_bool().map_err(Error::Io)?;
+        debug!("stereo: {stereo}");
 
         // 'c' (frame count code) field (bits 6-7).
         let frame_count_code = reader.read_bits_leq32(2).map_err(Error::Io)? as u8;
+        debug!("frame Count Code: {frame_count_code:#02b}" );
+
         let frame_count = FrameCount::try_from(frame_count_code)?;
 
         return Ok(Toc {
@@ -135,6 +143,21 @@ impl Toc {
             stereo,
             frame_count,
         });
+    }
+
+    pub fn as_byte(&self) -> u8 {
+        let mut byte = (self.config & 0x1F) << 3; // Shift 'config' into bits 7-3
+        debug!("Byte after config: {:08b}", byte);
+
+        if self.stereo {
+            byte |= 1 << 2; // Set bit 2 for 'stereo'
+        }
+        debug!("Byte after stereo: {:08b}", byte);
+
+        byte |= (self.frame_count as u8) & 0x03; // Set bits 1-0 for 'frame_count'
+        debug!("Final reconstructed byte: {:08b}", byte);
+
+        return byte;
     }
 
     pub fn params(&self) -> Result<Parameters, Error> {
@@ -284,7 +307,17 @@ impl TryFrom<u8> for FrameCount {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::LazyLock;
     use super::*;
+
+    static _LOGGER: LazyLock<(), fn()> = LazyLock::new(init_logger);
+    fn init_logger() {
+        env_logger::builder()
+            .is_test(true)
+            .filter_level(log::LevelFilter::Debug)
+            .try_init()
+            .unwrap();
+    }
 
     #[derive(Debug)]
     struct TestCase {
@@ -349,6 +382,60 @@ mod tests {
         }
     }
 
+    fn new_toc_byte(
+        is_stereo: bool,
+        frame_count: FrameCount,
+        audio_mode: AudioMode,
+        bandwidth: Bandwidth,
+        frame_size: FrameSize,
+    ) -> u8 {
+        let config_number = match (audio_mode, bandwidth, frame_size) {
+            (AudioMode::Silk, Bandwidth::NarrowBand, FrameSize::Ms10) => 0,
+            (AudioMode::Silk, Bandwidth::NarrowBand, FrameSize::Ms20) => 1,
+            (AudioMode::Silk, Bandwidth::NarrowBand, FrameSize::Ms40) => 2,
+            (AudioMode::Silk, Bandwidth::NarrowBand, FrameSize::Ms60) => 3,
+            (AudioMode::Silk, Bandwidth::MediumBand, FrameSize::Ms10) => 4,
+            (AudioMode::Silk, Bandwidth::MediumBand, FrameSize::Ms20) => 5,
+            (AudioMode::Silk, Bandwidth::MediumBand, FrameSize::Ms40) => 6,
+            (AudioMode::Silk, Bandwidth::MediumBand, FrameSize::Ms60) => 7,
+            (AudioMode::Silk, Bandwidth::WideBand, FrameSize::Ms10) => 8,
+            (AudioMode::Silk, Bandwidth::WideBand, FrameSize::Ms20) => 9,
+            (AudioMode::Silk, Bandwidth::WideBand, FrameSize::Ms40) => 10,
+            (AudioMode::Silk, Bandwidth::WideBand, FrameSize::Ms60) => 11,
+            (AudioMode::Hybrid, Bandwidth::SuperWideBand, FrameSize::Ms10) => 12,
+            (AudioMode::Hybrid, Bandwidth::SuperWideBand, FrameSize::Ms20) => 13,
+            (AudioMode::Hybrid, Bandwidth::FullBand, FrameSize::Ms10) => 14,
+            (AudioMode::Hybrid, Bandwidth::FullBand, FrameSize::Ms20) => 15,
+            (AudioMode::Celt, Bandwidth::NarrowBand, FrameSize::Ms2_5) => 16,
+            (AudioMode::Celt, Bandwidth::NarrowBand, FrameSize::Ms5) => 17,
+            (AudioMode::Celt, Bandwidth::NarrowBand, FrameSize::Ms10) => 18,
+            (AudioMode::Celt, Bandwidth::NarrowBand, FrameSize::Ms20) => 19,
+            (AudioMode::Celt, Bandwidth::WideBand, FrameSize::Ms2_5) => 20,
+            (AudioMode::Celt, Bandwidth::WideBand, FrameSize::Ms5) => 21,
+            (AudioMode::Celt, Bandwidth::WideBand, FrameSize::Ms10) => 22,
+            (AudioMode::Celt, Bandwidth::WideBand, FrameSize::Ms20) => 23,
+            (AudioMode::Celt, Bandwidth::SuperWideBand, FrameSize::Ms2_5) => 24,
+            (AudioMode::Celt, Bandwidth::SuperWideBand, FrameSize::Ms5) => 25,
+            (AudioMode::Celt, Bandwidth::SuperWideBand, FrameSize::Ms10) => 26,
+            (AudioMode::Celt, Bandwidth::SuperWideBand, FrameSize::Ms20) => 27,
+            (AudioMode::Celt, Bandwidth::FullBand, FrameSize::Ms2_5) => 28,
+            (AudioMode::Celt, Bandwidth::FullBand, FrameSize::Ms5) => 29,
+            (AudioMode::Celt, Bandwidth::FullBand, FrameSize::Ms10) => 30,
+            (AudioMode::Celt, Bandwidth::FullBand, FrameSize::Ms20) => 31,
+            _ => panic!("Invalid audio mode or bandwidth or frame size"),
+        };
+
+        let stereo_flag = if is_stereo { 1 << 6 } else { 0 };
+
+        let frame_count_code = match frame_count {
+            FrameCount::One => 0,
+            FrameCount::TwoEqual => 1 << 6,
+            FrameCount::TwoDifferent => 1 << 7,
+            FrameCount::Arbitrary => 3 << 6,
+        };
+
+        return (config_number << 3) | stereo_flag | frame_count_code;
+    }
     fn populate_test_table() -> Vec<TestCase> {
         vec![
             TestCase { toc_byte: 0b00000000, is_stereo: false, frame_count: FrameCount::One, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::NarrowBand, frame_size: FrameSize::Ms10 },
@@ -394,7 +481,9 @@ mod tests {
     fn run_all_cases() {
         let _ = populate_test_table()
             .iter()
-            .map(|t| t.check());
+            .map(|t| {
+                t.check();
+            } );
     }
 
     #[test]
@@ -477,4 +566,30 @@ mod tests {
             (24, Bandwidth::SuperWideBand),
             (28, Bandwidth::FullBand),
         ]);
+
+    #[test]
+    fn as_byte() {
+        for t in populate_test_table() {
+            let toc = Toc::new(t.toc_byte).expect("Failed to create Toc from byte");
+            let as_byte = toc.as_byte();
+
+            assert_eq!(
+                as_byte,
+                t.toc_byte,
+                "Failed to test as_byte result. Original: {:#010b}, as_byte(): {:#010b}",
+                t.toc_byte,
+                as_byte
+            );
+           
+            let reconstructed = new_toc_byte(t.is_stereo, t.frame_count, t.audio_mode, t.bandwidth, t.frame_size);
+            assert_eq!(
+                as_byte,
+                t.toc_byte,
+                "Failed to reconstruct TOC byte. Original: {:#010b}, Reconstructed: {:#010b}",
+                t.toc_byte,
+                reconstructed
+            )
+        }
+    }
 }
+
