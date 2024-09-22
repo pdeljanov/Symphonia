@@ -319,34 +319,33 @@ mod tests {
                 frame_count: None,
                 padding_length: 0,
                 frames: Vec::new(),
-            }
+            };
         }
 
         fn vbr(mut self, vbr: bool) -> Self {
             self.vbr = vbr;
-            return self
+            return self;
         }
 
         fn padding_flag(mut self, padding_flag: bool) -> Self {
             self.padding_flag = padding_flag;
-            return self
+            return self;
         }
 
         fn frame_count(mut self, frame_count: u8) -> Self {
             self.frame_count = Some(frame_count);
-            return self
+            return self;
         }
 
         fn padding(mut self, padding_length: usize) -> Self {
             self.padding_flag = true;
             self.padding_length = padding_length;
-            return self
+            return self;
         }
 
-        /// Adds a frame to the packet.
         fn add_frame(mut self, frame: &[u8]) -> Self {
             self.frames.push(frame.to_vec());
-            return self
+            return self;
         }
 
         fn build(self) -> Vec<u8> {
@@ -422,8 +421,7 @@ mod tests {
             .add_frame(&frame_data)
             .build();
 
-        let packet =
-            FramePacket::new(&packet_data).expect("Failed to parse two equal frames packet");
+        let packet = FramePacket::new(&packet_data).expect("Failed to parse two equal frames packet");
 
         assert_eq!(packet.frames.len(), 2);
         assert_eq!(packet.frames[0], &frame_data[0..2]);
@@ -450,8 +448,7 @@ mod tests {
             .add_frame(&frame_2)
             .build();
 
-        let packet =
-            FramePacket::new(&data).expect("Failed to parse two different frames packet");
+        let packet = FramePacket::new(&data).expect("Failed to parse two different frames packet");
 
         assert_eq!(packet.frames.len(), 2);
         assert_eq!(packet.frames[0], &frame_1[..]);
@@ -475,8 +472,7 @@ mod tests {
             .add_frame(&frame_3)
             .build();
 
-        let packet =
-            FramePacket::new(&data).expect("Failed to parse arbitrary frames CBR packet");
+        let packet = FramePacket::new(&data).expect("Failed to parse arbitrary frames CBR packet");
 
         assert_eq!(packet.frames.len(), 3);
         assert_eq!(packet.frames[0], &frame_1[..]);
@@ -533,7 +529,7 @@ mod tests {
     #[test]
     fn handle_invalid_packet_length() {
         let toc_byte = 0b0000_0001;
-        let frame_data = [0xAA, 0xBB, 0xCC]; // Length not divisible by 2.
+        let frame_data = [0xAA, 0xBB, 0xCC];
 
         let data = Packet::new(toc_byte)
             .add_frame(&frame_data)
