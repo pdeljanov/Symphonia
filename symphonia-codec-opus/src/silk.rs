@@ -42,3 +42,10 @@
 /// 
 /// https://datatracker.ietf.org/doc/html/rfc6716#section-4.2
 pub struct Decoder;
+
+
+impl Decoder {
+    pub fn new(sample_rate: u32, channels: usize) -> Self {
+        unimplemented!();
+    }
+}
