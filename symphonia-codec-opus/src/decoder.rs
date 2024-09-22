@@ -3,9 +3,13 @@ use symphonia_core::audio::{AudioBuffer, AudioBufferRef};
 use symphonia_core::codecs::{CodecDescriptor, CodecParameters, Decoder, DecoderOptions, FinalizeResult, CODEC_TYPE_OPUS};
 use symphonia_core::formats::Packet;
 use crate::{celt, silk};
+use thiserror::Error;
 
-/// Opus codec descriptor 
-/// Codecs register themselves using CodecDescriptor.
+const OPUS_FRAME_SIZES: [usize; 5] = [120, 240, 480, 960, 1920];
+const SILK_INTERNAL_SAMPLE_RATE: u32 = 16000;
+const CELT_INTERNAL_SAMPLE_RATE: u32 = 48000;
+const DEFAULT_FRAME_LENGTH_MS: usize = 20;
+
 static OPUS_CODEC_DESCRIPTOR: Lazy<CodecDescriptor> = Lazy::new(|| {
     CodecDescriptor {
         codec: CODEC_TYPE_OPUS,
@@ -22,44 +26,11 @@ pub fn get_codecs() -> &'static [CodecDescriptor] {
     return std::slice::from_ref(&*OPUS_CODEC_DESCRIPTOR);
 }
 
-// Opus-specific constants
-const OPUS_FRAME_SIZES: [usize; 5] = [120, 240, 480, 960, 1920];
-const MAX_FRAME_SIZE_MS: usize = 60;
-const MAX_PACKET_DURATION_MS: usize = 120;
-const SILK_INTERNAL_SAMPLE_RATE: u32 = 16000;
-const CELT_INTERNAL_SAMPLE_RATE: u32 = 48000;
-
-
-#[derive(Debug, Clone, Copy)]
-enum Mode {
-    Silk,
-    Celt,
-    Hybrid,
-}
-
-
-#[derive(Debug, Clone, Copy)]
-enum Bandwidth {
-    NarrowBand,
-    MediumBand,
-    WideBand,
-    SuperWideBand,
-    FullBand,
-}
-
-struct Frame {
-    mode: Mode,
-    bandwidth: Bandwidth,
-    frame_size: usize,
-    data: Box<u8>,
-}
-
 pub struct OpusDecoder {
     params: CodecParameters,
     buf: AudioBuffer<f32>,
     silk_decoder: Option<silk::Decoder>,
     celt_decoder: Option<celt::Decoder>,
-    // range_decoder ?
 }
 
 
