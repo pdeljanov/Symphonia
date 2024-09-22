@@ -85,9 +85,9 @@ impl<'a> FramePacket<'a> {
 
         return match toc.frame_count() {
             FrameCount::One => Self::one(data, toc),
-            FrameCount::TwoEqual => Self::two_equal(data, toc),
-            FrameCount::TwoDifferent => Self::two_different(data, toc),
-            FrameCount::Arbitrary => Self::arbitrary(data, toc),
+            FrameCount::TwoEqual => Self::two_equal_frames(data, toc),
+            FrameCount::TwoDifferent => Self::two_different_frames(data, toc),
+            FrameCount::Arbitrary => Self::signaled_number_of_frames(data, toc),
         };
     }
 
@@ -101,7 +101,7 @@ impl<'a> FramePacket<'a> {
         });
     }
 
-    fn two_equal(data: &'a [u8], toc: Toc) -> Result<Self> {
+    fn two_equal_frames(data: &'a [u8], toc: Toc) -> Result<Self> {
         if data.len() % 2 != 0 {
             return Err(Error::InvalidCode1PacketLength.into());
         }
@@ -116,7 +116,7 @@ impl<'a> FramePacket<'a> {
         });
     }
 
-    fn two_different(data: &'a [u8], toc: Toc) -> Result<Self> {
+    fn two_different_frames(data: &'a [u8], toc: Toc) -> Result<Self> {
         let (n1, offset) = Self::get_frame_length(data)?;
 
         if data.len() < offset + n1 {
@@ -137,7 +137,7 @@ impl<'a> FramePacket<'a> {
         });
     }
 
-    fn arbitrary(data: &'a [u8], toc: Toc) -> Result<Self> {
+    fn signaled_number_of_frames(data: &'a [u8], toc: Toc) -> Result<Self> {
         let (frame_count_byte, rest) = data.split_first().ok_or(Error::PacketTooShort)?;
 
         let buf = [*frame_count_byte];
@@ -301,7 +301,7 @@ impl<'a> FramePacket<'a> {
 mod tests {
     use super::*;
     #[test]
-    fn parse_single_frame_packet() {
+    fn single_frame_packet() {
         let toc_byte = 0b0000_0000;
         let frame_data = [0xAA, 0xBB, 0xCC];
 
@@ -314,7 +314,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_two_equal_frames_packet() {
+    fn two_equal_frames_packet() {
         let toc_byte = 0b0000_0001;
         let frame_data = [0xAA, 0xBB, 0xCC, 0xDD];
 
@@ -328,7 +328,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_two_different_frames_packet() {
+    fn two_different_frames_packet() {
         let toc_byte = 0b0000_0010;
         let frame1 = [0xAA, 0xBB];
         let frame2 = [0xCC, 0xDD, 0xEE];
@@ -346,7 +346,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_arbitrary_frames_cbr_packet() {
+    fn arbitrary_frames_cbr_packet() {
         let toc_byte = 0b0000_0011;
         let frame_count_byte = 0b0000_0011;
         let frame1 = [0xAA, 0xBB];
@@ -365,7 +365,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_arbitrary_frames_vbr_packet() {
+    fn arbitrary_frames_vbr_packet() {
         let toc_byte = 0b0000_0011;
         let frame_count_byte = 0b1000_0010;
         let frame1_length = [0x02];
@@ -392,7 +392,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_packet_with_padding() {
+    fn packet_with_padding() {
         let toc_byte = 0b0000_0011;
         let frame_count_byte = 0b0100_0001;
         let padding_length = [0x02];
