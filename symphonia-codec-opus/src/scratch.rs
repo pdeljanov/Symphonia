@@ -63,7 +63,7 @@ impl From<Error> for symphonia_core::errors::Error {
     }
 }
 
-const MAX_FRAME_LENGTH: usize = 255 * 4 + 255; // 1275 
+const MAX_FRAME_LENGTH: usize = 255 * 4 + 255; // 1275
 const MAX_TOTAL_DURATION_MS: u128 = 120;
 const MAX_PADDING_VALUE: u8 = 254;
 
@@ -123,16 +123,16 @@ impl<'a> FramePacket<'a> {
             return Err(Error::FirstFrameLengthExceedsData.into());
         }
 
-        let frame1_end = offset + n1;
-        let frame1 = &data[offset..frame1_end];
-        let frame2 = &data[frame1_end..];
+        let frame_1_end = offset + n1;
+        let frame_1 = &data[offset..frame_1_end];
+        let frame_2 = &data[frame_1_end..];
 
-        Self::check_frame_size(frame1.len())?;
-        Self::check_frame_size(frame2.len())?;
+        Self::check_frame_size(frame_1.len())?;
+        Self::check_frame_size(frame_2.len())?;
 
         return Ok(Self {
             toc,
-            frames: vec![frame1, frame2],
+            frames: vec![frame_1, frame_2],
             padding: None,
         });
     }
@@ -169,7 +169,7 @@ impl<'a> FramePacket<'a> {
             let padding_start = offset;
             let padding_end = offset + padding_length;
             let padding_data = &rest[padding_start..padding_end];
-            offset = padding_end; 
+            offset = padding_end;
             Some(padding_data)
         } else {
             None
@@ -333,7 +333,7 @@ mod tests {
     #[test]
     fn two_different_frames_packet() {
         let toc = create_toc(0, false, FrameCount::TwoDifferent);
-        let data = [0, 2, 0, 0, 3, 0, 0, 0]; // TOC, length1, frame1, length2, frame2
+        let data = [0, 2, 0, 0, 3, 0, 0, 0]; // TOC, length1, frame_1, length2, frame_2
         let packet = FramePacket::new(&data).unwrap();
 
         assert_eq!(packet.toc(), toc);
@@ -400,7 +400,7 @@ mod tests {
             let toc = create_toc(config, stereo, FrameCount::Arbitrary);
             let mut packet_data = vec![toc.as_byte(), frame_count];
             packet_data.extend_from_slice(&data);
-            
+
             if let Ok(packet) = FramePacket::new(&packet_data) {
                 prop_assert_eq!(packet.toc(), toc);
                 prop_assert!(packet.frames().len() > 0);
@@ -418,7 +418,7 @@ mod tests {
             let toc = create_toc(config, stereo, FrameCount::Arbitrary);
             let mut packet_data = vec![toc.as_byte(), frame_count];
             packet_data.extend_from_slice(&data);
-            
+
             prop_assert!(FramePacket::new(&packet_data).is_err());
         }
     }

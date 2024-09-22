@@ -2,7 +2,7 @@ use crate::toc::{FrameCount, Toc};
 use std::num::NonZeroU8;
 use std::time::Duration;
 use symphonia_core::errors::Result;
-use symphonia_core::io::{BitReaderRtl, BitReaderLtr, ReadBitsLtr};
+use symphonia_core::io::{BitReaderLtr, ReadBitsLtr};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -123,16 +123,16 @@ impl<'a> FramePacket<'a> {
             return Err(Error::FirstFrameLengthExceedsData.into());
         }
 
-        let frame1_end = offset + n1;
-        let frame1 = &data[offset..frame1_end];
-        let frame2 = &data[frame1_end..];
+        let frame_1_end = offset + n1;
+        let frame_1 = &data[offset..frame_1_end];
+        let frame_2 = &data[frame_1_end..];
 
-        Self::check_frame_size(frame1.len())?;
-        Self::check_frame_size(frame2.len())?;
+        Self::check_frame_size(frame_1.len())?;
+        Self::check_frame_size(frame_2.len())?;
 
         return Ok(Self {
             toc,
-            frames: vec![frame1, frame2],
+            frames: vec![frame_1, frame_2],
             padding: None,
         });
     }
@@ -169,7 +169,7 @@ impl<'a> FramePacket<'a> {
             let padding_start = offset;
             let padding_end = offset + padding_length;
             let padding_data = &rest[padding_start..padding_end];
-            offset = padding_end; 
+            offset = padding_end;
             Some(padding_data)
         } else {
             None
@@ -183,11 +183,11 @@ impl<'a> FramePacket<'a> {
             Self::get_cbr_frames(frames_data, frame_count)?
         };
 
-        return  Ok(Self {
+        return Ok(Self {
             toc,
             frames,
             padding: padding_data,
-        })
+        });
     }
 
     fn get_vbr_frames(data: &'a [u8], frame_count: u8) -> Result<Vec<&'a [u8]>> {
@@ -300,13 +300,113 @@ impl<'a> FramePacket<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct Packet {
+        toc_byte: u8,
+        vbr: bool,
+        padding_flag: bool,
+        frame_count: Option<u8>,
+        padding_length: usize,
+        frames: Vec<Vec<u8>>,
+    }
+
+    impl Packet {
+        fn new(toc_byte: u8) -> Self {
+            return Self {
+                toc_byte,
+                vbr: false,
+                padding_flag: false,
+                frame_count: None,
+                padding_length: 0,
+                frames: Vec::new(),
+            }
+        }
+
+        fn vbr(mut self, vbr: bool) -> Self {
+            self.vbr = vbr;
+            return self
+        }
+
+        fn padding_flag(mut self, padding_flag: bool) -> Self {
+            self.padding_flag = padding_flag;
+            return self
+        }
+
+        fn frame_count(mut self, frame_count: u8) -> Self {
+            self.frame_count = Some(frame_count);
+            return self
+        }
+
+        fn padding(mut self, padding_length: usize) -> Self {
+            self.padding_flag = true;
+            self.padding_length = padding_length;
+            return self
+        }
+
+        /// Adds a frame to the packet.
+        fn add_frame(mut self, frame: &[u8]) -> Self {
+            self.frames.push(frame.to_vec());
+            return self
+        }
+
+        fn build(self) -> Vec<u8> {
+            let mut data = Vec::new();
+            data.push(self.toc_byte);
+
+            if let Some(frame_count) = self.frame_count {
+                let mut frame_count_byte = 0u8;
+                if self.vbr {
+                    frame_count_byte |= 0b1000_0000;
+                }
+                if self.padding_flag {
+                    frame_count_byte |= 0b0100_0000;
+                }
+                frame_count_byte |= frame_count & 0b00111111;
+                data.push(frame_count_byte);
+            }
+
+            if self.padding_flag {
+                let mut remaining_padding = self.padding_length;
+                while remaining_padding >= 255 {
+                    data.push(255u8);
+                    remaining_padding -= 255;
+                }
+                data.push(remaining_padding as u8);
+                data.extend(vec![0u8; self.padding_length]);
+            }
+
+            if self.vbr {
+                for (i, frame) in self.frames.iter().enumerate() {
+                    if i != self.frames.len() - 1 {
+                        let frame_len = frame.len();
+                        assert!(
+                            frame_len < 252,
+                            "Frame length too long for test builder (max 251)"
+                        );
+                        data.push(frame_len as u8);
+                    }
+                    data.extend(frame);
+                }
+            } else {
+                for frame in self.frames {
+                    data.extend(frame);
+                }
+            }
+
+            return data;
+        }
+    }
+
     #[test]
     fn single_frame_packet() {
         let toc_byte = 0b0000_0000;
         let frame_data = [0xAA, 0xBB, 0xCC];
 
-        let packet_data = [toc_byte].iter().chain(&frame_data).cloned().collect::<Vec<u8>>();
-        let packet = FramePacket::new(&packet_data).expect("Failed to parse single frame packet");
+        let packet_data = Packet::new(toc_byte)
+            .add_frame(&frame_data)
+            .build();
+
+        let packet = FramePacket::new(&packet_data).expect("Failed to parse single-frame packet");
 
         assert_eq!(packet.frames.len(), 1);
         assert_eq!(packet.frames[0], &frame_data[..]);
@@ -318,8 +418,12 @@ mod tests {
         let toc_byte = 0b0000_0001;
         let frame_data = [0xAA, 0xBB, 0xCC, 0xDD];
 
-        let packet_data = [toc_byte].iter().chain(&frame_data).cloned().collect::<Vec<u8>>();
-        let packet = FramePacket::new(&packet_data).expect("Failed to parse two equal frames packet");
+        let packet_data = Packet::new(toc_byte)
+            .add_frame(&frame_data)
+            .build();
+
+        let packet =
+            FramePacket::new(&packet_data).expect("Failed to parse two equal frames packet");
 
         assert_eq!(packet.frames.len(), 2);
         assert_eq!(packet.frames[0], &frame_data[0..2]);
@@ -330,101 +434,112 @@ mod tests {
     #[test]
     fn two_different_frames_packet() {
         let toc_byte = 0b0000_0010;
-        let frame1 = [0xAA, 0xBB];
-        let frame2 = [0xCC, 0xDD, 0xEE];
+        let frame_1 = [0xAA, 0xBB];
+        let frame_2 = [0xCC, 0xDD, 0xEE];
 
-        let frame1_length = [0x02];
-        let frame_data = frame1_length.iter().chain(&frame1).chain(&frame2).cloned().collect::<Vec<u8>>();
+        let frame_1_len = frame_1.len();
+        assert!(
+            frame_1_len < 252,
+            "Frame length too long for test builder (max 251)"
+        );
+        let frame_1_len_byte = [frame_1_len as u8];
 
-        let packet_data = [toc_byte].iter().chain(&frame_data).cloned().collect::<Vec<u8>>();
-        let packet = FramePacket::new(&packet_data).expect("Failed to parse two different frames packet");
+        let data = Packet::new(toc_byte)
+            .add_frame(&frame_1_len_byte)
+            .add_frame(&frame_1)
+            .add_frame(&frame_2)
+            .build();
+
+        let packet =
+            FramePacket::new(&data).expect("Failed to parse two different frames packet");
 
         assert_eq!(packet.frames.len(), 2);
-        assert_eq!(packet.frames[0], &frame1[..]);
-        assert_eq!(packet.frames[1], &frame2[..]);
+        assert_eq!(packet.frames[0], &frame_1[..]);
+        assert_eq!(packet.frames[1], &frame_2[..]);
         assert!(packet.padding.is_none());
     }
 
     #[test]
     fn arbitrary_frames_cbr_packet() {
         let toc_byte = 0b0000_0011;
-        let frame_count_byte = 0b0000_0011;
-        let frame1 = [0xAA, 0xBB];
-        let frame2 = [0xCC, 0xDD];
-        let frame3 = [0xEE, 0xFF];
-        let frame_data = [frame1, frame2, frame3].concat();
+        let frame_count = 3u8;
 
-        let packet_data = [toc_byte, frame_count_byte].iter().chain(&frame_data).cloned().collect::<Vec<u8>>();
-        let packet = FramePacket::new(&packet_data).expect("Failed to parse arbitrary frames CBR packet");
+        let frame_1 = [0xAA, 0xBB];
+        let frame_2 = [0xCC, 0xDD];
+        let frame_3 = [0xEE, 0xFF];
+
+        let data = Packet::new(toc_byte)
+            .frame_count(frame_count)
+            .add_frame(&frame_1)
+            .add_frame(&frame_2)
+            .add_frame(&frame_3)
+            .build();
+
+        let packet =
+            FramePacket::new(&data).expect("Failed to parse arbitrary frames CBR packet");
 
         assert_eq!(packet.frames.len(), 3);
-        assert_eq!(packet.frames[0], &frame1[..]);
-        assert_eq!(packet.frames[1], &frame2[..]);
-        assert_eq!(packet.frames[2], &frame3[..]);
+        assert_eq!(packet.frames[0], &frame_1[..]);
+        assert_eq!(packet.frames[1], &frame_2[..]);
+        assert_eq!(packet.frames[2], &frame_3[..]);
         assert!(packet.padding.is_none());
     }
 
     #[test]
     fn arbitrary_frames_vbr_packet() {
         let toc_byte = 0b0000_0011;
-        let frame_count_byte = 0b1000_0010;
-        let frame1_length = [0x02];
-        let frame1 = [0xAA, 0xBB];
-        let frame2 = [0xCC, 0xDD, 0xEE];
-        let frame_data = frame1_length.iter()
-            .chain(&frame1)
-            .chain(&frame2)
-            .cloned()
-            .collect::<Vec<u8>>();
+        let frame_count = 2u8;
 
-        let packet_data = [toc_byte, frame_count_byte]
-            .iter()
-            .chain(&frame_data)
-            .cloned()
-            .collect::<Vec<u8>>();
+        let frame_1 = [0xAA, 0xBB];
+        let frame_2 = [0xCC, 0xDD, 0xEE];
 
-        let packet = FramePacket::new(&packet_data).expect("Failed to parse arbitrary frames VBR packet");
+        let data = Packet::new(toc_byte)
+            .vbr(true)
+            .frame_count(frame_count)
+            .add_frame(&frame_1)
+            .add_frame(&frame_2)
+            .build();
+
+        let packet =
+            FramePacket::new(&data).expect("Failed to parse arbitrary frames VBR packet");
 
         assert_eq!(packet.frames.len(), 2);
-        assert_eq!(packet.frames[0], &frame1[..]);
-        assert_eq!(packet.frames[1], &frame2[..]);
+        assert_eq!(packet.frames[0], &frame_1[..]);
+        assert_eq!(packet.frames[1], &frame_2[..]);
         assert!(packet.padding.is_none());
     }
 
     #[test]
     fn packet_with_padding() {
         let toc_byte = 0b0000_0011;
-        let frame_count_byte = 0b0100_0001;
-        let padding_length = [0x02];
-        let padding_data = [0x00, 0x00];
+        let frame_count = 1u8;
         let frame = [0xAA, 0xBB, 0xCC];
 
-        let packet_data = [toc_byte, frame_count_byte]
-            .iter()
-            .chain(&padding_length)
-            .chain(&padding_data)
-            .chain(&frame)
-            .cloned()
-            .collect::<Vec<u8>>();
+        let data = Packet::new(toc_byte)
+            .frame_count(frame_count)
+            .padding(2)
+            .add_frame(&frame)
+            .build();
 
-        let packet = FramePacket::new(&packet_data).expect("Failed to parse packet with padding");
+        let packet = FramePacket::new(&data).expect("Failed to parse packet with padding");
 
-        assert_eq!(packet.frames.len(), 1); // FAILED: assertion `left == right` failed left: [0, 0, 170] right: [170, 187, 204] 
+        assert_eq!(packet.frames.len(), 1);
         assert_eq!(packet.frames[0], &frame[..]);
 
-        let padding_start = 2; 
-        let padding_end = padding_start + padding_length[0] as usize;
-
-        assert_eq!(packet.padding.unwrap(), &packet_data[padding_start..padding_end]);
+        let expected = [0u8; 2];
+        assert_eq!(packet.padding.unwrap(), &expected[..]);
     }
 
     #[test]
     fn handle_invalid_packet_length() {
         let toc_byte = 0b0000_0001;
-        let frame_data = [0xAA, 0xBB, 0xCC];
+        let frame_data = [0xAA, 0xBB, 0xCC]; // Length not divisible by 2.
 
-        let packet_data = [toc_byte].iter().chain(&frame_data).cloned().collect::<Vec<u8>>();
-        let result = FramePacket::new(&packet_data);
+        let data = Packet::new(toc_byte)
+            .add_frame(&frame_data)
+            .build();
+
+        let result = FramePacket::new(&data);
 
         assert!(result.is_err());
         match result {
