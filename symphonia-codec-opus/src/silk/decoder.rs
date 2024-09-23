@@ -6,7 +6,7 @@ use symphonia_core::errors::{Error as SymphoniaError, Result};
 use symphonia_core::formats::Packet;
 use symphonia_core::io::BitReaderLtr;
 use thiserror::Error;
-use crate::range::{self, RangeDecoder};
+use crate::entropy::{self, RangeDecoder};
 
 #[derive(Error, Debug)]
 pub enum Error {
@@ -21,13 +21,14 @@ pub enum Error {
 
     #[error("Decoding error: {0}")]
     DecodingError(#[from] SymphoniaError),
-    
+
     #[error("Invalid synthesized samples")]
     InvalidSynthesizedSamples,
-    
+
     #[error("Buffer too small")]
     BufferTooSmall,
 }
+
 
 impl From<Error> for SymphoniaError {
     fn from(err: Error) -> Self {
@@ -78,10 +79,12 @@ impl Decoder {
 
         return Ok(self.buffer.as_audio_buffer_ref());
     }
+}
 
+impl Decoder {
     fn decode_frame(&mut self, frame_data: &[u8]) -> Result<()> {
         let reader = BitReaderLtr::new(frame_data);
-        let mut range_decoder = range::Decoder::new(reader)?;
+        let mut range_decoder = entropy::Decoder::new(reader)?;
 
         let vad_flag = self.decode_vad_flag(&mut range_decoder)?; // FIXME: why this is unused??
         let lsf_coeffs = self.decode_lsf(&mut range_decoder)?;
@@ -96,10 +99,10 @@ impl Decoder {
         return Ok(());
     }
 
-    fn decode_vad_flag<R: RangeDecoder>(&mut self, decoder: &mut R) -> Result<bool> {
+    fn decode_vad_flag<R: RangeDecoder>(&mut self, decoder: &mut R) -> Result<VadFlag> {
         let vad_flag = decoder.decode_symbol_logp(1)? == 1;
 
-        return Ok(vad_flag);
+        return Ok(if vad_flag { VadFlag::Active } else { VadFlag::Inactive });
     }
 
     fn decode_lsf<R: RangeDecoder>(&mut self, decoder: &mut R) -> Result<Vec<f32>> {
@@ -117,7 +120,6 @@ impl Decoder {
     }
 
     fn decode_ltp<R: RangeDecoder>(&mut self, decoder: &mut R) -> Result<LtpParameters> {
-        // TODO: implement code to decode LTP parameters.
         let pitch_lag = decoder.decode_symbol_logp(7)? as usize;
         let pitch_gain = decoder.decode_symbol_logp(3)? as f32;
 
@@ -128,7 +130,7 @@ impl Decoder {
     }
 
     fn decode_gains<R: RangeDecoder>(&mut self, decoder: &mut R) -> Result<Vec<f32>> {
-        let num_subframes = 4; // TODO: process subframes 
+        let num_subframes = 4; // TODO: process subframes
         let mut gains = Vec::with_capacity(num_subframes);
 
         for _ in 0..num_subframes {
@@ -195,7 +197,7 @@ struct State {
 
 impl State {
     fn new(sample_rate: u32, channels: usize) -> Self {
-        let frame_length = (sample_rate / 50) as usize; // Assuming 20 ms frames.
+        let frame_length = (sample_rate / 50) as usize; // TODO: remove magic.
         Self {
             sample_rate,
             channels,
@@ -243,6 +245,12 @@ impl State {
 
         return Ok(());
     }
+}
+
+#[repr(u8)]
+enum VadFlag {
+    Inactive = 0,
+    Active = 1,
 }
 
 
