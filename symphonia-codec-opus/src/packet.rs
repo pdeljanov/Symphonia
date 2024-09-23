@@ -4,6 +4,7 @@ use std::time::Duration;
 use symphonia_core::errors::Result;
 use symphonia_core::io::{BitReaderLtr, ReadBitsLtr};
 use thiserror::Error;
+use symphonia_core::formats::Packet;
 
 #[derive(Error, Debug)]
 pub enum Error {

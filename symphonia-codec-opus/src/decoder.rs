@@ -2,10 +2,12 @@ use once_cell::sync::Lazy;
 use symphonia_core::audio::{AudioBuffer, AudioBufferRef};
 use symphonia_core::codecs::{CodecDescriptor, CodecParameters, Decoder, DecoderOptions, FinalizeResult, CODEC_TYPE_OPUS};
 use symphonia_core::formats::Packet;
-use crate::{celt, silk};
+use crate::{celt, range, silk};
 use thiserror::Error;
+use symphonia_core::io::BitReaderLtr;
 
 const OPUS_FRAME_SIZES: [usize; 5] = [120, 240, 480, 960, 1920];
+
 const SILK_INTERNAL_SAMPLE_RATE: u32 = 16000;
 const CELT_INTERNAL_SAMPLE_RATE: u32 = 48000;
 const DEFAULT_FRAME_LENGTH_MS: usize = 20;
