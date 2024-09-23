@@ -2,7 +2,7 @@ use once_cell::sync::Lazy;
 use symphonia_core::audio::{AudioBuffer, AudioBufferRef};
 use symphonia_core::codecs::{CodecDescriptor, CodecParameters, Decoder, DecoderOptions, FinalizeResult, CODEC_TYPE_OPUS};
 use symphonia_core::formats::Packet;
-use crate::{celt, range, silk};
+use crate::{celt, entropy, silk};
 use thiserror::Error;
 use symphonia_core::io::BitReaderLtr;
 
