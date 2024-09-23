@@ -77,10 +77,25 @@ const MIN_RANGE_SIZE: u32 = 1 << 23;
 const MAX_RANGE_VALUE: u32 = 0x7FFFFFFF;
 const BYTE_BITS: u32 = 8;
 
+pub trait RangeDecoder: Send + Sync {
+    fn decode_symbol_with_icdf(&mut self, icdf: &[u32]) -> Result<u32>;
+    fn decode_symbol_logp(&mut self, probability: u32) -> Result<u32>;
+}
+
 pub struct Decoder<R> {
     reader: R,
     rng: u32,
     val: u32,
+}
+
+impl<R: ReadBitsLtr + FiniteBitStream + Send + Sync> RangeDecoder for Decoder<R> {
+    fn decode_symbol_with_icdf(&mut self, icdf: &[u32]) -> Result<u32> {
+        return self.decode_symbol_with_icdf(icdf);
+    }
+
+    fn decode_symbol_logp(&mut self, logp: u32) -> Result<u32> {
+        return self.decode_symbol_logp(logp);
+    }
 }
 
 impl<R: ReadBitsLtr + FiniteBitStream> Decoder<R> {
@@ -113,7 +128,7 @@ impl<R: ReadBitsLtr + FiniteBitStream> Decoder<R> {
     /// returns the decoded symbol index.
     ///
     /// https://datatracker.ietf.org/doc/html/rfc6716#section-4.1.3.3
-    pub fn decode_symbol_with_icdf(&mut self, table: &[u32]) -> Result<u32> {
+    fn decode_symbol_with_icdf(&mut self, table: &[u32]) -> Result<u32> {
         let (total, table) = table.split_first()
             .ok_or_else(|| Error::DecodeError("cumulative distribution table is empty"))?;
 
@@ -149,7 +164,7 @@ impl<R: ReadBitsLtr + FiniteBitStream> Decoder<R> {
     /// is the absolute value of the base-2 logarithm of the probability of a "1".
     ///
     /// https://datatracker.ietf.org/doc/html/rfc6716#section-4.1.3.2
-    pub fn decode_symbol_logp(&mut self, logp: u32) -> Result<u32> {
+    fn decode_symbol_logp(&mut self, logp: u32) -> Result<u32> {
         let scale = self.rng >> logp;
 
         let i = if self.val >= scale {
