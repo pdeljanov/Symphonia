@@ -118,7 +118,7 @@ pub struct Toc {
 
 
 impl Toc {
-    pub fn new(byte: u8) -> Result<Self, Error> {
+    pub fn try_new(byte: u8) -> Result<Self, Error> {
         debug!("TOC byte: {:08b}", byte);
 
         let buf = [byte];
@@ -243,12 +243,13 @@ impl TryFrom<u8> for Bandwidth {
 }
 
 /// Enumeration of possible frame sizes in nanoseconds.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[repr(u64)]
 pub enum FrameSize {
     Ms2_5 = 2_500_000,
     Ms5 = 5_000_000,
     Ms10 = 10_000_000,
+    #[default]
     Ms20 = 20_000_000,
     Ms40 = 40_000_000,
     Ms60 = 60_000_000,
@@ -331,7 +332,7 @@ mod tests {
 
     impl TestCase {
         fn check(&self) {
-            let toc = Toc::new(self.toc_byte).expect("Failed to create Toc from byte");
+            let toc = Toc::try_new(self.toc_byte).expect("Failed to create Toc from byte");
 
             assert_eq!(
                 toc.is_stereo(),
@@ -488,7 +489,7 @@ mod tests {
 
     #[test]
     fn invalid_toc_byte() {
-        Toc::new(42).unwrap();
+        Toc::try_new(42).unwrap();
     }
 
     #[test]
@@ -570,7 +571,7 @@ mod tests {
     #[test]
     fn as_byte() {
         for t in populate_test_table() {
-            let toc = Toc::new(t.toc_byte).expect("Failed to create Toc from byte");
+            let toc = Toc::try_new(t.toc_byte).expect("Failed to create Toc from byte");
             let as_byte = toc.as_byte();
 
             assert_eq!(
