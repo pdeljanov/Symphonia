@@ -8,3 +8,5 @@ mod error;
 mod decoder;
 
 pub (crate) use decoder::Decoder;
+pub use error::Error;
+pub use frame::{Frame, FrameType, QuantizationOffsetType};

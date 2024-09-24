@@ -82,7 +82,7 @@ impl<'a> FramePacket<'a> {
             return Err(Error::EmptyFrameData.into());
         }
 
-        let toc = Toc::new(*toc_byte).map_err(Error::Toc)?;
+        let toc = Toc::try_new(*toc_byte).map_err(Error::Toc)?;
 
         return match toc.frame_count() {
             FrameCount::One => Self::one(data, toc),
