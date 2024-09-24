@@ -1,10 +1,11 @@
 use once_cell::sync::Lazy;
-use symphonia_core::audio::{AudioBuffer, AudioBufferRef};
+use symphonia_core::audio::{AudioBuffer, AudioBufferRef, SignalSpec};
 use symphonia_core::codecs::{CodecDescriptor, CodecParameters, Decoder, DecoderOptions, FinalizeResult, CODEC_TYPE_OPUS};
 use symphonia_core::formats::Packet;
-use crate::{celt, entropy, silk};
+use crate::{celt, entropy, silk, toc};
 use thiserror::Error;
-use symphonia_core::io::BitReaderLtr;
+use symphonia_core::errors::Error;
+use crate::toc::{AudioMode, Toc};
 
 const OPUS_FRAME_SIZES: [usize; 5] = [120, 240, 480, 960, 1920];
 
@@ -29,19 +30,25 @@ pub fn get_codecs() -> &'static [CodecDescriptor] {
 }
 
 pub struct OpusDecoder {
-    params: CodecParameters,
-    buf: AudioBuffer<f32>,
-    silk_decoder: Option<silk::Decoder>,
-    celt_decoder: Option<celt::Decoder>,
+    buf: Option<AudioBuffer<f32>>, 
+    silk_decoder: silk::Decoder,
+    celt_decoder: celt::Decoder,
 }
 
 
 impl Decoder for OpusDecoder {
-    fn try_new(_params: &CodecParameters, _options: &DecoderOptions) -> symphonia_core::errors::Result<Self>
+    fn try_new(params: &CodecParameters, _options: &DecoderOptions) -> symphonia_core::errors::Result<Self>
     where
         Self: Sized,
     {
-        unimplemented!()
+        let silk_decoder = silk::Decoder::try_new(params)?;
+        let celt_decoder = celt::Decoder::new();
+
+        return Ok(Self {
+            buf: None,
+            silk_decoder,
+            celt_decoder,
+        });
     }
 
     fn supported_codecs() -> &'static [CodecDescriptor]
@@ -59,8 +66,14 @@ impl Decoder for OpusDecoder {
         unimplemented!()
     }
 
-    fn decode(&mut self, _packet: &Packet) -> symphonia_core::errors::Result<AudioBufferRef> {
-        unimplemented!()
+    fn decode(&mut self, packet: &Packet) -> symphonia_core::errors::Result<AudioBufferRef> {
+        // TODO: error handling 
+        let toc_byte = packet.data.first().copied().unwrap();
+        let toc = Toc::try_new(toc_byte).unwrap();
+        let params = toc.params().unwrap();
+
+        // TODO: decoder switching.
+        return self.silk_decoder.decode(packet, &params);
     }
 
     fn finalize(&mut self) -> FinalizeResult {
