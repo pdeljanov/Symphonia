@@ -6,6 +6,7 @@ mod table;
 mod codebook;
 mod error;
 mod decoder;
+mod icdf;
 
 pub (crate) use decoder::Decoder;
 pub use error::Error;
