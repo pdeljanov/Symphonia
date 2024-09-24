@@ -1334,9 +1334,9 @@ pub const ICDF_FRAME_TYPE_VADACTIVE: [u32; 5] = [256, 24, 98, 246, 256];
 /// +-------------+------------------------------------+
 /// https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.4
 /// ```
-pub const ICDF_INDEPENDENT_QUANTIZATION_GAIN_MSBINACTIVE: [u32; 9] = [256, 32, 144, 212, 241, 253, 254, 255, 256];
-pub const ICDF_INDEPENDENT_QUANTIZATION_GAIN_MSBUNVOICED: [u32; 9] = [256, 2, 19, 64, 124, 186, 233, 252, 256];
-pub const ICDF_INDEPENDENT_QUANTIZATION_GAIN_MSBVOICED: [u32; 9] = [256, 1, 4, 30, 101, 195, 245, 254, 256];
+pub const ICDF_INDEPENDENT_QUANTIZATION_GAIN_MSB_INACTIVE: [u32; 9] = [256, 32, 144, 212, 241, 253, 254, 255, 256];
+pub const ICDF_INDEPENDENT_QUANTIZATION_GAIN_MSB_UNVOICED: [u32; 9] = [256, 2, 19, 64, 124, 186, 233, 252, 256];
+pub const ICDF_INDEPENDENT_QUANTIZATION_GAIN_MSB_VOICED: [u32; 9] = [256, 1, 4, 30, 101, 195, 245, 254, 256];
 
 ///``` text
 /// +--------------------------------------+
