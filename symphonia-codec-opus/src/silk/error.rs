@@ -1,3 +1,4 @@
+use symphonia_core::errors::Error as SymphoniaError;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -19,11 +20,16 @@ pub enum Error {
 
     #[error("Unsupported SILK configuration")]
     UnsupportedConfig,
+
+    #[error("Invalid synthesized samples")]
+    InvalidSynthesizedSamples,
+    
+    #[error("Calculation overflow")]
+    CalculationOverflow,
 }
 
-
-impl From<crate::silk::decoder::Error> for symphonia_core::errors::Error {
-    fn from(err: crate::silk::decoder::Error) -> Self {
-        return symphonia_core::errors::Error::DecodeError(err.to_string().leak());
+impl From<Error> for SymphoniaError {
+    fn from(err: Error) -> Self {
+        return SymphoniaError::DecodeError(err.to_string().leak());
     }
 }
