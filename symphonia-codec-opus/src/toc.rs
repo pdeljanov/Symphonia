@@ -161,7 +161,7 @@ impl Toc {
     }
 
     pub fn params(&self) -> Result<Parameters, Error> {
-        Parameters::new(self.config)
+        Parameters::try_new(self.config)
     }
 
     pub fn is_stereo(&self) -> bool {
@@ -181,7 +181,7 @@ pub struct Parameters {
 }
 
 impl Parameters {
-    pub fn new(config: u8) -> Result<Self, Error> {
+    pub fn try_new(config: u8) -> Result<Self, Error> {
         let audio_mode = AudioMode::try_from(config)?;
         let bandwidth = Bandwidth::try_from(config)?;
         let frame_size = FrameSize::try_from(config)?;
@@ -494,7 +494,7 @@ mod tests {
 
     #[test]
     fn invalid_config_value() {
-        Parameters::new(0b1).unwrap();
+        Parameters::try_new(0b1).unwrap();
     }
 
     #[test]
@@ -512,7 +512,7 @@ mod tests {
             #[test]
             fn $field() {
                 for (input, expected) in $inputs.iter() {
-                    let instance = $object::new(*input).unwrap();
+                    let instance = $object::try_new(*input).unwrap();
                     assert_eq!(
                         instance.$field, 
                         *expected, 
@@ -581,7 +581,7 @@ mod tests {
                 t.toc_byte,
                 as_byte
             );
-           
+
             let reconstructed = new_toc_byte(t.is_stereo, t.frame_count, t.audio_mode, t.bandwidth, t.frame_size);
             assert_eq!(
                 as_byte,
