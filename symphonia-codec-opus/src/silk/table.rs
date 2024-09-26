@@ -1,3 +1,37 @@
+///  Contents
+///
+/// Codebooks:
+/// These are predefined sets of vectors used for quantizing various parameters like LSFs, 
+/// pitch contours, and LTP filters. The encoder selects the closest vector from the codebook 
+/// to represent the parameter, reducing the amount of data needed to transmit.
+///
+/// Probability Distribution Functions (PDFs) and Cumulative Distribution Functions (CDFs):
+/// PDFs define the probability of each possible symbol (like a codebook index) occurring.
+/// CDFs are used in entropy coding (e.g., range coding) to efficiently encode symbols based on their probabilities.
+///
+/// LSF (Line Spectral Frequencies):
+/// LSFs are used to represent the spectral envelope of the audio signal. 
+/// They are quantized using codebooks to ensure efficient transmission and reconstruction.
+///
+/// VAD (Voice Activity Detection):
+/// Determines whether a frame contains speech or is silent/inactive, influencing how the frame is encoded.
+///
+/// LTP (Long-Term Prediction):
+/// Utilizes past audio samples to predict future ones, 
+/// improving compression efficiency, especially in voiced speech.
+///
+/// Pitch Contour:
+/// Represents the pitch variations over time, crucial for natural-sounding speech synthesis.
+///
+/// Excitation Coding:
+/// Deals with representing the excitation signal, which, when combined with the filter,
+/// recreates the original audio signal.
+///
+/// Rate Level:
+/// Determines the bit rate used for encoding, balancing audio quality against bandwidth usage.
+///
+///
+/// 
 /// Codebook Selection for NB/MB Normalized LSF Stage-2 Index Decoding
 /// NOTE: In definition of codebook 'a = 0, b = 1...'
 /// ```text

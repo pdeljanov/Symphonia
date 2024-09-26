@@ -26,6 +26,12 @@ pub enum Error {
     
     #[error("Calculation overflow")]
     CalculationOverflow,
+    
+    #[error("Invalid data")]
+    InvalidData,
+    
+    #[error("Invalid frame size")]
+    InvalidFrameSize,
 }
 
 impl From<Error> for SymphoniaError {
