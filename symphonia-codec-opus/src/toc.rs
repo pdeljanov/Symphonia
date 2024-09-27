@@ -261,6 +261,12 @@ impl From<FrameSize> for Duration {
     }
 }
 
+impl FrameSize {
+    pub fn duration(&self) -> Duration {
+        return Duration::from(*self);
+    }
+}
+
 impl TryFrom<u8> for FrameSize {
     type Error = Error;
 
@@ -484,7 +490,7 @@ mod tests {
             .iter()
             .map(|t| {
                 t.check();
-            } );
+            });
     }
 
     #[test]
