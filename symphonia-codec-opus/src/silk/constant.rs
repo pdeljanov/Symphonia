@@ -1353,8 +1353,8 @@ pub const MINIMUM_SPACING_NORMALIZED_LSF_WB: [i32; 17] = [100, 3, 40, 3, 3, 3, 5
 /// +----------+-----------------------------+
 ///  https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.3
 /// ``` 
-pub const ICDF_FRAME_TYPE_VADINACTIVE: [u32; 3] = [256, 26, 256];
-pub const ICDF_FRAME_TYPE_VADACTIVE: [u32; 5] = [256, 24, 98, 246, 256];
+pub const ICDF_FRAME_TYPE_VAD_INACTIVE: [u32; 3] = [256, 26, 256];
+pub const ICDF_FRAME_TYPE_VAD_ACTIVE: [u32; 5] = [256, 24, 98, 246, 256];
 
 ///``` text
 /// +-------------+------------------------------------+
