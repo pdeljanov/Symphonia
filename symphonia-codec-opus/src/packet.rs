@@ -69,7 +69,7 @@ const MAX_TOTAL_DURATION_MS: u128 = 120;
 const MAX_PADDING_VALUE: u8 = 254;
 
 pub struct FramePacket<'a> {
-    toc: Toc,
+    pub(crate) toc: Toc,
     pub(crate) frames: Vec<&'a [u8]>,
     padding: Option<&'a [u8]>,
 }

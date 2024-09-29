@@ -41,7 +41,7 @@ impl Decoder for OpusDecoder {
     where
         Self: Sized,
     {
-        let silk_decoder = silk::Decoder::try_new(params)?;
+        let silk_decoder = silk::Decoder::try_new(params,)?;
         let celt_decoder = celt::Decoder::new();
 
         return Ok(Self {
@@ -67,13 +67,7 @@ impl Decoder for OpusDecoder {
     }
 
     fn decode(&mut self, packet: &Packet) -> symphonia_core::errors::Result<AudioBufferRef> {
-        // TODO: error handling 
-        let toc_byte = packet.data.first().copied().unwrap();
-        let toc = Toc::try_new(toc_byte).unwrap();
-        let params = toc.params().unwrap();
-
-        // TODO: decoder switching.
-        return self.silk_decoder.decode(packet, &params);
+        return self.silk_decoder.decode(packet);
     }
 
     fn finalize(&mut self) -> FinalizeResult {
