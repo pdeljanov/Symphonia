@@ -42,7 +42,10 @@ impl Decoder {
         let frame_packet = FramePacket::new(&packet.data)?;
 
         let params = frame_packet.toc.params().map_err(|_| Error::UnsupportedConfig)?;
-        self.state = State::try_new(self.channels, params.frame_size, params.bandwidth)?;
+
+        if self.state.frame_size != params.frame_size || self.state.bandwidth != params.bandwidth || self.state.channels != self.channels {
+            self.state = State::try_new(self.channels, params.frame_size, params.bandwidth)?;
+        }
 
         for frame_data in frame_packet.frames.iter() {
             let frame = self.decode_frame(frame_data)?;
@@ -164,7 +167,7 @@ impl Decoder {
     }
 
     fn decode_lsf_stage2<R: RangeDecoder>(&self, decoder: &mut R, i1: u32) -> Result<(usize, Vec<i16>)> {
-        let d_lpc = self.state.channels.count(); // TODO: find out if  Assuming d_LPC is equal to the number of channels is correct or not?
+        let d_lpc = self.state.lpc_order;
         let mut res_q10 = vec![0i16; d_lpc];
 
         for i in 0..d_lpc {
@@ -352,16 +355,14 @@ impl Decoder {
     ) -> Result<()> {
         let rate_level = self.decode_rate_level(decoder, frame.frame_type.signal_type)?;
         let (pulse_counts, lsb_counts) = self.decode_pulse_counts(decoder, rate_level)?;
-
         let lcg_seed = decoder.decode_symbol_with_icdf(&constant::ICDF_LINEAR_CONGRUENTIAL_GENERATOR_SEED)?;
 
         for subframe in frame.subframes.iter_mut() {
-            let pulse_locations = self.decode_pulse_locations(decoder, &pulse_counts, &lsb_counts)?;
-            let excitation = self.apply_sign_and_scaling(pulse_locations, frame.frame_type, lcg_seed)?;
-            subframe.excitation = excitation;
+            let pulse_locations = self.decode_pulse_locations(decoder, pulse_counts, lsb_counts)?;
+            subframe.excitation = self.apply_sign_and_scaling(pulse_locations, frame.frame_type, lcg_seed)?;
         }
 
-        return Ok(());
+        Ok(())
     }
 
     fn apply_sign_and_scaling(
@@ -387,9 +388,6 @@ impl Decoder {
             if (lcg_seed & LCG_SIGN_MASK) != 0 {
                 e_q23 = -e_q23;
             }
-
-            let e_raw_u32 = e_raw as u32;
-            lcg_seed = lcg_seed.wrapping_add(e_raw_u32);
 
             excitation.push(e_q23);
         }
@@ -417,101 +415,74 @@ impl Decoder {
         return decoder.decode_symbol_with_icdf(icdf);
     }
 
-    fn decode_pulse_counts<R: RangeDecoder>(&self, decoder: &mut R, rate_level: u32) -> Result<(Vec<u8>, Vec<u8>)> {
+    fn decode_pulse_counts<R: RangeDecoder>(&self, decoder: &mut R, rate_level: u32) -> Result<(u8, u8)> {
         const MAX_PULSE_COUNT: u32 = 17;
-        const OVERFLOW_PULSE_COUNT: u8 = 18;
         const MAX_LSB_COUNT: u8 = 10;
 
-        let num_blocks = self.state.frame_size.into();
-        let mut pulse_counts = vec![0u8; num_blocks];
-        let mut lsb_counts = vec![0u8; num_blocks];
+        let mut count = decoder.decode_symbol_with_icdf(&constant::ICDF_PULSE_COUNT[rate_level as usize])?;
+        let mut lsb_count = 0u8;
 
-        for i in 0..num_blocks {
-            let mut count = decoder.decode_symbol_with_icdf(&constant::ICDF_PULSE_COUNT[rate_level as usize])?;
-            let mut lsb_count = 0u8;
-
-            while count == MAX_PULSE_COUNT && lsb_count < MAX_LSB_COUNT {
-                count = decoder.decode_symbol_with_icdf(&constant::ICDF_PULSE_COUNT[9])?;
-                lsb_count += 1;
-            }
-
-            if lsb_count == MAX_LSB_COUNT {
-                count = decoder.decode_symbol_with_icdf(&constant::ICDF_PULSE_COUNT[MAX_LSB_COUNT as usize])?;
-            }
-
-            pulse_counts[i] = count as u8;
-            lsb_counts[i] = lsb_count;
+        while count == MAX_PULSE_COUNT && lsb_count < MAX_LSB_COUNT {
+            count = decoder.decode_symbol_with_icdf(&constant::ICDF_PULSE_COUNT[9])?;
+            lsb_count += 1;
         }
 
-        return Ok((pulse_counts, lsb_counts));
+        if lsb_count == MAX_LSB_COUNT {
+            count = decoder.decode_symbol_with_icdf(&constant::ICDF_PULSE_COUNT[MAX_LSB_COUNT as usize])?;
+        }
+
+        return Ok((count as u8, lsb_count));
     }
 
     fn decode_pulse_locations<R: RangeDecoder>(
         &self,
         decoder: &mut R,
-        pulse_counts: &[u8],
-        lsb_counts: &[u8],
+        pulse_count: u8,
+        lsb_count: u8,
     ) -> Result<Vec<f32>> {
         const SHELL_BLOCK_SIZE: usize = 16;
         const MAX_PULSE_COUNT: u8 = 17;
 
-        let mut excitation = Vec::new();
+        let mut excitation = Vec::with_capacity(SHELL_BLOCK_SIZE);
 
-        for (&pulse_count, &lsb_count) in pulse_counts.iter().zip(lsb_counts.iter()) {
-            if pulse_count == 0 {
-                excitation.extend(std::iter::repeat(0.0).take(SHELL_BLOCK_SIZE));
-                continue;
+        if pulse_count == 0 {
+            excitation.extend(std::iter::repeat(0.0).take(SHELL_BLOCK_SIZE));
+            return Ok(excitation);
+        }
+
+        let mut pulse_partitions = [pulse_count; SHELL_BLOCK_SIZE];
+
+        for &block_size in &[16, 8, 4, 2] {
+            let half_block_size = block_size / 2;
+
+            for i in (0..SHELL_BLOCK_SIZE).step_by(block_size) {
+                let icdf = match block_size {
+                    16 => &constant::ICDF_PULSE_COUNT_SPLIT_16_SAMPLE_PARTITIONS[pulse_partitions[i] as usize],
+                    8 => &constant::ICDF_PULSE_COUNT_SPLIT_8_SAMPLE_PARTITIONS[pulse_partitions[i] as usize],
+                    4 => &constant::ICDF_PULSE_COUNT_SPLIT_4_SAMPLE_PARTITIONS[pulse_partitions[i] as usize],
+                    2 => &constant::ICDF_PULSE_COUNT_SPLIT_2_SAMPLE_PARTITIONS[pulse_partitions[i] as usize],
+                    _ => return Err(Error::InvalidPartitionSize.into()),
+                };
+
+                let left_pulses = decoder.decode_symbol_with_icdf(icdf)? as u8;
+                let right_pulses = pulse_partitions[i].saturating_sub(left_pulses);
+
+                pulse_partitions[i] = left_pulses;
+                pulse_partitions[i + half_block_size] = right_pulses;
             }
+        }
 
-            let mut pulse_locations = vec![0i32; SHELL_BLOCK_SIZE];
-            let mut pulse_partitions = [pulse_count; SHELL_BLOCK_SIZE];
-
-            for block_size in &[16, 8, 4, 2] {
-                let half_block_size = block_size / 2;
-                let mut partition_index = 0;
-
-                for i in (0..SHELL_BLOCK_SIZE).step_by(*block_size) {
-                    let icdf = match block_size {
-                        16 => &constant::ICDF_PULSE_COUNT_SPLIT_16_SAMPLE_PARTITIONS[pulse_partitions[i] as usize],
-                        8 => &constant::ICDF_PULSE_COUNT_SPLIT_8_SAMPLE_PARTITIONS[pulse_partitions[i] as usize],
-                        4 => &constant::ICDF_PULSE_COUNT_SPLIT_4_SAMPLE_PARTITIONS[pulse_partitions[i] as usize],
-                        2 => &constant::ICDF_PULSE_COUNT_SPLIT_2_SAMPLE_PARTITIONS[pulse_partitions[i] as usize],
-                        _ => return Err(Error::InvalidPartitionSize.into()),
-                    };
-
-                    let left_pulses = decoder.decode_symbol_with_icdf(icdf)? as u8;
-                    let right_pulses = pulse_partitions[i] - left_pulses;
-
-                    pulse_partitions[i] = left_pulses;
-                    pulse_partitions[i + half_block_size] = right_pulses;
-
-                    pulse_locations[i + partition_index] = left_pulses as i32;
-                    pulse_locations[i + partition_index + 1] = right_pulses as i32;
-
-                    partition_index += 1;
-                }
-            }
-
-            let mut block_excitation: Vec<f32> = pulse_locations.into_iter().map(|p| p as f32).collect();
+        for i in 0..SHELL_BLOCK_SIZE {
+            let mut value = pulse_partitions[i] as f32;
 
             if pulse_count == MAX_PULSE_COUNT {
-                for i in 0..SHELL_BLOCK_SIZE {
-                    for _ in 0..lsb_count {
-                        let lsb = decoder.decode_symbol_with_icdf(&constant::ICDF_EXCITATION_LSB)?;
-                        block_excitation[i] = block_excitation[i] * 2.0 + lsb as f32;
-                    }
+                for _ in 0..lsb_count {
+                    let lsb = decoder.decode_symbol_with_icdf(&constant::ICDF_EXCITATION_LSB)?;
+                    value = value * 2.0 + lsb as f32;
                 }
             }
 
-            self.decode_excitation_signs(
-                decoder,
-                &mut block_excitation,
-                self.state.prev_frame_type.signal_type,
-                self.state.prev_frame_type.quantization_offset_type,
-                pulse_count,
-            )?;
-
-            excitation.extend(block_excitation);
+            excitation.push(value);
         }
 
         return Ok(excitation);
@@ -639,6 +610,7 @@ pub struct State {
     prev_nlsf_q15: Vec<i16>,
     prev_lpc_values: Vec<f32>,
     lbrr_flag: bool,
+    lpc_order: usize,
 }
 
 impl State {
@@ -663,6 +635,7 @@ impl State {
             prev_nlsf_q15,
             prev_lpc_values,
             lbrr_flag,
+            lpc_order,
         });
     }
 
