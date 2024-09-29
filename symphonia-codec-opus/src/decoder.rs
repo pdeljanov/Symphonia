@@ -2,7 +2,7 @@ use once_cell::sync::Lazy;
 use symphonia_core::audio::{AudioBuffer, AudioBufferRef, SignalSpec};
 use symphonia_core::codecs::{CodecDescriptor, CodecParameters, Decoder, DecoderOptions, FinalizeResult, CODEC_TYPE_OPUS};
 use symphonia_core::formats::Packet;
-use crate::{celt, entropy, silk, toc};
+use crate::silk;
 
 /// Static Opus Codec Descriptor.
 static OPUS_CODEC_DESCRIPTOR: Lazy<CodecDescriptor> = Lazy::new(|| {
@@ -26,7 +26,6 @@ pub fn get_codecs() -> &'static [CodecDescriptor] {
 /// CELT and Hybrid modes are placeholders for future implementation.
 pub struct OpusDecoder {
     silk_decoder: silk::Decoder,
-    celt_decoder: celt::Decoder,
 }
 
 
@@ -36,9 +35,8 @@ impl Decoder for OpusDecoder {
         Self: Sized,
     {
         let silk_decoder = silk::Decoder::try_new(params.to_owned())?;
-        let celt_decoder = celt::Decoder::new(/*TODO: Implement*/);
 
-        return Ok(Self { silk_decoder, celt_decoder });
+        return Ok(Self { silk_decoder});
     }
 
     fn supported_codecs() -> &'static [CodecDescriptor]
@@ -50,7 +48,6 @@ impl Decoder for OpusDecoder {
 
     fn reset(&mut self) {
         self.silk_decoder.reset();
-        self.celt_decoder.reset();
     }
 
     fn codec_params(&self) -> &CodecParameters {
