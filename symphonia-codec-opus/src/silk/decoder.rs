@@ -205,14 +205,9 @@ impl State {
     }
 
     fn calculate_frame_length(sample_rate: NonZeroU32, frame_size: FrameSize) -> Result<usize> {
-        let duration = Duration::from(frame_size);
-
         let samples = (sample_rate.get() as u128)
-            .checked_mul(duration.as_nanos())
-            .ok_or(Error::CalculationOverflow)?;
-
-        let samples = samples
-            .checked_div(1_000_000_000)
+            .checked_mul(frame_size.duration().as_nanos())
+            .and_then(|ns| ns.checked_div(1_000_000_000))
             .ok_or(Error::CalculationOverflow)?;
 
         return usize::try_from(samples).map_err(|_| Error::CalculationOverflow.into());
@@ -228,22 +223,6 @@ impl State {
 
         return Ok(());
     }
-}
-
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum SignalType {
-    #[default]
-    Inactive,
-    Voiced,
-    Unvoiced,
-}
-
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub enum QuantizationOffsetType {
-    #[default]
-    High,
-    Low,
 }
 
 #[derive(Debug, Clone, Default, Copy, PartialEq, Eq)]
@@ -313,6 +292,14 @@ impl Frame {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum SignalType {
+    #[default]
+    Inactive,
+    Voiced,
+    Unvoiced,
+}
+
 impl TryFrom<u8> for SignalType {
     type Error = Error;
 
@@ -324,6 +311,13 @@ impl TryFrom<u8> for SignalType {
             _ => Err(Error::InvalidFrameType),
         };
     }
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum QuantizationOffsetType {
+    #[default]
+    High,
+    Low,
 }
 
 impl TryFrom<u8> for QuantizationOffsetType {
@@ -343,6 +337,78 @@ pub enum StreamType {
     Coupled,
     Independent,
 }
+
+type SubframeSize = u8;
+impl TryFrom<FrameSize> for SubframeSize {
+    type Error = Error;
+
+    fn try_from(frame_size: FrameSize) -> core::result::Result<Self, Self::Error> {
+        return match frame_size {
+            FrameSize::Ms2_5 => Ok(1),
+            FrameSize::Ms5 => Ok(1),
+            FrameSize::Ms10 => Ok(2),
+            FrameSize::Ms20 => Ok(4),
+            FrameSize::Ms40 => Ok(8),
+            FrameSize::Ms60 => Ok(12),
+            _ => Err(Error::InvalidFrameSize),
+        };
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct Subframe {
+    pub frame_type: FrameType,
+    pub vad_flag: bool,
+    pub lbrr_flag: bool,
+    pub gains: [f32; 2],
+    pub nlsf: [f32; 16],
+    pub pitch_lags: [u16; 2],
+    pub excitation: [f32; 16],
+    pub sample_count: usize,
+    pub lbrr_frames: Vec<Subframe>, // Nested subframes for LBRR
+}
+
+impl Subframe {
+    pub fn new(
+        frame_type: FrameType,
+        vad_flag: bool,
+        lbrr_flag: bool,
+        sample_count: usize,
+    ) -> Self {
+        return Self {
+            frame_type,
+            vad_flag,
+            lbrr_flag,
+            gains: [0.0; 2],
+            nlsf: [0.0; 16],
+            pitch_lags: [0; 2],
+            excitation: [0.0; 16],
+            sample_count,
+            lbrr_frames: Vec::new(),
+        }
+    }
+
+    pub fn set_gains(&mut self, gains: &[f32; 2]) {
+        self.gains = *gains;
+    }
+
+    pub fn set_nlsf(&mut self, nlsf: &[f32; 16]) {
+        self.nlsf = *nlsf;
+    }
+
+    pub fn set_pitch_lags(&mut self, pitch_lags: &[u16; 2]) {
+        self.pitch_lags = *pitch_lags;
+    }
+
+    pub fn set_excitation(&mut self, excitation: [f32; 16]) {
+        self.excitation = excitation;
+    }
+
+    pub fn add_lbrr_subframe(&mut self, lbrr_subframe: Subframe) {
+        self.lbrr_frames.push(lbrr_subframe);
+    }
+}
+
 
 pub struct Layer {
     pub stream_type: StreamType,
