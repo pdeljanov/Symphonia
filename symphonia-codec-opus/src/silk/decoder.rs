@@ -142,8 +142,6 @@ impl Decoder {
        return Ok(frame)
     }
 
-    
-
     fn decode_header_bits<R: RangeDecoder>(&self, decoder: &mut R) -> Result<(bool, bool)> {
         let vad_flag = decoder.decode_symbol_logp(1)? == 1;
         let lbrr_flag = decoder.decode_symbol_logp(1)? == 1;
