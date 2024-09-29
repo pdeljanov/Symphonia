@@ -23,15 +23,42 @@ pub enum Error {
 
     #[error("Invalid synthesized samples")]
     InvalidSynthesizedSamples,
-    
+
     #[error("Calculation overflow")]
     CalculationOverflow,
-    
+
     #[error("Invalid data")]
     InvalidData,
-    
+
     #[error("Invalid frame size")]
     InvalidFrameSize,
+
+    #[error("Invalid periodicity index")]
+    InvalidPeriodicityIndex,
+
+    #[error("Invalid LTP scaling index")]
+    InvalidLTPScalingIndex,
+
+    #[error("Invalid LBRR frame")]
+    InvalidLBRRFrame,
+
+    #[error("Mismatch frame subframes")]
+    MismatchFrameSubframes,
+
+    #[error("Unsupported frame size")]
+    UnsupportedFrameSize,
+
+    #[error("Invalid partition size")]
+    InvalidPartitionSize,
+
+    #[error("Invalid number of partitions")]
+    SynthesizedFrameLengthMismatch,
+
+    #[error("Invalid pulse count")]
+    InvalidPulseCount,
+    
+    #[error("Buffer overflow")]
+    BufferOverflow,
 }
 
 impl From<Error> for SymphoniaError {
