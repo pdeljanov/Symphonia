@@ -59,6 +59,12 @@ pub enum Error {
     
     #[error("Buffer overflow")]
     BufferOverflow,
+    
+    #[error("Frame length exceeds maximum")]
+    FrameLengthExceedsMaximum,
+    
+    #[error("Frame length exceeds data size")]
+    FrameLengthExceedsDataSize,
 }
 
 impl From<Error> for SymphoniaError {
