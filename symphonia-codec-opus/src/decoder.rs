@@ -3,16 +3,8 @@ use symphonia_core::audio::{AudioBuffer, AudioBufferRef, SignalSpec};
 use symphonia_core::codecs::{CodecDescriptor, CodecParameters, Decoder, DecoderOptions, FinalizeResult, CODEC_TYPE_OPUS};
 use symphonia_core::formats::Packet;
 use crate::{celt, entropy, silk, toc};
-use thiserror::Error;
-use symphonia_core::errors::Error;
-use crate::toc::{AudioMode, Toc};
 
-const OPUS_FRAME_SIZES: [usize; 5] = [120, 240, 480, 960, 1920];
-
-const SILK_INTERNAL_SAMPLE_RATE: u32 = 16000;
-const CELT_INTERNAL_SAMPLE_RATE: u32 = 48000;
-const DEFAULT_FRAME_LENGTH_MS: usize = 20;
-
+/// Static Opus Codec Descriptor.
 static OPUS_CODEC_DESCRIPTOR: Lazy<CodecDescriptor> = Lazy::new(|| {
     CodecDescriptor {
         codec: CODEC_TYPE_OPUS,
@@ -24,13 +16,15 @@ static OPUS_CODEC_DESCRIPTOR: Lazy<CodecDescriptor> = Lazy::new(|| {
     }
 });
 
-/// Register the Opus decoder with Symphonia
+/// Register the Opus decoder with Symphonia.
 pub fn get_codecs() -> &'static [CodecDescriptor] {
     return std::slice::from_ref(&*OPUS_CODEC_DESCRIPTOR);
 }
 
+/// The OpusDecoder struct implements the Symphonia Decoder trait.
+/// It currently supports only SILK mode. 
+/// CELT and Hybrid modes are placeholders for future implementation.
 pub struct OpusDecoder {
-    buf: Option<AudioBuffer<f32>>, 
     silk_decoder: silk::Decoder,
     celt_decoder: celt::Decoder,
 }
@@ -41,32 +35,30 @@ impl Decoder for OpusDecoder {
     where
         Self: Sized,
     {
-        let silk_decoder = silk::Decoder::try_new(params,)?;
-        let celt_decoder = celt::Decoder::new();
+        let silk_decoder = silk::Decoder::try_new(params.to_owned())?;
+        let celt_decoder = celt::Decoder::new(/*TODO: Implement*/);
 
-        return Ok(Self {
-            buf: None,
-            silk_decoder,
-            celt_decoder,
-        });
+        return Ok(Self { silk_decoder, celt_decoder });
     }
 
     fn supported_codecs() -> &'static [CodecDescriptor]
     where
         Self: Sized,
     {
-        unimplemented!()
+        return get_codecs();
     }
 
     fn reset(&mut self) {
-        unimplemented!()
+        self.silk_decoder.reset();
+        self.celt_decoder.reset();
     }
 
     fn codec_params(&self) -> &CodecParameters {
-        unimplemented!()
+        return self.silk_decoder.codec_params();
     }
 
     fn decode(&mut self, packet: &Packet) -> symphonia_core::errors::Result<AudioBufferRef> {
+        // TODO: Implement all decoder modes and proper error handling. 
         return self.silk_decoder.decode(packet);
     }
 
