@@ -11,16 +11,15 @@ use symphonia_core::errors::Result;
 use symphonia_core::formats::Packet;
 use symphonia_core::io::{BitReaderLtr, FiniteBitStream, ReadBitsLtr};
 
-const SUBFRAME_COUNT: usize = 4;
-const MAX_LBRR_FRAME_SIZE: usize = 4096; // TODO: check RFC 6716!
 pub struct Decoder {
+    params: CodecParameters,
     buffer: AudioBuffer<f32>,
     channels: Channels,
     state: State,
 }
 
 impl Decoder {
-    pub fn try_new(params: &CodecParameters) -> Result<Self> {
+    pub fn try_new(params: CodecParameters) -> Result<Self> {
         let params = params.to_owned();
         let state = State::default();
 
@@ -29,7 +28,7 @@ impl Decoder {
         let signal_spec = SignalSpec::new(sample_rate, channels);
         let buffer = AudioBuffer::new(sample_rate as u64, signal_spec);
 
-        return Ok(Self { channels, buffer, state });
+        return Ok(Self { params, channels, buffer, state });
     }
 
     pub fn reset(&mut self) {
@@ -37,6 +36,10 @@ impl Decoder {
         self.buffer.clear();
     }
 
+
+    pub fn codec_params(&self) -> &CodecParameters {
+        return &self.params;
+    }
 
     pub fn decode(&mut self, packet: &Packet) -> Result<AudioBufferRef<'_>> {
         let frame_packet = FramePacket::new(&packet.data)?;
@@ -68,8 +71,14 @@ impl Decoder {
         let mut reader = BitReaderLtr::new(packet_data);
         let mut offset = 0;
 
+        const MAX_LBRR_FRAME_SIZE: usize = 4096;
         while reader.bits_left() >= 8 {
             let frame_length = self.read_lbrr_frame_length(&mut reader)?;
+
+            if frame_length > MAX_LBRR_FRAME_SIZE {
+                return Err(Error::FrameLengthExceedsMaximum.into());
+            }
+
             if frame_length as u64 * 8 > reader.bits_left() {
                 return Err(Error::InvalidLBRRFrame.into());
             }
@@ -78,11 +87,16 @@ impl Decoder {
             reader.ignore_bits(frame_length as u32 * 8)?;
             offset += frame_length;
 
+            if offset > packet_data.len() {
+                return Err(Error::FrameLengthExceedsDataSize.into());
+            }
+
             lbrr_frames.push(&packet_data[frame_start..offset]);
         }
 
         return Ok(lbrr_frames);
     }
+
 
     fn read_lbrr_frame_length(&self, reader: &mut BitReaderLtr) -> Result<usize> {
         let mut length = 0;
@@ -112,12 +126,23 @@ impl Decoder {
         frame.frame_type = self.decode_frame_type(&mut range_decoder, vad_flag)?;
 
         self.decode_gains(&mut range_decoder, &mut frame)?;
+
         self.decode_lsf(&mut range_decoder, &mut frame)?;
-        self.decode_ltp(&mut range_decoder, &mut frame)?;
+
+        if self.state.frame_size == FrameSize::Ms20 {
+            frame.lsf_interpolation_index = Some(range_decoder.decode_symbol_with_icdf(&constant::ICDF_NORMALIZED_LSF_INTERPOLATION_INDEX)?);
+        }
+
+        if frame.frame_type.signal_type == SignalType::Voiced {
+            self.decode_ltp(&mut range_decoder, &mut frame)?;
+        }
+
         self.decode_excitation(&mut range_decoder, &mut frame)?;
 
-        return Ok(frame);
+       return Ok(frame)
     }
+
+    
 
     fn decode_header_bits<R: RangeDecoder>(&self, decoder: &mut R) -> Result<(bool, bool)> {
         let vad_flag = decoder.decode_symbol_logp(1)? == 1;
@@ -151,6 +176,11 @@ impl Decoder {
             let nlsf_q15 = self.reconstruct_nlsf(d_lpc, &res_q10, i1)?;
             let stabilized_nlsf_q15 = self.stabilize_nlsf(&nlsf_q15)?;
             subframe.nlsf_q15 = stabilized_nlsf_q15;
+        }
+
+        if self.state.frame_size == FrameSize::Ms20 {
+            let interpolation_index = decoder.decode_symbol_with_icdf(&constant::ICDF_NORMALIZED_LSF_INTERPOLATION_INDEX)?;
+            frame.lsf_interpolation_index = Some(interpolation_index);
         }
 
         return Ok(());
@@ -359,40 +389,59 @@ impl Decoder {
 
         for subframe in frame.subframes.iter_mut() {
             let pulse_locations = self.decode_pulse_locations(decoder, pulse_counts, lsb_counts)?;
-            subframe.excitation = self.apply_sign_and_scaling(pulse_locations, frame.frame_type, lcg_seed)?;
+            subframe.excitation = pulse_locations;
+
+            // Decode the signs of the excitation
+            self.decode_excitation_signs(
+                decoder,
+                &mut subframe.excitation,
+                frame.frame_type.signal_type,
+                frame.frame_type.quantization_offset_type,
+                pulse_counts,
+            )?;
+
+            self.apply_sign_and_scaling(
+                &mut subframe.excitation,
+                frame.frame_type,
+                lcg_seed,
+            )?;
         }
 
-        Ok(())
+        return Ok(());
     }
+
 
     fn apply_sign_and_scaling(
         &self,
-        pulse_locations: Vec<f32>,
+        excitation: &mut Vec<f32>,
         frame_type: FrameType,
-        mut lcg_seed: u32,
-    ) -> Result<Vec<f32>> {
+        lcg_seed: u32,
+    ) -> Result<()> {
         const SCALE_FACTOR: f32 = 256.0;
         const SIGN_OFFSET: i32 = 20;
-        const LCG_MULTIPLIER: u32 = 196314165;
-        const LCG_INCREMENT: u32 = 907633515;
+        const LCG_MULTIPLIER: u32 = 196_314_165;
+        const LCG_INCREMENT: u32 = 907_633_515;
         const LCG_SIGN_MASK: u32 = 0x8000_0000;
 
         let offset_q23 = self.get_quantization_offset(frame_type.signal_type, frame_type.quantization_offset_type) as f32;
-        let mut excitation = Vec::with_capacity(pulse_locations.len());
+        let mut excitation_scaled = Vec::with_capacity(excitation.len());
 
-        for &e_raw in &pulse_locations {
+        for &e_raw in excitation.iter() {
             let mut e_q23 = (e_raw * SCALE_FACTOR) - (e_raw.signum() * SIGN_OFFSET as f32) + offset_q23;
 
-            lcg_seed = lcg_seed.wrapping_mul(LCG_MULTIPLIER).wrapping_add(LCG_INCREMENT);
+            let mut seed = lcg_seed;
+            seed = seed.wrapping_mul(LCG_MULTIPLIER).wrapping_add(LCG_INCREMENT);
 
-            if (lcg_seed & LCG_SIGN_MASK) != 0 {
+            if (seed & LCG_SIGN_MASK) != 0 {
                 e_q23 = -e_q23;
             }
 
-            excitation.push(e_q23);
+            excitation_scaled.push(e_q23);
         }
 
-        return Ok(excitation);
+        *excitation = excitation_scaled;
+
+        Ok(())
     }
 
 
@@ -472,8 +521,8 @@ impl Decoder {
             }
         }
 
-        for i in 0..SHELL_BLOCK_SIZE {
-            let mut value = pulse_partitions[i] as f32;
+        for partition in pulse_partitions.iter() {
+            let mut value = *partition as f32;
 
             if pulse_count == MAX_PULSE_COUNT {
                 for _ in 0..lsb_count {
@@ -492,7 +541,7 @@ impl Decoder {
     fn decode_excitation_signs<R: RangeDecoder>(
         &self,
         decoder: &mut R,
-        excitation: &mut Vec<f32>,
+        excitation: &mut [f32],
         signal_type: SignalType,
         quantization_offset_type: QuantizationOffsetType,
         pulse_count: u8,
@@ -564,15 +613,9 @@ impl Decoder {
     }
 
 
-    fn synthesize(&mut self, frames: &[Frame]) -> Result<()> {
-        for frame in frames {
-            self.synthesize_frame(frame)?;
-        }
-
-        return Ok(());
-    }
-
     fn synthesize_frame(&mut self, frame: &Frame) -> Result<()> {
+        const SUBFRAME_COUNT: usize = 4;
+
         let samples_per_subframe = frame.sample_count / SUBFRAME_COUNT;
         let channels = self.buffer.spec().channels.count();
 
@@ -607,8 +650,6 @@ pub struct State {
     bandwidth: Bandwidth,
     prev_frame_type: FrameType,
     prev_samples: Vec<f32>,
-    prev_nlsf_q15: Vec<i16>,
-    prev_lpc_values: Vec<f32>,
     lbrr_flag: bool,
     lpc_order: usize,
 }
@@ -616,13 +657,11 @@ pub struct State {
 impl State {
     pub fn try_new(channels: Channels, frame_size: FrameSize, bandwidth: Bandwidth) -> Result<Self> {
         let sample_rate = bandwidth.sample_rate();
-        let frame_length = Self::calculate_frame_length(sample_rate, frame_size.clone())?;
+        let frame_length = Self::calculate_frame_length(sample_rate, frame_size)?;
         let channel_count = channels.count();
         let lpc_order = LpcOrder::from(bandwidth);
         let prev_frame_type = FrameType::default();
         let prev_samples = vec![0.0; frame_length * channel_count];
-        let prev_nlsf_q15 = vec![0; lpc_order];
-        let prev_lpc_values = vec![0.0; lpc_order];
         let lbrr_flag = false;
 
         return Ok(Self {
@@ -632,8 +671,6 @@ impl State {
             bandwidth,
             prev_frame_type,
             prev_samples,
-            prev_nlsf_q15,
-            prev_lpc_values,
             lbrr_flag,
             lpc_order,
         });
@@ -662,6 +699,7 @@ pub struct Frame {
     pub sample_count: usize,
     pub subframes: Vec<Subframe>,
     pub ltp_scale: f32,
+    pub lsf_interpolation_index: Option<u32>,
 }
 
 impl Frame {
@@ -673,6 +711,7 @@ impl Frame {
             sample_count,
             subframes: vec![Subframe::default(); num_subframes],
             ltp_scale: 0.0,
+            lsf_interpolation_index: None,
         };
     }
 }
