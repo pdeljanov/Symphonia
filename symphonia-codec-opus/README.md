@@ -12,23 +12,6 @@ symphonia-codec-opus/
 ├── Cargo.toml
 ├── README.md
 └── src/
-    ├── lib.rs                 # Main library file, implements Symphonia's Codec trait
-    ├── decoder.rs             # Top-level Opus decoder structure
-    ├── header.rs              # Opus header parsing
-    ├── errors.rs              # Opus-specific error types
-    ├── silk/
-    │   ├── mod.rs             # SILK module entry point
-    │   ├── decoder.rs         # Main SILK decoding logic
-    │   ├── lpc.rs             # Linear Predictive Coding
-    │   ├── nlsf.rs            # Noise-Like Synthesized Frequency decoding
-    │   ├── pitch.rs           # Pitch analysis and filtering
-    │   ├── range_coder.rs     # Range decoder implementation
-    │   └── resampler.rs       # Resampler for SILK
-    ├── celt/
-    │   └── mod.rs             # Placeholder for future CELT implementation
-    └── utils/
-        ├── mod.rs             # Utility functions entry point
-        └── bitstream.rs       # Bitstream reading utilities
 ```
 
 ## Limitations
@@ -43,9 +26,8 @@ There is a plan for future improvements, which could involve adding CELT support
 ## Codec integration
 
 Symphonia uses a modular approach where demuxers handle container formats (e.g., OGG) and pass compressed audio streams
-to decoders. The role of your symphonia-codec-opus crate will be strictly limited to decoding Opus-encoded audio
-streams. You should not implement container-level operations such as OGG demuxing, which is already handled by the
-existing demuxers like symphonia-format-ogg.
+to decoders. The role of symphonia-codec-opus crate will be strictly limited to decoding Opus-encoded audio
+streams. Container-level operations such as OGG demuxing is already handled by the existing demuxers like symphonia-format-ogg.
 
 `CodecParameters` is a key structure in Symphonia used to pass audio stream metadata. In `symphonia-format-ogg` crate
 the demuxer extracts and passes metadata from the Ogg container to the Opus decoder via `CodecParameters`.
@@ -61,11 +43,8 @@ The decoding process involves:
 * Decoding frames based on the SILK (for low bitrates) or CELT (for high bitrates) hybrid mode that uses both.
 * Using Opus’s range decoder to interpret symbols packed into each frame, particularly for audio bandwidth and
   prediction settings.
-
-Road map consists of the implementing TOC byte (Table of Contents byte), which describes the mode (
-SILK, CELT, or hybrid), audio bandwidth, and number of frames.
-
-
+ 
+## Roadmap
 
 ## Flowchart
 
