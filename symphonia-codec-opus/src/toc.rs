@@ -214,15 +214,17 @@ impl TryFrom<u8> for AudioMode {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum Bandwidth {
     NarrowBand,
     MediumBand,
     WideBand,
     SuperWideBand,
+    #[default]
     FullBand,
 }
 
+/// Effective sample rate for a given bandwidth, Hz.
 impl Bandwidth {
     pub fn sample_rate(&self) -> u32 {
         return match self {
