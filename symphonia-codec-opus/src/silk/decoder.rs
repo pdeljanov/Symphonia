@@ -170,14 +170,14 @@ impl Decoder {
         let d_lpc = self.state.lpc_order;
         let mut res_q10 = vec![0i16; d_lpc];
 
-        for i in 0..d_lpc {
+        for res_q10 in res_q10.iter_mut() {
             let icdf = &constant::ICDF_NORMALIZED_LSF_STAGE_TWO_INDEX[i1 as usize];
             let symbol = decoder.decode_symbol_with_icdf(icdf)?;
-            res_q10[i] = (symbol as i16) - 4;
+            *res_q10 = (symbol as i16) - 4;
 
-            if res_q10[i] == -4 || res_q10[i] == 4 {
+            if *res_q10 == -4 || *res_q10 == 4 {
                 let extension = decoder.decode_symbol_with_icdf(&constant::ICDF_NORMALIZED_LSF_STAGE_TWO_INDEX_EXTENSION)?;
-                res_q10[i] += if res_q10[i] < 0 { -(extension as i16) } else { extension as i16 };
+                *res_q10 += if *res_q10 < 0 { -(extension as i16) } else { extension as i16 };
             }
         }
 
@@ -651,17 +651,6 @@ impl State {
             .ok_or(Error::CalculationOverflow)?;
 
         return usize::try_from(samples).map_err(|_| Error::CalculationOverflow.into());
-    }
-
-    fn update_frame_size(&mut self, new_frame_size: FrameSize) -> Result<()> {
-        if self.frame_size != new_frame_size {
-            self.frame_size = new_frame_size;
-            let new_frame_length = Self::calculate_frame_length(self.sample_rate, new_frame_size)?;
-            let channel_count = self.channels.count();
-            self.prev_samples.resize(new_frame_length * channel_count, 0.0);
-        }
-
-        return Ok(());
     }
 }
 
