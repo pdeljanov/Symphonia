@@ -1,4 +1,3 @@
-mod filter;
 mod constant;
 mod error;
 mod decoder;
