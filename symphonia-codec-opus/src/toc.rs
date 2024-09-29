@@ -11,7 +11,7 @@
 ///                              +-+-+-+-+-+-+-+-+
 ///                              | config  |s| c |
 ///                              +-+-+-+-+-+-+-+-+
-/// 
+///
 ///                           Figure 1: The TOC Byte
 /// ```
 ///  The top five bits of the TOC byte, labeled "config", encode one of 32
@@ -221,6 +221,18 @@ pub enum Bandwidth {
     WideBand,
     SuperWideBand,
     FullBand,
+}
+
+impl Bandwidth {
+    pub fn sample_rate(&self) -> u32 {
+        return match self {
+            Bandwidth::NarrowBand => 8_000,
+            Bandwidth::MediumBand => 12_000,
+            Bandwidth::WideBand => 16_000,
+            Bandwidth::SuperWideBand => 24_000,
+            Bandwidth::FullBand => 48_000,
+        };
+    }
 }
 
 impl TryFrom<u8> for Bandwidth {
@@ -520,9 +532,9 @@ mod tests {
                 for (input, expected) in $inputs.iter() {
                     let instance = $object::try_new(*input).unwrap();
                     assert_eq!(
-                        instance.$field, 
-                        *expected, 
-                        "{} {:?} should be {:?} for {}", 
+                        instance.$field,
+                        *expected,
+                        "{} {:?} should be {:?} for {}",
                         stringify!($object), input, expected, stringify!($field)
                     );
                 }
@@ -530,7 +542,7 @@ mod tests {
         }
     }
 
-    test_mapping!(frame_count, Toc, 
+    test_mapping!(frame_count, Toc,
             [
               (0b00000000, FrameCount::One),
               (0b00000001, FrameCount::TwoEqual),
@@ -538,7 +550,7 @@ mod tests {
               (0b00000011, FrameCount::Arbitrary),
             ]);
 
-    test_mapping!(frame_size, Parameters,  
+    test_mapping!(frame_size, Parameters,
         [
             (0, FrameSize::Ms10), (1, FrameSize::Ms20), (2, FrameSize::Ms40), (3, FrameSize::Ms60),
             (4, FrameSize::Ms10), (5, FrameSize::Ms20), (6, FrameSize::Ms40), (7, FrameSize::Ms60),
