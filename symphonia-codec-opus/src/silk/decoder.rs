@@ -210,19 +210,31 @@ impl Decoder {
         let d_lpc = self.state.lpc_order;
         let mut res_q10 = vec![0i16; d_lpc];
 
+        let codebook = match self.state.bandwidth {
+            Bandwidth::NarrowBand | Bandwidth::MediumBand => &constant::CODEBOOK_NORMALIZED_LSF_STAGE_TWO_INDEX_NARROWBAND_OR_MEDIUMBAND,
+            Bandwidth::WideBand | Bandwidth::SuperWideBand | Bandwidth::FullBand => &constant::CODEBOOK_NORMALIZED_LSF_STAGE_TWO_INDEX_WIDEBAND,
+        };
+
         for res_q10 in res_q10.iter_mut() {
-            let icdf = &constant::ICDF_NORMALIZED_LSF_STAGE_TWO_INDEX[i1 as usize];
+            let icdf = codebook[i1 as usize];
+
             let symbol = decoder.decode_symbol_with_icdf(icdf)?;
+
             *res_q10 = (symbol as i16) - 4;
 
             if *res_q10 == -4 || *res_q10 == 4 {
                 let extension = decoder.decode_symbol_with_icdf(&constant::ICDF_NORMALIZED_LSF_STAGE_TWO_INDEX_EXTENSION)?;
-                *res_q10 += if *res_q10 < 0 { -(extension as i16) } else { extension as i16 };
+                *res_q10 += if *res_q10 < 0 {
+                    -(extension as i16)
+                } else {
+                    extension as i16
+                };
             }
         }
 
         return Ok((d_lpc, res_q10));
     }
+
 
     fn reconstruct_nlsf(&self, d_lpc: usize, res_q10: &[i16], i1: u32) -> Result<Vec<i16>> {
         let mut nlsf_q15 = vec![0i16; d_lpc];
@@ -681,8 +693,19 @@ impl Decoder {
             lpc_coeffs[i] = -((q[i + 1] - q[i]) - (p[i + 1] - p[i]) + (1 << 7)) >> 8;
         }
 
+        let gamma = match bandwidth {
+            Bandwidth::NarrowBand => 0.98,
+            Bandwidth::WideBand | Bandwidth::SuperWideBand | Bandwidth::FullBand => 0.99,
+            Bandwidth::MediumBand => 1.0,
+        } as f32;
+
+        for (i, coeff) in lpc_coeffs.iter_mut().enumerate() {
+            *coeff = (*coeff as f32 * gamma.powi(i as i32)) as i32;
+        }
+
         return Ok(lpc_coeffs);
     }
+
 
     fn synthesize_frame(&mut self, frame: &Frame) -> Result<()> {
         let samples_per_subframe = frame.sample_count / frame.subframes.len();
