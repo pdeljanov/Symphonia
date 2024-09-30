@@ -55,7 +55,7 @@ impl Decoder for OpusDecoder {
     }
 
     fn decode(&mut self, packet: &Packet) -> symphonia_core::errors::Result<AudioBufferRef> {
-        // TODO: Implement all decoder modes and proper error handling. 
+        // TODO: Implement all decoder modes.
         return self.silk_decoder.decode(packet);
     }
 
