@@ -139,7 +139,7 @@ impl Decoder {
 
         self.decode_excitation(&mut range_decoder, &mut frame)?;
 
-       return Ok(frame)
+        return Ok(frame);
     }
 
     fn decode_header_bits<R: RangeDecoder>(&self, decoder: &mut R) -> Result<(bool, bool)> {
@@ -179,6 +179,18 @@ impl Decoder {
         if self.state.frame_size == FrameSize::Ms20 {
             let interpolation_index = decoder.decode_symbol_with_icdf(&constant::ICDF_NORMALIZED_LSF_INTERPOLATION_INDEX)?;
             frame.lsf_interpolation_index = Some(interpolation_index);
+
+            if let Some(w_q2) = frame.lsf_interpolation_index {
+                let n0_q15 = &frame.subframes[0].nlsf_q15;
+                let n2_q15 = &frame.subframes[2].nlsf_q15;
+                let mut n1_q15 = vec![0; self.state.lpc_order];
+
+                for k in 0..self.state.lpc_order {
+                    n1_q15[k] = n0_q15[k] + ((w_q2 as i32 * (n2_q15[k] as i32 - n0_q15[k] as i32)) >> 2) as i16;
+                }
+
+                frame.subframes[1].nlsf_q15 = n1_q15;
+            }
         }
 
         return Ok(());
@@ -342,12 +354,27 @@ impl Decoder {
             .zip(pitch_lags.iter().zip(ltp_coeffs.iter()))
             .for_each(|(subframe, (&pitch_lag, ltp_coeff))| {
                 subframe.pitch_lag = pitch_lag;
-                subframe.ltp_coeffs = ltp_coeff.clone();
+                subframe.ltp_coeffs = ltp_coeff.to_vec();
             });
 
         return Ok(());
     }
 
+    fn ltp_synthesis(excitation: &[f32], pitch_lag: u16, ltp_coeffs: &[i8], ltp_scale: f32) -> Vec<f32> {
+        let mut ltp_signal = vec![0.0; excitation.len()];
+
+        for i in 0..excitation.len() {
+            let mut pred = 0.0;
+            for (j, &coeff) in ltp_coeffs.iter().enumerate() {
+                if i >= pitch_lag as usize + j {
+                    pred += ltp_signal[i - pitch_lag as usize - j] * (coeff as f32 / 128.0);
+                }
+            }
+            ltp_signal[i] = excitation[i] + ltp_scale * pred;
+        }
+
+        return ltp_signal;
+    }
 
     fn decode_gains<R: RangeDecoder>(&self, decoder: &mut R, frame: &mut Frame) -> Result<()> {
         for subframe in frame.subframes.iter_mut() {
@@ -389,7 +416,6 @@ impl Decoder {
             let pulse_locations = self.decode_pulse_locations(decoder, pulse_counts, lsb_counts)?;
             subframe.excitation = pulse_locations;
 
-            // Decode the signs of the excitation
             self.decode_excitation_signs(
                 decoder,
                 &mut subframe.excitation,
@@ -411,9 +437,9 @@ impl Decoder {
 
     fn apply_sign_and_scaling(
         &self,
-        excitation: &mut Vec<f32>,
+        excitation: &mut [f32],
         frame_type: FrameType,
-        lcg_seed: u32,
+        mut lcg_seed: u32,
     ) -> Result<()> {
         const SCALE_FACTOR: f32 = 256.0;
         const SIGN_OFFSET: i32 = 20;
@@ -422,26 +448,23 @@ impl Decoder {
         const LCG_SIGN_MASK: u32 = 0x8000_0000;
 
         let offset_q23 = self.get_quantization_offset(frame_type.signal_type, frame_type.quantization_offset_type) as f32;
-        let mut excitation_scaled = Vec::with_capacity(excitation.len());
 
-        for &e_raw in excitation.iter() {
+        for sample in excitation.iter_mut() {
+            let e_raw = *sample;
             let mut e_q23 = (e_raw * SCALE_FACTOR) - (e_raw.signum() * SIGN_OFFSET as f32) + offset_q23;
 
-            let mut seed = lcg_seed;
-            seed = seed.wrapping_mul(LCG_MULTIPLIER).wrapping_add(LCG_INCREMENT);
+            lcg_seed = lcg_seed.wrapping_mul(LCG_MULTIPLIER).wrapping_add(LCG_INCREMENT);
 
-            if (seed & LCG_SIGN_MASK) != 0 {
+            if (lcg_seed & LCG_SIGN_MASK) != 0 {
                 e_q23 = -e_q23;
             }
 
-            excitation_scaled.push(e_q23);
+            *sample = e_q23;
+            lcg_seed = lcg_seed.wrapping_add(e_raw as u32);
         }
-
-        *excitation = excitation_scaled;
 
         Ok(())
     }
-
 
     fn get_quantization_offset(&self, signal_type: SignalType, quantization_offset_type: QuantizationOffsetType) -> i32 {
         return match (signal_type, quantization_offset_type) {
@@ -611,10 +634,58 @@ impl Decoder {
     }
 
 
-    fn synthesize_frame(&mut self, frame: &Frame) -> Result<()> {
-        const SUBFRAME_COUNT: usize = 4;
+    fn lpc_synthesis(lpc_coeffs: &[i32], excitation: &[f32], subframe_size: usize) -> Vec<f32> {
+        let order = lpc_coeffs.len();
+        let mut output = vec![0.0; subframe_size];
 
-        let samples_per_subframe = frame.sample_count / SUBFRAME_COUNT;
+        for i in 0..subframe_size {
+            let mut y = excitation[i];
+            for j in 0..order.min(i) {
+                y -= lpc_coeffs[j] as f32 / 4096.0 * output[i - j - 1];
+            }
+            output[i] = y;
+        }
+
+        return output;
+    }
+
+    fn lsf_to_lpc(lsf_q15: &[i16], bandwidth: Bandwidth) -> Result<Vec<i32>> {
+        let order = lsf_q15.len();
+        let lsf_ordering: &[u8] = match bandwidth {
+            Bandwidth::NarrowBand | Bandwidth::MediumBand => &constant::LSF_ORDERING_POLYNOMIAL_EVALUATION_NB_MB,
+            _ => &constant::LSF_ORDERING_POLYNOMIAL_EVALUATION_WB,
+        };
+
+        let mut lpc_coeffs = vec![0; order];
+        let mut p = vec![1 << 16; order + 1];
+        let mut q = vec![1 << 16; order + 1];
+
+        for &index in lsf_ordering.iter().take(order) {
+            let f = constant::Q12_COSINE_TABLE_FOR_LSF_CONVERSION[(lsf_q15[index as usize] >> 5) as usize];
+
+            let update_vector = |vec: &mut Vec<i32>| {
+                let mut prev = vec[0];
+                vec[0] = (((vec[0] as i64) * ((1 << 16) - f as i64)) >> 16) as i32;
+                for elem in vec.iter_mut().take(order + 1).skip(1) {
+                    let tmp = *elem;
+                    *elem = (((tmp as i64) * ((1 << 16) - f as i64)) >> 16) as i32 - prev;
+                    prev = tmp;
+                }
+            };
+
+            update_vector(&mut p);
+            update_vector(&mut q);
+        }
+
+        for i in 0..order {
+            lpc_coeffs[i] = -((q[i + 1] - q[i]) - (p[i + 1] - p[i]) + (1 << 7)) >> 8;
+        }
+
+        return Ok(lpc_coeffs);
+    }
+
+    fn synthesize_frame(&mut self, frame: &Frame) -> Result<()> {
+        let samples_per_subframe = frame.sample_count / frame.subframes.len();
         let channels = self.buffer.spec().channels.count();
 
         if self.buffer.frames() + frame.sample_count > self.buffer.capacity() {
@@ -626,8 +697,17 @@ impl Decoder {
         for ch in 0..channels {
             let dst = self.buffer.chan_mut(ch);
             for (s, subframe) in frame.subframes.iter().enumerate() {
-                let excitation = &subframe.excitation;
-                for (i, &sample) in excitation.iter().enumerate() {
+                let ltp_signal = Self::ltp_synthesis(
+                    &subframe.excitation,
+                    subframe.pitch_lag,
+                    &subframe.ltp_coeffs,
+                    frame.ltp_scale,
+                );
+
+                let lpc_coeffs = Self::lsf_to_lpc(&subframe.nlsf_q15, self.state.bandwidth)?;
+                let lpc_signal = Self::lpc_synthesis(&lpc_coeffs, &ltp_signal, samples_per_subframe);
+
+                for (i, &sample) in lpc_signal.iter().enumerate() {
                     dst[start + s * samples_per_subframe + i] = sample;
                 }
             }
@@ -767,8 +847,7 @@ type LpcOrder = usize;
 impl From<Bandwidth> for LpcOrder {
     fn from(value: Bandwidth) -> Self {
         return match value {
-            Bandwidth::NarrowBand => 10,
-            Bandwidth::MediumBand => 12,
+            Bandwidth::NarrowBand | Bandwidth::MediumBand => 10,
             Bandwidth::WideBand | Bandwidth::SuperWideBand | Bandwidth::FullBand => 16,
         };
     }
