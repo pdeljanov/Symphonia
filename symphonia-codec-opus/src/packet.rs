@@ -1,3 +1,17 @@
+//! Opus packet parsing implementation.
+//!
+//! This module provides functionality to parse Opus packets as specified in RFC 6716.
+//! It includes structures and methods to handle various packet configurations and frame counts.
+//!
+//! References:
+//! - RFC 6716: Definition of the Opus Audio Codec (https://tools.ietf.org/html/rfc6716)
+//! Opus packet parsing implementation.
+//!
+//! This module provides functionality to parse Opus packets as specified in RFC 6716.
+//! It includes structures and methods to handle various packet configurations and frame counts.
+//!
+//! References:
+//! - RFC 6716: Definition of the Opus Audio Codec (https://tools.ietf.org/html/rfc6716)
 use crate::toc::{FrameCount, Toc};
 use std::num::NonZeroU8;
 use std::time::Duration;
@@ -67,7 +81,35 @@ const MAX_FRAME_LENGTH: usize = 255 * 4 + 255; // 1275
 const MAX_TOTAL_DURATION_MS: u128 = 120;
 const MAX_PADDING_VALUE: u8 = 254;
 
+
+/// Packet Organization
+/// ```text
+///      0                   1                   2                   3
+///      0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+///     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+///     | config  |s|    companded frame size                            |
+///     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+///     |                                                               |
+///     +-+         compressed frame 1 (N-1 bytes)...                 +-+
+///     |                                                               |
+///     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+///
+///                    Figure 1: A Code 0 Packet
+///```
+///
+/// https://datatracker.ietf.org/doc/html/rfc6716#section-3.2.2
 pub struct FramePacket<'a> {
+    /// Table of Contents (TOC) byte
+    /// ```text
+    ///  0 1 2 3 4 5 6 7
+    /// +-+-+-+-+-+-+-+-+
+    /// | config  |s| c |
+    /// +-+-+-+-+-+-+-+-+
+    ///
+    ///                Figure 2: The TOC byte
+    ///```
+    ///
+    /// https://datatracker.ietf.org/doc/html/rfc6716#section-3.1
     pub(crate) toc: Toc,
     pub(crate) frames: Vec<&'a [u8]>,
     padding: Option<&'a [u8]>,
@@ -91,6 +133,9 @@ impl<'a> FramePacket<'a> {
         };
     }
 
+    /// Parse a Code 0 packet (single frame).
+    ///
+    /// https://datatracker.ietf.org/doc/html/rfc6716#section-3.2.2
     fn one(data: &'a [u8], toc: Toc) -> Result<Self> {
         Self::check_frame_size(data.len())?;
 
@@ -101,6 +146,9 @@ impl<'a> FramePacket<'a> {
         });
     }
 
+    /// Parse a Code 1 packet (two frames with equal compressed size).
+    ///
+    /// https://datatracker.ietf.org/doc/html/rfc6716#section-3.2.3j
     fn two_equal_frames(data: &'a [u8], toc: Toc) -> Result<Self> {
         if data.len() % 2 != 0 {
             return Err(Error::InvalidCode1PacketLength.into());
@@ -116,6 +164,9 @@ impl<'a> FramePacket<'a> {
         });
     }
 
+    /// Parse a Code 2 packet (two frames with different compressed sizes).
+    ///
+    /// https://datatracker.ietf.org/doc/html/rfc6716#section-3.2.4
     fn two_different_frames(data: &'a [u8], toc: Toc) -> Result<Self> {
         let (n1, offset) = Self::get_frame_length(data)?;
 
@@ -137,6 +188,11 @@ impl<'a> FramePacket<'a> {
         });
     }
 
+    /// Parse a Code 3 packet (an arbitrary number of frames).
+    ///
+    /// This method handles both CBR and VBR modes, as well as padding.
+    ///
+    /// https://datatracker.ietf.org/doc/html/rfc6716#section-3.2.5
     fn signaled_number_of_frames(data: &'a [u8], toc: Toc) -> Result<Self> {
         let (frame_count_byte, rest) = data.split_first().ok_or(Error::PacketTooShort)?;
 
@@ -190,6 +246,9 @@ impl<'a> FramePacket<'a> {
         });
     }
 
+    /// Parse frames for VBR (Variable Bit Rate) packets.
+    ///
+    /// https://datatracker.ietf.org/doc/html/rfc6716#section-3.2.5
     fn get_vbr_frames(data: &'a [u8], frame_count: u8) -> Result<Vec<&'a [u8]>> {
         let mut frames = Vec::with_capacity(frame_count as usize);
         let mut offset = 0;
@@ -216,6 +275,9 @@ impl<'a> FramePacket<'a> {
     }
 
 
+    /// Parse frames for CBR (Constant Bit Rate) packets.
+    ///
+    /// https://datatracker.ietf.org/doc/html/rfc6716#section-3.2.5
     fn get_cbr_frames(data: &'a [u8], frame_count: NonZeroU8) -> Result<Vec<&'a [u8]>> {
         let frame_count = frame_count.get() as usize;
         let frame_size = data.len() / frame_count;
@@ -229,6 +291,15 @@ impl<'a> FramePacket<'a> {
         return Ok(data.chunks_exact(frame_size).collect());
     }
 
+    /// Padding
+    /// ```text
+    /// Values from 0...254 indicate that 0...254 bytes of padding are included,
+    /// in addition to the bytes used to indicate the size of the padding.
+    /// If the value is 255, then the size of the additional padding is 254 bytes,
+    /// plus the padding value encoded in the next byte.
+    ///```
+    ///
+    /// https://datatracker.ietf.org/doc/html/rfc6716#section-3.2.5
     fn get_padding_length(data: &[u8]) -> Result<(usize, usize)> {
         let mut total_padding: usize = 0;
         let mut offset: usize = 0;
@@ -246,6 +317,14 @@ impl<'a> FramePacket<'a> {
         return Ok((total_padding, offset));
     }
 
+    /// Frame length coding
+    /// ```text
+    /// 0: No frame (DTX or lost packet)
+    /// 1...251: Length of the frame in bytes
+    /// 252...255: A second byte is needed. The total length is (second_byte*4)+first_byte
+    ///```
+    ///
+    /// https://datatracker.ietf.org/doc/html/rfc6716#section-3.2.1
     fn get_frame_length(data: &[u8]) -> Result<(usize, usize)> {
         let (&first_byte, rest) = data.split_first()
             .ok_or(Error::InsufficientDataForFrameLength)?;

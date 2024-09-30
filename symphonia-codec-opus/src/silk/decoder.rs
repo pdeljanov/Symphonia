@@ -1,3 +1,52 @@
+//! SILK decoder implementation.
+//!
+//! The decoder's LP layer uses a modified version of the SILK codec
+//! (herein simply called "SILK"), which runs a decoded excitation signal
+//! through adaptive long-term and short-term prediction synthesis
+//! filters.  It runs at NB, MB, and WB sample rates internally.  When
+//! used in a SWB or FB Hybrid frame, the LP layer itself still only runs
+//! in WB.
+/// 
+/// https://datatracker.ietf.org/doc/html/rfc6716#section-4.2 
+/// 
+/// SILK Decoder Modules
+/// 
+///```text 
+///    An overview of the decoder is given in Figure 14.
+/// 
+///         +---------+    +------------+
+///      -->| Range   |--->| Decode     |---------------------------+
+///       1 | Decoder | 2  | Parameters |----------+       5        |
+///         +---------+    +------------+     4    |                |
+///                             3 |                |                |
+///                              \/               \/               \/
+///                        +------------+   +------------+   +------------+
+///                        | Generate   |-->| LTP        |-->| LPC        |
+///                        | Excitation |   | Synthesis  |   | Synthesis  |
+///                        +------------+   +------------+   +------------+
+///                                                ^                |
+///                                                |                |
+///                            +-------------------+----------------+
+///                            |                                      6
+///                            |   +------------+   +-------------+
+///                            +-->| Stereo     |-->| Sample Rate |-->
+///                                | Unmixing   | 7 | Conversion  | 8
+///                                +------------+   +-------------+
+/// 
+///      1: Range encoded bitstream
+///      2: Coded parameters
+///      3: Pulses, LSBs, and signs
+///      4: Pitch lags, Long-Term Prediction (LTP) coefficients
+///      5: Linear Predictive Coding (LPC) coefficients and gains
+///      6: Decoded signal (mono or mid-side stereo)
+///      7: Unmixed signal (mono or left-right stereo)
+///      8: Resampled signal
+/// 
+/// 
+///                           Figure 14: SILK Decoder
+/// ```
+/// 
+/// https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.1 
 use std::convert::TryFrom;
 use crate::entropy::{self, RangeDecoder};
 use crate::packet::FramePacket;
@@ -11,6 +60,80 @@ use symphonia_core::errors::Result;
 use symphonia_core::formats::Packet;
 use symphonia_core::io::{BitReaderLtr, FiniteBitStream, ReadBitsLtr};
 
+/// SILK Frame Structure
+/// ```text
+/// +----------------------------------+
+/// |           Header Bits            |
+/// | +------------------------------+ |
+/// | |    VAD flag (1 bit/frame)    | |
+/// | +------------------------------+ |
+/// | |        LBRR flag (1 bit)     | |
+/// +----------------------------------+
+/// |      Per-Frame LBRR Flags        |
+/// |     (optional, variable size)    |
+/// +----------------------------------+
+/// |    LBRR Frames (if present)      |
+/// | +------------------------------+ |
+/// | |        LBRR Frame 1          | |
+/// | +------------------------------+ |
+/// | |        LBRR Frame 2          | |
+/// | +------------------------------+ |
+/// | |        LBRR Frame 3          | |
+/// +----------------------------------+
+/// |         Regular SILK Frame       |
+/// | +------------------------------+ |
+/// | |        Frame Type            | |
+/// | +------------------------------+ |
+/// | |     Quantization Gains       | |
+/// | +------------------------------+ |
+/// | | Normalized LSF Stage-1 Index | |
+/// | +------------------------------+ |
+/// | |Normalized LSF Stage-2 Residual|
+/// | +------------------------------+ |
+/// | |   LSF Interpolation Weight   | |
+/// | |   (20 ms frames only)        | |
+/// | +------------------------------+ |
+/// | |    Primary Pitch Lag         | |
+/// | |    (voiced frames only)      | |
+/// | +------------------------------+ |
+/// | | Subframe Pitch Contour       | |
+/// | | (voiced frames only)         | |
+/// | +------------------------------+ |
+/// | |    Periodicity Index         | |
+/// | |    (voiced frames only)      | |
+/// | +------------------------------+ |
+/// | |      LTP Filter Coeffs       | |
+/// | |    (voiced frames only)      | |
+/// | +------------------------------+ |
+/// | |       LTP Scaling            | |
+/// | |    (certain conditions)      | |
+/// | +------------------------------+ |
+/// | |         LCG Seed             | |
+/// | +------------------------------+ |
+/// | |    Excitation Rate Level     | |
+/// | +------------------------------+ |
+/// | |   Excitation Pulse Counts    | |
+/// | +------------------------------+ |
+/// | |  Excitation Pulse Locations  | |
+/// | +------------------------------+ |
+/// | |      Excitation LSBs         | |
+/// | +------------------------------+ |
+/// | |     Excitation Signs         | |
+/// +----------------------------------+
+/// ```
+/// 
+/// 1. The size and presence of each component can vary based on frame type,
+///    signal characteristics, and coding decisions.
+/// 2. LBRR (Low Bit-Rate Redundancy) frames are optional and may not be present.
+/// 3. Some elements (like LTP parameters) are only present in voiced frames.
+/// 4. The LSF interpolation weight is only present in 20 ms frames.
+/// 5. LTP scaling is only present under certain conditions specified in the RFC.
+/// 6. The excitation coding process includes multiple steps with variable sizes.
+///
+/// This structure reflects the complex and variable nature of SILK frames
+/// as described in RFC 6716, Section 4.2.7.
+///
+/// https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7
 pub struct Decoder {
     params: CodecParameters,
     buffer: AudioBuffer<f32>,
@@ -41,6 +164,12 @@ impl Decoder {
         return &self.params;
     }
 
+    /// Decodes a SILK packet
+    ///
+    /// This method implements the main decoding process for SILK packets,
+    /// including handling of regular frames and LBRR (Low Bit-Rate Redundancy) frames.
+    ///
+    /// https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7
     pub fn decode(&mut self, packet: &Packet) -> Result<AudioBufferRef<'_>> {
         let frame_packet = FramePacket::new(&packet.data)?;
 
@@ -142,6 +271,13 @@ impl Decoder {
         return Ok(frame);
     }
 
+    /// Decodes the SILK frame header
+    ///
+    /// The SILK frame begins with two to eight header bits, which consist of
+    /// one Voice Activity Detection (VAD) bit per frame (up to 3), followed by
+    /// a single flag indicating the presence of LBRR frames.
+    ///
+    /// https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.3
     fn decode_header_bits<R: RangeDecoder>(&self, decoder: &mut R) -> Result<(bool, bool)> {
         let vad_flag = decoder.decode_symbol_logp(1)? == 1;
         let lbrr_flag = decoder.decode_symbol_logp(1)? == 1;
@@ -149,6 +285,12 @@ impl Decoder {
         return Ok((vad_flag, lbrr_flag));
     }
 
+    
+    /// Decodes the SILK frame type
+    ///
+    /// The frame type is encoded using a context-dependent codebook.
+    ///
+    /// https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.3
     fn decode_frame_type<R: RangeDecoder>(&mut self, decoder: &mut R, vad_flag: bool) -> Result<FrameType> {
         let icdf: &[u32] = if vad_flag { &constant::ICDF_FRAME_TYPE_VAD_ACTIVE } else { &constant::ICDF_FRAME_TYPE_VAD_INACTIVE };
         let frame_type_symbol = decoder.decode_symbol_with_icdf(icdf)?;
@@ -167,6 +309,12 @@ impl Decoder {
     }
 
 
+    /// Decodes the Line Spectral Frequencies (LSF).
+    ///
+    /// LSF coefficients are decoded using a two-stage process and may include
+    /// interpolation for 20 ms frames.
+    ///
+    /// https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.5
     fn decode_lsf<R: RangeDecoder>(&self, decoder: &mut R, frame: &mut Frame) -> Result<()> {
         for subframe in frame.subframes.iter_mut() {
             let i1 = self.decode_lsf_stage1(decoder, frame.vad_flag, frame.frame_type.signal_type)?;
@@ -351,6 +499,11 @@ impl Decoder {
         return Ok(scale);
     }
 
+    /// Decodes Long-Term Prediction (LTP) parameters.
+    ///
+    /// This includes pitch lags, LTP coefficients, and LTP scaling.
+    ///
+    /// https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.6
     fn decode_ltp<R: RangeDecoder>(&mut self, decoder: &mut R, frame: &mut Frame) -> Result<()> {
         let pitch_lags = self.decode_pitch_lags(decoder)?;
         let ltp_coeffs = self.decode_ltp_coeffs(decoder)?;
@@ -414,7 +567,11 @@ impl Decoder {
         return Ok(normalized_gain);
     }
 
-
+    /// Decodes the excitation signal.
+    ///
+    /// The excitation is coded using a modified version of the Pyramid Vector Quantizer (PVQ).
+    ///
+    /// https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.8
     fn decode_excitation<R: RangeDecoder>(
         &mut self,
         decoder: &mut R,
@@ -743,6 +900,12 @@ impl Decoder {
 }
 
 
+/// SILK Decoder State
+///
+/// This structure maintains the state of the SILK decoder across frames,
+/// including information about the previous frame and current configuration.
+///
+/// https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.9
 #[derive(Debug, Default, Clone)]
 pub struct State {
     sample_rate: u32,
@@ -754,6 +917,7 @@ pub struct State {
     lbrr_flag: bool,
     lpc_order: usize,
 }
+
 
 impl State {
     pub fn try_new(channels: Channels, frame_size: FrameSize, bandwidth: Bandwidth) -> Result<Self> {
@@ -792,6 +956,12 @@ impl State {
     }
 }
 
+/// SILK Frame
+///
+/// Represents a decoded SILK frame, containing all the relevant information
+/// extracted from the bitstream.
+///
+/// https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7
 #[derive(Debug, Default)]
 pub struct Frame {
     pub frame_type: FrameType,
@@ -817,6 +987,12 @@ impl Frame {
     }
 }
 
+/// SILK Subframe
+///
+/// Represents a subframe within a SILK frame, containing the decoded parameters
+/// specific to that subframe.
+///
+/// https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.9
 #[derive(Debug, Clone, Default)]
 pub struct Subframe {
     pub gain: f32,
@@ -837,6 +1013,15 @@ impl FrameType {
     }
 }
 
+/// SILK Signal Type
+///
+/// Represents the type of signal in a SILK frame.
+///
+/// - Inactive: Silence or background noise
+/// - Voiced: Speech with periodic character
+/// - Unvoiced: Speech without periodic character
+///
+/// https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.3
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum SignalType {
     #[default]
@@ -845,6 +1030,14 @@ pub enum SignalType {
     Unvoiced,
 }
 
+/// SILK Quantization Offset Type
+///
+/// Represents the type of quantization offset used in a SILK frame.
+///
+/// - High: Higher offset, typically used for higher quality or bitrate
+/// - Low: Lower offset, typically used for lower quality or bitrate
+///
+/// https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.3
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum QuantizationOffsetType {
     #[default]
@@ -852,8 +1045,22 @@ pub enum QuantizationOffsetType {
     Low,
 }
 
+/// Represents the number of subframes in a SILK frame
+///
+/// This type alias and its implementation provide a mapping from the frame size
+/// to the number of subframes it contains.
+///
+/// https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.9
 type SubframeSize = usize;
 impl From<FrameSize> for SubframeSize {
+     /// Converts a FrameSize to the number of subframes it contains
+    ///
+    /// The number of subframes varies based on the frame duration:
+    /// - 2.5 ms and 5 ms frames have 1 subframe
+    /// - 10 ms frames have 2 subframes
+    /// - 20 ms frames have 4 subframes
+    /// - 40 ms frames have 8 subframes
+    /// - 60 ms frames have 12 subframes
     fn from(frame_size: FrameSize) -> Self {
         return match frame_size {
             FrameSize::Ms2_5 => 1,
@@ -866,6 +1073,12 @@ impl From<FrameSize> for SubframeSize {
     }
 }
 
+/// Represents the order of the Linear Predictive Coding (LPC) filter
+///
+/// This type alias and its implementation provide a mapping from the audio bandwidth
+/// to the LPC order used in the SILK codec.
+///
+/// https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.5
 type LpcOrder = usize;
 impl From<Bandwidth> for LpcOrder {
     fn from(value: Bandwidth) -> Self {
