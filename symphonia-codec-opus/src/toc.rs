@@ -1,5 +1,5 @@
 //! The TOC Byte (Table of Contents Byte)
-/// A well-formed Opus packet MUST contain at least one byte [R1]().  This
+/// A well-formed Opus packet MUST contain at least one byte.  This
 /// byte forms a table-of-contents (TOC) header that signals which of the
 /// various modes and configurations a given packet uses.  It is composed
 /// of a configuration number, "config", a stereo flag, "s", and a frame
@@ -14,75 +14,8 @@
 ///
 ///                           Figure 1: The TOC Byte
 /// ```
-///  The top five bits of the TOC byte, labeled "config", encode one of 32
-///  possible configurations of operating mode, audio bandwidth, and frame
-///  size.  As described, the LP (SILK) layer and MDCT (CELT) layer can be
-///  combined in three possible operating modes:
-///
-///  1.  A SILK-only mode for use in low bitrate connections with an audio
-///      bandwidth of WB or less,
-///
-///  2.  A Hybrid (SILK+CELT) mode for SWB or FB speech at medium
-///      bitrates, and
-///
-///  3.  A CELT-only mode for very low delay speech transmission as well
-///      as music transmission (NB to FB).
-///
-///  The 32 possible configurations each identify which one of these
-///  operating modes the packet uses, as well as the audio bandwidth and
-///  the frame size.  Table 2 lists the parameters for each configuration.
-///
-///```text
-///   +-----------------------+-----------+-----------+-------------------+
-///   | Configuration         | Mode      | Bandwidth | Frame Sizes       |
-///   | Number(s)             |           |           |                   |
-///   +-----------------------+-----------+-----------+-------------------+
-///   | 0...3                 | SILK-only | NB        | 10, 20, 40, 60 ms |
-///   |                       |           |           |                   |
-///   | 4...7                 | SILK-only | MB        | 10, 20, 40, 60 ms |
-///   |                       |           |           |                   |
-///   | 8...11                | SILK-only | WB        | 10, 20, 40, 60 ms |
-///   |                       |           |           |                   |
-///   | 12...13               | Hybrid    | SWB       | 10, 20 ms         |
-///   |                       |           |           |                   |
-///   | 14...15               | Hybrid    | FB        | 10, 20 ms         |
-///   |                       |           |           |                   |
-///   | 16...19               | CELT-only | NB        | 2.5, 5, 10, 20 ms |
-///   |                       |           |           |                   |
-///   | 20...23               | CELT-only | WB        | 2.5, 5, 10, 20 ms |
-///   |                       |           |           |                   |
-///   | 24...27               | CELT-only | SWB       | 2.5, 5, 10, 20 ms |
-///   |                       |           |           |                   |
-///   | 28...31               | CELT-only | FB        | 2.5, 5, 10, 20 ms |
-///   +-----------------------+-----------+-----------+-------------------+
-///
-///                Table 2: TOC Byte Configuration Parameters
-///```
-///
-///  The configuration numbers in each range (e.g., 0...3 for NB SILK-
-///   only) correspond to the various choices of frame size, in the same
-///   order.  For example, configuration 0 has a 10 ms frame size and
-///   configuration 3 has a 60 ms frame size.
-///
-///   One additional bit, labeled "s", signals mono vs. stereo, with 0
-///   indicating mono and 1 indicating stereo.
-///
-///   The remaining two bits of the TOC byte, labeled "c", code the number
-///   of frames per packet (codes 0 to 3) as follows:
-///
-///   *  0: 1 frame in the packet
-///
-///   *  1: 2 frames in the packet, each with equal compressed size
-///
-///   *  2: 2 frames in the packet, with different compressed sizes
-///
-///   *  3: an arbitrary number of frames in the packet
-///
-///   This document refers to a packet as a code 0 packet, code 1 packet,
-///   etc., based on the value of "c".
 ///
 /// https://datatracker.ietf.org/doc/html/rfc6716#section-3.1
-
 use std::convert::TryFrom;
 use std::time::Duration;
 use log::debug;
@@ -129,6 +62,8 @@ impl Toc {
         debug!("config: {config:#05b}" );
 
         // 's' (stereo) flag (bit 5).
+        //  One additional bit, labeled "s", signals mono vs. stereo, with 0
+        //  indicating mono and 1 indicating stereo.
         let stereo = reader.read_bool().map_err(Error::Io)?;
         debug!("stereo: {stereo}");
 
@@ -194,6 +129,23 @@ impl Parameters {
     }
 }
 
+/// The `config` field specifies the operating mode, bandwidth, and frame size.
+///
+/// ```text
+/// +-----------------------+-----------+-----------+-------------------+
+/// | Configuration         | Mode      | Bandwidth | Frame Sizes       |
+/// | Number(s)             |           |           |                   |
+/// +-----------------------+-----------+-----------+-------------------+
+/// | 0...3                 | SILK-only | NB        | 10, 20, 40, 60 ms |
+/// | 4...7                 | SILK-only | MB        | 10, 20, 40, 60 ms |
+/// | 8...11                | SILK-only | WB        | 10, 20, 40, 60 ms |
+/// | 12...13               | Hybrid    | SWB       | 10, 20 ms         |
+/// | 14...15               | Hybrid    | FB        | 10, 20 ms         |
+/// | 16...19               | CELT-only | NB        | 2.5, 5, 10, 20 ms |
+/// | 20...23               | CELT-only | WB        | 2.5, 5, 10, 20 ms |
+/// | 24...27               | CELT-only | SWB       | 2.5, 5, 10, 20 ms |
+/// | 28...31               | CELT-only | FB        | 2.5, 5, 10, 20 ms |
+/// +-----------------------+-----------+-----------+-------------------+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AudioMode {
     Silk,
@@ -214,6 +166,30 @@ impl TryFrom<u8> for AudioMode {
     }
 }
 
+/// The Bandwidth the Opus codec scales from 6 kbit/s narrowband mono speech to
+/// 510 kbit/s fullband stereo music, with algorithmic delays ranging
+/// from 5 ms to 65.2 ms.  At any given time, either the LP layer, the
+/// MDCT layer, or both, may be active.  It can seamlessly switch between
+/// all of its various operating modes, giving it a great deal of
+/// flexibility to adapt to varying content and network conditions
+/// without renegotiating the current session.  The codec allows input
+/// and output of various audio bandwidths, defined as follows:
+/// ```text
+/// +----------------------+-----------------+-------------------------+
+/// | Abbreviation         | Audio Bandwidth | Sample Rate (Effective) |
+/// +----------------------+-----------------+-------------------------+
+/// | NB (narrowband)      |           4 kHz |                   8 kHz |
+/// |                      |                 |                         |
+/// | MB (medium-band)     |           6 kHz |                  12 kHz |
+/// |                      |                 |                         |
+/// | WB (wideband)        |           8 kHz |                  16 kHz |
+/// |                      |                 |                         |
+/// | SWB (super-wideband) |          12 kHz |                  24 kHz |
+/// |                      |                 |                         |
+/// | FB (fullband)        |      20 kHz (*) |                  48 kHz |
+/// +----------------------+-----------------+-------------------------+
+/// ```
+/// https://datatracker.ietf.org/doc/html/rfc6716#section-2
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum Bandwidth {
     NarrowBand,
@@ -275,6 +251,29 @@ impl From<FrameSize> for Duration {
     }
 }
 
+/// The `config` field specifies the operating mode, bandwidth, and frame size.
+/// ```text
+/// +-----------------------+-----------+-----------+-------------------+
+/// | Configuration         | Mode      | Bandwidth | Frame Sizes       |
+/// | Number(s)             |           |           |                   |
+/// +-----------------------+-----------+-----------+-------------------+
+/// | 0...3                 | SILK-only | NB        | 10, 20, 40, 60 ms |
+/// | 4...7                 | SILK-only | MB        | 10, 20, 40, 60 ms |
+/// | 8...11                | SILK-only | WB        | 10, 20, 40, 60 ms |
+/// | 12...13               | Hybrid    | SWB       | 10, 20 ms         |
+/// | 14...15               | Hybrid    | FB        | 10, 20 ms         |
+/// | 16...19               | CELT-only | NB        | 2.5, 5, 10, 20 ms |
+/// | 20...23               | CELT-only | WB        | 2.5, 5, 10, 20 ms |
+/// | 24...27               | CELT-only | SWB       | 2.5, 5, 10, 20 ms |
+/// | 28...31               | CELT-only | FB        | 2.5, 5, 10, 20 ms |
+/// +-----------------------+-----------+-----------+-------------------+
+///  The 32 possible configurations each identify which one of these
+///  operating modes the packet uses, as well as the audio bandwidth and
+///  the frame size.  Table  lists the parameters for each configuration.
+///  The configuration numbers in each range (e.g., 0...3 for NB SILK-
+///  only) correspond to the various choices of frame size, in the same
+///  order.  For example, configuration 0 has a 10 ms frame size and
+///  configuration 3 has a 60 ms frame size.
 impl FrameSize {
     pub fn duration(&self) -> Duration {
         return Duration::from(*self);
@@ -304,14 +303,38 @@ impl TryFrom<u8> for FrameSize {
     }
 }
 
+
+///   The remaining two bits of the TOC byte, labeled "c", code the number
+///   of frames per packet (codes 0 to 3) as follows:
+///
+/// ```text
+/// +---+----------------------------------------------+
+/// | c | Frames per packet                            |
+/// +---+----------------------------------------------+
+/// | 0 | 1 frame in the packet                        |
+/// | 1 | 2 frames in the packet, equal compressed size|
+/// | 2 | 2 frames in the packet, different sizes      |
+/// | 3 | An arbitrary number of frames                |
+/// +---+----------------------------------------------+
+/// ```
+///
+/// These values correspond to the `c` field in the TOC byte.
+/// 
+/// https://datatracker.ietf.org/doc/html/rfc6716#section-3.1
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FrameCount {
+    /// 1 frame in the packet (c = 0)
     One,
+    
+    /// 2 frames, both with equal compressed size (c = 1)
     TwoEqual,
+    
+    /// 2 frames, with different compressed sizes (c = 2)
     TwoDifferent,
+    
+    /// Arbitrary number of frames (c = 3)
     Arbitrary,
 }
-
 impl TryFrom<u8> for FrameCount {
     type Error = Error;
 
