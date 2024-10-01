@@ -68,17 +68,20 @@ use symphonia_core::io::{BitReaderLtr, FiniteBitStream, ReadBitsLtr};
 /// | |    VAD flag (1 bit/frame)    | |
 /// | +------------------------------+ |
 /// | |        LBRR flag (1 bit)     | |
+/// | +------------------------------+ |
 /// +----------------------------------+
 /// |      Per-Frame LBRR Flags        |
-/// |     (optional, variable size)    |
+/// |          (optional)              |
 /// +----------------------------------+
-/// |    LBRR Frames (if present)      |
+/// |        LBRR Frames               |
+/// |          (optional)              |
 /// | +------------------------------+ |
 /// | |        LBRR Frame 1          | |
 /// | +------------------------------+ |
 /// | |        LBRR Frame 2          | |
 /// | +------------------------------+ |
 /// | |        LBRR Frame 3          | |
+/// | +------------------------------+ |
 /// +----------------------------------+
 /// |         Regular SILK Frame       |
 /// | +------------------------------+ |
@@ -86,27 +89,27 @@ use symphonia_core::io::{BitReaderLtr, FiniteBitStream, ReadBitsLtr};
 /// | +------------------------------+ |
 /// | |     Quantization Gains       | |
 /// | +------------------------------+ |
-/// | | Normalized LSF Stage-1 Index | |
+/// | | Normalized LSF Stage1 Index  | |
 /// | +------------------------------+ |
-/// | |Normalized LSF Stage-2 Residual|
+/// | |Normalized LSF Stage2 Residual| |
 /// | +------------------------------+ |
 /// | |   LSF Interpolation Weight   | |
-/// | |   (20 ms frames only)        | |
+/// | |      (optional, 20 ms)       | |
 /// | +------------------------------+ |
 /// | |    Primary Pitch Lag         | |
-/// | |    (voiced frames only)      | |
+/// | |    (optional, voiced)        | |
 /// | +------------------------------+ |
 /// | | Subframe Pitch Contour       | |
-/// | | (voiced frames only)         | |
+/// | |      (optional, voiced)      | |
 /// | +------------------------------+ |
 /// | |    Periodicity Index         | |
-/// | |    (voiced frames only)      | |
+/// | |    (optional, voiced)        | |
 /// | +------------------------------+ |
 /// | |      LTP Filter Coeffs       | |
-/// | |    (voiced frames only)      | |
+/// | |    (optional, voiced)        | |
 /// | +------------------------------+ |
 /// | |       LTP Scaling            | |
-/// | |    (certain conditions)      | |
+/// | |    (optional, conditional)   | |
 /// | +------------------------------+ |
 /// | |         LCG Seed             | |
 /// | +------------------------------+ |
@@ -119,17 +122,25 @@ use symphonia_core::io::{BitReaderLtr, FiniteBitStream, ReadBitsLtr};
 /// | |      Excitation LSBs         | |
 /// | +------------------------------+ |
 /// | |     Excitation Signs         | |
+/// | +------------------------------+ |
 /// +----------------------------------+
 /// ```
-/// 
 /// 1. The size and presence of each component can vary based on frame type,
 ///    signal characteristics, and coding decisions.
-/// 2. LBRR (Low Bit-Rate Redundancy) frames are optional and may not be present.
-/// 3. Some elements (like LTP parameters) are only present in voiced frames.
-/// 4. The LSF interpolation weight is only present in 20 ms frames.
-/// 5. LTP scaling is only present under certain conditions specified in the RFC.
+/// 2. **LBRR (Low Bit-Rate Redundancy) frames** are optional and may not be present.
+/// 3. Some elements (like LTP parameters) are only present in **voiced frames**.
+/// 4. The **LSF interpolation weight** is only present in **20 ms frames**.
+/// 5. **LTP scaling** is only present under certain conditions specified in the RFC.
 /// 6. The excitation coding process includes multiple steps with variable sizes.
-///
+/// 7. **Additional Clarifications:**
+///    - **VAD Flag:** Indicates whether Voice Activity Detection is active for the frame.
+///    - **LBRR Flags:** Each LBRR frame has its own flag indicating its presence.
+///    - **Frame Type:** Specifies whether the frame is voiced, unvoiced, or a transition.
+///    - **LSF Indices:** Represent the Line Spectral Frequencies used for spectral envelope modeling.
+///    - **Pitch Parameters:** Include primary pitch lag and subframe pitch contours for voiced frames.
+///    - **LTP (Long-Term Prediction) Parameters:** Enhance the coding of periodic signals.
+///    - **Excitation Parameters:** Define the excitation signal's characteristics, crucial for synthesizing the speech signal.
+/// 
 /// This structure reflects the complex and variable nature of SILK frames
 /// as described in RFC 6716, Section 4.2.7.
 ///
