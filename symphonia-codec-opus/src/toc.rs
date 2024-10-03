@@ -1,4 +1,5 @@
 //! The TOC Byte (Table of Contents Byte)
+use log::debug;
 /// A well-formed Opus packet MUST contain at least one byte.  This
 /// byte forms a table-of-contents (TOC) header that signals which of the
 /// various modes and configurations a given packet uses.  It is composed
@@ -18,9 +19,8 @@
 /// https://datatracker.ietf.org/doc/html/rfc6716#section-3.1
 use std::convert::TryFrom;
 use std::time::Duration;
-use log::debug;
-use thiserror::Error;
 use symphonia_core::io::{BitReaderLtr, ReadBitsLtr};
+use thiserror::Error;
 
 
 #[derive(Debug, Error)]
@@ -112,14 +112,14 @@ impl Toc {
 pub struct Parameters {
     pub audio_mode: AudioMode,
     pub bandwidth: Bandwidth,
-    pub frame_size: FrameSize,
+    pub frame_size: FrameDuration,
 }
 
 impl Parameters {
     pub fn try_new(config: u8) -> Result<Self, Error> {
         let audio_mode = AudioMode::try_from(config)?;
         let bandwidth = Bandwidth::try_from(config)?;
-        let frame_size = FrameSize::try_from(config)?;
+        let frame_size = FrameDuration::try_from(config)?;
 
         return Ok(Self {
             audio_mode,
@@ -190,6 +190,17 @@ impl TryFrom<u8> for AudioMode {
 /// +----------------------+-----------------+-------------------------+
 /// ```
 /// https://datatracker.ietf.org/doc/html/rfc6716#section-2
+///
+///  Jus like for the number of channels, any decoder can decode audio that is
+///  encoded at any bandwidth.  For example, any Opus decoder operating at
+///  8 kHz can decode an FB Opus frame, and any Opus decoder operating at
+///  48 kHz can decode an NB frame.  Similarly, the reference encoder can
+///  take a 48 kHz input signal and encode it as NB.  The higher the audio
+///  bandwidth, the higher the required bitrate to achieve acceptable
+///  quality.  The audio bandwidth can be explicitly specified in
+///  real-time, but, by default, the reference encoder attempts to make the
+///  best bandwidth decision possible given the current bitrate.
+/// https://datatracker.ietf.org/doc/html/rfc6716#section-2.1.3
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum Bandwidth {
     NarrowBand,
@@ -232,10 +243,19 @@ impl TryFrom<u8> for Bandwidth {
     }
 }
 
-/// Enumeration of possible frame sizes in nanoseconds.
+/// Opus can encode frames of 2.5, 5, 10, 20, 40, or 60 ms.
+/// It can also combine multiple frames into packets of up to 120 ms.
+/// For real-time applications, sending fewer packets per second reduces
+/// the bitrate, since it reduces the overhead from IP, UDP, and RTP headers.
+/// However, it increases latency and sensitivity to packet losses,
+/// as losing one packet constitutes a loss of a bigger chunk of audio.
+/// Increasing the frame duration also slightly improves coding
+/// efficiency, but the gain becomes small for frame sizes above 20 ms.
+/// For this reason, 20 ms frames are a good choice for most applications.
+/// https://datatracker.ietf.org/doc/html/rfc6716#section-2.1.4
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[repr(u64)]
-pub enum FrameSize {
+pub enum FrameDuration {
     Ms2_5 = 2_500_000,
     Ms5 = 5_000_000,
     Ms10 = 10_000_000,
@@ -245,9 +265,22 @@ pub enum FrameSize {
     Ms60 = 60_000_000,
 }
 
-impl From<FrameSize> for Duration {
-    fn from(frame_size: FrameSize) -> Self {
+impl From<FrameDuration> for Duration {
+    fn from(frame_size: FrameDuration) -> Self {
         return Duration::from_nanos(frame_size as u64);
+    }
+}
+
+impl FrameDuration { // at 48kHz
+    pub fn sample_count(&self) -> usize {
+        return match self {
+            FrameDuration::Ms2_5 => 120,
+            FrameDuration::Ms5 => 240,
+            FrameDuration::Ms10 => 480,
+            FrameDuration::Ms20 => 960,
+            FrameDuration::Ms40 => 1920,
+            FrameDuration::Ms60 => 2880,
+        };
     }
 }
 
@@ -274,30 +307,30 @@ impl From<FrameSize> for Duration {
 ///  only) correspond to the various choices of frame size, in the same
 ///  order.  For example, configuration 0 has a 10 ms frame size and
 ///  configuration 3 has a 60 ms frame size.
-impl FrameSize {
+impl FrameDuration {
     pub fn duration(&self) -> Duration {
         return Duration::from(*self);
     }
 }
 
-impl TryFrom<u8> for FrameSize {
+impl TryFrom<u8> for FrameDuration {
     type Error = Error;
 
     fn try_from(config: u8) -> Result<Self, Error> {
         return match config {
             // SILK modes (configs 0..11)
-            0 | 4 | 8 => Ok(FrameSize::Ms10),
-            1 | 5 | 9 => Ok(FrameSize::Ms20),
-            2 | 6 | 10 => Ok(FrameSize::Ms40),
-            3 | 7 | 11 => Ok(FrameSize::Ms60),
+            0 | 4 | 8 => Ok(FrameDuration::Ms10),
+            1 | 5 | 9 => Ok(FrameDuration::Ms20),
+            2 | 6 | 10 => Ok(FrameDuration::Ms40),
+            3 | 7 | 11 => Ok(FrameDuration::Ms60),
             // Hybrid modes (configs 12..15)
-            12 | 14 => Ok(FrameSize::Ms10),
-            13 | 15 => Ok(FrameSize::Ms20),
+            12 | 14 => Ok(FrameDuration::Ms10),
+            13 | 15 => Ok(FrameDuration::Ms20),
             // CELT modes (configs 16..31)
-            16 | 20 | 24 | 28 => Ok(FrameSize::Ms2_5),
-            17 | 21 | 25 | 29 => Ok(FrameSize::Ms5),
-            18 | 22 | 26 | 30 => Ok(FrameSize::Ms10),
-            19 | 23 | 27 | 31 => Ok(FrameSize::Ms20),
+            16 | 20 | 24 | 28 => Ok(FrameDuration::Ms2_5),
+            17 | 21 | 25 | 29 => Ok(FrameDuration::Ms5),
+            18 | 22 | 26 | 30 => Ok(FrameDuration::Ms10),
+            19 | 23 | 27 | 31 => Ok(FrameDuration::Ms20),
             _ => Err(Error::InvalidFrameSize),
         };
     }
@@ -319,19 +352,19 @@ impl TryFrom<u8> for FrameSize {
 /// ```
 ///
 /// These values correspond to the `c` field in the TOC byte.
-/// 
+///
 /// https://datatracker.ietf.org/doc/html/rfc6716#section-3.1
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FrameCount {
     /// 1 frame in the packet (c = 0)
     One,
-    
+
     /// 2 frames, both with equal compressed size (c = 1)
     TwoEqual,
-    
+
     /// 2 frames, with different compressed sizes (c = 2)
     TwoDifferent,
-    
+
     /// Arbitrary number of frames (c = 3)
     Arbitrary,
 }
@@ -351,8 +384,8 @@ impl TryFrom<u8> for FrameCount {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::LazyLock;
     use super::*;
+    use std::sync::LazyLock;
 
     static _LOGGER: LazyLock<(), fn()> = LazyLock::new(init_logger);
     fn init_logger() {
@@ -370,7 +403,7 @@ mod tests {
         frame_count: FrameCount,
         audio_mode: AudioMode,
         bandwidth: Bandwidth,
-        frame_size: FrameSize,
+        frame_size: FrameDuration,
     }
 
     impl TestCase {
@@ -431,41 +464,41 @@ mod tests {
         frame_count: FrameCount,
         audio_mode: AudioMode,
         bandwidth: Bandwidth,
-        frame_size: FrameSize,
+        frame_size: FrameDuration,
     ) -> u8 {
         let config_number = match (audio_mode, bandwidth, frame_size) {
-            (AudioMode::Silk, Bandwidth::NarrowBand, FrameSize::Ms10) => 0,
-            (AudioMode::Silk, Bandwidth::NarrowBand, FrameSize::Ms20) => 1,
-            (AudioMode::Silk, Bandwidth::NarrowBand, FrameSize::Ms40) => 2,
-            (AudioMode::Silk, Bandwidth::NarrowBand, FrameSize::Ms60) => 3,
-            (AudioMode::Silk, Bandwidth::MediumBand, FrameSize::Ms10) => 4,
-            (AudioMode::Silk, Bandwidth::MediumBand, FrameSize::Ms20) => 5,
-            (AudioMode::Silk, Bandwidth::MediumBand, FrameSize::Ms40) => 6,
-            (AudioMode::Silk, Bandwidth::MediumBand, FrameSize::Ms60) => 7,
-            (AudioMode::Silk, Bandwidth::WideBand, FrameSize::Ms10) => 8,
-            (AudioMode::Silk, Bandwidth::WideBand, FrameSize::Ms20) => 9,
-            (AudioMode::Silk, Bandwidth::WideBand, FrameSize::Ms40) => 10,
-            (AudioMode::Silk, Bandwidth::WideBand, FrameSize::Ms60) => 11,
-            (AudioMode::Hybrid, Bandwidth::SuperWideBand, FrameSize::Ms10) => 12,
-            (AudioMode::Hybrid, Bandwidth::SuperWideBand, FrameSize::Ms20) => 13,
-            (AudioMode::Hybrid, Bandwidth::FullBand, FrameSize::Ms10) => 14,
-            (AudioMode::Hybrid, Bandwidth::FullBand, FrameSize::Ms20) => 15,
-            (AudioMode::Celt, Bandwidth::NarrowBand, FrameSize::Ms2_5) => 16,
-            (AudioMode::Celt, Bandwidth::NarrowBand, FrameSize::Ms5) => 17,
-            (AudioMode::Celt, Bandwidth::NarrowBand, FrameSize::Ms10) => 18,
-            (AudioMode::Celt, Bandwidth::NarrowBand, FrameSize::Ms20) => 19,
-            (AudioMode::Celt, Bandwidth::WideBand, FrameSize::Ms2_5) => 20,
-            (AudioMode::Celt, Bandwidth::WideBand, FrameSize::Ms5) => 21,
-            (AudioMode::Celt, Bandwidth::WideBand, FrameSize::Ms10) => 22,
-            (AudioMode::Celt, Bandwidth::WideBand, FrameSize::Ms20) => 23,
-            (AudioMode::Celt, Bandwidth::SuperWideBand, FrameSize::Ms2_5) => 24,
-            (AudioMode::Celt, Bandwidth::SuperWideBand, FrameSize::Ms5) => 25,
-            (AudioMode::Celt, Bandwidth::SuperWideBand, FrameSize::Ms10) => 26,
-            (AudioMode::Celt, Bandwidth::SuperWideBand, FrameSize::Ms20) => 27,
-            (AudioMode::Celt, Bandwidth::FullBand, FrameSize::Ms2_5) => 28,
-            (AudioMode::Celt, Bandwidth::FullBand, FrameSize::Ms5) => 29,
-            (AudioMode::Celt, Bandwidth::FullBand, FrameSize::Ms10) => 30,
-            (AudioMode::Celt, Bandwidth::FullBand, FrameSize::Ms20) => 31,
+            (AudioMode::Silk, Bandwidth::NarrowBand, FrameDuration::Ms10) => 0,
+            (AudioMode::Silk, Bandwidth::NarrowBand, FrameDuration::Ms20) => 1,
+            (AudioMode::Silk, Bandwidth::NarrowBand, FrameDuration::Ms40) => 2,
+            (AudioMode::Silk, Bandwidth::NarrowBand, FrameDuration::Ms60) => 3,
+            (AudioMode::Silk, Bandwidth::MediumBand, FrameDuration::Ms10) => 4,
+            (AudioMode::Silk, Bandwidth::MediumBand, FrameDuration::Ms20) => 5,
+            (AudioMode::Silk, Bandwidth::MediumBand, FrameDuration::Ms40) => 6,
+            (AudioMode::Silk, Bandwidth::MediumBand, FrameDuration::Ms60) => 7,
+            (AudioMode::Silk, Bandwidth::WideBand, FrameDuration::Ms10) => 8,
+            (AudioMode::Silk, Bandwidth::WideBand, FrameDuration::Ms20) => 9,
+            (AudioMode::Silk, Bandwidth::WideBand, FrameDuration::Ms40) => 10,
+            (AudioMode::Silk, Bandwidth::WideBand, FrameDuration::Ms60) => 11,
+            (AudioMode::Hybrid, Bandwidth::SuperWideBand, FrameDuration::Ms10) => 12,
+            (AudioMode::Hybrid, Bandwidth::SuperWideBand, FrameDuration::Ms20) => 13,
+            (AudioMode::Hybrid, Bandwidth::FullBand, FrameDuration::Ms10) => 14,
+            (AudioMode::Hybrid, Bandwidth::FullBand, FrameDuration::Ms20) => 15,
+            (AudioMode::Celt, Bandwidth::NarrowBand, FrameDuration::Ms2_5) => 16,
+            (AudioMode::Celt, Bandwidth::NarrowBand, FrameDuration::Ms5) => 17,
+            (AudioMode::Celt, Bandwidth::NarrowBand, FrameDuration::Ms10) => 18,
+            (AudioMode::Celt, Bandwidth::NarrowBand, FrameDuration::Ms20) => 19,
+            (AudioMode::Celt, Bandwidth::WideBand, FrameDuration::Ms2_5) => 20,
+            (AudioMode::Celt, Bandwidth::WideBand, FrameDuration::Ms5) => 21,
+            (AudioMode::Celt, Bandwidth::WideBand, FrameDuration::Ms10) => 22,
+            (AudioMode::Celt, Bandwidth::WideBand, FrameDuration::Ms20) => 23,
+            (AudioMode::Celt, Bandwidth::SuperWideBand, FrameDuration::Ms2_5) => 24,
+            (AudioMode::Celt, Bandwidth::SuperWideBand, FrameDuration::Ms5) => 25,
+            (AudioMode::Celt, Bandwidth::SuperWideBand, FrameDuration::Ms10) => 26,
+            (AudioMode::Celt, Bandwidth::SuperWideBand, FrameDuration::Ms20) => 27,
+            (AudioMode::Celt, Bandwidth::FullBand, FrameDuration::Ms2_5) => 28,
+            (AudioMode::Celt, Bandwidth::FullBand, FrameDuration::Ms5) => 29,
+            (AudioMode::Celt, Bandwidth::FullBand, FrameDuration::Ms10) => 30,
+            (AudioMode::Celt, Bandwidth::FullBand, FrameDuration::Ms20) => 31,
             _ => panic!("Invalid audio mode or bandwidth or frame size"),
         };
 
@@ -482,42 +515,42 @@ mod tests {
     }
     fn populate_test_table() -> Vec<TestCase> {
         vec![
-            TestCase { toc_byte: 0b00000000, is_stereo: false, frame_count: FrameCount::One, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::NarrowBand, frame_size: FrameSize::Ms10 },
-            TestCase { toc_byte: 0b00000001, is_stereo: false, frame_count: FrameCount::TwoEqual, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::NarrowBand, frame_size: FrameSize::Ms10 },
-            TestCase { toc_byte: 0b00000100, is_stereo: true, frame_count: FrameCount::One, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::NarrowBand, frame_size: FrameSize::Ms10 },
-            TestCase { toc_byte: 0b00000101, is_stereo: true, frame_count: FrameCount::TwoEqual, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::NarrowBand, frame_size: FrameSize::Ms10 },
-            TestCase { toc_byte: 0b00010000, is_stereo: false, frame_count: FrameCount::One, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::NarrowBand, frame_size: FrameSize::Ms40 },
-            TestCase { toc_byte: 0b00010001, is_stereo: false, frame_count: FrameCount::TwoEqual, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::NarrowBand, frame_size: FrameSize::Ms40 },
-            TestCase { toc_byte: 0b00010100, is_stereo: true, frame_count: FrameCount::One, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::NarrowBand, frame_size: FrameSize::Ms40 },
-            TestCase { toc_byte: 0b00010101, is_stereo: true, frame_count: FrameCount::TwoEqual, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::NarrowBand, frame_size: FrameSize::Ms40 },
-            TestCase { toc_byte: 0b00011100, is_stereo: true, frame_count: FrameCount::One, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::NarrowBand, frame_size: FrameSize::Ms60 },
-            TestCase { toc_byte: 0b00011101, is_stereo: true, frame_count: FrameCount::TwoEqual, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::NarrowBand, frame_size: FrameSize::Ms60 },
-            TestCase { toc_byte: 0b00100000, is_stereo: false, frame_count: FrameCount::One, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::MediumBand, frame_size: FrameSize::Ms10 },
-            TestCase { toc_byte: 0b00100001, is_stereo: false, frame_count: FrameCount::TwoEqual, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::MediumBand, frame_size: FrameSize::Ms10 },
-            TestCase { toc_byte: 0b00100100, is_stereo: true, frame_count: FrameCount::One, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::MediumBand, frame_size: FrameSize::Ms10 },
-            TestCase { toc_byte: 0b00100101, is_stereo: true, frame_count: FrameCount::TwoEqual, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::MediumBand, frame_size: FrameSize::Ms10 },
-            TestCase { toc_byte: 0b00101100, is_stereo: true, frame_count: FrameCount::One, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::MediumBand, frame_size: FrameSize::Ms20 },
-            TestCase { toc_byte: 0b00101101, is_stereo: true, frame_count: FrameCount::TwoEqual, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::MediumBand, frame_size: FrameSize::Ms20 },
-            TestCase { toc_byte: 0b00110000, is_stereo: false, frame_count: FrameCount::One, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::MediumBand, frame_size: FrameSize::Ms40 },
-            TestCase { toc_byte: 0b00110001, is_stereo: false, frame_count: FrameCount::TwoEqual, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::MediumBand, frame_size: FrameSize::Ms40 },
-            TestCase { toc_byte: 0b00110100, is_stereo: true, frame_count: FrameCount::One, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::MediumBand, frame_size: FrameSize::Ms40 },
-            TestCase { toc_byte: 0b00110101, is_stereo: true, frame_count: FrameCount::TwoEqual, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::MediumBand, frame_size: FrameSize::Ms40 },
-            TestCase { toc_byte: 0b00111100, is_stereo: true, frame_count: FrameCount::One, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::MediumBand, frame_size: FrameSize::Ms60 },
-            TestCase { toc_byte: 0b00111101, is_stereo: true, frame_count: FrameCount::TwoEqual, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::MediumBand, frame_size: FrameSize::Ms60 },
-            TestCase { toc_byte: 0b01001000, is_stereo: false, frame_count: FrameCount::One, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::WideBand, frame_size: FrameSize::Ms20 },
-            TestCase { toc_byte: 0b01001001, is_stereo: false, frame_count: FrameCount::TwoEqual, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::WideBand, frame_size: FrameSize::Ms20 },
-            TestCase { toc_byte: 0b01001100, is_stereo: true, frame_count: FrameCount::One, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::WideBand, frame_size: FrameSize::Ms20 },
-            TestCase { toc_byte: 0b01001101, is_stereo: true, frame_count: FrameCount::TwoEqual, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::WideBand, frame_size: FrameSize::Ms20 },
-            TestCase { toc_byte: 0b01100000, is_stereo: false, frame_count: FrameCount::One, audio_mode: AudioMode::Hybrid, bandwidth: Bandwidth::SuperWideBand, frame_size: FrameSize::Ms10 },
-            TestCase { toc_byte: 0b01100001, is_stereo: false, frame_count: FrameCount::TwoEqual, audio_mode: AudioMode::Hybrid, bandwidth: Bandwidth::SuperWideBand, frame_size: FrameSize::Ms10 },
-            TestCase { toc_byte: 0b01100100, is_stereo: true, frame_count: FrameCount::One, audio_mode: AudioMode::Hybrid, bandwidth: Bandwidth::SuperWideBand, frame_size: FrameSize::Ms10 },
-            TestCase { toc_byte: 0b01100101, is_stereo: true, frame_count: FrameCount::TwoEqual, audio_mode: AudioMode::Hybrid, bandwidth: Bandwidth::SuperWideBand, frame_size: FrameSize::Ms10 },
-            TestCase { toc_byte: 0b10000000, is_stereo: false, frame_count: FrameCount::One, audio_mode: AudioMode::Celt, bandwidth: Bandwidth::NarrowBand, frame_size: FrameSize::Ms2_5 },
-            TestCase { toc_byte: 0b10000001, is_stereo: false, frame_count: FrameCount::TwoEqual, audio_mode: AudioMode::Celt, bandwidth: Bandwidth::NarrowBand, frame_size: FrameSize::Ms2_5 },
-            TestCase { toc_byte: 0b10000100, is_stereo: true, frame_count: FrameCount::One, audio_mode: AudioMode::Celt, bandwidth: Bandwidth::NarrowBand, frame_size: FrameSize::Ms2_5 },
-            TestCase { toc_byte: 0b10000101, is_stereo: true, frame_count: FrameCount::TwoEqual, audio_mode: AudioMode::Celt, bandwidth: Bandwidth::NarrowBand, frame_size: FrameSize::Ms2_5 },
-            TestCase { toc_byte: 0b10001000, is_stereo: false, frame_count: FrameCount::One, audio_mode: AudioMode::Celt, bandwidth: Bandwidth::NarrowBand, frame_size: FrameSize::Ms5 },
-            TestCase { toc_byte: 0b10001001, is_stereo: false, frame_count: FrameCount::TwoEqual, audio_mode: AudioMode::Celt, bandwidth: Bandwidth::NarrowBand, frame_size: FrameSize::Ms5 },
+            TestCase { toc_byte: 0b00000000, is_stereo: false, frame_count: FrameCount::One, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::NarrowBand, frame_size: FrameDuration::Ms10 },
+            TestCase { toc_byte: 0b00000001, is_stereo: false, frame_count: FrameCount::TwoEqual, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::NarrowBand, frame_size: FrameDuration::Ms10 },
+            TestCase { toc_byte: 0b00000100, is_stereo: true, frame_count: FrameCount::One, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::NarrowBand, frame_size: FrameDuration::Ms10 },
+            TestCase { toc_byte: 0b00000101, is_stereo: true, frame_count: FrameCount::TwoEqual, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::NarrowBand, frame_size: FrameDuration::Ms10 },
+            TestCase { toc_byte: 0b00010000, is_stereo: false, frame_count: FrameCount::One, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::NarrowBand, frame_size: FrameDuration::Ms40 },
+            TestCase { toc_byte: 0b00010001, is_stereo: false, frame_count: FrameCount::TwoEqual, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::NarrowBand, frame_size: FrameDuration::Ms40 },
+            TestCase { toc_byte: 0b00010100, is_stereo: true, frame_count: FrameCount::One, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::NarrowBand, frame_size: FrameDuration::Ms40 },
+            TestCase { toc_byte: 0b00010101, is_stereo: true, frame_count: FrameCount::TwoEqual, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::NarrowBand, frame_size: FrameDuration::Ms40 },
+            TestCase { toc_byte: 0b00011100, is_stereo: true, frame_count: FrameCount::One, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::NarrowBand, frame_size: FrameDuration::Ms60 },
+            TestCase { toc_byte: 0b00011101, is_stereo: true, frame_count: FrameCount::TwoEqual, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::NarrowBand, frame_size: FrameDuration::Ms60 },
+            TestCase { toc_byte: 0b00100000, is_stereo: false, frame_count: FrameCount::One, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::MediumBand, frame_size: FrameDuration::Ms10 },
+            TestCase { toc_byte: 0b00100001, is_stereo: false, frame_count: FrameCount::TwoEqual, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::MediumBand, frame_size: FrameDuration::Ms10 },
+            TestCase { toc_byte: 0b00100100, is_stereo: true, frame_count: FrameCount::One, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::MediumBand, frame_size: FrameDuration::Ms10 },
+            TestCase { toc_byte: 0b00100101, is_stereo: true, frame_count: FrameCount::TwoEqual, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::MediumBand, frame_size: FrameDuration::Ms10 },
+            TestCase { toc_byte: 0b00101100, is_stereo: true, frame_count: FrameCount::One, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::MediumBand, frame_size: FrameDuration::Ms20 },
+            TestCase { toc_byte: 0b00101101, is_stereo: true, frame_count: FrameCount::TwoEqual, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::MediumBand, frame_size: FrameDuration::Ms20 },
+            TestCase { toc_byte: 0b00110000, is_stereo: false, frame_count: FrameCount::One, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::MediumBand, frame_size: FrameDuration::Ms40 },
+            TestCase { toc_byte: 0b00110001, is_stereo: false, frame_count: FrameCount::TwoEqual, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::MediumBand, frame_size: FrameDuration::Ms40 },
+            TestCase { toc_byte: 0b00110100, is_stereo: true, frame_count: FrameCount::One, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::MediumBand, frame_size: FrameDuration::Ms40 },
+            TestCase { toc_byte: 0b00110101, is_stereo: true, frame_count: FrameCount::TwoEqual, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::MediumBand, frame_size: FrameDuration::Ms40 },
+            TestCase { toc_byte: 0b00111100, is_stereo: true, frame_count: FrameCount::One, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::MediumBand, frame_size: FrameDuration::Ms60 },
+            TestCase { toc_byte: 0b00111101, is_stereo: true, frame_count: FrameCount::TwoEqual, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::MediumBand, frame_size: FrameDuration::Ms60 },
+            TestCase { toc_byte: 0b01001000, is_stereo: false, frame_count: FrameCount::One, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::WideBand, frame_size: FrameDuration::Ms20 },
+            TestCase { toc_byte: 0b01001001, is_stereo: false, frame_count: FrameCount::TwoEqual, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::WideBand, frame_size: FrameDuration::Ms20 },
+            TestCase { toc_byte: 0b01001100, is_stereo: true, frame_count: FrameCount::One, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::WideBand, frame_size: FrameDuration::Ms20 },
+            TestCase { toc_byte: 0b01001101, is_stereo: true, frame_count: FrameCount::TwoEqual, audio_mode: AudioMode::Silk, bandwidth: Bandwidth::WideBand, frame_size: FrameDuration::Ms20 },
+            TestCase { toc_byte: 0b01100000, is_stereo: false, frame_count: FrameCount::One, audio_mode: AudioMode::Hybrid, bandwidth: Bandwidth::SuperWideBand, frame_size: FrameDuration::Ms10 },
+            TestCase { toc_byte: 0b01100001, is_stereo: false, frame_count: FrameCount::TwoEqual, audio_mode: AudioMode::Hybrid, bandwidth: Bandwidth::SuperWideBand, frame_size: FrameDuration::Ms10 },
+            TestCase { toc_byte: 0b01100100, is_stereo: true, frame_count: FrameCount::One, audio_mode: AudioMode::Hybrid, bandwidth: Bandwidth::SuperWideBand, frame_size: FrameDuration::Ms10 },
+            TestCase { toc_byte: 0b01100101, is_stereo: true, frame_count: FrameCount::TwoEqual, audio_mode: AudioMode::Hybrid, bandwidth: Bandwidth::SuperWideBand, frame_size: FrameDuration::Ms10 },
+            TestCase { toc_byte: 0b10000000, is_stereo: false, frame_count: FrameCount::One, audio_mode: AudioMode::Celt, bandwidth: Bandwidth::NarrowBand, frame_size: FrameDuration::Ms2_5 },
+            TestCase { toc_byte: 0b10000001, is_stereo: false, frame_count: FrameCount::TwoEqual, audio_mode: AudioMode::Celt, bandwidth: Bandwidth::NarrowBand, frame_size: FrameDuration::Ms2_5 },
+            TestCase { toc_byte: 0b10000100, is_stereo: true, frame_count: FrameCount::One, audio_mode: AudioMode::Celt, bandwidth: Bandwidth::NarrowBand, frame_size: FrameDuration::Ms2_5 },
+            TestCase { toc_byte: 0b10000101, is_stereo: true, frame_count: FrameCount::TwoEqual, audio_mode: AudioMode::Celt, bandwidth: Bandwidth::NarrowBand, frame_size: FrameDuration::Ms2_5 },
+            TestCase { toc_byte: 0b10001000, is_stereo: false, frame_count: FrameCount::One, audio_mode: AudioMode::Celt, bandwidth: Bandwidth::NarrowBand, frame_size: FrameDuration::Ms5 },
+            TestCase { toc_byte: 0b10001001, is_stereo: false, frame_count: FrameCount::TwoEqual, audio_mode: AudioMode::Celt, bandwidth: Bandwidth::NarrowBand, frame_size: FrameDuration::Ms5 },
         ]
     }
 
@@ -542,12 +575,12 @@ mod tests {
 
     #[test]
     fn frame_size_to_duration() {
-        assert_eq!(Duration::from(FrameSize::Ms2_5), Duration::from_nanos(2_500_000));
-        assert_eq!(Duration::from(FrameSize::Ms5), Duration::from_nanos(5_000_000));
-        assert_eq!(Duration::from(FrameSize::Ms10), Duration::from_nanos(10_000_000));
-        assert_eq!(Duration::from(FrameSize::Ms20), Duration::from_nanos(20_000_000));
-        assert_eq!(Duration::from(FrameSize::Ms40), Duration::from_nanos(40_000_000));
-        assert_eq!(Duration::from(FrameSize::Ms60), Duration::from_nanos(60_000_000));
+        assert_eq!(Duration::from(FrameDuration::Ms2_5), Duration::from_nanos(2_500_000));
+        assert_eq!(Duration::from(FrameDuration::Ms5), Duration::from_nanos(5_000_000));
+        assert_eq!(Duration::from(FrameDuration::Ms10), Duration::from_nanos(10_000_000));
+        assert_eq!(Duration::from(FrameDuration::Ms20), Duration::from_nanos(20_000_000));
+        assert_eq!(Duration::from(FrameDuration::Ms40), Duration::from_nanos(40_000_000));
+        assert_eq!(Duration::from(FrameDuration::Ms60), Duration::from_nanos(60_000_000));
     }
 
     macro_rules! test_mapping {
@@ -577,14 +610,14 @@ mod tests {
 
     test_mapping!(frame_size, Parameters,
         [
-            (0, FrameSize::Ms10), (1, FrameSize::Ms20), (2, FrameSize::Ms40), (3, FrameSize::Ms60),
-            (4, FrameSize::Ms10), (5, FrameSize::Ms20), (6, FrameSize::Ms40), (7, FrameSize::Ms60),
-            (8, FrameSize::Ms10), (9, FrameSize::Ms20), (10, FrameSize::Ms40), (11, FrameSize::Ms60),
-            (12, FrameSize::Ms10), (13, FrameSize::Ms20), (14, FrameSize::Ms10), (15, FrameSize::Ms20),
-            (16, FrameSize::Ms2_5), (17, FrameSize::Ms5), (18, FrameSize::Ms10), (19, FrameSize::Ms20),
-            (20, FrameSize::Ms2_5), (21, FrameSize::Ms5), (22, FrameSize::Ms10), (23, FrameSize::Ms20),
-            (24, FrameSize::Ms2_5), (25, FrameSize::Ms5), (26, FrameSize::Ms10), (27, FrameSize::Ms20),
-            (28, FrameSize::Ms2_5), (29, FrameSize::Ms5), (30, FrameSize::Ms10), (31, FrameSize::Ms20),
+            (0, FrameDuration::Ms10), (1, FrameDuration::Ms20), (2, FrameDuration::Ms40), (3, FrameDuration::Ms60),
+            (4, FrameDuration::Ms10), (5, FrameDuration::Ms20), (6, FrameDuration::Ms40), (7, FrameDuration::Ms60),
+            (8, FrameDuration::Ms10), (9, FrameDuration::Ms20), (10, FrameDuration::Ms40), (11, FrameDuration::Ms60),
+            (12, FrameDuration::Ms10), (13, FrameDuration::Ms20), (14, FrameDuration::Ms10), (15, FrameDuration::Ms20),
+            (16, FrameDuration::Ms2_5), (17, FrameDuration::Ms5), (18, FrameDuration::Ms10), (19, FrameDuration::Ms20),
+            (20, FrameDuration::Ms2_5), (21, FrameDuration::Ms5), (22, FrameDuration::Ms10), (23, FrameDuration::Ms20),
+            (24, FrameDuration::Ms2_5), (25, FrameDuration::Ms5), (26, FrameDuration::Ms10), (27, FrameDuration::Ms20),
+            (28, FrameDuration::Ms2_5), (29, FrameDuration::Ms5), (30, FrameDuration::Ms10), (31, FrameDuration::Ms20),
         ]);
 
 
