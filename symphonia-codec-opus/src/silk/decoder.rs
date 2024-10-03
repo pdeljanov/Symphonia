@@ -51,7 +51,7 @@ use std::convert::TryFrom;
 use crate::entropy::{self, RangeDecoder};
 use crate::packet::FramePacket;
 use crate::silk::error::Error;
-use crate::toc::{Bandwidth, FrameSize};
+use crate::toc::{Bandwidth, FrameDuration};
 use crate::silk::constant;
 
 use symphonia_core::audio::{AsAudioBufferRef, AudioBuffer, AudioBufferRef, Channels, Signal, SignalSpec};
@@ -269,7 +269,7 @@ impl Decoder {
 
         self.decode_lsf(&mut range_decoder, &mut frame)?;
 
-        if self.state.frame_size == FrameSize::Ms20 {
+        if self.state.frame_size == FrameDuration::Ms20 {
             frame.lsf_interpolation_index = Some(range_decoder.decode_symbol_with_icdf(&constant::ICDF_NORMALIZED_LSF_INTERPOLATION_INDEX)?);
         }
 
@@ -335,7 +335,7 @@ impl Decoder {
             subframe.nlsf_q15 = stabilized_nlsf_q15;
         }
 
-        if self.state.frame_size == FrameSize::Ms20 {
+        if self.state.frame_size == FrameDuration::Ms20 {
             let interpolation_index = decoder.decode_symbol_with_icdf(&constant::ICDF_NORMALIZED_LSF_INTERPOLATION_INDEX)?;
             frame.lsf_interpolation_index = Some(interpolation_index);
 
@@ -921,7 +921,7 @@ impl Decoder {
 pub struct State {
     sample_rate: u32,
     channels: Channels,
-    frame_size: FrameSize,
+    frame_size: FrameDuration,
     bandwidth: Bandwidth,
     prev_frame_type: FrameType,
     prev_samples: Vec<f32>,
@@ -931,7 +931,7 @@ pub struct State {
 
 
 impl State {
-    pub fn try_new(channels: Channels, frame_size: FrameSize, bandwidth: Bandwidth) -> Result<Self> {
+    pub fn try_new(channels: Channels, frame_size: FrameDuration, bandwidth: Bandwidth) -> Result<Self> {
         let sample_rate = bandwidth.sample_rate();
         let frame_length = Self::calculate_frame_length(sample_rate, frame_size)?;
         let channel_count = channels.count();
@@ -957,7 +957,7 @@ impl State {
         self.prev_samples.fill(0.0);
     }
 
-    fn calculate_frame_length(sample_rate: u32, frame_size: FrameSize) -> Result<usize> {
+    fn calculate_frame_length(sample_rate: u32, frame_size: FrameDuration) -> Result<usize> {
         let samples = (sample_rate as u128)
             .checked_mul(frame_size.duration().as_nanos())
             .and_then(|ns| ns.checked_div(1_000_000_000))
@@ -1063,7 +1063,7 @@ pub enum QuantizationOffsetType {
 ///
 /// https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.9
 type SubframeSize = usize;
-impl From<FrameSize> for SubframeSize {
+impl From<FrameDuration> for SubframeSize {
      /// Converts a FrameSize to the number of subframes it contains
     ///
     /// The number of subframes varies based on the frame duration:
@@ -1072,14 +1072,14 @@ impl From<FrameSize> for SubframeSize {
     /// - 20 ms frames have 4 subframes
     /// - 40 ms frames have 8 subframes
     /// - 60 ms frames have 12 subframes
-    fn from(frame_size: FrameSize) -> Self {
+    fn from(frame_size: FrameDuration) -> Self {
         return match frame_size {
-            FrameSize::Ms2_5 => 1,
-            FrameSize::Ms5 => 1,
-            FrameSize::Ms10 => 2,
-            FrameSize::Ms20 => 4,
-            FrameSize::Ms40 => 8,
-            FrameSize::Ms60 => 12,
+            FrameDuration::Ms2_5 => 1,
+            FrameDuration::Ms5 => 1,
+            FrameDuration::Ms10 => 2,
+            FrameDuration::Ms20 => 4,
+            FrameDuration::Ms40 => 8,
+            FrameDuration::Ms60 => 12,
         };
     }
 }

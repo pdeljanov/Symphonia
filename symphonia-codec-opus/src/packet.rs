@@ -77,9 +77,10 @@ impl From<Error> for symphonia_core::errors::Error {
     }
 }
 
-const MAX_FRAME_LENGTH: usize = 255 * 4 + 255; // 1275 
+const MAX_FRAME_LENGTH: usize = 255 * 4 + 255; // 1275
 const MAX_TOTAL_DURATION_MS: u128 = 120;
 const MAX_PADDING_VALUE: u8 = 254;
+const MAX_FRAMES: usize = 48;
 
 
 /// Packet Organization
@@ -131,6 +132,19 @@ impl<'a> FramePacket<'a> {
             FrameCount::TwoDifferent => Self::two_different_frames(data, toc),
             FrameCount::Arbitrary => Self::signaled_number_of_frames(data, toc),
         };
+    }
+
+
+    pub fn toc(&self) -> Toc {
+        return self.toc;
+    }
+
+    pub fn frames(&self) -> &[&'a [u8]] {
+        return &self.frames;
+    }
+
+    pub fn padding(&self) -> Option<&'a [u8]> {
+        return self.padding;
     }
 
     /// Parse a Code 0 packet (single frame).
@@ -360,18 +374,6 @@ impl<'a> FramePacket<'a> {
             return Err(Error::FrameLengthExceedsMaximum.into());
         }
         return Ok(());
-    }
-
-    pub fn toc(&self) -> Toc {
-        return self.toc;
-    }
-
-    pub fn frames(&self) -> &[&'a [u8]] {
-        return &self.frames;
-    }
-
-    pub fn padding(&self) -> Option<&'a [u8]> {
-        return self.padding;
     }
 }
 
