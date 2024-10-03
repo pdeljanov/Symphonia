@@ -1,11 +1,11 @@
-use once_cell::sync::Lazy;
-use symphonia_core::audio::{AudioBuffer, AudioBufferRef, SignalSpec};
+use crate::silk;
+use std::sync::LazyLock;
+use symphonia_core::audio::AudioBufferRef;
 use symphonia_core::codecs::{CodecDescriptor, CodecParameters, Decoder, DecoderOptions, FinalizeResult, CODEC_TYPE_OPUS};
 use symphonia_core::formats::Packet;
-use crate::silk;
 
 /// Static Opus Codec Descriptor.
-static OPUS_CODEC_DESCRIPTOR: Lazy<CodecDescriptor> = Lazy::new(|| {
+static OPUS_CODEC_DESCRIPTOR: LazyLock<CodecDescriptor> = LazyLock::new(|| {
     CodecDescriptor {
         codec: CODEC_TYPE_OPUS,
         short_name: "opus",
@@ -36,7 +36,7 @@ impl Decoder for OpusDecoder {
     {
         let silk_decoder = silk::Decoder::try_new(params.to_owned())?;
 
-        return Ok(Self { silk_decoder});
+        return Ok(Self { silk_decoder });
     }
 
     fn supported_codecs() -> &'static [CodecDescriptor]
