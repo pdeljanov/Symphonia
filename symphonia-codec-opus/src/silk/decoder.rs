@@ -140,7 +140,7 @@ use symphonia_core::io::{BitReaderLtr, FiniteBitStream, ReadBitsLtr};
 ///    - **Pitch Parameters:** Include primary pitch lag and subframe pitch contours for voiced frames.
 ///    - **LTP (Long-Term Prediction) Parameters:** Enhance the coding of periodic signals.
 ///    - **Excitation Parameters:** Define the excitation signal's characteristics, crucial for synthesizing the speech signal.
-/// 
+///
 /// This structure reflects the complex and variable nature of SILK frames
 /// as described in RFC 6716, Section 4.2.7.
 ///
@@ -184,10 +184,8 @@ impl Decoder {
     pub fn decode(&mut self, packet: &Packet) -> Result<AudioBufferRef<'_>> {
         let frame_packet = FramePacket::new(&packet.data)?;
 
-        let params = frame_packet.toc.params().map_err(|_| Error::UnsupportedConfig)?;
-
-        if self.state.frame_size != params.frame_size || self.state.bandwidth != params.bandwidth || self.state.channels != self.channels {
-            self.state = State::try_new(self.channels, params.frame_size, params.bandwidth)?;
+        if self.state.frame_size != frame_packet.frame_size || self.state.bandwidth != frame_packet.bandwidth || self.state.channels != self.channels {
+            self.state = State::try_new(self.channels, frame_packet.frame_size, frame_packet.bandwidth)?;
         }
 
         for frame_data in frame_packet.frames.iter() {
@@ -296,7 +294,7 @@ impl Decoder {
         return Ok((vad_flag, lbrr_flag));
     }
 
-    
+
     /// Decodes the SILK frame type
     ///
     /// The frame type is encoded using a context-dependent codebook.
@@ -1064,7 +1062,7 @@ pub enum QuantizationOffsetType {
 /// https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.9
 type SubframeSize = usize;
 impl From<FrameDuration> for SubframeSize {
-     /// Converts a FrameSize to the number of subframes it contains
+    /// Converts a FrameSize to the number of subframes it contains
     ///
     /// The number of subframes varies based on the frame duration:
     /// - 2.5 ms and 5 ms frames have 1 subframe
