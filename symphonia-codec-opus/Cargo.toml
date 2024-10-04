@@ -24,6 +24,7 @@ proptest = { version = "1", features = ["std", "attr-macro"] }
 [lints.clippy]
 needless_return = "allow"
 enum_variant_names = "allow"
+upper_case_acronyms = "allow"
 unused_imports = "allow"
 
 [dev-dependencies]

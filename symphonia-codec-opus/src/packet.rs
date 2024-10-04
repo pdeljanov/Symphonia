@@ -12,7 +12,7 @@
 //!
 //! References:
 //! - RFC 6716: Definition of the Opus Audio Codec (https://tools.ietf.org/html/rfc6716)
-use crate::toc::{FrameCount, Toc};
+use crate::toc::{AudioMode, Bandwidth, FrameCount, FrameDuration, Toc};
 use std::num::NonZeroU8;
 use std::time::Duration;
 use symphonia_core::errors::Result;
@@ -111,9 +111,12 @@ pub struct FramePacket<'a> {
     ///```
     ///
     /// https://datatracker.ietf.org/doc/html/rfc6716#section-3.1
-    pub(crate) toc: Toc,
-    pub(crate) frames: Vec<&'a [u8]>,
-    padding: Option<&'a [u8]>,
+    pub stereo: bool,
+    pub audio_mode: AudioMode,
+    pub bandwidth: Bandwidth,
+    pub frame_size: FrameDuration,
+    pub frames: Vec<&'a [u8]>,
+    pub padding: Option<&'a [u8]>,
 }
 
 impl<'a> FramePacket<'a> {
@@ -124,46 +127,48 @@ impl<'a> FramePacket<'a> {
             return Err(Error::EmptyFrameData.into());
         }
 
-        let toc = Toc::try_new(*toc_byte).map_err(Error::Toc)?;
+        let Toc {
+            stereo,
+            frame_count,
+            audio_mode,
+            bandwidth,
+            frame_size, ..
+        } = Toc::try_new(*toc_byte).map_err(Error::Toc)?;
 
-        return match toc.frame_count() {
-            FrameCount::One => Self::one(data, toc),
-            FrameCount::TwoEqual => Self::two_equal_frames(data, toc),
-            FrameCount::TwoDifferent => Self::two_different_frames(data, toc),
-            FrameCount::Arbitrary => Self::signaled_number_of_frames(data, toc),
+        let packet = Self {
+            stereo,
+            audio_mode,
+            bandwidth,
+            frame_size,
+            frames: vec![],
+            padding: None,
         };
-    }
 
-
-    pub fn toc(&self) -> Toc {
-        return self.toc;
-    }
-
-    pub fn frames(&self) -> &[&'a [u8]] {
-        return &self.frames;
-    }
-
-    pub fn padding(&self) -> Option<&'a [u8]> {
-        return self.padding;
+        return match frame_count {
+            FrameCount::One => packet.one(data),
+            FrameCount::TwoEqual => packet.two_equal_frames(data),
+            FrameCount::TwoDifferent => packet.two_different_frames(data),
+            FrameCount::Arbitrary => packet.signaled_number_of_frames(data),
+        };
     }
 
     /// Parse a Code 0 packet (single frame).
     ///
     /// https://datatracker.ietf.org/doc/html/rfc6716#section-3.2.2
-    fn one(data: &'a [u8], toc: Toc) -> Result<Self> {
+    fn one(self, data: &'a [u8]) -> Result<Self> {
         Self::check_frame_size(data.len())?;
 
         return Ok(Self {
-            toc,
             frames: vec![data],
             padding: None,
+            ..self
         });
     }
 
     /// Parse a Code 1 packet (two frames with equal compressed size).
     ///
     /// https://datatracker.ietf.org/doc/html/rfc6716#section-3.2.3j
-    fn two_equal_frames(data: &'a [u8], toc: Toc) -> Result<Self> {
+    fn two_equal_frames(self, data: &'a [u8]) -> Result<Self> {
         if data.len() % 2 != 0 {
             return Err(Error::InvalidCode1PacketLength.into());
         }
@@ -172,16 +177,16 @@ impl<'a> FramePacket<'a> {
         Self::check_frame_size(frame_size)?;
 
         return Ok(Self {
-            toc,
             frames: data.chunks(frame_size).collect(),
             padding: None,
+            ..self
         });
     }
 
     /// Parse a Code 2 packet (two frames with different compressed sizes).
     ///
     /// https://datatracker.ietf.org/doc/html/rfc6716#section-3.2.4
-    fn two_different_frames(data: &'a [u8], toc: Toc) -> Result<Self> {
+    fn two_different_frames(self, data: &'a [u8]) -> Result<Self> {
         let (n1, offset) = Self::get_frame_length(data)?;
 
         if data.len() < offset + n1 {
@@ -196,9 +201,9 @@ impl<'a> FramePacket<'a> {
         Self::check_frame_size(frame_2.len())?;
 
         return Ok(Self {
-            toc,
             frames: vec![frame_1, frame_2],
             padding: None,
+            ..self
         });
     }
 
@@ -207,7 +212,7 @@ impl<'a> FramePacket<'a> {
     /// This method handles both CBR and VBR modes, as well as padding.
     ///
     /// https://datatracker.ietf.org/doc/html/rfc6716#section-3.2.5
-    fn signaled_number_of_frames(data: &'a [u8], toc: Toc) -> Result<Self> {
+    fn signaled_number_of_frames(self, data: &'a [u8]) -> Result<Self> {
         let (frame_count_byte, rest) = data.split_first().ok_or(Error::PacketTooShort)?;
 
         let buf = [*frame_count_byte];
@@ -219,7 +224,7 @@ impl<'a> FramePacket<'a> {
 
         let frame_count = NonZeroU8::new(m).ok_or(Error::ZeroFrameCount)?;
 
-        Self::check_total_duration(frame_count.get(), &toc)?;
+        Self::check_total_duration(frame_count.get(), self.frame_size)?;
 
         let mut offset = 0;
 
@@ -254,9 +259,9 @@ impl<'a> FramePacket<'a> {
         };
 
         return Ok(Self {
-            toc,
             frames,
             padding: padding_data,
+            ..self
         });
     }
 
@@ -356,9 +361,8 @@ impl<'a> FramePacket<'a> {
         };
     }
 
-    fn check_total_duration(frame_count: u8, toc: &Toc) -> Result<()> {
-        let params = toc.params().map_err(Error::Toc)?;
-        let total_duration_ms = Duration::from(params.frame_size).as_millis()
+    fn check_total_duration(frame_count: u8, frame_duration: FrameDuration) -> Result<()> {
+        let total_duration_ms = Duration::from(frame_duration).as_millis()
             .checked_mul(frame_count as u128)
             .ok_or(Error::TotalDurationOverflow)?;
 
