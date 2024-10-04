@@ -56,7 +56,7 @@ impl TrackState {
 
         track
             .with_time_base(TimeBase::new(1, trak.mdia.mdhd.timescale))
-            .with_num_frames(trak.mdia.mdhd.duration);
+            .with_num_frames(trak.duration);
 
         track
     }
@@ -523,8 +523,9 @@ impl FormatReader for IsoMp4Reader<'_> {
             }
             else {
                 // No more segments. If the stream is unseekable, it may be the case that there are
-                // more segments coming. Iterate atoms until a new segment is found or the
-                // end-of-stream is reached.
+                // more segments coming. If the stream is seekable it might be fragmented and no segments are found in
+                // the moov atom. Iterate atoms until a new segment is found or the
+                // end-of-stream is reached
                 if !self.try_read_more_segments()? {
                     return Ok(None);
                 }
