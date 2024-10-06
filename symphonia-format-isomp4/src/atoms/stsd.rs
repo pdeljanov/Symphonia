@@ -6,7 +6,6 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use core::str;
-use std::usize;
 
 use log::debug;
 use symphonia_core::audio::{Channels, Position};
@@ -145,6 +144,11 @@ impl StsdAtom {
                 codec_params.with_width(entry.width).with_height(entry.height);
 
                 match entry.codec_specific {
+                    Some(VisualCodecSpecific::Esds(ref esds)) => {
+                        // ESDS is not a video specific atom. Returns an error if not an video
+                        // elementary stream.
+                        esds.fill_video_codec_params(&mut codec_params).ok()?;
+                    }
                     Some(VisualCodecSpecific::Avc1(ref avc)) => {
                         avc.fill_codec_params(&mut codec_params);
                     }
@@ -549,6 +553,7 @@ pub struct VisualSampleEntry {
 #[allow(dead_code)]
 #[derive(Debug)]
 pub enum VisualCodecSpecific {
+    Esds(EsdsAtom),
     Av1,
     Avc1(AvcCAtom),
     Hvc1,

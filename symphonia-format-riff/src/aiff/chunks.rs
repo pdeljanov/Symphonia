@@ -28,6 +28,7 @@ pub struct CommonChunk {
     /// The number of channels.
     pub n_channels: i16,
     /// The number of audio frames.
+    #[allow(dead_code)]
     pub n_sample_frames: u32,
     /// The sample size in bits.
     pub sample_size: i16,
@@ -252,7 +253,9 @@ impl CommonChunkParser for ChunkParser<CommonChunk> {
 /// `SoundChunk` is a required AIFF chunk, containing the audio data.
 pub struct SoundChunk {
     pub len: u32,
+    #[allow(dead_code)]
     pub offset: u32,
+    #[allow(dead_code)]
     pub block_size: u32,
 }
 

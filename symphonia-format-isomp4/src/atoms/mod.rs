@@ -414,6 +414,7 @@ impl AtomHeader {
     }
 
     /// Get the atom's header size.
+    #[allow(dead_code)]
     pub fn header_len(&self) -> u64 {
         u64::from(self.header_len)
     }
@@ -452,6 +453,7 @@ impl AtomHeader {
     /// non-UUID atom.
     ///
     /// On success, consumes 16 bytes from the payload size.
+    #[allow(dead_code)]
     pub fn read_uuid<B: ReadBytes>(&mut self, reader: &mut B) -> Result<[u8; 16]> {
         match self.atom_type {
             AtomType::Uuid => {
@@ -564,7 +566,7 @@ impl<B: ReadBytes> AtomIterator<B> {
                 // An atom with a length of zero is defined to span to the end of the stream. If
                 // len is available, use it for the next atom start position, otherwise, use u64 max
                 // which will trip an end of stream error on the next iteration.
-                self.len.map(|l| self.base_pos + l).unwrap_or(std::u64::MAX)
+                self.len.map(|l| self.base_pos + l).unwrap_or(u64::MAX)
             }
 
             Some(atom_len) => self.next_atom_pos + atom_len.get(),

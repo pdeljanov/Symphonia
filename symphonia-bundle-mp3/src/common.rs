@@ -100,9 +100,13 @@ pub struct FrameHeader {
     pub sample_rate: u32,
     pub sample_rate_idx: usize,
     pub channel_mode: ChannelMode,
+    #[allow(dead_code)]
     pub emphasis: Emphasis,
+    #[allow(dead_code)]
     pub is_copyrighted: bool,
+    #[allow(dead_code)]
     pub is_original: bool,
+    #[allow(dead_code)]
     pub has_padding: bool,
     pub has_crc: bool,
     pub frame_size: usize,

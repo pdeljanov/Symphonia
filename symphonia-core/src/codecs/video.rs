@@ -24,6 +24,15 @@ use crate::common::FourCc;
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct VideoCodecId(u32);
 
+/// Null video codec ID
+pub const CODEC_ID_NULL: VideoCodecId = VideoCodecId(0x0);
+
+impl Default for VideoCodecId {
+    fn default() -> Self {
+        CODEC_ID_NULL
+    }
+}
+
 impl VideoCodecId {
     /// Create a new video codec ID from a FourCC.
     pub const fn new(cc: FourCc) -> VideoCodecId {
@@ -44,11 +53,8 @@ impl fmt::Display for VideoCodecId {
     }
 }
 
-/// Null video codec ID
-pub const CODEC_ID_NULL: VideoCodecId = VideoCodecId(0x0);
-
 /// Codec parameters for video codecs.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct VideoCodecParameters {
     /// The codec ID.
     pub codec: VideoCodecId,

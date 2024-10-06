@@ -236,8 +236,7 @@ impl<'s> IsoMp4Reader<'s> {
         }
 
         // Instantiate a `TrackState` for each track in the media.
-        let track_states =
-            (0..moov.traks.len()).map(|t| TrackState::new(t)).collect::<Vec<TrackState>>();
+        let track_states = (0..moov.traks.len()).map(TrackState::new).collect::<Vec<TrackState>>();
 
         // Instantiate a `Track` for all track states above.
         let tracks = track_states

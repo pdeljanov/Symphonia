@@ -115,11 +115,11 @@ impl EsdsAtom {
 
         match get_codec_id_from_object_type(self.descriptor.dec_config.object_type_indication) {
             Some(CodecId::Video(id)) => {
-                // Object type indication identified an audio codec.
+                // Object type indication identified an video codec.
                 codec_params.for_codec(id);
             }
             Some(_) => {
-                // Object type indication identified a non-audio codec. This is unexpected.
+                // Object type indication identified a non-video codec. This is unexpected.
                 return decode_error("isomp4 (esds): expected a video codec type");
             }
             None => {

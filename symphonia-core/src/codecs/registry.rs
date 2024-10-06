@@ -162,6 +162,7 @@ where
 
 /// A `CodecRegistry` allows the registration of codecs, and provides a method to instantiate a
 /// `Decoder` given a `CodecParameters` object.
+#[derive(Default)]
 pub struct CodecRegistry {
     audio: InnerCodecRegistry<AudioCodecId, RegisteredAudioDecoder>,
     video: InnerCodecRegistry<VideoCodecId, RegisteredVideoDecoder>,
@@ -242,7 +243,7 @@ impl CodecRegistry {
         for codec in C::supported_codecs() {
             let reg = RegisteredAudioDecoder {
                 codec: *codec,
-                factory: |params, opts| Ok(C::try_registry_new(params, opts)?),
+                factory: |params, opts| C::try_registry_new(params, opts),
             };
 
             self.audio.register_at_tier(tier, codec.id, reg);
@@ -265,7 +266,7 @@ impl CodecRegistry {
         for codec in C::supported_codecs() {
             let reg = RegisteredVideoDecoder {
                 codec: *codec,
-                factory: |params, opts| Ok(C::try_registry_new(params, opts)?),
+                factory: |params, opts| C::try_registry_new(params, opts),
             };
 
             self.video.register_at_tier(tier, codec.codec, reg);
@@ -291,7 +292,7 @@ impl CodecRegistry {
         for codec in C::supported_codecs() {
             let reg = RegisteredSubtitleDecoder {
                 codec: *codec,
-                factory: |params, opts| Ok(C::try_registry_new(params, opts)?),
+                factory: |params, opts| C::try_registry_new(params, opts),
             };
 
             self.subtitle.register_at_tier(tier, codec.codec, reg);

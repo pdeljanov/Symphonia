@@ -28,6 +28,15 @@ use crate::formats::Packet;
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct AudioCodecId(u32);
 
+/// Null audio codec ID
+pub const CODEC_ID_NULL: AudioCodecId = AudioCodecId(0x0);
+
+impl Default for AudioCodecId {
+    fn default() -> Self {
+        CODEC_ID_NULL
+    }
+}
+
 impl AudioCodecId {
     /// Create a new audio codec ID from a FourCC.
     pub const fn new(cc: FourCc) -> AudioCodecId {
@@ -48,9 +57,6 @@ impl fmt::Display for AudioCodecId {
     }
 }
 
-/// Null audio codec ID
-pub const CODEC_ID_NULL: AudioCodecId = AudioCodecId(0x0);
-
 /// A method and expected value to perform verification on the decoded audio.
 #[derive(Copy, Clone, Debug)]
 pub enum VerificationCheck {
@@ -67,7 +73,7 @@ pub enum VerificationCheck {
 }
 
 /// Codec parameters for audio codecs.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct AudioCodecParameters {
     /// The codec ID.
     pub codec: AudioCodecId,
@@ -174,12 +180,6 @@ impl AudioCodecParameters {
     pub fn with_verification_code(&mut self, code: VerificationCheck) -> &mut Self {
         self.verification_check = Some(code);
         self
-    }
-}
-
-impl Default for AudioCodecParameters {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

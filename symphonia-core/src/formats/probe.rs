@@ -323,7 +323,7 @@ impl Probe {
                 score: P::score,
                 specific: ProbeMatch::Format {
                     info: data.info,
-                    factory: |mss, opts| Ok(P::try_probe_new(mss, opts)?),
+                    factory: |mss, opts| P::try_probe_new(mss, opts),
                 },
             };
 
@@ -343,7 +343,7 @@ impl Probe {
                 score: P::score,
                 specific: ProbeMatch::Metadata {
                     info: data.info,
-                    factory: |mss, opts| Ok(P::try_probe_new(mss, opts)?),
+                    factory: |mss, opts| P::try_probe_new(mss, opts),
                 },
             };
 
@@ -374,7 +374,7 @@ impl Probe {
 
     /// Scans the provided `MediaSourceStream` from the current position for the best next metadata
     /// or format reader. If a match is found, returns it.
-    pub fn next<'s>(&self, mss: &mut MediaSourceStream<'s>, _hint: &Hint) -> Result<ProbeMatch> {
+    pub fn next(&self, mss: &mut MediaSourceStream<'_>, _hint: &Hint) -> Result<ProbeMatch> {
         let mut win = 0u16;
 
         let init_pos = mss.pos();

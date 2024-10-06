@@ -27,11 +27,20 @@ use crate::subtitle::GenericSubtitleBufferRef;
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SubtitleCodecId(u32);
 
+/// Null subtitle codec ID
+pub const CODEC_ID_NULL: SubtitleCodecId = SubtitleCodecId(0x0);
+
 impl SubtitleCodecId {
     /// Create a new subtitle codec ID from a FourCC.
     pub const fn new(cc: FourCc) -> SubtitleCodecId {
         // A FourCc always only contains ASCII characters. Therefore, the upper bits are always 0.
         Self(0x8000_0000 | u32::from_be_bytes(cc.get()))
+    }
+}
+
+impl Default for SubtitleCodecId {
+    fn default() -> Self {
+        CODEC_ID_NULL
     }
 }
 
@@ -47,11 +56,8 @@ impl fmt::Display for SubtitleCodecId {
     }
 }
 
-/// Null subtitle codec ID
-pub const CODEC_ID_NULL: SubtitleCodecId = SubtitleCodecId(0x0);
-
 /// Codec parameters for subtitle codecs.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct SubtitleCodecParameters {
     /// The codec ID.
     pub codec: SubtitleCodecId,
