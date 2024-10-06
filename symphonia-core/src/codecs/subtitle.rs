@@ -154,6 +154,8 @@ pub mod well_known {
     pub const CODEC_ID_DVBSUB: SubtitleCodecId = SubtitleCodecId(0x205);
     /// HDMV text subtitles (HDMV TextST)
     pub const CODEC_ID_HDMV_TEXTST: SubtitleCodecId = SubtitleCodecId(0x206);
+    /// 3GPP Timed Text subtitle (MPEG Timed Text)
+    pub const CODEC_ID_MOV_TEXT: SubtitleCodecId = SubtitleCodecId(0x207);
 
     // Image-based subtitle codecs
     //----------------------------
