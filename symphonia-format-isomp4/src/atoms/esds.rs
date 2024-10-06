@@ -138,7 +138,9 @@ impl EsdsAtom {
 
 /// Try to get a codec ID from from an object type indication.
 fn get_codec_id_from_object_type(obj_type: u8) -> Option<CodecId> {
-    use symphonia_core::codecs::audio::well_known::{CODEC_ID_AAC, CODEC_ID_MP3};
+    use symphonia_core::codecs::audio::well_known::{
+        CODEC_ID_AAC, CODEC_ID_AC3, CODEC_ID_DCA, CODEC_ID_EAC3, CODEC_ID_MP3,
+    };
     use symphonia_core::codecs::video::well_known::{
         CODEC_ID_H264, CODEC_ID_HEVC, CODEC_ID_MPEG2, CODEC_ID_MPEG4, CODEC_ID_VP9,
     };
@@ -151,6 +153,10 @@ fn get_codec_id_from_object_type(obj_type: u8) -> Option<CodecId> {
     // MP3
     const OBJ_TYPE_AUDIO_MPEG2_3: u8 = 0x69; // Audio ISO/IEC 13818-3 (MP3)
     const OBJ_TYPE_AUDIO_MPEG1_3: u8 = 0x6b; // Audio ISO/IEC 11172-3 (MP3)
+
+    const OBJ_TYPE_AUDIO_AC3: u8 = 0xa5;
+    const OBJ_TYPE_AUDIO_EAC3: u8 = 0xa6;
+    const OBJ_TYPE_AUDIO_DTS: u8 = 0xa9;
 
     // MPEG2 video
     const OBJ_TYPE_VISUAL_MPEG2_2_SP: u8 = 0x60; // Visual ISO/IEC 13818-2 Simple Profile
@@ -177,6 +183,9 @@ fn get_codec_id_from_object_type(obj_type: u8) -> Option<CodecId> {
             CodecId::Audio(CODEC_ID_AAC)
         }
         OBJ_TYPE_AUDIO_MPEG2_3 | OBJ_TYPE_AUDIO_MPEG1_3 => CodecId::Audio(CODEC_ID_MP3),
+        OBJ_TYPE_AUDIO_AC3 => CodecId::Audio(CODEC_ID_AC3),
+        OBJ_TYPE_AUDIO_EAC3 => CodecId::Audio(CODEC_ID_EAC3),
+        OBJ_TYPE_AUDIO_DTS => CodecId::Audio(CODEC_ID_DCA),
         OBJ_TYPE_VISUAL_MPEG2_2_SP
         | OBJ_TYPE_VISUAL_MPEG2_2_MP
         | OBJ_TYPE_VISUAL_MPEG2_2_SNR

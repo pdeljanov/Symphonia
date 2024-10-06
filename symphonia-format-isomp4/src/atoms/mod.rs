@@ -14,6 +14,8 @@ pub(crate) mod alac;
 pub(crate) mod avcc;
 pub(crate) mod co64;
 pub(crate) mod ctts;
+pub(crate) mod dac3;
+pub(crate) mod dec3;
 pub(crate) mod edts;
 pub(crate) mod elst;
 pub(crate) mod esds;
@@ -57,6 +59,8 @@ pub use avcc::AvcCAtom;
 pub use co64::Co64Atom;
 #[allow(unused_imports)]
 pub use ctts::CttsAtom;
+pub use dac3::Dac3Atom;
+pub use dec3::Dec3Atom;
 pub use edts::EdtsAtom;
 pub use elst::ElstAtom;
 pub use esds::EsdsAtom;
@@ -97,6 +101,7 @@ pub use wave::WaveAtom;
 /// Atom types.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum AtomType {
+    Ac3Config,
     AdvisoryTag,
     AlbumArtistTag,
     AlbumTag,
@@ -105,6 +110,7 @@ pub enum AtomType {
     AudioSampleEntryAc3,
     AudioSampleEntryAlac,
     AudioSampleEntryALaw,
+    AudioSampleEntryEc3,
     AudioSampleEntryF32,
     AudioSampleEntryF64,
     AudioSampleEntryFlac,
@@ -135,6 +141,7 @@ pub enum AtomType {
     DateTag,
     DescriptionTag,
     DiskNumberTag,
+    Eac3Config,
     Edit,
     EditList,
     EncodedByTag,
@@ -233,9 +240,12 @@ impl From<[u8; 4]> for AtomType {
             b"avc1" => AtomType::VisualSampleEntryAvc1,
             b"avcC" => AtomType::AvcConfiguration,
             b"btrt" => AtomType::BitRate,
+            b"ec-3" => AtomType::AudioSampleEntryEc3,
             b"clap" => AtomType::CleanAperture,
             b"co64" => AtomType::ChunkOffset64,
             b"ctts" => AtomType::CompositionTimeToSample,
+            b"dac3" => AtomType::Ac3Config,
+            b"dec3" => AtomType::Eac3Config,
             b"data" => AtomType::MetaTagData,
             b"dfLa" => AtomType::FlacDsConfig,
             b"dOps" => AtomType::OpusDsConfig,

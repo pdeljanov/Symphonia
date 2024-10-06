@@ -25,7 +25,10 @@ use symphonia_core::codecs::CodecParameters;
 use symphonia_core::errors::{decode_error, unsupported_error, Result};
 use symphonia_core::io::ReadBytes;
 
-use crate::atoms::{AlacAtom, Atom, AtomHeader, AtomType, EsdsAtom, FlacAtom, OpusAtom, WaveAtom};
+use crate::atoms::{
+    AlacAtom, Atom, AtomHeader, AtomType, Dac3Atom, Dec3Atom, EsdsAtom, FlacAtom, OpusAtom,
+    WaveAtom,
+};
 use crate::fp::FpU16;
 
 use super::{AtomIterator, AvcCAtom, HvcCAtom};
@@ -57,6 +60,8 @@ impl Atom for StsdAtom {
         let sample_entry = match sample_entry_header.atom_type {
             AtomType::AudioSampleEntryMp4a
             | AtomType::AudioSampleEntryAlac
+            | AtomType::AudioSampleEntryAc3
+            | AtomType::AudioSampleEntryEc3
             | AtomType::AudioSampleEntryFlac
             | AtomType::AudioSampleEntryOpus
             | AtomType::AudioSampleEntryMp3
@@ -115,8 +120,14 @@ impl StsdAtom {
                         // elementary stream.
                         esds.fill_audio_codec_params(&mut codec_params).ok()?;
                     }
+                    Some(AudioCodecSpecific::Ac3(ref dac3)) => {
+                        dac3.fill_codec_params(&mut codec_params);
+                    }
                     Some(AudioCodecSpecific::Alac(ref alac)) => {
                         alac.fill_codec_params(&mut codec_params);
+                    }
+                    Some(AudioCodecSpecific::Eac3(ref dec3)) => {
+                        dec3.fill_codec_params(&mut codec_params);
                     }
                     Some(AudioCodecSpecific::Flac(ref flac)) => {
                         flac.fill_codec_params(&mut codec_params);
@@ -184,8 +195,12 @@ pub struct Pcm {
 pub enum AudioCodecSpecific {
     /// MPEG Elementary Stream descriptor.
     Esds(EsdsAtom),
+    /// Dolby Digital
+    Ac3(Dac3Atom),
     /// Apple Lossless Audio Codec (ALAC).
     Alac(AlacAtom),
+    /// Dolby Digital Plus
+    Eac3(Dec3Atom),
     /// Free Lossless Audio Codec (FLAC).
     Flac(FlacAtom),
     /// Opus.
@@ -485,6 +500,14 @@ fn read_audio_sample_entry<B: ReadBytes>(
 
                 codec_specific = Some(AudioCodecSpecific::Esds(iter.read_atom::<EsdsAtom>()?));
             }
+            AtomType::Ac3Config => {
+                // Ac3 codec-specific atom.
+                if header.atom_type != AtomType::AudioSampleEntryAc3 || codec_specific.is_some() {
+                    return decode_error("isomp4: invalid sample entry");
+                }
+
+                codec_specific = Some(AudioCodecSpecific::Ac3(iter.read_atom::<Dac3Atom>()?));
+            }
             AtomType::AudioSampleEntryAlac => {
                 // ALAC codec-specific atom.
                 if header.atom_type != AtomType::AudioSampleEntryAlac || codec_specific.is_some() {
@@ -492,6 +515,14 @@ fn read_audio_sample_entry<B: ReadBytes>(
                 }
 
                 codec_specific = Some(AudioCodecSpecific::Alac(iter.read_atom::<AlacAtom>()?));
+            }
+            AtomType::Eac3Config => {
+                // Eac3 codec-specific atom.
+                if header.atom_type != AtomType::AudioSampleEntryEc3 || codec_specific.is_some() {
+                    return decode_error("isomp4: invalid sample entry");
+                }
+
+                codec_specific = Some(AudioCodecSpecific::Eac3(iter.read_atom::<Dec3Atom>()?));
             }
             AtomType::FlacDsConfig => {
                 // FLAC codec-specific atom.
