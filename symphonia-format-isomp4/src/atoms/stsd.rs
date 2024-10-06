@@ -20,6 +20,8 @@ use symphonia_core::codecs::audio::well_known::{CODEC_ID_PCM_U16BE, CODEC_ID_PCM
 use symphonia_core::codecs::audio::well_known::{CODEC_ID_PCM_U24BE, CODEC_ID_PCM_U24LE};
 use symphonia_core::codecs::audio::well_known::{CODEC_ID_PCM_U32BE, CODEC_ID_PCM_U32LE};
 use symphonia_core::codecs::audio::{AudioCodecId, AudioCodecParameters, CODEC_ID_NULL};
+use symphonia_core::codecs::subtitle::well_known::CODEC_ID_MOV_TEXT;
+use symphonia_core::codecs::subtitle::SubtitleCodecParameters;
 use symphonia_core::codecs::video::VideoCodecParameters;
 use symphonia_core::codecs::CodecParameters;
 use symphonia_core::errors::{decode_error, unsupported_error, Result};
@@ -89,7 +91,9 @@ impl Atom for StsdAtom {
             | AtomType::VisualSampleEntryVp9 => {
                 read_visual_sample_entry(reader, sample_entry_header)?
             }
-            AtomType::SubtitleSampleEntryText | AtomType::SubtitleSampleEntryXml => {
+            AtomType::SubtitleSampleEntryText
+            | AtomType::SubtitleSampleEntryTimedText
+            | AtomType::SubtitleSampleEntryXml => {
                 read_subtitle_sample_entry(reader, sample_entry_header)?
             }
             _ => {
@@ -176,6 +180,15 @@ impl StsdAtom {
                 }
 
                 Some(CodecParameters::Video(codec_params))
+            }
+            SampleEntry::Subtitle(entry) => {
+                let mut codec_params = SubtitleCodecParameters::new();
+
+                if let Some(SubtitleCodecSpecific::TimedText) = entry.codec_specific {
+                    codec_params.for_codec(CODEC_ID_MOV_TEXT);
+                }
+
+                Some(CodecParameters::Subtitle(codec_params))
             }
             _ => None,
         }
@@ -714,12 +727,19 @@ fn read_visual_sample_entry<B: ReadBytes>(
     }))
 }
 
+#[derive(Debug)]
+pub enum SubtitleCodecSpecific {
+    /// MOV_TEXT
+    TimedText,
+}
+
 /// Subtitle sample entry type.
 #[allow(dead_code)]
 #[derive(Debug)]
 pub struct SubtitleSampleEntry {
     btrt: Option<BtrtAtom>,
     txtc: Option<TxtcAtom>,
+    codec_specific: Option<SubtitleCodecSpecific>,
 }
 
 fn read_subtitle_sample_entry<B: ReadBytes>(
@@ -734,6 +754,7 @@ fn read_subtitle_sample_entry<B: ReadBytes>(
     // Sample entry data reference.
     let _ = reader.read_be_u16()?;
 
+    let mut codec_specific = None;
     // SubtitleSampleEntry portion
 
     match header.atom_type {
@@ -743,6 +764,18 @@ fn read_subtitle_sample_entry<B: ReadBytes>(
 
             let (_, _mime_type) =
                 read_null_terminated_utf8(reader, header.data_unread_at(reader.pos()))?;
+        }
+        AtomType::SubtitleSampleEntryTimedText => {
+            // Standard - 3GPP TS 26.245 - TextSampleEntry
+            // display flags - 4 bytes
+            // horizontal justification - 1 bytes
+            // vertical justification - 1 bytes
+            // background color rgba - 4 bytes
+            // box record - 8 bytes
+            // style record - 12 bytes
+            reader.ignore_bytes(30)?;
+
+            codec_specific = Some(SubtitleCodecSpecific::TimedText);
         }
         AtomType::SubtitleSampleEntryXml => {
             let (_, _namespace) =
@@ -776,7 +809,7 @@ fn read_subtitle_sample_entry<B: ReadBytes>(
         }
     }
 
-    Ok(SampleEntry::Subtitle(SubtitleSampleEntry { btrt, txtc }))
+    Ok(SampleEntry::Subtitle(SubtitleSampleEntry { btrt, txtc, codec_specific }))
 }
 
 fn read_null_terminated_utf8<B: ReadBytes>(
