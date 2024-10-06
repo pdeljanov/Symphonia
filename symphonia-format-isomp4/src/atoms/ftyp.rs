@@ -12,6 +12,7 @@ use crate::atoms::{Atom, AtomHeader};
 use crate::fourcc::FourCc;
 
 /// File type atom.
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct FtypAtom {
     header: AtomHeader,

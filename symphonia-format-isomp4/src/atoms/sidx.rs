@@ -16,6 +16,7 @@ pub enum ReferenceType {
     Media,
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct SidxReference {
     pub reference_type: ReferenceType,
@@ -27,6 +28,7 @@ pub struct SidxReference {
 }
 
 /// Segment index atom.
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct SidxAtom {
     /// Atom header.

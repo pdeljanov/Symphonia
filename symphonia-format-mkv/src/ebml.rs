@@ -508,6 +508,7 @@ impl<R: ReadBytes> ElementIterator<R> {
 }
 
 /// An EBML element data.
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) enum ElementData {
     /// A binary buffer.
