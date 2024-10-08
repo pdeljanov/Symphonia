@@ -17,4 +17,4 @@ encoding_rs = "0.8.17"
 log = "0.4"
 symphonia-core = { version = "0.5.4", path = "../symphonia-core" }
 symphonia-metadata = { version = "0.5.4", path = "../symphonia-metadata" }
-symphonia-utils-xiph = { version = "0.5.4", path = "../symphonia-utils-xiph" }
+symphonia-common = { version = "0.5.4", path = "../symphonia-common" }

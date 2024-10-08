@@ -10,7 +10,9 @@ use symphonia_core::codecs::audio::{AudioCodecParameters, VerificationCheck};
 use symphonia_core::errors::{decode_error, unsupported_error, Result};
 use symphonia_core::io::{BufReader, ReadBytes};
 
-use symphonia_utils_xiph::flac::metadata::{MetadataBlockHeader, MetadataBlockType, StreamInfo};
+use symphonia_common::xiph::audio::flac::metadata::{
+    MetadataBlockHeader, MetadataBlockType, StreamInfo,
+};
 
 use crate::atoms::{Atom, AtomHeader};
 

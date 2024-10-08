@@ -1,8 +1,8 @@
-# Symphonia Xiph Utilities
+# Symphonia Common Utilities
 
-[![Docs](https://docs.rs/symphonia-utils-xiph/badge.svg)](https://docs.rs/symphonia-utils-xiph)
+[![Docs](https://docs.rs/symphonia-common/badge.svg)](https://docs.rs/symphonia-common)
 
-Common utilities for Xiph formats and codecs for Project Symphonia.
+Common utilities for codecs and formats for Project Symphonia.
 
 **Note:** This crate is part of Symphonia. Please use the [`symphonia`](https://crates.io/crates/symphonia) crate instead of this one directly.
 

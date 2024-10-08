@@ -12,6 +12,7 @@ members = [
     "symphonia-codec-pcm",
     "symphonia-codec-vorbis",
     "symphonia-codec-wavpack",
+    "symphonia-common",
     "symphonia-core",
     "symphonia-format-isomp4",
     "symphonia-format-mkv",
@@ -19,6 +20,5 @@ members = [
     "symphonia-format-riff",
     "symphonia-metadata",
     "symphonia-play",
-    "symphonia-utils-xiph",
     "symphonia-check",
 ]

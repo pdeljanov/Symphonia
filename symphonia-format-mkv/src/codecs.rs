@@ -16,8 +16,8 @@ use symphonia_core::codecs::video::{well_known::*, VideoCodecId, VideoCodecParam
 use symphonia_core::codecs::{CodecId, CodecParameters, CodecProfile};
 use symphonia_core::errors::{decode_error, Error, Result};
 
+use symphonia_common::xiph::audio::flac::metadata::{MetadataBlockHeader, MetadataBlockType};
 use symphonia_core::io::{BitReaderLtr, BufReader, ReadBitsLtr, ReadBytes};
-use symphonia_utils_xiph::flac::metadata::{MetadataBlockHeader, MetadataBlockType};
 
 use crate::lacing::read_xiph_sizes;
 use crate::segment::TrackElement;
