@@ -7,6 +7,9 @@
 
 use log::warn;
 
+use symphonia_common::mpeg::video::{
+    AVCDecoderConfigurationRecord, HEVCDecoderConfigurationRecord,
+};
 use symphonia_core::audio::sample::SampleFormat;
 use symphonia_core::codecs::audio::well_known::{CODEC_ID_FLAC, CODEC_ID_VORBIS};
 use symphonia_core::codecs::audio::AudioCodecParameters;
@@ -17,7 +20,7 @@ use symphonia_core::codecs::{CodecId, CodecParameters, CodecProfile};
 use symphonia_core::errors::{decode_error, Error, Result};
 
 use symphonia_common::xiph::audio::flac::metadata::{MetadataBlockHeader, MetadataBlockType};
-use symphonia_core::io::{BitReaderLtr, BufReader, ReadBitsLtr, ReadBytes};
+use symphonia_core::io::{BufReader, ReadBytes};
 
 use crate::lacing::read_xiph_sizes;
 use crate::segment::TrackElement;
@@ -342,76 +345,12 @@ fn get_codec_profile_and_level(track: &TrackElement) -> (Option<CodecProfile>, O
             track
                 .codec_private
                 .as_ref()
-                .and_then(|buf| HevcDecoderConfigurationRecord::read(buf).ok())
+                .and_then(|buf| HEVCDecoderConfigurationRecord::read(buf).ok())
                 .map(|cfg| (Some(cfg.profile), Some(cfg.level)))
                 .unwrap_or_else(|| (None, None))
         }
 
         // Other Codecs
         _ => (None, None),
-    }
-}
-
-struct AVCDecoderConfigurationRecord {
-    profile: CodecProfile,
-    level: u32,
-}
-
-impl AVCDecoderConfigurationRecord {
-    fn read(buf: &[u8]) -> Result<Self> {
-        let mut br = BitReaderLtr::new(buf);
-
-        // Parse the AVCDecoderConfigurationRecord to get the profile and level. Defined in
-        // ISO/IEC 14496-15 section 5.3.3.1.
-
-        // Configuration version is always 1.
-        let configuration_version = br.read_bits_leq32(8)?;
-
-        if configuration_version != 1 {
-            return decode_error("mkv (avc): unexpected avc decoder configuration record version");
-        }
-
-        // AVC profile as defined in ISO/IEC 14496-10.
-        let avc_profile_indication = br.read_bits_leq32(8)?;
-        let _profile_compatibility = br.read_bits_leq32(8)?;
-        let avc_level_indication = br.read_bits_leq32(8)?;
-
-        Ok(AVCDecoderConfigurationRecord {
-            profile: CodecProfile::new(avc_profile_indication),
-            level: avc_level_indication,
-        })
-    }
-}
-
-struct HevcDecoderConfigurationRecord {
-    profile: CodecProfile,
-    level: u32,
-}
-
-impl HevcDecoderConfigurationRecord {
-    fn read(buf: &[u8]) -> Result<Self> {
-        let mut br = BitReaderLtr::new(buf);
-
-        // Parse the HevcDecoderConfigurationRecord to get the profile and level. Defined in
-        // ISO/IEC 14496-15 section 8.3.3.1.
-
-        // Configuration version is always 1.
-        let configuration_version = br.read_bits_leq32(8)?;
-
-        if configuration_version != 1 {
-            return decode_error("mkv (hevc): unexpected avc decoder configuration record version");
-        }
-
-        let _general_profile_space = br.read_bits_leq32(2)?;
-        let _general_tier_flag = br.read_bit()?;
-        let general_profile_idc = br.read_bits_leq32(5)?;
-        let _general_profile_compatibility_flags = br.read_bits_leq32(32)?;
-        let _general_constraint_indicator_flags = br.read_bits_leq64(48)?;
-        let general_level_idc = br.read_bits_leq32(8)?;
-
-        Ok(HevcDecoderConfigurationRecord {
-            profile: CodecProfile::new(general_profile_idc),
-            level: general_level_idc,
-        })
     }
 }

@@ -5,11 +5,12 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+use symphonia_common::mpeg::video::AVCDecoderConfigurationRecord;
 use symphonia_core::codecs::video::well_known::CODEC_ID_H264;
 use symphonia_core::codecs::video::VideoCodecParameters;
 use symphonia_core::codecs::CodecProfile;
-use symphonia_core::errors::{decode_error, Error, Result};
-use symphonia_core::io::{BitReaderLtr, ReadBitsLtr, ReadBytes};
+use symphonia_core::errors::{Error, Result};
+use symphonia_core::io::ReadBytes;
 
 use crate::atoms::{Atom, AtomHeader};
 
@@ -32,31 +33,9 @@ impl Atom for AvcCAtom {
 
         let extra_data = reader.read_boxed_slice_exact(len as usize)?;
 
-        dbg!(extra_data.len());
+        let avc_config = AVCDecoderConfigurationRecord::read(&extra_data)?;
 
-        // Parse the AVCDecoderConfigurationRecord to get the profile and level. Defined in
-        // ISO/IEC 14496-15 section 5.3.3.1.
-        let mut br = BitReaderLtr::new(&extra_data);
-
-        // Configuration version is always 1.
-        let configuration_version = br.read_bits_leq32(8)?;
-
-        if configuration_version != 1 {
-            return decode_error(
-                "isomp4 (avc): unexpected avc decoder configuration record version",
-            );
-        }
-
-        // AVC profile as defined in ISO/IEC 14496-10.
-        let avc_profile_indication = br.read_bits_leq32(8)?;
-        let _profile_compatibility = br.read_bits_leq32(8)?;
-        let avc_level_indication = br.read_bits_leq32(8)?;
-
-        Ok(Self {
-            extra_data,
-            profile: CodecProfile::new(avc_profile_indication),
-            level: avc_level_indication,
-        })
+        Ok(Self { extra_data, profile: avc_config.profile, level: avc_config.level })
     }
 }
 

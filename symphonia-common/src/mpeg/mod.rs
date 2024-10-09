@@ -12,5 +12,4 @@
 #![allow(clippy::identity_op)]
 #![allow(clippy::manual_range_contains)]
 
-pub mod mpeg;
-pub mod xiph;
+pub mod video;
