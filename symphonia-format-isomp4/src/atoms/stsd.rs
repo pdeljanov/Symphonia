@@ -28,7 +28,7 @@ use symphonia_core::io::ReadBytes;
 use crate::atoms::{AlacAtom, Atom, AtomHeader, AtomType, EsdsAtom, FlacAtom, OpusAtom, WaveAtom};
 use crate::fp::FpU16;
 
-use super::{AtomIterator, AvcCAtom};
+use super::{AtomIterator, AvcCAtom, HvcCAtom};
 
 /// Sample description atom.
 #[allow(dead_code)]
@@ -75,6 +75,9 @@ impl Atom for StsdAtom {
             }
             AtomType::VisualSampleEntryAv1
             | AtomType::VisualSampleEntryAvc1
+            | AtomType::VisualSampleEntryDvh1
+            | AtomType::VisualSampleEntryDvhe
+            | AtomType::VisualSampleEntryHev1
             | AtomType::VisualSampleEntryHvc1
             | AtomType::VisualSampleEntryMp4v
             | AtomType::VisualSampleEntryVp8
@@ -151,6 +154,12 @@ impl StsdAtom {
                     }
                     Some(VisualCodecSpecific::Avc1(ref avc)) => {
                         avc.fill_codec_params(&mut codec_params);
+                    }
+                    Some(VisualCodecSpecific::Dvh1(ref hevc))
+                    | Some(VisualCodecSpecific::Dvhe(ref hevc))
+                    | Some(VisualCodecSpecific::Hev1(ref hevc))
+                    | Some(VisualCodecSpecific::Hvc1(ref hevc)) => {
+                        hevc.fill_codec_params(&mut codec_params);
                     }
                     _ => (),
                 }
@@ -556,7 +565,10 @@ pub enum VisualCodecSpecific {
     Esds(EsdsAtom),
     Av1,
     Avc1(AvcCAtom),
-    Hvc1,
+    Dvhe(HvcCAtom),
+    Dvh1(HvcCAtom),
+    Hev1(HvcCAtom),
+    Hvc1(HvcCAtom),
     Mp4v,
     Vp8,
     Vp9,
@@ -615,10 +627,44 @@ fn read_visual_sample_entry<B: ReadBytes>(
             AtomType::AvcConfiguration => {
                 // AVC
                 if header.atom_type != AtomType::VisualSampleEntryAvc1 || codec_specific.is_some() {
-                    return decode_error("isomp4: invalid sample entry");
+                    return decode_error("isomp4: invalid avc configuration sample entry");
                 }
 
                 codec_specific = Some(VisualCodecSpecific::Avc1(iter.read_atom::<AvcCAtom>()?));
+            }
+            AtomType::HevcConfiguration => {
+                // HEVC
+                match header.atom_type {
+                    AtomType::VisualSampleEntryDvhe => {
+                        if codec_specific.is_some() {
+                            return decode_error("isomp4: invalid dvhe configuration sample entry");
+                        }
+                        codec_specific =
+                            Some(VisualCodecSpecific::Dvhe(iter.read_atom::<HvcCAtom>()?));
+                    }
+                    AtomType::VisualSampleEntryDvh1 => {
+                        if codec_specific.is_some() {
+                            return decode_error("isomp4: invalid dvh1 configuration sample entry");
+                        }
+                        codec_specific =
+                            Some(VisualCodecSpecific::Dvh1(iter.read_atom::<HvcCAtom>()?));
+                    }
+                    AtomType::VisualSampleEntryHev1 => {
+                        if codec_specific.is_some() {
+                            return decode_error("isomp4: invalid hev1 configuration sample entry");
+                        }
+                        codec_specific =
+                            Some(VisualCodecSpecific::Hev1(iter.read_atom::<HvcCAtom>()?));
+                    }
+                    AtomType::VisualSampleEntryHvc1 => {
+                        if codec_specific.is_some() {
+                            return decode_error("isomp4: invalid hvc1 configuration sample entry");
+                        }
+                        codec_specific =
+                            Some(VisualCodecSpecific::Hvc1(iter.read_atom::<HvcCAtom>()?));
+                    }
+                    _ => {}
+                }
             }
             _ => {
                 debug!("unknown visual sample entry sub-atom: {:?}.", entry_header.atom_type());

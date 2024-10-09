@@ -20,6 +20,7 @@ pub(crate) mod esds;
 pub(crate) mod flac;
 pub(crate) mod ftyp;
 pub(crate) mod hdlr;
+pub(crate) mod hvcc;
 pub(crate) mod ilst;
 pub(crate) mod mdhd;
 pub(crate) mod mdia;
@@ -62,6 +63,7 @@ pub use esds::EsdsAtom;
 pub use flac::FlacAtom;
 pub use ftyp::FtypAtom;
 pub use hdlr::HdlrAtom;
+pub use hvcc::HvcCAtom;
 pub use ilst::IlstAtom;
 pub use mdhd::MdhdAtom;
 pub use mdia::MdiaAtom;
@@ -147,6 +149,7 @@ pub enum AtomType {
     GroupingTag,
     Handler,
     HdVideoTag,
+    HevcConfiguration,
     IdentPodcastTag,
     KeywordTag,
     LongDescriptionTag,
@@ -209,6 +212,9 @@ pub enum AtomType {
     Uuid,
     VisualSampleEntryAv1,
     VisualSampleEntryAvc1,
+    VisualSampleEntryDvh1,
+    VisualSampleEntryDvhe,
+    VisualSampleEntryHev1,
     VisualSampleEntryHvc1,
     VisualSampleEntryMp4v,
     VisualSampleEntryVp8,
@@ -233,6 +239,8 @@ impl From<[u8; 4]> for AtomType {
             b"data" => AtomType::MetaTagData,
             b"dfLa" => AtomType::FlacDsConfig,
             b"dOps" => AtomType::OpusDsConfig,
+            b"dvh1" => AtomType::VisualSampleEntryDvh1,
+            b"dvhe" => AtomType::VisualSampleEntryDvhe,
             b"edts" => AtomType::Edit,
             b"elst" => AtomType::EditList,
             b"esds" => AtomType::Esds,
@@ -242,7 +250,9 @@ impl From<[u8; 4]> for AtomType {
             b"free" => AtomType::Free,
             b"ftyp" => AtomType::FileType,
             b"hdlr" => AtomType::Handler,
+            b"hev1" => AtomType::VisualSampleEntryHev1,
             b"hvc1" => AtomType::VisualSampleEntryHvc1,
+            b"hvcC" => AtomType::HevcConfiguration,
             b"ilst" => AtomType::MetaList,
             b"in24" => AtomType::AudioSampleEntryS24,
             b"in32" => AtomType::AudioSampleEntryS32,
