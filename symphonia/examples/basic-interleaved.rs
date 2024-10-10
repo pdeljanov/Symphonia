@@ -33,7 +33,7 @@ fn main() {
 
     // Probe the media source stream for a format.
     let mut format =
-        symphonia::default::get_probe().format(&hint, mss, fmt_opts, meta_opts).unwrap();
+        symphonia::default::get_probe().probe(&hint, mss, fmt_opts, meta_opts).unwrap();
 
     // Get the default audio track.
     let track = format.default_track(TrackType::Audio).unwrap();

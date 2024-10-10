@@ -175,7 +175,7 @@ fn run(args: &ArgMatches) -> Result<i32> {
     let no_progress = args.is_present("no-progress");
 
     // Probe the media source stream for metadata and get the format reader.
-    match symphonia::default::get_probe().format(&hint, mss, fmt_opts, meta_opts) {
+    match symphonia::default::get_probe().probe(&hint, mss, fmt_opts, meta_opts) {
         Ok(mut format) => {
             // Dump visuals if requested.
             if args.is_present("dump-visuals") {

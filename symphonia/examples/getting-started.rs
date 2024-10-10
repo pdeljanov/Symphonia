@@ -27,7 +27,7 @@ fn main() {
 
     // Probe the media source.
     let mut format = symphonia::default::get_probe()
-        .format(&hint, mss, fmt_opts, meta_opts)
+        .probe(&hint, mss, fmt_opts, meta_opts)
         .expect("unsupported format");
 
     // Find the first audio track with a known (decodeable) codec.

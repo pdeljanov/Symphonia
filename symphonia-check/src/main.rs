@@ -163,7 +163,7 @@ impl DecoderInstance {
 
         let hint = Hint::new();
 
-        let format = symphonia::default::get_probe().format(&hint, mss, fmt_opts, meta_opts)?;
+        let format = symphonia::default::get_probe().probe(&hint, mss, fmt_opts, meta_opts)?;
 
         let track = format.default_track(TrackType::Audio).unwrap();
 
