@@ -415,6 +415,8 @@ pub mod well_known {
     pub const CODEC_ID_TTA: AudioCodecId = AudioCodecId(0x2004);
     /// RealAudio Lossless Format (RALF)
     pub const CODEC_ID_RALF: AudioCodecId = AudioCodecId(0x2005);
+    /// Dolby TrueHD Lossless codec
+    pub const CODEC_ID_TRUEHD: AudioCodecId = AudioCodecId(0x2006);
 
     /// Codec profiles for well-known audio codecs.
     pub mod profiles {
