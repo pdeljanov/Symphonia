@@ -8,8 +8,16 @@
 //! An ID3v1 metadata reader.
 
 use symphonia_core::errors::{unsupported_error, Result};
-use symphonia_core::io::ReadBytes;
-use symphonia_core::meta::{MetadataBuilder, StandardTagKey, Tag, Value};
+use symphonia_core::formats::probe::{
+    Anchors, ProbeMetadataData, ProbeableMetadata, Score, Scoreable,
+};
+use symphonia_core::io::{MediaSourceStream, ReadBytes, ScopedStream};
+use symphonia_core::meta::well_known::METADATA_ID_ID3;
+use symphonia_core::meta::{
+    MetadataBuilder, MetadataInfo, MetadataOptions, MetadataReader, MetadataRevision,
+    StandardTagKey, Tag, Value,
+};
+use symphonia_core::support_metadata;
 
 const GENRES: &[&str] = &[
     // Standard Genres as per ID3v1 specificaation
@@ -147,7 +155,9 @@ const GENRES: &[&str] = &[
     "Terror",
     "Indie",
     "BritPop",
-    "(133)",
+    // Genre #133 was originally defined to be an offensive term. Symphonia uses the inoffensive
+    // version from Winamp 5.63+.
+    "Afro-Punk",
     "Polsk Punk",
     "Beat",
     "Christian Gangsta Rap",
@@ -209,7 +219,7 @@ const GENRES: &[&str] = &[
     "Psybient",
 ];
 
-pub fn read_id3v1<B: ReadBytes>(reader: &mut B, metadata: &mut MetadataBuilder) -> Result<()> {
+fn read_id3v1<B: ReadBytes>(reader: &mut B, builder: &mut MetadataBuilder) -> Result<()> {
     // Read the "TAG" header.
     let marker = reader.read_triple_bytes()?;
 
@@ -217,32 +227,36 @@ pub fn read_id3v1<B: ReadBytes>(reader: &mut B, metadata: &mut MetadataBuilder) 
         return unsupported_error("id3v1: Not an ID3v1 tag");
     }
 
-    let buf = reader.read_boxed_slice_exact(125)?;
+    let mut buf = [0u8; 125];
+    reader.read_buf_exact(&mut buf)?;
 
     let title = decode_iso8859_text(&buf[0..30]);
     if !title.is_empty() {
-        metadata.add_tag(Tag::new(Some(StandardTagKey::TrackTitle), "TITLE", Value::from(title)));
+        builder.add_tag(Tag::new(Some(StandardTagKey::TrackTitle), "TITLE", Value::from(title)));
     }
 
     let artist = decode_iso8859_text(&buf[30..60]);
     if !artist.is_empty() {
-        metadata.add_tag(Tag::new(Some(StandardTagKey::Artist), "ARTIST", Value::from(artist)));
+        builder.add_tag(Tag::new(Some(StandardTagKey::Artist), "ARTIST", Value::from(artist)));
     }
 
     let album = decode_iso8859_text(&buf[60..90]);
     if !album.is_empty() {
-        metadata.add_tag(Tag::new(Some(StandardTagKey::Album), "ALBUM", Value::from(album)));
+        builder.add_tag(Tag::new(Some(StandardTagKey::Album), "ALBUM", Value::from(album)));
     }
 
     let year = decode_iso8859_text(&buf[90..94]);
     if !year.is_empty() {
-        metadata.add_tag(Tag::new(Some(StandardTagKey::Date), "DATE", Value::from(year)));
+        builder.add_tag(Tag::new(Some(StandardTagKey::Date), "DATE", Value::from(year)));
     }
 
+    // If the second-last byte of the comment field is 0 (indicating the remaining characters are
+    // also 0), then the last byte of the comment field is the track number.
     let comment = if buf[122] == 0 {
+        // The last byte of the comment field is the track number.
         let track = buf[123];
 
-        metadata.add_tag(Tag::new(Some(StandardTagKey::TrackNumber), "TRACK", Value::from(track)));
+        builder.add_tag(Tag::new(Some(StandardTagKey::TrackNumber), "TRACK", Value::from(track)));
 
         decode_iso8859_text(&buf[94..122])
     }
@@ -251,26 +265,25 @@ pub fn read_id3v1<B: ReadBytes>(reader: &mut B, metadata: &mut MetadataBuilder) 
     };
 
     if !comment.is_empty() {
-        metadata.add_tag(Tag::new(Some(StandardTagKey::Comment), "COMMENT", Value::from(comment)));
+        builder.add_tag(Tag::new(Some(StandardTagKey::Comment), "COMMENT", Value::from(comment)));
     }
 
-    let genre_idx = buf[124] as usize;
-
-    // Convert the genre index to an actual genre name using the GENRES lookup table. Genre #133 is
-    // an offensive term and is excluded from Symphonia.
-    if genre_idx < GENRES.len() && genre_idx != 133 {
-        metadata.add_tag(Tag::new(
-            Some(StandardTagKey::Genre),
-            "GENRE",
-            Value::from(GENRES[genre_idx]),
-        ));
+    // Convert the genre index to an actual genre name using the GENRES lookup table.
+    if let Some(&genre) = GENRES.get(buf[124] as usize) {
+        builder.add_tag(Tag::new(Some(StandardTagKey::Genre), "GENRE", Value::from(genre)));
     }
 
     Ok(())
 }
 
 fn decode_iso8859_text(data: &[u8]) -> String {
-    data.iter().filter(|&b| *b > 0x1f).map(|&b| b as char).collect()
+    // Stop after encountering a null-terminator character and ignore all other ASCII control
+    // characters.
+    data.iter()
+        .take_while(|&&b| b != b'\0')
+        .filter(|&b| !b.is_ascii_control())
+        .map(|&b| b as char)
+        .collect()
 }
 
 pub mod util {
@@ -279,5 +292,60 @@ pub mod util {
     /// Try to get the genre name for the ID3v1 genre index.
     pub fn genre_name(index: u8) -> Option<&'static &'static str> {
         GENRES.get(usize::from(index))
+    }
+}
+
+const ID3V1_METADATA_INFO: MetadataInfo =
+    MetadataInfo { metadata: METADATA_ID_ID3, short_name: "id3v1", long_name: "ID3v1" };
+
+/// ID3v1 tag reader.
+pub struct Id3v1Reader<'s> {
+    reader: MediaSourceStream<'s>,
+}
+
+impl<'s> Id3v1Reader<'s> {
+    pub fn try_new(mss: MediaSourceStream<'s>, _opts: MetadataOptions) -> Result<Self> {
+        Ok(Self { reader: mss })
+    }
+}
+
+impl Scoreable for Id3v1Reader<'_> {
+    fn score(_src: ScopedStream<&mut MediaSourceStream<'_>>) -> Result<Score> {
+        Ok(Score::Supported(255))
+    }
+}
+
+impl ProbeableMetadata<'_> for Id3v1Reader<'_> {
+    fn try_probe_new(
+        mss: MediaSourceStream<'_>,
+        opts: MetadataOptions,
+    ) -> Result<Box<dyn MetadataReader + '_>>
+    where
+        Self: Sized,
+    {
+        Ok(Box::new(Id3v1Reader::try_new(mss, opts)?))
+    }
+
+    fn probe_data() -> &'static [ProbeMetadataData] {
+        &[support_metadata!(ID3V1_METADATA_INFO, &[], &[], &[b"TAG"], Anchors::Exclusive(&[128]))]
+    }
+}
+
+impl MetadataReader for Id3v1Reader<'_> {
+    fn metadata_info(&self) -> &MetadataInfo {
+        &ID3V1_METADATA_INFO
+    }
+
+    fn read_all(&mut self) -> Result<MetadataRevision> {
+        let mut builder = MetadataBuilder::new();
+        read_id3v1(&mut self.reader, &mut builder)?;
+        Ok(builder.metadata())
+    }
+
+    fn into_inner<'s>(self: Box<Self>) -> MediaSourceStream<'s>
+    where
+        Self: 's,
+    {
+        self.reader
     }
 }
