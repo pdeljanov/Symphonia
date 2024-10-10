@@ -1,7 +1,7 @@
 [package]
-name = "symphonia-utils-xiph"
+name = "symphonia-common"
 version = "0.5.4"
-description = "Project Symphonia utilities for Xiph codecs and formats."
+description = "Project Symphonia utilities for codecs and formats."
 homepage = "https://github.com/pdeljanov/Symphonia"
 repository = "https://github.com/pdeljanov/Symphonia"
 authors = ["Philip Deljanov <philip.deljanov@gmail.com>"]

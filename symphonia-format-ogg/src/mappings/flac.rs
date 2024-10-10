@@ -18,8 +18,10 @@ use symphonia_core::formats::Track;
 use symphonia_core::io::{BufReader, MonitorStream, ReadBytes};
 use symphonia_core::meta::MetadataBuilder;
 
-use symphonia_utils_xiph::flac::metadata::{read_comment_block, read_picture_block};
-use symphonia_utils_xiph::flac::metadata::{MetadataBlockHeader, MetadataBlockType, StreamInfo};
+use symphonia_common::xiph::audio::flac::metadata::{read_comment_block, read_picture_block};
+use symphonia_common::xiph::audio::flac::metadata::{
+    MetadataBlockHeader, MetadataBlockType, StreamInfo,
+};
 
 use log::warn;
 

@@ -5,12 +5,12 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+use symphonia_common::xiph::audio::flac::metadata::StreamInfo;
 use symphonia_core::checksum::Crc16Ansi;
 use symphonia_core::errors::{Error, Result};
 use symphonia_core::formats::Packet;
 use symphonia_core::io::{BufReader, Monitor, ReadBytes, SeekBuffered};
 use symphonia_core::util::bits;
-use symphonia_utils_xiph::flac::metadata::StreamInfo;
 
 use log::warn;
 

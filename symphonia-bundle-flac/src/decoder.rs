@@ -9,6 +9,7 @@ use std::cmp;
 use std::convert::TryInto;
 use std::num::Wrapping;
 
+use symphonia_common::xiph::audio::flac::metadata::StreamInfo;
 use symphonia_core::audio::{
     AsGenericAudioBufferRef, AudioBuffer, AudioMut, AudioSpec, GenericAudioBufferRef,
 };
@@ -22,7 +23,6 @@ use symphonia_core::formats::Packet;
 use symphonia_core::io::{BitReaderLtr, BufReader, ReadBitsLtr};
 use symphonia_core::support_audio_codec;
 use symphonia_core::util::bits::sign_extend_leq32_to_i32;
-use symphonia_utils_xiph::flac::metadata::StreamInfo;
 
 use log::{debug, log_enabled, warn};
 

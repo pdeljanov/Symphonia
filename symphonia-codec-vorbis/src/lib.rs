@@ -30,7 +30,7 @@ use symphonia_core::formats::Packet;
 use symphonia_core::io::{BitReaderRtl, BufReader, FiniteBitStream, ReadBitsRtl, ReadBytes};
 use symphonia_core::support_audio_codec;
 
-use symphonia_utils_xiph::vorbis::*;
+use symphonia_common::xiph::audio::vorbis::*;
 
 use log::{debug, warn};
 

@@ -16,8 +16,8 @@ use symphonia_core::formats::Track;
 use symphonia_core::io::{BitReaderRtl, BufReader, ReadBitsRtl, ReadBytes};
 use symphonia_core::meta::MetadataBuilder;
 
+use symphonia_common::xiph::audio::vorbis::*;
 use symphonia_metadata::vorbis::*;
-use symphonia_utils_xiph::vorbis::*;
 
 use log::warn;
 

@@ -9,6 +9,7 @@ use std::io::{Seek, SeekFrom};
 
 use symphonia_core::support_format;
 
+use symphonia_common::xiph::audio::flac::metadata::*;
 use symphonia_core::codecs::audio::{
     well_known::CODEC_ID_FLAC, AudioCodecParameters, VerificationCheck,
 };
@@ -22,8 +23,6 @@ use symphonia_core::formats::util::{SeekIndex, SeekSearchResult};
 use symphonia_core::formats::well_known::FORMAT_ID_FLAC;
 use symphonia_core::io::*;
 use symphonia_core::meta::{Metadata, MetadataBuilder, MetadataLog};
-
-use symphonia_utils_xiph::flac::metadata::*;
 
 use log::{debug, info};
 
