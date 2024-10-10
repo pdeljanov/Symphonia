@@ -229,6 +229,8 @@ fn get_codec_id(track: &TrackElement) -> Option<CodecId> {
         | "A_AAC/MPEG4/LTP" | "A_AAC" => CodecId::Audio(CODEC_ID_AAC),
         "A_MPC" => CodecId::Audio(CODEC_ID_MUSEPACK),
         "A_AC3" | "A_AC3/BSID9" | "A_AC3/BSID10" => CodecId::Audio(CODEC_ID_AC3),
+        "A_EAC3" => CodecId::Audio(CODEC_ID_EAC3),
+        "A_TRUEHD" => CodecId::Audio(CODEC_ID_TRUEHD),
         "A_ALAC" => CodecId::Audio(CODEC_ID_ALAC),
         "A_DTS" => CodecId::Audio(CODEC_ID_DCA),
         // A_DTS/EXPRESS
@@ -282,7 +284,7 @@ fn get_codec_id(track: &TrackElement) -> Option<CodecId> {
         "V_AV1" => CodecId::Video(CODEC_ID_AV1),
         "V_AVS2" => CodecId::Video(CODEC_ID_AVS2),
         "V_AVS3" => CodecId::Video(CODEC_ID_AVS3),
-        // V_MS/VFW/FOURCC
+        // V_MS/VFW/FOURCC WVC1 (VC-1)
         // V_UNCOMPRESSED
         // V_QUICKTIME
         // V_PRORES
