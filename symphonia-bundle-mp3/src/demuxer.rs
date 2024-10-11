@@ -908,6 +908,6 @@ fn is_maybe_vbri_tag(buf: &[u8], header: &FrameHeader) -> bool {
     if id != VBRI_TAG_ID {
         return false;
     }
-
+    true
     // The bytes preceeding the VBRI tag (mostly the side information) should be all 0.
 }
