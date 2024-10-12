@@ -14,6 +14,7 @@
 #![allow(clippy::identity_op)]
 #![allow(clippy::manual_range_contains)]
 
+pub mod ape;
 pub mod flac;
 pub mod id3v1;
 pub mod id3v2;

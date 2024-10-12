@@ -135,6 +135,8 @@ All metadata readers are provided by the `symphonia-metadata` crate.
 
 | Format                | Status    |
 |-----------------------|-----------|
+| APEv1                 | Great     |
+| APEv2                 | Great     |
 | ID3v1                 | Great     |
 | ID3v2                 | Great     |
 | ISO/MP4               | Great     |

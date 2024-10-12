@@ -366,8 +366,8 @@ lazy_static! {
 lazy_static! {
     static ref TXXX_FRAME_STD_KEYS: HashMap<&'static str, StandardTagKey> = {
         let mut m = HashMap::new();
-        m.insert("ACOUSTID FINGERPRINT", StandardTagKey::AcoustidFingerprint);
-        m.insert("ACOUSTID ID", StandardTagKey::AcoustidId);
+        m.insert("ACOUSTID FINGERPRINT", StandardTagKey::AcoustIdFingerprint);
+        m.insert("ACOUSTID ID", StandardTagKey::AcoustId);
         m.insert("BARCODE", StandardTagKey::IdentBarcode);
         m.insert("CATALOGNUMBER", StandardTagKey::IdentCatalogNumber);
         m.insert("LICENSE", StandardTagKey::License);
