@@ -129,6 +129,7 @@ pub enum StandardVisualKey {
     Illustration,
     BandArtistLogo,
     PublisherStudioLogo,
+    Other,
 }
 
 /// `StandardTagKey` is an enumeration providing standardized keys for common tag types.

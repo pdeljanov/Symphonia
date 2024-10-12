@@ -18,7 +18,7 @@ use symphonia_core::io::{MediaSourceStream, ReadBytes, ScopedStream, SeekBuffere
 use symphonia_core::meta::well_known::{METADATA_ID_APEV1, METADATA_ID_APEV2};
 use symphonia_core::meta::{
     MetadataBuilder, MetadataInfo, MetadataOptions, MetadataReader, MetadataRevision,
-    StandardTagKey, Tag, Value,
+    StandardTagKey, StandardVisualKey, Tag, Value, Visual,
 };
 use symphonia_core::support_metadata;
 
@@ -109,6 +109,35 @@ lazy_static! {
         // TODO: Bibliography
 
         // No mappings for: Index, Introplay, Dummy
+        m
+    };
+}
+
+lazy_static! {
+    static ref APE_VISUAL_TAG_MAP: HashMap<&'static str, StandardVisualKey> = {
+        let mut m = HashMap::new();
+        m.insert("cover art (other)", StandardVisualKey::Other);
+        m.insert("cover art (png icon)", StandardVisualKey::FileIcon);
+        m.insert("cover art (icon)", StandardVisualKey::OtherIcon);
+        m.insert("cover art (front)", StandardVisualKey::FrontCover);
+        m.insert("cover art (back)", StandardVisualKey::BackCover);
+        m.insert("cover art (leaflet)", StandardVisualKey::Leaflet);
+        m.insert("cover art (media)", StandardVisualKey::Media);
+        m.insert("cover art (lead artist)", StandardVisualKey::LeadArtistPerformerSoloist);
+        m.insert("cover art (artist)", StandardVisualKey::ArtistPerformer);
+        m.insert("cover art (conductor)", StandardVisualKey::Conductor);
+        m.insert("cover art (band)", StandardVisualKey::BandOrchestra);
+        m.insert("cover art (composer)", StandardVisualKey::Composer);
+        m.insert("cover art (lyricist)", StandardVisualKey::Lyricist);
+        m.insert("cover art (recording location)", StandardVisualKey::RecordingLocation);
+        m.insert("cover art (during recording)", StandardVisualKey::RecordingSession);
+        m.insert("cover art (during performance)", StandardVisualKey::Performance);
+        m.insert("cover art (video capture)", StandardVisualKey::ScreenCapture);
+        m.insert("cover art (fish)", StandardVisualKey::Other);
+        m.insert("cover art (illustration)", StandardVisualKey::Illustration);
+        m.insert("cover art (band logotype)", StandardVisualKey::BandArtistLogo);
+        m.insert("cover art (publisher logotype)", StandardVisualKey::PublisherStudioLogo);
+
         m
     };
 }
@@ -349,11 +378,30 @@ impl MetadataReader for ApeReader<'_> {
                 ApeItemValue::Binary(bin) => Value::Binary(bin),
             };
 
-            // Try to find standard tag key.
-            let std_key = APE_TAG_MAP.get(item.key.to_lowercase().as_str()).copied();
+            let key_lower = item.key.to_ascii_lowercase();
 
-            // TODO: Detect visuals. Will need to be able to detect common image formats to do this
-            // robustly.
+            // If the APE tag key can be mapped to a standard visual key, and the value is binary
+            // data, then consider the tag to be a visual.
+            if let Some(std_key) = APE_VISUAL_TAG_MAP.get(key_lower.as_str()).copied() {
+                if let Value::Binary(data) = value {
+                    // TODO: Detect image format, mime-type, dimensions, etc. from the binary data.
+
+                    builder.add_visual(Visual {
+                        media_type: "".to_string(),
+                        dimensions: None,
+                        bits_per_pixel: None,
+                        color_mode: None,
+                        usage: Some(std_key),
+                        tags: vec![],
+                        data,
+                    });
+
+                    continue;
+                }
+            }
+
+            // Try to find a standard tag key.
+            let std_key = APE_TAG_MAP.get(key_lower.as_str()).copied();
 
             builder.add_tag(Tag::new(std_key, &item.key, value));
         }
