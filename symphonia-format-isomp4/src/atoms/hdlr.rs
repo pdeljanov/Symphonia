@@ -33,6 +33,7 @@ pub enum HandlerType {
 }
 
 /// Handler atom.
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct HdlrAtom {
     /// Atom header.

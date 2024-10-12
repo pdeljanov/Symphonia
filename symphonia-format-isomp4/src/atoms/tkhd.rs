@@ -12,6 +12,7 @@ use crate::atoms::{Atom, AtomHeader};
 use crate::fp::FpU8;
 
 /// Track header atom.
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct TkhdAtom {
     /// Atom header.

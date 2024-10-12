@@ -373,6 +373,7 @@ impl AtomHeader {
 }
 
 pub trait Atom: Sized {
+    #[allow(dead_code)]
     fn header(&self) -> AtomHeader;
 
     fn read<B: ReadBytes>(reader: &mut B, header: AtomHeader) -> Result<Self>;
@@ -442,7 +443,7 @@ impl<B: ReadBytes> AtomIterator<B> {
                 // An atom with a length of zero is defined to span to the end of the stream. If
                 // len is available, use it for the next atom start position, otherwise, use u64 max
                 // which will trip an end of stream error on the next iteration.
-                self.len.map(|l| self.base_pos + l).unwrap_or(std::u64::MAX)
+                self.len.map(|l| self.base_pos + l).unwrap_or(u64::MAX)
             }
 
             len => self.next_atom_pos + len,

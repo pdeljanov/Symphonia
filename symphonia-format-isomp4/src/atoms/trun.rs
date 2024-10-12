@@ -12,6 +12,7 @@ use symphonia_core::util::bits;
 use crate::atoms::{Atom, AtomHeader};
 
 /// Track fragment run atom.
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct TrunAtom {
     /// Atom header.

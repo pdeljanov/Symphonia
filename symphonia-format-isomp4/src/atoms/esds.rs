@@ -120,6 +120,7 @@ class ES_Descriptor extends BaseDescriptor : bit(8) tag=ES_DescrTag {
 }
 */
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct ESDescriptor {
     pub es_id: u16,
@@ -202,6 +203,7 @@ class DecoderConfigDescriptor extends BaseDescriptor : bit(8) tag=DecoderConfigD
 }
 */
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct DecoderConfigDescriptor {
     pub codec_type: CodecType,

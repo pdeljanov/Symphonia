@@ -66,10 +66,7 @@ impl Chunk {
             }
             other => {
                 // Log unsupported chunk types but don't return an error
-                info!(
-                    "unsupported chunk type ('{}')",
-                    str::from_utf8(other.as_slice()).unwrap_or("????")
-                );
+                info!("unsupported chunk type ('{}')", str::from_utf8(other).unwrap_or("????"));
 
                 if chunk_size >= 0 {
                     reader.ignore_bytes(chunk_size as u64)?;
@@ -371,7 +368,9 @@ impl ChannelLayout {
 #[derive(Debug)]
 pub struct ChannelDescription {
     pub channel_label: u32,
+    #[allow(dead_code)]
     pub channel_flags: u32,
+    #[allow(dead_code)]
     pub coordinates: [f32; 3],
 }
 

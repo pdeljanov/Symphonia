@@ -475,7 +475,7 @@ pub trait SeekBuffered {
     /// This function is identical to [`SeekBuffered::seek_buffered_rel`] when a negative delta is
     /// provided.
     fn seek_buffered_rev(&mut self, delta: usize) {
-        assert!(delta < std::isize::MAX as usize);
+        assert!(delta < isize::MAX as usize);
         self.seek_buffered_rel(-(delta as isize));
     }
 }
