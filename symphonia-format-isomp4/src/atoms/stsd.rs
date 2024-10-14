@@ -22,8 +22,8 @@ use symphonia_core::codecs::audio::well_known::{CODEC_ID_PCM_U32BE, CODEC_ID_PCM
 use symphonia_core::codecs::audio::{AudioCodecId, AudioCodecParameters, CODEC_ID_NULL_AUDIO};
 use symphonia_core::codecs::subtitle::well_known::CODEC_ID_MOV_TEXT;
 use symphonia_core::codecs::subtitle::SubtitleCodecParameters;
-use symphonia_core::codecs::video::VideoCodecParameters;
-use symphonia_core::codecs::CodecParameters;
+use symphonia_core::codecs::video::{VideoCodecId, VideoCodecParameters, VideoExtraData};
+use symphonia_core::codecs::{CodecParameters, CodecProfile};
 use symphonia_core::errors::{decode_error, unsupported_error, Result};
 use symphonia_core::io::ReadBytes;
 
@@ -157,26 +157,19 @@ impl StsdAtom {
                 Some(CodecParameters::Audio(codec_params))
             }
             SampleEntry::Visual(entry) => {
-                let mut codec_params = VideoCodecParameters::new();
+                let mut codec_params = VideoCodecParameters {
+                    width: Some(entry.width),
+                    height: Some(entry.height),
+                    codec: entry.codec_id,
+                    extra_data: entry.extra_data.clone(),
+                    ..Default::default()
+                };
 
-                codec_params.with_width(entry.width).with_height(entry.height);
-
-                match entry.codec_specific {
-                    Some(VisualCodecSpecific::Esds(ref esds)) => {
-                        // ESDS is not a video specific atom. Returns an error if not an video
-                        // elementary stream.
-                        esds.fill_video_codec_params(&mut codec_params).ok()?;
-                    }
-                    Some(VisualCodecSpecific::Avc1(ref avc)) => {
-                        avc.fill_codec_params(&mut codec_params);
-                    }
-                    Some(VisualCodecSpecific::Dvh1(ref hevc))
-                    | Some(VisualCodecSpecific::Dvhe(ref hevc))
-                    | Some(VisualCodecSpecific::Hev1(ref hevc))
-                    | Some(VisualCodecSpecific::Hvc1(ref hevc)) => {
-                        hevc.fill_codec_params(&mut codec_params);
-                    }
-                    _ => (),
+                if let Some(profile) = entry.profile {
+                    codec_params.with_profile(profile);
+                }
+                if let Some(level) = entry.level {
+                    codec_params.with_level(level);
                 }
 
                 Some(CodecParameters::Video(codec_params))
@@ -591,7 +584,7 @@ fn read_audio_sample_entry<B: ReadBytes>(
 
 /// Visual sample entry.
 #[allow(dead_code)]
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct VisualSampleEntry {
     pub width: u16,
     pub height: u16,
@@ -600,22 +593,10 @@ pub struct VisualSampleEntry {
     /// Frame count per sample.
     pub frame_count: u16,
     pub compressor: Option<String>,
-    pub codec_specific: Option<VisualCodecSpecific>,
-}
-
-#[allow(dead_code)]
-#[derive(Debug)]
-pub enum VisualCodecSpecific {
-    Esds(EsdsAtom),
-    Av1,
-    Avc1(AvcCAtom),
-    Dvhe(HvcCAtom),
-    Dvh1(HvcCAtom),
-    Hev1(HvcCAtom),
-    Hvc1(HvcCAtom),
-    Mp4v,
-    Vp8,
-    Vp9,
+    pub codec_id: VideoCodecId,
+    pub profile: Option<CodecProfile>,
+    pub level: Option<u32>,
+    pub extra_data: Vec<VideoExtraData>,
 }
 
 fn read_visual_sample_entry<B: ReadBytes>(
@@ -635,17 +616,20 @@ fn read_visual_sample_entry<B: ReadBytes>(
     // Reserved.
     reader.ignore_bytes(16)?;
 
-    let width = reader.read_be_u16()?;
-    let height = reader.read_be_u16()?;
-    let horiz_res = f64::from(FpU16::parse_raw(reader.read_be_u32()?));
-    let vert_res = f64::from(FpU16::parse_raw(reader.read_be_u32()?));
+    let mut entry = VisualSampleEntry {
+        width: reader.read_be_u16()?,
+        height: reader.read_be_u16()?,
+        horiz_res: f64::from(FpU16::parse_raw(reader.read_be_u32()?)),
+        vert_res: f64::from(FpU16::parse_raw(reader.read_be_u32()?)),
+        ..Default::default()
+    };
 
     // Reserved.
     let _ = reader.read_be_u32()?;
 
-    let frame_count = reader.read_be_u16()?;
+    entry.frame_count = reader.read_be_u16()?;
 
-    let compressor = {
+    entry.compressor = {
         let len = usize::from(reader.read_u8()?);
 
         let mut name = [0u8; 31];
@@ -664,51 +648,19 @@ fn read_visual_sample_entry<B: ReadBytes>(
 
     let mut iter = AtomIterator::new(reader, header);
 
-    let mut codec_specific = None;
-
     while let Some(entry_header) = iter.next()? {
         match entry_header.atom_type {
+            AtomType::Esds => {
+                let atom = iter.read_atom::<EsdsAtom>()?;
+                atom.fill_video_sample_entry(&mut entry)?;
+            }
             AtomType::AvcConfiguration => {
-                // AVC
-                if header.atom_type != AtomType::VisualSampleEntryAvc1 || codec_specific.is_some() {
-                    return decode_error("isomp4: invalid avc configuration sample entry");
-                }
-
-                codec_specific = Some(VisualCodecSpecific::Avc1(iter.read_atom::<AvcCAtom>()?));
+                let atom = iter.read_atom::<AvcCAtom>()?;
+                atom.fill_video_sample_entry(&mut entry);
             }
             AtomType::HevcConfiguration => {
-                // HEVC
-                match header.atom_type {
-                    AtomType::VisualSampleEntryDvhe => {
-                        if codec_specific.is_some() {
-                            return decode_error("isomp4: invalid dvhe configuration sample entry");
-                        }
-                        codec_specific =
-                            Some(VisualCodecSpecific::Dvhe(iter.read_atom::<HvcCAtom>()?));
-                    }
-                    AtomType::VisualSampleEntryDvh1 => {
-                        if codec_specific.is_some() {
-                            return decode_error("isomp4: invalid dvh1 configuration sample entry");
-                        }
-                        codec_specific =
-                            Some(VisualCodecSpecific::Dvh1(iter.read_atom::<HvcCAtom>()?));
-                    }
-                    AtomType::VisualSampleEntryHev1 => {
-                        if codec_specific.is_some() {
-                            return decode_error("isomp4: invalid hev1 configuration sample entry");
-                        }
-                        codec_specific =
-                            Some(VisualCodecSpecific::Hev1(iter.read_atom::<HvcCAtom>()?));
-                    }
-                    AtomType::VisualSampleEntryHvc1 => {
-                        if codec_specific.is_some() {
-                            return decode_error("isomp4: invalid hvc1 configuration sample entry");
-                        }
-                        codec_specific =
-                            Some(VisualCodecSpecific::Hvc1(iter.read_atom::<HvcCAtom>()?));
-                    }
-                    _ => {}
-                }
+                let atom = iter.read_atom::<HvcCAtom>()?;
+                atom.fill_video_sample_entry(&mut entry);
             }
             _ => {
                 debug!("unknown visual sample entry sub-atom: {:?}.", entry_header.atom_type());
@@ -716,15 +668,7 @@ fn read_visual_sample_entry<B: ReadBytes>(
         }
     }
 
-    Ok(SampleEntry::Visual(VisualSampleEntry {
-        width,
-        height,
-        horiz_res,
-        vert_res,
-        frame_count,
-        compressor,
-        codec_specific,
-    }))
+    Ok(SampleEntry::Visual(entry))
 }
 
 #[derive(Debug)]

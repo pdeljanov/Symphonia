@@ -53,6 +53,29 @@ impl fmt::Display for VideoCodecId {
     }
 }
 
+/// An `VideoExtraDataId` is a unique identifier used to identify a specific video extra data.
+#[repr(transparent)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct VideoExtraDataId(u32);
+
+/// Null video extra data ID.
+pub const VIDEO_EXTRA_DATA_ID_NULL: VideoExtraDataId = VideoExtraDataId(0x0);
+
+impl Default for VideoExtraDataId {
+    fn default() -> Self {
+        VIDEO_EXTRA_DATA_ID_NULL
+    }
+}
+
+/// Extra data for a video codec.
+#[derive(Clone, Debug, Default)]
+pub struct VideoExtraData {
+    /// The extra data ID.
+    pub id: VideoExtraDataId,
+    /// Extra data (defined by codec)
+    pub data: Box<[u8]>,
+}
+
 /// Codec parameters for video codecs.
 #[derive(Clone, Debug, Default)]
 pub struct VideoCodecParameters {
@@ -67,21 +90,10 @@ pub struct VideoCodecParameters {
     /// Video height.
     pub height: Option<u16>,
     /// Extra data (defined by the codec).
-    pub extra_data: Option<Box<[u8]>>,
+    pub extra_data: Vec<VideoExtraData>,
 }
 
 impl VideoCodecParameters {
-    pub fn new() -> VideoCodecParameters {
-        VideoCodecParameters {
-            codec: CODEC_ID_NULL_VIDEO,
-            profile: None,
-            level: None,
-            width: None,
-            height: None,
-            extra_data: None,
-        }
-    }
-
     /// Provide the `VideoCodecId`.
     pub fn for_codec(&mut self, codec: VideoCodecId) -> &mut Self {
         self.codec = codec;
@@ -112,9 +124,9 @@ impl VideoCodecParameters {
         self
     }
 
-    /// Provide codec extra data.
-    pub fn with_extra_data(&mut self, data: Box<[u8]>) -> &mut Self {
-        self.extra_data = Some(data);
+    /// Adds codec's extra data.
+    pub fn add_extra_data(&mut self, data: VideoExtraData) -> &mut Self {
+        self.extra_data.push(data);
         self
     }
 }
@@ -378,5 +390,27 @@ pub mod well_known {
         pub const CODEC_PROFILE_VC1_MAIN: CodecProfile = CodecProfile(1);
         /// VC-1 Advanced Profile
         pub const CODEC_PROFILE_VC1_ADVANCED: CodecProfile = CodecProfile(2);
+    }
+
+    pub mod extra_data {
+        use crate::codecs::video::VideoExtraDataId;
+
+        /// AVCDecoderConfigurationRecord
+        pub const VIDEO_EXTRA_DATA_ID_AVC_DECODER_CONFIG: VideoExtraDataId = VideoExtraDataId(1);
+
+        /// HEVCDecoderConfigurationRecord
+        pub const VIDEO_EXTRA_DATA_ID_HEVC_DECODER_CONFIG: VideoExtraDataId = VideoExtraDataId(2);
+
+        /// VP9DecoderConfiguration
+        pub const VIDEO_EXTRA_DATA_ID_VP9_DECODER_CONFIG: VideoExtraDataId = VideoExtraDataId(3);
+
+        /// AV1DecoderConfiguration
+        pub const VIDEO_EXTRA_DATA_ID_AV1_DECODER_CONFIG: VideoExtraDataId = VideoExtraDataId(4);
+
+        /// DolbyVisionConfiguration
+        pub const VIDEO_EXTRA_DATA_ID_DOLBY_VISION_CONFIG: VideoExtraDataId = VideoExtraDataId(5);
+
+        /// DolbyVision EL HEVC
+        pub const VIDEO_EXTRA_DATA_ID_DOLBY_VISION_EL_HEVC: VideoExtraDataId = VideoExtraDataId(6);
     }
 }
