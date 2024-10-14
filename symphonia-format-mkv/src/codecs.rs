@@ -5,6 +5,10 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+use extra_data::{
+    VIDEO_EXTRA_DATA_ID_AV1_DECODER_CONFIG, VIDEO_EXTRA_DATA_ID_AVC_DECODER_CONFIG,
+    VIDEO_EXTRA_DATA_ID_HEVC_DECODER_CONFIG, VIDEO_EXTRA_DATA_ID_VP9_DECODER_CONFIG,
+};
 use log::warn;
 
 use symphonia_common::mpeg::video::{
@@ -15,7 +19,9 @@ use symphonia_core::codecs::audio::well_known::{CODEC_ID_FLAC, CODEC_ID_VORBIS};
 use symphonia_core::codecs::audio::AudioCodecParameters;
 use symphonia_core::codecs::audio::{well_known::*, AudioCodecId};
 use symphonia_core::codecs::subtitle::{well_known::*, SubtitleCodecId, SubtitleCodecParameters};
-use symphonia_core::codecs::video::{well_known::*, VideoCodecId, VideoCodecParameters};
+use symphonia_core::codecs::video::{
+    well_known::*, VideoCodecId, VideoCodecParameters, VideoExtraData, VIDEO_EXTRA_DATA_ID_NULL,
+};
 use symphonia_core::codecs::{CodecId, CodecParameters, CodecProfile};
 use symphonia_core::errors::{decode_error, Error, Result};
 
@@ -106,9 +112,12 @@ fn make_video_codec_params(
         }
     };
 
-    let mut codec_params = VideoCodecParameters::new();
-
-    codec_params.for_codec(id);
+    let mut codec_params = VideoCodecParameters {
+        codec: id,
+        width: Some(video.pixel_width),
+        height: Some(video.pixel_height),
+        ..Default::default()
+    };
 
     if let Some(profile) = profile {
         codec_params.with_profile(profile);
@@ -118,10 +127,15 @@ fn make_video_codec_params(
         codec_params.with_level(level);
     }
 
-    codec_params.with_width(video.pixel_width).with_height(video.pixel_height);
-
     if let Some(codec_private) = track.codec_private {
-        codec_params.with_extra_data(codec_private);
+        let extra_data_id = match id {
+            CODEC_ID_H264 => VIDEO_EXTRA_DATA_ID_AVC_DECODER_CONFIG,
+            CODEC_ID_HEVC => VIDEO_EXTRA_DATA_ID_HEVC_DECODER_CONFIG,
+            CODEC_ID_VP9 => VIDEO_EXTRA_DATA_ID_VP9_DECODER_CONFIG,
+            CODEC_ID_AV1 => VIDEO_EXTRA_DATA_ID_AV1_DECODER_CONFIG,
+            _ => VIDEO_EXTRA_DATA_ID_NULL,
+        };
+        codec_params.add_extra_data(VideoExtraData { id: extra_data_id, data: codec_private });
     }
 
     Ok(Some(CodecParameters::Video(codec_params)))
