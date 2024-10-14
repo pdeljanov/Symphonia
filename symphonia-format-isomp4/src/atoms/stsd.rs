@@ -30,8 +30,8 @@ use symphonia_core::errors::{decode_error, unsupported_error, Result};
 use symphonia_core::io::ReadBytes;
 
 use crate::atoms::{
-    AlacAtom, Atom, AtomHeader, AtomIterator, AtomType, AvcCAtom, Dac3Atom, Dec3Atom, EsdsAtom,
-    FlacAtom, HvcCAtom, OpusAtom, WaveAtom,
+    AlacAtom, Atom, AtomHeader, AtomIterator, AtomType, AvcCAtom, Dac3Atom, Dec3Atom, DoviAtom,
+    EsdsAtom, FlacAtom, HvcCAtom, OpusAtom, WaveAtom,
 };
 use crate::fp::FpU16;
 
@@ -548,6 +548,10 @@ fn read_visual_sample_entry<B: ReadBytes>(
             }
             AtomType::HevcConfiguration => {
                 let atom = iter.read_atom::<HvcCAtom>()?;
+                atom.fill_video_sample_entry(&mut entry);
+            }
+            AtomType::DolbyVisionConfiguration => {
+                let atom = iter.read_atom::<DoviAtom>()?;
                 atom.fill_video_sample_entry(&mut entry);
             }
             _ => {
