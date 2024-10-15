@@ -41,51 +41,62 @@ instead of this one directly.
 | **Last Decoded Buffer** | 🔴 Missing     | Needs implementation to return the last decoded audio buffer.     |
 
 ---
-
-## ⚠️ **Immediate Action Items**
-
-| Task                                      | Status         | Priority | Notes                                                                                                                                        |
-|-------------------------------------------|----------------|----------|----------------------------------------------------------------------------------------------------------------------------------------------|
-| **Refactor SILK Decoder**                 | 🟡 In Progress | 🔥 High  | Improve code quality and add more tests. Ensure compatibility with more Opus streams.                                                        |
-| **Implement CELT Decoder**                | 🔴 Not Started | 🔥 High  | CELT mode is crucial for decoding music streams. Refer to [RFC 6716 Section 4.3](https://datatracker.ietf.org/doc/html/rfc6716#section-4.3). |
-| **Implement Hybrid Mode**                 | 🔴 Not Started | 🔥 High  | Hybrid mode combines SILK and CELT decoding. Placeholder needs full implementation.                                                          |
-| **Add Finalize and Last Decoded Buffers** | 🔴 Not Started | ⚡ Medium | Complete the `finalize()` and `last_decoded()` methods for a full decoder API.                                                               |
-| **Optimize Range Decoder**                | 🟢 Done        | ⚡ Medium | Range decoder is implemented but can be further optimized for performance.                                                                   |
-| **Expand Tests & Benchmarks**             | 🟡 Ongoing     | ⚡ Medium | Increase test coverage for edge cases, especially malformed packets. Add benchmarks.                                                         |
-
-
 ## 🛠 **Roadmap**
+```mermaid
+gantt
+    title Silk Decoder Implementation Roadmap (Single Person Workflow)
+    dateFormat  YYYY-MM-DD
 
-| Phase                         | Estimated Duration | Deliverables                                                                                          |
-|-------------------------------|--------------------|-------------------------------------------------------------------------------------------------------|
-| **Phase 0**: Initial          | **3 weeks**        | Finalizing implementation of Silk decoder. Add tests.                                                 |
-| **Phase 1**: CELT and Hybrid  | **6 weeks**        | Complete CELT and Hybrid decoding modes. Add corresponding tests.                                     |
-| **Phase 2**: Refactor & Tests | **5 weeks**        | Refactor the SILK decoder, improve test coverage                                                      |
-| **Phase 3**: Optimization     | **2 weeks**        | Profile and optimize range decoder performance. Ensure handling of edge cases and improve efficiency. |
-| **Phase 4**: Documentation    | **Ongoing**        | Keep updating documentation, encourage community involvement, and respond to user feedback.           |
+    section Phase 1: Frame Parsing
+    Parse Frame Header               :done, 2024-10-14, 5d
+    Parse Frame Control Parameters    :2024-10-19, 5d
+    
+    section Phase 2: LPC Coefficients
+    Extract LPC Coefficients          :2024-10-24, 7d
+    Predict and Filter                :2024-11-01, 5d
 
+    section LSF and LPC
+    Implement LSF decoding            :2024-11-06, 3d
+    Develop LSF to LPC conversion     :2024-11-09, 2d
+    
+    section Phase 3: Quantization and Coding
+    Excitation Signal Quantization    :2024-11-11, 7d
+    Decode Excitation Signal          :2024-11-18, 5d
+    
+    section Excitation Decoding
+    Implement PVQ codebook decoding   :2024-11-23, 4d
+    Develop pulse location decoding   :2024-11-27, 3d
+    Implement sign and LSB decoding   :2024-11-30, 2d
 
-## Codec integration
+    section LTP and LPC Synthesis
+    Implement LTP filter              :2024-12-02, 3d
+    Develop LPC synthesis             :2024-12-05, 4d
 
-Symphonia uses a modular approach where demuxers handle container formats (e.g., OGG) and pass compressed audio streams
-to decoders. The role of symphonia-codec-opus crate will be strictly limited to decoding Opus-encoded audio
-streams. Container-level operations such as OGG demuxing is already handled by the existing demuxers like symphonia-format-ogg.
+    section Phase 4: Gain Control
+    Gain Quantization                 :2024-12-10, 5d
+    Apply Gain                        :2024-12-15, 5d
 
-## Packet parsing and decoding
+    section Post-processing
+    Implement stereo unmixing         :2024-12-20, 2d
+    Develop resampling module         :2024-12-22, 3d
+    De-emphasis Filtering             :2024-12-27, 3d
+    Packet Reconstruction             :2024-12-30, 4d
 
-Opus packet structure and frame sizes are well-documented in [RFC 6716](https://datatracker.ietf.org/doc/html/rfc6716)
-and [RFC 7587](https://datatracker.ietf.org/doc/html/rfc7845).
-The decoding process involves:
+    section Finalization
+    Implement Finalize method         :2025-01-03, 1d
+    Develop Last Decoded Buffer       :2025-01-04, 1d
 
-* Extracting frames from the Opus packet (with variable-length frame packing).
-* Handling different frame durations (2.5, 5, 10, 20 ms) as described in the RFC.
-* Decoding frames based on the SILK (for low bitrates) or CELT (for high bitrates) hybrid mode that uses both.
-* Using Opus’s range decoder to interpret symbols packed into each frame, particularly for audio bandwidth and
-  prediction settings.
+    section Integration and Testing
+    Integrate with symphonia          :2025-01-06, 3d
+    Comprehensive testing             :2025-01-09, 4d
+    End-to-End Decoder Testing        :2025-01-14, 5d
+    Final Optimizations               :2025-01-19, 5d
+```
 
 ## License
 
 Symphonia is provided under the MPL v2.0 license. Please refer to the LICENSE file for more details.
+
 
 ## Contributing
 

@@ -1,0 +1,217 @@
+rust-analyzer
+  LSP server for the Rust programming language.
+
+  Subcommands and their flags do not provide any stability guarantees and may be removed or
+  changed without notice. Top-level flags that are not marked as [Unstable] provide
+  backwards-compatibility and may be relied on.
+
+OPTIONS:
+    -v, --verbose
+      Verbosity level, can be repeated multiple times.
+
+    -q, --quiet
+      Verbosity level.
+
+    --log-file <path>
+      Log to the specified file instead of stderr.
+
+    --no-log-buffering
+      Flush log records to the file immediately.
+
+    --wait-dbg
+      [Unstable] Wait until a debugger is attached to (requires debug build).
+
+    -h, --help
+      Prints help information.
+
+    -V, --version
+      Print version.
+
+    --print-config-schema
+      Dump a LSP config JSON schema.
+
+SUBCOMMANDS:
+
+rust-analyzer parse
+  Parse stdin.
+
+  OPTIONS:
+    --no-dump
+      Suppress printing.
+
+
+rust-analyzer symbols
+  Parse stdin and print the list of symbols.
+
+
+rust-analyzer highlight
+  Highlight stdin as html.
+
+  OPTIONS:
+    --rainbow
+      Enable rainbow highlighting of identifiers.
+
+
+rust-analyzer analysis-stats
+  Batch typecheck project and print summary statistics
+
+  ARGS:
+    <path>
+      Directory with Cargo.toml.
+
+  OPTIONS:
+    --output <format>
+
+    --randomize
+      Randomize order in which crates, modules, and items are processed.
+
+    --parallel
+      Run type inference in parallel.
+
+    --source-stats
+      Print the total length of all source and macro files (whitespace is not counted).
+
+    -o, --only <path>
+      Only analyze items matching this path.
+
+    --with-deps
+      Also analyze all dependencies.
+
+    --no-sysroot
+      Don't load sysroot crates (`std`, `core` & friends).
+
+    --disable-build-scripts
+      Don't run build scripts or load `OUT_DIR` values by running `cargo check` before analysis.
+
+    --disable-proc-macros
+      Don't use expand proc macros.
+
+    --proc-macro-srv <path>
+      Run the proc-macro-srv binary at the specified path.
+
+    --skip-lowering
+      Skip body lowering.
+
+    --skip-inference
+      Skip type inference.
+
+    --skip-mir-stats
+      Skip lowering to mir
+
+    --skip-data-layout
+      Skip data layout calculation
+
+    --skip-const-eval
+      Skip const evaluation
+
+    --run-all-ide-things
+      Runs several IDE features after analysis, including semantics highlighting, diagnostics
+      and annotations. This is useful for benchmarking the memory usage on a project that has
+      been worked on for a bit in a longer running session.
+
+    --run-term-search
+      Run term search on all the tail expressions (of functions, block, if statements etc.)
+
+    --validate-term-search
+      Validate term search by running `cargo check` on every response.
+      Note that this also temporarily modifies the files on disk, use with caution!
+
+
+rust-analyzer run-tests
+  Run unit tests of the project using mir interpreter
+
+  ARGS:
+    <path>
+      Directory with Cargo.toml.
+
+
+rust-analyzer rustc-tests
+  Run unit tests of the project using mir interpreter
+
+  ARGS:
+    <rustc_repo>
+      Directory with Cargo.toml.
+
+  OPTIONS:
+    --filter <path>
+      Only run tests with filter as substring
+
+
+rust-analyzer diagnostics
+
+  ARGS:
+    <path>
+      Directory with Cargo.toml.
+
+  OPTIONS:
+    --disable-build-scripts
+      Don't run build scripts or load `OUT_DIR` values by running `cargo check` before analysis.
+
+    --disable-proc-macros
+      Don't use expand proc macros.
+
+    --proc-macro-srv <path>
+      Run the proc-macro-srv binary at the specified path.
+
+
+rust-analyzer unresolved-references
+  Report unresolved references
+
+  ARGS:
+    <path>
+      Directory with Cargo.toml.
+
+  OPTIONS:
+    --disable-build-scripts
+      Don't run build scripts or load `OUT_DIR` values by running `cargo check` before analysis.
+
+    --disable-proc-macros
+      Don't use expand proc macros.
+
+    --proc-macro-srv <path>
+      Run the proc-macro-srv binary at the specified path.
+
+
+rust-analyzer ssr
+
+  ARGS:
+    <rule>...
+      A structured search replace rule (`$a.foo($b) ==>> bar($a, $b)`)
+
+
+rust-analyzer search
+
+  ARGS:
+    <pattern>...
+      A structured search replace pattern (`$a.foo($b)`)
+
+  OPTIONS:
+    --debug <snippet>
+      Prints debug information for any nodes with source exactly equal to snippet.
+
+
+rust-analyzer lsif
+
+  ARGS:
+    <path>
+
+  OPTIONS:
+    --exclude-vendored-libraries
+      Exclude code from vendored libraries from the resulting index.
+
+
+rust-analyzer scip
+
+  ARGS:
+    <path>
+
+  OPTIONS:
+    --output <path>
+      The output path where the SCIP file will be written to. Defaults to `index.scip`.
+
+    --config-path <config_path>
+      A path to an json configuration file that can be used to customize cargo behavior.
+
+    --exclude-vendored-libraries
+      Exclude code from vendored libraries from the resulting index.
+

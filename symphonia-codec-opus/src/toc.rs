@@ -1,7 +1,6 @@
 //! The TOC Byte (Table of Contents Byte)
-use log::debug;
-/// A well-formed Opus packet MUST contain at least one byte.  This
-/// byte forms a table-of-contents (TOC) header that signals which of the
+/// A well-formed Opus packet MUST contain at least one byte. 
+/// This byte forms a table-of-contents (TOC) header that signals which of the
 /// various modes and configurations a given packet uses.  It is composed
 /// of a configuration number, "config", a stereo flag, "s", and a frame
 /// count code, "c", arranged as illustrated in Figure 1.  A description
@@ -17,6 +16,7 @@ use log::debug;
 /// ```
 ///
 /// https://datatracker.ietf.org/doc/html/rfc6716#section-3.1
+use log::debug;
 use std::convert::TryFrom;
 use std::time::Duration;
 use symphonia_core::io::{BitReaderLtr, ReadBitsLtr};
@@ -108,23 +108,6 @@ impl Toc {
     }
 }
 
-/// The `config` field specifies the operating mode, bandwidth, and frame size.
-///
-/// ```text
-/// +-----------------------+-----------+-----------+-------------------+
-/// | Configuration         | Mode      | Bandwidth | Frame Sizes       |
-/// | Number(s)             |           |           |                   |
-/// +-----------------------+-----------+-----------+-------------------+
-/// | 0...3                 | SILK-only | NB        | 10, 20, 40, 60 ms |
-/// | 4...7                 | SILK-only | MB        | 10, 20, 40, 60 ms |
-/// | 8...11                | SILK-only | WB        | 10, 20, 40, 60 ms |
-/// | 12...13               | Hybrid    | SWB       | 10, 20 ms         |
-/// | 14...15               | Hybrid    | FB        | 10, 20 ms         |
-/// | 16...19               | CELT-only | NB        | 2.5, 5, 10, 20 ms |
-/// | 20...23               | CELT-only | WB        | 2.5, 5, 10, 20 ms |
-/// | 24...27               | CELT-only | SWB       | 2.5, 5, 10, 20 ms |
-/// | 28...31               | CELT-only | FB        | 2.5, 5, 10, 20 ms |
-/// +-----------------------+-----------+-----------+-------------------+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AudioMode {
     SILK,
