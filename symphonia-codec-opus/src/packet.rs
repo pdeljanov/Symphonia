@@ -152,8 +152,23 @@ impl<'a> FramePacket<'a> {
         };
     }
 
-    /// Parse a Code 0 packet (single frame).
-    ///
+    /// Code 0: One Frame in the Packet
+    /// For code 0 packets, the TOC byte is immediately followed by N-1 bytes
+    /// of compressed data for a single frame (where N is the size of the
+    /// packet), as illustrated in Figure 2.
+    ///```text
+    ///       0                   1                   2                   3
+    ///       0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+    ///      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    ///      | config  |s|0|0|                                               |
+    ///      +-+-+-+-+-+-+-+-+                                               |
+    ///      |                    Compressed frame 1 (N-1 bytes)...          :
+    ///      :                                                               |
+    ///      |                                                               |
+    ///      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    /// 
+    ///                          Figure 2: A Code 0 Packet
+    ///``` 
     /// https://datatracker.ietf.org/doc/html/rfc6716#section-3.2.2
     fn one(self, data: &'a [u8]) -> Result<Self> {
         Self::check_frame_size(data.len())?;
@@ -165,8 +180,29 @@ impl<'a> FramePacket<'a> {
         });
     }
 
-    /// Parse a Code 1 packet (two frames with equal compressed size).
+    /// Code 1: Two Frames in the Packet, Each with Equal Compressed Size
+    /// For code 1 packets, the TOC byte is immediately followed by the
+    /// (N-1)/2 bytes of compressed data for the first frame, followed by
+    /// (N-1)/2 bytes of compressed data for the second frame, as illustrated
+    /// in Figure 3. The number of payload bytes available for compressed
+    /// data, N-1, MUST be even for all code 1 packets [R3].
+    ///```text
+    ///      0                   1                   2                   3
+    ///      0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+    ///     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    ///     | config  |s|0|1|                                               |
+    ///     +-+-+-+-+-+-+-+-+                                               :
+    ///     |             Compressed frame 1 ((N-1)/2 bytes)...             |
+    ///     :                               +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    ///     |                               |                               |
+    ///     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+                               :
+    ///     |             Compressed frame 2 ((N-1)/2 bytes)...             |
+    ///     :                                               +-+-+-+-+-+-+-+-+
+    ///     |                                               |
+    ///     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
     ///
+    ///                         Figure 3: A Code 1 Packet
+    /// ```
     /// https://datatracker.ietf.org/doc/html/rfc6716#section-3.2.3j
     fn two_equal_frames(self, data: &'a [u8]) -> Result<Self> {
         if data.len() % 2 != 0 {
@@ -183,8 +219,36 @@ impl<'a> FramePacket<'a> {
         });
     }
 
-    /// Parse a Code 2 packet (two frames with different compressed sizes).
-    ///
+    /// Code 2: Two Frames in the Packet, with Different CompressedSizes
+    /// For code 2 packets, the TOC byte is followed by a one- or two-byte
+    /// sequence indicating the length of the first frame (marked N1 in
+    /// Figure 4), followed by N1 bytes of compressed data for the first
+    /// frame.  The remaining N-N1-2 or N-N1-3 bytes are the compressed data
+    /// for the second frame.  This is illustrated in Figure 4.  A code 2
+    /// packet MUST contain enough bytes to represent a valid length.  For
+    /// example, a 1-byte code 2 packet is always invalid, and a 2-byte code
+    /// 2 packet whose second byte is in the range 252...255 is also invalid.
+    ///  The length of the first frame, N1, MUST also be no larger than the
+    /// size of the payload remaining after decoding that length for all code
+    /// 2 packets [R4].  This makes, for example, a 2-byte code 2 packet with
+    /// a second byte in the range 1...251 invalid as well (the only valid
+    /// 2-byte code 2 packet is one where the length of both frames is zero).
+    /// ```text
+    ///    0                   1                   2                   3
+    ///    0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+    ///   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    ///   | config  |s|1|0| N1 (1-2 bytes):                               |
+    ///   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+                               :
+    ///   |               Compressed frame 1 (N1 bytes)...                |
+    ///   :                               +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    ///   |                               |                               |
+    ///   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+                               |
+    ///   |                     Compressed frame 2...                     :
+    ///   :                                                               |
+    ///   |                                                               |
+    ///   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    ///                         Figure 4: A Code 2 Packet
+    /// ```
     /// https://datatracker.ietf.org/doc/html/rfc6716#section-3.2.4
     fn two_different_frames(self, data: &'a [u8]) -> Result<Self> {
         let (n1, offset) = Self::get_frame_length(data)?;
@@ -207,10 +271,28 @@ impl<'a> FramePacket<'a> {
         });
     }
 
-    /// Parse a Code 3 packet (an arbitrary number of frames).
+    /// Code 3: A Signaled Number of Frames in the Packet
+    /// Code 3 packets signal the number of frames, as well as additional
+    /// padding, called "Opus padding" to indicate that this padding is added
+    /// at the Opus layer rather than at the transport layer.Code 3 packets
+    /// MUST have at least 2 bytes. The TOC byte is followed by a
+    /// byte encoding the number of frames in the packet in bits 2 to 7
+    /// (marked "M" in Figure 5), with bit 1 indicating whether or not Opus
+    /// padding is inserted (marked "p" in Figure 5), and bit 0 indicating
+    /// VBR (marked "v" in Figure 5).  M MUST NOT be zero, and the audio
+    /// duration contained within a packet MUST NOT exceed 120 ms [R5].  This
+    /// limits the maximum frame count for any frame size to 48 (for 2.5 ms
+    /// frames), with lower limits for longer frame sizes.  Figure 5
+    /// illustrates the layout of the frame count byte.
+    ///```text
+    ///                             0
+    ///                             0 1 2 3 4 5 6 7
+    ///                            +-+-+-+-+-+-+-+-+
+    ///                            |v|p|     M     |
+    ///                            +-+-+-+-+-+-+-+-+
     ///
-    /// This method handles both CBR and VBR modes, as well as padding.
-    ///
+    ///                     Figure 5: The frame count byte
+    ///```
     /// https://datatracker.ietf.org/doc/html/rfc6716#section-3.2.5
     fn signaled_number_of_frames(self, data: &'a [u8]) -> Result<Self> {
         let (frame_count_byte, rest) = data.split_first().ok_or(Error::PacketTooShort)?;
