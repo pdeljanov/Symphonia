@@ -1,3 +1,27 @@
+//! Opus Decoder
+///
+/// The Opus decoder consists of two main blocks: the SILK decoder and
+/// the CELT decoder. At any given time, one or both of the SILK and
+/// CELT decoders may be active.  The output of the Opus decode is the
+/// sum of the outputs from the SILK and CELT decoders with proper sample
+/// rate conversion and delay compensation on the SILK side, and optional
+/// decimation (when decoding to sample rates less than 48 kHz) on the
+/// CELT side, as illustrated in the block diagram below.
+///```text
+///
+///                          +---------+    +------------+
+///                          |  SILK   |    |   Sample   |
+///                       +->| Decoder |--->|    Rate    |----+
+/// Bit-    +---------+   |  |         |    | Conversion |    v
+/// stream  |  Range  |---+  +---------+    +------------+  /---\  Audio
+/// ------->| Decoder |                                     | + |------>
+///         |         |---+  +---------+    +------------+  \---/
+///         +---------+   |  |  CELT   |    | Decimation |    ^
+///                       +->| Decoder |--->| (Optional) |----+
+///                          |         |    |            |
+///                          +---------+    +------------+
+/// ```
+/// https://datatracker.ietf.org/doc/html/rfc6716#section-4
 use crate::silk;
 use std::sync::LazyLock;
 use symphonia_core::audio::AudioBufferRef;

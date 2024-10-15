@@ -1,4 +1,4 @@
-//! SILK decoder implementation.
+//! SILK decoder implementation (symphonia crate).
 //!
 //! The decoder's LP layer uses a modified version of the SILK codec
 //! (herein simply called "SILK"), which runs a decoded excitation signal
