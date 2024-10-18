@@ -29,11 +29,11 @@ use crate::formats::Packet;
 pub struct AudioCodecId(u32);
 
 /// Null audio codec ID
-pub const CODEC_ID_NULL: AudioCodecId = AudioCodecId(0x0);
+pub const CODEC_ID_NULL_AUDIO: AudioCodecId = AudioCodecId(0x0);
 
 impl Default for AudioCodecId {
     fn default() -> Self {
-        CODEC_ID_NULL
+        CODEC_ID_NULL_AUDIO
     }
 }
 
@@ -102,7 +102,7 @@ pub struct AudioCodecParameters {
 impl AudioCodecParameters {
     pub fn new() -> AudioCodecParameters {
         AudioCodecParameters {
-            codec: CODEC_ID_NULL,
+            codec: CODEC_ID_NULL_AUDIO,
             profile: None,
             sample_rate: None,
             sample_format: None,
@@ -396,9 +396,9 @@ pub mod well_known {
     /// Lossless Digital Audio Codec (LDAC)
     pub const CODEC_ID_LDAC: AudioCodecId = AudioCodecId(0x1018);
     /// Bink Audio
-    pub const CODEC_ID_BINK: AudioCodecId = AudioCodecId(0x1019);
+    pub const CODEC_ID_BINK_AUDIO: AudioCodecId = AudioCodecId(0x1019);
     /// Smacker Audio
-    pub const CODEC_ID_SMACKER: AudioCodecId = AudioCodecId(0x1020);
+    pub const CODEC_ID_SMACKER_AUDIO: AudioCodecId = AudioCodecId(0x1020);
 
     // Compressed lossless audio codecs
     //---------------------------------

@@ -19,7 +19,7 @@ use symphonia_core::codecs::audio::well_known::{CODEC_ID_PCM_S8, CODEC_ID_PCM_U8
 use symphonia_core::codecs::audio::well_known::{CODEC_ID_PCM_U16BE, CODEC_ID_PCM_U16LE};
 use symphonia_core::codecs::audio::well_known::{CODEC_ID_PCM_U24BE, CODEC_ID_PCM_U24LE};
 use symphonia_core::codecs::audio::well_known::{CODEC_ID_PCM_U32BE, CODEC_ID_PCM_U32LE};
-use symphonia_core::codecs::audio::{AudioCodecId, AudioCodecParameters, CODEC_ID_NULL};
+use symphonia_core::codecs::audio::{AudioCodecId, AudioCodecParameters, CODEC_ID_NULL_AUDIO};
 use symphonia_core::codecs::subtitle::well_known::CODEC_ID_MOV_TEXT;
 use symphonia_core::codecs::subtitle::SubtitleCodecParameters;
 use symphonia_core::codecs::video::VideoCodecParameters;
@@ -249,7 +249,7 @@ pub struct AudioSampleEntry {
 fn is_pcm_codec(atype: AtomType) -> bool {
     // PCM data in version 0 and 1 is signalled by the sample entry atom type. In version 2, the
     // atom type for PCM data is always LPCM.
-    atype == AtomType::AudioSampleEntryLpcm || pcm_codec_id(atype) != CODEC_ID_NULL
+    atype == AtomType::AudioSampleEntryLpcm || pcm_codec_id(atype) != CODEC_ID_NULL_AUDIO
 }
 
 /// Gets the PCM codec from the sample entry atom type for version 0 and 1 sample entries.
@@ -262,7 +262,7 @@ fn pcm_codec_id(atype: AtomType) -> AudioCodecId {
         AtomType::AudioSampleEntryS32 => CODEC_ID_PCM_S32LE,
         AtomType::AudioSampleEntryF32 => CODEC_ID_PCM_F32LE,
         AtomType::AudioSampleEntryF64 => CODEC_ID_PCM_F64LE,
-        _ => CODEC_ID_NULL,
+        _ => CODEC_ID_NULL_AUDIO,
     }
 }
 
@@ -295,7 +295,7 @@ fn lpcm_codec_id(bits_per_sample: u32, lpcm_flags: u32) -> AudioCodecId {
             64 if is_big_endian => CODEC_ID_PCM_F64BE,
             32 => CODEC_ID_PCM_F32LE,
             64 => CODEC_ID_PCM_F64LE,
-            _ => CODEC_ID_NULL,
+            _ => CODEC_ID_NULL_AUDIO,
         }
     }
     else {
@@ -310,7 +310,7 @@ fn lpcm_codec_id(bits_per_sample: u32, lpcm_flags: u32) -> AudioCodecId {
                 16 => CODEC_ID_PCM_S16LE,
                 24 => CODEC_ID_PCM_S24LE,
                 32 => CODEC_ID_PCM_S32LE,
-                _ => CODEC_ID_NULL,
+                _ => CODEC_ID_NULL_AUDIO,
             }
         }
         else {
@@ -323,7 +323,7 @@ fn lpcm_codec_id(bits_per_sample: u32, lpcm_flags: u32) -> AudioCodecId {
                 16 => CODEC_ID_PCM_U16LE,
                 24 => CODEC_ID_PCM_U24LE,
                 32 => CODEC_ID_PCM_U32LE,
-                _ => CODEC_ID_NULL,
+                _ => CODEC_ID_NULL_AUDIO,
             }
         }
     }
@@ -481,7 +481,7 @@ fn read_audio_sample_entry<B: ReadBytes>(
             // This is only valid if this is a PCM codec.
             let codec_id = lpcm_codec_id(bits_per_sample, lpcm_flags);
 
-            if is_pcm_codec && codec_id != CODEC_ID_NULL {
+            if is_pcm_codec && codec_id != CODEC_ID_NULL_AUDIO {
                 // Like version 1, the new fields describe the PCM sample format and supersede the
                 // original version 0 fields.
                 Some(AudioCodecSpecific::Pcm(Pcm {

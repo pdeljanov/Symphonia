@@ -25,11 +25,11 @@ use crate::common::FourCc;
 pub struct VideoCodecId(u32);
 
 /// Null video codec ID
-pub const CODEC_ID_NULL: VideoCodecId = VideoCodecId(0x0);
+pub const CODEC_ID_NULL_VIDEO: VideoCodecId = VideoCodecId(0x0);
 
 impl Default for VideoCodecId {
     fn default() -> Self {
-        CODEC_ID_NULL
+        CODEC_ID_NULL_VIDEO
     }
 }
 
@@ -73,7 +73,7 @@ pub struct VideoCodecParameters {
 impl VideoCodecParameters {
     pub fn new() -> VideoCodecParameters {
         VideoCodecParameters {
-            codec: CODEC_ID_NULL,
+            codec: CODEC_ID_NULL_VIDEO,
             profile: None,
             level: None,
             width: None,
@@ -157,9 +157,9 @@ pub mod well_known {
     // RAD Games Tools (Epic Games Tools) codecs
 
     /// Bink Video
-    pub const CODEC_ID_BINK: VideoCodecId = VideoCodecId(0x200);
+    pub const CODEC_ID_BINK_VIDEO: VideoCodecId = VideoCodecId(0x200);
     /// Smacker Video
-    pub const CODEC_ID_SMACKER: VideoCodecId = VideoCodecId(0x201);
+    pub const CODEC_ID_SMACKER_VIDEO: VideoCodecId = VideoCodecId(0x201);
 
     /// Cinepak
     pub const CODEC_ID_CINEPAK: VideoCodecId = VideoCodecId(0x300);
