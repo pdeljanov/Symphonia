@@ -84,7 +84,7 @@ impl EsdsAtom {
     /// If the elementary stream descriptor describes an audio stream, populate the provided
     /// audio codec parameters.
     pub fn fill_audio_codec_params(&self, codec_params: &mut AudioCodecParameters) -> Result<()> {
-        use symphonia_core::codecs::audio::CODEC_ID_NULL;
+        use symphonia_core::codecs::audio::CODEC_ID_NULL_AUDIO;
 
         match get_codec_id_from_object_type(self.descriptor.dec_config.object_type_indication) {
             Some(CodecId::Audio(id)) => {
@@ -97,7 +97,7 @@ impl EsdsAtom {
             }
             None => {
                 // Unknown object type indication.
-                codec_params.for_codec(CODEC_ID_NULL);
+                codec_params.for_codec(CODEC_ID_NULL_AUDIO);
             }
         }
 
@@ -111,7 +111,7 @@ impl EsdsAtom {
     /// If the elementary stream descriptor describes an video stream, populate the provided
     /// video codec parameters.
     pub fn fill_video_codec_params(&self, codec_params: &mut VideoCodecParameters) -> Result<()> {
-        use symphonia_core::codecs::video::CODEC_ID_NULL;
+        use symphonia_core::codecs::video::CODEC_ID_NULL_VIDEO;
 
         match get_codec_id_from_object_type(self.descriptor.dec_config.object_type_indication) {
             Some(CodecId::Video(id)) => {
@@ -124,7 +124,7 @@ impl EsdsAtom {
             }
             None => {
                 // Unknown object type indication.
-                codec_params.for_codec(CODEC_ID_NULL);
+                codec_params.for_codec(CODEC_ID_NULL_VIDEO);
             }
         }
 

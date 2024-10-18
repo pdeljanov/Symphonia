@@ -369,13 +369,13 @@ pub trait FormatReader: Send + Sync {
         // Find the first track matching the desired track type with a known codec.
         self.tracks().iter().find(|track| match &track.codec_params {
             Some(CodecParameters::Audio(params)) if track_type == TrackType::Audio => {
-                params.codec != audio::CODEC_ID_NULL
+                params.codec != audio::CODEC_ID_NULL_AUDIO
             }
             Some(CodecParameters::Video(params)) if track_type == TrackType::Video => {
-                params.codec != video::CODEC_ID_NULL
+                params.codec != video::CODEC_ID_NULL_VIDEO
             }
             Some(CodecParameters::Subtitle(params)) if track_type == TrackType::Subtitle => {
-                params.codec != subtitle::CODEC_ID_NULL
+                params.codec != subtitle::CODEC_ID_NULL_SUBTITLE
             }
             _ => false,
         })

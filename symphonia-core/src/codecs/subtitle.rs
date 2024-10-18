@@ -28,7 +28,7 @@ use crate::subtitle::GenericSubtitleBufferRef;
 pub struct SubtitleCodecId(u32);
 
 /// Null subtitle codec ID
-pub const CODEC_ID_NULL: SubtitleCodecId = SubtitleCodecId(0x0);
+pub const CODEC_ID_NULL_SUBTITLE: SubtitleCodecId = SubtitleCodecId(0x0);
 
 impl SubtitleCodecId {
     /// Create a new subtitle codec ID from a FourCC.
@@ -40,7 +40,7 @@ impl SubtitleCodecId {
 
 impl Default for SubtitleCodecId {
     fn default() -> Self {
-        CODEC_ID_NULL
+        CODEC_ID_NULL_SUBTITLE
     }
 }
 
@@ -67,7 +67,7 @@ pub struct SubtitleCodecParameters {
 
 impl SubtitleCodecParameters {
     pub fn new() -> SubtitleCodecParameters {
-        SubtitleCodecParameters { codec: CODEC_ID_NULL, extra_data: None }
+        SubtitleCodecParameters { codec: CODEC_ID_NULL_SUBTITLE, extra_data: None }
     }
 
     /// Provide the `VideoCodecId`.
