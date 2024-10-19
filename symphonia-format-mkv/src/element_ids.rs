@@ -53,7 +53,9 @@ pub enum ElementType {
     BlockAdditions,
     BlockMore,
     BlockAddId,
+    BlockAddIdType,
     BlockAdditional,
+    BlockAdditionMapping,
     BlockDuration,
     ReferenceBlock,
     DiscardPadding,
@@ -93,6 +95,7 @@ pub enum ElementType {
     DisplayHeight,
     DisplayUnit,
     AspectRatioType,
+    DolbyVisionConfiguration,
     Audio,
     SamplingFrequency,
     OutputSamplingFrequency,
@@ -218,7 +221,9 @@ lazy_static! {
         elems.insert(0x75A1, (Type::Master, ElementType::BlockAdditions));
         elems.insert(0xA6, (Type::Master, ElementType::BlockMore));
         elems.insert(0xEE, (Type::Unsigned, ElementType::BlockAddId));
+        elems.insert(0x41E7, (Type::String, ElementType::BlockAddIdType));
         elems.insert(0xA5, (Type::Binary, ElementType::BlockAdditional));
+        elems.insert(0x41E4, (Type::Binary, ElementType::BlockAdditionMapping));
         elems.insert(0x9B, (Type::Unsigned, ElementType::BlockDuration));
         elems.insert(0xFB, (Type::Signed, ElementType::ReferenceBlock));
         elems.insert(0x75A2, (Type::Signed, ElementType::DiscardPadding));
@@ -258,6 +263,7 @@ lazy_static! {
         elems.insert(0x54BA, (Type::Unsigned, ElementType::DisplayHeight));
         elems.insert(0x54B2, (Type::Unsigned, ElementType::DisplayUnit));
         elems.insert(0x54B3, (Type::Unsigned, ElementType::AspectRatioType));
+        elems.insert(0x41ED, (Type::Binary, ElementType::DolbyVisionConfiguration));
         elems.insert(0xE1, (Type::Master, ElementType::Audio));
         elems.insert(0xB5, (Type::Float, ElementType::SamplingFrequency));
         elems.insert(0x78B5, (Type::Float, ElementType::OutputSamplingFrequency));

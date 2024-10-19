@@ -5,6 +5,10 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+use symphonia_core::codecs::video::well_known::extra_data::{
+    VIDEO_EXTRA_DATA_ID_DOLBY_VISION_CONFIG, VIDEO_EXTRA_DATA_ID_DOLBY_VISION_EL_HEVC,
+};
+use symphonia_core::codecs::video::VideoExtraData;
 use symphonia_core::errors::{Error, Result};
 use symphonia_core::io::{BufReader, ReadBytes};
 use symphonia_core::meta::{MetadataBuilder, MetadataRevision, Tag, Value};
@@ -21,6 +25,7 @@ pub(crate) struct TrackElement {
     pub(crate) language: Option<String>,
     pub(crate) codec_id: String,
     pub(crate) codec_private: Option<Box<[u8]>>,
+    pub(crate) block_addition_mappings: Vec<BlockAdditionMappingElement>,
     pub(crate) audio: Option<AudioElement>,
     pub(crate) video: Option<VideoElement>,
     pub(crate) default_duration: Option<u64>,
@@ -36,6 +41,7 @@ impl Element for TrackElement {
         let mut audio = None;
         let mut video = None;
         let mut codec_private = None;
+        let mut block_addition_mappings = Vec::new();
         let mut codec_id = None;
         let mut default_duration = None;
 
@@ -63,6 +69,9 @@ impl Element for TrackElement {
                 ElementType::Video => {
                     video = Some(it.read_element_data()?);
                 }
+                ElementType::BlockAdditionMapping => {
+                    block_addition_mappings.push(it.read_element_data()?);
+                }
                 ElementType::DefaultDuration => {
                     default_duration = Some(it.read_u64()?);
                 }
@@ -78,6 +87,7 @@ impl Element for TrackElement {
             language,
             codec_id: codec_id.ok_or(Error::DecodeError("mkv: missing codec id"))?,
             codec_private,
+            block_addition_mappings,
             audio,
             video,
             default_duration,
@@ -163,6 +173,51 @@ impl Element for VideoElement {
         }
 
         Ok(Self { pixel_width: pixel_width.unwrap_or(0), pixel_height: pixel_height.unwrap_or(0) })
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct BlockAdditionMappingElement {
+    pub(crate) extra_data: Option<VideoExtraData>,
+}
+
+impl Element for BlockAdditionMappingElement {
+    const ID: ElementType = ElementType::BlockAdditionMapping;
+
+    fn read<B: ReadBytes>(reader: &mut B, header: ElementHeader) -> Result<Self> {
+        // There can be many BlockAdditionMapping elements with DolbyVisionConfiguration in a single track
+        // BlockAddIdType FourCC string allows to determine the type of DolbyVisionConfiguration extra data
+        let mut extra_data = None;
+        let mut block_add_id_type = String::new();
+
+        let mut it = header.children(reader);
+        while let Some(header) = it.read_header()? {
+            match header.etype {
+                ElementType::BlockAddIdType => {
+                    block_add_id_type = it.read_string()?;
+                }
+                ElementType::DolbyVisionConfiguration => match block_add_id_type.as_str() {
+                    "dvcC" | "dvvC" => {
+                        extra_data = Some(VideoExtraData {
+                            id: VIDEO_EXTRA_DATA_ID_DOLBY_VISION_CONFIG,
+                            data: it.read_boxed_slice()?,
+                        });
+                    }
+                    "hvcE" => {
+                        extra_data = Some(VideoExtraData {
+                            id: VIDEO_EXTRA_DATA_ID_DOLBY_VISION_EL_HEVC,
+                            data: it.read_boxed_slice()?,
+                        });
+                    }
+                    _ => {}
+                },
+                other => {
+                    log::debug!("ignored element {:?}", other);
+                }
+            }
+        }
+
+        Ok(Self { extra_data })
     }
 }
 
