@@ -138,6 +138,12 @@ fn make_video_codec_params(
         codec_params.add_extra_data(VideoExtraData { id: extra_data_id, data: codec_private });
     }
 
+    for block in track.block_addition_mappings {
+        if let Some(extra_data) = block.extra_data {
+            codec_params.add_extra_data(extra_data);
+        }
+    }
+
     Ok(Some(CodecParameters::Video(codec_params)))
 }
 
