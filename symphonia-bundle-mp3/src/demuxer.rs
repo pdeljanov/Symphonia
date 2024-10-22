@@ -40,7 +40,7 @@ const MP3_FORMAT_INFO: FormatInfo =
 pub struct MpaReader<'s> {
     reader: MediaSourceStream<'s>,
     tracks: Vec<Track>,
-    cues: Vec<Cue>,
+    chapters: Option<ChapterGroup>,
     metadata: MetadataLog,
     enable_gapless: bool,
     first_packet_pos: u64,
@@ -201,8 +201,8 @@ impl FormatReader for MpaReader<'_> {
         self.metadata.metadata()
     }
 
-    fn cues(&self) -> &[Cue] {
-        &self.cues
+    fn chapters(&self) -> Option<&ChapterGroup> {
+        self.chapters.as_ref()
     }
 
     fn tracks(&self) -> &[Track] {
@@ -467,8 +467,8 @@ impl<'s> MpaReader<'s> {
         Ok(MpaReader {
             reader: mss,
             tracks: vec![track],
-            cues: Vec::new(),
-            metadata: opts.metadata.unwrap_or_default(),
+            chapters: opts.external_data.chapters,
+            metadata: opts.external_data.metadata.unwrap_or_default(),
             enable_gapless: opts.enable_gapless,
             first_packet_pos,
             next_packet_ts: 0,

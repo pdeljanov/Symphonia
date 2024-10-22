@@ -92,7 +92,6 @@ struct SampleDataInfo {
 pub struct IsoMp4Reader<'s> {
     iter: AtomIterator<MediaSourceStream<'s>>,
     tracks: Vec<Track>,
-    cues: Vec<Cue>,
     metadata: MetadataLog,
     /// Segments of the movie. Sorted in ascending order by sequence number.
     segs: Vec<Box<dyn StreamSegment>>,
@@ -125,7 +124,7 @@ impl<'s> IsoMp4Reader<'s> {
             None
         };
 
-        let mut metadata = opts.metadata.unwrap_or_default();
+        let mut metadata = opts.external_data.metadata.unwrap_or_default();
 
         // Parse all atoms if the stream is seekable, otherwise parse all atoms up-to the mdat atom.
         let mut iter = AtomIterator::new_root(mss, total_len);
@@ -257,15 +256,7 @@ impl<'s> IsoMp4Reader<'s> {
 
         let segs: Vec<Box<dyn StreamSegment>> = vec![Box::new(MoovSegment::new(moov.clone()))];
 
-        Ok(IsoMp4Reader {
-            iter,
-            tracks,
-            cues: Default::default(),
-            metadata,
-            track_states,
-            segs,
-            moov,
-        })
+        Ok(IsoMp4Reader { iter, tracks, metadata, track_states, segs, moov })
     }
 
     /// Idempotently gets information regarding the next sample of the media stream. This function
@@ -566,10 +557,6 @@ impl FormatReader for IsoMp4Reader<'_> {
 
     fn metadata(&mut self) -> Metadata<'_> {
         self.metadata.metadata()
-    }
-
-    fn cues(&self) -> &[Cue] {
-        &self.cues
     }
 
     fn tracks(&self) -> &[Track] {

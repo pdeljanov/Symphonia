@@ -43,7 +43,7 @@ const WAVE_FORMAT_INFO: FormatInfo = FormatInfo {
 pub struct WavReader<'s> {
     reader: MediaSourceStream<'s>,
     tracks: Vec<Track>,
-    cues: Vec<Cue>,
+    chapters: Option<ChapterGroup>,
     metadata: MetadataLog,
     packet_info: PacketInfo,
     data_start_pos: u64,
@@ -140,8 +140,8 @@ impl<'s> WavReader<'s> {
                     return Ok(WavReader {
                         reader: mss,
                         tracks: vec![track],
-                        cues: Vec::new(),
-                        metadata: opts.metadata.unwrap_or_default(),
+                        chapters: opts.external_data.chapters,
+                        metadata: opts.external_data.metadata.unwrap_or_default(),
                         packet_info,
                         data_start_pos,
                         data_end_pos,
@@ -208,8 +208,8 @@ impl FormatReader for WavReader<'_> {
         self.metadata.metadata()
     }
 
-    fn cues(&self) -> &[Cue] {
-        &self.cues
+    fn chapters(&self) -> Option<&ChapterGroup> {
+        self.chapters.as_ref()
     }
 
     fn tracks(&self) -> &[Track] {

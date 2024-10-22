@@ -16,6 +16,7 @@ use std::num::NonZeroU32;
 use crate::common::FourCc;
 use crate::errors::Result;
 use crate::io::MediaSourceStream;
+use crate::units::Time;
 
 /// A `MetadataType` is a unique identifier used to identify a metadata format.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -147,7 +148,7 @@ pub enum StandardTagKey {
     AccurateRipResult,
     AccurateRipTotal,
     AcoustIdFingerprint,
-    AcoustId,
+    AcoustIdId,
     Album,
     AlbumArtist,
     Arranger,
@@ -180,6 +181,7 @@ pub enum StandardTagKey {
     IdentPn,
     IdentPodcast,
     IdentUpc,
+    IndexNumber,
     Label,
     LabelCode,
     Language,
@@ -447,11 +449,56 @@ pub struct VendorData {
     pub data: Box<[u8]>,
 }
 
-/// `Metadata` is a container for a single discrete revision of metadata information.
+/// A group of chapters and/or other chapter groups.
+#[derive(Clone, Debug)]
+pub struct ChapterGroup {
+    /// A list of chapters and/or chapter groups.
+    pub items: Vec<ChapterGroupItem>,
+    /// The tags associated with the group of chapters.
+    pub tags: Vec<Tag>,
+    /// The visuals associated with the group of chapters.
+    pub visuals: Vec<Visual>,
+}
+
+/// A chapter is a labelled section of a piece of media with a defined start time.
+#[derive(Clone, Debug)]
+pub struct Chapter {
+    /// The offset from the beginning of the media to the start of the chapter.
+    pub start_time: Time,
+    /// The offset from the beginning of the media to the end of the chapter.
+    pub end_time: Option<Time>,
+    /// The byte position from the beginning of the media source to the first byte of the first
+    /// frame in the chapter.
+    pub start_byte: Option<u64>,
+    /// The byte position from the beginning of the media source to the first byte of the frame
+    /// following the end of the chapter.
+    pub end_byte: Option<u64>,
+    /// The tags associated with the chapter.
+    pub tags: Vec<Tag>,
+    /// The visuals associated with the chapter.
+    pub visuals: Vec<Visual>,
+}
+
+/// A chapter group item is either a chapter or chapter group.
+#[derive(Clone, Debug)]
+pub enum ChapterGroupItem {
+    /// The item is a chapter group.
+    Group(ChapterGroup),
+    /// The item is a chapter.
+    Chapter(Chapter),
+}
+
+/// A metadata revision is a container for a single discrete revision of media metadata.
+///
+/// A metadata revision contains what a user typically associates with metadata: tags, pictures,
+/// etc.
 #[derive(Clone, Debug, Default)]
 pub struct MetadataRevision {
+    /// Key-value pairs of metadata.
     tags: Vec<Tag>,
+    /// Attached pictures.
     visuals: Vec<Visual>,
+    /// Vendor-specific data.
     vendor_data: Vec<VendorData>,
 }
 
@@ -589,12 +636,29 @@ impl MetadataLog {
     }
 }
 
+/// Enumeration of types of metadata side data.
+#[non_exhaustive]
+pub enum MetadataSideData {
+    /// Chapter information.
+    Chapters(ChapterGroup),
+}
+
+/// The decoded contents of read metadata.
+pub struct MetadataBuffer {
+    /// The revision of metadata containing tags, visuals, and vendor-specific metadata buffers.
+    pub revision: MetadataRevision,
+    /// Additional pieces of data stored in the metadata, but not part of a metadata revision. These
+    /// pieces of data are usually passed to a format reader to support its function.
+    pub side_data: Vec<MetadataSideData>,
+}
+
+/// A `MetadataReader` reads and decodes metadata and produces a revision of that decoded metadata.
 pub trait MetadataReader: Send + Sync {
     /// Get basic information about the metadata format.
     fn metadata_info(&self) -> &MetadataInfo;
 
     /// Read all metadata and return it if successful.
-    fn read_all(&mut self) -> Result<MetadataRevision>;
+    fn read_all(&mut self) -> Result<MetadataBuffer>;
 
     /// Consumes the `MetadataReader` and returns the underlying media source stream
     fn into_inner<'s>(self: Box<Self>) -> MediaSourceStream<'s>

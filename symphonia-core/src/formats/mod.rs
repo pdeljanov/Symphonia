@@ -14,16 +14,17 @@ use crate::codecs::{audio, subtitle, video, CodecParameters};
 use crate::common::FourCc;
 use crate::errors::Result;
 use crate::io::{BufReader, MediaSourceStream};
-use crate::meta::{Metadata, MetadataLog, Tag};
+use crate::meta::{ChapterGroup, Metadata, MetadataLog};
 use crate::units::{Time, TimeBase, TimeStamp};
 
 pub mod prelude {
     //! The `formats` module prelude.
 
+    pub use crate::meta::{Chapter, ChapterGroup, ChapterGroupItem};
     pub use crate::units::{Duration, TimeBase, TimeStamp};
 
     pub use super::{
-        Cue, FormatId, FormatInfo, FormatOptions, FormatReader, Packet, SeekMode, SeekTo, SeekedTo,
+        FormatId, FormatInfo, FormatOptions, FormatReader, Packet, SeekMode, SeekTo, SeekedTo,
         Track,
     };
 }
@@ -134,12 +135,22 @@ pub struct FormatOptions {
     /// When enabled, this option will also alter the value and interpretation of timestamps and
     /// durations such that they are relative to the non-trimmed region.
     pub enable_gapless: bool,
-    /// Optional metadata that is external to the media container. This may be metadata that was
-    /// read before the start of the container, or provided via. some other side-channel.
+    /// External, supplementary, data related to the media container read before the start of the
+    /// container, or provided through some other side-channel.
+    pub external_data: ExternalFormatData,
+}
+
+/// `ExternalFormatData` contains supplementary data related to the media container that was read
+/// before the start of the container, or provided through some other side-channel.
+#[derive(Clone, Debug, Default)]
+pub struct ExternalFormatData {
+    /// Optional metadata.
     ///
     /// When provided, the `FormatReader` will take the metadata revisions in this log and use them
     /// as them as the first metdata revisions for the container.
     pub metadata: Option<MetadataLog>,
+    /// Optional chapter information.
+    pub chapters: Option<ChapterGroup>,
 }
 
 impl Default for FormatOptions {
@@ -148,40 +159,9 @@ impl Default for FormatOptions {
             prebuild_seek_index: false,
             seek_index_fill_rate: 20,
             enable_gapless: false,
-            metadata: None,
+            external_data: Default::default(),
         }
     }
-}
-
-/// A `Cue` is a designated point of time within a media stream.
-///
-/// A `Cue` may be a mapping from either a source track, a chapter, cuesheet, or a timestamp
-/// depending on the source media. A `Cue`'s duration is the difference between the `Cue`'s
-/// timestamp and the next. Each `Cue` may contain an optional index of points relative to the `Cue`
-/// that never exceed the timestamp of the next `Cue`. A `Cue` may also have associated `Tag`s.
-#[derive(Clone, Debug)]
-pub struct Cue {
-    /// A unique index for the `Cue`.
-    pub index: u32,
-    /// The starting timestamp in number of frames from the start of the stream.
-    pub start_ts: u64,
-    /// A list of `Tag`s associated with the `Cue`.
-    pub tags: Vec<Tag>,
-    /// A list of `CuePoints`s that are contained within this `Cue`. These points are children of
-    /// the `Cue` since the `Cue` itself is an implicit `CuePoint`.
-    pub points: Vec<CuePoint>,
-}
-
-/// A `CuePoint` is a point, represented as a frame offset, within a `Cue`.
-///
-/// A `CuePoint` provides more precise indexing within a parent `Cue`. Additional `Tag`s may be
-/// associated with a `CuePoint`.
-#[derive(Clone, Debug)]
-pub struct CuePoint {
-    /// The offset of the first frame in the `CuePoint` relative to the start of the parent `Cue`.
-    pub start_offset_ts: u64,
-    /// A list of `Tag`s associated with the `CuePoint`.
-    pub tags: Vec<Tag>,
 }
 
 /// The track type.
@@ -323,8 +303,10 @@ pub trait FormatReader: Send + Sync {
     /// Get basic information about the container format.
     fn format_info(&self) -> &FormatInfo;
 
-    /// Gets a list of all `Cue`s.
-    fn cues(&self) -> &[Cue];
+    /// Get media chapters, if available.
+    fn chapters(&self) -> Option<&ChapterGroup> {
+        None
+    }
 
     /// Gets the metadata revision log.
     fn metadata(&mut self) -> Metadata<'_>;

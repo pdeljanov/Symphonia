@@ -12,6 +12,7 @@
 // in the remaining fields with default values.
 #![allow(clippy::needless_update)]
 
+use std::borrow::Cow;
 use std::ffi::{OsStr, OsString};
 use std::fs::File;
 use std::io::Write;
@@ -22,11 +23,12 @@ use symphonia::core::codecs::audio::{AudioDecoderOptions, FinalizeResult};
 use symphonia::core::codecs::{CodecInfo, CodecParameters, CodecProfile};
 use symphonia::core::errors::{Error, Result};
 use symphonia::core::formats::probe::Hint;
-use symphonia::core::formats::{
-    Cue, FormatOptions, FormatReader, SeekMode, SeekTo, Track, TrackType,
-};
+use symphonia::core::formats::{FormatOptions, FormatReader, SeekMode, SeekTo, Track, TrackType};
 use symphonia::core::io::{MediaSource, MediaSourceStream, ReadOnlySource};
-use symphonia::core::meta::{ColorMode, MetadataOptions, MetadataRevision, Tag, Value, Visual};
+use symphonia::core::meta::{
+    Chapter, ChapterGroup, ChapterGroupItem, ColorMode, MetadataOptions, MetadataRevision, Tag,
+    Visual,
+};
 use symphonia::core::units::{Time, TimeBase};
 
 use clap::{Arg, ArgMatches};
@@ -310,6 +312,7 @@ fn play(
         match reader.seek(SeekMode::Accurate, seek_to) {
             Ok(seeked_to) => seeked_to.required_ts,
             Err(Error::ResetRequired) => {
+                print_blank();
                 print_tracks(reader.tracks());
                 track_id = reader.default_track(TrackType::Audio).unwrap().id;
                 0
@@ -338,6 +341,7 @@ fn play(
                 // streaming OGG (e.g., Icecast) wherein the entire contents of the container change
                 // (new tracks, codecs, metadata, etc.). Therefore, we must select a new track and
                 // recreate the decoder.
+                print_blank();
                 print_tracks(reader.tracks());
 
                 // Select the first supported track since the user's selected track number might no
@@ -486,26 +490,43 @@ fn dump_visuals(format: &mut Box<dyn FormatReader>, file_name: &OsStr) {
     }
 }
 
+/// The minimum padding for tag keys.
+const MIN_PAD: usize = 20;
+/// The maximum padding for tag keys.
+const MAX_PAD: usize = 40;
+
 fn print_format(path: &Path, format: &mut Box<dyn FormatReader>) {
     println!("+ {}", path.display());
 
     let format_info = format.format_info();
 
-    println!("|");
-    println!("| // Container //");
-    println!("|     Format Name:          {} ({})", format_info.long_name, format_info.short_name);
-    println!("|     Format Type:          {}", format_info.format);
+    print_blank();
+    print_header("Container");
+    print_pair(
+        "Format Name:",
+        &format!("{} ({})", format_info.long_name, format_info.short_name),
+        Bullet::None,
+        1,
+    );
+    print_pair("Format ID:", &format_info.format, Bullet::None, 1);
 
     print_tracks(format.tracks());
 
-    // Prefer metadata that's provided in the container format, over other tags found during the
-    // probe operation.
-    if let Some(metadata_rev) = format.metadata().current() {
-        print_tags(metadata_rev.tags());
-        print_visuals(metadata_rev.visuals());
+    // Consume all metadata revisions up-to and including the latest.
+    loop {
+        if let Some(revision) = format.metadata().current() {
+            print_tags(revision.tags());
+            print_visuals(revision.visuals());
+        }
+
+        if format.metadata().is_latest() {
+            break;
+        }
+
+        format.metadata().pop();
     }
 
-    print_cues(format.cues());
+    print_chapters(format.chapters());
     println!(":");
     println!();
 }
@@ -522,187 +543,198 @@ fn print_tracks(tracks: &[Track]) {
         // Default codec registry.
         let reg = symphonia::default::get_codecs();
 
-        println!("|");
-        println!("| // Tracks //");
+        print_blank();
+        print_header("Tracks");
 
         for (idx, track) in tracks.iter().enumerate() {
             match &track.codec_params {
                 Some(CodecParameters::Audio(params)) => {
                     let codec_info = reg.get_audio_decoder(params.codec).map(|d| &d.codec.info);
 
-                    println!("|     [{:0>2}] Track Type:      Audio", idx + 1);
-                    println!("|          Codec Name:      {}", fmt_codec_name(codec_info));
-                    println!("|          Codec ID:        {}", params.codec);
+                    print_pair("Track Type:", &"Audio", Bullet::Num(idx + 1), 1);
+                    print_pair("Codec Name:", &fmt_codec_name(codec_info), Bullet::None, 1);
+                    print_pair("Codec ID:", &params.codec, Bullet::None, 1);
+
                     if let Some(profile) = params.profile {
-                        println!(
-                            "|          Profile:         {}",
-                            fmt_codec_profile(profile, codec_info)
+                        print_pair(
+                            "Profile:",
+                            &fmt_codec_profile(profile, codec_info),
+                            Bullet::None,
+                            1,
                         );
                     }
-                    if let Some(sample_rate) = params.sample_rate {
-                        println!("|          Sample Rate:     {}", sample_rate);
+                    if let Some(rate) = params.sample_rate {
+                        print_pair("Sample Rate:", &rate, Bullet::None, 1);
                     }
-                    if let Some(sample_format) = params.sample_format {
-                        println!("|          Sample Format:   {:?}", sample_format);
+                    if let Some(fmt) = params.sample_format {
+                        print_pair("Sample Format:", &format!("{:?}", fmt), Bullet::None, 1);
                     }
                     if let Some(bits_per_sample) = params.bits_per_sample {
-                        println!("|          Bits per Sample: {}", bits_per_sample);
+                        print_pair("Bits per Sample:", &bits_per_sample, Bullet::None, 1);
                     }
                     if let Some(channels) = &params.channels {
-                        println!("|          Channel(s):      {}", channels.count());
-                        println!("|          Channel Map:     {}", channels);
+                        print_pair("Channel(s):", &channels.count(), Bullet::None, 1);
+                        print_pair("Channel Map:", &channels, Bullet::None, 1);
                     }
                 }
                 Some(CodecParameters::Video(params)) => {
                     let codec_info = reg.get_video_decoder(params.codec).map(|d| &d.codec.info);
 
-                    println!("|     [{:0>2}] Track Type:      Video", idx + 1);
-                    println!("|          Codec Name:      {}", fmt_codec_name(codec_info));
-                    println!("|          Codec ID:        {}", params.codec);
+                    print_pair("Track Type:", &"Video", Bullet::Num(idx + 1), 1);
+                    print_pair("Codec Name:", &fmt_codec_name(codec_info), Bullet::None, 1);
+                    print_pair("Codec ID:", &params.codec, Bullet::None, 1);
+
                     if let Some(profile) = params.profile {
-                        println!(
-                            "|          Profile:         {}",
-                            fmt_codec_profile(profile, codec_info)
+                        print_pair(
+                            "Profile:",
+                            &fmt_codec_profile(profile, codec_info),
+                            Bullet::None,
+                            1,
                         );
                     }
                     if let Some(level) = params.level {
-                        println!("|          Level:           {}", level);
+                        print_pair("Level:", &level, Bullet::None, 1);
                     }
                     if let Some(width) = params.width {
-                        println!("|          Width:           {}", width);
+                        print_pair("Width:", &width, Bullet::None, 1);
                     }
                     if let Some(height) = params.height {
-                        println!("|          Height:          {}", height);
+                        print_pair("Height:", &height, Bullet::None, 1);
                     }
                 }
                 Some(CodecParameters::Subtitle(params)) => {
-                    println!("|     [{:0>2}] Track Type:      Subtitle", idx + 1);
-                    println!(
-                        "|          Codec Name:      {}",
-                        fmt_codec_name(
-                            reg.get_subtitle_decoder(params.codec).map(|d| &d.codec.info)
-                        )
+                    let codec_name = fmt_codec_name(
+                        reg.get_subtitle_decoder(params.codec).map(|d| &d.codec.info),
                     );
-                    println!("|          Codec ID:        {}", params.codec);
+
+                    print_pair("Track Type:", &"Subtitle", Bullet::Num(idx + 1), 1);
+                    print_pair("Codec Name:", &codec_name, Bullet::None, 1);
+                    print_pair("Codec ID:", &params.codec, Bullet::None, 1);
                 }
                 _ => {
-                    println!("|     [{:0>2}] Track Type:      *Unsupported*", idx + 1);
+                    print_pair("Track Type:", &"*Unsupported*", Bullet::Num(idx + 1), 1);
                 }
             }
 
             if let Some(tb) = track.time_base {
-                println!("|          Time Base:       {}", tb);
+                print_pair("Time Base:", &tb, Bullet::None, 1);
             }
 
             if track.start_ts > 0 {
                 if let Some(tb) = track.time_base {
-                    println!(
-                        "|          Start Time:      {} ({})",
-                        fmt_time(track.start_ts, tb),
-                        track.start_ts
+                    print_pair(
+                        "Start Time:",
+                        &format!("{} ({})", fmt_ts(track.start_ts, tb), track.start_ts),
+                        Bullet::None,
+                        1,
                     );
                 }
                 else {
-                    println!("|          Start Time:      {}", track.start_ts);
+                    print_pair("Start Time:", &track.start_ts, Bullet::None, 1);
                 }
             }
 
             if let Some(num_frames) = track.num_frames {
                 if let Some(tb) = track.time_base {
-                    println!(
-                        "|          Duration:        {} ({})",
-                        fmt_time(num_frames, tb),
-                        num_frames
+                    print_pair(
+                        "Duration:",
+                        &format!("{} ({})", fmt_ts(num_frames, tb), num_frames),
+                        Bullet::None,
+                        1,
                     );
                 }
                 else {
-                    println!("|          Frames:          {}", num_frames);
+                    print_pair("Frames:", &num_frames, Bullet::None, 1);
                 }
             }
 
-            if let Some(padding) = track.delay {
-                println!("|          Encoder Delay:   {}", padding);
+            if let Some(delay) = track.delay {
+                print_pair("Encoder Delay:", &delay, Bullet::None, 1);
             }
 
             if let Some(padding) = track.padding {
-                println!("|          Encoder Padding: {}", padding);
+                print_pair("Encoder Padding:", &padding, Bullet::None, 1);
             }
 
             if let Some(language) = &track.language {
-                println!("|          Language:        {}", language);
+                print_pair("Language:", &language, Bullet::None, 1);
             }
         }
     }
 }
 
-fn print_cues(cues: &[Cue]) {
-    if !cues.is_empty() {
-        println!("|");
-        println!("| // Cues //");
+fn print_chapters(chapters: Option<&ChapterGroup>) {
+    if let Some(chapters) = chapters {
+        print_blank();
+        print_header("Chapters");
 
-        for (idx, cue) in cues.iter().enumerate() {
-            println!("|     [{:0>2}] Track:      {}", idx + 1, cue.index);
-            println!("|          Timestamp:  {}", cue.start_ts);
-
-            // Print tags associated with the Cue.
-            if !cue.tags.is_empty() {
-                println!("|          Tags:");
-
-                for (tidx, tag) in cue.tags.iter().enumerate() {
-                    if let Some(std_key) = tag.std_key {
-                        println!(
-                            "{}",
-                            print_tag_item(tidx + 1, &format!("{:?}", std_key), &tag.value, 21)
-                        );
-                    }
-                    else {
-                        println!("{}", print_tag_item(tidx + 1, &tag.key, &tag.value, 21));
-                    }
-                }
+        fn print_chapter(chap: &Chapter, idx: usize, depth: usize) {
+            // Chapter bounds.
+            print_pair("Start Time:", &fmt_time(chap.start_time), Bullet::Num(idx), depth);
+            if let Some(end_time) = chap.end_time {
+                print_pair("End Time:", &fmt_time(end_time), Bullet::None, depth);
             }
 
-            // Print any sub-cues.
-            if !cue.points.is_empty() {
-                println!("|          Sub-Cues:");
+            // Chapter tags.
+            if !chap.tags.is_empty() {
+                print_one("Tags:", Bullet::None, depth);
+                let pad = optimal_tag_key_pad(&chap.tags, MIN_PAD - 5, MAX_PAD);
 
-                for (ptidx, pt) in cue.points.iter().enumerate() {
-                    println!(
-                        "|                      [{:0>2}] Offset:    {:?}",
-                        ptidx + 1,
-                        pt.start_offset_ts
-                    );
-
-                    // Start the number of sub-cue tags, but don't print them.
-                    if !pt.tags.is_empty() {
-                        println!(
-                            "|                           Sub-Tags:  {} (not listed)",
-                            pt.tags.len()
-                        );
-                    }
+                for (i, tag) in chap.tags.iter().enumerate() {
+                    let key = fmt_tag_key(tag);
+                    print_pair_custom(&key, &tag.value, Bullet::Num(i + 1), pad, depth + 1);
                 }
             }
         }
+
+        fn print_chapter_group(group: &ChapterGroup, idx: usize, depth: usize) {
+            print_one("Chapter Group:", Bullet::Num(idx), depth);
+
+            // Chapter group tags.
+            if !group.tags.is_empty() {
+                print_one("Tags:", Bullet::None, depth);
+                let pad = optimal_tag_key_pad(&group.tags, MIN_PAD - 5, MAX_PAD);
+
+                for (i, tag) in group.tags.iter().enumerate() {
+                    let key = fmt_tag_key(tag);
+                    print_pair_custom(&key, &tag.value, Bullet::Num(i + 1), pad, depth + 1);
+                }
+            }
+
+            // Chapter group items.
+            print_one("Items:", Bullet::None, depth);
+            for (i, item) in group.items.iter().enumerate() {
+                match item {
+                    ChapterGroupItem::Group(group) => print_chapter_group(group, i, depth + 1),
+                    ChapterGroupItem::Chapter(chap) => print_chapter(chap, i + 1, depth + 1),
+                }
+            }
+        }
+
+        // Start recursion.
+        print_chapter_group(chapters, 1, 1);
     }
 }
 
 fn print_tags(tags: &[Tag]) {
     if !tags.is_empty() {
-        println!("|");
-        println!("| // Tags //");
+        print_blank();
+        print_header("Tags");
 
         let mut idx = 1;
 
+        // Find maximum tag key string length, then constrain it to reasonable limits.
+        let pad = optimal_tag_key_pad(tags, MIN_PAD, MAX_PAD);
+
         // Print tags with a standard tag key first, these are the most common tags.
         for tag in tags.iter().filter(|tag| tag.is_known()) {
-            if let Some(std_key) = tag.std_key {
-                println!("{}", print_tag_item(idx, &format!("{:?}", std_key), &tag.value, 4));
-            }
+            print_pair_custom(&fmt_tag_key(tag), &tag.value, Bullet::Num(idx), pad, 1);
             idx += 1;
         }
 
         // Print the remaining tags with keys truncated to 26 characters.
         for tag in tags.iter().filter(|tag| !tag.is_known()) {
-            println!("{}", print_tag_item(idx, &tag.key, &tag.value, 4));
+            print_pair_custom(&fmt_tag_key(tag), &tag.value, Bullet::Num(idx), pad, 1);
             idx += 1;
         }
     }
@@ -710,79 +742,177 @@ fn print_tags(tags: &[Tag]) {
 
 fn print_visuals(visuals: &[Visual]) {
     if !visuals.is_empty() {
-        println!("|");
-        println!("| // Visuals //");
+        print_blank();
+        print_header("Visuals");
 
         for (idx, visual) in visuals.iter().enumerate() {
             if let Some(usage) = visual.usage {
-                println!("|     [{:0>2}] Usage:      {:?}", idx + 1, usage);
-                println!("|          Media Type: {}", visual.media_type);
+                print_pair("Usage:", &format!("{:?}", usage), Bullet::Num(idx + 1), 1);
+                print_pair("Media Type:", &visual.media_type, Bullet::None, 1);
             }
             else {
-                println!("|     [{:0>2}] Media Type: {}", idx + 1, visual.media_type);
+                print_pair("Media Type:", &visual.media_type, Bullet::Num(idx + 1), 1);
             }
             if let Some(dimensions) = visual.dimensions {
-                println!(
-                    "|          Dimensions: {} px x {} px",
-                    dimensions.width, dimensions.height
+                print_pair(
+                    "Dimensions:",
+                    &format!("{} x {} px", dimensions.width, dimensions.height),
+                    Bullet::None,
+                    1,
                 );
             }
             if let Some(bpp) = visual.bits_per_pixel {
-                println!("|          Bits/Pixel: {}", bpp);
+                print_pair("Bits/Pixel:", &bpp, Bullet::None, 1);
             }
             if let Some(ColorMode::Indexed(colors)) = visual.color_mode {
-                println!("|          Palette:    {} colors", colors);
+                print_pair("Palette:", &colors, Bullet::None, 1);
             }
-            println!("|          Size:       {} bytes", visual.data.len());
+            print_pair("Size (bytes):", &visual.data.len(), Bullet::None, 1);
 
             // Print out tags similar to how regular tags are printed.
             if !visual.tags.is_empty() {
-                println!("|          Tags:");
-            }
+                print_one("Tags:", Bullet::None, 1);
 
-            for (tidx, tag) in visual.tags.iter().enumerate() {
-                if let Some(std_key) = tag.std_key {
-                    println!(
-                        "{}",
-                        print_tag_item(tidx + 1, &format!("{:?}", std_key), &tag.value, 21)
-                    );
-                }
-                else {
-                    println!("{}", print_tag_item(tidx + 1, &tag.key, &tag.value, 21));
+                let pad = optimal_tag_key_pad(&visual.tags, MIN_PAD - 5, MAX_PAD);
+
+                for (tidx, tag) in visual.tags.iter().enumerate() {
+                    print_pair_custom(&fmt_tag_key(tag), &tag.value, Bullet::Num(tidx + 1), pad, 2);
                 }
             }
         }
     }
 }
 
-fn print_tag_item(idx: usize, key: &str, value: &Value, indent: usize) -> String {
-    let key_str = match key.len() {
-        0..=28 => format!("| {:w$}[{:0>2}] {:<28} : ", "", idx, key, w = indent),
-        _ => format!("| {:w$}[{:0>2}] {:.<28} : ", "", idx, key.split_at(26).0, w = indent),
-    };
+/// A list bullet.
+#[allow(dead_code)]
+enum Bullet {
+    /// No bullet.
+    None,
+    /// A numbered bullet.
+    Num(usize),
+    /// A custom character.
+    Char(char),
+}
 
-    let line_prefix = format!("\n| {:w$} : ", "", w = indent + 4 + 28 + 1);
-    let line_wrap_prefix = format!("\n| {:w$}   ", "", w = indent + 4 + 28 + 1);
-
-    let mut out = String::new();
-
-    out.push_str(&key_str);
-
-    for (wrapped, line) in value.to_string().lines().enumerate() {
-        if wrapped > 0 {
-            out.push_str(&line_prefix);
+impl std::fmt::Display for Bullet {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // The bullet must occupy 4 characters.
+        match self {
+            Bullet::None => write!(f, "    "),
+            Bullet::Num(num) => write!(f, "[{:0>2}]", num),
+            Bullet::Char(ch) => write!(f, "   {}", ch),
         }
-
-        let mut chars = line.chars();
-        let split = (0..)
-            .map(|_| chars.by_ref().take(72).collect::<String>())
-            .take_while(|s| !s.is_empty())
-            .collect::<Vec<_>>();
-
-        out.push_str(&split.join(&line_wrap_prefix));
     }
+}
 
-    out
+/// Print one value as a plain, numbered, or bulleted list item in a hierarchical list.
+fn print_one(value: &str, bullet: Bullet, depth: usize) {
+    let indent = 5 * depth;
+    // The format is: "|<INDENT><BULLET> <VALUE>"
+    println!("|{:indent$}{} {}", "", bullet, value)
+}
+
+/// Print a key-value pair as a plain, numbered, or bulleted list item in a hierarchical list.
+///
+/// The key padding may be customized with `pad`.
+fn print_pair_custom<T>(key: &str, value: &T, bullet: Bullet, pad: usize, depth: usize)
+where
+    T: std::fmt::Display,
+{
+    let indent = 5 * depth;
+    let key = pad_key(key, pad);
+
+    // The format is: "|<INDENT><BULLET> <KEY> "
+    print!("|{:indent$}{} {} ", "", bullet, key);
+
+    print_pair_value(&value.to_string(), indent + key.len() + 4 + 2);
+}
+
+/// Print a key-value pair as a plain, numbered, or bulleted list item in a hierarchical list with
+/// default key padding.
+fn print_pair<T>(key: &str, value: &T, bullet: Bullet, depth: usize)
+where
+    T: std::fmt::Display,
+{
+    print_pair_custom(key, value, bullet, MIN_PAD, depth)
+}
+
+#[inline(never)]
+fn print_pair_value(value: &str, lead: usize) {
+    if !value.is_empty() {
+        // Print multi-line values with wrapping.
+        //
+        // TODO: lines() does not split on carriage returns ('\r') if a line feed ('\n') does not
+        // follow. These orphan carriage returns break the output unfortunately.
+        for (i, line) in value.lines().enumerate() {
+            let mut chars = line.chars();
+
+            for (j, seg) in (0..)
+                .map(|_| {
+                    // Try to wrap at the first whitespace character after 60 characters, or force
+                    // wrapping at 80 charaters.
+                    chars
+                        .by_ref()
+                        .enumerate()
+                        .take_while(|(i, c)| *i <= 60 || *i <= 80 && !c.is_whitespace())
+                        .map(|(_, c)| c)
+                        .collect::<String>()
+                })
+                .take_while(|s| !s.is_empty())
+                .enumerate()
+            {
+                // Print new output line prefix.
+                if i > 0 || j > 0 {
+                    print!("|{:lead$}", "");
+                }
+                // Print line-wrapping character if this is a line-wrap.
+                if j > 0 {
+                    print!("\u{21aa} ")
+                }
+                // Print sub-string.
+                println!("{}", seg)
+            }
+        }
+    }
+    else {
+        println!();
+    }
+}
+
+/// Print a list header.
+fn print_header(title: &str) {
+    println!("| // {} //", title)
+}
+
+/// Print a blank list line.
+fn print_blank() {
+    println!("|")
+}
+
+/// Calculate the appropriate length for tag key padding.
+fn optimal_tag_key_pad(tags: &[Tag], min: usize, max: usize) -> usize {
+    tags.iter().map(|tag| fmt_tag_key(tag).chars().count()).max().unwrap_or(min).clamp(min, max)
+}
+
+// Format a tag's key.
+fn fmt_tag_key(tag: &Tag) -> Cow<'_, str> {
+    if let Some(std_key) = tag.std_key {
+        Cow::Owned(format!("{:?}", std_key))
+    }
+    else {
+        Cow::Borrowed(&tag.key)
+    }
+}
+
+/// Pad a key.
+fn pad_key(key: &str, pad: usize) -> String {
+    if key.len() <= pad {
+        format!("{:<pad$}", key)
+    }
+    else {
+        // Key length too large.
+        format!("{:.<pad$}", key.split_at(pad - 2).0)
+    }
 }
 
 fn fmt_codec_name(info: Option<&CodecInfo>) -> String {
@@ -804,9 +934,12 @@ fn fmt_codec_profile(profile: CodecProfile, info: Option<&CodecInfo>) -> String 
     }
 }
 
-fn fmt_time(ts: u64, tb: TimeBase) -> String {
+fn fmt_ts(ts: u64, tb: TimeBase) -> String {
     let time = tb.calc_time(ts);
+    fmt_time(time)
+}
 
+fn fmt_time(time: Time) -> String {
     let hours = time.seconds / (60 * 60);
     let mins = (time.seconds % (60 * 60)) / 60;
     let secs = f64::from((time.seconds % 60) as u32) + time.frac;

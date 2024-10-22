@@ -33,7 +33,7 @@ const CAF_FORMAT_INFO: FormatInfo =
 pub struct CafReader<'s> {
     reader: MediaSourceStream<'s>,
     tracks: Vec<Track>,
-    cues: Vec<Cue>,
+    chapters: Option<ChapterGroup>,
     metadata: MetadataLog,
     data_start_pos: u64,
     data_len: Option<u64>,
@@ -122,8 +122,8 @@ impl FormatReader for CafReader<'_> {
         self.metadata.metadata()
     }
 
-    fn cues(&self) -> &[Cue] {
-        &self.cues
+    fn chapters(&self) -> Option<&ChapterGroup> {
+        self.chapters.as_ref()
     }
 
     fn tracks(&self) -> &[Track] {
@@ -246,8 +246,8 @@ impl<'s> CafReader<'s> {
         let mut reader = Self {
             reader: mss,
             tracks: vec![],
-            cues: vec![],
-            metadata: opts.metadata.unwrap_or_default(),
+            chapters: opts.external_data.chapters,
+            metadata: opts.external_data.metadata.unwrap_or_default(),
             data_start_pos: 0,
             data_len: None,
             packet_info: PacketInfo::Unknown,

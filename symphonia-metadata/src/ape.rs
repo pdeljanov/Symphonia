@@ -17,8 +17,8 @@ use symphonia_core::formats::probe::{
 use symphonia_core::io::{MediaSourceStream, ReadBytes, ScopedStream, SeekBuffered};
 use symphonia_core::meta::well_known::{METADATA_ID_APEV1, METADATA_ID_APEV2};
 use symphonia_core::meta::{
-    MetadataBuilder, MetadataInfo, MetadataOptions, MetadataReader, MetadataRevision,
-    StandardTagKey, StandardVisualKey, Tag, Value, Visual,
+    MetadataBuffer, MetadataBuilder, MetadataInfo, MetadataOptions, MetadataReader, StandardTagKey,
+    StandardVisualKey, Tag, Value, Visual,
 };
 use symphonia_core::support_metadata;
 
@@ -30,7 +30,7 @@ lazy_static! {
         m.insert("accurateripdiscid"           , StandardTagKey::AccurateRipDiscId);
         m.insert("accurateripresult"           , StandardTagKey::AccurateRipResult);
         m.insert("acoustid_fingerprint"        , StandardTagKey::AcoustIdFingerprint);
-        m.insert("acoustid_id"                 , StandardTagKey::AcoustId);
+        m.insert("acoustid_id"                 , StandardTagKey::AcoustIdId);
         m.insert("album artist"                , StandardTagKey::AlbumArtist);
         m.insert("album"                       , StandardTagKey::Album);
         m.insert("albumartistsort"             , StandardTagKey::SortAlbumArtist);
@@ -338,7 +338,7 @@ impl MetadataReader for ApeReader<'_> {
         }
     }
 
-    fn read_all(&mut self) -> Result<MetadataRevision> {
+    fn read_all(&mut self) -> Result<MetadataBuffer> {
         let mut builder = MetadataBuilder::new();
 
         // Read the tag header. This may actually be the header OR the footer.
@@ -422,7 +422,7 @@ impl MetadataReader for ApeReader<'_> {
             return decode_error("ape: header and footer mismatch");
         }
 
-        Ok(builder.metadata())
+        Ok(MetadataBuffer { revision: builder.metadata(), side_data: Vec::new() })
     }
 
     fn into_inner<'s>(self: Box<Self>) -> MediaSourceStream<'s>

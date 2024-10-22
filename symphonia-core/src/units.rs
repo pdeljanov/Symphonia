@@ -7,7 +7,7 @@
 
 //! The `units` module provides definitions for common units.
 
-use std::fmt;
+use std::{fmt, ops};
 
 /// A `TimeStamp` represents an instantenous instant in time since the start of a stream. One
 /// `TimeStamp` "tick" is equivalent to the stream's `TimeBase` in seconds.
@@ -15,6 +15,13 @@ pub type TimeStamp = u64;
 
 /// A `Duration` indicates a positive span of time.
 pub type Duration = u64;
+
+#[inline(always)]
+fn div_rem<T: ops::Div<Output = T> + ops::Rem<Output = T> + Copy>(x: T, y: T) -> (T, T) {
+    let quot = x / y;
+    let rem = x % y;
+    (quot, rem)
+}
 
 /// `Time` represents a duration of time in seconds, or the number of seconds since an arbitrary
 /// epoch. `Time` is stored as an integer number of seconds plus any remaining fraction of a second
@@ -26,47 +33,79 @@ pub struct Time {
 }
 
 impl Time {
-    const SECONDS_PER_MINUTE: u64 = 60;
-    const SECONDS_PER_HOUR: u64 = 60 * 60;
-    const NANOSECONDS_PER_SECOND: u32 = 1_000_000_000;
-    const NANOSECONDS_PER_SECOND_INV: f64 = 1.0 / 1_000_000_000.0;
+    /// Milliseconds per second.
+    const MS_PER_SEC: u32 = 1_000;
+    /// Microseconds per second.
+    const US_PER_SEC: u32 = 1_000_000;
+    /// Nanoseconds per second.
+    const NS_PER_SEC: u32 = 1_000_000_000;
+    /// Seconds per hour.
+    const SECS_PER_HR: u64 = 60 * 60;
+    /// Seconds per minute.
+    const SECS_PER_MIN: u64 = 60;
 
+    /// Instantiate from a count and seconds, and a fraction of a second.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `frac` is < 0.0, or >= 1.0.
     pub fn new(seconds: u64, frac: f64) -> Self {
+        assert!(frac >= 0.0 && frac < 1.0, "fractional seconds must be between [0.0, 1.0)");
         Time { seconds, frac }
     }
 
+    /// Instantiate from a count of nanoseconds.
+    pub fn from_ns(ns: u64) -> Time {
+        let (seconds, rem) = div_rem(ns, u64::from(Time::NS_PER_SEC));
+
+        Time { seconds, frac: f64::from(rem as u32) / f64::from(Time::NS_PER_SEC) }
+    }
+
+    /// Instantiate from a count of microseconds.
+    pub fn from_us(us: u64) -> Time {
+        let (seconds, rem) = div_rem(us, u64::from(Time::US_PER_SEC));
+
+        Time { seconds, frac: f64::from(rem as u32) / f64::from(Time::US_PER_SEC) }
+    }
+
+    /// Instantiate from a count of milliseconds.
+    pub fn from_ms(ms: u64) -> Time {
+        let (seconds, rem) = div_rem(ms, u64::from(Time::MS_PER_SEC));
+
+        Time { seconds, frac: f64::from(rem as u32) / f64::from(Time::MS_PER_SEC) }
+    }
+
     pub fn from_ss(s: u8, ns: u32) -> Option<Time> {
-        if s > 59 || ns >= Time::NANOSECONDS_PER_SECOND {
+        if s > 59 || ns >= Time::NS_PER_SEC {
             return None;
         }
 
         let seconds = u64::from(s);
-        let frac = Time::NANOSECONDS_PER_SECOND_INV * f64::from(ns);
+        let frac = f64::from(ns) / f64::from(Time::NS_PER_SEC);
 
         Some(Time { seconds, frac })
     }
 
     pub fn from_mmss(m: u8, s: u8, ns: u32) -> Option<Time> {
-        if m > 59 || s > 59 || ns >= Time::NANOSECONDS_PER_SECOND {
+        if m > 59 || s > 59 || ns >= Time::NS_PER_SEC {
             return None;
         }
 
-        let seconds = (Time::SECONDS_PER_MINUTE * u64::from(m)) + u64::from(s);
-        let frac = Time::NANOSECONDS_PER_SECOND_INV * f64::from(ns);
+        let seconds = (Time::SECS_PER_MIN * u64::from(m)) + u64::from(s);
+        let frac = f64::from(ns) / f64::from(Time::NS_PER_SEC);
 
         Some(Time { seconds, frac })
     }
 
     pub fn from_hhmmss(h: u32, m: u8, s: u8, ns: u32) -> Option<Time> {
-        if m > 59 || s > 59 || ns >= Time::NANOSECONDS_PER_SECOND {
+        if m > 59 || s > 59 || ns >= Time::NS_PER_SEC {
             return None;
         }
 
-        let seconds = (Time::SECONDS_PER_HOUR * u64::from(h))
-            + (Time::SECONDS_PER_MINUTE * u64::from(m))
-            + u64::from(s);
+        let seconds =
+            (Time::SECS_PER_HR * u64::from(h)) + (Time::SECS_PER_MIN * u64::from(m)) + u64::from(s);
 
-        let frac = Time::NANOSECONDS_PER_SECOND_INV * f64::from(ns);
+        let frac = f64::from(ns) / f64::from(Time::NS_PER_SEC);
 
         Some(Time { seconds, frac })
     }

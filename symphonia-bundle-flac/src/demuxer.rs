@@ -42,7 +42,7 @@ pub struct FlacReader<'s> {
     reader: MediaSourceStream<'s>,
     metadata: MetadataLog,
     tracks: Vec<Track>,
-    cues: Vec<Cue>,
+    chapters: Option<ChapterGroup>,
     index: Option<SeekIndex>,
     first_frame_offset: u64,
     parser: PacketParser,
@@ -76,8 +76,8 @@ impl<'s> FlacReader<'s> {
         let mut metadata_builder = MetadataBuilder::new();
 
         let mut reader = mss;
-        let mut tracks = Vec::new();
-        let mut cues = Vec::new();
+        let mut track = None;
+        let mut chapters = None;
         let mut index = None;
         let mut parser = Default::default();
 
@@ -89,15 +89,23 @@ impl<'s> FlacReader<'s> {
             let mut block_stream = ScopedStream::new(&mut reader, u64::from(header.block_len));
 
             match header.block_type {
+                // The StreamInfo block is parsed into a track.
+                MetadataBlockType::StreamInfo => {
+                    // Only a single stream information block is allowed.
+                    if track.is_none() {
+                        track = Some(read_stream_info_block(&mut block_stream, &mut parser)?);
+                    }
+                    else {
+                        return decode_error("flac: found more than one stream info block");
+                    }
+                }
                 MetadataBlockType::Application => {
                     // TODO: Store vendor data.
                     read_application_block(&mut block_stream, header.block_len)?;
                 }
                 // SeekTable blocks are parsed into a SeekIndex.
                 MetadataBlockType::SeekTable => {
-                    // Check if a SeekTable has already be parsed. If one has, then the file is
-                    // invalid, atleast for seeking. Either way, it's a violation of the
-                    // specification.
+                    // Only a single seek table block is allowed.
                     if index.is_none() {
                         let mut new_index = SeekIndex::new();
                         read_seek_table_block(&mut block_stream, header.block_len, &mut new_index)?;
@@ -113,15 +121,19 @@ impl<'s> FlacReader<'s> {
                 }
                 // Cuesheet blocks are parsed into Cues.
                 MetadataBlockType::Cuesheet => {
-                    read_cuesheet_block(&mut block_stream, &mut cues)?;
+                    // A cuesheet block must appear before the stream information block so that the
+                    // timebase is known to calculate the cue times. This should always be the case
+                    // since the stream information block must always be the first metadata block.
+                    if let Some(tb) = track.as_ref().and_then(|track| track.time_base) {
+                        chapters = Some(read_cuesheet_block(&mut block_stream, tb)?);
+                    }
+                    else {
+                        return decode_error("flac: cuesheet block before stream info");
+                    }
                 }
                 // Picture blocks are read as Visuals.
                 MetadataBlockType::Picture => {
                     read_picture_block(&mut block_stream, &mut metadata_builder)?;
-                }
-                // StreamInfo blocks are parsed into Streams.
-                MetadataBlockType::StreamInfo => {
-                    read_stream_info_block(&mut block_stream, &mut tracks, &mut parser)?;
                 }
                 // Padding blocks are skipped.
                 MetadataBlockType::Padding => {
@@ -150,8 +162,15 @@ impl<'s> FlacReader<'s> {
             }
         }
 
+        // A single stream information block is mandatory. So it is an error for track to be `None`
+        // after iterating over all metadata blocks.
+        let tracks = match track {
+            Some(track) => vec![track],
+            _ => return decode_error("flac: missing stream info block"),
+        };
+
         // Commit any read metadata to the metadata log.
-        let mut metadata = opts.metadata.unwrap_or_default();
+        let mut metadata = opts.external_data.metadata.unwrap_or_default();
         metadata.push(metadata_builder.metadata());
 
         // Synchronize the packet parser to the first audio frame.
@@ -161,7 +180,7 @@ impl<'s> FlacReader<'s> {
         // metadata blocks have been read.
         let first_frame_offset = reader.pos();
 
-        Ok(FlacReader { reader, metadata, tracks, cues, index, first_frame_offset, parser })
+        Ok(FlacReader { reader, metadata, tracks, chapters, index, first_frame_offset, parser })
     }
 }
 
@@ -197,8 +216,8 @@ impl FormatReader for FlacReader<'_> {
         self.metadata.metadata()
     }
 
-    fn cues(&self) -> &[Cue] {
-        &self.cues
+    fn chapters(&self) -> Option<&ChapterGroup> {
+        self.chapters.as_ref()
     }
 
     fn tracks(&self) -> &[Track] {
@@ -360,57 +379,47 @@ impl FormatReader for FlacReader<'_> {
 /// Reads a StreamInfo block and populates the reader with stream information.
 fn read_stream_info_block<B: ReadBytes + FiniteStream>(
     reader: &mut B,
-    tracks: &mut Vec<Track>,
     parser: &mut PacketParser,
-) -> Result<()> {
-    // Only one StreamInfo block, and therefore only one Track, is allowed per media source stream.
-    if tracks.is_empty() {
-        // Ensure the block length is correct for a stream information block before allocating a
-        // buffer for it.
-        if !StreamInfo::is_valid_size(reader.byte_len()) {
-            return decode_error("flac: invalid stream info block size");
-        }
-
-        // Read the stream information block as a boxed slice so that it may be attached as extra
-        // data on the codec parameters.
-        let extra_data = reader.read_boxed_slice_exact(reader.byte_len() as usize)?;
-
-        // Parse the stream info block.
-        let info = StreamInfo::read(&mut BufReader::new(&extra_data))?;
-
-        // Populate the codec parameters with the basic audio parameters of the track.
-        let mut codec_params = AudioCodecParameters::new();
-
-        codec_params
-            .for_codec(CODEC_ID_FLAC)
-            .with_extra_data(extra_data)
-            .with_sample_rate(info.sample_rate)
-            .with_bits_per_sample(info.bits_per_sample)
-            .with_channels(info.channels.clone());
-
-        if let Some(md5) = info.md5 {
-            codec_params.with_verification_code(VerificationCheck::Md5(md5));
-        }
-
-        // Populate the track.
-        let mut track = Track::new(0);
-
-        track.with_codec_params(CodecParameters::Audio(codec_params));
-
-        // Total samples per channel (also the total number of frames) is optional.
-        if let Some(num_frames) = info.n_samples {
-            track.with_num_frames(num_frames);
-        }
-
-        // Reset the packet parser.
-        parser.reset(info);
-
-        // Add the track.
-        tracks.push(track);
-    }
-    else {
-        return decode_error("flac: found more than one stream info block");
+) -> Result<Track> {
+    // Ensure the block length is correct for a stream information block before allocating a
+    // buffer for it.
+    if !StreamInfo::is_valid_size(reader.byte_len()) {
+        return decode_error("flac: invalid stream info block size");
     }
 
-    Ok(())
+    // Read the stream information block as a boxed slice so that it may be attached as extra
+    // data on the codec parameters.
+    let extra_data = reader.read_boxed_slice_exact(reader.byte_len() as usize)?;
+
+    // Parse the stream info block.
+    let info = StreamInfo::read(&mut BufReader::new(&extra_data))?;
+
+    // Populate the codec parameters with the basic audio parameters of the track.
+    let mut codec_params = AudioCodecParameters::new();
+
+    codec_params
+        .for_codec(CODEC_ID_FLAC)
+        .with_extra_data(extra_data)
+        .with_sample_rate(info.sample_rate)
+        .with_bits_per_sample(info.bits_per_sample)
+        .with_channels(info.channels.clone());
+
+    if let Some(md5) = info.md5 {
+        codec_params.with_verification_code(VerificationCheck::Md5(md5));
+    }
+
+    // Populate the track.
+    let mut track = Track::new(0);
+
+    track.with_codec_params(CodecParameters::Audio(codec_params));
+
+    // Total samples per channel (also the total number of frames) is optional.
+    if let Some(num_frames) = info.n_samples {
+        track.with_num_frames(num_frames);
+    }
+
+    // Reset the packet parser.
+    parser.reset(info);
+
+    Ok(track)
 }

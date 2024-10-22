@@ -34,7 +34,7 @@ const OGG_FORMAT_INFO: FormatInfo =
 pub struct OggReader<'s> {
     reader: MediaSourceStream<'s>,
     tracks: Vec<Track>,
-    cues: Vec<Cue>,
+    chapters: Option<ChapterGroup>,
     metadata: MetadataLog,
     enable_gapless: bool,
     /// The page reader.
@@ -61,8 +61,8 @@ impl<'s> OggReader<'s> {
         let mut ogg = OggReader {
             reader: mss,
             tracks: Default::default(),
-            cues: Default::default(),
-            metadata: opts.metadata.unwrap_or_default(),
+            chapters: opts.external_data.chapters,
+            metadata: opts.external_data.metadata.unwrap_or_default(),
             streams: Default::default(),
             enable_gapless: opts.enable_gapless,
             pages,
@@ -440,8 +440,8 @@ impl FormatReader for OggReader<'_> {
         self.metadata.metadata()
     }
 
-    fn cues(&self) -> &[Cue] {
-        &self.cues
+    fn chapters(&self) -> Option<&ChapterGroup> {
+        self.chapters.as_ref()
     }
 
     fn tracks(&self) -> &[Track] {

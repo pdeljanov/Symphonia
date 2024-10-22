@@ -9,9 +9,11 @@ use std::ascii;
 
 use symphonia_core::audio::{Channels, Position};
 use symphonia_core::errors::{decode_error, Result};
-use symphonia_core::formats::{util::SeekIndex, Cue, CuePoint};
+use symphonia_core::formats::util::SeekIndex;
 use symphonia_core::io::*;
-use symphonia_core::meta::{StandardTagKey, Tag, Value, VendorData};
+use symphonia_core::meta::{
+    Chapter, ChapterGroup, ChapterGroupItem, StandardTagKey, Tag, Value, VendorData,
+};
 
 #[derive(PartialEq, Eq)]
 pub enum MetadataBlockType {
@@ -241,13 +243,14 @@ fn printable_ascii_to_string(bytes: &[u8]) -> Option<String> {
 }
 
 /// Read a cuesheet block.
-pub fn read_cuesheet_block<B: ReadBytes>(reader: &mut B, cues: &mut Vec<Cue>) -> Result<()> {
+pub fn read_cuesheet_block<B: ReadBytes>(reader: &mut B, tb: TimeBase) -> Result<ChapterGroup> {
     // Read cuesheet catalog number. The catalog number only allows printable ASCII characters.
     let mut catalog_number_buf = vec![0u8; 128];
     reader.read_buf_exact(&mut catalog_number_buf)?;
 
-    let _catalog_number = match printable_ascii_to_string(&catalog_number_buf) {
-        Some(s) => s,
+    // Read the catalog number, and store it in a Tag to be attached to the chapter group.
+    let catalog_number = match printable_ascii_to_string(&catalog_number_buf) {
+        Some(s) => Tag::new(Some(StandardTagKey::IdentCatalogNumber), "CATALOG", Value::from(s)),
         None => return decode_error("flac: cuesheet catalog number contains invalid characters"),
     };
 
@@ -281,18 +284,24 @@ pub fn read_cuesheet_block<B: ReadBytes>(reader: &mut B, cues: &mut Vec<Cue>) ->
         return decode_error("flac: cuesheets for CD-DA must not have more than 100 tracks");
     }
 
+    let mut group = ChapterGroup {
+        items: Vec::with_capacity(usize::from(n_tracks)),
+        tags: vec![catalog_number],
+        visuals: Vec::new(),
+    };
+
     for _ in 0..n_tracks {
-        read_cuesheet_track(reader, is_cdda, cues)?;
+        group.items.push(read_cuesheet_track(reader, is_cdda, tb)?);
     }
 
-    Ok(())
+    Ok(group)
 }
 
 fn read_cuesheet_track<B: ReadBytes>(
     reader: &mut B,
     is_cdda: bool,
-    cues: &mut Vec<Cue>,
-) -> Result<()> {
+    tb: TimeBase,
+) -> Result<ChapterGroupItem> {
     let n_offset_samples = reader.read_be_u64()?;
 
     // For a CD-DA cuesheet, the track sample offset is the same as the first index (INDEX 00 or
@@ -324,7 +333,7 @@ fn read_cuesheet_track<B: ReadBytes>(
     reader.read_buf_exact(&mut isrc_buf)?;
 
     let isrc = match printable_ascii_to_string(&isrc_buf) {
-        Some(s) => s,
+        Some(s) => Tag::new(Some(StandardTagKey::IdentIsrc), "ISRC", Value::from(s)),
         None => return decode_error("flac: cuesheet track ISRC contains invalid characters"),
     };
 
@@ -354,24 +363,47 @@ fn read_cuesheet_track<B: ReadBytes>(
         return decode_error("flac: cuesheet track indicies cannot exceed 100 for CD-DA");
     }
 
-    let mut cue =
-        Cue { index: number, start_ts: n_offset_samples, tags: Vec::new(), points: Vec::new() };
+    // If the track contains indicies, then one chapter will be created per index, and a chapter
+    // group returned.
+    if n_indicies > 0 {
+        let mut group = ChapterGroup {
+            items: Vec::with_capacity(n_indicies),
+            tags: vec![isrc],
+            visuals: vec![],
+        };
 
-    // Push the ISRC as a tag.
-    cue.tags.push(Tag::new(Some(StandardTagKey::IdentIsrc), "ISRC", Value::from(isrc)));
+        // Add each index as a chapter.
+        for _ in 0..n_indicies {
+            let index = read_cuesheet_track_index(reader, is_cdda, n_offset_samples, tb)?;
 
-    for _ in 0..n_indicies {
-        cue.points.push(read_cuesheet_track_index(reader, is_cdda)?);
+            group.items.push(ChapterGroupItem::Chapter(index));
+        }
+
+        Ok(ChapterGroupItem::Group(group))
     }
+    else {
+        // If the track has no indicies, return a single chapter.
+        let chapter = Chapter {
+            start_time: tb.calc_time(n_offset_samples),
+            end_time: None,
+            start_byte: None,
+            end_byte: None,
+            tags: vec![isrc],
+            visuals: vec![],
+        };
 
-    cues.push(cue);
-
-    Ok(())
+        Ok(ChapterGroupItem::Chapter(chapter))
+    }
 }
 
-fn read_cuesheet_track_index<B: ReadBytes>(reader: &mut B, is_cdda: bool) -> Result<CuePoint> {
+fn read_cuesheet_track_index<B: ReadBytes>(
+    reader: &mut B,
+    is_cdda: bool,
+    track_ts: u64,
+    tb: TimeBase,
+) -> Result<Chapter> {
     let n_offset_samples = reader.read_be_u64()?;
-    let idx_point_enc = reader.read_be_u32()?;
+    let idx_number_raw = reader.read_be_u32()?;
 
     // CD-DA track index points must have a sample offset that is a multiple of 588 samples
     // (588 samples = 44100 samples/sec * 1/75th of a sec).
@@ -381,14 +413,30 @@ fn read_cuesheet_track_index<B: ReadBytes>(reader: &mut B, is_cdda: bool) -> Res
         );
     }
 
-    if idx_point_enc & 0x00ff_ffff != 0 {
+    // Lower 24 bits are reserved and should be 0.
+    if idx_number_raw & 0x00ff_ffff != 0 {
         return decode_error("flac: cuesheet track index reserved bits should be 0");
     }
 
-    // TODO: Should be 0 or 1 for the first index for CD-DA.
-    let _idx_point = ((idx_point_enc & 0xff00_0000) >> 24) as u8;
+    // Upper 8 bits is the index number.
+    // TODO: Should be 0 or 1 for the first index for CD-DA. It should also not exceed 100 for
+    //       CD-DA.
+    let idx_number = ((idx_number_raw & 0xff00_0000) >> 24) as u8;
 
-    Ok(CuePoint { start_offset_ts: n_offset_samples, tags: Vec::new() })
+    // Calculate the index's starting timestamp.
+    let idx_start_ts = match track_ts.checked_add(n_offset_samples) {
+        Some(ts) => ts,
+        None => return decode_error("flac: cuesheet track index start time too large"),
+    };
+
+    Ok(Chapter {
+        start_time: tb.calc_time(idx_start_ts),
+        end_time: None,
+        start_byte: None,
+        end_byte: None,
+        tags: vec![Tag::new(Some(StandardTagKey::IndexNumber), "INDEX", Value::from(idx_number))],
+        visuals: Vec::new(),
+    })
 }
 
 /// Read a vendor-specific application block.
@@ -409,6 +457,7 @@ pub fn read_application_block<B: ReadBytes>(
     Ok(VendorData { ident, data })
 }
 
+use symphonia_core::units::TimeBase;
 pub use symphonia_metadata::flac::read_comment_block;
 pub use symphonia_metadata::flac::read_picture_block;
 

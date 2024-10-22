@@ -39,7 +39,7 @@ const ADTS_FORMAT_INFO: FormatInfo = FormatInfo {
 pub struct AdtsReader<'s> {
     reader: MediaSourceStream<'s>,
     tracks: Vec<Track>,
-    cues: Vec<Cue>,
+    chapters: Option<ChapterGroup>,
     metadata: MetadataLog,
     first_frame_pos: u64,
     next_packet_ts: u64,
@@ -75,8 +75,8 @@ impl<'s> AdtsReader<'s> {
         Ok(AdtsReader {
             reader: mss,
             tracks: vec![track],
-            cues: Vec::new(),
-            metadata: opts.metadata.unwrap_or_default(),
+            chapters: opts.external_data.chapters,
+            metadata: opts.external_data.metadata.unwrap_or_default(),
             first_frame_pos,
             next_packet_ts: 0,
         })
@@ -296,8 +296,8 @@ impl FormatReader for AdtsReader<'_> {
         self.metadata.metadata()
     }
 
-    fn cues(&self) -> &[Cue] {
-        &self.cues
+    fn chapters(&self) -> Option<&ChapterGroup> {
+        self.chapters.as_ref()
     }
 
     fn tracks(&self) -> &[Track] {

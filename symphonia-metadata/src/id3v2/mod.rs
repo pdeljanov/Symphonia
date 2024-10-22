@@ -7,16 +7,19 @@
 
 //! An ID3v2 metadata reader.
 
+use std::collections::HashMap;
+
 use symphonia_core::errors::{decode_error, unsupported_error, Result};
 use symphonia_core::formats::probe::{ProbeMetadataData, ProbeableMetadata, Score, Scoreable};
 use symphonia_core::io::*;
 use symphonia_core::meta::well_known::METADATA_ID_ID3V2;
 use symphonia_core::meta::{
-    MetadataBuilder, MetadataInfo, MetadataOptions, MetadataReader, MetadataRevision,
+    ChapterGroup, ChapterGroupItem, MetadataBuffer, MetadataBuilder, MetadataInfo, MetadataOptions,
+    MetadataReader, MetadataSideData,
 };
 use symphonia_core::support_metadata;
 
-use log::{info, trace, warn};
+use log::{debug, info, trace, warn};
 
 mod frames;
 mod unsync;
@@ -279,6 +282,7 @@ fn read_id3v2_body<B: ReadBytes + FiniteStream>(
     reader: &mut B,
     header: &Header,
     metadata: &mut MetadataBuilder,
+    side_data: &mut Vec<MetadataSideData>,
 ) -> Result<()> {
     // If there is an extended header, read and parse it based on the major version of the tag.
     if header.has_extended_header {
@@ -290,11 +294,9 @@ fn read_id3v2_body<B: ReadBytes + FiniteStream>(
         trace!("{:#?}", &extended);
     }
 
-    let min_frame_size = match header.major_version {
-        2 => 6,
-        3 | 4 => 10,
-        _ => unreachable!(),
-    };
+    let min_frame_size = min_frame_size(header.major_version);
+
+    let mut chap_builder: ChapterGroupBuilder = Default::default();
 
     loop {
         // Read frames based on the major version of the tag.
@@ -322,6 +324,14 @@ fn read_id3v2_body<B: ReadBytes + FiniteStream>(
             FrameResult::Visual(visual) => {
                 metadata.add_visual(visual);
             }
+            // A chapter was encountered, save it for post-processing.
+            FrameResult::Chapter(chap) => {
+                chap_builder.add_chapter(chap);
+            }
+            // A table of contents was encountered, save it for post-processing.
+            FrameResult::TableOfContents(toc) => {
+                chap_builder.add_toc(toc);
+            }
             // An unknown frame was encountered.
             FrameResult::UnsupportedFrame(ref id) => {
                 info!("unsupported frame {}", id);
@@ -338,10 +348,19 @@ fn read_id3v2_body<B: ReadBytes + FiniteStream>(
         }
     }
 
+    // Compile table of contents and chapter frames into a set of Cues.
+    if let Some(chapters) = chap_builder.build() {
+        side_data.push(MetadataSideData::Chapters(chapters));
+    }
+
     Ok(())
 }
 
-pub fn read_id3v2<B: ReadBytes>(reader: &mut B, metadata: &mut MetadataBuilder) -> Result<()> {
+pub fn read_id3v2<B: ReadBytes>(
+    reader: &mut B,
+    metadata: &mut MetadataBuilder,
+    side_data: &mut Vec<MetadataSideData>,
+) -> Result<()> {
     // Read the (sorta) version agnostic tag header.
     let header = read_id3v2_header(reader)?;
 
@@ -350,7 +369,7 @@ pub fn read_id3v2<B: ReadBytes>(reader: &mut B, metadata: &mut MetadataBuilder) 
     let mut scoped = if header.unsynchronisation && header.major_version < 4 {
         let mut unsync = UnsyncStream::new(ScopedStream::new(reader, u64::from(header.size)));
 
-        read_id3v2_body(&mut unsync, &header, metadata)?;
+        read_id3v2_body(&mut unsync, &header, metadata, side_data)?;
 
         unsync.into_inner()
     }
@@ -359,7 +378,7 @@ pub fn read_id3v2<B: ReadBytes>(reader: &mut B, metadata: &mut MetadataBuilder) 
     else {
         let mut scoped = ScopedStream::new(reader, u64::from(header.size));
 
-        read_id3v2_body(&mut scoped, &header, metadata)?;
+        read_id3v2_body(&mut scoped, &header, metadata, side_data)?;
 
         scoped
     };
@@ -368,6 +387,160 @@ pub fn read_id3v2<B: ReadBytes>(reader: &mut B, metadata: &mut MetadataBuilder) 
     scoped.ignore()?;
 
     Ok(())
+}
+
+/// The chapter group builder utility validates and builds a `ChapterGroup` from a set of ID3v2
+/// chapter and table of contents frames.
+///
+/// Constraints:
+///
+///  1. All table of contents and chapters shall be uniquely identified.
+///  2. There shall only be 1 top-level table of contents.
+///  3. A table of contents shall only be referenced once to prevent loops.
+///  4. A table of contents that is not top-level must be referenced.
+///  5. A chapter does not need to be referenced. However, if it is referenced, it may
+///     only be referenced once.
+///
+/// Any constraint violation will halt processing and drop all cues.
+#[derive(Default)]
+struct ChapterGroupBuilder {
+    is_err: bool,
+    root_toc_id: Option<String>,
+    tocs: HashMap<String, Id3v2TableOfContents>,
+    chaps: HashMap<String, Id3v2Chapter>,
+}
+
+impl ChapterGroupBuilder {
+    fn error(&mut self) {
+        self.is_err = true;
+        self.root_toc_id = None;
+        self.tocs.clear();
+        self.chaps.clear();
+    }
+
+    fn is_unique_key(&self, id: &str) -> bool {
+        !(self.tocs.contains_key(id) || self.chaps.contains_key(id))
+    }
+
+    /// Add an ID3v2 table of contents.
+    fn add_toc(&mut self, toc: Id3v2TableOfContents) {
+        // Do not allow non-unique element IDs.
+        if !self.is_unique_key(&toc.id) {
+            debug!("id3v2: toc id '{}' is not unique", &toc.id);
+            return self.error();
+        }
+
+        // Do not allow multiple top-level table of contents.
+        if toc.top_level {
+            if self.root_toc_id.is_some() {
+                debug!("id3v2: multiple top-level toc");
+                return self.error();
+            }
+            self.root_toc_id = Some(toc.id.to_string())
+        }
+
+        self.tocs.insert(toc.id.to_string(), toc);
+    }
+
+    /// Add an ID3v2 chapter.
+    fn add_chapter(&mut self, mut chap: Id3v2Chapter) {
+        // Do not allow non-unique element IDs.
+        if !self.is_unique_key(&chap.id) {
+            debug!("id3v2: chapter id '{}' is not unique", &chap.id);
+            return self.error();
+        }
+
+        // Store the chapter count at the time this chapter was added to order standalone chapters
+        // later by order read.
+        chap.read_order = self.chaps.len();
+
+        self.chaps.insert(chap.id.to_string(), chap);
+    }
+
+    /// Build a chapter group from the added ID3v2 table of contents and chapters.
+    fn build(mut self) -> Option<ChapterGroup> {
+        /// Depth-first traversal of TOC elements to build the chapter hierarchy.
+        fn dfs(
+            id: &str,
+            tocs: &mut HashMap<String, Id3v2TableOfContents>,
+            chaps: &mut HashMap<String, Id3v2Chapter>,
+        ) -> Option<ChapterGroup> {
+            // Attempt to remove the TOC with the provided TOC ID. If it was removed, create a
+            // chapter group from it.
+            tocs.remove(id).map(|toc| {
+                let mut parent = ChapterGroup {
+                    items: Vec::with_capacity(toc.items.len()),
+                    tags: toc.tags,
+                    visuals: toc.visuals,
+                };
+
+                for child_id in toc.items {
+                    if let Some(chap) = chaps.remove(&child_id) {
+                        // Item is a chapter.
+                        parent.items.push(ChapterGroupItem::Chapter(chap.chapter));
+                    }
+                    else if let Some(child) = dfs(&child_id, tocs, chaps) {
+                        // Item is a TOC.
+                        parent.items.push(ChapterGroupItem::Group(child));
+                    }
+                    else {
+                        // Item reference is broken.
+                        debug!("id3v2: missing chapter or toc element");
+                    }
+                }
+
+                parent
+            })
+        }
+
+        // Can't build if an error was found.
+        if self.is_err {
+            return None;
+        }
+
+        // Build a chapter group starting at top-level table of contents (TOC), if one exists.
+        let top = self.root_toc_id.and_then(|toc_id| dfs(&toc_id, &mut self.tocs, &mut self.chaps));
+
+        // After building the chapter group from the top-level TOC, any remaining TOC elements are
+        // unreferenced. The behaviour in this case is not specified by the standard. Therefore,
+        // these TOC and the chapters referenced by them will be considered invalid and removed.
+        if !self.tocs.is_empty() {
+            debug!("id3v2: unreferenced toc and/or chapter elements");
+
+            for toc in self.tocs.values() {
+                for child_id in &toc.items {
+                    self.chaps.remove(child_id);
+                }
+            }
+
+            self.tocs.clear();
+        }
+
+        // The remaining chapters are completely unreferenced. This is allowed per the ID3v2
+        // specification. To accomodate these chapters, a new top-level TOC is created with the
+        // original top-level nested underneath it with all the unreferenced chapters as siblings.
+        if !self.chaps.is_empty() {
+            // Collect all standalone ID3v2 chapters.
+            let mut items: Vec<Id3v2Chapter> = self.chaps.into_values().collect();
+
+            // Sort by read order.
+            items.sort_by_key(|item| item.read_order);
+
+            // Convert to chapter group items.
+            let mut items: Vec<ChapterGroupItem> =
+                items.into_iter().map(|chap| ChapterGroupItem::Chapter(chap.chapter)).collect();
+
+            // Add the top-level chapter group, if one exists.
+            if let Some(top) = top {
+                items.push(ChapterGroupItem::Group(top));
+            }
+
+            Some(ChapterGroup { items, tags: vec![], visuals: vec![] })
+        }
+        else {
+            top
+        }
+    }
 }
 
 pub mod util {
@@ -440,10 +613,13 @@ impl MetadataReader for Id3v2Reader<'_> {
         &ID3V2_METADATA_INFO
     }
 
-    fn read_all(&mut self) -> Result<MetadataRevision> {
+    fn read_all(&mut self) -> Result<MetadataBuffer> {
         let mut builder = MetadataBuilder::new();
-        read_id3v2(&mut self.reader, &mut builder)?;
-        Ok(builder.metadata())
+        let mut side_data = Vec::new();
+
+        read_id3v2(&mut self.reader, &mut builder, &mut side_data)?;
+
+        Ok(MetadataBuffer { revision: builder.metadata(), side_data })
     }
 
     fn into_inner<'s>(self: Box<Self>) -> MediaSourceStream<'s>

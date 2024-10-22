@@ -45,7 +45,7 @@ const AIFF_FORMAT_INFO: FormatInfo = FormatInfo {
 pub struct AiffReader<'s> {
     reader: MediaSourceStream<'s>,
     tracks: Vec<Track>,
-    cues: Vec<Cue>,
+    chapters: Option<ChapterGroup>,
     metadata: MetadataLog,
     packet_info: PacketInfo,
     data_start_pos: u64,
@@ -70,7 +70,7 @@ impl<'s> AiffReader<'s> {
 
         let mut codec_params = AudioCodecParameters::new();
         //TODO: Chunks such as marker contain metadata, get it.
-        let metadata = opts.metadata.unwrap_or_default();
+        let metadata = opts.external_data.metadata.unwrap_or_default();
         let mut packet_info = PacketInfo::without_blocks(0);
 
         loop {
@@ -120,7 +120,7 @@ impl<'s> AiffReader<'s> {
                     return Ok(AiffReader {
                         reader: mss,
                         tracks: vec![track],
-                        cues: Vec::new(),
+                        chapters: opts.external_data.chapters,
                         metadata,
                         packet_info,
                         data_start_pos,
@@ -178,8 +178,8 @@ impl FormatReader for AiffReader<'_> {
         self.metadata.metadata()
     }
 
-    fn cues(&self) -> &[Cue] {
-        &self.cues
+    fn chapters(&self) -> Option<&ChapterGroup> {
+        self.chapters.as_ref()
     }
 
     fn tracks(&self) -> &[Track] {

@@ -14,7 +14,7 @@ use crate::common::Tier;
 use crate::errors::{unsupported_error, Error, Result};
 use crate::formats::{FormatInfo, FormatOptions, FormatReader};
 use crate::io::{MediaSource, MediaSourceStream, ReadBytes, ScopedStream, SeekBuffered};
-use crate::meta::{MetadataInfo, MetadataOptions, MetadataReader};
+use crate::meta::{MetadataInfo, MetadataOptions, MetadataReader, MetadataSideData};
 
 use log::{debug, error, trace, warn};
 
@@ -628,12 +628,23 @@ fn read_and_append_metadata<'s>(
     let mut reader = factory(mss, meta_opts)?;
 
     // Read all metadata and get a metdata revision.
-    let rev = reader.read_all()?;
+    let metadata = reader.read_all()?;
 
     debug!("appending '{}' metadata", reader.metadata_info().short_name);
 
     // Append it to the metadata log.
-    fmt_opts.metadata.get_or_insert_with(Default::default).push(rev);
+    fmt_opts.external_data.metadata.get_or_insert_with(Default::default).push(metadata.revision);
+
+    // Append relevant side data.
+    for side_data in metadata.side_data {
+        match side_data {
+            MetadataSideData::Chapters(chapters) => {
+                debug!("appending '{}' chapters", reader.metadata_info().short_name);
+
+                fmt_opts.external_data.chapters = Some(chapters)
+            }
+        }
+    }
 
     // Consume the metadata reader and return the media source stream to the caller.
     Ok(reader.into_inner())

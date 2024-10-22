@@ -11,11 +11,12 @@ use std::str;
 
 use symphonia_core::errors::{decode_error, unsupported_error, Result};
 use symphonia_core::io::{BufReader, FiniteStream, ReadBytes};
-use symphonia_core::meta::{StandardTagKey, Tag, Value, Visual};
+use symphonia_core::meta::{Chapter, StandardTagKey, Tag, Value, Visual};
 
 use encoding_rs::UTF_16BE;
 use lazy_static::lazy_static;
 use log::warn;
+use symphonia_core::units::Time;
 
 use super::unsync::{decode_unsynchronisation, read_syncsafe_leq32};
 use super::util;
@@ -36,8 +37,10 @@ use super::util;
 //       CRM                                        Encrypted meta frame
 //   x   PIC    APIC                                Attached picture
 //                      ASPI                        Audio seek point index
+//   x          CHAP                                Chapter
 //   x   COM    COMM             Comment            Comments
 //              COMR                                Commercial frame
+//   x          CTOC                                Table of contents
 //              ENCR                                Encryption method registration
 //       EQU    EQUA                                Equalisation
 //                      EQU2                        Equalisation (2)
@@ -145,9 +148,43 @@ use super::util;
 //     ID3v2.3: http://id3.org/d3v2.3.0
 //     ID3v2.4: http://id3.org/id3v2.4.0-frames
 
+/// An ID3v2 chapter.
+#[derive(Clone, Debug)]
+pub struct Id3v2Chapter {
+    // The chapter identifier.
+    pub id: String,
+    /// A counter indicating the order the chapter frame was read.
+    pub read_order: usize,
+    /// The chapter contents.
+    pub chapter: Chapter,
+}
+
+/// An ID3v2 table of contents describes different sections and chapters of an audio stream.
+#[derive(Clone, Debug, Default)]
+pub struct Id3v2TableOfContents {
+    /// The table of contents identifier.
+    pub id: String,
+    /// Indicates if this is the top-level table of contents frame. Only one table of contents
+    /// frame should be marked top-level, and not be a child of any other frame.
+    pub top_level: bool,
+    /// Indicates if the entries should be played as a continuous ordered sequence or played
+    /// individually.
+    ///
+    /// TODO: It is not clear if this is useful.
+    #[allow(dead_code)]
+    pub ordered: bool,
+    /// The identifiers of the items that belong to this table of contents. These may identify
+    /// a chapter or another table of contents.
+    pub items: Vec<String>,
+    /// The tags associated with this table of contents.
+    pub tags: Vec<Tag>,
+    /// The visuals associated with this table of contents.
+    pub visuals: Vec<Visual>,
+}
+
 /// The result of parsing a frame.
 pub enum FrameResult {
-    /// Padding was encountered instead of a frame. The remainder of the ID3v2 Tag may be skipped.
+    /// Padding was encountered instead of a frame. The remainder of the ID3v2 tag may be skipped.
     Padding,
     /// An unknown frame was found and its body skipped.
     UnsupportedFrame(String),
@@ -159,6 +196,19 @@ pub enum FrameResult {
     Visual(Visual),
     /// A frame was parsed and yielded many `Tag`s.
     MultipleTags(Vec<Tag>),
+    /// A frame was parsed and yielded a chapter.
+    Chapter(Id3v2Chapter),
+    /// A frame was parsed and yielded a table of contents.
+    TableOfContents(Id3v2TableOfContents),
+}
+
+/// Gets the minimum frame size for a major version of an ID3v2.
+pub fn min_frame_size(major_version: u8) -> u64 {
+    match major_version {
+        2 => 6,
+        3 | 4 => 10,
+        _ => unreachable!("id2v3: unexpected version"),
+    }
 }
 
 /// Makes a frame result for a frame containing invalid data.
@@ -171,7 +221,16 @@ fn unsupported_frame(id: &[u8]) -> Result<FrameResult> {
     Ok(FrameResult::UnsupportedFrame(as_ascii_str(id).to_string()))
 }
 
-type FrameParser = fn(&mut BufReader<'_>, Option<StandardTagKey>, &str) -> Result<FrameResult>;
+/// Useful information about a frame for a frame parser.
+struct FrameInfo<'a> {
+    /// The original name of the frame as written in the frame.
+    id: &'a str,
+    /// The major version of the ID3v2 tag containing the frame.
+    major_version: u8,
+}
+
+type FrameParser =
+    fn(&mut BufReader<'_>, Option<StandardTagKey>, &FrameInfo<'_>) -> Result<FrameResult>;
 
 lazy_static! {
     static ref LEGACY_FRAME_MAP: HashMap<&'static [u8; 3], &'static [u8; 4]> = {
@@ -255,8 +314,10 @@ lazy_static! {
             // m.insert(b"AENC", read_null_frame);
             m.insert(b"APIC", (read_apic_frame as FrameParser, None));
             // m.insert(b"ASPI", read_null_frame);
+            m.insert(b"CHAP", (read_chap_frame, None));
             m.insert(b"COMM", (read_comm_uslt_frame, Some(StandardTagKey::Comment)));
             // m.insert(b"COMR", read_null_frame);
+            m.insert(b"CTOC", (read_ctoc_frame, None));
             // m.insert(b"ENCR", read_null_frame);
             // m.insert(b"EQU2", read_null_frame);
             // m.insert(b"EQUA", read_null_frame);
@@ -367,7 +428,7 @@ lazy_static! {
     static ref TXXX_FRAME_STD_KEYS: HashMap<&'static str, StandardTagKey> = {
         let mut m = HashMap::new();
         m.insert("ACOUSTID FINGERPRINT", StandardTagKey::AcoustIdFingerprint);
-        m.insert("ACOUSTID ID", StandardTagKey::AcoustId);
+        m.insert("ACOUSTID ID", StandardTagKey::AcoustIdId);
         m.insert("BARCODE", StandardTagKey::IdentBarcode);
         m.insert("CATALOGNUMBER", StandardTagKey::IdentCatalogNumber);
         m.insert("LICENSE", StandardTagKey::License);
@@ -459,8 +520,9 @@ pub fn read_id3v2p2_frame<B: ReadBytes>(reader: &mut B) -> Result<FrameResult> {
     }
 
     let data = reader.read_boxed_slice_exact(size as usize)?;
+    let info = FrameInfo { id: as_ascii_str(&id), major_version: 2 };
 
-    parser(&mut BufReader::new(&data), *std_key, as_ascii_str(&id))
+    parser(&mut BufReader::new(&data), *std_key, &info)
 }
 
 /// Read an ID3v2.3 frame.
@@ -525,8 +587,9 @@ pub fn read_id3v2p3_frame<B: ReadBytes>(reader: &mut B) -> Result<FrameResult> {
     }
 
     let data = reader.read_boxed_slice_exact(size as usize)?;
+    let info = FrameInfo { id: as_ascii_str(&id), major_version: 4 };
 
-    parser(&mut BufReader::new(&data), *std_key, as_ascii_str(&id))
+    parser(&mut BufReader::new(&data), *std_key, &info)
 }
 
 /// Read an ID3v2.4 frame.
@@ -618,17 +681,19 @@ pub fn read_id3v2p4_frame<B: ReadBytes + FiniteStream>(reader: &mut B) -> Result
     // You win some, you lose some. :)
     let mut raw_data = reader.read_boxed_slice_exact(size as usize)?;
 
+    let info = FrameInfo { id: as_ascii_str(&id), major_version: 4 };
+
     // The frame body is unsynchronised. Decode the unsynchronised data back to it's original form
     // in-place before wrapping the decoded data in a BufStream for the frame parsers.
     if flags & 0x2 != 0x0 {
         let unsync_data = decode_unsynchronisation(&mut raw_data);
 
-        parser(&mut BufReader::new(unsync_data), *std_key, as_ascii_str(&id))
+        parser(&mut BufReader::new(unsync_data), *std_key, &info)
     }
     // The frame body has not been unsynchronised. Wrap the raw data buffer in BufStream without any
     // additional decoding.
     else {
-        parser(&mut BufReader::new(&raw_data), *std_key, as_ascii_str(&id))
+        parser(&mut BufReader::new(&raw_data), *std_key, &info)
     }
 }
 
@@ -636,7 +701,7 @@ pub fn read_id3v2p4_frame<B: ReadBytes + FiniteStream>(reader: &mut B) -> Result
 fn read_text_frame(
     reader: &mut BufReader<'_>,
     std_key: Option<StandardTagKey>,
-    id: &str,
+    info: &FrameInfo<'_>,
 ) -> Result<FrameResult> {
     // The first byte of the frame is the encoding.
     let encoding = match Encoding::parse(reader.read_byte()?) {
@@ -654,9 +719,9 @@ fn read_text_frame(
 
         if len > 0 {
             // Scan for text, and create a Tag.
-            let text = scan_text(reader, encoding, len)?;
+            let text = read_text(reader, encoding, len)?;
 
-            tags.push(Tag::new(std_key, id, Value::from(text)));
+            tags.push(Tag::new(std_key, info.id, Value::from(text)));
         }
         else {
             break;
@@ -670,7 +735,7 @@ fn read_text_frame(
 fn read_txxx_frame(
     reader: &mut BufReader<'_>,
     _: Option<StandardTagKey>,
-    _: &str,
+    _: &FrameInfo<'_>,
 ) -> Result<FrameResult> {
     // The first byte of the frame is the encoding.
     let encoding = match Encoding::parse(reader.read_byte()?) {
@@ -679,11 +744,11 @@ fn read_txxx_frame(
     };
 
     // Read the description string.
-    let desc = scan_text(reader, encoding, reader.bytes_available() as usize)?;
+    let desc = read_text(reader, encoding, reader.bytes_available() as usize)?;
 
     // Some TXXX frames may be mapped to standard keys. Check if a standard key exists for the
     // description.
-    let std_key = TXXX_FRAME_STD_KEYS.get(desc.as_ref()).copied();
+    let std_key = TXXX_FRAME_STD_KEYS.get(desc.as_str()).copied();
 
     // Generate a key name using the description.
     let key = format!("TXXX:{}", desc);
@@ -697,7 +762,7 @@ fn read_txxx_frame(
         let len = reader.bytes_available() as usize;
 
         if len > 0 {
-            let text = scan_text(reader, encoding, len)?;
+            let text = read_text(reader, encoding, len)?;
             tags.push(Tag::new(std_key, &key, Value::from(text)));
         }
         else {
@@ -712,12 +777,12 @@ fn read_txxx_frame(
 fn read_url_frame(
     reader: &mut BufReader<'_>,
     std_key: Option<StandardTagKey>,
-    id: &str,
+    info: &FrameInfo<'_>,
 ) -> Result<FrameResult> {
     // Scan for a ISO-8859-1 URL string.
-    let url = scan_text(reader, Encoding::Iso8859_1, reader.bytes_available() as usize)?;
+    let url = read_text(reader, Encoding::Iso8859_1, reader.bytes_available() as usize)?;
     // Create a Tag.
-    let tag = Tag::new(std_key, id, Value::from(url));
+    let tag = Tag::new(std_key, info.id, Value::from(url));
 
     Ok(FrameResult::Tag(tag))
 }
@@ -726,7 +791,7 @@ fn read_url_frame(
 fn read_wxxx_frame(
     reader: &mut BufReader<'_>,
     std_key: Option<StandardTagKey>,
-    _: &str,
+    _: &FrameInfo<'_>,
 ) -> Result<FrameResult> {
     // The first byte of the WXXX frame is the encoding of the description.
     let encoding = match Encoding::parse(reader.read_byte()?) {
@@ -735,9 +800,9 @@ fn read_wxxx_frame(
     };
 
     // Scan for the the description string.
-    let desc = format!("WXXX:{}", &scan_text(reader, encoding, reader.bytes_available() as usize)?);
+    let desc = format!("WXXX:{}", &read_text(reader, encoding, reader.bytes_available() as usize)?);
     // Scan for a ISO-8859-1 URL string.
-    let url = scan_text(reader, Encoding::Iso8859_1, reader.bytes_available() as usize)?;
+    let url = read_text(reader, Encoding::Iso8859_1, reader.bytes_available() as usize)?;
     // Create a Tag.
     let tag = Tag::new(std_key, &desc, Value::from(url));
 
@@ -748,12 +813,12 @@ fn read_wxxx_frame(
 fn read_priv_frame(
     reader: &mut BufReader<'_>,
     std_key: Option<StandardTagKey>,
-    _: &str,
+    _: &FrameInfo<'_>,
 ) -> Result<FrameResult> {
     // Scan for a ISO-8859-1 owner identifier.
     let owner = format!(
         "PRIV:{}",
-        &scan_text(reader, Encoding::Iso8859_1, reader.bytes_available() as usize)?
+        &read_text(reader, Encoding::Iso8859_1, reader.bytes_available() as usize)?
     );
 
     // The remainder of the frame is binary data.
@@ -769,7 +834,7 @@ fn read_priv_frame(
 fn read_comm_uslt_frame(
     reader: &mut BufReader<'_>,
     std_key: Option<StandardTagKey>,
-    id: &str,
+    info: &FrameInfo<'_>,
 ) -> Result<FrameResult> {
     // The first byte of the frame is the encoding of the description.
     let encoding = match Encoding::parse(reader.read_byte()?) {
@@ -784,18 +849,18 @@ fn read_comm_uslt_frame(
     // ISO-639-2 language codes, we'll just skip the language code if it doesn't validate. Returning
     // an error would break far too many files to be worth it.
     let key = if validate_lang_code(lang) {
-        format!("{}!{}", id, as_ascii_str(&lang))
+        format!("{}!{}", info.id, as_ascii_str(&lang))
     }
     else {
-        id.to_string()
+        info.id.to_string()
     };
 
     // Short text (content description) is next, but since there is no way to represent this in
     // Symphonia, skip it.
-    scan_text(reader, encoding, reader.bytes_available() as usize)?;
+    read_text(reader, encoding, reader.bytes_available() as usize)?;
 
     // Full text (lyrics) is last.
-    let text = scan_text(reader, encoding, reader.bytes_available() as usize)?;
+    let text = read_text(reader, encoding, reader.bytes_available() as usize)?;
 
     // Create the tag.
     let tag = Tag::new(std_key, &key, Value::from(text));
@@ -807,7 +872,7 @@ fn read_comm_uslt_frame(
 fn read_pcnt_frame(
     reader: &mut BufReader<'_>,
     std_key: Option<StandardTagKey>,
-    id: &str,
+    info: &FrameInfo<'_>,
 ) -> Result<FrameResult> {
     let len = reader.byte_len() as usize;
 
@@ -831,7 +896,7 @@ fn read_pcnt_frame(
     let play_count = u64::from_be_bytes(buf);
 
     // Create the tag.
-    let tag = Tag::new(std_key, id, Value::from(play_count));
+    let tag = Tag::new(std_key, info.id, Value::from(play_count));
 
     Ok(FrameResult::Tag(tag))
 }
@@ -840,10 +905,10 @@ fn read_pcnt_frame(
 fn read_popm_frame(
     reader: &mut BufReader<'_>,
     std_key: Option<StandardTagKey>,
-    id: &str,
+    info: &FrameInfo<'_>,
 ) -> Result<FrameResult> {
-    let email = scan_text(reader, Encoding::Iso8859_1, reader.bytes_available() as usize)?;
-    let key = format!("{}:{}", id, &email);
+    let email = read_text(reader, Encoding::Iso8859_1, reader.bytes_available() as usize)?;
+    let key = format!("{}:{}", info.id, &email);
 
     let rating = reader.read_u8()?;
 
@@ -860,13 +925,13 @@ fn read_popm_frame(
 fn read_mcdi_frame(
     reader: &mut BufReader<'_>,
     std_key: Option<StandardTagKey>,
-    id: &str,
+    info: &FrameInfo<'_>,
 ) -> Result<FrameResult> {
     // The entire frame is a binary dump of a CD-DA TOC.
     let buf = reader.read_buf_bytes_ref(reader.byte_len() as usize)?;
 
     // Create the tag.
-    let tag = Tag::new(std_key, id, Value::from(buf));
+    let tag = Tag::new(std_key, info.id, Value::from(buf));
 
     Ok(FrameResult::Tag(tag))
 }
@@ -874,7 +939,7 @@ fn read_mcdi_frame(
 fn read_apic_frame(
     reader: &mut BufReader<'_>,
     _: Option<StandardTagKey>,
-    _: &str,
+    _: &FrameInfo<'_>,
 ) -> Result<FrameResult> {
     // The first byte of the frame is the encoding of the text description.
     let encoding = match Encoding::parse(reader.read_byte()?) {
@@ -883,14 +948,13 @@ fn read_apic_frame(
     };
 
     // ASCII media (MIME) type.
-    let media_type =
-        scan_text(reader, Encoding::Iso8859_1, reader.bytes_available() as usize)?.into_owned();
+    let media_type = read_text(reader, Encoding::Iso8859_1, reader.bytes_available() as usize)?;
 
     // Image usage.
     let usage = util::apic_picture_type_to_visual_key(u32::from(reader.read_u8()?));
 
     // Textual image description.
-    let desc = scan_text(reader, encoding, reader.bytes_available() as usize)?;
+    let desc = read_text(reader, encoding, reader.bytes_available() as usize)?;
 
     let tags = vec![Tag::new(Some(StandardTagKey::Description), "", Value::from(desc))];
 
@@ -909,6 +973,123 @@ fn read_apic_frame(
     };
 
     Ok(FrameResult::Visual(visual))
+}
+
+/// Reads a `CHAP` (chapter) frame.
+fn read_chap_frame(
+    reader: &mut BufReader<'_>,
+    _: Option<StandardTagKey>,
+    info: &FrameInfo<'_>,
+) -> Result<FrameResult> {
+    // Read the element ID.
+    let id = read_text(reader, Encoding::Iso8859_1, reader.bytes_available() as usize)?;
+
+    // Start time in ms.
+    let start_ms = reader.read_be_u32()?;
+    // End time in ms.
+    let end_ms = reader.read_be_u32()?;
+    // Optional start position in bytes.
+    let start_byte = match reader.read_be_u32()? {
+        u32::MAX => None,
+        start_byte => Some(u64::from(start_byte)),
+    };
+    // Optional end position in bytes.
+    let end_byte = match reader.read_be_u32()? {
+        u32::MAX => None,
+        end_byte => Some(u64::from(end_byte)),
+    };
+
+    // Read supplemental tags.
+    let mut tags = vec![];
+    let mut visuals = vec![];
+
+    while reader.bytes_available() >= min_frame_size(info.major_version) {
+        let frame = match info.major_version {
+            2 => read_id3v2p2_frame(reader),
+            3 => read_id3v2p3_frame(reader),
+            4 => read_id3v2p4_frame(reader),
+            _ => break,
+        }?;
+
+        match frame {
+            FrameResult::MultipleTags(tag_list) => tags.extend(tag_list.into_iter()),
+            FrameResult::Tag(tag) => tags.push(tag),
+            FrameResult::Visual(visual) => visuals.push(visual),
+            _ => {}
+        }
+    }
+
+    let chapter = Id3v2Chapter {
+        id,
+        read_order: 0,
+        chapter: Chapter {
+            start_time: Time::from_ms(u64::from(start_ms)),
+            end_time: Some(Time::from_ms(u64::from(end_ms))),
+            start_byte,
+            end_byte,
+            tags,
+            visuals,
+        },
+    };
+
+    Ok(FrameResult::Chapter(chapter))
+}
+
+/// Reads a `CTOC` (table of contents) frame.
+fn read_ctoc_frame(
+    reader: &mut BufReader<'_>,
+    _: Option<StandardTagKey>,
+    info: &FrameInfo<'_>,
+) -> Result<FrameResult> {
+    // Read for the element ID.
+    let id = read_text(reader, Encoding::Iso8859_1, reader.bytes_available() as usize)?;
+
+    // Read the flags.
+    // - Bit 0 is the "ordered" bit. Indicates if the items should be played in order, or
+    //   individually.
+    // - Bit 1 is the "top-level" bit. Indicates if this table of contents is the root.
+    let flags = reader.read_u8()?;
+    // The number of items in this table of contents
+    let entry_count = reader.read_u8()?;
+
+    // Read child item element IDs.
+    let mut items = Vec::with_capacity(usize::from(entry_count));
+
+    for _ in 0..entry_count {
+        let name = read_text(reader, Encoding::Iso8859_1, reader.bytes_available() as usize)?;
+        items.push(name);
+    }
+
+    // Read supplemental tags.
+    let mut tags = Vec::new();
+    let mut visuals = Vec::new();
+
+    while reader.bytes_available() >= min_frame_size(info.major_version) {
+        let frame = match info.major_version {
+            2 => read_id3v2p2_frame(reader),
+            3 => read_id3v2p3_frame(reader),
+            4 => read_id3v2p4_frame(reader),
+            _ => break,
+        }?;
+
+        match frame {
+            FrameResult::MultipleTags(tag_list) => tags.extend(tag_list.into_iter()),
+            FrameResult::Tag(tag) => tags.push(tag),
+            FrameResult::Visual(visual) => visuals.push(visual),
+            _ => {}
+        }
+    }
+
+    let toc = Id3v2TableOfContents {
+        id,
+        top_level: flags & 2 != 0,
+        ordered: flags & 1 != 0,
+        items,
+        tags,
+        visuals,
+    };
+
+    Ok(FrameResult::TableOfContents(toc))
 }
 
 /// Enumeration of valid encodings for text fields in ID3v2 tags
@@ -948,11 +1129,11 @@ impl Encoding {
 /// the scanned string is valid UTF-8, or is equivalent to UTF-8, then no copies will occur. If a
 /// null terminator is not found, and `scan_len` is reached, or the stream is exhausted, all the
 /// scanned bytes up-to that point are interpreted as the string.
-fn scan_text<'a>(
-    reader: &'a mut BufReader<'_>,
+fn read_text(
+    reader: &mut BufReader<'_>,
     encoding: Encoding,
     scan_len: usize,
-) -> io::Result<Cow<'a, str>> {
+) -> io::Result<String> {
     let buf = match encoding {
         Encoding::Iso8859_1 | Encoding::Utf8 => reader.scan_bytes_aligned_ref(&[0x00], 1, scan_len),
         Encoding::Utf16Bom | Encoding::Utf16Be => {
@@ -960,7 +1141,7 @@ fn scan_text<'a>(
         }
     }?;
 
-    Ok(decode_text(encoding, buf))
+    Ok(String::from(decode_text(encoding, buf)))
 }
 
 /// Decodes a slice of bytes containing encoded text into a UTF-8 `str`. Trailing null terminators

@@ -14,8 +14,8 @@ use symphonia_core::formats::probe::{
 use symphonia_core::io::{MediaSourceStream, ReadBytes, ScopedStream};
 use symphonia_core::meta::well_known::METADATA_ID_ID3;
 use symphonia_core::meta::{
-    MetadataBuilder, MetadataInfo, MetadataOptions, MetadataReader, MetadataRevision,
-    StandardTagKey, Tag, Value,
+    MetadataBuffer, MetadataBuilder, MetadataInfo, MetadataOptions, MetadataReader, StandardTagKey,
+    Tag, Value,
 };
 use symphonia_core::support_metadata;
 
@@ -336,10 +336,10 @@ impl MetadataReader for Id3v1Reader<'_> {
         &ID3V1_METADATA_INFO
     }
 
-    fn read_all(&mut self) -> Result<MetadataRevision> {
+    fn read_all(&mut self) -> Result<MetadataBuffer> {
         let mut builder = MetadataBuilder::new();
         read_id3v1(&mut self.reader, &mut builder)?;
-        Ok(builder.metadata())
+        Ok(MetadataBuffer { revision: builder.metadata(), side_data: Vec::new() })
     }
 
     fn into_inner<'s>(self: Box<Self>) -> MediaSourceStream<'s>

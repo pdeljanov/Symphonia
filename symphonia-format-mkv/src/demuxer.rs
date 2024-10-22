@@ -50,7 +50,7 @@ pub struct MkvReader<'s> {
     track_states: HashMap<u32, TrackState>,
     current_cluster: Option<ClusterState>,
     metadata: MetadataLog,
-    cues: Vec<Cue>,
+    chapters: Option<ChapterGroup>,
     frames: VecDeque<Frame>,
     timestamp_scale: u64,
     clusters: Vec<ClusterElement>,
@@ -93,7 +93,7 @@ impl<'s> MkvReader<'s> {
         let mut segment_tracks = None;
         let mut info = None;
         let mut clusters = Vec::new();
-        let mut metadata = opts.metadata.unwrap_or_default();
+        let mut metadata = opts.external_data.metadata.unwrap_or_default();
         let mut current_cluster = None;
 
         let mut seek_positions = Vec::new();
@@ -234,7 +234,7 @@ impl<'s> MkvReader<'s> {
             track_states: states,
             current_cluster,
             metadata,
-            cues: Vec::new(),
+            chapters: opts.external_data.chapters,
             frames: VecDeque::new(),
             timestamp_scale: info.timestamp_scale,
             clusters,
@@ -442,8 +442,8 @@ impl FormatReader for MkvReader<'_> {
         &MKV_FORMAT_INFO
     }
 
-    fn cues(&self) -> &[Cue] {
-        &self.cues
+    fn chapters(&self) -> Option<&ChapterGroup> {
+        self.chapters.as_ref()
     }
 
     fn metadata(&mut self) -> Metadata<'_> {
