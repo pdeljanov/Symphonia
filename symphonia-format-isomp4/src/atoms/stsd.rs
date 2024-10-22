@@ -19,7 +19,9 @@ use symphonia_core::codecs::audio::well_known::{CODEC_ID_PCM_S8, CODEC_ID_PCM_U8
 use symphonia_core::codecs::audio::well_known::{CODEC_ID_PCM_U16BE, CODEC_ID_PCM_U16LE};
 use symphonia_core::codecs::audio::well_known::{CODEC_ID_PCM_U24BE, CODEC_ID_PCM_U24LE};
 use symphonia_core::codecs::audio::well_known::{CODEC_ID_PCM_U32BE, CODEC_ID_PCM_U32LE};
-use symphonia_core::codecs::audio::{AudioCodecId, AudioCodecParameters, CODEC_ID_NULL_AUDIO};
+use symphonia_core::codecs::audio::{
+    AudioCodecId, AudioCodecParameters, VerificationCheck, CODEC_ID_NULL_AUDIO,
+};
 use symphonia_core::codecs::subtitle::well_known::CODEC_ID_MOV_TEXT;
 use symphonia_core::codecs::subtitle::SubtitleCodecParameters;
 use symphonia_core::codecs::video::{VideoCodecId, VideoCodecParameters, VideoExtraData};
@@ -28,12 +30,10 @@ use symphonia_core::errors::{decode_error, unsupported_error, Result};
 use symphonia_core::io::ReadBytes;
 
 use crate::atoms::{
-    AlacAtom, Atom, AtomHeader, AtomType, Dac3Atom, Dec3Atom, EsdsAtom, FlacAtom, OpusAtom,
-    WaveAtom,
+    AlacAtom, Atom, AtomHeader, AtomIterator, AtomType, AvcCAtom, Dac3Atom, Dec3Atom, EsdsAtom,
+    FlacAtom, HvcCAtom, OpusAtom, WaveAtom,
 };
 use crate::fp::FpU16;
-
-use super::{AtomIterator, AvcCAtom, HvcCAtom};
 
 /// Sample description atom.
 #[allow(dead_code)]
@@ -111,110 +111,14 @@ impl StsdAtom {
     pub fn make_codec_params(&self) -> Option<CodecParameters> {
         // Audio sample entry.
         match &self.sample_entry {
-            SampleEntry::Audio(entry) => {
-                let mut codec_params = AudioCodecParameters::new();
-
-                // General audio parameters.
-                codec_params.with_sample_rate(entry.sample_rate as u32);
-
-                // Codec-specific parameters.
-                match entry.codec_specific {
-                    Some(AudioCodecSpecific::Esds(ref esds)) => {
-                        // ESDS is not an audio specific atom. Returns an error if not an audio
-                        // elementary stream.
-                        esds.fill_audio_codec_params(&mut codec_params).ok()?;
-                    }
-                    Some(AudioCodecSpecific::Ac3(ref dac3)) => {
-                        dac3.fill_codec_params(&mut codec_params);
-                    }
-                    Some(AudioCodecSpecific::Alac(ref alac)) => {
-                        alac.fill_codec_params(&mut codec_params);
-                    }
-                    Some(AudioCodecSpecific::Eac3(ref dec3)) => {
-                        dec3.fill_codec_params(&mut codec_params);
-                    }
-                    Some(AudioCodecSpecific::Flac(ref flac)) => {
-                        flac.fill_codec_params(&mut codec_params);
-                    }
-                    Some(AudioCodecSpecific::Opus(ref opus)) => {
-                        opus.fill_codec_params(&mut codec_params);
-                    }
-                    Some(AudioCodecSpecific::Mp3) => {
-                        codec_params.for_codec(CODEC_ID_MP3);
-                    }
-                    Some(AudioCodecSpecific::Pcm(ref pcm)) => {
-                        // PCM codecs.
-                        codec_params
-                            .for_codec(pcm.codec_id)
-                            .with_bits_per_coded_sample(pcm.bits_per_coded_sample)
-                            .with_bits_per_sample(pcm.bits_per_sample)
-                            .with_max_frames_per_packet(pcm.frames_per_packet)
-                            .with_channels(pcm.channels.clone());
-                    }
-                    _ => (),
-                }
-
-                Some(CodecParameters::Audio(codec_params))
-            }
-            SampleEntry::Visual(entry) => {
-                let mut codec_params = VideoCodecParameters {
-                    width: Some(entry.width),
-                    height: Some(entry.height),
-                    codec: entry.codec_id,
-                    extra_data: entry.extra_data.clone(),
-                    ..Default::default()
-                };
-
-                if let Some(profile) = entry.profile {
-                    codec_params.with_profile(profile);
-                }
-                if let Some(level) = entry.level {
-                    codec_params.with_level(level);
-                }
-
-                Some(CodecParameters::Video(codec_params))
-            }
+            SampleEntry::Audio(entry) => Some(CodecParameters::Audio(entry.make_codec_params())),
+            SampleEntry::Visual(entry) => Some(CodecParameters::Video(entry.make_codec_params())),
             SampleEntry::Subtitle(entry) => {
-                let mut codec_params = SubtitleCodecParameters::new();
-
-                if let Some(SubtitleCodecSpecific::TimedText) = entry.codec_specific {
-                    codec_params.for_codec(CODEC_ID_MOV_TEXT);
-                }
-
-                Some(CodecParameters::Subtitle(codec_params))
+                Some(CodecParameters::Subtitle(entry.make_codec_params()))
             }
             _ => None,
         }
     }
-}
-
-#[derive(Debug)]
-pub struct Pcm {
-    pub codec_id: AudioCodecId,
-    pub bits_per_sample: u32,
-    pub bits_per_coded_sample: u32,
-    pub frames_per_packet: u64,
-    pub channels: Channels,
-}
-
-#[derive(Debug)]
-pub enum AudioCodecSpecific {
-    /// MPEG Elementary Stream descriptor.
-    Esds(EsdsAtom),
-    /// Dolby Digital
-    Ac3(Dac3Atom),
-    /// Apple Lossless Audio Codec (ALAC).
-    Alac(AlacAtom),
-    /// Dolby Digital Plus
-    Eac3(Dec3Atom),
-    /// Free Lossless Audio Codec (FLAC).
-    Flac(FlacAtom),
-    /// Opus.
-    Opus(OpusAtom),
-    /// MP3.
-    Mp3,
-    /// PCM codecs.
-    Pcm(Pcm),
 }
 
 /// Generic sample entry.
@@ -230,14 +134,35 @@ pub enum SampleEntry {
 
 /// Audio sample entry.
 #[allow(dead_code)]
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct AudioSampleEntry {
     pub num_channels: u32,
     pub sample_size: u16,
     pub sample_rate: f64,
-    pub codec_specific: Option<AudioCodecSpecific>,
+    pub codec_id: AudioCodecId,
+    pub bits_per_sample: Option<u32>,
+    pub bits_per_coded_sample: Option<u32>,
+    pub frames_per_packet: Option<u64>,
+    pub channels: Option<Channels>,
+    pub verification_check: Option<VerificationCheck>,
+    pub extra_data: Option<Box<[u8]>>,
 }
 
+impl AudioSampleEntry {
+    pub(crate) fn make_codec_params(&self) -> AudioCodecParameters {
+        AudioCodecParameters {
+            codec: self.codec_id,
+            sample_rate: Some(self.sample_rate as u32),
+            bits_per_sample: self.bits_per_sample,
+            bits_per_coded_sample: self.bits_per_coded_sample,
+            channels: self.channels.clone(),
+            max_frames_per_packet: self.frames_per_packet,
+            verification_check: self.verification_check,
+            extra_data: self.extra_data.clone(),
+            ..Default::default()
+        }
+    }
+}
 /// Gets if the sample entry atom is for a PCM codec.
 fn is_pcm_codec(atype: AtomType) -> bool {
     // PCM data in version 0 and 1 is signalled by the sample entry atom type. In version 2, the
@@ -373,45 +298,39 @@ fn read_audio_sample_entry<B: ReadBytes>(
 
     // AudioSampleEntry(V1) portion
 
+    let mut entry = AudioSampleEntry::default();
+
     // The version of the audio sample entry.
     let version = reader.read_be_u16()?;
 
     // Skip revision and vendor.
     reader.ignore_bytes(6)?;
 
-    let mut num_channels = u32::from(reader.read_be_u16()?);
-    let sample_size = reader.read_be_u16()?;
+    entry.num_channels = u32::from(reader.read_be_u16()?);
+    entry.sample_size = reader.read_be_u16()?;
 
     // Skip compression ID and packet size.
     reader.ignore_bytes(4)?;
 
-    let mut sample_rate = f64::from(FpU16::parse_raw(reader.read_be_u32()?));
+    entry.sample_rate = f64::from(FpU16::parse_raw(reader.read_be_u32()?));
 
     let is_pcm_codec = is_pcm_codec(header.atom_type);
 
-    let mut codec_specific = match version {
+    match version {
         0 => {
             // Version 0.
             if is_pcm_codec {
-                let codec_id = pcm_codec_id(header.atom_type);
-                let bits_per_sample = 8 * bytes_per_pcm_sample(codec_id);
+                entry.codec_id = pcm_codec_id(header.atom_type);
+                let bits_per_sample = 8 * bytes_per_pcm_sample(entry.codec_id);
 
                 // Validate the codec-derived bytes-per-sample equals the declared bytes-per-sample.
-                if u32::from(sample_size) != bits_per_sample {
+                if u32::from(entry.sample_size) != bits_per_sample {
                     return decode_error("isomp4: invalid pcm sample size");
                 }
-
-                // The original fields describe the PCM sample format.
-                Some(AudioCodecSpecific::Pcm(Pcm {
-                    codec_id: pcm_codec_id(header.atom_type),
-                    bits_per_sample,
-                    bits_per_coded_sample: bits_per_sample,
-                    frames_per_packet: 1,
-                    channels: pcm_channels(num_channels)?,
-                }))
-            }
-            else {
-                None
+                entry.bits_per_sample = Some(bits_per_sample);
+                entry.bits_per_coded_sample = Some(bits_per_sample);
+                entry.frames_per_packet = Some(1);
+                entry.channels = Some(pcm_channels(entry.num_channels)?);
             }
         }
         1 => {
@@ -432,8 +351,8 @@ fn read_audio_sample_entry<B: ReadBytes>(
             let _ = reader.read_be_u32()?;
 
             if is_pcm_codec {
-                let codec_id = pcm_codec_id(header.atom_type);
-                let codec_bytes_per_sample = bytes_per_pcm_sample(codec_id);
+                entry.codec_id = pcm_codec_id(header.atom_type);
+                let codec_bytes_per_sample = bytes_per_pcm_sample(entry.codec_id);
 
                 // Validate the codec-derived bytes-per-sample equals the declared bytes-per-sample.
                 if bytes_per_audio_sample != codec_bytes_per_sample {
@@ -442,24 +361,18 @@ fn read_audio_sample_entry<B: ReadBytes>(
 
                 // The new fields describe the PCM sample format and supersede the original version
                 // 0 fields.
-                Some(AudioCodecSpecific::Pcm(Pcm {
-                    codec_id,
-                    bits_per_sample: 8 * codec_bytes_per_sample,
-                    bits_per_coded_sample: 8 * codec_bytes_per_sample,
-                    frames_per_packet: 1,
-                    channels: pcm_channels(num_channels)?,
-                }))
-            }
-            else {
-                None
+                entry.bits_per_sample = Some(8 * codec_bytes_per_sample);
+                entry.bits_per_coded_sample = Some(8 * codec_bytes_per_sample);
+                entry.frames_per_packet = Some(1);
+                entry.channels = Some(pcm_channels(entry.num_channels)?);
             }
         }
         2 => {
             // Version 2.
             reader.ignore_bytes(4)?;
 
-            sample_rate = reader.read_be_f64()?;
-            num_channels = reader.read_be_u32()?;
+            entry.sample_rate = reader.read_be_f64()?;
+            entry.num_channels = reader.read_be_u32()?;
 
             if reader.read_be_u32()? != 0x7f00_0000 {
                 return decode_error("isomp4: audio sample entry v2 reserved must be 0x7f00_0000");
@@ -472,21 +385,15 @@ fn read_audio_sample_entry<B: ReadBytes>(
             let lpcm_frames_per_packet = reader.read_be_u32()?;
 
             // This is only valid if this is a PCM codec.
-            let codec_id = lpcm_codec_id(bits_per_sample, lpcm_flags);
+            entry.codec_id = lpcm_codec_id(bits_per_sample, lpcm_flags);
 
-            if is_pcm_codec && codec_id != CODEC_ID_NULL_AUDIO {
+            if is_pcm_codec && entry.codec_id != CODEC_ID_NULL_AUDIO {
                 // Like version 1, the new fields describe the PCM sample format and supersede the
                 // original version 0 fields.
-                Some(AudioCodecSpecific::Pcm(Pcm {
-                    codec_id,
-                    bits_per_sample,
-                    bits_per_coded_sample: bits_per_sample,
-                    frames_per_packet: u64::from(lpcm_frames_per_packet),
-                    channels: lpcm_channels(num_channels)?,
-                }))
-            }
-            else {
-                None
+                entry.bits_per_sample = Some(bits_per_sample);
+                entry.bits_per_coded_sample = Some(bits_per_sample);
+                entry.frames_per_packet = Some(u64::from(lpcm_frames_per_packet));
+                entry.channels = Some(lpcm_channels(entry.num_channels)?);
             }
         }
         _ => {
@@ -499,65 +406,34 @@ fn read_audio_sample_entry<B: ReadBytes>(
     while let Some(entry_header) = iter.next()? {
         match entry_header.atom_type {
             AtomType::Esds => {
-                // MP4A/ESDS codec-specific atom.
-                if header.atom_type != AtomType::AudioSampleEntryMp4a || codec_specific.is_some() {
-                    return decode_error("isomp4: invalid sample entry");
-                }
-
-                codec_specific = Some(AudioCodecSpecific::Esds(iter.read_atom::<EsdsAtom>()?));
+                let atom = iter.read_atom::<EsdsAtom>()?;
+                atom.fill_audio_sample_entry(&mut entry)?;
             }
             AtomType::Ac3Config => {
-                // Ac3 codec-specific atom.
-                if header.atom_type != AtomType::AudioSampleEntryAc3 || codec_specific.is_some() {
-                    return decode_error("isomp4: invalid sample entry");
-                }
-
-                codec_specific = Some(AudioCodecSpecific::Ac3(iter.read_atom::<Dac3Atom>()?));
+                let atom = iter.read_atom::<Dac3Atom>()?;
+                atom.fill_audio_sample_entry(&mut entry);
             }
             AtomType::AudioSampleEntryAlac => {
-                // ALAC codec-specific atom.
-                if header.atom_type != AtomType::AudioSampleEntryAlac || codec_specific.is_some() {
-                    return decode_error("isomp4: invalid sample entry");
-                }
-
-                codec_specific = Some(AudioCodecSpecific::Alac(iter.read_atom::<AlacAtom>()?));
+                let atom = iter.read_atom::<AlacAtom>()?;
+                atom.fill_audio_sample_entry(&mut entry);
             }
             AtomType::Eac3Config => {
-                // Eac3 codec-specific atom.
-                if header.atom_type != AtomType::AudioSampleEntryEc3 || codec_specific.is_some() {
-                    return decode_error("isomp4: invalid sample entry");
-                }
-
-                codec_specific = Some(AudioCodecSpecific::Eac3(iter.read_atom::<Dec3Atom>()?));
+                let atom = iter.read_atom::<Dec3Atom>()?;
+                atom.fill_audio_sample_entry(&mut entry);
             }
             AtomType::FlacDsConfig => {
-                // FLAC codec-specific atom.
-                if header.atom_type != AtomType::AudioSampleEntryFlac || codec_specific.is_some() {
-                    return decode_error("isomp4: invalid sample entry");
-                }
-
-                codec_specific = Some(AudioCodecSpecific::Flac(iter.read_atom::<FlacAtom>()?));
+                let atom = iter.read_atom::<FlacAtom>()?;
+                atom.fill_audio_sample_entry(&mut entry);
             }
             AtomType::OpusDsConfig => {
-                // Opus codec-specific atom.
-                if header.atom_type != AtomType::AudioSampleEntryOpus || codec_specific.is_some() {
-                    return decode_error("isomp4: invalid sample entry");
-                }
-
-                codec_specific = Some(AudioCodecSpecific::Opus(iter.read_atom::<OpusAtom>()?));
+                let atom = iter.read_atom::<OpusAtom>()?;
+                atom.fill_audio_sample_entry(&mut entry);
             }
             AtomType::AudioSampleEntryQtWave => {
                 // The QuickTime WAVE (aka. siDecompressionParam) atom may contain many different
                 // types of sub-atoms to store decoder parameters.
-                let wave = iter.read_atom::<WaveAtom>()?;
-
-                if let Some(esds) = wave.esds {
-                    if codec_specific.is_some() {
-                        return decode_error("isomp4: invalid sample entry");
-                    }
-
-                    codec_specific = Some(AudioCodecSpecific::Esds(esds));
-                }
+                let atom = iter.read_atom::<WaveAtom>()?;
+                atom.fill_audio_sample_entry(&mut entry)?;
             }
             _ => {
                 debug!("unknown audio sample entry sub-atom: {:?}.", entry_header.atom_type());
@@ -567,19 +443,10 @@ fn read_audio_sample_entry<B: ReadBytes>(
 
     // A MP3 sample entry has no codec-specific atom.
     if header.atom_type == AtomType::AudioSampleEntryMp3 {
-        if codec_specific.is_some() {
-            return decode_error("isomp4: invalid sample entry");
-        }
-
-        codec_specific = Some(AudioCodecSpecific::Mp3);
+        entry.codec_id = CODEC_ID_MP3;
     }
 
-    Ok(SampleEntry::Audio(AudioSampleEntry {
-        num_channels,
-        sample_size,
-        sample_rate,
-        codec_specific,
-    }))
+    Ok(SampleEntry::Audio(entry))
 }
 
 /// Visual sample entry.
@@ -597,6 +464,27 @@ pub struct VisualSampleEntry {
     pub profile: Option<CodecProfile>,
     pub level: Option<u32>,
     pub extra_data: Vec<VideoExtraData>,
+}
+
+impl VisualSampleEntry {
+    pub(crate) fn make_codec_params(&self) -> VideoCodecParameters {
+        let mut codec_params = VideoCodecParameters {
+            width: Some(self.width),
+            height: Some(self.height),
+            codec: self.codec_id,
+            extra_data: self.extra_data.clone(),
+            ..Default::default()
+        };
+
+        if let Some(profile) = self.profile {
+            codec_params.with_profile(profile);
+        }
+        if let Some(level) = self.level {
+            codec_params.with_level(level);
+        }
+
+        codec_params
+    }
 }
 
 fn read_visual_sample_entry<B: ReadBytes>(
@@ -684,6 +572,18 @@ pub struct SubtitleSampleEntry {
     btrt: Option<BtrtAtom>,
     txtc: Option<TxtcAtom>,
     codec_specific: Option<SubtitleCodecSpecific>,
+}
+
+impl SubtitleSampleEntry {
+    pub(crate) fn make_codec_params(&self) -> SubtitleCodecParameters {
+        let mut codec_params = SubtitleCodecParameters::new();
+
+        if let Some(SubtitleCodecSpecific::TimedText) = self.codec_specific {
+            codec_params.for_codec(CODEC_ID_MOV_TEXT);
+        }
+
+        codec_params
+    }
 }
 
 fn read_subtitle_sample_entry<B: ReadBytes>(
