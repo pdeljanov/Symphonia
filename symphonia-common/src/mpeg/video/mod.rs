@@ -76,3 +76,37 @@ impl HEVCDecoderConfigurationRecord {
         })
     }
 }
+
+#[derive(Debug, Default)]
+pub struct DOVIDecoderConfigurationRecord {
+    pub dv_version_major: u8,
+    pub dv_version_minor: u8,
+    pub dv_profile: u8,
+    pub dv_level: u8,
+    pub rpu_present_flag: bool,
+    pub el_present_flag: bool,
+    pub bl_present_flag: bool,
+    pub dv_bl_signal_compatibility_id: u8,
+}
+
+impl DOVIDecoderConfigurationRecord {
+    pub fn read(buf: &[u8]) -> Result<Self> {
+        let mut br = BitReaderLtr::new(buf);
+
+        // Parse the DOVIDecoderConfigurationRecord, point 3.2 from
+        // https://professional.dolby.com/siteassets/content-creation/dolby-vision-for-content-creators/dolby_vision_bitstreams_within_the_iso_base_media_file_format_dec2017.pdf
+
+        let config = DOVIDecoderConfigurationRecord {
+            dv_version_major: br.read_bits_leq32(8)? as u8,
+            dv_version_minor: br.read_bits_leq32(8)? as u8,
+            dv_profile: br.read_bits_leq32(7)? as u8,
+            dv_level: br.read_bits_leq32(6)? as u8,
+            rpu_present_flag: br.read_bool()?,
+            el_present_flag: br.read_bool()?,
+            bl_present_flag: br.read_bool()?,
+            dv_bl_signal_compatibility_id: br.read_bits_leq32(4)? as u8,
+        };
+
+        Ok(config)
+    }
+}
