@@ -7,7 +7,9 @@
 
 use symphonia_core::support_format;
 
-use symphonia_core::errors::{decode_error, seek_error, unsupported_error, Result, SeekErrorKind};
+use symphonia_core::errors::{
+    decode_error, seek_error, unsupported_error, Error, Result, SeekErrorKind,
+};
 use symphonia_core::formats::prelude::*;
 use symphonia_core::formats::probe::{ProbeFormatData, ProbeableFormat, Score, Scoreable};
 use symphonia_core::formats::well_known::FORMAT_ID_ISOMP4;
@@ -33,6 +35,8 @@ const ISOMP4_FORMAT_INFO: FormatInfo = FormatInfo {
 pub struct TrackState {
     /// The track number.
     track_num: usize,
+    /// The track ID.
+    track_id: u32,
     /// The current segment.
     cur_seg: usize,
     /// The current sample index relative to the track.
@@ -42,12 +46,8 @@ pub struct TrackState {
 }
 
 impl TrackState {
-    pub fn new(track_num: usize) -> Self {
-        Self { track_num, cur_seg: 0, next_sample: 0, next_sample_pos: 0 }
-    }
-
-    pub fn make_track(&self, trak: &TrakAtom) -> Track {
-        let mut track = Track::new(self.track_num as u32);
+    pub fn make(track_num: usize, trak: &TrakAtom) -> (Self, Track) {
+        let mut track = Track::new(trak.tkhd.id);
 
         // Create the codec parameters using the sample description atom.
         if let Some(codec_params) = trak.mdia.minf.stbl.stsd.make_codec_params() {
@@ -58,7 +58,15 @@ impl TrackState {
             .with_time_base(TimeBase::new(1, trak.mdia.mdhd.timescale))
             .with_num_frames(trak.duration);
 
-        track
+        let state = Self {
+            track_num,
+            track_id: trak.tkhd.id,
+            cur_seg: 0,
+            next_sample: 0,
+            next_sample_pos: 0,
+        };
+
+        (state, track)
     }
 }
 
@@ -67,6 +75,8 @@ impl TrackState {
 struct NextSampleInfo {
     /// The track number of the next sample.
     track_num: usize,
+    /// The track id.
+    track_id: u32,
     /// The timestamp of the next sample.
     ts: u64,
     /// The timestamp expressed in seconds.
@@ -234,15 +244,16 @@ impl<'s> IsoMp4Reader<'s> {
             metadata.push(rev);
         }
 
-        // Instantiate a `TrackState` for each track in the media.
-        let track_states = (0..moov.traks.len()).map(TrackState::new).collect::<Vec<TrackState>>();
+        // Create a track and track state for each Track (trak) atom.
+        let mut tracks = Vec::with_capacity(moov.traks.len());
+        let mut track_states = Vec::with_capacity(moov.traks.len());
 
-        // Instantiate a `Track` for all track states above.
-        let tracks = track_states
-            .iter()
-            .zip(&moov.traks)
-            .map(|(state, trak)| state.make_track(trak))
-            .collect();
+        for (t, trak) in moov.traks.iter().enumerate() {
+            let (track_state, track) = TrackState::make(t, trak);
+
+            tracks.push(track);
+            track_states.push(track_state);
+        }
 
         // The number of tracks specified in the moov atom must match the number in the mvex atom.
         if let Some(mvex) = &moov.mvex {
@@ -282,9 +293,7 @@ impl<'s> IsoMp4Reader<'s> {
                     // Compare the presentation time of the sample from this track to other tracks,
                     // and select the track with the earliest presentation time.
                     match earliest {
-                        Some(NextSampleInfo { track_num: _, ts: _, time, dur: _, seg_idx: _ })
-                            if time <= sample_time =>
-                        {
+                        Some(NextSampleInfo { time, .. }) if time <= sample_time => {
                             // Earliest is less than or equal to the track's next sample
                             // presentation time. No need to update earliest.
                         }
@@ -293,6 +302,7 @@ impl<'s> IsoMp4Reader<'s> {
                             // presentation time. Update earliest.
                             earliest = Some(NextSampleInfo {
                                 track_num: state.track_num,
+                                track_id: state.track_id,
                                 ts: timing.ts,
                                 time: sample_time,
                                 dur: timing.dur,
@@ -410,7 +420,7 @@ impl<'s> IsoMp4Reader<'s> {
     }
 
     fn seek_track_by_ts(&mut self, track_num: usize, ts: u64) -> Result<SeekedTo> {
-        debug!("seeking track={} to frame_ts={}", track_num, ts);
+        debug!("seeking track_num={} to frame_ts={}", track_num, ts);
 
         struct SeekLocation {
             seg_idx: usize,
@@ -461,13 +471,14 @@ impl<'s> IsoMp4Reader<'s> {
             let timing = seg.sample_timing(track_num, seek_loc.sample_num)?.unwrap();
 
             debug!(
-                "seeked track={} to packet_ts={} (delta={})",
+                "seeked track_num={} (track_id={}) to packet_ts={} (delta={})",
                 track_num,
+                track.track_id,
                 timing.ts,
                 timing.ts as i64 - ts as i64
             );
 
-            Ok(SeekedTo { track_id: track_num as u32, required_ts: ts, actual_ts: timing.ts })
+            Ok(SeekedTo { track_id: track.track_id, required_ts: ts, actual_ts: timing.ts })
         }
         else {
             // Timestamp was not found.
@@ -548,7 +559,7 @@ impl FormatReader for IsoMp4Reader<'_> {
         }
 
         Ok(Some(Packet::new_from_boxed_slice(
-            next_sample_info.track_num as u32,
+            next_sample_info.track_id,
             next_sample_info.ts,
             u64::from(next_sample_info.dur),
             reader.read_boxed_slice_exact(sample_info.len as usize)?,
@@ -570,42 +581,50 @@ impl FormatReader for IsoMp4Reader<'_> {
 
         match to {
             SeekTo::TimeStamp { ts, track_id } => {
-                let selected_track_id = track_id as usize;
-
                 // The seek timestamp is in timebase units specific to the selected track. Get the
                 // selected track and use the timebase to convert the timestamp into time units so
                 // that the other tracks can be seeked.
-                if let Some(selected_track) = self.tracks().get(selected_track_id) {
+                if let Some((track_num, track)) =
+                    self.tracks.iter().enumerate().find(|(_, track)| track.id == track_id)
+                {
                     // Convert to time units.
-                    let time = selected_track.time_base.unwrap().calc_time(ts);
+                    let time = track.time_base.unwrap().calc_time(ts);
 
                     // Seek all tracks excluding the primary track to the desired time.
                     for t in 0..self.track_states.len() {
-                        if t != selected_track_id {
+                        if t != track_num {
                             self.seek_track_by_time(t, time)?;
                         }
                     }
 
                     // Seek the primary track and return the result.
-                    self.seek_track_by_ts(selected_track_id, ts)
+                    self.seek_track_by_ts(track_num, ts)
                 }
                 else {
-                    seek_error(SeekErrorKind::Unseekable)
+                    seek_error(SeekErrorKind::InvalidTrack)
                 }
             }
             SeekTo::Time { time, track_id } => {
-                // Select the first track if a selected track was not provided.
-                let selected_track_id = track_id.unwrap_or(0) as usize;
+                // If provided, find the track number of the track with the desired track_id, or
+                // default to the first track.
+                let track_num = match track_id {
+                    Some(id) => self
+                        .tracks
+                        .iter()
+                        .position(|track| track.id == id)
+                        .ok_or(Error::SeekError(SeekErrorKind::InvalidTrack))?,
+                    None => 0,
+                };
 
                 // Seek all tracks excluding the selected track and discard the result.
                 for t in 0..self.track_states.len() {
-                    if t != selected_track_id {
+                    if t != track_num {
                         self.seek_track_by_time(t, time)?;
                     }
                 }
 
                 // Seek the primary track and return the result.
-                self.seek_track_by_time(selected_track_id, time)
+                self.seek_track_by_time(track_num, time)
             }
         }
     }
