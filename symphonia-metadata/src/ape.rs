@@ -7,6 +7,7 @@
 
 //! An APEv1 and APEv2 metadata reader.
 
+use core::str;
 use std::collections::HashMap;
 use std::io::{Seek, SeekFrom};
 
@@ -23,6 +24,8 @@ use symphonia_core::meta::{
 use symphonia_core::support_metadata;
 
 use lazy_static::lazy_static;
+
+use crate::utils::images::{try_get_image_info, ImageInfo};
 
 lazy_static! {
     static ref APE_TAG_MAP: HashMap<&'static str, StandardTagKey> = {
@@ -384,15 +387,18 @@ impl MetadataReader for ApeReader<'_> {
             // data, then consider the tag to be a visual.
             if let Some(std_key) = APE_VISUAL_TAG_MAP.get(key_lower.as_str()).copied() {
                 if let Value::Binary(data) = value {
-                    // TODO: Detect image format, mime-type, dimensions, etc. from the binary data.
+                    let mut tags = vec![];
+
+                    // Try to parse the image data to obtain information about the image. This may
+                    // alter the image buffer if extra information was attached to it.
+                    let (data, image_info) = try_parse_image_data(data, &mut tags);
 
                     builder.add_visual(Visual {
-                        media_type: "".to_string(),
-                        dimensions: None,
-                        bits_per_pixel: None,
-                        color_mode: None,
+                        media_type: image_info.as_ref().map(|info| info.media_type.clone()),
+                        dimensions: image_info.as_ref().map(|info| info.dimensions),
+                        color_mode: image_info.as_ref().map(|info| info.color_mode),
                         usage: Some(std_key),
-                        tags: vec![],
+                        tags,
                         data,
                     });
 
@@ -461,4 +467,43 @@ fn read_utf8_value<B: ReadBytes>(reader: &mut B, len: usize) -> Result<String> {
         Ok(value) => Ok(value),
         Err(_) => decode_error("ape: item value is not utf-8"),
     }
+}
+
+fn try_parse_image_data(buf: Box<[u8]>, tags: &mut Vec<Tag>) -> (Box<[u8]>, Option<ImageInfo>) {
+    // It appears that the buffer stored by some binary tag items start with a null-terminated
+    // filename of unspecified encoding (though UTF-8 seems likely). This is not documented
+    // anywhere. Try to get this filename and strip it from the binary data.
+
+    // Try to detect an image at the start of the data buffer.
+    if let Some(info) = try_get_image_info(&buf) {
+        // Image detected, return the original buffer back with the image information.
+        return (buf, Some(info));
+    }
+
+    // Image information could not be detected. The data buffer may start with a null-terminated
+    // filename. Try to find a null-terminator.
+    if let Some(pos) = buf.iter().position(|&d| d == b'\0') {
+        // Split at the null-terminator.
+        let (left, right) = buf.split_at(pos);
+        // Drop the null-terminator.
+        let right = right.split_first().unwrap().1;
+
+        // Try to detect an image after the null-terminator.
+        if let Some(info) = try_get_image_info(right) {
+            // Try to interpret the bytes preceeding the null-terminator as a UTF-8 encoded filename
+            // and add it to the visual's tags if successful.
+            if let Ok(name) = str::from_utf8(left) {
+                if !name.is_empty() {
+                    tags.push(Tag::new(Some(StandardTagKey::OriginalFile), "", Value::from(name)));
+                }
+            }
+
+            // Image detected, return the cropped buffer with the image information.
+            return (right.into(), Some(info));
+        }
+    }
+
+    // An image could not be detected. The image format may be unsupported, or the buffer contains
+    // something else. Return the original buffer.
+    (buf, None)
 }

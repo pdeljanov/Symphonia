@@ -12,6 +12,7 @@ use symphonia_core::meta::{
 };
 use symphonia_core::meta::{Value, Visual};
 use symphonia_core::util::bits;
+use symphonia_metadata::utils::images::try_get_image_info;
 use symphonia_metadata::{id3v1, itunes};
 
 use crate::atoms::{Atom, AtomHeader, AtomIterator, AtomType};
@@ -364,18 +365,12 @@ fn add_visual_tag<B: ReadBytes>(
 
     // There could be more than one attached image.
     for value in tag.values {
-        let media_type = match value.data_type {
-            DataType::Bmp => "image/bmp",
-            DataType::Jpeg => "image/jpeg",
-            DataType::Png => "image/png",
-            _ => "",
-        };
+        let image_info = try_get_image_info(&value.data);
 
         builder.add_visual(Visual {
-            media_type: media_type.into(),
-            dimensions: None,
-            bits_per_pixel: None,
-            color_mode: None,
+            media_type: image_info.as_ref().map(|info| info.media_type.clone()),
+            dimensions: image_info.as_ref().map(|info| info.dimensions),
+            color_mode: image_info.as_ref().map(|info| info.color_mode),
             usage: Some(StandardVisualKey::FrontCover),
             tags: Default::default(),
             data: value.data,

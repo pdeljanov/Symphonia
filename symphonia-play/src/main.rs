@@ -26,8 +26,8 @@ use symphonia::core::formats::probe::Hint;
 use symphonia::core::formats::{FormatOptions, FormatReader, SeekMode, SeekTo, Track, TrackType};
 use symphonia::core::io::{MediaSource, MediaSourceStream, ReadOnlySource};
 use symphonia::core::meta::{
-    Chapter, ChapterGroup, ChapterGroupItem, ColorMode, MetadataOptions, MetadataRevision, Tag,
-    Visual,
+    Chapter, ChapterGroup, ChapterGroupItem, ColorMode, ColorModel, MetadataOptions,
+    MetadataRevision, Tag, Visual,
 };
 use symphonia::core::units::{Time, TimeBase};
 
@@ -465,12 +465,12 @@ fn do_verification(finalization: FinalizeResult) -> Result<i32> {
 }
 
 fn dump_visual(visual: &Visual, file_name: &OsStr, index: usize) {
-    let extension = match visual.media_type.to_lowercase().as_str() {
-        "image/bmp" => ".bmp",
-        "image/gif" => ".gif",
-        "image/jpeg" => ".jpg",
-        "image/png" => ".png",
-        _ => "",
+    let extension = match visual.media_type.as_ref().map(|m| m.to_lowercase()).as_deref() {
+        Some("image/bmp") => ".bmp",
+        Some("image/gif") => ".gif",
+        Some("image/jpeg") => ".jpg",
+        Some("image/png") => ".png",
+        _ => ".bin",
     };
 
     let mut out_file_name = OsString::from(file_name);
@@ -748,10 +748,11 @@ fn print_visuals(visuals: &[Visual]) {
         for (idx, visual) in visuals.iter().enumerate() {
             if let Some(usage) = visual.usage {
                 print_pair("Usage:", &format!("{:?}", usage), Bullet::Num(idx + 1), 1);
-                print_pair("Media Type:", &visual.media_type, Bullet::None, 1);
             }
-            else {
-                print_pair("Media Type:", &visual.media_type, Bullet::Num(idx + 1), 1);
+            if let Some(media_type) = &visual.media_type {
+                let bullet =
+                    if visual.usage.is_some() { Bullet::None } else { Bullet::Num(idx + 1) };
+                print_pair("Media Type:", media_type, bullet, 1);
             }
             if let Some(dimensions) = visual.dimensions {
                 print_pair(
@@ -761,13 +762,27 @@ fn print_visuals(visuals: &[Visual]) {
                     1,
                 );
             }
-            if let Some(bpp) = visual.bits_per_pixel {
-                print_pair("Bits/Pixel:", &bpp, Bullet::None, 1);
+
+            match visual.color_mode {
+                Some(ColorMode::Direct(model)) => {
+                    print_pair("Color Mode:", &"Direct", Bullet::None, 1);
+                    print_pair("Color Model:", &fmt_color_model(model), Bullet::None, 1);
+                    print_pair("Bits/Pixel:", &model.bits_per_pixel(), Bullet::None, 1);
+                }
+                Some(ColorMode::Indexed(palette)) => {
+                    print_pair("Color Mode:", &"Indexed", Bullet::None, 1);
+                    print_pair("Bits/Pixel:", &palette.bits_per_pixel, Bullet::None, 1);
+                    print_pair(
+                        "Color Model:",
+                        &fmt_color_model(palette.color_model),
+                        Bullet::None,
+                        1,
+                    );
+                }
+                _ => (),
             }
-            if let Some(ColorMode::Indexed(colors)) = visual.color_mode {
-                print_pair("Palette:", &colors, Bullet::None, 1);
-            }
-            print_pair("Size (bytes):", &visual.data.len(), Bullet::None, 1);
+
+            print_pair("Size:", &fmt_size(visual.data.len()), Bullet::None, 1);
 
             // Print out tags similar to how regular tags are printed.
             if !visual.tags.is_empty() {
@@ -915,6 +930,17 @@ fn pad_key(key: &str, pad: usize) -> String {
     }
 }
 
+fn fmt_color_model(model: ColorModel) -> String {
+    match model {
+        ColorModel::Y(b) => format!("Y{b}"),
+        ColorModel::YA(b) => format!("Y{b}A{b}"),
+        ColorModel::RGB(b) => format!("R{b}G{b}B{b}"),
+        ColorModel::RGBA(b) => format!("R{b}G{b}B{b}A{b}"),
+        ColorModel::CMYK(b) => format!("C{b}M{b}Y{b}K{b}"),
+        _ => "*Unknown*".to_string(),
+    }
+}
+
 fn fmt_codec_name(info: Option<&CodecInfo>) -> String {
     match info {
         Some(info) => format!("{} ({})", info.long_name, info.short_name),
@@ -931,6 +957,29 @@ fn fmt_codec_profile(profile: CodecProfile, info: Option<&CodecInfo>) -> String 
     match profile_info {
         Some(info) => format!("{} ({}) [{}]", info.long_name, info.short_name, profile.get()),
         None => format!("{}", profile.get()),
+    }
+}
+
+fn fmt_size(size: usize) -> String {
+    // < 1 KiB
+    if size < 1 << 10 {
+        // Show in Bytes
+        format!("{} B", size)
+    }
+    // < 1 MiB
+    else if size < 1 << 20 {
+        // Show in Kibibytes
+        format!("{:.1} KiB ({} B)", (size as f64) / 1024.0, size)
+    }
+    // < 1 GiB
+    else if size < 1 << 30 {
+        // Show in Mebibytes
+        format!("{:.1} MiB ({} B)", ((size >> 10) as f64) / 1024.0, size)
+    }
+    // >= 1 GiB
+    else {
+        // Show in Gibibytes
+        format!("{:.1} GiB ({} B)", ((size >> 20) as f64) / 1024.0, size)
     }
 }
 

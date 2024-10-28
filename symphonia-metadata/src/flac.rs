@@ -7,12 +7,13 @@
 
 //! Readers for FLAC comment and picture metadata blocks.
 
-use std::num::NonZeroU32;
+use std::num::NonZeroU8;
 
 use symphonia_core::errors::{decode_error, Result};
 use symphonia_core::io::ReadBytes;
-use symphonia_core::meta::{ColorMode, MetadataBuilder, Size, StandardTagKey, Tag, Value, Visual};
+use symphonia_core::meta::{MetadataBuilder, Size, StandardTagKey, Tag, Value, Visual};
 
+use crate::utils::images::try_get_image_info;
 use crate::{id3v2, vorbis};
 
 /// Converts a string of bytes to an ASCII string if all characters are within the printable ASCII
@@ -47,29 +48,36 @@ pub fn read_picture_block<B: ReadBytes>(
     let type_enc = reader.read_be_u32()?;
 
     // Read the Media Type length in bytes.
+    // TODO: Apply a limit.
     let media_type_len = reader.read_be_u32()? as usize;
 
     // Read the Media Type bytes
-    let mut media_type_buf = vec![0u8; media_type_len];
-    reader.read_buf_exact(&mut media_type_buf)?;
+    let media_type_buf = reader.read_boxed_slice_exact(media_type_len)?;
 
     // Convert Media Type bytes to an ASCII string. Non-printable ASCII characters are invalid.
     let media_type = match printable_ascii_to_string(&media_type_buf) {
-        Some(s) => s,
+        Some(s) => {
+            // Return None if the media-type string is empty.
+            Some(s).filter(|s| !s.is_empty())
+        }
         None => return decode_error("meta (flac): picture mime-type contains invalid characters"),
     };
 
+    let mut tags = vec![];
+
     // Read the description length in bytes.
+    // TODO: Apply a limit.
     let desc_len = reader.read_be_u32()? as usize;
 
     // Read the description bytes.
-    let mut desc_buf = vec![0u8; desc_len];
-    reader.read_buf_exact(&mut desc_buf)?;
+    let desc_buf = reader.read_boxed_slice_exact(desc_len)?;
 
+    // Convert to a UTF-8 string.
     let desc = String::from_utf8_lossy(&desc_buf);
 
-    // Convert description bytes into a standard Vorbis DESCRIPTION tag.
-    let tags = vec![Tag::new(Some(StandardTagKey::Description), "DESCRIPTION", Value::from(desc))];
+    if !desc.is_empty() {
+        tags.push(Tag::new(Some(StandardTagKey::Description), "DESCRIPTION", Value::from(desc)));
+    }
 
     // Read the width, and height of the visual.
     let width = reader.read_be_u32()?;
@@ -79,26 +87,27 @@ pub fn read_picture_block<B: ReadBytes>(
     let dimensions = if width > 0 && height > 0 { Some(Size { width, height }) } else { None };
 
     // Read bits-per-pixel of the visual.
-    let bits_per_pixel = NonZeroU32::new(reader.read_be_u32()?);
+    let _bits_per_pixel = NonZeroU8::new(reader.read_be_u32()? as u8);
 
     // Indexed colours is only valid for image formats that use an indexed colour palette. If it is
     // 0, the image does not used indexed colours.
-    let indexed_colours_enc = reader.read_be_u32()?;
+    let _color_mode = reader.read_be_u32()?;
 
-    let color_mode = match indexed_colours_enc {
-        0 => Some(ColorMode::Discrete),
-        _ => Some(ColorMode::Indexed(NonZeroU32::new(indexed_colours_enc).unwrap())),
-    };
-
-    // Read the image data
+    // Read the image data length in bytes.
+    // TODO: Apply a limit.
     let data_len = reader.read_be_u32()? as usize;
+
+    // Read the image data.
     let data = reader.read_boxed_slice_exact(data_len)?;
 
+    // Try to detect the image characteristics from the image data. Detect image characteristics
+    // will be preferred over what's been stated in the picture block.
+    let image_info = try_get_image_info(&data);
+
     metadata.add_visual(Visual {
-        media_type,
-        dimensions,
-        bits_per_pixel,
-        color_mode,
+        media_type: image_info.as_ref().map(|info| info.media_type.clone()).or(media_type),
+        dimensions: image_info.as_ref().map(|info| info.dimensions).or(dimensions),
+        color_mode: image_info.as_ref().map(|info| info.color_mode),
         usage: id3v2::util::apic_picture_type_to_visual_key(type_enc),
         tags,
         data,

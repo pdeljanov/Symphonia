@@ -18,6 +18,8 @@ use lazy_static::lazy_static;
 use log::warn;
 use symphonia_core::units::Time;
 
+use crate::utils::images::try_get_image_info;
+
 use super::unsync::{decode_unsynchronisation, read_syncsafe_leq32};
 use super::util;
 
@@ -939,7 +941,7 @@ fn read_mcdi_frame(
 fn read_apic_frame(
     reader: &mut BufReader<'_>,
     _: Option<StandardTagKey>,
-    _: &FrameInfo<'_>,
+    info: &FrameInfo<'_>,
 ) -> Result<FrameResult> {
     // The first byte of the frame is the encoding of the text description.
     let encoding = match Encoding::parse(reader.read_byte()?) {
@@ -947,26 +949,47 @@ fn read_apic_frame(
         _ => return decode_error("id3v2: invalid text encoding"),
     };
 
-    // ASCII media (MIME) type.
-    let media_type = read_text(reader, Encoding::Iso8859_1, reader.bytes_available() as usize)?;
+    // Image format/media type
+    let media_type = if info.id == "PIC" {
+        // Legacy PIC frames use a 3 character identifier. Only JPG and PNG are well-defined.
+        match &reader.read_triple_bytes()? {
+            b"JPG" => Some("image/jpeg"),
+            b"PNG" => Some("image/png"),
+            b"BMP" => Some("image/bmp"),
+            b"GIF" => Some("image/gif"),
+            _ => None,
+        }
+        .map(|s| s.to_string())
+    }
+    else {
+        // APIC frames use a null-terminated ASCII media-type string.
+        Some(read_text(reader, Encoding::Iso8859_1, reader.bytes_available() as usize)?)
+            .filter(|s| !s.is_empty())
+    };
 
     // Image usage.
     let usage = util::apic_picture_type_to_visual_key(u32::from(reader.read_u8()?));
 
-    // Textual image description.
+    let mut tags = vec![];
+
+    // Null-teriminated image description in specified encoding.
     let desc = read_text(reader, encoding, reader.bytes_available() as usize)?;
 
-    let tags = vec![Tag::new(Some(StandardTagKey::Description), "", Value::from(desc))];
+    if !desc.is_empty() {
+        tags.push(Tag::new(Some(StandardTagKey::Description), "", Value::from(desc)));
+    }
 
     // The remainder of the APIC frame is the image data.
     // TODO: Apply a limit.
     let data = Box::from(reader.read_buf_bytes_available_ref());
 
+    // Try to get information about the image.
+    let image_info = try_get_image_info(&data);
+
     let visual = Visual {
-        media_type,
-        dimensions: None,
-        bits_per_pixel: None,
-        color_mode: None,
+        media_type: image_info.as_ref().map(|info| info.media_type.clone()).or(media_type),
+        dimensions: image_info.as_ref().map(|info| info.dimensions),
+        color_mode: image_info.as_ref().map(|info| info.color_mode),
         usage,
         tags,
         data,

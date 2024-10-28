@@ -20,4 +20,5 @@ pub mod id3v1;
 pub mod id3v2;
 pub mod itunes;
 pub mod riff;
+pub mod utils;
 pub mod vorbis;

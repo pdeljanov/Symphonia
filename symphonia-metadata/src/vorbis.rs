@@ -14,9 +14,10 @@ use log::warn;
 
 use symphonia_core::errors::Result;
 use symphonia_core::io::{BufReader, ReadBytes};
-use symphonia_core::meta::{MetadataBuilder, StandardTagKey, Tag, Value};
+use symphonia_core::meta::{MetadataBuilder, StandardTagKey, Tag, Value, Visual};
 
 use crate::flac;
+use crate::utils::images::try_get_image_info;
 
 lazy_static! {
     static ref VORBIS_COMMENT_MAP: HashMap<&'static str, StandardTagKey> = {
@@ -127,6 +128,27 @@ fn parse_base64_picture_block(encoded: &str, metadata: &mut MetadataBuilder) {
     }
 }
 
+fn parse_base64_cover_art(encoded: &str, metadata: &mut MetadataBuilder) {
+    if let Some(data) = base64_decode(encoded) {
+        if let Some(image_info) = try_get_image_info(&data) {
+            metadata.add_visual(Visual {
+                media_type: Some(image_info.media_type),
+                dimensions: Some(image_info.dimensions),
+                color_mode: Some(image_info.color_mode),
+                usage: None,
+                tags: vec![],
+                data,
+            });
+        }
+        else {
+            warn!("could not detect cover art image format")
+        }
+    }
+    else {
+        warn!("the base64 encoding of cover art is invalid");
+    }
+}
+
 /// Parse the given Vorbis Comment string into a `Tag`.
 fn parse_comment(tag: &str, metadata: &mut MetadataBuilder) {
     // Vorbis Comments (aka tags) are stored as <key>=<value> where <key> is
@@ -140,10 +162,14 @@ fn parse_comment(tag: &str, metadata: &mut MetadataBuilder) {
         let key_lower = key.to_lowercase();
 
         // A comment with a key "METADATA_BLOCK_PICTURE" is a FLAC picture block encoded in base64.
-        // Attempt to decode it as such. If this fails in any way, treat the comment as a regular
-        // tag.
+        // Attempt to decode it as such.
         if key_lower == "metadata_block_picture" {
             parse_base64_picture_block(value, metadata);
+        }
+        else if key_lower == "coverart" {
+            // A comment with a key "COVERART" is a base64 encoded image. Attempt to decode it as
+            // such.
+            parse_base64_cover_art(value, metadata);
         }
         else {
             // Attempt to assign a standardized tag key.

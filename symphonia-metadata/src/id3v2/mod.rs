@@ -549,6 +549,7 @@ pub mod util {
     /// Try to get a `StandardVisualKey` from the APIC picture type identifier.
     pub fn apic_picture_type_to_visual_key(apic: u32) -> Option<StandardVisualKey> {
         match apic {
+            0x00 => Some(StandardVisualKey::Other),
             0x01 => Some(StandardVisualKey::FileIcon),
             0x02 => Some(StandardVisualKey::OtherIcon),
             0x03 => Some(StandardVisualKey::FrontCover),

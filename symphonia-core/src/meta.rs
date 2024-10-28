@@ -11,7 +11,7 @@ use std::borrow::Cow;
 use std::collections::VecDeque;
 use std::convert::From;
 use std::fmt;
-use std::num::NonZeroU32;
+use std::num::NonZeroU8;
 
 use crate::common::FourCc;
 use crate::errors::Result;
@@ -401,32 +401,72 @@ pub struct Size {
     pub height: u32,
 }
 
-/// `ColorMode` indicates how the color of a pixel is encoded in a `Visual`.
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+/// A color model describes how a color is represented.
+#[non_exhaustive]
+pub enum ColorModel {
+    /// Grayscale (1 channel: `Y`), of the indicated bit depth.
+    Y(NonZeroU8),
+    /// Grayscale with alpha (2 channels: `Y`, `A`), of the indicated bit depth.
+    YA(NonZeroU8),
+    /// RGB (3 channels: `R`,`G`,`B`), of the indicated bit depth.
+    RGB(NonZeroU8),
+    /// RGBA (4 channels: `R`,`G`,`B`,`A`), of the indicated bit depth.
+    RGBA(NonZeroU8),
+    /// CMYK (4 channels: `C`,`M`,`Y`,`K`), of the indicated bit depth.
+    CMYK(NonZeroU8),
+}
+
+impl ColorModel {
+    /// Gets the bits/pixel.
+    pub fn bits_per_pixel(&self) -> u32 {
+        match self {
+            ColorModel::Y(bits) => u32::from(bits.get()),
+            ColorModel::YA(bits) => 2 * u32::from(bits.get()),
+            ColorModel::RGB(bits) => 3 * u32::from(bits.get()),
+            ColorModel::RGBA(bits) => 4 * u32::from(bits.get()),
+            ColorModel::CMYK(bits) => 4 * u32::from(bits.get()),
+        }
+    }
+
+    /// Returns if the color model contains an alpha channel.
+    pub fn has_alpha_channel(&self) -> bool {
+        matches!(self, ColorModel::YA(_) | ColorModel::RGBA(_))
+    }
+}
+
+/// A description of the color palette for indexed color mode.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct ColorPaletteInfo {
+    /// The number of bits per pixel used to index the palette.
+    pub bits_per_pixel: NonZeroU8,
+    /// The color model of the entries in the palette.
+    pub color_model: ColorModel,
+}
+
+/// Indicates how colors are represented in the image.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum ColorMode {
-    /// Each pixel in the `Visual` stores its own color information.
-    Discrete,
-    /// Each pixel in the `Visual` stores an index into a color palette containing the color
-    /// information. The value stored by this variant indicates the number of colors in the color
-    /// palette.
-    Indexed(NonZeroU32),
+    /// Direct colour mode. Each pixel in the image stores the value of each color model primary.
+    ///
+    /// For example, in the RGB color model, each pixel will store a value for the red, green, and
+    /// blue color primaries.
+    Direct(ColorModel),
+    /// Indexed colour mode. Each pixel in the image stores an index into a color map (the palette)
+    /// that stores the actual color.
+    Indexed(ColorPaletteInfo),
 }
 
 /// A `Visual` is any 2 dimensional graphic.
 #[derive(Clone, Debug)]
 pub struct Visual {
     /// The Media Type (MIME Type) used to encode the `Visual`.
-    pub media_type: String,
+    pub media_type: Option<String>,
     /// The dimensions of the `Visual`.
     ///
     /// Note: This value may not be accurate as it comes from metadata, not the embedded graphic
     /// itself. Consider it only a hint.
     pub dimensions: Option<Size>,
-    /// The number of bits-per-pixel (aka bit-depth) of the unencoded image.
-    ///
-    /// Note: This value may not be accurate as it comes from metadata, not the embedded graphic
-    /// itself. Consider it only a hint.
-    pub bits_per_pixel: Option<NonZeroU32>,
     /// The color mode of the `Visual`.
     ///
     /// Note: This value may not be accurate as it comes from metadata, not the embedded graphic
