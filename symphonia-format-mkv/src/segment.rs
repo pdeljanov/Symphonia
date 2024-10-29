@@ -5,13 +5,15 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+use std::sync::Arc;
+
 use symphonia_core::codecs::video::well_known::extra_data::{
     VIDEO_EXTRA_DATA_ID_DOLBY_VISION_CONFIG, VIDEO_EXTRA_DATA_ID_DOLBY_VISION_EL_HEVC,
 };
 use symphonia_core::codecs::video::VideoExtraData;
 use symphonia_core::errors::{Error, Result};
 use symphonia_core::io::{BufReader, ReadBytes};
-use symphonia_core::meta::{MetadataBuilder, MetadataRevision, Tag, Value};
+use symphonia_core::meta::{MetadataBuilder, MetadataRevision, RawTag, RawValue, Tag};
 
 use crate::ebml::{read_unsigned_vint, Element, ElementData, ElementHeader};
 use crate::element_ids::ElementType;
@@ -634,22 +636,19 @@ impl Element for TagsElement {
 
 impl TagsElement {
     pub(crate) fn to_metadata(&self) -> MetadataRevision {
-        let mut metadata = MetadataBuilder::new();
+        let mut builder = MetadataBuilder::new();
         for tag in self.tags.iter() {
             for simple_tag in tag.simple_tags.iter() {
                 // TODO: support std_key
-                metadata.add_tag(Tag::new(
-                    None,
-                    &simple_tag.name,
-                    match &simple_tag.value {
-                        ElementData::Binary(b) => Value::Binary(b.clone()),
-                        ElementData::String(s) => Value::String(s.clone()),
-                        _ => unreachable!(),
-                    },
-                ));
+                let value = match &simple_tag.value {
+                    ElementData::Binary(b) => RawValue::Binary(Arc::new(b.clone())),
+                    ElementData::String(s) => RawValue::String(Arc::new(s.clone())),
+                    _ => unreachable!(),
+                };
+                builder.add_tag(Tag::new(RawTag::new(simple_tag.name.as_ref(), value)));
             }
         }
-        metadata.metadata()
+        builder.metadata()
     }
 }
 

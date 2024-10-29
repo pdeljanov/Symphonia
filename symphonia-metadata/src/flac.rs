@@ -8,10 +8,11 @@
 //! Readers for FLAC comment and picture metadata blocks.
 
 use std::num::NonZeroU8;
+use std::sync::Arc;
 
 use symphonia_core::errors::{decode_error, Result};
 use symphonia_core::io::ReadBytes;
-use symphonia_core::meta::{MetadataBuilder, Size, StandardTagKey, Tag, Value, Visual};
+use symphonia_core::meta::{MetadataBuilder, Size, StandardTag, Tag, Visual};
 
 use crate::utils::images::try_get_image_info;
 use crate::{id3v2, vorbis};
@@ -43,7 +44,7 @@ pub fn read_comment_block<B: ReadBytes>(
 /// Read a picture metadata block.
 pub fn read_picture_block<B: ReadBytes>(
     reader: &mut B,
-    metadata: &mut MetadataBuilder,
+    builder: &mut MetadataBuilder,
 ) -> Result<()> {
     let type_enc = reader.read_be_u32()?;
 
@@ -76,7 +77,11 @@ pub fn read_picture_block<B: ReadBytes>(
     let desc = String::from_utf8_lossy(&desc_buf);
 
     if !desc.is_empty() {
-        tags.push(Tag::new(Some(StandardTagKey::Description), "DESCRIPTION", Value::from(desc)));
+        let desc = Arc::new(desc.into_owned());
+        let tag =
+            Tag::new_from_parts("DESCRIPTION", desc.clone(), Some(StandardTag::Description(desc)));
+
+        tags.push(tag);
     }
 
     // Read the width, and height of the visual.
@@ -104,7 +109,7 @@ pub fn read_picture_block<B: ReadBytes>(
     // will be preferred over what's been stated in the picture block.
     let image_info = try_get_image_info(&data);
 
-    metadata.add_visual(Visual {
+    builder.add_visual(Visual {
         media_type: image_info.as_ref().map(|info| info.media_type.clone()).or(media_type),
         dimensions: image_info.as_ref().map(|info| info.dimensions).or(dimensions),
         color_mode: image_info.as_ref().map(|info| info.color_mode),

@@ -7,63 +7,69 @@
 
 //! A RIFF INFO metadata reader.
 
-use lazy_static::lazy_static;
 use std::collections::HashMap;
-use symphonia_core::meta::{StandardTagKey, Tag, Value};
+
+use lazy_static::lazy_static;
+
+use symphonia_core::errors::Result;
+use symphonia_core::meta::{MetadataBuilder, RawTag};
+
+use crate::utils::std_tag::*;
 
 lazy_static! {
-    static ref RIFF_INFO_MAP: HashMap<&'static str, StandardTagKey> = {
-        let mut m = HashMap::new();
-        m.insert("ages", StandardTagKey::Rating);
-        m.insert("cmnt", StandardTagKey::Comment);
+    static ref RIFF_INFO_MAP: RawTagParserMap = {
+        let mut m: RawTagParserMap = HashMap::new();
+        m.insert("ages", parse_rating);
+        m.insert("cmnt", parse_comment);
         // Is this the same as a cmnt?
-        m.insert("comm", StandardTagKey::Comment);
-        m.insert("dtim", StandardTagKey::OriginalDate);
-        m.insert("genr", StandardTagKey::Genre);
-        m.insert("iart", StandardTagKey::Artist);
+        m.insert("comm", parse_comment);
+        m.insert("dtim", parse_original_date);
+        m.insert("genr", parse_genre);
+        m.insert("iart", parse_artist);
         // Is this also  the same as cmnt?
-        m.insert("icmt", StandardTagKey::Comment);
-        m.insert("icop", StandardTagKey::Copyright);
-        m.insert("icrd", StandardTagKey::Date);
-        m.insert("idit", StandardTagKey::OriginalDate);
-        m.insert("ienc", StandardTagKey::EncodedBy);
-        m.insert("ieng", StandardTagKey::Engineer);
-        m.insert("ifrm", StandardTagKey::TrackTotal);
-        m.insert("ignr", StandardTagKey::Genre);
-        m.insert("ilng", StandardTagKey::Language);
-        m.insert("imus", StandardTagKey::Composer);
-        m.insert("inam", StandardTagKey::TrackTitle);
-        m.insert("iprd", StandardTagKey::Album);
-        m.insert("ipro", StandardTagKey::Producer);
-        m.insert("iprt", StandardTagKey::TrackNumber);
-        m.insert("irtd", StandardTagKey::Rating);
-        m.insert("isft", StandardTagKey::Encoder);
-        m.insert("isgn", StandardTagKey::Genre);
-        m.insert("isrf", StandardTagKey::MediaFormat);
-        m.insert("itch", StandardTagKey::EncodedBy);
-        m.insert("iwri", StandardTagKey::Writer);
-        m.insert("lang", StandardTagKey::Language);
-        m.insert("prt1", StandardTagKey::TrackNumber);
-        m.insert("prt2", StandardTagKey::TrackTotal);
+        m.insert("icmt", parse_comment);
+        m.insert("icop", parse_copyright);
+        m.insert("icrd", parse_date);
+        m.insert("idit", parse_original_date);
+        m.insert("ienc", parse_encoded_by);
+        m.insert("ieng", parse_engineer);
+        m.insert("ifrm", parse_track_total);
+        m.insert("ignr", parse_genre);
+        m.insert("ilng", parse_language);
+        m.insert("imus", parse_composer);
+        m.insert("inam", parse_track_title);
+        m.insert("iprd", parse_album);
+        m.insert("ipro", parse_producer);
+        m.insert("iprt", parse_track_number_exclusive);
+        m.insert("irtd", parse_rating);
+        m.insert("isft", parse_encoder);
+        m.insert("isgn", parse_genre);
+        m.insert("isrf", parse_media_format);
+        m.insert("itch", parse_encoded_by);
+        m.insert("itrk", parse_track_number_exclusive);
+        m.insert("iwri", parse_writer);
+        m.insert("lang", parse_language);
+        m.insert("prt1", parse_part_number_exclusive);
+        m.insert("prt2", parse_part_total);
         // Same as inam?
-        m.insert("titl", StandardTagKey::TrackTitle);
-        m.insert("torg", StandardTagKey::Label);
-        m.insert("trck", StandardTagKey::TrackNumber);
-        m.insert("tver", StandardTagKey::Version);
-        m.insert("year", StandardTagKey::Date);
+        m.insert("titl", parse_track_title);
+        m.insert("torg", parse_label);
+        m.insert("trck", parse_track_number_exclusive);
+        m.insert("tver", parse_version);
+        m.insert("year", parse_date);
         m
     };
 }
 
 /// Parse the RIFF INFO block into a `Tag` using the block's identifier tag and a slice
 /// containing the block's contents.
-pub fn parse(tag: [u8; 4], buf: &[u8]) -> Tag {
+pub fn read_riff_info_block(tag: [u8; 4], buf: &[u8], builder: &mut MetadataBuilder) -> Result<()> {
     // TODO: Key should be checked that it only contains ASCII characters.
     let key = String::from_utf8_lossy(&tag);
     let value = String::from_utf8_lossy(buf);
 
-    // Attempt to assign a standardized tag key.
-    let std_tag = RIFF_INFO_MAP.get(key.to_lowercase().as_str()).copied();
+    let raw = RawTag::new(key, value);
 
-    Tag::new(std_tag, &key, Value::from(value))
+    builder.add_mapped_tags(raw, &RIFF_INFO_MAP);
+    Ok(())
 }

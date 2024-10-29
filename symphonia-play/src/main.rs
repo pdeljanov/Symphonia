@@ -27,7 +27,7 @@ use symphonia::core::formats::{FormatOptions, FormatReader, SeekMode, SeekTo, Tr
 use symphonia::core::io::{MediaSource, MediaSourceStream, ReadOnlySource};
 use symphonia::core::meta::{
     Chapter, ChapterGroup, ChapterGroupItem, ColorMode, ColorModel, MetadataOptions,
-    MetadataRevision, Tag, Visual,
+    MetadataRevision, StandardTag, Tag, Visual,
 };
 use symphonia::core::units::{Time, TimeBase};
 
@@ -681,8 +681,7 @@ fn print_chapters(chapters: Option<&ChapterGroup>) {
                 let pad = optimal_tag_key_pad(&chap.tags, MIN_PAD - 5, MAX_PAD);
 
                 for (i, tag) in chap.tags.iter().enumerate() {
-                    let key = fmt_tag_key(tag);
-                    print_pair_custom(&key, &tag.value, Bullet::Num(i + 1), pad, depth + 1);
+                    print_tag(tag, Bullet::Num(i + 1), pad, depth + 1);
                 }
             }
         }
@@ -696,8 +695,7 @@ fn print_chapters(chapters: Option<&ChapterGroup>) {
                 let pad = optimal_tag_key_pad(&group.tags, MIN_PAD - 5, MAX_PAD);
 
                 for (i, tag) in group.tags.iter().enumerate() {
-                    let key = fmt_tag_key(tag);
-                    print_pair_custom(&key, &tag.value, Bullet::Num(i + 1), pad, depth + 1);
+                    print_tag(tag, Bullet::Num(i + 1), pad, depth + 1);
                 }
             }
 
@@ -705,7 +703,7 @@ fn print_chapters(chapters: Option<&ChapterGroup>) {
             print_one("Items:", Bullet::None, depth);
             for (i, item) in group.items.iter().enumerate() {
                 match item {
-                    ChapterGroupItem::Group(group) => print_chapter_group(group, i, depth + 1),
+                    ChapterGroupItem::Group(group) => print_chapter_group(group, i + 1, depth + 1),
                     ChapterGroupItem::Chapter(chap) => print_chapter(chap, i + 1, depth + 1),
                 }
             }
@@ -727,15 +725,28 @@ fn print_tags(tags: &[Tag]) {
         let pad = optimal_tag_key_pad(tags, MIN_PAD, MAX_PAD);
 
         // Print tags with a standard tag key first, these are the most common tags.
-        for tag in tags.iter().filter(|tag| tag.is_known()) {
-            print_pair_custom(&fmt_tag_key(tag), &tag.value, Bullet::Num(idx), pad, 1);
+        for tag in tags.iter().filter(|tag| tag.has_std_tag()) {
+            print_tag(tag, Bullet::Num(idx), pad, 1);
             idx += 1;
         }
 
         // Print the remaining tags with keys truncated to 26 characters.
-        for tag in tags.iter().filter(|tag| !tag.is_known()) {
-            print_pair_custom(&fmt_tag_key(tag), &tag.value, Bullet::Num(idx), pad, 1);
+        for tag in tags.iter().filter(|tag| !tag.has_std_tag()) {
+            print_tag(tag, Bullet::Num(idx), pad, 1);
             idx += 1;
+        }
+    }
+}
+
+fn print_tag(tag: &Tag, bullet: Bullet, pad: usize, depth: usize) {
+    let formatted = fmt_tag(tag);
+    print_pair_custom(&formatted.key, &formatted.value, bullet, pad, depth);
+
+    // Sub-fields.
+    if let Some(fields) = &tag.raw.sub_fields {
+        print_one("Sub-fields:", Bullet::None, depth);
+        for (i, sub_field) in fields.iter().enumerate() {
+            print_pair(&sub_field.field, &sub_field.value, Bullet::Num(i + 1), depth + 1);
         }
     }
 }
@@ -791,7 +802,7 @@ fn print_visuals(visuals: &[Visual]) {
                 let pad = optimal_tag_key_pad(&visual.tags, MIN_PAD - 5, MAX_PAD);
 
                 for (tidx, tag) in visual.tags.iter().enumerate() {
-                    print_pair_custom(&fmt_tag_key(tag), &tag.value, Bullet::Num(tidx + 1), pad, 2);
+                    print_tag(tag, Bullet::Num(tidx + 1), pad, 2);
                 }
             }
         }
@@ -830,17 +841,14 @@ fn print_one(value: &str, bullet: Bullet, depth: usize) {
 /// Print a key-value pair as a plain, numbered, or bulleted list item in a hierarchical list.
 ///
 /// The key padding may be customized with `pad`.
-fn print_pair_custom<T>(key: &str, value: &T, bullet: Bullet, pad: usize, depth: usize)
-where
-    T: std::fmt::Display,
-{
+fn print_pair_custom(key: &str, value: &str, bullet: Bullet, pad: usize, depth: usize) {
     let indent = 5 * depth;
     let key = pad_key(key, pad);
 
     // The format is: "|<INDENT><BULLET> <KEY> "
     print!("|{:indent$}{} {} ", "", bullet, key);
 
-    print_pair_value(&value.to_string(), indent + key.len() + 4 + 2);
+    print_pair_value(value, indent + key.len() + 4 + 2);
 }
 
 /// Print a key-value pair as a plain, numbered, or bulleted list item in a hierarchical list with
@@ -849,7 +857,7 @@ fn print_pair<T>(key: &str, value: &T, bullet: Bullet, depth: usize)
 where
     T: std::fmt::Display,
 {
-    print_pair_custom(key, value, bullet, MIN_PAD, depth)
+    print_pair_custom(key, &value.to_string(), bullet, MIN_PAD, depth)
 }
 
 #[inline(never)]
@@ -857,8 +865,9 @@ fn print_pair_value(value: &str, lead: usize) {
     if !value.is_empty() {
         // Print multi-line values with wrapping.
         //
-        // TODO: lines() does not split on carriage returns ('\r') if a line feed ('\n') does not
-        // follow. These orphan carriage returns break the output unfortunately.
+        // NOTE: lines() does not split on orphan carriage returns ('\r') if a line feed ('\n') does
+        // not follow. These orphan carriage returns will break the output and thus will be filtered
+        // out.
         for (i, line) in value.lines().enumerate() {
             let mut chars = line.chars();
 
@@ -868,6 +877,7 @@ fn print_pair_value(value: &str, lead: usize) {
                     // wrapping at 80 charaters.
                     chars
                         .by_ref()
+                        .filter(|&c| c != '\r')
                         .enumerate()
                         .take_while(|(i, c)| *i <= 60 || *i <= 80 && !c.is_whitespace())
                         .map(|(_, c)| c)
@@ -906,17 +916,7 @@ fn print_blank() {
 
 /// Calculate the appropriate length for tag key padding.
 fn optimal_tag_key_pad(tags: &[Tag], min: usize, max: usize) -> usize {
-    tags.iter().map(|tag| fmt_tag_key(tag).chars().count()).max().unwrap_or(min).clamp(min, max)
-}
-
-// Format a tag's key.
-fn fmt_tag_key(tag: &Tag) -> Cow<'_, str> {
-    if let Some(std_key) = tag.std_key {
-        Cow::Owned(format!("{:?}", std_key))
-    }
-    else {
-        Cow::Borrowed(&tag.key)
-    }
+    tags.iter().map(|tag| fmt_tag(tag).key.chars().count()).max().unwrap_or(min).clamp(min, max)
 }
 
 /// Pad a key.
@@ -1050,4 +1050,213 @@ fn print_progress(ts: u64, dur: Option<u64>, tb: Option<TimeBase>) {
 
     // Flush immediately since stdout is buffered.
     output.flush().unwrap();
+}
+
+struct FormattedTag<'a> {
+    key: Cow<'a, str>,
+    value: Cow<'a, str>,
+}
+
+impl<'a> FormattedTag<'a> {
+    fn new<V>(key: &'a str, value: V) -> Self
+    where
+        V: Into<Cow<'a, str>>,
+    {
+        FormattedTag { key: Cow::from(key), value: value.into() }
+    }
+}
+
+fn fmt_tag(tag: &Tag) -> FormattedTag<'_> {
+    match &tag.std {
+        Some(StandardTag::AccurateRipCount(v)) => FormattedTag::new("AccurateRip Count", &**v),
+        Some(StandardTag::AccurateRipCountAllOffsets(v)) => {
+            FormattedTag::new("AccurateRip Count All Offsets", &**v)
+        }
+        Some(StandardTag::AccurateRipCountWithOffset(v)) => {
+            FormattedTag::new("AccurateRip Count With Offset", &**v)
+        }
+        Some(StandardTag::AccurateRipCrc(v)) => FormattedTag::new("AccurateRip CRC", &**v),
+        Some(StandardTag::AccurateRipDiscId(v)) => FormattedTag::new("AccurateRip Disc ID", &**v),
+        Some(StandardTag::AccurateRipId(v)) => FormattedTag::new("AccurateRip ID", &**v),
+        Some(StandardTag::AccurateRipOffset(v)) => FormattedTag::new("AccurateRip Offset", &**v),
+        Some(StandardTag::AccurateRipResult(v)) => FormattedTag::new("AccurateRip Result", &**v),
+        Some(StandardTag::AccurateRipTotal(v)) => FormattedTag::new("AccurateRip Total", &**v),
+        Some(StandardTag::AcoustIdFingerprint(v)) => {
+            FormattedTag::new("AcoustId Fingerprint", &**v)
+        }
+        Some(StandardTag::AcoustIdId(v)) => FormattedTag::new("AcoustId ID", &**v),
+        Some(StandardTag::Album(v)) => FormattedTag::new("Album", &**v),
+        Some(StandardTag::AlbumArtist(v)) => FormattedTag::new("Album Artist", &**v),
+        Some(StandardTag::Arranger(v)) => FormattedTag::new("Arranger", &**v),
+        Some(StandardTag::Artist(v)) => FormattedTag::new("Artist", &**v),
+        Some(StandardTag::Bpm(v)) => FormattedTag::new("BPM", v.to_string()),
+        Some(StandardTag::CdToc(v)) => FormattedTag::new("CD Table of Contents", &**v),
+        Some(StandardTag::Comment(v)) => FormattedTag::new("Comment", &**v),
+        Some(StandardTag::Compilation) => FormattedTag::new("Is Compilation", "<Yes>"),
+        Some(StandardTag::Composer(v)) => FormattedTag::new("Composer", &**v),
+        Some(StandardTag::Conductor(v)) => FormattedTag::new("Conductor", &**v),
+        Some(StandardTag::Copyright(v)) => FormattedTag::new("Copyright", &**v),
+        Some(StandardTag::CueToolsDbDiscConfidence(v)) => {
+            FormattedTag::new("CueTools DB Disc Confidence", &**v)
+        }
+        Some(StandardTag::CueToolsDbTrackConfidence(v)) => {
+            FormattedTag::new("CueTools DB Track Confidence", &**v)
+        }
+        Some(StandardTag::Date(v)) => FormattedTag::new("Date", &**v),
+        Some(StandardTag::Description(v)) => FormattedTag::new("Description", &**v),
+        Some(StandardTag::DiscNumber(v)) => FormattedTag::new("Disc Number", v.to_string()),
+        Some(StandardTag::DiscSubtitle(v)) => FormattedTag::new("Disc Subtitle", &**v),
+        Some(StandardTag::DiscTotal(v)) => FormattedTag::new("Disc Total", v.to_string()),
+        Some(StandardTag::EncodedBy(v)) => FormattedTag::new("Encoded By", &**v),
+        Some(StandardTag::Encoder(v)) => FormattedTag::new("Encoder", &**v),
+        Some(StandardTag::EncoderSettings(v)) => FormattedTag::new("Encoder Settings", &**v),
+        Some(StandardTag::EncodingDate(v)) => FormattedTag::new("Encoding Date", &**v),
+        Some(StandardTag::Engineer(v)) => FormattedTag::new("Engineer", &**v),
+        Some(StandardTag::Ensemble(v)) => FormattedTag::new("Ensemble", &**v),
+        Some(StandardTag::Genre(v)) => FormattedTag::new("Genre", &**v),
+        Some(StandardTag::Grouping(v)) => FormattedTag::new("Grouping", &**v),
+        Some(StandardTag::IdentAsin(v)) => FormattedTag::new("ASIN", &**v),
+        Some(StandardTag::IdentBarcode(v)) => FormattedTag::new("Barcode", &**v),
+        Some(StandardTag::IdentCatalogNumber(v)) => FormattedTag::new("Catalog Number", &**v),
+        Some(StandardTag::IdentEanUpn(v)) => FormattedTag::new("EAN/UPN", &**v),
+        Some(StandardTag::IdentIsbn(v)) => FormattedTag::new("ISBN", &**v),
+        Some(StandardTag::IdentIsrc(v)) => FormattedTag::new("ISRC", &**v),
+        Some(StandardTag::IdentPn(v)) => FormattedTag::new("PN", &**v),
+        Some(StandardTag::IdentPodcast(v)) => FormattedTag::new("Podcast", &**v),
+        Some(StandardTag::IdentUpc(v)) => FormattedTag::new("UPC", &**v),
+        Some(StandardTag::IndexNumber(v)) => FormattedTag::new("Index Number", v.to_string()),
+        Some(StandardTag::InitialKey(v)) => FormattedTag::new("Initial Key", &**v),
+        Some(StandardTag::InternetRadioName(v)) => FormattedTag::new("Internet Radio Name", &**v),
+        Some(StandardTag::InternetRadioOwner(v)) => FormattedTag::new("Internet Radio Owner", &**v),
+        Some(StandardTag::Label(v)) => FormattedTag::new("Label", &**v),
+        Some(StandardTag::LabelCode(v)) => FormattedTag::new("Label Code", &**v),
+        Some(StandardTag::Language(v)) => FormattedTag::new("Language", &**v),
+        Some(StandardTag::License(v)) => FormattedTag::new("License", &**v),
+        Some(StandardTag::Lyricist(v)) => FormattedTag::new("Lyricist", &**v),
+        Some(StandardTag::Lyrics(v)) => FormattedTag::new("Lyrics", &**v),
+        Some(StandardTag::MediaFormat(v)) => FormattedTag::new("Media Format", &**v),
+        Some(StandardTag::MixDj(v)) => FormattedTag::new("Mix DJ", &**v),
+        Some(StandardTag::MixEngineer(v)) => FormattedTag::new("Mix Engineer", &**v),
+        Some(StandardTag::Mood(v)) => FormattedTag::new("Mood", &**v),
+        Some(StandardTag::MovementName(v)) => FormattedTag::new("Movement Name", &**v),
+        Some(StandardTag::MovementNumber(v)) => FormattedTag::new("Movement Number", v.to_string()),
+        Some(StandardTag::MovementTotal(v)) => FormattedTag::new("Movement Total", v.to_string()),
+        Some(StandardTag::Mp3GainAlbumMinMax(v)) => FormattedTag::new("Mp3Gain Album MinMax", &**v),
+        Some(StandardTag::Mp3GainMinMax(v)) => FormattedTag::new("Mp3Gain MinMax", &**v),
+        Some(StandardTag::Mp3GainUndo(v)) => FormattedTag::new("Mp3Gain Undo", &**v),
+        Some(StandardTag::MusicBrainzAlbumArtistId(v)) => {
+            FormattedTag::new("MusicBrainz Album Artist ID", &**v)
+        }
+        Some(StandardTag::MusicBrainzAlbumId(v)) => FormattedTag::new("MusicBrainz Album ID", &**v),
+        Some(StandardTag::MusicBrainzArtistId(v)) => {
+            FormattedTag::new("MusicBrainz Artist ID", &**v)
+        }
+        Some(StandardTag::MusicBrainzDiscId(v)) => FormattedTag::new("MusicBrainz Disc ID", &**v),
+        Some(StandardTag::MusicBrainzGenreId(v)) => FormattedTag::new("MusicBrainz Genre ID", &**v),
+        Some(StandardTag::MusicBrainzLabelId(v)) => FormattedTag::new("MusicBrainz Label ID", &**v),
+        Some(StandardTag::MusicBrainzOriginalAlbumId(v)) => {
+            FormattedTag::new("MusicBrainz Original Album ID", &**v)
+        }
+        Some(StandardTag::MusicBrainzOriginalArtistId(v)) => {
+            FormattedTag::new("MusicBrainz Original Artist ID", &**v)
+        }
+        Some(StandardTag::MusicBrainzRecordingId(v)) => {
+            FormattedTag::new("MusicBrainz Recording ID", &**v)
+        }
+        Some(StandardTag::MusicBrainzReleaseGroupId(v)) => {
+            FormattedTag::new("MusicBrainz Release Group ID", &**v)
+        }
+        Some(StandardTag::MusicBrainzReleaseStatus(v)) => {
+            FormattedTag::new("MusicBrainz Release Status", &**v)
+        }
+        Some(StandardTag::MusicBrainzReleaseTrackId(v)) => {
+            FormattedTag::new("MusicBrainz Release Track ID", &**v)
+        }
+        Some(StandardTag::MusicBrainzReleaseType(v)) => {
+            FormattedTag::new("MusicBrainz Release Type", &**v)
+        }
+        Some(StandardTag::MusicBrainzTrackId(v)) => FormattedTag::new("MusicBrainz Track ID", &**v),
+        Some(StandardTag::MusicBrainzTrmId(v)) => FormattedTag::new("MusicBrainz TRM ID", &**v),
+        Some(StandardTag::MusicBrainzWorkId(v)) => FormattedTag::new("MusicBrainz Work ID", &**v),
+        Some(StandardTag::Opus(v)) => FormattedTag::new("Opus", &**v),
+        Some(StandardTag::OriginalAlbum(v)) => FormattedTag::new("Original Album", &**v),
+        Some(StandardTag::OriginalArtist(v)) => FormattedTag::new("Original Artist", &**v),
+        Some(StandardTag::OriginalDate(v)) => FormattedTag::new("Original Date", &**v),
+        Some(StandardTag::OriginalFile(v)) => FormattedTag::new("Original File", &**v),
+        Some(StandardTag::OriginalWriter(v)) => FormattedTag::new("Original Writer", &**v),
+        Some(StandardTag::OriginalYear(v)) => FormattedTag::new("Original Year", v.to_string()),
+        Some(StandardTag::Owner(v)) => FormattedTag::new("Owner", &**v),
+        Some(StandardTag::Part(v)) => FormattedTag::new("Part", &**v),
+        Some(StandardTag::PartNumber(v)) => FormattedTag::new("Part", v.to_string()),
+        Some(StandardTag::PartTotal(v)) => FormattedTag::new("Part Total", v.to_string()),
+        Some(StandardTag::Performer(v)) => FormattedTag::new("Performer", &**v),
+        Some(StandardTag::Podcast) => FormattedTag::new("Is Podcast", "<Yes>"),
+        Some(StandardTag::PodcastCategory(v)) => FormattedTag::new("Podcast Category", &**v),
+        Some(StandardTag::PodcastDescription(v)) => FormattedTag::new("Podcast Description", &**v),
+        Some(StandardTag::PodcastKeywords(v)) => FormattedTag::new("Podcast Keywords", &**v),
+        Some(StandardTag::Producer(v)) => FormattedTag::new("Producer", &**v),
+        Some(StandardTag::PurchaseDate(v)) => FormattedTag::new("Purchase Date", &**v),
+        Some(StandardTag::Rating(v)) => FormattedTag::new("Rating", &**v),
+        Some(StandardTag::RecordingDate(v)) => FormattedTag::new("Recording Date", &**v),
+        Some(StandardTag::RecordingLocation(v)) => FormattedTag::new("Recording Location", &**v),
+        Some(StandardTag::RecordingTime(v)) => FormattedTag::new("Recording Time", &**v),
+        Some(StandardTag::ReleaseCountry(v)) => FormattedTag::new("Release Country", &**v),
+        Some(StandardTag::ReleaseDate(v)) => FormattedTag::new("Release Date", &**v),
+        Some(StandardTag::Remixer(v)) => FormattedTag::new("Remixer", &**v),
+        Some(StandardTag::ReplayGainAlbumGain(v)) => {
+            FormattedTag::new("ReplayGain Album Gain", &**v)
+        }
+        Some(StandardTag::ReplayGainAlbumPeak(v)) => {
+            FormattedTag::new("ReplayGain Album Peak", &**v)
+        }
+        Some(StandardTag::ReplayGainAlbumRange(v)) => {
+            FormattedTag::new("ReplayGain Album Range", &**v)
+        }
+        Some(StandardTag::ReplayGainReferenceLoudness(v)) => {
+            FormattedTag::new("ReplayGain Reference Loudness", &**v)
+        }
+        Some(StandardTag::ReplayGainTrackGain(v)) => {
+            FormattedTag::new("ReplayGain Track Gain", &**v)
+        }
+        Some(StandardTag::ReplayGainTrackPeak(v)) => {
+            FormattedTag::new("ReplayGain Track Peak", &**v)
+        }
+        Some(StandardTag::ReplayGainTrackRange(v)) => {
+            FormattedTag::new("ReplayGain Track Range", &**v)
+        }
+        Some(StandardTag::Script(v)) => FormattedTag::new("Script", &**v),
+        Some(StandardTag::SortAlbum(v)) => FormattedTag::new("Album (Sort Order)", &**v),
+        Some(StandardTag::SortAlbumArtist(v)) => {
+            FormattedTag::new("Album Artist (Sort Order)", &**v)
+        }
+        Some(StandardTag::SortArtist(v)) => FormattedTag::new("Artist (Sort Order)", &**v),
+        Some(StandardTag::SortComposer(v)) => FormattedTag::new("Composer (Sort Order)", &**v),
+        Some(StandardTag::SortTrackTitle(v)) => FormattedTag::new("Track Title (Sort Order)", &**v),
+        Some(StandardTag::TaggingDate(v)) => FormattedTag::new("Tagging Date", &**v),
+        Some(StandardTag::TrackNumber(v)) => FormattedTag::new("Track Number", v.to_string()),
+        Some(StandardTag::TrackSubtitle(v)) => FormattedTag::new("Track Subtitle", &**v),
+        Some(StandardTag::TrackTitle(v)) => FormattedTag::new("Track Title", &**v),
+        Some(StandardTag::TrackTotal(v)) => FormattedTag::new("Track Total", v.to_string()),
+        Some(StandardTag::TvEpisode(v)) => FormattedTag::new("TV Episode Number", v.to_string()),
+        Some(StandardTag::TvEpisodeTitle(v)) => FormattedTag::new("TV Episode Title", &**v),
+        Some(StandardTag::TvNetwork(v)) => FormattedTag::new("TV Network", &**v),
+        Some(StandardTag::TvSeason(v)) => FormattedTag::new("TV Season", v.to_string()),
+        Some(StandardTag::TvShowTitle(v)) => FormattedTag::new("TV Show Title", &**v),
+        Some(StandardTag::Url(v)) => FormattedTag::new("URL", &**v),
+        Some(StandardTag::UrlArtist(v)) => FormattedTag::new("Artist URL", &**v),
+        Some(StandardTag::UrlCopyright(v)) => FormattedTag::new("Copyright URL", &**v),
+        Some(StandardTag::UrlInternetRadio(v)) => FormattedTag::new("Internet Radio URL", &**v),
+        Some(StandardTag::UrlLabel(v)) => FormattedTag::new("Label URL", &**v),
+        Some(StandardTag::UrlOfficial(v)) => FormattedTag::new("Official URL", &**v),
+        Some(StandardTag::UrlPayment(v)) => FormattedTag::new("Payment URL", &**v),
+        Some(StandardTag::UrlPodcast(v)) => FormattedTag::new("Podcast URL", &**v),
+        Some(StandardTag::UrlPurchase(v)) => FormattedTag::new("Purchase URL", &**v),
+        Some(StandardTag::UrlSource(v)) => FormattedTag::new("Source URL", &**v),
+        Some(StandardTag::Version(v)) => FormattedTag::new("Version", &**v),
+        Some(StandardTag::Work(v)) => FormattedTag::new("Work", &**v),
+        Some(StandardTag::Writer(v)) => FormattedTag::new("Writer", &**v),
+        _ => FormattedTag::new(&tag.raw.key, format!("{}", tag.raw.value)),
+    }
+
+    // Non-standard tag.
 }

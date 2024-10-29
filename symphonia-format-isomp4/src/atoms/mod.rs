@@ -230,6 +230,7 @@ pub enum AtomType {
     VisualSampleEntryMp4v,
     VisualSampleEntryVp8,
     VisualSampleEntryVp9,
+    WorkTag,
     Other([u8; 4]),
 }
 
@@ -364,6 +365,7 @@ impl From<[u8; 4]> for AtomType {
             b"\xa9lyr" => AtomType::LyricsTag,
             b"\xa9nam" => AtomType::TrackTitleTag,
             b"\xa9too" => AtomType::EncoderTag,
+            b"\xa9wrk" => AtomType::WorkTag,
             b"\xa9wrt" => AtomType::ComposerTag,
             _ => AtomType::Other(val),
         }

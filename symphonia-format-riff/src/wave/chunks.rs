@@ -18,7 +18,7 @@ use symphonia_core::codecs::audio::AudioCodecId;
 use symphonia_core::errors::{decode_error, unsupported_error, Error, Result};
 use symphonia_core::formats::Track;
 use symphonia_core::io::{MediaSourceStream, ReadBytes};
-use symphonia_core::meta::{MetadataBuilder, MetadataRevision, Tag};
+use symphonia_core::meta::{MetadataBuilder, MetadataRevision};
 use symphonia_metadata::riff;
 
 use crate::common::{
@@ -549,16 +549,15 @@ impl fmt::Display for ListChunk {
 }
 
 pub struct InfoChunk {
-    pub tag: Tag,
+    pub tag: [u8; 4],
+    pub buf: Box<[u8]>,
 }
 
 impl ParseChunk for InfoChunk {
     fn parse<B: ReadBytes>(reader: &mut B, tag: [u8; 4], len: u32) -> Result<InfoChunk> {
         // TODO: Apply limit.
-        let mut value_buf = vec![0u8; len as usize];
-        reader.read_buf_exact(&mut value_buf)?;
-
-        Ok(InfoChunk { tag: riff::parse(tag, &value_buf) })
+        let buf = reader.read_boxed_slice_exact(len as usize)?;
+        Ok(InfoChunk { tag, buf })
     }
 }
 
@@ -618,23 +617,16 @@ pub fn append_fact_params(track: &mut Track, fact: &FactChunk) {
 pub fn read_info_chunk(source: &mut MediaSourceStream<'_>, len: u32) -> Result<MetadataRevision> {
     let mut info_list = ChunksReader::<RiffInfoListChunks>::new(len, ByteOrder::LittleEndian);
 
-    let mut metadata_builder = MetadataBuilder::new();
+    let mut builder = MetadataBuilder::new();
 
-    loop {
-        let chunk = info_list.next(source)?;
-
-        if let Some(RiffInfoListChunks::Info(info)) = chunk {
-            let parsed_info = info.parse(source)?;
-            metadata_builder.add_tag(parsed_info.tag);
-        }
-        else {
-            break;
-        }
+    while let Some(RiffInfoListChunks::Info(info)) = info_list.next(source)? {
+        let info = info.parse(source)?;
+        riff::read_riff_info_block(info.tag, &info.buf, &mut builder)?;
     }
 
     info_list.finish(source)?;
 
-    Ok(metadata_builder.metadata())
+    Ok(builder.metadata())
 }
 
 /// Corrects a WAVE channel mask that doesn't is not valid for the stated number of channels.

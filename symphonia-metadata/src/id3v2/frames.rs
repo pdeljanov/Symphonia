@@ -8,10 +8,13 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::io;
 use std::str;
+use std::sync::Arc;
 
 use symphonia_core::errors::{decode_error, unsupported_error, Result};
 use symphonia_core::io::{BufReader, FiniteStream, ReadBytes};
-use symphonia_core::meta::{Chapter, StandardTagKey, Tag, Value, Visual};
+use symphonia_core::meta::RawTag;
+use symphonia_core::meta::RawTagSubField;
+use symphonia_core::meta::{Chapter, RawValue, StandardTag, Tag, Visual};
 
 use encoding_rs::UTF_16BE;
 use lazy_static::lazy_static;
@@ -19,6 +22,7 @@ use log::warn;
 use symphonia_core::units::Time;
 
 use crate::utils::images::try_get_image_info;
+use crate::utils::std_tag::*;
 
 use super::unsync::{decode_unsynchronisation, read_syncsafe_leq32};
 use super::util;
@@ -33,7 +37,7 @@ use super::util;
 // However, it is likely that ID3v2.3-only frames appear in some real-world ID3v2.4 tags.
 //
 //   -   ----   ----    ----    ----------------    ------------------------------------------------
-//   S   v2.2   v2.3    v2.4    Std. Key            Description
+//   S   v2.2   v2.3    v2.4    StandardTag         Description
 //   -   ----   ----    ----    ----------------    ------------------------------------------------
 //       CRA    AENC                                Audio encryption
 //       CRM                                        Encrypted meta frame
@@ -82,10 +86,10 @@ use super::util;
 //   x   TXT    TEXT             Writer             Lyricist/Text writer
 //   x   TFT    TFLT                                File type
 //   x   TIM    TIME     n/a     Date               Time
-//   x   TT1    TIT1             ContentGroup       Content group description
+//   x   TT1    TIT1             Grouping           Content group description
 //   x   TT2    TIT2             TrackTitle         Title/songname/content description
 //   x   TT3    TIT3             TrackSubtitle      Subtitle/Description refinement
-//   x   TKE    TKEY                                Initial key
+//   x   TKE    TKEY             InitialKey         Initial key
 //   x   TLA    TLAN             Language           Language(s)
 //   x   TLE    TLEN                                Length
 //   x                  TMCL                        Musician credits list
@@ -129,10 +133,10 @@ use super::util;
 //   x          WPAY             UrlPayment         Payment
 //   x   WPB    WPUB             UrlLabel           Publishers official webpage
 //   x   WXX    WXXX             Url                User defined URL link frame
-//   x          GRP1                                (Apple iTunes) Grouping
+//   x          GRP1             Grouping           (Apple iTunes) Grouping
 //   x          MVNM             MovementName       (Apple iTunes) Movement name
 //   x          MVIN             MovementNumber     (Apple iTunes) Movement number
-//       PCS    PCST                                (Apple iTunes) Podcast flag
+//       PCS    PCST             Podcast            (Apple iTunes) Podcast flag
 //   x          TCAT             PodcastCategory    (Apple iTunes) Podcast category
 //   x          TDES             PodcastDescription (Apple iTunes) Podcast description
 //   x          TGID             IdentPodcast       (Apple iTunes) Podcast identifier
@@ -231,9 +235,6 @@ struct FrameInfo<'a> {
     major_version: u8,
 }
 
-type FrameParser =
-    fn(&mut BufReader<'_>, Option<StandardTagKey>, &FrameInfo<'_>) -> Result<FrameResult>;
-
 lazy_static! {
     static ref LEGACY_FRAME_MAP: HashMap<&'static [u8; 3], &'static [u8; 4]> = {
         let mut m = HashMap::new();
@@ -309,15 +310,20 @@ lazy_static! {
     };
 }
 
+/// Function pointer to an ID3v2 frame parser.
+type FrameParser = fn(BufReader<'_>, &FrameInfo<'_>, Option<RawTagParser>) -> Result<FrameResult>;
+
+/// Map of 4 character ID3v2 frame IDs to a frame parser and optional raw tag parser pair.
+type FrameParserMap = HashMap<&'static [u8; 4], (FrameParser, Option<RawTagParser>)>;
+
 lazy_static! {
-    static ref FRAME_PARSERS:
-        HashMap<&'static [u8; 4], (FrameParser, Option<StandardTagKey>)> = {
-            let mut m = HashMap::new();
+    static ref FRAME_PARSERS: FrameParserMap = {
+            let mut m: FrameParserMap = HashMap::new();
             // m.insert(b"AENC", read_null_frame);
             m.insert(b"APIC", (read_apic_frame as FrameParser, None));
             // m.insert(b"ASPI", read_null_frame);
             m.insert(b"CHAP", (read_chap_frame, None));
-            m.insert(b"COMM", (read_comm_uslt_frame, Some(StandardTagKey::Comment)));
+            m.insert(b"COMM", (read_comm_uslt_frame, Some(parse_comment)));
             // m.insert(b"COMR", read_null_frame);
             m.insert(b"CTOC", (read_ctoc_frame, None));
             // m.insert(b"ENCR", read_null_frame);
@@ -332,7 +338,7 @@ lazy_static! {
             // m.insert(b"MLLT", read_null_frame);
             // m.insert(b"OWNE", read_null_frame);
             m.insert(b"PCNT", (read_pcnt_frame, None));
-            m.insert(b"POPM", (read_popm_frame, Some(StandardTagKey::Rating)));
+            m.insert(b"POPM", (read_popm_frame, Some(parse_rating)));
             // m.insert(b"POSS", read_null_frame);
             m.insert(b"PRIV", (read_priv_frame, None));
             // m.insert(b"RBUF", read_null_frame);
@@ -343,107 +349,112 @@ lazy_static! {
             // m.insert(b"SIGN", read_null_frame);
             // m.insert(b"SYLT", read_null_frame);
             // m.insert(b"SYTC", read_null_frame);
-            m.insert(b"TALB", (read_text_frame, Some(StandardTagKey::Album)));
-            m.insert(b"TBPM", (read_text_frame, Some(StandardTagKey::Bpm)));
-            m.insert(b"TCOM", (read_text_frame, Some(StandardTagKey::Composer)));
-            m.insert(b"TCON", (read_text_frame, Some(StandardTagKey::Genre)));
-            m.insert(b"TCOP", (read_text_frame, Some(StandardTagKey::Copyright)));
-            m.insert(b"TDAT", (read_text_frame, Some(StandardTagKey::Date)));
-            m.insert(b"TDEN", (read_text_frame, Some(StandardTagKey::EncodingDate)));
+            m.insert(b"TALB", (read_text_frame, Some(parse_album)));
+            m.insert(b"TBPM", (read_text_frame, Some(parse_bpm)));
+            m.insert(b"TCOM", (read_text_frame, Some(parse_composer)));
+            m.insert(b"TCON", (read_text_frame, Some(parse_id3v2_genre)));
+            m.insert(b"TCOP", (read_text_frame, Some(parse_copyright)));
+            m.insert(b"TDAT", (read_text_frame, Some(parse_date)));
+            m.insert(b"TDEN", (read_text_frame, Some(parse_encoding_date)));
             m.insert(b"TDLY", (read_text_frame, None));
-            m.insert(b"TDOR", (read_text_frame, Some(StandardTagKey::OriginalDate)));
-            m.insert(b"TDRC", (read_text_frame, Some(StandardTagKey::Date)));
-            m.insert(b"TDRL", (read_text_frame, Some(StandardTagKey::ReleaseDate)));
-            m.insert(b"TDTG", (read_text_frame, Some(StandardTagKey::TaggingDate)));
-            m.insert(b"TENC", (read_text_frame, Some(StandardTagKey::EncodedBy)));
+            m.insert(b"TDOR", (read_text_frame, Some(parse_original_date)));
+            m.insert(b"TDRC", (read_text_frame, Some(parse_date)));
+            m.insert(b"TDRL", (read_text_frame, Some(parse_release_date)));
+            m.insert(b"TDTG", (read_text_frame, Some(parse_tagging_date)));
+            m.insert(b"TENC", (read_text_frame, Some(parse_encoded_by)));
             // Also Writer?
-            m.insert(b"TEXT", (read_text_frame, Some(StandardTagKey::Writer)));
+            m.insert(b"TEXT", (read_text_frame, Some(parse_writer)));
             m.insert(b"TFLT", (read_text_frame, None));
-            m.insert(b"TIME", (read_text_frame, Some(StandardTagKey::Date)));
+            m.insert(b"TIME", (read_text_frame, Some(parse_date)));
             m.insert(b"TIPL", (read_text_frame, None));
-            m.insert(b"TIT1", (read_text_frame, Some(StandardTagKey::ContentGroup)));
-            m.insert(b"TIT2", (read_text_frame, Some(StandardTagKey::TrackTitle)));
-            m.insert(b"TIT3", (read_text_frame, Some(StandardTagKey::TrackSubtitle)));
-            m.insert(b"TKEY", (read_text_frame, None));
-            m.insert(b"TLAN", (read_text_frame, Some(StandardTagKey::Language)));
+            m.insert(b"TIT1", (read_text_frame, Some(parse_grouping)));
+            m.insert(b"TIT2", (read_text_frame, Some(parse_track_title)));
+            m.insert(b"TIT3", (read_text_frame, Some(parse_track_subtitle)));
+            m.insert(b"TKEY", (read_text_frame, Some(parse_initial_key)));
+            m.insert(b"TLAN", (read_text_frame, Some(parse_language)));
             m.insert(b"TLEN", (read_text_frame, None));
             m.insert(b"TMCL", (read_text_frame, None));
-            m.insert(b"TMED", (read_text_frame, Some(StandardTagKey::MediaFormat)));
-            m.insert(b"TMOO", (read_text_frame, Some(StandardTagKey::Mood)));
-            m.insert(b"TOAL", (read_text_frame, Some(StandardTagKey::OriginalAlbum)));
-            m.insert(b"TOFN", (read_text_frame, Some(StandardTagKey::OriginalFile)));
-            m.insert(b"TOLY", (read_text_frame, Some(StandardTagKey::OriginalWriter)));
-            m.insert(b"TOPE", (read_text_frame, Some(StandardTagKey::OriginalArtist)));
-            m.insert(b"TORY", (read_text_frame, Some(StandardTagKey::OriginalDate)));
+            m.insert(b"TMED", (read_text_frame, Some(parse_media_format)));
+            m.insert(b"TMOO", (read_text_frame, Some(parse_mood)));
+            m.insert(b"TOAL", (read_text_frame, Some(parse_original_album)));
+            m.insert(b"TOFN", (read_text_frame, Some(parse_original_file)));
+            m.insert(b"TOLY", (read_text_frame, Some(parse_original_writer)));
+            m.insert(b"TOPE", (read_text_frame, Some(parse_original_artist)));
+            m.insert(b"TORY", (read_text_frame, Some(parse_original_date)));
             m.insert(b"TOWN", (read_text_frame, None));
-            m.insert(b"TPE1", (read_text_frame, Some(StandardTagKey::Artist)));
-            m.insert(b"TPE2", (read_text_frame, Some(StandardTagKey::AlbumArtist)));
-            m.insert(b"TPE3", (read_text_frame, Some(StandardTagKey::Conductor)));
-            m.insert(b"TPE4", (read_text_frame, Some(StandardTagKey::Remixer)));
+            m.insert(b"TPE1", (read_text_frame, Some(parse_artist)));
+            m.insert(b"TPE2", (read_text_frame, Some(parse_album_artist)));
+            m.insert(b"TPE3", (read_text_frame, Some(parse_conductor)));
+            m.insert(b"TPE4", (read_text_frame, Some(parse_remixer)));
             // May be "disc number / total discs"
-            m.insert(b"TPOS", (read_text_frame, Some(StandardTagKey::DiscNumber)));
+            m.insert(b"TPOS", (read_text_frame, Some(parse_disc_number)));
             m.insert(b"TPRO", (read_text_frame, None));
-            m.insert(b"TPUB", (read_text_frame, Some(StandardTagKey::Label)));
+            m.insert(b"TPUB", (read_text_frame, Some(parse_label)));
             // May be "track number / total tracks"
-            m.insert(b"TRCK", (read_text_frame, Some(StandardTagKey::TrackNumber)));
-            m.insert(b"TRDA", (read_text_frame, Some(StandardTagKey::Date)));
-            m.insert(b"TRSN", (read_text_frame, None));
-            m.insert(b"TRSO", (read_text_frame, None));
+            m.insert(b"TRCK", (read_text_frame, Some(parse_track_number)));
+            m.insert(b"TRDA", (read_text_frame, Some(parse_date)));
+            m.insert(b"TRSN", (read_text_frame, Some(parse_internet_radio_name)));
+            m.insert(b"TRSO", (read_text_frame, Some(parse_internet_radio_owner)));
             m.insert(b"TSIZ", (read_text_frame, None));
-            m.insert(b"TSOA", (read_text_frame, Some(StandardTagKey::SortAlbum)));
-            m.insert(b"TSOP", (read_text_frame, Some(StandardTagKey::SortArtist)));
-            m.insert(b"TSOT", (read_text_frame, Some(StandardTagKey::SortTrackTitle)));
-            m.insert(b"TSRC", (read_text_frame, Some(StandardTagKey::IdentIsrc)));
-            m.insert(b"TSSE", (read_text_frame, Some(StandardTagKey::Encoder)));
+            m.insert(b"TSOA", (read_text_frame, Some(parse_sort_album)));
+            m.insert(b"TSOP", (read_text_frame, Some(parse_sort_artist)));
+            m.insert(b"TSOT", (read_text_frame, Some(parse_sort_track_title)));
+            m.insert(b"TSRC", (read_text_frame, Some(parse_ident_isrc)));
+            m.insert(b"TSSE", (read_text_frame, Some(parse_encoder)));
             m.insert(b"TSST", (read_text_frame, None));
             m.insert(b"TXXX", (read_txxx_frame, None));
-            m.insert(b"TYER", (read_text_frame, Some(StandardTagKey::Date)));
+            m.insert(b"TYER", (read_text_frame, Some(parse_date)));
             // m.insert(b"UFID", read_null_frame);
             // m.insert(b"USER", read_null_frame);
-            m.insert(b"USLT", (read_comm_uslt_frame, Some(StandardTagKey::Lyrics)));
-            m.insert(b"WCOM", (read_url_frame, Some(StandardTagKey::UrlPurchase)));
-            m.insert(b"WCOP", (read_url_frame, Some(StandardTagKey::UrlCopyright)));
-            m.insert(b"WOAF", (read_url_frame, Some(StandardTagKey::UrlOfficial)));
-            m.insert(b"WOAR", (read_url_frame, Some(StandardTagKey::UrlArtist)));
-            m.insert(b"WOAS", (read_url_frame, Some(StandardTagKey::UrlSource)));
-            m.insert(b"WORS", (read_url_frame, Some(StandardTagKey::UrlInternetRadio)));
-            m.insert(b"WPAY", (read_url_frame, Some(StandardTagKey::UrlPayment)));
-            m.insert(b"WPUB", (read_url_frame, Some(StandardTagKey::UrlLabel)));
-            m.insert(b"WXXX", (read_wxxx_frame, Some(StandardTagKey::Url)));
+            m.insert(b"USLT", (read_comm_uslt_frame, Some(parse_lyrics)));
+            m.insert(b"WCOM", (read_url_frame, Some(parse_url_purchase)));
+            m.insert(b"WCOP", (read_url_frame, Some(parse_url_copyright)));
+            m.insert(b"WOAF", (read_url_frame, Some(parse_url_official)));
+            m.insert(b"WOAR", (read_url_frame, Some(parse_url_artist)));
+            m.insert(b"WOAS", (read_url_frame, Some(parse_url_source)));
+            m.insert(b"WORS", (read_url_frame, Some(parse_url_internet_radio)));
+            m.insert(b"WPAY", (read_url_frame, Some(parse_url_payment)));
+            m.insert(b"WPUB", (read_url_frame, Some(parse_url_label)));
+            m.insert(b"WXXX", (read_wxxx_frame, Some(parse_url)));
             // Apple iTunes frames
             // m.insert(b"PCST", (read_null_frame, None));
-            m.insert(b"GRP1", (read_text_frame, None));
-            m.insert(b"MVIN", (read_text_frame, Some(StandardTagKey::MovementNumber)));
-            m.insert(b"MVNM", (read_text_frame, Some(StandardTagKey::MovementName)));
-            m.insert(b"TCAT", (read_text_frame, Some(StandardTagKey::PodcastCategory)));
-            m.insert(b"TDES", (read_text_frame, Some(StandardTagKey::PodcastDescription)));
-            m.insert(b"TGID", (read_text_frame, Some(StandardTagKey::IdentPodcast)));
-            m.insert(b"TKWD", (read_text_frame, Some(StandardTagKey::PodcastKeywords)));
-            m.insert(b"TSO2", (read_text_frame, Some(StandardTagKey::SortAlbumArtist)));
-            m.insert(b"TSOC", (read_text_frame, Some(StandardTagKey::SortComposer)));
-            m.insert(b"WFED", (read_text_frame, Some(StandardTagKey::UrlPodcast)));
+            m.insert(b"GRP1", (read_text_frame, Some(parse_grouping)));
+            m.insert(b"MVIN", (read_text_frame, Some(parse_movement_number)));
+            m.insert(b"MVNM", (read_text_frame, Some(parse_movement_name)));
+            m.insert(b"TCAT", (read_text_frame, Some(parse_podcast_category)));
+            m.insert(b"TDES", (read_text_frame, Some(parse_podcast_description)));
+            m.insert(b"TGID", (read_text_frame, Some(parse_ident_podcast)));
+            m.insert(b"TKWD", (read_text_frame, Some(parse_podcast_keywords)));
+            m.insert(b"TSO2", (read_text_frame, Some(parse_sort_album_artist)));
+            m.insert(b"TSOC", (read_text_frame, Some(parse_sort_composer)));
+            m.insert(b"WFED", (read_text_frame, Some(parse_url_podcast)));
             m
         };
 }
 
 lazy_static! {
-    static ref TXXX_FRAME_STD_KEYS: HashMap<&'static str, StandardTagKey> = {
-        let mut m = HashMap::new();
-        m.insert("ACOUSTID FINGERPRINT", StandardTagKey::AcoustIdFingerprint);
-        m.insert("ACOUSTID ID", StandardTagKey::AcoustIdId);
-        m.insert("BARCODE", StandardTagKey::IdentBarcode);
-        m.insert("CATALOGNUMBER", StandardTagKey::IdentCatalogNumber);
-        m.insert("LICENSE", StandardTagKey::License);
-        m.insert("MUSICBRAINZ ALBUM ARTIST ID", StandardTagKey::MusicBrainzAlbumArtistId);
-        m.insert("MUSICBRAINZ ALBUM ID", StandardTagKey::MusicBrainzAlbumId);
-        m.insert("MUSICBRAINZ ARTIST ID", StandardTagKey::MusicBrainzArtistId);
-        m.insert("MUSICBRAINZ RELEASE GROUP ID", StandardTagKey::MusicBrainzReleaseGroupId);
-        m.insert("MUSICBRAINZ WORK ID", StandardTagKey::MusicBrainzWorkId);
-        m.insert("REPLAYGAIN_ALBUM_GAIN", StandardTagKey::ReplayGainAlbumGain);
-        m.insert("REPLAYGAIN_ALBUM_PEAK", StandardTagKey::ReplayGainAlbumPeak);
-        m.insert("REPLAYGAIN_TRACK_GAIN", StandardTagKey::ReplayGainTrackGain);
-        m.insert("REPLAYGAIN_TRACK_PEAK", StandardTagKey::ReplayGainTrackPeak);
-        m.insert("SCRIPT", StandardTagKey::Script);
+    static ref TXXX_FRAME_STD_KEYS: RawTagParserMap = {
+        let mut m: RawTagParserMap = HashMap::new();
+        // m.insert("itunesadvistory", parse_advisory);
+        m.insert("acoustid fingerprint", parse_acoustid_fingerprint);
+        m.insert("acoustid id", parse_acoustid_id);
+        m.insert("albumartistsort", parse_sort_album_artist);
+        m.insert("barcode", parse_ident_barcode);
+        m.insert("catalognumber", parse_ident_catalog_number);
+        m.insert("license", parse_license);
+        m.insert("musicbrainz album artist id", parse_musicbrainz_album_artist_id);
+        m.insert("musicbrainz album id", parse_musicbrainz_album_id);
+        m.insert("musicbrainz album status", parse_musicbrainz_release_status);
+        m.insert("musicbrainz album type", parse_musicbrainz_release_type);
+        m.insert("musicbrainz artist id", parse_musicbrainz_artist_id);
+        m.insert("musicbrainz release group id", parse_musicbrainz_release_group_id);
+        m.insert("musicbrainz work id", parse_musicbrainz_work_id);
+        m.insert("replaygain_album_gain", parse_replaygain_album_gain);
+        m.insert("replaygain_album_peak", parse_replaygain_album_peak);
+        m.insert("replaygain_track_gain", parse_replaygain_track_gain);
+        m.insert("replaygain_track_peak", parse_replaygain_track_peak);
+        m.insert("script", parse_script);
+        m.insert("work", parse_work);
         m
     };
 }
@@ -474,13 +485,13 @@ fn as_ascii_str(id: &[u8]) -> &str {
 }
 
 /// Finds a frame parser for "modern" ID3v2.3 or ID3v2.4 tags.
-fn find_parser(id: [u8; 4]) -> Option<&'static (FrameParser, Option<StandardTagKey>)> {
+fn find_parser(id: [u8; 4]) -> Option<&'static (FrameParser, Option<RawTagParser>)> {
     FRAME_PARSERS.get(&id)
 }
 
 /// Finds a frame parser for a "legacy" ID3v2.2 tag by finding an equivalent "modern" ID3v2.3+ frame
 /// parser.
-fn find_parser_legacy(id: [u8; 3]) -> Option<&'static (FrameParser, Option<StandardTagKey>)> {
+fn find_parser_legacy(id: [u8; 3]) -> Option<&'static (FrameParser, Option<RawTagParser>)> {
     match LEGACY_FRAME_MAP.get(&id) {
         Some(id) => find_parser(**id),
         _ => None,
@@ -508,7 +519,7 @@ pub fn read_id3v2p2_frame<B: ReadBytes>(reader: &mut B) -> Result<FrameResult> {
 
     // Find a parser for the frame. If there is none, skip over the remainder of the frame as it
     // cannot be parsed.
-    let (parser, std_key) = match find_parser_legacy(id) {
+    let (parser, raw_tag_parser) = match find_parser_legacy(id) {
         Some(p) => p,
         None => {
             reader.ignore_bytes(size)?;
@@ -524,7 +535,7 @@ pub fn read_id3v2p2_frame<B: ReadBytes>(reader: &mut B) -> Result<FrameResult> {
     let data = reader.read_boxed_slice_exact(size as usize)?;
     let info = FrameInfo { id: as_ascii_str(&id), major_version: 2 };
 
-    parser(&mut BufReader::new(&data), *std_key, &info)
+    parser(BufReader::new(&data), &info, *raw_tag_parser)
 }
 
 /// Read an ID3v2.3 frame.
@@ -554,7 +565,7 @@ pub fn read_id3v2p3_frame<B: ReadBytes>(reader: &mut B) -> Result<FrameResult> {
 
     // Find a parser for the frame. If there is none, skip over the remainder of the frame as it
     // cannot be parsed.
-    let (parser, std_key) = match find_parser(id) {
+    let (parser, raw_tag_parser) = match find_parser(id) {
         Some(p) => p,
         None => {
             reader.ignore_bytes(size)?;
@@ -591,7 +602,7 @@ pub fn read_id3v2p3_frame<B: ReadBytes>(reader: &mut B) -> Result<FrameResult> {
     let data = reader.read_boxed_slice_exact(size as usize)?;
     let info = FrameInfo { id: as_ascii_str(&id), major_version: 4 };
 
-    parser(&mut BufReader::new(&data), *std_key, &info)
+    parser(BufReader::new(&data), &info, *raw_tag_parser)
 }
 
 /// Read an ID3v2.4 frame.
@@ -620,7 +631,7 @@ pub fn read_id3v2p4_frame<B: ReadBytes + FiniteStream>(reader: &mut B) -> Result
 
     // Find a parser for the frame. If there is none, skip over the remainder of the frame as it
     // cannot be parsed.
-    let (parser, std_key) = match find_parser(id) {
+    let (parser, raw_tag_parser) = match find_parser(id) {
         Some(p) => p,
         None => {
             reader.ignore_bytes(size)?;
@@ -690,20 +701,20 @@ pub fn read_id3v2p4_frame<B: ReadBytes + FiniteStream>(reader: &mut B) -> Result
     if flags & 0x2 != 0x0 {
         let unsync_data = decode_unsynchronisation(&mut raw_data);
 
-        parser(&mut BufReader::new(unsync_data), *std_key, &info)
+        parser(BufReader::new(unsync_data), &info, *raw_tag_parser)
     }
     // The frame body has not been unsynchronised. Wrap the raw data buffer in BufStream without any
     // additional decoding.
     else {
-        parser(&mut BufReader::new(&raw_data), *std_key, &info)
+        parser(BufReader::new(&raw_data), &info, *raw_tag_parser)
     }
 }
 
 /// Reads all text frames frame except for `TXXX`.
 fn read_text_frame(
-    reader: &mut BufReader<'_>,
-    std_key: Option<StandardTagKey>,
+    mut reader: BufReader<'_>,
     info: &FrameInfo<'_>,
+    raw_tag_parser: Option<RawTagParser>,
 ) -> Result<FrameResult> {
     // The first byte of the frame is the encoding.
     let encoding = match Encoding::parse(reader.read_byte()?) {
@@ -716,17 +727,13 @@ fn read_text_frame(
     let mut tags = Vec::<Tag>::new();
 
     // The remainder of the frame is one or more null-terminated strings.
-    loop {
-        let len = reader.bytes_available() as usize;
+    while reader.bytes_available() > 0 {
+        let text = read_text(&mut reader, encoding)?;
 
-        if len > 0 {
-            // Scan for text, and create a Tag.
-            let text = read_text(reader, encoding, len)?;
-
-            tags.push(Tag::new(std_key, info.id, Value::from(text)));
-        }
-        else {
-            break;
+        match map_raw_tag(RawTag::new(info.id, text), raw_tag_parser) {
+            FrameResult::Tag(tag) => tags.push(tag),
+            FrameResult::MultipleTags(multi) => tags.extend(multi.into_iter()),
+            _ => (),
         }
     }
 
@@ -735,9 +742,9 @@ fn read_text_frame(
 
 /// Reads a `TXXX` (user defined) text frame.
 fn read_txxx_frame(
-    reader: &mut BufReader<'_>,
-    _: Option<StandardTagKey>,
+    mut reader: BufReader<'_>,
     _: &FrameInfo<'_>,
+    _: Option<RawTagParser>,
 ) -> Result<FrameResult> {
     // The first byte of the frame is the encoding.
     let encoding = match Encoding::parse(reader.read_byte()?) {
@@ -746,29 +753,27 @@ fn read_txxx_frame(
     };
 
     // Read the description string.
-    let desc = read_text(reader, encoding, reader.bytes_available() as usize)?;
-
-    // Some TXXX frames may be mapped to standard keys. Check if a standard key exists for the
-    // description.
-    let std_key = TXXX_FRAME_STD_KEYS.get(desc.as_str()).copied();
+    let desc = read_text(&mut reader, encoding)?;
 
     // Generate a key name using the description.
     let key = format!("TXXX:{}", desc);
+
+    // Some TXXX frames may be mapped to standard keys. Check if a standard key exists for the
+    // description.
+    let raw_tag_parser = TXXX_FRAME_STD_KEYS.get(desc.to_ascii_lowercase().as_str()).copied();
 
     // Since a TXXX frame can have a null-terminated list of values, and Symphonia allows multiple
     // tags with the same key, create one Tag per listed value.
     let mut tags = Vec::<Tag>::new();
 
     // The remainder of the frame is one or more null-terminated strings.
-    loop {
-        let len = reader.bytes_available() as usize;
+    while reader.bytes_available() > 0 {
+        let text = read_text(&mut reader, encoding)?;
 
-        if len > 0 {
-            let text = read_text(reader, encoding, len)?;
-            tags.push(Tag::new(std_key, &key, Value::from(text)));
-        }
-        else {
-            break;
+        match map_raw_tag(RawTag::new(key.clone(), text), raw_tag_parser) {
+            FrameResult::Tag(tag) => tags.push(tag),
+            FrameResult::MultipleTags(multi) => tags.extend(multi.into_iter()),
+            _ => (),
         }
     }
 
@@ -777,23 +782,22 @@ fn read_txxx_frame(
 
 /// Reads all URL frames except for `WXXX`.
 fn read_url_frame(
-    reader: &mut BufReader<'_>,
-    std_key: Option<StandardTagKey>,
+    mut reader: BufReader<'_>,
     info: &FrameInfo<'_>,
+    raw_tag_parser: Option<RawTagParser>,
 ) -> Result<FrameResult> {
     // Scan for a ISO-8859-1 URL string.
-    let url = read_text(reader, Encoding::Iso8859_1, reader.bytes_available() as usize)?;
-    // Create a Tag.
-    let tag = Tag::new(std_key, info.id, Value::from(url));
+    let url = read_text(&mut reader, Encoding::Iso8859_1)?;
 
-    Ok(FrameResult::Tag(tag))
+    // Create the tag.
+    Ok(map_raw_tag(RawTag::new(info.id, url), raw_tag_parser))
 }
 
 /// Reads a `WXXX` (user defined) URL frame.
 fn read_wxxx_frame(
-    reader: &mut BufReader<'_>,
-    std_key: Option<StandardTagKey>,
+    mut reader: BufReader<'_>,
     _: &FrameInfo<'_>,
+    raw_tag_parser: Option<RawTagParser>,
 ) -> Result<FrameResult> {
     // The first byte of the WXXX frame is the encoding of the description.
     let encoding = match Encoding::parse(reader.read_byte()?) {
@@ -802,41 +806,35 @@ fn read_wxxx_frame(
     };
 
     // Scan for the the description string.
-    let desc = format!("WXXX:{}", &read_text(reader, encoding, reader.bytes_available() as usize)?);
+    let key = format!("WXXX:{}", read_text(&mut reader, encoding)?);
     // Scan for a ISO-8859-1 URL string.
-    let url = read_text(reader, Encoding::Iso8859_1, reader.bytes_available() as usize)?;
-    // Create a Tag.
-    let tag = Tag::new(std_key, &desc, Value::from(url));
+    let url = read_text(&mut reader, Encoding::Iso8859_1)?;
 
-    Ok(FrameResult::Tag(tag))
+    // Create the tag.
+    Ok(map_raw_tag(RawTag::new(key, url), raw_tag_parser))
 }
 
 /// Reads a `PRIV` (private) frame.
 fn read_priv_frame(
-    reader: &mut BufReader<'_>,
-    std_key: Option<StandardTagKey>,
+    mut reader: BufReader<'_>,
     _: &FrameInfo<'_>,
+    raw_tag_parser: Option<RawTagParser>,
 ) -> Result<FrameResult> {
     // Scan for a ISO-8859-1 owner identifier.
-    let owner = format!(
-        "PRIV:{}",
-        &read_text(reader, Encoding::Iso8859_1, reader.bytes_available() as usize)?
-    );
+    let owner = format!("PRIV:{}", read_text(&mut reader, Encoding::Iso8859_1)?);
 
     // The remainder of the frame is binary data.
-    let data_buf = reader.read_buf_bytes_ref(reader.bytes_available() as usize)?;
+    let data = reader.read_buf_bytes_ref(reader.bytes_available() as usize)?;
 
-    // Create a Tag.
-    let tag = Tag::new(std_key, &owner, Value::from(data_buf));
-
-    Ok(FrameResult::Tag(tag))
+    // Create the tag.
+    Ok(map_raw_tag(RawTag::new(owner, data), raw_tag_parser))
 }
 
 /// Reads a `COMM` (comment) or `USLT` (unsynchronized comment) frame.
 fn read_comm_uslt_frame(
-    reader: &mut BufReader<'_>,
-    std_key: Option<StandardTagKey>,
+    mut reader: BufReader<'_>,
     info: &FrameInfo<'_>,
+    raw_tag_parser: Option<RawTagParser>,
 ) -> Result<FrameResult> {
     // The first byte of the frame is the encoding of the description.
     let encoding = match Encoding::parse(reader.read_byte()?) {
@@ -859,89 +857,82 @@ fn read_comm_uslt_frame(
 
     // Short text (content description) is next, but since there is no way to represent this in
     // Symphonia, skip it.
-    read_text(reader, encoding, reader.bytes_available() as usize)?;
+    read_text(&mut reader, encoding)?;
 
     // Full text (lyrics) is last.
-    let text = read_text(reader, encoding, reader.bytes_available() as usize)?;
+    let text = read_text(&mut reader, encoding)?;
 
     // Create the tag.
-    let tag = Tag::new(std_key, &key, Value::from(text));
-
-    Ok(FrameResult::Tag(tag))
+    Ok(map_raw_tag(RawTag::new(key, text), raw_tag_parser))
 }
 
 /// Reads a `PCNT` (total file play count) frame.
 fn read_pcnt_frame(
-    reader: &mut BufReader<'_>,
-    std_key: Option<StandardTagKey>,
+    mut reader: BufReader<'_>,
     info: &FrameInfo<'_>,
+    raw_tag_parser: Option<RawTagParser>,
 ) -> Result<FrameResult> {
-    let len = reader.byte_len() as usize;
-
-    // The play counter must be a minimum of 4 bytes long.
-    if len < 4 {
-        return decode_error("id3v2: play counters must be a minimum of 32bits");
-    }
-
-    // However it may be extended by an arbitrary amount of bytes (or so it would seem).
-    // Practically, a 4-byte (32-bit) count is way more than enough, but we'll support up-to an
-    // 8-byte (64bit) count.
-    if len > 8 {
-        return unsupported_error("id3v2: play counters greater than 64bits are not supported");
-    }
-
-    // The play counter is stored as an N-byte big-endian integer. Read N bytes into an 8-byte
-    // buffer, making sure the missing bytes are zeroed, and then reinterpret as a 64-bit integer.
-    let mut buf = [0u8; 8];
-    reader.read_buf_exact(&mut buf[8 - len..])?;
-
-    let play_count = u64::from_be_bytes(buf);
+    // Read the mandatory play counter.
+    let play_count = match read_play_counter(&mut reader)? {
+        Some(count) => count,
+        _ => return decode_error("id3v2: invalid play counter"),
+    };
 
     // Create the tag.
-    let tag = Tag::new(std_key, info.id, Value::from(play_count));
-
-    Ok(FrameResult::Tag(tag))
+    Ok(map_raw_tag(RawTag::new(info.id, play_count), raw_tag_parser))
 }
 
 /// Reads a `POPM` (popularimeter) frame.
 fn read_popm_frame(
-    reader: &mut BufReader<'_>,
-    std_key: Option<StandardTagKey>,
+    mut reader: BufReader<'_>,
     info: &FrameInfo<'_>,
+    _: Option<RawTagParser>,
 ) -> Result<FrameResult> {
-    let email = read_text(reader, Encoding::Iso8859_1, reader.bytes_available() as usize)?;
-    let key = format!("{}:{}", info.id, &email);
+    let mut fields = Vec::new();
 
+    // Read the email of the user this frame belongs to. Add it to the sub-fields of the tag.
+    let email = read_text(&mut reader, Encoding::Iso8859_1)?;
+    fields.push(RawTagSubField::new("EMAIL", email));
+
+    // Read the rating.
     let rating = reader.read_u8()?;
 
-    // There's a personalized play counter here, but there is no analogue in Symphonia so don't do
-    // anything with it.
+    // Read the optional play counter. Add it to the sub-fields of the tag.
+    if let Some(play_counter) = read_play_counter(&mut reader)? {
+        fields.push(RawTagSubField::new("PLAY_COUNTER", play_counter));
+    }
+
+    // The primary value of this frame is the rating as it is mandatory whereas the play counter is
+    // not. Add the user's email and play counter as sub-fields.
+    let raw = RawTag::new_with_sub_fields(info.id, rating, fields.into_boxed_slice());
 
     // Create the tag.
-    let tag = Tag::new(std_key, &key, Value::from(rating));
+    let tag = Tag::new(raw);
 
     Ok(FrameResult::Tag(tag))
 }
 
 /// Reads a `MCDI` (music CD identifier) frame.
 fn read_mcdi_frame(
-    reader: &mut BufReader<'_>,
-    std_key: Option<StandardTagKey>,
+    mut reader: BufReader<'_>,
     info: &FrameInfo<'_>,
+    _: Option<RawTagParser>,
 ) -> Result<FrameResult> {
     // The entire frame is a binary dump of a CD-DA TOC.
     let buf = reader.read_buf_bytes_ref(reader.byte_len() as usize)?;
 
+    // TODO: Parse binary MCDI into hex-string based format as specified for the StandardTag.
+
     // Create the tag.
-    let tag = Tag::new(std_key, info.id, Value::from(buf));
+    let tag = Tag::new_from_parts(info.id, buf, None);
 
     Ok(FrameResult::Tag(tag))
 }
 
 fn read_apic_frame(
-    reader: &mut BufReader<'_>,
-    _: Option<StandardTagKey>,
+    mut reader: BufReader<'_>,
     info: &FrameInfo<'_>,
+    _: Option<RawTagParser>,
 ) -> Result<FrameResult> {
     // The first byte of the frame is the encoding of the text description.
     let encoding = match Encoding::parse(reader.read_byte()?) {
@@ -963,8 +954,7 @@ fn read_apic_frame(
     }
     else {
         // APIC frames use a null-terminated ASCII media-type string.
-        Some(read_text(reader, Encoding::Iso8859_1, reader.bytes_available() as usize)?)
-            .filter(|s| !s.is_empty())
+        read_text_not_empty(&mut reader, Encoding::Iso8859_1)?
     };
 
     // Image usage.
@@ -973,10 +963,8 @@ fn read_apic_frame(
     let mut tags = vec![];
 
     // Null-teriminated image description in specified encoding.
-    let desc = read_text(reader, encoding, reader.bytes_available() as usize)?;
-
-    if !desc.is_empty() {
-        tags.push(Tag::new(Some(StandardTagKey::Description), "", Value::from(desc)));
+    if let Some(desc) = read_text_not_empty(&mut reader, encoding)? {
+        tags.push(Tag::new_from_parts("", "", Some(StandardTag::Description(Arc::from(desc)))));
     }
 
     // The remainder of the APIC frame is the image data.
@@ -1000,12 +988,12 @@ fn read_apic_frame(
 
 /// Reads a `CHAP` (chapter) frame.
 fn read_chap_frame(
-    reader: &mut BufReader<'_>,
-    _: Option<StandardTagKey>,
+    mut reader: BufReader<'_>,
     info: &FrameInfo<'_>,
+    _: Option<RawTagParser>,
 ) -> Result<FrameResult> {
     // Read the element ID.
-    let id = read_text(reader, Encoding::Iso8859_1, reader.bytes_available() as usize)?;
+    let id = read_text(&mut reader, Encoding::Iso8859_1)?;
 
     // Start time in ms.
     let start_ms = reader.read_be_u32()?;
@@ -1028,9 +1016,9 @@ fn read_chap_frame(
 
     while reader.bytes_available() >= min_frame_size(info.major_version) {
         let frame = match info.major_version {
-            2 => read_id3v2p2_frame(reader),
-            3 => read_id3v2p3_frame(reader),
-            4 => read_id3v2p4_frame(reader),
+            2 => read_id3v2p2_frame(&mut reader),
+            3 => read_id3v2p3_frame(&mut reader),
+            4 => read_id3v2p4_frame(&mut reader),
             _ => break,
         }?;
 
@@ -1060,12 +1048,12 @@ fn read_chap_frame(
 
 /// Reads a `CTOC` (table of contents) frame.
 fn read_ctoc_frame(
-    reader: &mut BufReader<'_>,
-    _: Option<StandardTagKey>,
+    mut reader: BufReader<'_>,
     info: &FrameInfo<'_>,
+    _: Option<RawTagParser>,
 ) -> Result<FrameResult> {
     // Read for the element ID.
-    let id = read_text(reader, Encoding::Iso8859_1, reader.bytes_available() as usize)?;
+    let id = read_text(&mut reader, Encoding::Iso8859_1)?;
 
     // Read the flags.
     // - Bit 0 is the "ordered" bit. Indicates if the items should be played in order, or
@@ -1079,7 +1067,7 @@ fn read_ctoc_frame(
     let mut items = Vec::with_capacity(usize::from(entry_count));
 
     for _ in 0..entry_count {
-        let name = read_text(reader, Encoding::Iso8859_1, reader.bytes_available() as usize)?;
+        let name = read_text(&mut reader, Encoding::Iso8859_1)?;
         items.push(name);
     }
 
@@ -1089,9 +1077,9 @@ fn read_ctoc_frame(
 
     while reader.bytes_available() >= min_frame_size(info.major_version) {
         let frame = match info.major_version {
-            2 => read_id3v2p2_frame(reader),
-            3 => read_id3v2p3_frame(reader),
-            4 => read_id3v2p4_frame(reader),
+            2 => read_id3v2p2_frame(&mut reader),
+            3 => read_id3v2p3_frame(&mut reader),
+            4 => read_id3v2p4_frame(&mut reader),
             _ => break,
         }?;
 
@@ -1113,6 +1101,36 @@ fn read_ctoc_frame(
     };
 
     Ok(FrameResult::TableOfContents(toc))
+}
+
+/// Attempt to map the raw tag into one or more standard tags.
+fn map_raw_tag(raw: RawTag, parser: Option<RawTagParser>) -> FrameResult {
+    if let Some(parser) = parser {
+        // A parser was provided.
+        if let RawValue::String(value) = &raw.value {
+            // Parse and return frame result.
+            match parser(value.clone()) {
+                [Some(std), None] => {
+                    // One raw tag yielded one standard tag.
+                    return FrameResult::Tag(Tag::new_std(raw, std));
+                }
+                [None, Some(std)] => {
+                    // One raw tag yielded one standard tag.
+                    return FrameResult::Tag(Tag::new_std(raw, std));
+                }
+                [Some(std0), Some(std1)] => {
+                    // One raw tag yielded two standards tags.
+                    let tags = vec![Tag::new_std(raw.clone(), std0), Tag::new_std(raw, std1)];
+                    return FrameResult::MultipleTags(tags);
+                }
+                // The raw value could not be parsed.
+                _ => (),
+            }
+        }
+    }
+
+    // Could not parse, add a raw tag.
+    FrameResult::Tag(Tag::new(raw))
 }
 
 /// Enumeration of valid encodings for text fields in ID3v2 tags
@@ -1146,21 +1164,28 @@ impl Encoding {
     }
 }
 
-/// Scans up-to `scan_len` bytes from the provided `BufStream` for a string that is terminated with
-/// the appropriate null terminator for the given encoding as per the ID3v2 specification. A
-/// copy-on-write reference to the string excluding the null terminator is returned or an error. If
-/// the scanned string is valid UTF-8, or is equivalent to UTF-8, then no copies will occur. If a
-/// null terminator is not found, and `scan_len` is reached, or the stream is exhausted, all the
-/// scanned bytes up-to that point are interpreted as the string.
-fn read_text(
+/// Same behaviour as `read_text`, but ignores empty strings.
+fn read_text_not_empty(
     reader: &mut BufReader<'_>,
     encoding: Encoding,
-    scan_len: usize,
-) -> io::Result<String> {
+) -> io::Result<Option<String>> {
+    Ok(Some(read_text(reader, encoding)?).filter(|text| !text.is_empty()))
+}
+
+/// Read a null-terminated string of the specified encoding from the stream. If the stream ends
+/// before the null-terminator is reached, all the bytes up-to that point are interpreted as the
+/// string.
+fn read_text(reader: &mut BufReader<'_>, encoding: Encoding) -> io::Result<String> {
+    let max_len = reader.bytes_available() as usize;
+
     let buf = match encoding {
-        Encoding::Iso8859_1 | Encoding::Utf8 => reader.scan_bytes_aligned_ref(&[0x00], 1, scan_len),
+        Encoding::Iso8859_1 | Encoding::Utf8 => {
+            // Byte aligned encodings. The null-terminator is 1 byte.
+            reader.scan_bytes_aligned_ref(&[0x00], 1, max_len)
+        }
         Encoding::Utf16Bom | Encoding::Utf16Be => {
-            reader.scan_bytes_aligned_ref(&[0x00, 0x00], 2, scan_len)
+            // Two-byte aligned encodings. The null-terminator is 2 bytes.
+            reader.scan_bytes_aligned_ref(&[0x00, 0x00], 2, max_len)
         }
     }?;
 
@@ -1205,4 +1230,33 @@ fn decode_text(encoding: Encoding, data: &[u8]) -> Cow<'_, str> {
             UTF_16BE.decode(&data[..end]).0
         }
     }
+}
+
+/// Read a variably sized play counter.
+fn read_play_counter(reader: &mut BufReader<'_>) -> Result<Option<u64>> {
+    let len = reader.bytes_available() as usize;
+
+    // A length of 0 indicates no play counter.
+    if len == 0 {
+        return Ok(None);
+    }
+
+    // A valid play counter must be a minimum of 4 bytes long.
+    if len < 4 {
+        return decode_error("id3v2: play counter must be a minimum of 32 bits");
+    }
+
+    // However it may be extended by an arbitrary amount of bytes (or so it would seem).
+    // Practically, a 4-byte (32-bit) count is way more than enough, but we'll support up-to an
+    // 8-byte (64bit) count.
+    if len > 8 {
+        return unsupported_error("id3v2: play counter greater-than 64 bits are not supported");
+    }
+
+    // The play counter is stored as an N-byte big-endian integer. Read N bytes into an 8-byte
+    // buffer, making sure the missing bytes are zeroed, and then reinterpret as a 64-bit integer.
+    let mut buf = [0u8; 8];
+    reader.read_buf_exact(&mut buf[8 - len..])?;
+
+    Ok(Some(u64::from_be_bytes(buf)))
 }

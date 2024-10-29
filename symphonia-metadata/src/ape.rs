@@ -10,6 +10,7 @@
 use core::str;
 use std::collections::HashMap;
 use std::io::{Seek, SeekFrom};
+use std::sync::Arc;
 
 use symphonia_core::errors::{decode_error, unsupported_error, Result};
 use symphonia_core::formats::probe::{
@@ -18,94 +19,104 @@ use symphonia_core::formats::probe::{
 use symphonia_core::io::{MediaSourceStream, ReadBytes, ScopedStream, SeekBuffered};
 use symphonia_core::meta::well_known::{METADATA_ID_APEV1, METADATA_ID_APEV2};
 use symphonia_core::meta::{
-    MetadataBuffer, MetadataBuilder, MetadataInfo, MetadataOptions, MetadataReader, StandardTagKey,
-    StandardVisualKey, Tag, Value, Visual,
+    MetadataBuffer, MetadataBuilder, MetadataInfo, MetadataOptions, MetadataReader, RawTag,
+    RawValue, StandardTag, StandardVisualKey, Tag, Visual,
 };
 use symphonia_core::support_metadata;
 
 use lazy_static::lazy_static;
 
 use crate::utils::images::{try_get_image_info, ImageInfo};
+use crate::utils::std_tag::*;
 
 lazy_static! {
-    static ref APE_TAG_MAP: HashMap<&'static str, StandardTagKey> = {
-        let mut m = HashMap::new();
-        m.insert("accurateripdiscid"           , StandardTagKey::AccurateRipDiscId);
-        m.insert("accurateripresult"           , StandardTagKey::AccurateRipResult);
-        m.insert("acoustid_fingerprint"        , StandardTagKey::AcoustIdFingerprint);
-        m.insert("acoustid_id"                 , StandardTagKey::AcoustIdId);
-        m.insert("album artist"                , StandardTagKey::AlbumArtist);
-        m.insert("album"                       , StandardTagKey::Album);
-        m.insert("albumartistsort"             , StandardTagKey::SortAlbumArtist);
-        m.insert("albumsort"                   , StandardTagKey::SortAlbum);
-        m.insert("arranger"                    , StandardTagKey::Arranger);
-        m.insert("artist"                      , StandardTagKey::Artist);
-        m.insert("artistsort"                  , StandardTagKey::SortArtist);
-        m.insert("asin"                        , StandardTagKey::IdentAsin);
-        m.insert("bpm"                         , StandardTagKey::Bpm);
-        m.insert("catalog"                     , StandardTagKey::IdentCatalogNumber);
-        m.insert("catalognumber"               , StandardTagKey::IdentCatalogNumber);
-        m.insert("comment"                     , StandardTagKey::Comment);
-        m.insert("compilation"                 , StandardTagKey::Compilation);
-        m.insert("composer"                    , StandardTagKey::Composer);
-        m.insert("composersort"                , StandardTagKey::SortComposer);
-        m.insert("conductor"                   , StandardTagKey::Conductor);
-        m.insert("copyright"                   , StandardTagKey::Copyright);
+    static ref APE_TAG_MAP: RawTagParserMap = {
+        let mut m: RawTagParserMap = HashMap::new();
+        m.insert("accurateripcount"            , parse_accuraterip_count);
+        m.insert("accurateripcountalloffsets"  , parse_accuraterip_count_all_offsets);
+        m.insert("accurateripcountwithoffset"  , parse_accuraterip_count_with_offset);
+        m.insert("accurateripcrc"              , parse_accuraterip_crc);
+        m.insert("accurateripdiscid"           , parse_accuraterip_disc_id);
+        m.insert("accurateripid"               , parse_accuraterip_id);
+        m.insert("accurateripoffset"           , parse_accuraterip_offset);
+        m.insert("accurateripresult"           , parse_accuraterip_result);
+        m.insert("accurateriptotal"            , parse_accuraterip_total);
+        m.insert("acoustid_fingerprint"        , parse_acoustid_fingerprint);
+        m.insert("acoustid_id"                 , parse_acoustid_id);
+        m.insert("album artist"                , parse_album_artist);
+        m.insert("album"                       , parse_album);
+        m.insert("albumartistsort"             , parse_sort_album_artist);
+        m.insert("albumsort"                   , parse_sort_album);
+        m.insert("arranger"                    , parse_arranger);
+        m.insert("artist"                      , parse_artist);
+        m.insert("artistsort"                  , parse_sort_artist);
+        m.insert("asin"                        , parse_ident_asin);
+        m.insert("bpm"                         , parse_bpm);
+        m.insert("catalog"                     , parse_ident_catalog_number);
+        m.insert("catalognumber"               , parse_ident_catalog_number);
+        m.insert("comment"                     , parse_comment);
+        m.insert("compilation"                 , parse_compilation);
+        m.insert("composer"                    , parse_composer);
+        m.insert("composersort"                , parse_sort_composer);
+        m.insert("conductor"                   , parse_conductor);
+        m.insert("copyright"                   , parse_copyright);
         // Disc Number or Disc Number/Total Discs
-        m.insert("disc"                        , StandardTagKey::DiscNumber);
-        m.insert("djmixer"                     , StandardTagKey::MixDj);
+        m.insert("disc"                        , parse_disc_number);
+        m.insert("djmixer"                     , parse_mix_dj);
         // EAN-13/UPC-A
-        m.insert("ean/upc"                     , StandardTagKey::IdentEanUpn);
-        m.insert("encodedby"                   , StandardTagKey::EncodedBy);
-        m.insert("encoder settings"            , StandardTagKey::EncoderSettings);
-        m.insert("encoder"                     , StandardTagKey::Encoder);
-        m.insert("engineer"                    , StandardTagKey::Engineer);
-        m.insert("file"                        , StandardTagKey::OriginalFile);
-        m.insert("genre"                       , StandardTagKey::Genre);
-        m.insert("isbn"                        , StandardTagKey::IdentIsbn);
-        m.insert("isrc"                        , StandardTagKey::IdentIsrc);
-        m.insert("label"                       , StandardTagKey::Label);
-        m.insert("labelcode"                   , StandardTagKey::LabelCode);
-        m.insert("language"                    , StandardTagKey::Language);
-        m.insert("lyricist"                    , StandardTagKey::Lyricist);
-        m.insert("lyrics"                      , StandardTagKey::Lyrics);
-        m.insert("media"                       , StandardTagKey::MediaFormat);
-        m.insert("mixer"                       , StandardTagKey::MixEngineer);
-        m.insert("mood"                        , StandardTagKey::Mood);
-        m.insert("movement"                    , StandardTagKey::MovementTotal);
-        m.insert("movementname"                , StandardTagKey::MovementName);
-        m.insert("movementtotal"               , StandardTagKey::Mood);
-        m.insert("mp3gain_album_minmax"        , StandardTagKey::Mp3GainAlbumMinMax);
-        m.insert("mp3gain_minmax"              , StandardTagKey::Mp3GainMinMax);
-        m.insert("mp3gain_undo"                , StandardTagKey::Mp3GainUndo);
-        m.insert("musicbrainz_albumartistid"   , StandardTagKey::MusicBrainzAlbumArtistId);
-        m.insert("musicbrainz_albumid"         , StandardTagKey::MusicBrainzAlbumId);
-        m.insert("musicbrainz_artistid"        , StandardTagKey::MusicBrainzArtistId);
-        m.insert("musicbrainz_discid"          , StandardTagKey::AccurateRipDiscId);
-        m.insert("musicbrainz_originalalbumid" , StandardTagKey::MusicBrainzOriginalAlbumId);
-        m.insert("musicbrainz_originalartistid", StandardTagKey::MusicBrainzOriginalArtistId);
-        m.insert("musicbrainz_releasegroupid"  , StandardTagKey::MusicBrainzReleaseGroupId);
-        m.insert("musicbrainz_releasetrackid"  , StandardTagKey::MusicBrainzReleaseTrackId);
-        m.insert("musicbrainz_trackid"         , StandardTagKey::MusicBrainzTrackId);
-        m.insert("musicbrainz_trmid"           , StandardTagKey::MusicBrainzTrmId);
-        m.insert("musicbrainz_workid"          , StandardTagKey::MusicBrainzWorkId);
-        m.insert("original artist"             , StandardTagKey::OriginalArtist);
-        m.insert("originalyear"                , StandardTagKey::OriginalDate);
-        m.insert("publisher"                   , StandardTagKey::Label);
-        m.insert("record date"                 , StandardTagKey::RecordingDate);
-        m.insert("record location"             , StandardTagKey::RecordingLocation);
-        m.insert("related"                     , StandardTagKey::Url);
-        m.insert("replaygain_album_gain"       , StandardTagKey::ReplayGainAlbumGain);
-        m.insert("replaygain_album_peak"       , StandardTagKey::ReplayGainAlbumPeak);
-        m.insert("replaygain_track_gain"       , StandardTagKey::ReplayGainTrackGain);
-        m.insert("replaygain_track_peak"       , StandardTagKey::ReplayGainTrackPeak);
-        m.insert("subtitle"                    , StandardTagKey::TrackSubtitle);
-        m.insert("title"                       , StandardTagKey::TrackTitle);
-        m.insert("titlesort"                   , StandardTagKey::SortTrackTitle);
+        m.insert("ean/upc"                     , parse_ident_ean_upn);
+        m.insert("encodedby"                   , parse_encoded_by);
+        m.insert("encoder settings"            , parse_encoder_settings);
+        m.insert("encoder"                     , parse_encoder);
+        m.insert("engineer"                    , parse_engineer);
+        m.insert("file"                        , parse_original_file);
+        m.insert("genre"                       , parse_genre);
+        m.insert("isbn"                        , parse_ident_isbn);
+        m.insert("isrc"                        , parse_ident_isrc);
+        m.insert("label"                       , parse_label);
+        m.insert("labelcode"                   , parse_label_code);
+        m.insert("language"                    , parse_language);
+        m.insert("lyricist"                    , parse_lyricist);
+        m.insert("lyrics"                      , parse_lyrics);
+        m.insert("media"                       , parse_media_format);
+        m.insert("mixer"                       , parse_mix_engineer);
+        m.insert("mood"                        , parse_mood);
+        m.insert("movement"                    , parse_movement_total);
+        m.insert("movementname"                , parse_movement_name);
+        m.insert("movementtotal"               , parse_mood);
+        m.insert("mp3gain_album_minmax"        , parse_mp3gain_album_min_max);
+        m.insert("mp3gain_minmax"              , parse_mp3gain_min_max);
+        m.insert("mp3gain_undo"                , parse_mp3gain_undo);
+        m.insert("musicbrainz_albumartistid"   , parse_musicbrainz_album_artist_id);
+        m.insert("musicbrainz_albumid"         , parse_musicbrainz_album_id);
+        m.insert("musicbrainz_albumstatus"     , parse_musicbrainz_release_status);
+        m.insert("musicbrainz_albumtype"       , parse_musicbrainz_release_type);
+        m.insert("musicbrainz_artistid"        , parse_musicbrainz_artist_id);
+        m.insert("musicbrainz_discid"          , parse_musicbrainz_disc_id);
+        m.insert("musicbrainz_originalalbumid" , parse_musicbrainz_original_album_id);
+        m.insert("musicbrainz_originalartistid", parse_musicbrainz_original_artist_id);
+        m.insert("musicbrainz_releasegroupid"  , parse_musicbrainz_release_group_id);
+        m.insert("musicbrainz_releasetrackid"  , parse_musicbrainz_release_track_id);
+        m.insert("musicbrainz_trackid"         , parse_musicbrainz_track_id);
+        m.insert("musicbrainz_trmid"           , parse_musicbrainz_trm_id);
+        m.insert("musicbrainz_workid"          , parse_musicbrainz_work_id);
+        m.insert("original artist"             , parse_original_artist);
+        m.insert("originalyear"                , parse_original_date);
+        m.insert("publisher"                   , parse_label);
+        m.insert("record date"                 , parse_recording_date);
+        m.insert("record location"             , parse_recording_location);
+        m.insert("related"                     , parse_url);
+        m.insert("replaygain_album_gain"       , parse_replaygain_album_gain);
+        m.insert("replaygain_album_peak"       , parse_replaygain_album_peak);
+        m.insert("replaygain_track_gain"       , parse_replaygain_track_gain);
+        m.insert("replaygain_track_peak"       , parse_replaygain_track_peak);
+        m.insert("subtitle"                    , parse_track_subtitle);
+        m.insert("title"                       , parse_track_title);
+        m.insert("titlesort"                   , parse_sort_track_title);
         // Track Number or Track Number/Total Tracks
-        m.insert("track"                       , StandardTagKey::TrackNumber);
-        m.insert("writer"                      , StandardTagKey::Writer);
-        m.insert("year"                        , StandardTagKey::ReleaseDate);
+        m.insert("track"                       , parse_track_number);
+        m.insert("writer"                      , parse_writer);
+        m.insert("year"                        , parse_release_date);
         // TODO: Debut Album
         // TODO: Publicationright
         // TODO: Abstract
@@ -374,19 +385,12 @@ impl MetadataReader for ApeReader<'_> {
         for _ in 0..header.num_items {
             let item = ApeItem::read(&mut self.reader, &header)?;
 
-            // Map APE tag item values.
-            let value = match item.value {
-                ApeItemValue::String(str) => Value::String(str),
-                ApeItemValue::Locator(loc) => Value::String(loc),
-                ApeItemValue::Binary(bin) => Value::Binary(bin),
-            };
-
             let key_lower = item.key.to_ascii_lowercase();
 
             // If the APE tag key can be mapped to a standard visual key, and the value is binary
             // data, then consider the tag to be a visual.
             if let Some(std_key) = APE_VISUAL_TAG_MAP.get(key_lower.as_str()).copied() {
-                if let Value::Binary(data) = value {
+                if let ApeItemValue::Binary(data) = item.value {
                     let mut tags = vec![];
 
                     // Try to parse the image data to obtain information about the image. This may
@@ -406,10 +410,14 @@ impl MetadataReader for ApeReader<'_> {
                 }
             }
 
-            // Try to find a standard tag key.
-            let std_key = APE_TAG_MAP.get(key_lower.as_str()).copied();
+            // Map APE tag item values to raw values.
+            let value = match item.value {
+                ApeItemValue::String(str) => RawValue::from(str),
+                ApeItemValue::Locator(loc) => RawValue::from(loc),
+                ApeItemValue::Binary(bin) => RawValue::from(bin),
+            };
 
-            builder.add_tag(Tag::new(std_key, &item.key, value));
+            builder.add_mapped_tags(RawTag::new(item.key, value), &APE_TAG_MAP);
         }
 
         // Read the footer.
@@ -494,7 +502,15 @@ fn try_parse_image_data(buf: Box<[u8]>, tags: &mut Vec<Tag>) -> (Box<[u8]>, Opti
             // and add it to the visual's tags if successful.
             if let Ok(name) = str::from_utf8(left) {
                 if !name.is_empty() {
-                    tags.push(Tag::new(Some(StandardTagKey::OriginalFile), "", Value::from(name)));
+                    let name = Arc::new(name.to_string());
+
+                    let tag = Tag::new_from_parts(
+                        "FILE",
+                        name.clone(),
+                        Some(StandardTag::OriginalFile(name)),
+                    );
+
+                    tags.push(tag);
                 }
             }
 

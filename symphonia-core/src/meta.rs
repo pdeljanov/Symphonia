@@ -6,12 +6,55 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 //! The `meta` module defines basic metadata elements, and management structures.
+//!
+//! # Tags
+//!
+//! Within the context of media, a tag is single piece of metadata about the media as a whole, or a
+//! track within the media. The storage of tags, their structure, and organization, varies based on
+//! the metadata/tagging format.
+//!
+//! The [`Tag`] structure represents a single tag, and abstracts over the differences in tagging
+//! formats. `Tag` is a composition of a mandatory raw tag, and an optional standard tag.
+//!
+//! ## Raw Tags
+//!
+//! A [`RawTag`] stores a tag in a data format that matches as closely as possible to the format of
+//! the tag as it was written. The data format depends on the tagging format, and the writer of the
+//! tag.
+//!
+//! A `RawTag` consists of a mandatory key-value pair. For most tagging formats, this is sufficient
+//! to faithfully represent the original tag, however, for some more structured tagging formats, a
+//! set of additional key-value pairs ([`RawTagSubField`]) may be populated.
+//!
+//! The meaning of the tag can be derived from its key, however, the key may be named differently
+//! based on the underlying tagging format and the writer of the tag.
+//!
+//! Raw tags can be ignored by most tag consumers. Instead, standard tags should be preferred.
+//!
+//! ## Standard Tags
+//!
+//! A [`StandardTag`] is a parsed representation of a tag. Unlike a raw tag, a standard tag has a
+//! well-defined data type and meaning.
+//!
+//! A metadata reader will assign a `StandardTag` to a `Tag` if it is able to identify the meaning
+//! of the `RawTag`, and parse its value. If the `RawTag` maps to multiple `StandardTag`s, then
+//! the `Tag` (along with the `RawTag`) will be duplicated for each `StandardTag` with each instance
+//! being assigned one `StandardTag`.
+//!
+//! An end-user should prefer consuming standard tags over raw tags.
+//!
+//! ## Storage Efficiency
+//!
+//! In many cases, the value of a `RawTag` will be the same as the `StandardTag`. Since a value may
+//! be large, duplicating it could be wasteful. For this reason, string and binary data values are
+//! stored using an [`Arc`].
 
 use std::borrow::Cow;
 use std::collections::VecDeque;
 use std::convert::From;
 use std::fmt;
 use std::num::NonZeroU8;
+use std::sync::Arc;
 
 use crate::common::FourCc;
 use crate::errors::Result;
@@ -109,6 +152,7 @@ pub struct MetadataOptions {
 ///
 /// The visual types listed here are derived from, though do not entirely cover, the ID3v2 APIC
 /// frame specification.
+#[non_exhaustive]
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum StandardVisualKey {
     FileIcon,
@@ -133,153 +177,165 @@ pub enum StandardVisualKey {
     Other,
 }
 
-/// `StandardTagKey` is an enumeration providing standardized keys for common tag types.
-/// A tag reader may assign a `StandardTagKey` to a `Tag` if the tag's key is generally
-/// accepted to map to a specific usage.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-pub enum StandardTagKey {
-    AccurateRipCount,
-    AccurateRipCountAllOffsets,
-    AccurateRipCountWithOffset,
-    AccurateRipCrc,
-    AccurateRipDiscId,
-    AccurateRipId,
-    AccurateRipOffset,
-    AccurateRipResult,
-    AccurateRipTotal,
-    AcoustIdFingerprint,
-    AcoustIdId,
-    Album,
-    AlbumArtist,
-    Arranger,
-    Artist,
-    Bpm,
-    Comment,
+/// A standard tag is an enumeration of well-defined and well-known tags with parsed values.
+#[non_exhaustive]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum StandardTag {
+    AccurateRipCount(Arc<String>),
+    AccurateRipCountAllOffsets(Arc<String>),
+    AccurateRipCountWithOffset(Arc<String>),
+    AccurateRipCrc(Arc<String>),
+    AccurateRipDiscId(Arc<String>),
+    AccurateRipId(Arc<String>),
+    AccurateRipOffset(Arc<String>),
+    AccurateRipResult(Arc<String>),
+    AccurateRipTotal(Arc<String>),
+    AcoustIdFingerprint(Arc<String>),
+    AcoustIdId(Arc<String>),
+    Album(Arc<String>),
+    AlbumArtist(Arc<String>),
+    Arranger(Arc<String>),
+    Artist(Arc<String>),
+    Bpm(u64),
+    CdToc(Arc<String>),
+    Comment(Arc<String>),
     Compilation,
-    Composer,
-    Conductor,
-    ContentGroup,
-    Copyright,
-    Date,
-    Description,
-    DiscNumber,
-    DiscSubtitle,
-    DiscTotal,
-    EncodedBy,
-    Encoder,
-    EncoderSettings,
-    EncodingDate,
-    Engineer,
-    Ensemble,
-    Genre,
-    IdentAsin,
-    IdentBarcode,
-    IdentCatalogNumber,
-    IdentEanUpn,
-    IdentIsbn,
-    IdentIsrc,
-    IdentPn,
-    IdentPodcast,
-    IdentUpc,
-    IndexNumber,
-    Label,
-    LabelCode,
-    Language,
-    License,
-    Lyricist,
-    Lyrics,
-    MediaFormat,
-    MixDj,
-    MixEngineer,
-    Mood,
-    MovementName,
-    MovementNumber,
-    MovementTotal,
-    Mp3GainAlbumMinMax,
-    Mp3GainMinMax,
-    Mp3GainUndo,
-    MusicBrainzAlbumArtistId,
-    MusicBrainzAlbumId,
-    MusicBrainzArtistId,
-    MusicBrainzDiscId,
-    MusicBrainzGenreId,
-    MusicBrainzLabelId,
-    MusicBrainzOriginalAlbumId,
-    MusicBrainzOriginalArtistId,
-    MusicBrainzRecordingId,
-    MusicBrainzReleaseGroupId,
-    MusicBrainzReleaseStatus,
-    MusicBrainzReleaseTrackId,
-    MusicBrainzReleaseType,
-    MusicBrainzTrackId,
-    MusicBrainzTrmId,
-    MusicBrainzWorkId,
-    Opus,
-    OriginalAlbum,
-    OriginalArtist,
-    OriginalDate,
-    OriginalFile,
-    OriginalWriter,
-    Owner,
-    Part,
-    PartTotal,
-    Performer,
+    Composer(Arc<String>),
+    Conductor(Arc<String>),
+    Copyright(Arc<String>),
+    CueToolsDbDiscConfidence(Arc<String>),
+    CueToolsDbTrackConfidence(Arc<String>),
+    Date(Arc<String>),
+    Description(Arc<String>),
+    DiscNumber(u64),
+    DiscSubtitle(Arc<String>),
+    DiscTotal(u64),
+    EncodedBy(Arc<String>),
+    Encoder(Arc<String>),
+    EncoderSettings(Arc<String>),
+    EncodingDate(Arc<String>),
+    Engineer(Arc<String>),
+    Ensemble(Arc<String>),
+    Genre(Arc<String>),
+    Grouping(Arc<String>),
+    IdentAsin(Arc<String>),
+    IdentBarcode(Arc<String>),
+    IdentCatalogNumber(Arc<String>),
+    IdentEanUpn(Arc<String>),
+    IdentIsbn(Arc<String>),
+    IdentIsrc(Arc<String>),
+    IdentPn(Arc<String>),
+    IdentPodcast(Arc<String>),
+    IdentUpc(Arc<String>),
+    IndexNumber(u8),
+    InitialKey(Arc<String>),
+    InternetRadioName(Arc<String>),
+    InternetRadioOwner(Arc<String>),
+    Label(Arc<String>),
+    LabelCode(Arc<String>),
+    Language(Arc<String>),
+    License(Arc<String>),
+    Lyricist(Arc<String>),
+    Lyrics(Arc<String>),
+    MediaFormat(Arc<String>),
+    MixDj(Arc<String>),
+    MixEngineer(Arc<String>),
+    Mood(Arc<String>),
+    MovementName(Arc<String>),
+    MovementNumber(u64),
+    MovementTotal(u64),
+    Mp3GainAlbumMinMax(Arc<String>),
+    Mp3GainMinMax(Arc<String>),
+    Mp3GainUndo(Arc<String>),
+    MusicBrainzAlbumArtistId(Arc<String>),
+    MusicBrainzAlbumId(Arc<String>),
+    MusicBrainzArtistId(Arc<String>),
+    MusicBrainzDiscId(Arc<String>),
+    MusicBrainzGenreId(Arc<String>),
+    MusicBrainzLabelId(Arc<String>),
+    MusicBrainzOriginalAlbumId(Arc<String>),
+    MusicBrainzOriginalArtistId(Arc<String>),
+    MusicBrainzRecordingId(Arc<String>),
+    MusicBrainzReleaseGroupId(Arc<String>),
+    MusicBrainzReleaseStatus(Arc<String>),
+    MusicBrainzReleaseTrackId(Arc<String>),
+    MusicBrainzReleaseType(Arc<String>),
+    MusicBrainzTrackId(Arc<String>),
+    MusicBrainzTrmId(Arc<String>),
+    MusicBrainzWorkId(Arc<String>),
+    Opus(Arc<String>),
+    OriginalAlbum(Arc<String>),
+    OriginalArtist(Arc<String>),
+    OriginalDate(Arc<String>),
+    OriginalFile(Arc<String>),
+    OriginalWriter(Arc<String>),
+    OriginalYear(u16),
+    Owner(Arc<String>),
+    PartNumber(u64),
+    Part(Arc<String>),
+    PartTotal(u64),
+    Performer(Arc<String>),
     Podcast,
-    PodcastCategory,
-    PodcastDescription,
-    PodcastKeywords,
-    Producer,
-    PurchaseDate,
-    Rating,
-    RecordingDate,
-    RecordingLocation,
-    RecordingTime,
-    ReleaseCountry,
-    ReleaseDate,
-    Remixer,
-    ReplayGainAlbumGain,
-    ReplayGainAlbumPeak,
-    ReplayGainTrackGain,
-    ReplayGainTrackPeak,
-    Script,
-    SortAlbum,
-    SortAlbumArtist,
-    SortArtist,
-    SortComposer,
-    SortTrackTitle,
-    TaggingDate,
-    TrackNumber,
-    TrackSubtitle,
-    TrackTitle,
-    TrackTotal,
-    TvEpisode,
-    TvEpisodeTitle,
-    TvNetwork,
-    TvSeason,
-    TvShowTitle,
-    Url,
-    UrlArtist,
-    UrlCopyright,
-    UrlInternetRadio,
-    UrlLabel,
-    UrlOfficial,
-    UrlPayment,
-    UrlPodcast,
-    UrlPurchase,
-    UrlSource,
-    Version,
-    Writer,
+    PodcastCategory(Arc<String>),
+    PodcastDescription(Arc<String>),
+    PodcastKeywords(Arc<String>),
+    Producer(Arc<String>),
+    PurchaseDate(Arc<String>),
+    Rating(Arc<String>),
+    RecordingDate(Arc<String>),
+    RecordingLocation(Arc<String>),
+    RecordingTime(Arc<String>),
+    ReleaseCountry(Arc<String>),
+    ReleaseDate(Arc<String>),
+    Remixer(Arc<String>),
+    ReplayGainAlbumGain(Arc<String>),
+    ReplayGainAlbumPeak(Arc<String>),
+    ReplayGainAlbumRange(Arc<String>),
+    ReplayGainReferenceLoudness(Arc<String>),
+    ReplayGainTrackGain(Arc<String>),
+    ReplayGainTrackPeak(Arc<String>),
+    ReplayGainTrackRange(Arc<String>),
+    Script(Arc<String>),
+    SortAlbum(Arc<String>),
+    SortAlbumArtist(Arc<String>),
+    SortArtist(Arc<String>),
+    SortComposer(Arc<String>),
+    SortTrackTitle(Arc<String>),
+    TaggingDate(Arc<String>),
+    TrackNumber(u64),
+    TrackSubtitle(Arc<String>),
+    TrackTitle(Arc<String>),
+    TrackTotal(u64),
+    TvEpisode(u64),
+    TvEpisodeTitle(Arc<String>),
+    TvNetwork(Arc<String>),
+    TvSeason(u64),
+    TvShowTitle(Arc<String>),
+    Url(Arc<String>),
+    UrlArtist(Arc<String>),
+    UrlCopyright(Arc<String>),
+    UrlInternetRadio(Arc<String>),
+    UrlLabel(Arc<String>),
+    UrlOfficial(Arc<String>),
+    UrlPayment(Arc<String>),
+    UrlPodcast(Arc<String>),
+    UrlPurchase(Arc<String>),
+    UrlSource(Arc<String>),
+    Version(Arc<String>),
+    Work(Arc<String>),
+    Writer(Arc<String>),
 }
 
-/// A `Tag` value.
+/// The value of a [`RawTag`].
 ///
-/// Note: The data types in this enumeration are a generalization. Depending on the particular tag
-/// format, the actual data type a specific tag may have a lesser width or encoding than the data
-/// type in this enumeration.
+/// Note: The data types in this enumeration are an abstraction. Depending on the particular tagging
+/// format, the actual data type of a specific tag may have a lesser width or different encoding
+/// than the data type stored here.
+#[non_exhaustive]
 #[derive(Clone, Debug)]
-pub enum Value {
+pub enum RawValue {
     /// A binary buffer.
-    Binary(Box<[u8]>),
+    Binary(Arc<Box<[u8]>>),
     /// A boolean value.
     Boolean(bool),
     /// A flag or indicator. A flag carries no data, but the presence of the tag has an implicit
@@ -290,14 +346,14 @@ pub enum Value {
     /// A signed integer.
     SignedInt(i64),
     /// A string. This is also the catch-all type for tags with unconventional data types.
-    String(String),
+    String(Arc<String>),
     /// An unsigned integer.
     UnsignedInt(u64),
 }
 
 macro_rules! impl_from_for_value {
     ($value:ident, $from:ty, $conv:expr) => {
-        impl From<$from> for Value {
+        impl From<$from> for RawValue {
             fn from($value: $from) -> Self {
                 $conv
             }
@@ -305,21 +361,24 @@ macro_rules! impl_from_for_value {
     };
 }
 
-impl_from_for_value!(v, &[u8], Value::Binary(Box::from(v)));
-impl_from_for_value!(v, bool, Value::Boolean(v));
-impl_from_for_value!(v, f32, Value::Float(f64::from(v)));
-impl_from_for_value!(v, f64, Value::Float(v));
-impl_from_for_value!(v, i8, Value::SignedInt(i64::from(v)));
-impl_from_for_value!(v, i16, Value::SignedInt(i64::from(v)));
-impl_from_for_value!(v, i32, Value::SignedInt(i64::from(v)));
-impl_from_for_value!(v, i64, Value::SignedInt(v));
-impl_from_for_value!(v, u8, Value::UnsignedInt(u64::from(v)));
-impl_from_for_value!(v, u16, Value::UnsignedInt(u64::from(v)));
-impl_from_for_value!(v, u32, Value::UnsignedInt(u64::from(v)));
-impl_from_for_value!(v, u64, Value::UnsignedInt(v));
-impl_from_for_value!(v, &str, Value::String(String::from(v)));
-impl_from_for_value!(v, String, Value::String(v));
-impl_from_for_value!(v, Cow<'_, str>, Value::String(String::from(v)));
+impl_from_for_value!(v, &[u8], RawValue::Binary(Arc::new(Box::from(v))));
+impl_from_for_value!(v, Box<[u8]>, RawValue::Binary(Arc::new(v)));
+impl_from_for_value!(v, Arc<Box<[u8]>>, RawValue::Binary(v));
+impl_from_for_value!(v, bool, RawValue::Boolean(v));
+impl_from_for_value!(v, f32, RawValue::Float(f64::from(v)));
+impl_from_for_value!(v, f64, RawValue::Float(v));
+impl_from_for_value!(v, i8, RawValue::SignedInt(i64::from(v)));
+impl_from_for_value!(v, i16, RawValue::SignedInt(i64::from(v)));
+impl_from_for_value!(v, i32, RawValue::SignedInt(i64::from(v)));
+impl_from_for_value!(v, i64, RawValue::SignedInt(v));
+impl_from_for_value!(v, u8, RawValue::UnsignedInt(u64::from(v)));
+impl_from_for_value!(v, u16, RawValue::UnsignedInt(u64::from(v)));
+impl_from_for_value!(v, u32, RawValue::UnsignedInt(u64::from(v)));
+impl_from_for_value!(v, u64, RawValue::UnsignedInt(v));
+impl_from_for_value!(v, &str, RawValue::String(Arc::new(v.to_string())));
+impl_from_for_value!(v, String, RawValue::String(Arc::new(v)));
+impl_from_for_value!(v, Arc<String>, RawValue::String(v));
+impl_from_for_value!(v, Cow<'_, str>, RawValue::String(Arc::new(v.into_owned())));
 
 fn buffer_to_hex_string(buf: &[u8]) -> String {
     let mut output = String::with_capacity(5 * buf.len());
@@ -335,64 +394,113 @@ fn buffer_to_hex_string(buf: &[u8]) -> String {
     output
 }
 
-impl fmt::Display for Value {
+impl fmt::Display for RawValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // Implement default formatters for each type.
         match self {
-            Value::Binary(ref buf) => f.write_str(&buffer_to_hex_string(buf)),
-            Value::Boolean(boolean) => fmt::Display::fmt(boolean, f),
-            Value::Flag => write!(f, "<flag>"),
-            Value::Float(float) => fmt::Display::fmt(float, f),
-            Value::SignedInt(int) => fmt::Display::fmt(int, f),
-            Value::String(ref string) => fmt::Display::fmt(string, f),
-            Value::UnsignedInt(uint) => fmt::Display::fmt(uint, f),
+            RawValue::Binary(ref buf) => f.write_str(&buffer_to_hex_string(buf)),
+            RawValue::Boolean(boolean) => fmt::Display::fmt(boolean, f),
+            RawValue::Flag => write!(f, "<flag>"),
+            RawValue::Float(float) => fmt::Display::fmt(float, f),
+            RawValue::SignedInt(int) => fmt::Display::fmt(int, f),
+            RawValue::String(ref string) => fmt::Display::fmt(string, f),
+            RawValue::UnsignedInt(uint) => fmt::Display::fmt(uint, f),
         }
     }
 }
 
-/// A `Tag` encapsulates a key-value pair of metadata.
+/// A key-value pair of supplementary data that can be attached to a raw tag.
+#[derive(Clone, Debug)]
+pub struct RawTagSubField {
+    /// The name of the sub-field.
+    pub field: String,
+    /// The value of the sub-field.
+    pub value: RawValue,
+}
+
+impl RawTagSubField {
+    /// Create a new sub-field from the provided field and value. Consumes the inputs.
+    pub fn new<F, V>(field: F, value: V) -> Self
+    where
+        F: Into<String>,
+        V: Into<RawValue>,
+    {
+        RawTagSubField { field: field.into(), value: value.into() }
+    }
+}
+
+/// A raw tag represents a tag in a data format that matches, as closely as possible, to the data
+/// format that the tag was written in.
+#[derive(Clone, Debug)]
+pub struct RawTag {
+    /// The name of the tag's key.
+    pub key: String,
+    /// The value of the tag.
+    pub value: RawValue,
+    /// The tag's sub-fields, if any.
+    pub sub_fields: Option<Box<[RawTagSubField]>>,
+}
+
+impl RawTag {
+    /// Create a new raw tag from the provided key and value, with no sub-fields. Consumes the
+    /// inputs.
+    pub fn new<K, V>(key: K, value: V) -> Self
+    where
+        K: Into<String>,
+        V: Into<RawValue>,
+    {
+        RawTag { key: key.into(), value: value.into(), sub_fields: None }
+    }
+
+    /// Create a new raw tag with sub-fields from the provided key, value, and sub-fields. Consumes
+    /// the inputs.
+    pub fn new_with_sub_fields<K, V>(key: K, value: V, sub_fields: Box<[RawTagSubField]>) -> Self
+    where
+        K: Into<String>,
+        V: Into<RawValue>,
+    {
+        RawTag { key: key.into(), value: value.into(), sub_fields: Some(sub_fields) }
+    }
+}
+
+/// A tag encapsulates a single piece of metadata.
 #[derive(Clone, Debug)]
 pub struct Tag {
-    /// If the `Tag`'s key string is commonly associated with a typical type, meaning, or purpose,
-    /// then if recognized a `StandardTagKey` will be assigned to this `Tag`.
-    ///
-    /// This is a best effort guess since not all metadata formats have a well defined or specified
-    /// tag mapping. However, it is recommended that consumers prefer `std_key` over `key`, if
-    /// provided.
-    pub std_key: Option<StandardTagKey>,
-    /// A key string indicating the type, meaning, or purpose of the `Tag`s value.
-    ///
-    /// Note: The meaning of `key` is dependant on the underlying metadata format.
-    pub key: String,
-    /// The value of the `Tag`.
-    pub value: Value,
+    /// The raw tag.
+    pub raw: RawTag,
+    /// An optional standard tag.
+    pub std: Option<StandardTag>,
 }
 
 impl Tag {
-    /// Create a new `Tag`.
-    pub fn new(std_key: Option<StandardTagKey>, key: &str, value: Value) -> Tag {
-        Tag { std_key, key: key.to_string(), value }
+    /// Create a new tag from a raw tag. Consumes the inputs.
+    pub fn new(raw: RawTag) -> Self {
+        Tag { raw, std: None }
     }
 
-    /// Returns true if the `Tag`'s key string was recognized and a `StandardTagKey` was assigned,
-    /// otherwise false is returned.
-    pub fn is_known(&self) -> bool {
-        self.std_key.is_some()
+    /// Create a new tag from a raw tag with a standard tag. Consumes the inputs.
+    pub fn new_std(raw: RawTag, std: StandardTag) -> Self {
+        Tag { raw, std: Some(std) }
+    }
+
+    /// Create a new tag from its constituent parts: a key, value, and optional standard tag.
+    /// Consumes the inputs.
+    pub fn new_from_parts<K, V>(key: K, value: V, std: Option<StandardTag>) -> Self
+    where
+        K: Into<String>,
+        V: Into<RawValue>,
+    {
+        Tag { raw: RawTag { key: key.into(), value: value.into(), sub_fields: None }, std }
+    }
+
+    /// Returns `true` if the tag was recognized as a well-known tag and has a standard tag
+    /// assigned.
+    pub fn has_std_tag(&self) -> bool {
+        self.std.is_some()
     }
 }
 
-impl fmt::Display for Tag {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self.std_key {
-            Some(ref std_key) => {
-                write!(f, "{{ std_key={:?}, key=\"{}\", value={} }}", std_key, self.key, self.value)
-            }
-            None => write!(f, "{{ key=\"{}\", value={} }}", self.key, self.value),
-        }
-    }
-}
-
-/// A 2 dimensional (width and height) size type.
+/// A 2-dimensional (width and height) size type.
 #[derive(Copy, Clone, Debug, Default)]
 pub struct Size {
     /// The width in pixels.
@@ -562,7 +670,7 @@ impl MetadataRevision {
     }
 }
 
-/// `MetadataBuilder` is the builder for `Metadata` revisions.
+/// `MetadataBuilder` is the builder for [`Metadata`] revisions.
 #[derive(Clone, Debug, Default)]
 pub struct MetadataBuilder {
     metadata: MetadataRevision,
@@ -598,7 +706,7 @@ impl MetadataBuilder {
     }
 }
 
-/// A reference to the metadata inside of a [MetadataLog].
+/// A reference to the metadata inside of a [`MetadataLog`].
 #[derive(Debug)]
 pub struct Metadata<'a> {
     revisions: &'a mut VecDeque<MetadataRevision>,
@@ -640,7 +748,7 @@ impl<'a> Metadata<'a> {
     }
 }
 
-/// `MetadataLog` is a container for time-ordered `Metadata` revisions.
+/// `MetadataLog` is a container for time-ordered [`Metadata`] revisions.
 #[derive(Clone, Debug, Default)]
 pub struct MetadataLog {
     revisions: VecDeque<MetadataRevision>,

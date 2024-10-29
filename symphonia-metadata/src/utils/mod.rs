@@ -8,3 +8,4 @@
 //! Common metadata utilities.
 
 pub mod images;
+pub(crate) mod std_tag;

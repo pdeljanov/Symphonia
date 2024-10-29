@@ -6,14 +6,13 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use std::ascii;
+use std::sync::Arc;
 
 use symphonia_core::audio::{Channels, Position};
 use symphonia_core::errors::{decode_error, Result};
 use symphonia_core::formats::util::SeekIndex;
 use symphonia_core::io::*;
-use symphonia_core::meta::{
-    Chapter, ChapterGroup, ChapterGroupItem, StandardTagKey, Tag, Value, VendorData,
-};
+use symphonia_core::meta::{Chapter, ChapterGroup, ChapterGroupItem, StandardTag, Tag, VendorData};
 
 #[derive(PartialEq, Eq)]
 pub enum MetadataBlockType {
@@ -250,7 +249,10 @@ pub fn read_cuesheet_block<B: ReadBytes>(reader: &mut B, tb: TimeBase) -> Result
 
     // Read the catalog number, and store it in a Tag to be attached to the chapter group.
     let catalog_number = match printable_ascii_to_string(&catalog_number_buf) {
-        Some(s) => Tag::new(Some(StandardTagKey::IdentCatalogNumber), "CATALOG", Value::from(s)),
+        Some(num) => {
+            let num = Arc::new(num);
+            Tag::new_from_parts("CATALOG", num.clone(), Some(StandardTag::IdentCatalogNumber(num)))
+        }
         None => return decode_error("flac: cuesheet catalog number contains invalid characters"),
     };
 
@@ -333,7 +335,10 @@ fn read_cuesheet_track<B: ReadBytes>(
     reader.read_buf_exact(&mut isrc_buf)?;
 
     let isrc = match printable_ascii_to_string(&isrc_buf) {
-        Some(s) => Tag::new(Some(StandardTagKey::IdentIsrc), "ISRC", Value::from(s)),
+        Some(num) => {
+            let num = Arc::new(num);
+            Tag::new_from_parts("ISRC", num.clone(), Some(StandardTag::IdentIsrc(num)))
+        }
         None => return decode_error("flac: cuesheet track ISRC contains invalid characters"),
     };
 
@@ -434,7 +439,11 @@ fn read_cuesheet_track_index<B: ReadBytes>(
         end_time: None,
         start_byte: None,
         end_byte: None,
-        tags: vec![Tag::new(Some(StandardTagKey::IndexNumber), "INDEX", Value::from(idx_number))],
+        tags: vec![Tag::new_from_parts(
+            "INDEX",
+            idx_number,
+            Some(StandardTag::IndexNumber(idx_number)),
+        )],
         visuals: Vec::new(),
     })
 }

@@ -7,6 +7,8 @@
 
 //! An ID3v1 metadata reader.
 
+use std::sync::Arc;
+
 use symphonia_core::errors::{unsupported_error, Result};
 use symphonia_core::formats::probe::{
     Anchors, ProbeMetadataData, ProbeableMetadata, Score, Scoreable,
@@ -14,8 +16,8 @@ use symphonia_core::formats::probe::{
 use symphonia_core::io::{MediaSourceStream, ReadBytes, ScopedStream};
 use symphonia_core::meta::well_known::METADATA_ID_ID3;
 use symphonia_core::meta::{
-    MetadataBuffer, MetadataBuilder, MetadataInfo, MetadataOptions, MetadataReader, StandardTagKey,
-    Tag, Value,
+    MetadataBuffer, MetadataBuilder, MetadataInfo, MetadataOptions, MetadataReader, StandardTag,
+    Tag,
 };
 use symphonia_core::support_metadata;
 
@@ -230,33 +232,33 @@ fn read_id3v1<B: ReadBytes>(reader: &mut B, builder: &mut MetadataBuilder) -> Re
     let mut buf = [0u8; 125];
     reader.read_buf_exact(&mut buf)?;
 
-    let title = decode_iso8859_text(&buf[0..30]);
-    if !title.is_empty() {
-        builder.add_tag(Tag::new(Some(StandardTagKey::TrackTitle), "TITLE", Value::from(title)));
+    if let Some(title) = decode_iso8859_text(&buf[0..30]) {
+        let tag = Tag::new_from_parts("TITLE", title.clone(), Some(StandardTag::TrackTitle(title)));
+        builder.add_tag(tag);
     }
 
-    let artist = decode_iso8859_text(&buf[30..60]);
-    if !artist.is_empty() {
-        builder.add_tag(Tag::new(Some(StandardTagKey::Artist), "ARTIST", Value::from(artist)));
+    if let Some(artist) = decode_iso8859_text(&buf[30..60]) {
+        let tag = Tag::new_from_parts("ARTIST", artist.clone(), Some(StandardTag::Artist(artist)));
+        builder.add_tag(tag);
     }
 
-    let album = decode_iso8859_text(&buf[60..90]);
-    if !album.is_empty() {
-        builder.add_tag(Tag::new(Some(StandardTagKey::Album), "ALBUM", Value::from(album)));
+    if let Some(album) = decode_iso8859_text(&buf[60..90]) {
+        let tag = Tag::new_from_parts("ALBUM", album.clone(), Some(StandardTag::Album(album)));
+        builder.add_tag(tag);
     }
 
-    let year = decode_iso8859_text(&buf[90..94]);
-    if !year.is_empty() {
-        builder.add_tag(Tag::new(Some(StandardTagKey::Date), "DATE", Value::from(year)));
+    if let Some(year) = decode_iso8859_text(&buf[90..94]) {
+        let tag = Tag::new_from_parts("DATE", year.clone(), Some(StandardTag::Date(year)));
+        builder.add_tag(tag);
     }
 
     // If the second-last byte of the comment field is 0 (indicating the remaining characters are
     // also 0), then the last byte of the comment field is the track number.
     let comment = if buf[122] == 0 {
         // The last byte of the comment field is the track number.
-        let track = buf[123];
+        let track = u64::from(buf[123]);
 
-        builder.add_tag(Tag::new(Some(StandardTagKey::TrackNumber), "TRACK", Value::from(track)));
+        builder.add_tag(Tag::new_from_parts("TRACK", track, Some(StandardTag::TrackNumber(track))));
 
         decode_iso8859_text(&buf[94..122])
     }
@@ -264,34 +266,45 @@ fn read_id3v1<B: ReadBytes>(reader: &mut B, builder: &mut MetadataBuilder) -> Re
         decode_iso8859_text(&buf[94..124])
     };
 
-    if !comment.is_empty() {
-        builder.add_tag(Tag::new(Some(StandardTagKey::Comment), "COMMENT", Value::from(comment)));
+    if let Some(comment) = comment {
+        let tag =
+            Tag::new_from_parts("COMMENT", comment.clone(), Some(StandardTag::Comment(comment)));
+        builder.add_tag(tag);
     }
 
     // Convert the genre index to an actual genre name using the GENRES lookup table.
-    if let Some(&genre) = GENRES.get(buf[124] as usize) {
-        builder.add_tag(Tag::new(Some(StandardTagKey::Genre), "GENRE", Value::from(genre)));
+    if let Some(genre) = GENRES.get(buf[124] as usize).map(|g| Arc::new(g.to_string())) {
+        let tag = Tag::new_from_parts("GENRE", genre.clone(), Some(StandardTag::Genre(genre)));
+        builder.add_tag(tag);
     }
 
     Ok(())
 }
 
-fn decode_iso8859_text(data: &[u8]) -> String {
+fn decode_iso8859_text(data: &[u8]) -> Option<Arc<String>> {
     // Stop after encountering a null-terminator character and ignore all other ASCII control
     // characters.
-    data.iter()
+    let value = data
+        .iter()
         .take_while(|&&b| b != b'\0')
         .filter(|&b| !b.is_ascii_control())
         .map(|&b| b as char)
-        .collect()
+        .collect::<String>();
+
+    if !value.is_empty() {
+        Some(Arc::new(value))
+    }
+    else {
+        None
+    }
 }
 
 pub mod util {
     use super::GENRES;
 
     /// Try to get the genre name for the ID3v1 genre index.
-    pub fn genre_name(index: u8) -> Option<&'static &'static str> {
-        GENRES.get(usize::from(index))
+    pub fn genre_name(index: u8) -> Option<String> {
+        GENRES.get(usize::from(index)).map(|genre| genre.to_string())
     }
 }
 

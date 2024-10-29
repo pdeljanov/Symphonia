@@ -14,112 +14,136 @@ use log::warn;
 
 use symphonia_core::errors::Result;
 use symphonia_core::io::{BufReader, ReadBytes};
-use symphonia_core::meta::{MetadataBuilder, StandardTagKey, Tag, Value, Visual};
+use symphonia_core::meta::{MetadataBuilder, RawTag, Visual};
 
 use crate::flac;
 use crate::utils::images::try_get_image_info;
+use crate::utils::std_tag::*;
 
 lazy_static! {
-    static ref VORBIS_COMMENT_MAP: HashMap<&'static str, StandardTagKey> = {
-        let mut m = HashMap::new();
-        m.insert("album artist"                , StandardTagKey::AlbumArtist);
-        m.insert("album"                       , StandardTagKey::Album);
-        m.insert("albumartist"                 , StandardTagKey::AlbumArtist);
-        m.insert("albumartistsort"             , StandardTagKey::SortAlbumArtist);
-        m.insert("albumsort"                   , StandardTagKey::SortAlbum);
-        m.insert("arranger"                    , StandardTagKey::Arranger);
-        m.insert("artist"                      , StandardTagKey::Artist);
-        m.insert("artistsort"                  , StandardTagKey::SortArtist);
+    static ref VORBIS_COMMENT_MAP: RawTagParserMap = {
+        let mut m: RawTagParserMap = HashMap::new();
+
+        m.insert("accurateripcount"             , parse_accuraterip_count);
+        m.insert("accurateripcountalloffsets"   , parse_accuraterip_count_all_offsets);
+        m.insert("accurateripcountwithoffset"   , parse_accuraterip_count_with_offset);
+        m.insert("accurateripcrc"               , parse_accuraterip_crc);
+        m.insert("accurateripdiscid"            , parse_accuraterip_disc_id);
+        m.insert("accurateripid"                , parse_accuraterip_id);
+        m.insert("accurateripoffset"            , parse_accuraterip_offset);
+        m.insert("accurateripresult"            , parse_accuraterip_result);
+        m.insert("accurateriptotal"             , parse_accuraterip_total);
+        m.insert("album artist"                 , parse_album_artist);
+        m.insert("album"                        , parse_album);
+        m.insert("albumartist"                  , parse_album_artist);
+        m.insert("albumartistsort"              , parse_sort_album_artist);
+        m.insert("albumsort"                    , parse_sort_album);
+        m.insert("arranger"                     , parse_arranger);
+        m.insert("artist"                       , parse_artist);
+        m.insert("artistsort"                   , parse_sort_artist);
         // TODO: Is Author a synonym for Writer?
-        m.insert("author"                      , StandardTagKey::Writer);
-        m.insert("barcode"                     , StandardTagKey::IdentBarcode);
-        m.insert("bpm"                         , StandardTagKey::Bpm);
-        m.insert("catalog #"                   , StandardTagKey::IdentCatalogNumber);
-        m.insert("catalog"                     , StandardTagKey::IdentCatalogNumber);
-        m.insert("catalognumber"               , StandardTagKey::IdentCatalogNumber);
-        m.insert("catalogue #"                 , StandardTagKey::IdentCatalogNumber);
-        m.insert("comment"                     , StandardTagKey::Comment);
-        m.insert("compileation"                , StandardTagKey::Compilation);
-        m.insert("composer"                    , StandardTagKey::Composer);
-        m.insert("conductor"                   , StandardTagKey::Conductor);
-        m.insert("copyright"                   , StandardTagKey::Copyright);
-        m.insert("date"                        , StandardTagKey::Date);
-        m.insert("description"                 , StandardTagKey::Description);
-        m.insert("disc"                        , StandardTagKey::DiscNumber);
-        m.insert("discnumber"                  , StandardTagKey::DiscNumber);
-        m.insert("discsubtitle"                , StandardTagKey::DiscSubtitle);
-        m.insert("disctotal"                   , StandardTagKey::DiscTotal);
-        m.insert("disk"                        , StandardTagKey::DiscNumber);
-        m.insert("disknumber"                  , StandardTagKey::DiscNumber);
-        m.insert("disksubtitle"                , StandardTagKey::DiscSubtitle);
-        m.insert("disktotal"                   , StandardTagKey::DiscTotal);
-        m.insert("djmixer"                     , StandardTagKey::MixDj);
-        m.insert("ean/upn"                     , StandardTagKey::IdentEanUpn);
-        m.insert("encoded-by"                  , StandardTagKey::EncodedBy);
-        m.insert("encoder settings"            , StandardTagKey::EncoderSettings);
-        m.insert("encoder"                     , StandardTagKey::Encoder);
-        m.insert("encoding"                    , StandardTagKey::EncoderSettings);
-        m.insert("engineer"                    , StandardTagKey::Engineer);
-        m.insert("ensemble"                    , StandardTagKey::Ensemble);
-        m.insert("genre"                       , StandardTagKey::Genre);
-        m.insert("isrc"                        , StandardTagKey::IdentIsrc);
-        m.insert("language"                    , StandardTagKey::Language);
-        m.insert("label"                       , StandardTagKey::Label);
-        m.insert("license"                     , StandardTagKey::License);
-        m.insert("lyricist"                    , StandardTagKey::Lyricist);
-        m.insert("lyrics"                      , StandardTagKey::Lyrics);
-        m.insert("media"                       , StandardTagKey::MediaFormat);
-        m.insert("mixer"                       , StandardTagKey::MixEngineer);
-        m.insert("mood"                        , StandardTagKey::Mood);
-        m.insert("musicbrainz_albumartistid"   , StandardTagKey::MusicBrainzAlbumArtistId);
-        m.insert("musicbrainz_albumid"         , StandardTagKey::MusicBrainzAlbumId);
-        m.insert("musicbrainz_artistid"        , StandardTagKey::MusicBrainzArtistId);
-        m.insert("musicbrainz_discid"          , StandardTagKey::MusicBrainzDiscId);
-        m.insert("musicbrainz_originalalbumid" , StandardTagKey::MusicBrainzOriginalAlbumId);
-        m.insert("musicbrainz_originalartistid", StandardTagKey::MusicBrainzOriginalArtistId);
-        m.insert("musicbrainz_recordingid"     , StandardTagKey::MusicBrainzRecordingId);
-        m.insert("musicbrainz_releasegroupid"  , StandardTagKey::MusicBrainzReleaseGroupId);
-        m.insert("musicbrainz_releasetrackid"  , StandardTagKey::MusicBrainzReleaseTrackId);
-        m.insert("musicbrainz_trackid"         , StandardTagKey::MusicBrainzTrackId);
-        m.insert("musicbrainz_workid"          , StandardTagKey::MusicBrainzWorkId);
-        m.insert("opus"                        , StandardTagKey::Opus);
-        m.insert("organization"                , StandardTagKey::Label);
-        m.insert("originaldate"                , StandardTagKey::OriginalDate);
-        m.insert("part"                        , StandardTagKey::Part);
-        m.insert("performer"                   , StandardTagKey::Performer);
-        m.insert("producer"                    , StandardTagKey::Producer);
-        m.insert("productnumber"               , StandardTagKey::IdentPn);
+        m.insert("author"                       , parse_writer);
+        m.insert("barcode"                      , parse_ident_barcode);
+        m.insert("bpm"                          , parse_bpm);
+        m.insert("catalog #"                    , parse_ident_catalog_number);
+        m.insert("catalog"                      , parse_ident_catalog_number);
+        m.insert("catalognumber"                , parse_ident_catalog_number);
+        m.insert("catalogue #"                  , parse_ident_catalog_number);
+        m.insert("cdtoc"                        , parse_cdtoc);
+        m.insert("comment"                      , parse_comment);
+        m.insert("compileation"                 , parse_compilation);
+        m.insert("composer"                     , parse_composer);
+        m.insert("conductor"                    , parse_conductor);
+        m.insert("copyright"                    , parse_copyright);
+        m.insert("ctdbdiscconfidence"           , parse_cuetoolsdb_disc_confidence);
+        m.insert("ctdbtrackconfidence"          , parse_cuetoolsdb_track_confidence);
+        m.insert("date"                         , parse_date);
+        m.insert("description"                  , parse_description);
+        m.insert("disc"                         , parse_disc_number_exclusive);
+        m.insert("discnumber"                   , parse_disc_number);
+        m.insert("discsubtitle"                 , parse_disc_subtitle);
+        m.insert("disctotal"                    , parse_disc_total);
+        m.insert("disk"                         , parse_disc_number_exclusive);
+        m.insert("disknumber"                   , parse_disc_number);
+        m.insert("disksubtitle"                 , parse_disc_subtitle);
+        m.insert("disktotal"                    , parse_disc_total);
+        m.insert("djmixer"                      , parse_mix_dj);
+        m.insert("ean/upn"                      , parse_ident_ean_upn);
+        m.insert("encoded-by"                   , parse_encoded_by);
+        m.insert("encodedby"                    , parse_encoded_by);
+        m.insert("encoder settings"             , parse_encoder_settings);
+        m.insert("encoder"                      , parse_encoder);
+        m.insert("encoding"                     , parse_encoder_settings);
+        m.insert("engineer"                     , parse_engineer);
+        m.insert("ensemble"                     , parse_ensemble);
+        m.insert("genre"                        , parse_genre);
+        m.insert("grouping"                     , parse_grouping);
+        m.insert("isrc"                         , parse_ident_isrc);
+        m.insert("language"                     , parse_language);
+        m.insert("label"                        , parse_label);
+        m.insert("labelno"                      , parse_ident_catalog_number);
+        m.insert("license"                      , parse_license);
+        m.insert("lyricist"                     , parse_lyricist);
+        m.insert("lyrics"                       , parse_lyrics);
+        m.insert("media"                        , parse_media_format);
+        m.insert("mixer"                        , parse_mix_engineer);
+        m.insert("mood"                         , parse_mood);
+        m.insert("musicbrainz_albumartistid"    , parse_musicbrainz_album_artist_id);
+        m.insert("musicbrainz_albumid"          , parse_musicbrainz_album_id);
+        m.insert("musicbrainz_artistid"         , parse_musicbrainz_artist_id);
+        m.insert("musicbrainz_discid"           , parse_musicbrainz_disc_id);
+        m.insert("musicbrainz_originalalbumid"  , parse_musicbrainz_original_album_id);
+        m.insert("musicbrainz_originalartistid" , parse_musicbrainz_original_artist_id);
+        m.insert("musicbrainz_recordingid"      , parse_musicbrainz_recording_id);
+        m.insert("musicbrainz_releasegroupid"   , parse_musicbrainz_release_group_id);
+        m.insert("musicbrainz_releasetrackid"   , parse_musicbrainz_release_track_id);
+        m.insert("musicbrainz_trackid"          , parse_musicbrainz_track_id);
+        m.insert("musicbrainz_workid"           , parse_musicbrainz_work_id);
+        m.insert("opus"                         , parse_opus);
+        m.insert("organization"                 , parse_label);
+        m.insert("originaldate"                 , parse_original_date);
+        m.insert("originalyear"                 , parse_original_year);
+        m.insert("part"                         , parse_part);
+        m.insert("partnumber"                   , parse_part_number_exclusive);
+        m.insert("performer"                    , parse_performer);
+        m.insert("producer"                     , parse_producer);
+        m.insert("productnumber"                , parse_ident_pn);
         // TODO: Is Publisher a synonym for Label?
-        m.insert("publisher"                   , StandardTagKey::Label);
-        m.insert("rating"                      , StandardTagKey::Rating);
-        m.insert("releasecountry"              , StandardTagKey::ReleaseCountry);
-        m.insert("remixer"                     , StandardTagKey::Remixer);
-        m.insert("replaygain_album_gain"       , StandardTagKey::ReplayGainAlbumGain);
-        m.insert("replaygain_album_peak"       , StandardTagKey::ReplayGainAlbumPeak);
-        m.insert("replaygain_track_gain"       , StandardTagKey::ReplayGainTrackGain);
-        m.insert("replaygain_track_peak"       , StandardTagKey::ReplayGainTrackPeak);
-        m.insert("script"                      , StandardTagKey::Script);
-        m.insert("subtitle"                    , StandardTagKey::TrackSubtitle);
-        m.insert("title"                       , StandardTagKey::TrackTitle);
-        m.insert("titlesort"                   , StandardTagKey::SortTrackTitle);
-        m.insert("totaldiscs"                  , StandardTagKey::DiscTotal);
-        m.insert("totaltracks"                 , StandardTagKey::TrackTotal);
-        m.insert("tracknumber"                 , StandardTagKey::TrackNumber);
-        m.insert("tracktotal"                  , StandardTagKey::TrackTotal);
-        m.insert("unsyncedlyrics"              , StandardTagKey::Lyrics);
-        m.insert("upc"                         , StandardTagKey::IdentUpc);
-        m.insert("version"                     , StandardTagKey::Remixer);
-        m.insert("version"                     , StandardTagKey::Version);
-        m.insert("writer"                      , StandardTagKey::Writer);
-        m.insert("year"                        , StandardTagKey::Date);
+        m.insert("publisher"                    , parse_label);
+        m.insert("rating"                       , parse_rating);
+        m.insert("releasecountry"               , parse_release_country);
+        m.insert("releasestatus"                , parse_musicbrainz_release_status);
+        m.insert("releasetype"                  , parse_musicbrainz_release_type);
+        m.insert("remixer"                      , parse_remixer);
+        m.insert("replaygain_album_gain"        , parse_replaygain_album_gain);
+        m.insert("replaygain_album_peak"        , parse_replaygain_album_peak);
+        m.insert("replaygain_reference_loudness", parse_replaygain_reference_loudness);
+        m.insert("replaygain_track_gain"        , parse_replaygain_track_gain);
+        m.insert("replaygain_track_peak"        , parse_replaygain_track_peak);
+        m.insert("script"                       , parse_script);
+        m.insert("subtitle"                     , parse_track_subtitle);
+        m.insert("title"                        , parse_track_title);
+        m.insert("titlesort"                    , parse_sort_track_title);
+        m.insert("totaldiscs"                   , parse_disc_total);
+        m.insert("totaltracks"                  , parse_track_total);
+        m.insert("track"                        , parse_track_number_exclusive);
+        m.insert("tracknumber"                  , parse_track_number);
+        m.insert("tracktotal"                   , parse_track_total);
+        m.insert("unsyncedlyrics"               , parse_lyrics);
+        m.insert("upc"                          , parse_ident_upc);
+        m.insert("version"                      , parse_remixer);
+        m.insert("version"                      , parse_version);
+        m.insert("work"                         , parse_work);
+        m.insert("writer"                       , parse_writer);
+        m.insert("year"                         , parse_date);
         m
     };
 }
 
 /// Parse a string containing a base64 encoded FLAC picture block into a visual.
-fn parse_base64_picture_block(encoded: &str, metadata: &mut MetadataBuilder) {
+fn parse_base64_picture_block(encoded: &str, builder: &mut MetadataBuilder) {
     if let Some(data) = base64_decode(encoded) {
-        if flac::read_picture_block(&mut BufReader::new(&data), metadata).is_err() {
+        if flac::read_picture_block(&mut BufReader::new(&data), builder).is_err() {
             warn!("invalid picture block data");
         }
     }
@@ -128,10 +152,10 @@ fn parse_base64_picture_block(encoded: &str, metadata: &mut MetadataBuilder) {
     }
 }
 
-fn parse_base64_cover_art(encoded: &str, metadata: &mut MetadataBuilder) {
+fn parse_base64_cover_art(encoded: &str, builder: &mut MetadataBuilder) {
     if let Some(data) = base64_decode(encoded) {
         if let Some(image_info) = try_get_image_info(&data) {
-            metadata.add_visual(Visual {
+            builder.add_visual(Visual {
                 media_type: Some(image_info.media_type),
                 dimensions: Some(image_info.dimensions),
                 color_mode: Some(image_info.color_mode),
@@ -150,39 +174,35 @@ fn parse_base64_cover_art(encoded: &str, metadata: &mut MetadataBuilder) {
 }
 
 /// Parse the given Vorbis Comment string into a `Tag`.
-fn parse_comment(tag: &str, metadata: &mut MetadataBuilder) {
+fn parse_vorbis_comment(comment_data: &[u8], builder: &mut MetadataBuilder) {
     // Vorbis Comments (aka tags) are stored as <key>=<value> where <key> is
     // a reduced ASCII-only identifier and <value> is a UTF8 value.
     //
     // <Key> must only contain ASCII 0x20 through 0x7D, with 0x3D ('=') excluded.
     // ASCII 0x41 through 0x5A inclusive (A-Z) is to be considered equivalent to
     // ASCII 0x61 through 0x7A inclusive (a-z) for tag matching.
+    let comment = String::from_utf8_lossy(comment_data);
 
-    if let Some((key, value)) = tag.split_once('=') {
-        let key_lower = key.to_lowercase();
-
+    if let Some((key, value)) = comment.split_once('=') {
         // A comment with a key "METADATA_BLOCK_PICTURE" is a FLAC picture block encoded in base64.
         // Attempt to decode it as such.
-        if key_lower == "metadata_block_picture" {
-            parse_base64_picture_block(value, metadata);
+        if key.eq_ignore_ascii_case("metadata_block_picture") {
+            parse_base64_picture_block(value, builder);
         }
-        else if key_lower == "coverart" {
+        else if key.eq_ignore_ascii_case("coverart") {
             // A comment with a key "COVERART" is a base64 encoded image. Attempt to decode it as
             // such.
-            parse_base64_cover_art(value, metadata);
+            parse_base64_cover_art(value, builder);
         }
         else {
-            // Attempt to assign a standardized tag key.
-            let std_tag = VORBIS_COMMENT_MAP.get(key_lower.as_str()).copied();
-
-            metadata.add_tag(Tag::new(std_tag, key, Value::from(value)));
+            builder.add_mapped_tags(RawTag::new(key, value), &VORBIS_COMMENT_MAP);
         }
     }
 }
 
 pub fn read_comment_no_framing<B: ReadBytes>(
     reader: &mut B,
-    metadata: &mut MetadataBuilder,
+    builder: &mut MetadataBuilder,
 ) -> Result<()> {
     // Read the vendor string length in bytes.
     let vendor_length = reader.read_u32()?;
@@ -197,12 +217,14 @@ pub fn read_comment_no_framing<B: ReadBytes>(
         // Read the comment string length in bytes.
         let comment_length = reader.read_u32()?;
 
-        // Read the comment string.
-        let mut comment_bytes = vec![0; comment_length as usize];
-        reader.read_buf_exact(&mut comment_bytes)?;
+        // TODO: Apply a limit.
 
-        // Parse the comment string into a Tag and insert it into the parsed tag list.
-        parse_comment(&String::from_utf8_lossy(&comment_bytes), metadata);
+        // Read the comment string.
+        let mut comment_data = vec![0; comment_length as usize];
+        reader.read_buf_exact(&mut comment_data)?;
+
+        // Parse the Vorbis comment into a Tag and add it to the builder.
+        parse_vorbis_comment(&comment_data, builder);
     }
 
     Ok(())
