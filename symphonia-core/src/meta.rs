@@ -833,19 +833,35 @@ pub trait MetadataReader: Send + Sync {
 pub mod well_known {
     use super::MetadataId;
 
-    // ID3 tags
-    //---------
+    // Xiph tags
 
-    /// ID3
-    pub const METADATA_ID_ID3: MetadataId = MetadataId(0x100);
+    /// Vorbis Comment
+    pub const METADATA_ID_VORBIS_COMMENT: MetadataId = MetadataId(0x100);
+    /// FLAC tags
+    pub const METADATA_ID_FLAC: MetadataId = MetadataId(0x101);
+
+    // ID3 tags
+
+    /// ID3v1
+    pub const METADATA_ID_ID3V1: MetadataId = MetadataId(0x200);
     /// ID3v2
-    pub const METADATA_ID_ID3V2: MetadataId = MetadataId(0x101);
+    pub const METADATA_ID_ID3V2: MetadataId = MetadataId(0x201);
 
     // APE tags
-    //---------
 
     /// APEv1
-    pub const METADATA_ID_APEV1: MetadataId = MetadataId(0x200);
+    pub const METADATA_ID_APEV1: MetadataId = MetadataId(0x300);
     /// APEv2
-    pub const METADATA_ID_APEV2: MetadataId = MetadataId(0x201);
+    pub const METADATA_ID_APEV2: MetadataId = MetadataId(0x301);
+
+    // Format-native tags
+
+    /// RIFF tags
+    pub const METADATA_ID_RIFF: MetadataId = MetadataId(0x400);
+    /// EXIF
+    pub const METADATA_ID_EXIF: MetadataId = MetadataId(0x401);
+    /// Matroska tags
+    pub const METADATA_ID_MATROSKA: MetadataId = MetadataId(0x402);
+    /// ISOMP4 tags
+    pub const METADATA_ID_ISOMP4: MetadataId = MetadataId(0x403);
 }
