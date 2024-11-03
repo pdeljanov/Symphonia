@@ -320,17 +320,18 @@ fn add_var_unsigned_int_tag<B: ReadBytes>(
 fn add_flag_tag<B: ReadBytes>(
     iter: &mut AtomIterator<B>,
     builder: &mut MetadataBuilder,
-    map: fn() -> Option<StandardTag>,
+    map: fn(&RawValue) -> Option<StandardTag>,
 ) -> Result<()> {
     let tag = iter.read_atom::<MetaTagAtom>()?;
 
     // There should only be 1 value.
     if let Some(value) = tag.values.first() {
-        // Only add the tag if the boolean value is true (1).
         if let Some(bool_value) = value.data.first() {
-            if *bool_value == 1 {
-                builder.add_tag(Tag::new_from_parts("", true, map()));
-            }
+            builder.add_tag(Tag::new_from_parts(
+                "",
+                true,
+                map(&RawValue::Boolean(*bool_value == 1)),
+            ));
         }
     }
 
@@ -605,6 +606,15 @@ macro_rules! map_std_str {
     };
 }
 
+macro_rules! map_std_bool {
+    ($std:path) => {
+        |value: &RawValue| match value {
+            RawValue::Boolean(b) => Some($std(*b)),
+            _ => None,
+        }
+    };
+}
+
 macro_rules! map_std_uint {
     ($std:path) => {
         |value: &RawValue| match value {
@@ -648,7 +658,7 @@ impl Atom for IlstAtom {
                     add_generic_tag(&mut iter, &mut mb, map_std_str!(StandardTag::Comment))?
                 }
                 AtomType::CompilationTag => {
-                    add_flag_tag(&mut iter, &mut mb, || Some(StandardTag::Compilation))?
+                    add_flag_tag(&mut iter, &mut mb, map_std_bool!(StandardTag::CompilationFlag))?
                 }
                 AtomType::ComposerTag => {
                     add_generic_tag(&mut iter, &mut mb, map_std_str!(StandardTag::Composer))?
@@ -704,7 +714,7 @@ impl Atom for IlstAtom {
                     add_generic_tag(&mut iter, &mut mb, map_std_str!(StandardTag::Owner))?
                 }
                 AtomType::PodcastTag => {
-                    add_flag_tag(&mut iter, &mut mb, || Some(StandardTag::Podcast))?
+                    add_flag_tag(&mut iter, &mut mb, map_std_bool!(StandardTag::PodcastFlag))?
                 }
                 AtomType::PurchaseDateTag => {
                     add_generic_tag(&mut iter, &mut mb, map_std_str!(StandardTag::PurchaseDate))?

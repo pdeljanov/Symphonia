@@ -17,4 +17,5 @@ encoding_rs = "0.8.17"
 lazy_static = "1.4.0"
 log = "0.4"
 regex-lite = "0.1.6"
+smallvec = "1.13.1"
 symphonia-core = { version = "0.5.4", path = "../symphonia-core" }

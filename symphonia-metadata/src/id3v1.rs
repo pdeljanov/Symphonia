@@ -14,7 +14,7 @@ use symphonia_core::formats::probe::{
     Anchors, ProbeMetadataData, ProbeableMetadata, Score, Scoreable,
 };
 use symphonia_core::io::{MediaSourceStream, ReadBytes, ScopedStream};
-use symphonia_core::meta::well_known::METADATA_ID_ID3;
+use symphonia_core::meta::well_known::METADATA_ID_ID3V1;
 use symphonia_core::meta::{
     MetadataBuffer, MetadataBuilder, MetadataInfo, MetadataOptions, MetadataReader, StandardTag,
     Tag,
@@ -309,7 +309,7 @@ pub mod util {
 }
 
 const ID3V1_METADATA_INFO: MetadataInfo =
-    MetadataInfo { metadata: METADATA_ID_ID3, short_name: "id3v1", long_name: "ID3v1" };
+    MetadataInfo { metadata: METADATA_ID_ID3V1, short_name: "id3v1", long_name: "ID3v1" };
 
 /// ID3v1 tag reader.
 pub struct Id3v1Reader<'s> {

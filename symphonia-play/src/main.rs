@@ -26,8 +26,8 @@ use symphonia::core::formats::probe::Hint;
 use symphonia::core::formats::{FormatOptions, FormatReader, SeekMode, SeekTo, Track, TrackType};
 use symphonia::core::io::{MediaSource, MediaSourceStream, ReadOnlySource};
 use symphonia::core::meta::{
-    Chapter, ChapterGroup, ChapterGroupItem, ColorMode, ColorModel, MetadataOptions,
-    MetadataRevision, StandardTag, Tag, Visual,
+    Chapter, ChapterGroup, ChapterGroupItem, ColorMode, ColorModel, ContentAdvisory,
+    MetadataOptions, MetadataRevision, StandardTag, Tag, Visual,
 };
 use symphonia::core::units::{Time, TimeBase};
 
@@ -744,9 +744,17 @@ fn print_tag(tag: &Tag, bullet: Bullet, pad: usize, depth: usize) {
 
     // Sub-fields.
     if let Some(fields) = &tag.raw.sub_fields {
-        print_one("Sub-fields:", Bullet::None, depth);
-        for (i, sub_field) in fields.iter().enumerate() {
-            print_pair(&sub_field.field, &sub_field.value, Bullet::Num(i + 1), depth + 1);
+        if !fields.is_empty() {
+            print_one("Sub-fields:", Bullet::None, depth);
+            for (i, sub_field) in fields.iter().enumerate() {
+                print_pair_custom(
+                    &sub_field.field,
+                    &sub_field.value.to_string(),
+                    Bullet::Num(i + 1),
+                    pad - 5,
+                    depth + 1,
+                );
+            }
         }
     }
 }
@@ -1092,9 +1100,19 @@ fn fmt_tag(tag: &Tag) -> FormattedTag<'_> {
         Some(StandardTag::Bpm(v)) => FormattedTag::new("BPM", v.to_string()),
         Some(StandardTag::CdToc(v)) => FormattedTag::new("CD Table of Contents", &**v),
         Some(StandardTag::Comment(v)) => FormattedTag::new("Comment", &**v),
-        Some(StandardTag::Compilation) => FormattedTag::new("Is Compilation", "<Yes>"),
+        Some(StandardTag::CompilationFlag(v)) => {
+            FormattedTag::new("Is Compilation", if *v { "<Yes>" } else { "<No>" })
+        }
         Some(StandardTag::Composer(v)) => FormattedTag::new("Composer", &**v),
         Some(StandardTag::Conductor(v)) => FormattedTag::new("Conductor", &**v),
+        Some(StandardTag::ContentAdvisory(v)) => FormattedTag::new(
+            "Content Advisory",
+            match v {
+                ContentAdvisory::None => "None",
+                ContentAdvisory::Explicit => "Explicit",
+                ContentAdvisory::Censored => "Censored",
+            },
+        ),
         Some(StandardTag::Copyright(v)) => FormattedTag::new("Copyright", &**v),
         Some(StandardTag::CueToolsDbDiscConfidence(v)) => {
             FormattedTag::new("CueTools DB Disc Confidence", &**v)
@@ -1190,11 +1208,17 @@ fn fmt_tag(tag: &Tag) -> FormattedTag<'_> {
         Some(StandardTag::PartNumber(v)) => FormattedTag::new("Part", v.to_string()),
         Some(StandardTag::PartTotal(v)) => FormattedTag::new("Part Total", v.to_string()),
         Some(StandardTag::Performer(v)) => FormattedTag::new("Performer", &**v),
-        Some(StandardTag::Podcast) => FormattedTag::new("Is Podcast", "<Yes>"),
+        Some(StandardTag::PlayCounter(v)) => FormattedTag::new("Play Counter", v.to_string()),
         Some(StandardTag::PodcastCategory(v)) => FormattedTag::new("Podcast Category", &**v),
         Some(StandardTag::PodcastDescription(v)) => FormattedTag::new("Podcast Description", &**v),
+        Some(StandardTag::PodcastFlag(v)) => {
+            FormattedTag::new("Is Podcast", if *v { "<Yes>" } else { "<No>" })
+        }
         Some(StandardTag::PodcastKeywords(v)) => FormattedTag::new("Podcast Keywords", &**v),
         Some(StandardTag::Producer(v)) => FormattedTag::new("Producer", &**v),
+        Some(StandardTag::ProductionCopyright(v)) => {
+            FormattedTag::new("Production Copyright", &**v)
+        }
         Some(StandardTag::PurchaseDate(v)) => FormattedTag::new("Purchase Date", &**v),
         Some(StandardTag::Rating(v)) => FormattedTag::new("Rating", &**v),
         Some(StandardTag::RecordingDate(v)) => FormattedTag::new("Recording Date", &**v),
@@ -1233,6 +1257,7 @@ fn fmt_tag(tag: &Tag) -> FormattedTag<'_> {
         Some(StandardTag::SortComposer(v)) => FormattedTag::new("Composer (Sort Order)", &**v),
         Some(StandardTag::SortTrackTitle(v)) => FormattedTag::new("Track Title (Sort Order)", &**v),
         Some(StandardTag::TaggingDate(v)) => FormattedTag::new("Tagging Date", &**v),
+        Some(StandardTag::TermsOfUse(v)) => FormattedTag::new("Terms of Use", &**v),
         Some(StandardTag::TrackNumber(v)) => FormattedTag::new("Track Number", v.to_string()),
         Some(StandardTag::TrackSubtitle(v)) => FormattedTag::new("Track Subtitle", &**v),
         Some(StandardTag::TrackTitle(v)) => FormattedTag::new("Track Title", &**v),

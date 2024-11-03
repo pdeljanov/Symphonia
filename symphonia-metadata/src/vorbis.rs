@@ -51,7 +51,7 @@ lazy_static! {
         m.insert("catalogue #"                  , parse_ident_catalog_number);
         m.insert("cdtoc"                        , parse_cdtoc);
         m.insert("comment"                      , parse_comment);
-        m.insert("compileation"                 , parse_compilation);
+        m.insert("compilation"                  , parse_compilation);
         m.insert("composer"                     , parse_composer);
         m.insert("conductor"                    , parse_conductor);
         m.insert("copyright"                    , parse_copyright);

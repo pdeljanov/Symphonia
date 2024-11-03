@@ -9,7 +9,7 @@
 
 use std::{collections::HashMap, sync::Arc};
 
-use symphonia_core::meta::{MetadataBuilder, RawTag, RawValue, StandardTag, Tag};
+use symphonia_core::meta::{ContentAdvisory, MetadataBuilder, RawTag, RawValue, StandardTag, Tag};
 
 // A pair of standard tags.
 pub type StandardTagPair = [Option<StandardTag>; 2];
@@ -101,8 +101,8 @@ pub fn parse_bpm(v: Arc<String>) -> StandardTagPair {
 noop_parser!(parse_cdtoc, StandardTag::CdToc);
 noop_parser!(parse_comment, StandardTag::Comment);
 
-pub fn parse_compilation(_v: Arc<String>) -> StandardTagPair {
-    [Some(StandardTag::Compilation), None]
+pub fn parse_compilation(v: Arc<String>) -> StandardTagPair {
+    [parse_bool(v).map(StandardTag::CompilationFlag), None]
 }
 
 noop_parser!(parse_composer, StandardTag::Composer);
@@ -200,8 +200,9 @@ pub fn parse_original_year(v: Arc<String>) -> StandardTagPair {
 }
 
 noop_parser!(parse_original_file, StandardTag::OriginalFile);
-noop_parser!(parse_original_writer, StandardTag::OriginalWriter);
-// noop_parser!(parse_owner, StandardTag::Owner);
+noop_parser!(parse_original_lyricist, StandardTag::OriginalLyricist);
+// noop_parser!(parse_original_writer, StandardTag::OriginalWriter);
+noop_parser!(parse_owner, StandardTag::Owner);
 noop_parser!(parse_part, StandardTag::Part);
 
 pub fn parse_part_number_exclusive(v: Arc<String>) -> StandardTagPair {
@@ -214,15 +215,16 @@ pub fn parse_part_total(v: Arc<String>) -> StandardTagPair {
 }
 
 noop_parser!(parse_performer, StandardTag::Performer);
-
-// pub fn parse_podcast(_v: Arc<String>) -> StandardTagPair {
-//     [Some(StandardTag::Podcast), None]
-// }
-
 noop_parser!(parse_podcast_category, StandardTag::PodcastCategory);
 noop_parser!(parse_podcast_description, StandardTag::PodcastDescription);
+
+pub fn parse_podcast_flag(v: Arc<String>) -> StandardTagPair {
+    [parse_bool(v).map(StandardTag::PodcastFlag), None]
+}
+
 noop_parser!(parse_podcast_keywords, StandardTag::PodcastKeywords);
 noop_parser!(parse_producer, StandardTag::Producer);
+noop_parser!(parse_production_copyright, StandardTag::ProductionCopyright);
 // noop_parser!(parse_purchase_date, StandardTag::PurchaseDate);
 noop_parser!(parse_rating, StandardTag::Rating);
 noop_parser!(parse_recording_date, StandardTag::RecordingDate);
@@ -248,6 +250,7 @@ noop_parser!(parse_sort_artist, StandardTag::SortArtist);
 noop_parser!(parse_sort_composer, StandardTag::SortComposer);
 noop_parser!(parse_sort_track_title, StandardTag::SortTrackTitle);
 noop_parser!(parse_tagging_date, StandardTag::TaggingDate);
+noop_parser!(parse_terms_of_use, StandardTag::TermsOfUse);
 
 pub fn parse_track_number_exclusive(v: Arc<String>) -> StandardTagPair {
     let track_number = v.parse::<u64>().ok().map(StandardTag::TrackNumber);
@@ -294,6 +297,21 @@ noop_parser!(parse_version, StandardTag::Version);
 noop_parser!(parse_work, StandardTag::Work);
 noop_parser!(parse_writer, StandardTag::Writer);
 
+pub fn parse_itunes_content_advisory(v: Arc<String>) -> StandardTagPair {
+    let content_advisory = v
+        .parse::<u8>()
+        .ok()
+        .and_then(|value| match value {
+            0 => Some(ContentAdvisory::None),
+            1 | 4 => Some(ContentAdvisory::Explicit),
+            2 => Some(ContentAdvisory::Censored),
+            _ => None,
+        })
+        .map(StandardTag::ContentAdvisory);
+
+    [content_advisory, None]
+}
+
 pub fn parse_id3v2_genre(v: Arc<String>) -> StandardTagPair {
     use regex_lite::Regex;
 
@@ -329,6 +347,14 @@ pub fn parse_id3v2_genre(v: Arc<String>) -> StandardTagPair {
         .unwrap_or_else(|| StandardTag::Genre(v));
 
     [Some(genre), None]
+}
+
+fn parse_bool(v: Arc<String>) -> Option<bool> {
+    match v.to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "y " => Some(true),
+        "0" | "false" | "no" | "n" => Some(false),
+        _ => None,
+    }
 }
 
 /// Parse a string in the format "NUM/TOTAL" or "NUM" into a pair of optional integers.

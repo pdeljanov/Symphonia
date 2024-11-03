@@ -172,6 +172,17 @@ pub enum StandardVisualKey {
     Other,
 }
 
+/// A content advisory.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum ContentAdvisory {
+    /// The content is not explicit.
+    None,
+    /// The content is explicit.
+    Explicit,
+    /// The content has been cleaned/censored.
+    Censored,
+}
+
 /// A standard tag is an enumeration of well-defined and well-known tags with parsed values.
 #[non_exhaustive]
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -194,9 +205,10 @@ pub enum StandardTag {
     Bpm(u64),
     CdToc(Arc<String>),
     Comment(Arc<String>),
-    Compilation,
+    CompilationFlag(bool),
     Composer(Arc<String>),
     Conductor(Arc<String>),
+    ContentAdvisory(ContentAdvisory),
     Copyright(Arc<String>),
     CueToolsDbDiscConfidence(Arc<String>),
     CueToolsDbTrackConfidence(Arc<String>),
@@ -263,18 +275,21 @@ pub enum StandardTag {
     OriginalArtist(Arc<String>),
     OriginalDate(Arc<String>),
     OriginalFile(Arc<String>),
+    OriginalLyricist(Arc<String>),
     OriginalWriter(Arc<String>),
     OriginalYear(u16),
     Owner(Arc<String>),
-    PartNumber(u64),
     Part(Arc<String>),
+    PartNumber(u64),
     PartTotal(u64),
     Performer(Arc<String>),
-    Podcast,
+    PlayCounter(u64),
     PodcastCategory(Arc<String>),
     PodcastDescription(Arc<String>),
+    PodcastFlag(bool),
     PodcastKeywords(Arc<String>),
     Producer(Arc<String>),
+    ProductionCopyright(Arc<String>),
     PurchaseDate(Arc<String>),
     Rating(Arc<String>),
     RecordingDate(Arc<String>),
@@ -297,6 +312,7 @@ pub enum StandardTag {
     SortComposer(Arc<String>),
     SortTrackTitle(Arc<String>),
     TaggingDate(Arc<String>),
+    TermsOfUse(Arc<String>),
     TrackNumber(u64),
     TrackSubtitle(Arc<String>),
     TrackTitle(Arc<String>),
@@ -327,7 +343,7 @@ pub enum StandardTag {
 /// format, the actual data type of a specific tag may have a lesser width or different encoding
 /// than the data type stored here.
 #[non_exhaustive]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum RawValue {
     /// A binary buffer.
     Binary(Arc<Box<[u8]>>),
@@ -340,8 +356,10 @@ pub enum RawValue {
     Float(f64),
     /// A signed integer.
     SignedInt(i64),
-    /// A string. This is also the catch-all type for tags with unconventional data types.
+    /// A string.
     String(Arc<String>),
+    /// A list of strings.
+    StringList(Arc<Vec<String>>),
     /// An unsigned integer.
     UnsignedInt(u64),
 }
@@ -374,6 +392,7 @@ impl_from_for_value!(v, &str, RawValue::String(Arc::new(v.to_string())));
 impl_from_for_value!(v, String, RawValue::String(Arc::new(v)));
 impl_from_for_value!(v, Arc<String>, RawValue::String(v));
 impl_from_for_value!(v, Cow<'_, str>, RawValue::String(Arc::new(v.into_owned())));
+impl_from_for_value!(v, Vec<String>, RawValue::StringList(Arc::new(v)));
 
 fn buffer_to_hex_string(buf: &[u8]) -> String {
     let mut output = String::with_capacity(5 * buf.len());
@@ -399,6 +418,7 @@ impl fmt::Display for RawValue {
             RawValue::Float(float) => fmt::Display::fmt(float, f),
             RawValue::SignedInt(int) => fmt::Display::fmt(int, f),
             RawValue::String(ref string) => fmt::Display::fmt(string, f),
+            RawValue::StringList(ref list) => fmt::Display::fmt(&list.join("\n"), f),
             RawValue::UnsignedInt(uint) => fmt::Display::fmt(uint, f),
         }
     }

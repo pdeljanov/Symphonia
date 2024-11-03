@@ -19,7 +19,7 @@ use symphonia_core::meta::{
 };
 use symphonia_core::support_metadata;
 
-use log::{debug, info, trace, warn};
+use log::{debug, trace};
 
 mod frames;
 mod unsync;
@@ -308,6 +308,8 @@ fn read_id3v2_body<B: ReadBytes + FiniteStream>(
         }?;
 
         match frame {
+            // The frame was skipped for some reason.
+            FrameResult::Skipped => (),
             // The padding has been reached, don't parse any further.
             FrameResult::Padding => break,
             // A frame was parsed into a tag, add it to the tag collection.
@@ -315,8 +317,8 @@ fn read_id3v2_body<B: ReadBytes + FiniteStream>(
                 metadata.add_tag(tag);
             }
             // A frame was parsed into multiple tags, add them all to the tag collection.
-            FrameResult::MultipleTags(multi_tags) => {
-                for tag in multi_tags {
+            FrameResult::MultipleTags(tags) => {
+                for tag in tags {
                     metadata.add_tag(tag);
                 }
             }
@@ -331,14 +333,6 @@ fn read_id3v2_body<B: ReadBytes + FiniteStream>(
             // A table of contents was encountered, save it for post-processing.
             FrameResult::TableOfContents(toc) => {
                 chap_builder.add_toc(toc);
-            }
-            // An unknown frame was encountered.
-            FrameResult::UnsupportedFrame(ref id) => {
-                info!("unsupported frame {}", id);
-            }
-            // The frame contained invalid data.
-            FrameResult::InvalidData(ref id) => {
-                warn!("invalid data for {} frame", id);
             }
         }
 
@@ -356,7 +350,7 @@ fn read_id3v2_body<B: ReadBytes + FiniteStream>(
     Ok(())
 }
 
-pub fn read_id3v2<B: ReadBytes>(
+fn read_id3v2<B: ReadBytes>(
     reader: &mut B,
     metadata: &mut MetadataBuilder,
     side_data: &mut Vec<MetadataSideData>,
@@ -543,37 +537,6 @@ impl ChapterGroupBuilder {
     }
 }
 
-pub mod util {
-    use symphonia_core::meta::StandardVisualKey;
-
-    /// Try to get a `StandardVisualKey` from the APIC picture type identifier.
-    pub fn apic_picture_type_to_visual_key(apic: u32) -> Option<StandardVisualKey> {
-        match apic {
-            0x00 => Some(StandardVisualKey::Other),
-            0x01 => Some(StandardVisualKey::FileIcon),
-            0x02 => Some(StandardVisualKey::OtherIcon),
-            0x03 => Some(StandardVisualKey::FrontCover),
-            0x04 => Some(StandardVisualKey::BackCover),
-            0x05 => Some(StandardVisualKey::Leaflet),
-            0x06 => Some(StandardVisualKey::Media),
-            0x07 => Some(StandardVisualKey::LeadArtistPerformerSoloist),
-            0x08 => Some(StandardVisualKey::ArtistPerformer),
-            0x09 => Some(StandardVisualKey::Conductor),
-            0x0a => Some(StandardVisualKey::BandOrchestra),
-            0x0b => Some(StandardVisualKey::Composer),
-            0x0c => Some(StandardVisualKey::Lyricist),
-            0x0d => Some(StandardVisualKey::RecordingLocation),
-            0x0e => Some(StandardVisualKey::RecordingSession),
-            0x0f => Some(StandardVisualKey::Performance),
-            0x10 => Some(StandardVisualKey::ScreenCapture),
-            0x12 => Some(StandardVisualKey::Illustration),
-            0x13 => Some(StandardVisualKey::BandArtistLogo),
-            0x14 => Some(StandardVisualKey::PublisherStudioLogo),
-            _ => None,
-        }
-    }
-}
-
 const ID3V2_METADATA_INFO: MetadataInfo =
     MetadataInfo { metadata: METADATA_ID_ID3V2, short_name: "id3v2", long_name: "ID3v2" };
 
@@ -628,5 +591,135 @@ impl MetadataReader for Id3v2Reader<'_> {
         Self: 's,
     {
         self.reader
+    }
+}
+
+pub mod sub_fields {
+    //! Key name constants for sub-fields of well-known ID3v2 frames.
+    //!
+    //! For the exact meaning of these fields, and the format of their values, please consult the
+    //! official ID3v2 specification.
+
+    // Generally applicable to all frames
+
+    pub const ENCRYPTION_METHOD_ID: &str = "ENCRYPTION_METHOD_ID";
+    pub const GROUP_ID: &str = "GROUP_ID";
+
+    // AENC frames
+
+    pub const AENC_OWNER: &str = "OWNER";
+    pub const AENC_PREVIEW_LENGTH: &str = "PREVIEW_LEN";
+    pub const AENC_PREVIEW_START: &str = "PREVIEW_START";
+
+    // ATXT frames
+
+    pub const ATXT_EQUIVALENT_TEXT: &str = "EQUIVALENT_TEXT";
+    pub const ATXT_MIME_TYPE: &str = "MIME_TYPE";
+
+    // COMM frames
+
+    pub const COMM_LANGUAGE: &str = "LANGUAGE";
+    pub const COMM_SHORT_DESCRIPTION: &str = "SHORT_DESCRIPTION";
+
+    // COMR frames
+
+    pub const COMR_CONTACT_URL: &str = "CONTACT_URL";
+    pub const COMR_DESCRIPTION: &str = "DESCRIPTION";
+    pub const COMR_MIME_TYPE: &str = "MIME_TYPE";
+    pub const COMR_RECEIVED_AS: &str = "RECEIVED_AS";
+    pub const COMR_SELLER_LOGO: &str = "SELLER_LOGO";
+    pub const COMR_SELLER_NAME: &str = "SELLER_NAME";
+    pub const COMR_VALID_UNTIL: &str = "VALID_UNTIL";
+
+    // CRM frames
+
+    pub const CRM_OWNER: &str = "OWNER";
+    pub const CRM_DESRIPTION: &str = "DESCRIPTION";
+
+    // ENCR frames
+
+    pub const ENCR_ENCRYPTION_DATA: &str = "ENCRYPTION_DATA";
+    pub const ENCR_OWNER: &str = "OWNER";
+
+    // GEOB frames
+
+    pub const GEOB_DESCRIPTION: &str = "DESCRIPTION";
+    pub const GEOB_FILE_NAME: &str = "FILE_NAME";
+    pub const GEOB_MIME_TYPE: &str = "MIME_TYPE";
+
+    // GRID frames
+
+    pub const GRID_GROUP_DATA: &str = "GROUP_DATA";
+    pub const GRID_OWNER: &str = "OWNER";
+    pub const OWNE_PURCHASE_DATE: &str = "PURCHASE_DATE";
+    pub const OWNE_SELLER_NAME: &str = "SELLER_NAME";
+
+    // POPM frames
+
+    pub const POPM_EMAIL: &str = "EMAIL";
+    pub const POPM_PLAY_COUNTER: &str = "PLAY_COUNTER";
+
+    // POSS frames
+
+    pub const POSS_POSITION_UNITS: &str = "UNITS";
+
+    // PRIV frames
+
+    pub const PRIV_OWNER: &str = "OWNER";
+
+    // SIGN frames
+
+    pub const SIGN_GROUP_ID: &str = "GROUP_ID";
+
+    // TXXX frames
+
+    pub const TXXX_DESCRIPTION: &str = "DESCRIPTION";
+
+    // UFID frames
+
+    pub const UFID_OWNER: &str = "OWNER";
+
+    // USER frames
+
+    pub const USER_LANGUAGE: &str = "LANGUAGE";
+
+    // USLT frames
+
+    pub const USLT_LANGUAGE: &str = "LANGUAGE";
+    pub const USLT_DESCRIPTION: &str = "DESCRIPTION";
+
+    // WXXX frames
+
+    pub const WXXX_DESCRIPTION: &str = "DESCRIPTION";
+}
+
+pub mod util {
+    use symphonia_core::meta::StandardVisualKey;
+
+    /// Try to get a `StandardVisualKey` from the APIC picture type identifier.
+    pub fn apic_picture_type_to_visual_key(apic: u32) -> Option<StandardVisualKey> {
+        match apic {
+            0x00 => Some(StandardVisualKey::Other),
+            0x01 => Some(StandardVisualKey::FileIcon),
+            0x02 => Some(StandardVisualKey::OtherIcon),
+            0x03 => Some(StandardVisualKey::FrontCover),
+            0x04 => Some(StandardVisualKey::BackCover),
+            0x05 => Some(StandardVisualKey::Leaflet),
+            0x06 => Some(StandardVisualKey::Media),
+            0x07 => Some(StandardVisualKey::LeadArtistPerformerSoloist),
+            0x08 => Some(StandardVisualKey::ArtistPerformer),
+            0x09 => Some(StandardVisualKey::Conductor),
+            0x0a => Some(StandardVisualKey::BandOrchestra),
+            0x0b => Some(StandardVisualKey::Composer),
+            0x0c => Some(StandardVisualKey::Lyricist),
+            0x0d => Some(StandardVisualKey::RecordingLocation),
+            0x0e => Some(StandardVisualKey::RecordingSession),
+            0x0f => Some(StandardVisualKey::Performance),
+            0x10 => Some(StandardVisualKey::ScreenCapture),
+            0x12 => Some(StandardVisualKey::Illustration),
+            0x13 => Some(StandardVisualKey::BandArtistLogo),
+            0x14 => Some(StandardVisualKey::PublisherStudioLogo),
+            _ => None,
+        }
     }
 }
