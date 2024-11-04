@@ -10,7 +10,7 @@ readme = "README.md"
 categories = ["multimedia", "multimedia::audio", "multimedia::encoding"]
 keywords = ["audio", "codec", "decoder", "multimedia", "media"]
 edition = "2021"
-rust-version = "1.56"
+rust-version = "1.77"
 
 [features]
 # Only royalty-free open standard codecs and formats are enabled by default.

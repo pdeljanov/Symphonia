@@ -35,18 +35,13 @@ const ABS_MAX_ALLOWABLE_SAMPLE_DELTA: f32 = 0.00001;
 // ISO. Around 2^-14 (-84.2dB).
 // const ABS_MAX_ALLOWABLE_SAMPLE_DELTA_MP3: f32 = 0.00006104;
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Default)]
 enum RefDecoder {
+    #[default]
     Ffmpeg,
     Flac,
     Mpg123,
     Oggdec,
-}
-
-impl Default for RefDecoder {
-    fn default() -> Self {
-        RefDecoder::Ffmpeg
-    }
 }
 
 #[derive(Default)]

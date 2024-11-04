@@ -10,7 +10,7 @@ readme = "README.md"
 categories = ["multimedia", "multimedia::audio", "multimedia::encoding"]
 keywords = ["audio", "media", "demuxer", "mp4", "iso"]
 edition = "2021"
-rust-version = "1.56"
+rust-version = "1.77"
 
 [dependencies]
 encoding_rs = "0.8.17"

@@ -106,11 +106,12 @@ pub struct MetadataInfo {
 ///
 /// All limits can be defaulted to a reasonable value specific to the situation. These defaults will
 /// generally not break any normal streams.
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Default)]
 pub enum Limit {
     /// Do not impose any limit.
     None,
     /// Use the a reasonable default specified by the `FormatReader` or `Decoder` implementation.
+    #[default]
     Default,
     /// Specify the upper limit of the resource. Units are case specific.
     Maximum(usize),
@@ -125,12 +126,6 @@ impl Limit {
             Limit::Default => Some(default),
             Limit::Maximum(max) => Some(*max),
         }
-    }
-}
-
-impl Default for Limit {
-    fn default() -> Self {
-        Limit::Default
     }
 }
 

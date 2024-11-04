@@ -20,8 +20,8 @@
     <a href="https://deps.rs/repo/github/pdeljanov/symphonia">
         <img src="https://deps.rs/repo/github/pdeljanov/symphonia/status.svg" />
     </a>
-    <a href="https://blog.rust-lang.org/2021/06/17/Rust-1.53.0.html">
-        <img alt="Rustc Version 1.53.0+" src="https://img.shields.io/badge/rustc-1.53%2B-lightgrey.svg"/>
+    <a href="https://blog.rust-lang.org/2024/03/21/Rust-1.77.0.html">
+        <img alt="Rustc Version 1.77+" src="https://img.shields.io/badge/rustc-1.77%2B-lightgrey.svg"/>
     </a>
 </p>
 
@@ -188,6 +188,12 @@ Symphonia provides the following tools for debugging purposes:
 
 * [`symphonia-play`](https://github.com/pdeljanov/Symphonia/tree/master/symphonia-play) for probing, decoding, validating, and playing back media streams.
 * [`symphonia-check`](https://github.com/pdeljanov/Symphonia/tree/master/symphonia-check) for validating Symphonia's decoded output against various decoders.
+
+## Minimum Supported Rust Version
+
+The minimum supported Rust version (MSRV) for Symphonia 0.6.x releases is 1.77.
+
+This project considers incrementing the MSRV to be a SemVer breaking change.
 
 ## Author
 

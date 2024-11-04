@@ -10,7 +10,7 @@ readme = "README.md"
 categories = ["multimedia", "multimedia::audio", "multimedia::encoding"]
 keywords = ["audio", "media", "demuxer", "caf"]
 edition = "2021"
-rust-version = "1.56"
+rust-version = "1.77"
 
 [dependencies]
 log = "0.4"
