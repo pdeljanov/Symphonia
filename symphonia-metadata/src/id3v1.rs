@@ -7,6 +7,7 @@
 
 //! An ID3v1 metadata reader.
 
+use std::borrow::Cow;
 use std::sync::Arc;
 
 use symphonia_core::errors::{unsupported_error, Result};
@@ -20,6 +21,8 @@ use symphonia_core::meta::{
     Tag,
 };
 use symphonia_core::support_metadata;
+
+use encoding_rs::WINDOWS_1252;
 
 const GENRES: &[&str] = &[
     // Standard Genres as per ID3v1 specificaation
@@ -232,22 +235,22 @@ fn read_id3v1<B: ReadBytes>(reader: &mut B, builder: &mut MetadataBuilder) -> Re
     let mut buf = [0u8; 125];
     reader.read_buf_exact(&mut buf)?;
 
-    if let Some(title) = decode_iso8859_text(&buf[0..30]) {
+    if let Some(title) = decode_iso8859_buf(&buf[0..30]) {
         let tag = Tag::new_from_parts("TITLE", title.clone(), Some(StandardTag::TrackTitle(title)));
         builder.add_tag(tag);
     }
 
-    if let Some(artist) = decode_iso8859_text(&buf[30..60]) {
+    if let Some(artist) = decode_iso8859_buf(&buf[30..60]) {
         let tag = Tag::new_from_parts("ARTIST", artist.clone(), Some(StandardTag::Artist(artist)));
         builder.add_tag(tag);
     }
 
-    if let Some(album) = decode_iso8859_text(&buf[60..90]) {
+    if let Some(album) = decode_iso8859_buf(&buf[60..90]) {
         let tag = Tag::new_from_parts("ALBUM", album.clone(), Some(StandardTag::Album(album)));
         builder.add_tag(tag);
     }
 
-    if let Some(year) = decode_iso8859_text(&buf[90..94]) {
+    if let Some(year) = decode_iso8859_buf(&buf[90..94]) {
         let tag = Tag::new_from_parts("DATE", year.clone(), Some(StandardTag::Date(year)));
         builder.add_tag(tag);
     }
@@ -260,10 +263,10 @@ fn read_id3v1<B: ReadBytes>(reader: &mut B, builder: &mut MetadataBuilder) -> Re
 
         builder.add_tag(Tag::new_from_parts("TRACK", track, Some(StandardTag::TrackNumber(track))));
 
-        decode_iso8859_text(&buf[94..122])
+        decode_iso8859_buf(&buf[94..122])
     }
     else {
-        decode_iso8859_text(&buf[94..124])
+        decode_iso8859_buf(&buf[94..124])
     };
 
     if let Some(comment) = comment {
@@ -281,18 +284,40 @@ fn read_id3v1<B: ReadBytes>(reader: &mut B, builder: &mut MetadataBuilder) -> Re
     Ok(())
 }
 
-fn decode_iso8859_text(data: &[u8]) -> Option<Arc<String>> {
-    // Stop after encountering a null-terminator character and ignore all other ASCII control
-    // characters.
-    let value = data
-        .iter()
-        .take_while(|&&b| b != b'\0')
-        .filter(|&b| !b.is_ascii_control())
-        .map(|&b| b as char)
-        .collect::<String>();
+fn decode_iso8859_buf(buf: &[u8]) -> Option<Arc<String>> {
+    // Trim the buffer upto a null-terminator.
+    let buf = match buf.iter().position(|&b| b == b'\0') {
+        Some(i) => &buf[..i],
+        None => buf,
+    };
 
-    if !value.is_empty() {
-        Some(Arc::new(value))
+    // Decode as Windows code page 1252 (a superset of ISO-8859-1).
+    let text = WINDOWS_1252.decode(buf).0;
+
+    // Replace all control characters that should not be there for ISO-8859-1 with the Unicode
+    // replacement character (U+FFFD).
+    let text = if text.chars().any(|c| c.is_ascii_control()) {
+        let replaced: String = text
+            .chars()
+            .map(|c| {
+                if c.is_ascii_control() {
+                    '\u{FFFD}'
+                }
+                else {
+                    c
+                }
+            })
+            .collect();
+        Cow::Owned(replaced)
+    }
+    else {
+        // No control characters found. Return the original string.
+        text
+    };
+
+    // Do not return an empty string.
+    if !text.is_empty() {
+        Some(Arc::new(text.into_owned()))
     }
     else {
         None
