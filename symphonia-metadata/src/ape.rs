@@ -412,9 +412,17 @@ impl MetadataReader for ApeReader<'_> {
 
             // Map APE tag item values to raw values.
             let value = match item.value {
-                ApeItemValue::String(str) => RawValue::from(str),
-                ApeItemValue::Locator(loc) => RawValue::from(loc),
-                ApeItemValue::Binary(bin) => RawValue::from(bin),
+                ApeItemValue::String(value) | ApeItemValue::Locator(value) => {
+                    // If the value contains a null-terminator, then the value is actually a list.
+                    if value.contains('\0') {
+                        let items = value.split_terminator('\0').map(|s| s.to_string()).collect();
+                        RawValue::StringList(Arc::new(items))
+                    }
+                    else {
+                        RawValue::from(value)
+                    }
+                }
+                ApeItemValue::Binary(value) => RawValue::from(value),
             };
 
             builder.add_mapped_tags(RawTag::new(item.key, value), &APE_TAG_MAP);
