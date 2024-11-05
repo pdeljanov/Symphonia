@@ -18,7 +18,7 @@ use symphonia_core::formats::Track;
 use symphonia_core::io::{BufReader, ReadBytes};
 use symphonia_core::meta::MetadataBuilder;
 
-use symphonia_metadata::vorbis;
+use symphonia_metadata::embedded::vorbis;
 
 use log::warn;
 
@@ -256,7 +256,7 @@ impl Mapper for OpusMapper {
                 // This packet should be a metadata packet containing a Vorbis Comment.
                 let mut builder = MetadataBuilder::new();
 
-                vorbis::read_comment_no_framing(&mut reader, &mut builder)?;
+                vorbis::read_vorbis_comment(&mut reader, &mut builder)?;
 
                 self.need_comment = false;
 

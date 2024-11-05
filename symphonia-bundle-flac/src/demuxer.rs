@@ -117,7 +117,7 @@ impl<'s> FlacReader<'s> {
                 }
                 // VorbisComment blocks are parsed into Tags.
                 MetadataBlockType::VorbisComment => {
-                    read_comment_block(&mut block_stream, &mut metadata_builder)?;
+                    read_flac_comment_block(&mut block_stream, &mut metadata_builder)?;
                 }
                 // Cuesheet blocks are parsed into Cues.
                 MetadataBlockType::Cuesheet => {
@@ -133,7 +133,7 @@ impl<'s> FlacReader<'s> {
                 }
                 // Picture blocks are read as Visuals.
                 MetadataBlockType::Picture => {
-                    read_picture_block(&mut block_stream, &mut metadata_builder)?;
+                    read_flac_picture_block(&mut block_stream, &mut metadata_builder)?;
                 }
                 // Padding blocks are skipped.
                 MetadataBlockType::Padding => {

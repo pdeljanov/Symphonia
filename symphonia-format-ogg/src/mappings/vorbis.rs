@@ -17,7 +17,7 @@ use symphonia_core::io::{BitReaderRtl, BufReader, ReadBitsRtl, ReadBytes};
 use symphonia_core::meta::MetadataBuilder;
 
 use symphonia_common::xiph::audio::vorbis::*;
-use symphonia_metadata::vorbis::*;
+use symphonia_metadata::embedded::vorbis::*;
 
 use log::warn;
 
@@ -213,7 +213,7 @@ impl Mapper for VorbisMapper {
                 VORBIS_PACKET_TYPE_COMMENT => {
                     let mut builder = MetadataBuilder::new();
 
-                    read_comment_no_framing(&mut reader, &mut builder)?;
+                    read_vorbis_comment(&mut reader, &mut builder)?;
 
                     Ok(MapResult::SideData { data: SideData::Metadata(builder.metadata()) })
                 }

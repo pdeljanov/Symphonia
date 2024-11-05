@@ -5,7 +5,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! A RIFF INFO metadata reader.
+//! RIFF INFO block parsing.
 
 use std::collections::HashMap;
 
@@ -63,7 +63,11 @@ lazy_static! {
 
 /// Parse the RIFF INFO block into a `Tag` using the block's identifier tag and a slice
 /// containing the block's contents.
-pub fn read_riff_info_block(tag: [u8; 4], buf: &[u8], builder: &mut MetadataBuilder) -> Result<()> {
+pub fn parse_riff_info_block(
+    tag: [u8; 4],
+    buf: &[u8],
+    builder: &mut MetadataBuilder,
+) -> Result<()> {
     // TODO: Key should be checked that it only contains ASCII characters.
     let key = String::from_utf8_lossy(&tag);
     let value = String::from_utf8_lossy(buf);

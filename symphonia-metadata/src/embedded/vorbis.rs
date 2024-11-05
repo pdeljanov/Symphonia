@@ -5,7 +5,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! A Vorbic COMMENT metadata reader for FLAC or OGG formats.
+//! Vorbis Comment reading.
 
 use std::collections::HashMap;
 
@@ -16,7 +16,7 @@ use symphonia_core::errors::Result;
 use symphonia_core::io::{BufReader, ReadBytes};
 use symphonia_core::meta::{MetadataBuilder, RawTag, Visual};
 
-use crate::flac;
+use crate::embedded::flac;
 use crate::utils::images::try_get_image_info;
 use crate::utils::std_tag::*;
 
@@ -143,7 +143,7 @@ lazy_static! {
 /// Parse a string containing a base64 encoded FLAC picture block into a visual.
 fn parse_base64_picture_block(encoded: &str, builder: &mut MetadataBuilder) {
     if let Some(data) = base64_decode(encoded) {
-        if flac::read_picture_block(&mut BufReader::new(&data), builder).is_err() {
+        if flac::read_flac_picture_block(&mut BufReader::new(&data), builder).is_err() {
             warn!("invalid picture block data");
         }
     }
@@ -200,7 +200,7 @@ fn parse_vorbis_comment(comment_data: &[u8], builder: &mut MetadataBuilder) {
     }
 }
 
-pub fn read_comment_no_framing<B: ReadBytes>(
+pub fn read_vorbis_comment<B: ReadBytes>(
     reader: &mut B,
     builder: &mut MetadataBuilder,
 ) -> Result<()> {

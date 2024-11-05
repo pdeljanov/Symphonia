@@ -19,7 +19,8 @@ use symphonia_core::errors::{decode_error, unsupported_error, Error, Result};
 use symphonia_core::formats::Track;
 use symphonia_core::io::{MediaSourceStream, ReadBytes};
 use symphonia_core::meta::{MetadataBuilder, MetadataRevision};
-use symphonia_metadata::riff;
+
+use symphonia_metadata::embedded::riff;
 
 use crate::common::{
     ByteOrder, ChunkParser, ChunksReader, FormatALaw, FormatAdpcm, FormatData, FormatExtensible,
@@ -621,7 +622,7 @@ pub fn read_info_chunk(source: &mut MediaSourceStream<'_>, len: u32) -> Result<M
 
     while let Some(RiffInfoListChunks::Info(info)) = info_list.next(source)? {
         let info = info.parse(source)?;
-        riff::read_riff_info_block(info.tag, &info.buf, &mut builder)?;
+        riff::parse_riff_info_block(info.tag, &info.buf, &mut builder)?;
     }
 
     info_list.finish(source)?;

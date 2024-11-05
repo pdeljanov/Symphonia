@@ -18,7 +18,9 @@ use symphonia_core::formats::Track;
 use symphonia_core::io::{BufReader, MonitorStream, ReadBytes};
 use symphonia_core::meta::MetadataBuilder;
 
-use symphonia_common::xiph::audio::flac::metadata::{read_comment_block, read_picture_block};
+use symphonia_common::xiph::audio::flac::metadata::{
+    read_flac_comment_block, read_flac_picture_block,
+};
 use symphonia_common::xiph::audio::flac::metadata::{
     MetadataBlockHeader, MetadataBlockType, StreamInfo,
 };
@@ -321,14 +323,14 @@ impl Mapper for FlacMapper {
                 MetadataBlockType::VorbisComment => {
                     let mut builder = MetadataBuilder::new();
 
-                    read_comment_block(&mut reader, &mut builder)?;
+                    read_flac_comment_block(&mut reader, &mut builder)?;
 
                     Ok(MapResult::SideData { data: SideData::Metadata(builder.metadata()) })
                 }
                 MetadataBlockType::Picture => {
                     let mut builder = MetadataBuilder::new();
 
-                    read_picture_block(&mut reader, &mut builder)?;
+                    read_flac_picture_block(&mut reader, &mut builder)?;
 
                     Ok(MapResult::SideData { data: SideData::Metadata(builder.metadata()) })
                 }

@@ -5,7 +5,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! Readers for FLAC comment and picture metadata blocks.
+//! FLAC metadata block reading.
 
 use std::num::NonZeroU8;
 use std::sync::Arc;
@@ -14,8 +14,9 @@ use symphonia_core::errors::{decode_error, Result};
 use symphonia_core::io::ReadBytes;
 use symphonia_core::meta::{MetadataBuilder, Size, StandardTag, Tag, Visual};
 
+use crate::embedded::vorbis;
+use crate::id3v2;
 use crate::utils::images::try_get_image_info;
-use crate::{id3v2, vorbis};
 
 /// Converts a string of bytes to an ASCII string if all characters are within the printable ASCII
 /// range. If a null byte is encounted, the string terminates at that point.
@@ -34,15 +35,15 @@ fn printable_ascii_to_string(bytes: &[u8]) -> Option<String> {
 }
 
 /// Read a comment metadata block.
-pub fn read_comment_block<B: ReadBytes>(
+pub fn read_flac_comment_block<B: ReadBytes>(
     reader: &mut B,
     metadata: &mut MetadataBuilder,
 ) -> Result<()> {
-    vorbis::read_comment_no_framing(reader, metadata)
+    vorbis::read_vorbis_comment(reader, metadata)
 }
 
 /// Read a picture metadata block.
-pub fn read_picture_block<B: ReadBytes>(
+pub fn read_flac_picture_block<B: ReadBytes>(
     reader: &mut B,
     builder: &mut MetadataBuilder,
 ) -> Result<()> {

@@ -13,6 +13,10 @@ use symphonia_core::errors::{decode_error, Result};
 use symphonia_core::formats::util::SeekIndex;
 use symphonia_core::io::*;
 use symphonia_core::meta::{Chapter, ChapterGroup, ChapterGroupItem, StandardTag, Tag, VendorData};
+use symphonia_core::units::TimeBase;
+
+pub use symphonia_metadata::embedded::flac::read_flac_comment_block;
+pub use symphonia_metadata::embedded::flac::read_flac_picture_block;
 
 #[derive(PartialEq, Eq)]
 pub enum MetadataBlockType {
@@ -465,10 +469,6 @@ pub fn read_application_block<B: ReadBytes>(
     let data = reader.read_boxed_slice_exact(block_length as usize - 4)?;
     Ok(VendorData { ident, data })
 }
-
-use symphonia_core::units::TimeBase;
-pub use symphonia_metadata::flac::read_comment_block;
-pub use symphonia_metadata::flac::read_picture_block;
 
 pub struct MetadataBlockHeader {
     pub is_last: bool,
