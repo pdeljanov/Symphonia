@@ -15,7 +15,7 @@ use symphonia_core::io::ReadBytes;
 use symphonia_core::meta::{MetadataBuilder, Size, StandardTag, Tag, Visual};
 
 use crate::embedded::vorbis;
-use crate::id3v2;
+use crate::utils::id3v2::get_visual_key_from_picture_type;
 use crate::utils::images::try_get_image_info;
 
 /// Converts a string of bytes to an ASCII string if all characters are within the printable ASCII
@@ -114,7 +114,7 @@ pub fn read_flac_picture_block<B: ReadBytes>(
         media_type: image_info.as_ref().map(|info| info.media_type.clone()).or(media_type),
         dimensions: image_info.as_ref().map(|info| info.dimensions).or(dimensions),
         color_mode: image_info.as_ref().map(|info| info.color_mode),
-        usage: id3v2::util::apic_picture_type_to_visual_key(type_enc),
+        usage: get_visual_key_from_picture_type(type_enc),
         tags,
         data,
     });

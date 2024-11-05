@@ -15,7 +15,7 @@ use symphonia_core::meta::{
 use symphonia_core::meta::{RawValue, Visual};
 use symphonia_core::util::bits;
 use symphonia_metadata::utils::images::try_get_image_info;
-use symphonia_metadata::{id3v1, itunes};
+use symphonia_metadata::utils::{id3v1, itunes};
 
 use crate::atoms::{Atom, AtomHeader, AtomIterator, AtomType};
 
@@ -435,7 +435,7 @@ fn add_id3v1_genre_tag<B: ReadBytes>(
 
         // The stored index uses 1-based indexing, but the ID3v1 genre list is 0-based.
         if index > 0 && index <= 255 {
-            if let Some(genre) = id3v1::util::genre_name((index - 1) as u8) {
+            if let Some(genre) = id3v1::get_genre_name((index - 1) as u8) {
                 let genre = Arc::new(genre);
                 let tag = Tag::new_from_parts("", genre.clone(), Some(StandardTag::Genre(genre)));
                 builder.add_tag(tag);
@@ -457,7 +457,7 @@ fn add_freeform_tag<B: ReadBytes>(
         // Parse the value atom data into a string, if possible.
         if let Some(value) = parse_tag_value(value_atom.data_type, &value_atom.data) {
             // Try to map iTunes freeform tags to standard tag keys.
-            itunes::parse_as_itunes_tag(tag.full_name(), value, builder)?;
+            itunes::parse_itunes_tag(tag.full_name(), value, builder)?;
         }
         else {
             warn!("unsupported data type {:?} for free-form tag", value_atom.data_type);

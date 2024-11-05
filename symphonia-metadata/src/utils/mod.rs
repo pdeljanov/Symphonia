@@ -7,5 +7,9 @@
 
 //! Common metadata utilities.
 
+pub mod id3v1;
+pub mod id3v2;
 pub mod images;
+pub mod itunes;
+
 pub(crate) mod std_tag;

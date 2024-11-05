@@ -5,7 +5,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! iTunes metadata support.
+//! Utilties for handling iTunes-style metadata.
 
 use symphonia_core::errors::Result;
 use symphonia_core::meta::{MetadataBuilder, RawTag, RawValue};
@@ -82,11 +82,7 @@ lazy_static! {
 }
 
 /// Try to parse iTunes metadata from a raw tag and add it to the builder.
-pub fn parse_as_itunes_tag(
-    key: String,
-    value: RawValue,
-    builder: &mut MetadataBuilder,
-) -> Result<()> {
+pub fn parse_itunes_tag(key: String, value: RawValue, builder: &mut MetadataBuilder) -> Result<()> {
     builder.add_mapped_tags(RawTag::new(key, value), &ITUNES_TAG_MAP);
     Ok(())
 }

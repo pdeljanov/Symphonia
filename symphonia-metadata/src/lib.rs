@@ -18,5 +18,4 @@ pub mod ape;
 pub mod embedded;
 pub mod id3v1;
 pub mod id3v2;
-pub mod itunes;
 pub mod utils;

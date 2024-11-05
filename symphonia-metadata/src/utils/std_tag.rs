@@ -315,7 +315,7 @@ pub fn parse_itunes_content_advisory(v: Arc<String>) -> StandardTagPair {
 pub fn parse_id3v2_genre(v: Arc<String>) -> StandardTagPair {
     use regex_lite::Regex;
 
-    use crate::id3v1;
+    use crate::utils::id3v1::get_genre_name;
 
     // Regex that will match the following strings:
     //
@@ -334,7 +334,7 @@ pub fn parse_id3v2_genre(v: Arc<String>) -> StandardTagPair {
     }
     else if let Some(num) = caps.name("num0").or_else(|| caps.name("num1")) {
         // Only genre number provided. Parse to u8, then lookup the genre name.
-        num.as_str().parse::<u8>().ok().and_then(id3v1::util::genre_name)
+        num.as_str().parse::<u8>().ok().and_then(get_genre_name)
     }
     else {
         // Empty string.

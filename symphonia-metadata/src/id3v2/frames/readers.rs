@@ -27,7 +27,7 @@ use smallvec::{smallvec, SmallVec};
 
 use crate::id3v2::frames::{FrameResult, Id3v2Chapter, Id3v2TableOfContents};
 use crate::id3v2::sub_fields::*;
-use crate::id3v2::util::apic_picture_type_to_visual_key;
+use crate::utils::id3v2::get_visual_key_from_picture_type;
 use crate::utils::std_tag::*;
 
 use crate::utils::images::try_get_image_info;
@@ -339,7 +339,7 @@ pub fn read_apic_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Resu
     };
 
     // Image usage.
-    let usage = apic_picture_type_to_visual_key(u32::from(reader.read_u8()?));
+    let usage = get_visual_key_from_picture_type(u32::from(reader.read_u8()?));
 
     let mut tags = vec![];
 
