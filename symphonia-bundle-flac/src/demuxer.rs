@@ -9,7 +9,7 @@ use std::io::{Seek, SeekFrom};
 
 use symphonia_core::support_format;
 
-use symphonia_common::xiph::audio::flac::metadata::*;
+use symphonia_common::xiph::audio::flac::{MetadataBlockHeader, MetadataBlockType, StreamInfo};
 use symphonia_core::codecs::audio::{
     well_known::CODEC_ID_FLAC, AudioCodecParameters, VerificationCheck,
 };
@@ -23,6 +23,7 @@ use symphonia_core::formats::util::{SeekIndex, SeekSearchResult};
 use symphonia_core::formats::well_known::FORMAT_ID_FLAC;
 use symphonia_core::io::*;
 use symphonia_core::meta::{Metadata, MetadataBuilder, MetadataLog};
+use symphonia_metadata::embedded::flac::*;
 
 use log::{debug, info};
 
@@ -101,15 +102,14 @@ impl<'s> FlacReader<'s> {
                 }
                 MetadataBlockType::Application => {
                     // TODO: Store vendor data.
-                    read_application_block(&mut block_stream, header.block_len)?;
+                    read_flac_application_block(&mut block_stream, header.block_len)?;
                 }
                 // SeekTable blocks are parsed into a SeekIndex.
                 MetadataBlockType::SeekTable => {
                     // Only a single seek table block is allowed.
                     if index.is_none() {
-                        let mut new_index = SeekIndex::new();
-                        read_seek_table_block(&mut block_stream, header.block_len, &mut new_index)?;
-                        index = Some(new_index);
+                        index =
+                            Some(read_flac_seektable_block(&mut block_stream, header.block_len)?);
                     }
                     else {
                         return decode_error("flac: found more than one seek table block");
@@ -125,7 +125,7 @@ impl<'s> FlacReader<'s> {
                     // timebase is known to calculate the cue times. This should always be the case
                     // since the stream information block must always be the first metadata block.
                     if let Some(tb) = track.as_ref().and_then(|track| track.time_base) {
-                        chapters = Some(read_cuesheet_block(&mut block_stream, tb)?);
+                        chapters = Some(read_flac_cuesheet_block(&mut block_stream, tb)?);
                     }
                     else {
                         return decode_error("flac: cuesheet block before stream info");

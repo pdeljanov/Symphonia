@@ -9,7 +9,7 @@ use std::cmp;
 use std::convert::TryInto;
 use std::num::Wrapping;
 
-use symphonia_common::xiph::audio::flac::metadata::StreamInfo;
+use symphonia_common::xiph::audio::flac::StreamInfo;
 use symphonia_core::audio::{
     AsGenericAudioBufferRef, AudioBuffer, AudioMut, AudioSpec, GenericAudioBufferRef,
 };

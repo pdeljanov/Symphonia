@@ -5,14 +5,11 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+use symphonia_common::xiph::audio::flac::{MetadataBlockHeader, MetadataBlockType, StreamInfo};
 use symphonia_core::codecs::audio::well_known::CODEC_ID_FLAC;
 use symphonia_core::codecs::audio::VerificationCheck;
 use symphonia_core::errors::{decode_error, unsupported_error, Result};
 use symphonia_core::io::{BufReader, ReadBytes};
-
-use symphonia_common::xiph::audio::flac::metadata::{
-    MetadataBlockHeader, MetadataBlockType, StreamInfo,
-};
 
 use crate::atoms::stsd::AudioSampleEntry;
 use crate::atoms::{Atom, AtomHeader};

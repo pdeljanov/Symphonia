@@ -9,6 +9,7 @@ use crate::common::SideData;
 
 use super::{MapResult, Mapper, PacketParser};
 
+use symphonia_common::xiph::audio::flac::{MetadataBlockHeader, MetadataBlockType, StreamInfo};
 use symphonia_core::checksum::Crc8Ccitt;
 use symphonia_core::codecs::audio::well_known::CODEC_ID_FLAC;
 use symphonia_core::codecs::audio::{AudioCodecParameters, VerificationCheck};
@@ -17,13 +18,7 @@ use symphonia_core::errors::{decode_error, Result};
 use symphonia_core::formats::Track;
 use symphonia_core::io::{BufReader, MonitorStream, ReadBytes};
 use symphonia_core::meta::MetadataBuilder;
-
-use symphonia_common::xiph::audio::flac::metadata::{
-    read_flac_comment_block, read_flac_picture_block,
-};
-use symphonia_common::xiph::audio::flac::metadata::{
-    MetadataBlockHeader, MetadataBlockType, StreamInfo,
-};
+use symphonia_metadata::embedded::flac::{read_flac_comment_block, read_flac_picture_block};
 
 use log::warn;
 

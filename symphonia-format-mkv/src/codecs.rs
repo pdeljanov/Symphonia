@@ -14,6 +14,7 @@ use log::warn;
 use symphonia_common::mpeg::video::{
     AVCDecoderConfigurationRecord, HEVCDecoderConfigurationRecord,
 };
+use symphonia_common::xiph::audio::flac::{MetadataBlockHeader, MetadataBlockType};
 use symphonia_core::audio::sample::SampleFormat;
 use symphonia_core::codecs::audio::well_known::{CODEC_ID_FLAC, CODEC_ID_VORBIS};
 use symphonia_core::codecs::audio::AudioCodecParameters;
@@ -24,8 +25,6 @@ use symphonia_core::codecs::video::{
 };
 use symphonia_core::codecs::{CodecId, CodecParameters, CodecProfile};
 use symphonia_core::errors::{decode_error, Error, Result};
-
-use symphonia_common::xiph::audio::flac::metadata::{MetadataBlockHeader, MetadataBlockType};
 use symphonia_core::io::{BufReader, ReadBytes};
 
 use crate::lacing::read_xiph_sizes;

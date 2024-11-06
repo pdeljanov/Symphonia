@@ -8,6 +8,7 @@
 use super::{MapResult, Mapper, PacketParser};
 use crate::common::SideData;
 
+use symphonia_common::xiph::audio::vorbis::*;
 use symphonia_core::codecs::audio::well_known::CODEC_ID_VORBIS;
 use symphonia_core::codecs::audio::AudioCodecParameters;
 use symphonia_core::codecs::CodecParameters;
@@ -15,8 +16,6 @@ use symphonia_core::errors::{decode_error, unsupported_error, Result};
 use symphonia_core::formats::Track;
 use symphonia_core::io::{BitReaderRtl, BufReader, ReadBitsRtl, ReadBytes};
 use symphonia_core::meta::MetadataBuilder;
-
-use symphonia_common::xiph::audio::vorbis::*;
 use symphonia_metadata::embedded::vorbis::*;
 
 use log::warn;

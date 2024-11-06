@@ -7,12 +7,18 @@
 
 //! FLAC metadata block reading.
 
+use std::ascii;
 use std::num::NonZeroU8;
 use std::sync::Arc;
 
 use symphonia_core::errors::{decode_error, Result};
+use symphonia_core::formats::util::SeekIndex;
 use symphonia_core::io::ReadBytes;
-use symphonia_core::meta::{MetadataBuilder, Size, StandardTag, Tag, Visual};
+use symphonia_core::meta::{
+    Chapter, ChapterGroup, ChapterGroupItem, MetadataBuilder, Size, StandardTag, Tag, VendorData,
+    Visual,
+};
+use symphonia_core::units::TimeBase;
 
 use crate::embedded::vorbis;
 use crate::utils::id3v2::get_visual_key_from_picture_type;
@@ -37,9 +43,9 @@ fn printable_ascii_to_string(bytes: &[u8]) -> Option<String> {
 /// Read a comment metadata block.
 pub fn read_flac_comment_block<B: ReadBytes>(
     reader: &mut B,
-    metadata: &mut MetadataBuilder,
+    builder: &mut MetadataBuilder,
 ) -> Result<()> {
-    vorbis::read_vorbis_comment(reader, metadata)
+    vorbis::read_vorbis_comment(reader, builder)
 }
 
 /// Read a picture metadata block.
@@ -120,4 +126,260 @@ pub fn read_flac_picture_block<B: ReadBytes>(
     });
 
     Ok(())
+}
+
+/// Read a seek table metadata block as a seek index.
+pub fn read_flac_seektable_block<B: ReadBytes>(
+    reader: &mut B,
+    block_length: u32,
+) -> Result<SeekIndex> {
+    // The number of seek table entries is always the block length divided by the length of a single
+    // entry, 18 bytes.
+    let count = block_length / 18;
+
+    let mut index = SeekIndex::new();
+
+    for _ in 0..count {
+        let sample = reader.read_be_u64()?;
+
+        // A sample value of 0xFFFFFFFFFFFFFFFF is designated as a placeholder and is to be
+        // ignored by decoders. The remaining 10 bytes of the seek point are undefined and must
+        // still be consumed.
+        if sample != 0xffff_ffff_ffff_ffff {
+            index.insert(sample, reader.read_be_u64()?, u32::from(reader.read_be_u16()?));
+        }
+        else {
+            reader.ignore_bytes(10)?;
+        }
+    }
+
+    Ok(index)
+}
+
+/// Read a vendor-specific application metadata block as vendor data.
+pub fn read_flac_application_block<B: ReadBytes>(
+    reader: &mut B,
+    block_length: u32,
+) -> Result<VendorData> {
+    // Read the application identifier. Usually this is just 4 ASCII characters, but it is not
+    // limited to that. Non-printable ASCII characters must be escaped to create a valid UTF8
+    // string.
+    let ident_buf = reader.read_quad_bytes()?;
+    let ident = String::from_utf8(
+        ident_buf.as_ref().iter().copied().flat_map(ascii::escape_default).collect(),
+    )
+    .unwrap();
+
+    let data = reader.read_boxed_slice_exact(block_length as usize - 4)?;
+    Ok(VendorData { ident, data })
+}
+
+/// Read a cuesheet metadata block as a chapter group.
+pub fn read_flac_cuesheet_block<B: ReadBytes>(
+    reader: &mut B,
+    tb: TimeBase,
+) -> Result<ChapterGroup> {
+    // Read cuesheet catalog number. The catalog number only allows printable ASCII characters.
+    let mut catalog_number_buf = vec![0u8; 128];
+    reader.read_buf_exact(&mut catalog_number_buf)?;
+
+    // Read the catalog number, and store it in a Tag to be attached to the chapter group.
+    let catalog_number = match printable_ascii_to_string(&catalog_number_buf) {
+        Some(num) => {
+            let num = Arc::new(num);
+            Tag::new_from_parts("CATALOG", num.clone(), Some(StandardTag::IdentCatalogNumber(num)))
+        }
+        None => return decode_error("flac: cuesheet catalog number contains invalid characters"),
+    };
+
+    // Number of lead-in samples.
+    let n_lead_in_samples = reader.read_be_u64()?;
+
+    // Next bit is set for CD-DA cuesheets.
+    let is_cdda = (reader.read_u8()? & 0x80) == 0x80;
+
+    // Lead-in should be non-zero only for CD-DA cuesheets.
+    if !is_cdda && n_lead_in_samples > 0 {
+        return decode_error("flac: cuesheet lead-in samples should be zero if not CD-DA");
+    }
+
+    // Next 258 bytes (read as 129 u16's) must be zero.
+    for _ in 0..129 {
+        if reader.read_be_u16()? != 0 {
+            return decode_error("flac: cuesheet reserved bits should be zero");
+        }
+    }
+
+    let n_tracks = reader.read_u8()?;
+
+    // There should be at-least one track in the cuesheet.
+    if n_tracks == 0 {
+        return decode_error("flac: cuesheet must have at-least one track");
+    }
+
+    // CD-DA cuesheets must have no more than 100 tracks (99 audio tracks + lead-out track)
+    if is_cdda && n_tracks > 100 {
+        return decode_error("flac: cuesheets for CD-DA must not have more than 100 tracks");
+    }
+
+    let mut group = ChapterGroup {
+        items: Vec::with_capacity(usize::from(n_tracks)),
+        tags: vec![catalog_number],
+        visuals: Vec::new(),
+    };
+
+    for _ in 0..n_tracks {
+        group.items.push(read_flac_cuesheet_track(reader, is_cdda, tb)?);
+    }
+
+    Ok(group)
+}
+
+fn read_flac_cuesheet_track<B: ReadBytes>(
+    reader: &mut B,
+    is_cdda: bool,
+    tb: TimeBase,
+) -> Result<ChapterGroupItem> {
+    let n_offset_samples = reader.read_be_u64()?;
+
+    // For a CD-DA cuesheet, the track sample offset is the same as the first index (INDEX 00 or
+    // INDEX 01) on the CD. Therefore, the offset must be a multiple of 588 samples
+    // (588 samples = 44100 samples/sec * 1/75th of a sec).
+    if is_cdda && n_offset_samples % 588 != 0 {
+        return decode_error(
+            "flac: cuesheet track sample offset is not a multiple of 588 for CD-DA",
+        );
+    }
+
+    let number = u32::from(reader.read_u8()?);
+
+    // A track number of 0 is disallowed in all cases. For CD-DA cuesheets, track 0 is reserved for
+    // lead-in.
+    if number == 0 {
+        return decode_error("flac: cuesheet track number of 0 not allowed");
+    }
+
+    // For CD-DA cuesheets, only track numbers 1-99 are allowed for regular tracks and 170 for
+    // lead-out.
+    if is_cdda && number > 99 && number != 170 {
+        return decode_error(
+            "flac: cuesheet track numbers greater than 99 are not allowed for CD-DA",
+        );
+    }
+
+    let mut isrc_buf = vec![0u8; 12];
+    reader.read_buf_exact(&mut isrc_buf)?;
+
+    let isrc = match printable_ascii_to_string(&isrc_buf) {
+        Some(num) => {
+            let num = Arc::new(num);
+            Tag::new_from_parts("ISRC", num.clone(), Some(StandardTag::IdentIsrc(num)))
+        }
+        None => return decode_error("flac: cuesheet track ISRC contains invalid characters"),
+    };
+
+    // Next 14 bytes are reserved. However, the first two bits are flags. Consume the reserved bytes
+    // in u16 chunks a minor performance improvement.
+    let flags = reader.read_be_u16()?;
+
+    // These values are contained in the Cuesheet but have no analogue in Symphonia.
+    let _is_audio = (flags & 0x8000) == 0x0000;
+    let _use_pre_emphasis = (flags & 0x4000) == 0x4000;
+
+    if flags & 0x3fff != 0 {
+        return decode_error("flac: cuesheet track reserved bits should be zero");
+    }
+
+    // Consume the remaining 12 bytes read in 3 u32 chunks.
+    for _ in 0..3 {
+        if reader.read_be_u32()? != 0 {
+            return decode_error("flac: cuesheet track reserved bits should be zero");
+        }
+    }
+
+    let n_indicies = reader.read_u8()? as usize;
+
+    // For CD-DA cuesheets, the track index cannot exceed 100 indicies.
+    if is_cdda && n_indicies > 100 {
+        return decode_error("flac: cuesheet track indicies cannot exceed 100 for CD-DA");
+    }
+
+    // If the track contains indicies, then one chapter will be created per index, and a chapter
+    // group returned.
+    if n_indicies > 0 {
+        let mut group = ChapterGroup {
+            items: Vec::with_capacity(n_indicies),
+            tags: vec![isrc],
+            visuals: vec![],
+        };
+
+        // Add each index as a chapter.
+        for _ in 0..n_indicies {
+            let index = read_flac_cuesheet_track_index(reader, is_cdda, n_offset_samples, tb)?;
+
+            group.items.push(ChapterGroupItem::Chapter(index));
+        }
+
+        Ok(ChapterGroupItem::Group(group))
+    }
+    else {
+        // If the track has no indicies, return a single chapter.
+        let chapter = Chapter {
+            start_time: tb.calc_time(n_offset_samples),
+            end_time: None,
+            start_byte: None,
+            end_byte: None,
+            tags: vec![isrc],
+            visuals: vec![],
+        };
+
+        Ok(ChapterGroupItem::Chapter(chapter))
+    }
+}
+
+fn read_flac_cuesheet_track_index<B: ReadBytes>(
+    reader: &mut B,
+    is_cdda: bool,
+    track_ts: u64,
+    tb: TimeBase,
+) -> Result<Chapter> {
+    let n_offset_samples = reader.read_be_u64()?;
+    let idx_number_raw = reader.read_be_u32()?;
+
+    // CD-DA track index points must have a sample offset that is a multiple of 588 samples
+    // (588 samples = 44100 samples/sec * 1/75th of a sec).
+    if is_cdda && n_offset_samples % 588 != 0 {
+        return decode_error(
+            "flac: cuesheet track index point sample offset is not a multiple of 588 for CD-DA",
+        );
+    }
+
+    // Lower 24 bits are reserved and should be 0.
+    if idx_number_raw & 0x00ff_ffff != 0 {
+        return decode_error("flac: cuesheet track index reserved bits should be 0");
+    }
+
+    // Upper 8 bits is the index number.
+    // TODO: Should be 0 or 1 for the first index for CD-DA. It should also not exceed 100 for
+    //       CD-DA.
+    let idx_number = ((idx_number_raw & 0xff00_0000) >> 24) as u8;
+
+    // Calculate the index's starting timestamp.
+    let idx_start_ts = match track_ts.checked_add(n_offset_samples) {
+        Some(ts) => ts,
+        None => return decode_error("flac: cuesheet track index start time too large"),
+    };
+
+    Ok(Chapter {
+        start_time: tb.calc_time(idx_start_ts),
+        end_time: None,
+        start_byte: None,
+        end_byte: None,
+        tags: vec![Tag::new_from_parts(
+            "INDEX",
+            idx_number,
+            Some(StandardTag::IndexNumber(idx_number)),
+        )],
+        visuals: Vec::new(),
+    })
 }
