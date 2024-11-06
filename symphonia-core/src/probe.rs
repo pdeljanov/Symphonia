@@ -276,7 +276,7 @@ impl Probe {
 
                             // TODO: Implement scoring.
 
-                            info!(
+                            debug!(
                                 "found the format marker {:x?} @ {}+{} bytes.",
                                 &context[0..len],
                                 init_pos,
