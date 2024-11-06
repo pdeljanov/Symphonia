@@ -22,4 +22,3 @@ mp3 = []
 log = "0.4"
 lazy_static = "1.4.0"
 symphonia-core = { version = "0.5.4", path = "../symphonia-core" }
-symphonia-metadata = { version = "0.5.4", path = "../symphonia-metadata" }

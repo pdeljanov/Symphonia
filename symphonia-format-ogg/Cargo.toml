@@ -15,8 +15,13 @@ rust-version = "1.77"
 [dependencies]
 log = "0.4"
 symphonia-core = { version = "0.5.4", path = "../symphonia-core" }
-symphonia-metadata = { version = "0.5.4", path = "../symphonia-metadata" }
 symphonia-common = { version = "0.5.4", path = "../symphonia-common" }
+
+[dependencies.symphonia-metadata]
+version = "0.5.4"
+path = "../symphonia-metadata"
+default-features = false
+features = ["vorbis"]
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)'] }

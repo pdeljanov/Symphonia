@@ -540,6 +540,7 @@ impl ChapterGroupBuilder {
 const ID3V2_METADATA_INFO: MetadataInfo =
     MetadataInfo { metadata: METADATA_ID_ID3V2, short_name: "id3v2", long_name: "ID3v2" };
 
+/// ID3v2 tag reader.
 pub struct Id3v2Reader<'s> {
     reader: MediaSourceStream<'s>,
 }

@@ -138,16 +138,20 @@ A `symphonia-bundle-*` package is a combination of a decoder and a native demuxe
 
 All metadata readers are provided by the `symphonia-metadata` crate.
 
-| Format                | Status    |
-|-----------------------|-----------|
-| APEv1                 | Great     |
-| APEv2                 | Great     |
-| ID3v1                 | Great     |
-| ID3v2                 | Great     |
-| ISO/MP4               | Great     |
-| RIFF                  | Great     |
-| Vorbis comment (FLAC) | Perfect   |
-| Vorbis comment (OGG)  | Perfect   |
+For metadata formats that are standalone and not part of the media container, a feature flag may be used to toggle support.
+
+| Format                | Status    | Feature Flag | Default |
+|-----------------------|-----------|--------------|---------|
+| APEv1                 | Great     | `ape`        | Yes     |
+| APEv2                 | Great     | `ape`        | Yes     |
+| ID3v1                 | Great     | `id3v1`      | Yes     |
+| ID3v2                 | Great     | `id3v2`      | Yes     |
+| ISO/MP4               | Great     | N/A          | N/A     |
+| RIFF                  | Great     | N/A          | N/A     |
+| Vorbis comment (FLAC) | Perfect   | N/A          | N/A     |
+| Vorbis comment (OGG)  | Perfect   | N/A          | N/A     |
+
+> **Tip:** All metadata formats can be enabled with the `all-meta` feature flag.
 
 ## Quality
 

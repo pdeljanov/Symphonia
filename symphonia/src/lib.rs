@@ -18,7 +18,7 @@
 //! royalty-free open standard media formats and codecs. Other formats and codecs must be enabled
 //! using feature flags.
 //!
-//! **Tip:** All formats and codecs can be enabled with the `all` feature flag.
+//! **Tip:** All format, codec, and metadata support can be enabled with the `all` feature flag.
 //!
 //! ## Formats
 //!
@@ -58,15 +58,21 @@
 //!
 //! ## Metadata
 //!
-//! The following metadata tagging formats are supported. These are always enabled.
+//! For metadata formats that are standalone and not part of the media container, a feature flag may
+//! be used to toggle support.
 //!
-//! * APEv1
-//! * APEv2
-//! * ID3v1
-//! * ID3v2
-//! * ISO/MP4
-//! * RIFF
-//! * Vorbis Comment (in OGG & FLAC)
+//! | Format                | Feature Flag | Default |
+//! |-----------------------|--------------|---------|
+//! | APEv1                 | `ape`        | Yes     |
+//! | APEv2                 | `ape`        | Yes     |
+//! | ID3v1                 | `id3v1`      | Yes     |
+//! | ID3v2                 | `id3v2`      | Yes     |
+//! | ISO/MP4               | N/A          | N/A     |
+//! | RIFF                  | N/A          | N/A     |
+//! | Vorbis comment (FLAC) | N/A          | N/A     |
+//! | Vorbis comment (OGG)  | N/A          | N/A     |
+//!
+//! **Tip:** All metadata formats can be enabled with the `all-meta` feature flag.
 //!
 //! ## Optimizations
 //!
@@ -192,6 +198,19 @@ pub mod default {
         pub type Mp3Reader<'s> = MpaReader<'s>;
     }
 
+    pub mod meta {
+        //! The `meta` module re-exports all enabled Symphonia metadata readers.
+
+        #[cfg(feature = "ape")]
+        pub use symphonia_metadata::ape::ApeReader;
+        #[cfg(feature = "id3v1")]
+        pub use symphonia_metadata::id3v1::Id3v1Reader;
+        #[cfg(feature = "id3v2")]
+        pub use symphonia_metadata::id3v2::Id3v2Reader;
+
+        pub use symphonia_metadata::embedded;
+    }
+
     use lazy_static::lazy_static;
 
     use symphonia_core::codecs::registry::CodecRegistry;
@@ -267,10 +286,6 @@ pub mod default {
     ///
     /// Use this function to easily populate a custom probe with all enabled formats.
     pub fn register_enabled_formats(probe: &mut Probe) {
-        use symphonia_metadata::ape::ApeReader;
-        use symphonia_metadata::id3v1::Id3v1Reader;
-        use symphonia_metadata::id3v2::Id3v2Reader;
-
         // Formats
         #[cfg(feature = "aac")]
         probe.register_format::<formats::AdtsReader<'_>>();
@@ -300,9 +315,14 @@ pub mod default {
         probe.register_format::<formats::MkvReader<'_>>();
 
         // Metadata
-        probe.register_metadata::<Id3v1Reader<'_>>();
-        probe.register_metadata::<Id3v2Reader<'_>>();
-        probe.register_metadata::<ApeReader<'_>>();
+        #[cfg(feature = "ape")]
+        probe.register_metadata::<meta::ApeReader<'_>>();
+
+        #[cfg(feature = "id3v1")]
+        probe.register_metadata::<meta::Id3v1Reader<'_>>();
+
+        #[cfg(feature = "id3v2")]
+        probe.register_metadata::<meta::Id3v2Reader<'_>>();
     }
 }
 

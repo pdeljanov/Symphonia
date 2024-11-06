@@ -7,6 +7,9 @@
 
 //! Reading and parsing of metadata formats that are embedded into other containers.
 
+#[cfg(feature = "flac")]
 pub mod flac;
+#[cfg(feature = "riff-info")]
 pub mod riff;
+#[cfg(feature = "vorbis")]
 pub mod vorbis;

@@ -16,5 +16,5 @@ rust-version = "1.77"
 encoding_rs = "0.8.17"
 log = "0.4"
 symphonia-core = { version = "0.5.4", path = "../symphonia-core" }
-symphonia-metadata = { version = "0.5.4", path = "../symphonia-metadata" }
 symphonia-common = { version = "0.5.4", path = "../symphonia-common" }
+symphonia-metadata = { version = "0.5.4", path = "../symphonia-metadata", default-features = false }

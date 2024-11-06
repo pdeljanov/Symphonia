@@ -7,6 +7,10 @@
 
 //! Standard tag parsing and helpers.
 
+// Depending on which features are enabled, some parsers may be unused. Disable this lint as it
+// would be too difficult to individually waive the lint.
+#![allow(dead_code)]
+
 use std::{collections::HashMap, sync::Arc};
 
 use symphonia_core::meta::{ContentAdvisory, MetadataBuilder, RawTag, RawValue, StandardTag, Tag};

@@ -21,4 +21,9 @@ wav = []
 extended = "0.1.0"
 log = "0.4"
 symphonia-core = { version = "0.5.4", path = "../symphonia-core" }
-symphonia-metadata = { version = "0.5.4", path = "../symphonia-metadata" }
+
+[dependencies.symphonia-metadata]
+version = "0.5.4"
+path = "../symphonia-metadata"
+default-features = false
+features = ["riff"]

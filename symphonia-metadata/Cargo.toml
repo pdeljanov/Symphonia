@@ -12,6 +12,21 @@ keywords = ["multimedia", "media", "metadata", "id3v1", "id3v2"]
 edition = "2021"
 rust-version = "1.77"
 
+[features]
+default = ["ape", "id3v1", "id3v2"]
+
+ape = []
+flac = ["vorbis"]
+id3v1 = []
+id3v2 = []
+riff-info = []
+vorbis = ["flac"]
+
+# Enable all RIFF metadata formats.
+riff = [
+    "riff-info",
+]
+
 [dependencies]
 encoding_rs = "0.8.17"
 lazy_static = "1.4.0"
