@@ -34,6 +34,7 @@ pcm = ["symphonia-codec-pcm"]
 aiff = ["symphonia-format-riff/aiff"]
 vorbis = ["symphonia-codec-vorbis"]
 wav = ["symphonia-format-riff/wav"]
+opus = ["symphonia-codec-opus"]
 
 # MPEG audio codecs.
 mpa = ["mp1", "mp2", "mp3"]
@@ -125,6 +126,11 @@ optional = true
 [dependencies.symphonia-codec-vorbis]
 version = "0.5.4"
 path = "../symphonia-codec-vorbis"
+optional = true
+
+[dependencies.symphonia-codec-opus]
+version = "0.0.1"
+path = "../symphonia-codec-opus"
 optional = true
 
 [dependencies.symphonia-format-riff]
