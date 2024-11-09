@@ -31,6 +31,7 @@ lazy_static! {
         m.insert("com.apple.itunes:engineer", parse_engineer);
         m.insert("com.apple.itunes:initialkey", parse_initial_key);
         m.insert("com.apple.itunes:isrc", parse_ident_isrc);
+        m.insert("com.apple.itunes:itunes_cddb_1", parse_cdtoc); // TODO: Slightly different format.
         m.insert("com.apple.itunes:label", parse_label);
         m.insert("com.apple.itunes:language", parse_language);
         m.insert("com.apple.itunes:license", parse_license);

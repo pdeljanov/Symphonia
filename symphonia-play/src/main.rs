@@ -1097,6 +1097,7 @@ fn fmt_tag(tag: &Tag) -> FormattedTag<'_> {
         Some(StandardTag::AlbumArtist(v)) => FormattedTag::new("Album Artist", &**v),
         Some(StandardTag::Arranger(v)) => FormattedTag::new("Arranger", &**v),
         Some(StandardTag::Artist(v)) => FormattedTag::new("Artist", &**v),
+        Some(StandardTag::Author(v)) => FormattedTag::new("Author", &**v),
         Some(StandardTag::Bpm(v)) => FormattedTag::new("BPM", v.to_string()),
         Some(StandardTag::CdToc(v)) => FormattedTag::new("CD Table of Contents", &**v),
         Some(StandardTag::Comment(v)) => FormattedTag::new("Comment", &**v),
@@ -1196,6 +1197,7 @@ fn fmt_tag(tag: &Tag) -> FormattedTag<'_> {
         Some(StandardTag::MusicBrainzTrackId(v)) => FormattedTag::new("MusicBrainz Track ID", &**v),
         Some(StandardTag::MusicBrainzTrmId(v)) => FormattedTag::new("MusicBrainz TRM ID", &**v),
         Some(StandardTag::MusicBrainzWorkId(v)) => FormattedTag::new("MusicBrainz Work ID", &**v),
+        Some(StandardTag::Narrator(v)) => FormattedTag::new("Narrator", &**v),
         Some(StandardTag::Opus(v)) => FormattedTag::new("Opus", &**v),
         Some(StandardTag::OriginalAlbum(v)) => FormattedTag::new("Original Album", &**v),
         Some(StandardTag::OriginalArtist(v)) => FormattedTag::new("Original Artist", &**v),
@@ -1249,6 +1251,7 @@ fn fmt_tag(tag: &Tag) -> FormattedTag<'_> {
             FormattedTag::new("ReplayGain Track Range", &**v)
         }
         Some(StandardTag::Script(v)) => FormattedTag::new("Script", &**v),
+        Some(StandardTag::Soloist(v)) => FormattedTag::new("Soloist", &**v),
         Some(StandardTag::SortAlbum(v)) => FormattedTag::new("Album (Sort Order)", &**v),
         Some(StandardTag::SortAlbumArtist(v)) => {
             FormattedTag::new("Album Artist (Sort Order)", &**v)
@@ -1256,6 +1259,9 @@ fn fmt_tag(tag: &Tag) -> FormattedTag<'_> {
         Some(StandardTag::SortArtist(v)) => FormattedTag::new("Artist (Sort Order)", &**v),
         Some(StandardTag::SortComposer(v)) => FormattedTag::new("Composer (Sort Order)", &**v),
         Some(StandardTag::SortTrackTitle(v)) => FormattedTag::new("Track Title (Sort Order)", &**v),
+        Some(StandardTag::SortTvShowTitle(v)) => {
+            FormattedTag::new("TV Show Title (Sort Order)", &**v)
+        }
         Some(StandardTag::TaggingDate(v)) => FormattedTag::new("Tagging Date", &**v),
         Some(StandardTag::TermsOfUse(v)) => FormattedTag::new("Terms of Use", &**v),
         Some(StandardTag::TrackNumber(v)) => FormattedTag::new("Track Number", v.to_string()),
