@@ -21,13 +21,12 @@ lazy_static! {
         let mut m: RawTagParserMap = HashMap::new();
         m.insert("ages", parse_rating);
         m.insert("cmnt", parse_comment);
-        // Is this the same as a cmnt?
-        m.insert("comm", parse_comment);
+        m.insert("comm", parse_comment); // TODO: Same as "cmnt"
         m.insert("dtim", parse_original_date);
         m.insert("genr", parse_genre);
         m.insert("iart", parse_artist);
-        // Is this also  the same as cmnt?
-        m.insert("icmt", parse_comment);
+        m.insert("icmt", parse_comment); // TODO: Same as "cmnt"?
+        m.insert("icnt", parse_release_country);
         m.insert("icop", parse_copyright);
         m.insert("icrd", parse_date);
         m.insert("idit", parse_original_date);
@@ -36,6 +35,7 @@ lazy_static! {
         m.insert("ifrm", parse_track_total);
         m.insert("ignr", parse_genre);
         m.insert("ilng", parse_language);
+        m.insert("imed", parse_media_format);
         m.insert("imus", parse_composer);
         m.insert("inam", parse_track_title);
         m.insert("iprd", parse_album);
@@ -46,13 +46,13 @@ lazy_static! {
         m.insert("isgn", parse_genre);
         m.insert("isrf", parse_media_format);
         m.insert("itch", parse_encoded_by);
+        m.insert("itoc", parse_cdtoc);
         m.insert("itrk", parse_track_number_exclusive);
         m.insert("iwri", parse_writer);
         m.insert("lang", parse_language);
         m.insert("prt1", parse_part_number_exclusive);
         m.insert("prt2", parse_part_total);
-        // Same as inam?
-        m.insert("titl", parse_track_title);
+        m.insert("titl", parse_track_title); // TODO: Same as "inam"?
         m.insert("torg", parse_label);
         m.insert("trck", parse_track_number_exclusive);
         m.insert("tver", parse_version);
