@@ -58,6 +58,7 @@ impl fmt::Display for AudioCodecId {
 }
 
 /// A method and expected value to perform verification on the decoded audio.
+#[non_exhaustive]
 #[derive(Copy, Clone, Debug)]
 pub enum VerificationCheck {
     /// CRC8 of interleaved PCM audio samples.

@@ -235,9 +235,9 @@ impl std::fmt::Display for AmbisonicBFormat {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-#[non_exhaustive]
 /// A channel label.
+#[non_exhaustive]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum ChannelLabel {
     /// The channel is a positioned channel. Only one bit may be set in the position mask.
     Positioned(Position),
@@ -271,8 +271,8 @@ impl From<AmbisonicBFormat> for ChannelLabel {
 }
 
 /// A set of channels.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum Channels {
     /// Channels are assigned explict speaker positions. A bit set to 1 indicates that the
     /// corresponding channel position is present.

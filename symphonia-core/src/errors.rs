@@ -13,6 +13,7 @@ use std::io;
 use std::result;
 
 /// `SeekErrorKind` is a list of generic reasons why a seek may fail.
+#[non_exhaustive]
 #[derive(Debug)]
 pub enum SeekErrorKind {
     /// The stream is not seekable at all.
@@ -37,6 +38,7 @@ impl SeekErrorKind {
 }
 
 /// `Error` provides an enumeration of all possible errors reported by Symphonia.
+#[non_exhaustive]
 #[derive(Debug)]
 pub enum Error {
     /// An IO error occured while reading, writing, or seeking the stream.

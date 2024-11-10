@@ -262,6 +262,7 @@ pub mod dither {
     }
 
     /// Enumeration of dither algorithms.
+    #[non_exhaustive]
     pub enum DitherType {
         /// No dithering.
         Identity,
