@@ -12,7 +12,8 @@ use std::collections::HashMap;
 use lazy_static::lazy_static;
 
 use symphonia_core::errors::Result;
-use symphonia_core::meta::{MetadataBuilder, RawTag};
+use symphonia_core::io::ReadBytes;
+use symphonia_core::meta::{MetadataBuilder, MetadataSideData, RawTag};
 
 use crate::utils::std_tag::*;
 
@@ -76,4 +77,13 @@ pub fn parse_riff_info_block(
 
     builder.add_mapped_tags(raw, &RIFF_INFO_MAP);
     Ok(())
+}
+
+/// Read a RIFF ID3 block.
+pub fn read_riff_id3_block<B: ReadBytes>(
+    reader: &mut B,
+    builder: &mut MetadataBuilder,
+    side_data: &mut Vec<MetadataSideData>,
+) -> Result<()> {
+    crate::id3v2::read_id3v2(reader, builder, side_data)
 }

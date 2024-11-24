@@ -5,17 +5,19 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+use std::collections::HashMap;
 use std::io::{Seek, SeekFrom};
+use std::sync::Arc;
 
 use symphonia_core::codecs::audio::AudioCodecParameters;
 use symphonia_core::codecs::CodecParameters;
-use symphonia_core::errors::{seek_error, unsupported_error};
+use symphonia_core::errors::{decode_error, seek_error, unsupported_error, Error};
 use symphonia_core::errors::{Result, SeekErrorKind};
 use symphonia_core::formats::prelude::*;
 use symphonia_core::formats::probe::{ProbeFormatData, ProbeableFormat, Score, Scoreable};
 use symphonia_core::formats::well_known::FORMAT_ID_AIFF;
 use symphonia_core::io::*;
-use symphonia_core::meta::{Metadata, MetadataLog};
+use symphonia_core::meta::{Metadata, MetadataBuilder, MetadataLog, StandardTag, Tag, VendorData};
 use symphonia_core::support_format;
 
 use log::debug;
@@ -54,86 +56,251 @@ pub struct AiffReader<'s> {
 
 impl<'s> AiffReader<'s> {
     pub fn try_new(mut mss: MediaSourceStream<'s>, opts: FormatOptions) -> Result<Self> {
-        // The FORM marker should be present.
+        // An AIFF file is one large RIFF chunk, with the actual meta and audio data contained in
+        // nested chunks. Therefore, the file starts with a RIFF chunk header (chunk ID & size).
+
+        // The top-level chunk has the FORM chunk ID. This is also the file marker.
         let marker = mss.read_quad_bytes()?;
+
         if marker != AIFF_STREAM_MARKER {
-            return unsupported_error("aiff: missing riff stream marker");
+            return unsupported_error("aiff: missing aiff riff stream marker");
         }
 
-        // File is basically one RIFF chunk, with the actual meta and audio data as sub-chunks (called local chunks).
-        // Therefore, the header was the chunk ID, and the next 4 bytes is the length of the RIFF
-        // chunk.
+        // The length of the top-level FORM chunk. Must be atleast 4 bytes.
         let riff_len = mss.read_be_u32()?;
+
+        if riff_len < 4 {
+            return decode_error("aiff: invalid riff length");
+        }
+
+        // The form type. Only AIFF and AIFC forms are supported.
         let riff_form = mss.read_quad_bytes()?;
 
-        let mut riff_chunks = ChunksReader::<RiffAiffChunks>::new(riff_len, ByteOrder::BigEndian);
+        if riff_form != AIFF_RIFF_FORM && riff_form != AIFC_RIFF_FORM {
+            return unsupported_error("aiff: riff form is not aiff or aifc");
+        }
+
+        let mut riff_chunks =
+            ChunksReader::<RiffAiffChunks>::new(riff_len - 4, ByteOrder::BigEndian);
+
+        // Chunks can be read in any order, so collect them to be processed later.
+        let mut comm = None;
+        let mut data = None;
+        let mut mark = None;
+        let mut comt = None;
+        let mut id3 = None;
+
+        let is_seekable = mss.is_seekable();
+
+        let mut builder = MetadataBuilder::new();
+
+        // Scan over all chunks.
+        while let Some(chunk) = riff_chunks.next(&mut mss)? {
+            match chunk {
+                RiffAiffChunks::Common(chunk) => {
+                    // Only one common chunk is allowed.
+                    if comm.is_some() {
+                        return decode_error("aiff: multiple common chunks");
+                    }
+
+                    comm = match riff_form {
+                        AIFF_RIFF_FORM => Some(chunk.parse_aiff(&mut mss)?),
+                        AIFC_RIFF_FORM => Some(chunk.parse_aifc(&mut mss)?),
+                        _ => unreachable!(),
+                    };
+                }
+                RiffAiffChunks::Sound(chunk) => {
+                    // Only one sound data chunk is allowed.
+                    if data.is_some() {
+                        return decode_error("aiff: multiple sound data chunks");
+                    }
+
+                    data = Some(chunk.parse(&mut mss)?);
+
+                    // If the media source is not seekable, then it is not possible to scan chunks
+                    // past the sound data chunk.
+                    if !is_seekable {
+                        break;
+                    }
+
+                    mss.ignore_bytes(data.as_ref().unwrap().len as u64)?;
+                }
+                RiffAiffChunks::Marker(chunk) => {
+                    // Only one markers chunk is allowed.
+                    if mark.is_some() {
+                        return decode_error("aiff: multiple markers chunks");
+                    }
+
+                    // Saver makers chunk for post-processing.
+                    mark = Some(chunk.parse(&mut mss)?)
+                }
+                RiffAiffChunks::Comments(chunk) => {
+                    // Only one comments chunk is allowed.
+                    if comt.is_some() {
+                        return decode_error("aiff: multiple comments chunks");
+                    }
+
+                    // Save comments chunk for post-processing.
+                    comt = Some(chunk.parse(&mut mss)?);
+                }
+                RiffAiffChunks::AppSpecific(chunk) => {
+                    // Add application-specific data.
+                    let appl = chunk.parse(&mut mss)?;
+                    builder
+                        .add_vendor_data(VendorData { ident: appl.application, data: appl.data });
+                }
+                RiffAiffChunks::Text(chunk) => {
+                    // Add tag.
+                    let text = chunk.parse(&mut mss)?;
+                    builder.add_tag(text.tag);
+                }
+                RiffAiffChunks::Id3(chunk) => id3 = Some(chunk.parse(&mut mss)?),
+            }
+        }
+
+        // The common element is mandatory.
+        let comm = comm.ok_or(Error::DecodeError("aiff: missing common element"))?;
+        // The sound data element is mandatory.
+        let data = data.ok_or(Error::DecodeError("aiff: missing sound data chunk"))?;
+
+        // Seek to the sound data.
+        if is_seekable {
+            mss.seek(SeekFrom::Start(data.data_start_pos))?;
+        }
+
+        // Metadata processing.
+        let mut metadata = opts.external_data.metadata.unwrap_or_default();
+
+        // Process markers and comments.
+        let chapters = process_markers(&comm, mark, comt, &mut builder);
+
+        // Add metadata generated from marker, comment, and text chunks.
+        // TODO: Don't add if empty.
+        metadata.push(builder.metadata());
+
+        // Add ID3 metadata.
+        if let Some(id3) = id3 {
+            metadata.push(id3.metadata);
+        }
+
+        // The common chunk contains the block_align field and possible additional information
+        // to handle packetization and seeking.
+        let packet_info = comm.packet_info()?;
 
         let mut codec_params = AudioCodecParameters::new();
-        //TODO: Chunks such as marker contain metadata, get it.
-        let metadata = opts.external_data.metadata.unwrap_or_default();
-        let mut packet_info = PacketInfo::without_blocks(0);
+        codec_params
+            .with_max_frames_per_packet(packet_info.get_max_frames_per_packet())
+            .with_frames_per_block(packet_info.frames_per_block);
 
-        loop {
-            let chunk = riff_chunks.next(&mut mss)?;
+        // Append common chunk fields to codec parameters.
+        append_format_params(&mut codec_params, comm.format_data, comm.sample_rate);
 
-            // The last chunk should always be a data chunk, if it is not, then the stream is
-            // unsupported.
-            // TODO: According to the spec additional chunks can be added after the sound data chunk. In fact any order can be possible.
-            if chunk.is_none() {
-                return unsupported_error("aiff: missing sound chunk");
+        // Create a new track using the collected codec parameters.
+        let mut track = Track::new(0);
+        track.with_codec_params(CodecParameters::Audio(codec_params));
+
+        // Append sound data chunk fields to track.
+        append_data_params(&mut track, u64::from(data.len), &packet_info);
+
+        Ok(AiffReader {
+            reader: mss,
+            tracks: vec![track],
+            chapters: chapters.or(opts.external_data.chapters),
+            metadata,
+            packet_info,
+            data_start_pos: data.data_start_pos,
+            data_end_pos: data.data_start_pos + u64::from(data.len),
+        })
+    }
+}
+
+fn process_markers(
+    comm: &CommonChunk,
+    mark: Option<MarkerChunk>,
+    comt: Option<CommentsChunk>,
+    builder: &mut MetadataBuilder,
+) -> Option<ChapterGroup> {
+    let mut chapters = Vec::new();
+    let mut marker_index = HashMap::new();
+
+    // Process markers chunk.
+    if let Some(mark) = mark {
+        let tb = TimeBase::new(1, comm.sample_rate);
+
+        // Create a chapter for each marker.
+        chapters.reserve(mark.markers.len());
+
+        for marker in mark.markers {
+            // Record the index of the chapter in the chapters vector for the given marker id.
+            // Only non-zero positive marker IDs are valid. There should also only be one marker
+            // per marker ID.
+            if marker.id > 0 && !marker_index.contains_key(&marker.id) {
+                marker_index.insert(marker.id, chapters.len());
             }
 
-            match chunk.unwrap() {
-                RiffAiffChunks::Common(common) => {
-                    let common = match riff_form {
-                        AIFF_RIFF_FORM => common.parse_aiff(&mut mss)?,
-                        AIFC_RIFF_FORM => common.parse_aifc(&mut mss)?,
-                        _ => return unsupported_error("aiff: riff form is not supported"),
-                    };
+            // Add the chapter.
+            chapters.push(Chapter {
+                start_time: tb.calc_time(u64::from(marker.ts)),
+                end_time: None,
+                start_byte: None,
+                end_byte: None,
+                tags: vec![Tag::new_from_parts("NAME", marker.name, None)],
+                visuals: vec![],
+            });
+        }
+    }
 
-                    // The Format chunk contains the block_align field and possible additional information
-                    // to handle packetization and seeking.
-                    packet_info = common.packet_info()?;
-                    codec_params
-                        .with_max_frames_per_packet(packet_info.get_max_frames_per_packet())
-                        .with_frames_per_block(packet_info.frames_per_block);
+    // Process comments cjunk.
+    if let Some(comt) = comt {
+        for comment in comt.comments {
+            let value = Arc::new(comment.text);
 
-                    // Append Format chunk fields to codec parameters.
-                    append_format_params(&mut codec_params, common.format_data, common.sample_rate);
-                }
-                RiffAiffChunks::Sound(dat) => {
-                    let data = dat.parse(&mut mss)?;
+            let tag =
+                Tag::new_from_parts("COMMMENT", value.clone(), Some(StandardTag::Comment(value)));
 
-                    // Record the bounds of the data chunk.
-                    let data_start_pos = mss.pos();
-                    let data_end_pos = data_start_pos + u64::from(data.len);
-
-                    // Create a new track using the collected codec parameters.
-                    let mut track = Track::new(0);
-
-                    track.with_codec_params(CodecParameters::Audio(codec_params));
-
-                    // Append Sound chunk fields to track.
-                    append_data_params(&mut track, data.len as u64, &packet_info);
-
-                    // Instantiate the AIFF reader.
-                    return Ok(AiffReader {
-                        reader: mss,
-                        tracks: vec![track],
-                        chapters: opts.external_data.chapters,
-                        metadata,
-                        packet_info,
-                        data_start_pos,
-                        data_end_pos,
-                    });
+            if comment.marker_id == 0 {
+                // Invalid/unset marker ID, this is a general comment.
+                builder.add_tag(tag);
+            }
+            else if comment.marker_id > 0 {
+                // Marker ID is set, this comment belongs to a marker/chapter. Try to get the
+                // index of the chapter associated with this marker ID.
+                if let Some(idx) = marker_index.get(&comment.marker_id) {
+                    // Add tag to chapter.
+                    chapters[*idx].tags.push(tag);
                 }
             }
         }
     }
+
+    if !chapters.is_empty() {
+        Some(ChapterGroup {
+            items: chapters.into_iter().map(ChapterGroupItem::Chapter).collect(),
+            tags: vec![],
+            visuals: vec![],
+        })
+    }
+    else {
+        None
+    }
 }
 
 impl Scoreable for AiffReader<'_> {
-    fn score(_src: ScopedStream<&mut MediaSourceStream<'_>>) -> Result<Score> {
+    fn score(mut src: ScopedStream<&mut MediaSourceStream<'_>>) -> Result<Score> {
+        // Perform simple scoring by testing that the RIFF stream marker and RIFF form are both
+        // valid for AIFF.
+        let riff_marker = src.read_quad_bytes()?;
+        src.ignore_bytes(4)?;
+        let riff_form = src.read_quad_bytes()?;
+
+        if riff_marker != AIFF_STREAM_MARKER {
+            return Ok(Score::Unsupported);
+        }
+
+        if riff_form != AIFF_RIFF_FORM && riff_form != AIFC_RIFF_FORM {
+            return Ok(Score::Unsupported);
+        }
+
         Ok(Score::Supported(255))
     }
 }

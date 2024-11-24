@@ -60,6 +60,11 @@ impl<T: ParseChunkTag> ChunksReader<T> {
     pub fn next<B: ReadBytes>(&mut self, reader: &mut B) -> Result<Option<T>> {
         // Loop until a chunk is recognized and returned, or the end of stream is reached.
         loop {
+            // Check if at the end.
+            if self.consumed >= self.len {
+                return Ok(None);
+            }
+
             // Align to the next 2-byte boundary if not currently aligned.
             if self.consumed & 0x1 == 1 {
                 reader.read_u8()?;

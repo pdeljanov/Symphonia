@@ -5,7 +5,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+use core::str;
 use std::fmt;
+use std::sync::Arc;
 
 use symphonia_core::audio::{layouts, Channels};
 use symphonia_core::codecs::audio::well_known::{
@@ -15,6 +17,8 @@ use symphonia_core::codecs::audio::well_known::{
 };
 use symphonia_core::errors::{decode_error, unsupported_error, Result};
 use symphonia_core::io::{MediaSourceStream, ReadBytes};
+use symphonia_core::meta::{MetadataBuilder, MetadataRevision, StandardTag, Tag};
+use symphonia_metadata::embedded::riff;
 
 use crate::common::{
     ChunkParser, FormatALaw, FormatData, FormatIeeeFloat, FormatMuLaw, FormatPcm, PacketInfo,
@@ -257,6 +261,7 @@ pub struct SoundChunk {
     pub offset: u32,
     #[allow(dead_code)]
     pub block_size: u32,
+    pub data_start_pos: u64,
 }
 
 impl ParseChunk for SoundChunk {
@@ -268,13 +273,147 @@ impl ParseChunk for SoundChunk {
             return unsupported_error("riff: No support for AIFF block-aligned data");
         }
 
-        Ok(SoundChunk { len, offset, block_size })
+        let data_start_pos = reader.pos();
+
+        Ok(SoundChunk { len: len - 8, offset, block_size, data_start_pos })
+    }
+}
+
+pub struct MarkerChunk {
+    pub markers: Vec<Marker>,
+}
+
+pub struct Marker {
+    pub id: i16,
+    pub ts: u32,
+    pub name: String,
+}
+
+impl ParseChunk for MarkerChunk {
+    fn parse<B: ReadBytes>(reader: &mut B, _tag: [u8; 4], _len: u32) -> Result<Self> {
+        let num_markers = reader.read_be_u16()?;
+
+        let mut markers = Vec::with_capacity(usize::from(num_markers));
+
+        for _ in 0..num_markers {
+            let id = reader.read_be_i16()?;
+            let ts = reader.read_be_u32()?;
+            let name = read_pascal_string(reader)?;
+
+            markers.push(Marker { id, ts, name });
+        }
+
+        Ok(MarkerChunk { markers })
+    }
+}
+
+pub struct AppSpecificChunk {
+    pub application: String,
+    pub data: Box<[u8]>,
+}
+
+impl ParseChunk for AppSpecificChunk {
+    fn parse<B: ReadBytes>(reader: &mut B, _tag: [u8; 4], len: u32) -> Result<Self> {
+        let start_pos = reader.pos();
+
+        // The application signature.
+        let signature = reader.read_quad_bytes()?;
+
+        // If the signature is "pdos", an application name is present before the app-specific data.
+        let application = match &signature {
+            b"pdos" => read_pascal_string(reader)?,
+            _ => format!("{:x}", u32::from_be_bytes(signature)),
+        };
+
+        // The remainder of the chunk is the app-specific data.
+        let consumed = (reader.pos() - start_pos) as u32;
+
+        if consumed > len {
+            return decode_error("aiff: malformed application-specific chunk");
+        }
+
+        let data = reader.read_boxed_slice_exact((len - consumed) as usize)?;
+
+        Ok(AppSpecificChunk { application, data })
+    }
+}
+
+pub struct CommentsChunk {
+    pub comments: Vec<Comment>,
+}
+
+pub struct Comment {
+    /// Comment creation timestamp.
+    #[allow(dead_code)]
+    pub timestamp: u32,
+    pub marker_id: i16,
+    pub text: String,
+}
+
+impl ParseChunk for CommentsChunk {
+    fn parse<B: ReadBytes>(reader: &mut B, _tag: [u8; 4], _len: u32) -> Result<Self> {
+        let num_comments = reader.read_be_u16()?;
+
+        let mut comments = Vec::with_capacity(usize::from(num_comments));
+
+        for _ in 0..num_comments {
+            let timestamp = reader.read_be_u32()?;
+            let marker_id = reader.read_be_i16()?;
+            let len = reader.read_be_u16()?;
+            let buf = reader.read_boxed_slice_exact(usize::from(len))?;
+
+            comments.push(Comment { timestamp, marker_id, text: decode_string(&buf) });
+        }
+
+        Ok(CommentsChunk { comments })
+    }
+}
+
+pub struct TextChunk {
+    pub tag: Tag,
+}
+
+impl ParseChunk for TextChunk {
+    fn parse<B: ReadBytes>(reader: &mut B, tag: [u8; 4], len: u32) -> Result<Self> {
+        let text = reader.read_boxed_slice_exact(len as usize)?;
+
+        let value = Arc::new(decode_string(&text));
+
+        let std_tag = match &tag {
+            b"NAME" => StandardTag::TrackTitle(value.clone()),
+            b"AUTH" => StandardTag::Encoder(value.clone()),
+            b"(c) " => StandardTag::Copyright(value.clone()),
+            b"ANNO" => StandardTag::Comment(value.clone()),
+            _ => unreachable!(),
+        };
+
+        let tag = Tag::new_from_parts(str::from_utf8(&tag).unwrap(), value, Some(std_tag));
+
+        Ok(TextChunk { tag })
+    }
+}
+
+pub struct Id3Chunk {
+    pub metadata: MetadataRevision,
+}
+
+impl ParseChunk for Id3Chunk {
+    fn parse<B: ReadBytes>(reader: &mut B, _tag: [u8; 4], _len: u32) -> Result<Self> {
+        let mut builder = MetadataBuilder::new();
+        let mut side_data = Vec::new();
+        riff::read_riff_id3_block(reader, &mut builder, &mut side_data)?;
+        Ok(Id3Chunk { metadata: builder.metadata() })
     }
 }
 
 pub enum RiffAiffChunks {
     Common(ChunkParser<CommonChunk>),
     Sound(ChunkParser<SoundChunk>),
+    Marker(ChunkParser<MarkerChunk>),
+    AppSpecific(ChunkParser<AppSpecificChunk>),
+    Comments(ChunkParser<CommentsChunk>),
+    Text(ChunkParser<TextChunk>),
+    Id3(ChunkParser<Id3Chunk>),
 }
 
 macro_rules! parser {
@@ -288,9 +427,44 @@ impl ParseChunkTag for RiffAiffChunks {
         match &tag {
             b"COMM" => parser!(RiffAiffChunks::Common, CommonChunk, tag, len),
             b"SSND" => parser!(RiffAiffChunks::Sound, SoundChunk, tag, len),
+            b"MARK" => parser!(RiffAiffChunks::Marker, MarkerChunk, tag, len),
+            b"APPL" => parser!(RiffAiffChunks::AppSpecific, AppSpecificChunk, tag, len),
+            b"COMT" => parser!(RiffAiffChunks::Comments, CommentsChunk, tag, len),
+            b"NAME" | b"AUTH" | b"(c) " | b"ANNO" => {
+                parser!(RiffAiffChunks::Text, TextChunk, tag, len)
+            }
+            b"ID3 " => parser!(RiffAiffChunks::Id3, Id3Chunk, tag, len),
             _ => None,
         }
     }
+}
+
+fn read_pascal_string<B: ReadBytes>(reader: &mut B) -> Result<String> {
+    let len = reader.read_byte()?;
+    let value = reader.read_boxed_slice_exact(usize::from(len))?;
+
+    // If the length of the string data is even, then the total length of the pascal string would be
+    // odd with the length byte. Read an additional padding byte such that the pascal string is an
+    // even length in total.
+    if len & 1 == 0 {
+        let _ = reader.read_byte()?;
+    }
+
+    Ok(decode_string(&value))
+}
+
+fn decode_string(data: &[u8]) -> String {
+    data.iter()
+        .take_while(|&&b| b != b'\0')
+        .map(|&c| {
+            if c.is_ascii_control() {
+                '\u{FFFD}'
+            }
+            else {
+                char::from(c)
+            }
+        })
+        .collect()
 }
 
 fn map_aiff_channel_count(count: u16) -> Result<Channels> {

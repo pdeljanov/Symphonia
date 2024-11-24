@@ -350,7 +350,7 @@ fn read_id3v2_body<B: ReadBytes + FiniteStream>(
     Ok(())
 }
 
-fn read_id3v2<B: ReadBytes>(
+pub(crate) fn read_id3v2<B: ReadBytes>(
     reader: &mut B,
     metadata: &mut MetadataBuilder,
     side_data: &mut Vec<MetadataSideData>,
