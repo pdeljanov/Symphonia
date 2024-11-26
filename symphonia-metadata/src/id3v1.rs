@@ -7,7 +7,6 @@
 
 //! An ID3v1 metadata reader.
 
-use std::borrow::Cow;
 use std::sync::Arc;
 
 use symphonia_core::errors::{unsupported_error, Result};
@@ -21,8 +20,7 @@ use symphonia_core::meta::{
     Tag,
 };
 use symphonia_core::support_metadata;
-
-use encoding_rs::WINDOWS_1252;
+use symphonia_core::util::text;
 
 use crate::utils::id3v1::get_genre_name;
 
@@ -87,39 +85,14 @@ fn read_id3v1<B: ReadBytes>(reader: &mut B, builder: &mut MetadataBuilder) -> Re
 }
 
 fn decode_iso8859_buf(buf: &[u8]) -> Option<Arc<String>> {
-    // Trim the buffer upto a null-terminator.
-    let buf = match buf.iter().position(|&b| b == b'\0') {
-        Some(i) => &buf[..i],
-        None => buf,
-    };
-
-    // Decode as Windows code page 1252 (a superset of ISO-8859-1).
-    let text = WINDOWS_1252.decode(buf).0;
-
-    // Replace all control characters that should not be there for ISO-8859-1 with the Unicode
-    // replacement character (U+FFFD).
-    let text = if text.chars().any(|c| c.is_ascii_control()) {
-        let replaced: String = text
-            .chars()
-            .map(|c| {
-                if c.is_ascii_control() {
-                    '\u{FFFD}'
-                }
-                else {
-                    c
-                }
-            })
-            .collect();
-        Cow::Owned(replaced)
-    }
-    else {
-        // No control characters found. Return the original string.
-        text
-    };
+    // Decode a null-terminated string. ID3v1 does not specify an encoding, so assume ISO-8859-1
+    // such that all characters codes are valid.
+    let text =
+        text::decode_iso8859_1_lossy(buf).take_while(text::filter::not_null).collect::<String>();
 
     // Do not return an empty string.
     if !text.is_empty() {
-        Some(Arc::new(text.into_owned()))
+        Some(Arc::new(text))
     }
     else {
         None

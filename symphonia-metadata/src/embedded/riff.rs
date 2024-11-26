@@ -7,11 +7,12 @@
 
 //! RIFF-based metadata formats reading.
 
+use core::str;
 use std::collections::HashMap;
 
 use lazy_static::lazy_static;
 
-use symphonia_core::errors::Result;
+use symphonia_core::errors::{decode_error, Result};
 use symphonia_core::io::ReadBytes;
 use symphonia_core::meta::{MetadataBuilder, MetadataSideData, RawTag};
 
@@ -62,25 +63,31 @@ lazy_static! {
     };
 }
 
-/// Parse the RIFF INFO block into a `Tag` using the block's identifier tag and a slice
-/// containing the block's contents.
-pub fn parse_riff_info_block(
-    tag: [u8; 4],
+/// Parse a RIFF INFO chunk into a `Tag` using the chunk's identifier and a slice containing the
+/// chunk's payload.
+pub fn parse_riff_info_chunk(
+    chunk_id: [u8; 4],
     buf: &[u8],
     builder: &mut MetadataBuilder,
 ) -> Result<()> {
-    // TODO: Key should be checked that it only contains ASCII characters.
-    let key = String::from_utf8_lossy(&tag);
+    // It is invalid for a chunk ID to contain non-ASCII characters, or ASCII control characters per
+    // EA-IFF-85. Since chunk IDs are supposed to be well-defined, and each metadata/info chunk has
+    // a standardized ID, this is a hard error.
+    if chunk_id.iter().any(|c| !c.is_ascii() || c.is_ascii_control()) {
+        return decode_error("meta (riff): chunk ID is invalid");
+    }
+
+    // Safety: Key is always ASCII.
+    let key = str::from_utf8(&chunk_id).unwrap();
     let value = String::from_utf8_lossy(buf);
 
-    let raw = RawTag::new(key, value);
+    builder.add_mapped_tags(RawTag::new(key, value), &RIFF_INFO_MAP);
 
-    builder.add_mapped_tags(raw, &RIFF_INFO_MAP);
     Ok(())
 }
 
-/// Read a RIFF ID3 block.
-pub fn read_riff_id3_block<B: ReadBytes>(
+/// Read a RIFF ID3 chunk payload.
+pub fn read_riff_id3_chunk<B: ReadBytes>(
     reader: &mut B,
     builder: &mut MetadataBuilder,
     side_data: &mut Vec<MetadataSideData>,

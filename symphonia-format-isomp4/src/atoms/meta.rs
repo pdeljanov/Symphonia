@@ -47,6 +47,7 @@ impl Atom for MetaAtom {
                 AtomType::MetaList => {
                     metadata = Some(iter.read_atom::<IlstAtom>()?.metadata);
                 }
+                // TODO: Support country and language lists.
                 _ => (),
             }
         }

@@ -18,6 +18,7 @@ use symphonia_core::codecs::audio::well_known::{
 use symphonia_core::errors::{decode_error, unsupported_error, Result};
 use symphonia_core::io::{MediaSourceStream, ReadBytes};
 use symphonia_core::meta::{MetadataBuilder, MetadataRevision, StandardTag, Tag};
+use symphonia_core::util::text;
 use symphonia_metadata::embedded::riff;
 
 use crate::common::{
@@ -401,7 +402,7 @@ impl ParseChunk for Id3Chunk {
     fn parse<B: ReadBytes>(reader: &mut B, _tag: [u8; 4], _len: u32) -> Result<Self> {
         let mut builder = MetadataBuilder::new();
         let mut side_data = Vec::new();
-        riff::read_riff_id3_block(reader, &mut builder, &mut side_data)?;
+        riff::read_riff_id3_chunk(reader, &mut builder, &mut side_data)?;
         Ok(Id3Chunk { metadata: builder.metadata() })
     }
 }
@@ -454,17 +455,8 @@ fn read_pascal_string<B: ReadBytes>(reader: &mut B) -> Result<String> {
 }
 
 fn decode_string(data: &[u8]) -> String {
-    data.iter()
-        .take_while(|&&b| b != b'\0')
-        .map(|&c| {
-            if c.is_ascii_control() {
-                '\u{FFFD}'
-            }
-            else {
-                char::from(c)
-            }
-        })
-        .collect()
+    // Stop at a null-terminator. Control character usage is undefined in AIFF, so preserve them.
+    text::decode_iso8859_1_lossy(data).take_while(text::filter::not_null).collect()
 }
 
 fn map_aiff_channel_count(count: u16) -> Result<Channels> {

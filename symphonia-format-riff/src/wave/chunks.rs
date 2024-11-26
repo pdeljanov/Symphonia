@@ -616,16 +616,17 @@ pub fn append_fact_params(track: &mut Track, fact: &FactChunk) {
 }
 
 pub fn read_info_chunk(source: &mut MediaSourceStream<'_>, len: u32) -> Result<MetadataRevision> {
-    let mut info_list = ChunksReader::<RiffInfoListChunks>::new(len, ByteOrder::LittleEndian);
+    let mut list = ChunksReader::<RiffInfoListChunks>::new(len, ByteOrder::LittleEndian);
 
     let mut builder = MetadataBuilder::new();
 
-    while let Some(RiffInfoListChunks::Info(info)) = info_list.next(source)? {
+    while let Some(RiffInfoListChunks::Info(info)) = list.next(source)? {
         let info = info.parse(source)?;
-        riff::parse_riff_info_block(info.tag, &info.buf, &mut builder)?;
+        // Ignore errors while parsing one chunk.
+        let _ = riff::parse_riff_info_chunk(info.tag, &info.buf, &mut builder);
     }
 
-    info_list.finish(source)?;
+    list.finish(source)?;
 
     Ok(builder.metadata())
 }

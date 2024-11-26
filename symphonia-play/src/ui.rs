@@ -17,6 +17,7 @@ use symphonia::core::meta::{
     MetadataRevision, StandardTag, Tag, Visual,
 };
 use symphonia::core::units::{Time, TimeBase};
+use symphonia::core::util::text;
 
 /// The minimum padding for tag keys.
 const MIN_PAD: usize = 20;
@@ -402,21 +403,29 @@ pub fn print_pair_value(value: &str, lead: usize) {
         // Print multi-line values with wrapping.
         //
         // NOTE: lines() does not split on orphan carriage returns ('\r') if a line feed ('\n') does
-        // not follow. These orphan carriage returns will break the output and thus will be filtered
-        // out.
+        // not follow. These orphan carriage returns will appear as a C0 control character.
         for (i, line) in value.lines().enumerate() {
             let mut chars = line.chars();
 
             for (j, seg) in (0..)
                 .map(|_| {
                     // Try to wrap at the first whitespace character after 60 characters, or force
-                    // wrapping at 80 charaters.
+                    // wrapping at 80 charaters. C0 control characters will be replaced with their
+                    // respective graphical symbols, while C1 control characters will be silently
+                    // removed.
                     chars
                         .by_ref()
-                        .filter(|&c| c != '\r')
+                        .filter(text::filter::not_c1_control)
                         .enumerate()
                         .take_while(|(i, c)| *i <= 60 || *i <= 80 && !c.is_whitespace())
-                        .map(|(_, c)| c)
+                        .map(|(_, c)| {
+                            if text::filter::c0_control(&c) {
+                                char::from_u32(0x2400 + c as u32).unwrap()
+                            }
+                            else {
+                                c
+                            }
+                        })
                         .collect::<String>()
                 })
                 .take_while(|s| !s.is_empty())

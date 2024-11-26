@@ -38,6 +38,7 @@ impl Atom for UdtaAtom {
                 AtomType::Meta => {
                     meta = Some(iter.read_atom::<MetaAtom>()?);
                 }
+                // TODO: Support older QuickTime-style user data lists. Need sample files.
                 _ => (),
             }
         }

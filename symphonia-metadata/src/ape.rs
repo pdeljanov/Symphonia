@@ -25,6 +25,7 @@ use symphonia_core::meta::{
 use symphonia_core::support_metadata;
 
 use lazy_static::lazy_static;
+use symphonia_core::util::text;
 
 use crate::utils::images::{try_get_image_info, ImageInfo};
 use crate::utils::std_tag::*;
@@ -456,32 +457,32 @@ impl MetadataReader for ApeReader<'_> {
 }
 
 fn read_key<B: ReadBytes>(reader: &mut B) -> Result<String> {
-    let mut buf = Vec::new();
+    // A key is recommended to be between 2-16 characters.
+    let mut key = String::with_capacity(16);
 
     loop {
-        let byte = reader.read_u8()?;
+        let c = char::from(reader.read_u8()?);
 
         // Break at the null-terminator. Do not add it to the string buffer.
-        if byte == 0 {
+        if text::filter::null(&c) {
             break;
         }
 
-        // Can only contain ASCII characters from 0x20 ' ' up to 0x7E '~'.
-        if byte < 0x20 || byte > 0x7e {
-            return decode_error("ape: invalid character in item key");
-        }
+        // TODO: The maximum allowed key length is 255 characters. Drop characters or error out?
 
-        buf.push(byte);
+        // A key may only contain ASCII characters from 0x20 ' ' up to 0x7e '~'.
+        if text::filter::ascii_text(&c) {
+            key.push(c);
+        }
     }
 
-    // Safety: Only printable ASCII characters are pushed onto the vector.
-    Ok(String::from_utf8(buf).unwrap())
+    Ok(key)
 }
 
 fn read_utf8_value<B: ReadBytes>(reader: &mut B, len: usize) -> Result<String> {
     match String::from_utf8(reader.read_boxed_slice_exact(len)?.into_vec()) {
         Ok(value) => Ok(value),
-        Err(_) => decode_error("ape: item value is not utf-8"),
+        Err(_) => decode_error("ape: item value is valid not utf-8"),
     }
 }
 

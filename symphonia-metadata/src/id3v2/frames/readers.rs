@@ -7,7 +7,7 @@
 
 //! Frame body readers.
 
-use std::borrow::Cow;
+use std::char;
 use std::collections::HashMap;
 use std::io;
 use std::str;
@@ -19,8 +19,8 @@ use symphonia_core::meta::RawTag;
 use symphonia_core::meta::RawTagSubField;
 use symphonia_core::meta::{Chapter, RawValue, StandardTag, Tag, Visual};
 use symphonia_core::units::Time;
+use symphonia_core::util::text;
 
-use encoding_rs::{UTF_16BE, WINDOWS_1252};
 use lazy_static::lazy_static;
 use log::debug;
 use smallvec::{smallvec, SmallVec};
@@ -93,62 +93,41 @@ impl Encoding {
     }
 }
 
-/// Decodes a slice of bytes containing encoded text into a UTF-8 `str`. Invalid characters are
-/// replaced with the [U+FFFD REPLACEMENT CHARACTER].
-fn decode_string_buf(encoding: Encoding, data: &[u8]) -> Cow<'_, str> {
+/// Decodes a slice of bytes containing encoded text into a `String`.
+///
+/// The ID3v2 specification forbids all control characters other than line-feed on the
+/// ISO/IEC 8859-1 text encoding, however, does not state if the same limitation applies to the
+/// Unicode encodings. Therefore, this restriction is not applied to other encodings.
+fn decode_string_buf(buf: &[u8], encoding: Encoding) -> String {
     match encoding {
         Encoding::Iso8859_1 => {
-            // Decode as ISO-8859-1.
-            //
-            // WINDOWS-1252 is a superset of ISO-8859-1.
-            let string = WINDOWS_1252.decode(data).0;
-
-            // Replace invalid characters for ISO-8859-1, excluding ID3v2 exceptions.
-            if string.chars().any(is_invalid_iso8859_1_control_char) {
-                // Replace control characters with the Unicode replacement character (U+FFFD)
-                let replaced: String = string
-                    .chars()
-                    .map(|c| {
-                        if is_invalid_iso8859_1_control_char(c) {
-                            '\u{FFFD}'
-                        }
-                        else {
-                            c
-                        }
-                    })
-                    .collect();
-                Cow::Owned(replaced)
-            }
-            else {
-                // Return the original string if no control characters are found
-                string
-            }
+            // Decode as an ID3v2-specific variant of ISO/IEC 8859-1 that allows the line-feed
+            // control character.
+            decode_id3v2_iso8859_1(buf).collect()
         }
         Encoding::Utf8 => {
             // Decode as UTF-8.
-            String::from_utf8_lossy(data)
+            String::from_utf8_lossy(buf).into_owned()
         }
         Encoding::Utf16Bom | Encoding::Utf16Be => {
-            // Decode as UTF-16. If a byte-order-mark is present, UTF_16BE.decode() will use the
-            // indicated endianness. Otherwise, big endian is assumed.
-            UTF_16BE.decode(data).0
+            // Decode as UTF-16. If a byte-order-mark is present, it will be respected. Otherwise,
+            // big-endian is assumed.
+            text::decode_utf16be_lossy(buf).collect()
         }
     }
 }
 
-/// Returns `true` if the character is not a valid control character for ISO-8859-1 in ID3v2.
-fn is_invalid_iso8859_1_control_char(c: char) -> bool {
-    let is_valid = match c {
-        // ID3v2 explictly allows line feed characters in full-text strings.
-        '\u{0a}' => true,
-        // All other control characters are disallowed.
-        '\u{00}'..='\u{1f}' => false,
-        '\u{7f}' => false,
-        // All other characters are allowed.
-        _ => true,
-    };
-
-    !is_valid
+fn decode_id3v2_iso8859_1(buf: &[u8]) -> impl Iterator<Item = char> + '_ {
+    buf.iter().map(|&c| {
+        match c {
+            // C0 control codes excluding line-feed.
+            0x00..=0x09 | 0x0b..=0x1f => char::REPLACEMENT_CHARACTER,
+            // C1 control codes.
+            0x80..=0x9f => char::REPLACEMENT_CHARACTER,
+            // All other non-control characters.
+            _ => char::from(c),
+        }
+    })
 }
 
 // Primitive value readers (keep sorted in alphabetical order)
@@ -257,7 +236,7 @@ fn read_string(reader: &mut BufReader<'_>, encoding: Encoding) -> io::Result<Str
         }
     };
 
-    Ok(String::from(decode_string_buf(encoding, buf)))
+    Ok(decode_string_buf(buf, encoding))
 }
 
 /// Same behaviour as `read_string`, but ignores empty strings.

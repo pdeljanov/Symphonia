@@ -13,13 +13,12 @@ use symphonia_core::meta::{
     ContentAdvisory, MetadataBuilder, MetadataRevision, RawTag, StandardTag, StandardVisualKey, Tag,
 };
 use symphonia_core::meta::{RawValue, Visual};
-use symphonia_core::util::bits;
+use symphonia_core::util::{bits, text};
 use symphonia_metadata::utils::images::try_get_image_info;
 use symphonia_metadata::utils::{id3v1, itunes};
 
 use crate::atoms::{Atom, AtomHeader, AtomIterator, AtomType};
 
-use encoding_rs::{SHIFT_JIS, UTF_16BE};
 use log::{debug, warn};
 
 /// Data type enumeration for metadata value atoms as defined in the QuickTime File Format standard.
@@ -91,10 +90,8 @@ impl From<u32> for DataType {
 }
 
 fn parse_no_type(data: &[u8]) -> Option<RawValue> {
-    // Latin1, potentially null-terminated.
-    let end = data.iter().position(|&c| c == b'\0').unwrap_or(data.len());
-    let text = String::from_utf8_lossy(&data[..end]);
-    Some(RawValue::from(text))
+    // Return as binary data.
+    Some(RawValue::from(data))
 }
 
 fn parse_utf8(data: &[u8]) -> Option<RawValue> {
@@ -105,13 +102,7 @@ fn parse_utf8(data: &[u8]) -> Option<RawValue> {
 
 fn parse_utf16(data: &[u8]) -> Option<RawValue> {
     // UTF16 BE
-    let text = UTF_16BE.decode(data).0;
-    Some(RawValue::from(text))
-}
-
-fn parse_shift_jis(data: &[u8]) -> Option<RawValue> {
-    // Shift-JIS
-    let text = SHIFT_JIS.decode(data).0;
+    let text = text::decode_utf16be_lossy(data).collect::<String>();
     Some(RawValue::from(text))
 }
 
@@ -240,7 +231,6 @@ fn parse_tag_value(data_type: DataType, data: &[u8]) -> Option<RawValue> {
         DataType::NoType => parse_no_type(data),
         DataType::Utf8 | DataType::Utf8Sort => parse_utf8(data),
         DataType::Utf16 | DataType::Utf16Sort => parse_utf16(data),
-        DataType::ShiftJis => parse_shift_jis(data),
         DataType::UnsignedInt8 => parse_unsigned_int8(data),
         DataType::UnsignedInt16 => parse_unsigned_int16(data),
         DataType::UnsignedInt32 => parse_unsigned_int32(data),
@@ -514,20 +504,33 @@ pub struct MetaTagDataAtom {
 
 impl Atom for MetaTagDataAtom {
     fn read<B: ReadBytes>(reader: &mut B, mut header: AtomHeader) -> Result<Self> {
+        // For the MOV container, the bytes occupied by the version and flags fields is the type
+        // indicator.
+        //
+        // The byte normally occupied by the version number is actually a data type set indicator
+        // and must always be 0 (indicating the data type will come from the well-known set).
+        // The next 3 bytes, normally occupied by the atom flags, indicate an index into the table
+        // of well-known data types.
+        //
+        // For the ISO/MP4 BMFF container, the version number is always 0, and the flags also
+        // indicate an index into a table of well-known data types. Therefore, MOV and the ISO/MP4
+        // BMFF are compatible if the version is 0.
         let (version, flags) = header.read_extended_header(reader)?;
 
-        // For the mov brand, this a data type indicator and must always be 0 (well-known type). It
-        // specifies the table in which the next 24-bit integer specifying the actual data type
-        // indexes. For iso/mp4, this is a version, and there is only one version, 0. Therefore,
-        // flags are interpreted as the actual data type index.
         if version != 0 {
             return decode_error("isomp4: invalid data atom version");
         }
 
+        // Lookup the well-known type.
         let data_type = DataType::from(flags);
 
-        // For the mov brand, the next four bytes are country and languages code. However, for
-        // iso/mp4 these codes should be ignored.
+        // The next 4 bytes form a locale indicator consisting of two 2-byte fields for the country
+        // and language codes, respectively.
+        //
+        // For both fields, a value of 0 indicates default, a value of 1-255 indicate the index of
+        // a country/language list stored in the country/language sub-atoms of the parent `meta`
+        // atom, and a value > 255 indicate an ISO-3166 country code or a packed ISO-639-2 language
+        // code.
         let _country = reader.read_be_u16()?;
         let _language = reader.read_be_u16()?;
 

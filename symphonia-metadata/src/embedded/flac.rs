@@ -7,7 +7,6 @@
 
 //! FLAC metadata block reading.
 
-use std::ascii;
 use std::num::NonZeroU8;
 use std::sync::Arc;
 
@@ -164,12 +163,7 @@ pub fn read_flac_application_block<B: ReadBytes>(
     // Read the application identifier. Usually this is just 4 ASCII characters, but it is not
     // limited to that. Non-printable ASCII characters must be escaped to create a valid UTF8
     // string.
-    let ident_buf = reader.read_quad_bytes()?;
-    let ident = String::from_utf8(
-        ident_buf.as_ref().iter().copied().flat_map(ascii::escape_default).collect(),
-    )
-    .unwrap();
-
+    let ident = escape_identifier(&reader.read_quad_bytes()?);
     let data = reader.read_boxed_slice_exact(block_length as usize - 4)?;
     Ok(VendorData { ident, data })
 }
@@ -382,4 +376,27 @@ fn read_flac_cuesheet_track_index<B: ReadBytes>(
         )],
         visuals: Vec::new(),
     })
+}
+
+/// Convert a buffer slice containing most ASCII into a string identifier.
+///
+/// For each byte in the buffer, either convert and append it as a character if it is printable
+/// ASCII character, or append it as an escaped hex value.
+fn escape_identifier(buf: &[u8]) -> String {
+    let mut ident = String::with_capacity(buf.len());
+
+    for &byte in buf {
+        if byte.is_ascii() && !byte.is_ascii_control() {
+            ident.push(char::from(byte));
+        }
+        else {
+            let u = (byte & 0xf0) >> 4;
+            let l = byte & 0x0f;
+            ident.push_str("\\0x");
+            ident.push(if u < 10 { (b'0' + u) as char } else { (b'a' + u - 10) as char });
+            ident.push(if l < 10 { (b'0' + l) as char } else { (b'a' + l - 10) as char });
+        }
+    }
+
+    ident
 }

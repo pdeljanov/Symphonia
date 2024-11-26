@@ -423,8 +423,8 @@ fn validate_frame_id(id: &[u8]) -> bool {
 /// Gets a slice of ASCII bytes as a string slice.
 ///
 /// Assumes the bytes are valid ASCII characters. Panics otherwise.
-fn as_ascii_str(id: &[u8]) -> &str {
-    std::str::from_utf8(id).unwrap()
+fn from_ascii(id: &[u8]) -> &str {
+    std::str::from_utf8(id).expect("ascii only")
 }
 
 /// Get the default frame reader for unknown frames.
@@ -470,7 +470,7 @@ pub fn read_id3v2p2_frame<B: ReadBytes>(reader: &mut B) -> Result<FrameResult> {
 
     // A frame must be atleast 1 byte as per the specification.
     if size == 0 {
-        warn!("'{}' was skipped because it has a size of 0", as_ascii_str(&id));
+        warn!("'{}' was skipped because it has a size of 0", from_ascii(&id));
         return Ok(FrameResult::Skipped);
     }
 
@@ -553,13 +553,13 @@ pub fn read_id3v2p3_frame<B: ReadBytes>(reader: &mut B) -> Result<FrameResult> {
     if is_compressed {
         reader.ignore_bytes(u64::from(data_size))?;
 
-        warn!("'{}' was skipped because compressed frames are not supported", as_ascii_str(&id));
+        warn!("'{}' was skipped because compressed frames are not supported", from_ascii(&id));
         return Ok(FrameResult::Skipped);
     }
 
     // A zero-length frame body is not allowed, but can be skipped.
     if data_size == 0 {
-        warn!("'{}' was skipped because it has a size of 0", as_ascii_str(&id));
+        warn!("'{}' was skipped because it has a size of 0", from_ascii(&id));
         return Ok(FrameResult::Skipped);
     }
 
@@ -665,13 +665,13 @@ pub fn read_id3v2p4_frame<B: ReadBytes + FiniteStream>(reader: &mut B) -> Result
     if is_compressed {
         reader.ignore_bytes(u64::from(data_size))?;
 
-        warn!("'{}' was skipped because compressed frames are not supported", as_ascii_str(&id));
+        warn!("'{}' was skipped because compressed frames are not supported", from_ascii(&id));
         return Ok(FrameResult::Skipped);
     }
 
     // A zero-length frame body is not allowed, but can be skipped.
     if data_size == 0 {
-        warn!("'{}' was skipped because it has a size of 0", as_ascii_str(&id));
+        warn!("'{}' was skipped because it has a size of 0", from_ascii(&id));
         return Ok(FrameResult::Skipped);
     }
 

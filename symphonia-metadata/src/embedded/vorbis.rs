@@ -15,6 +15,7 @@ use log::warn;
 use symphonia_core::errors::Result;
 use symphonia_core::io::{BufReader, ReadBytes};
 use symphonia_core::meta::{MetadataBuilder, RawTag, Visual};
+use symphonia_core::util::text;
 
 use crate::embedded::flac;
 use crate::utils::images::try_get_image_info;
@@ -141,8 +142,8 @@ lazy_static! {
 }
 
 /// Parse a string containing a base64 encoded FLAC picture block into a visual.
-fn parse_base64_picture_block(encoded: &str, builder: &mut MetadataBuilder) {
-    if let Some(data) = base64_decode(encoded) {
+fn parse_base64_picture_block(b64: &str, builder: &mut MetadataBuilder) {
+    if let Some(data) = base64_decode(b64) {
         if flac::read_flac_picture_block(&mut BufReader::new(&data), builder).is_err() {
             warn!("invalid picture block data");
         }
@@ -152,8 +153,9 @@ fn parse_base64_picture_block(encoded: &str, builder: &mut MetadataBuilder) {
     }
 }
 
-fn parse_base64_cover_art(encoded: &str, builder: &mut MetadataBuilder) {
-    if let Some(data) = base64_decode(encoded) {
+// Parse a string containing a base64 encoding image file into a visual.
+fn parse_base64_cover_art(b64: &str, builder: &mut MetadataBuilder) {
+    if let Some(data) = base64_decode(b64) {
         if let Some(image_info) = try_get_image_info(&data) {
             builder.add_visual(Visual {
                 media_type: Some(image_info.media_type),
@@ -174,19 +176,22 @@ fn parse_base64_cover_art(encoded: &str, builder: &mut MetadataBuilder) {
 }
 
 /// Parse the given Vorbis Comment string into a `Tag`.
-fn parse_vorbis_comment(comment_data: &[u8], builder: &mut MetadataBuilder) {
-    // Vorbis Comments (aka tags) are stored as <key>=<value> where <key> is
-    // a reduced ASCII-only identifier and <value> is a UTF8 value.
+fn parse_vorbis_comment(buf: &[u8], builder: &mut MetadataBuilder) {
+    // Vorbis Comments are stored as <Key>=<Value> pairs where <Key> is a reduced ASCII-only
+    // identifier and <Value> is a UTF-8 string value.
     //
-    // <Key> must only contain ASCII 0x20 through 0x7D, with 0x3D ('=') excluded.
-    // ASCII 0x41 through 0x5A inclusive (A-Z) is to be considered equivalent to
-    // ASCII 0x61 through 0x7A inclusive (a-z) for tag matching.
-    let comment = String::from_utf8_lossy(comment_data);
+    // Convert the entire comment into a UTF-8 string.
+    let comment = String::from_utf8_lossy(buf);
 
+    // Split the comment into key and value at the first '=' character.
     if let Some((key, value)) = comment.split_once('=') {
-        // A comment with a key "METADATA_BLOCK_PICTURE" is a FLAC picture block encoded in base64.
-        // Attempt to decode it as such.
+        // The key should only contain ASCII 0x20 through 0x7e (officially 0x7d, but this probably a
+        // typo), with 0x3d ('=') excluded.
+        let key = key.chars().filter(text::filter::ascii_text).collect::<String>();
+
         if key.eq_ignore_ascii_case("metadata_block_picture") {
+            // A comment with a key "METADATA_BLOCK_PICTURE" is a FLAC picture block encoded in
+            // base64. Attempt to decode it as such.
             parse_base64_picture_block(value, builder);
         }
         else if key.eq_ignore_ascii_case("coverart") {
@@ -195,6 +200,8 @@ fn parse_vorbis_comment(comment_data: &[u8], builder: &mut MetadataBuilder) {
             parse_base64_cover_art(value, builder);
         }
         else {
+            // Add a tag created from the key-value pair, while also attempting to map it to a
+            // standard tag.
             builder.add_mapped_tags(RawTag::new(key, value), &VORBIS_COMMENT_MAP);
         }
     }
