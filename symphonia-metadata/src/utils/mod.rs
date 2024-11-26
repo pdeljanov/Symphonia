@@ -12,4 +12,5 @@ pub mod id3v2;
 pub mod images;
 pub mod itunes;
 
+pub(crate) mod base64;
 pub(crate) mod std_tag;
