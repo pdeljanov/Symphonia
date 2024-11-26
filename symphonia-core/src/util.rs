@@ -375,3 +375,280 @@ pub mod clamp {
         }
     }
 }
+
+pub mod text {
+    //! Utilities for decoding encoded characters from byte slices, and text handling.
+
+    use char;
+
+    /// Create an iterator over ASCII encoded characters in `buf`.
+    ///
+    /// Invalid characters are substituted with the Unicode `U+FFFD REPLACEMENT CHARACTER` (�).
+    pub fn decode_ascii_lossy(buf: &[u8]) -> impl Iterator<Item = char> + '_ {
+        buf.iter().map(|&c| {
+            if c.is_ascii() {
+                char::from(c)
+            }
+            else {
+                char::REPLACEMENT_CHARACTER
+            }
+        })
+    }
+
+    /// Create an iterator over ISO/IEC 8859-1 encoded characters in `buf`.
+    ///
+    /// Invalid characters are substituted with the Unicode `U+FFFD REPLACEMENT CHARACTER` (�).
+    ///
+    /// Note: ISO/IEC 8859-1 does not encode any of the C0 or C1 control characters. This is in
+    /// contrast to the IANA's similarly named ISO-8859-1 encoding which does. See
+    /// [`decode_iso8859_1_lossy`].
+    pub fn decode_isoiec8859_1_lossy(buf: &[u8]) -> impl Iterator<Item = char> + '_ {
+        // ISO/IEC 8859-1 maps directly to the first two Unicode blocks (Basic Latin, & Latin-1
+        // Supplement). However, unlike those Unicode code blocks (which form the ISO-8859-1
+        // character set), the C0 and C1 control characters are not valid ISO/IEC 8859-1. Replace
+        // these characters with the Unicode replacement character.
+        buf.iter().map(|&c| {
+            match c {
+                // C0 and C1 control characters.
+                0x00..=0x1f | 0x80..=0x9f => char::REPLACEMENT_CHARACTER,
+                // All other non-control characters.
+                _ => char::from(c),
+            }
+        })
+    }
+
+    /// Create an iterator over ISO-8859-1 (IANA defined character set) encoded characters in `buf`.
+    ///
+    /// Note: ISO-8859-1 as defined by the IANA, is a superset of the similarly named ISO/IEC 8859-1
+    /// character set that encodes C0 and C1 control characters. See [`decode_isoiec8859_1_lossy`].
+    pub fn decode_iso8859_1_lossy(buf: &[u8]) -> impl Iterator<Item = char> + '_ {
+        buf.iter().copied().map(char::from)
+    }
+
+    /// Create an iterator over Windows-1252 encoded characters in `buf`.
+    ///
+    /// Invalid characters are substituted with the Unicode `U+FFFD REPLACEMENT CHARACTER` (�).
+    ///
+    /// Windows-1252 is a strict superset of ISO/IEC 8859-1. In addition to the characters defined
+    /// in ISO/IEC 8859-1, it contains all C0 control characters from ISO-8859-1, but uses the space
+    /// reserved for the C1 control characters for additional printable characters.
+    ///
+    /// Note: Some character codes residing in the C1 control character space are officially
+    /// undefined in Windows-1252, but are mapped to C1 control characters when using Windows
+    /// multi-byte conversion APIs. These character codes are considered invalid.
+    pub fn decode_cp1252_lossy(buf: &[u8]) -> impl Iterator<Item = char> + '_ {
+        // Mapping of C1 control codes to Unicode characters.
+        const CP1252_C1: [char; 32] = [
+            '\u{20ac}',                  // 0x80
+            char::REPLACEMENT_CHARACTER, // 0x81
+            '\u{201a}',                  // 0x82
+            '\u{0192}',                  // 0x83
+            '\u{201e}',                  // 0x84
+            '\u{2026}',                  // 0x85
+            '\u{2020}',                  // 0x86
+            '\u{2021}',                  // 0x87
+            '\u{02c6}',                  // 0x88
+            '\u{2030}',                  // 0x89
+            '\u{0160}',                  // 0x8a
+            '\u{2039}',                  // 0x8b
+            '\u{0152}',                  // 0x8c
+            char::REPLACEMENT_CHARACTER, // 0x8d
+            '\u{017d}',                  // 0x8e
+            char::REPLACEMENT_CHARACTER, // 0x8f
+            char::REPLACEMENT_CHARACTER, // 0x90
+            '\u{2018}',                  // 0x91
+            '\u{2019}',                  // 0x92
+            '\u{201c}',                  // 0x93
+            '\u{201d}',                  // 0x94
+            '\u{2022}',                  // 0x95
+            '\u{2013}',                  // 0x96
+            '\u{2014}',                  // 0x97
+            '\u{02dc}',                  // 0x98
+            '\u{2122}',                  // 0x99
+            '\u{0161}',                  // 0x9a
+            '\u{203a}',                  // 0x9b
+            '\u{0153}',                  // 0x9c
+            char::REPLACEMENT_CHARACTER, // 0x9d
+            '\u{017e}',                  // 0x9e
+            '\u{0178}',                  // 0x9f
+        ];
+
+        buf.iter().map(|&c| match c {
+            // The C1 control code range is mapped to other characters.
+            0x80..=0x9f => CP1252_C1[usize::from(c - 0x80)],
+            // All other characters map to identical Unicode blocks.
+            _ => char::from(c),
+        })
+    }
+
+    /// Create an iterator over UTF-16 big-endian (BE) encoded characters in `buf`.
+    ///
+    /// If a byte-order marker (BOM) is present, it will be respected. Otherwise, big-endian is
+    /// assumed.
+    ///
+    /// Invalid characters are substituted with the Unicode `U+FFFD REPLACEMENT CHARACTER` (�).
+    pub fn decode_utf16be_lossy(buf: &[u8]) -> impl Iterator<Item = char> + '_ {
+        // Check byte-order-marker, then decode.
+        match buf.first_chunk::<2>() {
+            // Big-endian. Remove BOM.
+            Some([0xfe, 0xff]) => decode_utf16_bytes(&buf[2..], u16::from_be_bytes),
+            // Little-endian. Remove BOM.
+            Some([0xff, 0xfe]) => decode_utf16_bytes(&buf[2..], u16::from_le_bytes),
+            // No BOM, or buffer too short. Decode entire buffer as big-endian.
+            _ => decode_utf16_bytes(buf, u16::from_be_bytes),
+        }
+    }
+
+    /// Create an iterator over UTF-16 little-endian (LE) encoded characters in `buf`.
+    ///
+    /// If a byte-order marker (BOM) is present, it will be respected. Otherwise, little-endian is
+    /// assumed.
+    ///
+    /// Invalid characters are substituted with the Unicode `U+FFFD REPLACEMENT CHARACTER` (�).
+    pub fn decode_utf16le_lossy(buf: &[u8]) -> impl Iterator<Item = char> + '_ {
+        // Check byte-order-marker, then decode.
+        match buf.first_chunk::<2>() {
+            // Big-endian. Remove BOM.
+            Some([0xfe, 0xff]) => decode_utf16_bytes(&buf[2..], u16::from_be_bytes),
+            // Little-endian. Remove BOM.
+            Some([0xff, 0xfe]) => decode_utf16_bytes(&buf[2..], u16::from_le_bytes),
+            // No BOM, or buffer too short. Decode entire buffer as little-endian.
+            _ => decode_utf16_bytes(buf, u16::from_le_bytes),
+        }
+    }
+
+    /// Utility function to create an iterator over UTF-16 encoded characters given a buffer and
+    /// a conversion function from `[u8; 2]` to `u16`.
+    fn decode_utf16_bytes(buf: &[u8], f: fn([u8; 2]) -> u16) -> impl Iterator<Item = char> + '_ {
+        // TODO: Use `buf.array_chunks::<2>()` when stabilized.
+        char::decode_utf16(buf.chunks_exact(2).map(move |bytes| f(bytes.try_into().unwrap())))
+            .map(|r| r.unwrap_or(char::REPLACEMENT_CHARACTER))
+    }
+
+    pub mod filter {
+        //! Character iterator predicates for categories of characters.
+
+        /// Predicate for matching null-terminator characters.
+        #[inline]
+        pub fn null(c: &char) -> bool {
+            *c == '\0'
+        }
+
+        /// Predicate for matching non-null terminator characters.
+        #[inline]
+        pub fn not_null(c: &char) -> bool {
+            !null(c)
+        }
+
+        /// Predicate for matching C0 or C1 control characters.
+        ///
+        /// Returns `true` if the character is a C0 or C1 control character (Unicode CC category),
+        /// or `false` otherwise.
+        #[inline]
+        pub fn control(c: &char) -> bool {
+            matches!(c, '\0'..='\u{1f}' | '\u{7f}'..='\u{9f}')
+        }
+
+        /// Predicate for matching characters that are not C0 or C1 control characters.
+        ///
+        /// Returns `true` if the character is not a C0 or C1 control character (Unicode CC
+        /// category), or `false` otherwise.
+        #[inline]
+        pub fn not_control(c: &char) -> bool {
+            !control(c)
+        }
+
+        /// Predicate for matching C0 control characters.
+        #[inline]
+        pub fn c0_control(c: &char) -> bool {
+            matches!(c, '\0'..='\u{1f}' | '\u{7f}')
+        }
+
+        /// Predicate for matching characters that are not C0 control characters.
+        #[inline]
+        pub fn not_c0_control(c: &char) -> bool {
+            !c0_control(c)
+        }
+
+        /// Predicate for matching C1 control characters.
+        #[inline]
+        pub fn c1_control(c: &char) -> bool {
+            matches!(c, '\u{80}'..='\u{9f}')
+        }
+
+        /// Predicate for matching characters that are not C1 control characters.
+        #[inline]
+        pub fn not_c1_control(c: &char) -> bool {
+            !c1_control(c)
+        }
+
+        /// Predicate for matching ASCII text characters.
+        ///
+        /// ASCII text characters are all ASCII graphical characters and SPACE.
+        #[inline]
+        pub fn ascii_text(c: &char) -> bool {
+            matches!(c, ' '..='~')
+        }
+
+        /// Predicate for matching non-text ASCII characters.
+        ///
+        /// ASCII text characters are all ASCII graphical characters and SPACE.
+        #[inline]
+        pub fn not_ascii_text(c: &char) -> bool {
+            !ascii_text(c)
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        #[test]
+        fn verify_decode_utf16be() {
+            use super::decode_utf16be_lossy;
+
+            assert_eq!(decode_utf16be_lossy(&[]).collect::<String>(), String::new());
+            assert_eq!(decode_utf16be_lossy(&[b' ']).collect::<String>(), String::new());
+            assert_eq!(decode_utf16be_lossy(&[0x00, 0x20]).collect::<String>(), String::from(" "));
+
+            // Little-endian forced by BOM.
+            assert_eq!(
+                decode_utf16be_lossy(&[0xff, 0xfe, 0x20, 0x00]).collect::<String>(),
+                String::from(" ")
+            );
+
+            // BOM used in string.
+            assert_eq!(
+                decode_utf16be_lossy(&[0x00, 0x20, 0xff, 0xfe]).collect::<String>(),
+                String::from(" \u{fffe}")
+            );
+            assert_eq!(
+                decode_utf16be_lossy(&[0x00, 0x20, 0xfe, 0xff]).collect::<String>(),
+                String::from(" \u{feff}")
+            );
+        }
+
+        #[test]
+        fn verify_decode_utf16le() {
+            use super::decode_utf16le_lossy;
+
+            assert_eq!(decode_utf16le_lossy(&[]).collect::<String>(), String::new());
+            assert_eq!(decode_utf16le_lossy(&[b' ']).collect::<String>(), String::new());
+            assert_eq!(decode_utf16le_lossy(&[0x20, 0x00]).collect::<String>(), String::from(" "));
+
+            // Big-endian forced by BOM.
+            assert_eq!(
+                decode_utf16le_lossy(&[0xfe, 0xff, 0x00, 0x20]).collect::<String>(),
+                String::from(" ")
+            );
+
+            // BOM used in string.
+            assert_eq!(
+                decode_utf16le_lossy(&[0x20, 0x00, 0xff, 0xfe]).collect::<String>(),
+                String::from(" \u{feff}")
+            );
+            assert_eq!(
+                decode_utf16le_lossy(&[0x20, 0x00, 0xfe, 0xff]).collect::<String>(),
+                String::from(" \u{fffe}")
+            );
+        }
+    }
+}
