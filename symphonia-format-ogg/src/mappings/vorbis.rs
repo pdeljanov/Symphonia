@@ -211,10 +211,13 @@ impl Mapper for VorbisMapper {
             match packet_type {
                 VORBIS_PACKET_TYPE_COMMENT => {
                     let mut builder = MetadataBuilder::new();
+                    let mut side_data = Default::default();
 
-                    read_vorbis_comment(&mut reader, &mut builder)?;
+                    read_vorbis_comment(&mut reader, &mut builder, &mut side_data)?;
 
-                    Ok(MapResult::SideData { data: SideData::Metadata(builder.metadata()) })
+                    let rev = builder.metadata();
+
+                    Ok(MapResult::SideData { data: SideData::Metadata { rev, side_data } })
                 }
                 VORBIS_PACKET_TYPE_SETUP => {
                     // Safety: Audio codec parameters are always available if mapper is

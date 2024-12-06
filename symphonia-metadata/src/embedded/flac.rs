@@ -44,14 +44,13 @@ pub fn read_flac_comment_block<B: ReadBytes>(
     reader: &mut B,
     builder: &mut MetadataBuilder,
 ) -> Result<()> {
-    vorbis::read_vorbis_comment(reader, builder)
+    // Discard side data.
+    let mut side_data = Default::default();
+    vorbis::read_vorbis_comment(reader, builder, &mut side_data)
 }
 
 /// Read a picture metadata block.
-pub fn read_flac_picture_block<B: ReadBytes>(
-    reader: &mut B,
-    builder: &mut MetadataBuilder,
-) -> Result<()> {
+pub fn read_flac_picture_block<B: ReadBytes>(reader: &mut B) -> Result<Visual> {
     let type_enc = reader.read_be_u32()?;
 
     // Read the Media Type length in bytes.
@@ -115,16 +114,14 @@ pub fn read_flac_picture_block<B: ReadBytes>(
     // will be preferred over what's been stated in the picture block.
     let image_info = try_get_image_info(&data);
 
-    builder.add_visual(Visual {
+    Ok(Visual {
         media_type: image_info.as_ref().map(|info| info.media_type.clone()).or(media_type),
         dimensions: image_info.as_ref().map(|info| info.dimensions).or(dimensions),
         color_mode: image_info.as_ref().map(|info| info.color_mode),
         usage: get_visual_key_from_picture_type(type_enc),
         tags,
         data,
-    });
-
-    Ok(())
+    })
 }
 
 /// Read a seek table metadata block as a seek index.

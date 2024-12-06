@@ -7,14 +7,19 @@
 
 //! Vorbis Comment reading.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
+use std::sync::Arc;
 
 use lazy_static::lazy_static;
 use log::warn;
 
-use symphonia_core::errors::Result;
+use symphonia_core::errors::{decode_error, Error, Result};
 use symphonia_core::io::{BufReader, ReadBytes};
-use symphonia_core::meta::{MetadataBuilder, RawTag, Visual};
+use symphonia_core::meta::{
+    Chapter, ChapterGroup, ChapterGroupItem, MetadataBuilder, MetadataSideData, RawTag,
+    StandardTag, Tag, Visual,
+};
+use symphonia_core::units::Time;
 use symphonia_core::util::text;
 
 use crate::embedded::flac;
@@ -143,41 +148,179 @@ lazy_static! {
 }
 
 /// Parse a string containing a base64 encoded FLAC picture block into a visual.
-fn parse_base64_picture_block(b64: &str, builder: &mut MetadataBuilder) {
-    if let Some(data) = base64::decode(b64) {
-        if flac::read_flac_picture_block(&mut BufReader::new(&data), builder).is_err() {
-            warn!("invalid picture block data");
-        }
-    }
+fn parse_base64_picture_block(b64: &str) -> Result<ParsedComment> {
+    // Decode the Base64 encoded FLAC metadata block.
+    let Some(data) = base64::decode(b64)
     else {
-        warn!("the base64 encoding of a picture block is invalid");
-    }
+        return decode_error("meta(vorbis): the base64 encoding of a picture block is invalid");
+    };
+
+    flac::read_flac_picture_block(&mut BufReader::new(&data)).map(ParsedComment::Visual)
 }
 
-// Parse a string containing a base64 encoding image file into a visual.
-fn parse_base64_cover_art(b64: &str, builder: &mut MetadataBuilder) {
-    if let Some(data) = base64::decode(b64) {
-        if let Some(image_info) = try_get_image_info(&data) {
-            builder.add_visual(Visual {
-                media_type: Some(image_info.media_type),
-                dimensions: Some(image_info.dimensions),
-                color_mode: Some(image_info.color_mode),
-                usage: None,
-                tags: vec![],
-                data,
-            });
+/// Parse a string containing a base64 encoding image file into a visual.
+fn parse_base64_cover_art(b64: &str) -> Result<ParsedComment> {
+    // Decode the Base64 encoded image data.
+    let Some(data) = base64::decode(b64)
+    else {
+        return decode_error("meta (vorbis): the base64 encoding of cover art is invalid");
+    };
+
+    // Try to get image information.
+    let Some(image_info) = try_get_image_info(&data)
+    else {
+        return decode_error("meta (vorbis): could not detect cover art image format");
+    };
+
+    Ok(ParsedComment::Visual(Visual {
+        media_type: Some(image_info.media_type),
+        dimensions: Some(image_info.dimensions),
+        color_mode: Some(image_info.color_mode),
+        usage: None,
+        tags: vec![],
+        data,
+    }))
+}
+
+/// Parse a chapter timestamp in the HH:MM:SS.SSS format.
+fn parse_chapter_timestamp(time: &str) -> Result<Time> {
+    const FMT_ERR: Error = Error::DecodeError("malformed chapter timestamp");
+    const OOB_ERR: Error = Error::DecodeError("chapter timestamp out-of-bounds");
+
+    /// Parse an unsigned number containing atleast 1 digit from a string slice, and return the
+    /// number as an `u32` with the number of digits.
+    fn parse_unsigned_num(buf: &str, trim_leading: bool) -> Result<(u32, u8)> {
+        // The string slice is empty. This is an error.
+        if buf.is_empty() {
+            return Err(FMT_ERR);
+        }
+
+        // Trim leading or trailing zeros from the string slice. This may result in an empty string
+        // slice if all digits are 0.
+        let buf = match trim_leading {
+            true => buf.trim_start_matches('0'),
+            false => buf.trim_end_matches('0'),
+        };
+
+        if buf.is_empty() {
+            // The string slice after stripping the leading or trailing zeros is empty. Only one
+            // zero digit was significant.
+            Ok((0, 1))
         }
         else {
-            warn!("could not detect cover art image format")
+            buf.bytes()
+                .try_fold(0u32, |num, digit| match digit {
+                    b'0'..=b'9' => {
+                        num.checked_mul(10).and_then(|num| num.checked_add(u32::from(digit - b'0')))
+                    }
+                    _ => None,
+                })
+                .map(|num| (num, buf.len() as u8))
+                .ok_or(FMT_ERR)
         }
     }
+
+    // Hours, minutes, and integer seconds are mandatory.
+    let Some((h_str, rem)) = time.split_once(':')
     else {
-        warn!("the base64 encoding of cover art is invalid");
+        return Err(FMT_ERR);
+    };
+    let Some((m_str, rem)) = rem.split_once(':')
+    else {
+        return Err(FMT_ERR);
+    };
+    // Fractional seconds are optional.
+    let (s_str, frac_s_str) = rem.split_once('.').unwrap_or((rem, "0"));
+
+    let (h, _) = parse_unsigned_num(h_str, true)?;
+    let (m, _) = parse_unsigned_num(m_str, true)?;
+    let (s, _) = parse_unsigned_num(s_str, true)?;
+    // This is the numerator portion of fractional seconds.
+    let (frac_s_numer, frac_s_digits) = parse_unsigned_num(frac_s_str, false)?;
+    // The number of digits in the numerator indicates the denominator.
+    let ns = (1_000_000_000 * u64::from(frac_s_numer)) / 10u64.pow(u32::from(frac_s_digits));
+
+    Time::from_hhmmss(
+        h,
+        m.try_into().map_err(|_| OOB_ERR)?,
+        s.try_into().map_err(|_| OOB_ERR)?,
+        ns as u32,
+    )
+    .ok_or(OOB_ERR)
+}
+
+/// The intent of the chapter information value.
+enum ChapterInfoIntent {
+    /// Chapter starting timestamp.
+    Time,
+    /// A chapter-specific tag.
+    Tag(String),
+}
+
+/// The chapter information key.
+struct ChapterInfoKey {
+    /// The chapter number this key is associated with.
+    num: u32,
+    /// The intent of the chapter info associated with this key.
+    intent: ChapterInfoIntent,
+}
+
+/// Try to parse the key as a chapter information key.
+fn try_parse_chapter_info_key(key: &str) -> Option<ChapterInfoKey> {
+    let mut iter = key.chars();
+
+    // A chapter key must begin with case-insensitive "CHAPTER" prefix.
+    for p in "CHAPTER".chars() {
+        match iter.next() {
+            Some(c) if c.eq_ignore_ascii_case(&p) => (),
+            _ => return None,
+        }
     }
+
+    // Then it must be followed by 3 digits indicating the chapter number.
+    let mut num = 0;
+
+    for _ in 0..3 {
+        match iter.next() {
+            Some(c) if c.is_ascii_digit() => {
+                num *= 10;
+                num += u32::from(c) - u32::from('0');
+            }
+            _ => return None,
+        }
+    }
+
+    // The remainder of the key may be an optional suffix containing a key for additional
+    // information pertaining to the chapter such as the name. If there is no suffix, then this is a
+    // chapter timestamp comment.
+    let field = iter.as_str().to_string();
+
+    let intent =
+        if field.is_empty() { ChapterInfoIntent::Time } else { ChapterInfoIntent::Tag(field) };
+
+    Some(ChapterInfoKey { num, intent })
+}
+
+/// Chapter information.
+struct ChapterInfo {
+    /// The chapter information key.
+    key: ChapterInfoKey,
+    /// The value.
+    value: String,
+}
+
+/// A parsed Vorbis comment.
+enum ParsedComment {
+    /// The comment yielded a tag.
+    Tag(RawTag),
+    /// The comment yielded a visual.
+    Visual(Visual),
+    /// The comment yielded chapter information.
+    ChapterInfo(ChapterInfo),
 }
 
 /// Parse the given Vorbis Comment string into a `Tag`.
-fn parse_vorbis_comment(buf: &[u8], builder: &mut MetadataBuilder) {
+fn parse_vorbis_comment(buf: &[u8]) -> Result<ParsedComment> {
     // Vorbis Comments are stored as <Key>=<Value> pairs where <Key> is a reduced ASCII-only
     // identifier and <Value> is a UTF-8 string value.
     //
@@ -190,38 +333,50 @@ fn parse_vorbis_comment(buf: &[u8], builder: &mut MetadataBuilder) {
         // typo), with 0x3d ('=') excluded.
         let key = key.chars().filter(text::filter::ascii_text).collect::<String>();
 
-        if key.eq_ignore_ascii_case("metadata_block_picture") {
+        if let Some(key) = try_parse_chapter_info_key(&key) {
+            // A comment with a key starting with "CHAPTERXXX" is a chapter information comment.
+            Ok(ParsedComment::ChapterInfo(ChapterInfo { key, value: value.to_string() }))
+        }
+        else if key.eq_ignore_ascii_case("metadata_block_picture") {
             // A comment with a key "METADATA_BLOCK_PICTURE" is a FLAC picture block encoded in
             // base64. Attempt to decode it as such.
-            parse_base64_picture_block(value, builder);
+            parse_base64_picture_block(value)
         }
         else if key.eq_ignore_ascii_case("coverart") {
             // A comment with a key "COVERART" is a base64 encoded image. Attempt to decode it as
             // such.
-            parse_base64_cover_art(value, builder);
+            parse_base64_cover_art(value)
         }
         else {
             // Add a tag created from the key-value pair, while also attempting to map it to a
             // standard tag.
-            builder.add_mapped_tags(RawTag::new(key, value), &VORBIS_COMMENT_MAP);
+            Ok(ParsedComment::Tag(RawTag::new(key, value)))
         }
+    }
+    else {
+        decode_error("meta (vorbis): malformed comment")
     }
 }
 
 pub fn read_vorbis_comment<B: ReadBytes>(
     reader: &mut B,
     builder: &mut MetadataBuilder,
+    side_data: &mut Vec<MetadataSideData>,
 ) -> Result<()> {
     // Read the vendor string length in bytes.
-    let vendor_length = reader.read_u32()?;
+    let vendor_len = reader.read_u32()?;
 
     // Ignore the vendor string.
-    reader.ignore_bytes(u64::from(vendor_length))?;
+    reader.ignore_bytes(u64::from(vendor_len))?;
+
+    // Map of chapter number to a vector of chapter information.
+    let mut chapters: BTreeMap<u32, Vec<ChapterInfo>> = Default::default();
 
     // Read the number of comments.
-    let n_comments = reader.read_u32()? as usize;
+    let num_comments = reader.read_u32()? as usize;
 
-    for _ in 0..n_comments {
+    // Read each comment.
+    for _ in 0..num_comments {
         // Read the comment string length in bytes.
         let comment_length = reader.read_u32()?;
 
@@ -231,9 +386,180 @@ pub fn read_vorbis_comment<B: ReadBytes>(
         let mut comment_data = vec![0; comment_length as usize];
         reader.read_buf_exact(&mut comment_data)?;
 
-        // Parse the Vorbis comment into a Tag and add it to the builder.
-        parse_vorbis_comment(&comment_data, builder);
+        // Parse the Vorbis comment and handle the parsed output.
+        match parse_vorbis_comment(&comment_data) {
+            Ok(parsed) => match parsed {
+                ParsedComment::Tag(raw) => {
+                    // Comment was a tag.
+                    builder.add_mapped_tags(raw, &VORBIS_COMMENT_MAP);
+                }
+                ParsedComment::Visual(visual) => {
+                    // Comment was a picture.
+                    builder.add_visual(visual);
+                }
+                ParsedComment::ChapterInfo(info) => {
+                    // Comment was chapter information. Collect chapter information to build a
+                    // chapter group later.
+                    chapters.entry(info.key.num).or_default().push(info);
+                }
+            },
+            Err(err) => warn!("{}", err),
+        }
+    }
+
+    // If chapter information is present, try to build a chapter group.
+    if !chapters.is_empty() {
+        let items = chapters
+            .into_iter()
+            .filter_map(|(_, infos)| {
+                let mut time = None;
+                let mut tags = Vec::new();
+
+                for info in infos {
+                    match info.key.intent {
+                        ChapterInfoIntent::Time => {
+                            // Value is the chapter's start time.
+                            time = parse_chapter_timestamp(&info.value).ok();
+                        }
+                        ChapterInfoIntent::Tag(key) => {
+                            let value = Arc::new(info.value);
+
+                            // "NAME" and "URL" are the only standardized keys for chapters.
+                            let std_tag = if key.eq_ignore_ascii_case("name") {
+                                Some(StandardTag::TrackTitle(value.clone()))
+                            }
+                            else if key.eq_ignore_ascii_case("url") {
+                                Some(StandardTag::Url(value.clone()))
+                            }
+                            else {
+                                None
+                            };
+
+                            // Chapter-specific comment.
+                            tags.push(Tag::new_from_parts(key, value, std_tag));
+                        }
+                    }
+                }
+
+                // A chapter can only be created if the chapter's start time is known.
+                time.map(|time| {
+                    ChapterGroupItem::Chapter(Chapter {
+                        start_time: time,
+                        end_time: None,
+                        start_byte: None,
+                        end_byte: None,
+                        tags,
+                        visuals: vec![],
+                    })
+                })
+            })
+            .collect::<Vec<ChapterGroupItem>>();
+
+        side_data.push(MetadataSideData::Chapters(ChapterGroup {
+            items,
+            tags: vec![],
+            visuals: vec![],
+        }));
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use symphonia_core::units::Time;
+
+    #[test]
+    fn verify_parse_chapter_timestamp() {
+        use super::parse_chapter_timestamp;
+
+        // Empty buffer.
+        assert!(parse_chapter_timestamp("").is_err());
+        // Various invalid constructions.
+        assert!(parse_chapter_timestamp("0").is_err());
+        assert!(parse_chapter_timestamp("00").is_err());
+        assert!(parse_chapter_timestamp("00:").is_err());
+        assert!(parse_chapter_timestamp("00:0").is_err());
+        assert!(parse_chapter_timestamp("00:00").is_err());
+        assert!(parse_chapter_timestamp("00:00:").is_err());
+        assert!(parse_chapter_timestamp("00:00:0.").is_err());
+        // Invalid radix.
+        assert!(parse_chapter_timestamp("0x0:00:00.000").is_err());
+        assert!(parse_chapter_timestamp("00:0x0:00.000").is_err());
+        assert!(parse_chapter_timestamp("00:00:0x0.000").is_err());
+        assert!(parse_chapter_timestamp("00:00:00.0x000").is_err());
+        // No negative or positive signs.
+        assert!(parse_chapter_timestamp("-:00:00.000").is_err());
+        assert!(parse_chapter_timestamp("+:00:00.000").is_err());
+        assert!(parse_chapter_timestamp("-01:00:00.000").is_err());
+        assert!(parse_chapter_timestamp("00:-01:00.000").is_err());
+        assert!(parse_chapter_timestamp("00:00:-01.000").is_err());
+        assert!(parse_chapter_timestamp("+01:00:00.000").is_err());
+
+        // Various valid constructions.
+        assert_eq!(
+            parse_chapter_timestamp("00:00:0").unwrap(),
+            Time::from_hhmmss(0, 0, 0, 0).unwrap()
+        );
+        assert_eq!(
+            parse_chapter_timestamp("00:00:00").unwrap(),
+            Time::from_hhmmss(0, 0, 0, 0).unwrap()
+        );
+        assert_eq!(
+            parse_chapter_timestamp("0:0:0.0").unwrap(),
+            Time::from_hhmmss(0, 0, 0, 0).unwrap()
+        );
+        assert_eq!(
+            parse_chapter_timestamp("00:0:0.0").unwrap(),
+            Time::from_hhmmss(0, 0, 0, 0).unwrap()
+        );
+        assert_eq!(
+            parse_chapter_timestamp("00:00:0.0").unwrap(),
+            Time::from_hhmmss(0, 0, 0, 0).unwrap()
+        );
+        assert_eq!(
+            parse_chapter_timestamp("00:00:00.0").unwrap(),
+            Time::from_hhmmss(0, 0, 0, 0).unwrap()
+        );
+        assert_eq!(
+            parse_chapter_timestamp("00:00:00.00").unwrap(),
+            Time::from_hhmmss(0, 0, 0, 0).unwrap()
+        );
+        assert_eq!(
+            parse_chapter_timestamp("00:00:00.000").unwrap(),
+            Time::from_hhmmss(0, 0, 0, 0).unwrap()
+        );
+        assert_eq!(
+            parse_chapter_timestamp("000000000:00:00.00").unwrap(),
+            Time::from_hhmmss(0, 0, 0, 0).unwrap()
+        );
+        assert_eq!(
+            parse_chapter_timestamp("00:00:00.1000").unwrap(),
+            Time::from_hhmmss(0, 0, 0, 100_000_000).unwrap()
+        );
+
+        // Maximum valid.
+        assert_eq!(
+            parse_chapter_timestamp("999999999:59:59.999999999").unwrap(),
+            Time::from_hhmmss(999_999_999, 59, 59, 999_999_999).unwrap()
+        );
+        // Maximum valid with insignificant digits.
+        assert_eq!(
+            parse_chapter_timestamp("0999999999:059:059.9999999990").unwrap(),
+            Time::from_hhmmss(999_999_999, 59, 59, 999_999_999).unwrap()
+        );
+        assert_eq!(
+            parse_chapter_timestamp("000000999999999:000059:000059.999999999000000").unwrap(),
+            Time::from_hhmmss(999_999_999, 59, 59, 999_999_999).unwrap()
+        );
+
+        // Hours invalid (> u32::MAX).
+        assert!(parse_chapter_timestamp("4294967296:00:00.0").is_err());
+        // Minutes invalid (> 59).
+        assert!(parse_chapter_timestamp("00:60:00.000").is_err());
+        assert!(parse_chapter_timestamp("00:256:00.000").is_err());
+        // Seconds invalid (> 59).
+        assert!(parse_chapter_timestamp("00:00:60.000").is_err());
+        assert!(parse_chapter_timestamp("00:00:256.000").is_err());
+    }
 }

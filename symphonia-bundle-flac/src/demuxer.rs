@@ -133,7 +133,7 @@ impl<'s> FlacReader<'s> {
                 }
                 // Picture blocks are read as Visuals.
                 MetadataBlockType::Picture => {
-                    read_flac_picture_block(&mut block_stream, &mut metadata_builder)?;
+                    metadata_builder.add_visual(read_flac_picture_block(&mut block_stream)?);
                 }
                 // Padding blocks are skipped.
                 MetadataBlockType::Padding => {

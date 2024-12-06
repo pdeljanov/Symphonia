@@ -255,12 +255,15 @@ impl Mapper for OpusMapper {
             if sig == *OGG_OPUS_COMMENT_SIGNATURE {
                 // This packet should be a metadata packet containing a Vorbis Comment.
                 let mut builder = MetadataBuilder::new();
+                let mut side_data = Default::default();
 
-                vorbis::read_vorbis_comment(&mut reader, &mut builder)?;
+                vorbis::read_vorbis_comment(&mut reader, &mut builder, &mut side_data)?;
+
+                let rev = builder.metadata();
 
                 self.need_comment = false;
 
-                Ok(MapResult::SideData { data: SideData::Metadata(builder.metadata()) })
+                Ok(MapResult::SideData { data: SideData::Metadata { rev, side_data } })
             }
             else {
                 warn!("ogg (opus): invalid packet type");

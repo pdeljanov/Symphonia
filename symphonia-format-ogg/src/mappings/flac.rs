@@ -320,14 +320,18 @@ impl Mapper for FlacMapper {
 
                     read_flac_comment_block(&mut reader, &mut builder)?;
 
-                    Ok(MapResult::SideData { data: SideData::Metadata(builder.metadata()) })
+                    let rev = builder.metadata();
+
+                    Ok(MapResult::SideData { data: SideData::Metadata { rev, side_data: vec![] } })
                 }
                 MetadataBlockType::Picture => {
                     let mut builder = MetadataBuilder::new();
 
-                    read_flac_picture_block(&mut reader, &mut builder)?;
+                    builder.add_visual(read_flac_picture_block(&mut reader)?);
 
-                    Ok(MapResult::SideData { data: SideData::Metadata(builder.metadata()) })
+                    let rev = builder.metadata();
+
+                    Ok(MapResult::SideData { data: SideData::Metadata { rev, side_data: vec![] } })
                 }
                 _ => Ok(MapResult::Unknown),
             }

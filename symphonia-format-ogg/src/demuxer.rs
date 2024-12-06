@@ -14,7 +14,7 @@ use symphonia_core::formats::prelude::*;
 use symphonia_core::formats::probe::{ProbeFormatData, ProbeableFormat, Score, Scoreable};
 use symphonia_core::formats::well_known::FORMAT_ID_OGG;
 use symphonia_core::io::*;
-use symphonia_core::meta::{Metadata, MetadataLog};
+use symphonia_core::meta::{Metadata, MetadataLog, MetadataSideData};
 use symphonia_core::support_format;
 
 use log::{debug, info, warn};
@@ -341,7 +341,16 @@ impl<'s> OggReader<'s> {
                 // Consume each piece of side data.
                 for data in side_data {
                     match data {
-                        SideData::Metadata(rev) => self.metadata.push(rev),
+                        SideData::Metadata { rev, side_data } => {
+                            self.metadata.push(rev);
+
+                            // Process side data.
+                            for data in side_data {
+                                if let MetadataSideData::Chapters(chapters) = data {
+                                    self.chapters = Some(chapters);
+                                }
+                            }
+                        }
                     }
                 }
 
