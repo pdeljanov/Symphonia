@@ -11,7 +11,7 @@ use std::path::Path;
 
 use lazy_static::lazy_static;
 use symphonia::core::codecs::{CodecInfo, CodecParameters, CodecProfile};
-use symphonia::core::formats::{FormatReader, Track};
+use symphonia::core::formats::{FormatReader, Track, TrackFlags};
 use symphonia::core::meta::{
     Chapter, ChapterGroup, ChapterGroupItem, ColorMode, ColorModel, ContentAdvisory,
     MetadataRevision, StandardTag, Tag, Visual,
@@ -187,6 +187,22 @@ pub fn print_tracks(tracks: &[Track]) {
 
             if let Some(language) = &track.language {
                 print_pair("Language:", &language, Bullet::None, 1);
+            }
+
+            if !track.flags.is_empty() {
+                for (i, flag) in track.flags.iter().enumerate() {
+                    let name = match flag {
+                        TrackFlags::DEFAULT => "Default",
+                        TrackFlags::FORCED => "Forced",
+                        TrackFlags::ORIGINAL_LANGUAGE => "Original Language",
+                        TrackFlags::COMMENTARY => "Commentary",
+                        TrackFlags::HEARING_IMPAIRED => "Hearing Impaired",
+                        TrackFlags::VISUALLY_IMPAIRED => "Visually Impaired",
+                        TrackFlags::TEXT_DESCRIPTIONS => "Text description",
+                        _ => "*Unknown*",
+                    };
+                    print_pair(if i == 0 { "Flags:" } else { "" }, &name, Bullet::None, 1);
+                }
             }
         }
     }

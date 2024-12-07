@@ -17,6 +17,8 @@ use crate::io::{BufReader, MediaSourceStream};
 use crate::meta::{ChapterGroup, Metadata, MetadataLog};
 use crate::units::{Time, TimeBase, TimeStamp};
 
+use bitflags::bitflags;
+
 pub mod prelude {
     //! The `formats` module prelude.
 
@@ -164,6 +166,31 @@ impl Default for FormatOptions {
     }
 }
 
+bitflags! {
+    /// Flags indicating certain attributes about a track.
+    #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+    pub struct TrackFlags: u32 {
+        /// The track is the default track for its track type.
+        const DEFAULT           = 1 << 0;
+        /// The track should be played even if user or player settings normally wouldn't call for
+        /// it.
+        ///
+        /// For example, the forced flag may be set on an English subtitle track so that it is
+        /// always played even if the audio language is also English.
+        const FORCED            = 1 << 1;
+        /// The track is in the original language.
+        const ORIGINAL_LANGUAGE = 1 << 2;
+        /// The track contains commentary.
+        const COMMENTARY        = 1 << 3;
+        /// The track is suitable for the hearing impaired.
+        const HEARING_IMPAIRED  = 1 << 4;
+        /// The track is suitable for the visually impaired.
+        const VISUALLY_IMPAIRED = 1 << 5;
+        /// The track contains text descriptions of visual content.
+        const TEXT_DESCRIPTIONS = 1 << 6;
+    }
+}
+
 /// The track type.
 #[non_exhaustive]
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -210,6 +237,8 @@ pub struct Track {
     /// The number of trailing frames inserted by the encoder for padding that should be skipped
     /// during playback.
     pub padding: Option<u32>,
+    /// Flags indicating track attributes.
+    pub flags: TrackFlags,
 }
 
 impl Track {
@@ -224,6 +253,7 @@ impl Track {
             start_ts: 0,
             delay: None,
             padding: None,
+            flags: TrackFlags::empty(),
         }
     }
 
@@ -281,6 +311,12 @@ impl Track {
         self.padding = Some(padding);
         self
     }
+
+    /// Append provided track flags.
+    pub fn with_flags(&mut self, flags: TrackFlags) -> &mut Self {
+        self.flags |= flags;
+        self
+    }
 }
 
 /// A `FormatReader` is a container demuxer. It provides methods to probe a media container for
@@ -331,23 +367,11 @@ pub trait FormatReader: Send + Sync {
     /// Get the first track of a certain track type.
     fn first_track(&self, track_type: TrackType) -> Option<&Track> {
         // Find the first track matching the desired track type.
-        self.tracks().iter().find(|track| match track.codec_params {
-            Some(CodecParameters::Audio(_)) if track_type == TrackType::Audio => true,
-            Some(CodecParameters::Video(_)) if track_type == TrackType::Video => true,
-            Some(CodecParameters::Subtitle(_)) if track_type == TrackType::Subtitle => true,
-            _ => false,
-        })
+        self.tracks().iter().find(|track| matches_track_type(track, track_type))
     }
 
-    /// Get the default track of a certain track type.
-    ///
-    /// # For Implementations
-    ///
-    /// If the container format has the capability to designate a default track, this function
-    /// should return it. Otherwise, the default implementation will return the first track of the
-    /// desired track type with a non-null codec ID. If no tracks are present then `None` is
-    /// returned.
-    fn default_track(&self, track_type: TrackType) -> Option<&Track> {
+    /// Get the first track of a certain track type with a known (non-null) codec.
+    fn first_track_known_codec(&self, track_type: TrackType) -> Option<&Track> {
         // Find the first track matching the desired track type with a known codec.
         self.tracks().iter().find(|track| match &track.codec_params {
             Some(CodecParameters::Audio(params)) if track_type == TrackType::Audio => {
@@ -363,6 +387,26 @@ pub trait FormatReader: Send + Sync {
         })
     }
 
+    /// Get the default track of a certain track type.
+    ///
+    /// # For Implementations
+    ///
+    /// The default implementation of this function will return the first track of the desired track
+    /// type with the default flag set, or if there is no track with the default flag set, the first
+    /// track of the desired track type with a non-null codec ID. If no tracks are present then
+    /// `None` is returned.
+    ///
+    /// Most format reader implementations should not override the default implementation and
+    /// instead set the default track flag appropriately.
+    fn default_track(&self, track_type: TrackType) -> Option<&Track> {
+        // Find a track with the default flag set that matches the desired track type.
+        self.tracks()
+            .iter()
+            .filter(|track| track.flags.contains(TrackFlags::DEFAULT))
+            .find(|track| matches_track_type(track, track_type))
+            .or_else(|| self.first_track_known_codec(track_type))
+    }
+
     /// Reader the next packet from the container.
     ///
     /// If `Ok(None)` is returned, the media has ended and no more packets will be produced until
@@ -376,6 +420,16 @@ pub trait FormatReader: Send + Sync {
     fn into_inner<'s>(self: Box<Self>) -> MediaSourceStream<'s>
     where
         Self: 's;
+}
+
+/// Returns true, if `track` is of the specific track type.
+fn matches_track_type(track: &Track, track_type: TrackType) -> bool {
+    match track.codec_params {
+        Some(CodecParameters::Audio(_)) if track_type == TrackType::Audio => true,
+        Some(CodecParameters::Video(_)) if track_type == TrackType::Video => true,
+        Some(CodecParameters::Subtitle(_)) if track_type == TrackType::Subtitle => true,
+        _ => false,
+    }
 }
 
 /// A `Packet` contains a discrete amount of encoded data for a single codec bitstream. The exact
