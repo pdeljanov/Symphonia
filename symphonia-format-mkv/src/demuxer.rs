@@ -220,6 +220,8 @@ impl<'s> MkvReader<'s> {
                 tr.with_language(language);
             }
 
+            tr.with_flags(track.flags);
+
             if let Some(codec_params) = make_track_codec_params(track)? {
                 tr.with_codec_params(codec_params);
             }

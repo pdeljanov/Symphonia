@@ -12,6 +12,7 @@ use symphonia_core::codecs::video::well_known::extra_data::{
 };
 use symphonia_core::codecs::video::VideoExtraData;
 use symphonia_core::errors::{Error, Result};
+use symphonia_core::formats::TrackFlags;
 use symphonia_core::io::{BufReader, ReadBytes};
 use symphonia_core::meta::{MetadataBuilder, MetadataRevision, RawTag, RawValue, Tag};
 
@@ -31,6 +32,7 @@ pub(crate) struct TrackElement {
     pub(crate) audio: Option<AudioElement>,
     pub(crate) video: Option<VideoElement>,
     pub(crate) default_duration: Option<u64>,
+    pub(crate) flags: TrackFlags,
 }
 
 impl Element for TrackElement {
@@ -46,6 +48,7 @@ impl Element for TrackElement {
         let mut block_addition_mappings = Vec::new();
         let mut codec_id = None;
         let mut default_duration = None;
+        let mut flags = Default::default();
 
         let mut it = header.children(reader);
         while let Some(header) = it.read_header()? {
@@ -77,6 +80,41 @@ impl Element for TrackElement {
                 ElementType::DefaultDuration => {
                     default_duration = Some(it.read_u64()?);
                 }
+                ElementType::FlagDefault => {
+                    if it.read_u64()? == 1 {
+                        flags |= TrackFlags::DEFAULT;
+                    }
+                }
+                ElementType::FlagForced => {
+                    if it.read_u64()? == 1 {
+                        flags |= TrackFlags::FORCED;
+                    }
+                }
+                ElementType::FlagHearingImpaired => {
+                    if it.read_u64()? == 1 {
+                        flags |= TrackFlags::HEARING_IMPAIRED;
+                    }
+                }
+                ElementType::FlagVisualImpaired => {
+                    if it.read_u64()? == 1 {
+                        flags |= TrackFlags::VISUALLY_IMPAIRED;
+                    }
+                }
+                ElementType::FlagTextDescriptions => {
+                    if it.read_u64()? == 1 {
+                        flags |= TrackFlags::TEXT_DESCRIPTIONS;
+                    }
+                }
+                ElementType::FlagOriginal => {
+                    if it.read_u64()? == 1 {
+                        flags |= TrackFlags::ORIGINAL_LANGUAGE;
+                    }
+                }
+                ElementType::FlagCommentary => {
+                    if it.read_u64()? == 1 {
+                        flags |= TrackFlags::COMMENTARY;
+                    }
+                }
                 other => {
                     log::debug!("ignored element {:?}", other);
                 }
@@ -93,6 +131,7 @@ impl Element for TrackElement {
             audio,
             video,
             default_duration,
+            flags,
         })
     }
 }
