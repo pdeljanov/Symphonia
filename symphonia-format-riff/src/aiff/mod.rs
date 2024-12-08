@@ -17,7 +17,7 @@ use symphonia_core::formats::prelude::*;
 use symphonia_core::formats::probe::{ProbeFormatData, ProbeableFormat, Score, Scoreable};
 use symphonia_core::formats::well_known::FORMAT_ID_AIFF;
 use symphonia_core::io::*;
-use symphonia_core::meta::{Metadata, MetadataBuilder, MetadataLog, StandardTag, Tag, VendorData};
+use symphonia_core::meta::{Metadata, MetadataBuilder, MetadataLog, StandardTag, Tag};
 use symphonia_core::support_format;
 
 use log::debug;
@@ -47,6 +47,7 @@ const AIFF_FORMAT_INFO: FormatInfo = FormatInfo {
 pub struct AiffReader<'s> {
     reader: MediaSourceStream<'s>,
     tracks: Vec<Track>,
+    attachments: Vec<Attachment>,
     chapters: Option<ChapterGroup>,
     metadata: MetadataLog,
     packet_info: PacketInfo,
@@ -92,6 +93,7 @@ impl<'s> AiffReader<'s> {
 
         let is_seekable = mss.is_seekable();
 
+        let mut attachments = Vec::new();
         let mut builder = MetadataBuilder::new();
 
         // Scan over all chunks.
@@ -146,8 +148,11 @@ impl<'s> AiffReader<'s> {
                 RiffAiffChunks::AppSpecific(chunk) => {
                     // Add application-specific data.
                     let appl = chunk.parse(&mut mss)?;
-                    builder
-                        .add_vendor_data(VendorData { ident: appl.application, data: appl.data });
+
+                    attachments.push(Attachment::VendorData(VendorDataAttachment {
+                        ident: appl.application,
+                        data: appl.data,
+                    }));
                 }
                 RiffAiffChunks::Text(chunk) => {
                     // Add tag.
@@ -205,6 +210,7 @@ impl<'s> AiffReader<'s> {
         Ok(AiffReader {
             reader: mss,
             tracks: vec![track],
+            attachments,
             chapters: chapters.or(opts.external_data.chapters),
             metadata,
             packet_info,
@@ -345,6 +351,10 @@ impl FormatReader for AiffReader<'_> {
         self.metadata.metadata()
     }
 
+    fn attachments(&self) -> &[Attachment] {
+        &self.attachments
+    }
+
     fn chapters(&self) -> Option<&ChapterGroup> {
         self.chapters.as_ref()
     }
@@ -387,11 +397,11 @@ impl FormatReader for AiffReader<'_> {
         debug!("seeking to frame_ts={}", ts);
 
         // RIFF is not internally packetized for PCM codecs. Packetization is simulated by trying to
-        // read a constant number of samples or blocks every call to next_packet. Therefore, a packet begins
-        // wherever the data stream is currently positioned. Since timestamps on packets should be
-        // determinstic, instead of seeking to the exact timestamp requested and starting the next
-        // packet there, seek to a packet boundary. In this way, packets will have have the same
-        // timestamps regardless if the stream was seeked or not.
+        // read a constant number of samples or blocks every call to next_packet. Therefore, a
+        // packet begins wherever the data stream is currently positioned. Since timestamps on
+        // packets should be determinstic, instead of seeking to the exact timestamp requested and
+        // starting the next packet there, seek to a packet boundary. In this way, packets will have
+        // have the same timestamps regardless if the stream was seeked or not.
         let actual_ts = self.packet_info.get_actual_ts(ts);
 
         // Calculate the absolute byte offset of the desired audio frame.

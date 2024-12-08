@@ -11,7 +11,7 @@ use std::path::Path;
 
 use lazy_static::lazy_static;
 use symphonia::core::codecs::{CodecInfo, CodecParameters, CodecProfile};
-use symphonia::core::formats::{FormatReader, Track, TrackFlags};
+use symphonia::core::formats::{Attachment, FormatReader, Track, TrackFlags};
 use symphonia::core::meta::{
     Chapter, ChapterGroup, ChapterGroupItem, ColorMode, ColorModel, ContentAdvisory,
     MetadataRevision, StandardTag, Tag, Visual,
@@ -56,6 +56,7 @@ pub fn print_format(path: &Path, format: &mut Box<dyn FormatReader>) {
     }
 
     print_chapters(format.chapters());
+    print_attachments(format.attachments());
     println!(":");
     println!();
 }
@@ -256,6 +257,34 @@ pub fn print_chapters(chapters: Option<&ChapterGroup>) {
 
         // Start recursion.
         print_chapter_group(chapters, 1, 1);
+    }
+}
+
+pub fn print_attachments(attachments: &[Attachment]) {
+    if !attachments.is_empty() {
+        print_blank();
+        print_header("Attachments");
+
+        for (i, attachment) in attachments.iter().enumerate() {
+            match attachment {
+                Attachment::File(file) => {
+                    print_pair("Attachment Type:", &"File", Bullet::Num(i + 1), 1);
+                    print_pair("File Name:", &file.name, Bullet::None, 1);
+                    if let Some(media_type) = &file.media_type {
+                        print_pair("Media Type:", &media_type, Bullet::None, 1);
+                    }
+                    if let Some(desc) = &file.description {
+                        print_pair("Description:", &desc, Bullet::None, 1);
+                    }
+                    print_pair("Size:", &fmt_size(file.data.len()), Bullet::None, 1);
+                }
+                Attachment::VendorData(vendor) => {
+                    print_pair("Attachment Type:", &"Vendor Data", Bullet::Num(i + 1), 1);
+                    print_pair("Identifier:", &vendor.ident, Bullet::None, 1);
+                    print_pair("Size:", &fmt_size(vendor.data.len()), Bullet::None, 1);
+                }
+            }
+        }
     }
 }
 

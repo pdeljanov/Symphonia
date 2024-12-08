@@ -41,9 +41,10 @@ const FLAC_FORMAT_INFO: FormatInfo = FormatInfo {
 /// Free Lossless Audio Codec (FLAC) native frame reader.
 pub struct FlacReader<'s> {
     reader: MediaSourceStream<'s>,
-    metadata: MetadataLog,
     tracks: Vec<Track>,
+    attachments: Vec<Attachment>,
     chapters: Option<ChapterGroup>,
+    metadata: MetadataLog,
     index: Option<SeekIndex>,
     first_frame_offset: u64,
     parser: PacketParser,
@@ -78,6 +79,7 @@ impl<'s> FlacReader<'s> {
 
         let mut reader = mss;
         let mut track = None;
+        let mut attachments = Vec::new();
         let mut chapters = None;
         let mut index = None;
         let mut parser = Default::default();
@@ -101,8 +103,9 @@ impl<'s> FlacReader<'s> {
                     }
                 }
                 MetadataBlockType::Application => {
-                    // TODO: Store vendor data.
-                    read_flac_application_block(&mut block_stream, header.block_len)?;
+                    let vendor_data =
+                        read_flac_application_block(&mut block_stream, header.block_len)?;
+                    attachments.push(Attachment::VendorData(vendor_data));
                 }
                 // SeekTable blocks are parsed into a SeekIndex.
                 MetadataBlockType::SeekTable => {
@@ -180,7 +183,16 @@ impl<'s> FlacReader<'s> {
         // metadata blocks have been read.
         let first_frame_offset = reader.pos();
 
-        Ok(FlacReader { reader, metadata, tracks, chapters, index, first_frame_offset, parser })
+        Ok(FlacReader {
+            reader,
+            tracks,
+            attachments,
+            chapters,
+            metadata,
+            index,
+            first_frame_offset,
+            parser,
+        })
     }
 }
 
@@ -206,6 +218,10 @@ impl ProbeableFormat<'_> for FlacReader<'_> {
 impl FormatReader for FlacReader<'_> {
     fn format_info(&self) -> &FormatInfo {
         &FLAC_FORMAT_INFO
+    }
+
+    fn attachments(&self) -> &[Attachment] {
+        &self.attachments
     }
 
     fn next_packet(&mut self) -> Result<Option<Packet>> {

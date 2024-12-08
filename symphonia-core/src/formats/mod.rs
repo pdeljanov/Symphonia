@@ -26,8 +26,8 @@ pub mod prelude {
     pub use crate::units::{Duration, TimeBase, TimeStamp};
 
     pub use super::{
-        FormatId, FormatInfo, FormatOptions, FormatReader, Packet, SeekMode, SeekTo, SeekedTo,
-        Track,
+        Attachment, FileAttachment, FormatId, FormatInfo, FormatOptions, FormatReader, Packet,
+        SeekMode, SeekTo, SeekedTo, Track, VendorDataAttachment,
     };
 }
 
@@ -319,6 +319,35 @@ impl Track {
     }
 }
 
+/// An attachment is additional data that is carried along with the container format.
+pub enum Attachment {
+    /// A file.
+    File(FileAttachment),
+    /// Application or vendor-specific data.
+    VendorData(VendorDataAttachment),
+}
+
+/// A file attachment.
+pub struct FileAttachment {
+    /// The file name.
+    pub name: String,
+    /// An optional description of the file.
+    pub description: Option<String>,
+    /// An optional media-type describing the file data.
+    pub media_type: Option<String>,
+    /// The file data.
+    pub data: Box<[u8]>,
+}
+
+/// Application or vendor-specific proprietary binary data attachment.
+#[derive(Clone, Debug)]
+pub struct VendorDataAttachment {
+    /// A text representation of the vendor's application identifier.
+    pub ident: String,
+    /// The vendor data.
+    pub data: Box<[u8]>,
+}
+
 /// A `FormatReader` is a container demuxer. It provides methods to probe a media container for
 /// information and access the tracks encapsulated in the container.
 ///
@@ -339,7 +368,20 @@ pub trait FormatReader: Send + Sync {
     /// Get basic information about the container format.
     fn format_info(&self) -> &FormatInfo;
 
+    /// Get a list of all attachments.
+    ///
+    /// # For Implementations
+    ///
+    /// The default implementation returns an empty slice.
+    fn attachments(&self) -> &[Attachment] {
+        &[]
+    }
+
     /// Get media chapters, if available.
+    ///
+    /// # For Implementations
+    ///
+    /// The default implementation returns `None`.
     fn chapters(&self) -> Option<&ChapterGroup> {
         None
     }

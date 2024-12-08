@@ -607,15 +607,6 @@ pub struct Visual {
     pub data: Box<[u8]>,
 }
 
-/// `VendorData` is any binary metadata that is proprietary to a certain application or vendor.
-#[derive(Clone, Debug)]
-pub struct VendorData {
-    /// A text representation of the vendor's application identifier.
-    pub ident: String,
-    /// The vendor data.
-    pub data: Box<[u8]>,
-}
-
 /// A group of chapters and/or other chapter groups.
 #[derive(Clone, Debug)]
 pub struct ChapterGroup {
@@ -665,8 +656,6 @@ pub struct MetadataRevision {
     tags: Vec<Tag>,
     /// Attached pictures.
     visuals: Vec<Visual>,
-    /// Vendor-specific data.
-    vendor_data: Vec<VendorData>,
 }
 
 impl MetadataRevision {
@@ -681,11 +670,6 @@ impl MetadataRevision {
     /// Gets an immutable slice to the `Visual`s in this revision.
     pub fn visuals(&self) -> &[Visual] {
         &self.visuals
-    }
-
-    /// Gets an immutable slice to the `VendorData` in this revision.
-    pub fn vendor_data(&self) -> &[VendorData] {
-        &self.vendor_data
     }
 }
 
@@ -710,12 +694,6 @@ impl MetadataBuilder {
     /// Add a `Visual` to the metadata.
     pub fn add_visual(&mut self, visual: Visual) -> &mut Self {
         self.metadata.visuals.push(visual);
-        self
-    }
-
-    /// Add `VendorData` to the metadata.
-    pub fn add_vendor_data(&mut self, vendor_data: VendorData) -> &mut Self {
-        self.metadata.vendor_data.push(vendor_data);
         self
     }
 

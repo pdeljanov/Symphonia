@@ -12,10 +12,10 @@ use std::sync::Arc;
 
 use symphonia_core::errors::{decode_error, Result};
 use symphonia_core::formats::util::SeekIndex;
+use symphonia_core::formats::VendorDataAttachment;
 use symphonia_core::io::ReadBytes;
 use symphonia_core::meta::{
-    Chapter, ChapterGroup, ChapterGroupItem, MetadataBuilder, Size, StandardTag, Tag, VendorData,
-    Visual,
+    Chapter, ChapterGroup, ChapterGroupItem, MetadataBuilder, Size, StandardTag, Tag, Visual,
 };
 use symphonia_core::units::TimeBase;
 
@@ -156,13 +156,13 @@ pub fn read_flac_seektable_block<B: ReadBytes>(
 pub fn read_flac_application_block<B: ReadBytes>(
     reader: &mut B,
     block_length: u32,
-) -> Result<VendorData> {
+) -> Result<VendorDataAttachment> {
     // Read the application identifier. Usually this is just 4 ASCII characters, but it is not
     // limited to that. Non-printable ASCII characters must be escaped to create a valid UTF8
     // string.
     let ident = escape_identifier(&reader.read_quad_bytes()?);
     let data = reader.read_boxed_slice_exact(block_length as usize - 4)?;
-    Ok(VendorData { ident, data })
+    Ok(VendorDataAttachment { ident, data })
 }
 
 /// Read a cuesheet metadata block as a chapter group.
