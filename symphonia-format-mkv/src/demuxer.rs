@@ -25,8 +25,8 @@ use crate::ebml::{EbmlElement, ElementHeader, ElementIterator};
 use crate::element_ids::{ElementType, ELEMENTS};
 use crate::lacing::{extract_frames, Frame};
 use crate::segment::{
-    BlockGroupElement, ClusterElement, CuesElement, InfoElement, SeekHeadElement, TagsElement,
-    TracksElement,
+    AttachmentsElement, BlockGroupElement, ClusterElement, CuesElement, InfoElement,
+    SeekHeadElement, TagsElement, TracksElement,
 };
 
 const MKV_FORMAT_INFO: FormatInfo =
@@ -49,8 +49,9 @@ pub struct MkvReader<'s> {
     tracks: Vec<Track>,
     track_states: HashMap<u32, TrackState>,
     current_cluster: Option<ClusterState>,
-    metadata: MetadataLog,
+    attachments: Vec<Attachment>,
     chapters: Option<ChapterGroup>,
+    metadata: MetadataLog,
     frames: VecDeque<Frame>,
     timestamp_scale: u64,
     clusters: Vec<ClusterElement>,
@@ -93,10 +94,12 @@ impl<'s> MkvReader<'s> {
         let mut segment_tracks = None;
         let mut info = None;
         let mut clusters = Vec::new();
-        let mut metadata = opts.external_data.metadata.unwrap_or_default();
         let mut current_cluster = None;
-
         let mut seek_positions = Vec::new();
+
+        let mut metadata = opts.external_data.metadata.unwrap_or_default();
+        let mut attachments = Vec::new();
+
         while let Ok(Some(header)) = it.read_child_header() {
             match header.etype {
                 ElementType::SeekHead => {
@@ -139,6 +142,17 @@ impl<'s> MkvReader<'s> {
                     // we can't be sure that we'll find anything useful.
                     break;
                 }
+                ElementType::Attachments => {
+                    let attachments_elem = it.read_element_data::<AttachmentsElement>()?;
+                    for file in attachments_elem.attached_files {
+                        attachments.push(Attachment::File(FileAttachment {
+                            name: file.name,
+                            description: file.desc,
+                            media_type: Some(file.media_type),
+                            data: file.data,
+                        }));
+                    }
+                }
                 other => {
                     it.ignore_data()?;
                     log::debug!("ignored element {:?}", other);
@@ -176,6 +190,17 @@ impl<'s> MkvReader<'s> {
                                 end: None,
                                 blocks: Box::new([]),
                             });
+                        }
+                    }
+                    ElementType::Attachments => {
+                        let attachments_elem = it.read_element::<AttachmentsElement>()?;
+                        for file in attachments_elem.attached_files {
+                            attachments.push(Attachment::File(FileAttachment {
+                                name: file.name,
+                                description: file.desc,
+                                media_type: Some(file.media_type),
+                                data: file.data,
+                            }));
                         }
                     }
                     _ => (),
@@ -235,8 +260,9 @@ impl<'s> MkvReader<'s> {
             tracks,
             track_states: states,
             current_cluster,
-            metadata,
+            attachments,
             chapters: opts.external_data.chapters,
+            metadata,
             frames: VecDeque::new(),
             timestamp_scale: info.timestamp_scale,
             clusters,
@@ -442,6 +468,10 @@ impl ProbeableFormat<'_> for MkvReader<'_> {
 impl FormatReader for MkvReader<'_> {
     fn format_info(&self) -> &FormatInfo {
         &MKV_FORMAT_INFO
+    }
+
+    fn attachments(&self) -> &[Attachment] {
+        &self.attachments
     }
 
     fn chapters(&self) -> Option<&ChapterGroup> {

@@ -169,6 +169,13 @@ pub enum ElementType {
     TagDefault,
     TagString,
     TagBinary,
+    Attachments,
+    AttachedFile,
+    FileDescription,
+    FileName,
+    FileMediaType,
+    FileData,
+    FileUid,
     /// Special type for unknown tags.
     Unknown,
 }
@@ -337,6 +344,13 @@ lazy_static! {
         elems.insert(0x4484, (Type::Unsigned, ElementType::TagDefault));
         elems.insert(0x4487, (Type::String, ElementType::TagString));
         elems.insert(0x4485, (Type::Binary, ElementType::TagBinary));
+        elems.insert(0x1941A469, (Type::Master, ElementType::Attachments));
+        elems.insert(0x61A7, (Type::Master, ElementType::AttachedFile));
+        elems.insert(0x467E, (Type::String, ElementType::FileDescription));
+        elems.insert(0x466E, (Type::String, ElementType::FileName));
+        elems.insert(0x4660, (Type::String, ElementType::FileMediaType));
+        elems.insert(0x465C, (Type::Binary, ElementType::FileData));
+        elems.insert(0x46AE, (Type::Unsigned, ElementType::FileUid));
         elems
     };
 }

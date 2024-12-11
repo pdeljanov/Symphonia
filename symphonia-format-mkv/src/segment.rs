@@ -752,3 +752,81 @@ impl Element for SimpleTagElement {
         })
     }
 }
+
+#[derive(Debug)]
+pub(crate) struct AttachedFileElement {
+    pub(crate) name: String,
+    pub(crate) desc: Option<String>,
+    pub(crate) media_type: String,
+    pub(crate) data: Box<[u8]>,
+}
+
+impl Element for AttachedFileElement {
+    const ID: ElementType = ElementType::AttachedFile;
+
+    fn read<B: ReadBytes>(reader: &mut B, header: ElementHeader) -> Result<Self> {
+        let mut name = None;
+        let mut desc = None;
+        let mut media_type = None;
+        let mut data = None;
+
+        let mut it = header.children(reader);
+        while let Some(header) = it.read_header()? {
+            match header.etype {
+                ElementType::FileDescription => {
+                    desc = Some(it.read_string()?);
+                }
+                ElementType::FileName => {
+                    name = Some(it.read_string()?);
+                }
+                ElementType::FileMediaType => {
+                    media_type = Some(it.read_string()?);
+                }
+                ElementType::FileData => {
+                    data = Some(it.read_boxed_slice()?);
+                }
+                ElementType::FileUid => {
+                    let _ = it.read_u64()?;
+                }
+                other => {
+                    log::debug!("ignored element {:?}", other);
+                }
+            }
+        }
+
+        Ok(Self {
+            name: name.ok_or(Error::DecodeError("mkv: missing attached file name"))?,
+            desc,
+            media_type: media_type
+                .ok_or(Error::DecodeError("mkv: missing attached file media-type"))?,
+            data: data.ok_or(Error::DecodeError("mkv: missing attached file data"))?,
+        })
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct AttachmentsElement {
+    pub(crate) attached_files: Box<[AttachedFileElement]>,
+}
+
+impl Element for AttachmentsElement {
+    const ID: ElementType = ElementType::Attachments;
+
+    fn read<B: ReadBytes>(reader: &mut B, header: ElementHeader) -> Result<Self> {
+        let mut attached_files = Vec::new();
+
+        let mut it = header.children(reader);
+        while let Some(header) = it.read_header()? {
+            match header.etype {
+                ElementType::AttachedFile => {
+                    attached_files.push(it.read_element_data::<AttachedFileElement>()?);
+                }
+                other => {
+                    log::debug!("ignored element {:?}", other);
+                }
+            }
+        }
+
+        Ok(Self { attached_files: attached_files.into_boxed_slice() })
+    }
+}
