@@ -537,9 +537,9 @@ impl Atom for MetaTagDataAtom {
         // The data payload is the remainder of the atom.
         // TODO: Apply a limit.
         let data = {
-            let size = header.data_unread_at(reader.pos()).ok_or_else(|| {
-                Error::DecodeError("isomp4 (ilst): expected atom size to be known")
-            })?;
+            let size = header
+                .data_unread_at(reader.pos())
+                .ok_or(Error::DecodeError("isomp4 (ilst): expected atom size to be known"))?;
 
             reader.read_boxed_slice_exact(size as usize)?
         };
@@ -561,7 +561,7 @@ impl Atom for MetaTagNamespaceAtom {
 
         let size = header
             .data_len()
-            .ok_or_else(|| Error::DecodeError("isomp4 (ilst): expected atom size to be known"))?;
+            .ok_or(Error::DecodeError("isomp4 (ilst): expected atom size to be known"))?;
 
         let buf = reader.read_boxed_slice_exact(size as usize)?;
 

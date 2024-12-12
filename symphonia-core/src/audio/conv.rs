@@ -680,7 +680,6 @@ impl<S> ConvertibleSample for S where
 mod tests {
     use super::FromSample;
     use crate::audio::sample::{i24, u24, Sample};
-    use std::{i16, i32, i8, u16, u32, u8};
 
     #[test]
     fn verify_u8_from_sample() {

@@ -123,7 +123,7 @@ pub struct Interleaved<'a, S: Sample> {
     end: usize,
 }
 
-impl<'a, S: Sample> Interleaved<'a, S> {
+impl<S: Sample> Interleaved<'_, S> {
     fn new(planes: &[Vec<S>], bound: Range<usize>) -> Interleaved<'_, S> {
         let num_planes = planes.len();
         let len = bound.len();
@@ -135,7 +135,7 @@ impl<'a, S: Sample> Interleaved<'a, S> {
     }
 }
 
-impl<'a, S: Sample> Iterator for Interleaved<'a, S> {
+impl<S: Sample> Iterator for Interleaved<'_, S> {
     type Item = S;
 
     fn next(&mut self) -> Option<Self::Item> {

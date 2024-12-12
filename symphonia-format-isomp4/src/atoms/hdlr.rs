@@ -65,9 +65,9 @@ impl Atom for HdlrAtom {
 
         // Human readable UTF-8 string of the track type.
         let name = {
-            let size = header.data_unread_at(reader.pos()).ok_or_else(|| {
-                Error::DecodeError("isomp4 (hdlr): expected atom size to be known")
-            })?;
+            let size = header
+                .data_unread_at(reader.pos())
+                .ok_or(Error::DecodeError("isomp4 (hdlr): expected atom size to be known"))?;
             let buf = reader.read_boxed_slice_exact(size as usize)?;
             String::from_utf8_lossy(&buf).to_string()
         };

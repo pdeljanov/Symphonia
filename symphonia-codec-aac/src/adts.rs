@@ -410,9 +410,9 @@ fn approximate_frame_count(mut source: &mut MediaSourceStream<'_>) -> Result<Opt
         let mut scoped_stream = ScopedStream::new(&mut source, MAX_LEN);
 
         loop {
-            let header = match AdtsHeader::read(&mut scoped_stream) {
-                Ok(header) => header,
-                _ => break,
+            let Ok(header) = AdtsHeader::read(&mut scoped_stream)
+            else {
+                break;
             };
 
             if scoped_stream.ignore_bytes(u64::from(header.payload_len())).is_err() {
