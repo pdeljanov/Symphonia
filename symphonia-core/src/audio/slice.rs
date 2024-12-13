@@ -33,7 +33,7 @@ impl<'a, S: Sample> AudioSlice<'a, S> {
     }
 }
 
-impl<'a, S: Sample> Audio<S> for AudioSlice<'a, S> {
+impl<S: Sample> Audio<S> for AudioSlice<'_, S> {
     fn spec(&self) -> &AudioSpec {
         self.spec
     }
@@ -112,7 +112,7 @@ impl<S: Sample + SampleBytes> AudioBytes<S> for AudioSlice<'_, S> {
     }
 }
 
-impl<'a, S: Sample> std::ops::Index<Position> for AudioSlice<'a, S> {
+impl<S: Sample> std::ops::Index<Position> for AudioSlice<'_, S> {
     type Output = [S];
 
     fn index(&self, index: Position) -> &Self::Output {
@@ -120,7 +120,7 @@ impl<'a, S: Sample> std::ops::Index<Position> for AudioSlice<'a, S> {
     }
 }
 
-impl<'a, S: Sample> std::ops::Index<usize> for AudioSlice<'a, S> {
+impl<S: Sample> std::ops::Index<usize> for AudioSlice<'_, S> {
     type Output = [S];
 
     fn index(&self, index: usize) -> &Self::Output {
@@ -151,7 +151,7 @@ impl<'a, S: Sample> AudioSliceMut<'a, S> {
     }
 }
 
-impl<'a, S: Sample> Audio<S> for AudioSliceMut<'a, S> {
+impl<S: Sample> Audio<S> for AudioSliceMut<'_, S> {
     fn spec(&self) -> &AudioSpec {
         self.spec
     }
@@ -194,7 +194,7 @@ impl<'a, S: Sample> Audio<S> for AudioSliceMut<'a, S> {
     }
 }
 
-impl<'a, S: Sample> AudioMut<S> for AudioSliceMut<'a, S> {
+impl<S: Sample> AudioMut<S> for AudioSliceMut<'_, S> {
     fn plane_mut(&mut self, idx: usize) -> Option<&mut [S]> {
         self.planes.get_mut(idx).map(|plane| &mut plane[self.range.clone()])
     }
@@ -254,7 +254,7 @@ impl<S: Sample + SampleBytes> AudioBytes<S> for AudioSliceMut<'_, S> {
     }
 }
 
-impl<'a, S: Sample> std::ops::Index<Position> for AudioSliceMut<'a, S> {
+impl<S: Sample> std::ops::Index<Position> for AudioSliceMut<'_, S> {
     type Output = [S];
 
     fn index(&self, index: Position) -> &Self::Output {
@@ -262,13 +262,13 @@ impl<'a, S: Sample> std::ops::Index<Position> for AudioSliceMut<'a, S> {
     }
 }
 
-impl<'a, S: Sample> std::ops::IndexMut<Position> for AudioSliceMut<'a, S> {
+impl<S: Sample> std::ops::IndexMut<Position> for AudioSliceMut<'_, S> {
     fn index_mut(&mut self, index: Position) -> &mut Self::Output {
         self.plane_by_position_mut(index).unwrap()
     }
 }
 
-impl<'a, S: Sample> std::ops::Index<usize> for AudioSliceMut<'a, S> {
+impl<S: Sample> std::ops::Index<usize> for AudioSliceMut<'_, S> {
     type Output = [S];
 
     fn index(&self, index: usize) -> &Self::Output {
@@ -276,7 +276,7 @@ impl<'a, S: Sample> std::ops::Index<usize> for AudioSliceMut<'a, S> {
     }
 }
 
-impl<'a, S: Sample> std::ops::IndexMut<usize> for AudioSliceMut<'a, S> {
+impl<S: Sample> std::ops::IndexMut<usize> for AudioSliceMut<'_, S> {
     fn index_mut(&mut self, index: usize) -> &mut Self::Output {
         self.plane_mut(index).unwrap()
     }

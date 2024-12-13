@@ -36,7 +36,7 @@ impl Atom for OpusAtom {
         // Opus identification header.
         let data_len = header
             .data_len()
-            .ok_or_else(|| Error::DecodeError("isomp4 (opus): expected atom size to be known"))?
+            .ok_or(Error::DecodeError("isomp4 (opus): expected atom size to be known"))?
             as usize;
 
         if data_len < MIN_OPUS_EXTRA_DATA_SIZE - OPUS_MAGIC_LEN {

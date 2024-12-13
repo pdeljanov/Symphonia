@@ -291,7 +291,7 @@ macro_rules! impl_generic_ref_func {
     };
 }
 
-impl<'a> GenericAudioBufferRef<'a> {
+impl GenericAudioBufferRef<'_> {
     /// Get the audio specification.
     pub fn spec(&self) -> &AudioSpec {
         impl_generic_ref_func!(self, buf, buf.spec())

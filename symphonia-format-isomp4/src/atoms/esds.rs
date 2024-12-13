@@ -53,7 +53,7 @@ impl Atom for EsdsAtom {
         // The ES descriptors occupy the rest of the atom.
         let ds_size = header
             .data_len()
-            .ok_or_else(|| Error::DecodeError("isomp4 (esds): expected atom size to be known"))?;
+            .ok_or(Error::DecodeError("isomp4 (esds): expected atom size to be known"))?;
 
         let mut scoped = ScopedStream::new(reader, ds_size);
 

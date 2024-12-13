@@ -607,7 +607,7 @@ impl<'a, S: Sample> Deref for MutableAudioPlaneSlices<'a, S> {
     }
 }
 
-impl<'a, S: Sample> DerefMut for MutableAudioPlaneSlices<'a, S> {
+impl<S: Sample> DerefMut for MutableAudioPlaneSlices<'_, S> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.planes
     }

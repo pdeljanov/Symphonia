@@ -600,6 +600,7 @@ pub mod text {
     }
 
     #[cfg(test)]
+    #[allow(clippy::byte_char_slices)]
     mod tests {
         #[test]
         fn verify_decode_utf16be() {

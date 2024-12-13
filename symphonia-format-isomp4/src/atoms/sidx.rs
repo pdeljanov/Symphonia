@@ -49,7 +49,7 @@ impl Atom for SidxAtom {
         let anchor = header
             .atom_len()
             .map(|atom_len| header.atom_pos() + atom_len.get())
-            .ok_or_else(|| Error::DecodeError("isomp4 (sidx): expected atom size to be known"))?;
+            .ok_or(Error::DecodeError("isomp4 (sidx): expected atom size to be known"))?;
 
         let (earliest_pts, first_offset) = match version {
             0 => (u64::from(reader.read_be_u32()?), anchor + u64::from(reader.read_be_u32()?)),

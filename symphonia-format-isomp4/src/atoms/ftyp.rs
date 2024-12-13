@@ -26,7 +26,7 @@ impl Atom for FtypAtom {
         // since it only stores FourCCs.
         let data_len = header
             .data_len()
-            .ok_or_else(|| Error::DecodeError("isomp4 (ftyp): expected atom size to be known"))?;
+            .ok_or(Error::DecodeError("isomp4 (ftyp): expected atom size to be known"))?;
 
         if data_len < 8 || data_len & 0x3 != 0 {
             return decode_error("isomp4: invalid ftyp data length");

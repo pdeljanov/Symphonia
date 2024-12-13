@@ -24,7 +24,7 @@ impl Atom for Dec3Atom {
         // EAC3SpecificBox should have length
         let len = header
             .data_len()
-            .ok_or_else(|| Error::DecodeError("isomp4 (dec3): expected atom size to be known"))?;
+            .ok_or(Error::DecodeError("isomp4 (dec3): expected atom size to be known"))?;
 
         let extra_data = reader.read_boxed_slice_exact(len as usize)?;
 
