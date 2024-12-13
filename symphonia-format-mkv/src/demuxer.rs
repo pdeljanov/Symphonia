@@ -7,7 +7,6 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::convert::TryFrom;
-use std::io::{Seek, SeekFrom};
 
 use symphonia_core::errors::{seek_error, unsupported_error, Error, Result, SeekErrorKind};
 use symphonia_core::formats::prelude::*;
@@ -18,10 +17,10 @@ use symphonia_core::meta::{Metadata, MetadataLog};
 use symphonia_core::support_format;
 use symphonia_core::units::TimeBase;
 
-use log::warn;
+use log::{info, warn};
 
 use crate::codecs::make_track_codec_params;
-use crate::ebml::{EbmlElement, ElementHeader, ElementIterator};
+use crate::ebml::{EbmlElement, ElementHeader, ElementIterator, OwnedElementReader};
 use crate::element_ids::{ElementType, ELEMENTS};
 use crate::lacing::{extract_frames, Frame};
 use crate::segment::{
@@ -45,7 +44,7 @@ pub struct TrackState {
 /// `MkvReader` implements a demuxer for the Matroska and WebM formats.
 pub struct MkvReader<'s> {
     /// Iterator over EBML element headers
-    iter: ElementIterator<MediaSourceStream<'s>>,
+    iter: ElementIterator<OwnedElementReader<MediaSourceStream<'s>>>,
     tracks: Vec<Track>,
     track_states: HashMap<u32, TrackState>,
     current_cluster: Option<ClusterState>,
@@ -64,22 +63,16 @@ struct ClusterState {
 }
 
 impl<'s> MkvReader<'s> {
-    pub fn try_new(mut mss: MediaSourceStream<'s>, opts: FormatOptions) -> Result<Self> {
-        let is_seekable = mss.is_seekable();
-
+    pub fn try_new(mss: MediaSourceStream<'s>, opts: FormatOptions) -> Result<Self> {
         // Get the total length of the stream, if possible.
-        let total_len = if is_seekable {
-            let pos = mss.pos();
-            let len = mss.seek(SeekFrom::End(0))?;
-            mss.seek(SeekFrom::Start(pos))?;
-            log::info!("stream is seekable with len={} bytes.", len);
-            Some(len)
-        }
-        else {
-            None
-        };
+        let (is_seekable, total_len) = (mss.is_seekable(), mss.byte_len());
 
-        let mut it = ElementIterator::new(mss, total_len);
+        match total_len {
+            Some(len) if is_seekable => info!("stream is seekable with len={} bytes.", len),
+            _ => (),
+        }
+
+        let mut it = ElementIterator::new(OwnedElementReader::new(mss), total_len);
         let ebml = it.read_element::<EbmlElement>()?;
 
         if !matches!(ebml.header.doc_type.as_str(), "matroska" | "webm") {
@@ -161,6 +154,9 @@ impl<'s> MkvReader<'s> {
         }
 
         if is_seekable {
+            // All elements preceeding the element iterator's current position have already been
+            // read and do not need to be revisited.
+            seek_positions.retain(|sp| sp.1 >= it.pos());
             // Make sure we don't jump backwards unnecessarily.
             seek_positions.sort_by_key(|sp| sp.1);
 
@@ -212,9 +208,7 @@ impl<'s> MkvReader<'s> {
             segment_tracks.ok_or(Error::DecodeError("mkv: missing Tracks element"))?;
 
         if is_seekable {
-            let mut reader = it.into_inner();
-            reader.seek(SeekFrom::Start(segment_pos))?;
-            it = ElementIterator::new(reader, total_len);
+            it.seek(segment_pos)?;
         }
 
         let info = info.ok_or(Error::DecodeError("mkv: missing Info element"))?;
@@ -534,7 +528,7 @@ impl FormatReader for MkvReader<'_> {
     where
         Self: 's,
     {
-        self.iter.into_inner()
+        self.iter.into_inner().into_inner()
     }
 }
 

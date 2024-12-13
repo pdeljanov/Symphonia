@@ -16,7 +16,9 @@ use symphonia_core::formats::TrackFlags;
 use symphonia_core::io::{BufReader, ReadBytes};
 use symphonia_core::meta::{MetadataBuilder, MetadataRevision, RawTag, RawValue, Tag};
 
-use crate::ebml::{read_unsigned_vint, Element, ElementData, ElementHeader};
+use crate::ebml::{
+    read_unsigned_vint, Element, ElementData, ElementHeader, ElementIterator, ElementReader,
+};
 use crate::element_ids::ElementType;
 use crate::lacing::calc_abs_block_timestamp;
 
@@ -38,7 +40,7 @@ pub(crate) struct TrackElement {
 impl Element for TrackElement {
     const ID: ElementType = ElementType::TrackEntry;
 
-    fn read<B: ReadBytes>(reader: &mut B, header: ElementHeader) -> Result<Self> {
+    fn read<R: ElementReader>(mut it: ElementIterator<R>, _header: ElementHeader) -> Result<Self> {
         let mut number = None;
         let mut uid = None;
         let mut language = None;
@@ -50,7 +52,6 @@ impl Element for TrackElement {
         let mut default_duration = None;
         let mut flags = Default::default();
 
-        let mut it = header.children(reader);
         while let Some(header) = it.read_header()? {
             match header.etype {
                 ElementType::TrackNumber => {
@@ -148,13 +149,12 @@ pub(crate) struct AudioElement {
 impl Element for AudioElement {
     const ID: ElementType = ElementType::Audio;
 
-    fn read<B: ReadBytes>(reader: &mut B, header: ElementHeader) -> Result<Self> {
+    fn read<R: ElementReader>(mut it: ElementIterator<R>, _header: ElementHeader) -> Result<Self> {
         let mut sampling_frequency = None;
         let mut output_sampling_frequency = None;
         let mut channels = None;
         let mut bit_depth = None;
 
-        let mut it = header.children(reader);
         while let Some(header) = it.read_header()? {
             match header.etype {
                 ElementType::SamplingFrequency => {
@@ -194,11 +194,10 @@ pub(crate) struct VideoElement {
 impl Element for VideoElement {
     const ID: ElementType = ElementType::Video;
 
-    fn read<B: ReadBytes>(reader: &mut B, header: ElementHeader) -> Result<Self> {
+    fn read<R: ElementReader>(mut it: ElementIterator<R>, _header: ElementHeader) -> Result<Self> {
         let mut pixel_width = None;
         let mut pixel_height = None;
 
-        let mut it = header.children(reader);
         while let Some(header) = it.read_header()? {
             match header.etype {
                 ElementType::PixelWidth => {
@@ -225,13 +224,12 @@ pub(crate) struct BlockAdditionMappingElement {
 impl Element for BlockAdditionMappingElement {
     const ID: ElementType = ElementType::BlockAdditionMapping;
 
-    fn read<B: ReadBytes>(reader: &mut B, header: ElementHeader) -> Result<Self> {
+    fn read<R: ElementReader>(mut it: ElementIterator<R>, _header: ElementHeader) -> Result<Self> {
         // There can be many BlockAdditionMapping elements with DolbyVisionConfiguration in a single track
         // BlockAddIdType FourCC string allows to determine the type of DolbyVisionConfiguration extra data
         let mut extra_data = None;
         let mut block_add_id_type = String::new();
 
-        let mut it = header.children(reader);
         while let Some(header) = it.read_header()? {
             match header.etype {
                 ElementType::BlockAddIdType => {
@@ -270,10 +268,9 @@ pub(crate) struct SeekHeadElement {
 impl Element for SeekHeadElement {
     const ID: ElementType = ElementType::SeekHead;
 
-    fn read<B: ReadBytes>(reader: &mut B, header: ElementHeader) -> Result<Self> {
+    fn read<R: ElementReader>(mut it: ElementIterator<R>, _header: ElementHeader) -> Result<Self> {
         let mut seeks = Vec::new();
 
-        let mut it = header.children(reader);
         while let Some(header) = it.read_header()? {
             match header.etype {
                 ElementType::Seek => {
@@ -298,11 +295,10 @@ pub(crate) struct SeekElement {
 impl Element for SeekElement {
     const ID: ElementType = ElementType::Seek;
 
-    fn read<B: ReadBytes>(reader: &mut B, header: ElementHeader) -> Result<Self> {
+    fn read<R: ElementReader>(mut it: ElementIterator<R>, _header: ElementHeader) -> Result<Self> {
         let mut seek_id = None;
         let mut seek_position = None;
 
-        let mut it = header.children(reader);
         while let Some(header) = it.read_header()? {
             match header.etype {
                 ElementType::SeekId => {
@@ -332,8 +328,7 @@ pub(crate) struct TracksElement {
 impl Element for TracksElement {
     const ID: ElementType = ElementType::Tracks;
 
-    fn read<B: ReadBytes>(reader: &mut B, header: ElementHeader) -> Result<Self> {
-        let mut it = header.children(reader);
+    fn read<R: ElementReader>(mut it: ElementIterator<R>, _header: ElementHeader) -> Result<Self> {
         Ok(Self { tracks: it.read_elements()? })
     }
 }
@@ -353,7 +348,7 @@ pub(crate) struct EbmlHeaderElement {
 impl Element for EbmlHeaderElement {
     const ID: ElementType = ElementType::Ebml;
 
-    fn read<B: ReadBytes>(reader: &mut B, header: ElementHeader) -> Result<Self> {
+    fn read<R: ElementReader>(mut it: ElementIterator<R>, _header: ElementHeader) -> Result<Self> {
         let mut version = None;
         let mut read_version = None;
         let mut max_id_length = None;
@@ -362,7 +357,6 @@ impl Element for EbmlHeaderElement {
         let mut doc_type_version = None;
         let mut doc_type_read_version = None;
 
-        let mut it = header.children(reader);
         while let Some(header) = it.read_header()? {
             match header.etype {
                 ElementType::EbmlVersion => {
@@ -417,14 +411,13 @@ pub(crate) struct InfoElement {
 impl Element for InfoElement {
     const ID: ElementType = ElementType::Info;
 
-    fn read<B: ReadBytes>(reader: &mut B, header: ElementHeader) -> Result<Self> {
+    fn read<R: ElementReader>(mut it: ElementIterator<R>, _header: ElementHeader) -> Result<Self> {
         let mut duration = None;
         let mut timestamp_scale = None;
         let mut title = None;
         let mut muxing_app = None;
         let mut writing_app = None;
 
-        let mut it = header.children(reader);
         while let Some(header) = it.read_header()? {
             match header.etype {
                 ElementType::TimestampScale => {
@@ -467,8 +460,7 @@ pub(crate) struct CuesElement {
 impl Element for CuesElement {
     const ID: ElementType = ElementType::Cues;
 
-    fn read<B: ReadBytes>(reader: &mut B, header: ElementHeader) -> Result<Self> {
-        let mut it = header.children(reader);
+    fn read<R: ElementReader>(mut it: ElementIterator<R>, _header: ElementHeader) -> Result<Self> {
         Ok(Self { points: it.read_elements()? })
     }
 }
@@ -483,9 +475,7 @@ pub(crate) struct CuePointElement {
 impl Element for CuePointElement {
     const ID: ElementType = ElementType::CuePoint;
 
-    fn read<B: ReadBytes>(reader: &mut B, header: ElementHeader) -> Result<Self> {
-        let mut it = header.children(reader);
-
+    fn read<R: ElementReader>(mut it: ElementIterator<R>, _header: ElementHeader) -> Result<Self> {
         let mut time = None;
         let mut pos = None;
         while let Some(header) = it.read_header()? {
@@ -517,9 +507,7 @@ pub(crate) struct CueTrackPositionsElement {
 impl Element for CueTrackPositionsElement {
     const ID: ElementType = ElementType::CueTrackPositions;
 
-    fn read<B: ReadBytes>(reader: &mut B, header: ElementHeader) -> Result<Self> {
-        let mut it = header.children(reader);
-
+    fn read<R: ElementReader>(mut it: ElementIterator<R>, _header: ElementHeader) -> Result<Self> {
         let mut track = None;
         let mut pos = None;
         while let Some(header) = it.read_header()? {
@@ -552,9 +540,7 @@ pub(crate) struct BlockGroupElement {
 impl Element for BlockGroupElement {
     const ID: ElementType = ElementType::BlockGroup;
 
-    fn read<B: ReadBytes>(reader: &mut B, header: ElementHeader) -> Result<Self> {
-        let mut it = header.children(reader);
-
+    fn read<R: ElementReader>(mut it: ElementIterator<R>, _header: ElementHeader) -> Result<Self> {
         let mut data = None;
         let mut block_duration = None;
         while let Some(header) = it.read_header()? {
@@ -598,8 +584,8 @@ pub(crate) struct ClusterElement {
 impl Element for ClusterElement {
     const ID: ElementType = ElementType::Cluster;
 
-    fn read<B: ReadBytes>(reader: &mut B, header: ElementHeader) -> Result<Self> {
-        let pos = reader.pos();
+    fn read<R: ElementReader>(mut it: ElementIterator<R>, header: ElementHeader) -> Result<Self> {
+        let pos = it.pos();
         let mut timestamp = None;
         let mut blocks = Vec::new();
         let has_size = header.end().is_some();
@@ -616,7 +602,6 @@ impl Element for ClusterElement {
             timestamp.ok_or(Error::DecodeError("mkv: missing timestamp for a cluster"))
         }
 
-        let mut it = header.children(reader);
         while let Some(header) = it.read_header()? {
             match header.etype {
                 ElementType::Timestamp => {
@@ -654,10 +639,9 @@ pub(crate) struct TagsElement {
 impl Element for TagsElement {
     const ID: ElementType = ElementType::Tags;
 
-    fn read<B: ReadBytes>(reader: &mut B, header: ElementHeader) -> Result<Self> {
+    fn read<R: ElementReader>(mut it: ElementIterator<R>, _header: ElementHeader) -> Result<Self> {
         let mut tags = Vec::new();
 
-        let mut it = header.children(reader);
         while let Some(header) = it.read_header()? {
             match header.etype {
                 ElementType::Tag => {
@@ -699,10 +683,9 @@ pub(crate) struct TagElement {
 impl Element for TagElement {
     const ID: ElementType = ElementType::Tag;
 
-    fn read<B: ReadBytes>(reader: &mut B, header: ElementHeader) -> Result<Self> {
+    fn read<R: ElementReader>(mut it: ElementIterator<R>, _header: ElementHeader) -> Result<Self> {
         let mut simple_tags = Vec::new();
 
-        let mut it = header.children(reader);
         while let Some(header) = it.read_header()? {
             match header.etype {
                 ElementType::SimpleTag => {
@@ -727,11 +710,10 @@ pub(crate) struct SimpleTagElement {
 impl Element for SimpleTagElement {
     const ID: ElementType = ElementType::SimpleTag;
 
-    fn read<B: ReadBytes>(reader: &mut B, header: ElementHeader) -> Result<Self> {
+    fn read<R: ElementReader>(mut it: ElementIterator<R>, _header: ElementHeader) -> Result<Self> {
         let mut name = None;
         let mut value = None;
 
-        let mut it = header.children(reader);
         while let Some(header) = it.read_header()? {
             match header.etype {
                 ElementType::TagName => {
@@ -764,13 +746,12 @@ pub(crate) struct AttachedFileElement {
 impl Element for AttachedFileElement {
     const ID: ElementType = ElementType::AttachedFile;
 
-    fn read<B: ReadBytes>(reader: &mut B, header: ElementHeader) -> Result<Self> {
+    fn read<R: ElementReader>(mut it: ElementIterator<R>, _header: ElementHeader) -> Result<Self> {
         let mut name = None;
         let mut desc = None;
         let mut media_type = None;
         let mut data = None;
 
-        let mut it = header.children(reader);
         while let Some(header) = it.read_header()? {
             match header.etype {
                 ElementType::FileDescription => {
@@ -812,10 +793,9 @@ pub(crate) struct AttachmentsElement {
 impl Element for AttachmentsElement {
     const ID: ElementType = ElementType::Attachments;
 
-    fn read<B: ReadBytes>(reader: &mut B, header: ElementHeader) -> Result<Self> {
+    fn read<R: ElementReader>(mut it: ElementIterator<R>, _header: ElementHeader) -> Result<Self> {
         let mut attached_files = Vec::new();
 
-        let mut it = header.children(reader);
         while let Some(header) = it.read_header()? {
             match header.etype {
                 ElementType::AttachedFile => {

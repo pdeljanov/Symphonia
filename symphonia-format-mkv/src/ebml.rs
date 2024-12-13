@@ -5,7 +5,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use std::io::SeekFrom;
+use std::io::{Seek, SeekFrom};
+use std::ops::{Deref, DerefMut};
 
 use symphonia_core::errors::{decode_error, seek_error, Error, Result, SeekErrorKind};
 use symphonia_core::io::{MediaSource, ReadBytes};
@@ -146,12 +147,87 @@ mod tests {
     }
 }
 
+/// A trait for abstracting owning vs. non-owning readers for the element iterator.
+pub(crate) trait ElementReader: DerefMut<Target = Self::Inner> {
+    /// The concrete type of the underlying reader implementing `ReadBytes`.
+    type Inner: ReadBytes;
+}
+
+/// An element reader for an underlying owned reader.
+pub(crate) struct OwnedElementReader<B: ReadBytes> {
+    pub reader: B,
+}
+
+impl<B: ReadBytes> OwnedElementReader<B> {
+    /// Create a new owning element reader.
+    pub(crate) fn new(reader: B) -> Self {
+        Self { reader }
+    }
+
+    /// Consume the element reader and return the underlying inner reader.
+    pub(crate) fn into_inner(self) -> B {
+        self.reader
+    }
+}
+
+impl<B: ReadBytes> ElementReader for OwnedElementReader<B> {
+    type Inner = B;
+}
+
+impl<B: ReadBytes> Deref for OwnedElementReader<B> {
+    type Target = B;
+    #[inline(always)]
+    fn deref(&self) -> &Self::Target {
+        &self.reader
+    }
+}
+
+impl<B: ReadBytes> DerefMut for OwnedElementReader<B> {
+    #[inline(always)]
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.reader
+    }
+}
+
+/// An element reader for an underlying borrowed reader.
+struct BorrowedElementReader<'a, B: ReadBytes> {
+    reader: &'a mut B,
+}
+
+impl<'a, B: ReadBytes> BorrowedElementReader<'a, B> {
+    /// Create a new borrowing element reader.
+    pub(crate) fn new(reader: &'a mut B) -> Self {
+        Self { reader }
+    }
+}
+
+impl<B: ReadBytes> ElementReader for BorrowedElementReader<'_, B> {
+    type Inner = B;
+}
+
+impl<B: ReadBytes> Deref for BorrowedElementReader<'_, B> {
+    type Target = B;
+    #[inline(always)]
+    fn deref(&self) -> &Self::Target {
+        self.reader
+    }
+}
+
+impl<B: ReadBytes> DerefMut for BorrowedElementReader<'_, B> {
+    #[inline(always)]
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.reader
+    }
+}
+
 #[derive(Copy, Clone, Debug)]
 pub struct ElementHeader {
     /// The element tag.
     pub tag: u32,
     /// The element type.
     pub etype: ElementType,
+    /// The depth of the element in the document.
+    pub depth: u8,
     /// The element's offset in the stream.
     pub pos: u64,
     /// The total size of the element including the header.
@@ -164,7 +240,7 @@ pub struct ElementHeader {
 
 impl ElementHeader {
     /// Returns an iterator over child elements of the current element.
-    pub(crate) fn children<R: ReadBytes>(&self, reader: R) -> ElementIterator<R> {
+    pub(crate) fn children<R: ElementReader>(&self, reader: R) -> Result<ElementIterator<R>> {
         assert_eq!(reader.pos(), self.data_pos, "unexpected position");
         ElementIterator::new_of(reader, *self)
     }
@@ -181,23 +257,27 @@ impl ElementHeader {
 
 pub trait Element: Sized {
     const ID: ElementType;
-    fn read<B: ReadBytes>(reader: &mut B, header: ElementHeader) -> Result<Self>;
+    fn read<R: ElementReader>(it: ElementIterator<R>, header: ElementHeader) -> Result<Self>;
 }
 
 impl ElementHeader {
     /// Reads a single EBML element header from the stream.
-    pub(crate) fn read<R: ReadBytes>(mut reader: &mut R) -> Result<(ElementHeader, bool)> {
-        let (tag, tag_len, reset) = read_tag(&mut reader)?;
+    pub(crate) fn read<R: ElementReader>(
+        reader: &mut R,
+        depth: u8,
+    ) -> Result<(ElementHeader, bool)> {
+        let (tag, tag_len, reset) = read_tag(reader.deref_mut())?;
         let header_start = reader.pos() - u64::from(tag_len);
 
         // According to spec, elements like Segment and Cluster can have unknown size.
         // Currently, these cases are represented as `data_len` equal to 0,
         // but it might be worth changing it to an Option at some point.
-        let size = read_size(&mut reader)?.unwrap_or(0);
+        let size = read_size(reader.deref_mut())?.unwrap_or(0);
         Ok((
             ElementHeader {
                 tag,
                 etype: ELEMENTS.get(&tag).map_or(ElementType::Unknown, |(_, etype)| *etype),
+                depth,
                 pos: header_start,
                 len: reader.pos() - header_start + size,
                 data_len: size,
@@ -216,13 +296,11 @@ pub(crate) struct EbmlElement {
 impl Element for EbmlElement {
     const ID: ElementType = ElementType::Ebml;
 
-    fn read<B: ReadBytes>(reader: &mut B, header: ElementHeader) -> Result<Self> {
-        let mut it = header.children(reader);
+    fn read<R: ElementReader>(mut it: ElementIterator<R>, _header: ElementHeader) -> Result<Self> {
         Ok(Self { header: it.read_element_data::<EbmlHeaderElement>()? })
     }
 }
-
-pub(crate) struct ElementIterator<R: ReadBytes> {
+pub(crate) struct ElementIterator<R: ElementReader> {
     /// Reader of the stream containing this element.
     reader: R,
     /// Store current element header (for sanity check purposes).
@@ -231,29 +309,39 @@ pub(crate) struct ElementIterator<R: ReadBytes> {
     next_pos: u64,
     /// Position immediately past last byte of this element.
     end: Option<u64>,
+    /// The depth of the iterator in the document.
+    depth: u8,
 }
 
-impl<R: ReadBytes> ElementIterator<R> {
+impl<R: ElementReader> ElementIterator<R> {
     /// Creates a new iterator over elements starting from the current stream position.
     pub(crate) fn new(reader: R, end: Option<u64>) -> Self {
-        let pos = reader.pos();
-        Self::new_at(reader, pos, end)
-    }
-
-    /// Creates a new iterator over elements starting from the given stream position.
-    fn new_at(reader: R, start: u64, end: Option<u64>) -> Self {
-        Self { reader, current: None, next_pos: start, end }
+        // Creates a new iterator over elements starting from the given stream position.
+        let next_pos = reader.pos();
+        Self { reader, current: None, next_pos, end, depth: 0 }
     }
 
     /// Creates a new iterator over children of the given parent element.
-    fn new_of(reader: R, parent: ElementHeader) -> Self {
-        Self { reader, current: Some(parent), next_pos: parent.data_pos, end: parent.end() }
+    fn new_of(reader: R, parent: ElementHeader) -> Result<Self> {
+        let depth = parent
+            .depth
+            .checked_add(1)
+            .filter(|&depth| depth < 16)
+            .ok_or(Error::DecodeError("mkv: element recursion limit reached"))?;
+
+        Ok(Self {
+            reader,
+            current: Some(parent),
+            next_pos: parent.data_pos,
+            end: parent.end(),
+            depth,
+        })
     }
 
     /// Seek to a specified offset inside of the stream.
     pub(crate) fn seek(&mut self, pos: u64) -> Result<()>
     where
-        R: MediaSource,
+        R::Target: MediaSource,
     {
         let current_pos = self.pos();
         self.current = None;
@@ -317,7 +405,7 @@ impl<R: ReadBytes> ElementIterator<R> {
         assert_eq!(self.next_pos, self.reader.pos(), "invalid position");
 
         if self.reader.pos() < self.end.unwrap_or(u64::MAX) {
-            let (header, reset) = ElementHeader::read(&mut self.reader)?;
+            let (header, reset) = ElementHeader::read(&mut self.reader, self.depth)?;
             if reset {
                 // After finding a new top-level element in a broken stream
                 // it is necessary to update `next_pos` so it refers to a position
@@ -347,7 +435,8 @@ impl<R: ReadBytes> ElementIterator<R> {
             return decode_error("mkv: unexpected EBML element");
         }
 
-        let element = E::read(&mut self.reader, header)?;
+        let it = header.children(BorrowedElementReader::new(self.reader.deref_mut()))?;
+        let element = E::read(it, header)?;
         // Update position to match the position element reader finished at
         self.next_pos = self.reader.pos();
         Ok(element)
@@ -368,7 +457,9 @@ impl<R: ReadBytes> ElementIterator<R> {
                 continue;
             }
 
-            elements.push(E::read(&mut self.reader, header)?);
+            let it = header.children(BorrowedElementReader::new(self.reader.deref_mut()))?;
+
+            elements.push(E::read(it, header)?);
         }
         Ok(elements.into_boxed_slice())
     }
