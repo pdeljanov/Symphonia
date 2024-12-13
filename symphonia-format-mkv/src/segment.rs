@@ -14,13 +14,18 @@ use symphonia_core::codecs::video::VideoExtraData;
 use symphonia_core::errors::{Error, Result};
 use symphonia_core::formats::TrackFlags;
 use symphonia_core::io::{BufReader, ReadBytes};
-use symphonia_core::meta::{MetadataBuilder, MetadataRevision, RawTag, RawValue, Tag};
+use symphonia_core::meta::{
+    Chapter, ChapterGroup, ChapterGroupItem, MetadataBuilder, MetadataRevision, RawTag,
+    RawTagSubField, RawValue, StandardTag, Tag,
+};
+use symphonia_core::units::Time;
 
 use crate::ebml::{
     read_unsigned_vint, Element, ElementData, ElementHeader, ElementIterator, ElementReader,
 };
 use crate::element_ids::ElementType;
 use crate::lacing::calc_abs_block_timestamp;
+use crate::sub_fields::*;
 
 #[allow(dead_code)]
 #[derive(Debug)]
@@ -808,5 +813,377 @@ impl Element for AttachmentsElement {
         }
 
         Ok(Self { attached_files: attached_files.into_boxed_slice() })
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct ChaptersElement {
+    pub(crate) editions: Box<[EditionEntryElement]>,
+}
+
+impl Element for ChaptersElement {
+    const ID: ElementType = ElementType::Chapters;
+
+    fn read<R: ElementReader>(mut it: ElementIterator<R>, _header: ElementHeader) -> Result<Self> {
+        let mut editions = Vec::new();
+
+        while let Some(header) = it.read_header()? {
+            match header.etype {
+                ElementType::EditionEntry => {
+                    editions.push(it.read_element_data::<EditionEntryElement>()?);
+                }
+                other => {
+                    log::debug!("ignored element {:?}", other);
+                }
+            }
+        }
+
+        Ok(Self { editions: editions.into_boxed_slice() })
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct EditionEntryElement {
+    pub(crate) is_hidden: bool,
+    pub(crate) is_default: bool,
+    #[allow(dead_code)]
+    pub(crate) is_ordered: bool,
+    pub(crate) display: Box<[EditionDisplayElement]>,
+    pub(crate) chapters: Box<[ChapterAtomElement]>,
+}
+
+impl Element for EditionEntryElement {
+    const ID: ElementType = ElementType::EditionEntry;
+
+    fn read<R: ElementReader>(mut it: ElementIterator<R>, _header: ElementHeader) -> Result<Self> {
+        let mut is_hidden = false;
+        let mut is_default = false;
+        let mut is_ordered = false;
+        let mut display = Vec::new();
+        let mut chapters = Vec::new();
+
+        while let Some(header) = it.read_header()? {
+            match header.etype {
+                ElementType::EditionUid => {
+                    let _ = it.read_u64()?;
+                }
+                ElementType::EditionFlagHidden => {
+                    is_hidden = it.read_u64()? == 1;
+                }
+                ElementType::EditionFlagDefault => {
+                    is_default = it.read_u64()? == 1;
+                }
+                ElementType::EditionFlagOrdered => {
+                    is_ordered = it.read_u64()? == 1;
+                }
+                ElementType::EditionDisplay => {
+                    display.push(it.read_element_data::<EditionDisplayElement>()?)
+                }
+                ElementType::ChapterAtom => {
+                    chapters.push(it.read_element_data::<ChapterAtomElement>()?)
+                }
+                other => {
+                    log::debug!("ignored element {:?}", other);
+                }
+            }
+        }
+
+        Ok(Self {
+            is_hidden,
+            is_default,
+            is_ordered,
+            display: display.into_boxed_slice(),
+            chapters: chapters.into_boxed_slice(),
+        })
+    }
+}
+
+impl EditionEntryElement {
+    pub(crate) fn into_chapter_group(self) -> ChapterGroup {
+        let mut tags = Vec::with_capacity(self.display.len());
+
+        // Edition title tags.
+        for display in self.display {
+            let mut sub_fields = Vec::with_capacity(1);
+
+            // Edition language sub-field.
+            if let Some(lang) = display.lang_bcp47 {
+                // BCP47 language code is present.
+                sub_fields.push(RawTagSubField::new(EDITION_TITLE_LANGUAGE_BCP47, lang));
+            }
+
+            let title = Arc::new(display.name);
+
+            let raw = RawTag::new_with_sub_fields(
+                "ChapString",
+                title.clone(),
+                sub_fields.into_boxed_slice(),
+            );
+
+            tags.push(Tag::new_std(raw, StandardTag::TrackTitle(title)));
+        }
+
+        // Edition chapters.
+        let mut items = Vec::with_capacity(self.chapters.len());
+
+        for chapter in self.chapters {
+            if !chapter.is_hidden {
+                items.push(chapter.into_chapter_group_item());
+            }
+        }
+
+        ChapterGroup { items, tags, visuals: vec![] }
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct EditionDisplayElement {
+    pub(crate) name: String,
+    pub(crate) lang_bcp47: Option<String>,
+}
+
+impl Element for EditionDisplayElement {
+    const ID: ElementType = ElementType::EditionDisplay;
+
+    fn read<R: ElementReader>(mut it: ElementIterator<R>, _header: ElementHeader) -> Result<Self> {
+        let mut name = None;
+        let mut lang_bcp47 = None;
+
+        while let Some(header) = it.read_header()? {
+            match header.etype {
+                ElementType::EditionString => {
+                    name = Some(it.read_string()?);
+                }
+                ElementType::EditionLanguageBcp47 => {
+                    lang_bcp47 = Some(it.read_string()?);
+                }
+                other => {
+                    log::debug!("ignored element {:?}", other);
+                }
+            }
+        }
+
+        Ok(Self {
+            name: name.ok_or(Error::DecodeError("mkv: missing edition display name"))?,
+            lang_bcp47,
+        })
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct ChapterAtomElement {
+    #[allow(dead_code)]
+    pub(crate) is_enabled: bool,
+    pub(crate) is_hidden: bool,
+    pub(crate) time_start: u64,
+    pub(crate) time_end: Option<u64>,
+    pub(crate) skip_type: Option<u8>,
+    pub(crate) display: Box<[ChapterDisplayElement]>,
+    pub(crate) chapters: Box<[ChapterAtomElement]>,
+}
+
+impl Element for ChapterAtomElement {
+    const ID: ElementType = ElementType::ChapterAtom;
+
+    fn read<R: ElementReader>(mut it: ElementIterator<R>, _header: ElementHeader) -> Result<Self> {
+        let mut is_enabled = false;
+        let mut is_hidden = false;
+        let mut time_start = None;
+        let mut time_end = None;
+        let mut skip_type = None;
+        let mut display = Vec::new();
+        let mut chapters = Vec::new();
+
+        while let Some(header) = it.read_header()? {
+            match header.etype {
+                ElementType::ChapterUid => {}
+                ElementType::ChapterStringUid => {}
+                ElementType::ChapterTimeStart => {
+                    time_start = Some(it.read_u64()?);
+                }
+                ElementType::ChapterTimeEnd => {
+                    time_end = Some(it.read_u64()?);
+                }
+                ElementType::ChapterFlagEnabled => {
+                    is_enabled = it.read_u64()? == 1;
+                }
+                ElementType::ChapterFlagHidden => {
+                    is_hidden = it.read_u64()? == 1;
+                }
+                ElementType::ChapterDisplay => {
+                    display.push(it.read_element_data::<ChapterDisplayElement>()?);
+                }
+                ElementType::ChapterSkipType => {
+                    skip_type = match it.read_u64()? {
+                        value @ 0..=6 => Some(value as u8),
+                        _ => None,
+                    };
+                }
+                ElementType::ChapterAtom => {
+                    chapters.push(it.read_element_data::<ChapterAtomElement>()?);
+                }
+                other => {
+                    log::debug!("ignored element {:?}", other);
+                }
+            }
+        }
+
+        Ok(Self {
+            is_enabled,
+            is_hidden,
+            time_start: time_start
+                .ok_or(Error::DecodeError("mkv: missing chapter atom time start"))?,
+            time_end,
+            skip_type,
+            display: display.into_boxed_slice(),
+            chapters: chapters.into_boxed_slice(),
+        })
+    }
+}
+
+impl ChapterAtomElement {
+    pub(crate) fn into_chapter_group_item(self) -> ChapterGroupItem {
+        let mut tags = Vec::with_capacity(self.display.len());
+
+        // Chapter title tags.
+        for display in self.display {
+            let mut sub_fields = Vec::with_capacity(if display.country.is_some() { 2 } else { 1 });
+
+            // Chapter language sub-field.
+            if let Some(lang) = display.lang_bcp47 {
+                // BCP47 language code is present, prefer it over the ISO 639-2 chapter language
+                // and county elements.
+                sub_fields.push(RawTagSubField::new(CHAPTER_TITLE_LANGUAGE_BCP47, lang));
+            }
+            else {
+                // ISO 639-2 language code.
+                sub_fields.push(RawTagSubField::new(CHAPTER_TITLE_LANGUAGE, display.lang));
+
+                // Chapter country sub-field.
+                if let Some(country) = display.country {
+                    sub_fields.push(RawTagSubField::new(CHAPTER_TITLE_COUNTRY, country));
+                }
+            }
+
+            let title = Arc::new(display.name);
+
+            let raw = RawTag::new_with_sub_fields(
+                "ChapString",
+                title.clone(),
+                sub_fields.into_boxed_slice(),
+            );
+
+            tags.push(Tag::new_std(raw, StandardTag::TrackTitle(title)));
+        }
+
+        // Chapter skip-type tag.
+        if let Some(skip_type) = self.skip_type {
+            tags.push(Tag::new_from_parts("ChapterSkipType", skip_type, None));
+        }
+
+        let chapter = Chapter {
+            start_time: Time::from_ns(self.time_start),
+            end_time: self.time_end.map(Time::from_ns),
+            start_byte: None,
+            end_byte: None,
+            tags,
+            visuals: vec![],
+        };
+
+        if self.chapters.is_empty() {
+            // This chapter atom does not have nested chapters. Return a chapter item.
+            ChapterGroupItem::Chapter(chapter)
+        }
+        else {
+            // This chapter atom has nested chapters. Return a group containing 1 chapter
+            // (this one), and a group of nested chapters.
+            let mut items = Vec::with_capacity(self.chapters.len());
+
+            for chapter in self.chapters {
+                if !chapter.is_hidden {
+                    items.push(chapter.into_chapter_group_item());
+                }
+            }
+
+            ChapterGroupItem::Group(
+                // The parent chapter group.
+                ChapterGroup {
+                    items: vec![
+                        // The parent chapter as the first item in the chapter group.
+                        ChapterGroupItem::Chapter(chapter),
+                        // The nested chapters as a chapter group as the second item.
+                        ChapterGroupItem::Group(ChapterGroup {
+                            items,
+                            tags: vec![],
+                            visuals: vec![],
+                        }),
+                    ],
+                    tags: vec![],
+                    visuals: vec![],
+                },
+            )
+        }
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct ChapterDisplayElement {
+    pub(crate) name: String,
+    pub(crate) lang: String,
+    pub(crate) lang_bcp47: Option<String>,
+    pub(crate) country: Option<String>,
+}
+
+impl Element for ChapterDisplayElement {
+    const ID: ElementType = ElementType::ChapterDisplay;
+
+    fn read<R: ElementReader>(mut it: ElementIterator<R>, _header: ElementHeader) -> Result<Self> {
+        let mut name = None;
+        let mut lang = None;
+        let mut lang_bcp47 = None;
+        let mut country = None;
+
+        while let Some(header) = it.read_header()? {
+            match header.etype {
+                ElementType::ChapString => {
+                    name = Some(it.read_string()?);
+                }
+                ElementType::ChapLanguage => {
+                    lang = Some(it.read_string()?);
+                }
+                ElementType::ChapLanguageBcp47 => {
+                    lang_bcp47 = Some(it.read_string()?);
+                }
+                ElementType::ChapCountry => {
+                    country = Some(it.read_string()?);
+                }
+                other => {
+                    log::debug!("ignored element {:?}", other);
+                }
+            }
+        }
+
+        Ok(Self {
+            name: name.ok_or(Error::DecodeError("mkv: missing chapter display name"))?,
+            lang: lang.ok_or(Error::DecodeError("mkv: missing chapter display language"))?,
+            lang_bcp47,
+            country,
+        })
+    }
+}
+
+impl ChaptersElement {
+    /// Builds a chapter group containing the chapters of the first non-hidden default edition, or,
+    /// if one doesn't exist, the first non-hidden edition.
+    pub(crate) fn build_chapter_group(self) -> Option<ChapterGroup> {
+        // Find the first non-hidden default edition. Or, the first non-hidden edition.
+        let index = self
+            .editions
+            .iter()
+            .position(|e| !e.is_hidden && e.is_default)
+            .or_else(|| self.editions.iter().position(|e| !e.is_hidden));
+
+        // Convert to chapter group.
+        index.map(|index| self.editions.into_vec().swap_remove(index).into_chapter_group())
     }
 }

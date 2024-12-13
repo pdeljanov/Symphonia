@@ -147,15 +147,30 @@ pub enum ElementType {
     CueBlockNumber,
     Chapters,
     EditionEntry,
+    EditionUid,
+    EditionFlagHidden,
+    EditionFlagDefault,
+    EditionFlagOrdered,
+    EditionDisplay,
+    EditionString,
+    EditionLanguageBcp47,
     ChapterAtom,
     ChapterUid,
     ChapterStringUid,
     ChapterTimeStart,
     ChapterTimeEnd,
+    ChapterFlagHidden,
+    ChapterFlagEnabled,
+    ChapterSegmentUuid,
+    ChapterSkipType,
+    ChapterSegmentEditionUid,
+    ChapterPhysicalEquiv,
+    ChapterTrack,
+    ChapterTrackUid,
     ChapterDisplay,
     ChapString,
     ChapLanguage,
-    ChapLanguageIetf,
+    ChapLanguageBcp47,
     ChapCountry,
     Tags,
     Tag,
@@ -190,6 +205,8 @@ impl ElementType {
                 | ElementType::SeekHead
                 | ElementType::Tags
                 | ElementType::Tracks
+                | ElementType::Chapters
+                | ElementType::Attachments
         )
     }
 }
@@ -322,15 +339,30 @@ lazy_static! {
         elems.insert(0x5378, (Type::Unsigned, ElementType::CueBlockNumber));
         elems.insert(0x1043A770, (Type::Master, ElementType::Chapters));
         elems.insert(0x45B9, (Type::Master, ElementType::EditionEntry));
+        elems.insert(0x45BC, (Type::Unsigned, ElementType::EditionUid));
+        elems.insert(0x45BD, (Type::Unsigned, ElementType::EditionFlagHidden));
+        elems.insert(0x45DB, (Type::Unsigned, ElementType::EditionFlagDefault));
+        elems.insert(0x45DD, (Type::Unsigned, ElementType::EditionFlagOrdered));
+        elems.insert(0x4520, (Type::Master, ElementType::EditionDisplay));
+        elems.insert(0x4521, (Type::String, ElementType::EditionString));
+        elems.insert(0x45E4, (Type::String, ElementType::EditionLanguageBcp47));
         elems.insert(0xB6, (Type::Master, ElementType::ChapterAtom));
         elems.insert(0x73C4, (Type::Unsigned, ElementType::ChapterUid));
         elems.insert(0x5654, (Type::String, ElementType::ChapterStringUid));
         elems.insert(0x91, (Type::Unsigned, ElementType::ChapterTimeStart));
         elems.insert(0x92, (Type::Unsigned, ElementType::ChapterTimeEnd));
+        elems.insert(0x98, (Type::Unsigned, ElementType::ChapterFlagHidden));
+        elems.insert(0x4598, (Type::Unsigned, ElementType::ChapterFlagEnabled));
+        elems.insert(0x6E67, (Type::Unsigned, ElementType::ChapterSegmentUuid));
+        elems.insert(0x4588, (Type::Unsigned, ElementType::ChapterSkipType));
+        elems.insert(0x6EBC, (Type::Unsigned, ElementType::ChapterSegmentEditionUid));
+        elems.insert(0x63C3, (Type::Unsigned, ElementType::ChapterPhysicalEquiv));
+        elems.insert(0x8F, (Type::Master, ElementType::ChapterTrack));
+        elems.insert(0x89, (Type::Unsigned, ElementType::ChapterTrackUid));
         elems.insert(0x80, (Type::Master, ElementType::ChapterDisplay));
         elems.insert(0x85, (Type::String, ElementType::ChapString));
         elems.insert(0x437C, (Type::String, ElementType::ChapLanguage));
-        elems.insert(0x437D, (Type::String, ElementType::ChapLanguageIetf));
+        elems.insert(0x437D, (Type::String, ElementType::ChapLanguageBcp47));
         elems.insert(0x437E, (Type::String, ElementType::ChapCountry));
         elems.insert(0x1254C367, (Type::Master, ElementType::Tags));
         elems.insert(0x7373, (Type::Master, ElementType::Tag));

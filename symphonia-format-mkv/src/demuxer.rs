@@ -24,8 +24,8 @@ use crate::ebml::{EbmlElement, ElementHeader, ElementIterator, OwnedElementReade
 use crate::element_ids::{ElementType, ELEMENTS};
 use crate::lacing::{extract_frames, Frame};
 use crate::segment::{
-    AttachmentsElement, BlockGroupElement, ClusterElement, CuesElement, InfoElement,
-    SeekHeadElement, TagsElement, TracksElement,
+    AttachmentsElement, BlockGroupElement, ChaptersElement, ClusterElement, CuesElement,
+    InfoElement, SeekHeadElement, TagsElement, TracksElement,
 };
 
 const MKV_FORMAT_INFO: FormatInfo =
@@ -92,6 +92,7 @@ impl<'s> MkvReader<'s> {
 
         let mut metadata = opts.external_data.metadata.unwrap_or_default();
         let mut attachments = Vec::new();
+        let mut chapters = opts.external_data.chapters;
 
         while let Ok(Some(header)) = it.read_child_header() {
             match header.etype {
@@ -146,6 +147,10 @@ impl<'s> MkvReader<'s> {
                         }));
                     }
                 }
+                ElementType::Chapters => {
+                    let chapters_elem = it.read_element_data::<ChaptersElement>()?;
+                    chapters = chapters_elem.build_chapter_group()
+                }
                 other => {
                     it.ignore_data()?;
                     log::debug!("ignored element {:?}", other);
@@ -198,6 +203,10 @@ impl<'s> MkvReader<'s> {
                                 data: file.data,
                             }));
                         }
+                    }
+                    ElementType::Chapters => {
+                        let chapters_elem = it.read_element::<ChaptersElement>()?;
+                        chapters = chapters_elem.build_chapter_group()
                     }
                     _ => (),
                 }
@@ -255,7 +264,7 @@ impl<'s> MkvReader<'s> {
             track_states: states,
             current_cluster,
             attachments,
-            chapters: opts.external_data.chapters,
+            chapters,
             metadata,
             frames: VecDeque::new(),
             timestamp_scale: info.timestamp_scale,
