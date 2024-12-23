@@ -92,8 +92,8 @@ impl<T: ParseChunkTag> ChunksReader<T> {
             // input, it may overflow when if added to anything.
             if self.len - self.consumed < len {
                 // When ffmpeg encodes wave to stdout the riff (parent) and data chunk lengths are
-                // (2^32)-1 since the size can't be known ahead of time.
-                if !(self.len == len && len == u32::MAX) {
+                // (2^32)-1 since the size can't be known ahead of time. Parent length was reduced by 4 to read "form type"
+                if !(self.len + 4 == u32::MAX && len == u32::MAX) {
                     debug!(
                         "chunk length of {} exceeds parent (list) chunk length",
                         String::from_utf8_lossy(&tag)
