@@ -22,15 +22,6 @@
 //! An embedded metadata format is one that is embedded into the media container. This crate
 //! implements reading or parsing functions for these metadata formats in the [`embedded`] module.
 
-#![warn(rust_2018_idioms)]
-#![forbid(unsafe_code)]
-// The following lints are allowed in all Symphonia crates. Please see clippy.toml for their
-// justification.
-#![allow(clippy::comparison_chain)]
-#![allow(clippy::excessive_precision)]
-#![allow(clippy::identity_op)]
-#![allow(clippy::manual_range_contains)]
-
 #[cfg(feature = "ape")]
 pub mod ape;
 #[cfg(feature = "id3v1")]
