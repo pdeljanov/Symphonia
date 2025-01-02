@@ -22,3 +22,31 @@ members = [
     "symphonia-play",
     "symphonia-check",
 ]
+
+[workspace.lints.rust]
+rust_2018_idioms = { level = "warn", priority = -1 }
+unsafe_code = "forbid"
+deprecated-safe = "forbid"
+
+[workspace.lints.clippy]
+# Justification:
+#   Where possible, expressing an algorithm as closely as possible to the specification is
+#   preferrable. Rewriting using range syntax provides marginal benefit, but could be confusing.
+manual_range_contains = "allow"
+
+# Justification:
+#   There is a performance penalty associated with the recommended idiom.
+comparison_chain = "allow"
+
+# Justification:
+#   Floating point constants provided by specifications and papers often provide extra digits that
+#   are truncated when using 32-bit floating point airthmetic. By keeping this precision, we can use
+#   the values provided directly & without modification, and, when investigating accuracy issues,
+#   we can easily switch to 64-bit floating point arithmetic and benefit from the higher precision.
+excessive_precision = "allow"
+
+# Justification:
+#   Sometimes the base or initial case of an unrolled multi-iteration/step mathematical expression
+#   contains operations that are otherwise no-ops. Disable the warning for these expressions because
+#   they're instructive to the reader and improve the code aesthetics.
+identity_op = "allow"
