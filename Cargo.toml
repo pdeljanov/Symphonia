@@ -27,6 +27,7 @@ members = [
 rust_2018_idioms = { level = "warn", priority = -1 }
 unsafe_code = "forbid"
 deprecated-safe = "forbid"
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)'] }
 
 [workspace.lints.clippy]
 # Justification:
