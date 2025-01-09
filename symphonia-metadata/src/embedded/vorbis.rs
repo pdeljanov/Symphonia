@@ -40,6 +40,8 @@ lazy_static! {
         m.insert("accurateripoffset"            , parse_accuraterip_offset);
         m.insert("accurateripresult"            , parse_accuraterip_result);
         m.insert("accurateriptotal"             , parse_accuraterip_total);
+        m.insert("acoustid_fingerprint"         , parse_acoustid_fingerprint);
+        m.insert("acoustid_id"                  , parse_acoustid_id);
         m.insert("album artist"                 , parse_album_artist);
         m.insert("album"                        , parse_album);
         m.insert("albumartist"                  , parse_album_artist);
