@@ -12,7 +12,10 @@ use crate::audio::{
 
 use super::{Audio, AudioBuffer, AudioBytes, AudioMut, AudioSpec};
 
-/// A container for an owned [`AudioBuffer`] of any standard sample format.
+/// An owning wrapper for an [`AudioBuffer`] of any standard sample format.
+///
+/// Calls on this wrapper are dispatched to the underlying, wrapped, buffer and are semantically
+/// identical.
 pub enum GenericAudioBuffer {
     /// An unsigned 8-bit integer buffer.
     U8(AudioBuffer<u8>),
@@ -107,30 +110,48 @@ impl GenericAudioBuffer {
         impl_generic_func!(self, buf, buf.clear());
     }
 
+    /// Resizes the buffer such that the number of frames is `new_len`. New frames are silent.
+    ///
+    /// See [`AudioBuffer::resize_with_silence`] for full details.
     pub fn resize_with_silence(&mut self, new_len: usize) {
         impl_generic_func!(self, buf, buf.resize_with_silence(new_len))
     }
 
+    /// Resizes the buffer such that the number of frames is `new_len`. New frames are left
+    /// uninitialized and may contain stale data that should be overwritten.
+    ///
+    /// See [`AudioBuffer::resize_uninit`] for full details.
     pub fn resize_uninit(&mut self, new_len: usize) {
         impl_generic_func!(self, buf, buf.resize_uninit(new_len))
     }
 
+    /// Renders a number of silent frames.
+    ///
+    /// See [`AudioBuffer::render_silence`] for full details.
     pub fn render_silence(&mut self, num_frames: Option<usize>) -> usize {
         impl_generic_func!(self, buf, buf.render_silence(num_frames))
     }
 
+    /// Renders an uninitialized number of frames.
+    ///
+    /// See [`AudioBuffer::render_uninit`] for full details.
     pub fn render_uninit(&mut self, num_frames: Option<usize>) -> usize {
         impl_generic_func!(self, buf, buf.render_uninit(num_frames))
     }
 
+    /// Shifts the contents of the buffer back by the number of frames specified. The leading frames
+    /// are dropped from the buffer.
     pub fn shift(&mut self, shift: usize) {
         impl_generic_func!(self, buf, buf.shift(shift))
     }
 
+    /// Truncates the buffer to the number of frames specified. If the number of frames in the
+    /// buffer is less-than the number of frames specified, then this function does nothing.
     pub fn truncate(&mut self, num_frames: usize) {
         impl_generic_func!(self, buf, buf.truncate(num_frames))
     }
 
+    /// Trims frames from the start and end of the buffer.
     pub fn trim(&mut self, start: usize, end: usize) {
         impl_generic_func!(self, buf, buf.trim(start, end))
     }
@@ -145,6 +166,7 @@ impl GenericAudioBuffer {
         self.frames()
     }
 
+    /// Copy audio to a mutable audio slice while doing any necessary sample format conversions.
     pub fn copy_to<Sout, Dst>(&self, dst: &mut Dst)
     where
         Sout: ConvertibleSample,
@@ -153,6 +175,9 @@ impl GenericAudioBuffer {
         impl_generic_func!(self, buf, dst.copy_from(buf));
     }
 
+    /// Copy all audio frames to a slice of samples in interleaved order.
+    ///
+    /// See [`AudioBuffer::copy_to_slice_interleaved`] for full details.
     pub fn copy_to_slice_interleaved<Sout, Dst>(&self, dst: Dst)
     where
         Sout: ConvertibleSample,
@@ -161,6 +186,9 @@ impl GenericAudioBuffer {
         impl_generic_func!(self, buf, buf.copy_to_slice_interleaved(dst))
     }
 
+    /// Copy all audio planes to discrete slices.
+    ///
+    /// See [`AudioBuffer::copy_to_slice_planar`] for full details.
     pub fn copy_to_slice_planar<Sout, Dst>(&self, dst: &mut [Dst])
     where
         Sout: ConvertibleSample,
@@ -169,6 +197,9 @@ impl GenericAudioBuffer {
         impl_generic_func!(self, buf, buf.copy_to_slice_planar(dst))
     }
 
+    /// Copy all audio frames to a vector of samples in interleaved order.
+    ///
+    /// See [`AudioBuffer::copy_to_vec_interleaved`] for full details.
     pub fn copy_to_vec_interleaved<Sout>(&self, dst: &mut Vec<Sout>)
     where
         Sout: ConvertibleSample,
@@ -176,6 +207,9 @@ impl GenericAudioBuffer {
         impl_generic_func!(self, buf, buf.copy_to_vec_interleaved(dst))
     }
 
+    /// Copy all audio planes to discrete vectors.
+    ///
+    /// See [`AudioBuffer::copy_to_vecs_planar`] for full details.
     pub fn copy_to_vecs_planar<Sout>(&self, dst: &mut Vec<Vec<Sout>>)
     where
         Sout: ConvertibleSample,
@@ -183,6 +217,10 @@ impl GenericAudioBuffer {
         impl_generic_func!(self, buf, buf.copy_to_vecs_planar(dst))
     }
 
+    /// Copy interleaved audio to the destination byte slice after converting to a different sample
+    /// format.
+    ///
+    /// See [`AudioBuffer::copy_bytes_interleaved_as`] for full details.
     pub fn copy_bytes_interleaved_as<Sout, Dst>(&self, dst: Dst)
     where
         Sout: SampleBytes + ConvertibleSample,
@@ -191,6 +229,10 @@ impl GenericAudioBuffer {
         impl_generic_func!(self, buf, buf.copy_bytes_interleaved_as::<Sout, _>(dst))
     }
 
+    /// Copy planar audio as bytes to a destination slice per plane after converting to a different
+    /// sample format.
+    ///
+    /// See [`AudioBuffer::copy_bytes_planar_as`] for full details.
     pub fn copy_bytes_planar_as<Sout, Dst>(&self, dst: &mut [Dst])
     where
         Sout: SampleBytes + ConvertibleSample,
@@ -199,22 +241,63 @@ impl GenericAudioBuffer {
         impl_generic_func!(self, buf, buf.copy_bytes_planar_as::<Sout, _>(dst))
     }
 
-    pub fn copy_bytes_interleaved<Sout, Dst>(&self, dst: Dst)
+    /// Copy interleaved audio to the destination byte slice.
+    ///
+    /// See [`AudioBuffer::copy_bytes_interleaved`] for full details.
+    pub fn copy_bytes_interleaved<Dst>(&self, dst: Dst)
     where
-        Sout: SampleBytes,
         Dst: AsMut<[u8]>,
     {
         impl_generic_func!(self, buf, buf.copy_bytes_interleaved(dst))
     }
 
-    pub fn copy_bytes_planar<Sout, Dst>(&self, dst: &mut [Dst])
+    /// Copy planar audio as bytes to a destination slice per plane.
+    ///
+    /// See [`AudioBuffer::copy_bytes_planar`] for full details.
+    pub fn copy_bytes_planar<Dst>(&self, dst: &mut [Dst])
     where
-        Sout: SampleBytes,
         Dst: AsMut<[u8]>,
     {
         impl_generic_func!(self, buf, buf.copy_bytes_planar(dst))
     }
 
+    /// Copy interleaved audio to the destination byte vector.
+    ///
+    /// See [`AudioBuffer::copy_bytes_to_vec_interleaved`] for full details.
+    pub fn copy_bytes_to_vec_interleaved(&self, dst: &mut Vec<u8>) {
+        impl_generic_func!(self, buf, buf.copy_bytes_to_vec_interleaved(dst))
+    }
+
+    /// Copy interleaved audio to the destination byte vector after converting to a different sample
+    /// format.
+    ///
+    /// See [`AudioBuffer::copy_bytes_to_vec_interleaved_as`] for full details.
+    pub fn copy_bytes_to_vec_interleaved_as<Sout>(&self, dst: &mut Vec<u8>)
+    where
+        Sout: SampleBytes + ConvertibleSample,
+    {
+        impl_generic_func!(self, buf, buf.copy_bytes_to_vec_interleaved_as::<Sout>(dst))
+    }
+
+    /// Copy audio planes as bytes to discrete byte vectors.
+    ///
+    /// See [`AudioBuffer::copy_bytes_to_vecs_planar`] for full details.
+    pub fn copy_bytes_to_vecs_planar(&self, dst: &mut Vec<Vec<u8>>) {
+        impl_generic_func!(self, buf, buf.copy_bytes_to_vecs_planar(dst))
+    }
+
+    /// Copy audio planes as bytes to discrete byte vectors after converting to a different sample
+    /// format.
+    ///
+    /// See [`AudioBuffer::copy_bytes_to_vecs_planar_as`] for full details.
+    pub fn copy_bytes_to_vecs_planar_as<Sout>(&self, dst: &mut Vec<Vec<u8>>)
+    where
+        Sout: SampleBytes + ConvertibleSample,
+    {
+        impl_generic_func!(self, buf, buf.copy_bytes_to_vecs_planar_as::<Sout>(dst))
+    }
+
+    /// Get the length in bytes of all samples if converted to a new sample format.
     pub fn byte_len_as<Sout>(&self) -> usize
     where
         Sout: SampleBytes + ConvertibleSample,
@@ -222,6 +305,8 @@ impl GenericAudioBuffer {
         impl_generic_func!(self, buf, buf.byte_len_as::<Sout>())
     }
 
+    /// Get the length in bytes of all samples in a single plane if converted to a new sample
+    /// format.
     pub fn byte_len_per_plane_as<Sout>(&self) -> usize
     where
         Sout: SampleBytes + ConvertibleSample,
@@ -229,6 +314,8 @@ impl GenericAudioBuffer {
         impl_generic_func!(self, buf, buf.byte_len_per_plane_as::<Sout>())
     }
 
+    /// Get the length of bytes of a single interleaved audio frame if converted to a new sample
+    /// format.
     pub fn byte_len_per_frame_as<Sout>(&self) -> usize
     where
         Sout: SampleBytes + ConvertibleSample,
@@ -236,20 +323,26 @@ impl GenericAudioBuffer {
         impl_generic_func!(self, buf, buf.byte_len_per_frame_as::<Sout>())
     }
 
+    /// Get the length in bytes of all samples.
     pub fn byte_len(&self) -> usize {
         impl_generic_func!(self, buf, buf.byte_len())
     }
 
+    /// Get the length in bytes of all samples in a single plane.
     pub fn byte_len_per_plane(&self) -> usize {
         impl_generic_func!(self, buf, buf.byte_len_per_plane())
     }
 
+    /// Get the length of bytes of a single interleaved audio frame.
     pub fn byte_len_per_frame(&self) -> usize {
         impl_generic_func!(self, buf, buf.byte_len_per_frame())
     }
 }
 
-/// A immutable reference to an [`AudioBuffer`] of any standard sample format.
+/// A non-owning immutable wrapper for an [`AudioBuffer`] of any standard sample format.
+///
+/// Calls on this wrapper are dispatched to the underlying, wrapped, buffer and are semantically
+/// identical.
 #[derive(Clone)]
 pub enum GenericAudioBufferRef<'a> {
     /// An unsigned 8-bit integer buffer reference.
@@ -335,6 +428,7 @@ impl GenericAudioBufferRef<'_> {
         self.frames()
     }
 
+    /// Copy audio to a mutable audio slice while doing any necessary sample format conversions.
     pub fn copy_to<Sout, Dst>(&self, dst: &mut Dst)
     where
         Sout: ConvertibleSample,
@@ -343,6 +437,9 @@ impl GenericAudioBufferRef<'_> {
         impl_generic_ref_func!(self, buf, dst.copy_from(*buf));
     }
 
+    /// Copy all audio frames to a slice of samples in interleaved order.
+    ///
+    /// See [`AudioBuffer::copy_to_slice_interleaved`] for full details.
     pub fn copy_to_slice_interleaved<Sout, Dst>(&self, dst: Dst)
     where
         Sout: ConvertibleSample,
@@ -351,6 +448,9 @@ impl GenericAudioBufferRef<'_> {
         impl_generic_ref_func!(self, buf, buf.copy_to_slice_interleaved(dst))
     }
 
+    /// Copy all audio planes to discrete slices.
+    ///
+    /// See [`AudioBuffer::copy_to_slice_planar`] for full details.
     pub fn copy_to_slice_planar<Sout, Dst>(&self, dst: &mut [Dst])
     where
         Sout: ConvertibleSample,
@@ -359,6 +459,9 @@ impl GenericAudioBufferRef<'_> {
         impl_generic_ref_func!(self, buf, buf.copy_to_slice_planar(dst))
     }
 
+    /// Copy all audio frames to a vector of samples in interleaved order.
+    ///
+    /// See [`AudioBuffer::copy_to_vec_interleaved`] for full details.
     pub fn copy_to_vec_interleaved<Sout>(&self, dst: &mut Vec<Sout>)
     where
         Sout: ConvertibleSample,
@@ -366,6 +469,9 @@ impl GenericAudioBufferRef<'_> {
         impl_generic_ref_func!(self, buf, buf.copy_to_vec_interleaved(dst))
     }
 
+    /// Copy all audio planes to discrete vectors.
+    ///
+    /// See [`AudioBuffer::copy_to_vecs_planar`] for full details.
     pub fn copy_to_vecs_planar<Sout>(&self, dst: &mut Vec<Vec<Sout>>)
     where
         Sout: ConvertibleSample,
@@ -373,6 +479,10 @@ impl GenericAudioBufferRef<'_> {
         impl_generic_ref_func!(self, buf, buf.copy_to_vecs_planar(dst))
     }
 
+    /// Copy interleaved audio to the destination byte slice after converting to a different sample
+    /// format.
+    ///
+    /// See [`AudioBuffer::copy_bytes_interleaved_as`] for full details.
     pub fn copy_bytes_interleaved_as<Sout, Dst>(&self, dst: Dst)
     where
         Sout: SampleBytes + ConvertibleSample,
@@ -381,6 +491,10 @@ impl GenericAudioBufferRef<'_> {
         impl_generic_ref_func!(self, buf, buf.copy_bytes_interleaved_as::<Sout, _>(dst))
     }
 
+    /// Copy planar audio as bytes to a destination slice per plane after converting to a different
+    /// sample format.
+    ///
+    /// See [`AudioBuffer::copy_bytes_planar_as`] for full details.
     pub fn copy_bytes_planar_as<Sout, Dst>(&self, dst: &mut [Dst])
     where
         Sout: SampleBytes + ConvertibleSample,
@@ -389,22 +503,63 @@ impl GenericAudioBufferRef<'_> {
         impl_generic_ref_func!(self, buf, buf.copy_bytes_planar_as::<Sout, _>(dst))
     }
 
-    pub fn copy_bytes_interleaved<Sout, Dst>(&self, dst: Dst)
+    /// Copy interleaved audio to the destination byte slice.
+    ///
+    /// See [`AudioBuffer::copy_bytes_interleaved`] for full details.
+    pub fn copy_bytes_interleaved<Dst>(&self, dst: Dst)
     where
-        Sout: SampleBytes,
         Dst: AsMut<[u8]>,
     {
         impl_generic_ref_func!(self, buf, buf.copy_bytes_interleaved(dst))
     }
 
-    pub fn copy_bytes_planar<Sout, Dst>(&self, dst: &mut [Dst])
+    /// Copy planar audio as bytes to a destination slice per plane.
+    ///
+    /// See [`AudioBuffer::copy_bytes_planar`] for full details.
+    pub fn copy_bytes_planar<Dst>(&self, dst: &mut [Dst])
     where
-        Sout: SampleBytes,
         Dst: AsMut<[u8]>,
     {
         impl_generic_ref_func!(self, buf, buf.copy_bytes_planar(dst))
     }
 
+    /// Copy interleaved audio to the destination byte vector.
+    ///
+    /// See [`AudioBuffer::copy_bytes_to_vec_interleaved`] for full details.
+    pub fn copy_bytes_to_vec_interleaved(&self, dst: &mut Vec<u8>) {
+        impl_generic_ref_func!(self, buf, buf.copy_bytes_to_vec_interleaved(dst))
+    }
+
+    /// Copy interleaved audio to the destination byte vector after converting to a different sample
+    /// format.
+    ///
+    /// See [`AudioBuffer::copy_bytes_to_vec_interleaved_as`] for full details.
+    pub fn copy_bytes_to_vec_interleaved_as<Sout>(&self, dst: &mut Vec<u8>)
+    where
+        Sout: SampleBytes + ConvertibleSample,
+    {
+        impl_generic_ref_func!(self, buf, buf.copy_bytes_to_vec_interleaved_as::<Sout>(dst))
+    }
+
+    /// Copy audio planes as bytes to discrete byte vectors.
+    ///
+    /// See [`AudioBuffer::copy_bytes_to_vecs_planar`] for full details.
+    pub fn copy_bytes_to_vecs_planar(&self, dst: &mut Vec<Vec<u8>>) {
+        impl_generic_ref_func!(self, buf, buf.copy_bytes_to_vecs_planar(dst))
+    }
+
+    /// Copy audio planes as bytes to discrete byte vectors after converting to a different sample
+    /// format.
+    ///
+    /// See [`AudioBuffer::copy_bytes_to_vecs_planar_as`] for full details.
+    pub fn copy_bytes_to_vecs_planar_as<Sout>(&self, dst: &mut Vec<Vec<u8>>)
+    where
+        Sout: SampleBytes + ConvertibleSample,
+    {
+        impl_generic_ref_func!(self, buf, buf.copy_bytes_to_vecs_planar_as::<Sout>(dst))
+    }
+
+    /// Get the length in bytes of all samples if converted to a new sample format.
     pub fn byte_len_as<Sout>(&self) -> usize
     where
         Sout: SampleBytes + ConvertibleSample,
@@ -412,6 +567,8 @@ impl GenericAudioBufferRef<'_> {
         impl_generic_ref_func!(self, buf, buf.byte_len_as::<Sout>())
     }
 
+    /// Get the length in bytes of all samples in a single plane if converted to a new sample
+    /// format.
     pub fn byte_len_per_plane_as<Sout>(&self) -> usize
     where
         Sout: SampleBytes + ConvertibleSample,
@@ -419,6 +576,8 @@ impl GenericAudioBufferRef<'_> {
         impl_generic_ref_func!(self, buf, buf.byte_len_per_plane_as::<Sout>())
     }
 
+    /// Get the length of bytes of a single interleaved audio frame if converted to a new sample
+    /// format.
     pub fn byte_len_per_frame_as<Sout>(&self) -> usize
     where
         Sout: SampleBytes + ConvertibleSample,
@@ -426,14 +585,17 @@ impl GenericAudioBufferRef<'_> {
         impl_generic_ref_func!(self, buf, buf.byte_len_per_frame_as::<Sout>())
     }
 
+    /// Get the length in bytes of all samples.
     pub fn byte_len(&self) -> usize {
         impl_generic_ref_func!(self, buf, buf.byte_len())
     }
 
+    /// Get the length in bytes of all samples in a single plane.
     pub fn byte_len_per_plane(&self) -> usize {
         impl_generic_ref_func!(self, buf, buf.byte_len_per_plane())
     }
 
+    /// Get the length of bytes of a single interleaved audio frame.
     pub fn byte_len_per_frame(&self) -> usize {
         impl_generic_ref_func!(self, buf, buf.byte_len_per_frame())
     }

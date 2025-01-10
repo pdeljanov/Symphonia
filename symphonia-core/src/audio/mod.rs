@@ -267,7 +267,8 @@ pub trait Audio<S: Sample> {
     /// This function takes a mutable reference to a vector. The vector is resized such that the
     /// length of the vector after the copy is the exact number of samples copied.
     ///
-    /// If the sample format of the vector differs a sample format conversion will occur.
+    /// A sample format conversion will occur if the sample format of the destination vector
+    /// differs.
     ///
     /// # Realtime Safety
     ///
@@ -288,13 +289,13 @@ pub trait Audio<S: Sample> {
     /// to match the number of audio planes being copied. Each inner audio plane vector is then
     /// resized to match the number of samples copied per plane.
     ///
-    /// If the sample format of the audio plane vectors differ a sample format conversion will
-    /// occur.
+    /// A sample format conversion will occur if the sample format of the destination vectors
+    /// differ.
     ///
     /// # Realtime Safety
     ///
     /// This function allocates if either the outer vector is not long enough, or if an audio plane
-    /// vector is long long enough. Allocations can be avoided all vectors have capacity reserved
+    /// vector is not long enough. Allocations can be avoided if all vectors have capacity reserved
     /// ahead of time.
     fn copy_to_vecs_planar<Sout>(&self, dst: &mut Vec<Vec<Sout>>)
     where
@@ -470,7 +471,7 @@ pub trait AudioBytes<S: Sample + SampleBytes>: Audio<S> {
         Dst: AsMut<[u8]>;
 
     /// Copy planar audio as bytes to a destination slice per plane after converting to a different
-    /// sample format
+    /// sample format.
     ///
     /// There must be exactly one destination slice per audio plane.
     ///
@@ -529,6 +530,90 @@ pub trait AudioBytes<S: Sample + SampleBytes>: Audio<S> {
     fn copy_bytes_planar<Dst>(&self, dst: &mut [Dst])
     where
         Dst: AsMut<[u8]>;
+
+    /// Copy interleaved audio to the destination byte vector.
+    ///
+    /// This function takes a mutable reference to a vector. The vector is resized such that the
+    /// length of the vector after the copy is the exact number of samples copied.
+    ///
+    /// # Realtime Safety
+    ///
+    /// This function allocates if the vector is not long enough. Allocations can be avoided if
+    /// the vector has capacity reserved ahead of time.
+    fn copy_bytes_to_vec_interleaved(&self, dst: &mut Vec<u8>) {
+        // Ensure the vector is long enough.
+        dst.resize(self.byte_len(), 0);
+        self.copy_bytes_interleaved(dst);
+    }
+
+    /// Copy interleaved audio to the destination byte vector after converting to a different sample
+    /// format.
+    ///
+    /// This function takes a mutable reference to a vector. The vector is resized such that the
+    /// length of the vector after the copy is the exact number of samples copied.
+    ///
+    /// # Realtime Safety
+    ///
+    /// This function allocates if the vector is not long enough. Allocations can be avoided if
+    /// the vector has capacity reserved ahead of time.
+    fn copy_bytes_to_vec_interleaved_as<Sout>(&self, dst: &mut Vec<u8>)
+    where
+        Sout: SampleBytes + FromSample<S>,
+    {
+        // Ensure the vector is long enough.
+        dst.resize(self.byte_len_as::<Sout>(), 0);
+        self.copy_bytes_interleaved_as::<Sout, _>(dst);
+    }
+
+    /// Copy audio planes as bytes to discrete byte vectors.
+    ///
+    /// This function takes a mutable reference to a vector of vectors. The outer vector is resized
+    /// to match the number of audio planes being copied. Each inner byte vector is resized to
+    /// match the number of bytes per plane.
+    ///
+    /// # Realtime Safety
+    ///
+    /// This function allocates if either the outer vector is not long enough, or if an audio plane
+    /// vector is not long enough. Allocations can be avoided if all vectors have capacity reserved
+    /// ahead of time.
+    fn copy_bytes_to_vecs_planar(&self, dst: &mut Vec<Vec<u8>>) {
+        // Ensure there is one vector per plane.
+        dst.resize(self.num_planes(), Default::default());
+
+        // Ensure the vector for each plane is the correct length.
+        for vec in dst.iter_mut() {
+            vec.resize(self.byte_len_per_plane(), 0);
+        }
+
+        self.copy_bytes_planar(dst);
+    }
+
+    /// Copy audio planes as bytes to discrete byte vectors after converting to a different sample
+    /// format.
+    ///
+    /// This function takes a mutable reference to a vector of vectors. The outer vector is resized
+    /// to match the number of audio planes being copied. Each inner byte vector is resized to
+    /// match the number of bytes per plane.
+    ///
+    /// # Realtime Safety
+    ///
+    /// This function allocates if either the outer vector is not long enough, or if an audio plane
+    /// vector is not long enough. Allocations can be avoided if all vectors have capacity reserved
+    /// ahead of time.
+    fn copy_bytes_to_vecs_planar_as<Sout>(&self, dst: &mut Vec<Vec<u8>>)
+    where
+        Sout: SampleBytes + FromSample<S>,
+    {
+        // Ensure there is one vector per plane.
+        dst.resize(self.num_planes(), Default::default());
+
+        // Ensure the vector for each plane is the correct length.
+        for vec in dst.iter_mut() {
+            vec.resize(self.byte_len_per_plane_as::<Sout>(), 0);
+        }
+
+        self.copy_bytes_planar_as::<Sout, _>(dst);
+    }
 }
 
 /// Trait for querying the maximum capacity in bytes for dynamically sized audio storage.

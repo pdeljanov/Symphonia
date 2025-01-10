@@ -103,10 +103,8 @@ mod pulseaudio {
                 return Ok(());
             }
 
-            self.buf.resize(decoded.byte_len_as::<f32>(), 0);
-
-            // Interleave samples from the audio buffer into the sample buffer.
-            decoded.copy_bytes_interleaved_as::<f32, _>(&mut self.buf);
+            // Interleave samples as f32 from the audio buffer into a byte buffer.
+            decoded.copy_bytes_to_vec_interleaved_as::<f32>(&mut self.buf);
 
             // Write interleaved samples to PulseAudio.
             match self.pa.write(&self.buf) {
