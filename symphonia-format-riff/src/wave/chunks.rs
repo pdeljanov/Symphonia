@@ -368,17 +368,17 @@ impl WaveFormatChunk {
             //| WaveFormatData::Extensible(WaveFormatExtensible { codec, bits_per_sample, .. })
                 if codec == CODEC_ID_ADPCM_MS =>
             {
-                let frames_per_block = ((((self.block_align - (7 * self.n_channels)) * 8)
-                    / (bits_per_sample * self.n_channels))
-                    + 2) as u64;
+                let frames_per_block = ((self.block_align - (7 * self.n_channels)) as u64 * 8)
+                    / (bits_per_sample * self.n_channels) as u64
+                    + 2;
                 PacketInfo::with_blocks(self.block_align, frames_per_block)
             }
             FormatData::Adpcm(FormatAdpcm { codec, bits_per_sample, .. })
                 if codec == CODEC_ID_ADPCM_IMA_WAV =>
             {
-                let frames_per_block = (((self.block_align - (4 * self.n_channels)) * 8)
-                    / (bits_per_sample * self.n_channels)
-                    + 1) as u64;
+                let frames_per_block = ((self.block_align - (4 * self.n_channels)) as u64 * 8)
+                    / (bits_per_sample * self.n_channels) as u64
+                    + 1;
                 PacketInfo::with_blocks(self.block_align, frames_per_block)
             }
             _ => Ok(PacketInfo::without_blocks(self.block_align)),
