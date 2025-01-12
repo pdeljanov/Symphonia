@@ -11,7 +11,9 @@ rust-version = "1.77"
 publish = false
 
 [dependencies]
-clap = "3.1.0"
+clap = { version = "4.5.23", features = ["derive"] }
 log = { version = "0.4", features = ["release_max_level_info"] }
 pretty_env_logger = "0.4"
 symphonia = { version = "0.5.4", path = "../symphonia", features = ["all", "opt-simd"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
