@@ -25,7 +25,7 @@ use crate::element_ids::{ElementType, ELEMENTS};
 use crate::lacing::{extract_frames, Frame};
 use crate::segment::{
     AttachmentsElement, BlockGroupElement, ChaptersElement, ClusterElement, CuesElement,
-    InfoElement, SeekHeadElement, TagsElement, TracksElement,
+    InfoElement, SeekHeadElement, TagsElement, TargetTagsMap, TracksElement,
 };
 
 const MKV_FORMAT_INFO: FormatInfo =
@@ -89,10 +89,9 @@ impl<'s> MkvReader<'s> {
         let mut clusters = Vec::new();
         let mut current_cluster = None;
         let mut seek_positions = Vec::new();
-
-        let mut metadata = opts.external_data.metadata.unwrap_or_default();
-        let mut attachments = Vec::new();
-        let mut chapters = opts.external_data.chapters;
+        let mut tags = Vec::new();
+        let mut attachments = None;
+        let mut chapters = None;
 
         while let Ok(Some(header)) = it.read_child_header() {
             match header.etype {
@@ -125,8 +124,8 @@ impl<'s> MkvReader<'s> {
                     }
                 }
                 ElementType::Tags => {
-                    let tags = it.read_element_data::<TagsElement>()?;
-                    metadata.push(tags.to_metadata());
+                    // Multiple tags element per segment allowed.
+                    tags.push(it.read_element_data::<TagsElement>()?);
                 }
                 ElementType::Cluster => {
                     // Set state for current cluster for the first call of `next_element`.
@@ -137,19 +136,18 @@ impl<'s> MkvReader<'s> {
                     break;
                 }
                 ElementType::Attachments => {
-                    let attachments_elem = it.read_element_data::<AttachmentsElement>()?;
-                    for file in attachments_elem.attached_files {
-                        attachments.push(Attachment::File(FileAttachment {
-                            name: file.name,
-                            description: file.desc,
-                            media_type: Some(file.media_type),
-                            data: file.data,
-                        }));
+                    // Only one attachments element per segment is expected.
+                    if attachments.is_some() {
+                        log::warn!("unexpected attachments element");
                     }
+                    attachments = Some(it.read_element_data::<AttachmentsElement>()?);
                 }
                 ElementType::Chapters => {
-                    let chapters_elem = it.read_element_data::<ChaptersElement>()?;
-                    chapters = chapters_elem.build_chapter_group()
+                    // Only one chapters element per segment is expected.
+                    if chapters.is_some() {
+                        log::warn!("unexpected chapters element");
+                    }
+                    chapters = Some(it.read_element_data::<ChaptersElement>()?);
                 }
                 other => {
                     it.ignore_data()?;
@@ -179,8 +177,8 @@ impl<'s> MkvReader<'s> {
                         info = Some(it.read_element::<InfoElement>()?);
                     }
                     ElementType::Tags => {
-                        let tags = it.read_element::<TagsElement>()?;
-                        metadata.push(tags.to_metadata());
+                        // Multiple tags element per segment allowed.
+                        tags.push(it.read_element::<TagsElement>()?);
                     }
                     ElementType::Cues => {
                         let cues = it.read_element::<CuesElement>()?;
@@ -194,19 +192,18 @@ impl<'s> MkvReader<'s> {
                         }
                     }
                     ElementType::Attachments => {
-                        let attachments_elem = it.read_element::<AttachmentsElement>()?;
-                        for file in attachments_elem.attached_files {
-                            attachments.push(Attachment::File(FileAttachment {
-                                name: file.name,
-                                description: file.desc,
-                                media_type: Some(file.media_type),
-                                data: file.data,
-                            }));
+                        // Only one attachments element per segment is expected.
+                        if attachments.is_some() {
+                            log::warn!("unexpected attachments element after meta seek");
                         }
+                        attachments = Some(it.read_element::<AttachmentsElement>()?);
                     }
                     ElementType::Chapters => {
-                        let chapters_elem = it.read_element::<ChaptersElement>()?;
-                        chapters = chapters_elem.build_chapter_group()
+                        // Only one chapters element per segment is expected.
+                        if chapters.is_some() {
+                            log::warn!("unexpected chapters element after meta seek");
+                        }
+                        chapters = Some(it.read_element::<ChaptersElement>()?)
                     }
                     _ => (),
                 }
@@ -221,6 +218,38 @@ impl<'s> MkvReader<'s> {
         }
 
         let info = info.ok_or(Error::DecodeError("mkv: missing Info element"))?;
+
+        // Create a hashmap of all per-target tags (edition, chapter, & attachment tags).
+        let mut per_target_tags: TargetTagsMap = Default::default();
+
+        segment_tracks.get_target_uids(&mut per_target_tags);
+
+        if let Some(chapters) = &chapters {
+            chapters.get_target_uids(&mut per_target_tags);
+        }
+        if let Some(attachments) = &attachments {
+            attachments.get_target_uids(&mut per_target_tags);
+        }
+
+        // Begin with externally provided metadata and chapters.
+        let mut metadata = opts.external_data.metadata.unwrap_or_default();
+
+        // Post-process all tag elements into metadata revisions, while also collecting per-target
+        // tags.
+        let is_video = segment_tracks.tracks.as_ref().iter().any(|t| t.video.is_some());
+        for tag in tags {
+            metadata.push(tag.into_metadata(&mut per_target_tags, is_video));
+        }
+
+        // Post-process chapters element.
+        let chapters = chapters
+            .map(|chapters| chapters.into_chapter_group(&mut per_target_tags))
+            .unwrap_or(opts.external_data.chapters);
+
+        // Process attachments element.
+        let attachments = attachments
+            .map(|attachments| attachments.into_attachments(&mut per_target_tags))
+            .unwrap_or_default();
 
         // TODO: remove this unwrap?
         let time_base = TimeBase::new(u32::try_from(info.timestamp_scale).unwrap(), 1_000_000_000);
@@ -244,8 +273,11 @@ impl<'s> MkvReader<'s> {
                 tr.with_num_frames(duration as u64);
             }
 
-            if let Some(language) = &track.language {
-                tr.with_language(language);
+            if let Some(lang_bcp47) = &track.lang_bcp47 {
+                tr.with_language(lang_bcp47);
+            }
+            else {
+                tr.with_language(&track.lang);
             }
 
             tr.with_flags(track.flags);
@@ -429,11 +461,12 @@ impl<'s> MkvReader<'s> {
                     &mut self.frames,
                 )?;
             }
-            ElementType::Tags => {
-                let tags = self.iter.read_element_data::<TagsElement>()?;
-                self.metadata.push(tags.to_metadata());
-                self.current_cluster = None;
-            }
+            // ElementType::Tags => {
+            //     let tags = self.iter.read_element_data::<TagsElement>()?;
+
+            //     self.metadata.push(tags.into_metadata());
+            //     self.current_cluster = None;
+            // }
             _ if header.etype.is_top_level() => {
                 self.current_cluster = None;
             }

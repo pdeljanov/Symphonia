@@ -76,6 +76,7 @@ pub enum ElementType {
     DefaultDuration,
     Name,
     Language,
+    LanguageBcp47,
     CodecId,
     CodecPrivate,
     CodecName,
@@ -178,9 +179,13 @@ pub enum ElementType {
     TargetTypeValue,
     TargetType,
     TagTrackUid,
+    TagEditionUid,
+    TagChapterUid,
+    TagAttachmentUid,
     SimpleTag,
     TagName,
     TagLanguage,
+    TagLanguageBcp47,
     TagDefault,
     TagString,
     TagBinary,
@@ -268,6 +273,7 @@ lazy_static! {
         elems.insert(0x23E383, (Type::Unsigned, ElementType::DefaultDuration));
         elems.insert(0x536E, (Type::String, ElementType::Name));
         elems.insert(0x22B59C, (Type::String, ElementType::Language));
+        elems.insert(0x22B59D, (Type::String, ElementType::LanguageBcp47));
         elems.insert(0x86, (Type::String, ElementType::CodecId));
         elems.insert(0x63A2, (Type::Binary, ElementType::CodecPrivate));
         elems.insert(0x258688, (Type::String, ElementType::CodecName));
@@ -370,9 +376,13 @@ lazy_static! {
         elems.insert(0x68CA, (Type::Unsigned, ElementType::TargetTypeValue));
         elems.insert(0x63CA, (Type::String, ElementType::TargetType));
         elems.insert(0x63C5, (Type::Unsigned, ElementType::TagTrackUid));
+        elems.insert(0x63C9, (Type::Unsigned, ElementType::TagEditionUid));
+        elems.insert(0x63C4, (Type::Unsigned, ElementType::TagChapterUid));
+        elems.insert(0x63C6, (Type::Unsigned, ElementType::TagAttachmentUid));
         elems.insert(0x67C8, (Type::Master, ElementType::SimpleTag));
         elems.insert(0x45A3, (Type::String, ElementType::TagName));
         elems.insert(0x447A, (Type::String, ElementType::TagLanguage));
+        elems.insert(0x447B, (Type::String, ElementType::TagLanguageBcp47));
         elems.insert(0x4484, (Type::Unsigned, ElementType::TagDefault));
         elems.insert(0x4487, (Type::String, ElementType::TagString));
         elems.insert(0x4485, (Type::Binary, ElementType::TagBinary));

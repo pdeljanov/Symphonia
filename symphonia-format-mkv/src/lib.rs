@@ -20,6 +20,7 @@ mod ebml;
 mod element_ids;
 mod lacing;
 mod segment;
+mod tags;
 
 pub use crate::demuxer::MkvReader;
 
@@ -28,6 +29,9 @@ pub mod sub_fields {
     //!
     //! For the exact meaning of these fields, and the format of their values, please consult the
     //! official Matroska specification.
+
+    pub const TAG_LANGUAGE: &str = "LANGUAGE";
+    pub const TAG_LANGUAGE_BCP47: &str = "LANGUAGE_BCP47";
 
     pub const CHAPTER_TITLE_COUNTRY: &str = "CHAPTER_TITLE_COUNTRY";
     pub const CHAPTER_TITLE_LANGUAGE: &str = "CHAPTER_TITLE_LANGUAGE";

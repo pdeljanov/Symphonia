@@ -5,18 +5,21 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+use std::collections::HashMap;
+use std::num::NonZeroU64;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use symphonia_core::codecs::video::well_known::extra_data::{
     VIDEO_EXTRA_DATA_ID_DOLBY_VISION_CONFIG, VIDEO_EXTRA_DATA_ID_DOLBY_VISION_EL_HEVC,
 };
 use symphonia_core::codecs::video::VideoExtraData;
-use symphonia_core::errors::{Error, Result};
-use symphonia_core::formats::TrackFlags;
+use symphonia_core::errors::{decode_error, Error, Result};
+use symphonia_core::formats::{Attachment, FileAttachment, TrackFlags};
 use symphonia_core::io::{BufReader, ReadBytes};
 use symphonia_core::meta::{
     Chapter, ChapterGroup, ChapterGroupItem, MetadataBuilder, MetadataRevision, RawTag,
-    RawTagSubField, RawValue, StandardTag, Tag,
+    RawTagSubField, StandardTag, Tag,
 };
 use symphonia_core::units::Time;
 
@@ -26,13 +29,15 @@ use crate::ebml::{
 use crate::element_ids::ElementType;
 use crate::lacing::calc_abs_block_timestamp;
 use crate::sub_fields::*;
+use crate::tags::{make_raw_tags, map_std_tag, TagContext, Target};
 
 #[allow(dead_code)]
 #[derive(Debug)]
 pub(crate) struct TrackElement {
     pub(crate) number: u64,
-    pub(crate) uid: u64,
-    pub(crate) language: Option<String>,
+    pub(crate) uid: NonZeroU64,
+    pub(crate) lang: String,
+    pub(crate) lang_bcp47: Option<String>,
     pub(crate) codec_id: String,
     pub(crate) codec_private: Option<Box<[u8]>>,
     pub(crate) block_addition_mappings: Vec<BlockAdditionMappingElement>,
@@ -45,10 +50,11 @@ pub(crate) struct TrackElement {
 impl Element for TrackElement {
     const ID: ElementType = ElementType::TrackEntry;
 
-    fn read<R: ElementReader>(mut it: ElementIterator<R>, _header: ElementHeader) -> Result<Self> {
+    fn read<R: ElementReader>(mut it: ElementIterator<R>, parent: ElementHeader) -> Result<Self> {
         let mut number = None;
         let mut uid = None;
-        let mut language = None;
+        let mut lang = None;
+        let mut lang_bcp47 = None;
         let mut audio = None;
         let mut video = None;
         let mut codec_private = None;
@@ -60,13 +66,20 @@ impl Element for TrackElement {
         while let Some(header) = it.read_header()? {
             match header.etype {
                 ElementType::TrackNumber => {
+                    // TODO: 0 is invalid.
                     number = Some(it.read_u64()?);
                 }
                 ElementType::TrackUid => {
-                    uid = Some(it.read_u64()?);
+                    uid = match NonZeroU64::new(it.read_u64()?) {
+                        None => return decode_error("mkv: invalid track uid"),
+                        uid => uid,
+                    };
                 }
                 ElementType::Language => {
-                    language = Some(it.read_string()?);
+                    lang = Some(it.read_string()?);
+                }
+                ElementType::LanguageBcp47 => {
+                    lang_bcp47 = Some(it.read_string()?);
                 }
                 ElementType::CodecId => {
                     codec_id = Some(it.read_string()?);
@@ -122,7 +135,7 @@ impl Element for TrackElement {
                     }
                 }
                 other => {
-                    log::debug!("ignored element {:?}", other);
+                    log::debug!("ignored {:?} child element {:?}", parent.etype, other);
                 }
             }
         }
@@ -130,7 +143,8 @@ impl Element for TrackElement {
         Ok(Self {
             number: number.ok_or(Error::DecodeError("mkv: missing track number"))?,
             uid: uid.ok_or(Error::DecodeError("mkv: missing track UID"))?,
-            language,
+            lang: lang.unwrap_or_else(|| "eng".into()),
+            lang_bcp47,
             codec_id: codec_id.ok_or(Error::DecodeError("mkv: missing codec id"))?,
             codec_private,
             block_addition_mappings,
@@ -154,7 +168,7 @@ pub(crate) struct AudioElement {
 impl Element for AudioElement {
     const ID: ElementType = ElementType::Audio;
 
-    fn read<R: ElementReader>(mut it: ElementIterator<R>, _header: ElementHeader) -> Result<Self> {
+    fn read<R: ElementReader>(mut it: ElementIterator<R>, parent: ElementHeader) -> Result<Self> {
         let mut sampling_frequency = None;
         let mut output_sampling_frequency = None;
         let mut channels = None;
@@ -175,7 +189,7 @@ impl Element for AudioElement {
                     bit_depth = Some(it.read_u64()?);
                 }
                 other => {
-                    log::debug!("ignored element {:?}", other);
+                    log::debug!("ignored {:?} child element {:?}", parent.etype, other);
                 }
             }
         }
@@ -199,7 +213,7 @@ pub(crate) struct VideoElement {
 impl Element for VideoElement {
     const ID: ElementType = ElementType::Video;
 
-    fn read<R: ElementReader>(mut it: ElementIterator<R>, _header: ElementHeader) -> Result<Self> {
+    fn read<R: ElementReader>(mut it: ElementIterator<R>, parent: ElementHeader) -> Result<Self> {
         let mut pixel_width = None;
         let mut pixel_height = None;
 
@@ -212,7 +226,7 @@ impl Element for VideoElement {
                     pixel_height = Some(it.read_u64()? as u16);
                 }
                 other => {
-                    log::debug!("ignored element {:?}", other);
+                    log::debug!("ignored {:?} child element {:?}", parent.etype, other);
                 }
             }
         }
@@ -229,7 +243,7 @@ pub(crate) struct BlockAdditionMappingElement {
 impl Element for BlockAdditionMappingElement {
     const ID: ElementType = ElementType::BlockAdditionMapping;
 
-    fn read<R: ElementReader>(mut it: ElementIterator<R>, _header: ElementHeader) -> Result<Self> {
+    fn read<R: ElementReader>(mut it: ElementIterator<R>, parent: ElementHeader) -> Result<Self> {
         // There can be many BlockAdditionMapping elements with DolbyVisionConfiguration in a single track
         // BlockAddIdType FourCC string allows to determine the type of DolbyVisionConfiguration extra data
         let mut extra_data = None;
@@ -256,7 +270,7 @@ impl Element for BlockAdditionMappingElement {
                     _ => {}
                 },
                 other => {
-                    log::debug!("ignored element {:?}", other);
+                    log::debug!("ignored {:?} child element {:?}", parent.etype, other);
                 }
             }
         }
@@ -273,7 +287,7 @@ pub(crate) struct SeekHeadElement {
 impl Element for SeekHeadElement {
     const ID: ElementType = ElementType::SeekHead;
 
-    fn read<R: ElementReader>(mut it: ElementIterator<R>, _header: ElementHeader) -> Result<Self> {
+    fn read<R: ElementReader>(mut it: ElementIterator<R>, parent: ElementHeader) -> Result<Self> {
         let mut seeks = Vec::new();
 
         while let Some(header) = it.read_header()? {
@@ -282,7 +296,7 @@ impl Element for SeekHeadElement {
                     seeks.push(it.read_element_data()?);
                 }
                 other => {
-                    log::debug!("ignored element {:?}", other);
+                    log::debug!("ignored {:?} child element {:?}", parent.etype, other);
                 }
             }
         }
@@ -300,7 +314,7 @@ pub(crate) struct SeekElement {
 impl Element for SeekElement {
     const ID: ElementType = ElementType::Seek;
 
-    fn read<R: ElementReader>(mut it: ElementIterator<R>, _header: ElementHeader) -> Result<Self> {
+    fn read<R: ElementReader>(mut it: ElementIterator<R>, parent: ElementHeader) -> Result<Self> {
         let mut seek_id = None;
         let mut seek_position = None;
 
@@ -313,7 +327,7 @@ impl Element for SeekElement {
                     seek_position = Some(it.read_u64()?);
                 }
                 other => {
-                    log::debug!("ignored element {:?}", other);
+                    log::debug!("ignored {:?} child element {:?}", parent.etype, other);
                 }
             }
         }
@@ -333,8 +347,16 @@ pub(crate) struct TracksElement {
 impl Element for TracksElement {
     const ID: ElementType = ElementType::Tracks;
 
-    fn read<R: ElementReader>(mut it: ElementIterator<R>, _header: ElementHeader) -> Result<Self> {
+    fn read<R: ElementReader>(mut it: ElementIterator<R>, _parent: ElementHeader) -> Result<Self> {
         Ok(Self { tracks: it.read_elements()? })
+    }
+}
+
+impl TracksElement {
+    pub(crate) fn get_target_uids(&self, target_tags: &mut TargetTagsMap) {
+        self.tracks.iter().for_each(|track| {
+            target_tags.insert(TargetUid::Track(track.uid.get()), Default::default());
+        })
     }
 }
 
@@ -353,7 +375,7 @@ pub(crate) struct EbmlHeaderElement {
 impl Element for EbmlHeaderElement {
     const ID: ElementType = ElementType::Ebml;
 
-    fn read<R: ElementReader>(mut it: ElementIterator<R>, _header: ElementHeader) -> Result<Self> {
+    fn read<R: ElementReader>(mut it: ElementIterator<R>, parent: ElementHeader) -> Result<Self> {
         let mut version = None;
         let mut read_version = None;
         let mut max_id_length = None;
@@ -386,7 +408,7 @@ impl Element for EbmlHeaderElement {
                     doc_type_read_version = Some(it.read_u64()?);
                 }
                 other => {
-                    log::debug!("ignored element {:?}", other);
+                    log::debug!("ignored {:?} child element {:?}", parent.etype, other);
                 }
             }
         }
@@ -416,7 +438,7 @@ pub(crate) struct InfoElement {
 impl Element for InfoElement {
     const ID: ElementType = ElementType::Info;
 
-    fn read<R: ElementReader>(mut it: ElementIterator<R>, _header: ElementHeader) -> Result<Self> {
+    fn read<R: ElementReader>(mut it: ElementIterator<R>, parent: ElementHeader) -> Result<Self> {
         let mut duration = None;
         let mut timestamp_scale = None;
         let mut title = None;
@@ -441,7 +463,7 @@ impl Element for InfoElement {
                     writing_app = Some(it.read_string()?);
                 }
                 other => {
-                    log::debug!("ignored element {:?}", other);
+                    log::debug!("ignored {:?} child element {:?}", parent.etype, other);
                 }
             }
         }
@@ -465,7 +487,7 @@ pub(crate) struct CuesElement {
 impl Element for CuesElement {
     const ID: ElementType = ElementType::Cues;
 
-    fn read<R: ElementReader>(mut it: ElementIterator<R>, _header: ElementHeader) -> Result<Self> {
+    fn read<R: ElementReader>(mut it: ElementIterator<R>, _parent: ElementHeader) -> Result<Self> {
         Ok(Self { points: it.read_elements()? })
     }
 }
@@ -480,7 +502,7 @@ pub(crate) struct CuePointElement {
 impl Element for CuePointElement {
     const ID: ElementType = ElementType::CuePoint;
 
-    fn read<R: ElementReader>(mut it: ElementIterator<R>, _header: ElementHeader) -> Result<Self> {
+    fn read<R: ElementReader>(mut it: ElementIterator<R>, parent: ElementHeader) -> Result<Self> {
         let mut time = None;
         let mut pos = None;
         while let Some(header) = it.read_header()? {
@@ -490,7 +512,7 @@ impl Element for CuePointElement {
                     pos = Some(it.read_element_data()?);
                 }
                 other => {
-                    log::debug!("ignored element {:?}", other);
+                    log::debug!("ignored {:?} child element {:?}", parent.etype, other);
                 }
             }
         }
@@ -512,7 +534,7 @@ pub(crate) struct CueTrackPositionsElement {
 impl Element for CueTrackPositionsElement {
     const ID: ElementType = ElementType::CueTrackPositions;
 
-    fn read<R: ElementReader>(mut it: ElementIterator<R>, _header: ElementHeader) -> Result<Self> {
+    fn read<R: ElementReader>(mut it: ElementIterator<R>, parent: ElementHeader) -> Result<Self> {
         let mut track = None;
         let mut pos = None;
         while let Some(header) = it.read_header()? {
@@ -524,7 +546,7 @@ impl Element for CueTrackPositionsElement {
                     pos = Some(it.read_u64()?);
                 }
                 other => {
-                    log::debug!("ignored element {:?}", other);
+                    log::debug!("ignored {:?} child element {:?}", parent.etype, other);
                 }
             }
         }
@@ -545,7 +567,7 @@ pub(crate) struct BlockGroupElement {
 impl Element for BlockGroupElement {
     const ID: ElementType = ElementType::BlockGroup;
 
-    fn read<R: ElementReader>(mut it: ElementIterator<R>, _header: ElementHeader) -> Result<Self> {
+    fn read<R: ElementReader>(mut it: ElementIterator<R>, parent: ElementHeader) -> Result<Self> {
         let mut data = None;
         let mut block_duration = None;
         while let Some(header) = it.read_header()? {
@@ -560,7 +582,7 @@ impl Element for BlockGroupElement {
                     block_duration = Some(it.read_u64()?);
                 }
                 other => {
-                    log::debug!("ignored element {:?}", other);
+                    log::debug!("ignored {:?} child element {:?}", parent.etype, other);
                 }
             }
         }
@@ -589,11 +611,11 @@ pub(crate) struct ClusterElement {
 impl Element for ClusterElement {
     const ID: ElementType = ElementType::Cluster;
 
-    fn read<R: ElementReader>(mut it: ElementIterator<R>, header: ElementHeader) -> Result<Self> {
+    fn read<R: ElementReader>(mut it: ElementIterator<R>, parent: ElementHeader) -> Result<Self> {
         let pos = it.pos();
         let mut timestamp = None;
         let mut blocks = Vec::new();
-        let has_size = header.end().is_some();
+        let has_size = parent.end().is_some();
 
         fn read_block(data: &[u8], timestamp: u64, offset: u64) -> Result<BlockElement> {
             let mut reader = BufReader::new(data);
@@ -622,7 +644,7 @@ impl Element for ClusterElement {
                 }
                 _ if header.etype.is_top_level() && !has_size => break,
                 other => {
-                    log::debug!("ignored element {:?}", other);
+                    log::debug!("ignored {:?} child element {:?}", parent.etype, other);
                 }
             }
         }
@@ -631,7 +653,7 @@ impl Element for ClusterElement {
             timestamp: get_timestamp(timestamp)?,
             blocks: blocks.into_boxed_slice(),
             pos,
-            end: header.end(),
+            end: parent.end(),
         })
     }
 }
@@ -644,7 +666,7 @@ pub(crate) struct TagsElement {
 impl Element for TagsElement {
     const ID: ElementType = ElementType::Tags;
 
-    fn read<R: ElementReader>(mut it: ElementIterator<R>, _header: ElementHeader) -> Result<Self> {
+    fn read<R: ElementReader>(mut it: ElementIterator<R>, parent: ElementHeader) -> Result<Self> {
         let mut tags = Vec::new();
 
         while let Some(header) = it.read_header()? {
@@ -653,7 +675,7 @@ impl Element for TagsElement {
                     tags.push(it.read_element_data::<TagElement>()?);
                 }
                 other => {
-                    log::debug!("ignored element {:?}", other);
+                    log::debug!("ignored {:?} child element {:?}", parent.etype, other);
                 }
             }
         }
@@ -662,20 +684,178 @@ impl Element for TagsElement {
     }
 }
 
+/// Map of a target-specific UID to a vector of tags.
+pub type TargetTagsMap = HashMap<TargetUid, Vec<Tag>>;
+
 impl TagsElement {
-    pub(crate) fn to_metadata(&self) -> MetadataRevision {
-        let mut builder = MetadataBuilder::new();
-        for tag in self.tags.iter() {
-            for simple_tag in tag.simple_tags.iter() {
-                // TODO: support std_key
-                let value = match &simple_tag.value {
-                    ElementData::Binary(b) => RawValue::Binary(Arc::new(b.clone())),
-                    ElementData::String(s) => RawValue::String(Arc::new(s.clone())),
-                    _ => unreachable!(),
-                };
-                builder.add_tag(Tag::new(RawTag::new(simple_tag.name.as_ref(), value)));
+    pub(crate) fn into_metadata(
+        mut self,
+        target_tags: &mut TargetTagsMap,
+        is_video: bool,
+    ) -> MetadataRevision {
+        /// UID -> (Last tag context, Tag vector)
+        type UidMap = HashMap<u64, (TagContext, Vec<Tag>)>;
+
+        /// Append tags to the item in the UID map for the given UID.
+        fn append_to_map(map: &mut UidMap, uid: u64, raw_tags: &Vec<RawTag>, target: &Target) {
+            if let Some(item) = map.get_mut(&uid) {
+                // Attempt to generate a standard tag for each raw tag using the last context for
+                // the current item, and push a new tag.
+                for raw in raw_tags {
+                    item.1.push(Tag { raw: raw.clone(), std: map_std_tag(raw, &item.0) });
+                }
+                // Update the last target of the context for the given item. Note, this is a cheap
+                // clone (internal RC).
+                item.0.target = Some(target.clone());
             }
         }
+
+        /// Append tags to all items in the UID map.
+        fn append_to_map_all(map: &mut UidMap, raw_tags: &Vec<RawTag>, target: &Target) {
+            for (_, item) in map.iter_mut() {
+                // Attempt to generate a standard tag for each raw tag using the last context for
+                // the current item, and push a new tag.
+                for raw in raw_tags {
+                    item.1.push(Tag { raw: raw.clone(), std: map_std_tag(raw, &item.0) });
+                }
+                // Update the last target of the context for the given item. Note, this is a cheap
+                // clone (internal RC).
+                item.0.target = Some(target.clone());
+            }
+        }
+
+        /// Append tags to media.
+        fn append_to_media(
+            builder: &mut MetadataBuilder,
+            raw_tags: &Vec<RawTag>,
+            target: &Option<Target>,
+            ctx: &mut TagContext,
+        ) {
+            // Attempt to generate a standard tag for each raw tag using the last media context, and
+            // push a new tag.
+            for raw in raw_tags {
+                builder.add_tag(Tag { raw: raw.clone(), std: map_std_tag(raw, ctx) });
+            }
+            // Update the last target of the media tag context. Note, this is a cheap clone
+            // (internal RC).
+            ctx.target = target.clone();
+        }
+
+        let mut builder = MetadataBuilder::new();
+        let mut media_target = TagContext { is_video, target: None };
+
+        let mut tracks: UidMap = Default::default();
+        let mut editions: UidMap = Default::default();
+        let mut chapters: UidMap = Default::default();
+        let mut attachments: UidMap = Default::default();
+
+        // Pre-populate maps using known track, edition, chapter, and attachment UIDs.
+        for (uid, _) in target_tags.iter() {
+            let default = (media_target.clone(), Vec::new());
+            match uid {
+                TargetUid::Track(uid) => tracks.insert(*uid, default),
+                TargetUid::Edition(uid) => editions.insert(*uid, default),
+                TargetUid::Chapter(uid) => chapters.insert(*uid, default),
+                TargetUid::Attachment(uid) => attachments.insert(*uid, default),
+            };
+        }
+
+        // Sort all tag elements in order of ascending target level. Tag elements without a target
+        // or target level should be last. This sort is stable so tag elements at the same target
+        // level will be in the same relative position as they were read.
+        self.tags.sort_by_key(|tag| {
+            tag.targets.as_ref().map(|targets| targets.target_type_value).unwrap_or(u64::MAX)
+        });
+
+        for tag in self.tags {
+            // Tag context for the current tag element.
+            let ctx = TagContext {
+                is_video,
+                target: tag.targets.as_ref().map(|t| Target {
+                    value: t.target_type_value,
+                    name: t.target_type.clone().map(Rc::new),
+                }),
+            };
+
+            // Generate a vector of raw tags from simple tag elements. This vector will be appended
+            // to the appropriate targets or media.
+            let mut raw_tags = Vec::with_capacity(tag.simple_tags.len());
+
+            for tag in tag.simple_tags {
+                make_raw_tags(tag, &ctx, &mut raw_tags);
+            }
+
+            // Append tags to targets.
+            if let Some(targets) = tag.targets {
+                if !targets.uids.is_empty() {
+                    let target = ctx.target.unwrap();
+
+                    // Append tags to specific to tracks, editions, chapters, or attachments.
+                    for uid in targets.uids {
+                        match uid {
+                            TargetUid::Track(uid) if !targets.all_tracks => {
+                                append_to_map(&mut tracks, uid, &raw_tags, &target);
+                            }
+                            TargetUid::Edition(uid) if !targets.all_editions => {
+                                append_to_map(&mut editions, uid, &raw_tags, &target);
+                            }
+                            TargetUid::Chapter(uid) if !targets.all_chapters => {
+                                append_to_map(&mut chapters, uid, &raw_tags, &target);
+                            }
+                            TargetUid::Attachment(uid) if !targets.all_attachments => {
+                                append_to_map(&mut attachments, uid, &raw_tags, &target);
+                            }
+                            _ => (),
+                        }
+                    }
+
+                    // Append tags to all tracks.
+                    if targets.all_tracks {
+                        append_to_map_all(&mut tracks, &raw_tags, &target);
+                    }
+                    // Append tags to all editions.
+                    if targets.all_editions {
+                        append_to_map_all(&mut editions, &raw_tags, &target);
+                    }
+                    // Append tags to all chapters.
+                    if targets.all_chapters {
+                        append_to_map_all(&mut chapters, &raw_tags, &target);
+                    }
+                    // Append tags to all attachments.
+                    if targets.all_attachments {
+                        append_to_map_all(&mut attachments, &raw_tags, &target);
+                    }
+                }
+                else {
+                    // No target UID(s). Append tags to the entire media.
+                    append_to_media(&mut builder, &raw_tags, &ctx.target, &mut media_target);
+                }
+            }
+            else {
+                // No targets. Append tags to the entire media.
+                append_to_media(&mut builder, &raw_tags, &None, &mut media_target);
+            }
+        }
+
+        // SAFETY: There needs to be sane limits (e.g., 1024 each category).
+
+        // Return edition target tags.
+        for (uid, mut value) in editions {
+            let tags = target_tags.entry(TargetUid::Edition(uid)).or_default();
+            tags.append(&mut value.1);
+        }
+        // Return chapter target tags.
+        for (uid, mut value) in chapters {
+            let tags = target_tags.entry(TargetUid::Chapter(uid)).or_default();
+            tags.append(&mut value.1);
+        }
+        // Return attachment target tags.
+        for (uid, mut value) in attachments {
+            let tags = target_tags.entry(TargetUid::Attachment(uid)).or_default();
+            tags.append(&mut value.1);
+        }
+
+        // Return media and track-level metadata.
         builder.metadata()
     }
 }
@@ -683,41 +863,143 @@ impl TagsElement {
 #[derive(Debug)]
 pub(crate) struct TagElement {
     pub(crate) simple_tags: Box<[SimpleTagElement]>,
+    pub(crate) targets: Option<TargetsElement>,
 }
 
 impl Element for TagElement {
     const ID: ElementType = ElementType::Tag;
 
-    fn read<R: ElementReader>(mut it: ElementIterator<R>, _header: ElementHeader) -> Result<Self> {
+    fn read<R: ElementReader>(mut it: ElementIterator<R>, parent: ElementHeader) -> Result<Self> {
         let mut simple_tags = Vec::new();
+        let mut targets = None;
 
         while let Some(header) = it.read_header()? {
             match header.etype {
+                ElementType::Targets => {
+                    targets = Some(it.read_element_data::<TargetsElement>()?);
+                }
                 ElementType::SimpleTag => {
                     simple_tags.push(it.read_element_data::<SimpleTagElement>()?);
                 }
                 other => {
-                    log::debug!("ignored element {:?}", other);
+                    log::debug!("ignored {:?} child element {:?}", parent.etype, other);
                 }
             }
         }
 
-        Ok(Self { simple_tags: simple_tags.into_boxed_slice() })
+        Ok(Self { simple_tags: simple_tags.into_boxed_slice(), targets })
+    }
+}
+
+#[derive(Debug, Hash, PartialEq, Eq)]
+pub(crate) enum TargetUid {
+    Track(u64),
+    Edition(u64),
+    Chapter(u64),
+    Attachment(u64),
+}
+
+#[derive(Debug)]
+pub(crate) struct TargetsElement {
+    pub(crate) target_type_value: u64,
+    pub(crate) target_type: Option<Box<str>>,
+    pub(crate) uids: Vec<TargetUid>,
+    pub(crate) all_tracks: bool,
+    pub(crate) all_editions: bool,
+    pub(crate) all_chapters: bool,
+    pub(crate) all_attachments: bool,
+}
+
+impl Element for TargetsElement {
+    const ID: ElementType = ElementType::Targets;
+
+    fn read<R: ElementReader>(mut it: ElementIterator<R>, parent: ElementHeader) -> Result<Self> {
+        let mut target_type_value = None;
+        let mut target_type = None;
+        let mut uids = Vec::new();
+        let mut all_tracks = false;
+        let mut all_editions = false;
+        let mut all_chapters = false;
+        let mut all_attachments = false;
+
+        while let Some(header) = it.read_header()? {
+            match header.etype {
+                ElementType::TargetTypeValue => {
+                    target_type_value = Some(it.read_u64()?);
+                }
+                ElementType::TargetType => {
+                    target_type = Some(it.read_string()?);
+                }
+                ElementType::TagTrackUid => {
+                    let uid = it.read_u64()?;
+                    uids.push(TargetUid::Track(uid));
+                    // If the UID is 0, then all tracks are targets.
+                    if uid == 0 {
+                        all_tracks = true;
+                    }
+                }
+                ElementType::TagEditionUid => {
+                    let uid = it.read_u64()?;
+                    uids.push(TargetUid::Edition(uid));
+                    // If the UID is 0, then all editions are targets.
+                    if uid == 0 {
+                        all_editions = true;
+                    }
+                }
+                ElementType::TagChapterUid => {
+                    let uid = it.read_u64()?;
+                    uids.push(TargetUid::Chapter(uid));
+                    // If the UID is 0, then all chapters are targets.
+                    if uid == 0 {
+                        all_chapters = true;
+                    }
+                }
+                ElementType::TagAttachmentUid => {
+                    let uid = it.read_u64()?;
+                    uids.push(TargetUid::Attachment(uid));
+                    // If the UID is 0, then all attachments are targets.
+                    if uid == 0 {
+                        all_attachments = true;
+                    }
+                }
+                other => {
+                    log::debug!("ignored {:?} child element {:?}", parent.etype, other);
+                }
+            }
+        }
+
+        Ok(Self {
+            target_type_value: target_type_value.unwrap_or(50),
+            target_type: target_type.map(|t| t.into_boxed_str()),
+            uids,
+            all_tracks,
+            all_editions,
+            all_chapters,
+            all_attachments,
+        })
     }
 }
 
 #[derive(Debug)]
 pub(crate) struct SimpleTagElement {
     pub(crate) name: Box<str>,
-    pub(crate) value: ElementData,
+    pub(crate) value: Option<ElementData>,
+    pub(crate) is_default: bool,
+    pub(crate) lang: String,
+    pub(crate) lang_bcp47: Option<String>,
+    pub(crate) sub_tags: Vec<SimpleTagElement>,
 }
 
 impl Element for SimpleTagElement {
     const ID: ElementType = ElementType::SimpleTag;
 
-    fn read<R: ElementReader>(mut it: ElementIterator<R>, _header: ElementHeader) -> Result<Self> {
+    fn read<R: ElementReader>(mut it: ElementIterator<R>, parent: ElementHeader) -> Result<Self> {
         let mut name = None;
         let mut value = None;
+        let mut lang = None;
+        let mut lang_bcp47 = None;
+        let mut is_default = true;
+        let mut sub_tags = Vec::new();
 
         while let Some(header) = it.read_header()? {
             match header.etype {
@@ -727,21 +1009,42 @@ impl Element for SimpleTagElement {
                 ElementType::TagString | ElementType::TagBinary => {
                     value = Some(it.read_data()?);
                 }
+                ElementType::TagLanguage => {
+                    lang = Some(it.read_string()?);
+                }
+                ElementType::TagLanguageBcp47 => {
+                    lang_bcp47 = Some(it.read_string()?);
+                }
+                ElementType::TagDefault => {
+                    is_default = it.read_u64()? == 1;
+                }
+                ElementType::SimpleTag => {
+                    // Simple tag elements exist at a depth >= 3. Only support 3 levels of nesting
+                    // as this is enough to support Matroska's standardized tagging scheme.
+                    if parent.depth < 6 {
+                        sub_tags.push(it.read_element_data::<SimpleTagElement>()?);
+                    }
+                }
                 other => {
-                    log::debug!("ignored element {:?}", other);
+                    log::debug!("ignored {:?} child element {:?}", parent.etype, other);
                 }
             }
         }
 
         Ok(Self {
             name: name.ok_or(Error::DecodeError("mkv: missing tag name"))?.into_boxed_str(),
-            value: value.ok_or(Error::DecodeError("mkv: missing tag value"))?,
+            value,
+            lang: lang.unwrap_or_else(|| "und".into()),
+            lang_bcp47,
+            is_default,
+            sub_tags,
         })
     }
 }
 
 #[derive(Debug)]
 pub(crate) struct AttachedFileElement {
+    pub(crate) uid: NonZeroU64,
     pub(crate) name: String,
     pub(crate) desc: Option<String>,
     pub(crate) media_type: String,
@@ -751,7 +1054,8 @@ pub(crate) struct AttachedFileElement {
 impl Element for AttachedFileElement {
     const ID: ElementType = ElementType::AttachedFile;
 
-    fn read<R: ElementReader>(mut it: ElementIterator<R>, _header: ElementHeader) -> Result<Self> {
+    fn read<R: ElementReader>(mut it: ElementIterator<R>, parent: ElementHeader) -> Result<Self> {
+        let mut uid = None;
         let mut name = None;
         let mut desc = None;
         let mut media_type = None;
@@ -772,15 +1076,19 @@ impl Element for AttachedFileElement {
                     data = Some(it.read_boxed_slice()?);
                 }
                 ElementType::FileUid => {
-                    let _ = it.read_u64()?;
+                    uid = match NonZeroU64::new(it.read_u64()?) {
+                        None => return decode_error("mkv: invalid file uid"),
+                        uid => uid,
+                    };
                 }
                 other => {
-                    log::debug!("ignored element {:?}", other);
+                    log::debug!("ignored {:?} child element {:?}", parent.etype, other);
                 }
             }
         }
 
         Ok(Self {
+            uid: uid.ok_or(Error::DecodeError("mkv: missing attached file uid"))?,
             name: name.ok_or(Error::DecodeError("mkv: missing attached file name"))?,
             desc,
             media_type: media_type
@@ -798,7 +1106,7 @@ pub(crate) struct AttachmentsElement {
 impl Element for AttachmentsElement {
     const ID: ElementType = ElementType::Attachments;
 
-    fn read<R: ElementReader>(mut it: ElementIterator<R>, _header: ElementHeader) -> Result<Self> {
+    fn read<R: ElementReader>(mut it: ElementIterator<R>, parent: ElementHeader) -> Result<Self> {
         let mut attached_files = Vec::new();
 
         while let Some(header) = it.read_header()? {
@@ -807,12 +1115,35 @@ impl Element for AttachmentsElement {
                     attached_files.push(it.read_element_data::<AttachedFileElement>()?);
                 }
                 other => {
-                    log::debug!("ignored element {:?}", other);
+                    log::debug!("ignored {:?} child element {:?}", parent.etype, other);
                 }
             }
         }
 
         Ok(Self { attached_files: attached_files.into_boxed_slice() })
+    }
+}
+
+impl AttachmentsElement {
+    pub(crate) fn get_target_uids(&self, target_tags: &mut TargetTagsMap) {
+        self.attached_files.iter().for_each(|file| {
+            target_tags.insert(TargetUid::Attachment(file.uid.get()), Default::default());
+        })
+    }
+
+    pub(crate) fn into_attachments(self, _target_tags: &mut TargetTagsMap) -> Vec<Attachment> {
+        self.attached_files
+            .into_vec()
+            .into_iter()
+            .map(|file| {
+                Attachment::File(FileAttachment {
+                    name: file.name,
+                    description: file.desc,
+                    media_type: Some(file.media_type),
+                    data: file.data,
+                })
+            })
+            .collect()
     }
 }
 
@@ -824,7 +1155,7 @@ pub(crate) struct ChaptersElement {
 impl Element for ChaptersElement {
     const ID: ElementType = ElementType::Chapters;
 
-    fn read<R: ElementReader>(mut it: ElementIterator<R>, _header: ElementHeader) -> Result<Self> {
+    fn read<R: ElementReader>(mut it: ElementIterator<R>, parent: ElementHeader) -> Result<Self> {
         let mut editions = Vec::new();
 
         while let Some(header) = it.read_header()? {
@@ -833,7 +1164,7 @@ impl Element for ChaptersElement {
                     editions.push(it.read_element_data::<EditionEntryElement>()?);
                 }
                 other => {
-                    log::debug!("ignored element {:?}", other);
+                    log::debug!("ignored {:?} child element {:?}", parent.etype, other);
                 }
             }
         }
@@ -842,8 +1173,34 @@ impl Element for ChaptersElement {
     }
 }
 
+impl ChaptersElement {
+    pub(crate) fn get_target_uids(&self, target_tags: &mut TargetTagsMap) {
+        self.editions.iter().for_each(|edition| edition.get_target_uids(target_tags));
+    }
+
+    /// Builds a chapter group containing the chapters of the first non-hidden default edition, or,
+    /// if one doesn't exist, the first non-hidden edition.
+    pub(crate) fn into_chapter_group(
+        self,
+        target_tags: &mut TargetTagsMap,
+    ) -> Option<ChapterGroup> {
+        // Find the first non-hidden default edition. Or, the first non-hidden edition.
+        let index = self
+            .editions
+            .iter()
+            .position(|e| !e.is_hidden && e.is_default)
+            .or_else(|| self.editions.iter().position(|e| !e.is_hidden));
+
+        // Convert to chapter group.
+        index.map(|index| {
+            self.editions.into_vec().swap_remove(index).into_chapter_group(target_tags)
+        })
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct EditionEntryElement {
+    pub(crate) uid: NonZeroU64,
     pub(crate) is_hidden: bool,
     pub(crate) is_default: bool,
     #[allow(dead_code)]
@@ -855,7 +1212,8 @@ pub(crate) struct EditionEntryElement {
 impl Element for EditionEntryElement {
     const ID: ElementType = ElementType::EditionEntry;
 
-    fn read<R: ElementReader>(mut it: ElementIterator<R>, _header: ElementHeader) -> Result<Self> {
+    fn read<R: ElementReader>(mut it: ElementIterator<R>, parent: ElementHeader) -> Result<Self> {
+        let mut uid = None;
         let mut is_hidden = false;
         let mut is_default = false;
         let mut is_ordered = false;
@@ -865,7 +1223,10 @@ impl Element for EditionEntryElement {
         while let Some(header) = it.read_header()? {
             match header.etype {
                 ElementType::EditionUid => {
-                    let _ = it.read_u64()?;
+                    uid = match NonZeroU64::new(it.read_u64()?) {
+                        None => return decode_error("mkv: invalid edition uid"),
+                        uid => uid,
+                    };
                 }
                 ElementType::EditionFlagHidden => {
                     is_hidden = it.read_u64()? == 1;
@@ -883,12 +1244,13 @@ impl Element for EditionEntryElement {
                     chapters.push(it.read_element_data::<ChapterAtomElement>()?)
                 }
                 other => {
-                    log::debug!("ignored element {:?}", other);
+                    log::debug!("ignored {:?} child element {:?}", parent.etype, other);
                 }
             }
         }
 
         Ok(Self {
+            uid: uid.ok_or(Error::DecodeError("mkv: missing edition uid"))?,
             is_hidden,
             is_default,
             is_ordered,
@@ -899,8 +1261,18 @@ impl Element for EditionEntryElement {
 }
 
 impl EditionEntryElement {
-    pub(crate) fn into_chapter_group(self) -> ChapterGroup {
-        let mut tags = Vec::with_capacity(self.display.len());
+    pub(crate) fn get_target_uids(&self, target_tags: &mut TargetTagsMap) {
+        // Append edition UID.
+        target_tags.insert(TargetUid::Edition(self.uid.get()), Default::default());
+        // Append chapter UIDs.
+        self.chapters.iter().for_each(|chapter| chapter.get_target_uids(target_tags));
+    }
+
+    pub(crate) fn into_chapter_group(self, target_tags: &mut TargetTagsMap) -> ChapterGroup {
+        // Take the vector of tags associated with this edition, if any.
+        let mut tags = target_tags
+            .remove(&TargetUid::Edition(self.uid.get()))
+            .unwrap_or_else(|| Vec::with_capacity(self.display.len()));
 
         // Edition title tags.
         for display in self.display {
@@ -920,7 +1292,7 @@ impl EditionEntryElement {
                 sub_fields.into_boxed_slice(),
             );
 
-            tags.push(Tag::new_std(raw, StandardTag::TrackTitle(title)));
+            tags.push(Tag::new_std(raw, StandardTag::ChapterTitle(title)));
         }
 
         // Edition chapters.
@@ -928,7 +1300,7 @@ impl EditionEntryElement {
 
         for chapter in self.chapters {
             if !chapter.is_hidden {
-                items.push(chapter.into_chapter_group_item());
+                items.push(chapter.into_chapter_group_item(target_tags));
             }
         }
 
@@ -945,7 +1317,7 @@ pub(crate) struct EditionDisplayElement {
 impl Element for EditionDisplayElement {
     const ID: ElementType = ElementType::EditionDisplay;
 
-    fn read<R: ElementReader>(mut it: ElementIterator<R>, _header: ElementHeader) -> Result<Self> {
+    fn read<R: ElementReader>(mut it: ElementIterator<R>, parent: ElementHeader) -> Result<Self> {
         let mut name = None;
         let mut lang_bcp47 = None;
 
@@ -958,7 +1330,7 @@ impl Element for EditionDisplayElement {
                     lang_bcp47 = Some(it.read_string()?);
                 }
                 other => {
-                    log::debug!("ignored element {:?}", other);
+                    log::debug!("ignored {:?} child element {:?}", parent.etype, other);
                 }
             }
         }
@@ -972,6 +1344,7 @@ impl Element for EditionDisplayElement {
 
 #[derive(Debug)]
 pub(crate) struct ChapterAtomElement {
+    pub(crate) uid: NonZeroU64,
     #[allow(dead_code)]
     pub(crate) is_enabled: bool,
     pub(crate) is_hidden: bool,
@@ -985,7 +1358,8 @@ pub(crate) struct ChapterAtomElement {
 impl Element for ChapterAtomElement {
     const ID: ElementType = ElementType::ChapterAtom;
 
-    fn read<R: ElementReader>(mut it: ElementIterator<R>, _header: ElementHeader) -> Result<Self> {
+    fn read<R: ElementReader>(mut it: ElementIterator<R>, parent: ElementHeader) -> Result<Self> {
+        let mut uid = None;
         let mut is_enabled = false;
         let mut is_hidden = false;
         let mut time_start = None;
@@ -996,7 +1370,12 @@ impl Element for ChapterAtomElement {
 
         while let Some(header) = it.read_header()? {
             match header.etype {
-                ElementType::ChapterUid => {}
+                ElementType::ChapterUid => {
+                    uid = match NonZeroU64::new(it.read_u64()?) {
+                        None => return decode_error("mkv: invalid chapter uid"),
+                        uid => uid,
+                    };
+                }
                 ElementType::ChapterStringUid => {}
                 ElementType::ChapterTimeStart => {
                     time_start = Some(it.read_u64()?);
@@ -1023,12 +1402,13 @@ impl Element for ChapterAtomElement {
                     chapters.push(it.read_element_data::<ChapterAtomElement>()?);
                 }
                 other => {
-                    log::debug!("ignored element {:?}", other);
+                    log::debug!("ignored {:?} child element {:?}", parent.etype, other);
                 }
             }
         }
 
         Ok(Self {
+            uid: uid.ok_or(Error::DecodeError("mkv: missing chapter uid"))?,
             is_enabled,
             is_hidden,
             time_start: time_start
@@ -1042,8 +1422,21 @@ impl Element for ChapterAtomElement {
 }
 
 impl ChapterAtomElement {
-    pub(crate) fn into_chapter_group_item(self) -> ChapterGroupItem {
-        let mut tags = Vec::with_capacity(self.display.len());
+    pub(crate) fn get_target_uids(&self, target_tags: &mut TargetTagsMap) {
+        // Append chapter UID.
+        target_tags.insert(TargetUid::Chapter(self.uid.get()), Default::default());
+        // Append chapter UIDs.
+        self.chapters.iter().for_each(|chapter| chapter.get_target_uids(target_tags));
+    }
+
+    pub(crate) fn into_chapter_group_item(
+        self,
+        target_tags: &mut TargetTagsMap,
+    ) -> ChapterGroupItem {
+        // Take the vector of any tags associated with this chapter, if any.
+        let mut tags = target_tags
+            .remove(&TargetUid::Chapter(self.uid.get()))
+            .unwrap_or_else(|| Vec::with_capacity(self.display.len()));
 
         // Chapter title tags.
         for display in self.display {
@@ -1073,12 +1466,12 @@ impl ChapterAtomElement {
                 sub_fields.into_boxed_slice(),
             );
 
-            tags.push(Tag::new_std(raw, StandardTag::TrackTitle(title)));
+            tags.push(Tag::new_std(raw, StandardTag::ChapterTitle(title)));
         }
 
         // Chapter skip-type tag.
         if let Some(skip_type) = self.skip_type {
-            tags.push(Tag::new_from_parts("ChapterSkipType", skip_type, None));
+            tags.push(Tag::new_from_parts("CHAPTER_SKIP_TYPE", skip_type, None));
         }
 
         let chapter = Chapter {
@@ -1101,7 +1494,7 @@ impl ChapterAtomElement {
 
             for chapter in self.chapters {
                 if !chapter.is_hidden {
-                    items.push(chapter.into_chapter_group_item());
+                    items.push(chapter.into_chapter_group_item(target_tags));
                 }
             }
 
@@ -1137,7 +1530,7 @@ pub(crate) struct ChapterDisplayElement {
 impl Element for ChapterDisplayElement {
     const ID: ElementType = ElementType::ChapterDisplay;
 
-    fn read<R: ElementReader>(mut it: ElementIterator<R>, _header: ElementHeader) -> Result<Self> {
+    fn read<R: ElementReader>(mut it: ElementIterator<R>, parent: ElementHeader) -> Result<Self> {
         let mut name = None;
         let mut lang = None;
         let mut lang_bcp47 = None;
@@ -1158,7 +1551,7 @@ impl Element for ChapterDisplayElement {
                     country = Some(it.read_string()?);
                 }
                 other => {
-                    log::debug!("ignored element {:?}", other);
+                    log::debug!("ignored {:?} child element {:?}", parent.etype, other);
                 }
             }
         }
@@ -1169,21 +1562,5 @@ impl Element for ChapterDisplayElement {
             lang_bcp47,
             country,
         })
-    }
-}
-
-impl ChaptersElement {
-    /// Builds a chapter group containing the chapters of the first non-hidden default edition, or,
-    /// if one doesn't exist, the first non-hidden edition.
-    pub(crate) fn build_chapter_group(self) -> Option<ChapterGroup> {
-        // Find the first non-hidden default edition. Or, the first non-hidden edition.
-        let index = self
-            .editions
-            .iter()
-            .position(|e| !e.is_hidden && e.is_default)
-            .or_else(|| self.editions.iter().position(|e| !e.is_hidden));
-
-        // Convert to chapter group.
-        index.map(|index| self.editions.into_vec().swap_remove(index).into_chapter_group())
     }
 }
