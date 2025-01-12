@@ -66,7 +66,7 @@ lazy_static! {
         m.insert("copyright"                    , parse_copyright);
         m.insert("ctdbdiscconfidence"           , parse_cuetoolsdb_disc_confidence);
         m.insert("ctdbtrackconfidence"          , parse_cuetoolsdb_track_confidence);
-        m.insert("date"                         , parse_date);
+        m.insert("date"                         , parse_recording_date);
         m.insert("description"                  , parse_description);
         m.insert("disc"                         , parse_disc_number_exclusive);
         m.insert("discnumber"                   , parse_disc_number);
@@ -110,8 +110,8 @@ lazy_static! {
         m.insert("musicbrainz_workid"           , parse_musicbrainz_work_id);
         m.insert("opus"                         , parse_opus);
         m.insert("organization"                 , parse_label);
-        m.insert("originaldate"                 , parse_original_date);
-        m.insert("originalyear"                 , parse_original_year);
+        m.insert("originaldate"                 , parse_original_release_date);
+        m.insert("originalyear"                 , parse_original_release_year);
         m.insert("part"                         , parse_part);
         m.insert("partnumber"                   , parse_part_number_exclusive);
         m.insert("performer"                    , parse_performer);
@@ -140,11 +140,10 @@ lazy_static! {
         m.insert("tracktotal"                   , parse_track_total);
         m.insert("unsyncedlyrics"               , parse_lyrics);
         m.insert("upc"                          , parse_ident_upc);
-        m.insert("version"                      , parse_remixer);
         m.insert("version"                      , parse_version);
         m.insert("work"                         , parse_work);
         m.insert("writer"                       , parse_writer);
-        m.insert("year"                         , parse_date);
+        m.insert("year"                         , parse_recording_year);
         m
     };
 }
@@ -428,7 +427,7 @@ pub fn read_vorbis_comment<B: ReadBytes>(
 
                             // "NAME" and "URL" are the only standardized keys for chapters.
                             let std_tag = if key.eq_ignore_ascii_case("name") {
-                                Some(StandardTag::TrackTitle(value.clone()))
+                                Some(StandardTag::ChapterTitle(value.clone()))
                             }
                             else if key.eq_ignore_ascii_case("url") {
                                 Some(StandardTag::Url(value.clone()))

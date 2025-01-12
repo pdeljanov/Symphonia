@@ -24,14 +24,14 @@ lazy_static! {
         m.insert("ages", parse_rating);
         m.insert("cmnt", parse_comment);
         m.insert("comm", parse_comment); // TODO: Same as "cmnt"
-        m.insert("dtim", parse_original_date);
+        m.insert("dtim", parse_recording_time);
         m.insert("genr", parse_genre);
         m.insert("iart", parse_artist);
         m.insert("icmt", parse_comment); // TODO: Same as "cmnt"?
         m.insert("icnt", parse_release_country);
         m.insert("icop", parse_copyright);
-        m.insert("icrd", parse_date);
-        m.insert("idit", parse_original_date);
+        m.insert("icrd", parse_recording_date);
+        m.insert("idit", parse_recording_date); // TODO: Actually date of last edit?
         m.insert("ienc", parse_encoded_by);
         m.insert("ieng", parse_engineer);
         m.insert("ifrm", parse_track_total);
@@ -58,7 +58,7 @@ lazy_static! {
         m.insert("torg", parse_label);
         m.insert("trck", parse_track_number_exclusive);
         m.insert("tver", parse_version);
-        m.insert("year", parse_date);
+        m.insert("year", parse_recording_year);
         m
     };
 }

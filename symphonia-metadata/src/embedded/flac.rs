@@ -369,7 +369,7 @@ fn read_flac_cuesheet_track_index<B: ReadBytes>(
         tags: vec![Tag::new_from_parts(
             "INDEX",
             idx_number,
-            Some(StandardTag::IndexNumber(idx_number)),
+            Some(StandardTag::CdTrackIndex(idx_number)),
         )],
         visuals: Vec::new(),
     })

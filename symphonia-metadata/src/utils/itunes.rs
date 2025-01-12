@@ -62,7 +62,7 @@ lazy_static! {
         m.insert("com.apple.itunes:musicbrainz track id", parse_musicbrainz_track_id);
         m.insert("com.apple.itunes:musicbrainz trm id", parse_musicbrainz_trm_id);
         m.insert("com.apple.itunes:musicbrainz work id", parse_musicbrainz_work_id);
-        m.insert("com.apple.itunes:originaldate", parse_original_date);
+        m.insert("com.apple.itunes:originaldate", parse_original_release_date);
         m.insert("com.apple.itunes:producer", parse_producer);
         m.insert("com.apple.itunes:releasedate", parse_release_date);
         m.insert("com.apple.itunes:remixer", parse_remixer);

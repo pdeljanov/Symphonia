@@ -80,7 +80,7 @@ use readers::*;
 // x                 TDEN   EncodingDate           Encoding time
 // x   TDY    TDLY                                 Playlist delay
 // x                 TDOR   OriginalDate           Original release time
-// x                 TDRC   Date                   Recording time
+// x                 TDRC   Date                   Recording date
 // x                 TDRL   ReleaseDate            Release time
 // x                 TDTG   TaggingDate            Tagging time
 // x   TEN    TENC          EncodedBy              Encoded by
@@ -335,17 +335,17 @@ lazy_static! {
             m.insert(b"TCOM", (read_text_frame, Some(parse_composer)));
             m.insert(b"TCON", (read_text_frame, Some(parse_id3v2_genre)));
             m.insert(b"TCOP", (read_text_frame, Some(parse_copyright)));
-            m.insert(b"TDAT", (read_text_frame, Some(parse_date)));
+            m.insert(b"TDAT", (read_text_frame, Some(parse_recording_date)));
             m.insert(b"TDEN", (read_text_frame, Some(parse_encoding_date)));
             m.insert(b"TDLY", (read_text_frame, None));
-            m.insert(b"TDOR", (read_text_frame, Some(parse_original_date)));
-            m.insert(b"TDRC", (read_text_frame, Some(parse_date)));
-            m.insert(b"TDRL", (read_text_frame, Some(parse_release_date)));
+            m.insert(b"TDOR", (read_text_frame, Some(parse_original_release_date)));
+            m.insert(b"TDRC", (read_text_frame, Some(parse_recording_date)));
+            m.insert(b"TDRL", (read_text_frame, Some(parse_release_time)));
             m.insert(b"TDTG", (read_text_frame, Some(parse_tagging_date)));
             m.insert(b"TENC", (read_text_frame, Some(parse_encoded_by)));
             m.insert(b"TEXT", (read_text_frame, Some(parse_lyricist)));
             m.insert(b"TFLT", (read_text_frame, None));
-            m.insert(b"TIME", (read_text_frame, Some(parse_date)));
+            m.insert(b"TIME", (read_text_frame, Some(parse_recording_time)));
             m.insert(b"TIPL", (read_tipl_frame, None));
             m.insert(b"TIT1", (read_text_frame, Some(parse_grouping)));
             m.insert(b"TIT2", (read_text_frame, Some(parse_track_title)));
@@ -360,7 +360,7 @@ lazy_static! {
             m.insert(b"TOFN", (read_text_frame, Some(parse_original_file)));
             m.insert(b"TOLY", (read_text_frame, Some(parse_original_lyricist)));
             m.insert(b"TOPE", (read_text_frame, Some(parse_original_artist)));
-            m.insert(b"TORY", (read_text_frame, Some(parse_original_date)));
+            m.insert(b"TORY", (read_text_frame, Some(parse_original_release_year)));
             m.insert(b"TOWN", (read_text_frame, Some(parse_owner)));
             m.insert(b"TPE1", (read_text_frame, Some(parse_artist)));
             m.insert(b"TPE2", (read_text_frame, Some(parse_album_artist)));
@@ -370,7 +370,7 @@ lazy_static! {
             m.insert(b"TPRO", (read_text_frame, Some(parse_production_copyright)));
             m.insert(b"TPUB", (read_text_frame, Some(parse_label)));
             m.insert(b"TRCK", (read_text_frame, Some(parse_track_number)));
-            m.insert(b"TRDA", (read_text_frame, Some(parse_date)));
+            m.insert(b"TRDA", (read_text_frame, Some(parse_recording_date))); // TODO: Dates
             m.insert(b"TRSN", (read_text_frame, Some(parse_internet_radio_name)));
             m.insert(b"TRSO", (read_text_frame, Some(parse_internet_radio_owner)));
             m.insert(b"TSIZ", (read_text_frame, None));
@@ -381,7 +381,7 @@ lazy_static! {
             m.insert(b"TSSE", (read_text_frame, Some(parse_encoder)));
             m.insert(b"TSST", (read_text_frame, Some(parse_disc_subtitle)));
             m.insert(b"TXXX", (read_txxx_frame, None));
-            m.insert(b"TYER", (read_text_frame, Some(parse_date)));
+            m.insert(b"TYER", (read_text_frame, Some(parse_recording_year)));
             m.insert(b"UFID", (read_ufid_frame, None));
             m.insert(b"USER", (read_user_frame, None));
             m.insert(b"USLT", (read_uslt_frame, None));

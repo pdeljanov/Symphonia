@@ -102,7 +102,7 @@ lazy_static! {
         m.insert("musicbrainz_trmid"           , parse_musicbrainz_trm_id);
         m.insert("musicbrainz_workid"          , parse_musicbrainz_work_id);
         m.insert("original artist"             , parse_original_artist);
-        m.insert("originalyear"                , parse_original_date);
+        m.insert("originalyear"                , parse_original_release_year);
         m.insert("publisher"                   , parse_label);
         m.insert("record date"                 , parse_recording_date);
         m.insert("record location"             , parse_recording_location);

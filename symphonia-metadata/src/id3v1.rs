@@ -51,7 +51,11 @@ fn read_id3v1<B: ReadBytes>(reader: &mut B, builder: &mut MetadataBuilder) -> Re
     }
 
     if let Some(year) = decode_iso8859_buf(&buf[90..94]) {
-        let tag = Tag::new_from_parts("DATE", year.clone(), Some(StandardTag::Date(year)));
+        let tag = Tag::new_from_parts(
+            "YEAR",
+            year.clone(),
+            year.parse::<u16>().ok().map(StandardTag::RecordingYear),
+        );
         builder.add_tag(tag);
     }
 

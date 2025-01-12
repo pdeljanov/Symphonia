@@ -472,6 +472,42 @@ fn add_id3v1_genre_tag<B: ReadBytes>(
     Ok(())
 }
 
+fn add_rating_tag<B: ReadBytes>(
+    iter: &mut AtomIterator<B>,
+    builder: &mut MetadataBuilder,
+) -> Result<()> {
+    let tag = iter.read_atom::<MetaTagAtom>()?;
+
+    // There should be exactly 1 value.
+    if let Some(value_atom) = tag.values.first() {
+        // Parse the value atom's data to get the raw value of the rating.
+        if let Some(raw_value) = parse_tag_value(value_atom.data_type, &value_atom.data) {
+            // The value should be a signed integer between 0 - 100.
+            let rating = match raw_value {
+                RawValue::SignedInt(value) if value >= 0 && value <= 100 => Some(value as u32),
+                _ => {
+                    warn!("invalid data for rating tag");
+                    None
+                }
+            };
+
+            if let Some(rating) = rating {
+                let raw_key = get_raw_tag_key(tag.atom_type);
+
+                builder.add_tag(Tag::new_std(
+                    RawTag::new(raw_key, raw_value),
+                    StandardTag::Rating(10_000 * rating),
+                ));
+            }
+        }
+        else {
+            warn!("unsupported data type {:?} for {:?} tag", value_atom.data_type, tag.atom_type);
+        }
+    }
+
+    Ok(())
+}
+
 fn add_freeform_tag<B: ReadBytes>(
     iter: &mut AtomIterator<B>,
     builder: &mut MetadataBuilder,
@@ -728,7 +764,7 @@ impl Atom for IlstAtom {
                     add_generic_tag(&mut iter, &mut mb, map_std_str!(StandardTag::Genre))?
                 }
                 AtomType::DateTag => {
-                    add_generic_tag(&mut iter, &mut mb, map_std_str!(StandardTag::Date))?
+                    add_generic_tag(&mut iter, &mut mb, map_std_str!(StandardTag::ReleaseDate))?
                 }
                 AtomType::DescriptionTag => {
                     add_generic_tag(&mut iter, &mut mb, map_std_str!(StandardTag::Description))?
@@ -803,9 +839,7 @@ impl Atom for IlstAtom {
                 AtomType::PublisherTag => {
                     add_generic_tag(&mut iter, &mut mb, map_std_str!(StandardTag::Label))?
                 }
-                AtomType::RatingTag => {
-                    add_generic_tag(&mut iter, &mut mb, map_std_str!(StandardTag::Rating))?
-                }
+                AtomType::RatingTag => add_rating_tag(&mut iter, &mut mb)?,
                 AtomType::RecordingCopyrightTag => add_generic_tag(
                     &mut iter,
                     &mut mb,
@@ -826,9 +860,11 @@ impl Atom for IlstAtom {
                 AtomType::SortNameTag => {
                     add_generic_tag(&mut iter, &mut mb, map_std_str!(StandardTag::SortTrackTitle))?
                 }
-                AtomType::SortShowNameTag => {
-                    add_generic_tag(&mut iter, &mut mb, map_std_str!(StandardTag::SortTvShowTitle))?
-                }
+                AtomType::SortShowNameTag => add_generic_tag(
+                    &mut iter,
+                    &mut mb,
+                    map_std_str!(StandardTag::SortTvSeriesTitle),
+                )?,
                 AtomType::TempoTag => {
                     add_generic_tag(&mut iter, &mut mb, map_std_uint!(StandardTag::Bpm))?
                 }
@@ -844,17 +880,19 @@ impl Atom for IlstAtom {
                 AtomType::TvEpisodeNameTag => {
                     add_generic_tag(&mut iter, &mut mb, map_std_str!(StandardTag::TvEpisodeTitle))?
                 }
-                AtomType::TvEpisodeNumberTag => {
-                    add_generic_tag(&mut iter, &mut mb, map_std_uint!(StandardTag::TvEpisode))?
-                }
+                AtomType::TvEpisodeNumberTag => add_generic_tag(
+                    &mut iter,
+                    &mut mb,
+                    map_std_uint!(StandardTag::TvEpisodeNumber),
+                )?,
                 AtomType::TvNetworkNameTag => {
                     add_generic_tag(&mut iter, &mut mb, map_std_str!(StandardTag::TvNetwork))?
                 }
                 AtomType::TvSeasonNumberTag => {
-                    add_generic_tag(&mut iter, &mut mb, map_std_uint!(StandardTag::TvSeason))?
+                    add_generic_tag(&mut iter, &mut mb, map_std_uint!(StandardTag::TvSeasonNumber))?
                 }
                 AtomType::TvShowNameTag => {
-                    add_generic_tag(&mut iter, &mut mb, map_std_str!(StandardTag::TvShowTitle))?
+                    add_generic_tag(&mut iter, &mut mb, map_std_str!(StandardTag::TvSeriesTitle))?
                 }
                 AtomType::UrlPodcastTag => {
                     add_generic_tag(&mut iter, &mut mb, map_std_str!(StandardTag::UrlPodcast))?
