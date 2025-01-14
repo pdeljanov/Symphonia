@@ -32,6 +32,7 @@ pcm = ["dep:symphonia-codec-pcm"]
 aiff = ["dep:symphonia-format-riff", "symphonia-format-riff/aiff"]
 vorbis = ["dep:symphonia-codec-vorbis"]
 wav = ["dep:symphonia-format-riff", "symphonia-format-riff/wav"]
+wavpack = ["dep:symphonia-codec-wavpack"]
 ape = ["symphonia-metadata/ape"]
 id3v1 = ["symphonia-metadata/id3v1"]
 id3v2 = ["symphonia-metadata/id3v2"]
@@ -60,6 +61,7 @@ all-formats = [
     "ogg",
     "aiff",
     "wav",
+    "wavpack"
 ]
 
 # Enable all supported standalone metadata formats.
@@ -136,6 +138,11 @@ optional = true
 [dependencies.symphonia-codec-vorbis]
 version = "0.5.4"
 path = "../symphonia-codec-vorbis"
+optional = true
+
+[dependencies.symphonia-codec-wavpack]
+version = "0.5.4"
+path = "../symphonia-codec-wavpack"
 optional = true
 
 [dependencies.symphonia-format-riff]
