@@ -17,8 +17,8 @@
 mod codecs;
 mod demuxer;
 mod ebml;
-mod element_ids;
 mod lacing;
+mod schema;
 mod segment;
 mod tags;
 

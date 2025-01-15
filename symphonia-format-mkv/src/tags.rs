@@ -9,7 +9,7 @@ use std::{ops::Deref, rc::Rc, sync::Arc};
 
 use symphonia_core::meta::{RawTag, RawTagSubField, RawValue, StandardTag};
 
-use crate::{ebml::ElementData, segment::SimpleTagElement, sub_fields::*};
+use crate::{segment::SimpleTagElement, sub_fields::*};
 
 #[derive(Clone, Debug)]
 /// Target type information.
@@ -85,13 +85,6 @@ fn get_target_path(ctx: &TagContext) -> String {
 }
 
 pub fn make_raw_tag(path: String, tag: SimpleTagElement, out: &mut Vec<RawTag>) {
-    let value = match tag.value {
-        Some(ElementData::Binary(b)) => RawValue::Binary(Arc::new(b)),
-        Some(ElementData::String(s)) => RawValue::String(Arc::new(s)),
-        Some(_) => unreachable!(),
-        _ => RawValue::Flag,
-    };
-
     let mut sub_fields = Vec::with_capacity(1);
 
     // Tag language sub-field.
@@ -111,12 +104,12 @@ pub fn make_raw_tag(path: String, tag: SimpleTagElement, out: &mut Vec<RawTag>) 
     for sub_tag in tag.sub_tags {
         match sub_tag.name.as_ref() {
             "URL" | "EMAIL" | "ADDRESS" | "FAX" | "PHONE" | "INSTRUMENTS" | "CHARACTER" => {
-                if let Some(ElementData::String(value)) = sub_tag.value {
+                if let Some(RawValue::String(value)) = sub_tag.value {
                     sub_fields.push(RawTagSubField::new(sub_tag.name, value));
                 }
             }
             "SORT_WITH" => {
-                if let Some(ElementData::String(value)) = sub_tag.value {
+                if let Some(RawValue::String(value)) = sub_tag.value {
                     out.push(RawTag::new(format!("{}/SORT_WITH", path), value));
                 }
             }
@@ -124,7 +117,11 @@ pub fn make_raw_tag(path: String, tag: SimpleTagElement, out: &mut Vec<RawTag>) 
         }
     }
 
-    out.push(RawTag::new_with_sub_fields(path, value, sub_fields.into_boxed_slice()))
+    out.push(RawTag::new_with_sub_fields(
+        path,
+        tag.value.unwrap_or(RawValue::Flag),
+        sub_fields.into_boxed_slice(),
+    ))
 }
 
 /// Attempt to map a raw tag to a standard tag.

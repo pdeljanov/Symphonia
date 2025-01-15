@@ -30,9 +30,9 @@ fn parse_flags(flags: u8) -> Result<Lacing> {
     }
 }
 
-fn read_ebml_sizes<R: ReadBytes>(mut reader: R, frames: usize) -> Result<Vec<u64>> {
-    let mut sizes = Vec::new();
-    for _ in 0..frames {
+fn read_ebml_sizes<R: ReadBytes>(mut reader: R, num_frames: usize) -> Result<Vec<u64>> {
+    let mut sizes = Vec::with_capacity(num_frames);
+    for _ in 0..num_frames {
         if let Some(last_size) = sizes.last().copied() {
             let delta = read_signed_vint(&mut reader)?;
             sizes.push((last_size as i64 + delta) as u64)
@@ -46,10 +46,10 @@ fn read_ebml_sizes<R: ReadBytes>(mut reader: R, frames: usize) -> Result<Vec<u64
     Ok(sizes)
 }
 
-pub(crate) fn read_xiph_sizes<R: ReadBytes>(mut reader: R, frames: usize) -> Result<Vec<u64>> {
+pub(crate) fn read_xiph_sizes<R: ReadBytes>(mut reader: R, num_frames: usize) -> Result<Vec<u64>> {
+    let mut sizes = Vec::with_capacity(num_frames);
     let mut prefixes = 0;
-    let mut sizes = Vec::new();
-    while sizes.len() < frames {
+    while sizes.len() < num_frames {
         let byte = reader.read_byte()? as u64;
         if byte == 255 {
             prefixes += 1;
@@ -109,15 +109,15 @@ pub(crate) fn extract_frames(
         Lacing::Xiph | Lacing::Ebml => {
             // Read number of stored sizes which is actually `number of frames` - 1
             // since size of the last frame is deduced from block size.
-            let frames = reader.read_byte()? as usize;
+            let num_frames = reader.read_byte()? as usize;
             let sizes = match lacing {
-                Lacing::Xiph => read_xiph_sizes(&mut reader, frames)?,
-                Lacing::Ebml => read_ebml_sizes(&mut reader, frames)?,
+                Lacing::Xiph => read_xiph_sizes(&mut reader, num_frames)?,
+                Lacing::Ebml => read_ebml_sizes(&mut reader, num_frames)?,
                 _ => unreachable!(),
             };
 
             let frame_duration = block_duration
-                .map(|it| it / (frames + 1) as u64)
+                .map(|it| it / (num_frames + 1) as u64)
                 .or(default_frame_duration)
                 .unwrap_or(0);
 

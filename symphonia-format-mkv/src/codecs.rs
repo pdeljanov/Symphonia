@@ -67,7 +67,7 @@ fn make_audio_codec_params(
 
     codec_params.with_sample_rate(audio.sampling_frequency.round() as u32);
 
-    let format = audio.bit_depth.and_then(|bits| match bits {
+    let format = audio.bit_depth.and_then(|bits| match bits.get() {
         8 => Some(SampleFormat::S8),
         16 => Some(SampleFormat::S16),
         24 => Some(SampleFormat::S24),
@@ -80,7 +80,7 @@ fn make_audio_codec_params(
     }
 
     if let Some(bits) = audio.bit_depth {
-        codec_params.with_bits_per_sample(bits as u32);
+        codec_params.with_bits_per_sample(bits.get() as u32);
     }
 
     if let Some(codec_private) = track.codec_private {
@@ -113,8 +113,14 @@ fn make_video_codec_params(
 
     let mut codec_params = VideoCodecParameters {
         codec: id,
-        width: Some(video.pixel_width),
-        height: Some(video.pixel_height),
+        width: Some(
+            u16::try_from(video.pixel_width.get())
+                .map_err(|_| Error::Unsupported("mkv: video width too large"))?,
+        ),
+        height: Some(
+            u16::try_from(video.pixel_height.get())
+                .map_err(|_| Error::Unsupported("mkv: video height too large"))?,
+        ),
         ..Default::default()
     };
 
@@ -263,19 +269,19 @@ fn get_codec_id(track: &TrackElement) -> Option<CodecId> {
         "A_REAL/COOK" => CodecId::Audio(CODEC_ID_COOK),
         "A_REAL/SIPR" => CodecId::Audio(CODEC_ID_SIPR),
         "A_REAL/RALF" => CodecId::Audio(CODEC_ID_RALF),
-        "A_PCM/INT/BIG" => match bit_depth? {
+        "A_PCM/INT/BIG" => match bit_depth?.get() {
             16 => CodecId::Audio(CODEC_ID_PCM_S16BE),
             24 => CodecId::Audio(CODEC_ID_PCM_S24BE),
             32 => CodecId::Audio(CODEC_ID_PCM_S32BE),
             _ => return None,
         },
-        "A_PCM/INT/LIT" => match bit_depth? {
+        "A_PCM/INT/LIT" => match bit_depth?.get() {
             16 => CodecId::Audio(CODEC_ID_PCM_S16LE),
             24 => CodecId::Audio(CODEC_ID_PCM_S24LE),
             32 => CodecId::Audio(CODEC_ID_PCM_S32LE),
             _ => return None,
         },
-        "A_PCM/FLOAT/IEEE" => match bit_depth? {
+        "A_PCM/FLOAT/IEEE" => match bit_depth?.get() {
             32 => CodecId::Audio(CODEC_ID_PCM_F32LE),
             64 => CodecId::Audio(CODEC_ID_PCM_F64LE),
             _ => return None,
