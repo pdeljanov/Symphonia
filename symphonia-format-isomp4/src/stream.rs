@@ -138,21 +138,8 @@ impl StreamSegment for MoofSegment {
     }
 
     fn all_tracks_ended(&self) -> bool {
-        for (trak, seq) in self.moov.traks.iter().zip(&self.seq) {
-            // If there was no track fragment for this track in this segment, then the track ended
-            // in a previous segment.
-            if seq.traf_idx.is_none() {
-                continue;
-            }
-
-            // If a track does NOT end in this segment, then this cannot be the last segment.
-            if seq.first_ts + seq.total_sample_duration < trak.duration {
-                return false;
-            }
-        }
-
-        // All tracks ended.
-        true
+        // cannot determine the total track duration in the fragmented file
+        false
     }
 
     fn sample_timing(&self, track_num: usize, sample_num: u32) -> Result<Option<SampleTiming>> {
@@ -347,9 +334,14 @@ impl StreamSegment for MoovSegment {
     }
 
     fn all_tracks_ended(&self) -> bool {
+        // cannot determine the total track duration in the fragmented file
+        if self.moov.is_fragmented() {
+            return false;
+        }
+
         // If a track does not end in this segment, then this cannot be the last segment.
         for trak in &self.moov.traks {
-            if trak.mdia.minf.stbl.stts.total_duration < trak.duration {
+            if trak.mdia.minf.stbl.stts.total_duration < trak.mdia.mdhd.duration {
                 return false;
             }
         }
