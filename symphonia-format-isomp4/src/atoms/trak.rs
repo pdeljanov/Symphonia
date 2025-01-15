@@ -20,8 +20,6 @@ pub struct TrakAtom {
     pub edts: Option<EdtsAtom>,
     /// Media atom.
     pub mdia: MdiaAtom,
-    /// Duration, equal to mdia.mdhd.duration unless it is zero, in which case it is equal to tkhd.duration.
-    pub duration: u64,
 }
 
 impl Atom for TrakAtom {
@@ -47,19 +45,16 @@ impl Atom for TrakAtom {
             }
         }
 
-        let Some(tkhd_atom) = tkhd
+        let Some(tkhd) = tkhd
         else {
             return decode_error("isomp4: missing tkhd atom");
         };
 
-        let Some(mdia_atom) = mdia
+        let Some(mdia) = mdia
         else {
             return decode_error("isomp4: missing mdia atom");
         };
 
-        let duration =
-            if mdia_atom.mdhd.duration != 0 { mdia_atom.mdhd.duration } else { tkhd_atom.duration };
-
-        Ok(TrakAtom { tkhd: tkhd_atom, edts, mdia: mdia_atom, duration })
+        Ok(TrakAtom { tkhd, edts, mdia })
     }
 }

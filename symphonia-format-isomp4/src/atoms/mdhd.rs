@@ -61,7 +61,7 @@ impl Atom for MdhdAtom {
                 mdhd.ctime = u64::from(reader.read_be_u32()?);
                 mdhd.mtime = u64::from(reader.read_be_u32()?);
                 mdhd.timescale = NonZero::new(reader.read_be_u32()?)
-                    .ok_or(Error::DecodeError("isomp4: timescale is zero"))?;
+                    .ok_or(Error::DecodeError("isomp4: timescale is zero in mdhd"))?;
                 // 0xffff_ffff is a special case.
                 mdhd.duration = match reader.read_be_u32()? {
                     u32::MAX => u64::MAX,
@@ -72,7 +72,7 @@ impl Atom for MdhdAtom {
                 mdhd.ctime = reader.read_be_u64()?;
                 mdhd.mtime = reader.read_be_u64()?;
                 mdhd.timescale = NonZero::new(reader.read_be_u32()?)
-                    .ok_or(Error::DecodeError("isomp4: timescale is zero"))?;
+                    .ok_or(Error::DecodeError("isomp4: timescale is zero in mdhd"))?;
                 mdhd.duration = reader.read_be_u64()?;
             }
             _ => {
