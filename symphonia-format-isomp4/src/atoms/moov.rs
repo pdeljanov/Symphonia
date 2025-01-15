@@ -69,9 +69,10 @@ impl Atom for MoovAtom {
             }
         }
 
-        if mvhd.is_none() {
+        let Some(mvhd) = mvhd
+        else {
             return decode_error("isomp4: missing mvhd atom");
-        }
+        };
 
         // If fragmented, the mvex atom should contain a trex atom for each trak atom in moov.
         if let Some(mvex) = mvex.as_ref() {
@@ -85,6 +86,14 @@ impl Atom for MoovAtom {
             }
         }
 
-        Ok(MoovAtom { mvhd: mvhd.unwrap(), traks, mvex, udta })
+        // If trak.mdia.mdhd.duration is 0, set it to trak.tkhd.duration converted to trak.mdia.mdhd.timescale
+        for trak in traks.iter_mut() {
+            if trak.mdia.mdhd.duration == 0 {
+                trak.mdia.mdhd.duration =
+                    trak.tkhd.duration * trak.mdia.mdhd.timescale as u64 / mvhd.timescale as u64;
+            }
+        }
+
+        Ok(MoovAtom { mvhd, traks, mvex, udta })
     }
 }
