@@ -10,7 +10,9 @@ use std::io::{Seek, SeekFrom};
 use symphonia_core::support_format;
 
 use symphonia_core::codecs::{CodecParameters, VerificationCheck, CODEC_TYPE_FLAC};
-use symphonia_core::errors::{decode_error, seek_error, unsupported_error, Result, SeekErrorKind};
+use symphonia_core::errors::{
+    decode_error, seek_error, unsupported_error, Error, Result, SeekErrorKind,
+};
 use symphonia_core::formats::prelude::*;
 use symphonia_core::formats::util::{SeekIndex, SeekSearchResult};
 use symphonia_core::io::*;
@@ -69,8 +71,7 @@ impl FlacReader {
                         let mut new_index = SeekIndex::new();
                         read_seek_table_block(&mut block_stream, header.block_len, &mut new_index)?;
                         index = Some(new_index);
-                    }
-                    else {
+                    } else {
                         return decode_error("flac: found more than one seek table block");
                     }
                 }
@@ -204,8 +205,7 @@ impl FormatReader for FlacReader {
                 // known, the seek cannot be completed.
                 if let Some(sample_rate) = params.sample_rate {
                     TimeBase::new(1, sample_rate).calc_timestamp(time)
-                }
-                else {
+                } else {
                     return seek_error(SeekErrorKind::Unseekable);
                 }
             }
@@ -229,7 +229,8 @@ impl FormatReader for FlacReader {
             // lower bound is set to the byte offset of the first frame, while the upper bound is
             // set to the length of the stream.
             let mut start_byte_offset = self.first_frame_offset;
-            let mut end_byte_offset = self.reader.seek(SeekFrom::End(0))?;
+            let mut end_byte_offset =
+                self.reader.byte_len().ok_or(Error::SeekError(SeekErrorKind::Unseekable))?;
 
             // If there is an index, use it to refine the binary search range.
             if let Some(ref index) = self.index {
@@ -265,13 +266,11 @@ impl FormatReader for FlacReader {
 
                 if ts < sync.ts {
                     end_byte_offset = mid_byte_offset;
-                }
-                else if ts >= sync.ts && ts < sync.ts + sync.dur {
+                } else if ts >= sync.ts && ts < sync.ts + sync.dur {
                     debug!("seeked to ts={} (delta={})", sync.ts, sync.ts as i64 - ts as i64);
 
                     return Ok(SeekedTo { track_id: 0, actual_ts: sync.ts, required_ts: ts });
-                }
-                else {
+                } else {
                     start_byte_offset = mid_byte_offset;
                 }
             }
@@ -366,8 +365,7 @@ fn read_stream_info_block<B: ReadBytes + FiniteStream>(
 
         // Add the track.
         tracks.push(Track::new(0, codec_params));
-    }
-    else {
+    } else {
         return decode_error("flac: found more than one stream info block");
     }
 
