@@ -52,7 +52,7 @@ pub struct AiffReader<'s> {
     metadata: MetadataLog,
     packet_info: PacketInfo,
     data_start_pos: u64,
-    data_end_pos: u64,
+    data_end_pos: Option<u64>,
 }
 
 impl<'s> AiffReader<'s> {
@@ -82,7 +82,7 @@ impl<'s> AiffReader<'s> {
         }
 
         let mut riff_chunks =
-            ChunksReader::<RiffAiffChunks>::new(riff_len - 4, ByteOrder::BigEndian);
+            ChunksReader::<RiffAiffChunks>::new(Some(riff_len - 4), ByteOrder::BigEndian);
 
         // Chunks can be read in any order, so collect them to be processed later.
         let mut comm = None;
@@ -119,13 +119,19 @@ impl<'s> AiffReader<'s> {
 
                     data = Some(chunk.parse(&mut mss)?);
 
-                    // If the media source is not seekable, then it is not possible to scan chunks
-                    // past the sound data chunk.
+                    // If the media source is not seekable, then it is not possible to scan for
+                    // chunks past the sound data chunk.
                     if !is_seekable {
                         break;
                     }
 
-                    mss.ignore_bytes(data.as_ref().unwrap().len as u64)?;
+                    // The length of the sound data chunk must also be known.
+                    if let Some(len) = data.as_ref().unwrap().len {
+                        mss.ignore_bytes(u64::from(len))?;
+                    }
+                    else {
+                        break;
+                    }
                 }
                 RiffAiffChunks::Marker(chunk) => {
                     // Only one markers chunk is allowed.
@@ -205,7 +211,9 @@ impl<'s> AiffReader<'s> {
         track.with_codec_params(CodecParameters::Audio(codec_params));
 
         // Append sound data chunk fields to track.
-        append_data_params(&mut track, u64::from(data.len), &packet_info);
+        if let Some(data_len) = data.len {
+            append_data_params(&mut track, u64::from(data_len), &packet_info);
+        }
 
         Ok(AiffReader {
             reader: mss,
@@ -215,7 +223,7 @@ impl<'s> AiffReader<'s> {
             metadata,
             packet_info,
             data_start_pos: data.data_start_pos,
-            data_end_pos: data.data_start_pos + u64::from(data.len),
+            data_end_pos: data.len.map(|len| data.data_start_pos + u64::from(len)),
         })
     }
 }
@@ -343,7 +351,7 @@ impl FormatReader for AiffReader<'_> {
             &self.packet_info,
             &self.tracks,
             self.data_start_pos,
-            self.data_end_pos,
+            self.data_end_pos.unwrap_or(u64::MAX),
         )
     }
 

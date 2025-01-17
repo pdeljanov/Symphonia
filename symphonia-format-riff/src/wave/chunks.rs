@@ -524,7 +524,7 @@ pub struct ListChunk {
 
 impl ListChunk {
     pub fn skip<B: ReadBytes>(&self, reader: &mut B) -> Result<()> {
-        ChunksReader::<NullChunks>::new(self.len, ByteOrder::LittleEndian).finish(reader)
+        ChunksReader::<NullChunks>::new(Some(self.len), ByteOrder::LittleEndian).finish(reader)
     }
 }
 
@@ -563,12 +563,14 @@ impl ParseChunk for InfoChunk {
 }
 
 pub struct DataChunk {
-    pub len: u32,
+    pub len: Option<u32>,
 }
 
 impl ParseChunk for DataChunk {
     fn parse<B: ReadBytes>(_: &mut B, _: [u8; 4], len: u32) -> Result<DataChunk> {
-        Ok(DataChunk { len })
+        // If the length us u32::MAX, that usually indicates the file is streaming and the length
+        // is not known.
+        Ok(DataChunk { len: Some(len).filter(|&len| len != u32::MAX) })
     }
 }
 
@@ -616,7 +618,7 @@ pub fn append_fact_params(track: &mut Track, fact: &FactChunk) {
 }
 
 pub fn read_info_chunk(source: &mut MediaSourceStream<'_>, len: u32) -> Result<MetadataRevision> {
-    let mut list = ChunksReader::<RiffInfoListChunks>::new(len, ByteOrder::LittleEndian);
+    let mut list = ChunksReader::<RiffInfoListChunks>::new(Some(len), ByteOrder::LittleEndian);
 
     let mut builder = MetadataBuilder::new();
 

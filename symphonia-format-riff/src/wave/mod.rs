@@ -47,7 +47,7 @@ pub struct WavReader<'s> {
     metadata: MetadataLog,
     packet_info: PacketInfo,
     data_start_pos: u64,
-    data_end_pos: u64,
+    data_end_pos: Option<u64>,
 }
 
 impl<'s> WavReader<'s> {
@@ -78,8 +78,12 @@ impl<'s> WavReader<'s> {
             return unsupported_error("wav: riff form is not wave");
         }
 
+        // When ffmpeg encodes wave to stdout the riff (parent) and data (child) chunk lengths are
+        // (2^32)-1 since the size is not known ahead of time.
+        let riff_data_len = if riff_len < u32::MAX { Some(riff_len - 4) } else { None };
+
         let mut riff_chunks =
-            ChunksReader::<RiffWaveChunks>::new(riff_len - 4, ByteOrder::LittleEndian);
+            ChunksReader::<RiffWaveChunks>::new(riff_data_len, ByteOrder::LittleEndian);
 
         let mut codec_params = AudioCodecParameters::new();
         let mut metadata: MetadataLog = Default::default();
@@ -99,8 +103,8 @@ impl<'s> WavReader<'s> {
                 RiffWaveChunks::Format(fmt) => {
                     let format = fmt.parse(&mut mss)?;
 
-                    // The Format chunk contains the block_align field and possible additional information
-                    // to handle packetization and seeking.
+                    // The Format chunk contains the block_align field and possible additional
+                    // information to handle packetization and seeking.
                     packet_info = format.packet_info()?;
                     codec_params
                         .with_max_frames_per_packet(packet_info.get_max_frames_per_packet())
@@ -127,7 +131,7 @@ impl<'s> WavReader<'s> {
 
                     // Record the bounds of the data chunk.
                     let data_start_pos = mss.pos();
-                    let data_end_pos = data_start_pos + u64::from(data.len);
+                    let data_end_pos = data.len.map(|len| data_start_pos + u64::from(len));
 
                     // Create the track.
                     let mut track = Track::new(0);
@@ -140,7 +144,9 @@ impl<'s> WavReader<'s> {
                     }
 
                     // Append Data chunk fields to track.
-                    append_data_params(&mut track, data.len as u64, &packet_info);
+                    if let Some(data_len) = data.len {
+                        append_data_params(&mut track, u64::from(data_len), &packet_info);
+                    }
 
                     // Instantiate the reader.
                     return Ok(WavReader {
@@ -206,7 +212,7 @@ impl FormatReader for WavReader<'_> {
             &self.packet_info,
             &self.tracks,
             self.data_start_pos,
-            self.data_end_pos,
+            self.data_end_pos.unwrap_or(u64::MAX),
         )
     }
 
@@ -256,11 +262,11 @@ impl FormatReader for WavReader<'_> {
         debug!("seeking to frame_ts={}", ts);
 
         // WAVE is not internally packetized for PCM codecs. Packetization is simulated by trying to
-        // read a constant number of samples or blocks every call to next_packet. Therefore, a packet begins
-        // wherever the data stream is currently positioned. Since timestamps on packets should be
-        // determinstic, instead of seeking to the exact timestamp requested and starting the next
-        // packet there, seek to a packet boundary. In this way, packets will have have the same
-        // timestamps regardless if the stream was seeked or not.
+        // read a constant number of samples or blocks every call to next_packet. Therefore, a
+        // packet begins wherever the data stream is currently positioned. Since timestamps on
+        // packets should be determinstic, instead of seeking to the exact timestamp requested and
+        // starting the next packet there, seek to a packet boundary. In this way, packets will have
+        // the same timestamps regardless if the stream was seeked or not.
         let actual_ts = self.packet_info.get_actual_ts(ts);
 
         // Calculate the absolute byte offset of the desired audio frame.

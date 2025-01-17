@@ -257,7 +257,7 @@ impl CommonChunkParser for ChunkParser<CommonChunk> {
 
 /// `SoundChunk` is a required AIFF chunk, containing the audio data.
 pub struct SoundChunk {
-    pub len: u32,
+    pub len: Option<u32>,
     #[allow(dead_code)]
     pub offset: u32,
     #[allow(dead_code)]
@@ -267,16 +267,23 @@ pub struct SoundChunk {
 
 impl ParseChunk for SoundChunk {
     fn parse<B: ReadBytes>(reader: &mut B, _: [u8; 4], len: u32) -> Result<SoundChunk> {
+        // Validate minimum size.
+        if len < 8 {
+            return decode_error("aiff: invalid chunk size for sound chunk");
+        }
+
         let offset = reader.read_be_u32()?;
         let block_size = reader.read_be_u32()?;
 
         if offset != 0 || block_size != 0 {
-            return unsupported_error("riff: No support for AIFF block-aligned data");
+            return unsupported_error("aiff: no support for aiff block-aligned data");
         }
 
         let data_start_pos = reader.pos();
 
-        Ok(SoundChunk { len: len - 8, offset, block_size, data_start_pos })
+        // TODO: FFmpeg seems to set the chunk length to 0 when streaming. This, however, doesn't
+        // appear to be well supported, event by FFmpeg.
+        Ok(SoundChunk { len: Some(len - 8), offset, block_size, data_start_pos })
     }
 }
 
