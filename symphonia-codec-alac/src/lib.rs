@@ -658,6 +658,12 @@ fn decode_sce_or_cpe<B: ReadBitsLtr>(
             elem1.predict(&mut out1[..num_samples])?;
 
             if mid_side_weight != 0 {
+                // mid_side_shift should not be bigger than 31 bits as we are shifting i32 to the right
+                // TODO Validate whether it should also not be greater than config.bit_depth.
+                if mid_side_shift > 31 {
+                    return decode_error("alac: mid_side_shift is greater than 31 bit");
+                }
+
                 decorrelate_mid_side(out0, out1, mid_side_weight, mid_side_shift);
             }
         }
