@@ -150,6 +150,9 @@ impl<S: EbmlSchema> Clone for EbmlElementHeader<S> {
 }
 
 impl<S: EbmlSchema> EbmlElementHeader<S> {
+    /// Minimum EBML header size.
+    pub const MIN_SIZE: u64 = 2;
+
     /// Read an EBML element header from the stream.
     pub(crate) fn read<R: ReadBytes>(reader: &mut R, depth: u8, schema: &S) -> Result<Self> {
         // Read the variable width element ID.
@@ -493,6 +496,11 @@ impl<R: ReadEbml, S: EbmlSchema> EbmlIterator<R, S> {
                 log::warn!("overran parent element by {} bytes", pos - parent_end);
                 return Err(EbmlError::Overrun);
             }
+            else if parent_end - pos < EbmlElementHeader::<S>::MIN_SIZE {
+                // Remaing byte is not enough for EbmlElementHeader MIN_SIZE of 2 bytes
+                // Iteration of the current parent element is done.
+                return Ok(None);
+            }
         }
 
         // Get the current depth in the EBML document.
@@ -544,15 +552,26 @@ impl<R: ReadEbml, S: EbmlSchema> EbmlIterator<R, S> {
             return Err(EbmlError::UnexpectedElement);
         }
 
-        // It is invalid for a child element's end position to exceed its parent's end position.
-        // The element may be discarded in such cases.
+        // Perform checks after the header parsing
         if let Some(parent_end) = parent_end {
+            let pos = self.reader.pos();
+
+            // The parent element was overrun. This can happen during header parsing
+            if pos > parent_end {
+                log::debug!("element header out-of-bounds, ignoring");
+                // Seek back to parent_end, it will always succeed
+                self.reader.seek_buffered(parent_end);
+                return Ok(None);
+            }
+
+            // It is invalid for a child element's end position to exceed its parent's end position.
+            // The element may be discarded in such cases.
             if let Some(child_end) = header.end() {
                 if child_end > parent_end {
                     // TODO: Maybe scan for other elements instead of skipping to the end of the
                     // parent?
                     log::debug!("element out-of-bounds, ignoring");
-                    self.reader.ignore_bytes(parent_end - self.reader.pos())?;
+                    self.reader.ignore_bytes(parent_end - pos)?;
                     return Ok(None);
                 }
             }
