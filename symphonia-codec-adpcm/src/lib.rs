@@ -88,6 +88,10 @@ impl AdpcmDecoder {
         };
 
         let spec = if let Some(channels) = &params.channels {
+            if channels.count() > 2 {
+                return unsupported_error("adpcm: up to two channels are supported");
+            }
+
             AudioSpec::new(rate, channels.clone())
         }
         else {
