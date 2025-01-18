@@ -16,7 +16,7 @@ use symphonia_core::codecs::audio::well_known::{
     CODEC_ID_PCM_S8,
 };
 use symphonia_core::errors::{decode_error, unsupported_error, Result};
-use symphonia_core::io::{MediaSourceStream, ReadBytes};
+use symphonia_core::io::ReadBytes;
 use symphonia_core::meta::{MetadataBuilder, MetadataRevision, StandardTag, Tag};
 use symphonia_core::util::text;
 use symphonia_metadata::embedded::riff;
@@ -145,12 +145,7 @@ impl ParseChunk for CommonChunk {
         let n_channels = reader.read_be_i16()?;
         let n_sample_frames = reader.read_be_u32()?;
         let sample_size = reader.read_be_i16()?;
-
-        let mut sample_rate: [u8; 10] = [0; 10];
-        reader.read_buf_exact(sample_rate.as_mut())?;
-
-        let sample_rate = Extended::from_be_bytes(sample_rate);
-        let sample_rate = sample_rate.to_f64() as u32;
+        let sample_rate = read_sample_rate(reader)?;
 
         let format_data = Self::read_pcm_fmt(sample_size as u16, n_channels as u16);
 
@@ -206,34 +201,28 @@ impl fmt::Display for CommonChunk {
 }
 
 pub trait CommonChunkParser {
-    fn parse_aiff(self, source: &mut MediaSourceStream<'_>) -> Result<CommonChunk>;
-    fn parse_aifc(self, source: &mut MediaSourceStream<'_>) -> Result<CommonChunk>;
+    fn parse_aiff<B: ReadBytes>(self, reader: &mut B) -> Result<CommonChunk>;
+    fn parse_aifc<B: ReadBytes>(self, reader: &mut B) -> Result<CommonChunk>;
 }
 
 impl CommonChunkParser for ChunkParser<CommonChunk> {
-    fn parse_aiff(self, source: &mut MediaSourceStream<'_>) -> Result<CommonChunk> {
-        self.parse(source)
+    fn parse_aiff<B: ReadBytes>(self, reader: &mut B) -> Result<CommonChunk> {
+        self.parse(reader)
     }
 
-    fn parse_aifc(self, source: &mut MediaSourceStream<'_>) -> Result<CommonChunk> {
-        let n_channels = source.read_be_i16()?;
-        let n_sample_frames = source.read_be_u32()?;
-        let sample_size = source.read_be_i16()?;
-
-        let mut sample_rate: [u8; 10] = [0; 10];
-        source.read_buf_exact(sample_rate.as_mut())?;
-
-        let sample_rate = Extended::from_be_bytes(sample_rate);
-        let sample_rate = sample_rate.to_f64() as u32;
-
-        let compression_type = source.read_quad_bytes()?;
+    fn parse_aifc<B: ReadBytes>(self, reader: &mut B) -> Result<CommonChunk> {
+        let n_channels = reader.read_be_i16()?;
+        let n_sample_frames = reader.read_be_u32()?;
+        let sample_size = reader.read_be_i16()?;
+        let sample_rate = read_sample_rate(reader)?;
+        let compression_type = reader.read_quad_bytes()?;
 
         // Ignore pascal string containing compression_name
-        let str_len = source.read_byte()?;
-        source.ignore_bytes(str_len as u64)?;
+        let str_len = reader.read_byte()?;
+        reader.ignore_bytes(str_len as u64)?;
         // Total number of bytes in pascal string must be even, since len is excluded from our var, we add 1
         if (str_len + 1) % 2 != 0 {
-            source.ignore_bytes(1)?;
+            reader.ignore_bytes(1)?;
         }
 
         let format_data = match &compression_type {
@@ -445,6 +434,27 @@ impl ParseChunkTag for RiffAiffChunks {
             _ => None,
         }
     }
+}
+
+fn read_sample_rate<B: ReadBytes>(reader: &mut B) -> Result<u32> {
+    let mut buf: [u8; 10] = [0; 10];
+    reader.read_buf_exact(&mut buf)?;
+
+    let sample_rate_f64 = Extended::from_be_bytes(buf).to_f64();
+
+    // Do not allow infinite or NaN sample rates.
+    if sample_rate_f64.is_infinite() || sample_rate_f64.is_nan() {
+        return decode_error("aiff: sample rate is not a real number");
+    }
+
+    let sample_rate = sample_rate_f64 as u32;
+
+    // Do not allow a 0 Hz sample rates.
+    if sample_rate == 0 {
+        return decode_error("aiff: sample rate cannot be 0");
+    }
+
+    Ok(sample_rate)
 }
 
 fn read_pascal_string<B: ReadBytes>(reader: &mut B) -> Result<String> {
