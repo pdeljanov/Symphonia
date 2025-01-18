@@ -145,12 +145,7 @@ impl ParseChunk for CommonChunk {
         let sample_size = reader.read_be_i16()?;
         let sample_rate = read_sample_rate(reader)?;
 
-        let format_data = Self::read_pcm_fmt(sample_size as u16, n_channels as u16);
-
-        let format_data = match format_data {
-            Ok(data) => data,
-            Err(e) => return Err(e),
-        };
+        let format_data = Self::read_pcm_fmt(sample_size as u16, n_channels as u16)?;
 
         Ok(CommonChunk { n_channels, n_sample_frames, sample_size, sample_rate, format_data })
     }
@@ -232,12 +227,7 @@ impl CommonChunkParser for ChunkParser<CommonChunk> {
             b"sowt" | b"SOWT" => CommonChunk::read_sowt_fmt(sample_size as u16, n_channels as u16),
             b"twos" | b"TWOS" => CommonChunk::read_twos_fmt(sample_size as u16, n_channels as u16),
             _ => return unsupported_error("aifc: Compression type not implemented"),
-        };
-
-        let format_data = match format_data {
-            Ok(data) => data,
-            Err(e) => return Err(e),
-        };
+        }?;
 
         Ok(CommonChunk { n_channels, n_sample_frames, sample_size, sample_rate, format_data })
     }
