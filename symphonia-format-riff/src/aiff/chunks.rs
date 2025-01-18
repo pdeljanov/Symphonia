@@ -45,22 +45,17 @@ pub struct CommonChunk {
 
 impl CommonChunk {
     fn read_pcm_fmt(bits_per_sample: u16, n_channels: u16) -> Result<FormatData> {
-        // Bits per sample for PCM is both the encoded sample width, and the actual sample width.
-        // Strictly, this must either be 8 or 16 bits, but there is no reason why 24 and 32 bits
-        // can't be supported. Since these files do exist, allow for 8/16/24/32-bit samples, but
-        // error if not a multiple of 8 or greater than 32-bits.
-        //
-        // It is possible though for AIFF to have a sample size not divisible by 8.
-        // Data is left justified, with the remaining bits zeroed. Currently not supported.
-        //
-        // Select the appropriate codec using bits per sample. Samples are always interleaved and
-        // little-endian encoded for the PCM format.
+        // Sample sizes that are not a multiple of 8 bits are rounded-up to the nearest byte. The
+        // data is left justified. Therefore, these cases are essentially equivalent to if the
+        // samples were stored with a sample size that was a multiple of 8 bits to begin with.
+        let bits_per_sample = 8 * ((bits_per_sample + 7) / 8);
+
         let codec = match bits_per_sample {
             8 => CODEC_ID_PCM_S8,
             16 => CODEC_ID_PCM_S16BE,
             24 => CODEC_ID_PCM_S24BE,
             32 => CODEC_ID_PCM_S32BE,
-            _ => return decode_error("aiff: bits per sample for pcm must be 8, 16, 24 or 32 bits"),
+            _ => return decode_error("aiff: bits per sample for pcm must be between 1-32 bits"),
         };
 
         let channels = map_aiff_channel_count(n_channels)?;
@@ -113,16 +108,19 @@ impl CommonChunk {
     pub fn packet_info(&self) -> Result<PacketInfo> {
         match &self.format_data {
             FormatData::Pcm(_) => {
-                let block_align = self.n_channels * self.sample_size / 8;
+                // Sample size is rounded-up to the nearest byte.
+                let block_align = self.n_channels * (self.sample_size + 7) / 8;
                 Ok(PacketInfo::without_blocks(block_align as u16))
             }
             FormatData::ALaw(_) => {
-                // In a-law encoding, each audio sample is represented by an 8-bit value that has been compressed
+                // In a-law encoding, each audio sample is represented by an 8-bit value that has
+                // been compressed
                 let block_align = self.n_channels;
                 Ok(PacketInfo::without_blocks(block_align as u16))
             }
             FormatData::MuLaw(_) => {
-                // In mu-law encoding, each audio sample is represented by an 8-bit value that has been compressed
+                // In mu-law encoding, each audio sample is represented by an 8-bit value that has
+                // been compressed
                 let block_align = self.n_channels;
                 Ok(PacketInfo::without_blocks(block_align as u16))
             }
@@ -220,7 +218,8 @@ impl CommonChunkParser for ChunkParser<CommonChunk> {
         // Ignore pascal string containing compression_name
         let str_len = reader.read_byte()?;
         reader.ignore_bytes(str_len as u64)?;
-        // Total number of bytes in pascal string must be even, since len is excluded from our var, we add 1
+        // Total number of bytes in pascal string must be even, since len is excluded from our var,
+        // we add 1
         if (str_len + 1) % 2 != 0 {
             reader.ignore_bytes(1)?;
         }
