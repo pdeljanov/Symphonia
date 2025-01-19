@@ -243,6 +243,8 @@ pub struct ESDescriptor {
 
 impl ObjectDescriptor for ESDescriptor {
     fn read<B: ReadBytes>(reader: &mut B, len: u32) -> Result<Self> {
+        let pos = reader.pos();
+
         let es_id = reader.read_be_u16()?;
         let es_flags = reader.read_u8()?;
 
@@ -264,6 +266,11 @@ impl ObjectDescriptor for ESDescriptor {
 
         let mut dec_config = None;
         let mut sl_config = None;
+
+        // len should be bigger than what have been read
+        if reader.pos() - pos > len as u64 {
+            return decode_error("isomp4: es descriptor len is wrong");
+        }
 
         let mut scoped = ScopedStream::new(reader, u64::from(len) - 3);
 
