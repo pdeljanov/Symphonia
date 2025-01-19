@@ -144,7 +144,8 @@ impl MkvReader {
             while let Some(frame) = self.frames.front() {
                 if frame.timestamp + frame.duration >= ts && frame.track == track_id {
                     break 'out frame.timestamp;
-                } else {
+                }
+                else {
                     self.frames.pop_front();
                 }
             }
@@ -157,7 +158,8 @@ impl MkvReader {
     fn seek_track_by_ts(&mut self, track_id: u32, ts: u64) -> Result<SeekedTo> {
         if self.clusters.is_empty() {
             self.seek_track_by_ts_forward(track_id, ts)
-        } else {
+        }
+        else {
             let mut target_cluster = None;
             for cluster in &self.clusters {
                 if cluster.timestamp > ts {
@@ -309,7 +311,8 @@ impl FormatReader for MkvReader {
             reader.seek(SeekFrom::Start(pos))?;
             log::info!("stream is seekable with len={} bytes.", len);
             Some(len)
-        } else {
+        }
+        else {
             None
         };
 
