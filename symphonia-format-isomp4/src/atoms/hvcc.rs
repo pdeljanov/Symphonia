@@ -14,9 +14,7 @@ use symphonia_core::errors::{decode_error, Result};
 use symphonia_core::io::ReadBytes;
 
 use crate::atoms::stsd::VisualSampleEntry;
-use crate::atoms::{Atom, AtomHeader};
-
-const MAX_ATOM_SIZE: u64 = 1024;
+use crate::atoms::{Atom, AtomHeader, MAX_ATOM_SIZE};
 
 #[allow(dead_code)]
 #[derive(Debug)]

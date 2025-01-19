@@ -59,7 +59,17 @@ impl Atom for StscAtom {
     fn read<B: ReadBytes>(reader: &mut B, mut header: AtomHeader) -> Result<Self> {
         let (_, _) = header.read_extended_header(reader)?;
 
+        // minimum data size is 4 bytes
+        let len = match header.data_len() {
+            Some(len) if len >= 4 => len as u32,
+            Some(_) => return decode_error("isomp4 (stsc): atom size is less than 16 bytes"),
+            None => return decode_error("isomp4 (stsc): expected atom size to be known"),
+        };
+
         let entry_count = reader.read_be_u32()?;
+        if entry_count != (len - 4) / 12 {
+            return decode_error("isomp4 (stsc): invalid entry count");
+        }
 
         // TODO: Apply a limit.
         let mut entries = Vec::with_capacity(entry_count as usize);
@@ -78,12 +88,12 @@ impl Atom for StscAtom {
             for i in 0..entry_count as usize - 1 {
                 // Validate that first_chunk is monotonic across all entries.
                 if entries[i + 1].first_chunk < entries[i].first_chunk {
-                    return decode_error("isomp4: stsc entry first chunk not monotonic");
+                    return decode_error("isomp4 (stsc): entry's first chunk not monotonic");
                 }
 
                 // Validate that samples per chunk is > 0. Could the entry be ignored?
                 if entries[i].samples_per_chunk == 0 {
-                    return decode_error("isomp4: stsc entry has 0 samples per chunk");
+                    return decode_error("isomp4 (stsc): entry has 0 samples per chunk");
                 }
 
                 let n = entries[i + 1].first_chunk - entries[i].first_chunk;
@@ -94,7 +104,7 @@ impl Atom for StscAtom {
 
             // Validate that samples per chunk is > 0. Could the entry be ignored?
             if entries[entry_count as usize - 1].samples_per_chunk == 0 {
-                return decode_error("isomp4: stsc entry has 0 samples per chunk");
+                return decode_error("isomp4 (stsc): entry has 0 samples per chunk");
             }
         }
 

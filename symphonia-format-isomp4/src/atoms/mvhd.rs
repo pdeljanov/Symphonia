@@ -34,6 +34,11 @@ impl Atom for MvhdAtom {
     fn read<B: ReadBytes>(reader: &mut B, mut header: AtomHeader) -> Result<Self> {
         let (version, _) = header.read_extended_header(reader)?;
 
+        let expected_len = if version == 0 { 96 } else { 108 };
+        if header.data_len() != Some(expected_len) {
+            return decode_error("isomp4 (mvhd): atom size is not 108 or 120 bytes");
+        }
+
         let mut mvhd =
             MvhdAtom { ctime: 0, mtime: 0, timescale: 0, duration: 0, volume: Default::default() };
 
@@ -55,7 +60,7 @@ impl Atom for MvhdAtom {
                 mvhd.timescale = reader.read_be_u32()?;
                 mvhd.duration = reader.read_be_u64()?;
             }
-            _ => return decode_error("isomp4: invalid mvhd version"),
+            _ => return decode_error("isomp4 (mvhd): invalid version"),
         }
 
         // Ignore the preferred playback rate.

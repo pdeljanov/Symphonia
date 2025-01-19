@@ -8,7 +8,7 @@
 use symphonia_core::errors::{decode_error, Result};
 use symphonia_core::io::ReadBytes;
 
-use crate::atoms::{Atom, AtomHeader};
+use crate::atoms::{Atom, AtomHeader, MAX_ATOM_SIZE};
 use crate::fp::FpU8;
 
 /// Track header atom.
@@ -40,6 +40,12 @@ impl Atom for TkhdAtom {
     fn read<B: ReadBytes>(reader: &mut B, mut header: AtomHeader) -> Result<Self> {
         let (version, flags) = header.read_extended_header(reader)?;
 
+        match header.data_len() {
+            Some(len) if len >= 34 && len <= MAX_ATOM_SIZE => len as usize,
+            Some(_) => return decode_error("isomp4 (tkhd): atom size is greater than 1kb"),
+            None => return decode_error("isomp4 (tkhd): expected atom size to be known"),
+        };
+
         let mut tkhd = TkhdAtom {
             flags,
             ctime: 0,
@@ -67,7 +73,7 @@ impl Atom for TkhdAtom {
                 let _ = reader.read_be_u32()?; // Reserved
                 tkhd.duration = reader.read_be_u64()?;
             }
-            _ => return decode_error("isomp4: invalid tkhd version"),
+            _ => return decode_error("isomp4 (tkhd): invalid version"),
         }
 
         // Reserved

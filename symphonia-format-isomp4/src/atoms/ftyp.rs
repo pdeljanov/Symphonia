@@ -29,7 +29,7 @@ impl Atom for FtypAtom {
             .ok_or(Error::DecodeError("isomp4 (ftyp): expected atom size to be known"))?;
 
         if data_len < 8 || data_len & 0x3 != 0 {
-            return decode_error("isomp4: invalid ftyp data length");
+            return decode_error("isomp4 (ftype): invalid data length");
         }
 
         // Major

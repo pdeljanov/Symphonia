@@ -13,8 +13,6 @@ use symphonia_core::io::ReadBytes;
 use crate::atoms::stsd::VisualSampleEntry;
 use crate::atoms::{Atom, AtomHeader};
 
-const DOVI_CONFIG_SIZE: u64 = 24;
-
 #[allow(dead_code)]
 #[derive(Debug)]
 pub struct DoviAtom {
@@ -28,7 +26,7 @@ impl Atom for DoviAtom {
         // https://professional.dolby.com/siteassets/content-creation/dolby-vision-for-content-creators/dolby_vision_bitstreams_within_the_iso_base_media_file_format_dec2017.pdf
         // It should be 24 bytes
         let len = match header.data_len() {
-            Some(len @ DOVI_CONFIG_SIZE) => len as usize,
+            Some(len @ 24) => len as usize,
             Some(_) => return decode_error("isomp4 (dvcC/dvvC): atom size is not 24 bytes"),
             None => return decode_error("isomp4 (dvcC/dvvC): expected atom size to be known"),
         };

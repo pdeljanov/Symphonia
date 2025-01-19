@@ -50,11 +50,11 @@ impl Atom for StsdAtom {
         let num_entries = reader.read_be_u32()?;
 
         if num_entries == 0 {
-            return decode_error("isomp4: missing sample entry");
+            return decode_error("isomp4 (stsd): missing sample entry");
         }
 
         if num_entries > 1 {
-            return unsupported_error("isomp4: more than 1 sample entry");
+            return unsupported_error("isomp4 (stsd): more than 1 sample entry");
         }
 
         let sample_entry_header = AtomHeader::read(reader)?;

@@ -5,7 +5,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::errors::Result;
+use symphonia_core::errors::{decode_error, Result};
 use symphonia_core::io::ReadBytes;
 
 use crate::atoms::{Atom, AtomHeader};
@@ -29,6 +29,10 @@ pub struct TrexAtom {
 impl Atom for TrexAtom {
     fn read<B: ReadBytes>(reader: &mut B, mut header: AtomHeader) -> Result<Self> {
         let (_, _) = header.read_extended_header(reader)?;
+
+        if header.data_len() != Some(20) {
+            return decode_error("isomp4 (trex): atom size is not 32 bytes");
+        }
 
         Ok(TrexAtom {
             track_id: reader.read_be_u32()?,
