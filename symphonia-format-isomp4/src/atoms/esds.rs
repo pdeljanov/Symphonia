@@ -43,7 +43,7 @@ fn read_descriptor_header<B: ReadBytes>(reader: &mut B) -> Result<(u8, u32)> {
 #[derive(Debug)]
 pub struct EsdsAtom {
     /// Elementary stream descriptor.
-    descriptor: ESDescriptor,
+    descriptor: Option<ESDescriptor>,
 }
 
 impl Atom for EsdsAtom {
@@ -76,7 +76,7 @@ impl Atom for EsdsAtom {
         // Ignore remainder of the atom.
         scoped.ignore()?;
 
-        Ok(EsdsAtom { descriptor: descriptor.unwrap() })
+        Ok(EsdsAtom { descriptor })
     }
 }
 
@@ -84,20 +84,22 @@ impl EsdsAtom {
     /// If the elementary stream descriptor describes an audio stream, populate the provided
     /// audio sample entry.
     pub fn fill_audio_sample_entry(&self, entry: &mut AudioSampleEntry) -> Result<()> {
-        match get_codec_id_from_object_type(self.descriptor.dec_config.object_type_indication) {
-            Some(CodecId::Audio(id)) => {
-                // Object type indication identified an audio codec.
-                entry.codec_id = id;
+        if let Some(desc) = &self.descriptor {
+            match get_codec_id_from_object_type(desc.dec_config.object_type_indication) {
+                Some(CodecId::Audio(id)) => {
+                    // Object type indication identified an audio codec.
+                    entry.codec_id = id;
+                }
+                Some(_) => {
+                    // Object type indication identified a non-audio codec. This is unexpected.
+                    return decode_error("isomp4 (esds): expected an audio codec type");
+                }
+                None => {}
             }
-            Some(_) => {
-                // Object type indication identified a non-audio codec. This is unexpected.
-                return decode_error("isomp4 (esds): expected an audio codec type");
-            }
-            None => {}
-        }
 
-        if let Some(ds_config) = &self.descriptor.dec_config.dec_specific_info {
-            entry.extra_data = Some(ds_config.extra_data.clone());
+            if let Some(ds_config) = &desc.dec_config.dec_specific_info {
+                entry.extra_data = Some(ds_config.extra_data.clone());
+            }
         }
 
         Ok(())
@@ -106,23 +108,25 @@ impl EsdsAtom {
     /// If the elementary stream descriptor describes an video stream, populate the provided
     /// video sample entry.
     pub fn fill_video_sample_entry(&self, entry: &mut VisualSampleEntry) -> Result<()> {
-        match get_codec_id_from_object_type(self.descriptor.dec_config.object_type_indication) {
-            Some(CodecId::Video(id)) => {
-                // Object type indication identified an video codec.
-                entry.codec_id = id;
+        if let Some(desc) = &self.descriptor {
+            match get_codec_id_from_object_type(desc.dec_config.object_type_indication) {
+                Some(CodecId::Video(id)) => {
+                    // Object type indication identified an video codec.
+                    entry.codec_id = id;
+                }
+                Some(_) => {
+                    // Object type indication identified a non-video codec. This is unexpected.
+                    return decode_error("isomp4 (esds): expected a video codec type");
+                }
+                None => {}
             }
-            Some(_) => {
-                // Object type indication identified a non-video codec. This is unexpected.
-                return decode_error("isomp4 (esds): expected a video codec type");
-            }
-            None => {}
-        }
 
-        if let Some(ds_config) = &self.descriptor.dec_config.dec_specific_info {
-            entry.extra_data.push(VideoExtraData {
-                id: VIDEO_EXTRA_DATA_ID_NULL,
-                data: ds_config.extra_data.clone(),
-            });
+            if let Some(ds_config) = &desc.dec_config.dec_specific_info {
+                entry.extra_data.push(VideoExtraData {
+                    id: VIDEO_EXTRA_DATA_ID_NULL,
+                    data: ds_config.extra_data.clone(),
+                });
+            }
         }
 
         Ok(())
