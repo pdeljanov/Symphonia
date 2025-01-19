@@ -34,3 +34,9 @@ name = "decode_mp3"
 path = "fuzz_targets/decode_mp3.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "decode_aac"
+path = "fuzz_targets/decode_aac.rs"
+test = false
+doc = false
