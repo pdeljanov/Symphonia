@@ -22,11 +22,16 @@ impl Atom for MehdAtom {
     fn read<B: ReadBytes>(reader: &mut B, mut header: AtomHeader) -> Result<Self> {
         let (version, _) = header.read_extended_header(reader)?;
 
+        let expected_len = if version == 0 { 4 } else { 8 };
+        if header.data_len() != Some(expected_len) {
+            return decode_error("isomp4 (mehd): atom size is not 16 or 20 bytes");
+        }
+
         let fragment_duration = match version {
             0 => u64::from(reader.read_be_u32()?),
             1 => reader.read_be_u64()?,
             _ => {
-                return decode_error("isomp4: invalid mehd version");
+                return decode_error("isomp4 (mehd): invalid version");
             }
         };
 
