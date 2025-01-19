@@ -244,7 +244,7 @@ impl PacketInfo {
         })
     }
 
-    pub fn without_blocks(frame_len: u16) -> Self {
+    pub fn without_blocks(frame_len: u32) -> Self {
         Self {
             block_size: u64::from(frame_len),
             frames_per_block: 1,
