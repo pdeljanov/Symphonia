@@ -137,7 +137,8 @@ impl CommonChunk {
         match &self.format_data {
             FormatData::Pcm(_) => {
                 // Sample size is rounded-up to the nearest byte.
-                let block_align = u32::from(self.n_channels) * u32::from(self.sample_size + 7) / 8;
+                let block_align =
+                    u32::from(self.n_channels) * (u32::from(self.sample_size + 7) / 8);
                 Ok(PacketInfo::without_blocks(block_align))
             }
             FormatData::ALaw(_) => {
@@ -152,7 +153,7 @@ impl CommonChunk {
             }
             FormatData::IeeeFloat(_) => {
                 // Sample size is always a multiple of 8 bits.
-                let block_align = u32::from(self.n_channels) * u32::from(self.sample_size) / 8;
+                let block_align = u32::from(self.n_channels) * (u32::from(self.sample_size) / 8);
                 Ok(PacketInfo::without_blocks(block_align))
             }
             FormatData::Extensible(_) => {
