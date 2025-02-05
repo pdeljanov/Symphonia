@@ -311,7 +311,7 @@ impl QueryDescriptor for IsoMp4Reader {
             "isomp4",
             "ISO Base Media File Format",
             &["mp4", "m4a", "m4p", "m4b", "m4r", "m4v", "mov"],
-            &["video/mp4", "audio/m4a"],
+            &["video/mp4", "audio/mp4"],
             &[b"ftyp"] // Top-level atoms
         )]
     }
