@@ -198,7 +198,7 @@ impl LogicalStream {
 
             for packet in self.packets.iter_mut().rev().take(num_new_packets) {
                 page_dur = page_dur.saturating_add(packet.dur);
-                packet.ts = page_end_ts.saturating_sub(page_dur);
+                packet.pts = page_end_ts.saturating_sub(page_dur);
             }
 
             if self.gapless {

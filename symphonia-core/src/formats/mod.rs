@@ -481,11 +481,11 @@ fn matches_track_type(track: &Track, track_type: TrackType) -> bool {
 pub struct Packet {
     /// The track ID.
     track_id: u32,
-    /// The timestamp of the packet. When gapless support is enabled, this timestamp is relative to
+    /// The presentation timestamp of the packet. When gapless support is enabled, this timestamp is relative to
     /// the end of the encoder delay.
     ///
     /// This timestamp is in `TimeBase` units.
-    pub ts: u64,
+    pub pts: u64,
     /// The duration of the packet. When gapless support is enabled, the duration does not include
     /// the encoder delay or padding.
     ///
@@ -503,37 +503,37 @@ pub struct Packet {
 
 impl Packet {
     /// Create a new `Packet` from a slice.
-    pub fn new_from_slice(track_id: u32, ts: u64, dur: u64, buf: &[u8]) -> Self {
-        Packet { track_id, ts, dur, trim_start: 0, trim_end: 0, data: Box::from(buf) }
+    pub fn new_from_slice(track_id: u32, pts: u64, dur: u64, buf: &[u8]) -> Self {
+        Packet { track_id, pts, dur, trim_start: 0, trim_end: 0, data: Box::from(buf) }
     }
 
     /// Create a new `Packet` from a boxed slice.
-    pub fn new_from_boxed_slice(track_id: u32, ts: u64, dur: u64, data: Box<[u8]>) -> Self {
-        Packet { track_id, ts, dur, trim_start: 0, trim_end: 0, data }
+    pub fn new_from_boxed_slice(track_id: u32, pts: u64, dur: u64, data: Box<[u8]>) -> Self {
+        Packet { track_id, pts, dur, trim_start: 0, trim_end: 0, data }
     }
 
     /// Create a new `Packet` with trimming information from a slice.
     pub fn new_trimmed_from_slice(
         track_id: u32,
-        ts: u64,
+        pts: u64,
         dur: u64,
         trim_start: u32,
         trim_end: u32,
         buf: &[u8],
     ) -> Self {
-        Packet { track_id, ts, dur, trim_start, trim_end, data: Box::from(buf) }
+        Packet { track_id, pts, dur, trim_start, trim_end, data: Box::from(buf) }
     }
 
     /// Create a new `Packet` with trimming information from a boxed slice.
     pub fn new_trimmed_from_boxed_slice(
         track_id: u32,
-        ts: u64,
+        pts: u64,
         dur: u64,
         trim_start: u32,
         trim_end: u32,
         data: Box<[u8]>,
     ) -> Self {
-        Packet { track_id, ts, dur, trim_start, trim_end, data }
+        Packet { track_id, pts, dur, trim_start, trim_end, data }
     }
 
     /// The track identifier of the track this packet belongs to.
@@ -541,12 +541,12 @@ impl Packet {
         self.track_id
     }
 
-    /// Get the timestamp of the packet in `TimeBase` units.
+    /// Get the presentation timestamp of the packet in `TimeBase` units.
     ///
     /// If gapless support is enabled, then this timestamp is relative to the end of the encoder
     /// delay.
-    pub fn ts(&self) -> u64 {
-        self.ts
+    pub fn pts(&self) -> u64 {
+        self.pts
     }
 
     /// Get the duration of the packet in `TimeBase` units.
@@ -720,20 +720,20 @@ pub mod util {
     /// Given a `Packet`, the encoder delay in frames, and the number of non-delay or padding
     /// frames, adjust the packet's timestamp and duration, and populate the trim information.
     pub fn trim_packet(packet: &mut Packet, delay: u32, num_frames: Option<u64>) {
-        packet.trim_start = if packet.ts < u64::from(delay) {
-            let trim = (u64::from(delay) - packet.ts).min(packet.dur);
-            packet.ts = 0;
+        packet.trim_start = if packet.pts < u64::from(delay) {
+            let trim = (u64::from(delay) - packet.pts).min(packet.dur);
+            packet.pts = 0;
             packet.dur -= trim;
             trim as u32
         }
         else {
-            packet.ts -= u64::from(delay);
+            packet.pts -= u64::from(delay);
             0
         };
 
         if let Some(num_frames) = num_frames {
-            packet.trim_end = if packet.ts + packet.dur > num_frames {
-                let trim = (packet.ts + packet.dur - num_frames).min(packet.dur);
+            packet.trim_end = if packet.pts + packet.dur > num_frames {
+                let trim = (packet.pts + packet.dur - num_frames).min(packet.dur);
                 packet.dur -= trim;
                 trim as u32
             }
