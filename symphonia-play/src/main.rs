@@ -38,7 +38,7 @@ mod resampler;
 #[derive(Copy, Clone)]
 enum SeekPosition {
     Time(f64),
-    Timetamp(u64),
+    Timestamp(u64),
 }
 
 fn main() {
@@ -215,7 +215,7 @@ fn run(args: &ArgMatches) -> Result<i32> {
                 }
                 else {
                     args.value_of("seek-ts")
-                        .map(|ts| SeekPosition::Timetamp(ts.parse::<u64>().unwrap_or(0)))
+                        .map(|ts| SeekPosition::Timestamp(ts.parse::<u64>().unwrap_or(0)))
                 };
 
                 // Setup playback options.
@@ -340,7 +340,7 @@ fn play(mut reader: Box<dyn FormatReader>, opts: PlayOptions) -> Result<i32> {
     let seek_ts = if let Some(seek_pos) = opts.seek_pos {
         let seek_to = match seek_pos {
             SeekPosition::Time(t) => SeekTo::Time { time: Time::from(t), track_id: Some(track_id) },
-            SeekPosition::Timetamp(ts) => SeekTo::TimeStamp { ts, track_id },
+            SeekPosition::Timestamp(ts) => SeekTo::TimeStamp { ts, track_id },
         };
 
         // Attempt the seek. If the seek fails, ignore the error and return a seek timestamp of 0 so
