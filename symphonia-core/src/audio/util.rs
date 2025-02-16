@@ -182,8 +182,8 @@ pub fn copy_from_slice_interleaved<Sin, Sout, Src, Dst>(
     let num_planes = dst.len();
 
     assert!(
-        dst.len() == num_planes * bound.len(),
-        "destination slice does not match number of samples"
+        src.len() == num_planes * bound.len(),
+        "source slice length does not match expected number of samples"
     );
 
     let mut i = 0;
@@ -325,6 +325,40 @@ pub fn copy_bytes_planar<Sout, Sin, Src, F, Dst>(
 
         for (&s, d) in src.iter().zip(dst) {
             *d = f(s).to_ne_sample_bytes();
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::copy_from_slice_interleaved;
+
+    #[test]
+    fn verify_copy_from_slice_interleaved() {
+        let src = vec![
+            0.00, -1.0, 0.5, // 1st frame
+            0.25, -0.75, 0.25, // 2nd frame
+            0.50, -0.50, 0.0, // 3rd frame
+            0.75, -0.25, -0.25, // 4th frame
+            1.00, 0.00, -0.5, // 5th frame
+        ];
+
+        // Copy to entire destination slice.
+        {
+            let mut dst = vec![vec![0.0; 5]; 3];
+            copy_from_slice_interleaved(&src, 0..5, &mut dst);
+            assert_eq!(dst[0], [0.0, 0.25, 0.5, 0.75, 1.0]);
+            assert_eq!(dst[1], [-1.0, -0.75, -0.5, -0.25, 0.0]);
+            assert_eq!(dst[2], [0.5, 0.25, 0.0, -0.25, -0.5]);
+        }
+
+        // Copy to sub-slice of destination slice.
+        {
+            let mut dst = vec![vec![0.0; 5]; 3];
+            copy_from_slice_interleaved(&src[3..12], 1..4, &mut dst);
+            assert_eq!(dst[0], [0.0, 0.25, 0.5, 0.75, 0.0]);
+            assert_eq!(dst[1], [0.0, -0.75, -0.5, -0.25, 0.0]);
+            assert_eq!(dst[2], [0.0, 0.25, 0.0, -0.25, 0.0]);
         }
     }
 }
