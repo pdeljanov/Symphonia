@@ -106,6 +106,7 @@ impl IcsInfo {
         }
     }
 
+    /// this method should be called from Ics::decode_info() which will perform additional validations for max_sfb
     pub fn decode<B: ReadBitsLtr>(&mut self, bs: &mut B) -> Result<()> {
         self.prev_window_sequence = self.window_sequence;
         self.prev_window_shape = self.window_shape;
@@ -291,6 +292,16 @@ impl Ics {
         self.sfb_cb[g][sfb] == INTENSITY_HCB
     }
 
+    pub fn decode_info<B: ReadBitsLtr>(&mut self, bs: &mut B) -> Result<()> {
+        self.info.decode(bs)?;
+
+        // validate info.max_sfb - it should not be bigger than bands array len - 1
+        if self.info.max_sfb + 1 > self.get_bands().len() {
+            return decode_error("aac: ics info max_sfb is too big for the bands size");
+        }
+        Ok(())
+    }
+
     fn decode_scale_factor_data<B: ReadBitsLtr>(&mut self, bs: &mut B) -> Result<()> {
         let mut noise_pcm_flag = true;
         let mut scf_intensity = -INTENSITY_SCALE_MIN;
@@ -407,7 +418,8 @@ impl Ics {
 
         // If a common window is used, a common ICS info was decoded previously.
         if !common_window {
-            self.info.decode(bs)?;
+            // do not call self.info.decode() as it will skip required validations present in the decode_info()
+            self.decode_info(bs)?;
         }
 
         self.decode_section_data(bs)?;
