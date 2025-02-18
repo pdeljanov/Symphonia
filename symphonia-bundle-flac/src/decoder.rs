@@ -97,6 +97,11 @@ impl FlacDecoder {
 
         let header = read_frame_header(&mut reader, sync)?;
 
+        // Update the sample rate for this frame.
+        if let Some(sample_rate) = header.sample_rate {
+            self.buf.spec_mut().rate = sample_rate;
+        }
+
         // Use the bits per sample and sample rate as stated in the frame header, falling back to
         // the stream information if provided. If neither are available, return an error.
         let bits_per_sample = if let Some(bps) = header.bits_per_sample {
