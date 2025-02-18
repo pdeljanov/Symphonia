@@ -394,7 +394,7 @@ impl FormatReader for AdtsReader<'_> {
 
 fn approximate_frame_count(mut source: &mut MediaSourceStream<'_>) -> Result<Option<u64>> {
     let original_pos = source.pos();
-    let total_len = match source.byte_len() {
+    let remaining_len = match source.byte_len() {
         Some(len) => len - original_pos,
         _ => return Ok(None),
     };
@@ -428,34 +428,48 @@ fn approximate_frame_count(mut source: &mut MediaSourceStream<'_>) -> Result<Opt
     else {
         // The number of points to sample within the stream.
         const NUM_SAMPLE_POINTS: u64 = 4;
+        const NUM_FRAMES: u32 = 100;
 
-        let step = (total_len - original_pos) / NUM_SAMPLE_POINTS;
+        let step = remaining_len / NUM_SAMPLE_POINTS;
 
-        // Skip the first sample point (start of file) since it is an outlier.
-        for new_pos in (original_pos..total_len - step).step_by(step as usize).skip(1) {
-            let res = source.seek(SeekFrom::Start(new_pos));
-            if res.is_err() {
-                break;
-            }
+        // file can be small enough and not have enough NUM_FRAMES, but we can still read at least one header
+        if step > 0 {
+            for new_pos in (original_pos..(original_pos + remaining_len)).step_by(step as usize) {
+                let mut cur_pos = new_pos;
+                if source.seek(SeekFrom::Start(cur_pos)).is_err() {
+                    break;
+                }
 
-            for _ in 0..=100 {
-                let header = match AdtsHeader::read(&mut source) {
-                    Ok(header) => header,
-                    _ => break,
-                };
+                for _ in 0..NUM_FRAMES {
+                    let header = match AdtsHeader::read(&mut source) {
+                        Ok(header) => header,
+                        _ => break,
+                    };
 
-                parsed_n_frames += 1;
-                n_bytes += u64::from(header.frame_len);
+                    parsed_n_frames += 1;
+                    n_bytes += u64::from(header.frame_len);
+
+                    // skip frame to avoid meeting sync word in the audio data and for quick sync()
+                    cur_pos += u64::from(header.frame_len);
+                    if source.seek(SeekFrom::Start(cur_pos)).is_err() {
+                        break;
+                    }
+                }
+
+                // if reading NUM_FRAMES frames overflow the next step position then break
+                if cur_pos > new_pos + step {
+                    break;
+                }
             }
         }
 
         let _ = source.seek(SeekFrom::Start(original_pos))?;
     }
 
-    debug!("adts: parsed {} of {} bytes to approximate duration", n_bytes, total_len);
+    debug!("adts: parsed {} of {} bytes to approximate duration", n_bytes, remaining_len);
 
     match parsed_n_frames {
         0 => Ok(None),
-        _ => Ok(Some(total_len / (n_bytes / parsed_n_frames) * SAMPLES_PER_AAC_PACKET)),
+        _ => Ok(Some(remaining_len / (n_bytes / parsed_n_frames) * SAMPLES_PER_AAC_PACKET)),
     }
 }

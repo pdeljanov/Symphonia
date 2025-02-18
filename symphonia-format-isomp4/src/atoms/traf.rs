@@ -50,7 +50,7 @@ impl Atom for TrafAtom {
 
         // Tfhd is mandatory.
         if tfhd.is_none() {
-            return decode_error("isomp4: missing tfhd atom");
+            return decode_error("isomp4 (traf): missing tfhd atom");
         }
 
         Ok(TrafAtom { tfhd: tfhd.unwrap(), truns, total_sample_count })
