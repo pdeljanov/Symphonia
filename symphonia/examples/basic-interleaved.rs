@@ -77,10 +77,10 @@ fn main() {
                     let spec = *audio_buf.spec();
 
                     // Get the capacity of the decoded buffer. Note: This is capacity, not length!
-                    let duration = audio_buf.capacity() as u64;
+                    let buffer_capacity = audio_buf.capacity() as u64;
 
                     // Create the f32 sample buffer.
-                    sample_buf = Some(SampleBuffer::<f32>::new(duration, spec));
+                    sample_buf = Some(SampleBuffer::<f32>::new(buffer_capacity, spec));
                 }
 
                 // Copy the decoded audio buffer into the sample buffer in an interleaved format.
