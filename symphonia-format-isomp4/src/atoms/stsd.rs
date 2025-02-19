@@ -215,8 +215,7 @@ fn lpcm_codec_id(bits_per_sample: u32, lpcm_flags: u32) -> AudioCodecId {
             64 => CODEC_ID_PCM_F64LE,
             _ => CODEC_ID_NULL_AUDIO,
         }
-    }
-    else {
+    } else {
         // Integer sample format.
         if is_signed {
             // Signed-integer sample format.
@@ -230,8 +229,7 @@ fn lpcm_codec_id(bits_per_sample: u32, lpcm_flags: u32) -> AudioCodecId {
                 32 => CODEC_ID_PCM_S32LE,
                 _ => CODEC_ID_NULL_AUDIO,
             }
-        }
-        else {
+        } else {
             // Unsigned-integer sample format.
             match bits_per_sample {
                 8 => CODEC_ID_PCM_U8,
@@ -307,6 +305,8 @@ fn read_audio_sample_entry<B: ReadBytes>(
     reader.ignore_bytes(6)?;
 
     entry.num_channels = u32::from(reader.read_be_u16()?);
+    entry.channels = Some(Channels::Discrete(entry.num_channels as u16)); // Probably good idea to have some sort of "default"
+
     entry.sample_size = reader.read_be_u16()?;
 
     // Skip compression ID and packet size.
