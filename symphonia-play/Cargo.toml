@@ -11,6 +11,9 @@ rust-version = "1.77"
 publish = false
 default-run = "symphonia-play"
 
+[lints]
+workspace = true
+
 [dependencies]
 clap = "3.1.0"
 lazy_static = "1.4.0"

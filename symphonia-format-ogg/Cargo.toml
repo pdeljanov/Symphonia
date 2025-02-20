@@ -12,6 +12,9 @@ keywords = ["audio", "media", "demuxer", "ogg"]
 edition = "2021"
 rust-version = "1.77"
 
+[lints]
+workspace = true
+
 [dependencies]
 log = "0.4"
 symphonia-core = { version = "0.5.4", path = "../symphonia-core" }
@@ -22,6 +25,3 @@ version = "0.5.4"
 path = "../symphonia-metadata"
 default-features = false
 features = ["vorbis"]
-
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)'] }
