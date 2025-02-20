@@ -124,7 +124,8 @@ impl MagicCookie {
             }
 
             layout_channels
-        } else {
+        }
+        else {
             // If extra channel information is not provided, use the number of channels to assign
             // a channel layout.
             //
