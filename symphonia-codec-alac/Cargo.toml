@@ -15,3 +15,4 @@ rust-version = "1.77"
 [dependencies]
 log = "0.4"
 symphonia-core = { version = "0.5.4", path = "../symphonia-core" }
+symphonia-common = { version = "0.5.4", path = "../symphonia-common" }
