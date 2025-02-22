@@ -54,6 +54,16 @@ pub enum Error {
     LimitError(&'static str),
     /// The demuxer or decoder needs to be reset before continuing.
     ResetRequired,
+
+    BufferUnderrun,
+
+    EndOfBitstream,
+
+    OutOfBounds,
+
+    UnexpectedEof,
+
+    Other(&'static str),
 }
 
 impl fmt::Display for Error {
@@ -75,6 +85,21 @@ impl fmt::Display for Error {
             Error::ResetRequired => {
                 write!(f, "decoder needs to be reset")
             }
+            Error::BufferUnderrun => {
+                write!(f, "buffer underrun")
+            }
+            Error::EndOfBitstream => {
+                write!(f, "end of bitstream")
+            }
+            Error::OutOfBounds => {
+                write!(f, "out of bounds")
+            }
+            Error::Other(msg) => {
+                write!(f, "{}", msg)
+            }
+            Error::UnexpectedEof => {
+                write!(f, "unexpected end of file")
+            }
         }
     }
 }
@@ -88,7 +113,18 @@ impl std::error::Error for Error {
             Error::Unsupported(_) => None,
             Error::LimitError(_) => None,
             Error::ResetRequired => None,
+            Error::BufferUnderrun => None,
+            Error::EndOfBitstream => None,
+            Error::OutOfBounds => None,
+            Error::Other(_) => None,
+            Error::UnexpectedEof => None,
         }
+    }
+}
+
+impl From<Error> for std::io::Error {
+    fn from(value: Error) -> Self {
+        io::Error::new(io::ErrorKind::Other, value)
     }
 }
 
