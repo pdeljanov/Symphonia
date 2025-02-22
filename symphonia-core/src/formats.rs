@@ -13,6 +13,9 @@ use crate::errors::Result;
 use crate::io::{BufReader, MediaSourceStream};
 use crate::meta::{Metadata, Tag};
 use crate::units::{Time, TimeStamp};
+use alloc::boxed::Box;
+use alloc::string::String;
+use alloc::vec::Vec;
 
 pub mod prelude {
     //! The `formats` module prelude.
@@ -328,6 +331,7 @@ pub mod util {
     //! Helper utilities for implementing `FormatReader`s.
 
     use super::Packet;
+    use alloc::vec::Vec;
 
     /// A `SeekPoint` is a mapping between a sample or frame number to byte offset within a media
     /// stream.

@@ -10,8 +10,8 @@
 //! The complex (I)FFT in this module supports a size up-to 65536. The FFT is implemented using the
 //! radix-2 Cooley-Tukey algorithm.
 
-use std::convert::TryInto;
-use std::f32;
+use core::convert::TryInto;
+use core::f32;
 
 use lazy_static::lazy_static;
 
@@ -25,7 +25,7 @@ macro_rules! fft_twiddle_table {
 
                 let mut table = [Default::default(); N >> 1];
 
-                let theta = std::f64::consts::PI / (N >> 1) as f64;
+                let theta = core::f64::consts::PI / (N >> 1) as f64;
 
                 for (k, t) in table.iter_mut().enumerate() {
                     let angle = theta * k as f64;
@@ -71,7 +71,7 @@ fn fft_twiddle_factors(n: usize) -> &'static [Complex] {
 
 /// The complex Fast Fourier Transform (FFT).
 pub struct Fft {
-    perm: Box<[u16]>,
+    perm: alloc::boxed::Box<[u16]>,
 }
 
 impl Fft {
@@ -409,7 +409,8 @@ fn fft2(x: &mut [Complex; 2]) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::f64;
+    use alloc::vec::Vec;
+    use core::f64;
 
     /// Compute a naive DFT.
     fn dft_naive(x: &[Complex], y: &mut [Complex]) {

@@ -27,7 +27,7 @@ pub use no_simd::*;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::f64;
+    use core::f64;
 
     fn imdct_analytical(x: &[f32], y: &mut [f32], scale: f64) {
         assert!(y.len() == 2 * x.len());
