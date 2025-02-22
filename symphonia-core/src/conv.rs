@@ -28,7 +28,7 @@ pub mod dither {
     use super::FromSample;
     use crate::sample::Sample;
     use crate::sample::{i24, u24};
-    use std::marker::PhantomData;
+    use core::marker::PhantomData;
 
     mod prng {
         #[inline]
@@ -679,7 +679,7 @@ impl<S> ConvertibleSample for S where
 mod tests {
     use super::FromSample;
     use crate::sample::{i24, u24, Sample};
-    use std::{i16, i32, i8, u16, u32, u8};
+    use core::{i16, i32, i8, u16, u32, u8};
 
     #[test]
     fn verify_u8_from_sample() {
