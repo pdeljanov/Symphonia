@@ -28,6 +28,7 @@ mod media_source_stream;
 mod monitor_stream;
 mod scoped_stream;
 
+use crate::Result;
 pub use bit::*;
 pub use buf_reader::BufReader;
 pub use media_source_stream::{MediaSourceStream, MediaSourceStreamOptions};
@@ -144,67 +145,67 @@ impl<R: io::Read> io::Seek for ReadOnlySource<R> {
 /// unsigned integers or floating-point values of standard widths.
 pub trait ReadBytes {
     /// Reads a single byte from the stream and returns it or an error.
-    fn read_byte(&mut self) -> io::Result<u8>;
+    fn read_byte(&mut self) -> Result<u8>;
 
     /// Reads two bytes from the stream and returns them in read-order or an error.
-    fn read_double_bytes(&mut self) -> io::Result<[u8; 2]>;
+    fn read_double_bytes(&mut self) -> Result<[u8; 2]>;
 
     /// Reads three bytes from the stream and returns them in read-order or an error.
-    fn read_triple_bytes(&mut self) -> io::Result<[u8; 3]>;
+    fn read_triple_bytes(&mut self) -> Result<[u8; 3]>;
 
     /// Reads four bytes from the stream and returns them in read-order or an error.
-    fn read_quad_bytes(&mut self) -> io::Result<[u8; 4]>;
+    fn read_quad_bytes(&mut self) -> Result<[u8; 4]>;
 
     /// Reads up-to the number of bytes required to fill buf or returns an error.
-    fn read_buf(&mut self, buf: &mut [u8]) -> io::Result<usize>;
+    fn read_buf(&mut self, buf: &mut [u8]) -> Result<usize>;
 
     /// Reads exactly the number of bytes required to fill be provided buffer or returns an error.
-    fn read_buf_exact(&mut self, buf: &mut [u8]) -> io::Result<()>;
+    fn read_buf_exact(&mut self, buf: &mut [u8]) -> Result<()>;
 
     /// Reads a single unsigned byte from the stream and returns it or an error.
     #[inline(always)]
-    fn read_u8(&mut self) -> io::Result<u8> {
+    fn read_u8(&mut self) -> Result<u8> {
         self.read_byte()
     }
 
     /// Reads a single signed byte from the stream and returns it or an error.
     #[inline(always)]
-    fn read_i8(&mut self) -> io::Result<i8> {
+    fn read_i8(&mut self) -> Result<i8> {
         Ok(self.read_byte()? as i8)
     }
 
     /// Reads two bytes from the stream and interprets them as an unsigned 16-bit little-endian
     /// integer or returns an error.
     #[inline(always)]
-    fn read_u16(&mut self) -> io::Result<u16> {
+    fn read_u16(&mut self) -> Result<u16> {
         Ok(u16::from_le_bytes(self.read_double_bytes()?))
     }
 
     /// Reads two bytes from the stream and interprets them as an signed 16-bit little-endian
     /// integer or returns an error.
     #[inline(always)]
-    fn read_i16(&mut self) -> io::Result<i16> {
+    fn read_i16(&mut self) -> Result<i16> {
         Ok(i16::from_le_bytes(self.read_double_bytes()?))
     }
 
     /// Reads two bytes from the stream and interprets them as an unsigned 16-bit big-endian
     /// integer or returns an error.
     #[inline(always)]
-    fn read_be_u16(&mut self) -> io::Result<u16> {
+    fn read_be_u16(&mut self) -> Result<u16> {
         Ok(u16::from_be_bytes(self.read_double_bytes()?))
     }
 
     /// Reads two bytes from the stream and interprets them as an signed 16-bit big-endian
     /// integer or returns an error.
     #[inline(always)]
-    fn read_be_i16(&mut self) -> io::Result<i16> {
+    fn read_be_i16(&mut self) -> Result<i16> {
         Ok(i16::from_be_bytes(self.read_double_bytes()?))
     }
 
     /// Reads three bytes from the stream and interprets them as an unsigned 24-bit little-endian
     /// integer or returns an error.
     #[inline(always)]
-    fn read_u24(&mut self) -> io::Result<u32> {
+    fn read_u24(&mut self) -> Result<u32> {
         let mut buf = [0u8; mem::size_of::<u32>()];
         buf[0..3].clone_from_slice(&self.read_triple_bytes()?);
         Ok(u32::from_le_bytes(buf))
@@ -213,14 +214,14 @@ pub trait ReadBytes {
     /// Reads three bytes from the stream and interprets them as an signed 24-bit little-endian
     /// integer or returns an error.
     #[inline(always)]
-    fn read_i24(&mut self) -> io::Result<i32> {
+    fn read_i24(&mut self) -> Result<i32> {
         Ok(((self.read_u24()? << 8) as i32) >> 8)
     }
 
     /// Reads three bytes from the stream and interprets them as an unsigned 24-bit big-endian
     /// integer or returns an error.
     #[inline(always)]
-    fn read_be_u24(&mut self) -> io::Result<u32> {
+    fn read_be_u24(&mut self) -> Result<u32> {
         let mut buf = [0u8; mem::size_of::<u32>()];
         buf[0..3].clone_from_slice(&self.read_triple_bytes()?);
         Ok(u32::from_be_bytes(buf) >> 8)
@@ -229,42 +230,42 @@ pub trait ReadBytes {
     /// Reads three bytes from the stream and interprets them as an signed 24-bit big-endian
     /// integer or returns an error.
     #[inline(always)]
-    fn read_be_i24(&mut self) -> io::Result<i32> {
+    fn read_be_i24(&mut self) -> Result<i32> {
         Ok(((self.read_be_u24()? << 8) as i32) >> 8)
     }
 
     /// Reads four bytes from the stream and interprets them as an unsigned 32-bit little-endian
     /// integer or returns an error.
     #[inline(always)]
-    fn read_u32(&mut self) -> io::Result<u32> {
+    fn read_u32(&mut self) -> Result<u32> {
         Ok(u32::from_le_bytes(self.read_quad_bytes()?))
     }
 
     /// Reads four bytes from the stream and interprets them as an signed 32-bit little-endian
     /// integer or returns an error.
     #[inline(always)]
-    fn read_i32(&mut self) -> io::Result<i32> {
+    fn read_i32(&mut self) -> Result<i32> {
         Ok(i32::from_le_bytes(self.read_quad_bytes()?))
     }
 
     /// Reads four bytes from the stream and interprets them as an unsigned 32-bit big-endian
     /// integer or returns an error.
     #[inline(always)]
-    fn read_be_u32(&mut self) -> io::Result<u32> {
+    fn read_be_u32(&mut self) -> Result<u32> {
         Ok(u32::from_be_bytes(self.read_quad_bytes()?))
     }
 
     /// Reads four bytes from the stream and interprets them as a signed 32-bit big-endian
     /// integer or returns an error.
     #[inline(always)]
-    fn read_be_i32(&mut self) -> io::Result<i32> {
+    fn read_be_i32(&mut self) -> Result<i32> {
         Ok(i32::from_be_bytes(self.read_quad_bytes()?))
     }
 
     /// Reads eight bytes from the stream and interprets them as an unsigned 64-bit little-endian
     /// integer or returns an error.
     #[inline(always)]
-    fn read_u64(&mut self) -> io::Result<u64> {
+    fn read_u64(&mut self) -> Result<u64> {
         let mut buf = [0u8; mem::size_of::<u64>()];
         self.read_buf_exact(&mut buf)?;
         Ok(u64::from_le_bytes(buf))
@@ -273,7 +274,7 @@ pub trait ReadBytes {
     /// Reads eight bytes from the stream and interprets them as an signed 64-bit little-endian
     /// integer or returns an error.
     #[inline(always)]
-    fn read_i64(&mut self) -> io::Result<i64> {
+    fn read_i64(&mut self) -> Result<i64> {
         let mut buf = [0u8; mem::size_of::<i64>()];
         self.read_buf_exact(&mut buf)?;
         Ok(i64::from_le_bytes(buf))
@@ -282,7 +283,7 @@ pub trait ReadBytes {
     /// Reads eight bytes from the stream and interprets them as an unsigned 64-bit big-endian
     /// integer or returns an error.
     #[inline(always)]
-    fn read_be_u64(&mut self) -> io::Result<u64> {
+    fn read_be_u64(&mut self) -> Result<u64> {
         let mut buf = [0u8; mem::size_of::<u64>()];
         self.read_buf_exact(&mut buf)?;
         Ok(u64::from_be_bytes(buf))
@@ -291,7 +292,7 @@ pub trait ReadBytes {
     /// Reads eight bytes from the stream and interprets them as an signed 64-bit big-endian
     /// integer or returns an error.
     #[inline(always)]
-    fn read_be_i64(&mut self) -> io::Result<i64> {
+    fn read_be_i64(&mut self) -> Result<i64> {
         let mut buf = [0u8; mem::size_of::<i64>()];
         self.read_buf_exact(&mut buf)?;
         Ok(i64::from_be_bytes(buf))
@@ -300,21 +301,21 @@ pub trait ReadBytes {
     /// Reads four bytes from the stream and interprets them as a 32-bit little-endian IEEE-754
     /// floating-point value.
     #[inline(always)]
-    fn read_f32(&mut self) -> io::Result<f32> {
+    fn read_f32(&mut self) -> Result<f32> {
         Ok(f32::from_le_bytes(self.read_quad_bytes()?))
     }
 
     /// Reads four bytes from the stream and interprets them as a 32-bit big-endian IEEE-754
     /// floating-point value.
     #[inline(always)]
-    fn read_be_f32(&mut self) -> io::Result<f32> {
+    fn read_be_f32(&mut self) -> Result<f32> {
         Ok(f32::from_be_bytes(self.read_quad_bytes()?))
     }
 
     /// Reads four bytes from the stream and interprets them as a 64-bit little-endian IEEE-754
     /// floating-point value.
     #[inline(always)]
-    fn read_f64(&mut self) -> io::Result<f64> {
+    fn read_f64(&mut self) -> Result<f64> {
         let mut buf = [0u8; mem::size_of::<u64>()];
         self.read_buf_exact(&mut buf)?;
         Ok(f64::from_le_bytes(buf))
@@ -323,7 +324,7 @@ pub trait ReadBytes {
     /// Reads four bytes from the stream and interprets them as a 64-bit big-endian IEEE-754
     /// floating-point value.
     #[inline(always)]
-    fn read_be_f64(&mut self) -> io::Result<f64> {
+    fn read_be_f64(&mut self) -> Result<f64> {
         let mut buf = [0u8; mem::size_of::<u64>()];
         self.read_buf_exact(&mut buf)?;
         Ok(f64::from_be_bytes(buf))
@@ -331,7 +332,7 @@ pub trait ReadBytes {
 
     /// Reads up-to the number of bytes requested, and returns a boxed slice of the data or an
     /// error.
-    fn read_boxed_slice(&mut self, len: usize) -> io::Result<Box<[u8]>> {
+    fn read_boxed_slice(&mut self, len: usize) -> Result<Box<[u8]>> {
         let mut buf = vec![0u8; len];
         let actual_len = self.read_buf(&mut buf)?;
         buf.truncate(actual_len);
@@ -340,7 +341,7 @@ pub trait ReadBytes {
 
     /// Reads exactly the number of bytes requested, and returns a boxed slice of the data or an
     /// error.
-    fn read_boxed_slice_exact(&mut self, len: usize) -> io::Result<Box<[u8]>> {
+    fn read_boxed_slice_exact(&mut self, len: usize) -> Result<Box<[u8]>> {
         let mut buf = vec![0u8; len];
         self.read_buf_exact(&mut buf)?;
         Ok(buf.into_boxed_slice())
@@ -349,7 +350,7 @@ pub trait ReadBytes {
     /// Reads bytes from the stream into a supplied buffer until a byte pattern is matched. Returns
     /// a mutable slice to the valid region of the provided buffer.
     #[inline(always)]
-    fn scan_bytes<'a>(&mut self, pattern: &[u8], buf: &'a mut [u8]) -> io::Result<&'a mut [u8]> {
+    fn scan_bytes<'a>(&mut self, pattern: &[u8], buf: &'a mut [u8]) -> Result<&'a mut [u8]> {
         self.scan_bytes_aligned(pattern, 1, buf)
     }
 
@@ -360,10 +361,10 @@ pub trait ReadBytes {
         pattern: &[u8],
         align: usize,
         buf: &'a mut [u8],
-    ) -> io::Result<&'a mut [u8]>;
+    ) -> Result<&'a mut [u8]>;
 
     /// Ignores the specified number of bytes from the stream or returns an error.
-    fn ignore_bytes(&mut self, count: u64) -> io::Result<()>;
+    fn ignore_bytes(&mut self, count: u64) -> Result<()>;
 
     /// Gets the position of the stream.
     fn pos(&self) -> u64;
@@ -371,32 +372,32 @@ pub trait ReadBytes {
 
 impl<R: ReadBytes> ReadBytes for &mut R {
     #[inline(always)]
-    fn read_byte(&mut self) -> io::Result<u8> {
+    fn read_byte(&mut self) -> Result<u8> {
         (*self).read_byte()
     }
 
     #[inline(always)]
-    fn read_double_bytes(&mut self) -> io::Result<[u8; 2]> {
+    fn read_double_bytes(&mut self) -> Result<[u8; 2]> {
         (*self).read_double_bytes()
     }
 
     #[inline(always)]
-    fn read_triple_bytes(&mut self) -> io::Result<[u8; 3]> {
+    fn read_triple_bytes(&mut self) -> Result<[u8; 3]> {
         (*self).read_triple_bytes()
     }
 
     #[inline(always)]
-    fn read_quad_bytes(&mut self) -> io::Result<[u8; 4]> {
+    fn read_quad_bytes(&mut self) -> Result<[u8; 4]> {
         (*self).read_quad_bytes()
     }
 
     #[inline(always)]
-    fn read_buf(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+    fn read_buf(&mut self, buf: &mut [u8]) -> Result<usize> {
         (*self).read_buf(buf)
     }
 
     #[inline(always)]
-    fn read_buf_exact(&mut self, buf: &mut [u8]) -> io::Result<()> {
+    fn read_buf_exact(&mut self, buf: &mut [u8]) -> Result<()> {
         (*self).read_buf_exact(buf)
     }
 
@@ -406,12 +407,12 @@ impl<R: ReadBytes> ReadBytes for &mut R {
         pattern: &[u8],
         align: usize,
         buf: &'a mut [u8],
-    ) -> io::Result<&'a mut [u8]> {
+    ) -> Result<&'a mut [u8]> {
         (*self).scan_bytes_aligned(pattern, align, buf)
     }
 
     #[inline(always)]
-    fn ignore_bytes(&mut self, count: u64) -> io::Result<()> {
+    fn ignore_bytes(&mut self, count: u64) -> Result<()> {
         (*self).ignore_bytes(count)
     }
 
