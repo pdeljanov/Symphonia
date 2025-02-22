@@ -5,14 +5,14 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+use crate::errors::Result;
 use core::cmp;
-use std::io;
 
 use super::{FiniteStream, ReadBytes, SeekBuffered};
 
 #[inline(always)]
-fn out_of_bounds_error<T>() -> io::Result<T> {
-    Err(io::Error::new(io::ErrorKind::UnexpectedEof, "out of bounds"))
+fn out_of_bounds_error<T>() -> Result<T> {
+    Err(crate::errors::Error::OutOfBoundsError)
 }
 
 /// A `ScopedStream` restricts the number of bytes that may be read to an upper limit.
@@ -41,7 +41,7 @@ impl<B: ReadBytes> ScopedStream<B> {
     }
 
     /// Ignores the remainder of the `ScopedStream`.
-    pub fn ignore(&mut self) -> io::Result<()> {
+    pub fn ignore(&mut self) -> Result<()> {
         self.inner.ignore_bytes(self.len - self.read)
     }
 
@@ -70,7 +70,7 @@ impl<B: ReadBytes> FiniteStream for ScopedStream<B> {
 
 impl<B: ReadBytes> ReadBytes for ScopedStream<B> {
     #[inline(always)]
-    fn read_byte(&mut self) -> io::Result<u8> {
+    fn read_byte(&mut self) -> Result<u8> {
         if self.len - self.read < 1 {
             return out_of_bounds_error();
         }
@@ -80,7 +80,7 @@ impl<B: ReadBytes> ReadBytes for ScopedStream<B> {
     }
 
     #[inline(always)]
-    fn read_double_bytes(&mut self) -> io::Result<[u8; 2]> {
+    fn read_double_bytes(&mut self) -> Result<[u8; 2]> {
         if self.len - self.read < 2 {
             return out_of_bounds_error();
         }
@@ -90,7 +90,7 @@ impl<B: ReadBytes> ReadBytes for ScopedStream<B> {
     }
 
     #[inline(always)]
-    fn read_triple_bytes(&mut self) -> io::Result<[u8; 3]> {
+    fn read_triple_bytes(&mut self) -> Result<[u8; 3]> {
         if self.len - self.read < 3 {
             return out_of_bounds_error();
         }
@@ -100,7 +100,7 @@ impl<B: ReadBytes> ReadBytes for ScopedStream<B> {
     }
 
     #[inline(always)]
-    fn read_quad_bytes(&mut self) -> io::Result<[u8; 4]> {
+    fn read_quad_bytes(&mut self) -> Result<[u8; 4]> {
         if self.len - self.read < 4 {
             return out_of_bounds_error();
         }
@@ -109,7 +109,7 @@ impl<B: ReadBytes> ReadBytes for ScopedStream<B> {
         self.inner.read_quad_bytes()
     }
 
-    fn read_buf(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+    fn read_buf(&mut self, buf: &mut [u8]) -> Result<usize> {
         // Limit read_buf() to the remainder of the scoped bytes if buf has a greater length.
         let scoped_len = cmp::min(self.len - self.read, buf.len() as u64) as usize;
         let result = self.inner.read_buf(&mut buf[0..scoped_len])?;
@@ -117,7 +117,7 @@ impl<B: ReadBytes> ReadBytes for ScopedStream<B> {
         Ok(result)
     }
 
-    fn read_buf_exact(&mut self, buf: &mut [u8]) -> io::Result<()> {
+    fn read_buf_exact(&mut self, buf: &mut [u8]) -> Result<()> {
         if self.len - self.read < buf.len() as u64 {
             return out_of_bounds_error();
         }
@@ -132,7 +132,7 @@ impl<B: ReadBytes> ReadBytes for ScopedStream<B> {
         pattern: &[u8],
         align: usize,
         buf: &'a mut [u8],
-    ) -> io::Result<&'a mut [u8]> {
+    ) -> Result<&'a mut [u8]> {
         if self.len - self.read < buf.len() as u64 {
             return out_of_bounds_error();
         }
@@ -143,7 +143,7 @@ impl<B: ReadBytes> ReadBytes for ScopedStream<B> {
     }
 
     #[inline(always)]
-    fn ignore_bytes(&mut self, count: u64) -> io::Result<()> {
+    fn ignore_bytes(&mut self, count: u64) -> Result<()> {
         if self.len - self.read < count {
             return out_of_bounds_error();
         }

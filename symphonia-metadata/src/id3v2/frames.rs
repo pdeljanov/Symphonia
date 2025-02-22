@@ -6,7 +6,6 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::io;
 use std::str;
 
 use symphonia_core::errors::{decode_error, unsupported_error, Result};
@@ -952,7 +951,7 @@ fn scan_text<'a>(
     reader: &'a mut BufReader<'_>,
     encoding: Encoding,
     scan_len: usize,
-) -> io::Result<Cow<'a, str>> {
+) -> Result<Cow<'a, str>> {
     let buf = match encoding {
         Encoding::Iso8859_1 | Encoding::Utf8 => reader.scan_bytes_aligned_ref(&[0x00], 1, scan_len),
         Encoding::Utf16Bom | Encoding::Utf16Be => {

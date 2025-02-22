@@ -5,9 +5,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::io::{vlc::*, ReadBitsLtr};
-
 use lazy_static::lazy_static;
+use symphonia_core::errors::Result;
+use symphonia_core::io::{vlc::*, ReadBitsLtr};
 
 #[rustfmt::skip]
 const SPECTRUM_CODEBOOK1_LENS: [u8; 81] = [
@@ -500,7 +500,7 @@ pub struct QuadsCodebook {
 
 impl QuadsCodebook {
     #[inline(always)]
-    pub fn read_quant<B: ReadBitsLtr>(&self, bs: &mut B) -> std::io::Result<(u8, u8, u8, u8)> {
+    pub fn read_quant<B: ReadBitsLtr>(&self, bs: &mut B) -> Result<(u8, u8, u8, u8)> {
         bs.read_codebook(&self.codebook).map(|(cw, _)| AAC_QUADS[cw as usize])
     }
 }
@@ -522,7 +522,7 @@ pub struct PairsCodebook {
 
 impl PairsCodebook {
     #[inline(always)]
-    pub fn read_dequant<B: ReadBitsLtr>(&self, bs: &mut B) -> std::io::Result<(f32, f32)> {
+    pub fn read_dequant<B: ReadBitsLtr>(&self, bs: &mut B) -> Result<(f32, f32)> {
         bs.read_codebook(&self.codebook).map(|(cw, _)| self.values[cw as usize])
     }
 }
@@ -543,7 +543,7 @@ pub struct EscapeCodebook {
 
 impl EscapeCodebook {
     #[inline(always)]
-    pub fn read_quant<B: ReadBitsLtr>(&self, bs: &mut B) -> std::io::Result<(u16, u16)> {
+    pub fn read_quant<B: ReadBitsLtr>(&self, bs: &mut B) -> Result<(u16, u16)> {
         bs.read_codebook(&self.codebook).map(|(cw, _)| self.values[cw as usize])
     }
 }

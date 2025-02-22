@@ -5,17 +5,20 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use std::cmp;
+use crate::errors::Result;
+use alloc::boxed::Box;
+use alloc::vec;
+use core::cmp;
+use core::ops::Sub;
 use std::io;
 use std::io::{IoSliceMut, Read, Seek};
-use std::ops::Sub;
 
 use super::SeekBuffered;
 use super::{MediaSource, ReadBytes};
 
 #[inline(always)]
-fn end_of_stream_error<T>() -> io::Result<T> {
-    Err(io::Error::new(io::ErrorKind::UnexpectedEof, "end of stream"))
+fn end_of_stream_error<T>() -> Result<T> {
+    Err(crate::errors::Error::EndOfStreamError)
 }
 
 /// `MediaSourceStreamOptions` specifies the buffering behaviour of a `MediaSourceStream`.
@@ -98,7 +101,7 @@ impl MediaSourceStream {
     }
 
     /// If the buffer has been exhausted, fetch a new block of data to replenish the buffer.
-    fn fetch(&mut self) -> io::Result<()> {
+    fn fetch(&mut self) -> Result<()> {
         // Only fetch when the ring buffer is empty.
         if self.is_buffer_exhausted() {
             // Split the vector at the write position to get slices of the two contiguous regions of
@@ -137,7 +140,7 @@ impl MediaSourceStream {
 
     /// If the buffer has been exhausted, fetch a new block of data to replenish the buffer. If
     /// no more data could be fetched, return an end-of-stream error.
-    fn fetch_or_eof(&mut self) -> io::Result<()> {
+    fn fetch_or_eof(&mut self) -> Result<()> {
         self.fetch()?;
 
         if self.is_buffer_exhausted() {
@@ -236,7 +239,7 @@ impl io::Seek for MediaSourceStream {
 
 impl ReadBytes for MediaSourceStream {
     #[inline(always)]
-    fn read_byte(&mut self) -> io::Result<u8> {
+    fn read_byte(&mut self) -> Result<u8> {
         // This function, read_byte, is inlined for performance. To reduce code bloat, place the
         // read-ahead buffer replenishment in a seperate function. Call overhead will be negligible
         // compared to the actual underlying read.
@@ -250,7 +253,7 @@ impl ReadBytes for MediaSourceStream {
         Ok(value)
     }
 
-    fn read_double_bytes(&mut self) -> io::Result<[u8; 2]> {
+    fn read_double_bytes(&mut self) -> Result<[u8; 2]> {
         let mut bytes = [0; 2];
 
         let buf = self.continguous_buf();
@@ -268,7 +271,7 @@ impl ReadBytes for MediaSourceStream {
         Ok(bytes)
     }
 
-    fn read_triple_bytes(&mut self) -> io::Result<[u8; 3]> {
+    fn read_triple_bytes(&mut self) -> Result<[u8; 3]> {
         let mut bytes = [0; 3];
 
         let buf = self.continguous_buf();
@@ -285,7 +288,7 @@ impl ReadBytes for MediaSourceStream {
         Ok(bytes)
     }
 
-    fn read_quad_bytes(&mut self) -> io::Result<[u8; 4]> {
+    fn read_quad_bytes(&mut self) -> Result<[u8; 4]> {
         let mut bytes = [0; 4];
 
         let buf = self.continguous_buf();
@@ -302,7 +305,7 @@ impl ReadBytes for MediaSourceStream {
         Ok(bytes)
     }
 
-    fn read_buf(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+    fn read_buf(&mut self, buf: &mut [u8]) -> Result<usize> {
         // Implemented via io::Read trait.
         let read = self.read(buf)?;
 
@@ -317,7 +320,7 @@ impl ReadBytes for MediaSourceStream {
         }
     }
 
-    fn read_buf_exact(&mut self, mut buf: &mut [u8]) -> io::Result<()> {
+    fn read_buf_exact(&mut self, mut buf: &mut [u8]) -> Result<()> {
         while !buf.is_empty() {
             match self.read(buf) {
                 Ok(0) => break,
@@ -325,7 +328,7 @@ impl ReadBytes for MediaSourceStream {
                     buf = &mut buf[count..];
                 }
                 Err(ref e) if e.kind() == io::ErrorKind::Interrupted => {}
-                Err(e) => return Err(e),
+                Err(e) => return Err(crate::errors::Error::IoError(e)),
             }
         }
 
@@ -342,12 +345,12 @@ impl ReadBytes for MediaSourceStream {
         _: &[u8],
         _: usize,
         _: &'a mut [u8],
-    ) -> io::Result<&'a mut [u8]> {
+    ) -> Result<&'a mut [u8]> {
         // Intentionally left unimplemented.
         unimplemented!();
     }
 
-    fn ignore_bytes(&mut self, mut count: u64) -> io::Result<()> {
+    fn ignore_bytes(&mut self, mut count: u64) -> Result<()> {
         // If the stream is seekable and the number of bytes to ignore is large, perform a seek
         // first. Note that ignored bytes are rewindable. Therefore, ensure the ring-buffer is
         // full after the seek just like if bytes were ignored by consuming them instead.

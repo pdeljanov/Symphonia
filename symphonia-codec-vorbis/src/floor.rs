@@ -89,10 +89,10 @@ macro_rules! io_try_or_ret {
     ($expr:expr) => {
         match $expr {
             Ok(val) => val,
-            // An end-of-bitstream error is classified under ErrorKind::Other. This condition
-            // should not be treated as an error, rather, it should return from the function
-            // immediately without error.
-            Err(ref e) if e.kind() == std::io::ErrorKind::Other => return Ok(()),
+
+            // This condition should not be treated as an error, rather,
+            // it should return from the function immediately without error.
+            Err(symphonia_core::errors::Error::EndOfStreamError) => return Ok(()),
             Err(e) => return Err(e.into()),
         }
     };

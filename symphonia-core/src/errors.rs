@@ -52,6 +52,11 @@ pub enum Error {
     LimitError(&'static str),
     /// The demuxer or decoder needs to be reset before continuing.
     ResetRequired,
+
+    BufferUnderrunError,
+    OutOfBoundsError,
+    EndOfStreamError,
+    OtherError(&'static str),
 }
 
 impl fmt::Display for Error {
@@ -73,11 +78,23 @@ impl fmt::Display for Error {
             Error::ResetRequired => {
                 write!(f, "decoder needs to be reset")
             }
+            Error::BufferUnderrunError => {
+                write!(f, "buffer underrun")
+            }
+            Error::OutOfBoundsError => {
+                write!(f, "out of bounds")
+            }
+            Error::EndOfStreamError => {
+                write!(f, "end of stream")
+            }
+            Error::OtherError(msg) => {
+                write!(f, "{}", msg)
+            }
         }
     }
 }
 
-impl std::error::Error for Error {
+impl error::Error for Error {
     fn cause(&self) -> Option<&dyn error::Error> {
         match *self {
             Error::IoError(ref err) => Some(err),
@@ -86,6 +103,10 @@ impl std::error::Error for Error {
             Error::Unsupported(_) => None,
             Error::LimitError(_) => None,
             Error::ResetRequired => None,
+            Error::BufferUnderrunError => None,
+            Error::OutOfBoundsError => None,
+            Error::EndOfStreamError => None,
+            Error::OtherError(_) => None,
         }
     }
 }
@@ -93,6 +114,15 @@ impl std::error::Error for Error {
 impl From<io::Error> for Error {
     fn from(err: io::Error) -> Error {
         Error::IoError(err)
+    }
+}
+
+impl From<Error> for io::Error {
+    fn from(value: Error) -> Self {
+        match value {
+            Error::IoError(err) => err,
+            _ => io::Error::new(io::ErrorKind::Other, format!("{}", value)),
+        }
     }
 }
 
