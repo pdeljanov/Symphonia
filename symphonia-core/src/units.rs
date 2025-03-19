@@ -9,7 +9,7 @@
 
 use std::fmt;
 
-/// A `TimeStamp` represents an instantenous instant in time since the start of a stream. One
+/// A `TimeStamp` represents an instantaneous instant in time since the start of a stream. One
 /// `TimeStamp` "tick" is equivalent to the stream's `TimeBase` in seconds.
 pub type TimeStamp = u64;
 
@@ -135,7 +135,7 @@ impl From<Time> for std::time::Duration {
 ///
 /// In other words, a `TimeBase` is the length in seconds of one tick of a `TimeStamp` or
 /// `Duration`.
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct TimeBase {
     /// The numerator.
     pub numer: u32,
@@ -231,6 +231,17 @@ impl TimeBase {
 impl From<TimeBase> for f64 {
     fn from(timebase: TimeBase) -> Self {
         f64::from(timebase.numer) / f64::from(timebase.denom)
+    }
+}
+
+impl Default for TimeBase {
+    fn default() -> Self {
+        // Make sure the default returns an illegal value
+        // with a TimeBase of 0.
+        Self {
+            numer: 1,
+            denom: 1,
+        }
     }
 }
 
