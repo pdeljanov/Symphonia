@@ -471,6 +471,7 @@ fn read_mpeg_frame(reader: &mut MediaSourceStream) -> Result<(FrameHeader, Vec<u
         }
 
         warn!("invalid mpeg audio header");
+        Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid mpeg audio header"))?
     };
 
     // Allocate frame buffer.
