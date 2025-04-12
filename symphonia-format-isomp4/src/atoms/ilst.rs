@@ -20,6 +20,7 @@ use encoding_rs::{SHIFT_JIS, UTF_16BE};
 use log::warn;
 
 /// Data type enumeration for metadata value atoms as defined in the QuickTime File Format standard.
+#[allow(dead_code)]
 #[derive(Debug, Copy, Clone)]
 pub enum DataType {
     AffineTransformF64,

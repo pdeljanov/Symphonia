@@ -119,7 +119,7 @@ impl FormatReader for MpaReader {
 
             // The base Xing/Info tag may contain the number of frames.
             if let Some(num_mpeg_frames) = info_tag.num_frames {
-                info!("using xing header for duration");
+                debug!("using xing header for duration");
 
                 let num_frames = u64::from(num_mpeg_frames) * header.duration();
 
@@ -133,7 +133,7 @@ impl FormatReader for MpaReader {
             }
         }
         else if let Some(vbri_tag) = try_read_vbri_tag(&packet, &header) {
-            info!("using vbri header for duration");
+            debug!("using vbri header for duration");
 
             let num_frames = u64::from(vbri_tag.num_mpeg_frames) * header.duration();
 
@@ -768,7 +768,7 @@ fn try_read_info_tag_inner(buf: &[u8], header: &FrameHeader) -> Result<Option<Xi
         }
         else {
             // The tag is truncated. No CRC will be present.
-            info!("xing tag lame extension is truncated");
+            debug!("xing tag lame extension is truncated");
             None
         };
 
@@ -788,13 +788,13 @@ fn try_read_info_tag_inner(buf: &[u8], header: &FrameHeader) -> Result<Option<Xi
         }
         else {
             // The CRC did not match, this is probably not a LAME tag.
-            warn!("xing tag lame extension crc mismatch");
+            debug!("xing tag lame extension crc mismatch");
             None
         }
     }
     else {
         // Frame not large enough for a LAME tag.
-        info!("xing tag too small for lame extension");
+        debug!("xing tag too small for lame extension");
         None
     };
 

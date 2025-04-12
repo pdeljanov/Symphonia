@@ -145,6 +145,7 @@ pub enum AudioCodecSpecific {
     Pcm(Pcm),
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct AudioSampleEntry {
     pub num_channels: u32,

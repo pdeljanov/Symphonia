@@ -11,6 +11,7 @@ use symphonia_core::io::ReadBytes;
 use crate::atoms::{Atom, AtomHeader, AtomIterator, AtomType, EdtsAtom, MdiaAtom, TkhdAtom};
 
 /// Track atom.
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct TrakAtom {
     /// Atom header.
