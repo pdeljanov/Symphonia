@@ -306,6 +306,10 @@ fn approximate_frame_count(mut source: &mut MediaSourceStream) -> Result<Option<
         const NUM_SAMPLE_POINTS: u64 = 4;
 
         let step = (total_len - original_pos) / NUM_SAMPLE_POINTS;
+        if step == 0 {
+            // Not enough data to meaningfully approximate
+            return Ok(None);
+        }
 
         // Skip the first sample point (start of file) since it is an outlier.
         for new_pos in (original_pos..total_len - step).step_by(step as usize).skip(1) {
