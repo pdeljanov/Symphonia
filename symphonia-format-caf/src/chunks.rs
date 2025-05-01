@@ -201,7 +201,7 @@ impl AudioDescription {
                     }
                 }
             }
-            AppleIMA4 => CODEC_ID_ADPCM_IMA_WAV,
+            AppleIMA4 => CODEC_ID_ADPCM_IMA_QT,
             MPEG4AAC => CODEC_ID_AAC,
             ULaw => CODEC_ID_PCM_MULAW,
             ALaw => CODEC_ID_PCM_ALAW,
