@@ -220,8 +220,8 @@ impl AudioDescription {
         Ok(result)
     }
 
-    pub fn format_is_compressed(&self) -> bool {
-        self.bits_per_channel == 0
+    pub fn is_variable_packet_format(&self) -> bool {
+        self.bytes_per_packet == 0 || self.frames_per_packet == 0
     }
 }
 
