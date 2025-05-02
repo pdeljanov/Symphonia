@@ -153,7 +153,7 @@ impl LogicalStream {
                 }
                 Ok(MapResult::SideData { data }) => side_data.push(data),
                 Err(e) => {
-                    warn!("mapping packet failed ({}), skipping", e.to_string())
+                    warn!("mapping packet failed ({}), skipping", e)
                 }
                 _ => (),
             }
@@ -327,12 +327,7 @@ impl LogicalStream {
                 let actual_page_end_ts = last_bound.ts.saturating_add(page_dur);
 
                 // Any samples after the stated timestamp of this page are considered delay samples.
-                if actual_page_end_ts > page_end_ts {
-                    actual_page_end_ts - page_end_ts
-                }
-                else {
-                    0
-                }
+                actual_page_end_ts.saturating_sub(page_end_ts)
             }
             else {
                 // Don't have the timestamp of the previous page so it is not possible to

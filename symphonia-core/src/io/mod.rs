@@ -369,7 +369,7 @@ pub trait ReadBytes {
     fn pos(&self) -> u64;
 }
 
-impl<'b, R: ReadBytes> ReadBytes for &'b mut R {
+impl<R: ReadBytes> ReadBytes for &mut R {
     #[inline(always)]
     fn read_byte(&mut self) -> io::Result<u8> {
         (*self).read_byte()
@@ -421,7 +421,7 @@ impl<'b, R: ReadBytes> ReadBytes for &'b mut R {
     }
 }
 
-impl<'b, S: SeekBuffered> SeekBuffered for &'b mut S {
+impl<S: SeekBuffered> SeekBuffered for &mut S {
     fn ensure_seekback_buffer(&mut self, len: usize) {
         (*self).ensure_seekback_buffer(len)
     }
@@ -480,7 +480,7 @@ pub trait SeekBuffered {
     }
 }
 
-impl<'b, F: FiniteStream> FiniteStream for &'b mut F {
+impl<F: FiniteStream> FiniteStream for &mut F {
     fn byte_len(&self) -> u64 {
         (**self).byte_len()
     }

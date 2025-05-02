@@ -429,7 +429,7 @@ pub enum AudioBufferRef<'a> {
     F64(Cow<'a, AudioBuffer<f64>>),
 }
 
-impl<'a> AudioBufferRef<'a> {
+impl AudioBufferRef<'_> {
     /// Gets the signal specification for the buffer.
     pub fn spec(&self) -> &SignalSpec {
         impl_audio_buffer_ref_func!(self, buf, buf.spec())

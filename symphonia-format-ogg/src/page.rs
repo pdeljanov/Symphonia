@@ -130,7 +130,7 @@ pub struct Page<'a> {
     page_buf: &'a [u8],
 }
 
-impl<'a> Page<'a> {
+impl Page<'_> {
     /// Returns an iterator over all complete packets within the page.
     ///
     /// If this page contains a partial packet, then the partial packet data may be retrieved using
