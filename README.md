@@ -27,7 +27,7 @@
 
 <p>
     <strong>
-        Symphonia is a pure Rust audio decoding and media demuxing library supporting AAC, ADPCM, ALAC, FLAC, MKV, MP1, MP2, MP3, MP4, OGG, Vorbis, WAV, and WebM.
+        Symphonia is a pure Rust audio decoding and media demuxing library supporting AAC, ADPCM, AIFF, ALAC, CAF, FLAC, MKV, MP1, MP2, MP3, MP4, OGG, Vorbis, WAV, and WebM.
     </strong>
 </p>
 
@@ -87,17 +87,20 @@ A status of *Excellent* is only assigned after the feature passes all compliance
 
 | Format   | Status    | Gapless* | Feature Flag | Default | Crate                       |
 |----------|-----------|----------|--------------|---------|-----------------------------|
+| AIFF     | Great     | Yes      | `aiff`       | No      | [`symphonia-format-riff`]   |
+| CAF      | Good      | No       | `caf`        | No      | [`symphonia-format-caf`]    |
 | ISO/MP4  | Great     | No       | `isomp4`     | No      | [`symphonia-format-isomp4`] |
 | MKV/WebM | Good      | No       | `mkv`        | Yes     | [`symphonia-format-mkv`]    |
 | OGG      | Great     | Yes      | `ogg`        | Yes     | [`symphonia-format-ogg`]    |
-| Wave     | Excellent | Yes      | `wav`        | Yes     | [`symphonia-format-wav`]    |
+| Wave     | Excellent | Yes      | `wav`        | Yes     | [`symphonia-format-riff`]   |
 
 \* Gapless playback requires support from both the demuxer and decoder.
 
+[`symphonia-format-caf`]: https://docs.rs/symphonia-format-caf
 [`symphonia-format-isomp4`]: https://docs.rs/symphonia-format-isomp4
-[`symphonia-format-ogg`]: https://docs.rs/symphonia-format-ogg
-[`symphonia-format-wav`]: https://docs.rs/symphonia-format-wav
 [`symphonia-format-mkv`]: https://docs.rs/symphonia-format-mkv
+[`symphonia-format-ogg`]: https://docs.rs/symphonia-format-ogg
+[`symphonia-format-riff`]: https://docs.rs/symphonia-format-riff
 
 > **Tip:** All formats can be enabled with the `all-formats` feature flag.
 
@@ -159,6 +162,18 @@ Symphonia aims to be comparable to, or faster than, popular open-source C-based 
 
 See the [benchmarks](https://github.com/pdeljanov/Symphonia/blob/master/BENCHMARKS.md) for more information.
 
+### Optimizations
+
+At this time, SIMD optimizations are not enabled by default. Enabling any SIMD support feature flags will pull in the `rustfft` dependency.
+
+| Instruction Set | Feature Flag    | Default |
+|-----------------|-----------------|---------|
+| SSE             | `opt-simd-sse`  | No      |
+| AVX             | `opt-simd-avx`  | No      |
+| Neon            | `opt-simd-neon` | No      |
+
+> **Tip:** All SIMD optimizations can be enabled with the `opt-simd` feature flag.
+
 ## Examples
 
 Basic usage examples may be found [`here`](https://github.com/pdeljanov/Symphonia/tree/master/symphonia/examples).
@@ -186,6 +201,4 @@ Symphonia is provided under the MPL v2.0 license. Please refer to the LICENSE fi
 
 ## Contributing
 
-Symphonia is an open-source project and contributions are very welcome! If you would like to make a large contribution, please raise an issue ahead of time to make sure your efforts fit into the project goals, and that there's no duplication of effort. Please be aware that all contributions must also be licensed under the MPL v2.0 license to be accepted.
-
-When submitting a pull request, be sure you have included yourself in the CONTRIBUTORS file!
+Symphonia is a free and open-source project that welcomes contributions! To get started, please read our [Contribution Guidelines](CONTRIBUTING.md).

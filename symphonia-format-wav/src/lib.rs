@@ -5,6 +5,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+#![deprecated(since = "0.5.4", note = "superseded by `symphonia-format-riff`")]
 #![warn(rust_2018_idioms)]
 #![forbid(unsafe_code)]
 // The following lints are allowed in all Symphonia crates. Please see clippy.toml for their

@@ -20,7 +20,7 @@ use std::io::{Seek, SeekFrom};
 
 use super::common::{map_channels, M4AType, AAC_SAMPLE_RATES, M4A_TYPES};
 
-use log::debug;
+use log::{debug, info};
 
 const SAMPLES_PER_AAC_PACKET: u64 = 1024;
 
@@ -131,7 +131,10 @@ impl FormatReader for AdtsReader {
         // Use the header to populate the codec parameters.
         let mut params = CodecParameters::new();
 
-        params.for_codec(CODEC_TYPE_AAC).with_sample_rate(header.sample_rate);
+        params
+            .for_codec(CODEC_TYPE_AAC)
+            .with_sample_rate(header.sample_rate)
+            .with_time_base(TimeBase::new(1, header.sample_rate));
 
         if let Some(channels) = header.channels {
             params.with_channels(channels);
@@ -141,6 +144,12 @@ impl FormatReader for AdtsReader {
         source.seek_buffered_rev(AdtsHeader::SIZE);
 
         let first_frame_pos = source.pos();
+
+        let n_frames = approximate_frame_count(&mut source)?;
+        if let Some(n_frames) = n_frames {
+            info!("estimating duration from bitrate, may be inaccurate for vbr files");
+            params.with_n_frames(n_frames);
+        }
 
         Ok(AdtsReader {
             reader: source,
@@ -256,5 +265,77 @@ impl FormatReader for AdtsReader {
 
     fn into_inner(self: Box<Self>) -> MediaSourceStream {
         self.reader
+    }
+}
+
+fn approximate_frame_count(mut source: &mut MediaSourceStream) -> Result<Option<u64>> {
+    let original_pos = source.pos();
+    let total_len = match source.byte_len() {
+        Some(len) => len - original_pos,
+        _ => return Ok(None),
+    };
+
+    let mut parsed_n_frames = 0;
+    let mut n_bytes = 0;
+
+    if !source.is_seekable() {
+        // The maximum length in bytes of frames to consume from the stream to sample.
+        const MAX_LEN: u64 = 16 * 1024;
+
+        source.ensure_seekback_buffer(MAX_LEN as usize);
+        let mut scoped_stream = ScopedStream::new(&mut source, MAX_LEN);
+
+        loop {
+            let header = match AdtsHeader::read(&mut scoped_stream) {
+                Ok(header) => header,
+                _ => break,
+            };
+
+            if scoped_stream.ignore_bytes(header.frame_len as u64).is_err() {
+                break;
+            }
+
+            parsed_n_frames += 1;
+            n_bytes += header.frame_len + AdtsHeader::SIZE;
+        }
+
+        let _ = source.seek_buffered(original_pos);
+    }
+    else {
+        // The number of points to sample within the stream.
+        const NUM_SAMPLE_POINTS: u64 = 4;
+
+        let step = (total_len - original_pos) / NUM_SAMPLE_POINTS;
+
+        // Skip the first sample point (start of file) since it is an outlier.
+        for new_pos in (original_pos..total_len - step).step_by(step as usize).skip(1) {
+            let res = source.seek(SeekFrom::Start(new_pos));
+            if res.is_err() {
+                break;
+            }
+
+            for _ in 0..=100 {
+                let header = match AdtsHeader::read(&mut source) {
+                    Ok(header) => header,
+                    _ => break,
+                };
+
+                if source.ignore_bytes(header.frame_len as u64).is_err() {
+                    break;
+                }
+
+                parsed_n_frames += 1;
+                n_bytes += header.frame_len + AdtsHeader::SIZE;
+            }
+        }
+
+        let _ = source.seek(SeekFrom::Start(original_pos))?;
+    }
+
+    debug!("adts: Parsed {} of {} bytes to approximate duration", n_bytes, total_len);
+
+    match parsed_n_frames {
+        0 => Ok(None),
+        _ => Ok(Some(total_len / (n_bytes as u64 / parsed_n_frames) * SAMPLES_PER_AAC_PACKET)),
     }
 }

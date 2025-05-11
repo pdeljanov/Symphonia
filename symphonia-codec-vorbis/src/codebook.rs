@@ -5,8 +5,6 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use std::usize;
-
 use symphonia_core::errors::{decode_error, Result};
 use symphonia_core::io::{
     vlc::{BitOrder, Codebook, CodebookBuilder, Entry32x32},
@@ -354,7 +352,7 @@ impl VorbisCodebook {
 
         // Generate the values associated for each codeword.
         // TODO: Should unused entries be 0 or actually the correct value?
-        let values: Vec<u32> = (0..codebook_entries).into_iter().collect();
+        let values: Vec<u32> = (0..codebook_entries).collect();
 
         // Finally, generate the codebook with a reverse (LSb) bit order.
         let mut builder = CodebookBuilder::new_sparse(BitOrder::Reverse);

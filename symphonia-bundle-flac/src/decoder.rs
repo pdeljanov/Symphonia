@@ -481,7 +481,7 @@ fn decode_residual<B: ReadBitsLtr>(
     // Read the partition order.
     let order = bs.read_bits_leq32(4)?;
 
-    // The number of paritions is equal to 2^order.
+    // The number of partitions is equal to 2^order.
     let n_partitions = 1usize << order;
 
     // In general, all partitions have the same number of samples such that the sum of all partition
@@ -660,7 +660,7 @@ fn fixed_predict(order: u32, buf: &mut [i32]) {
 
 /// Generalized Linear Predictive Coding (LPC) decoder. The exact number of coefficients given is
 /// specified by `order`. Coefficients must be stored in reverse order in `coeffs` with the first
-/// coefficient at index 31. Coefficients at indicies less than 31 - `order` must be 0.
+/// coefficient at index 31. Coefficients at indices less than 31 - `order` must be 0.
 /// It is expected that the first `order` samples in `buf` are warm-up samples.
 fn lpc_predict<const N: usize>(order: usize, coeffs: &[i32; N], coeff_shift: u32, buf: &mut [i32]) {
     // Order must be less than or equal to the number of coefficients.

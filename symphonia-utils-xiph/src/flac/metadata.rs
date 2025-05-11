@@ -6,17 +6,12 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use std::ascii;
-use std::num::NonZeroU32;
 
 use symphonia_core::audio::Channels;
 use symphonia_core::errors::{decode_error, Result};
-use symphonia_core::formats::util::SeekIndex;
-use symphonia_core::formats::{Cue, CuePoint};
+use symphonia_core::formats::{util::SeekIndex, Cue, CuePoint};
 use symphonia_core::io::*;
-use symphonia_core::meta::{ColorMode, MetadataBuilder, Size, StandardTagKey, Tag, Value};
-use symphonia_core::meta::{VendorData, Visual};
-
-use symphonia_metadata::{id3v2, vorbis};
+use symphonia_core::meta::{StandardTagKey, Tag, Value, VendorData};
 
 #[derive(PartialEq, Eq)]
 pub enum MetadataBlockType {
@@ -103,7 +98,7 @@ pub struct StreamInfo {
 }
 
 impl StreamInfo {
-    /// Try to read a stream information block.
+    /// Read a stream information block.
     pub fn read<B: ReadBytes>(reader: &mut B) -> Result<StreamInfo> {
         let mut info = StreamInfo {
             block_len_min: 0,
@@ -200,15 +195,7 @@ impl StreamInfo {
     }
 }
 
-/// Try to read a comment block.
-pub fn read_comment_block<B: ReadBytes>(
-    reader: &mut B,
-    metadata: &mut MetadataBuilder,
-) -> Result<()> {
-    vorbis::read_comment_no_framing(reader, metadata)
-}
-
-/// Try to read a seek table block.
+/// Read a seek table block.
 pub fn read_seek_table_block<B: ReadBytes>(
     reader: &mut B,
     block_length: u32,
@@ -251,7 +238,7 @@ fn printable_ascii_to_string(bytes: &[u8]) -> Option<String> {
     Some(result)
 }
 
-/// Try to read a cuesheet block.
+/// Read a cuesheet block.
 pub fn read_cuesheet_block<B: ReadBytes>(reader: &mut B, cues: &mut Vec<Cue>) -> Result<()> {
     // Read cuesheet catalog number. The catalog number only allows printable ASCII characters.
     let mut catalog_number_buf = vec![0u8; 128];
@@ -402,7 +389,7 @@ fn read_cuesheet_track_index<B: ReadBytes>(reader: &mut B, is_cdda: bool) -> Res
     Ok(CuePoint { start_offset_ts: n_offset_samples, tags: Vec::new() })
 }
 
-/// Try to read a vendor-specific application block.
+/// Read a vendor-specific application block.
 pub fn read_application_block<B: ReadBytes>(
     reader: &mut B,
     block_length: u32,
@@ -420,73 +407,8 @@ pub fn read_application_block<B: ReadBytes>(
     Ok(VendorData { ident, data })
 }
 
-/// Try to read a picture block.
-pub fn read_picture_block<B: ReadBytes>(
-    reader: &mut B,
-    metadata: &mut MetadataBuilder,
-) -> Result<()> {
-    let type_enc = reader.read_be_u32()?;
-
-    // Read the Media Type length in bytes.
-    let media_type_len = reader.read_be_u32()? as usize;
-
-    // Read the Media Type bytes
-    let mut media_type_buf = vec![0u8; media_type_len];
-    reader.read_buf_exact(&mut media_type_buf)?;
-
-    // Convert Media Type bytes to an ASCII string. Non-printable ASCII characters are invalid.
-    let media_type = match printable_ascii_to_string(&media_type_buf) {
-        Some(s) => s,
-        None => return decode_error("flac: picture mime-type contains invalid characters"),
-    };
-
-    // Read the description length in bytes.
-    let desc_len = reader.read_be_u32()? as usize;
-
-    // Read the description bytes.
-    let mut desc_buf = vec![0u8; desc_len];
-    reader.read_buf_exact(&mut desc_buf)?;
-
-    let desc = String::from_utf8_lossy(&desc_buf);
-
-    // Convert description bytes into a standard Vorbis DESCRIPTION tag.
-    let tags = vec![Tag::new(Some(StandardTagKey::Description), "DESCRIPTION", Value::from(desc))];
-
-    // Read the width, and height of the visual.
-    let width = reader.read_be_u32()?;
-    let height = reader.read_be_u32()?;
-
-    // If either the width or height is 0, then the size is invalid.
-    let dimensions = if width > 0 && height > 0 { Some(Size { width, height }) } else { None };
-
-    // Read bits-per-pixel of the visual.
-    let bits_per_pixel = NonZeroU32::new(reader.read_be_u32()?);
-
-    // Indexed colours is only valid for image formats that use an indexed colour palette. If it is
-    // 0, the image does not used indexed colours.
-    let indexed_colours_enc = reader.read_be_u32()?;
-
-    let color_mode = match indexed_colours_enc {
-        0 => Some(ColorMode::Discrete),
-        _ => Some(ColorMode::Indexed(NonZeroU32::new(indexed_colours_enc).unwrap())),
-    };
-
-    // Read the image data
-    let data_len = reader.read_be_u32()? as usize;
-    let data = reader.read_boxed_slice_exact(data_len)?;
-
-    metadata.add_visual(Visual {
-        media_type,
-        dimensions,
-        bits_per_pixel,
-        color_mode,
-        usage: id3v2::util::apic_picture_type_to_visual_key(type_enc),
-        tags,
-        data,
-    });
-
-    Ok(())
-}
+pub use symphonia_metadata::flac::read_comment_block;
+pub use symphonia_metadata::flac::read_picture_block;
 
 pub struct MetadataBlockHeader {
     pub is_last: bool,

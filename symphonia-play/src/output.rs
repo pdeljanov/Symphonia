@@ -66,11 +66,11 @@ mod pulseaudio {
             // attributes for very short audio streams.
             //
             // let pa_buf_attr = pulse::def::BufferAttr {
-            //     maxlength: std::u32::MAX,
+            //     maxlength: u32::MAX,
             //     tlength: 1024,
-            //     prebuf: std::u32::MAX,
-            //     minreq: std::u32::MAX,
-            //     fragsize: std::u32::MAX,
+            //     prebuf: u32::MAX,
+            //     minreq: u32::MAX,
+            //     fragsize: u32::MAX,
             // };
 
             // Create a PulseAudio connection.
@@ -80,7 +80,7 @@ mod pulseaudio {
                 pulse::stream::Direction::Playback, // Playback stream
                 None,                               // Default playback device
                 "Music",                            // Description of the stream
-                &pa_spec,                           // Signal specificaiton
+                &pa_spec,                           // Signal specification
                 pa_ch_map.as_ref(),                 // Channel map
                 None,                               // Custom buffering attributes
             );

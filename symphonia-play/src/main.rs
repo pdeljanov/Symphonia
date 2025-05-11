@@ -12,6 +12,7 @@
 // in the remaining fields with default values.
 #![allow(clippy::needless_update)]
 
+use std::ffi::{OsStr, OsString};
 use std::fs::File;
 use std::io::Write;
 use std::path::Path;
@@ -33,6 +34,11 @@ mod output;
 #[cfg(not(target_os = "linux"))]
 mod resampler;
 
+enum SeekPosition {
+    Time(f64),
+    Timetamp(u64),
+}
+
 fn main() {
     pretty_env_logger::init();
 
@@ -45,8 +51,28 @@ fn main() {
                 .long("seek")
                 .short('s')
                 .value_name("TIME")
-                .help("Seek to the given time in seconds")
-                .conflicts_with_all(&["verify", "decode-only", "verify-only", "probe-only"]),
+                .help("Seek to the time in seconds")
+                .conflicts_with_all(&[
+                    "seek-ts",
+                    "decode-only",
+                    "probe-only",
+                    "verify",
+                    "verify-only",
+                ]),
+        )
+        .arg(
+            Arg::new("seek-ts")
+                .long("seek-ts")
+                .short('S')
+                .value_name("TIMESTAMP")
+                .help("Seek to the timestamp in timebase units")
+                .conflicts_with_all(&[
+                    "seek",
+                    "decode-only",
+                    "probe-only",
+                    "verify",
+                    "verify-only",
+                ]),
         )
         .arg(
             Arg::new("track").long("track").short('t').value_name("TRACK").help("The track to use"),
@@ -80,6 +106,11 @@ fn main() {
             Arg::new("no-gapless").long("no-gapless").help("Disable gapless decoding and playback"),
         )
         .arg(
+            Arg::new("dump-visuals")
+                .long("dump-visuals")
+                .help("Dump all visuals to the current working directory"),
+        )
+        .arg(
             Arg::new("INPUT")
                 .help("The input file path, or - to use standard input")
                 .required(true)
@@ -100,18 +131,17 @@ fn main() {
 }
 
 fn run(args: &ArgMatches) -> Result<i32> {
-    let path_str = args.value_of("INPUT").unwrap();
+    let path = Path::new(args.value_of("INPUT").unwrap());
 
     // Create a hint to help the format registry guess what format reader is appropriate.
     let mut hint = Hint::new();
 
     // If the path string is '-' then read from standard input.
-    let source = if path_str == "-" {
+    let source = if path.as_os_str() == "-" {
         Box::new(ReadOnlySource::new(std::io::stdin())) as Box<dyn MediaSource>
     }
     else {
         // Othwerise, get a Path from the path string.
-        let path = Path::new(path_str);
 
         // Provide the file extension as a hint.
         if let Some(extension) = path.extension() {
@@ -144,6 +174,17 @@ fn run(args: &ArgMatches) -> Result<i32> {
     // Probe the media source stream for metadata and get the format reader.
     match symphonia::default::get_probe().format(&hint, mss, &format_opts, &metadata_opts) {
         Ok(mut probed) => {
+            // Dump visuals if requested.
+            if args.is_present("dump-visuals") {
+                let name = match path.file_name() {
+                    Some(name) if name != "-" => name,
+                    _ => OsStr::new("NoName"),
+                };
+
+                dump_visuals(&mut probed, name);
+            }
+
+            // Select the operating mode.
             if args.is_present("verify-only") {
                 // Verify-only mode decodes and verifies the audio, but does not play it.
                 decode_only(probed.format, &DecoderOptions { verify: true, ..Default::default() })
@@ -154,22 +195,28 @@ fn run(args: &ArgMatches) -> Result<i32> {
             }
             else if args.is_present("probe-only") {
                 // Probe-only mode only prints information about the format, tracks, metadata, etc.
-                print_format(path_str, &mut probed);
+                print_format(path, &mut probed);
                 Ok(0)
             }
             else {
                 // Playback mode.
-                print_format(path_str, &mut probed);
+                print_format(path, &mut probed);
 
                 // If present, parse the seek argument.
-                let seek_time = args.value_of("seek").map(|p| p.parse::<f64>().unwrap_or(0.0));
+                let seek = if let Some(time) = args.value_of("seek") {
+                    Some(SeekPosition::Time(time.parse::<f64>().unwrap_or(0.0)))
+                }
+                else {
+                    args.value_of("seek-ts")
+                        .map(|ts| SeekPosition::Timetamp(ts.parse::<u64>().unwrap_or(0)))
+                };
 
                 // Set the decoder options.
                 let decode_opts =
                     DecoderOptions { verify: args.is_present("verify"), ..Default::default() };
 
                 // Play it!
-                play(probed.format, track, seek_time, &decode_opts, no_progress)
+                play(probed.format, track, seek, &decode_opts, no_progress)
             }
         }
         Err(err) => {
@@ -225,7 +272,7 @@ struct PlayTrackOptions {
 fn play(
     mut reader: Box<dyn FormatReader>,
     track_num: Option<usize>,
-    seek_time: Option<f64>,
+    seek: Option<SeekPosition>,
     decode_opts: &DecoderOptions,
     no_progress: bool,
 ) -> Result<i32> {
@@ -240,14 +287,17 @@ fn play(
         _ => return Ok(0),
     };
 
-    // If there is a seek time, seek the reader to the time specified and get the timestamp of the
+    // If seeking, seek the reader to the time or timestamp specified and get the timestamp of the
     // seeked position. All packets with a timestamp < the seeked position will not be played.
     //
     // Note: This is a half-baked approach to seeking! After seeking the reader, packets should be
     // decoded and *samples* discarded up-to the exact *sample* indicated by required_ts. The
     // current approach will discard excess samples if seeking to a sample within a packet.
-    let seek_ts = if let Some(time) = seek_time {
-        let seek_to = SeekTo::Time { time: Time::from(time), track_id: Some(track_id) };
+    let seek_ts = if let Some(seek) = seek {
+        let seek_to = match seek {
+            SeekPosition::Time(t) => SeekTo::Time { time: Time::from(t), track_id: Some(track_id) },
+            SeekPosition::Timetamp(ts) => SeekTo::TimeStamp { ts, track_id },
+        };
 
         // Attempt the seek. If the seek fails, ignore the error and return a seek timestamp of 0 so
         // that no samples are trimmed.
@@ -427,8 +477,45 @@ fn do_verification(finalization: FinalizeResult) -> Result<i32> {
     }
 }
 
-fn print_format(path: &str, probed: &mut ProbeResult) {
-    println!("+ {}", path);
+fn dump_visual(visual: &Visual, file_name: &OsStr, index: usize) {
+    let extension = match visual.media_type.to_lowercase().as_str() {
+        "image/bmp" => ".bmp",
+        "image/gif" => ".gif",
+        "image/jpeg" => ".jpg",
+        "image/png" => ".png",
+        _ => "",
+    };
+
+    let mut out_file_name = OsString::from(file_name);
+    out_file_name.push(format!("-{:0>2}{}", index, extension));
+
+    if let Err(err) = File::create(out_file_name).and_then(|mut file| file.write_all(&visual.data))
+    {
+        warn!("failed to dump visual due to error {}", err);
+    }
+}
+
+fn dump_visuals(probed: &mut ProbeResult, file_name: &OsStr) {
+    if let Some(metadata) = probed.format.metadata().current() {
+        for (i, visual) in metadata.visuals().iter().enumerate() {
+            dump_visual(visual, file_name, i);
+        }
+
+        // Warn that certain visuals are preferred.
+        if probed.metadata.get().as_ref().is_some() {
+            info!("visuals that are part of the container format are preferentially dumped.");
+            info!("not dumping additional visuals that were found while probing.");
+        }
+    }
+    else if let Some(metadata) = probed.metadata.get().as_ref().and_then(|m| m.current()) {
+        for (i, visual) in metadata.visuals().iter().enumerate() {
+            dump_visual(visual, file_name, i);
+        }
+    }
+}
+
+fn print_format(path: &Path, probed: &mut ProbeResult) {
+    println!("+ {}", path.display());
     print_tracks(probed.format.tracks());
 
     // Prefer metadata that's provided in the container format, over other tags found during the

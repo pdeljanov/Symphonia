@@ -569,8 +569,7 @@ lazy_static! {
             let len = table.codes.len() as u16;
 
             // Generate values for the codebook.
-            let values: Vec<u16> = (0..len).into_iter()
-                                           .map(|i| mpeg_gen_value(i, table.wrap))
+            let values: Vec<u16> = (0..len).map(|i| mpeg_gen_value(i, table.wrap))
                                            .collect();
 
             // Generate the codebook.
@@ -596,8 +595,7 @@ lazy_static! {
             let len = table.codes.len() as u16;
 
             // Generate values for the codebook.
-            let values: Vec<u16> = (0..len).into_iter()
-                                           .map(|i| mpeg_gen_value(i, table.wrap))
+            let values: Vec<u16> = (0..len).map(|i| mpeg_gen_value(i, table.wrap))
                                            .collect();
 
             // Generate the codebook.

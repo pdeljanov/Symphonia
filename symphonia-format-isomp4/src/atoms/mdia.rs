@@ -10,6 +10,7 @@ use symphonia_core::io::ReadBytes;
 
 use crate::atoms::{Atom, AtomHeader, AtomIterator, AtomType, HdlrAtom, MdhdAtom, MinfAtom};
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct MdiaAtom {
     header: AtomHeader,

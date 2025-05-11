@@ -50,6 +50,7 @@ pub(crate) mod wave;
 pub use self::meta::MetaAtom;
 pub use alac::AlacAtom;
 pub use co64::Co64Atom;
+#[allow(unused_imports)]
 pub use ctts::CttsAtom;
 pub use edts::EdtsAtom;
 pub use elst::ElstAtom;
@@ -74,6 +75,7 @@ pub use stbl::StblAtom;
 pub use stco::StcoAtom;
 pub use stsc::StscAtom;
 pub use stsd::StsdAtom;
+#[allow(unused_imports)]
 pub use stss::StssAtom;
 pub use stsz::StszAtom;
 pub use stts::SttsAtom;
@@ -371,6 +373,7 @@ impl AtomHeader {
 }
 
 pub trait Atom: Sized {
+    #[allow(dead_code)]
     fn header(&self) -> AtomHeader;
 
     fn read<B: ReadBytes>(reader: &mut B, header: AtomHeader) -> Result<Self>;
@@ -435,14 +438,15 @@ impl<B: ReadBytes> AtomIterator<B> {
         let atom = AtomHeader::read(&mut self.reader)?;
 
         // Calculate the start position for the next atom (the exclusive end of the current atom).
-        self.next_atom_pos += match atom.atom_len {
+        self.next_atom_pos = match atom.atom_len {
             0 => {
                 // An atom with a length of zero is defined to span to the end of the stream. If
                 // len is available, use it for the next atom start position, otherwise, use u64 max
                 // which will trip an end of stream error on the next iteration.
-                self.len.unwrap_or(std::u64::MAX) - self.next_atom_pos
+                self.len.map(|l| self.base_pos + l).unwrap_or(u64::MAX)
             }
-            len => len,
+
+            len => self.next_atom_pos + len,
         };
 
         self.cur_atom = Some(atom);

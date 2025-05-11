@@ -26,6 +26,8 @@
 //!
 //! | Format   | Feature Flag | Gapless* | Default |
 //! |----------|--------------|----------|---------|
+//! | AIFF     | `aiff`       | Yes      | No      |
+//! | CAF      | `caf`        | No       | No      |
 //! | ISO/MP4  | `isomp4`     | No       | No      |
 //! | MKV/WebM | `mkv`        | No       | Yes     |
 //! | OGG      | `ogg`        | Yes      | Yes     |
@@ -33,7 +35,7 @@
 //!
 //! \* Gapless playback requires support from both the demuxer and decoder.
 //!
-//! **Tip:** All formats can be enabled with the `all-codecs` feature flag.
+//! **Tip:** All formats can be enabled with the `all-formats` feature flag.
 //!
 //! ## Codecs
 //!
@@ -64,6 +66,20 @@
 //! * RIFF
 //! * Vorbis Comment (in OGG & FLAC)
 //!
+//! ## Optimizations
+//!
+//! SIMD optimizations are **not** enabled by default. They may be enabled on a per-instruction
+//! set basis using the following feature flags. Enabling any SIMD support feature flags will pull
+//! in the `rustfft` dependency.
+//!
+//! | Instruction Set | Feature Flag    | Default |
+//! |-----------------|-----------------|---------|
+//! | SSE             | `opt-simd-sse`  | No      |
+//! | AVX             | `opt-simd-avx`  | No      |
+//! | Neon            | `opt-simd-neon` | No      |
+//!
+//! **Tip:** All SIMD optimizations can be enabled with the `opt-simd` feature flag.
+//!
 //! # Usage
 //!
 //! The following steps describe a basic usage of Symphonia:
@@ -82,7 +98,7 @@
 //! 4.  Instantiate a [`MediaSourceStream`][core::io::MediaSourceStream] with the `MediaSource`
 //!     above.
 //! 5.  Using the `Probe`, call [`format`][core::probe::Probe::format] and pass it the
-//!    `MediaSourceStream`.
+//!     `MediaSourceStream`.
 //! 6.  If the probe successfully detects a compatible format, a `FormatReader` will be returned.
 //!     This is an instance of a demuxer that can read and demux the provided source into
 //!     [`Packet`][core::formats::Packet]s.
@@ -155,14 +171,18 @@ pub mod default {
         pub use symphonia_bundle_mp3::MpaReader;
         #[cfg(feature = "aac")]
         pub use symphonia_codec_aac::AdtsReader;
+        #[cfg(feature = "caf")]
+        pub use symphonia_format_caf::CafReader;
         #[cfg(feature = "isomp4")]
         pub use symphonia_format_isomp4::IsoMp4Reader;
         #[cfg(feature = "mkv")]
         pub use symphonia_format_mkv::MkvReader;
         #[cfg(feature = "ogg")]
         pub use symphonia_format_ogg::OggReader;
+        #[cfg(feature = "aiff")]
+        pub use symphonia_format_riff::AiffReader;
         #[cfg(feature = "wav")]
-        pub use symphonia_format_wav::WavReader;
+        pub use symphonia_format_riff::WavReader;
 
         #[deprecated = "use `default::formats::MpaReader` instead"]
         #[cfg(any(feature = "mp1", feature = "mp2", feature = "mp3"))]
@@ -250,6 +270,9 @@ pub mod default {
         #[cfg(feature = "aac")]
         probe.register_all::<formats::AdtsReader>();
 
+        #[cfg(feature = "caf")]
+        probe.register_all::<formats::CafReader>();
+
         #[cfg(feature = "flac")]
         probe.register_all::<formats::FlacReader>();
 
@@ -258,6 +281,9 @@ pub mod default {
 
         #[cfg(any(feature = "mp1", feature = "mp2", feature = "mp3"))]
         probe.register_all::<formats::MpaReader>();
+
+        #[cfg(feature = "aiff")]
+        probe.register_all::<formats::AiffReader>();
 
         #[cfg(feature = "wav")]
         probe.register_all::<formats::WavReader>();

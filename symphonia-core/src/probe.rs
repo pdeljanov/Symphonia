@@ -13,7 +13,7 @@ use crate::formats::{FormatOptions, FormatReader};
 use crate::io::{MediaSourceStream, ReadBytes, SeekBuffered};
 use crate::meta::{Metadata, MetadataLog, MetadataOptions, MetadataReader};
 
-use log::{debug, error, info};
+use log::{debug, error};
 
 mod bloom {
 
@@ -237,6 +237,10 @@ impl Probe {
 
             count += 1;
 
+            if count > Probe::PROBE_SEARCH_LIMIT {
+                break;
+            }
+
             if count % 4096 == 0 {
                 debug!(
                     "searching for format marker... {}+{} / {} bytes.",
@@ -272,7 +276,7 @@ impl Probe {
 
                             // TODO: Implement scoring.
 
-                            info!(
+                            debug!(
                                 "found the format marker {:x?} @ {}+{} bytes.",
                                 &context[0..len],
                                 init_pos,
@@ -291,8 +295,13 @@ impl Probe {
             }
         }
 
-        // Could not find any marker within the probe limit.
-        error!("reached probe limit of {} bytes.", Probe::PROBE_SEARCH_LIMIT);
+        if count < Probe::PROBE_SEARCH_LIMIT {
+            error!("probe reach EOF at {} bytes.", count);
+        }
+        else {
+            // Could not find any marker within the probe limit.
+            error!("reached probe limit of {} bytes.", Probe::PROBE_SEARCH_LIMIT);
+        }
 
         unsupported_error("core (probe): no suitable format reader found")
     }

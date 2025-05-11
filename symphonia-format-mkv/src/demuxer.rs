@@ -199,7 +199,7 @@ impl MkvReader {
         if let Some(ClusterState { end: Some(end), .. }) = &self.current_cluster {
             // Make sure we don't read past the current cluster if its size is known.
             if self.iter.pos() >= *end {
-                log::debug!("ended cluster");
+                // log::debug!("ended cluster");
                 self.current_cluster = None;
             }
         }
@@ -390,6 +390,10 @@ impl FormatReader for MkvReader {
 
             for (etype, pos) in seek_positions {
                 it.seek(pos)?;
+
+                // Safety: The element type or position may be incorrect. The element iterator will
+                // validate the type (as declared in the header) of the element at the seeked
+                // position against the element type asked to be read.
                 match etype {
                     ElementType::Tracks => {
                         segment_tracks = Some(it.read_element::<TracksElement>()?);

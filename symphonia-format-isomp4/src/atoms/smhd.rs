@@ -12,6 +12,7 @@ use crate::atoms::{Atom, AtomHeader};
 use crate::fp::FpI8;
 
 /// Sound header atom.
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct SmhdAtom {
     /// Atom header.

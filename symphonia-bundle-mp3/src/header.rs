@@ -65,10 +65,6 @@ pub fn check_header(header: u32) -> bool {
     if (header >> 10) & 0x3 == 0x3 {
         return false;
     }
-    // Emphasis (0x2 is not allowed)
-    if header & 0x3 == 0x2 {
-        return false;
-    }
     true
 }
 
@@ -190,10 +186,9 @@ pub fn parse_frame_header(header: u32) -> Result<FrameHeader> {
     }
 
     let emphasis = match header & 0x3 {
-        0b00 => Emphasis::None,
         0b01 => Emphasis::Fifty15,
         0b11 => Emphasis::CcitJ17,
-        _ => return decode_error("mpa: invalid emphasis"),
+        _ => Emphasis::None,
     };
 
     let is_copyrighted = header & 0x8 != 0x0;

@@ -69,7 +69,7 @@ pub struct MetadataOptions {
 ///
 /// The visual types listed here are derived from, though do not entirely cover, the ID3v2 APIC
 /// frame specification.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum StandardVisualKey {
     FileIcon,
     OtherIcon,
@@ -95,7 +95,7 @@ pub enum StandardVisualKey {
 /// `StandardTagKey` is an enumeration providing standardized keys for common tag types.
 /// A tag reader may assign a `StandardTagKey` to a `Tag` if the tag's key is generally
 /// accepted to map to a specific usage.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum StandardTagKey {
     AcoustidFingerprint,
     AcoustidId,
@@ -395,6 +395,26 @@ pub struct MetadataRevision {
     pub vendor_data: Vec<VendorData>,
 }
 
+impl MetadataRevision {
+    /// Gets an immutable slice to the `Tag`s in this revision.
+    ///
+    /// If a tag read from the source contained multiple values, then there will be one `Tag` item
+    /// per value, with each item having the same key and standard key.
+    pub fn tags(&self) -> &[Tag] {
+        &self.tags
+    }
+
+    /// Gets an immutable slice to the `Visual`s in this revision.
+    pub fn visuals(&self) -> &[Visual] {
+        &self.visuals
+    }
+
+    /// Gets an immutable slice to the `VendorData` in this revision.
+    pub fn vendor_data(&self) -> &[VendorData] {
+        &self.vendor_data
+    }
+}
+
 /// `MetadataBuilder` is the builder for `Metadata` revisions.
 #[derive(Clone, Debug, Default)]
 pub struct MetadataBuilder {
@@ -470,8 +490,7 @@ impl<'a> Metadata<'a> {
     pub fn pop(&mut self) -> Option<MetadataRevision> {
         if self.revisions.len() > 1 {
             self.revisions.pop_front()
-        }
-        else {
+        } else {
             None
         }
     }

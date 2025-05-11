@@ -154,11 +154,11 @@ struct GranuleChannel {
     /// per scale factor.
     ///
     /// - For MPEG1 bitstreams, `scalefac_compress` is a 4-bit index into
-    ///  `SCALE_FACTOR_SLEN[0..16]` to obtain a number of bits per scale factor pair.
+    ///   `SCALE_FACTOR_SLEN[0..16]` to obtain a number of bits per scale factor pair.
     ///
     /// - For MPEG2/2.5 bitstreams, `scalefac_compress` is a 9-bit value that decodes into
-    /// `slen[0..3]` (referred to as slen1-4 in the standard) for the number of bits per scale
-    /// factor, and depending on which range the value falls into, for which bands.
+    ///   `slen[0..3]` (referred to as slen1-4 in the standard) for the number of bits per scale
+    ///   factor, and depending on which range the value falls into, for which bands.
     scalefac_compress: u16,
     /// Indicates the block type (type of window) for the channel in the granule.
     block_type: BlockType,

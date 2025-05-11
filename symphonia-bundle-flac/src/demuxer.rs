@@ -266,7 +266,7 @@ impl FormatReader for FlacReader {
                 if ts < sync.ts {
                     end_byte_offset = mid_byte_offset;
                 }
-                else if ts > sync.ts && ts < sync.ts + sync.dur {
+                else if ts >= sync.ts && ts < sync.ts + sync.dur {
                     debug!("seeked to ts={} (delta={})", sync.ts, sync.ts as i64 - ts as i64);
 
                     return Ok(SeekedTo { track_id: 0, actual_ts: sync.ts, required_ts: ts });
@@ -288,7 +288,7 @@ impl FormatReader for FlacReader {
         let packet = loop {
             let sync = self.parser.resync(&mut self.reader)?;
 
-            // The desired timestamp preceeds the current packet's timestamp.
+            // The desired timestamp precedes the current packet's timestamp.
             if ts < sync.ts {
                 // Attempted to seek backwards on an unseekable stream.
                 if !self.reader.is_seekable() {

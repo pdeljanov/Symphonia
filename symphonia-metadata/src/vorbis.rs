@@ -1,5 +1,5 @@
 // Symphonia
-// Copyright (c) 2019-2022 The Project Symphonia Developers.
+// Copyright (c) 2019-2024 The Project Symphonia Developers.
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -7,11 +7,16 @@
 
 //! A Vorbic COMMENT metadata reader for FLAC or OGG formats.
 
-use lazy_static::lazy_static;
 use std::collections::HashMap;
+
+use lazy_static::lazy_static;
+use log::warn;
+
 use symphonia_core::errors::Result;
-use symphonia_core::io::ReadBytes;
+use symphonia_core::io::{BufReader, ReadBytes};
 use symphonia_core::meta::{MetadataBuilder, StandardTagKey, Tag, Value};
+
+use crate::flac;
 
 lazy_static! {
     static ref VORBIS_COMMENT_MAP: HashMap<&'static str, StandardTagKey> = {
@@ -110,8 +115,20 @@ lazy_static! {
     };
 }
 
+/// Parse a string containing a base64 encoded FLAC picture block into a visual.
+fn parse_base64_picture_block(encoded: &str, metadata: &mut MetadataBuilder) {
+    if let Some(data) = base64_decode(encoded) {
+        if flac::read_picture_block(&mut BufReader::new(&data), metadata).is_err() {
+            warn!("invalid picture block data");
+        }
+    }
+    else {
+        warn!("the base64 encoding of a picture block is invalid");
+    }
+}
+
 /// Parse the given Vorbis Comment string into a `Tag`.
-fn parse(tag: &str) -> Tag {
+fn parse_comment(tag: &str, metadata: &mut MetadataBuilder) {
     // Vorbis Comments (aka tags) are stored as <key>=<value> where <key> is
     // a reduced ASCII-only identifier and <value> is a UTF8 value.
     //
@@ -119,18 +136,22 @@ fn parse(tag: &str) -> Tag {
     // ASCII 0x41 through 0x5A inclusive (A-Z) is to be considered equivalent to
     // ASCII 0x61 through 0x7A inclusive (a-z) for tag matching.
 
-    let field: Vec<&str> = tag.splitn(2, '=').collect();
+    if let Some((key, value)) = tag.split_once('=') {
+        let key_lower = key.to_lowercase();
 
-    // Attempt to assign a standardized tag key.
-    let std_tag = VORBIS_COMMENT_MAP.get(field[0].to_lowercase().as_str()).copied();
+        // A comment with a key "METADATA_BLOCK_PICTURE" is a FLAC picture block encoded in base64.
+        // Attempt to decode it as such. If this fails in any way, treat the comment as a regular
+        // tag.
+        if key_lower == "metadata_block_picture" {
+            parse_base64_picture_block(value, metadata);
+        }
+        else {
+            // Attempt to assign a standardized tag key.
+            let std_tag = VORBIS_COMMENT_MAP.get(key_lower.as_str()).copied();
 
-    // The value field was empty so only the key field exists. Create an empty tag for the given
-    // key field.
-    if field.len() == 1 {
-        return Tag::new(std_tag, field[0], Value::from(""));
+            metadata.add_tag(Tag::new(std_tag, key, Value::from(value)));
+        }
     }
-
-    Tag::new(std_tag, field[0], Value::from(field[1]))
 }
 
 pub fn read_comment_no_framing<B: ReadBytes>(
@@ -151,12 +172,130 @@ pub fn read_comment_no_framing<B: ReadBytes>(
         let comment_length = reader.read_u32()?;
 
         // Read the comment string.
-        let mut comment_byte = vec![0; comment_length as usize];
-        reader.read_buf_exact(&mut comment_byte)?;
+        let mut comment_bytes = vec![0; comment_length as usize];
+        reader.read_buf_exact(&mut comment_bytes)?;
 
         // Parse the comment string into a Tag and insert it into the parsed tag list.
-        metadata.add_tag(parse(&String::from_utf8_lossy(&comment_byte)));
+        parse_comment(&String::from_utf8_lossy(&comment_bytes), metadata);
     }
 
     Ok(())
+}
+
+/// Decode a RFC4648 Base64 encoded string.
+fn base64_decode(encoded: &str) -> Option<Box<[u8]>> {
+    // A sentinel value indicating that an invalid symbol was encountered.
+    const BAD_SYM: u8 = 0xff;
+
+    /// Generates a lookup table mapping RFC4648 base64 symbols to their 6-bit decoded values at
+    /// compile time.
+    const fn rfc4648_base64_symbols() -> [u8; 256] {
+        const SYMBOLS: &[u8; 64] =
+            b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+        let mut table = [BAD_SYM; 256];
+        let mut i = 0;
+
+        while i < SYMBOLS.len() {
+            table[SYMBOLS[i] as usize] = i as u8;
+            i += 1
+        }
+
+        table
+    }
+
+    const SYM_VALUE: [u8; 256] = rfc4648_base64_symbols();
+
+    // Trim padding, since it's not required for decoding.
+    let encoded = encoded.trim_end_matches('=');
+
+    // Each valid base64 symbol decodes to 6 bits. Therefore, the decoded byte length is 3 / 4 the
+    // number of symbols in the base64 encoded string.
+    let mut decoded = Vec::with_capacity((encoded.len() * 3) / 4);
+
+    // Decode in chunks of 4 symbols, yielding 3 bytes per chunk. Since base64 symbols are ASCII
+    // characters (1 byte per character), iterate over the bytes of the base64 string instead of
+    // chars (4 bytes per character). This allows the use of a lookup table to determine the symbol
+    // value.
+    let mut iter = encoded.as_bytes().chunks_exact(4);
+
+    for enc in &mut iter {
+        let v0 = SYM_VALUE[usize::from(enc[0])];
+        let v1 = SYM_VALUE[usize::from(enc[1])];
+        let v2 = SYM_VALUE[usize::from(enc[2])];
+        let v3 = SYM_VALUE[usize::from(enc[3])];
+
+        // Check for invalid symbols.
+        if v0 == BAD_SYM || v1 == BAD_SYM || v2 == BAD_SYM || v3 == BAD_SYM {
+            return None;
+        }
+
+        // 6 bits from v0, 2 bits from v1 (4 remaining).
+        decoded.push(((v0 & 0x3f) << 2) | (v1 >> 4));
+        // 4 bits from v1, 4 bits from v2 (2 remaining).
+        decoded.push(((v1 & 0x0f) << 4) | (v2 >> 2));
+        // 2 bits from v2, 6 bits from v3 (0 remaining).
+        decoded.push(((v2 & 0x03) << 6) | (v3 >> 0));
+    }
+
+    // Decode the remaining 2 to 3 symbols.
+    let rem = iter.remainder();
+
+    // If there are atleast 2 symbols remaining, then a minimum of one extra byte may be decoded.
+    if rem.len() >= 2 {
+        let v0 = SYM_VALUE[usize::from(rem[0])];
+        let v1 = SYM_VALUE[usize::from(rem[1])];
+
+        if v0 == BAD_SYM || v1 == BAD_SYM {
+            return None;
+        }
+
+        decoded.push(((v0 & 0x3f) << 2) | (v1 >> 4));
+
+        // If there were 3 symbols remaining, then one additional byte may be decoded.
+        if rem.len() >= 3 {
+            let v2 = SYM_VALUE[usize::from(rem[2])];
+
+            if v2 == BAD_SYM {
+                return None;
+            }
+
+            decoded.push(((v1 & 0x0f) << 4) | (v2 >> 2));
+        }
+    }
+    else if rem.len() == 1 {
+        // Atleast 2 symbols are required to decode a single byte. Therefore, this is an error.
+        return None;
+    }
+
+    Some(decoded.into_boxed_slice())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::base64_decode;
+
+    #[test]
+    fn verify_base64_decode() {
+        // Valid, with padding.
+        assert_eq!(Some(b"".as_slice()), base64_decode("").as_deref());
+        assert_eq!(Some(b"f".as_slice()), base64_decode("Zg==").as_deref());
+        assert_eq!(Some(b"fo".as_slice()), base64_decode("Zm8=").as_deref());
+        assert_eq!(Some(b"foo".as_slice()), base64_decode("Zm9v").as_deref());
+        assert_eq!(Some(b"foob".as_slice()), base64_decode("Zm9vYg==").as_deref());
+        assert_eq!(Some(b"fooba".as_slice()), base64_decode("Zm9vYmE=").as_deref());
+        assert_eq!(Some(b"foobar".as_slice()), base64_decode("Zm9vYmFy").as_deref());
+        // Valid, without padding.
+        assert_eq!(Some(b"".as_slice()), base64_decode("").as_deref());
+        assert_eq!(Some(b"f".as_slice()), base64_decode("Zg").as_deref());
+        assert_eq!(Some(b"fo".as_slice()), base64_decode("Zm8").as_deref());
+        assert_eq!(Some(b"foo".as_slice()), base64_decode("Zm9v").as_deref());
+        assert_eq!(Some(b"foob".as_slice()), base64_decode("Zm9vYg").as_deref());
+        assert_eq!(Some(b"fooba".as_slice()), base64_decode("Zm9vYmE").as_deref());
+        assert_eq!(Some(b"foobar".as_slice()), base64_decode("Zm9vYmFy").as_deref());
+        // Invalid.
+        assert_eq!(None, base64_decode("a").as_deref());
+        assert_eq!(None, base64_decode("ab!c").as_deref());
+        assert_eq!(None, base64_decode("ab=c").as_deref());
+    }
 }

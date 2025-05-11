@@ -36,7 +36,7 @@ pub(crate) fn read_tag<R: ReadBytes>(mut reader: R) -> Result<(u32, u32, bool)> 
             vint = (vint << 8) | u32::from(byte);
         }
 
-        log::debug!("element with tag: {:X}", vint);
+        // log::debug!("element with tag: {:X}", vint);
         return Ok((vint, remaining_octets + 1, false));
     }
 
@@ -341,11 +341,11 @@ impl<R: ReadBytes> ElementIterator<R> {
     /// [Self::read_header] or [Self::read_child_header].
     pub(crate) fn read_element_data<E: Element>(&mut self) -> Result<E> {
         let header = self.current.expect("EBML header must be read before calling this function");
-        assert_eq!(
-            header.etype,
-            E::ID,
-            "EBML element type must be checked before calling this function"
-        );
+
+        // Ensure the EBML element header has the same element type as the one being read.
+        if header.etype != E::ID {
+            return decode_error("mkv: unexpected EBML element");
+        }
 
         let element = E::read(&mut self.reader, header)?;
         // Update position to match the position element reader finished at
@@ -508,6 +508,7 @@ impl<R: ReadBytes> ElementIterator<R> {
 }
 
 /// An EBML element data.
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) enum ElementData {
     /// A binary buffer.
