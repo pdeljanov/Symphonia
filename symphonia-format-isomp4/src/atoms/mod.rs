@@ -100,6 +100,8 @@ pub use trun::TrunAtom;
 pub use udta::UdtaAtom;
 pub use wave::WaveAtom;
 
+pub(crate) const MAX_ATOM_SIZE: u64 = 1024;
+
 /// Atom types.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum AtomType {
