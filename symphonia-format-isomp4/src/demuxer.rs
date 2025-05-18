@@ -56,7 +56,7 @@ impl TrackState {
 
         track
             .with_time_base(TimeBase::new(1, trak.mdia.mdhd.timescale))
-            .with_num_frames(trak.duration);
+            .with_num_frames(trak.mdia.mdhd.duration);
 
         let state = Self {
             track_num,
