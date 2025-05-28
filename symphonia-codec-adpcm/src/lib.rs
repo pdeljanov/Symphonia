@@ -30,7 +30,7 @@ use symphonia_core::errors::{unsupported_error, Result};
 use symphonia_core::formats::Packet;
 use symphonia_core::io::ReadBytes;
 
-mod codec_ima;
+mod codec_ima_wav;
 mod codec_ima_qt;
 mod codec_ms;
 mod common_ima;
@@ -50,7 +50,7 @@ impl InnerDecoder {
     fn decode_mono_fn<B: ReadBytes>(&self) -> impl Fn(&mut B, &mut [i32], usize) -> Result<()> {
         match *self {
             InnerDecoder::AdpcmMs => codec_ms::decode_mono,
-            InnerDecoder::AdpcmIma => codec_ima::decode_mono,
+            InnerDecoder::AdpcmIma => codec_ima_wav::decode_mono,
             InnerDecoder::AdpcmImaQT => codec_ima_qt::decode_mono,
         }
     }
@@ -60,7 +60,7 @@ impl InnerDecoder {
     ) -> impl Fn(&mut B, [&mut [i32]; 2], usize) -> Result<()> {
         match *self {
             InnerDecoder::AdpcmMs => codec_ms::decode_stereo,
-            InnerDecoder::AdpcmIma => codec_ima::decode_stereo,
+            InnerDecoder::AdpcmIma => codec_ima_wav::decode_stereo,
             InnerDecoder::AdpcmImaQT => codec_ima_qt::decode_stereo,
         }
     }
