@@ -33,6 +33,7 @@ use symphonia_core::io::ReadBytes;
 mod codec_ima;
 mod codec_ima_qt;
 mod codec_ms;
+mod common_ima;
 mod common;
 
 fn is_supported_adpcm_codec(codec_id: AudioCodecId) -> bool {
