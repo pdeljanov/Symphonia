@@ -284,7 +284,7 @@ pub(super) fn hybrid_synthesis(
 ) {
     // The first sub-band after the rzero partition boundary is the sub-band limit. All sub-bands
     // past this are zeroed.
-    let sb_limit = (channel.rzero + 17) / 18;
+    let sb_limit = channel.rzero.div_ceil(18);
 
     // Determine the split point of long and short blocks in terms of a sub-band index.
     //
