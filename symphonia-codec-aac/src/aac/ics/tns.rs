@@ -167,8 +167,7 @@ impl Tns {
             for f in 0..self.n_filt[w] {
                 let top = bottom;
 
-                bottom =
-                    if top > self.coeffs[w][f].length { top - self.coeffs[w][f].length } else { 0 };
+                bottom = top.saturating_sub(self.coeffs[w][f].length);
 
                 let order = self.coeffs[w][f].order;
 
