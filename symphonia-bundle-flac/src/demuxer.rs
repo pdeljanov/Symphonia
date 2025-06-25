@@ -7,6 +7,7 @@
 
 use std::io::{Seek, SeekFrom};
 
+use symphonia_core::audio::Channels;
 use symphonia_core::support_format;
 
 use symphonia_common::xiph::audio::flac::{MetadataBlockHeader, MetadataBlockType, StreamInfo};
@@ -26,6 +27,8 @@ use symphonia_core::meta::{Metadata, MetadataBuilder, MetadataLog};
 use symphonia_metadata::embedded::flac::*;
 
 use log::{debug, info};
+
+use crate::frame::ChannelAssignment;
 
 use super::parser::PacketParser;
 
@@ -55,15 +58,17 @@ impl<'s> FlacReader<'s> {
         // Read the first 4 bytes of the stream. Ideally this will be the FLAC stream marker.
         let marker = mss.read_quad_bytes()?;
 
-        if marker != FLAC_STREAM_MARKER {
-            return unsupported_error("flac: missing flac stream marker");
-        }
-
-        // Strictly speaking, the first metadata block must be a StreamInfo block. There is
-        // no technical need for this from the reader's point of view. Additionally, if the
-        // reader is fed a stream mid-way there is no StreamInfo block. Therefore, just read
-        // all metadata blocks and handle the StreamInfo block as it comes.
-        let flac = FlacReader::init_with_metadata(mss, opts)?;
+        let flac = if marker == FLAC_STREAM_MARKER {
+            // Strictly speaking, the first metadata block must be a StreamInfo block. There is
+            // no technical need for this from the reader's point of view. Additionally, if the
+            // reader is fed a stream mid-way there is no StreamInfo block. Therefore, just read
+            // all metadata blocks and handle the StreamInfo block as it comes.
+            FlacReader::init_with_metadata(mss, opts)?
+        } else {
+            // If the first 4 bytes are not the FLAC stream marker, attempt to read the first
+            // frame header, which will also resync the parser to the first frame.
+            FlacReader::init_without_metadata(mss)?
+        };
 
         // Make sure that there is atleast one StreamInfo block.
         if flac.tracks.is_empty() {
@@ -97,8 +102,7 @@ impl<'s> FlacReader<'s> {
                     // Only a single stream information block is allowed.
                     if track.is_none() {
                         track = Some(read_stream_info_block(&mut block_stream, &mut parser)?);
-                    }
-                    else {
+                    } else {
                         return decode_error("flac: found more than one stream info block");
                     }
                 }
@@ -113,8 +117,7 @@ impl<'s> FlacReader<'s> {
                     if index.is_none() {
                         index =
                             Some(read_flac_seektable_block(&mut block_stream, header.block_len)?);
-                    }
-                    else {
+                    } else {
                         return decode_error("flac: found more than one seek table block");
                     }
                 }
@@ -129,8 +132,7 @@ impl<'s> FlacReader<'s> {
                     // since the stream information block must always be the first metadata block.
                     if let Some(tb) = track.as_ref().and_then(|track| track.time_base) {
                         chapters = Some(read_flac_cuesheet_block(&mut block_stream, tb)?);
-                    }
-                    else {
+                    } else {
                         return decode_error("flac: cuesheet block before stream info");
                     }
                 }
@@ -194,6 +196,62 @@ impl<'s> FlacReader<'s> {
             parser,
         })
     }
+    
+    // Initialises the reader without reading any metadata blocks, but by reading a frame header.
+    fn init_without_metadata(mss: MediaSourceStream<'s>) -> Result<Self> {
+        let mut reader = mss;
+        let attachments = Vec::new();
+        let chapters = None;
+        let metadata = MetadataLog::default();
+        let index = None;
+        let mut parser = <PacketParser as Default>::default();
+        let mut info = StreamInfo::default();
+
+        let header = parser.find_next_header(&mut reader)?;
+
+        let mut codec_params = AudioCodecParameters::new();
+        codec_params.for_codec(CODEC_ID_FLAC);
+
+        if let Some(sample_rate) = header.sample_rate {
+            codec_params.with_sample_rate(sample_rate);
+            info.sample_rate = sample_rate;
+        }
+
+        if let Some(bits_per_sample) = header.bits_per_sample {
+            codec_params.with_bits_per_sample(bits_per_sample);
+            info.bits_per_sample = bits_per_sample;
+        }
+
+        let channels = match header.channel_assignment {
+            ChannelAssignment::Independant(ch) => Channels::Discrete(ch as u16),
+            _ => Channels::Discrete(2),
+        };
+
+        codec_params.with_channels(channels.clone());
+        info.channels = channels;
+
+        info.block_len_min = header.block_num_samples;
+        info.block_len_max = header.block_num_samples;
+
+        parser.reset(info);
+
+        let mut track = Track::new(0);
+        track.with_codec_params(CodecParameters::Audio(codec_params));
+        let tracks = vec![track];
+
+        let first_frame_offset = reader.pos();
+
+        Ok(FlacReader {
+            reader,
+            tracks,
+            attachments,
+            chapters,
+            metadata,
+            index,
+            first_frame_offset,
+            parser,
+        })
+    }
 }
 
 impl Scoreable for FlacReader<'_> {
@@ -211,7 +269,16 @@ impl ProbeableFormat<'_> for FlacReader<'_> {
     }
 
     fn probe_data() -> &'static [ProbeFormatData] {
-        &[support_format!(FLAC_FORMAT_INFO, &["flac"], &["audio/flac"], &[b"fLaC"])]
+        &[support_format!(
+            FLAC_FORMAT_INFO,
+            &["flac"],
+            &["audio/flac"],
+            &[
+                &[0x66, 0x4c, 0x61, 0x43], // FLAC stream marker, &[b"fLaC"]
+                &[0xff, 0xf8],             // FLAC frame sync code - fixed block size
+                &[0xff, 0xf9],             // FLAC frame sync code - variable block size
+            ]
+        )]
     }
 }
 
@@ -257,8 +324,7 @@ impl FormatReader for FlacReader<'_> {
                 // seek cannot be completed.
                 if let Some(tb) = track.time_base {
                     tb.calc_timestamp(time)
-                }
-                else {
+                } else {
                     return seek_error(SeekErrorKind::Unseekable);
                 }
             }
@@ -318,13 +384,11 @@ impl FormatReader for FlacReader<'_> {
 
                 if ts < sync.ts {
                     end_byte_offset = mid_byte_offset;
-                }
-                else if ts >= sync.ts && ts < sync.ts + sync.dur {
+                } else if ts >= sync.ts && ts < sync.ts + sync.dur {
                     debug!("seeked to ts={} (delta={})", sync.ts, sync.ts as i64 - ts as i64);
 
                     return Ok(SeekedTo { track_id: 0, actual_ts: sync.ts, required_ts: ts });
-                }
-                else {
+                } else {
                     start_byte_offset = mid_byte_offset;
                 }
             }

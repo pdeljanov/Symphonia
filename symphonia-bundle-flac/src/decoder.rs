@@ -91,36 +91,46 @@ pub struct FlacDecoder {
 
 impl FlacDecoder {
     pub fn try_new(params: &AudioCodecParameters, options: &AudioDecoderOptions) -> Result<Self> {
+        const FLAC_BLOCK_LEN_MAX: u16 = 65535;
+
         // This decoder only supports FLAC.
         if params.codec != CODEC_ID_FLAC {
             return unsupported_error("flac: invalid codec");
         }
 
-        // Obtain the extra data.
-        let extra_data = match params.extra_data.as_ref() {
-            Some(buf) => buf,
-            _ => return unsupported_error("flac: missing extra data"),
-        };
-
-        // Read the stream information block.
-        let info = StreamInfo::read(&mut BufReader::new(extra_data))?;
-
         // Clone the codec parameters so that the parameters can be supplemented and/or amended.
         let mut params = params.clone();
 
-        // Amend the provided codec parameters with information from the stream information block.
-        params
-            .with_sample_rate(info.sample_rate)
-            .with_bits_per_sample(info.bits_per_sample)
-            .with_max_frames_per_packet(u64::from(info.block_len_max))
-            .with_channels(info.channels.clone());
+        // Obtain the audio spec from either the extra data or the frame data.
+        let (spec, block_len) = match params.extra_data.as_ref() {
+            Some(extra_data) => {
+                // Read the stream information block.
+                let info = StreamInfo::read(&mut BufReader::new(extra_data))?;
 
-        if let Some(md5) = info.md5 {
-            params.with_verification_code(VerificationCheck::Md5(md5));
-        }
+                // Amend the provided codec parameters with information from the stream information block.
+                params
+                    .with_sample_rate(info.sample_rate)
+                    .with_bits_per_sample(info.bits_per_sample)
+                    .with_max_frames_per_packet(u64::from(info.block_len_max))
+                    .with_channels(info.channels.clone());
 
-        let spec = AudioSpec::new(info.sample_rate, info.channels.clone());
-        let buf = AudioBuffer::new(spec, usize::from(info.block_len_max));
+                if let Some(md5) = info.md5 {
+                    params.with_verification_code(VerificationCheck::Md5(md5));
+                }
+
+                (AudioSpec::new(info.sample_rate, info.channels.clone()), info.block_len_max)
+            }
+            None => (
+                AudioSpec::new(
+                    params.sample_rate.unwrap_or(44100),
+                    params.channels.clone().unwrap_or_default(),
+                ),
+                FLAC_BLOCK_LEN_MAX,
+            ), // _ => return unsupported_error("flac: missing extra data"),
+        };
+
+        // let spec = AudioSpec::new(info.sample_rate, info.channels.clone());
+        let buf = AudioBuffer::new(spec, usize::from(block_len));
 
         // TODO: Verify packet integrity if the demuxer is not.
         // if !params.packet_data_integrity {
@@ -147,11 +157,9 @@ impl FlacDecoder {
         // the stream information if provided. If neither are available, return an error.
         let bits_per_sample = if let Some(bps) = header.bits_per_sample {
             bps
-        }
-        else if let Some(bps) = self.params.bits_per_sample {
+        } else if let Some(bps) = self.params.bits_per_sample {
             bps
-        }
-        else {
+        } else {
             return decode_error("flac: bits per sample not provided");
         };
 
@@ -257,8 +265,7 @@ impl AudioDecoder for FlacDecoder {
         if let Err(e) = self.decode_inner(packet) {
             self.buf.clear();
             Err(e)
-        }
-        else {
+        } else {
             Ok(self.buf.as_generic_audio_buffer_ref())
         }
     }
@@ -288,8 +295,7 @@ impl AudioDecoder for FlacDecoder {
                 }
 
                 result.verify_ok = Some(decoded == expected)
-            }
-            else {
+            } else {
                 warn!("verification requested but the expected md5 checksum was not provided");
             }
         }
@@ -479,8 +485,7 @@ fn decode_linear<B: ReadBitsLtr>(bs: &mut B, bps: u32, order: u32, buf: &mut [i3
             11..=12 => lpc::<12>(order, &qlp_coeffs, qlp_coeff_shift, buf),
             _ => lpc::<32>(order, &qlp_coeffs, qlp_coeff_shift, buf),
         };
-    }
-    else {
+    } else {
         return unsupported_error("flac: lpc shifts less than 0 are not supported");
     }
 
@@ -572,8 +577,7 @@ fn decode_rice_partition<B: ReadBitsLtr>(
             let r = bs.read_bits_leq32(rice_param)?;
             *sample = rice_signed_to_i32((q << rice_param) | r);
         }
-    }
-    else {
+    } else {
         let residual_bits = bs.read_bits_leq32(5)?;
 
         // trace!(
