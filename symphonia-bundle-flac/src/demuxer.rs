@@ -64,7 +64,8 @@ impl<'s> FlacReader<'s> {
             // reader is fed a stream mid-way there is no StreamInfo block. Therefore, just read
             // all metadata blocks and handle the StreamInfo block as it comes.
             FlacReader::init_with_metadata(mss, opts)?
-        } else {
+        }
+        else {
             // If the first 4 bytes are not the FLAC stream marker, attempt to read the first
             // frame header, which will also resync the parser to the first frame.
             FlacReader::init_without_metadata(mss)?
@@ -102,7 +103,8 @@ impl<'s> FlacReader<'s> {
                     // Only a single stream information block is allowed.
                     if track.is_none() {
                         track = Some(read_stream_info_block(&mut block_stream, &mut parser)?);
-                    } else {
+                    }
+                    else {
                         return decode_error("flac: found more than one stream info block");
                     }
                 }
@@ -117,7 +119,8 @@ impl<'s> FlacReader<'s> {
                     if index.is_none() {
                         index =
                             Some(read_flac_seektable_block(&mut block_stream, header.block_len)?);
-                    } else {
+                    }
+                    else {
                         return decode_error("flac: found more than one seek table block");
                     }
                 }
@@ -132,7 +135,8 @@ impl<'s> FlacReader<'s> {
                     // since the stream information block must always be the first metadata block.
                     if let Some(tb) = track.as_ref().and_then(|track| track.time_base) {
                         chapters = Some(read_flac_cuesheet_block(&mut block_stream, tb)?);
-                    } else {
+                    }
+                    else {
                         return decode_error("flac: cuesheet block before stream info");
                     }
                 }
@@ -196,7 +200,7 @@ impl<'s> FlacReader<'s> {
             parser,
         })
     }
-    
+
     // Initialises the reader without reading any metadata blocks, but by reading a frame header.
     fn init_without_metadata(mss: MediaSourceStream<'s>) -> Result<Self> {
         let mut reader = mss;
@@ -324,7 +328,8 @@ impl FormatReader for FlacReader<'_> {
                 // seek cannot be completed.
                 if let Some(tb) = track.time_base {
                     tb.calc_timestamp(time)
-                } else {
+                }
+                else {
                     return seek_error(SeekErrorKind::Unseekable);
                 }
             }
@@ -384,11 +389,13 @@ impl FormatReader for FlacReader<'_> {
 
                 if ts < sync.ts {
                     end_byte_offset = mid_byte_offset;
-                } else if ts >= sync.ts && ts < sync.ts + sync.dur {
+                }
+                else if ts >= sync.ts && ts < sync.ts + sync.dur {
                     debug!("seeked to ts={} (delta={})", sync.ts, sync.ts as i64 - ts as i64);
 
                     return Ok(SeekedTo { track_id: 0, actual_ts: sync.ts, required_ts: ts });
-                } else {
+                }
+                else {
                     start_byte_offset = mid_byte_offset;
                 }
             }

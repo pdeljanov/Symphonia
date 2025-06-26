@@ -38,11 +38,13 @@ impl<const N: usize> MovingAverage<N> {
         if self.count >= N {
             // If greater-than N values were pushed, then all samples must be averaged.
             self.samples.iter().sum::<usize>() / N
-        } else if self.count > 0 {
+        }
+        else if self.count > 0 {
             // If less-than N values were pushed, then only the first 0..N samples need to be
             // averaged.
             self.samples.iter().take(self.count).sum::<usize>() / self.count
-        } else {
+        }
+        else {
             // No samples.
             0
         }
@@ -201,16 +203,19 @@ impl PacketBuilder {
                     self.get_max_avg_frame_size()
                 );
                 true
-            } else if first.state.total_len > self.get_max_avg_frame_size() {
+            }
+            else if first.state.total_len > self.get_max_avg_frame_size() {
                 warn!(
                     "dropping fragment: packet would exeed 4x average historical size of {} bytes",
                     self.get_max_avg_frame_size()
                 );
                 true
-            } else if self.frags.len() >= 4 {
+            }
+            else if self.frags.len() >= 4 {
                 warn!("dropping fragment: packet would exceed fragment count limit");
                 true
-            } else {
+            }
+            else {
                 false
             };
 
@@ -228,7 +233,8 @@ impl PacketBuilder {
         let (header, data) = if frag.crc_match {
             // The fragment has a CRC that matches the expected CRC.
             (frag.parse_header(), frag.data)
-        } else {
+        }
+        else {
             // The fragment does not have a CRC that matches the expected CRC.
             //
             // For each existing fragment, update its running CRC with the payload of the new
@@ -237,27 +243,28 @@ impl PacketBuilder {
             // are discarded, and all fragments from F up-to and including the new fragment are
             // merged to form a packet.
             let start = self.frags.iter_mut().position(|f| f.update(&frag));
-            
+
             if let Some(i) = start {
                 // A range of fragments has been found that forms a packet.
                 let total_len = self.frags[i].state.total_len;
-                
+
                 // debug!("merging {} fragments: total_len={}", self.frags.len() - i + 1, total_len);
-                
+
                 // Merge fragment data buffers.
                 let mut data = Vec::with_capacity(total_len);
-                
+
                 for f in self.frags[i..].iter() {
                     data.extend_from_slice(&f.data);
                 }
-                
+
                 data.extend_from_slice(&frag.data);
-                
+
                 (self.frags[i].parse_header(), data.into_boxed_slice())
-            } else {
+            }
+            else {
                 // A range of fragments has not been found that forms a packet.
                 self.push_fragment(frag);
-                
+
                 return None;
             }
         };
@@ -524,7 +531,7 @@ impl PacketParser {
     }
 
     /// Resync the reader to the start of the next frame and return
-    /// the header. Omit the strict header check as this checks against 
+    /// the header. Omit the strict header check as this checks against
     /// info from metadata which might not be available if we started mid-stream.
     pub fn find_next_header<B>(&mut self, reader: &mut B) -> Result<FrameHeader>
     where
@@ -541,7 +548,8 @@ impl PacketParser {
 
             if let Ok(header) = read_frame_header(reader, sync) {
                 break header;
-            } else {
+            }
+            else {
                 // If the header check failed, then seek to one byte past the start of the false frame
                 // and continue trying to resynchronize.
                 reader.seek_buffered(frame_pos + 1);
