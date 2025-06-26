@@ -91,7 +91,7 @@ pub struct FlacDecoder {
 
 impl FlacDecoder {
     pub fn try_new(params: &AudioCodecParameters, options: &AudioDecoderOptions) -> Result<Self> {
-        const FLAC_BLOCK_LEN_MAX: u16 = 65535;
+        const FLAC_BLOCK_LEN_MAX: u16 = u16::MAX;
 
         // This decoder only supports FLAC.
         if params.codec != CODEC_ID_FLAC {
@@ -120,16 +120,21 @@ impl FlacDecoder {
 
                 (AudioSpec::new(info.sample_rate, info.channels.clone()), info.block_len_max)
             }
+
+            // If no extra data is provided, use the codec parameters directly and set the
+            // audio buffer capacity to the maximum allowed.
             None => (
                 AudioSpec::new(
-                    params.sample_rate.unwrap_or(44100),
-                    params.channels.clone().unwrap_or_default(),
+                    params.sample_rate.ok_or(Error::DecodeError("Unable to decode sample rate"))?,
+                    params
+                        .channels
+                        .clone()
+                        .ok_or(Error::DecodeError("Unable to decode channels"))?,
                 ),
                 FLAC_BLOCK_LEN_MAX,
-            ), // _ => return unsupported_error("flac: missing extra data"),
+            ),
         };
 
-        // let spec = AudioSpec::new(info.sample_rate, info.channels.clone());
         let buf = AudioBuffer::new(spec, usize::from(block_len));
 
         // TODO: Verify packet integrity if the demuxer is not.
