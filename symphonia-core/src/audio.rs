@@ -32,7 +32,7 @@ bitflags! {
     /// The first 18 defined channels are guaranteed to be identical to those specified by
     /// Microsoft's WAVEFORMATEXTENSIBLE structure. Channels after 18 are defined by Symphonia and
     /// no order is guaranteed.
-    #[derive(Default)]
+    #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
     pub struct Channels: u32 {
         /// Front-left (left) or the Mono channel.
         const FRONT_LEFT         = 0x0000_0001;
@@ -89,41 +89,16 @@ bitflags! {
     }
 }
 
-/// An iterator over individual channels within a `Channels` bitmask.
-pub struct ChannelsIter {
-    channels: Channels,
-}
-
-impl Iterator for ChannelsIter {
-    type Item = Channels;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if !self.channels.is_empty() {
-            let channel = Channels::from_bits_truncate(1 << self.channels.bits.trailing_zeros());
-            self.channels ^= channel;
-            Some(channel)
-        }
-        else {
-            None
-        }
-    }
-}
-
 impl Channels {
     /// Gets the number of channels.
     pub fn count(self) -> usize {
-        self.bits.count_ones() as usize
-    }
-
-    /// Gets an iterator over individual channels.
-    pub fn iter(&self) -> ChannelsIter {
-        ChannelsIter { channels: *self }
+        self.bits().count_ones() as usize
     }
 }
 
 impl fmt::Display for Channels {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{:#032b}", self.bits)
+        write!(f, "{:#032b}", self.bits())
     }
 }
 
