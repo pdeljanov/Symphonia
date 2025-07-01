@@ -1,16 +1,16 @@
 [package]
 name = "symphonia-metadata"
-version = "0.5.4"
 description = "Project Symphonia multimedia tag and metadata readers."
-homepage = "https://github.com/pdeljanov/Symphonia"
-repository = "https://github.com/pdeljanov/Symphonia"
-authors = ["Philip Deljanov <philip.deljanov@gmail.com>"]
-license = "MPL-2.0"
-readme = "README.md"
-categories = ["multimedia", "multimedia::audio", "multimedia::encoding"]
 keywords = ["multimedia", "media", "metadata", "id3v1", "id3v2"]
-edition = "2018"
-rust-version = "1.53"
+# Common package metadata is located in the root Cargo.toml.
+authors.workspace = true
+version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+categories.workspace = true
+edition.workspace = true
+rust-version.workspace = true
 
 [dependencies]
 encoding_rs = "0.8.17"

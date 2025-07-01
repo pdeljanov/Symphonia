@@ -22,3 +22,16 @@ members = [
     "symphonia-utils-xiph",
     "symphonia-check",
 ]
+
+# Common workspace attributes shared by all crates.
+[workspace.package]
+authors = ["Philip Deljanov <philip.deljanov@gmail.com>"]
+version = "0.5.4"
+license = "MPL-2.0"
+license-file = "LICENSE"
+homepage = "https://github.com/pdeljanov/Symphonia"
+repository = "https://github.com/pdeljanov/Symphonia"
+categories = ["multimedia", "multimedia::audio", "multimedia::encoding"]
+keywords = ["audio", "codec", "decoder", "multimedia", "media"]
+edition = "2018"
+rust-version = "1.53"
