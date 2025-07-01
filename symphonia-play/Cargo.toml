@@ -1,15 +1,17 @@
 [package]
 name = "symphonia-play"
-version = "0.5.4"
 description = "Project Symphonia audio player demo application."
-homepage = "https://github.com/pdeljanov/Symphonia"
-repository = "https://github.com/pdeljanov/Symphonia"
-authors = ["Philip Deljanov <philip.deljanov@gmail.com>"]
-license = "MPL-2.0"
-edition = "2021"
-rust-version = "1.77"
 publish = false
 default-run = "symphonia-play"
+# Common package metadata is located in the root Cargo.toml.
+authors.workspace = true
+version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+categories.workspace = true
+edition.workspace = true
+rust-version.workspace = true
 
 [dependencies]
 clap = "3.1.0"
@@ -23,7 +25,7 @@ libpulse-binding = "2.5.0"
 libpulse-simple-binding = "2.5.0"
 
 [target.'cfg(not(target_os = "linux"))'.dependencies]
+arrayvec = "0.7.1"
 cpal = "0.13.3"
 rb = "0.3.2"
-rubato = "0.14.1"
-smallvec = "1.13.1"
+rubato = "0.12.0"
