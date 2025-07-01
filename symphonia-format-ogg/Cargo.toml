@@ -1,27 +1,22 @@
 [package]
 name = "symphonia-format-ogg"
-version = "0.5.4"
 description = "Pure Rust OGG demuxer (a part of project Symphonia)."
-homepage = "https://github.com/pdeljanov/Symphonia"
-repository = "https://github.com/pdeljanov/Symphonia"
-authors = ["Philip Deljanov <philip.deljanov@gmail.com>"]
-license = "MPL-2.0"
-readme = "README.md"
-categories = ["multimedia", "multimedia::audio", "multimedia::encoding"]
 keywords = ["audio", "media", "demuxer", "ogg"]
-edition = "2021"
-rust-version = "1.77"
+# Common package metadata is located in the root Cargo.toml.
+authors.workspace = true
+version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+categories.workspace = true
+edition.workspace = true
+rust-version.workspace = true
 
 [dependencies]
 log = "0.4"
 symphonia-core = { version = "0.5.4", path = "../symphonia-core" }
-symphonia-common = { version = "0.5.4", path = "../symphonia-common" }
-
-[dependencies.symphonia-metadata]
-version = "0.5.4"
-path = "../symphonia-metadata"
-default-features = false
-features = ["vorbis"]
+symphonia-metadata = { version = "0.5.4", path = "../symphonia-metadata" }
+symphonia-utils-xiph = { version = "0.5.4", path = "../symphonia-utils-xiph" }
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)'] }
