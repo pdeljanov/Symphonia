@@ -37,8 +37,8 @@ instead of this one directly.
 | **Hybrid Decoder**      | 🔴 Missing     | Placeholder. Needed for mixed music and speech decoding.          |
 | **Range Coding**        | 🟢 Implemented | Based on RFC 6716, tested and working.                            |
 | **Packet Handling**     | 🟢 Implemented | Basic packet parsing and processing is working fine.              |
-| **Finalize Method**     | 🔴 Missing     | Required to free resources after decoding completes.              |
-| **Last Decoded Buffer** | 🔴 Missing     | Needs implementation to return the last decoded audio buffer.     |
+| **Finalize Method**     | 🟢 Implemented | Returns post-decode finalization status.                          |
+| **Last Decoded Buffer** | 🟢 Implemented | Returns a generic reference to the last decoded audio buffer.     |
 
 ---
 ## 🛠 **Roadmap**
