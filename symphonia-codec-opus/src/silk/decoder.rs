@@ -54,11 +54,11 @@ use crate::silk::error::Error;
 use crate::toc::{Bandwidth, FrameDuration};
 use crate::silk::constant;
 
-use symphonia_core::audio::{AsAudioBufferRef, AudioBuffer, AudioBufferRef, Channels, Signal, SignalSpec};
-use symphonia_core::codecs::CodecParameters;
+use symphonia_core::audio::{AsGenericAudioBufferRef, Audio, AudioBuffer, AudioMut, AudioSpec, Channels, GenericAudioBufferRef};
+use symphonia_core::codecs::audio::{AudioCodecParameters, FinalizeResult};
 use symphonia_core::errors::Result;
-use symphonia_core::formats::Packet;
 use symphonia_core::io::{BitReaderLtr, FiniteBitStream, ReadBitsLtr};
+use symphonia_core::packet::PacketRef;
 
 /// SILK Frame Structure
 /// ```text
@@ -146,21 +146,21 @@ use symphonia_core::io::{BitReaderLtr, FiniteBitStream, ReadBitsLtr};
 ///
 /// https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7
 pub struct Decoder {
-    params: CodecParameters,
-    buffer: AudioBuffer<f32>,
+    params: AudioCodecParameters,
     channels: Channels,
+    buffer: AudioBuffer<f32>,
     state: State,
 }
 
 impl Decoder {
-    pub fn try_new(params: CodecParameters) -> Result<Self> {
+    pub fn try_new(params: AudioCodecParameters) -> Result<Self> {
         let params = params.to_owned();
         let state = State::default();
 
         let sample_rate = params.sample_rate.ok_or(Error::UnsupportedConfig)?;
-        let channels = params.channels.ok_or(Error::UnsupportedConfig)?;
-        let signal_spec = SignalSpec::new(sample_rate, channels);
-        let buffer = AudioBuffer::new(sample_rate as u64, signal_spec);
+        let channels = params.channels.clone().ok_or(Error::UnsupportedConfig)?;
+        let spec = AudioSpec::new(sample_rate, channels.clone());
+        let buffer: AudioBuffer<f32> = AudioBuffer::new(spec, sample_rate as usize);
 
         return Ok(Self { params, channels, buffer, state });
     }
@@ -170,9 +170,16 @@ impl Decoder {
         self.buffer.clear();
     }
 
-
-    pub fn codec_params(&self) -> &CodecParameters {
+    pub fn codec_params(&self) -> &AudioCodecParameters {
         return &self.params;
+    }
+
+    pub fn finalize(&mut self) -> FinalizeResult {
+        return FinalizeResult::default();
+    }
+
+    pub fn last_decoded(&self) -> GenericAudioBufferRef<'_> {
+        return self.buffer.as_generic_audio_buffer_ref();
     }
 
     /// Decodes a SILK packet
@@ -181,11 +188,13 @@ impl Decoder {
     /// including handling of regular frames and LBRR (Low Bit-Rate Redundancy) frames.
     ///
     /// https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7
-    pub fn decode(&mut self, packet: &Packet) -> Result<AudioBufferRef<'_>> {
-        let frame_packet = FramePacket::new(&packet.data)?;
+    pub fn decode(&mut self, packet: &PacketRef<'_>) -> Result<GenericAudioBufferRef<'_>> {
+        self.buffer.clear();
+
+        let frame_packet = FramePacket::new(packet.data)?;
 
         if self.state.frame_size != frame_packet.frame_size || self.state.bandwidth != frame_packet.bandwidth || self.state.channels != self.channels {
-            self.state = State::try_new(self.channels, frame_packet.frame_size, frame_packet.bandwidth)?;
+            self.state = State::try_new(self.channels.clone(), frame_packet.frame_size, frame_packet.bandwidth)?;
         }
 
         for frame_data in frame_packet.frames.iter() {
@@ -194,14 +203,14 @@ impl Decoder {
         }
 
         if self.state.lbrr_flag {
-            let lbrr_frames_data = self.extract_lbrr_frames(&packet.data)?;
+            let lbrr_frames_data = self.extract_lbrr_frames(packet.data)?;
             for lbrr_data in lbrr_frames_data.iter() {
                 let lbrr_frame = self.decode_frame(lbrr_data)?;
                 self.synthesize_frame(&lbrr_frame)?;
             }
         }
 
-        return Ok(self.buffer.as_audio_buffer_ref());
+        return Ok(self.buffer.as_generic_audio_buffer_ref());
     }
 
     fn extract_lbrr_frames<'a>(&self, packet_data: &'a [u8]) -> Result<Vec<&'a [u8]>> {
@@ -875,7 +884,7 @@ impl Decoder {
 
     fn synthesize_frame(&mut self, frame: &Frame) -> Result<()> {
         let samples_per_subframe = frame.sample_count / frame.subframes.len();
-        let channels = self.buffer.spec().channels.count();
+        let channels = self.buffer.spec().channels().count();
 
         if self.buffer.frames() + frame.sample_count > self.buffer.capacity() {
             return Err(Error::BufferOverflow.into());
@@ -883,9 +892,14 @@ impl Decoder {
 
         let start = self.buffer.frames();
 
+        // Mark frames as committed by updating the internal frame count before accessing plane_mut
+        self.buffer.render_uninit(Some(frame.sample_count));
+
         for ch in 0..channels {
-            let dst = self.buffer.chan_mut(ch);
+            let dst = self.buffer.plane_mut(ch).ok_or(Error::BufferOverflow)?;
             for (s, subframe) in frame.subframes.iter().enumerate() {
+                let offset = start + s * samples_per_subframe;
+
                 let ltp_signal = Self::ltp_synthesis(
                     &subframe.excitation,
                     subframe.pitch_lag,
@@ -896,13 +910,11 @@ impl Decoder {
                 let lpc_coeffs = Self::lsf_to_lpc(&subframe.nlsf_q15, self.state.bandwidth)?;
                 let lpc_signal = Self::lpc_synthesis(&lpc_coeffs, &ltp_signal, samples_per_subframe);
 
-                for (i, &sample) in lpc_signal.iter().enumerate() {
-                    dst[start + s * samples_per_subframe + i] = sample;
+                for i in 0..samples_per_subframe {
+                    dst[offset + i] = ltp_signal[i] + lpc_signal[i];
                 }
             }
         }
-
-        self.buffer.render_reserved(Some(frame.sample_count));
 
         return Ok(());
     }

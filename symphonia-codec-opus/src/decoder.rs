@@ -24,70 +24,127 @@
 /// https://datatracker.ietf.org/doc/html/rfc6716#section-4
 use crate::silk;
 use std::sync::LazyLock;
-use symphonia_core::audio::AudioBufferRef;
-use symphonia_core::codecs::{CodecDescriptor, CodecParameters, Decoder, DecoderOptions, FinalizeResult, CODEC_TYPE_OPUS};
-use symphonia_core::formats::Packet;
+use symphonia_core::audio::GenericAudioBufferRef;
+use symphonia_core::codecs::CodecInfo;
+use symphonia_core::codecs::audio::well_known::CODEC_ID_OPUS;
+use symphonia_core::codecs::audio::{
+    AudioCodecParameters, AudioDecoder, AudioDecoderOptions, FinalizeResult,
+};
+use symphonia_core::codecs::registry::{RegisterableAudioDecoder, SupportedAudioCodec};
+use symphonia_core::errors::{Result, unsupported_error};
+use symphonia_core::packet::PacketRef;
 
-/// Static Opus Codec Descriptor.
-static OPUS_CODEC_DESCRIPTOR: LazyLock<CodecDescriptor> = LazyLock::new(|| {
-    CodecDescriptor {
-        codec: CODEC_TYPE_OPUS,
+/// Static Opus codec info.
+static CODEC_INFO: LazyLock<CodecInfo> = LazyLock::new(|| {
+    CodecInfo {
         short_name: "opus",
         long_name: "Opus Audio Codec",
-        inst_func: |params: &CodecParameters, options: &DecoderOptions| -> symphonia_core::errors::Result<Box<dyn Decoder>> {
-            Ok(Box::new(OpusDecoder::try_new(params, options)?))
-        },
+        profiles: &[],
     }
 });
 
-/// Register the Opus decoder with Symphonia.
-pub fn get_codecs() -> &'static [CodecDescriptor] {
-    return std::slice::from_ref(&*OPUS_CODEC_DESCRIPTOR);
-}
+/// Static supported codecs array.
+static SUPPORTED_CODECS: LazyLock<[SupportedAudioCodec; 1]> = LazyLock::new(|| {
+    [SupportedAudioCodec {
+        id: CODEC_ID_OPUS,
+        info: *CODEC_INFO,
+    }]
+});
 
-/// The OpusDecoder struct implements the Symphonia Decoder trait.
-/// It currently supports only SILK mode. 
+/// The OpusDecoder struct implements the Symphonia AudioDecoder trait.
+/// It currently supports only SILK mode.
 /// CELT and Hybrid modes are placeholders for future implementation.
 pub struct OpusDecoder {
     silk_decoder: silk::Decoder,
 }
 
+impl OpusDecoder {
+    pub fn try_new(params: &AudioCodecParameters, _options: &AudioDecoderOptions) -> Result<Self> {
+        if params.codec != CODEC_ID_OPUS {
+            return unsupported_error("opus: invalid codec");
+        }
 
-impl Decoder for OpusDecoder {
-    fn try_new(params: &CodecParameters, _options: &DecoderOptions) -> symphonia_core::errors::Result<Self>
-    where
-        Self: Sized,
-    {
         let silk_decoder = silk::Decoder::try_new(params.to_owned())?;
 
         return Ok(Self { silk_decoder });
     }
+}
 
-    fn supported_codecs() -> &'static [CodecDescriptor]
-    where
-        Self: Sized,
-    {
-        return get_codecs();
-    }
-
+impl AudioDecoder for OpusDecoder {
     fn reset(&mut self) {
         self.silk_decoder.reset();
     }
 
-    fn codec_params(&self) -> &CodecParameters {
+    fn codec_info(&self) -> &CodecInfo {
+        return &CODEC_INFO;
+    }
+
+    fn codec_params(&self) -> &AudioCodecParameters {
         return self.silk_decoder.codec_params();
     }
 
-    fn decode(&mut self, packet: &Packet) -> symphonia_core::errors::Result<AudioBufferRef> {
+    fn decode_ref(&mut self, packet: &PacketRef<'_>) -> Result<GenericAudioBufferRef<'_>> {
         // TODO: Implement all decoder modes.
         return self.silk_decoder.decode(packet);
     }
 
     fn finalize(&mut self) -> FinalizeResult {
-        unimplemented!()
+        return self.silk_decoder.finalize();
     }
 
-    fn last_decoded(&self) -> AudioBufferRef {
-        unimplemented!()
+    fn last_decoded(&self) -> GenericAudioBufferRef<'_> {
+        return self.silk_decoder.last_decoded();
+    }
+}
+
+impl RegisterableAudioDecoder for OpusDecoder {
+    fn try_registry_new(
+        params: &AudioCodecParameters,
+        opts: &AudioDecoderOptions,
+    ) -> Result<Box<dyn AudioDecoder>> {
+        return Ok(Box::new(Self::try_new(params, opts)?));
+    }
+
+    fn supported_codecs() -> &'static [SupportedAudioCodec] {
+        return &SUPPORTED_CODECS[..];
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use symphonia_core::audio::{Channels, Position};
+    use symphonia_core::codecs::audio::well_known::CODEC_ID_VORBIS;
+
+    #[test]
+    fn opus_decoder_initialization() {
+        let mut params = AudioCodecParameters::new();
+        params
+            .for_codec(CODEC_ID_OPUS)
+            .with_sample_rate(48000)
+            .with_channels(Channels::Positioned(
+                Position::FRONT_LEFT | Position::FRONT_RIGHT,
+            ));
+
+        let mut decoder = OpusDecoder::try_new(&params, &AudioDecoderOptions::default()).unwrap();
+
+        assert_eq!(decoder.codec_info().short_name, "opus");
+        assert_eq!(decoder.codec_params().codec, CODEC_ID_OPUS);
+        assert_eq!(decoder.last_decoded().frames(), 0);
+        assert!(decoder.finalize().verify_ok.is_none());
+
+        decoder.reset();
+
+        assert_eq!(OpusDecoder::supported_codecs().len(), 1);
+        assert_eq!(OpusDecoder::supported_codecs()[0].id, CODEC_ID_OPUS);
+    }
+
+    #[test]
+    fn opus_decoder_invalid_codec() {
+        let mut params = AudioCodecParameters::new();
+        params.for_codec(CODEC_ID_VORBIS);
+
+        let result = OpusDecoder::try_new(&params, &AudioDecoderOptions::default());
+        assert!(result.is_err());
     }
 }
