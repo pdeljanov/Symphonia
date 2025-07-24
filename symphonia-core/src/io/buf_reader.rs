@@ -57,21 +57,22 @@ impl<'a> BufReader<'a> {
         // return the remainder of the buffer or scan_length bytes, which ever is shorter, we return
         // that here.
         if remaining < pattern.len() || scan_len < pattern.len() {
+            self.pos = end;
             return Ok(&self.buf[start..end]);
         }
 
-        let mut j = start;
-        let mut i = start + pattern.len();
+        let mut i = start;
+        let mut j = start + pattern.len();
 
-        while i < end {
-            if &self.buf[j..i] == pattern {
+        while j < end {
+            if &self.buf[i..j] == pattern {
                 break;
             }
-            i += align;
             j += align;
+            i += align;
         }
 
-        self.pos = cmp::min(i, self.buf.len());
+        self.pos = cmp::min(j, self.buf.len());
         Ok(&self.buf[start..self.pos])
     }
 
