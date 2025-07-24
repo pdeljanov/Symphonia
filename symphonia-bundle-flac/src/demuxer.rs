@@ -10,7 +10,7 @@ use std::io::{Seek, SeekFrom};
 use symphonia_core::support_format;
 
 use symphonia_core::codecs::{CodecParameters, VerificationCheck, CODEC_TYPE_FLAC};
-use symphonia_core::errors::{decode_error, seek_error, unsupported_error, Result, SeekErrorKind};
+use symphonia_core::errors::{decode_error, seek_error, unsupported_error, Result, SeekErrorKind, Error};
 use symphonia_core::formats::prelude::*;
 use symphonia_core::formats::util::{SeekIndex, SeekSearchResult};
 use symphonia_core::io::*;
@@ -172,7 +172,15 @@ impl FormatReader for FlacReader {
     }
 
     fn next_packet(&mut self) -> Result<Packet> {
-        self.parser.parse(&mut self.reader)
+        let pos = self.reader.pos();
+        match self.parser.parse(&mut self.reader) {
+            Ok(packet) => Ok(packet),
+            Err(Error::IoError(err)) if err.kind() == std::io::ErrorKind::UnexpectedEof => {
+                self.reader.seek_buffered(pos);
+                Err(Error::IoError(err))
+            }
+            Err(err) => Err(err),
+        }
     }
 
     fn metadata(&mut self) -> Metadata<'_> {
