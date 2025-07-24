@@ -249,8 +249,9 @@ impl<'s> OggReader<'s> {
         let actual_ts = loop {
             match self.peek_logical_packet() {
                 Some(packet) => {
-                    if packet.track_id() == serial && packet.ts + packet.dur >= required_ts {
-                        break packet.ts;
+                    if packet.track_id() == serial && packet.pts as u64 + packet.dur >= required_ts
+                    {
+                        break packet.pts as u64;
                     }
 
                     self.discard_logical_packet();
