@@ -12,6 +12,9 @@ keywords = ["audio", "codec", "decoder", "mp3", "mpeg"]
 edition = "2021"
 rust-version = "1.77"
 
+[lints]
+workspace = true
+
 [features]
 default = ["mp1", "mp2", "mp3"]
 mp1 = []
