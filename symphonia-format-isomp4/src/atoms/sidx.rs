@@ -42,6 +42,14 @@ impl Atom for SidxAtom {
     fn read<B: ReadBytes>(reader: &mut B, mut header: AtomHeader) -> Result<Self> {
         let (version, _) = header.read_extended_header(reader)?;
 
+        let min_size = if version == 0 { 20 } else { 28 };
+        // TODO - remove anchor variable
+        let len = match header.data_len() {
+            Some(len) if len >= min_size => len,
+            Some(_) => return decode_error("isomp4 (sidx): atom size is less than 32 or 40 bytes"),
+            None => return decode_error("isomp4 (sidx): expected atom size to be known"),
+        };
+
         let reference_id = reader.read_be_u32()?;
         let timescale = reader.read_be_u32()?;
 
@@ -55,12 +63,15 @@ impl Atom for SidxAtom {
             0 => (u64::from(reader.read_be_u32()?), anchor + u64::from(reader.read_be_u32()?)),
             1 => (reader.read_be_u64()?, anchor + reader.read_be_u64()?),
             _ => {
-                return decode_error("isomp4: invalid sidx version");
+                return decode_error("isomp4 (sidx): invalid version");
             }
         };
 
         let _reserved = reader.read_be_u16()?;
         let reference_count = reader.read_be_u16()?;
+        if reference_count != ((len - min_size) / 12) as u16 {
+            return decode_error("isomp4 (sidx): invalid entry count");
+        }
 
         let mut references = Vec::new();
 

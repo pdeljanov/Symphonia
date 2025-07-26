@@ -5,7 +5,6 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::common::FourCc;
 use symphonia_core::errors::{Error, Result};
 use symphonia_core::io::ReadBytes;
 
@@ -54,7 +53,7 @@ impl Atom for HdlrAtom {
             b"subt" => HandlerType::Subtitle,
             b"text" => HandlerType::Text,
             &hdlr => {
-                warn!("unknown handler type {:?}", FourCc::new(hdlr));
+                warn!("unknown handler type {:?}", hdlr);
                 HandlerType::Other(hdlr)
             }
         };

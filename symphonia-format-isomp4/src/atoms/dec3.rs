@@ -6,11 +6,11 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use symphonia_core::codecs::audio::well_known::CODEC_ID_EAC3;
-use symphonia_core::errors::{Error, Result};
+use symphonia_core::errors::{decode_error, Result};
 use symphonia_core::io::ReadBytes;
 
 use crate::atoms::stsd::AudioSampleEntry;
-use crate::atoms::{Atom, AtomHeader};
+use crate::atoms::{Atom, AtomHeader, MAX_ATOM_SIZE};
 
 #[allow(dead_code)]
 #[derive(Debug)]
@@ -21,12 +21,13 @@ pub struct Dec3Atom {
 
 impl Atom for Dec3Atom {
     fn read<B: ReadBytes>(reader: &mut B, header: AtomHeader) -> Result<Self> {
-        // EAC3SpecificBox should have length
-        let len = header
-            .data_len()
-            .ok_or(Error::DecodeError("isomp4 (dec3): expected atom size to be known"))?;
+        let len = match header.data_len() {
+            Some(len) if len <= MAX_ATOM_SIZE => len as usize,
+            Some(_) => return decode_error("isomp4 (dec3): atom size is greater than 1kb"),
+            None => return decode_error("isomp4 (dec3): expected atom size to be known"),
+        };
 
-        let extra_data = reader.read_boxed_slice_exact(len as usize)?;
+        let extra_data = reader.read_boxed_slice_exact(len)?;
 
         Ok(Dec3Atom { extra_data })
     }
