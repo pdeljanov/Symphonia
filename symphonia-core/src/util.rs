@@ -89,30 +89,6 @@ pub mod bits {
         ((0xff_u32 << upper) ^ (0xff_u32 << lower)) as u8
     }
 
-    /// Returns the number of trailing ones in an unsigned 8-bit integer.
-    #[inline(always)]
-    pub fn trailing_ones_u8(value: u8) -> u32 {
-        (!value & value.wrapping_add(1)).trailing_zeros()
-    }
-
-    /// Returns the number of trailing ones in an unsigned 16-bit integer.
-    #[inline(always)]
-    pub fn trailing_ones_u16(value: u16) -> u32 {
-        (!value & value.wrapping_add(1)).trailing_zeros()
-    }
-
-    /// Returns the number of trailing ones in an unsigned 32-bit integer.
-    #[inline(always)]
-    pub fn trailing_ones_u32(value: u32) -> u32 {
-        (!value & value.wrapping_add(1)).trailing_zeros()
-    }
-
-    /// Returns the number of trailing ones in an unsigned 64-bit integer.
-    #[inline(always)]
-    pub fn trailing_ones_u64(value: u64) -> u32 {
-        (!value & value.wrapping_add(1)).trailing_zeros()
-    }
-
     /// Returns true if the unsigned 16-bit integer contains one or more bytes which have all bits
     /// set.
     #[inline(always)]
@@ -132,16 +108,6 @@ pub mod bits {
     #[inline(always)]
     pub fn contains_ones_byte_u64(value: u64) -> bool {
         ((value & !value.wrapping_add(0x0101_0101_0101_0101)) & 0x8080_8080_8080_8080) != 0
-    }
-
-    #[test]
-    fn verify_trailing_ones() {
-        assert_eq!(trailing_ones_u32(0), 0);
-        assert_eq!(trailing_ones_u32(1), 1);
-        assert_eq!(trailing_ones_u32(2), 0);
-        assert_eq!(trailing_ones_u32(3), 2);
-        assert_eq!(trailing_ones_u32(0xf00f_7fff), 15);
-        assert_eq!(trailing_ones_u32(0xffff_ffff), 32);
     }
 
     #[test]
