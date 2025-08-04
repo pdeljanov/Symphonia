@@ -212,9 +212,13 @@ pub fn read_seek_table_block<B: ReadBytes>(
         // ignored by decoders. The remaining 10 bytes of the seek point are undefined and must
         // still be consumed.
         if sample != 0xffff_ffff_ffff_ffff {
-            table.insert(sample, reader.read_be_u64()?, u32::from(reader.read_be_u16()?));
-        }
-        else {
+            let byte_offset = reader.read_be_u64()?;
+            let n_frames = u32::from(reader.read_be_u16()?);
+            // Ignore seek points if n_frames is 0
+            if n_frames != 0 {
+                table.insert(sample, byte_offset, n_frames);
+            }
+        } else {
             reader.ignore_bytes(10)?;
         }
     }
