@@ -161,7 +161,7 @@ impl LogicalStream {
                 }
                 Ok(MapResult::SideData { data }) => side_data.push(data),
                 Err(e) => {
-                    warn!("mapping packet failed ({}), skipping", e.to_string())
+                    warn!("mapping packet failed ({}), skipping", e)
                 }
                 _ => (),
             }

@@ -12,7 +12,7 @@ use crate::io::ReadBytes;
 use crate::util::bits::*;
 
 fn end_of_bitstream_error<T>() -> io::Result<T> {
-    Err(io::Error::new(io::ErrorKind::Other, "unexpected end of bitstream"))
+    Err(io::Error::other("unexpected end of bitstream"))
 }
 
 pub mod vlc {
@@ -23,7 +23,7 @@ pub mod vlc {
     use std::io;
 
     fn codebook_error<T>(desc: &'static str) -> io::Result<T> {
-        Err(io::Error::new(io::ErrorKind::Other, desc))
+        Err(io::Error::other(desc))
     }
 
     /// `BitOrder` describes the relationship between the order of bits in the provided codewords

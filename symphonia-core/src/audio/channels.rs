@@ -398,7 +398,7 @@ pub mod layouts {
     //!  * `FRONT` layouts include the front left, front left-of-center, front right-of-center, and
     //!    front right channels.
     //!  * `WIDE` layouts include all channels from the `FRONT` layout plus the front center
-    //!     channel.
+    //!    channel.
     //!  * `SIDE` layouts include the side left and side right channels.
     //!  * `XPY` layouts have `X` standard (non-LFE) channels, and `Y` LFE channels.
     //!
