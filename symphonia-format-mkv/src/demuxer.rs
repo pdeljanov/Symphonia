@@ -603,6 +603,7 @@ impl From<EbmlError> for Error {
         // All non-IO EBML errors are mapped to a decode error.
         let msg = match value {
             EbmlError::IoError(err) => return Error::IoError(err),
+            EbmlError::SymphoniaCoreError(err) => return err,
             EbmlError::InvalidEbmlElementIdLength => "mkv (ebml): invalid ebml element id length",
             EbmlError::InvalidEbmlDataLength => "mkv (ebml): invalid ebml vint length",
             EbmlError::UnknownElement => "mkv (ebml): the element is unknown",

@@ -16,6 +16,8 @@ use symphonia_core::util::bits::sign_extend_leq64_to_i64;
 pub enum EbmlError {
     /// An IO error occured while reading, writing, or seeking the EBML document.
     IoError(std::io::Error),
+    /// An IO error occured while reading, writing, or seeking the EBML document.
+    SymphoniaCoreError(symphonia_core::errors::Error),
     /// The encoding of an EBML element ID was invalid.
     InvalidEbmlElementIdLength,
     /// The encoding of an EBML element data size was invalid.
@@ -55,6 +57,12 @@ pub enum EbmlError {
 impl From<std::io::Error> for EbmlError {
     fn from(err: std::io::Error) -> EbmlError {
         EbmlError::IoError(err)
+    }
+}
+
+impl From<symphonia_core::errors::Error> for EbmlError {
+    fn from(err: symphonia_core::errors::Error) -> Self {
+        EbmlError::SymphoniaCoreError(err)
     }
 }
 
