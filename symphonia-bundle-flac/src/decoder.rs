@@ -175,10 +175,15 @@ impl FlacDecoder {
             match header.channel_assignment {
                 ChannelAssignment::Independant(channels) => {
                     for i in 0..channels as usize {
-                        read_subframe(&mut bs, bits_per_sample, self.buf.plane_mut(i).unwrap())?;
+                        read_subframe(
+                            &mut bs,
+                            bits_per_sample,
+                            self.buf
+                                .plane_mut(i)
+                                .ok_or(Error::DecodeError("invalid plane data"))?,
+                        )?;
                     }
                 }
-
                 // For Left/Side, Mid/Side, and Right/Side channel configurations, the Side
                 // (Difference) channel requires an extra bit per sample.
                 ChannelAssignment::LeftSide => {
