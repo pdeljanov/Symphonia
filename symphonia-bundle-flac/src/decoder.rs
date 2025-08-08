@@ -8,7 +8,6 @@
 use std::cmp;
 use std::convert::TryInto;
 use std::num::Wrapping;
-use std::io::{Error, ErrorKind};
 
 use symphonia_common::xiph::audio::flac::StreamInfo;
 use symphonia_core::audio::{
@@ -19,7 +18,7 @@ use symphonia_core::codecs::audio::{AudioCodecParameters, AudioDecoderOptions};
 use symphonia_core::codecs::audio::{AudioDecoder, FinalizeResult, VerificationCheck};
 use symphonia_core::codecs::registry::{RegisterableAudioDecoder, SupportedAudioCodec};
 use symphonia_core::codecs::CodecInfo;
-use symphonia_core::errors::{decode_error, unsupported_error, Result};
+use symphonia_core::errors::{decode_error, unsupported_error, Error, Result};
 use symphonia_core::formats::Packet;
 use symphonia_core::io::{BitReaderLtr, BufReader, ReadBitsLtr};
 use symphonia_core::support_audio_codec;
@@ -186,7 +185,7 @@ impl FlacDecoder {
                     let (left, side) = self
                         .buf
                         .plane_pair_mut(0, 1)
-                        .ok_or(Error::new(ErrorKind::InvalidData, "invalid plane data"))?;
+                        .ok_or(Error::DecodeError("invalid plane data"))?;
 
                     read_subframe(&mut bs, bits_per_sample, left)?;
                     read_subframe(&mut bs, bits_per_sample + 1, side)?;
@@ -197,7 +196,7 @@ impl FlacDecoder {
                     let (mid, side) = self
                         .buf
                         .plane_pair_mut(0, 1)
-                        .ok_or(Error::new(ErrorKind::InvalidData, "invalid plane data"))?;
+                        .ok_or(Error::DecodeError("invalid plane data"))?;
 
                     read_subframe(&mut bs, bits_per_sample, mid)?;
                     read_subframe(&mut bs, bits_per_sample + 1, side)?;
@@ -208,7 +207,7 @@ impl FlacDecoder {
                     let (side, right) = self
                         .buf
                         .plane_pair_mut(0, 1)
-                        .ok_or(Error::new(ErrorKind::InvalidData, "invalid plane data"))?;
+                        .ok_or(Error::DecodeError("invalid plane data"))?;
 
                     read_subframe(&mut bs, bits_per_sample + 1, side)?;
                     read_subframe(&mut bs, bits_per_sample, right)?;
