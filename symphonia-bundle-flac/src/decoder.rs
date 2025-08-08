@@ -8,6 +8,7 @@
 use std::cmp;
 use std::convert::TryInto;
 use std::num::Wrapping;
+use std::io::{Error, ErrorKind};
 
 use symphonia_common::xiph::audio::flac::StreamInfo;
 use symphonia_core::audio::{
@@ -178,10 +179,14 @@ impl FlacDecoder {
                         read_subframe(&mut bs, bits_per_sample, self.buf.plane_mut(i).unwrap())?;
                     }
                 }
+
                 // For Left/Side, Mid/Side, and Right/Side channel configurations, the Side
                 // (Difference) channel requires an extra bit per sample.
                 ChannelAssignment::LeftSide => {
-                    let (left, side) = self.buf.plane_pair_mut(0, 1).unwrap();
+                    let (left, side) = self
+                        .buf
+                        .plane_pair_mut(0, 1)
+                        .ok_or(Error::new(ErrorKind::InvalidData, "invalid plane data"))?;
 
                     read_subframe(&mut bs, bits_per_sample, left)?;
                     read_subframe(&mut bs, bits_per_sample + 1, side)?;
@@ -189,7 +194,10 @@ impl FlacDecoder {
                     decorrelate_left_side(left, side);
                 }
                 ChannelAssignment::MidSide => {
-                    let (mid, side) = self.buf.plane_pair_mut(0, 1).unwrap();
+                    let (mid, side) = self
+                        .buf
+                        .plane_pair_mut(0, 1)
+                        .ok_or(Error::new(ErrorKind::InvalidData, "invalid plane data"))?;
 
                     read_subframe(&mut bs, bits_per_sample, mid)?;
                     read_subframe(&mut bs, bits_per_sample + 1, side)?;
@@ -197,7 +205,10 @@ impl FlacDecoder {
                     decorrelate_mid_side(mid, side);
                 }
                 ChannelAssignment::RightSide => {
-                    let (side, right) = self.buf.plane_pair_mut(0, 1).unwrap();
+                    let (side, right) = self
+                        .buf
+                        .plane_pair_mut(0, 1)
+                        .ok_or(Error::new(ErrorKind::InvalidData, "invalid plane data"))?;
 
                     read_subframe(&mut bs, bits_per_sample + 1, side)?;
                     read_subframe(&mut bs, bits_per_sample, right)?;
