@@ -20,7 +20,7 @@ use crate::header::{self, MAX_MPEG_FRAME_SIZE, MPEG_HEADER_LEN};
 
 use std::io::{Seek, SeekFrom};
 
-use log::{debug, info, warn};
+use log::{debug, error, info, warn};
 
 /// MPEG1 and MPEG2 audio elementary stream reader.
 ///
@@ -470,7 +470,8 @@ fn read_mpeg_frame(reader: &mut MediaSourceStream) -> Result<(FrameHeader, Vec<u
             break (header, sync);
         }
 
-        warn!("invalid mpeg audio header");
+        error!("invalid mpeg audio header");
+        Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid mpeg audio header"))?
     };
 
     // Allocate frame buffer.
