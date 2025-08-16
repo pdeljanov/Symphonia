@@ -117,6 +117,21 @@ macro_rules! read_pcm_signed {
     };
 }
 
+macro_rules! read_pcm_signed_be {
+    ($buf:expr, $fmt:tt, $read:expr, $width:expr, $coded_width:expr) => {{
+        let mask = !((1 << ($width - $coded_width)) - 1);
+        match $buf {
+            GenericAudioBuffer::$fmt(ref mut buf) => buf.fill(|audio_planes, idx| -> Result<()> {
+                for plane in audio_planes.planes() {
+                    plane[idx] = ($read & mask).into_sample();
+                }
+                Ok(())
+            }),
+            _ => unreachable!(),
+        }
+    }};
+}
+
 macro_rules! read_pcm_unsigned {
     ($buf:expr, $fmt:tt, $read:expr, $width:expr, $coded_width:expr) => {
         // Get buffer of the correct sample format.
@@ -134,6 +149,21 @@ macro_rules! read_pcm_unsigned {
             _ => unreachable!(),
         }
     };
+}
+
+macro_rules! read_pcm_unsigned_be {
+    ($buf:expr, $fmt:tt, $read:expr, $width:expr, $coded_width:expr) => {{
+        let mask = !((1 << ($width - $coded_width)) - 1);
+        match $buf {
+            GenericAudioBuffer::$fmt(ref mut buf) => buf.fill(|audio_planes, idx| -> Result<()> {
+                for plane in audio_planes.planes() {
+                    plane[idx] = ($read & mask).into_sample();
+                }
+                Ok(())
+            }),
+            _ => unreachable!(),
+        }
+    }};
 }
 
 macro_rules! read_pcm_floating {
@@ -285,19 +315,19 @@ impl PcmDecoder {
                 read_pcm_signed!(self.buf, S32, reader.read_i32()?, 32, self.coded_width)
             }
             CODEC_TYPE_PCM_S32BE => {
-                read_pcm_signed!(self.buf, S32, reader.read_be_i32()?, 32, self.coded_width)
+                read_pcm_signed_be!(self.buf, S32, reader.read_be_i32()?, 32, self.coded_width)
             }
             CODEC_TYPE_PCM_S24LE => {
                 read_pcm_signed!(self.buf, S24, reader.read_i24()? << 8, 24, self.coded_width)
             }
             CODEC_TYPE_PCM_S24BE => {
-                read_pcm_signed!(self.buf, S24, reader.read_be_i24()? << 8, 24, self.coded_width)
+                read_pcm_signed_be!(self.buf, S24, reader.read_be_i24()? << 8, 24, self.coded_width)
             }
             CODEC_TYPE_PCM_S16LE => {
                 read_pcm_signed!(self.buf, S16, reader.read_i16()?, 16, self.coded_width)
             }
             CODEC_TYPE_PCM_S16BE => {
-                read_pcm_signed!(self.buf, S16, reader.read_be_i16()?, 16, self.coded_width)
+                read_pcm_signed_be!(self.buf, S16, reader.read_be_i16()?, 16, self.coded_width)
             }
             CODEC_TYPE_PCM_S8 => {
                 read_pcm_signed!(self.buf, S8, reader.read_i8()?, 8, self.coded_width)
@@ -306,19 +336,25 @@ impl PcmDecoder {
                 read_pcm_unsigned!(self.buf, U32, reader.read_u32()?, 32, self.coded_width)
             }
             CODEC_TYPE_PCM_U32BE => {
-                read_pcm_unsigned!(self.buf, U32, reader.read_be_u32()?, 32, self.coded_width)
+                read_pcm_unsigned_be!(self.buf, U32, reader.read_be_u32()?, 32, self.coded_width)
             }
             CODEC_TYPE_PCM_U24LE => {
                 read_pcm_unsigned!(self.buf, U24, reader.read_u24()? << 8, 24, self.coded_width)
             }
             CODEC_TYPE_PCM_U24BE => {
-                read_pcm_unsigned!(self.buf, U24, reader.read_be_u24()? << 8, 24, self.coded_width)
+                read_pcm_unsigned_be!(
+                    self.buf,
+                    U24,
+                    reader.read_be_u24()? << 8,
+                    24,
+                    self.coded_width
+                )
             }
             CODEC_TYPE_PCM_U16LE => {
                 read_pcm_unsigned!(self.buf, U16, reader.read_u16()?, 16, self.coded_width)
             }
             CODEC_TYPE_PCM_U16BE => {
-                read_pcm_unsigned!(self.buf, U16, reader.read_be_u16()?, 16, self.coded_width)
+                read_pcm_unsigned_be!(self.buf, U16, reader.read_be_u16()?, 16, self.coded_width)
             }
             CODEC_TYPE_PCM_U8 => {
                 read_pcm_unsigned!(self.buf, U8, reader.read_u8()?, 8, self.coded_width)
