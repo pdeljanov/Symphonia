@@ -133,7 +133,7 @@ pub struct CuePoint {
 
 /// A `Track` is an independently coded media bitstream. A media format may contain multiple tracks
 /// in one container. Each of those tracks are represented by one `Track`.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct Track {
     /// A unique identifier for the track.
     pub id: u32,
@@ -141,11 +141,13 @@ pub struct Track {
     pub codec_params: CodecParameters,
     /// The language of the track. May be unknown.
     pub language: Option<String>,
+    /// The name of the track. May be unknown.
+    pub name: Option<String>,
 }
 
 impl Track {
     pub fn new(id: u32, codec_params: CodecParameters) -> Self {
-        Track { id, codec_params, language: None }
+        Track { id, codec_params, language: None, name: None }
     }
 }
 
