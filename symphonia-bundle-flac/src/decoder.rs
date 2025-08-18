@@ -265,11 +265,11 @@ impl AudioDecoder for FlacDecoder {
                     let mut expected_s = String::with_capacity(32);
                     let mut decoded_s = String::with_capacity(32);
 
-                    expected.iter().for_each(|b| write!(expected_s, "{:02x}", b).unwrap());
-                    decoded.iter().for_each(|b| write!(decoded_s, "{:02x}", b).unwrap());
+                    expected.iter().for_each(|b| write!(expected_s, "{b:02x}").unwrap());
+                    decoded.iter().for_each(|b| write!(decoded_s, "{b:02x}").unwrap());
 
-                    debug!("verification: expected md5 = {}", expected_s);
-                    debug!("verification: decoded md5  = {}", decoded_s);
+                    debug!("verification: expected md5 = {expected_s}");
+                    debug!("verification: decoded md5  = {decoded_s}");
                 }
 
                 result.verify_ok = Some(decoded == expected)

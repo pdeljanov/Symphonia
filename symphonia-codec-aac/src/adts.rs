@@ -322,7 +322,7 @@ impl FormatReader for AdtsReader<'_> {
             }
         };
 
-        debug!("seeking to ts={}", required_ts);
+        debug!("seeking to ts={required_ts}");
 
         // If the desired timestamp is less-than the next packet timestamp, attempt to seek
         // to the start of the stream.
@@ -464,7 +464,7 @@ fn approximate_frame_count(mut source: &mut MediaSourceStream<'_>) -> Result<Opt
         let _ = source.seek(SeekFrom::Start(original_pos))?;
     }
 
-    debug!("adts: parsed {} of {} bytes to approximate duration", n_bytes, remaining_len);
+    debug!("adts: parsed {n_bytes} of {remaining_len} bytes to approximate duration");
 
     match parsed_n_frames {
         0 => Ok(None),

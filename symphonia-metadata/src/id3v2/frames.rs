@@ -485,7 +485,7 @@ pub fn read_id3v2p2_frame<B: ReadBytes>(reader: &mut B) -> Result<FrameResult> {
         Ok(result) => Ok(result),
         Err(err) => {
             // On error, skip the frame.
-            warn!("{}", err);
+            warn!("{err}");
             Ok(FrameResult::Skipped)
         }
     }
@@ -585,7 +585,7 @@ pub fn read_id3v2p3_frame<B: ReadBytes>(reader: &mut B) -> Result<FrameResult> {
         }
         Err(err) => {
             // On error, skip the frame.
-            warn!("{}", err);
+            warn!("{err}");
             Ok(FrameResult::Skipped)
         }
     }
@@ -710,7 +710,7 @@ pub fn read_id3v2p4_frame<B: ReadBytes + FiniteStream>(reader: &mut B) -> Result
         }
         Err(err) => {
             // On error, skip the frame.
-            warn!("{}", err);
+            warn!("{err}");
             Ok(FrameResult::Skipped)
         }
     }

@@ -404,7 +404,7 @@ pub fn read_vorbis_comment<B: ReadBytes>(
                     chapters.entry(info.key.num).or_default().push(info);
                 }
             },
-            Err(err) => warn!("{}", err),
+            Err(err) => warn!("{err}"),
         }
     }
 

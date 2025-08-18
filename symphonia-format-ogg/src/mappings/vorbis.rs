@@ -275,7 +275,7 @@ impl Mapper for VorbisMapper {
                     Ok(MapResult::Setup)
                 }
                 _ => {
-                    warn!("ogg (vorbis): packet type {} unexpected", packet_type);
+                    warn!("ogg (vorbis): packet type {packet_type} unexpected");
                     Ok(MapResult::Unknown)
                 }
             }

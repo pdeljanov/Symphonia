@@ -68,7 +68,7 @@ impl<'s> MkvReader<'s> {
         let (is_seekable, total_len) = (mss.is_seekable(), mss.byte_len());
 
         match total_len {
-            Some(len) if is_seekable => info!("stream is seekable with len={} bytes.", len),
+            Some(len) if is_seekable => info!("stream is seekable with len={len} bytes."),
             _ => (),
         }
 
@@ -148,7 +148,7 @@ impl<'s> MkvReader<'s> {
                     chapters = Some(it.read_master_element::<ChaptersElement>()?);
                 }
                 other => {
-                    log::debug!("top-level scan ignored element {:?}", other);
+                    log::debug!("top-level scan ignored element {other:?}");
                 }
             }
         }
@@ -355,7 +355,7 @@ impl<'s> MkvReader<'s> {
     }
 
     fn seek_track_by_ts(&mut self, track_id: u32, ts: u64) -> Result<SeekedTo> {
-        log::debug!("seeking track_id={} to ts={}", track_id, ts);
+        log::debug!("seeking track_id={track_id} to ts={ts}");
 
         // If cues exist, seek to the nearest cue point.
         if let Some(cues) = &self.cues {
@@ -486,7 +486,7 @@ impl<'s> MkvReader<'s> {
                     }
                     // All other elements.
                     other => {
-                        log::debug!("ignored element {:?}", other);
+                        log::debug!("ignored element {other:?}");
                     }
                 }
             }

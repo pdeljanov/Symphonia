@@ -66,12 +66,12 @@ fn get_target_path(ctx: &TagContext) -> String {
         // into it.
         if let Some(target_name) = &target.name {
             // A target type name is explictly provided.
-            format!("{}@", target_name)
+            format!("{target_name}@")
         }
         else if let Some(target_name) = default_target_name(target.value, ctx.is_video) {
             // A target type name is not provided, but a default target name for this target value
             // is known.
-            format!("{}@", target_name)
+            format!("{target_name}@")
         }
         else {
             // There is no known target type name for the target value provided.
@@ -110,7 +110,7 @@ pub fn make_raw_tag(path: String, tag: SimpleTagElement, out: &mut Vec<RawTag>) 
             }
             "SORT_WITH" => {
                 if let Some(RawValue::String(value)) = sub_tag.value {
-                    out.push(RawTag::new(format!("{}/SORT_WITH", path), value));
+                    out.push(RawTag::new(format!("{path}/SORT_WITH"), value));
                 }
             }
             _ => (),

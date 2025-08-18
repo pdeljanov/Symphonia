@@ -168,7 +168,7 @@ impl std::fmt::Display for Position {
             .collect::<Vec<_>>()
             .join(",");
 
-        write!(f, "[{}]", list)
+        write!(f, "[{list}]")
     }
 }
 
@@ -360,7 +360,7 @@ impl std::fmt::Display for Channels {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Channels::Positioned(positions) => std::fmt::Display::fmt(positions, f),
-            Channels::Discrete(count) => write!(f, "[D0,..,D{}]", count),
+            Channels::Discrete(count) => write!(f, "[D0,..,D{count}]"),
             Channels::Ambisonic(order) => {
                 write!(f, "[ACN0,..,ACN{}]", (1 + usize::from(*order)) * (1 + usize::from(*order)))
             }
@@ -373,9 +373,9 @@ impl std::fmt::Display for Channels {
                             .get(pos.bits().trailing_zeros() as usize)
                             .unwrap_or(&"???")
                             .to_string(),
-                        ChannelLabel::Discrete(idx) => format!("D{}", idx),
-                        ChannelLabel::Ambisonic(acn) => format!("ACN{}", acn),
-                        ChannelLabel::AmbisonicBFormat(fo) => format!("{}", fo),
+                        ChannelLabel::Discrete(idx) => format!("D{idx}"),
+                        ChannelLabel::Ambisonic(acn) => format!("ACN{acn}"),
+                        ChannelLabel::AmbisonicBFormat(fo) => format!("{fo}"),
                     };
                     list.push(name);
                 }

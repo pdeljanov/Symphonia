@@ -487,7 +487,7 @@ impl Probe {
             // Skip anchor if the anchor offset exceeds the source length, or intersects the last
             // read preceeds the end of the last successful read.
             if anchor > end || end - anchor < last_reader_end {
-                debug!("skipping trailing metadata offset -{}", anchor);
+                debug!("skipping trailing metadata offset -{anchor}");
                 continue;
             }
 
@@ -568,7 +568,7 @@ impl Probe {
         }
 
         if count < self.opts.max_probe_depth {
-            error!("probe reached EOF at {} bytes", count);
+            error!("probe reached EOF at {count} bytes");
         }
         else {
             // Could not find any marker within the probe limit.

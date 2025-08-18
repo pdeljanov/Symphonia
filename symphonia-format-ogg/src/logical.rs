@@ -161,7 +161,7 @@ impl LogicalStream {
                 }
                 Ok(MapResult::SideData { data }) => side_data.push(data),
                 Err(e) => {
-                    warn!("mapping packet failed ({}), skipping", e)
+                    warn!("mapping packet failed ({e}), skipping")
                 }
                 _ => (),
             }
@@ -449,7 +449,7 @@ impl LogicalStream {
 
             // New partial packet buffer size, rounded up to the nearest 8K block.
             let new_buf_len = (new_part_len + (8 * 1024 - 1)) & !(8 * 1024 - 1);
-            debug!("grow packet buffer to {} bytes", new_buf_len);
+            debug!("grow packet buffer to {new_buf_len} bytes");
 
             self.part_buf.resize(new_buf_len, Default::default());
         }

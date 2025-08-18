@@ -362,7 +362,7 @@ fn add_advisory_tag<B: ReadBytes>(
                         1 | 4 => Some(ContentAdvisory::Explicit),
                         2 => Some(ContentAdvisory::Censored),
                         _ => {
-                            warn!("unknown content advisory value {}", value);
+                            warn!("unknown content advisory value {value}");
                             None
                         }
                     }
@@ -916,7 +916,7 @@ impl Atom for IlstAtom {
                 AtomType::FreeFormTag => add_freeform_tag(&mut iter, &mut mb)?,
                 // Completely unknown tag atom.
                 AtomType::Other(atom_type) => {
-                    debug!("unknown metadata sub-atom {:x?}", atom_type);
+                    debug!("unknown metadata sub-atom {atom_type:x?}");
                 }
                 // Known tag atom, but has no standard tag or special handling.
                 _ => {

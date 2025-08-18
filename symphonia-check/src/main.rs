@@ -202,7 +202,7 @@ impl DecoderInstance {
             // Decode the packet, ignoring decode errors if `keep_going` is true.
             match self.decoder.decode(&packet) {
                 Ok(_) => break,
-                Err(Error::DecodeError(err)) if keep_going => warn!("{}", err),
+                Err(Error::DecodeError(err)) if keep_going => warn!("{err}"),
                 Err(err) => return Err(err),
             }
         }
@@ -423,11 +423,11 @@ fn main() {
 
     let mut res: TestResult = Default::default();
 
-    println!("Input Path: {}", path);
+    println!("Input Path: {path}");
     println!();
 
     if let Err(err) = run_test(path, &opts, &mut res) {
-        eprintln!("Test interrupted by error: {}", err);
+        eprintln!("Test interrupted by error: {err}");
         std::process::exit(2);
     };
 

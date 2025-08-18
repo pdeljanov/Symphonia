@@ -185,7 +185,7 @@ impl FormatReader for CafReader<'_> {
                     TimeStamp::from(packet.start_frame)
                 }
                 else {
-                    error!("invalid packet index: {}", current_packet_index);
+                    error!("invalid packet index: {current_packet_index}");
                     return decode_error("caf: invalid packet index");
                 };
 
@@ -277,7 +277,7 @@ impl<'s> CafReader<'s> {
 
         let file_version = self.reader.read_be_u16()?;
         if file_version != 1 {
-            error!("unsupported file version ({})", file_version);
+            error!("unsupported file version ({file_version})");
             return unsupported_error("caf: unsupported file version");
         }
 

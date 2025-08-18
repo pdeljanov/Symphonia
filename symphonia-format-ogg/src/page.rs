@@ -326,7 +326,7 @@ impl PageReader {
         if len > self.page_buf.len() {
             // New page buffer size, rounded up to the nearest 8K block.
             let new_buf_len = (len + (8 * 1024 - 1)) & !(8 * 1024 - 1);
-            debug!("grow page buffer to {} bytes", new_buf_len);
+            debug!("grow page buffer to {new_buf_len} bytes");
 
             self.page_buf.resize(new_buf_len, Default::default());
         }

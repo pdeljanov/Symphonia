@@ -67,7 +67,7 @@ impl Atom for EsdsAtom {
                     descriptor = Some(ESDescriptor::read(&mut scoped, desc_len)?);
                 }
                 _ => {
-                    warn!("unknown descriptor in esds atom, desc={}", desc);
+                    warn!("unknown descriptor in esds atom, desc={desc}");
                     scoped.ignore_bytes(desc_len as u64)?;
                 }
             }
@@ -190,7 +190,7 @@ fn get_codec_id_from_object_type(obj_type: u8) -> Option<CodecId> {
         OBJ_TYPE_VISUAL_HEVC1 => CodecId::Video(CODEC_ID_HEVC),
         OBJ_TYPE_VISUAL_VP09 => CodecId::Video(CODEC_ID_VP9),
         _ => {
-            debug!("unknown object type indication {:#x} for decoder config descriptor", obj_type);
+            debug!("unknown object type indication {obj_type:#x} for decoder config descriptor");
             return None;
         }
     };
@@ -275,7 +275,7 @@ impl ObjectDescriptor for ESDescriptor {
                     sl_config = Some(SLDescriptor::read(&mut scoped, desc_len)?);
                 }
                 _ => {
-                    debug!("skipping {} object in es descriptor", desc);
+                    debug!("skipping {desc} object in es descriptor");
                     scoped.ignore_bytes(u64::from(desc_len))?;
                 }
             }
@@ -350,7 +350,7 @@ impl ObjectDescriptor for DecoderConfigDescriptor {
                     dec_specific_config = Some(DecoderSpecificInfo::read(&mut scoped, desc_len)?);
                 }
                 _ => {
-                    debug!("skipping {} object in decoder config descriptor", desc);
+                    debug!("skipping {desc} object in decoder config descriptor");
                     scoped.ignore_bytes(u64::from(desc_len))?;
                 }
             }

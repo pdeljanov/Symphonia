@@ -97,7 +97,7 @@ pub fn print_tracks(tracks: &[Track]) {
                         print_pair("Sample Rate:", &rate, Bullet::None, 1);
                     }
                     if let Some(fmt) = params.sample_format {
-                        print_pair("Sample Format:", &format!("{:?}", fmt), Bullet::None, 1);
+                        print_pair("Sample Format:", &format!("{fmt:?}"), Bullet::None, 1);
                     }
                     if let Some(bits_per_sample) = params.bits_per_sample {
                         print_pair("Bits per Sample:", &bits_per_sample, Bullet::None, 1);
@@ -340,7 +340,7 @@ pub fn print_visuals(visuals: &[Visual]) {
 
         for (idx, visual) in visuals.iter().enumerate() {
             if let Some(usage) = visual.usage {
-                print_pair("Usage:", &format!("{:?}", usage), Bullet::Num(idx + 1), 1);
+                print_pair("Usage:", &format!("{usage:?}"), Bullet::Num(idx + 1), 1);
             }
             if let Some(media_type) = &visual.media_type {
                 let bullet =
@@ -407,8 +407,8 @@ impl std::fmt::Display for Bullet {
         // The bullet must occupy 4 characters.
         match self {
             Bullet::None => write!(f, "    "),
-            Bullet::Num(num) => write!(f, "[{:0>2}]", num),
-            Bullet::Char(ch) => write!(f, "   {}", ch),
+            Bullet::Num(num) => write!(f, "[{num:0>2}]"),
+            Bullet::Char(ch) => write!(f, "   {ch}"),
         }
     }
 }
@@ -485,7 +485,7 @@ pub fn print_pair_value(value: &str, lead: usize) {
                     print!("\u{21aa} ")
                 }
                 // Print sub-string.
-                println!("{}", seg)
+                println!("{seg}")
             }
         }
     }
@@ -496,7 +496,7 @@ pub fn print_pair_value(value: &str, lead: usize) {
 
 /// Print a list header.
 pub fn print_header(title: &str) {
-    println!("| // {} //", title)
+    println!("| // {title} //")
 }
 
 /// Print a blank list line.
@@ -536,7 +536,7 @@ pub fn print_progress(ts: u64, dur: Option<u64>, tb: Option<TimeBase>) {
         let mins = (t.seconds % (60 * 60)) / 60;
         let secs = f64::from((t.seconds % 60) as u32) + t.frac;
 
-        write!(output, "\r\u{25b6}\u{fe0f}  {}:{:0>2}:{:0>4.1}", hours, mins, secs).unwrap();
+        write!(output, "\r\u{25b6}\u{fe0f}  {hours}:{mins:0>2}:{secs:0>4.1}").unwrap();
 
         if let Some(dur) = dur {
             let d = tb.calc_time(dur.saturating_sub(ts));
@@ -550,7 +550,7 @@ pub fn print_progress(ts: u64, dur: Option<u64>, tb: Option<TimeBase>) {
         }
     }
     else {
-        write!(output, "\r\u{25b6}\u{fe0f}  {}", ts).unwrap();
+        write!(output, "\r\u{25b6}\u{fe0f}  {ts}").unwrap();
     }
 
     // This extra space is a workaround for Konsole to correctly erase the previous line.
@@ -568,7 +568,7 @@ fn optimal_tag_key_pad(tags: &[Tag], min: usize, max: usize) -> usize {
 /// Pad a key.
 fn pad_key(key: &str, pad: usize) -> String {
     if key.len() <= pad {
-        format!("{:<pad$}", key)
+        format!("{key:<pad$}")
     }
     else {
         // Key length too large.
@@ -610,7 +610,7 @@ fn fmt_size(size: usize) -> String {
     // < 1 KiB
     if size < 1 << 10 {
         // Show in Bytes
-        format!("{} B", size)
+        format!("{size} B")
     }
     // < 1 MiB
     else if size < 1 << 20 {
@@ -639,7 +639,7 @@ fn fmt_time(time: Time) -> String {
     let mins = (time.seconds % (60 * 60)) / 60;
     let secs = f64::from((time.seconds % 60) as u32) + time.frac;
 
-    format!("{}:{:0>2}:{:0>6.3}", hours, mins, secs)
+    format!("{hours}:{mins:0>2}:{secs:0>6.3}")
 }
 
 struct FormattedTag<'a> {

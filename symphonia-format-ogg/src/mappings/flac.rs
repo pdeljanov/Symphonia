@@ -305,7 +305,7 @@ impl Mapper for FlacMapper {
         }
         else if packet_type == 0x00 || packet_type == 0x80 {
             // Packet types 0x00 and 0x80 are invalid.
-            warn!("ogg (flac): flac packet type {} unexpected", packet_type);
+            warn!("ogg (flac): flac packet type {packet_type} unexpected");
             Ok(MapResult::Unknown)
         }
         else {

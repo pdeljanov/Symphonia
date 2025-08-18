@@ -259,7 +259,7 @@ impl FormatReader for WavReader<'_> {
             }
         }
 
-        debug!("seeking to frame_ts={}", ts);
+        debug!("seeking to frame_ts={ts}");
 
         // WAVE is not internally packetized for PCM codecs. Packetization is simulated by trying to
         // read a constant number of samples or blocks every call to next_packet. Therefore, a

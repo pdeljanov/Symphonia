@@ -76,7 +76,7 @@ fn main() {
 
                 // Sum up the total number of samples.
                 total_sample_count += samples.len();
-                print!("\rDecoded {} samples", total_sample_count);
+                print!("\rDecoded {total_sample_count} samples");
             }
             Err(Error::DecodeError(_)) => (),
             Err(_) => break,

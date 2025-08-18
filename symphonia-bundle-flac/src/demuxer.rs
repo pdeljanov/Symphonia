@@ -155,7 +155,7 @@ impl<'s> FlacReader<'s> {
             let block_unread_len = block_stream.bytes_available();
 
             if block_unread_len > 0 {
-                info!("under read block by {} bytes.", block_unread_len);
+                info!("under read block by {block_unread_len} bytes.");
                 block_stream.ignore_bytes(block_unread_len)?;
             }
 
@@ -264,7 +264,7 @@ impl FormatReader for FlacReader<'_> {
             }
         };
 
-        debug!("seeking to frame_ts={}", ts);
+        debug!("seeking to frame_ts={ts}");
 
         // If the total number of frames in the stream is known, verify the desired frame timestamp
         // does not exceed it.

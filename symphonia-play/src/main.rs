@@ -292,7 +292,7 @@ fn decode_only(mut reader: Box<dyn FormatReader>, opts: DecodeOptions) -> Result
         // Decode the packet into audio samples.
         match decoder.decode(&packet) {
             Ok(_decoded) => continue,
-            Err(Error::DecodeError(err)) => warn!("decode error: {}", err),
+            Err(Error::DecodeError(err)) => warn!("decode error: {err}"),
             Err(err) => return Err(err),
         }
     }
@@ -357,7 +357,7 @@ fn play(mut reader: Box<dyn FormatReader>, opts: PlayOptions) -> Result<i32> {
             }
             Err(err) => {
                 // Don't give-up on a seek error.
-                warn!("seek error: {}", err);
+                warn!("seek error: {err}");
                 0
             }
         }
@@ -483,7 +483,7 @@ fn play_track(
             Err(Error::DecodeError(err)) => {
                 // Decode errors are not fatal. Print the error message and try to decode the next
                 // packet as usual.
-                warn!("decode error: {}", err);
+                warn!("decode error: {err}");
             }
             Err(err) => return Err(err),
         }
@@ -542,10 +542,10 @@ fn dump_visual(visual: &Visual, file_name: &OsStr, index: usize) {
     };
 
     let mut out_file_name = OsString::from(file_name);
-    out_file_name.push(format!("-{:0>2}{}", index, extension));
+    out_file_name.push(format!("-{index:0>2}{extension}"));
 
     if let Err(err) = File::create(out_file_name).and_then(|mut file| file.write_all(&visual.data))
     {
-        warn!("failed to dump visual due to error {}", err);
+        warn!("failed to dump visual due to error {err}");
     }
 }

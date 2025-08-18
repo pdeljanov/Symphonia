@@ -260,7 +260,7 @@ impl FormatReader for MpaReader<'_> {
             return seek_error(SeekErrorKind::ForwardOnly);
         }
 
-        debug!("seeking to ts={} (+{} delay = {})", desired_ts, delay, required_ts);
+        debug!("seeking to ts={desired_ts} (+{delay} delay = {required_ts})");
 
         // Step 1
         //

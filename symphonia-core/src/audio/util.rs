@@ -104,8 +104,8 @@ where
     };
 
     // Validate the sub-range indicies form a valid range and do not exceed the bounding range.
-    assert!(start <= end, "audio buffer slice index start {} is beyond end {}", start, end);
-    assert!(end <= len, "audio buffer slice end {} index is out of range {}", end, len);
+    assert!(start <= end, "audio buffer slice index start {start} is beyond end {end}");
+    assert!(end <= len, "audio buffer slice end {end} index is out of range {len}");
 
     // Compute the absolute start index of the sub-range in the bounding range.
     let start = start.checked_add(bound.start).unwrap_or_else(panic_start_index_overflow);

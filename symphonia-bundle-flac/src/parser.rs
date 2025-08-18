@@ -451,8 +451,7 @@ impl PacketParser {
                         if num_frames < num_total_frames {
                             // Demuxed less frames than expected.
                             warn!(
-                                "expected {} frames but only read {} before end of stream",
-                                num_total_frames, num_frames
+                                "expected {num_total_frames} frames but only read {num_frames} before end of stream"
                             );
                             return Err(Error::IoError(err));
                         }
