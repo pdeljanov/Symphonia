@@ -5,7 +5,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use std::num::NonZero;
+use std::num::NonZeroU64;
 
 use symphonia_core::errors::{decode_error, Result};
 use symphonia_core::io::ReadBytes;
@@ -438,7 +438,7 @@ pub struct AtomHeader {
     /// The position of the atom.
     atom_pos: u64,
     /// The total size of the atom including all headers.
-    atom_len: Option<NonZero<u64>>,
+    atom_len: Option<NonZeroU64>,
 }
 
 impl AtomHeader {
@@ -468,7 +468,7 @@ impl AtomHeader {
                     return decode_error("isomp4: atom size is invalid");
                 }
 
-                (AtomHeader::LARGE_HEADER_SIZE, NonZero::new(large_atom_len))
+                (AtomHeader::LARGE_HEADER_SIZE, NonZeroU64::new(large_atom_len))
             }
             _ => {
                 // The atom size should be atleast the size of the header.
@@ -476,7 +476,7 @@ impl AtomHeader {
                     return decode_error("isomp4: atom size is invalid");
                 }
 
-                (AtomHeader::HEADER_SIZE, NonZero::new(atom_len))
+                (AtomHeader::HEADER_SIZE, NonZeroU64::new(atom_len))
             }
         };
 
@@ -494,7 +494,7 @@ impl AtomHeader {
     }
 
     /// If known, get the total atom size.
-    pub fn atom_len(&self) -> Option<NonZero<u64>> {
+    pub fn atom_len(&self) -> Option<NonZeroU64> {
         self.atom_len
     }
 

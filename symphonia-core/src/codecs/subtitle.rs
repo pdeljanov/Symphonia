@@ -116,14 +116,14 @@ pub trait SubtitleDecoder: Send + Sync {
     /// discarded. Decoding may be continued with the next packet.
     ///
     /// Implementors of decoders *must* `clear` the last decoded subtitle if an error occurs.
-    fn decode(&mut self, packet: &Packet) -> Result<GenericSubtitleBufferRef>;
+    fn decode(&mut self, packet: &Packet) -> Result<GenericSubtitleBufferRef<'_>>;
 
     /// Allows read access to the internal audio buffer.
     ///
     /// After a successful call to `decode`, this will contain the audio content of the last decoded
     /// `Packet`. If the last call to `decode` resulted in an error, then implementors *must* ensure
     /// the returned audio buffer has zero length.
-    fn last_decoded(&self) -> GenericSubtitleBufferRef;
+    fn last_decoded(&self) -> GenericSubtitleBufferRef<'_>;
 }
 
 /// IDs for well-known subtitle codecs.

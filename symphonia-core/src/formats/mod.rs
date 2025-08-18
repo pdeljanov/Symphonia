@@ -580,7 +580,7 @@ impl Packet {
     }
 
     /// Get a `BufStream` to read the packet data buffer sequentially.
-    pub fn as_buf_reader(&self) -> BufReader {
+    pub fn as_buf_reader(&self) -> BufReader<'_> {
         BufReader::new(&self.data)
     }
 }
