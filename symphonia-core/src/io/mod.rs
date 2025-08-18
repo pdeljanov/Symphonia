@@ -136,7 +136,7 @@ impl<R: io::Read> io::Read for ReadOnlySource<R> {
 
 impl<R: io::Read> io::Seek for ReadOnlySource<R> {
     fn seek(&mut self, _: io::SeekFrom) -> io::Result<u64> {
-        Err(io::Error::new(io::ErrorKind::Other, "source does not support seeking"))
+        Err(io::Error::other("source does not support seeking"))
     }
 }
 
