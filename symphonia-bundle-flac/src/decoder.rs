@@ -18,7 +18,7 @@ use symphonia_core::codecs::audio::{AudioCodecParameters, AudioDecoderOptions};
 use symphonia_core::codecs::audio::{AudioDecoder, FinalizeResult, VerificationCheck};
 use symphonia_core::codecs::registry::{RegisterableAudioDecoder, SupportedAudioCodec};
 use symphonia_core::codecs::CodecInfo;
-use symphonia_core::errors::{decode_error, unsupported_error, Result};
+use symphonia_core::errors::{decode_error, unsupported_error, Error, Result};
 use symphonia_core::formats::Packet;
 use symphonia_core::io::{BitReaderLtr, BufReader, ReadBitsLtr};
 use symphonia_core::support_audio_codec;
@@ -175,13 +175,22 @@ impl FlacDecoder {
             match header.channel_assignment {
                 ChannelAssignment::Independant(channels) => {
                     for i in 0..channels as usize {
-                        read_subframe(&mut bs, bits_per_sample, self.buf.plane_mut(i).unwrap())?;
+                        read_subframe(
+                            &mut bs,
+                            bits_per_sample,
+                            self.buf
+                                .plane_mut(i)
+                                .ok_or(Error::DecodeError("flac: unexpected channel assignment"))?,
+                        )?;
                     }
                 }
                 // For Left/Side, Mid/Side, and Right/Side channel configurations, the Side
                 // (Difference) channel requires an extra bit per sample.
                 ChannelAssignment::LeftSide => {
-                    let (left, side) = self.buf.plane_pair_mut(0, 1).unwrap();
+                    let (left, side) = self
+                        .buf
+                        .plane_pair_mut(0, 1)
+                        .ok_or(Error::DecodeError("flac: unexpected channel assignment"))?;
 
                     read_subframe(&mut bs, bits_per_sample, left)?;
                     read_subframe(&mut bs, bits_per_sample + 1, side)?;
@@ -189,7 +198,10 @@ impl FlacDecoder {
                     decorrelate_left_side(left, side);
                 }
                 ChannelAssignment::MidSide => {
-                    let (mid, side) = self.buf.plane_pair_mut(0, 1).unwrap();
+                    let (mid, side) = self
+                        .buf
+                        .plane_pair_mut(0, 1)
+                        .ok_or(Error::DecodeError("flac: unexpected channel assignment"))?;
 
                     read_subframe(&mut bs, bits_per_sample, mid)?;
                     read_subframe(&mut bs, bits_per_sample + 1, side)?;
@@ -197,7 +209,10 @@ impl FlacDecoder {
                     decorrelate_mid_side(mid, side);
                 }
                 ChannelAssignment::RightSide => {
-                    let (side, right) = self.buf.plane_pair_mut(0, 1).unwrap();
+                    let (side, right) = self
+                        .buf
+                        .plane_pair_mut(0, 1)
+                        .ok_or(Error::DecodeError("flac: unexpected channel assignment"))?;
 
                     read_subframe(&mut bs, bits_per_sample + 1, side)?;
                     read_subframe(&mut bs, bits_per_sample, right)?;
