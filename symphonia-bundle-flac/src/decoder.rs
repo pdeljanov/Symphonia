@@ -180,7 +180,7 @@ impl FlacDecoder {
                             bits_per_sample,
                             self.buf
                                 .plane_mut(i)
-                                .ok_or(Error::DecodeError("invalid plane data"))?,
+                                .ok_or(Error::DecodeError("flac: unexpected channel assignment"))?,
                         )?;
                     }
                 }
@@ -190,7 +190,7 @@ impl FlacDecoder {
                     let (left, side) = self
                         .buf
                         .plane_pair_mut(0, 1)
-                        .ok_or(Error::DecodeError("invalid plane data"))?;
+                        .ok_or(Error::DecodeError("flac: unexpected channel assignment"))?;
 
                     read_subframe(&mut bs, bits_per_sample, left)?;
                     read_subframe(&mut bs, bits_per_sample + 1, side)?;
@@ -201,7 +201,7 @@ impl FlacDecoder {
                     let (mid, side) = self
                         .buf
                         .plane_pair_mut(0, 1)
-                        .ok_or(Error::DecodeError("invalid plane data"))?;
+                        .ok_or(Error::DecodeError("flac: unexpected channel assignment"))?;
 
                     read_subframe(&mut bs, bits_per_sample, mid)?;
                     read_subframe(&mut bs, bits_per_sample + 1, side)?;
@@ -212,7 +212,7 @@ impl FlacDecoder {
                     let (side, right) = self
                         .buf
                         .plane_pair_mut(0, 1)
-                        .ok_or(Error::DecodeError("invalid plane data"))?;
+                        .ok_or(Error::DecodeError("flac: unexpected channel assignment"))?;
 
                     read_subframe(&mut bs, bits_per_sample + 1, side)?;
                     read_subframe(&mut bs, bits_per_sample, right)?;
