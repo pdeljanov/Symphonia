@@ -30,11 +30,11 @@ use symphonia_core::errors::{unsupported_error, Result};
 use symphonia_core::formats::Packet;
 use symphonia_core::io::ReadBytes;
 
-mod codec_ima_wav;
 mod codec_ima_qt;
+mod codec_ima_wav;
 mod codec_ms;
-mod common_ima;
 mod common;
+mod common_ima;
 
 fn is_supported_adpcm_codec(codec_id: AudioCodecId) -> bool {
     matches!(codec_id, CODEC_ID_ADPCM_MS | CODEC_ID_ADPCM_IMA_WAV | CODEC_ID_ADPCM_IMA_QT)

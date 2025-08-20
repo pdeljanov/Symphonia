@@ -45,8 +45,7 @@ pub(crate) fn decode_stereo<B: ReadBytes>(
     frames_per_block: usize,
 ) -> Result<()> {
     let data_bytes_per_channel = frames_per_block - 1;
-    let mut status =
-        [read_preamble(stream)?, read_preamble(stream)?];
+    let mut status = [read_preamble(stream)?, read_preamble(stream)?];
     buffers[0][0] = from_i16_shift!(status[0].predictor);
     buffers[1][0] = from_i16_shift!(status[1].predictor);
     for index in 0..data_bytes_per_channel {
