@@ -11,7 +11,7 @@ rust-version = "1.77"
 publish = false
 
 [dependencies]
-clap = "3.1.0"
+clap = "3.2.25"
 log = { version = "0.4", features = ["release_max_level_info"] }
 pretty_env_logger = "0.4"
 symphonia = { version = "0.5.4", path = "../symphonia", features = ["all", "opt-simd"] }
