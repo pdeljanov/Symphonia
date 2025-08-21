@@ -103,7 +103,7 @@ pub struct SeekedTo {
 }
 
 /// `SeekMode` selects the precision of a seek.
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum SeekMode {
     /// Coarse seek mode is a best-effort attempt to seek to the requested position. The actual
     /// position seeked to may be before or after the requested position. Coarse seeking is an
