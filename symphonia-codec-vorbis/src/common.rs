@@ -20,7 +20,7 @@ pub struct BitSetIterator<'a> {
     count: usize,
 }
 
-impl<'a> Iterator for BitSetIterator<'a> {
+impl Iterator for BitSetIterator<'_> {
     type Item = usize;
 
     fn next(&mut self) -> Option<Self::Item> {

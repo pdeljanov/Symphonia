@@ -93,7 +93,7 @@ impl<'a> BufReader<'a> {
     }
 }
 
-impl<'a> ReadBytes for BufReader<'a> {
+impl ReadBytes for BufReader<'_> {
     #[inline(always)]
     fn read_byte(&mut self) -> io::Result<u8> {
         if self.buf.len() - self.pos < 1 {
@@ -191,7 +191,7 @@ impl<'a> ReadBytes for BufReader<'a> {
     }
 }
 
-impl<'a> FiniteStream for BufReader<'a> {
+impl FiniteStream for BufReader<'_> {
     #[inline(always)]
     fn byte_len(&self) -> u64 {
         self.buf.len() as u64
