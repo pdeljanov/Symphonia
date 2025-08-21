@@ -27,6 +27,7 @@ fn parse_language(code: u16) -> String {
 }
 
 /// Media header atom.
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct MdhdAtom {
     /// Atom header.

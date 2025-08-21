@@ -11,6 +11,7 @@ use symphonia_core::io::ReadBytes;
 use crate::atoms::{Atom, AtomHeader};
 
 /// Movie fragment header atom.
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct MfhdAtom {
     /// Atom header.

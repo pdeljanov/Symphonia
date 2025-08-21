@@ -38,6 +38,7 @@ fn read_descriptor_header<B: ReadBytes>(reader: &mut B) -> Result<(u8, u32)> {
     Ok((tag, size))
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct EsdsAtom {
     /// Atom header.

@@ -20,6 +20,7 @@ pub struct StscEntry {
 }
 
 /// Sample to Chunk Atom
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct StscAtom {
     /// Atom header.

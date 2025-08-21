@@ -12,6 +12,7 @@ use crate::atoms::{Atom, AtomHeader};
 use crate::fp::FpU8;
 
 /// Movie header atom.
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct MvhdAtom {
     /// Atom header.

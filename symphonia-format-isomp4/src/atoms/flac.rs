@@ -13,6 +13,7 @@ use symphonia_utils_xiph::flac::metadata::{MetadataBlockHeader, MetadataBlockTyp
 
 use crate::atoms::{Atom, AtomHeader};
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct FlacAtom {
     /// Atom header.

@@ -17,6 +17,7 @@ pub struct SampleDurationEntry {
 }
 
 /// Time-to-sample atom.
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct SttsAtom {
     /// Atom header.
