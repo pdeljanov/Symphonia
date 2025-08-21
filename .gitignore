@@ -6,6 +6,9 @@ Cargo.lock
 # Ghostwriter
 *.md.backup
 
+# JetBrains
+.idea
+
 # Visual Studio Code
 *.code-workspace
 .vscode
