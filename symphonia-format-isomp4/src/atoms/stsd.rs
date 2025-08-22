@@ -307,6 +307,8 @@ fn read_audio_sample_entry<B: ReadBytes>(
     reader.ignore_bytes(6)?;
 
     entry.num_channels = u32::from(reader.read_be_u16()?);
+    entry.channels = Some(Channels::Discrete(entry.num_channels as u16)); // Probably good idea to have some sort of "default"
+
     entry.sample_size = reader.read_be_u16()?;
 
     // Skip compression ID and packet size.
