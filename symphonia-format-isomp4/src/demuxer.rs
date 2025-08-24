@@ -8,7 +8,9 @@
 use symphonia_core::{errors::end_of_stream_error, support_format};
 
 use symphonia_core::codecs::CodecParameters;
-use symphonia_core::errors::{decode_error, seek_error, unsupported_error, Result, SeekErrorKind};
+use symphonia_core::errors::{
+    decode_error, seek_error, unsupported_error, Error, Result, SeekErrorKind,
+};
 use symphonia_core::formats::prelude::*;
 use symphonia_core::io::{MediaSource, MediaSourceStream, ReadBytes, SeekBuffered};
 use symphonia_core::meta::{Metadata, MetadataLog};
@@ -335,7 +337,7 @@ impl FormatReader for IsoMp4Reader {
         // Get the total length of the stream, if possible.
         let total_len = if is_seekable {
             let pos = mss.pos();
-            let len = mss.seek(SeekFrom::End(0))?;
+            let len = mss.byte_len().ok_or(Error::SeekError(SeekErrorKind::Unseekable))?;
             mss.seek(SeekFrom::Start(pos))?;
             info!("stream is seekable with len={} bytes.", len);
             Some(len)
