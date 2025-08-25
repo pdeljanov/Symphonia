@@ -46,6 +46,11 @@ impl Atom for MdhdAtom {
     fn read<B: ReadBytes>(reader: &mut B, mut header: AtomHeader) -> Result<Self> {
         let (version, _) = header.read_extended_header(reader)?;
 
+        let expected_len = if version == 0 { 20 } else { 32 };
+        if header.data_len() != Some(expected_len) {
+            return decode_error("isomp4 (mdhd): atom size is not 32 or 44 bytes");
+        }
+
         let mut mdhd =
             MdhdAtom { ctime: 0, mtime: 0, timescale: 0, duration: 0, language: String::new() };
 
@@ -67,7 +72,7 @@ impl Atom for MdhdAtom {
                 mdhd.duration = reader.read_be_u64()?;
             }
             _ => {
-                return decode_error("isomp4: invalid mdhd version");
+                return decode_error("isomp4 (mdhd): invalid version");
             }
         }
 

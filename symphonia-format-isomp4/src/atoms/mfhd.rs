@@ -5,7 +5,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::errors::Result;
+use symphonia_core::errors::{decode_error, Result};
 use symphonia_core::io::ReadBytes;
 
 use crate::atoms::{Atom, AtomHeader};
@@ -21,6 +21,10 @@ pub struct MfhdAtom {
 impl Atom for MfhdAtom {
     fn read<B: ReadBytes>(reader: &mut B, mut header: AtomHeader) -> Result<Self> {
         let (_, _) = header.read_extended_header(reader)?;
+
+        if header.data_len() != Some(4) {
+            return decode_error("isomp4 (mfhd): atom size is not 16 bytes");
+        }
 
         let sequence_number = reader.read_be_u32()?;
 

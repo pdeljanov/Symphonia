@@ -32,9 +32,20 @@ impl Atom for ElstAtom {
     fn read<B: ReadBytes>(reader: &mut B, mut header: AtomHeader) -> Result<Self> {
         let (version, _) = header.read_extended_header(reader)?;
 
-        // TODO: Apply a limit.
-        let entry_count = reader.read_be_u32()?;
+        // minimum data size is 4 bytes
+        let len = match header.data_len() {
+            Some(len) if len >= 4 => len as u32,
+            Some(_) => return decode_error("isomp4 (elst): atom size is less than 16 bytes"),
+            None => return decode_error("isomp4 (elst): expected atom size to be known"),
+        };
 
+        let entry_count = reader.read_be_u32()?;
+        let entry_len = if version == 0 { 12 } else { 20 };
+        if entry_count != (len - 4) / entry_len {
+            return decode_error("isomp4 (elst): invalid entry count");
+        }
+
+        // TODO: Apply a limit.
         let mut entries = Vec::new();
 
         for _ in 0..entry_count {
@@ -47,7 +58,7 @@ impl Atom for ElstAtom {
                     reader.read_be_u64()?,
                     bits::sign_extend_leq64_to_i64(reader.read_be_u64()?, 64),
                 ),
-                _ => return decode_error("isomp4: invalid tkhd version"),
+                _ => return decode_error("isomp4 (elst): invalid version"),
             };
 
             let media_rate_int = bits::sign_extend_leq16_to_i16(reader.read_be_u16()?, 16);

@@ -5,7 +5,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::errors::Result;
+use symphonia_core::errors::{decode_error, Result};
 use symphonia_core::io::ReadBytes;
 
 use crate::atoms::{Atom, AtomHeader};
@@ -21,7 +21,17 @@ impl Atom for StcoAtom {
     fn read<B: ReadBytes>(reader: &mut B, mut header: AtomHeader) -> Result<Self> {
         let (_, _) = header.read_extended_header(reader)?;
 
+        // minimum data size is 4 bytes
+        let len = match header.data_len() {
+            Some(len) if len >= 4 => len as u32,
+            Some(_) => return decode_error("isomp4 (stco): atom size is less than 16 bytes"),
+            None => return decode_error("isomp4 (stco): expected atom size to be known"),
+        };
+
         let entry_count = reader.read_be_u32()?;
+        if entry_count != (len - 4) / 4 {
+            return decode_error("isomp4 (stco): invalid entry count");
+        }
 
         // TODO: Apply a limit.
         let mut chunk_offsets = Vec::with_capacity(entry_count as usize);

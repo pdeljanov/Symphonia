@@ -5,10 +5,10 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::errors::Result;
+use symphonia_core::errors::{decode_error, Result};
 use symphonia_core::io::ReadBytes;
 
-use crate::atoms::{Atom, AtomHeader};
+use crate::atoms::{Atom, AtomHeader, MAX_ATOM_SIZE};
 
 /// Track fragment header atom.
 #[allow(dead_code)]
@@ -30,6 +30,12 @@ pub struct TfhdAtom {
 impl Atom for TfhdAtom {
     fn read<B: ReadBytes>(reader: &mut B, mut header: AtomHeader) -> Result<Self> {
         let (_, flags) = header.read_extended_header(reader)?;
+
+        match header.data_len() {
+            Some(len) if len >= 4 && len <= MAX_ATOM_SIZE => len as usize,
+            Some(_) => return decode_error("isomp4 (tfhd): atom size is greater than 1kb"),
+            None => return decode_error("isomp4 (tfhd): expected atom size to be known"),
+        };
 
         let track_id = reader.read_be_u32()?;
 

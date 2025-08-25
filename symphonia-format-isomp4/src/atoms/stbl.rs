@@ -69,30 +69,33 @@ impl Atom for StblAtom {
         }
 
         if stsd.is_none() {
-            return decode_error("isomp4: missing stsd atom");
+            return decode_error("isomp4 (stbl): missing stsd atom");
         }
 
         if stts.is_none() {
-            return decode_error("isomp4: missing stts atom");
+            return decode_error("isomp4 (stbl): missing stts atom");
         }
 
         if stsc.is_none() {
-            return decode_error("isomp4: missing stsc atom");
+            return decode_error("isomp4 (stbl): missing stsc atom");
         }
 
         if stsz.is_none() {
-            return decode_error("isomp4: missing stsz atom");
+            return decode_error("isomp4 (stbl): missing stsz atom");
         }
 
         if stco.is_none() && co64.is_none() {
             // This is a spec. violation, but some m4a files appear to lack these atoms.
-            warn!("missing stco or co64 atom");
+            warn!("isomp4 (stbl): missing stco or co64 atom");
         }
+
+        let mut stsc = stsc.unwrap();
+        stsc.post_processing(&stco, &co64)?;
 
         Ok(StblAtom {
             stsd: stsd.unwrap(),
             stts: stts.unwrap(),
-            stsc: stsc.unwrap(),
+            stsc,
             stsz: stsz.unwrap(),
             stco,
             co64,
