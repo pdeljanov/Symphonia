@@ -12,6 +12,9 @@ keywords = ["audio", "codec", "decoder", "aac", "m4a"]
 edition = "2021"
 rust-version = "1.77"
 
+[lints]
+workspace = true
+
 [dependencies]
 log = "0.4"
 lazy_static = "1.4.0"

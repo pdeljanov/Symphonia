@@ -12,6 +12,9 @@ keywords = ["audio", "codec", "decoder", "multimedia", "media"]
 edition = "2021"
 rust-version = "1.77"
 
+[lints]
+workspace = true
+
 [features]
 default = []
 
@@ -21,11 +24,7 @@ opt-simd-avx = ["rustfft/avx"]
 opt-simd-neon = ["rustfft/neon"]
 
 # Enable all SIMD support.
-opt-simd = [
-    "opt-simd-sse",
-    "opt-simd-avx",
-    "opt-simd-neon",
-]
+opt-simd = ["opt-simd-sse", "opt-simd-avx", "opt-simd-neon"]
 
 [dependencies]
 bitflags = "2.4.2"
