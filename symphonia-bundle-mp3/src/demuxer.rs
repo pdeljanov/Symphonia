@@ -101,6 +101,7 @@ impl FormatReader for MpaReader {
 
         params
             .for_codec(header.codec())
+            .with_average_bitrate(header.bitrate)
             .with_sample_rate(header.sample_rate)
             .with_time_base(TimeBase::new(1, header.sample_rate))
             .with_channels(header.channel_mode.channels());
