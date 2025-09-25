@@ -5,9 +5,10 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+use symphonia_common::apple::audio::alac::MagicCookie;
 use symphonia_core::codecs::audio::well_known::CODEC_ID_ALAC;
 use symphonia_core::errors::{decode_error, unsupported_error, Result};
-use symphonia_core::io::ReadBytes;
+use symphonia_core::io::{BufReader, ReadBytes};
 
 use crate::atoms::stsd::AudioSampleEntry;
 use crate::atoms::{Atom, AtomHeader};
@@ -17,6 +18,7 @@ use crate::atoms::{Atom, AtomHeader};
 pub struct AlacAtom {
     /// ALAC extra data (magic cookie).
     extra_data: Box<[u8]>,
+    magic_cookie: MagicCookie,
 }
 
 impl Atom for AlacAtom {
@@ -40,14 +42,18 @@ impl Atom for AlacAtom {
 
         // Read the magic cookie.
         let extra_data = reader.read_boxed_slice_exact(magic_len)?;
+        let magic_cookie = MagicCookie::try_read(&mut BufReader::new(&extra_data))?;
 
-        Ok(AlacAtom { extra_data })
+        Ok(AlacAtom { extra_data, magic_cookie })
     }
 }
 
 impl AlacAtom {
     pub fn fill_audio_sample_entry(&self, entry: &mut AudioSampleEntry) {
         entry.codec_id = CODEC_ID_ALAC;
+        entry.sample_rate = self.magic_cookie.sample_rate as f64;
+        entry.bits_per_sample = Some(self.magic_cookie.bit_depth as u32);
+        entry.channels = Some(self.magic_cookie.channels.clone());
         entry.extra_data = Some(self.extra_data.clone());
     }
 }
