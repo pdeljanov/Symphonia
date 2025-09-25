@@ -392,19 +392,25 @@ pub mod util {
             let seek_point = SeekPoint::new(ts, byte_offset, n_frames);
 
             // Get the timestamp of the last entry in the index.
-            let last_ts = self.points.last().map_or(u64::MAX, |p| p.frame_ts);
+            let (last_ts, last_offset) =
+                self.points.last().map_or((u64::MAX, u64::MAX), |p| (p.frame_ts, p.byte_offset));
 
-            // If the seek point has a timestamp greater-than the last entry in the index, then
-            // simply append it to the index.
-            if ts > last_ts {
+            // If the seek point has a timestamp greater-than and byte offset greater-than or equal to
+            // the last entry in the index, then simply append it to the index.
+            if ts > last_ts && byte_offset >= last_offset {
                 self.points.push(seek_point)
             }
             else if ts < last_ts {
                 // If the seek point has a timestamp less-than the last entry in the index, then the
                 // insertion point must be found. This case should rarely occur.
-                let i = self.points.partition_point(|p| ts > p.frame_ts);
+                let i = self
+                    .points
+                    .partition_point(|p| ts > p.frame_ts && byte_offset >= p.byte_offset);
 
-                self.points.insert(i, seek_point);
+                // Insert if the point found or if the points are empty
+                if i < self.points.len() || i == 0 {
+                    self.points.insert(i, seek_point);
+                }
             }
         }
 
