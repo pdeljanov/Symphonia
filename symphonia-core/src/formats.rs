@@ -402,12 +402,7 @@ pub mod util {
             else if ts < last_ts {
                 // If the seek point has a timestamp less-than the last entry in the index, then the
                 // insertion point must be found. This case should rarely occur.
-
-                // TODO: Use when Rust 1.52 is stable.
-                // let i = self.points.partition_point(|p| p.frame_ts < ts);
-
-                let i =
-                    self.points.iter().position(|p| p.frame_ts > ts).unwrap_or(self.points.len());
+                let i = self.points.partition_point(|p| ts > p.frame_ts);
 
                 self.points.insert(i, seek_point);
             }
