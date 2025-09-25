@@ -16,6 +16,7 @@ use symphonia_common::mpeg::video::{
 };
 use symphonia_common::xiph::audio::flac::{MetadataBlockHeader, MetadataBlockType};
 use symphonia_core::audio::sample::SampleFormat;
+use symphonia_core::audio::Channels;
 use symphonia_core::codecs::audio::well_known::{CODEC_ID_FLAC, CODEC_ID_VORBIS};
 use symphonia_core::codecs::audio::AudioCodecParameters;
 use symphonia_core::codecs::audio::{well_known::*, AudioCodecId};
@@ -66,6 +67,7 @@ fn make_audio_codec_params(
     }
 
     codec_params.with_sample_rate(audio.sampling_frequency.round() as u32);
+    codec_params.with_channels(Channels::Discrete(audio.channels.get() as u16));
 
     let format = audio.bit_depth.and_then(|bits| match bits.get() {
         8 => Some(SampleFormat::S8),
