@@ -18,7 +18,9 @@ use symphonia_core::errors::{decode_error, Result};
 use symphonia_core::formats::Track;
 use symphonia_core::io::{BufReader, MonitorStream, ReadBytes};
 use symphonia_core::meta::MetadataBuilder;
-use symphonia_metadata::embedded::flac::{read_flac_comment_block, read_flac_picture_block};
+use symphonia_metadata::embedded::flac::{
+    read_flac_comment_block, read_flac_picture_block, FLAC_METADATA_INFO,
+};
 
 use log::warn;
 
@@ -316,20 +318,20 @@ impl Mapper for FlacMapper {
 
             match header.block_type {
                 MetadataBlockType::VorbisComment => {
-                    let mut builder = MetadataBuilder::new();
+                    let mut builder = MetadataBuilder::new(FLAC_METADATA_INFO);
 
                     read_flac_comment_block(&mut reader, &mut builder)?;
 
-                    let rev = builder.metadata();
+                    let rev = builder.build();
 
                     Ok(MapResult::SideData { data: SideData::Metadata { rev, side_data: vec![] } })
                 }
                 MetadataBlockType::Picture => {
-                    let mut builder = MetadataBuilder::new();
+                    let mut builder = MetadataBuilder::new(FLAC_METADATA_INFO);
 
                     builder.add_visual(read_flac_picture_block(&mut reader)?);
 
-                    let rev = builder.metadata();
+                    let rev = builder.build();
 
                     Ok(MapResult::SideData { data: SideData::Metadata { rev, side_data: vec![] } })
                 }

@@ -29,6 +29,8 @@ use crate::common::{
 
 use log::info;
 
+use super::WAVE_METADATA_INFO;
+
 pub struct WaveFormatChunk {
     /// The number of channels.
     pub n_channels: u16,
@@ -618,9 +620,9 @@ pub fn append_fact_params(track: &mut Track, fact: &FactChunk) {
 }
 
 pub fn read_info_chunk(source: &mut MediaSourceStream<'_>, len: u32) -> Result<MetadataRevision> {
-    let mut list = ChunksReader::<RiffInfoListChunks>::new(Some(len), ByteOrder::LittleEndian);
+    let mut builder = MetadataBuilder::new(WAVE_METADATA_INFO);
 
-    let mut builder = MetadataBuilder::new();
+    let mut list = ChunksReader::<RiffInfoListChunks>::new(Some(len), ByteOrder::LittleEndian);
 
     while let Some(RiffInfoListChunks::Info(info)) = list.next(source)? {
         let info = info.parse(source)?;
@@ -630,7 +632,7 @@ pub fn read_info_chunk(source: &mut MediaSourceStream<'_>, len: u32) -> Result<M
 
     list.finish(source)?;
 
-    Ok(builder.metadata())
+    Ok(builder.build())
 }
 
 /// Corrects a WAVE channel mask that doesn't is not valid for the stated number of channels.

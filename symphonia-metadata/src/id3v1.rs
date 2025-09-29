@@ -145,9 +145,9 @@ impl MetadataReader for Id3v1Reader<'_> {
     }
 
     fn read_all(&mut self) -> Result<MetadataBuffer> {
-        let mut builder = MetadataBuilder::new();
+        let mut builder = MetadataBuilder::new(ID3V1_METADATA_INFO);
         read_id3v1(&mut self.reader, &mut builder)?;
-        Ok(MetadataBuffer { revision: builder.metadata(), side_data: Vec::new() })
+        Ok(MetadataBuffer { revision: builder.build(), side_data: Vec::new() })
     }
 
     fn into_inner<'s>(self: Box<Self>) -> MediaSourceStream<'s>

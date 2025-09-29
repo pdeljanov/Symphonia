@@ -15,9 +15,10 @@ use log::warn;
 
 use symphonia_core::errors::{decode_error, Error, Result};
 use symphonia_core::io::{BufReader, ReadBytes};
+use symphonia_core::meta::well_known::METADATA_ID_VORBIS_COMMENT;
 use symphonia_core::meta::{
-    Chapter, ChapterGroup, ChapterGroupItem, MetadataBuilder, MetadataSideData, RawTag,
-    StandardTag, Tag, Visual,
+    Chapter, ChapterGroup, ChapterGroupItem, MetadataBuilder, MetadataInfo, MetadataSideData,
+    RawTag, StandardTag, Tag, Visual,
 };
 use symphonia_core::units::Time;
 use symphonia_core::util::text;
@@ -26,6 +27,12 @@ use crate::embedded::flac;
 use crate::utils::base64;
 use crate::utils::images::try_get_image_info;
 use crate::utils::std_tag::*;
+
+pub const VORBIS_COMMENT_METADATA_INFO: MetadataInfo = MetadataInfo {
+    metadata: METADATA_ID_VORBIS_COMMENT,
+    short_name: "vorbis",
+    long_name: "Vorbis Comment",
+};
 
 lazy_static! {
     static ref VORBIS_COMMENT_MAP: RawTagParserMap = {

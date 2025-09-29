@@ -17,7 +17,7 @@ use symphonia_core::codecs::audio::well_known::{
 };
 use symphonia_core::errors::{decode_error, unsupported_error, Result};
 use symphonia_core::io::ReadBytes;
-use symphonia_core::meta::{MetadataBuilder, MetadataRevision, StandardTag, Tag};
+use symphonia_core::meta::{MetadataRevision, StandardTag, Tag};
 use symphonia_core::util::text;
 use symphonia_metadata::embedded::riff;
 
@@ -411,10 +411,9 @@ pub struct Id3Chunk {
 
 impl ParseChunk for Id3Chunk {
     fn parse<B: ReadBytes>(reader: &mut B, _tag: [u8; 4], _len: u32) -> Result<Self> {
-        let mut builder = MetadataBuilder::new();
         let mut side_data = Vec::new();
-        riff::read_riff_id3_chunk(reader, &mut builder, &mut side_data)?;
-        Ok(Id3Chunk { metadata: builder.metadata() })
+        let metadata = riff::read_riff_id3_chunk(reader, &mut side_data)?;
+        Ok(Id3Chunk { metadata })
     }
 }
 

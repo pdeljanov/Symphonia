@@ -75,7 +75,7 @@ impl<'s> FlacReader<'s> {
 
     /// Reads all the metadata blocks, returning a fully populated `FlacReader`.
     fn init_with_metadata(mss: MediaSourceStream<'s>, opts: FormatOptions) -> Result<Self> {
-        let mut metadata_builder = MetadataBuilder::new();
+        let mut metadata_builder = MetadataBuilder::new(FLAC_METADATA_INFO);
 
         let mut reader = mss;
         let mut track = None;
@@ -174,7 +174,7 @@ impl<'s> FlacReader<'s> {
 
         // Commit any read metadata to the metadata log.
         let mut metadata = opts.external_data.metadata.unwrap_or_default();
-        metadata.push(metadata_builder.metadata());
+        metadata.push(metadata_builder.build());
 
         // Synchronize the packet parser to the first audio frame.
         let _ = parser.resync(&mut reader)?;

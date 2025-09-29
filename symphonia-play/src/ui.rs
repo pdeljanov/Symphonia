@@ -13,7 +13,7 @@ use lazy_static::lazy_static;
 use symphonia::core::codecs::{CodecInfo, CodecParameters, CodecProfile};
 use symphonia::core::formats::{Attachment, FormatReader, Track, TrackFlags};
 use symphonia::core::meta::{
-    Chapter, ChapterGroup, ChapterGroupItem, ColorMode, ColorModel, ContentAdvisory,
+    Chapter, ChapterGroup, ChapterGroupItem, ColorMode, ColorModel, ContentAdvisory, MetadataInfo,
     MetadataRevision, StandardTag, Tag, Visual,
 };
 use symphonia::core::units::{Time, TimeBase};
@@ -43,9 +43,8 @@ pub fn print_format(path: &Path, format: &mut Box<dyn FormatReader>) {
 
     // Consume all metadata revisions up-to and including the latest.
     loop {
-        if let Some(revision) = format.metadata().current() {
-            print_tags(revision.tags());
-            print_visuals(revision.visuals());
+        if let Some(rev) = format.metadata().current() {
+            print_meta_revision(rev);
         }
 
         if format.metadata().is_latest() {
@@ -62,8 +61,7 @@ pub fn print_format(path: &Path, format: &mut Box<dyn FormatReader>) {
 }
 
 pub fn print_update(rev: &MetadataRevision) {
-    print_tags(rev.tags());
-    print_visuals(rev.visuals());
+    print_meta_revision(rev);
     println!(":");
     println!();
 }
@@ -288,27 +286,43 @@ pub fn print_attachments(attachments: &[Attachment]) {
     }
 }
 
-pub fn print_tags(tags: &[Tag]) {
-    if !tags.is_empty() {
+pub fn print_meta_revision(rev: &MetadataRevision) {
+    if !rev.media.tags.is_empty() || !rev.per_track.is_empty() {
         print_blank();
-        print_header("Tags");
+        print_header(&format!("Tags (From {})", rev.info.long_name));
 
-        let mut idx = 1;
+        // Media tags.
+        print_tags(&rev.media.tags, 1);
 
-        // Find maximum tag key string length, then constrain it to reasonable limits.
-        let pad = optimal_tag_key_pad(tags, MIN_PAD, MAX_PAD);
-
-        // Print tags with a standard tag first, these are the most common tags.
-        for tag in tags.iter().filter(|tag| tag.has_std_tag()) {
-            print_tag(tag, Bullet::Num(idx), pad, 1);
-            idx += 1;
+        // Track-specific tags.
+        for track in &rev.per_track {
+            if !track.metadata.tags.is_empty() {
+                print_blank();
+                print_one(&format!("Track #{:#x} Tags:", track.track_id), Bullet::None, 0);
+                print_tags(&track.metadata.tags, 1);
+            }
         }
+    }
 
-        // Print the remaining tags with keys truncated to the optimal key length.
-        for tag in tags.iter().filter(|tag| !tag.has_std_tag()) {
-            print_tag(tag, Bullet::Num(idx), pad, 1);
-            idx += 1;
-        }
+    print_visuals(&rev.info, &rev.media.visuals);
+}
+
+pub fn print_tags(tags: &[Tag], depth: usize) {
+    let mut idx = 1;
+
+    // Find maximum tag key string length, then constrain it to reasonable limits.
+    let pad = optimal_tag_key_pad(tags, MIN_PAD, MAX_PAD);
+
+    // Print tags with a standard tag first, these are the most common tags.
+    for tag in tags.iter().filter(|tag| tag.has_std_tag()) {
+        print_tag(tag, Bullet::Num(idx), pad, depth);
+        idx += 1;
+    }
+
+    // Print the remaining tags with keys truncated to the optimal key length.
+    for tag in tags.iter().filter(|tag| !tag.has_std_tag()) {
+        print_tag(tag, Bullet::Num(idx), pad, depth);
+        idx += 1;
     }
 }
 
@@ -333,10 +347,10 @@ pub fn print_tag(tag: &Tag, bullet: Bullet, pad: usize, depth: usize) {
     }
 }
 
-pub fn print_visuals(visuals: &[Visual]) {
+pub fn print_visuals(info: &MetadataInfo, visuals: &[Visual]) {
     if !visuals.is_empty() {
         print_blank();
-        print_header("Visuals");
+        print_header(&format!("Visuals (From {})", info.long_name));
 
         for (idx, visual) in visuals.iter().enumerate() {
             if let Some(usage) = visual.usage {

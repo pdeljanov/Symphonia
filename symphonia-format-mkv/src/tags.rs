@@ -93,9 +93,9 @@ pub fn make_raw_tag(path: String, tag: SimpleTagElement, out: &mut Vec<RawTag>) 
         // language.
         sub_fields.push(RawTagSubField::new(TAG_LANGUAGE_BCP47, lang));
     }
-    else {
+    else if let Some(lang) = tag.lang {
         // ISO 639-2 language code.
-        sub_fields.push(RawTagSubField::new(TAG_LANGUAGE, tag.lang));
+        sub_fields.push(RawTagSubField::new(TAG_LANGUAGE, lang));
     }
 
     // The URL, EMAIL, ADDRESS, FAX, PHONE, INSTRUMENTS, and CHARACTER nested sub-tags are mapped as

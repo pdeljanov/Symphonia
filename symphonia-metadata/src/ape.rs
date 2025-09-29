@@ -354,7 +354,7 @@ impl MetadataReader for ApeReader<'_> {
     }
 
     fn read_all(&mut self) -> Result<MetadataBuffer> {
-        let mut builder = MetadataBuilder::new();
+        let mut builder = MetadataBuilder::new(*self.metadata_info());
 
         // Read the tag header. This may actually be the header OR the footer.
         let header = ApeHeader::read(&mut self.reader)?;
@@ -445,7 +445,7 @@ impl MetadataReader for ApeReader<'_> {
             return decode_error("ape: header and footer mismatch");
         }
 
-        Ok(MetadataBuffer { revision: builder.metadata(), side_data: Vec::new() })
+        Ok(MetadataBuffer { revision: builder.build(), side_data: Vec::new() })
     }
 
     fn into_inner<'s>(self: Box<Self>) -> MediaSourceStream<'s>

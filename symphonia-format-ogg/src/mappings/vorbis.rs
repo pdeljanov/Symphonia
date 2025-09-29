@@ -210,12 +210,12 @@ impl Mapper for VorbisMapper {
             // Handle each header packet type specifically.
             match packet_type {
                 VORBIS_PACKET_TYPE_COMMENT => {
-                    let mut builder = MetadataBuilder::new();
+                    let mut builder = MetadataBuilder::new(VORBIS_COMMENT_METADATA_INFO);
                     let mut side_data = Default::default();
 
                     read_vorbis_comment(&mut reader, &mut builder, &mut side_data)?;
 
-                    let rev = builder.metadata();
+                    let rev = builder.build();
 
                     Ok(MapResult::SideData { data: SideData::Metadata { rev, side_data } })
                 }

@@ -15,9 +15,10 @@ use symphonia_core::codecs::video::well_known::extra_data::{
 };
 use symphonia_core::codecs::video::VideoExtraData;
 use symphonia_core::formats::{Attachment, FileAttachment, TrackFlags};
+use symphonia_core::meta::well_known::METADATA_ID_MATROSKA;
 use symphonia_core::meta::{
-    Chapter, ChapterGroup, ChapterGroupItem, MetadataBuilder, MetadataRevision, RawTag,
-    RawTagSubField, RawValue, StandardTag, Tag,
+    Chapter, ChapterGroup, ChapterGroupItem, MetadataBuilder, MetadataInfo, MetadataRevision,
+    PerTrackMetadataBuilder, RawTag, RawTagSubField, RawValue, StandardTag, Tag,
 };
 use symphonia_core::units::Time;
 
@@ -25,6 +26,12 @@ use crate::ebml::{EbmlElement, EbmlElementHeader, EbmlError, EbmlIterator, ReadE
 use crate::schema::{MkvElement, MkvSchema};
 use crate::sub_fields::*;
 use crate::tags::{make_raw_tags, map_std_tag, TagContext, Target};
+
+const MKV_METADATA_INFO: MetadataInfo = MetadataInfo {
+    metadata: METADATA_ID_MATROSKA,
+    short_name: "mkv",
+    long_name: "Matroska / WebM",
+};
 
 // NOTES ON READING EBML ELEMENTS
 // ==============================
@@ -992,7 +999,7 @@ impl TagsElement {
             ctx.target = target.clone();
         }
 
-        let mut builder = MetadataBuilder::new();
+        let mut builder = MetadataBuilder::new(MKV_METADATA_INFO);
         let mut media_target = TagContext { is_video, target: None };
 
         let mut tracks: UidMap = Default::default();
@@ -1090,6 +1097,14 @@ impl TagsElement {
 
         // SAFETY: There needs to be sane limits (e.g., 1024 each category).
 
+        // Return track target tags.
+        for (uid, tags) in tracks {
+            let mut track_builder = PerTrackMetadataBuilder::new(uid);
+            for tag in tags.1 {
+                track_builder.add_tag(tag);
+            }
+            builder.add_track(track_builder.build());
+        }
         // Return edition target tags.
         for (uid, mut value) in editions {
             let tags = target_tags.entry(TargetUid::Edition(uid)).or_default();
@@ -1107,7 +1122,7 @@ impl TagsElement {
         }
 
         // Return media and track-level metadata.
-        builder.metadata()
+        builder.build()
     }
 }
 
@@ -1248,7 +1263,7 @@ pub(crate) struct SimpleTagElement {
     pub(crate) value: Option<RawValue>,
     #[allow(dead_code)]
     pub(crate) is_default: bool,
-    pub(crate) lang: String,
+    pub(crate) lang: Option<String>,
     pub(crate) lang_bcp47: Option<String>,
     pub(crate) sub_tags: Vec<SimpleTagElement>,
 }
@@ -1271,7 +1286,8 @@ impl EbmlElement<MkvSchema> for SimpleTagElement {
                     name = Some(it.read_string_no_default()?);
                 }
                 MkvElement::TagLanguage => {
-                    // Mandatory element. Schema-defined default is "und".
+                    // Mandatory element. Schema-defined default is "und", however, treat it as
+                    // optional.
                     lang = it.read_string()?;
                 }
                 MkvElement::TagString => {
@@ -1303,9 +1319,6 @@ impl EbmlElement<MkvSchema> for SimpleTagElement {
                 }
             }
         }
-
-        // Populate missing or empty mandatory elements with defaults.
-        let lang = lang.unwrap_or_else(|| "und".into());
 
         Ok(Self {
             name: name.ok_or(EbmlError::ElementError("mkv: missing tag name"))?.into_boxed_str(),

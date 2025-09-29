@@ -15,7 +15,8 @@ use symphonia_core::formats::prelude::*;
 use symphonia_core::formats::probe::{ProbeFormatData, ProbeableFormat, Score, Scoreable};
 use symphonia_core::formats::well_known::FORMAT_ID_WAVE;
 use symphonia_core::io::*;
-use symphonia_core::meta::{Metadata, MetadataLog};
+use symphonia_core::meta::well_known::METADATA_ID_WAVE;
+use symphonia_core::meta::{Metadata, MetadataInfo, MetadataLog};
 use symphonia_core::support_format;
 
 use log::{debug, error};
@@ -33,6 +34,12 @@ const WAVE_RIFF_FORM: [u8; 4] = *b"WAVE";
 
 const WAVE_FORMAT_INFO: FormatInfo = FormatInfo {
     format: FORMAT_ID_WAVE,
+    short_name: "wave",
+    long_name: "Waveform Audio File Format",
+};
+
+const WAVE_METADATA_INFO: MetadataInfo = MetadataInfo {
+    metadata: METADATA_ID_WAVE,
     short_name: "wave",
     long_name: "Waveform Audio File Format",
 };

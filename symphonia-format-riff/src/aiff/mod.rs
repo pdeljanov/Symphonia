@@ -17,7 +17,10 @@ use symphonia_core::formats::prelude::*;
 use symphonia_core::formats::probe::{ProbeFormatData, ProbeableFormat, Score, Scoreable};
 use symphonia_core::formats::well_known::FORMAT_ID_AIFF;
 use symphonia_core::io::*;
-use symphonia_core::meta::{Metadata, MetadataBuilder, MetadataLog, StandardTag, Tag};
+use symphonia_core::meta::well_known::METADATA_ID_AIFF;
+use symphonia_core::meta::{
+    Metadata, MetadataBuilder, MetadataInfo, MetadataLog, StandardTag, Tag,
+};
 use symphonia_core::support_format;
 
 use log::debug;
@@ -37,6 +40,12 @@ const AIFC_RIFF_FORM: [u8; 4] = *b"AIFC";
 
 const AIFF_FORMAT_INFO: FormatInfo = FormatInfo {
     format: FORMAT_ID_AIFF,
+    short_name: "aiff",
+    long_name: "Audio Interchange File Format",
+};
+
+const AIFF_METADATA_INFO: MetadataInfo = MetadataInfo {
+    metadata: METADATA_ID_AIFF,
     short_name: "aiff",
     long_name: "Audio Interchange File Format",
 };
@@ -94,7 +103,7 @@ impl<'s> AiffReader<'s> {
         let is_seekable = mss.is_seekable();
 
         let mut attachments = Vec::new();
-        let mut builder = MetadataBuilder::new();
+        let mut builder = MetadataBuilder::new(AIFF_METADATA_INFO);
 
         // Scan over all chunks.
         while let Some(chunk) = riff_chunks.next(&mut mss)? {
@@ -187,7 +196,7 @@ impl<'s> AiffReader<'s> {
 
         // Add metadata generated from marker, comment, and text chunks.
         // TODO: Don't add if empty.
-        metadata.push(builder.metadata());
+        metadata.push(builder.build());
 
         // Add ID3 metadata.
         if let Some(id3) = id3 {

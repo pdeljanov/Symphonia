@@ -56,12 +56,12 @@ use std::fmt;
 use std::num::NonZeroU8;
 use std::sync::Arc;
 
-use crate::common::FourCc;
+use crate::common::{FourCc, Limit};
 use crate::errors::Result;
 use crate::io::MediaSourceStream;
 use crate::units::Time;
 
-/// A `MetadataType` is a unique identifier used to identify a metadata format.
+/// A `MetadataId` is a unique identifier used to identify a specific metadata format.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct MetadataId(u32);
 
@@ -89,7 +89,7 @@ impl fmt::Display for MetadataId {
 pub const METADATA_ID_NULL: MetadataId = MetadataId(0x0);
 
 /// Basic information about a metadata format.
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct MetadataInfo {
     /// The `MetadataType` identifier.
     pub metadata: MetadataId,
@@ -99,37 +99,7 @@ pub struct MetadataInfo {
     pub long_name: &'static str,
 }
 
-/// `Limit` defines an upper-bound on how much of a resource should be allocated when the amount to
-/// be allocated is specified by the media stream, which is untrusted. A limit will place an
-/// upper-bound on this allocation at the risk of breaking potentially valid streams. Limits are
-/// used to prevent denial-of-service attacks.
-///
-/// All limits can be defaulted to a reasonable value specific to the situation. These defaults will
-/// generally not break any normal streams.
-#[derive(Copy, Clone, Debug, Default)]
-pub enum Limit {
-    /// Do not impose any limit.
-    None,
-    /// Use the a reasonable default specified by the `FormatReader` or `Decoder` implementation.
-    #[default]
-    Default,
-    /// Specify the upper limit of the resource. Units are case specific.
-    Maximum(usize),
-}
-
-impl Limit {
-    /// Gets the numeric limit of the limit, or default value. If there is no limit, None is
-    /// returned.
-    pub fn limit_or_default(&self, default: usize) -> Option<usize> {
-        match self {
-            Limit::None => None,
-            Limit::Default => Some(default),
-            Limit::Maximum(max) => Some(*max),
-        }
-    }
-}
-
-/// `MetadataOptions` is a common set of options that all metadata readers use.
+/// A common set of options that all metadata readers use.
 #[derive(Copy, Clone, Debug, Default)]
 pub struct MetadataOptions {
     /// The maximum size limit in bytes that a tag may occupy in memory once decoded. Tags exceeding
@@ -705,60 +675,108 @@ pub enum ChapterGroupItem {
     Chapter(Chapter),
 }
 
-/// A metadata revision is a container for a single discrete revision of media metadata.
+/// A container of metadata tags and pictures.
+#[derive(Clone, Debug, Default)]
+pub struct MetadataContainer {
+    /// Key-value pairs of metadata.
+    pub tags: Vec<Tag>,
+    /// Attached pictures.
+    pub visuals: Vec<Visual>,
+}
+
+/// Container for metadata associated with a specific track. A [`MetadataContainer`] wrapper
+/// associating it with a track ID.
+#[derive(Clone, Debug, Default)]
+pub struct PerTrackMetadata {
+    /// The ID of the track the metadata is associated with.
+    pub track_id: u64,
+    /// Track-specific metadata.
+    pub metadata: MetadataContainer,
+}
+
+/// A metadata revision is a container for a single discrete version of media metadata.
 ///
 /// A metadata revision contains what a user typically associates with metadata: tags, pictures,
-/// etc.
-#[derive(Clone, Debug, Default)]
+/// etc., for the media as a whole and, optionally, for each contained track.
+#[derive(Clone, Debug)]
 pub struct MetadataRevision {
-    /// Key-value pairs of metadata.
-    tags: Vec<Tag>,
-    /// Attached pictures.
-    visuals: Vec<Visual>,
-}
-
-impl MetadataRevision {
-    /// Gets an immutable slice to the `Tag`s in this revision.
+    /// Information about the source of this revision of metadata.
+    pub info: MetadataInfo,
+    /// Media-level, global, metadata.
     ///
-    /// If a tag read from the source contained multiple values, then there will be one `Tag` item
-    /// per value, with each item having the same key and standard key.
-    pub fn tags(&self) -> &[Tag] {
-        &self.tags
-    }
-
-    /// Gets an immutable slice to the `Visual`s in this revision.
-    pub fn visuals(&self) -> &[Visual] {
-        &self.visuals
-    }
+    /// The vast majority of metadata is media-level metadata.
+    pub media: MetadataContainer,
+    /// Per-track metadata.
+    pub per_track: Vec<PerTrackMetadata>,
 }
 
-/// `MetadataBuilder` is the builder for [`Metadata`] revisions.
-#[derive(Clone, Debug, Default)]
+/// A builder for [`MetadataRevision`].
+#[derive(Clone, Debug)]
 pub struct MetadataBuilder {
-    metadata: MetadataRevision,
+    revision: MetadataRevision,
 }
 
 impl MetadataBuilder {
     /// Instantiate a new `MetadataBuilder`.
-    pub fn new() -> Self {
-        MetadataBuilder { metadata: Default::default() }
+    pub fn new(info: MetadataInfo) -> Self {
+        let revision =
+            MetadataRevision { info, media: Default::default(), per_track: Default::default() };
+        MetadataBuilder { revision }
     }
 
-    /// Add a `Tag` to the metadata.
+    /// Add a media-level `Tag` to the metadata.
     pub fn add_tag(&mut self, tag: Tag) -> &mut Self {
-        self.metadata.tags.push(tag);
+        self.revision.media.tags.push(tag);
         self
     }
 
-    /// Add a `Visual` to the metadata.
+    /// Add a media-level `Visual` to the metadata.
     pub fn add_visual(&mut self, visual: Visual) -> &mut Self {
-        self.metadata.visuals.push(visual);
+        self.revision.media.visuals.push(visual);
         self
     }
 
-    /// Yield the constructed `Metadata` revision.
-    pub fn metadata(self) -> MetadataRevision {
-        self.metadata
+    /// Add track-specific metadata.
+    pub fn add_track(&mut self, per_track: PerTrackMetadata) -> &mut Self {
+        self.revision.per_track.push(per_track);
+        self
+    }
+
+    /// Build and return the metadata revision.
+    pub fn build(self) -> MetadataRevision {
+        self.revision
+    }
+}
+
+/// A builder for [`PerTrackMetadata`].
+#[derive(Clone, Debug)]
+pub struct PerTrackMetadataBuilder {
+    per_track: PerTrackMetadata,
+}
+
+impl PerTrackMetadataBuilder {
+    /// Instantiate a new `MetadataBuilder`.
+    pub fn new(track_id: u64) -> Self {
+        PerTrackMetadataBuilder {
+            per_track: PerTrackMetadata { track_id, metadata: Default::default() },
+        }
+    }
+
+    /// Add a `Tag` to the per-track metadata.
+    pub fn add_tag(&mut self, tag: Tag) -> &mut Self {
+        self.per_track.metadata.tags.push(tag);
+        self
+    }
+
+    /// Add a `Visual` to the per-track metadata.
+    pub fn add_visual(&mut self, visual: Visual) -> &mut Self {
+        self.per_track.metadata.visuals.push(visual);
+        self
+    }
+
+    /// Build and return the track-specific metadata.
+    pub fn build(self) -> PerTrackMetadata {
+        self.per_track
     }
 }
 
@@ -804,7 +822,7 @@ impl Metadata<'_> {
     }
 }
 
-/// `MetadataLog` is a container for time-ordered [`Metadata`] revisions.
+/// A queue for time-ordered [`MetadataRevision`]s.
 #[derive(Clone, Debug, Default)]
 pub struct MetadataLog {
     revisions: VecDeque<MetadataRevision>,
@@ -898,11 +916,13 @@ pub mod well_known {
     // Format-native tags
 
     /// RIFF tags
-    pub const METADATA_ID_RIFF: MetadataId = MetadataId(0x400);
+    pub const METADATA_ID_WAVE: MetadataId = MetadataId(0x400);
+    /// RIFF tags
+    pub const METADATA_ID_AIFF: MetadataId = MetadataId(0x401);
     /// EXIF
-    pub const METADATA_ID_EXIF: MetadataId = MetadataId(0x401);
+    pub const METADATA_ID_EXIF: MetadataId = MetadataId(0x402);
     /// Matroska tags
-    pub const METADATA_ID_MATROSKA: MetadataId = MetadataId(0x402);
+    pub const METADATA_ID_MATROSKA: MetadataId = MetadataId(0x403);
     /// ISOMP4 tags
-    pub const METADATA_ID_ISOMP4: MetadataId = MetadataId(0x403);
+    pub const METADATA_ID_ISOMP4: MetadataId = MetadataId(0x404);
 }

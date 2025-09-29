@@ -14,7 +14,7 @@ use lazy_static::lazy_static;
 
 use symphonia_core::errors::{decode_error, Result};
 use symphonia_core::io::ReadBytes;
-use symphonia_core::meta::{MetadataBuilder, MetadataSideData, RawTag};
+use symphonia_core::meta::{MetadataBuilder, MetadataRevision, MetadataSideData, RawTag};
 
 use crate::utils::std_tag::*;
 
@@ -89,8 +89,9 @@ pub fn parse_riff_info_chunk(
 /// Read a RIFF ID3 chunk payload.
 pub fn read_riff_id3_chunk<B: ReadBytes>(
     reader: &mut B,
-    builder: &mut MetadataBuilder,
     side_data: &mut Vec<MetadataSideData>,
-) -> Result<()> {
-    crate::id3v2::read_id3v2(reader, builder, side_data)
+) -> Result<MetadataRevision> {
+    let mut builder = MetadataBuilder::new(crate::id3v2::ID3V2_METADATA_INFO);
+    crate::id3v2::read_id3v2(reader, &mut builder, side_data)?;
+    Ok(builder.build())
 }

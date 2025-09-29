@@ -9,8 +9,10 @@ use std::sync::Arc;
 
 use symphonia_core::errors::{decode_error, Error, Result};
 use symphonia_core::io::{BufReader, ReadBytes};
+use symphonia_core::meta::well_known::METADATA_ID_ISOMP4;
 use symphonia_core::meta::{
-    ContentAdvisory, MetadataBuilder, MetadataRevision, RawTag, StandardTag, StandardVisualKey, Tag,
+    ContentAdvisory, MetadataBuilder, MetadataInfo, MetadataRevision, RawTag, StandardTag,
+    StandardVisualKey, Tag,
 };
 use symphonia_core::meta::{RawValue, Visual};
 use symphonia_core::util::{bits, text};
@@ -20,6 +22,12 @@ use symphonia_metadata::utils::{id3v1, itunes};
 use crate::atoms::{Atom, AtomHeader, AtomIterator, AtomType};
 
 use log::{debug, warn};
+
+const ISOMP4_METADATA_INFO: MetadataInfo = MetadataInfo {
+    metadata: METADATA_ID_ISOMP4,
+    short_name: "isomp4",
+    long_name: "ISO Base Media File Format",
+};
 
 /// Data type enumeration for metadata value atoms as defined in the QuickTime File Format standard.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -720,7 +728,7 @@ impl Atom for IlstAtom {
     fn read<B: ReadBytes>(reader: &mut B, header: AtomHeader) -> Result<Self> {
         let mut iter = AtomIterator::new(reader, header);
 
-        let mut mb = MetadataBuilder::new();
+        let mut mb = MetadataBuilder::new(ISOMP4_METADATA_INFO);
 
         while let Some(header) = iter.next()? {
             // Ignore standard atoms, check if other is a metadata atom.
@@ -925,7 +933,7 @@ impl Atom for IlstAtom {
             }
         }
 
-        Ok(IlstAtom { metadata: mb.metadata() })
+        Ok(IlstAtom { metadata: mb.build() })
     }
 }
 

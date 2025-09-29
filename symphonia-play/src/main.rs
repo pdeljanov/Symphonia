@@ -526,7 +526,7 @@ fn do_verification(finalization: FinalizeResult) -> Result<i32> {
 
 fn dump_visuals(format: &mut Box<dyn FormatReader>, file_name: &OsStr) {
     if let Some(metadata) = format.metadata().current() {
-        for (i, visual) in metadata.visuals().iter().enumerate() {
+        for (i, visual) in metadata.media.visuals.iter().enumerate() {
             dump_visual(visual, file_name, i);
         }
     }

@@ -537,7 +537,7 @@ impl ChapterGroupBuilder {
     }
 }
 
-const ID3V2_METADATA_INFO: MetadataInfo =
+pub(crate) const ID3V2_METADATA_INFO: MetadataInfo =
     MetadataInfo { metadata: METADATA_ID_ID3V2, short_name: "id3v2", long_name: "ID3v2" };
 
 /// ID3v2 tag reader.
@@ -579,12 +579,12 @@ impl MetadataReader for Id3v2Reader<'_> {
     }
 
     fn read_all(&mut self) -> Result<MetadataBuffer> {
-        let mut builder = MetadataBuilder::new();
+        let mut builder = MetadataBuilder::new(ID3V2_METADATA_INFO);
         let mut side_data = Vec::new();
 
         read_id3v2(&mut self.reader, &mut builder, &mut side_data)?;
 
-        Ok(MetadataBuffer { revision: builder.metadata(), side_data })
+        Ok(MetadataBuffer { revision: builder.build(), side_data })
     }
 
     fn into_inner<'s>(self: Box<Self>) -> MediaSourceStream<'s>
