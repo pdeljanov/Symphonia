@@ -87,11 +87,28 @@ struct MagicCookie {
 }
 
 impl MagicCookie {
-    fn try_read<B: ReadBytes + FiniteStream>(reader: &mut B) -> Result<MagicCookie> {
-        // The magic cookie is either 24 or 48 bytes long.
-        if reader.byte_len() != 24 && reader.byte_len() != 48 {
+    fn try_parse(mut buf: &[u8]) -> Result<MagicCookie> {
+        // The magic cookie must be atleast 24 bytes long.
+        if buf.len() < 24 {
+            return unsupported_error("alac: magic cookie size too small");
+        }
+
+        // The magic cookie may be preceeded by a FRMA atom. Skip over the FRMA atom.
+        if buf[4..8] == *b"frma" {
+            buf = &buf[12..];
+        }
+
+        // The magic cookie may be preceeded by an ALAC atom. Skip over the ALAC atom.
+        if buf[4..8] == *b"alac" {
+            buf = &buf[12..];
+        }
+
+        // The magic cookie must be either 24 or 48 bytes long.
+        if buf.len() != 24 && buf.len() != 48 {
             return unsupported_error("alac: invalid magic cookie size");
         }
+
+        let mut reader = BufReader::new(buf);
 
         let mut config = MagicCookie {
             frame_length: reader.read_be_u32()?,
@@ -416,7 +433,7 @@ impl AlacDecoder {
 
         // Read the config (magic cookie).
         let config = if let Some(extra_data) = &params.extra_data {
-            MagicCookie::try_read(&mut BufReader::new(extra_data))?
+            MagicCookie::try_parse(extra_data)?
         }
         else {
             return unsupported_error("alac: missing extra data");
