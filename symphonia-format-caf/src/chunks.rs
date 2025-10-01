@@ -201,7 +201,7 @@ impl AudioDescription {
                     }
                 }
             }
-            AppleIMA4 => CODEC_ID_ADPCM_IMA_WAV,
+            AppleIMA4 => CODEC_ID_ADPCM_IMA_QT,
             MPEG4AAC => CODEC_ID_AAC,
             ULaw => CODEC_ID_PCM_MULAW,
             ALaw => CODEC_ID_PCM_ALAW,
@@ -220,8 +220,8 @@ impl AudioDescription {
         Ok(result)
     }
 
-    pub fn format_is_compressed(&self) -> bool {
-        self.bits_per_channel == 0
+    pub fn is_variable_packet_format(&self) -> bool {
+        self.bytes_per_packet == 0 || self.frames_per_packet == 0
     }
 }
 
