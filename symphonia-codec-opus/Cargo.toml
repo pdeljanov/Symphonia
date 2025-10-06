@@ -4,7 +4,7 @@ version = "0.0.1"
 description = "Pure Opus decoder (a part of project Symphonia)."
 homepage = "https://github.com/pdeljanov/Symphonia"
 repository = "https://github.com/pdeljanov/Symphonia"
-authors = ["Philip Deljanov <philip.deljanov@gmail.com>"]
+authors = ["Philip Deljanov <philip.deljanov@gmail.com>", "Yevhen Bilyk, <jiztastamablastamarang@gmail.com>"]
 license = "MPL-2.0"
 readme = "README.md"
 categories = ["multimedia", "multimedia::audio", "multimedia::encoding"]
@@ -14,4 +14,15 @@ rust-version = "1.77"
 
 [dependencies]
 log = "0.4"
+env_logger = "0.11.5"
 symphonia-core = { version = "0.5.4", path = "../symphonia-core" }
+thiserror = "1"
+
+[lints.clippy]
+needless_return = "allow"
+enum_variant_names = "allow"
+upper_case_acronyms = "allow"
+unused_imports = "allow"
+
+[dev-dependencies]
+serial_test = "3.1.1"
