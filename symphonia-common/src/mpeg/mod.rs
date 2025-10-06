@@ -12,4 +12,5 @@
 #![allow(clippy::identity_op)]
 #![allow(clippy::manual_range_contains)]
 
+pub mod formats;
 pub mod video;

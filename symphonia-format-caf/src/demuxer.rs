@@ -10,17 +10,23 @@ use log::{debug, error, info};
 use std::io::{Seek, SeekFrom};
 use symphonia_core::{
     audio::{Channels, Position},
-    codecs::audio::*,
-    codecs::CodecParameters,
+    codecs::{
+        audio::{well_known::CODEC_ID_AAC, *},
+        CodecParameters,
+    },
     errors::{decode_error, seek_error, unsupported_error, Result, SeekErrorKind},
-    formats::prelude::*,
-    formats::probe::{ProbeFormatData, ProbeableFormat, Score, Scoreable},
-    formats::well_known::FORMAT_ID_CAF,
+    formats::{
+        prelude::*,
+        probe::{ProbeFormatData, ProbeableFormat, Score, Scoreable},
+        well_known::FORMAT_ID_CAF,
+    },
     io::*,
     meta::{Metadata, MetadataLog},
     support_format,
     units::{TimeBase, TimeStamp},
 };
+
+use symphonia_common::mpeg::formats::*;
 
 const MAX_FRAMES_PER_PACKET: u64 = 1152;
 
@@ -422,7 +428,31 @@ impl<'s> CafReader<'s> {
                     }
                 }
                 Some(MagicCookie(data)) => {
-                    codec_params.with_extra_data(data);
+                    match codec_params.codec {
+                        CODEC_ID_AAC => {
+                            // For AAC, the magic cookie is an ES Descriptor. However, the extra
+                            // data format for AAC decoders is solely the content of the
+                            // decoder-specific information descriptor.
+                            let mut reader = BufReader::new(&data);
+
+                            let (desc_tag, desc_len) = read_object_descriptor_header(&mut reader)?;
+
+                            if desc_tag == ClassTag::EsDescriptor {
+                                // Parse the ES Descriptor.
+                                let desc = ESDescriptor::read(&mut reader, desc_len)?;
+
+                                // Attach the extra data stored in the decoder-specific
+                                // configuration.
+                                if let Some(info) = desc.dec_config.dec_specific_info {
+                                    codec_params.with_extra_data(info.extra_data);
+                                }
+                            }
+                        }
+                        _ => {
+                            // For all other formats attach the entire magic cookie.
+                            codec_params.with_extra_data(data);
+                        }
+                    }
                 }
                 Some(Free) | None => {}
             }
