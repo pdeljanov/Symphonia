@@ -521,9 +521,24 @@ pub struct CodecDescriptor {
 
 /// A `CodecRegistry` allows the registration of codecs, and provides a method to instantiate a
 /// `Decoder` given a `CodecParameters` object.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct CodecRegistry {
     codecs: HashMap<CodecType, CodecDescriptor>,
+}
+
+impl fmt::Debug for CodecRegistry {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut f = f.debug_struct("CodecRegistry");
+        for (i, cd) in self.codecs.values().enumerate()
+        {
+            f.field(format!("Codec {i}").as_str(), &cd.long_name);
+        }
+        if self.codecs.is_empty()
+        {
+            f.field("No codecs registered", &"");
+        }
+        f.finish()
+    }
 }
 
 impl CodecRegistry {
