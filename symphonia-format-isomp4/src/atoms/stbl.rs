@@ -14,6 +14,7 @@ use crate::atoms::{Co64Atom, StcoAtom, StscAtom, StsdAtom, StszAtom, SttsAtom};
 use log::warn;
 
 /// Sample table atom.
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct StblAtom {
     /// Atom header.

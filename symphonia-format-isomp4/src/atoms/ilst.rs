@@ -20,6 +20,7 @@ use encoding_rs::{SHIFT_JIS, UTF_16BE};
 use log::warn;
 
 /// Data type enumeration for metadata value atoms as defined in the QuickTime File Format standard.
+#[allow(dead_code)]
 #[derive(Debug, Copy, Clone)]
 pub enum DataType {
     AffineTransformF64,
@@ -472,6 +473,7 @@ fn add_freeform_tag<B: ReadBytes>(
 }
 
 /// Metadata tag data atom.
+#[allow(dead_code)]
 pub struct MetaTagDataAtom {
     /// Atom header.
     header: AtomHeader,
@@ -514,6 +516,7 @@ impl Atom for MetaTagDataAtom {
 }
 
 /// Metadata tag name and mean atom.
+#[allow(dead_code)]
 pub struct MetaTagNamespaceAtom {
     /// Atom header.
     header: AtomHeader,
@@ -540,6 +543,7 @@ impl Atom for MetaTagNamespaceAtom {
 }
 
 /// A generic metadata tag atom.
+#[allow(dead_code)]
 pub struct MetaTagAtom {
     /// Atom header.
     header: AtomHeader,
@@ -605,6 +609,7 @@ impl Atom for MetaTagAtom {
 }
 
 /// User data atom.
+#[allow(dead_code)]
 pub struct IlstAtom {
     /// Atom header.
     header: AtomHeader,

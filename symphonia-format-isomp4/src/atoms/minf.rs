@@ -11,6 +11,7 @@ use symphonia_core::io::ReadBytes;
 use crate::atoms::{Atom, AtomHeader, AtomIterator, AtomType, SmhdAtom, StblAtom};
 
 /// Media information atom.
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct MinfAtom {
     /// Atom header.

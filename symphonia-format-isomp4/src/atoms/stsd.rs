@@ -25,6 +25,7 @@ use crate::fp::FpU16;
 use super::AtomIterator;
 
 /// Sample description atom.
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct StsdAtom {
     /// Atom header.
@@ -145,6 +146,7 @@ pub enum AudioCodecSpecific {
     Pcm(Pcm),
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct AudioSampleEntry {
     pub num_channels: u32,

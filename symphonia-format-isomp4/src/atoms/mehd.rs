@@ -11,6 +11,7 @@ use symphonia_core::io::ReadBytes;
 use crate::atoms::{Atom, AtomHeader};
 
 /// Movie extends header atom.
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct MehdAtom {
     /// Atom header.

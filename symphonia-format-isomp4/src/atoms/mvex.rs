@@ -11,6 +11,7 @@ use symphonia_core::io::ReadBytes;
 use crate::atoms::{Atom, AtomHeader, AtomIterator, AtomType, MehdAtom, TrexAtom};
 
 /// Movie extends atom.
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct MvexAtom {
     /// Atom header.

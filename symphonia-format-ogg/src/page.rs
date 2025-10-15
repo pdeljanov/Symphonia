@@ -18,6 +18,7 @@ pub const OGG_PAGE_MAX_SIZE: usize = OGG_PAGE_HEADER_SIZE + 255 + 255 * 255;
 
 #[derive(Copy, Clone, Default)]
 pub struct PageHeader {
+    #[allow(dead_code)]
     pub version: u8,
     pub absgp: u64,
     pub serial: u32,
@@ -129,7 +130,7 @@ pub struct Page<'a> {
     page_buf: &'a [u8],
 }
 
-impl<'a> Page<'a> {
+impl Page<'_> {
     /// Returns an iterator over all complete packets within the page.
     ///
     /// If this page contains a partial packet, then the partial packet data may be retrieved using

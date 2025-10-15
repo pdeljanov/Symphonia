@@ -12,6 +12,7 @@ use crate::atoms::{Atom, AtomHeader};
 use crate::fp::FpU8;
 
 /// Movie header atom.
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct MvhdAtom {
     /// Atom header.
@@ -53,7 +54,7 @@ impl Atom for MvhdAtom {
                 mvhd.timescale = reader.read_be_u32()?;
                 // 0xffff_ffff is a special case.
                 mvhd.duration = match reader.read_be_u32()? {
-                    std::u32::MAX => std::u64::MAX,
+                    u32::MAX => u64::MAX,
                     duration => u64::from(duration),
                 };
             }

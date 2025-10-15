@@ -12,6 +12,7 @@ use crate::atoms::{Atom, AtomHeader, EsdsAtom};
 
 use super::{AtomIterator, AtomType};
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct WaveAtom {
     /// Atom header.

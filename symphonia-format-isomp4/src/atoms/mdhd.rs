@@ -27,6 +27,7 @@ fn parse_language(code: u16) -> String {
 }
 
 /// Media header atom.
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct MdhdAtom {
     /// Atom header.
@@ -67,7 +68,7 @@ impl Atom for MdhdAtom {
                 mdhd.timescale = reader.read_be_u32()?;
                 // 0xffff_ffff is a special case.
                 mdhd.duration = match reader.read_be_u32()? {
-                    std::u32::MAX => std::u64::MAX,
+                    u32::MAX => u64::MAX,
                     duration => u64::from(duration),
                 };
             }

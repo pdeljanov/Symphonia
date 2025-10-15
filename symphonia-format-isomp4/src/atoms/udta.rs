@@ -12,6 +12,7 @@ use symphonia_core::meta::MetadataRevision;
 use crate::atoms::{Atom, AtomHeader, AtomIterator, AtomType, MetaAtom};
 
 /// User data atom.
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct UdtaAtom {
     /// Atom header.

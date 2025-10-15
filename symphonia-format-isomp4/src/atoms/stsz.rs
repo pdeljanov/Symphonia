@@ -17,6 +17,7 @@ pub enum SampleSize {
 }
 
 /// Sample Size Atom
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct StszAtom {
     /// Atom header.

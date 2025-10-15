@@ -16,6 +16,7 @@ use crate::atoms::{
 use log::warn;
 
 /// Movie atom.
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct MoovAtom {
     /// Atom header.

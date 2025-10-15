@@ -11,6 +11,7 @@ use symphonia_core::io::ReadBytes;
 use crate::atoms::{Atom, AtomHeader};
 
 /// Chunk offset atom (64-bit version).
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct Co64Atom {
     /// Atom header.

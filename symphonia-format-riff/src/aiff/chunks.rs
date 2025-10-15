@@ -27,6 +27,7 @@ pub struct CommonChunk {
     /// The number of channels.
     pub n_channels: i16,
     /// The number of audio frames.
+    #[allow(dead_code)]
     pub n_sample_frames: u32,
     /// The sample size in bits.
     pub sample_size: i16,
@@ -147,10 +148,7 @@ impl ParseChunk for CommonChunk {
 
         let format_data = Self::read_pcm_fmt(sample_size as u16, n_channels as u16);
 
-        let format_data = match format_data {
-            Ok(data) => data,
-            Err(e) => return Err(e),
-        };
+        let format_data = format_data?;
 
         Ok(CommonChunk { n_channels, n_sample_frames, sample_size, sample_rate, format_data })
     }
@@ -239,10 +237,7 @@ impl CommonChunkParser for ChunkParser<CommonChunk> {
             _ => return unsupported_error("aifc: Compression type not implemented"),
         };
 
-        let format_data = match format_data {
-            Ok(data) => data,
-            Err(e) => return Err(e),
-        };
+        let format_data = format_data?;
 
         Ok(CommonChunk { n_channels, n_sample_frames, sample_size, sample_rate, format_data })
     }
@@ -251,7 +246,9 @@ impl CommonChunkParser for ChunkParser<CommonChunk> {
 /// `SoundChunk` is a required AIFF chunk, containing the audio data.
 pub struct SoundChunk {
     pub len: u32,
+    #[allow(dead_code)]
     pub offset: u32,
+    #[allow(dead_code)]
     pub block_size: u32,
 }
 
