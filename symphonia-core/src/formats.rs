@@ -8,6 +8,10 @@
 //! The `format` module provides the traits and support structures necessary to implement media
 //! demuxers.
 
+use alloc::boxed::Box;
+use alloc::string::String;
+use alloc::vec::Vec;
+
 use crate::codecs::CodecParameters;
 use crate::errors::Result;
 use crate::io::{BufReader, MediaSourceStream};
@@ -326,6 +330,8 @@ impl Packet {
 
 pub mod util {
     //! Helper utilities for implementing `FormatReader`s.
+
+    use alloc::vec::Vec;
 
     use super::Packet;
 

@@ -12,6 +12,8 @@
 #![allow(clippy::identity_op)]
 #![allow(clippy::manual_range_contains)]
 
+extern crate alloc;
+
 pub mod audio;
 pub mod checksum;
 pub mod codecs;

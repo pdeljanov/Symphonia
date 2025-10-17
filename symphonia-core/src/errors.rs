@@ -7,10 +7,10 @@
 
 //! The `errors` module defines the common error type.
 
+use core::fmt;
+use core::result;
 use std::error;
-use std::fmt;
 use std::io;
-use std::result;
 
 /// `SeekErrorKind` is a list of generic reasons why a seek may fail.
 #[derive(Debug)]

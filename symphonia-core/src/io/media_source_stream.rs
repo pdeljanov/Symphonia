@@ -5,10 +5,13 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use std::cmp;
+use core::cmp;
+use core::ops::Sub;
 use std::io;
 use std::io::{IoSliceMut, Read, Seek};
-use std::ops::Sub;
+
+use alloc::boxed::Box;
+use alloc::vec;
 
 use super::SeekBuffered;
 use super::{MediaSource, ReadBytes};
@@ -467,8 +470,12 @@ impl SeekBuffered for MediaSourceStream {
 
 #[cfg(test)]
 mod tests {
-    use super::{MediaSourceStream, ReadBytes, SeekBuffered};
+    use alloc::boxed::Box;
+    use alloc::vec;
+    use alloc::vec::Vec;
     use std::io::{Cursor, Read};
+
+    use super::{MediaSourceStream, ReadBytes, SeekBuffered};
 
     /// Generate a random vector of bytes of the specified length using a PRNG.
     fn generate_random_bytes(len: usize) -> Box<[u8]> {
