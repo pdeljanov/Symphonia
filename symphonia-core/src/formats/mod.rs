@@ -8,7 +8,8 @@
 //! The `format` module provides the traits and support structures necessary to implement media
 //! demuxers.
 
-use std::fmt;
+use alloc::{boxed::Box, string::String, string::ToString};
+use core::fmt;
 
 use crate::codecs::{CodecParameters, audio, subtitle, video};
 use crate::common::FourCc;
@@ -587,6 +588,8 @@ impl Packet {
 
 pub mod util {
     //! Helper utilities for implementing `FormatReader`s.
+    //!
+    use alloc::vec::Vec;
 
     use super::Packet;
 

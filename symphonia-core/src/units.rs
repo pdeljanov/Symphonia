@@ -7,7 +7,7 @@
 
 //! The `units` module provides definitions for common units.
 
-use std::{fmt, ops};
+use core::{fmt, ops};
 
 /// A `TimeStamp` represents an instantenous instant in time since the start of a stream. One
 /// `TimeStamp` "tick" is equivalent to the stream's `TimeBase` in seconds.
@@ -157,15 +157,15 @@ impl From<f64> for Time {
     }
 }
 
-impl From<std::time::Duration> for Time {
-    fn from(duration: std::time::Duration) -> Self {
+impl From<core::time::Duration> for Time {
+    fn from(duration: core::time::Duration) -> Self {
         Time::new(duration.as_secs(), f64::from(duration.subsec_nanos()) / 1_000_000_000.0)
     }
 }
 
-impl From<Time> for std::time::Duration {
+impl From<Time> for core::time::Duration {
     fn from(time: Time) -> Self {
-        std::time::Duration::new(time.seconds, (1_000_000_000.0 * time.frac) as u32)
+        core::time::Duration::new(time.seconds, (1_000_000_000.0 * time.frac) as u32)
     }
 }
 
@@ -267,7 +267,7 @@ impl fmt::Display for TimeBase {
 #[cfg(test)]
 mod tests {
     use super::{Time, TimeBase};
-    use std::time::Duration;
+    use core::time::Duration;
 
     #[test]
     fn verify_timebase() {

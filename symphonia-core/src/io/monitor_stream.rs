@@ -5,6 +5,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+// temporary exception from no_std until errors don't depend on io::Error
+extern crate std;
+
 use std::io;
 
 use super::ReadBytes;

@@ -19,8 +19,12 @@
 //! either the [`ReadBitsLtr`] or [`ReadBitsRtl`] traits depending on the order in which they
 //! consume bits.
 
+// temporary exception from no_std until we don't use io here anymore
+extern crate std;
+
+use alloc::{boxed::Box, vec};
+use core::mem;
 use std::io;
-use std::mem;
 
 mod bit;
 mod buf_reader;
@@ -74,7 +78,7 @@ impl MediaSource for std::fs::File {
     }
 }
 
-impl<T: std::convert::AsRef<[u8]> + Send + Sync> MediaSource for io::Cursor<T> {
+impl<T: core::convert::AsRef<[u8]> + Send + Sync> MediaSource for io::Cursor<T> {
     /// Always returns true since a `io::Cursor<u8>` is always seekable.
     fn is_seekable(&self) -> bool {
         true

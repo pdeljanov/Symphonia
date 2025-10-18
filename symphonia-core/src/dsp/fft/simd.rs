@@ -10,7 +10,8 @@
 //! The complex (I)FFT in this module supports a size up-to 65536. The FFT is implemented using the
 //! radix-2 Cooley-Tukey algorithm.
 
-use std::{f32, sync::Arc};
+use alloc::{boxed::Box, sync::Arc, vec};
+use core::f32;
 
 use crate::dsp::complex::Complex;
 use crate::dsp::fft::MAX_SIZE;

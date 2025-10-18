@@ -277,7 +277,7 @@ pub mod clamp {
     #[cfg(test)]
     mod tests {
         use super::*;
-        use std::{i8, i16, i32, i64, u8, u16, u32, u64};
+        use core::{i8, i16, i32, i64, u8, u16, u32, u64};
 
         #[test]
         fn verify_clamp() {
@@ -541,6 +541,7 @@ pub mod text {
     #[cfg(test)]
     #[allow(clippy::byte_char_slices)]
     mod tests {
+        use alloc::string::String;
         #[test]
         fn verify_decode_utf16be() {
             use super::decode_utf16be_lossy;

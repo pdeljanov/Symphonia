@@ -7,10 +7,13 @@
 
 //! The `errors` module defines the common error type.
 
-use std::error;
-use std::fmt;
+// Temporary exception from no_std until we removed io from the error type
+extern crate std;
+
+use core::error;
+use core::fmt;
+use core::result;
 use std::io;
-use std::result;
 
 /// `SeekErrorKind` is a list of generic reasons why a seek may fail.
 #[non_exhaustive]
@@ -79,7 +82,7 @@ impl fmt::Display for Error {
     }
 }
 
-impl std::error::Error for Error {
+impl core::error::Error for Error {
     fn cause(&self) -> Option<&dyn error::Error> {
         match *self {
             Error::IoError(ref err) => Some(err),
