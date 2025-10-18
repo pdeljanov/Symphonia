@@ -7,7 +7,7 @@
 
 //! The `units` module provides definitions for common units.
 
-use std::fmt;
+use core::{fmt, ops};
 
 use core::num::NonZero;
 
@@ -791,8 +791,47 @@ impl From<u16> for Time {
 
 impl From<u32> for Time {
     fn from(seconds: u32) -> Self {
-        // UNWRAP: Nanoseconds is < 1000000000.
-        Time::try_new(i64::from(seconds), 0).unwrap()
+        Time::new(u64::from(seconds), 0.0)
+    }
+}
+
+impl From<u64> for Time {
+    fn from(seconds: u64) -> Self {
+        Time::new(seconds, 0.0)
+    }
+}
+
+impl From<f32> for Time {
+    fn from(seconds: f32) -> Self {
+        if seconds >= 0.0 {
+            Time::new(seconds.trunc() as u64, f64::from(seconds.fract()))
+        }
+        else {
+            Time::new(0, 0.0)
+        }
+    }
+}
+
+impl From<f64> for Time {
+    fn from(seconds: f64) -> Self {
+        if seconds >= 0.0 {
+            Time::new(seconds.trunc() as u64, seconds.fract())
+        }
+        else {
+            Time::new(0, 0.0)
+        }
+    }
+}
+
+impl From<core::time::Duration> for Time {
+    fn from(duration: core::time::Duration) -> Self {
+        Time::new(duration.as_secs(), f64::from(duration.subsec_nanos()) / 1_000_000_000.0)
+    }
+}
+
+impl From<Time> for core::time::Duration {
+    fn from(time: Time) -> Self {
+        core::time::Duration::new(time.seconds, (1_000_000_000.0 * time.frac) as u32)
     }
 }
 
@@ -913,6 +952,7 @@ impl fmt::Display for TimeBase {
 #[cfg(test)]
 mod tests {
     use super::{Time, TimeBase, Timestamp};
+    use core::time::Duration;
 
     #[test]
     fn verify_time() {

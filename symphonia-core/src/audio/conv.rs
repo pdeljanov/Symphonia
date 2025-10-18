@@ -28,7 +28,7 @@ pub mod dither {
     use super::FromSample;
     use crate::audio::sample::Sample;
     use crate::audio::sample::{i24, u24};
-    use std::marker::PhantomData;
+    use core::marker::PhantomData;
 
     mod prng {
         #[inline]

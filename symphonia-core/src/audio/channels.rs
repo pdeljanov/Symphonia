@@ -5,7 +5,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use std::fmt::Debug;
+use alloc::{boxed::Box, format, string::ToString, vec::Vec};
+use core::fmt::Debug;
 
 use bitflags::bitflags;
 
@@ -155,8 +156,8 @@ const POSITION_NAMES: &[&str; 28] = &[
     "RRC",
 ];
 
-impl std::fmt::Display for Position {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for Position {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let list = self
             .iter()
             .map(|pos| {
@@ -212,8 +213,8 @@ pub enum AmbisonicBFormat {
     Q,
 }
 
-impl std::fmt::Display for AmbisonicBFormat {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for AmbisonicBFormat {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             AmbisonicBFormat::W => write!(f, "W"),
             AmbisonicBFormat::X => write!(f, "X"),
@@ -356,10 +357,10 @@ impl From<Box<[ChannelLabel]>> for Channels {
     }
 }
 
-impl std::fmt::Display for Channels {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for Channels {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Channels::Positioned(positions) => std::fmt::Display::fmt(positions, f),
+            Channels::Positioned(positions) => core::fmt::Display::fmt(positions, f),
             Channels::Discrete(count) => write!(f, "[D0,..,D{count}]"),
             Channels::Ambisonic(order) => {
                 write!(f, "[ACN0,..,ACN{}]", (1 + usize::from(*order)) * (1 + usize::from(*order)))

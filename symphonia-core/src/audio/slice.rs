@@ -5,7 +5,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use std::ops::{Range, RangeBounds};
+use alloc::vec::Vec;
+use core::ops::{Range, RangeBounds};
 
 use crate::audio::conv::FromSample;
 use crate::audio::sample::{Sample, SampleBytes};
@@ -112,7 +113,7 @@ impl<S: Sample + SampleBytes> AudioBytes<S> for AudioSlice<'_, S> {
     }
 }
 
-impl<S: Sample> std::ops::Index<Position> for AudioSlice<'_, S> {
+impl<S: Sample> core::ops::Index<Position> for AudioSlice<'_, S> {
     type Output = [S];
 
     fn index(&self, index: Position) -> &Self::Output {
@@ -120,7 +121,7 @@ impl<S: Sample> std::ops::Index<Position> for AudioSlice<'_, S> {
     }
 }
 
-impl<S: Sample> std::ops::Index<usize> for AudioSlice<'_, S> {
+impl<S: Sample> core::ops::Index<usize> for AudioSlice<'_, S> {
     type Output = [S];
 
     fn index(&self, index: usize) -> &Self::Output {
@@ -254,7 +255,7 @@ impl<S: Sample + SampleBytes> AudioBytes<S> for AudioSliceMut<'_, S> {
     }
 }
 
-impl<S: Sample> std::ops::Index<Position> for AudioSliceMut<'_, S> {
+impl<S: Sample> core::ops::Index<Position> for AudioSliceMut<'_, S> {
     type Output = [S];
 
     fn index(&self, index: Position) -> &Self::Output {
@@ -262,13 +263,13 @@ impl<S: Sample> std::ops::Index<Position> for AudioSliceMut<'_, S> {
     }
 }
 
-impl<S: Sample> std::ops::IndexMut<Position> for AudioSliceMut<'_, S> {
+impl<S: Sample> core::ops::IndexMut<Position> for AudioSliceMut<'_, S> {
     fn index_mut(&mut self, index: Position) -> &mut Self::Output {
         self.plane_by_position_mut(index).unwrap()
     }
 }
 
-impl<S: Sample> std::ops::Index<usize> for AudioSliceMut<'_, S> {
+impl<S: Sample> core::ops::Index<usize> for AudioSliceMut<'_, S> {
     type Output = [S];
 
     fn index(&self, index: usize) -> &Self::Output {
@@ -276,7 +277,7 @@ impl<S: Sample> std::ops::Index<usize> for AudioSliceMut<'_, S> {
     }
 }
 
-impl<S: Sample> std::ops::IndexMut<usize> for AudioSliceMut<'_, S> {
+impl<S: Sample> core::ops::IndexMut<usize> for AudioSliceMut<'_, S> {
     fn index_mut(&mut self, index: usize) -> &mut Self::Output {
         self.plane_mut(index).unwrap()
     }
