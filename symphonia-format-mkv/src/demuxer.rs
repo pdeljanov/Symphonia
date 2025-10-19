@@ -307,7 +307,7 @@ impl FormatReader for MkvReader {
         // Get the total length of the stream, if possible.
         let total_len = if is_seekable {
             let pos = reader.pos();
-            let len = reader.seek(SeekFrom::End(0))?;
+            let len = reader.byte_len().ok_or(Error::SeekError(SeekErrorKind::Unseekable))?;
             reader.seek(SeekFrom::Start(pos))?;
             log::info!("stream is seekable with len={} bytes.", len);
             Some(len)
