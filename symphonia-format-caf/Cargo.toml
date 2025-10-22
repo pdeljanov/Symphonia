@@ -12,6 +12,9 @@ keywords = ["audio", "media", "demuxer", "caf"]
 edition = "2021"
 rust-version = "1.77"
 
+[lints]
+workspace = true
+
 [dependencies]
 log = "0.4"
 symphonia-common = { version = "0.5.4", path = "../symphonia-common" }
