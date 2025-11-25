@@ -351,6 +351,11 @@ impl FormatReader for IsoMp4Reader {
         // Parse all atoms if the stream is seekable, otherwise parse all atoms up-to the mdat atom.
         let mut iter = AtomIterator::new_root(mss, total_len);
 
+        // Track the position of the first mdat/moof atom to avoid rescanning.
+        let mut first_data_pos = None;
+        // Track whether we should continue scanning sidx atoms.
+        let mut scan_all_sidx = true;
+
         while let Some(header) = iter.next()? {
             // Top-level atoms.
             match header.atype {
@@ -369,21 +374,60 @@ impl FormatReader for IsoMp4Reader {
                         break;
                     }
                     else {
-                        // If the stream is seekable, examine all segment indexes and select the
-                        // index with the earliest presentation timestamp to be the first.
+                        // Skip sidx atoms if we've already determined we don't need to scan them.
+                        if !scan_all_sidx {
+                            iter.consume_atom();
+                            continue;
+                        }
+
+                        // For seekable streams, read the first sidx atom and check if it's a master sidx.
+                        // A master sidx contains only Media references (reference_type = 0), meaning all
+                        // entries point to actual media segments, not other sidx atoms.
+                        // If it's a master and has no references, we're done. Otherwise, scan all sidx
+                        // atoms to find the one with the earliest presentation timestamp.
                         let new_sidx = iter.read_atom::<SidxAtom>()?;
 
-                        let is_earlier = match &sidx {
-                            Some(sidx) => new_sidx.earliest_pts < sidx.earliest_pts,
-                            _ => true,
-                        };
+                        if sidx.is_none() {
+                            // First sidx atom - check if it's a master sidx.
+                            // A master sidx has all references with reference_type = Media (0).
+                            let is_master = new_sidx.references.iter().all(|r| {
+                                matches!(r.reference_type, crate::atoms::sidx::ReferenceType::Media)
+                            });
 
-                        if is_earlier {
                             sidx = Some(new_sidx);
+
+                            // If it's a master sidx and has no references, we're done scanning sidx atoms.
+                            // This is a DASH-friendly short-circuit for well-formed DASH files.
+                            if is_master && sidx.as_ref().unwrap().references.is_empty() {
+                                scan_all_sidx = false;
+                                // If we've already found moov and the first data atom, we can stop
+                                // scanning entirely to avoid reading through the whole file.
+                                if moov.is_some() && first_data_pos.is_some() {
+                                    break;
+                                }
+                            }
+                            // If it's NOT a master (has Segment references) OR has references, we need
+                            // to scan all sidx atoms to find the one with earliest PTS.
+                        }
+                        else {
+                            // Compare with existing sidx and keep the one with earliest PTS.
+                            let is_earlier = new_sidx.earliest_pts < sidx.as_ref().unwrap().earliest_pts;
+                            if is_earlier {
+                                sidx = Some(new_sidx);
+                            }
                         }
                     }
                 }
                 AtomType::MediaData | AtomType::MovieFragment => {
+                    // Remember the position of the first mdat/moof atom to avoid rescanning.
+                    // The atom starts at the reader position minus the header size.
+                    // Header size is 8 bytes (standard) or 16 bytes (extended with 64-bit length).
+                    let header_size = if header.atom_len == 1 { 16 } else { 8 };
+                    let atom_start = iter.inner_mut().pos() - header_size;
+                    if first_data_pos.is_none() {
+                        first_data_pos = Some(atom_start);
+                    }
+
                     // The mdat atom contains the codec bitstream data. For segmented streams, a
                     // moof + mdat pair is required for playback. If the source is unseekable then
                     // the format reader cannot skip past these atoms without dropping samples.
@@ -396,6 +440,22 @@ impl FormatReader for IsoMp4Reader {
 
                         // The remainder of the stream will be read incrementally.
                         break;
+                    }
+                    // For seekable streams, stop scanning once we've found the first data atom
+                    // and have read the moov atom. This avoids excessive HTTP requests for well formed DASH files.
+                    // In DASH files, sidx atoms are typically at the beginning before the first mdat/moof,
+                    // so once we hit the first data atom, we've likely found all sidx atoms.
+                    else if moov.is_some() {
+                        // Consume the atom before breaking.
+                        iter.consume_atom();
+                        // Stop scanning - we have everything we need (moov, first mdat/moof).
+                        // If we were scanning for sidx atoms, we've likely found them all by now
+                        // since they come before the first data atom in well-formed DASH files.
+                        break;
+                    }
+                    else {
+                        // Haven't read moov yet, consume and continue.
+                        iter.consume_atom();
                     }
                 }
                 AtomType::Meta => {
@@ -422,21 +482,32 @@ impl FormatReader for IsoMp4Reader {
             return unsupported_error("isomp4: missing moov atom");
         }
 
-        // If the stream was seekable, then all atoms in the media source stream were scanned. Seek
-        // back to the first mdat atom for playback. If the stream is not seekable, then the atom
-        // iterator is currently positioned at the first mdat atom.
+        // If the stream was seekable and we found a data atom, seek directly to it to avoid
+        // rescanning. Otherwise, if the stream is not seekable, the atom iterator is already
+        // positioned at the first mdat atom.
         if is_seekable {
-            let mut mss = iter.into_inner();
-            mss.seek(SeekFrom::Start(0))?;
+            if let Some(data_pos) = first_data_pos {
+                // Seek directly to the first data atom position.
+                let mut mss = iter.into_inner();
+                mss.seek(SeekFrom::Start(data_pos))?;
+                iter = AtomIterator::new_root(mss, total_len);
+                // Consume the mdat/moof atom header that we're now positioned at.
+                iter.next()?;
+            }
+            else {
+                // No data atom found during initial scan, seek to start and scan for it.
+                let mut mss = iter.into_inner();
+                mss.seek(SeekFrom::Start(0))?;
 
-            iter = AtomIterator::new_root(mss, total_len);
+                iter = AtomIterator::new_root(mss, total_len);
 
-            while let Some(header) = iter.next_no_consume()? {
-                match header.atype {
-                    AtomType::MediaData | AtomType::MovieFragment => break,
-                    _ => (),
+                while let Some(header) = iter.next_no_consume()? {
+                    match header.atype {
+                        AtomType::MediaData | AtomType::MovieFragment => break,
+                        _ => (),
+                    }
+                    iter.consume_atom();
                 }
-                iter.consume_atom();
             }
         }
 
