@@ -105,6 +105,7 @@ pub fn print_tracks(tracks: &[Track]) {
                         print_pair("Channel Map:", &channels, Bullet::None, 1);
                     }
                 }
+                #[cfg(feature = "exp-video-codecs")]
                 Some(CodecParameters::Video(params)) => {
                     let codec_info = reg.get_video_decoder(params.codec).map(|d| &d.codec.info);
 
@@ -130,6 +131,7 @@ pub fn print_tracks(tracks: &[Track]) {
                         print_pair("Height:", &height, Bullet::None, 1);
                     }
                 }
+                #[cfg(feature = "exp-subtitle-codecs")]
                 Some(CodecParameters::Subtitle(params)) => {
                     let codec_name = fmt_codec_name(
                         reg.get_subtitle_decoder(params.codec).map(|d| &d.codec.info),

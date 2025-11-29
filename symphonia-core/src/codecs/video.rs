@@ -9,7 +9,9 @@
 
 use std::fmt;
 
-use crate::codecs::{CodecInfo, CodecProfile};
+#[cfg(feature = "exp-video-codecs")]
+use crate::codecs::CodecInfo;
+use crate::codecs::CodecProfile;
 use crate::common::FourCc;
 
 /// An `VideoCodecId` is a unique identifier used to identify a specific video codec.
@@ -132,6 +134,7 @@ impl VideoCodecParameters {
 }
 
 /// `VideoDecoderOptions` is a common set of options that all subtitle decoders use.
+#[cfg(feature = "exp-video-codecs")]
 #[derive(Copy, Clone, Debug, Default)]
 pub struct VideoDecoderOptions {
     // None yet.
@@ -139,6 +142,7 @@ pub struct VideoDecoderOptions {
 
 /// A `VideoDecoder` implements a video codec's decode algorithm. It consumes `Packet`s and
 /// produces video frames.
+#[cfg(feature = "exp-video-codecs")]
 pub trait VideoDecoder: Send + Sync {
     /// Reset the decoder.
     ///

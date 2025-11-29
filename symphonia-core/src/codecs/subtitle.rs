@@ -9,10 +9,14 @@
 
 use std::fmt;
 
+#[cfg(feature = "exp-subtitle-codecs")]
 use crate::codecs::CodecInfo;
 use crate::common::FourCc;
+#[cfg(feature = "exp-subtitle-codecs")]
 use crate::errors::Result;
+#[cfg(feature = "exp-subtitle-codecs")]
 use crate::formats::Packet;
+#[cfg(feature = "exp-subtitle-codecs")]
 use crate::subtitle::GenericSubtitleBufferRef;
 
 /// An `SubtitleCodecId` is a unique identifier used to identify a specific video codec.
@@ -84,6 +88,7 @@ impl SubtitleCodecParameters {
 }
 
 /// `SubtitleDecoderOptions` is a common set of options that all subtitle decoders use.
+#[cfg(feature = "exp-subtitle-codecs")]
 #[derive(Copy, Clone, Debug, Default)]
 pub struct SubtitleDecoderOptions {
     // None yet.
@@ -91,6 +96,7 @@ pub struct SubtitleDecoderOptions {
 
 /// A `SubtitleDecoder` implements a subtitle codec's decode algorithm. It consumes `Packet`s and
 /// produces plain text or rendered subtitles.
+#[cfg(feature = "exp-subtitle-codecs")]
 pub trait SubtitleDecoder: Send + Sync {
     /// Reset the decoder.
     ///

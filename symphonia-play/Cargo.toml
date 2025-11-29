@@ -11,6 +11,13 @@ rust-version = "1.77"
 publish = false
 default-run = "symphonia-play"
 
+[features]
+exp-video-codecs = ["symphonia/exp-video-codecs"]
+exp-subtitle-codecs = ["symphonia/exp-subtitle-codecs"]
+
+# Enable experimental features since symphonia-play is a development tool.
+default = ["exp-subtitle-codecs", "exp-video-codecs"]
+
 [dependencies]
 clap = "3.1.0"
 lazy_static = "1.4.0"

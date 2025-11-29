@@ -88,6 +88,10 @@ opt-simd = [
     "opt-simd-neon",
 ]
 
+# Experimental features.
+exp-subtitle-codecs = ["symphonia-core/exp-subtitle-codecs"]
+exp-video-codecs = ["symphonia-core/exp-video-codecs"]
+
 [dependencies]
 lazy_static = "1.4.0"
 
