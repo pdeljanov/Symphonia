@@ -5,9 +5,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::codecs::video::{VideoExtraData, VIDEO_EXTRA_DATA_ID_NULL};
 use symphonia_core::codecs::CodecId;
-use symphonia_core::errors::{decode_error, Error, Result};
+use symphonia_core::codecs::video::{VIDEO_EXTRA_DATA_ID_NULL, VideoExtraData};
+use symphonia_core::errors::{Error, Result, decode_error};
 use symphonia_core::io::ReadBytes;
 
 use symphonia_common::mpeg::formats::*;

@@ -9,13 +9,13 @@ use core::str;
 use std::fmt;
 use std::sync::Arc;
 
-use symphonia_core::audio::{layouts, Channels};
+use symphonia_core::audio::{Channels, layouts};
 use symphonia_core::codecs::audio::well_known::{
-    CODEC_ID_PCM_ALAW, CODEC_ID_PCM_F32BE, CODEC_ID_PCM_F64BE, CODEC_ID_PCM_MULAW,
+    CODEC_ID_PCM_ALAW, CODEC_ID_PCM_F32BE, CODEC_ID_PCM_F64BE, CODEC_ID_PCM_MULAW, CODEC_ID_PCM_S8,
     CODEC_ID_PCM_S16BE, CODEC_ID_PCM_S16LE, CODEC_ID_PCM_S24BE, CODEC_ID_PCM_S32BE,
-    CODEC_ID_PCM_S32LE, CODEC_ID_PCM_S8,
+    CODEC_ID_PCM_S32LE,
 };
-use symphonia_core::errors::{decode_error, unsupported_error, Result};
+use symphonia_core::errors::{Result, decode_error, unsupported_error};
 use symphonia_core::io::ReadBytes;
 use symphonia_core::meta::{MetadataRevision, StandardTag, Tag};
 use symphonia_core::util::text;

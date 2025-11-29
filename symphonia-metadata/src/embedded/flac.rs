@@ -10,9 +10,9 @@
 use std::num::NonZeroU8;
 use std::sync::Arc;
 
-use symphonia_core::errors::{decode_error, Result};
-use symphonia_core::formats::util::SeekIndex;
+use symphonia_core::errors::{Result, decode_error};
 use symphonia_core::formats::VendorDataAttachment;
+use symphonia_core::formats::util::SeekIndex;
 use symphonia_core::io::ReadBytes;
 use symphonia_core::meta::well_known::METADATA_ID_FLAC;
 use symphonia_core::meta::{

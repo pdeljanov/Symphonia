@@ -6,9 +6,9 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use symphonia_common::xiph::audio::flac::{MetadataBlockHeader, MetadataBlockType, StreamInfo};
-use symphonia_core::codecs::audio::well_known::CODEC_ID_FLAC;
 use symphonia_core::codecs::audio::VerificationCheck;
-use symphonia_core::errors::{decode_error, unsupported_error, Result};
+use symphonia_core::codecs::audio::well_known::CODEC_ID_FLAC;
+use symphonia_core::errors::{Result, decode_error, unsupported_error};
 use symphonia_core::io::{BufReader, ReadBytes};
 
 use crate::atoms::stsd::AudioSampleEntry;

@@ -10,7 +10,7 @@
 
 use crate::common::FrameHeader;
 
-use super::{common::*, GranuleChannel};
+use super::{GranuleChannel, common::*};
 
 use std::{convert::TryInto, f64};
 
@@ -481,8 +481,8 @@ pub fn frequency_inversion(samples: &mut [f32; 576]) {
 
 #[cfg(test)]
 mod tests {
-    use super::imdct12_win;
     use super::IMDCT_WINDOWS;
+    use super::imdct12_win;
     use std::f64;
 
     fn imdct12_analytical(x: &[f32; 6]) -> [f32; 12] {

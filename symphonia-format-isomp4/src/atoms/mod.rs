@@ -7,7 +7,7 @@
 
 use std::num::NonZeroU64;
 
-use symphonia_core::errors::{decode_error, Result};
+use symphonia_core::errors::{Result, decode_error};
 use symphonia_core::io::ReadBytes;
 
 pub(crate) mod alac;
@@ -663,12 +663,7 @@ impl<B: ReadBytes> AtomIterator<B> {
     }
 
     pub fn next_no_consume(&mut self) -> Result<Option<AtomHeader>> {
-        if self.cur_atom.is_some() {
-            Ok(self.cur_atom)
-        }
-        else {
-            self.next()
-        }
+        if self.cur_atom.is_some() { Ok(self.cur_atom) } else { self.next() }
     }
 
     pub fn read_atom<A: Atom>(&mut self) -> Result<A> {

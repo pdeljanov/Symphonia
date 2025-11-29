@@ -24,10 +24,10 @@ members = [
 ]
 
 [workspace.package]
-edition = "2021"
+edition = "2024"
 homepage = "https://github.com/pdeljanov/Symphonia"
 license = "MPL-2.0"
 license-file = "LICENSE"
 repository = "https://github.com/pdeljanov/Symphonia"
-rust-version = "1.77"
+rust-version = "1.85"
 version = "0.6.0"

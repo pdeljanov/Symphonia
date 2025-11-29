@@ -8,9 +8,9 @@
 use log::{debug, error, info, warn};
 use std::{convert::TryFrom, fmt, mem::size_of, str};
 use symphonia_core::{
-    audio::{layouts, AmbisonicBFormat, ChannelLabel, Channels, Position},
-    codecs::audio::{well_known::*, AudioCodecId},
-    errors::{decode_error, unsupported_error, Error, Result},
+    audio::{AmbisonicBFormat, ChannelLabel, Channels, Position, layouts},
+    codecs::audio::{AudioCodecId, well_known::*},
+    errors::{Error, Result, decode_error, unsupported_error},
     io::{MediaSourceStream, ReadBytes},
 };
 

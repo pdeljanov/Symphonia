@@ -11,7 +11,7 @@
 use std::io::{Seek, SeekFrom};
 
 use crate::common::Tier;
-use crate::errors::{unsupported_error, Error, Result};
+use crate::errors::{Error, Result, unsupported_error};
 use crate::formats::{FormatInfo, FormatOptions, FormatReader};
 use crate::io::{MediaSource, MediaSourceStream, ReadBytes, ScopedStream, SeekBuffered};
 use crate::meta::{MetadataInfo, MetadataOptions, MetadataReader, MetadataSideData};

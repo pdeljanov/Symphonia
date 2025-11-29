@@ -9,9 +9,9 @@ use std::collections::HashMap;
 use std::io::{Seek, SeekFrom};
 use std::sync::Arc;
 
-use symphonia_core::codecs::audio::AudioCodecParameters;
 use symphonia_core::codecs::CodecParameters;
-use symphonia_core::errors::{decode_error, seek_error, unsupported_error, Error};
+use symphonia_core::codecs::audio::AudioCodecParameters;
+use symphonia_core::errors::{Error, decode_error, seek_error, unsupported_error};
 use symphonia_core::errors::{Result, SeekErrorKind};
 use symphonia_core::formats::prelude::*;
 use symphonia_core::formats::probe::{ProbeFormatData, ProbeableFormat, Score, Scoreable};
@@ -26,7 +26,7 @@ use symphonia_core::support_format;
 use log::debug;
 
 use crate::common::{
-    append_data_params, append_format_params, next_packet, ByteOrder, ChunksReader, PacketInfo,
+    ByteOrder, ChunksReader, PacketInfo, append_data_params, append_format_params, next_packet,
 };
 mod chunks;
 use chunks::*;

@@ -7,7 +7,7 @@
 
 use crate::audio::{
     conv::ConvertibleSample,
-    sample::{i24, u24, SampleBytes, SampleFormat},
+    sample::{SampleBytes, SampleFormat, i24, u24},
 };
 
 use super::{Audio, AudioBuffer, AudioBytes, AudioMut, AudioSpec};

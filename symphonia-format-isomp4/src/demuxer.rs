@@ -8,7 +8,7 @@
 use symphonia_core::support_format;
 
 use symphonia_core::errors::{
-    decode_error, seek_error, unsupported_error, Error, Result, SeekErrorKind,
+    Error, Result, SeekErrorKind, decode_error, seek_error, unsupported_error,
 };
 use symphonia_core::formats::prelude::*;
 use symphonia_core::formats::probe::{ProbeFormatData, ProbeableFormat, Score, Scoreable};

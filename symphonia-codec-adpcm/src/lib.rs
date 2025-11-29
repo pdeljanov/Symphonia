@@ -14,8 +14,8 @@
 #![allow(clippy::identity_op)]
 #![allow(clippy::manual_range_contains)]
 
-use symphonia_core::codecs::registry::{RegisterableAudioDecoder, SupportedAudioCodec};
 use symphonia_core::codecs::CodecInfo;
+use symphonia_core::codecs::registry::{RegisterableAudioDecoder, SupportedAudioCodec};
 use symphonia_core::support_audio_codec;
 
 use symphonia_core::audio::{
@@ -26,7 +26,7 @@ use symphonia_core::codecs::audio::well_known::{
 };
 use symphonia_core::codecs::audio::{AudioCodecId, AudioCodecParameters, AudioDecoderOptions};
 use symphonia_core::codecs::audio::{AudioDecoder, FinalizeResult};
-use symphonia_core::errors::{unsupported_error, Result};
+use symphonia_core::errors::{Result, unsupported_error};
 use symphonia_core::formats::Packet;
 use symphonia_core::io::ReadBytes;
 

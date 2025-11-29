@@ -10,7 +10,7 @@
 use std::collections::HashMap;
 use std::str;
 
-use symphonia_core::errors::{decode_error, Result};
+use symphonia_core::errors::{Result, decode_error};
 use symphonia_core::io::{BufReader, FiniteStream, ReadBytes};
 use symphonia_core::meta::RawTagSubField;
 use symphonia_core::meta::{Chapter, RawValue, Tag, Visual};

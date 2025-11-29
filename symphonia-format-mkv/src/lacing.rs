@@ -7,7 +7,7 @@
 
 use std::collections::{HashMap, VecDeque};
 
-use symphonia_core::errors::{decode_error, Result};
+use symphonia_core::errors::{Result, decode_error};
 use symphonia_core::io::{BufReader, ReadBytes};
 
 use crate::demuxer::TrackState;

@@ -11,9 +11,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::errors::{decode_error, Result};
-use symphonia_core::io::vlc::{Codebook, Entry8x16};
+use symphonia_core::errors::{Result, decode_error};
 use symphonia_core::io::ReadBitsLtr;
+use symphonia_core::io::vlc::{Codebook, Entry8x16};
 
 use crate::aac::codebooks;
 use crate::aac::common::*;
@@ -177,12 +177,7 @@ impl IcsInfo {
             0
         }
         else if g >= self.window_groups {
-            if self.long_win {
-                1
-            }
-            else {
-                8
-            }
+            if self.long_win { 1 } else { 8 }
         }
         else {
             self.group_start[g]
@@ -354,12 +349,7 @@ impl Ics {
     }
 
     pub fn get_bands(&self) -> &'static [usize] {
-        if self.info.long_win {
-            self.sbinfo.long_bands
-        }
-        else {
-            self.sbinfo.short_bands
-        }
+        if self.info.long_win { self.sbinfo.long_bands } else { self.sbinfo.short_bands }
     }
 
     fn decode_spectrum<B: ReadBitsLtr>(&mut self, bs: &mut B, lcg: &mut Lcg) -> Result<()> {

@@ -9,10 +9,10 @@ use super::{MapResult, Mapper, PacketParser};
 use crate::common::SideData;
 
 use symphonia_common::xiph::audio::vorbis::*;
-use symphonia_core::codecs::audio::well_known::CODEC_ID_VORBIS;
-use symphonia_core::codecs::audio::AudioCodecParameters;
 use symphonia_core::codecs::CodecParameters;
-use symphonia_core::errors::{decode_error, unsupported_error, Result};
+use symphonia_core::codecs::audio::AudioCodecParameters;
+use symphonia_core::codecs::audio::well_known::CODEC_ID_VORBIS;
+use symphonia_core::errors::{Result, decode_error, unsupported_error};
 use symphonia_core::formats::Track;
 use symphonia_core::io::{BitReaderRtl, BufReader, ReadBitsRtl, ReadBytes};
 use symphonia_core::meta::MetadataBuilder;
@@ -81,12 +81,7 @@ impl PacketParser for VorbisPacketParser {
         // Determine the current block size.
         let cur_bs_exp = if mode_num < self.num_modes {
             let block_flag = (self.modes_block_flags >> mode_num) & 1;
-            if block_flag == 1 {
-                self.bs1_exp
-            }
-            else {
-                self.bs0_exp
-            }
+            if block_flag == 1 { self.bs1_exp } else { self.bs0_exp }
         }
         else {
             return 0;

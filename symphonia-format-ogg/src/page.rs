@@ -6,7 +6,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use symphonia_core::checksum::Crc32;
-use symphonia_core::errors::{decode_error, Error, Result};
+use symphonia_core::errors::{Error, Result, decode_error};
 use symphonia_core::io::{BufReader, Monitor, MonitorStream, ReadBytes, SeekBuffered};
 
 use log::{debug, warn};
@@ -98,12 +98,7 @@ impl<'a> PagePackets<'a> {
         // Consume the rest of the packets.
         let discard = usize::from(self.lens.sum::<u16>());
 
-        if self.data.len() > discard {
-            Some(&self.data[discard..])
-        }
-        else {
-            None
-        }
+        if self.data.len() > discard { Some(&self.data[discard..]) } else { None }
     }
 }
 

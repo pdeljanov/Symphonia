@@ -5,11 +5,11 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::errors::{decode_error, Result};
+use symphonia_core::errors::{Result, decode_error};
 
 use crate::common::{ChannelMode, FrameHeader, Mode};
 
-use super::{common::*, Granule};
+use super::{Granule, common::*};
 
 use std::cmp::max;
 use std::{f32, f64};

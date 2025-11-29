@@ -13,7 +13,7 @@ use std::io;
 use std::str;
 use std::sync::Arc;
 
-use symphonia_core::errors::{decode_error, unsupported_error, Result};
+use symphonia_core::errors::{Result, decode_error, unsupported_error};
 use symphonia_core::io::{BufReader, FiniteStream, ReadBytes};
 use symphonia_core::meta::RawTag;
 use symphonia_core::meta::RawTagSubField;
@@ -23,7 +23,7 @@ use symphonia_core::util::text;
 
 use lazy_static::lazy_static;
 use log::debug;
-use smallvec::{smallvec, SmallVec};
+use smallvec::{SmallVec, smallvec};
 
 use crate::id3v2::frames::{FrameResult, Id3v2Chapter, Id3v2TableOfContents};
 use crate::id3v2::sub_fields::*;

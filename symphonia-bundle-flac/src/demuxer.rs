@@ -10,12 +10,12 @@ use std::io::{Seek, SeekFrom};
 use symphonia_core::support_format;
 
 use symphonia_common::xiph::audio::flac::{MetadataBlockHeader, MetadataBlockType, StreamInfo};
-use symphonia_core::codecs::audio::{
-    well_known::CODEC_ID_FLAC, AudioCodecParameters, VerificationCheck,
-};
 use symphonia_core::codecs::CodecParameters;
+use symphonia_core::codecs::audio::{
+    AudioCodecParameters, VerificationCheck, well_known::CODEC_ID_FLAC,
+};
 use symphonia_core::errors::{
-    decode_error, seek_error, unsupported_error, Error, Result, SeekErrorKind,
+    Error, Result, SeekErrorKind, decode_error, seek_error, unsupported_error,
 };
 use symphonia_core::formats::prelude::*;
 use symphonia_core::formats::probe::{ProbeFormatData, ProbeableFormat, Score, Scoreable};

@@ -10,7 +10,7 @@
 
 use std::fmt;
 
-use crate::codecs::{audio, subtitle, video, CodecParameters};
+use crate::codecs::{CodecParameters, audio, subtitle, video};
 use crate::common::FourCc;
 use crate::errors::Result;
 use crate::io::{BufReader, MediaSourceStream};

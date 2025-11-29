@@ -11,10 +11,10 @@ use std::io::{Seek, SeekFrom};
 use symphonia_core::{
     audio::{Channels, Position},
     codecs::{
-        audio::{well_known::CODEC_ID_AAC, *},
         CodecParameters,
+        audio::{well_known::CODEC_ID_AAC, *},
     },
-    errors::{decode_error, seek_error, unsupported_error, Result, SeekErrorKind},
+    errors::{Result, SeekErrorKind, decode_error, seek_error, unsupported_error},
     formats::{
         prelude::*,
         probe::{ProbeFormatData, ProbeableFormat, Score, Scoreable},
@@ -110,7 +110,7 @@ impl FormatReader for CafReader<'_> {
                 let buffer = self.reader.read_boxed_slice(bytes_to_read as usize)?;
                 Ok(Some(Packet::new_from_boxed_slice(0, packet_timestamp, packet_duration, buffer)))
             }
-            PacketInfo::VariableAudioPacket { packets, ref mut current_packet_index } => {
+            PacketInfo::VariableAudioPacket { packets, current_packet_index } => {
                 if let Some(packet) = packets.get(*current_packet_index) {
                     *current_packet_index += 1;
                     let buffer = self.reader.read_boxed_slice(packet.size as usize)?;
@@ -420,9 +420,7 @@ impl<'s> CafReader<'s> {
                     }
                 }
                 Some(PacketTable(table)) => {
-                    if let PacketInfo::VariableAudioPacket { ref mut packets, .. } =
-                        &mut self.packet_info
-                    {
+                    if let PacketInfo::VariableAudioPacket { packets, .. } = &mut self.packet_info {
                         num_frames = Some(table.valid_frames as u64);
                         *packets = table.packets;
                     }

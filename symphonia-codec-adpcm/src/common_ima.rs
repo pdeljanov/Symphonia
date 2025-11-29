@@ -7,7 +7,7 @@
 
 use symphonia_core::util::clamp::clamp_i16;
 
-use crate::common::{from_i16_shift, Nibble};
+use crate::common::{Nibble, from_i16_shift};
 
 #[rustfmt::skip]
 const IMA_INDEX_TABLE: [i32; 16] = [

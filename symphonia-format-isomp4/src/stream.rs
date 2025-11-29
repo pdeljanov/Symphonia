@@ -4,9 +4,9 @@
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
-use symphonia_core::errors::{decode_error, Error, Result};
+use symphonia_core::errors::{Error, Result, decode_error};
 
-use crate::atoms::{stsz::SampleSize, Co64Atom, MoofAtom, MoovAtom, StcoAtom, TrafAtom};
+use crate::atoms::{Co64Atom, MoofAtom, MoovAtom, StcoAtom, TrafAtom, stsz::SampleSize};
 
 use std::ops::Range;
 use std::sync::Arc;
@@ -366,12 +366,7 @@ impl StreamSegment for MoovSegment {
         // Find the sample timing. Note, complexity of O(N).
         let timing = trak.mdia.minf.stbl.stts.find_timing_for_sample(sample_num);
 
-        if let Some((ts, dur)) = timing {
-            Ok(Some(SampleTiming { ts, dur }))
-        }
-        else {
-            Ok(None)
-        }
+        if let Some((ts, dur)) = timing { Ok(Some(SampleTiming { ts, dur })) } else { Ok(None) }
     }
 
     fn ts_sample(&self, track_num: usize, ts: u64) -> Result<Option<u32>> {

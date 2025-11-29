@@ -5,10 +5,10 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::errors::{decode_error, Result};
+use symphonia_core::errors::{Result, decode_error};
 use symphonia_core::io::ReadBytes;
 
-use crate::common::{from_i16_shift, u16_to_i32, Nibble};
+use crate::common::{Nibble, from_i16_shift, u16_to_i32};
 use crate::common_ima::AdpcmImaBlockStatus;
 
 fn read_preamble<B: ReadBytes>(stream: &mut B) -> Result<AdpcmImaBlockStatus> {

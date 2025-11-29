@@ -13,7 +13,7 @@ use std::sync::Arc;
 use lazy_static::lazy_static;
 use log::warn;
 
-use symphonia_core::errors::{decode_error, Error, Result};
+use symphonia_core::errors::{Error, Result, decode_error};
 use symphonia_core::io::{BufReader, ReadBytes};
 use symphonia_core::meta::well_known::METADATA_ID_VORBIS_COMMENT;
 use symphonia_core::meta::{

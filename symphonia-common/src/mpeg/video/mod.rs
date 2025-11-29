@@ -6,7 +6,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use symphonia_core::codecs::CodecProfile;
-use symphonia_core::errors::{decode_error, Result};
+use symphonia_core::errors::{Result, decode_error};
 use symphonia_core::io::{BitReaderLtr, ReadBitsLtr};
 
 pub struct AVCDecoderConfigurationRecord {

@@ -8,7 +8,7 @@
 use symphonia_core::errors::Result;
 use symphonia_core::io::ReadBytes;
 
-use crate::common::{u16_to_i32, Nibble};
+use crate::common::{Nibble, u16_to_i32};
 use crate::common_ima::AdpcmImaBlockStatus;
 
 fn read_preamble<B: ReadBytes>(stream: &mut B) -> Result<AdpcmImaBlockStatus> {

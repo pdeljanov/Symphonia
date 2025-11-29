@@ -10,10 +10,10 @@ use std::num::NonZeroU64;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use symphonia_core::codecs::video::VideoExtraData;
 use symphonia_core::codecs::video::well_known::extra_data::{
     VIDEO_EXTRA_DATA_ID_DOLBY_VISION_CONFIG, VIDEO_EXTRA_DATA_ID_DOLBY_VISION_EL_HEVC,
 };
-use symphonia_core::codecs::video::VideoExtraData;
 use symphonia_core::formats::{Attachment, FileAttachment, TrackFlags};
 use symphonia_core::meta::well_known::METADATA_ID_MATROSKA;
 use symphonia_core::meta::{
@@ -25,7 +25,7 @@ use symphonia_core::units::Time;
 use crate::ebml::{EbmlElement, EbmlElementHeader, EbmlError, EbmlIterator, ReadEbml, Result};
 use crate::schema::{MkvElement, MkvSchema};
 use crate::sub_fields::*;
-use crate::tags::{make_raw_tags, map_std_tag, TagContext, Target};
+use crate::tags::{TagContext, Target, make_raw_tags, map_std_tag};
 
 const MKV_METADATA_INFO: MetadataInfo = MetadataInfo {
     metadata: METADATA_ID_MATROSKA,
@@ -280,7 +280,7 @@ impl EbmlElement<MkvSchema> for AudioElement {
                         Some(_) => {
                             return Err(EbmlError::ElementError(
                                 "mkv: invalid (<= 0.0) audio sampling frequency",
-                            ))
+                            ));
                         }
                         _ => None,
                     };
@@ -294,7 +294,7 @@ impl EbmlElement<MkvSchema> for AudioElement {
                         Some(_) => {
                             return Err(EbmlError::ElementError(
                                 "mkv: invalid (<= 0.0) audio output sampling frequency",
-                            ))
+                            ));
                         }
                     };
                 }
@@ -596,7 +596,7 @@ impl EbmlElement<MkvSchema> for EbmlHeaderElement {
                         Some(len) if len < 4 => {
                             return Err(EbmlError::ElementError(
                                 "mkv: invalid ebml maximum id length",
-                            ))
+                            ));
                         }
                         len => len,
                     }
@@ -607,7 +607,7 @@ impl EbmlElement<MkvSchema> for EbmlHeaderElement {
                         Some(0) => {
                             return Err(EbmlError::ElementError(
                                 "mkv: invalid ebml maximum size length",
-                            ))
+                            ));
                         }
                         len => len,
                     }

@@ -19,15 +19,15 @@
 use std::cmp::min;
 
 use symphonia_core::audio::{
-    layouts, AsGenericAudioBufferRef, AudioBuffer, AudioMut, AudioSpec, Channels,
-    GenericAudioBufferRef,
+    AsGenericAudioBufferRef, AudioBuffer, AudioMut, AudioSpec, Channels, GenericAudioBufferRef,
+    layouts,
 };
+use symphonia_core::codecs::CodecInfo;
 use symphonia_core::codecs::audio::well_known::CODEC_ID_ALAC;
 use symphonia_core::codecs::audio::{AudioCodecParameters, AudioDecoderOptions};
 use symphonia_core::codecs::audio::{AudioDecoder, FinalizeResult};
 use symphonia_core::codecs::registry::{RegisterableAudioDecoder, SupportedAudioCodec};
-use symphonia_core::codecs::CodecInfo;
-use symphonia_core::errors::{decode_error, unsupported_error, Result};
+use symphonia_core::errors::{Result, decode_error, unsupported_error};
 use symphonia_core::formats::Packet;
 use symphonia_core::io::{BitReaderLtr, BufReader, FiniteStream, ReadBitsLtr, ReadBytes};
 use symphonia_core::support_audio_codec;

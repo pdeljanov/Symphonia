@@ -8,8 +8,8 @@
 use std::collections::BTreeMap;
 use std::io::{Seek, SeekFrom};
 
-use symphonia_core::errors::{reset_error, seek_error, unsupported_error};
 use symphonia_core::errors::{Error, Result, SeekErrorKind};
+use symphonia_core::errors::{reset_error, seek_error, unsupported_error};
 use symphonia_core::formats::prelude::*;
 use symphonia_core::formats::probe::{ProbeFormatData, ProbeableFormat, Score, Scoreable};
 use symphonia_core::formats::well_known::FORMAT_ID_OGG;

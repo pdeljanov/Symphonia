@@ -9,7 +9,7 @@
 
 use std::sync::Arc;
 
-use symphonia_core::errors::{unsupported_error, Result};
+use symphonia_core::errors::{Result, unsupported_error};
 use symphonia_core::formats::probe::{
     Anchors, ProbeMetadataData, ProbeableMetadata, Score, Scoreable,
 };
@@ -95,12 +95,7 @@ fn decode_iso8859_buf(buf: &[u8]) -> Option<Arc<String>> {
         text::decode_iso8859_1_lossy(buf).take_while(text::filter::not_null).collect::<String>();
 
     // Do not return an empty string.
-    if !text.is_empty() {
-        Some(Arc::new(text))
-    }
-    else {
-        None
-    }
+    if !text.is_empty() { Some(Arc::new(text)) } else { None }
 }
 
 const ID3V1_METADATA_INFO: MetadataInfo =

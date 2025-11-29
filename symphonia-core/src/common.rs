@@ -30,12 +30,7 @@ impl FourCc {
     /// A FourCC cannot contain non-ASCII characters. If a non-ASCII character is found, `None` is
     /// returned.
     pub const fn try_new(val: [u8; 4]) -> Option<Self> {
-        if val.is_ascii() {
-            Some(Self(val))
-        }
-        else {
-            None
-        }
+        if val.is_ascii() { Some(Self(val)) } else { None }
     }
 
     /// Returns the contained byte array.

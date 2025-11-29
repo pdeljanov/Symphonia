@@ -15,17 +15,17 @@ use symphonia_common::mpeg::video::{
     AVCDecoderConfigurationRecord, HEVCDecoderConfigurationRecord,
 };
 use symphonia_common::xiph::audio::flac::{MetadataBlockHeader, MetadataBlockType};
-use symphonia_core::audio::sample::SampleFormat;
 use symphonia_core::audio::Channels;
-use symphonia_core::codecs::audio::well_known::{CODEC_ID_FLAC, CODEC_ID_VORBIS};
+use symphonia_core::audio::sample::SampleFormat;
 use symphonia_core::codecs::audio::AudioCodecParameters;
-use symphonia_core::codecs::audio::{well_known::*, AudioCodecId};
-use symphonia_core::codecs::subtitle::{well_known::*, SubtitleCodecId, SubtitleCodecParameters};
+use symphonia_core::codecs::audio::well_known::{CODEC_ID_FLAC, CODEC_ID_VORBIS};
+use symphonia_core::codecs::audio::{AudioCodecId, well_known::*};
+use symphonia_core::codecs::subtitle::{SubtitleCodecId, SubtitleCodecParameters, well_known::*};
 use symphonia_core::codecs::video::{
-    well_known::*, VideoCodecId, VideoCodecParameters, VideoExtraData, VIDEO_EXTRA_DATA_ID_NULL,
+    VIDEO_EXTRA_DATA_ID_NULL, VideoCodecId, VideoCodecParameters, VideoExtraData, well_known::*,
 };
 use symphonia_core::codecs::{CodecId, CodecParameters, CodecProfile};
-use symphonia_core::errors::{decode_error, Error, Result};
+use symphonia_core::errors::{Error, Result, decode_error};
 use symphonia_core::io::{BufReader, ReadBytes};
 
 use crate::lacing::read_xiph_sizes;

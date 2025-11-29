@@ -6,7 +6,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use symphonia_core::checksum::Crc8Ccitt;
-use symphonia_core::errors::{decode_error, Result};
+use symphonia_core::errors::{Result, decode_error};
 use symphonia_core::io::{Monitor, MonitorStream, ReadBytes};
 
 /// The minimum FLAC frame header size including the sync bytes.

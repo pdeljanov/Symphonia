@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use std::default::Default;
 use std::hash::Hash;
 
+use crate::codecs::CodecInfo;
 use crate::codecs::audio::{AudioCodecId, AudioCodecParameters, AudioDecoder, AudioDecoderOptions};
 #[cfg(feature = "exp-subtitle-codecs")]
 use crate::codecs::subtitle::{
@@ -18,9 +19,8 @@ use crate::codecs::subtitle::{
 };
 #[cfg(feature = "exp-video-codecs")]
 use crate::codecs::video::{VideoCodecId, VideoCodecParameters, VideoDecoder, VideoDecoderOptions};
-use crate::codecs::CodecInfo;
 use crate::common::Tier;
-use crate::errors::{unsupported_error, Result};
+use crate::errors::{Result, unsupported_error};
 
 /// Description of a supported audio codec.
 #[derive(Copy, Clone)]

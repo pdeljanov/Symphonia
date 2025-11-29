@@ -13,12 +13,12 @@ use symphonia_common::xiph::audio::flac::StreamInfo;
 use symphonia_core::audio::{
     AsGenericAudioBufferRef, AudioBuffer, AudioMut, AudioSpec, GenericAudioBufferRef,
 };
+use symphonia_core::codecs::CodecInfo;
 use symphonia_core::codecs::audio::well_known::CODEC_ID_FLAC;
 use symphonia_core::codecs::audio::{AudioCodecParameters, AudioDecoderOptions};
 use symphonia_core::codecs::audio::{AudioDecoder, FinalizeResult, VerificationCheck};
 use symphonia_core::codecs::registry::{RegisterableAudioDecoder, SupportedAudioCodec};
-use symphonia_core::codecs::CodecInfo;
-use symphonia_core::errors::{decode_error, unsupported_error, Error, Result};
+use symphonia_core::errors::{Error, Result, decode_error, unsupported_error};
 use symphonia_core::formats::Packet;
 use symphonia_core::io::{BitReaderLtr, BufReader, ReadBitsLtr};
 use symphonia_core::support_audio_codec;

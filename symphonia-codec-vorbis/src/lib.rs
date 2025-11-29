@@ -19,13 +19,13 @@
 use symphonia_core::audio::{
     AsGenericAudioBufferRef, AudioBuffer, AudioMut, AudioSpec, GenericAudioBufferRef,
 };
+use symphonia_core::codecs::CodecInfo;
 use symphonia_core::codecs::audio::well_known::CODEC_ID_VORBIS;
 use symphonia_core::codecs::audio::{AudioCodecParameters, AudioDecoderOptions};
 use symphonia_core::codecs::audio::{AudioDecoder, FinalizeResult};
 use symphonia_core::codecs::registry::{RegisterableAudioDecoder, SupportedAudioCodec};
-use symphonia_core::codecs::CodecInfo;
 use symphonia_core::dsp::mdct::Imdct;
-use symphonia_core::errors::{decode_error, unsupported_error, Result};
+use symphonia_core::errors::{Result, decode_error, unsupported_error};
 use symphonia_core::formats::Packet;
 use symphonia_core::io::{BitReaderRtl, BufReader, FiniteBitStream, ReadBitsRtl, ReadBytes};
 use symphonia_core::support_audio_codec;
@@ -253,20 +253,10 @@ impl VorbisDecoder {
 
             for (m, a) in magnitude_ch.residue[..n2].iter_mut().zip(&mut angle_ch.residue[..n2]) {
                 let (new_m, new_a) = if *m > 0.0 {
-                    if *a > 0.0 {
-                        (*m, *m - *a)
-                    }
-                    else {
-                        (*m + *a, *m)
-                    }
+                    if *a > 0.0 { (*m, *m - *a) } else { (*m + *a, *m) }
                 }
                 else {
-                    if *a > 0.0 {
-                        (*m, *m + *a)
-                    }
-                    else {
-                        (*m - *a, *m)
-                    }
+                    if *a > 0.0 { (*m, *m + *a) } else { (*m - *a, *m) }
                 };
 
                 *m = new_m;

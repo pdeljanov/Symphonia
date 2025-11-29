@@ -445,13 +445,13 @@ impl fmt::Display for RawValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // Implement default formatters for each type.
         match self {
-            RawValue::Binary(ref buf) => f.write_str(&buffer_to_hex_string(buf)),
+            RawValue::Binary(buf) => f.write_str(&buffer_to_hex_string(buf)),
             RawValue::Boolean(boolean) => fmt::Display::fmt(boolean, f),
             RawValue::Flag => write!(f, "<flag>"),
             RawValue::Float(float) => fmt::Display::fmt(float, f),
             RawValue::SignedInt(int) => fmt::Display::fmt(int, f),
-            RawValue::String(ref string) => fmt::Display::fmt(string, f),
-            RawValue::StringList(ref list) => fmt::Display::fmt(&list.join("\n"), f),
+            RawValue::String(string) => fmt::Display::fmt(string, f),
+            RawValue::StringList(list) => fmt::Display::fmt(&list.join("\n"), f),
             RawValue::UnsignedInt(uint) => fmt::Display::fmt(uint, f),
         }
     }
@@ -813,12 +813,7 @@ impl Metadata<'_> {
     /// `Metadata`. When there are no newer revisions, `None` is returned. As such, `pop` will never
     /// completely empty the log.
     pub fn pop(&mut self) -> Option<MetadataRevision> {
-        if self.revisions.len() > 1 {
-            self.revisions.pop_front()
-        }
-        else {
-            None
-        }
+        if self.revisions.len() > 1 { self.revisions.pop_front() } else { None }
     }
 }
 

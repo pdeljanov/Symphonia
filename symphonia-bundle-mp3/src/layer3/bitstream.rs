@@ -5,12 +5,12 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::errors::{decode_error, Result};
+use symphonia_core::errors::{Result, decode_error};
 use symphonia_core::io::ReadBitsLtr;
 
 use crate::common::{ChannelMode, FrameHeader};
 
-use super::{common::*, FrameData, Granule, GranuleChannel};
+use super::{FrameData, Granule, GranuleChannel, common::*};
 
 /// Pairs of bit lengths for MPEG version 1 scale factors. For MPEG version 1, there are two
 /// possible bit lengths for scale factors: slen1 and slen2. The first N of bands have scale factors

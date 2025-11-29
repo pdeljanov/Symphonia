@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::io::{Seek, SeekFrom};
 use std::sync::Arc;
 
-use symphonia_core::errors::{decode_error, unsupported_error, Result};
+use symphonia_core::errors::{Result, decode_error, unsupported_error};
 use symphonia_core::formats::probe::{
     Anchors, ProbeMetadataData, ProbeableMetadata, Score, Scoreable,
 };
@@ -27,7 +27,7 @@ use symphonia_core::support_metadata;
 use lazy_static::lazy_static;
 use symphonia_core::util::text;
 
-use crate::utils::images::{try_get_image_info, ImageInfo};
+use crate::utils::images::{ImageInfo, try_get_image_info};
 use crate::utils::std_tag::*;
 
 lazy_static! {

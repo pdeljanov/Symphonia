@@ -7,7 +7,7 @@
 
 use std::sync::Arc;
 
-use symphonia_core::errors::{decode_error, Error, Result};
+use symphonia_core::errors::{Error, Result, decode_error};
 use symphonia_core::io::{BufReader, ReadBytes};
 use symphonia_core::meta::well_known::METADATA_ID_ISOMP4;
 use symphonia_core::meta::{

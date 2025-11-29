@@ -8,7 +8,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::convert::TryFrom;
 
-use symphonia_core::errors::{seek_error, unsupported_error, Error, Result, SeekErrorKind};
+use symphonia_core::errors::{Error, Result, SeekErrorKind, seek_error, unsupported_error};
 use symphonia_core::formats::prelude::*;
 use symphonia_core::formats::probe::{ProbeFormatData, ProbeableFormat, Score, Scoreable};
 use symphonia_core::formats::well_known::FORMAT_ID_MKV;
@@ -21,7 +21,7 @@ use log::info;
 
 use crate::codecs::make_track_codec_params;
 use crate::ebml::{EbmlElementInfo, EbmlError, EbmlIterator, EbmlSchema, ReadEbml};
-use crate::lacing::{extract_frames, Frame};
+use crate::lacing::{Frame, extract_frames};
 use crate::schema::{MkvElement, MkvSchema};
 use crate::segment::{
     AttachmentsElement, BlockGroupElement, ChaptersElement, CuesElement, EbmlHeaderElement,

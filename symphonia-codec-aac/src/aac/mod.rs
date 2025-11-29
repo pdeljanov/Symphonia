@@ -14,12 +14,12 @@
 use symphonia_core::audio::{
     AsGenericAudioBufferRef, AudioBuffer, AudioSpec, GenericAudioBufferRef,
 };
+use symphonia_core::codecs::CodecInfo;
 use symphonia_core::codecs::audio::well_known::CODEC_ID_AAC;
 use symphonia_core::codecs::audio::{AudioCodecParameters, AudioDecoderOptions};
 use symphonia_core::codecs::audio::{AudioDecoder, FinalizeResult};
 use symphonia_core::codecs::registry::{RegisterableAudioDecoder, SupportedAudioCodec};
-use symphonia_core::codecs::CodecInfo;
-use symphonia_core::errors::{unsupported_error, Result};
+use symphonia_core::errors::{Result, unsupported_error};
 use symphonia_core::formats::Packet;
 use symphonia_core::io::{BitReaderLtr, FiniteBitStream, ReadBitsLtr};
 use symphonia_core::{codec_profile, support_audio_codec};
@@ -64,12 +64,7 @@ impl M4AInfo {
             _ => unreachable!(),
         };
 
-        if otypeidx >= M4A_TYPES.len() {
-            Ok(M4AType::Unknown)
-        }
-        else {
-            Ok(M4A_TYPES[otypeidx])
-        }
+        if otypeidx >= M4A_TYPES.len() { Ok(M4AType::Unknown) } else { Ok(M4A_TYPES[otypeidx]) }
     }
 
     fn read_sampling_frequency<B: ReadBitsLtr>(bs: &mut B) -> Result<u32> {
@@ -84,12 +79,7 @@ impl M4AInfo {
 
     fn read_channel_config<B: ReadBitsLtr>(bs: &mut B) -> Result<usize> {
         let chidx = bs.read_bits_leq32(4)? as usize;
-        if chidx < AAC_CHANNELS.len() {
-            Ok(AAC_CHANNELS[chidx])
-        }
-        else {
-            Ok(chidx)
-        }
+        if chidx < AAC_CHANNELS.len() { Ok(AAC_CHANNELS[chidx]) } else { Ok(chidx) }
     }
 
     fn read(&mut self, buf: &[u8]) -> Result<()> {

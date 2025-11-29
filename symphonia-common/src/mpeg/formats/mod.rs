@@ -6,7 +6,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use symphonia_core::codecs::CodecId;
-use symphonia_core::errors::{decode_error, unsupported_error, Result};
+use symphonia_core::errors::{Result, decode_error, unsupported_error};
 use symphonia_core::io::{FiniteStream, ReadBytes, ScopedStream};
 
 use log::debug;
@@ -356,7 +356,7 @@ impl ObjectDescriptor for SLConfigDescriptor {
         match scoped.read_u8()? {
             PREDEFINED_CUSTOM | PREDEFINED_NULL | PREDEFINED_MP4 => (),
             _ => {
-                return unsupported_error("common (mpeg): invalid sl config descriptor predefined")
+                return unsupported_error("common (mpeg): invalid sl config descriptor predefined");
             }
         };
 

@@ -17,8 +17,8 @@ use std::fs::File;
 use std::io::Write;
 use std::path::Path;
 
-use symphonia::core::codecs::audio::{AudioDecoderOptions, FinalizeResult};
 use symphonia::core::codecs::CodecParameters;
+use symphonia::core::codecs::audio::{AudioDecoderOptions, FinalizeResult};
 use symphonia::core::errors::{Error, Result};
 use symphonia::core::formats::probe::Hint;
 use symphonia::core::formats::{FormatOptions, FormatReader, SeekMode, SeekTo, TrackType};

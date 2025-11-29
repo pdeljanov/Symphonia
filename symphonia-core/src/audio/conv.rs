@@ -6,7 +6,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 //! The `conv` module provides methods to convert samples between different sample types (formats).
-use crate::audio::sample::{i24, u24, Sample};
+use crate::audio::sample::{Sample, i24, u24};
 
 pub mod dither {
     //! The `dither` module provides methods to apply a dither to a sample.
@@ -679,7 +679,7 @@ impl<S> ConvertibleSample for S where
 #[cfg(test)]
 mod tests {
     use super::FromSample;
-    use crate::audio::sample::{i24, u24, Sample};
+    use crate::audio::sample::{Sample, i24, u24};
 
     #[test]
     fn verify_u8_from_sample() {

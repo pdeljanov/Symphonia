@@ -9,13 +9,13 @@ use std::fmt;
 
 use symphonia_core::audio::AmbisonicBFormat;
 use symphonia_core::audio::{ChannelLabel, Channels, Position};
+use symphonia_core::codecs::audio::AudioCodecId;
 use symphonia_core::codecs::audio::well_known::{
     CODEC_ID_ADPCM_IMA_WAV, CODEC_ID_ADPCM_MS, CODEC_ID_PCM_ALAW, CODEC_ID_PCM_F32LE,
     CODEC_ID_PCM_F64LE, CODEC_ID_PCM_MULAW, CODEC_ID_PCM_S16LE, CODEC_ID_PCM_S24LE,
     CODEC_ID_PCM_S32LE, CODEC_ID_PCM_U8,
 };
-use symphonia_core::codecs::audio::AudioCodecId;
-use symphonia_core::errors::{decode_error, unsupported_error, Error, Result};
+use symphonia_core::errors::{Error, Result, decode_error, unsupported_error};
 use symphonia_core::formats::Track;
 use symphonia_core::io::{MediaSourceStream, ReadBytes};
 use symphonia_core::meta::{MetadataBuilder, MetadataRevision};
@@ -90,7 +90,7 @@ impl WaveFormatChunk {
             _ => {
                 return decode_error(
                     "wav: bits per sample for fmt_pcm must be 8, 16, 24 or 32 bits",
-                )
+                );
             }
         };
 
@@ -275,7 +275,7 @@ impl WaveFormatChunk {
                 // IEEE floating formats do not support truncated sample widths.
                 if bits_per_sample != bits_per_coded_sample {
                     return decode_error(
-                        "wav: bits per sample for fmt_ext IEEE sub-type must equal bits per coded sample"
+                        "wav: bits per sample for fmt_ext IEEE sub-type must equal bits per coded sample",
                     );
                 }
 
@@ -286,7 +286,7 @@ impl WaveFormatChunk {
                     _ => {
                         return decode_error(
                             "wav: bits per sample for fmt_ext IEEE sub-type must be 32 or 64 bits",
-                        )
+                        );
                     }
                 }
             }

@@ -5,14 +5,14 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::errors::{unsupported_error, Error};
+use symphonia_core::errors::{Error, unsupported_error};
 use symphonia_core::support_format;
 
 use symphonia_core::audio::Channels;
-use symphonia_core::codecs::audio::well_known::CODEC_ID_AAC;
-use symphonia_core::codecs::audio::AudioCodecParameters;
 use symphonia_core::codecs::CodecParameters;
-use symphonia_core::errors::{decode_error, seek_error, Result, SeekErrorKind};
+use symphonia_core::codecs::audio::AudioCodecParameters;
+use symphonia_core::codecs::audio::well_known::CODEC_ID_AAC;
+use symphonia_core::errors::{Result, SeekErrorKind, decode_error, seek_error};
 use symphonia_core::formats::prelude::*;
 use symphonia_core::formats::probe::{ProbeFormatData, ProbeableFormat, Score, Scoreable};
 use symphonia_core::formats::well_known::FORMAT_ID_ADTS;
@@ -21,7 +21,7 @@ use symphonia_core::meta::{Metadata, MetadataLog};
 
 use std::io::{Seek, SeekFrom};
 
-use super::common::{map_to_channels, M4AType, AAC_CHANNELS, AAC_SAMPLE_RATES, M4A_TYPES};
+use super::common::{AAC_CHANNELS, AAC_SAMPLE_RATES, M4A_TYPES, M4AType, map_to_channels};
 
 use log::{debug, info};
 

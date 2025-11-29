@@ -9,12 +9,12 @@ use std::cmp::min;
 use std::convert::TryInto;
 use std::io;
 
-use symphonia_core::errors::{decode_error, Error, Result};
+use symphonia_core::errors::{Error, Result, decode_error};
 use symphonia_core::io::{BitReaderRtl, ReadBitsRtl};
 
+use super::DspChannel;
 use super::codebook::VorbisCodebook;
 use super::common::*;
-use super::DspChannel;
 
 #[derive(Debug, Default)]
 struct ResidueVqClass {

@@ -11,15 +11,15 @@ use super::{MapResult, Mapper, PacketParser};
 
 use symphonia_common::xiph::audio::flac::{MetadataBlockHeader, MetadataBlockType, StreamInfo};
 use symphonia_core::checksum::Crc8Ccitt;
+use symphonia_core::codecs::CodecParameters;
 use symphonia_core::codecs::audio::well_known::CODEC_ID_FLAC;
 use symphonia_core::codecs::audio::{AudioCodecParameters, VerificationCheck};
-use symphonia_core::codecs::CodecParameters;
-use symphonia_core::errors::{decode_error, Result};
+use symphonia_core::errors::{Result, decode_error};
 use symphonia_core::formats::Track;
 use symphonia_core::io::{BufReader, MonitorStream, ReadBytes};
 use symphonia_core::meta::MetadataBuilder;
 use symphonia_metadata::embedded::flac::{
-    read_flac_comment_block, read_flac_picture_block, FLAC_METADATA_INFO,
+    FLAC_METADATA_INFO, read_flac_comment_block, read_flac_picture_block,
 };
 
 use log::warn;

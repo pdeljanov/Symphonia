@@ -5,11 +5,11 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::errors::{unsupported_error, Result};
+use symphonia_core::errors::{Result, unsupported_error};
 use symphonia_core::io::ReadBytes;
 use symphonia_core::util::clamp::clamp_i16;
 
-use crate::common::{from_i16_shift, u16_to_i32, Nibble};
+use crate::common::{Nibble, from_i16_shift, u16_to_i32};
 
 #[rustfmt::skip]
 const MS_ADAPTATION_TABLE: [i32; 16] = [
@@ -31,12 +31,7 @@ macro_rules! check_block_predictor {
 }
 
 pub fn signed_nibble(nibble: u8) -> i8 {
-    if (nibble & 0x08) != 0 {
-        nibble as i8 - 0x10
-    }
-    else {
-        nibble as i8
-    }
+    if (nibble & 0x08) != 0 { nibble as i8 - 0x10 } else { nibble as i8 }
 }
 
 /// `AdpcmMsBlockStatus` contains values to decode a block
@@ -120,6 +115,7 @@ pub(crate) fn decode_mono<B: ReadBytes>(
     Ok(())
 }
 
+#[allow(clippy::needless_range_loop)]
 pub(crate) fn decode_stereo<B: ReadBytes>(
     stream: &mut B,
     buffers: [&mut [i32]; 2],
@@ -130,6 +126,7 @@ pub(crate) fn decode_stereo<B: ReadBytes>(
     buffers[0][1] = from_i16_shift!(left_status.sample1);
     buffers[1][0] = from_i16_shift!(right_status.sample2);
     buffers[1][1] = from_i16_shift!(right_status.sample1);
+    // NOTE: This loop causes a false positive with clippy.
     for frame in 2..frames_per_block {
         let nibbles = stream.read_u8()?;
         buffers[0][frame] = left_status.expand_nibble(nibbles, Nibble::Upper);

@@ -5,10 +5,10 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::errors::{decode_error, Result};
+use symphonia_core::errors::{Result, decode_error};
 use symphonia_core::io::{
-    vlc::{BitOrder, Codebook, CodebookBuilder, Entry32x32},
     ReadBitsRtl,
+    vlc::{BitOrder, Codebook, CodebookBuilder, Entry32x32},
 };
 
 use super::common::*;
@@ -23,12 +23,7 @@ fn float32_unpack(x: u32) -> f32 {
     let sign = x & 0x80000000;
     let exponent = (x & 0x7fe00000) >> 21;
     let value = (mantissa as f32) * 2.0f32.powi(exponent as i32 - 788);
-    if sign == 0 {
-        value
-    }
-    else {
-        -value
-    }
+    if sign == 0 { value } else { -value }
 }
 
 /// As defined in section 9.2.3 of the Vorbis I specification.
@@ -282,7 +277,7 @@ impl VorbisCodebook {
 
                 let num = bs.read_bits_leq32(num_bits)?;
 
-                code_lens.extend(std::iter::repeat(cur_len as u8).take(num as usize));
+                code_lens.extend(std::iter::repeat_n(cur_len as u8, num as usize));
 
                 cur_len += 1;
                 cur_entry += num;

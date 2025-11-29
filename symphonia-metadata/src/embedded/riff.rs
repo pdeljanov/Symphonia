@@ -12,7 +12,7 @@ use std::collections::HashMap;
 
 use lazy_static::lazy_static;
 
-use symphonia_core::errors::{decode_error, Result};
+use symphonia_core::errors::{Result, decode_error};
 use symphonia_core::io::ReadBytes;
 use symphonia_core::meta::{MetadataBuilder, MetadataRevision, MetadataSideData, RawTag};
 

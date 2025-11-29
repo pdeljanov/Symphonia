@@ -10,9 +10,9 @@ use crate::common::SideData;
 use super::{MapResult, Mapper, PacketParser};
 
 use symphonia_core::audio::{Channels, Position};
-use symphonia_core::codecs::audio::well_known::CODEC_ID_OPUS;
-use symphonia_core::codecs::audio::AudioCodecParameters;
 use symphonia_core::codecs::CodecParameters;
+use symphonia_core::codecs::audio::AudioCodecParameters;
+use symphonia_core::codecs::audio::well_known::CODEC_ID_OPUS;
 use symphonia_core::errors::Result;
 use symphonia_core::formats::Track;
 use symphonia_core::io::{BufReader, ReadBytes};
