@@ -70,6 +70,7 @@ impl Layer1 {
 }
 
 impl Layer for Layer1 {
+    #[allow(clippy::needless_range_loop)]
     fn decode(
         &mut self,
         reader: &mut BufReader<'_>,
