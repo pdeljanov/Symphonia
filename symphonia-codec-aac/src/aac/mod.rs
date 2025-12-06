@@ -375,7 +375,14 @@ impl AacDecoder {
                     }
                     for _ in 0..count {
                         // ext payload
-                        bs.ignore_bits(8)?;
+                        let ext_type = bs.read_bits_leq32(4)?;
+
+                        // 13 == Parametric Stereo (HE-AAC v2)
+                        // 14 == SBR (HE-AAC)
+                        if ext_type == 13 || ext_type == 14 {
+                            self.m4ainfo.sbr_present = true;
+                        }
+                        bs.ignore_bits(4)?;
                     }
                 }
                 7 => {
@@ -453,7 +460,11 @@ impl Decoder for AacDecoder {
 
         //print!("edata:"); for s in edata.iter() { print!(" {:02X}", *s);}println!("");
 
-        if (m4ainfo.otype != M4AType::Lc) || (m4ainfo.channels > 2) || (m4ainfo.samples != 1024) {
+        if (m4ainfo.otype != M4AType::Lc)
+            || (m4ainfo.sbr_present)
+            || (m4ainfo.channels > 2)
+            || (m4ainfo.samples != 1024)
+        {
             return unsupported_error("aac: aac too complex");
         }
 
