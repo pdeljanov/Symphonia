@@ -31,3 +31,10 @@ license-file = "LICENSE"
 repository = "https://github.com/pdeljanov/Symphonia"
 rust-version = "1.85"
 version = "0.6.0"
+
+#cargo-features = ["profile-rustflags"]
+
+[profile.profiling]
+inherits = "release"
+debug = true
+#rustflags = ["-C", "force-frame-pointers=y"]
