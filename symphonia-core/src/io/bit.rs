@@ -257,7 +257,6 @@ pub mod vlc {
     pub struct CodebookBuilder {
         max_bits_per_block: u8,
         bit_order: BitOrder,
-        is_sparse: bool,
     }
 
     impl CodebookBuilder {
@@ -268,18 +267,7 @@ pub mod vlc {
         /// codebook reads bits in an order different from the order of the provided codewords,
         /// then this option can be used to make them compatible.
         pub fn new(bit_order: BitOrder) -> Self {
-            CodebookBuilder { max_bits_per_block: 4, bit_order, is_sparse: false }
-        }
-
-        /// Instantiates a new `CodebookBuilder` for sparse codebooks.
-        ///
-        /// A sparse codebook is one in which not all codewords are valid. These invalid codewords
-        /// are effectively "unused" and have no value. Therefore, it is illegal for a bitstream to
-        /// contain the codeword bit pattern.
-        ///
-        /// Unused codewords are marked by having a length of 0.
-        pub fn new_sparse(bit_order: BitOrder) -> Self {
-            CodebookBuilder { max_bits_per_block: 4, bit_order, is_sparse: true }
+            CodebookBuilder { max_bits_per_block: 4, bit_order }
         }
 
         /// Specify the maximum number of bits that should be consumed from the source at a time.
@@ -295,7 +283,6 @@ pub mod vlc {
 
         fn generate_lut<E: CodebookEntry>(
             bit_order: BitOrder,
-            is_sparse: bool,
             blocks: &[CodebookBlock<E>],
         ) -> io::Result<Vec<E>> {
             // The codebook table.
@@ -413,9 +400,9 @@ pub mod vlc {
                     entry_count += count;
                 }
 
-                // If the decoding tree is not sparse, the number of entries added to the table
-                // should equal the block length if the. It is a fatal error if this is not true.
-                if !is_sparse && entry_count != block_len {
+                // The number of entries added to the table should equal the block length. It is a
+                // fatal error if this is not true.
+                if entry_count != block_len {
                     return codebook_error("core (io): codebook is incomplete");
                 }
             }
@@ -457,12 +444,7 @@ pub mod vlc {
                     // A zero length codeword in a spare codebook is allowed, but not in a regular
                     // codebook.
                     if code_len == 0 {
-                        if self.is_sparse {
-                            continue;
-                        }
-                        else {
-                            return codebook_error("core (io): zero length codeword");
-                        }
+                        return codebook_error("core (io): zero length codeword");
                     }
 
                     while len > self.max_bits_per_block {
@@ -511,7 +493,7 @@ pub mod vlc {
             }
 
             // Generate the codebook lookup table.
-            let table = CodebookBuilder::generate_lut(self.bit_order, self.is_sparse, &blocks)?;
+            let table = CodebookBuilder::generate_lut(self.bit_order, &blocks)?;
 
             // Determine the first block length if skipping the initial jump entry.
             let init_block_len = table.first().map(|block| block.jump_len()).unwrap_or(0);
