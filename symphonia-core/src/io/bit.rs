@@ -461,10 +461,10 @@ mod private {
     use std::io;
 
     pub trait FetchBitsLtr {
-        /// Discard any remaining bits in the source and fetch new bits.
+        /// Discard any remaining bits in the source and fetch 1 or more new bits.
         fn fetch_bits(&mut self) -> io::Result<()>;
 
-        /// Fetch new bits, and append them after the remaining bits.
+        /// Fetch 0 or more new bits, and append them after the remaining bits.
         fn fetch_bits_partial(&mut self) -> io::Result<()>;
 
         /// Get all the bits in the source.
@@ -478,10 +478,10 @@ mod private {
     }
 
     pub trait FetchBitsRtl {
-        /// Discard any remaining bits in the source and fetch new bits.
+        /// Discard any remaining bits in the source and fetch 1 or more new bits.
         fn fetch_bits(&mut self) -> io::Result<()>;
 
-        /// Fetch new bits, and append them after the remaining bits.
+        /// Fetch 0 or more new bits, and append them after the remaining bits.
         fn fetch_bits_partial(&mut self) -> io::Result<()>;
 
         /// Get all the bits in the source.
@@ -881,28 +881,29 @@ impl<'a> BitReaderLtr<'a> {
 impl private::FetchBitsLtr for BitReaderLtr<'_> {
     #[inline]
     fn fetch_bits_partial(&mut self) -> io::Result<()> {
-        let mut buf = [0u8; std::mem::size_of::<u64>()];
+        let num_bytes = (u64::BITS - self.n_bits_left) as usize >> 3;
 
-        let read_len = min(self.buf.len(), (u64::BITS - self.n_bits_left) as usize >> 3);
+        let mut num_bytes_read = 0;
 
-        buf[..read_len].copy_from_slice(&self.buf[..read_len]);
+        for &byte in self.buf.iter().take(num_bytes) {
+            self.bits |= u64::from(byte) << (u64::BITS - 8 - self.n_bits_left);
+            self.n_bits_left += 8;
+            num_bytes_read += 1;
+        }
 
-        self.buf = &self.buf[read_len..];
-
-        self.bits |= u64::from_be_bytes(buf) >> self.n_bits_left;
-        self.n_bits_left += (read_len as u32) << 3;
+        self.buf = &self.buf[num_bytes_read..];
 
         Ok(())
     }
 
     fn fetch_bits(&mut self) -> io::Result<()> {
-        let mut buf = [0u8; std::mem::size_of::<u64>()];
-
         let read_len = min(self.buf.len(), std::mem::size_of::<u64>());
 
         if read_len == 0 {
             return end_of_bitstream_error();
         }
+
+        let mut buf = [0u8; std::mem::size_of::<u64>()];
 
         buf[..read_len].copy_from_slice(&self.buf[..read_len]);
 
@@ -1320,28 +1321,29 @@ impl<'a> BitReaderRtl<'a> {
 impl private::FetchBitsRtl for BitReaderRtl<'_> {
     #[inline]
     fn fetch_bits_partial(&mut self) -> io::Result<()> {
-        let mut buf = [0u8; std::mem::size_of::<u64>()];
+        let num_bytes = (u64::BITS - self.n_bits_left) as usize >> 3;
 
-        let read_len = min(self.buf.len(), (u64::BITS - self.n_bits_left) as usize >> 3);
+        let mut num_bytes_read = 0;
 
-        buf[..read_len].copy_from_slice(&self.buf[..read_len]);
+        for &byte in self.buf.iter().take(num_bytes) {
+            self.bits |= u64::from(byte) << self.n_bits_left;
+            self.n_bits_left += 8;
+            num_bytes_read += 1;
+        }
 
-        self.buf = &self.buf[read_len..];
-
-        self.bits |= u64::from_le_bytes(buf) << self.n_bits_left;
-        self.n_bits_left += (read_len as u32) << 3;
+        self.buf = &self.buf[num_bytes_read..];
 
         Ok(())
     }
 
     fn fetch_bits(&mut self) -> io::Result<()> {
-        let mut buf = [0u8; std::mem::size_of::<u64>()];
-
         let read_len = min(self.buf.len(), std::mem::size_of::<u64>());
 
         if read_len == 0 {
             return end_of_bitstream_error();
         }
+
+        let mut buf = [0u8; std::mem::size_of::<u64>()];
 
         buf[..read_len].copy_from_slice(&self.buf[..read_len]);
 
