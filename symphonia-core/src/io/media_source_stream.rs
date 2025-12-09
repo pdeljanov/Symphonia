@@ -5,10 +5,14 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use std::cmp;
+// temporary exception from no_std until we don't use io here anymore
+extern crate std;
+
+use alloc::{boxed::Box, vec};
+use core::cmp;
+use core::ops::Sub;
 use std::io;
 use std::io::{IoSliceMut, Read, Seek};
-use std::ops::Sub;
 
 use super::SeekBuffered;
 use super::{MediaSource, ReadBytes};
@@ -457,8 +461,13 @@ impl SeekBuffered for MediaSourceStream<'_> {
 
 #[cfg(test)]
 mod tests {
-    use super::{MediaSourceStream, ReadBytes, SeekBuffered};
+    // exception from no_std is fine in tests
+    extern crate std;
+
+    use alloc::{boxed::Box, vec, vec::Vec};
     use std::io::{Cursor, Read};
+
+    use super::{MediaSourceStream, ReadBytes, SeekBuffered};
 
     /// Generate a random vector of bytes of the specified length using a PRNG.
     fn generate_random_bytes(len: usize) -> Box<[u8]> {

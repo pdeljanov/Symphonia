@@ -5,7 +5,10 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use std::cmp::min;
+// temporary exception from no_std until we don't use io here anymore
+extern crate std;
+
+use core::cmp::min;
 use std::io;
 
 use crate::io::ReadBytes;
@@ -18,8 +21,14 @@ fn end_of_bitstream_error<T>() -> io::Result<T> {
 pub mod vlc {
     //! The `vlc` module provides support for decoding variable-length codes (VLC).
 
-    use std::cmp::max;
-    use std::collections::{BTreeMap, VecDeque};
+    // temporary exception from no_std until we don't use io here anymore
+    extern crate std;
+
+    use alloc::{
+        collections::{BTreeMap, VecDeque},
+        vec::Vec,
+    };
+    use core::cmp::max;
     use std::io;
 
     fn codebook_error<T>(desc: &'static str) -> io::Result<T> {
@@ -522,6 +531,8 @@ pub mod vlc {
 }
 
 mod private {
+    // temporary exception from no_std until we don't use io here anymore
+    extern crate std;
     use std::io;
 
     pub trait FetchBitsLtr {
@@ -1466,6 +1477,8 @@ impl FiniteBitStream for BitReaderRtl<'_> {
 
 #[cfg(test)]
 mod tests {
+    use alloc::vec::Vec;
+
     use super::vlc::{BitOrder, Codebook, CodebookBuilder, Entry8x8};
     use super::{BitReaderLtr, ReadBitsLtr};
     use super::{BitReaderRtl, ReadBitsRtl};
@@ -1830,7 +1843,7 @@ mod tests {
         let decoded: Vec<u8> =
             (0..text.len()).map(|_| bs.read_codebook(&codebook).unwrap().0).collect();
 
-        assert_eq!(text, std::str::from_utf8(&decoded).unwrap());
+        assert_eq!(text, core::str::from_utf8(&decoded).unwrap());
     }
 
     // BitStreamRtl
@@ -2126,6 +2139,6 @@ mod tests {
         let decoded: Vec<u8> =
             (0..text.len()).map(|_| bs.read_codebook(&codebook).unwrap().0).collect();
 
-        assert_eq!(text, std::str::from_utf8(&decoded).unwrap());
+        assert_eq!(text, core::str::from_utf8(&decoded).unwrap());
     }
 }

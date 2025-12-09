@@ -7,9 +7,13 @@
 
 //! Registry for codecs to support lookup and instantiation of decoders dynamically at runtime.
 
+// Temporary exception from no_std because HashMap is not in alloc
+extern crate std;
+
+use alloc::boxed::Box;
+use core::default::Default;
+use core::hash::Hash;
 use std::collections::HashMap;
-use std::default::Default;
-use std::hash::Hash;
 
 use crate::codecs::CodecInfo;
 use crate::codecs::audio::{AudioCodecId, AudioCodecParameters, AudioDecoder, AudioDecoderOptions};
@@ -147,7 +151,7 @@ impl<C, R> Default for InnerCodecRegistry<C, R> {
 
 impl<C, R> InnerCodecRegistry<C, R>
 where
-    C: Hash + std::cmp::Eq,
+    C: Hash + core::cmp::Eq,
 {
     fn get(&self, id: &C) -> Option<&R> {
         self.preferred.get(id).or_else(|| self.standard.get(id)).or_else(|| self.fallback.get(id))
