@@ -357,8 +357,8 @@ impl VorbisCodebook {
         // Finally, generate the codebook with a reverse (LSb) bit order.
         let mut builder = CodebookBuilder::new(BitOrder::Reverse);
 
-        // Read in 8-bit blocks.
-        builder.bits_per_read(8);
+        // Read in 4-8 bit-wide blocks.
+        builder.bits_per_read(code_lens.iter().max().copied().unwrap_or(0).clamp(4, 8));
 
         let codebook = builder.make::<Entry32x32>(&code_words, &code_lens, &code_values)?;
 
