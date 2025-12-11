@@ -48,6 +48,7 @@ pub struct LogicalStream {
     start_bound: Option<Bound>,
     end_bound: Option<Bound>,
     gapless: bool,
+    state: InspectState,
 }
 
 impl LogicalStream {
@@ -63,6 +64,7 @@ impl LogicalStream {
             start_bound: None,
             end_bound: None,
             gapless,
+            state: Default::default(),
         }
     }
 
@@ -91,6 +93,9 @@ impl LogicalStream {
 
     /// Reads a page.
     pub fn read_page(&mut self, page: &Page<'_>) -> Result<Vec<SideData>> {
+        // Check the end time and end delay. If the stream is seekable,
+        // this was already calculated at the beginning and this is a no-op.
+        self.inspect_end_page(page);
         // Side data vector. This will not allocate unless data is pushed to it (normal case).
         let mut side_data = Vec::new();
 
@@ -285,26 +290,24 @@ impl LogicalStream {
 
     /// Examines one or more of the last pages of the codec bitstream to obtain the end time and
     /// end delay parameters. To obtain the end delay, at a minimum, the last two pages are
-    /// required. The state returned by each iteration of this function should be passed into the
-    /// subsequent iteration.
-    pub fn inspect_end_page(&mut self, mut state: InspectState, page: &Page<'_>) -> InspectState {
+    /// required.
+    pub fn inspect_end_page(&mut self, page: &Page<'_>) {
         if self.end_bound.is_some() {
-            debug!("end page already found");
-            return state;
+            return;
         }
 
         // Get and/or create the sniffer state.
-        let parser = match &mut state.parser {
+        let parser = match &mut self.state.parser {
             Some(parser) => parser,
             None => {
-                state.parser = self.mapper.make_parser();
+                self.state.parser = self.mapper.make_parser();
 
-                if let Some(parser) = &mut state.parser {
+                if let Some(parser) = &mut self.state.parser {
                     parser
                 }
                 else {
                     debug!("failed to make end bound packet parser");
-                    return state;
+                    return;
                 }
             }
         };
@@ -326,10 +329,10 @@ impl LogicalStream {
             page_dur = page_dur.saturating_add(parser.parse_next_packet_dur(buf));
         }
 
-        // The end delay can only be determined if this is the last page, and the timstamp of the
+        // The end delay can only be determined if this is the last page, and the timestamp of the
         // second last page is known.
         let end_delay = if page.header.is_last_page {
-            if let Some(last_bound) = &state.bound {
+            if let Some(last_bound) = &self.state.bound {
                 // The real ending timestamp of the decoded data is the timestamp of the previous
                 // page plus the decoded duration of this page.
                 let actual_page_end_ts = last_bound.ts.saturating_add(page_dur);
@@ -369,9 +372,7 @@ impl LogicalStream {
         }
 
         // Update the state's bound.
-        state.bound = Some(bound);
-
-        state
+        self.state.bound = Some(bound);
     }
 
     /// Examine a page and return the start and end timestamps as a tuple.

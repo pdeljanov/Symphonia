@@ -10,7 +10,7 @@ use std::io::{Seek, SeekFrom};
 use symphonia_core::errors::Result;
 use symphonia_core::io::{MediaSourceStream, ReadBytes, ScopedStream, SeekBuffered};
 
-use super::logical::{InspectState, LogicalStream};
+use super::logical::LogicalStream;
 use super::page::*;
 
 use log::debug;
@@ -153,8 +153,6 @@ fn scan_stream_end(
 
     let mut upper_pos = None;
 
-    let mut state: InspectState = Default::default();
-
     // Read pages until the provided end position or a new physical stream starts.
     loop {
         let page = pages.page();
@@ -168,7 +166,7 @@ fn scan_stream_end(
             break;
         };
 
-        state = stream.inspect_end_page(state, &page);
+        stream.inspect_end_page(&page);
 
         // The new end of the physical stream is the position after this page.
         upper_pos = Some(scoped_reader.pos());
