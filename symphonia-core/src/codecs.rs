@@ -228,6 +228,14 @@ pub const CODEC_TYPE_ALAC: CodecType = CodecType(0x2003);
 /// True Audio (TTA)
 pub const CODEC_TYPE_TTA: CodecType = CodecType(0x2004);
 
+// DSD audio codecs
+//-----------------
+
+/// DSD (Least Significant Bit First)
+pub const CODEC_TYPE_DSD_LSBF: CodecType = CodecType(0x3000);
+/// DSD (Most Significant Bit First)
+pub const CODEC_TYPE_DSD_MSBF: CodecType = CodecType(0x3001);
+
 /// A method and expected value to perform verification on the decoded audio.
 #[derive(Copy, Clone, Debug)]
 pub enum VerificationCheck {
@@ -239,16 +247,17 @@ pub enum VerificationCheck {
     Crc32([u8; 4]),
     /// MD5 of interleaved PCM audio samples.
     Md5([u8; 16]),
-    /// Codec defined, up-to 16-byte code.
-    Other([u8; 16]),
-}
-
-/// Codec parameters stored in a container format's headers and metadata may be passed to a codec
-/// using the `CodecParameters` structure.
-#[derive(Clone, Debug)]
-pub struct CodecParameters {
-    /// The codec type.
-    pub codec: CodecType,
+        /// Codec defined, up-to 16-byte code.
+        Other([u8; 16]),
+    }
+    
+    /// Codec parameters stored in a container format's headers and metadata may be passed to a codec
+    /// using the `CodecParameters` structure.
+    #[derive(Clone, Debug)]
+    pub struct CodecParameters {
+        /// The codec type.
+        pub codec: CodecType,
+    
 
     /// The sample rate of the audio in Hz.
     pub sample_rate: Option<u32>,
