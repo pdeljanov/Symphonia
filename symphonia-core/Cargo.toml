@@ -29,7 +29,7 @@ opt-simd = [
 
 [dependencies]
 arrayvec = "0.7.1"
-bitflags = "1.2.1"
+bitflags = "2.6.0"
 bytemuck = "1.7"
 lazy_static = "1.4.0"
 log = "0.4"
