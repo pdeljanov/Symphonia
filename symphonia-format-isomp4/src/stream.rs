@@ -146,7 +146,7 @@ impl StreamSegment for MoofSegment {
             }
 
             // If a track does NOT end in this segment, then this cannot be the last segment.
-            if seq.first_ts + seq.total_sample_duration < trak.duration {
+            if seq.first_ts + seq.total_sample_duration < trak.mdia.mdhd.duration {
                 return false;
             }
         }
@@ -349,7 +349,7 @@ impl StreamSegment for MoovSegment {
     fn all_tracks_ended(&self) -> bool {
         // If a track does not end in this segment, then this cannot be the last segment.
         for trak in &self.moov.traks {
-            if trak.mdia.minf.stbl.stts.total_duration < trak.duration {
+            if trak.mdia.minf.stbl.stts.total_duration < trak.mdia.mdhd.duration {
                 return false;
             }
         }
