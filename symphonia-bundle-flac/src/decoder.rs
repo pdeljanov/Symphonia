@@ -101,11 +101,9 @@ impl FlacDecoder {
         // the stream information if provided. If neither are available, return an error.
         let bits_per_sample = if let Some(bps) = header.bits_per_sample {
             bps
-        }
-        else if let Some(bps) = self.params.bits_per_sample {
+        } else if let Some(bps) = self.params.bits_per_sample {
             bps
-        }
-        else {
+        } else {
             return decode_error("flac: bits per sample not provided");
         };
 
@@ -122,7 +120,9 @@ impl FlacDecoder {
 
         let frame_channels = match header.channel_assignment {
             ChannelAssignment::Independant(c) => c as usize,
-            ChannelAssignment::LeftSide | ChannelAssignment::MidSide | ChannelAssignment::RightSide => 2,
+            ChannelAssignment::LeftSide
+            | ChannelAssignment::MidSide
+            | ChannelAssignment::RightSide => 2,
         };
 
         if frame_channels != self.buf.spec().channels.count() {
@@ -254,8 +254,7 @@ impl Decoder for FlacDecoder {
         if let Err(e) = self.decode_inner(packet) {
             self.buf.clear();
             Err(e)
-        }
-        else {
+        } else {
             Ok(self.buf.as_audio_buffer_ref())
         }
     }
@@ -285,8 +284,7 @@ impl Decoder for FlacDecoder {
                 }
 
                 result.verify_ok = Some(decoded == expected)
-            }
-            else {
+            } else {
                 warn!("verification requested but the expected md5 checksum was not provided");
             }
         }
@@ -460,8 +458,7 @@ fn decode_linear<B: ReadBitsLtr>(bs: &mut B, bps: u32, order: u32, buf: &mut [i3
             11..=12 => lpc::<12>(order, &qlp_coeffs, qlp_coeff_shift, buf),
             _ => lpc::<32>(order, &qlp_coeffs, qlp_coeff_shift, buf),
         };
-    }
-    else {
+    } else {
         return unsupported_error("flac: lpc shifts less than 0 are not supported");
     }
 
@@ -553,8 +550,7 @@ fn decode_rice_partition<B: ReadBitsLtr>(
             let r = bs.read_bits_leq32(rice_param)?;
             *sample = rice_signed_to_i32((q << rice_param) | r);
         }
-    }
-    else {
+    } else {
         let residual_bits = bs.read_bits_leq32(5)?;
 
         // trace!(
