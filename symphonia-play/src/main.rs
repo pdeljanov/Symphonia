@@ -470,9 +470,9 @@ fn play_track(
                 // should be decoded and *samples* discarded up-to the exact *sample* indicated by
                 // required_ts. The current approach will discard extra samples if seeking to a
                 // sample within a packet.
-                if packet.ts() >= opts.seek_ts {
+                if packet.pts() >= opts.seek_ts {
                     if !opts.no_progress {
-                        ui::print_progress(packet.ts(), dur, tb);
+                        ui::print_progress(packet.pts(), dur, tb);
                     }
 
                     if let Some(audio_output) = audio_output {
