@@ -247,17 +247,16 @@ pub enum VerificationCheck {
     Crc32([u8; 4]),
     /// MD5 of interleaved PCM audio samples.
     Md5([u8; 16]),
-        /// Codec defined, up-to 16-byte code.
-        Other([u8; 16]),
-    }
-    
-    /// Codec parameters stored in a container format's headers and metadata may be passed to a codec
-    /// using the `CodecParameters` structure.
-    #[derive(Clone, Debug)]
-    pub struct CodecParameters {
-        /// The codec type.
-        pub codec: CodecType,
-    
+    /// Codec defined, up-to 16-byte code.
+    Other([u8; 16]),
+}
+
+/// Codec parameters stored in a container format's headers and metadata may be passed to a codec
+/// using the `CodecParameters` structure.
+#[derive(Clone, Debug)]
+pub struct CodecParameters {
+    /// The codec type.
+    pub codec: CodecType,
 
     /// The sample rate of the audio in Hz.
     pub sample_rate: Option<u32>,

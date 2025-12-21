@@ -81,7 +81,6 @@ impl Decoder for DsdDecoder {
     }
 
     fn reset(&mut self) {
-
         // No state in this simple decoder
     }
 
@@ -91,7 +90,6 @@ impl Decoder for DsdDecoder {
 
     fn decode(&mut self, packet: &Packet) -> Result<AudioBufferRef<'_>> {
         self.decode_inner(packet);
-
         Ok(AudioBufferRef::U32(std::borrow::Cow::Borrowed(&self.buf)))
     }
 

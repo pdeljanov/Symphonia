@@ -25,4 +25,4 @@ members = [
 ]
 
 [patch.crates-io]
-cpal = { git = "https://github.com/ljufa/cpal.git" }
+cpal = { path = "../cpal" }

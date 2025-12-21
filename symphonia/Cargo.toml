@@ -50,6 +50,7 @@ all-codecs = [
     "mp3",
     "pcm",
     "vorbis",
+    "dsd",
 ]
 
 # Enable all supported formats.
