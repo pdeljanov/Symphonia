@@ -23,6 +23,3 @@ members = [
     "symphonia-utils-xiph",
     "symphonia-check",
 ]
-
-[patch.crates-io]
-cpal = { path = "../cpal" }
