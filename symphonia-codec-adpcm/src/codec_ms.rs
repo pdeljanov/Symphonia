@@ -120,6 +120,7 @@ pub(crate) fn decode_mono<B: ReadBytes>(
     Ok(())
 }
 
+#[allow(clippy::needless_range_loop)]
 pub(crate) fn decode_stereo<B: ReadBytes>(
     stream: &mut B,
     buffers: [&mut [i32]; 2],
