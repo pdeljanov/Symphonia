@@ -53,3 +53,6 @@ ehthumbs_vista.db
 *.stackdump
 [Dd]esktop.ini
 *.lnk
+
+# JetBranis IDE
+.idea/
