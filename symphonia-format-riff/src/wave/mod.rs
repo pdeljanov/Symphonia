@@ -303,3 +303,209 @@ impl FormatReader for WavReader {
         self.reader
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Cursor;
+    use symphonia_core::formats::FormatReader;
+    use symphonia_core::io::ReadOnlySource;
+
+    /// Creates a minimal valid RF64 file in memory.
+    fn create_rf64_test_file(data_size: u64, sample_count: u64, pcm_data: &[u8]) -> Vec<u8> {
+        let mut file = Vec::new();
+
+        // RF64 header
+        file.extend_from_slice(b"RF64");
+        file.extend_from_slice(&0xFFFFFFFFu32.to_le_bytes()); // placeholder size
+        file.extend_from_slice(b"WAVE");
+
+        // ds64 chunk (28 bytes minimum)
+        file.extend_from_slice(b"ds64");
+        file.extend_from_slice(&28u32.to_le_bytes()); // chunk size
+        // Calculate actual riff size (not used in parsing but included for completeness)
+        let riff_size: u64 = 4 + 8 + 28 + 8 + 16 + 8 + data_size; // WAVE + ds64 + fmt + data
+        file.extend_from_slice(&riff_size.to_le_bytes()); // riffSize64
+        file.extend_from_slice(&data_size.to_le_bytes()); // dataSize64
+        file.extend_from_slice(&sample_count.to_le_bytes()); // sampleCount64
+        file.extend_from_slice(&0u32.to_le_bytes()); // tableLength
+
+        // fmt chunk (16 bytes, PCM format)
+        file.extend_from_slice(b"fmt ");
+        file.extend_from_slice(&16u32.to_le_bytes());
+        file.extend_from_slice(&1u16.to_le_bytes()); // format = PCM
+        file.extend_from_slice(&1u16.to_le_bytes()); // channels = 1
+        file.extend_from_slice(&44100u32.to_le_bytes()); // sample rate
+        file.extend_from_slice(&88200u32.to_le_bytes()); // byte rate
+        file.extend_from_slice(&2u16.to_le_bytes()); // block align
+        file.extend_from_slice(&16u16.to_le_bytes()); // bits per sample
+
+        // data chunk
+        file.extend_from_slice(b"data");
+        // For RF64, data chunk size is 0xFFFFFFFF when > 4GB, actual size in ds64
+        let chunk_size = if data_size > u32::MAX as u64 { 0xFFFFFFFF } else { data_size as u32 };
+        file.extend_from_slice(&chunk_size.to_le_bytes());
+        file.extend_from_slice(pcm_data);
+
+        file
+    }
+
+    /// Creates a minimal valid standard WAV file in memory.
+    fn create_wav_test_file(pcm_data: &[u8]) -> Vec<u8> {
+        let mut file = Vec::new();
+        let data_len = pcm_data.len() as u32;
+
+        // RIFF header
+        file.extend_from_slice(b"RIFF");
+        let total_size = 4 + 8 + 16 + 8 + data_len; // WAVE + fmt chunk + data chunk
+        file.extend_from_slice(&total_size.to_le_bytes());
+        file.extend_from_slice(b"WAVE");
+
+        // fmt chunk
+        file.extend_from_slice(b"fmt ");
+        file.extend_from_slice(&16u32.to_le_bytes());
+        file.extend_from_slice(&1u16.to_le_bytes()); // PCM
+        file.extend_from_slice(&1u16.to_le_bytes()); // mono
+        file.extend_from_slice(&44100u32.to_le_bytes()); // sample rate
+        file.extend_from_slice(&88200u32.to_le_bytes()); // byte rate
+        file.extend_from_slice(&2u16.to_le_bytes()); // block align
+        file.extend_from_slice(&16u16.to_le_bytes()); // bits per sample
+
+        // data chunk
+        file.extend_from_slice(b"data");
+        file.extend_from_slice(&data_len.to_le_bytes());
+        file.extend_from_slice(pcm_data);
+
+        file
+    }
+
+    #[test]
+    fn test_rf64_small_file() {
+        // Test RF64 with data that fits in 32-bit (to verify format still works)
+        let pcm_data = vec![0u8; 1000]; // 500 samples at 16-bit mono
+        let rf64_file = create_rf64_test_file(1000, 500, &pcm_data);
+
+        let source = ReadOnlySource::new(Cursor::new(rf64_file));
+        let mss = MediaSourceStream::new(Box::new(source), Default::default());
+
+        let reader = WavReader::try_new(mss, &FormatOptions::default()).unwrap();
+
+        assert_eq!(reader.tracks.len(), 1);
+        let params = &reader.tracks[0].codec_params;
+        assert_eq!(params.n_frames, Some(500));
+        assert_eq!(params.sample_rate, Some(44100));
+    }
+
+    #[test]
+    fn test_rf64_large_data_size() {
+        // Test RF64 with >4GB data size (just the metadata, not actual data)
+        let pcm_data = vec![0u8; 100]; // Small actual data for test
+        let large_data_size: u64 = 5_000_000_000; // 5GB
+        let sample_count = large_data_size / 2; // 16-bit samples
+        let rf64_file = create_rf64_test_file(large_data_size, sample_count, &pcm_data);
+
+        let source = ReadOnlySource::new(Cursor::new(rf64_file));
+        let mss = MediaSourceStream::new(Box::new(source), Default::default());
+
+        let reader = WavReader::try_new(mss, &FormatOptions::default()).unwrap();
+
+        assert_eq!(reader.tracks.len(), 1);
+        let params = &reader.tracks[0].codec_params;
+        // The n_frames should come from ds64's 64-bit sample count
+        assert_eq!(params.n_frames, Some(sample_count));
+        // data_end_pos should use 64-bit size
+        assert_eq!(reader.data_end_pos - reader.data_start_pos, large_data_size);
+    }
+
+    #[test]
+    fn test_standard_wav_unchanged() {
+        // Verify standard WAV files still work (regression test)
+        let pcm_data = vec![0u8; 100];
+        let wav_file = create_wav_test_file(&pcm_data);
+
+        let source = ReadOnlySource::new(Cursor::new(wav_file));
+        let mss = MediaSourceStream::new(Box::new(source), Default::default());
+
+        let reader = WavReader::try_new(mss, &FormatOptions::default()).unwrap();
+
+        assert_eq!(reader.tracks.len(), 1);
+        assert_eq!(reader.data_end_pos - reader.data_start_pos, 100);
+    }
+
+    #[test]
+    fn test_rf64_missing_ds64_uses_fallback() {
+        // RF64 file without ds64 chunk should still work using 32-bit sizes
+        let mut file = Vec::new();
+
+        // RF64 header (but no ds64 chunk)
+        file.extend_from_slice(b"RF64");
+        let total_size = 4 + 8 + 16 + 8 + 100;
+        file.extend_from_slice(&(total_size as u32).to_le_bytes());
+        file.extend_from_slice(b"WAVE");
+
+        // fmt chunk
+        file.extend_from_slice(b"fmt ");
+        file.extend_from_slice(&16u32.to_le_bytes());
+        file.extend_from_slice(&1u16.to_le_bytes()); // PCM
+        file.extend_from_slice(&1u16.to_le_bytes()); // mono
+        file.extend_from_slice(&44100u32.to_le_bytes());
+        file.extend_from_slice(&88200u32.to_le_bytes());
+        file.extend_from_slice(&2u16.to_le_bytes());
+        file.extend_from_slice(&16u16.to_le_bytes());
+
+        // data chunk
+        file.extend_from_slice(b"data");
+        file.extend_from_slice(&100u32.to_le_bytes());
+        file.extend_from_slice(&vec![0u8; 100]);
+
+        let source = ReadOnlySource::new(Cursor::new(file));
+        let mss = MediaSourceStream::new(Box::new(source), Default::default());
+
+        // Should work, falling back to 32-bit sizes
+        let reader = WavReader::try_new(mss, &FormatOptions::default()).unwrap();
+        assert_eq!(reader.data_end_pos - reader.data_start_pos, 100);
+    }
+
+    #[test]
+    fn test_ds64_ignored_in_standard_wav() {
+        // Standard RIFF/WAV with a ds64 chunk should ignore it
+        let mut file = Vec::new();
+
+        // RIFF header
+        file.extend_from_slice(b"RIFF");
+        let total_size = 4 + 8 + 28 + 8 + 16 + 8 + 100; // includes ds64
+        file.extend_from_slice(&(total_size as u32).to_le_bytes());
+        file.extend_from_slice(b"WAVE");
+
+        // ds64 chunk (should be ignored in standard WAV)
+        file.extend_from_slice(b"ds64");
+        file.extend_from_slice(&28u32.to_le_bytes());
+        file.extend_from_slice(&999999999u64.to_le_bytes()); // fake riff size
+        file.extend_from_slice(&888888888u64.to_le_bytes()); // fake data size (should NOT be used)
+        file.extend_from_slice(&777777777u64.to_le_bytes()); // fake sample count
+        file.extend_from_slice(&0u32.to_le_bytes());
+
+        // fmt chunk
+        file.extend_from_slice(b"fmt ");
+        file.extend_from_slice(&16u32.to_le_bytes());
+        file.extend_from_slice(&1u16.to_le_bytes());
+        file.extend_from_slice(&1u16.to_le_bytes());
+        file.extend_from_slice(&44100u32.to_le_bytes());
+        file.extend_from_slice(&88200u32.to_le_bytes());
+        file.extend_from_slice(&2u16.to_le_bytes());
+        file.extend_from_slice(&16u16.to_le_bytes());
+
+        // data chunk
+        file.extend_from_slice(b"data");
+        file.extend_from_slice(&100u32.to_le_bytes());
+        file.extend_from_slice(&vec![0u8; 100]);
+
+        let source = ReadOnlySource::new(Cursor::new(file));
+        let mss = MediaSourceStream::new(Box::new(source), Default::default());
+
+        let reader = WavReader::try_new(mss, &FormatOptions::default()).unwrap();
+
+        // Should use 32-bit size from data chunk, NOT 64-bit from ds64
+        assert_eq!(reader.data_end_pos - reader.data_start_pos, 100);
+    }
+}
