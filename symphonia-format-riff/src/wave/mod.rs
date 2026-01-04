@@ -26,8 +26,19 @@ use chunks::*;
 
 /// WAVE is actually a RIFF stream, with a "RIFF" ASCII stream marker.
 const WAVE_STREAM_MARKER: [u8; 4] = *b"RIFF";
+/// RF64 is a 64-bit extension of RIFF, with "RF64" as the stream marker.
+const RF64_STREAM_MARKER: [u8; 4] = *b"RF64";
 /// A possible RIFF form is "wave".
 const WAVE_RIFF_FORM: [u8; 4] = *b"WAVE";
+
+/// Holds 64-bit size information from the ds64 chunk for RF64 files.
+#[derive(Default)]
+struct Rf64Sizes {
+    /// 64-bit data chunk size (None for standard WAV files).
+    data_size: Option<u64>,
+    /// 64-bit sample count (None for standard WAV or if not provided).
+    sample_count: Option<u64>,
+}
 
 /// Waveform Audio File Format (WAV) format reader.
 ///
@@ -63,16 +74,18 @@ impl QueryDescriptor for WavReader {
 
 impl FormatReader for WavReader {
     fn try_new(mut source: MediaSourceStream, _options: &FormatOptions) -> Result<Self> {
-        // The RIFF marker should be present.
+        // The RIFF or RF64 marker should be present.
         let marker = source.read_quad_bytes()?;
 
-        if marker != WAVE_STREAM_MARKER {
-            return unsupported_error("wav: missing riff stream marker");
-        }
+        let is_rf64 = match marker {
+            WAVE_STREAM_MARKER => false,
+            RF64_STREAM_MARKER => true,
+            _ => return unsupported_error("wav: missing riff/rf64 stream marker"),
+        };
 
         // A Wave file is one large RIFF chunk, with the actual meta and audio data as sub-chunks.
         // Therefore, the header was the chunk ID, and the next 4 bytes is the length of the RIFF
-        // chunk.
+        // chunk. For RF64 files, this is 0xFFFFFFFF and the actual size is in the ds64 chunk.
         let riff_len = source.read_u32()?;
         let riff_form = source.read_quad_bytes()?;
 
@@ -89,6 +102,7 @@ impl FormatReader for WavReader {
         let mut codec_params = CodecParameters::new();
         let mut metadata: MetadataLog = Default::default();
         let mut packet_info = PacketInfo::without_blocks(0);
+        let mut rf64_sizes = Rf64Sizes::default();
 
         loop {
             let chunk = riff_chunks.next(&mut source)?;
@@ -100,12 +114,25 @@ impl FormatReader for WavReader {
             }
 
             match chunk.unwrap() {
-                RiffWaveChunks::Ds64(ds64) => {
-                    // ds64 chunk is only valid in RF64 files. For now, we skip it.
-                    // Full RF64 support will be added in a subsequent change.
-                    // Parse to consume the bytes from the stream.
-                    let _ = ds64.parse(&mut source)?;
-                    debug!("skipping ds64 chunk (RF64 support pending)");
+                RiffWaveChunks::Ds64(ds64_parser) => {
+                    // ds64 chunk is only valid in RF64 files.
+                    if !is_rf64 {
+                        // Parse to consume the bytes, but ignore in standard WAV files.
+                        let _ = ds64_parser.parse(&mut source)?;
+                        debug!("ignoring ds64 chunk in non-RF64 file");
+                        continue;
+                    }
+
+                    let ds64 = ds64_parser.parse(&mut source)?;
+                    debug!(
+                        "parsed ds64 chunk: data_size={}, sample_count={}",
+                        ds64.data_size, ds64.sample_count
+                    );
+
+                    rf64_sizes.data_size = Some(ds64.data_size);
+                    if ds64.sample_count > 0 {
+                        rf64_sizes.sample_count = Some(ds64.sample_count);
+                    }
                 }
                 RiffWaveChunks::Format(fmt) => {
                     let format = fmt.parse(&mut source)?;
@@ -127,8 +154,11 @@ impl FormatReader for WavReader {
                 RiffWaveChunks::Fact(fct) => {
                     let fact = fct.parse(&mut source)?;
 
-                    // Append Fact chunk fields to codec parameters.
-                    append_fact_params(&mut codec_params, &fact);
+                    // For RF64 files, prefer the sample count from ds64 over fact chunk.
+                    // Only use fact chunk if we don't have a 64-bit sample count.
+                    if rf64_sizes.sample_count.is_none() {
+                        append_fact_params(&mut codec_params, &fact);
+                    }
                 }
                 RiffWaveChunks::List(lst) => {
                     let list = lst.parse(&mut source)?;
@@ -145,10 +175,18 @@ impl FormatReader for WavReader {
 
                     // Record the bounds of the data chunk.
                     let data_start_pos = source.pos();
-                    let data_end_pos = data_start_pos + u64::from(data.len);
+
+                    // Use 64-bit data size from ds64 for RF64 files, otherwise use 32-bit size.
+                    let data_len = rf64_sizes.data_size.unwrap_or(u64::from(data.len));
+                    let data_end_pos = data_start_pos + data_len;
 
                     // Append Data chunk fields to codec parameters.
-                    append_data_params(&mut codec_params, data.len as u64, &packet_info);
+                    append_data_params(&mut codec_params, data_len, &packet_info);
+
+                    // If we have a 64-bit sample count from ds64, use it.
+                    if let Some(sample_count) = rf64_sizes.sample_count {
+                        codec_params.with_n_frames(sample_count);
+                    }
 
                     // Add a new track using the collected codec parameters.
                     return Ok(WavReader {
