@@ -100,6 +100,13 @@ impl FormatReader for WavReader {
             }
 
             match chunk.unwrap() {
+                RiffWaveChunks::Ds64(ds64) => {
+                    // ds64 chunk is only valid in RF64 files. For now, we skip it.
+                    // Full RF64 support will be added in a subsequent change.
+                    // Parse to consume the bytes from the stream.
+                    let _ = ds64.parse(&mut source)?;
+                    debug!("skipping ds64 chunk (RF64 support pending)");
+                }
                 RiffWaveChunks::Format(fmt) => {
                     let format = fmt.parse(&mut source)?;
 
