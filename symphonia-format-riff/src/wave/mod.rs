@@ -27,6 +27,7 @@ use chunks::*;
 /// WAVE is actually a RIFF stream, with a "RIFF" ASCII stream marker.
 const WAVE_STREAM_MARKER: [u8; 4] = *b"RIFF";
 /// RF64 is a 64-bit extension of RIFF, with "RF64" as the stream marker.
+/// Reference: EBU Tech 3306 - MBWF / RF64: An extended File Format for Audio.
 const RF64_STREAM_MARKER: [u8; 4] = *b"RF64";
 /// A possible RIFF form is "wave".
 const WAVE_RIFF_FORM: [u8; 4] = *b"WAVE";
