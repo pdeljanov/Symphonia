@@ -56,13 +56,21 @@ pub struct WavReader {
 impl QueryDescriptor for WavReader {
     fn query() -> &'static [Descriptor] {
         &[
-            // WAVE RIFF form
+            // Standard WAVE RIFF form
             support_format!(
                 "wave",
                 "Waveform Audio File Format",
                 &["wav", "wave"],
                 &["audio/vnd.wave", "audio/x-wav", "audio/wav", "audio/wave"],
                 &[b"RIFF"]
+            ),
+            // RF64 extended WAVE format (64-bit extension for files > 4GB)
+            support_format!(
+                "rf64",
+                "RF64 Extended Waveform Audio File Format",
+                &["wav", "wave", "rf64"],
+                &["audio/vnd.wave", "audio/x-wav", "audio/wav", "audio/wave"],
+                &[b"RF64"]
             ),
         ]
     }
