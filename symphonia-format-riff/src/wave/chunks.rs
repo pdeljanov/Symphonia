@@ -566,8 +566,12 @@ pub struct Ds64Chunk {
 
 impl ParseChunk for Ds64Chunk {
     fn parse<B: ReadBytes>(reader: &mut B, _tag: [u8; 4], len: u32) -> Result<Self> {
-        // Minimum ds64 chunk size is 28 bytes (3 u64s + 1 u32 table length)
-        if len < 28 {
+        // ds64 fixed header: riffSize64 (8) + dataSize64 (8) + sampleCount64 (8) + tableLength (4)
+        const DS64_MIN_CHUNK_SIZE: u32 = 28;
+        // Each table entry: chunkId (4) + chunkSize64 (8)
+        const DS64_TABLE_ENTRY_SIZE: u64 = 12;
+
+        if len < DS64_MIN_CHUNK_SIZE {
             return decode_error("wav: malformed ds64 chunk");
         }
 
@@ -576,10 +580,10 @@ impl ParseChunk for Ds64Chunk {
         let sample_count = reader.read_u64()?;
         let table_length = reader.read_u32()?;
 
-        // Skip over the table entries if present (each entry is 12 bytes: 4-byte ID + 8-byte size)
-        // We don't need them since we only care about data chunk size and sample count
+        // Skip over the table entries if present.
+        // We don't need them since we only care about data chunk size and sample count.
         if table_length > 0 {
-            let table_bytes = u64::from(table_length) * 12;
+            let table_bytes = u64::from(table_length) * DS64_TABLE_ENTRY_SIZE;
             reader.ignore_bytes(table_bytes)?;
         }
 
