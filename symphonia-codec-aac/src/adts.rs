@@ -43,7 +43,7 @@ impl QueryDescriptor for AdtsReader {
             "Audio Data Transport Stream (native AAC)",
             &["aac"],
             &["audio/aac"],
-            &[&[0xff, 0xf1]]
+            &[&[0xff, 0xf0], &[0xff, 0xf1], &[0xff, 0xf8], &[0xff, 0xf9]]
         )]
     }
 
@@ -67,7 +67,7 @@ impl AdtsHeader {
     fn sync<B: ReadBytes>(reader: &mut B) -> Result<()> {
         let mut sync = 0u16;
 
-        while sync != 0xfff1 {
+        while (sync & 0xfff6) != 0xfff0 {
             sync = (sync << 8) | u16::from(reader.read_u8()?);
         }
 
