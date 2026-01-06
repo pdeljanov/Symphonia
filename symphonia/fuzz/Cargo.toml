@@ -1,14 +1,9 @@
-
 [package]
 name = "symphonia-fuzz"
+version = "0.0.0"
+authors = ["Automatically generated"]
 publish = false
-# Common package metadata located in workspace Cargo.toml.
-edition.workspace = true
-homepage.workspace = true
-license.workspace = true
-repository.workspace = true
-rust-version.workspace = true
-version.workspace = true
+edition = "2021"
 
 [package.metadata]
 cargo-fuzz = true

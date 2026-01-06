@@ -67,16 +67,11 @@ pub mod dither {
                 }
             }
 
-            #[inline(always)]
-            fn rotl(x: u32, k: u32) -> u32 {
-                (x << k) | (x >> (32 - k))
-            }
-
             #[inline]
             pub fn next(&mut self) -> u32 {
                 let x = self.s[0].wrapping_add(self.s[3]);
 
-                let result = Xoshiro128pp::rotl(x, 7).wrapping_add(self.s[0]);
+                let result = x.rotate_left(7).wrapping_add(self.s[0]);
 
                 let t = self.s[1] << 9;
 
@@ -87,7 +82,7 @@ pub mod dither {
 
                 self.s[2] ^= t;
 
-                self.s[3] = Xoshiro128pp::rotl(self.s[3], 11);
+                self.s[3] = self.s[3].rotate_left(11);
 
                 result
             }
