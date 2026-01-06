@@ -1,39 +1,48 @@
 #![no_main]
 use libfuzzer_sys::fuzz_target;
-use symphonia::core::codecs::DecoderOptions;
-use symphonia::core::formats::FormatOptions;
+use symphonia::core::codecs::audio::AudioDecoderOptions;
+use symphonia::core::formats::probe::Hint;
+use symphonia::core::formats::{FormatOptions, TrackType};
 use symphonia::core::meta::MetadataOptions;
-use symphonia::core::probe::Hint;
 
 fuzz_target!(|data: Vec<u8>| {
     let data = std::io::Cursor::new(data);
 
     let source = symphonia::core::io::MediaSourceStream::new(Box::new(data), Default::default());
 
-    match symphonia::default::get_probe().format(
+    let Ok(mut format) = symphonia::default::get_probe().probe(
         &Hint::new(),
         source,
-        &FormatOptions::default(),
-        &MetadataOptions::default(),
-    ) {
-        Ok(mut probed) => {
-            let track = probed.format.default_track().unwrap();
+        FormatOptions::default(),
+        MetadataOptions::default(),
+    )
+    else {
+        return;
+    };
 
-            let mut decoder = match symphonia::default::get_codecs()
-                .make(&track.codec_params, &DecoderOptions::default())
-            {
-                Ok(d) => d,
-                Err(_) => return,
-            };
+    // Find the first audio track with a known (decodeable) codec.
+    let Some(track) = format.default_track(TrackType::Audio)
+    else {
+        return;
+    };
 
-            loop {
-                let packet = match probed.format.next_packet() {
-                    Ok(p) => p,
-                    Err(_) => return,
-                };
-                let _ = decoder.decode(&packet);
-            }
-        }
-        Err(_) => {}
+    // Use the default options for the decoder.
+    let dec_opts: AudioDecoderOptions = Default::default();
+
+    // Create a decoder for the track.
+    let audio_params =
+        track.codec_params.as_ref().expect("codec parameters missing").audio().unwrap();
+    let Ok(mut decoder) =
+        symphonia::default::get_codecs().make_audio_decoder(audio_params, &dec_opts)
+    else {
+        return;
+    };
+
+    loop {
+        let Ok(Some(packet)) = format.next_packet()
+        else {
+            return;
+        };
+        let _ = decoder.decode(&packet);
     }
 });
