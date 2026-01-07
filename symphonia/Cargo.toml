@@ -23,6 +23,7 @@ aac = ["symphonia-codec-aac"]
 adpcm = ["symphonia-codec-adpcm"]
 alac = ["symphonia-codec-alac"]
 flac = ["symphonia-bundle-flac"]
+dsd = ["symphonia-bundle-dsd"]
 caf = ["symphonia-format-caf"]
 isomp4 = ["symphonia-format-isomp4"]
 mkv = ["symphonia-format-mkv"]
@@ -49,6 +50,7 @@ all-codecs = [
     "mp3",
     "pcm",
     "vorbis",
+    "dsd",
 ]
 
 # Enable all supported formats.
@@ -58,7 +60,8 @@ all-formats = [
     "mkv",
     "ogg",
     "aiff",
-    "wav"
+    "wav",
+    "dsd",
 ]
 
 # Enable all supported codecs and formats.
@@ -93,6 +96,11 @@ path = "../symphonia-metadata"
 [dependencies.symphonia-bundle-flac]
 version = "0.5.5"
 path = "../symphonia-bundle-flac"
+optional = true
+
+[dependencies.symphonia-bundle-dsd]
+version = "0.5.5"
+path = "../symphonia-bundle-dsd"
 optional = true
 
 [dependencies.symphonia-bundle-mp3]

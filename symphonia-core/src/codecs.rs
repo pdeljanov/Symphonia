@@ -228,6 +228,14 @@ pub const CODEC_TYPE_ALAC: CodecType = CodecType(0x2003);
 /// True Audio (TTA)
 pub const CODEC_TYPE_TTA: CodecType = CodecType(0x2004);
 
+// DSD audio codecs
+//-----------------
+
+/// DSD (Least Significant Bit First)
+pub const CODEC_TYPE_DSD_LSBF: CodecType = CodecType(0x3000);
+/// DSD (Most Significant Bit First)
+pub const CODEC_TYPE_DSD_MSBF: CodecType = CodecType(0x3001);
+
 /// A method and expected value to perform verification on the decoded audio.
 #[derive(Copy, Clone, Debug)]
 pub enum VerificationCheck {
