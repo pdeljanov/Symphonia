@@ -552,11 +552,61 @@ impl ParseChunk for DataChunk {
     }
 }
 
+/// DS64 chunk contains 64-bit sizes for RF64 files.
+/// This chunk must appear before the fmt chunk in RF64 files.
+/// Reference: EBU Tech 3306 - MBWF / RF64: An extended File Format for Audio.
+pub struct Ds64Chunk {
+    /// 64-bit RIFF chunk size (total file size minus 8).
+    pub riff_size: u64,
+    /// 64-bit data chunk size.
+    pub data_size: u64,
+    /// 64-bit sample/frame count (replaces fact chunk value).
+    pub sample_count: u64,
+}
+
+impl ParseChunk for Ds64Chunk {
+    fn parse<B: ReadBytes>(reader: &mut B, _tag: [u8; 4], len: u32) -> Result<Self> {
+        // ds64 fixed header: riffSize64 (8) + dataSize64 (8) + sampleCount64 (8) + tableLength (4)
+        const DS64_MIN_CHUNK_SIZE: u32 = 28;
+        // Each table entry: chunkId (4) + chunkSize64 (8)
+        const DS64_TABLE_ENTRY_SIZE: u64 = 12;
+
+        if len < DS64_MIN_CHUNK_SIZE {
+            return decode_error("wav: malformed ds64 chunk");
+        }
+
+        let riff_size = reader.read_u64()?;
+        let data_size = reader.read_u64()?;
+        let sample_count = reader.read_u64()?;
+        let table_length = reader.read_u32()?;
+
+        // Skip over the table entries if present.
+        // We don't need them since we only care about data chunk size and sample count.
+        if table_length > 0 {
+            let table_bytes = u64::from(table_length) * DS64_TABLE_ENTRY_SIZE;
+            reader.ignore_bytes(table_bytes)?;
+        }
+
+        Ok(Ds64Chunk { riff_size, data_size, sample_count })
+    }
+}
+
+impl fmt::Display for Ds64Chunk {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "Ds64Chunk {{")?;
+        writeln!(f, "\triff_size: {},", self.riff_size)?;
+        writeln!(f, "\tdata_size: {},", self.data_size)?;
+        writeln!(f, "\tsample_count: {},", self.sample_count)?;
+        writeln!(f, "}}")
+    }
+}
+
 pub enum RiffWaveChunks {
     Format(ChunkParser<WaveFormatChunk>),
     List(ChunkParser<ListChunk>),
     Fact(ChunkParser<FactChunk>),
     Data(ChunkParser<DataChunk>),
+    Ds64(ChunkParser<Ds64Chunk>),
 }
 
 macro_rules! parser {
@@ -572,6 +622,7 @@ impl ParseChunkTag for RiffWaveChunks {
             b"LIST" => parser!(RiffWaveChunks::List, ListChunk, tag, len),
             b"fact" => parser!(RiffWaveChunks::Fact, FactChunk, tag, len),
             b"data" => parser!(RiffWaveChunks::Data, DataChunk, tag, len),
+            b"ds64" => parser!(RiffWaveChunks::Ds64, Ds64Chunk, tag, len),
             _ => None,
         }
     }
@@ -615,4 +666,71 @@ pub fn read_info_chunk(source: &mut MediaSourceStream, len: u32) -> Result<Metad
     info_list.finish(source)?;
 
     Ok(metadata_builder.metadata())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Cursor;
+    use symphonia_core::io::ReadOnlySource;
+
+    #[test]
+    fn test_ds64_chunk_parse() {
+        // ds64 chunk: riffSize=0x123456789ABCDEF0, dataSize=0x0FEDCBA987654321,
+        // sampleCount=0x0000000100000000, tableLen=0
+        let data: [u8; 28] = [
+            // riffSize64 (little-endian)
+            0xF0, 0xDE, 0xBC, 0x9A, 0x78, 0x56, 0x34, 0x12, // dataSize64 (little-endian)
+            0x21, 0x43, 0x65, 0x87, 0xA9, 0xCB, 0xED, 0x0F,
+            // sampleCount64 (little-endian)
+            0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, // tableLength
+            0x00, 0x00, 0x00, 0x00,
+        ];
+
+        let source = ReadOnlySource::new(Cursor::new(data));
+        let mut reader =
+            symphonia_core::io::MediaSourceStream::new(Box::new(source), Default::default());
+
+        let ds64 = Ds64Chunk::parse(&mut reader, *b"ds64", 28).unwrap();
+
+        assert_eq!(ds64.riff_size, 0x123456789ABCDEF0);
+        assert_eq!(ds64.data_size, 0x0FEDCBA987654321);
+        assert_eq!(ds64.sample_count, 0x0000000100000000);
+    }
+
+    #[test]
+    fn test_ds64_chunk_with_table() {
+        // ds64 chunk with 1 table entry for a chunk named "levl"
+        let data: [u8; 40] = [
+            // riffSize64
+            0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00, // dataSize64
+            0x00, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, // sampleCount64
+            0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // tableLength = 1
+            0x01, 0x00, 0x00, 0x00, // table entry: "levl" + size
+            b'l', b'e', b'v', b'l', 0x00, 0x00, 0x00, 0x00, 0x05, 0x00, 0x00, 0x00,
+        ];
+
+        let source = ReadOnlySource::new(Cursor::new(data));
+        let mut reader =
+            symphonia_core::io::MediaSourceStream::new(Box::new(source), Default::default());
+
+        let ds64 = Ds64Chunk::parse(&mut reader, *b"ds64", 40).unwrap();
+
+        assert_eq!(ds64.riff_size, 0x0000001000000000);
+        assert_eq!(ds64.data_size, 0x0000000800000000);
+        assert_eq!(ds64.sample_count, 0x1000);
+    }
+
+    #[test]
+    fn test_ds64_chunk_too_short() {
+        // ds64 chunk with only 20 bytes (should fail, minimum is 28)
+        let data: [u8; 20] = [0u8; 20];
+
+        let source = ReadOnlySource::new(Cursor::new(data));
+        let mut reader =
+            symphonia_core::io::MediaSourceStream::new(Box::new(source), Default::default());
+
+        let result = Ds64Chunk::parse(&mut reader, *b"ds64", 20);
+        assert!(result.is_err());
+    }
 }
