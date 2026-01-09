@@ -507,7 +507,7 @@ pub trait Decoder: Send + Sync {
 /// the `CodecType`, a short name, and a long name are provided. The `CodecDescriptor` also provides
 /// an instantiation function. When the instantiation function is called, a `Decoder` for the codec
 /// is returned.
-#[derive(Copy, Clone)]
+#[derive(Debug, Copy, Clone)]
 pub struct CodecDescriptor {
     /// The `CodecType` identifier.
     pub codec: CodecType,
@@ -521,8 +521,24 @@ pub struct CodecDescriptor {
 
 /// A `CodecRegistry` allows the registration of codecs, and provides a method to instantiate a
 /// `Decoder` given a `CodecParameters` object.
+#[derive(Clone)]
 pub struct CodecRegistry {
     codecs: HashMap<CodecType, CodecDescriptor>,
+}
+
+impl fmt::Debug for CodecRegistry {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut f = f.debug_struct("CodecRegistry");
+        for (i, cd) in self.codecs.values().enumerate()
+        {
+            f.field(format!("Codec {i}").as_str(), &cd.long_name);
+        }
+        if self.codecs.is_empty()
+        {
+            f.field("No codecs registered", &"");
+        }
+        f.finish()
+    }
 }
 
 impl CodecRegistry {
