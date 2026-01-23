@@ -6,7 +6,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use symphonia_core::audio::{AudioBuffer, AudioMut};
-use symphonia_core::errors::{decode_error, Result};
+use symphonia_core::errors::{Result, decode_error};
 use symphonia_core::io::{BitReaderLtr, BufReader, ReadBitsLtr, ReadBytes};
 use symphonia_core::util::bits::sign_extend_leq32_to_i32;
 
@@ -70,6 +70,7 @@ impl Layer1 {
 }
 
 impl Layer for Layer1 {
+    #[allow(clippy::needless_range_loop)]
     fn decode(
         &mut self,
         reader: &mut BufReader<'_>,
@@ -111,6 +112,7 @@ impl Layer for Layer1 {
         }
 
         // Read bit allocations for the intensity coded sub-bands.
+        // NOTE: This loop causes a false positive with clippy.
         for sb in bound..32 {
             let bits = bs.read_bits_leq32(4)? as u8;
 

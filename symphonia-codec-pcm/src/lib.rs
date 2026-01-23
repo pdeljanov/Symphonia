@@ -14,8 +14,8 @@
 #![allow(clippy::identity_op)]
 #![allow(clippy::manual_range_contains)]
 
-use symphonia_core::codecs::registry::{RegisterableAudioDecoder, SupportedAudioCodec};
 use symphonia_core::codecs::CodecInfo;
+use symphonia_core::codecs::registry::{RegisterableAudioDecoder, SupportedAudioCodec};
 use symphonia_core::support_audio_codec;
 
 use symphonia_core::audio::{
@@ -25,16 +25,16 @@ use symphonia_core::codecs::audio::{
     AudioCodecId, AudioCodecParameters, AudioDecoder, AudioDecoderOptions, FinalizeResult,
 };
 // Signed Int PCM codecs
+use symphonia_core::codecs::audio::well_known::{CODEC_ID_PCM_S8, CODEC_ID_PCM_S16LE};
 use symphonia_core::codecs::audio::well_known::{
     CODEC_ID_PCM_S16BE, CODEC_ID_PCM_S24BE, CODEC_ID_PCM_S32BE,
 };
-use symphonia_core::codecs::audio::well_known::{CODEC_ID_PCM_S16LE, CODEC_ID_PCM_S8};
 use symphonia_core::codecs::audio::well_known::{CODEC_ID_PCM_S24LE, CODEC_ID_PCM_S32LE};
 // Unsigned Int PCM codecs
+use symphonia_core::codecs::audio::well_known::{CODEC_ID_PCM_U8, CODEC_ID_PCM_U16LE};
 use symphonia_core::codecs::audio::well_known::{
     CODEC_ID_PCM_U16BE, CODEC_ID_PCM_U24BE, CODEC_ID_PCM_U32BE,
 };
-use symphonia_core::codecs::audio::well_known::{CODEC_ID_PCM_U16LE, CODEC_ID_PCM_U8};
 use symphonia_core::codecs::audio::well_known::{CODEC_ID_PCM_U24LE, CODEC_ID_PCM_U32LE};
 // Floating point PCM codecs
 use symphonia_core::codecs::audio::well_known::{CODEC_ID_PCM_F32BE, CODEC_ID_PCM_F32LE};
@@ -43,7 +43,7 @@ use symphonia_core::codecs::audio::well_known::{CODEC_ID_PCM_F64BE, CODEC_ID_PCM
 use symphonia_core::audio::conv::IntoSample;
 use symphonia_core::audio::sample::SampleFormat;
 use symphonia_core::codecs::audio::well_known::{CODEC_ID_PCM_ALAW, CODEC_ID_PCM_MULAW};
-use symphonia_core::errors::{decode_error, unsupported_error, Result};
+use symphonia_core::errors::{Result, decode_error, unsupported_error};
 use symphonia_core::formats::Packet;
 use symphonia_core::io::ReadBytes;
 
@@ -166,12 +166,7 @@ fn alaw_to_linear(mut a_val: u8) -> i16 {
         _ => t = (t + 0x108) << (seg - 1),
     }
 
-    if a_val & 0x80 == 0x80 {
-        t
-    }
-    else {
-        -t
-    }
+    if a_val & 0x80 == 0x80 { t } else { -t }
 }
 
 fn mulaw_to_linear(mut mu_val: u8) -> i16 {
@@ -185,12 +180,7 @@ fn mulaw_to_linear(mut mu_val: u8) -> i16 {
     let mut t = i16::from((mu_val & XLAW_QUANT_MASK) << 3) + BIAS;
     t <<= (mu_val & XLAW_SEG_MASK) >> XLAW_SEG_SHIFT;
 
-    if mu_val & 0x80 == 0x80 {
-        BIAS - t
-    }
-    else {
-        t - BIAS
-    }
+    if mu_val & 0x80 == 0x80 { BIAS - t } else { t - BIAS }
 }
 
 fn is_supported_pcm_codec(codec_id: AudioCodecId) -> bool {

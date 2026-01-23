@@ -5,14 +5,14 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::errors::{unsupported_error, Error};
+use symphonia_core::errors::{Error, unsupported_error};
 use symphonia_core::support_format;
 
 use symphonia_core::audio::Channels;
-use symphonia_core::codecs::audio::well_known::CODEC_ID_AAC;
-use symphonia_core::codecs::audio::AudioCodecParameters;
 use symphonia_core::codecs::CodecParameters;
-use symphonia_core::errors::{decode_error, seek_error, Result, SeekErrorKind};
+use symphonia_core::codecs::audio::AudioCodecParameters;
+use symphonia_core::codecs::audio::well_known::CODEC_ID_AAC;
+use symphonia_core::errors::{Result, SeekErrorKind, decode_error, seek_error};
 use symphonia_core::formats::prelude::*;
 use symphonia_core::formats::probe::{ProbeFormatData, ProbeableFormat, Score, Scoreable};
 use symphonia_core::formats::well_known::FORMAT_ID_ADTS;
@@ -21,7 +21,7 @@ use symphonia_core::meta::{Metadata, MetadataLog};
 
 use std::io::{Seek, SeekFrom};
 
-use super::common::{map_to_channels, M4AType, AAC_CHANNELS, AAC_SAMPLE_RATES, M4A_TYPES};
+use super::common::{AAC_CHANNELS, AAC_SAMPLE_RATES, M4A_TYPES, M4AType, map_to_channels};
 
 use log::{debug, info};
 
@@ -322,7 +322,7 @@ impl FormatReader for AdtsReader<'_> {
             }
         };
 
-        debug!("seeking to ts={}", required_ts);
+        debug!("seeking to ts={required_ts}");
 
         // If the desired timestamp is less-than the next packet timestamp, attempt to seek
         // to the start of the stream.
@@ -394,7 +394,7 @@ impl FormatReader for AdtsReader<'_> {
 
 fn approximate_frame_count(mut source: &mut MediaSourceStream<'_>) -> Result<Option<u64>> {
     let original_pos = source.pos();
-    let total_len = match source.byte_len() {
+    let remaining_len = match source.byte_len() {
         Some(len) => len - original_pos,
         _ => return Ok(None),
     };
@@ -428,34 +428,46 @@ fn approximate_frame_count(mut source: &mut MediaSourceStream<'_>) -> Result<Opt
     else {
         // The number of points to sample within the stream.
         const NUM_SAMPLE_POINTS: u64 = 4;
+        const NUM_FRAMES_PER_SAMPLE_POINT: u32 = 100;
 
-        let step = (total_len - original_pos) / NUM_SAMPLE_POINTS;
+        let step = remaining_len / NUM_SAMPLE_POINTS;
 
-        // Skip the first sample point (start of file) since it is an outlier.
-        for new_pos in (original_pos..total_len - step).step_by(step as usize).skip(1) {
-            let res = source.seek(SeekFrom::Start(new_pos));
-            if res.is_err() {
-                break;
-            }
+        // file can be small enough and not have enough NUM_FRAMES_PER_SAMPLE_POINT, but we can still read at least one frame
+        if step > 0 {
+            for new_pos in (original_pos..(original_pos + remaining_len)).step_by(step as usize) {
+                // Skip sample point if previous read exceeded its boundary.
+                if new_pos < source.pos() {
+                    continue;
+                }
 
-            for _ in 0..=100 {
-                let header = match AdtsHeader::read(&mut source) {
-                    Ok(header) => header,
-                    _ => break,
-                };
+                if source.seek(SeekFrom::Start(new_pos)).is_err() {
+                    break;
+                }
 
-                parsed_n_frames += 1;
-                n_bytes += u64::from(header.frame_len);
+                for _ in 0..NUM_FRAMES_PER_SAMPLE_POINT {
+                    let header = match AdtsHeader::read(&mut source) {
+                        Ok(header) => header,
+                        _ => break,
+                    };
+
+                    parsed_n_frames += 1;
+                    n_bytes += u64::from(header.frame_len);
+
+                    // skip frame payload to avoid seaching the sync word in the audio data
+                    if source.ignore_bytes(header.payload_len() as u64).is_err() {
+                        break;
+                    }
+                }
             }
         }
 
         let _ = source.seek(SeekFrom::Start(original_pos))?;
     }
 
-    debug!("adts: parsed {} of {} bytes to approximate duration", n_bytes, total_len);
+    debug!("adts: parsed {n_bytes} of {remaining_len} bytes to approximate duration");
 
     match parsed_n_frames {
         0 => Ok(None),
-        _ => Ok(Some(total_len / (n_bytes / parsed_n_frames) * SAMPLES_PER_AAC_PACKET)),
+        _ => Ok(Some(remaining_len / (n_bytes / parsed_n_frames) * SAMPLES_PER_AAC_PACKET)),
     }
 }

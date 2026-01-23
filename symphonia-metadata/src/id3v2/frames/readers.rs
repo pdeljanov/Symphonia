@@ -13,7 +13,7 @@ use std::io;
 use std::str;
 use std::sync::Arc;
 
-use symphonia_core::errors::{decode_error, unsupported_error, Result};
+use symphonia_core::errors::{Result, decode_error, unsupported_error};
 use symphonia_core::io::{BufReader, FiniteStream, ReadBytes};
 use symphonia_core::meta::RawTag;
 use symphonia_core::meta::RawTagSubField;
@@ -23,7 +23,7 @@ use symphonia_core::util::text;
 
 use lazy_static::lazy_static;
 use log::debug;
-use smallvec::{smallvec, SmallVec};
+use smallvec::{SmallVec, smallvec};
 
 use crate::id3v2::frames::{FrameResult, Id3v2Chapter, Id3v2TableOfContents};
 use crate::id3v2::sub_fields::*;
@@ -418,7 +418,17 @@ pub fn read_chap_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Resu
 
         match frame {
             FrameResult::MultipleTags(tag_list) => tags.extend(tag_list.into_iter()),
-            FrameResult::Tag(tag) => tags.push(tag),
+            FrameResult::Tag(mut tag) => {
+                // The TIT2 (track title) and TIT3 (track subtitle/description) ID3v2 frames are
+                // repurposed for chapter title and description, respectively.
+                tag.std = match tag.std.take() {
+                    Some(StandardTag::TrackTitle(title)) => Some(StandardTag::ChapterTitle(title)),
+                    Some(StandardTag::TrackSubtitle(desc)) => Some(StandardTag::Description(desc)),
+                    other => other,
+                };
+
+                tags.push(tag)
+            }
             FrameResult::Visual(visual) => visuals.push(visual),
             _ => {}
         }

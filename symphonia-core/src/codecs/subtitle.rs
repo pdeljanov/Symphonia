@@ -9,10 +9,14 @@
 
 use std::fmt;
 
+#[cfg(feature = "exp-subtitle-codecs")]
 use crate::codecs::CodecInfo;
 use crate::common::FourCc;
+#[cfg(feature = "exp-subtitle-codecs")]
 use crate::errors::Result;
+#[cfg(feature = "exp-subtitle-codecs")]
 use crate::formats::Packet;
+#[cfg(feature = "exp-subtitle-codecs")]
 use crate::subtitle::GenericSubtitleBufferRef;
 
 /// An `SubtitleCodecId` is a unique identifier used to identify a specific video codec.
@@ -84,6 +88,7 @@ impl SubtitleCodecParameters {
 }
 
 /// `SubtitleDecoderOptions` is a common set of options that all subtitle decoders use.
+#[cfg(feature = "exp-subtitle-codecs")]
 #[derive(Copy, Clone, Debug, Default)]
 pub struct SubtitleDecoderOptions {
     // None yet.
@@ -91,6 +96,7 @@ pub struct SubtitleDecoderOptions {
 
 /// A `SubtitleDecoder` implements a subtitle codec's decode algorithm. It consumes `Packet`s and
 /// produces plain text or rendered subtitles.
+#[cfg(feature = "exp-subtitle-codecs")]
 pub trait SubtitleDecoder: Send + Sync {
     /// Reset the decoder.
     ///
@@ -116,14 +122,14 @@ pub trait SubtitleDecoder: Send + Sync {
     /// discarded. Decoding may be continued with the next packet.
     ///
     /// Implementors of decoders *must* `clear` the last decoded subtitle if an error occurs.
-    fn decode(&mut self, packet: &Packet) -> Result<GenericSubtitleBufferRef>;
+    fn decode(&mut self, packet: &Packet) -> Result<GenericSubtitleBufferRef<'_>>;
 
     /// Allows read access to the internal audio buffer.
     ///
     /// After a successful call to `decode`, this will contain the audio content of the last decoded
     /// `Packet`. If the last call to `decode` resulted in an error, then implementors *must* ensure
     /// the returned audio buffer has zero length.
-    fn last_decoded(&self) -> GenericSubtitleBufferRef;
+    fn last_decoded(&self) -> GenericSubtitleBufferRef<'_>;
 }
 
 /// IDs for well-known subtitle codecs.

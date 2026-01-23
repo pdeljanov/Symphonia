@@ -10,12 +10,12 @@ use std::io::{Seek, SeekFrom};
 use symphonia_core::support_format;
 
 use symphonia_common::xiph::audio::flac::{MetadataBlockHeader, MetadataBlockType, StreamInfo};
-use symphonia_core::codecs::audio::{
-    well_known::CODEC_ID_FLAC, AudioCodecParameters, VerificationCheck,
-};
 use symphonia_core::codecs::CodecParameters;
+use symphonia_core::codecs::audio::{
+    AudioCodecParameters, VerificationCheck, well_known::CODEC_ID_FLAC,
+};
 use symphonia_core::errors::{
-    decode_error, seek_error, unsupported_error, Error, Result, SeekErrorKind,
+    Error, Result, SeekErrorKind, decode_error, seek_error, unsupported_error,
 };
 use symphonia_core::formats::prelude::*;
 use symphonia_core::formats::probe::{ProbeFormatData, ProbeableFormat, Score, Scoreable};
@@ -75,7 +75,7 @@ impl<'s> FlacReader<'s> {
 
     /// Reads all the metadata blocks, returning a fully populated `FlacReader`.
     fn init_with_metadata(mss: MediaSourceStream<'s>, opts: FormatOptions) -> Result<Self> {
-        let mut metadata_builder = MetadataBuilder::new();
+        let mut metadata_builder = MetadataBuilder::new(FLAC_METADATA_INFO);
 
         let mut reader = mss;
         let mut track = None;
@@ -155,7 +155,7 @@ impl<'s> FlacReader<'s> {
             let block_unread_len = block_stream.bytes_available();
 
             if block_unread_len > 0 {
-                info!("under read block by {} bytes.", block_unread_len);
+                info!("under read block by {block_unread_len} bytes.");
                 block_stream.ignore_bytes(block_unread_len)?;
             }
 
@@ -174,7 +174,7 @@ impl<'s> FlacReader<'s> {
 
         // Commit any read metadata to the metadata log.
         let mut metadata = opts.external_data.metadata.unwrap_or_default();
-        metadata.push(metadata_builder.metadata());
+        metadata.push(metadata_builder.build());
 
         // Synchronize the packet parser to the first audio frame.
         let _ = parser.resync(&mut reader)?;
@@ -264,7 +264,7 @@ impl FormatReader for FlacReader<'_> {
             }
         };
 
-        debug!("seeking to frame_ts={}", ts);
+        debug!("seeking to frame_ts={ts}");
 
         // If the total number of frames in the stream is known, verify the desired frame timestamp
         // does not exceed it.

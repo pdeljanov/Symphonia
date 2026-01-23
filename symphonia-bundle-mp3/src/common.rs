@@ -5,9 +5,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::audio::{layouts, AudioBuffer, AudioSpec, Channels, Position};
-use symphonia_core::codecs::audio::well_known::{CODEC_ID_MP1, CODEC_ID_MP2, CODEC_ID_MP3};
+use symphonia_core::audio::{AudioBuffer, AudioSpec, Channels, Position, layouts};
 use symphonia_core::codecs::audio::AudioCodecId;
+use symphonia_core::codecs::audio::well_known::{CODEC_ID_MP1, CODEC_ID_MP2, CODEC_ID_MP3};
 use symphonia_core::errors::Result;
 
 use symphonia_core::io::BufReader;

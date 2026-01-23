@@ -8,7 +8,7 @@
 use std::fmt;
 
 use symphonia_core::audio::{AudioBuffer, AudioMut};
-use symphonia_core::errors::{decode_error, Error, Result};
+use symphonia_core::errors::{Error, Result, decode_error};
 use symphonia_core::io::{BitReaderLtr, BufReader, ReadBitsLtr, ReadBytes};
 
 mod bitstream;
@@ -83,7 +83,7 @@ impl BitResevoir {
             // The number of bytes that will be missing.
             let underflow = (main_data_begin - unread) as u32;
 
-            warn!("mpa: invalid main_data_begin, underflow by {} bytes", underflow);
+            warn!("mpa: invalid main_data_begin, underflow by {underflow} bytes");
 
             underflow
         };
@@ -243,7 +243,7 @@ impl fmt::Debug for GranuleChannel {
 
         write!(f, "\tscalefacs=[ ")?;
         for sf in &self.scalefacs[..] {
-            write!(f, "{}, ", sf)?;
+            write!(f, "{sf}, ")?;
         }
         writeln!(f, "]")?;
         writeln!(f, "\trzero={}", self.rzero)?;

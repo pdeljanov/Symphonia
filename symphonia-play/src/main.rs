@@ -17,8 +17,8 @@ use std::fs::File;
 use std::io::Write;
 use std::path::Path;
 
-use symphonia::core::codecs::audio::{AudioDecoderOptions, FinalizeResult};
 use symphonia::core::codecs::CodecParameters;
+use symphonia::core::codecs::audio::{AudioDecoderOptions, FinalizeResult};
 use symphonia::core::errors::{Error, Result};
 use symphonia::core::formats::probe::Hint;
 use symphonia::core::formats::{FormatOptions, FormatReader, SeekMode, SeekTo, TrackType};
@@ -38,7 +38,7 @@ mod resampler;
 #[derive(Copy, Clone)]
 enum SeekPosition {
     Time(f64),
-    Timetamp(u64),
+    Timestamp(u64),
 }
 
 fn main() {
@@ -215,7 +215,7 @@ fn run(args: &ArgMatches) -> Result<i32> {
                 }
                 else {
                     args.value_of("seek-ts")
-                        .map(|ts| SeekPosition::Timetamp(ts.parse::<u64>().unwrap_or(0)))
+                        .map(|ts| SeekPosition::Timestamp(ts.parse::<u64>().unwrap_or(0)))
                 };
 
                 // Setup playback options.
@@ -292,7 +292,7 @@ fn decode_only(mut reader: Box<dyn FormatReader>, opts: DecodeOptions) -> Result
         // Decode the packet into audio samples.
         match decoder.decode(&packet) {
             Ok(_decoded) => continue,
-            Err(Error::DecodeError(err)) => warn!("decode error: {}", err),
+            Err(Error::DecodeError(err)) => warn!("decode error: {err}"),
             Err(err) => return Err(err),
         }
     }
@@ -340,7 +340,7 @@ fn play(mut reader: Box<dyn FormatReader>, opts: PlayOptions) -> Result<i32> {
     let seek_ts = if let Some(seek_pos) = opts.seek_pos {
         let seek_to = match seek_pos {
             SeekPosition::Time(t) => SeekTo::Time { time: Time::from(t), track_id: Some(track_id) },
-            SeekPosition::Timetamp(ts) => SeekTo::TimeStamp { ts, track_id },
+            SeekPosition::Timestamp(ts) => SeekTo::TimeStamp { ts, track_id },
         };
 
         // Attempt the seek. If the seek fails, ignore the error and return a seek timestamp of 0 so
@@ -357,7 +357,7 @@ fn play(mut reader: Box<dyn FormatReader>, opts: PlayOptions) -> Result<i32> {
             }
             Err(err) => {
                 // Don't give-up on a seek error.
-                warn!("seek error: {}", err);
+                warn!("seek error: {err}");
                 0
             }
         }
@@ -483,7 +483,7 @@ fn play_track(
             Err(Error::DecodeError(err)) => {
                 // Decode errors are not fatal. Print the error message and try to decode the next
                 // packet as usual.
-                warn!("decode error: {}", err);
+                warn!("decode error: {err}");
             }
             Err(err) => return Err(err),
         }
@@ -526,7 +526,7 @@ fn do_verification(finalization: FinalizeResult) -> Result<i32> {
 
 fn dump_visuals(format: &mut Box<dyn FormatReader>, file_name: &OsStr) {
     if let Some(metadata) = format.metadata().current() {
-        for (i, visual) in metadata.visuals().iter().enumerate() {
+        for (i, visual) in metadata.media.visuals.iter().enumerate() {
             dump_visual(visual, file_name, i);
         }
     }
@@ -542,10 +542,10 @@ fn dump_visual(visual: &Visual, file_name: &OsStr, index: usize) {
     };
 
     let mut out_file_name = OsString::from(file_name);
-    out_file_name.push(format!("-{:0>2}{}", index, extension));
+    out_file_name.push(format!("-{index:0>2}{extension}"));
 
     if let Err(err) = File::create(out_file_name).and_then(|mut file| file.write_all(&visual.data))
     {
-        warn!("failed to dump visual due to error {}", err);
+        warn!("failed to dump visual due to error {err}");
     }
 }

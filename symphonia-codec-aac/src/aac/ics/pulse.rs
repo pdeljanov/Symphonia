@@ -18,12 +18,7 @@ use crate::aac::common::{MAX_SFBS, MAX_WINDOWS};
 
 #[inline(always)]
 fn iquant(val: f32) -> f32 {
-    if val < 0.0 {
-        -((-val).powf(4.0 / 3.0))
-    }
-    else {
-        val.powf(4.0 / 3.0)
-    }
+    if val < 0.0 { -((-val).powf(4.0 / 3.0)) } else { val.powf(4.0 / 3.0) }
 }
 
 #[inline(always)]
@@ -32,12 +27,7 @@ fn requant(val: f32, scale: f32) -> f32 {
         return 0.0;
     }
     let bval = val / scale;
-    if bval >= 0.0 {
-        val.powf(3.0 / 4.0)
-    }
-    else {
-        -((-val).powf(3.0 / 4.0))
-    }
+    if bval >= 0.0 { val.powf(3.0 / 4.0) } else { -((-val).powf(3.0 / 4.0)) }
 }
 
 #[derive(Clone, Copy)]

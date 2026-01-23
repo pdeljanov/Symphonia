@@ -8,8 +8,8 @@
 use std::collections::BTreeMap;
 use std::io::{Seek, SeekFrom};
 
-use symphonia_core::errors::{reset_error, seek_error, unsupported_error};
 use symphonia_core::errors::{Error, Result, SeekErrorKind};
+use symphonia_core::errors::{reset_error, seek_error, unsupported_error};
 use symphonia_core::formats::prelude::*;
 use symphonia_core::formats::probe::{ProbeFormatData, ProbeableFormat, Score, Scoreable};
 use symphonia_core::formats::well_known::FORMAT_ID_OGG;
@@ -82,7 +82,7 @@ impl<'s> OggReader<'s> {
                 Ok(_) => break,
                 Err(Error::IoError(e)) => return Err(Error::from(e)),
                 Err(e) => {
-                    warn!("{}", e);
+                    warn!("{e}");
                 }
             }
         }
@@ -186,8 +186,7 @@ impl<'s> OggReader<'s> {
                     _ => {
                         // No more pages for the stream from the mid-point onwards.
                         debug!(
-                            "seek: bisect step: byte_range=[{}, {}, {}]",
-                            start_byte_pos, mid_byte_pos, end_byte_pos,
+                            "seek: bisect step: byte_range=[{start_byte_pos}, {mid_byte_pos}, {end_byte_pos}]",
                         );
 
                         end_byte_pos = mid_byte_pos;
@@ -199,8 +198,7 @@ impl<'s> OggReader<'s> {
                 let (start_ts, end_ts) = stream.inspect_page(&self.pages.page());
 
                 debug!(
-                    "seek: bisect step: page={{ start_ts={}, end_ts={} }} byte_range=[{}, {}, {}]",
-                    start_ts, end_ts, start_byte_pos, mid_byte_pos, end_byte_pos,
+                    "seek: bisect step: page={{ start_ts={start_ts}, end_ts={end_ts} }} byte_range=[{start_byte_pos}, {mid_byte_pos}, {end_byte_pos}]",
                 );
 
                 if required_ts < start_ts {
@@ -395,7 +393,7 @@ impl<'s> OggReader<'s> {
             // Warn if the track is not ready. This should not happen if the physical stream was
             // muxed properly.
             if !stream.is_ready() {
-                warn!("track for serial={:#x} may not be ready", serial);
+                warn!("track for serial={serial:#x} may not be ready");
             }
 
             self.tracks.push(stream.track().clone());
@@ -533,7 +531,7 @@ impl FormatReader for OggReader<'_> {
             }
         };
 
-        debug!("seeking track={:#x} to frame_ts={}", serial, required_ts);
+        debug!("seeking track={serial:#x} to frame_ts={required_ts}");
 
         // Do the actual seek.
         self.do_seek(serial, required_ts)

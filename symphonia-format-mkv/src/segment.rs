@@ -5,50 +5,126 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+use std::collections::HashMap;
+use std::num::NonZeroU64;
+use std::rc::Rc;
 use std::sync::Arc;
 
+use symphonia_core::codecs::video::VideoExtraData;
 use symphonia_core::codecs::video::well_known::extra_data::{
     VIDEO_EXTRA_DATA_ID_DOLBY_VISION_CONFIG, VIDEO_EXTRA_DATA_ID_DOLBY_VISION_EL_HEVC,
 };
-use symphonia_core::codecs::video::VideoExtraData;
-use symphonia_core::errors::{Error, Result};
-use symphonia_core::formats::TrackFlags;
-use symphonia_core::io::{BufReader, ReadBytes};
+use symphonia_core::formats::{Attachment, FileAttachment, TrackFlags};
+use symphonia_core::meta::well_known::METADATA_ID_MATROSKA;
 use symphonia_core::meta::{
-    Chapter, ChapterGroup, ChapterGroupItem, MetadataBuilder, MetadataRevision, RawTag,
-    RawTagSubField, RawValue, StandardTag, Tag,
+    Chapter, ChapterGroup, ChapterGroupItem, MetadataBuilder, MetadataInfo, MetadataRevision,
+    PerTrackMetadataBuilder, RawTag, RawTagSubField, RawValue, StandardTag, Tag,
 };
 use symphonia_core::units::Time;
 
-use crate::ebml::{
-    read_unsigned_vint, Element, ElementData, ElementHeader, ElementIterator, ElementReader,
-};
-use crate::element_ids::ElementType;
-use crate::lacing::calc_abs_block_timestamp;
+use crate::ebml::{EbmlElement, EbmlElementHeader, EbmlError, EbmlIterator, ReadEbml, Result};
+use crate::schema::{MkvElement, MkvSchema};
 use crate::sub_fields::*;
+use crate::tags::{TagContext, Target, make_raw_tags, map_std_tag};
+
+const MKV_METADATA_INFO: MetadataInfo = MetadataInfo {
+    metadata: METADATA_ID_MATROSKA,
+    short_name: "mkv",
+    long_name: "Matroska / WebM",
+};
+
+// NOTES ON READING EBML ELEMENTS
+// ==============================
+//
+// EBML elements are classified as mandatory or non-mandatory. Mandatory EBML elements must be
+// present if they do not have a schema-defined default value. If a mandatory element is not
+// present, then the schema-defined default value should be used instead. On the other hand,
+// non-mandatory EBML elements do not need to be present and no default value is assumed in their
+// absence.
+//
+// All non-master EBML elements are defined by the schema to carry one piece of data in one of the
+// EBML-defined primitive data-types: unsigned integer, signed integer, float, date, string, or
+// binary buffer. However, an EBML element may also be "empty" (i.e., the element is written to the
+// EBML document without any data), in which case the schema-defined default value should be used,
+// if one was defined, or the default value for the data-type (0 or "").
+//
+// Therefore, the value yielded for an element depends on:
+//
+//  1. If the element is defined to be mandatory or non-mandatory.
+//  2. If the element is present in the document or not.
+//  3. If the element has a schema-defined default value or not.
+//
+// The table below summarizes the intended behaviour as per the EBML standard.
+//
+// +---------------+---------------------------------------+---------------------------------------+
+// |               | Element is Present                    | Element is not Present                |
+// +---------------+---------------------------------------+---------------------------------------+
+// | Mandatory     | Not-empty: Use written value.         | Schema default [2], or error [3].     |
+// | Element       | Empty:     Schema or type default [1] |                                       |
+// +---------------+---------------------------------------+---------------------------------------+
+// | Non-Mandatory | Not-empty: Use written value.         | Do nothing. Do not use.               |
+// | Element       | Empty:     Schema or type default [1] |                                       |
+// +---------------+---------------------------------------+---------------------------------------+
+//
+// [1] RFC-8794 (Extensible Binary Meta Language), Sect. 6.1
+// [2] RFC-8794 (Extensible Binary Meta Language), Sect. 11.1.6.8
+// [3] RFC-8794 (Extensible Binary Meta Language), Sect. 11.1.19
+//
+// EBML ITERATOR
+// ~~~~~~~~~~~~~
+//
+// The EBML iterator provides 3 variants of read functions per data-type to support the scenarios
+// above.
+//
+//  1. `read_TYPE`            - Returns an `Option<T>` where `None` indicates an empty element.
+//  2. `read_TYPE_default`    - Takes a schema-defined default value to return when the element is
+//                              empty.
+//  3. `read_TYPE_no_default` - Returns the type-defined default value when the element is empty.
+//                              For use when there is no schema-defined default value.
+//
+// MODULE CONVENTIONS
+// ~~~~~~~~~~~~~~~~~~
+//
+// The code in this module shall use the following conventions for implementation consistency:
+//
+//  1. Excluding mandatory elements with schema-defined defaults, element values shall be read with
+//     either `read_TYPE_default` or `read_TYPE_no_default`, to always yield a non-empty value, then
+//     stored in an `Option<T>`.
+//  2. For mandatory elements with schema-defined defaults, element values shall be read with
+//     `read_TYPE`. The returned `Option<T>` is stored directly.
+//  3. After iterating over all elements, the `Option`s for mandatory elements with schema-defined
+//     defaults shall be `unwrap_or`'d with their schema-defined default. Mandatory elements without
+//     schema-defined defaults that are `None` shall result in an error.
+//  4. The per-element data structures shall be defined such that only non-mandatory element values
+//     are wrapped in options.
+
+type MkvEbmlIterator<R> = EbmlIterator<R, MkvSchema>;
+type MkvEbmlElementHeader = EbmlElementHeader<MkvSchema>;
 
 #[allow(dead_code)]
 #[derive(Debug)]
 pub(crate) struct TrackElement {
-    pub(crate) number: u64,
-    pub(crate) uid: u64,
-    pub(crate) language: Option<String>,
+    pub(crate) number: NonZeroU64,
+    pub(crate) uid: NonZeroU64,
+    pub(crate) lang: String,
+    pub(crate) lang_bcp47: Option<String>,
     pub(crate) codec_id: String,
     pub(crate) codec_private: Option<Box<[u8]>>,
     pub(crate) block_addition_mappings: Vec<BlockAdditionMappingElement>,
     pub(crate) audio: Option<AudioElement>,
     pub(crate) video: Option<VideoElement>,
-    pub(crate) default_duration: Option<u64>,
+    pub(crate) default_duration: Option<NonZeroU64>,
     pub(crate) flags: TrackFlags,
 }
 
-impl Element for TrackElement {
-    const ID: ElementType = ElementType::TrackEntry;
+impl EbmlElement<MkvSchema> for TrackElement {
+    const TYPE: MkvElement = MkvElement::TrackEntry;
 
-    fn read<R: ElementReader>(mut it: ElementIterator<R>, _header: ElementHeader) -> Result<Self> {
+    fn read<R: ReadEbml>(it: &mut MkvEbmlIterator<R>, hdr: &MkvEbmlElementHeader) -> Result<Self> {
         let mut number = None;
         let mut uid = None;
-        let mut language = None;
+        let mut lang = None;
+        let mut lang_bcp47 = None;
         let mut audio = None;
         let mut video = None;
         let mut codec_private = None;
@@ -57,81 +133,116 @@ impl Element for TrackElement {
         let mut default_duration = None;
         let mut flags = Default::default();
 
-        while let Some(header) = it.read_header()? {
-            match header.etype {
-                ElementType::TrackNumber => {
-                    number = Some(it.read_u64()?);
+        while let Some(child) = it.next_header()? {
+            match child.element_type() {
+                MkvElement::TrackNumber => {
+                    // Mandatory element. May not be 0. No schema-defined default.
+                    let val = NonZeroU64::new(it.read_u64_no_default()?)
+                        .ok_or(EbmlError::ElementError("mkv: invalid (0) track number"))?;
+
+                    number = Some(val);
                 }
-                ElementType::TrackUid => {
-                    uid = Some(it.read_u64()?);
+                MkvElement::TrackUid => {
+                    // Mandatory element. May not be 0. No schema-defined default.
+                    let val = NonZeroU64::new(it.read_u64_no_default()?)
+                        .ok_or(EbmlError::ElementError("mkv: invalid (0) track uid"))?;
+
+                    uid = Some(val);
                 }
-                ElementType::Language => {
-                    language = Some(it.read_string()?);
+                MkvElement::Language => {
+                    // Mandatory element. Schema-defined default is "eng".
+                    lang = it.read_string()?;
                 }
-                ElementType::CodecId => {
-                    codec_id = Some(it.read_string()?);
+                MkvElement::LanguageBcp47 => {
+                    // Non-mandatory element. No schema-defined default.
+                    lang_bcp47 = Some(it.read_string_no_default()?);
                 }
-                ElementType::CodecPrivate => {
-                    codec_private = Some(it.read_boxed_slice()?);
+                MkvElement::CodecId => {
+                    // Mandatory element. No schema-defined default.
+                    codec_id = Some(it.read_string_no_default()?);
                 }
-                ElementType::Audio => {
-                    audio = Some(it.read_element_data()?);
+                MkvElement::CodecPrivate => {
+                    // Non-mandatory element.
+                    codec_private = Some(it.read_binary()?);
                 }
-                ElementType::Video => {
-                    video = Some(it.read_element_data()?);
+                MkvElement::Audio => {
+                    // Non-mandatory element.
+                    audio = Some(it.read_master_element()?);
                 }
-                ElementType::BlockAdditionMapping => {
-                    block_addition_mappings.push(it.read_element_data()?);
+                MkvElement::Video => {
+                    // Non-mandatory element.
+                    video = Some(it.read_master_element()?);
                 }
-                ElementType::DefaultDuration => {
-                    default_duration = Some(it.read_u64()?);
+                MkvElement::BlockAdditionMapping => {
+                    // Non-mandatory element.
+                    block_addition_mappings.push(it.read_master_element()?);
                 }
-                ElementType::FlagDefault => {
-                    if it.read_u64()? == 1 {
+                MkvElement::DefaultDuration => {
+                    // Non-mandatory. May not be 0. No schema-defined default.
+                    let val = NonZeroU64::new(it.read_u64_no_default()?).ok_or(
+                        EbmlError::ElementError("mkv: invalid (0) track default duration"),
+                    )?;
+
+                    default_duration = Some(val);
+                }
+                MkvElement::FlagDefault => {
+                    // Mandatory element. Schema-defined default is 1 (set).
+                    if it.read_u64_default(1)? == 1 {
                         flags |= TrackFlags::DEFAULT;
                     }
                 }
-                ElementType::FlagForced => {
-                    if it.read_u64()? == 1 {
+                MkvElement::FlagForced => {
+                    // Mandatory element. Schema-defined default is 0 (unset).
+                    if it.read_u64_default(0)? == 1 {
                         flags |= TrackFlags::FORCED;
                     }
                 }
-                ElementType::FlagHearingImpaired => {
-                    if it.read_u64()? == 1 {
+                MkvElement::FlagHearingImpaired => {
+                    // Non-mandatory element. Schema-defined default is 0 (unset).
+                    if it.read_u64_default(0)? == 1 {
                         flags |= TrackFlags::HEARING_IMPAIRED;
                     }
                 }
-                ElementType::FlagVisualImpaired => {
-                    if it.read_u64()? == 1 {
+                MkvElement::FlagVisualImpaired => {
+                    // Non-mandatory element. Schema-defined default is 0 (unset).
+                    if it.read_u64_default(0)? == 1 {
                         flags |= TrackFlags::VISUALLY_IMPAIRED;
                     }
                 }
-                ElementType::FlagTextDescriptions => {
-                    if it.read_u64()? == 1 {
+                MkvElement::FlagTextDescriptions => {
+                    // Non-mandatory element. Schema-defined default is 0 (unset).
+                    if it.read_u64_default(0)? == 1 {
                         flags |= TrackFlags::TEXT_DESCRIPTIONS;
                     }
                 }
-                ElementType::FlagOriginal => {
-                    if it.read_u64()? == 1 {
+                MkvElement::FlagOriginal => {
+                    // Non-mandatory element. Schema-defined default is 0 (unset).
+                    if it.read_u64_default(0)? == 1 {
                         flags |= TrackFlags::ORIGINAL_LANGUAGE;
                     }
                 }
-                ElementType::FlagCommentary => {
-                    if it.read_u64()? == 1 {
+                MkvElement::FlagCommentary => {
+                    // Non-mandatory element. Schema-defined default is 0 (unset).
+                    if it.read_u64_default(0)? == 1 {
                         flags |= TrackFlags::COMMENTARY;
                     }
                 }
                 other => {
-                    log::debug!("ignored element {:?}", other);
+                    // Unexpected child element.
+                    log::debug!("ignored {:?} child {:?}", hdr.element_type(), other);
                 }
             }
         }
 
+        // Populate missing or empty mandatory elements that have default values.
+        let lang = lang.unwrap_or_else(|| "eng".into());
+
         Ok(Self {
-            number: number.ok_or(Error::DecodeError("mkv: missing track number"))?,
-            uid: uid.ok_or(Error::DecodeError("mkv: missing track UID"))?,
-            language,
-            codec_id: codec_id.ok_or(Error::DecodeError("mkv: missing codec id"))?,
+            number: number.ok_or(EbmlError::ElementError("mkv: missing track number"))?,
+            uid: uid.ok_or(EbmlError::ElementError("mkv: missing track uid"))?,
+            lang,
+            lang_bcp47,
+            codec_id: codec_id.ok_or(EbmlError::ElementError("mkv: missing codec id"))?,
             codec_private,
             block_addition_mappings,
             audio,
@@ -147,77 +258,126 @@ impl Element for TrackElement {
 pub(crate) struct AudioElement {
     pub(crate) sampling_frequency: f64,
     pub(crate) output_sampling_frequency: Option<f64>,
-    pub(crate) channels: u64,
-    pub(crate) bit_depth: Option<u64>,
+    pub(crate) channels: NonZeroU64,
+    pub(crate) bit_depth: Option<NonZeroU64>,
 }
 
-impl Element for AudioElement {
-    const ID: ElementType = ElementType::Audio;
+impl EbmlElement<MkvSchema> for AudioElement {
+    const TYPE: MkvElement = MkvElement::Audio;
 
-    fn read<R: ElementReader>(mut it: ElementIterator<R>, _header: ElementHeader) -> Result<Self> {
+    fn read<R: ReadEbml>(it: &mut MkvEbmlIterator<R>, hdr: &MkvEbmlElementHeader) -> Result<Self> {
         let mut sampling_frequency = None;
         let mut output_sampling_frequency = None;
         let mut channels = None;
         let mut bit_depth = None;
 
-        while let Some(header) = it.read_header()? {
-            match header.etype {
-                ElementType::SamplingFrequency => {
-                    sampling_frequency = Some(it.read_f64()?);
+        while let Some(child) = it.next_header()? {
+            match child.element_type() {
+                MkvElement::SamplingFrequency => {
+                    // Mandatory element. Must be > 0.0. Schema-defined default is 8000.
+                    sampling_frequency = match it.read_f64()? {
+                        Some(freq) if freq > 0.0 => Some(freq),
+                        Some(_) => {
+                            return Err(EbmlError::ElementError(
+                                "mkv: invalid (<= 0.0) audio sampling frequency",
+                            ));
+                        }
+                        _ => None,
+                    };
                 }
-                ElementType::OutputSamplingFrequency => {
-                    output_sampling_frequency = Some(it.read_f64()?);
+                MkvElement::OutputSamplingFrequency => {
+                    // Non-mandatory element. Must be > 0.0. Schema-defined default is equal to
+                    // `sampling_frequency`.
+                    output_sampling_frequency = match it.read_f64()? {
+                        None => Some(None),
+                        Some(freq) if freq > 0.0 => Some(Some(freq)),
+                        Some(_) => {
+                            return Err(EbmlError::ElementError(
+                                "mkv: invalid (<= 0.0) audio output sampling frequency",
+                            ));
+                        }
+                    };
                 }
-                ElementType::Channels => {
-                    channels = Some(it.read_u64()?);
+                MkvElement::Channels => {
+                    // Mandatory element. Must not be 0. Schema-defined default is 1.
+                    channels = it
+                        .read_u64()?
+                        .map(|s| {
+                            NonZeroU64::new(s)
+                                .ok_or(EbmlError::ElementError("mkv: invalid (0) audio channels"))
+                        })
+                        .transpose()?;
                 }
-                ElementType::BitDepth => {
-                    bit_depth = Some(it.read_u64()?);
+                MkvElement::BitDepth => {
+                    // Non-mandatory element. Must not be 0. No schema-defined default.
+                    let val = NonZeroU64::new(it.read_u64_no_default()?)
+                        .ok_or(EbmlError::ElementError("mkv: invalid (0) track number"))?;
+
+                    bit_depth = Some(val);
                 }
                 other => {
-                    log::debug!("ignored element {:?}", other);
+                    // Unexpected child element.
+                    log::debug!("ignored {:?} child {:?}", hdr.element_type(), other);
                 }
             }
         }
 
-        Ok(Self {
-            sampling_frequency: sampling_frequency.unwrap_or(8000.0),
-            output_sampling_frequency,
-            channels: channels.unwrap_or(1),
-            bit_depth,
-        })
+        // Populate missing to empty mandatory element defaults.
+        let sampling_frequency = sampling_frequency.unwrap_or(8000.0);
+        let channels = channels.unwrap_or(NonZeroU64::new(1).unwrap());
+
+        // The output sampling frequency is a non-mandatory element. If it was present and not
+        // empty, then use the contained value. If it was empty, then it defaults to the value of
+        // the sampling frequency element.
+        let output_sampling_frequency =
+            output_sampling_frequency.map(|freq| freq.unwrap_or(sampling_frequency));
+
+        Ok(Self { sampling_frequency, output_sampling_frequency, channels, bit_depth })
     }
 }
 
 #[allow(dead_code)]
 #[derive(Debug)]
 pub(crate) struct VideoElement {
-    pub(crate) pixel_width: u16,
-    pub(crate) pixel_height: u16,
+    pub(crate) pixel_width: NonZeroU64,
+    pub(crate) pixel_height: NonZeroU64,
 }
 
-impl Element for VideoElement {
-    const ID: ElementType = ElementType::Video;
+impl EbmlElement<MkvSchema> for VideoElement {
+    const TYPE: MkvElement = MkvElement::Video;
 
-    fn read<R: ElementReader>(mut it: ElementIterator<R>, _header: ElementHeader) -> Result<Self> {
+    fn read<R: ReadEbml>(it: &mut MkvEbmlIterator<R>, hdr: &MkvEbmlElementHeader) -> Result<Self> {
         let mut pixel_width = None;
         let mut pixel_height = None;
 
-        while let Some(header) = it.read_header()? {
-            match header.etype {
-                ElementType::PixelWidth => {
-                    pixel_width = Some(it.read_u64()? as u16);
+        while let Some(child) = it.next_header()? {
+            match child.element_type() {
+                MkvElement::PixelWidth => {
+                    // Mandatory element. No schema-defined default.
+                    let val = NonZeroU64::new(it.read_u64_no_default()?)
+                        .ok_or(EbmlError::ElementError("mkv: invalid (0) video width"))?;
+
+                    pixel_width = Some(val);
                 }
-                ElementType::PixelHeight => {
-                    pixel_height = Some(it.read_u64()? as u16);
+                MkvElement::PixelHeight => {
+                    // Mandatory element. No schema-defined default.
+                    let val = NonZeroU64::new(it.read_u64_no_default()?)
+                        .ok_or(EbmlError::ElementError("mkv: invalid (0) video height"))?;
+
+                    pixel_height = Some(val);
                 }
                 other => {
-                    log::debug!("ignored element {:?}", other);
+                    // Unexpected child element.
+                    log::debug!("ignored {:?} child {:?}", hdr.element_type(), other);
                 }
             }
         }
 
-        Ok(Self { pixel_width: pixel_width.unwrap_or(0), pixel_height: pixel_height.unwrap_or(0) })
+        Ok(Self {
+            pixel_width: pixel_width.ok_or(EbmlError::ElementError("mkv: missing video width"))?,
+            pixel_height: pixel_height
+                .ok_or(EbmlError::ElementError("mkv: missing video height"))?,
+        })
     }
 }
 
@@ -226,37 +386,43 @@ pub(crate) struct BlockAdditionMappingElement {
     pub(crate) extra_data: Option<VideoExtraData>,
 }
 
-impl Element for BlockAdditionMappingElement {
-    const ID: ElementType = ElementType::BlockAdditionMapping;
+impl EbmlElement<MkvSchema> for BlockAdditionMappingElement {
+    const TYPE: MkvElement = MkvElement::BlockAdditionMapping;
 
-    fn read<R: ElementReader>(mut it: ElementIterator<R>, _header: ElementHeader) -> Result<Self> {
-        // There can be many BlockAdditionMapping elements with DolbyVisionConfiguration in a single track
-        // BlockAddIdType FourCC string allows to determine the type of DolbyVisionConfiguration extra data
+    fn read<R: ReadEbml>(it: &mut MkvEbmlIterator<R>, hdr: &MkvEbmlElementHeader) -> Result<Self> {
+        // There can be many BlockAdditionMapping elements with DolbyVisionConfiguration in a single
+        // track BlockAddIdType FourCC string allows to determine the type of
+        // DolbyVisionConfiguration extra data
         let mut extra_data = None;
-        let mut block_add_id_type = String::new();
+        let mut block_add_id_type = None;
 
-        while let Some(header) = it.read_header()? {
-            match header.etype {
-                ElementType::BlockAddIdType => {
-                    block_add_id_type = it.read_string()?;
+        while let Some(child) = it.next_header()? {
+            match child.element_type() {
+                MkvElement::BlockAddIdType => {
+                    // Mandatory element. Default is 0.
+                    block_add_id_type = it.read_u64()?;
                 }
-                ElementType::DolbyVisionConfiguration => match block_add_id_type.as_str() {
-                    "dvcC" | "dvvC" => {
-                        extra_data = Some(VideoExtraData {
-                            id: VIDEO_EXTRA_DATA_ID_DOLBY_VISION_CONFIG,
-                            data: it.read_boxed_slice()?,
-                        });
+                MkvElement::BlockAddIdExtraData => {
+                    // Non-manadatory element. Interpret block addition type ID as FourCC.
+                    match &u32::to_be_bytes(block_add_id_type.unwrap_or(0) as u32) {
+                        b"dvcC" | b"dvvC" => {
+                            extra_data = Some(VideoExtraData {
+                                id: VIDEO_EXTRA_DATA_ID_DOLBY_VISION_CONFIG,
+                                data: it.read_binary()?,
+                            });
+                        }
+                        b"hvcE" => {
+                            extra_data = Some(VideoExtraData {
+                                id: VIDEO_EXTRA_DATA_ID_DOLBY_VISION_EL_HEVC,
+                                data: it.read_binary()?,
+                            });
+                        }
+                        _ => {}
                     }
-                    "hvcE" => {
-                        extra_data = Some(VideoExtraData {
-                            id: VIDEO_EXTRA_DATA_ID_DOLBY_VISION_EL_HEVC,
-                            data: it.read_boxed_slice()?,
-                        });
-                    }
-                    _ => {}
-                },
+                }
                 other => {
-                    log::debug!("ignored element {:?}", other);
+                    // Unexpected child element.
+                    log::debug!("ignored {:?} child {:?}", hdr.element_type(), other);
                 }
             }
         }
@@ -270,19 +436,21 @@ pub(crate) struct SeekHeadElement {
     pub(crate) seeks: Box<[SeekElement]>,
 }
 
-impl Element for SeekHeadElement {
-    const ID: ElementType = ElementType::SeekHead;
+impl EbmlElement<MkvSchema> for SeekHeadElement {
+    const TYPE: MkvElement = MkvElement::SeekHead;
 
-    fn read<R: ElementReader>(mut it: ElementIterator<R>, _header: ElementHeader) -> Result<Self> {
+    fn read<R: ReadEbml>(it: &mut MkvEbmlIterator<R>, hdr: &MkvEbmlElementHeader) -> Result<Self> {
         let mut seeks = Vec::new();
 
-        while let Some(header) = it.read_header()? {
-            match header.etype {
-                ElementType::Seek => {
-                    seeks.push(it.read_element_data()?);
+        while let Some(child) = it.next_header()? {
+            match child.element_type() {
+                MkvElement::Seek => {
+                    // Mandatory element.
+                    seeks.push(it.read_master_element()?);
                 }
                 other => {
-                    log::debug!("ignored element {:?}", other);
+                    // Unexpected child element.
+                    log::debug!("ignored {:?} child {:?}", hdr.element_type(), other);
                 }
             }
         }
@@ -297,30 +465,44 @@ pub(crate) struct SeekElement {
     pub(crate) position: u64,
 }
 
-impl Element for SeekElement {
-    const ID: ElementType = ElementType::Seek;
+impl EbmlElement<MkvSchema> for SeekElement {
+    const TYPE: MkvElement = MkvElement::Seek;
 
-    fn read<R: ElementReader>(mut it: ElementIterator<R>, _header: ElementHeader) -> Result<Self> {
+    fn read<R: ReadEbml>(it: &mut MkvEbmlIterator<R>, hdr: &MkvEbmlElementHeader) -> Result<Self> {
         let mut seek_id = None;
         let mut seek_position = None;
 
-        while let Some(header) = it.read_header()? {
-            match header.etype {
-                ElementType::SeekId => {
-                    seek_id = Some(it.read_u64()?);
+        while let Some(child) = it.next_header()? {
+            match child.element_type() {
+                MkvElement::SeekId => {
+                    // Read
+                    let mut raw = [0u8; 8];
+
+                    seek_id = match it.read_binary_into(&mut raw)? {
+                        len @ 1..=8 => {
+                            let mut buf = [0u8; 8];
+                            buf[8 - len..].copy_from_slice(&raw[..len]);
+                            Some(u64::from_be_bytes(buf))
+                        }
+                        _ => return Err(EbmlError::ElementError("mkv: invalid seek element id")),
+                    };
+                    // TODO: This is actually an EBML element ID. Read it properly.
                 }
-                ElementType::SeekPosition => {
-                    seek_position = Some(it.read_u64()?);
+                MkvElement::SeekPosition => {
+                    // Mandatory element. Must not be 0. No schema-defined default.
+                    seek_position = Some(it.read_u64_no_default()?);
                 }
                 other => {
-                    log::debug!("ignored element {:?}", other);
+                    // Unexpected child element.
+                    log::debug!("ignored {:?} child {:?}", hdr.element_type(), other);
                 }
             }
         }
 
         Ok(Self {
-            id: seek_id.ok_or(Error::DecodeError("mkv: missing seek track id"))?,
-            position: seek_position.ok_or(Error::DecodeError("mkv: missing seek track pos"))?,
+            id: seek_id.ok_or(EbmlError::ElementError("mkv: missing seek track id"))?,
+            position: seek_position
+                .ok_or(EbmlError::ElementError("mkv: missing seek track position"))?,
         })
     }
 }
@@ -330,30 +512,53 @@ pub(crate) struct TracksElement {
     pub(crate) tracks: Box<[TrackElement]>,
 }
 
-impl Element for TracksElement {
-    const ID: ElementType = ElementType::Tracks;
+impl EbmlElement<MkvSchema> for TracksElement {
+    const TYPE: MkvElement = MkvElement::Tracks;
 
-    fn read<R: ElementReader>(mut it: ElementIterator<R>, _header: ElementHeader) -> Result<Self> {
-        Ok(Self { tracks: it.read_elements()? })
+    fn read<R: ReadEbml>(it: &mut MkvEbmlIterator<R>, hdr: &MkvEbmlElementHeader) -> Result<Self> {
+        let mut tracks = vec![];
+
+        while let Some(child) = it.next_header()? {
+            match child.element_type() {
+                MkvElement::TrackEntry => {
+                    // Mandatory element.
+                    tracks.push(it.read_master_element()?);
+                }
+                other => {
+                    // Unexpected child element.
+                    log::debug!("ignored {:?} child {:?}", hdr.element_type(), other);
+                }
+            }
+        }
+
+        Ok(Self { tracks: tracks.into_boxed_slice() })
+    }
+}
+
+impl TracksElement {
+    pub(crate) fn get_target_uids(&self, target_tags: &mut TargetTagsMap) {
+        self.tracks.iter().for_each(|track| {
+            target_tags.insert(TargetUid::Track(track.uid.get()), Default::default());
+        })
     }
 }
 
 #[allow(dead_code)]
 #[derive(Debug)]
 pub(crate) struct EbmlHeaderElement {
-    pub(crate) version: u64,
-    pub(crate) read_version: u64,
+    pub(crate) version: NonZeroU64,
+    pub(crate) read_version: NonZeroU64,
     pub(crate) max_id_length: u64,
     pub(crate) max_size_length: u64,
     pub(crate) doc_type: String,
-    pub(crate) doc_type_version: u64,
-    pub(crate) doc_type_read_version: u64,
+    pub(crate) doc_type_version: NonZeroU64,
+    pub(crate) doc_type_read_version: NonZeroU64,
 }
 
-impl Element for EbmlHeaderElement {
-    const ID: ElementType = ElementType::Ebml;
+impl EbmlElement<MkvSchema> for EbmlHeaderElement {
+    const TYPE: MkvElement = MkvElement::Ebml;
 
-    fn read<R: ElementReader>(mut it: ElementIterator<R>, _header: ElementHeader) -> Result<Self> {
+    fn read<R: ReadEbml>(it: &mut MkvEbmlIterator<R>, hdr: &MkvEbmlElementHeader) -> Result<Self> {
         let mut version = None;
         let mut read_version = None;
         let mut max_id_length = None;
@@ -362,43 +567,111 @@ impl Element for EbmlHeaderElement {
         let mut doc_type_version = None;
         let mut doc_type_read_version = None;
 
-        while let Some(header) = it.read_header()? {
-            match header.etype {
-                ElementType::EbmlVersion => {
-                    version = Some(it.read_u64()?);
+        while let Some(child) = it.next_header()? {
+            match child.element_type() {
+                MkvElement::EbmlVersion => {
+                    // Mandatory element. Must not be 0. Schema-defined default is 1.
+                    version = it
+                        .read_u64()?
+                        .map(|s| {
+                            NonZeroU64::new(s)
+                                .ok_or(EbmlError::ElementError("mkv: invalid (0) ebml version"))
+                        })
+                        .transpose()?;
                 }
-                ElementType::EbmlReadVersion => {
-                    read_version = Some(it.read_u64()?);
+                MkvElement::EbmlReadVersion => {
+                    // Mandatory element. Must note be 0. Schema-defined default is 1.
+                    read_version = it
+                        .read_u64()?
+                        .map(|s| {
+                            NonZeroU64::new(s).ok_or(EbmlError::ElementError(
+                                "mkv: invalid (0) ebml read version",
+                            ))
+                        })
+                        .transpose()?;
                 }
-                ElementType::EbmlMaxIdLength => {
-                    max_id_length = Some(it.read_u64()?);
+                MkvElement::EbmlMaxIdLength => {
+                    // Mandatory element. Must be >= 4. Schema-defined default is 4.
+                    max_id_length = match it.read_u64()? {
+                        Some(len) if len < 4 => {
+                            return Err(EbmlError::ElementError(
+                                "mkv: invalid ebml maximum id length",
+                            ));
+                        }
+                        len => len,
+                    }
                 }
-                ElementType::EbmlMaxSizeLength => {
-                    max_size_length = Some(it.read_u64()?);
+                MkvElement::EbmlMaxSizeLength => {
+                    // Mandatory element. Must not be 0. Schema-defined default is 8.
+                    max_size_length = match it.read_u64()? {
+                        Some(0) => {
+                            return Err(EbmlError::ElementError(
+                                "mkv: invalid ebml maximum size length",
+                            ));
+                        }
+                        len => len,
+                    }
                 }
-                ElementType::DocType => {
-                    doc_type = Some(it.read_string()?);
+                MkvElement::DocType => {
+                    // Mandatory element. No schema-defined default.
+                    doc_type = it.read_string()?;
                 }
-                ElementType::DocTypeVersion => {
-                    doc_type_version = Some(it.read_u64()?);
+                MkvElement::DocTypeVersion => {
+                    // Mandatory element. Not not be 0. Schema-defined default is 1.
+                    doc_type_version = it
+                        .read_u64()?
+                        .map(|s| {
+                            NonZeroU64::new(s).ok_or(EbmlError::ElementError(
+                                "mkv: invalid (0) ebml document type version",
+                            ))
+                        })
+                        .transpose()?;
                 }
-                ElementType::DocTypeReadVersion => {
-                    doc_type_read_version = Some(it.read_u64()?);
+                MkvElement::DocTypeReadVersion => {
+                    // Mandatory element. Must not be 0. Schema-defined default is 1.
+                    doc_type_read_version = it
+                        .read_u64()?
+                        .map(|s| {
+                            NonZeroU64::new(s).ok_or(EbmlError::ElementError(
+                                "mkv: invalid (0) ebml document type read version",
+                            ))
+                        })
+                        .transpose()?;
                 }
                 other => {
-                    log::debug!("ignored element {:?}", other);
+                    // Unexpected child element.
+                    log::debug!("ignored {:?} child {:?}", hdr.element_type(), other);
                 }
             }
         }
 
+        let version = version.unwrap_or(NonZeroU64::new(1).unwrap());
+        let read_version = read_version.unwrap_or(NonZeroU64::new(1).unwrap());
+        let doc_type_version = doc_type_version.unwrap_or(NonZeroU64::new(1).unwrap());
+        let doc_type_read_version = doc_type_read_version.unwrap_or(NonZeroU64::new(1).unwrap());
+
+        // EbmlReadVersion must be <= EbmlVersion.
+        if read_version > version {
+            return Err(EbmlError::ElementError(
+                "mkv: ebml minimum reader version must be <= ebml version",
+            ));
+        }
+
+        // DocTypeReadVersion must be <= DocTypeVersion.
+        if doc_type_read_version > doc_type_version {
+            return Err(EbmlError::ElementError(
+                "mkv: ebml minimum document type reader version must be <= document type version",
+            ));
+        }
+
         Ok(Self {
-            version: version.unwrap_or(1),
-            read_version: read_version.unwrap_or(1),
+            version,
+            read_version,
             max_id_length: max_id_length.unwrap_or(4),
             max_size_length: max_size_length.unwrap_or(8),
-            doc_type: doc_type.ok_or(Error::Unsupported("mkv: invalid ebml file"))?,
-            doc_type_version: doc_type_version.unwrap_or(1),
-            doc_type_read_version: doc_type_read_version.unwrap_or(1),
+            doc_type: doc_type.ok_or(EbmlError::ElementError("mkv: missing ebml doc type"))?,
+            doc_type_version,
+            doc_type_read_version,
         })
     }
 }
@@ -406,52 +679,73 @@ impl Element for EbmlHeaderElement {
 #[allow(dead_code)]
 #[derive(Debug)]
 pub(crate) struct InfoElement {
-    pub(crate) timestamp_scale: u64,
+    pub(crate) timestamp_scale: NonZeroU64,
     pub(crate) duration: Option<f64>,
     title: Option<Box<str>>,
     muxing_app: Box<str>,
     writing_app: Box<str>,
 }
 
-impl Element for InfoElement {
-    const ID: ElementType = ElementType::Info;
+impl EbmlElement<MkvSchema> for InfoElement {
+    const TYPE: MkvElement = MkvElement::Info;
 
-    fn read<R: ElementReader>(mut it: ElementIterator<R>, _header: ElementHeader) -> Result<Self> {
+    fn read<R: ReadEbml>(it: &mut MkvEbmlIterator<R>, hdr: &MkvEbmlElementHeader) -> Result<Self> {
         let mut duration = None;
         let mut timestamp_scale = None;
         let mut title = None;
         let mut muxing_app = None;
         let mut writing_app = None;
 
-        while let Some(header) = it.read_header()? {
-            match header.etype {
-                ElementType::TimestampScale => {
-                    timestamp_scale = Some(it.read_u64()?);
+        while let Some(child) = it.next_header()? {
+            match child.element_type() {
+                MkvElement::TimestampScale => {
+                    // Mandatory element. Must not be 0. Schema-defined default is 1'000'000.
+                    timestamp_scale = it
+                        .read_u64()?
+                        .map(|s| {
+                            NonZeroU64::new(s).ok_or(EbmlError::ElementError(
+                                "mkv: invalid (0) info timestamp scale",
+                            ))
+                        })
+                        .transpose()?;
                 }
-                ElementType::Duration => {
-                    duration = Some(it.read_f64()?);
+                MkvElement::Duration => {
+                    // Non-mandatory element. No schema-defined default.
+                    // TODO: Must not be > 0.0.
+                    duration = Some(it.read_f64_no_default()?);
                 }
-                ElementType::Title => {
-                    title = Some(it.read_string()?);
+                MkvElement::Title => {
+                    // Non-mandatory element. No schema-defined default.
+                    title = Some(it.read_string_no_default()?);
                 }
-                ElementType::MuxingApp => {
-                    muxing_app = Some(it.read_string()?);
+                MkvElement::MuxingApp => {
+                    // Mandatory element. No schema-defined default.
+                    muxing_app = Some(it.read_string_no_default()?);
                 }
-                ElementType::WritingApp => {
-                    writing_app = Some(it.read_string()?);
+                MkvElement::WritingApp => {
+                    // Mandatory element. No schema-defined default.
+                    writing_app = Some(it.read_string_no_default()?);
                 }
                 other => {
-                    log::debug!("ignored element {:?}", other);
+                    // Unexpected child element.
+                    log::debug!("ignored {:?} child {:?}", hdr.element_type(), other);
                 }
             }
         }
 
+        // Populate missing or empty mandatory elements with defaults.
+        let timestamp_scale = timestamp_scale.unwrap_or(NonZeroU64::new(1_000_000).unwrap());
+
         Ok(Self {
-            timestamp_scale: timestamp_scale.unwrap_or(1_000_000),
+            timestamp_scale,
             duration,
             title: title.map(|it| it.into_boxed_str()),
-            muxing_app: muxing_app.unwrap_or_default().into_boxed_str(),
-            writing_app: writing_app.unwrap_or_default().into_boxed_str(),
+            muxing_app: muxing_app
+                .ok_or(EbmlError::ElementError("mkv: missing info muxing app"))?
+                .into_boxed_str(),
+            writing_app: writing_app
+                .ok_or(EbmlError::ElementError("mkv: missing info writing app"))?
+                .into_boxed_str(),
         })
     }
 }
@@ -462,11 +756,26 @@ pub(crate) struct CuesElement {
     pub(crate) points: Box<[CuePointElement]>,
 }
 
-impl Element for CuesElement {
-    const ID: ElementType = ElementType::Cues;
+impl EbmlElement<MkvSchema> for CuesElement {
+    const TYPE: MkvElement = MkvElement::Cues;
 
-    fn read<R: ElementReader>(mut it: ElementIterator<R>, _header: ElementHeader) -> Result<Self> {
-        Ok(Self { points: it.read_elements()? })
+    fn read<R: ReadEbml>(it: &mut MkvEbmlIterator<R>, hdr: &MkvEbmlElementHeader) -> Result<Self> {
+        let mut points = vec![];
+
+        while let Some(child) = it.next_header()? {
+            match child.element_type() {
+                MkvElement::CuePoint => {
+                    // Mandatory element.
+                    points.push(it.read_master_element()?);
+                }
+                other => {
+                    // Unexpected child element.
+                    log::debug!("ignored {:?} child {:?}", hdr.element_type(), other);
+                }
+            }
+        }
+
+        Ok(Self { points: points.into_boxed_slice() })
     }
 }
 
@@ -477,27 +786,33 @@ pub(crate) struct CuePointElement {
     pub(crate) positions: CueTrackPositionsElement,
 }
 
-impl Element for CuePointElement {
-    const ID: ElementType = ElementType::CuePoint;
+impl EbmlElement<MkvSchema> for CuePointElement {
+    const TYPE: MkvElement = MkvElement::CuePoint;
 
-    fn read<R: ElementReader>(mut it: ElementIterator<R>, _header: ElementHeader) -> Result<Self> {
+    fn read<R: ReadEbml>(it: &mut MkvEbmlIterator<R>, hdr: &MkvEbmlElementHeader) -> Result<Self> {
         let mut time = None;
-        let mut pos = None;
-        while let Some(header) = it.read_header()? {
-            match header.etype {
-                ElementType::CueTime => time = Some(it.read_u64()?),
-                ElementType::CueTrackPositions => {
-                    pos = Some(it.read_element_data()?);
+        let mut positions = None;
+
+        while let Some(child) = it.next_header()? {
+            match child.element_type() {
+                MkvElement::CueTime => {
+                    // Mandatory element. No schema-defined default.
+                    time = Some(it.read_u64_no_default()?);
+                }
+                MkvElement::CueTrackPositions => {
+                    // Mandatory element.
+                    positions = Some(it.read_master_element()?);
                 }
                 other => {
-                    log::debug!("ignored element {:?}", other);
+                    // Unexpected child element.
+                    log::debug!("ignored {:?} child {:?}", hdr.element_type(), other);
                 }
             }
         }
 
         Ok(Self {
-            time: time.ok_or(Error::DecodeError("mkv: missing time in cue"))?,
-            positions: pos.ok_or(Error::DecodeError("mkv: missing positions in cue"))?,
+            time: time.ok_or(EbmlError::ElementError("mkv: missing time in cue"))?,
+            positions: positions.ok_or(EbmlError::ElementError("mkv: missing positions in cue"))?,
         })
     }
 }
@@ -505,33 +820,55 @@ impl Element for CuePointElement {
 #[allow(dead_code)]
 #[derive(Debug)]
 pub(crate) struct CueTrackPositionsElement {
-    pub(crate) track: u64,
-    pub(crate) cluster_position: u64,
+    pub(crate) track: NonZeroU64,
+    pub(crate) cluster_pos: u64,
+    pub(crate) cluster_rel_pos: Option<u64>,
 }
 
-impl Element for CueTrackPositionsElement {
-    const ID: ElementType = ElementType::CueTrackPositions;
+impl EbmlElement<MkvSchema> for CueTrackPositionsElement {
+    const TYPE: MkvElement = MkvElement::CueTrackPositions;
 
-    fn read<R: ElementReader>(mut it: ElementIterator<R>, _header: ElementHeader) -> Result<Self> {
+    fn read<R: ReadEbml>(it: &mut MkvEbmlIterator<R>, hdr: &MkvEbmlElementHeader) -> Result<Self> {
         let mut track = None;
-        let mut pos = None;
-        while let Some(header) = it.read_header()? {
-            match header.etype {
-                ElementType::CueTrack => {
-                    track = Some(it.read_u64()?);
+        let mut cluster_pos = None;
+        let mut cluster_rel_pos = None;
+
+        while let Some(child) = it.next_header()? {
+            match child.element_type() {
+                MkvElement::CueTrack => {
+                    // Mandatory element. May not be 0. No schema-defined default.
+                    let val = NonZeroU64::new(it.read_u64_no_default()?).ok_or(
+                        EbmlError::ElementError("mkv: invalid (0) track for cue track positions"),
+                    )?;
+
+                    track = Some(val);
                 }
-                ElementType::CueClusterPosition => {
-                    pos = Some(it.read_u64()?);
+                MkvElement::CueClusterPosition => {
+                    // Mandatory element. No schema-defined default.
+                    cluster_pos = Some(it.read_u64_no_default()?);
+                }
+                MkvElement::CueRelativePosition => {
+                    // Non-mandatory element. No schema-defined default.
+                    cluster_rel_pos = Some(it.read_u64_no_default()?);
+                }
+                MkvElement::CueDuration => {
+                    // Cue duration is not required but are so numerous we don't want to log them
+                    // as unexpected elements, or when they're skipped. Explictly skip to silence.
+                    // logs.
+                    it.skip_data()?;
                 }
                 other => {
-                    log::debug!("ignored element {:?}", other);
+                    // Unexpected child element.
+                    log::debug!("ignored {:?} child {:?}", hdr.element_type(), other);
                 }
             }
         }
         Ok(Self {
-            track: track.ok_or(Error::DecodeError("mkv: missing track in cue track positions"))?,
-            cluster_position: pos
-                .ok_or(Error::DecodeError("mkv: missing position in cue track positions"))?,
+            track: track
+                .ok_or(EbmlError::ElementError("mkv: missing track in cue track positions"))?,
+            cluster_pos: cluster_pos
+                .ok_or(EbmlError::ElementError("mkv: missing position in cue track positions"))?,
+            cluster_rel_pos,
         })
     }
 }
@@ -542,96 +879,38 @@ pub(crate) struct BlockGroupElement {
     pub(crate) duration: Option<u64>,
 }
 
-impl Element for BlockGroupElement {
-    const ID: ElementType = ElementType::BlockGroup;
+impl EbmlElement<MkvSchema> for BlockGroupElement {
+    const TYPE: MkvElement = MkvElement::BlockGroup;
 
-    fn read<R: ElementReader>(mut it: ElementIterator<R>, _header: ElementHeader) -> Result<Self> {
+    fn read<R: ReadEbml>(it: &mut MkvEbmlIterator<R>, hdr: &MkvEbmlElementHeader) -> Result<Self> {
         let mut data = None;
         let mut block_duration = None;
-        while let Some(header) = it.read_header()? {
-            match header.etype {
-                ElementType::DiscardPadding => {
-                    let _nanos = it.read_data()?;
+
+        while let Some(child) = it.next_header()? {
+            match child.element_type() {
+                MkvElement::DiscardPadding => {
+                    // Non-mandatory element. No schema-defined default.
+                    // TODO: Use it!
+                    let _nanos = it.read_i64_no_default()?;
                 }
-                ElementType::Block => {
-                    data = Some(it.read_boxed_slice()?);
+                MkvElement::Block => {
+                    // Mandatory element.
+                    data = Some(it.read_binary()?);
                 }
-                ElementType::BlockDuration => {
-                    block_duration = Some(it.read_u64()?);
+                MkvElement::BlockDuration => {
+                    // Non-mandatory element. Schema-defined default is TBD.
+                    block_duration = it.read_u64()?;
                 }
                 other => {
-                    log::debug!("ignored element {:?}", other);
+                    // Unexpected child element.
+                    log::debug!("ignored {:?} child {:?}", hdr.element_type(), other);
                 }
             }
         }
+
         Ok(Self {
-            data: data.ok_or(Error::DecodeError("mkv: missing block inside block group"))?,
+            data: data.ok_or(EbmlError::ElementError("mkv: missing block inside block group"))?,
             duration: block_duration,
-        })
-    }
-}
-
-#[derive(Debug)]
-pub(crate) struct BlockElement {
-    pub(crate) track: u64,
-    pub(crate) timestamp: u64,
-    pub(crate) pos: u64,
-}
-
-#[derive(Debug)]
-pub(crate) struct ClusterElement {
-    pub(crate) timestamp: u64,
-    pub(crate) pos: u64,
-    pub(crate) end: Option<u64>,
-    pub(crate) blocks: Box<[BlockElement]>,
-}
-
-impl Element for ClusterElement {
-    const ID: ElementType = ElementType::Cluster;
-
-    fn read<R: ElementReader>(mut it: ElementIterator<R>, header: ElementHeader) -> Result<Self> {
-        let pos = it.pos();
-        let mut timestamp = None;
-        let mut blocks = Vec::new();
-        let has_size = header.end().is_some();
-
-        fn read_block(data: &[u8], timestamp: u64, offset: u64) -> Result<BlockElement> {
-            let mut reader = BufReader::new(data);
-            let track = read_unsigned_vint(&mut reader)?;
-            let rel_ts = reader.read_be_u16()? as i16;
-            let timestamp = calc_abs_block_timestamp(timestamp, rel_ts);
-            Ok(BlockElement { track, timestamp, pos: offset })
-        }
-
-        fn get_timestamp(timestamp: Option<u64>) -> Result<u64> {
-            timestamp.ok_or(Error::DecodeError("mkv: missing timestamp for a cluster"))
-        }
-
-        while let Some(header) = it.read_header()? {
-            match header.etype {
-                ElementType::Timestamp => {
-                    timestamp = Some(it.read_u64()?);
-                }
-                ElementType::BlockGroup => {
-                    let group = it.read_element_data::<BlockGroupElement>()?;
-                    blocks.push(read_block(&group.data, get_timestamp(timestamp)?, header.pos)?);
-                }
-                ElementType::SimpleBlock => {
-                    let data = it.read_boxed_slice()?;
-                    blocks.push(read_block(&data, get_timestamp(timestamp)?, header.pos)?);
-                }
-                _ if header.etype.is_top_level() && !has_size => break,
-                other => {
-                    log::debug!("ignored element {:?}", other);
-                }
-            }
-        }
-
-        Ok(ClusterElement {
-            timestamp: get_timestamp(timestamp)?,
-            blocks: blocks.into_boxed_slice(),
-            pos,
-            end: header.end(),
         })
     }
 }
@@ -641,19 +920,20 @@ pub(crate) struct TagsElement {
     pub(crate) tags: Box<[TagElement]>,
 }
 
-impl Element for TagsElement {
-    const ID: ElementType = ElementType::Tags;
+impl EbmlElement<MkvSchema> for TagsElement {
+    const TYPE: MkvElement = MkvElement::Tags;
 
-    fn read<R: ElementReader>(mut it: ElementIterator<R>, _header: ElementHeader) -> Result<Self> {
+    fn read<R: ReadEbml>(it: &mut MkvEbmlIterator<R>, hdr: &MkvEbmlElementHeader) -> Result<Self> {
         let mut tags = Vec::new();
 
-        while let Some(header) = it.read_header()? {
-            match header.etype {
-                ElementType::Tag => {
-                    tags.push(it.read_element_data::<TagElement>()?);
+        while let Some(header) = it.next_header()? {
+            match header.element_type() {
+                MkvElement::Tag => {
+                    tags.push(it.read_master_element::<TagElement>()?);
                 }
                 other => {
-                    log::debug!("ignored element {:?}", other);
+                    // Unexpected child element.
+                    log::debug!("ignored {:?} child {:?}", hdr.element_type(), other);
                 }
             }
         }
@@ -662,130 +942,453 @@ impl Element for TagsElement {
     }
 }
 
+/// Map of a target-specific UID to a vector of tags.
+pub type TargetTagsMap = HashMap<TargetUid, Vec<Tag>>;
+
 impl TagsElement {
-    pub(crate) fn to_metadata(&self) -> MetadataRevision {
-        let mut builder = MetadataBuilder::new();
-        for tag in self.tags.iter() {
-            for simple_tag in tag.simple_tags.iter() {
-                // TODO: support std_key
-                let value = match &simple_tag.value {
-                    ElementData::Binary(b) => RawValue::Binary(Arc::new(b.clone())),
-                    ElementData::String(s) => RawValue::String(Arc::new(s.clone())),
-                    _ => unreachable!(),
-                };
-                builder.add_tag(Tag::new(RawTag::new(simple_tag.name.as_ref(), value)));
+    pub(crate) fn into_metadata(
+        mut self,
+        target_tags: &mut TargetTagsMap,
+        is_video: bool,
+    ) -> MetadataRevision {
+        /// UID -> (Last tag context, Tag vector)
+        type UidMap = HashMap<u64, (TagContext, Vec<Tag>)>;
+
+        /// Append tags to the item in the UID map for the given UID.
+        fn append_to_map(map: &mut UidMap, uid: u64, raw_tags: &Vec<RawTag>, target: &Target) {
+            if let Some(item) = map.get_mut(&uid) {
+                // Attempt to generate a standard tag for each raw tag using the last context for
+                // the current item, and push a new tag.
+                for raw in raw_tags {
+                    item.1.push(Tag { raw: raw.clone(), std: map_std_tag(raw, &item.0) });
+                }
+                // Update the last target of the context for the given item. Note, this is a cheap
+                // clone (internal RC).
+                item.0.target = Some(target.clone());
             }
         }
-        builder.metadata()
+
+        /// Append tags to all items in the UID map.
+        fn append_to_map_all(map: &mut UidMap, raw_tags: &Vec<RawTag>, target: &Target) {
+            for (_, item) in map.iter_mut() {
+                // Attempt to generate a standard tag for each raw tag using the last context for
+                // the current item, and push a new tag.
+                for raw in raw_tags {
+                    item.1.push(Tag { raw: raw.clone(), std: map_std_tag(raw, &item.0) });
+                }
+                // Update the last target of the context for the given item. Note, this is a cheap
+                // clone (internal RC).
+                item.0.target = Some(target.clone());
+            }
+        }
+
+        /// Append tags to media.
+        fn append_to_media(
+            builder: &mut MetadataBuilder,
+            raw_tags: &Vec<RawTag>,
+            target: &Option<Target>,
+            ctx: &mut TagContext,
+        ) {
+            // Attempt to generate a standard tag for each raw tag using the last media context, and
+            // push a new tag.
+            for raw in raw_tags {
+                builder.add_tag(Tag { raw: raw.clone(), std: map_std_tag(raw, ctx) });
+            }
+            // Update the last target of the media tag context. Note, this is a cheap clone
+            // (internal RC).
+            ctx.target = target.clone();
+        }
+
+        let mut builder = MetadataBuilder::new(MKV_METADATA_INFO);
+        let mut media_target = TagContext { is_video, target: None };
+
+        let mut tracks: UidMap = Default::default();
+        let mut editions: UidMap = Default::default();
+        let mut chapters: UidMap = Default::default();
+        let mut attachments: UidMap = Default::default();
+
+        // Pre-populate maps using known track, edition, chapter, and attachment UIDs.
+        for (uid, _) in target_tags.iter() {
+            let default = (media_target.clone(), Vec::new());
+            match uid {
+                TargetUid::Track(uid) => tracks.insert(*uid, default),
+                TargetUid::Edition(uid) => editions.insert(*uid, default),
+                TargetUid::Chapter(uid) => chapters.insert(*uid, default),
+                TargetUid::Attachment(uid) => attachments.insert(*uid, default),
+            };
+        }
+
+        // Sort all tag elements in order of ascending target level. Tag elements without a target
+        // or target level should be last. This sort is stable so tag elements at the same target
+        // level will be in the same relative position as they were read.
+        self.tags.sort_by_key(|tag| {
+            tag.targets.as_ref().map(|targets| targets.target_type_value).unwrap_or(u64::MAX)
+        });
+
+        for tag in self.tags {
+            // Tag context for the current tag element.
+            let ctx = TagContext {
+                is_video,
+                target: tag.targets.as_ref().map(|t| Target {
+                    value: t.target_type_value,
+                    name: t.target_type.clone().map(Rc::new),
+                }),
+            };
+
+            // Generate a vector of raw tags from simple tag elements. This vector will be appended
+            // to the appropriate targets or media.
+            let mut raw_tags = Vec::with_capacity(tag.simple_tags.len());
+
+            for tag in tag.simple_tags {
+                make_raw_tags(tag, &ctx, &mut raw_tags);
+            }
+
+            // Append tags to targets.
+            if let Some(targets) = tag.targets {
+                if !targets.uids.is_empty() {
+                    let target = ctx.target.unwrap();
+
+                    // Append tags to specific to tracks, editions, chapters, or attachments.
+                    for uid in targets.uids {
+                        match uid {
+                            TargetUid::Track(uid) if !targets.all_tracks => {
+                                append_to_map(&mut tracks, uid, &raw_tags, &target);
+                            }
+                            TargetUid::Edition(uid) if !targets.all_editions => {
+                                append_to_map(&mut editions, uid, &raw_tags, &target);
+                            }
+                            TargetUid::Chapter(uid) if !targets.all_chapters => {
+                                append_to_map(&mut chapters, uid, &raw_tags, &target);
+                            }
+                            TargetUid::Attachment(uid) if !targets.all_attachments => {
+                                append_to_map(&mut attachments, uid, &raw_tags, &target);
+                            }
+                            _ => (),
+                        }
+                    }
+
+                    // Append tags to all tracks.
+                    if targets.all_tracks {
+                        append_to_map_all(&mut tracks, &raw_tags, &target);
+                    }
+                    // Append tags to all editions.
+                    if targets.all_editions {
+                        append_to_map_all(&mut editions, &raw_tags, &target);
+                    }
+                    // Append tags to all chapters.
+                    if targets.all_chapters {
+                        append_to_map_all(&mut chapters, &raw_tags, &target);
+                    }
+                    // Append tags to all attachments.
+                    if targets.all_attachments {
+                        append_to_map_all(&mut attachments, &raw_tags, &target);
+                    }
+                }
+                else {
+                    // No target UID(s). Append tags to the entire media.
+                    append_to_media(&mut builder, &raw_tags, &ctx.target, &mut media_target);
+                }
+            }
+            else {
+                // No targets. Append tags to the entire media.
+                append_to_media(&mut builder, &raw_tags, &None, &mut media_target);
+            }
+        }
+
+        // SAFETY: There needs to be sane limits (e.g., 1024 each category).
+
+        // Return track target tags.
+        for (uid, tags) in tracks {
+            let mut track_builder = PerTrackMetadataBuilder::new(uid);
+            for tag in tags.1 {
+                track_builder.add_tag(tag);
+            }
+            builder.add_track(track_builder.build());
+        }
+        // Return edition target tags.
+        for (uid, mut value) in editions {
+            let tags = target_tags.entry(TargetUid::Edition(uid)).or_default();
+            tags.append(&mut value.1);
+        }
+        // Return chapter target tags.
+        for (uid, mut value) in chapters {
+            let tags = target_tags.entry(TargetUid::Chapter(uid)).or_default();
+            tags.append(&mut value.1);
+        }
+        // Return attachment target tags.
+        for (uid, mut value) in attachments {
+            let tags = target_tags.entry(TargetUid::Attachment(uid)).or_default();
+            tags.append(&mut value.1);
+        }
+
+        // Return media and track-level metadata.
+        builder.build()
     }
 }
 
 #[derive(Debug)]
 pub(crate) struct TagElement {
     pub(crate) simple_tags: Box<[SimpleTagElement]>,
+    pub(crate) targets: Option<TargetsElement>,
 }
 
-impl Element for TagElement {
-    const ID: ElementType = ElementType::Tag;
+impl EbmlElement<MkvSchema> for TagElement {
+    const TYPE: MkvElement = MkvElement::Tag;
 
-    fn read<R: ElementReader>(mut it: ElementIterator<R>, _header: ElementHeader) -> Result<Self> {
+    fn read<R: ReadEbml>(it: &mut MkvEbmlIterator<R>, hdr: &MkvEbmlElementHeader) -> Result<Self> {
         let mut simple_tags = Vec::new();
+        let mut targets = None;
 
-        while let Some(header) = it.read_header()? {
-            match header.etype {
-                ElementType::SimpleTag => {
-                    simple_tags.push(it.read_element_data::<SimpleTagElement>()?);
+        while let Some(header) = it.next_header()? {
+            match header.element_type() {
+                MkvElement::Targets => {
+                    targets = Some(it.read_master_element::<TargetsElement>()?);
+                }
+                MkvElement::SimpleTag => {
+                    simple_tags.push(it.read_master_element::<SimpleTagElement>()?);
                 }
                 other => {
-                    log::debug!("ignored element {:?}", other);
+                    // Unexpected child element.
+                    log::debug!("ignored {:?} child {:?}", hdr.element_type(), other);
                 }
             }
         }
 
-        Ok(Self { simple_tags: simple_tags.into_boxed_slice() })
+        Ok(Self { simple_tags: simple_tags.into_boxed_slice(), targets })
+    }
+}
+
+#[derive(Debug, Hash, PartialEq, Eq)]
+pub(crate) enum TargetUid {
+    Track(u64),
+    Edition(u64),
+    Chapter(u64),
+    Attachment(u64),
+}
+
+#[derive(Debug)]
+pub(crate) struct TargetsElement {
+    pub(crate) target_type_value: u64,
+    pub(crate) target_type: Option<Box<str>>,
+    pub(crate) uids: Vec<TargetUid>,
+    pub(crate) all_tracks: bool,
+    pub(crate) all_editions: bool,
+    pub(crate) all_chapters: bool,
+    pub(crate) all_attachments: bool,
+}
+
+impl EbmlElement<MkvSchema> for TargetsElement {
+    const TYPE: MkvElement = MkvElement::Targets;
+
+    fn read<R: ReadEbml>(it: &mut MkvEbmlIterator<R>, hdr: &MkvEbmlElementHeader) -> Result<Self> {
+        let mut target_type_value = None;
+        let mut target_type = None;
+        let mut uids = Vec::new();
+        let mut all_tracks = false;
+        let mut all_editions = false;
+        let mut all_chapters = false;
+        let mut all_attachments = false;
+
+        while let Some(header) = it.next_header()? {
+            match header.element_type() {
+                MkvElement::TargetTypeValue => {
+                    // Mandatory element. Schema-defined default is 50.
+                    target_type_value = it.read_u64()?;
+                }
+                MkvElement::TargetType => {
+                    // Non-mandatory element. No schema-defined default.
+                    target_type = Some(it.read_string_no_default()?);
+                }
+                MkvElement::TagTrackUid => {
+                    // Non-mandatory element. Schema-defined default is 0.
+                    let uid = it.read_u64_default(0)?;
+                    uids.push(TargetUid::Track(uid));
+                    // If the UID is 0, then all tracks are targets.
+                    if uid == 0 {
+                        all_tracks = true;
+                    }
+                }
+                MkvElement::TagEditionUid => {
+                    // Non-mandatory element. Schema-defined default is 0.
+                    let uid = it.read_u64_default(0)?;
+                    uids.push(TargetUid::Edition(uid));
+                    // If the UID is 0, then all editions are targets.
+                    if uid == 0 {
+                        all_editions = true;
+                    }
+                }
+                MkvElement::TagChapterUid => {
+                    // Non-mandatory element. Schema-defined default is 0.
+                    let uid = it.read_u64_default(0)?;
+                    uids.push(TargetUid::Chapter(uid));
+                    // If the UID is 0, then all chapters are targets.
+                    if uid == 0 {
+                        all_chapters = true;
+                    }
+                }
+                MkvElement::TagAttachmentUid => {
+                    // Non-mandatory element. Schema-defined default is 0.
+                    let uid = it.read_u64_default(0)?;
+                    uids.push(TargetUid::Attachment(uid));
+                    // If the UID is 0, then all attachments are targets.
+                    if uid == 0 {
+                        all_attachments = true;
+                    }
+                }
+                other => {
+                    // Unexpected child element.
+                    log::debug!("ignored {:?} child {:?}", hdr.element_type(), other);
+                }
+            }
+        }
+
+        // Populate missing or empty mandatory elements with defaults.
+        let target_type_value = target_type_value.unwrap_or(50);
+
+        Ok(Self {
+            target_type_value,
+            target_type: target_type.map(|t| t.into_boxed_str()),
+            uids,
+            all_tracks,
+            all_editions,
+            all_chapters,
+            all_attachments,
+        })
     }
 }
 
 #[derive(Debug)]
 pub(crate) struct SimpleTagElement {
     pub(crate) name: Box<str>,
-    pub(crate) value: ElementData,
+    pub(crate) value: Option<RawValue>,
+    #[allow(dead_code)]
+    pub(crate) is_default: bool,
+    pub(crate) lang: Option<String>,
+    pub(crate) lang_bcp47: Option<String>,
+    pub(crate) sub_tags: Vec<SimpleTagElement>,
 }
 
-impl Element for SimpleTagElement {
-    const ID: ElementType = ElementType::SimpleTag;
+impl EbmlElement<MkvSchema> for SimpleTagElement {
+    const TYPE: MkvElement = MkvElement::SimpleTag;
 
-    fn read<R: ElementReader>(mut it: ElementIterator<R>, _header: ElementHeader) -> Result<Self> {
+    fn read<R: ReadEbml>(it: &mut MkvEbmlIterator<R>, hdr: &MkvEbmlElementHeader) -> Result<Self> {
         let mut name = None;
         let mut value = None;
+        let mut lang = None;
+        let mut lang_bcp47 = None;
+        let mut is_default = true;
+        let mut sub_tags = Vec::new();
 
-        while let Some(header) = it.read_header()? {
-            match header.etype {
-                ElementType::TagName => {
-                    name = Some(it.read_string()?);
+        while let Some(header) = it.next_header()? {
+            match header.element_type() {
+                MkvElement::TagName => {
+                    // Mandatory element. No schema-defined default.
+                    name = Some(it.read_string_no_default()?);
                 }
-                ElementType::TagString | ElementType::TagBinary => {
-                    value = Some(it.read_data()?);
+                MkvElement::TagLanguage => {
+                    // Mandatory element. Schema-defined default is "und", however, treat it as
+                    // optional.
+                    lang = it.read_string()?;
+                }
+                MkvElement::TagString => {
+                    // Non-mandatory element. No schema-defined default.
+                    value = Some(RawValue::String(Arc::new(it.read_string_no_default()?)));
+                }
+                MkvElement::TagBinary => {
+                    // Non-mandatory element. No schema-defined default.
+                    value = Some(RawValue::Binary(Arc::new(it.read_binary()?)))
+                }
+                MkvElement::TagLanguageBcp47 => {
+                    // Non-mandatory element. No schema-defined default.
+                    lang_bcp47 = Some(it.read_string_no_default()?);
+                }
+                MkvElement::TagDefault => {
+                    // Mandatory element. Schema-defined default value is set.
+                    is_default = it.read_u64_default(1)? == 1;
+                }
+                MkvElement::SimpleTag => {
+                    // Simple tag elements exist at a depth >= 3. Only support 3 levels of nesting
+                    // as this is enough to support Matroska's standardized tagging scheme.
+                    if hdr.depth() < 6 {
+                        sub_tags.push(it.read_master_element::<SimpleTagElement>()?);
+                    }
                 }
                 other => {
-                    log::debug!("ignored element {:?}", other);
+                    // Unexpected child element.
+                    log::debug!("ignored {:?} child {:?}", hdr.element_type(), other);
                 }
             }
         }
 
         Ok(Self {
-            name: name.ok_or(Error::DecodeError("mkv: missing tag name"))?.into_boxed_str(),
-            value: value.ok_or(Error::DecodeError("mkv: missing tag value"))?,
+            name: name.ok_or(EbmlError::ElementError("mkv: missing tag name"))?.into_boxed_str(),
+            value,
+            lang,
+            lang_bcp47,
+            is_default,
+            sub_tags,
         })
     }
 }
 
 #[derive(Debug)]
 pub(crate) struct AttachedFileElement {
+    pub(crate) uid: NonZeroU64,
     pub(crate) name: String,
     pub(crate) desc: Option<String>,
     pub(crate) media_type: String,
     pub(crate) data: Box<[u8]>,
 }
 
-impl Element for AttachedFileElement {
-    const ID: ElementType = ElementType::AttachedFile;
+impl EbmlElement<MkvSchema> for AttachedFileElement {
+    const TYPE: MkvElement = MkvElement::AttachedFile;
 
-    fn read<R: ElementReader>(mut it: ElementIterator<R>, _header: ElementHeader) -> Result<Self> {
+    fn read<R: ReadEbml>(it: &mut MkvEbmlIterator<R>, hdr: &MkvEbmlElementHeader) -> Result<Self> {
+        let mut uid = None;
         let mut name = None;
         let mut desc = None;
         let mut media_type = None;
         let mut data = None;
 
-        while let Some(header) = it.read_header()? {
-            match header.etype {
-                ElementType::FileDescription => {
-                    desc = Some(it.read_string()?);
+        while let Some(header) = it.next_header()? {
+            match header.element_type() {
+                MkvElement::FileDescription => {
+                    // Non-mandatory element. No schema-defined default.
+                    desc = Some(it.read_string_no_default()?);
                 }
-                ElementType::FileName => {
-                    name = Some(it.read_string()?);
+                MkvElement::FileName => {
+                    // Mandatory element. No schema-defined default.
+                    name = Some(it.read_string_no_default()?);
                 }
-                ElementType::FileMediaType => {
-                    media_type = Some(it.read_string()?);
+                MkvElement::FileMediaType => {
+                    // Mandatory element. No schema-defined default.
+                    media_type = Some(it.read_string_no_default()?);
                 }
-                ElementType::FileData => {
-                    data = Some(it.read_boxed_slice()?);
+                MkvElement::FileData => {
+                    // Mandatory element. No schema-defined default.
+                    data = Some(it.read_binary()?);
                 }
-                ElementType::FileUid => {
-                    let _ = it.read_u64()?;
+                MkvElement::FileUid => {
+                    // Mandatory element. May not be 0. No schema-defined default.
+                    let val = NonZeroU64::new(it.read_u64_no_default()?)
+                        .ok_or(EbmlError::ElementError("mkv: invalid file uid"))?;
+
+                    uid = Some(val);
                 }
                 other => {
-                    log::debug!("ignored element {:?}", other);
+                    // Unexpected child element.
+                    log::debug!("ignored {:?} child {:?}", hdr.element_type(), other);
                 }
             }
         }
 
         Ok(Self {
-            name: name.ok_or(Error::DecodeError("mkv: missing attached file name"))?,
+            uid: uid.ok_or(EbmlError::ElementError("mkv: missing attached file uid"))?,
+            name: name.ok_or(EbmlError::ElementError("mkv: missing attached file name"))?,
             desc,
             media_type: media_type
-                .ok_or(Error::DecodeError("mkv: missing attached file media-type"))?,
-            data: data.ok_or(Error::DecodeError("mkv: missing attached file data"))?,
+                .ok_or(EbmlError::ElementError("mkv: missing attached file media-type"))?,
+            data: data.ok_or(EbmlError::ElementError("mkv: missing attached file data"))?,
         })
     }
 }
@@ -795,19 +1398,20 @@ pub(crate) struct AttachmentsElement {
     pub(crate) attached_files: Box<[AttachedFileElement]>,
 }
 
-impl Element for AttachmentsElement {
-    const ID: ElementType = ElementType::Attachments;
+impl EbmlElement<MkvSchema> for AttachmentsElement {
+    const TYPE: MkvElement = MkvElement::Attachments;
 
-    fn read<R: ElementReader>(mut it: ElementIterator<R>, _header: ElementHeader) -> Result<Self> {
+    fn read<R: ReadEbml>(it: &mut MkvEbmlIterator<R>, hdr: &MkvEbmlElementHeader) -> Result<Self> {
         let mut attached_files = Vec::new();
 
-        while let Some(header) = it.read_header()? {
-            match header.etype {
-                ElementType::AttachedFile => {
-                    attached_files.push(it.read_element_data::<AttachedFileElement>()?);
+        while let Some(header) = it.next_header()? {
+            match header.element_type() {
+                MkvElement::AttachedFile => {
+                    attached_files.push(it.read_master_element::<AttachedFileElement>()?);
                 }
                 other => {
-                    log::debug!("ignored element {:?}", other);
+                    // Unexpected child element.
+                    log::debug!("ignored {:?} child {:?}", hdr.element_type(), other);
                 }
             }
         }
@@ -816,24 +1420,48 @@ impl Element for AttachmentsElement {
     }
 }
 
+impl AttachmentsElement {
+    pub(crate) fn get_target_uids(&self, target_tags: &mut TargetTagsMap) {
+        self.attached_files.iter().for_each(|file| {
+            target_tags.insert(TargetUid::Attachment(file.uid.get()), Default::default());
+        })
+    }
+
+    pub(crate) fn into_attachments(self, _target_tags: &mut TargetTagsMap) -> Vec<Attachment> {
+        self.attached_files
+            .into_vec()
+            .into_iter()
+            .map(|file| {
+                Attachment::File(FileAttachment {
+                    name: file.name,
+                    description: file.desc,
+                    media_type: Some(file.media_type),
+                    data: file.data,
+                })
+            })
+            .collect()
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct ChaptersElement {
     pub(crate) editions: Box<[EditionEntryElement]>,
 }
 
-impl Element for ChaptersElement {
-    const ID: ElementType = ElementType::Chapters;
+impl EbmlElement<MkvSchema> for ChaptersElement {
+    const TYPE: MkvElement = MkvElement::Chapters;
 
-    fn read<R: ElementReader>(mut it: ElementIterator<R>, _header: ElementHeader) -> Result<Self> {
+    fn read<R: ReadEbml>(it: &mut MkvEbmlIterator<R>, hdr: &MkvEbmlElementHeader) -> Result<Self> {
         let mut editions = Vec::new();
 
-        while let Some(header) = it.read_header()? {
-            match header.etype {
-                ElementType::EditionEntry => {
-                    editions.push(it.read_element_data::<EditionEntryElement>()?);
+        while let Some(header) = it.next_header()? {
+            match header.element_type() {
+                MkvElement::EditionEntry => {
+                    editions.push(it.read_master_element::<EditionEntryElement>()?);
                 }
                 other => {
-                    log::debug!("ignored element {:?}", other);
+                    // Unexpected child element.
+                    log::debug!("ignored {:?} child {:?}", hdr.element_type(), other);
                 }
             }
         }
@@ -842,8 +1470,34 @@ impl Element for ChaptersElement {
     }
 }
 
+impl ChaptersElement {
+    pub(crate) fn get_target_uids(&self, target_tags: &mut TargetTagsMap) {
+        self.editions.iter().for_each(|edition| edition.get_target_uids(target_tags));
+    }
+
+    /// Builds a chapter group containing the chapters of the first non-hidden default edition, or,
+    /// if one doesn't exist, the first non-hidden edition.
+    pub(crate) fn into_chapter_group(
+        self,
+        target_tags: &mut TargetTagsMap,
+    ) -> Option<ChapterGroup> {
+        // Find the first non-hidden default edition. Or, the first non-hidden edition.
+        let index = self
+            .editions
+            .iter()
+            .position(|e| !e.is_hidden && e.is_default)
+            .or_else(|| self.editions.iter().position(|e| !e.is_hidden));
+
+        // Convert to chapter group.
+        index.map(|index| {
+            self.editions.into_vec().swap_remove(index).into_chapter_group(target_tags)
+        })
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct EditionEntryElement {
+    pub(crate) uid: NonZeroU64,
     pub(crate) is_hidden: bool,
     pub(crate) is_default: bool,
     #[allow(dead_code)]
@@ -852,43 +1506,50 @@ pub(crate) struct EditionEntryElement {
     pub(crate) chapters: Box<[ChapterAtomElement]>,
 }
 
-impl Element for EditionEntryElement {
-    const ID: ElementType = ElementType::EditionEntry;
+impl EbmlElement<MkvSchema> for EditionEntryElement {
+    const TYPE: MkvElement = MkvElement::EditionEntry;
 
-    fn read<R: ElementReader>(mut it: ElementIterator<R>, _header: ElementHeader) -> Result<Self> {
+    fn read<R: ReadEbml>(it: &mut MkvEbmlIterator<R>, hdr: &MkvEbmlElementHeader) -> Result<Self> {
+        let mut uid = None;
         let mut is_hidden = false;
         let mut is_default = false;
         let mut is_ordered = false;
         let mut display = Vec::new();
         let mut chapters = Vec::new();
 
-        while let Some(header) = it.read_header()? {
-            match header.etype {
-                ElementType::EditionUid => {
-                    let _ = it.read_u64()?;
+        while let Some(header) = it.next_header()? {
+            match header.element_type() {
+                MkvElement::EditionUid => {
+                    // Mandatory element. Must not be 0.
+                    let val = NonZeroU64::new(it.read_u64_no_default()?)
+                        .ok_or(EbmlError::ElementError("mkv: invalid (0) edition uid"))?;
+
+                    uid = Some(val);
                 }
-                ElementType::EditionFlagHidden => {
-                    is_hidden = it.read_u64()? == 1;
+                MkvElement::EditionFlagHidden => {
+                    is_hidden = it.read_u64_default(0)? == 1;
                 }
-                ElementType::EditionFlagDefault => {
-                    is_default = it.read_u64()? == 1;
+                MkvElement::EditionFlagDefault => {
+                    is_default = it.read_u64_default(0)? == 1;
                 }
-                ElementType::EditionFlagOrdered => {
-                    is_ordered = it.read_u64()? == 1;
+                MkvElement::EditionFlagOrdered => {
+                    is_ordered = it.read_u64_default(0)? == 1;
                 }
-                ElementType::EditionDisplay => {
-                    display.push(it.read_element_data::<EditionDisplayElement>()?)
+                MkvElement::EditionDisplay => {
+                    display.push(it.read_master_element::<EditionDisplayElement>()?)
                 }
-                ElementType::ChapterAtom => {
-                    chapters.push(it.read_element_data::<ChapterAtomElement>()?)
+                MkvElement::ChapterAtom => {
+                    chapters.push(it.read_master_element::<ChapterAtomElement>()?)
                 }
                 other => {
-                    log::debug!("ignored element {:?}", other);
+                    // Unexpected child element.
+                    log::debug!("ignored {:?} child {:?}", hdr.element_type(), other);
                 }
             }
         }
 
         Ok(Self {
+            uid: uid.ok_or(EbmlError::ElementError("mkv: missing edition uid"))?,
             is_hidden,
             is_default,
             is_ordered,
@@ -899,8 +1560,18 @@ impl Element for EditionEntryElement {
 }
 
 impl EditionEntryElement {
-    pub(crate) fn into_chapter_group(self) -> ChapterGroup {
-        let mut tags = Vec::with_capacity(self.display.len());
+    pub(crate) fn get_target_uids(&self, target_tags: &mut TargetTagsMap) {
+        // Append edition UID.
+        target_tags.insert(TargetUid::Edition(self.uid.get()), Default::default());
+        // Append chapter UIDs.
+        self.chapters.iter().for_each(|chapter| chapter.get_target_uids(target_tags));
+    }
+
+    pub(crate) fn into_chapter_group(self, target_tags: &mut TargetTagsMap) -> ChapterGroup {
+        // Take the vector of tags associated with this edition, if any.
+        let mut tags = target_tags
+            .remove(&TargetUid::Edition(self.uid.get()))
+            .unwrap_or_else(|| Vec::with_capacity(self.display.len()));
 
         // Edition title tags.
         for display in self.display {
@@ -920,7 +1591,7 @@ impl EditionEntryElement {
                 sub_fields.into_boxed_slice(),
             );
 
-            tags.push(Tag::new_std(raw, StandardTag::TrackTitle(title)));
+            tags.push(Tag::new_std(raw, StandardTag::ChapterTitle(title)));
         }
 
         // Edition chapters.
@@ -928,7 +1599,7 @@ impl EditionEntryElement {
 
         for chapter in self.chapters {
             if !chapter.is_hidden {
-                items.push(chapter.into_chapter_group_item());
+                items.push(chapter.into_chapter_group_item(target_tags));
             }
         }
 
@@ -942,29 +1613,32 @@ pub(crate) struct EditionDisplayElement {
     pub(crate) lang_bcp47: Option<String>,
 }
 
-impl Element for EditionDisplayElement {
-    const ID: ElementType = ElementType::EditionDisplay;
+impl EbmlElement<MkvSchema> for EditionDisplayElement {
+    const TYPE: MkvElement = MkvElement::EditionDisplay;
 
-    fn read<R: ElementReader>(mut it: ElementIterator<R>, _header: ElementHeader) -> Result<Self> {
+    fn read<R: ReadEbml>(it: &mut MkvEbmlIterator<R>, hdr: &MkvEbmlElementHeader) -> Result<Self> {
         let mut name = None;
         let mut lang_bcp47 = None;
 
-        while let Some(header) = it.read_header()? {
-            match header.etype {
-                ElementType::EditionString => {
-                    name = Some(it.read_string()?);
+        while let Some(header) = it.next_header()? {
+            match header.element_type() {
+                MkvElement::EditionString => {
+                    // Mandatory element. No schema-defined default.
+                    name = Some(it.read_string_no_default()?);
                 }
-                ElementType::EditionLanguageBcp47 => {
-                    lang_bcp47 = Some(it.read_string()?);
+                MkvElement::EditionLanguageIetf => {
+                    // Non-mandatory element. No schema-defined default.
+                    lang_bcp47 = Some(it.read_string_no_default()?);
                 }
                 other => {
-                    log::debug!("ignored element {:?}", other);
+                    // Unexpected child element.
+                    log::debug!("ignored {:?} child {:?}", hdr.element_type(), other);
                 }
             }
         }
 
         Ok(Self {
-            name: name.ok_or(Error::DecodeError("mkv: missing edition display name"))?,
+            name: name.ok_or(EbmlError::ElementError("mkv: missing edition display name"))?,
             lang_bcp47,
         })
     }
@@ -972,6 +1646,7 @@ impl Element for EditionDisplayElement {
 
 #[derive(Debug)]
 pub(crate) struct ChapterAtomElement {
+    pub(crate) uid: NonZeroU64,
     #[allow(dead_code)]
     pub(crate) is_enabled: bool,
     pub(crate) is_hidden: bool,
@@ -982,10 +1657,11 @@ pub(crate) struct ChapterAtomElement {
     pub(crate) chapters: Box<[ChapterAtomElement]>,
 }
 
-impl Element for ChapterAtomElement {
-    const ID: ElementType = ElementType::ChapterAtom;
+impl EbmlElement<MkvSchema> for ChapterAtomElement {
+    const TYPE: MkvElement = MkvElement::ChapterAtom;
 
-    fn read<R: ElementReader>(mut it: ElementIterator<R>, _header: ElementHeader) -> Result<Self> {
+    fn read<R: ReadEbml>(it: &mut MkvEbmlIterator<R>, hdr: &MkvEbmlElementHeader) -> Result<Self> {
+        let mut uid = None;
         let mut is_enabled = false;
         let mut is_hidden = false;
         let mut time_start = None;
@@ -994,45 +1670,59 @@ impl Element for ChapterAtomElement {
         let mut display = Vec::new();
         let mut chapters = Vec::new();
 
-        while let Some(header) = it.read_header()? {
-            match header.etype {
-                ElementType::ChapterUid => {}
-                ElementType::ChapterStringUid => {}
-                ElementType::ChapterTimeStart => {
-                    time_start = Some(it.read_u64()?);
+        while let Some(header) = it.next_header()? {
+            match header.element_type() {
+                MkvElement::ChapterUid => {
+                    // Non-mandatory element. Must not be 0. No schema-defined default.
+                    let val = NonZeroU64::new(it.read_u64_no_default()?)
+                        .ok_or(EbmlError::ElementError("mkv: invalid chapter uid"))?;
+
+                    uid = Some(val);
                 }
-                ElementType::ChapterTimeEnd => {
-                    time_end = Some(it.read_u64()?);
+                MkvElement::ChapterStringUid => {}
+                MkvElement::ChapterTimeStart => {
+                    // Mandatory element. No schema-defined default.
+                    time_start = Some(it.read_u64_no_default()?);
                 }
-                ElementType::ChapterFlagEnabled => {
-                    is_enabled = it.read_u64()? == 1;
+                MkvElement::ChapterTimeEnd => {
+                    // Non-mandatory element. No schema-defined default.
+                    time_end = Some(it.read_u64_no_default()?);
                 }
-                ElementType::ChapterFlagHidden => {
-                    is_hidden = it.read_u64()? == 1;
+                MkvElement::ChapterFlagEnabled => {
+                    // Mandatory element. Schema-defined default is 1 (set).
+                    is_enabled = it.read_u64_default(1)? == 1;
                 }
-                ElementType::ChapterDisplay => {
-                    display.push(it.read_element_data::<ChapterDisplayElement>()?);
+                MkvElement::ChapterFlagHidden => {
+                    // Mandatory element. Schema-defined default is 0 (unset).
+                    is_hidden = it.read_u64_default(0)? == 1;
                 }
-                ElementType::ChapterSkipType => {
-                    skip_type = match it.read_u64()? {
-                        value @ 0..=6 => Some(value as u8),
-                        _ => None,
+                MkvElement::ChapterDisplay => {
+                    // Non-mandatory element.
+                    display.push(it.read_master_element::<ChapterDisplayElement>()?);
+                }
+                MkvElement::ChapterSkipType => {
+                    // Non-mandatory element. No schema-defined default.
+                    skip_type = match it.read_u64_no_default()? {
+                        value if value <= 6 => Some(value as u8),
+                        _ => return Err(EbmlError::ElementError("mkv: invalid chapter skip type")),
                     };
                 }
-                ElementType::ChapterAtom => {
-                    chapters.push(it.read_element_data::<ChapterAtomElement>()?);
+                MkvElement::ChapterAtom => {
+                    chapters.push(it.read_master_element::<ChapterAtomElement>()?);
                 }
                 other => {
-                    log::debug!("ignored element {:?}", other);
+                    // Unexpected child element.
+                    log::debug!("ignored {:?} child {:?}", hdr.element_type(), other);
                 }
             }
         }
 
         Ok(Self {
+            uid: uid.ok_or(EbmlError::ElementError("mkv: missing chapter uid"))?,
             is_enabled,
             is_hidden,
             time_start: time_start
-                .ok_or(Error::DecodeError("mkv: missing chapter atom time start"))?,
+                .ok_or(EbmlError::ElementError("mkv: missing chapter atom time start"))?,
             time_end,
             skip_type,
             display: display.into_boxed_slice(),
@@ -1042,8 +1732,21 @@ impl Element for ChapterAtomElement {
 }
 
 impl ChapterAtomElement {
-    pub(crate) fn into_chapter_group_item(self) -> ChapterGroupItem {
-        let mut tags = Vec::with_capacity(self.display.len());
+    pub(crate) fn get_target_uids(&self, target_tags: &mut TargetTagsMap) {
+        // Append chapter UID.
+        target_tags.insert(TargetUid::Chapter(self.uid.get()), Default::default());
+        // Append chapter UIDs.
+        self.chapters.iter().for_each(|chapter| chapter.get_target_uids(target_tags));
+    }
+
+    pub(crate) fn into_chapter_group_item(
+        self,
+        target_tags: &mut TargetTagsMap,
+    ) -> ChapterGroupItem {
+        // Take the vector of any tags associated with this chapter, if any.
+        let mut tags = target_tags
+            .remove(&TargetUid::Chapter(self.uid.get()))
+            .unwrap_or_else(|| Vec::with_capacity(self.display.len()));
 
         // Chapter title tags.
         for display in self.display {
@@ -1073,12 +1776,12 @@ impl ChapterAtomElement {
                 sub_fields.into_boxed_slice(),
             );
 
-            tags.push(Tag::new_std(raw, StandardTag::TrackTitle(title)));
+            tags.push(Tag::new_std(raw, StandardTag::ChapterTitle(title)));
         }
 
         // Chapter skip-type tag.
         if let Some(skip_type) = self.skip_type {
-            tags.push(Tag::new_from_parts("ChapterSkipType", skip_type, None));
+            tags.push(Tag::new_from_parts("CHAPTER_SKIP_TYPE", skip_type, None));
         }
 
         let chapter = Chapter {
@@ -1101,7 +1804,7 @@ impl ChapterAtomElement {
 
             for chapter in self.chapters {
                 if !chapter.is_hidden {
-                    items.push(chapter.into_chapter_group_item());
+                    items.push(chapter.into_chapter_group_item(target_tags));
                 }
             }
 
@@ -1134,56 +1837,48 @@ pub(crate) struct ChapterDisplayElement {
     pub(crate) country: Option<String>,
 }
 
-impl Element for ChapterDisplayElement {
-    const ID: ElementType = ElementType::ChapterDisplay;
+impl EbmlElement<MkvSchema> for ChapterDisplayElement {
+    const TYPE: MkvElement = MkvElement::ChapterDisplay;
 
-    fn read<R: ElementReader>(mut it: ElementIterator<R>, _header: ElementHeader) -> Result<Self> {
+    fn read<R: ReadEbml>(it: &mut MkvEbmlIterator<R>, hdr: &MkvEbmlElementHeader) -> Result<Self> {
         let mut name = None;
         let mut lang = None;
         let mut lang_bcp47 = None;
         let mut country = None;
 
-        while let Some(header) = it.read_header()? {
-            match header.etype {
-                ElementType::ChapString => {
-                    name = Some(it.read_string()?);
+        while let Some(header) = it.next_header()? {
+            match header.element_type() {
+                MkvElement::ChapString => {
+                    // Mandatory element. No schema-defined default.
+                    name = Some(it.read_string_no_default()?);
                 }
-                ElementType::ChapLanguage => {
-                    lang = Some(it.read_string()?);
+                MkvElement::ChapLanguage => {
+                    // Mandatory element. Schema-defined default is "eng".
+                    lang = it.read_string()?;
                 }
-                ElementType::ChapLanguageBcp47 => {
-                    lang_bcp47 = Some(it.read_string()?);
+                MkvElement::ChapLanguageBcp47 => {
+                    // Non-mandatory element. No schema-defined default.
+                    lang_bcp47 = Some(it.read_string_no_default()?);
                 }
-                ElementType::ChapCountry => {
-                    country = Some(it.read_string()?);
+                MkvElement::ChapCountry => {
+                    // Non-mandatory element. No schema-defined default.
+                    country = Some(it.read_string_no_default()?);
                 }
                 other => {
-                    log::debug!("ignored element {:?}", other);
+                    // Unexpected child element.
+                    log::debug!("ignored {:?} child {:?}", hdr.element_type(), other);
                 }
             }
         }
 
+        // Populate missing or empty mandatory elements with defaults.
+        let lang = lang.unwrap_or_else(|| "eng".into());
+
         Ok(Self {
-            name: name.ok_or(Error::DecodeError("mkv: missing chapter display name"))?,
-            lang: lang.ok_or(Error::DecodeError("mkv: missing chapter display language"))?,
+            name: name.ok_or(EbmlError::ElementError("mkv: missing chapter display name"))?,
+            lang,
             lang_bcp47,
             country,
         })
-    }
-}
-
-impl ChaptersElement {
-    /// Builds a chapter group containing the chapters of the first non-hidden default edition, or,
-    /// if one doesn't exist, the first non-hidden edition.
-    pub(crate) fn build_chapter_group(self) -> Option<ChapterGroup> {
-        // Find the first non-hidden default edition. Or, the first non-hidden edition.
-        let index = self
-            .editions
-            .iter()
-            .position(|e| !e.is_hidden && e.is_default)
-            .or_else(|| self.editions.iter().position(|e| !e.is_hidden));
-
-        // Convert to chapter group.
-        index.map(|index| self.editions.into_vec().swap_remove(index).into_chapter_group())
     }
 }

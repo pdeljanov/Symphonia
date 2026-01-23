@@ -12,7 +12,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use symphonia_core::audio::{AudioBuffer, AudioMut};
-use symphonia_core::errors::{decode_error, Result};
+use symphonia_core::errors::{Result, decode_error};
 use symphonia_core::io::ReadBitsLtr;
 
 use crate::aac::common::*;
@@ -59,7 +59,8 @@ impl ChannelPair {
 
         if common_window {
             // Decode the common ICS info block into the first channel.
-            self.ics0.info.decode(bs)?;
+            // do not call self.ics0.info.decode() as it will skip required validations present in self.ics0.decode_info()
+            self.ics0.decode_info(bs)?;
 
             // Mid-side stereo mask decoding.
             self.ms_mask_present = bs.read_bits_leq32(2)? as u8;

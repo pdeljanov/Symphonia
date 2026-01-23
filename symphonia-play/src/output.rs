@@ -88,7 +88,7 @@ mod pulseaudio {
             match pa_result {
                 Ok(pa) => Ok(Box::new(PulseAudioOutput { pa, buf: Default::default() })),
                 Err(err) => {
-                    error!("audio output stream open error: {}", err);
+                    error!("audio output stream open error: {err}");
 
                     Err(AudioOutputError::OpenStreamError)
                 }
@@ -109,7 +109,7 @@ mod pulseaudio {
             // Write interleaved samples to PulseAudio.
             match self.pa.write(&self.buf) {
                 Err(err) => {
-                    error!("audio output stream write error: {}", err);
+                    error!("audio output stream write error: {err}");
 
                     Err(AudioOutputError::StreamClosedError)
                 }
@@ -190,7 +190,7 @@ mod pulseaudio {
             _ => {
                 // If a Symphonia channel cannot map to a PulseAudio position then return `None`
                 // because PulseAudio will not be able to open a stream with invalid channels.
-                warn!("failed to map positioned channel {:?} to output", position);
+                warn!("failed to map positioned channel {position:?} to output");
                 return None;
             }
         };
@@ -234,7 +234,7 @@ mod pulseaudio {
             _ => {
                 // If a Symphonia channel cannot map to a PulseAudio position then return `None`
                 // because PulseAudio will not be able to open a stream with invalid channels.
-                warn!("failed to map discrete channel {:?} to output", index);
+                warn!("failed to map discrete channel {index:?} to output");
                 return None;
             }
         };

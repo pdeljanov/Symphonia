@@ -56,12 +56,12 @@ use std::fmt;
 use std::num::NonZeroU8;
 use std::sync::Arc;
 
-use crate::common::FourCc;
+use crate::common::{FourCc, Limit};
 use crate::errors::Result;
 use crate::io::MediaSourceStream;
 use crate::units::Time;
 
-/// A `MetadataType` is a unique identifier used to identify a metadata format.
+/// A `MetadataId` is a unique identifier used to identify a specific metadata format.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct MetadataId(u32);
 
@@ -89,7 +89,7 @@ impl fmt::Display for MetadataId {
 pub const METADATA_ID_NULL: MetadataId = MetadataId(0x0);
 
 /// Basic information about a metadata format.
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct MetadataInfo {
     /// The `MetadataType` identifier.
     pub metadata: MetadataId,
@@ -99,37 +99,7 @@ pub struct MetadataInfo {
     pub long_name: &'static str,
 }
 
-/// `Limit` defines an upper-bound on how much of a resource should be allocated when the amount to
-/// be allocated is specified by the media stream, which is untrusted. A limit will place an
-/// upper-bound on this allocation at the risk of breaking potentially valid streams. Limits are
-/// used to prevent denial-of-service attacks.
-///
-/// All limits can be defaulted to a reasonable value specific to the situation. These defaults will
-/// generally not break any normal streams.
-#[derive(Copy, Clone, Debug, Default)]
-pub enum Limit {
-    /// Do not impose any limit.
-    None,
-    /// Use the a reasonable default specified by the `FormatReader` or `Decoder` implementation.
-    #[default]
-    Default,
-    /// Specify the upper limit of the resource. Units are case specific.
-    Maximum(usize),
-}
-
-impl Limit {
-    /// Gets the numeric limit of the limit, or default value. If there is no limit, None is
-    /// returned.
-    pub fn limit_or_default(&self, default: usize) -> Option<usize> {
-        match self {
-            Limit::None => None,
-            Limit::Default => Some(default),
-            Limit::Maximum(max) => Some(*max),
-        }
-    }
-}
-
-/// `MetadataOptions` is a common set of options that all metadata readers use.
+/// A common set of options that all metadata readers use.
 #[derive(Copy, Clone, Debug, Default)]
 pub struct MetadataOptions {
     /// The maximum size limit in bytes that a tag may occupy in memory once decoded. Tags exceeding
@@ -198,32 +168,49 @@ pub enum StandardTag {
     AccurateRipTotal(Arc<String>),
     AcoustIdFingerprint(Arc<String>),
     AcoustIdId(Arc<String>),
+    Actor(Arc<String>),
     Album(Arc<String>),
     AlbumArtist(Arc<String>),
     Arranger(Arc<String>),
+    ArtDirector(Arc<String>),
     Artist(Arc<String>),
+    AssistantDirector(Arc<String>),
     Author(Arc<String>),
     Bpm(u64),
     CdToc(Arc<String>),
+    CdTrackIndex(u8),
+    ChapterTitle(Arc<String>),
+    Choregrapher(Arc<String>),
+    Cinematographer(Arc<String>),
+    CollectionTitle(Arc<String>),
     Comment(Arc<String>),
     CompilationFlag(bool),
     Composer(Arc<String>),
     Conductor(Arc<String>),
     ContentAdvisory(ContentAdvisory),
+    ContentRating(Arc<String>),
+    ContentType(Arc<String>),
+    Coproducer(Arc<String>),
     Copyright(Arc<String>),
+    CostumeDesigner(Arc<String>),
     CueToolsDbDiscConfidence(Arc<String>),
     CueToolsDbTrackConfidence(Arc<String>),
-    Date(Arc<String>),
     Description(Arc<String>),
+    DigitizedDate(Arc<String>),
+    Director(Arc<String>),
     DiscNumber(u64),
     DiscSubtitle(Arc<String>),
     DiscTotal(u64),
+    Distributor(Arc<String>),
+    EditedBy(Arc<String>),
+    EditionTitle(Arc<String>),
     EncodedBy(Arc<String>),
     Encoder(Arc<String>),
     EncoderSettings(Arc<String>),
     EncodingDate(Arc<String>),
     Engineer(Arc<String>),
     Ensemble(Arc<String>),
+    ExecutiveProducer(Arc<String>),
     Genre(Arc<String>),
     Grouping(Arc<String>),
     IdentAsin(Arc<String>),
@@ -232,19 +219,22 @@ pub enum StandardTag {
     IdentEanUpn(Arc<String>),
     IdentIsbn(Arc<String>),
     IdentIsrc(Arc<String>),
+    IdentLccn(Arc<String>),
     IdentPn(Arc<String>),
     IdentPodcast(Arc<String>),
     IdentUpc(Arc<String>),
-    IndexNumber(u8),
+    ImdbTitleId(Arc<String>),
     InitialKey(Arc<String>),
     InternetRadioName(Arc<String>),
     InternetRadioOwner(Arc<String>),
+    Keywords(Arc<String>),
     Label(Arc<String>),
     LabelCode(Arc<String>),
     Language(Arc<String>),
     License(Arc<String>),
     Lyricist(Arc<String>),
     Lyrics(Arc<String>),
+    Measure(Arc<String>),
     MediaFormat(Arc<String>),
     MixDj(Arc<String>),
     MixEngineer(Arc<String>),
@@ -252,6 +242,7 @@ pub enum StandardTag {
     MovementName(Arc<String>),
     MovementNumber(u64),
     MovementTotal(u64),
+    MovieTitle(Arc<String>),
     Mp3GainAlbumMinMax(Arc<String>),
     Mp3GainMinMax(Arc<String>),
     Mp3GainUndo(Arc<String>),
@@ -273,18 +264,25 @@ pub enum StandardTag {
     MusicBrainzWorkId(Arc<String>),
     Narrator(Arc<String>),
     Opus(Arc<String>),
+    OpusNumber(u64),
     OriginalAlbum(Arc<String>),
     OriginalArtist(Arc<String>),
-    OriginalDate(Arc<String>),
     OriginalFile(Arc<String>),
     OriginalLyricist(Arc<String>),
+    OriginalRecordingDate(Arc<String>),
+    OriginalRecordingTime(Arc<String>),
+    OriginalRecordingYear(u16),
+    OriginalReleaseDate(Arc<String>),
+    OriginalReleaseTime(Arc<String>),
+    OriginalReleaseYear(u16),
     OriginalWriter(Arc<String>),
-    OriginalYear(u16),
     Owner(Arc<String>),
     Part(Arc<String>),
     PartNumber(u64),
+    PartTitle(Arc<String>),
     PartTotal(u64),
     Performer(Arc<String>),
+    Period(Arc<String>),
     PlayCounter(u64),
     PodcastCategory(Arc<String>),
     PodcastDescription(Arc<String>),
@@ -292,13 +290,18 @@ pub enum StandardTag {
     PodcastKeywords(Arc<String>),
     Producer(Arc<String>),
     ProductionCopyright(Arc<String>),
+    ProductionDesigner(Arc<String>),
+    ProductionStudio(Arc<String>),
     PurchaseDate(Arc<String>),
-    Rating(Arc<String>),
+    Rating(u32), // In PPM.
     RecordingDate(Arc<String>),
     RecordingLocation(Arc<String>),
     RecordingTime(Arc<String>),
+    RecordingYear(u16),
     ReleaseCountry(Arc<String>),
     ReleaseDate(Arc<String>),
+    ReleaseTime(Arc<String>),
+    ReleaseYear(u16),
     Remixer(Arc<String>),
     ReplayGainAlbumGain(Arc<String>),
     ReplayGainAlbumPeak(Arc<String>),
@@ -307,25 +310,47 @@ pub enum StandardTag {
     ReplayGainTrackGain(Arc<String>),
     ReplayGainTrackPeak(Arc<String>),
     ReplayGainTrackRange(Arc<String>),
+    ScreenplayAuthor(Arc<String>),
     Script(Arc<String>),
     Soloist(Arc<String>),
     SortAlbum(Arc<String>),
     SortAlbumArtist(Arc<String>),
     SortArtist(Arc<String>),
+    SortCollectionTitle(Arc<String>),
     SortComposer(Arc<String>),
+    SortEditionTitle(Arc<String>),
+    SortMovieTitle(Arc<String>),
+    SortOpusTitle(Arc<String>),
+    SortPartTitle(Arc<String>),
     SortTrackTitle(Arc<String>),
-    SortTvShowTitle(Arc<String>),
+    SortTvEpisodeTitle(Arc<String>),
+    SortTvSeasonTitle(Arc<String>),
+    SortTvSeriesTitle(Arc<String>),
+    SortVolumeTitle(Arc<String>),
+    Subject(Arc<String>),
+    Summary(Arc<String>),
+    Synopsis(Arc<String>),
     TaggingDate(Arc<String>),
     TermsOfUse(Arc<String>),
+    Thanks(Arc<String>),
+    TmdbMovieId(Arc<String>),
+    TmdbSeriesId(Arc<String>),
     TrackNumber(u64),
     TrackSubtitle(Arc<String>),
     TrackTitle(Arc<String>),
     TrackTotal(u64),
-    TvEpisode(u64),
+    Tuning(Arc<String>),
+    TvdbEpisodeId(Arc<String>),
+    TvdbMovieId(Arc<String>),
+    TvdbSeriesId(Arc<String>),
+    TvEpisodeNumber(u64),
     TvEpisodeTitle(Arc<String>),
+    TvEpisodeTotal(u64),
     TvNetwork(Arc<String>),
-    TvSeason(u64),
-    TvShowTitle(Arc<String>),
+    TvSeasonNumber(u64),
+    TvSeasonTitle(Arc<String>),
+    TvSeasonTotal(u64),
+    TvSeriesTitle(Arc<String>),
     Url(Arc<String>),
     UrlArtist(Arc<String>),
     UrlCopyright(Arc<String>),
@@ -337,8 +362,12 @@ pub enum StandardTag {
     UrlPurchase(Arc<String>),
     UrlSource(Arc<String>),
     Version(Arc<String>),
+    VolumeNumber(u64),
+    VolumeTitle(Arc<String>),
+    VolumeTotal(u64),
     Work(Arc<String>),
     Writer(Arc<String>),
+    WrittenDate(Arc<String>),
 }
 
 /// The value of a [`RawTag`].
@@ -416,13 +445,13 @@ impl fmt::Display for RawValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // Implement default formatters for each type.
         match self {
-            RawValue::Binary(ref buf) => f.write_str(&buffer_to_hex_string(buf)),
+            RawValue::Binary(buf) => f.write_str(&buffer_to_hex_string(buf)),
             RawValue::Boolean(boolean) => fmt::Display::fmt(boolean, f),
             RawValue::Flag => write!(f, "<flag>"),
             RawValue::Float(float) => fmt::Display::fmt(float, f),
             RawValue::SignedInt(int) => fmt::Display::fmt(int, f),
-            RawValue::String(ref string) => fmt::Display::fmt(string, f),
-            RawValue::StringList(ref list) => fmt::Display::fmt(&list.join("\n"), f),
+            RawValue::String(string) => fmt::Display::fmt(string, f),
+            RawValue::StringList(list) => fmt::Display::fmt(&list.join("\n"), f),
             RawValue::UnsignedInt(uint) => fmt::Display::fmt(uint, f),
         }
     }
@@ -646,60 +675,108 @@ pub enum ChapterGroupItem {
     Chapter(Chapter),
 }
 
-/// A metadata revision is a container for a single discrete revision of media metadata.
+/// A container of metadata tags and pictures.
+#[derive(Clone, Debug, Default)]
+pub struct MetadataContainer {
+    /// Key-value pairs of metadata.
+    pub tags: Vec<Tag>,
+    /// Attached pictures.
+    pub visuals: Vec<Visual>,
+}
+
+/// Container for metadata associated with a specific track. A [`MetadataContainer`] wrapper
+/// associating it with a track ID.
+#[derive(Clone, Debug, Default)]
+pub struct PerTrackMetadata {
+    /// The ID of the track the metadata is associated with.
+    pub track_id: u64,
+    /// Track-specific metadata.
+    pub metadata: MetadataContainer,
+}
+
+/// A metadata revision is a container for a single discrete version of media metadata.
 ///
 /// A metadata revision contains what a user typically associates with metadata: tags, pictures,
-/// etc.
-#[derive(Clone, Debug, Default)]
+/// etc., for the media as a whole and, optionally, for each contained track.
+#[derive(Clone, Debug)]
 pub struct MetadataRevision {
-    /// Key-value pairs of metadata.
-    tags: Vec<Tag>,
-    /// Attached pictures.
-    visuals: Vec<Visual>,
-}
-
-impl MetadataRevision {
-    /// Gets an immutable slice to the `Tag`s in this revision.
+    /// Information about the source of this revision of metadata.
+    pub info: MetadataInfo,
+    /// Media-level, global, metadata.
     ///
-    /// If a tag read from the source contained multiple values, then there will be one `Tag` item
-    /// per value, with each item having the same key and standard key.
-    pub fn tags(&self) -> &[Tag] {
-        &self.tags
-    }
-
-    /// Gets an immutable slice to the `Visual`s in this revision.
-    pub fn visuals(&self) -> &[Visual] {
-        &self.visuals
-    }
+    /// The vast majority of metadata is media-level metadata.
+    pub media: MetadataContainer,
+    /// Per-track metadata.
+    pub per_track: Vec<PerTrackMetadata>,
 }
 
-/// `MetadataBuilder` is the builder for [`Metadata`] revisions.
-#[derive(Clone, Debug, Default)]
+/// A builder for [`MetadataRevision`].
+#[derive(Clone, Debug)]
 pub struct MetadataBuilder {
-    metadata: MetadataRevision,
+    revision: MetadataRevision,
 }
 
 impl MetadataBuilder {
     /// Instantiate a new `MetadataBuilder`.
-    pub fn new() -> Self {
-        MetadataBuilder { metadata: Default::default() }
+    pub fn new(info: MetadataInfo) -> Self {
+        let revision =
+            MetadataRevision { info, media: Default::default(), per_track: Default::default() };
+        MetadataBuilder { revision }
     }
 
-    /// Add a `Tag` to the metadata.
+    /// Add a media-level `Tag` to the metadata.
     pub fn add_tag(&mut self, tag: Tag) -> &mut Self {
-        self.metadata.tags.push(tag);
+        self.revision.media.tags.push(tag);
         self
     }
 
-    /// Add a `Visual` to the metadata.
+    /// Add a media-level `Visual` to the metadata.
     pub fn add_visual(&mut self, visual: Visual) -> &mut Self {
-        self.metadata.visuals.push(visual);
+        self.revision.media.visuals.push(visual);
         self
     }
 
-    /// Yield the constructed `Metadata` revision.
-    pub fn metadata(self) -> MetadataRevision {
-        self.metadata
+    /// Add track-specific metadata.
+    pub fn add_track(&mut self, per_track: PerTrackMetadata) -> &mut Self {
+        self.revision.per_track.push(per_track);
+        self
+    }
+
+    /// Build and return the metadata revision.
+    pub fn build(self) -> MetadataRevision {
+        self.revision
+    }
+}
+
+/// A builder for [`PerTrackMetadata`].
+#[derive(Clone, Debug)]
+pub struct PerTrackMetadataBuilder {
+    per_track: PerTrackMetadata,
+}
+
+impl PerTrackMetadataBuilder {
+    /// Instantiate a new `MetadataBuilder`.
+    pub fn new(track_id: u64) -> Self {
+        PerTrackMetadataBuilder {
+            per_track: PerTrackMetadata { track_id, metadata: Default::default() },
+        }
+    }
+
+    /// Add a `Tag` to the per-track metadata.
+    pub fn add_tag(&mut self, tag: Tag) -> &mut Self {
+        self.per_track.metadata.tags.push(tag);
+        self
+    }
+
+    /// Add a `Visual` to the per-track metadata.
+    pub fn add_visual(&mut self, visual: Visual) -> &mut Self {
+        self.per_track.metadata.visuals.push(visual);
+        self
+    }
+
+    /// Build and return the track-specific metadata.
+    pub fn build(self) -> PerTrackMetadata {
+        self.per_track
     }
 }
 
@@ -736,16 +813,11 @@ impl Metadata<'_> {
     /// `Metadata`. When there are no newer revisions, `None` is returned. As such, `pop` will never
     /// completely empty the log.
     pub fn pop(&mut self) -> Option<MetadataRevision> {
-        if self.revisions.len() > 1 {
-            self.revisions.pop_front()
-        }
-        else {
-            None
-        }
+        if self.revisions.len() > 1 { self.revisions.pop_front() } else { None }
     }
 }
 
-/// `MetadataLog` is a container for time-ordered [`Metadata`] revisions.
+/// A queue for time-ordered [`MetadataRevision`]s.
 #[derive(Clone, Debug, Default)]
 pub struct MetadataLog {
     revisions: VecDeque<MetadataRevision>,
@@ -839,11 +911,13 @@ pub mod well_known {
     // Format-native tags
 
     /// RIFF tags
-    pub const METADATA_ID_RIFF: MetadataId = MetadataId(0x400);
+    pub const METADATA_ID_WAVE: MetadataId = MetadataId(0x400);
+    /// RIFF tags
+    pub const METADATA_ID_AIFF: MetadataId = MetadataId(0x401);
     /// EXIF
-    pub const METADATA_ID_EXIF: MetadataId = MetadataId(0x401);
+    pub const METADATA_ID_EXIF: MetadataId = MetadataId(0x402);
     /// Matroska tags
-    pub const METADATA_ID_MATROSKA: MetadataId = MetadataId(0x402);
+    pub const METADATA_ID_MATROSKA: MetadataId = MetadataId(0x403);
     /// ISOMP4 tags
-    pub const METADATA_ID_ISOMP4: MetadataId = MetadataId(0x403);
+    pub const METADATA_ID_ISOMP4: MetadataId = MetadataId(0x404);
 }

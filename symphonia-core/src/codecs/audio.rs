@@ -230,7 +230,7 @@ pub trait AudioDecoder: Send + Sync {
     /// the decoded audio buffer to change. All other errors are unrecoverable.
     ///
     /// Implementors of decoders *must* `clear` the internal audio buffer if an error occurs.
-    fn decode(&mut self, packet: &Packet) -> Result<GenericAudioBufferRef>;
+    fn decode(&mut self, packet: &Packet) -> Result<GenericAudioBufferRef<'_>>;
 
     /// Optionally, obtain post-decode information such as the verification status.
     fn finalize(&mut self) -> FinalizeResult;
@@ -240,7 +240,7 @@ pub trait AudioDecoder: Send + Sync {
     /// After a successful call to `decode`, this will contain the audio content of the last decoded
     /// `Packet`. If the last call to `decode` resulted in an error, then implementors *must* ensure
     /// the returned audio buffer has zero length.
-    fn last_decoded(&self) -> GenericAudioBufferRef;
+    fn last_decoded(&self) -> GenericAudioBufferRef<'_>;
 }
 
 /// Codec IDs and profiles for well-known audio codecs.

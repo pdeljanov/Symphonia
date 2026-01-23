@@ -89,30 +89,6 @@ pub mod bits {
         ((0xff_u32 << upper) ^ (0xff_u32 << lower)) as u8
     }
 
-    /// Returns the number of trailing ones in an unsigned 8-bit integer.
-    #[inline(always)]
-    pub fn trailing_ones_u8(value: u8) -> u32 {
-        (!value & value.wrapping_add(1)).trailing_zeros()
-    }
-
-    /// Returns the number of trailing ones in an unsigned 16-bit integer.
-    #[inline(always)]
-    pub fn trailing_ones_u16(value: u16) -> u32 {
-        (!value & value.wrapping_add(1)).trailing_zeros()
-    }
-
-    /// Returns the number of trailing ones in an unsigned 32-bit integer.
-    #[inline(always)]
-    pub fn trailing_ones_u32(value: u32) -> u32 {
-        (!value & value.wrapping_add(1)).trailing_zeros()
-    }
-
-    /// Returns the number of trailing ones in an unsigned 64-bit integer.
-    #[inline(always)]
-    pub fn trailing_ones_u64(value: u64) -> u32 {
-        (!value & value.wrapping_add(1)).trailing_zeros()
-    }
-
     /// Returns true if the unsigned 16-bit integer contains one or more bytes which have all bits
     /// set.
     #[inline(always)]
@@ -132,16 +108,6 @@ pub mod bits {
     #[inline(always)]
     pub fn contains_ones_byte_u64(value: u64) -> bool {
         ((value & !value.wrapping_add(0x0101_0101_0101_0101)) & 0x8080_8080_8080_8080) != 0
-    }
-
-    #[test]
-    fn verify_trailing_ones() {
-        assert_eq!(trailing_ones_u32(0), 0);
-        assert_eq!(trailing_ones_u32(1), 1);
-        assert_eq!(trailing_ones_u32(2), 0);
-        assert_eq!(trailing_ones_u32(3), 2);
-        assert_eq!(trailing_ones_u32(0xf00f_7fff), 15);
-        assert_eq!(trailing_ones_u32(0xffff_ffff), 32);
     }
 
     #[test]
@@ -209,12 +175,7 @@ pub mod clamp {
     /// Clamps the given value to the [0, 255] range.
     #[inline]
     pub fn clamp_u8(val: u16) -> u8 {
-        if val & !0xff == 0 {
-            val as u8
-        }
-        else {
-            0xff
-        }
+        if val & !0xff == 0 { val as u8 } else { 0xff }
     }
 
     /// Clamps the given value to the [-128, 127] range.
@@ -244,12 +205,7 @@ pub mod clamp {
     /// Clamps the given value to the [0, 65_535] range.
     #[inline]
     pub fn clamp_u16(val: u32) -> u16 {
-        if val & !0xffff == 0 {
-            val as u16
-        }
-        else {
-            0xffff
-        }
+        if val & !0xffff == 0 { val as u16 } else { 0xffff }
     }
 
     /// Clamps the given value to the [-32_767, 32_768] range.
@@ -266,12 +222,7 @@ pub mod clamp {
     /// Clamps the given value to the [0, 16_777_215] range.
     #[inline]
     pub fn clamp_u24(val: u32) -> u32 {
-        if val & !0x00ff_ffff == 0 {
-            val
-        }
-        else {
-            0x00ff_ffff
-        }
+        if val & !0x00ff_ffff == 0 { val } else { 0x00ff_ffff }
     }
 
     /// Clamps the given value to the [-8_388_608, 8_388_607] range.
@@ -288,12 +239,7 @@ pub mod clamp {
     /// Clamps the given value to the [0, 4_294_967_295] range.
     #[inline]
     pub fn clamp_u32(val: u64) -> u32 {
-        if val & !0xffff_ffff == 0 {
-            val as u32
-        }
-        else {
-            0xffff_ffff
-        }
+        if val & !0xffff_ffff == 0 { val as u32 } else { 0xffff_ffff }
     }
 
     /// Clamps the given value to the [-2_147_483_648, 2_147_483_647] range.
@@ -331,7 +277,7 @@ pub mod clamp {
     #[cfg(test)]
     mod tests {
         use super::*;
-        use std::{i16, i32, i64, i8, u16, u32, u64, u8};
+        use std::{i8, i16, i32, i64, u8, u16, u32, u64};
 
         #[test]
         fn verify_clamp() {
@@ -385,14 +331,7 @@ pub mod text {
     ///
     /// Invalid characters are substituted with the Unicode `U+FFFD REPLACEMENT CHARACTER` (�).
     pub fn decode_ascii_lossy(buf: &[u8]) -> impl Iterator<Item = char> + '_ {
-        buf.iter().map(|&c| {
-            if c.is_ascii() {
-                char::from(c)
-            }
-            else {
-                char::REPLACEMENT_CHARACTER
-            }
-        })
+        buf.iter().map(|&c| if c.is_ascii() { char::from(c) } else { char::REPLACEMENT_CHARACTER })
     }
 
     /// Create an iterator over ISO/IEC 8859-1 encoded characters in `buf`.

@@ -30,12 +30,7 @@ impl FourCc {
     /// A FourCC cannot contain non-ASCII characters. If a non-ASCII character is found, `None` is
     /// returned.
     pub const fn try_new(val: [u8; 4]) -> Option<Self> {
-        if val.is_ascii() {
-            Some(Self(val))
-        }
-        else {
-            None
-        }
+        if val.is_ascii() { Some(Self(val)) } else { None }
     }
 
     /// Returns the contained byte array.
@@ -64,4 +59,34 @@ pub enum Tier {
     Standard,
     /// Use as a fallback if nothing else is available.
     Fallback,
+}
+
+/// `Limit` defines an upper-bound of how much of a resource should be allocated when the amount to
+/// be allocated is specified by the media stream, which is untrusted. A limit will place an
+/// upper-bound on this allocation at the risk of breaking potentially valid streams. Limits are
+/// used to prevent denial-of-service attacks.
+///
+/// All limits can be defaulted to a reasonable value specific to the situation. These defaults will
+/// generally not break any normal streams.
+#[derive(Copy, Clone, Debug, Default)]
+pub enum Limit {
+    /// Do not impose any limit.
+    None,
+    /// Use the a reasonable default specified by the `FormatReader` or `Decoder` implementation.
+    #[default]
+    Default,
+    /// Specify the upper limit of the resource. Units are case specific.
+    Maximum(usize),
+}
+
+impl Limit {
+    /// Gets the numeric limit of the limit, or default value. If there is no limit, None is
+    /// returned.
+    pub fn limit_or_default(&self, default: usize) -> Option<usize> {
+        match self {
+            Limit::None => None,
+            Limit::Default => Some(default),
+            Limit::Maximum(max) => Some(*max),
+        }
+    }
 }

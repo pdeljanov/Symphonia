@@ -309,12 +309,7 @@ impl ReadBytes for MediaSourceStream<'_> {
         // Unlike the io::Read trait, ByteStream returns an end-of-stream error when no more data
         // can be read. If a non-zero read is requested, and 0 bytes are read, return an
         // end-of-stream error.
-        if !buf.is_empty() && read == 0 {
-            unexpected_eof_error()
-        }
-        else {
-            Ok(read)
-        }
+        if !buf.is_empty() && read == 0 { unexpected_eof_error() } else { Ok(read) }
     }
 
     fn read_buf_exact(&mut self, mut buf: &mut [u8]) -> io::Result<()> {
@@ -329,12 +324,7 @@ impl ReadBytes for MediaSourceStream<'_> {
             }
         }
 
-        if !buf.is_empty() {
-            unexpected_eof_error()
-        }
-        else {
-            Ok(())
-        }
+        if !buf.is_empty() { unexpected_eof_error() } else { Ok(()) }
     }
 
     fn scan_bytes_aligned<'a>(

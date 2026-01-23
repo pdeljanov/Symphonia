@@ -14,12 +14,12 @@
 use symphonia_core::audio::{
     AsGenericAudioBufferRef, AudioBuffer, AudioSpec, GenericAudioBufferRef,
 };
+use symphonia_core::codecs::CodecInfo;
 use symphonia_core::codecs::audio::well_known::CODEC_ID_AAC;
 use symphonia_core::codecs::audio::{AudioCodecParameters, AudioDecoderOptions};
 use symphonia_core::codecs::audio::{AudioDecoder, FinalizeResult};
 use symphonia_core::codecs::registry::{RegisterableAudioDecoder, SupportedAudioCodec};
-use symphonia_core::codecs::CodecInfo;
-use symphonia_core::errors::{unsupported_error, Result};
+use symphonia_core::errors::{Result, unsupported_error};
 use symphonia_core::formats::Packet;
 use symphonia_core::io::{BitReaderLtr, FiniteBitStream, ReadBitsLtr};
 use symphonia_core::{codec_profile, support_audio_codec};
@@ -64,12 +64,7 @@ impl M4AInfo {
             _ => unreachable!(),
         };
 
-        if otypeidx >= M4A_TYPES.len() {
-            Ok(M4AType::Unknown)
-        }
-        else {
-            Ok(M4A_TYPES[otypeidx])
-        }
+        if otypeidx >= M4A_TYPES.len() { Ok(M4AType::Unknown) } else { Ok(M4A_TYPES[otypeidx]) }
     }
 
     fn read_sampling_frequency<B: ReadBitsLtr>(bs: &mut B) -> Result<u32> {
@@ -84,12 +79,7 @@ impl M4AInfo {
 
     fn read_channel_config<B: ReadBitsLtr>(bs: &mut B) -> Result<usize> {
         let chidx = bs.read_bits_leq32(4)? as usize;
-        if chidx < AAC_CHANNELS.len() {
-            Ok(AAC_CHANNELS[chidx])
-        }
-        else {
-            Ok(chidx)
-        }
+        if chidx < AAC_CHANNELS.len() { Ok(AAC_CHANNELS[chidx]) } else { Ok(chidx) }
     }
 
     fn read(&mut self, buf: &[u8]) -> Result<()> {
@@ -339,7 +329,11 @@ impl AacDecoder {
 
         //print!("edata:"); for s in edata.iter() { print!(" {:02X}", *s);}println!("");
 
-        if (m4ainfo.otype != M4AType::Lc) || (m4ainfo.channels > 2) || (m4ainfo.samples != 1024) {
+        if m4ainfo.otype != M4AType::Lc
+            || m4ainfo.sbr_present
+            || m4ainfo.channels > 2
+            || m4ainfo.samples != 1024
+        {
             return unsupported_error("aac: aac too complex");
         }
 
@@ -429,9 +423,29 @@ impl AacDecoder {
                         count += bs.read_bits_leq32(8)? as usize;
                         count -= 1;
                     }
-                    for _ in 0..count {
-                        // ext payload
-                        bs.ignore_bits(8)?;
+
+                    // Check if the ID_FIL element contains SBR data. Note that ID_FIL elements with
+                    // SBR data may not contain other extension payloads.
+                    if count > 0 {
+                        let ext_type = bs.read_bits_leq32(4)?;
+
+                        match ext_type {
+                            // EXT_SBR_DATA (0xd)
+                            // EXT_SBR_DATA_CRC (0xe)
+                            0xd | 0xe => self.m4ainfo.sbr_present = true,
+                            // EXT_FILL (0x0)
+                            // EXT_FILL_DATA (0x1)
+                            // EXT_DATA_ELEMENT (0x2)
+                            // EXT_DYNAMIC_RANGE (0xb)
+                            // EXT_SAC_DATA (0xc)
+                            _ => (),
+                        }
+
+                        // Ignore extension payload(s).
+                        bs.ignore_bits(4)?;
+                        for _ in 0..count - 1 {
+                            bs.ignore_bits(8)?;
+                        }
                     }
                 }
                 7 => {

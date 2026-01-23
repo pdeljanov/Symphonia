@@ -9,7 +9,7 @@
 
 use std::sync::Arc;
 
-use symphonia_core::errors::{unsupported_error, Result};
+use symphonia_core::errors::{Result, unsupported_error};
 use symphonia_core::formats::probe::{
     Anchors, ProbeMetadataData, ProbeableMetadata, Score, Scoreable,
 };
@@ -51,7 +51,11 @@ fn read_id3v1<B: ReadBytes>(reader: &mut B, builder: &mut MetadataBuilder) -> Re
     }
 
     if let Some(year) = decode_iso8859_buf(&buf[90..94]) {
-        let tag = Tag::new_from_parts("DATE", year.clone(), Some(StandardTag::Date(year)));
+        let tag = Tag::new_from_parts(
+            "YEAR",
+            year.clone(),
+            year.parse::<u16>().ok().map(StandardTag::RecordingYear),
+        );
         builder.add_tag(tag);
     }
 
@@ -91,12 +95,7 @@ fn decode_iso8859_buf(buf: &[u8]) -> Option<Arc<String>> {
         text::decode_iso8859_1_lossy(buf).take_while(text::filter::not_null).collect::<String>();
 
     // Do not return an empty string.
-    if !text.is_empty() {
-        Some(Arc::new(text))
-    }
-    else {
-        None
-    }
+    if !text.is_empty() { Some(Arc::new(text)) } else { None }
 }
 
 const ID3V1_METADATA_INFO: MetadataInfo =
@@ -141,9 +140,9 @@ impl MetadataReader for Id3v1Reader<'_> {
     }
 
     fn read_all(&mut self) -> Result<MetadataBuffer> {
-        let mut builder = MetadataBuilder::new();
+        let mut builder = MetadataBuilder::new(ID3V1_METADATA_INFO);
         read_id3v1(&mut self.reader, &mut builder)?;
-        Ok(MetadataBuffer { revision: builder.metadata(), side_data: Vec::new() })
+        Ok(MetadataBuffer { revision: builder.build(), side_data: Vec::new() })
     }
 
     fn into_inner<'s>(self: Box<Self>) -> MediaSourceStream<'s>

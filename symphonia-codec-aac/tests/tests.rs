@@ -1,6 +1,6 @@
 use symphonia_codec_aac::{AacDecoder, AdtsReader};
 use symphonia_core::codecs::audio::{
-    well_known::CODEC_ID_AAC, AudioCodecParameters, AudioDecoder, AudioDecoderOptions,
+    AudioCodecParameters, AudioDecoder, AudioDecoderOptions, well_known::CODEC_ID_AAC,
 };
 use symphonia_core::errors;
 use symphonia_core::formats::probe::ProbeableFormat;

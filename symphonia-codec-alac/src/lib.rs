@@ -19,15 +19,15 @@
 use std::cmp::min;
 
 use symphonia_core::audio::{
-    layouts, AsGenericAudioBufferRef, AudioBuffer, AudioMut, AudioSpec, Channels,
-    GenericAudioBufferRef,
+    AsGenericAudioBufferRef, AudioBuffer, AudioMut, AudioSpec, Channels, GenericAudioBufferRef,
+    layouts,
 };
+use symphonia_core::codecs::CodecInfo;
 use symphonia_core::codecs::audio::well_known::CODEC_ID_ALAC;
 use symphonia_core::codecs::audio::{AudioCodecParameters, AudioDecoderOptions};
 use symphonia_core::codecs::audio::{AudioDecoder, FinalizeResult};
 use symphonia_core::codecs::registry::{RegisterableAudioDecoder, SupportedAudioCodec};
-use symphonia_core::codecs::CodecInfo;
-use symphonia_core::errors::{decode_error, unsupported_error, Result};
+use symphonia_core::errors::{Result, decode_error, unsupported_error};
 use symphonia_core::formats::Packet;
 use symphonia_core::io::{BitReaderLtr, BufReader, FiniteStream, ReadBitsLtr, ReadBytes};
 use symphonia_core::support_audio_codec;
@@ -87,11 +87,28 @@ struct MagicCookie {
 }
 
 impl MagicCookie {
-    fn try_read<B: ReadBytes + FiniteStream>(reader: &mut B) -> Result<MagicCookie> {
-        // The magic cookie is either 24 or 48 bytes long.
-        if reader.byte_len() != 24 && reader.byte_len() != 48 {
+    fn try_parse(mut buf: &[u8]) -> Result<MagicCookie> {
+        // The magic cookie must be atleast 24 bytes long.
+        if buf.len() < 24 {
+            return unsupported_error("alac: magic cookie size too small");
+        }
+
+        // The magic cookie may be preceeded by a FRMA atom. Skip over the FRMA atom.
+        if buf[4..8] == *b"frma" {
+            buf = &buf[12..];
+        }
+
+        // The magic cookie may be preceeded by an ALAC atom. Skip over the ALAC atom.
+        if buf[4..8] == *b"alac" {
+            buf = &buf[12..];
+        }
+
+        // The magic cookie must be either 24 or 48 bytes long.
+        if buf.len() != 24 && buf.len() != 48 {
             return unsupported_error("alac: invalid magic cookie size");
         }
+
+        let mut reader = BufReader::new(buf);
 
         let mut config = MagicCookie {
             frame_length: reader.read_be_u32()?,
@@ -416,7 +433,7 @@ impl AlacDecoder {
 
         // Read the config (magic cookie).
         let config = if let Some(extra_data) = &params.extra_data {
-            MagicCookie::try_read(&mut BufReader::new(extra_data))?
+            MagicCookie::try_parse(extra_data)?
         }
         else {
             return unsupported_error("alac: missing extra data");
@@ -658,6 +675,12 @@ fn decode_sce_or_cpe<B: ReadBitsLtr>(
             elem1.predict(&mut out1[..num_samples])?;
 
             if mid_side_weight != 0 {
+                // mid_side_shift should not be bigger than 31 bits as we are shifting i32 to the right
+                // TODO Validate whether it should also not be greater than config.bit_depth.
+                if mid_side_shift > 31 {
+                    return decode_error("alac: mid_side_shift is greater than 31 bit");
+                }
+
                 decorrelate_mid_side(out0, out1, mid_side_weight, mid_side_shift);
             }
         }

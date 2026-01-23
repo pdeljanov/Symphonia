@@ -14,38 +14,44 @@
 #![allow(clippy::identity_op)]
 #![allow(clippy::manual_range_contains)]
 
-use symphonia_core::codecs::registry::{RegisterableAudioDecoder, SupportedAudioCodec};
 use symphonia_core::codecs::CodecInfo;
+use symphonia_core::codecs::registry::{RegisterableAudioDecoder, SupportedAudioCodec};
 use symphonia_core::support_audio_codec;
 
 use symphonia_core::audio::{
     AsGenericAudioBufferRef, Audio, AudioBuffer, AudioMut, AudioSpec, GenericAudioBufferRef,
 };
-use symphonia_core::codecs::audio::well_known::{CODEC_ID_ADPCM_IMA_WAV, CODEC_ID_ADPCM_MS};
+use symphonia_core::codecs::audio::well_known::{
+    CODEC_ID_ADPCM_IMA_QT, CODEC_ID_ADPCM_IMA_WAV, CODEC_ID_ADPCM_MS,
+};
 use symphonia_core::codecs::audio::{AudioCodecId, AudioCodecParameters, AudioDecoderOptions};
 use symphonia_core::codecs::audio::{AudioDecoder, FinalizeResult};
-use symphonia_core::errors::{unsupported_error, Result};
+use symphonia_core::errors::{Result, unsupported_error};
 use symphonia_core::formats::Packet;
 use symphonia_core::io::ReadBytes;
 
-mod codec_ima;
+mod codec_ima_qt;
+mod codec_ima_wav;
 mod codec_ms;
 mod common;
+mod common_ima;
 
 fn is_supported_adpcm_codec(codec_id: AudioCodecId) -> bool {
-    matches!(codec_id, CODEC_ID_ADPCM_MS | CODEC_ID_ADPCM_IMA_WAV)
+    matches!(codec_id, CODEC_ID_ADPCM_MS | CODEC_ID_ADPCM_IMA_WAV | CODEC_ID_ADPCM_IMA_QT)
 }
 
 enum InnerDecoder {
     AdpcmMs,
     AdpcmIma,
+    AdpcmImaQT,
 }
 
 impl InnerDecoder {
     fn decode_mono_fn<B: ReadBytes>(&self) -> impl Fn(&mut B, &mut [i32], usize) -> Result<()> {
         match *self {
             InnerDecoder::AdpcmMs => codec_ms::decode_mono,
-            InnerDecoder::AdpcmIma => codec_ima::decode_mono,
+            InnerDecoder::AdpcmIma => codec_ima_wav::decode_mono,
+            InnerDecoder::AdpcmImaQT => codec_ima_qt::decode_mono,
         }
     }
 
@@ -54,7 +60,8 @@ impl InnerDecoder {
     ) -> impl Fn(&mut B, [&mut [i32]; 2], usize) -> Result<()> {
         match *self {
             InnerDecoder::AdpcmMs => codec_ms::decode_stereo,
-            InnerDecoder::AdpcmIma => codec_ima::decode_stereo,
+            InnerDecoder::AdpcmIma => codec_ima_wav::decode_stereo,
+            InnerDecoder::AdpcmImaQT => codec_ima_qt::decode_stereo,
         }
     }
 }
@@ -88,6 +95,10 @@ impl AdpcmDecoder {
         };
 
         let spec = if let Some(channels) = &params.channels {
+            if channels.count() > 2 {
+                return unsupported_error("adpcm: up to two channels are supported");
+            }
+
             AudioSpec::new(rate, channels.clone())
         }
         else {
@@ -97,6 +108,7 @@ impl AdpcmDecoder {
         let inner_decoder = match params.codec {
             CODEC_ID_ADPCM_MS => InnerDecoder::AdpcmMs,
             CODEC_ID_ADPCM_IMA_WAV => InnerDecoder::AdpcmIma,
+            CODEC_ID_ADPCM_IMA_QT => InnerDecoder::AdpcmImaQT,
             _ => return unsupported_error("adpcm: codec is unsupported"),
         };
 
@@ -195,6 +207,7 @@ impl RegisterableAudioDecoder for AdpcmDecoder {
         &[
             support_audio_codec!(CODEC_ID_ADPCM_MS, "adpcm_ms", "Microsoft ADPCM"),
             support_audio_codec!(CODEC_ID_ADPCM_IMA_WAV, "adpcm_ima_wav", "ADPCM IMA WAV"),
+            support_audio_codec!(CODEC_ID_ADPCM_IMA_QT, "adpcm_ima_qt", "ADPCM IMA QT"),
         ]
     }
 }

@@ -10,15 +10,15 @@ use crate::common::SideData;
 use super::{MapResult, Mapper, PacketParser};
 
 use symphonia_core::audio::{Channels, Position};
-use symphonia_core::codecs::audio::well_known::CODEC_ID_OPUS;
-use symphonia_core::codecs::audio::AudioCodecParameters;
 use symphonia_core::codecs::CodecParameters;
+use symphonia_core::codecs::audio::AudioCodecParameters;
+use symphonia_core::codecs::audio::well_known::CODEC_ID_OPUS;
 use symphonia_core::errors::Result;
 use symphonia_core::formats::Track;
 use symphonia_core::io::{BufReader, ReadBytes};
 use symphonia_core::meta::MetadataBuilder;
 
-use symphonia_metadata::embedded::vorbis;
+use symphonia_metadata::embedded::vorbis::{self, VORBIS_COMMENT_METADATA_INFO};
 
 use log::warn;
 
@@ -254,12 +254,12 @@ impl Mapper for OpusMapper {
 
             if sig == *OGG_OPUS_COMMENT_SIGNATURE {
                 // This packet should be a metadata packet containing a Vorbis Comment.
-                let mut builder = MetadataBuilder::new();
+                let mut builder = MetadataBuilder::new(VORBIS_COMMENT_METADATA_INFO);
                 let mut side_data = Default::default();
 
                 vorbis::read_vorbis_comment(&mut reader, &mut builder, &mut side_data)?;
 
-                let rev = builder.metadata();
+                let rev = builder.build();
 
                 self.need_comment = false;
 

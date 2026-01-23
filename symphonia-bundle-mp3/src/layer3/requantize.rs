@@ -10,7 +10,7 @@ use symphonia_core::io::ReadBitsLtr;
 
 use crate::common::FrameHeader;
 
-use super::{codebooks, common::*, GranuleChannel};
+use super::{GranuleChannel, codebooks, common::*};
 
 use std::cmp::min;
 use std::{f32, f64};

@@ -11,14 +11,16 @@ use super::{MapResult, Mapper, PacketParser};
 
 use symphonia_common::xiph::audio::flac::{MetadataBlockHeader, MetadataBlockType, StreamInfo};
 use symphonia_core::checksum::Crc8Ccitt;
+use symphonia_core::codecs::CodecParameters;
 use symphonia_core::codecs::audio::well_known::CODEC_ID_FLAC;
 use symphonia_core::codecs::audio::{AudioCodecParameters, VerificationCheck};
-use symphonia_core::codecs::CodecParameters;
-use symphonia_core::errors::{decode_error, Result};
+use symphonia_core::errors::{Result, decode_error};
 use symphonia_core::formats::Track;
 use symphonia_core::io::{BufReader, MonitorStream, ReadBytes};
 use symphonia_core::meta::MetadataBuilder;
-use symphonia_metadata::embedded::flac::{read_flac_comment_block, read_flac_picture_block};
+use symphonia_metadata::embedded::flac::{
+    FLAC_METADATA_INFO, read_flac_comment_block, read_flac_picture_block,
+};
 
 use log::warn;
 
@@ -305,7 +307,7 @@ impl Mapper for FlacMapper {
         }
         else if packet_type == 0x00 || packet_type == 0x80 {
             // Packet types 0x00 and 0x80 are invalid.
-            warn!("ogg (flac): flac packet type {} unexpected", packet_type);
+            warn!("ogg (flac): flac packet type {packet_type} unexpected");
             Ok(MapResult::Unknown)
         }
         else {
@@ -316,20 +318,20 @@ impl Mapper for FlacMapper {
 
             match header.block_type {
                 MetadataBlockType::VorbisComment => {
-                    let mut builder = MetadataBuilder::new();
+                    let mut builder = MetadataBuilder::new(FLAC_METADATA_INFO);
 
                     read_flac_comment_block(&mut reader, &mut builder)?;
 
-                    let rev = builder.metadata();
+                    let rev = builder.build();
 
                     Ok(MapResult::SideData { data: SideData::Metadata { rev, side_data: vec![] } })
                 }
                 MetadataBlockType::Picture => {
-                    let mut builder = MetadataBuilder::new();
+                    let mut builder = MetadataBuilder::new(FLAC_METADATA_INFO);
 
                     builder.add_visual(read_flac_picture_block(&mut reader)?);
 
-                    let rev = builder.metadata();
+                    let rev = builder.build();
 
                     Ok(MapResult::SideData { data: SideData::Metadata { rev, side_data: vec![] } })
                 }

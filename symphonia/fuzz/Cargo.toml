@@ -1,11 +1,14 @@
 
 [package]
 name = "symphonia-fuzz"
-version = "0.0.0"
-authors = ["Automatically generated"]
 publish = false
-edition = "2021"
-rust-version = "1.77"
+# Common package metadata located in workspace Cargo.toml.
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
 
 [package.metadata]
 cargo-fuzz = true
@@ -17,7 +20,6 @@ libfuzzer-sys = "0.4"
 path = ".."
 default-features = false
 features = ["all"]
-
 
 # Prevent this from interfering with workspaces
 [workspace]

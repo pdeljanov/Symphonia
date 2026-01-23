@@ -10,17 +10,23 @@ use log::{debug, error, info};
 use std::io::{Seek, SeekFrom};
 use symphonia_core::{
     audio::{Channels, Position},
-    codecs::audio::*,
-    codecs::CodecParameters,
-    errors::{decode_error, seek_error, unsupported_error, Result, SeekErrorKind},
-    formats::prelude::*,
-    formats::probe::{ProbeFormatData, ProbeableFormat, Score, Scoreable},
-    formats::well_known::FORMAT_ID_CAF,
+    codecs::{
+        CodecParameters,
+        audio::{well_known::CODEC_ID_AAC, *},
+    },
+    errors::{Result, SeekErrorKind, decode_error, seek_error, unsupported_error},
+    formats::{
+        prelude::*,
+        probe::{ProbeFormatData, ProbeableFormat, Score, Scoreable},
+        well_known::FORMAT_ID_CAF,
+    },
     io::*,
     meta::{Metadata, MetadataLog},
     support_format,
     units::{TimeBase, TimeStamp},
 };
+
+use symphonia_common::mpeg::formats::*;
 
 const MAX_FRAMES_PER_PACKET: u64 = 1152;
 
@@ -42,8 +48,8 @@ pub struct CafReader<'s> {
 
 enum PacketInfo {
     Unknown,
-    Uncompressed { bytes_per_frame: u32 },
-    Compressed { packets: Vec<CafPacket>, current_packet_index: usize },
+    FixedAudioPacket { bytes_per_packet: u32, frames_per_packet: u32 },
+    VariableAudioPacket { packets: Vec<CafPacket>, current_packet_index: usize },
 }
 
 impl Scoreable for CafReader<'_> {
@@ -72,12 +78,20 @@ impl FormatReader for CafReader<'_> {
 
     fn next_packet(&mut self) -> Result<Option<Packet>> {
         match &mut self.packet_info {
-            PacketInfo::Uncompressed { bytes_per_frame } => {
+            PacketInfo::FixedAudioPacket { bytes_per_packet, frames_per_packet } => {
                 let pos = self.reader.pos();
                 let data_pos = pos - self.data_start_pos;
 
-                let bytes_per_frame = *bytes_per_frame as u64;
-                let max_bytes_to_read = bytes_per_frame * MAX_FRAMES_PER_PACKET;
+                let bytes_per_packet = *bytes_per_packet as u64;
+                let frames_per_packet = *frames_per_packet as u64;
+
+                // frames_per_packet == 1 means uncompressed data which we want to chunk into MAX_FRAMES_PER_PACKET
+                let max_bytes_to_read = if frames_per_packet == 1 {
+                    bytes_per_packet * MAX_FRAMES_PER_PACKET
+                }
+                else {
+                    bytes_per_packet
+                };
 
                 let bytes_remaining = if let Some(data_len) = self.data_len {
                     data_len.saturating_sub(data_pos)
@@ -91,12 +105,12 @@ impl FormatReader for CafReader<'_> {
                 }
 
                 let bytes_to_read = max_bytes_to_read.min(bytes_remaining);
-                let packet_duration = bytes_to_read / bytes_per_frame;
-                let packet_timestamp = data_pos / bytes_per_frame;
+                let packet_duration = bytes_to_read / bytes_per_packet * frames_per_packet;
+                let packet_timestamp = (data_pos / bytes_per_packet) * frames_per_packet;
                 let buffer = self.reader.read_boxed_slice(bytes_to_read as usize)?;
                 Ok(Some(Packet::new_from_boxed_slice(0, packet_timestamp, packet_duration, buffer)))
             }
-            PacketInfo::Compressed { packets, ref mut current_packet_index } => {
+            PacketInfo::VariableAudioPacket { packets, current_packet_index } => {
                 if let Some(packet) = packets.get(*current_packet_index) {
                     *current_packet_index += 1;
                     let buffer = self.reader.read_boxed_slice(packet.size as usize)?;
@@ -150,12 +164,22 @@ impl FormatReader for CafReader<'_> {
         }
 
         match &mut self.packet_info {
-            PacketInfo::Uncompressed { bytes_per_frame } => {
-                // Packetization for PCM data is performed by chunking the stream into
-                // packets of MAX_FRAMES_PER_PACKET frames each.
+            PacketInfo::FixedAudioPacket {
+                bytes_per_packet: bytes_per_frame,
+                frames_per_packet,
+            } => {
+                let frames_per_packet = if *frames_per_packet == 1 {
+                    // Packetization for uncompressed data is performed by chunking the stream into
+                    // packets of MAX_FRAMES_PER_PACKET frames each.
+                    MAX_FRAMES_PER_PACKET
+                }
+                else {
+                    *frames_per_packet as u64
+                };
+
                 // To allow for determinstic packet timestamps, we want the seek to jump to the
                 // packet boundary before the requested seek time.
-                let actual_ts = (required_ts / MAX_FRAMES_PER_PACKET) * MAX_FRAMES_PER_PACKET;
+                let actual_ts = (required_ts / frames_per_packet) * frames_per_packet;
                 let seek_pos = self.data_start_pos + actual_ts * (*bytes_per_frame as u64);
 
                 if self.reader.is_seekable() {
@@ -180,12 +204,12 @@ impl FormatReader for CafReader<'_> {
 
                 Ok(SeekedTo { track_id: 0, actual_ts, required_ts })
             }
-            PacketInfo::Compressed { packets, current_packet_index } => {
+            PacketInfo::VariableAudioPacket { packets, current_packet_index } => {
                 let current_ts = if let Some(packet) = packets.get(*current_packet_index) {
                     TimeStamp::from(packet.start_frame)
                 }
                 else {
-                    error!("invalid packet index: {}", current_packet_index);
+                    error!("invalid packet index: {current_packet_index}");
                     return decode_error("caf: invalid packet index");
                 };
 
@@ -277,7 +301,7 @@ impl<'s> CafReader<'s> {
 
         let file_version = self.reader.read_be_u16()?;
         if file_version != 1 {
-            error!("unsupported file version ({})", file_version);
+            error!("unsupported file version ({file_version})");
             return unsupported_error("caf: unsupported file version");
         }
 
@@ -325,13 +349,28 @@ impl<'s> CafReader<'s> {
             }
         }
 
-        if desc.format_is_compressed() {
-            self.packet_info =
-                PacketInfo::Compressed { packets: Vec::new(), current_packet_index: 0 };
+        // Need to set max_frames_per_packet in all cases in case it is needed (eg. adpcm)
+        if desc.frames_per_packet == 1 {
+            // If uncompressed data, chunk the stream into MAX_FRAMES_PER_PACKET sizes
+            codec_params
+                .with_max_frames_per_packet(MAX_FRAMES_PER_PACKET)
+                .with_frames_per_block(MAX_FRAMES_PER_PACKET);
         }
         else {
-            codec_params.with_max_frames_per_packet(MAX_FRAMES_PER_PACKET).with_frames_per_block(1);
-            self.packet_info = PacketInfo::Uncompressed { bytes_per_frame: desc.bytes_per_packet }
+            codec_params
+                .with_max_frames_per_packet(desc.frames_per_packet as u64)
+                .with_frames_per_block(desc.frames_per_packet as u64);
+        }
+
+        if desc.is_variable_packet_format() {
+            self.packet_info =
+                PacketInfo::VariableAudioPacket { packets: Vec::new(), current_packet_index: 0 };
+        }
+        else {
+            self.packet_info = PacketInfo::FixedAudioPacket {
+                bytes_per_packet: desc.bytes_per_packet,
+                frames_per_packet: desc.frames_per_packet,
+            }
         };
 
         Ok(())
@@ -356,9 +395,16 @@ impl<'s> CafReader<'s> {
                 Some(AudioData(data)) => {
                     self.data_start_pos = data.start_pos;
                     self.data_len = data.data_len;
+
                     if let Some(data_len) = self.data_len {
-                        if let PacketInfo::Uncompressed { bytes_per_frame } = &self.packet_info {
-                            num_frames = Some(data_len / *bytes_per_frame as u64);
+                        if let PacketInfo::FixedAudioPacket {
+                            bytes_per_packet,
+                            frames_per_packet,
+                        } = &self.packet_info
+                        {
+                            num_frames = Some(
+                                (data_len / *bytes_per_packet as u64) * *frames_per_packet as u64,
+                            );
                         }
                     }
                 }
@@ -374,13 +420,37 @@ impl<'s> CafReader<'s> {
                     }
                 }
                 Some(PacketTable(table)) => {
-                    if let PacketInfo::Compressed { ref mut packets, .. } = &mut self.packet_info {
+                    if let PacketInfo::VariableAudioPacket { packets, .. } = &mut self.packet_info {
                         num_frames = Some(table.valid_frames as u64);
                         *packets = table.packets;
                     }
                 }
                 Some(MagicCookie(data)) => {
-                    codec_params.with_extra_data(data);
+                    match codec_params.codec {
+                        CODEC_ID_AAC => {
+                            // For AAC, the magic cookie is an ES Descriptor. However, the extra
+                            // data format for AAC decoders is solely the content of the
+                            // decoder-specific information descriptor.
+                            let mut reader = BufReader::new(&data);
+
+                            let (desc_tag, desc_len) = read_object_descriptor_header(&mut reader)?;
+
+                            if desc_tag == ClassTag::EsDescriptor {
+                                // Parse the ES Descriptor.
+                                let desc = ESDescriptor::read(&mut reader, desc_len)?;
+
+                                // Attach the extra data stored in the decoder-specific
+                                // configuration.
+                                if let Some(info) = desc.dec_config.dec_specific_info {
+                                    codec_params.with_extra_data(info.extra_data);
+                                }
+                            }
+                        }
+                        _ => {
+                            // For all other formats attach the entire magic cookie.
+                            codec_params.with_extra_data(data);
+                        }
+                    }
                 }
                 Some(Free) | None => {}
             }

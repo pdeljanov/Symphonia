@@ -9,13 +9,13 @@ use std::fmt;
 
 use symphonia_core::audio::AmbisonicBFormat;
 use symphonia_core::audio::{ChannelLabel, Channels, Position};
+use symphonia_core::codecs::audio::AudioCodecId;
 use symphonia_core::codecs::audio::well_known::{
     CODEC_ID_ADPCM_IMA_WAV, CODEC_ID_ADPCM_MS, CODEC_ID_PCM_ALAW, CODEC_ID_PCM_F32LE,
     CODEC_ID_PCM_F64LE, CODEC_ID_PCM_MULAW, CODEC_ID_PCM_S16LE, CODEC_ID_PCM_S24LE,
     CODEC_ID_PCM_S32LE, CODEC_ID_PCM_U8,
 };
-use symphonia_core::codecs::audio::AudioCodecId;
-use symphonia_core::errors::{decode_error, unsupported_error, Error, Result};
+use symphonia_core::errors::{Error, Result, decode_error, unsupported_error};
 use symphonia_core::formats::Track;
 use symphonia_core::io::{MediaSourceStream, ReadBytes};
 use symphonia_core::meta::{MetadataBuilder, MetadataRevision};
@@ -28,6 +28,8 @@ use crate::common::{
 };
 
 use log::info;
+
+use super::WAVE_METADATA_INFO;
 
 pub struct WaveFormatChunk {
     /// The number of channels.
@@ -88,7 +90,7 @@ impl WaveFormatChunk {
             _ => {
                 return decode_error(
                     "wav: bits per sample for fmt_pcm must be 8, 16, 24 or 32 bits",
-                )
+                );
             }
         };
 
@@ -273,7 +275,7 @@ impl WaveFormatChunk {
                 // IEEE floating formats do not support truncated sample widths.
                 if bits_per_sample != bits_per_coded_sample {
                     return decode_error(
-                        "wav: bits per sample for fmt_ext IEEE sub-type must equal bits per coded sample"
+                        "wav: bits per sample for fmt_ext IEEE sub-type must equal bits per coded sample",
                     );
                 }
 
@@ -284,7 +286,7 @@ impl WaveFormatChunk {
                     _ => {
                         return decode_error(
                             "wav: bits per sample for fmt_ext IEEE sub-type must be 32 or 64 bits",
-                        )
+                        );
                     }
                 }
             }
@@ -368,20 +370,20 @@ impl WaveFormatChunk {
             //| WaveFormatData::Extensible(WaveFormatExtensible { codec, bits_per_sample, .. })
                 if codec == CODEC_ID_ADPCM_MS =>
             {
-                let frames_per_block = ((((self.block_align - (7 * self.n_channels)) * 8)
-                    / (bits_per_sample * self.n_channels))
-                    + 2) as u64;
+                let frames_per_block = ((self.block_align - (7 * self.n_channels)) as u64 * 8)
+                    / (bits_per_sample * self.n_channels) as u64
+                    + 2;
                 PacketInfo::with_blocks(self.block_align, frames_per_block)
             }
             FormatData::Adpcm(FormatAdpcm { codec, bits_per_sample, .. })
                 if codec == CODEC_ID_ADPCM_IMA_WAV =>
             {
-                let frames_per_block = (((self.block_align - (4 * self.n_channels)) * 8)
-                    / (bits_per_sample * self.n_channels)
-                    + 1) as u64;
+                let frames_per_block = ((self.block_align - (4 * self.n_channels)) as u64 * 8)
+                    / (bits_per_sample * self.n_channels) as u64
+                    + 1;
                 PacketInfo::with_blocks(self.block_align, frames_per_block)
             }
-            _ => Ok(PacketInfo::without_blocks(self.block_align)),
+            _ => Ok(PacketInfo::without_blocks(u32::from(self.block_align))),
         }
     }
 }
@@ -524,7 +526,7 @@ pub struct ListChunk {
 
 impl ListChunk {
     pub fn skip<B: ReadBytes>(&self, reader: &mut B) -> Result<()> {
-        ChunksReader::<NullChunks>::new(self.len, ByteOrder::LittleEndian).finish(reader)
+        ChunksReader::<NullChunks>::new(Some(self.len), ByteOrder::LittleEndian).finish(reader)
     }
 }
 
@@ -563,12 +565,14 @@ impl ParseChunk for InfoChunk {
 }
 
 pub struct DataChunk {
-    pub len: u32,
+    pub len: Option<u32>,
 }
 
 impl ParseChunk for DataChunk {
     fn parse<B: ReadBytes>(_: &mut B, _: [u8; 4], len: u32) -> Result<DataChunk> {
-        Ok(DataChunk { len })
+        // If the length us u32::MAX, that usually indicates the file is streaming and the length
+        // is not known.
+        Ok(DataChunk { len: Some(len).filter(|&len| len != u32::MAX) })
     }
 }
 
@@ -616,9 +620,9 @@ pub fn append_fact_params(track: &mut Track, fact: &FactChunk) {
 }
 
 pub fn read_info_chunk(source: &mut MediaSourceStream<'_>, len: u32) -> Result<MetadataRevision> {
-    let mut list = ChunksReader::<RiffInfoListChunks>::new(len, ByteOrder::LittleEndian);
+    let mut builder = MetadataBuilder::new(WAVE_METADATA_INFO);
 
-    let mut builder = MetadataBuilder::new();
+    let mut list = ChunksReader::<RiffInfoListChunks>::new(Some(len), ByteOrder::LittleEndian);
 
     while let Some(RiffInfoListChunks::Info(info)) = list.next(source)? {
         let info = info.parse(source)?;
@@ -628,7 +632,7 @@ pub fn read_info_chunk(source: &mut MediaSourceStream<'_>, len: u32) -> Result<M
 
     list.finish(source)?;
 
-    Ok(builder.metadata())
+    Ok(builder.build())
 }
 
 /// Corrects a WAVE channel mask that doesn't is not valid for the stated number of channels.

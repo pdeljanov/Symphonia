@@ -11,14 +11,16 @@ use std::collections::HashMap;
 use std::default::Default;
 use std::hash::Hash;
 
+use crate::codecs::CodecInfo;
 use crate::codecs::audio::{AudioCodecId, AudioCodecParameters, AudioDecoder, AudioDecoderOptions};
+#[cfg(feature = "exp-subtitle-codecs")]
 use crate::codecs::subtitle::{
     SubtitleCodecId, SubtitleCodecParameters, SubtitleDecoder, SubtitleDecoderOptions,
 };
+#[cfg(feature = "exp-video-codecs")]
 use crate::codecs::video::{VideoCodecId, VideoCodecParameters, VideoDecoder, VideoDecoderOptions};
-use crate::codecs::CodecInfo;
 use crate::common::Tier;
-use crate::errors::{unsupported_error, Result};
+use crate::errors::{Result, unsupported_error};
 
 /// Description of a supported audio codec.
 #[derive(Copy, Clone)]
@@ -42,6 +44,7 @@ pub trait RegisterableAudioDecoder: AudioDecoder {
 }
 
 /// Description of a supported video codec.
+#[cfg(feature = "exp-video-codecs")]
 #[derive(Copy, Clone)]
 pub struct SupportedVideoCodec {
     pub codec: VideoCodecId,
@@ -50,6 +53,7 @@ pub struct SupportedVideoCodec {
 
 /// To support registration in a codec registry, a `VideoDecoder` must implement the
 /// `RegisterableVideoDecoder` trait.
+#[cfg(feature = "exp-video-codecs")]
 pub trait RegisterableVideoDecoder: VideoDecoder {
     fn try_registry_new(
         params: &VideoCodecParameters,
@@ -63,6 +67,7 @@ pub trait RegisterableVideoDecoder: VideoDecoder {
 }
 
 /// Description of a supported subtitle codec.
+#[cfg(feature = "exp-subtitle-codecs")]
 #[derive(Copy, Clone)]
 pub struct SupportedSubtitleCodec {
     pub codec: SubtitleCodecId,
@@ -71,6 +76,7 @@ pub struct SupportedSubtitleCodec {
 
 /// To support registration in a codec registry, a `SubtitleDecoder` must implement the
 /// `RegisterableSubtitleDecoder` trait.
+#[cfg(feature = "exp-subtitle-codecs")]
 pub trait RegisterableSubtitleDecoded: SubtitleDecoder {
     fn try_registry_new(
         params: &SubtitleCodecParameters,
@@ -88,10 +94,12 @@ pub type AudioDecoderFactoryFn =
     fn(&AudioCodecParameters, &AudioDecoderOptions) -> Result<Box<dyn AudioDecoder>>;
 
 /// `VideoDecoder` factory function. Creates a boxed `VideoDecoder`.
+#[cfg(feature = "exp-video-codecs")]
 pub type VideoDecoderFactoryFn =
     fn(&VideoCodecParameters, &VideoDecoderOptions) -> Result<Box<dyn VideoDecoder>>;
 
 /// `SubtitleDecoder` factory function. Creates a boxed `SubtitleDecoder`.
+#[cfg(feature = "exp-subtitle-codecs")]
 pub type SubtitleDecoderFactoryFn =
     fn(&SubtitleCodecParameters, &SubtitleDecoderOptions) -> Result<Box<dyn SubtitleDecoder>>;
 
@@ -104,6 +112,7 @@ pub struct RegisteredAudioDecoder {
 }
 
 /// Registration details of a video decoder for a particular video codec.
+#[cfg(feature = "exp-video-codecs")]
 pub struct RegisteredVideoDecoder {
     /// Video codec details.
     pub codec: SupportedVideoCodec,
@@ -112,6 +121,7 @@ pub struct RegisteredVideoDecoder {
 }
 
 /// Registration details of a subtitle decoder for a particular subtitle codec.
+#[cfg(feature = "exp-subtitle-codecs")]
 pub struct RegisteredSubtitleDecoder {
     /// Subtitle codec details.
     pub codec: SupportedSubtitleCodec,
@@ -165,7 +175,9 @@ where
 #[derive(Default)]
 pub struct CodecRegistry {
     audio: InnerCodecRegistry<AudioCodecId, RegisteredAudioDecoder>,
+    #[cfg(feature = "exp-video-codecs")]
     video: InnerCodecRegistry<VideoCodecId, RegisteredVideoDecoder>,
+    #[cfg(feature = "exp-subtitle-codecs")]
     subtitle: InnerCodecRegistry<SubtitleCodecId, RegisteredSubtitleDecoder>,
 }
 
@@ -174,7 +186,9 @@ impl CodecRegistry {
     pub fn new() -> Self {
         CodecRegistry {
             audio: Default::default(),
+            #[cfg(feature = "exp-video-codecs")]
             video: Default::default(),
+            #[cfg(feature = "exp-subtitle-codecs")]
             subtitle: Default::default(),
         }
     }
@@ -197,12 +211,14 @@ impl CodecRegistry {
 
     /// Get the registration information of the most preferred video decoder for the specified
     /// video codec.
+    #[cfg(feature = "exp-video-codecs")]
     pub fn get_video_decoder(&self, id: VideoCodecId) -> Option<&RegisteredVideoDecoder> {
         self.video.get(&id)
     }
 
     /// Get the registration information of the video decoder at the specified tier for the
     /// specified video codec.
+    #[cfg(feature = "exp-video-codecs")]
     pub fn get_video_decoder_at_tier(
         &self,
         tier: Tier,
@@ -213,12 +229,14 @@ impl CodecRegistry {
 
     /// Get the registration information of the most preferred subtitle decoder for the specified
     /// subtitle codec.
+    #[cfg(feature = "exp-subtitle-codecs")]
     pub fn get_subtitle_decoder(&self, id: SubtitleCodecId) -> Option<&RegisteredSubtitleDecoder> {
         self.subtitle.get(&id)
     }
 
     /// Get the registration information of the subtitle decoder at the specified tier for the
     /// specified subtitle codec.
+    #[cfg(feature = "exp-subtitle-codecs")]
     pub fn get_subtitle_decoder_at_tier(
         &self,
         tier: Tier,
@@ -254,6 +272,7 @@ impl CodecRegistry {
     ///
     /// If a supported video codec was previously registered by another video decoder at the same
     /// tier, it will be replaced within the registry.
+    #[cfg(feature = "exp-video-codecs")]
     pub fn register_video_decoder<C: RegisterableVideoDecoder>(&mut self) {
         self.register_video_decoder_at_tier::<C>(Tier::Standard);
     }
@@ -262,6 +281,7 @@ impl CodecRegistry {
     ///
     /// If a supported codec was previously registered by another video decoder at the same tier, it
     /// will be replaced within the registry.
+    #[cfg(feature = "exp-video-codecs")]
     pub fn register_video_decoder_at_tier<C: RegisterableVideoDecoder>(&mut self, tier: Tier) {
         for codec in C::supported_codecs() {
             let reg = RegisteredVideoDecoder {
@@ -277,6 +297,7 @@ impl CodecRegistry {
     ///
     /// If a supported subtitle codec was previously registered by another subtitle decoder at the
     /// same tier, it will be replaced within the registry.
+    #[cfg(feature = "exp-subtitle-codecs")]
     pub fn register_subtitle_decoder<C: RegisterableSubtitleDecoded>(&mut self) {
         self.register_subtitle_decoder_at_tier::<C>(Tier::Standard);
     }
@@ -285,6 +306,7 @@ impl CodecRegistry {
     ///
     /// If a supported codec was previously registered by another subtitle decoder at the same tier,
     /// it will be replaced within the registry.
+    #[cfg(feature = "exp-subtitle-codecs")]
     pub fn register_subtitle_decoder_at_tier<C: RegisterableSubtitleDecoded>(
         &mut self,
         tier: Tier,
@@ -324,6 +346,7 @@ impl CodecRegistry {
     /// found, it will be instantiated with the provided video codec parameters and video decoder
     /// options. If a suitable decoder could not be found, or the decoder could not be instantiated,
     /// an error will be returned.
+    #[cfg(feature = "exp-video-codecs")]
     pub fn make_video_decoder(
         &self,
         params: &VideoCodecParameters,
@@ -343,6 +366,7 @@ impl CodecRegistry {
     /// is found, it will be instantiated with the provided subtitle codec parameters and subtitle
     /// decoder options. If a suitable decoder could not be found, or the decoder could not be
     /// instantiated, an error will be returned.
+    #[cfg(feature = "exp-subtitle-codecs")]
     pub fn make_subtitle_decoder(
         &self,
         params: &SubtitleCodecParameters,

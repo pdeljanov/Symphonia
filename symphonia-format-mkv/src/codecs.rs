@@ -15,16 +15,17 @@ use symphonia_common::mpeg::video::{
     AVCDecoderConfigurationRecord, HEVCDecoderConfigurationRecord,
 };
 use symphonia_common::xiph::audio::flac::{MetadataBlockHeader, MetadataBlockType};
+use symphonia_core::audio::Channels;
 use symphonia_core::audio::sample::SampleFormat;
-use symphonia_core::codecs::audio::well_known::{CODEC_ID_FLAC, CODEC_ID_VORBIS};
 use symphonia_core::codecs::audio::AudioCodecParameters;
-use symphonia_core::codecs::audio::{well_known::*, AudioCodecId};
-use symphonia_core::codecs::subtitle::{well_known::*, SubtitleCodecId, SubtitleCodecParameters};
+use symphonia_core::codecs::audio::well_known::{CODEC_ID_FLAC, CODEC_ID_VORBIS};
+use symphonia_core::codecs::audio::{AudioCodecId, well_known::*};
+use symphonia_core::codecs::subtitle::{SubtitleCodecId, SubtitleCodecParameters, well_known::*};
 use symphonia_core::codecs::video::{
-    well_known::*, VideoCodecId, VideoCodecParameters, VideoExtraData, VIDEO_EXTRA_DATA_ID_NULL,
+    VIDEO_EXTRA_DATA_ID_NULL, VideoCodecId, VideoCodecParameters, VideoExtraData, well_known::*,
 };
 use symphonia_core::codecs::{CodecId, CodecParameters, CodecProfile};
-use symphonia_core::errors::{decode_error, Error, Result};
+use symphonia_core::errors::{Error, Result, decode_error};
 use symphonia_core::io::{BufReader, ReadBytes};
 
 use crate::lacing::read_xiph_sizes;
@@ -66,8 +67,9 @@ fn make_audio_codec_params(
     }
 
     codec_params.with_sample_rate(audio.sampling_frequency.round() as u32);
+    codec_params.with_channels(Channels::Discrete(audio.channels.get() as u16));
 
-    let format = audio.bit_depth.and_then(|bits| match bits {
+    let format = audio.bit_depth.and_then(|bits| match bits.get() {
         8 => Some(SampleFormat::S8),
         16 => Some(SampleFormat::S16),
         24 => Some(SampleFormat::S24),
@@ -80,7 +82,7 @@ fn make_audio_codec_params(
     }
 
     if let Some(bits) = audio.bit_depth {
-        codec_params.with_bits_per_sample(bits as u32);
+        codec_params.with_bits_per_sample(bits.get() as u32);
     }
 
     if let Some(codec_private) = track.codec_private {
@@ -113,8 +115,14 @@ fn make_video_codec_params(
 
     let mut codec_params = VideoCodecParameters {
         codec: id,
-        width: Some(video.pixel_width),
-        height: Some(video.pixel_height),
+        width: Some(
+            u16::try_from(video.pixel_width.get())
+                .map_err(|_| Error::Unsupported("mkv: video width too large"))?,
+        ),
+        height: Some(
+            u16::try_from(video.pixel_height.get())
+                .map_err(|_| Error::Unsupported("mkv: video height too large"))?,
+        ),
         ..Default::default()
     };
 
@@ -263,19 +271,19 @@ fn get_codec_id(track: &TrackElement) -> Option<CodecId> {
         "A_REAL/COOK" => CodecId::Audio(CODEC_ID_COOK),
         "A_REAL/SIPR" => CodecId::Audio(CODEC_ID_SIPR),
         "A_REAL/RALF" => CodecId::Audio(CODEC_ID_RALF),
-        "A_PCM/INT/BIG" => match bit_depth? {
+        "A_PCM/INT/BIG" => match bit_depth?.get() {
             16 => CodecId::Audio(CODEC_ID_PCM_S16BE),
             24 => CodecId::Audio(CODEC_ID_PCM_S24BE),
             32 => CodecId::Audio(CODEC_ID_PCM_S32BE),
             _ => return None,
         },
-        "A_PCM/INT/LIT" => match bit_depth? {
+        "A_PCM/INT/LIT" => match bit_depth?.get() {
             16 => CodecId::Audio(CODEC_ID_PCM_S16LE),
             24 => CodecId::Audio(CODEC_ID_PCM_S24LE),
             32 => CodecId::Audio(CODEC_ID_PCM_S32LE),
             _ => return None,
         },
-        "A_PCM/FLOAT/IEEE" => match bit_depth? {
+        "A_PCM/FLOAT/IEEE" => match bit_depth?.get() {
             32 => CodecId::Audio(CODEC_ID_PCM_F32LE),
             64 => CodecId::Audio(CODEC_ID_PCM_F64LE),
             _ => return None,

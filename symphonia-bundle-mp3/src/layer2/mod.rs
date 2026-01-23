@@ -141,12 +141,7 @@ fn find_sb_info(header: &FrameHeader) -> &'static SbInfo {
 
         if bitrate_per_channel <= 48_000 {
             // Table 3-B.2c and 3-B.2d are only used for bitrates <= 48 kbit/s.
-            if header.sample_rate == 32_000 {
-                3
-            }
-            else {
-                2
-            }
+            if header.sample_rate == 32_000 { 3 } else { 2 }
         }
         else if bitrate_per_channel <= 80_000 {
             // Table 3-B.2a is always used for 48 kbit/s < bitrates <= 80 kbits/s.
@@ -232,6 +227,7 @@ impl Layer2 {
 }
 
 impl Layer for Layer2 {
+    #[allow(clippy::needless_range_loop)]
     fn decode(
         &mut self,
         reader: &mut BufReader<'_>,
@@ -273,6 +269,7 @@ impl Layer for Layer2 {
         }
 
         // Read the class index (allocation in the standard) for each intensity coded sub-band.
+        // NOTE: This loop causes a false positive with clippy.
         for sb in bound..sb_info.sblimit {
             let nbal = find_sb_quant_info(sb_info, sb).nbal;
 

@@ -1,16 +1,17 @@
 [package]
 name = "symphonia-core"
-version = "0.5.4"
 description = "Project Symphonia shared structs, traits, and features."
-homepage = "https://github.com/pdeljanov/Symphonia"
-repository = "https://github.com/pdeljanov/Symphonia"
 authors = ["Philip Deljanov <philip.deljanov@gmail.com>"]
-license = "MPL-2.0"
 readme = "README.md"
 categories = ["multimedia", "multimedia::audio", "multimedia::encoding"]
 keywords = ["audio", "codec", "decoder", "multimedia", "media"]
-edition = "2021"
-rust-version = "1.77"
+# Common package metadata located in workspace Cargo.toml.
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
 
 [features]
 default = []
@@ -27,6 +28,10 @@ opt-simd = [
     "opt-simd-neon",
 ]
 
+# Experimental features.
+exp-subtitle-codecs = []
+exp-video-codecs = []
+
 [dependencies]
 bitflags = "2.4.2"
 bytemuck = "1.7"
@@ -38,4 +43,9 @@ smallvec = "1.13.1"
 [dependencies.rustfft]
 version = "6.1.0"
 optional = true
+default-features = false
+
+[dev-dependencies.rand]
+version = "0.9.2"
+features = ["small_rng"]
 default-features = false

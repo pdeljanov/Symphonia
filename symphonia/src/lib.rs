@@ -88,6 +88,24 @@
 //!
 //! **Tip:** All SIMD optimizations can be enabled with the `opt-simd` feature flag.
 //!
+//! # Experimental Features
+//!
+//! Previews of experimental new features may be enabled by using feature flags. Experimental
+//! features should be used for development purposes only. Before using an experimental feature,
+//! please observe the warnings below. Never use experimental features in a production application.
+//!
+//! | Experimental Feature   | Feature Flag          |
+//! |------------------------|-----------------------|
+//! | Subtitle codec support | `exp-subtitle-codecs` |
+//! | Video codec support    | `exp-video-codecs`    |
+//!
+//! ## Warnings
+//!
+//! * SemVer compatibilty is **not** guaranteed. Be prepared for build failures.
+//! * Experimental features and their associated feature flags **may be removed at any time.**
+//! * Functionality **may change or break at any time.**
+//! * Again, **never** use in any production application.
+//!
 //! # Usage
 //!
 //! The following steps describe a basic usage of Symphonia:

@@ -8,9 +8,9 @@
 use log::{debug, error, info, warn};
 use std::{convert::TryFrom, fmt, mem::size_of, str};
 use symphonia_core::{
-    audio::{layouts, AmbisonicBFormat, ChannelLabel, Channels, Position},
-    codecs::audio::{well_known::*, AudioCodecId},
-    errors::{decode_error, unsupported_error, Error, Result},
+    audio::{AmbisonicBFormat, ChannelLabel, Channels, Position, layouts},
+    codecs::audio::{AudioCodecId, well_known::*},
+    errors::{Error, Result, decode_error, unsupported_error},
     io::{MediaSourceStream, ReadBytes},
 };
 
@@ -181,7 +181,7 @@ impl AudioDescription {
                         (64, true) => CODEC_ID_PCM_F64LE,
                         (64, false) => CODEC_ID_PCM_F64BE,
                         (bits, _) => {
-                            error!("unsupported PCM floating point format (bits: {})", bits);
+                            error!("unsupported PCM floating point format (bits: {bits})");
                             return unsupported_error("caf: unsupported bits per channel");
                         }
                     }
@@ -195,13 +195,13 @@ impl AudioDescription {
                         (32, true) => CODEC_ID_PCM_S32LE,
                         (32, false) => CODEC_ID_PCM_S32BE,
                         (bits, _) => {
-                            error!("unsupported PCM integer format (bits: {})", bits);
+                            error!("unsupported PCM integer format (bits: {bits})");
                             return unsupported_error("caf: unsupported bits per channel");
                         }
                     }
                 }
             }
-            AppleIMA4 => CODEC_ID_ADPCM_IMA_WAV,
+            AppleIMA4 => CODEC_ID_ADPCM_IMA_QT,
             MPEG4AAC => CODEC_ID_AAC,
             ULaw => CODEC_ID_PCM_MULAW,
             ALaw => CODEC_ID_PCM_ALAW,
@@ -212,7 +212,7 @@ impl AudioDescription {
             Flac => CODEC_ID_FLAC,
             Opus => CODEC_ID_OPUS,
             unsupported => {
-                error!("unsupported codec ({:?})", unsupported);
+                error!("unsupported codec ({unsupported:?})");
                 return unsupported_error("caf: unsupported codec");
             }
         };
@@ -220,8 +220,8 @@ impl AudioDescription {
         Ok(result)
     }
 
-    pub fn format_is_compressed(&self) -> bool {
-        self.bits_per_channel == 0
+    pub fn is_variable_packet_format(&self) -> bool {
+        self.bytes_per_packet == 0 || self.frames_per_packet == 0
     }
 }
 
@@ -248,7 +248,7 @@ impl AudioData {
         }
 
         let data_len = (chunk_size - edit_count_offset) as u64;
-        debug!("data_len: {}", data_len);
+        debug!("data_len: {data_len}");
         reader.ignore_bytes(data_len)?;
         Ok(Self { _edit_count: edit_count, start_pos, data_len: Some(data_len) })
     }
@@ -288,7 +288,7 @@ impl AudioDescriptionFormatId {
             b"ima4" => AppleIMA4,
             b"aac " => {
                 if format_flags != 2 {
-                    warn!("undocumented AAC object type ({})", format_flags);
+                    warn!("undocumented AAC object type ({format_flags})");
                 }
                 return Ok(MPEG4AAC);
             }
@@ -304,13 +304,13 @@ impl AudioDescriptionFormatId {
             b"flac" => Flac,
             b"opus" => Opus,
             other => {
-                error!("unsupported format id ({:?})", other);
+                error!("unsupported format id ({other:?})");
                 return unsupported_error("caf: unsupported format id");
             }
         };
 
         if format_flags != 0 {
-            info!("non-zero format flags ({})", format_flags);
+            info!("non-zero format flags ({format_flags})");
         }
 
         Ok(result)
@@ -385,7 +385,7 @@ impl ChannelLayout {
                             ChannelLabel::Ambisonic((acn - CHANNEL_LABEL_HOA_ACN_0) as u16)
                         }
                         unsupported => {
-                            warn!("unsupported channel label: {}", unsupported);
+                            warn!("unsupported channel label: {unsupported}");
                             return None;
                         }
                     };
@@ -416,7 +416,7 @@ impl ChannelLayout {
             LAYOUT_TAG_MPEG_7_1_A => layouts::CHANNEL_LAYOUT_MPEG_7P1_A,
             LAYOUT_TAG_DVD_10 => layouts::CHANNEL_LAYOUT_3P1,
             unsupported => {
-                debug!("unsupported channel layout: {}", unsupported);
+                debug!("unsupported channel layout: {unsupported}");
                 return None;
             }
         };
@@ -468,13 +468,13 @@ impl PacketTable {
 
         let total_packets = reader.read_be_i64()?;
         if total_packets < 0 {
-            error!("invalid number of packets in the packet table ({})", total_packets);
+            error!("invalid number of packets in the packet table ({total_packets})");
             return decode_error("caf: invalid number of packets in the packet table");
         }
 
         let valid_frames = reader.read_be_i64()?;
         if valid_frames < 0 {
-            error!("invalid number of frames in the packet table ({})", valid_frames);
+            error!("invalid number of frames in the packet table ({valid_frames})");
             return decode_error("caf: invalid number of frames in the packet table");
         }
 
@@ -535,8 +535,7 @@ impl PacketTable {
             (_, _) => {
                 if total_packets > 0 {
                     error!(
-                        "unexpected packet table for constant bit rate ({} packets)",
-                        total_packets
+                        "unexpected packet table for constant bit rate ({total_packets} packets)"
                     );
                     return decode_error(
                         "caf: unexpected packet table for constant bit rate format",
@@ -578,7 +577,7 @@ pub struct CafPacket {
 }
 
 fn invalid_chunk_size_error<T>(chunk_type: &str, chunk_size: i64) -> Result<T> {
-    error!("invalid {} chunk size ({})", chunk_type, chunk_size);
+    error!("invalid {chunk_type} chunk size ({chunk_size})");
     decode_error("caf: invalid chunk size")
 }
 

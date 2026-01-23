@@ -114,7 +114,6 @@ noop_parser!(parse_conductor, StandardTag::Conductor);
 noop_parser!(parse_copyright, StandardTag::Copyright);
 noop_parser!(parse_cuetoolsdb_disc_confidence, StandardTag::CueToolsDbDiscConfidence);
 noop_parser!(parse_cuetoolsdb_track_confidence, StandardTag::CueToolsDbTrackConfidence);
-noop_parser!(parse_date, StandardTag::Date);
 noop_parser!(parse_description, StandardTag::Description);
 
 pub fn parse_disc_number_exclusive(v: Arc<String>) -> StandardTagPair {
@@ -196,10 +195,19 @@ noop_parser!(parse_musicbrainz_work_id, StandardTag::MusicBrainzWorkId);
 noop_parser!(parse_opus, StandardTag::Opus);
 noop_parser!(parse_original_album, StandardTag::OriginalAlbum);
 noop_parser!(parse_original_artist, StandardTag::OriginalArtist);
-noop_parser!(parse_original_date, StandardTag::OriginalDate);
+noop_parser!(parse_original_recording_date, StandardTag::OriginalRecordingDate);
+noop_parser!(parse_original_recording_time, StandardTag::OriginalRecordingTime);
 
-pub fn parse_original_year(v: Arc<String>) -> StandardTagPair {
-    let year = v.parse::<u16>().ok().map(StandardTag::OriginalYear);
+pub fn parse_original_recording_year(v: Arc<String>) -> StandardTagPair {
+    let year = v.parse::<u16>().ok().map(StandardTag::OriginalRecordingYear);
+    [year, None]
+}
+
+noop_parser!(parse_original_release_date, StandardTag::OriginalReleaseDate);
+noop_parser!(parse_original_release_time, StandardTag::OriginalReleaseTime);
+
+pub fn parse_original_release_year(v: Arc<String>) -> StandardTagPair {
+    let year = v.parse::<u16>().ok().map(StandardTag::OriginalReleaseYear);
     [year, None]
 }
 
@@ -230,12 +238,34 @@ noop_parser!(parse_podcast_keywords, StandardTag::PodcastKeywords);
 noop_parser!(parse_producer, StandardTag::Producer);
 noop_parser!(parse_production_copyright, StandardTag::ProductionCopyright);
 // noop_parser!(parse_purchase_date, StandardTag::PurchaseDate);
-noop_parser!(parse_rating, StandardTag::Rating);
+
+pub fn parse_rating(v: Arc<String>) -> StandardTagPair {
+    // 0 - 100 rating scale to PPM.
+    let rating = match v.parse::<u32>() {
+        Ok(num) if num <= 100 => Some(StandardTag::Rating(num * 10000)),
+        _ => None,
+    };
+    [rating, None]
+}
+
 noop_parser!(parse_recording_date, StandardTag::RecordingDate);
 noop_parser!(parse_recording_location, StandardTag::RecordingLocation);
-// noop_parser!(parse_recording_time, StandardTag::RecordingTime);
+noop_parser!(parse_recording_time, StandardTag::RecordingTime);
+
+pub fn parse_recording_year(v: Arc<String>) -> StandardTagPair {
+    let year = v.parse::<u16>().ok().map(StandardTag::RecordingYear);
+    [year, None]
+}
+
 noop_parser!(parse_release_country, StandardTag::ReleaseCountry);
 noop_parser!(parse_release_date, StandardTag::ReleaseDate);
+noop_parser!(parse_release_time, StandardTag::ReleaseTime);
+
+pub fn parse_release_year(v: Arc<String>) -> StandardTagPair {
+    let year = v.parse::<u16>().ok().map(StandardTag::ReleaseYear);
+    [year, None]
+}
+
 noop_parser!(parse_remixer, StandardTag::Remixer);
 
 // Parser ReplayGain string into floating point dB values?
@@ -246,7 +276,6 @@ noop_parser!(parse_replaygain_reference_loudness, StandardTag::ReplayGainReferen
 noop_parser!(parse_replaygain_track_gain, StandardTag::ReplayGainTrackGain);
 noop_parser!(parse_replaygain_track_peak, StandardTag::ReplayGainTrackPeak);
 noop_parser!(parse_replaygain_track_range, StandardTag::ReplayGainTrackRange);
-
 noop_parser!(parse_script, StandardTag::Script);
 noop_parser!(parse_sort_album, StandardTag::SortAlbum);
 noop_parser!(parse_sort_album_artist, StandardTag::SortAlbumArtist);

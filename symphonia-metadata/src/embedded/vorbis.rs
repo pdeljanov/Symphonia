@@ -13,11 +13,12 @@ use std::sync::Arc;
 use lazy_static::lazy_static;
 use log::warn;
 
-use symphonia_core::errors::{decode_error, Error, Result};
+use symphonia_core::errors::{Error, Result, decode_error};
 use symphonia_core::io::{BufReader, ReadBytes};
+use symphonia_core::meta::well_known::METADATA_ID_VORBIS_COMMENT;
 use symphonia_core::meta::{
-    Chapter, ChapterGroup, ChapterGroupItem, MetadataBuilder, MetadataSideData, RawTag,
-    StandardTag, Tag, Visual,
+    Chapter, ChapterGroup, ChapterGroupItem, MetadataBuilder, MetadataInfo, MetadataSideData,
+    RawTag, StandardTag, Tag, Visual,
 };
 use symphonia_core::units::Time;
 use symphonia_core::util::text;
@@ -26,6 +27,12 @@ use crate::embedded::flac;
 use crate::utils::base64;
 use crate::utils::images::try_get_image_info;
 use crate::utils::std_tag::*;
+
+pub const VORBIS_COMMENT_METADATA_INFO: MetadataInfo = MetadataInfo {
+    metadata: METADATA_ID_VORBIS_COMMENT,
+    short_name: "vorbis",
+    long_name: "Vorbis Comment",
+};
 
 lazy_static! {
     static ref VORBIS_COMMENT_MAP: RawTagParserMap = {
@@ -66,7 +73,7 @@ lazy_static! {
         m.insert("copyright"                    , parse_copyright);
         m.insert("ctdbdiscconfidence"           , parse_cuetoolsdb_disc_confidence);
         m.insert("ctdbtrackconfidence"          , parse_cuetoolsdb_track_confidence);
-        m.insert("date"                         , parse_date);
+        m.insert("date"                         , parse_recording_date);
         m.insert("description"                  , parse_description);
         m.insert("disc"                         , parse_disc_number_exclusive);
         m.insert("discnumber"                   , parse_disc_number);
@@ -110,8 +117,8 @@ lazy_static! {
         m.insert("musicbrainz_workid"           , parse_musicbrainz_work_id);
         m.insert("opus"                         , parse_opus);
         m.insert("organization"                 , parse_label);
-        m.insert("originaldate"                 , parse_original_date);
-        m.insert("originalyear"                 , parse_original_year);
+        m.insert("originaldate"                 , parse_original_release_date);
+        m.insert("originalyear"                 , parse_original_release_year);
         m.insert("part"                         , parse_part);
         m.insert("partnumber"                   , parse_part_number_exclusive);
         m.insert("performer"                    , parse_performer);
@@ -140,11 +147,10 @@ lazy_static! {
         m.insert("tracktotal"                   , parse_track_total);
         m.insert("unsyncedlyrics"               , parse_lyrics);
         m.insert("upc"                          , parse_ident_upc);
-        m.insert("version"                      , parse_remixer);
         m.insert("version"                      , parse_version);
         m.insert("work"                         , parse_work);
         m.insert("writer"                       , parse_writer);
-        m.insert("year"                         , parse_date);
+        m.insert("year"                         , parse_recording_year);
         m
     };
 }
@@ -405,7 +411,7 @@ pub fn read_vorbis_comment<B: ReadBytes>(
                     chapters.entry(info.key.num).or_default().push(info);
                 }
             },
-            Err(err) => warn!("{}", err),
+            Err(err) => warn!("{err}"),
         }
     }
 
@@ -428,7 +434,7 @@ pub fn read_vorbis_comment<B: ReadBytes>(
 
                             // "NAME" and "URL" are the only standardized keys for chapters.
                             let std_tag = if key.eq_ignore_ascii_case("name") {
-                                Some(StandardTag::TrackTitle(value.clone()))
+                                Some(StandardTag::ChapterTitle(value.clone()))
                             }
                             else if key.eq_ignore_ascii_case("url") {
                                 Some(StandardTag::Url(value.clone()))

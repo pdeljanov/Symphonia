@@ -13,11 +13,11 @@ use crate::audio::conv::FromSample;
 use crate::audio::sample::{Sample, SampleBytes};
 use crate::errors::Result;
 
-use super::{util::*, AudioPlanes, AudioPlanesMut};
 use super::{
     Audio, AudioBufferBytes, AudioBytes, AudioMut, AudioSlice, AudioSliceMut, AudioSpec,
     Interleaved, Position,
 };
+use super::{AudioPlanes, AudioPlanesMut, util::*};
 
 /// The maximum number of audio plane slices that will be stored on the stack before storing the
 /// slices on the heap.

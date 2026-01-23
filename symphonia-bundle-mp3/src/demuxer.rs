@@ -8,10 +8,10 @@
 use symphonia_core::support_format;
 
 use symphonia_core::checksum::Crc16AnsiLe;
-use symphonia_core::codecs::audio::well_known::{CODEC_ID_MP1, CODEC_ID_MP2, CODEC_ID_MP3};
-use symphonia_core::codecs::audio::AudioCodecParameters;
 use symphonia_core::codecs::CodecParameters;
-use symphonia_core::errors::{seek_error, Error, Result, SeekErrorKind};
+use symphonia_core::codecs::audio::AudioCodecParameters;
+use symphonia_core::codecs::audio::well_known::{CODEC_ID_MP1, CODEC_ID_MP2, CODEC_ID_MP3};
+use symphonia_core::errors::{Error, Result, SeekErrorKind, seek_error};
 use symphonia_core::formats::prelude::*;
 use symphonia_core::formats::probe::{ProbeFormatData, ProbeableFormat, Score, Scoreable};
 use symphonia_core::formats::well_known::{FORMAT_ID_MP1, FORMAT_ID_MP2, FORMAT_ID_MP3};
@@ -260,7 +260,7 @@ impl FormatReader for MpaReader<'_> {
             return seek_error(SeekErrorKind::ForwardOnly);
         }
 
-        debug!("seeking to ts={} (+{} delay = {})", desired_ts, delay, required_ts);
+        debug!("seeking to ts={desired_ts} (+{delay} delay = {required_ts})");
 
         // Step 1
         //
@@ -857,7 +857,7 @@ fn try_read_info_tag_inner(buf: &[u8], header: &FrameHeader) -> Result<Option<Xi
         };
 
         // If there is no CRC, then assume the tag is correct. Otherwise, use the CRC.
-        let is_tag_ok = crc.map_or(true, |crc| crc == reader.monitor().crc());
+        let is_tag_ok = crc.is_none_or(|crc| crc == reader.monitor().crc());
 
         if is_tag_ok {
             // The CRC matched or is not present.

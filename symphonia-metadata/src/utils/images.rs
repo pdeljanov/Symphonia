@@ -9,7 +9,7 @@
 
 use std::num::NonZeroU8;
 
-use symphonia_core::errors::{decode_error, unsupported_error, Result};
+use symphonia_core::errors::{Result, decode_error, unsupported_error};
 use symphonia_core::io::{BufReader, ReadBytes};
 use symphonia_core::meta::{ColorMode, ColorModel, ColorPaletteInfo, Size};
 
@@ -64,7 +64,16 @@ pub fn try_get_image_info(buf: &[u8]) -> Option<ImageInfo> {
 fn parse_jpeg(mut reader: BufReader<'_>) -> Result<ImageInfo> {
     while reader.read_u8()? == 0xff {
         let chunk_type = reader.read_u8()?;
+
+        // Skip parameter-less markers, see https://github.com/corkami/formats/blob/master/image/jpeg.md
+        if chunk_type >= 0xd0 && chunk_type <= 0xd9 {
+            continue;
+        }
+
         let chunk_len = reader.read_be_u16()?;
+        if chunk_len < 2 {
+            return decode_error("meta (jpeg): invalid chunk length");
+        }
 
         // Baseline, and progressive DCT.
         if chunk_type == 0xc0 || chunk_type == 0xc2 {

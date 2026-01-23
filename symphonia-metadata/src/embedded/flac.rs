@@ -10,18 +10,26 @@
 use std::num::NonZeroU8;
 use std::sync::Arc;
 
-use symphonia_core::errors::{decode_error, Result};
-use symphonia_core::formats::util::SeekIndex;
+use symphonia_core::errors::{Result, decode_error};
 use symphonia_core::formats::VendorDataAttachment;
+use symphonia_core::formats::util::SeekIndex;
 use symphonia_core::io::ReadBytes;
+use symphonia_core::meta::well_known::METADATA_ID_FLAC;
 use symphonia_core::meta::{
-    Chapter, ChapterGroup, ChapterGroupItem, MetadataBuilder, Size, StandardTag, Tag, Visual,
+    Chapter, ChapterGroup, ChapterGroupItem, MetadataBuilder, MetadataInfo, Size, StandardTag, Tag,
+    Visual,
 };
 use symphonia_core::units::TimeBase;
 
 use crate::embedded::vorbis;
 use crate::utils::id3v2::get_visual_key_from_picture_type;
 use crate::utils::images::try_get_image_info;
+
+pub const FLAC_METADATA_INFO: MetadataInfo = MetadataInfo {
+    metadata: METADATA_ID_FLAC,
+    short_name: "flac",
+    long_name: "Free Lossless Audio Codec",
+};
 
 /// Converts a string of bytes to an ASCII string if all characters are within the printable ASCII
 /// range. If a null byte is encounted, the string terminates at that point.
@@ -369,7 +377,7 @@ fn read_flac_cuesheet_track_index<B: ReadBytes>(
         tags: vec![Tag::new_from_parts(
             "INDEX",
             idx_number,
-            Some(StandardTag::IndexNumber(idx_number)),
+            Some(StandardTag::CdTrackIndex(idx_number)),
         )],
         visuals: Vec::new(),
     })

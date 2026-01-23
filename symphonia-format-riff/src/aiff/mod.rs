@@ -9,21 +9,24 @@ use std::collections::HashMap;
 use std::io::{Seek, SeekFrom};
 use std::sync::Arc;
 
-use symphonia_core::codecs::audio::AudioCodecParameters;
 use symphonia_core::codecs::CodecParameters;
-use symphonia_core::errors::{decode_error, seek_error, unsupported_error, Error};
+use symphonia_core::codecs::audio::AudioCodecParameters;
+use symphonia_core::errors::{Error, decode_error, seek_error, unsupported_error};
 use symphonia_core::errors::{Result, SeekErrorKind};
 use symphonia_core::formats::prelude::*;
 use symphonia_core::formats::probe::{ProbeFormatData, ProbeableFormat, Score, Scoreable};
 use symphonia_core::formats::well_known::FORMAT_ID_AIFF;
 use symphonia_core::io::*;
-use symphonia_core::meta::{Metadata, MetadataBuilder, MetadataLog, StandardTag, Tag};
+use symphonia_core::meta::well_known::METADATA_ID_AIFF;
+use symphonia_core::meta::{
+    Metadata, MetadataBuilder, MetadataInfo, MetadataLog, StandardTag, Tag,
+};
 use symphonia_core::support_format;
 
 use log::debug;
 
 use crate::common::{
-    append_data_params, append_format_params, next_packet, ByteOrder, ChunksReader, PacketInfo,
+    ByteOrder, ChunksReader, PacketInfo, append_data_params, append_format_params, next_packet,
 };
 mod chunks;
 use chunks::*;
@@ -41,6 +44,12 @@ const AIFF_FORMAT_INFO: FormatInfo = FormatInfo {
     long_name: "Audio Interchange File Format",
 };
 
+const AIFF_METADATA_INFO: MetadataInfo = MetadataInfo {
+    metadata: METADATA_ID_AIFF,
+    short_name: "aiff",
+    long_name: "Audio Interchange File Format",
+};
+
 /// Audio Interchange File Format (AIFF) format reader.
 ///
 /// `AiffReader` implements a demuxer for the AIFF container format.
@@ -52,7 +61,7 @@ pub struct AiffReader<'s> {
     metadata: MetadataLog,
     packet_info: PacketInfo,
     data_start_pos: u64,
-    data_end_pos: u64,
+    data_end_pos: Option<u64>,
 }
 
 impl<'s> AiffReader<'s> {
@@ -82,7 +91,7 @@ impl<'s> AiffReader<'s> {
         }
 
         let mut riff_chunks =
-            ChunksReader::<RiffAiffChunks>::new(riff_len - 4, ByteOrder::BigEndian);
+            ChunksReader::<RiffAiffChunks>::new(Some(riff_len - 4), ByteOrder::BigEndian);
 
         // Chunks can be read in any order, so collect them to be processed later.
         let mut comm = None;
@@ -94,7 +103,7 @@ impl<'s> AiffReader<'s> {
         let is_seekable = mss.is_seekable();
 
         let mut attachments = Vec::new();
-        let mut builder = MetadataBuilder::new();
+        let mut builder = MetadataBuilder::new(AIFF_METADATA_INFO);
 
         // Scan over all chunks.
         while let Some(chunk) = riff_chunks.next(&mut mss)? {
@@ -119,13 +128,19 @@ impl<'s> AiffReader<'s> {
 
                     data = Some(chunk.parse(&mut mss)?);
 
-                    // If the media source is not seekable, then it is not possible to scan chunks
-                    // past the sound data chunk.
+                    // If the media source is not seekable, then it is not possible to scan for
+                    // chunks past the sound data chunk.
                     if !is_seekable {
                         break;
                     }
 
-                    mss.ignore_bytes(data.as_ref().unwrap().len as u64)?;
+                    // The length of the sound data chunk must also be known.
+                    if let Some(len) = data.as_ref().unwrap().len {
+                        mss.ignore_bytes(u64::from(len))?;
+                    }
+                    else {
+                        break;
+                    }
                 }
                 RiffAiffChunks::Marker(chunk) => {
                     // Only one markers chunk is allowed.
@@ -181,7 +196,7 @@ impl<'s> AiffReader<'s> {
 
         // Add metadata generated from marker, comment, and text chunks.
         // TODO: Don't add if empty.
-        metadata.push(builder.metadata());
+        metadata.push(builder.build());
 
         // Add ID3 metadata.
         if let Some(id3) = id3 {
@@ -205,7 +220,9 @@ impl<'s> AiffReader<'s> {
         track.with_codec_params(CodecParameters::Audio(codec_params));
 
         // Append sound data chunk fields to track.
-        append_data_params(&mut track, u64::from(data.len), &packet_info);
+        if let Some(data_len) = data.len {
+            append_data_params(&mut track, u64::from(data_len), &packet_info);
+        }
 
         Ok(AiffReader {
             reader: mss,
@@ -215,7 +232,7 @@ impl<'s> AiffReader<'s> {
             metadata,
             packet_info,
             data_start_pos: data.data_start_pos,
-            data_end_pos: data.data_start_pos + u64::from(data.len),
+            data_end_pos: data.len.map(|len| data.data_start_pos + u64::from(len)),
         })
     }
 }
@@ -343,7 +360,7 @@ impl FormatReader for AiffReader<'_> {
             &self.packet_info,
             &self.tracks,
             self.data_start_pos,
-            self.data_end_pos,
+            self.data_end_pos.unwrap_or(u64::MAX),
         )
     }
 
@@ -394,7 +411,7 @@ impl FormatReader for AiffReader<'_> {
             }
         }
 
-        debug!("seeking to frame_ts={}", ts);
+        debug!("seeking to frame_ts={ts}");
 
         // RIFF is not internally packetized for PCM codecs. Packetization is simulated by trying to
         // read a constant number of samples or blocks every call to next_packet. Therefore, a

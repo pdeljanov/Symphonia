@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::io::{Seek, SeekFrom};
 use std::sync::Arc;
 
-use symphonia_core::errors::{decode_error, unsupported_error, Result};
+use symphonia_core::errors::{Result, decode_error, unsupported_error};
 use symphonia_core::formats::probe::{
     Anchors, ProbeMetadataData, ProbeableMetadata, Score, Scoreable,
 };
@@ -27,7 +27,7 @@ use symphonia_core::support_metadata;
 use lazy_static::lazy_static;
 use symphonia_core::util::text;
 
-use crate::utils::images::{try_get_image_info, ImageInfo};
+use crate::utils::images::{ImageInfo, try_get_image_info};
 use crate::utils::std_tag::*;
 
 lazy_static! {
@@ -102,7 +102,7 @@ lazy_static! {
         m.insert("musicbrainz_trmid"           , parse_musicbrainz_trm_id);
         m.insert("musicbrainz_workid"          , parse_musicbrainz_work_id);
         m.insert("original artist"             , parse_original_artist);
-        m.insert("originalyear"                , parse_original_date);
+        m.insert("originalyear"                , parse_original_release_year);
         m.insert("publisher"                   , parse_label);
         m.insert("record date"                 , parse_recording_date);
         m.insert("record location"             , parse_recording_location);
@@ -354,7 +354,7 @@ impl MetadataReader for ApeReader<'_> {
     }
 
     fn read_all(&mut self) -> Result<MetadataBuffer> {
-        let mut builder = MetadataBuilder::new();
+        let mut builder = MetadataBuilder::new(*self.metadata_info());
 
         // Read the tag header. This may actually be the header OR the footer.
         let header = ApeHeader::read(&mut self.reader)?;
@@ -445,7 +445,7 @@ impl MetadataReader for ApeReader<'_> {
             return decode_error("ape: header and footer mismatch");
         }
 
-        Ok(MetadataBuffer { revision: builder.metadata(), side_data: Vec::new() })
+        Ok(MetadataBuffer { revision: builder.build(), side_data: Vec::new() })
     }
 
     fn into_inner<'s>(self: Box<Self>) -> MediaSourceStream<'s>

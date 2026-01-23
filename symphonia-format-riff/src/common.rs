@@ -11,7 +11,7 @@ use std::marker::PhantomData;
 
 use symphonia_core::audio::Channels;
 use symphonia_core::codecs::audio::{AudioCodecId, AudioCodecParameters};
-use symphonia_core::errors::{decode_error, Result};
+use symphonia_core::errors::{Result, decode_error};
 use symphonia_core::formats::prelude::*;
 use symphonia_core::io::{MediaSourceStream, ReadBytes};
 
@@ -46,23 +46,25 @@ impl ParseChunkTag for NullChunks {
 /// This makes reading the actual chunk data lazy in that the  chunk is not read until the object is
 /// consumed.
 pub struct ChunksReader<T: ParseChunkTag> {
-    len: u32,
+    len: Option<u64>,
     byte_order: ByteOrder,
-    consumed: u32,
+    consumed: u64,
     phantom: PhantomData<T>,
 }
 
 impl<T: ParseChunkTag> ChunksReader<T> {
-    pub fn new(len: u32, byte_order: ByteOrder) -> Self {
-        ChunksReader { len, byte_order, consumed: 0, phantom: PhantomData }
+    pub fn new(len: Option<u32>, byte_order: ByteOrder) -> Self {
+        ChunksReader { len: len.map(u64::from), byte_order, consumed: 0, phantom: PhantomData }
     }
 
     pub fn next<B: ReadBytes>(&mut self, reader: &mut B) -> Result<Option<T>> {
         // Loop until a chunk is recognized and returned, or the end of stream is reached.
         loop {
-            // Check if at the end.
-            if self.consumed >= self.len {
-                return Ok(None);
+            // Check if at the end of the parent chunk.
+            if let Some(len) = self.len {
+                if self.consumed >= len {
+                    return Ok(None);
+                }
             }
 
             // Align to the next 2-byte boundary if not currently aligned.
@@ -71,29 +73,29 @@ impl<T: ParseChunkTag> ChunksReader<T> {
                 self.consumed += 1;
             }
 
-            // Check if there are enough bytes for another chunk, if not, there are no more chunks.
-            if self.consumed + 8 > self.len {
-                return Ok(None);
+            // Check if there are enough bytes (8) to read a chunk header. If not, there are no more
+            // chunks to be read.
+            if let Some(len) = self.len {
+                if self.consumed + 8 > len {
+                    return Ok(None);
+                }
             }
 
-            // Read tag and len, the chunk header.
+            // Read chunk tag and length (the chunk header).
             let tag = reader.read_quad_bytes()?;
 
-            let len = match self.byte_order {
+            let chunk_len = match self.byte_order {
                 ByteOrder::LittleEndian => reader.read_u32()?,
                 ByteOrder::BigEndian => reader.read_be_u32()?,
             };
 
             self.consumed += 8;
 
-            // Check if the ChunkReader has enough unread bytes to fully read the chunk.
-            //
-            // Warning: the formulation of this conditional is critical because len is untrusted
-            // input, it may overflow when if added to anything.
-            if self.len - self.consumed < len {
-                // When ffmpeg encodes wave to stdout the riff (parent) and data chunk lengths are
-                // (2^32)-1 since the size can't be known ahead of time.
-                if !(self.len == len && len == u32::MAX) {
+            // Check if the ChunkReader has enough unread bytes to fully read the chunk body.
+            if let Some(len) = self.len {
+                // Warning: The formulation of this conditional is critical because chunk_len is an
+                // untrusted input, it may overflow when if added to anything.
+                if len - self.consumed < u64::from(chunk_len) {
                     debug!(
                         "chunk length of {} exceeds parent (list) chunk length",
                         String::from_utf8_lossy(&tag)
@@ -103,34 +105,36 @@ impl<T: ParseChunkTag> ChunksReader<T> {
             }
 
             // The length of the chunk has been validated, so "consume" the chunk.
-            self.consumed = self.consumed.saturating_add(len);
+            self.consumed = self.consumed.saturating_add(u64::from(chunk_len));
 
-            match T::parse_tag(tag, len) {
+            match T::parse_tag(tag, chunk_len) {
                 Some(chunk) => return Ok(Some(chunk)),
                 None => {
                     // As per the RIFF spec, unknown chunks are to be ignored.
                     info!(
                         "ignoring unknown chunk: tag={}, len={}.",
                         String::from_utf8_lossy(&tag),
-                        len
+                        chunk_len
                     );
 
-                    reader.ignore_bytes(u64::from(len))?
+                    reader.ignore_bytes(u64::from(chunk_len))?
                 }
             }
         }
     }
     pub fn finish<B: ReadBytes>(&mut self, reader: &mut B) -> Result<()> {
-        // If data is remaining in this chunk, skip it.
-        if self.consumed < self.len {
-            let remaining = self.len - self.consumed;
-            reader.ignore_bytes(u64::from(remaining))?;
-            self.consumed += remaining;
-        }
+        // If data is remaining in the parent chunk, skip it.
+        if let Some(parent_len) = self.len {
+            if self.consumed < parent_len {
+                let remaining = parent_len - self.consumed;
+                reader.ignore_bytes(remaining)?;
+                self.consumed += remaining;
+            }
 
-        // Pad the chunk to the next 2-byte boundary.
-        if self.len & 0x1 == 1 {
-            reader.read_u8()?;
+            // Pad the chunk to the next 2-byte boundary.
+            if parent_len & 0x1 == 1 {
+                reader.read_u8()?;
+            }
         }
 
         Ok(())
@@ -240,7 +244,7 @@ impl PacketInfo {
         })
     }
 
-    pub fn without_blocks(frame_len: u16) -> Self {
+    pub fn without_blocks(frame_len: u32) -> Self {
         Self {
             block_size: u64::from(frame_len),
             frames_per_block: 1,
@@ -346,6 +350,7 @@ pub fn append_format_params(
 /// generic - find a better name, or combine with append_data_params append_format_params
 pub fn append_data_params(track: &mut Track, data_len: u64, packet_info: &PacketInfo) {
     if !packet_info.is_empty() {
+        // Prefer the duration in the FACT chunk.
         let num_frames = packet_info.get_frames(data_len);
         track.with_num_frames(num_frames);
     }

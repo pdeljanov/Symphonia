@@ -6,7 +6,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use symphonia_core::checksum::Crc8Ccitt;
-use symphonia_core::errors::{decode_error, Result};
+use symphonia_core::errors::{Result, decode_error};
 use symphonia_core::io::{Monitor, MonitorStream, ReadBytes};
 
 /// The minimum FLAC frame header size including the sync bytes.
@@ -186,6 +186,7 @@ pub fn read_frame_header<B: ReadBytes>(reader: &mut B, sync: u16) -> Result<Fram
         0x4 => Some(16),
         0x5 => Some(20),
         0x6 => Some(24),
+        0x7 => Some(32),
         _ => {
             return decode_error("flac: bits per sample set to reserved value");
         }
@@ -253,7 +254,7 @@ pub fn is_likely_frame_header(buf: &[u8]) -> bool {
     }
 
     // Reserved sample size.
-    if (buf[3] & 0x0e == 0x6) || (buf[3] & 0x0e == 0x0e) {
+    if buf[3] & 0x0e == 0x6 {
         return false;
     }
 

@@ -5,8 +5,8 @@ use std::path::Path;
 use symphonia::core::audio::sample::Sample;
 use symphonia::core::codecs::audio::AudioDecoderOptions;
 use symphonia::core::errors::Error;
-use symphonia::core::formats::probe::Hint;
 use symphonia::core::formats::FormatOptions;
+use symphonia::core::formats::probe::Hint;
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
 use symphonia_core::formats::TrackType;
@@ -76,7 +76,7 @@ fn main() {
 
                 // Sum up the total number of samples.
                 total_sample_count += samples.len();
-                print!("\rDecoded {} samples", total_sample_count);
+                print!("\rDecoded {total_sample_count} samples");
             }
             Err(Error::DecodeError(_)) => (),
             Err(_) => break,

@@ -9,15 +9,15 @@ use core::str;
 use std::fmt;
 use std::sync::Arc;
 
-use symphonia_core::audio::{layouts, Channels};
+use symphonia_core::audio::{Channels, layouts};
 use symphonia_core::codecs::audio::well_known::{
-    CODEC_ID_PCM_ALAW, CODEC_ID_PCM_F32BE, CODEC_ID_PCM_F64BE, CODEC_ID_PCM_MULAW,
+    CODEC_ID_PCM_ALAW, CODEC_ID_PCM_F32BE, CODEC_ID_PCM_F64BE, CODEC_ID_PCM_MULAW, CODEC_ID_PCM_S8,
     CODEC_ID_PCM_S16BE, CODEC_ID_PCM_S16LE, CODEC_ID_PCM_S24BE, CODEC_ID_PCM_S32BE,
-    CODEC_ID_PCM_S8,
+    CODEC_ID_PCM_S32LE,
 };
-use symphonia_core::errors::{decode_error, unsupported_error, Result};
-use symphonia_core::io::{MediaSourceStream, ReadBytes};
-use symphonia_core::meta::{MetadataBuilder, MetadataRevision, StandardTag, Tag};
+use symphonia_core::errors::{Result, decode_error, unsupported_error};
+use symphonia_core::io::ReadBytes;
+use symphonia_core::meta::{MetadataRevision, StandardTag, Tag};
 use symphonia_core::util::text;
 use symphonia_metadata::embedded::riff;
 
@@ -31,12 +31,12 @@ use extended::Extended;
 /// `CommonChunk` is a required AIFF chunk, containing metadata.
 pub struct CommonChunk {
     /// The number of channels.
-    pub n_channels: i16,
+    pub n_channels: u16,
     /// The number of audio frames.
     #[allow(dead_code)]
     pub n_sample_frames: u32,
     /// The sample size in bits.
-    pub sample_size: i16,
+    pub sample_size: u16,
     /// The sample rate in Hz.
     pub sample_rate: u32,
     /// Extra data associated with the format block conditional upon the format tag.
@@ -45,36 +45,59 @@ pub struct CommonChunk {
 
 impl CommonChunk {
     fn read_pcm_fmt(bits_per_sample: u16, n_channels: u16) -> Result<FormatData> {
-        // Bits per sample for PCM is both the encoded sample width, and the actual sample width.
-        // Strictly, this must either be 8 or 16 bits, but there is no reason why 24 and 32 bits
-        // can't be supported. Since these files do exist, allow for 8/16/24/32-bit samples, but
-        // error if not a multiple of 8 or greater than 32-bits.
-        //
-        // It is possible though for AIFF to have a sample size not divisible by 8.
-        // Data is left justified, with the remaining bits zeroed. Currently not supported.
-        //
-        // Select the appropriate codec using bits per sample. Samples are always interleaved and
-        // little-endian encoded for the PCM format.
-        let codec = match bits_per_sample {
-            8 => CODEC_ID_PCM_S8,
-            16 => CODEC_ID_PCM_S16BE,
-            24 => CODEC_ID_PCM_S24BE,
-            32 => CODEC_ID_PCM_S32BE,
-            _ => return decode_error("aiff: bits per sample for pcm must be 8, 16, 24 or 32 bits"),
+        // Sample sizes that are not a multiple of 8 bits are rounded-up to the nearest byte. The
+        // data is left justified. Therefore, these cases are essentially equivalent to if the
+        // samples were stored with a sample size that was a multiple of 8 bits to begin with.
+        let (codec, bits_per_sample) = match bits_per_sample {
+            1..=8 => (CODEC_ID_PCM_S8, 8),
+            9..=16 => (CODEC_ID_PCM_S16BE, 16),
+            17..=24 => (CODEC_ID_PCM_S24BE, 24),
+            25..=32 => (CODEC_ID_PCM_S32BE, 32),
+            _ => return decode_error("aiff: bits per sample for pcm must be between 1-32 bits"),
         };
 
         let channels = map_aiff_channel_count(n_channels)?;
         Ok(FormatData::Pcm(FormatPcm { bits_per_sample, channels, codec }))
     }
 
-    fn read_alaw_pcm_fmt(n_channels: u16) -> Result<FormatData> {
+    fn read_alaw_pcm_fmt(bits_per_sample: u16, n_channels: u16) -> Result<FormatData> {
+        if bits_per_sample != 8 {
+            return decode_error("aifc: bits per sample invalid for alaw");
+        }
         let channels = map_aiff_channel_count(n_channels)?;
         Ok(FormatData::ALaw(FormatALaw { codec: CODEC_ID_PCM_ALAW, channels }))
     }
 
-    fn read_mulaw_pcm_fmt(n_channels: u16) -> Result<FormatData> {
+    fn read_mulaw_pcm_fmt(bits_per_sample: u16, n_channels: u16) -> Result<FormatData> {
+        if bits_per_sample != 8 {
+            return decode_error("aifc: bits per sample invalid for u-law");
+        }
         let channels = map_aiff_channel_count(n_channels)?;
         Ok(FormatData::MuLaw(FormatMuLaw { codec: CODEC_ID_PCM_MULAW, channels }))
+    }
+
+    fn read_in24_fmt(bits_per_sample: u16, n_channels: u16) -> Result<FormatData> {
+        if bits_per_sample != 24 {
+            return decode_error("aifc: bits per sample invalid for in14");
+        }
+        let channels = map_aiff_channel_count(n_channels)?;
+        Ok(FormatData::Pcm(FormatPcm { bits_per_sample, channels, codec: CODEC_ID_PCM_S24BE }))
+    }
+
+    fn read_in32_fmt(bits_per_sample: u16, n_channels: u16) -> Result<FormatData> {
+        if bits_per_sample != 32 {
+            return decode_error("aifc: bits per sample invalid for in32");
+        }
+        let channels = map_aiff_channel_count(n_channels)?;
+        Ok(FormatData::Pcm(FormatPcm { bits_per_sample, channels, codec: CODEC_ID_PCM_S32BE }))
+    }
+
+    fn read_23ni_fmt(bits_per_sample: u16, n_channels: u16) -> Result<FormatData> {
+        if bits_per_sample != 32 {
+            return decode_error("aifc: bits per sample invalid for 23ni");
+        }
+        let channels = map_aiff_channel_count(n_channels)?;
+        Ok(FormatData::Pcm(FormatPcm { bits_per_sample, channels, codec: CODEC_ID_PCM_S32LE }))
     }
 
     fn read_ieee_fmt(bits_per_sample: u16, n_channels: u16) -> Result<FormatData> {
@@ -113,22 +136,25 @@ impl CommonChunk {
     pub fn packet_info(&self) -> Result<PacketInfo> {
         match &self.format_data {
             FormatData::Pcm(_) => {
-                let block_align = self.n_channels * self.sample_size / 8;
-                Ok(PacketInfo::without_blocks(block_align as u16))
+                // Sample size is rounded-up to the nearest byte.
+                let block_align =
+                    u32::from(self.n_channels) * (u32::from(self.sample_size + 7) / 8);
+                Ok(PacketInfo::without_blocks(block_align))
             }
             FormatData::ALaw(_) => {
-                // In a-law encoding, each audio sample is represented by an 8-bit value that has been compressed
-                let block_align = self.n_channels;
-                Ok(PacketInfo::without_blocks(block_align as u16))
+                // In a-law encoding, each audio sample is represented by an 8-bit value that has
+                // been compressed.
+                Ok(PacketInfo::without_blocks(u32::from(self.n_channels)))
             }
             FormatData::MuLaw(_) => {
-                // In mu-law encoding, each audio sample is represented by an 8-bit value that has been compressed
-                let block_align = self.n_channels;
-                Ok(PacketInfo::without_blocks(block_align as u16))
+                // In mu-law encoding, each audio sample is represented by an 8-bit value that has
+                // been compressed.
+                Ok(PacketInfo::without_blocks(u32::from(self.n_channels)))
             }
             FormatData::IeeeFloat(_) => {
-                let block_align = self.n_channels * self.sample_size / 8;
-                Ok(PacketInfo::without_blocks(block_align as u16))
+                // Sample size is always a multiple of 8 bits.
+                let block_align = u32::from(self.n_channels) * (u32::from(self.sample_size) / 8);
+                Ok(PacketInfo::without_blocks(block_align))
             }
             FormatData::Extensible(_) => {
                 unsupported_error("aiff: packet info not implemented for format Extensible")
@@ -142,22 +168,12 @@ impl CommonChunk {
 
 impl ParseChunk for CommonChunk {
     fn parse<B: ReadBytes>(reader: &mut B, _tag: [u8; 4], _: u32) -> Result<CommonChunk> {
-        let n_channels = reader.read_be_i16()?;
+        let n_channels = reader.read_be_u16()?;
         let n_sample_frames = reader.read_be_u32()?;
-        let sample_size = reader.read_be_i16()?;
+        let sample_size = reader.read_be_u16()?;
+        let sample_rate = read_sample_rate(reader)?;
 
-        let mut sample_rate: [u8; 10] = [0; 10];
-        reader.read_buf_exact(sample_rate.as_mut())?;
-
-        let sample_rate = Extended::from_be_bytes(sample_rate);
-        let sample_rate = sample_rate.to_f64() as u32;
-
-        let format_data = Self::read_pcm_fmt(sample_size as u16, n_channels as u16);
-
-        let format_data = match format_data {
-            Ok(data) => data,
-            Err(e) => return Err(e),
-        };
+        let format_data = Self::read_pcm_fmt(sample_size, n_channels)?;
 
         Ok(CommonChunk { n_channels, n_sample_frames, sample_size, sample_rate, format_data })
     }
@@ -206,50 +222,38 @@ impl fmt::Display for CommonChunk {
 }
 
 pub trait CommonChunkParser {
-    fn parse_aiff(self, source: &mut MediaSourceStream<'_>) -> Result<CommonChunk>;
-    fn parse_aifc(self, source: &mut MediaSourceStream<'_>) -> Result<CommonChunk>;
+    fn parse_aiff<B: ReadBytes>(self, reader: &mut B) -> Result<CommonChunk>;
+    fn parse_aifc<B: ReadBytes>(self, reader: &mut B) -> Result<CommonChunk>;
 }
 
 impl CommonChunkParser for ChunkParser<CommonChunk> {
-    fn parse_aiff(self, source: &mut MediaSourceStream<'_>) -> Result<CommonChunk> {
-        self.parse(source)
+    fn parse_aiff<B: ReadBytes>(self, reader: &mut B) -> Result<CommonChunk> {
+        self.parse(reader)
     }
 
-    fn parse_aifc(self, source: &mut MediaSourceStream<'_>) -> Result<CommonChunk> {
-        let n_channels = source.read_be_i16()?;
-        let n_sample_frames = source.read_be_u32()?;
-        let sample_size = source.read_be_i16()?;
+    fn parse_aifc<B: ReadBytes>(self, reader: &mut B) -> Result<CommonChunk> {
+        let n_channels = reader.read_be_u16()?;
+        let n_sample_frames = reader.read_be_u32()?;
+        let sample_size = reader.read_be_u16()?;
+        let sample_rate = read_sample_rate(reader)?;
+        let compression_type = reader.read_quad_bytes()?;
 
-        let mut sample_rate: [u8; 10] = [0; 10];
-        source.read_buf_exact(sample_rate.as_mut())?;
-
-        let sample_rate = Extended::from_be_bytes(sample_rate);
-        let sample_rate = sample_rate.to_f64() as u32;
-
-        let compression_type = source.read_quad_bytes()?;
-
-        // Ignore pascal string containing compression_name
-        let str_len = source.read_byte()?;
-        source.ignore_bytes(str_len as u64)?;
-        // Total number of bytes in pascal string must be even, since len is excluded from our var, we add 1
-        if (str_len + 1) % 2 != 0 {
-            source.ignore_bytes(1)?;
-        }
+        // Ignore the compression_name pascal string.
+        ignore_pascal_string(reader)?;
 
         let format_data = match &compression_type {
-            b"none" | b"NONE" => CommonChunk::read_pcm_fmt(sample_size as u16, n_channels as u16),
-            b"alaw" | b"ALAW" => CommonChunk::read_alaw_pcm_fmt(n_channels as u16),
-            b"ulaw" | b"ULAW" => CommonChunk::read_mulaw_pcm_fmt(n_channels as u16),
-            b"fl32" | b"fl64" => CommonChunk::read_ieee_fmt(sample_size as u16, n_channels as u16),
-            b"sowt" | b"SOWT" => CommonChunk::read_sowt_fmt(sample_size as u16, n_channels as u16),
-            b"twos" | b"TWOS" => CommonChunk::read_twos_fmt(sample_size as u16, n_channels as u16),
-            _ => return unsupported_error("aifc: Compression type not implemented"),
-        };
-
-        let format_data = match format_data {
-            Ok(data) => data,
-            Err(e) => return Err(e),
-        };
+            b"none" | b"NONE" => CommonChunk::read_pcm_fmt(sample_size, n_channels),
+            b"alaw" | b"ALAW" => CommonChunk::read_alaw_pcm_fmt(sample_size, n_channels),
+            b"ulaw" | b"ULAW" => CommonChunk::read_mulaw_pcm_fmt(sample_size, n_channels),
+            b"in24" | b"IN24" => CommonChunk::read_in24_fmt(sample_size, n_channels),
+            b"in32" | b"IN32" => CommonChunk::read_in32_fmt(sample_size, n_channels),
+            b"23ni" | b"23NI" => CommonChunk::read_23ni_fmt(sample_size, n_channels),
+            b"fl32" | b"FL32" => CommonChunk::read_ieee_fmt(sample_size, n_channels),
+            b"fl64" | b"FL64" => CommonChunk::read_ieee_fmt(sample_size, n_channels),
+            b"sowt" | b"SOWT" => CommonChunk::read_sowt_fmt(sample_size, n_channels),
+            b"twos" | b"TWOS" => CommonChunk::read_twos_fmt(sample_size, n_channels),
+            _ => return unsupported_error("aifc: compression type not supported"),
+        }?;
 
         Ok(CommonChunk { n_channels, n_sample_frames, sample_size, sample_rate, format_data })
     }
@@ -257,7 +261,7 @@ impl CommonChunkParser for ChunkParser<CommonChunk> {
 
 /// `SoundChunk` is a required AIFF chunk, containing the audio data.
 pub struct SoundChunk {
-    pub len: u32,
+    pub len: Option<u32>,
     #[allow(dead_code)]
     pub offset: u32,
     #[allow(dead_code)]
@@ -267,16 +271,23 @@ pub struct SoundChunk {
 
 impl ParseChunk for SoundChunk {
     fn parse<B: ReadBytes>(reader: &mut B, _: [u8; 4], len: u32) -> Result<SoundChunk> {
+        // Validate minimum size.
+        if len < 8 {
+            return decode_error("aiff: invalid chunk size for sound chunk");
+        }
+
         let offset = reader.read_be_u32()?;
         let block_size = reader.read_be_u32()?;
 
         if offset != 0 || block_size != 0 {
-            return unsupported_error("riff: No support for AIFF block-aligned data");
+            return unsupported_error("aiff: no support for aiff block-aligned data");
         }
 
         let data_start_pos = reader.pos();
 
-        Ok(SoundChunk { len: len - 8, offset, block_size, data_start_pos })
+        // TODO: FFmpeg seems to set the chunk length to 0 when streaming. This, however, doesn't
+        // appear to be well supported, event by FFmpeg.
+        Ok(SoundChunk { len: Some(len - 8), offset, block_size, data_start_pos })
     }
 }
 
@@ -400,10 +411,9 @@ pub struct Id3Chunk {
 
 impl ParseChunk for Id3Chunk {
     fn parse<B: ReadBytes>(reader: &mut B, _tag: [u8; 4], _len: u32) -> Result<Self> {
-        let mut builder = MetadataBuilder::new();
         let mut side_data = Vec::new();
-        riff::read_riff_id3_chunk(reader, &mut builder, &mut side_data)?;
-        Ok(Id3Chunk { metadata: builder.metadata() })
+        let metadata = riff::read_riff_id3_chunk(reader, &mut side_data)?;
+        Ok(Id3Chunk { metadata })
     }
 }
 
@@ -440,6 +450,35 @@ impl ParseChunkTag for RiffAiffChunks {
     }
 }
 
+fn read_sample_rate<B: ReadBytes>(reader: &mut B) -> Result<u32> {
+    let mut buf: [u8; 10] = [0; 10];
+    reader.read_buf_exact(&mut buf)?;
+
+    let sample_rate_f64 = Extended::from_be_bytes(buf).to_f64();
+
+    // Do not allow infinite or NaN sample rates.
+    if sample_rate_f64.is_infinite() || sample_rate_f64.is_nan() {
+        return decode_error("aiff: sample rate is not a real number");
+    }
+
+    let sample_rate = sample_rate_f64 as u32;
+
+    // Do not allow a 0 Hz sample rates.
+    if sample_rate == 0 {
+        return decode_error("aiff: sample rate cannot be 0");
+    }
+
+    Ok(sample_rate)
+}
+
+fn ignore_pascal_string<B: ReadBytes>(reader: &mut B) -> Result<()> {
+    let mut len = u64::from(reader.read_byte()?);
+    if len & 1 == 0 {
+        len += 1;
+    }
+    Ok(reader.ignore_bytes(len)?)
+}
+
 fn read_pascal_string<B: ReadBytes>(reader: &mut B) -> Result<String> {
     let len = reader.read_byte()?;
     let value = reader.read_boxed_slice_exact(usize::from(len))?;
@@ -461,7 +500,7 @@ fn decode_string(data: &[u8]) -> String {
 
 fn map_aiff_channel_count(count: u16) -> Result<Channels> {
     let channels = match count {
-        0 => return decode_error("riff: invalid channel count"),
+        0 => return decode_error("aiff: invalid channel count"),
         1 => layouts::CHANNEL_LAYOUT_MONO,
         2 => layouts::CHANNEL_LAYOUT_STEREO,
         3 => layouts::CHANNEL_LAYOUT_3P0,

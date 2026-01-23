@@ -12,9 +12,9 @@ use std::collections::HashMap;
 
 use lazy_static::lazy_static;
 
-use symphonia_core::errors::{decode_error, Result};
+use symphonia_core::errors::{Result, decode_error};
 use symphonia_core::io::ReadBytes;
-use symphonia_core::meta::{MetadataBuilder, MetadataSideData, RawTag};
+use symphonia_core::meta::{MetadataBuilder, MetadataRevision, MetadataSideData, RawTag};
 
 use crate::utils::std_tag::*;
 
@@ -24,14 +24,14 @@ lazy_static! {
         m.insert("ages", parse_rating);
         m.insert("cmnt", parse_comment);
         m.insert("comm", parse_comment); // TODO: Same as "cmnt"
-        m.insert("dtim", parse_original_date);
+        m.insert("dtim", parse_recording_time);
         m.insert("genr", parse_genre);
         m.insert("iart", parse_artist);
         m.insert("icmt", parse_comment); // TODO: Same as "cmnt"?
         m.insert("icnt", parse_release_country);
         m.insert("icop", parse_copyright);
-        m.insert("icrd", parse_date);
-        m.insert("idit", parse_original_date);
+        m.insert("icrd", parse_recording_date);
+        m.insert("idit", parse_recording_date); // TODO: Actually date of last edit?
         m.insert("ienc", parse_encoded_by);
         m.insert("ieng", parse_engineer);
         m.insert("ifrm", parse_track_total);
@@ -58,7 +58,7 @@ lazy_static! {
         m.insert("torg", parse_label);
         m.insert("trck", parse_track_number_exclusive);
         m.insert("tver", parse_version);
-        m.insert("year", parse_date);
+        m.insert("year", parse_recording_year);
         m
     };
 }
@@ -89,8 +89,9 @@ pub fn parse_riff_info_chunk(
 /// Read a RIFF ID3 chunk payload.
 pub fn read_riff_id3_chunk<B: ReadBytes>(
     reader: &mut B,
-    builder: &mut MetadataBuilder,
     side_data: &mut Vec<MetadataSideData>,
-) -> Result<()> {
-    crate::id3v2::read_id3v2(reader, builder, side_data)
+) -> Result<MetadataRevision> {
+    let mut builder = MetadataBuilder::new(crate::id3v2::ID3V2_METADATA_INFO);
+    crate::id3v2::read_id3v2(reader, &mut builder, side_data)?;
+    Ok(builder.build())
 }

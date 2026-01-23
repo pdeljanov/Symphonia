@@ -8,7 +8,7 @@
 use symphonia_core::support_format;
 
 use symphonia_core::errors::{
-    decode_error, seek_error, unsupported_error, Error, Result, SeekErrorKind,
+    Error, Result, SeekErrorKind, decode_error, seek_error, unsupported_error,
 };
 use symphonia_core::formats::prelude::*;
 use symphonia_core::formats::probe::{ProbeFormatData, ProbeableFormat, Score, Scoreable};
@@ -127,7 +127,7 @@ impl<'s> IsoMp4Reader<'s> {
             let pos = mss.pos();
             let len = mss.seek(SeekFrom::End(0))?;
             mss.seek(SeekFrom::Start(pos))?;
-            info!("stream is seekable with len={} bytes.", len);
+            info!("stream is seekable with len={len} bytes.");
             Some(len)
         }
         else {
@@ -420,7 +420,7 @@ impl<'s> IsoMp4Reader<'s> {
     }
 
     fn seek_track_by_ts(&mut self, track_num: usize, ts: u64) -> Result<SeekedTo> {
-        debug!("seeking track_num={} to frame_ts={}", track_num, ts);
+        debug!("seeking track_num={track_num} to frame_ts={ts}");
 
         struct SeekLocation {
             seg_idx: usize,

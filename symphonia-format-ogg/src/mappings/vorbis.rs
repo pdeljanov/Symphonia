@@ -9,10 +9,10 @@ use super::{MapResult, Mapper, PacketParser};
 use crate::common::SideData;
 
 use symphonia_common::xiph::audio::vorbis::*;
-use symphonia_core::codecs::audio::well_known::CODEC_ID_VORBIS;
-use symphonia_core::codecs::audio::AudioCodecParameters;
 use symphonia_core::codecs::CodecParameters;
-use symphonia_core::errors::{decode_error, unsupported_error, Result};
+use symphonia_core::codecs::audio::AudioCodecParameters;
+use symphonia_core::codecs::audio::well_known::CODEC_ID_VORBIS;
+use symphonia_core::errors::{Result, decode_error, unsupported_error};
 use symphonia_core::formats::Track;
 use symphonia_core::io::{BitReaderRtl, BufReader, ReadBitsRtl, ReadBytes};
 use symphonia_core::meta::MetadataBuilder;
@@ -81,12 +81,7 @@ impl PacketParser for VorbisPacketParser {
         // Determine the current block size.
         let cur_bs_exp = if mode_num < self.num_modes {
             let block_flag = (self.modes_block_flags >> mode_num) & 1;
-            if block_flag == 1 {
-                self.bs1_exp
-            }
-            else {
-                self.bs0_exp
-            }
+            if block_flag == 1 { self.bs1_exp } else { self.bs0_exp }
         }
         else {
             return 0;
@@ -210,12 +205,12 @@ impl Mapper for VorbisMapper {
             // Handle each header packet type specifically.
             match packet_type {
                 VORBIS_PACKET_TYPE_COMMENT => {
-                    let mut builder = MetadataBuilder::new();
+                    let mut builder = MetadataBuilder::new(VORBIS_COMMENT_METADATA_INFO);
                     let mut side_data = Default::default();
 
                     read_vorbis_comment(&mut reader, &mut builder, &mut side_data)?;
 
-                    let rev = builder.metadata();
+                    let rev = builder.build();
 
                     Ok(MapResult::SideData { data: SideData::Metadata { rev, side_data } })
                 }
@@ -275,7 +270,7 @@ impl Mapper for VorbisMapper {
                     Ok(MapResult::Setup)
                 }
                 _ => {
-                    warn!("ogg (vorbis): packet type {} unexpected", packet_type);
+                    warn!("ogg (vorbis): packet type {packet_type} unexpected");
                     Ok(MapResult::Unknown)
                 }
             }
