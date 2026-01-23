@@ -131,10 +131,6 @@ impl DspChannel {
                 buf[self.bs0 / 2..].copy_from_slice(&self.imdct[end..self.bs1 / 2]);
             }
 
-            // Clamp the output samples.
-            for s in buf.iter_mut() {
-                *s = s.clamp(-1.0, 1.0);
-            }
         }
 
         // Save right-half of IMDCT buffer for later.
