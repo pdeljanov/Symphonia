@@ -432,13 +432,12 @@ fn add_id3v1_genre_tag<B: ReadBytes>(
 
     // There should only be 1 value.
     if let Some(value) = tag.values.first() {
-        // The ID3v1 genre is stored as a unsigned 16-bit big-endian integer.
-        let index = BufReader::new(&value.data).read_be_u16()?;
-
-        // The stored index uses 1-based indexing, but the ID3v1 genre list is 0-based.
-        if index > 0 {
-            if let Some(genre) = id3v1::util::genre_name((index - 1) as u8) {
-                builder.add_tag(Tag::new(Some(StandardTagKey::Genre), "", Value::from(*genre)));
+        // Gracefully handle malformed data (< 2 bytes). Fixes #311.
+        if let Ok(index) = BufReader::new(&value.data).read_be_u16() {
+            if index > 0 {
+                if let Some(genre) = id3v1::util::genre_name((index - 1) as u8) {
+                    builder.add_tag(Tag::new(Some(StandardTagKey::Genre), "", Value::from(*genre)));
+                }
             }
         }
     }
