@@ -78,15 +78,11 @@ impl WaveFormatChunk {
         // Select the appropriate codec using bits per sample. Samples are always interleaved and
         // little-endian encoded for the PCM format.
         let codec = match bits_per_sample {
-            8 => CODEC_TYPE_PCM_U8,
-            16 => CODEC_TYPE_PCM_S16LE,
-            24 => CODEC_TYPE_PCM_S24LE,
-            32 => CODEC_TYPE_PCM_S32LE,
-            _ => {
-                return decode_error(
-                    "wav: bits per sample for fmt_pcm must be 8, 16, 24 or 32 bits",
-                )
-            }
+            1..=8 => CODEC_TYPE_PCM_U8,
+            9..=16 => CODEC_TYPE_PCM_S16LE,
+            17..=24 => CODEC_TYPE_PCM_S24LE,
+            25..=32 => CODEC_TYPE_PCM_S32LE,
+            _ => return decode_error("wav: bits per sample unsupported for pcm"),
         };
 
         let channels = try_channel_count_to_mask(n_channels)?;
