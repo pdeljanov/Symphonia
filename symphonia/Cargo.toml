@@ -22,6 +22,7 @@ default = ["adpcm", "flac", "mkv", "ogg", "pcm", "vorbis", "wav"]
 aac = ["symphonia-codec-aac"]
 adpcm = ["symphonia-codec-adpcm"]
 alac = ["symphonia-codec-alac"]
+dsd = ["symphonia-codec-dsd", "symphonia-format-dsd"]
 flac = ["symphonia-bundle-flac"]
 caf = ["symphonia-format-caf"]
 isomp4 = ["symphonia-format-isomp4"]
@@ -43,6 +44,7 @@ all-codecs = [
     "aac",
     "adpcm",
     "alac",
+    "dsd",
     "flac",
     "mp1",
     "mp2",
@@ -54,6 +56,7 @@ all-codecs = [
 # Enable all supported formats.
 all-formats = [
     "caf",
+    "dsd",
     "isomp4",
     "mkv",
     "ogg",
@@ -117,6 +120,11 @@ version = "0.5.5"
 path = "../symphonia-codec-alac"
 optional = true
 
+[dependencies.symphonia-codec-dsd]
+version = "0.5.5"
+path = "../symphonia-codec-dsd"
+optional = true
+
 [dependencies.symphonia-codec-pcm]
 version = "0.5.5"
 path = "../symphonia-codec-pcm"
@@ -152,6 +160,11 @@ optional = true
 [dependencies.symphonia-format-caf]
 version = "0.5.5"
 path = "../symphonia-format-caf"
+optional = true
+
+[dependencies.symphonia-format-dsd]
+version = "0.5.5"
+path = "../symphonia-format-dsd"
 optional = true
 
 # Show documentation with all features enabled on docs.rs

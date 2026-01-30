@@ -243,6 +243,28 @@ pub enum VerificationCheck {
     Other([u8; 16]),
 }
 
+/// Indicates how channel data is laid out in memory for multi-channel audio.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum ChannelDataLayout {
+    /// Channels are interleaved in memory: [L, R, L, R, L, R, ...]
+    /// This is the most common layout for PCM audio.
+    Interleaved,
+    /// Channels are stored in separate planar buffers: [L, L, L, ...], [R, R, R, ...]
+    /// Used by formats like DSF, FLAC, and some video codecs.
+    Planar,
+}
+
+/// Indicates the bit order within bytes for bitstream formats.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum BitOrder {
+    /// Least significant bit first (LSB-first).
+    /// Used by DSF and DFF DSD formats.
+    LsbFirst,
+    /// Most significant bit first (MSB-first).
+    /// The default for most formats.
+    MsbFirst,
+}
+
 /// Codec parameters stored in a container format's headers and metadata may be passed to a codec
 /// using the `CodecParameters` structure.
 #[derive(Clone, Debug)]
@@ -284,6 +306,19 @@ pub struct CodecParameters {
     /// The channel layout.
     pub channel_layout: Option<Layout>,
 
+    /// The channel data layout (interleaved vs planar).
+    ///
+    /// Indicates how multi-channel audio data is organized in memory. Most formats use
+    /// interleaved layout, but some (like DSF, FLAC) use planar layout where each channel
+    /// is stored in a separate contiguous buffer.
+    pub channel_data_layout: Option<ChannelDataLayout>,
+
+    /// The bit order within bytes for bitstream formats.
+    ///
+    /// Relevant for formats that work at the bit level (like DSD). Most formats are MSB-first,
+    /// but DSF/DFF use LSB-first encoding.
+    pub bit_order: Option<BitOrder>,
+
     /// The number of leading frames inserted by the encoder that should be skipped during playback.
     pub delay: Option<u32>,
 
@@ -320,6 +355,8 @@ impl CodecParameters {
             bits_per_coded_sample: None,
             channels: None,
             channel_layout: None,
+            channel_data_layout: None,
+            bit_order: None,
             delay: None,
             padding: None,
             max_frames_per_packet: None,
@@ -387,6 +424,18 @@ impl CodecParameters {
     /// Provide the channel layout.
     pub fn with_channel_layout(&mut self, channel_layout: Layout) -> &mut Self {
         self.channel_layout = Some(channel_layout);
+        self
+    }
+
+    /// Provide the channel data layout (interleaved vs planar).
+    pub fn with_channel_data_layout(&mut self, layout: ChannelDataLayout) -> &mut Self {
+        self.channel_data_layout = Some(layout);
+        self
+    }
+
+    /// Provide the bit order within bytes.
+    pub fn with_bit_order(&mut self, bit_order: BitOrder) -> &mut Self {
+        self.bit_order = Some(bit_order);
         self
     }
 

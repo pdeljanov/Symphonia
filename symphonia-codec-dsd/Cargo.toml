@@ -1,0 +1,17 @@
+[package]
+name = "symphonia-codec-dsd"
+version = "0.5.5"
+description = "Pure Rust DSD decoder (a part of project Symphonia)."
+homepage = "https://github.com/pdeljanov/Symphonia"
+repository = "https://github.com/pdeljanov/Symphonia"
+authors = ["M0Rf30 <morf3089@gmail.com>"]
+license = "MPL-2.0"
+readme = "README.md"
+categories = ["multimedia", "multimedia::audio", "multimedia::decoding"]
+keywords = ["audio", "codec", "decoder", "dsd"]
+edition = "2018"
+rust-version = "1.53"
+
+[dependencies]
+log = "0.4"
+symphonia-core = { version = "0.5.5", path = "../symphonia-core" }
