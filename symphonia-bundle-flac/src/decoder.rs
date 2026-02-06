@@ -120,6 +120,17 @@ impl FlacDecoder {
         self.buf.clear();
         self.buf.render_reserved(Some(header.block_num_samples as usize));
 
+        let frame_channels = match header.channel_assignment {
+            ChannelAssignment::Independant(c) => c as usize,
+            ChannelAssignment::LeftSide
+            | ChannelAssignment::MidSide
+            | ChannelAssignment::RightSide => 2,
+        };
+
+        if frame_channels != self.buf.spec().channels.count() {
+            return decode_error("flac: frame channel count does not match stream info");
+        }
+
         // Only Bitstream reading for subframes.
         {
             // Sub-frames don't have any byte-aligned content, so use a BitReader.
@@ -330,6 +341,9 @@ fn read_subframe<B: ReadBitsLtr>(bs: &mut B, frame_bps: u32, buf: &mut [i32]) ->
     // bits per sample in the audio sub-block. If the bit is set, unary decode the number of
     // dropped bits per sample.
     let dropped_bps = if bs.read_bool()? { bs.read_unary_zeros()? + 1 } else { 0 };
+    if dropped_bps > frame_bps {
+        return decode_error("flac: dropped bits per sample is greater than the frame bits per sample");
+    }
 
     // The bits per sample stated in the frame header is for the decoded audio sub-block samples.
     // However, it is likely that the lower order bits of all the samples are simply 0. Therefore,
@@ -389,6 +403,10 @@ fn decode_fixed_linear<B: ReadBitsLtr>(
     order: u32,
     buf: &mut [i32],
 ) -> Result<()> {
+    if order as usize > buf.len() {
+        return decode_error("flac: fixed predictor order is greater than the block size");
+    }
+
     // The first `order` samples are encoded verbatim to warm-up the LPC decoder.
     decode_verbatim(bs, bps, &mut buf[..order as usize])?;
 
@@ -406,6 +424,10 @@ fn decode_fixed_linear<B: ReadBitsLtr>(
 }
 
 fn decode_linear<B: ReadBitsLtr>(bs: &mut B, bps: u32, order: u32, buf: &mut [i32]) -> Result<()> {
+    if order as usize > buf.len() {
+        return decode_error("flac: predictor order is greater than the block size");
+    }
+
     // The order of the Linear Predictor should be between 1 and 32.
     debug_assert!(order > 0 && order <= 32);
 
