@@ -9,6 +9,7 @@ use super::common::SideData;
 
 use symphonia_core::errors::Result;
 use symphonia_core::formats::Track;
+use symphonia_core::units::{Duration, Timestamp};
 
 mod flac;
 mod opus;
@@ -31,7 +32,7 @@ pub enum MapResult {
     /// The packet contained setup data.
     Setup,
     /// The packet contained stream data.
-    StreamData { dur: u64 },
+    StreamData { dur: Duration, discard: Duration },
     /// The packet contained unknown data.
     Unknown,
 }
@@ -39,7 +40,7 @@ pub enum MapResult {
 /// A `PacketParser` implements a packet parser that decodes the timestamp and duration for a
 /// packet.
 pub trait PacketParser: Send + Sync {
-    fn parse_next_packet_dur(&mut self, packet: &[u8]) -> u64;
+    fn parse_next_packet_dur(&mut self, packet: &[u8]) -> (Duration, Duration);
 }
 
 /// A `Mapper` implements packet-handling for a specific `Codec`.
@@ -59,8 +60,13 @@ pub trait Mapper: Send + Sync {
     fn track_mut(&mut self) -> &mut Track;
 
     /// Convert an absolute granular position to a timestamp.
-    fn absgp_to_ts(&self, ts: u64) -> u64 {
-        ts
+    fn absgp_to_ts(&self, absgp: u64) -> Timestamp {
+        Timestamp::from(absgp as i64)
+    }
+
+    /// Get the maximum duration between two random access points.
+    fn max_rap_period(&self) -> Duration {
+        Duration::new(0)
     }
 
     /// Make a packet parser for parsing packet timing.
@@ -119,7 +125,7 @@ impl Mapper for NullMapper {
 struct NullPacketParser {}
 
 impl PacketParser for NullPacketParser {
-    fn parse_next_packet_dur(&mut self, _: &[u8]) -> u64 {
-        0
+    fn parse_next_packet_dur(&mut self, _: &[u8]) -> (Duration, Duration) {
+        (Duration::ZERO, Duration::ZERO)
     }
 }

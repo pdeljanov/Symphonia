@@ -9,6 +9,7 @@ use std::collections::VecDeque;
 
 use symphonia_core::errors::{Result, decode_error};
 use symphonia_core::formats::{Packet, Track};
+use symphonia_core::units::{Duration, Timestamp};
 
 use super::common::SideData;
 use super::mappings::Mapper;
@@ -17,20 +18,26 @@ use super::page::Page;
 
 use log::{debug, warn};
 
-#[allow(dead_code)]
 #[derive(Copy, Clone, Debug)]
 struct Bound {
+    /// The page sequence number.
     seq: u32,
-    ts: u64,
-    delay: u64,
+    /// Indicates if this is the last page.
+    is_last_page: bool,
+    /// The start or end timestamp (depends on the type of bound).
+    ts: Timestamp,
+    /// The samples to discard from the start or end (depends on type of bound).
+    discard: Duration,
 }
 
-#[allow(dead_code)]
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 struct PageInfo {
+    /// The page sequence number.
     seq: u32,
-    absgp: u64,
+    /// Indicates if this is the last page.
     is_last_page: bool,
+    /// The page's end timestamp derived from the absolute granule position.
+    end_ts: Option<Timestamp>,
 }
 
 #[derive(Default)]
@@ -47,13 +54,12 @@ pub struct LogicalStream {
     prev_page_info: Option<PageInfo>,
     start_bound: Option<Bound>,
     end_bound: Option<Bound>,
-    gapless: bool,
 }
 
 impl LogicalStream {
     const MAX_PACKET_LEN: usize = 16 * 1024 * 1024;
 
-    pub fn new(mapper: Box<dyn Mapper>, gapless: bool) -> Self {
+    pub fn new(mapper: Box<dyn Mapper>) -> Self {
         LogicalStream {
             mapper,
             packets: Default::default(),
@@ -62,7 +68,6 @@ impl LogicalStream {
             prev_page_info: None,
             start_bound: None,
             end_bound: None,
-            gapless,
         }
     }
 
@@ -79,6 +84,11 @@ impl LogicalStream {
         self.mapper.is_ready()
     }
 
+    /// Get the maximum duration between two random access points.
+    pub fn max_rap_period(&self) -> Duration {
+        self.mapper.max_rap_period()
+    }
+
     /// Get the `Track` for the logical stream.
     pub fn track(&self) -> &Track {
         self.mapper.track()
@@ -91,6 +101,11 @@ impl LogicalStream {
 
     /// Reads a page.
     pub fn read_page(&mut self, page: &Page<'_>) -> Result<Vec<SideData>> {
+        self.read_page_init(page, false)
+    }
+
+    /// Read a page. Specifying whether this is the initial bitstream page.
+    pub fn read_page_init(&mut self, page: &Page<'_>, is_init_page: bool) -> Result<Vec<SideData>> {
         // Side data vector. This will not allocate unless data is pushed to it (normal case).
         let mut side_data = Vec::new();
 
@@ -110,13 +125,17 @@ impl LogicalStream {
             }
         }
 
+        // Keep a copy of the previous page information.
+        let prev_page_info = self.prev_page_info.take();
+
+        // Update with new page information.
         self.prev_page_info = Some(PageInfo {
             seq: page.header.sequence,
-            absgp: page.header.absgp,
             is_last_page: page.header.is_last_page,
+            // Propagate the last known valid bitstream timestamp. This will be updated later if
+            // a bitstream packet ends in this page.
+            end_ts: prev_page_info.and_then(|info| info.end_ts),
         });
-
-        let mut iter = page.packets();
 
         // If there is partial packet data buffered, a continuation page is expected.
         if !page.header.is_continuation && self.part_len > 0 {
@@ -125,6 +144,8 @@ impl LogicalStream {
             // Clear partial packet data.
             self.part_len = 0;
         }
+
+        let mut iter = page.packets();
 
         // If there is no partial packet data buffered, a continuation page is not expected.
         if page.header.is_continuation && self.part_len == 0 {
@@ -140,6 +161,9 @@ impl LogicalStream {
             }
         }
 
+        let mut total_pkt_dur = Duration::ZERO;
+        let mut total_pkt_discard = Duration::ZERO;
+
         let num_prev_packets = self.packets.len();
 
         for buf in &mut iter {
@@ -150,14 +174,21 @@ impl LogicalStream {
             // queue. If it contains side data, then add it to the side data list. Ignore other
             // types of packet data.
             match self.mapper.map_packet(&data) {
-                Ok(MapResult::StreamData { dur }) => {
+                Ok(MapResult::StreamData { dur, discard }) => {
+                    total_pkt_dur = total_pkt_dur.saturating_add(dur);
+                    total_pkt_discard = total_pkt_discard.saturating_add(discard);
+
                     // Create a packet.
-                    self.packets.push_back(Packet::new_from_boxed_slice(
+                    let mut packet = Packet::new_from_boxed_slice(
                         page.header.serial,
-                        0,
+                        Timestamp::ZERO,
                         dur,
                         data,
-                    ));
+                    );
+
+                    packet.trim_start = discard;
+
+                    self.packets.push_back(packet);
                 }
                 Ok(MapResult::SideData { data }) => side_data.push(data),
                 Err(e) => {
@@ -173,42 +204,95 @@ impl LogicalStream {
             self.save_partial_packet(buf)?;
         }
 
-        // The number of packets from this page that were queued.
-        let num_new_packets = self.packets.len() - num_prev_packets;
+        // If one or more bitstream packets ended in this page, process them.
+        if num_prev_packets < self.packets.len() {
+            // The page's timestamp is one past the last valid frame in the last completed packet
+            // in this page.
+            let page_end_ts = self.mapper.absgp_to_ts(page.header.absgp);
 
-        if num_new_packets > 0 {
-            // Get the start delay.
-            let start_delay = self.start_bound.as_ref().map_or(0, |b| b.delay);
+            // Update previous page information with the timestamp.
+            self.prev_page_info.as_mut().unwrap().end_ts = Some(page_end_ts);
 
-            // Assign timestamps by first calculating the timestamp of one past the last sample in
-            // in the last packet of this page, add the start delay.
-            let mut page_end_ts =
-                self.mapper.absgp_to_ts(page.header.absgp).saturating_add(start_delay);
-
-            // If this is the last page, then add the end delay to the timestamp.
-            if page.header.is_last_page {
-                let end_delay = self.end_bound.as_ref().map_or(0, |b| b.delay);
-                page_end_ts = page_end_ts.saturating_add(end_delay);
+            // Compute the page's start timestamp.
+            let page_start_ts = if let Some(ts) = prev_page_info.and_then(|prev| prev.end_ts) {
+                // The previous page is known and it has a valid end timestamp. Use it as this
+                // page's start timestamp.
+                ts
             }
+            else {
+                let is_single_page_stream =
+                    page.header.is_last_page && (is_init_page || self.is_single_page_stream());
 
-            // Then, iterate over the newly added packets in reverse order and subtract their
-            // cumulative duration at each iteration to get the timestamp of the first sample
-            // in each packet.
-            let mut page_dur = 0u64;
+                // The lower-bound for the page's start timestamp.
+                let page_start_ts_raw = page_end_ts.saturating_sub(total_pkt_dur);
 
-            for packet in self.packets.iter_mut().rev().take(num_new_packets) {
-                page_dur = page_dur.saturating_add(packet.dur);
-                packet.pts = page_end_ts.saturating_sub(page_dur);
-            }
+                if is_single_page_stream {
+                    // In a single-page stream that begins at t = 0, the page end timestamp is the
+                    // exact length of valid (no delay or padding) frames. Therefore, the page start
+                    // timestamp is known to be equal to -delay frames. All additional frames are
+                    // padding.
+                    //
+                    // If the stream does not start at t = 0, then it is not possible to determine
+                    // whether frames should be discarded from the start or the end of the stream.
+                    // Therefore, we assume t = 0 for the remainder.
+                    let total_dur_no_padding =
+                        total_pkt_discard.checked_add((page_end_ts.get() as u64).into()).unwrap();
 
-            if self.gapless {
-                for packet in self.packets.iter_mut().rev().take(num_new_packets) {
-                    symphonia_core::formats::util::trim_packet(
-                        packet,
-                        start_delay as u32,
-                        self.end_bound.as_ref().map(|b| b.ts),
-                    );
+                    if total_pkt_dur >= total_dur_no_padding {
+                        // The total packet duration is >= delay + valid (assuming t = 0) frames,
+                        // the extra frames must be padding.
+                        //
+                        // If the assumption the stream begins at t = 0 is false, then the following
+                        // misbehaviour will occur:
+                        //
+                        // If the encoder set t < 0 to discard additional frames at the start of the
+                        // stream, then the additional frames will be discard from the end, not the
+                        // beginning.
+                        //
+                        // If the encoder set t > 0 to indicate the media begins later, then no
+                        // padding frames will get discarded.
+                        Timestamp::from(-(total_pkt_discard.get() as i64))
+                    }
+                    else {
+                        // Stream starts at t > 0.
+                        page_start_ts_raw
+                    }
                 }
+                else {
+                    // In a multi-page stream, all pages other than the last have no padding.
+                    // Therefore, the naive calculation is always valid because the total packet
+                    // duration would only include valid or discarded frames.
+                    //
+                    // For the last page, this calculation fails because the total packet duration
+                    // includes the padding and it is not possible to know how many frames are
+                    // valid. If the end bound is known, the correct page start timestamp can be
+                    // found.
+                    page_start_ts_raw
+                }
+            };
+
+            let mut next_pkt_pts = page_start_ts;
+
+            for packet in self.packets.iter_mut().skip(num_prev_packets) {
+                packet.pts = next_pkt_pts;
+
+                // The packet's duration is populated with the packet's decoded duration (includes
+                // delay and padding). Calculate the next packet's PTS. This is also the end PTS of
+                // the current packet.
+                next_pkt_pts = next_pkt_pts.saturating_add(packet.dur);
+
+                // Remove the start trim from the packet's duration. The start trim was populated
+                // earlier.
+                packet.dur = packet.dur.saturating_sub(packet.trim_start);
+
+                // If the end of the current packet exceeds the page end, trim the end. Don't trim
+                // more frames than available.
+                if next_pkt_pts > page_end_ts {
+                    packet.trim_end = page_end_ts.abs_delta(next_pkt_pts).min(packet.dur);
+                }
+
+                // Remove the end trim from the packet's duration.
+                packet.dur = packet.dur.saturating_sub(packet.trim_end);
             }
         }
 
@@ -251,23 +335,46 @@ impl LogicalStream {
             }
         };
 
-        // Calculate the page duration.
-        let mut page_dur = 0u64;
+        // Sum the total duration of all packets, and the amount to discard.
+        let mut total_pkt_dur = Duration::ZERO;
+        let mut total_pkt_discard = Duration::ZERO;
 
         for buf in page.packets() {
-            page_dur = page_dur.saturating_add(parser.parse_next_packet_dur(buf));
+            let (pkt_dur, pkt_discard) = parser.parse_next_packet_dur(buf);
+
+            // On overflow, it will not be possible to determine the start bound.
+            total_pkt_dur = match total_pkt_dur.checked_add(pkt_dur) {
+                Some(total) => total,
+                _ => return,
+            };
+            total_pkt_discard = match total_pkt_discard.checked_add(pkt_discard) {
+                Some(total) => total,
+                _ => return,
+            };
         }
 
+        // Map the absolute granule position to a timestamp.
         let page_end_ts = self.mapper.absgp_to_ts(page.header.absgp);
 
-        // If the page timestamp is >= the page duration, then the stream starts at timestamp 0 or
-        // a positive start time.
-        let bound = if page_end_ts >= page_dur {
-            Bound { seq: page.header.sequence, ts: page_end_ts - page_dur, delay: 0 }
+        // For single page streams, the first page is also the last page. If the page is
+        // explicitly marked as the last page, then we assume the stream starts and ends on the
+        // same page. Therefore, we can only assume it starts at pts=0, and any discarded frames
+        // are padding frames, not delay frames.
+        let page_start_ts = if !page.header.is_last_page {
+            match page_end_ts.checked_sub(total_pkt_dur) {
+                Some(ts) => ts,
+                _ => return,
+            }
         }
         else {
-            // If the page timestamp < the page duration, then the difference is the start delay.
-            Bound { seq: page.header.sequence, ts: 0, delay: page_dur - page_end_ts }
+            Timestamp::new(-(total_pkt_discard.get() as i64))
+        };
+
+        let bound = Bound {
+            seq: page.header.sequence,
+            is_last_page: page.header.is_last_page,
+            ts: page_start_ts,
+            discard: total_pkt_discard,
         };
 
         // Update codec parameters.
@@ -275,8 +382,8 @@ impl LogicalStream {
 
         track.with_start_ts(bound.ts);
 
-        if bound.delay > 0 {
-            track.with_delay(bound.delay as u32);
+        if bound.discard > Duration::ZERO {
+            track.with_delay(bound.discard.get() as u32);
         }
 
         // Update start bound.
@@ -288,12 +395,13 @@ impl LogicalStream {
     /// required. The state returned by each iteration of this function should be passed into the
     /// subsequent iteration.
     pub fn inspect_end_page(&mut self, mut state: InspectState, page: &Page<'_>) -> InspectState {
+        // Do nothing if the end bound was found.
         if self.end_bound.is_some() {
             debug!("end page already found");
             return state;
         }
 
-        // Get and/or create the sniffer state.
+        // Get and/or create the packet parser.
         let parser = match &mut state.parser {
             Some(parser) => parser,
             None => {
@@ -309,63 +417,90 @@ impl LogicalStream {
             }
         };
 
-        let start_delay = self.start_bound.as_ref().map_or(0, |b| b.delay);
-
-        // The actual page end timestamp is the absolute granule position + the start delay.
-        let page_end_ts = self
-            .mapper
-            .absgp_to_ts(page.header.absgp)
-            .saturating_add(if self.gapless { 0 } else { start_delay });
-
         // Calculate the page duration. Note that even though only the last page uses this duration,
         // it is important to feed the packet parser so that the first packet of the final page
         // doesn't have a duration of 0 due to lapping on some codecs.
-        let mut page_dur = 0u64;
+        let mut total_pkt_dur = Duration::ZERO;
 
         for buf in page.packets() {
-            page_dur = page_dur.saturating_add(parser.parse_next_packet_dur(buf));
+            let (pkt_dur, _) = parser.parse_next_packet_dur(buf);
+
+            // On overflow it will be impossible to determine the end bound.
+            total_pkt_dur = match total_pkt_dur.checked_add(pkt_dur) {
+                Some(total) => total,
+                _ => return state,
+            };
         }
 
+        // Map the absolute granule position to a timestamp.
+        let page_end_ts = self.mapper.absgp_to_ts(page.header.absgp);
+
         // The end delay can only be determined if this is the last page, and the timstamp of the
-        // second last page is known.
+        // second last page is known, or this is the only page of the stream.
         let end_delay = if page.header.is_last_page {
             if let Some(last_bound) = &state.bound {
-                // The real ending timestamp of the decoded data is the timestamp of the previous
-                // page plus the decoded duration of this page.
-                let actual_page_end_ts = last_bound.ts.saturating_add(page_dur);
+                // The actual ending timestamp of the decoded data is the timestamp of the previous
+                // page plus the decoded duration of this page. Subtract the stated page end
+                // timestamp to determine the padding. On overflow, it'll be impossible to determine
+                // the end delay, so force it to be 0.
+                last_bound
+                    .ts
+                    .checked_add(total_pkt_dur)
+                    .map(|actual_page_end_ts| actual_page_end_ts.abs_delta(page_end_ts))
+            }
+            else if self.start_bound.is_some_and(|b| b.seq == page.header.sequence) {
+                // The start and end page is the same page. The end delay is the amount of excess
+                // page duration after subtracting the page's end timestamp.
 
-                // Any samples after the stated timestamp of this page are considered delay samples.
-                actual_page_end_ts.saturating_sub(page_end_ts)
+                // The amount of start delay, if available.
+                let delay = self.start_bound.map(|s| s.discard).unwrap_or(Duration::ZERO);
+
+                // The page end timestamp does not include delay or padding. Therefore, it is also
+                // the duration of valid content assuming it is non-negative.
+                let valid = page_end_ts.duration_from(Timestamp::ZERO);
+
+                // The amount of valid content plus padding.
+                let valid_and_padding = total_pkt_dur.checked_sub(delay);
+
+                // Take the valid duration from the valid and padding duration to yield the end
+                // padding.
+                valid_and_padding
+                    .zip(valid)
+                    .and_then(|(valid_and_padding, valid)| valid_and_padding.checked_sub(valid))
             }
             else {
                 // Don't have the timestamp of the previous page so it is not possible to
                 // calculate the end delay.
-                0
+                None
             }
         }
         else {
             // Only the last page can have an end delay.
-            0
+            None
         };
 
-        let bound = Bound { seq: page.header.sequence, ts: page_end_ts, delay: end_delay };
+        let bound = Bound {
+            seq: page.header.sequence,
+            is_last_page: page.header.is_last_page,
+            ts: page_end_ts,
+            discard: end_delay.unwrap_or(Duration::ZERO),
+        };
 
         // If this is the last page, update the codec parameters.
         if page.header.is_last_page {
+            // TODO: What if this is negative?
+            let num_frames = bound.ts.get() as u64;
+            let num_padding_frames = bound.discard.get() as u32;
+
             let track = self.mapper.track_mut();
 
-            // Do not report the end delay if gapless is enabled.
-            let block_end_ts = bound.ts + if self.gapless { 0 } else { bound.delay };
+            track.with_num_frames(num_frames);
 
-            if block_end_ts > track.start_ts {
-                track.with_num_frames(block_end_ts - track.start_ts);
+            if num_padding_frames > 0 {
+                track.with_padding(num_padding_frames);
             }
 
-            if bound.delay > 0 {
-                track.with_padding(bound.delay as u32);
-            }
-
-            self.end_bound = Some(bound)
+            self.end_bound = Some(bound);
         }
 
         // Update the state's bound.
@@ -374,46 +509,62 @@ impl LogicalStream {
         state
     }
 
-    /// Examine a page and return the start and end timestamps as a tuple.
-    pub fn inspect_page(&mut self, page: &Page<'_>) -> (u64, u64) {
-        // Get the start delay.
-        let start_delay = self.start_bound.as_ref().map_or(0, |b| b.delay);
-
+    /// Examine a page in isolation and return the start and end timestamps as a tuple.
+    pub fn inspect_page(&mut self, page: &Page<'_>) -> (Timestamp, Timestamp) {
         // Get the cumulative duration of all packets within this page.
-        let mut page_dur = 0u64;
+        let mut total_pkt_dur = Duration::ZERO;
+        let mut total_pkt_discard = Duration::ZERO;
 
         if let Some(mut parser) = self.mapper.make_parser() {
             for buf in page.packets() {
-                page_dur = page_dur.saturating_add(parser.parse_next_packet_dur(buf));
+                let (pkt_dur, pkt_discard) = parser.parse_next_packet_dur(buf);
+
+                total_pkt_dur = total_pkt_dur.saturating_add(pkt_dur);
+                total_pkt_discard = total_pkt_discard.saturating_add(pkt_discard);
             }
         }
 
-        // If this is the final page, get the end delay.
-        let end_delay = if page.header.is_last_page {
-            self.end_bound.as_ref().map_or(0, |b| b.delay)
-        }
-        else {
-            0
+        let page_end_ts = self.mapper.absgp_to_ts(page.header.absgp);
+
+        // Map the absolute granule position to a timestamp.
+        let page_start_ts_raw = page_end_ts.checked_sub(total_pkt_dur).unwrap();
+
+        let page_start_ts = match self.start_bound {
+            // Start bound is known, and this is the first bitstream page.
+            Some(b) if b.seq == page.header.sequence => b.ts,
+            // Start bound is known, but this is not the first bitstream page.
+            Some(_) => page_start_ts_raw,
+            // Start bound is not known. Assume this is the first bitstream page.
+            None if page_start_ts_raw.is_negative() => {
+                Timestamp::new(-(total_pkt_discard.get() as i64))
+            }
+            // Start bound is not known, but the page start timestamp is positive. The
+            // stream likely started with a positive timestamp.
+            None => page_start_ts_raw,
         };
 
-        // The total delay.
-        let delay = start_delay + end_delay;
+        (page_start_ts, page_end_ts)
+    }
 
-        // Add the total delay to the page end timestamp.
-        let page_end_ts = self.mapper.absgp_to_ts(page.header.absgp).saturating_add(delay);
-
-        // Get the page start timestamp of the page by subtracting the cumulative packet duration.
-        let page_start_ts = page_end_ts.saturating_sub(page_dur);
-
-        if !self.gapless {
-            // If gapless playback is disabled, then report the start and end timestamps with the
-            // delays incorporated.
-            (page_start_ts, page_end_ts)
-        }
-        else {
-            // If gapless playback is enabled, report the start and end timestamps without the
-            // delays.
-            (page_start_ts.saturating_sub(delay), page_end_ts.saturating_sub(delay))
+    /// Returns true if the stream is only a single page.
+    fn is_single_page_stream(&self) -> bool {
+        match self.start_bound {
+            // The starting page is known, and it is marked as the last page. This is a single-page
+            // stream.
+            Some(start) if start.is_last_page => true,
+            // The starting page is known, and it is not marked as the last page. This can be
+            // assumed to be a multi-page stream. NOTE: This assumption relies on the starting page
+            // being the page with first completed packet.
+            Some(start) => {
+                // However, if the starting and ending pages are known and have mismatched sequence
+                // numbers (this shouldn't happen), then the previous assumption was false.
+                match self.end_bound {
+                    Some(end) => start.seq == end.seq,
+                    _ => true,
+                }
+            }
+            // The starting page is not known, cannot assume this is a single-page stream.
+            _ => false,
         }
     }
 

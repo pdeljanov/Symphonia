@@ -10,6 +10,7 @@ use symphonia_core::checksum::Crc16Ansi;
 use symphonia_core::errors::{Error, Result};
 use symphonia_core::formats::Packet;
 use symphonia_core::io::{BufReader, Monitor, ReadBytes, SeekBuffered};
+use symphonia_core::units::{Duration, Timestamp};
 use symphonia_core::util::bits;
 
 use log::warn;
@@ -57,12 +58,12 @@ impl<const N: usize> Default for MovingAverage<N> {
     }
 }
 
-/// Frame synchronization information.
-pub struct SyncInfo {
-    /// The timestamp of the first audio frame in the packet.
-    pub ts: u64,
+/// Parser-internal frame synchronization information.
+struct SyncInfo {
+    /// The timestamp of the first audio frame in the packet. Never exceeds 36-bits.
+    ts: u64,
     /// The number of audio frames in the packet.
-    pub dur: u64,
+    dur: u16,
 }
 
 /// A parsed packet.
@@ -285,6 +286,22 @@ impl PacketBuilder {
     }
 }
 
+/// Frame resynchronization information.
+pub struct ResyncInfo {
+    /// The timestamp of the first audio frame in the packet.
+    pub ts: Timestamp,
+    /// The number of audio frames in the packet.
+    pub dur: Duration,
+}
+
+impl ResyncInfo {
+    /// Get the timestamp of the next frame.
+    #[inline]
+    pub fn next_ts(&self) -> Timestamp {
+        self.ts.checked_add(self.dur).expect("flac timestamp + duration cannot exceed 37 bits")
+    }
+}
+
 #[derive(Default)]
 pub struct PacketParser {
     /// Stream information.
@@ -446,7 +463,7 @@ impl PacketParser {
                     if let Some(header) = self.builder.last_header() {
                         let sync = calc_sync_info(&self.info, header);
 
-                        let num_frames = sync.ts + sync.dur;
+                        let num_frames = sync.ts + u64::from(sync.dur);
 
                         if num_frames < num_total_frames {
                             // Demuxed less frames than expected.
@@ -489,11 +506,16 @@ impl PacketParser {
         // Update the frame size moving average.
         self.fsma.push(parsed.buf.len());
 
-        Ok(Some(Packet::new_from_boxed_slice(0, parsed.sync.ts, parsed.sync.dur, parsed.buf)))
+        Ok(Some(Packet::new_from_boxed_slice(
+            0,
+            parsed.sync.ts.try_into().expect("flac timestamp is 36-bits maximum"),
+            Duration::from(parsed.sync.dur),
+            parsed.buf,
+        )))
     }
 
     /// Resync the reader to the start of the next frame.
-    pub fn resync<B>(&mut self, reader: &mut B) -> Result<SyncInfo>
+    pub fn resync<B>(&mut self, reader: &mut B) -> Result<ResyncInfo>
     where
         B: ReadBytes + SeekBuffered,
     {
@@ -528,7 +550,10 @@ impl PacketParser {
             self.soft_reset();
         }
 
-        Ok(sync)
+        Ok(ResyncInfo {
+            ts: sync.ts.try_into().expect("flac timestamp is 36-bits maximum"),
+            dur: sync.dur.into(),
+        })
     }
 
     /// Reset the packet parser for a new stream.
@@ -545,7 +570,7 @@ impl PacketParser {
 fn calc_sync_info(stream_info: &StreamInfo, header: &FrameHeader) -> SyncInfo {
     let is_fixed = stream_info.block_len_max == stream_info.block_len_min;
 
-    let dur = u64::from(header.block_num_samples);
+    let dur = header.block_num_samples;
 
     let ts = match header.block_sequence {
         BlockSequence::BySample(sample) => sample,
@@ -555,7 +580,7 @@ fn calc_sync_info(stream_info: &StreamInfo, header: &FrameHeader) -> SyncInfo {
         BlockSequence::ByFrame(frame) => {
             // This should not happen in practice.
             warn!("got a fixed size frame for a variable stream, the timestamp may be off");
-            u64::from(frame) * dur
+            u64::from(frame) * u64::from(dur)
         }
     };
 

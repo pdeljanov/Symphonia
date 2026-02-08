@@ -10,6 +10,7 @@
 use std::num::NonZeroU8;
 use std::sync::Arc;
 
+use log::warn;
 use symphonia_core::errors::{Result, decode_error};
 use symphonia_core::formats::VendorDataAttachment;
 use symphonia_core::formats::util::SeekIndex;
@@ -19,7 +20,7 @@ use symphonia_core::meta::{
     Chapter, ChapterGroup, ChapterGroupItem, MetadataBuilder, MetadataInfo, Size, StandardTag, Tag,
     Visual,
 };
-use symphonia_core::units::TimeBase;
+use symphonia_core::units::{TimeBase, Timestamp};
 
 use crate::embedded::vorbis;
 use crate::utils::id3v2::get_visual_key_from_picture_type;
@@ -137,23 +138,29 @@ pub fn read_flac_seektable_block<B: ReadBytes>(
     reader: &mut B,
     block_length: u32,
 ) -> Result<SeekIndex> {
-    // The number of seek table entries is always the block length divided by the length of a single
-    // entry, 18 bytes.
+    // The number of seek table entries is always the metadata block length divided by the length of
+    // a single entry, 18 bytes.
     let count = block_length / 18;
 
     let mut index = SeekIndex::new();
 
+    // Read each entry in the seektable.
     for _ in 0..count {
+        // The sample number (timestamp) of the first sample in the target frame.
         let sample = reader.read_be_u64()?;
 
-        // A sample value of 0xFFFFFFFFFFFFFFFF is designated as a placeholder and is to be
-        // ignored by decoders. The remaining 10 bytes of the seek point are undefined and must
-        // still be consumed.
-        if sample != 0xffff_ffff_ffff_ffff {
-            index.insert(sample, reader.read_be_u64()?, u32::from(reader.read_be_u16()?));
+        // A sample number of 0xFFFFFFFFFFFFFFFF is designated as a placeholder and indicates the
+        // entry should be ignored by decoders. However, since timestamps > 0x7FFFFFFFFFFFFFFF are
+        // unrepresentable in Symphonia, all of these entries will also be ignored.
+        if let Ok(sample) = sample.try_into() {
+            // The byte offset of the target frame.
+            let offset = reader.read_be_u64()?;
+            // The number of samples in the target frame.
+            let num_samples = reader.read_be_u16()?;
+            index.insert(sample, offset, u32::from(num_samples));
         }
         else {
-            reader.ignore_bytes(10)?;
+            reader.ignore_bytes(10)?
         }
     }
 
@@ -250,7 +257,7 @@ fn read_flac_cuesheet_track<B: ReadBytes>(
         );
     }
 
-    let number = u32::from(reader.read_u8()?);
+    let number = reader.read_u8()?;
 
     // A track number of 0 is disallowed in all cases. For CD-DA cuesheets, track 0 is reserved for
     // lead-in.
@@ -322,9 +329,14 @@ fn read_flac_cuesheet_track<B: ReadBytes>(
         Ok(ChapterGroupItem::Group(group))
     }
     else {
+        let start_ts = n_offset_samples.try_into().unwrap_or_else(|_| {
+            warn!("cuesheet track index offset too large, clamping to maximum");
+            i64::MAX
+        });
+
         // If the track has no indicies, return a single chapter.
         let chapter = Chapter {
-            start_time: tb.calc_time(n_offset_samples),
+            start_time: tb.calc_time_saturating(Timestamp::from(start_ts)),
             end_time: None,
             start_byte: None,
             end_byte: None,
@@ -363,14 +375,17 @@ fn read_flac_cuesheet_track_index<B: ReadBytes>(
     //       CD-DA.
     let idx_number = ((idx_number_raw & 0xff00_0000) >> 24) as u8;
 
-    // Calculate the index's starting timestamp.
-    let idx_start_ts = match track_ts.checked_add(n_offset_samples) {
-        Some(ts) => ts,
-        None => return decode_error("flac: cuesheet track index start time too large"),
-    };
+    // Calculate the track index's starting timestamp. Clamp it to the maximum
+    let start_ts = track_ts
+        .checked_add(n_offset_samples)
+        .and_then(|ts| ts.try_into().ok())
+        .unwrap_or_else(|| {
+            warn!("cuesheet track index offset too large, clamping to maximum");
+            i64::MAX
+        });
 
     Ok(Chapter {
-        start_time: tb.calc_time(idx_start_ts),
+        start_time: tb.calc_time_saturating(Timestamp::from(start_ts)),
         end_time: None,
         start_byte: None,
         end_byte: None,

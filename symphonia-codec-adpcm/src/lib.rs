@@ -124,7 +124,7 @@ impl AdpcmDecoder {
 
         let frames_per_block = self.params.frames_per_block.unwrap() as usize;
 
-        let block_count = packet.block_dur() as usize / frames_per_block;
+        let block_count = packet.block_dur().get() as usize / frames_per_block;
 
         self.buf.clear();
         self.buf.render_uninit(Some(block_count * frames_per_block));

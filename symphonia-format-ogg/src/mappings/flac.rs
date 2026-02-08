@@ -18,6 +18,7 @@ use symphonia_core::errors::{Result, decode_error};
 use symphonia_core::formats::Track;
 use symphonia_core::io::{BufReader, MonitorStream, ReadBytes};
 use symphonia_core::meta::MetadataBuilder;
+use symphonia_core::units::Duration;
 use symphonia_metadata::embedded::flac::{
     FLAC_METADATA_INFO, read_flac_comment_block, read_flac_picture_block,
 };
@@ -259,11 +260,12 @@ fn decode_frame_header(buf: &[u8]) -> Result<FrameHeader> {
 struct FlacPacketParser {}
 
 impl PacketParser for FlacPacketParser {
-    fn parse_next_packet_dur(&mut self, packet: &[u8]) -> u64 {
-        match decode_frame_header(packet).ok() {
+    fn parse_next_packet_dur(&mut self, packet: &[u8]) -> (Duration, Duration) {
+        let dur = match decode_frame_header(packet).ok() {
             Some(header) => header.dur,
             _ => 0,
-        }
+        };
+        (Duration::from(dur), Duration::ZERO)
     }
 }
 
@@ -303,7 +305,7 @@ impl Mapper for FlacMapper {
                 _ => 0,
             };
 
-            Ok(MapResult::StreamData { dur })
+            Ok(MapResult::StreamData { dur: Duration::from(dur), discard: Duration::ZERO })
         }
         else if packet_type == 0x00 || packet_type == 0x80 {
             // Packet types 0x00 and 0x80 are invalid.

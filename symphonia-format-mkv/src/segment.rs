@@ -110,10 +110,12 @@ pub(crate) struct TrackElement {
     pub(crate) lang_bcp47: Option<String>,
     pub(crate) codec_id: String,
     pub(crate) codec_private: Option<Box<[u8]>>,
+    pub(crate) codec_delay: u64,
     pub(crate) block_addition_mappings: Vec<BlockAdditionMappingElement>,
     pub(crate) audio: Option<AudioElement>,
     pub(crate) video: Option<VideoElement>,
     pub(crate) default_duration: Option<NonZeroU64>,
+    pub(crate) track_timestamp_scale: f64,
     pub(crate) flags: TrackFlags,
 }
 
@@ -127,10 +129,12 @@ impl EbmlElement<MkvSchema> for TrackElement {
         let mut lang_bcp47 = None;
         let mut audio = None;
         let mut video = None;
-        let mut codec_private = None;
         let mut block_addition_mappings = Vec::new();
         let mut codec_id = None;
+        let mut codec_private = None;
+        let mut codec_delay = None;
         let mut default_duration = None;
+        let mut track_timestamp_scale = None;
         let mut flags = Default::default();
 
         while let Some(child) = it.next_header()? {
@@ -165,6 +169,10 @@ impl EbmlElement<MkvSchema> for TrackElement {
                     // Non-mandatory element.
                     codec_private = Some(it.read_binary()?);
                 }
+                MkvElement::CodecDelay => {
+                    // Mandatory element. Schema-defined default is 0.
+                    codec_delay = it.read_u64()?;
+                }
                 MkvElement::Audio => {
                     // Non-mandatory element.
                     audio = Some(it.read_master_element()?);
@@ -184,6 +192,10 @@ impl EbmlElement<MkvSchema> for TrackElement {
                     )?;
 
                     default_duration = Some(val);
+                }
+                MkvElement::TrackTimestampScale => {
+                    // Mandatory element. Schema-defined default is 1.0. Deprecated v3.
+                    track_timestamp_scale = Some(it.read_f64_default(1.0)?);
                 }
                 MkvElement::FlagDefault => {
                     // Mandatory element. Schema-defined default is 1 (set).
@@ -236,6 +248,8 @@ impl EbmlElement<MkvSchema> for TrackElement {
 
         // Populate missing or empty mandatory elements that have default values.
         let lang = lang.unwrap_or_else(|| "eng".into());
+        let codec_delay = codec_delay.unwrap_or(0);
+        let track_timestamp_scale = track_timestamp_scale.unwrap_or(1.0);
 
         Ok(Self {
             number: number.ok_or(EbmlError::ElementError("mkv: missing track number"))?,
@@ -244,10 +258,12 @@ impl EbmlElement<MkvSchema> for TrackElement {
             lang_bcp47,
             codec_id: codec_id.ok_or(EbmlError::ElementError("mkv: missing codec id"))?,
             codec_private,
+            codec_delay,
             block_addition_mappings,
             audio,
             video,
             default_duration,
+            track_timestamp_scale,
             flags,
         })
     }
@@ -782,6 +798,7 @@ impl EbmlElement<MkvSchema> for CuesElement {
 #[allow(dead_code)]
 #[derive(Debug)]
 pub(crate) struct CuePointElement {
+    /// Time in segment ticks.
     pub(crate) time: u64,
     pub(crate) positions: CueTrackPositionsElement,
 }
@@ -873,10 +890,12 @@ impl EbmlElement<MkvSchema> for CueTrackPositionsElement {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub(crate) struct BlockGroupElement {
     pub(crate) data: Box<[u8]>,
     pub(crate) duration: Option<u64>,
+    pub(crate) reference_block: Option<i64>,
 }
 
 impl EbmlElement<MkvSchema> for BlockGroupElement {
@@ -885,6 +904,7 @@ impl EbmlElement<MkvSchema> for BlockGroupElement {
     fn read<R: ReadEbml>(it: &mut MkvEbmlIterator<R>, hdr: &MkvEbmlElementHeader) -> Result<Self> {
         let mut data = None;
         let mut block_duration = None;
+        let mut reference_block = None;
 
         while let Some(child) = it.next_header()? {
             match child.element_type() {
@@ -901,6 +921,10 @@ impl EbmlElement<MkvSchema> for BlockGroupElement {
                     // Non-mandatory element. Schema-defined default is TBD.
                     block_duration = it.read_u64()?;
                 }
+                MkvElement::ReferenceBlock => {
+                    // Non-mandatory element. No schema-defined default.
+                    reference_block = Some(it.read_i64_no_default()?);
+                }
                 other => {
                     // Unexpected child element.
                     log::debug!("ignored {:?} child {:?}", hdr.element_type(), other);
@@ -911,6 +935,7 @@ impl EbmlElement<MkvSchema> for BlockGroupElement {
         Ok(Self {
             data: data.ok_or(EbmlError::ElementError("mkv: missing block inside block group"))?,
             duration: block_duration,
+            reference_block,
         })
     }
 }
@@ -1785,8 +1810,8 @@ impl ChapterAtomElement {
         }
 
         let chapter = Chapter {
-            start_time: Time::from_ns(self.time_start),
-            end_time: self.time_end.map(Time::from_ns),
+            start_time: Time::from_nanos_u64(self.time_start),
+            end_time: self.time_end.map(Time::from_nanos_u64),
             start_byte: None,
             end_byte: None,
             tags,

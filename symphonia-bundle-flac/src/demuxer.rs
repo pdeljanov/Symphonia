@@ -241,11 +241,10 @@ impl FormatReader for FlacReader<'_> {
     }
 
     fn seek(&mut self, _mode: SeekMode, to: SeekTo) -> Result<SeekedTo> {
-        if self.tracks.is_empty() {
+        let Some(track) = self.tracks.first()
+        else {
             return seek_error(SeekErrorKind::Unseekable);
-        }
-
-        let track = &self.tracks[0];
+        };
 
         // Get the timestamp of the desired audio frame.
         let ts = match to {
@@ -253,23 +252,26 @@ impl FormatReader for FlacReader<'_> {
             SeekTo::TimeStamp { ts, .. } => ts,
             // Time value given, calculate frame timestamp using the track's timebase.
             SeekTo::Time { time, .. } => {
-                // Use the timebase to calculate the frame timestamp. If timebase is not known, the
-                // seek cannot be completed.
-                if let Some(tb) = track.time_base {
-                    tb.calc_timestamp(time)
-                }
-                else {
-                    return seek_error(SeekErrorKind::Unseekable);
-                }
+                // The timebase is required to calculate the timestamp.
+                let tb = track.time_base.ok_or(Error::SeekError(SeekErrorKind::Unseekable))?;
+
+                // If the timestamp overflows, the seek if out-of-range.
+                tb.calc_timestamp(time).ok_or(Error::SeekError(SeekErrorKind::OutOfRange))?
             }
         };
 
         debug!("seeking to frame_ts={ts}");
 
+        // Negative timestamp are invalid for FLAC.
+        if ts.is_negative() {
+            return seek_error(SeekErrorKind::OutOfRange);
+        }
+
         // If the total number of frames in the stream is known, verify the desired frame timestamp
         // does not exceed it.
         if let Some(num_frames) = track.num_frames {
-            if ts > num_frames {
+            // The timestamp is always positive.
+            if ts.get() as u64 > num_frames {
                 return seek_error(SeekErrorKind::OutOfRange);
             }
         }
@@ -319,8 +321,8 @@ impl FormatReader for FlacReader<'_> {
                 if ts < sync.ts {
                     end_byte_offset = mid_byte_offset;
                 }
-                else if ts >= sync.ts && ts < sync.ts + sync.dur {
-                    debug!("seeked to ts={} (delta={})", sync.ts, sync.ts as i64 - ts as i64);
+                else if ts >= sync.ts && ts < sync.next_ts() {
+                    debug!("seeked to ts={} (delta={})", sync.ts, sync.ts.saturating_delta(ts));
 
                     return Ok(SeekedTo { track_id: 0, actual_ts: sync.ts, required_ts: ts });
                 }
@@ -371,7 +373,7 @@ impl FormatReader for FlacReader<'_> {
                 }
             }
             // The desired timestamp is contained within the current packet.
-            else if ts >= sync.ts && ts < sync.ts + sync.dur {
+            else if ts >= sync.ts && ts < sync.next_ts() {
                 break sync;
             }
 
@@ -379,7 +381,7 @@ impl FormatReader for FlacReader<'_> {
             self.reader.read_byte()?;
         };
 
-        debug!("seeked to packet_ts={} (delta={})", packet.ts, packet.ts as i64 - ts as i64);
+        debug!("seeked to packet_ts={} (delta={})", packet.ts, packet.ts.saturating_delta(ts));
 
         Ok(SeekedTo { track_id: 0, actual_ts: packet.ts, required_ts: ts })
     }

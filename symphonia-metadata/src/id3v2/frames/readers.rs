@@ -438,8 +438,8 @@ pub fn read_chap_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Resu
         id,
         read_order: 0,
         chapter: Chapter {
-            start_time: Time::from_ms(u64::from(start_ms)),
-            end_time: Some(Time::from_ms(u64::from(end_ms))),
+            start_time: Time::from_millis(i64::from(start_ms)),
+            end_time: Some(Time::from_millis(i64::from(end_ms))),
             start_byte,
             end_byte,
             tags,

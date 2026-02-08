@@ -7,6 +7,7 @@
 
 use core::str;
 use std::fmt;
+use std::num::NonZero;
 use std::sync::Arc;
 
 use symphonia_core::audio::{Channels, layouts};
@@ -38,7 +39,7 @@ pub struct CommonChunk {
     /// The sample size in bits.
     pub sample_size: u16,
     /// The sample rate in Hz.
-    pub sample_rate: u32,
+    pub sample_rate: NonZero<u32>,
     /// Extra data associated with the format block conditional upon the format tag.
     pub format_data: FormatData,
 }
@@ -139,22 +140,22 @@ impl CommonChunk {
                 // Sample size is rounded-up to the nearest byte.
                 let block_align =
                     u32::from(self.n_channels) * (u32::from(self.sample_size + 7) / 8);
-                Ok(PacketInfo::without_blocks(block_align))
+                PacketInfo::without_blocks(block_align)
             }
             FormatData::ALaw(_) => {
                 // In a-law encoding, each audio sample is represented by an 8-bit value that has
                 // been compressed.
-                Ok(PacketInfo::without_blocks(u32::from(self.n_channels)))
+                PacketInfo::without_blocks(u32::from(self.n_channels))
             }
             FormatData::MuLaw(_) => {
                 // In mu-law encoding, each audio sample is represented by an 8-bit value that has
                 // been compressed.
-                Ok(PacketInfo::without_blocks(u32::from(self.n_channels)))
+                PacketInfo::without_blocks(u32::from(self.n_channels))
             }
             FormatData::IeeeFloat(_) => {
                 // Sample size is always a multiple of 8 bits.
                 let block_align = u32::from(self.n_channels) * (u32::from(self.sample_size) / 8);
-                Ok(PacketInfo::without_blocks(block_align))
+                PacketInfo::without_blocks(block_align)
             }
             FormatData::Extensible(_) => {
                 unsupported_error("aiff: packet info not implemented for format Extensible")
@@ -450,7 +451,7 @@ impl ParseChunkTag for RiffAiffChunks {
     }
 }
 
-fn read_sample_rate<B: ReadBytes>(reader: &mut B) -> Result<u32> {
+fn read_sample_rate<B: ReadBytes>(reader: &mut B) -> Result<NonZero<u32>> {
     let mut buf: [u8; 10] = [0; 10];
     reader.read_buf_exact(&mut buf)?;
 
@@ -461,12 +462,11 @@ fn read_sample_rate<B: ReadBytes>(reader: &mut B) -> Result<u32> {
         return decode_error("aiff: sample rate is not a real number");
     }
 
-    let sample_rate = sample_rate_f64 as u32;
-
     // Do not allow a 0 Hz sample rates.
-    if sample_rate == 0 {
-        return decode_error("aiff: sample rate cannot be 0");
-    }
+    let sample_rate = match NonZero::new(sample_rate_f64 as u32) {
+        Some(sample_rate) => sample_rate,
+        _ => return decode_error("aiff: sample rate cannot be 0"),
+    };
 
     Ok(sample_rate)
 }

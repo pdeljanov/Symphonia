@@ -42,9 +42,8 @@ pub struct MpaReader<'s> {
     tracks: Vec<Track>,
     chapters: Option<ChapterGroup>,
     metadata: MetadataLog,
-    enable_gapless: bool,
     first_packet_pos: u64,
-    next_packet_ts: u64,
+    next_packet_ts: Timestamp,
 }
 
 impl Scoreable for MpaReader<'_> {
@@ -178,21 +177,29 @@ impl FormatReader for MpaReader<'_> {
             break (header, packet);
         };
 
-        // Each frame contains 1 or 2 granules with each granule being exactly 576 samples long.
+        // The timestamp for this packet.
         let ts = self.next_packet_ts;
+        // The duration of this packet.
         let duration = header.duration();
 
-        self.next_packet_ts += duration;
+        // Advance the next packet timestamp based on this packet's duration. If it saturates, then
+        // it is not possible to read further.
+        self.next_packet_ts = match self.next_packet_ts.checked_add(duration) {
+            Some(ts) => ts,
+            None => return Ok(None),
+        };
 
         let mut packet = Packet::new_from_boxed_slice(0, ts, duration, packet.into_boxed_slice());
 
-        if self.enable_gapless {
-            symphonia_core::formats::util::trim_packet(
-                &mut packet,
-                self.tracks[0].delay.unwrap_or(0),
-                self.tracks[0].num_frames,
-            );
-        }
+        symphonia_core::formats::util::trim_packet(
+            &mut packet,
+            // Delay frames have negative timestamps, so the end PTS is the duration starting from
+            // PTS=0.
+            self.tracks[0]
+                .num_frames
+                .map(Duration::from)
+                .and_then(|dur| dur.timestamp_from(Timestamp::ZERO)),
+        );
 
         Ok(Some(packet))
     }
@@ -214,53 +221,52 @@ impl FormatReader for MpaReader<'_> {
         const REF_FRAMES_MASK: usize = MAX_REF_FRAMES - 1;
 
         // Get the timestamp of the desired audio frame.
-        let desired_ts = match to {
+        let required_ts = match to {
             // Frame timestamp given.
             SeekTo::TimeStamp { ts, .. } => ts,
             // Time value given, calculate frame timestamp using the timebase.
             SeekTo::Time { time, .. } => {
-                // Use the timebase to calculate the frame timestamp. If timebase is not known, the
-                // seek cannot be completed.
-                if let Some(tb) = self.tracks[0].time_base {
-                    tb.calc_timestamp(time)
-                }
-                else {
-                    return seek_error(SeekErrorKind::Unseekable);
-                }
+                // The timebase is required to calculate the timestamp.
+                let tb =
+                    self.tracks[0].time_base.ok_or(Error::SeekError(SeekErrorKind::Unseekable))?;
+
+                // If the timestamp overflows, the seek if out-of-range.
+                tb.calc_timestamp(time).ok_or(Error::SeekError(SeekErrorKind::OutOfRange))?
             }
         };
 
-        // If gapless playback is enabled, get the delay.
-        let delay =
-            if self.enable_gapless { u64::from(self.tracks[0].delay.unwrap_or(0)) } else { 0 };
+        // Get the total duration of the track (excludes delay and padding).
+        let dur_ts = self.tracks[0].num_frames.map(Duration::from);
 
-        // If gapless playback is enabled, get the padding.
-        let padding =
-            if self.enable_gapless { u64::from(self.tracks[0].padding.unwrap_or(0)) } else { 0 };
+        // Get the delay and padding values (or 0 if unknown).
+        let delay = self.tracks[0].delay.unwrap_or(0);
+        let padding = self.tracks[0].padding.unwrap_or(0);
 
-        // If possible, calculate the total duration of the track including delay and padding
-        // frames.
-        let duration = self.tracks[0].num_frames.map(|num_frames| num_frames + delay + padding);
+        // Calculate the valid timestamp bounds of the track.
+        let min_ts = Timestamp::from(-i64::from(delay));
+        let max_ts = dur_ts
+            .and_then(|dur| min_ts.checked_add(dur))
+            .and_then(|dur| dur.checked_add(Duration::from(delay + padding)));
 
-        // The required timestamp is offset by the delay.
-        let required_ts = desired_ts + delay;
-
-        // It is an error to seek past the end of the track.
-        if let Some(duration) = duration {
-            if required_ts > duration {
+        // Ensure the seek position is within the bounds of the track.
+        if required_ts < min_ts {
+            return seek_error(SeekErrorKind::OutOfRange);
+        }
+        else if let Some(max_ts) = max_ts {
+            if required_ts > max_ts {
                 return seek_error(SeekErrorKind::OutOfRange);
             }
         }
 
-        // If the stream is unseekable and the required timestamp in the past, then return an
-        // error, it is not possible to seek to it.
         let is_seekable = self.reader.is_seekable();
 
+        // If the stream is unseekable and the required timestamp in the past, then return an
+        // error, it is not possible to seek to it.
         if !is_seekable && required_ts < self.next_packet_ts {
             return seek_error(SeekErrorKind::ForwardOnly);
         }
 
-        debug!("seeking to ts={desired_ts} (+{delay} delay = {required_ts})");
+        debug!("seeking to ts={required_ts}");
 
         // Step 1
         //
@@ -271,8 +277,8 @@ impl FormatReader for MpaReader<'_> {
         // In accurate seek mode, the underlying media source stream will not be seeked unless the
         // required timestamp is in the past, in which case the stream is seeked back to the start.
         match mode {
-            SeekMode::Coarse if is_seekable => self.preseek_coarse(required_ts, duration)?,
-            SeekMode::Accurate => self.preseek_accurate(required_ts)?,
+            SeekMode::Coarse if is_seekable => self.preseek_coarse(required_ts, min_ts, max_ts)?,
+            SeekMode::Accurate => self.preseek_accurate(required_ts, min_ts)?,
             _ => (),
         };
 
@@ -303,87 +309,84 @@ impl FormatReader for MpaReader<'_> {
             let header = header::parse_frame_header(sync)?;
 
             // Position of the frame header.
-            let pos = self.reader.pos() - std::mem::size_of::<u32>() as u64;
+            let pos = self.reader.pos() - header::MPEG_HEADER_LEN as u64;
 
             // Calculate the duration of the frame.
-            let duration = header.duration();
+            let frame_dur = header.duration();
 
             // Add the frame to the frame ring.
             frames[n_parsed & REF_FRAMES_MASK] = FramePos { pos, ts: self.next_packet_ts };
             n_parsed += 1;
 
-            // If the next frame's timestamp would exceed the desired timestamp, rewind back to the
-            // start of this frame and end the search.
-            if self.next_packet_ts + duration > required_ts {
-                // The main_data_begin offset is a negative offset from the frame's header to where
-                // its main data begins. Therefore, for a decoder to properly decode this frame, the
-                // reader must provide previous (reference) frames up-to and including the frame
-                // that contains the first byte this frame's main_data.
-                let main_data_begin = read_main_data_begin(&mut self.reader, &header)? as u64;
-
-                debug!(
-                    "found frame with ts={} ({}) @ pos={} with main_data_begin={}",
-                    self.next_packet_ts.saturating_sub(delay),
-                    self.next_packet_ts,
-                    pos,
-                    main_data_begin
-                );
-
-                // The number of reference frames is 0 if main_data_begin is also 0. Otherwise,
-                // attempt to find the first (oldest) reference frame, then select 1 frame before
-                // that one to actually seek to.
-                let mut n_ref_frames = 0;
-                let mut ref_frame = &frames[(n_parsed - 1) & REF_FRAMES_MASK];
-
-                if main_data_begin > 0 {
-                    // The maximum number of reference frames is limited to the number of frames
-                    // read and the number of previous frames recorded.
-                    let max_ref_frames = std::cmp::min(n_parsed, frames.len());
-
-                    while n_ref_frames < max_ref_frames {
-                        ref_frame = &frames[(n_parsed - n_ref_frames - 1) & REF_FRAMES_MASK];
-
-                        if pos - ref_frame.pos >= main_data_begin {
-                            break;
-                        }
-
-                        n_ref_frames += 1;
-                    }
+            let next_packet_ts = match self.next_packet_ts.checked_add(frame_dur) {
+                Some(ts) if ts <= required_ts => ts,
+                // The timestamp of the next MPEG frame exceeds the desired timestamp, or it
+                // exceeds the representable range. Rewind back to the start of the current frame
+                // and end the search.
+                _ => {
+                    // The main_data_begin offset is a negative offset from the frame's header to
+                    // where its main data begins. Therefore, for a decoder to properly decode this
+                    // frame, the reader must provide previous (reference) frames up-to and
+                    // including the frame that contains the first byte this frame's main_data.
+                    let main_data_begin = read_main_data_begin(&mut self.reader, &header)? as u64;
 
                     debug!(
-                        "will seek -{} frame(s) to ts={} ({}) @ pos={} (-{} bytes)",
-                        n_ref_frames,
-                        ref_frame.ts.saturating_sub(delay),
-                        ref_frame.ts,
-                        ref_frame.pos,
-                        pos - ref_frame.pos
+                        "found frame with ts={} @ pos={} with main_data_begin={}",
+                        self.next_packet_ts, pos, main_data_begin
                     );
+
+                    // The number of reference frames is 0 if main_data_begin is also 0. Otherwise,
+                    // attempt to find the first (oldest) reference frame, then select 1 frame
+                    // before that one to actually seek to.
+                    let mut n_ref_frames = 0;
+                    let mut ref_frame = &frames[(n_parsed - 1) & REF_FRAMES_MASK];
+
+                    if main_data_begin > 0 {
+                        // The maximum number of reference frames is limited to the number of frames
+                        // read and the number of previous frames recorded.
+                        let max_ref_frames = std::cmp::min(n_parsed, frames.len());
+
+                        while n_ref_frames < max_ref_frames {
+                            ref_frame = &frames[(n_parsed - n_ref_frames - 1) & REF_FRAMES_MASK];
+
+                            if pos - ref_frame.pos >= main_data_begin {
+                                break;
+                            }
+
+                            n_ref_frames += 1;
+                        }
+
+                        debug!(
+                            "will seek -{} frame(s) to ts={} @ pos={} (-{} bytes)",
+                            n_ref_frames,
+                            ref_frame.ts,
+                            ref_frame.pos,
+                            pos - ref_frame.pos
+                        );
+                    }
+
+                    // Do the actual seek to the reference frame.
+                    self.reader.seek_buffered(ref_frame.pos);
+
+                    self.next_packet_ts = ref_frame.ts;
+                    break;
                 }
-
-                // Do the actual seek to the reference frame.
-                self.next_packet_ts = ref_frame.ts;
-                self.reader.seek_buffered(ref_frame.pos);
-
-                break;
-            }
+            };
 
             // Otherwise, ignore the frame body.
             self.reader.ignore_bytes(header.frame_size as u64)?;
 
             // Increment the timestamp for the next packet.
-            self.next_packet_ts += duration;
+            self.next_packet_ts = next_packet_ts;
         }
 
-        let actual_ts = self.next_packet_ts.saturating_sub(delay);
-
         debug!(
-            "seeked to ts={} ({}) (delta={})",
-            actual_ts,
+            "seeked to ts={} (delta={})",
             self.next_packet_ts,
-            self.next_packet_ts as i64 - required_ts as i64,
+            self.next_packet_ts.saturating_delta(required_ts),
         );
 
-        Ok(SeekedTo { track_id: 0, required_ts: required_ts - delay, actual_ts })
+        Ok(SeekedTo { track_id: 0, required_ts, actual_ts: self.next_packet_ts })
     }
 
     fn into_inner<'s>(self: Box<Self>) -> MediaSourceStream<'s>
@@ -415,34 +418,27 @@ impl<'s> MpaReader<'s> {
         // Check if there is a Xing/Info tag contained in the first frame.
         if let Some(info_tag) = try_read_info_tag(&packet, &header) {
             // The LAME tag contains ReplayGain and padding information.
-            let (delay, padding) = if let Some(lame_tag) = info_tag.lame {
+            if let Some(lame_tag) = info_tag.lame {
                 track.with_delay(lame_tag.enc_delay).with_padding(lame_tag.enc_padding);
-
-                (lame_tag.enc_delay, lame_tag.enc_padding)
             }
-            else {
-                (0, 0)
-            };
 
-            // The base Xing/Info tag may contain the number of frames.
+            // The base Xing/Info tag may contain the number of MPEG frames.
             if let Some(num_mpeg_frames) = info_tag.num_frames {
                 info!("using xing header for duration");
 
-                let num_frames = u64::from(num_mpeg_frames) * header.duration();
+                // The total number of audio frames including delay and padding frames.
+                let num_frames = u64::from(num_mpeg_frames) * u64::from(header.num_frames());
 
-                // Adjust for gapless playback.
-                if opts.enable_gapless {
-                    track.with_num_frames(num_frames - u64::from(delay) - u64::from(padding));
-                }
-                else {
-                    track.with_num_frames(num_frames);
-                }
+                // Remove delay and padding frames.
+                let discard = track.delay.unwrap_or(0) + track.padding.unwrap_or(0);
+
+                track.with_num_frames(num_frames.saturating_sub(u64::from(discard)));
             }
         }
         else if let Some(vbri_tag) = try_read_vbri_tag(&packet, &header) {
             info!("using vbri header for duration");
 
-            let num_frames = u64::from(vbri_tag.num_mpeg_frames) * header.duration();
+            let num_frames = u64::from(vbri_tag.num_mpeg_frames) * u64::from(header.num_frames());
 
             // Check if there is a VBRI tag.
             track.with_num_frames(num_frames);
@@ -457,75 +453,96 @@ impl<'s> MpaReader<'s> {
                 info!("estimating duration from bitrate, may be inaccurate for vbr files");
 
                 if let Some(n_mpeg_frames) = estimate_num_mpeg_frames(&mut mss) {
-                    track.with_num_frames(n_mpeg_frames * header.duration());
+                    track.with_num_frames(n_mpeg_frames * u64::from(header.num_frames()));
                 }
             }
         }
 
         let first_packet_pos = mss.pos();
+        let next_packet_ts = Timestamp::from(-i64::from(track.delay.unwrap_or(0)));
 
         Ok(MpaReader {
             reader: mss,
             tracks: vec![track],
             chapters: opts.external_data.chapters,
             metadata: opts.external_data.metadata.unwrap_or_default(),
-            enable_gapless: opts.enable_gapless,
             first_packet_pos,
-            next_packet_ts: 0,
+            next_packet_ts,
         })
     }
 
     /// Seeks the media source stream to a byte position roughly where the packet with the required
     /// timestamp should be located.
-    fn preseek_coarse(&mut self, required_ts: u64, duration: Option<u64>) -> Result<()> {
-        // Get the total byte length of the stream. It is not possible to seek without this.
-        let total_byte_len = match self.reader.byte_len() {
-            Some(byte_len) => byte_len,
+    fn preseek_coarse(
+        &mut self,
+        required_ts: Timestamp,
+        min_ts: Timestamp,
+        max_ts: Option<Timestamp>,
+    ) -> Result<()> {
+        // Get the length in bytes of the stream's audio data. It is not possible to coarsely seek
+        // without knowing this.
+        let audio_byte_len = match self.reader.byte_len() {
+            Some(byte_len) => u128::from(byte_len - self.first_packet_pos),
             None => return seek_error(SeekErrorKind::Unseekable),
         };
 
-        // It is not possible to coarse seek without the duration.
-        let duration = match duration {
-            Some(duration_ts) => duration_ts,
-            None => return seek_error(SeekErrorKind::Unseekable),
+        // It is not possible to coarse seek without knowing both the upper and lower timestamp
+        // bounds, and the lower timestamp bound must be <= the upper timestamp bound.
+        let max_ts = match max_ts {
+            Some(max_ts) if max_ts >= min_ts => max_ts,
+            _ => return seek_error(SeekErrorKind::Unseekable),
         };
 
-        // Calculate the total size of the audio data.
-        let audio_byte_len = total_byte_len - self.first_packet_pos;
+        // Call invariants.
+        debug_assert!(min_ts <= required_ts);
+        debug_assert!(required_ts <= max_ts);
 
-        // Calculate, roughly, where the packet containing the required timestamp is in the media
-        // source stream relative to the start of the audio data.
-        let packet_pos =
-            ((u128::from(required_ts) * u128::from(audio_byte_len)) / u128::from(duration)) as u64;
+        // The total duration of the track.
+        let total_dur = u128::from(max_ts.abs_delta(min_ts).get());
+
+        // Calculate, roughly, the byte position of where the MPEG frame containing the required
+        // timestamp should be in the media source stream relative to the start of the audio data.
+        let seek_pos_rel =
+            (u128::from(required_ts.abs_delta(min_ts).get()) * audio_byte_len) / total_dur;
 
         // It is preferable to return a packet with a timestamp before the requested timestamp.
         // Therefore, subtract the maximum packet size from the position found above to ensure this.
-        let seek_pos = packet_pos.saturating_sub(MAX_MPEG_FRAME_SIZE) + self.first_packet_pos;
+        let seek_pos =
+            seek_pos_rel + u128::from(self.first_packet_pos) - MAX_MPEG_FRAME_SIZE as u128;
 
         // Seek the media source stream.
-        self.reader.seek(SeekFrom::Start(seek_pos))?;
+        self.reader.seek(SeekFrom::Start(
+            seek_pos.try_into().map_err(|_| Error::SeekError(SeekErrorKind::OutOfRange))?,
+        ))?;
 
-        // Resync to the start of the next packet.
+        // Resync to the start of the next MPEG frame.
         let (header, _) = read_mpeg_frame_strict(&mut self.reader)?;
 
-        // Calculate, roughly, the timestamp of the packet based on the byte position after resync.
-        let seeked_pos = self.reader.pos();
+        // The byte position of the next MPEG frame relative to the start of the audio data.
+        let audio_byte_pos = u128::from(self.reader.pos() - self.first_packet_pos);
 
-        let ts = ((u128::from(seeked_pos - self.first_packet_pos) * u128::from(duration))
-            / u128::from(audio_byte_len)) as u64;
+        // Calculate, roughly, the duration from the start of the audio of the packet based on the
+        // byte position after resync.
+        let dur_to_pkt = Duration::from(((audio_byte_pos * total_dur) / audio_byte_len) as u64);
 
-        // Assuming the duration of a packet remains constant throughout the stream (not a
-        // guarantee, but usually the case), round the timestamp to a multiple of a packet duration.
-        let packet_dur = header.duration();
+        // Assume the duration of a packet remains constant throughout the stream (not a
+        // guarantee, but usually the case).
+        let pkt_dur = header.duration();
 
-        self.next_packet_ts = (ts / packet_dur) * packet_dur;
+        // Compute the timestamp of the next packet. First align the estimated duration from the
+        // start of the audio to a packet boundary. Then add to the lower-bound timestamp. In
+        // theory, this should never exceed the upper-bound timestamp.
+        //
+        // UNWRAP: The packet duration is always non-zero, and no larger than 1152.
+        self.next_packet_ts =
+            min_ts.checked_add(dur_to_pkt.align_down(pkt_dur).unwrap()).unwrap_or(max_ts);
 
         Ok(())
     }
 
     /// Seeks the media source stream back to the start of the first packet if the required
     /// timestamp is in the past.
-    fn preseek_accurate(&mut self, required_ts: u64) -> Result<()> {
+    fn preseek_accurate(&mut self, required_ts: Timestamp, min_ts: Timestamp) -> Result<()> {
         if required_ts < self.next_packet_ts {
             let seeked_pos = self.reader.seek(SeekFrom::Start(self.first_packet_pos))?;
 
@@ -536,7 +553,7 @@ impl<'s> MpaReader<'s> {
             }
 
             // Successfuly seeked to the start of the stream, reset the next packet timestamp.
-            self.next_packet_ts = 0;
+            self.next_packet_ts = min_ts;
         }
 
         Ok(())
@@ -618,7 +635,7 @@ fn is_frame_header_similar(header: &FrameHeader, sync: u32) -> bool {
 
 #[derive(Default)]
 struct FramePos {
-    ts: u64,
+    ts: Timestamp,
     pos: u64,
 }
 

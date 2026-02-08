@@ -375,7 +375,7 @@ mod cpal {
 
             let resampler = if spec.rate() != config.sample_rate.0 {
                 info!("resampling {} Hz to {} Hz", spec.rate(), config.sample_rate.0);
-                Some(Resampler::new(spec, config.sample_rate.0, duration as usize))
+                Some(Resampler::new(spec, config.sample_rate.0, duration.get() as usize))
             }
             else {
                 None

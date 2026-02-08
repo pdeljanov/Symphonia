@@ -36,7 +36,6 @@ pub struct OggReader<'s> {
     tracks: Vec<Track>,
     chapters: Option<ChapterGroup>,
     metadata: MetadataLog,
-    enable_gapless: bool,
     /// The page reader.
     pages: PageReader,
     /// `LogicalStream` for each serial.
@@ -64,7 +63,6 @@ impl<'s> OggReader<'s> {
             chapters: opts.external_data.chapters,
             metadata: opts.external_data.metadata.unwrap_or_default(),
             streams: Default::default(),
-            enable_gapless: opts.enable_gapless,
             pages,
             phys_byte_range_start: 0,
             phys_byte_range_end: None,
@@ -160,12 +158,20 @@ impl<'s> OggReader<'s> {
         }
     }
 
-    fn do_seek(&mut self, serial: u32, required_ts: u64) -> Result<SeekedTo> {
+    fn do_seek(&mut self, serial: u32, required_ts: Timestamp) -> Result<SeekedTo> {
+        // The stream being seeked.
+        let stream = self.streams.get_mut(&serial).unwrap();
+
+        // Subtract the maximum duration between random access points from the required timestamp.
+        // This ensures any frames that need to be consumed or discarded by the decoder on reset
+        // are dealt with before the required timestamp.
+        let target_ts = required_ts.saturating_sub(stream.max_rap_period());
+
+        debug!("seek: target_ts={target_ts} (rap={})", required_ts.saturating_delta(target_ts));
+
         // If the reader is seekable, then use the bisection method to coarsely seek to the nearest
         // page that ends before the required timestamp.
         if self.reader.is_seekable() {
-            let stream = self.streams.get_mut(&serial).unwrap();
-
             // Bisection method byte ranges. When these two values are equal, the bisection has
             // converged on the position of the correct page.
             let mut start_byte_pos = self.phys_byte_range_start;
@@ -186,7 +192,8 @@ impl<'s> OggReader<'s> {
                     _ => {
                         // No more pages for the stream from the mid-point onwards.
                         debug!(
-                            "seek: bisect step: byte_range=[{start_byte_pos}, {mid_byte_pos}, {end_byte_pos}]",
+                            "seek: bisect step: byte_range=\
+                            [{start_byte_pos}, {mid_byte_pos}, {end_byte_pos}]",
                         );
 
                         end_byte_pos = mid_byte_pos;
@@ -198,15 +205,16 @@ impl<'s> OggReader<'s> {
                 let (start_ts, end_ts) = stream.inspect_page(&self.pages.page());
 
                 debug!(
-                    "seek: bisect step: page={{ start_ts={start_ts}, end_ts={end_ts} }} byte_range=[{start_byte_pos}, {mid_byte_pos}, {end_byte_pos}]",
+                    "seek: bisect step: page={{ start_ts={start_ts}, end_ts={end_ts} }} \
+                    byte_range=[{start_byte_pos}, {mid_byte_pos}, {end_byte_pos}]",
                 );
 
-                if required_ts < start_ts {
+                if target_ts < start_ts {
                     // The required timestamp is less-than the timestamp of the first sample in the
                     // page. Update the upper bound and bisect again.
                     end_byte_pos = mid_byte_pos;
                 }
-                else if required_ts > end_ts {
+                else if target_ts > end_ts {
                     // The required timestamp is greater-than the timestamp of the final sample in
                     // the in the page. Update the lower bound and bisect again.
                     start_byte_pos = mid_byte_pos;
@@ -247,9 +255,16 @@ impl<'s> OggReader<'s> {
         let actual_ts = loop {
             match self.peek_logical_packet() {
                 Some(packet) => {
-                    if packet.track_id() == serial && packet.pts + packet.dur >= required_ts {
-                        break packet.pts;
+                    // Skip packets not belonging to the stream being seeked.
+                    if packet.track_id() != serial {
+                        continue;
                     }
+
+                    match packet.pts.checked_add(packet.dur) {
+                        Some(next_packet_ts) if next_packet_ts < target_ts => (),
+                        // Packet exceeds the requested timestamp, or the representable range.
+                        _ => break packet.pts,
+                    };
 
                     self.discard_logical_packet();
                 }
@@ -273,7 +288,7 @@ impl<'s> OggReader<'s> {
             "seeked track={:#x} to packet_ts={} (delta={})",
             serial,
             actual_ts,
-            actual_ts as i64 - required_ts as i64
+            actual_ts.saturating_delta(required_ts),
         );
 
         Ok(SeekedTo { track_id: serial, actual_ts, required_ts })
@@ -316,8 +331,7 @@ impl<'s> OggReader<'s> {
                         header.serial
                     );
 
-                    let stream = LogicalStream::new(mapper, self.enable_gapless);
-                    streams.insert(header.serial, stream);
+                    streams.insert(header.serial, LogicalStream::new(mapper));
                 }
             }
 
@@ -334,7 +348,7 @@ impl<'s> OggReader<'s> {
             let page = self.pages.page();
 
             if let Some(stream) = streams.get_mut(&page.header.serial) {
-                let side_data = stream.read_page(&page)?;
+                let side_data = stream.read_page_init(&page, true)?;
 
                 // Consume each piece of side data.
                 for data in side_data {
@@ -470,8 +484,13 @@ impl FormatReader for OggReader<'_> {
                     }
 
                     // Timestamp upper-bound out-of-range.
-                    if let Some(dur) = track.num_frames {
-                        if ts > dur + track.start_ts {
+                    if let Some(num_frames) = track.num_frames {
+                        let max_ts = track
+                            .start_ts
+                            .checked_add(Duration::from(num_frames))
+                            .ok_or(Error::SeekError(SeekErrorKind::Unseekable))?;
+
+                        if ts > max_ts {
                             return seek_error(SeekErrorKind::OutOfRange);
                         }
                     }
@@ -500,13 +519,13 @@ impl FormatReader for OggReader<'_> {
                 let ts = if let Some(stream) = self.streams.get(&serial) {
                     let track = stream.track();
 
-                    let ts = if let Some(tb) = track.time_base {
-                        tb.calc_timestamp(time)
-                    }
-                    else {
-                        // No sample rate. This should never happen.
-                        return seek_error(SeekErrorKind::Unseekable);
-                    };
+                    // The timebase is required to calculate the timestamp.
+                    let tb = track.time_base.ok_or(Error::SeekError(SeekErrorKind::Unseekable))?;
+
+                    // If the timestamp overflows, the seek if out-of-range.
+                    let ts = tb
+                        .calc_timestamp(time)
+                        .ok_or(Error::SeekError(SeekErrorKind::OutOfRange))?;
 
                     // Timestamp lower-bound out-of-range.
                     if ts < track.start_ts {
@@ -514,8 +533,13 @@ impl FormatReader for OggReader<'_> {
                     }
 
                     // Timestamp upper-bound out-of-range.
-                    if let Some(dur) = track.num_frames {
-                        if ts > dur + track.start_ts {
+                    if let Some(num_frames) = track.num_frames {
+                        let max_ts = track
+                            .start_ts
+                            .checked_add(Duration::from(num_frames))
+                            .ok_or(Error::SeekError(SeekErrorKind::Unseekable))?;
+
+                        if ts > max_ts {
                             return seek_error(SeekErrorKind::OutOfRange);
                         }
                     }

@@ -15,7 +15,7 @@ use crate::common::FourCc;
 use crate::errors::Result;
 use crate::io::{BufReader, MediaSourceStream};
 use crate::meta::{ChapterGroup, Metadata, MetadataLog};
-use crate::units::{Time, TimeBase, TimeStamp};
+use crate::units::{Duration, Time, TimeBase, Timestamp};
 
 use bitflags::bitflags;
 
@@ -23,7 +23,7 @@ pub mod prelude {
     //! The `formats` module prelude.
 
     pub use crate::meta::{Chapter, ChapterGroup, ChapterGroupItem};
-    pub use crate::units::{Duration, TimeBase, TimeStamp};
+    pub use crate::units::{Duration, TimeBase, Timestamp};
 
     pub use super::{
         Attachment, FileAttachment, FormatId, FormatInfo, FormatOptions, FormatReader, Packet,
@@ -85,7 +85,7 @@ pub enum SeekTo {
     /// Seek to a track's `TimeStamp` in that track's timebase units.
     TimeStamp {
         /// The `TimeStamp` to seek to.
-        ts: TimeStamp,
+        ts: Timestamp,
         /// Specifies which track `ts` is relative to.
         track_id: u32,
     },
@@ -97,9 +97,9 @@ pub struct SeekedTo {
     /// The track the seek was relative to.
     pub track_id: u32,
     /// The `TimeStamp` required for the requested seek.
-    pub required_ts: TimeStamp,
+    pub required_ts: Timestamp,
     /// The `TimeStamp` that was seeked to.
-    pub actual_ts: TimeStamp,
+    pub actual_ts: Timestamp,
 }
 
 /// `SeekMode` selects the precision of a seek.
@@ -224,14 +224,23 @@ pub struct Track {
     /// The timebase is the length of time in seconds of a single tick of a timestamp or duration.
     /// It can be used to convert any timestamp or duration related to the track into seconds.
     pub time_base: Option<TimeBase>,
-    /// The length of the track in number of frames.
+    /// The length of the track in number of audio, video, or subtitle frames.
+    ///
+    /// This count excludes any delay or padding frames. In other words, it is the number of
+    /// playable (non-discarded) frames.
+    ///
+    /// Generally, when presenting a track's duration, the `duration` field should be used instead.
+    /// This is because a track's timebase may not always be the reciprocal of the sample or frame
+    /// rate, resulting in slight differences between the duration as stated in the container
+    /// (in timebase units) vs. when calculated from the number of playable frames.
+    pub num_frames: Option<u64>,
+    /// The duration of the track in timebase units.
     ///
     /// If a timebase is available, this field can be used to calculate the total duration of the
-    /// track in seconds by using [`TimeBase::calc_time`] and passing the number of frames as the
-    /// timestamp.
-    pub num_frames: Option<u64>,
+    /// track in seconds by using [`TimeBase::calc_time`] and passing the duration as the argument.
+    pub duration: Option<Duration>,
     /// The timestamp of the first frame.
-    pub start_ts: u64,
+    pub start_ts: Timestamp,
     /// The number of leading frames inserted by the encoder that should be skipped during playback.
     pub delay: Option<u32>,
     /// The number of trailing frames inserted by the encoder for padding that should be skipped
@@ -250,7 +259,8 @@ impl Track {
             language: None,
             time_base: None,
             num_frames: None,
-            start_ts: 0,
+            duration: None,
+            start_ts: Timestamp::new(0),
             delay: None,
             padding: None,
             flags: TrackFlags::empty(),
@@ -259,14 +269,14 @@ impl Track {
 
     /// Provide the codec parameters.
     ///
-    /// Note: If the codec parameters contains a sample or frame rate, a default timebase will be
-    /// derived.
+    /// Note: If the codec parameters contains a non-zero sample or frame rate that, a default
+    /// timebase will be derived.
     pub fn with_codec_params(&mut self, codec_params: CodecParameters) -> &mut Self {
         // Derive a timebase from the sample/frame rate if one is not already set.
         if self.time_base.is_none() {
             self.time_base = match &codec_params {
                 CodecParameters::Audio(params) => {
-                    params.sample_rate.map(|rate| TimeBase::new(1, rate))
+                    params.sample_rate.and_then(TimeBase::try_from_recip)
                 }
                 _ => None,
             };
@@ -294,8 +304,14 @@ impl Track {
         self
     }
 
+    /// Provide the duration in timebase units.
+    pub fn with_duration(&mut self, duration: Duration) -> &mut Self {
+        self.duration = Some(duration);
+        self
+    }
+
     /// Provide the timestamp of the first frame.
-    pub fn with_start_ts(&mut self, start_ts: u64) -> &mut Self {
+    pub fn with_start_ts(&mut self, start_ts: Timestamp) -> &mut Self {
         self.start_ts = start_ts;
         self
     }
@@ -477,111 +493,141 @@ fn matches_track_type(track: &Track, track_type: TrackType) -> bool {
 /// A `Packet` contains a discrete amount of encoded data for a single codec bitstream. The exact
 /// amount of data is bounded, but not defined, and is dependant on the container and/or the
 /// encapsulated codec.
+///
+/// # Timing
+///
+/// Packets carry various timing information to support the decoding process. Generally, this
+/// timing information is read directly from the media container, but may also be synthesized by
+/// a format reader if it is not explicitly signalled.
+///
+/// Take note of the difference between *valid* and *decoded* frames. Valid frames are frames that
+/// should be presented (played back) to the user, while decoded frames include any encoder delay
+/// and/or padding frames. The latter are generally discarded by the decoder.
+///
+/// # For Implementers
+///
+/// When synthesizing PTS, negative PTS should be used for encoder delay frames. However, this is
+/// not strictly mandatory. Encoder delay and padding frames are ultimately signalled using the trim
+/// fields. Regardless, the `dur` field must only be populated with the duration of *valid* frames,
+/// while the sum of `dur`, `trim_start`, and `trim_end` must equal the amount of frames the decoder
+/// would produce if no trimming occurs. This sum is called the block duration.
 #[derive(Clone)]
 pub struct Packet {
     /// The track ID.
     track_id: u32,
-    /// The presentation timestamp of the packet.
+    /// The presentation timestamp (PTS) of the packet in `TimeBase` units.
+    pub pts: Timestamp,
+    /// The decode timestamp (DTS) of the packet in `TimeBase` units.
+    pub dts: Timestamp,
+    /// The duration of all *valid* frames in the packet in `TimeBase` units.
     ///
-    /// For audio tracks, when gapless support is enabled, this timestamp is relative to the end of
-    /// the encoder delay.
-    ///
-    /// This timestamp is in `TimeBase` units.
-    pub pts: u64,
-    /// The duration of the packet. When gapless support is enabled, the duration does not include
-    /// the encoder delay or padding.
-    ///
-    /// The duration is in `TimeBase` units.
-    pub dur: u64,
-    /// When gapless support is enabled, this is the number of decoded frames that should be trimmed
-    /// from the start of the packet to remove the encoder delay. Must be 0 in all other cases.
-    pub trim_start: u32,
-    /// When gapless support is enabled, this is the number of decoded frames that should be trimmed
-    /// from the end of the packet to remove the encoder padding. Must be 0 in all other cases.
-    pub trim_end: u32,
-    /// The packet buffer.
+    /// This duration excludes any delay or padding frames that may be produced by the decoder.
+    pub dur: Duration,
+    /// The duration of *decoded* frames that should be trimmed from the start of the decoded
+    /// buffer to remove encoder delay.
+    pub trim_start: Duration,
+    /// The duration of *decoded* frames that should be trimmed from the end of the decoded
+    /// buffer to remove encoder padding.
+    pub trim_end: Duration,
+    /// The packet data buffer.
     pub data: Box<[u8]>,
 }
 
 impl Packet {
     /// Create a new `Packet` from a slice.
-    pub fn new_from_slice(track_id: u32, pts: u64, dur: u64, buf: &[u8]) -> Self {
-        Packet { track_id, pts, dur, trim_start: 0, trim_end: 0, data: Box::from(buf) }
+    pub fn new_from_slice(track_id: u32, pts: Timestamp, dur: Duration, buf: &[u8]) -> Self {
+        Packet {
+            track_id,
+            pts,
+            dts: pts,
+            dur,
+            trim_start: Duration::ZERO,
+            trim_end: Duration::ZERO,
+            data: Box::from(buf),
+        }
     }
 
     /// Create a new `Packet` from a boxed slice.
-    pub fn new_from_boxed_slice(track_id: u32, pts: u64, dur: u64, data: Box<[u8]>) -> Self {
-        Packet { track_id, pts, dur, trim_start: 0, trim_end: 0, data }
-    }
-
-    /// Create a new `Packet` with trimming information from a slice.
-    pub fn new_trimmed_from_slice(
+    pub fn new_from_boxed_slice(
         track_id: u32,
-        pts: u64,
-        dur: u64,
-        trim_start: u32,
-        trim_end: u32,
-        buf: &[u8],
-    ) -> Self {
-        Packet { track_id, pts, dur, trim_start, trim_end, data: Box::from(buf) }
-    }
-
-    /// Create a new `Packet` with trimming information from a boxed slice.
-    pub fn new_trimmed_from_boxed_slice(
-        track_id: u32,
-        pts: u64,
-        dur: u64,
-        trim_start: u32,
-        trim_end: u32,
+        pts: Timestamp,
+        dur: Duration,
         data: Box<[u8]>,
     ) -> Self {
-        Packet { track_id, pts, dur, trim_start, trim_end, data }
+        Packet {
+            track_id,
+            pts,
+            dts: pts,
+            dur,
+            trim_start: Duration::ZERO,
+            trim_end: Duration::ZERO,
+            data,
+        }
     }
 
     /// The track identifier of the track this packet belongs to.
-    pub fn track_id(&self) -> u32 {
+    #[inline]
+    pub const fn track_id(&self) -> u32 {
         self.track_id
     }
 
-    /// Get the timestamp of the packet in `TimeBase` units.
+    /// Get the presentation timestamp (PTS) of the packet in `TimeBase` units.
     ///
-    /// If gapless support is enabled, then this timestamp is relative to the end of the encoder
-    /// delay.
-    pub fn pts(&self) -> u64 {
+    /// This is the time relative to the start of the media that the decoded packet should be
+    /// presented to the user.
+    #[inline]
+    pub const fn pts(&self) -> Timestamp {
         self.pts
     }
 
-    /// Get the duration of the packet in `TimeBase` units.
+    /// Get the decode timestamp (DTS) of the packet in `TimeBase` units.
     ///
-    /// If gapless support is enabled, then this is the duration after the encoder delay and padding
-    /// is trimmed.
-    pub fn dur(&self) -> u64 {
+    /// This is the time relative to the start of the media that the packet should be decoded.
+    #[inline]
+    pub const fn dts(&self) -> Timestamp {
+        self.dts
+    }
+
+    /// Get the duration of all *valid* frames in the packet in `TimeBase` units.
+    ///
+    /// This duration excludes any delay or padding frames that may be produced by the decoder.
+    /// Generally, delay or padding frames should not be presented to the user.
+    #[inline]
+    pub const fn dur(&self) -> Duration {
         self.dur
     }
 
-    /// Get the duration of the packet in `TimeBase` units if no decoded frames are trimmed.
+    /// Get the duration of all *decoded* frames in the packet in `TimeBase` units.
     ///
-    /// If gapless support is disabled, then this is the same as the duration.
-    pub fn block_dur(&self) -> u64 {
-        self.dur + u64::from(self.trim_start) + u64::from(self.trim_end)
+    /// This duration includes any delay or padding frames that may be produced by the decoder. As
+    /// such, this is a sum of the duration, start trim, and end trim.
+    #[inline]
+    pub const fn block_dur(&self) -> Duration {
+        self.dur.saturating_add(self.trim_start).saturating_add(self.trim_end)
     }
 
-    /// Get the number of frames to trim from the start of the decoded packet.
-    pub fn trim_start(&self) -> u32 {
+    /// Get the duration of *decoded* frames that should be trimmed from the start of the decoded
+    /// buffer to remove encoder delay.
+    #[inline]
+    pub const fn trim_start(&self) -> Duration {
         self.trim_start
     }
 
-    /// Get the number of frames to trim from the end of the decoded packet.
-    pub fn trim_end(&self) -> u32 {
+    /// Get the duration of *decoded* frames that should be trimmed from the end of the decoded
+    /// buffer to remove encoder padding.
+    #[inline]
+    pub const fn trim_end(&self) -> Duration {
         self.trim_end
     }
 
-    /// Get an immutable slice to the packet buffer.
-    pub fn buf(&self) -> &[u8] {
+    /// Get an immutable slice to the packet data buffer.
+    #[inline]
+    pub const fn buf(&self) -> &[u8] {
         &self.data
     }
 
-    /// Get a `BufStream` to read the packet data buffer sequentially.
+    /// Get a `BufReader` to read the packet data buffer sequentially.
+    #[inline]
     pub fn as_buf_reader(&self) -> BufReader<'_> {
         BufReader::new(&self.data)
     }
@@ -590,14 +636,17 @@ impl Packet {
 pub mod util {
     //! Helper utilities for implementing `FormatReader`s.
 
-    use super::Packet;
+    use crate::{
+        formats::Packet,
+        units::{Duration, Timestamp},
+    };
 
     /// A `SeekPoint` is a mapping between a sample or frame number to byte offset within a media
     /// stream.
     #[derive(Copy, Clone, Debug, PartialEq, Eq)]
     pub struct SeekPoint {
         /// The frame or sample timestamp of the `SeekPoint`.
-        pub frame_ts: u64,
+        pub frame_ts: Timestamp,
         /// The byte offset of the `SeekPoint`s timestamp relative to a format-specific location.
         pub byte_offset: u64,
         /// The number of frames the `SeekPoint` covers.
@@ -605,7 +654,7 @@ pub mod util {
     }
 
     impl SeekPoint {
-        fn new(frame_ts: u64, byte_offset: u64, n_frames: u32) -> Self {
+        fn new(frame_ts: Timestamp, byte_offset: u64, n_frames: u32) -> Self {
             SeekPoint { frame_ts, byte_offset, n_frames }
         }
     }
@@ -650,13 +699,13 @@ pub mod util {
         }
 
         /// Insert a `SeekPoint` into the index.
-        pub fn insert(&mut self, ts: u64, byte_offset: u64, n_frames: u32) {
+        pub fn insert(&mut self, ts: Timestamp, byte_offset: u64, n_frames: u32) {
             // Create the seek point.
             let seek_point = SeekPoint::new(ts, byte_offset, n_frames);
 
             // Get the timestamp of the last entry in the index.
             let (last_ts, last_offset) =
-                self.points.last().map_or((u64::MAX, u64::MAX), |p| (p.frame_ts, p.byte_offset));
+                self.points.last().map_or((Timestamp::MIN, 0), |p| (p.frame_ts, p.byte_offset));
 
             // If the seek point has a timestamp greater-than and byte offset greater-than or equal to
             // the last entry in the index, then simply append it to the index.
@@ -680,7 +729,7 @@ pub mod util {
         /// Search the index to find a bounded range of bytes wherein the specified frame timestamp
         /// will be contained. If the index is empty, this function simply returns a result
         /// indicating the entire stream should be searched manually.
-        pub fn search(&self, frame_ts: u64) -> SeekSearchResult {
+        pub fn search(&self, frame_ts: Timestamp) -> SeekSearchResult {
             // The index must contain atleast one SeekPoint to return a useful result.
             if !self.points.is_empty() {
                 let mut lower = 0;
@@ -720,86 +769,116 @@ pub mod util {
         }
     }
 
-    /// Given a `Packet`, the encoder delay in frames, and the number of non-delay or padding
-    /// frames, adjust the packet's timestamp and duration, and populate the trim information.
-    pub fn trim_packet(packet: &mut Packet, delay: u32, num_frames: Option<u64>) {
-        packet.trim_start = if packet.pts < u64::from(delay) {
-            let trim = (u64::from(delay) - packet.pts).min(packet.dur);
-            packet.pts = 0;
-            packet.dur -= trim;
-            trim as u32
-        }
-        else {
-            packet.pts -= u64::from(delay);
-            0
-        };
+    /// Populate a packet's trim information and adjust its duration.
+    ///
+    /// Given a `Packet` whose PTS and duration are populated, and the end timestamp of the stream
+    /// excluding delay and padding frames, this function calculates the trim start and trim end
+    /// durations and subtracts their sum from the duration.
+    ///
+    /// This helper assumes that frames with a PTS < 0 are to be trimmed from the start. Frames
+    /// whose PTS exceeds the end timestamp of the stream are trimmed from the end.
+    pub fn trim_packet(packet: &mut Packet, end_pts: Option<Timestamp>) {
+        // The packet's duration including any delay or padding frames.
+        let pkt_block_dur = packet.block_dur();
 
-        if let Some(num_frames) = num_frames {
-            packet.trim_end = if packet.pts + packet.dur > num_frames {
-                let trim = (packet.pts + packet.dur - num_frames).min(packet.dur);
-                packet.dur -= trim;
-                trim as u32
+        // All frames with a negative PTS must be trimmed first. This duration may exceed the
+        // number of decoded frames.
+        let negative = packet.pts.duration_to(Timestamp::ZERO).unwrap_or(Duration::ZERO);
+
+        // Cap to the number of decoded frames.
+        packet.trim_start = negative.min(pkt_block_dur);
+
+        // It is only possible to trim the end of a packet if the end PTS is known.
+        if let Some(end_pts) = end_pts {
+            if let Some(pkt_end_pts) = packet.pts.checked_add(pkt_block_dur) {
+                packet.trim_end = pkt_end_pts.duration_from(end_pts).unwrap_or(Duration::ZERO);
             }
-            else {
-                0
-            };
         }
+
+        packet.dur = packet.dur.saturating_sub(packet.trim_start).saturating_sub(packet.trim_end);
     }
 
     #[cfg(test)]
     mod tests {
+        use crate::units::Timestamp;
+
         use super::{SeekIndex, SeekPoint, SeekSearchResult};
 
         #[test]
         fn verify_seek_index_search() {
             let mut index = SeekIndex::new();
             // Normal index insert
-            index.insert(479232, 706812, 1152);
-            index.insert(959616, 1421536, 1152);
-            index.insert(1919232, 2833241, 1152);
-            index.insert(2399616, 3546987, 1152);
-            index.insert(2880000, 4259455, 1152);
+            index.insert(Timestamp::new(479232), 706812, 1152);
+            index.insert(Timestamp::new(959616), 1421536, 1152);
+            index.insert(Timestamp::new(1919232), 2833241, 1152);
+            index.insert(Timestamp::new(2399616), 3546987, 1152);
+            index.insert(Timestamp::new(2880000), 4259455, 1152);
 
             // Search for point lower than the first entry
             assert_eq!(
-                index.search(0),
-                SeekSearchResult::Upper(SeekPoint::new(479232, 706812, 1152))
+                index.search(Timestamp::new(0)),
+                SeekSearchResult::Upper(SeekPoint::new(Timestamp::new(479232), 706812, 1152))
             );
 
             // Search for point higher than last entry
             assert_eq!(
-                index.search(3000000),
-                SeekSearchResult::Lower(SeekPoint::new(2880000, 4259455, 1152))
+                index.search(Timestamp::new(3000000)),
+                SeekSearchResult::Lower(SeekPoint::new(Timestamp::new(2880000), 4259455, 1152))
             );
 
             // Search for point that has equal timestamp with some index
             assert_eq!(
-                index.search(959616),
+                index.search(Timestamp::new(959616)),
                 SeekSearchResult::Range(
-                    SeekPoint::new(959616, 1421536, 1152),
-                    SeekPoint::new(1919232, 2833241, 1152)
+                    SeekPoint::new(Timestamp::new(959616), 1421536, 1152),
+                    SeekPoint::new(Timestamp::new(1919232), 2833241, 1152)
                 )
             );
 
             // Index insert out of order
-            index.insert(1440000, 2132419, 1152);
+            index.insert(Timestamp::new(1440000), 2132419, 1152);
+            index.insert(Timestamp::new(-78000), 20, 1152);
+            index.insert(Timestamp::new(-50000), 45000, 1152);
+
+            // Search for a negative timestamp.
+            assert_eq!(
+                index.search(Timestamp::MIN),
+                SeekSearchResult::Upper(SeekPoint::new(Timestamp::new(-78000), 20, 1152))
+            );
+
+            assert_eq!(
+                index.search(Timestamp::new(-69000)),
+                SeekSearchResult::Range(
+                    SeekPoint::new(Timestamp::new(-78000), 20, 1152),
+                    SeekPoint::new(Timestamp::new(-50000), 45000, 1152)
+                )
+            );
+
+            // Search for 0 again.
+            assert_eq!(
+                index.search(Timestamp::new(0)),
+                SeekSearchResult::Range(
+                    SeekPoint::new(Timestamp::new(-50000), 45000, 1152),
+                    SeekPoint::new(Timestamp::new(479232), 706812, 1152)
+                )
+            );
 
             // Search for point that have out of order index when inserting
             assert_eq!(
-                index.search(1000000),
+                index.search(Timestamp::new(1000000)),
                 SeekSearchResult::Range(
-                    SeekPoint::new(959616, 1421536, 1152),
-                    SeekPoint::new(1440000, 2132419, 1152)
+                    SeekPoint::new(Timestamp::new(959616), 1421536, 1152),
+                    SeekPoint::new(Timestamp::new(1440000), 2132419, 1152)
                 )
             );
 
             // Index insert with byte_offset less than last entry
-            index.insert(3359232, 0, 0);
+            index.insert(Timestamp::new(3359232), 0, 0);
 
             // Search for ignored point because byte_offset less than last entry
             assert_eq!(
-                index.search(3359232),
-                SeekSearchResult::Lower(SeekPoint::new(2880000, 4259455, 1152))
+                index.search(Timestamp::new(3359232)),
+                SeekSearchResult::Lower(SeekPoint::new(Timestamp::new(2880000), 4259455, 1152))
             );
         }
     }

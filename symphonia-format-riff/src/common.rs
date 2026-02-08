@@ -8,6 +8,7 @@
 /// `PacketInfo` helps to simulate packetization over a number of blocks of data.
 /// In case the codec is blockless the block size equals one full audio frame in bytes.
 use std::marker::PhantomData;
+use std::num::NonZero;
 
 use symphonia_core::audio::Channels;
 use symphonia_core::codecs::audio::{AudioCodecId, AudioCodecParameters};
@@ -24,7 +25,7 @@ pub enum ByteOrder {
 
 /// The maximum number of frames that will be in a packet.
 /// Since there are no real packets in AIFF, this is arbitrary, used same value as MP3.
-const MAX_FRAMES_PER_PACKET: u64 = 1152;
+const MAX_FRAMES_PER_PACKET: NonZero<u64> = NonZero::new(1152).unwrap();
 
 /// `ParseChunkTag` implements `parse_tag` to map between the 4-byte chunk identifier and the
 /// enumeration
@@ -227,46 +228,66 @@ pub struct FormatMuLaw {
 }
 
 pub struct PacketInfo {
-    pub block_size: u64,
-    pub frames_per_block: u64,
-    pub max_blocks_per_packet: u64,
+    pub block_size: NonZero<u64>,
+    pub frames_per_block: NonZero<u64>,
+    pub max_blocks_per_packet: NonZero<u64>,
+    pub max_frames_per_packet: NonZero<u64>,
 }
 
 impl PacketInfo {
     pub fn with_blocks(block_size: u16, frames_per_block: u64) -> Result<Self> {
-        if frames_per_block == 0 {
-            return decode_error("riff: frames per block is 0");
-        }
+        // Frames/block must be non-zero.
+        let frames_per_block = match NonZero::new(frames_per_block) {
+            Some(value) => value,
+            _ => return decode_error("riff: frames per block is 0"),
+        };
+
+        // Block size must be non-zero.
+        let block_size = match NonZero::new(u64::from(block_size)) {
+            Some(value) => value,
+            None => return decode_error("riff: block size is 0"),
+        };
+
+        // Atleast one block must be present per packet.
+        let max_blocks_per_packet = match NonZero::new(
+            frames_per_block.max(MAX_FRAMES_PER_PACKET).get() / frames_per_block.get(),
+        ) {
+            Some(value) => value,
+            _ => return decode_error("riff: max blocks per packet is 0"),
+        };
+
+        // Pre-compute maximum frames per packet.
+        let max_frames_per_packet = match max_blocks_per_packet.checked_mul(frames_per_block) {
+            Some(value) => value,
+            _ => return decode_error("riff: max frames per packet overflow"),
+        };
+
+        Ok(Self { block_size, frames_per_block, max_blocks_per_packet, max_frames_per_packet })
+    }
+
+    pub fn without_blocks(frame_len: u32) -> Result<Self> {
+        // Block size must be non-zero.
+        let block_size = match NonZero::new(u64::from(frame_len)) {
+            Some(value) => value,
+            None => return decode_error("riff: block size is 0"),
+        };
+
         Ok(Self {
-            block_size: u64::from(block_size),
-            frames_per_block,
-            max_blocks_per_packet: frames_per_block.max(MAX_FRAMES_PER_PACKET) / frames_per_block,
+            block_size,
+            frames_per_block: NonZero::new(1).unwrap(),
+            max_blocks_per_packet: MAX_FRAMES_PER_PACKET,
+            max_frames_per_packet: MAX_FRAMES_PER_PACKET,
         })
     }
 
-    pub fn without_blocks(frame_len: u32) -> Self {
-        Self {
-            block_size: u64::from(frame_len),
-            frames_per_block: 1,
-            max_blocks_per_packet: MAX_FRAMES_PER_PACKET,
-        }
+    pub fn get_num_frames_at(&self, data_pos: u64) -> u64 {
+        (data_pos / self.block_size) * self.frames_per_block.get()
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.block_size == 0
-    }
-
-    pub fn get_max_frames_per_packet(&self) -> u64 {
-        self.max_blocks_per_packet * self.frames_per_block
-    }
-
-    pub fn get_frames(&self, data_len: u64) -> u64 {
-        data_len / self.block_size * self.frames_per_block
-    }
-
-    pub fn get_actual_ts(&self, ts: u64) -> u64 {
-        let max_frames_per_packet = self.get_max_frames_per_packet();
-        ts / max_frames_per_packet * max_frames_per_packet
+    pub fn get_actual_ts(&self, ts: Timestamp) -> Timestamp {
+        let max_frames_per_packet = self.max_frames_per_packet.get();
+        // UNWRAP: Maximum frames/packet is non-zero 0.
+        ts.align_towards_zero(Duration::from(max_frames_per_packet)).unwrap()
     }
 }
 
@@ -281,9 +302,6 @@ pub fn next_packet(
     if tracks.is_empty() {
         return decode_error("riff: no tracks");
     }
-    if packet_info.is_empty() {
-        return decode_error("riff: block size is 0");
-    }
 
     // Determine the number of complete blocks remaining in the data chunk.
     let num_blocks_left =
@@ -293,22 +311,26 @@ pub fn next_packet(
         return Ok(None);
     }
 
-    let blocks_per_packet = num_blocks_left.min(packet_info.max_blocks_per_packet);
-
-    let dur = blocks_per_packet * packet_info.frames_per_block;
-    let packet_len = blocks_per_packet * packet_info.block_size;
-
-    // Copy the frames.
-    let packet_buf = reader.read_boxed_slice(packet_len as usize)?;
+    let blocks_per_packet = num_blocks_left.min(packet_info.max_blocks_per_packet.get());
 
     // The packet timestamp is the position of the first byte of the first frame in the
     // packet relative to the start of the data chunk divided by the length per frame.
-    let pts = packet_info.get_frames(pos - data_start_pos);
+    let pts = match packet_info.get_num_frames_at(pos - data_start_pos).try_into() {
+        Ok(pts) => pts,
+        Err(_) => return Ok(None),
+    };
+
+    let dur = Duration::from(blocks_per_packet * packet_info.frames_per_block.get());
+    let pkt_len = blocks_per_packet * packet_info.block_size.get();
+
+    // Copy the frames.
+    let packet_buf = reader.read_boxed_slice(pkt_len as usize)?;
 
     Ok(Some(Packet::new_from_boxed_slice(0, pts, dur, packet_buf)))
 }
 
-/// TODO: format here refers to format chunk in Wave terminology, but the data being handled here is generic - find a better name, or combine with append_data_params
+/// TODO: format here refers to format chunk in Wave terminology, but the data being handled here is
+/// generic - find a better name, or combine with append_data_params
 pub fn append_format_params(
     codec_params: &mut AudioCodecParameters,
     format_data: FormatData,
@@ -349,9 +371,7 @@ pub fn append_format_params(
 /// TODO: format here refers to format chunk in Wave terminology, but the data being handled here is
 /// generic - find a better name, or combine with append_data_params append_format_params
 pub fn append_data_params(track: &mut Track, data_len: u64, packet_info: &PacketInfo) {
-    if !packet_info.is_empty() {
-        // Prefer the duration in the FACT chunk.
-        let num_frames = packet_info.get_frames(data_len);
-        track.with_num_frames(num_frames);
-    }
+    // Prefer the duration in the FACT chunk.
+    let num_frames = packet_info.get_num_frames_at(data_len);
+    track.with_num_frames(num_frames);
 }

@@ -383,7 +383,7 @@ impl WaveFormatChunk {
                     + 1;
                 PacketInfo::with_blocks(self.block_align, frames_per_block)
             }
-            _ => Ok(PacketInfo::without_blocks(u32::from(self.block_align))),
+            _ => PacketInfo::without_blocks(u32::from(self.block_align)),
         }
     }
 }

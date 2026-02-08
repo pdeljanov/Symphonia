@@ -25,7 +25,7 @@ use super::common::{AAC_CHANNELS, AAC_SAMPLE_RATES, M4A_TYPES, M4AType, map_to_c
 
 use log::{debug, info};
 
-const SAMPLES_PER_AAC_PACKET: u64 = 1024;
+const SAMPLES_PER_AAC_PACKET: Duration = Duration::new(1024);
 
 const ADTS_FORMAT_INFO: FormatInfo = FormatInfo {
     format: FORMAT_ID_ADTS,
@@ -42,7 +42,7 @@ pub struct AdtsReader<'s> {
     chapters: Option<ChapterGroup>,
     metadata: MetadataLog,
     first_frame_pos: u64,
-    next_packet_ts: u64,
+    next_packet_ts: Timestamp,
 }
 
 impl<'s> AdtsReader<'s> {
@@ -78,7 +78,7 @@ impl<'s> AdtsReader<'s> {
             chapters: opts.external_data.chapters,
             metadata: opts.external_data.metadata.unwrap_or_default(),
             first_frame_pos,
-            next_packet_ts: 0,
+            next_packet_ts: Timestamp::new(0),
         })
     }
 }
@@ -282,7 +282,10 @@ impl FormatReader for AdtsReader<'_> {
 
         let ts = self.next_packet_ts;
 
-        self.next_packet_ts += SAMPLES_PER_AAC_PACKET;
+        self.next_packet_ts = match self.next_packet_ts.checked_add(SAMPLES_PER_AAC_PACKET) {
+            Some(ts) => ts,
+            None => return Ok(None),
+        };
 
         Ok(Some(Packet::new_from_boxed_slice(
             0,
@@ -311,14 +314,12 @@ impl FormatReader for AdtsReader<'_> {
             SeekTo::TimeStamp { ts, .. } => ts,
             // Time value given, calculate frame timestamp using the timebase.
             SeekTo::Time { time, .. } => {
-                // Use the timebase to calculate the frame timestamp. If timebase is not known, the
-                // seek cannot be completed.
-                if let Some(tb) = self.tracks[0].time_base {
-                    tb.calc_timestamp(time)
-                }
-                else {
-                    return seek_error(SeekErrorKind::Unseekable);
-                }
+                // The timebase is required to calculate the timestamp.
+                let tb =
+                    self.tracks[0].time_base.ok_or(Error::SeekError(SeekErrorKind::Unseekable))?;
+
+                // If the timestamp overflows, the seek if out-of-range.
+                tb.calc_timestamp(time).ok_or(Error::SeekError(SeekErrorKind::OutOfRange))?
             }
         };
 
@@ -342,7 +343,7 @@ impl FormatReader for AdtsReader<'_> {
             }
 
             // Successfuly seeked to the start of the stream, reset the next packet timestamp.
-            self.next_packet_ts = 0;
+            self.next_packet_ts = Timestamp::from(0);
         }
 
         // Parse frames from the stream until the frame containing the desired timestamp is
@@ -361,24 +362,28 @@ impl FormatReader for AdtsReader<'_> {
 
             // TODO: Support multiple AAC packets per ADTS packet.
 
-            // If the next frame's timestamp would exceed the desired timestamp, rewind back to the
-            // start of this frame and end the search.
-            if self.next_packet_ts + SAMPLES_PER_AAC_PACKET > required_ts {
-                self.reader.seek_buffered_rev(usize::from(header.header_len()));
-                break;
-            }
+            let next_packet_ts = match self.next_packet_ts.checked_add(SAMPLES_PER_AAC_PACKET) {
+                Some(ts) if ts <= required_ts => ts,
+                // If the next frame's timestamp would exceed the desired timestamp, or it
+                // exceeds the representable range, rewind back to the start of this frame and end
+                // the search.
+                _ => {
+                    self.reader.seek_buffered_rev(usize::from(header.header_len()));
+                    break;
+                }
+            };
 
-            // Otherwise, ignore the frame body.
+            // Ignore the frame body.
             self.reader.ignore_bytes(u64::from(header.payload_len()))?;
 
             // Increment the timestamp for the next packet.
-            self.next_packet_ts += SAMPLES_PER_AAC_PACKET;
+            self.next_packet_ts = next_packet_ts;
         }
 
         debug!(
             "seeked to ts={} (delta={})",
             self.next_packet_ts,
-            required_ts as i64 - self.next_packet_ts as i64
+            required_ts.saturating_delta(self.next_packet_ts),
         );
 
         Ok(SeekedTo { track_id: 0, required_ts, actual_ts: self.next_packet_ts })
@@ -432,7 +437,8 @@ fn approximate_frame_count(mut source: &mut MediaSourceStream<'_>) -> Result<Opt
 
         let step = remaining_len / NUM_SAMPLE_POINTS;
 
-        // file can be small enough and not have enough NUM_FRAMES_PER_SAMPLE_POINT, but we can still read at least one frame
+        // file can be small enough and not have enough NUM_FRAMES_PER_SAMPLE_POINT, but we can
+        // still read at least one frame
         if step > 0 {
             for new_pos in (original_pos..(original_pos + remaining_len)).step_by(step as usize) {
                 // Skip sample point if previous read exceeded its boundary.
@@ -468,6 +474,6 @@ fn approximate_frame_count(mut source: &mut MediaSourceStream<'_>) -> Result<Opt
 
     match parsed_n_frames {
         0 => Ok(None),
-        _ => Ok(Some(remaining_len / (n_bytes / parsed_n_frames) * SAMPLES_PER_AAC_PACKET)),
+        _ => Ok(Some(remaining_len / (n_bytes / parsed_n_frames) * SAMPLES_PER_AAC_PACKET.get())),
     }
 }

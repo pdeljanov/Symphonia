@@ -6,15 +6,18 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use crate::chunks::*;
-use log::{debug, error, info};
-use std::io::{Seek, SeekFrom};
+use log::{debug, error, info, warn};
+use std::{
+    io::{Seek, SeekFrom},
+    num::NonZero,
+};
 use symphonia_core::{
     audio::{Channels, Position},
     codecs::{
         CodecParameters,
         audio::{well_known::CODEC_ID_AAC, *},
     },
-    errors::{Result, SeekErrorKind, decode_error, seek_error, unsupported_error},
+    errors::{Error, Result, SeekErrorKind, decode_error, seek_error, unsupported_error},
     formats::{
         prelude::*,
         probe::{ProbeFormatData, ProbeableFormat, Score, Scoreable},
@@ -23,7 +26,7 @@ use symphonia_core::{
     io::*,
     meta::{Metadata, MetadataLog},
     support_format,
-    units::{TimeBase, TimeStamp},
+    units::{TimeBase, Timestamp},
 };
 
 use symphonia_common::mpeg::formats::*;
@@ -48,8 +51,15 @@ pub struct CafReader<'s> {
 
 enum PacketInfo {
     Unknown,
-    FixedAudioPacket { bytes_per_packet: u32, frames_per_packet: u32 },
-    VariableAudioPacket { packets: Vec<CafPacket>, current_packet_index: usize },
+    FixedAudioPacket {
+        bytes_per_packet: NonZero<u32>,
+        frames_per_packet: NonZero<u32>,
+        start_pts: Timestamp,
+    },
+    VariableAudioPacket {
+        packets: Vec<CafPacket>,
+        current_packet_index: usize,
+    },
 }
 
 impl Scoreable for CafReader<'_> {
@@ -78,14 +88,15 @@ impl FormatReader for CafReader<'_> {
 
     fn next_packet(&mut self) -> Result<Option<Packet>> {
         match &mut self.packet_info {
-            PacketInfo::FixedAudioPacket { bytes_per_packet, frames_per_packet } => {
+            PacketInfo::FixedAudioPacket { bytes_per_packet, frames_per_packet, start_pts } => {
                 let pos = self.reader.pos();
                 let data_pos = pos - self.data_start_pos;
 
-                let bytes_per_packet = *bytes_per_packet as u64;
-                let frames_per_packet = *frames_per_packet as u64;
+                let bytes_per_packet = u64::from(bytes_per_packet.get());
+                let frames_per_packet = u64::from(frames_per_packet.get());
 
-                // frames_per_packet == 1 means uncompressed data which we want to chunk into MAX_FRAMES_PER_PACKET
+                // frames_per_packet == 1 means uncompressed data which we want to chunk into
+                // MAX_FRAMES_PER_PACKET
                 let max_bytes_to_read = if frames_per_packet == 1 {
                     bytes_per_packet * MAX_FRAMES_PER_PACKET
                 }
@@ -105,10 +116,29 @@ impl FormatReader for CafReader<'_> {
                 }
 
                 let bytes_to_read = max_bytes_to_read.min(bytes_remaining);
-                let packet_duration = bytes_to_read / bytes_per_packet * frames_per_packet;
-                let packet_timestamp = (data_pos / bytes_per_packet) * frames_per_packet;
-                let buffer = self.reader.read_boxed_slice(bytes_to_read as usize)?;
-                Ok(Some(Packet::new_from_boxed_slice(0, packet_timestamp, packet_duration, buffer)))
+
+                // Calculate the packet duration.
+                let Some(dur) = (bytes_to_read / bytes_per_packet)
+                    .checked_mul(frames_per_packet)
+                    .map(Duration::new)
+                else {
+                    warn!("packet duration exceeds maximum representable duration");
+                    return Ok(None);
+                };
+
+                // Calculate the packet PTS by offsetting the duration read so far from the start
+                // PTS.
+                let Some(pts) = (data_pos / bytes_per_packet)
+                    .checked_mul(frames_per_packet)
+                    .and_then(|offset| start_pts.checked_add(Duration::from(offset)))
+                else {
+                    warn!("media exceeds maximum representable duration");
+                    return Ok(None);
+                };
+
+                let buf = self.reader.read_boxed_slice(bytes_to_read as usize)?;
+
+                Ok(Some(Packet::new_from_boxed_slice(0, pts, dur, buf)))
             }
             PacketInfo::VariableAudioPacket { packets, current_packet_index } => {
                 if let Some(packet) = packets.get(*current_packet_index) {
@@ -148,39 +178,59 @@ impl FormatReader for CafReader<'_> {
         let required_ts = match to {
             SeekTo::TimeStamp { ts, .. } => ts,
             SeekTo::Time { time, .. } => {
-                if let Some(time_base) = self.time_base() {
-                    time_base.calc_timestamp(time)
-                }
-                else {
-                    return seek_error(SeekErrorKind::Unseekable);
-                }
+                // The timebase is required to calculate the timestamp.
+                let tb = self.time_base().ok_or(Error::SeekError(SeekErrorKind::Unseekable))?;
+                // If the timestamp overflows, the seek if out-of-range.
+                tb.calc_timestamp(time).ok_or(Error::SeekError(SeekErrorKind::OutOfRange))?
             }
         };
 
-        if let Some(duration) = self.duration() {
-            if duration < required_ts {
+        // Range check.
+        let (min_ts, max_ts) = self.seek_bounds()?;
+
+        if required_ts < min_ts {
+            return seek_error(SeekErrorKind::OutOfRange);
+        }
+        else if let Some(max_ts) = max_ts {
+            if required_ts > max_ts {
                 return seek_error(SeekErrorKind::OutOfRange);
             }
         }
 
         match &mut self.packet_info {
-            PacketInfo::FixedAudioPacket {
-                bytes_per_packet: bytes_per_frame,
-                frames_per_packet,
-            } => {
-                let frames_per_packet = if *frames_per_packet == 1 {
+            PacketInfo::FixedAudioPacket { bytes_per_packet, frames_per_packet, start_pts } => {
+                let is_uncompressed = frames_per_packet.get() == 1;
+
+                let frames_per_packet = if is_uncompressed {
                     // Packetization for uncompressed data is performed by chunking the stream into
                     // packets of MAX_FRAMES_PER_PACKET frames each.
                     MAX_FRAMES_PER_PACKET
                 }
                 else {
-                    *frames_per_packet as u64
+                    u64::from(frames_per_packet.get())
                 };
 
-                // To allow for determinstic packet timestamps, we want the seek to jump to the
-                // packet boundary before the requested seek time.
-                let actual_ts = (required_ts / frames_per_packet) * frames_per_packet;
-                let seek_pos = self.data_start_pos + actual_ts * (*bytes_per_frame as u64);
+                // Calculate the duration from the start PTS. This is equal to the number of frames
+                // to the requested PTS. The seek is out-of-range if this is negative. To maintain
+                // determinstic packet timestamps, the seek must jump to a packet boundary before
+                // the requested seek time, so align down to a packet boundary.
+                let dur_from_start = required_ts
+                    .duration_from(*start_pts)
+                    .and_then(|d| d.align_down(Duration::from(frames_per_packet)))
+                    .ok_or(Error::SeekError(SeekErrorKind::OutOfRange))?;
+
+                // Calculate the actual PTS that will be seeked to after aligning down.
+                let actual_ts = start_pts
+                    .checked_add(dur_from_start)
+                    .ok_or(Error::SeekError(SeekErrorKind::OutOfRange))?;
+
+                // Calculate the position to seek to. If compressed, there may be more than one
+                // frame per packet so the duration from start must be converted from frames to
+                // packets by dividing by frames-per-packet. This is lossless since we're aligned
+                // to a multiple of frames-per-packet in all cases.
+                let seek_pos = self.data_start_pos
+                    + u64::from(bytes_per_packet.get()) * dur_from_start.get()
+                        / if is_uncompressed { 1 } else { frames_per_packet };
 
                 if self.reader.is_seekable() {
                     self.reader.seek(SeekFrom::Start(seek_pos))?;
@@ -197,16 +247,16 @@ impl FormatReader for CafReader<'_> {
 
                 debug!(
                     "seek required_ts: {}, actual_ts: {}, (difference: {})",
-                    actual_ts,
                     required_ts,
-                    actual_ts as i64 - required_ts as i64,
+                    actual_ts,
+                    actual_ts.saturating_delta(required_ts),
                 );
 
-                Ok(SeekedTo { track_id: 0, actual_ts, required_ts })
+                Ok(SeekedTo { track_id: 0, required_ts, actual_ts })
             }
             PacketInfo::VariableAudioPacket { packets, current_packet_index } => {
                 let current_ts = if let Some(packet) = packets.get(*current_packet_index) {
-                    TimeStamp::from(packet.start_frame)
+                    packet.start_frame
                 }
                 else {
                     error!("invalid packet index: {current_packet_index}");
@@ -241,13 +291,13 @@ impl FormatReader for CafReader<'_> {
                 }
 
                 *current_packet_index = seek_packet_index;
-                let actual_ts = TimeStamp::from(seek_packet.start_frame);
+                let actual_ts = seek_packet.start_frame;
 
                 debug!(
                     "seek required_ts: {}, actual_ts: {}, (difference: {}, packet: {})",
                     required_ts,
                     actual_ts,
-                    actual_ts as i64 - required_ts as i64,
+                    actual_ts.saturating_delta(required_ts),
                     seek_packet_index,
                 );
 
@@ -289,8 +339,21 @@ impl<'s> CafReader<'s> {
         self.tracks.first().and_then(|track| track.time_base)
     }
 
-    fn duration(&self) -> Option<u64> {
-        self.tracks.first().and_then(|track| track.num_frames)
+    fn seek_bounds(&self) -> Result<(Timestamp, Option<Timestamp>)> {
+        let (dur, delay, padding) = self
+            .tracks
+            .first()
+            .map(|track| (track.num_frames, track.delay.unwrap_or(0), track.padding.unwrap_or(0)))
+            .unwrap_or((None, 0, 0));
+
+        let dur = dur.map(Duration::from);
+
+        let min_ts = Timestamp::from(-i64::from(delay));
+        let max_ts = dur
+            .and_then(|dur| min_ts.checked_add(dur))
+            .and_then(|ts| ts.checked_add(Duration::from(padding)));
+
+        Ok((min_ts, max_ts))
     }
 
     fn check_file_header(&mut self) -> Result<()> {
@@ -322,6 +385,8 @@ impl<'s> CafReader<'s> {
             .with_bits_per_sample(desc.bits_per_channel)
             .with_bits_per_coded_sample((desc.bytes_per_packet * 8) / desc.channels_per_frame);
 
+        // TODO: Bits per sample and bits per coded sample are wrong for compressed.
+
         match desc.channels_per_frame {
             0 => {
                 // A channel count of zero should have been rejected by the AudioDescription parser
@@ -349,27 +414,30 @@ impl<'s> CafReader<'s> {
             }
         }
 
-        // Need to set max_frames_per_packet in all cases in case it is needed (eg. adpcm)
+        // Need to set max_frames_per_packet in all cases in case it is needed (e.g. ADPCM).
         if desc.frames_per_packet == 1 {
-            // If uncompressed data, chunk the stream into MAX_FRAMES_PER_PACKET sizes
+            // If uncompressed data, chunk the stream into MAX_FRAMES_PER_PACKET blocks.
             codec_params
                 .with_max_frames_per_packet(MAX_FRAMES_PER_PACKET)
                 .with_frames_per_block(MAX_FRAMES_PER_PACKET);
         }
         else {
+            // TODO: Handle variable frames per packet (frames per packet == 0).
             codec_params
-                .with_max_frames_per_packet(desc.frames_per_packet as u64)
-                .with_frames_per_block(desc.frames_per_packet as u64);
+                .with_max_frames_per_packet(u64::from(desc.frames_per_packet))
+                .with_frames_per_block(u64::from(desc.frames_per_packet));
         }
 
-        if desc.is_variable_packet_format() {
-            self.packet_info =
-                PacketInfo::VariableAudioPacket { packets: Vec::new(), current_packet_index: 0 };
+        self.packet_info = if desc.is_variable_packet_format() {
+            PacketInfo::VariableAudioPacket { packets: Vec::new(), current_packet_index: 0 }
         }
         else {
-            self.packet_info = PacketInfo::FixedAudioPacket {
-                bytes_per_packet: desc.bytes_per_packet,
-                frames_per_packet: desc.frames_per_packet,
+            PacketInfo::FixedAudioPacket {
+                // UNWRAP: Cannot reach this else block if either bytes/packet or frames/packet are
+                // zero.
+                bytes_per_packet: NonZero::new(desc.bytes_per_packet).unwrap(),
+                frames_per_packet: NonZero::new(desc.frames_per_packet).unwrap(),
+                start_pts: Timestamp::new(0),
             }
         };
 
@@ -379,6 +447,7 @@ impl<'s> CafReader<'s> {
     fn read_chunks(&mut self) -> Result<Track> {
         use Chunk::*;
 
+        let mut track = Track::new(0);
         let mut codec_params = AudioCodecParameters::new();
         let mut audio_desc = None;
         let mut num_frames = None;
@@ -400,10 +469,12 @@ impl<'s> CafReader<'s> {
                         if let PacketInfo::FixedAudioPacket {
                             bytes_per_packet,
                             frames_per_packet,
+                            ..
                         } = &self.packet_info
                         {
                             num_frames = Some(
-                                (data_len / *bytes_per_packet as u64) * *frames_per_packet as u64,
+                                (data_len / u64::from(bytes_per_packet.get()))
+                                    * u64::from(frames_per_packet.get()),
                             );
                         }
                     }
@@ -420,9 +491,24 @@ impl<'s> CafReader<'s> {
                     }
                 }
                 Some(PacketTable(table)) => {
-                    if let PacketInfo::VariableAudioPacket { packets, .. } = &mut self.packet_info {
-                        num_frames = Some(table.valid_frames as u64);
-                        *packets = table.packets;
+                    if table.priming_frames > 0 {
+                        track.with_delay(table.priming_frames as u32);
+                    }
+                    if table.remainder_frames > 0 {
+                        track.with_padding(table.remainder_frames as u32);
+                    }
+
+                    match &mut self.packet_info {
+                        PacketInfo::FixedAudioPacket { start_pts, .. } => {
+                            if table.priming_frames > 0 {
+                                *start_pts = Timestamp::from(-i64::from(table.priming_frames));
+                            }
+                        }
+                        PacketInfo::VariableAudioPacket { packets, .. } => {
+                            num_frames = Some(table.valid_frames as u64);
+                            *packets = table.packets;
+                        }
+                        _ => (),
                     }
                 }
                 Some(MagicCookie(data)) => {
@@ -471,8 +557,6 @@ impl<'s> CafReader<'s> {
                 }
             }
         }
-
-        let mut track = Track::new(0);
 
         track.with_codec_params(CodecParameters::Audio(codec_params));
 

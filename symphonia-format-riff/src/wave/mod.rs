@@ -9,7 +9,7 @@ use std::io::{Seek, SeekFrom};
 
 use symphonia_core::codecs::CodecParameters;
 use symphonia_core::codecs::audio::AudioCodecParameters;
-use symphonia_core::errors::{Result, SeekErrorKind};
+use symphonia_core::errors::{Error, Result, SeekErrorKind};
 use symphonia_core::errors::{decode_error, seek_error, unsupported_error};
 use symphonia_core::formats::prelude::*;
 use symphonia_core::formats::probe::{ProbeFormatData, ProbeableFormat, Score, Scoreable};
@@ -94,7 +94,7 @@ impl<'s> WavReader<'s> {
 
         let mut codec_params = AudioCodecParameters::new();
         let mut metadata: MetadataLog = Default::default();
-        let mut packet_info = PacketInfo::without_blocks(0);
+        let mut packet_info = None;
         let mut fact = None;
 
         loop {
@@ -112,13 +112,15 @@ impl<'s> WavReader<'s> {
 
                     // The Format chunk contains the block_align field and possible additional
                     // information to handle packetization and seeking.
-                    packet_info = format.packet_info()?;
+                    let info = format.packet_info()?;
                     codec_params
-                        .with_max_frames_per_packet(packet_info.get_max_frames_per_packet())
-                        .with_frames_per_block(packet_info.frames_per_block);
+                        .with_max_frames_per_packet(info.max_frames_per_packet.get())
+                        .with_frames_per_block(info.frames_per_block.get());
 
                     // Append Format chunk fields to codec parameters.
                     append_format_params(&mut codec_params, format.format_data, format.sample_rate);
+
+                    packet_info = Some(info);
                 }
                 RiffWaveChunks::Fact(fct) => {
                     fact = Some(fct.parse(&mut mss)?);
@@ -144,6 +146,11 @@ impl<'s> WavReader<'s> {
                     let mut track = Track::new(0);
 
                     track.with_codec_params(CodecParameters::Audio(codec_params));
+
+                    let Some(packet_info) = packet_info
+                    else {
+                        return decode_error("wav: missing format chunk");
+                    };
 
                     // Append Fact chunk fields to track.
                     if let Some(fact) = &fact {
@@ -236,37 +243,39 @@ impl FormatReader for WavReader<'_> {
     }
 
     fn seek(&mut self, _mode: SeekMode, to: SeekTo) -> Result<SeekedTo> {
-        if self.tracks.is_empty() || self.packet_info.is_empty() {
+        if self.tracks.is_empty() {
             return seek_error(SeekErrorKind::Unseekable);
         }
 
         let track = &self.tracks[0];
 
-        let ts = match to {
+        let required_ts = match to {
             // Frame timestamp given.
             SeekTo::TimeStamp { ts, .. } => ts,
             // Time value given, calculate frame timestamp using the time base.
             SeekTo::Time { time, .. } => {
-                // Use the time base to calculate the frame timestamp. If time base is not
-                // known, the seek cannot be completed.
-                if let Some(tb) = track.time_base {
-                    tb.calc_timestamp(time)
-                }
-                else {
-                    return seek_error(SeekErrorKind::Unseekable);
-                }
+                // The timebase is required to calculate the timestamp.
+                let tb = track.time_base.ok_or(Error::SeekError(SeekErrorKind::Unseekable))?;
+
+                // If the timestamp overflows, the seek if out-of-range.
+                tb.calc_timestamp(time).ok_or(Error::SeekError(SeekErrorKind::OutOfRange))?
             }
         };
+
+        // Negative timestamps are not allowed.
+        if required_ts.is_negative() {
+            return seek_error(SeekErrorKind::OutOfRange);
+        }
 
         // If the total number of frames in the track is known, verify the desired frame timestamp
         // does not exceed it.
         if let Some(num_frames) = track.num_frames {
-            if ts > num_frames {
+            if required_ts.get() as u64 > num_frames {
                 return seek_error(SeekErrorKind::OutOfRange);
             }
         }
 
-        debug!("seeking to frame_ts={ts}");
+        debug!("seeking to frame_ts={required_ts}");
 
         // WAVE is not internally packetized for PCM codecs. Packetization is simulated by trying to
         // read a constant number of samples or blocks every call to next_packet. Therefore, a
@@ -274,10 +283,11 @@ impl FormatReader for WavReader<'_> {
         // packets should be determinstic, instead of seeking to the exact timestamp requested and
         // starting the next packet there, seek to a packet boundary. In this way, packets will have
         // the same timestamps regardless if the stream was seeked or not.
-        let actual_ts = self.packet_info.get_actual_ts(ts);
+        let actual_ts = self.packet_info.get_actual_ts(required_ts);
 
         // Calculate the absolute byte offset of the desired audio frame.
-        let seek_pos = self.data_start_pos + (actual_ts * self.packet_info.block_size);
+        let seek_pos =
+            self.data_start_pos + (actual_ts.get() as u64 * self.packet_info.block_size.get());
 
         // If the reader supports seeking we can seek directly to the frame's offset wherever it may
         // be.
@@ -296,9 +306,13 @@ impl FormatReader for WavReader<'_> {
             }
         }
 
-        debug!("seeked to packet_ts={} (delta={})", actual_ts, actual_ts as i64 - ts as i64);
+        debug!(
+            "seeked to packet_ts={} (delta={})",
+            actual_ts,
+            actual_ts.saturating_delta(required_ts)
+        );
 
-        Ok(SeekedTo { track_id: 0, actual_ts, required_ts: ts })
+        Ok(SeekedTo { track_id: 0, actual_ts, required_ts })
     }
 
     fn into_inner<'s>(self: Box<Self>) -> MediaSourceStream<'s>

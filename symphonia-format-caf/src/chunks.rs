@@ -12,6 +12,7 @@ use symphonia_core::{
     codecs::audio::{AudioCodecId, well_known::*},
     errors::{Error, Result, decode_error, unsupported_error},
     io::{MediaSourceStream, ReadBytes},
+    units::{Duration, Timestamp},
 };
 
 // CAF audio channel layouts.
@@ -482,7 +483,8 @@ impl PacketTable {
         let remainder_frames = reader.read_be_i32()?;
 
         let mut packets = Vec::with_capacity(total_packets as usize);
-        let mut current_frame = 0;
+        let mut current_frame =
+            Timestamp::from(-i64::from(if priming_frames > 0 { priming_frames } else { 0 }));
         let mut packet_offset = 0;
 
         match (desc.bytes_per_packet, desc.frames_per_packet) {
@@ -490,29 +492,33 @@ impl PacketTable {
             (0, 0) => {
                 for _ in 0..total_packets {
                     let size = read_variable_length_integer(reader)?;
-                    let frames = read_variable_length_integer(reader)?;
+                    let frames = Duration::from(read_variable_length_integer(reader)?);
                     packets.push(CafPacket {
                         size,
                         frames,
                         start_frame: current_frame,
                         data_offset: packet_offset,
                     });
-                    current_frame += frames;
-                    packet_offset += size;
+                    current_frame = current_frame
+                        .checked_add(frames)
+                        .ok_or(Error::Unsupported("track too long"))?;
+                    packet_offset += size; // TODO: This could overflow...
                 }
             }
             // Variable bytes per packet, constant number of frames
             (0, frames_per_packet) => {
                 for _ in 0..total_packets {
                     let size = read_variable_length_integer(reader)?;
-                    let frames = frames_per_packet as u64;
+                    let frames = Duration::from(frames_per_packet);
                     packets.push(CafPacket {
                         size,
                         frames,
                         start_frame: current_frame,
                         data_offset: packet_offset,
                     });
-                    current_frame += frames;
+                    current_frame = current_frame
+                        .checked_add(frames)
+                        .ok_or(Error::Unsupported("track too long"))?;
                     packet_offset += size;
                 }
             }
@@ -520,14 +526,16 @@ impl PacketTable {
             (bytes_per_packet, 0) => {
                 for _ in 0..total_packets {
                     let size = bytes_per_packet as u64;
-                    let frames = read_variable_length_integer(reader)?;
+                    let frames = Duration::from(read_variable_length_integer(reader)?);
                     packets.push(CafPacket {
                         size,
                         frames,
                         start_frame: current_frame,
                         data_offset: packet_offset,
                     });
-                    current_frame += frames;
+                    current_frame = current_frame
+                        .checked_add(frames)
+                        .ok_or(Error::Unsupported("track too long"))?;
                     packet_offset += size;
                 }
             }
@@ -567,10 +575,10 @@ pub struct CafPacket {
     // The packet's offset in bytes from the start of the data
     pub data_offset: u64,
     // The index of the first frame in the packet
-    pub start_frame: u64,
+    pub start_frame: Timestamp,
     // The number of frames in the packet
     // For files with a constant frames per packet this value will match frames_per_packet
-    pub frames: u64,
+    pub frames: Duration,
     // The size in bytes of the packet
     // For constant bit-rate files this value will match bytes_per_packet
     pub size: u64,

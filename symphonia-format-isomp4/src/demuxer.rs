@@ -55,7 +55,7 @@ impl TrackState {
         }
 
         track
-            .with_time_base(TimeBase::new(1, trak.mdia.mdhd.timescale))
+            .with_time_base(TimeBase::from_recip(trak.mdia.mdhd.timescale))
             .with_num_frames(trak.duration);
 
         let state = Self {
@@ -78,11 +78,11 @@ struct NextSampleInfo {
     /// The track id.
     track_id: u32,
     /// The timestamp of the next sample.
-    ts: u64,
+    ts: Timestamp,
     /// The timestamp expressed in seconds.
     time: Time,
     /// The duration of the next sample.
-    dur: u32,
+    dur: Duration,
     /// The segment containing the next sample.
     seg_idx: usize,
 }
@@ -288,7 +288,15 @@ impl<'s> IsoMp4Reader<'s> {
                 // Try to get the timestamp for the next sample of the track from the segment.
                 if let Some(timing) = seg.sample_timing(state.track_num, state.next_sample)? {
                     // Calculate the presentation time using the timestamp.
-                    let sample_time = tb.calc_time(timing.ts);
+                    let Some(ts) = timing.ts.try_into().ok()
+                    else {
+                        return Ok(None);
+                    };
+
+                    let Some(sample_time) = tb.calc_time(ts)
+                    else {
+                        return Ok(None);
+                    };
 
                     // Compare the presentation time of the sample from this track to other tracks,
                     // and select the track with the earliest presentation time.
@@ -303,9 +311,9 @@ impl<'s> IsoMp4Reader<'s> {
                             earliest = Some(NextSampleInfo {
                                 track_num: state.track_num,
                                 track_id: state.track_id,
-                                ts: timing.ts,
+                                ts,
                                 time: sample_time,
-                                dur: timing.dur,
+                                dur: Duration::from(timing.dur),
                                 seg_idx: seg_idx_delta + state.cur_seg,
                             });
                         }
@@ -412,14 +420,15 @@ impl<'s> IsoMp4Reader<'s> {
         // Convert time to timestamp for the track.
         if let Some(track) = self.tracks.get(track_num) {
             let tb = track.time_base.unwrap();
-            self.seek_track_by_ts(track_num, tb.calc_timestamp(time))
+            let ts = tb.calc_timestamp(time).ok_or(Error::SeekError(SeekErrorKind::OutOfRange))?;
+            self.seek_track_by_ts(track_num, ts)
         }
         else {
             seek_error(SeekErrorKind::Unseekable)
         }
     }
 
-    fn seek_track_by_ts(&mut self, track_num: usize, ts: u64) -> Result<SeekedTo> {
+    fn seek_track_by_ts(&mut self, track_num: usize, ts: Timestamp) -> Result<SeekedTo> {
         debug!("seeking track_num={track_num} to frame_ts={ts}");
 
         struct SeekLocation {
@@ -427,63 +436,61 @@ impl<'s> IsoMp4Reader<'s> {
             sample_num: u32,
         }
 
-        let mut seek_loc = None;
+        // Can only seek to 0 or positive timestamps.
+        if ts.is_negative() {
+            return seek_error(SeekErrorKind::OutOfRange);
+        }
+
         let mut seg_skip = 0;
 
-        loop {
+        let seek_loc = 'locate: loop {
             // Iterate over all segments and attempt to find the segment and sample number that
             // contains the desired timestamp. Skip segments already examined.
             for (seg_idx, seg) in self.segs.iter().enumerate().skip(seg_skip) {
-                if let Some(sample_num) = seg.ts_sample(track_num, ts)? {
-                    seek_loc = Some(SeekLocation { seg_idx, sample_num });
-                    break;
+                if let Some(sample_num) = seg.ts_sample(track_num, ts.get() as u64)? {
+                    break 'locate SeekLocation { seg_idx, sample_num };
                 }
 
                 // Mark the segment as examined.
                 seg_skip = seg_idx + 1;
             }
 
-            // If a seek location is found, break.
-            if seek_loc.is_some() {
-                break;
-            }
-
             // Otherwise, try to read more segments from the stream.
             if !self.try_read_more_segments()? {
                 return seek_error(SeekErrorKind::OutOfRange);
             }
-        }
+        };
 
-        if let Some(seek_loc) = seek_loc {
-            let seg = &self.segs[seek_loc.seg_idx];
+        let seg = &self.segs[seek_loc.seg_idx];
 
-            // Get the sample information.
-            let data_desc = seg.sample_data(track_num, seek_loc.sample_num, true)?;
+        // Get the sample timing.
+        let timing = seg.sample_timing(track_num, seek_loc.sample_num)?.unwrap();
 
-            // Update the track's next sample information to point to the seeked sample.
-            let track = &mut self.track_states[track_num];
+        // Try to convert the sample timing to a timestamp.
+        let actual_ts = match Timestamp::try_from(timing.ts) {
+            Ok(ts) => ts,
+            _ => return seek_error(SeekErrorKind::OutOfRange),
+        };
 
-            track.cur_seg = seek_loc.seg_idx;
-            track.next_sample = seek_loc.sample_num;
-            track.next_sample_pos = data_desc.base_pos + data_desc.offset.unwrap();
+        // Get the sample information.
+        let data_desc = seg.sample_data(track_num, seek_loc.sample_num, true)?;
 
-            // Get the actual timestamp for this sample.
-            let timing = seg.sample_timing(track_num, seek_loc.sample_num)?.unwrap();
+        // Update the track's next sample information to point to the seeked sample.
+        let track = &mut self.track_states[track_num];
 
-            debug!(
-                "seeked track_num={} (track_id={}) to packet_ts={} (delta={})",
-                track_num,
-                track.track_id,
-                timing.ts,
-                timing.ts as i64 - ts as i64
-            );
+        track.cur_seg = seek_loc.seg_idx;
+        track.next_sample = seek_loc.sample_num;
+        track.next_sample_pos = data_desc.base_pos + data_desc.offset.unwrap();
 
-            Ok(SeekedTo { track_id: track.track_id, required_ts: ts, actual_ts: timing.ts })
-        }
-        else {
-            // Timestamp was not found.
-            seek_error(SeekErrorKind::OutOfRange)
-        }
+        debug!(
+            "seeked track_num={} (track_id={}) to packet_ts={} (delta={})",
+            track_num,
+            track.track_id,
+            actual_ts,
+            actual_ts.saturating_delta(ts),
+        );
+
+        Ok(SeekedTo { track_id: track.track_id, required_ts: ts, actual_ts })
     }
 }
 
@@ -525,9 +532,9 @@ impl FormatReader for IsoMp4Reader<'_> {
             }
             else {
                 // No more segments. If the stream is unseekable, it may be the case that there are
-                // more segments coming. If the stream is seekable it might be fragmented and no segments are found in
-                // the moov atom. Iterate atoms until a new segment is found or the
-                // end-of-stream is reached
+                // more segments coming. If the stream is seekable it might be fragmented and no
+                // segments are found in the moov atom. Iterate atoms until a new segment is found
+                // or the end-of-stream is reached
                 if !self.try_read_more_segments()? {
                     return Ok(None);
                 }
@@ -561,7 +568,7 @@ impl FormatReader for IsoMp4Reader<'_> {
         Ok(Some(Packet::new_from_boxed_slice(
             next_sample_info.track_id,
             next_sample_info.ts,
-            u64::from(next_sample_info.dur),
+            next_sample_info.dur,
             reader.read_boxed_slice_exact(sample_info.len as usize)?,
         )))
     }
@@ -588,7 +595,11 @@ impl FormatReader for IsoMp4Reader<'_> {
                     self.tracks.iter().enumerate().find(|(_, track)| track.id == track_id)
                 {
                     // Convert to time units.
-                    let time = track.time_base.unwrap().calc_time(ts);
+                    let time = track
+                        .time_base
+                        .unwrap()
+                        .calc_time(ts)
+                        .ok_or(Error::SeekError(SeekErrorKind::Unseekable))?;
 
                     // Seek all tracks excluding the primary track to the desired time.
                     for t in 0..self.track_states.len() {

@@ -18,6 +18,7 @@ use symphonia_core::formats::Track;
 use symphonia_core::io::{BufReader, ReadBytes};
 use symphonia_core::meta::MetadataBuilder;
 
+use symphonia_core::units::Duration;
 use symphonia_metadata::embedded::vorbis::{self, VORBIS_COMMENT_METADATA_INFO};
 
 use log::warn;
@@ -155,14 +156,14 @@ pub fn detect(serial: u32, buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> {
 pub struct OpusPacketParser {}
 
 impl PacketParser for OpusPacketParser {
-    fn parse_next_packet_dur(&mut self, packet: &[u8]) -> u64 {
+    fn parse_next_packet_dur(&mut self, packet: &[u8]) -> (Duration, Duration) {
         // See https://www.rfc-editor.org/rfc/rfc6716
         // Read TOC (Table Of Contents) byte which is the first byte in the opus data.
         let toc_byte = match packet.first() {
             Some(b) => b,
             None => {
                 warn!("opus packet empty");
-                return 0;
+                return (Duration::ZERO, Duration::ZERO);
             }
         };
         // The configuration number is the 5 most significant bits. Shift out 3 least significant
@@ -205,13 +206,13 @@ impl PacketParser for OpusPacketParser {
                     // What to do here? I'd like to return an error but this is an infalliable
                     // trait.
                     warn!("opus code 3 packet with no following byte containing number of frames");
-                    return 0;
+                    return (Duration::ZERO, Duration::ZERO);
                 }
             },
             _ => unreachable!("masked 2 bits"),
         };
         // Look up the packet length and return it.
-        frame_duration * num_frames
+        (Duration::new(frame_duration * num_frames), Duration::ZERO)
     }
 }
 
@@ -243,7 +244,8 @@ impl Mapper for OpusMapper {
 
     fn map_packet(&mut self, packet: &[u8]) -> Result<MapResult> {
         if !self.need_comment {
-            Ok(MapResult::StreamData { dur: OpusPacketParser {}.parse_next_packet_dur(packet) })
+            let (dur, discard) = OpusPacketParser {}.parse_next_packet_dur(packet);
+            Ok(MapResult::StreamData { dur, discard })
         }
         else {
             let mut reader = BufReader::new(packet);

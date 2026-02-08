@@ -209,11 +209,11 @@ impl<'s> AiffReader<'s> {
 
         let mut codec_params = AudioCodecParameters::new();
         codec_params
-            .with_max_frames_per_packet(packet_info.get_max_frames_per_packet())
-            .with_frames_per_block(packet_info.frames_per_block);
+            .with_max_frames_per_packet(packet_info.max_frames_per_packet.get())
+            .with_frames_per_block(packet_info.frames_per_block.get());
 
         // Append common chunk fields to codec parameters.
-        append_format_params(&mut codec_params, comm.format_data, comm.sample_rate);
+        append_format_params(&mut codec_params, comm.format_data, comm.sample_rate.get());
 
         // Create a new track using the collected codec parameters.
         let mut track = Track::new(0);
@@ -248,7 +248,7 @@ fn process_markers(
 
     // Process markers chunk.
     if let Some(mark) = mark {
-        let tb = TimeBase::new(1, comm.sample_rate);
+        let tb = TimeBase::from_recip(comm.sample_rate);
 
         // Create a chapter for each marker.
         chapters.reserve(mark.markers.len());
@@ -263,7 +263,7 @@ fn process_markers(
 
             // Add the chapter.
             chapters.push(Chapter {
-                start_time: tb.calc_time(u64::from(marker.ts)),
+                start_time: tb.calc_time(Timestamp::from(marker.ts)).unwrap(),
                 end_time: None,
                 start_byte: None,
                 end_byte: None,
@@ -381,37 +381,39 @@ impl FormatReader for AiffReader<'_> {
     }
 
     fn seek(&mut self, _mode: SeekMode, to: SeekTo) -> Result<SeekedTo> {
-        if self.tracks.is_empty() || self.packet_info.is_empty() {
+        if self.tracks.is_empty() {
             return seek_error(SeekErrorKind::Unseekable);
         }
 
         let track = &self.tracks[0];
 
-        let ts = match to {
+        let required_ts = match to {
             // Frame timestamp given.
             SeekTo::TimeStamp { ts, .. } => ts,
             // Time value given, calculate frame timestamp using the timebase.
             SeekTo::Time { time, .. } => {
-                // Use the timebase to calculate the frame timestamp. If timebase is not
-                // known, the seek cannot be completed.
-                if let Some(tb) = track.time_base {
-                    tb.calc_timestamp(time)
-                }
-                else {
-                    return seek_error(SeekErrorKind::Unseekable);
-                }
+                // The timebase is required to calculate the timestamp.
+                let tb = track.time_base.ok_or(Error::SeekError(SeekErrorKind::Unseekable))?;
+
+                // If the timestamp overflows, the seek if out-of-range.
+                tb.calc_timestamp(time).ok_or(Error::SeekError(SeekErrorKind::OutOfRange))?
             }
         };
+
+        // Negative timestamps are not allowed.
+        if required_ts.is_negative() {
+            return seek_error(SeekErrorKind::OutOfRange);
+        }
 
         // If the total number of frames in the track is known, verify the desired frame timestamp
         // does not exceed it.
         if let Some(n_frames) = track.num_frames {
-            if ts > n_frames {
+            if required_ts.get() as u64 > n_frames {
                 return seek_error(SeekErrorKind::OutOfRange);
             }
         }
 
-        debug!("seeking to frame_ts={ts}");
+        debug!("seeking to frame_ts={required_ts}");
 
         // RIFF is not internally packetized for PCM codecs. Packetization is simulated by trying to
         // read a constant number of samples or blocks every call to next_packet. Therefore, a
@@ -419,10 +421,11 @@ impl FormatReader for AiffReader<'_> {
         // packets should be determinstic, instead of seeking to the exact timestamp requested and
         // starting the next packet there, seek to a packet boundary. In this way, packets will have
         // have the same timestamps regardless if the stream was seeked or not.
-        let actual_ts = self.packet_info.get_actual_ts(ts);
+        let actual_ts = self.packet_info.get_actual_ts(required_ts);
 
         // Calculate the absolute byte offset of the desired audio frame.
-        let seek_pos = self.data_start_pos + (actual_ts * self.packet_info.block_size);
+        let seek_pos =
+            self.data_start_pos + (actual_ts.get() as u64 * self.packet_info.block_size.get());
 
         // If the reader supports seeking we can seek directly to the frame's offset wherever it may
         // be.
@@ -441,9 +444,13 @@ impl FormatReader for AiffReader<'_> {
             }
         }
 
-        debug!("seeked to packet_ts={} (delta={})", actual_ts, actual_ts as i64 - ts as i64);
+        debug!(
+            "seeked to packet_ts={} (delta={})",
+            actual_ts,
+            actual_ts.saturating_delta(required_ts)
+        );
 
-        Ok(SeekedTo { track_id: 0, actual_ts, required_ts: ts })
+        Ok(SeekedTo { track_id: 0, actual_ts, required_ts })
     }
 
     fn into_inner<'s>(self: Box<Self>) -> MediaSourceStream<'s>

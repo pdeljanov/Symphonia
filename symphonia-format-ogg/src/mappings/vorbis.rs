@@ -16,6 +16,7 @@ use symphonia_core::errors::{Result, decode_error, unsupported_error};
 use symphonia_core::formats::Track;
 use symphonia_core::io::{BitReaderRtl, BufReader, ReadBitsRtl, ReadBytes};
 use symphonia_core::meta::MetadataBuilder;
+use symphonia_core::units::Duration;
 use symphonia_metadata::embedded::vorbis::*;
 
 use log::warn;
@@ -60,13 +61,13 @@ impl VorbisPacketParser {
 }
 
 impl PacketParser for VorbisPacketParser {
-    fn parse_next_packet_dur(&mut self, packet: &[u8]) -> u64 {
+    fn parse_next_packet_dur(&mut self, packet: &[u8]) -> (Duration, Duration) {
         let mut bs = BitReaderRtl::new(packet);
 
         // First bit must be 0 to indicate audio packet.
         match bs.read_bool() {
             Ok(bit) if !bit => (),
-            _ => return 0,
+            _ => return (Duration::ZERO, Duration::ZERO),
         }
 
         // Number of bits for the mode number.
@@ -75,7 +76,7 @@ impl PacketParser for VorbisPacketParser {
         // Read the mode number.
         let mode_num = match bs.read_bits_leq32(mode_num_bits) {
             Ok(mode_num) => mode_num as u8,
-            _ => return 0,
+            _ => return (Duration::ZERO, Duration::ZERO),
         };
 
         // Determine the current block size.
@@ -84,20 +85,25 @@ impl PacketParser for VorbisPacketParser {
             if block_flag == 1 { self.bs1_exp } else { self.bs0_exp }
         }
         else {
-            return 0;
+            return (Duration::ZERO, Duration::ZERO);
         };
 
-        // Calculate the duration if the previous block size is available. Otherwise return 0.
-        let dur = if let Some(prev_bs_exp) = self.prev_bs_exp {
-            ((1 << prev_bs_exp) >> 2) + ((1 << cur_bs_exp) >> 2)
+        // Calculate the duration and number of frames to discard.
+        let cur_block_n = 1u64 << cur_bs_exp;
+
+        let (dur, discard) = if let Some(prev_bs_exp) = self.prev_bs_exp {
+            let prev_block_n = 1 << prev_bs_exp;
+            // Have previous block, do not discard any frames.
+            ((prev_block_n >> 2) + (cur_block_n >> 2), 0)
         }
         else {
-            0
+            // Do not have previous block, all lapped frames will be disarded.
+            (cur_block_n >> 1, cur_block_n >> 1)
         };
 
         self.prev_bs_exp = Some(cur_bs_exp);
 
-        dur
+        (Duration::new(dur), Duration::new(discard))
     }
 }
 
@@ -148,6 +154,16 @@ impl Mapper for VorbisMapper {
         "vorbis"
     }
 
+    fn max_rap_period(&self) -> Duration {
+        // A Vorbis decoder will discard the first half of lapped samples when reset. Therefore,
+        // the worst-case random access period is half the length of the longest block.
+        let period = match &self.parser {
+            Some(parser) => (1 << parser.bs0_exp.max(parser.bs1_exp)) >> 1,
+            None => 0,
+        };
+        Duration::new(period)
+    }
+
     fn track(&self) -> &Track {
         &self.track
     }
@@ -185,12 +201,12 @@ impl Mapper for VorbisMapper {
 
         // An even numbered packet type is an audio packet.
         if packet_type & 1 == 0 {
-            let dur = match &mut self.parser {
+            let (dur, discard) = match &mut self.parser {
                 Some(parser) => parser.parse_next_packet_dur(packet),
-                _ => 0,
+                _ => (Duration::ZERO, Duration::ZERO),
             };
 
-            Ok(MapResult::StreamData { dur })
+            Ok(MapResult::StreamData { dur, discard })
         }
         else {
             // Odd numbered packet types are header packets.

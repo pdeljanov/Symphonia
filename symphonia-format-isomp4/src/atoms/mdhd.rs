@@ -5,7 +5,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::errors::{Result, decode_error};
+use std::num::NonZero;
+
+use symphonia_core::errors::{Error, Result, decode_error};
 use symphonia_core::io::ReadBytes;
 
 use crate::atoms::{Atom, AtomHeader};
@@ -35,7 +37,7 @@ pub struct MdhdAtom {
     /// Modification time.
     pub mtime: u64,
     /// Timescale.
-    pub timescale: u32,
+    pub timescale: NonZero<u32>,
     /// Duration of the media in timescale units.
     pub duration: u64,
     /// Language.
@@ -46,14 +48,20 @@ impl Atom for MdhdAtom {
     fn read<B: ReadBytes>(reader: &mut B, mut header: AtomHeader) -> Result<Self> {
         let (version, _) = header.read_extended_header(reader)?;
 
-        let mut mdhd =
-            MdhdAtom { ctime: 0, mtime: 0, timescale: 0, duration: 0, language: String::new() };
+        let mut mdhd = MdhdAtom {
+            ctime: 0,
+            mtime: 0,
+            timescale: NonZero::new(1).unwrap(),
+            duration: 0,
+            language: String::new(),
+        };
 
         match version {
             0 => {
                 mdhd.ctime = u64::from(reader.read_be_u32()?);
                 mdhd.mtime = u64::from(reader.read_be_u32()?);
-                mdhd.timescale = reader.read_be_u32()?;
+                mdhd.timescale = NonZero::new(reader.read_be_u32()?)
+                    .ok_or(Error::DecodeError("isomp4: timescale is zero"))?;
                 // 0xffff_ffff is a special case.
                 mdhd.duration = match reader.read_be_u32()? {
                     u32::MAX => u64::MAX,
@@ -63,7 +71,8 @@ impl Atom for MdhdAtom {
             1 => {
                 mdhd.ctime = reader.read_be_u64()?;
                 mdhd.mtime = reader.read_be_u64()?;
-                mdhd.timescale = reader.read_be_u32()?;
+                mdhd.timescale = NonZero::new(reader.read_be_u32()?)
+                    .ok_or(Error::DecodeError("isomp4: timescale is zero"))?;
                 mdhd.duration = reader.read_be_u64()?;
             }
             _ => {

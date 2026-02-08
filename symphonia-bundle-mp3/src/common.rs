@@ -11,6 +11,7 @@ use symphonia_core::codecs::audio::well_known::{CODEC_ID_MP1, CODEC_ID_MP2, CODE
 use symphonia_core::errors::Result;
 
 use symphonia_core::io::BufReader;
+use symphonia_core::units::Duration;
 
 /// The MPEG audio version.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -147,13 +148,21 @@ impl FrameHeader {
         AudioSpec::new(self.sample_rate, channels)
     }
 
-    /// Returns the number of audio samples in the frame per channel.
-    pub fn duration(&self) -> u64 {
+    /// Returns the number of per-channel audio samples in the MPEG frame.
+    pub fn num_frames(&self) -> u16 {
         match self.layer {
             MpegLayer::Layer1 => 384,
             MpegLayer::Layer2 => 1152,
-            MpegLayer::Layer3 => 576 * self.n_granules() as u64,
+            MpegLayer::Layer3 => 576 * self.n_granules() as u16,
         }
+    }
+
+    /// Returns the duration of the MPEG frame.
+    ///
+    /// This is effectively the same as `num_frames`, but as a `Duration`.
+    #[inline(always)]
+    pub fn duration(&self) -> Duration {
+        Duration::from(self.num_frames())
     }
 
     /// Returns the number of granules in the frame.

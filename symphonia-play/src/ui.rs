@@ -16,7 +16,7 @@ use symphonia::core::meta::{
     Chapter, ChapterGroup, ChapterGroupItem, ColorMode, ColorModel, ContentAdvisory, MetadataInfo,
     MetadataRevision, StandardTag, Tag, Visual,
 };
-use symphonia::core::units::{Time, TimeBase};
+use symphonia::core::units::{Duration, Time, TimeBase, Timestamp};
 use symphonia::core::util::text;
 
 /// The minimum padding for tag keys.
@@ -150,11 +150,11 @@ pub fn print_tracks(tracks: &[Track]) {
                 print_pair("Time Base:", &tb, Bullet::None, 1);
             }
 
-            if track.start_ts > 0 {
+            if track.start_ts.is_positive() {
                 if let Some(tb) = track.time_base {
                     print_pair(
                         "Start Time:",
-                        &format!("{} ({})", fmt_ts(track.start_ts, tb), track.start_ts),
+                        &format!("{} ({})", fmt_ts(track.start_ts, tb), track.start_ts), // TODO
                         Bullet::None,
                         1,
                     );
@@ -168,7 +168,7 @@ pub fn print_tracks(tracks: &[Track]) {
                 if let Some(tb) = track.time_base {
                     print_pair(
                         "Duration:",
-                        &format!("{} ({})", fmt_ts(num_frames, tb), num_frames),
+                        &format!("{} ({})", fmt_dur(num_frames.into(), tb), num_frames),
                         Bullet::None,
                         1,
                     );
@@ -520,9 +520,9 @@ pub fn print_blank() {
     println!("|")
 }
 
-pub fn print_progress(ts: u64, dur: Option<u64>, tb: Option<TimeBase>) {
+pub fn print_progress(cur_ts: Timestamp, dur: Option<Duration>, tb: Option<TimeBase>) {
     // Get a string slice containing a progress bar.
-    fn progress_bar(ts: u64, dur: u64) -> &'static str {
+    fn progress_bar(ts: Timestamp, dur: Duration) -> &'static str {
         const NUM_STEPS: usize = 60;
 
         lazy_static! {
@@ -531,9 +531,10 @@ pub fn print_progress(ts: u64, dur: Option<u64>, tb: Option<TimeBase>) {
             };
         }
 
+        // Clamp negative timestamps to 0 and calculate the progress index.
         let i = (NUM_STEPS as u64)
-            .saturating_mul(ts)
-            .checked_div(dur)
+            .saturating_mul(ts.max(Timestamp::ZERO).get() as u64)
+            .checked_div(dur.get())
             .unwrap_or(0)
             .clamp(0, NUM_STEPS as u64);
 
@@ -546,27 +547,19 @@ pub fn print_progress(ts: u64, dur: Option<u64>, tb: Option<TimeBase>) {
     let mut output = stdout.lock();
 
     if let Some(tb) = tb {
-        let t = tb.calc_time(ts);
-
-        let hours = t.seconds / (60 * 60);
-        let mins = (t.seconds % (60 * 60)) / 60;
-        let secs = f64::from((t.seconds % 60) as u32) + t.frac;
-
-        write!(output, "\r\u{25b6}\u{fe0f}  {hours}:{mins:0>2}:{secs:0>4.1}").unwrap();
+        let cur_time = tb.calc_time_saturating(cur_ts);
+        write!(output, "\r\u{25b6}\u{fe0f}  ").unwrap();
+        write_time(&mut output, cur_time).unwrap();
 
         if let Some(dur) = dur {
-            let d = tb.calc_time(dur.saturating_sub(ts));
-
-            let hours = d.seconds / (60 * 60);
-            let mins = (d.seconds % (60 * 60)) / 60;
-            let secs = f64::from((d.seconds % 60) as u32) + d.frac;
-
-            write!(output, " {} -{}:{:0>2}:{:0>4.1}", progress_bar(ts, dur), hours, mins, secs)
-                .unwrap();
+            let rem_ts = cur_ts.saturating_sub(dur);
+            let rem_time = tb.calc_time_saturating(rem_ts);
+            write!(output, " {} ", progress_bar(cur_ts, dur)).unwrap();
+            write_time(&mut output, rem_time).unwrap()
         }
     }
     else {
-        write!(output, "\r\u{25b6}\u{fe0f}  {ts}").unwrap();
+        write!(output, "\r\u{25b6}\u{fe0f}  {cur_ts}").unwrap();
     }
 
     // This extra space is a workaround for Konsole to correctly erase the previous line.
@@ -645,24 +638,49 @@ fn fmt_size(size: usize) -> String {
     }
 }
 
-fn fmt_ts(ts: u64, tb: TimeBase) -> String {
-    let time = tb.calc_time(ts);
+fn fmt_dur(dur: Duration, tb: TimeBase) -> String {
+    let ts = Timestamp::ZERO.saturating_add(dur);
+    let time = tb.calc_time(ts).unwrap_or(Time::MAX);
+    fmt_time(time)
+}
+
+fn fmt_ts(ts: Timestamp, tb: TimeBase) -> String {
+    let time = tb.calc_time(ts).unwrap_or(Time::MAX);
     fmt_time(time)
 }
 
 fn fmt_time(time: Time) -> String {
-    let hours = time.seconds / (60 * 60);
-    let mins = (time.seconds % (60 * 60)) / 60;
-    let secs = f64::from((time.seconds % 60) as u32) + time.frac;
+    let (total_secs, nanos) = time.parts();
 
-    format!("{hours}:{mins:0>2}:{secs:0>6.3}")
+    let total_secs_abs = total_secs.unsigned_abs();
+    let hours = total_secs_abs / (60 * 60);
+    let mins = (total_secs_abs % (60 * 60)) / 60;
+    let secs = f64::from((total_secs_abs % 60) as u32) + f64::from(nanos) / 1e9;
+
+    let sign = if total_secs.is_negative() { "-" } else { "" };
+
+    format!("{sign}{hours}:{mins:0>2}:{secs:0>6.3}")
+}
+
+fn write_time<W: Write>(out: &mut W, time: Time) -> std::io::Result<()> {
+    let (total_secs, nanos) = time.parts();
+
+    let total_secs_abs = total_secs.unsigned_abs();
+    let hours = total_secs_abs / (60 * 60);
+    let mins = (total_secs_abs % (60 * 60)) / 60;
+    let secs = f64::from((total_secs_abs % 60) as u32) + f64::from(nanos) / 1e9;
+
+    let sign = if total_secs.is_negative() { "-" } else { "" };
+
+    write!(out, "{sign}{hours}:{mins:0>2}:{secs:0>4.1}")
 }
 
 struct FormattedTag<'a> {
     key: Cow<'a, str>,
     value: Cow<'a, str>,
 }
-
+// 0:03:40.961088435
+//         999999999
 impl<'a> FormattedTag<'a> {
     fn new<V>(key: &'a str, value: V) -> Self
     where

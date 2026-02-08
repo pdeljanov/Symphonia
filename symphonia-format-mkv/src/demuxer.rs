@@ -7,6 +7,7 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::convert::TryFrom;
+use std::num::NonZero;
 
 use symphonia_core::errors::{Error, Result, SeekErrorKind, seek_error, unsupported_error};
 use symphonia_core::formats::prelude::*;
@@ -17,7 +18,7 @@ use symphonia_core::meta::{Metadata, MetadataLog};
 use symphonia_core::support_format;
 use symphonia_core::units::TimeBase;
 
-use log::info;
+use log::{info, warn};
 
 use crate::codecs::make_track_codec_params;
 use crate::ebml::{EbmlElementInfo, EbmlError, EbmlIterator, EbmlSchema, ReadEbml};
@@ -35,8 +36,10 @@ const MKV_FORMAT_INFO: FormatInfo =
 pub struct TrackState {
     /// The track number.
     track_num: u32,
-    /// Default frame duration in nanoseconds.
+    /// Default frame duration in Matroska ticks (nanoseconds).
     pub(crate) default_frame_duration: Option<u64>,
+    /// Codec delay in segment ticks (timebase units).
+    pub(crate) codec_delay: u64,
 }
 
 /// Matroska (MKV) and WebM demultiplexer.
@@ -58,7 +61,9 @@ pub struct MkvReader<'s> {
 
 #[derive(Copy, Clone, Debug)]
 struct ClusterState {
+    /// The cluster timestamp.
     timestamp: Option<u64>,
+    /// The start position of the cluster.
     start: u64,
 }
 
@@ -260,9 +265,10 @@ impl<'s> MkvReader<'s> {
 
         // Should TimeBase use a u64/u64 rational?
         let time_base = TimeBase::new(
-            u32::try_from(info.timestamp_scale.get())
+            info.timestamp_scale
+                .try_into()
                 .map_err(|_| Error::Unsupported("mkv: timestamp scale too large (report this)"))?,
-            1_000_000_000,
+            NonZero::new(1_000_000_000).unwrap(),
         );
 
         let mut tracks = Vec::new();
@@ -275,7 +281,14 @@ impl<'s> MkvReader<'s> {
                 track_num: u32::try_from(track.number.get())
                     .map_err(|_| Error::Unsupported("mkv: track number too large (report this)"))?,
                 default_frame_duration: track.default_duration.map(|d| d.get()),
+                codec_delay: track.codec_delay,
             };
+
+            // Track timestamp scale is not well supported by many MKV readers and is removed in
+            // Matroska v4. Warn that Symphonia does not support it.
+            if track.track_timestamp_scale != 1.0 {
+                warn!("track {} has an unsupported timestamp scale (not 1.0)", state.track_num);
+            }
 
             // Create the track.
             let mut tr = Track::new(state.track_num);
@@ -317,12 +330,17 @@ impl<'s> MkvReader<'s> {
         })
     }
 
-    fn seek_track_by_ts_forward(&mut self, track_id: u32, ts: u64) -> Result<SeekedTo> {
+    fn seek_track_by_ts_forward(&mut self, track_id: u32, ts: Timestamp) -> Result<SeekedTo> {
         let actual_ts = 'out: loop {
             // Skip frames from the buffer until the given timestamp
             while let Some(frame) = self.frames.front() {
-                if frame.timestamp + frame.duration >= ts && frame.track == track_id {
-                    break 'out frame.timestamp;
+                let next_frame_pts = frame
+                    .pts
+                    .checked_add(frame.duration)
+                    .ok_or(Error::SeekError(SeekErrorKind::OutOfRange))?;
+
+                if next_frame_pts >= ts && frame.track == track_id {
+                    break 'out frame.pts;
                 }
                 else {
                     self.frames.pop_front();
@@ -338,7 +356,7 @@ impl<'s> MkvReader<'s> {
         Ok(SeekedTo { track_id, required_ts: ts, actual_ts })
     }
 
-    fn seek_track_by_ts_atomic(&mut self, track_id: u32, ts: u64) -> Result<SeekedTo> {
+    fn seek_track_by_ts_atomic(&mut self, track_id: u32, ts: Timestamp) -> Result<SeekedTo> {
         // Save the iterator and cluster states to restore in-case of and error.
         let iter_state = self.iter.save_state();
         let cluster_state = self.current_cluster;
@@ -354,7 +372,7 @@ impl<'s> MkvReader<'s> {
         }
     }
 
-    fn seek_track_by_ts(&mut self, track_id: u32, ts: u64) -> Result<SeekedTo> {
+    fn seek_track_by_ts(&mut self, track_id: u32, ts: Timestamp) -> Result<SeekedTo> {
         log::debug!("seeking track_id={track_id} to ts={ts}");
 
         // If cues exist, seek to the nearest cue point.
@@ -362,7 +380,10 @@ impl<'s> MkvReader<'s> {
             let mut target_cue_point = None;
 
             for cue_point in &cues.points {
-                if cue_point.time > ts {
+                // If `ts` is negative, then it cannot be larger than the cue-point time which is
+                // always positive. If `ts` is 0 or positive, then it can safely be converted to a
+                // u64 without underflowing.
+                if !ts.is_negative() && cue_point.time > ts.get() as u64 {
                     break;
                 }
                 target_cue_point = Some(cue_point);
@@ -475,14 +496,17 @@ impl<'s> MkvReader<'s> {
                         };
 
                         // Extract frames.
-                        extract_frames(
+                        if !extract_frames(
                             &data,
                             duration,
                             &self.track_states,
                             cluster_ts,
                             self.timestamp_scale,
                             &mut self.frames,
-                        )?;
+                        )? {
+                            warn!("pts for block is too large");
+                            return Ok(false);
+                        }
                     }
                     // All other elements.
                     other => {
@@ -547,7 +571,13 @@ impl FormatReader for MkvReader<'_> {
                 };
                 let track = track.ok_or(Error::SeekError(SeekErrorKind::InvalidTrack))?;
                 let tb = track.time_base.unwrap();
-                let ts = tb.calc_timestamp(time);
+                let ts = match tb.calc_timestamp(time) {
+                    Some(ts) => ts,
+                    None => {
+                        warn!("seek ts is too large");
+                        return seek_error(SeekErrorKind::OutOfRange);
+                    }
+                };
                 let track_id = track.id;
                 self.seek_track_by_ts_atomic(track_id, ts)
             }
@@ -569,7 +599,7 @@ impl FormatReader for MkvReader<'_> {
             if let Some(frame) = self.frames.pop_front() {
                 return Ok(Some(Packet::new_from_boxed_slice(
                     frame.track,
-                    frame.timestamp,
+                    frame.pts,
                     frame.duration,
                     frame.data,
                 )));

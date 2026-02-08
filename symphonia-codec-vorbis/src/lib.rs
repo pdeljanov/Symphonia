@@ -308,8 +308,8 @@ impl VorbisDecoder {
             );
         }
 
-        // Trim
-        self.buf.trim(packet.trim_start() as usize, packet.trim_end() as usize);
+        // Trim gaps.
+        self.buf.trim(packet.trim_start().get() as usize, packet.trim_end().get() as usize);
 
         // Save the new lapping state.
         self.dsp.lapping_state = Some(LappingState { prev_block_flag: mode.block_flag });
