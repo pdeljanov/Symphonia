@@ -506,7 +506,7 @@ impl PacketParser {
         // Update the frame size moving average.
         self.fsma.push(parsed.buf.len());
 
-        Ok(Some(Packet::new_from_boxed_slice(
+        Ok(Some(Packet::new(
             0,
             parsed.sync.ts.try_into().expect("flac timestamp is 36-bits maximum"),
             Duration::from(parsed.sync.dur),

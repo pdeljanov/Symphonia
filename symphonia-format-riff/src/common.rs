@@ -326,7 +326,7 @@ pub fn next_packet(
     // Copy the frames.
     let packet_buf = reader.read_boxed_slice(pkt_len as usize)?;
 
-    Ok(Some(Packet::new_from_boxed_slice(0, pts, dur, packet_buf)))
+    Ok(Some(Packet::new(0, pts, dur, packet_buf)))
 }
 
 /// TODO: format here refers to format chunk in Wave terminology, but the data being handled here is

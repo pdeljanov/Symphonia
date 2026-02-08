@@ -597,12 +597,7 @@ impl FormatReader for MkvReader<'_> {
     fn next_packet(&mut self) -> Result<Option<Packet>> {
         loop {
             if let Some(frame) = self.frames.pop_front() {
-                return Ok(Some(Packet::new_from_boxed_slice(
-                    frame.track,
-                    frame.pts,
-                    frame.duration,
-                    frame.data,
-                )));
+                return Ok(Some(Packet::new(frame.track, frame.pts, frame.duration, frame.data)));
             }
 
             if !self.next_element()? {

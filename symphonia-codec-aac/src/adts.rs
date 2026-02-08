@@ -287,7 +287,7 @@ impl FormatReader for AdtsReader<'_> {
             None => return Ok(None),
         };
 
-        Ok(Some(Packet::new_from_boxed_slice(
+        Ok(Some(Packet::new(
             0,
             ts,
             SAMPLES_PER_AAC_PACKET,

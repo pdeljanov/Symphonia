@@ -8,7 +8,7 @@
 use std::collections::VecDeque;
 
 use symphonia_core::errors::{Result, decode_error};
-use symphonia_core::formats::{Packet, Track};
+use symphonia_core::formats::{Packet, PacketBuilder, Track};
 use symphonia_core::units::{Duration, Timestamp};
 
 use super::common::SideData;
@@ -178,15 +178,13 @@ impl LogicalStream {
                     total_pkt_dur = total_pkt_dur.saturating_add(dur);
                     total_pkt_discard = total_pkt_discard.saturating_add(discard);
 
-                    // Create a packet.
-                    let mut packet = Packet::new_from_boxed_slice(
-                        page.header.serial,
-                        Timestamp::ZERO,
-                        dur,
-                        data,
-                    );
-
-                    packet.trim_start = discard;
+                    let packet = PacketBuilder::new()
+                        .track_id(page.header.serial)
+                        .pts(Timestamp::ZERO)
+                        .dur(dur)
+                        .data(data)
+                        .trim_start(discard)
+                        .build();
 
                     self.packets.push_back(packet);
                 }

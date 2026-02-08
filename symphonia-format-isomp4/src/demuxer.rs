@@ -565,7 +565,7 @@ impl FormatReader for IsoMp4Reader<'_> {
             }
         }
 
-        Ok(Some(Packet::new_from_boxed_slice(
+        Ok(Some(Packet::new(
             next_sample_info.track_id,
             next_sample_info.ts,
             next_sample_info.dur,

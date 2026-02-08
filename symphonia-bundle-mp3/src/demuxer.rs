@@ -12,9 +12,9 @@ use symphonia_core::codecs::CodecParameters;
 use symphonia_core::codecs::audio::AudioCodecParameters;
 use symphonia_core::codecs::audio::well_known::{CODEC_ID_MP1, CODEC_ID_MP2, CODEC_ID_MP3};
 use symphonia_core::errors::{Error, Result, SeekErrorKind, seek_error};
-use symphonia_core::formats::prelude::*;
 use symphonia_core::formats::probe::{ProbeFormatData, ProbeableFormat, Score, Scoreable};
 use symphonia_core::formats::well_known::{FORMAT_ID_MP1, FORMAT_ID_MP2, FORMAT_ID_MP3};
+use symphonia_core::formats::{PacketBuilder, prelude::*};
 use symphonia_core::io::*;
 use symphonia_core::meta::{Metadata, MetadataLog};
 
@@ -146,9 +146,9 @@ impl FormatReader for MpaReader<'_> {
     }
 
     fn next_packet(&mut self) -> Result<Option<Packet>> {
-        let (header, packet) = loop {
+        let (header, data) = loop {
             // Read the next MPEG frame.
-            let (header, packet) = match read_mpeg_frame(&mut self.reader) {
+            let (header, data) = match read_mpeg_frame(&mut self.reader) {
                 Ok(frame) => frame,
                 Err(Error::IoError(err)) if err.kind() == std::io::ErrorKind::UnexpectedEof => {
                     // MPEG streams have no well-defined end, so when no more frames can be read,
@@ -159,47 +159,48 @@ impl FormatReader for MpaReader<'_> {
             };
 
             // Check if the packet contains a Xing, Info, or VBRI tag.
-            if is_maybe_info_tag(&packet, &header) {
-                if try_read_info_tag(&packet, &header).is_some() {
+            if is_maybe_info_tag(&data, &header) {
+                if try_read_info_tag(&data, &header).is_some() {
                     // Discard the packet and tag since it was not at the start of the stream.
                     warn!("found an unexpected xing tag, discarding");
                     continue;
                 }
             }
-            else if is_maybe_vbri_tag(&packet, &header)
-                && try_read_vbri_tag(&packet, &header).is_some()
+            else if is_maybe_vbri_tag(&data, &header)
+                && try_read_vbri_tag(&data, &header).is_some()
             {
                 // Discard the packet and tag since it was not at the start of the stream.
                 warn!("found an unexpected vbri tag, discarding");
                 continue;
             }
 
-            break (header, packet);
+            break (header, data);
         };
 
-        // The timestamp for this packet.
-        let ts = self.next_packet_ts;
-        // The duration of this packet.
-        let duration = header.duration();
+        // The timestamp and duration for this packet.
+        let pts = self.next_packet_ts;
+        let dur = header.duration();
 
         // Advance the next packet timestamp based on this packet's duration. If it saturates, then
         // it is not possible to read further.
-        self.next_packet_ts = match self.next_packet_ts.checked_add(duration) {
+        self.next_packet_ts = match self.next_packet_ts.checked_add(dur) {
             Some(ts) => ts,
             None => return Ok(None),
         };
 
-        let mut packet = Packet::new_from_boxed_slice(0, ts, duration, packet.into_boxed_slice());
-
-        symphonia_core::formats::util::trim_packet(
-            &mut packet,
-            // Delay frames have negative timestamps, so the end PTS is the duration starting from
-            // PTS=0.
-            self.tracks[0]
-                .num_frames
-                .map(Duration::from)
-                .and_then(|dur| dur.timestamp_from(Timestamp::ZERO)),
-        );
+        // Build the packet.
+        let packet = PacketBuilder::new()
+            .track_id(0)
+            .pts(pts)
+            .trimmed_dur(
+                dur,
+                self.tracks[0]
+                    .num_frames
+                    .map(Duration::from)
+                    .and_then(|dur| dur.timestamp_from(Timestamp::ZERO)),
+            )
+            .data(data)
+            .build();
 
         Ok(Some(packet))
     }

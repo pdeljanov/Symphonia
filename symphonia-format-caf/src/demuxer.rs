@@ -138,18 +138,13 @@ impl FormatReader for CafReader<'_> {
 
                 let buf = self.reader.read_boxed_slice(bytes_to_read as usize)?;
 
-                Ok(Some(Packet::new_from_boxed_slice(0, pts, dur, buf)))
+                Ok(Some(Packet::new(0, pts, dur, buf)))
             }
             PacketInfo::VariableAudioPacket { packets, current_packet_index } => {
                 if let Some(packet) = packets.get(*current_packet_index) {
                     *current_packet_index += 1;
                     let buffer = self.reader.read_boxed_slice(packet.size as usize)?;
-                    Ok(Some(Packet::new_from_boxed_slice(
-                        0,
-                        packet.start_frame,
-                        packet.frames,
-                        buffer,
-                    )))
+                    Ok(Some(Packet::new(0, packet.start_frame, packet.frames, buffer)))
                 }
                 else if *current_packet_index == packets.len() {
                     Ok(None)
