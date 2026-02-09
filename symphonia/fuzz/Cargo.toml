@@ -3,12 +3,12 @@
 name = "symphonia-fuzz"
 publish = false
 # Common package metadata located in workspace Cargo.toml.
-edition.workspace = true
-homepage.workspace = true
-license.workspace = true
-repository.workspace = true
-rust-version.workspace = true
-version.workspace = true
+edition = "2024"
+homepage = "https://github.com/pdeljanov/Symphonia"
+license = "MPL-2.0"
+repository = "https://github.com/pdeljanov/Symphonia"
+rust-version = "1.85"
+version = "0.6.0"
 
 [package.metadata]
 cargo-fuzz = true

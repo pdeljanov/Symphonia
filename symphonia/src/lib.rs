@@ -108,45 +108,6 @@
 //!
 //! # Usage
 //!
-//! The following steps describe a basic usage of Symphonia:
-//!
-//! 1.  Instantiate a [`CodecRegistry`][core::codecs::CodecRegistry] and register all the codecs
-//!     that are of interest. Alternatively, you may use [`default::get_codecs`] to get the default
-//!     registry with all the enabled codecs pre-registered. The registry will be used to
-//!     instantiate a [`Decoder`][core::codecs::Decoder] later.
-//! 2.  Instantiate a [`Probe`][core::probe::Probe] and register all the formats that are of
-//!     interest. Alternatively, you may use [`default::get_probe`] to get a default format probe
-//!     with all the enabled formats pre-registered. The probe will be used to automatically detect
-//!     the media format and instantiate a compatible [`FormatReader`][core::formats::FormatReader].
-//! 3.  Make sure the [`MediaSource`][core::io::MediaSource] trait is implemented for whatever
-//!     source you are using. This trait is already implemented for `std::fs::File` and
-//!     `std::io::Cursor`.
-//! 4.  Instantiate a [`MediaSourceStream`][core::io::MediaSourceStream] with the `MediaSource`
-//!     above.
-//! 5.  Using the `Probe`, call [`format`][core::probe::Probe::format] and pass it the
-//!     `MediaSourceStream`.
-//! 6.  If the probe successfully detects a compatible format, a `FormatReader` will be returned.
-//!     This is an instance of a demuxer that can read and demux the provided source into
-//!     [`Packet`][core::formats::Packet]s.
-//! 7.  At this point it is possible to interrogate the `FormatReader` for general information about
-//!     the media and metadata. Examine the [`Track`][core::formats::Track] listing using
-//!     [`tracks`][core::formats::FormatReader::tracks] and select one or more tracks of interest to
-//!     decode.
-//! 8.  To instantiate a `Decoder` for a selected `Track`, call the `CodecRegistry`'s
-//!     [`make`][core::codecs::CodecRegistry::make] function and pass it
-//!     the [`CodecParameters`][core::codecs::CodecParameters] for that track. This step is repeated
-//!     once per selected track.
-//! 9.  To decode a track, obtain a packet from the `FormatReader` by
-//!     calling [`next_packet`][`core::formats::FormatReader::next_packet`] and then pass the
-//!     `Packet` to the `Decoder` for that track. The [`decode`][core::codecs::Decoder::decode]
-//!     function will read a packet and return a
-//!     [`GenericAudioBufferRef`][core::audio::GenericAudioBufferRef]
-//!     (an "any-type" [`AudioBuffer`][core::audio::AudioBuffer]).
-//! 10. The `GenericAudioBufferRef` may be used to access the decoded audio samples directly by
-//!     matching on different `AudioBuffer` types, or the generic interfaces can be used to copy the
-//!     samples into an external slice or vector of a desired sample format.
-//! 11. Repeat step 9 and 10 until the end-of-stream error is returned.
-//!
 //! An example implementation of a simple audio player (symphonia-play) can be found in the
 //! Project Symphonia git repository.
 //!
@@ -157,9 +118,9 @@
 //!
 //! # Adding new formats and codecs
 //!
-//! Simply implement the [`Decoder`][core::codecs::Decoder] trait for a decoder or the
-//! [`FormatReader`][core::formats::FormatReader] trait for a demuxer trait and register with
-//! the appropriate registry or probe!
+//! Simply implement the [`AudioDecoder`][core::codecs::audio::AudioDecoder] trait for an audio
+//! decoder or the [`FormatReader`][core::formats::FormatReader] trait for a demuxer trait and
+//! register with the appropriate registry or probe!
 
 pub mod default {
     //! The `default` module provides convenience functions and registries to get an implementer
