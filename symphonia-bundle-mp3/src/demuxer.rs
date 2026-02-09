@@ -508,8 +508,8 @@ impl<'s> MpaReader<'s> {
 
         // It is preferable to return a packet with a timestamp before the requested timestamp.
         // Therefore, subtract the maximum packet size from the position found above to ensure this.
-        let seek_pos =
-            seek_pos_rel + u128::from(self.first_packet_pos) - MAX_MPEG_FRAME_SIZE as u128;
+        let seek_pos = (seek_pos_rel + u128::from(self.first_packet_pos))
+            .saturating_sub(MAX_MPEG_FRAME_SIZE as u128);
 
         // Seek the media source stream.
         self.reader.seek(SeekFrom::Start(
