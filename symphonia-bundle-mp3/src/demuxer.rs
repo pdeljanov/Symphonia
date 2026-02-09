@@ -12,9 +12,9 @@ use symphonia_core::codecs::CodecParameters;
 use symphonia_core::codecs::audio::AudioCodecParameters;
 use symphonia_core::codecs::audio::well_known::{CODEC_ID_MP1, CODEC_ID_MP2, CODEC_ID_MP3};
 use symphonia_core::errors::{Error, Result, SeekErrorKind, seek_error};
+use symphonia_core::formats::prelude::*;
 use symphonia_core::formats::probe::{ProbeFormatData, ProbeableFormat, Score, Scoreable};
 use symphonia_core::formats::well_known::{FORMAT_ID_MP1, FORMAT_ID_MP2, FORMAT_ID_MP3};
-use symphonia_core::formats::{PacketBuilder, prelude::*};
 use symphonia_core::io::*;
 use symphonia_core::meta::{Metadata, MetadataLog};
 

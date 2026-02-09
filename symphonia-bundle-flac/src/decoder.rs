@@ -19,8 +19,8 @@ use symphonia_core::codecs::audio::{AudioCodecParameters, AudioDecoderOptions};
 use symphonia_core::codecs::audio::{AudioDecoder, FinalizeResult, VerificationCheck};
 use symphonia_core::codecs::registry::{RegisterableAudioDecoder, SupportedAudioCodec};
 use symphonia_core::errors::{Error, Result, decode_error, unsupported_error};
-use symphonia_core::formats::Packet;
 use symphonia_core::io::{BitReaderLtr, BufReader, ReadBitsLtr};
+use symphonia_core::packet::Packet;
 use symphonia_core::support_audio_codec;
 use symphonia_core::util::bits::sign_extend_leq32_to_i32;
 

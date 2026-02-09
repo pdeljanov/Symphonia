@@ -21,6 +21,7 @@ pub mod errors;
 pub mod formats;
 pub mod io;
 pub mod meta;
+pub mod packet;
 pub mod subtitle;
 pub mod units;
 pub mod util;

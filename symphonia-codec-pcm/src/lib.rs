@@ -44,8 +44,8 @@ use symphonia_core::audio::conv::IntoSample;
 use symphonia_core::audio::sample::SampleFormat;
 use symphonia_core::codecs::audio::well_known::{CODEC_ID_PCM_ALAW, CODEC_ID_PCM_MULAW};
 use symphonia_core::errors::{Result, decode_error, unsupported_error};
-use symphonia_core::formats::Packet;
 use symphonia_core::io::ReadBytes;
+use symphonia_core::packet::Packet;
 
 macro_rules! read_pcm_signed {
     ($buf:expr, $fmt:tt, $read:expr, $width:expr, $coded_width:expr) => {

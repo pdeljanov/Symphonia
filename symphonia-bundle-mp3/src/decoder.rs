@@ -12,8 +12,8 @@ use symphonia_core::codecs::audio::{
 };
 use symphonia_core::codecs::registry::{RegisterableAudioDecoder, SupportedAudioCodec};
 use symphonia_core::errors::{Result, decode_error, unsupported_error};
-use symphonia_core::formats::Packet;
 use symphonia_core::io::FiniteStream;
+use symphonia_core::packet::Packet;
 use symphonia_core::support_audio_codec;
 
 #[cfg(feature = "mp1")]

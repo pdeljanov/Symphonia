@@ -8,8 +8,8 @@
 use symphonia_common::xiph::audio::flac::StreamInfo;
 use symphonia_core::checksum::Crc16Ansi;
 use symphonia_core::errors::{Error, Result};
-use symphonia_core::formats::Packet;
 use symphonia_core::io::{BufReader, Monitor, ReadBytes, SeekBuffered};
+use symphonia_core::packet::Packet;
 use symphonia_core::units::{Duration, Timestamp};
 use symphonia_core::util::bits;
 

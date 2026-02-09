@@ -26,8 +26,8 @@ use symphonia_core::codecs::audio::{AudioDecoder, FinalizeResult};
 use symphonia_core::codecs::registry::{RegisterableAudioDecoder, SupportedAudioCodec};
 use symphonia_core::dsp::mdct::Imdct;
 use symphonia_core::errors::{Result, decode_error, unsupported_error};
-use symphonia_core::formats::Packet;
 use symphonia_core::io::{BitReaderRtl, BufReader, FiniteBitStream, ReadBitsRtl, ReadBytes};
+use symphonia_core::packet::Packet;
 use symphonia_core::support_audio_codec;
 
 use symphonia_common::xiph::audio::vorbis::*;

@@ -20,8 +20,8 @@ use symphonia_core::codecs::audio::{AudioCodecParameters, AudioDecoderOptions};
 use symphonia_core::codecs::audio::{AudioDecoder, FinalizeResult};
 use symphonia_core::codecs::registry::{RegisterableAudioDecoder, SupportedAudioCodec};
 use symphonia_core::errors::{Result, unsupported_error};
-use symphonia_core::formats::Packet;
 use symphonia_core::io::{BitReaderLtr, FiniteBitStream, ReadBitsLtr};
+use symphonia_core::packet::Packet;
 use symphonia_core::{codec_profile, support_audio_codec};
 
 mod codebooks;

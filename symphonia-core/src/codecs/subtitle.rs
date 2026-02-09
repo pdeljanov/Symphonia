@@ -15,7 +15,7 @@ use crate::common::FourCc;
 #[cfg(feature = "exp-subtitle-codecs")]
 use crate::errors::Result;
 #[cfg(feature = "exp-subtitle-codecs")]
-use crate::formats::Packet;
+use crate::packet::Packet;
 #[cfg(feature = "exp-subtitle-codecs")]
 use crate::subtitle::GenericSubtitleBufferRef;
 

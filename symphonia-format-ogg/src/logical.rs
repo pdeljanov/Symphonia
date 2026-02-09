@@ -8,7 +8,8 @@
 use std::collections::VecDeque;
 
 use symphonia_core::errors::{Result, decode_error};
-use symphonia_core::formats::{Packet, PacketBuilder, Track};
+use symphonia_core::formats::Track;
+use symphonia_core::packet::{Packet, PacketBuilder};
 use symphonia_core::units::{Duration, Timestamp};
 
 use super::common::SideData;
