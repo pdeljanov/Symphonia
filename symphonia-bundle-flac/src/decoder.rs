@@ -375,7 +375,7 @@ fn read_subframe<B: ReadBitsLtr>(bs: &mut B, frame_bps: u32, buf: &mut [i32]) ->
     // sub-frame and obtaining the truncated audio sub-block samples.
     let bps = frame_bps - dropped_bps;
     if bps > u32::BITS {
-        return decode_error("flac: invalid bit width")
+        return decode_error("flac: invalid bit width");
     }
 
     // trace!("\tsubframe: type={:?}, bps={}, dropped_bps={}",
