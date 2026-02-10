@@ -1,4 +1,3 @@
-
 [package]
 name = "symphonia-fuzz"
 publish = false
@@ -32,7 +31,43 @@ test = false
 doc = false
 
 [[bin]]
-name = "decode_mp3"
-path = "fuzz_targets/decode_mp3.rs"
+name = "decode_mpa"
+path = "fuzz_targets/decode_mpa.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "decode_flac"
+path = "fuzz_targets/decode_flac.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "decode_aac"
+path = "fuzz_targets/decode_aac.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "decode_vorbis"
+path = "fuzz_targets/decode_vorbis.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "decode_pcm"
+path = "fuzz_targets/decode_pcm.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "decode_adpcm"
+path = "fuzz_targets/decode_adpcm.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "decode_alac"
+path = "fuzz_targets/decode_alac.rs"
 test = false
 doc = false
