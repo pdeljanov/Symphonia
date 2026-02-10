@@ -1,0 +1,30 @@
+name: Fuzzing Smoke Test
+
+on:
+  push:
+    branches: [ master, dev-0.6 ]
+  pull_request:
+    branches: [ master, dev-0.6 ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fuzz-smoke-test:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@nightly
+
+    - name: Install cargo-fuzz
+      run: cargo install cargo-fuzz
+
+    - name: Run Fuzzers (Smoke Test)
+      run: |
+        cd symphonia/fuzz
+        # Ensure the script is executable
+        chmod +x run_all.sh
+        # Run each fuzzer for 10 seconds to ensure they build and run without immediate crashes
+        ./run_all.sh 10
