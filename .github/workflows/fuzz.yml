@@ -1,4 +1,4 @@
-name: Fuzzing Smoke Test
+name: Fuzzing
 
 # Extended fuzz support is currently only available on the `dev-0.6` branch.
 # TODO(#330): once 0.6 is folded back into `master`, update targets here.
@@ -12,7 +12,8 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  fuzz-smoke-test:
+  smoke-test:
+    name: Smoke Test (10 seconds)
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
