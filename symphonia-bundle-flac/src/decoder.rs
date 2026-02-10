@@ -664,7 +664,7 @@ fn fixed_predict(order: u32, buf: &mut [i32]) {
         // s(i) = 1*s(i),
         1 => {
             for i in 1..buf.len() {
-                buf[i] += buf[i - 1];
+                buf[i] = buf[i].wrapping_add(buf[i - 1]);
             }
         }
         // A 2nd order predictor uses the polynomial: s(i) = 2*s(i-1) - 1*s(i-2).
@@ -672,7 +672,7 @@ fn fixed_predict(order: u32, buf: &mut [i32]) {
             for i in 2..buf.len() {
                 let a = Wrapping(-1) * Wrapping(i64::from(buf[i - 2]));
                 let b = Wrapping(2) * Wrapping(i64::from(buf[i - 1]));
-                buf[i] += (a + b).0 as i32;
+                buf[i] = buf[i].wrapping_add((a + b).0 as i32);
             }
         }
         // A 3rd order predictor uses the polynomial: s(i) = 3*s(i-1) - 3*s(i-2) + 1*s(i-3).
@@ -681,7 +681,7 @@ fn fixed_predict(order: u32, buf: &mut [i32]) {
                 let a = Wrapping(1) * Wrapping(i64::from(buf[i - 3]));
                 let b = Wrapping(-3) * Wrapping(i64::from(buf[i - 2]));
                 let c = Wrapping(3) * Wrapping(i64::from(buf[i - 1]));
-                buf[i] += (a + b + c).0 as i32;
+                buf[i] = buf[i].wrapping_add((a + b + c).0 as i32);
             }
         }
         // A 4th order predictor uses the polynomial:
@@ -692,7 +692,7 @@ fn fixed_predict(order: u32, buf: &mut [i32]) {
                 let b = Wrapping(4) * Wrapping(i64::from(buf[i - 3]));
                 let c = Wrapping(-6) * Wrapping(i64::from(buf[i - 2]));
                 let d = Wrapping(4) * Wrapping(i64::from(buf[i - 1]));
-                buf[i] += (a + b + c + d).0 as i32;
+                buf[i] = buf[i].wrapping_add((a + b + c + d).0 as i32);
             }
         }
         _ => unreachable!(),
