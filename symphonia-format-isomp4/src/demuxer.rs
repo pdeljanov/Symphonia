@@ -43,9 +43,18 @@ impl TrackState {
     pub fn new(track_num: usize, trak: &TrakAtom) -> Self {
         let mut codec_params = CodecParameters::new();
 
+        // Use mdhd.duration if available, otherwise fall back to the total duration
+        // computed from the sample-to-time (stts) table. Some encoders (e.g. Lavf/ffmpeg)
+        // write mdhd.duration=0 and rely on the stts table for actual timing.
+        let duration = if trak.mdia.mdhd.duration > 0 {
+            trak.mdia.mdhd.duration
+        } else {
+            trak.mdia.minf.stbl.stts.total_duration
+        };
+
         codec_params
             .with_time_base(TimeBase::new(1, trak.mdia.mdhd.timescale))
-            .with_n_frames(trak.mdia.mdhd.duration);
+            .with_n_frames(duration);
 
         // Fill the codec parameters using the sample description atom.
         trak.mdia.minf.stbl.stsd.fill_codec_params(&mut codec_params);
