@@ -23,6 +23,7 @@ pub(crate) struct TrackElement {
     pub(crate) codec_private: Option<Box<[u8]>>,
     pub(crate) audio: Option<AudioElement>,
     pub(crate) default_duration: Option<u64>,
+    pub(crate) name: Option<String>,
 }
 
 impl Element for TrackElement {
@@ -36,6 +37,7 @@ impl Element for TrackElement {
         let mut codec_private = None;
         let mut codec_id = None;
         let mut default_duration = None;
+        let mut name = None;
 
         let mut it = header.children(reader);
         while let Some(header) = it.read_header()? {
@@ -61,6 +63,9 @@ impl Element for TrackElement {
                 ElementType::DefaultDuration => {
                     default_duration = Some(it.read_u64()?);
                 }
+                ElementType::Name => {
+                    name = Some(it.read_string()?);
+                }
                 other => {
                     log::debug!("ignored element {:?}", other);
                 }
@@ -75,6 +80,7 @@ impl Element for TrackElement {
             codec_private,
             audio,
             default_duration,
+            name,
         })
     }
 }
