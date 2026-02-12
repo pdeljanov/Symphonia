@@ -11,7 +11,7 @@ use std::num::Wrapping;
 
 use symphonia_common::xiph::audio::flac::StreamInfo;
 use symphonia_core::audio::{
-    AsGenericAudioBufferRef, Audio, AudioBuffer, AudioMut, AudioSpec, GenericAudioBufferRef,
+    AsGenericAudioBufferRef, AudioBuffer, AudioMut, AudioSpec, GenericAudioBufferRef,
 };
 use symphonia_core::codecs::CodecInfo;
 use symphonia_core::codecs::audio::well_known::CODEC_ID_FLAC;
@@ -154,7 +154,7 @@ impl FlacDecoder {
         else {
             return decode_error("flac: bits per sample not provided");
         };
-        if bps > u32::BITS {
+        if bits_per_sample > u32::BITS {
             return decode_error("flac: invalid bit width");
         }
 
