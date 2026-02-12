@@ -365,7 +365,7 @@ impl ElementChannel {
 
             // Rewrite `1 << (self.shift - 1)` as `(1 << self.shift) >> 1` to prevent overflowing
             // when shift is 0.
-            let val = (sum + ((1 << self.shift) >> 1)) >> self.shift;
+            let val = (sum.wrapping_add((1 << self.shift) >> 1)) >> self.shift;
             out[i] = clip_msbs(out[i].wrapping_add(past0).wrapping_add(val), num_clip_bits);
 
             // Adjust the coefficients if the initial value of the residual was not 0.
