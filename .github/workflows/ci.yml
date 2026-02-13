@@ -29,6 +29,9 @@ jobs:
     - name: Check all features
       run: cargo check --all --all-features --exclude symphonia-play
 
+    - name: Check fuzzers
+      run: cargo check --manifest-path symphonia/fuzz/Cargo.toml --verbose
+
   clippy:
     name: Clippy ${{ matrix.os }}
 
