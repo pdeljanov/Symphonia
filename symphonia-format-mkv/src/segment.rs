@@ -7,7 +7,9 @@
 
 use symphonia_core::errors::{Error, Result};
 use symphonia_core::io::{BufReader, ReadBytes};
-use symphonia_core::meta::{MetadataBuilder, MetadataRevision, Tag, Value};
+use symphonia_core::meta::{
+    MetadataBuilder, MetadataLog, MetadataRevision, StandardTagKey, Tag, Value,
+};
 
 use crate::ebml::{read_unsigned_vint, Element, ElementData, ElementHeader};
 use crate::element_ids::ElementType;
@@ -269,13 +271,14 @@ impl Element for EbmlHeaderElement {
     }
 }
 
-#[allow(dead_code)]
 #[derive(Debug)]
 pub(crate) struct InfoElement {
     pub(crate) timestamp_scale: u64,
     pub(crate) duration: Option<f64>,
     title: Option<Box<str>>,
+    #[allow(dead_code)]
     muxing_app: Box<str>,
+    #[allow(dead_code)]
     writing_app: Box<str>,
 }
 
@@ -320,6 +323,23 @@ impl Element for InfoElement {
             muxing_app: muxing_app.unwrap_or_default().into_boxed_str(),
             writing_app: writing_app.unwrap_or_default().into_boxed_str(),
         })
+    }
+}
+
+impl InfoElement {
+    pub fn copy_metadata_into(&self, metadata_log: &mut MetadataLog) {
+        match &self.title {
+            Some(title) => {
+                let mut metadata = MetadataBuilder::new();
+                metadata.add_tag(Tag::new(
+                    Some(StandardTagKey::TrackTitle),
+                    "TITLE",
+                    Value::String(title.to_string()),
+                ));
+                metadata_log.push(metadata.metadata());
+            }
+            None => return,
+        }
     }
 }
 
