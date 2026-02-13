@@ -154,6 +154,9 @@ impl FlacDecoder {
         else {
             return decode_error("flac: bits per sample not provided");
         };
+        if bits_per_sample > u32::BITS {
+            return decode_error("flac: invalid bit width");
+        }
 
         // trace!("frame: [{:?}] strategy={:?}, n_samples={}, bps={}, channels={:?}",
         //     header.block_sequence,
@@ -163,6 +166,9 @@ impl FlacDecoder {
         //     &header.channel_assignment);
 
         // Reserve a writeable chunk in the buffer equal to the number of samples in the block.
+        if header.block_num_samples as usize > self.buf.capacity() {
+            return decode_error("flac: allocation would overflow buffer");
+        }
         self.buf.clear();
         self.buf.render_uninit(Some(header.block_num_samples as usize));
 

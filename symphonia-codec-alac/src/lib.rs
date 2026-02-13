@@ -135,6 +135,13 @@ impl MagicCookie {
             return decode_error("alac: invalid bit depth");
         }
 
+        // Limit the frame length to a reasonable value to prevent a single, 4-byte integer
+        // value from crashing the entire application via memory exhaustion.
+        const STANDARD_FRAME_SIZE: u32 = 4096;
+        if config.frame_length > STANDARD_FRAME_SIZE * 16 {
+            return unsupported_error("alac: frame length too large");
+        }
+
         // Only 8 channel layouts exist.
         // TODO: Support discrete/auxiliary channels.
         if config.num_channels < 1 || config.num_channels > 8 {
@@ -319,7 +326,8 @@ impl ElementChannel {
         }
 
         // An order of 0 indicates no prediction is done (the residuals are the samples).
-        if self.lpc_order == 0 {
+        // If the output buffer is empty, there is nothing to predict.
+        if self.lpc_order == 0 || out.is_empty() {
             return Ok(());
         }
 
@@ -340,7 +348,9 @@ impl ElementChannel {
         let order = self.lpc_order as usize;
 
         // Process warm-up samples.
-        for i in 1..1 + order {
+        // The loop is bounded by `out.len()` to prevent out-of-bounds access if the frame is
+        // shorter than the LPC order.
+        for i in 1..min(1 + order, out.len()) {
             out[i] = clip_msbs(out[i].wrapping_add(out[i - 1]), num_clip_bits);
         }
 
@@ -635,6 +645,9 @@ fn decode_sce_or_cpe<B: ReadBitsLtr>(
     // otherwise use the frame length in the configuration.
     let num_samples =
         if is_partial_frame { bs.read_bits_leq32(32)? } else { config.frame_length } as usize;
+    if num_samples > config.frame_length as usize {
+        return decode_error("alac: frame length exceeds maximum frame length");
+    }
 
     if !is_uncompressed {
         // The number of upper sample bits that will be predicted per channel. This may be less-than
