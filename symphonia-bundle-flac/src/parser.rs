@@ -527,13 +527,6 @@ fn strict_frame_header_check(
     header: &FrameHeader,
     last_header: Option<&FrameHeader>,
 ) -> bool {
-    // Sample rate is fixed for the stream.
-    if let Some(sample_rate) = header.sample_rate {
-        if sample_rate != stream_info.sample_rate {
-            return false;
-        }
-    }
-
     // Bits per sample is fixed for the stream.
     if let Some(bps) = header.bits_per_sample {
         if bps != stream_info.bits_per_sample {
