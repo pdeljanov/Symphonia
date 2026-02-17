@@ -19,7 +19,8 @@ pub fn probe_stream_start(
     reader: &mut MediaSourceStream<'_>,
     pages: &mut PageReader,
     streams: &mut BTreeMap<u32, LogicalStream>,
-) {
+    byte_range_start: u64,
+) -> Result<()> {
     // Save the original position to jump back to.
     let original_pos = reader.pos();
 
@@ -27,6 +28,7 @@ pub fn probe_stream_start(
     let mut scoped_reader = ScopedStream::new(reader, OGG_PAGE_MAX_SIZE as u64);
 
     let mut probed = BTreeSet::<u32>::new();
+    let mut page_changed = false;
 
     // Examine the first bitstream page of each logical stream within the physical stream to
     // determine the number of leading samples, and start time. This function is called assuming
@@ -57,12 +59,25 @@ pub fn probe_stream_start(
 
         // Read the next page.
         match pages.try_next_page(&mut scoped_reader) {
-            Ok(_) => (),
+            Ok(_) => {
+                page_changed = true;
+            }
             _ => break,
         };
     }
 
-    scoped_reader.into_inner().seek_buffered(original_pos);
+    let reader = scoped_reader.into_inner();
+    // The page is only changed in the less common case of having >1 logical streams
+    if page_changed {
+        // Restore the original page
+        reader.seek_buffered(byte_range_start);
+        pages.next_page(reader)
+    }
+    else {
+        // Restore the original position
+        reader.seek_buffered(original_pos);
+        Ok(())
+    }
 }
 
 pub fn probe_stream_end(
@@ -72,9 +87,6 @@ pub fn probe_stream_end(
     byte_range_start: u64,
     byte_range_end: u64,
 ) -> Result<Option<u64>> {
-    // Save the original position.
-    let original_pos = reader.pos();
-
     // Number of bytes to linearly scan. We assume the OGG maximum page size for each logical
     // stream.
     let linear_scan_len = (streams.len() * OGG_PAGE_MAX_SIZE) as u64;
@@ -135,8 +147,9 @@ pub fn probe_stream_end(
         result
     };
 
-    // Restore the original position
-    reader.seek(SeekFrom::Start(original_pos))?;
+    // Restore the original page
+    reader.seek(SeekFrom::Start(byte_range_start))?;
+    pages.next_page(reader)?;
 
     Ok(result)
 }
