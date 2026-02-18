@@ -9,7 +9,7 @@ use symphonia_core::support_format;
 
 use symphonia_core::checksum::Crc16AnsiLe;
 use symphonia_core::codecs::CodecParameters;
-use symphonia_core::errors::{seek_error, Result, SeekErrorKind};
+use symphonia_core::errors::{decode_error, seek_error, Result, SeekErrorKind};
 use symphonia_core::formats::prelude::*;
 use symphonia_core::io::*;
 use symphonia_core::meta::{Metadata, MetadataLog};
@@ -728,9 +728,17 @@ fn try_read_info_tag_inner(buf: &[u8], header: &FrameHeader) -> Result<Option<Xi
 
             if encoder[..4] == *b"LAME" || encoder[..4] == *b"Lavf" || encoder[..4] == *b"Lavc" {
                 let delay = 528 + 1 + (trim >> 12);
-                let padding = trim & ((1 << 12) - 1);
+                let padding = (trim & ((1 << 12) - 1)).saturating_sub(528 + 1);
 
-                (delay, padding.saturating_sub(528 + 1))
+                if let Some(num_frames) = num_frames {
+                    if u64::from(num_frames) * header.duration()
+                        < u64::from(delay) + u64::from(padding)
+                    {
+                        return decode_error("xing tag lame delay and padding exceed duration");
+                    }
+                }
+
+                (delay, padding)
             }
             else {
                 (0, 0)
