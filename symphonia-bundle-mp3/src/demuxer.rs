@@ -9,7 +9,7 @@ use symphonia_core::support_format;
 
 use symphonia_core::checksum::Crc16AnsiLe;
 use symphonia_core::codecs::CodecParameters;
-use symphonia_core::errors::{seek_error, Result, SeekErrorKind};
+use symphonia_core::errors::{seek_error, unsupported_error, Result, SeekErrorKind};
 use symphonia_core::formats::prelude::*;
 use symphonia_core::io::*;
 use symphonia_core::meta::{Metadata, MetadataLog};
@@ -486,6 +486,7 @@ fn read_mpeg_frame(reader: &mut MediaSourceStream) -> Result<(FrameHeader, Vec<u
 
 /// Reads a MPEG frame and checks if the next frame begins after the packet.
 fn read_mpeg_frame_strict(reader: &mut MediaSourceStream) -> Result<(FrameHeader, Vec<u8>)> {
+    let mut cnt = 0;
     loop {
         // Read the next MPEG frame.
         let (header, packet) = read_mpeg_frame(reader)?;
@@ -502,11 +503,16 @@ fn read_mpeg_frame_strict(reader: &mut MediaSourceStream) -> Result<(FrameHeader
             if !header::is_frame_header_word_synced(sync) || !is_frame_header_similar(&header, sync)
             {
                 warn!("skipping junk at {} bytes", pos - packet.len() as u64);
+                cnt += 1;
 
                 // Seek back to the second byte of the rejected packet to prevent syncing to the
                 // same spot again.
                 reader.seek_buffered_rev(packet.len() + MPEG_HEADER_LEN - 1);
-                continue;
+                if cnt < 20 {
+                    continue;
+                } else {
+                    return unsupported_error("Stream is not readable");
+                }
             }
         }
 
