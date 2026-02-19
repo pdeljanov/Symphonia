@@ -180,11 +180,20 @@ impl MkvReader {
                 target_block = Some(block);
             }
 
-            let pos = match target_block {
-                Some(block) => block.pos,
-                None => cluster.pos,
+            let (seek_ts, pos) = match target_block {
+                Some(block) => (block.timestamp, block.pos),
+                None => (cluster.timestamp, cluster.pos),
             };
-            self.iter.seek(pos)?;
+
+            match self.frames.front() {
+                Some(frame) => {
+                    // skip internal seeking if the target timestamp is in the current block/cluster
+                    if seek_ts > frame.timestamp || ts < frame.timestamp {
+                        self.iter.seek(pos)?;
+                    }
+                }
+                None => self.iter.seek(pos)?,
+            }
 
             // Restore cluster's metadata
             self.current_cluster =
