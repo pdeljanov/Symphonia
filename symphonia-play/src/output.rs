@@ -104,7 +104,10 @@ mod pulseaudio {
             }
 
             // Interleave samples from the audio buffer into the sample buffer.
-            self.sample_buf.copy_interleaved_ref(decoded);
+            if let Err(err) = self.sample_buf.copy_interleaved_ref(decoded) {
+                error!("audio output write error: {}", err);
+                return Err(AudioOutputError::StreamClosedError);
+            }
 
             // Write interleaved samples to PulseAudio.
             match self.pa.write(self.sample_buf.as_bytes()) {
@@ -327,7 +330,10 @@ mod cpal {
             }
             else {
                 // Resampling is not required. Interleave the sample for cpal using a sample buffer.
-                self.sample_buf.copy_interleaved_ref(decoded);
+                if let Err(err) = self.sample_buf.copy_interleaved_ref(decoded) {
+                    error!("audio output write error: {}", err);
+                    return Err(AudioOutputError::StreamClosedError);
+                }
 
                 self.sample_buf.samples()
             };

@@ -118,7 +118,7 @@ impl FlacDecoder {
 
         // Reserve a writeable chunk in the buffer equal to the number of samples in the block.
         self.buf.clear();
-        self.buf.render_reserved(Some(header.block_num_samples as usize));
+        self.buf.render_reserved(Some(header.block_num_samples as usize))?;
 
         let frame_channels = match header.channel_assignment {
             ChannelAssignment::Independant(c) => c as usize,

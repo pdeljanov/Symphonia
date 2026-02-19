@@ -18,7 +18,7 @@ use arrayvec::ArrayVec;
 use bitflags::bitflags;
 
 use crate::conv::{ConvertibleSample, FromSample, IntoSample};
-use crate::errors::Result;
+use crate::errors::{decode_error, Result};
 use crate::sample::{i24, u24, Sample};
 use crate::units::Duration;
 
@@ -372,12 +372,16 @@ impl<S: Sample> AudioBuffer<S> {
 
     /// Converts the contents of an AudioBuffer into an equivalent destination AudioBuffer of a
     /// different type. If the types are the same then this is a copy operation.
-    pub fn convert<T: Sample>(&self, dest: &mut AudioBuffer<T>)
+    pub fn convert<T: Sample>(&self, dest: &mut AudioBuffer<T>) -> Result<()>
     where
         S: IntoSample<T>,
     {
-        assert!(dest.n_capacity >= self.n_capacity);
-        assert!(dest.spec == self.spec);
+        if dest.n_capacity < self.n_capacity {
+             return decode_error("capacity will be exceeded");
+        }
+        if dest.spec != self.spec {
+             return decode_error("signal specifications do not match");
+        }
 
         for c in 0..self.spec.channels.count() {
             let begin = c * self.n_capacity;
@@ -389,6 +393,7 @@ impl<S: Sample> AudioBuffer<S> {
         }
 
         dest.n_frames = self.n_frames;
+        Ok(())
     }
 
     /// Makes an equivalent AudioBuffer of a different type.
@@ -446,7 +451,7 @@ impl AudioBufferRef<'_> {
         impl_audio_buffer_ref_func!(self, buf, buf.frames())
     }
 
-    pub fn convert<T>(&self, dest: &mut AudioBuffer<T>)
+    pub fn convert<T>(&self, dest: &mut AudioBuffer<T>) -> Result<()>
     where
         T: Sample
             + FromSample<u8>
@@ -519,7 +524,7 @@ pub trait Signal<S: Sample> {
     /// Renders a number of silent frames.
     ///
     /// If `n_frames` is `None`, the remaining number of frames will be used.
-    fn render_silence(&mut self, n_frames: Option<usize>);
+    fn render_silence(&mut self, n_frames: Option<usize>) -> Result<()>;
 
     /// Renders a reserved number of frames. This is a cheap operation and simply advances the frame
     /// counter. The underlying audio data is not modified and should be overwritten through other
@@ -527,7 +532,7 @@ pub trait Signal<S: Sample> {
     ///
     /// If `n_frames` is `None`, the remaining number of frames will be used. If `n_frames` is too
     /// large, this function will assert.
-    fn render_reserved(&mut self, n_frames: Option<usize>);
+    fn render_reserved(&mut self, n_frames: Option<usize>) -> Result<()>;
 
     /// Renders a number of frames using the provided render function. The number of frames to
     /// render is specified by `n_frames`. If `n_frames` is `None`, the remaining number of frames
@@ -624,11 +629,13 @@ impl<S: Sample> Signal<S> for AudioBuffer<S> {
         }
     }
 
-    fn render_silence(&mut self, n_frames: Option<usize>) {
+    fn render_silence(&mut self, n_frames: Option<usize>) -> Result<()> {
         let n_silent_frames = n_frames.unwrap_or(self.n_capacity - self.n_frames);
 
         // Do not render past the end of the audio buffer.
-        assert!(self.n_frames + n_silent_frames <= self.capacity(), "capacity will be exceeded");
+        if self.n_frames + n_silent_frames > self.capacity() {
+             return decode_error("capacity will be exceeded");
+        }
 
         for channel in self.buf.chunks_exact_mut(self.n_capacity) {
             for sample in &mut channel[self.n_frames..self.n_frames + n_silent_frames] {
@@ -637,13 +644,17 @@ impl<S: Sample> Signal<S> for AudioBuffer<S> {
         }
 
         self.n_frames += n_silent_frames;
+        Ok(())
     }
 
-    fn render_reserved(&mut self, n_frames: Option<usize>) {
+    fn render_reserved(&mut self, n_frames: Option<usize>) -> Result<()> {
         let n_reserved_frames = n_frames.unwrap_or(self.n_capacity - self.n_frames);
         // Do not render past the end of the audio buffer.
-        assert!(self.n_frames + n_reserved_frames <= self.n_capacity, "capacity will be exceeded");
+        if self.n_frames + n_reserved_frames > self.n_capacity {
+             return decode_error("capacity will be exceeded");
+        }
         self.n_frames += n_reserved_frames;
+        Ok(())
     }
 
     fn render<'a, F>(&'a mut self, n_frames: Option<usize>, mut render: F) -> Result<()>
@@ -656,7 +667,9 @@ impl<S: Sample> Signal<S> for AudioBuffer<S> {
 
         // Do not render past the end of the audio buffer.
         let end = self.n_frames + n_render_frames;
-        assert!(end <= self.n_capacity, "capacity will be exceeded");
+        if end > self.n_capacity {
+             return decode_error("capacity will be exceeded");
+        }
 
         // At this point, n_render_frames can be considered "reserved". Create an audio plane
         // structure and fill each plane entry with a reference to the "reserved" samples in each
@@ -772,7 +785,7 @@ impl<S: Sample> SampleBuffer<S> {
 
     /// Copies all audio data from the source `AudioBufferRef` in planar channel order into the
     /// `SampleBuffer`. The two buffers must be equivalent.
-    pub fn copy_planar_ref(&mut self, src: AudioBufferRef)
+    pub fn copy_planar_ref(&mut self, src: AudioBufferRef) -> Result<()>
     where
         S: ConvertibleSample,
     {
@@ -792,7 +805,7 @@ impl<S: Sample> SampleBuffer<S> {
 
     /// Copies all audio data from a source `AudioBuffer` into the `SampleBuffer` in planar
     /// channel order. The two buffers must be equivalent.
-    pub fn copy_planar_typed<F>(&mut self, src: &AudioBuffer<F>)
+    pub fn copy_planar_typed<F>(&mut self, src: &AudioBuffer<F>) -> Result<()>
     where
         F: Sample + IntoSample<S>,
     {
@@ -802,7 +815,9 @@ impl<S: Sample> SampleBuffer<S> {
 
         // Ensure that the capacity of the sample buffer is greater than or equal to the number
         // of samples that will be copied from the source buffer.
-        assert!(self.capacity() >= n_samples);
+        if self.capacity() < n_samples {
+             return decode_error("capacity will be exceeded");
+        }
 
         for ch in 0..n_channels {
             let ch_slice = src.chan(ch);
@@ -814,11 +829,12 @@ impl<S: Sample> SampleBuffer<S> {
 
         // Commit the written samples.
         self.n_written = n_samples;
+        Ok(())
     }
 
     /// Copies all audio data from the source `AudioBufferRef` in interleaved channel order into the
     /// `SampleBuffer`. The two buffers must be equivalent.
-    pub fn copy_interleaved_ref(&mut self, src: AudioBufferRef)
+    pub fn copy_interleaved_ref(&mut self, src: AudioBufferRef) -> Result<()>
     where
         S: ConvertibleSample,
     {
@@ -838,7 +854,7 @@ impl<S: Sample> SampleBuffer<S> {
 
     /// Copies all audio samples from a source `AudioBuffer` into the `SampleBuffer` in interleaved
     /// channel order. The two buffers must be equivalent.
-    pub fn copy_interleaved_typed<F>(&mut self, src: &AudioBuffer<F>)
+    pub fn copy_interleaved_typed<F>(&mut self, src: &AudioBuffer<F>) -> Result<()>
     where
         F: Sample + IntoSample<S>,
     {
@@ -847,7 +863,9 @@ impl<S: Sample> SampleBuffer<S> {
 
         // Ensure that the capacity of the sample buffer is greater than or equal to the number
         // of samples that will be copied from the source buffer.
-        assert!(self.capacity() >= n_samples);
+        if self.capacity() < n_samples {
+             return decode_error("capacity will be exceeded");
+        }
 
         // Interleave the source buffer channels into the sample buffer.
         for ch in 0..n_channels {
@@ -860,6 +878,7 @@ impl<S: Sample> SampleBuffer<S> {
 
         // Commit the written samples.
         self.n_written = n_samples;
+        Ok(())
     }
 }
 
@@ -1055,7 +1074,7 @@ impl<S: Sample + RawSample> RawSampleBuffer<S> {
 
     /// Copies all audio data from the source `AudioBufferRef` in planar channel order into the
     /// `RawSampleBuffer`. The two buffers must be equivalent.
-    pub fn copy_planar_ref(&mut self, src: AudioBufferRef)
+    pub fn copy_planar_ref(&mut self, src: AudioBufferRef) -> Result<()>
     where
         S: ConvertibleSample,
     {
@@ -1076,7 +1095,7 @@ impl<S: Sample + RawSample> RawSampleBuffer<S> {
     /// Copies all audio data from a source `AudioBuffer` that is of a different sample format type
     /// than that of the `RawSampleBuffer` in planar channel order. The two buffers must be
     /// equivalent.
-    pub fn copy_planar_typed<F>(&mut self, src: &AudioBuffer<F>)
+    pub fn copy_planar_typed<F>(&mut self, src: &AudioBuffer<F>) -> Result<()>
     where
         F: Sample + IntoSample<S>,
     {
@@ -1085,7 +1104,9 @@ impl<S: Sample + RawSample> RawSampleBuffer<S> {
 
         // Ensure that the capacity of the sample buffer is greater than or equal to the number
         // of samples that will be copied from the source buffer.
-        assert!(self.capacity() >= n_samples);
+        if self.capacity() < n_samples {
+             return decode_error("capacity will be exceeded");
+        }
 
         let dst_buf = &mut self.buf[..n_samples];
 
@@ -1098,17 +1119,20 @@ impl<S: Sample + RawSample> RawSampleBuffer<S> {
         }
 
         self.n_written = n_samples;
+        Ok(())
     }
 
     /// Copies all audio data from the source `AudioBuffer` to the `RawSampleBuffer` in planar order.
     /// The two buffers must be equivalent.
-    pub fn copy_planar(&mut self, src: &AudioBuffer<S>) {
+    pub fn copy_planar(&mut self, src: &AudioBuffer<S>) -> Result<()> {
         let n_channels = src.spec.channels.count();
         let n_samples = src.n_frames * n_channels;
 
         // Ensure that the capacity of the sample buffer is greater than or equal to the number
         // of samples that will be copied from the source buffer.
-        assert!(self.capacity() >= n_samples);
+        if self.capacity() < n_samples {
+             return decode_error("capacity will be exceeded");
+        }
 
         let dst_buf = &mut self.buf[..n_samples];
 
@@ -1121,11 +1145,12 @@ impl<S: Sample + RawSample> RawSampleBuffer<S> {
         }
 
         self.n_written = n_samples;
+        Ok(())
     }
 
     /// Copies all audio data from the source `AudioBufferRef` in interleaved channel order into the
     /// `RawSampleBuffer`. The two buffers must be equivalent.
-    pub fn copy_interleaved_ref(&mut self, src: AudioBufferRef)
+    pub fn copy_interleaved_ref(&mut self, src: AudioBufferRef) -> Result<()>
     where
         S: ConvertibleSample,
     {
@@ -1146,7 +1171,7 @@ impl<S: Sample + RawSample> RawSampleBuffer<S> {
     /// Copies all audio data from a source `AudioBuffer` that is of a different sample format type
     /// than that of the `RawSampleBuffer` in interleaved channel order. The two buffers must be
     /// equivalent.
-    pub fn copy_interleaved_typed<F>(&mut self, src: &AudioBuffer<F>)
+    pub fn copy_interleaved_typed<F>(&mut self, src: &AudioBuffer<F>) -> Result<()>
     where
         F: Sample + IntoSample<S>,
     {
@@ -1156,7 +1181,9 @@ impl<S: Sample + RawSample> RawSampleBuffer<S> {
 
         // Ensure that the capacity of the sample buffer is greater than or equal to the number
         // of samples that will be copied from the source buffer.
-        assert!(self.capacity() >= n_samples);
+        if self.capacity() < n_samples {
+             return decode_error("capacity will be exceeded");
+        }
 
         // The destination buffer slice.
         let dst_buf = &mut self.buf[..n_samples];
@@ -1195,18 +1222,21 @@ impl<S: Sample + RawSample> RawSampleBuffer<S> {
         }
 
         self.n_written = n_samples;
+        Ok(())
     }
 
     /// Copies all audio data from the source `AudioBuffer` to the `RawSampleBuffer` in interleaved
     /// channel order. The two buffers must be equivalent.
-    pub fn copy_interleaved(&mut self, src: &AudioBuffer<S>) {
+    pub fn copy_interleaved(&mut self, src: &AudioBuffer<S>) -> Result<()> {
         let n_frames = src.n_frames;
         let n_channels = src.spec.channels.count();
         let n_samples = n_frames * n_channels;
 
         // Ensure that the capacity of the sample buffer is greater than or equal to the number
         // of samples that will be copied from the source buffer.
-        assert!(self.capacity() >= n_samples);
+        if self.capacity() < n_samples {
+             return decode_error("capacity will be exceeded");
+        }
 
         // The destination buffer slice.
         let dst_buf = &mut self.buf[..n_samples];
@@ -1245,5 +1275,98 @@ impl<S: Sample + RawSample> RawSampleBuffer<S> {
         }
 
         self.n_written = n_samples;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_audio_buffer_convert_capacity_error() {
+        let spec = SignalSpec::new(44100, Channels::FRONT_LEFT | Channels::FRONT_RIGHT);
+        let mut src_buf = AudioBuffer::<f32>::new(100, spec);
+        src_buf.render_silence(None).unwrap();
+
+        let mut dest_buf = AudioBuffer::<i16>::new(50, spec);
+
+        let result = src_buf.convert(&mut dest_buf);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_sample_buffer_copy_planar_capacity_error() {
+        let spec = SignalSpec::new(44100, Channels::FRONT_LEFT | Channels::FRONT_RIGHT);
+        let mut src_buf = AudioBuffer::<f32>::new(100, spec);
+        src_buf.render_silence(None).unwrap();
+
+        // Src has 100 frames * 2 channels = 200 samples.
+        // Dest needs capacity >= 200.
+        let mut dest_buf = SampleBuffer::<i16>::new(50, spec); 
+        // Dest has 50 frames * 2 channels = 100 samples capacity.
+
+        let result = dest_buf.copy_planar_typed(&src_buf);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_sample_buffer_copy_interleaved_capacity_error() {
+        let spec = SignalSpec::new(44100, Channels::FRONT_LEFT | Channels::FRONT_RIGHT);
+        let mut src_buf = AudioBuffer::<f32>::new(100, spec);
+        src_buf.render_silence(None).unwrap();
+
+        let mut dest_buf = SampleBuffer::<i16>::new(50, spec);
+
+        let result = dest_buf.copy_interleaved_typed(&src_buf);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_raw_sample_buffer_copy_planar_capacity_error() {
+        let spec = SignalSpec::new(44100, Channels::FRONT_LEFT | Channels::FRONT_RIGHT);
+        let mut src_buf = AudioBuffer::<f32>::new(100, spec);
+        src_buf.render_silence(None).unwrap();
+
+        let mut dest_buf = RawSampleBuffer::<i16>::new(50, spec);
+
+        let result = dest_buf.copy_planar_typed(&src_buf);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_raw_sample_buffer_copy_interleaved_capacity_error() {
+        let spec = SignalSpec::new(44100, Channels::FRONT_LEFT | Channels::FRONT_RIGHT);
+        let mut src_buf = AudioBuffer::<f32>::new(100, spec);
+        src_buf.render_silence(None).unwrap();
+
+        let mut dest_buf = RawSampleBuffer::<i16>::new(50, spec);
+
+        let result = dest_buf.copy_interleaved_typed(&src_buf);
+        assert!(result.is_err());
+    }
+    
+    #[test]
+    fn test_raw_sample_buffer_copy_planar_same_type_capacity_error() {
+        let spec = SignalSpec::new(44100, Channels::FRONT_LEFT | Channels::FRONT_RIGHT);
+        let mut src_buf = AudioBuffer::<i16>::new(100, spec);
+        src_buf.render_silence(None).unwrap();
+
+        let mut dest_buf = RawSampleBuffer::<i16>::new(50, spec);
+
+        let result = dest_buf.copy_planar(&src_buf);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_raw_sample_buffer_copy_interleaved_same_type_capacity_error() {
+        let spec = SignalSpec::new(44100, Channels::FRONT_LEFT | Channels::FRONT_RIGHT);
+        let mut src_buf = AudioBuffer::<i16>::new(100, spec);
+        src_buf.render_silence(None).unwrap();
+
+        let mut dest_buf = RawSampleBuffer::<i16>::new(50, spec);
+
+        let result = dest_buf.copy_interleaved(&src_buf);
+        assert!(result.is_err());
     }
 }

@@ -188,7 +188,10 @@ fn get_next_audio_buf_best_effort(inst: &mut DecoderInstance) -> Result<()> {
     }
 }
 
-fn copy_audio_buf_to_sample_buf(src: AudioBufferRef<'_>, dst: &mut Option<SampleBuffer<f32>>) {
+fn copy_audio_buf_to_sample_buf(
+    src: AudioBufferRef<'_>,
+    dst: &mut Option<SampleBuffer<f32>>,
+) -> Result<()> {
     if dst.is_none() {
         let spec = *src.spec();
         let duration = src.capacity() as u64;
@@ -232,7 +235,7 @@ fn run_check(
         }
 
         // Copy to the target's audio buffer into the target sample buffer.
-        copy_audio_buf_to_sample_buf(tgt_inst.decoder.last_decoded(), &mut tgt_sample_buf);
+        copy_audio_buf_to_sample_buf(tgt_inst.decoder.last_decoded(), &mut tgt_sample_buf)?;
 
         // Get a slice of the target sample buffer.
         let mut tgt_samples = tgt_sample_buf.as_mut().unwrap().samples();
@@ -250,7 +253,7 @@ fn run_check(
                 get_next_audio_buf_best_effort(ref_inst)?;
 
                 // Copy to reference audio buffer to reference sample buffer.
-                copy_audio_buf_to_sample_buf(ref_inst.decoder.last_decoded(), &mut ref_sample_buf);
+                copy_audio_buf_to_sample_buf(ref_inst.decoder.last_decoded(), &mut ref_sample_buf)?;
 
                 // Save number of reference samples in the sample buffer and reset the sample buffer
                 // position counter.

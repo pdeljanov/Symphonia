@@ -422,7 +422,7 @@ impl AacDecoder {
     fn decode_inner(&mut self, packet: &Packet) -> Result<()> {
         // Clear the audio output buffer.
         self.buf.clear();
-        self.buf.render_reserved(None);
+        self.buf.render_reserved(None)?;
 
         let mut bs = BitReaderLtr::new(packet.buf());
 
