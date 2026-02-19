@@ -15,6 +15,7 @@ pub struct Resampler<T> {
     output: Vec<Vec<f32>>,
     interleaved: Vec<T>,
     duration: usize,
+    output_channels: usize,
 }
 
 impl<T> Resampler<T>
@@ -45,13 +46,14 @@ where
         }
 
         // Interleave the planar samples from Rubato.
-        let num_channels = self.output.len();
+        // In some cases amount of channels in audio stream isn't equal to the amount of channels in the output device, so fill excess output channels with default values.
+        let num_channels = self.output_channels;
 
         self.interleaved.resize(num_channels * self.output[0].len(), T::MID);
 
         for (i, frame) in self.interleaved.chunks_exact_mut(num_channels).enumerate() {
             for (ch, s) in frame.iter_mut().enumerate() {
-                *s = self.output[ch][i].into_sample();
+                *s = self.output.get(ch).map(|x| x[i].into_sample()).unwrap_or(T::MID);
             }
         }
 
@@ -63,7 +65,13 @@ impl<T> Resampler<T>
 where
     T: Sample + FromSample<f32> + IntoSample<f32>,
 {
-    pub fn new(spec: SignalSpec, to_sample_rate: usize, duration: u64) -> Self {
+    pub fn new(
+        spec: SignalSpec,
+        to_sample_rate: usize,
+        duration: u64,
+        output_channels: usize,
+    ) -> Self {
+        assert!(output_channels > 0);
         let duration = duration as usize;
         let num_channels = spec.channels.count();
 
@@ -80,7 +88,14 @@ where
 
         let input = vec![Vec::with_capacity(duration); num_channels];
 
-        Self { resampler, input, output, duration, interleaved: Default::default() }
+        Self {
+            resampler,
+            input,
+            output,
+            duration,
+            interleaved: Default::default(),
+            output_channels,
+        }
     }
 
     /// Resamples a planar/non-interleaved input.
