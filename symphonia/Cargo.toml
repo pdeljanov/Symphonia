@@ -79,6 +79,9 @@ opt-simd = [
     "opt-simd-neon",
 ]
 
+# Enable Serde support.
+serde = ["symphonia-core/serde"]
+
 [dependencies]
 lazy_static = "1.4.0"
 

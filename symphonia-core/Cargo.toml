@@ -27,12 +27,21 @@ opt-simd = [
     "opt-simd-neon",
 ]
 
+# Enable Serde support.
+serde = ["dep:serde"]
+
 [dependencies]
 arrayvec = "0.7.1"
 bitflags = "1.2.1"
 bytemuck = "1.7"
 lazy_static = "1.4.0"
 log = "0.4"
+
+[dependencies.serde]
+version = "1.0.195"
+features = ["derive", "alloc"]
+optional = true
+default-features = false
 
 [dependencies.rustfft]
 version = "6.1.0"
