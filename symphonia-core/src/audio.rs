@@ -712,7 +712,7 @@ impl<S: Sample> Signal<S> for AudioBuffer<S> {
 }
 
 /// A `SampleBuffer`, is a sample oriented buffer. It is agnostic to the ordering/layout of samples
-/// within the buffer. `SampleBuffer` is mean't for safely importing and exporting sample data to
+/// within the buffer. `SampleBuffer` is meant for safely importing and exporting sample data to
 /// and from Symphonia using the sample's in-memory data-type.
 pub struct SampleBuffer<S: Sample> {
     buf: Box<[S]>,
@@ -993,7 +993,7 @@ impl RawSample for f64 {
 
 /// A `RawSampleBuffer`, is a byte-oriented sample buffer. All samples copied to this buffer are
 /// converted into their packed data-type and stored as a stream of bytes. `RawSampleBuffer` is
-/// mean't for safely importing and exporting sample data to and from Symphonia as raw bytes.
+/// meant for safely importing and exporting sample data to and from Symphonia as raw bytes.
 pub struct RawSampleBuffer<S: Sample + RawSample> {
     buf: Box<[S::RawType]>,
     n_written: usize,
