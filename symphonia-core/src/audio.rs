@@ -377,10 +377,10 @@ impl<S: Sample> AudioBuffer<S> {
         S: IntoSample<T>,
     {
         if dest.n_capacity < self.n_capacity {
-             return decode_error("capacity will be exceeded");
+            return decode_error("capacity will be exceeded");
         }
         if dest.spec != self.spec {
-             return decode_error("signal specifications do not match");
+            return decode_error("signal specifications do not match");
         }
 
         for c in 0..self.spec.channels.count() {
@@ -634,7 +634,7 @@ impl<S: Sample> Signal<S> for AudioBuffer<S> {
 
         // Do not render past the end of the audio buffer.
         if self.n_frames + n_silent_frames > self.capacity() {
-             return decode_error("capacity will be exceeded");
+            return decode_error("capacity will be exceeded");
         }
 
         for channel in self.buf.chunks_exact_mut(self.n_capacity) {
@@ -651,7 +651,7 @@ impl<S: Sample> Signal<S> for AudioBuffer<S> {
         let n_reserved_frames = n_frames.unwrap_or(self.n_capacity - self.n_frames);
         // Do not render past the end of the audio buffer.
         if self.n_frames + n_reserved_frames > self.n_capacity {
-             return decode_error("capacity will be exceeded");
+            return decode_error("capacity will be exceeded");
         }
         self.n_frames += n_reserved_frames;
         Ok(())
@@ -668,7 +668,7 @@ impl<S: Sample> Signal<S> for AudioBuffer<S> {
         // Do not render past the end of the audio buffer.
         let end = self.n_frames + n_render_frames;
         if end > self.n_capacity {
-             return decode_error("capacity will be exceeded");
+            return decode_error("capacity will be exceeded");
         }
 
         // At this point, n_render_frames can be considered "reserved". Create an audio plane
@@ -816,7 +816,7 @@ impl<S: Sample> SampleBuffer<S> {
         // Ensure that the capacity of the sample buffer is greater than or equal to the number
         // of samples that will be copied from the source buffer.
         if self.capacity() < n_samples {
-             return decode_error("capacity will be exceeded");
+            return decode_error("capacity will be exceeded");
         }
 
         for ch in 0..n_channels {
@@ -864,7 +864,7 @@ impl<S: Sample> SampleBuffer<S> {
         // Ensure that the capacity of the sample buffer is greater than or equal to the number
         // of samples that will be copied from the source buffer.
         if self.capacity() < n_samples {
-             return decode_error("capacity will be exceeded");
+            return decode_error("capacity will be exceeded");
         }
 
         // Interleave the source buffer channels into the sample buffer.
@@ -1105,7 +1105,7 @@ impl<S: Sample + RawSample> RawSampleBuffer<S> {
         // Ensure that the capacity of the sample buffer is greater than or equal to the number
         // of samples that will be copied from the source buffer.
         if self.capacity() < n_samples {
-             return decode_error("capacity will be exceeded");
+            return decode_error("capacity will be exceeded");
         }
 
         let dst_buf = &mut self.buf[..n_samples];
@@ -1131,7 +1131,7 @@ impl<S: Sample + RawSample> RawSampleBuffer<S> {
         // Ensure that the capacity of the sample buffer is greater than or equal to the number
         // of samples that will be copied from the source buffer.
         if self.capacity() < n_samples {
-             return decode_error("capacity will be exceeded");
+            return decode_error("capacity will be exceeded");
         }
 
         let dst_buf = &mut self.buf[..n_samples];
@@ -1182,7 +1182,7 @@ impl<S: Sample + RawSample> RawSampleBuffer<S> {
         // Ensure that the capacity of the sample buffer is greater than or equal to the number
         // of samples that will be copied from the source buffer.
         if self.capacity() < n_samples {
-             return decode_error("capacity will be exceeded");
+            return decode_error("capacity will be exceeded");
         }
 
         // The destination buffer slice.
@@ -1235,7 +1235,7 @@ impl<S: Sample + RawSample> RawSampleBuffer<S> {
         // Ensure that the capacity of the sample buffer is greater than or equal to the number
         // of samples that will be copied from the source buffer.
         if self.capacity() < n_samples {
-             return decode_error("capacity will be exceeded");
+            return decode_error("capacity will be exceeded");
         }
 
         // The destination buffer slice.
@@ -1303,7 +1303,7 @@ mod tests {
 
         // Src has 100 frames * 2 channels = 200 samples.
         // Dest needs capacity >= 200.
-        let mut dest_buf = SampleBuffer::<i16>::new(50, spec); 
+        let mut dest_buf = SampleBuffer::<i16>::new(50, spec);
         // Dest has 50 frames * 2 channels = 100 samples capacity.
 
         let result = dest_buf.copy_planar_typed(&src_buf);
@@ -1345,7 +1345,7 @@ mod tests {
         let result = dest_buf.copy_interleaved_typed(&src_buf);
         assert!(result.is_err());
     }
-    
+
     #[test]
     fn test_raw_sample_buffer_copy_planar_same_type_capacity_error() {
         let spec = SignalSpec::new(44100, Channels::FRONT_LEFT | Channels::FRONT_RIGHT);
