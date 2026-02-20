@@ -435,7 +435,7 @@ impl Layer for Layer3 {
 
             // Each granule will yield 576 samples. After reserving frames, all steps must be
             // infalliable.
-            out.render_reserved(Some(576));
+            out.render_reserved(Some(576))?;
 
             // The next steps are independant of channel count.
             for ch in 0..header.n_channels() {

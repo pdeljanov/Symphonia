@@ -241,7 +241,7 @@ impl VorbisDecoder {
             };
 
             let render_len = (prev_block_n + n) / 4;
-            self.buf.render_reserved(Some(render_len));
+            self.buf.render_reserved(Some(render_len))?;
         }
 
         // Render all the audio channels.
@@ -404,7 +404,7 @@ fn read_ident_header<B: ReadBytes>(reader: &mut B) -> Result<IdentHeader> {
     }
 
     // Next, the number of channels and sample rate must be non-zero.
-    let n_channels = reader.read_u8()?;
+    let n_channels = reader.read_u32()? as u8;
 
     if n_channels == 0 {
         return decode_error("vorbis: number of channels cannot be 0");

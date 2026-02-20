@@ -71,7 +71,7 @@ impl AdpcmDecoder {
         let block_count = packet.block_dur() as usize / frames_per_block;
 
         self.buf.clear();
-        self.buf.render_reserved(Some(block_count * frames_per_block));
+        self.buf.render_reserved(Some(block_count * frames_per_block))?;
 
         let channel_count = self.buf.spec().channels.count();
         match channel_count {

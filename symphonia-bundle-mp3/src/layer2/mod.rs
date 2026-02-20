@@ -376,7 +376,7 @@ impl Layer for Layer2 {
 
         // Each packet will yield 1152 audio frames. After reserving frames, all steps must be
         // infalliable.
-        out.render_reserved(Some(1152));
+        out.render_reserved(Some(1152))?;
 
         for (ch, samples) in samples.iter().enumerate().take(num_channels) {
             // Perform polyphase synthesis and generate PCM samples.

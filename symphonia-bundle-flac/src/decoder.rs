@@ -118,7 +118,7 @@ impl FlacDecoder {
 
         // Reserve a writeable chunk in the buffer equal to the number of samples in the block.
         self.buf.clear();
-        self.buf.render_reserved(Some(header.block_num_samples as usize));
+        self.buf.render_reserved(Some(header.block_num_samples as usize))?;
 
         let frame_channels = match header.channel_assignment {
             ChannelAssignment::Independant(c) => c as usize,
@@ -342,7 +342,9 @@ fn read_subframe<B: ReadBitsLtr>(bs: &mut B, frame_bps: u32, buf: &mut [i32]) ->
     // dropped bits per sample.
     let dropped_bps = if bs.read_bool()? { bs.read_unary_zeros()? + 1 } else { 0 };
     if dropped_bps > frame_bps {
-        return decode_error("flac: dropped bits per sample is greater than the frame bits per sample");
+        return decode_error(
+            "flac: dropped bits per sample is greater than the frame bits per sample",
+        );
     }
 
     // The bits per sample stated in the frame header is for the decoded audio sub-block samples.

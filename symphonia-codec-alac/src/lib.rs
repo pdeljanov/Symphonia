@@ -489,7 +489,7 @@ impl AlacDecoder {
 
         // Fill the audio buffer with silence.
         self.buf.clear();
-        self.buf.render_silence(None);
+        self.buf.render_silence(None)?;
 
         loop {
             let tag = bs.read_bits_leq32(3)?;

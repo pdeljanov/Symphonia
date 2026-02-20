@@ -130,7 +130,6 @@ impl DspChannel {
                 // Unity samples (no overlap).
                 buf[self.bs0 / 2..].copy_from_slice(&self.imdct[end..self.bs1 / 2]);
             }
-
         }
 
         // Save right-half of IMDCT buffer for later.
