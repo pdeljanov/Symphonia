@@ -13,6 +13,13 @@ TARGETS=(
     "decode_pcm"
     "decode_adpcm"
     "decode_alac"
+    "demux_mkv"
+    "demux_isomp4"
+    "demux_ogg"
+    "demux_flac"
+    "demux_wav"
+    "demux_aiff"
+    "demux_caf"
 )
 
 echo "Running each fuzzer for $DURATION seconds..."

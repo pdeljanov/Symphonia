@@ -1,3 +1,5 @@
+pub mod demuxer;
+
 use symphonia::core::codecs::audio::AudioCodecParameters;
 use symphonia::core::codecs::registry::RegisterableAudioDecoder;
 use symphonia::core::packet::Packet;

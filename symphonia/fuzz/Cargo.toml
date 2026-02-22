@@ -71,3 +71,45 @@ name = "decode_alac"
 path = "fuzz_targets/decode_alac.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "demux_mkv"
+path = "fuzz_targets/demux_mkv.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "demux_isomp4"
+path = "fuzz_targets/demux_isomp4.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "demux_ogg"
+path = "fuzz_targets/demux_ogg.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "demux_flac"
+path = "fuzz_targets/demux_flac.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "demux_wav"
+path = "fuzz_targets/demux_wav.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "demux_aiff"
+path = "fuzz_targets/demux_aiff.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "demux_caf"
+path = "fuzz_targets/demux_caf.rs"
+test = false
+doc = false
