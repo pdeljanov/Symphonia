@@ -6,10 +6,13 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use core::str;
-use std::fmt;
-use std::num::NonZero;
-use std::sync::Arc;
+use core::fmt;
+use core::num::NonZero;
+use alloc::boxed::Box;
+use alloc::string::String;
+use alloc::sync::Arc;
 
+use alloc::vec::Vec;
 use symphonia_core::audio::{Channels, layouts};
 use symphonia_core::codecs::audio::well_known::{
     CODEC_ID_PCM_ALAW, CODEC_ID_PCM_F32BE, CODEC_ID_PCM_F64BE, CODEC_ID_PCM_MULAW, CODEC_ID_PCM_S8,

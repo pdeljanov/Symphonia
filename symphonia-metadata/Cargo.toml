@@ -14,14 +14,13 @@ rust-version.workspace = true
 version.workspace = true
 
 [features]
-default = ["std", "ape", "id3v1", "id3v2"]
+default = ["ape", "id3v1", "id3v2"]
 
-std = ["symphonia-core/std"]
 ape = []
 flac = ["vorbis"]
 id3v1 = []
 id3v2 = []
-riff-info = []
+riff-info = ["id3v2"]
 vorbis = ["flac"]
 
 # Enable all RIFF metadata formats.

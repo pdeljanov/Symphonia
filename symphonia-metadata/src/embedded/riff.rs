@@ -7,6 +7,7 @@
 
 //! RIFF-based metadata formats reading.
 
+use alloc::{string::String, vec::Vec};
 use core::str;
 
 use hashbrown::HashMap;
