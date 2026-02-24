@@ -356,7 +356,7 @@ impl Layer3 {
                 // IO error to a decode error.
                 frame_data.granules[gr].channels[ch].rzero = match huffman_result {
                     Ok(rzero) => rzero,
-                    Err(Error::IoError(e)) if e.kind() == std::io::ErrorKind::Other => {
+                    Err(Error::IoError(e)) if e.kind() == symphonia_core::io::ErrorKind::Other => {
                         return decode_error("mpa: huffman decode overrun");
                     }
                     Err(err) => return Err(err),

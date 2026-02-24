@@ -15,7 +15,7 @@ use super::{MediaSource, ReadBytes};
 
 #[inline(always)]
 fn unexpected_eof_error<T>() -> super::Result<T> {
-    Err(super::Error::other("unexpected eof"))
+    Err(super::Error::eof("unexpected eof"))
 }
 
 /// `MediaSourceStreamOptions` specifies the buffering behaviour of a `MediaSourceStream`.
@@ -112,8 +112,6 @@ impl<'s> MediaSourceStream<'s> {
                 self.inner.read(&mut vec0[..self.read_block_len])?
             }
             else {
-                // TODO: figure out how to add back in
-
                 // Otherwise, perform a vectored read into the two contiguous region slices.
                 let rem = self.read_block_len - vec0.len();
 

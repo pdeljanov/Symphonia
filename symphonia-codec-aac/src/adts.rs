@@ -268,8 +268,7 @@ impl FormatReader for AdtsReader<'_> {
         // Parse the header to get the calculated frame size.
         let header = match AdtsHeader::read(&mut self.reader) {
             Ok(header) => header,
-            // TODO: consider something other than `Other`
-            Err(Error::IoError(err)) if err.kind() == symphonia_core::io::ErrorKind::Other => {
+            Err(Error::IoError(err)) if err.is_eof() => {
                 // ADTS streams have no well-defined end, so when no more frames can be read,
                 // consider the stream ended.
                 return Ok(None);
@@ -352,7 +351,7 @@ impl FormatReader for AdtsReader<'_> {
             let header = match AdtsHeader::read(&mut self.reader) {
                 Ok(header) => header,
                 // TODO: consider something other than `Other`
-                Err(Error::IoError(err)) if err.kind() == symphonia_core::io::ErrorKind::Other => {
+                Err(Error::IoError(err)) if err.is_eof() => {
                     // ADTS streams have no well-defined end, so if no more frames can be read then
                     // assume the seek position is out-of-range.
                     return seek_error(SeekErrorKind::OutOfRange);

@@ -9,12 +9,11 @@
 
 use std::char;
 use std::collections::HashMap;
-use std::io;
 use std::str;
 use std::sync::Arc;
 
 use symphonia_core::errors::{Result, decode_error, unsupported_error};
-use symphonia_core::io::{BufReader, FiniteStream, ReadBytes};
+use symphonia_core::io::{self, BufReader, FiniteStream, ReadBytes};
 use symphonia_core::meta::RawTag;
 use symphonia_core::meta::RawTagSubField;
 use symphonia_core::meta::{Chapter, RawValue, StandardTag, Tag, Visual};

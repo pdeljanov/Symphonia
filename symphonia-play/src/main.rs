@@ -22,7 +22,7 @@ use symphonia::core::codecs::audio::{AudioDecoderOptions, FinalizeResult};
 use symphonia::core::errors::{Error, Result};
 use symphonia::core::formats::probe::Hint;
 use symphonia::core::formats::{FormatOptions, FormatReader, SeekMode, SeekTo, TrackType};
-use symphonia::core::io::{MediaSource, MediaSourceStream, ReadOnlySource};
+use symphonia::core::io::{FromStd, MediaSource, MediaSourceStream, ReadOnlySource};
 use symphonia::core::meta::{MetadataOptions, Visual};
 use symphonia::core::units::{Duration, Time, Timestamp};
 
@@ -149,7 +149,7 @@ fn run(args: &ArgMatches) -> Result<i32> {
 
     // If the path string is '-' then read from standard input.
     let source = if path.as_os_str() == "-" {
-        Box::new(ReadOnlySource::new(std::io::stdin())) as Box<dyn MediaSource>
+        Box::new(ReadOnlySource::new(FromStd::new(std::io::stdin()))) as Box<dyn MediaSource<Error = symphonia::core::io::Error>>
     }
     else {
         // Othwerise, get a Path from the path string.
@@ -161,7 +161,7 @@ fn run(args: &ArgMatches) -> Result<i32> {
             }
         }
 
-        Box::new(File::open(path)?)
+        Box::new(FromStd::new(File::open(path)?))
     };
 
     // Create the media source stream using the boxed media source from above.

@@ -11,7 +11,7 @@ use crate::io::ReadBytes;
 use crate::util::bits::*;
 
 fn end_of_bitstream_error<T>() -> super::Result<T> {
-    Err(super::Error::other("unexpected end of bitstream"))
+    Err(super::Error::eof("unexpected end of bitstream"))
 }
 
 pub mod vlc {

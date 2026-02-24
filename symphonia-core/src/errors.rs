@@ -98,6 +98,13 @@ impl From<io::Error> for Error {
     }
 }
 
+#[cfg(feature = "std")]
+impl From<std::io::Error> for Error {
+    fn from(err: std::io::Error) -> Self {
+        Error::IoError(err.into())
+    }
+}
+
 pub type Result<T> = result::Result<T, Error>;
 
 /// Convenience function to create a decode error.

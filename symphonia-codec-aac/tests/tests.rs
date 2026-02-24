@@ -4,10 +4,10 @@ use symphonia_core::codecs::audio::{
 };
 use symphonia_core::errors;
 use symphonia_core::formats::probe::ProbeableFormat;
-use symphonia_core::io::MediaSourceStream;
+use symphonia_core::io::{MediaSourceStream, Cursor};
 
 fn test_decode(data: Vec<u8>) -> symphonia_core::errors::Result<()> {
-    let data = std::io::Cursor::new(data);
+    let data = Cursor::new(data);
 
     let mss = MediaSourceStream::new(Box::new(data), Default::default());
 

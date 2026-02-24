@@ -21,8 +21,6 @@ use symphonia_core::meta::{Metadata, MetadataLog};
 use crate::common::{FrameHeader, MpegLayer};
 use crate::header::{self, MAX_MPEG_FRAME_SIZE, MPEG_HEADER_LEN};
 
-use std::io::{Seek, SeekFrom};
-
 use log::{debug, info, warn};
 
 const MP1_FORMAT_INFO: FormatInfo =
@@ -150,7 +148,7 @@ impl FormatReader for MpaReader<'_> {
             // Read the next MPEG frame.
             let (header, data) = match read_mpeg_frame(&mut self.reader) {
                 Ok(frame) => frame,
-                Err(Error::IoError(err)) if err.kind() == std::io::ErrorKind::UnexpectedEof => {
+                Err(Error::IoError(err)) if err.is_eof() => {
                     // MPEG streams have no well-defined end, so when no more frames can be read,
                     // consider the stream ended.
                     return Ok(None);
@@ -296,7 +294,7 @@ impl FormatReader for MpaReader<'_> {
             // Sync to the next frame.
             let sync = match header::sync_frame(&mut self.reader) {
                 Ok(sync) => sync,
-                Err(Error::IoError(err)) if err.kind() == std::io::ErrorKind::UnexpectedEof => {
+                Err(Error::IoError(err)) if err.is_eof() => {
                     // MPEG streams have no well-defined end, so if no more frames can be read then
                     // assume the seek position is out-of-range. This would normally only happen if
                     // the duration of the track is unknown, or it is was longer than the track

@@ -17,7 +17,6 @@ use symphonia_core::io::*;
 use symphonia_core::meta::{Metadata, MetadataLog};
 use symphonia_core::units::Time;
 
-use std::io::{Seek, SeekFrom};
 use std::sync::Arc;
 
 use crate::atoms::{AtomIterator, AtomType};

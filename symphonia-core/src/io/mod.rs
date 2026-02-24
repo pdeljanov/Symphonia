@@ -33,11 +33,13 @@ pub mod utils;
 
 pub use bit::*;
 pub use buf_reader::BufReader;
-pub use embedded_io::{BufRead, ErrorKind, Read, Seek, SeekFrom, ErrorType, ReadExactError};
+pub use embedded_io::{BufRead, ErrorKind, ErrorType, Read, ReadExactError, Seek, SeekFrom};
 pub use media_source_stream::{MediaSourceStream, MediaSourceStreamOptions};
 pub use monitor_stream::{Monitor, MonitorStream};
 pub use scoped_stream::ScopedStream;
-pub use utils::{Cursor, BorrowedBuf, BorrowedCursor, IoSliceMut};
+pub use utils::{BorrowedBuf, BorrowedCursor, Cursor, IoSliceMut};
+#[cfg(feature = "std")]
+pub use utils::FromStd;
 
 pub type Result<T> = core::result::Result<T, Error>;
 
@@ -45,19 +47,28 @@ pub type Result<T> = core::result::Result<T, Error>;
 pub struct Error {
     kind: io::ErrorKind,
     message: Cow<'static, str>,
+    eof: bool,
 }
 
 impl Error {
     pub fn new(kind: ErrorKind, msg: impl Into<Cow<'static, str>>) -> Self {
-        Self { kind, message: msg.into() }
+        Self { kind, message: msg.into(), eof: false }
     }
 
     pub fn other(msg: impl Into<Cow<'static, str>>) -> Self {
-        Self { kind: io::ErrorKind::Other, message: msg.into() }
+        Self { kind: io::ErrorKind::Other, message: msg.into(), eof: false }
+    }
+
+    pub fn eof(msg: impl Into<Cow<'static, str>>) -> Self {
+        Self { kind: io::ErrorKind::Other, message: msg.into(), eof: true }
     }
 
     pub fn kind(&self) -> embedded_io::ErrorKind {
         self.kind
+    }
+
+    pub fn is_eof(&self) -> bool {
+        self.eof
     }
 }
 
@@ -77,14 +88,18 @@ impl core::fmt::Display for Error {
 
 impl From<io::ErrorKind> for Error {
     fn from(value: io::ErrorKind) -> Self {
-        Self { kind: value, message: "no message".into() }
+        Self { kind: value, message: "no message".into(), eof: false }
     }
 }
 
 #[cfg(feature = "std")]
 impl From<std::io::Error> for Error {
     fn from(value: std::io::Error) -> Self {
-        Self { kind: value.kind().into(), message: format!("{}", value).into() }
+        Self {
+            kind: value.kind().into(),
+            message: format!("{}", value).into(),
+            eof: value.kind() == std::io::ErrorKind::UnexpectedEof,
+        }
     }
 }
 
@@ -116,7 +131,7 @@ pub trait MediaSource: io::Read + io::Seek + Send + Sync {
 }
 
 #[cfg(feature = "std")]
-impl MediaSource for embedded_io_adapters::std::FromStd<std::fs::File> {
+impl MediaSource for FromStd<std::fs::File> {
     /// Returns if the `std::io::File` backing the `MediaSource` is seekable.
     ///
     /// Note: This operation involves querying the underlying file descriptor for information and
@@ -178,7 +193,7 @@ impl<T: core::convert::AsRef<[u8]> + Send + Sync> MediaSource for Cursor<T> {
     }
 }
 
-/// `ReadOnlySource` wraps any source implementing [`std::io::Read`] in an unseekable
+/// `ReadOnlySource` wraps any source implementing [`embedded_io::Read`] in an unseekable
 /// [`MediaSource`].
 pub struct ReadOnlySource<R: io::Read> {
     inner: R,

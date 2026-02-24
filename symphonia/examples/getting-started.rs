@@ -5,6 +5,7 @@ use symphonia::core::formats::probe::Hint;
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
 use symphonia_core::formats::TrackType;
+use symphonia_core::io::FromStd;
 
 fn main() {
     // Get the first command line argument.
@@ -15,7 +16,7 @@ fn main() {
     let src = std::fs::File::open(path).expect("failed to open media");
 
     // Create the media source stream.
-    let mss = MediaSourceStream::new(Box::new(src), Default::default());
+    let mss = MediaSourceStream::new(Box::new(FromStd::new(src)), Default::default());
 
     // Create a probe hint using the file's extension. [Optional]
     let mut hint = Hint::new();

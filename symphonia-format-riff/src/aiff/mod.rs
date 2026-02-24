@@ -6,7 +6,6 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use std::collections::HashMap;
-use std::io::{Seek, SeekFrom};
 use std::sync::Arc;
 
 use symphonia_core::codecs::CodecParameters;

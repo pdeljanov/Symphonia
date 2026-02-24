@@ -9,14 +9,13 @@
 
 use core::str;
 use std::collections::HashMap;
-use std::io::{Seek, SeekFrom};
 use std::sync::Arc;
 
 use symphonia_core::errors::{Result, decode_error, unsupported_error};
 use symphonia_core::formats::probe::{
     Anchors, ProbeMetadataData, ProbeableMetadata, Score, Scoreable,
 };
-use symphonia_core::io::{MediaSourceStream, ReadBytes, ScopedStream, SeekBuffered};
+use symphonia_core::io::{MediaSourceStream, ReadBytes, ScopedStream, SeekBuffered, Seek, SeekFrom};
 use symphonia_core::meta::well_known::{METADATA_ID_APEV1, METADATA_ID_APEV2};
 use symphonia_core::meta::{
     MetadataBuffer, MetadataBuilder, MetadataInfo, MetadataOptions, MetadataReader, RawTag,

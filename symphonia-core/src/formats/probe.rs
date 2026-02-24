@@ -718,8 +718,7 @@ fn score(
 
     // Perform the scoring operation.
     let result = match (candidate.score)(ScopedStream::new(mss, u64::from(max_depth))) {
-        // TODO: consider some other solution than all `Other` kinds
-        Err(Error::IoError(err)) if err.kind() != crate::io::ErrorKind::Other => {
+        Err(Error::IoError(err)) if err.is_eof() => {
             // IO errors that are not an unexpected end-of-file (or out-of-bounds) error, abort the
             // entire probe operation.
             Err(Error::IoError(err))

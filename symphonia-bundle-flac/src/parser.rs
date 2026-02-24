@@ -456,7 +456,7 @@ impl PacketParser {
     {
         match self.read_fragment(reader, avg_frame_size) {
             Ok(fragment) => Ok(Some(fragment)),
-            Err(Error::IoError(err)) if err.kind() == std::io::ErrorKind::UnexpectedEof => {
+            Err(Error::IoError(err)) if err.is_eof() => {
                 // If the required information is available, verify that atleast the expected number
                 // of audio frames were demuxed.
                 if let Some(num_total_frames) = self.info.n_samples {

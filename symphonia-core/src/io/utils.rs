@@ -4,6 +4,8 @@
 pub use io_slice::IoSliceMut;
 #[cfg(feature = "std")]
 pub use std::io::IoSliceMut;
+#[cfg(feature = "std")]
+pub use from_std::FromStd;
 
 use alloc::vec::Vec;
 use core::{
@@ -39,6 +41,80 @@ mod io_slice {
         #[inline]
         fn deref_mut(&mut self) -> &mut [u8] {
             self.0
+        }
+    }
+}
+
+#[cfg(feature = "std")]
+mod from_std {
+    use std::io::{Read, Seek};
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct FromStd<T> {
+        inner: T,
+    }
+
+    impl<T> FromStd<T> {
+        pub const fn new(inner: T) -> Self {
+            Self { inner }
+        }
+
+        pub fn into_inner(self) -> T {
+            self.inner
+        }
+
+        pub const fn inner(&self) -> &T {
+            &self.inner
+        }
+
+        pub const fn inner_mut(&mut self) -> &mut T {
+            &mut self.inner
+        }
+    }
+
+    impl<T> super::ErrorType for FromStd<T> {
+        type Error = super::Error;
+    }
+
+    impl<T: std::io::Read> super::Read for FromStd<T> {
+        fn read(&mut self, buf: &mut [u8]) -> Result<usize, Self::Error> {
+            Ok(self.inner.read(buf)?)
+        }
+
+        fn read_exact(&mut self, buf: &mut [u8]) -> Result<(), super::ReadExactError<Self::Error>> {
+            match self.inner.read_exact(buf) {
+                Ok(n) => Ok(n),
+                Err(err) if err.kind() == std::io::ErrorKind::UnexpectedEof => Err(super::ReadExactError::UnexpectedEof),
+                Err(err) => Err(super::ReadExactError::Other(err.into()))
+            }
+        }
+    }
+
+    impl<T: std::io::BufRead> super::BufRead for FromStd<T> {
+        fn fill_buf(&mut self) -> Result<&[u8], Self::Error> {
+            Ok(self.inner.fill_buf()?)
+        }
+
+        fn consume(&mut self, amt: usize) {
+            self.inner.consume(amt)
+        }
+    }
+
+    impl<T: std::io::Seek> super::Seek for FromStd<T> {
+        fn seek(&mut self, pos: super::SeekFrom) -> Result<u64, Self::Error> {
+            Ok(self.inner.seek(pos.into())?)
+        }
+
+        fn rewind(&mut self) -> Result<(), Self::Error> {
+            Ok(self.inner.rewind()?)
+        }
+
+        fn stream_position(&mut self) -> Result<u64, Self::Error> {
+            Ok(self.inner.stream_position()?)
+        }
+
+        fn seek_relative(&mut self, offset: i64) -> Result<(), Self::Error> {
+            Ok(self.inner.seek_relative(offset)?)
         }
     }
 }

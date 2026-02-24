@@ -5,9 +5,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use std::io::SeekFrom;
-
-use symphonia_core::io::{MediaSource, ReadBytes, SeekBuffered};
+use symphonia_core::io::{MediaSource, ReadBytes, SeekBuffered, SeekFrom};
 use symphonia_core::util::bits::sign_extend_leq64_to_i64;
 
 /// `EbmlError` provides an enumeration of all possible EBML iterator errors.
@@ -15,7 +13,7 @@ use symphonia_core::util::bits::sign_extend_leq64_to_i64;
 #[derive(Debug)]
 pub enum EbmlError {
     /// An IO error occured while reading, writing, or seeking the EBML document.
-    IoError(std::io::Error),
+    IoError(symphonia_core::io::Error),
     /// The encoding of an EBML element ID was invalid.
     InvalidEbmlElementIdLength,
     /// The encoding of an EBML element data size was invalid.
@@ -52,8 +50,8 @@ pub enum EbmlError {
     ElementError(&'static str),
 }
 
-impl From<std::io::Error> for EbmlError {
-    fn from(err: std::io::Error) -> EbmlError {
+impl From<symphonia_core::io::Error> for EbmlError {
+    fn from(err: symphonia_core::io::Error) -> EbmlError {
         EbmlError::IoError(err)
     }
 }
@@ -238,14 +236,12 @@ impl<S: EbmlSchema> EbmlElementHeader<S> {
                 let is_parent_valid = if info.is_global() {
                     // The element is global. It has no specific parent.
                     true
-                }
-                else {
+                } else {
                     // The element is non-global. It has a parent.
                     if info.is_recursive() {
                         // The element is recursive. Its parent can be itself.
                         info.parent_id() == parent_id || parent_id == self.id
-                    }
-                    else {
+                    } else {
                         // The element is non-recursive.
                         info.parent_id() == parent_id
                     }
@@ -341,8 +337,7 @@ impl<R: ReadEbml, S: EbmlSchema> EbmlIterator<R, S> {
         if let Some(header) = self.current.take() {
             self.stack.push(header);
             Ok(())
-        }
-        else {
+        } else {
             // No element to push.
             Err(EbmlError::NoElement)
         }
@@ -353,8 +348,7 @@ impl<R: ReadEbml, S: EbmlSchema> EbmlIterator<R, S> {
         if let Some(header) = self.stack.pop() {
             self.current.replace(header);
             Ok(())
-        }
-        else {
+        } else {
             // No element to pop.
             Err(EbmlError::NoParent)
         }
@@ -397,8 +391,11 @@ impl<R: ReadEbml, S: EbmlSchema> EbmlIterator<R, S> {
     pub(crate) fn restore_state(&mut self, state: EbmlIteratorState<S>) -> Result<()>
     where
         R: MediaSource,
+        symphonia_core::io::Error: std::convert::From<<R as symphonia_core::io::ErrorType>::Error>,
     {
-        self.reader.seek(SeekFrom::Start(state.pos))?;
+        self.reader
+            .seek(SeekFrom::Start(state.pos))
+            .map_err(symphonia_core::io::Error::from)?;
         self.current = state.current;
         self.stack = state.stack;
         Ok(())
@@ -410,6 +407,7 @@ impl<R: ReadEbml, S: EbmlSchema> EbmlIterator<R, S> {
     pub(crate) fn seek_to_child(&mut self, offset: u64) -> Result<()>
     where
         R: MediaSource,
+        symphonia_core::io::Error: std::convert::From<<R as symphonia_core::io::ErrorType>::Error>,
     {
         // Determine the current parent element ID, position, and size. If there is no parent, use
         // the EBML document.
@@ -437,7 +435,9 @@ impl<R: ReadEbml, S: EbmlSchema> EbmlIterator<R, S> {
         let child_pos = parent_pos.checked_add(offset).ok_or(EbmlError::SeekOutOfRange)?;
 
         // Seek to the child element position.
-        self.reader.seek(SeekFrom::Start(child_pos))?;
+        self.reader
+            .seek(SeekFrom::Start(child_pos))
+            .map_err(symphonia_core::io::Error::from)?;
 
         // Reset the iterator so that a call to next_element or next_header yields the child
         // element.
@@ -490,13 +490,11 @@ impl<R: ReadEbml, S: EbmlSchema> EbmlIterator<R, S> {
             if pos == parent_end {
                 // Iteration of the current parent element is done.
                 return Ok(None);
-            }
-            else if pos > parent_end {
+            } else if pos > parent_end {
                 // The parent element was overrun.
                 log::warn!("overran parent element by {} bytes", pos - parent_end);
                 return Err(EbmlError::Overrun);
-            }
-            else if parent_end - pos < EbmlElementHeader::<S>::MIN_SIZE {
+            } else if parent_end - pos < EbmlElementHeader::<S>::MIN_SIZE {
                 // Remaing byte is not enough for EbmlElementHeader MIN_SIZE of 2 bytes
                 // Iteration of the current parent element is done.
                 return Ok(None);
@@ -596,13 +594,11 @@ impl<R: ReadEbml, S: EbmlSchema> EbmlIterator<R, S> {
                 let element = E::read(self, &header)?;
                 self.pop_element()?;
                 Ok(element)
-            }
-            else {
+            } else {
                 // Element is not a master element, it cannot be read as an element.
                 Err(EbmlError::ExpectedMasterElement)
             }
-        }
-        else {
+        } else {
             // The current element is not a known element type.
             Err(EbmlError::UnknownElement)
         }

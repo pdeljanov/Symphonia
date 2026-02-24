@@ -11,7 +11,7 @@ use super::{FiniteStream, ReadBytes};
 
 #[inline(always)]
 fn underrun_error<T>() -> super::Result<T> {
-    Err(super::Error::other("buffer underrun"))
+    Err(super::Error::eof("buffer underrun"))
 }
 
 /// A `BufReader` reads bytes from a byte buffer.
