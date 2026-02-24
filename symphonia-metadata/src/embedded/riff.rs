@@ -8,8 +8,8 @@
 //! RIFF-based metadata formats reading.
 
 use core::str;
-use std::collections::HashMap;
 
+use hashbrown::HashMap;
 use lazy_static::lazy_static;
 
 use symphonia_core::errors::{Result, decode_error};

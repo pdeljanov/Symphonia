@@ -7,9 +7,10 @@
 
 //! Vorbis Comment reading.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use hashbrown::HashMap;
 use lazy_static::lazy_static;
 use log::warn;
 
