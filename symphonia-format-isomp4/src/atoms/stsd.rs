@@ -7,6 +7,9 @@
 
 use core::str;
 
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use log::debug;
 use symphonia_core::audio::{Channels, Position};
 use symphonia_core::codecs::audio::well_known::CODEC_ID_MP3;
