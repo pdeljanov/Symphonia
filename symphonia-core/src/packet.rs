@@ -150,6 +150,8 @@ impl Packet {
 }
 
 mod builder {
+    use alloc::boxed::Box;
+
     use crate::packet::Packet;
     use crate::units::{Duration, Timestamp};
 
@@ -310,4 +312,5 @@ mod builder {
     }
 }
 
+use alloc::boxed::Box;
 pub use builder::PacketBuilder;
