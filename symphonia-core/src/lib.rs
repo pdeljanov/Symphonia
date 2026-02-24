@@ -14,6 +14,7 @@
 #![allow(clippy::manual_range_contains)]
 #![cfg_attr(not(feature = "std"), no_std)]
 
+#[macro_use]
 extern crate alloc;
 
 #[cfg(feature = "std")]
