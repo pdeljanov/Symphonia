@@ -5,6 +5,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+use alloc::boxed::Box;
+use alloc::string::String;
+use alloc::vec::Vec;
 use symphonia_core::support_format;
 
 use symphonia_core::checksum::Crc16AnsiLe;
@@ -343,7 +346,7 @@ impl FormatReader for MpaReader<'_> {
                     if main_data_begin > 0 {
                         // The maximum number of reference frames is limited to the number of frames
                         // read and the number of previous frames recorded.
-                        let max_ref_frames = std::cmp::min(n_parsed, frames.len());
+                        let max_ref_frames = core::cmp::min(n_parsed, frames.len());
 
                         while n_ref_frames < max_ref_frames {
                             ref_frame = &frames[(n_parsed - n_ref_frames - 1) & REF_FRAMES_MASK];

@@ -11,8 +11,8 @@ use crate::common::{ChannelMode, FrameHeader, Mode};
 
 use super::{Granule, common::*};
 
-use std::cmp::max;
-use std::{f32, f64};
+use core::cmp::max;
+use core::{f32, f64};
 
 use lazy_static::lazy_static;
 

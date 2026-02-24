@@ -12,8 +12,8 @@ use crate::common::FrameHeader;
 
 use super::{GranuleChannel, codebooks, common::*};
 
-use std::cmp::min;
-use std::{f32, f64};
+use core::cmp::min;
+use core::{f32, f64};
 
 use lazy_static::lazy_static;
 
