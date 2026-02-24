@@ -5,6 +5,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+use alloc::boxed::Box;
+use alloc::vec::Vec;
 use extra_data::{
     VIDEO_EXTRA_DATA_ID_AV1_DECODER_CONFIG, VIDEO_EXTRA_DATA_ID_AVC_DECODER_CONFIG,
     VIDEO_EXTRA_DATA_ID_HEVC_DECODER_CONFIG, VIDEO_EXTRA_DATA_ID_VP9_DECODER_CONFIG,

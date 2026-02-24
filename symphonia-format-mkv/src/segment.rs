@@ -5,11 +5,14 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use std::collections::HashMap;
-use std::num::NonZeroU64;
-use std::rc::Rc;
-use std::sync::Arc;
+use core::num::NonZeroU64;
 
+use alloc::boxed::Box;
+use alloc::rc::Rc;
+use alloc::sync::Arc;
+use alloc::string::String;
+use alloc::vec::Vec;
+use hashbrown::HashMap;
 use symphonia_core::codecs::video::VideoExtraData;
 use symphonia_core::codecs::video::well_known::extra_data::{
     VIDEO_EXTRA_DATA_ID_DOLBY_VISION_CONFIG, VIDEO_EXTRA_DATA_ID_DOLBY_VISION_EL_HEVC,

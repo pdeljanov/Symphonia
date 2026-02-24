@@ -5,6 +5,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+use alloc::boxed::Box;
+use alloc::string::String;
+use alloc::vec::Vec;
 use symphonia_core::io::{MediaSource, ReadBytes, SeekBuffered, SeekFrom};
 use symphonia_core::util::bits::sign_extend_leq64_to_i64;
 
@@ -56,7 +59,7 @@ impl From<symphonia_core::io::Error> for EbmlError {
     }
 }
 
-pub type Result<T> = std::result::Result<T, EbmlError>;
+pub type Result<T> = core::result::Result<T, EbmlError>;
 
 /// A super-trait of `ReadBytes` and `SeekBuffered` that all readers of `EbmlIterator` must
 /// implement.
@@ -77,7 +80,7 @@ pub(crate) enum EbmlDataType {
 /// Trait for an object providing element information in an EBML document schema.
 pub(crate) trait EbmlElementInfo: Copy + Clone {
     /// The element type enumeration for the schema.
-    type ElementType: Copy + Clone + Default + PartialEq + Eq + PartialOrd + Ord + std::fmt::Debug;
+    type ElementType: Copy + Clone + Default + PartialEq + Eq + PartialOrd + Ord + core::fmt::Debug;
 
     /// Get the element type.
     fn element_type(&self) -> Self::ElementType;
@@ -391,7 +394,7 @@ impl<R: ReadEbml, S: EbmlSchema> EbmlIterator<R, S> {
     pub(crate) fn restore_state(&mut self, state: EbmlIteratorState<S>) -> Result<()>
     where
         R: MediaSource,
-        symphonia_core::io::Error: std::convert::From<<R as symphonia_core::io::ErrorType>::Error>,
+        symphonia_core::io::Error: core::convert::From<<R as symphonia_core::io::ErrorType>::Error>,
     {
         self.reader
             .seek(SeekFrom::Start(state.pos))
@@ -407,7 +410,7 @@ impl<R: ReadEbml, S: EbmlSchema> EbmlIterator<R, S> {
     pub(crate) fn seek_to_child(&mut self, offset: u64) -> Result<()>
     where
         R: MediaSource,
-        symphonia_core::io::Error: std::convert::From<<R as symphonia_core::io::ErrorType>::Error>,
+        symphonia_core::io::Error: core::convert::From<<R as symphonia_core::io::ErrorType>::Error>,
     {
         // Determine the current parent element ID, position, and size. If there is no parent, use
         // the EBML document.
