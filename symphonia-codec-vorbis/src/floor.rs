@@ -5,8 +5,10 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use std::cmp::min;
-use std::collections::HashSet;
+use core::cmp::min;
+use alloc::boxed::Box;
+use alloc::vec::Vec;
+use hashbrown::HashSet;
 
 use symphonia_core::errors::{Error, Result, decode_error};
 use symphonia_core::io::{BitReaderRtl, ReadBitsRtl};
@@ -285,7 +287,7 @@ impl Floor for Floor0 {
             &self.setup.floor0_map_long
         };
 
-        let omega_step = std::f32::consts::PI / f32::from(self.setup.floor0_bark_map_size);
+        let omega_step = core::f32::consts::PI / f32::from(self.setup.floor0_bark_map_size);
 
         let mut i = 0;
 
