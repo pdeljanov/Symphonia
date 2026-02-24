@@ -7,8 +7,8 @@
 
 //! FLAC metadata block reading.
 
-use std::num::NonZeroU8;
-use std::sync::Arc;
+use core::num::NonZeroU8;
+use alloc::{sync::Arc, string::String, vec::Vec};
 
 use log::warn;
 use symphonia_core::errors::{Result, decode_error};

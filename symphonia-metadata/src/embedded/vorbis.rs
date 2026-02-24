@@ -7,8 +7,8 @@
 
 //! Vorbis Comment reading.
 
-use std::collections::BTreeMap;
-use std::sync::Arc;
+use alloc::collections::BTreeMap;
+use alloc::{sync::Arc, string::{String, ToString}, vec::Vec};
 
 use hashbrown::HashMap;
 use lazy_static::lazy_static;
