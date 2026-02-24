@@ -9,6 +9,7 @@ use crate::common::SideData;
 
 use super::{MapResult, Mapper, PacketParser};
 
+use alloc::boxed::Box;
 use symphonia_common::xiph::audio::flac::{MetadataBlockHeader, MetadataBlockType, StreamInfo};
 use symphonia_core::checksum::Crc8Ccitt;
 use symphonia_core::codecs::CodecParameters;

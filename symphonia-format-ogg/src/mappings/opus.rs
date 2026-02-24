@@ -9,6 +9,7 @@ use crate::common::SideData;
 
 use super::{MapResult, Mapper, PacketParser};
 
+use alloc::boxed::Box;
 use symphonia_core::audio::{Channels, Position};
 use symphonia_core::codecs::CodecParameters;
 use symphonia_core::codecs::audio::AudioCodecParameters;

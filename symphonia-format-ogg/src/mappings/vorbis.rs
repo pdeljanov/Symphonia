@@ -8,6 +8,8 @@
 use super::{MapResult, Mapper, PacketParser};
 use crate::common::SideData;
 
+use alloc::boxed::Box;
+use alloc::vec::Vec;
 use symphonia_common::xiph::audio::vorbis::*;
 use symphonia_core::codecs::CodecParameters;
 use symphonia_core::codecs::audio::AudioCodecParameters;
