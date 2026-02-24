@@ -7,13 +7,10 @@
 
 //! Registry for codecs to support lookup and instantiation of decoders dynamically at runtime.
 
-// Temporary exception from no_std because HashMap is not in alloc
-extern crate std;
-
 use alloc::boxed::Box;
+use hashbrown::HashMap;
 use core::default::Default;
 use core::hash::Hash;
-use std::collections::HashMap;
 
 use crate::codecs::CodecInfo;
 use crate::codecs::audio::{AudioCodecId, AudioCodecParameters, AudioDecoder, AudioDecoderOptions};
@@ -133,6 +130,7 @@ pub struct RegisteredSubtitleDecoder {
     pub factory: SubtitleDecoderFactoryFn,
 }
 
+// TODO: consider passing BuildHasher as generic here
 struct InnerCodecRegistry<C, R> {
     preferred: HashMap<C, R>,
     standard: HashMap<C, R>,
