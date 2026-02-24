@@ -47,8 +47,6 @@ mod io_slice {
 
 #[cfg(feature = "std")]
 mod from_std {
-    use std::io::{Read, Seek};
-
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub struct FromStd<T> {
         inner: T,

@@ -15,7 +15,6 @@
 #![allow(clippy::manual_range_contains)]
 #![no_std]
 
-#[macro_use]
 extern crate alloc;
 
 use alloc::boxed::Box;

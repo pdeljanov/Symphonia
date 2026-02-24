@@ -13,7 +13,6 @@
 #![allow(clippy::manual_range_contains)]
 #![no_std]
 
-#[macro_use]
 extern crate alloc;
 
 pub mod mpeg;
