@@ -29,7 +29,7 @@ homepage = "https://github.com/pdeljanov/Symphonia"
 license = "MPL-2.0"
 license-file = "LICENSE"
 repository = "https://github.com/pdeljanov/Symphonia"
-rust-version = "1.85"
+rust-version = "1.93"
 version = "0.6.0"
 
 #cargo-features = ["profile-rustflags"]

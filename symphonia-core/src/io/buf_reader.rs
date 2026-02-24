@@ -5,17 +5,13 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-// temporary exception from no_std until we don't use io here anymore
-extern crate std;
-
 use core::cmp;
-use std::io;
 
 use super::{FiniteStream, ReadBytes};
 
 #[inline(always)]
-fn underrun_error<T>() -> io::Result<T> {
-    Err(io::Error::new(io::ErrorKind::UnexpectedEof, "buffer underrun"))
+fn underrun_error<T>() -> super::Result<T> {
+    Err(super::Error::other("buffer underrun"))
 }
 
 /// A `BufReader` reads bytes from a byte buffer.
@@ -36,7 +32,7 @@ impl<'a> BufReader<'a> {
     /// if the underlying buffer is exhausted before matching the pattern, remainder of the buffer
     /// is returned.
     #[inline(always)]
-    pub fn scan_bytes_ref(&mut self, pattern: &[u8], scan_len: usize) -> io::Result<&'a [u8]> {
+    pub fn scan_bytes_ref(&mut self, pattern: &[u8], scan_len: usize) -> super::Result<&'a [u8]> {
         self.scan_bytes_aligned_ref(pattern, 1, scan_len)
     }
 
@@ -47,7 +43,7 @@ impl<'a> BufReader<'a> {
         pattern: &[u8],
         align: usize,
         scan_len: usize,
-    ) -> io::Result<&'a [u8]> {
+    ) -> super::Result<&'a [u8]> {
         // The pattern must be atleast one byte.
         debug_assert!(!pattern.is_empty());
 
@@ -80,7 +76,7 @@ impl<'a> BufReader<'a> {
     }
 
     /// Returns a reference to the next `len` bytes in the buffer and advances the stream.
-    pub fn read_buf_bytes_ref(&mut self, len: usize) -> io::Result<&'a [u8]> {
+    pub fn read_buf_bytes_ref(&mut self, len: usize) -> super::Result<&'a [u8]> {
         if self.pos + len > self.buf.len() {
             return underrun_error();
         }
@@ -98,7 +94,7 @@ impl<'a> BufReader<'a> {
 
 impl ReadBytes for BufReader<'_> {
     #[inline(always)]
-    fn read_byte(&mut self) -> io::Result<u8> {
+    fn read_byte(&mut self) -> super::Result<u8> {
         if self.buf.len() - self.pos < 1 {
             return underrun_error();
         }
@@ -108,7 +104,7 @@ impl ReadBytes for BufReader<'_> {
     }
 
     #[inline(always)]
-    fn read_double_bytes(&mut self) -> io::Result<[u8; 2]> {
+    fn read_double_bytes(&mut self) -> super::Result<[u8; 2]> {
         if self.buf.len() - self.pos < 2 {
             return underrun_error();
         }
@@ -121,7 +117,7 @@ impl ReadBytes for BufReader<'_> {
     }
 
     #[inline(always)]
-    fn read_triple_bytes(&mut self) -> io::Result<[u8; 3]> {
+    fn read_triple_bytes(&mut self) -> super::Result<[u8; 3]> {
         if self.buf.len() - self.pos < 3 {
             return underrun_error();
         }
@@ -134,7 +130,7 @@ impl ReadBytes for BufReader<'_> {
     }
 
     #[inline(always)]
-    fn read_quad_bytes(&mut self) -> io::Result<[u8; 4]> {
+    fn read_quad_bytes(&mut self) -> super::Result<[u8; 4]> {
         if self.buf.len() - self.pos < 4 {
             return underrun_error();
         }
@@ -146,7 +142,7 @@ impl ReadBytes for BufReader<'_> {
         Ok(bytes)
     }
 
-    fn read_buf(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+    fn read_buf(&mut self, buf: &mut [u8]) -> super::Result<usize> {
         let len = cmp::min(self.buf.len() - self.pos, buf.len());
         buf[..len].copy_from_slice(&self.buf[self.pos..self.pos + len]);
         self.pos += len;
@@ -154,7 +150,7 @@ impl ReadBytes for BufReader<'_> {
         Ok(len)
     }
 
-    fn read_buf_exact(&mut self, buf: &mut [u8]) -> io::Result<()> {
+    fn read_buf_exact(&mut self, buf: &mut [u8]) -> super::Result<()> {
         let len = buf.len();
 
         if self.buf.len() - self.pos < len {
@@ -172,14 +168,14 @@ impl ReadBytes for BufReader<'_> {
         pattern: &[u8],
         align: usize,
         buf: &'b mut [u8],
-    ) -> io::Result<&'b mut [u8]> {
+    ) -> super::Result<&'b mut [u8]> {
         let scanned = self.scan_bytes_aligned_ref(pattern, align, buf.len())?;
         buf[..scanned.len()].copy_from_slice(scanned);
 
         Ok(&mut buf[..scanned.len()])
     }
 
-    fn ignore_bytes(&mut self, count: u64) -> io::Result<()> {
+    fn ignore_bytes(&mut self, count: u64) -> super::Result<()> {
         if self.buf.len() - self.pos < count as usize {
             return underrun_error();
         }

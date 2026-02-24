@@ -7,7 +7,7 @@
 
 //! The `units` module provides definitions for common units.
 
-use core::{fmt, ops};
+use core::fmt;
 
 use core::num::NonZero;
 

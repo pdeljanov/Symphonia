@@ -7,13 +7,10 @@
 
 //! The `errors` module defines the common error type.
 
-// Temporary exception from no_std until we removed io from the error type
-extern crate std;
-
 use core::error;
 use core::fmt;
 use core::result;
-use std::io;
+use crate::io;
 
 /// `SeekErrorKind` is a list of generic reasons why a seek may fail.
 #[non_exhaustive]
@@ -45,7 +42,7 @@ impl SeekErrorKind {
 #[derive(Debug)]
 pub enum Error {
     /// An IO error occured while reading, writing, or seeking the stream.
-    IoError(std::io::Error),
+    IoError(crate::io::Error),
     /// The stream contained malformed data and could not be decoded or demuxed.
     DecodeError(&'static str),
     /// The stream could not be seeked.
