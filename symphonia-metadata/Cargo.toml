@@ -14,8 +14,9 @@ rust-version.workspace = true
 version.workspace = true
 
 [features]
-default = ["ape", "id3v1", "id3v2"]
+default = ["std", "ape", "id3v1", "id3v2"]
 
+std = ["symphonia-core/std"]
 ape = []
 flac = ["vorbis"]
 id3v1 = []
@@ -34,3 +35,4 @@ log = "0.4"
 regex-lite = "0.1.6"
 smallvec = "1.13.1"
 symphonia-core = { version = "0.6.0", path = "../symphonia-core" }
+hashbrown = { workspace = true }

@@ -40,7 +40,7 @@ bitflags = "2.4.2"
 bytemuck = "1.7"
 embedded-io = { version = "0.7.1", features = ["alloc"] }
 embedded-io-adapters = "0.7.0"
-hashbrown = "0.16.1"
+hashbrown = { workspace = true }
 lazy_static = "1.4.0"
 log = "0.4"
 num-complex = "0.4"

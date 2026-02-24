@@ -11,8 +11,10 @@
 // would be too difficult to individually waive the lint.
 #![allow(dead_code)]
 
-use std::{collections::HashMap, sync::Arc};
+use alloc::{sync::Arc};
 
+use alloc::{borrow::ToOwned, string::String};
+use hashbrown::HashMap;
 use symphonia_core::meta::{ContentAdvisory, MetadataBuilder, RawTag, RawValue, StandardTag, Tag};
 
 // A pair of standard tags.
@@ -409,7 +411,7 @@ fn parse_m_of_n(v: Arc<String>) -> (Option<u64>, Option<u64>) {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use alloc::sync::Arc;
 
     use symphonia_core::meta::StandardTag;
 

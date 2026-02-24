@@ -34,6 +34,9 @@ version = "0.6.0"
 
 #cargo-features = ["profile-rustflags"]
 
+[workspace.dependencies]
+hashbrown = "0.16.1"
+
 [profile.profiling]
 inherits = "release"
 debug = true

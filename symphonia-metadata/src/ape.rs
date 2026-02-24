@@ -8,8 +8,11 @@
 //! An APEv1 and APEv2 metadata reader.
 
 use core::str;
-use std::collections::HashMap;
-use std::sync::Arc;
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use hashbrown::HashMap;
+use alloc::sync::Arc;
 
 use symphonia_core::errors::{Result, decode_error, unsupported_error};
 use symphonia_core::formats::probe::{

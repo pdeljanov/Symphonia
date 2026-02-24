@@ -7,8 +7,9 @@
 
 //! Image utilities.
 
-use std::num::NonZeroU8;
+use core::num::NonZeroU8;
 
+use alloc::string::{String, ToString};
 use symphonia_core::errors::{Result, decode_error, unsupported_error};
 use symphonia_core::io::{BufReader, ReadBytes};
 use symphonia_core::meta::{ColorMode, ColorModel, ColorPaletteInfo, Size};

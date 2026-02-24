@@ -11,6 +11,8 @@
 // would be too difficult to individually waive the lint.
 #![allow(dead_code)]
 
+use alloc::{boxed::Box, vec::Vec};
+
 /// Decode a RFC4648 Base64 encoded string.
 pub fn decode(encoded: &str) -> Option<Box<[u8]>> {
     // A sentinel value indicating that an invalid symbol was encountered.

@@ -7,11 +7,14 @@
 
 //! Frame body readers.
 
-use std::char;
-use std::collections::HashMap;
-use std::str;
-use std::sync::Arc;
+use core::char;
+use core::str;
+use alloc::sync::Arc;
 
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use hashbrown::HashMap;
 use symphonia_core::errors::{Result, decode_error, unsupported_error};
 use symphonia_core::io::{self, BufReader, FiniteStream, ReadBytes};
 use symphonia_core::meta::RawTag;
@@ -54,7 +57,7 @@ impl<'a> FrameInfo<'a> {
     /// Panics if the frame ID is invalid.
     pub fn new(id: &'a [u8], major_version: u8, raw_tag_parser: Option<RawTagParser>) -> Self {
         FrameInfo {
-            id: std::str::from_utf8(id).expect("validated frame id bytes"),
+            id: core::str::from_utf8(id).expect("validated frame id bytes"),
             major_version,
             raw_tag_parser,
         }
@@ -173,7 +176,7 @@ fn read_lang_code(reader: &mut BufReader<'_>) -> Result<Option<String>> {
     }
     else {
         // Convert to lowercase string.
-        Some(std::str::from_utf8(&code).unwrap().to_ascii_lowercase())
+        Some(core::str::from_utf8(&code).unwrap().to_ascii_lowercase())
     };
 
     Ok(code)
@@ -1083,6 +1086,7 @@ lazy_static! {
 mod tests {
     use super::Encoding;
 
+    use alloc::string::ToString;
     use symphonia_core::io::BufReader;
 
     #[test]
@@ -1247,7 +1251,7 @@ mod tests {
     fn verify_read_string_list() {
         use super::read_string_list;
 
-        use std::sync::Arc;
+        use alloc::sync::Arc;
 
         use symphonia_core::meta::RawValue;
 
