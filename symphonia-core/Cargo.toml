@@ -14,7 +14,7 @@ rust-version.workspace = true
 version.workspace = true
 
 [features]
-default = ["std"]
+default = []
 
 std = ["embedded-io/std", "embedded-io-adapters/std"]
 defmt = ["embedded-io/defmt"]
