@@ -8,12 +8,17 @@
 //! Vorbis Comment reading.
 
 use alloc::collections::BTreeMap;
-use alloc::{sync::Arc, string::{String, ToString}, vec::Vec};
+use alloc::{
+    string::{String, ToString},
+    sync::Arc,
+    vec::Vec,
+};
 
 use hashbrown::HashMap;
-use lazy_static::lazy_static;
+
 use log::warn;
 
+use symphonia_core::Lazy;
 use symphonia_core::errors::{Error, Result, decode_error};
 use symphonia_core::io::{BufReader, ReadBytes};
 use symphonia_core::meta::well_known::METADATA_ID_VORBIS_COMMENT;
@@ -35,132 +40,129 @@ pub const VORBIS_COMMENT_METADATA_INFO: MetadataInfo = MetadataInfo {
     long_name: "Vorbis Comment",
 };
 
-lazy_static! {
-    static ref VORBIS_COMMENT_MAP: RawTagParserMap = {
-        let mut m: RawTagParserMap = HashMap::new();
+static VORBIS_COMMENT_MAP: Lazy<RawTagParserMap> = Lazy::new(|| {
+    let mut m: RawTagParserMap = HashMap::new();
 
-        m.insert("accurateripcount"             , parse_accuraterip_count);
-        m.insert("accurateripcountalloffsets"   , parse_accuraterip_count_all_offsets);
-        m.insert("accurateripcountwithoffset"   , parse_accuraterip_count_with_offset);
-        m.insert("accurateripcrc"               , parse_accuraterip_crc);
-        m.insert("accurateripdiscid"            , parse_accuraterip_disc_id);
-        m.insert("accurateripid"                , parse_accuraterip_id);
-        m.insert("accurateripoffset"            , parse_accuraterip_offset);
-        m.insert("accurateripresult"            , parse_accuraterip_result);
-        m.insert("accurateriptotal"             , parse_accuraterip_total);
-        m.insert("acoustid_fingerprint"         , parse_acoustid_fingerprint);
-        m.insert("acoustid_id"                  , parse_acoustid_id);
-        m.insert("album artist"                 , parse_album_artist);
-        m.insert("album"                        , parse_album);
-        m.insert("albumartist"                  , parse_album_artist);
-        m.insert("albumartistsort"              , parse_sort_album_artist);
-        m.insert("albumsort"                    , parse_sort_album);
-        m.insert("arranger"                     , parse_arranger);
-        m.insert("artist"                       , parse_artist);
-        m.insert("artistsort"                   , parse_sort_artist);
-        // TODO: Is Author a synonym for Writer?
-        m.insert("author"                       , parse_writer);
-        m.insert("barcode"                      , parse_ident_barcode);
-        m.insert("bpm"                          , parse_bpm);
-        m.insert("catalog #"                    , parse_ident_catalog_number);
-        m.insert("catalog"                      , parse_ident_catalog_number);
-        m.insert("catalognumber"                , parse_ident_catalog_number);
-        m.insert("catalogue #"                  , parse_ident_catalog_number);
-        m.insert("cdtoc"                        , parse_cdtoc);
-        m.insert("comment"                      , parse_comment);
-        m.insert("compilation"                  , parse_compilation);
-        m.insert("composer"                     , parse_composer);
-        m.insert("conductor"                    , parse_conductor);
-        m.insert("copyright"                    , parse_copyright);
-        m.insert("ctdbdiscconfidence"           , parse_cuetoolsdb_disc_confidence);
-        m.insert("ctdbtrackconfidence"          , parse_cuetoolsdb_track_confidence);
-        m.insert("date"                         , parse_recording_date);
-        m.insert("description"                  , parse_description);
-        m.insert("disc"                         , parse_disc_number_exclusive);
-        m.insert("discnumber"                   , parse_disc_number);
-        m.insert("discsubtitle"                 , parse_disc_subtitle);
-        m.insert("disctotal"                    , parse_disc_total);
-        m.insert("disk"                         , parse_disc_number_exclusive);
-        m.insert("disknumber"                   , parse_disc_number);
-        m.insert("disksubtitle"                 , parse_disc_subtitle);
-        m.insert("disktotal"                    , parse_disc_total);
-        m.insert("djmixer"                      , parse_mix_dj);
-        m.insert("ean/upn"                      , parse_ident_ean_upn);
-        m.insert("encoded-by"                   , parse_encoded_by);
-        m.insert("encodedby"                    , parse_encoded_by);
-        m.insert("encoder settings"             , parse_encoder_settings);
-        m.insert("encoder"                      , parse_encoder);
-        m.insert("encoding"                     , parse_encoder_settings);
-        m.insert("engineer"                     , parse_engineer);
-        m.insert("ensemble"                     , parse_ensemble);
-        m.insert("genre"                        , parse_genre);
-        m.insert("grouping"                     , parse_grouping);
-        m.insert("isrc"                         , parse_ident_isrc);
-        m.insert("language"                     , parse_language);
-        m.insert("label"                        , parse_label);
-        m.insert("labelno"                      , parse_ident_catalog_number);
-        m.insert("license"                      , parse_license);
-        m.insert("lyricist"                     , parse_lyricist);
-        m.insert("lyrics"                       , parse_lyrics);
-        m.insert("media"                        , parse_media_format);
-        m.insert("mixer"                        , parse_mix_engineer);
-        m.insert("mood"                         , parse_mood);
-        m.insert("musicbrainz_albumartistid"    , parse_musicbrainz_album_artist_id);
-        m.insert("musicbrainz_albumid"          , parse_musicbrainz_album_id);
-        m.insert("musicbrainz_artistid"         , parse_musicbrainz_artist_id);
-        m.insert("musicbrainz_discid"           , parse_musicbrainz_disc_id);
-        m.insert("musicbrainz_originalalbumid"  , parse_musicbrainz_original_album_id);
-        m.insert("musicbrainz_originalartistid" , parse_musicbrainz_original_artist_id);
-        m.insert("musicbrainz_recordingid"      , parse_musicbrainz_recording_id);
-        m.insert("musicbrainz_releasegroupid"   , parse_musicbrainz_release_group_id);
-        m.insert("musicbrainz_releasetrackid"   , parse_musicbrainz_release_track_id);
-        m.insert("musicbrainz_trackid"          , parse_musicbrainz_track_id);
-        m.insert("musicbrainz_workid"           , parse_musicbrainz_work_id);
-        m.insert("opus"                         , parse_opus);
-        m.insert("organization"                 , parse_label);
-        m.insert("originaldate"                 , parse_original_release_date);
-        m.insert("originalyear"                 , parse_original_release_year);
-        m.insert("part"                         , parse_part);
-        m.insert("partnumber"                   , parse_part_number_exclusive);
-        m.insert("performer"                    , parse_performer);
-        m.insert("producer"                     , parse_producer);
-        m.insert("productnumber"                , parse_ident_pn);
-        // TODO: Is Publisher a synonym for Label?
-        m.insert("publisher"                    , parse_label);
-        m.insert("rating"                       , parse_rating);
-        m.insert("releasecountry"               , parse_release_country);
-        m.insert("releasestatus"                , parse_musicbrainz_release_status);
-        m.insert("releasetype"                  , parse_musicbrainz_release_type);
-        m.insert("remixer"                      , parse_remixer);
-        m.insert("replaygain_album_gain"        , parse_replaygain_album_gain);
-        m.insert("replaygain_album_peak"        , parse_replaygain_album_peak);
-        m.insert("replaygain_reference_loudness", parse_replaygain_reference_loudness);
-        m.insert("replaygain_track_gain"        , parse_replaygain_track_gain);
-        m.insert("replaygain_track_peak"        , parse_replaygain_track_peak);
-        m.insert("script"                       , parse_script);
-        m.insert("subtitle"                     , parse_track_subtitle);
-        m.insert("title"                        , parse_track_title);
-        m.insert("titlesort"                    , parse_sort_track_title);
-        m.insert("totaldiscs"                   , parse_disc_total);
-        m.insert("totaltracks"                  , parse_track_total);
-        m.insert("track"                        , parse_track_number_exclusive);
-        m.insert("tracknumber"                  , parse_track_number);
-        m.insert("tracktotal"                   , parse_track_total);
-        m.insert("unsyncedlyrics"               , parse_lyrics);
-        m.insert("upc"                          , parse_ident_upc);
-        m.insert("version"                      , parse_version);
-        m.insert("work"                         , parse_work);
-        m.insert("writer"                       , parse_writer);
-        m.insert("year"                         , parse_recording_year);
-        m
-    };
-}
+    m.insert("accurateripcount", parse_accuraterip_count);
+    m.insert("accurateripcountalloffsets", parse_accuraterip_count_all_offsets);
+    m.insert("accurateripcountwithoffset", parse_accuraterip_count_with_offset);
+    m.insert("accurateripcrc", parse_accuraterip_crc);
+    m.insert("accurateripdiscid", parse_accuraterip_disc_id);
+    m.insert("accurateripid", parse_accuraterip_id);
+    m.insert("accurateripoffset", parse_accuraterip_offset);
+    m.insert("accurateripresult", parse_accuraterip_result);
+    m.insert("accurateriptotal", parse_accuraterip_total);
+    m.insert("acoustid_fingerprint", parse_acoustid_fingerprint);
+    m.insert("acoustid_id", parse_acoustid_id);
+    m.insert("album artist", parse_album_artist);
+    m.insert("album", parse_album);
+    m.insert("albumartist", parse_album_artist);
+    m.insert("albumartistsort", parse_sort_album_artist);
+    m.insert("albumsort", parse_sort_album);
+    m.insert("arranger", parse_arranger);
+    m.insert("artist", parse_artist);
+    m.insert("artistsort", parse_sort_artist);
+    // TODO: Is Author a synonym for Writer?
+    m.insert("author", parse_writer);
+    m.insert("barcode", parse_ident_barcode);
+    m.insert("bpm", parse_bpm);
+    m.insert("catalog #", parse_ident_catalog_number);
+    m.insert("catalog", parse_ident_catalog_number);
+    m.insert("catalognumber", parse_ident_catalog_number);
+    m.insert("catalogue #", parse_ident_catalog_number);
+    m.insert("cdtoc", parse_cdtoc);
+    m.insert("comment", parse_comment);
+    m.insert("compilation", parse_compilation);
+    m.insert("composer", parse_composer);
+    m.insert("conductor", parse_conductor);
+    m.insert("copyright", parse_copyright);
+    m.insert("ctdbdiscconfidence", parse_cuetoolsdb_disc_confidence);
+    m.insert("ctdbtrackconfidence", parse_cuetoolsdb_track_confidence);
+    m.insert("date", parse_recording_date);
+    m.insert("description", parse_description);
+    m.insert("disc", parse_disc_number_exclusive);
+    m.insert("discnumber", parse_disc_number);
+    m.insert("discsubtitle", parse_disc_subtitle);
+    m.insert("disctotal", parse_disc_total);
+    m.insert("disk", parse_disc_number_exclusive);
+    m.insert("disknumber", parse_disc_number);
+    m.insert("disksubtitle", parse_disc_subtitle);
+    m.insert("disktotal", parse_disc_total);
+    m.insert("djmixer", parse_mix_dj);
+    m.insert("ean/upn", parse_ident_ean_upn);
+    m.insert("encoded-by", parse_encoded_by);
+    m.insert("encodedby", parse_encoded_by);
+    m.insert("encoder settings", parse_encoder_settings);
+    m.insert("encoder", parse_encoder);
+    m.insert("encoding", parse_encoder_settings);
+    m.insert("engineer", parse_engineer);
+    m.insert("ensemble", parse_ensemble);
+    m.insert("genre", parse_genre);
+    m.insert("grouping", parse_grouping);
+    m.insert("isrc", parse_ident_isrc);
+    m.insert("language", parse_language);
+    m.insert("label", parse_label);
+    m.insert("labelno", parse_ident_catalog_number);
+    m.insert("license", parse_license);
+    m.insert("lyricist", parse_lyricist);
+    m.insert("lyrics", parse_lyrics);
+    m.insert("media", parse_media_format);
+    m.insert("mixer", parse_mix_engineer);
+    m.insert("mood", parse_mood);
+    m.insert("musicbrainz_albumartistid", parse_musicbrainz_album_artist_id);
+    m.insert("musicbrainz_albumid", parse_musicbrainz_album_id);
+    m.insert("musicbrainz_artistid", parse_musicbrainz_artist_id);
+    m.insert("musicbrainz_discid", parse_musicbrainz_disc_id);
+    m.insert("musicbrainz_originalalbumid", parse_musicbrainz_original_album_id);
+    m.insert("musicbrainz_originalartistid", parse_musicbrainz_original_artist_id);
+    m.insert("musicbrainz_recordingid", parse_musicbrainz_recording_id);
+    m.insert("musicbrainz_releasegroupid", parse_musicbrainz_release_group_id);
+    m.insert("musicbrainz_releasetrackid", parse_musicbrainz_release_track_id);
+    m.insert("musicbrainz_trackid", parse_musicbrainz_track_id);
+    m.insert("musicbrainz_workid", parse_musicbrainz_work_id);
+    m.insert("opus", parse_opus);
+    m.insert("organization", parse_label);
+    m.insert("originaldate", parse_original_release_date);
+    m.insert("originalyear", parse_original_release_year);
+    m.insert("part", parse_part);
+    m.insert("partnumber", parse_part_number_exclusive);
+    m.insert("performer", parse_performer);
+    m.insert("producer", parse_producer);
+    m.insert("productnumber", parse_ident_pn);
+    // TODO: Is Publisher a synonym for Label?
+    m.insert("publisher", parse_label);
+    m.insert("rating", parse_rating);
+    m.insert("releasecountry", parse_release_country);
+    m.insert("releasestatus", parse_musicbrainz_release_status);
+    m.insert("releasetype", parse_musicbrainz_release_type);
+    m.insert("remixer", parse_remixer);
+    m.insert("replaygain_album_gain", parse_replaygain_album_gain);
+    m.insert("replaygain_album_peak", parse_replaygain_album_peak);
+    m.insert("replaygain_reference_loudness", parse_replaygain_reference_loudness);
+    m.insert("replaygain_track_gain", parse_replaygain_track_gain);
+    m.insert("replaygain_track_peak", parse_replaygain_track_peak);
+    m.insert("script", parse_script);
+    m.insert("subtitle", parse_track_subtitle);
+    m.insert("title", parse_track_title);
+    m.insert("titlesort", parse_sort_track_title);
+    m.insert("totaldiscs", parse_disc_total);
+    m.insert("totaltracks", parse_track_total);
+    m.insert("track", parse_track_number_exclusive);
+    m.insert("tracknumber", parse_track_number);
+    m.insert("tracktotal", parse_track_total);
+    m.insert("unsyncedlyrics", parse_lyrics);
+    m.insert("upc", parse_ident_upc);
+    m.insert("version", parse_version);
+    m.insert("work", parse_work);
+    m.insert("writer", parse_writer);
+    m.insert("year", parse_recording_year);
+    m
+});
 
 /// Parse a string containing a base64 encoded FLAC picture block into a visual.
 fn parse_base64_picture_block(b64: &str) -> Result<ParsedComment> {
     // Decode the Base64 encoded FLAC metadata block.
-    let Some(data) = base64::decode(b64)
-    else {
+    let Some(data) = base64::decode(b64) else {
         return decode_error("meta(vorbis): the base64 encoding of a picture block is invalid");
     };
 
@@ -170,14 +172,12 @@ fn parse_base64_picture_block(b64: &str) -> Result<ParsedComment> {
 /// Parse a string containing a base64 encoding image file into a visual.
 fn parse_base64_cover_art(b64: &str) -> Result<ParsedComment> {
     // Decode the Base64 encoded image data.
-    let Some(data) = base64::decode(b64)
-    else {
+    let Some(data) = base64::decode(b64) else {
         return decode_error("meta (vorbis): the base64 encoding of cover art is invalid");
     };
 
     // Try to get image information.
-    let Some(image_info) = try_get_image_info(&data)
-    else {
+    let Some(image_info) = try_get_image_info(&data) else {
         return decode_error("meta (vorbis): could not detect cover art image format");
     };
 
@@ -215,8 +215,7 @@ fn parse_chapter_timestamp(time: &str) -> Result<Time> {
             // The string slice after stripping the leading or trailing zeros is empty. Only one
             // zero digit was significant.
             Ok((0, 1))
-        }
-        else {
+        } else {
             buf.bytes()
                 .try_fold(0u32, |num, digit| match digit {
                     b'0'..=b'9' => {
@@ -230,12 +229,10 @@ fn parse_chapter_timestamp(time: &str) -> Result<Time> {
     }
 
     // Hours, minutes, and integer seconds are mandatory.
-    let Some((h_str, rem)) = time.split_once(':')
-    else {
+    let Some((h_str, rem)) = time.split_once(':') else {
         return Err(FMT_ERR);
     };
-    let Some((m_str, rem)) = rem.split_once(':')
-    else {
+    let Some((m_str, rem)) = rem.split_once(':') else {
         return Err(FMT_ERR);
     };
     // Fractional seconds are optional.
@@ -345,24 +342,20 @@ fn parse_vorbis_comment(buf: &[u8]) -> Result<ParsedComment> {
         if let Some(key) = try_parse_chapter_info_key(&key) {
             // A comment with a key starting with "CHAPTERXXX" is a chapter information comment.
             Ok(ParsedComment::ChapterInfo(ChapterInfo { key, value: value.to_string() }))
-        }
-        else if key.eq_ignore_ascii_case("metadata_block_picture") {
+        } else if key.eq_ignore_ascii_case("metadata_block_picture") {
             // A comment with a key "METADATA_BLOCK_PICTURE" is a FLAC picture block encoded in
             // base64. Attempt to decode it as such.
             parse_base64_picture_block(value)
-        }
-        else if key.eq_ignore_ascii_case("coverart") {
+        } else if key.eq_ignore_ascii_case("coverart") {
             // A comment with a key "COVERART" is a base64 encoded image. Attempt to decode it as
             // such.
             parse_base64_cover_art(value)
-        }
-        else {
+        } else {
             // Add a tag created from the key-value pair, while also attempting to map it to a
             // standard tag.
             Ok(ParsedComment::Tag(RawTag::new(key, value)))
         }
-    }
-    else {
+    } else {
         decode_error("meta (vorbis): malformed comment")
     }
 }
@@ -436,11 +429,9 @@ pub fn read_vorbis_comment<B: ReadBytes>(
                             // "NAME" and "URL" are the only standardized keys for chapters.
                             let std_tag = if key.eq_ignore_ascii_case("name") {
                                 Some(StandardTag::ChapterTitle(value.clone()))
-                            }
-                            else if key.eq_ignore_ascii_case("url") {
+                            } else if key.eq_ignore_ascii_case("url") {
                                 Some(StandardTag::Url(value.clone()))
-                            }
-                            else {
+                            } else {
                                 None
                             };
 

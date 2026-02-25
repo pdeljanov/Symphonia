@@ -357,8 +357,7 @@ pub fn parse_id3v2_genre(v: Arc<String>) -> StandardTagPair {
     } else if s.chars().all(|c| c.is_ascii_digit()) {
         // "<NUMBER>"
         s.parse::<u8>().ok().and_then(get_genre_name)
-    } else if s.starts_with('(') {
-        let rest = &s[1..];
+    } else if let Some(rest) = s.strip_prefix('(') {
         if let Some(close) = rest.find(')') {
             let num_str = &rest[..close];
             let after   = &rest[close + 1..];

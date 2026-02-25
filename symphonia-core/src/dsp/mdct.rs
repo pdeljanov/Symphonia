@@ -11,7 +11,7 @@
 
 use alloc::{boxed::Box, vec, vec::Vec};
 
-use crate::dsp::complex::Complex;
+use crate::dsp::complex::{Complex, ComplexFloat};
 use crate::dsp::fft::*;
 
 /// The Inverse Modified Discrete Transform (IMDCT).

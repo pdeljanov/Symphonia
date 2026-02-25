@@ -13,12 +13,12 @@ use alloc::borrow::ToOwned;
 use alloc::string::String;
 use alloc::vec::Vec;
 use hashbrown::HashMap;
+use symphonia_core::Lazy;
 use symphonia_core::errors::{Result, decode_error};
 use symphonia_core::io::{BufReader, FiniteStream, ReadBytes};
 use symphonia_core::meta::RawTagSubField;
 use symphonia_core::meta::{Chapter, RawValue, Tag, Visual};
 
-use lazy_static::lazy_static;
 use log::warn;
 use smallvec::SmallVec;
 
@@ -220,198 +220,194 @@ pub fn min_frame_size(major_version: u8) -> u64 {
     }
 }
 
-lazy_static! {
-    static ref LEGACY_FRAME_MAP: HashMap<&'static [u8; 3], &'static [u8; 4]> = {
-        let mut m = HashMap::new();
-        m.insert(b"BUF", b"RBUF");
-        m.insert(b"CNT", b"PCNT");
-        m.insert(b"COM", b"COMM");
-        m.insert(b"CRA", b"AENC");
-        m.insert(b"CRM", b"CRM_"); // Maps to pseudo-ID3v2.4 frame.
-        m.insert(b"EQU", b"EQUA");
-        m.insert(b"ETC", b"ETCO");
-        m.insert(b"GEO", b"GEOB");
-        m.insert(b"IPL", b"IPLS");
-        m.insert(b"LNK", b"LINK");
-        m.insert(b"MCI", b"MCDI");
-        m.insert(b"MLL", b"MLLT");
-        m.insert(b"PCS", b"PCST");
-        m.insert(b"PIC", b"APIC");
-        m.insert(b"POP", b"POPM");
-        m.insert(b"REV", b"RVRB");
-        m.insert(b"RVA", b"RVAD");
-        m.insert(b"SLT", b"SYLT");
-        m.insert(b"STC", b"SYTC");
-        m.insert(b"TAL", b"TALB");
-        m.insert(b"TBP", b"TBPM");
-        m.insert(b"TCM", b"TCOM");
-        m.insert(b"TCO", b"TCON");
-        m.insert(b"TCP", b"TCMP");
-        m.insert(b"TCR", b"TCOP");
-        m.insert(b"TDA", b"TDAT");
-        m.insert(b"TDY", b"TDLY");
-        m.insert(b"TEN", b"TENC");
-        m.insert(b"TFT", b"TFLT");
-        m.insert(b"TIM", b"TIME");
-        m.insert(b"TKE", b"TKEY");
-        m.insert(b"TLA", b"TLAN");
-        m.insert(b"TLE", b"TLEN");
-        m.insert(b"TMT", b"TMED");
-        m.insert(b"TOA", b"TOPE");
-        m.insert(b"TOF", b"TOFN");
-        m.insert(b"TOL", b"TOLY");
-        m.insert(b"TOR", b"TORY");
-        m.insert(b"TOT", b"TOAL");
-        m.insert(b"TP1", b"TPE1");
-        m.insert(b"TP2", b"TPE2");
-        m.insert(b"TP3", b"TPE3");
-        m.insert(b"TP4", b"TPE4");
-        m.insert(b"TPA", b"TPOS");
-        m.insert(b"TPB", b"TPUB");
-        m.insert(b"TRC", b"TSRC");
-        m.insert(b"TRD", b"TRDA");
-        m.insert(b"TRK", b"TRCK");
-        m.insert(b"TS2", b"TSO2");
-        m.insert(b"TSA", b"TSOA");
-        m.insert(b"TSC", b"TSOC");
-        m.insert(b"TSI", b"TSIZ");
-        m.insert(b"TSP", b"TSOP");
-        m.insert(b"TSS", b"TSSE");
-        m.insert(b"TST", b"TSOT");
-        m.insert(b"TT1", b"TIT1");
-        m.insert(b"TT2", b"TIT2");
-        m.insert(b"TT3", b"TIT3");
-        m.insert(b"TXT", b"TEXT");
-        m.insert(b"TXX", b"TXXX");
-        m.insert(b"TYE", b"TYER");
-        m.insert(b"UFI", b"UFID");
-        m.insert(b"ULT", b"USLT");
-        m.insert(b"WAF", b"WOAF");
-        m.insert(b"WAR", b"WOAR");
-        m.insert(b"WAS", b"WOAS");
-        m.insert(b"WCM", b"WCOM");
-        m.insert(b"WCP", b"WCOP");
-        m.insert(b"WPB", b"WPUB");
-        m.insert(b"WXX", b"WXXX");
-        m
-    };
-}
+static LEGACY_FRAME_MAP: Lazy<HashMap<&'static [u8; 3], &'static [u8; 4]>> = Lazy::new(|| {
+    let mut m = HashMap::new();
+    m.insert(b"BUF", b"RBUF");
+    m.insert(b"CNT", b"PCNT");
+    m.insert(b"COM", b"COMM");
+    m.insert(b"CRA", b"AENC");
+    m.insert(b"CRM", b"CRM_"); // Maps to pseudo-ID3v2.4 frame.
+    m.insert(b"EQU", b"EQUA");
+    m.insert(b"ETC", b"ETCO");
+    m.insert(b"GEO", b"GEOB");
+    m.insert(b"IPL", b"IPLS");
+    m.insert(b"LNK", b"LINK");
+    m.insert(b"MCI", b"MCDI");
+    m.insert(b"MLL", b"MLLT");
+    m.insert(b"PCS", b"PCST");
+    m.insert(b"PIC", b"APIC");
+    m.insert(b"POP", b"POPM");
+    m.insert(b"REV", b"RVRB");
+    m.insert(b"RVA", b"RVAD");
+    m.insert(b"SLT", b"SYLT");
+    m.insert(b"STC", b"SYTC");
+    m.insert(b"TAL", b"TALB");
+    m.insert(b"TBP", b"TBPM");
+    m.insert(b"TCM", b"TCOM");
+    m.insert(b"TCO", b"TCON");
+    m.insert(b"TCP", b"TCMP");
+    m.insert(b"TCR", b"TCOP");
+    m.insert(b"TDA", b"TDAT");
+    m.insert(b"TDY", b"TDLY");
+    m.insert(b"TEN", b"TENC");
+    m.insert(b"TFT", b"TFLT");
+    m.insert(b"TIM", b"TIME");
+    m.insert(b"TKE", b"TKEY");
+    m.insert(b"TLA", b"TLAN");
+    m.insert(b"TLE", b"TLEN");
+    m.insert(b"TMT", b"TMED");
+    m.insert(b"TOA", b"TOPE");
+    m.insert(b"TOF", b"TOFN");
+    m.insert(b"TOL", b"TOLY");
+    m.insert(b"TOR", b"TORY");
+    m.insert(b"TOT", b"TOAL");
+    m.insert(b"TP1", b"TPE1");
+    m.insert(b"TP2", b"TPE2");
+    m.insert(b"TP3", b"TPE3");
+    m.insert(b"TP4", b"TPE4");
+    m.insert(b"TPA", b"TPOS");
+    m.insert(b"TPB", b"TPUB");
+    m.insert(b"TRC", b"TSRC");
+    m.insert(b"TRD", b"TRDA");
+    m.insert(b"TRK", b"TRCK");
+    m.insert(b"TS2", b"TSO2");
+    m.insert(b"TSA", b"TSOA");
+    m.insert(b"TSC", b"TSOC");
+    m.insert(b"TSI", b"TSIZ");
+    m.insert(b"TSP", b"TSOP");
+    m.insert(b"TSS", b"TSSE");
+    m.insert(b"TST", b"TSOT");
+    m.insert(b"TT1", b"TIT1");
+    m.insert(b"TT2", b"TIT2");
+    m.insert(b"TT3", b"TIT3");
+    m.insert(b"TXT", b"TEXT");
+    m.insert(b"TXX", b"TXXX");
+    m.insert(b"TYE", b"TYER");
+    m.insert(b"UFI", b"UFID");
+    m.insert(b"ULT", b"USLT");
+    m.insert(b"WAF", b"WOAF");
+    m.insert(b"WAR", b"WOAR");
+    m.insert(b"WAS", b"WOAS");
+    m.insert(b"WCM", b"WCOM");
+    m.insert(b"WCP", b"WCOP");
+    m.insert(b"WPB", b"WPUB");
+    m.insert(b"WXX", b"WXXX");
+    m
+});
 
-lazy_static! {
-    static ref FRAME_READERS: FrameReaderMap = {
-            let mut m: FrameReaderMap = HashMap::new();
-            m.insert(b"AENC", (read_aenc_frame as FrameReader, None));
-            m.insert(b"APIC", (read_apic_frame, None));
-            m.insert(b"ASPI", (read_raw_frame, None)); // TODO: SeekIndex side-data?
-            m.insert(b"ATXT", (read_atxt_frame, None));
-            m.insert(b"CHAP", (read_chap_frame, None));
-            m.insert(b"COMM", (read_comm_frame, None));
-            m.insert(b"COMR", (read_comr_frame, None));
-            m.insert(b"CRM_", (read_crm_frame, None)); // Pseudo-frame to support ID3v2.2 frame.
-            m.insert(b"CTOC", (read_ctoc_frame, None));
-            m.insert(b"ENCR", (read_encr_frame, None));
-            m.insert(b"EQU2", (read_raw_frame, None));
-            m.insert(b"EQUA", (read_raw_frame, None));
-            m.insert(b"ETCO", (read_raw_frame, None));
-            m.insert(b"GEOB", (read_geob_frame, None));
-            m.insert(b"GRID", (read_grid_frame, None));
-            m.insert(b"IPLS", (read_tipl_frame, None));
-            m.insert(b"LINK", (skip_frame, None));
-            m.insert(b"MCDI", (read_mcdi_frame, None));
-            m.insert(b"MLLT", (read_raw_frame, None)); // TODO: SeekIndex side-data?
-            m.insert(b"OWNE", (read_owne_frame, None));
-            m.insert(b"PCNT", (read_pcnt_frame, None));
-            m.insert(b"POPM", (read_popm_frame, None));
-            m.insert(b"POSS", (read_poss_frame, None));
-            m.insert(b"PRIV", (read_priv_frame, None));
-            m.insert(b"RBUF", (read_raw_frame, None));
-            m.insert(b"RVA2", (read_raw_frame, None));
-            m.insert(b"RVAD", (read_raw_frame, None));
-            m.insert(b"RVRB", (read_raw_frame, None));
-            m.insert(b"SEEK", (skip_frame, None));
-            m.insert(b"SIGN", (read_sign_frame, None));
-            m.insert(b"SYLT", (read_raw_frame, None));
-            m.insert(b"SYTC", (read_raw_frame, None));
-            m.insert(b"TALB", (read_text_frame, Some(parse_album)));
-            m.insert(b"TBPM", (read_text_frame, Some(parse_bpm)));
-            m.insert(b"TCMP", (read_text_frame, Some(parse_compilation)));
-            m.insert(b"TCOM", (read_text_frame, Some(parse_composer)));
-            m.insert(b"TCON", (read_text_frame, Some(parse_id3v2_genre)));
-            m.insert(b"TCOP", (read_text_frame, Some(parse_copyright)));
-            m.insert(b"TDAT", (read_text_frame, Some(parse_recording_date)));
-            m.insert(b"TDEN", (read_text_frame, Some(parse_encoding_date)));
-            m.insert(b"TDLY", (read_text_frame, None));
-            m.insert(b"TDOR", (read_text_frame, Some(parse_original_release_date)));
-            m.insert(b"TDRC", (read_text_frame, Some(parse_recording_date)));
-            m.insert(b"TDRL", (read_text_frame, Some(parse_release_time)));
-            m.insert(b"TDTG", (read_text_frame, Some(parse_tagging_date)));
-            m.insert(b"TENC", (read_text_frame, Some(parse_encoded_by)));
-            m.insert(b"TEXT", (read_text_frame, Some(parse_lyricist)));
-            m.insert(b"TFLT", (read_text_frame, None));
-            m.insert(b"TIME", (read_text_frame, Some(parse_recording_time)));
-            m.insert(b"TIPL", (read_tipl_frame, None));
-            m.insert(b"TIT1", (read_text_frame, Some(parse_grouping)));
-            m.insert(b"TIT2", (read_text_frame, Some(parse_track_title)));
-            m.insert(b"TIT3", (read_text_frame, Some(parse_track_subtitle)));
-            m.insert(b"TKEY", (read_text_frame, Some(parse_initial_key)));
-            m.insert(b"TLAN", (read_text_frame, Some(parse_language)));
-            m.insert(b"TLEN", (read_text_frame, None));
-            m.insert(b"TMCL", (read_text_frame, None));
-            m.insert(b"TMED", (read_text_frame, Some(parse_media_format)));
-            m.insert(b"TMOO", (read_text_frame, Some(parse_mood)));
-            m.insert(b"TOAL", (read_text_frame, Some(parse_original_album)));
-            m.insert(b"TOFN", (read_text_frame, Some(parse_original_file)));
-            m.insert(b"TOLY", (read_text_frame, Some(parse_original_lyricist)));
-            m.insert(b"TOPE", (read_text_frame, Some(parse_original_artist)));
-            m.insert(b"TORY", (read_text_frame, Some(parse_original_release_year)));
-            m.insert(b"TOWN", (read_text_frame, Some(parse_owner)));
-            m.insert(b"TPE1", (read_text_frame, Some(parse_artist)));
-            m.insert(b"TPE2", (read_text_frame, Some(parse_album_artist)));
-            m.insert(b"TPE3", (read_text_frame, Some(parse_conductor)));
-            m.insert(b"TPE4", (read_text_frame, Some(parse_remixer)));
-            m.insert(b"TPOS", (read_text_frame, Some(parse_disc_number)));
-            m.insert(b"TPRO", (read_text_frame, Some(parse_production_copyright)));
-            m.insert(b"TPUB", (read_text_frame, Some(parse_label)));
-            m.insert(b"TRCK", (read_text_frame, Some(parse_track_number)));
-            m.insert(b"TRDA", (read_text_frame, Some(parse_recording_date))); // TODO: Dates
-            m.insert(b"TRSN", (read_text_frame, Some(parse_internet_radio_name)));
-            m.insert(b"TRSO", (read_text_frame, Some(parse_internet_radio_owner)));
-            m.insert(b"TSIZ", (read_text_frame, None));
-            m.insert(b"TSOA", (read_text_frame, Some(parse_sort_album)));
-            m.insert(b"TSOP", (read_text_frame, Some(parse_sort_artist)));
-            m.insert(b"TSOT", (read_text_frame, Some(parse_sort_track_title)));
-            m.insert(b"TSRC", (read_text_frame, Some(parse_ident_isrc)));
-            m.insert(b"TSSE", (read_text_frame, Some(parse_encoder)));
-            m.insert(b"TSST", (read_text_frame, Some(parse_disc_subtitle)));
-            m.insert(b"TXXX", (read_txxx_frame, None));
-            m.insert(b"TYER", (read_text_frame, Some(parse_recording_year)));
-            m.insert(b"UFID", (read_ufid_frame, None));
-            m.insert(b"USER", (read_user_frame, None));
-            m.insert(b"USLT", (read_uslt_frame, None));
-            m.insert(b"WCOM", (read_url_frame, Some(parse_url_purchase)));
-            m.insert(b"WCOP", (read_url_frame, Some(parse_url_copyright)));
-            m.insert(b"WOAF", (read_url_frame, Some(parse_url_official)));
-            m.insert(b"WOAR", (read_url_frame, Some(parse_url_artist)));
-            m.insert(b"WOAS", (read_url_frame, Some(parse_url_source)));
-            m.insert(b"WORS", (read_url_frame, Some(parse_url_internet_radio)));
-            m.insert(b"WPAY", (read_url_frame, Some(parse_url_payment)));
-            m.insert(b"WPUB", (read_url_frame, Some(parse_url_label)));
-            m.insert(b"WXXX", (read_wxxx_frame, Some(parse_url)));
-            // Apple iTunes frames
-            m.insert(b"PCST", (read_text_frame, Some(parse_podcast_flag)));
-            m.insert(b"GRP1", (read_text_frame, Some(parse_grouping)));
-            m.insert(b"MVIN", (read_text_frame, Some(parse_movement_number)));
-            m.insert(b"MVNM", (read_text_frame, Some(parse_movement_name)));
-            m.insert(b"TCAT", (read_text_frame, Some(parse_podcast_category)));
-            m.insert(b"TDES", (read_text_frame, Some(parse_podcast_description)));
-            m.insert(b"TGID", (read_text_frame, Some(parse_ident_podcast)));
-            m.insert(b"TKWD", (read_text_frame, Some(parse_podcast_keywords)));
-            m.insert(b"TSO2", (read_text_frame, Some(parse_sort_album_artist)));
-            m.insert(b"TSOC", (read_text_frame, Some(parse_sort_composer)));
-            m.insert(b"WFED", (read_text_frame, Some(parse_url_podcast)));
-            m
-        };
-}
+static FRAME_READERS: Lazy<FrameReaderMap> = Lazy::new(|| {
+    let mut m: FrameReaderMap = HashMap::new();
+    m.insert(b"AENC", (read_aenc_frame as FrameReader, None));
+    m.insert(b"APIC", (read_apic_frame, None));
+    m.insert(b"ASPI", (read_raw_frame, None)); // TODO: SeekIndex side-data?
+    m.insert(b"ATXT", (read_atxt_frame, None));
+    m.insert(b"CHAP", (read_chap_frame, None));
+    m.insert(b"COMM", (read_comm_frame, None));
+    m.insert(b"COMR", (read_comr_frame, None));
+    m.insert(b"CRM_", (read_crm_frame, None)); // Pseudo-frame to support ID3v2.2 frame.
+    m.insert(b"CTOC", (read_ctoc_frame, None));
+    m.insert(b"ENCR", (read_encr_frame, None));
+    m.insert(b"EQU2", (read_raw_frame, None));
+    m.insert(b"EQUA", (read_raw_frame, None));
+    m.insert(b"ETCO", (read_raw_frame, None));
+    m.insert(b"GEOB", (read_geob_frame, None));
+    m.insert(b"GRID", (read_grid_frame, None));
+    m.insert(b"IPLS", (read_tipl_frame, None));
+    m.insert(b"LINK", (skip_frame, None));
+    m.insert(b"MCDI", (read_mcdi_frame, None));
+    m.insert(b"MLLT", (read_raw_frame, None)); // TODO: SeekIndex side-data?
+    m.insert(b"OWNE", (read_owne_frame, None));
+    m.insert(b"PCNT", (read_pcnt_frame, None));
+    m.insert(b"POPM", (read_popm_frame, None));
+    m.insert(b"POSS", (read_poss_frame, None));
+    m.insert(b"PRIV", (read_priv_frame, None));
+    m.insert(b"RBUF", (read_raw_frame, None));
+    m.insert(b"RVA2", (read_raw_frame, None));
+    m.insert(b"RVAD", (read_raw_frame, None));
+    m.insert(b"RVRB", (read_raw_frame, None));
+    m.insert(b"SEEK", (skip_frame, None));
+    m.insert(b"SIGN", (read_sign_frame, None));
+    m.insert(b"SYLT", (read_raw_frame, None));
+    m.insert(b"SYTC", (read_raw_frame, None));
+    m.insert(b"TALB", (read_text_frame, Some(parse_album)));
+    m.insert(b"TBPM", (read_text_frame, Some(parse_bpm)));
+    m.insert(b"TCMP", (read_text_frame, Some(parse_compilation)));
+    m.insert(b"TCOM", (read_text_frame, Some(parse_composer)));
+    m.insert(b"TCON", (read_text_frame, Some(parse_id3v2_genre)));
+    m.insert(b"TCOP", (read_text_frame, Some(parse_copyright)));
+    m.insert(b"TDAT", (read_text_frame, Some(parse_recording_date)));
+    m.insert(b"TDEN", (read_text_frame, Some(parse_encoding_date)));
+    m.insert(b"TDLY", (read_text_frame, None));
+    m.insert(b"TDOR", (read_text_frame, Some(parse_original_release_date)));
+    m.insert(b"TDRC", (read_text_frame, Some(parse_recording_date)));
+    m.insert(b"TDRL", (read_text_frame, Some(parse_release_time)));
+    m.insert(b"TDTG", (read_text_frame, Some(parse_tagging_date)));
+    m.insert(b"TENC", (read_text_frame, Some(parse_encoded_by)));
+    m.insert(b"TEXT", (read_text_frame, Some(parse_lyricist)));
+    m.insert(b"TFLT", (read_text_frame, None));
+    m.insert(b"TIME", (read_text_frame, Some(parse_recording_time)));
+    m.insert(b"TIPL", (read_tipl_frame, None));
+    m.insert(b"TIT1", (read_text_frame, Some(parse_grouping)));
+    m.insert(b"TIT2", (read_text_frame, Some(parse_track_title)));
+    m.insert(b"TIT3", (read_text_frame, Some(parse_track_subtitle)));
+    m.insert(b"TKEY", (read_text_frame, Some(parse_initial_key)));
+    m.insert(b"TLAN", (read_text_frame, Some(parse_language)));
+    m.insert(b"TLEN", (read_text_frame, None));
+    m.insert(b"TMCL", (read_text_frame, None));
+    m.insert(b"TMED", (read_text_frame, Some(parse_media_format)));
+    m.insert(b"TMOO", (read_text_frame, Some(parse_mood)));
+    m.insert(b"TOAL", (read_text_frame, Some(parse_original_album)));
+    m.insert(b"TOFN", (read_text_frame, Some(parse_original_file)));
+    m.insert(b"TOLY", (read_text_frame, Some(parse_original_lyricist)));
+    m.insert(b"TOPE", (read_text_frame, Some(parse_original_artist)));
+    m.insert(b"TORY", (read_text_frame, Some(parse_original_release_year)));
+    m.insert(b"TOWN", (read_text_frame, Some(parse_owner)));
+    m.insert(b"TPE1", (read_text_frame, Some(parse_artist)));
+    m.insert(b"TPE2", (read_text_frame, Some(parse_album_artist)));
+    m.insert(b"TPE3", (read_text_frame, Some(parse_conductor)));
+    m.insert(b"TPE4", (read_text_frame, Some(parse_remixer)));
+    m.insert(b"TPOS", (read_text_frame, Some(parse_disc_number)));
+    m.insert(b"TPRO", (read_text_frame, Some(parse_production_copyright)));
+    m.insert(b"TPUB", (read_text_frame, Some(parse_label)));
+    m.insert(b"TRCK", (read_text_frame, Some(parse_track_number)));
+    m.insert(b"TRDA", (read_text_frame, Some(parse_recording_date))); // TODO: Dates
+    m.insert(b"TRSN", (read_text_frame, Some(parse_internet_radio_name)));
+    m.insert(b"TRSO", (read_text_frame, Some(parse_internet_radio_owner)));
+    m.insert(b"TSIZ", (read_text_frame, None));
+    m.insert(b"TSOA", (read_text_frame, Some(parse_sort_album)));
+    m.insert(b"TSOP", (read_text_frame, Some(parse_sort_artist)));
+    m.insert(b"TSOT", (read_text_frame, Some(parse_sort_track_title)));
+    m.insert(b"TSRC", (read_text_frame, Some(parse_ident_isrc)));
+    m.insert(b"TSSE", (read_text_frame, Some(parse_encoder)));
+    m.insert(b"TSST", (read_text_frame, Some(parse_disc_subtitle)));
+    m.insert(b"TXXX", (read_txxx_frame, None));
+    m.insert(b"TYER", (read_text_frame, Some(parse_recording_year)));
+    m.insert(b"UFID", (read_ufid_frame, None));
+    m.insert(b"USER", (read_user_frame, None));
+    m.insert(b"USLT", (read_uslt_frame, None));
+    m.insert(b"WCOM", (read_url_frame, Some(parse_url_purchase)));
+    m.insert(b"WCOP", (read_url_frame, Some(parse_url_copyright)));
+    m.insert(b"WOAF", (read_url_frame, Some(parse_url_official)));
+    m.insert(b"WOAR", (read_url_frame, Some(parse_url_artist)));
+    m.insert(b"WOAS", (read_url_frame, Some(parse_url_source)));
+    m.insert(b"WORS", (read_url_frame, Some(parse_url_internet_radio)));
+    m.insert(b"WPAY", (read_url_frame, Some(parse_url_payment)));
+    m.insert(b"WPUB", (read_url_frame, Some(parse_url_label)));
+    m.insert(b"WXXX", (read_wxxx_frame, Some(parse_url)));
+    // Apple iTunes frames
+    m.insert(b"PCST", (read_text_frame, Some(parse_podcast_flag)));
+    m.insert(b"GRP1", (read_text_frame, Some(parse_grouping)));
+    m.insert(b"MVIN", (read_text_frame, Some(parse_movement_number)));
+    m.insert(b"MVNM", (read_text_frame, Some(parse_movement_name)));
+    m.insert(b"TCAT", (read_text_frame, Some(parse_podcast_category)));
+    m.insert(b"TDES", (read_text_frame, Some(parse_podcast_description)));
+    m.insert(b"TGID", (read_text_frame, Some(parse_ident_podcast)));
+    m.insert(b"TKWD", (read_text_frame, Some(parse_podcast_keywords)));
+    m.insert(b"TSO2", (read_text_frame, Some(parse_sort_album_artist)));
+    m.insert(b"TSOC", (read_text_frame, Some(parse_sort_composer)));
+    m.insert(b"WFED", (read_text_frame, Some(parse_url_podcast)));
+    m
+});
 
 /// Validates that a frame id only contains uppercase letters (A-Z), and digits (0-9).
 fn validate_frame_id(id: &[u8]) -> bool {
@@ -696,8 +692,7 @@ pub fn read_id3v2p4_frame<B: ReadBytes + FiniteStream>(reader: &mut B) -> Result
         let unsync_data = decode_unsynchronisation(&mut data);
 
         read_frame(BufReader::new(unsync_data), &info)
-    }
-    else {
+    } else {
         // The frame body has not been unsynchronised.
         read_frame(BufReader::new(&data), &info)
     };

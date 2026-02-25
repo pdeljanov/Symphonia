@@ -9,7 +9,6 @@ use std::borrow::Cow;
 use std::io::Write;
 use std::path::Path;
 
-use lazy_static::lazy_static;
 use symphonia::core::codecs::{CodecInfo, CodecParameters, CodecProfile};
 use symphonia::core::formats::{Attachment, FormatReader, Track, TrackFlags};
 use symphonia::core::meta::{
@@ -18,6 +17,7 @@ use symphonia::core::meta::{
 };
 use symphonia::core::units::{Duration, Time, TimeBase, Timestamp};
 use symphonia::core::util::text;
+use symphonia::core::Lazy;
 
 /// The minimum padding for tag keys.
 const MIN_PAD: usize = 20;
@@ -158,8 +158,7 @@ pub fn print_tracks(tracks: &[Track]) {
                         Bullet::None,
                         1,
                     );
-                }
-                else {
+                } else {
                     print_pair("Start Time:", &track.start_ts, Bullet::None, 1);
                 }
             }
@@ -172,8 +171,7 @@ pub fn print_tracks(tracks: &[Track]) {
                         Bullet::None,
                         1,
                     );
-                }
-                else {
+                } else {
                     print_pair("Frames:", &num_frames, Bullet::None, 1);
                 }
             }
@@ -482,8 +480,7 @@ pub fn print_pair_value(value: &str, lead: usize) {
                         .map(|(_, c)| {
                             if text::filter::c0_control(&c) {
                                 char::from_u32(0x2400 + c as u32).unwrap()
-                            }
-                            else {
+                            } else {
                                 c
                             }
                         })
@@ -504,8 +501,7 @@ pub fn print_pair_value(value: &str, lead: usize) {
                 println!("{seg}")
             }
         }
-    }
-    else {
+    } else {
         println!();
     }
 }
@@ -525,11 +521,9 @@ pub fn print_progress(cur_ts: Timestamp, dur: Option<Duration>, tb: Option<TimeB
     fn progress_bar(ts: Timestamp, dur: Duration) -> &'static str {
         const NUM_STEPS: usize = 60;
 
-        lazy_static! {
-            static ref PROGRESS_BAR: Vec<String> = {
-                (0..NUM_STEPS + 1).map(|i| format!("[{:<60}]", str::repeat("■", i))).collect()
-            };
-        }
+        static PROGRESS_BAR: Lazy<Vec<String>> = Lazy::new(|| {
+            (0..NUM_STEPS + 1).map(|i| format!("[{:<60}]", str::repeat("■", i))).collect()
+        });
 
         // Clamp negative timestamps to 0 and calculate the progress index.
         let i = (NUM_STEPS as u64)
@@ -557,8 +551,7 @@ pub fn print_progress(cur_ts: Timestamp, dur: Option<Duration>, tb: Option<TimeB
             write!(output, " {} ", progress_bar(cur_ts, dur)).unwrap();
             write_time(&mut output, rem_time).unwrap()
         }
-    }
-    else {
+    } else {
         write!(output, "\r\u{25b6}\u{fe0f}  {cur_ts}").unwrap();
     }
 
@@ -578,8 +571,7 @@ fn optimal_tag_key_pad(tags: &[Tag], min: usize, max: usize) -> usize {
 fn pad_key(key: &str, pad: usize) -> String {
     if key.len() <= pad {
         format!("{key:<pad$}")
-    }
-    else {
+    } else {
         // Key length too large.
         format!("{:.<pad$}", key.split_at(pad - 2).0)
     }

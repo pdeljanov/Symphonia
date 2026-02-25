@@ -10,6 +10,7 @@
 use core::fmt;
 
 use core::num::NonZero;
+use num_traits::Float;
 
 /// A `Timestamp` is an instant in time expressed in stream timebase units.
 ///

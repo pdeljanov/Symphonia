@@ -6,9 +6,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use alloc::vec::Vec;
-use symphonia_core::io::vlc::*;
-
-use lazy_static::lazy_static;
+use symphonia_core::{Lazy, io::vlc::*};
 
 #[rustfmt::skip]
 const MPEG_CODES_0: [u32; 0] = [ ];
@@ -560,54 +558,48 @@ fn mpeg_gen_value(i: u16, wrap: u16) -> u16 {
     ((i / wrap) << 4) | (i % wrap)
 }
 
-lazy_static! {
-    pub static ref CODEBOOK_TABLES: [Codebook<Entry16x16>; 18] = {
-        let mut codebooks: [Codebook<Entry16x16>; 18] = Default::default();
+pub static CODEBOOK_TABLES: Lazy<[Codebook<Entry16x16>; 18]> = Lazy::new(|| {
+    let mut codebooks: [Codebook<Entry16x16>; 18] = Default::default();
 
-        for (codebook, table) in codebooks.iter_mut().zip(&MPEG_TABLES) {
-            assert!(table.codes.len() == table.lens.len());
+    for (codebook, table) in codebooks.iter_mut().zip(&MPEG_TABLES) {
+        assert!(table.codes.len() == table.lens.len());
 
-            let len = table.codes.len() as u16;
+        let len = table.codes.len() as u16;
 
-            // Generate values for the codebook.
-            let values: Vec<u16> = (0..len).map(|i| mpeg_gen_value(i, table.wrap))
-                                           .collect();
+        // Generate values for the codebook.
+        let values: Vec<u16> = (0..len).map(|i| mpeg_gen_value(i, table.wrap)).collect();
 
-            // Generate the codebook.
-            let mut builder = CodebookBuilder::new(BitOrder::Verbatim);
+        // Generate the codebook.
+        let mut builder = CodebookBuilder::new(BitOrder::Verbatim);
 
-            // Decode a maximum of 8 bits per read.
-            builder.bits_per_read(8);
+        // Decode a maximum of 8 bits per read.
+        builder.bits_per_read(8);
 
-            *codebook = builder.make(table.codes, table.lens, &values).unwrap();
-        }
+        *codebook = builder.make(table.codes, table.lens, &values).unwrap();
+    }
 
-        codebooks
-    };
-}
+    codebooks
+});
 
-lazy_static! {
-    pub static ref QUADS_CODEBOOK_TABLE: [Codebook<Entry16x16>; 2] = {
-        let mut codebooks: [Codebook<Entry16x16>; 2] = Default::default();
+pub static QUADS_CODEBOOK_TABLE: Lazy<[Codebook<Entry16x16>; 2]> = Lazy::new(|| {
+    let mut codebooks: [Codebook<Entry16x16>; 2] = Default::default();
 
-        for (codebook, table) in codebooks.iter_mut().zip(&MPEG_QUADS_TABLES) {
-            assert!(table.codes.len() == table.lens.len());
+    for (codebook, table) in codebooks.iter_mut().zip(&MPEG_QUADS_TABLES) {
+        assert!(table.codes.len() == table.lens.len());
 
-            let len = table.codes.len() as u16;
+        let len = table.codes.len() as u16;
 
-            // Generate values for the codebook.
-            let values: Vec<u16> = (0..len).map(|i| mpeg_gen_value(i, table.wrap))
-                                           .collect();
+        // Generate values for the codebook.
+        let values: Vec<u16> = (0..len).map(|i| mpeg_gen_value(i, table.wrap)).collect();
 
-            // Generate the codebook.
-            let mut builder = CodebookBuilder::new(BitOrder::Verbatim);
+        // Generate the codebook.
+        let mut builder = CodebookBuilder::new(BitOrder::Verbatim);
 
-            // Decode a maximum of 8 bits per read.
-            builder.bits_per_read(8);
+        // Decode a maximum of 8 bits per read.
+        builder.bits_per_read(8);
 
-            *codebook = builder.make(table.codes, table.lens, &values).unwrap();
-        }
+        *codebook = builder.make(table.codes, table.lens, &values).unwrap();
+    }
 
-        codebooks
-    };
-}
+    codebooks
+});

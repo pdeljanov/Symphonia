@@ -100,7 +100,7 @@ exp-subtitle-codecs = ["symphonia-core/exp-subtitle-codecs"]
 exp-video-codecs = ["symphonia-core/exp-video-codecs"]
 
 [dependencies]
-lazy_static = "1.4.0"
+
 
 [dependencies.symphonia-core]
 version = "0.6.0"

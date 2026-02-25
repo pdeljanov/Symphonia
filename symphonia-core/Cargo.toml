@@ -16,7 +16,7 @@ version.workspace = true
 [features]
 default = []
 
-std = ["embedded-io/std", "embedded-io-adapters/std"]
+std = ["embedded-io/std", "embedded-io-adapters/std", "once_cell/std"]
 defmt = ["embedded-io/defmt"]
 
 # SIMD support.
@@ -41,10 +41,13 @@ bytemuck = "1.7"
 embedded-io = { version = "0.7.1", features = ["alloc"] }
 embedded-io-adapters = "0.7.0"
 hashbrown = { workspace = true }
-lazy_static = "1.4.0"
+
 log = "0.4"
-num-complex = { version = "0.4", default-features = false }
+num-complex = { version = "0.4", default-features = false, features = ["libm"] }
+num-traits = { version = "0.2", default-features = false, features = ["libm"] }
 smallvec = "1.13.1"
+# Use critical-section feature for no_std support, but when std is enabled uses std::sync
+once_cell = { version = "1.21", default-features = false, features = ["critical-section"] }
 
 [dependencies.rustfft]
 version = "6.1.0"

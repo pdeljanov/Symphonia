@@ -34,3 +34,8 @@ pub mod subtitle;
 pub mod units;
 pub mod util;
 pub mod video;
+
+// Re-export for other crates so that all features are managed centrally
+pub use once_cell::sync::{OnceCell, Lazy};
+
+pub use num_traits::Float;
