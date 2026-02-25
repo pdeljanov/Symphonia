@@ -849,7 +849,7 @@ fn dct32(x: &[f32; 32], y: &mut [f32; 32]) {
 #[cfg(test)]
 mod tests {
     use super::dct32;
-    use std::f64;
+    use core::f64;
 
     fn dct32_analytical(x: &[f32; 32]) -> [f32; 32] {
         const PI_32: f64 = f64::consts::PI / 32.0;

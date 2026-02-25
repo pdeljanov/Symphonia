@@ -8,146 +8,140 @@
 // Justification: Some loops are better expressed without a range loop.
 #![allow(clippy::needless_range_loop)]
 
+use symphonia_core::{Float, Lazy};
+
 use crate::common::FrameHeader;
 
 use super::{GranuleChannel, common::*};
 
-use std::{convert::TryInto, f64};
+use core::{convert::TryInto, f64};
 
-use lazy_static::lazy_static;
+/// Hybrid synthesesis IMDCT window coefficients for: Long, Start, Short, and End block, in that
+/// order.
+///
+/// For long blocks:
+///
+/// ```text
+/// W[ 0..36] = sin(PI/36.0 * (i + 0.5))
+/// ```
+///
+/// For start blocks:
+///
+/// ```text
+/// W[ 0..18] = sin(PI/36.0 * (i + 0.5))
+/// W[18..24] = 1.0
+/// W[24..30] = sin(PI/12.0 * ((i - 18) - 0.5))
+/// W[30..36] = 0.0
+/// ```
+///
+/// For short blocks (to be applied to each 12 sample window):
+///
+/// ```text
+/// W[ 0..12] = sin(PI/12.0 * (i + 0.5))
+/// W[12..36] = 0.0
+/// ```
+///
+/// For end blocks:
+///
+/// ```text
+/// W[ 0..6 ] = 0.0
+/// W[ 6..12] = sin(PI/12.0 * ((i - 6) + 0.5))
+/// W[12..18] = 1.0
+/// W[18..36] = sin(PI/36.0 * (i + 0.5))
+/// ```
+static IMDCT_WINDOWS: Lazy<[[f32; 36]; 4]> = Lazy::new(|| {
+    const PI_36: f64 = f64::consts::PI / 36.0;
+    const PI_12: f64 = f64::consts::PI / 12.0;
 
-lazy_static! {
-    /// Hybrid synthesesis IMDCT window coefficients for: Long, Start, Short, and End block, in that
-    /// order.
-    ///
-    /// For long blocks:
-    ///
-    /// ```text
-    /// W[ 0..36] = sin(PI/36.0 * (i + 0.5))
-    /// ```
-    ///
-    /// For start blocks:
-    ///
-    /// ```text
-    /// W[ 0..18] = sin(PI/36.0 * (i + 0.5))
-    /// W[18..24] = 1.0
-    /// W[24..30] = sin(PI/12.0 * ((i - 18) - 0.5))
-    /// W[30..36] = 0.0
-    /// ```
-    ///
-    /// For short blocks (to be applied to each 12 sample window):
-    ///
-    /// ```text
-    /// W[ 0..12] = sin(PI/12.0 * (i + 0.5))
-    /// W[12..36] = 0.0
-    /// ```
-    ///
-    /// For end blocks:
-    ///
-    /// ```text
-    /// W[ 0..6 ] = 0.0
-    /// W[ 6..12] = sin(PI/12.0 * ((i - 6) + 0.5))
-    /// W[12..18] = 1.0
-    /// W[18..36] = sin(PI/36.0 * (i + 0.5))
-    /// ```
-    static ref IMDCT_WINDOWS: [[f32; 36]; 4] = {
-        const PI_36: f64 = f64::consts::PI / 36.0;
-        const PI_12: f64 = f64::consts::PI / 12.0;
+    let mut windows = [[0f32; 36]; 4];
 
-        let mut windows = [[0f32; 36]; 4];
+    // Window for Long blocks.
+    for i in 0..36 {
+        windows[0][i] = (PI_36 * (i as f64 + 0.5)).sin() as f32;
+    }
 
-        // Window for Long blocks.
-        for i in 0..36 {
-            windows[0][i] = (PI_36 * (i as f64 + 0.5)).sin() as f32;
+    // Window for Start blocks (indicies 30..36 implictly 0.0).
+    for i in 0..18 {
+        windows[1][i] = (PI_36 * (i as f64 + 0.5)).sin() as f32;
+    }
+    for i in 18..24 {
+        windows[1][i] = 1.0;
+    }
+    for i in 24..30 {
+        windows[1][i] = (PI_12 * ((i - 18) as f64 + 0.5)).sin() as f32;
+    }
+
+    // Window for Short blocks.
+    for i in 0..12 {
+        windows[2][i] = (PI_12 * (i as f64 + 0.5)).sin() as f32;
+    }
+
+    // Window for End blocks (indicies 0..6 implicitly 0.0).
+    for i in 6..12 {
+        windows[3][i] = (PI_12 * ((i - 6) as f64 + 0.5)).sin() as f32;
+    }
+    for i in 12..18 {
+        windows[3][i] = 1.0;
+    }
+    for i in 18..36 {
+        windows[3][i] = (PI_36 * (i as f64 + 0.5)).sin() as f32;
+    }
+
+    windows
+});
+
+/// Lookup table of cosine coefficients for half of a 12-point IMDCT.
+///
+/// This table is derived from the general expression:
+///
+/// ```text
+/// cos12[i][k] = cos(PI/24.0 * (2*i + 1 + N/2) * (2*k + 1))
+/// ```
+/// where:
+///     `N=12`, `i=N/4..3N/4`, and `k=0..N/2`.
+static IMDCT_HALF_COS_12: Lazy<[[f32; 6]; 6]> = Lazy::new(|| {
+    const PI_24: f64 = f64::consts::PI / 24.0;
+
+    let mut cos = [[0f32; 6]; 6];
+
+    for (i, cos_i) in cos.iter_mut().enumerate() {
+        for (k, cos_ik) in cos_i.iter_mut().enumerate() {
+            // Only compute the middle half of the cosine lookup table (i offset by 3).
+            let n = (2 * (i + 3) + (12 / 2) + 1) * (2 * k + 1);
+            *cos_ik = (PI_24 * n as f64).cos() as f32;
         }
+    }
 
-        // Window for Start blocks (indicies 30..36 implictly 0.0).
-        for i in 0..18 {
-            windows[1][i] = (PI_36 * (i as f64 + 0.5)).sin() as f32;
-        }
-        for i in 18..24 {
-            windows[1][i] = 1.0;
-        }
-        for i in 24..30 {
-            windows[1][i] = (PI_12 * ((i - 18) as f64 + 0.5)).sin() as f32;
-        }
+    cos
+});
 
-        // Window for Short blocks.
-        for i in 0..12 {
-            windows[2][i] = (PI_12 * (i as f64 + 0.5)).sin() as f32;
-        }
+/// Pair of lookup tables, CS and CA, for alias reduction.
+///
+/// As per ISO/IEC 11172-3, CS and CA are calculated as follows:
+///
+/// ```text
+/// cs[i] =  1.0 / sqrt(1.0 + c[i]^2)
+/// ca[i] = c[i] / sqrt(1.0 + c[i]^2)
+/// ```
+///
+/// where:
+/// ```text
+/// c[i] = [ -0.6, -0.535, -0.33, -0.185, -0.095, -0.041, -0.0142, -0.0037 ]
+/// ```
+static ANTIALIAS_CS_CA: Lazy<([f32; 8], [f32; 8])> = Lazy::new(|| {
+    const C: [f64; 8] = [-0.6, -0.535, -0.33, -0.185, -0.095, -0.041, -0.0142, -0.0037];
 
-        // Window for End blocks (indicies 0..6 implicitly 0.0).
-        for i in 6..12 {
-            windows[3][i] = (PI_12 * ((i - 6) as f64 + 0.5)).sin() as f32;
-        }
-        for i in 12..18 {
-            windows[3][i] = 1.0;
-        }
-        for i in 18..36 {
-            windows[3][i] = (PI_36 * (i as f64 + 0.5)).sin() as f32;
-        }
+    let mut cs = [0f32; 8];
+    let mut ca = [0f32; 8];
 
-        windows
-   };
-}
+    for i in 0..8 {
+        let sqrt = (1.0 + (C[i] * C[i])).sqrt();
+        cs[i] = (1.0 / sqrt) as f32;
+        ca[i] = (C[i] / sqrt) as f32;
+    }
 
-lazy_static! {
-    /// Lookup table of cosine coefficients for half of a 12-point IMDCT.
-    ///
-    /// This table is derived from the general expression:
-    ///
-    /// ```text
-    /// cos12[i][k] = cos(PI/24.0 * (2*i + 1 + N/2) * (2*k + 1))
-    /// ```
-    /// where:
-    ///     `N=12`, `i=N/4..3N/4`, and `k=0..N/2`.
-    static ref IMDCT_HALF_COS_12: [[f32; 6]; 6] = {
-        const PI_24: f64 = f64::consts::PI / 24.0;
-
-        let mut cos = [[0f32; 6]; 6];
-
-        for (i, cos_i) in cos.iter_mut().enumerate() {
-            for (k, cos_ik) in cos_i.iter_mut().enumerate() {
-                // Only compute the middle half of the cosine lookup table (i offset by 3).
-                let n = (2 * (i + 3) + (12 / 2) + 1) * (2 * k + 1);
-                *cos_ik = (PI_24 * n as f64).cos() as f32;
-            }
-        }
-
-        cos
-    };
-}
-
-lazy_static! {
-    /// Pair of lookup tables, CS and CA, for alias reduction.
-    ///
-    /// As per ISO/IEC 11172-3, CS and CA are calculated as follows:
-    ///
-    /// ```text
-    /// cs[i] =  1.0 / sqrt(1.0 + c[i]^2)
-    /// ca[i] = c[i] / sqrt(1.0 + c[i]^2)
-    /// ```
-    ///
-    /// where:
-    /// ```text
-    /// c[i] = [ -0.6, -0.535, -0.33, -0.185, -0.095, -0.041, -0.0142, -0.0037 ]
-    /// ```
-    static ref ANTIALIAS_CS_CA: ([f32; 8], [f32; 8]) = {
-        const C: [f64; 8] = [ -0.6, -0.535, -0.33, -0.185, -0.095, -0.041, -0.0142, -0.0037 ];
-
-        let mut cs = [0f32; 8];
-        let mut ca = [0f32; 8];
-
-        for i in 0..8 {
-            let sqrt = f64::sqrt(1.0 + (C[i] * C[i]));
-            cs[i] = (1.0 / sqrt) as f32;
-            ca[i] = (C[i] / sqrt) as f32;
-        }
-
-        (cs, ca)
-    };
-}
+    (cs, ca)
+});
 
 /// Reorder samples that are part of short blocks into sub-band order.
 pub(super) fn reorder(header: &FrameHeader, channel: &mut GranuleChannel, buf: &mut [f32; 576]) {
@@ -173,8 +167,7 @@ pub(super) fn reorder(header: &FrameHeader, channel: &mut GranuleChannel, buf: &
         let bands = if is_mixed {
             let switch = SFB_MIXED_SWITCH_POINT[header.sample_rate_idx];
             &SFB_MIXED_BANDS[header.sample_rate_idx][switch..]
-        }
-        else {
+        } else {
             &SFB_SHORT_BANDS[header.sample_rate_idx]
         };
 
@@ -483,7 +476,7 @@ pub fn frequency_inversion(samples: &mut [f32; 576]) {
 mod tests {
     use super::IMDCT_WINDOWS;
     use super::imdct12_win;
-    use std::f64;
+    use core::f64;
 
     fn imdct12_analytical(x: &[f32; 6]) -> [f32; 12] {
         const PI_24: f64 = f64::consts::PI / 24.0;
@@ -661,15 +654,15 @@ mod imdct36 {
         // Scale factors for odd input samples. Computed from (23).
         // 2 * cos(PI * (2*m + 1) / 36)
         const SCALE: [f32; 9] = [
-            1.992_389_396_183_491_1,  // m=0
-            1.931_851_652_578_136_6,  // m=1
-            1.812_615_574_073_299_9,  // m=2
-            1.638_304_088_577_983_6,  // m=3
-            std::f32::consts::SQRT_2, // m=4
-            1.147_152_872_702_092_3,  // m=5
-            0.845_236_523_481_398_9,  // m=6
-            0.517_638_090_205_041_9,  // m=7
-            0.174_311_485_495_316_3,  // m=8
+            1.992_389_396_183_491_1,   // m=0
+            1.931_851_652_578_136_6,   // m=1
+            1.812_615_574_073_299_9,   // m=2
+            1.638_304_088_577_983_6,   // m=3
+            core::f32::consts::SQRT_2, // m=4
+            1.147_152_872_702_092_3,   // m=5
+            0.845_236_523_481_398_9,   // m=6
+            0.517_638_090_205_041_9,   // m=7
+            0.174_311_485_495_316_3,   // m=8
         ];
 
         let even = [
@@ -776,7 +769,7 @@ mod imdct36 {
     #[cfg(test)]
     mod tests {
         use super::imdct36;
-        use std::f64;
+        use core::f64;
 
         fn imdct36_analytical(x: &[f32; 18]) -> [f32; 36] {
             let mut result = [0f32; 36];

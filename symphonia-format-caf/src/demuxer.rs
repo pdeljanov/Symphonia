@@ -6,11 +6,9 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use crate::chunks::*;
+use alloc::{boxed::Box, vec::Vec};
 use log::{debug, error, info, warn};
-use std::{
-    io::{Seek, SeekFrom},
-    num::NonZero,
-};
+use core::num::NonZero;
 use symphonia_core::{
     audio::{Channels, Position},
     codecs::{
@@ -99,15 +97,13 @@ impl FormatReader for CafReader<'_> {
                 // MAX_FRAMES_PER_PACKET
                 let max_bytes_to_read = if frames_per_packet == 1 {
                     bytes_per_packet * MAX_FRAMES_PER_PACKET
-                }
-                else {
+                } else {
                     bytes_per_packet
                 };
 
                 let bytes_remaining = if let Some(data_len) = self.data_len {
                     data_len.saturating_sub(data_pos)
-                }
-                else {
+                } else {
                     max_bytes_to_read
                 };
 
@@ -145,11 +141,9 @@ impl FormatReader for CafReader<'_> {
                     *current_packet_index += 1;
                     let buffer = self.reader.read_boxed_slice(packet.size as usize)?;
                     Ok(Some(Packet::new(0, packet.start_frame, packet.frames, buffer)))
-                }
-                else if *current_packet_index == packets.len() {
+                } else if *current_packet_index == packets.len() {
                     Ok(None)
-                }
-                else {
+                } else {
                     decode_error("caf: invalid packet index")
                 }
             }
@@ -185,8 +179,7 @@ impl FormatReader for CafReader<'_> {
 
         if required_ts < min_ts {
             return seek_error(SeekErrorKind::OutOfRange);
-        }
-        else if let Some(max_ts) = max_ts {
+        } else if let Some(max_ts) = max_ts {
             if required_ts > max_ts {
                 return seek_error(SeekErrorKind::OutOfRange);
             }
@@ -200,8 +193,7 @@ impl FormatReader for CafReader<'_> {
                     // Packetization for uncompressed data is performed by chunking the stream into
                     // packets of MAX_FRAMES_PER_PACKET frames each.
                     MAX_FRAMES_PER_PACKET
-                }
-                else {
+                } else {
                     u64::from(frames_per_packet.get())
                 };
 
@@ -229,13 +221,11 @@ impl FormatReader for CafReader<'_> {
 
                 if self.reader.is_seekable() {
                     self.reader.seek(SeekFrom::Start(seek_pos))?;
-                }
-                else {
+                } else {
                     let current_pos = self.reader.pos();
                     if seek_pos >= current_pos {
                         self.reader.ignore_bytes(seek_pos - current_pos)?;
-                    }
-                    else {
+                    } else {
                         return seek_error(SeekErrorKind::ForwardOnly);
                     }
                 }
@@ -252,16 +242,14 @@ impl FormatReader for CafReader<'_> {
             PacketInfo::VariableAudioPacket { packets, current_packet_index } => {
                 let current_ts = if let Some(packet) = packets.get(*current_packet_index) {
                     packet.start_frame
-                }
-                else {
+                } else {
                     error!("invalid packet index: {current_packet_index}");
                     return decode_error("caf: invalid packet index");
                 };
 
                 let search_range = if current_ts < required_ts {
                     *current_packet_index..packets.len()
-                }
-                else {
+                } else {
                     0..*current_packet_index
                 };
 
@@ -274,13 +262,11 @@ impl FormatReader for CafReader<'_> {
 
                 if self.reader.is_seekable() {
                     self.reader.seek(SeekFrom::Start(seek_pos))?;
-                }
-                else {
+                } else {
                     let current_pos = self.reader.pos();
                     if seek_pos >= current_pos {
                         self.reader.ignore_bytes(seek_pos - current_pos)?;
-                    }
-                    else {
+                    } else {
                         return seek_error(SeekErrorKind::ForwardOnly);
                     }
                 }
@@ -415,8 +401,7 @@ impl<'s> CafReader<'s> {
             codec_params
                 .with_max_frames_per_packet(MAX_FRAMES_PER_PACKET)
                 .with_frames_per_block(MAX_FRAMES_PER_PACKET);
-        }
-        else {
+        } else {
             // TODO: Handle variable frames per packet (frames per packet == 0).
             codec_params
                 .with_max_frames_per_packet(u64::from(desc.frames_per_packet))
@@ -425,8 +410,7 @@ impl<'s> CafReader<'s> {
 
         self.packet_info = if desc.is_variable_packet_format() {
             PacketInfo::VariableAudioPacket { packets: Vec::new(), current_packet_index: 0 }
-        }
-        else {
+        } else {
             PacketInfo::FixedAudioPacket {
                 // UNWRAP: Cannot reach this else block if either bytes/packet or frames/packet are
                 // zero.
@@ -477,8 +461,7 @@ impl<'s> CafReader<'s> {
                 Some(ChannelLayout(layout)) => {
                     if let Some(channels) = layout.channels() {
                         codec_params.channels = Some(channels);
-                    }
-                    else {
+                    } else {
                         // Don't error if the layout doesn't correspond directly to a Symphonia
                         // layout, the channels bitmap was set after the audio description was read
                         // to match the number of channels, and that's probably OK.

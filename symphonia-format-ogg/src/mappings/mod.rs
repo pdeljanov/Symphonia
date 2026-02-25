@@ -7,6 +7,7 @@
 
 use super::common::SideData;
 
+use alloc::boxed::Box;
 use symphonia_core::errors::Result;
 use symphonia_core::formats::Track;
 use symphonia_core::units::{Duration, Timestamp};

@@ -21,6 +21,7 @@ wav = []
 [dependencies]
 extended = "0.1.0"
 log = "0.4"
+hashbrown = { workspace = true }
 symphonia-core = { version = "0.6.0", path = "../symphonia-core" }
 
 [dependencies.symphonia-metadata]

@@ -16,7 +16,7 @@
 //! * Codec parameters refers to a set of parameters common to a particular codec type (e.g.,
 //!   audio sample rate).
 
-use std::hash::Hash;
+use core::hash::Hash;
 
 pub mod audio;
 pub mod registry;

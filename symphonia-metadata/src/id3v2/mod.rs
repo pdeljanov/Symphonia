@@ -7,8 +7,10 @@
 
 //! An ID3v2 metadata reader.
 
-use std::collections::HashMap;
-
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use hashbrown::HashMap;
 use symphonia_core::errors::{Result, decode_error, unsupported_error};
 use symphonia_core::formats::probe::{ProbeMetadataData, ProbeableMetadata, Score, Scoreable};
 use symphonia_core::io::*;

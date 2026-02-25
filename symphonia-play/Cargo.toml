@@ -21,7 +21,7 @@ default = ["exp-subtitle-codecs", "exp-video-codecs"]
 
 [dependencies]
 clap = "3.1.0"
-lazy_static = "1.4.0"
+
 log = { version = "0.4", features = ["release_max_level_info"] }
 pretty_env_logger = "0.4"
 symphonia = { version = "0.6.0", path = "../symphonia", features = ["all", "opt-simd"] }

@@ -5,16 +5,15 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+use symphonia_core::{Float, Lazy};
 use symphonia_core::errors::{Result, decode_error};
 
 use crate::common::{ChannelMode, FrameHeader, Mode};
 
 use super::{Granule, common::*};
 
-use std::cmp::max;
-use std::{f32, f64};
-
-use lazy_static::lazy_static;
+use core::cmp::max;
+use core::{f32, f64};
 
 /// The invalid intensity position for MPEG1 bitstreams.
 const INTENSITY_INV_POS_MPEG1: u8 = 7;
@@ -28,98 +27,87 @@ const INTENSITY_INV_POS_MPEG1: u8 = 7;
 /// to consider is_pos == 7 invalid for MPEG2 or 2.5.
 const INTENSITY_INV_POS_MPEG2: u8 = 31;
 
-lazy_static! {
-    /// (Left, right) channel coefficients for decoding intensity stereo in MPEG2 bitstreams.
-    ///
-    /// These coefficients are derived from section 2.4.3.2 of ISO/IEC 13818-3.
-    ///
-    /// As per the specification, for a given intensity position, is_pos (0 <= is_pos < 32), the
-    /// channel coefficients, k_l and k_r, may be calculated as per the table below:
-    ///
-    /// ```text
-    /// If...            | k_l                     | k_r
-    /// -----------------+-------------------------+-------------------
-    /// is_pos     == 0  | 1.0                     | 1.0
-    /// is_pos & 1 == 1  | i0 ^ [(is_pos + 1) / 2] | 1.0
-    /// is_pos & 1 == 0  | 1.0                     | i0 ^ (is_pos / 2)
-    /// ```
-    ///
-    /// The value of i0 is dependant on the least significant bit of scalefac_compress.
-    ///
-    /// ```text
-    /// scalefac_compress & 1 | i0
-    /// ----------------------+---------------------
-    /// 0                     | 1 / sqrt(sqrt(2.0))
-    /// 1                     | 1 / sqrt(2.0)
-    /// ```
-    ///
-    /// The first dimension of this table is indexed by scalefac_compress & 1 to select i0. The
-    /// second dimension is indexed by is_pos to obtain the channel coefficients. Note that
-    /// is_pos == 31 is considered an invalid position, but IS included in the table.
-    static ref INTENSITY_STEREO_RATIOS_MPEG2: [[(f32, f32); 32]; 2] = {
-        let is_scale: [f64; 2] = [
-            1.0 / f64::sqrt(f64::consts::SQRT_2),
-            f64::consts::FRAC_1_SQRT_2,
-        ];
+/// (Left, right) channel coefficients for decoding intensity stereo in MPEG2 bitstreams.
+///
+/// These coefficients are derived from section 2.4.3.2 of ISO/IEC 13818-3.
+///
+/// As per the specification, for a given intensity position, is_pos (0 <= is_pos < 32), the
+/// channel coefficients, k_l and k_r, may be calculated as per the table below:
+///
+/// ```text
+/// If...            | k_l                     | k_r
+/// -----------------+-------------------------+-------------------
+/// is_pos     == 0  | 1.0                     | 1.0
+/// is_pos & 1 == 1  | i0 ^ [(is_pos + 1) / 2] | 1.0
+/// is_pos & 1 == 0  | 1.0                     | i0 ^ (is_pos / 2)
+/// ```
+///
+/// The value of i0 is dependant on the least significant bit of scalefac_compress.
+///
+/// ```text
+/// scalefac_compress & 1 | i0
+/// ----------------------+---------------------
+/// 0                     | 1 / sqrt(sqrt(2.0))
+/// 1                     | 1 / sqrt(2.0)
+/// ```
+///
+/// The first dimension of this table is indexed by scalefac_compress & 1 to select i0. The
+/// second dimension is indexed by is_pos to obtain the channel coefficients. Note that
+/// is_pos == 31 is considered an invalid position, but IS included in the table.
+static INTENSITY_STEREO_RATIOS_MPEG2: Lazy<[[(f32, f32); 32]; 2]> = Lazy::new(|| {
+    let is_scale: [f64; 2] = [1.0 / f64::sqrt(f64::consts::SQRT_2), f64::consts::FRAC_1_SQRT_2];
 
-        let mut ratios = [[(0.0, 0.0); 32]; 2];
+    let mut ratios = [[(0.0, 0.0); 32]; 2];
 
-        for (i, is_pos) in (0..32).enumerate() {
-            if is_pos & 1 != 0 {
-                // Odd case.
-                ratios[0][i] = (is_scale[0].powf(f64::from(is_pos + 1) / 2.0) as f32, 1.0);
-                ratios[1][i] = (is_scale[1].powf(f64::from(is_pos + 1) / 2.0) as f32, 1.0);
-            }
-            else {
-                // Even & zero case.
-                ratios[0][i] = (1.0, is_scale[0].powf(f64::from(is_pos) / 2.0) as f32);
-                ratios[1][i] = (1.0, is_scale[1].powf(f64::from(is_pos) / 2.0) as f32);
-            }
+    for (i, is_pos) in (0..32).enumerate() {
+        if is_pos & 1 != 0 {
+            // Odd case.
+            ratios[0][i] = (is_scale[0].powf(f64::from(is_pos + 1) / 2.0) as f32, 1.0);
+            ratios[1][i] = (is_scale[1].powf(f64::from(is_pos + 1) / 2.0) as f32, 1.0);
+        } else {
+            // Even & zero case.
+            ratios[0][i] = (1.0, is_scale[0].powf(f64::from(is_pos) / 2.0) as f32);
+            ratios[1][i] = (1.0, is_scale[1].powf(f64::from(is_pos) / 2.0) as f32);
         }
+    }
 
-        ratios
-    };
-}
+    ratios
+});
 
-lazy_static! {
-    /// (Left, right) channel coeffcients for decoding intensity stereo in MPEG1 bitstreams.
-    ///
-    /// These coefficients are derived from section 2.4.3.4.9.3 of ISO/IEC 11172-3.
-    ///
-    /// As per the specification, for a given intensity position, is_pos (0 <= is_pos < 7), a ratio,
-    /// is_ratio, is calculated as follows:
-    ///
-    /// ```text
-    /// is_ratio = tan(is_pos * PI/12)
-    /// ```
-    ///
-    /// Then, the channel coefficients, k_l and k_r, are calculated as follows:
-    ///
-    /// ```text
-    /// k_l = is_ratio / (1 + is_ratio)
-    /// k_r =        1 / (1 + is_ratio)
-    /// ```
-    ///
-    /// This table is indexed by is_pos. Note that is_pos == 7 is invalid and is NOT included in the
-    /// table.
-    static ref INTENSITY_STEREO_RATIOS_MPEG1: [(f32, f32); 7] = {
-        const PI_12: f64 = f64::consts::PI / 12.0;
+/// (Left, right) channel coeffcients for decoding intensity stereo in MPEG1 bitstreams.
+///
+/// These coefficients are derived from section 2.4.3.4.9.3 of ISO/IEC 11172-3.
+///
+/// As per the specification, for a given intensity position, is_pos (0 <= is_pos < 7), a ratio,
+/// is_ratio, is calculated as follows:
+///
+/// ```text
+/// is_ratio = tan(is_pos * PI/12)
+/// ```
+///
+/// Then, the channel coefficients, k_l and k_r, are calculated as follows:
+///
+/// ```text
+/// k_l = is_ratio / (1 + is_ratio)
+/// k_r =        1 / (1 + is_ratio)
+/// ```
+///
+/// This table is indexed by is_pos. Note that is_pos == 7 is invalid and is NOT included in the
+/// table.
+static INTENSITY_STEREO_RATIOS_MPEG1: Lazy<[(f32, f32); 7]> = Lazy::new(|| {
+    const PI_12: f64 = f64::consts::PI / 12.0;
 
-        let mut ratios = [(0.0, 0.0); 7];
+    let mut ratios = [(0.0, 0.0); 7];
 
-        for (is_pos, ratio) in ratios.iter_mut().enumerate() {
-            let is_ratio = (PI_12 * is_pos as f64).tan();
-            *ratio = (
-                (is_ratio / (1.0 + is_ratio)) as f32,
-                (1.0 / (1.0 + is_ratio)) as f32
-            );
-        }
+    for (is_pos, ratio) in ratios.iter_mut().enumerate() {
+        let is_ratio = (PI_12 * is_pos as f64).tan();
+        *ratio = ((is_ratio / (1.0 + is_ratio)) as f32, (1.0 / (1.0 + is_ratio)) as f32);
+    }
 
-        ratios[6] = (1.0, 0.0);
+    ratios[6] = (1.0, 0.0);
 
-        ratios
-    };
-}
+    ratios
+});
 
 /// Decorrelates mid and side channels into left and right channels.
 ///
@@ -181,8 +169,7 @@ fn process_intensity(
             *l = ratio_l * is;
             *r = ratio_r * is;
         }
-    }
-    else if mid_side {
+    } else if mid_side {
         process_mid_side(ch0, ch1);
     }
 }
@@ -215,8 +202,7 @@ fn process_intensity_long_block(
     // Select the intensity stereo ratios table.
     let (is_table, is_inv_pos) = if header.is_mpeg1() {
         (&INTENSITY_STEREO_RATIOS_MPEG1[..], INTENSITY_INV_POS_MPEG1)
-    }
-    else {
+    } else {
         let is_scale = granule.channels[1].scalefac_compress & 1;
         (&INTENSITY_STEREO_RATIOS_MPEG2[usize::from(is_scale)][..], INTENSITY_INV_POS_MPEG2)
     };
@@ -248,8 +234,7 @@ fn process_intensity_long_block(
                 &mut ch0[start..end],
                 &mut ch1[start..end],
             );
-        }
-        else {
+        } else {
             break;
         }
 
@@ -332,8 +317,7 @@ fn process_intensity_short_block(
         let switch = SFB_MIXED_SWITCH_POINT[header.sample_rate_idx];
         // Variable number of short and long scalefactor bands based on the switch point.
         (&bands[switch..], Some(&bands[..switch + 1]), bands.len() - 1)
-    }
-    else {
+    } else {
         // 39 scalefactors from 13 scalefactor bands with 3 short windows per band.
         (&SFB_SHORT_BANDS[header.sample_rate_idx][..], None, 39)
     };
@@ -341,8 +325,7 @@ fn process_intensity_short_block(
     // Select the intensity stereo ratios table based on the bitstream version.
     let (is_table, is_inv_pos) = if header.is_mpeg1() {
         (&INTENSITY_STEREO_RATIOS_MPEG1[..], INTENSITY_INV_POS_MPEG1)
-    }
-    else {
+    } else {
         let is_scale = granule.channels[1].scalefac_compress & 1;
         (&INTENSITY_STEREO_RATIOS_MPEG2[usize::from(is_scale)][..], INTENSITY_INV_POS_MPEG2)
     };
@@ -384,8 +367,7 @@ fn process_intensity_short_block(
                 &mut ch0[s2..s3],
                 &mut ch1[s2..s3],
             );
-        }
-        else if mid_side {
+        } else if mid_side {
             // If the window is non-zeroed, process it with mid-side stereo.
             process_mid_side(&mut ch0[s2..s3], &mut ch1[s2..s3]);
         }
@@ -405,8 +387,7 @@ fn process_intensity_short_block(
                 &mut ch0[s1..s2],
                 &mut ch1[s1..s2],
             );
-        }
-        else if mid_side {
+        } else if mid_side {
             process_mid_side(&mut ch0[s1..s2], &mut ch1[s1..s2]);
         }
 
@@ -424,8 +405,7 @@ fn process_intensity_short_block(
                 &mut ch0[s0..s1],
                 &mut ch1[s0..s1],
             );
-        }
-        else if mid_side {
+        } else if mid_side {
             process_mid_side(&mut ch0[s0..s1], &mut ch1[s0..s1]);
         }
 
@@ -465,8 +445,7 @@ fn process_intensity_short_block(
                         &mut ch0[start..end],
                         &mut ch1[start..end],
                     );
-                }
-                else {
+                } else {
                     break;
                 }
 

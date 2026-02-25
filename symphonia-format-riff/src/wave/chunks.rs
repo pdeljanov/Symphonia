@@ -5,8 +5,11 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use std::fmt;
+use core::fmt;
 
+use alloc::boxed::Box;
+use alloc::string::String;
+use alloc::vec::Vec;
 use symphonia_core::audio::AmbisonicBFormat;
 use symphonia_core::audio::{ChannelLabel, Channels, Position};
 use symphonia_core::codecs::audio::AudioCodecId;

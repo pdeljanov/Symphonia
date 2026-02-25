@@ -5,8 +5,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use std::num::NonZero;
+use core::num::NonZero;
 
+use alloc::string::{String, ToString};
 use symphonia_core::errors::{Error, Result, decode_error};
 use symphonia_core::io::ReadBytes;
 

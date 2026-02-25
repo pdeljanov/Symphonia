@@ -5,8 +5,11 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use std::collections::{HashMap, VecDeque};
+use alloc::boxed::Box;
+use alloc::collections::VecDeque;
 
+use alloc::vec::Vec;
+use hashbrown::HashMap;
 use symphonia_core::errors::{Result, decode_error};
 use symphonia_core::io::{BufReader, ReadBytes};
 use symphonia_core::units::{Duration, Timestamp};
@@ -37,8 +40,7 @@ fn read_ebml_sizes<R: ReadBytes>(mut reader: R, num_frames: usize) -> Result<Vec
         if let Some(last_size) = sizes.last().copied() {
             let delta = read_signed_vint(&mut reader)?;
             sizes.push((last_size as i64 + delta) as u64)
-        }
-        else {
+        } else {
             let size = read_unsigned_vint(&mut reader)?;
             sizes.push(size);
         }
@@ -54,8 +56,7 @@ pub(crate) fn read_xiph_sizes<R: ReadBytes>(mut reader: R, num_frames: usize) ->
         let byte = reader.read_byte()? as u64;
         if byte == 255 {
             prefixes += 1;
-        }
-        else {
+        } else {
             let size = prefixes * 255 + byte;
             prefixes = 0;
             sizes.push(size);

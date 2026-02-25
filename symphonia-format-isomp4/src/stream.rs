@@ -8,8 +8,8 @@ use symphonia_core::errors::{Error, Result, decode_error};
 
 use crate::atoms::{Co64Atom, MoofAtom, MoovAtom, StcoAtom, TrafAtom, stsz::SampleSize};
 
-use std::ops::Range;
-use std::sync::Arc;
+use core::ops::Range;
+use alloc::{sync::Arc, vec::Vec};
 
 /// Sample data information.
 pub struct SampleDataDesc {

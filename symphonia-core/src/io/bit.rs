@@ -5,22 +5,24 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use std::cmp::min;
-use std::io;
+use core::cmp::min;
 
 use crate::io::ReadBytes;
 use crate::util::bits::*;
 
-fn end_of_bitstream_error<T>() -> io::Result<T> {
-    Err(io::Error::other("unexpected end of bitstream"))
+fn end_of_bitstream_error<T>() -> super::Result<T> {
+    Err(super::Error::eof("unexpected end of bitstream"))
 }
 
 pub mod vlc {
     //! The `vlc` module provides support for decoding variable-length codes (VLC).
 
-    use std::collections::{BTreeMap, VecDeque};
-    use std::io;
-    use std::num::NonZero;
+    use alloc::{
+        collections::{BTreeMap, VecDeque},
+        vec::Vec,
+    };
+    use crate::io;
+    use core::num::NonZero;
 
     fn codebook_error<T>(desc: &'static str) -> io::Result<T> {
         Err(io::Error::other(desc))
@@ -458,7 +460,7 @@ pub mod vlc {
 }
 
 mod private {
-    use std::io;
+    use crate::io;
 
     pub trait FetchBitsLtr {
         /// Discard any remaining bits in the source and fetch 1 or more new bits.
@@ -512,7 +514,7 @@ pub trait ReadBitsLtr: private::FetchBitsLtr {
 
     /// Ignores the specified number of bits from the stream or returns an error.
     #[inline(always)]
-    fn ignore_bits(&mut self, mut num_bits: u32) -> io::Result<()> {
+    fn ignore_bits(&mut self, mut num_bits: u32) -> super::Result<()> {
         if num_bits <= self.num_bits_left() {
             self.consume_bits(num_bits);
         }
@@ -535,13 +537,13 @@ pub trait ReadBitsLtr: private::FetchBitsLtr {
 
     /// Ignores one bit from the stream or returns an error.
     #[inline(always)]
-    fn ignore_bit(&mut self) -> io::Result<()> {
+    fn ignore_bit(&mut self) -> super::Result<()> {
         self.ignore_bits(1)
     }
 
     /// Read a single bit as a boolean value or returns an error.
     #[inline(always)]
-    fn read_bool(&mut self) -> io::Result<bool> {
+    fn read_bool(&mut self) -> super::Result<bool> {
         if self.num_bits_left() < 1 {
             self.fetch_bits()?;
         }
@@ -554,7 +556,7 @@ pub trait ReadBitsLtr: private::FetchBitsLtr {
 
     /// Reads and returns a single bit or returns an error.
     #[inline(always)]
-    fn read_bit(&mut self) -> io::Result<u32> {
+    fn read_bit(&mut self) -> super::Result<u32> {
         if self.num_bits_left() < 1 {
             self.fetch_bits()?;
         }
@@ -568,7 +570,7 @@ pub trait ReadBitsLtr: private::FetchBitsLtr {
 
     /// Reads and returns up to 32-bits or returns an error.
     #[inline(always)]
-    fn read_bits_leq32(&mut self, mut bit_width: u32) -> io::Result<u32> {
+    fn read_bits_leq32(&mut self, mut bit_width: u32) -> super::Result<u32> {
         debug_assert!(bit_width <= u32::BITS);
 
         // Shift in two 32-bit operations instead of a single 64-bit operation to avoid panicing
@@ -594,14 +596,14 @@ pub trait ReadBitsLtr: private::FetchBitsLtr {
     /// Reads up to 32-bits and interprets them as a signed two's complement integer or returns an
     /// error.
     #[inline(always)]
-    fn read_bits_leq32_signed(&mut self, bit_width: u32) -> io::Result<i32> {
+    fn read_bits_leq32_signed(&mut self, bit_width: u32) -> super::Result<i32> {
         let value = self.read_bits_leq32(bit_width)?;
         Ok(sign_extend_leq32_to_i32(value, bit_width))
     }
 
     /// Reads and returns up to 64-bits or returns an error.
     #[inline(always)]
-    fn read_bits_leq64(&mut self, mut bit_width: u32) -> io::Result<u64> {
+    fn read_bits_leq64(&mut self, mut bit_width: u32) -> super::Result<u64> {
         debug_assert!(bit_width <= u64::BITS);
 
         // Hard-code the bit_width == 0 case as it's not possible to handle both the bit_width == 0
@@ -635,14 +637,14 @@ pub trait ReadBitsLtr: private::FetchBitsLtr {
     /// Reads up to 64-bits and interprets them as a signed two's complement integer or returns an
     /// error.
     #[inline(always)]
-    fn read_bits_leq64_signed(&mut self, bit_width: u32) -> io::Result<i64> {
+    fn read_bits_leq64_signed(&mut self, bit_width: u32) -> super::Result<i64> {
         let value = self.read_bits_leq64(bit_width)?;
         Ok(sign_extend_leq64_to_i64(value, bit_width))
     }
 
     /// Reads and returns a unary zeros encoded integer or an error.
     #[inline(always)]
-    fn read_unary_zeros(&mut self) -> io::Result<u32> {
+    fn read_unary_zeros(&mut self) -> super::Result<u32> {
         let mut num = 0;
 
         loop {
@@ -675,7 +677,7 @@ pub trait ReadBitsLtr: private::FetchBitsLtr {
 
     /// Reads and returns a unary zeros encoded integer that is capped to a maximum value.
     #[inline(always)]
-    fn read_unary_zeros_capped(&mut self, mut limit: u32) -> io::Result<u32> {
+    fn read_unary_zeros_capped(&mut self, mut limit: u32) -> super::Result<u32> {
         let mut num = 0;
 
         loop {
@@ -712,7 +714,7 @@ pub trait ReadBitsLtr: private::FetchBitsLtr {
 
     /// Reads and returns a unary ones encoded integer or an error.
     #[inline(always)]
-    fn read_unary_ones(&mut self) -> io::Result<u32> {
+    fn read_unary_ones(&mut self) -> super::Result<u32> {
         // Note: This algorithm is identical to read_unary_zeros except flipped for 1s.
         let mut num = 0;
 
@@ -738,7 +740,7 @@ pub trait ReadBitsLtr: private::FetchBitsLtr {
 
     /// Reads and returns a unary ones encoded integer that is capped to a maximum value.
     #[inline(always)]
-    fn read_unary_ones_capped(&mut self, mut limit: u32) -> io::Result<u32> {
+    fn read_unary_ones_capped(&mut self, mut limit: u32) -> super::Result<u32> {
         // Note: This algorithm is identical to read_unary_zeros_capped except flipped for 1s.
         let mut num = 0;
 
@@ -774,7 +776,7 @@ pub trait ReadBitsLtr: private::FetchBitsLtr {
     fn read_codebook<E: vlc::CodebookEntry>(
         &mut self,
         codebook: &vlc::Codebook<E>,
-    ) -> io::Result<(E::ValueType, u32)> {
+    ) -> super::Result<(E::ValueType, u32)> {
         // Attempt to refill the bit buffer with enough bits for the longest codeword in the
         // codebook. However, this does not mean the bit buffer will have enough bits to decode a
         // codeword.
@@ -831,14 +833,14 @@ impl<'a, B: ReadBytes> BitStreamLtr<'a, B> {
 
 impl<B: ReadBytes> private::FetchBitsLtr for BitStreamLtr<'_, B> {
     #[inline(always)]
-    fn fetch_bits(&mut self) -> io::Result<()> {
+    fn fetch_bits(&mut self) -> super::Result<()> {
         self.bits = u64::from(self.reader.read_u8()?) << 56;
         self.n_bits_left = u8::BITS;
         Ok(())
     }
 
     #[inline(always)]
-    fn fetch_bits_partial(&mut self) -> io::Result<()> {
+    fn fetch_bits_partial(&mut self) -> super::Result<()> {
         todo!()
     }
 
@@ -880,7 +882,7 @@ impl<'a> BitReaderLtr<'a> {
 
 impl private::FetchBitsLtr for BitReaderLtr<'_> {
     #[inline]
-    fn fetch_bits_partial(&mut self) -> io::Result<()> {
+    fn fetch_bits_partial(&mut self) -> super::Result<()> {
         let num_bytes = (u64::BITS - self.n_bits_left) as usize >> 3;
 
         let mut num_bytes_read = 0;
@@ -896,14 +898,14 @@ impl private::FetchBitsLtr for BitReaderLtr<'_> {
         Ok(())
     }
 
-    fn fetch_bits(&mut self) -> io::Result<()> {
-        let read_len = min(self.buf.len(), std::mem::size_of::<u64>());
+    fn fetch_bits(&mut self) -> super::Result<()> {
+        let read_len = min(self.buf.len(), core::mem::size_of::<u64>());
 
         if read_len == 0 {
             return end_of_bitstream_error();
         }
 
-        let mut buf = [0u8; std::mem::size_of::<u64>()];
+        let mut buf = [0u8; core::mem::size_of::<u64>()];
 
         buf[..read_len].copy_from_slice(&self.buf[..read_len]);
 
@@ -951,7 +953,7 @@ pub trait ReadBitsRtl: private::FetchBitsRtl {
 
     /// Ignores the specified number of bits from the stream or returns an error.
     #[inline(always)]
-    fn ignore_bits(&mut self, mut num_bits: u32) -> io::Result<()> {
+    fn ignore_bits(&mut self, mut num_bits: u32) -> super::Result<()> {
         if num_bits <= self.num_bits_left() {
             self.consume_bits(num_bits);
         }
@@ -974,13 +976,13 @@ pub trait ReadBitsRtl: private::FetchBitsRtl {
 
     /// Ignores one bit from the stream or returns an error.
     #[inline(always)]
-    fn ignore_bit(&mut self) -> io::Result<()> {
+    fn ignore_bit(&mut self) -> super::Result<()> {
         self.ignore_bits(1)
     }
 
     /// Read a single bit as a boolean value or returns an error.
     #[inline(always)]
-    fn read_bool(&mut self) -> io::Result<bool> {
+    fn read_bool(&mut self) -> super::Result<bool> {
         if self.num_bits_left() < 1 {
             self.fetch_bits()?;
         }
@@ -993,7 +995,7 @@ pub trait ReadBitsRtl: private::FetchBitsRtl {
 
     /// Reads and returns a single bit or returns an error.
     #[inline(always)]
-    fn read_bit(&mut self) -> io::Result<u32> {
+    fn read_bit(&mut self) -> super::Result<u32> {
         if self.num_bits_left() < 1 {
             self.fetch_bits()?;
         }
@@ -1007,7 +1009,7 @@ pub trait ReadBitsRtl: private::FetchBitsRtl {
 
     /// Reads and returns up to 32-bits or returns an error.
     #[inline(always)]
-    fn read_bits_leq32(&mut self, bit_width: u32) -> io::Result<u32> {
+    fn read_bits_leq32(&mut self, bit_width: u32) -> super::Result<u32> {
         debug_assert!(bit_width <= u32::BITS);
 
         let mut bits = self.get_bits();
@@ -1032,14 +1034,14 @@ pub trait ReadBitsRtl: private::FetchBitsRtl {
     /// Reads up to 32-bits and interprets them as a signed two's complement integer or returns an
     /// error.
     #[inline(always)]
-    fn read_bits_leq32_signed(&mut self, bit_width: u32) -> io::Result<i32> {
+    fn read_bits_leq32_signed(&mut self, bit_width: u32) -> super::Result<i32> {
         let value = self.read_bits_leq32(bit_width)?;
         Ok(sign_extend_leq32_to_i32(value, bit_width))
     }
 
     /// Reads and returns up to 64-bits or returns an error.
     #[inline(always)]
-    fn read_bits_leq64(&mut self, bit_width: u32) -> io::Result<u64> {
+    fn read_bits_leq64(&mut self, bit_width: u32) -> super::Result<u64> {
         debug_assert!(bit_width <= u64::BITS);
 
         // Hard-code the bit_width == 0 case as it's not possible to handle both the bit_width == 0
@@ -1077,14 +1079,14 @@ pub trait ReadBitsRtl: private::FetchBitsRtl {
     /// Reads up to 64-bits and interprets them as a signed two's complement integer or returns an
     /// error.
     #[inline(always)]
-    fn read_bits_leq64_signed(&mut self, bit_width: u32) -> io::Result<i64> {
+    fn read_bits_leq64_signed(&mut self, bit_width: u32) -> super::Result<i64> {
         let value = self.read_bits_leq64(bit_width)?;
         Ok(sign_extend_leq64_to_i64(value, bit_width))
     }
 
     /// Reads and returns a unary zeros encoded integer or an error.
     #[inline(always)]
-    fn read_unary_zeros(&mut self) -> io::Result<u32> {
+    fn read_unary_zeros(&mut self) -> super::Result<u32> {
         let mut num = 0;
 
         loop {
@@ -1117,7 +1119,7 @@ pub trait ReadBitsRtl: private::FetchBitsRtl {
 
     /// Reads and returns a unary zeros encoded integer that is capped to a maximum value.
     #[inline(always)]
-    fn read_unary_zeros_capped(&mut self, mut limit: u32) -> io::Result<u32> {
+    fn read_unary_zeros_capped(&mut self, mut limit: u32) -> super::Result<u32> {
         let mut num = 0;
 
         loop {
@@ -1154,7 +1156,7 @@ pub trait ReadBitsRtl: private::FetchBitsRtl {
 
     /// Reads and returns a unary ones encoded integer or an error.
     #[inline(always)]
-    fn read_unary_ones(&mut self) -> io::Result<u32> {
+    fn read_unary_ones(&mut self) -> super::Result<u32> {
         // Note: This algorithm is identical to read_unary_zeros except flipped for 1s.
         let mut num = 0;
 
@@ -1180,7 +1182,7 @@ pub trait ReadBitsRtl: private::FetchBitsRtl {
 
     /// Reads and returns a unary ones encoded integer or an error.
     #[inline(always)]
-    fn read_unary_ones_capped(&mut self, mut limit: u32) -> io::Result<u32> {
+    fn read_unary_ones_capped(&mut self, mut limit: u32) -> super::Result<u32> {
         // Note: This algorithm is identical to read_unary_zeros_capped except flipped for 1s.
         let mut num = 0;
 
@@ -1214,7 +1216,7 @@ pub trait ReadBitsRtl: private::FetchBitsRtl {
     fn read_codebook<E: vlc::CodebookEntry>(
         &mut self,
         codebook: &vlc::Codebook<E>,
-    ) -> io::Result<(E::ValueType, u32)> {
+    ) -> super::Result<(E::ValueType, u32)> {
         // Attempt to refill the bit buffer with enough bits for the longest codeword in the
         // codebook. However, this does not mean the bit buffer will have enough bits to decode a
         // codeword.
@@ -1271,14 +1273,14 @@ impl<'a, B: ReadBytes> BitStreamRtl<'a, B> {
 
 impl<B: ReadBytes> private::FetchBitsRtl for BitStreamRtl<'_, B> {
     #[inline(always)]
-    fn fetch_bits(&mut self) -> io::Result<()> {
+    fn fetch_bits(&mut self) -> super::Result<()> {
         self.bits = u64::from(self.reader.read_u8()?);
         self.n_bits_left = u8::BITS;
         Ok(())
     }
 
     #[inline(always)]
-    fn fetch_bits_partial(&mut self) -> io::Result<()> {
+    fn fetch_bits_partial(&mut self) -> super::Result<()> {
         todo!()
     }
 
@@ -1320,7 +1322,7 @@ impl<'a> BitReaderRtl<'a> {
 
 impl private::FetchBitsRtl for BitReaderRtl<'_> {
     #[inline]
-    fn fetch_bits_partial(&mut self) -> io::Result<()> {
+    fn fetch_bits_partial(&mut self) -> super::Result<()> {
         let num_bytes = (u64::BITS - self.n_bits_left) as usize >> 3;
 
         let mut num_bytes_read = 0;
@@ -1336,14 +1338,14 @@ impl private::FetchBitsRtl for BitReaderRtl<'_> {
         Ok(())
     }
 
-    fn fetch_bits(&mut self) -> io::Result<()> {
-        let read_len = min(self.buf.len(), std::mem::size_of::<u64>());
+    fn fetch_bits(&mut self) -> super::Result<()> {
+        let read_len = min(self.buf.len(), core::mem::size_of::<u64>());
 
         if read_len == 0 {
             return end_of_bitstream_error();
         }
 
-        let mut buf = [0u8; std::mem::size_of::<u64>()];
+        let mut buf = [0u8; core::mem::size_of::<u64>()];
 
         buf[..read_len].copy_from_slice(&self.buf[..read_len]);
 
@@ -1383,6 +1385,7 @@ impl FiniteBitStream for BitReaderRtl<'_> {
 #[cfg(test)]
 mod tests {
     use rand::{RngCore, SeedableRng};
+    use alloc::vec::Vec;
 
     use super::vlc::{BitOrder, Codebook, CodebookBuilder, Entry8x8};
     use super::{BitReaderLtr, ReadBitsLtr};
@@ -1757,7 +1760,7 @@ mod tests {
         let decoded: Vec<u8> =
             (0..text.len()).map(|_| bs.read_codebook(&codebook).unwrap().0).collect();
 
-        assert_eq!(text, std::str::from_utf8(&decoded).unwrap());
+        assert_eq!(text, core::str::from_utf8(&decoded).unwrap());
     }
 
     #[test]
@@ -2074,7 +2077,7 @@ mod tests {
         let decoded: Vec<u8> =
             (0..text.len()).map(|_| bs.read_codebook(&codebook).unwrap().0).collect();
 
-        assert_eq!(text, std::str::from_utf8(&decoded).unwrap());
+        assert_eq!(text, core::str::from_utf8(&decoded).unwrap());
     }
 
     #[test]

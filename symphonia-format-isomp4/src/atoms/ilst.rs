@@ -5,8 +5,11 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use std::sync::Arc;
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::sync::Arc;
 
+use alloc::vec::Vec;
 use symphonia_core::errors::{Error, Result, decode_error};
 use symphonia_core::io::{BufReader, ReadBytes};
 use symphonia_core::meta::well_known::METADATA_ID_ISOMP4;

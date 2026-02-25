@@ -7,21 +7,23 @@
 
 //! Frame body readers.
 
-use std::char;
-use std::collections::HashMap;
-use std::io;
-use std::str;
-use std::sync::Arc;
+use alloc::sync::Arc;
+use symphonia_core::Lazy;
+use core::char;
+use core::str;
 
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use hashbrown::HashMap;
 use symphonia_core::errors::{Result, decode_error, unsupported_error};
-use symphonia_core::io::{BufReader, FiniteStream, ReadBytes};
+use symphonia_core::io::{self, BufReader, FiniteStream, ReadBytes};
 use symphonia_core::meta::RawTag;
 use symphonia_core::meta::RawTagSubField;
 use symphonia_core::meta::{Chapter, RawValue, StandardTag, Tag, Visual};
 use symphonia_core::units::Time;
 use symphonia_core::util::text;
 
-use lazy_static::lazy_static;
 use log::debug;
 use smallvec::{SmallVec, smallvec};
 
@@ -55,7 +57,7 @@ impl<'a> FrameInfo<'a> {
     /// Panics if the frame ID is invalid.
     pub fn new(id: &'a [u8], major_version: u8, raw_tag_parser: Option<RawTagParser>) -> Self {
         FrameInfo {
-            id: std::str::from_utf8(id).expect("validated frame id bytes"),
+            id: core::str::from_utf8(id).expect("validated frame id bytes"),
             major_version,
             raw_tag_parser,
         }
@@ -171,10 +173,9 @@ fn read_lang_code(reader: &mut BufReader<'_>) -> Result<Option<String>> {
     let code = if code.eq_ignore_ascii_case(b"XXX") {
         // Unknown language code.
         None
-    }
-    else {
+    } else {
         // Convert to lowercase string.
-        Some(std::str::from_utf8(&code).unwrap().to_ascii_lowercase())
+        Some(core::str::from_utf8(&code).unwrap().to_ascii_lowercase())
     };
 
     Ok(code)
@@ -311,8 +312,7 @@ pub fn read_apic_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Resu
             _ => None,
         }
         .map(|s| s.to_string())
-    }
-    else {
+    } else {
         // APIC frames use a null-terminated ASCII media-type string.
         read_string_ignore_empty(&mut reader, Encoding::Iso8859_1)?
     };
@@ -866,8 +866,7 @@ pub fn read_tipl_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Resu
         }
 
         Ok(FrameResult::MultipleTags(tags))
-    }
-    else {
+    } else {
         // Return as text frame.
         Ok(FrameResult::Tag(Tag::new(raw)))
     }
@@ -1027,63 +1026,60 @@ fn map_raw_tag(raw: RawTag, parser: Option<RawTagParser>) -> FrameResult {
 // Loopup tables.
 
 // Mapping TXXX descriptions to raw tag parsers.
-lazy_static! {
-    static ref TXXX_DESC_PARSERS: RawTagParserMap = {
-        let mut m: RawTagParserMap = HashMap::new();
-        m.insert("acoustid fingerprint", parse_acoustid_fingerprint);
-        m.insert("acoustid id", parse_acoustid_id);
-        m.insert("albumartistsort", parse_sort_album_artist);
-        m.insert("asin", parse_ident_asin);
-        m.insert("barcode", parse_ident_barcode);
-        m.insert("catalognumber", parse_ident_catalog_number);
-        m.insert("composersort", parse_sort_composer);
-        m.insert("itunesadvistory", parse_itunes_content_advisory);
-        m.insert("license", parse_license);
-        m.insert("musicbrainz album artist id", parse_musicbrainz_album_artist_id);
-        m.insert("musicbrainz album id", parse_musicbrainz_album_id);
-        m.insert("musicbrainz album release country", parse_release_country);
-        m.insert("musicbrainz album status", parse_musicbrainz_release_status);
-        m.insert("musicbrainz album type", parse_musicbrainz_release_type);
-        m.insert("musicbrainz artist id", parse_musicbrainz_artist_id);
-        m.insert("musicbrainz disc id", parse_musicbrainz_disc_id);
-        m.insert("musicbrainz original album id", parse_musicbrainz_original_album_id);
-        m.insert("musicbrainz original artist id", parse_musicbrainz_original_artist_id);
-        m.insert("musicbrainz release group id", parse_musicbrainz_release_group_id);
-        m.insert("musicbrainz release track id", parse_musicbrainz_release_track_id);
-        m.insert("musicbrainz trm id", parse_musicbrainz_trm_id);
-        m.insert("musicbrainz work id", parse_musicbrainz_work_id);
-        m.insert("releasedate", parse_release_date);
-        m.insert("replaygain_album_gain", parse_replaygain_album_gain);
-        m.insert("replaygain_album_peak", parse_replaygain_album_peak);
-        m.insert("replaygain_album_range", parse_replaygain_album_range);
-        m.insert("replaygain_reference_loudness", parse_replaygain_reference_loudness);
-        m.insert("replaygain_track_gain", parse_replaygain_track_gain);
-        m.insert("replaygain_track_peak", parse_replaygain_track_peak);
-        m.insert("replaygain_track_range", parse_replaygain_track_range);
-        m.insert("script", parse_script);
-        m.insert("work", parse_work);
-        m.insert("writer", parse_writer);
-        m
-    };
-}
+static TXXX_DESC_PARSERS: Lazy<RawTagParserMap> = Lazy::new(|| {
+    let mut m: RawTagParserMap = HashMap::new();
+    m.insert("acoustid fingerprint", parse_acoustid_fingerprint);
+    m.insert("acoustid id", parse_acoustid_id);
+    m.insert("albumartistsort", parse_sort_album_artist);
+    m.insert("asin", parse_ident_asin);
+    m.insert("barcode", parse_ident_barcode);
+    m.insert("catalognumber", parse_ident_catalog_number);
+    m.insert("composersort", parse_sort_composer);
+    m.insert("itunesadvistory", parse_itunes_content_advisory);
+    m.insert("license", parse_license);
+    m.insert("musicbrainz album artist id", parse_musicbrainz_album_artist_id);
+    m.insert("musicbrainz album id", parse_musicbrainz_album_id);
+    m.insert("musicbrainz album release country", parse_release_country);
+    m.insert("musicbrainz album status", parse_musicbrainz_release_status);
+    m.insert("musicbrainz album type", parse_musicbrainz_release_type);
+    m.insert("musicbrainz artist id", parse_musicbrainz_artist_id);
+    m.insert("musicbrainz disc id", parse_musicbrainz_disc_id);
+    m.insert("musicbrainz original album id", parse_musicbrainz_original_album_id);
+    m.insert("musicbrainz original artist id", parse_musicbrainz_original_artist_id);
+    m.insert("musicbrainz release group id", parse_musicbrainz_release_group_id);
+    m.insert("musicbrainz release track id", parse_musicbrainz_release_track_id);
+    m.insert("musicbrainz trm id", parse_musicbrainz_trm_id);
+    m.insert("musicbrainz work id", parse_musicbrainz_work_id);
+    m.insert("releasedate", parse_release_date);
+    m.insert("replaygain_album_gain", parse_replaygain_album_gain);
+    m.insert("replaygain_album_peak", parse_replaygain_album_peak);
+    m.insert("replaygain_album_range", parse_replaygain_album_range);
+    m.insert("replaygain_reference_loudness", parse_replaygain_reference_loudness);
+    m.insert("replaygain_track_gain", parse_replaygain_track_gain);
+    m.insert("replaygain_track_peak", parse_replaygain_track_peak);
+    m.insert("replaygain_track_range", parse_replaygain_track_range);
+    m.insert("script", parse_script);
+    m.insert("work", parse_work);
+    m.insert("writer", parse_writer);
+    m
+});
 
 // Mapping TIPL "functions" to raw tag parsers.
-lazy_static! {
-    static ref TIPL_FUNC_PARSERS: RawTagParserMap = {
-        let mut m: RawTagParserMap = HashMap::new();
-        m.insert("arranger", parse_arranger);
-        m.insert("engineer", parse_engineer);
-        m.insert("dj-mix", parse_mix_dj);
-        m.insert("mix", parse_mix_engineer);
-        m.insert("producer", parse_producer);
-        m
-    };
-}
+static TIPL_FUNC_PARSERS: Lazy<RawTagParserMap> = Lazy::new(|| {
+    let mut m: RawTagParserMap = HashMap::new();
+    m.insert("arranger", parse_arranger);
+    m.insert("engineer", parse_engineer);
+    m.insert("dj-mix", parse_mix_dj);
+    m.insert("mix", parse_mix_engineer);
+    m.insert("producer", parse_producer);
+    m
+});
 
 #[cfg(test)]
 mod tests {
     use super::Encoding;
 
+    use alloc::string::ToString;
     use symphonia_core::io::BufReader;
 
     #[test]
@@ -1248,7 +1244,7 @@ mod tests {
     fn verify_read_string_list() {
         use super::read_string_list;
 
-        use std::sync::Arc;
+        use alloc::sync::Arc;
 
         use symphonia_core::meta::RawValue;
 

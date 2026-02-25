@@ -30,6 +30,10 @@
 #![allow(clippy::excessive_precision)]
 #![allow(clippy::identity_op)]
 #![allow(clippy::manual_range_contains)]
+#![no_std]
+
+#[macro_use]
+extern crate alloc;
 
 #[cfg(feature = "ape")]
 pub mod ape;

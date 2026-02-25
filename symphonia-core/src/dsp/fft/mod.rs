@@ -29,7 +29,8 @@ pub const MAX_SIZE: usize = 1 << 16;
 
 #[cfg(test)]
 mod tests {
-    use std::f64;
+    use alloc::vec::Vec;
+    use core::f64;
 
     use super::{Fft, Ifft};
     use crate::dsp::complex::Complex;

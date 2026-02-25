@@ -15,9 +15,15 @@
 #![allow(clippy::manual_range_contains)]
 // Disable to better express the specification.
 #![allow(clippy::collapsible_else_if)]
+#![no_std]
 
-use std::cmp::min;
+#[macro_use]
+extern crate alloc;
 
+use core::cmp::min;
+
+use alloc::boxed::Box;
+use alloc::vec::Vec;
 use symphonia_core::audio::{
     AsGenericAudioBufferRef, AudioBuffer, AudioMut, AudioSpec, Channels, GenericAudioBufferRef,
     layouts,

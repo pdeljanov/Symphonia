@@ -8,7 +8,8 @@
 //! The `probe` module provides methods and traits to support auto-detection of media formats from
 //! arbitrary media streams.
 
-use std::io::{Seek, SeekFrom};
+use alloc::{borrow::ToOwned, boxed::Box, string::String, vec::Vec};
+use embedded_io::{Seek, SeekFrom};
 
 use crate::common::Tier;
 use crate::errors::{Error, Result, unsupported_error};
@@ -19,6 +20,7 @@ use crate::meta::{MetadataInfo, MetadataOptions, MetadataReader, MetadataSideDat
 use log::{debug, error, trace, warn};
 
 mod bloom {
+    use alloc::{boxed::Box, vec};
 
     fn fnv1a32(value: &[u8; 2]) -> u32 {
         const INIT: u32 = 0x811c_9dc5;
@@ -716,7 +718,7 @@ fn score(
 
     // Perform the scoring operation.
     let result = match (candidate.score)(ScopedStream::new(mss, u64::from(max_depth))) {
-        Err(Error::IoError(err)) if err.kind() != std::io::ErrorKind::UnexpectedEof => {
+        Err(Error::IoError(err)) if err.is_eof() => {
             // IO errors that are not an unexpected end-of-file (or out-of-bounds) error, abort the
             // entire probe operation.
             Err(Error::IoError(err))

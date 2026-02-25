@@ -9,7 +9,9 @@
 //!
 //! The MDCT in this module is implemented in-terms of a forward FFT.
 
-use crate::dsp::complex::Complex;
+use alloc::{boxed::Box, vec, vec::Vec};
+
+use crate::dsp::complex::{Complex, ComplexFloat};
 use crate::dsp::fft::*;
 
 /// The Inverse Modified Discrete Transform (IMDCT).
@@ -43,7 +45,7 @@ impl Imdct {
         let mut twiddle = Vec::with_capacity(n2);
 
         let alpha = 1.0 / 8.0 + if scale.is_sign_positive() { 0.0 } else { n2 as f64 };
-        let pi_n = std::f64::consts::PI / n as f64;
+        let pi_n = core::f64::consts::PI / n as f64;
         let sqrt_scale = scale.abs().sqrt();
 
         for k in 0..n2 {
@@ -149,7 +151,7 @@ impl Imdct {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::f64;
+    use core::f64;
 
     fn imdct_analytical(x: &[f32], y: &mut [f32], scale: f64) {
         assert!(y.len() == 2 * x.len());

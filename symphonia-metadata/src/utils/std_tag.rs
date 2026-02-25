@@ -11,8 +11,10 @@
 // would be too difficult to individually waive the lint.
 #![allow(dead_code)]
 
-use std::{collections::HashMap, sync::Arc};
+use alloc::sync::Arc;
 
+use alloc::{borrow::ToOwned, string::String};
+use hashbrown::HashMap;
 use symphonia_core::meta::{ContentAdvisory, MetadataBuilder, RawTag, RawValue, StandardTag, Tag};
 
 // A pair of standard tags.
@@ -346,35 +348,42 @@ pub fn parse_itunes_content_advisory(v: Arc<String>) -> StandardTagPair {
 }
 
 pub fn parse_id3v2_genre(v: Arc<String>) -> StandardTagPair {
-    use regex_lite::Regex;
-
     use crate::utils::id3v1::get_genre_name;
 
-    // Regex that will match the following strings:
-    //
-    // "<NUMBER>"
-    // "<NAME>"
-    // "(<NUMBER>)"
-    // "(<NUMBER)<NAME>"
-    let re = Regex::new(r"^(?P<num0>[0-9]+)$|(?:\((?P<num1>[0-9]+)\))?(?P<name>.+)?$").unwrap();
+    let s = v.as_str();
 
-    // The regex will always match an empty string, therefore unwrapping is safe.
-    let caps = re.captures(v.as_str()).unwrap();
-
-    let name = if let Some(name) = caps.name("name") {
-        // A user-defined genre name provided.
-        Some(name.as_str().to_owned())
-    }
-    else if let Some(num) = caps.name("num0").or_else(|| caps.name("num1")) {
-        // Only genre number provided. Parse to u8, then lookup the genre name.
-        num.as_str().parse::<u8>().ok().and_then(get_genre_name)
-    }
-    else {
-        // Empty string.
+    let name = if s.is_empty() {
         None
+    } else if s.chars().all(|c| c.is_ascii_digit()) {
+        // "<NUMBER>"
+        s.parse::<u8>().ok().and_then(get_genre_name)
+    } else if let Some(rest) = s.strip_prefix('(') {
+        if let Some(close) = rest.find(')') {
+            let num_str = &rest[..close];
+            let after   = &rest[close + 1..];
+
+            // The bracketed section must contain at least one digit (mirrors [0-9]+).
+            let valid_num = !num_str.is_empty() && num_str.chars().all(|c| c.is_ascii_digit());
+
+            if valid_num && after.is_empty() {
+                // "(<NUMBER>)"
+                num_str.parse::<u8>().ok().and_then(get_genre_name)
+            } else if valid_num {
+                // "(<NUMBER>)<NAME>"
+                Some(after.to_owned())
+            } else {
+                // "()" or "(<GARBAGE>)..." — not a genre number, treat whole string as name.
+                Some(s.to_owned())
+            }
+        } else {
+            // No closing paren — plain name.
+            Some(s.to_owned())
+        }
+    } else {
+        // "<NAME>"
+        Some(s.to_owned())
     };
 
-    // Fallback to the original value for the genre if one could not be parsed.
     let genre = name
         .map(|name| StandardTag::Genre(Arc::new(name)))
         .unwrap_or_else(|| StandardTag::Genre(v));
@@ -392,24 +401,34 @@ fn parse_bool(v: Arc<String>) -> Option<bool> {
 
 /// Parse a string in the format "NUM/TOTAL" or "NUM" into a pair of optional integers.
 fn parse_m_of_n(v: Arc<String>) -> (Option<u64>, Option<u64>) {
-    use regex_lite::Regex;
+    let s = v.as_str();
 
-    let re = Regex::new(r"^(?P<m>[0-9]+)(/(?P<n>[0-9]+))?$").unwrap();
+    // The original regex anchors the whole string, so a slash *must* be followed
+    // by a valid integer — otherwise nothing matches and we return (None, None).
+    if let Some(slash) = s.find('/') {
+        let m_str = &s[..slash];
+        let n_str = &s[slash + 1..];
 
-    let mut opt_m = None;
-    let mut opt_n = None;
+        let all_digits = |p: &str| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit());
 
-    if let Some(caps) = re.captures(v.as_str()) {
-        opt_m = caps.name("m").and_then(|m| m.as_str().parse::<u64>().ok());
-        opt_n = caps.name("n").and_then(|n| n.as_str().parse::<u64>().ok());
+        if all_digits(m_str) && all_digits(n_str) {
+            (m_str.parse::<u64>().ok(), n_str.parse::<u64>().ok())
+        } else {
+            (None, None)
+        }
+    } else {
+        // No slash — must be a bare number.
+        if !s.is_empty() && s.chars().all(|c| c.is_ascii_digit()) {
+            (s.parse::<u64>().ok(), None)
+        } else {
+            (None, None)
+        }
     }
-
-    (opt_m, opt_n)
 }
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use alloc::sync::Arc;
 
     use symphonia_core::meta::StandardTag;
 

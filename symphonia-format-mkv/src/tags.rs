@@ -5,8 +5,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use std::{ops::Deref, rc::Rc, sync::Arc};
+use core::{ops::Deref, };
 
+use alloc::{boxed::Box, rc::Rc, string::{String, ToString}, sync::Arc, vec::Vec};
 use symphonia_core::meta::{RawTag, RawTagSubField, RawValue, StandardTag};
 
 use crate::{segment::SimpleTagElement, sub_fields::*};
@@ -17,7 +18,7 @@ pub struct Target {
     /// The target type value.
     pub value: u64,
     /// The target type name, if explicitly specified.
-    pub name: Option<Rc<Box<str>>>,
+    pub name: Option<Rc<Box<str>>>, // TODO: Can be Rc<str>?
 }
 
 /// Describes the context in-which a tag exists.

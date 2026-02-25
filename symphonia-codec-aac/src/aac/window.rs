@@ -11,7 +11,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use std::f32::consts;
+use core::f32::consts;
+
+use alloc::vec::Vec;
 
 /// Window types.
 #[derive(Debug, Clone, Copy, PartialEq)]

@@ -10,6 +10,7 @@ use symphonia::core::formats::probe::Hint;
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
 use symphonia_core::formats::TrackType;
+use symphonia_core::io::FromStd;
 
 fn main() {
     // Get command line arguments.
@@ -17,7 +18,7 @@ fn main() {
 
     // Create a media source. Note that the MediaSource trait is automatically implemented for File,
     // among other types.
-    let file = Box::new(File::open(Path::new(&args[1])).unwrap());
+    let file = Box::new(FromStd::new(File::open(Path::new(&args[1])).unwrap()));
 
     // Create the media source stream using the boxed media source from above.
     let mss = MediaSourceStream::new(file, Default::default());

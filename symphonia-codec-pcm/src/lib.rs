@@ -13,7 +13,11 @@
 #![allow(clippy::excessive_precision)]
 #![allow(clippy::identity_op)]
 #![allow(clippy::manual_range_contains)]
+#![no_std]
 
+extern crate alloc;
+
+use alloc::boxed::Box;
 use symphonia_core::codecs::CodecInfo;
 use symphonia_core::codecs::registry::{RegisterableAudioDecoder, SupportedAudioCodec};
 use symphonia_core::support_audio_codec;

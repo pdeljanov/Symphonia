@@ -5,8 +5,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+use alloc::{boxed::Box, vec::Vec};
 use log::{debug, error, info, warn};
-use std::{convert::TryFrom, fmt, mem::size_of, str};
+use core::{convert::TryFrom, fmt, mem::size_of, str};
 use symphonia_core::{
     audio::{AmbisonicBFormat, ChannelLabel, Channels, Position, layouts},
     codecs::audio::{AudioCodecId, well_known::*},
@@ -609,7 +610,9 @@ fn read_variable_length_integer(reader: &mut MediaSourceStream<'_>) -> Result<u6
 
 #[cfg(test)]
 mod tests {
-    use std::io::Cursor;
+    use symphonia_core::io::Cursor;
+
+    use alloc::{boxed::Box, vec::Vec};
 
     use super::*;
 

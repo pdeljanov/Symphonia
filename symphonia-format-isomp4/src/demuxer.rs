@@ -5,6 +5,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+use alloc::boxed::Box;
+use alloc::vec::Vec;
 use symphonia_core::support_format;
 
 use symphonia_core::errors::{
@@ -17,8 +19,7 @@ use symphonia_core::io::*;
 use symphonia_core::meta::{Metadata, MetadataLog};
 use symphonia_core::units::Time;
 
-use std::io::{Seek, SeekFrom};
-use std::sync::Arc;
+use alloc::sync::Arc;
 
 use crate::atoms::{AtomIterator, AtomType};
 use crate::atoms::{FtypAtom, MetaAtom, MoofAtom, MoovAtom, SidxAtom, TrakAtom};

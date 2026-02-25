@@ -7,9 +7,10 @@
 
 //! Registry for codecs to support lookup and instantiation of decoders dynamically at runtime.
 
-use std::collections::HashMap;
-use std::default::Default;
-use std::hash::Hash;
+use alloc::boxed::Box;
+use hashbrown::HashMap;
+use core::default::Default;
+use core::hash::Hash;
 
 use crate::codecs::CodecInfo;
 use crate::codecs::audio::{AudioCodecId, AudioCodecParameters, AudioDecoder, AudioDecoderOptions};
@@ -129,6 +130,7 @@ pub struct RegisteredSubtitleDecoder {
     pub factory: SubtitleDecoderFactoryFn,
 }
 
+// TODO: consider passing BuildHasher as generic here
 struct InnerCodecRegistry<C, R> {
     preferred: HashMap<C, R>,
     standard: HashMap<C, R>,
@@ -147,7 +149,7 @@ impl<C, R> Default for InnerCodecRegistry<C, R> {
 
 impl<C, R> InnerCodecRegistry<C, R>
 where
-    C: Hash + std::cmp::Eq,
+    C: Hash + core::cmp::Eq,
 {
     fn get(&self, id: &C) -> Option<&R> {
         self.preferred.get(id).or_else(|| self.standard.get(id)).or_else(|| self.fallback.get(id))

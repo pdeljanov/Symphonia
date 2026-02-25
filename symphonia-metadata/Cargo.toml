@@ -20,7 +20,7 @@ ape = []
 flac = ["vorbis"]
 id3v1 = []
 id3v2 = []
-riff-info = []
+riff-info = ["id3v2"]
 vorbis = ["flac"]
 
 # Enable all RIFF metadata formats.
@@ -29,8 +29,8 @@ riff = [
 ]
 
 [dependencies]
-lazy_static = "1.4.0"
+
 log = "0.4"
-regex-lite = "0.1.6"
 smallvec = "1.13.1"
 symphonia-core = { version = "0.6.0", path = "../symphonia-core" }
+hashbrown = { workspace = true }

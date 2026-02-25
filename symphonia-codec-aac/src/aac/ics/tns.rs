@@ -14,7 +14,7 @@
 use symphonia_core::errors::Result;
 use symphonia_core::io::ReadBitsLtr;
 
-use std::f32::consts;
+use core::f32::consts;
 
 use crate::aac::common::*;
 use crate::aac::ics::IcsInfo;

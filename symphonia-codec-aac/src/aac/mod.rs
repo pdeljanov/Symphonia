@@ -11,6 +11,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+use alloc::boxed::Box;
+use alloc::vec::Vec;
 use symphonia_core::audio::{
     AsGenericAudioBufferRef, AudioBuffer, AudioSpec, GenericAudioBufferRef,
 };
@@ -271,8 +273,8 @@ impl M4AInfo {
     }
 }
 
-impl std::fmt::Display for M4AInfo {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for M4AInfo {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(
             f,
             "MPEG 4 Audio {}, {} Hz, {} channels, {} samples per frame",

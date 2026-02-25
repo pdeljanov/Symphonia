@@ -5,9 +5,11 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::io::{ReadBitsLtr, vlc::*};
-
-use lazy_static::lazy_static;
+use alloc::{boxed::Box, vec::Vec};
+use symphonia_core::{
+    Lazy,
+    io::{ReadBitsLtr, vlc::*},
+};
 
 #[rustfmt::skip]
 const SPECTRUM_CODEBOOK1_LENS: [u8; 81] = [
@@ -500,7 +502,10 @@ pub struct QuadsCodebook {
 
 impl QuadsCodebook {
     #[inline(always)]
-    pub fn read_quant<B: ReadBitsLtr>(&self, bs: &mut B) -> std::io::Result<(u8, u8, u8, u8)> {
+    pub fn read_quant<B: ReadBitsLtr>(
+        &self,
+        bs: &mut B,
+    ) -> symphonia_core::io::Result<(u8, u8, u8, u8)> {
         bs.read_codebook(&self.codebook).map(|(cw, _)| AAC_QUADS[cw as usize])
     }
 }
@@ -522,7 +527,10 @@ pub struct PairsCodebook {
 
 impl PairsCodebook {
     #[inline(always)]
-    pub fn read_dequant<B: ReadBitsLtr>(&self, bs: &mut B) -> std::io::Result<(f32, f32)> {
+    pub fn read_dequant<B: ReadBitsLtr>(
+        &self,
+        bs: &mut B,
+    ) -> symphonia_core::io::Result<(f32, f32)> {
         bs.read_codebook(&self.codebook).map(|(cw, _)| self.values[cw as usize])
     }
 }
@@ -543,7 +551,7 @@ pub struct EscapeCodebook {
 
 impl EscapeCodebook {
     #[inline(always)]
-    pub fn read_quant<B: ReadBitsLtr>(&self, bs: &mut B) -> std::io::Result<(u16, u16)> {
+    pub fn read_quant<B: ReadBitsLtr>(&self, bs: &mut B) -> symphonia_core::io::Result<(u16, u16)> {
         bs.read_codebook(&self.codebook).map(|(cw, _)| self.values[cw as usize])
     }
 }
@@ -624,46 +632,42 @@ fn escape_pair<const MOD: usize>(cw: usize) -> (u16, u16) {
     ((cw / MOD) as u16, (cw % MOD) as u16)
 }
 
-lazy_static! {
-    pub static ref QUADS: [QuadsCodebook; 4] = [
+pub static QUADS: Lazy<[QuadsCodebook; 4]> = Lazy::new(|| {
+    [
         make_basic_codebook(&SPECTRUM_TABLES[0]),
         make_basic_codebook(&SPECTRUM_TABLES[1]),
         make_basic_codebook(&SPECTRUM_TABLES[2]),
         make_basic_codebook(&SPECTRUM_TABLES[3]),
-    ];
-}
+    ]
+});
 
-lazy_static! {
-    pub static ref PAIRS: [PairsCodebook; 6] = [
+pub static PAIRS: Lazy<[PairsCodebook; 6]> = Lazy::new(|| {
+    [
         make_value_codebook(&SPECTRUM_TABLES[4], signed_pair::<9>),
         make_value_codebook(&SPECTRUM_TABLES[5], signed_pair::<9>),
         make_value_codebook(&SPECTRUM_TABLES[6], unsigned_pair::<8>),
         make_value_codebook(&SPECTRUM_TABLES[7], unsigned_pair::<8>),
         make_value_codebook(&SPECTRUM_TABLES[8], unsigned_pair::<13>),
         make_value_codebook(&SPECTRUM_TABLES[9], unsigned_pair::<13>),
-    ];
-}
+    ]
+});
 
-lazy_static! {
-    pub static ref ESC: EscapeCodebook =
-        make_value_codebook(&SPECTRUM_TABLES[10], escape_pair::<17>);
-}
+pub static ESC: Lazy<EscapeCodebook> =
+    Lazy::new(|| make_value_codebook(&SPECTRUM_TABLES[10], escape_pair::<17>));
 
-lazy_static! {
-    pub static ref SCALEFACTORS: Codebook<Entry8x16> = {
-        assert_eq!(SCF_CODEBOOK_CODES.len(), SCF_CODEBOOK_LENS.len());
+pub static SCALEFACTORS: Lazy<Codebook<Entry8x16>> = Lazy::new(|| {
+    assert_eq!(SCF_CODEBOOK_CODES.len(), SCF_CODEBOOK_LENS.len());
 
-        let len = SCF_CODEBOOK_CODES.len() as u8;
+    let len = SCF_CODEBOOK_CODES.len() as u8;
 
-        // Generate the values for the codebook.
-        let values: Vec<u8> = (0..len).collect();
+    // Generate the values for the codebook.
+    let values: Vec<u8> = (0..len).collect();
 
-        // Generate the codebook.
-        let mut builder = CodebookBuilder::new(BitOrder::Verbatim);
+    // Generate the codebook.
+    let mut builder = CodebookBuilder::new(BitOrder::Verbatim);
 
-        // Read in 8-bit blocks.
-        builder.bits_per_read(8);
+    // Read in 8-bit blocks.
+    builder.bits_per_read(8);
 
-        builder.make(&SCF_CODEBOOK_CODES, &SCF_CODEBOOK_LENS, &values).unwrap()
-    };
-}
+    builder.make(&SCF_CODEBOOK_CODES, &SCF_CODEBOOK_LENS, &values).unwrap()
+});

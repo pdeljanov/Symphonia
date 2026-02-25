@@ -5,8 +5,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use std::fmt;
+use core::fmt;
 
+use alloc::boxed::Box;
 use symphonia_core::audio::{AudioBuffer, AudioMut};
 use symphonia_core::errors::{Error, Result, decode_error};
 use symphonia_core::io::{BitReaderLtr, BufReader, ReadBitsLtr, ReadBytes};
@@ -356,7 +357,7 @@ impl Layer3 {
                 // IO error to a decode error.
                 frame_data.granules[gr].channels[ch].rzero = match huffman_result {
                     Ok(rzero) => rzero,
-                    Err(Error::IoError(e)) if e.kind() == std::io::ErrorKind::Other => {
+                    Err(Error::IoError(e)) if e.kind() == symphonia_core::io::ErrorKind::Other => {
                         return decode_error("mpa: huffman decode overrun");
                     }
                     Err(err) => return Err(err),

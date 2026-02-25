@@ -5,9 +5,10 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use std::collections::BTreeMap;
-use std::io::{Seek, SeekFrom};
+use alloc::boxed::Box;
+use alloc::collections::BTreeMap;
 
+use alloc::vec::Vec;
 use symphonia_core::errors::{Error, Result, SeekErrorKind};
 use symphonia_core::errors::{reset_error, seek_error, unsupported_error};
 use symphonia_core::formats::prelude::*;
@@ -143,7 +144,7 @@ impl<'s> OggReader<'s> {
 
             match self.read_page() {
                 Ok(_) => (),
-                Err(Error::IoError(err)) if err.kind() == std::io::ErrorKind::UnexpectedEof => {
+                Err(Error::IoError(err)) if err.is_eof() => {
                     // Check that all logical streams have read their last page.
                     if self.have_all_streams_read_last_page() {
                         // All streams read their last page. End of stream has been reached.
@@ -270,7 +271,7 @@ impl<'s> OggReader<'s> {
                 }
                 _ => match self.read_page() {
                     Ok(_) => (),
-                    Err(Error::IoError(err)) if err.kind() == std::io::ErrorKind::UnexpectedEof => {
+                    Err(Error::IoError(err)) if err.is_eof() => {
                         // If all streams have read their last page, then the seek was out-of-range.
                         if self.have_all_streams_read_last_page() {
                             return seek_error(SeekErrorKind::OutOfRange);

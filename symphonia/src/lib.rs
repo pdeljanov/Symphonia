@@ -7,6 +7,7 @@
 
 #![warn(rust_2018_idioms)]
 #![forbid(unsafe_code)]
+#![no_std]
 
 //! # Project Symphonia
 //!
@@ -190,26 +191,21 @@ pub mod default {
         pub use symphonia_metadata::embedded;
     }
 
-    use lazy_static::lazy_static;
-
+    use symphonia_core::Lazy;
     use symphonia_core::codecs::registry::CodecRegistry;
     use symphonia_core::formats::probe::Probe;
 
-    lazy_static! {
-        static ref CODEC_REGISTRY: CodecRegistry = {
-            let mut registry = CodecRegistry::new();
-            register_enabled_codecs(&mut registry);
-            registry
-        };
-    }
+    static CODEC_REGISTRY: Lazy<CodecRegistry> = Lazy::new(|| {
+        let mut registry = CodecRegistry::new();
+        register_enabled_codecs(&mut registry);
+        registry
+    });
 
-    lazy_static! {
-        static ref PROBE: Probe = {
-            let mut probe: Probe = Default::default();
-            register_enabled_formats(&mut probe);
-            probe
-        };
-    }
+    static PROBE: Lazy<Probe> = Lazy::new(|| {
+        let mut probe: Probe = Default::default();
+        register_enabled_formats(&mut probe);
+        probe
+    });
 
     /// Gets the default `CodecRegistry`. This registry pre-registers all the codecs selected by the
     /// `feature` flags in the includer's `Cargo.toml`. If `features` is not set, the default set of
