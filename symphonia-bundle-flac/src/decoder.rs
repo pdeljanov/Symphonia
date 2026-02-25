@@ -91,36 +91,51 @@ pub struct FlacDecoder {
 
 impl FlacDecoder {
     pub fn try_new(params: &AudioCodecParameters, options: &AudioDecoderOptions) -> Result<Self> {
+        const FLAC_BLOCK_LEN_MAX: u16 = u16::MAX;
+
         // This decoder only supports FLAC.
         if params.codec != CODEC_ID_FLAC {
             return unsupported_error("flac: invalid codec");
         }
 
-        // Obtain the extra data.
-        let extra_data = match params.extra_data.as_ref() {
-            Some(buf) => buf,
-            _ => return unsupported_error("flac: missing extra data"),
-        };
-
-        // Read the stream information block.
-        let info = StreamInfo::read(&mut BufReader::new(extra_data))?;
-
         // Clone the codec parameters so that the parameters can be supplemented and/or amended.
         let mut params = params.clone();
 
-        // Amend the provided codec parameters with information from the stream information block.
-        params
-            .with_sample_rate(info.sample_rate)
-            .with_bits_per_sample(info.bits_per_sample)
-            .with_max_frames_per_packet(u64::from(info.block_len_max))
-            .with_channels(info.channels.clone());
+        // Obtain the audio spec from either the extra data or the frame data.
+        let (spec, block_len) = match params.extra_data.as_ref() {
+            Some(extra_data) => {
+                // Read the stream information block.
+                let info = StreamInfo::read(&mut BufReader::new(extra_data))?;
 
-        if let Some(md5) = info.md5 {
-            params.with_verification_code(VerificationCheck::Md5(md5));
-        }
+                // Amend the provided codec parameters with information from the stream information block.
+                params
+                    .with_sample_rate(info.sample_rate)
+                    .with_bits_per_sample(info.bits_per_sample)
+                    .with_max_frames_per_packet(u64::from(info.block_len_max))
+                    .with_channels(info.channels.clone());
 
-        let spec = AudioSpec::new(info.sample_rate, info.channels.clone());
-        let buf = AudioBuffer::new(spec, usize::from(info.block_len_max));
+                if let Some(md5) = info.md5 {
+                    params.with_verification_code(VerificationCheck::Md5(md5));
+                }
+
+                (AudioSpec::new(info.sample_rate, info.channels.clone()), info.block_len_max)
+            }
+
+            // If no extra data is provided, use the codec parameters directly and set the
+            // audio buffer capacity to the maximum allowed.
+            None => (
+                AudioSpec::new(
+                    params.sample_rate.ok_or(Error::DecodeError("Unable to decode sample rate"))?,
+                    params
+                        .channels
+                        .clone()
+                        .ok_or(Error::DecodeError("Unable to decode channels"))?,
+                ),
+                FLAC_BLOCK_LEN_MAX,
+            ),
+        };
+
+        let buf = AudioBuffer::new(spec, usize::from(block_len));
 
         // TODO: Verify packet integrity if the demuxer is not.
         // if !params.packet_data_integrity {
