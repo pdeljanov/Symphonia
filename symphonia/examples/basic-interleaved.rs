@@ -85,6 +85,10 @@ fn main() {
 
                 // Copy the decoded audio buffer into the sample buffer in an interleaved format.
                 if let Some(buf) = &mut sample_buf {
+                    if buf.capacity() < audio_buf.frames() * audio_buf.spec().channels.count() {
+                        // The audio buffer is too large for the sample buffer.
+                        break;
+                    }
                     buf.copy_interleaved_ref(audio_buf);
 
                     // The samples may now be access via the `samples()` function.

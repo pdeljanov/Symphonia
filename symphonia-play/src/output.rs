@@ -104,6 +104,11 @@ mod pulseaudio {
             }
 
             // Interleave samples from the audio buffer into the sample buffer.
+            let n_samples = decoded.frames() * decoded.spec().channels.count();
+            if self.sample_buf.capacity() < n_samples {
+                error!("audio output write error: sample buffer capacity exceeded");
+                return Err(AudioOutputError::StreamClosedError);
+            }
             self.sample_buf.copy_interleaved_ref(decoded);
 
             // Write interleaved samples to PulseAudio.
@@ -327,6 +332,11 @@ mod cpal {
             }
             else {
                 // Resampling is not required. Interleave the sample for cpal using a sample buffer.
+                let n_samples = decoded.frames() * decoded.spec().channels.count();
+                if self.sample_buf.capacity() < n_samples {
+                    error!("audio output write error: sample buffer capacity exceeded");
+                    return Err(AudioOutputError::StreamClosedError);
+                }
                 self.sample_buf.copy_interleaved_ref(decoded);
 
                 self.sample_buf.samples()
