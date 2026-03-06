@@ -17,56 +17,52 @@ use lazy_static::lazy_static;
 
 use super::complex::Complex;
 
-macro_rules! fft_twiddle_table {
-    ($bi:expr, $name:ident) => {
-        lazy_static! {
-            static ref $name: [Complex; (1 << $bi) >> 1] = {
-                const N: usize = 1 << $bi;
+use std::sync::{RwLock, RwLockReadGuard};
 
-                let mut table = [Default::default(); N >> 1];
-
-                let theta = std::f64::consts::PI / (N >> 1) as f64;
-
-                for (k, t) in table.iter_mut().enumerate() {
-                    let angle = theta * k as f64;
-                    *t = Complex::new(angle.cos() as f32, -angle.sin() as f32);
-                }
-
-                table
-            };
-        }
-    };
+lazy_static! {
+    /// We use a resizable vector for the twiddle table for the following reasons:
+    /// 1. Since it is allocated on the heap, the compiler should not attempt to reserve space for
+    ///    it in the program binary. The compiler will attempt that with a static array even if it
+    ///    is contained in a "lazy_static" macro. This approach can reduce binary size by 500kB.
+    /// 2. For applications where memory is more restricted, the twiddle table will be as small as
+    ///    possible inputs -- you don't pay the penalty of a 256KB twiddle table if you only need
+    ///    a 1024-sized table. Only one twiddle table exists at a time, as twiddle values for
+    ///    smaller values of `n` are a proper subset of the values for `n`.
+    static ref FFT_TWIDDLE_TABLE: RwLock<Vec<Complex>> = RwLock::new(Vec::new());
 }
 
-fft_twiddle_table!(6, FFT_TWIDDLE_TABLE_64);
-fft_twiddle_table!(7, FFT_TWIDDLE_TABLE_128);
-fft_twiddle_table!(8, FFT_TWIDDLE_TABLE_256);
-fft_twiddle_table!(9, FFT_TWIDDLE_TABLE_512);
-fft_twiddle_table!(10, FFT_TWIDDLE_TABLE_1024);
-fft_twiddle_table!(11, FFT_TWIDDLE_TABLE_2048);
-fft_twiddle_table!(12, FFT_TWIDDLE_TABLE_4096);
-fft_twiddle_table!(13, FFT_TWIDDLE_TABLE_8192);
-fft_twiddle_table!(14, FFT_TWIDDLE_TABLE_16384);
-fft_twiddle_table!(15, FFT_TWIDDLE_TABLE_32768);
-fft_twiddle_table!(16, FFT_TWIDDLE_TABLE_65536);
-
 /// Get the twiddle factors for a FFT of size `n`.
-fn fft_twiddle_factors(n: usize) -> &'static [Complex] {
-    // FFT sizes <= 32 use unrolled FFT implementations with hard-coded twiddle factors.
-    match n {
-        64 => FFT_TWIDDLE_TABLE_64.as_ref(),
-        128 => FFT_TWIDDLE_TABLE_128.as_ref(),
-        256 => FFT_TWIDDLE_TABLE_256.as_ref(),
-        512 => FFT_TWIDDLE_TABLE_512.as_ref(),
-        1024 => FFT_TWIDDLE_TABLE_1024.as_ref(),
-        2048 => FFT_TWIDDLE_TABLE_2048.as_ref(),
-        4096 => FFT_TWIDDLE_TABLE_4096.as_ref(),
-        8192 => FFT_TWIDDLE_TABLE_8192.as_ref(),
-        16384 => FFT_TWIDDLE_TABLE_16384.as_ref(),
-        32768 => FFT_TWIDDLE_TABLE_32768.as_ref(),
-        65536 => FFT_TWIDDLE_TABLE_65536.as_ref(),
-        _ => panic!("fft size too large"),
+fn get_twiddles(n: usize) -> (usize, RwLockReadGuard<'static, Vec<Complex>>) {
+    let mut max_n: usize;
+    {
+        let read_guard = FFT_TWIDDLE_TABLE.read().unwrap();
+        max_n = read_guard.len() * 2;
+        // Twiddle table is sufficiently sized.
+        if max_n >= n {
+            return (max_n, read_guard);
+        }
     }
+    {
+        let mut write_guard = FFT_TWIDDLE_TABLE.write().unwrap();
+        // Check the table size again before writing to ensure it wasn't updated by another thread.
+        if write_guard.len() * 2 < n {
+            max_n = n.next_power_of_two();
+            let len = max_n / 2;
+
+            // Since the larger table is more "dense", we can't easily re-use the existing values
+            // and it's safer to just re-do the entire table.
+            let theta = std::f64::consts::PI / len as f64;
+
+            write_guard.clear();
+            write_guard.reserve(len);
+            write_guard.extend((0..len).map(|k| {
+                let angle = theta * k as f64;
+                Complex::new(angle.cos() as f32, -angle.sin() as f32)
+            }));
+        }
+    }
+
+    (max_n, FFT_TWIDDLE_TABLE.read().unwrap())
 }
 
 /// The complex Fast Fourier Transform (FFT).
@@ -81,7 +77,7 @@ impl Fft {
     pub fn new(n: usize) -> Self {
         // The FFT size must be a power of two.
         assert!(n.is_power_of_two());
-        // The permutation table uses 16-bit indicies. Therefore, the absolute maximum FFT size is
+        // The permutation table uses 16-bit indices. Therefore, the absolute maximum FFT size is
         // limited to 2^16.
         assert!(n <= Fft::MAX_SIZE);
 
@@ -110,7 +106,7 @@ impl Fft {
         }
 
         // Do the forward FFT.
-        Self::transform(y, n);
+        Self::do_transform(y, n);
 
         // Output scale.
         let c = 1.0 / n as f32;
@@ -139,7 +135,7 @@ impl Fft {
         }
 
         // Do the forward FFT.
-        Self::transform(x, n);
+        Self::do_transform(x, n);
 
         // Output scale.
         let c = 1.0 / n as f32;
@@ -164,14 +160,7 @@ impl Fft {
         }
 
         // Start FFT recursion.
-        match n {
-            1 => (),
-            2 => fft2(x.try_into().unwrap()),
-            4 => fft4(x.try_into().unwrap()),
-            8 => fft8(x.try_into().unwrap()),
-            16 => fft16(x.try_into().unwrap()),
-            _ => Self::transform(x, n),
-        }
+        Self::do_transform(x, n);
     }
 
     /// Calculate the FFT.
@@ -186,17 +175,26 @@ impl Fft {
         }
 
         // Start FFT recursion.
+        Self::do_transform(y, n);
+    }
+
+    fn do_transform(x: &mut [Complex], n: usize) {
         match n {
             1 => (),
-            2 => fft2(y.try_into().unwrap()),
-            4 => fft4(y.try_into().unwrap()),
-            8 => fft8(y.try_into().unwrap()),
-            16 => fft16(y.try_into().unwrap()),
-            _ => Self::transform(y, n),
+            2 => fft2(x.try_into().unwrap()),
+            4 => fft4(x.try_into().unwrap()),
+            8 => fft8(x.try_into().unwrap()),
+            16 => fft16(x.try_into().unwrap()),
+            32 => fft32(x.try_into().unwrap()),
+            _ => {
+                let (max_n, twiddles) = get_twiddles(n);
+                let stride = max_n / n;
+                Self::transform(x, n, &twiddles, stride);
+            }
         }
     }
 
-    fn transform(x: &mut [Complex], n: usize) {
+    fn transform(x: &mut [Complex], n: usize, twiddles: &[Complex], stride: usize) {
         fn to_arr(x: &mut [Complex]) -> Option<&mut [Complex; 32]> {
             x.try_into().ok()
         }
@@ -209,25 +207,17 @@ impl Fft {
 
             let (even, odd) = x.split_at_mut(n_half);
 
-            Self::transform(even, n_half);
-            Self::transform(odd, n_half);
+            Self::transform(even, n_half, twiddles, stride * 2);
+            Self::transform(odd, n_half, twiddles, stride * 2);
 
-            let twiddle = fft_twiddle_factors(n);
-
-            for ((e, o), w) in
-                even.chunks_exact_mut(2).zip(odd.chunks_exact_mut(2)).zip(twiddle.chunks_exact(2))
+            for ((e, o), &w) in
+                even.iter_mut().zip(odd.iter_mut()).zip(twiddles.iter().step_by(stride))
             {
-                let p0 = e[0];
-                let q0 = o[0] * w[0];
+                let p = *e;
+                let q = *o * w;
 
-                e[0] = p0 + q0;
-                o[0] = p0 - q0;
-
-                let p1 = e[1];
-                let q1 = o[1] * w[1];
-
-                e[1] = p1 + q1;
-                o[1] = p1 - q1;
+                *e = p + q;
+                *o = p - q;
             }
         }
     }
@@ -456,9 +446,32 @@ mod tests {
     }
 
     /// Returns true if both real and imaginary complex number components deviate by less than
-    /// `epsilon` between the left-hand side and right-hand side.
-    fn check_complex(lhs: Complex, rhs: Complex, epsilon: f32) -> bool {
-        (lhs.re - rhs.re).abs() < epsilon && (lhs.im - rhs.im).abs() < epsilon
+    /// an acceptable error bound relative to their magnitudes.
+    fn check_complex(lhs: Complex, rhs: Complex, base_epsilon: f32) -> bool {
+        // Use a relative epsilon that scales with the magnitude of the expected value.
+        // We use a slightly larger absolute minimum epsilon to handle cases near 0.0
+        // where floating point noise dominates.
+        // The actual value might be -1.8e-6 and the expected 8.9e-6.
+        // Both are effectively zero, but their relative difference is large.
+        const MIN_EPSILON: f32 = 1e-4;
+        let re_epsilon = MIN_EPSILON.max(base_epsilon * rhs.re.abs());
+        let im_epsilon = MIN_EPSILON.max(base_epsilon * rhs.im.abs());
+
+        (lhs.re - rhs.re).abs() <= re_epsilon && (lhs.im - rhs.im).abs() <= im_epsilon
+    }
+    const EPSILON: f32 = 1e-5;
+    const STRICT_EPSILON: f32 = 1e-6;
+
+    fn assert_almost_eq(expected: &[Complex], actual: &[Complex], epsilon: f32) {
+        for (&e, &a) in expected.iter().zip(actual.iter()) {
+            assert!(
+                check_complex(a, e, epsilon),
+                "actual {:?} versus {:?} expected (relative epsilon {})",
+                a,
+                e,
+                epsilon
+            );
+        }
     }
 
     #[rustfmt::skip]
@@ -540,9 +553,7 @@ mod tests {
         // Actual
         Fft::new(TEST_VECTOR.len()).fft(&TEST_VECTOR, &mut actual);
 
-        for (&a, &e) in actual.iter().zip(expected.iter()) {
-            assert!(check_complex(a, e, 0.00001));
-        }
+        assert_almost_eq(&actual, &expected, EPSILON);
     }
 
     #[test]
@@ -557,9 +568,7 @@ mod tests {
         actual.copy_from_slice(&TEST_VECTOR);
         Fft::new(TEST_VECTOR.len()).fft_inplace(&mut actual);
 
-        for (&a, &e) in actual.iter().zip(expected.iter()) {
-            assert!(check_complex(a, e, 0.00001));
-        }
+        assert_almost_eq(&actual, &expected, EPSILON);
     }
 
     #[test]
@@ -573,9 +582,7 @@ mod tests {
         // Actual
         Fft::new(TEST_VECTOR.len()).ifft(&TEST_VECTOR, &mut actual);
 
-        for (&a, &e) in actual.iter().zip(expected.iter()) {
-            assert!(check_complex(a, e, 0.00001));
-        }
+        assert_almost_eq(&actual, &expected, EPSILON);
     }
 
     #[test]
@@ -590,9 +597,7 @@ mod tests {
         actual.copy_from_slice(&TEST_VECTOR);
         Fft::new(TEST_VECTOR.len()).ifft_inplace(&mut actual);
 
-        for (&a, &e) in actual.iter().zip(expected.iter()) {
-            assert!(check_complex(a, e, 0.00001));
-        }
+        assert_almost_eq(&actual, &expected, EPSILON);
     }
 
     #[test]
@@ -604,9 +609,7 @@ mod tests {
         fft.fft(&TEST_VECTOR, &mut fft_out);
         fft.ifft(&fft_out, &mut ifft_out);
 
-        for (&a, &e) in ifft_out.iter().zip(TEST_VECTOR.iter()) {
-            assert!(check_complex(a, e, 0.000001));
-        }
+        assert_almost_eq(&ifft_out, &TEST_VECTOR, STRICT_EPSILON);
     }
 
     #[test]
@@ -618,8 +621,94 @@ mod tests {
         fft.fft_inplace(&mut out);
         fft.ifft_inplace(&mut out);
 
-        for (&a, &e) in out.iter().zip(TEST_VECTOR.iter()) {
-            assert!(check_complex(a, e, 0.000001));
+        assert_almost_eq(&out, &TEST_VECTOR, STRICT_EPSILON);
+    }
+
+    fn generate_test_signal(n: usize) -> Vec<Complex> {
+        let mut signal = Vec::with_capacity(n);
+        for i in 0..n {
+            // Mix of a DC component, a low frequency, and a high frequency to get interesting values.
+            let t = i as f32 / n as f32;
+            let val = 1.0
+                + (2.0 * f32::consts::PI * 3.0 * t).sin()
+                + (2.0 * f32::consts::PI * 15.0 * t).cos();
+            signal.push(Complex { re: val, im: 0.0 });
         }
+        signal
+    }
+
+    #[test]
+    fn verify_fft_various_sizes() {
+        let sizes = [2, 4, 8, 16, 32, 128, 256, 512];
+        for &size in &sizes {
+            let signal = generate_test_signal(size);
+
+            let mut actual = vec![Default::default(); size];
+            let mut expected = vec![Default::default(); size];
+
+            dft_naive(&signal, &mut expected);
+
+            let fft = Fft::new(size);
+            fft.fft(&signal, &mut actual);
+
+            assert_almost_eq(&actual, &expected, EPSILON);
+        }
+    }
+
+    #[test]
+    fn verify_fft_striding() {
+        // Start with a larger table.
+        let large_size = 1024;
+        let large_signal = generate_test_signal(large_size);
+        let mut large_actual = vec![Default::default(); large_size];
+        let large_fft = Fft::new(large_size);
+        large_fft.fft(&large_signal, &mut large_actual);
+
+        // Now do a smaller FFT. This will use the large global table with a stride.
+        let small_size = 64;
+        let small_signal = generate_test_signal(small_size);
+        let mut small_actual = vec![Default::default(); small_size];
+        let mut small_expected = vec![Default::default(); small_size];
+
+        dft_naive(&small_signal, &mut small_expected);
+
+        let small_fft = Fft::new(small_size);
+        small_fft.fft(&small_signal, &mut small_actual);
+
+        assert_almost_eq(&small_actual, &small_expected, EPSILON);
+    }
+
+    #[test]
+    fn verify_fft_grows_in_place() {
+        // First, a small FFT.
+        let small_size = 64;
+        let small_signal = generate_test_signal(small_size);
+        let mut small_actual = vec![Default::default(); small_size];
+        let small_fft = Fft::new(small_size);
+        small_fft.fft(&small_signal, &mut small_actual);
+
+        // Then do a large FFT to force the global table to grow.
+        let large_size = 1024;
+        let large_signal = generate_test_signal(large_size);
+        let mut large_actual = vec![Default::default(); large_size];
+        let mut large_expected = vec![Default::default(); large_size];
+        let large_fft = Fft::new(large_size);
+        large_fft.fft(&large_signal, &mut large_actual);
+
+        dft_naive(&large_signal, &mut large_expected);
+
+        assert_almost_eq(&large_actual, &large_expected, EPSILON);
+    }
+
+    #[test]
+    #[should_panic]
+    fn verify_fft_invalid_size_not_power_of_two() {
+        let _fft = Fft::new(100);
+    }
+
+    #[test]
+    #[should_panic]
+    fn verify_fft_invalid_size_too_large() {
+        let _fft = Fft::new(Fft::MAX_SIZE * 2);
     }
 }
