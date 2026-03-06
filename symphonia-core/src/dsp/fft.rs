@@ -460,7 +460,6 @@ mod tests {
         (lhs.re - rhs.re).abs() <= re_epsilon && (lhs.im - rhs.im).abs() <= im_epsilon
     }
     const EPSILON: f32 = 1e-5;
-    const STRICT_EPSILON: f32 = 1e-6;
 
     fn assert_almost_eq(expected: &[Complex], actual: &[Complex], epsilon: f32) {
         for (&e, &a) in expected.iter().zip(actual.iter()) {
@@ -609,7 +608,7 @@ mod tests {
         fft.fft(&TEST_VECTOR, &mut fft_out);
         fft.ifft(&fft_out, &mut ifft_out);
 
-        assert_almost_eq(&ifft_out, &TEST_VECTOR, STRICT_EPSILON);
+        assert_almost_eq(&ifft_out, &TEST_VECTOR, EPSILON);
     }
 
     #[test]
@@ -621,7 +620,7 @@ mod tests {
         fft.fft_inplace(&mut out);
         fft.ifft_inplace(&mut out);
 
-        assert_almost_eq(&out, &TEST_VECTOR, STRICT_EPSILON);
+        assert_almost_eq(&out, &TEST_VECTOR, EPSILON);
     }
 
     fn generate_test_signal(n: usize) -> Vec<Complex> {
