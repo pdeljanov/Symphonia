@@ -7,8 +7,6 @@
 
 use symphonia_core::io::{ReadBitsLtr, vlc::*};
 
-use lazy_static::lazy_static;
-
 #[rustfmt::skip]
 const SPECTRUM_CODEBOOK1_LENS: [u8; 81] = [
     11,  9, 11, 10,  7, 10, 11,  9, 11, 10,  7, 10,  7,  5,  7,  9,
@@ -624,33 +622,31 @@ fn escape_pair<const MOD: usize>(cw: usize) -> (u16, u16) {
     ((cw / MOD) as u16, (cw % MOD) as u16)
 }
 
-lazy_static! {
-    pub static ref QUADS: [QuadsCodebook; 4] = [
+pub static QUADS: std::sync::LazyLock<[QuadsCodebook; 4]> = std::sync::LazyLock::new(|| {
+    [
         make_basic_codebook(&SPECTRUM_TABLES[0]),
         make_basic_codebook(&SPECTRUM_TABLES[1]),
         make_basic_codebook(&SPECTRUM_TABLES[2]),
         make_basic_codebook(&SPECTRUM_TABLES[3]),
-    ];
-}
+    ]
+});
 
-lazy_static! {
-    pub static ref PAIRS: [PairsCodebook; 6] = [
+pub static PAIRS: std::sync::LazyLock<[PairsCodebook; 6]> = std::sync::LazyLock::new(|| {
+    [
         make_value_codebook(&SPECTRUM_TABLES[4], signed_pair::<9>),
         make_value_codebook(&SPECTRUM_TABLES[5], signed_pair::<9>),
         make_value_codebook(&SPECTRUM_TABLES[6], unsigned_pair::<8>),
         make_value_codebook(&SPECTRUM_TABLES[7], unsigned_pair::<8>),
         make_value_codebook(&SPECTRUM_TABLES[8], unsigned_pair::<13>),
         make_value_codebook(&SPECTRUM_TABLES[9], unsigned_pair::<13>),
-    ];
-}
+    ]
+});
 
-lazy_static! {
-    pub static ref ESC: EscapeCodebook =
-        make_value_codebook(&SPECTRUM_TABLES[10], escape_pair::<17>);
-}
+pub static ESC: std::sync::LazyLock<EscapeCodebook> =
+    std::sync::LazyLock::new(|| make_value_codebook(&SPECTRUM_TABLES[10], escape_pair::<17>));
 
-lazy_static! {
-    pub static ref SCALEFACTORS: Codebook<Entry8x16> = {
+pub static SCALEFACTORS: std::sync::LazyLock<Codebook<Entry8x16>> =
+    std::sync::LazyLock::new(|| {
         assert_eq!(SCF_CODEBOOK_CODES.len(), SCF_CODEBOOK_LENS.len());
 
         let len = SCF_CODEBOOK_CODES.len() as u8;
@@ -665,5 +661,4 @@ lazy_static! {
         builder.bits_per_read(8);
 
         builder.make(&SCF_CODEBOOK_CODES, &SCF_CODEBOOK_LENS, &values).unwrap()
-    };
-}
+    });

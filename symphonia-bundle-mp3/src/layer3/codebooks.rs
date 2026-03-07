@@ -7,8 +7,6 @@
 
 use symphonia_core::io::vlc::*;
 
-use lazy_static::lazy_static;
-
 #[rustfmt::skip]
 const MPEG_CODES_0: [u32; 0] = [ ];
 
@@ -559,8 +557,8 @@ fn mpeg_gen_value(i: u16, wrap: u16) -> u16 {
     ((i / wrap) << 4) | (i % wrap)
 }
 
-lazy_static! {
-    pub static ref CODEBOOK_TABLES: [Codebook<Entry16x16>; 18] = {
+pub static CODEBOOK_TABLES: std::sync::LazyLock<[Codebook<Entry16x16>; 18]> =
+    std::sync::LazyLock::new(|| {
         let mut codebooks: [Codebook<Entry16x16>; 18] = Default::default();
 
         for (codebook, table) in codebooks.iter_mut().zip(&MPEG_TABLES) {
@@ -569,8 +567,7 @@ lazy_static! {
             let len = table.codes.len() as u16;
 
             // Generate values for the codebook.
-            let values: Vec<u16> = (0..len).map(|i| mpeg_gen_value(i, table.wrap))
-                                           .collect();
+            let values: Vec<u16> = (0..len).map(|i| mpeg_gen_value(i, table.wrap)).collect();
 
             // Generate the codebook.
             let mut builder = CodebookBuilder::new(BitOrder::Verbatim);
@@ -582,11 +579,10 @@ lazy_static! {
         }
 
         codebooks
-    };
-}
+    });
 
-lazy_static! {
-    pub static ref QUADS_CODEBOOK_TABLE: [Codebook<Entry16x16>; 2] = {
+pub static QUADS_CODEBOOK_TABLE: std::sync::LazyLock<[Codebook<Entry16x16>; 2]> =
+    std::sync::LazyLock::new(|| {
         let mut codebooks: [Codebook<Entry16x16>; 2] = Default::default();
 
         for (codebook, table) in codebooks.iter_mut().zip(&MPEG_QUADS_TABLES) {
@@ -595,8 +591,7 @@ lazy_static! {
             let len = table.codes.len() as u16;
 
             // Generate values for the codebook.
-            let values: Vec<u16> = (0..len).map(|i| mpeg_gen_value(i, table.wrap))
-                                           .collect();
+            let values: Vec<u16> = (0..len).map(|i| mpeg_gen_value(i, table.wrap)).collect();
 
             // Generate the codebook.
             let mut builder = CodebookBuilder::new(BitOrder::Verbatim);
@@ -608,5 +603,4 @@ lazy_static! {
         }
 
         codebooks
-    };
-}
+    });

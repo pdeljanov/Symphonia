@@ -9,8 +9,6 @@ use std::collections::HashMap;
 
 use crate::ebml::{EbmlDataType, EbmlElementInfo, EbmlSchema};
 
-use lazy_static::lazy_static;
-
 /// MKV element type enumeration.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum MkvElement {
@@ -337,8 +335,8 @@ impl EbmlElementInfo for MkvElementInfo {
     }
 }
 
-lazy_static! {
-    static ref MKV_SCHEMA: HashMap<u32, MkvElementInfo> = {
+static MKV_SCHEMA: std::sync::LazyLock<HashMap<u32, MkvElementInfo>> =
+    std::sync::LazyLock::new(|| {
         use MkvElementInfo as E;
         let mut e = HashMap::new();
         // Global
@@ -373,7 +371,10 @@ lazy_static! {
         // \Segment\Chapters
         e.insert(0x1043a770, E(MkvElement::Chapters, EbmlDataType::Master, 1, 0x18538067));
         e.insert(0x45b9, E(MkvElement::EditionEntry, EbmlDataType::Master, 2, 0x1043a770));
-        e.insert(0xb6, E(MkvElement::ChapterAtom, EbmlDataType::Master, EBML_RECURSIVE | 3, 0x45b9));
+        e.insert(
+            0xb6,
+            E(MkvElement::ChapterAtom, EbmlDataType::Master, EBML_RECURSIVE | 3, 0x45b9),
+        );
         e.insert(0x6944, E(MkvElement::ChapProcess, EbmlDataType::Master, 4, 0xb6));
         e.insert(0x6955, E(MkvElement::ChapProcessCodecId, EbmlDataType::Unsigned, 5, 0x6944));
         e.insert(0x6911, E(MkvElement::ChapProcessCommand, EbmlDataType::Master, 5, 0x6944));
@@ -405,7 +406,10 @@ lazy_static! {
         e.insert(0x45dd, E(MkvElement::EditionFlagOrdered, EbmlDataType::Unsigned, 3, 0x45b9));
         e.insert(0x45bc, E(MkvElement::EditionUid, EbmlDataType::Unsigned, 3, 0x45b9));
         // \Segment\Cluster
-        e.insert(0x1f43b675, E(MkvElement::Cluster, EbmlDataType::Master, EBML_UNKNOWN | 1, 0x18538067));
+        e.insert(
+            0x1f43b675,
+            E(MkvElement::Cluster, EbmlDataType::Master, EBML_UNKNOWN | 1, 0x18538067),
+        );
         e.insert(0xa0, E(MkvElement::BlockGroup, EbmlDataType::Master, 2, 0x1f43b675));
         e.insert(0xa1, E(MkvElement::Block, EbmlDataType::Binary, 3, 0xa0));
         e.insert(0x75a1, E(MkvElement::BlockAdditions, EbmlDataType::Master, 3, 0xa0));
@@ -456,7 +460,10 @@ lazy_static! {
         e.insert(0x1549a966, E(MkvElement::Info, EbmlDataType::Master, 1, 0x18538067));
         e.insert(0x6924, E(MkvElement::ChapterTranslate, EbmlDataType::Master, 2, 0x1549a966));
         e.insert(0x69bf, E(MkvElement::ChapterTranslateCodec, EbmlDataType::Unsigned, 3, 0x6924));
-        e.insert(0x69fc, E(MkvElement::ChapterTranslateEditionUid, EbmlDataType::Unsigned, 3, 0x6924));
+        e.insert(
+            0x69fc,
+            E(MkvElement::ChapterTranslateEditionUid, EbmlDataType::Unsigned, 3, 0x6924),
+        );
         e.insert(0x69a5, E(MkvElement::ChapterTranslateId, EbmlDataType::Binary, 3, 0x6924));
         e.insert(0x4461, E(MkvElement::DateUtc, EbmlDataType::Date, 2, 0x1549a966));
         e.insert(0x4489, E(MkvElement::Duration, EbmlDataType::Float, 2, 0x1549a966));
@@ -479,7 +486,10 @@ lazy_static! {
         // \Segment\Tags
         e.insert(0x1254c367, E(MkvElement::Tags, EbmlDataType::Master, 1, 0x18538067));
         e.insert(0x7373, E(MkvElement::Tag, EbmlDataType::Master, 2, 0x1254c367));
-        e.insert(0x67c8, E(MkvElement::SimpleTag, EbmlDataType::Master, EBML_RECURSIVE | 3, 0x7373));
+        e.insert(
+            0x67c8,
+            E(MkvElement::SimpleTag, EbmlDataType::Master, EBML_RECURSIVE | 3, 0x7373),
+        );
         e.insert(0x4485, E(MkvElement::TagBinary, EbmlDataType::Binary, 4, 0x67c8));
         e.insert(0x4484, E(MkvElement::TagDefault, EbmlDataType::Unsigned, 4, 0x67c8));
         e.insert(0x44b4, E(MkvElement::TagDefaultBogus, EbmlDataType::Unsigned, 4, 0x67c8));
@@ -535,7 +545,10 @@ lazy_static! {
         e.insert(0x47e6, E(MkvElement::ContentSigHashAlgo, EbmlDataType::Unsigned, 6, 0x5035));
         e.insert(0x47e4, E(MkvElement::ContentSigKeyId, EbmlDataType::Binary, 6, 0x5035));
         e.insert(0x47e3, E(MkvElement::ContentSignature, EbmlDataType::Binary, 6, 0x5035));
-        e.insert(0x234e7a, E(MkvElement::DefaultDecodedFieldDuration, EbmlDataType::Unsigned, 3, 0xae));
+        e.insert(
+            0x234e7a,
+            E(MkvElement::DefaultDecodedFieldDuration, EbmlDataType::Unsigned, 3, 0xae),
+        );
         e.insert(0x23e383, E(MkvElement::DefaultDuration, EbmlDataType::Unsigned, 3, 0xae));
         e.insert(0x55af, E(MkvElement::FlagCommentary, EbmlDataType::Unsigned, 3, 0xae));
         e.insert(0x88, E(MkvElement::FlagDefault, EbmlDataType::Unsigned, 3, 0xae));
@@ -566,7 +579,10 @@ lazy_static! {
         e.insert(0x23314f, E(MkvElement::TrackTimestampScale, EbmlDataType::Float, 3, 0xae));
         e.insert(0x6624, E(MkvElement::TrackTranslate, EbmlDataType::Master, 3, 0xae));
         e.insert(0x66bf, E(MkvElement::TrackTranslateCodec, EbmlDataType::Unsigned, 4, 0x6624));
-        e.insert(0x66fc, E(MkvElement::TrackTranslateEditionUid, EbmlDataType::Unsigned, 4, 0x6624));
+        e.insert(
+            0x66fc,
+            E(MkvElement::TrackTranslateEditionUid, EbmlDataType::Unsigned, 4, 0x6624),
+        );
         e.insert(0x66a5, E(MkvElement::TrackTranslateTrackId, EbmlDataType::Binary, 4, 0x6624));
         e.insert(0x83, E(MkvElement::TrackType, EbmlDataType::Unsigned, 3, 0xae));
         e.insert(0x73c5, E(MkvElement::TrackUid, EbmlDataType::Unsigned, 3, 0xae));
@@ -626,8 +642,7 @@ lazy_static! {
         e.insert(0x53b8, E(MkvElement::StereoMode, EbmlDataType::Unsigned, 4, 0xe0));
         e.insert(0x2eb524, E(MkvElement::UncompressedFourCc, EbmlDataType::Binary, 4, 0xe0));
         e
-    };
-}
+    });
 
 /// The EBML schema for MKV/WebM.
 #[derive(Default)]

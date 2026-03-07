@@ -9,7 +9,6 @@ use std::borrow::Cow;
 use std::io::Write;
 use std::path::Path;
 
-use lazy_static::lazy_static;
 use symphonia::core::codecs::{CodecInfo, CodecParameters, CodecProfile};
 use symphonia::core::formats::{Attachment, FormatReader, Track, TrackFlags};
 use symphonia::core::meta::{
@@ -525,11 +524,9 @@ pub fn print_progress(cur_ts: Timestamp, dur: Option<Duration>, tb: Option<TimeB
     fn progress_bar(ts: Timestamp, dur: Duration) -> &'static str {
         const NUM_STEPS: usize = 60;
 
-        lazy_static! {
-            static ref PROGRESS_BAR: Vec<String> = {
-                (0..NUM_STEPS + 1).map(|i| format!("[{:<60}]", str::repeat("■", i))).collect()
-            };
-        }
+        static PROGRESS_BAR: std::sync::LazyLock<Vec<String>> = std::sync::LazyLock::new(|| {
+            (0..NUM_STEPS + 1).map(|i| format!("[{:<60}]", str::repeat("■", i))).collect()
+        });
 
         // Clamp negative timestamps to 0 and calculate the progress index.
         let i = (NUM_STEPS as u64)
