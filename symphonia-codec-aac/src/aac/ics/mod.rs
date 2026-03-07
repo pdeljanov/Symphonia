@@ -591,4 +591,3 @@ fn read_escape<B: ReadBitsLtr>(bs: &mut B) -> Result<u16> {
 
     Ok(word)
 }
-
