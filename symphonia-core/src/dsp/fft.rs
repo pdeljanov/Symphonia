@@ -713,25 +713,26 @@ mod tests {
 
     #[test]
     fn verify_fft_multithreaded() {
-        use std::thread;
         use std::sync::{Arc, Barrier};
+        use std::thread;
+        const NUM_THREADS: usize = 16;
         let mut handles = vec![];
-        let num_threads = 16;
-        let barrier = Arc::new(Barrier::new(num_threads));
+        let barrier = Arc::new(Barrier::new(NUM_THREADS));
 
         // Spawn multiple threads that simultaneously try to compute a large FFT.
         // This will force contention on the `FFT_TWIDDLE_TABLE` and test the
         // initialization and growth logic for race conditions.
-        for _ in 0..num_threads {
+        for i in 0..NUM_THREADS {
             let b = barrier.clone();
             let handle = thread::spawn(move || {
-                let size = 4096;
+                // Have a couple of different sizes, but also contention at each size.
+                let size = 2usize.pow(((i % (NUM_THREADS / 4)) + 8) as u32);
                 let signal = generate_test_signal(size);
                 let mut actual = vec![Default::default(); size];
                 let fft = Fft::new(size);
-                
+
                 b.wait();
-                
+
                 fft.fft(&signal, &mut actual);
             });
             handles.push(handle);
