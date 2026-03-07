@@ -33,10 +33,9 @@ lazy_static! {
 
 /// Get the twiddle factors for a FFT of size `n`.
 fn get_twiddles(n: usize) -> (usize, RwLockReadGuard<'static, Vec<Complex>>) {
-    let mut max_n: usize;
     {
         let read_guard = FFT_TWIDDLE_TABLE.read().unwrap();
-        max_n = read_guard.len() * 2;
+        let max_n = read_guard.len() * 2;
         // Twiddle table is sufficiently sized.
         if max_n >= n {
             return (max_n, read_guard);
@@ -46,7 +45,7 @@ fn get_twiddles(n: usize) -> (usize, RwLockReadGuard<'static, Vec<Complex>>) {
         let mut write_guard = FFT_TWIDDLE_TABLE.write().unwrap();
         // Check the table size again before writing to ensure it wasn't updated by another thread.
         if write_guard.len() * 2 < n {
-            max_n = n.next_power_of_two();
+            let max_n = n.next_power_of_two();
             let len = max_n / 2;
 
             // Since the larger table is more "dense", we can't easily re-use the existing values
@@ -62,7 +61,8 @@ fn get_twiddles(n: usize) -> (usize, RwLockReadGuard<'static, Vec<Complex>>) {
         }
     }
 
-    (max_n, FFT_TWIDDLE_TABLE.read().unwrap())
+    let read_guard = FFT_TWIDDLE_TABLE.read().unwrap();
+    (read_guard.len() * 2, read_guard)
 }
 
 /// The complex Fast Fourier Transform (FFT).
@@ -709,5 +709,36 @@ mod tests {
     #[should_panic]
     fn verify_fft_invalid_size_too_large() {
         let _fft = Fft::new(Fft::MAX_SIZE * 2);
+    }
+
+    #[test]
+    fn verify_fft_multithreaded() {
+        use std::thread;
+        use std::sync::{Arc, Barrier};
+        let mut handles = vec![];
+        let num_threads = 16;
+        let barrier = Arc::new(Barrier::new(num_threads));
+
+        // Spawn multiple threads that simultaneously try to compute a large FFT.
+        // This will force contention on the `FFT_TWIDDLE_TABLE` and test the
+        // initialization and growth logic for race conditions.
+        for _ in 0..num_threads {
+            let b = barrier.clone();
+            let handle = thread::spawn(move || {
+                let size = 4096;
+                let signal = generate_test_signal(size);
+                let mut actual = vec![Default::default(); size];
+                let fft = Fft::new(size);
+                
+                b.wait();
+                
+                fft.fft(&signal, &mut actual);
+            });
+            handles.push(handle);
+        }
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
     }
 }
