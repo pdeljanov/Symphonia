@@ -37,34 +37,34 @@ const INTENSITY_SCALE_MIN: i16 = -155;
 const NORMAL_SCALE_MIN: i16 = -100;
 
 /// Pre-computed table of y = x^(4/3).
-static POW43_TABLE: std::sync::LazyLock<[f32; 8192]> = std::sync::LazyLock::new(|| {
-    let mut pow43 = [0f32; 8192];
+static POW43_TABLE: std::sync::LazyLock<Box<[f32; 8192]>> = std::sync::LazyLock::new(|| {
+    let mut pow43 = vec![0f32; 8192];
     for (i, pow43) in pow43.iter_mut().enumerate() {
         *pow43 = f32::powf(i as f32, 4.0 / 3.0);
     }
-    pow43
+    pow43.into_boxed_slice().try_into().unwrap()
 });
 
 /// Pre-computed table of y = 2^(0.25 * (x - 156)) for decoding scale factors for normal bands.
 /// This table is indexed relative to -100, the minimum encoded scale factor value for normal
 /// bands. Therefore, an input of 0 corresponds to -100.
-static NORMAL_SCF_TABLE: std::sync::LazyLock<[f32; 256]> = std::sync::LazyLock::new(|| {
-    let mut table = [0f32; 256];
+static NORMAL_SCF_TABLE: std::sync::LazyLock<Box<[f32; 256]>> = std::sync::LazyLock::new(|| {
+    let mut table = vec![0f32; 256];
     for (i, table) in table.iter_mut().enumerate() {
         *table = 2.0f32.powf(0.25 * f32::from(i as i16 - 56 + NORMAL_SCALE_MIN))
     }
-    table
+    table.into_boxed_slice().try_into().unwrap()
 });
 
 /// Pre-computed table of y = 0.5^(0.25 * (x - 155)) for decoding scale factors for intensity
 /// coded bands. This table is indexed relative to -155, the minimum encoded scale factor value
 /// for intensity coded bands. Therefore, an input of 0 corresponds to -155.
-static INTENSITY_SCF_TABLE: std::sync::LazyLock<[f32; 256]> = std::sync::LazyLock::new(|| {
-    let mut table = [0f32; 256];
+static INTENSITY_SCF_TABLE: std::sync::LazyLock<Box<[f32; 256]>> = std::sync::LazyLock::new(|| {
+    let mut table = vec![0f32; 256];
     for (i, table) in table.iter_mut().enumerate() {
         *table = 0.5f32.powf(0.25 * f32::from(i as i16 + INTENSITY_SCALE_MIN));
     }
-    table
+    table.into_boxed_slice().try_into().unwrap()
 });
 
 #[derive(Clone)]
@@ -591,3 +591,4 @@ fn read_escape<B: ReadBitsLtr>(bs: &mut B) -> Result<u16> {
 
     Ok(word)
 }
+

@@ -19,18 +19,17 @@ use log::info;
 
 /// Lookup table for computing x(i) = s(i)^(4/3) where s(i) is a decoded Huffman sample. The
 /// value of s(i) is bound between 0..8207.
-static REQUANTIZE_POW43: std::sync::LazyLock<[f32; 8207]> = std::sync::LazyLock::new(|| {
+static REQUANTIZE_POW43: std::sync::LazyLock<Box<[f32; 8207]>> = std::sync::LazyLock::new(|| {
     // It is wasteful to initialize to 0.. however, Symphonia policy is to limit unsafe code to
     // only symphonia-core.
     //
     // TODO: Implement generic lookup table initialization in the core library.
-    let mut pow43 = [0f32; 8207];
+    let mut pow43 = vec![0f32; 8207];
     for (i, pow43) in pow43.iter_mut().enumerate() {
         *pow43 = f32::powf(i as f32, 4.0 / 3.0);
     }
-    pow43
+    pow43.into_boxed_slice().try_into().unwrap()
 });
-
 /// Zero a sample buffer.
 #[inline(always)]
 pub(super) fn zero(buf: &mut [f32; 576]) {

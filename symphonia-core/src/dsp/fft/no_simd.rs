@@ -13,20 +13,21 @@ use crate::dsp::fft::MAX_SIZE;
 
 macro_rules! fft_twiddle_table {
     ($bi:expr, $name:ident) => {
-        static ref $name: [Complex<f32>; (1 << $bi) >> 1] = {
-                        const N: usize = 1 << $bi;
+        static $name: std::sync::LazyLock<Box<[Complex<f32>; (1 << $bi) >> 1]>> =
+            std::sync::LazyLock::new(|| {
+                const N: usize = 1 << $bi;
 
-                        let mut table = [Default::default(); N >> 1];
+                let mut table = Box::new([Default::default(); N >> 1]);
 
-                        let theta = std::f64::consts::PI / (N >> 1) as f64;
+                let theta = std::f64::consts::PI / (N >> 1) as f64;
 
-                        for (k, t) in table.iter_mut().enumerate() {
-                            let angle = theta * k as f64;
-                            *t = Complex::new(angle.cos() as f32, -angle.sin() as f32);
-                        }
+                for (k, t) in table.iter_mut().enumerate() {
+                    let angle = theta * k as f64;
+                    *t = Complex::new(angle.cos() as f32, -angle.sin() as f32);
+                }
 
-                        table
-                    };
+                table
+            });
     };
 }
 
