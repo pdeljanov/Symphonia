@@ -150,7 +150,8 @@ fn run(args: &ArgMatches) -> Result<i32> {
     // If the path string is '-' then read from standard input.
     let source = if path.as_os_str() == "-" {
         Box::new(ReadOnlySource::new(std::io::stdin())) as Box<dyn MediaSource>
-    } else {
+    }
+    else {
         // Othwerise, get a Path from the path string.
 
         // Provide the file extension as a hint.
@@ -194,7 +195,8 @@ fn run(args: &ArgMatches) -> Result<i32> {
                 // Probe-only mode only prints information about the format, tracks, metadata, etc.
                 ui::print_format(path, &mut format);
                 Ok(0)
-            } else if args.is_present("verify-only") {
+            }
+            else if args.is_present("verify-only") {
                 // Verify-only mode decodes and verifies the audio, but does not play it.
                 let opts = DecodeOptions {
                     decoder_opts: AudioDecoderOptions { verify: true, ..Default::default() },
@@ -202,7 +204,8 @@ fn run(args: &ArgMatches) -> Result<i32> {
                 };
 
                 decode_only(format, opts)
-            } else if args.is_present("decode-only") {
+            }
+            else if args.is_present("decode-only") {
                 // Decode-only mode decodes the audio, but does not play or verify it.
                 let opts = DecodeOptions {
                     decoder_opts: AudioDecoderOptions { verify: false, ..Default::default() },
@@ -210,7 +213,8 @@ fn run(args: &ArgMatches) -> Result<i32> {
                 };
 
                 decode_only(format, opts)
-            } else {
+            }
+            else {
                 // Playback mode.
                 ui::print_format(path, &mut format);
 
@@ -219,7 +223,8 @@ fn run(args: &ArgMatches) -> Result<i32> {
                     args.get_one::<f64>("seek")
                         .and_then(|&time| Time::try_from_secs_f64(time))
                         .map(SeekPosition::Time)
-                } else {
+                }
+                else {
                     args.get_one::<Timestamp>("seek-ts").map(|&ts| SeekPosition::Timestamp(ts))
                 };
 
@@ -284,7 +289,8 @@ fn decode_only(mut reader: Box<dyn FormatReader>, opts: DecodeOptions) -> Result
 
     // Decode all packets, ignoring all decode errors.
     loop {
-        let Some(packet) = reader.next_packet()? else {
+        let Some(packet) = reader.next_packet()?
+        else {
             break;
         };
 
@@ -365,7 +371,8 @@ fn play(mut reader: Box<dyn FormatReader>, opts: PlayOptions) -> Result<i32> {
                 Timestamp::ZERO
             }
         }
-    } else {
+    }
+    else {
         // If not seeking, the seek timestamp is 0.
         Timestamp::ZERO
     };
@@ -431,7 +438,8 @@ fn play_track(
     // Decode and play the packets belonging to the selected track.
     loop {
         // Get the next packet from the format reader.
-        let Some(packet) = reader.next_packet()? else {
+        let Some(packet) = reader.next_packet()?
+        else {
             break;
         };
 
@@ -460,7 +468,8 @@ fn play_track(
 
                     // Try to open the audio output.
                     audio_output.replace(output::try_open(decoded.spec(), duration).unwrap());
-                } else {
+                }
+                else {
                     // TODO: Check the audio spec. and duration hasn't changed.
                 }
 

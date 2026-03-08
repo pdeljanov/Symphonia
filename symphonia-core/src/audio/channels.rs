@@ -128,7 +128,8 @@ impl Position {
         if count <= Position::NUM_STD_WAVE_CHANNELS {
             // Channel count does not exceed the maximum number of standard WAVE channels.
             Position::from_count(count)
-        } else {
+        }
+        else {
             None
         }
     }
@@ -141,7 +142,8 @@ impl Position {
         if mask >> Position::NUM_STD_WAVE_CHANNELS == 0 {
             // The bitmask does not contain any bits outside the standard WAVE channels bitmask.
             Position::from_bits(u64::from(mask))
-        } else {
+        }
+        else {
             None
         }
     }

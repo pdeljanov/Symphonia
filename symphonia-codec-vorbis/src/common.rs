@@ -37,7 +37,8 @@ impl Iterator for BitSetIterator<'_> {
                 self.pos += offset + 1;
                 self.count -= 1;
                 return Some(self.pos - 1);
-            } else {
+            }
+            else {
                 self.pos += 32 - bits_read;
             }
         }

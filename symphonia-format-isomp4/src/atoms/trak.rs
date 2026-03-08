@@ -47,11 +47,13 @@ impl Atom for TrakAtom {
             }
         }
 
-        let Some(tkhd_atom) = tkhd else {
+        let Some(tkhd_atom) = tkhd
+        else {
             return decode_error("isomp4: missing tkhd atom");
         };
 
-        let Some(mdia_atom) = mdia else {
+        let Some(mdia_atom) = mdia
+        else {
             return decode_error("isomp4: missing mdia atom");
         };
 

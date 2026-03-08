@@ -1108,11 +1108,13 @@ impl TagsElement {
                     if targets.all_attachments {
                         append_to_map_all(&mut attachments, &raw_tags, &target);
                     }
-                } else {
+                }
+                else {
                     // No target UID(s). Append tags to the entire media.
                     append_to_media(&mut builder, &raw_tags, &ctx.target, &mut media_target);
                 }
-            } else {
+            }
+            else {
                 // No targets. Append tags to the entire media.
                 append_to_media(&mut builder, &raw_tags, &None, &mut media_target);
             }
@@ -1780,7 +1782,8 @@ impl ChapterAtomElement {
                 // BCP47 language code is present, prefer it over the ISO 639-2 chapter language
                 // and county elements.
                 sub_fields.push(RawTagSubField::new(CHAPTER_TITLE_LANGUAGE_BCP47, lang));
-            } else {
+            }
+            else {
                 // ISO 639-2 language code.
                 sub_fields.push(RawTagSubField::new(CHAPTER_TITLE_LANGUAGE, display.lang));
 
@@ -1818,7 +1821,8 @@ impl ChapterAtomElement {
         if self.chapters.is_empty() {
             // This chapter atom does not have nested chapters. Return a chapter item.
             ChapterGroupItem::Chapter(chapter)
-        } else {
+        }
+        else {
             // This chapter atom has nested chapters. Return a group containing 1 chapter
             // (this one), and a group of nested chapters.
             let mut items = Vec::with_capacity(self.chapters.len());

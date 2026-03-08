@@ -215,7 +215,8 @@ fn lpcm_codec_id(bits_per_sample: u32, lpcm_flags: u32) -> AudioCodecId {
             64 => CODEC_ID_PCM_F64LE,
             _ => CODEC_ID_NULL_AUDIO,
         }
-    } else {
+    }
+    else {
         // Integer sample format.
         if is_signed {
             // Signed-integer sample format.
@@ -229,7 +230,8 @@ fn lpcm_codec_id(bits_per_sample: u32, lpcm_flags: u32) -> AudioCodecId {
                 32 => CODEC_ID_PCM_S32LE,
                 _ => CODEC_ID_NULL_AUDIO,
             }
-        } else {
+        }
+        else {
             // Unsigned-integer sample format.
             match bits_per_sample {
                 8 => CODEC_ID_PCM_U8,

@@ -16,7 +16,8 @@ fn parse_language(code: u16) -> String {
     // An ISO language code outside of these bounds is not valid.
     if code < 0x400 || code > 0x7fff {
         String::new()
-    } else {
+    }
+    else {
         let chars = [
             ((code >> 10) & 0x1f) as u8 + 0x60,
             ((code >> 5) & 0x1f) as u8 + 0x60,

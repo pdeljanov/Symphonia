@@ -66,7 +66,8 @@ impl BitResevoir {
             self.len = main_data_end;
 
             0
-        } else {
+        }
+        else {
             // Shift all the unread bytes to the front of the resevoir. Since this is an underflow
             // condition, all unread bytes will be unconditionally reused.
             self.buf.copy_within(self.len - unread..self.len, 0);
@@ -314,14 +315,16 @@ impl Layer3 {
                     }
 
                     bs
-                } else {
+                }
+                else {
                     return decode_error("mpa: invalid main_data offset");
                 };
 
                 // Read the scale factors (part2) and get the number of bits read.
                 let part2_len = if header.is_mpeg1() {
                     bitstream::read_scale_factors_mpeg1(&mut bs, gr, ch, frame_data)
-                } else {
+                }
+                else {
                     bitstream::read_scale_factors_mpeg2(
                         &mut bs,
                         ch > 0 && header.is_intensity_stereo(),

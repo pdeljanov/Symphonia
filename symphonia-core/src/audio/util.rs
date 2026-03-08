@@ -28,12 +28,14 @@ pub fn plane_pair_by_buffer_index<S: Sample>(
             let (a, b) = planes.split_at(idx1);
 
             Some((&a[idx0][range.clone()], &b[0][range.clone()]))
-        } else {
+        }
+        else {
             let (a, b) = planes.split_at(idx0);
 
             Some((&b[0][range.clone()], &a[idx1][range.clone()]))
         }
-    } else {
+    }
+    else {
         // Either one or both plane indicies are out of range.
         None
     }
@@ -56,12 +58,14 @@ pub fn plane_pair_by_buffer_index_mut<S: Sample>(
             let (a, b) = planes.split_at_mut(idx1);
 
             Some((&mut a[idx0][range.clone()], &mut b[0][range.clone()]))
-        } else {
+        }
+        else {
             let (a, b) = planes.split_at_mut(idx0);
 
             Some((&mut b[0][range.clone()], &mut a[idx1][range.clone()]))
         }
-    } else {
+    }
+    else {
         // Either one or both plane indicies are out of range.
         None
     }

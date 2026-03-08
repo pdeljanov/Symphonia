@@ -96,7 +96,8 @@ impl Pulse {
 
             if base > 0.0 {
                 base += f32::from(self.pulse_amp[pno]);
-            } else {
+            }
+            else {
                 base -= f32::from(self.pulse_amp[pno]);
             }
             coeffs[k] = iquant(base) * scale;

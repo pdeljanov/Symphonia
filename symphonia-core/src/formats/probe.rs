@@ -569,7 +569,8 @@ impl Probe {
 
         if count < self.opts.max_probe_depth {
             error!("probe reached EOF at {count} bytes");
-        } else {
+        }
+        else {
             // Could not find any marker within the probe limit.
             error!("reached probe limit of {} bytes", self.opts.max_probe_depth);
         }

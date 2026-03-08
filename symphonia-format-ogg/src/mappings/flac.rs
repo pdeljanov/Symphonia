@@ -190,7 +190,8 @@ fn decode_frame_header(buf: &[u8]) -> Result<FrameHeader> {
         }
 
         frame
-    } else {
+    }
+    else {
         // Variable block size streams sequence blocks by a sample number.
         let sample = match utf8_decode_be_u64(&mut reader_crc8)? {
             Some(sample) => sample,
@@ -305,11 +306,13 @@ impl Mapper for FlacMapper {
             };
 
             Ok(MapResult::StreamData { dur: Duration::from(dur), discard: Duration::ZERO })
-        } else if packet_type == 0x00 || packet_type == 0x80 {
+        }
+        else if packet_type == 0x00 || packet_type == 0x80 {
             // Packet types 0x00 and 0x80 are invalid.
             warn!("ogg (flac): flac packet type {packet_type} unexpected");
             Ok(MapResult::Unknown)
-        } else {
+        }
+        else {
             let mut reader = BufReader::new(packet);
 
             // Packet types in the range 0x01 thru 0x7f, and 0x81 thru 0xfe are metadata blocks.

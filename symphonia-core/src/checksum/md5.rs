@@ -258,7 +258,8 @@ impl Monitor for Md5 {
             // source buffer.
             if copy_len == Md5::BLOCK_LEN {
                 transform(&mut self.state, &rem[..copy_len]);
-            } else {
+            }
+            else {
                 // If the copy length is less than a whole block, buffer it into the current block.
                 self.block[block_len..block_len + copy_len].copy_from_slice(&rem[..copy_len]);
 

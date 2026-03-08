@@ -472,10 +472,12 @@ impl ChapterGroupBuilder {
                     if let Some(chap) = chaps.remove(&child_id) {
                         // Item is a chapter.
                         parent.items.push(ChapterGroupItem::Chapter(chap.chapter));
-                    } else if let Some(child) = dfs(&child_id, tocs, chaps) {
+                    }
+                    else if let Some(child) = dfs(&child_id, tocs, chaps) {
                         // Item is a TOC.
                         parent.items.push(ChapterGroupItem::Group(child));
-                    } else {
+                    }
+                    else {
                         // Item reference is broken.
                         debug!("id3v2: missing chapter or toc element");
                     }
@@ -528,7 +530,8 @@ impl ChapterGroupBuilder {
             }
 
             Some(ChapterGroup { items, tags: vec![], visuals: vec![] })
-        } else {
+        }
+        else {
             top
         }
     }

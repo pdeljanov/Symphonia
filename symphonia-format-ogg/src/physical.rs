@@ -37,7 +37,8 @@ pub fn probe_stream_start(
         // If the page does not belong to the current physical stream, break out.
         let stream = if let Some(stream) = streams.get_mut(&page.header.serial) {
             stream
-        } else {
+        }
+        else {
             break;
         };
 
@@ -82,7 +83,8 @@ pub fn probe_stream_end(
     // non-chained physical streams, which is the majority of cases.
     if byte_range_end >= linear_scan_len && byte_range_start <= byte_range_end - linear_scan_len {
         reader.seek(SeekFrom::Start(byte_range_end - linear_scan_len))?;
-    } else {
+    }
+    else {
         reader.seek(SeekFrom::Start(byte_range_start))?;
     }
 
@@ -112,7 +114,8 @@ pub fn probe_stream_end(
 
             if streams.contains_key(&header.serial) {
                 start = mid;
-            } else {
+            }
+            else {
                 end = mid;
             }
 
@@ -127,7 +130,8 @@ pub fn probe_stream_end(
         pages.next_page(reader)?;
 
         scan_stream_end(reader, pages, streams, end)
-    } else {
+    }
+    else {
         result
     };
 
@@ -159,7 +163,8 @@ fn scan_stream_end(
         // extent of the physical stream has been found.
         let stream = if let Some(stream) = streams.get_mut(&page.header.serial) {
             stream
-        } else {
+        }
+        else {
             break;
         };
 

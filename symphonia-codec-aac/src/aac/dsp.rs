@@ -76,7 +76,8 @@ impl Dsp {
         // Inverse MDCT
         if seq != EIGHT_SHORT_SEQUENCE {
             self.imdct_long.imdct(coeffs, &mut self.pcm_long);
-        } else {
+        }
+        else {
             for (ain, aout) in coeffs.chunks_exact(128).zip(self.pcm_long.chunks_exact_mut(256)) {
                 self.imdct_short.imdct(ain, aout);
             }
@@ -90,7 +91,8 @@ impl Dsp {
                         self.pcm_short[w * 128 + i] += src[i] * short_win[i];
                         self.pcm_short[w * 128 + i + 128] += src[i + 128] * short_win[127 - i];
                     }
-                } else {
+                }
+                else {
                     for i in 0..128 {
                         self.pcm_short[i] = src[i] * prev_short_win[i];
                         self.pcm_short[i + 128] = src[i + 128] * short_win[127 - i];

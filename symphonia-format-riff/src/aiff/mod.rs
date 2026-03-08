@@ -137,7 +137,8 @@ impl<'s> AiffReader<'s> {
                     // The length of the sound data chunk must also be known.
                     if let Some(len) = data.as_ref().unwrap().len {
                         mss.ignore_bytes(u64::from(len))?;
-                    } else {
+                    }
+                    else {
                         break;
                     }
                 }
@@ -283,7 +284,8 @@ fn process_markers(
             if comment.marker_id == 0 {
                 // Invalid/unset marker ID, this is a general comment.
                 builder.add_tag(tag);
-            } else if comment.marker_id > 0 {
+            }
+            else if comment.marker_id > 0 {
                 // Marker ID is set, this comment belongs to a marker/chapter. Try to get the
                 // index of the chapter associated with this marker ID.
                 if let Some(idx) = marker_index.get(&comment.marker_id) {
@@ -300,7 +302,8 @@ fn process_markers(
             tags: vec![],
             visuals: vec![],
         })
-    } else {
+    }
+    else {
         None
     }
 }
@@ -435,7 +438,8 @@ impl FormatReader for AiffReader<'_> {
             let current_pos = self.reader.pos();
             if seek_pos >= current_pos {
                 self.reader.ignore_bytes(seek_pos - current_pos)?;
-            } else {
+            }
+            else {
                 return seek_error(SeekErrorKind::ForwardOnly);
             }
         }

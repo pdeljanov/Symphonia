@@ -158,7 +158,8 @@ pub fn read_flac_seektable_block<B: ReadBytes>(
             // The number of samples in the target frame.
             let num_samples = reader.read_be_u16()?;
             index.insert(sample, offset, u32::from(num_samples));
-        } else {
+        }
+        else {
             reader.ignore_bytes(10)?
         }
     }
@@ -326,7 +327,8 @@ fn read_flac_cuesheet_track<B: ReadBytes>(
         }
 
         Ok(ChapterGroupItem::Group(group))
-    } else {
+    }
+    else {
         let start_ts = n_offset_samples.try_into().unwrap_or_else(|_| {
             warn!("cuesheet track index offset too large, clamping to maximum");
             i64::MAX
@@ -406,7 +408,8 @@ fn escape_identifier(buf: &[u8]) -> String {
     for &byte in buf {
         if byte.is_ascii() && !byte.is_ascii_control() {
             ident.push(char::from(byte));
-        } else {
+        }
+        else {
             let u = (byte & 0xf0) >> 4;
             let l = byte & 0x0f;
             ident.push_str("\\0x");

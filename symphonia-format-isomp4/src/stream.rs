@@ -253,7 +253,8 @@ impl StreamSegment for MoofSegment {
                 // fragment header.
                 trun_offset = if offset.is_negative() {
                     traf_base_pos - u64::from(offset.wrapping_abs() as u32)
-                } else {
+                }
+                else {
                     traf_base_pos + offset as u64
                 };
             }
@@ -263,7 +264,8 @@ impl StreamSegment for MoofSegment {
                     // Get the size and offset of the sample.
                     let (offset, size) = trun.sample_offset(sample_num_rel, default_size);
                     (Some(offset), size)
-                } else {
+                }
+                else {
                     // Just get the size of the sample.
                     let size = trun.sample_size(sample_num_rel, default_size);
                     (None, size)
@@ -307,17 +309,21 @@ fn get_chunk_offset(
         // 32-bit offset
         if let Some(offset) = stco.chunk_offsets.get(chunk) {
             Ok(Some(u64::from(*offset)))
-        } else {
+        }
+        else {
             decode_error("isomp4: missing stco entry")
         }
-    } else if let Some(co64) = co64.as_ref() {
+    }
+    else if let Some(co64) = co64.as_ref() {
         // 64-bit offset
         if let Some(offset) = co64.chunk_offsets.get(chunk) {
             Ok(Some(*offset))
-        } else {
+        }
+        else {
             decode_error("isomp4: missing co64 entry")
         }
-    } else {
+    }
+    else {
         // This should never happen because it is mandatory to have either a stco or co64 atom.
         decode_error("isomp4: missing stco or co64 atom")
     }
@@ -426,14 +432,16 @@ impl StreamSegment for MoovSegment {
 
                     if let Some(samples) = entries.get(chunk_first_sample..sample_num as usize) {
                         samples.iter().map(|&size| u64::from(size)).sum()
-                    } else {
+                    }
+                    else {
                         return decode_error("isomp4: missing one or more stsz entries");
                     }
                 }
             };
 
             Some(offset)
-        } else {
+        }
+        else {
             None
         };
 
@@ -443,7 +451,8 @@ impl StreamSegment for MoovSegment {
             SampleSize::Variable(ref entries) => {
                 if let Some(size) = entries.get(sample_num as usize) {
                     *size
-                } else {
+                }
+                else {
                     return decode_error("isomp4: missing stsz entry");
                 }
             }

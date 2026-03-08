@@ -98,7 +98,8 @@ impl M4AInfo {
 
             let ext_chans = if self.otype == M4AType::ER_BSAC {
                 Self::read_channel_config(&mut bs)?
-            } else {
+            }
+            else {
                 0
             };
 
@@ -307,7 +308,8 @@ impl AacDecoder {
         if let Some(extra_data_buf) = &params.extra_data {
             validate!(extra_data_buf.len() >= 2);
             m4ainfo.read(extra_data_buf)?;
-        } else {
+        }
+        else {
             // Otherwise, assume there is no ASC and use the codec parameters for ADTS.
             m4ainfo.otype = M4AType::Lc;
             m4ainfo.samples = 1024;
@@ -319,7 +321,8 @@ impl AacDecoder {
 
             m4ainfo.channels = if let Some(channels) = &params.channels {
                 channels.count()
-            } else {
+            }
+            else {
                 return unsupported_error("aac: channels or channel layout is required");
             };
         }
@@ -352,7 +355,8 @@ impl AacDecoder {
     fn set_pair(&mut self, pair_no: usize, channel: usize, pair: bool) -> Result<()> {
         if self.pairs.len() <= pair_no {
             self.pairs.push(cpe::ChannelPair::new(pair, channel, self.sbinfo));
-        } else {
+        }
+        else {
             validate!(self.pairs[pair_no].channel == channel);
             validate!(self.pairs[pair_no].is_pair == pair);
         }
@@ -502,7 +506,8 @@ impl AudioDecoder for AacDecoder {
         if let Err(e) = self.decode_inner(packet) {
             self.buf.clear();
             Err(e)
-        } else {
+        }
+        else {
             Ok(self.buf.as_generic_audio_buffer_ref())
         }
     }

@@ -364,10 +364,12 @@ pub fn parse_id3v2_genre(v: Arc<String>) -> StandardTagPair {
     let name = if let Some(name) = caps.name("name") {
         // A user-defined genre name provided.
         Some(name.as_str().to_owned())
-    } else if let Some(num) = caps.name("num0").or_else(|| caps.name("num1")) {
+    }
+    else if let Some(num) = caps.name("num0").or_else(|| caps.name("num1")) {
         // Only genre number provided. Parse to u8, then lookup the genre name.
         num.as_str().parse::<u8>().ok().and_then(get_genre_name)
-    } else {
+    }
+    else {
         // Empty string.
         None
     };

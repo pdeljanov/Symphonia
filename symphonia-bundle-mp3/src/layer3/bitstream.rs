@@ -145,7 +145,8 @@ fn read_granule_channel_side_info<B: ReadBitsLtr>(
         // The second region, region1, spans the remaining samples. Therefore the third region,
         // region2, isn't used.
         channel.region2_start = 576;
-    } else {
+    }
+    else {
         // If window switching is not used, the block type is always Long.
         channel.block_type = BlockType::Long;
 
@@ -362,7 +363,8 @@ pub(super) fn read_scale_factors_mpeg2<B: ReadBitsLtr>(
             ),
             _ => unreachable!(),
         }
-    } else {
+    }
+    else {
         // The actual value of scalefac_compress is a 9-bit unsigned integer (0..512) for MPEG2.
         let sfc = u32::from(channel.scalefac_compress);
 

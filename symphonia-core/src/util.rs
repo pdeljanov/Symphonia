@@ -188,7 +188,8 @@ pub mod clamp {
         // limits of an i8.
         if val.wrapping_add(0x80) & !0xff == 0 {
             val as i8
-        } else {
+        }
+        else {
             // The given value was determined to be outside the valid numerical range of i8.
             //
             // Shift right all the magnitude bits of val, leaving val to be either 0xff if val was
@@ -212,7 +213,8 @@ pub mod clamp {
     pub fn clamp_i16(val: i32) -> i16 {
         if val.wrapping_add(0x8000) & !0xffff == 0 {
             val as i16
-        } else {
+        }
+        else {
             0x7fff ^ val.wrapping_shr(31) as i16
         }
     }
@@ -228,7 +230,8 @@ pub mod clamp {
     pub fn clamp_i24(val: i32) -> i32 {
         if val.wrapping_add(0x0080_0000) & !0x00ff_ffff == 0 {
             val
-        } else {
+        }
+        else {
             0x007f_ffff ^ val.wrapping_shr(31)
         }
     }
@@ -244,7 +247,8 @@ pub mod clamp {
     pub fn clamp_i32(val: i64) -> i32 {
         if val.wrapping_add(0x8000_0000) & !0xffff_ffff == 0 {
             val as i32
-        } else {
+        }
+        else {
             0x7fff_ffff ^ val.wrapping_shr(63) as i32
         }
     }

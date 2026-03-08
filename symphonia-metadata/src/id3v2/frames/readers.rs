@@ -171,7 +171,8 @@ fn read_lang_code(reader: &mut BufReader<'_>) -> Result<Option<String>> {
     let code = if code.eq_ignore_ascii_case(b"XXX") {
         // Unknown language code.
         None
-    } else {
+    }
+    else {
         // Convert to lowercase string.
         Some(std::str::from_utf8(&code).unwrap().to_ascii_lowercase())
     };
@@ -310,7 +311,8 @@ pub fn read_apic_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Resu
             _ => None,
         }
         .map(|s| s.to_string())
-    } else {
+    }
+    else {
         // APIC frames use a null-terminated ASCII media-type string.
         read_string_ignore_empty(&mut reader, Encoding::Iso8859_1)?
     };
@@ -864,7 +866,8 @@ pub fn read_tipl_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Resu
         }
 
         Ok(FrameResult::MultipleTags(tags))
-    } else {
+    }
+    else {
         // Return as text frame.
         Ok(FrameResult::Tag(Tag::new(raw)))
     }

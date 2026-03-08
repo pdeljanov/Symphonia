@@ -280,7 +280,8 @@ impl Floor for Floor0 {
         // Select the correct Bark-scale map based on the block-size exponent.
         let map = if bs_exp == self.setup.floor0_map_short_bs_exp {
             &self.setup.floor0_map_short
-        } else {
+        }
+        else {
             &self.setup.floor0_map_long
         };
 
@@ -315,7 +316,8 @@ impl Floor for Floor0 {
 
                 p = p * p * (1.0 - (cos_omega * cos_omega));
                 q = q * q * 0.25;
-            } else {
+            }
+            else {
                 p = p * p * ((1.0 - cos_omega) / 2.0);
                 q = q * q * ((1.0 + cos_omega) / 2.0);
             }
@@ -599,19 +601,23 @@ impl Floor1 {
                 self.floor_final_y[i] = if val >= room {
                     if highroom > lowroom {
                         val - lowroom + predicted
-                    } else {
+                    }
+                    else {
                         predicted - val + highroom - 1
                     }
-                } else {
+                }
+                else {
                     // If val is odd.
                     if val & 1 == 1 {
                         predicted - ((val + 1) / 2)
-                    } else {
+                    }
+                    else {
                         // If val is even.
                         predicted + (val / 2)
                     }
                 }
-            } else {
+            }
+            else {
                 self.floor_step2_flag[i] = false;
                 self.floor_final_y[i] = predicted;
             }
@@ -700,7 +706,8 @@ impl Floor for Floor1 {
                 *floor_y = if is_subbook_used {
                     let subbook_idx = class.subbooks[subclass_idx as usize] as usize;
                     try_or_ret!(codebooks[subbook_idx].read_scalar(bs))
-                } else {
+                }
+                else {
                     0
                 };
             }
@@ -800,7 +807,8 @@ fn render_line(x0: u32, y0: i32, x1: u32, y1: i32, n: usize, v: &mut [f32]) {
         y += if err >= adx {
             err -= adx;
             sy
-        } else {
+        }
+        else {
             base
         };
 

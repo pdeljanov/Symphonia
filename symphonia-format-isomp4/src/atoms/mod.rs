@@ -522,10 +522,12 @@ impl AtomHeader {
             if pos >= data_pos + data_len {
                 // Current position after the atom payload.
                 0
-            } else if pos >= data_pos {
+            }
+            else if pos >= data_pos {
                 // Current position within the atom payload.
                 data_len - (pos - data_pos)
-            } else {
+            }
+            else {
                 // Current position before atom payload (this is a coding error).
                 panic!("isomp4: current position preceeds atom payload");
             }
@@ -626,7 +628,8 @@ impl<B: ReadBytes> AtomIterator<B> {
 
         if cur_pos < self.next_atom_pos {
             self.reader.ignore_bytes(self.next_atom_pos - cur_pos)?;
-        } else if cur_pos > self.next_atom_pos {
+        }
+        else if cur_pos > self.next_atom_pos {
             // This is very bad, either the atom's length was incorrect or the demuxer erroroneously
             // overread an atom.
             return decode_error("isomp4: overread atom");

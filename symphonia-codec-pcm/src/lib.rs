@@ -240,7 +240,8 @@ impl PcmDecoder {
             }
 
             AudioSpec::new(rate, channels.clone())
-        } else {
+        }
+        else {
             return unsupported_error("pcm: channels or channel_layout is required");
         };
 
@@ -279,7 +280,8 @@ impl PcmDecoder {
                 CODEC_ID_PCM_ALAW | CODEC_ID_PCM_MULAW => (),
                 _ => return unsupported_error("pcm: unknown bits per (coded) sample"),
             }
-        } else if coded_width > sample_format_width {
+        }
+        else if coded_width > sample_format_width {
             // If the coded sample width is greater than the width of the sample format, then the
             // stream has incorrect parameters.
             return decode_error("pcm: coded bits per sample is greater than the sample format");
@@ -400,7 +402,8 @@ impl AudioDecoder for PcmDecoder {
         if let Err(e) = self.decode_inner(packet) {
             self.buf.clear();
             Err(e)
-        } else {
+        }
+        else {
             Ok(self.buf.as_generic_audio_buffer_ref())
         }
     }

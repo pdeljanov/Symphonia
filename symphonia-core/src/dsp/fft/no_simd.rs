@@ -224,7 +224,8 @@ fn transform(x: &mut [Complex<f32>], n: usize) {
 
     if let Some(x) = to_arr(x) {
         fft32(x);
-    } else {
+    }
+    else {
         let n_half = n >> 1;
 
         let (even, odd) = x.split_at_mut(n_half);
