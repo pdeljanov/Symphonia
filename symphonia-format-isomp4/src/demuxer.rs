@@ -121,6 +121,8 @@ impl<'s> IsoMp4Reader<'s> {
         let mut ftyp = None;
         let mut moov = None;
         let mut sidx = None;
+        // For segmented streams calculate num frames using sidx atoms found throughout the stream
+        let mut sidx_num_timebase_units = 0u32;
 
         // Get the total length of the stream, if possible.
         let total_len = if is_seekable {
@@ -160,6 +162,10 @@ impl<'s> IsoMp4Reader<'s> {
                         // If the stream is seekable, examine all segment indexes and select the
                         // index with the earliest presentation timestamp to be the first.
                         let new_sidx = iter.read_atom::<SidxAtom>()?;
+
+                        for reference in &new_sidx.references {
+                            sidx_num_timebase_units += reference.subsegment_duration;
+                        }
 
                         let is_earlier = match &sidx {
                             Some(sidx) => new_sidx.earliest_pts < sidx.earliest_pts,
@@ -221,7 +227,9 @@ impl<'s> IsoMp4Reader<'s> {
 
             while let Some(header) = iter.next_no_consume()? {
                 match header.atom_type() {
-                    AtomType::MediaData | AtomType::MovieFragment => break,
+                    AtomType::MediaData | AtomType::MovieFragment => {
+                        break;
+                    }
                     _ => (),
                 }
                 iter.consume_atom();
@@ -249,7 +257,10 @@ impl<'s> IsoMp4Reader<'s> {
         let mut track_states = Vec::with_capacity(moov.traks.len());
 
         for (t, trak) in moov.traks.iter().enumerate() {
-            let (track_state, track) = TrackState::make(t, trak);
+            let (track_state, mut track) = TrackState::make(t, trak);
+            if track.duration.is_none() && sidx_num_timebase_units != 0 {
+                track.num_frames = Some(sidx_num_timebase_units.into());
+            }
 
             tracks.push(track);
             track_states.push(track_state);
