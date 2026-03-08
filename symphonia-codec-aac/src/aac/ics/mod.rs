@@ -151,8 +151,7 @@ impl IcsInfo {
                     self.window_groups += 1;
                 }
             }
-        }
-        else {
+        } else {
             self.long_win = true;
             self.num_windows = 1;
             self.max_sfb = bs.read_bits_leq32(6)? as usize;
@@ -175,11 +174,9 @@ impl IcsInfo {
     fn get_group_start(&self, g: usize) -> usize {
         if g == 0 {
             0
-        }
-        else if g >= self.window_groups {
+        } else if g >= self.window_groups {
             if self.long_win { 1 } else { 8 }
-        }
-        else {
+        } else {
             self.group_start[g]
         }
     }
@@ -312,21 +309,18 @@ impl Ics {
             for sfb in 0..self.info.max_sfb {
                 self.scales[g][sfb] = if self.is_zero(g, sfb) {
                     0.0
-                }
-                else if self.is_intensity(g, sfb) {
+                } else if self.is_intensity(g, sfb) {
                     scf_intensity += i16::from(bs.read_codebook(scf_cb)?.0) - 60;
 
                     // Valid range is -155 to 100. Value offset by 155 for lookup table indexing.
                     validate!((scf_intensity >= 0) && (scf_intensity < 256));
 
                     table_intensity_scf[scf_intensity as usize]
-                }
-                else if self.is_noise(g, sfb) {
+                } else if self.is_noise(g, sfb) {
                     if noise_pcm_flag {
                         noise_pcm_flag = false;
                         scf_noise += (bs.read_bits_leq32(9)? as i16) - 256;
-                    }
-                    else {
+                    } else {
                         scf_noise += i16::from(bs.read_codebook(scf_cb)?.0) - 60;
                     }
 
@@ -334,8 +328,7 @@ impl Ics {
                     validate!((scf_noise >= 0) && (scf_noise < 256));
 
                     table_normal_scf[scf_noise as usize]
-                }
-                else {
+                } else {
                     scf_normal += i16::from(bs.read_codebook(scf_cb)?.0) - 60;
 
                     // Valid range is -100 to 155. Value offset by 100 for lookup table indexing.

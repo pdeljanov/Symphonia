@@ -145,8 +145,7 @@ impl Residue {
     ) -> Result<()> {
         let result = if self.setup.residue_type == 2 {
             self.read_residue_inner_type_2(bs, bs_exp, codebooks, residue_channels, channels)
-        }
-        else {
+        } else {
             self.read_residue_inner_type_0_1(bs, bs_exp, codebooks, residue_channels, channels)
         };
 
@@ -461,8 +460,7 @@ fn decode_classes(mut val: u32, parts_per_classword: u16, classifications: u32, 
         }
 
         skip
-    }
-    else {
+    } else {
         0
     };
 

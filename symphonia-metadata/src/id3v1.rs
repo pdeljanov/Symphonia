@@ -68,8 +68,7 @@ fn read_id3v1<B: ReadBytes>(reader: &mut B, builder: &mut MetadataBuilder) -> Re
         builder.add_tag(Tag::new_from_parts("TRACK", track, Some(StandardTag::TrackNumber(track))));
 
         decode_iso8859_buf(&buf[94..122])
-    }
-    else {
+    } else {
         decode_iso8859_buf(&buf[94..124])
     };
 

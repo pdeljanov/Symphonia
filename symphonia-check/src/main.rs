@@ -450,8 +450,7 @@ fn main() {
     let ret = if res.n_failed_samples == 0 {
         println!("PASS");
         0
-    }
-    else {
+    } else {
         println!("FAIL");
         1
     };

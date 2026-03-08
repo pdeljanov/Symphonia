@@ -37,8 +37,7 @@ fn read_ebml_sizes<R: ReadBytes>(mut reader: R, num_frames: usize) -> Result<Vec
         if let Some(last_size) = sizes.last().copied() {
             let delta = read_signed_vint(&mut reader)?;
             sizes.push((last_size as i64 + delta) as u64)
-        }
-        else {
+        } else {
             let size = read_unsigned_vint(&mut reader)?;
             sizes.push(size);
         }
@@ -54,8 +53,7 @@ pub(crate) fn read_xiph_sizes<R: ReadBytes>(mut reader: R, num_frames: usize) ->
         let byte = reader.read_byte()? as u64;
         if byte == 255 {
             prefixes += 1;
-        }
-        else {
+        } else {
             let size = prefixes * 255 + byte;
             prefixes = 0;
             sizes.push(size);

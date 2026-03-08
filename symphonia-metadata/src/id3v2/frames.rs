@@ -693,8 +693,7 @@ pub fn read_id3v2p4_frame<B: ReadBytes + FiniteStream>(reader: &mut B) -> Result
         let unsync_data = decode_unsynchronisation(&mut data);
 
         read_frame(BufReader::new(unsync_data), &info)
-    }
-    else {
+    } else {
         // The frame body has not been unsynchronised.
         read_frame(BufReader::new(&data), &info)
     };

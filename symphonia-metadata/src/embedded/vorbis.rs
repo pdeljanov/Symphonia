@@ -158,8 +158,7 @@ lazy_static! {
 /// Parse a string containing a base64 encoded FLAC picture block into a visual.
 fn parse_base64_picture_block(b64: &str) -> Result<ParsedComment> {
     // Decode the Base64 encoded FLAC metadata block.
-    let Some(data) = base64::decode(b64)
-    else {
+    let Some(data) = base64::decode(b64) else {
         return decode_error("meta(vorbis): the base64 encoding of a picture block is invalid");
     };
 
@@ -169,14 +168,12 @@ fn parse_base64_picture_block(b64: &str) -> Result<ParsedComment> {
 /// Parse a string containing a base64 encoding image file into a visual.
 fn parse_base64_cover_art(b64: &str) -> Result<ParsedComment> {
     // Decode the Base64 encoded image data.
-    let Some(data) = base64::decode(b64)
-    else {
+    let Some(data) = base64::decode(b64) else {
         return decode_error("meta (vorbis): the base64 encoding of cover art is invalid");
     };
 
     // Try to get image information.
-    let Some(image_info) = try_get_image_info(&data)
-    else {
+    let Some(image_info) = try_get_image_info(&data) else {
         return decode_error("meta (vorbis): could not detect cover art image format");
     };
 
@@ -214,8 +211,7 @@ fn parse_chapter_timestamp(time: &str) -> Result<Time> {
             // The string slice after stripping the leading or trailing zeros is empty. Only one
             // zero digit was significant.
             Ok((0, 1))
-        }
-        else {
+        } else {
             buf.bytes()
                 .try_fold(0u32, |num, digit| match digit {
                     b'0'..=b'9' => {
@@ -229,12 +225,10 @@ fn parse_chapter_timestamp(time: &str) -> Result<Time> {
     }
 
     // Hours, minutes, and integer seconds are mandatory.
-    let Some((h_str, rem)) = time.split_once(':')
-    else {
+    let Some((h_str, rem)) = time.split_once(':') else {
         return Err(FMT_ERR);
     };
-    let Some((m_str, rem)) = rem.split_once(':')
-    else {
+    let Some((m_str, rem)) = rem.split_once(':') else {
         return Err(FMT_ERR);
     };
     // Fractional seconds are optional.
@@ -344,24 +338,20 @@ fn parse_vorbis_comment(buf: &[u8]) -> Result<ParsedComment> {
         if let Some(key) = try_parse_chapter_info_key(&key) {
             // A comment with a key starting with "CHAPTERXXX" is a chapter information comment.
             Ok(ParsedComment::ChapterInfo(ChapterInfo { key, value: value.to_string() }))
-        }
-        else if key.eq_ignore_ascii_case("metadata_block_picture") {
+        } else if key.eq_ignore_ascii_case("metadata_block_picture") {
             // A comment with a key "METADATA_BLOCK_PICTURE" is a FLAC picture block encoded in
             // base64. Attempt to decode it as such.
             parse_base64_picture_block(value)
-        }
-        else if key.eq_ignore_ascii_case("coverart") {
+        } else if key.eq_ignore_ascii_case("coverart") {
             // A comment with a key "COVERART" is a base64 encoded image. Attempt to decode it as
             // such.
             parse_base64_cover_art(value)
-        }
-        else {
+        } else {
             // Add a tag created from the key-value pair, while also attempting to map it to a
             // standard tag.
             Ok(ParsedComment::Tag(RawTag::new(key, value)))
         }
-    }
-    else {
+    } else {
         decode_error("meta (vorbis): malformed comment")
     }
 }
@@ -435,11 +425,9 @@ pub fn read_vorbis_comment<B: ReadBytes>(
                             // "NAME" and "URL" are the only standardized keys for chapters.
                             let std_tag = if key.eq_ignore_ascii_case("name") {
                                 Some(StandardTag::ChapterTitle(value.clone()))
-                            }
-                            else if key.eq_ignore_ascii_case("url") {
+                            } else if key.eq_ignore_ascii_case("url") {
                                 Some(StandardTag::Url(value.clone()))
-                            }
-                            else {
+                            } else {
                                 None
                             };
 

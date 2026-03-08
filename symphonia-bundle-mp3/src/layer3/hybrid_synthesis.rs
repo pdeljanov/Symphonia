@@ -173,8 +173,7 @@ pub(super) fn reorder(header: &FrameHeader, channel: &mut GranuleChannel, buf: &
         let bands = if is_mixed {
             let switch = SFB_MIXED_SWITCH_POINT[header.sample_rate_idx];
             &SFB_MIXED_BANDS[header.sample_rate_idx][switch..]
-        }
-        else {
+        } else {
             &SFB_SHORT_BANDS[header.sample_rate_idx]
         };
 

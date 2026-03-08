@@ -147,8 +147,7 @@ impl<'s> WavReader<'s> {
 
                     track.with_codec_params(CodecParameters::Audio(codec_params));
 
-                    let Some(packet_info) = packet_info
-                    else {
+                    let Some(packet_info) = packet_info else {
                         return decode_error("wav: missing format chunk");
                     };
 
@@ -300,8 +299,7 @@ impl FormatReader for WavReader<'_> {
             let current_pos = self.reader.pos();
             if seek_pos >= current_pos {
                 self.reader.ignore_bytes(seek_pos - current_pos)?;
-            }
-            else {
+            } else {
                 return seek_error(SeekErrorKind::ForwardOnly);
             }
         }

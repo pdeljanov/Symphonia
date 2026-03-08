@@ -42,8 +42,7 @@ impl Atom for StszAtom {
             }
 
             SampleSize::Variable(entries)
-        }
-        else {
+        } else {
             SampleSize::Constant(sample_size)
         };
 

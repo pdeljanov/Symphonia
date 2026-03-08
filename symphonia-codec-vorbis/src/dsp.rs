@@ -88,8 +88,7 @@ impl DspChannel {
             // Window for this block.
             let win = if block_flag && lap_state.prev_block_flag {
                 &windows.long
-            }
-            else {
+            } else {
                 &windows.short
             };
 
@@ -97,8 +96,7 @@ impl DspChannel {
                 // Both the previous and current blocks are either short or long. In this case,
                 // there is a complete overlap between.
                 overlap_add(buf, &self.overlap[..bs / 2], &self.imdct[..bs / 2], win);
-            }
-            else if lap_state.prev_block_flag && !block_flag {
+            } else if lap_state.prev_block_flag && !block_flag {
                 // The previous block is long and the current block is short.
                 let start = (self.bs1 - self.bs0) / 4;
                 let end = start + self.bs0 / 2;
@@ -113,8 +111,7 @@ impl DspChannel {
                     &self.imdct[..self.bs0 / 2],
                     win,
                 );
-            }
-            else {
+            } else {
                 // The previous block is short and the current block is long.
                 let start = (self.bs1 - self.bs0) / 4;
                 let end = start + self.bs0 / 2;

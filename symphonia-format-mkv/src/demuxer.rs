@@ -301,8 +301,7 @@ impl<'s> MkvReader<'s> {
 
             if let Some(lang_bcp47) = &track.lang_bcp47 {
                 tr.with_language(lang_bcp47);
-            }
-            else {
+            } else {
                 tr.with_language(&track.lang);
             }
 
@@ -341,8 +340,7 @@ impl<'s> MkvReader<'s> {
 
                 if next_frame_pts >= ts && frame.track == track_id {
                     break 'out frame.pts;
-                }
-                else {
+                } else {
                     self.frames.pop_front();
                 }
             }
@@ -472,15 +470,13 @@ impl<'s> MkvReader<'s> {
                     }
                     block_type @ (MkvElement::SimpleBlock | MkvElement::BlockGroup) => {
                         // Get the current cluster information.
-                        let Some(cluster) = self.current_cluster.as_ref()
-                        else {
+                        let Some(cluster) = self.current_cluster.as_ref() else {
                             log::warn!("expected to have cluster");
                             return Ok(true);
                         };
 
                         // Get the cluster timestamp.
-                        let Some(cluster_ts) = cluster.timestamp
-                        else {
+                        let Some(cluster_ts) = cluster.timestamp else {
                             log::warn!("missing cluster timestamp");
                             return Ok(true);
                         };

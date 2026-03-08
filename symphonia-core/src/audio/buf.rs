@@ -404,8 +404,7 @@ impl<S: Sample> AudioBuffer<S> {
     pub fn shift(&mut self, shift: usize) {
         if shift >= self.num_frames {
             self.clear();
-        }
-        else if shift > 0 {
+        } else if shift > 0 {
             // Shift the samples down in each plane.
             for plane in &mut self.planes {
                 plane.copy_within(shift..self.num_frames, 0);

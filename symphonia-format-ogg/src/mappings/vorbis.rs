@@ -83,8 +83,7 @@ impl PacketParser for VorbisPacketParser {
         let cur_bs_exp = if mode_num < self.num_modes {
             let block_flag = (self.modes_block_flags >> mode_num) & 1;
             if block_flag == 1 { self.bs1_exp } else { self.bs0_exp }
-        }
-        else {
+        } else {
             return (Duration::ZERO, Duration::ZERO);
         };
 
@@ -95,8 +94,7 @@ impl PacketParser for VorbisPacketParser {
             let prev_block_n = 1 << prev_bs_exp;
             // Have previous block, do not discard any frames.
             ((prev_block_n >> 2) + (cur_block_n >> 2), 0)
-        }
-        else {
+        } else {
             // Do not have previous block, all lapped frames will be disarded.
             (cur_block_n >> 1, cur_block_n >> 1)
         };
@@ -207,8 +205,7 @@ impl Mapper for VorbisMapper {
             };
 
             Ok(MapResult::StreamData { dur, discard })
-        }
-        else {
+        } else {
             // Odd numbered packet types are header packets.
             let mut sig = [0; 6];
             reader.read_buf_exact(&mut sig)?;
@@ -451,12 +448,10 @@ pub fn skip_codebook(bs: &mut BitReaderRtl<'_>) -> Result<()> {
                     let _ = bs.read_bits_leq32(5)?;
                 }
             }
-        }
-        else {
+        } else {
             bs.ignore_bits(codebook_entries * 5)?;
         }
-    }
-    else {
+    } else {
         // Codeword list is length ordered.
         let mut cur_entry = 0;
         let mut _cur_len = bs.read_bits_leq32(5)? + 1;

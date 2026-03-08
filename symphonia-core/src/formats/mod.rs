@@ -567,8 +567,7 @@ pub mod util {
             // the last entry in the index, then simply append it to the index.
             if ts > last_ts && byte_offset >= last_offset {
                 self.points.push(seek_point)
-            }
-            else if ts < last_ts {
+            } else if ts < last_ts {
                 // If the seek point has a timestamp less-than the last entry in the index, then the
                 // insertion point must be found. This case should rarely occur.
                 let i = self
@@ -611,8 +610,7 @@ pub mod util {
 
                     if frame_ts < mid_ts {
                         upper = mid;
-                    }
-                    else {
+                    } else {
                         lower = mid;
                     }
                 }

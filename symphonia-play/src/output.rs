@@ -330,8 +330,7 @@ mod cpal {
                     sample_rate: cpal::SampleRate(spec.rate()),
                     buffer_size: cpal::BufferSize::Default,
                 }
-            }
-            else {
+            } else {
                 // Use the default config for Windows.
                 device
                     .default_output_config()
@@ -376,8 +375,7 @@ mod cpal {
             let resampler = if spec.rate() != config.sample_rate.0 {
                 info!("resampling {} Hz to {} Hz", spec.rate(), config.sample_rate.0);
                 Some(Resampler::new(spec, config.sample_rate.0, duration.get() as usize))
-            }
-            else {
+            } else {
                 None
             };
 
@@ -401,8 +399,7 @@ mod cpal {
                 // Resampling is required. The resampler will return interleaved samples in the
                 // correct sample format.
                 resampler.resample(decoded, &mut self.output)
-            }
-            else {
+            } else {
                 // Resampling is not required. Interleave the sample for cpal using a sample buffer.
                 decoded.copy_to_vec_interleaved(&mut self.output);
                 &self.output[..]

@@ -94,8 +94,7 @@ impl MpaDecoder {
         // The audio buffer can only be created after the first frame is decoded.
         if self.buf.is_unused() {
             self.buf = AudioBuffer::new(header.spec(), 1152);
-        }
-        else {
+        } else {
             // Ensure the packet contains an audio frame with the same signal specification as the
             // buffer.
             //
@@ -151,8 +150,7 @@ impl AudioDecoder for MpaDecoder {
         if let Err(e) = self.decode_inner(packet) {
             self.buf.clear();
             Err(e)
-        }
-        else {
+        } else {
             Ok(self.buf.as_generic_audio_buffer_ref())
         }
     }

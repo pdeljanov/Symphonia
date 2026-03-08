@@ -100,8 +100,7 @@ impl AdpcmDecoder {
             }
 
             AudioSpec::new(rate, channels.clone())
-        }
-        else {
+        } else {
             return unsupported_error("adpcm: channels or channel_layout is required");
         };
 
@@ -177,8 +176,7 @@ impl AudioDecoder for AdpcmDecoder {
         if let Err(e) = self.decode_inner(packet) {
             self.buf.clear();
             Err(e)
-        }
-        else {
+        } else {
             Ok(self.buf.as_generic_audio_buffer_ref())
         }
     }

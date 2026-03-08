@@ -238,14 +238,12 @@ impl<S: EbmlSchema> EbmlElementHeader<S> {
                 let is_parent_valid = if info.is_global() {
                     // The element is global. It has no specific parent.
                     true
-                }
-                else {
+                } else {
                     // The element is non-global. It has a parent.
                     if info.is_recursive() {
                         // The element is recursive. Its parent can be itself.
                         info.parent_id() == parent_id || parent_id == self.id
-                    }
-                    else {
+                    } else {
                         // The element is non-recursive.
                         info.parent_id() == parent_id
                     }
@@ -341,8 +339,7 @@ impl<R: ReadEbml, S: EbmlSchema> EbmlIterator<R, S> {
         if let Some(header) = self.current.take() {
             self.stack.push(header);
             Ok(())
-        }
-        else {
+        } else {
             // No element to push.
             Err(EbmlError::NoElement)
         }
@@ -353,8 +350,7 @@ impl<R: ReadEbml, S: EbmlSchema> EbmlIterator<R, S> {
         if let Some(header) = self.stack.pop() {
             self.current.replace(header);
             Ok(())
-        }
-        else {
+        } else {
             // No element to pop.
             Err(EbmlError::NoParent)
         }
@@ -490,13 +486,11 @@ impl<R: ReadEbml, S: EbmlSchema> EbmlIterator<R, S> {
             if pos == parent_end {
                 // Iteration of the current parent element is done.
                 return Ok(None);
-            }
-            else if pos > parent_end {
+            } else if pos > parent_end {
                 // The parent element was overrun.
                 log::warn!("overran parent element by {} bytes", pos - parent_end);
                 return Err(EbmlError::Overrun);
-            }
-            else if parent_end - pos < EbmlElementHeader::<S>::MIN_SIZE {
+            } else if parent_end - pos < EbmlElementHeader::<S>::MIN_SIZE {
                 // Remaing byte is not enough for EbmlElementHeader MIN_SIZE of 2 bytes
                 // Iteration of the current parent element is done.
                 return Ok(None);
@@ -596,13 +590,11 @@ impl<R: ReadEbml, S: EbmlSchema> EbmlIterator<R, S> {
                 let element = E::read(self, &header)?;
                 self.pop_element()?;
                 Ok(element)
-            }
-            else {
+            } else {
                 // Element is not a master element, it cannot be read as an element.
                 Err(EbmlError::ExpectedMasterElement)
             }
-        }
-        else {
+        } else {
             // The current element is not a known element type.
             Err(EbmlError::UnknownElement)
         }

@@ -80,8 +80,7 @@ impl TnsCoeffs {
                 // Convert to signed integer.
                 let c = f32::from(if (val & sign_mask) != 0 {
                     (val | neg_mask) as i8
-                }
-                else {
+                } else {
                     val as i8
                 });
 
@@ -122,11 +121,9 @@ impl Tns {
         // Table 4.156
         let max_order = if !info.long_win {
             7
-        }
-        else if is_lc {
+        } else if is_lc {
             12
-        }
-        else {
+        } else {
             TNS_MAX_ORDER
         };
 
@@ -155,8 +152,7 @@ impl Tns {
     ) {
         let tns_max_bands = (if info.long_win {
             TNS_MAX_LONG_BANDS[rate_idx]
-        }
-        else {
+        } else {
             TNS_MAX_SHORT_BANDS[rate_idx]
         })
         .min(info.max_sfb);
@@ -186,8 +182,7 @@ impl Tns {
                             coeffs[i] -= coeffs[i - j - 1] * lpc[j];
                         }
                     }
-                }
-                else {
+                } else {
                     for (m, i) in (start..end).rev().enumerate() {
                         for j in 0..order.min(m) {
                             coeffs[i] -= coeffs[i + j + 1] * lpc[j];

@@ -337,8 +337,7 @@ impl FormatReader for AdtsReader<'_> {
                 if seeked_pos != self.first_frame_pos {
                     return seek_error(SeekErrorKind::Unseekable);
                 }
-            }
-            else {
+            } else {
                 return seek_error(SeekErrorKind::ForwardOnly);
             }
 
@@ -415,8 +414,7 @@ fn approximate_frame_count(mut source: &mut MediaSourceStream<'_>) -> Result<Opt
         let mut scoped_stream = ScopedStream::new(&mut source, MAX_LEN);
 
         loop {
-            let Ok(header) = AdtsHeader::read(&mut scoped_stream)
-            else {
+            let Ok(header) = AdtsHeader::read(&mut scoped_stream) else {
                 break;
             };
 
@@ -429,8 +427,7 @@ fn approximate_frame_count(mut source: &mut MediaSourceStream<'_>) -> Result<Opt
         }
 
         let _ = source.seek_buffered(original_pos);
-    }
-    else {
+    } else {
         // The number of points to sample within the stream.
         const NUM_SAMPLE_POINTS: u64 = 4;
         const NUM_FRAMES_PER_SAMPLE_POINT: u32 = 100;

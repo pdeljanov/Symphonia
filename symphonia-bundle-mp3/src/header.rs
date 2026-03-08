@@ -179,8 +179,7 @@ pub fn parse_frame_header(header: u32) -> Result<FrameHeader> {
             {
                 return decode_error("mpa: invalid Layer 2 bitrate for mono channel mode");
             }
-        }
-        else if bitrate == 32_000 || bitrate == 48_000 || bitrate == 56_000 || bitrate == 80_000 {
+        } else if bitrate == 32_000 || bitrate == 48_000 || bitrate == 56_000 || bitrate == 80_000 {
             return decode_error("mpa: invalid Layer 2 bitrate for non-mono channel mode");
         }
     }

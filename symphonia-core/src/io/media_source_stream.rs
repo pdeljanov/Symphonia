@@ -110,8 +110,7 @@ impl<'s> MediaSourceStream<'s> {
             // slice.
             let actual_read_len = if vec0.len() >= self.read_block_len {
                 self.inner.read(&mut vec0[..self.read_block_len])?
-            }
-            else {
+            } else {
                 // Otherwise, perform a vectored read into the two contiguous region slices.
                 let rem = self.read_block_len - vec0.len();
 
@@ -158,8 +157,7 @@ impl<'s> MediaSourceStream<'s> {
     fn continguous_buf(&self) -> &[u8] {
         if self.write_pos >= self.read_pos {
             &self.ring[self.read_pos..self.write_pos]
-        }
-        else {
+        } else {
             &self.ring[self.read_pos..]
         }
     }
@@ -258,8 +256,7 @@ impl ReadBytes for MediaSourceStream<'_> {
         if buf.len() >= 2 {
             bytes.copy_from_slice(&buf[..2]);
             self.consume(2);
-        }
-        else {
+        } else {
             for byte in bytes.iter_mut() {
                 *byte = self.read_byte()?;
             }
@@ -276,8 +273,7 @@ impl ReadBytes for MediaSourceStream<'_> {
         if buf.len() >= 3 {
             bytes.copy_from_slice(&buf[..3]);
             self.consume(3);
-        }
-        else {
+        } else {
             for byte in bytes.iter_mut() {
                 *byte = self.read_byte()?;
             }
@@ -293,8 +289,7 @@ impl ReadBytes for MediaSourceStream<'_> {
         if buf.len() >= 4 {
             bytes.copy_from_slice(&buf[..4]);
             self.consume(4);
-        }
-        else {
+        } else {
             for byte in bytes.iter_mut() {
                 *byte = self.read_byte()?;
             }
@@ -382,8 +377,7 @@ impl SeekBuffered for MediaSourceStream<'_> {
             // Get the readable regions of the current ring.
             let (vec0, vec1) = if self.write_pos >= self.read_pos {
                 (&self.ring[self.read_pos..self.write_pos], None)
-            }
-            else {
+            } else {
                 (&self.ring[self.read_pos..], Some(&self.ring[..self.write_pos]))
             };
 
@@ -395,8 +389,7 @@ impl SeekBuffered for MediaSourceStream<'_> {
                 let total_len = vec0_len + vec1.len();
                 new_ring[vec0_len..total_len].copy_from_slice(vec1);
                 total_len
-            }
-            else {
+            } else {
                 vec0_len
             };
 
@@ -409,8 +402,7 @@ impl SeekBuffered for MediaSourceStream<'_> {
     fn unread_buffer_len(&self) -> usize {
         if self.write_pos >= self.read_pos {
             self.write_pos - self.read_pos
-        }
-        else {
+        } else {
             self.write_pos + (self.ring.len() - self.read_pos)
         }
     }
@@ -428,13 +420,11 @@ impl SeekBuffered for MediaSourceStream<'_> {
         let delta = if pos > old_pos {
             assert!(pos - old_pos < isize::MAX as u64);
             (pos - old_pos) as isize
-        }
-        else if pos < old_pos {
+        } else if pos < old_pos {
             // Backward seek.
             assert!(old_pos - pos < isize::MAX as u64);
             -((old_pos - pos) as isize)
-        }
-        else {
+        } else {
             0
         };
 
@@ -445,8 +435,7 @@ impl SeekBuffered for MediaSourceStream<'_> {
         if delta < 0 {
             let abs_delta = cmp::min((-delta) as usize, self.read_buffer_len());
             self.read_pos = (self.read_pos + self.ring.len() - abs_delta) & self.ring_mask;
-        }
-        else if delta > 0 {
+        } else if delta > 0 {
             let abs_delta = cmp::min(delta as usize, self.unread_buffer_len());
             self.read_pos = (self.read_pos + abs_delta) & self.ring_mask;
         }

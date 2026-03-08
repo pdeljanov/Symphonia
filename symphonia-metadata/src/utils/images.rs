@@ -215,16 +215,13 @@ fn parse_bitmap(mut reader: BufReader<'_>) -> Result<ImageInfo> {
                     bits_per_pixel: non_zero(bit_count as u8),
                     color_model: ColorModel::RGB(non_zero(8)),
                 })
-            }
-            else if bit_count == 16 {
+            } else if bit_count == 16 {
                 // With 16bpp, R5G5B5 is used.
                 ColorMode::Direct(ColorModel::RGB(non_zero(5)))
-            }
-            else if bit_count == 24 || bit_count == 32 {
+            } else if bit_count == 24 || bit_count == 32 {
                 // With 24bpp or 32bpp, R8G8B8(A8) is used.
                 ColorMode::Direct(ColorModel::RGB(non_zero(8)))
-            }
-            else {
+            } else {
                 return decode_error("meta (bmp): invalid bit count");
             }
         }
@@ -279,8 +276,7 @@ fn parse_gif(mut reader: BufReader<'_>) -> Result<ImageInfo> {
             bits_per_pixel: non_zero(bpp),
             color_model: ColorModel::RGB(non_zero(8)),
         })
-    }
-    else {
+    } else {
         // No GCT.
         return unsupported_error("meta (gif): local color tables are unsupported");
     };

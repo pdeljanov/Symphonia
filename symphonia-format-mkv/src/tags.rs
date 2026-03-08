@@ -45,15 +45,13 @@ pub fn make_raw_tags(tag: SimpleTagElement, ctx: &TagContext, out: &mut Vec<RawT
             let path = format!("{}/{}", path, tag.name);
             make_raw_tag(path, tag, out);
         }
-    }
-    else if tag.name.eq_ignore_ascii_case("COUNTRY") {
+    } else if tag.name.eq_ignore_ascii_case("COUNTRY") {
         // COUNTRY tag is a parent tag, but a COUNTRY sub-field will be used instead.
         for tag in tag.sub_tags {
             let path = format!("{}/{}", path, tag.name);
             make_raw_tag(path, tag, out);
         }
-    }
-    else {
+    } else {
         // Non-parent tag.
         path.push_str(&tag.name);
         make_raw_tag(path, tag, out);
@@ -67,18 +65,15 @@ fn get_target_path(ctx: &TagContext) -> String {
         if let Some(target_name) = &target.name {
             // A target type name is explictly provided.
             format!("{target_name}@")
-        }
-        else if let Some(target_name) = default_target_name(target.value, ctx.is_video) {
+        } else if let Some(target_name) = default_target_name(target.value, ctx.is_video) {
             // A target type name is not provided, but a default target name for this target value
             // is known.
             format!("{target_name}@")
-        }
-        else {
+        } else {
             // There is no known target type name for the target value provided.
             format!("#{}@", target.value)
         }
-    }
-    else {
+    } else {
         // No target.
         "".into()
     }
@@ -92,8 +87,7 @@ pub fn make_raw_tag(path: String, tag: SimpleTagElement, out: &mut Vec<RawTag>) 
         // BCP47 language code is present, prefer it over the ISO 639-2 chapter
         // language.
         sub_fields.push(RawTagSubField::new(TAG_LANGUAGE_BCP47, lang));
-    }
-    else if let Some(lang) = tag.lang {
+    } else if let Some(lang) = tag.lang {
         // ISO 639-2 language code.
         sub_fields.push(RawTagSubField::new(TAG_LANGUAGE, lang));
     }
@@ -384,14 +378,12 @@ fn map_total_parts(value: &Arc<String>, ctx: &TagContext) -> Option<StandardTag>
             };
 
             Some(std)
-        }
-        else {
+        } else {
             // No explicit or default target name. It is not possible to definitively map to a
             // standard tag.
             None
         }
-    }
-    else {
+    } else {
         // There is no lower target level, so it is not possible to know what kind of target this
         // total count refers to. The raw tag cannot be mapped.
         None
@@ -544,8 +536,7 @@ fn parse_imdb(value: &Arc<String>) -> Option<StandardTag> {
         }
 
         Some(StandardTag::ImdbTitleId(Arc::new(id.to_string())))
-    }
-    else {
+    } else {
         // Invalid format.
         None
     }
@@ -562,16 +553,13 @@ fn parse_tvdb(value: &Arc<String>) -> Option<StandardTag> {
     if category.eq_ignore_ascii_case("series") {
         // TVDB series ID.
         Some(StandardTag::TvdbSeriesId(Arc::new(id.to_string())))
-    }
-    else if category.eq_ignore_ascii_case("episodes") {
+    } else if category.eq_ignore_ascii_case("episodes") {
         // TVDB episode ID.
         Some(StandardTag::TvdbEpisodeId(Arc::new(id.to_string())))
-    }
-    else if category.eq_ignore_ascii_case("movies") {
+    } else if category.eq_ignore_ascii_case("movies") {
         // TVDB movie ID.
         Some(StandardTag::TvdbMovieId(Arc::new(id.to_string())))
-    }
-    else {
+    } else {
         // Unknown category.
         None
     }
@@ -587,17 +575,14 @@ fn parse_tmdb(value: &Arc<String>) -> Option<StandardTag> {
         if category.eq_ignore_ascii_case("movie") {
             // TMDB movie ID.
             Some(StandardTag::TmdbMovieId(Arc::new(id.to_string())))
-        }
-        else if category.eq_ignore_ascii_case("tv") {
+        } else if category.eq_ignore_ascii_case("tv") {
             // TMDB series ID
             Some(StandardTag::TmdbSeriesId(Arc::new(id.to_string())))
-        }
-        else {
+        } else {
             // Unknown category.
             None
         }
-    }
-    else {
+    } else {
         // Invalid format.
         None
     }

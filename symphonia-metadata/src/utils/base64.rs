@@ -91,8 +91,7 @@ pub fn decode(encoded: &str) -> Option<Box<[u8]>> {
 
             decoded.push(((v1 & 0x0f) << 4) | (v2 >> 2));
         }
-    }
-    else if rem.len() == 1 {
+    } else if rem.len() == 1 {
         // Atleast 2 symbols are required to decode a single byte. Therefore, this is an error.
         return None;
     }

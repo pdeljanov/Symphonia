@@ -648,8 +648,7 @@ fn fix_wave_channel_mask(mut channel_mask: u32, n_channels: u16) -> u32 {
         // Too few ones in mask so add extra ones above the most significant one
         let shift = 32 - (!channel_mask).leading_ones();
         channel_mask |= ((1 << channel_diff) - 1) << shift;
-    }
-    else {
+    } else {
         // Too many ones in mask so remove the most significant extra ones
         while channel_mask.count_ones() != n_channels as u32 {
             let highest_one = 31 - (!channel_mask).leading_ones();

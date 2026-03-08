@@ -418,8 +418,7 @@ impl MetadataReader for ApeReader<'_> {
                     if value.contains('\0') {
                         let items = value.split_terminator('\0').map(|s| s.to_string()).collect();
                         RawValue::StringList(Arc::new(items))
-                    }
-                    else {
+                    } else {
                         RawValue::from(value)
                     }
                 }

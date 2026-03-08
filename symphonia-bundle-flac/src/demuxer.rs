@@ -97,8 +97,7 @@ impl<'s> FlacReader<'s> {
                     // Only a single stream information block is allowed.
                     if track.is_none() {
                         track = Some(read_stream_info_block(&mut block_stream, &mut parser)?);
-                    }
-                    else {
+                    } else {
                         return decode_error("flac: found more than one stream info block");
                     }
                 }
@@ -113,8 +112,7 @@ impl<'s> FlacReader<'s> {
                     if index.is_none() {
                         index =
                             Some(read_flac_seektable_block(&mut block_stream, header.block_len)?);
-                    }
-                    else {
+                    } else {
                         return decode_error("flac: found more than one seek table block");
                     }
                 }
@@ -129,8 +127,7 @@ impl<'s> FlacReader<'s> {
                     // since the stream information block must always be the first metadata block.
                     if let Some(tb) = track.as_ref().and_then(|track| track.time_base) {
                         chapters = Some(read_flac_cuesheet_block(&mut block_stream, tb)?);
-                    }
-                    else {
+                    } else {
                         return decode_error("flac: cuesheet block before stream info");
                     }
                 }
@@ -241,8 +238,7 @@ impl FormatReader for FlacReader<'_> {
     }
 
     fn seek(&mut self, _mode: SeekMode, to: SeekTo) -> Result<SeekedTo> {
-        let Some(track) = self.tracks.first()
-        else {
+        let Some(track) = self.tracks.first() else {
             return seek_error(SeekErrorKind::Unseekable);
         };
 
@@ -320,13 +316,11 @@ impl FormatReader for FlacReader<'_> {
 
                 if ts < sync.ts {
                     end_byte_offset = mid_byte_offset;
-                }
-                else if ts >= sync.ts && ts < sync.next_ts() {
+                } else if ts >= sync.ts && ts < sync.next_ts() {
                     debug!("seeked to ts={} (delta={})", sync.ts, sync.ts.saturating_delta(ts));
 
                     return Ok(SeekedTo { track_id: 0, actual_ts: sync.ts, required_ts: ts });
-                }
-                else {
+                } else {
                     start_byte_offset = mid_byte_offset;
                 }
             }

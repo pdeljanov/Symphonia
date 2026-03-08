@@ -142,18 +142,15 @@ fn find_sb_info(header: &FrameHeader) -> &'static SbInfo {
         if bitrate_per_channel <= 48_000 {
             // Table 3-B.2c and 3-B.2d are only used for bitrates <= 48 kbit/s.
             if header.sample_rate == 32_000 { 3 } else { 2 }
-        }
-        else if bitrate_per_channel <= 80_000 {
+        } else if bitrate_per_channel <= 80_000 {
             // Table 3-B.2a is always used for 48 kbit/s < bitrates <= 80 kbits/s.
             0
-        }
-        else {
+        } else {
             // Table 3-B.2a and 3-B.2b as always used for bitrates > 80 kbit/s.
             // TODO: Free format also used this case, but we don't support it.
             usize::from(header.sample_rate != 48_000)
         }
-    }
-    else {
+    } else {
         // MPEG2 & MPEG2.5 use the same table regardless of bitrate and sample rate.
         4
     };
@@ -181,8 +178,7 @@ fn dequantize(bs: &mut BitReaderLtr<'_>, class: &QuantClass) -> Result<[f32; 3]>
         // Each raw sample is in the range 0..nlevels. Therefore, the bit width of an individual
         // raw sample is the minimum number of bits it takes to represent nlevels.
         nlevels.next_power_of_two().trailing_zeros()
-    }
-    else {
+    } else {
         // Read individial raw samples from the bitstream.
         let bits = u32::from(class.bits);
 
