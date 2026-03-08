@@ -366,7 +366,10 @@ impl<'s> IsoMp4Reader<'s> {
         //
         // Note, there will always be one segment because the moov atom was converted into a segment
         // when the reader was instantiated.
-        if self.segs.last().unwrap().all_tracks_ended() {
+        // 
+        // However, if the stream is fragmented, the current last segment may be over, but we'll find a new
+        // one if we look
+        if !self.moov.is_fragmented() && self.segs.last().unwrap().all_tracks_ended() {
             return Ok(false);
         }
 
