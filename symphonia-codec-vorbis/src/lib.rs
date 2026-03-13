@@ -84,7 +84,12 @@ impl VorbisDecoder {
         };
 
         // The extra data contains the identification and setup headers.
-        let mut reader = BufReader::new(extra_data);
+        let unpacked_data = if !extra_data.is_empty() && extra_data[0] == XIPH_LACED_LEADING_HEADER {
+            unpack_xiph_laced_extradata(extra_data)?
+        } else {
+            extra_data.to_vec()
+        };
+        let mut reader = BufReader::new(&unpacked_data);
 
         // Read ident header.
         let ident = read_ident_header(&mut reader)?;
