@@ -15,6 +15,14 @@
 //! U8, S8, U16, S16, U24, S24, U32, S32, F32, and F64. These sample formats correspond to the
 //! following underlying data types, respectively: `u8`, `i8`, `u16`, `i16`, `u24`, `i24`, `u32`,
 //! `i32`, `f32`, and `f64`.
+//!
+//! ### Generic Wrappers
+//!
+//! To make handling varying sample formats easier, this module also implements a set of generic
+//! wrappers around typed audio buffers and slices. These wrappers are implemented as enums whereby
+//! each enumerator corresponds to one of the aforementioned standard sample formats. Functions on
+//! the generic wrappers match closely with that of the typed interface and are dispatch to the
+//! active enumerator.
 use std::ops::Range;
 
 mod buf;
