@@ -79,12 +79,7 @@ impl MpaDecoder {
         // Create decoder state.
         let state = State::new(params.codec);
 
-        Ok(MpaDecoder {
-            opts: opts.clone(),
-            params: params.clone(),
-            state,
-            buf: Default::default(),
-        })
+        Ok(MpaDecoder { opts: *opts, params: params.clone(), state, buf: Default::default() })
     }
 
     fn decode_inner(&mut self, packet: &Packet) -> Result<()> {

@@ -120,7 +120,7 @@ impl VorbisDecoder {
             Dsp { windows, channels: dsp_channels, imdct_short, imdct_long, prev_block_flag: None };
 
         Ok(VorbisDecoder {
-            opts: opts.clone(),
+            opts: *opts,
             params: params.clone(),
             ident,
             codebooks: setup.codebooks,
