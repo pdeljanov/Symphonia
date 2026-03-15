@@ -168,8 +168,7 @@ fn run(args: &ArgMatches) -> Result<i32> {
     let mss = MediaSourceStream::new(source, Default::default());
 
     // Use the default options for format readers other than for gapless playback.
-    let fmt_opts =
-        FormatOptions { enable_gapless: !args.is_present("no-gapless"), ..Default::default() };
+    let fmt_opts: FormatOptions = Default::default();
 
     // Use the default options for metadata readers.
     let meta_opts: MetadataOptions = Default::default();
@@ -187,6 +186,8 @@ fn run(args: &ArgMatches) -> Result<i32> {
                 dump_visuals(&mut format, name);
             }
 
+            let enable_gapless = !args.is_present("no-gapless");
+
             // Get the value of the track number option, if provided.
             let track_num = args.get_one::<usize>("track").copied();
 
@@ -199,16 +200,15 @@ fn run(args: &ArgMatches) -> Result<i32> {
             else if args.is_present("verify-only") {
                 // Verify-only mode decodes and verifies the audio, but does not play it.
                 let opts = DecodeOptions {
-                    decoder_opts: AudioDecoderOptions { verify: true, ..Default::default() },
+                    decoder_opts: AudioDecoderOptions { enable_gapless, verify: true },
                     track_num,
                 };
-
                 decode_only(format, opts)
             }
             else if args.is_present("decode-only") {
                 // Decode-only mode decodes the audio, but does not play or verify it.
                 let opts = DecodeOptions {
-                    decoder_opts: AudioDecoderOptions { verify: false, ..Default::default() },
+                    decoder_opts: AudioDecoderOptions { enable_gapless, verify: false },
                     track_num,
                 };
 
@@ -232,8 +232,8 @@ fn run(args: &ArgMatches) -> Result<i32> {
                 let opts = PlayOptions {
                     // Decoder options.
                     decoder_opts: AudioDecoderOptions {
+                        enable_gapless,
                         verify: args.is_present("verify"),
-                        ..Default::default()
                     },
                     track_num,
                     seek_pos,

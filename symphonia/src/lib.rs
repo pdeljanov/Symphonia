@@ -111,11 +111,6 @@
 //! An example implementation of a simple audio player (symphonia-play) can be found in the
 //! Project Symphonia git repository.
 //!
-//! # Gapless Playback
-//!
-//! Gapless playback is disabled by default. To enable gapless playback, set
-//! [`FormatOptions::enable_gapless`][core::formats::FormatOptions::enable_gapless] to `true`.
-//!
 //! # Adding new formats and codecs
 //!
 //! Simply implement the [`AudioDecoder`][core::codecs::audio::AudioDecoder] trait for an audio

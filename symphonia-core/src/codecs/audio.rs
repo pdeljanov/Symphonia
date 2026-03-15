@@ -194,10 +194,24 @@ pub struct FinalizeResult {
 }
 
 /// `AudioDecoderOptions` is a common set of options that all audio decoders use.
-#[derive(Copy, Clone, Debug, Default)]
+#[derive(Copy, Clone, Debug)]
 pub struct AudioDecoderOptions {
+    /// Enable support for gapless playback.
+    ///
+    /// When enabled, the decoder will trim any delay or padding frames.
+    ///
+    /// Default: `true`.
+    pub enable_gapless: bool,
     /// The decoded audio should be verified if possible during the decode process.
+    ///
+    /// Default: `false`.
     pub verify: bool,
+}
+
+impl Default for AudioDecoderOptions {
+    fn default() -> Self {
+        Self { enable_gapless: true, verify: false }
+    }
 }
 
 /// An `AudioDecoder` implements an audio codec's decode algorithm. It consumes `Packet`s and

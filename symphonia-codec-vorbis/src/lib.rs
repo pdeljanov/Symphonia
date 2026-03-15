@@ -50,6 +50,8 @@ use window::Windows;
 
 /// Vorbis decoder.
 pub struct VorbisDecoder {
+    /// Decoder options.
+    opts: AudioDecoderOptions,
     /// Codec paramters.
     params: AudioCodecParameters,
     /// Identity header.
@@ -71,7 +73,7 @@ pub struct VorbisDecoder {
 }
 
 impl VorbisDecoder {
-    pub fn try_new(params: &AudioCodecParameters, _opts: &AudioDecoderOptions) -> Result<Self> {
+    pub fn try_new(params: &AudioCodecParameters, opts: &AudioDecoderOptions) -> Result<Self> {
         // This decoder only supports Vorbis.
         if params.codec != CODEC_ID_VORBIS {
             return unsupported_error("vorbis: invalid codec");
@@ -115,9 +117,10 @@ impl VorbisDecoder {
         let duration = 1 << ident.bs1_exp;
 
         let dsp =
-            Dsp { windows, channels: dsp_channels, imdct_short, imdct_long, lapping_state: None };
+            Dsp { windows, channels: dsp_channels, imdct_short, imdct_long, prev_block_flag: None };
 
         Ok(VorbisDecoder {
+            opts: opts.clone(),
             params: params.clone(),
             ident,
             codebooks: setup.codebooks,
@@ -282,26 +285,20 @@ impl VorbisDecoder {
         self.buf.clear();
 
         // Calculate the output length and reserve space in the output buffer. If there was no
-        // previous packet, then return an empty audio buffer since the decoder will need another
-        // packet before being able to produce audio.
-        if let Some(lap_state) = &self.dsp.lapping_state {
-            // The previous block size.
-            let prev_block_n = if lap_state.prev_block_flag {
-                1 << self.ident.bs1_exp
-            }
-            else {
-                1 << self.ident.bs0_exp
-            };
+        // previous packet, then use the current block size so the rendered length is half the
+        // current block size.
+        let prev_block_flag = self.dsp.prev_block_flag.unwrap_or(mode.block_flag);
 
-            let render_len = (prev_block_n + n) / 4;
-            self.buf.render_uninit(Some(render_len));
-        }
+        let prev_block_n =
+            1 << if prev_block_flag { self.ident.bs1_exp } else { self.ident.bs0_exp };
+
+        self.buf.render_uninit(Some((prev_block_n + n) / 4));
 
         // Render all the audio channels.
         for (i, channel) in self.dsp.channels.iter_mut().enumerate() {
             channel.synth(
                 mode.block_flag,
-                &self.dsp.lapping_state,
+                prev_block_flag,
                 &self.dsp.windows,
                 imdct,
                 self.buf.plane_mut(map_vorbis_channel(self.ident.n_channels, i)).unwrap(),
@@ -309,10 +306,18 @@ impl VorbisDecoder {
         }
 
         // Trim gaps.
-        self.buf.trim(packet.trim_start().get() as usize, packet.trim_end().get() as usize);
+        if self.opts.enable_gapless {
+            if self.dsp.prev_block_flag.is_none() {
+                // The first packet after a decoder reset is silenced when trimming gaps.
+                self.buf.clear();
+            }
+            else {
+                self.buf.trim(packet.trim_start().get() as usize, packet.trim_end().get() as usize);
+            }
+        }
 
-        // Save the new lapping state.
-        self.dsp.lapping_state = Some(LappingState { prev_block_flag: mode.block_flag });
+        // Update the previous block flag.
+        self.dsp.prev_block_flag = Some(mode.block_flag);
 
         Ok(())
     }

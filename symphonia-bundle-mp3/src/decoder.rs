@@ -57,13 +57,14 @@ impl State {
 
 /// MPEG1 and MPEG2 audio layer 1, 2, and 3 decoder.
 pub struct MpaDecoder {
+    opts: AudioDecoderOptions,
     params: AudioCodecParameters,
     state: State,
     buf: AudioBuffer<f32>,
 }
 
 impl MpaDecoder {
-    pub fn try_new(params: &AudioCodecParameters, _: &AudioDecoderOptions) -> Result<Self> {
+    pub fn try_new(params: &AudioCodecParameters, opts: &AudioDecoderOptions) -> Result<Self> {
         // This decoder only supports MP1, MP2, and MP3.
         match params.codec {
             #[cfg(feature = "mp1")]
@@ -78,7 +79,12 @@ impl MpaDecoder {
         // Create decoder state.
         let state = State::new(params.codec);
 
-        Ok(MpaDecoder { params: params.clone(), state, buf: Default::default() })
+        Ok(MpaDecoder {
+            opts: opts.clone(),
+            params: params.clone(),
+            state,
+            buf: Default::default(),
+        })
     }
 
     fn decode_inner(&mut self, packet: &Packet) -> Result<()> {
@@ -126,7 +132,9 @@ impl MpaDecoder {
         }
 
         // Trim gaps.
-        self.buf.trim(packet.trim_start().get() as usize, packet.trim_end().get() as usize);
+        if self.opts.enable_gapless {
+            self.buf.trim(packet.trim_start().get() as usize, packet.trim_end().get() as usize);
+        }
 
         Ok(())
     }

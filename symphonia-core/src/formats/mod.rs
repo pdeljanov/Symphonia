@@ -131,14 +131,6 @@ pub struct FormatOptions {
     /// a good compromise for casual playback of music, podcasts, movies, etc. However, for
     /// highly-interactive applications, this value should be decreased.
     pub seek_index_fill_rate: u16,
-    /// Enable support for gapless playback. Default: `false`.
-    ///
-    /// When enabled, the reader will provide trim information in packets that may be used by
-    /// decoders to trim any encoder delay or padding.
-    ///
-    /// When enabled, this option will also alter the value and interpretation of timestamps and
-    /// durations such that they are relative to the non-trimmed region.
-    pub enable_gapless: bool,
     /// External, supplementary, data related to the media container read before the start of the
     /// container, or provided through some other side-channel.
     pub external_data: ExternalFormatData,
@@ -162,7 +154,6 @@ impl Default for FormatOptions {
         FormatOptions {
             prebuild_seek_index: false,
             seek_index_fill_rate: 20,
-            enable_gapless: false,
             external_data: Default::default(),
         }
     }
