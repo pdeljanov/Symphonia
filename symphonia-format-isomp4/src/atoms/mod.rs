@@ -644,6 +644,7 @@ impl<B: ReadBytes> AtomIterator<B> {
 
         // Read the next atom header.
         let atom = AtomHeader::read(&mut self.reader)?;
+        log::trace!("found atom: {:?} @ 0x{:x}", atom.atom_type(), self.reader.pos());
 
         // Calculate the start position for the next atom (the exclusive end of the current atom).
         self.next_atom_pos = match atom.atom_len {
