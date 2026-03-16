@@ -151,6 +151,7 @@ impl Tns {
         info: &IcsInfo,
         bands: &[usize],
         rate_idx: usize,
+        short_win_len: usize,
         coeffs: &mut [f32; 1024],
     ) {
         let tns_max_bands = (if info.long_win {
@@ -175,8 +176,8 @@ impl Tns {
                     continue;
                 }
 
-                let start = w * 128 + bands[bottom.min(tns_max_bands)];
-                let end = w * 128 + bands[top.min(tns_max_bands)];
+                let start = w * short_win_len + bands[bottom.min(tns_max_bands)];
+                let end = w * short_win_len + bands[top.min(tns_max_bands)];
 
                 let lpc = &self.coeffs[w][f].coef;
 

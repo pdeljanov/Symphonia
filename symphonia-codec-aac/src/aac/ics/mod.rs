@@ -204,10 +204,17 @@ pub struct Ics {
     sbinfo: GASubbandInfo,
     pub coeffs: [f32; 1024],
     delay: [f32; 1024],
+    /// Short window length: 128 for 1024-sample mode, 120 for 960-sample mode.
+    pub short_win_len: usize,
 }
 
 impl Ics {
     pub fn new(sbinfo: GASubbandInfo) -> Self {
+        // Derive short window length from the sbinfo short bands table.
+        // The last element of short_bands is the total number of spectral coefficients
+        // in a short window (128 for 1024-sample mode, 120 for 960-sample mode).
+        let short_win_len = sbinfo.short_bands.last().copied().unwrap_or(128);
+
         Self {
             global_gain: 0,
             info: IcsInfo::new(),
@@ -222,6 +229,7 @@ impl Ics {
             sbinfo,
             coeffs: [0.0; 1024],
             delay: [0.0; 1024],
+            short_win_len,
         }
     }
 
@@ -239,6 +247,9 @@ impl Ics {
             let mut l = 0;
 
             while k < self.info.max_sfb {
+                if l >= MAX_SFBS {
+                    return decode_error("aac: too many sections in section_data");
+                }
                 self.sect_cb[g][l] = bs.read_bits_leq32(4)? as u8;
                 self.sect_len[g][l] = 0;
 
@@ -368,7 +379,8 @@ impl Ics {
                 let scale = self.scales[g][sfb];
 
                 for w in cur_w..next_w {
-                    let dst = &mut self.coeffs[start + w * 128..end + w * 128];
+                    let dst = &mut self.coeffs
+                        [start + w * self.short_win_len..end + w * self.short_win_len];
 
                     // Derived from ISO/IEC-14496-3 Table 4.151.
                     match cb_idx {
@@ -442,7 +454,7 @@ impl Ics {
         }
 
         if let Some(tns) = &self.tns {
-            tns.synth(&self.info, bands, rate_idx, &mut self.coeffs);
+            tns.synth(&self.info, bands, rate_idx, self.short_win_len, &mut self.coeffs);
         }
 
         dsp.synth(
