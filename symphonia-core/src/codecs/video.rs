@@ -135,6 +135,7 @@ impl VideoCodecParameters {
 
 /// `VideoDecoderOptions` is a common set of options that all subtitle decoders use.
 #[cfg(feature = "exp-video-codecs")]
+#[non_exhaustive]
 #[derive(Copy, Clone, Debug, Default)]
 pub struct VideoDecoderOptions {
     // None yet.

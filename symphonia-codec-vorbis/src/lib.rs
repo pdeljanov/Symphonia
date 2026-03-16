@@ -306,7 +306,7 @@ impl VorbisDecoder {
         }
 
         // Trim gaps.
-        if self.opts.enable_gapless {
+        if self.opts.gapless {
             if self.dsp.prev_block_flag.is_none() {
                 // The first packet after a decoder reset is silenced when trimming gaps.
                 self.buf.clear();

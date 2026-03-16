@@ -89,6 +89,7 @@ impl SubtitleCodecParameters {
 
 /// `SubtitleDecoderOptions` is a common set of options that all subtitle decoders use.
 #[cfg(feature = "exp-subtitle-codecs")]
+#[non_exhaustive]
 #[derive(Copy, Clone, Debug, Default)]
 pub struct SubtitleDecoderOptions {
     // None yet.

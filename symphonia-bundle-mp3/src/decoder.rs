@@ -127,7 +127,7 @@ impl MpaDecoder {
         }
 
         // Trim gaps.
-        if self.opts.enable_gapless {
+        if self.opts.gapless {
             self.buf.trim(packet.trim_start().get() as usize, packet.trim_end().get() as usize);
         }
 

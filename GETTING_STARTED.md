@@ -188,7 +188,7 @@ fn main() {
 ```
 
 > [!TIP]
-> Gapless audio playback is enabled by default. It is recommended you leave it enabled. However, it may be disabled by setting `AudioDecoderOptions::enable_gapless` to `false`.
+> Gapless audio playback is enabled by default. It is recommended you leave it enabled. However, it may be disabled by setting `AudioDecoderOptions::gapless` to `false`.
 
 #### Custom Decoders
 

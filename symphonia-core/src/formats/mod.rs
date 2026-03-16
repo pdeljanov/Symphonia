@@ -118,19 +118,25 @@ pub enum SeekMode {
 }
 
 /// `FormatOptions` is a common set of options that all demuxers use.
+#[non_exhaustive]
 #[derive(Clone, Debug)]
 pub struct FormatOptions {
     /// If a `FormatReader` requires a seek index, but the container does not provide one, build the
-    /// seek index during instantiation instead of building it progressively. Default: `false`.
+    /// seek index during instantiation instead of building it progressively.
+    ///
+    /// Default: `false`.
     pub prebuild_seek_index: bool,
-    /// If a seek index needs to be built, this value determines how often in seconds of decoded
-    /// content an entry is added to the index. Default: `20`.
+    /// If a seek index needs to be built, this value determines the period, in milliseconds, at
+    /// which a new entry is added to the seek index. For example, if set to 500 ms, then two
+    /// entries are added to the seek index for every 1 second of media.
+    ///
+    /// Default: `1000`.
     ///
     /// Note: This is a CPU vs. memory trade-off. A high value will increase the amount of IO
     /// required during a seek, whereas a low value will require more memory. The default chosen is
     /// a good compromise for casual playback of music, podcasts, movies, etc. However, for
     /// highly-interactive applications, this value should be decreased.
-    pub seek_index_fill_rate: u16,
+    pub seek_index_fill_period_ms: u16,
     /// External, supplementary, data related to the media container read before the start of the
     /// container, or provided through some other side-channel.
     pub external_data: ExternalFormatData,
@@ -153,9 +159,35 @@ impl Default for FormatOptions {
     fn default() -> Self {
         FormatOptions {
             prebuild_seek_index: false,
-            seek_index_fill_rate: 20,
+            seek_index_fill_period_ms: 1000,
             external_data: Default::default(),
         }
+    }
+}
+
+impl FormatOptions {
+    /// If a `FormatReader` requires a seek index, but the container does not provide one, build the
+    /// seek index during instantiation instead of building it progressively.
+    ///
+    /// Default: `false`.
+    pub fn prebuild_seek_index(mut self, prebuild: bool) -> Self {
+        self.prebuild_seek_index = prebuild;
+        self
+    }
+
+    /// If a seek index needs to be built, this value determines the period, in milliseconds, at
+    /// which a new entry is added to the seek index. For example, if set to 500 ms, then two
+    /// entries are added to the seek index for every 1 second of media.
+    ///
+    /// Default: `1000`.
+    ///
+    /// Note: This is a CPU vs. memory trade-off. A high value will increase the amount of IO
+    /// required during a seek, whereas a low value will require more memory. The default chosen is
+    /// a good compromise for casual playback of music, podcasts, movies, etc. However, for
+    /// highly-interactive applications, this value should be decreased.
+    pub fn seek_index_fill_period_ms(mut self, period: u16) -> Self {
+        self.seek_index_fill_period_ms = period;
+        self
     }
 }
 
