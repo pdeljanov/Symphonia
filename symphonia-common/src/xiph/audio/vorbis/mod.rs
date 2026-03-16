@@ -82,12 +82,15 @@ pub fn unpack_xiph_laced_extradata(extradata: &[u8]) -> Result<Vec<u8>> {
     let mut lengths = Vec::new();
 
     for _ in 0..XIPH_LACED_LEADING_HEADER {
-        let mut length = 0;
+        let mut length: usize = 0;
         let mut reached_end = false;
         while offset < extradata.len() {
             let val = extradata[offset] as usize;
             offset += 1;
-            length += val;
+            length = match length.checked_add(val) {
+                Some(l) => l,
+                None => return decode_error("vorbis: lacing length overflow"),
+            };
 
             if val < 255 {
                 reached_end = true;
@@ -107,8 +110,11 @@ pub fn unpack_xiph_laced_extradata(extradata: &[u8]) -> Result<Vec<u8>> {
         return decode_error("vorbis: no data remains after reading lacing");
     }
 
-    if offset + ident_len + comment_len > extradata.len() {
-        return decode_error("vorbis: header lengths exceed buffer size");
+    let total_header_len = ident_len.checked_add(comment_len).and_then(|l| l.checked_add(offset));
+
+    match total_header_len {
+        Some(len) if len <= extradata.len() => (),
+        _ => return decode_error("vorbis: header lengths exceed buffer size"),
     }
 
     let remaining_data = &extradata[offset..];
