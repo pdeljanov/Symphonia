@@ -125,7 +125,11 @@ impl FormatReader for MpaReader {
 
                 // Adjust for gapless playback.
                 if options.enable_gapless {
-                    params.with_n_frames(num_frames - u64::from(delay) - u64::from(padding));
+                    if num_frames >= u64::from(delay) + u64::from(padding) {
+                        params.with_n_frames(num_frames - u64::from(delay) - u64::from(padding));
+                    } else {
+                        warn!("xing tag num_frames ({}) < delay + padding ({}+{})", num_frames, delay, padding);
+                    }
                 }
                 else {
                     params.with_n_frames(num_frames);
