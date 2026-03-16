@@ -474,7 +474,6 @@ impl PacketParser {
                         }
                     }
                 }
-
                 Ok(None)
             }
             Err(err) => Err(err),
@@ -554,6 +553,43 @@ impl PacketParser {
             ts: sync.ts.try_into().expect("flac timestamp is 36-bits maximum"),
             dur: sync.dur.into(),
         })
+    }
+
+    /// Resync the reader to the start of the next frame and return
+    /// the header. Omit the strict header check as this checks against
+    /// info from metadata which might not be available if we started mid-stream.
+    pub fn find_next_header<B>(&mut self, reader: &mut B) -> Result<FrameHeader>
+    where
+        B: ReadBytes + SeekBuffered,
+    {
+        let init_pos = reader.pos();
+
+        let mut frame_pos;
+
+        let header = loop {
+            let sync = sync_frame(reader)?;
+
+            frame_pos = reader.pos() - 2;
+
+            if let Ok(header) = read_frame_header(reader, sync) {
+                break header;
+            }
+            else {
+                // If the header check failed, then seek to one byte past the start of the false frame
+                // and continue trying to resynchronize.
+                reader.seek_buffered(frame_pos + 1);
+            }
+        };
+
+        // Rewind reader back to the start of the frame.
+        reader.seek_buffered(frame_pos);
+
+        // If the reader was moved, soft reset the parser.
+        if init_pos != reader.pos() {
+            self.soft_reset();
+        }
+
+        Ok(header)
     }
 
     /// Reset the packet parser for a new stream.
