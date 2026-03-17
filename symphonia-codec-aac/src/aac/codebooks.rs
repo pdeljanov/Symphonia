@@ -625,23 +625,23 @@ fn escape_pair<const MOD: usize>(cw: usize) -> (u16, u16) {
 }
 
 lazy_static! {
-    pub static ref QUADS: [QuadsCodebook; 4] = [
+    pub static ref QUADS: Box<[QuadsCodebook; 4]> = Box::new([
         make_basic_codebook(&SPECTRUM_TABLES[0]),
         make_basic_codebook(&SPECTRUM_TABLES[1]),
         make_basic_codebook(&SPECTRUM_TABLES[2]),
         make_basic_codebook(&SPECTRUM_TABLES[3]),
-    ];
+    ]);
 }
 
 lazy_static! {
-    pub static ref PAIRS: [PairsCodebook; 6] = [
+    pub static ref PAIRS: Box<[PairsCodebook; 6]> = Box::new([
         make_value_codebook(&SPECTRUM_TABLES[4], signed_pair::<9>),
         make_value_codebook(&SPECTRUM_TABLES[5], signed_pair::<9>),
         make_value_codebook(&SPECTRUM_TABLES[6], unsigned_pair::<8>),
         make_value_codebook(&SPECTRUM_TABLES[7], unsigned_pair::<8>),
         make_value_codebook(&SPECTRUM_TABLES[8], unsigned_pair::<13>),
         make_value_codebook(&SPECTRUM_TABLES[9], unsigned_pair::<13>),
-    ];
+    ]);
 }
 
 lazy_static! {
