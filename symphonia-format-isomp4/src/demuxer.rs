@@ -48,7 +48,8 @@ impl TrackState {
         // write mdhd.duration=0 and rely on the stts table for actual timing.
         let duration = if trak.mdia.mdhd.duration > 0 {
             trak.mdia.mdhd.duration
-        } else {
+        }
+        else {
             trak.mdia.minf.stbl.stts.total_duration
         };
 
