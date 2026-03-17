@@ -17,7 +17,7 @@ use crate::synthesis;
 use lazy_static::lazy_static;
 
 lazy_static! {
-    static ref FACTOR: [f32; 16] = {
+    static ref FACTOR: Box<[f32]> = {
         let mut factor = [0f32; 16];
 
         for (i, factor) in factor.iter_mut().enumerate().skip(2) {
@@ -42,7 +42,7 @@ lazy_static! {
             *factor = (a as f32 / (a - 1) as f32) * (b as f32).recip();
         }
 
-        factor
+        Box::new(factor)
     };
 }
 

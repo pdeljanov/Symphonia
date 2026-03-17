@@ -16,10 +16,10 @@ use crate::dsp::fft::MAX_SIZE;
 macro_rules! fft_twiddle_table {
     ($bi:expr, $name:ident) => {
         lazy_static! {
-            static ref $name: [Complex<f32>; (1 << $bi) >> 1] = {
+            static ref $name: Box<[Complex<f32>]> = {
                 const N: usize = 1 << $bi;
 
-                let mut table = [Default::default(); N >> 1];
+                let mut table = std::vec![Default::default(); N >> 1];
 
                 let theta = std::f64::consts::PI / (N >> 1) as f64;
 
@@ -28,7 +28,7 @@ macro_rules! fft_twiddle_table {
                     *t = Complex::new(angle.cos() as f32, -angle.sin() as f32);
                 }
 
-                table
+                table.into_boxed_slice()
             };
         }
     };
