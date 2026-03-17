@@ -108,9 +108,8 @@ impl FormatReader for MpaReader {
         // Check if there is a Xing/Info tag contained in the first frame.
         if let Some(info_tag) = try_read_info_tag(&packet, &header) {
             // The LAME tag contains ReplayGain and padding information.
+            let mut have_valid_padding = info_tag.lame.is_some();
             let (delay, padding) = if let Some(lame_tag) = info_tag.lame {
-                params.with_delay(lame_tag.enc_delay).with_padding(lame_tag.enc_padding);
-
                 (lame_tag.enc_delay, lame_tag.enc_padding)
             }
             else {
@@ -123,13 +122,22 @@ impl FormatReader for MpaReader {
 
                 let num_frames = u64::from(num_mpeg_frames) * header.duration();
 
+                if num_frames < u64::from(delay) + u64::from(padding) {
+                    warn!("xing tag lame delay and padding exceed duration");
+                    have_valid_padding = false;
+                }
+
                 // Adjust for gapless playback.
-                if options.enable_gapless {
+                if options.enable_gapless && have_valid_padding {
                     params.with_n_frames(num_frames - u64::from(delay) - u64::from(padding));
                 }
                 else {
                     params.with_n_frames(num_frames);
                 }
+            }
+
+            if have_valid_padding {
+                params.with_delay(delay).with_padding(padding);
             }
         }
         else if let Some(vbri_tag) = try_read_vbri_tag(&packet, &header) {
