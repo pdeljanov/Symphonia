@@ -272,6 +272,9 @@ pub struct CodecParameters {
     /// The sample format of an audio sample.
     pub sample_format: Option<SampleFormat>,
 
+    /// The average number of bits in a given second of audio after decompression.
+    pub average_bitrate: Option<u32>,
+
     /// The number of bits per one decoded audio sample.
     pub bits_per_sample: Option<u32>,
 
@@ -316,6 +319,7 @@ impl CodecParameters {
             n_frames: None,
             start_ts: 0,
             sample_format: None,
+            average_bitrate: None,
             bits_per_sample: None,
             bits_per_coded_sample: None,
             channels: None,
@@ -363,6 +367,12 @@ impl CodecParameters {
     /// Provide the codec's decoded audio sample format.
     pub fn with_sample_format(&mut self, sample_format: SampleFormat) -> &mut Self {
         self.sample_format = Some(sample_format);
+        self
+    }
+
+    /// Provide the bit per sample of a decoded audio sample.
+    pub fn with_average_bitrate(&mut self, average_bitrate: u32) -> &mut Self {
+        self.average_bitrate = Some(average_bitrate);
         self
     }
 
