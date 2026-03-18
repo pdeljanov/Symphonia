@@ -1,9 +1,30 @@
+// Symphonia
+// Copyright (c) 2019-2026 The Project Symphonia Developers.
+//
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+//! SBR normative lookup tables from ISO/IEC 14496-3.
+//!
+//! All data in this module is transcribed directly from the ISO/IEC 14496-3
+//! standard. These are normative constants required for a conformant SBR decoder.
+
 use symphonia_core::dsp::complex::Complex;
 
-/// QMF synthesis/analysis prototype window coefficients (640 entries).
-/// Table 4.C.4 of ISO/IEC 14496-3.
+// ---------------------------------------------------------------------------
+// QMF prototype filter coefficients — ISO/IEC 14496-3, Table 4.C.4
+// ---------------------------------------------------------------------------
+
+/// Prototype filter coefficients for the 64-band QMF synthesis filterbank.
+///
+/// 640 values indexed as c[n], n = 0..639. The analysis filterbank uses even-indexed
+/// coefficients c[2k], k = 0..319. These values define the frequency response of the
+/// polyphase QMF filterbank used in SBR processing.
+///
+/// Reference: ISO/IEC 14496-3:2009, Table 4.C.4.
 #[rustfmt::skip]
-pub const SBR_QMF_WINDOW: [f32; 640] = [
+pub const QMF_WINDOW: [f32; 640] = [
     0.0,              -0.00055252865047, -0.00056176925738, -0.00049475180896,
    -0.00048752279712, -0.00048937912498, -0.00050407143497, -0.00052265642972,
    -0.00054665656337, -0.00056778025613, -0.00058709304852, -0.00061327473938,
@@ -166,10 +187,23 @@ pub const SBR_QMF_WINDOW: [f32; 640] = [
    -0.00048752279712, -0.00049475180896, -0.00056176925738, -0.00055252865047,
 ];
 
-/// SBR start frequency offset table (6 sample rate bands × 16 offsets).
-/// Table 4.A.42 of ISO/IEC 14496-3.
+// ---------------------------------------------------------------------------
+// SBR start frequency offsets — ISO/IEC 14496-3, Table 4.A.42
+// ---------------------------------------------------------------------------
+
+/// Start frequency offset table indexed by [sample_rate_band][k].
+///
+/// The 6 rows correspond to the following sample rate ranges:
+///   0: 16000 Hz
+///   1: 22050 Hz
+///   2: 24000 Hz
+///   3: 32000 Hz
+///   4: 44100 / 48000 Hz
+///   5: 64000 Hz and above
+///
+/// Reference: ISO/IEC 14496-3:2009, Table 4.A.42.
 #[rustfmt::skip]
-pub const SBR_OFFSETS: [[i8; 16]; 6] = [
+pub const START_FREQ_OFFSETS: [[i8; 16]; 6] = [
     [ -8, -7, -6, -5, -4, -3, -2, -1,  0,  1,  2,  3,  4,  5,  6,  7 ],
     [ -5, -4, -3, -2, -1,  0,  1,  2,  3,  4,  5,  6,  7,  9, 11, 13 ],
     [ -5, -3, -2, -1,  0,  1,  2,  3,  4,  5,  6,  7,  9, 11, 13, 16 ],
@@ -178,9 +212,14 @@ pub const SBR_OFFSETS: [[i8; 16]; 6] = [
     [ -2, -1,  0,  1,  2,  3,  4,  5,  6,  7,  9, 11, 13, 16, 20, 24 ],
 ];
 
-/// SBR Huffman codebook: envelope 1.5dB frequency direction (121 entries).
+// ---------------------------------------------------------------------------
+// SBR Huffman codebooks — ISO/IEC 14496-3, Tables 4.A.69–4.A.78
+// ---------------------------------------------------------------------------
+
+/// Envelope scalefactor codebook, 1.5 dB step, frequency direction.
+/// 121 entries (LAV = 60). Reference: Table 4.A.69.
 #[rustfmt::skip]
-pub const ENV_1_5DB_F_BITS: [u32; 121] = [
+pub const ENVELOPE_1_5DB_FREQ_CODES: [u32; 121] = [
     0x7ffe7, 0x7ffe8, 0xfffd2, 0xfffd3, 0xfffd4, 0xfffd5, 0xfffd6, 0xfffd7,
     0xfffd8, 0x7ffda, 0xfffd9, 0xfffda, 0xfffdb, 0xfffdc, 0x7ffdb, 0xfffdd,
     0x7ffdc, 0x7ffdd, 0xfffde, 0x3ffe4, 0xfffdf, 0xfffe0, 0xfffe1, 0x7ffde,
@@ -199,7 +238,7 @@ pub const ENV_1_5DB_F_BITS: [u32; 121] = [
     0xfffff,
 ];
 #[rustfmt::skip]
-pub const ENV_1_5DB_F_LENS: [u8; 121] = [
+pub const ENVELOPE_1_5DB_FREQ_LENGTHS: [u8; 121] = [
     19, 19, 20, 20, 20, 20, 20, 20,
     20, 19, 20, 20, 20, 20, 19, 20,
     19, 19, 20, 18, 20, 20, 20, 19,
@@ -218,9 +257,10 @@ pub const ENV_1_5DB_F_LENS: [u8; 121] = [
     20,
 ];
 
-/// SBR Huffman codebook: envelope 1.5dB time direction (121 entries).
+/// Envelope scalefactor codebook, 1.5 dB step, time direction.
+/// 121 entries (LAV = 60). Reference: Table 4.A.70.
 #[rustfmt::skip]
-pub const ENV_1_5DB_T_BITS: [u32; 121] = [
+pub const ENVELOPE_1_5DB_TIME_CODES: [u32; 121] = [
     0x3ffd6, 0x3ffd7, 0x3ffd8, 0x3ffd9, 0x3ffda, 0x3ffdb, 0x7ffb8, 0x7ffb9,
     0x7ffba, 0x7ffbb, 0x7ffbc, 0x7ffbd, 0x7ffbe, 0x7ffbf, 0x7ffc0, 0x7ffc1,
     0x7ffc2, 0x7ffc3, 0x7ffc4, 0x7ffc5, 0x7ffc6, 0x7ffc7, 0x7ffc8, 0x7ffc9,
@@ -239,7 +279,7 @@ pub const ENV_1_5DB_T_BITS: [u32; 121] = [
     0x7ffff,
 ];
 #[rustfmt::skip]
-pub const ENV_1_5DB_T_LENS: [u8; 121] = [
+pub const ENVELOPE_1_5DB_TIME_LENGTHS: [u8; 121] = [
     18, 18, 18, 18, 18, 18, 19, 19,
     19, 19, 19, 19, 19, 19, 19, 19,
     19, 19, 19, 19, 19, 19, 19, 19,
@@ -258,9 +298,10 @@ pub const ENV_1_5DB_T_LENS: [u8; 121] = [
     19,
 ];
 
-/// SBR Huffman codebook: envelope balance 1.5dB frequency direction (49 entries).
+/// Envelope balance codebook, 1.5 dB step, frequency direction.
+/// 49 entries (LAV = 24). Reference: Table 4.A.71.
 #[rustfmt::skip]
-pub const ENV_BAL_1_5DB_F_BITS: [u32; 49] = [
+pub const ENVELOPE_BAL_1_5DB_FREQ_CODES: [u32; 49] = [
     0x3ffe2, 0x3ffe3, 0x3ffe4, 0x3ffe5, 0x3ffe6, 0x3ffe7, 0x3ffe8, 0x3ffe9,
     0x3ffea, 0x3ffeb, 0x3ffec, 0x3ffed, 0x3ffee, 0x3ffef, 0x3fff0, 0x0fff7,
     0x1fff0, 0x03ffc, 0x007fe, 0x007fc, 0x000fe, 0x0007e, 0x0000e, 0x00002,
@@ -270,7 +311,7 @@ pub const ENV_BAL_1_5DB_F_BITS: [u32; 49] = [
     0x7ffff,
 ];
 #[rustfmt::skip]
-pub const ENV_BAL_1_5DB_F_LENS: [u8; 49] = [
+pub const ENVELOPE_BAL_1_5DB_FREQ_LENGTHS: [u8; 49] = [
     18, 18, 18, 18, 18, 18, 18, 18,
     18, 18, 18, 18, 18, 18, 18, 16,
     17, 14, 11, 11,  8,  7,  4,  2,
@@ -280,9 +321,10 @@ pub const ENV_BAL_1_5DB_F_LENS: [u8; 49] = [
     19,
 ];
 
-/// SBR Huffman codebook: envelope balance 1.5dB time direction (49 entries).
+/// Envelope balance codebook, 1.5 dB step, time direction.
+/// 49 entries (LAV = 24). Reference: Table 4.A.72.
 #[rustfmt::skip]
-pub const ENV_BAL_1_5DB_T_BITS: [u32; 49] = [
+pub const ENVELOPE_BAL_1_5DB_TIME_CODES: [u32; 49] = [
     0x0ffe4, 0x0ffe5, 0x0ffe6, 0x0ffe7, 0x0ffe8, 0x0ffe9, 0x0ffea, 0x0ffeb,
     0x0ffec, 0x0ffed, 0x0ffee, 0x0ffef, 0x0fff0, 0x0fff1, 0x0fff2, 0x0fff3,
     0x0fff4, 0x0ffe2, 0x00ffc, 0x007fc, 0x001fe, 0x0007e, 0x0001e, 0x00006,
@@ -292,7 +334,7 @@ pub const ENV_BAL_1_5DB_T_BITS: [u32; 49] = [
     0x1ffff,
 ];
 #[rustfmt::skip]
-pub const ENV_BAL_1_5DB_T_LENS: [u8; 49] = [
+pub const ENVELOPE_BAL_1_5DB_TIME_LENGTHS: [u8; 49] = [
     16, 16, 16, 16, 16, 16, 16, 16,
     16, 16, 16, 16, 16, 16, 16, 16,
     16, 16, 12, 11,  9,  7,  5,  3,
@@ -302,9 +344,10 @@ pub const ENV_BAL_1_5DB_T_LENS: [u8; 49] = [
     17,
 ];
 
-/// SBR Huffman codebook: envelope 3.0dB frequency direction (63 entries).
+/// Envelope scalefactor codebook, 3.0 dB step, frequency direction.
+/// 63 entries (LAV = 31). Reference: Table 4.A.73.
 #[rustfmt::skip]
-pub const ENV_3_0DB_F_BITS: [u32; 63] = [
+pub const ENVELOPE_3_0DB_FREQ_CODES: [u32; 63] = [
     0xffff0, 0xffff1, 0xffff2, 0xffff3, 0xffff4, 0xffff5, 0xffff6, 0x3fff3,
     0x7fff5, 0x7ffee, 0x7ffef, 0x7fff6, 0x3fff4, 0x3fff2, 0xffff7, 0x7fff0,
     0x1fff5, 0x3fff0, 0x1fff4, 0x0fff7, 0x0fff6, 0x07ff8, 0x03ffb, 0x00ffd,
@@ -315,7 +358,7 @@ pub const ENV_3_0DB_F_BITS: [u32; 63] = [
     0x7fff4, 0xffffa, 0xffffb, 0xffffc, 0xffffd, 0xffffe, 0xfffff,
 ];
 #[rustfmt::skip]
-pub const ENV_3_0DB_F_LENS: [u8; 63] = [
+pub const ENVELOPE_3_0DB_FREQ_LENGTHS: [u8; 63] = [
     20, 20, 20, 20, 20, 20, 20, 18,
     19, 19, 19, 19, 18, 18, 20, 19,
     17, 18, 17, 16, 16, 15, 14, 12,
@@ -326,9 +369,10 @@ pub const ENV_3_0DB_F_LENS: [u8; 63] = [
     19, 20, 20, 20, 20, 20, 20,
 ];
 
-/// SBR Huffman codebook: envelope 3.0dB time direction (63 entries).
+/// Envelope scalefactor codebook, 3.0 dB step, time direction.
+/// 63 entries (LAV = 31). Reference: Table 4.A.74.
 #[rustfmt::skip]
-pub const ENV_3_0DB_T_BITS: [u32; 63] = [
+pub const ENVELOPE_3_0DB_TIME_CODES: [u32; 63] = [
     0x3ffed, 0x3ffee, 0x7ffde, 0x7ffdf, 0x7ffe0, 0x7ffe1, 0x7ffe2, 0x7ffe3,
     0x7ffe4, 0x7ffe5, 0x7ffe6, 0x7ffe7, 0x7ffe8, 0x7ffe9, 0x7ffea, 0x7ffeb,
     0x7ffec, 0x1fff4, 0x0fff7, 0x0fff9, 0x0fff8, 0x03ffb, 0x03ffa, 0x03ff8,
@@ -339,7 +383,7 @@ pub const ENV_3_0DB_T_BITS: [u32; 63] = [
     0x7fff9, 0x7fffa, 0x7fffb, 0x7fffc, 0x7fffd, 0x7fffe, 0x7ffff,
 ];
 #[rustfmt::skip]
-pub const ENV_3_0DB_T_LENS: [u8; 63] = [
+pub const ENVELOPE_3_0DB_TIME_LENGTHS: [u8; 63] = [
     18, 18, 19, 19, 19, 19, 19, 19,
     19, 19, 19, 19, 19, 19, 19, 19,
     19, 17, 16, 16, 16, 14, 14, 14,
@@ -350,41 +394,44 @@ pub const ENV_3_0DB_T_LENS: [u8; 63] = [
     19, 19, 19, 19, 19, 19, 19,
 ];
 
-/// SBR Huffman codebook: envelope balance 3.0dB frequency direction (25 entries).
+/// Envelope balance codebook, 3.0 dB step, frequency direction.
+/// 25 entries (LAV = 12). Reference: Table 4.A.75.
 #[rustfmt::skip]
-pub const ENV_BAL_3_0DB_F_BITS: [u32; 25] = [
+pub const ENVELOPE_BAL_3_0DB_FREQ_CODES: [u32; 25] = [
     0x1ff7, 0x1ff8, 0x1ff9, 0x1ffa, 0x1ffb, 0x3ff8, 0x3ff9, 0x07fc,
     0x00fe, 0x007e, 0x000e, 0x0002, 0x0000, 0x0006, 0x001e, 0x003e,
     0x01fe, 0x0ffa, 0x1ff6, 0x3ffa, 0x3ffb, 0x3ffc, 0x3ffd, 0x3ffe,
     0x3fff,
 ];
 #[rustfmt::skip]
-pub const ENV_BAL_3_0DB_F_LENS: [u8; 25] = [
+pub const ENVELOPE_BAL_3_0DB_FREQ_LENGTHS: [u8; 25] = [
     13, 13, 13, 13, 13, 14, 14, 11,
      8,  7,  4,  2,  1,  3,  5,  6,
      9, 12, 13, 14, 14, 14, 14, 14,
     14,
 ];
 
-/// SBR Huffman codebook: envelope balance 3.0dB time direction (25 entries).
+/// Envelope balance codebook, 3.0 dB step, time direction.
+/// 25 entries (LAV = 12). Reference: Table 4.A.76.
 #[rustfmt::skip]
-pub const ENV_BAL_3_0DB_T_BITS: [u32; 25] = [
+pub const ENVELOPE_BAL_3_0DB_TIME_CODES: [u32; 25] = [
     0x1ff2, 0x1ff3, 0x1ff4, 0x1ff5, 0x1ff6, 0x1ff7, 0x1ff8, 0x0ff8,
     0x00fe, 0x007e, 0x000e, 0x0006, 0x0000, 0x0002, 0x001e, 0x003e,
     0x01fe, 0x1ff9, 0x1ffa, 0x1ffb, 0x1ffc, 0x1ffd, 0x1ffe, 0x3ffe,
     0x3fff,
 ];
 #[rustfmt::skip]
-pub const ENV_BAL_3_0DB_T_LENS: [u8; 25] = [
+pub const ENVELOPE_BAL_3_0DB_TIME_LENGTHS: [u8; 25] = [
     13, 13, 13, 13, 13, 13, 13, 12,
      8,  7,  4,  3,  1,  2,  5,  6,
      9, 13, 13, 13, 13, 13, 13, 14,
     14,
 ];
 
-/// SBR Huffman codebook: noise 3.0dB time direction (63 entries).
+/// Noise floor codebook, 3.0 dB step, time direction.
+/// 63 entries (LAV = 31). Reference: Table 4.A.77.
 #[rustfmt::skip]
-pub const NOISE_3_0DB_T_BITS: [u32; 63] = [
+pub const NOISE_3_0DB_TIME_CODES: [u32; 63] = [
     0x1fce, 0x1fcf, 0x1fd0, 0x1fd1, 0x1fd2, 0x1fd3, 0x1fd4, 0x1fd5,
     0x1fd6, 0x1fd7, 0x1fd8, 0x1fd9, 0x1fda, 0x1fdb, 0x1fdc, 0x1fdd,
     0x1fde, 0x1fdf, 0x1fe0, 0x1fe1, 0x1fe2, 0x1fe3, 0x1fe4, 0x1fe5,
@@ -395,7 +442,7 @@ pub const NOISE_3_0DB_T_BITS: [u32; 63] = [
     0x1ffa, 0x1ffb, 0x1ffc, 0x1ffd, 0x1ffe, 0x3ffe, 0x3fff,
 ];
 #[rustfmt::skip]
-pub const NOISE_3_0DB_T_LENS: [u8; 63] = [
+pub const NOISE_3_0DB_TIME_LENGTHS: [u8; 63] = [
     13, 13, 13, 13, 13, 13, 13, 13,
     13, 13, 13, 13, 13, 13, 13, 13,
     13, 13, 13, 13, 13, 13, 13, 13,
@@ -406,26 +453,35 @@ pub const NOISE_3_0DB_T_LENS: [u8; 63] = [
     13, 13, 13, 13, 13, 14, 14,
 ];
 
-/// SBR Huffman codebook: noise balance 3.0dB time direction (25 entries).
+/// Noise floor balance codebook, 3.0 dB step, time direction.
+/// 25 entries (LAV = 12). Reference: Table 4.A.78.
 #[rustfmt::skip]
-pub const NOISE_BAL_3_0DB_T_BITS: [u32; 25] = [
+pub const NOISE_BAL_3_0DB_TIME_CODES: [u32; 25] = [
     0xec, 0xed, 0xee, 0xef, 0xf0, 0xf1, 0xf2, 0xf3,
     0xf4, 0xf5, 0x1c, 0x02, 0x00, 0x06, 0x3a, 0xf6,
     0xf7, 0xf8, 0xf9, 0xfa, 0xfb, 0xfc, 0xfd, 0xfe,
     0xff,
 ];
 #[rustfmt::skip]
-pub const NOISE_BAL_3_0DB_T_LENS: [u8; 25] = [
+pub const NOISE_BAL_3_0DB_TIME_LENGTHS: [u8; 25] = [
     8, 8, 8, 8, 8, 8, 8, 8,
     8, 8, 5, 2, 1, 3, 6, 8,
     8, 8, 8, 8, 8, 8, 8, 8,
     8,
 ];
 
-/// SBR pseudo-random noise table (512 entries).
-/// Table 4.A.88 of ISO/IEC 14496-3.
+// ---------------------------------------------------------------------------
+// Pseudo-random noise table — ISO/IEC 14496-3, Table 4.A.88
+// ---------------------------------------------------------------------------
+
+/// Complex pseudo-random noise values for SBR HF noise generation.
+///
+/// 512 entries of complex values used for adding noise to the high-frequency
+/// subbands during SBR processing.
+///
+/// Reference: ISO/IEC 14496-3:2009, Table 4.A.88.
 #[rustfmt::skip]
-pub const SBR_NOISE_TABLE: [Complex; 512] = [
+pub const NOISE_TABLE: [Complex; 512] = [
     Complex{ re: -0.99948153278296, im: -0.59483417516607 },
     Complex{ re:  0.97113454393991, im: -0.67528515225647 },
     Complex{ re:  0.14130051758487, im: -0.95090983575689 },

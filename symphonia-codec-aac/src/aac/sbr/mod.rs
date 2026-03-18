@@ -5,11 +5,10 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! Spectral Band Replication (SBR) decoder for HE-AAC.
+//! Spectral Band Replication (SBR) core types and frequency table derivation.
 //!
-//! Implements SBR as defined in ISO/IEC 14496-3 Subpart 4.
-//! SBR extends AAC-LC by replicating high-frequency content from the decoded
-//! low-frequency signal, doubling the effective bandwidth and output sample rate.
+//! Implements the SBR frequency band table algorithms defined in
+//! ISO/IEC 14496-3:2009, subpart 4, section 4.6.18.3.
 
 pub mod bs;
 pub mod dsp;
@@ -20,7 +19,7 @@ mod tables;
 use symphonia_core::dsp::complex::Complex;
 use symphonia_core::errors::{decode_error, Result};
 
-/// Maximum number of envelopes per SBR frame.
+/// Maximum number of envelopes per SBR frame (ISO/IEC 14496-3, Table 4.155).
 pub const NUM_ENVELOPES: usize = 8;
 
 /// Maximum number of HF reconstruction patches.
@@ -29,20 +28,40 @@ pub const NUM_PATCHES: usize = 5;
 /// Number of QMF subbands (analysis: 32, synthesis: 64).
 pub const SBR_BANDS: usize = 64;
 
-/// QMF delay slots for overlap.
+/// QMF delay slots for overlap-add.
 pub const QMF_DELAY: usize = 8;
 
-/// HF adjustment border offset.
+/// HF adjustment border offset (T_HFAdj).
 pub const HF_ADJ: usize = 2;
 
 /// Maximum time slots per SBR frame.
 pub const MAX_SLOTS: usize = 16;
 
-/// Smoothing filter delay.
+/// Smoothing filter delay for gain interpolation.
 const SMOOTH_DELAY: usize = 4;
 
-/// SBR header data parsed from the extension payload.
-/// Contains configuration for frequency band tables, noise, and limiter.
+/// SBR time-frequency grid classification (ISO/IEC 14496-3, Table 4.160).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum FrameClass {
+    FixFix,
+    FixVar,
+    VarFix,
+    VarVar,
+}
+
+/// Quantization coupling mode for envelope and noise floor data.
+#[derive(Clone, Copy)]
+pub enum QuantMode {
+    Single,
+    Left,
+    Right,
+}
+
+/// SBR header parameters (ISO/IEC 14496-3, 4.6.18.2.2).
+///
+/// Controls frequency band table derivation, HF reconstruction, and envelope
+/// processing. These parameters change infrequently and trigger a full
+/// re-initialization of derived tables when modified.
 #[derive(Clone, Copy, Debug)]
 pub struct SbrHeader {
     pub amp_res: bool,
@@ -75,7 +94,8 @@ impl SbrHeader {
         }
     }
 
-    /// Check if this header differs from another in ways that require re-initialization.
+    /// Returns `true` if the frequency-affecting parameters differ from `other`,
+    /// which requires re-derivation of all frequency band tables.
     pub fn differs_from(&self, other: &Self) -> bool {
         self.start_freq != other.start_freq
             || self.stop_freq != other.stop_freq
@@ -86,37 +106,39 @@ impl SbrHeader {
     }
 }
 
-/// SBR frequency band state computed from the header.
-/// Contains the master frequency band table, derived tables, and patch configuration.
+/// Derived SBR frequency band tables and patch configuration.
+///
+/// All tables are computed from `SbrHeader` parameters and the core codec
+/// sample rate via the `init()` method, following ISO/IEC 14496-3, 4.6.18.3.
 #[derive(Clone)]
 pub struct SbrState {
-    /// Number of envelope bands at [low, high] resolution.
+    /// Number of envelope scale factor bands: [N_low, N_high].
     pub num_env_bands: [usize; 2],
-    /// Number of master frequency bands.
+    /// Number of bands in the master frequency band table (N_master).
     pub num_master: usize,
-    /// Number of noise floor bands.
+    /// Number of noise floor scale factor bands (N_Q).
     pub num_noise_bands: usize,
-    /// Number of limiter bands.
+    /// Number of limiter bands (N_L).
     pub num_lim: usize,
-    /// Crossover subband index (start of HF region).
+    /// Crossover subband index k_x — first subband in the SBR range.
     pub k_x: usize,
-    /// Mapping from low to high resolution band index.
+    /// Map: low-resolution band index -> high-resolution band index.
     pub low_to_high_res: [usize; SBR_BANDS],
-    /// Mapping from high to low resolution band index.
+    /// Map: high-resolution band index -> low-resolution band index.
     pub high_to_low_res: [usize; SBR_BANDS],
-    /// Master frequency band table f_master.
+    /// Master frequency band table f_master[0..=N_master].
     pub f: [usize; SBR_BANDS],
-    /// Low-resolution frequency band table.
+    /// Low-resolution frequency band table f_TableLow[0..=N_low].
     pub f_low: [usize; SBR_BANDS],
-    /// Noise floor frequency band table.
+    /// Noise floor frequency band table f_TableNoise[0..=N_Q].
     pub f_noise: [usize; SBR_BANDS],
-    /// Limiter frequency band table.
+    /// Limiter frequency band table f_TableLim[0..=N_L].
     pub f_lim: [usize; SBR_BANDS],
-    /// Number of subbands per patch.
+    /// Number of subbands in each HF patch.
     pub patch_num_subbands: [usize; SBR_BANDS],
-    /// Starting subband for each patch.
+    /// Starting subband index for each HF patch.
     pub patch_start_subband: [usize; SBR_BANDS],
-    /// Number of active patches.
+    /// Number of active HF patches.
     pub num_patches: usize,
 }
 
@@ -140,370 +162,481 @@ impl SbrState {
         }
     }
 
-    /// Initialize frequency tables from the SBR header and core codec sample rate.
-    /// The `srate` parameter is the AAC-LC output sample rate (before SBR doubling).
-    pub fn init(&mut self, hdr: &SbrHeader, srate: u32) -> Result<()> {
-        let offset_tab = match srate {
-            0..=16000 => &tables::SBR_OFFSETS[0],
-            16001..=22050 => &tables::SBR_OFFSETS[1],
-            22051..=24000 => &tables::SBR_OFFSETS[2],
-            24001..=32000 => &tables::SBR_OFFSETS[3],
-            32001..=64000 => &tables::SBR_OFFSETS[4],
-            _ => &tables::SBR_OFFSETS[5],
-        };
-        let smult = match srate {
-            0..=31999 => 3000u32,
-            32000..=63999 => 4000,
-            _ => 5000,
-        };
-        let start_min = (128 * smult + srate / 2) / srate;
-        let stop_min = (128 * smult * 2 + srate / 2) / srate;
+    /// Derive all frequency band tables from the SBR header and core sample rate.
+    ///
+    /// `sample_rate` is the AAC-LC output rate prior to SBR doubling.
+    /// Implements ISO/IEC 14496-3, 4.6.18.3.
+    pub fn init(&mut self, hdr: &SbrHeader, sample_rate: u32) -> Result<()> {
+        // Step 1: Derive start and stop subbands (Tables 4.64, 4.65).
+        let k0 = compute_start_subband(hdr.start_freq, sample_rate);
+        let k2 = compute_stop_subband(hdr.stop_freq, k0, sample_rate);
 
-        let k0 = ((start_min as i32) + i32::from(offset_tab[hdr.start_freq])).max(0) as usize;
-        let k2 = (match hdr.stop_freq {
-            14 => 2 * k0,
-            15 => 3 * k0,
-            _ => {
-                let mut stop_dk = [0usize; 14];
-                generate_vdk(&mut stop_dk, stop_min as usize, SBR_BANDS, 13);
-                let dk_sum: usize = stop_dk[..hdr.stop_freq].iter().sum();
-                (stop_min as usize) + dk_sum
-            }
-        })
-        .min(SBR_BANDS);
-
-        let max_bands = match srate {
+        // Validate against sample-rate-dependent maximum (Table 4.66).
+        let band_limit = match sample_rate {
             0..=32000 => 48,
             32001..=47999 => 35,
             _ => 32,
         };
-        if k2 - k0 > max_bands {
-            return decode_error("sbr: too many bands");
+        if k2 - k0 > band_limit {
+            return decode_error("sbr: frequency range exceeds maximum for sample rate");
         }
 
-        self.num_master = calculate_master_frequencies(&mut self.f, k0, k2, hdr);
-        let num_high = self.num_master - hdr.xover_band;
-        let num_low = (num_high + 1) / 2;
-
-        self.num_env_bands = [num_low, num_high];
-
-        let f_high = &self.f[hdr.xover_band..];
-        let k_x = f_high[0];
-        self.k_x = k_x;
-
-        self.f_low = [0; SBR_BANDS];
-        if (num_high & 1) == 0 {
-            for k in 0..=num_low {
-                self.f_low[k] = f_high[k * 2];
-            }
+        // Step 2: Master frequency band table (4.6.18.3.2).
+        self.num_master = if hdr.freq_scale == 0 {
+            build_master_linear(&mut self.f, k0, k2, hdr.alter_scale)
         }
         else {
-            self.f_low[0] = f_high[0];
-            for k in 1..=num_low {
-                self.f_low[k] = f_high[k * 2 - 1];
-            }
-        }
+            build_master_logarithmic(&mut self.f, k0, k2, hdr.freq_scale, hdr.alter_scale)
+        };
 
-        let high_src = &f_high[..=num_high];
-        let low_src = &self.f_low[..=num_low];
-        for (dst, low) in self.high_to_low_res.iter_mut().zip(low_src.iter()) {
-            if let Ok(idx) = high_src.binary_search(low) {
-                *dst = idx;
+        // Step 3: Derive high and low resolution tables (4.6.18.3.5).
+        let n_high = self.num_master - hdr.xover_band;
+        let n_low = (n_high + 1) >> 1;
+        self.num_env_bands = [n_low, n_high];
+
+        let f_high_start = hdr.xover_band;
+        self.k_x = self.f[f_high_start];
+
+        // f_TableLow from f_TableHigh per 4.6.18.3.5.
+        self.f_low = [0; SBR_BANDS];
+        let even_high = (n_high & 1) == 0;
+        for i in 0..=n_low {
+            self.f_low[i] = if even_high {
+                self.f[f_high_start + 2 * i]
+            }
+            else if i == 0 {
+                self.f[f_high_start]
             }
             else {
-                return decode_error("sbr: resolution mapping error");
-            }
-        }
-        for (dst, high) in self.low_to_high_res.iter_mut().zip(high_src.iter()) {
-            *dst = match low_src.binary_search(high) {
-                Ok(idx) => idx,
-                Err(idx) => idx.saturating_sub(1),
+                self.f[f_high_start + 2 * i - 1]
             };
         }
 
-        let num_q = (((hdr.noise_bands as f32) * ((k2 as f32) / (k_x as f32)).log2()).round()
-            as usize)
-            .max(1);
-        self.num_noise_bands = num_q;
-        self.f_noise = [0; SBR_BANDS];
-        let mut prev = 0;
-        self.f_noise[0] = self.f_low[0];
-        for k in 1..=num_q {
-            let idx = prev + ((num_low - prev) / (num_q + 1 - k));
-            self.f_noise[k] = self.f_low[idx];
-            prev = idx;
+        // Resolution cross-reference maps.
+        self.build_resolution_maps(f_high_start, n_high, n_low)?;
+
+        // Step 4: Noise floor bands (4.6.18.3.6).
+        self.compute_noise_table(hdr.noise_bands, k2);
+
+        // Step 5: Patch configuration (4.6.18.6.2).
+        self.compute_patches(k0, sample_rate)?;
+
+        // Step 6: Limiter band table (4.6.18.3.7).
+        self.compute_limiter_table(hdr.limiter_bands, n_low);
+
+        Ok(())
+    }
+
+    /// Build bidirectional maps between high and low resolution band indices.
+    fn build_resolution_maps(
+        &mut self,
+        f_high_start: usize,
+        n_high: usize,
+        n_low: usize,
+    ) -> Result<()> {
+        let high_table = &self.f[f_high_start..=f_high_start + n_high];
+        let low_table = &self.f_low[..=n_low];
+
+        // For each low-res boundary, find its index in the high-res table.
+        for (li, &lf) in low_table.iter().enumerate() {
+            match high_table.binary_search(&lf) {
+                Ok(hi) => self.high_to_low_res[li] = hi,
+                Err(_) => return decode_error("sbr: low/high resolution table inconsistency"),
+            }
         }
 
-        let mut num_patches = 0;
-        self.patch_num_subbands = [0; SBR_BANDS];
-        self.patch_start_subband = [0; SBR_BANDS];
-        let mut msb = k0;
-        let mut usb = k_x;
-        let m = f_high[num_high] - f_high[0];
-        let goal_sb = ((2048000 + srate / 2) / srate) as usize;
-        let last_band = k_x + m;
-        let mut k = if goal_sb < last_band {
-            let mut kk = 0;
-            for i in 0..self.num_master {
-                if self.f[i] >= goal_sb {
-                    break;
-                }
-                kk = i + 1;
-            }
-            kk
+        // For each high-res boundary, find the nearest low-res index.
+        for (hi, &hf) in high_table.iter().enumerate() {
+            self.low_to_high_res[hi] = match low_table.binary_search(&hf) {
+                Ok(li) => li,
+                Err(li) => li.saturating_sub(1),
+            };
+        }
+
+        Ok(())
+    }
+
+    /// Derive noise floor frequency band table (ISO/IEC 14496-3, 4.6.18.3.6).
+    fn compute_noise_table(&mut self, noise_bands: u8, k2: usize) {
+        let kx = self.k_x;
+        let n_low = self.num_env_bands[0];
+
+        // N_Q = max(1, round(noiseBands * log2(k2 / k_x)))
+        let n_q = if noise_bands == 0 || kx == 0 {
+            1
+        }
+        else {
+            ((noise_bands as f32) * ((k2 as f32) / (kx as f32)).log2()).round().max(1.0) as usize
+        };
+        self.num_noise_bands = n_q;
+
+        // Distribute noise bands evenly across the low-resolution table indices.
+        self.f_noise = [0; SBR_BANDS];
+        self.f_noise[0] = self.f_low[0];
+        let mut lo_idx = 0usize;
+        for q in 1..=n_q {
+            let step = (n_low - lo_idx) / (n_q + 1 - q);
+            lo_idx += step;
+            self.f_noise[q] = self.f_low[lo_idx];
+        }
+    }
+
+    /// Derive HF generation patch configuration (ISO/IEC 14496-3, 4.6.18.6.2).
+    fn compute_patches(&mut self, k0: usize, sample_rate: u32) -> Result<()> {
+        let kx = self.k_x;
+        let sbr_top = self.f[self.num_master]; // k_x + M
+        let m = sbr_top - kx;
+
+        // goalSb = round(2.048e6 / f_s)
+        let goal_sb = ((2_048_000u64 + sample_rate as u64 / 2) / sample_rate as u64) as usize;
+
+        // Find master-table index k where f_master[k] first reaches goalSb.
+        let mut k = if goal_sb < kx + m {
+            self.f[..self.num_master]
+                .iter()
+                .position(|&val| val >= goal_sb)
+                .unwrap_or(self.num_master)
         }
         else {
             self.num_master
         };
 
+        self.patch_num_subbands = [0; SBR_BANDS];
+        self.patch_start_subband = [0; SBR_BANDS];
+        let mut count = 0usize;
+        let mut msb = k0;
+        let mut usb = kx;
+
         loop {
-            let mut sb;
-            let mut odd;
+            // Scan downward for a patch boundary that fits.
             let mut j = k;
-            loop {
-                sb = self.f[j];
-                odd = (sb - 2 + k0) & 1;
-                if sb <= k0 + msb - 1 - odd {
-                    break;
+            let (sb, parity) = loop {
+                let sb = self.f[j];
+                let parity = (sb + k0) & 1;
+                if sb <= k0 + msb - 1 - parity {
+                    break (sb, parity);
                 }
                 j -= 1;
-            }
+            };
 
-            self.patch_num_subbands[num_patches] = sb.saturating_sub(usb);
-            self.patch_start_subband[num_patches] = k0 - odd - self.patch_num_subbands[num_patches];
+            let width = sb.saturating_sub(usb);
+            self.patch_num_subbands[count] = width;
+            self.patch_start_subband[count] = k0 - parity - width;
 
-            if self.patch_num_subbands[num_patches] > 0 {
+            if width > 0 {
                 usb = sb;
                 msb = sb;
-                num_patches += 1;
+                count += 1;
             }
             else {
-                msb = k_x;
+                msb = kx;
             }
 
             if self.f[k] < sb + 3 {
                 k = self.num_master;
             }
-
-            if sb == last_band {
+            if sb == sbr_top {
                 break;
             }
         }
-        if (num_patches > 1) && (self.patch_num_subbands[num_patches - 1] < 3) {
-            num_patches -= 1;
-        }
-        if num_patches > NUM_PATCHES {
-            return decode_error("sbr: too many patches");
-        }
-        self.num_patches = num_patches;
 
-        self.f_lim = [0; SBR_BANDS];
-        let num_l = if hdr.limiter_bands == 0 {
-            self.f_lim[0] = self.f_low[0];
-            self.f_lim[1] = self.f_low[num_low];
-            1
+        // Discard a trailing narrow patch.
+        if count > 1 && self.patch_num_subbands[count - 1] < 3 {
+            count -= 1;
         }
-        else {
-            let lim_bands = match hdr.limiter_bands {
-                1 => 1.2f32,
-                2 => 2.0,
-                _ => 3.0,
-            };
-            let mut patch_borders = [0usize; NUM_PATCHES + 1];
-            patch_borders[0] = k_x;
-            for kk in 0..num_patches {
-                patch_borders[kk + 1] = patch_borders[kk] + self.patch_num_subbands[kk];
-            }
-            self.f_lim = self.f_low;
-            let total = num_low + num_patches;
-            for &pborder in &patch_borders[1..num_patches] {
-                let mut i = 0;
-                for &el in self.f_lim[..total].iter() {
-                    if el > pborder {
-                        break;
-                    }
-                    i += 1;
-                }
-                for jj in (i..total - 1).rev() {
-                    self.f_lim[jj + 1] = self.f_lim[jj];
-                }
-                self.f_lim[i] = pborder;
-            }
-            let mut nr_lim = total - 1;
-            let mut kk = 1;
-            let pbord = &patch_borders[..=num_patches];
-            while kk <= nr_lim {
-                let n_octaves = ((self.f_lim[kk] as f32) / (self.f_lim[kk - 1] as f32)).log2();
-                if (n_octaves * lim_bands) < 0.49 {
-                    if self.f_lim[kk] == self.f_lim[kk - 1] || !pbord.contains(&self.f_lim[kk]) {
-                        for l in kk..nr_lim {
-                            self.f_lim[l] = self.f_lim[l + 1];
-                        }
-                        nr_lim -= 1;
-                    }
-                    else if !pbord.contains(&self.f_lim[kk - 1]) {
-                        for l in (kk - 1)..nr_lim {
-                            self.f_lim[l] = self.f_lim[l + 1];
-                        }
-                        nr_lim -= 1;
-                    }
-                    else {
-                        kk += 1;
-                    }
-                }
-                else {
-                    kk += 1;
-                }
-            }
-            nr_lim
-        };
-        self.num_lim = num_l;
+        if count > NUM_PATCHES {
+            return decode_error("sbr: patch count exceeds maximum");
+        }
 
+        self.num_patches = count;
         Ok(())
     }
-}
 
-/// Helper: generate logarithmically spaced band widths, sorted ascending.
-fn generate_vdk(v_dk: &mut [usize], k0: usize, k1: usize, num_bands: usize) {
-    let mut last = k0;
-    let k0f = k0 as f64;
-    let factor = (k1 as f64) / k0f;
-    for k in 0..num_bands {
-        let next = (k0f * factor.powf((k + 1) as f64 / (num_bands as f64))).round() as usize;
-        let newval = next - last;
-        last = next;
-        let mut idx = k;
-        for (j, &el) in v_dk[..k].iter().enumerate() {
-            if newval < el {
-                idx = j;
-                break;
+    /// Derive limiter frequency band table (ISO/IEC 14496-3, 4.6.18.3.7).
+    fn compute_limiter_table(&mut self, limiter_bands: u8, n_low: usize) {
+        self.f_lim = [0; SBR_BANDS];
+
+        if limiter_bands == 0 {
+            // Single limiter band spanning the full SBR range.
+            self.f_lim[0] = self.f_low[0];
+            self.f_lim[1] = self.f_low[n_low];
+            self.num_lim = 1;
+            return;
+        }
+
+        // limBandsPerOctave from bs_limiter_bands (Table 4.63).
+        let octave_res: f32 = match limiter_bands {
+            1 => 1.2,
+            2 => 2.0,
+            _ => 3.0,
+        };
+
+        // Accumulate patch edges.
+        let mut patch_edges = [0usize; NUM_PATCHES + 1];
+        patch_edges[0] = self.k_x;
+        for p in 0..self.num_patches {
+            patch_edges[p + 1] = patch_edges[p] + self.patch_num_subbands[p];
+        }
+        let edge_set = &patch_edges[..=self.num_patches];
+
+        // Merge f_TableLow boundaries with inner patch edges.
+        let mut lim = [0usize; SBR_BANDS];
+        lim[..=n_low].copy_from_slice(&self.f_low[..=n_low]);
+        let mut n_lim = n_low; // number of bands (boundaries = n_lim + 1)
+
+        // Insert inner patch edges (skip first and last) in sorted order.
+        for &edge in &patch_edges[1..self.num_patches] {
+            let pos = lim[..=n_lim].iter().position(|&b| b > edge).unwrap_or(n_lim + 1);
+            // Shift right to make room.
+            for s in (pos..=n_lim).rev() {
+                lim[s + 1] = lim[s];
+            }
+            lim[pos] = edge;
+            n_lim += 1;
+        }
+
+        // Iteratively thin bands narrower than the octave resolution limit.
+        let mut i = 1;
+        while i <= n_lim {
+            let width_octaves = (lim[i] as f32 / lim[i - 1] as f32).log2();
+            if width_octaves * octave_res < 0.49 {
+                if lim[i] == lim[i - 1] || !edge_set.contains(&lim[i]) {
+                    // Remove lim[i].
+                    for s in i..n_lim {
+                        lim[s] = lim[s + 1];
+                    }
+                    n_lim -= 1;
+                }
+                else if !edge_set.contains(&lim[i - 1]) {
+                    // Remove lim[i-1].
+                    for s in (i - 1)..n_lim {
+                        lim[s] = lim[s + 1];
+                    }
+                    n_lim -= 1;
+                }
+                else {
+                    i += 1;
+                }
+            }
+            else {
+                i += 1;
             }
         }
-        for j in (idx..k).rev() {
-            v_dk[j + 1] = v_dk[j];
-        }
-        v_dk[idx] = newval;
+
+        self.f_lim[..=n_lim].copy_from_slice(&lim[..=n_lim]);
+        self.num_lim = n_lim;
     }
 }
 
-/// Calculate the master frequency band table from header parameters.
-/// Returns the number of master bands.
-#[allow(clippy::comparison_chain)]
-fn calculate_master_frequencies(
-    f: &mut [usize; SBR_BANDS],
+/// Compute start subband k0 from bs_start_freq and sample rate.
+///
+/// ISO/IEC 14496-3, Table 4.64.
+fn compute_start_subband(start_freq: usize, sample_rate: u32) -> usize {
+    // Select the offset row for this sample rate.
+    let row = match sample_rate {
+        0..=16000 => 0,
+        16001..=22050 => 1,
+        22051..=24000 => 2,
+        24001..=32000 => 3,
+        32001..=64000 => 4,
+        _ => 5,
+    };
+    let offset = i32::from(tables::START_FREQ_OFFSETS[row][start_freq]);
+
+    // startMin = round(128 * f_startMin / f_s)
+    let f_start_min: u32 = match sample_rate {
+        0..=31999 => 3000,
+        32000..=63999 => 4000,
+        _ => 5000,
+    };
+    let start_min = ((128 * f_start_min + sample_rate / 2) / sample_rate) as i32;
+
+    (start_min + offset).max(0) as usize
+}
+
+/// Compute stop subband k2 from bs_stop_freq, k0, and sample rate.
+///
+/// ISO/IEC 14496-3, Table 4.65.
+fn compute_stop_subband(stop_freq: usize, k0: usize, sample_rate: u32) -> usize {
+    let raw = match stop_freq {
+        14 => 2 * k0,
+        15 => 3 * k0,
+        _ => {
+            // stopMin = round(128 * 2 * f_startMin / f_s)
+            let f_start_min: u32 = match sample_rate {
+                0..=31999 => 3000,
+                32000..=63999 => 4000,
+                _ => 5000,
+            };
+            let stop_min = ((128 * 2 * f_start_min + sample_rate / 2) / sample_rate) as usize;
+
+            // Logarithmically spaced widths for 13 stop bands.
+            let mut widths = [0usize; 13];
+            log_spaced_widths(&mut widths, stop_min, SBR_BANDS, 13);
+
+            stop_min + widths[..stop_freq].iter().sum::<usize>()
+        }
+    };
+
+    raw.min(SBR_BANDS)
+}
+
+/// Compute logarithmically spaced band widths, sorted in ascending order.
+///
+/// For `n` bands spanning [`k_start`, `k_stop`]:
+///   w[i] = round(k_start * (k_stop/k_start)^((i+1)/n)) - round(k_start * (k_stop/k_start)^(i/n))
+///
+/// The resulting widths are sorted ascending, as required by
+/// ISO/IEC 14496-3, 4.6.18.3.2.
+fn log_spaced_widths(out: &mut [usize], k_start: usize, k_stop: usize, n: usize) {
+    let base = k_start as f64;
+    let ratio = (k_stop as f64) / base;
+    let inv_n = 1.0 / (n as f64);
+
+    for i in 0..n {
+        let lower = (base * ratio.powf(i as f64 * inv_n)).round() as usize;
+        let upper = (base * ratio.powf((i + 1) as f64 * inv_n)).round() as usize;
+        out[i] = upper - lower;
+    }
+
+    out[..n].sort_unstable();
+}
+
+/// Build master frequency table with linear spacing (bs_freq_scale == 0).
+///
+/// ISO/IEC 14496-3, 4.6.18.3.2, case freq_scale == 0.
+fn build_master_linear(
+    f_master: &mut [usize; SBR_BANDS],
     k0: usize,
     k2: usize,
-    hdr: &SbrHeader,
+    alter_scale: bool,
 ) -> usize {
-    if hdr.freq_scale == 0 {
-        let (dk, num_bands) = if !hdr.alter_scale {
-            (1, 2 * ((k2 - k0) / 2))
-        }
-        else {
-            (2, 2 * ((k2 - k0 + 2) / (2 * 2)))
-        };
-        let k2_achieved = k0 + num_bands * dk;
-        let mut k2_diff = (k2 as isize) - (k2_achieved as isize);
-        let mut v_dk = [dk; SBR_BANDS];
-        if k2_diff < 0 {
-            let mut kk = 0;
-            while k2_diff != 0 {
-                v_dk[kk] -= 1;
-                kk += 1;
-                k2_diff += 1;
-            }
-        }
-        else if k2_diff > 0 {
-            let mut kk = num_bands - 1;
-            while k2_diff != 0 {
-                v_dk[kk] += 1;
-                kk -= 1;
-                k2_diff -= 1;
-            }
-        }
-        f[0] = k0;
-        for i in 0..num_bands {
-            f[i + 1] = f[i] + v_dk[i];
-        }
-        num_bands
+    let (dk, num_bands) = if !alter_scale {
+        (1usize, 2 * ((k2 - k0) / 2))
     }
     else {
-        let bands = 14 - hdr.freq_scale * 2;
-        let warp = if !hdr.alter_scale { 1.0f32 } else { 1.3f32 };
-        let two_regions = (k2 as f32) / (k0 as f32) > 2.2449;
-        let k1 = if two_regions { 2 * k0 } else { k2 };
-        let num_bands0 =
-            2 * (((bands as f32) * ((k1 as f32) / (k0 as f32)).log2() / 2.0).round() as usize);
+        (2usize, 2 * ((k2 - k0 + 2) / 4))
+    };
 
-        let mut v_dk0 = [0; SBR_BANDS];
-        generate_vdk(&mut v_dk0, k0, k1, num_bands0);
-        let mut v_k0 = [0; SBR_BANDS];
-        v_k0[0] = k0;
-        for i in 0..num_bands0 {
-            v_k0[i + 1] = v_k0[i] + v_dk0[i];
-        }
+    // Start with uniform widths, then adjust endpoints to hit k2 exactly.
+    let mut widths = [dk; SBR_BANDS];
+    let achieved = k0 + num_bands * dk;
+    let mut deficit = k2 as isize - achieved as isize;
 
-        if two_regions {
-            let num_bands1 = 2
-                * (((bands as f32) * ((k2 as f32) / (k1 as f32)).log2() / (2.0 * warp)).round()
-                    as usize);
-            let mut v_dk1 = [0; SBR_BANDS];
-            generate_vdk(&mut v_dk1, k1, k2, num_bands1);
-            let max_vdk0 = v_dk0[num_bands0 - 1];
-            if v_dk1[0] < max_vdk0 {
-                let change = (max_vdk0 - v_dk1[0]).min((v_dk1[num_bands1 - 1] - v_dk1[0]) / 2);
-                v_dk1[0] += change;
-                v_dk1[num_bands1 - 1] -= change;
-            }
-            let mut v_k1 = [0; SBR_BANDS];
-            v_k1[0] = k1;
-            for i in 0..num_bands1 {
-                v_k1[i + 1] = v_k1[i] + v_dk1[i];
-            }
-            f[..=num_bands0].copy_from_slice(&v_k0[..=num_bands0]);
-            f[num_bands0 + 1..][..=num_bands1].copy_from_slice(&v_k1[1..][..=num_bands1]);
-            num_bands0 + num_bands1
-        }
-        else {
-            f[..=num_bands0].copy_from_slice(&v_k0[..=num_bands0]);
-            num_bands0
+    if deficit > 0 {
+        // Widen the topmost bands.
+        let mut idx = num_bands - 1;
+        while deficit > 0 {
+            widths[idx] += 1;
+            idx = idx.wrapping_sub(1);
+            deficit -= 1;
         }
     }
+    else {
+        // Narrow the bottommost bands.
+        let mut idx = 0;
+        while deficit < 0 {
+            widths[idx] -= 1;
+            idx += 1;
+            deficit += 1;
+        }
+    }
+
+    // Accumulate to frequency boundaries.
+    f_master[0] = k0;
+    for i in 0..num_bands {
+        f_master[i + 1] = f_master[i] + widths[i];
+    }
+
+    num_bands
 }
 
-/// Helper: squared modulus of a complex number.
+/// Build master frequency table with logarithmic spacing (bs_freq_scale > 0).
+///
+/// ISO/IEC 14496-3, 4.6.18.3.2, case freq_scale > 0.
+/// May use one or two frequency regions depending on the k2/k0 ratio.
+fn build_master_logarithmic(
+    f_master: &mut [usize; SBR_BANDS],
+    k0: usize,
+    k2: usize,
+    freq_scale: u8,
+    alter_scale: bool,
+) -> usize {
+    // bands_per_octave: freq_scale {1,2,3} -> {12,10,8}
+    let bands_per_oct = (14 - 2 * freq_scale as usize) as f32;
+    let warp: f32 = if alter_scale { 1.3 } else { 1.0 };
+
+    // Determine if a two-region split is needed (4.6.18.3.2).
+    let use_two_regions = (k2 as f32) / (k0 as f32) > 2.2449;
+    let k1 = if use_two_regions { 2 * k0 } else { k2 };
+
+    // Region 0: [k0, k1]
+    let n0 = 2 * ((bands_per_oct * (k1 as f32 / k0 as f32).log2() / 2.0).round() as usize);
+
+    let mut w0 = [0usize; SBR_BANDS];
+    log_spaced_widths(&mut w0, k0, k1, n0);
+
+    f_master[0] = k0;
+    for i in 0..n0 {
+        f_master[i + 1] = f_master[i] + w0[i];
+    }
+
+    if !use_two_regions {
+        return n0;
+    }
+
+    // Region 1: [k1, k2]
+    let n1 = 2 * ((bands_per_oct * (k2 as f32 / k1 as f32).log2() / (2.0 * warp)).round() as usize);
+
+    let mut w1 = [0usize; SBR_BANDS];
+    log_spaced_widths(&mut w1, k1, k2, n1);
+
+    // Ensure continuity: first width of region 1 >= last width of region 0.
+    if w1[0] < w0[n0 - 1] {
+        let headroom = (w1[n1 - 1] - w1[0]) / 2;
+        let adjustment = (w0[n0 - 1] - w1[0]).min(headroom);
+        w1[0] += adjustment;
+        w1[n1 - 1] -= adjustment;
+    }
+
+    // Append region 1 boundaries after region 0.
+    let mut freq = k1;
+    for i in 0..n1 {
+        freq += w1[i];
+        f_master[n0 + 1 + i] = freq;
+    }
+
+    n0 + n1
+}
+
+/// Squared magnitude of a complex value: |c|^2 = re^2 + im^2.
 #[inline(always)]
 pub fn sq_modulus(c: Complex) -> f32 {
     c.re * c.re + c.im * c.im
 }
 
-/// SBR time-frequency grid class.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum FrameClass {
-    FixFix,
-    FixVar,
-    VarFix,
-    VarVar,
-}
+const COMPLEX_ZERO: Complex = Complex { re: 0.0, im: 0.0 };
 
-/// Quantization mode for coupled/uncoupled channels.
-#[derive(Clone, Copy)]
-pub enum QuantMode {
-    Single,
-    Left,
-    Right,
-}
-
-/// Per-channel SBR state for bitstream data and DSP processing.
+/// Per-channel SBR processing state.
+///
+/// Contains QMF subband buffers, bitstream-parsed envelope and noise floor
+/// parameters, and inter-frame state needed for continuity across frames.
 #[derive(Clone)]
 pub struct SbrChannel {
+    /// QMF analysis filterbank output W[t][k].
     pub w: [[Complex; SBR_BANDS]; QMF_DELAY + MAX_SLOTS * 2],
+    /// Low-frequency QMF subbands X_low[t][k].
     pub x: [[Complex; SBR_BANDS]; QMF_DELAY + MAX_SLOTS * 2],
+    /// High-frequency generated QMF subbands X_high[t][k].
     pub x_high: [[Complex; SBR_BANDS]; QMF_DELAY + MAX_SLOTS * 2],
+    /// Combined output subbands Y[t][k] for QMF synthesis.
     pub y: [[Complex; SBR_BANDS]; QMF_DELAY + MAX_SLOTS * 2],
+    /// Previous frame Y for overlap continuity.
     pub prev_y: [[Complex; SBR_BANDS]; QMF_DELAY + MAX_SLOTS * 2],
 
+    /// Current chirp control factors alpha_q (4.6.18.6.3).
     pub bw_array: [f32; SBR_BANDS],
+    /// Previous frame chirp factors.
     pub old_bw_array: [f32; SBR_BANDS],
 
     pub qmode: QuantMode,
@@ -542,8 +675,6 @@ pub struct SbrChannel {
     pub g_temp: [[f32; SBR_BANDS]; MAX_SLOTS * 2 + QMF_DELAY + SMOOTH_DELAY],
     pub q_temp: [[f32; SBR_BANDS]; MAX_SLOTS * 2 + QMF_DELAY + SMOOTH_DELAY],
 }
-
-const COMPLEX_ZERO: Complex = Complex { re: 0.0, im: 0.0 };
 
 impl SbrChannel {
     pub fn new() -> Self {
@@ -603,54 +734,53 @@ impl SbrChannel {
     }
 
     pub fn set_amp_res(&mut self, amp_res: bool) {
-        if self.fclass != FrameClass::FixFix || self.num_env != 1 {
-            self.amp_res = amp_res;
+        // For FIXFIX grids with a single envelope, force 1.5 dB resolution
+        // per ISO/IEC 14496-3, 4.6.18.3.3.
+        if self.fclass == FrameClass::FixFix && self.num_env == 1 {
+            self.amp_res = false;
         }
         else {
-            self.amp_res = false;
+            self.amp_res = amp_res;
         }
     }
 }
 
-/// Compute SBR CRC-10 over a bit stream (ISO/IEC 14496-3, 4.6.18.2).
+/// Compute the SBR CRC-10 check value (ISO/IEC 14496-3, 4.6.18.2).
 ///
-/// Polynomial: 0x233 (x^10 + x^5 + x^4 + x + 1), init: 0.
-/// `data` contains the payload bytes, `num_bits` is the number of valid bits
-/// (MSB-first within each byte).
+/// Generator polynomial: x^10 + x^5 + x^4 + x + 1 (0x233).
+/// Initial register value: 0. Processes `num_bits` bits from `data`
+/// (MSB-first within each byte), then flushes the 10-bit register.
 pub fn sbr_crc10(data: &[u8], num_bits: usize) -> u16 {
-    let mut crc: u16 = 0;
-    let mut bits_remaining = num_bits;
+    const GENERATOR: u16 = 0x233;
+    let mut reg: u16 = 0;
+    let mut bits_left = num_bits;
 
-    for &byte in data.iter() {
-        if bits_remaining == 0 {
+    for &byte in data {
+        if bits_left == 0 {
             break;
         }
-        let bits_in_byte = bits_remaining.min(8);
-        for bit_pos in (8 - bits_in_byte..8).rev() {
-            let new_bit = ((byte >> bit_pos) & 1) as u16;
-            if (crc >> 9) & 1 != 0 {
-                crc = ((crc << 1) | new_bit) ^ 0x233;
+        let n = bits_left.min(8);
+        for shift in (8 - n..8).rev() {
+            let input = u16::from((byte >> shift) & 1);
+            let msb = reg >> 9;
+            reg = ((reg << 1) | input) & 0x3FF;
+            if msb != 0 {
+                reg ^= GENERATOR;
             }
-            else {
-                crc = (crc << 1) | new_bit;
-            }
-            crc &= 0x3FF;
         }
-        bits_remaining -= bits_in_byte;
+        bits_left -= n;
     }
 
-    // Flush 10 zero bits through the CRC register.
+    // Flush: feed 10 zero bits to clear the register.
     for _ in 0..10 {
-        if (crc >> 9) & 1 != 0 {
-            crc = (crc << 1) ^ 0x233;
+        let msb = reg >> 9;
+        reg = (reg << 1) & 0x3FF;
+        if msb != 0 {
+            reg ^= GENERATOR;
         }
-        else {
-            crc <<= 1;
-        }
-        crc &= 0x3FF;
     }
 
-    crc
+    reg
 }
 
 #[cfg(test)]
@@ -658,57 +788,60 @@ mod tests {
     use super::*;
 
     #[test]
-    fn verify_crc10_zero_input() {
-        // All-zero input should produce CRC = 0 (no feedback triggered).
-        let data = [0u8; 8];
-        assert_eq!(sbr_crc10(&data, 64), 0);
+    fn crc10_all_zeros_is_zero() {
+        assert_eq!(sbr_crc10(&[0u8; 8], 64), 0);
     }
 
     #[test]
-    fn verify_crc10_single_byte() {
-        // Non-zero input should produce non-zero CRC.
-        let data = [0xFF];
-        let crc = sbr_crc10(&data, 8);
-        assert_ne!(crc, 0);
-        assert!(crc <= 0x3FF, "CRC-10 must be 10-bit");
+    fn crc10_nonzero_result() {
+        let val = sbr_crc10(&[0xFF], 8);
+        assert_ne!(val, 0);
+        assert!(val <= 0x3FF);
     }
 
     #[test]
-    fn verify_crc10_single_bit_flip() {
-        // Flipping one bit must change the CRC.
-        let data_a = [0x80, 0x00];
-        let data_b = [0xC0, 0x00];
-        let crc_a = sbr_crc10(&data_a, 16);
-        let crc_b = sbr_crc10(&data_b, 16);
-        assert_ne!(crc_a, crc_b);
+    fn crc10_bit_sensitivity() {
+        let a = sbr_crc10(&[0x80, 0x00], 16);
+        let b = sbr_crc10(&[0xC0, 0x00], 16);
+        assert_ne!(a, b);
     }
 
     #[test]
-    fn verify_crc10_partial_byte() {
-        // CRC over 12 bits should only use the top 4 bits of byte 1.
-        let data = [0xFF, 0xF0];
-        let crc_12 = sbr_crc10(&data, 12);
-        // Same data but with junk in the lower 4 bits of byte 1 — should match.
-        let data2 = [0xFF, 0xFF];
-        let crc_12b = sbr_crc10(&data2, 12);
-        assert_eq!(crc_12, crc_12b);
+    fn crc10_ignores_trailing_bits() {
+        // 12-bit input: only top 4 bits of byte 1 count.
+        let a = sbr_crc10(&[0xFF, 0xF0], 12);
+        let b = sbr_crc10(&[0xFF, 0xFF], 12);
+        assert_eq!(a, b);
     }
 
     #[test]
-    fn verify_crc10_self_check() {
-        // Appending the CRC to the data and re-computing should give 0.
+    fn crc10_self_check_property() {
         let payload = [0xDE, 0xAD, 0xBE, 0xEF];
         let crc = sbr_crc10(&payload, 32);
 
-        // Build extended data: payload bits + CRC bits (10 bits, MSB first).
-        // Total: 32 + 10 = 42 bits = 6 bytes (last byte has 2 valid bits).
+        // Append 10-bit CRC to make a 42-bit message; re-computing should yield 0.
         let mut extended = [0u8; 6];
         extended[..4].copy_from_slice(&payload);
-        // Place 10-bit CRC starting at bit 32.
         extended[4] = (crc >> 2) as u8;
         extended[5] = ((crc & 0x03) as u8) << 6;
 
-        let check = sbr_crc10(&extended, 42);
-        assert_eq!(check, 0, "CRC self-check must be zero");
+        assert_eq!(sbr_crc10(&extended, 42), 0);
+    }
+
+    #[test]
+    fn log_widths_sum_to_range() {
+        let mut w = [0usize; 10];
+        log_spaced_widths(&mut w, 20, 64, 10);
+        let total: usize = w[..10].iter().sum();
+        assert_eq!(total, 64 - 20);
+    }
+
+    #[test]
+    fn log_widths_ascending() {
+        let mut w = [0usize; 8];
+        log_spaced_widths(&mut w, 10, 50, 8);
+        for pair in w[..8].windows(2) {
+            assert!(pair[0] <= pair[1]);
+        }
     }
 }

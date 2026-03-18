@@ -150,876 +150,1017 @@ impl PsContext {
     }
 }
 
-/// Split one QMF subband into 2 sub-subbands with a real symmetric filter.
-fn hybrid2_re(
-    input: &[[f32; 2]], // 13 input samples [re, im]
-    out: &mut [[[f32; 2]; 32]; PS_MAX_SSB],
-    out_idx0: usize,
-    out_idx1: usize,
-    filter: &[f32; 7],
-    len: usize,
-) {
-    for i in 0..len {
-        let re_in = filter[6] * input[i + 6][0];
-        let im_in = filter[6] * input[i + 6][1];
-        let mut re_op = 0.0f32;
-        let mut im_op = 0.0f32;
-        for j in (0..6).step_by(2) {
-            re_op += filter[j + 1] * (input[i + j + 1][0] + input[i + 12 - j - 1][0]);
-            im_op += filter[j + 1] * (input[i + j + 1][1] + input[i + 12 - j - 1][1]);
-        }
-        out[out_idx0][i][0] = re_in + re_op;
-        out[out_idx0][i][1] = im_in + im_op;
-        out[out_idx1][i][0] = re_in - re_op;
-        out[out_idx1][i][1] = im_in - im_op;
-    }
-}
+// ---------------------------------------------------------------------------
+// Hybrid analysis / synthesis (ISO/IEC 14496-3:2009, Section 8.6.4.6.1)
+// ---------------------------------------------------------------------------
 
-/// Split one QMF subband into N sub-subbands with a complex filter (hybrid analysis).
-fn hybrid_analysis_cx(
-    input: &[[f32; 2]], // 13 input samples [re, im]
-    out: &mut [[[f32; 2]; 32]; PS_MAX_SSB],
-    out_start: usize,
-    filter: &[[[f32; 2]; 8]], // [subband][tap][re/im]
-    n_bands: usize,
-    stride: usize,
-    len: usize,
-) {
-    for i in 0..len {
-        // Precompute symmetric sums/differences.
-        let mut inre0 = [0.0f32; 6];
-        let mut inre1 = [0.0f32; 6];
-        let mut inim0 = [0.0f32; 6];
-        let mut inim1 = [0.0f32; 6];
-        for j in 0..6 {
-            inre0[j] = input[i + j][0] + input[i + 12 - j][0];
-            inre1[j] = input[i + j][1] - input[i + 12 - j][1];
-            inim0[j] = input[i + j][1] + input[i + 12 - j][1];
-            inim1[j] = input[i + j][0] - input[i + 12 - j][0];
-        }
-
-        for q in 0..n_bands {
-            let mut sum_re = filter[q][6][0] * input[i + 6][0];
-            let mut sum_im = filter[q][6][0] * input[i + 6][1];
-
-            for j in 0..6 {
-                sum_re += filter[q][j][0] * inre0[j] - filter[q][j][1] * inre1[j];
-                sum_im += filter[q][j][0] * inim0[j] + filter[q][j][1] * inim1[j];
-            }
-
-            out[out_start + q][i * stride][0] = sum_re;
-            out[out_start + q][i * stride][1] = sum_im;
-        }
-    }
-}
-
-/// Hybrid analysis: convert lowest 5 QMF subbands into hybrid representation.
-fn hybrid_analysis(
-    out: &mut [[[f32; 2]; 32]; PS_MAX_SSB],
-    in_buf: &mut [[[f32; 2]; 44]; 5],
-    l: &[[[f32; 64]; 38]; 2],
-    is34: bool,
-    len: usize,
-) {
-    let tables = &*PS_TABLES;
-
-    // Fill input buffers: copy QMF data into in_buf with 6-sample history.
-    for i in 0..5 {
-        for j in 0..38usize.min(len + 6) {
-            if j >= 6 && (j - 6) < len {
-                in_buf[i][j][0] = l[0][j - 6][i];
-                in_buf[i][j][1] = l[1][j - 6][i];
-            }
-        }
-    }
-
-    if is34 {
-        // 34-band mode: 12+8+4+4+4 = 32 hybrid subbands
-        hybrid_analysis_cx(&in_buf[0], out, 0, &tables.f34_0_12, 12, 1, len);
-        hybrid_analysis_cx(&in_buf[1], out, 12, &tables.f34_1_8, 8, 1, len);
-        hybrid_analysis_cx(&in_buf[2], out, 20, &tables.f34_2_4, 4, 1, len);
-        hybrid_analysis_cx(&in_buf[3], out, 24, &tables.f34_2_4, 4, 1, len);
-        hybrid_analysis_cx(&in_buf[4], out, 28, &tables.f34_2_4, 4, 1, len);
-
-        // Remaining QMF subbands pass through directly.
-        for i in 5..64 {
-            for j in 0..len {
-                out[i + 27][j][0] = l[0][j][i];
-                out[i + 27][j][1] = l[1][j][i];
-            }
-        }
-    }
-    else {
-        // 20-band mode: 6+2+2 = 10 hybrid subbands from QMF bands 0-2
-        // QMF band 0: 6-band complex hybrid
-        hybrid6_cx(out, &in_buf[0], &tables.f20_0_8, len);
-        // QMF band 1: 2-band real hybrid (reversed order)
-        hybrid2_re(&in_buf[1], out, 7, 6, &G1_Q2, len);
-        // QMF band 2: 2-band real hybrid
-        hybrid2_re(&in_buf[2], out, 8, 9, &G1_Q2, len);
-
-        // Remaining QMF subbands pass through.
-        for i in 3..64 {
-            for j in 0..len {
-                out[i + 7][j][0] = l[0][j][i];
-                out[i + 7][j][1] = l[1][j][i];
-            }
-        }
-    }
-
-    // Update in_buf history: shift last 6 samples to the beginning.
-    for i in 0..5 {
-        for j in 0..6 {
-            in_buf[i][j] = in_buf[i][len + j];
-        }
-    }
-}
-
-/// 6-band complex hybrid filter for QMF band 0 (20-band mode).
-fn hybrid6_cx(
-    out: &mut [[[f32; 2]; 32]; PS_MAX_SSB],
-    input: &[[f32; 2]],
-    filter: &[[[f32; 2]; 8]; 8],
-    len: usize,
-) {
-    for i in 0..len {
-        let mut temp = [[0.0f32; 2]; 8];
-
-        // Apply 8-point analysis filter
-        let mut inre0 = [0.0f32; 6];
-        let mut inre1 = [0.0f32; 6];
-        let mut inim0 = [0.0f32; 6];
-        let mut inim1 = [0.0f32; 6];
-        for j in 0..6 {
-            inre0[j] = input[i + j][0] + input[i + 12 - j][0];
-            inre1[j] = input[i + j][1] - input[i + 12 - j][1];
-            inim0[j] = input[i + j][1] + input[i + 12 - j][1];
-            inim1[j] = input[i + j][0] - input[i + 12 - j][0];
-        }
-
-        for q in 0..8 {
-            let mut sum_re = filter[q][6][0] * input[i + 6][0];
-            let mut sum_im = filter[q][6][0] * input[i + 6][1];
-            for j in 0..6 {
-                sum_re += filter[q][j][0] * inre0[j] - filter[q][j][1] * inre1[j];
-                sum_im += filter[q][j][0] * inim0[j] + filter[q][j][1] * inim1[j];
-            }
-            temp[q][0] = sum_re;
-            temp[q][1] = sum_im;
-        }
-
-        // Map 8 analysis outputs to 6 hybrid subbands.
-        out[0][i][0] = temp[6][0];
-        out[0][i][1] = temp[6][1];
-        out[1][i][0] = temp[7][0];
-        out[1][i][1] = temp[7][1];
-        out[2][i][0] = temp[0][0];
-        out[2][i][1] = temp[0][1];
-        out[3][i][0] = temp[1][0];
-        out[3][i][1] = temp[1][1];
-        out[4][i][0] = temp[2][0] + temp[5][0];
-        out[4][i][1] = temp[2][1] + temp[5][1];
-        out[5][i][0] = temp[3][0] + temp[4][0];
-        out[5][i][1] = temp[3][1] + temp[4][1];
-    }
-}
-
-/// Hybrid synthesis: merge hybrid subbands back into QMF domain.
-fn hybrid_synthesis(
-    out: &mut [[[f32; 64]; 38]; 2],
-    buf: &[[[f32; 2]; 32]; PS_MAX_SSB],
-    is34: bool,
-    len: usize,
-) {
-    if is34 {
-        for n in 0..len {
-            // QMF band 0: sum of 12 hybrid subbands.
-            let (mut re, mut im) = (0.0f32, 0.0f32);
-            for i in 0..12 {
-                re += buf[i][n][0];
-                im += buf[i][n][1];
-            }
-            out[0][n][0] = re;
-            out[1][n][0] = im;
-
-            // QMF band 1: sum of 8 hybrid subbands.
-            let (mut re, mut im) = (0.0f32, 0.0f32);
-            for i in 0..8 {
-                re += buf[12 + i][n][0];
-                im += buf[12 + i][n][1];
-            }
-            out[0][n][1] = re;
-            out[1][n][1] = im;
-
-            // QMF bands 2-4: sum of 4 hybrid subbands each.
-            for band in 0..3 {
-                let (mut re, mut im) = (0.0f32, 0.0f32);
-                for i in 0..4 {
-                    re += buf[20 + band * 4 + i][n][0];
-                    im += buf[20 + band * 4 + i][n][1];
-                }
-                out[0][n][2 + band] = re;
-                out[1][n][2 + band] = im;
-            }
-
-            // QMF bands 5-63: direct copy from hybrid buffer.
-            for i in 5..64 {
-                out[0][n][i] = buf[i + 27][n][0];
-                out[1][n][i] = buf[i + 27][n][1];
-            }
-        }
-    }
-    else {
-        for n in 0..len {
-            // QMF band 0: sum of 6 hybrid subbands.
-            out[0][n][0] = buf[0][n][0]
-                + buf[1][n][0]
-                + buf[2][n][0]
-                + buf[3][n][0]
-                + buf[4][n][0]
-                + buf[5][n][0];
-            out[1][n][0] = buf[0][n][1]
-                + buf[1][n][1]
-                + buf[2][n][1]
-                + buf[3][n][1]
-                + buf[4][n][1]
-                + buf[5][n][1];
-
-            // QMF band 1: sum of 2 hybrid subbands.
-            out[0][n][1] = buf[6][n][0] + buf[7][n][0];
-            out[1][n][1] = buf[6][n][1] + buf[7][n][1];
-
-            // QMF band 2: sum of 2 hybrid subbands.
-            out[0][n][2] = buf[8][n][0] + buf[9][n][0];
-            out[1][n][2] = buf[8][n][1] + buf[9][n][1];
-
-            // QMF bands 3-63: direct copy.
-            for i in 3..64 {
-                out[0][n][i] = buf[i + 7][n][0];
-                out[1][n][i] = buf[i + 7][n][1];
-            }
-        }
-    }
-}
-
-/// Generate a decorrelated (anticorrelated) signal from the mono input.
+/// Apply a 2-band real-valued symmetric prototype filter, splitting a single QMF
+/// subband into two sub-subbands (lowpass and highpass).
 ///
-/// Implements the PS decorrelation process: transient detection, 3-link
-/// cascaded all-pass filtering with fractional delay for low bands, and
-/// simple delay-based decorrelation for mid/high bands.
-fn decorrelation(ps: &mut PsContext, is34: bool, len: usize) {
+/// ISO/IEC 14496-3:2009, 8.6.4.6.1 -- real-valued 2-band hybrid filter.
+fn split_2band_real(
+    samples: &[[f32; 2]],
+    hybrid_out: &mut [[[f32; 2]; 32]; PS_MAX_SSB],
+    low_idx: usize,
+    high_idx: usize,
+    proto: &[f32; 7],
+    num_slots: usize,
+) {
+    for slot in 0..num_slots {
+        // Centre tap contribution (index 6 of 13 taps).
+        let centre_re = proto[6] * samples[slot + 6][0];
+        let centre_im = proto[6] * samples[slot + 6][1];
+
+        // Accumulate odd-indexed symmetric tap pairs.
+        let mut sym_re = 0.0f32;
+        let mut sym_im = 0.0f32;
+        for tap in (0..6).step_by(2) {
+            let coeff = proto[tap + 1];
+            sym_re += coeff * (samples[slot + tap + 1][0] + samples[slot + 12 - tap - 1][0]);
+            sym_im += coeff * (samples[slot + tap + 1][1] + samples[slot + 12 - tap - 1][1]);
+        }
+
+        // Lowpass = centre + symmetric; highpass = centre - symmetric.
+        hybrid_out[low_idx][slot][0] = centre_re + sym_re;
+        hybrid_out[low_idx][slot][1] = centre_im + sym_im;
+        hybrid_out[high_idx][slot][0] = centre_re - sym_re;
+        hybrid_out[high_idx][slot][1] = centre_im - sym_im;
+    }
+}
+
+/// Apply an N-band complex-valued prototype filter, splitting one QMF subband
+/// into multiple sub-subbands via complex modulated analysis.
+///
+/// ISO/IEC 14496-3:2009, 8.6.4.6.1 -- complex N-band hybrid filter bank.
+fn split_nband_complex(
+    samples: &[[f32; 2]],
+    hybrid_out: &mut [[[f32; 2]; 32]; PS_MAX_SSB],
+    first_subband: usize,
+    proto_filter: &[[[f32; 2]; 8]],
+    subband_count: usize,
+    output_stride: usize,
+    num_slots: usize,
+) {
+    for slot in 0..num_slots {
+        // Pre-compute symmetric sums and differences for the 13-tap window.
+        // ISO/IEC 14496-3:2009, 8.6.4.6.1 -- exploit conjugate symmetry.
+        let mut sum_re = [0.0f32; 6];
+        let mut diff_im = [0.0f32; 6];
+        let mut sum_im = [0.0f32; 6];
+        let mut diff_re = [0.0f32; 6];
+
+        for tap in 0..6 {
+            sum_re[tap] = samples[slot + tap][0] + samples[slot + 12 - tap][0];
+            diff_im[tap] = samples[slot + tap][1] - samples[slot + 12 - tap][1];
+            sum_im[tap] = samples[slot + tap][1] + samples[slot + 12 - tap][1];
+            diff_re[tap] = samples[slot + tap][0] - samples[slot + 12 - tap][0];
+        }
+
+        for band in 0..subband_count {
+            // Centre tap (real-only coefficient at tap index 6).
+            let mut acc_re = proto_filter[band][6][0] * samples[slot + 6][0];
+            let mut acc_im = proto_filter[band][6][0] * samples[slot + 6][1];
+
+            // Symmetric taps with complex coefficients.
+            for tap in 0..6 {
+                let coeff_re = proto_filter[band][tap][0];
+                let coeff_im = proto_filter[band][tap][1];
+                acc_re += coeff_re * sum_re[tap] - coeff_im * diff_im[tap];
+                acc_im += coeff_re * sum_im[tap] + coeff_im * diff_re[tap];
+            }
+
+            hybrid_out[first_subband + band][slot * output_stride][0] = acc_re;
+            hybrid_out[first_subband + band][slot * output_stride][1] = acc_im;
+        }
+    }
+}
+
+/// Perform 6-band complex hybrid analysis for QMF subband 0 in 20-band mode.
+///
+/// This uses an 8-point prototype and then maps the 8 analysis outputs down
+/// to 6 hybrid sub-subbands by merging certain pairs.
+///
+/// ISO/IEC 14496-3:2009, 8.6.4.6.1 -- 6-band hybrid filter for subband 0.
+fn split_6band_complex(
+    hybrid_out: &mut [[[f32; 2]; 32]; PS_MAX_SSB],
+    samples: &[[f32; 2]],
+    proto_8band: &[[[f32; 2]; 8]; 8],
+    num_slots: usize,
+) {
+    for slot in 0..num_slots {
+        // Pre-compute symmetric sums/differences across the 13-tap window.
+        let mut sum_re = [0.0f32; 6];
+        let mut diff_im = [0.0f32; 6];
+        let mut sum_im = [0.0f32; 6];
+        let mut diff_re = [0.0f32; 6];
+        for tap in 0..6 {
+            sum_re[tap] = samples[slot + tap][0] + samples[slot + 12 - tap][0];
+            diff_im[tap] = samples[slot + tap][1] - samples[slot + 12 - tap][1];
+            sum_im[tap] = samples[slot + tap][1] + samples[slot + 12 - tap][1];
+            diff_re[tap] = samples[slot + tap][0] - samples[slot + 12 - tap][0];
+        }
+
+        // Compute all 8 analysis sub-subbands.
+        let mut analysis = [[0.0f32; 2]; 8];
+        for band in 0..8 {
+            let mut acc_re = proto_8band[band][6][0] * samples[slot + 6][0];
+            let mut acc_im = proto_8band[band][6][0] * samples[slot + 6][1];
+
+            for tap in 0..6 {
+                let cr = proto_8band[band][tap][0];
+                let ci = proto_8band[band][tap][1];
+                acc_re += cr * sum_re[tap] - ci * diff_im[tap];
+                acc_im += cr * sum_im[tap] + ci * diff_re[tap];
+            }
+
+            analysis[band][0] = acc_re;
+            analysis[band][1] = acc_im;
+        }
+
+        // Map 8 analysis channels to 6 hybrid sub-subbands.
+        // Bands 4 and 5 each merge two analysis channels.
+        hybrid_out[0][slot][0] = analysis[6][0];
+        hybrid_out[0][slot][1] = analysis[6][1];
+        hybrid_out[1][slot][0] = analysis[7][0];
+        hybrid_out[1][slot][1] = analysis[7][1];
+        hybrid_out[2][slot][0] = analysis[0][0];
+        hybrid_out[2][slot][1] = analysis[0][1];
+        hybrid_out[3][slot][0] = analysis[1][0];
+        hybrid_out[3][slot][1] = analysis[1][1];
+        hybrid_out[4][slot][0] = analysis[2][0] + analysis[5][0];
+        hybrid_out[4][slot][1] = analysis[2][1] + analysis[5][1];
+        hybrid_out[5][slot][0] = analysis[3][0] + analysis[4][0];
+        hybrid_out[5][slot][1] = analysis[3][1] + analysis[4][1];
+    }
+}
+
+/// Hybrid analysis: decompose the 5 lowest QMF subbands into hybrid
+/// sub-subbands for finer frequency resolution.
+///
+/// ISO/IEC 14496-3:2009, 8.6.4.6.1 -- hybrid analysis filterbank.
+fn analyze_hybrid(
+    hybrid_out: &mut [[[f32; 2]; 32]; PS_MAX_SSB],
+    history_buf: &mut [[[f32; 2]; 44]; 5],
+    qmf_input: &[[[f32; 64]; 38]; 2],
+    use_34bands: bool,
+    num_slots: usize,
+) {
     let tables = &*PS_TABLES;
-    let is34_idx = is34 as usize;
-    let k_to_i = if is34 { &K_TO_I_34[..] } else { &K_TO_I_20[..] };
-    let nr_bands = NR_BANDS[is34_idx];
-    let nr_par = NR_PAR_BANDS[is34_idx];
-    let nr_allpass = NR_ALLPASS_BANDS[is34_idx];
-    let short_delay = SHORT_DELAY_BAND[is34_idx];
-    let decay_cutoff = DECAY_CUTOFF[is34_idx];
 
-    let peak_decay_factor: f32 = 0.76592833836465;
-    let a_smooth: f32 = 0.25;
-    let transient_impact: f32 = 1.5;
+    // Populate input history buffers with current frame's QMF data.
+    // The first 6 positions hold overlap from the previous frame.
+    for qmf_band in 0..5 {
+        for time_idx in 0..38usize.min(num_slots + 6) {
+            if time_idx >= 6 && (time_idx - 6) < num_slots {
+                let slot = time_idx - 6;
+                history_buf[qmf_band][time_idx][0] = qmf_input[0][slot][qmf_band];
+                history_buf[qmf_band][time_idx][1] = qmf_input[1][slot][qmf_band];
+            }
+        }
+    }
 
-    // Reset state if band mode changed.
-    if is34 != ps.common.is34bands_old {
+    if use_34bands {
+        // 34-band mode: 12 + 8 + 4 + 4 + 4 = 32 hybrid sub-subbands
+        // from QMF bands 0..4.
+        split_nband_complex(&history_buf[0], hybrid_out, 0, &tables.f34_0_12, 12, 1, num_slots);
+        split_nband_complex(&history_buf[1], hybrid_out, 12, &tables.f34_1_8, 8, 1, num_slots);
+        split_nband_complex(&history_buf[2], hybrid_out, 20, &tables.f34_2_4, 4, 1, num_slots);
+        split_nband_complex(&history_buf[3], hybrid_out, 24, &tables.f34_2_4, 4, 1, num_slots);
+        split_nband_complex(&history_buf[4], hybrid_out, 28, &tables.f34_2_4, 4, 1, num_slots);
+
+        // QMF bands 5..63 pass through unmodified (offset by 27 in hybrid domain).
+        for qmf_band in 5..64 {
+            for slot in 0..num_slots {
+                hybrid_out[qmf_band + 27][slot][0] = qmf_input[0][slot][qmf_band];
+                hybrid_out[qmf_band + 27][slot][1] = qmf_input[1][slot][qmf_band];
+            }
+        }
+    }
+    else {
+        // 20-band mode: 6 + 2 + 2 = 10 hybrid sub-subbands from QMF bands 0..2.
+        // QMF band 0: 6-band complex hybrid analysis.
+        split_6band_complex(hybrid_out, &history_buf[0], &tables.f20_0_8, num_slots);
+        // QMF band 1: 2-band real hybrid (note: indices are reversed).
+        split_2band_real(&history_buf[1], hybrid_out, 7, 6, &G1_Q2, num_slots);
+        // QMF band 2: 2-band real hybrid.
+        split_2band_real(&history_buf[2], hybrid_out, 8, 9, &G1_Q2, num_slots);
+
+        // QMF bands 3..63 pass through (offset by 7 in hybrid domain).
+        for qmf_band in 3..64 {
+            for slot in 0..num_slots {
+                hybrid_out[qmf_band + 7][slot][0] = qmf_input[0][slot][qmf_band];
+                hybrid_out[qmf_band + 7][slot][1] = qmf_input[1][slot][qmf_band];
+            }
+        }
+    }
+
+    // Preserve the final 6 samples as overlap for the next frame.
+    for qmf_band in 0..5 {
+        for overlap_idx in 0..6 {
+            history_buf[qmf_band][overlap_idx] = history_buf[qmf_band][num_slots + overlap_idx];
+        }
+    }
+}
+
+/// Hybrid synthesis: recombine hybrid sub-subbands back into QMF subbands.
+///
+/// ISO/IEC 14496-3:2009, 8.6.4.6.1 -- hybrid synthesis filterbank.
+fn synthesize_hybrid(
+    qmf_output: &mut [[[f32; 64]; 38]; 2],
+    hybrid_in: &[[[f32; 2]; 32]; PS_MAX_SSB],
+    use_34bands: bool,
+    num_slots: usize,
+) {
+    if use_34bands {
+        for slot in 0..num_slots {
+            // QMF band 0: sum 12 hybrid sub-subbands (indices 0..11).
+            let (mut acc_re, mut acc_im) = (0.0f32, 0.0f32);
+            for sub in 0..12 {
+                acc_re += hybrid_in[sub][slot][0];
+                acc_im += hybrid_in[sub][slot][1];
+            }
+            qmf_output[0][slot][0] = acc_re;
+            qmf_output[1][slot][0] = acc_im;
+
+            // QMF band 1: sum 8 hybrid sub-subbands (indices 12..19).
+            let (mut acc_re, mut acc_im) = (0.0f32, 0.0f32);
+            for sub in 0..8 {
+                acc_re += hybrid_in[12 + sub][slot][0];
+                acc_im += hybrid_in[12 + sub][slot][1];
+            }
+            qmf_output[0][slot][1] = acc_re;
+            qmf_output[1][slot][1] = acc_im;
+
+            // QMF bands 2..4: each sums 4 hybrid sub-subbands.
+            for group in 0..3 {
+                let (mut acc_re, mut acc_im) = (0.0f32, 0.0f32);
+                for sub in 0..4 {
+                    acc_re += hybrid_in[20 + group * 4 + sub][slot][0];
+                    acc_im += hybrid_in[20 + group * 4 + sub][slot][1];
+                }
+                qmf_output[0][slot][2 + group] = acc_re;
+                qmf_output[1][slot][2 + group] = acc_im;
+            }
+
+            // QMF bands 5..63: direct passthrough from hybrid domain.
+            for qmf_band in 5..64 {
+                qmf_output[0][slot][qmf_band] = hybrid_in[qmf_band + 27][slot][0];
+                qmf_output[1][slot][qmf_band] = hybrid_in[qmf_band + 27][slot][1];
+            }
+        }
+    }
+    else {
+        for slot in 0..num_slots {
+            // QMF band 0: sum of 6 hybrid sub-subbands.
+            qmf_output[0][slot][0] = hybrid_in[0][slot][0]
+                + hybrid_in[1][slot][0]
+                + hybrid_in[2][slot][0]
+                + hybrid_in[3][slot][0]
+                + hybrid_in[4][slot][0]
+                + hybrid_in[5][slot][0];
+            qmf_output[1][slot][0] = hybrid_in[0][slot][1]
+                + hybrid_in[1][slot][1]
+                + hybrid_in[2][slot][1]
+                + hybrid_in[3][slot][1]
+                + hybrid_in[4][slot][1]
+                + hybrid_in[5][slot][1];
+
+            // QMF band 1: sum of 2 hybrid sub-subbands.
+            qmf_output[0][slot][1] = hybrid_in[6][slot][0] + hybrid_in[7][slot][0];
+            qmf_output[1][slot][1] = hybrid_in[6][slot][1] + hybrid_in[7][slot][1];
+
+            // QMF band 2: sum of 2 hybrid sub-subbands.
+            qmf_output[0][slot][2] = hybrid_in[8][slot][0] + hybrid_in[9][slot][0];
+            qmf_output[1][slot][2] = hybrid_in[8][slot][1] + hybrid_in[9][slot][1];
+
+            // QMF bands 3..63: direct passthrough.
+            for qmf_band in 3..64 {
+                qmf_output[0][slot][qmf_band] = hybrid_in[qmf_band + 7][slot][0];
+                qmf_output[1][slot][qmf_band] = hybrid_in[qmf_band + 7][slot][1];
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Decorrelation (ISO/IEC 14496-3:2009, Section 8.6.4.6.2)
+// ---------------------------------------------------------------------------
+
+/// Generate the decorrelated (anticorrelated) side signal from the mono input.
+///
+/// Implements transient detection, cascaded 3-link all-pass filtering with
+/// fractional delay for low-frequency bands, and simple delay-based
+/// decorrelation for mid- and high-frequency bands.
+///
+/// ISO/IEC 14496-3:2009, 8.6.4.6.2 -- PS decorrelation.
+fn generate_decorrelated_signal(ps: &mut PsContext, use_34bands: bool, num_slots: usize) {
+    let tables = &*PS_TABLES;
+    let mode_idx = use_34bands as usize;
+
+    let subband_to_param = if use_34bands { &K_TO_I_34[..] } else { &K_TO_I_20[..] };
+    let total_subbands = NR_BANDS[mode_idx];
+    let num_param_bands = NR_PAR_BANDS[mode_idx];
+    let num_allpass_bands = NR_ALLPASS_BANDS[mode_idx];
+    let short_delay_start = SHORT_DELAY_BAND[mode_idx];
+    let decay_cutoff_band = DECAY_CUTOFF[mode_idx];
+
+    // ISO/IEC 14496-3:2009, 8.6.4.6.2 -- decorrelation constants.
+    let peak_decay_coeff: f32 = 0.76592833836465;
+    let smoothing_coeff: f32 = 0.25;
+    let transient_scale: f32 = 1.5;
+
+    // When the band configuration changes, reset all decorrelation state.
+    if use_34bands != ps.common.is34bands_old {
         ps.peak_decay_nrg = [0.0; 34];
         ps.power_smooth = [0.0; 34];
         ps.peak_decay_diff_smooth = [0.0; 34];
-        for slot in ps.delay.iter_mut() {
-            *slot = [[0.0; 2]; PS_QMF_TIME_SLOTS + PS_MAX_DELAY];
-        }
-        for band in ps.ap_delay.iter_mut() {
-            *band = [[[0.0; 2]; PS_QMF_TIME_SLOTS + PS_MAX_AP_DELAY]; PS_AP_LINKS];
+        ps.delay.iter_mut().for_each(|entry| {
+            *entry = [[0.0; 2]; PS_QMF_TIME_SLOTS + PS_MAX_DELAY];
+        });
+        ps.ap_delay.iter_mut().for_each(|entry| {
+            *entry = [[[0.0; 2]; PS_QMF_TIME_SLOTS + PS_MAX_AP_DELAY]; PS_AP_LINKS];
+        });
+    }
+
+    // Measure signal power in each parameter band.
+    // ISO/IEC 14496-3:2009, 8.6.4.6.2 -- power estimation.
+    let mut band_power = [[0.0f32; PS_QMF_TIME_SLOTS]; 34];
+    for subband in 0..total_subbands {
+        let param_band = subband_to_param[subband];
+        for slot in 0..num_slots {
+            let re = ps.l_buf[subband][slot][0];
+            let im = ps.l_buf[subband][slot][1];
+            band_power[param_band][slot] += re * re + im * im;
         }
     }
 
-    // Compute power per parameter band.
-    let mut power = [[0.0f32; PS_QMF_TIME_SLOTS]; 34];
-    for k in 0..nr_bands {
-        let i = k_to_i[k];
-        for n in 0..len {
-            power[i][n] +=
-                ps.l_buf[k][n][0] * ps.l_buf[k][n][0] + ps.l_buf[k][n][1] * ps.l_buf[k][n][1];
-        }
-    }
+    // Transient detection: derive a per-band attenuation factor.
+    // ISO/IEC 14496-3:2009, 8.6.4.6.2 -- transient detection.
+    let mut attenuation = [[0.0f32; PS_QMF_TIME_SLOTS]; 34];
+    for param_band in 0..num_param_bands {
+        for slot in 0..num_slots {
+            let decayed = peak_decay_coeff * ps.peak_decay_nrg[param_band];
+            let current_power = band_power[param_band][slot];
 
-    // Transient detection: compute per-band gain.
-    let mut transient_gain = [[0.0f32; PS_QMF_TIME_SLOTS]; 34];
-    for i in 0..nr_par {
-        for n in 0..len {
-            let decayed_peak = peak_decay_factor * ps.peak_decay_nrg[i];
-            ps.peak_decay_nrg[i] = decayed_peak.max(power[i][n]);
-            ps.power_smooth[i] += a_smooth * (power[i][n] - ps.power_smooth[i]);
-            ps.peak_decay_diff_smooth[i] +=
-                a_smooth * (ps.peak_decay_nrg[i] - power[i][n] - ps.peak_decay_diff_smooth[i]);
+            ps.peak_decay_nrg[param_band] = decayed.max(current_power);
+            ps.power_smooth[param_band] +=
+                smoothing_coeff * (current_power - ps.power_smooth[param_band]);
+            ps.peak_decay_diff_smooth[param_band] += smoothing_coeff
+                * (ps.peak_decay_nrg[param_band]
+                    - current_power
+                    - ps.peak_decay_diff_smooth[param_band]);
 
-            let denom = transient_impact * ps.peak_decay_diff_smooth[i];
-            transient_gain[i][n] =
-                if denom > ps.power_smooth[i] { ps.power_smooth[i] / denom } else { 1.0 };
+            let scaled_diff = transient_scale * ps.peak_decay_diff_smooth[param_band];
+            attenuation[param_band][slot] = if scaled_diff > ps.power_smooth[param_band] {
+                ps.power_smooth[param_band] / scaled_diff
+            }
+            else {
+                1.0
+            };
         }
     }
 
     // All-pass decorrelation for low-frequency bands.
-    for k in 0..nr_allpass {
-        let b = k_to_i[k];
-        let g_decay_slope = (1.0 - DECAY_SLOPE * (k as f32 - decay_cutoff as f32)).clamp(0.0, 1.0);
+    // ISO/IEC 14496-3:2009, 8.6.4.6.2 -- all-pass decorrelation filter.
+    for subband in 0..num_allpass_bands {
+        let param_idx = subband_to_param[subband];
+        let slope_gain =
+            (1.0 - DECAY_SLOPE * (subband as f32 - decay_cutoff_band as f32)).clamp(0.0, 1.0);
 
-        // Shift delay history.
-        for j in 0..PS_MAX_DELAY {
-            ps.delay[k][j] = ps.delay[k][len + j];
+        // Shift delay line history forward.
+        for d in 0..PS_MAX_DELAY {
+            ps.delay[subband][d] = ps.delay[subband][num_slots + d];
         }
-        for j in 0..len {
-            ps.delay[k][PS_MAX_DELAY + j] = ps.l_buf[k][j];
+        for s in 0..num_slots {
+            ps.delay[subband][PS_MAX_DELAY + s] = ps.l_buf[subband][s];
         }
 
-        // Shift all-pass delay history.
-        for m in 0..PS_AP_LINKS {
-            for j in 0..5 {
-                ps.ap_delay[k][m][j] = ps.ap_delay[k][m][len + j];
+        // Shift all-pass delay history forward.
+        for link in 0..PS_AP_LINKS {
+            for d in 0..5 {
+                ps.ap_delay[subband][link][d] = ps.ap_delay[subband][link][num_slots + d];
             }
         }
 
-        // Compute ag[m] = a[m] * g_decay_slope.
-        let mut ag = [0.0f32; PS_AP_LINKS];
-        for m in 0..PS_AP_LINKS {
-            ag[m] = AP_COEFF[m] * g_decay_slope;
-        }
+        // Compute scaled all-pass coefficients.
+        let scaled_ap: [f32; PS_AP_LINKS] =
+            [AP_COEFF[0] * slope_gain, AP_COEFF[1] * slope_gain, AP_COEFF[2] * slope_gain];
 
-        // All-pass filter processing.
-        let phi = &tables.phi_fract[is34_idx][k];
-        for n in 0..len {
-            // Apply fractional delay (phi_fract rotation).
-            let mut in_re = ps.delay[k][PS_MAX_DELAY + n - 2][0] * phi[0]
-                - ps.delay[k][PS_MAX_DELAY + n - 2][1] * phi[1];
-            let mut in_im = ps.delay[k][PS_MAX_DELAY + n - 2][0] * phi[1]
-                + ps.delay[k][PS_MAX_DELAY + n - 2][1] * phi[0];
+        // Process each time slot through the 3-link cascaded all-pass chain.
+        let fractional_phase = &tables.phi_fract[mode_idx][subband];
+        for slot in 0..num_slots {
+            // Apply fractional delay rotation to the delayed input.
+            let delayed_re = ps.delay[subband][PS_MAX_DELAY + slot - 2][0];
+            let delayed_im = ps.delay[subband][PS_MAX_DELAY + slot - 2][1];
+            let mut signal_re = delayed_re * fractional_phase[0] - delayed_im * fractional_phase[1];
+            let mut signal_im = delayed_re * fractional_phase[1] + delayed_im * fractional_phase[0];
 
-            // 3 cascaded all-pass filters.
-            for m in 0..PS_AP_LINKS {
-                let a_re = ag[m] * in_re;
-                let a_im = ag[m] * in_im;
-                let link_delay_idx = n + 2 - m; // ap_delay has 5 slots of history
-                let ld_re = ps.ap_delay[k][m][link_delay_idx][0];
-                let ld_im = ps.ap_delay[k][m][link_delay_idx][1];
-                let q_re = tables.q_fract_allpass[is34_idx][k][m][0];
-                let q_im = tables.q_fract_allpass[is34_idx][k][m][1];
+            // Cascade through 3 all-pass filter links.
+            for link in 0..PS_AP_LINKS {
+                let feedback_re = scaled_ap[link] * signal_re;
+                let feedback_im = scaled_ap[link] * signal_im;
+                let delay_idx = slot + 2 - link;
+                let link_re = ps.ap_delay[subband][link][delay_idx][0];
+                let link_im = ps.ap_delay[subband][link][delay_idx][1];
+                let frac_re = tables.q_fract_allpass[mode_idx][subband][link][0];
+                let frac_im = tables.q_fract_allpass[mode_idx][subband][link][1];
 
-                let apd_re = in_re;
-                let apd_im = in_im;
+                let input_snapshot_re = signal_re;
+                let input_snapshot_im = signal_im;
 
-                // Fractional delay on link delay.
-                in_re = ld_re * q_re - ld_im * q_im - a_re;
-                in_im = ld_re * q_im + ld_im * q_re - a_im;
+                // Fractional delay on the link delay line output.
+                signal_re = link_re * frac_re - link_im * frac_im - feedback_re;
+                signal_im = link_re * frac_im + link_im * frac_re - feedback_im;
 
-                // Store to all-pass delay line.
-                ps.ap_delay[k][m][n + 5][0] = apd_re + ag[m] * in_re;
-                ps.ap_delay[k][m][n + 5][1] = apd_im + ag[m] * in_im;
+                // Write to the all-pass delay line.
+                ps.ap_delay[subband][link][slot + 5][0] =
+                    input_snapshot_re + scaled_ap[link] * signal_re;
+                ps.ap_delay[subband][link][slot + 5][1] =
+                    input_snapshot_im + scaled_ap[link] * signal_im;
             }
 
-            // Apply transient gain.
-            ps.r_buf[k][n][0] = transient_gain[b][n] * in_re;
-            ps.r_buf[k][n][1] = transient_gain[b][n] * in_im;
+            // Attenuate according to the transient detector.
+            ps.r_buf[subband][slot][0] = attenuation[param_idx][slot] * signal_re;
+            ps.r_buf[subband][slot][1] = attenuation[param_idx][slot] * signal_im;
         }
     }
 
-    // Simple delay decorrelation for mid-frequency bands (delay 14).
-    for k in nr_allpass..short_delay {
-        let i = k_to_i[k];
-        for j in 0..PS_MAX_DELAY {
-            ps.delay[k][j] = ps.delay[k][len + j];
+    // Mid-frequency bands: simple decorrelation with 14-sample delay.
+    // ISO/IEC 14496-3:2009, 8.6.4.6.2 -- delay-based decorrelation.
+    for subband in num_allpass_bands..short_delay_start {
+        let param_idx = subband_to_param[subband];
+
+        for d in 0..PS_MAX_DELAY {
+            ps.delay[subband][d] = ps.delay[subband][num_slots + d];
         }
-        for j in 0..len {
-            ps.delay[k][PS_MAX_DELAY + j] = ps.l_buf[k][j];
+        for s in 0..num_slots {
+            ps.delay[subband][PS_MAX_DELAY + s] = ps.l_buf[subband][s];
         }
-        for n in 0..len {
-            ps.r_buf[k][n][0] = transient_gain[i][n] * ps.delay[k][PS_MAX_DELAY + n - 14][0];
-            ps.r_buf[k][n][1] = transient_gain[i][n] * ps.delay[k][PS_MAX_DELAY + n - 14][1];
+        for slot in 0..num_slots {
+            ps.r_buf[subband][slot][0] =
+                attenuation[param_idx][slot] * ps.delay[subband][PS_MAX_DELAY + slot - 14][0];
+            ps.r_buf[subband][slot][1] =
+                attenuation[param_idx][slot] * ps.delay[subband][PS_MAX_DELAY + slot - 14][1];
         }
     }
 
-    // Short delay decorrelation for high-frequency bands (delay 1).
-    for k in short_delay..nr_bands {
-        let i = k_to_i[k];
-        for j in 0..PS_MAX_DELAY {
-            ps.delay[k][j] = ps.delay[k][len + j];
+    // High-frequency bands: short decorrelation with 1-sample delay.
+    for subband in short_delay_start..total_subbands {
+        let param_idx = subband_to_param[subband];
+
+        for d in 0..PS_MAX_DELAY {
+            ps.delay[subband][d] = ps.delay[subband][num_slots + d];
         }
-        for j in 0..len {
-            ps.delay[k][PS_MAX_DELAY + j] = ps.l_buf[k][j];
+        for s in 0..num_slots {
+            ps.delay[subband][PS_MAX_DELAY + s] = ps.l_buf[subband][s];
         }
-        for n in 0..len {
-            ps.r_buf[k][n][0] = transient_gain[i][n] * ps.delay[k][PS_MAX_DELAY + n - 1][0];
-            ps.r_buf[k][n][1] = transient_gain[i][n] * ps.delay[k][PS_MAX_DELAY + n - 1][1];
+        for slot in 0..num_slots {
+            ps.r_buf[subband][slot][0] =
+                attenuation[param_idx][slot] * ps.delay[subband][PS_MAX_DELAY + slot - 1][0];
+            ps.r_buf[subband][slot][1] =
+                attenuation[param_idx][slot] * ps.delay[subband][PS_MAX_DELAY + slot - 1][1];
         }
     }
 }
 
-fn map_idx_10_to_20(
-    par_mapped: &mut [i8; PS_MAX_NR_IIDICC],
-    par: &[i8; PS_MAX_NR_IIDICC],
-    full: bool,
+// ---------------------------------------------------------------------------
+// Parameter band mapping (ISO/IEC 14496-3:2009, Section 8.6.4.6.3)
+// ---------------------------------------------------------------------------
+
+/// Expand 10-band parameters to 20-band representation by duplicating entries.
+///
+/// ISO/IEC 14496-3:2009, 8.6.4.6.3 -- parameter mapping.
+fn expand_10_to_20(
+    dst: &mut [i8; PS_MAX_NR_IIDICC],
+    src: &[i8; PS_MAX_NR_IIDICC],
+    full_range: bool,
 ) {
-    if full {
-        for b in (0..=9).rev() {
-            par_mapped[2 * b + 1] = par[b];
-            par_mapped[2 * b] = par[b];
+    if full_range {
+        // Duplicate each of the 10 source bands into 2 destination bands.
+        for idx in (0..=9).rev() {
+            dst[2 * idx + 1] = src[idx];
+            dst[2 * idx] = src[idx];
         }
     }
     else {
-        for b in (0..=4).rev() {
-            par_mapped[2 * b + 1] = par[b];
-            par_mapped[2 * b] = par[b];
+        // Only the lower 5 source bands are duplicated.
+        for idx in (0..=4).rev() {
+            dst[2 * idx + 1] = src[idx];
+            dst[2 * idx] = src[idx];
         }
-        par_mapped[10] = 0;
+        dst[10] = 0;
     }
 }
 
-fn map_idx_34_to_20(
-    par_mapped: &mut [i8; PS_MAX_NR_IIDICC],
-    par: &[i8; PS_MAX_NR_IIDICC],
-    full: bool,
+/// Contract 34-band parameters to 20-band representation by averaging groups.
+///
+/// ISO/IEC 14496-3:2009, 8.6.4.6.3 -- parameter mapping.
+fn contract_34_to_20(
+    dst: &mut [i8; PS_MAX_NR_IIDICC],
+    src: &[i8; PS_MAX_NR_IIDICC],
+    full_range: bool,
 ) {
-    par_mapped[0] = ((2i16 * par[0] as i16 + par[1] as i16) / 3) as i8;
-    par_mapped[1] = ((par[1] as i16 + 2i16 * par[2] as i16) / 3) as i8;
-    par_mapped[2] = ((2i16 * par[3] as i16 + par[4] as i16) / 3) as i8;
-    par_mapped[3] = ((par[4] as i16 + 2i16 * par[5] as i16) / 3) as i8;
-    par_mapped[4] = ((par[6] as i16 + par[7] as i16) / 2) as i8;
-    par_mapped[5] = ((par[8] as i16 + par[9] as i16) / 2) as i8;
-    par_mapped[6] = par[10];
-    par_mapped[7] = par[11];
-    par_mapped[8] = ((par[12] as i16 + par[13] as i16) / 2) as i8;
-    par_mapped[9] = ((par[14] as i16 + par[15] as i16) / 2) as i8;
-    par_mapped[10] = par[16];
-    if full {
-        par_mapped[11] = par[17];
-        par_mapped[12] = par[18];
-        par_mapped[13] = par[19];
-        par_mapped[14] = ((par[20] as i16 + par[21] as i16) / 2) as i8;
-        par_mapped[15] = ((par[22] as i16 + par[23] as i16) / 2) as i8;
-        par_mapped[16] = ((par[24] as i16 + par[25] as i16) / 2) as i8;
-        par_mapped[17] = ((par[26] as i16 + par[27] as i16) / 2) as i8;
-        par_mapped[18] =
-            ((par[28] as i16 + par[29] as i16 + par[30] as i16 + par[31] as i16) / 4) as i8;
-        par_mapped[19] = ((par[32] as i16 + par[33] as i16) / 2) as i8;
+    // Lower bands: weighted averages of adjacent 34-band parameters.
+    dst[0] = ((2i16 * src[0] as i16 + src[1] as i16) / 3) as i8;
+    dst[1] = ((src[1] as i16 + 2i16 * src[2] as i16) / 3) as i8;
+    dst[2] = ((2i16 * src[3] as i16 + src[4] as i16) / 3) as i8;
+    dst[3] = ((src[4] as i16 + 2i16 * src[5] as i16) / 3) as i8;
+    dst[4] = ((src[6] as i16 + src[7] as i16) / 2) as i8;
+    dst[5] = ((src[8] as i16 + src[9] as i16) / 2) as i8;
+    dst[6] = src[10];
+    dst[7] = src[11];
+    dst[8] = ((src[12] as i16 + src[13] as i16) / 2) as i8;
+    dst[9] = ((src[14] as i16 + src[15] as i16) / 2) as i8;
+    dst[10] = src[16];
+
+    if full_range {
+        // Upper bands.
+        dst[11] = src[17];
+        dst[12] = src[18];
+        dst[13] = src[19];
+        dst[14] = ((src[20] as i16 + src[21] as i16) / 2) as i8;
+        dst[15] = ((src[22] as i16 + src[23] as i16) / 2) as i8;
+        dst[16] = ((src[24] as i16 + src[25] as i16) / 2) as i8;
+        dst[17] = ((src[26] as i16 + src[27] as i16) / 2) as i8;
+        dst[18] = ((src[28] as i16 + src[29] as i16 + src[30] as i16 + src[31] as i16) / 4) as i8;
+        dst[19] = ((src[32] as i16 + src[33] as i16) / 2) as i8;
     }
 }
 
-fn map_idx_10_to_34(
-    par_mapped: &mut [i8; PS_MAX_NR_IIDICC],
-    par: &[i8; PS_MAX_NR_IIDICC],
-    full: bool,
+/// Expand 10-band parameters to 34-band representation.
+///
+/// ISO/IEC 14496-3:2009, 8.6.4.6.3 -- parameter mapping.
+fn expand_10_to_34(
+    dst: &mut [i8; PS_MAX_NR_IIDICC],
+    src: &[i8; PS_MAX_NR_IIDICC],
+    full_range: bool,
 ) {
-    if full {
-        for i in 28..34 {
-            par_mapped[i] = par[9];
+    if full_range {
+        // High bands.
+        for pos in 28..34 {
+            dst[pos] = src[9];
         }
-        par_mapped[27] = par[8];
-        par_mapped[26] = par[8];
-        par_mapped[25] = par[8];
-        par_mapped[24] = par[8];
-        for i in 20..24 {
-            par_mapped[i] = par[7];
+        dst[27] = src[8];
+        dst[26] = src[8];
+        dst[25] = src[8];
+        dst[24] = src[8];
+        for pos in 20..24 {
+            dst[pos] = src[7];
         }
-        par_mapped[19] = par[6];
-        par_mapped[18] = par[6];
-        par_mapped[17] = par[5];
-        par_mapped[16] = par[5];
+        dst[19] = src[6];
+        dst[18] = src[6];
+        dst[17] = src[5];
+        dst[16] = src[5];
     }
     else {
-        par_mapped[16] = 0;
+        dst[16] = 0;
     }
-    for i in 12..16 {
-        par_mapped[i] = par[4];
+
+    // Mid and low bands.
+    for pos in 12..16 {
+        dst[pos] = src[4];
     }
-    par_mapped[11] = par[3];
-    par_mapped[10] = par[3];
-    for i in 6..10 {
-        par_mapped[i] = par[2];
+    dst[11] = src[3];
+    dst[10] = src[3];
+    for pos in 6..10 {
+        dst[pos] = src[2];
     }
-    for i in 3..6 {
-        par_mapped[i] = par[1];
+    for pos in 3..6 {
+        dst[pos] = src[1];
     }
-    par_mapped[2] = par[0];
-    par_mapped[1] = par[0];
-    par_mapped[0] = par[0];
+    dst[2] = src[0];
+    dst[1] = src[0];
+    dst[0] = src[0];
 }
 
-fn map_idx_20_to_34(
-    par_mapped: &mut [i8; PS_MAX_NR_IIDICC],
-    par: &[i8; PS_MAX_NR_IIDICC],
-    full: bool,
+/// Expand 20-band parameters to 34-band representation, with interpolation
+/// at boundary crossings.
+///
+/// ISO/IEC 14496-3:2009, 8.6.4.6.3 -- parameter mapping.
+fn expand_20_to_34(
+    dst: &mut [i8; PS_MAX_NR_IIDICC],
+    src: &[i8; PS_MAX_NR_IIDICC],
+    full_range: bool,
 ) {
-    if full {
-        par_mapped[33] = par[19];
-        par_mapped[32] = par[19];
-        for i in 28..32 {
-            par_mapped[i] = par[18];
+    if full_range {
+        // Upper bands.
+        dst[33] = src[19];
+        dst[32] = src[19];
+        for pos in 28..32 {
+            dst[pos] = src[18];
         }
-        par_mapped[27] = par[17];
-        par_mapped[26] = par[17];
-        par_mapped[25] = par[16];
-        par_mapped[24] = par[16];
-        par_mapped[23] = par[15];
-        par_mapped[22] = par[15];
-        par_mapped[21] = par[14];
-        par_mapped[20] = par[14];
-        par_mapped[19] = par[13];
-        par_mapped[18] = par[12];
-        par_mapped[17] = par[11];
+        dst[27] = src[17];
+        dst[26] = src[17];
+        dst[25] = src[16];
+        dst[24] = src[16];
+        dst[23] = src[15];
+        dst[22] = src[15];
+        dst[21] = src[14];
+        dst[20] = src[14];
+        dst[19] = src[13];
+        dst[18] = src[12];
+        dst[17] = src[11];
     }
-    par_mapped[16] = par[10];
-    par_mapped[15] = par[9];
-    par_mapped[14] = par[9];
-    par_mapped[13] = par[8];
-    par_mapped[12] = par[8];
-    par_mapped[11] = par[7];
-    par_mapped[10] = par[6];
-    par_mapped[9] = par[5];
-    par_mapped[8] = par[5];
-    par_mapped[7] = par[4];
-    par_mapped[6] = par[4];
-    par_mapped[5] = par[3];
-    par_mapped[4] = ((par[2] as i16 + par[3] as i16) / 2) as i8;
-    par_mapped[3] = par[2];
-    par_mapped[2] = par[1];
-    par_mapped[1] = ((par[0] as i16 + par[1] as i16) / 2) as i8;
-    par_mapped[0] = par[0];
+
+    // Lower bands (always mapped).
+    dst[16] = src[10];
+    dst[15] = src[9];
+    dst[14] = src[9];
+    dst[13] = src[8];
+    dst[12] = src[8];
+    dst[11] = src[7];
+    dst[10] = src[6];
+    dst[9] = src[5];
+    dst[8] = src[5];
+    dst[7] = src[4];
+    dst[6] = src[4];
+    dst[5] = src[3];
+    dst[4] = ((src[2] as i16 + src[3] as i16) / 2) as i8;
+    dst[3] = src[2];
+    dst[2] = src[1];
+    dst[1] = ((src[0] as i16 + src[1] as i16) / 2) as i8;
+    dst[0] = src[0];
 }
 
-/// Map float values from 20-band to 34-band representation (for H matrices).
-fn map_val_20_to_34(par: &mut [f32; PS_MAX_NR_IIDICC]) {
-    par[33] = par[19];
-    par[32] = par[19];
-    par[31] = par[18];
-    par[30] = par[18];
-    par[29] = par[18];
-    par[28] = par[18];
-    par[27] = par[17];
-    par[26] = par[17];
-    par[25] = par[16];
-    par[24] = par[16];
-    par[23] = par[15];
-    par[22] = par[15];
-    par[21] = par[14];
-    par[20] = par[14];
-    par[19] = par[13];
-    par[18] = par[12];
-    par[17] = par[11];
-    par[16] = par[10];
-    par[15] = par[9];
-    par[14] = par[9];
-    par[13] = par[8];
-    par[12] = par[8];
-    par[11] = par[7];
-    par[10] = par[6];
-    par[9] = par[5];
-    par[8] = par[5];
-    par[7] = par[4];
-    par[6] = par[4];
-    par[5] = par[3];
-    par[4] = (par[2] + par[3]) * 0.5;
-    par[3] = par[2];
-    par[2] = par[1];
-    par[1] = (par[0] + par[1]) * 0.5;
+/// Expand float-valued 20-band H-matrix data to 34-band representation.
+///
+/// ISO/IEC 14496-3:2009, 8.6.4.6.3 -- mixing matrix remapping.
+fn expand_val_20_to_34(values: &mut [f32; PS_MAX_NR_IIDICC]) {
+    values[33] = values[19];
+    values[32] = values[19];
+    values[31] = values[18];
+    values[30] = values[18];
+    values[29] = values[18];
+    values[28] = values[18];
+    values[27] = values[17];
+    values[26] = values[17];
+    values[25] = values[16];
+    values[24] = values[16];
+    values[23] = values[15];
+    values[22] = values[15];
+    values[21] = values[14];
+    values[20] = values[14];
+    values[19] = values[13];
+    values[18] = values[12];
+    values[17] = values[11];
+    values[16] = values[10];
+    values[15] = values[9];
+    values[14] = values[9];
+    values[13] = values[8];
+    values[12] = values[8];
+    values[11] = values[7];
+    values[10] = values[6];
+    values[9] = values[5];
+    values[8] = values[5];
+    values[7] = values[4];
+    values[6] = values[4];
+    values[5] = values[3];
+    values[4] = (values[2] + values[3]) * 0.5;
+    values[3] = values[2];
+    values[2] = values[1];
+    values[1] = (values[0] + values[1]) * 0.5;
 }
 
-/// Map float values from 34-band to 20-band representation (for H matrices).
-fn map_val_34_to_20(par: &mut [f32; PS_MAX_NR_IIDICC]) {
-    par[0] = (2.0 * par[0] + par[1]) * 0.33333333;
-    par[1] = (par[1] + 2.0 * par[2]) * 0.33333333;
-    par[2] = (2.0 * par[3] + par[4]) * 0.33333333;
-    par[3] = (par[4] + 2.0 * par[5]) * 0.33333333;
-    par[4] = (par[6] + par[7]) * 0.5;
-    par[5] = (par[8] + par[9]) * 0.5;
-    par[6] = par[10];
-    par[7] = par[11];
-    par[8] = (par[12] + par[13]) * 0.5;
-    par[9] = (par[14] + par[15]) * 0.5;
-    par[10] = par[16];
-    par[11] = par[17];
-    par[12] = par[18];
-    par[13] = par[19];
-    par[14] = (par[20] + par[21]) * 0.5;
-    par[15] = (par[22] + par[23]) * 0.5;
-    par[16] = (par[24] + par[25]) * 0.5;
-    par[17] = (par[26] + par[27]) * 0.5;
-    par[18] = (par[28] + par[29] + par[30] + par[31]) * 0.25;
-    par[19] = (par[32] + par[33]) * 0.5;
+/// Contract float-valued 34-band H-matrix data to 20-band representation.
+///
+/// ISO/IEC 14496-3:2009, 8.6.4.6.3 -- mixing matrix remapping.
+fn contract_val_34_to_20(values: &mut [f32; PS_MAX_NR_IIDICC]) {
+    values[0] = (2.0 * values[0] + values[1]) * 0.33333333;
+    values[1] = (values[1] + 2.0 * values[2]) * 0.33333333;
+    values[2] = (2.0 * values[3] + values[4]) * 0.33333333;
+    values[3] = (values[4] + 2.0 * values[5]) * 0.33333333;
+    values[4] = (values[6] + values[7]) * 0.5;
+    values[5] = (values[8] + values[9]) * 0.5;
+    values[6] = values[10];
+    values[7] = values[11];
+    values[8] = (values[12] + values[13]) * 0.5;
+    values[9] = (values[14] + values[15]) * 0.5;
+    values[10] = values[16];
+    values[11] = values[17];
+    values[12] = values[18];
+    values[13] = values[19];
+    values[14] = (values[20] + values[21]) * 0.5;
+    values[15] = (values[22] + values[23]) * 0.5;
+    values[16] = (values[24] + values[25]) * 0.5;
+    values[17] = (values[26] + values[27]) * 0.5;
+    values[18] = (values[28] + values[29] + values[30] + values[31]) * 0.25;
+    values[19] = (values[32] + values[33]) * 0.5;
 }
 
-/// Remap integer parameter arrays (for 34-band target).
-fn remap34(
-    par: &[[i8; PS_MAX_NR_IIDICC]; PS_MAX_NUM_ENV],
-    num_par: usize,
-    num_env: usize,
-    full: bool,
+/// Remap integer parameter arrays to 34-band target resolution.
+///
+/// ISO/IEC 14496-3:2009, 8.6.4.6.3 -- parameter remapping.
+fn remap_to_34(
+    params: &[[i8; PS_MAX_NR_IIDICC]; PS_MAX_NUM_ENV],
+    source_band_count: usize,
+    envelope_count: usize,
+    full_range: bool,
 ) -> [[i8; PS_MAX_NR_IIDICC]; PS_MAX_NUM_ENV] {
-    let mut mapped = [[0i8; PS_MAX_NR_IIDICC]; PS_MAX_NUM_ENV];
-    if num_par == 20 || num_par == 11 {
-        for e in 0..num_env {
-            map_idx_20_to_34(&mut mapped[e], &par[e], full);
+    let mut remapped = [[0i8; PS_MAX_NR_IIDICC]; PS_MAX_NUM_ENV];
+
+    if source_band_count == 20 || source_band_count == 11 {
+        for env in 0..envelope_count {
+            expand_20_to_34(&mut remapped[env], &params[env], full_range);
         }
     }
-    else if num_par == 10 || num_par == 5 {
-        for e in 0..num_env {
-            map_idx_10_to_34(&mut mapped[e], &par[e], full);
+    else if source_band_count == 10 || source_band_count == 5 {
+        for env in 0..envelope_count {
+            expand_10_to_34(&mut remapped[env], &params[env], full_range);
         }
     }
     else {
-        // Already 34 bands, copy as-is.
-        mapped[..num_env].copy_from_slice(&par[..num_env]);
+        // Already at 34 bands -- copy unchanged.
+        remapped[..envelope_count].copy_from_slice(&params[..envelope_count]);
     }
-    mapped
+
+    remapped
 }
 
-/// Remap integer parameter arrays (for 20-band target).
-fn remap20(
-    par: &[[i8; PS_MAX_NR_IIDICC]; PS_MAX_NUM_ENV],
-    num_par: usize,
-    num_env: usize,
-    full: bool,
+/// Remap integer parameter arrays to 20-band target resolution.
+///
+/// ISO/IEC 14496-3:2009, 8.6.4.6.3 -- parameter remapping.
+fn remap_to_20(
+    params: &[[i8; PS_MAX_NR_IIDICC]; PS_MAX_NUM_ENV],
+    source_band_count: usize,
+    envelope_count: usize,
+    full_range: bool,
 ) -> [[i8; PS_MAX_NR_IIDICC]; PS_MAX_NUM_ENV] {
-    let mut mapped = [[0i8; PS_MAX_NR_IIDICC]; PS_MAX_NUM_ENV];
-    if num_par == 34 || num_par == 17 {
-        for e in 0..num_env {
-            map_idx_34_to_20(&mut mapped[e], &par[e], full);
+    let mut remapped = [[0i8; PS_MAX_NR_IIDICC]; PS_MAX_NUM_ENV];
+
+    if source_band_count == 34 || source_band_count == 17 {
+        for env in 0..envelope_count {
+            contract_34_to_20(&mut remapped[env], &params[env], full_range);
         }
     }
-    else if num_par == 10 || num_par == 5 {
-        for e in 0..num_env {
-            map_idx_10_to_20(&mut mapped[e], &par[e], full);
+    else if source_band_count == 10 || source_band_count == 5 {
+        for env in 0..envelope_count {
+            expand_10_to_20(&mut remapped[env], &params[env], full_range);
         }
     }
     else {
-        mapped[..num_env].copy_from_slice(&par[..num_env]);
+        // Already at 20 bands -- copy unchanged.
+        remapped[..envelope_count].copy_from_slice(&params[..envelope_count]);
     }
-    mapped
+
+    remapped
 }
+
+// ---------------------------------------------------------------------------
+// Stereo processing (ISO/IEC 14496-3:2009, Section 8.6.4.6.3)
+// ---------------------------------------------------------------------------
 
 /// Apply stereo mixing using IID/ICC (and optionally IPD/OPD) parameters.
 ///
 /// Remaps parameters to the active band resolution, computes the stereo
 /// mixing matrices H11/H12/H21/H22, and applies interpolated mixing:
 /// `L[k] = h11*S[k] + h12*D[k]`, `R[k] = h21*S[k] + h22*D[k]`.
-fn stereo_processing(ps: &mut PsContext, is34: bool) {
+///
+/// ISO/IEC 14496-3:2009, 8.6.4.6.3 -- stereo processing.
+fn apply_stereo_mixing(ps: &mut PsContext, use_34bands: bool) {
     let tables = &*PS_TABLES;
-    let is34_idx = is34 as usize;
-    let k_to_i = if is34 { &K_TO_I_34[..] } else { &K_TO_I_20[..] };
-    let nr_par = NR_PAR_BANDS[is34_idx];
-    let nr_bands = NR_BANDS[is34_idx];
+    let mode_idx = use_34bands as usize;
 
-    let ps2 = &ps.common;
+    let subband_to_param = if use_34bands { &K_TO_I_34[..] } else { &K_TO_I_20[..] };
+    let num_param_bands = NR_PAR_BANDS[mode_idx];
+    let total_subbands = NR_BANDS[mode_idx];
 
-    // Use HA (baseline) or HB depending on ICC mode.
-    let h_lut = if ps2.icc_mode < 3 { &tables.ha } else { &tables.hb };
+    let ctx = &ps.common;
 
-    // Copy previous envelope's H values.
-    if ps2.num_env_old > 0 {
-        for ri in 0..2 {
-            ps.h11[ri][0] = ps.h11[ri][ps2.num_env_old];
-            ps.h12[ri][0] = ps.h12[ri][ps2.num_env_old];
-            ps.h21[ri][0] = ps.h21[ri][ps2.num_env_old];
-            ps.h22[ri][0] = ps.h22[ri][ps2.num_env_old];
+    // Select mixing matrix (HA for baseline, HB for alternative modes).
+    // ISO/IEC 14496-3:2009, 8.6.4.6.3, Table 8.52.
+    let mixing_lut = if ctx.icc_mode < 3 { &tables.ha } else { &tables.hb };
+
+    // Carry forward the previous frame's final envelope H-values as the
+    // starting point for interpolation in the current frame.
+    if ctx.num_env_old > 0 {
+        for component in 0..2 {
+            ps.h11[component][0] = ps.h11[component][ctx.num_env_old];
+            ps.h12[component][0] = ps.h12[component][ctx.num_env_old];
+            ps.h21[component][0] = ps.h21[component][ctx.num_env_old];
+            ps.h22[component][0] = ps.h22[component][ctx.num_env_old];
         }
     }
 
-    // Remap H values if band mode changed.
-    if is34 && !ps2.is34bands_old {
-        for ri in 0..2 {
-            map_val_20_to_34(&mut ps.h11[ri][0]);
-            map_val_20_to_34(&mut ps.h12[ri][0]);
-            map_val_20_to_34(&mut ps.h21[ri][0]);
-            map_val_20_to_34(&mut ps.h22[ri][0]);
-        }
-        ps.opd_hist = [0; PS_MAX_NR_IIDICC];
-        ps.ipd_hist = [0; PS_MAX_NR_IIDICC];
-    }
-    else if !is34 && ps2.is34bands_old {
-        for ri in 0..2 {
-            map_val_34_to_20(&mut ps.h11[ri][0]);
-            map_val_34_to_20(&mut ps.h12[ri][0]);
-            map_val_34_to_20(&mut ps.h21[ri][0]);
-            map_val_34_to_20(&mut ps.h22[ri][0]);
+    // Remap the H-values when band resolution switches between frames.
+    if use_34bands && !ctx.is34bands_old {
+        for component in 0..2 {
+            expand_val_20_to_34(&mut ps.h11[component][0]);
+            expand_val_20_to_34(&mut ps.h12[component][0]);
+            expand_val_20_to_34(&mut ps.h21[component][0]);
+            expand_val_20_to_34(&mut ps.h22[component][0]);
         }
         ps.opd_hist = [0; PS_MAX_NR_IIDICC];
         ps.ipd_hist = [0; PS_MAX_NR_IIDICC];
     }
+    else if !use_34bands && ctx.is34bands_old {
+        for component in 0..2 {
+            contract_val_34_to_20(&mut ps.h11[component][0]);
+            contract_val_34_to_20(&mut ps.h12[component][0]);
+            contract_val_34_to_20(&mut ps.h21[component][0]);
+            contract_val_34_to_20(&mut ps.h22[component][0]);
+        }
+        ps.opd_hist = [0; PS_MAX_NR_IIDICC];
+        ps.ipd_hist = [0; PS_MAX_NR_IIDICC];
+    }
 
-    // Remap parameters.
-    let iid_mapped = if is34 {
-        remap34(&ps2.iid_par, ps2.nr_iid_par, ps2.num_env, true)
+    // Remap decoded parameters to the current band resolution.
+    let iid_remapped = if use_34bands {
+        remap_to_34(&ctx.iid_par, ctx.nr_iid_par, ctx.num_env, true)
     }
     else {
-        remap20(&ps2.iid_par, ps2.nr_iid_par, ps2.num_env, true)
+        remap_to_20(&ctx.iid_par, ctx.nr_iid_par, ctx.num_env, true)
     };
-    let icc_mapped = if is34 {
-        remap34(&ps2.icc_par, ps2.nr_icc_par, ps2.num_env, true)
+    let icc_remapped = if use_34bands {
+        remap_to_34(&ctx.icc_par, ctx.nr_icc_par, ctx.num_env, true)
     }
     else {
-        remap20(&ps2.icc_par, ps2.nr_icc_par, ps2.num_env, true)
+        remap_to_20(&ctx.icc_par, ctx.nr_icc_par, ctx.num_env, true)
     };
-    let ipd_mapped = if is34 {
-        remap34(&ps2.ipd_par, ps2.nr_ipdopd_par, ps2.num_env, false)
+    let ipd_remapped = if use_34bands {
+        remap_to_34(&ctx.ipd_par, ctx.nr_ipdopd_par, ctx.num_env, false)
     }
     else {
-        remap20(&ps2.ipd_par, ps2.nr_ipdopd_par, ps2.num_env, false)
+        remap_to_20(&ctx.ipd_par, ctx.nr_ipdopd_par, ctx.num_env, false)
     };
-    let opd_mapped = if is34 {
-        remap34(&ps2.opd_par, ps2.nr_ipdopd_par, ps2.num_env, false)
+    let opd_remapped = if use_34bands {
+        remap_to_34(&ctx.opd_par, ctx.nr_ipdopd_par, ctx.num_env, false)
     }
     else {
-        remap20(&ps2.opd_par, ps2.nr_ipdopd_par, ps2.num_env, false)
+        remap_to_20(&ctx.opd_par, ctx.nr_ipdopd_par, ctx.num_env, false)
     };
 
-    let num_env = ps.common.num_env;
-    let iid_quant = ps.common.iid_quant;
-    let enable_ipdopd = ps.common.enable_ipdopd;
-    let nr_ipdopd = NR_IPDOPD_BANDS[is34_idx];
+    let envelope_count = ps.common.num_env;
+    let quant_fine = ps.common.iid_quant;
+    let phase_enabled = ps.common.enable_ipdopd;
+    let num_phase_bands = NR_IPDOPD_BANDS[mode_idx];
 
-    // Compute mixing matrix for each envelope.
-    for e in 0..num_env {
-        for b in 0..nr_par {
-            // Clamp indices to valid ranges. Malicious bitstreams can produce arbitrary
-            // i8 values via wrapping_add of delta-coded parameters, which would cause
-            // out-of-bounds panics without clamping.
-            // h_lut dimensions: [46][8][4]
-            let raw_iid = iid_mapped[e][b] as i32 + 7 + 23 * iid_quant as i32;
-            let iid_idx = raw_iid.clamp(0, 45) as usize;
-            let icc_idx = icc_mapped[e][b].clamp(0, 7) as usize;
+    // Compute and apply the mixing matrix for each envelope.
+    // ISO/IEC 14496-3:2009, 8.6.4.6.3 -- stereo mixing matrix computation.
+    for env in 0..envelope_count {
+        for band in 0..num_param_bands {
+            // Clamp look-up indices to valid ranges.
+            // Malformed bitstreams can produce arbitrary i8 values through
+            // wrapping delta-coded parameters.
+            let raw_iid_offset = iid_remapped[env][band] as i32 + 7 + 23 * quant_fine as i32;
+            let clamped_iid = raw_iid_offset.clamp(0, 45) as usize;
+            let clamped_icc = icc_remapped[env][band].clamp(0, 7) as usize;
 
-            let h11 = h_lut[iid_idx][icc_idx][0];
-            let h12 = h_lut[iid_idx][icc_idx][1];
-            let h21 = h_lut[iid_idx][icc_idx][2];
-            let h22 = h_lut[iid_idx][icc_idx][3];
+            let lut_h11 = mixing_lut[clamped_iid][clamped_icc][0];
+            let lut_h12 = mixing_lut[clamped_iid][clamped_icc][1];
+            let lut_h21 = mixing_lut[clamped_iid][clamped_icc][2];
+            let lut_h22 = mixing_lut[clamped_iid][clamped_icc][3];
 
-            if enable_ipdopd && b < nr_ipdopd {
-                let opd_idx = (ps.opd_hist[b] as usize * 8 + opd_mapped[e][b] as usize) & 0x1FF;
-                let ipd_idx = (ps.ipd_hist[b] as usize * 8 + ipd_mapped[e][b] as usize) & 0x1FF;
+            if phase_enabled && band < num_phase_bands {
+                // IPD/OPD processing.
+                // ISO/IEC 14496-3:2009, 8.6.4.6.3 -- phase parameters.
+                let opd_idx =
+                    (ps.opd_hist[band] as usize * 8 + opd_remapped[env][band] as usize) & 0x1FF;
+                let ipd_idx =
+                    (ps.ipd_hist[band] as usize * 8 + ipd_remapped[env][band] as usize) & 0x1FF;
 
-                let opd_re = tables.pd_re_smooth[opd_idx];
-                let opd_im = tables.pd_im_smooth[opd_idx];
-                let ipd_re = tables.pd_re_smooth[ipd_idx];
-                let ipd_im = tables.pd_im_smooth[ipd_idx];
+                let opd_cos = tables.pd_re_smooth[opd_idx];
+                let opd_sin = tables.pd_im_smooth[opd_idx];
+                let ipd_cos = tables.pd_re_smooth[ipd_idx];
+                let ipd_sin = tables.pd_im_smooth[ipd_idx];
 
-                ps.opd_hist[b] = (opd_idx & 0x3F) as i8;
-                ps.ipd_hist[b] = (ipd_idx & 0x3F) as i8;
+                ps.opd_hist[band] = (opd_idx & 0x3F) as i8;
+                ps.ipd_hist[band] = (ipd_idx & 0x3F) as i8;
 
-                let ipd_adj_re = opd_re * ipd_re + opd_im * ipd_im;
-                let ipd_adj_im = opd_im * ipd_re - opd_re * ipd_im;
+                let adj_cos = opd_cos * ipd_cos + opd_sin * ipd_sin;
+                let adj_sin = opd_sin * ipd_cos - opd_cos * ipd_sin;
 
-                ps.h11[1][e + 1][b] = h11 * opd_im;
-                ps.h11[0][e + 1][b] = h11 * opd_re;
-                ps.h12[1][e + 1][b] = h12 * ipd_adj_im;
-                ps.h12[0][e + 1][b] = h12 * ipd_adj_re;
-                ps.h21[1][e + 1][b] = h21 * opd_im;
-                ps.h21[0][e + 1][b] = h21 * opd_re;
-                ps.h22[1][e + 1][b] = h22 * ipd_adj_im;
-                ps.h22[0][e + 1][b] = h22 * ipd_adj_re;
+                ps.h11[1][env + 1][band] = lut_h11 * opd_sin;
+                ps.h11[0][env + 1][band] = lut_h11 * opd_cos;
+                ps.h12[1][env + 1][band] = lut_h12 * adj_sin;
+                ps.h12[0][env + 1][band] = lut_h12 * adj_cos;
+                ps.h21[1][env + 1][band] = lut_h21 * opd_sin;
+                ps.h21[0][env + 1][band] = lut_h21 * opd_cos;
+                ps.h22[1][env + 1][band] = lut_h22 * adj_sin;
+                ps.h22[0][env + 1][band] = lut_h22 * adj_cos;
             }
             else {
-                ps.h11[0][e + 1][b] = h11;
-                ps.h12[0][e + 1][b] = h12;
-                ps.h21[0][e + 1][b] = h21;
-                ps.h22[0][e + 1][b] = h22;
-                ps.h11[1][e + 1][b] = 0.0;
-                ps.h12[1][e + 1][b] = 0.0;
-                ps.h21[1][e + 1][b] = 0.0;
-                ps.h22[1][e + 1][b] = 0.0;
+                ps.h11[0][env + 1][band] = lut_h11;
+                ps.h12[0][env + 1][band] = lut_h12;
+                ps.h21[0][env + 1][band] = lut_h21;
+                ps.h22[0][env + 1][band] = lut_h22;
+                ps.h11[1][env + 1][band] = 0.0;
+                ps.h12[1][env + 1][band] = 0.0;
+                ps.h21[1][env + 1][band] = 0.0;
+                ps.h22[1][env + 1][band] = 0.0;
             }
         }
 
-        // Apply stereo mixing with interpolation across each envelope.
-        let border = &ps.common.border_position;
-        for k in 0..nr_bands {
-            let b = k_to_i[k];
-            let start = (border[e] + 1) as usize;
-            let stop = (border[e + 1] + 1) as usize;
-            let width = if stop > start { stop - start } else { 1 };
-            let inv_width = 1.0 / width as f32;
+        // Interpolate mixing coefficients across each envelope and apply mixing.
+        // ISO/IEC 14496-3:2009, 8.6.4.6.3 -- stereo mixing with linear interpolation.
+        let borders = &ps.common.border_position;
+        for subband in 0..total_subbands {
+            let band = subband_to_param[subband];
+            let env_start = (borders[env] + 1) as usize;
+            let env_stop = (borders[env + 1] + 1) as usize;
+            let span = if env_stop > env_start { env_stop - env_start } else { 1 };
+            let inv_span = 1.0 / span as f32;
 
-            // ISO/IEC 14496-3 stereo mixing: L = H11*S + H21*D, R = H12*S + H22*D
-            // h0/h1 are signal/decorr for LEFT, h2/h3 are signal/decorr for RIGHT.
-            let mut h0 = ps.h11[0][e][b];
-            let mut h1 = ps.h21[0][e][b];
-            let mut h2 = ps.h12[0][e][b];
-            let mut h3 = ps.h22[0][e][b];
+            // Current interpolated values for left: (signal, decorr),
+            // and right: (signal, decorr).
+            let mut left_sig = ps.h11[0][env][band];
+            let mut left_dec = ps.h21[0][env][band];
+            let mut right_sig = ps.h12[0][env][band];
+            let mut right_dec = ps.h22[0][env][band];
 
-            let hs0 = (ps.h11[0][e + 1][b] - h0) * inv_width;
-            let hs1 = (ps.h21[0][e + 1][b] - h1) * inv_width;
-            let hs2 = (ps.h12[0][e + 1][b] - h2) * inv_width;
-            let hs3 = (ps.h22[0][e + 1][b] - h3) * inv_width;
+            // Per-sample increment.
+            let left_sig_step = (ps.h11[0][env + 1][band] - left_sig) * inv_span;
+            let left_dec_step = (ps.h21[0][env + 1][band] - left_dec) * inv_span;
+            let right_sig_step = (ps.h12[0][env + 1][band] - right_sig) * inv_span;
+            let right_dec_step = (ps.h22[0][env + 1][band] - right_dec) * inv_span;
 
-            if enable_ipdopd {
-                // Same H12/H21 swap as real path above.
-                let mut h0i = ps.h11[1][e][b];
-                let mut h1i = ps.h21[1][e][b];
-                let mut h2i = ps.h12[1][e][b];
-                let mut h3i = ps.h22[1][e][b];
+            if phase_enabled {
+                // Complex mixing with IPD/OPD phase rotation.
+                let mut left_sig_im = ps.h11[1][env][band];
+                let mut left_dec_im = ps.h21[1][env][band];
+                let mut right_sig_im = ps.h12[1][env][band];
+                let mut right_dec_im = ps.h22[1][env][band];
 
-                let hs0i = (ps.h11[1][e + 1][b] - h0i) * inv_width;
-                let hs1i = (ps.h21[1][e + 1][b] - h1i) * inv_width;
-                let hs2i = (ps.h12[1][e + 1][b] - h2i) * inv_width;
-                let hs3i = (ps.h22[1][e + 1][b] - h3i) * inv_width;
+                let left_sig_im_step = (ps.h11[1][env + 1][band] - left_sig_im) * inv_span;
+                let left_dec_im_step = (ps.h21[1][env + 1][band] - left_dec_im) * inv_span;
+                let right_sig_im_step = (ps.h12[1][env + 1][band] - right_sig_im) * inv_span;
+                let right_dec_im_step = (ps.h22[1][env + 1][band] - right_dec_im) * inv_span;
 
-                // Negate imaginary part for certain bands (per spec).
-                let negate = if is34 { k >= 9 && k <= 13 } else { k <= 1 };
+                // Certain subbands negate the imaginary mixing component per the spec.
+                let negate_phase =
+                    if use_34bands { subband >= 9 && subband <= 13 } else { subband <= 1 };
 
-                for n in start..stop {
-                    if n >= 32 {
+                for slot in env_start..env_stop {
+                    if slot >= 32 {
                         break;
                     }
-                    let l_re = ps.l_buf[k][n][0];
-                    let l_im = ps.l_buf[k][n][1];
-                    let r_re = ps.r_buf[k][n][0];
-                    let r_im = ps.r_buf[k][n][1];
+                    let mono_re = ps.l_buf[subband][slot][0];
+                    let mono_im = ps.l_buf[subband][slot][1];
+                    let side_re = ps.r_buf[subband][slot][0];
+                    let side_im = ps.r_buf[subband][slot][1];
 
-                    h0 += hs0;
-                    h1 += hs1;
-                    h2 += hs2;
-                    h3 += hs3;
-                    h0i += hs0i;
-                    h1i += hs1i;
-                    h2i += hs2i;
-                    h3i += hs3i;
+                    left_sig += left_sig_step;
+                    left_dec += left_dec_step;
+                    right_sig += right_sig_step;
+                    right_dec += right_dec_step;
+                    left_sig_im += left_sig_im_step;
+                    left_dec_im += left_dec_im_step;
+                    right_sig_im += right_sig_im_step;
+                    right_dec_im += right_dec_im_step;
 
-                    let (h0i_eff, h1i_eff, h2i_eff, h3i_eff) =
-                        if negate { (-h0i, -h1i, -h2i, -h3i) } else { (h0i, h1i, h2i, h3i) };
+                    let (ls_im, ld_im, rs_im, rd_im) = if negate_phase {
+                        (-left_sig_im, -left_dec_im, -right_sig_im, -right_dec_im)
+                    }
+                    else {
+                        (left_sig_im, left_dec_im, right_sig_im, right_dec_im)
+                    };
 
-                    ps.l_buf[k][n][0] = h0 * l_re + h1 * r_re - h0i_eff * l_im - h1i_eff * r_im;
-                    ps.l_buf[k][n][1] = h0 * l_im + h1 * r_im + h0i_eff * l_re + h1i_eff * r_re;
-                    ps.r_buf[k][n][0] = h2 * l_re + h3 * r_re - h2i_eff * l_im - h3i_eff * r_im;
-                    ps.r_buf[k][n][1] = h2 * l_im + h3 * r_im + h2i_eff * l_re + h3i_eff * r_re;
+                    ps.l_buf[subband][slot][0] =
+                        left_sig * mono_re + left_dec * side_re - ls_im * mono_im - ld_im * side_im;
+                    ps.l_buf[subband][slot][1] =
+                        left_sig * mono_im + left_dec * side_im + ls_im * mono_re + ld_im * side_re;
+                    ps.r_buf[subband][slot][0] = right_sig * mono_re + right_dec * side_re
+                        - rs_im * mono_im
+                        - rd_im * side_im;
+                    ps.r_buf[subband][slot][1] = right_sig * mono_im
+                        + right_dec * side_im
+                        + rs_im * mono_re
+                        + rd_im * side_re;
                 }
             }
             else {
-                for n in start..stop {
-                    if n >= 32 {
+                // Real-only mixing (no IPD/OPD).
+                for slot in env_start..env_stop {
+                    if slot >= 32 {
                         break;
                     }
-                    let l_re = ps.l_buf[k][n][0];
-                    let l_im = ps.l_buf[k][n][1];
-                    let r_re = ps.r_buf[k][n][0];
-                    let r_im = ps.r_buf[k][n][1];
+                    let mono_re = ps.l_buf[subband][slot][0];
+                    let mono_im = ps.l_buf[subband][slot][1];
+                    let side_re = ps.r_buf[subband][slot][0];
+                    let side_im = ps.r_buf[subband][slot][1];
 
-                    h0 += hs0;
-                    h1 += hs1;
-                    h2 += hs2;
-                    h3 += hs3;
+                    left_sig += left_sig_step;
+                    left_dec += left_dec_step;
+                    right_sig += right_sig_step;
+                    right_dec += right_dec_step;
 
-                    ps.l_buf[k][n][0] = h0 * l_re + h1 * r_re;
-                    ps.l_buf[k][n][1] = h0 * l_im + h1 * r_im;
-                    ps.r_buf[k][n][0] = h2 * l_re + h3 * r_re;
-                    ps.r_buf[k][n][1] = h2 * l_im + h3 * r_im;
+                    ps.l_buf[subband][slot][0] = left_sig * mono_re + left_dec * side_re;
+                    ps.l_buf[subband][slot][1] = left_sig * mono_im + left_dec * side_im;
+                    ps.r_buf[subband][slot][0] = right_sig * mono_re + right_dec * side_re;
+                    ps.r_buf[subband][slot][1] = right_sig * mono_im + right_dec * side_im;
                 }
             }
         }
     }
 }
 
+// ---------------------------------------------------------------------------
+// Public entry point
+// ---------------------------------------------------------------------------
+
 /// Apply Parametric Stereo processing.
 ///
 /// Implements the full PS decoding pipeline per ISO/IEC 14496-3:2009, 8.6.4.6:
-/// hybrid analysis → decorrelation → stereo processing → hybrid synthesis.
+/// hybrid analysis -> decorrelation -> stereo processing -> hybrid synthesis.
 ///
 /// Takes the mono QMF representation in `l` and produces stereo output in `l` (left)
 /// and `r` (right). The QMF format is `[re_or_im][time_slot][qmf_band]` where
@@ -1033,34 +1174,34 @@ pub fn ps_apply(
     top: usize,
     num_qmf_slots: usize,
 ) {
-    let is34 = ps.common.is34bands;
-    let is34_idx = is34 as usize;
-    let len: usize = num_qmf_slots;
+    let use_34bands = ps.common.is34bands;
+    let mode_idx = use_34bands as usize;
+    let num_slots: usize = num_qmf_slots;
 
-    // Clear unused bands above top.
-    let nr_bands = NR_BANDS[is34_idx];
-    let top_hybrid = top + nr_bands - 64;
-    for k in top_hybrid..nr_bands {
-        ps.delay[k] = [[0.0; 2]; PS_QMF_TIME_SLOTS + PS_MAX_DELAY];
+    // Zero out delay lines for unused bands above the SBR top frequency.
+    let total_subbands = NR_BANDS[mode_idx];
+    let top_hybrid = top + total_subbands - 64;
+    for subband in top_hybrid..total_subbands {
+        ps.delay[subband] = [[0.0; 2]; PS_QMF_TIME_SLOTS + PS_MAX_DELAY];
     }
-    if top_hybrid < NR_ALLPASS_BANDS[is34_idx] {
-        for k in top_hybrid..NR_ALLPASS_BANDS[is34_idx] {
-            ps.ap_delay[k] = [[[0.0; 2]; PS_QMF_TIME_SLOTS + PS_MAX_AP_DELAY]; PS_AP_LINKS];
+    if top_hybrid < NR_ALLPASS_BANDS[mode_idx] {
+        for subband in top_hybrid..NR_ALLPASS_BANDS[mode_idx] {
+            ps.ap_delay[subband] = [[[0.0; 2]; PS_QMF_TIME_SLOTS + PS_MAX_AP_DELAY]; PS_AP_LINKS];
         }
     }
 
-    // Step 1: Hybrid analysis of the mono (left) signal.
-    hybrid_analysis(&mut ps.l_buf, &mut ps.in_buf, l, is34, len);
+    // Step 1: Hybrid analysis -- decompose mono signal into hybrid sub-subbands.
+    analyze_hybrid(&mut ps.l_buf, &mut ps.in_buf, l, use_34bands, num_slots);
 
-    // Step 2: Decorrelation — generate anticorrelated right signal.
-    decorrelation(ps, is34, len);
+    // Step 2: Decorrelation -- generate anticorrelated side signal.
+    generate_decorrelated_signal(ps, use_34bands, num_slots);
 
-    // Step 3: Stereo processing — mix mono + decorrelated using IID/ICC.
-    stereo_processing(ps, is34);
+    // Step 3: Stereo processing -- mix mono and decorrelated using IID/ICC.
+    apply_stereo_mixing(ps, use_34bands);
 
-    // Step 4: Hybrid synthesis — merge back to QMF domain for both L and R.
-    hybrid_synthesis(l, &ps.l_buf, is34, len);
-    hybrid_synthesis(r, &ps.r_buf, is34, len);
+    // Step 4: Hybrid synthesis -- merge back to QMF domain for left and right.
+    synthesize_hybrid(l, &ps.l_buf, use_34bands, num_slots);
+    synthesize_hybrid(r, &ps.r_buf, use_34bands, num_slots);
 }
 
 #[cfg(test)]
@@ -1084,7 +1225,7 @@ mod tests {
 
     #[test]
     fn verify_ps_context_construction() {
-        // PsContext allocates large buffers on heap — verify it doesn't panic.
+        // PsContext allocates large buffers on heap -- verify it doesn't panic.
         let ctx = PsContext::new();
         assert!(!ctx.common.start);
         assert_eq!(ctx.peak_decay_nrg, [0.0; 34]);
@@ -1094,31 +1235,31 @@ mod tests {
     }
 
     #[test]
-    fn verify_map_idx_10_to_20_full() {
+    fn verify_expand_10_to_20_full() {
         let mut src = [0i8; PS_MAX_NR_IIDICC];
         for i in 0..10 {
             src[i] = (i + 1) as i8;
         }
 
         let mut dst = [0i8; PS_MAX_NR_IIDICC];
-        map_idx_10_to_20(&mut dst, &src, true);
+        expand_10_to_20(&mut dst, &src, true);
 
         // Each 10-band value should be duplicated into two 20-band values.
         for b in 0..10 {
-            assert_eq!(dst[2 * b], src[b], "map_idx_10_to_20 even[{}]", b);
-            assert_eq!(dst[2 * b + 1], src[b], "map_idx_10_to_20 odd[{}]", b);
+            assert_eq!(dst[2 * b], src[b], "expand_10_to_20 even[{}]", b);
+            assert_eq!(dst[2 * b + 1], src[b], "expand_10_to_20 odd[{}]", b);
         }
     }
 
     #[test]
-    fn verify_map_idx_10_to_20_partial() {
+    fn verify_expand_10_to_20_partial() {
         let mut src = [0i8; PS_MAX_NR_IIDICC];
         for i in 0..5 {
             src[i] = (i + 1) as i8;
         }
 
         let mut dst = [0i8; PS_MAX_NR_IIDICC];
-        map_idx_10_to_20(&mut dst, &src, false);
+        expand_10_to_20(&mut dst, &src, false);
 
         // Only first 5 bands are duplicated, band 10 is set to 0.
         for b in 0..5 {
@@ -1129,14 +1270,14 @@ mod tests {
     }
 
     #[test]
-    fn verify_map_idx_10_to_34_full() {
+    fn verify_expand_10_to_34_full() {
         let mut src = [0i8; PS_MAX_NR_IIDICC];
         for i in 0..10 {
             src[i] = (i + 1) as i8;
         }
 
         let mut dst = [0i8; PS_MAX_NR_IIDICC];
-        map_idx_10_to_34(&mut dst, &src, true);
+        expand_10_to_34(&mut dst, &src, true);
 
         // Verify low bands: 0,1,2 should map to par[0].
         assert_eq!(dst[0], src[0]);
@@ -1153,14 +1294,14 @@ mod tests {
     }
 
     #[test]
-    fn verify_map_idx_20_to_34_full() {
+    fn verify_expand_20_to_34_full() {
         let mut src = [0i8; PS_MAX_NR_IIDICC];
         for i in 0..20 {
             src[i] = (i + 1) as i8;
         }
 
         let mut dst = [0i8; PS_MAX_NR_IIDICC];
-        map_idx_20_to_34(&mut dst, &src, true);
+        expand_20_to_34(&mut dst, &src, true);
 
         // First band should be par[0].
         assert_eq!(dst[0], src[0]);
@@ -1175,14 +1316,14 @@ mod tests {
     }
 
     #[test]
-    fn verify_map_idx_34_to_20_full() {
+    fn verify_contract_34_to_20_full() {
         let mut src = [0i8; PS_MAX_NR_IIDICC];
         for i in 0..34 {
             src[i] = (i + 1) as i8;
         }
 
         let mut dst = [0i8; PS_MAX_NR_IIDICC];
-        map_idx_34_to_20(&mut dst, &src, true);
+        contract_34_to_20(&mut dst, &src, true);
 
         // Band 0 is (2*par[0] + par[1])/3.
         let expected = ((2i16 * src[0] as i16 + src[1] as i16) / 3) as i8;
@@ -1194,206 +1335,210 @@ mod tests {
     }
 
     #[test]
-    fn verify_remap34_passthrough_34bands() {
-        let mut par = [[0i8; PS_MAX_NR_IIDICC]; PS_MAX_NUM_ENV];
-        for e in 0..2 {
-            for b in 0..34 {
-                par[e][b] = (b as i8) + (e as i8 * 10);
+    fn verify_remap_to_34_passthrough_34bands() {
+        let mut params = [[0i8; PS_MAX_NR_IIDICC]; PS_MAX_NUM_ENV];
+        for env in 0..2 {
+            for band in 0..34 {
+                params[env][band] = (band as i8) + (env as i8 * 10);
             }
         }
 
-        let result = remap34(&par, 34, 2, true);
+        let result = remap_to_34(&params, 34, 2, true);
 
-        // 34→34 should be identity copy.
-        for e in 0..2 {
-            for b in 0..34 {
-                assert_eq!(result[e][b], par[e][b]);
-            }
-        }
-    }
-
-    #[test]
-    fn verify_remap20_passthrough_20bands() {
-        let mut par = [[0i8; PS_MAX_NR_IIDICC]; PS_MAX_NUM_ENV];
-        for e in 0..2 {
-            for b in 0..20 {
-                par[e][b] = (b as i8) + (e as i8 * 10);
-            }
-        }
-
-        let result = remap20(&par, 20, 2, true);
-
-        // 20→20 should be identity copy.
-        for e in 0..2 {
-            for b in 0..20 {
-                assert_eq!(result[e][b], par[e][b]);
+        // 34->34 should be identity copy.
+        for env in 0..2 {
+            for band in 0..34 {
+                assert_eq!(result[env][band], params[env][band]);
             }
         }
     }
 
     #[test]
-    fn verify_remap34_from_10bands() {
-        let mut par = [[0i8; PS_MAX_NR_IIDICC]; PS_MAX_NUM_ENV];
-        for b in 0..10 {
-            par[0][b] = (b + 1) as i8;
+    fn verify_remap_to_20_passthrough_20bands() {
+        let mut params = [[0i8; PS_MAX_NR_IIDICC]; PS_MAX_NUM_ENV];
+        for env in 0..2 {
+            for band in 0..20 {
+                params[env][band] = (band as i8) + (env as i8 * 10);
+            }
         }
 
-        let result = remap34(&par, 10, 1, true);
+        let result = remap_to_20(&params, 20, 2, true);
 
-        // Low bands should use map_idx_10_to_34 values.
-        assert_eq!(result[0][0], par[0][0]); // par[0] → bands 0-2
-        assert_eq!(result[0][1], par[0][0]);
-        assert_eq!(result[0][2], par[0][0]);
+        // 20->20 should be identity copy.
+        for env in 0..2 {
+            for band in 0..20 {
+                assert_eq!(result[env][band], params[env][band]);
+            }
+        }
     }
 
     #[test]
-    fn verify_remap20_from_34bands() {
-        let mut par = [[0i8; PS_MAX_NR_IIDICC]; PS_MAX_NUM_ENV];
-        for b in 0..34 {
-            par[0][b] = (b + 1) as i8;
+    fn verify_remap_to_34_from_10bands() {
+        let mut params = [[0i8; PS_MAX_NR_IIDICC]; PS_MAX_NUM_ENV];
+        for band in 0..10 {
+            params[0][band] = (band + 1) as i8;
         }
 
-        let result = remap20(&par, 34, 1, true);
+        let result = remap_to_34(&params, 10, 1, true);
 
-        // Should use map_idx_34_to_20.
-        let expected_6 = par[0][10]; // Band 6 = par[10]
+        // Low bands should use expand_10_to_34 values.
+        assert_eq!(result[0][0], params[0][0]); // par[0] -> bands 0-2
+        assert_eq!(result[0][1], params[0][0]);
+        assert_eq!(result[0][2], params[0][0]);
+    }
+
+    #[test]
+    fn verify_remap_to_20_from_34bands() {
+        let mut params = [[0i8; PS_MAX_NR_IIDICC]; PS_MAX_NUM_ENV];
+        for band in 0..34 {
+            params[0][band] = (band + 1) as i8;
+        }
+
+        let result = remap_to_20(&params, 34, 1, true);
+
+        // Should use contract_34_to_20.
+        let expected_6 = params[0][10]; // Band 6 = par[10]
         assert_eq!(result[0][6], expected_6);
     }
 
     #[test]
-    fn verify_map_val_20_to_34() {
-        let mut par = [0.0f32; PS_MAX_NR_IIDICC];
+    fn verify_expand_val_20_to_34() {
+        let mut values = [0.0f32; PS_MAX_NR_IIDICC];
         for i in 0..20 {
-            par[i] = (i + 1) as f32;
+            values[i] = (i + 1) as f32;
         }
 
-        map_val_20_to_34(&mut par);
+        expand_val_20_to_34(&mut values);
 
         // Band 0 should remain par[0] = 1.0.
-        assert_eq!(par[0], 1.0);
+        assert_eq!(values[0], 1.0);
         // Band 1 is average of original par[0] and par[1] = (1+2)/2 = 1.5.
-        assert!((par[1] - 1.5).abs() < 1e-6);
+        assert!((values[1] - 1.5).abs() < 1e-6);
         // Last two bands should equal original par[19] = 20.0.
-        assert_eq!(par[32], 20.0);
-        assert_eq!(par[33], 20.0);
+        assert_eq!(values[32], 20.0);
+        assert_eq!(values[33], 20.0);
     }
 
     #[test]
-    fn verify_map_val_34_to_20() {
-        let mut par = [0.0f32; PS_MAX_NR_IIDICC];
+    fn verify_contract_val_34_to_20() {
+        let mut values = [0.0f32; PS_MAX_NR_IIDICC];
         for i in 0..34 {
-            par[i] = (i + 1) as f32;
+            values[i] = (i + 1) as f32;
         }
 
-        map_val_34_to_20(&mut par);
+        contract_val_34_to_20(&mut values);
 
         // Band 6 = par[10] = 11.0.
-        assert_eq!(par[6], 11.0);
+        assert_eq!(values[6], 11.0);
         // Band 7 = par[11] = 12.0.
-        assert_eq!(par[7], 12.0);
-        // Band 0 = (2*1 + 2)/3 = 4/3 ≈ 1.333.
-        assert!((par[0] - 4.0 / 3.0).abs() < 1e-5);
+        assert_eq!(values[7], 12.0);
+        // Band 0 = (2*1 + 2)/3 = 4/3 ~ 1.333.
+        assert!((values[0] - 4.0 / 3.0).abs() < 1e-5);
     }
 
     #[test]
-    fn verify_hybrid_synthesis_20band_sums_subbands() {
-        let mut buf = Box::new([[[0.0f32; 2]; 32]; PS_MAX_SSB]);
+    fn verify_synthesize_hybrid_20band_sums_subbands() {
+        let mut hybrid_buf = Box::new([[[0.0f32; 2]; 32]; PS_MAX_SSB]);
 
         // Set hybrid subbands for QMF band 0 (6 subbands: indices 0-5).
         for sub in 0..6 {
-            buf[sub][0][0] = 1.0; // re
-            buf[sub][0][1] = 0.5; // im
+            hybrid_buf[sub][0][0] = 1.0; // re
+            hybrid_buf[sub][0][1] = 0.5; // im
         }
 
-        let mut out = [[[0.0f32; 64]; 38]; 2];
-        hybrid_synthesis(&mut out, &buf, false, 1);
+        let mut qmf_out = [[[0.0f32; 64]; 38]; 2];
+        synthesize_hybrid(&mut qmf_out, &hybrid_buf, false, 1);
 
         // QMF band 0 should be the sum of 6 hybrid subbands.
-        assert!((out[0][0][0] - 6.0).abs() < 1e-6, "QMF 0 re should be 6.0");
-        assert!((out[1][0][0] - 3.0).abs() < 1e-6, "QMF 0 im should be 3.0");
+        assert!((qmf_out[0][0][0] - 6.0).abs() < 1e-6, "QMF 0 re should be 6.0");
+        assert!((qmf_out[1][0][0] - 3.0).abs() < 1e-6, "QMF 0 im should be 3.0");
     }
 
     #[test]
-    fn verify_hybrid_synthesis_20band_direct_copy() {
-        let mut buf = Box::new([[[0.0f32; 2]; 32]; PS_MAX_SSB]);
+    fn verify_synthesize_hybrid_20band_direct_copy() {
+        let mut hybrid_buf = Box::new([[[0.0f32; 2]; 32]; PS_MAX_SSB]);
 
         // Set QMF band 3 (hybrid index = 3 + 7 = 10) to known values.
-        buf[10][0][0] = 42.0;
-        buf[10][0][1] = -7.5;
+        hybrid_buf[10][0][0] = 42.0;
+        hybrid_buf[10][0][1] = -7.5;
 
-        let mut out = [[[0.0f32; 64]; 38]; 2];
-        hybrid_synthesis(&mut out, &buf, false, 1);
+        let mut qmf_out = [[[0.0f32; 64]; 38]; 2];
+        synthesize_hybrid(&mut qmf_out, &hybrid_buf, false, 1);
 
         // QMF band 3 should be directly copied from hybrid index 10.
-        assert!((out[0][0][3] - 42.0).abs() < 1e-6);
-        assert!((out[1][0][3] - (-7.5)).abs() < 1e-6);
+        assert!((qmf_out[0][0][3] - 42.0).abs() < 1e-6);
+        assert!((qmf_out[1][0][3] - (-7.5)).abs() < 1e-6);
     }
 
     #[test]
-    fn verify_hybrid_synthesis_34band_sums_subbands() {
-        let mut buf = Box::new([[[0.0f32; 2]; 32]; PS_MAX_SSB]);
+    fn verify_synthesize_hybrid_34band_sums_subbands() {
+        let mut hybrid_buf = Box::new([[[0.0f32; 2]; 32]; PS_MAX_SSB]);
 
         // QMF band 0: 12 hybrid subbands (indices 0-11).
         for sub in 0..12 {
-            buf[sub][0][0] = 1.0;
-            buf[sub][0][1] = 2.0;
+            hybrid_buf[sub][0][0] = 1.0;
+            hybrid_buf[sub][0][1] = 2.0;
         }
 
-        let mut out = [[[0.0f32; 64]; 38]; 2];
-        hybrid_synthesis(&mut out, &buf, true, 1);
+        let mut qmf_out = [[[0.0f32; 64]; 38]; 2];
+        synthesize_hybrid(&mut qmf_out, &hybrid_buf, true, 1);
 
-        assert!((out[0][0][0] - 12.0).abs() < 1e-6, "QMF 0 re should be 12.0");
-        assert!((out[1][0][0] - 24.0).abs() < 1e-6, "QMF 0 im should be 24.0");
+        assert!((qmf_out[0][0][0] - 12.0).abs() < 1e-6, "QMF 0 re should be 12.0");
+        assert!((qmf_out[1][0][0] - 24.0).abs() < 1e-6, "QMF 0 im should be 24.0");
     }
 
     #[test]
-    fn verify_hybrid_synthesis_34band_qmf1_sum() {
-        let mut buf = Box::new([[[0.0f32; 2]; 32]; PS_MAX_SSB]);
+    fn verify_synthesize_hybrid_34band_qmf1_sum() {
+        let mut hybrid_buf = Box::new([[[0.0f32; 2]; 32]; PS_MAX_SSB]);
 
         // QMF band 1: 8 hybrid subbands (indices 12-19).
         for sub in 12..20 {
-            buf[sub][0][0] = 0.5;
-            buf[sub][0][1] = -0.25;
+            hybrid_buf[sub][0][0] = 0.5;
+            hybrid_buf[sub][0][1] = -0.25;
         }
 
-        let mut out = [[[0.0f32; 64]; 38]; 2];
-        hybrid_synthesis(&mut out, &buf, true, 1);
+        let mut qmf_out = [[[0.0f32; 64]; 38]; 2];
+        synthesize_hybrid(&mut qmf_out, &hybrid_buf, true, 1);
 
-        assert!((out[0][0][1] - 4.0).abs() < 1e-6, "QMF 1 re should be 4.0");
-        assert!((out[1][0][1] - (-2.0)).abs() < 1e-6, "QMF 1 im should be -2.0");
+        assert!((qmf_out[0][0][1] - 4.0).abs() < 1e-6, "QMF 1 re should be 4.0");
+        assert!((qmf_out[1][0][1] - (-2.0)).abs() < 1e-6, "QMF 1 im should be -2.0");
     }
 
     #[test]
-    fn verify_hybrid_synthesis_34band_direct_copy() {
-        let mut buf = Box::new([[[0.0f32; 2]; 32]; PS_MAX_SSB]);
+    fn verify_synthesize_hybrid_34band_direct_copy() {
+        let mut hybrid_buf = Box::new([[[0.0f32; 2]; 32]; PS_MAX_SSB]);
 
         // QMF band 5 in 34-band mode: hybrid index = 5 + 27 = 32.
-        buf[32][0][0] = 99.0;
-        buf[32][0][1] = -1.0;
+        hybrid_buf[32][0][0] = 99.0;
+        hybrid_buf[32][0][1] = -1.0;
 
-        let mut out = [[[0.0f32; 64]; 38]; 2];
-        hybrid_synthesis(&mut out, &buf, true, 1);
+        let mut qmf_out = [[[0.0f32; 64]; 38]; 2];
+        synthesize_hybrid(&mut qmf_out, &hybrid_buf, true, 1);
 
-        assert!((out[0][0][5] - 99.0).abs() < 1e-6);
-        assert!((out[1][0][5] - (-1.0)).abs() < 1e-6);
+        assert!((qmf_out[0][0][5] - 99.0).abs() < 1e-6);
+        assert!((qmf_out[1][0][5] - (-1.0)).abs() < 1e-6);
     }
 
     #[test]
-    fn verify_hybrid2_re_produces_output() {
+    fn verify_split_2band_real_produces_output() {
         // Feed a DC signal through the 2-band real hybrid filter.
         let mut input = [[0.0f32; 2]; 44];
         for i in 0..13 {
             input[i][0] = 1.0; // re = 1.0
         }
 
-        let mut out = Box::new([[[0.0f32; 2]; 32]; PS_MAX_SSB]);
-        hybrid2_re(&input, &mut out, 0, 1, &G1_Q2, 1);
+        let mut hybrid_out = Box::new([[[0.0f32; 2]; 32]; PS_MAX_SSB]);
+        split_2band_real(&input, &mut hybrid_out, 0, 1, &G1_Q2, 1);
 
         // With DC input, band 0 (lowpass) should have energy,
         // band 1 (highpass) should have less or zero for this filter.
-        let sum_sq_0 = out[0][0][0] * out[0][0][0] + out[0][0][1] * out[0][0][1];
+        let sum_sq_0 =
+            hybrid_out[0][0][0] * hybrid_out[0][0][0] + hybrid_out[0][0][1] * hybrid_out[0][0][1];
         // Just verify it produces non-trivial output.
-        assert!(sum_sq_0 > 0.0 || out[1][0][0].abs() > 0.0, "hybrid2 should produce output");
+        assert!(
+            sum_sq_0 > 0.0 || hybrid_out[1][0][0].abs() > 0.0,
+            "split_2band_real should produce output"
+        );
     }
 
     #[test]
@@ -1403,22 +1548,22 @@ mod tests {
         ps.common.is34bands_old = false;
         ps.common.num_env = 1;
 
-        // Zero input in l_buf → decorrelation should produce zero in r_buf.
-        decorrelation(&mut ps, false, PS_QMF_TIME_SLOTS);
+        // Zero input in l_buf -> decorrelation should produce zero in r_buf.
+        generate_decorrelated_signal(&mut ps, false, PS_QMF_TIME_SLOTS);
 
-        for k in 0..NR_BANDS[0] {
-            for n in 0..PS_QMF_TIME_SLOTS {
+        for subband in 0..NR_BANDS[0] {
+            for slot in 0..PS_QMF_TIME_SLOTS {
                 assert!(
-                    ps.r_buf[k][n][0].abs() < 1e-10,
+                    ps.r_buf[subband][slot][0].abs() < 1e-10,
                     "r_buf[{}][{}][0] should be zero for zero input",
-                    k,
-                    n
+                    subband,
+                    slot
                 );
                 assert!(
-                    ps.r_buf[k][n][1].abs() < 1e-10,
+                    ps.r_buf[subband][slot][1].abs() < 1e-10,
                     "r_buf[{}][{}][1] should be zero for zero input",
-                    k,
-                    n
+                    subband,
+                    slot
                 );
             }
         }

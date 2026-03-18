@@ -818,7 +818,7 @@ impl AacDecoder {
 
         // Choose decode step based on the object type.
         match self.m4ainfo.otype {
-            M4AType::Lc => self.decode_ga(&mut bs)?,
+            M4AType::Lc | M4AType::ER_AAC_LC => self.decode_ga(&mut bs)?,
             _ => return unsupported_error("aac: object type"),
         }
 
@@ -861,7 +861,9 @@ impl Decoder for AacDecoder {
             };
         }
 
-        if m4ainfo.otype != M4AType::Lc || (m4ainfo.samples != 1024 && m4ainfo.samples != 960) {
+        if !matches!(m4ainfo.otype, M4AType::Lc | M4AType::ER_AAC_LC)
+            || (m4ainfo.samples != 1024 && m4ainfo.samples != 960)
+        {
             return unsupported_error("aac: unsupported object type or frame length");
         }
 

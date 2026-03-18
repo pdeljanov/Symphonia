@@ -430,7 +430,7 @@ impl Ics {
 
         validate!(self.pulse.is_none() || self.info.long_win);
 
-        let is_aac_lc = m4atype == M4AType::Lc;
+        let is_aac_lc = matches!(m4atype, M4AType::Lc | M4AType::ER_AAC_LC);
 
         self.tns = tns::Tns::read(bs, &self.info, is_aac_lc)?;
 

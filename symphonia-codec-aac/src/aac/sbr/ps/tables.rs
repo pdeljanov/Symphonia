@@ -5,16 +5,21 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! Parametric Stereo lookup tables and constants.
+//! Parametric Stereo (PS) tables and constants for HE-AAC v2 decoding.
 //!
-//! Contains pre-computed and runtime-initialized tables for PS decoding as
-//! defined in ISO/IEC 14496-3 Subpart 4, Section 8.6.4:
-//! IID/ICC dequantization, stereo mixing matrices, hybrid filter prototypes,
-//! decorrelation filter coefficients, and Huffman codebook data.
+//! All normative data in this module is derived from ISO/IEC 14496-3:2009
+//! (MPEG-4 Audio), Subpart 4, Section 8.6.4. The runtime-computed tables
+//! (stereo mixing matrices, fractional delay coefficients, hybrid analysis
+//! filter taps, and IPD/OPD phase smoothing arrays) are generated from the
+//! formulae specified in Sections 8.6.4.6.1 through 8.6.4.6.3.
 
 use std::f32::consts::{FRAC_1_SQRT_2, FRAC_PI_2, PI, SQRT_2};
 
 use lazy_static::lazy_static;
+
+// ---------------------------------------------------------------------------
+// Scalar constants (ISO/IEC 14496-3:2009, Section 8.6.4)
+// ---------------------------------------------------------------------------
 
 /// Maximum number of PS envelopes per frame.
 pub const PS_MAX_NUM_ENV: usize = 5;
@@ -33,6 +38,11 @@ pub const PS_AP_LINKS: usize = 3;
 /// Maximum all-pass delay.
 pub const PS_MAX_AP_DELAY: usize = 5;
 
+// ---------------------------------------------------------------------------
+// Array constants indexed by resolution mode [20-band, 34-band]
+// (ISO/IEC 14496-3:2009, Table 8.48)
+// ---------------------------------------------------------------------------
+
 /// Number of parameter bands for each mode: [20-band, 34-band].
 pub const NR_PAR_BANDS: [usize; 2] = [20, 34];
 /// Number of IPD/OPD parameter bands: [20-band, 34-band].
@@ -49,6 +59,10 @@ pub const SHORT_DELAY_BAND: [usize; 2] = [42, 62];
 /// All-pass filter decay slope per sample (ISO/IEC 14496-3:2009, 8.6.4.6.2).
 pub const DECAY_SLOPE: f32 = 0.05;
 
+// ---------------------------------------------------------------------------
+// Mode-indexed tables (ISO/IEC 14496-3:2009, Table 8.48)
+// ---------------------------------------------------------------------------
+
 /// Number of IID/ICC parameter bands for each iid_mode / icc_mode (0..5).
 /// Derived from ISO/IEC 14496-3:2009, Table 8.48.
 pub const NR_IIDICC_PAR_TAB: [usize; 6] = [10, 20, 34, 10, 20, 34];
@@ -57,12 +71,20 @@ pub const NR_IIDICC_PAR_TAB: [usize; 6] = [10, 20, 34, 10, 20, 34];
 /// Derived from ISO/IEC 14496-3:2009, Table 8.48.
 pub const NR_IIDOPD_PAR_TAB: [usize; 6] = [5, 11, 17, 5, 11, 17];
 
+// ---------------------------------------------------------------------------
+// Envelope configuration (ISO/IEC 14496-3:2009, Table 8.49)
+// ---------------------------------------------------------------------------
+
 /// Number of envelopes per frame: [frame_class][num_env_idx].
 /// Derived from ISO/IEC 14496-3:2009, Table 8.49.
 pub const NUM_ENV_TAB: [[usize; 4]; 2] = [[0, 1, 2, 4], [1, 2, 3, 4]];
 
 /// log2 lookup for border position computation (fixed frame class).
 pub const FF_LOG2_TAB: [u32; 5] = [0, 0, 1, 2, 2];
+
+// ---------------------------------------------------------------------------
+// IID / ICC dequantization (ISO/IEC 14496-3:2009, Tables 8.50 and 8.51)
+// ---------------------------------------------------------------------------
 
 /// IID parameter dequantization table (46 entries: 15 for coarse + 31 for fine).
 /// Index 0..14 = coarse (iid_quant=0), 15..45 = fine (iid_quant=1).
@@ -93,6 +115,11 @@ pub const ICC_INVQ: [f32; 8] = [1.0, 0.937, 0.84118, 0.60092, 0.36764, 0.0, -0.5
 pub const ACOS_ICC_INVQ: [f32; 8] =
     [0.0, 0.35685527, 0.57133466, 0.92614472, 1.1943263, FRAC_PI_2, 2.2006171, PI];
 
+// ---------------------------------------------------------------------------
+// Fractional delay centre frequencies
+// (ISO/IEC 14496-3:2009, Section 8.6.4.6.2)
+// ---------------------------------------------------------------------------
+
 /// Frequency center values for 20-band fractional delay (ISO/IEC 14496-3:2009, 8.6.4.6.2).
 pub const F_CENTER_20: [i8; 10] = [-3, -1, 1, 3, 5, 7, 10, 14, 18, 22];
 
@@ -109,6 +136,11 @@ pub const F_CENTER_34: [i8; 32] = [
 pub const FRACTIONAL_DELAY_LINKS: [f32; 3] = [0.43, 0.75, 0.347];
 /// Fractional delay gain for phi_fract (ISO/IEC 14496-3:2009, 8.6.4.6.2).
 pub const FRACTIONAL_DELAY_GAIN: f32 = 0.39;
+
+// ---------------------------------------------------------------------------
+// Hybrid analysis filter prototypes
+// (ISO/IEC 14496-3:2009, Section 8.6.4.2, Table 8.46)
+// ---------------------------------------------------------------------------
 
 /// Real symmetric filter for 2-band hybrid split (ISO/IEC 14496-3:2009, 8.6.4.2, Table 8.46).
 pub const G1_Q2: [f32; 7] =
@@ -158,6 +190,11 @@ pub const G2_Q4: [f32; 7] = [
     0.25,
 ];
 
+// ---------------------------------------------------------------------------
+// Sub-subband to parameter-band mappings
+// (ISO/IEC 14496-3:2009, Table 8.52)
+// ---------------------------------------------------------------------------
+
 /// Mapping from sub-subband index k to parameter band i (20-band mode).
 /// 71 entries for 71 sub-subbands (ISO/IEC 14496-3:2009, Table 8.52).
 #[rustfmt::skip]
@@ -184,11 +221,19 @@ pub const K_TO_I_34: [usize; 91] = [
    33,33,33,33,33,33,33,
 ];
 
+// ---------------------------------------------------------------------------
+// All-pass decorrelation filter feedback coefficients
+// (ISO/IEC 14496-3:2009, Section 8.6.4.6.2)
+// ---------------------------------------------------------------------------
+
 /// Fixed allpass filter feedback coefficients for the 3 cascaded links
 /// (ISO/IEC 14496-3:2009, 8.6.4.6.2).
 pub const AP_COEFF: [f32; 3] = [0.65143905753106, 0.56471812200776, 0.48954165955695];
 
-// (ISO/IEC 14496-3:2009, 8.6.4.5, Tables 8.54–8.57)
+// ---------------------------------------------------------------------------
+// Huffman codebook data
+// (ISO/IEC 14496-3:2009, Section 8.6.4.5, Tables 8.54-8.57)
+// ---------------------------------------------------------------------------
 
 /// Sizes of each Huffman table.
 pub const HUFF_SIZES: [usize; 10] = [61, 61, 29, 29, 15, 15, 8, 8, 8, 8];
@@ -248,16 +293,20 @@ pub const AACPS_HUFF_TABS: [(u8, u8); 242] = [
     ( 5, 4), ( 2, 4), ( 6, 4), ( 4, 5), ( 3, 5), ( 1, 3), ( 7, 3), ( 0, 1),
 ];
 
+// ---------------------------------------------------------------------------
+// Runtime-computed PS tables
+// ---------------------------------------------------------------------------
+
 /// PS tables computed at initialization time.
 ///
 /// Contains stereo mixing matrices (HA/HB), fractional delay coefficients,
 /// phase smoothing tables, and hybrid filter coefficients, all derived from
 /// the formulas in ISO/IEC 14496-3:2009, 8.6.4.6.
 pub struct PsTables {
-    /// Stereo mixing matrix type A: [iid_index][icc_index] → [h11, h12, h21, h22].
+    /// Stereo mixing matrix type A: [iid_index][icc_index] -> [h11, h12, h21, h22].
     /// Computed per ISO/IEC 14496-3:2009, 8.6.4.6.3 (baseline stereo mixing).
     pub ha: [[[f32; 4]; 8]; 46],
-    /// Stereo mixing matrix type B: [iid_index][icc_index] → [h11, h12, h21, h22].
+    /// Stereo mixing matrix type B: [iid_index][icc_index] -> [h11, h12, h21, h22].
     /// Computed per ISO/IEC 14496-3:2009, 8.6.4.6.3 (alternative stereo mixing).
     pub hb: [[[f32; 4]; 8]; 46],
     /// Phase difference smoothing (real part): [pd0*64 + pd1*8 + pd2].
@@ -265,10 +314,10 @@ pub struct PsTables {
     pub pd_re_smooth: [f32; 512],
     /// Phase difference smoothing (imaginary part).
     pub pd_im_smooth: [f32; 512],
-    /// Fractional delay phase factors: [is34][k] → [cos, sin].
+    /// Fractional delay phase factors: [is34][k] -> [cos, sin].
     /// Computed per ISO/IEC 14496-3:2009, 8.6.4.6.2.
     pub phi_fract: [[[f32; 2]; 50]; 2],
-    /// All-pass fractional delay coefficients: [is34][k][link] → [cos, sin].
+    /// All-pass fractional delay coefficients: [is34][k][link] -> [cos, sin].
     /// Computed per ISO/IEC 14496-3:2009, 8.6.4.6.2.
     pub q_fract_allpass: [[[[f32; 2]; 3]; 50]; 2],
     /// Hybrid filter: 20-band mode, QMF band 0, 8 subbands.
@@ -281,9 +330,48 @@ pub struct PsTables {
     pub f34_2_4: [[[f32; 2]; 8]; 4],
 }
 
+// IPD/OPD unit-circle lookup, sampled at k*pi/4 for k=0..7
+// (ISO/IEC 14496-3:2009, Section 8.6.4.6.3).
+const IPDOPD_COS: [f32; 8] =
+    [1.0, FRAC_1_SQRT_2, 0.0, -FRAC_1_SQRT_2, -1.0, -FRAC_1_SQRT_2, 0.0, FRAC_1_SQRT_2];
+const IPDOPD_SIN: [f32; 8] =
+    [0.0, FRAC_1_SQRT_2, 1.0, FRAC_1_SQRT_2, 0.0, -FRAC_1_SQRT_2, -1.0, -FRAC_1_SQRT_2];
+
+/// Resolve the normalised frequency-centre value for sub-subband `band_idx`
+/// in the given resolution mode. Returns the value as f64 for precision.
+///
+/// For the first N entries the centre comes from the explicit table; for
+/// higher indices an extrapolation formula is used.
+/// (ISO/IEC 14496-3:2009, Section 8.6.4.6.2)
+fn resolve_centre_freq(is_34_band: bool, band_idx: usize) -> f64 {
+    if is_34_band {
+        if band_idx < F_CENTER_34.len() {
+            f64::from(F_CENTER_34[band_idx]) / 24.0
+        }
+        else {
+            band_idx as f64 - 26.5
+        }
+    }
+    else {
+        if band_idx < F_CENTER_20.len() {
+            f64::from(F_CENTER_20[band_idx]) * 0.125
+        }
+        else {
+            band_idx as f64 - 6.5
+        }
+    }
+}
+
+/// Store a (cos, sin) pair computed from `angle` (in f64) into a `[f32; 2]` slot.
+#[inline]
+fn store_sincos_pair(dest: &mut [f32; 2], angle: f64) {
+    dest[0] = angle.cos() as f32;
+    dest[1] = angle.sin() as f32;
+}
+
 impl PsTables {
     fn new() -> Self {
-        let mut t = Self {
+        let mut tbl = Self {
             ha: [[[0.0; 4]; 8]; 46],
             hb: [[[0.0; 4]; 8]; 46],
             pd_re_smooth: [0.0; 512],
@@ -295,142 +383,161 @@ impl PsTables {
             f34_1_8: [[[0.0; 2]; 8]; 8],
             f34_2_4: [[[0.0; 2]; 8]; 4],
         };
-        t.init();
-        t
+        tbl.build_all();
+        tbl
     }
 
-    fn init(&mut self) {
-        self.init_pd_smooth();
-        self.init_ha_hb();
-        self.init_phi_fract();
-        self.init_hybrid_filters();
+    /// Master build routine -- populates every computed field.
+    fn build_all(&mut self) {
+        self.build_stereo_mixing_matrices();
+        self.build_phase_smooth_tables();
+        self.build_decorrelation_delays();
+        self.build_hybrid_analysis_filters();
     }
 
-    /// Compute phase difference smoothing tables (ISO/IEC 14496-3:2009, 8.6.4.6.3).
-    fn init_pd_smooth(&mut self) {
-        let ipdopd_sin: [f32; 8] =
-            [0.0, FRAC_1_SQRT_2, 1.0, FRAC_1_SQRT_2, 0.0, -FRAC_1_SQRT_2, -1.0, -FRAC_1_SQRT_2];
-        let ipdopd_cos: [f32; 8] =
-            [1.0, FRAC_1_SQRT_2, 0.0, -FRAC_1_SQRT_2, -1.0, -FRAC_1_SQRT_2, 0.0, FRAC_1_SQRT_2];
+    // -----------------------------------------------------------------------
+    // Stereo mixing matrices HA and HB
+    // (ISO/IEC 14496-3:2009, Section 8.6.4.6.3)
+    // -----------------------------------------------------------------------
 
-        for pd0 in 0..8 {
-            for pd1 in 0..8 {
-                for pd2 in 0..8 {
-                    let re_smooth =
-                        0.25 * ipdopd_cos[pd0] + 0.5 * ipdopd_cos[pd1] + ipdopd_cos[pd2];
-                    let im_smooth =
-                        0.25 * ipdopd_sin[pd0] + 0.5 * ipdopd_sin[pd1] + ipdopd_sin[pd2];
-                    let mag = 1.0 / (re_smooth * re_smooth + im_smooth * im_smooth).sqrt();
-                    let idx = pd0 * 64 + pd1 * 8 + pd2;
-                    self.pd_re_smooth[idx] = re_smooth * mag;
-                    self.pd_im_smooth[idx] = im_smooth * mag;
+    /// Populate both `ha` and `hb` mixing matrices for every (IID, ICC) pair.
+    fn build_stereo_mixing_matrices(&mut self) {
+        for iid_idx in 0..46usize {
+            let ci = IID_PAR_DEQUANT[iid_idx];
+            let norm = SQRT_2 / (1.0 + ci * ci).sqrt();
+            let c_l = ci * norm;
+            let c_r = norm;
+
+            for icc_idx in 0..8usize {
+                Self::compute_ha_entry(&mut self.ha[iid_idx][icc_idx], c_l, c_r, icc_idx);
+                Self::compute_hb_entry(&mut self.hb[iid_idx][icc_idx], ci, icc_idx);
+            }
+        }
+    }
+
+    /// Compute a single HA matrix entry [h11, h12, h21, h22].
+    /// Uses the baseline mixing formulae from ISO/IEC 14496-3:2009, 8.6.4.6.3.
+    fn compute_ha_entry(out: &mut [f32; 4], c_l: f32, c_r: f32, icc_idx: usize) {
+        let half_acos = 0.5 * ACOS_ICC_INVQ[icc_idx];
+        let rotation = half_acos * (c_r - c_l) * FRAC_1_SQRT_2;
+        let sum_angle = rotation + half_acos;
+        let diff_angle = rotation - half_acos;
+        out[0] = c_l * sum_angle.cos();
+        out[1] = c_r * diff_angle.cos();
+        out[2] = c_l * sum_angle.sin();
+        out[3] = c_r * diff_angle.sin();
+    }
+
+    /// Compute a single HB matrix entry [h11, h12, h21, h22].
+    /// Uses the rotation-based mixing formulae from ISO/IEC 14496-3:2009, 8.6.4.6.3.
+    fn compute_hb_entry(out: &mut [f32; 4], ci: f32, icc_idx: usize) {
+        let rho = ICC_INVQ[icc_idx].max(0.05);
+
+        // Rotation angle alpha from atan2
+        let raw_alpha = 0.5 * (2.0 * ci * rho).atan2(ci * ci - 1.0);
+        let alpha = if raw_alpha < 0.0 { raw_alpha + FRAC_PI_2 } else { raw_alpha };
+
+        // Gamma from mu-based formula
+        let mu_sum = ci + 1.0 / ci;
+        let discriminant = (1.0 + (4.0 * rho * rho - 4.0) / (mu_sum * mu_sum)).sqrt();
+        let gamma = ((1.0 - discriminant) / (1.0 + discriminant)).sqrt().atan();
+
+        let (sin_a, cos_a) = alpha.sin_cos();
+        let (sin_g, cos_g) = gamma.sin_cos();
+
+        out[0] = SQRT_2 * cos_a * cos_g;
+        out[1] = SQRT_2 * sin_a * cos_g;
+        out[2] = -SQRT_2 * sin_a * sin_g;
+        out[3] = SQRT_2 * cos_a * sin_g;
+    }
+
+    // -----------------------------------------------------------------------
+    // IPD/OPD phase-difference smoothing
+    // (ISO/IEC 14496-3:2009, Section 8.6.4.6.3)
+    // -----------------------------------------------------------------------
+
+    /// Build the 512-entry normalised phase-difference smoothing lookup.
+    /// Index = pd0*64 + pd1*8 + pd2 where pd0/pd1/pd2 are 3-bit IPD/OPD indices.
+    fn build_phase_smooth_tables(&mut self) {
+        for combined in 0..512usize {
+            let p2 = combined & 7;
+            let p1 = (combined >> 3) & 7;
+            let p0 = (combined >> 6) & 7;
+
+            let weighted_re = 0.25 * IPDOPD_COS[p0] + 0.5 * IPDOPD_COS[p1] + IPDOPD_COS[p2];
+            let weighted_im = 0.25 * IPDOPD_SIN[p0] + 0.5 * IPDOPD_SIN[p1] + IPDOPD_SIN[p2];
+
+            let inv_mag = 1.0 / (weighted_re * weighted_re + weighted_im * weighted_im).sqrt();
+            self.pd_re_smooth[combined] = weighted_re * inv_mag;
+            self.pd_im_smooth[combined] = weighted_im * inv_mag;
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Fractional-delay phase factors for decorrelation all-pass filters
+    // (ISO/IEC 14496-3:2009, Section 8.6.4.6.2)
+    // -----------------------------------------------------------------------
+
+    /// Populate `phi_fract` and `q_fract_allpass` for both 20-band and 34-band
+    /// resolution modes in a unified loop.
+    fn build_decorrelation_delays(&mut self) {
+        for (mode_idx, &num_ap_bands) in NR_ALLPASS_BANDS.iter().enumerate() {
+            let is_34 = mode_idx == 1;
+
+            for band in 0..num_ap_bands {
+                let fc = resolve_centre_freq(is_34, band);
+
+                // All-pass link delays (3 cascaded sections)
+                for link in 0..PS_AP_LINKS {
+                    let angle =
+                        -std::f64::consts::PI * f64::from(FRACTIONAL_DELAY_LINKS[link]) * fc;
+                    store_sincos_pair(&mut self.q_fract_allpass[mode_idx][band][link], angle);
                 }
+
+                // Direct fractional delay (phi_fract)
+                let angle = -std::f64::consts::PI * f64::from(FRACTIONAL_DELAY_GAIN) * fc;
+                store_sincos_pair(&mut self.phi_fract[mode_idx][band], angle);
             }
         }
     }
 
-    /// Compute HA and HB stereo mixing matrices (ISO/IEC 14496-3:2009, 8.6.4.6.3).
-    fn init_ha_hb(&mut self) {
-        for iid in 0..46 {
-            let c = IID_PAR_DEQUANT[iid];
-            let c1 = SQRT_2 / (1.0 + c * c).sqrt();
-            let c2 = c * c1;
+    // -----------------------------------------------------------------------
+    // Hybrid analysis filter generation
+    // (ISO/IEC 14496-3:2009, Section 8.6.4.6.1)
+    // -----------------------------------------------------------------------
 
-            for icc in 0..8 {
-                // HA matrix
-                {
-                    let alpha = 0.5 * ACOS_ICC_INVQ[icc];
-                    let beta = alpha * (c1 - c2) * FRAC_1_SQRT_2;
-                    self.ha[iid][icc][0] = c2 * (beta + alpha).cos();
-                    self.ha[iid][icc][1] = c1 * (beta - alpha).cos();
-                    self.ha[iid][icc][2] = c2 * (beta + alpha).sin();
-                    self.ha[iid][icc][3] = c1 * (beta - alpha).sin();
-                }
-
-                // HB matrix
-                {
-                    let rho = ICC_INVQ[icc].max(0.05);
-                    let alpha = 0.5 * (2.0 * c * rho).atan2(c * c - 1.0);
-                    let mu = c + 1.0 / c;
-                    let mu_val = (1.0 + (4.0 * rho * rho - 4.0) / (mu * mu)).sqrt();
-                    let gamma = ((1.0 - mu_val) / (1.0 + mu_val)).sqrt().atan();
-
-                    let alpha = if alpha < 0.0 { alpha + FRAC_PI_2 } else { alpha };
-
-                    let (alpha_s, alpha_c) = alpha.sin_cos();
-                    let (gamma_s, gamma_c) = gamma.sin_cos();
-
-                    self.hb[iid][icc][0] = SQRT_2 * alpha_c * gamma_c;
-                    self.hb[iid][icc][1] = SQRT_2 * alpha_s * gamma_c;
-                    self.hb[iid][icc][2] = -SQRT_2 * alpha_s * gamma_s;
-                    self.hb[iid][icc][3] = SQRT_2 * alpha_c * gamma_s;
-                }
+    /// Synthesise complex hybrid filter taps from a real prototype.
+    ///
+    /// For each subband `sb` in `0..num_subbands` and each tap `tap` in 0..7:
+    ///   angle = 2*pi * (sb + 0.5) * (tap - 6) / num_subbands
+    ///   coeff[sb][tap] = (proto[tap]*cos(angle), -proto[tap]*sin(angle))
+    fn synthesise_hybrid_taps(
+        dest: &mut [[[f32; 2]; 8]],
+        prototype: &[f32; 7],
+        num_subbands: usize,
+    ) {
+        let denom = num_subbands as f32;
+        for sb in 0..num_subbands {
+            let freq = 2.0 * PI * (sb as f32 + 0.5) / denom;
+            for tap in 0..7usize {
+                let phase = freq * (tap as f32 - 6.0);
+                let weight = prototype[tap];
+                dest[sb][tap][0] = weight * phase.cos();
+                dest[sb][tap][1] = weight * (-phase.sin());
             }
         }
     }
 
-    /// Compute fractional delay phase factors for decorrelation
-    /// (ISO/IEC 14496-3:2009, 8.6.4.6.2).
-    fn init_phi_fract(&mut self) {
-        // 20-band mode
-        for k in 0..NR_ALLPASS_BANDS[0] {
-            let f_center = if k < F_CENTER_20.len() {
-                f64::from(F_CENTER_20[k]) * 0.125
-            }
-            else {
-                k as f64 - 6.5
-            };
-
-            for m in 0..PS_AP_LINKS {
-                let theta = -PI as f64 * f64::from(FRACTIONAL_DELAY_LINKS[m]) * f_center;
-                self.q_fract_allpass[0][k][m][0] = theta.cos() as f32;
-                self.q_fract_allpass[0][k][m][1] = theta.sin() as f32;
-            }
-
-            let theta = -PI as f64 * f64::from(FRACTIONAL_DELAY_GAIN) * f_center;
-            self.phi_fract[0][k][0] = theta.cos() as f32;
-            self.phi_fract[0][k][1] = theta.sin() as f32;
-        }
-
-        // 34-band mode
-        for k in 0..NR_ALLPASS_BANDS[1] {
-            let f_center = if k < F_CENTER_34.len() {
-                f64::from(F_CENTER_34[k]) / 24.0
-            }
-            else {
-                k as f64 - 26.5
-            };
-
-            for m in 0..PS_AP_LINKS {
-                let theta = -PI as f64 * f64::from(FRACTIONAL_DELAY_LINKS[m]) * f_center;
-                self.q_fract_allpass[1][k][m][0] = theta.cos() as f32;
-                self.q_fract_allpass[1][k][m][1] = theta.sin() as f32;
-            }
-
-            let theta = -PI as f64 * f64::from(FRACTIONAL_DELAY_GAIN) * f_center;
-            self.phi_fract[1][k][0] = theta.cos() as f32;
-            self.phi_fract[1][k][1] = theta.sin() as f32;
-        }
-    }
-
-    /// Generate complex hybrid filter coefficients from a prototype filter
-    /// (ISO/IEC 14496-3:2009, 8.6.4.6.1).
-    fn make_filters_from_proto(filter: &mut [[[f32; 2]; 8]], proto: &[f32; 7], bands: usize) {
-        for q in 0..bands {
-            for n in 0..7 {
-                let theta = 2.0 * PI * (q as f32 + 0.5) * (n as f32 - 6.0) / (bands as f32);
-                filter[q][n][0] = proto[n] * theta.cos();
-                filter[q][n][1] = proto[n] * (-theta.sin());
-            }
-        }
-    }
-
-    /// Initialize hybrid filter coefficient tables.
-    fn init_hybrid_filters(&mut self) {
-        Self::make_filters_from_proto(&mut self.f20_0_8, &G0_Q8, 8);
-        Self::make_filters_from_proto(&mut self.f34_0_12, &G0_Q12, 12);
-        Self::make_filters_from_proto(&mut self.f34_1_8, &G1_Q8, 8);
-        Self::make_filters_from_proto(&mut self.f34_2_4, &G2_Q4, 4);
+    /// Generate all four hybrid analysis filter banks.
+    fn build_hybrid_analysis_filters(&mut self) {
+        // 20-band mode: QMF band 0 -> 8 hybrid subbands
+        Self::synthesise_hybrid_taps(&mut self.f20_0_8, &G0_Q8, 8);
+        // 34-band mode: QMF band 0 -> 12 hybrid subbands
+        Self::synthesise_hybrid_taps(&mut self.f34_0_12, &G0_Q12, 12);
+        // 34-band mode: QMF band 1 -> 8 hybrid subbands
+        Self::synthesise_hybrid_taps(&mut self.f34_1_8, &G1_Q8, 8);
+        // 34-band mode: QMF bands 2-4 -> 4 hybrid subbands each
+        Self::synthesise_hybrid_taps(&mut self.f34_2_4, &G2_Q4, 4);
     }
 }
 
@@ -595,7 +702,7 @@ mod tests {
         assert!(ha[2] != 0.0, "HA h21 should be non-zero for IID=10, ICC=3");
 
         // For center IID=7 (c=1.0) with ICC=0 (fully correlated):
-        // alpha=0, beta=0 → h11=cos(0)=1, h21=sin(0)=0. This is correct behavior.
+        // alpha=0, beta=0 -> h11=cos(0)=1, h21=sin(0)=0. This is correct behavior.
         let ha_center = tables.ha[7][0];
         assert!((ha_center[0] - 1.0).abs() < 1e-6, "HA center h11 should be 1.0");
         assert!(ha_center[2].abs() < 1e-6, "HA center h21 should be 0.0 (fully correlated)");
@@ -614,7 +721,7 @@ mod tests {
         let tables = &*PS_TABLES;
 
         // For ICC=0 (fully correlated), the mixing matrix should roughly preserve energy.
-        // h11^2 + h21^2 ≈ 1 and h12^2 + h22^2 ≈ 1 for center IID.
+        // h11^2 + h21^2 ~ 1 and h12^2 + h22^2 ~ 1 for center IID.
         let ha = tables.ha[7][0]; // center IID, fully correlated
         let energy_l = ha[0] * ha[0] + ha[2] * ha[2];
         let energy_r = ha[1] * ha[1] + ha[3] * ha[3];
