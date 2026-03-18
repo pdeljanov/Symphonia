@@ -10,4 +10,4 @@ rust-version = "1.70"
 
 [dependencies]
 symphonia-core = { version = "0.5.5", path = "../symphonia-core" }
-ape-decoder = { version = "0.3.1", path = "../../decoder" }
+ape-decoder = { version = "0.3.2", path = "../../decoder" }
