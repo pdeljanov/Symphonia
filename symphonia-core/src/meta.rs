@@ -100,15 +100,40 @@ pub struct MetadataInfo {
 }
 
 /// A common set of options that all metadata readers use.
+#[non_exhaustive]
 #[derive(Copy, Clone, Debug, Default)]
 pub struct MetadataOptions {
-    /// The maximum size limit in bytes that a tag may occupy in memory once decoded. Tags exceeding
-    /// this limit will be skipped by the demuxer. Take note that tags in-memory are stored as UTF-8
-    /// and therefore may occupy more than one byte per character.
-    pub limit_metadata_bytes: Limit,
+    /// The maximum size in bytes that a tag may occupy in memory once decoded. Tags exceeding this
+    /// limit will be skipped by the demuxer. Take note that tags in memory are stored as UTF-8 and
+    /// therefore may occupy more than one byte per character.
+    ///
+    /// Default: `Limit::Default` (a reasonable limit chosen by the reader)
+    pub limit_tag_bytes: Limit,
 
-    /// The maximum size limit in bytes that a visual (picture) may occupy.
+    /// The maximum size in bytes that a visual (picture) may occupy.
+    ///
+    /// Default: `Limit::Default` (a reasonable limit chosen by the reader)
     pub limit_visual_bytes: Limit,
+}
+
+impl MetadataOptions {
+    /// The maximum size in bytes that a tag may occupy in memory once decoded. Tags exceeding this
+    /// limit will be skipped by the demuxer. Take note that tags in memory are stored as UTF-8 and
+    /// therefore may occupy more than one byte per character.
+    ///
+    /// Default: `Limit::Default` (a reasonable limit chosen by the reader)
+    pub fn limit_tag_bytes(mut self, limit: Limit) -> Self {
+        self.limit_tag_bytes = limit;
+        self
+    }
+
+    /// The maximum size in bytes that a visual (picture) may occupy.
+    ///
+    /// Default: `Limit::Default` (a reasonable limit chosen by the reader)
+    pub fn limit_visual_bytes(mut self, limit: Limit) -> Self {
+        self.limit_visual_bytes = limit;
+        self
+    }
 }
 
 /// `StandardVisualKey` is an enumeration providing standardized keys for common visual dispositions.
