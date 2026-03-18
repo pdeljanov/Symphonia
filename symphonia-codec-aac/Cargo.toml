@@ -15,4 +15,5 @@ rust-version = "1.53"
 [dependencies]
 log = "0.4"
 lazy_static = "1.4.0"
+rustfft = "6.2"
 symphonia-core = { version = "0.5.5", path = "../symphonia-core" }

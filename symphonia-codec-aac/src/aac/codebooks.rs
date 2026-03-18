@@ -598,10 +598,17 @@ where
     C::new(make_raw_codebook(table))
 }
 
-/// Inverse quantization.
+/// Inverse quantization via lookup table (x^(4/3)).
 #[inline(always)]
 fn iquant(val: usize) -> f32 {
-    f32::powf(val as f32, 4.0 / 3.0)
+    use super::ics::POW43_TABLE;
+    let tab: &[f32; 8192] = &POW43_TABLE;
+    if val < tab.len() {
+        tab[val]
+    }
+    else {
+        f32::powf(val as f32, 4.0 / 3.0)
+    }
 }
 
 fn signed_pair<const MOD: usize>(cw: usize) -> (f32, f32) {
