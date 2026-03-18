@@ -1,0 +1,13 @@
+[package]
+name = "symphonia-bundle-ape"
+version = "0.5.5"
+description = "Pure Rust Monkey's Audio (APE) decoder and demuxer."
+homepage = "https://github.com/pdeljanov/Symphonia"
+repository = "https://github.com/pdeljanov/Symphonia"
+license = "MPL-2.0"
+edition = "2018"
+rust-version = "1.70"
+
+[dependencies]
+symphonia-core = { version = "0.5.5", path = "../symphonia-core" }
+ape-decoder = { version = "0.3.1", path = "../../decoder" }

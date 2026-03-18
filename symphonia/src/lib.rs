@@ -142,6 +142,8 @@ pub mod default {
     pub mod codecs {
         //! The `codecs` module re-exports all enabled Symphonia decoders.
 
+        #[cfg(feature = "ape")]
+        pub use symphonia_bundle_ape::ApeDecoder;
         #[cfg(feature = "flac")]
         pub use symphonia_bundle_flac::FlacDecoder;
         #[cfg(any(feature = "mp1", feature = "mp2", feature = "mp3"))]
@@ -165,6 +167,8 @@ pub mod default {
     pub mod formats {
         //! The `formats` module re-exports all enabled Symphonia format readers.
 
+        #[cfg(feature = "ape")]
+        pub use symphonia_bundle_ape::ApeReader;
         #[cfg(feature = "flac")]
         pub use symphonia_bundle_flac::FlacReader;
         #[cfg(any(feature = "mp1", feature = "mp2", feature = "mp3"))]
@@ -245,6 +249,9 @@ pub mod default {
         #[cfg(feature = "alac")]
         registry.register_all::<codecs::AlacDecoder>();
 
+        #[cfg(feature = "ape")]
+        registry.register_all::<codecs::ApeDecoder>();
+
         #[cfg(feature = "flac")]
         registry.register_all::<codecs::FlacDecoder>();
 
@@ -269,6 +276,9 @@ pub mod default {
         // Formats
         #[cfg(feature = "aac")]
         probe.register_all::<formats::AdtsReader>();
+
+        #[cfg(feature = "ape")]
+        probe.register_all::<formats::ApeReader>();
 
         #[cfg(feature = "caf")]
         probe.register_all::<formats::CafReader>();
