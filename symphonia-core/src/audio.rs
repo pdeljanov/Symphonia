@@ -796,6 +796,9 @@ impl<S: Sample> SampleBuffer<S> {
     where
         F: Sample + IntoSample<S>,
     {
+        if src.frames() == 0 {
+            return;
+        }
         let n_frames = src.frames();
         let n_channels = src.spec.channels.count();
         let n_samples = n_frames * n_channels;
@@ -842,6 +845,9 @@ impl<S: Sample> SampleBuffer<S> {
     where
         F: Sample + IntoSample<S>,
     {
+        if src.frames() == 0 {
+            return;
+        }
         let n_channels = src.spec.channels.count();
         let n_samples = src.frames() * n_channels;
 
@@ -1080,6 +1086,9 @@ impl<S: Sample + RawSample> RawSampleBuffer<S> {
     where
         F: Sample + IntoSample<S>,
     {
+        if src.n_frames == 0 {
+            return;
+        }
         let n_channels = src.spec.channels.count();
         let n_samples = n_channels * src.n_frames;
 
@@ -1103,6 +1112,9 @@ impl<S: Sample + RawSample> RawSampleBuffer<S> {
     /// Copies all audio data from the source `AudioBuffer` to the `RawSampleBuffer` in planar order.
     /// The two buffers must be equivalent.
     pub fn copy_planar(&mut self, src: &AudioBuffer<S>) {
+        if src.n_frames == 0 {
+            return;
+        }
         let n_channels = src.spec.channels.count();
         let n_samples = src.n_frames * n_channels;
 
@@ -1150,6 +1162,9 @@ impl<S: Sample + RawSample> RawSampleBuffer<S> {
     where
         F: Sample + IntoSample<S>,
     {
+        if src.n_frames == 0 {
+            return;
+        }
         let n_frames = src.n_frames;
         let n_channels = src.spec.channels.count();
         let n_samples = n_frames * n_channels;
@@ -1200,6 +1215,9 @@ impl<S: Sample + RawSample> RawSampleBuffer<S> {
     /// Copies all audio data from the source `AudioBuffer` to the `RawSampleBuffer` in interleaved
     /// channel order. The two buffers must be equivalent.
     pub fn copy_interleaved(&mut self, src: &AudioBuffer<S>) {
+        if src.n_frames == 0 {
+            return;
+        }
         let n_frames = src.n_frames;
         let n_channels = src.spec.channels.count();
         let n_samples = n_frames * n_channels;
@@ -1245,5 +1263,36 @@ impl<S: Sample + RawSample> RawSampleBuffer<S> {
         }
 
         self.n_written = n_samples;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::audio::{AudioBuffer, Layout, RawSampleBuffer, SampleBuffer, SignalSpec};
+    use crate::units::Duration;
+
+    #[test]
+    fn test_raw_sample_buffer_copy_empty_audio_buffer() {
+        let spec = SignalSpec::new(48000, Layout::FivePointOne.into_channels());
+        let src_buf = AudioBuffer::<f32>::new(0, spec);
+        let mut dst_buf = RawSampleBuffer::<f32>::new(48000, spec);
+
+        // This should not panic
+        dst_buf.copy_interleaved_typed(&src_buf);
+        dst_buf.copy_interleaved(&src_buf);
+        dst_buf.copy_planar_typed(&src_buf);
+        dst_buf.copy_planar(&src_buf);
+    }
+
+    #[test]
+    fn test_sample_buffer_copy_empty_audio_buffer() {
+        let spec = SignalSpec::new(48000, Layout::FivePointOne.into_channels());
+        let src_buf = AudioBuffer::<f32>::new(0, spec);
+        let mut dst_buf = SampleBuffer::<f32>::new(48000, spec);
+
+        // This should not panic
+        dst_buf.copy_interleaved_typed(&src_buf);
+        dst_buf.copy_planar_typed(&src_buf);
     }
 }
