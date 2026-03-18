@@ -39,7 +39,7 @@ const NORMAL_SCALE_MIN: i16 = -100;
 
 lazy_static! {
     /// Pre-computed table of y = x^(4/3).
-    static ref POW43_TABLE: [f32; 8192] = {
+    pub static ref POW43_TABLE: [f32; 8192] = {
         let mut pow43 = [0f32; 8192];
         for (i, pow43) in pow43.iter_mut().enumerate() {
             *pow43 = f32::powf(i as f32, 4.0 / 3.0);

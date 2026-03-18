@@ -16,27 +16,34 @@ use symphonia_core::io::ReadBitsLtr;
 
 use crate::aac::common::{MAX_SFBS, MAX_WINDOWS};
 
+/// Inverse quantization (x^{4/3}) using lookup table.
 #[inline(always)]
 fn iquant(val: f32) -> f32 {
+    let tab: &[f32; 8192] = &super::POW43_TABLE;
+    let abs_val = val.abs();
+    let idx = abs_val as usize;
+    let result = if idx < tab.len() { tab[idx] } else { abs_val.powf(4.0 / 3.0) };
     if val < 0.0 {
-        -((-val).powf(4.0 / 3.0))
+        -result
     }
     else {
-        val.powf(4.0 / 3.0)
+        result
     }
 }
 
+/// Re-quantization (x^{3/4}) for pulse data synthesis.
 #[inline(always)]
 fn requant(val: f32, scale: f32) -> f32 {
     if scale == 0.0 {
         return 0.0;
     }
-    let bval = val / scale;
-    if bval >= 0.0 {
-        val.powf(3.0 / 4.0)
+    let abs_val = val.abs();
+    let result = abs_val.powf(3.0 / 4.0);
+    if val < 0.0 {
+        -result
     }
     else {
-        -((-val).powf(3.0 / 4.0))
+        result
     }
 }
 
