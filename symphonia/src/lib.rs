@@ -27,6 +27,7 @@
 //! | Format   | Feature Flag | Gapless* | Default |
 //! |----------|--------------|----------|---------|
 //! | AIFF     | `aiff`       | Yes      | No      |
+//! | APE      | `ape`        | No       | No      |
 //! | CAF      | `caf`        | No       | No      |
 //! | ISO/MP4  | `isomp4`     | No       | No      |
 //! | MKV/WebM | `mkv`        | No       | Yes     |
@@ -46,6 +47,7 @@
 //! | AAC-LC   | `aac`        | No      | No      |
 //! | ADPCM    | `adpcm`      | Yes     | Yes     |
 //! | ALAC     | `alac`       | Yes     | No      |
+//! | APE      | `ape`        | No      | No      |
 //! | FLAC     | `flac`       | Yes     | Yes     |
 //! | MP1      | `mp1`, `mpa` | No      | No      |
 //! | MP2      | `mp2`, `mpa` | No      | No      |
@@ -65,6 +67,8 @@
 //! * ISO/MP4
 //! * RIFF
 //! * Vorbis Comment (in OGG & FLAC)
+//!
+//! Additionally, APEv2 tags are supported when the `ape` feature is enabled.
 //!
 //! ## Optimizations
 //!

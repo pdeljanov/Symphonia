@@ -5,7 +5,10 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+use std::collections::HashMap;
 use std::io::{Seek, SeekFrom};
+
+use lazy_static::lazy_static;
 
 use symphonia_core::codecs::{CodecParameters, CODEC_TYPE_MONKEYS_AUDIO};
 use symphonia_core::errors::{seek_error, Result, SeekErrorKind};
@@ -13,12 +16,51 @@ use symphonia_core::formats::{
     Cue, FormatOptions, FormatReader, Packet, SeekMode, SeekTo, SeekedTo, Track,
 };
 use symphonia_core::io::{MediaSource, MediaSourceStream};
-use symphonia_core::meta::{Metadata, MetadataLog};
+use symphonia_core::meta::{MetadataBuilder, MetadataLog, Metadata, StandardTagKey, Tag, Value};
 use symphonia_core::probe::{Descriptor, Instantiate, QueryDescriptor};
 use symphonia_core::support_format;
 use symphonia_core::units::TimeBase;
 
 use ape_decoder::format::ApeFileInfo;
+
+// ---------------------------------------------------------------------------
+// APE tag field name → StandardTagKey mapping
+// ---------------------------------------------------------------------------
+
+lazy_static! {
+    static ref APE_TAG_MAP: HashMap<&'static str, StandardTagKey> = {
+        let mut m = HashMap::new();
+        m.insert("album artist",          StandardTagKey::AlbumArtist);
+        m.insert("album",                 StandardTagKey::Album);
+        m.insert("artist",                StandardTagKey::Artist);
+        m.insert("bpm",                   StandardTagKey::Bpm);
+        m.insert("comment",               StandardTagKey::Comment);
+        m.insert("composer",              StandardTagKey::Composer);
+        m.insert("conductor",             StandardTagKey::Conductor);
+        m.insert("copyright",             StandardTagKey::Copyright);
+        m.insert("disc",                  StandardTagKey::DiscNumber);
+        m.insert("genre",                 StandardTagKey::Genre);
+        m.insert("keywords",              StandardTagKey::Description);
+        m.insert("lyrics",                StandardTagKey::Lyrics);
+        m.insert("notes",                 StandardTagKey::Comment);
+        m.insert("publisher",             StandardTagKey::Label);
+        m.insert("rating",                StandardTagKey::Rating);
+        m.insert("replay gain (album)",   StandardTagKey::ReplayGainAlbumGain);
+        m.insert("replay gain (radio)",   StandardTagKey::ReplayGainTrackGain);
+        m.insert("title",                 StandardTagKey::TrackTitle);
+        m.insert("tool name",             StandardTagKey::Encoder);
+        m.insert("track",                 StandardTagKey::TrackNumber);
+        m.insert("year",                  StandardTagKey::Date);
+        m.insert("artist url",            StandardTagKey::UrlArtist);
+        m.insert("buy url",               StandardTagKey::UrlPurchase);
+        m.insert("copyright url",         StandardTagKey::UrlCopyright);
+        m
+    };
+}
+
+// ---------------------------------------------------------------------------
+// ApeReader
+// ---------------------------------------------------------------------------
 
 /// Monkey's Audio (APE) format reader (demuxer).
 pub struct ApeReader {
@@ -108,6 +150,51 @@ fn build_extra_data(info: &ApeFileInfo) -> Box<[u8]> {
     buf.into_boxed_slice()
 }
 
+/// Read APE tags and ID3v2 tags from the source, converting them to Symphonia metadata.
+fn read_metadata(reader: &mut MediaSourceStream, metadata: &mut MetadataLog) {
+    // Read APEv2 tags (located at end of file).
+    if let Ok(Some(tag)) = ape_decoder::read_tag(reader) {
+        let mut builder = MetadataBuilder::new();
+
+        for field in &tag.fields {
+            if field.field_type() == ape_decoder::TagFieldType::TextUtf8 {
+                if let Some(text) = field.value_as_str() {
+                    let key_lower = field.name.to_lowercase();
+                    let std_key = APE_TAG_MAP.get(key_lower.as_str()).copied();
+                    builder.add_tag(Tag::new(std_key, &field.name, Value::from(text)));
+                }
+            }
+        }
+
+        let revision = builder.metadata();
+        metadata.push(revision);
+    }
+
+    // Read ID3v2 tags (prepended before APE header, in junk region).
+    if let Ok(Some(id3)) = ape_decoder::read_id3v2(reader) {
+        let mut builder = MetadataBuilder::new();
+
+        let known: &[(&str, StandardTagKey, Option<String>)] = &[
+            ("TIT2", StandardTagKey::TrackTitle, id3.title()),
+            ("TPE1", StandardTagKey::Artist, id3.artist()),
+            ("TALB", StandardTagKey::Album, id3.album()),
+            ("TRCK", StandardTagKey::TrackNumber, id3.track()),
+            ("TDRC", StandardTagKey::Date, id3.year()),
+            ("TCON", StandardTagKey::Genre, id3.genre()),
+            ("COMM", StandardTagKey::Comment, id3.comment()),
+        ];
+
+        for (key, std_key, value) in known {
+            if let Some(text) = value {
+                builder.add_tag(Tag::new(Some(*std_key), key, Value::from(text.as_str())));
+            }
+        }
+
+        let revision = builder.metadata();
+        metadata.push(revision);
+    }
+}
+
 impl FormatReader for ApeReader {
     fn try_new(source: MediaSourceStream, _options: &FormatOptions) -> Result<Self>
     where
@@ -136,6 +223,11 @@ impl FormatReader for ApeReader {
             ));
         }
 
+        // Read metadata (APE tags and ID3v2 tags). Errors are silently ignored
+        // since metadata is non-essential for playback.
+        let mut metadata = MetadataLog::default();
+        read_metadata(&mut reader, &mut metadata);
+
         // Build codec parameters.
         let mut codec_params = CodecParameters::new();
 
@@ -154,7 +246,7 @@ impl FormatReader for ApeReader {
 
         Ok(ApeReader {
             reader,
-            metadata: MetadataLog::default(),
+            metadata,
             tracks,
             cues: Vec::new(),
             file_info,

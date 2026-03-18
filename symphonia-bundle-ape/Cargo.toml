@@ -11,3 +11,4 @@ rust-version = "1.70"
 [dependencies]
 symphonia-core = { version = "0.5.5", path = "../symphonia-core" }
 ape-decoder = { version = "0.3.2", path = "../../decoder" }
+lazy_static = "1.4.0"
