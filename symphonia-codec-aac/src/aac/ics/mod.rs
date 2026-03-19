@@ -37,14 +37,17 @@ const INTENSITY_HCB: u8 = 15;
 const INTENSITY_SCALE_MIN: i16 = -155;
 const NORMAL_SCALE_MIN: i16 = -100;
 
+const POWER_TABLE_SIZE: usize = 8192;
+const SCF_TABLE_SIZE: usize = 256;
+
 lazy_static! {
     /// Pre-computed table of y = x^(4/3).
-    static ref POW43_TABLE: Box<[f32]> = {
-        let mut pow43 = std::vec![0f32; 8192];
-        for (i, pow43) in pow43.iter_mut().enumerate() {
-            *pow43 = f32::powf(i as f32, 4.0 / 3.0);
-        }
-        pow43.into_boxed_slice()
+    static ref POW43_TABLE: Box<[f32; POWER_TABLE_SIZE]> = {
+
+        let vec: Vec<f32> = (0..POWER_TABLE_SIZE)
+        .map(|i| (i as f32).powf(4.0 / 3.0))
+        .collect();
+        vec.into_boxed_slice().try_into().unwrap()
     };
 }
 
@@ -52,12 +55,11 @@ lazy_static! {
     /// Pre-computed table of y = 2^(0.25 * (x - 156)) for decoding scale factors for normal bands.
     /// This table is indexed relative to -100, the minimum encoded scale factor value for normal
     /// bands. Therefore, an input of 0 corresponds to -100.
-    static ref NORMAL_SCF_TABLE: Box<[f32]> = {
-        let mut table = std::vec![0f32; 256];
-        for (i, table) in table.iter_mut().enumerate() {
-            *table = 2.0f32.powf(0.25 * f32::from(i as i16 - 56 + NORMAL_SCALE_MIN))
-        }
-        table.into_boxed_slice()
+    static ref NORMAL_SCF_TABLE: Box<[f32; SCF_TABLE_SIZE]> = {
+        let vec: Vec<f32> = (0..SCF_TABLE_SIZE)
+        .map(|i| 2.0f32.powf(0.25 * f32::from(i as i16 - 56 + NORMAL_SCALE_MIN)))
+        .collect();
+        vec.into_boxed_slice().try_into().unwrap()
     };
 }
 
@@ -65,12 +67,12 @@ lazy_static! {
     /// Pre-computed table of y = 0.5^(0.25 * (x - 155)) for decoding scale factors for intensity
     /// coded bands. This table is indexed relative to -155, the minimum encoded scale factor value
     /// for intensity coded bands. Therefore, an input of 0 corresponds to -155.
-    static ref INTENSITY_SCF_TABLE: Box<[f32]> = {
-        let mut table = std::vec![0f32; 256];
-        for (i, table) in table.iter_mut().enumerate() {
-            *table = 0.5f32.powf(0.25 * f32::from(i as i16 + INTENSITY_SCALE_MIN));
-        }
-        table.into_boxed_slice()
+    static ref INTENSITY_SCF_TABLE: Box<[f32; SCF_TABLE_SIZE]> = {
+        let vec: Vec<f32> = (0..SCF_TABLE_SIZE)
+        .map(|i| 0.5f32.powf(0.25 * f32::from(i as i16 + INTENSITY_SCALE_MIN)))
+        .collect();
+
+        vec.into_boxed_slice().try_into().unwrap()
     };
 }
 
@@ -305,8 +307,8 @@ impl Ics {
 
         let scf_cb: &Codebook<Entry8x16> = &codebooks::SCALEFACTORS;
 
-        let table_normal_scf: &[f32] = &NORMAL_SCF_TABLE;
-        let table_intensity_scf: &[f32] = &INTENSITY_SCF_TABLE;
+        let table_normal_scf: &[f32] = &**NORMAL_SCF_TABLE;
+        let table_intensity_scf: &[f32] = &**INTENSITY_SCF_TABLE;
 
         for g in 0..self.info.window_groups {
             for sfb in 0..self.info.max_sfb {
@@ -570,7 +572,7 @@ fn decode_pairs_unsigned_escape<B: ReadBitsLtr>(
     scale: f32,
     dst: &mut [f32],
 ) -> Result<()> {
-    let iquant: &[f32] = &POW43_TABLE;
+    let iquant: &[f32] = &**POW43_TABLE;
 
     for out in dst.chunks_exact_mut(2) {
         let (a, b) = cb.read_quant(bs)?;

@@ -19,19 +19,13 @@ use lazy_static::lazy_static;
 
 use log::info;
 
+const MAX_HUFFMAN_SAMPLE: usize = 8207;
+
 lazy_static! {
     /// Lookup table for computing x(i) = s(i)^(4/3) where s(i) is a decoded Huffman sample. The
     /// value of s(i) is bound between 0..8207.
-    static ref REQUANTIZE_POW43: Box<[f32]> = {
-        // It is wasteful to initialize to 0.. however, Symphonia policy is to limit unsafe code to
-        // only symphonia-core.
-        //
-        // TODO: Implement generic lookup table initialization in the core library.
-        let mut pow43 = std::vec![0f32; 8207];
-        for (i, pow43) in pow43.iter_mut().enumerate() {
-            *pow43 = f32::powf(i as f32, 4.0 / 3.0);
-        }
-        pow43.into_boxed_slice()
+    static ref REQUANTIZE_POW43: Box<[f32; MAX_HUFFMAN_SAMPLE]> = {
+        (0..MAX_HUFFMAN_SAMPLE).map(|i| f32::powf(i as f32, 4.0 / 3.0)).collect::<Vec<f32>>().into_boxed_slice().try_into().unwrap()
     };
 }
 
@@ -62,7 +56,7 @@ pub(super) fn read_huffman_samples<B: ReadBitsLtr>(
 
     // Dereference the POW43 table once per granule since there is a tiny overhead each time a
     // lazy_static is dereferenced that should be amortized over as many samples as possible.
-    let pow43_table: &[f32] = &REQUANTIZE_POW43;
+    let pow43_table: &[f32] = &**REQUANTIZE_POW43;
 
     let mut bits_read = 0;
     let mut i = 0;
