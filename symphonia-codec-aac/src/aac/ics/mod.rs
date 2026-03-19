@@ -43,7 +43,6 @@ const SCF_TABLE_SIZE: usize = 256;
 lazy_static! {
     /// Pre-computed table of y = x^(4/3).
     static ref POW43_TABLE: Box<[f32; POWER_TABLE_SIZE]> = {
-
         let vec: Vec<f32> = (0..POWER_TABLE_SIZE)
         .map(|i| (i as f32).powf(4.0 / 3.0))
         .collect();
