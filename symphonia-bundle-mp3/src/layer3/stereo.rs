@@ -56,7 +56,7 @@ lazy_static! {
     /// The first dimension of this table is indexed by scalefac_compress & 1 to select i0. The
     /// second dimension is indexed by is_pos to obtain the channel coefficients. Note that
     /// is_pos == 31 is considered an invalid position, but IS included in the table.
-    static ref INTENSITY_STEREO_RATIOS_MPEG2: [[(f32, f32); 32]; 2] = {
+    static ref INTENSITY_STEREO_RATIOS_MPEG2: Box<[[(f32, f32); 32]; 2]> = {
         let is_scale: [f64; 2] = [
             1.0 / f64::sqrt(f64::consts::SQRT_2),
             f64::consts::FRAC_1_SQRT_2,
@@ -77,7 +77,7 @@ lazy_static! {
             }
         }
 
-        ratios
+        Box::new(ratios)
     };
 }
 
@@ -102,7 +102,7 @@ lazy_static! {
     ///
     /// This table is indexed by is_pos. Note that is_pos == 7 is invalid and is NOT included in the
     /// table.
-    static ref INTENSITY_STEREO_RATIOS_MPEG1: [(f32, f32); 7] = {
+    static ref INTENSITY_STEREO_RATIOS_MPEG1: Box<[(f32, f32); 7]> = {
         const PI_12: f64 = f64::consts::PI / 12.0;
 
         let mut ratios = [(0.0, 0.0); 7];
@@ -117,7 +117,7 @@ lazy_static! {
 
         ratios[6] = (1.0, 0.0);
 
-        ratios
+        Box::new(ratios)
     };
 }
 

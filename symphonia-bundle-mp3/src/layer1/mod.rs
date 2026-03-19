@@ -14,37 +14,34 @@ use crate::common::*;
 use crate::layer12::LAYER12_SCALEFACTORS;
 use crate::synthesis;
 
-use lazy_static::lazy_static;
+static FACTOR: [f32; 16] = {
+    // As per ISO/IEC 11172-3, given the nb-bit signed raw sample, val, dequantization is
+    // defined as follows.
+    //
+    // fractional = val / 2^(nb - 1)
+    // dequantized = (2^nb) / (2^nb - 1) * (fractional * 2^(-nb + 1))
+    //
+    // After combining, expanding, and simplifying the above equations, the complete
+    // calculation can be expressed as below.
+    //
+    // [(2^nb) / ((2^nb) - 1)] * 2^(-nb + 1) * (val + 1)
+    // -------------------------------------
+    //                 factor
+    //
+    // Therefore, dequantization can be reduced to a single multiplication and addition (see dequantize function below).
+    // This lookup table generator computes factor for nb-bits between 2..15, inclusive.
+    const ARRAY_SIZE: usize = 16;
+    let mut factor: [f32; ARRAY_SIZE] = [0f32; ARRAY_SIZE];
+    let mut i = 2;
+    while i < ARRAY_SIZE {
+        let a = (1 << i) as f32;
+        let b = (1 << (i - 1)) as f32;
 
-lazy_static! {
-    static ref FACTOR: [f32; 16] = {
-        let mut factor = [0f32; 16];
-
-        for (i, factor) in factor.iter_mut().enumerate().skip(2) {
-            // As per ISO/IEC 11172-3, given the nb-bit signed raw sample, val, dequantization is
-            // defined as follows.
-            //
-            // fractional = val / 2^(nb - 1)
-            // dequantized = (2^nb) / (2^nb - 1) * (fractional * 2^(-nb + 1))
-            //
-            // After combining, expanding, and simplifying the above equations, the complete
-            // calculation can be expressed as below.
-            //
-            // [(2^nb) / ((2^nb) - 1)] * 2^(-nb + 1) * (val + 1)
-            // -------------------------------------
-            //                 factor
-            //
-            // Therefore, dequantization can be reduced to a single multiplication and addition.
-            // This lookup table generator computes factor for nb-bits between 2..15, inclusive.
-            let a = 1 << i;
-            let b = 1 << (i - 1);
-
-            *factor = (a as f32 / (a - 1) as f32) * (b as f32).recip();
-        }
-
-        factor
-    };
-}
+        factor[i] = (a / (a - 1.0)) * (1.0 / b);
+        i += 1;
+    }
+    factor
+};
 
 /// Dequantize a sample, `raw`, of length `bits` bits.
 #[inline(always)]

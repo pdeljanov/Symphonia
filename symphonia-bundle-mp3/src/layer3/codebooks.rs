@@ -560,7 +560,7 @@ fn mpeg_gen_value(i: u16, wrap: u16) -> u16 {
 }
 
 lazy_static! {
-    pub static ref CODEBOOK_TABLES: [Codebook<Entry16x16>; 18] = {
+    pub static ref CODEBOOK_TABLES: Box<[Codebook<Entry16x16>; 18]> = {
         let mut codebooks: [Codebook<Entry16x16>; 18] = Default::default();
 
         for (codebook, table) in codebooks.iter_mut().zip(&MPEG_TABLES) {
@@ -581,12 +581,12 @@ lazy_static! {
             *codebook = builder.make(table.codes, table.lens, &values).unwrap();
         }
 
-        codebooks
+        Box::new(codebooks)
     };
 }
 
 lazy_static! {
-    pub static ref QUADS_CODEBOOK_TABLE: [Codebook<Entry16x16>; 2] = {
+    pub static ref QUADS_CODEBOOK_TABLE: Box<[Codebook<Entry16x16>; 2]> = {
         let mut codebooks: [Codebook<Entry16x16>; 2] = Default::default();
 
         for (codebook, table) in codebooks.iter_mut().zip(&MPEG_QUADS_TABLES) {
@@ -607,6 +607,6 @@ lazy_static! {
             *codebook = builder.make(table.codes, table.lens, &values).unwrap();
         }
 
-        codebooks
+        Box::new(codebooks)
     };
 }
