@@ -37,7 +37,7 @@ static FACTOR: [f32; 16] = {
         let a = (1 << i) as f32;
         let b = (1 << (i - 1)) as f32;
 
-        factor[i] = (a / a - 1.0) * (1.0 / b);
+        factor[i] = (a / (a - 1.0)) * (1.0 / b);
         i += 1;
     }
     factor
