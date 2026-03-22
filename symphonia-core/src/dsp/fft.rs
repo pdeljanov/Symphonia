@@ -20,19 +20,20 @@ use super::complex::Complex;
 macro_rules! fft_twiddle_table {
     ($bi:expr, $name:ident) => {
         lazy_static! {
-            static ref $name: [Complex; (1 << $bi) >> 1] = {
+            static ref $name: Box<[Complex; (1 << $bi) >> 1]> = {
                 const N: usize = 1 << $bi;
+                const TABLE_SIZE: usize = N >> 1;
+                let theta = std::f64::consts::PI / TABLE_SIZE as f64;
 
-                let mut table = [Default::default(); N >> 1];
+                let table: Vec<Complex> = (0..TABLE_SIZE)
+                    .map(|k| {
+                        let angle = theta * k as f64;
+                        Complex::new(angle.cos() as f32, -angle.sin() as f32)
+                    })
+                    .collect();
 
-                let theta = std::f64::consts::PI / (N >> 1) as f64;
-
-                for (k, t) in table.iter_mut().enumerate() {
-                    let angle = theta * k as f64;
-                    *t = Complex::new(angle.cos() as f32, -angle.sin() as f32);
-                }
-
-                table
+                // UNWRAP: The vector was initialized to be the correct size.
+                table.into_boxed_slice().try_into().unwrap()
             };
         }
     };
@@ -65,7 +66,7 @@ fn fft_twiddle_factors(n: usize) -> &'static [Complex] {
         16384 => FFT_TWIDDLE_TABLE_16384.as_ref(),
         32768 => FFT_TWIDDLE_TABLE_32768.as_ref(),
         65536 => FFT_TWIDDLE_TABLE_65536.as_ref(),
-        _ => panic!("fft size too large"),
+        _ => panic!("fft size is invalid"),
     }
 }
 
@@ -197,25 +198,9 @@ impl Fft {
     }
 
     fn transform(x: &mut [Complex], n: usize) {
-        fn to_arr(x: &mut [Complex]) -> Option<&mut [Complex; 32]> {
-            x.try_into().ok()
-        }
-
-        if let Some(x) = to_arr(x) {
-            fft32(x);
-        }
-        else {
-            let n_half = n >> 1;
-
-            let (even, odd) = x.split_at_mut(n_half);
-
-            Self::transform(even, n_half);
-            Self::transform(odd, n_half);
-
-            let twiddle = fft_twiddle_factors(n);
-
+        fn merge(even: &mut [Complex], odd: &mut [Complex], twiddles: &[Complex]) {
             for ((e, o), w) in
-                even.chunks_exact_mut(2).zip(odd.chunks_exact_mut(2)).zip(twiddle.chunks_exact(2))
+                even.chunks_exact_mut(2).zip(odd.chunks_exact_mut(2)).zip(twiddles.chunks_exact(2))
             {
                 let p0 = e[0];
                 let q0 = o[0] * w[0];
@@ -228,6 +213,48 @@ impl Fft {
 
                 e[1] = p1 + q1;
                 o[1] = p1 - q1;
+            }
+        }
+
+        if let Ok(x) = x.try_into() {
+            // N is exactly 32.
+            fft32(x);
+        }
+        else {
+            // N is > 32. Therefore, N must be >= 64. Begin a breadth-first FFT over 64-point chunks
+            // using 32-point halves.
+            let mut step = 32;
+
+            // The first iteration must dispatch to a specialized 32-point FFT function. This can be
+            // considered the base case of the breadth-first FFT.
+            {
+                // Twiddle factors used when merging the two halves of each chunk.
+                let twiddles = fft_twiddle_factors(step << 1);
+
+                // Iterate over adjacent chunks containing the two halves that will be merged.
+                for pair in x.chunks_exact_mut(step << 1) {
+                    // Split the chunk into two adjacent halves and compute the FFT of each.
+                    let (even, odd) = pair.split_at_mut(step);
+                    fft32(even.try_into().unwrap());
+                    fft32(odd.try_into().unwrap());
+
+                    // Merge the two adjacent halves back into one chunk.
+                    merge(even, odd, twiddles);
+                }
+
+                // The next iteration will be over the adjacent chunks computed in this iteration.
+                step <<= 1;
+            }
+
+            // Each subsequent iteration is large enough that there is no need for a specialized FFT
+            // function.
+            while step < n {
+                let twiddles = fft_twiddle_factors(step << 1);
+                for pair in x.chunks_exact_mut(step << 1) {
+                    let (even, odd) = pair.split_at_mut(step);
+                    merge(even, odd, twiddles);
+                }
+                step <<= 1;
             }
         }
     }
