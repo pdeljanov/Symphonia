@@ -2,6 +2,7 @@
 
 members = [
     "symphonia",
+    "symphonia-bundle-ape",
     "symphonia-bundle-flac",
     "symphonia-bundle-mp3",
     "symphonia-codec-aac",

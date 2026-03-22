@@ -1,0 +1,18 @@
+[package]
+name = "symphonia-bundle-ape"
+version = "0.5.5"
+description = "Pure Rust Monkey's Audio (APE) decoder and demuxer (a part of project Symphonia)."
+homepage = "https://github.com/pdeljanov/Symphonia"
+repository = "https://github.com/pdeljanov/Symphonia"
+authors = ["OMBS.IO Dev Team <dev@ombs.io>"]
+license = "MPL-2.0"
+readme = "README.md"
+categories = ["multimedia", "multimedia::audio", "multimedia::encoding"]
+keywords = ["audio", "codec", "decoder", "ape", "monkey-audio"]
+edition = "2018"
+rust-version = "1.70"
+
+[dependencies]
+symphonia-core = { version = "0.5.5", path = "../symphonia-core" }
+ape-decoder = { version = "0.3.2", path = "../../decoder" }
+lazy_static = "1.4.0"

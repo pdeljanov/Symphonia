@@ -27,7 +27,7 @@
 
 <p>
     <strong>
-        Symphonia is a pure Rust audio decoding and media demuxing library supporting AAC, ADPCM, AIFF, ALAC, CAF, FLAC, MKV, MP1, MP2, MP3, MP4, OGG, Vorbis, WAV, and WebM.
+        Symphonia is a pure Rust audio decoding and media demuxing library supporting AAC, ADPCM, AIFF, ALAC, APE, CAF, FLAC, MKV, MP1, MP2, MP3, MP4, OGG, Vorbis, WAV, and WebM.
     </strong>
 </p>
 
@@ -88,6 +88,7 @@ A status of *Excellent* is only assigned after the feature passes all compliance
 | Format   | Status    | Gapless* | Feature Flag | Default | Crate                       |
 |----------|-----------|----------|--------------|---------|-----------------------------|
 | AIFF     | Great     | Yes      | `aiff`       | No      | [`symphonia-format-riff`]   |
+| APE      | Good      | No       | `ape`        | No      | [`symphonia-bundle-ape`]    |
 | CAF      | Good      | No       | `caf`        | No      | [`symphonia-format-caf`]    |
 | ISO/MP4  | Great     | No       | `isomp4`     | No      | [`symphonia-format-isomp4`] |
 | MKV/WebM | Good      | No       | `mkv`        | Yes     | [`symphonia-format-mkv`]    |
@@ -96,6 +97,7 @@ A status of *Excellent* is only assigned after the feature passes all compliance
 
 \* Gapless playback requires support from both the demuxer and decoder.
 
+[`symphonia-bundle-ape`]: https://docs.rs/symphonia-bundle-ape
 [`symphonia-format-caf`]: https://docs.rs/symphonia-format-caf
 [`symphonia-format-isomp4`]: https://docs.rs/symphonia-format-isomp4
 [`symphonia-format-mkv`]: https://docs.rs/symphonia-format-mkv
@@ -111,6 +113,7 @@ A status of *Excellent* is only assigned after the feature passes all compliance
 | AAC-LC                       | Great     | No      | `aac`        | No      | [`symphonia-codec-aac`]    |
 | ADPCM                        | Good      | Yes     | `adpcm`      | Yes     | [`symphonia-codec-adpcm`]  |
 | ALAC                         | Great     | Yes     | `alac`       | No      | [`symphonia-codec-alac`]   |
+| APE (Monkey's Audio)         | Good      | No      | `ape`        | No      | [`symphonia-bundle-ape`]   |
 | HE-AAC (AAC+, aacPlus)       | -         | -       | `he-aac`     | No      | [`symphonia-codec-aac`]    |
 | HE-AACv2 (eAAC+, aacPlus v2) | -         | -       | `he-aac-v2`  | No      | [`symphonia-codec-aac`]    |
 | FLAC                         | Excellent | Yes     | `flac`       | Yes     | [`symphonia-bundle-flac`]  |
@@ -124,6 +127,7 @@ A status of *Excellent* is only assigned after the feature passes all compliance
 
 A `symphonia-bundle-*` package is a combination of a decoder and a native demuxer.
 
+[`symphonia-bundle-ape`]: https://docs.rs/symphonia-bundle-ape
 [`symphonia-codec-aac`]: https://docs.rs/symphonia-codec-aac
 [`symphonia-codec-adpcm`]: https://docs.rs/symphonia-codec-adpcm
 [`symphonia-codec-alac`]: https://docs.rs/symphonia-codec-alac
@@ -144,6 +148,7 @@ All metadata readers are provided by the `symphonia-metadata` crate.
 | ID3v2                 | Great     |
 | ISO/MP4               | Great     |
 | RIFF                  | Great     |
+| APEv2                 | Good      |
 | Vorbis comment (FLAC) | Perfect   |
 | Vorbis comment (OGG)  | Perfect   |
 

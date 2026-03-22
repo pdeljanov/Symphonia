@@ -22,6 +22,7 @@ default = ["adpcm", "flac", "mkv", "ogg", "pcm", "vorbis", "wav"]
 aac = ["symphonia-codec-aac"]
 adpcm = ["symphonia-codec-adpcm"]
 alac = ["symphonia-codec-alac"]
+ape = ["symphonia-bundle-ape"]
 flac = ["symphonia-bundle-flac"]
 caf = ["symphonia-format-caf"]
 isomp4 = ["symphonia-format-isomp4"]
@@ -43,6 +44,7 @@ all-codecs = [
     "aac",
     "adpcm",
     "alac",
+    "ape",
     "flac",
     "mp1",
     "mp2",
@@ -89,6 +91,11 @@ path = "../symphonia-core"
 [dependencies.symphonia-metadata]
 version = "0.5.5"
 path = "../symphonia-metadata"
+
+[dependencies.symphonia-bundle-ape]
+version = "0.5.5"
+path = "../symphonia-bundle-ape"
+optional = true
 
 [dependencies.symphonia-bundle-flac]
 version = "0.5.5"
