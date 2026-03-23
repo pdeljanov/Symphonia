@@ -96,10 +96,9 @@ pub fn unpack_xiph_laced_extradata(extradata: &[u8]) -> Result<(&[u8], &[u8])> {
             }
         }
     }
-
     let [ident_len, comment_len] = lengths;
-    let remaining_data = iter.as_slice();
 
+    let remaining_data = iter.as_slice();
     if remaining_data.is_empty() {
         return decode_error("vorbis: no data remains after reading lacing");
     }
