@@ -69,64 +69,49 @@ pub const XIPH_LACED_LEADING_HEADER: u8 = 2;
 /// If the data is not Xiph laced (does not start with 2), it is returned as is.
 /// If it is Xiph laced, it extracts the Identification and Setup packets and returns
 /// them concatenated.
-pub fn unpack_xiph_laced_extradata(extradata: &[u8]) -> Result<Vec<u8>> {
-    if extradata.is_empty() {
+pub fn unpack_xiph_laced_extradata(extradata: &[u8]) -> Result<(&[u8], &[u8])> {
+    let Some((&header_count, lacing_data)) = extradata.split_first()
+    else {
         return decode_error("vorbis: extradata is empty");
-    }
+    };
 
-    if extradata[0] != XIPH_LACED_LEADING_HEADER {
+    if header_count != XIPH_LACED_LEADING_HEADER {
         return decode_error("vorbis: invalid Xiph lacing count");
     }
 
-    let mut offset = 1;
-    let mut lengths = Vec::new();
-
-    for _ in 0..XIPH_LACED_LEADING_HEADER {
-        let mut length: usize = 0;
-        let mut reached_end = false;
-        while offset < extradata.len() {
-            let val = extradata[offset] as usize;
-            offset += 1;
-            length = match length.checked_add(val) {
+    let mut iter = lacing_data.iter();
+    let mut lengths = [0usize; 2]; // Xiph lacing for 3 packets encodes exactly 2 lengths
+    for length in &mut lengths {
+        loop {
+            let &val = match iter.next() {
+                Some(v) => v,
+                None => return decode_error("vorbis: truncated length lacing"),
+            };
+            *length = match length.checked_add(val as usize) {
                 Some(l) => l,
                 None => return decode_error("vorbis: lacing length overflow"),
             };
-
             if val < 255 {
-                reached_end = true;
                 break;
             }
         }
-        if !reached_end {
-            return decode_error("vorbis: truncated length lacing");
-        }
-        lengths.push(length);
     }
 
-    let ident_len = lengths[0];
-    let comment_len = lengths[1];
+    let [ident_len, comment_len] = lengths;
+    let remaining_data = iter.as_slice();
 
-    if offset >= extradata.len() {
+    if remaining_data.is_empty() {
         return decode_error("vorbis: no data remains after reading lacing");
     }
 
-    let total_header_len = ident_len.checked_add(comment_len).and_then(|l| l.checked_add(offset));
-
-    match total_header_len {
-        Some(len) if len <= extradata.len() => (),
+    let id_and_comment_len = match ident_len.checked_add(comment_len) {
+        Some(len) if len <= remaining_data.len() => len,
         _ => return decode_error("vorbis: header lengths exceed buffer size"),
-    }
-
-    let remaining_data = &extradata[offset..];
+    };
 
     let id_packet = &remaining_data[..ident_len];
-    let setup_packet = &remaining_data[ident_len + comment_len..];
-
-    let mut unpacked = Vec::with_capacity(ident_len + setup_packet.len());
-    unpacked.extend_from_slice(id_packet);
-    unpacked.extend_from_slice(setup_packet);
-
-    Ok(unpacked)
+    let setup_packet = &remaining_data[id_and_comment_len..];
+    Ok((id_packet, setup_packet))
 }
 
 #[cfg(test)]
@@ -149,11 +134,7 @@ mod tests {
 
         let result = unpack_xiph_laced_extradata(&extradata).unwrap();
 
-        let mut expected = Vec::new();
-        expected.extend_from_slice(id_packet);
-        expected.extend_from_slice(setup_packet);
-
-        assert_eq!(result, expected);
+        assert_eq!(result, (id_packet.as_ref(), setup_packet.as_ref()));
     }
 
     #[test]
@@ -185,10 +166,36 @@ mod tests {
 
         let result = unpack_xiph_laced_extradata(&extradata).unwrap();
 
-        let mut expected = Vec::new();
-        expected.extend_from_slice(&vec![0; 255]);
-        expected.extend_from_slice(setup_packet);
+        let expected_id = vec![0; 255];
+        assert_eq!(result, (expected_id.as_slice(), setup_packet.as_ref()));
+    }
 
-        assert_eq!(result, expected);
+    #[test]
+    fn test_unpack_xiph_laced_extradata_empty() {
+        let result = unpack_xiph_laced_extradata(&[]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_unpack_xiph_laced_extradata_invalid_count() {
+        let extradata = vec![1, 30, 0]; // Raw vorbis identification header starts with 1
+        let result = unpack_xiph_laced_extradata(&extradata);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_unpack_xiph_laced_extradata_truncated_lacing() {
+        // Lacing is incomplete (we have a 255 but no next byte to finish the size)
+        let extradata = vec![XIPH_LACED_LEADING_HEADER, 255];
+        let result = unpack_xiph_laced_extradata(&extradata);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_unpack_xiph_laced_extradata_no_data_after_lacing() {
+        // Lacing completes successfully (lengths 0 and 0) but no actual packet data follows
+        let extradata = vec![XIPH_LACED_LEADING_HEADER, 0, 0];
+        let result = unpack_xiph_laced_extradata(&extradata);
+        assert!(result.is_err());
     }
 }
