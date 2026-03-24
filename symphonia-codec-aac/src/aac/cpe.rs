@@ -109,8 +109,8 @@ impl ChannelPair {
                 }
 
                 for sfb in 0..self.ics0.info.max_sfb {
-                    let start = w * 128 + bands[sfb];
-                    let end = w * 128 + bands[sfb + 1];
+                    let start = w * self.ics0.short_win_len + bands[sfb];
+                    let end = w * self.ics0.short_win_len + bands[sfb + 1];
 
                     if self.ics1.is_intensity(g, sfb) {
                         // Intensity stereo
@@ -160,6 +160,22 @@ impl ChannelPair {
 
         if self.is_pair {
             self.ics1.synth_channel(dsp, rate_idx, abuf.plane_mut(self.channel + 1).unwrap());
+        }
+    }
+
+    /// Synthesize a single channel to an arbitrary output slice.
+    /// `ch_index` is 0 for the first channel, 1 for the second (pair only).
+    pub fn synth_channel_to_buf(
+        &mut self,
+        dsp: &mut dsp::Dsp,
+        rate_idx: usize,
+        ch_index: usize,
+        dst: &mut [f32],
+    ) {
+        match ch_index {
+            0 => self.ics0.synth_channel(dsp, rate_idx, dst),
+            1 => self.ics1.synth_channel(dsp, rate_idx, dst),
+            _ => {}
         }
     }
 }
