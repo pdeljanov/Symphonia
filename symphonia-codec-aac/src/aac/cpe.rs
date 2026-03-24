@@ -162,4 +162,20 @@ impl ChannelPair {
             self.ics1.synth_channel(dsp, rate_idx, abuf.plane_mut(self.channel + 1).unwrap());
         }
     }
+
+    /// Synthesize a single channel to an arbitrary output slice.
+    /// `ch_index` is 0 for the first channel, 1 for the second (pair only).
+    pub fn synth_channel_to_buf(
+        &mut self,
+        dsp: &mut dsp::Dsp,
+        rate_idx: usize,
+        ch_index: usize,
+        dst: &mut [f32],
+    ) {
+        match ch_index {
+            0 => self.ics0.synth_channel(dsp, rate_idx, dst),
+            1 => self.ics1.synth_channel(dsp, rate_idx, dst),
+            _ => {}
+        }
+    }
 }
