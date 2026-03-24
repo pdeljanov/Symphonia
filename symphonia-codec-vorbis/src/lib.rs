@@ -72,6 +72,22 @@ pub struct VorbisDecoder {
     buf: AudioBuffer<f32>,
 }
 
+fn read_extradata(buf: &[u8]) -> Result<(IdentHeader, Setup)> {
+    let is_xiph_laced = !buf.is_empty() && buf[0] == XIPH_LACED_LEADING_HEADER;
+    if is_xiph_laced {
+        let (pkt_ident, pkt_setup) = unpack_xiph_laced_extradata(buf)?;
+        let ident = read_ident_header(&mut BufReader::new(pkt_ident))?;
+        let setup = read_setup(&mut BufReader::new(pkt_setup), &ident)?;
+        Ok((ident, setup))
+    }
+    else {
+        let mut reader = BufReader::new(buf);
+        let ident = read_ident_header(&mut reader)?;
+        let setup = read_setup(&mut reader, &ident)?;
+        Ok((ident, setup))
+    }
+}
+
 impl VorbisDecoder {
     pub fn try_new(params: &AudioCodecParameters, opts: &AudioDecoderOptions) -> Result<Self> {
         // This decoder only supports Vorbis.
@@ -86,13 +102,7 @@ impl VorbisDecoder {
         };
 
         // The extra data contains the identification and setup headers.
-        let mut reader = BufReader::new(extra_data);
-
-        // Read ident header.
-        let ident = read_ident_header(&mut reader)?;
-
-        // Read setup data.
-        let setup = read_setup(&mut reader, &ident)?;
+        let (ident, setup) = read_extradata(extra_data)?;
 
         // Initialize static DSP data.
         let windows = Windows::new(1 << ident.bs0_exp, 1 << ident.bs1_exp);
