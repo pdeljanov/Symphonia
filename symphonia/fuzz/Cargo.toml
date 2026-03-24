@@ -7,7 +7,7 @@ homepage = "https://github.com/pdeljanov/Symphonia"
 license = "MPL-2.0"
 repository = "https://github.com/pdeljanov/Symphonia"
 rust-version = "1.85"
-version = "0.6.0"
+version = "0.6.0-alpha.1"
 
 [package.metadata]
 cargo-fuzz = true
