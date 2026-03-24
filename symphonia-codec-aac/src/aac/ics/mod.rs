@@ -208,12 +208,14 @@ pub struct Ics {
     num_sec: [usize; MAX_WINDOWS],
     pub scales: [[f32; MAX_SFBS]; MAX_WINDOWS],
     sbinfo: GASubbandInfo,
+    pub short_win_len: usize,
     pub coeffs: [f32; 1024],
     delay: [f32; 1024],
 }
 
 impl Ics {
     pub fn new(sbinfo: GASubbandInfo) -> Self {
+        let short_win_len = sbinfo.short_bands.last().copied().unwrap_or(128);
         Self {
             global_gain: 0,
             info: IcsInfo::new(),
@@ -226,6 +228,7 @@ impl Ics {
             scales: [[0.0; MAX_SFBS]; MAX_WINDOWS],
             num_sec: [0; MAX_WINDOWS],
             sbinfo,
+            short_win_len,
             coeffs: [0.0; 1024],
             delay: [0.0; 1024],
         }
@@ -380,7 +383,7 @@ impl Ics {
                 let scale = self.scales[g][sfb];
 
                 for w in cur_w..next_w {
-                    let dst = &mut self.coeffs[start + w * 128..end + w * 128];
+                    let dst = &mut self.coeffs[start + w * self.short_win_len..end + w * self.short_win_len];
 
                     // Derived from ISO/IEC-14496-3 Table 4.151.
                     match cb_idx {
@@ -456,7 +459,7 @@ impl Ics {
         }
 
         if let Some(tns) = &self.tns {
-            tns.synth(&self.info, bands, rate_idx, &mut self.coeffs);
+            tns.synth(&self.info, bands, rate_idx, self.short_win_len, &mut self.coeffs);
         }
 
         dsp.synth(

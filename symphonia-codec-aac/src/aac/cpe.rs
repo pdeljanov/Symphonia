@@ -109,8 +109,8 @@ impl ChannelPair {
                 }
 
                 for sfb in 0..self.ics0.info.max_sfb {
-                    let start = w * 128 + bands[sfb];
-                    let end = w * 128 + bands[sfb + 1];
+                    let start = w * self.ics0.short_win_len + bands[sfb];
+                    let end = w * self.ics0.short_win_len + bands[sfb + 1];
 
                     if self.ics1.is_intensity(g, sfb) {
                         // Intensity stereo
