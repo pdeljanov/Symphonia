@@ -5,7 +5,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::errors::{decode_error, Result};
+use symphonia_core::errors::{Result, decode_error};
 use symphonia_core::io::ReadBytes;
 
 use crate::atoms::{Atom, AtomHeader};
@@ -15,8 +15,6 @@ use crate::fp::FpU8;
 #[allow(dead_code)]
 #[derive(Debug)]
 pub struct TkhdAtom {
-    /// Atom header.
-    header: AtomHeader,
     /// Track header flags.
     pub flags: u32,
     /// Creation time.
@@ -25,8 +23,10 @@ pub struct TkhdAtom {
     pub mtime: u64,
     /// Track identifier.
     pub id: u32,
-    /// Track duration in the timescale units specified in the movie header. This value is equal to
-    /// the sum of the durations of all the track's edits.
+    /// Track duration in the timescale units specified in the movie header.
+    ///
+    /// This value is equal to the sum of the durations of all the track's edits. If there are no
+    /// edits, then this is the duration of all the track's samples.
     pub duration: u64,
     /// Layer.
     pub layer: u16,
@@ -37,15 +37,10 @@ pub struct TkhdAtom {
 }
 
 impl Atom for TkhdAtom {
-    fn header(&self) -> AtomHeader {
-        self.header
-    }
-
-    fn read<B: ReadBytes>(reader: &mut B, header: AtomHeader) -> Result<Self> {
-        let (version, flags) = AtomHeader::read_extra(reader)?;
+    fn read<B: ReadBytes>(reader: &mut B, mut header: AtomHeader) -> Result<Self> {
+        let (version, flags) = header.read_extended_header(reader)?;
 
         let mut tkhd = TkhdAtom {
-            header,
             flags,
             ctime: 0,
             mtime: 0,

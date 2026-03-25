@@ -16,16 +16,17 @@ use std::fs::File;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-use symphonia::core::audio::{AudioBufferRef, SampleBuffer};
-use symphonia::core::codecs::{Decoder, DecoderOptions};
-use symphonia::core::errors::{Error, Result};
-use symphonia::core::formats::{FormatOptions, FormatReader};
+use symphonia::core::audio::GenericAudioBufferRef;
+use symphonia::core::codecs::CodecParameters;
+use symphonia::core::codecs::audio::{AudioDecoder, AudioDecoderOptions};
+use symphonia::core::errors::{Error, Result, unsupported_error};
+use symphonia::core::formats::probe::Hint;
+use symphonia::core::formats::{FormatOptions, FormatReader, TrackType};
 use symphonia::core::io::{MediaSourceStream, ReadOnlySource};
 use symphonia::core::meta::MetadataOptions;
-use symphonia::core::probe::Hint;
 
 use clap::Arg;
-use log::{info, warn};
+use log::warn;
 
 /// The absolute maximum allowable sample delta. Around 2^-17 (-102.4dB).
 const ABS_MAX_ALLOWABLE_SAMPLE_DELTA: f32 = 0.00001;
@@ -34,18 +35,13 @@ const ABS_MAX_ALLOWABLE_SAMPLE_DELTA: f32 = 0.00001;
 // ISO. Around 2^-14 (-84.2dB).
 // const ABS_MAX_ALLOWABLE_SAMPLE_DELTA_MP3: f32 = 0.00006104;
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Default)]
 enum RefDecoder {
+    #[default]
     Ffmpeg,
     Flac,
     Mpg123,
     Oggdec,
-}
-
-impl Default for RefDecoder {
-    fn default() -> Self {
-        RefDecoder::Ffmpeg
-    }
 }
 
 #[derive(Default)]
@@ -60,11 +56,14 @@ struct TestOptions {
 
 #[derive(Default)]
 struct TestResult {
+    n_frames: u64,
     n_samples: u64,
     n_failed_samples: u64,
     n_packets: u64,
     n_failed_packets: u64,
     abs_max_delta: f32,
+    tgt_unchecked_samples: u64,
+    ref_unchecked_samples: u64,
 }
 
 fn build_ffmpeg_command(path: &str, gapless: bool) -> Command {
@@ -136,76 +135,91 @@ impl RefProcess {
     }
 }
 
+#[derive(Default)]
+struct FlushStats {
+    n_packets: u64,
+    n_samples: u64,
+}
+
 struct DecoderInstance {
     format: Box<dyn FormatReader>,
-    decoder: Box<dyn Decoder>,
+    decoder: Box<dyn AudioDecoder>,
     track_id: u32,
 }
 
 impl DecoderInstance {
-    fn try_open(mss: MediaSourceStream, fmt_opts: &FormatOptions) -> Result<DecoderInstance> {
+    fn try_open(
+        mss: MediaSourceStream<'static>,
+        fmt_opts: FormatOptions,
+        dec_opts: AudioDecoderOptions,
+    ) -> Result<DecoderInstance> {
         // Use the default options for metadata and format readers, and the decoder.
         let meta_opts: MetadataOptions = Default::default();
-        let dec_opts: DecoderOptions = Default::default();
 
         let hint = Hint::new();
 
-        let probed = symphonia::default::get_probe().format(&hint, mss, fmt_opts, &meta_opts)?;
-        let format = probed.format;
+        let format = symphonia::default::get_probe().probe(&hint, mss, fmt_opts, meta_opts)?;
 
-        let track = format.default_track().unwrap();
+        let track = format.default_track(TrackType::Audio).unwrap();
 
-        let decoder = symphonia::default::get_codecs().make(&track.codec_params, &dec_opts)?;
+        let codec_params = match &track.codec_params {
+            Some(CodecParameters::Audio(params)) => params,
+            _ => return unsupported_error("only audio tracks are supported"),
+        };
+
+        let decoder =
+            symphonia::default::get_codecs().make_audio_decoder(codec_params, &dec_opts)?;
 
         let track_id = track.id;
 
         Ok(DecoderInstance { format, decoder, track_id })
     }
-}
 
-fn get_next_audio_buf(inst: &mut DecoderInstance) -> Result<AudioBufferRef<'_>> {
-    let pkt = loop {
-        // Get next packet.
-        let pkt = inst.format.next_packet()?;
-
-        // Ensure packet is from the correct track.
-        if pkt.track_id() == inst.track_id {
-            break pkt;
-        }
-    };
-
-    // Decode packet audio.
-    inst.decoder.decode(&pkt)
-}
-
-fn get_next_audio_buf_best_effort(inst: &mut DecoderInstance) -> Result<()> {
-    loop {
-        match get_next_audio_buf(inst) {
-            Ok(_) => break Ok(()),
-            Err(Error::DecodeError(err)) => warn!("{}", err),
-            Err(err) => break Err(err),
-        }
-    }
-}
-
-fn copy_audio_buf_to_sample_buf(src: AudioBufferRef<'_>, dst: &mut Option<SampleBuffer<f32>>) {
-    if dst.is_none() {
-        let spec = *src.spec();
-        let duration = src.capacity() as u64;
-
-        info!(
-            "created target raw audio buffer with rate={}, channels={}, duration={}",
-            spec.rate,
-            spec.channels.count(),
-            duration
-        );
-
-        *dst = Some(SampleBuffer::<f32>::new(duration, spec));
+    fn samples_per_frame(&self) -> Option<u64> {
+        self.decoder.codec_params().channels.as_ref().map(|ch| ch.count() as u64)
     }
 
-    let dst_raw_audio = dst.as_mut().unwrap();
+    fn next_audio_buf(&mut self, keep_going: bool) -> Result<Option<GenericAudioBufferRef<'_>>> {
+        loop {
+            // Get the next packet.
+            let packet = match self.format.next_packet() {
+                Ok(Some(packet)) => packet,
+                Ok(None) => return Ok(None),
+                Err(Error::IoError(err)) if err.kind() == std::io::ErrorKind::UnexpectedEof => {
+                    // WavReader will always return an UnexpectedEof when it ends because the
+                    // reference decoder is piping the decoded audio and cannot write out the
+                    // actual length of the media. Treat UnexpectedEof as the end of the stream.
+                    return Ok(None);
+                }
+                Err(err) => return Err(err),
+            };
 
-    dst_raw_audio.copy_interleaved_ref(src)
+            // Skip packets that do not belong to the track being decoded.
+            if packet.track_id() != self.track_id {
+                continue;
+            }
+
+            // Decode the packet, ignoring decode errors if `keep_going` is true.
+            match self.decoder.decode(&packet) {
+                Ok(_) => break,
+                Err(Error::DecodeError(err)) if keep_going => warn!("{err}"),
+                Err(err) => return Err(err),
+            }
+        }
+
+        Ok(Some(self.decoder.last_decoded()))
+    }
+
+    fn flush(&mut self, keep_going: bool) -> Result<FlushStats> {
+        let mut stats: FlushStats = Default::default();
+
+        while let Some(buf) = self.next_audio_buf(keep_going)? {
+            stats.n_packets += 1;
+            stats.n_samples += buf.samples_interleaved() as u64;
+        }
+
+        Ok(stats)
+    }
 }
 
 fn run_check(
@@ -215,53 +229,56 @@ fn run_check(
     acct: &mut TestResult,
 ) -> Result<()> {
     // Reference
-    let mut ref_sample_buf = None;
+    let mut ref_sample_buf: Vec<f32> = Default::default();
     let mut ref_sample_cnt = 0;
     let mut ref_sample_pos = 0;
 
     // Target
-    let mut tgt_sample_buf = None;
+    let mut tgt_sample_buf: Vec<f32> = Default::default();
+    let mut tgt_sample_cnt = 0;
+    let mut tgt_sample_pos = 0;
 
-    loop {
-        // Decode target's next audio buffer.
-        if opts.keep_going {
-            get_next_audio_buf_best_effort(tgt_inst)?;
-        }
-        else {
-            get_next_audio_buf(tgt_inst)?;
-        }
+    let samples_per_frame = tgt_inst.samples_per_frame().unwrap_or(1);
 
-        // Copy to the target's audio buffer into the target sample buffer.
-        copy_audio_buf_to_sample_buf(tgt_inst.decoder.last_decoded(), &mut tgt_sample_buf);
+    // Samples/frame must match for both decoders.
+    if samples_per_frame != ref_inst.samples_per_frame().unwrap_or(1) {
+        return unsupported_error("target and reference decoder samples per frame mismatch");
+    }
 
-        // Get a slice of the target sample buffer.
-        let mut tgt_samples = tgt_sample_buf.as_mut().unwrap().samples();
+    let early_fail = 'outer: loop {
+        // Decode the next target audio buffer and copy it to the target sample buffer.
+        match tgt_inst.next_audio_buf(opts.keep_going)? {
+            Some(buf) => buf.copy_to_vec_interleaved(&mut tgt_sample_buf),
+            None => break 'outer false,
+        };
 
-        // The number of samples previously read & compared.
-        let sample_num_base = acct.n_samples;
+        tgt_sample_cnt = tgt_sample_buf.len();
+        tgt_sample_pos = 0;
+
+        // The number of frames previously read & compared.
+        let frame_num_base = acct.n_frames;
 
         // The number of failed samples in the target packet.
         let mut n_failed_pkt_samples = 0;
 
-        while !tgt_samples.is_empty() {
-            // Need to read a new reference packet.
+        while tgt_sample_pos < tgt_sample_cnt {
+            // Need to read a decode a new reference buffer.
             if ref_sample_pos == ref_sample_cnt {
-                // Get next reference audio buffer.
-                get_next_audio_buf_best_effort(ref_inst)?;
+                // Get the next reference audio buffer and copy it to the reference sample buffer.
+                match ref_inst.next_audio_buf(true)? {
+                    Some(buf) => buf.copy_to_vec_interleaved(&mut ref_sample_buf),
+                    None => break 'outer false,
+                }
 
-                // Copy to reference audio buffer to reference sample buffer.
-                copy_audio_buf_to_sample_buf(ref_inst.decoder.last_decoded(), &mut ref_sample_buf);
-
-                // Save number of reference samples in the sample buffer and reset the sample buffer
-                // position counter.
-                ref_sample_cnt = ref_sample_buf.as_ref().unwrap().len();
+                ref_sample_cnt = ref_sample_buf.len();
                 ref_sample_pos = 0;
             }
 
-            // The reference sample audio buffer.
-            let ref_samples = &ref_sample_buf.as_mut().unwrap().samples()[ref_sample_pos..];
+            // Get a slice of the remaining samples in the reference and target sample buffers.
+            let ref_samples = &ref_sample_buf[ref_sample_pos..];
+            let tgt_samples = &tgt_sample_buf[tgt_sample_pos..];
 
-            // The number of samples that can be compared given the current state of the reference
+            // The number of samples that can be compared given the current length of the reference
             // and target sample buffers.
             let n_test_samples = std::cmp::min(ref_samples.len(), tgt_samples.len());
 
@@ -276,10 +293,11 @@ fn run_check(
                     // Print per-sample or per-packet failure nessage based on selected options.
                     if !opts.is_quiet && (opts.is_per_sample || n_failed_pkt_samples == 0) {
                         println!(
-                            "[FAIL] packet={:>6}, sample_num={:>12} ({:>4}), dec={:+.8}, ref={:+.8} ({:+.8})",
+                            "[FAIL] packet={:>8}, frame={:>10} ({:>4}), plane={:>3}, dec={:+.8}, ref={:+.8} ({:+.8})",
                             acct.n_packets,
-                            acct.n_samples,
-                            acct.n_samples - sample_num_base,
+                            acct.n_frames,
+                            acct.n_frames - frame_num_base,
+                            acct.n_samples % samples_per_frame,
                             t,
                             r,
                             r - t
@@ -291,13 +309,15 @@ fn run_check(
 
                 acct.abs_max_delta = acct.abs_max_delta.max(delta.abs());
                 acct.n_samples += 1;
+
+                if acct.n_samples % samples_per_frame == 0 {
+                    acct.n_frames += 1;
+                }
             }
 
-            // Update position in reference buffer.
+            // Update position in reference and target buffers.
             ref_sample_pos += n_test_samples;
-
-            // Update slice to compare next round.
-            tgt_samples = &tgt_samples[n_test_samples..];
+            tgt_sample_pos += n_test_samples;
         }
 
         acct.n_failed_samples += n_failed_pkt_samples;
@@ -305,8 +325,19 @@ fn run_check(
         acct.n_packets += 1;
 
         if opts.stop_after_fail && acct.n_failed_packets > 0 {
-            break;
+            break true;
         }
+    };
+
+    // Count how many samples were remaining for both the target and references if the loop did not
+    // break out early due to a failed sample.
+    if !early_fail {
+        let tgt_stats = tgt_inst.flush(true)?;
+        let ref_stats = ref_inst.flush(true)?;
+
+        acct.n_packets += tgt_stats.n_packets;
+        acct.tgt_unchecked_samples = (tgt_sample_cnt - tgt_sample_pos) as u64 + tgt_stats.n_samples;
+        acct.ref_unchecked_samples = (ref_sample_cnt - ref_sample_pos) as u64 + ref_stats.n_samples;
     }
 
     Ok(())
@@ -320,15 +351,16 @@ fn run_test(path: &str, opts: &TestOptions, result: &mut TestResult) -> Result<(
     let ref_ms = Box::new(ReadOnlySource::new(ref_process.child.stdout.take().unwrap()));
     let ref_mss = MediaSourceStream::new(ref_ms, Default::default());
 
-    let mut ref_inst = DecoderInstance::try_open(ref_mss, &Default::default())?;
+    let mut ref_inst = DecoderInstance::try_open(ref_mss, Default::default(), Default::default())?;
 
     // 3. Instantiate a Symphonia decoder for the test target.
     let tgt_ms = Box::new(File::open(Path::new(path))?);
     let tgt_mss = MediaSourceStream::new(tgt_ms, Default::default());
 
-    let tgt_fmt_opts = FormatOptions { enable_gapless: opts.gapless, ..Default::default() };
+    let tgt_fmt_opts = Default::default();
+    let tgt_dec_opts = AudioDecoderOptions::default().gapless(opts.gapless);
 
-    let mut tgt_inst = DecoderInstance::try_open(tgt_mss, &tgt_fmt_opts)?;
+    let mut tgt_inst = DecoderInstance::try_open(tgt_mss, tgt_fmt_opts, tgt_dec_opts)?;
 
     // 4. Begin check.
     run_check(&mut ref_inst, &mut tgt_inst, opts, result)
@@ -392,16 +424,12 @@ fn main() {
 
     let mut res: TestResult = Default::default();
 
-    println!("Input Path: {}", path);
+    println!("Input Path: {path}");
     println!();
 
-    match run_test(path, &opts, &mut res) {
-        Err(Error::IoError(err)) if err.kind() == std::io::ErrorKind::UnexpectedEof => (),
-        Err(err) => {
-            eprintln!("Test interrupted by error: {}", err);
-            std::process::exit(2);
-        }
-        _ => (),
+    if let Err(err) = run_test(path, &opts, &mut res) {
+        eprintln!("Test interrupted by error: {err}");
+        std::process::exit(2);
     };
 
     if !opts.is_quiet {
@@ -413,6 +441,9 @@ fn main() {
     println!();
     println!("  Failed/Total Packets: {:>12}/{:>12}", res.n_failed_packets, res.n_packets);
     println!("  Failed/Total Samples: {:>12}/{:>12}", res.n_failed_samples, res.n_samples);
+    println!();
+    println!("  Remaining Target Samples:          {:>12}", res.tgt_unchecked_samples);
+    println!("  Remaining Reference Samples:       {:>12}", res.ref_unchecked_samples);
     println!();
     println!("  Absolute Maximum Sample Delta:       {:.8}", res.abs_max_delta);
     println!();

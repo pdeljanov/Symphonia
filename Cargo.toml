@@ -1,4 +1,5 @@
 [workspace]
+resolver = "2"
 
 members = [
     "symphonia",
@@ -11,14 +12,29 @@ members = [
     "symphonia-codec-pcm",
     "symphonia-codec-vorbis",
     "symphonia-codec-wavpack",
+    "symphonia-common",
     "symphonia-core",
     "symphonia-format-isomp4",
     "symphonia-format-mkv",
     "symphonia-format-ogg",
     "symphonia-format-riff",
-    "symphonia-format-wav",
     "symphonia-metadata",
     "symphonia-play",
-    "symphonia-utils-xiph",
     "symphonia-check",
 ]
+
+[workspace.package]
+edition = "2024"
+homepage = "https://github.com/pdeljanov/Symphonia"
+license = "MPL-2.0"
+license-file = "LICENSE"
+repository = "https://github.com/pdeljanov/Symphonia"
+rust-version = "1.85"
+version = "0.6.0-alpha.1"
+
+#cargo-features = ["profile-rustflags"]
+
+[profile.profiling]
+inherits = "release"
+debug = true
+#rustflags = ["-C", "force-frame-pointers=y"]

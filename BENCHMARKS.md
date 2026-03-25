@@ -45,7 +45,7 @@ make -j16 examples
 
 ## Methodology
 
-The latest development versions based off the `master` branch of both projects is used.
+The latest development versions based off the `main` branch of both projects is used.
 
 [Hyperfine](https://github.com/sharkdp/hyperfine) is used to execute the tests. Each file is benchmarked for a minimum of 30 runs after 3 discarded cache warmup runs.
 

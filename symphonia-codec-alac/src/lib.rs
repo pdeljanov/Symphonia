@@ -19,15 +19,18 @@
 use std::cmp::min;
 
 use symphonia_core::audio::{
-    AsAudioBufferRef, AudioBuffer, AudioBufferRef, Channels, Signal, SignalSpec,
+    AsGenericAudioBufferRef, AudioBuffer, AudioMut, AudioSpec, Channels, GenericAudioBufferRef,
+    layouts,
 };
-use symphonia_core::codecs::{
-    CodecDescriptor, CodecParameters, Decoder, DecoderOptions, FinalizeResult, CODEC_TYPE_ALAC,
-};
-use symphonia_core::errors::{decode_error, unsupported_error, Result};
-use symphonia_core::formats::Packet;
+use symphonia_core::codecs::CodecInfo;
+use symphonia_core::codecs::audio::well_known::CODEC_ID_ALAC;
+use symphonia_core::codecs::audio::{AudioCodecParameters, AudioDecoderOptions};
+use symphonia_core::codecs::audio::{AudioDecoder, FinalizeResult};
+use symphonia_core::codecs::registry::{RegisterableAudioDecoder, SupportedAudioCodec};
+use symphonia_core::errors::{Result, decode_error, unsupported_error};
 use symphonia_core::io::{BitReaderLtr, BufReader, FiniteStream, ReadBitsLtr, ReadBytes};
-use symphonia_core::support_codec;
+use symphonia_core::packet::Packet;
+use symphonia_core::support_audio_codec;
 
 /// Supported ALAC version.
 const ALAC_VERSION: u8 = 0;
@@ -49,93 +52,19 @@ const ALAC_ELEM_TAG_FIL: u32 = 6;
 /// Frame End Element (END) tag.
 const ALAC_ELEM_TAG_END: u32 = 7;
 
-/// An ALAC channel layout.
-#[derive(Debug)]
-enum ChannelLayout {
-    /// Centre
-    Mono,
-    /// Front Left, Front Right
-    Stereo,
-    /// Centre, Front Left, Front Right
-    Mpeg3p0B,
-    /// Centre, Front Left, Front Right, Rear Centre
-    Mpeg4p0B,
-    /// Centre, Front Left, Front Right, Side Left, Side Right
-    Mpeg5p0D,
-    /// Centre, Front Left, Front Right, Side Left, Side Right, LFE
-    Mpeg5p1D,
-    /// Centre, Front Left, Front Right, Side Left, Side Right, Rear Centre, LFE
-    Aac6p1,
-    /// Centre, Front Left of Centre, Front Right of Centre, Front Left, Front Right, Side Left,
-    /// Side Right, LFE
-    Mpeg7p1B,
-}
-
-impl ChannelLayout {
-    /// Given the current ALAC channel layout, this function will return a mappings of an ALAC
-    /// channel number (the index into the array) to a Symphonia `AudioBuffer` channel index.
-    fn channel_map(&self) -> [u8; 8] {
-        match self {
-            ChannelLayout::Mono => [0, 0, 0, 0, 0, 0, 0, 0],
-            ChannelLayout::Stereo => [0, 1, 0, 0, 0, 0, 0, 0],
-            ChannelLayout::Mpeg3p0B => [2, 0, 1, 0, 0, 0, 0, 0],
-            ChannelLayout::Mpeg4p0B => [2, 0, 1, 3, 0, 0, 0, 0],
-            ChannelLayout::Mpeg5p0D => [2, 0, 1, 3, 4, 0, 0, 0],
-            ChannelLayout::Mpeg5p1D => [2, 0, 1, 4, 5, 3, 0, 0],
-            ChannelLayout::Aac6p1 => [2, 0, 1, 5, 6, 4, 3, 0],
-            ChannelLayout::Mpeg7p1B => [2, 4, 5, 0, 1, 6, 7, 3],
-        }
-    }
-
-    /// Get a Symphonia channels bitmask from the ALAC channel layout.
-    fn channels(&self) -> Channels {
-        match self {
-            ChannelLayout::Mono => Channels::FRONT_LEFT,
-            ChannelLayout::Stereo => Channels::FRONT_LEFT | Channels::FRONT_RIGHT,
-            ChannelLayout::Mpeg3p0B => {
-                Channels::FRONT_CENTRE | Channels::FRONT_LEFT | Channels::FRONT_RIGHT
-            }
-            ChannelLayout::Mpeg4p0B => {
-                Channels::FRONT_CENTRE
-                    | Channels::FRONT_LEFT
-                    | Channels::FRONT_RIGHT
-                    | Channels::REAR_CENTRE
-            }
-            ChannelLayout::Mpeg5p0D => {
-                Channels::FRONT_CENTRE
-                    | Channels::FRONT_LEFT
-                    | Channels::FRONT_RIGHT
-                    | Channels::SIDE_LEFT
-                    | Channels::SIDE_RIGHT
-            }
-            ChannelLayout::Mpeg5p1D => {
-                Channels::FRONT_CENTRE
-                    | Channels::FRONT_LEFT
-                    | Channels::FRONT_RIGHT
-                    | Channels::SIDE_LEFT
-                    | Channels::SIDE_RIGHT
-                    | Channels::LFE1
-            }
-            ChannelLayout::Aac6p1 => {
-                Channels::FRONT_CENTRE
-                    | Channels::FRONT_LEFT
-                    | Channels::FRONT_RIGHT
-                    | Channels::SIDE_LEFT
-                    | Channels::SIDE_RIGHT
-                    | Channels::REAR_CENTRE
-                    | Channels::LFE1
-            }
-            ChannelLayout::Mpeg7p1B => {
-                Channels::FRONT_CENTRE
-                    | Channels::FRONT_LEFT_CENTRE
-                    | Channels::FRONT_RIGHT_CENTRE
-                    | Channels::FRONT_LEFT
-                    | Channels::FRONT_RIGHT
-                    | Channels::SIDE_LEFT
-                    | Channels::SIDE_RIGHT
-                    | Channels::LFE1
-            }
-        }
+/// Given the current ALAC channel layout, this function will return a mappings of an ALAC
+/// channel number (the index into the array) to a Symphonia `AudioBuffer` channel index.
+fn map_channels(channels: &Channels) -> [u8; 8] {
+    match *channels {
+        layouts::CHANNEL_LAYOUT_MONO => [0, 0, 0, 0, 0, 0, 0, 0],
+        layouts::CHANNEL_LAYOUT_STEREO => [0, 1, 0, 0, 0, 0, 0, 0],
+        layouts::CHANNEL_LAYOUT_MPEG_3P0_B => [2, 0, 1, 0, 0, 0, 0, 0],
+        layouts::CHANNEL_LAYOUT_MPEG_4P0_B => [2, 0, 1, 3, 0, 0, 0, 0],
+        layouts::CHANNEL_LAYOUT_MPEG_5P0_D => [2, 0, 1, 3, 4, 0, 0, 0],
+        layouts::CHANNEL_LAYOUT_MPEG_5P1_D => [2, 0, 1, 4, 5, 3, 0, 0],
+        layouts::CHANNEL_LAYOUT_AAC_6P1 => [2, 0, 1, 5, 6, 4, 3, 0],
+        layouts::CHANNEL_LAYOUT_MPEG_7P1_B => [2, 4, 5, 0, 1, 6, 7, 3],
+        _ => unreachable!(),
     }
 }
 
@@ -154,15 +83,32 @@ struct MagicCookie {
     max_frame_bytes: u32,
     avg_bit_rate: u32,
     sample_rate: u32,
-    channel_layout: ChannelLayout,
+    channels: Channels,
 }
 
 impl MagicCookie {
-    fn try_read<B: ReadBytes + FiniteStream>(reader: &mut B) -> Result<MagicCookie> {
-        // The magic cookie is either 24 or 48 bytes long.
-        if reader.byte_len() != 24 && reader.byte_len() != 48 {
+    fn try_parse(mut buf: &[u8]) -> Result<MagicCookie> {
+        // The magic cookie must be atleast 24 bytes long.
+        if buf.len() < 24 {
+            return unsupported_error("alac: magic cookie size too small");
+        }
+
+        // The magic cookie may be preceeded by a FRMA atom. Skip over the FRMA atom.
+        if buf[4..8] == *b"frma" {
+            buf = &buf[12..];
+        }
+
+        // The magic cookie may be preceeded by an ALAC atom. Skip over the ALAC atom.
+        if buf[4..8] == *b"alac" {
+            buf = &buf[12..];
+        }
+
+        // The magic cookie must be either 24 or 48 bytes long.
+        if buf.len() != 24 && buf.len() != 48 {
             return unsupported_error("alac: invalid magic cookie size");
         }
+
+        let mut reader = BufReader::new(buf);
 
         let mut config = MagicCookie {
             frame_length: reader.read_be_u32()?,
@@ -176,7 +122,7 @@ impl MagicCookie {
             max_frame_bytes: reader.read_be_u32()?,
             avg_bit_rate: reader.read_be_u32()?,
             sample_rate: reader.read_be_u32()?,
-            channel_layout: ChannelLayout::Mono,
+            channels: Default::default(),
         };
 
         // Only support up-to the currently implemented ALAC version.
@@ -189,6 +135,13 @@ impl MagicCookie {
             return decode_error("alac: invalid bit depth");
         }
 
+        // Limit the frame length to a reasonable value to prevent a single, 4-byte integer
+        // value from crashing the entire application via memory exhaustion.
+        const STANDARD_FRAME_SIZE: u32 = 4096;
+        if config.frame_length > STANDARD_FRAME_SIZE * 16 {
+            return unsupported_error("alac: frame length too large");
+        }
+
         // Only 8 channel layouts exist.
         // TODO: Support discrete/auxiliary channels.
         if config.num_channels < 1 || config.num_channels > 8 {
@@ -197,7 +150,7 @@ impl MagicCookie {
 
         // If the magic cookie is 48 bytes, the channel layout is explictly set, otherwise select a
         // channel layout from the number of channels.
-        config.channel_layout = if reader.byte_len() == 48 {
+        config.channels = if reader.byte_len() == 48 {
             // The first field is the size of the channel layout info. This should always be 24.
             if reader.read_be_u32()? != 24 {
                 return decode_error("alac: invalid channel layout info size");
@@ -215,29 +168,29 @@ impl MagicCookie {
 
             // Read the channel layout tag. The numerical value of this tag is defined by the Apple
             // CoreAudio API.
-            let layout = match reader.read_be_u32()? {
+            let layout_channels = match reader.read_be_u32()? {
                 // 100 << 16
-                0x64_0001 => ChannelLayout::Mono,
+                0x64_0001 => layouts::CHANNEL_LAYOUT_MONO,
                 // 101 << 16
-                0x65_0002 => ChannelLayout::Stereo,
+                0x65_0002 => layouts::CHANNEL_LAYOUT_STEREO,
                 // 113 << 16
-                0x71_0003 => ChannelLayout::Mpeg3p0B,
+                0x71_0003 => layouts::CHANNEL_LAYOUT_MPEG_3P0_B,
                 // 116 << 16
-                0x74_0004 => ChannelLayout::Mpeg4p0B,
+                0x74_0004 => layouts::CHANNEL_LAYOUT_MPEG_4P0_B,
                 // 120 << 16
-                0x78_0005 => ChannelLayout::Mpeg5p0D,
+                0x78_0005 => layouts::CHANNEL_LAYOUT_MPEG_5P0_D,
                 // 124 << 16
-                0x7c_0006 => ChannelLayout::Mpeg5p1D,
+                0x7c_0006 => layouts::CHANNEL_LAYOUT_MPEG_5P1_D,
                 // 142 << 16
-                0x8e_0007 => ChannelLayout::Aac6p1,
+                0x8e_0007 => layouts::CHANNEL_LAYOUT_AAC_6P1,
                 // 127 << 16
-                0x7f_0008 => ChannelLayout::Mpeg7p1B,
+                0x7f_0008 => layouts::CHANNEL_LAYOUT_MPEG_7P1_B,
                 _ => return decode_error("alac: invalid channel layout tag"),
             };
 
             // The number of channels stated in the mandatory part of the magic cookie should match
             // the number of channels implicit to the channel layout.
-            if config.num_channels != layout.channels().count() as u8 {
+            if config.num_channels != layout_channels.count() as u8 {
                 return decode_error(
                     "alac: the number of channels differs from the channel layout",
                 );
@@ -248,7 +201,7 @@ impl MagicCookie {
                 return decode_error("alac: reserved values in channel layout info are not 0");
             }
 
-            layout
+            layout_channels
         }
         else {
             // If extra channel information is not provided, use the number of channels to assign
@@ -258,14 +211,14 @@ impl MagicCookie {
             // discrete and not part of a channel layout. However, Symphonia does not support
             // discrete/auxiliary channels so the standard ALAC channel layouts are used for now.
             match config.num_channels {
-                1 => ChannelLayout::Mono,
-                2 => ChannelLayout::Stereo,
-                3 => ChannelLayout::Mpeg3p0B,
-                4 => ChannelLayout::Mpeg4p0B,
-                5 => ChannelLayout::Mpeg5p0D,
-                6 => ChannelLayout::Mpeg5p1D,
-                7 => ChannelLayout::Aac6p1,
-                8 => ChannelLayout::Mpeg7p1B,
+                1 => layouts::CHANNEL_LAYOUT_MONO,
+                2 => layouts::CHANNEL_LAYOUT_STEREO,
+                3 => layouts::CHANNEL_LAYOUT_MPEG_3P0_B,
+                4 => layouts::CHANNEL_LAYOUT_MPEG_4P0_B,
+                5 => layouts::CHANNEL_LAYOUT_MPEG_5P0_D,
+                6 => layouts::CHANNEL_LAYOUT_MPEG_5P1_D,
+                7 => layouts::CHANNEL_LAYOUT_AAC_6P1,
+                8 => layouts::CHANNEL_LAYOUT_MPEG_7P1_B,
                 _ => return decode_error("alac: unknown channel layout for number of channels"),
             }
         };
@@ -373,7 +326,8 @@ impl ElementChannel {
         }
 
         // An order of 0 indicates no prediction is done (the residuals are the samples).
-        if self.lpc_order == 0 {
+        // If the output buffer is empty, there is nothing to predict.
+        if self.lpc_order == 0 || out.is_empty() {
             return Ok(());
         }
 
@@ -394,7 +348,9 @@ impl ElementChannel {
         let order = self.lpc_order as usize;
 
         // Process warm-up samples.
-        for i in 1..1 + order {
+        // The loop is bounded by `out.len()` to prevent out-of-bounds access if the frame is
+        // shorter than the LPC order.
+        for i in 1..min(1 + order, out.len()) {
             out[i] = clip_msbs(out[i].wrapping_add(out[i - 1]), num_clip_bits);
         }
 
@@ -419,7 +375,7 @@ impl ElementChannel {
 
             // Rewrite `1 << (self.shift - 1)` as `(1 << self.shift) >> 1` to prevent overflowing
             // when shift is 0.
-            let val = (sum + ((1 << self.shift) >> 1)) >> self.shift;
+            let val = (sum.wrapping_add((1 << self.shift) >> 1)) >> self.shift;
             out[i] = clip_msbs(out[i].wrapping_add(past0).wrapping_add(val), num_clip_bits);
 
             // Adjust the coefficients if the initial value of the residual was not 0.
@@ -468,7 +424,7 @@ impl ElementChannel {
 /// Apple Lossless Audio Codec (ALAC) decoder.
 pub struct AlacDecoder {
     /// Codec paramters.
-    params: CodecParameters,
+    params: AudioCodecParameters,
     /// A temporary buffer to store the tail bits while decoding an element with a bit-shift > 0. If
     /// `config.num_channels` > 1, then this buffer must be 2x the frame length.
     tail_bits: Vec<u16>,
@@ -479,10 +435,32 @@ pub struct AlacDecoder {
 }
 
 impl AlacDecoder {
+    pub fn try_new(params: &AudioCodecParameters, _opts: &AudioDecoderOptions) -> Result<Self> {
+        // Verify codec ID.
+        if params.codec != CODEC_ID_ALAC {
+            return unsupported_error("alac: invalid codec");
+        }
+
+        // Read the config (magic cookie).
+        let config = if let Some(extra_data) = &params.extra_data {
+            MagicCookie::try_parse(extra_data)?
+        }
+        else {
+            return unsupported_error("alac: missing extra data");
+        };
+
+        let spec = AudioSpec::new(config.sample_rate, config.channels.clone());
+        let buf = AudioBuffer::new(spec, config.frame_length as usize);
+
+        let max_tail_values = min(2, config.num_channels) as usize * config.frame_length as usize;
+
+        Ok(AlacDecoder { params: params.clone(), tail_bits: vec![0; max_tail_values], buf, config })
+    }
+
     fn decode_inner(&mut self, packet: &Packet) -> Result<()> {
         let mut bs = BitReaderLtr::new(packet.buf());
 
-        let channel_map = self.config.channel_layout.channel_map();
+        let channel_map = map_channels(&self.config.channels);
         let num_channels = self.config.num_channels as usize;
         let mut next_channel = 0;
         let mut num_frames = 0;
@@ -496,7 +474,10 @@ impl AlacDecoder {
 
             match tag {
                 ALAC_ELEM_TAG_SCE | ALAC_ELEM_TAG_LFE => {
-                    let out0 = self.buf.chan_mut(channel_map[next_channel] as usize);
+                    let out0 = self
+                        .buf
+                        .plane_mut(channel_map[next_channel] as usize)
+                        .expect("invalid channel map");
 
                     num_frames =
                         decode_sce_or_cpe(&self.config, &mut bs, &mut self.tail_bits, out0, None)?;
@@ -510,10 +491,13 @@ impl AlacDecoder {
                         break;
                     }
 
-                    let (out0, out1) = self.buf.chan_pair_mut(
-                        channel_map[next_channel + 0] as usize,
-                        channel_map[next_channel + 1] as usize,
-                    );
+                    let (out0, out1) = self
+                        .buf
+                        .plane_pair_mut(
+                            channel_map[next_channel + 0] as usize,
+                            channel_map[next_channel + 1] as usize,
+                        )
+                        .expect("invalid channel map");
 
                     num_frames = decode_sce_or_cpe(
                         &self.config,
@@ -572,55 +556,34 @@ impl AlacDecoder {
         let shift = 32 - self.config.bit_depth;
 
         if shift > 0 {
-            self.buf.transform(|sample| sample << shift);
+            self.buf.apply(|sample| sample << shift);
         }
 
         Ok(())
     }
 }
 
-impl Decoder for AlacDecoder {
-    fn try_new(params: &CodecParameters, _: &DecoderOptions) -> Result<Self> {
-        // Verify codec type.
-        if params.codec != CODEC_TYPE_ALAC {
-            return unsupported_error("alac: invalid codec type");
-        }
-
-        // Read the config (magic cookie).
-        let config = if let Some(extra_data) = &params.extra_data {
-            MagicCookie::try_read(&mut BufReader::new(extra_data))?
-        }
-        else {
-            return unsupported_error("alac: missing extra data");
-        };
-
-        let spec = SignalSpec::new(config.sample_rate, config.channel_layout.channels());
-        let buf = AudioBuffer::new(u64::from(config.frame_length), spec);
-
-        let max_tail_values = min(2, config.num_channels) as usize * config.frame_length as usize;
-
-        Ok(AlacDecoder { params: params.clone(), tail_bits: vec![0; max_tail_values], buf, config })
-    }
-
+impl AudioDecoder for AlacDecoder {
     fn reset(&mut self) {
         // Nothing to do.
     }
 
-    fn supported_codecs() -> &'static [CodecDescriptor] {
-        &[support_codec!(CODEC_TYPE_ALAC, "alac", "Apple Lossless Audio Codec")]
+    fn codec_info(&self) -> &CodecInfo {
+        // Only one codec is supported.
+        &Self::supported_codecs().first().unwrap().info
     }
 
-    fn codec_params(&self) -> &CodecParameters {
+    fn codec_params(&self) -> &AudioCodecParameters {
         &self.params
     }
 
-    fn decode(&mut self, packet: &Packet) -> Result<AudioBufferRef<'_>> {
+    fn decode(&mut self, packet: &Packet) -> Result<GenericAudioBufferRef<'_>> {
         if let Err(e) = self.decode_inner(packet) {
             self.buf.clear();
             Err(e)
         }
         else {
-            Ok(self.buf.as_audio_buffer_ref())
+            Ok(self.buf.as_generic_audio_buffer_ref())
         }
     }
 
@@ -628,8 +591,24 @@ impl Decoder for AlacDecoder {
         Default::default()
     }
 
-    fn last_decoded(&self) -> AudioBufferRef<'_> {
-        self.buf.as_audio_buffer_ref()
+    fn last_decoded(&self) -> GenericAudioBufferRef<'_> {
+        self.buf.as_generic_audio_buffer_ref()
+    }
+}
+
+impl RegisterableAudioDecoder for AlacDecoder {
+    fn try_registry_new(
+        params: &AudioCodecParameters,
+        opts: &AudioDecoderOptions,
+    ) -> Result<Box<dyn AudioDecoder>>
+    where
+        Self: Sized,
+    {
+        Ok(Box::new(AlacDecoder::try_new(params, opts)?))
+    }
+
+    fn supported_codecs() -> &'static [SupportedAudioCodec] {
+        &[support_audio_codec!(CODEC_ID_ALAC, "alac", "Apple Lossless Audio Codec")]
     }
 }
 
@@ -666,6 +645,9 @@ fn decode_sce_or_cpe<B: ReadBitsLtr>(
     // otherwise use the frame length in the configuration.
     let num_samples =
         if is_partial_frame { bs.read_bits_leq32(32)? } else { config.frame_length } as usize;
+    if num_samples > config.frame_length as usize {
+        return decode_error("alac: frame length exceeds maximum frame length");
+    }
 
     if !is_uncompressed {
         // The number of upper sample bits that will be predicted per channel. This may be less-than
@@ -706,6 +688,12 @@ fn decode_sce_or_cpe<B: ReadBitsLtr>(
             elem1.predict(&mut out1[..num_samples])?;
 
             if mid_side_weight != 0 {
+                // mid_side_shift should not be bigger than 31 bits as we are shifting i32 to the right
+                // TODO Validate whether it should also not be greater than config.bit_depth.
+                if mid_side_shift > 31 {
+                    return decode_error("alac: mid_side_shift is greater than 31 bit");
+                }
+
                 decorrelate_mid_side(out0, out1, mid_side_weight, mid_side_shift);
             }
         }

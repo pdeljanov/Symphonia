@@ -5,19 +5,19 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::codecs::{CodecParameters, VerificationCheck, CODEC_TYPE_FLAC};
-use symphonia_core::errors::{decode_error, unsupported_error, Result};
+use symphonia_common::xiph::audio::flac::{MetadataBlockHeader, MetadataBlockType, StreamInfo};
+use symphonia_core::codecs::audio::VerificationCheck;
+use symphonia_core::codecs::audio::well_known::CODEC_ID_FLAC;
+use symphonia_core::errors::{Result, decode_error, unsupported_error};
 use symphonia_core::io::{BufReader, ReadBytes};
 
-use symphonia_utils_xiph::flac::metadata::{MetadataBlockHeader, MetadataBlockType, StreamInfo};
-
+use crate::atoms::stsd::AudioSampleEntry;
 use crate::atoms::{Atom, AtomHeader};
 
+/// FLAC atom.
 #[allow(dead_code)]
 #[derive(Debug)]
 pub struct FlacAtom {
-    /// Atom header.
-    header: AtomHeader,
     /// FLAC stream info block.
     stream_info: StreamInfo,
     /// FLAC extra data.
@@ -25,12 +25,8 @@ pub struct FlacAtom {
 }
 
 impl Atom for FlacAtom {
-    fn header(&self) -> AtomHeader {
-        self.header
-    }
-
-    fn read<B: ReadBytes>(reader: &mut B, header: AtomHeader) -> Result<Self> {
-        let (version, flags) = AtomHeader::read_extra(reader)?;
+    fn read<B: ReadBytes>(reader: &mut B, mut header: AtomHeader) -> Result<Self> {
+        let (version, flags) = header.read_extended_header(reader)?;
 
         if version != 0 {
             return unsupported_error("isomp4 (flac): unsupported flac version");
@@ -56,22 +52,20 @@ impl Atom for FlacAtom {
         let extra_data = reader.read_boxed_slice_exact(block_header.block_len as usize)?;
         let stream_info = StreamInfo::read(&mut BufReader::new(&extra_data))?;
 
-        Ok(FlacAtom { header, stream_info, extra_data })
+        Ok(FlacAtom { stream_info, extra_data })
     }
 }
 
 impl FlacAtom {
-    pub fn fill_codec_params(&self, codec_params: &mut CodecParameters) {
-        codec_params
-            .for_codec(CODEC_TYPE_FLAC)
-            .with_sample_rate(self.stream_info.sample_rate)
-            .with_bits_per_sample(self.stream_info.bits_per_sample)
-            .with_channels(self.stream_info.channels)
-            .with_packet_data_integrity(true)
-            .with_extra_data(self.extra_data.clone());
+    pub fn fill_audio_sample_entry(&self, entry: &mut AudioSampleEntry) {
+        entry.codec_id = CODEC_ID_FLAC;
+        entry.sample_rate = self.stream_info.sample_rate as f64;
+        entry.bits_per_sample = Some(self.stream_info.bits_per_sample);
+        entry.channels = Some(self.stream_info.channels.clone());
+        entry.extra_data = Some(self.extra_data.clone());
 
         if let Some(md5) = self.stream_info.md5 {
-            codec_params.with_verification_code(VerificationCheck::Md5(md5));
+            entry.verification_check = Some(VerificationCheck::Md5(md5));
         }
     }
 }

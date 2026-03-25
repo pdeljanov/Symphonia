@@ -5,10 +5,10 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::errors::{decode_error, Result};
+use symphonia_core::errors::{Result, decode_error};
 use symphonia_core::io::{
-    vlc::{BitOrder, Codebook, CodebookBuilder, Entry32x32},
     ReadBitsRtl,
+    vlc::{BitOrder, Codebook, CodebookBuilder, Entry32x32},
 };
 
 use super::common::*;
@@ -23,12 +23,7 @@ fn float32_unpack(x: u32) -> f32 {
     let sign = x & 0x80000000;
     let exponent = (x & 0x7fe00000) >> 21;
     let value = (mantissa as f32) * 2.0f32.powi(exponent as i32 - 788);
-    if sign == 0 {
-        value
-    }
-    else {
-        -value
-    }
+    if sign == 0 { value } else { -value }
 }
 
 /// As defined in section 9.2.3 of the Vorbis I specification.
@@ -134,15 +129,12 @@ fn synthesize_codewords(code_lens: &[u8]) -> Result<Vec<u32>> {
 
     let mut next_codeword = [0u32; 33];
 
-    let mut num_sparse = 0;
-
     for &len in code_lens.iter() {
         // This should always be true.
         debug_assert!(len <= 32);
 
+        // Zero length codewords are invalid and ignored.
         if len == 0 {
-            num_sparse += 1;
-            codewords.push(0);
             continue;
         }
 
@@ -203,11 +195,7 @@ fn synthesize_codewords(code_lens: &[u8]) -> Result<Vec<u32>> {
     let is_underspecified =
         next_codeword.iter().enumerate().skip(1).any(|(i, &c)| c & (u32::MAX >> (32 - i)) != 0);
 
-    // Single entry codebooks are technically invalid, but must be supported as a special-case
-    // per Vorbis I specification, errate 20150226.
-    let is_single_entry_codebook = code_lens.len() - num_sparse == 1;
-
-    if is_underspecified && !is_single_entry_codebook {
+    if is_underspecified {
         return decode_error("vorbis: codebook underspecified");
     }
 
@@ -237,6 +225,7 @@ impl VorbisCodebook {
         let is_length_ordered = bs.read_bool()?;
 
         let mut code_lens = Vec::<u8>::with_capacity(codebook_entries as usize);
+        let mut code_values = Vec::<u32>::with_capacity(codebook_entries as usize);
 
         if !is_length_ordered {
             // Codeword list is not length ordered.
@@ -244,19 +233,16 @@ impl VorbisCodebook {
 
             if is_sparse {
                 // Sparsely packed codeword entry list.
-                for _ in 0..codebook_entries {
+                for entry in 0..codebook_entries {
                     let is_used = bs.read_bool()?;
 
-                    let code_len = if is_used {
-                        // Entry is used.
-                        bs.read_bits_leq32(5)? as u8 + 1
-                    }
-                    else {
-                        // Unused entries have a length of 0.
-                        0
-                    };
+                    // The codeword list is sparse. Only populate entries that are used.
+                    if is_used {
+                        let code_len = bs.read_bits_leq32(5)? as u8 + 1;
 
-                    code_lens.push(code_len);
+                        code_lens.push(code_len);
+                        code_values.push(entry);
+                    }
                 }
             }
             else {
@@ -265,6 +251,9 @@ impl VorbisCodebook {
                     let code_len = bs.read_bits_leq32(5)? as u8 + 1;
                     code_lens.push(code_len)
                 }
+
+                // The codeword list is not sparse. Populate all values.
+                code_values.extend(0..codebook_entries);
             }
         }
         else {
@@ -282,7 +271,7 @@ impl VorbisCodebook {
 
                 let num = bs.read_bits_leq32(num_bits)?;
 
-                code_lens.extend(std::iter::repeat(cur_len as u8).take(num as usize));
+                code_lens.extend(std::iter::repeat_n(cur_len as u8, num as usize));
 
                 cur_len += 1;
                 cur_entry += num;
@@ -295,6 +284,21 @@ impl VorbisCodebook {
                     break;
                 }
             }
+
+            // The codeword list is not sparse. Populate all values.
+            code_values.extend(0..cur_entry);
+        }
+
+        // Single-entry codebooks are technically invalid because the minimum possible codeword
+        // length is 1 which requires two entries. If only one entry is provided, then the codebook
+        // will contain an entry for codeword 0b0 but not for codeword 0b1. However, per the
+        // Vorbis I specification, errata 20150226, this special-case must be supported by decoding
+        // both codewords to the same value. Detect single-entry codebooks and add a duplicate entry
+        // such that both codewords will yield the same value and the codebook will be fully
+        // specified. Do not support single-entry codebooks for codeword lengths > 1.
+        if code_lens.len() == 1 && code_lens[0] == 1 {
+            code_lens.push(code_lens[0]);
+            code_values.push(code_values[0]);
         }
 
         // Read and unpack vector quantization (VQ) lookup table.
@@ -350,17 +354,13 @@ impl VorbisCodebook {
         // Generate a canonical list of codewords given the set of codeword lengths.
         let code_words = synthesize_codewords(&code_lens)?;
 
-        // Generate the values associated for each codeword.
-        // TODO: Should unused entries be 0 or actually the correct value?
-        let values: Vec<u32> = (0..codebook_entries).collect();
-
         // Finally, generate the codebook with a reverse (LSb) bit order.
-        let mut builder = CodebookBuilder::new_sparse(BitOrder::Reverse);
+        let mut builder = CodebookBuilder::new(BitOrder::Reverse);
 
-        // Read in 8-bit blocks.
-        builder.bits_per_read(8);
+        // Read in 4-8 bit-wide blocks.
+        builder.bits_per_read(code_lens.iter().max().copied().unwrap_or(0).clamp(4, 8));
 
-        let codebook = builder.make::<Entry32x32>(&code_words, &code_lens, &values)?;
+        let codebook = builder.make::<Entry32x32>(&code_words, &code_lens, &code_values)?;
 
         Ok(VorbisCodebook { codebook, dimensions: codebook_dimensions, vq_vec })
     }

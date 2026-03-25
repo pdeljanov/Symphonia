@@ -5,7 +5,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::errors::{decode_error, Result};
+use symphonia_core::errors::{Result, decode_error};
 use symphonia_core::io::ReadBytes;
 
 use crate::atoms::{Atom, AtomHeader, AtomIterator, AtomType, MfhdAtom, TrafAtom};
@@ -14,8 +14,6 @@ use crate::atoms::{Atom, AtomHeader, AtomIterator, AtomType, MfhdAtom, TrafAtom}
 #[allow(dead_code)]
 #[derive(Debug)]
 pub struct MoofAtom {
-    /// Atom header.
-    header: AtomHeader,
     /// The position of the first byte of this moof atom. This is used as the anchor point for the
     /// subsequent track atoms.
     pub moof_base_pos: u64,
@@ -26,20 +24,14 @@ pub struct MoofAtom {
 }
 
 impl Atom for MoofAtom {
-    fn header(&self) -> AtomHeader {
-        self.header
-    }
-
     fn read<B: ReadBytes>(reader: &mut B, header: AtomHeader) -> Result<Self> {
-        let moof_base_pos = reader.pos() - AtomHeader::HEADER_SIZE;
-
         let mut mfhd = None;
         let mut trafs = Vec::new();
 
         let mut iter = AtomIterator::new(reader, header);
 
         while let Some(header) = iter.next()? {
-            match header.atype {
+            match header.atom_type {
                 AtomType::MovieFragmentHeader => {
                     mfhd = Some(iter.read_atom::<MfhdAtom>()?);
                 }
@@ -55,6 +47,9 @@ impl Atom for MoofAtom {
             return decode_error("isomp4: missing mfhd atom");
         }
 
-        Ok(MoofAtom { header, moof_base_pos, mfhd: mfhd.unwrap(), trafs })
+        // The position of the first byte of the entire moof atom.
+        let moof_base_pos = header.atom_pos();
+
+        Ok(MoofAtom { moof_base_pos, mfhd: mfhd.unwrap(), trafs })
     }
 }

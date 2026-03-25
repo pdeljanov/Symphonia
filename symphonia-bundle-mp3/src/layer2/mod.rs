@@ -5,7 +5,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::audio::{AudioBuffer, Signal};
+use symphonia_core::audio::{AudioBuffer, AudioMut};
 use symphonia_core::errors::Result;
 use symphonia_core::io::{BitReaderLtr, BufReader, ReadBitsLtr, ReadBytes};
 use symphonia_core::util::bits::sign_extend_leq32_to_i32;
@@ -141,12 +141,7 @@ fn find_sb_info(header: &FrameHeader) -> &'static SbInfo {
 
         if bitrate_per_channel <= 48_000 {
             // Table 3-B.2c and 3-B.2d are only used for bitrates <= 48 kbit/s.
-            if header.sample_rate == 32_000 {
-                3
-            }
-            else {
-                2
-            }
+            if header.sample_rate == 32_000 { 3 } else { 2 }
         }
         else if bitrate_per_channel <= 80_000 {
             // Table 3-B.2a is always used for 48 kbit/s < bitrates <= 80 kbits/s.
@@ -274,6 +269,7 @@ impl Layer for Layer2 {
         }
 
         // Read the class index (allocation in the standard) for each intensity coded sub-band.
+        // NOTE: This loop causes a false positive with clippy.
         for sb in bound..sb_info.sblimit {
             let nbal = find_sb_quant_info(sb_info, sb).nbal;
 
@@ -376,11 +372,11 @@ impl Layer for Layer2 {
 
         // Each packet will yield 1152 audio frames. After reserving frames, all steps must be
         // infalliable.
-        out.render_reserved(Some(1152));
+        out.render_uninit(Some(1152));
 
         for (ch, samples) in samples.iter().enumerate().take(num_channels) {
             // Perform polyphase synthesis and generate PCM samples.
-            synthesis::synthesis(&mut self.synthesis[ch], 36, samples, out.chan_mut(ch));
+            synthesis::synthesis(&mut self.synthesis[ch], 36, samples, out.plane_mut(ch).unwrap());
         }
 
         Ok(())

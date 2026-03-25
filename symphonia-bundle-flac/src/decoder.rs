@@ -9,19 +9,20 @@ use std::cmp;
 use std::convert::TryInto;
 use std::num::Wrapping;
 
-use symphonia_core::audio::{AsAudioBufferRef, AudioBuffer, AudioBufferRef};
-use symphonia_core::audio::{Signal, SignalSpec};
-use symphonia_core::codecs::{
-    CodecDescriptor, CodecParameters, VerificationCheck, CODEC_TYPE_FLAC,
+use symphonia_common::xiph::audio::flac::StreamInfo;
+use symphonia_core::audio::{
+    AsGenericAudioBufferRef, AudioBuffer, AudioMut, AudioSpec, GenericAudioBufferRef,
 };
-use symphonia_core::codecs::{Decoder, DecoderOptions, FinalizeResult};
-use symphonia_core::errors::{decode_error, unsupported_error, Result};
-use symphonia_core::formats::Packet;
+use symphonia_core::codecs::CodecInfo;
+use symphonia_core::codecs::audio::well_known::CODEC_ID_FLAC;
+use symphonia_core::codecs::audio::{AudioCodecParameters, AudioDecoderOptions};
+use symphonia_core::codecs::audio::{AudioDecoder, FinalizeResult, VerificationCheck};
+use symphonia_core::codecs::registry::{RegisterableAudioDecoder, SupportedAudioCodec};
+use symphonia_core::errors::{Error, Result, decode_error, unsupported_error};
 use symphonia_core::io::{BitReaderLtr, BufReader, ReadBitsLtr};
-use symphonia_core::support_codec;
-use symphonia_core::units::TimeBase;
+use symphonia_core::packet::Packet;
+use symphonia_core::support_audio_codec;
 use symphonia_core::util::bits::sign_extend_leq32_to_i32;
-use symphonia_utils_xiph::flac::metadata::StreamInfo;
 
 use log::{debug, log_enabled, warn};
 
@@ -82,13 +83,58 @@ fn decorrelate_right_side(right: &[i32], side: &mut [i32]) {
 
 /// Free Lossless Audio Codec (FLAC) decoder.
 pub struct FlacDecoder {
-    params: CodecParameters,
+    params: AudioCodecParameters,
     is_validating: bool,
     validator: Validator,
     buf: AudioBuffer<i32>,
 }
 
 impl FlacDecoder {
+    pub fn try_new(params: &AudioCodecParameters, options: &AudioDecoderOptions) -> Result<Self> {
+        // This decoder only supports FLAC.
+        if params.codec != CODEC_ID_FLAC {
+            return unsupported_error("flac: invalid codec");
+        }
+
+        // Obtain the extra data.
+        let extra_data = match params.extra_data.as_ref() {
+            Some(buf) => buf,
+            _ => return unsupported_error("flac: missing extra data"),
+        };
+
+        // Read the stream information block.
+        let info = StreamInfo::read(&mut BufReader::new(extra_data))?;
+
+        // Clone the codec parameters so that the parameters can be supplemented and/or amended.
+        let mut params = params.clone();
+
+        // Amend the provided codec parameters with information from the stream information block.
+        params
+            .with_sample_rate(info.sample_rate)
+            .with_bits_per_sample(info.bits_per_sample)
+            .with_max_frames_per_packet(u64::from(info.block_len_max))
+            .with_channels(info.channels.clone());
+
+        if let Some(md5) = info.md5 {
+            params.with_verification_code(VerificationCheck::Md5(md5));
+        }
+
+        let spec = AudioSpec::new(info.sample_rate, info.channels.clone());
+        let buf = AudioBuffer::new(spec, usize::from(info.block_len_max));
+
+        // TODO: Verify packet integrity if the demuxer is not.
+        // if !params.packet_data_integrity {
+        //     return unsupported_error("flac: packet integrity is required");
+        // }
+
+        Ok(FlacDecoder {
+            params,
+            is_validating: options.verify,
+            validator: Default::default(),
+            buf,
+        })
+    }
+
     fn decode_inner(&mut self, packet: &Packet) -> Result<()> {
         let mut reader = packet.as_buf_reader();
 
@@ -108,6 +154,9 @@ impl FlacDecoder {
         else {
             return decode_error("flac: bits per sample not provided");
         };
+        if bits_per_sample > u32::BITS {
+            return decode_error("flac: invalid bit width");
+        }
 
         // trace!("frame: [{:?}] strategy={:?}, n_samples={}, bps={}, channels={:?}",
         //     header.block_sequence,
@@ -117,8 +166,11 @@ impl FlacDecoder {
         //     &header.channel_assignment);
 
         // Reserve a writeable chunk in the buffer equal to the number of samples in the block.
+        if header.block_num_samples as usize > self.buf.capacity() {
+            return decode_error("flac: allocation would overflow buffer");
+        }
         self.buf.clear();
-        self.buf.render_reserved(Some(header.block_num_samples as usize));
+        self.buf.render_uninit(Some(header.block_num_samples as usize));
 
         let frame_channels = match header.channel_assignment {
             ChannelAssignment::Independant(c) => c as usize,
@@ -140,13 +192,22 @@ impl FlacDecoder {
             match header.channel_assignment {
                 ChannelAssignment::Independant(channels) => {
                     for i in 0..channels as usize {
-                        read_subframe(&mut bs, bits_per_sample, self.buf.chan_mut(i))?;
+                        read_subframe(
+                            &mut bs,
+                            bits_per_sample,
+                            self.buf
+                                .plane_mut(i)
+                                .ok_or(Error::DecodeError("flac: unexpected channel assignment"))?,
+                        )?;
                     }
                 }
                 // For Left/Side, Mid/Side, and Right/Side channel configurations, the Side
                 // (Difference) channel requires an extra bit per sample.
                 ChannelAssignment::LeftSide => {
-                    let (left, side) = self.buf.chan_pair_mut(0, 1);
+                    let (left, side) = self
+                        .buf
+                        .plane_pair_mut(0, 1)
+                        .ok_or(Error::DecodeError("flac: unexpected channel assignment"))?;
 
                     read_subframe(&mut bs, bits_per_sample, left)?;
                     read_subframe(&mut bs, bits_per_sample + 1, side)?;
@@ -154,7 +215,10 @@ impl FlacDecoder {
                     decorrelate_left_side(left, side);
                 }
                 ChannelAssignment::MidSide => {
-                    let (mid, side) = self.buf.chan_pair_mut(0, 1);
+                    let (mid, side) = self
+                        .buf
+                        .plane_pair_mut(0, 1)
+                        .ok_or(Error::DecodeError("flac: unexpected channel assignment"))?;
 
                     read_subframe(&mut bs, bits_per_sample, mid)?;
                     read_subframe(&mut bs, bits_per_sample + 1, side)?;
@@ -162,7 +226,10 @@ impl FlacDecoder {
                     decorrelate_mid_side(mid, side);
                 }
                 ChannelAssignment::RightSide => {
-                    let (side, right) = self.buf.chan_pair_mut(0, 1);
+                    let (side, right) = self
+                        .buf
+                        .plane_pair_mut(0, 1)
+                        .ok_or(Error::DecodeError("flac: unexpected channel assignment"))?;
 
                     read_subframe(&mut bs, bits_per_sample + 1, side)?;
                     read_subframe(&mut bs, bits_per_sample, right)?;
@@ -182,83 +249,34 @@ impl FlacDecoder {
         // so that regardless the encoded bits/sample, the output is always 32bits/sample.
         if bits_per_sample < 32 {
             let shift = 32 - bits_per_sample;
-            self.buf.transform(|sample| sample << shift);
+            self.buf.apply(|sample| sample << shift);
         }
 
         Ok(())
     }
 }
 
-impl Decoder for FlacDecoder {
-    fn try_new(params: &CodecParameters, options: &DecoderOptions) -> Result<Self> {
-        // This decoder only supports FLAC.
-        if params.codec != CODEC_TYPE_FLAC {
-            return unsupported_error("flac: invalid codec type");
-        }
-
-        // Obtain the extra data.
-        let extra_data = match params.extra_data.as_ref() {
-            Some(buf) => buf,
-            _ => return unsupported_error("flac: missing extra data"),
-        };
-
-        // Read the stream information block.
-        let info = StreamInfo::read(&mut BufReader::new(extra_data))?;
-
-        // Clone the codec parameters so that the parameters can be supplemented and/or amended.
-        let mut params = params.clone();
-
-        // Amend the provided codec parameters with information from the stream information block.
-        params
-            .with_sample_rate(info.sample_rate)
-            .with_time_base(TimeBase::new(1, info.sample_rate))
-            .with_bits_per_sample(info.bits_per_sample)
-            .with_max_frames_per_packet(u64::from(info.block_len_max))
-            .with_channels(info.channels);
-
-        if let Some(md5) = info.md5 {
-            params.with_verification_code(VerificationCheck::Md5(md5));
-        }
-
-        if let Some(n_frames) = info.n_samples {
-            params.with_n_frames(n_frames);
-        }
-
-        let spec = SignalSpec::new(info.sample_rate, info.channels);
-        let buf = AudioBuffer::new(u64::from(info.block_len_max), spec);
-
-        // TODO: Verify packet integrity if the demuxer is not.
-        // if !params.packet_data_integrity {
-        //     return unsupported_error("flac: packet integrity is required");
-        // }
-
-        Ok(FlacDecoder {
-            params,
-            is_validating: options.verify,
-            validator: Default::default(),
-            buf,
-        })
-    }
-
-    fn supported_codecs() -> &'static [CodecDescriptor] {
-        &[support_codec!(CODEC_TYPE_FLAC, "flac", "Free Lossless Audio Codec")]
+impl AudioDecoder for FlacDecoder {
+    fn codec_info(&self) -> &CodecInfo {
+        // Only one codec is supported.
+        &Self::supported_codecs().first().unwrap().info
     }
 
     fn reset(&mut self) {
         // No state is stored between packets, therefore do nothing.
     }
 
-    fn codec_params(&self) -> &CodecParameters {
+    fn codec_params(&self) -> &AudioCodecParameters {
         &self.params
     }
 
-    fn decode(&mut self, packet: &Packet) -> Result<AudioBufferRef<'_>> {
+    fn decode(&mut self, packet: &Packet) -> Result<GenericAudioBufferRef<'_>> {
         if let Err(e) = self.decode_inner(packet) {
             self.buf.clear();
             Err(e)
         }
         else {
-            Ok(self.buf.as_audio_buffer_ref())
+            Ok(self.buf.as_generic_audio_buffer_ref())
         }
     }
 
@@ -279,11 +297,11 @@ impl Decoder for FlacDecoder {
                     let mut expected_s = String::with_capacity(32);
                     let mut decoded_s = String::with_capacity(32);
 
-                    expected.iter().for_each(|b| write!(expected_s, "{:02x}", b).unwrap());
-                    decoded.iter().for_each(|b| write!(decoded_s, "{:02x}", b).unwrap());
+                    expected.iter().for_each(|b| write!(expected_s, "{b:02x}").unwrap());
+                    decoded.iter().for_each(|b| write!(decoded_s, "{b:02x}").unwrap());
 
-                    debug!("verification: expected md5 = {}", expected_s);
-                    debug!("verification: decoded md5  = {}", decoded_s);
+                    debug!("verification: expected md5 = {expected_s}");
+                    debug!("verification: decoded md5  = {decoded_s}");
                 }
 
                 result.verify_ok = Some(decoded == expected)
@@ -296,8 +314,24 @@ impl Decoder for FlacDecoder {
         result
     }
 
-    fn last_decoded(&self) -> AudioBufferRef<'_> {
-        self.buf.as_audio_buffer_ref()
+    fn last_decoded(&self) -> GenericAudioBufferRef<'_> {
+        self.buf.as_generic_audio_buffer_ref()
+    }
+}
+
+impl RegisterableAudioDecoder for FlacDecoder {
+    fn try_registry_new(
+        params: &AudioCodecParameters,
+        opts: &AudioDecoderOptions,
+    ) -> Result<Box<dyn AudioDecoder>>
+    where
+        Self: Sized,
+    {
+        Ok(Box::new(FlacDecoder::try_new(params, opts)?))
+    }
+
+    fn supported_codecs() -> &'static [SupportedAudioCodec] {
+        &[support_audio_codec!(CODEC_ID_FLAC, "flac", "Free Lossless Audio Codec")]
     }
 }
 
@@ -341,6 +375,11 @@ fn read_subframe<B: ReadBitsLtr>(bs: &mut B, frame_bps: u32, buf: &mut [i32]) ->
     // bits per sample in the audio sub-block. If the bit is set, unary decode the number of
     // dropped bits per sample.
     let dropped_bps = if bs.read_bool()? { bs.read_unary_zeros()? + 1 } else { 0 };
+    if dropped_bps > frame_bps {
+        return decode_error(
+            "flac: dropped bits per sample is greater than the frame bits per sample",
+        );
+    }
 
     // The bits per sample stated in the frame header is for the decoded audio sub-block samples.
     // However, it is likely that the lower order bits of all the samples are simply 0. Therefore,
@@ -400,6 +439,10 @@ fn decode_fixed_linear<B: ReadBitsLtr>(
     order: u32,
     buf: &mut [i32],
 ) -> Result<()> {
+    if order as usize > buf.len() {
+        return decode_error("flac: fixed predictor order is greater than the block size");
+    }
+
     // The first `order` samples are encoded verbatim to warm-up the LPC decoder.
     decode_verbatim(bs, bps, &mut buf[..order as usize])?;
 
@@ -417,6 +460,10 @@ fn decode_fixed_linear<B: ReadBitsLtr>(
 }
 
 fn decode_linear<B: ReadBitsLtr>(bs: &mut B, bps: u32, order: u32, buf: &mut [i32]) -> Result<()> {
+    if order as usize > buf.len() {
+        return decode_error("flac: predictor order is greater than the block size");
+    }
+
     // The order of the Linear Predictor should be between 1 and 32.
     debug_assert!(order > 0 && order <= 32);
 
@@ -634,7 +681,7 @@ fn fixed_predict(order: u32, buf: &mut [i32]) {
         // s(i) = 1*s(i),
         1 => {
             for i in 1..buf.len() {
-                buf[i] += buf[i - 1];
+                buf[i] = buf[i].wrapping_add(buf[i - 1]);
             }
         }
         // A 2nd order predictor uses the polynomial: s(i) = 2*s(i-1) - 1*s(i-2).
@@ -642,7 +689,7 @@ fn fixed_predict(order: u32, buf: &mut [i32]) {
             for i in 2..buf.len() {
                 let a = Wrapping(-1) * Wrapping(i64::from(buf[i - 2]));
                 let b = Wrapping(2) * Wrapping(i64::from(buf[i - 1]));
-                buf[i] += (a + b).0 as i32;
+                buf[i] = buf[i].wrapping_add((a + b).0 as i32);
             }
         }
         // A 3rd order predictor uses the polynomial: s(i) = 3*s(i-1) - 3*s(i-2) + 1*s(i-3).
@@ -651,7 +698,7 @@ fn fixed_predict(order: u32, buf: &mut [i32]) {
                 let a = Wrapping(1) * Wrapping(i64::from(buf[i - 3]));
                 let b = Wrapping(-3) * Wrapping(i64::from(buf[i - 2]));
                 let c = Wrapping(3) * Wrapping(i64::from(buf[i - 1]));
-                buf[i] += (a + b + c).0 as i32;
+                buf[i] = buf[i].wrapping_add((a + b + c).0 as i32);
             }
         }
         // A 4th order predictor uses the polynomial:
@@ -662,7 +709,7 @@ fn fixed_predict(order: u32, buf: &mut [i32]) {
                 let b = Wrapping(4) * Wrapping(i64::from(buf[i - 3]));
                 let c = Wrapping(-6) * Wrapping(i64::from(buf[i - 2]));
                 let d = Wrapping(4) * Wrapping(i64::from(buf[i - 1]));
-                buf[i] += (a + b + c + d).0 as i32;
+                buf[i] = buf[i].wrapping_add((a + b + c + d).0 as i32);
             }
         }
         _ => unreachable!(),

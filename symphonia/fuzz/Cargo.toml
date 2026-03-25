@@ -1,10 +1,13 @@
-
 [package]
 name = "symphonia-fuzz"
-version = "0.0.0"
-authors = ["Automatically generated"]
 publish = false
-edition = "2018"
+# Common package metadata located in workspace Cargo.toml.
+edition = "2024"
+homepage = "https://github.com/pdeljanov/Symphonia"
+license = "MPL-2.0"
+repository = "https://github.com/pdeljanov/Symphonia"
+rust-version = "1.85"
+version = "0.6.0-alpha.1"
 
 [package.metadata]
 cargo-fuzz = true
@@ -17,7 +20,6 @@ path = ".."
 default-features = false
 features = ["all"]
 
-
 # Prevent this from interfering with workspaces
 [workspace]
 members = ["."]
@@ -29,7 +31,85 @@ test = false
 doc = false
 
 [[bin]]
-name = "decode_mp3"
-path = "fuzz_targets/decode_mp3.rs"
+name = "decode_mpa"
+path = "fuzz_targets/decode_mpa.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "decode_flac"
+path = "fuzz_targets/decode_flac.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "decode_aac"
+path = "fuzz_targets/decode_aac.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "decode_vorbis"
+path = "fuzz_targets/decode_vorbis.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "decode_pcm"
+path = "fuzz_targets/decode_pcm.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "decode_adpcm"
+path = "fuzz_targets/decode_adpcm.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "decode_alac"
+path = "fuzz_targets/decode_alac.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "demux_mkv"
+path = "fuzz_targets/demux_mkv.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "demux_isomp4"
+path = "fuzz_targets/demux_isomp4.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "demux_ogg"
+path = "fuzz_targets/demux_ogg.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "demux_flac"
+path = "fuzz_targets/demux_flac.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "demux_wav"
+path = "fuzz_targets/demux_wav.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "demux_aiff"
+path = "fuzz_targets/demux_aiff.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "demux_caf"
+path = "fuzz_targets/demux_caf.rs"
 test = false
 doc = false

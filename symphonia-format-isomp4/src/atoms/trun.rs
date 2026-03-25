@@ -5,7 +5,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::errors::{decode_error, Result};
+use symphonia_core::errors::{Result, decode_error};
 use symphonia_core::io::ReadBytes;
 use symphonia_core::util::bits;
 
@@ -15,8 +15,6 @@ use crate::atoms::{Atom, AtomHeader};
 #[allow(dead_code)]
 #[derive(Debug)]
 pub struct TrunAtom {
-    /// Atom header.
-    header: AtomHeader,
     /// Extended header flags.
     flags: u32,
     /// Data offset of this run.
@@ -244,12 +242,8 @@ impl TrunAtom {
 }
 
 impl Atom for TrunAtom {
-    fn header(&self) -> AtomHeader {
-        self.header
-    }
-
-    fn read<B: ReadBytes>(reader: &mut B, header: AtomHeader) -> Result<Self> {
-        let (_, flags) = AtomHeader::read_extra(reader)?;
+    fn read<B: ReadBytes>(reader: &mut B, mut header: AtomHeader) -> Result<Self> {
+        let (_, flags) = header.read_extended_header(reader)?;
 
         let sample_count = reader.read_be_u32()?;
 
@@ -306,7 +300,6 @@ impl Atom for TrunAtom {
         }
 
         Ok(TrunAtom {
-            header,
             flags,
             data_offset,
             sample_count,

@@ -5,15 +5,15 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::errors::{decode_error, Result};
+use symphonia_core::errors::{Result, decode_error};
 use symphonia_core::io::ReadBytes;
 use symphonia_core::util::bits;
 
 use crate::atoms::{Atom, AtomHeader};
 
 /// Edit list entry.
-#[derive(Debug)]
 #[allow(dead_code)]
+#[derive(Debug)]
 pub struct ElstEntry {
     segment_duration: u64,
     media_time: i64,
@@ -22,20 +22,15 @@ pub struct ElstEntry {
 }
 
 /// Edit list atom.
-#[derive(Debug)]
 #[allow(dead_code)]
+#[derive(Debug)]
 pub struct ElstAtom {
-    header: AtomHeader,
     entries: Vec<ElstEntry>,
 }
 
 impl Atom for ElstAtom {
-    fn header(&self) -> AtomHeader {
-        self.header
-    }
-
-    fn read<B: ReadBytes>(reader: &mut B, header: AtomHeader) -> Result<Self> {
-        let (version, _) = AtomHeader::read_extra(reader)?;
+    fn read<B: ReadBytes>(reader: &mut B, mut header: AtomHeader) -> Result<Self> {
+        let (version, _) = header.read_extended_header(reader)?;
 
         // TODO: Apply a limit.
         let entry_count = reader.read_be_u32()?;
@@ -66,6 +61,6 @@ impl Atom for ElstAtom {
             });
         }
 
-        Ok(ElstAtom { header, entries })
+        Ok(ElstAtom { entries })
     }
 }

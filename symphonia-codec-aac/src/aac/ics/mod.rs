@@ -11,9 +11,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::errors::{decode_error, Result};
-use symphonia_core::io::vlc::{Codebook, Entry8x16};
+use symphonia_core::errors::{Result, decode_error};
 use symphonia_core::io::ReadBitsLtr;
+use symphonia_core::io::vlc::{Codebook, Entry8x16};
 
 use crate::aac::codebooks;
 use crate::aac::common::*;
@@ -37,40 +37,49 @@ const INTENSITY_HCB: u8 = 15;
 const INTENSITY_SCALE_MIN: i16 = -155;
 const NORMAL_SCALE_MIN: i16 = -100;
 
+/// The length of the `POW43` table.
+const POW43_TABLE_LEN: usize = 8192;
+
 lazy_static! {
     /// Pre-computed table of y = x^(4/3).
-    static ref POW43_TABLE: [f32; 8192] = {
-        let mut pow43 = [0f32; 8192];
-        for (i, pow43) in pow43.iter_mut().enumerate() {
-            *pow43 = f32::powf(i as f32, 4.0 / 3.0);
-        }
-        pow43
+    static ref POW43_TABLE: Box<[f32; POW43_TABLE_LEN]> = {
+        let table: Vec<f32> = (0..POW43_TABLE_LEN).map(|i| (i as f32).powf(4.0 / 3.0)).collect();
+        // UNWRAP: The vector was initialized to be the correct size.
+        table.into_boxed_slice().try_into().unwrap()
     };
 }
+
+/// The length of the `NORMAL_SCF_TABLE` table.
+const NORMAL_SCF_TABLE_LEN: usize = 256;
 
 lazy_static! {
     /// Pre-computed table of y = 2^(0.25 * (x - 156)) for decoding scale factors for normal bands.
     /// This table is indexed relative to -100, the minimum encoded scale factor value for normal
     /// bands. Therefore, an input of 0 corresponds to -100.
-    static ref NORMAL_SCF_TABLE: [f32; 256] = {
-        let mut table = [0f32; 256];
-        for (i, table) in table.iter_mut().enumerate() {
-            *table = 2.0f32.powf(0.25 * f32::from(i as i16 - 56 + NORMAL_SCALE_MIN))
-        }
-        table
+    static ref NORMAL_SCF_TABLE: Box<[f32; NORMAL_SCF_TABLE_LEN]> = {
+        let table: Vec<f32> = (0..NORMAL_SCF_TABLE_LEN)
+            .map(|i| 2.0f32.powf(0.25 * f32::from(i as i16 - 56 + NORMAL_SCALE_MIN)))
+            .collect();
+
+        // UNWRAP: The vector was initialized to be the correct size.
+        table.into_boxed_slice().try_into().unwrap()
     };
 }
+
+/// The length of the `INTENSITY_SCF_TABLE` table.
+const INTENSITY_SCF_TABLE_LEN: usize = 256;
 
 lazy_static! {
     /// Pre-computed table of y = 0.5^(0.25 * (x - 155)) for decoding scale factors for intensity
     /// coded bands. This table is indexed relative to -155, the minimum encoded scale factor value
     /// for intensity coded bands. Therefore, an input of 0 corresponds to -155.
-    static ref INTENSITY_SCF_TABLE: [f32; 256] = {
-        let mut table = [0f32; 256];
-        for (i, table) in table.iter_mut().enumerate() {
-            *table = 0.5f32.powf(0.25 * f32::from(i as i16 + INTENSITY_SCALE_MIN));
-        }
-        table
+    static ref INTENSITY_SCF_TABLE: Box<[f32; INTENSITY_SCF_TABLE_LEN]> = {
+        let table: Vec<f32> = (0..INTENSITY_SCF_TABLE_LEN)
+            .map(|i| 0.5f32.powf(0.25 * f32::from(i as i16 + INTENSITY_SCALE_MIN)))
+            .collect();
+
+        // UNWRAP: The vector was initialized to be the correct size.
+        table.into_boxed_slice().try_into().unwrap()
     };
 }
 
@@ -106,6 +115,7 @@ impl IcsInfo {
         }
     }
 
+    /// this method should be called from Ics::decode_info() which will perform additional validations for max_sfb
     pub fn decode<B: ReadBitsLtr>(&mut self, bs: &mut B) -> Result<()> {
         self.prev_window_sequence = self.window_sequence;
         self.prev_window_shape = self.window_shape;
@@ -176,12 +186,7 @@ impl IcsInfo {
             0
         }
         else if g >= self.window_groups {
-            if self.long_win {
-                1
-            }
-            else {
-                8
-            }
+            if self.long_win { 1 } else { 8 }
         }
         else {
             self.group_start[g]
@@ -291,6 +296,16 @@ impl Ics {
         self.sfb_cb[g][sfb] == INTENSITY_HCB
     }
 
+    pub fn decode_info<B: ReadBitsLtr>(&mut self, bs: &mut B) -> Result<()> {
+        self.info.decode(bs)?;
+
+        // validate info.max_sfb - it should not be bigger than bands array len - 1
+        if self.info.max_sfb + 1 > self.get_bands().len() {
+            return decode_error("aac: ics info max_sfb is too big for the bands size");
+        }
+        Ok(())
+    }
+
     fn decode_scale_factor_data<B: ReadBitsLtr>(&mut self, bs: &mut B) -> Result<()> {
         let mut noise_pcm_flag = true;
         let mut scf_intensity = -INTENSITY_SCALE_MIN;
@@ -299,7 +314,7 @@ impl Ics {
 
         let scf_cb: &Codebook<Entry8x16> = &codebooks::SCALEFACTORS;
 
-        let table_normal_scf: &[f32; 256] = &NORMAL_SCF_TABLE;
+        let table_normal_scf: &[f32; NORMAL_SCF_TABLE_LEN] = &NORMAL_SCF_TABLE;
         let table_intensity_scf: &[f32; 256] = &INTENSITY_SCF_TABLE;
 
         for g in 0..self.info.window_groups {
@@ -343,12 +358,7 @@ impl Ics {
     }
 
     pub fn get_bands(&self) -> &'static [usize] {
-        if self.info.long_win {
-            self.sbinfo.long_bands
-        }
-        else {
-            self.sbinfo.short_bands
-        }
+        if self.info.long_win { self.sbinfo.long_bands } else { self.sbinfo.short_bands }
     }
 
     fn decode_spectrum<B: ReadBitsLtr>(&mut self, bs: &mut B, lcg: &mut Lcg) -> Result<()> {
@@ -407,7 +417,8 @@ impl Ics {
 
         // If a common window is used, a common ICS info was decoded previously.
         if !common_window {
-            self.info.decode(bs)?;
+            // do not call self.info.decode() as it will skip required validations present in the decode_info()
+            self.decode_info(bs)?;
         }
 
         self.decode_section_data(bs)?;
@@ -568,7 +579,7 @@ fn decode_pairs_unsigned_escape<B: ReadBitsLtr>(
     scale: f32,
     dst: &mut [f32],
 ) -> Result<()> {
-    let iquant: &[f32; 8192] = &POW43_TABLE;
+    let iquant: &[f32; POW43_TABLE_LEN] = &POW43_TABLE;
 
     for out in dst.chunks_exact_mut(2) {
         let (a, b) = cb.read_quant(bs)?;

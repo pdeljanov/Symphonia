@@ -8,7 +8,7 @@
 use std::cmp::min;
 use std::collections::HashSet;
 
-use symphonia_core::errors::{decode_error, Error, Result};
+use symphonia_core::errors::{Error, Result, decode_error};
 use symphonia_core::io::{BitReaderRtl, ReadBitsRtl};
 
 use super::codebook::VorbisCodebook;
@@ -778,12 +778,7 @@ fn render_point(x0: u32, y0: i32, x1: u32, y1: i32, x: u32) -> i32 {
     let adx = x1 - x0;
     let err = dy.unsigned_abs() * (x - x0);
     let off = err / adx;
-    if dy < 0 {
-        y0 - off as i32
-    }
-    else {
-        y0 + off as i32
-    }
+    if dy < 0 { y0 - off as i32 } else { y0 + off as i32 }
 }
 
 #[inline(always)]

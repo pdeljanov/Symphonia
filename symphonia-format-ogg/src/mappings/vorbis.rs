@@ -8,14 +8,16 @@
 use super::{MapResult, Mapper, PacketParser};
 use crate::common::SideData;
 
-use symphonia_core::codecs::{CodecParameters, CODEC_TYPE_VORBIS};
-use symphonia_core::errors::{decode_error, unsupported_error, Result};
+use symphonia_common::xiph::audio::vorbis::*;
+use symphonia_core::codecs::CodecParameters;
+use symphonia_core::codecs::audio::AudioCodecParameters;
+use symphonia_core::codecs::audio::well_known::CODEC_ID_VORBIS;
+use symphonia_core::errors::{Result, decode_error, unsupported_error};
+use symphonia_core::formats::Track;
 use symphonia_core::io::{BitReaderRtl, BufReader, ReadBitsRtl, ReadBytes};
 use symphonia_core::meta::MetadataBuilder;
-use symphonia_core::units::TimeBase;
-
-use symphonia_metadata::vorbis::*;
-use symphonia_utils_xiph::vorbis::*;
+use symphonia_core::units::Duration;
+use symphonia_metadata::embedded::vorbis::*;
 
 use log::warn;
 
@@ -59,13 +61,13 @@ impl VorbisPacketParser {
 }
 
 impl PacketParser for VorbisPacketParser {
-    fn parse_next_packet_dur(&mut self, packet: &[u8]) -> u64 {
+    fn parse_next_packet_dur(&mut self, packet: &[u8]) -> (Duration, Duration) {
         let mut bs = BitReaderRtl::new(packet);
 
         // First bit must be 0 to indicate audio packet.
         match bs.read_bool() {
             Ok(bit) if !bit => (),
-            _ => return 0,
+            _ => return (Duration::ZERO, Duration::ZERO),
         }
 
         // Number of bits for the mode number.
@@ -74,38 +76,38 @@ impl PacketParser for VorbisPacketParser {
         // Read the mode number.
         let mode_num = match bs.read_bits_leq32(mode_num_bits) {
             Ok(mode_num) => mode_num as u8,
-            _ => return 0,
+            _ => return (Duration::ZERO, Duration::ZERO),
         };
 
         // Determine the current block size.
         let cur_bs_exp = if mode_num < self.num_modes {
             let block_flag = (self.modes_block_flags >> mode_num) & 1;
-            if block_flag == 1 {
-                self.bs1_exp
-            }
-            else {
-                self.bs0_exp
-            }
+            if block_flag == 1 { self.bs1_exp } else { self.bs0_exp }
         }
         else {
-            return 0;
+            return (Duration::ZERO, Duration::ZERO);
         };
 
-        // Calculate the duration if the previous block size is available. Otherwise return 0.
-        let dur = if let Some(prev_bs_exp) = self.prev_bs_exp {
-            ((1 << prev_bs_exp) >> 2) + ((1 << cur_bs_exp) >> 2)
+        // Calculate the duration and number of frames to discard.
+        let cur_block_n = 1u64 << cur_bs_exp;
+
+        let (dur, discard) = if let Some(prev_bs_exp) = self.prev_bs_exp {
+            let prev_block_n = 1 << prev_bs_exp;
+            // Have previous block, do not discard any frames.
+            ((prev_block_n >> 2) + (cur_block_n >> 2), 0)
         }
         else {
-            0
+            // Do not have previous block, all lapped frames will be disarded.
+            (cur_block_n >> 1, cur_block_n >> 1)
         };
 
         self.prev_bs_exp = Some(cur_bs_exp);
 
-        dur
+        (Duration::new(dur), Duration::new(discard))
     }
 }
 
-pub fn detect(buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> {
+pub fn detect(serial: u32, buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> {
     // The identification header packet must be the correct size.
     if buf.len() != VORBIS_IDENTIFICATION_HEADER_SIZE {
         return Ok(None);
@@ -118,27 +120,30 @@ pub fn detect(buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> {
     };
 
     // Populate the codec parameters with the information above.
-    let mut codec_params = CodecParameters::new();
+    let mut codec_params = AudioCodecParameters::new();
 
     codec_params
-        .for_codec(CODEC_TYPE_VORBIS)
+        .for_codec(CODEC_ID_VORBIS)
         .with_sample_rate(ident.sample_rate)
-        .with_time_base(TimeBase::new(1, ident.sample_rate))
         .with_extra_data(Box::from(buf));
 
     if let Some(channels) = vorbis_channels_to_channels(ident.n_channels) {
         codec_params.with_channels(channels);
     }
 
+    // Create the track.
+    let mut track = Track::new(serial);
+
+    track.with_codec_params(CodecParameters::Audio(codec_params));
+
     // Instantiate the Vorbis mapper.
-    let mapper =
-        Box::new(VorbisMapper { codec_params, ident, parser: None, has_setup_header: false });
+    let mapper = Box::new(VorbisMapper { track, ident, parser: None, has_setup_header: false });
 
     Ok(Some(mapper))
 }
 
 struct VorbisMapper {
-    codec_params: CodecParameters,
+    track: Track,
     ident: IdentHeader,
     parser: Option<VorbisPacketParser>,
     has_setup_header: bool,
@@ -149,12 +154,22 @@ impl Mapper for VorbisMapper {
         "vorbis"
     }
 
-    fn codec_params(&self) -> &CodecParameters {
-        &self.codec_params
+    fn max_rap_period(&self) -> Duration {
+        // A Vorbis decoder will discard the first half of lapped samples when reset. Therefore,
+        // the worst-case random access period is half the length of the longest block.
+        let period = match &self.parser {
+            Some(parser) => (1 << parser.bs0_exp.max(parser.bs1_exp)) >> 1,
+            None => 0,
+        };
+        Duration::new(period)
     }
 
-    fn codec_params_mut(&mut self) -> &mut CodecParameters {
-        &mut self.codec_params
+    fn track(&self) -> &Track {
+        &self.track
+    }
+
+    fn track_mut(&mut self) -> &mut Track {
+        &mut self.track
     }
 
     fn reset(&mut self) {
@@ -186,12 +201,12 @@ impl Mapper for VorbisMapper {
 
         // An even numbered packet type is an audio packet.
         if packet_type & 1 == 0 {
-            let dur = match &mut self.parser {
+            let (dur, discard) = match &mut self.parser {
                 Some(parser) => parser.parse_next_packet_dur(packet),
-                _ => 0,
+                _ => (Duration::ZERO, Duration::ZERO),
             };
 
-            Ok(MapResult::StreamData { dur })
+            Ok(MapResult::StreamData { dur, discard })
         }
         else {
             // Odd numbered packet types are header packets.
@@ -206,15 +221,31 @@ impl Mapper for VorbisMapper {
             // Handle each header packet type specifically.
             match packet_type {
                 VORBIS_PACKET_TYPE_COMMENT => {
-                    let mut builder = MetadataBuilder::new();
+                    let mut builder = MetadataBuilder::new(VORBIS_COMMENT_METADATA_INFO);
+                    let mut side_data = Default::default();
 
-                    read_comment_no_framing(&mut reader, &mut builder)?;
+                    read_vorbis_comment(&mut reader, &mut builder, &mut side_data)?;
 
-                    Ok(MapResult::SideData { data: SideData::Metadata(builder.metadata()) })
+                    let rev = builder.build();
+
+                    Ok(MapResult::SideData { data: SideData::Metadata { rev, side_data } })
                 }
                 VORBIS_PACKET_TYPE_SETUP => {
+                    // Safety: Audio codec parameters are always available if mapper is
+                    // instantiated.
+                    let mut extra_data = self
+                        .track
+                        .codec_params
+                        .as_mut()
+                        .unwrap()
+                        .audio_mut()
+                        .unwrap()
+                        .extra_data
+                        .take()
+                        .unwrap()
+                        .into_vec();
+
                     // Append the setup headers to the extra data.
-                    let mut extra_data = self.codec_params.extra_data.take().unwrap().to_vec();
                     extra_data.extend_from_slice(packet);
 
                     // Try to read the setup header.
@@ -240,13 +271,22 @@ impl Mapper for VorbisMapper {
                         self.parser.replace(parser);
                     }
 
-                    self.codec_params.with_extra_data(extra_data.into_boxed_slice());
+                    // Safety: Audio codec parameters are always available if mapper is
+                    // instantiated.
+                    self.track
+                        .codec_params
+                        .as_mut()
+                        .unwrap()
+                        .audio_mut()
+                        .unwrap()
+                        .with_extra_data(extra_data.into_boxed_slice());
+
                     self.has_setup_header = true;
 
                     Ok(MapResult::Setup)
                 }
                 _ => {
-                    warn!("ogg (vorbis): packet type {} unexpected", packet_type);
+                    warn!("ogg (vorbis): packet type {packet_type} unexpected");
                     Ok(MapResult::Unknown)
                 }
             }

@@ -13,6 +13,7 @@ use std::io;
 use std::result;
 
 /// `SeekErrorKind` is a list of generic reasons why a seek may fail.
+#[non_exhaustive]
 #[derive(Debug)]
 pub enum SeekErrorKind {
     /// The stream is not seekable at all.
@@ -37,6 +38,7 @@ impl SeekErrorKind {
 }
 
 /// `Error` provides an enumeration of all possible errors reported by Symphonia.
+#[non_exhaustive]
 #[derive(Debug)]
 pub enum Error {
     /// An IO error occured while reading, writing, or seeking the stream.
@@ -59,16 +61,16 @@ impl fmt::Display for Error {
         match *self {
             Error::IoError(ref err) => err.fmt(f),
             Error::DecodeError(msg) => {
-                write!(f, "malformed stream: {}", msg)
+                write!(f, "malformed stream: {msg}")
             }
             Error::SeekError(ref kind) => {
                 write!(f, "seek error: {}", kind.as_str())
             }
             Error::Unsupported(feature) => {
-                write!(f, "unsupported feature: {}", feature)
+                write!(f, "unsupported feature: {feature}")
             }
             Error::LimitError(constraint) => {
-                write!(f, "limit reached: {}", constraint)
+                write!(f, "limit reached: {constraint}")
             }
             Error::ResetRequired => {
                 write!(f, "decoder needs to be reset")
@@ -121,9 +123,4 @@ pub fn limit_error<T>(constraint: &'static str) -> Result<T> {
 /// Convenience function to create a reset required error.
 pub fn reset_error<T>() -> Result<T> {
     Err(Error::ResetRequired)
-}
-
-/// Convenience function to create an end-of-stream error.
-pub fn end_of_stream_error<T>() -> Result<T> {
-    Err(Error::IoError(io::Error::new(io::ErrorKind::UnexpectedEof, "end of stream")))
 }

@@ -12,18 +12,18 @@ use crate::io::ReadBytes;
 use crate::util::bits::*;
 
 fn end_of_bitstream_error<T>() -> io::Result<T> {
-    Err(io::Error::new(io::ErrorKind::Other, "unexpected end of bitstream"))
+    Err(io::Error::other("unexpected end of bitstream"))
 }
 
 pub mod vlc {
     //! The `vlc` module provides support for decoding variable-length codes (VLC).
 
-    use std::cmp::max;
     use std::collections::{BTreeMap, VecDeque};
     use std::io;
+    use std::num::NonZero;
 
     fn codebook_error<T>(desc: &'static str) -> io::Result<T> {
-        Err(io::Error::new(io::ErrorKind::Other, desc))
+        Err(io::Error::other(desc))
     }
 
     /// `BitOrder` describes the relationship between the order of bits in the provided codewords
@@ -38,99 +38,29 @@ pub mod vlc {
         Reverse,
     }
 
-    /// `CodebookEntry` provides the functions required for an entry in the `Codebook`.
+    /// The `CodebookEntry` trait describes an entry in a codebook.
+    ///
+    /// This trait should be implemented by a zero-sized marker struct. When instantiating a
+    /// `Codebook`, the marker struct implementing `CodebookEntry` is supplied as the type argument.
     pub trait CodebookEntry: Copy + Clone + Default {
-        /// The type of a value in this entry.
-        type ValueType: Copy + From<u8>;
-        /// The type of a jump offset in this entry.
-        type OffsetType: Copy;
-
-        /// The maximum jump offset.
-        const JUMP_OFFSET_MAX: u32;
-
-        /// Creates a new value entry.
-        fn new_value(value: Self::ValueType, len: u8) -> Self;
-
-        /// Create a new jump entry.
-        fn new_jump(offset: u32, len: u8) -> Self;
-
-        /// Returns `true` if this entry is a value entry.
-        fn is_value(&self) -> bool;
-
-        /// Returns `true` if this entry is a jump entry.
-        fn is_jump(&self) -> bool;
-
-        /// Gets the value.
-        fn value(&self) -> Self::ValueType;
-
-        /// Get the length of the value in bits.
-        fn value_len(&self) -> u32;
-
-        /// Get the position in the table to jump to.
-        fn jump_offset(&self) -> usize;
-
-        /// Get the number of bits to read after jumping in the table.
-        fn jump_len(&self) -> u32;
+        /// The type of an index into the codebook table.
+        type IndexType: Copy + Default + TryFrom<u32> + Into<u32>;
+        /// The type of a value in the codebook.
+        type ValueType: Copy;
     }
 
     macro_rules! decl_entry {
         (
             #[doc = $expr:expr]
-            $name:ident, $value_type:ty, $offset_type:ty, $offset_max:expr, $jump_flag:expr
+            $name:ident, $value_type:ty, $index_type:ty
         ) => {
             #[doc = $expr]
             #[derive(Copy, Clone, Default)]
-            pub struct $name($value_type, $offset_type);
+            pub struct $name;
 
             impl CodebookEntry for $name {
+                type IndexType = $index_type;
                 type ValueType = $value_type;
-                type OffsetType = $offset_type;
-
-                const JUMP_OFFSET_MAX: u32 = $offset_max;
-
-                #[inline(always)]
-                fn new_value(value: Self::ValueType, len: u8) -> Self {
-                    $name(value, len.into())
-                }
-
-                #[inline(always)]
-                fn new_jump(offset: u32, len: u8) -> Self {
-                    $name(len.into(), $jump_flag | offset as Self::OffsetType)
-                }
-
-                #[inline(always)]
-                fn is_jump(&self) -> bool {
-                    self.1 & $jump_flag != 0
-                }
-
-                #[inline(always)]
-                fn is_value(&self) -> bool {
-                    self.1 & $jump_flag == 0
-                }
-
-                #[inline(always)]
-                fn value(&self) -> Self::ValueType {
-                    debug_assert!(self.is_value());
-                    self.0
-                }
-
-                #[inline(always)]
-                fn value_len(&self) -> u32 {
-                    debug_assert!(self.is_value());
-                    (self.1 & (!$jump_flag)).into()
-                }
-
-                #[inline(always)]
-                fn jump_offset(&self) -> usize {
-                    debug_assert!(self.is_jump());
-                    (self.1 & (!$jump_flag)) as usize
-                }
-
-                #[inline(always)]
-                fn jump_len(&self) -> u32 {
-                    debug_assert!(self.is_jump());
-                    self.0.into()
-                }
             }
         };
     }
@@ -139,90 +69,105 @@ pub mod vlc {
         /// `Entry8x8` is a codebook entry for 8-bit values with codes up-to 8-bits.
         Entry8x8,
         u8,
-        u8,
-        0x7f,
-        0x80
+        u8
     );
 
     decl_entry!(
         /// `Entry8x16` is a codebook entry for 8-bit values with codes up-to 16-bits.
         Entry8x16,
         u8,
-        u16,
-        0x7fff,
-        0x8000
+        u16
     );
 
     decl_entry!(
         /// `Entry8x32` is a codebook entry for 8-bit values with codes up-to 32-bits.
         Entry8x32,
         u8,
-        u32,
-        0x7fff_ffff,
-        0x8000_0000
+        u32
     );
 
     decl_entry!(
         /// `Entry16x8` is a codebook entry for 16-bit values with codes up-to 8-bits.
         Entry16x8,
         u16,
-        u8,
-        0x7f,
-        0x80
+        u8
     );
 
     decl_entry!(
         /// `Entry16x16` is a codebook entry for 16-bit values with codes up-to 16-bits.
         Entry16x16,
         u16,
-        u16,
-        0x7fff,
-        0x8000
+        u16
     );
 
     decl_entry!(
         /// `Entry16x32` is a codebook entry for 16-bit values with codes up-to 32-bits.
         Entry16x32,
         u16,
-        u32,
-        0x7fff_ffff,
-        0x8000_0000
+        u32
     );
 
     decl_entry!(
         /// `Entry32x8` is a codebook entry for 32-bit values with codes up-to 8-bits.
         Entry32x8,
         u32,
-        u8,
-        0x7fff,
-        0x80
+        u8
     );
 
     decl_entry!(
         /// `Entry32x16` is a codebook entry for 32-bit values with codes up-to 16-bits.
         Entry32x16,
         u32,
-        u16,
-        0x7fff,
-        0x8000
+        u16
     );
 
     decl_entry!(
         /// `Entry32x32` is a codebook entry for 32-bit values with codes up-to 32-bits.
         Entry32x32,
         u32,
-        u32,
-        0x7fff_ffff,
-        0x8000_0000
+        u32
     );
+
+    /// The concerete type for a codebook entry. May be either a Jump or Value entry.
+    #[derive(Copy, Clone)]
+    pub(super) enum Entry<E: CodebookEntry> {
+        /// A jump entry indicates to the decoder that the next codebook entry should be looked-up
+        /// at the offset specified by the provided index plus the next set of codeword bits.
+        Jump { index: E::IndexType },
+        /// A value entry indicates to the decoder that a codeword with the provided length in bits
+        /// has been decoded, and it yielded the provided value.
+        Value { value: E::ValueType, code_len: core::num::NonZero<u8> },
+    }
+
+    impl<E: CodebookEntry> Default for Entry<E> {
+        fn default() -> Self {
+            Self::Jump { index: Default::default() }
+        }
+    }
+
+    impl<E: CodebookEntry> Entry<E> {
+        /// Try to create a new jump entry. Returns `None` if the index is out-of-bounds for the
+        /// index type of the entry.
+        pub fn new_jump(index: u32) -> Option<Self> {
+            index.try_into().ok().map(|index| Self::Jump { index })
+        }
+
+        /// Create a new value entry.
+        pub fn new_value(value: E::ValueType, code_len: core::num::NonZero<u8>) -> Self {
+            Self::Value { value, code_len }
+        }
+    }
 
     /// `Codebook` is a variable-length code decoding table that may be used to efficiently read
     /// symbols from a source of bits.
-    #[derive(Default)]
+    #[derive(Clone, Default)]
     pub struct Codebook<E: CodebookEntry> {
-        pub table: Vec<E>,
-        pub max_code_len: u32,
-        pub init_block_len: u32,
+        /// The codebook entry table.
+        pub(super) table: Vec<Entry<E>>,
+        /// The maximum codeword length in bits in this codebook.
+        pub(super) max_code_len: u32,
+        /// The number of bits to read and decode at each iteration.
+        pub(super) bits_per_block: u32,
     }
 
     impl<E: CodebookEntry> Codebook<E> {
@@ -232,32 +177,46 @@ pub mod vlc {
         }
     }
 
-    #[derive(Default)]
+    /// A codebook builder value entry.
     struct CodebookValue<E: CodebookEntry> {
+        /// The remaining prefix bits of the codeword for this value.
         prefix: u16,
+        /// The remaining number of prefix bits of the codeword for this value.
         width: u8,
+        /// The total codeword length in number of bits for this value.
+        code_len: NonZero<u8>,
+        /// The value.
         value: E::ValueType,
     }
 
     impl<E: CodebookEntry> CodebookValue<E> {
-        fn new(prefix: u16, width: u8, value: E::ValueType) -> Self {
-            CodebookValue { prefix, width, value }
+        fn new(prefix: u16, width: u8, code_len: NonZero<u8>, value: E::ValueType) -> Self {
+            Self { prefix, width, code_len, value }
         }
     }
 
-    #[derive(Default)]
+    /// A codebook builder block. Represents a group of codebook table entries whose codewords share
+    /// the same set of prefix bits upto this block.
     struct CodebookBlock<E: CodebookEntry> {
+        /// The number of prefix bits the block consumes.
         width: u8,
+        /// Map of unique child block prefixes to indicies in the codebook table.
         nodes: BTreeMap<u16, usize>,
+        /// Codebook value entries whose codewords terminate in this block.
         values: Vec<CodebookValue<E>>,
+    }
+
+    impl<E: CodebookEntry> CodebookBlock<E> {
+        fn new(width: u8) -> Self {
+            Self { width, nodes: Default::default(), values: Default::default() }
+        }
     }
 
     /// `CodebookBuilder` generates a `Codebook` using a provided codebook specification and
     /// description.
     pub struct CodebookBuilder {
-        max_bits_per_block: u8,
+        bits_per_block: u8,
         bit_order: BitOrder,
-        is_sparse: bool,
     }
 
     impl CodebookBuilder {
@@ -268,36 +227,23 @@ pub mod vlc {
         /// codebook reads bits in an order different from the order of the provided codewords,
         /// then this option can be used to make them compatible.
         pub fn new(bit_order: BitOrder) -> Self {
-            CodebookBuilder { max_bits_per_block: 4, bit_order, is_sparse: false }
+            CodebookBuilder { bits_per_block: 4, bit_order }
         }
 
-        /// Instantiates a new `CodebookBuilder` for sparse codebooks.
-        ///
-        /// A sparse codebook is one in which not all codewords are valid. These invalid codewords
-        /// are effectively "unused" and have no value. Therefore, it is illegal for a bitstream to
-        /// contain the codeword bit pattern.
-        ///
-        /// Unused codewords are marked by having a length of 0.
-        pub fn new_sparse(bit_order: BitOrder) -> Self {
-            CodebookBuilder { max_bits_per_block: 4, bit_order, is_sparse: true }
-        }
-
-        /// Specify the maximum number of bits that should be consumed from the source at a time.
-        /// This value must be within the range 1 <= `max_bits_per_read` <= 16. Values outside of
-        /// this range will cause this function to panic. If not provided, a value will be
-        /// automatically chosen.
-        pub fn bits_per_read(&mut self, max_bits_per_read: u8) -> &mut Self {
-            assert!(max_bits_per_read <= 16);
-            assert!(max_bits_per_read > 0);
-            self.max_bits_per_block = max_bits_per_read;
+        /// Specify the number of bits that should be consumed from the source at a time. This value
+        /// must be within the range 1 <= `bits_per_read` <= 16. Values outside of this range will
+        /// cause this function to panic. If not provided, a value will be automatically chosen.
+        pub fn bits_per_read(&mut self, bits_per_read: u8) -> &mut Self {
+            assert!(bits_per_read <= 16);
+            assert!(bits_per_read > 0);
+            self.bits_per_block = bits_per_read;
             self
         }
 
         fn generate_lut<E: CodebookEntry>(
             bit_order: BitOrder,
-            is_sparse: bool,
             blocks: &[CodebookBlock<E>],
-        ) -> io::Result<Vec<E>> {
+        ) -> io::Result<Vec<Entry<E>>> {
             // The codebook table.
             let mut table = Vec::new();
 
@@ -306,14 +252,12 @@ pub mod vlc {
             // The computed end of the table given the blocks in the queue.
             let mut table_end = 0u32;
 
-            if !blocks.is_empty() {
+            // If the table is not empty, prepare for the recursion.
+            if let Some(block) = blocks.first() {
                 // Start traversal at the first block.
                 queue.push_front(0);
-
-                // The first entry in the table is always a jump to the first block.
-                let block = &blocks[0];
-                table.push(CodebookEntry::new_jump(1, block.width));
-                table_end += 1 + (1 << block.width);
+                // New blocks will begin after the end of the first block.
+                table_end += 1 << block.width;
             }
 
             // Traverse the tree in breadth-first order.
@@ -343,10 +287,12 @@ pub mod vlc {
                     // The width of the child block in bits.
                     let child_block_width = blocks[child_block_id].width;
 
-                    // Verify the jump offset does not exceed the entry's jump maximum.
-                    if table_end > E::JUMP_OFFSET_MAX {
-                        return codebook_error("core (io): codebook overflow");
-                    }
+                    // Try to create the jump entry. Return an error if the upper-bound of the
+                    // jump's index type is exceeded.
+                    let jump_entry = match Entry::<E>::new_jump(table_end) {
+                        Some(e) => e,
+                        _ => return codebook_error("core (io): codebook overflow"),
+                    };
 
                     // Determine the offset into the table depending on the bit-order.
                     let offset = match bit_order {
@@ -355,9 +301,6 @@ pub mod vlc {
                             child_block_prefix.reverse_bits().rotate_left(u32::from(block.width))
                         }
                     } as usize;
-
-                    // Add a jump entry to table.
-                    let jump_entry = CodebookEntry::new_jump(table_end, child_block_width);
 
                     table[table_base + offset] = jump_entry;
 
@@ -382,7 +325,7 @@ pub mod vlc {
                     let count = 1 << num_dnc_bits;
 
                     // The value entry that will be duplicated.
-                    let value_entry = CodebookEntry::new_value(value.value, value.width);
+                    let value_entry = Entry::<E>::new_value(value.value, value.code_len);
 
                     match bit_order {
                         BitOrder::Verbatim => {
@@ -413,9 +356,9 @@ pub mod vlc {
                     entry_count += count;
                 }
 
-                // If the decoding tree is not sparse, the number of entries added to the table
-                // should equal the block length if the. It is a fatal error if this is not true.
-                if !is_sparse && entry_count != block_len {
+                // The number of entries added to the table should equal the block length. It is a
+                // fatal error if this is not true.
+                if entry_count != block_len {
                     return codebook_error("core (io): codebook is incomplete");
                 }
             }
@@ -423,50 +366,49 @@ pub mod vlc {
             Ok(table)
         }
 
-        /// Construct a `Codebook` using the given codewords, their respective lengths, and values.
+        /// Construct a `Codebook` using the given codewords, their respective lengths in number of
+        /// bits, and associated values.
         ///
         /// This function may fail if the provided codewords do not form a complete VLC tree, or if
         /// the `CodebookEntry` is undersized.
         ///
-        /// This function will panic if the number of code words, code lengths, and values differ.
+        /// # Panics
+        ///
+        /// Panics if the number of codewords, code lengths, and values differ.
         pub fn make<E: CodebookEntry>(
             &mut self,
-            code_words: &[u32],
+            codes: &[u32],
             code_lens: &[u8],
             values: &[E::ValueType],
         ) -> io::Result<Codebook<E>> {
-            assert!(code_words.len() == code_lens.len());
-            assert!(code_words.len() == values.len());
+            assert!(codes.len() == code_lens.len());
+            assert!(codes.len() == values.len());
 
             let mut blocks = Vec::<CodebookBlock<E>>::new();
 
             let mut max_code_len = 0;
 
             // Only attempt to generate something if there are code words.
-            if !code_words.is_empty() {
-                let prefix_mask = !(!0 << self.max_bits_per_block);
+            if !codes.is_empty() {
+                let prefix_mask = !(!0 << self.bits_per_block);
 
                 // Push a root block.
-                blocks.push(Default::default());
+                blocks.push(CodebookBlock::new(self.bits_per_block));
 
                 // Populate the tree
-                for ((&code, &code_len), &value) in code_words.iter().zip(code_lens).zip(values) {
+                for ((&code, &code_len), &value) in codes.iter().zip(code_lens).zip(values) {
                     let mut parent_block_id = 0;
-                    let mut len = code_len;
 
-                    // A zero length codeword in a spare codebook is allowed, but not in a regular
-                    // codebook.
-                    if code_len == 0 {
-                        if self.is_sparse {
-                            continue;
-                        }
-                        else {
-                            return codebook_error("core (io): zero length codeword");
-                        }
-                    }
+                    // A zero length code if not allowed.
+                    let code_len = match NonZero::<u8>::new(code_len) {
+                        Some(len) => len,
+                        _ => return codebook_error("core (io): zero length codeword"),
+                    };
 
-                    while len > self.max_bits_per_block {
-                        len -= self.max_bits_per_block;
+                    let mut len = code_len.get();
+
+                    while len > self.bits_per_block {
+                        len -= self.bits_per_block;
 
                         let prefix = ((code >> len) & prefix_mask) as u16;
 
@@ -482,41 +424,35 @@ pub mod vlc {
 
                             block.nodes.insert(prefix, block_id);
 
-                            // The parent's block width must accomodate the prefix of the child.
-                            // This is always max_bits_per_block bits.
-                            block.width = self.max_bits_per_block;
-
                             // Append the new block.
-                            blocks.push(Default::default());
+                            blocks.push(CodebookBlock::new(self.bits_per_block));
 
                             parent_block_id = block_id;
                         }
                     }
 
-                    // The final chunk of code bits always has <= max_bits_per_block bits. Obtain
+                    // The final chunk of code bits always has <= bits_per_block bits. Obtain
                     // the final prefix.
-                    let prefix = code & (prefix_mask >> (self.max_bits_per_block - len));
+                    let prefix = code & (prefix_mask >> (self.bits_per_block - len));
 
                     let block = &mut blocks[parent_block_id];
 
                     // Push the value.
-                    block.values.push(CodebookValue::new(prefix as u16, len, value));
+                    block.values.push(CodebookValue::new(prefix as u16, len, code_len, value));
 
-                    // Update the block's width.
-                    block.width = max(block.width, len);
-
-                    // Update maximum observed codeword.
-                    max_code_len = max(max_code_len, code_len);
+                    // Update maximum observed codeword length.
+                    max_code_len = max_code_len.max(code_len.get());
                 }
             }
 
             // Generate the codebook lookup table.
-            let table = CodebookBuilder::generate_lut(self.bit_order, self.is_sparse, &blocks)?;
+            let table = CodebookBuilder::generate_lut(self.bit_order, &blocks)?;
 
-            // Determine the first block length if skipping the initial jump entry.
-            let init_block_len = table.first().map(|block| block.jump_len()).unwrap_or(0);
-
-            Ok(Codebook { table, max_code_len: u32::from(max_code_len), init_block_len })
+            Ok(Codebook {
+                table,
+                max_code_len: u32::from(max_code_len),
+                bits_per_block: u32::from(self.bits_per_block),
+            })
         }
     }
 }
@@ -525,10 +461,10 @@ mod private {
     use std::io;
 
     pub trait FetchBitsLtr {
-        /// Discard any remaining bits in the source and fetch new bits.
+        /// Discard any remaining bits in the source and fetch 1 or more new bits.
         fn fetch_bits(&mut self) -> io::Result<()>;
 
-        /// Fetch new bits, and append them after the remaining bits.
+        /// Fetch 0 or more new bits, and append them after the remaining bits.
         fn fetch_bits_partial(&mut self) -> io::Result<()>;
 
         /// Get all the bits in the source.
@@ -542,10 +478,10 @@ mod private {
     }
 
     pub trait FetchBitsRtl {
-        /// Discard any remaining bits in the source and fetch new bits.
+        /// Discard any remaining bits in the source and fetch 1 or more new bits.
         fn fetch_bits(&mut self) -> io::Result<()>;
 
-        /// Fetch new bits, and append them after the remaining bits.
+        /// Fetch 0 or more new bits, and append them after the remaining bits.
         fn fetch_bits_partial(&mut self) -> io::Result<()>;
 
         /// Get all the bits in the source.
@@ -839,51 +775,39 @@ pub trait ReadBitsLtr: private::FetchBitsLtr {
         &mut self,
         codebook: &vlc::Codebook<E>,
     ) -> io::Result<(E::ValueType, u32)> {
-        // Attempt refill the bit buffer with enough bits for the longest codeword in the codebook.
-        // However, this does not mean the bit buffer will have enough bits to decode a codeword.
+        // Attempt to refill the bit buffer with enough bits for the longest codeword in the
+        // codebook. However, this does not mean the bit buffer will have enough bits to decode a
+        // codeword.
         if self.num_bits_left() < codebook.max_code_len {
             self.fetch_bits_partial()?;
         }
 
-        // The number of bits actually buffered in the bit buffer.
-        let num_bits_left = self.num_bits_left();
-
         let mut bits = self.get_bits();
 
-        let mut block_len = codebook.init_block_len;
-        let mut entry = codebook.table[(bits >> (u64::BITS - block_len)) as usize + 1];
+        let bits_per_block = codebook.bits_per_block;
+        let bit_shift = u64::BITS - bits_per_block;
 
-        let mut consumed = 0;
+        let mut base = 0;
 
-        while entry.is_jump() {
-            // Consume the bits used for the initial or previous jump iteration.
-            consumed += block_len;
-            bits <<= block_len;
+        loop {
+            match codebook.table[base + (bits >> bit_shift) as usize] {
+                vlc::Entry::Jump { index } => {
+                    bits <<= bits_per_block;
+                    base = index.into() as usize;
+                }
+                vlc::Entry::Value { value, code_len } => {
+                    let code_len = u32::from(code_len.get());
 
-            // Since this is a jump entry, if there are no bits left then the bitstream ended early.
-            if consumed > num_bits_left {
-                return end_of_bitstream_error();
+                    if code_len > self.num_bits_left() {
+                        return end_of_bitstream_error();
+                    }
+
+                    self.consume_bits(code_len);
+
+                    break Ok((value, code_len));
+                }
             }
-
-            // Prepare for the next jump.
-            block_len = entry.jump_len();
-
-            let index = bits >> (u64::BITS - block_len);
-
-            // Jump to the next entry.
-            entry = codebook.table[entry.jump_offset() + index as usize];
         }
-
-        // The entry is always a value entry at this point. Consume the bits containing the value.
-        consumed += entry.value_len();
-
-        if consumed > num_bits_left {
-            return end_of_bitstream_error();
-        }
-
-        self.consume_bits(consumed);
-
-        Ok((entry.value(), consumed))
     }
 }
 
@@ -957,28 +881,29 @@ impl<'a> BitReaderLtr<'a> {
 impl private::FetchBitsLtr for BitReaderLtr<'_> {
     #[inline]
     fn fetch_bits_partial(&mut self) -> io::Result<()> {
-        let mut buf = [0u8; std::mem::size_of::<u64>()];
+        let num_bytes = (u64::BITS - self.n_bits_left) as usize >> 3;
 
-        let read_len = min(self.buf.len(), (u64::BITS - self.n_bits_left) as usize >> 3);
+        let mut num_bytes_read = 0;
 
-        buf[..read_len].copy_from_slice(&self.buf[..read_len]);
+        for &byte in self.buf.iter().take(num_bytes) {
+            self.bits |= u64::from(byte) << (u64::BITS - 8 - self.n_bits_left);
+            self.n_bits_left += 8;
+            num_bytes_read += 1;
+        }
 
-        self.buf = &self.buf[read_len..];
-
-        self.bits |= u64::from_be_bytes(buf) >> self.n_bits_left;
-        self.n_bits_left += (read_len as u32) << 3;
+        self.buf = &self.buf[num_bytes_read..];
 
         Ok(())
     }
 
     fn fetch_bits(&mut self) -> io::Result<()> {
-        let mut buf = [0u8; std::mem::size_of::<u64>()];
-
         let read_len = min(self.buf.len(), std::mem::size_of::<u64>());
 
         if read_len == 0 {
             return end_of_bitstream_error();
         }
+
+        let mut buf = [0u8; std::mem::size_of::<u64>()];
 
         buf[..read_len].copy_from_slice(&self.buf[..read_len]);
 
@@ -1290,49 +1215,39 @@ pub trait ReadBitsRtl: private::FetchBitsRtl {
         &mut self,
         codebook: &vlc::Codebook<E>,
     ) -> io::Result<(E::ValueType, u32)> {
+        // Attempt to refill the bit buffer with enough bits for the longest codeword in the
+        // codebook. However, this does not mean the bit buffer will have enough bits to decode a
+        // codeword.
         if self.num_bits_left() < codebook.max_code_len {
             self.fetch_bits_partial()?;
         }
 
-        // The number of bits actually buffered in the bit buffer.
-        let num_bits_left = self.num_bits_left();
-
         let mut bits = self.get_bits();
 
-        let mut block_len = codebook.init_block_len;
-        let mut entry = codebook.table[(bits & ((1 << block_len) - 1)) as usize + 1];
+        let bits_per_block = codebook.bits_per_block;
+        let bit_mask = (1 << bits_per_block) - 1;
 
-        let mut consumed = 0;
+        let mut base = 0;
 
-        while entry.is_jump() {
-            // Consume the bits used for the initial or previous jump iteration.
-            consumed += block_len;
-            bits >>= block_len;
+        loop {
+            match codebook.table[base + (bits & bit_mask) as usize] {
+                vlc::Entry::Jump { index } => {
+                    bits >>= bits_per_block;
+                    base = index.into() as usize;
+                }
+                vlc::Entry::Value { value, code_len } => {
+                    let code_len = u32::from(code_len.get());
 
-            // Since this is a jump entry, if there are no bits left then the bitstream ended early.
-            if consumed > num_bits_left {
-                return end_of_bitstream_error();
+                    if code_len > self.num_bits_left() {
+                        return end_of_bitstream_error();
+                    }
+
+                    self.consume_bits(code_len);
+
+                    break Ok((value, code_len));
+                }
             }
-
-            // Prepare for the next jump.
-            block_len = entry.jump_len();
-
-            let index = bits & ((1 << block_len) - 1);
-
-            // Jump to the next entry.
-            entry = codebook.table[entry.jump_offset() + index as usize];
         }
-
-        // The entry is always a value entry at this point. Consume the bits containing the value.
-        consumed += entry.value_len();
-
-        if consumed > num_bits_left {
-            return end_of_bitstream_error();
-        }
-
-        self.consume_bits(consumed);
-
-        Ok((entry.value(), consumed))
     }
 }
 
@@ -1406,28 +1321,29 @@ impl<'a> BitReaderRtl<'a> {
 impl private::FetchBitsRtl for BitReaderRtl<'_> {
     #[inline]
     fn fetch_bits_partial(&mut self) -> io::Result<()> {
-        let mut buf = [0u8; std::mem::size_of::<u64>()];
+        let num_bytes = (u64::BITS - self.n_bits_left) as usize >> 3;
 
-        let read_len = min(self.buf.len(), (u64::BITS - self.n_bits_left) as usize >> 3);
+        let mut num_bytes_read = 0;
 
-        buf[..read_len].copy_from_slice(&self.buf[..read_len]);
+        for &byte in self.buf.iter().take(num_bytes) {
+            self.bits |= u64::from(byte) << self.n_bits_left;
+            self.n_bits_left += 8;
+            num_bytes_read += 1;
+        }
 
-        self.buf = &self.buf[read_len..];
-
-        self.bits |= u64::from_le_bytes(buf) << self.n_bits_left;
-        self.n_bits_left += (read_len as u32) << 3;
+        self.buf = &self.buf[num_bytes_read..];
 
         Ok(())
     }
 
     fn fetch_bits(&mut self) -> io::Result<()> {
-        let mut buf = [0u8; std::mem::size_of::<u64>()];
-
         let read_len = min(self.buf.len(), std::mem::size_of::<u64>());
 
         if read_len == 0 {
             return end_of_bitstream_error();
         }
+
+        let mut buf = [0u8; std::mem::size_of::<u64>()];
 
         buf[..read_len].copy_from_slice(&self.buf[..read_len]);
 
@@ -1466,6 +1382,8 @@ impl FiniteBitStream for BitReaderRtl<'_> {
 
 #[cfg(test)]
 mod tests {
+    use rand::{RngCore, SeedableRng};
+
     use super::vlc::{BitOrder, Codebook, CodebookBuilder, Entry8x8};
     use super::{BitReaderLtr, ReadBitsLtr};
     use super::{BitReaderRtl, ReadBitsRtl};
@@ -1757,10 +1675,19 @@ mod tests {
         assert_eq!(bs.read_unary_ones_capped(256).unwrap(), 256);
     }
 
+    #[test]
+    fn verify_codebook_builder_make_empty() {
+        // Empty codebook.
+        let mut builder = CodebookBuilder::new(BitOrder::Verbatim);
+        let codebook = builder.make::<Entry8x8>(&[], &[], &[]);
+        assert_eq!(codebook.is_ok(), true);
+        assert_eq!(codebook.unwrap().is_empty(), true);
+    }
+
     fn generate_codebook(bit_order: BitOrder) -> (Codebook<Entry8x8>, Vec<u8>, &'static str) {
         // Codewords in MSb bit-order.
         #[rustfmt::skip]
-        const CODE_WORDS: [u32; 25] = [
+        const CODES: [u32; 25] = [
             0b001,
             0b111,
             0b010,
@@ -1816,7 +1743,7 @@ mod tests {
 
         // Construct a codebook using the tables above.
         let mut builder = CodebookBuilder::new(bit_order);
-        let codebook = builder.make::<Entry8x8>(&CODE_WORDS, &CODE_LENS, &VALUES).unwrap();
+        let codebook = builder.make::<Entry8x8>(&CODES, &CODE_LENS, &VALUES).unwrap();
 
         (codebook, data, TEXT)
     }
@@ -1831,6 +1758,27 @@ mod tests {
             (0..text.len()).map(|_| bs.read_codebook(&codebook).unwrap().0).collect();
 
         assert_eq!(text, std::str::from_utf8(&decoded).unwrap());
+    }
+
+    #[test]
+    fn fuzz_bitstreamltr_read_codebook() {
+        // Short fuzzing of codebook decoding.
+        use rand::rngs::SmallRng;
+
+        let (codebook, _, _) = generate_codebook(BitOrder::Verbatim);
+
+        let mut buf = [0; 64];
+        let mut rng = SmallRng::seed_from_u64(0x11d77093e9f9c6c9);
+
+        for _ in 0..10_000 {
+            rng.fill_bytes(&mut buf);
+
+            let mut bs = BitReaderLtr::new(&buf);
+
+            while let Ok(_) = bs.read_codebook(&codebook) {}
+
+            assert_eq!(bs.buf.len(), 0);
+        }
     }
 
     // BitStreamRtl
@@ -2127,5 +2075,26 @@ mod tests {
             (0..text.len()).map(|_| bs.read_codebook(&codebook).unwrap().0).collect();
 
         assert_eq!(text, std::str::from_utf8(&decoded).unwrap());
+    }
+
+    #[test]
+    fn fuzz_bitstreamrtl_read_codebook() {
+        // Short fuzzing of codebook decoding.
+        use rand::rngs::SmallRng;
+
+        let (codebook, _, _) = generate_codebook(BitOrder::Reverse);
+
+        let mut buf = [0; 64];
+        let mut rng = SmallRng::seed_from_u64(0x11d77093e9f9c6c9);
+
+        for _ in 0..10_000 {
+            rng.fill_bytes(&mut buf);
+
+            let mut bs = BitReaderRtl::new(&buf);
+
+            while let Ok(_) = bs.read_codebook(&codebook) {}
+
+            assert_eq!(bs.buf.len(), 0);
+        }
     }
 }

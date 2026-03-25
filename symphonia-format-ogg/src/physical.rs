@@ -16,7 +16,7 @@ use super::page::*;
 use log::debug;
 
 pub fn probe_stream_start(
-    reader: &mut MediaSourceStream,
+    reader: &mut MediaSourceStream<'_>,
     pages: &mut PageReader,
     streams: &mut BTreeMap<u32, LogicalStream>,
 ) {
@@ -66,7 +66,7 @@ pub fn probe_stream_start(
 }
 
 pub fn probe_stream_end(
-    reader: &mut MediaSourceStream,
+    reader: &mut MediaSourceStream<'_>,
     pages: &mut PageReader,
     streams: &mut BTreeMap<u32, LogicalStream>,
     byte_range_start: u64,
@@ -142,7 +142,7 @@ pub fn probe_stream_end(
 }
 
 fn scan_stream_end(
-    reader: &mut MediaSourceStream,
+    reader: &mut MediaSourceStream<'_>,
     pages: &mut PageReader,
     streams: &mut BTreeMap<u32, LogicalStream>,
     byte_range_end: u64,

@@ -5,12 +5,13 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+use symphonia_common::xiph::audio::flac::StreamInfo;
 use symphonia_core::checksum::Crc16Ansi;
-use symphonia_core::errors::Result;
-use symphonia_core::formats::Packet;
+use symphonia_core::errors::{Error, Result};
 use symphonia_core::io::{BufReader, Monitor, ReadBytes, SeekBuffered};
+use symphonia_core::packet::Packet;
+use symphonia_core::units::{Duration, Timestamp};
 use symphonia_core::util::bits;
-use symphonia_utils_xiph::flac::metadata::StreamInfo;
 
 use log::warn;
 
@@ -57,12 +58,12 @@ impl<const N: usize> Default for MovingAverage<N> {
     }
 }
 
-/// Frame synchronization information.
-pub struct SyncInfo {
-    /// The timestamp of the first audio frame in the packet.
-    pub ts: u64,
+/// Parser-internal frame synchronization information.
+struct SyncInfo {
+    /// The timestamp of the first audio frame in the packet. Never exceeds 36-bits.
+    ts: u64,
     /// The number of audio frames in the packet.
-    pub dur: u64,
+    dur: u16,
 }
 
 /// A parsed packet.
@@ -285,6 +286,22 @@ impl PacketBuilder {
     }
 }
 
+/// Frame resynchronization information.
+pub struct ResyncInfo {
+    /// The timestamp of the first audio frame in the packet.
+    pub ts: Timestamp,
+    /// The number of audio frames in the packet.
+    pub dur: Duration,
+}
+
+impl ResyncInfo {
+    /// Get the timestamp of the next frame.
+    #[inline]
+    pub fn next_ts(&self) -> Timestamp {
+        self.ts.checked_add(self.dur).expect("flac timestamp + duration cannot exceed 37 bits")
+    }
+}
+
 #[derive(Default)]
 pub struct PacketParser {
     /// Stream information.
@@ -427,8 +444,45 @@ impl PacketParser {
         }
     }
 
+    /// Reads a fragment or handles end-of-stream using the reader. Performs resynchronization when
+    /// necessary.
+    fn read_fragment_or_eos<B>(
+        &mut self,
+        reader: &mut B,
+        avg_frame_size: usize,
+    ) -> Result<Option<Fragment>>
+    where
+        B: ReadBytes + SeekBuffered,
+    {
+        match self.read_fragment(reader, avg_frame_size) {
+            Ok(fragment) => Ok(Some(fragment)),
+            Err(Error::IoError(err)) if err.kind() == std::io::ErrorKind::UnexpectedEof => {
+                // If the required information is available, verify that atleast the expected number
+                // of audio frames were demuxed.
+                if let Some(num_total_frames) = self.info.n_samples {
+                    if let Some(header) = self.builder.last_header() {
+                        let sync = calc_sync_info(&self.info, header);
+
+                        let num_frames = sync.ts + u64::from(sync.dur);
+
+                        if num_frames < num_total_frames {
+                            // Demuxed less frames than expected.
+                            warn!(
+                                "expected {num_total_frames} frames but only read {num_frames} before end of stream"
+                            );
+                            return Err(Error::IoError(err));
+                        }
+                    }
+                }
+
+                Ok(None)
+            }
+            Err(err) => Err(err),
+        }
+    }
+
     /// Parse the next packet from the stream.
-    pub fn parse<B>(&mut self, reader: &mut B) -> Result<Packet>
+    pub fn parse<B>(&mut self, reader: &mut B) -> Result<Option<Packet>>
     where
         B: ReadBytes + SeekBuffered,
     {
@@ -439,7 +493,10 @@ impl PacketParser {
 
         // Build a packet.
         let parsed = loop {
-            let fragment = self.read_fragment(reader, avg_frame_size)?;
+            let fragment = match self.read_fragment_or_eos(reader, avg_frame_size)? {
+                Some(fragment) => fragment,
+                None => return Ok(None),
+            };
 
             if let Some(packet) = self.builder.try_build(&self.info, fragment) {
                 break packet;
@@ -449,11 +506,16 @@ impl PacketParser {
         // Update the frame size moving average.
         self.fsma.push(parsed.buf.len());
 
-        Ok(Packet::new_from_boxed_slice(0, parsed.sync.ts, parsed.sync.dur, parsed.buf))
+        Ok(Some(Packet::new(
+            0,
+            parsed.sync.ts.try_into().expect("flac timestamp is 36-bits maximum"),
+            Duration::from(parsed.sync.dur),
+            parsed.buf,
+        )))
     }
 
     /// Resync the reader to the start of the next frame.
-    pub fn resync<B>(&mut self, reader: &mut B) -> Result<SyncInfo>
+    pub fn resync<B>(&mut self, reader: &mut B) -> Result<ResyncInfo>
     where
         B: ReadBytes + SeekBuffered,
     {
@@ -488,7 +550,10 @@ impl PacketParser {
             self.soft_reset();
         }
 
-        Ok(sync)
+        Ok(ResyncInfo {
+            ts: sync.ts.try_into().expect("flac timestamp is 36-bits maximum"),
+            dur: sync.dur.into(),
+        })
     }
 
     /// Reset the packet parser for a new stream.
@@ -505,7 +570,7 @@ impl PacketParser {
 fn calc_sync_info(stream_info: &StreamInfo, header: &FrameHeader) -> SyncInfo {
     let is_fixed = stream_info.block_len_max == stream_info.block_len_min;
 
-    let dur = u64::from(header.block_num_samples);
+    let dur = header.block_num_samples;
 
     let ts = match header.block_sequence {
         BlockSequence::BySample(sample) => sample,
@@ -515,7 +580,7 @@ fn calc_sync_info(stream_info: &StreamInfo, header: &FrameHeader) -> SyncInfo {
         BlockSequence::ByFrame(frame) => {
             // This should not happen in practice.
             warn!("got a fixed size frame for a variable stream, the timestamp may be off");
-            u64::from(frame) * dur
+            u64::from(frame) * u64::from(dur)
         }
     };
 

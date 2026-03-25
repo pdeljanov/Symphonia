@@ -5,7 +5,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::errors::{decode_error, unsupported_error, Result};
+use symphonia_core::errors::{Result, decode_error, unsupported_error};
 use symphonia_core::io::ReadBytes;
 
 use crate::common::*;
@@ -14,7 +14,7 @@ use crate::common::*;
 pub const MPEG_HEADER_LEN: usize = 4;
 
 /// The maximum length in bytes of a MPEG audio frame including the header.
-pub const MAX_MPEG_FRAME_SIZE: u64 = 2881;
+pub const MAX_MPEG_FRAME_SIZE: usize = 2881;
 
 /// Bit-rate lookup table for MPEG version 1 layer 1.
 const BIT_RATES_MPEG1_L1: [u32; 15] = [

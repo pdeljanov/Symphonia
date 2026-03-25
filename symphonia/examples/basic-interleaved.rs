@@ -2,13 +2,14 @@ use std::env;
 use std::fs::File;
 use std::path::Path;
 
-use symphonia::core::audio::SampleBuffer;
-use symphonia::core::codecs::DecoderOptions;
+use symphonia::core::audio::sample::Sample;
+use symphonia::core::codecs::audio::AudioDecoderOptions;
 use symphonia::core::errors::Error;
 use symphonia::core::formats::FormatOptions;
+use symphonia::core::formats::probe::Hint;
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
-use symphonia::core::probe::Hint;
+use symphonia_core::formats::TrackType;
 
 fn main() {
     // Get command line arguments.
@@ -26,34 +27,30 @@ fn main() {
     let hint = Hint::new();
 
     // Use the default options when reading and decoding.
-    let format_opts: FormatOptions = Default::default();
-    let metadata_opts: MetadataOptions = Default::default();
-    let decoder_opts: DecoderOptions = Default::default();
+    let fmt_opts: FormatOptions = Default::default();
+    let meta_opts: MetadataOptions = Default::default();
+    let dec_opts: AudioDecoderOptions = Default::default();
 
     // Probe the media source stream for a format.
-    let probed =
-        symphonia::default::get_probe().format(&hint, mss, &format_opts, &metadata_opts).unwrap();
+    let mut format =
+        symphonia::default::get_probe().probe(&hint, mss, fmt_opts, meta_opts).unwrap();
 
-    // Get the format reader yielded by the probe operation.
-    let mut format = probed.format;
-
-    // Get the default track.
-    let track = format.default_track().unwrap();
+    // Get the default audio track.
+    let track = format.default_track(TrackType::Audio).unwrap();
 
     // Create a decoder for the track.
-    let mut decoder =
-        symphonia::default::get_codecs().make(&track.codec_params, &decoder_opts).unwrap();
+    let mut decoder = symphonia::default::get_codecs()
+        .make_audio_decoder(track.codec_params.as_ref().unwrap().audio().unwrap(), &dec_opts)
+        .unwrap();
 
     // Store the track identifier, we'll use it to filter packets.
     let track_id = track.id;
 
-    let mut sample_count = 0;
-    let mut sample_buf = None;
+    let mut samples: Vec<f32> = Default::default();
+    let mut total_sample_count = 0;
 
-    loop {
-        // Get the next packet from the format reader.
-        let packet = format.next_packet().unwrap();
-
+    // Read and decode all packets from the format reader.
+    while let Some(packet) = format.next_packet().unwrap() {
         // If the packet does not belong to the selected track, skip it.
         if packet.track_id() != track_id {
             continue;
@@ -62,35 +59,24 @@ fn main() {
         // Decode the packet into audio samples, ignoring any decode errors.
         match decoder.decode(&packet) {
             Ok(audio_buf) => {
-                // The decoded audio samples may now be accessed via the audio buffer if per-channel
-                // slices of samples in their native decoded format is desired. Use-cases where
-                // the samples need to be accessed in an interleaved order or converted into
-                // another sample format, or a byte buffer is required, are covered by copying the
-                // audio buffer into a sample buffer or raw sample buffer, respectively. In the
-                // example below, we will copy the audio buffer into a sample buffer in an
-                // interleaved order while also converting to a f32 sample format.
+                // The decoded audio samples may now be accessed via the generic audio buffer
+                // returned by the decoder. You may match on the buffer to access a sample-format
+                // specific buffer, or use generic routines to copy out the audio samples in the
+                // desired sample format.
+                //
+                // In the example below, we will copy the all the samples into a vector in
+                // the f32 sample format in channel interleaved order.
 
-                // If this is the *first* decoded packet, create a sample buffer matching the
-                // decoded audio buffer format.
-                if sample_buf.is_none() {
-                    // Get the audio buffer specification.
-                    let spec = *audio_buf.spec();
+                // Ensure the vector is large enough to hold all the samples.
+                samples.resize(audio_buf.samples_interleaved(), f32::MID);
 
-                    // Get the capacity of the decoded buffer. Note: This is capacity, not length!
-                    let duration = audio_buf.capacity() as u64;
+                // Copy the audio samples from the generic audio buffer to the vector in interleaved
+                // order. The sample format to convert to is inferred from the type of the Vec.
+                audio_buf.copy_to_slice_interleaved(&mut samples);
 
-                    // Create the f32 sample buffer.
-                    sample_buf = Some(SampleBuffer::<f32>::new(duration, spec));
-                }
-
-                // Copy the decoded audio buffer into the sample buffer in an interleaved format.
-                if let Some(buf) = &mut sample_buf {
-                    buf.copy_interleaved_ref(audio_buf);
-
-                    // The samples may now be access via the `samples()` function.
-                    sample_count += buf.samples().len();
-                    print!("\rDecoded {} samples", sample_count);
-                }
+                // Sum up the total number of samples.
+                total_sample_count += samples.len();
+                print!("\rDecoded {total_sample_count} samples");
             }
             Err(Error::DecodeError(_)) => (),
             Err(_) => break,

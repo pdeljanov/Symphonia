@@ -5,7 +5,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::errors::{decode_error, Result};
+use symphonia_core::errors::{Result, decode_error};
 use symphonia_core::io::ReadBytes;
 use symphonia_core::meta::MetadataRevision;
 
@@ -19,8 +19,6 @@ use log::warn;
 #[allow(dead_code)]
 #[derive(Debug)]
 pub struct MoovAtom {
-    /// Atom header.
-    header: AtomHeader,
     /// Movie header atom.
     pub mvhd: MvhdAtom,
     /// Trak atoms.
@@ -44,10 +42,6 @@ impl MoovAtom {
 }
 
 impl Atom for MoovAtom {
-    fn header(&self) -> AtomHeader {
-        self.header
-    }
-
     fn read<B: ReadBytes>(reader: &mut B, header: AtomHeader) -> Result<Self> {
         let mut iter = AtomIterator::new(reader, header);
 
@@ -57,7 +51,7 @@ impl Atom for MoovAtom {
         let mut udta = None;
 
         while let Some(header) = iter.next()? {
-            match header.atype {
+            match header.atom_type {
                 AtomType::MovieHeader => {
                     mvhd = Some(iter.read_atom::<MvhdAtom>()?);
                 }
@@ -91,6 +85,6 @@ impl Atom for MoovAtom {
             }
         }
 
-        Ok(MoovAtom { header, mvhd: mvhd.unwrap(), traks, mvex, udta })
+        Ok(MoovAtom { mvhd: mvhd.unwrap(), traks, mvex, udta })
     }
 }

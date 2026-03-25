@@ -9,14 +9,17 @@ use crate::common::SideData;
 
 use super::{MapResult, Mapper, PacketParser};
 
-use symphonia_core::audio::Channels;
-use symphonia_core::codecs::{CodecParameters, CODEC_TYPE_OPUS};
+use symphonia_core::audio::{Channels, Position};
+use symphonia_core::codecs::CodecParameters;
+use symphonia_core::codecs::audio::AudioCodecParameters;
+use symphonia_core::codecs::audio::well_known::CODEC_ID_OPUS;
 use symphonia_core::errors::Result;
+use symphonia_core::formats::Track;
 use symphonia_core::io::{BufReader, ReadBytes};
 use symphonia_core::meta::MetadataBuilder;
-use symphonia_core::units::TimeBase;
 
-use symphonia_metadata::vorbis;
+use symphonia_core::units::Duration;
+use symphonia_metadata::embedded::vorbis::{self, VORBIS_COMMENT_METADATA_INFO};
 
 use log::warn;
 
@@ -32,7 +35,7 @@ const OGG_OPUS_COMMENT_SIGNATURE: &[u8] = b"OpusTags";
 /// The maximum support Opus OGG mapping version.
 const OGG_OPUS_MAPPING_VERSION_MAX: u8 = 0x0f;
 
-pub fn detect(buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> {
+pub fn detect(serial: u32, buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> {
     // The identification packet for Opus must be a minimum size.
     if buf.len() < OGG_OPUS_MIN_IDENTIFICATION_PACKET_SIZE {
         return Ok(None);
@@ -75,54 +78,54 @@ pub fn detect(buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> {
     // The next byte indicates the channel mapping. Most of these values are reserved.
     let channel_mapping = reader.read_byte()?;
 
-    let channels = match channel_mapping {
+    let positions = match channel_mapping {
         // RTP Mapping
-        0 if channel_count == 1 => Channels::FRONT_LEFT,
-        0 if channel_count == 2 => Channels::FRONT_LEFT | Channels::FRONT_RIGHT,
+        0 if channel_count == 1 => Position::FRONT_LEFT,
+        0 if channel_count == 2 => Position::FRONT_LEFT | Position::FRONT_RIGHT,
         // Vorbis Mapping
         1 => match channel_count {
-            1 => Channels::FRONT_LEFT,
-            2 => Channels::FRONT_LEFT | Channels::FRONT_RIGHT,
-            3 => Channels::FRONT_LEFT | Channels::FRONT_CENTRE | Channels::FRONT_RIGHT,
+            1 => Position::FRONT_LEFT,
+            2 => Position::FRONT_LEFT | Position::FRONT_RIGHT,
+            3 => Position::FRONT_LEFT | Position::FRONT_CENTER | Position::FRONT_RIGHT,
             4 => {
-                Channels::FRONT_LEFT
-                    | Channels::FRONT_RIGHT
-                    | Channels::REAR_LEFT
-                    | Channels::REAR_RIGHT
+                Position::FRONT_LEFT
+                    | Position::FRONT_RIGHT
+                    | Position::REAR_LEFT
+                    | Position::REAR_RIGHT
             }
             5 => {
-                Channels::FRONT_LEFT
-                    | Channels::FRONT_CENTRE
-                    | Channels::FRONT_RIGHT
-                    | Channels::REAR_LEFT
-                    | Channels::REAR_RIGHT
+                Position::FRONT_LEFT
+                    | Position::FRONT_CENTER
+                    | Position::FRONT_RIGHT
+                    | Position::REAR_LEFT
+                    | Position::REAR_RIGHT
             }
             6 => {
-                Channels::FRONT_LEFT
-                    | Channels::FRONT_CENTRE
-                    | Channels::FRONT_RIGHT
-                    | Channels::REAR_LEFT
-                    | Channels::REAR_RIGHT
-                    | Channels::LFE1
+                Position::FRONT_LEFT
+                    | Position::FRONT_CENTER
+                    | Position::FRONT_RIGHT
+                    | Position::REAR_LEFT
+                    | Position::REAR_RIGHT
+                    | Position::LFE1
             }
             7 => {
-                Channels::FRONT_LEFT
-                    | Channels::FRONT_CENTRE
-                    | Channels::FRONT_RIGHT
-                    | Channels::SIDE_LEFT
-                    | Channels::SIDE_RIGHT
-                    | Channels::REAR_CENTRE
-                    | Channels::LFE1
+                Position::FRONT_LEFT
+                    | Position::FRONT_CENTER
+                    | Position::FRONT_RIGHT
+                    | Position::SIDE_LEFT
+                    | Position::SIDE_RIGHT
+                    | Position::REAR_CENTER
+                    | Position::LFE1
             }
             8 => {
-                Channels::FRONT_LEFT
-                    | Channels::FRONT_CENTRE
-                    | Channels::FRONT_RIGHT
-                    | Channels::SIDE_LEFT
-                    | Channels::SIDE_RIGHT
-                    | Channels::REAR_LEFT
-                    | Channels::REAR_RIGHT
-                    | Channels::LFE1
+                Position::FRONT_LEFT
+                    | Position::FRONT_CENTER
+                    | Position::FRONT_RIGHT
+                    | Position::SIDE_LEFT
+                    | Position::SIDE_RIGHT
+                    | Position::REAR_LEFT
+                    | Position::REAR_RIGHT
+                    | Position::LFE1
             }
             _ => return Ok(None),
         },
@@ -131,18 +134,21 @@ pub fn detect(buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> {
     };
 
     // Populate the codec parameters with the information read from identification header.
-    let mut codec_params = CodecParameters::new();
+    let mut codec_params = AudioCodecParameters::new();
 
     codec_params
-        .for_codec(CODEC_TYPE_OPUS)
-        .with_delay(u32::from(pre_skip))
+        .for_codec(CODEC_ID_OPUS)
         .with_sample_rate(48_000)
-        .with_time_base(TimeBase::new(1, 48_000))
-        .with_channels(channels)
+        .with_channels(Channels::Positioned(positions))
         .with_extra_data(Box::from(buf));
 
+    // Create the track.
+    let mut track = Track::new(serial);
+
+    track.with_codec_params(CodecParameters::Audio(codec_params)).with_delay(u32::from(pre_skip));
+
     // Instantiate the Opus mapper.
-    let mapper = Box::new(OpusMapper { codec_params, need_comment: true });
+    let mapper = Box::new(OpusMapper { track, need_comment: true });
 
     Ok(Some(mapper))
 }
@@ -150,14 +156,14 @@ pub fn detect(buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> {
 pub struct OpusPacketParser {}
 
 impl PacketParser for OpusPacketParser {
-    fn parse_next_packet_dur(&mut self, packet: &[u8]) -> u64 {
+    fn parse_next_packet_dur(&mut self, packet: &[u8]) -> (Duration, Duration) {
         // See https://www.rfc-editor.org/rfc/rfc6716
         // Read TOC (Table Of Contents) byte which is the first byte in the opus data.
         let toc_byte = match packet.first() {
             Some(b) => b,
             None => {
                 warn!("opus packet empty");
-                return 0;
+                return (Duration::ZERO, Duration::ZERO);
             }
         };
         // The configuration number is the 5 most significant bits. Shift out 3 least significant
@@ -200,18 +206,18 @@ impl PacketParser for OpusPacketParser {
                     // What to do here? I'd like to return an error but this is an infalliable
                     // trait.
                     warn!("opus code 3 packet with no following byte containing number of frames");
-                    return 0;
+                    return (Duration::ZERO, Duration::ZERO);
                 }
             },
             _ => unreachable!("masked 2 bits"),
         };
         // Look up the packet length and return it.
-        frame_duration * num_frames
+        (Duration::new(frame_duration * num_frames), Duration::ZERO)
     }
 }
 
 struct OpusMapper {
-    codec_params: CodecParameters,
+    track: Track,
     need_comment: bool,
 }
 
@@ -224,12 +230,12 @@ impl Mapper for OpusMapper {
         // Nothing to do.
     }
 
-    fn codec_params(&self) -> &CodecParameters {
-        &self.codec_params
+    fn track(&self) -> &Track {
+        &self.track
     }
 
-    fn codec_params_mut(&mut self) -> &mut CodecParameters {
-        &mut self.codec_params
+    fn track_mut(&mut self) -> &mut Track {
+        &mut self.track
     }
 
     fn make_parser(&self) -> Option<Box<dyn super::PacketParser>> {
@@ -238,7 +244,8 @@ impl Mapper for OpusMapper {
 
     fn map_packet(&mut self, packet: &[u8]) -> Result<MapResult> {
         if !self.need_comment {
-            Ok(MapResult::StreamData { dur: OpusPacketParser {}.parse_next_packet_dur(packet) })
+            let (dur, discard) = OpusPacketParser {}.parse_next_packet_dur(packet);
+            Ok(MapResult::StreamData { dur, discard })
         }
         else {
             let mut reader = BufReader::new(packet);
@@ -249,13 +256,16 @@ impl Mapper for OpusMapper {
 
             if sig == *OGG_OPUS_COMMENT_SIGNATURE {
                 // This packet should be a metadata packet containing a Vorbis Comment.
-                let mut builder = MetadataBuilder::new();
+                let mut builder = MetadataBuilder::new(VORBIS_COMMENT_METADATA_INFO);
+                let mut side_data = Default::default();
 
-                vorbis::read_comment_no_framing(&mut reader, &mut builder)?;
+                vorbis::read_vorbis_comment(&mut reader, &mut builder, &mut side_data)?;
+
+                let rev = builder.build();
 
                 self.need_comment = false;
 
-                Ok(MapResult::SideData { data: SideData::Metadata(builder.metadata()) })
+                Ok(MapResult::SideData { data: SideData::Metadata { rev, side_data } })
             }
             else {
                 warn!("ogg (opus): invalid packet type");

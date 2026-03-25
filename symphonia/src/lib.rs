@@ -18,7 +18,7 @@
 //! royalty-free open standard media formats and codecs. Other formats and codecs must be enabled
 //! using feature flags.
 //!
-//! **Tip:** All formats and codecs can be enabled with the `all` feature flag.
+//! **Tip:** All format, codec, and metadata support can be enabled with the `all` feature flag.
 //!
 //! ## Formats
 //!
@@ -35,7 +35,7 @@
 //!
 //! \* Gapless playback requires support from both the demuxer and decoder.
 //!
-//! **Tip:** All formats can be enabled with the `all-formats` feature flag.
+//! **Tip:** All formats can be enabled with the `all-codecs` feature flag.
 //!
 //! ## Codecs
 //!
@@ -58,81 +58,64 @@
 //!
 //! ## Metadata
 //!
-//! The following metadata tagging formats are supported. These are always enabled.
+//! For metadata formats that are standalone and not part of the media container, a feature flag may
+//! be used to toggle support.
 //!
-//! * ID3v1
-//! * ID3v2
-//! * ISO/MP4
-//! * RIFF
-//! * Vorbis Comment (in OGG & FLAC)
+//! | Format                | Feature Flag | Default |
+//! |-----------------------|--------------|---------|
+//! | APEv1                 | `ape`        | Yes     |
+//! | APEv2                 | `ape`        | Yes     |
+//! | ID3v1                 | `id3v1`      | Yes     |
+//! | ID3v2                 | `id3v2`      | Yes     |
+//! | ISO/MP4               | N/A          | N/A     |
+//! | RIFF                  | N/A          | N/A     |
+//! | Vorbis comment (FLAC) | N/A          | N/A     |
+//! | Vorbis comment (OGG)  | N/A          | N/A     |
+//!
+//! **Tip:** All metadata formats can be enabled with the `all-meta` feature flag.
 //!
 //! ## Optimizations
 //!
-//! SIMD optimizations are **not** enabled by default. They may be enabled on a per-instruction
-//! set basis using the following feature flags. Enabling any SIMD support feature flags will pull
-//! in the `rustfft` dependency.
+//! SIMD optimizations are enabled by default. Precise control over which SIMD instruction sets are
+//! supported may be controlled using the following feature flags. Enabling any SIMD support feature
+//! flag will pull in the `rustfft` dependency.
 //!
 //! | Instruction Set | Feature Flag    | Default |
 //! |-----------------|-----------------|---------|
-//! | SSE             | `opt-simd-sse`  | No      |
-//! | AVX             | `opt-simd-avx`  | No      |
-//! | Neon            | `opt-simd-neon` | No      |
+//! | SSE             | `opt-simd-sse`  | Yes     |
+//! | AVX             | `opt-simd-avx`  | Yes     |
+//! | Neon            | `opt-simd-neon` | Yes     |
 //!
 //! **Tip:** All SIMD optimizations can be enabled with the `opt-simd` feature flag.
 //!
+//! # Experimental Features
+//!
+//! Previews of experimental new features may be enabled by using feature flags. Experimental
+//! features should be used for development purposes only. Before using an experimental feature,
+//! please observe the warnings below. Never use experimental features in a production application.
+//!
+//! | Experimental Feature   | Feature Flag          |
+//! |------------------------|-----------------------|
+//! | Subtitle codec support | `exp-subtitle-codecs` |
+//! | Video codec support    | `exp-video-codecs`    |
+//!
+//! ## Warnings
+//!
+//! * SemVer compatibilty is **not** guaranteed. Be prepared for build failures.
+//! * Experimental features and their associated feature flags **may be removed at any time.**
+//! * Functionality **may change or break at any time.**
+//! * Again, **never** use in any production application.
+//!
 //! # Usage
-//!
-//! The following steps describe a basic usage of Symphonia:
-//!
-//! 1.  Instantiate a [`CodecRegistry`][core::codecs::CodecRegistry] and register all the codecs
-//!     that are of interest. Alternatively, you may use [`default::get_codecs`] to get the default
-//!     registry with all the enabled codecs pre-registered. The registry will be used to
-//!     instantiate a [`Decoder`][core::codecs::Decoder] later.
-//! 2.  Instantiate a [`Probe`][core::probe::Probe] and register all the formats that are of
-//!     interest. Alternatively, you may use [`default::get_probe`] to get a default format probe
-//!     with all the enabled formats pre-registered. The probe will be used to automatically detect
-//!     the media format and instantiate a compatible [`FormatReader`][core::formats::FormatReader].
-//! 3.  Make sure the [`MediaSource`][core::io::MediaSource] trait is implemented for whatever
-//!     source you are using. This trait is already implemented for `std::fs::File` and
-//!     `std::io::Cursor`.
-//! 4.  Instantiate a [`MediaSourceStream`][core::io::MediaSourceStream] with the `MediaSource`
-//!     above.
-//! 5.  Using the `Probe`, call [`format`][core::probe::Probe::format] and pass it the
-//!     `MediaSourceStream`.
-//! 6.  If the probe successfully detects a compatible format, a `FormatReader` will be returned.
-//!     This is an instance of a demuxer that can read and demux the provided source into
-//!     [`Packet`][core::formats::Packet]s.
-//! 7.  At this point it is possible to interrogate the `FormatReader` for general information about
-//!     the media and metadata. Examine the [`Track`][core::formats::Track] listing using
-//!     [`tracks`][core::formats::FormatReader::tracks] and select one or more tracks of interest to
-//!     decode.
-//! 8.  To instantiate a `Decoder` for a selected `Track`, call the `CodecRegistry`'s
-//!     [`make`][core::codecs::CodecRegistry::make] function and pass it
-//!     the [`CodecParameters`][core::codecs::CodecParameters] for that track. This step is repeated
-//!     once per selected track.
-//! 9.  To decode a track, obtain a packet from the `FormatReader` by
-//!     calling [`next_packet`][`core::formats::FormatReader::next_packet`] and then pass the
-//!     `Packet` to the `Decoder` for that track. The [`decode`][core::codecs::Decoder::decode]
-//!     function will read a packet and return an [`AudioBufferRef`][core::audio::AudioBufferRef]
-//!     (an "any-type" [`AudioBuffer`][core::audio::AudioBuffer]).
-//! 10. The `AudioBufferRef` may be used to access the decoded audio samples directly, or it can be
-//!     copied into a [`SampleBuffer`][core::audio::SampleBuffer] or
-//!     [`RawSampleBuffer`][core::audio::RawSampleBuffer] to export the audio out of Symphonia.
-//! 11. Repeat step 9 and 10 until the end-of-stream error is returned.
 //!
 //! An example implementation of a simple audio player (symphonia-play) can be found in the
 //! Project Symphonia git repository.
 //!
-//! # Gapless Playback
-//!
-//! Gapless playback is disabled by default. To enable gapless playback, set
-//! [`FormatOptions::enable_gapless`][core::formats::FormatOptions::enable_gapless] to `true`.
-//!
 //! # Adding new formats and codecs
 //!
-//! Simply implement the [`Decoder`][core::codecs::Decoder] trait for a decoder or the
-//! [`FormatReader`][core::formats::FormatReader] trait for a demuxer trait and register with
-//! the appropriate registry or probe!
+//! Simply implement the [`AudioDecoder`][core::codecs::audio::AudioDecoder] trait for an audio
+//! decoder or the [`FormatReader`][core::formats::FormatReader] trait for a demuxer trait and
+//! register with the appropriate registry or probe!
 
 pub mod default {
     //! The `default` module provides convenience functions and registries to get an implementer
@@ -186,13 +169,26 @@ pub mod default {
 
         #[deprecated = "use `default::formats::MpaReader` instead"]
         #[cfg(any(feature = "mp1", feature = "mp2", feature = "mp3"))]
-        pub type Mp3Reader = MpaReader;
+        pub type Mp3Reader<'s> = MpaReader<'s>;
+    }
+
+    pub mod meta {
+        //! The `meta` module re-exports all enabled Symphonia metadata readers.
+
+        #[cfg(feature = "ape")]
+        pub use symphonia_metadata::ape::ApeReader;
+        #[cfg(feature = "id3v1")]
+        pub use symphonia_metadata::id3v1::Id3v1Reader;
+        #[cfg(feature = "id3v2")]
+        pub use symphonia_metadata::id3v2::Id3v2Reader;
+
+        pub use symphonia_metadata::embedded;
     }
 
     use lazy_static::lazy_static;
 
-    use symphonia_core::codecs::CodecRegistry;
-    use symphonia_core::probe::Probe;
+    use symphonia_core::codecs::registry::CodecRegistry;
+    use symphonia_core::formats::probe::Probe;
 
     lazy_static! {
         static ref CODEC_REGISTRY: CodecRegistry = {
@@ -237,25 +233,25 @@ pub mod default {
     /// Use this function to easily populate a custom registry with all enabled codecs.
     pub fn register_enabled_codecs(registry: &mut CodecRegistry) {
         #[cfg(feature = "aac")]
-        registry.register_all::<codecs::AacDecoder>();
+        registry.register_audio_decoder::<codecs::AacDecoder>();
 
         #[cfg(feature = "adpcm")]
-        registry.register_all::<codecs::AdpcmDecoder>();
+        registry.register_audio_decoder::<codecs::AdpcmDecoder>();
 
         #[cfg(feature = "alac")]
-        registry.register_all::<codecs::AlacDecoder>();
+        registry.register_audio_decoder::<codecs::AlacDecoder>();
 
         #[cfg(feature = "flac")]
-        registry.register_all::<codecs::FlacDecoder>();
+        registry.register_audio_decoder::<codecs::FlacDecoder>();
 
         #[cfg(any(feature = "mp1", feature = "mp2", feature = "mp3"))]
-        registry.register_all::<codecs::MpaDecoder>();
+        registry.register_audio_decoder::<codecs::MpaDecoder>();
 
         #[cfg(feature = "pcm")]
-        registry.register_all::<codecs::PcmDecoder>();
+        registry.register_audio_decoder::<codecs::PcmDecoder>();
 
         #[cfg(feature = "vorbis")]
-        registry.register_all::<codecs::VorbisDecoder>();
+        registry.register_audio_decoder::<codecs::VorbisDecoder>();
     }
 
     /// Registers all the formats selected by the `feature` flags in the includer's `Cargo.toml` on
@@ -264,38 +260,43 @@ pub mod default {
     ///
     /// Use this function to easily populate a custom probe with all enabled formats.
     pub fn register_enabled_formats(probe: &mut Probe) {
-        use symphonia_metadata::id3v2::Id3v2Reader;
-
         // Formats
         #[cfg(feature = "aac")]
-        probe.register_all::<formats::AdtsReader>();
+        probe.register_format::<formats::AdtsReader<'_>>();
 
         #[cfg(feature = "caf")]
-        probe.register_all::<formats::CafReader>();
+        probe.register_format::<formats::CafReader<'_>>();
 
         #[cfg(feature = "flac")]
-        probe.register_all::<formats::FlacReader>();
+        probe.register_format::<formats::FlacReader<'_>>();
 
         #[cfg(feature = "isomp4")]
-        probe.register_all::<formats::IsoMp4Reader>();
+        probe.register_format::<formats::IsoMp4Reader<'_>>();
 
         #[cfg(any(feature = "mp1", feature = "mp2", feature = "mp3"))]
-        probe.register_all::<formats::MpaReader>();
+        probe.register_format::<formats::MpaReader<'_>>();
 
         #[cfg(feature = "aiff")]
-        probe.register_all::<formats::AiffReader>();
+        probe.register_format::<formats::AiffReader<'_>>();
 
         #[cfg(feature = "wav")]
-        probe.register_all::<formats::WavReader>();
+        probe.register_format::<formats::WavReader<'_>>();
 
         #[cfg(feature = "ogg")]
-        probe.register_all::<formats::OggReader>();
+        probe.register_format::<formats::OggReader<'_>>();
 
         #[cfg(feature = "mkv")]
-        probe.register_all::<formats::MkvReader>();
+        probe.register_format::<formats::MkvReader<'_>>();
 
         // Metadata
-        probe.register_all::<Id3v2Reader>();
+        #[cfg(feature = "ape")]
+        probe.register_metadata::<meta::ApeReader<'_>>();
+
+        #[cfg(feature = "id3v1")]
+        probe.register_metadata::<meta::Id3v1Reader<'_>>();
+
+        #[cfg(feature = "id3v2")]
+        probe.register_metadata::<meta::Id3v2Reader<'_>>();
     }
 }
 

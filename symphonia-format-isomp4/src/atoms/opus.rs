@@ -5,26 +5,22 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::codecs::{CodecParameters, CODEC_TYPE_OPUS};
-use symphonia_core::errors::{decode_error, unsupported_error, Result};
+use symphonia_core::codecs::audio::well_known::CODEC_ID_OPUS;
+use symphonia_core::errors::{Error, Result, decode_error, unsupported_error};
 use symphonia_core::io::ReadBytes;
 
+use crate::atoms::stsd::AudioSampleEntry;
 use crate::atoms::{Atom, AtomHeader};
 
+/// Opus atom.
 #[allow(dead_code)]
 #[derive(Debug)]
 pub struct OpusAtom {
-    /// Atom header.
-    header: AtomHeader,
     /// Opus extra data (identification header).
     extra_data: Box<[u8]>,
 }
 
 impl Atom for OpusAtom {
-    fn header(&self) -> AtomHeader {
-        self.header
-    }
-
     fn read<B: ReadBytes>(reader: &mut B, header: AtomHeader) -> Result<Self> {
         const OPUS_MAGIC: &[u8] = b"OpusHead";
         const OPUS_MAGIC_LEN: usize = OPUS_MAGIC.len();
@@ -38,7 +34,10 @@ impl Atom for OpusAtom {
         // The dops atom contains an Opus identification header excluding the OpusHead magic
         // signature. Therefore, the atom data length should be atleast as long as the shortest
         // Opus identification header.
-        let data_len = header.data_len as usize;
+        let data_len = header
+            .data_len()
+            .ok_or(Error::DecodeError("isomp4 (opus): expected atom size to be known"))?
+            as usize;
 
         if data_len < MIN_OPUS_EXTRA_DATA_SIZE - OPUS_MAGIC_LEN {
             return decode_error("isomp4 (opus): opus identification header too short");
@@ -61,12 +60,13 @@ impl Atom for OpusAtom {
             return unsupported_error("isomp4 (opus): unsupported opus version");
         }
 
-        Ok(OpusAtom { header, extra_data })
+        Ok(OpusAtom { extra_data })
     }
 }
 
 impl OpusAtom {
-    pub fn fill_codec_params(&self, codec_params: &mut CodecParameters) {
-        codec_params.for_codec(CODEC_TYPE_OPUS).with_extra_data(self.extra_data.clone());
+    pub fn fill_audio_sample_entry(&self, entry: &mut AudioSampleEntry) {
+        entry.codec_id = CODEC_ID_OPUS;
+        entry.extra_data = Some(self.extra_data.clone());
     }
 }

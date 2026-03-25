@@ -15,13 +15,14 @@
 pub mod audio;
 pub mod checksum;
 pub mod codecs;
-pub mod conv;
+pub mod common;
 pub mod dsp;
 pub mod errors;
 pub mod formats;
 pub mod io;
 pub mod meta;
-pub mod probe;
-pub mod sample;
+pub mod packet;
+pub mod subtitle;
 pub mod units;
 pub mod util;
+pub mod video;

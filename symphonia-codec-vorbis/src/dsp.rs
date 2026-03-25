@@ -9,10 +9,6 @@ use symphonia_core::dsp::mdct::Imdct;
 
 use super::window::Windows;
 
-pub struct LappingState {
-    pub prev_block_flag: bool,
-}
-
 pub struct Dsp {
     /// DSP channels (max. 256 per-spec, but actually limited to 32 by Symphonia).
     pub channels: Vec<DspChannel>,
@@ -22,8 +18,8 @@ pub struct Dsp {
     pub imdct_long: Imdct,
     /// Windows for overlap-add.
     pub windows: Windows,
-    /// Lapping state.
-    pub lapping_state: Option<LappingState>,
+    /// Previous block flag.
+    pub prev_block_flag: Option<bool>,
 }
 
 impl Dsp {
@@ -32,7 +28,7 @@ impl Dsp {
             channel.reset();
         }
 
-        self.lapping_state = None;
+        self.prev_block_flag = None;
     }
 }
 
@@ -72,7 +68,7 @@ impl DspChannel {
     pub fn synth(
         &mut self,
         block_flag: bool,
-        lap_state: &Option<LappingState>,
+        prev_block_flag: bool,
         windows: &Windows,
         imdct: &mut Imdct,
         buf: &mut [f32],
@@ -84,57 +80,50 @@ impl DspChannel {
         imdct.imdct(&self.floor[..bs / 2], &mut self.imdct[..bs]);
 
         // Overlap-add and windowing with the previous buffer.
-        if let Some(lap_state) = &lap_state {
-            // Window for this block.
-            let win = if block_flag && lap_state.prev_block_flag {
-                &windows.long
-            }
-            else {
-                &windows.short
-            };
+        let win = if block_flag && prev_block_flag { &windows.long } else { &windows.short };
 
-            if lap_state.prev_block_flag == block_flag {
-                // Both the previous and current blocks are either short or long. In this case,
-                // there is a complete overlap between.
-                overlap_add(buf, &self.overlap[..bs / 2], &self.imdct[..bs / 2], win);
-            }
-            else if lap_state.prev_block_flag && !block_flag {
-                // The previous block is long and the current block is short.
-                let start = (self.bs1 - self.bs0) / 4;
-                let end = start + self.bs0 / 2;
+        if prev_block_flag == block_flag {
+            // Both the previous and current blocks are either short or long, or there was no
+            // previous block. In the former case, there is a complete overlap, in the latter, the
+            // current block will only be windowed.
+            overlap_add(buf, &self.overlap[..bs / 2], &self.imdct[..bs / 2], win);
+        }
+        else if prev_block_flag && !block_flag {
+            // The previous block is long and the current block is short.
+            let start = (self.bs1 - self.bs0) / 4;
+            let end = start + self.bs0 / 2;
 
-                // Unity samples (no overlap).
-                buf[..start].copy_from_slice(&self.overlap[..start]);
+            // Unity samples (no overlap).
+            buf[..start].copy_from_slice(&self.overlap[..start]);
 
-                // Overlapping samples.
-                overlap_add(
-                    &mut buf[start..],
-                    &self.overlap[start..end],
-                    &self.imdct[..self.bs0 / 2],
-                    win,
-                );
-            }
-            else {
-                // The previous block is short and the current block is long.
-                let start = (self.bs1 - self.bs0) / 4;
-                let end = start + self.bs0 / 2;
+            // Overlapping samples.
+            overlap_add(
+                &mut buf[start..],
+                &self.overlap[start..end],
+                &self.imdct[..self.bs0 / 2],
+                win,
+            );
+        }
+        else {
+            // The previous block is short and the current block is long.
+            let start = (self.bs1 - self.bs0) / 4;
+            let end = start + self.bs0 / 2;
 
-                // Overlapping samples.
-                overlap_add(
-                    &mut buf[..self.bs0 / 2],
-                    &self.overlap[..self.bs0 / 2],
-                    &self.imdct[start..end],
-                    win,
-                );
+            // Overlapping samples.
+            overlap_add(
+                &mut buf[..self.bs0 / 2],
+                &self.overlap[..self.bs0 / 2],
+                &self.imdct[start..end],
+                win,
+            );
 
-                // Unity samples (no overlap).
-                buf[self.bs0 / 2..].copy_from_slice(&self.imdct[end..self.bs1 / 2]);
-            }
+            // Unity samples (no overlap).
+            buf[self.bs0 / 2..].copy_from_slice(&self.imdct[end..self.bs1 / 2]);
+        }
 
-            // Clamp the output samples.
-            for s in buf.iter_mut() {
-                *s = s.clamp(-1.0, 1.0);
-            }
+        // Clamp the output samples.
+        for s in buf.iter_mut() {
+            *s = s.clamp(-1.0, 1.0);
         }
 
         // Save right-half of IMDCT buffer for later.

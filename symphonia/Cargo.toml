@@ -1,39 +1,45 @@
 [package]
 name = "symphonia"
-version = "0.5.5"
 description = "Pure Rust media container and audio decoding library."
-homepage = "https://github.com/pdeljanov/Symphonia"
-repository = "https://github.com/pdeljanov/Symphonia"
 authors = ["Philip Deljanov <philip.deljanov@gmail.com>"]
-license = "MPL-2.0"
 readme = "README.md"
-categories = ["multimedia", "multimedia::audio", "multimedia::encoding"]
+categories = ["multimedia", "multimedia::audio", "multimedia::encoding", "multimedia::video"]
 keywords = ["audio", "codec", "decoder", "multimedia", "media"]
-edition = "2018"
-rust-version = "1.53"
+# Common package metadata located in workspace Cargo.toml.
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+# Show documentation with all features enabled on docs.rs
+[package.metadata.docs.rs]
+all-features = true
 
 [features]
 # Only royalty-free open standard codecs and formats are enabled by default.
-# TODO: Remove all defaults for v0.6.0. Features should be additive.
-default = ["adpcm", "flac", "mkv", "ogg", "pcm", "vorbis", "wav"]
+default = ["opt-simd", "all-meta", "adpcm", "flac", "mkv", "ogg", "pcm", "vorbis", "wav"]
 
-# Enable specific codecs and formats.
-# TODO: Use "dep:" after MSRV is raised to >= 1.60.
-aac = ["symphonia-codec-aac"]
-adpcm = ["symphonia-codec-adpcm"]
-alac = ["symphonia-codec-alac"]
-flac = ["symphonia-bundle-flac"]
-caf = ["symphonia-format-caf"]
-isomp4 = ["symphonia-format-isomp4"]
-mkv = ["symphonia-format-mkv"]
-mp1 = ["symphonia-bundle-mp3/mp1"]
-mp2 = ["symphonia-bundle-mp3/mp2"]
-mp3 = ["symphonia-bundle-mp3/mp3"]
-ogg = ["symphonia-format-ogg"]
-pcm = ["symphonia-codec-pcm"]
-aiff = ["symphonia-format-riff/aiff"]
-vorbis = ["symphonia-codec-vorbis"]
-wav = ["symphonia-format-riff/wav"]
+# Feature flags to enable specific codecs, container, and standalone metadata formats.
+aac = ["dep:symphonia-codec-aac"]
+adpcm = ["dep:symphonia-codec-adpcm"]
+alac = ["dep:symphonia-codec-alac"]
+flac = ["dep:symphonia-bundle-flac"]
+caf = ["dep:symphonia-format-caf"]
+isomp4 = ["dep:symphonia-format-isomp4"]
+mkv = ["dep:symphonia-format-mkv"]
+mp1 = ["dep:symphonia-bundle-mp3", "symphonia-bundle-mp3/mp1"]
+mp2 = ["dep:symphonia-bundle-mp3", "symphonia-bundle-mp3/mp2"]
+mp3 = ["dep:symphonia-bundle-mp3", "symphonia-bundle-mp3/mp3"]
+ogg = ["dep:symphonia-format-ogg"]
+pcm = ["dep:symphonia-codec-pcm"]
+aiff = ["dep:symphonia-format-riff", "symphonia-format-riff/aiff"]
+vorbis = ["dep:symphonia-codec-vorbis"]
+wav = ["dep:symphonia-format-riff", "symphonia-format-riff/wav"]
+ape = ["symphonia-metadata/ape"]
+id3v1 = ["symphonia-metadata/id3v1"]
+id3v2 = ["symphonia-metadata/id3v2"]
 
 # MPEG audio codecs.
 mpa = ["mp1", "mp2", "mp3"]
@@ -51,20 +57,28 @@ all-codecs = [
     "vorbis",
 ]
 
-# Enable all supported formats.
+# Enable all supported container formats.
 all-formats = [
     "caf",
     "isomp4",
     "mkv",
     "ogg",
     "aiff",
-    "wav"
+    "wav",
+]
+
+# Enable all supported standalone metadata formats.
+all-meta = [
+    "ape",
+    "id3v1",
+    "id3v2",
 ]
 
 # Enable all supported codecs and formats.
 all = [
     "all-codecs",
     "all-formats",
+    "all-meta",
 ]
 
 # SIMD support.
@@ -79,81 +93,83 @@ opt-simd = [
     "opt-simd-neon",
 ]
 
+# Experimental features.
+exp-subtitle-codecs = ["symphonia-core/exp-subtitle-codecs"]
+exp-video-codecs = ["symphonia-core/exp-video-codecs"]
+
 [dependencies]
 lazy_static = "1.4.0"
 
 [dependencies.symphonia-core]
-version = "0.5.5"
+version = "0.6.0-alpha.1"
 path = "../symphonia-core"
 
 [dependencies.symphonia-metadata]
-version = "0.5.5"
+version = "0.6.0-alpha.1"
 path = "../symphonia-metadata"
+# Standalone crate enables all metadata formats by default.
+default-features = false
 
 [dependencies.symphonia-bundle-flac]
-version = "0.5.5"
+version = "0.6.0-alpha.1"
 path = "../symphonia-bundle-flac"
 optional = true
 
 [dependencies.symphonia-bundle-mp3]
-version = "0.5.5"
+version = "0.6.0-alpha.1"
 path = "../symphonia-bundle-mp3"
 optional = true
 # Standalone crate enables all MP1, MP2, and MP3 decoders by default.
 default-features = false
 
 [dependencies.symphonia-codec-aac]
-version = "0.5.5"
+version = "0.6.0-alpha.1"
 path = "../symphonia-codec-aac"
 optional = true
 
 [dependencies.symphonia-codec-adpcm]
-version = "0.5.5"
+version = "0.6.0-alpha.1"
 path = "../symphonia-codec-adpcm"
 optional = true
 
 [dependencies.symphonia-codec-alac]
-version = "0.5.5"
+version = "0.6.0-alpha.1"
 path = "../symphonia-codec-alac"
 optional = true
 
 [dependencies.symphonia-codec-pcm]
-version = "0.5.5"
+version = "0.6.0-alpha.1"
 path = "../symphonia-codec-pcm"
 optional = true
 
 [dependencies.symphonia-codec-vorbis]
-version = "0.5.5"
+version = "0.6.0-alpha.1"
 path = "../symphonia-codec-vorbis"
 optional = true
 
 [dependencies.symphonia-format-riff]
-version = "0.5.5"
+version = "0.6.0-alpha.1"
 path = "../symphonia-format-riff"
 optional = true
 # Standalone crate enables AIFF and WAVE by default.
 default-features = false
 
 [dependencies.symphonia-format-ogg]
-version = "0.5.5"
+version = "0.6.0-alpha.1"
 path = "../symphonia-format-ogg"
 optional = true
 
 [dependencies.symphonia-format-isomp4]
-version = "0.5.5"
+version = "0.6.0-alpha.1"
 path = "../symphonia-format-isomp4"
 optional = true
 
 [dependencies.symphonia-format-mkv]
-version = "0.5.5"
+version = "0.6.0-alpha.1"
 path = "../symphonia-format-mkv"
 optional = true
 
 [dependencies.symphonia-format-caf]
-version = "0.5.5"
+version = "0.6.0-alpha.1"
 path = "../symphonia-format-caf"
 optional = true
-
-# Show documentation with all features enabled on docs.rs
-[package.metadata.docs.rs]
-all-features = true

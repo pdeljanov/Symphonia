@@ -5,7 +5,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::errors::{decode_error, Result};
+use symphonia_core::errors::{Result, decode_error};
 use symphonia_core::io::ReadBytes;
 
 use crate::atoms::{Atom, AtomHeader, AtomIterator, AtomType, EdtsAtom, MdiaAtom, TkhdAtom};
@@ -14,21 +14,17 @@ use crate::atoms::{Atom, AtomHeader, AtomIterator, AtomType, EdtsAtom, MdiaAtom,
 #[allow(dead_code)]
 #[derive(Debug)]
 pub struct TrakAtom {
-    /// Atom header.
-    header: AtomHeader,
     /// Track header atom.
     pub tkhd: TkhdAtom,
     /// Optional, edit list atom.
     pub edts: Option<EdtsAtom>,
     /// Media atom.
     pub mdia: MdiaAtom,
+    /// Duration, equal to mdia.mdhd.duration unless it is zero, in which case it is equal to tkhd.duration.
+    pub duration: u64,
 }
 
 impl Atom for TrakAtom {
-    fn header(&self) -> AtomHeader {
-        self.header
-    }
-
     fn read<B: ReadBytes>(reader: &mut B, header: AtomHeader) -> Result<Self> {
         let mut iter = AtomIterator::new(reader, header);
 
@@ -37,7 +33,7 @@ impl Atom for TrakAtom {
         let mut mdia = None;
 
         while let Some(header) = iter.next()? {
-            match header.atype {
+            match header.atom_type {
                 AtomType::TrackHeader => {
                     tkhd = Some(iter.read_atom::<TkhdAtom>()?);
                 }
@@ -51,14 +47,19 @@ impl Atom for TrakAtom {
             }
         }
 
-        if tkhd.is_none() {
+        let Some(tkhd_atom) = tkhd
+        else {
             return decode_error("isomp4: missing tkhd atom");
-        }
+        };
 
-        if mdia.is_none() {
+        let Some(mdia_atom) = mdia
+        else {
             return decode_error("isomp4: missing mdia atom");
-        }
+        };
 
-        Ok(TrakAtom { header, tkhd: tkhd.unwrap(), edts, mdia: mdia.unwrap() })
+        let duration =
+            if mdia_atom.mdhd.duration != 0 { mdia_atom.mdhd.duration } else { tkhd_atom.duration };
+
+        Ok(TrakAtom { tkhd: tkhd_atom, edts, mdia: mdia_atom, duration })
     }
 }

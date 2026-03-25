@@ -8,11 +8,55 @@
 use log::{debug, error, info, warn};
 use std::{convert::TryFrom, fmt, mem::size_of, str};
 use symphonia_core::{
-    audio::{Channels, Layout},
-    codecs::*,
-    errors::{decode_error, unsupported_error, Error, Result},
+    audio::{AmbisonicBFormat, ChannelLabel, Channels, Position, layouts},
+    codecs::audio::{AudioCodecId, well_known::*},
+    errors::{Error, Result, decode_error, unsupported_error},
     io::{MediaSourceStream, ReadBytes},
+    units::{Duration, Timestamp},
 };
+
+// CAF audio channel layouts.
+const LAYOUT_TAG_USE_CHANNEL_DESCRIPTIONS: u32 = 0;
+const LAYOUT_TAG_USE_CHANNEL_BITMAP: u32 = 1 << 16;
+// Layout tags from the CAF spec that match the first N channels of a standard layout
+const LAYOUT_TAG_MONO: u32 = (100 << 16) | 1;
+const LAYOUT_TAG_STEREO: u32 = (101 << 16) | 2;
+const LAYOUT_TAG_STEREO_HEADPHONES: u32 = (102 << 16) | 2;
+const LAYOUT_TAG_MPEG_3_0_A: u32 = (113 << 16) | 3; // L R C
+const LAYOUT_TAG_MPEG_5_1_A: u32 = (121 << 16) | 6; // L R C LFE Ls Rs
+const LAYOUT_TAG_MPEG_7_1_A: u32 = (126 << 16) | 8; // L R C LFE Ls Rs Lc Rc
+const LAYOUT_TAG_DVD_10: u32 = (136 << 16) | 4; // L R C LFE
+
+// CAF audio channel labels.
+const CHANNEL_LABEL_LEFT: u32 = 1;
+const CHANNEL_LABEL_RIGHT: u32 = 2;
+const CHANNEL_LABEL_CENTER: u32 = 3;
+const CHANNEL_LABEL_LFE_SCREEN: u32 = 4;
+const CHANNEL_LABEL_LEFT_SURROUND: u32 = 5;
+const CHANNEL_LABEL_RIGHT_SURROUND: u32 = 6;
+const CHANNEL_LABEL_LEFT_CENTER: u32 = 7;
+const CHANNEL_LABEL_RIGHT_CENTER: u32 = 8;
+const CHANNEL_LABEL_CENTER_SURROUND: u32 = 9;
+const CHANNEL_LABEL_LEFT_SURROUND_DIRECT: u32 = 10;
+const CHANNEL_LABEL_RIGHT_SURROUND_DIRECT: u32 = 11;
+const CHANNEL_LABEL_TOP_CENTER_SURROUND: u32 = 12;
+const CHANNEL_LABEL_VERTICAL_HEIGHT_LEFT: u32 = 13;
+const CHANNEL_LABEL_VERTICAL_HEIGHT_CENTER: u32 = 14;
+const CHANNEL_LABEL_VERTICAL_HEIGHT_RIGHT: u32 = 15;
+const CHANNEL_LABEL_TOP_BACK_LEFT: u32 = 16;
+const CHANNEL_LABEL_TOP_BACK_CENTER: u32 = 17;
+const CHANNEL_LABEL_TOP_BACK_RIGHT: u32 = 18;
+const CHANNEL_LABEL_LEFT_WIDE: u32 = 35;
+const CHANNEL_LABEL_RIGHT_WIDE: u32 = 36;
+const CHANNEL_LABEL_LFE2: u32 = 37;
+const CHANNEL_LABEL_AMBISONIC_W: u32 = 200;
+const CHANNEL_LABEL_AMBISONIC_X: u32 = 201;
+const CHANNEL_LABEL_AMBISONIC_Y: u32 = 202;
+const CHANNEL_LABEL_AMBISONIC_Z: u32 = 203;
+const CHANNEL_LABEL_DISCRETE_0: u32 = (1 << 16) | 0;
+const CHANNEL_LABEL_DISCRETE_65535: u32 = (1 << 16) | 65535;
+const CHANNEL_LABEL_HOA_ACN_0: u32 = (2 << 16) | 0;
+const CHANNEL_LABEL_HOA_ACN_65024: u32 = (2 << 16) | 65024;
 
 #[derive(Debug)]
 pub enum Chunk {
@@ -36,7 +80,7 @@ impl Chunk {
     /// The first chunk read will be the AudioDescription chunk. Once it's been read, the caller
     /// should pass it in to subsequent read calls.
     pub fn read(
-        reader: &mut MediaSourceStream,
+        reader: &mut MediaSourceStream<'_>,
         audio_description: &Option<AudioDescription>,
     ) -> Result<Option<Self>> {
         let chunk_type = reader.read_quad_bytes()?;
@@ -94,7 +138,7 @@ pub struct AudioDescription {
 }
 
 impl AudioDescription {
-    pub fn read(reader: &mut MediaSourceStream, chunk_size: i64) -> Result<Self> {
+    pub fn read(reader: &mut MediaSourceStream<'_>, chunk_size: i64) -> Result<Self> {
         if chunk_size != 32 {
             return invalid_chunk_size_error("Audio Description", chunk_size);
         }
@@ -126,50 +170,50 @@ impl AudioDescription {
         })
     }
 
-    pub fn codec_type(&self) -> Result<CodecType> {
+    pub fn codec_id(&self) -> Result<AudioCodecId> {
         use AudioDescriptionFormatId::*;
 
         let result = match &self.format_id {
             LinearPCM { floating_point, little_endian } => {
                 if *floating_point {
                     match (self.bits_per_channel, *little_endian) {
-                        (32, true) => CODEC_TYPE_PCM_F32LE,
-                        (32, false) => CODEC_TYPE_PCM_F32BE,
-                        (64, true) => CODEC_TYPE_PCM_F64LE,
-                        (64, false) => CODEC_TYPE_PCM_F64BE,
+                        (32, true) => CODEC_ID_PCM_F32LE,
+                        (32, false) => CODEC_ID_PCM_F32BE,
+                        (64, true) => CODEC_ID_PCM_F64LE,
+                        (64, false) => CODEC_ID_PCM_F64BE,
                         (bits, _) => {
-                            error!("unsupported PCM floating point format (bits: {})", bits);
+                            error!("unsupported PCM floating point format (bits: {bits})");
                             return unsupported_error("caf: unsupported bits per channel");
                         }
                     }
                 }
                 else {
                     match (self.bits_per_channel, *little_endian) {
-                        (16, true) => CODEC_TYPE_PCM_S16LE,
-                        (16, false) => CODEC_TYPE_PCM_S16BE,
-                        (24, true) => CODEC_TYPE_PCM_S24LE,
-                        (24, false) => CODEC_TYPE_PCM_S24BE,
-                        (32, true) => CODEC_TYPE_PCM_S32LE,
-                        (32, false) => CODEC_TYPE_PCM_S32BE,
+                        (16, true) => CODEC_ID_PCM_S16LE,
+                        (16, false) => CODEC_ID_PCM_S16BE,
+                        (24, true) => CODEC_ID_PCM_S24LE,
+                        (24, false) => CODEC_ID_PCM_S24BE,
+                        (32, true) => CODEC_ID_PCM_S32LE,
+                        (32, false) => CODEC_ID_PCM_S32BE,
                         (bits, _) => {
-                            error!("unsupported PCM integer format (bits: {})", bits);
+                            error!("unsupported PCM integer format (bits: {bits})");
                             return unsupported_error("caf: unsupported bits per channel");
                         }
                     }
                 }
             }
-            AppleIMA4 => CODEC_TYPE_ADPCM_IMA_WAV,
-            MPEG4AAC => CODEC_TYPE_AAC,
-            ULaw => CODEC_TYPE_PCM_MULAW,
-            ALaw => CODEC_TYPE_PCM_ALAW,
-            MPEGLayer1 => CODEC_TYPE_MP1,
-            MPEGLayer2 => CODEC_TYPE_MP2,
-            MPEGLayer3 => CODEC_TYPE_MP3,
-            AppleLossless => CODEC_TYPE_ALAC,
-            Flac => CODEC_TYPE_FLAC,
-            Opus => CODEC_TYPE_OPUS,
+            AppleIMA4 => CODEC_ID_ADPCM_IMA_QT,
+            MPEG4AAC => CODEC_ID_AAC,
+            ULaw => CODEC_ID_PCM_MULAW,
+            ALaw => CODEC_ID_PCM_ALAW,
+            MPEGLayer1 => CODEC_ID_MP1,
+            MPEGLayer2 => CODEC_ID_MP2,
+            MPEGLayer3 => CODEC_ID_MP3,
+            AppleLossless => CODEC_ID_ALAC,
+            Flac => CODEC_ID_FLAC,
+            Opus => CODEC_ID_OPUS,
             unsupported => {
-                error!("unsupported codec ({:?})", unsupported);
+                error!("unsupported codec ({unsupported:?})");
                 return unsupported_error("caf: unsupported codec");
             }
         };
@@ -177,8 +221,8 @@ impl AudioDescription {
         Ok(result)
     }
 
-    pub fn format_is_compressed(&self) -> bool {
-        self.bits_per_channel == 0
+    pub fn is_variable_packet_format(&self) -> bool {
+        self.bytes_per_packet == 0 || self.frames_per_packet == 0
     }
 }
 
@@ -190,7 +234,7 @@ pub struct AudioData {
 }
 
 impl AudioData {
-    pub fn read(reader: &mut MediaSourceStream, chunk_size: i64) -> Result<Self> {
+    pub fn read(reader: &mut MediaSourceStream<'_>, chunk_size: i64) -> Result<Self> {
         let edit_count_offset = size_of::<u32>() as i64;
 
         if chunk_size != -1 && chunk_size < edit_count_offset {
@@ -205,7 +249,7 @@ impl AudioData {
         }
 
         let data_len = (chunk_size - edit_count_offset) as u64;
-        debug!("data_len: {}", data_len);
+        debug!("data_len: {data_len}");
         reader.ignore_bytes(data_len)?;
         Ok(Self { _edit_count: edit_count, start_pos, data_len: Some(data_len) })
     }
@@ -229,7 +273,7 @@ pub enum AudioDescriptionFormatId {
 }
 
 impl AudioDescriptionFormatId {
-    pub fn read(reader: &mut MediaSourceStream) -> Result<Self> {
+    pub fn read(reader: &mut MediaSourceStream<'_>) -> Result<Self> {
         use AudioDescriptionFormatId::*;
 
         let format_id = reader.read_quad_bytes()?;
@@ -245,7 +289,7 @@ impl AudioDescriptionFormatId {
             b"ima4" => AppleIMA4,
             b"aac " => {
                 if format_flags != 2 {
-                    warn!("undocumented AAC object type ({})", format_flags);
+                    warn!("undocumented AAC object type ({format_flags})");
                 }
                 return Ok(MPEG4AAC);
             }
@@ -261,13 +305,13 @@ impl AudioDescriptionFormatId {
             b"flac" => Flac,
             b"opus" => Opus,
             other => {
-                error!("unsupported format id ({:?})", other);
+                error!("unsupported format id ({other:?})");
                 return unsupported_error("caf: unsupported format id");
             }
         };
 
         if format_flags != 0 {
-            info!("non-zero format flags ({})", format_flags);
+            info!("non-zero format flags ({format_flags})");
         }
 
         Ok(result)
@@ -282,7 +326,7 @@ pub struct ChannelLayout {
 }
 
 impl ChannelLayout {
-    pub fn read(reader: &mut MediaSourceStream, chunk_size: i64) -> Result<Self> {
+    pub fn read(reader: &mut MediaSourceStream<'_>, chunk_size: i64) -> Result<Self> {
         if chunk_size < 12 {
             return invalid_chunk_size_error("Channel Layout", chunk_size);
         }
@@ -300,63 +344,80 @@ impl ChannelLayout {
     pub fn channels(&self) -> Option<Channels> {
         let channels = match self.channel_layout {
             // Use channel descriptions
-            0 => {
-                let mut channels: u32 = 0;
+            LAYOUT_TAG_USE_CHANNEL_DESCRIPTIONS => {
+                let mut labels = Vec::new();
+
                 for channel in self.channel_descriptions.iter() {
-                    match channel.channel_label {
-                        1 => channels |= Channels::FRONT_LEFT.bits(),
-                        2 => channels |= Channels::FRONT_RIGHT.bits(),
-                        3 => channels |= Channels::FRONT_CENTRE.bits(),
-                        4 => channels |= Channels::LFE1.bits(),
-                        5 => channels |= Channels::REAR_LEFT.bits(),
-                        6 => channels |= Channels::REAR_RIGHT.bits(),
-                        7 => channels |= Channels::FRONT_LEFT_CENTRE.bits(),
-                        8 => channels |= Channels::FRONT_RIGHT_CENTRE.bits(),
-                        9 => channels |= Channels::REAR_CENTRE.bits(),
-                        10 => channels |= Channels::SIDE_LEFT.bits(),
-                        11 => channels |= Channels::SIDE_RIGHT.bits(),
-                        12 => channels |= Channels::TOP_CENTRE.bits(),
-                        13 => channels |= Channels::TOP_FRONT_LEFT.bits(),
-                        14 => channels |= Channels::TOP_FRONT_CENTRE.bits(),
-                        15 => channels |= Channels::TOP_FRONT_RIGHT.bits(),
-                        16 => channels |= Channels::TOP_REAR_LEFT.bits(),
-                        17 => channels |= Channels::TOP_REAR_CENTRE.bits(),
-                        18 => channels |= Channels::TOP_REAR_RIGHT.bits(),
+                    let label = match channel.channel_label {
+                        // Standard positioned WAVE channels.
+                        CHANNEL_LABEL_LEFT => Position::FRONT_LEFT.into(),
+                        CHANNEL_LABEL_RIGHT => Position::FRONT_RIGHT.into(),
+                        CHANNEL_LABEL_CENTER => Position::FRONT_CENTER.into(),
+                        CHANNEL_LABEL_LFE_SCREEN => Position::LFE1.into(),
+                        CHANNEL_LABEL_LEFT_SURROUND => Position::REAR_LEFT.into(),
+                        CHANNEL_LABEL_RIGHT_SURROUND => Position::REAR_RIGHT.into(),
+                        CHANNEL_LABEL_LEFT_CENTER => Position::FRONT_LEFT_CENTER.into(),
+                        CHANNEL_LABEL_RIGHT_CENTER => Position::FRONT_RIGHT_CENTER.into(),
+                        CHANNEL_LABEL_CENTER_SURROUND => Position::REAR_CENTER.into(),
+                        CHANNEL_LABEL_LEFT_SURROUND_DIRECT => Position::SIDE_LEFT.into(),
+                        CHANNEL_LABEL_RIGHT_SURROUND_DIRECT => Position::SIDE_RIGHT.into(),
+                        CHANNEL_LABEL_TOP_CENTER_SURROUND => Position::TOP_CENTER.into(),
+                        CHANNEL_LABEL_VERTICAL_HEIGHT_LEFT => Position::TOP_FRONT_LEFT.into(),
+                        CHANNEL_LABEL_VERTICAL_HEIGHT_CENTER => Position::TOP_FRONT_CENTER.into(),
+                        CHANNEL_LABEL_VERTICAL_HEIGHT_RIGHT => Position::TOP_FRONT_RIGHT.into(),
+                        CHANNEL_LABEL_TOP_BACK_LEFT => Position::TOP_REAR_LEFT.into(),
+                        CHANNEL_LABEL_TOP_BACK_CENTER => Position::TOP_REAR_CENTER.into(),
+                        CHANNEL_LABEL_TOP_BACK_RIGHT => Position::TOP_REAR_RIGHT.into(),
+                        // Non-standard positioned channels.
+                        CHANNEL_LABEL_LEFT_WIDE => Position::FRONT_LEFT_WIDE.into(),
+                        CHANNEL_LABEL_RIGHT_WIDE => Position::FRONT_RIGHT_WIDE.into(),
+                        CHANNEL_LABEL_LFE2 => Position::LFE2.into(),
+                        // First-order Ambisonic channels.
+                        CHANNEL_LABEL_AMBISONIC_W => AmbisonicBFormat::W.into(),
+                        CHANNEL_LABEL_AMBISONIC_X => AmbisonicBFormat::X.into(),
+                        CHANNEL_LABEL_AMBISONIC_Y => AmbisonicBFormat::Y.into(),
+                        CHANNEL_LABEL_AMBISONIC_Z => AmbisonicBFormat::Z.into(),
+                        // Discrete channels.
+                        index @ CHANNEL_LABEL_DISCRETE_0..=CHANNEL_LABEL_DISCRETE_65535 => {
+                            ChannelLabel::Discrete((index - CHANNEL_LABEL_DISCRETE_0) as u16)
+                        }
+                        // Higher-order Ambisonic channels.
+                        acn @ CHANNEL_LABEL_HOA_ACN_0..=CHANNEL_LABEL_HOA_ACN_65024 => {
+                            ChannelLabel::Ambisonic((acn - CHANNEL_LABEL_HOA_ACN_0) as u16)
+                        }
                         unsupported => {
-                            info!("unsupported channel label: {}", unsupported);
+                            warn!("unsupported channel label: {unsupported}");
                             return None;
                         }
-                    }
+                    };
+
+                    labels.push(label);
                 }
-                return Channels::from_bits(channels);
+
+                Channels::Custom(labels.into_boxed_slice())
             }
             // Use the channel bitmap
-            LAYOUT_TAG_USE_CHANNEL_BITMAP => return Channels::from_bits(self.channel_bitmap),
+            LAYOUT_TAG_USE_CHANNEL_BITMAP => {
+                // The CAF channel bitmap is identical to a WAVE channel mask.
+                let positions = match Position::from_wave_channel_mask(self.channel_bitmap) {
+                    Some(positions) => positions,
+                    None => {
+                        warn!("unsupported channel bitmap: {}", self.channel_bitmap);
+                        return None;
+                    }
+                };
+
+                Channels::Positioned(positions)
+            }
             // Layout tags which have channel roles that match the standard channel layout
-            LAYOUT_TAG_MONO => Layout::Mono.into_channels(),
-            LAYOUT_TAG_STEREO | LAYOUT_TAG_STEREO_HEADPHONES => Layout::Stereo.into_channels(),
-            LAYOUT_TAG_MPEG_3_0_A => {
-                Channels::FRONT_LEFT | Channels::FRONT_RIGHT | Channels::FRONT_CENTRE
-            }
-            LAYOUT_TAG_MPEG_5_1_A => Layout::FivePointOne.into_channels(),
-            LAYOUT_TAG_MPEG_7_1_A => {
-                Channels::FRONT_LEFT
-                    | Channels::FRONT_RIGHT
-                    | Channels::FRONT_CENTRE
-                    | Channels::LFE1
-                    | Channels::REAR_LEFT
-                    | Channels::REAR_RIGHT
-                    | Channels::FRONT_LEFT_CENTRE
-                    | Channels::FRONT_RIGHT_CENTRE
-            }
-            LAYOUT_TAG_DVD_10 => {
-                Channels::FRONT_LEFT
-                    | Channels::FRONT_RIGHT
-                    | Channels::FRONT_CENTRE
-                    | Channels::LFE1
-            }
+            LAYOUT_TAG_MONO => layouts::CHANNEL_LAYOUT_MONO,
+            LAYOUT_TAG_STEREO | LAYOUT_TAG_STEREO_HEADPHONES => layouts::CHANNEL_LAYOUT_STEREO,
+            LAYOUT_TAG_MPEG_3_0_A => layouts::CHANNEL_LAYOUT_MPEG_3P0_A,
+            LAYOUT_TAG_MPEG_5_1_A => layouts::CHANNEL_LAYOUT_MPEG_5P1_A,
+            LAYOUT_TAG_MPEG_7_1_A => layouts::CHANNEL_LAYOUT_MPEG_7P1_A,
+            LAYOUT_TAG_DVD_10 => layouts::CHANNEL_LAYOUT_3P1,
             unsupported => {
-                debug!("unsupported channel layout: {}", unsupported);
+                debug!("unsupported channel layout: {unsupported}");
                 return None;
             }
         };
@@ -375,7 +436,7 @@ pub struct ChannelDescription {
 }
 
 impl ChannelDescription {
-    pub fn read(reader: &mut MediaSourceStream) -> Result<Self> {
+    pub fn read(reader: &mut MediaSourceStream<'_>) -> Result<Self> {
         Ok(Self {
             channel_label: reader.read_be_u32()?,
             channel_flags: reader.read_be_u32()?,
@@ -383,16 +444,6 @@ impl ChannelDescription {
         })
     }
 }
-
-const LAYOUT_TAG_USE_CHANNEL_BITMAP: u32 = 1 << 16;
-// Layout tags from the CAF spec that match the first N channels of a standard layout
-const LAYOUT_TAG_MONO: u32 = (100 << 16) | 1;
-const LAYOUT_TAG_STEREO: u32 = (101 << 16) | 2;
-const LAYOUT_TAG_STEREO_HEADPHONES: u32 = (102 << 16) | 2;
-const LAYOUT_TAG_MPEG_3_0_A: u32 = (113 << 16) | 3; // L R C
-const LAYOUT_TAG_MPEG_5_1_A: u32 = (121 << 16) | 6; // L R C LFE Ls Rs
-const LAYOUT_TAG_MPEG_7_1_A: u32 = (126 << 16) | 8; // L R C LFE Ls Rs Lc Rc
-const LAYOUT_TAG_DVD_10: u32 = (136 << 16) | 4; // L R C LFE
 
 pub struct PacketTable {
     pub valid_frames: i64,
@@ -403,7 +454,7 @@ pub struct PacketTable {
 
 impl PacketTable {
     pub fn read(
-        reader: &mut MediaSourceStream,
+        reader: &mut MediaSourceStream<'_>,
         desc: &Option<AudioDescription>,
         chunk_size: i64,
     ) -> Result<Self> {
@@ -418,13 +469,13 @@ impl PacketTable {
 
         let total_packets = reader.read_be_i64()?;
         if total_packets < 0 {
-            error!("invalid number of packets in the packet table ({})", total_packets);
+            error!("invalid number of packets in the packet table ({total_packets})");
             return decode_error("caf: invalid number of packets in the packet table");
         }
 
         let valid_frames = reader.read_be_i64()?;
         if valid_frames < 0 {
-            error!("invalid number of frames in the packet table ({})", valid_frames);
+            error!("invalid number of frames in the packet table ({valid_frames})");
             return decode_error("caf: invalid number of frames in the packet table");
         }
 
@@ -432,7 +483,8 @@ impl PacketTable {
         let remainder_frames = reader.read_be_i32()?;
 
         let mut packets = Vec::with_capacity(total_packets as usize);
-        let mut current_frame = 0;
+        let mut current_frame =
+            Timestamp::from(-i64::from(if priming_frames > 0 { priming_frames } else { 0 }));
         let mut packet_offset = 0;
 
         match (desc.bytes_per_packet, desc.frames_per_packet) {
@@ -440,29 +492,33 @@ impl PacketTable {
             (0, 0) => {
                 for _ in 0..total_packets {
                     let size = read_variable_length_integer(reader)?;
-                    let frames = read_variable_length_integer(reader)?;
+                    let frames = Duration::from(read_variable_length_integer(reader)?);
                     packets.push(CafPacket {
                         size,
                         frames,
                         start_frame: current_frame,
                         data_offset: packet_offset,
                     });
-                    current_frame += frames;
-                    packet_offset += size;
+                    current_frame = current_frame
+                        .checked_add(frames)
+                        .ok_or(Error::Unsupported("track too long"))?;
+                    packet_offset += size; // TODO: This could overflow...
                 }
             }
             // Variable bytes per packet, constant number of frames
             (0, frames_per_packet) => {
                 for _ in 0..total_packets {
                     let size = read_variable_length_integer(reader)?;
-                    let frames = frames_per_packet as u64;
+                    let frames = Duration::from(frames_per_packet);
                     packets.push(CafPacket {
                         size,
                         frames,
                         start_frame: current_frame,
                         data_offset: packet_offset,
                     });
-                    current_frame += frames;
+                    current_frame = current_frame
+                        .checked_add(frames)
+                        .ok_or(Error::Unsupported("track too long"))?;
                     packet_offset += size;
                 }
             }
@@ -470,14 +526,16 @@ impl PacketTable {
             (bytes_per_packet, 0) => {
                 for _ in 0..total_packets {
                     let size = bytes_per_packet as u64;
-                    let frames = read_variable_length_integer(reader)?;
+                    let frames = Duration::from(read_variable_length_integer(reader)?);
                     packets.push(CafPacket {
                         size,
                         frames,
                         start_frame: current_frame,
                         data_offset: packet_offset,
                     });
-                    current_frame += frames;
+                    current_frame = current_frame
+                        .checked_add(frames)
+                        .ok_or(Error::Unsupported("track too long"))?;
                     packet_offset += size;
                 }
             }
@@ -485,8 +543,7 @@ impl PacketTable {
             (_, _) => {
                 if total_packets > 0 {
                     error!(
-                        "unexpected packet table for constant bit rate ({} packets)",
-                        total_packets
+                        "unexpected packet table for constant bit rate ({total_packets} packets)"
                     );
                     return decode_error(
                         "caf: unexpected packet table for constant bit rate format",
@@ -518,21 +575,21 @@ pub struct CafPacket {
     // The packet's offset in bytes from the start of the data
     pub data_offset: u64,
     // The index of the first frame in the packet
-    pub start_frame: u64,
+    pub start_frame: Timestamp,
     // The number of frames in the packet
     // For files with a constant frames per packet this value will match frames_per_packet
-    pub frames: u64,
+    pub frames: Duration,
     // The size in bytes of the packet
     // For constant bit-rate files this value will match bytes_per_packet
     pub size: u64,
 }
 
 fn invalid_chunk_size_error<T>(chunk_type: &str, chunk_size: i64) -> Result<T> {
-    error!("invalid {} chunk size ({})", chunk_type, chunk_size);
+    error!("invalid {chunk_type} chunk size ({chunk_size})");
     decode_error("caf: invalid chunk size")
 }
 
-fn read_variable_length_integer(reader: &mut MediaSourceStream) -> Result<u64> {
+fn read_variable_length_integer(reader: &mut MediaSourceStream<'_>) -> Result<u64> {
     let mut result = 0;
 
     for _ in 0..9 {
