@@ -16,15 +16,20 @@ version.workspace = true
 [features]
 default = ["ape", "id3v1", "id3v2"]
 
+# Standalone metadata format readers.
 ape = []
-flac = ["vorbis"]
 id3v1 = []
 id3v2 = []
+
+# Embedded metadata format readers.
+flac = ["vorbis"]
 riff-info = []
+riff-id3 = ["id3v2"]
 vorbis = ["flac"]
 
-# Enable all RIFF metadata formats.
+# Meta-feature to enable all embedded RIFF metadata format readers.
 riff = [
+    "riff-id3",
     "riff-info",
 ]
 
