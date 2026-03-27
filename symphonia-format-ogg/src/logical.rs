@@ -8,7 +8,7 @@
 use std::collections::VecDeque;
 
 use symphonia_core::codecs::CodecParameters;
-use symphonia_core::errors::{decode_error, Result};
+use symphonia_core::errors::{decode_error, Error, Result};
 use symphonia_core::formats::Packet;
 
 use super::common::SideData;
@@ -105,6 +105,18 @@ impl LogicalStream {
             }
         }
 
+        // Get the start delay.
+        let start_delay = self.start_bound.as_ref().map_or(0, |b| b.delay);
+
+        // Retrieve last_ts before prev_page_info is updated.
+        let last_ts = if let Some(last_ts) = &self.prev_page_info {
+            self.mapper
+                .absgp_to_ts(last_ts.absgp)
+                .saturating_add(if self.gapless { 0 } else { start_delay })
+        } else {
+            0
+        };
+
         self.prev_page_info =
             Some(PageInfo { seq: page.header.sequence, absgp: page.header.absgp });
 
@@ -169,9 +181,6 @@ impl LogicalStream {
         let num_new_packets = self.packets.len() - num_prev_packets;
 
         if num_new_packets > 0 {
-            // Get the start delay.
-            let start_delay = self.start_bound.as_ref().map_or(0, |b| b.delay);
-
             // Assign timestamps by first calculating the timestamp of one past the last sample in
             // in the last packet of this page, add the start delay.
             let mut page_end_ts =
@@ -179,6 +188,31 @@ impl LogicalStream {
 
             // If this is the last page, then add the end delay to the timestamp.
             if page.header.is_last_page {
+                // When the last page is not received with the initial creating, we need to compute
+                // the end_bound now that we see the last page.
+                let mut page_dur = 0u64;
+
+                for packet in self.packets.iter_mut().rev().take(num_new_packets) {
+                    page_dur = page_dur.saturating_add(packet.dur);
+                }
+
+                let end_delay = {
+                    // The real ending timestamp of the decoded data is the timestamp of the previous
+                    // page plus the decoded duration of this page.
+                    let actual_page_end_ts = last_ts.saturating_add(page_dur);
+
+                    // Any samples after the stated timestamp of this page are considered delay samples.
+                    if actual_page_end_ts > page_end_ts {
+                        actual_page_end_ts - page_end_ts
+                    } else {
+                        0
+                    }
+                };
+
+                self.end_bound = Some(Bound {
+                    seq: page.header.sequence, ts: page_end_ts, delay: end_delay
+                });
+
                 let end_delay = self.end_bound.as_ref().map_or(0, |b| b.delay);
                 page_end_ts = page_end_ts.saturating_add(end_delay);
             }
