@@ -353,6 +353,7 @@ impl FormatReader for MkvReader {
                 }
                 ElementType::Info => {
                     info = Some(it.read_element_data::<InfoElement>()?);
+                    info.as_ref().unwrap().copy_metadata_into(&mut metadata);
                 }
                 ElementType::Cues => {
                     let cues = it.read_element_data::<CuesElement>()?;
