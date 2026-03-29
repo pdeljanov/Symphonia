@@ -5,7 +5,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::errors::{Result, decode_error};
+use std::num::NonZero;
+
+use symphonia_core::errors::{Error, Result, decode_error};
 use symphonia_core::io::ReadBytes;
 
 use crate::atoms::{Atom, AtomHeader};
@@ -20,7 +22,7 @@ pub struct MvhdAtom {
     /// The modification time.
     pub mtime: u64,
     /// Timescale for the movie expressed as the number of units per second.
-    pub timescale: u32,
+    pub timescale: NonZero<u32>,
     /// The duration of the movie in timescale units.
     ///
     /// This value is equal to the sum of the durations of all the longest track's edits. If there
@@ -34,15 +36,21 @@ impl Atom for MvhdAtom {
     fn read<B: ReadBytes>(reader: &mut B, mut header: AtomHeader) -> Result<Self> {
         let (version, _) = header.read_extended_header(reader)?;
 
-        let mut mvhd =
-            MvhdAtom { ctime: 0, mtime: 0, timescale: 0, duration: 0, volume: Default::default() };
+        let mut mvhd = MvhdAtom {
+            ctime: 0,
+            mtime: 0,
+            timescale: NonZero::new(1).unwrap(),
+            duration: 0,
+            volume: Default::default(),
+        };
 
         // Version 0 uses 32-bit time values, verion 1 used 64-bit values.
         match version {
             0 => {
                 mvhd.ctime = u64::from(reader.read_be_u32()?);
                 mvhd.mtime = u64::from(reader.read_be_u32()?);
-                mvhd.timescale = reader.read_be_u32()?;
+                mvhd.timescale = NonZero::new(reader.read_be_u32()?)
+                    .ok_or(Error::DecodeError("isomp4: timescale is zero in mvhd"))?;
                 // 0xffff_ffff is a special case.
                 mvhd.duration = match reader.read_be_u32()? {
                     u32::MAX => u64::MAX,
@@ -52,7 +60,8 @@ impl Atom for MvhdAtom {
             1 => {
                 mvhd.ctime = reader.read_be_u64()?;
                 mvhd.mtime = reader.read_be_u64()?;
-                mvhd.timescale = reader.read_be_u32()?;
+                mvhd.timescale = NonZero::new(reader.read_be_u32()?)
+                    .ok_or(Error::DecodeError("isomp4: timescale is zero in mvhd"))?;
                 mvhd.duration = reader.read_be_u64()?;
             }
             _ => return decode_error("isomp4: invalid mvhd version"),

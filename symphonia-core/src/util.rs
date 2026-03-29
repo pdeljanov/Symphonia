@@ -592,3 +592,98 @@ pub mod text {
         }
     }
 }
+
+pub mod time {
+    use std::num::NonZeroU32;
+
+    /// Converts a duration `duration` expressed in timescale `src_timescale`
+    /// into an equivalent duration expressed in timescale `dest_timescale`.
+    ///
+    /// Uses `u128` intermediates to guarantee no overflow.
+    /// Saturates to `u64::MAX` using Rust's built-in `.min()` (cleaner & branchless).
+    pub fn convert_duration(
+        duration: u64,
+        src_timescale: NonZeroU32,
+        dest_timescale: NonZeroU32,
+    ) -> u64 {
+        let num = (duration as u128) * (dest_timescale.get() as u128);
+        let den = src_timescale.get() as u128;
+
+        (num / den).min(u64::MAX as u128) as u64
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn test_identity() {
+            let src_timescale = NonZeroU32::new(1000).unwrap();
+            let dest_timescale = src_timescale;
+            assert_eq!(convert_duration(500, src_timescale, dest_timescale), 500);
+        }
+
+        #[test]
+        fn test_scale_up() {
+            let src_timescale = NonZeroU32::new(1).unwrap();
+            let dest_timescale = NonZeroU32::new(1000).unwrap();
+            assert_eq!(convert_duration(42, src_timescale, dest_timescale), 42_000);
+        }
+
+        #[test]
+        fn test_scale_down_floor() {
+            let src_timescale = NonZeroU32::new(1000).unwrap();
+            let dest_timescale = NonZeroU32::new(1).unwrap();
+            assert_eq!(convert_duration(500, src_timescale, dest_timescale), 0); // 500 / 1000 = 0
+            assert_eq!(convert_duration(999, src_timescale, dest_timescale), 0);
+            assert_eq!(convert_duration(1000, src_timescale, dest_timescale), 1);
+            assert_eq!(convert_duration(1999, src_timescale, dest_timescale), 1);
+        }
+
+        #[test]
+        fn test_zero_duration() {
+            let src_timescale = NonZeroU32::new(123).unwrap();
+            let dest_timescale = NonZeroU32::new(456).unwrap();
+            assert_eq!(convert_duration(0, src_timescale, dest_timescale), 0);
+        }
+
+        #[test]
+        fn test_max_no_overflow() {
+            let src_timescale = NonZeroU32::new(1).unwrap();
+            let dest_timescale = NonZeroU32::new(1).unwrap();
+            assert_eq!(convert_duration(u64::MAX, src_timescale, dest_timescale), u64::MAX);
+        }
+
+        #[test]
+        fn test_saturation() {
+            // result would be 2 * u64::MAX → must saturate
+            let src_timescale = NonZeroU32::new(1).unwrap();
+            let dest_timescale = NonZeroU32::new(2).unwrap();
+            assert_eq!(convert_duration(u64::MAX, src_timescale, dest_timescale), u64::MAX);
+
+            // another saturation case
+            let src_timescale = NonZeroU32::new(1).unwrap();
+            let dest_timescale = NonZeroU32::new(u32::MAX).unwrap();
+            assert_eq!(convert_duration(u64::MAX, src_timescale, dest_timescale), u64::MAX);
+        }
+
+        #[test]
+        fn test_large_timescales() {
+            let src_timescale = NonZeroU32::new(u32::MAX).unwrap();
+            let dest_timescale = NonZeroU32::new(u32::MAX).unwrap();
+            assert_eq!(convert_duration(42, src_timescale, dest_timescale), 42);
+
+            // floor(1 / u32::MAX) = 0
+            assert_eq!(convert_duration(1, src_timescale, NonZeroU32::new(1).unwrap()), 0);
+        }
+
+        #[test]
+        fn test_video_timescale_example() {
+            // classic 1 second @ 1000 movie timescale → 60000 video timescale
+            let src_timescale = NonZeroU32::new(1000).unwrap();
+            let dest_timescale = NonZeroU32::new(60000).unwrap();
+            let duration = 1_000_000u64;
+            assert_eq!(convert_duration(duration, src_timescale, dest_timescale), 60_000_000);
+        }
+    }
+}
