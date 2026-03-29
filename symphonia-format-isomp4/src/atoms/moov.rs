@@ -8,6 +8,7 @@
 use symphonia_core::errors::{Result, decode_error};
 use symphonia_core::io::ReadBytes;
 use symphonia_core::meta::MetadataRevision;
+use symphonia_core::util::time::convert_duration;
 
 use crate::atoms::{
     Atom, AtomHeader, AtomIterator, AtomType, MvexAtom, MvhdAtom, TrakAtom, UdtaAtom,
@@ -69,9 +70,10 @@ impl Atom for MoovAtom {
             }
         }
 
-        if mvhd.is_none() {
+        let Some(mvhd) = mvhd
+        else {
             return decode_error("isomp4: missing mvhd atom");
-        }
+        };
 
         // If fragmented, the mvex atom should contain a trex atom for each trak atom in moov.
         if let Some(mvex) = mvex.as_ref() {
@@ -85,6 +87,23 @@ impl Atom for MoovAtom {
             }
         }
 
-        Ok(MoovAtom { mvhd: mvhd.unwrap(), traks, mvex, udta })
+        // If trak.mdia.mdhd.duration is 0, prefer the more accurate sample-table total duration
+        // (when available). Otherwise fall back to converting trak.tkhd.duration from the movie
+        // timescale to the track media timescale.
+        for trak in traks.iter_mut() {
+            if trak.mdia.mdhd.duration == 0 {
+                trak.mdia.mdhd.duration = if trak.mdia.minf.stbl.stts.total_duration != 0 {
+                    trak.mdia.minf.stbl.stts.total_duration
+                }
+                else if trak.tkhd.duration != 0 {
+                    convert_duration(trak.tkhd.duration, mvhd.timescale, trak.mdia.mdhd.timescale)
+                }
+                else {
+                    0
+                }
+            }
+        }
+
+        Ok(MoovAtom { mvhd, traks, mvex, udta })
     }
 }

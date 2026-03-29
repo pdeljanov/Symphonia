@@ -32,6 +32,11 @@ repository = "https://github.com/pdeljanov/Symphonia"
 rust-version = "1.85"
 version = "0.6.0-alpha.1"
 
+[workspace.dependencies]
+lazy_static = "1.4.0"
+log = "0.4"
+smallvec = "1.13.1"
+
 #cargo-features = ["profile-rustflags"]
 
 [profile.profiling]
