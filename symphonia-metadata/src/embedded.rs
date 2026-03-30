@@ -9,7 +9,7 @@
 
 #[cfg(feature = "flac")]
 pub mod flac;
-#[cfg(feature = "riff-info")]
+#[cfg(any(feature = "riff-id3", feature = "riff-info"))]
 pub mod riff;
 #[cfg(feature = "vorbis")]
 pub mod vorbis;

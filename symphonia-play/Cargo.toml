@@ -21,8 +21,8 @@ default = ["exp-subtitle-codecs", "exp-video-codecs"]
 
 [dependencies]
 clap = "3.1.0"
-lazy_static = "1.4.0"
-log = { version = "0.4", features = ["release_max_level_info"] }
+lazy_static = { workspace = true }
+log = { workspace = true, features = ["release_max_level_info"] }
 pretty_env_logger = "0.4"
 symphonia = { version = "0.6.0-alpha.1", path = "../symphonia", features = ["all"] }
 
@@ -34,4 +34,4 @@ libpulse-simple-binding = "2.5.0"
 cpal = "0.13.3"
 rb = "0.3.2"
 rubato = "0.14.1"
-smallvec = "1.13.1"
+smallvec = { workspace = true }

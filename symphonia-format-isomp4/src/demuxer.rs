@@ -15,8 +15,9 @@ use symphonia_core::formats::probe::{ProbeFormatData, ProbeableFormat, Score, Sc
 use symphonia_core::formats::well_known::FORMAT_ID_ISOMP4;
 use symphonia_core::io::*;
 use symphonia_core::meta::{Metadata, MetadataLog};
-use symphonia_core::units::Time;
+use symphonia_core::units::{Time, TimeSpan};
 
+use std::collections::HashMap;
 use std::io::{Seek, SeekFrom};
 use std::sync::Arc;
 
@@ -46,7 +47,7 @@ pub struct TrackState {
 }
 
 impl TrackState {
-    pub fn make(track_num: usize, trak: &TrakAtom) -> (Self, Track) {
+    pub fn make(track_num: usize, trak: &TrakAtom, timespan: &TimeSpan) -> (Self, Track) {
         let mut track = Track::new(trak.tkhd.id);
 
         // Create the codec parameters using the sample description atom.
@@ -55,8 +56,8 @@ impl TrackState {
         }
 
         track
-            .with_time_base(TimeBase::from_recip(trak.mdia.mdhd.timescale))
-            .with_num_frames(trak.duration);
+            .with_time_base(TimeBase::from_recip(timespan.timescale))
+            .with_num_frames(timespan.duration);
 
         let state = Self {
             track_num,
@@ -138,6 +139,8 @@ impl<'s> IsoMp4Reader<'s> {
 
         // Parse all atoms if the stream is seekable, otherwise parse all atoms up-to the mdat atom.
         let mut iter = AtomIterator::new_root(mss, total_len);
+        // Maps each track id to its cumulative duration (TimeSpan) as parsed from the segment index.
+        let mut sidx_timespans: HashMap<u32, TimeSpan> = HashMap::new();
 
         while let Some(header) = iter.next()? {
             // Top-level atoms.
@@ -157,10 +160,21 @@ impl<'s> IsoMp4Reader<'s> {
                         break;
                     }
                     else {
-                        // If the stream is seekable, examine all segment indexes and select the
-                        // index with the earliest presentation timestamp to be the first.
+                        // If the stream is seekable, examine all segment indexes
                         let new_sidx = iter.read_atom::<SidxAtom>()?;
 
+                        // calculate total_duration per track from segment indexes
+                        let sidx_timespan = sidx_timespans
+                            .entry(new_sidx.reference_id)
+                            .or_insert(TimeSpan::new(new_sidx.timescale, 0));
+                        if sidx_timespan.timescale != new_sidx.timescale {
+                            return unsupported_error(
+                                "isomp4: different sidx timescale for the same track",
+                            );
+                        }
+                        sidx_timespan.duration += new_sidx.total_duration;
+
+                        // select the index with the earliest presentation timestamp to be the first.
                         let is_earlier = match &sidx {
                             Some(sidx) => new_sidx.earliest_pts < sidx.earliest_pts,
                             _ => true,
@@ -249,7 +263,13 @@ impl<'s> IsoMp4Reader<'s> {
         let mut track_states = Vec::with_capacity(moov.traks.len());
 
         for (t, trak) in moov.traks.iter().enumerate() {
-            let (track_state, track) = TrackState::make(t, trak);
+            // Determine timescale and duration based on whether the file is fragmented.
+            let timespan = match (moov.is_fragmented(), sidx_timespans.get(&trak.tkhd.id)) {
+                (true, Some(sidx_ts)) => TimeSpan::new(sidx_ts.timescale, sidx_ts.duration),
+                _ => TimeSpan::new(trak.mdia.mdhd.timescale, trak.mdia.mdhd.duration),
+            };
+
+            let (track_state, track) = TrackState::make(t, trak, &timespan);
 
             tracks.push(track);
             track_states.push(track_state);

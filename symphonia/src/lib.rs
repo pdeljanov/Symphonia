@@ -76,15 +76,15 @@
 //!
 //! ## Optimizations
 //!
-//! SIMD optimizations are **not** enabled by default. They may be enabled on a per-instruction
-//! set basis using the following feature flags. Enabling any SIMD support feature flags will pull
-//! in the `rustfft` dependency.
+//! SIMD optimizations are enabled by default. Precise control over which SIMD instruction sets are
+//! supported may be controlled using the following feature flags. Enabling any SIMD support feature
+//! flag will pull in the `rustfft` dependency.
 //!
 //! | Instruction Set | Feature Flag    | Default |
 //! |-----------------|-----------------|---------|
-//! | SSE             | `opt-simd-sse`  | No      |
-//! | AVX             | `opt-simd-avx`  | No      |
-//! | Neon            | `opt-simd-neon` | No      |
+//! | SSE             | `opt-simd-sse`  | Yes     |
+//! | AVX             | `opt-simd-avx`  | Yes     |
+//! | Neon            | `opt-simd-neon` | Yes     |
 //!
 //! **Tip:** All SIMD optimizations can be enabled with the `opt-simd` feature flag.
 //!

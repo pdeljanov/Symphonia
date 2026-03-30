@@ -3,7 +3,7 @@
 
 <!--
 <p>
-    <img src="https://raw.githubusercontent.com/pdeljanov/symphonia/master/assets/logo.png" width="200px" />
+    <img src="https://raw.githubusercontent.com/pdeljanov/symphonia/main/assets/logo.png" width="200px" />
 </p>
 -->
 
@@ -20,8 +20,8 @@
     <a href="https://deps.rs/repo/github/pdeljanov/symphonia">
         <img src="https://deps.rs/repo/github/pdeljanov/symphonia/status.svg" />
     </a>
-    <a href="https://blog.rust-lang.org/2024/03/21/Rust-1.77.0.html">
-        <img alt="Rustc Version 1.77+" src="https://img.shields.io/badge/rustc-1.77%2B-lightgrey.svg"/>
+    <a href="https://blog.rust-lang.org/2025/02/20/Rust-1.85.0/">
+        <img alt="Rustc Version 1.85+" src="https://img.shields.io/badge/rustc-1.85%2B-lightgrey.svg"/>
     </a>
 </p>
 
@@ -33,13 +33,13 @@
 
 <p>
     <h3>
-        <a href="https://github.com/pdeljanov/Symphonia/blob/master/GETTING_STARTED.md">Getting Started</a>
+        <a href="https://github.com/pdeljanov/Symphonia/blob/main/GETTING_STARTED.md">Getting Started</a>
         <span> · </span>
         <a href="https://docs.rs/symphonia">Documentation</a>
         <span> · </span>
-        <a href="https://github.com/pdeljanov/Symphonia/tree/master/symphonia/examples">Examples</a>
+        <a href="https://github.com/pdeljanov/Symphonia/tree/main/symphonia/examples">Examples</a>
         <span> · </span>
-        <a href="https://github.com/pdeljanov/Symphonia/blob/master/BENCHMARKS.md">Benchmarks</a>
+        <a href="https://github.com/pdeljanov/Symphonia/blob/main/BENCHMARKS.md">Benchmarks</a>
     </h3>
 </p>
 </div>
@@ -161,32 +161,32 @@ In addition to the safety guarantees afforded by Rust, Symphonia aims to:
 
 Symphonia aims to be comparable to, or faster than, popular open-source C-based implementations. Currently, Symphonia's decoders are generally +/-15% the performance of FFMpeg. However, the exact range will depend strongly on the codec, which features of the codec are being leveraged in the encoding, the Rust compiler version, and the CPU architecture being compiled for.
 
-See the [benchmarks](https://github.com/pdeljanov/Symphonia/blob/master/BENCHMARKS.md) for more information.
+See the [benchmarks](https://github.com/pdeljanov/Symphonia/blob/main/BENCHMARKS.md) for more information.
 
 ### Optimizations
 
-At this time, SIMD optimizations are **not** enabled by default. Enabling any SIMD support feature flags will pull in the `rustfft` dependency.
+All SIMD optimizations are enabled by default. SIMD support will pull in the `rustfft` dependency.
 
 | Instruction Set | Feature Flag    | Default |
 |-----------------|-----------------|---------|
-| SSE             | `opt-simd-sse`  | No      |
-| AVX             | `opt-simd-avx`  | No      |
-| Neon            | `opt-simd-neon` | No      |
+| SSE             | `opt-simd-sse`  | Yes     |
+| AVX             | `opt-simd-avx`  | Yes     |
+| Neon            | `opt-simd-neon` | Yes     |
 
 > **Tip:** All SIMD optimizations can be enabled with the `opt-simd` feature flag.
 
 ## Examples
 
-Basic usage examples may be found [`here`](https://github.com/pdeljanov/Symphonia/tree/master/symphonia/examples).
+Basic usage examples may be found [`here`](https://github.com/pdeljanov/Symphonia/tree/main/symphonia/examples).
 
-For a more complete application, see [`symphonia-play`](https://github.com/pdeljanov/Symphonia/tree/master/symphonia-play), a simple music player.
+For a more complete application, see [`symphonia-play`](https://github.com/pdeljanov/Symphonia/blob/main/symphonia-play), a simple music player.
 
 ## Tools
 
 Symphonia provides the following tools for debugging purposes:
 
-* [`symphonia-play`](https://github.com/pdeljanov/Symphonia/tree/master/symphonia-play) for probing, decoding, validating, and playing back media streams.
-* [`symphonia-check`](https://github.com/pdeljanov/Symphonia/tree/master/symphonia-check) for validating Symphonia's decoded output against various decoders.
+* [`symphonia-play`](https://github.com/pdeljanov/Symphonia/blob/main/symphonia-play) for probing, decoding, validating, and playing back media streams.
+* [`symphonia-check`](https://github.com/pdeljanov/Symphonia/blob/main/symphonia-check) for validating Symphonia's decoded output against various decoders.
 
 ## Minimum Supported Rust Version
 
@@ -208,4 +208,4 @@ Symphonia is provided under the MPL v2.0 license. Please refer to the LICENSE fi
 
 ## Contributing
 
-Symphonia is a free and open-source project that welcomes contributions! To get started, please read our [Contribution Guidelines](https://github.com/pdeljanov/Symphonia/tree/master/CONTRIBUTING.md).
+Symphonia is a free and open-source project that welcomes contributions! To get started, please read our [Contribution Guidelines](https://github.com/pdeljanov/Symphonia/blob/main/CONTRIBUTING.md).
