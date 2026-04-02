@@ -238,10 +238,7 @@ impl Default for TimeBase {
     fn default() -> Self {
         // Make sure the default returns an illegal value
         // with a TimeBase of 0.
-        Self {
-            numer: 1,
-            denom: 1,
-        }
+        Self { numer: 1, denom: 1 }
     }
 }
 
