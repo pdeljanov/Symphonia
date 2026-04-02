@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - master
+      - main
+      - "rel-*"
+      - "dev-*"
   pull_request: {}
 
 jobs:
