@@ -7,13 +7,14 @@
 
 use std::marker::PhantomData;
 
-use rubato::VecResampler;
 use symphonia::core::audio::conv::{FromSample, IntoSample};
 use symphonia::core::audio::sample::Sample;
-use symphonia::core::audio::{Audio, AudioBuffer, AudioMut, AudioSpec, GenericAudioBufferRef};
+use symphonia::core::audio::{Audio, AudioBuffer, AudioSpec, GenericAudioBufferRef};
+
+use rubato::Resampler as _;
 
 pub struct Resampler<T> {
-    resampler: rubato::FftFixedIn<f32>,
+    resampler: rubato::Fft<f32>,
     buf_in: AudioBuffer<f32>,
     buf_out: AudioBuffer<f32>,
     chunk_size: usize,
@@ -43,22 +44,11 @@ where
 
             // Get slices to the required regions of the input and output buffers.
             let (read, _) = {
-                let mut slices_in: smallvec::SmallVec<[&[f32]; 8]> = Default::default();
-                let mut slices_out: smallvec::SmallVec<[&mut [f32]; 8]> = Default::default();
-
-                for plane in self.buf_in.iter_planes() {
-                    slices_in.push(&plane[..self.chunk_size]);
-                }
-
-                for plane in self.buf_out.iter_planes_mut() {
-                    slices_out.push(&mut plane[begin..]);
-                }
-
                 // Resample a chunk.
                 rubato::Resampler::process_into_buffer(
                     &mut self.resampler,
-                    &slices_in,
-                    &mut slices_out,
+                    &AudioBufferAdapter(&self.buf_in),
+                    &mut AudioBufferAdapterMut(&mut self.buf_out),
                     None,
                 )
                 .unwrap()
@@ -80,12 +70,13 @@ where
     T: Sample + FromSample<f32> + IntoSample<f32>,
 {
     pub fn new(spec_in: &AudioSpec, out_sample_rate: u32, chunk_size: usize) -> Self {
-        let resampler = rubato::FftFixedIn::<f32>::new(
+        let resampler = rubato::Fft::<f32>::new(
             spec_in.rate() as usize,
             out_sample_rate as usize,
             chunk_size,
-            2,
+            1,
             spec_in.channels().count(),
+            rubato::FixedSync::Input,
         )
         .unwrap();
 
@@ -130,5 +121,57 @@ where
 
         // Resample.
         self.resample_inner(dst)
+    }
+}
+
+// Implementing adapter interface for Symphonia's AudioBuffer. Since both the adapter traits and
+// audio buffers are foreign types, a new-type is used.
+
+struct AudioBufferAdapter<'a, S: Sample>(&'a AudioBuffer<S>);
+
+unsafe impl<'a, T> rubato::audioadapter::Adapter<'a, T> for AudioBufferAdapter<'a, T>
+where
+    T: Sample,
+{
+    unsafe fn read_sample_unchecked(&self, channel: usize, frame: usize) -> T {
+        self.0[channel][frame]
+    }
+
+    fn channels(&self) -> usize {
+        self.0.num_planes()
+    }
+
+    fn frames(&self) -> usize {
+        self.0.frames()
+    }
+}
+
+struct AudioBufferAdapterMut<'a, S: Sample>(&'a mut AudioBuffer<S>);
+
+unsafe impl<'a, T> rubato::audioadapter::Adapter<'a, T> for AudioBufferAdapterMut<'a, T>
+where
+    T: Sample,
+{
+    unsafe fn read_sample_unchecked(&self, channel: usize, frame: usize) -> T {
+        self.0[channel][frame]
+    }
+
+    fn channels(&self) -> usize {
+        self.0.num_planes()
+    }
+
+    fn frames(&self) -> usize {
+        self.0.frames()
+    }
+}
+
+unsafe impl<'a, T> rubato::audioadapter::AdapterMut<'a, T> for AudioBufferAdapterMut<'a, T>
+where
+    T: Sample,
+{
+    unsafe fn write_sample_unchecked(&mut self, channel: usize, frame: usize, value: &T) -> bool {
+        self.0[channel][frame] = *value;
+        // No sample format conversion was performed.
+        false
     }
 }

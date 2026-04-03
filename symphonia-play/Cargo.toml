@@ -33,5 +33,4 @@ libpulse-simple-binding = "2.5.0"
 [target.'cfg(not(target_os = "linux"))'.dependencies]
 cpal = "0.17.3"
 rb = "0.4.1"
-rubato = "0.14.1"
-smallvec = { workspace = true }
+rubato = "2.0.0"

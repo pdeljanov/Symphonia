@@ -6,7 +6,6 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 #![warn(rust_2018_idioms)]
-#![forbid(unsafe_code)]
 // Justification: Fields on DecoderOptions and FormatOptions may change at any time, but
 // symphonia-play doesn't want to be updated every time those fields change, therefore always fill
 // in the remaining fields with default values.
