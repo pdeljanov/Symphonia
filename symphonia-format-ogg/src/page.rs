@@ -175,21 +175,31 @@ impl PageReader {
     where
         B: ReadBytes + SeekBuffered,
     {
+        // Remember the last position in case of error. The reader will sync back
+        // to this location if any error occurs.
+        let original_pos = reader.pos();
+
         let mut header_buf = [0u8; OGG_PAGE_HEADER_SIZE];
         header_buf[..4].copy_from_slice(&OGG_PAGE_MARKER);
 
         // Synchronize to an OGG page capture pattern.
-        sync_page(reader)?;
+        sync_page(reader).inspect_err(|_| {
+            reader.seek_buffered(original_pos);
+        })?;
 
         // Record the position immediately after synchronization. If the page is found corrupt the
         // reader will need to seek back here to try to regain synchronization.
         let sync_pos = reader.pos();
 
         // Read the part of the page header after the capture pattern into a buffer.
-        reader.read_buf_exact(&mut header_buf[4..])?;
+        reader.read_buf_exact(&mut header_buf[4..]).inspect_err(|_| {
+            reader.seek_buffered(original_pos);
+        })?;
 
         // Parse the page header buffer.
-        let header = read_page_header(&mut BufReader::new(&header_buf))?;
+        let header = read_page_header(&mut BufReader::new(&header_buf)).inspect_err(|_| {
+            reader.seek_buffered(original_pos);
+        })?;
 
         // debug!(
         //     "page {{ version={}, absgp={}, serial={}, sequence={}, crc={:#x}, n_segments={}, \
@@ -225,7 +235,9 @@ impl PageReader {
         self.packet_lens.clear();
 
         for _ in 0..header.n_segments {
-            let seg_len = crc32_reader.read_byte()?;
+            let seg_len = crc32_reader.read_byte().inspect_err(|_| {
+                crc32_reader.inner_mut().seek_buffered(original_pos);
+            })?;
 
             page_body_len += usize::from(seg_len);
             packet_len += u16::from(seg_len);
@@ -238,7 +250,9 @@ impl PageReader {
             }
         }
 
-        self.read_page_body(&mut crc32_reader, page_body_len)?;
+        self.read_page_body(&mut crc32_reader, page_body_len).inspect_err(|_| {
+            crc32_reader.inner_mut().seek_buffered(original_pos);
+        })?;
 
         let calculated_crc = crc32_reader.monitor().crc();
 
