@@ -20,10 +20,10 @@ exp-subtitle-codecs = ["symphonia/exp-subtitle-codecs"]
 default = ["exp-subtitle-codecs", "exp-video-codecs"]
 
 [dependencies]
-clap = "3.1.0"
+clap = "4.6.0"
 lazy_static = { workspace = true }
 log = { workspace = true, features = ["release_max_level_info"] }
-pretty_env_logger = "0.4"
+pretty_env_logger = "0.5"
 symphonia = { version = "0.6.0-alpha.1", path = "../symphonia", features = ["all"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
@@ -31,7 +31,7 @@ libpulse-binding = "2.5.0"
 libpulse-simple-binding = "2.5.0"
 
 [target.'cfg(not(target_os = "linux"))'.dependencies]
-cpal = "0.13.3"
-rb = "0.3.2"
+cpal = "0.17.3"
+rb = "0.4.1"
 rubato = "0.14.1"
 smallvec = { workspace = true }

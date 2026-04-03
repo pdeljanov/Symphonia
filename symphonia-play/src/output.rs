@@ -260,7 +260,7 @@ mod cpal {
     pub struct CpalAudioOutput;
 
     trait AudioOutputSample:
-        cpal::Sample + ConvertibleSample + IntoSample<f32> + std::marker::Send + 'static
+        cpal::SizedSample + ConvertibleSample + IntoSample<f32> + std::marker::Send + 'static
     {
     }
 
@@ -301,6 +301,10 @@ mod cpal {
                 cpal::SampleFormat::U16 => {
                     CpalAudioOutputImpl::<u16>::try_open(spec, duration, &device)
                 }
+                _ => {
+                    error!("unsupported output sample format");
+                    Err(AudioOutputError::OpenStreamError)
+                }
             }
         }
     }
@@ -327,7 +331,7 @@ mod cpal {
             let config = if cfg!(not(target_os = "windows")) {
                 cpal::StreamConfig {
                     channels: num_channels as cpal::ChannelCount,
-                    sample_rate: cpal::SampleRate(spec.rate()),
+                    sample_rate: spec.rate(),
                     buffer_size: cpal::BufferSize::Default,
                 }
             }
@@ -340,7 +344,7 @@ mod cpal {
             };
 
             // Create a ring buffer with a capacity for up-to 200ms of audio.
-            let ring_len = ((200 * config.sample_rate.0 as usize) / 1000) * num_channels;
+            let ring_len = ((200 * config.sample_rate as usize) / 1000) * num_channels;
 
             let ring_buf = SpscRb::new(ring_len);
             let (ring_buf_producer, ring_buf_consumer) = (ring_buf.producer(), ring_buf.consumer());
@@ -356,6 +360,7 @@ mod cpal {
                     data[written..].iter_mut().for_each(|s| *s = T::MID);
                 },
                 move |err| error!("audio output error: {}", err),
+                None,
             );
 
             if let Err(err) = stream_result {
@@ -373,9 +378,9 @@ mod cpal {
                 return Err(AudioOutputError::PlayStreamError);
             }
 
-            let resampler = if spec.rate() != config.sample_rate.0 {
-                info!("resampling {} Hz to {} Hz", spec.rate(), config.sample_rate.0);
-                Some(Resampler::new(spec, config.sample_rate.0, duration.get() as usize))
+            let resampler = if spec.rate() != config.sample_rate {
+                info!("resampling {} Hz to {} Hz", spec.rate(), config.sample_rate);
+                Some(Resampler::new(spec, config.sample_rate, duration.get() as usize))
             }
             else {
                 None

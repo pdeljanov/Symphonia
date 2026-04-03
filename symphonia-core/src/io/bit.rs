@@ -1382,7 +1382,7 @@ impl FiniteBitStream for BitReaderRtl<'_> {
 
 #[cfg(test)]
 mod tests {
-    use rand::{RngCore, SeedableRng};
+    use rand::{Rng, SeedableRng};
 
     use super::vlc::{BitOrder, Codebook, CodebookBuilder, Entry8x8};
     use super::{BitReaderLtr, ReadBitsLtr};

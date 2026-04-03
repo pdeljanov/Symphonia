@@ -26,7 +26,7 @@ use symphonia::core::io::{MediaSource, MediaSourceStream, ReadOnlySource};
 use symphonia::core::meta::{MetadataOptions, Visual};
 use symphonia::core::units::{Duration, Time, Timestamp};
 
-use clap::{Arg, ArgMatches};
+use clap::{Arg, ArgAction, ArgMatches};
 use log::{error, info, warn};
 
 mod output;
@@ -55,7 +55,7 @@ fn main() {
                 .value_name("TIME")
                 .value_parser(clap::value_parser!(f64))
                 .help("Seek to the time in seconds")
-                .conflicts_with_all(&[
+                .conflicts_with_all([
                     "seek-ts",
                     "decode-only",
                     "probe-only",
@@ -71,13 +71,7 @@ fn main() {
                 .value_parser(clap::value_parser!(i64))
                 .allow_hyphen_values(true)
                 .help("Seek to the timestamp in timebase units")
-                .conflicts_with_all(&[
-                    "seek",
-                    "decode-only",
-                    "probe-only",
-                    "verify",
-                    "verify-only",
-                ]),
+                .conflicts_with_all(["seek", "decode-only", "probe-only", "verify", "verify-only"]),
         )
         .arg(
             Arg::new("track")
@@ -90,34 +84,47 @@ fn main() {
         .arg(
             Arg::new("decode-only")
                 .long("decode-only")
+                .action(ArgAction::SetTrue)
                 .help("Decode, but do not play the audio")
-                .conflicts_with_all(&["probe-only", "verify-only", "verify"]),
+                .conflicts_with_all(["probe-only", "verify-only", "verify"]),
         )
         .arg(
             Arg::new("probe-only")
                 .long("probe-only")
+                .action(ArgAction::SetTrue)
                 .help("Only probe the input for metadata")
-                .conflicts_with_all(&["decode-only", "verify-only"]),
+                .conflicts_with_all(["decode-only", "verify-only"]),
         )
         .arg(
             Arg::new("verify-only")
                 .long("verify-only")
+                .action(ArgAction::SetTrue)
                 .help("Verify the decoded audio is valid, but do not play the audio")
-                .conflicts_with_all(&["verify"]),
+                .conflicts_with_all(["verify"]),
         )
         .arg(
             Arg::new("verify")
                 .long("verify")
                 .short('v')
+                .action(ArgAction::SetTrue)
                 .help("Verify the decoded audio is valid during playback"),
         )
-        .arg(Arg::new("no-progress").long("no-progress").help("Do not display playback progress"))
         .arg(
-            Arg::new("no-gapless").long("no-gapless").help("Disable gapless decoding and playback"),
+            Arg::new("no-progress")
+                .long("no-progress")
+                .action(ArgAction::SetTrue)
+                .help("Do not display playback progress"),
+        )
+        .arg(
+            Arg::new("no-gapless")
+                .long("no-gapless")
+                .action(ArgAction::SetTrue)
+                .help("Disable gapless decoding and playback"),
         )
         .arg(
             Arg::new("dump-visuals")
                 .long("dump-visuals")
+                .action(ArgAction::SetTrue)
                 .help("Dump all visuals to the current working directory"),
         )
         .arg(
@@ -177,7 +184,7 @@ fn run(args: &ArgMatches) -> Result<i32> {
     match symphonia::default::get_probe().probe(&hint, mss, fmt_opts, meta_opts) {
         Ok(mut format) => {
             // Dump visuals if requested.
-            if args.is_present("dump-visuals") {
+            if args.get_flag("dump-visuals") {
                 let name = match path.file_name() {
                     Some(name) if name != "-" => name,
                     _ => OsStr::new("NoName"),
@@ -189,20 +196,20 @@ fn run(args: &ArgMatches) -> Result<i32> {
             // Get the value of the track number option, if provided.
             let track_num = args.get_one::<usize>("track").copied();
 
-            let dec_opts = AudioDecoderOptions::default().gapless(!args.is_present("no-gapless"));
+            let dec_opts = AudioDecoderOptions::default().gapless(!args.get_flag("no-gapless"));
 
             // Select the operating mode.
-            if args.is_present("probe-only") {
+            if args.get_flag("probe-only") {
                 // Probe-only mode only prints information about the format, tracks, metadata, etc.
                 ui::print_format(path, &mut format);
                 Ok(0)
             }
-            else if args.is_present("verify-only") {
+            else if args.get_flag("verify-only") {
                 // Verify-only mode decodes and verifies the audio, but does not play it.
                 let opts = DecodeOptions { dec_opts: dec_opts.verify(true), track_num };
                 decode_only(format, opts)
             }
-            else if args.is_present("decode-only") {
+            else if args.get_flag("decode-only") {
                 // Decode-only mode decodes the audio, but does not play or verify it.
                 let opts = DecodeOptions { dec_opts: dec_opts.verify(false), track_num };
 
@@ -224,10 +231,10 @@ fn run(args: &ArgMatches) -> Result<i32> {
 
                 // Setup playback options.
                 let opts = PlayOptions {
-                    decoder_opts: dec_opts.verify(args.is_present("verify")),
+                    decoder_opts: dec_opts.verify(args.get_flag("verify")),
                     track_num,
                     seek_pos,
-                    no_progress: args.is_present("no-progress"),
+                    no_progress: args.get_flag("no-progress"),
                 };
 
                 // Play it!
