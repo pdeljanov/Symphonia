@@ -423,7 +423,7 @@ fn main() {
 
     let path = matches.get_one::<PathBuf>("INPUT").expect("path is a required argument");
 
-    let ref_decoder = match matches.get_one("decoder").copied().unwrap() {
+    let ref_decoder = match matches.get_one::<String>("decoder").unwrap().as_ref() {
         "ffmpeg" => RefDecoder::Ffmpeg,
         "flac" => RefDecoder::Flac,
         "mpg123" => RefDecoder::Mpg123,
