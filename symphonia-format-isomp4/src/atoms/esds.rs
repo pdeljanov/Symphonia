@@ -7,13 +7,13 @@
 
 use symphonia_core::codecs::CodecId;
 use symphonia_core::codecs::video::{VIDEO_EXTRA_DATA_ID_NULL, VideoExtraData};
-use symphonia_core::errors::{Error, Result, decode_error};
-use symphonia_core::io::ReadBytes;
+use symphonia_core::errors::Error;
+use symphonia_core::io::BufReader;
 
 use symphonia_common::mpeg::formats::*;
 
 use crate::atoms::stsd::{AudioSampleEntry, VisualSampleEntry};
-use crate::atoms::{Atom, AtomHeader};
+use crate::atoms::{Atom, AtomHeader, AtomIterator, ReadAtom, Result, decode_error};
 
 /// Elementary stream descriptor atom.
 #[allow(dead_code)]
@@ -24,28 +24,33 @@ pub struct EsdsAtom {
 }
 
 impl Atom for EsdsAtom {
-    fn read<B: ReadBytes>(reader: &mut B, mut header: AtomHeader) -> Result<Self> {
-        let (_, _) = header.read_extended_header(reader)?;
+    fn read<R: ReadAtom>(it: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
+        let (_, _) = it.read_extended_header()?;
 
-        let ds_size = header
-            .data_len()
+        // The ES descriptor occupies the entire atom.
+        let size = it
+            .data_left()?
             .ok_or(Error::DecodeError("isomp4 (esds): expected atom size to be known"))?;
 
         let mut descriptor = None;
 
-        // The ES descriptor occupies the rest of the atom.
-        if ds_size > MIN_OBJECT_DESCRIPTOR_SIZE {
+        if size > MIN_OBJECT_DESCRIPTOR_SIZE {
+            // Read into buffer to be able to use a buffer reader.
+            let buf = it.read_boxed_slice_exact(size as usize)?;
+
+            let mut reader = BufReader::new(&buf);
+
             // Read the object descriptor header.
-            let (desc_tag, desc_len) = read_object_descriptor_header(reader)?;
+            let (desc_tag, desc_len) = read_object_descriptor_header(&mut reader)?;
 
             // Read the ES descriptor.
             if desc_tag == ClassTag::EsDescriptor {
-                descriptor = Some(ESDescriptor::read(reader, desc_len)?);
+                descriptor = Some(ESDescriptor::read(&mut reader, desc_len)?);
             }
         }
 
         if descriptor.is_none() {
-            return decode_error("isomp4: missing es descriptor in esds");
+            return decode_error("isomp4 (esds): missing es descriptor in esds");
         }
 
         Ok(EsdsAtom { es_desc: descriptor.unwrap() })

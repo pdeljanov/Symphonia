@@ -7,7 +7,7 @@
 
 use std::sync::Arc;
 
-use symphonia_core::errors::{Error, Result, decode_error};
+use symphonia_core::errors::Error;
 use symphonia_core::io::{BufReader, ReadBytes};
 use symphonia_core::meta::well_known::METADATA_ID_ISOMP4;
 use symphonia_core::meta::{
@@ -19,7 +19,7 @@ use symphonia_core::util::{bits, text};
 use symphonia_metadata::utils::images::try_get_image_info;
 use symphonia_metadata::utils::{id3v1, itunes};
 
-use crate::atoms::{Atom, AtomHeader, AtomIterator, AtomType};
+use crate::atoms::{Atom, AtomHeader, AtomIterator, AtomType, ReadAtom, Result, decode_error};
 
 use log::{debug, warn};
 
@@ -257,12 +257,12 @@ fn parse_tag_value(data_type: DataType, data: &[u8]) -> Option<RawValue> {
 
 /// Reads and parses a `MetaTagAtom` from the provided iterator and adds it to the `MetadataBuilder`
 /// if there are no errors.
-fn add_generic_tag<B: ReadBytes>(
-    iter: &mut AtomIterator<B>,
+fn add_generic_tag<R: ReadAtom>(
+    it: &mut AtomIterator<R>,
     builder: &mut MetadataBuilder,
     map: fn(&RawValue) -> Option<StandardTag>,
 ) -> Result<()> {
-    let tag = iter.read_atom::<MetaTagAtom>()?;
+    let tag = it.read_atom::<MetaTagAtom>()?;
 
     let raw_key = get_raw_tag_key(tag.atom_type);
 
@@ -280,8 +280,8 @@ fn add_generic_tag<B: ReadBytes>(
     Ok(())
 }
 
-fn add_flag_tag<B: ReadBytes>(
-    iter: &mut AtomIterator<B>,
+fn add_flag_tag<R: ReadAtom>(
+    iter: &mut AtomIterator<R>,
     builder: &mut MetadataBuilder,
     map: fn(&RawValue) -> Option<StandardTag>,
 ) -> Result<()> {
@@ -300,8 +300,8 @@ fn add_flag_tag<B: ReadBytes>(
     Ok(())
 }
 
-fn add_pair_tag<B: ReadBytes>(
-    iter: &mut AtomIterator<B>,
+fn add_pair_tag<R: ReadAtom>(
+    iter: &mut AtomIterator<R>,
     builder: &mut MetadataBuilder,
     map0: fn(&RawValue) -> Option<StandardTag>,
     map1: fn(&RawValue) -> Option<StandardTag>,
@@ -328,8 +328,8 @@ fn add_pair_tag<B: ReadBytes>(
     Ok(())
 }
 
-fn add_visual_tag<B: ReadBytes>(
-    iter: &mut AtomIterator<B>,
+fn add_visual_tag<R: ReadAtom>(
+    iter: &mut AtomIterator<R>,
     builder: &mut MetadataBuilder,
 ) -> Result<()> {
     let tag = iter.read_atom::<MetaTagAtom>()?;
@@ -351,8 +351,8 @@ fn add_visual_tag<B: ReadBytes>(
     Ok(())
 }
 
-fn add_advisory_tag<B: ReadBytes>(
-    iter: &mut AtomIterator<B>,
+fn add_advisory_tag<R: ReadAtom>(
+    iter: &mut AtomIterator<R>,
     builder: &mut MetadataBuilder,
 ) -> Result<()> {
     let tag = iter.read_atom::<MetaTagAtom>()?;
@@ -398,8 +398,8 @@ fn add_advisory_tag<B: ReadBytes>(
     Ok(())
 }
 
-fn add_media_type_tag<B: ReadBytes>(
-    iter: &mut AtomIterator<B>,
+fn add_media_type_tag<R: ReadAtom>(
+    iter: &mut AtomIterator<R>,
     builder: &mut MetadataBuilder,
 ) -> Result<()> {
     let tag = iter.read_atom::<MetaTagAtom>()?;
@@ -448,8 +448,8 @@ fn add_media_type_tag<B: ReadBytes>(
     Ok(())
 }
 
-fn add_id3v1_genre_tag<B: ReadBytes>(
-    iter: &mut AtomIterator<B>,
+fn add_id3v1_genre_tag<R: ReadAtom>(
+    iter: &mut AtomIterator<R>,
     builder: &mut MetadataBuilder,
 ) -> Result<()> {
     let tag = iter.read_atom::<MetaTagAtom>()?;
@@ -480,8 +480,8 @@ fn add_id3v1_genre_tag<B: ReadBytes>(
     Ok(())
 }
 
-fn add_rating_tag<B: ReadBytes>(
-    iter: &mut AtomIterator<B>,
+fn add_rating_tag<R: ReadAtom>(
+    iter: &mut AtomIterator<R>,
     builder: &mut MetadataBuilder,
 ) -> Result<()> {
     let tag = iter.read_atom::<MetaTagAtom>()?;
@@ -516,8 +516,8 @@ fn add_rating_tag<B: ReadBytes>(
     Ok(())
 }
 
-fn add_freeform_tag<B: ReadBytes>(
-    iter: &mut AtomIterator<B>,
+fn add_freeform_tag<R: ReadAtom>(
+    iter: &mut AtomIterator<R>,
     builder: &mut MetadataBuilder,
 ) -> Result<()> {
     let tag = iter.read_atom::<MetaTagAtom>()?;
@@ -527,7 +527,7 @@ fn add_freeform_tag<B: ReadBytes>(
         // Parse the value atom data into a raw value, if possible.
         if let Some(value) = parse_tag_value(value_atom.data_type, &value_atom.data) {
             // Try to map iTunes freeform tags to standard tag keys.
-            itunes::parse_itunes_tag(tag.full_name(), value, builder)?;
+            let _ = itunes::parse_itunes_tag(tag.full_name(), value, builder);
         }
         else {
             warn!("unsupported data type {:?} for freeform tag", value_atom.data_type);
@@ -547,7 +547,7 @@ pub struct MetaTagDataAtom {
 }
 
 impl Atom for MetaTagDataAtom {
-    fn read<B: ReadBytes>(reader: &mut B, mut header: AtomHeader) -> Result<Self> {
+    fn read<R: ReadAtom>(it: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
         // For the MOV container, the bytes occupied by the version and flags fields is the type
         // indicator.
         //
@@ -559,10 +559,10 @@ impl Atom for MetaTagDataAtom {
         // For the ISO/MP4 BMFF container, the version number is always 0, and the flags also
         // indicate an index into a table of well-known data types. Therefore, MOV and the ISO/MP4
         // BMFF are compatible if the version is 0.
-        let (version, flags) = header.read_extended_header(reader)?;
+        let (version, flags) = it.read_extended_header()?;
 
         if version != 0 {
-            return decode_error("isomp4: invalid data atom version");
+            return decode_error("isomp4 (data): invalid data atom version");
         }
 
         // Lookup the well-known type.
@@ -575,17 +575,17 @@ impl Atom for MetaTagDataAtom {
         // a country/language list stored in the country/language sub-atoms of the parent `meta`
         // atom, and a value > 255 indicate an ISO-3166 country code or a packed ISO-639-2 language
         // code.
-        let _country = reader.read_be_u16()?;
-        let _language = reader.read_be_u16()?;
+        let _country = it.read_u16()?;
+        let _language = it.read_u16()?;
 
         // The data payload is the remainder of the atom.
-        // TODO: Apply a limit.
         let data = {
-            let size = header
-                .data_unread_at(reader.pos())
-                .ok_or(Error::DecodeError("isomp4 (ilst): expected atom size to be known"))?;
+            // TODO: Apply the metadata limit.
+            let size = it
+                .data_left()?
+                .ok_or(Error::DecodeError("isomp4 (data): expected atom size to be known"))?;
 
-            reader.read_boxed_slice_exact(size as usize)?
+            it.read_boxed_slice_exact(size as usize)?
         };
 
         Ok(MetaTagDataAtom { data, data_type })
@@ -600,14 +600,15 @@ pub struct MetaTagNamespaceAtom {
 }
 
 impl Atom for MetaTagNamespaceAtom {
-    fn read<B: ReadBytes>(reader: &mut B, mut header: AtomHeader) -> Result<Self> {
-        let (_, _) = header.read_extended_header(reader)?;
+    fn read<R: ReadAtom>(it: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
+        let (_, _) = it.read_extended_header()?;
 
-        let size = header
-            .data_len()
+        let size = it
+            .data_left()?
             .ok_or(Error::DecodeError("isomp4 (ilst): expected atom size to be known"))?;
 
-        let buf = reader.read_boxed_slice_exact(size as usize)?;
+        // TODO: Apply a metadata limit.
+        let buf = it.read_boxed_slice_exact(size as usize)?;
 
         // Do a lossy conversion because metadata should not prevent the demuxer from working.
         let value = String::from_utf8_lossy(&buf).to_string();
@@ -652,25 +653,23 @@ impl MetaTagAtom {
 }
 
 impl Atom for MetaTagAtom {
-    fn read<B: ReadBytes>(reader: &mut B, header: AtomHeader) -> Result<Self> {
+    fn read<R: ReadAtom>(it: &mut AtomIterator<R>, header: &AtomHeader) -> Result<Self> {
         let atom_type = header.atom_type();
-
-        let mut iter = AtomIterator::new(reader, header);
 
         let mut mean = None;
         let mut name = None;
         let mut values = Vec::new();
 
-        while let Some(header) = iter.next()? {
+        while let Some(header) = it.next_header()? {
             match header.atom_type {
                 AtomType::MetaTagData => {
-                    values.push(iter.read_atom::<MetaTagDataAtom>()?);
+                    values.push(it.read_atom::<MetaTagDataAtom>()?);
                 }
                 AtomType::MetaTagName => {
-                    name = Some(iter.read_atom::<MetaTagNamespaceAtom>()?);
+                    name = Some(it.read_atom::<MetaTagNamespaceAtom>()?);
                 }
                 AtomType::MetaTagMeaning => {
-                    mean = Some(iter.read_atom::<MetaTagNamespaceAtom>()?);
+                    mean = Some(it.read_atom::<MetaTagNamespaceAtom>()?);
                 }
                 _ => (),
             }
@@ -725,210 +724,200 @@ pub struct IlstAtom {
 }
 
 impl Atom for IlstAtom {
-    fn read<B: ReadBytes>(reader: &mut B, header: AtomHeader) -> Result<Self> {
-        let mut iter = AtomIterator::new(reader, header);
-
+    fn read<R: ReadAtom>(it: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
         let mut mb = MetadataBuilder::new(ISOMP4_METADATA_INFO);
 
-        while let Some(header) = iter.next()? {
+        while let Some(header) = it.next_header()? {
             // Ignore standard atoms, check if other is a metadata atom.
             match &header.atom_type {
-                AtomType::AdvisoryTag => add_advisory_tag(&mut iter, &mut mb)?,
+                AtomType::AdvisoryTag => add_advisory_tag(it, &mut mb)?,
                 AtomType::AlbumArtistTag => {
-                    add_generic_tag(&mut iter, &mut mb, map_std_str!(StandardTag::AlbumArtist))?
+                    add_generic_tag(it, &mut mb, map_std_str!(StandardTag::AlbumArtist))?
                 }
                 AtomType::AlbumTag => {
-                    add_generic_tag(&mut iter, &mut mb, map_std_str!(StandardTag::Album))?
+                    add_generic_tag(it, &mut mb, map_std_str!(StandardTag::Album))?
                 }
                 AtomType::ArrangerTag => {
-                    add_generic_tag(&mut iter, &mut mb, map_std_str!(StandardTag::Arranger))?
+                    add_generic_tag(it, &mut mb, map_std_str!(StandardTag::Arranger))?
                 }
                 AtomType::ArtistTag => {
-                    add_generic_tag(&mut iter, &mut mb, map_std_str!(StandardTag::Artist))?
+                    add_generic_tag(it, &mut mb, map_std_str!(StandardTag::Artist))?
                 }
                 AtomType::AuthorTag => {
-                    add_generic_tag(&mut iter, &mut mb, map_std_str!(StandardTag::Author))?
+                    add_generic_tag(it, &mut mb, map_std_str!(StandardTag::Author))?
                 }
                 AtomType::PodcastCategoryTag => {
-                    add_generic_tag(&mut iter, &mut mb, map_std_str!(StandardTag::PodcastCategory))?
+                    add_generic_tag(it, &mut mb, map_std_str!(StandardTag::PodcastCategory))?
                 }
                 AtomType::CommentTag => {
-                    add_generic_tag(&mut iter, &mut mb, map_std_str!(StandardTag::Comment))?
+                    add_generic_tag(it, &mut mb, map_std_str!(StandardTag::Comment))?
                 }
                 AtomType::CompilationTag => {
-                    add_flag_tag(&mut iter, &mut mb, map_std_bool!(StandardTag::CompilationFlag))?
+                    add_flag_tag(it, &mut mb, map_std_bool!(StandardTag::CompilationFlag))?
                 }
                 AtomType::ComposerTag => {
-                    add_generic_tag(&mut iter, &mut mb, map_std_str!(StandardTag::Composer))?
+                    add_generic_tag(it, &mut mb, map_std_str!(StandardTag::Composer))?
                 }
                 AtomType::ConductorTag => {
-                    add_generic_tag(&mut iter, &mut mb, map_std_str!(StandardTag::Conductor))?
+                    add_generic_tag(it, &mut mb, map_std_str!(StandardTag::Conductor))?
                 }
                 AtomType::CopyrightTag => {
-                    add_generic_tag(&mut iter, &mut mb, map_std_str!(StandardTag::Copyright))?
+                    add_generic_tag(it, &mut mb, map_std_str!(StandardTag::Copyright))?
                 }
-                AtomType::CoverTag => add_visual_tag(&mut iter, &mut mb)?,
+                AtomType::CoverTag => add_visual_tag(it, &mut mb)?,
                 AtomType::CustomGenreTag => {
-                    add_generic_tag(&mut iter, &mut mb, map_std_str!(StandardTag::Genre))?
+                    add_generic_tag(it, &mut mb, map_std_str!(StandardTag::Genre))?
                 }
                 AtomType::DateTag => {
-                    add_generic_tag(&mut iter, &mut mb, map_std_str!(StandardTag::ReleaseDate))?
+                    add_generic_tag(it, &mut mb, map_std_str!(StandardTag::ReleaseDate))?
                 }
                 AtomType::DescriptionTag => {
-                    add_generic_tag(&mut iter, &mut mb, map_std_str!(StandardTag::Description))?
+                    add_generic_tag(it, &mut mb, map_std_str!(StandardTag::Description))?
                 }
                 AtomType::DiskNumberTag => add_pair_tag(
-                    &mut iter,
+                    it,
                     &mut mb,
                     map_std_uint!(StandardTag::DiscNumber),
                     map_std_uint!(StandardTag::DiscTotal),
                 )?,
                 AtomType::EncodedByTag => {
-                    add_generic_tag(&mut iter, &mut mb, map_std_str!(StandardTag::EncodedBy))?
+                    add_generic_tag(it, &mut mb, map_std_str!(StandardTag::EncodedBy))?
                 }
                 AtomType::EncoderTag => {
-                    add_generic_tag(&mut iter, &mut mb, map_std_str!(StandardTag::Encoder))?
+                    add_generic_tag(it, &mut mb, map_std_str!(StandardTag::Encoder))?
                 }
-                AtomType::GaplessPlaybackTag => add_flag_tag(&mut iter, &mut mb, |_| None)?,
-                AtomType::GenreTag => add_id3v1_genre_tag(&mut iter, &mut mb)?,
+                AtomType::GaplessPlaybackTag => add_flag_tag(it, &mut mb, |_| None)?,
+                AtomType::GenreTag => add_id3v1_genre_tag(it, &mut mb)?,
                 AtomType::GroupingTag => {
-                    add_generic_tag(&mut iter, &mut mb, map_std_str!(StandardTag::Grouping))?
+                    add_generic_tag(it, &mut mb, map_std_str!(StandardTag::Grouping))?
                 }
                 AtomType::HdVideoTag => (),
                 AtomType::IdentPodcastTag => {
-                    add_generic_tag(&mut iter, &mut mb, map_std_str!(StandardTag::IdentPodcast))?
+                    add_generic_tag(it, &mut mb, map_std_str!(StandardTag::IdentPodcast))?
                 }
                 AtomType::IsrcTag => {
-                    add_generic_tag(&mut iter, &mut mb, map_std_str!(StandardTag::IdentIsrc))?
+                    add_generic_tag(it, &mut mb, map_std_str!(StandardTag::IdentIsrc))?
                 }
                 AtomType::LabelTag => {
-                    add_generic_tag(&mut iter, &mut mb, map_std_str!(StandardTag::Label))?
+                    add_generic_tag(it, &mut mb, map_std_str!(StandardTag::Label))?
                 }
                 AtomType::LabelUrlTag => {
-                    add_generic_tag(&mut iter, &mut mb, map_std_str!(StandardTag::UrlLabel))?
+                    add_generic_tag(it, &mut mb, map_std_str!(StandardTag::UrlLabel))?
                 }
                 AtomType::PodcastKeywordsTag => {
-                    add_generic_tag(&mut iter, &mut mb, map_std_str!(StandardTag::PodcastKeywords))?
+                    add_generic_tag(it, &mut mb, map_std_str!(StandardTag::PodcastKeywords))?
                 }
                 AtomType::LongDescriptionTag => {
-                    add_generic_tag(&mut iter, &mut mb, map_std_str!(StandardTag::Description))?
+                    add_generic_tag(it, &mut mb, map_std_str!(StandardTag::Description))?
                 }
                 AtomType::LyricsTag => {
-                    add_generic_tag(&mut iter, &mut mb, map_std_str!(StandardTag::Lyrics))?
+                    add_generic_tag(it, &mut mb, map_std_str!(StandardTag::Lyrics))?
                 }
-                AtomType::MediaTypeTag => add_media_type_tag(&mut iter, &mut mb)?,
+                AtomType::MediaTypeTag => add_media_type_tag(it, &mut mb)?,
                 AtomType::MovementCountTag => {
-                    add_generic_tag(&mut iter, &mut mb, map_std_uint!(StandardTag::MovementTotal))?
+                    add_generic_tag(it, &mut mb, map_std_uint!(StandardTag::MovementTotal))?
                 }
                 AtomType::MovementIndexTag => {
-                    add_generic_tag(&mut iter, &mut mb, map_std_uint!(StandardTag::MovementNumber))?
+                    add_generic_tag(it, &mut mb, map_std_uint!(StandardTag::MovementNumber))?
                 }
                 AtomType::MovementTag => {
-                    add_generic_tag(&mut iter, &mut mb, map_std_str!(StandardTag::MovementName))?
+                    add_generic_tag(it, &mut mb, map_std_str!(StandardTag::MovementName))?
                 }
                 AtomType::NarratorTag => {
-                    add_generic_tag(&mut iter, &mut mb, map_std_str!(StandardTag::Narrator))?
+                    add_generic_tag(it, &mut mb, map_std_str!(StandardTag::Narrator))?
                 }
                 AtomType::OriginalArtistTag => {
-                    add_generic_tag(&mut iter, &mut mb, map_std_str!(StandardTag::OriginalArtist))?
+                    add_generic_tag(it, &mut mb, map_std_str!(StandardTag::OriginalArtist))?
                 }
                 AtomType::OwnerTag => {
-                    add_generic_tag(&mut iter, &mut mb, map_std_str!(StandardTag::Owner))?
+                    add_generic_tag(it, &mut mb, map_std_str!(StandardTag::Owner))?
                 }
                 AtomType::PodcastTag => {
-                    add_flag_tag(&mut iter, &mut mb, map_std_bool!(StandardTag::PodcastFlag))?
+                    add_flag_tag(it, &mut mb, map_std_bool!(StandardTag::PodcastFlag))?
                 }
                 AtomType::PurchaseDateTag => {
-                    add_generic_tag(&mut iter, &mut mb, map_std_str!(StandardTag::PurchaseDate))?
+                    add_generic_tag(it, &mut mb, map_std_str!(StandardTag::PurchaseDate))?
                 }
                 AtomType::ProducerTag => {
-                    add_generic_tag(&mut iter, &mut mb, map_std_str!(StandardTag::Producer))?
+                    add_generic_tag(it, &mut mb, map_std_str!(StandardTag::Producer))?
                 }
                 AtomType::PublisherTag => {
-                    add_generic_tag(&mut iter, &mut mb, map_std_str!(StandardTag::Label))?
+                    add_generic_tag(it, &mut mb, map_std_str!(StandardTag::Label))?
                 }
-                AtomType::RatingTag => add_rating_tag(&mut iter, &mut mb)?,
-                AtomType::RecordingCopyrightTag => add_generic_tag(
-                    &mut iter,
-                    &mut mb,
-                    map_std_str!(StandardTag::ProductionCopyright),
-                )?,
+                AtomType::RatingTag => add_rating_tag(it, &mut mb)?,
+                AtomType::RecordingCopyrightTag => {
+                    add_generic_tag(it, &mut mb, map_std_str!(StandardTag::ProductionCopyright))?
+                }
                 AtomType::SortAlbumArtistTag => {
-                    add_generic_tag(&mut iter, &mut mb, map_std_str!(StandardTag::SortAlbumArtist))?
+                    add_generic_tag(it, &mut mb, map_std_str!(StandardTag::SortAlbumArtist))?
                 }
                 AtomType::SortAlbumTag => {
-                    add_generic_tag(&mut iter, &mut mb, map_std_str!(StandardTag::SortAlbum))?
+                    add_generic_tag(it, &mut mb, map_std_str!(StandardTag::SortAlbum))?
                 }
                 AtomType::SortArtistTag => {
-                    add_generic_tag(&mut iter, &mut mb, map_std_str!(StandardTag::SortArtist))?
+                    add_generic_tag(it, &mut mb, map_std_str!(StandardTag::SortArtist))?
                 }
                 AtomType::SortComposerTag => {
-                    add_generic_tag(&mut iter, &mut mb, map_std_str!(StandardTag::SortComposer))?
+                    add_generic_tag(it, &mut mb, map_std_str!(StandardTag::SortComposer))?
                 }
                 AtomType::SortNameTag => {
-                    add_generic_tag(&mut iter, &mut mb, map_std_str!(StandardTag::SortTrackTitle))?
+                    add_generic_tag(it, &mut mb, map_std_str!(StandardTag::SortTrackTitle))?
                 }
-                AtomType::SortShowNameTag => add_generic_tag(
-                    &mut iter,
-                    &mut mb,
-                    map_std_str!(StandardTag::SortTvSeriesTitle),
-                )?,
+                AtomType::SortShowNameTag => {
+                    add_generic_tag(it, &mut mb, map_std_str!(StandardTag::SortTvSeriesTitle))?
+                }
                 AtomType::TempoTag => {
-                    add_generic_tag(&mut iter, &mut mb, map_std_uint!(StandardTag::Bpm))?
+                    add_generic_tag(it, &mut mb, map_std_uint!(StandardTag::Bpm))?
                 }
                 AtomType::TrackNumberTag => add_pair_tag(
-                    &mut iter,
+                    it,
                     &mut mb,
                     map_std_uint!(StandardTag::TrackNumber),
                     map_std_uint!(StandardTag::TrackTotal),
                 )?,
                 AtomType::TrackTitleTag => {
-                    add_generic_tag(&mut iter, &mut mb, map_std_str!(StandardTag::TrackTitle))?
+                    add_generic_tag(it, &mut mb, map_std_str!(StandardTag::TrackTitle))?
                 }
                 AtomType::TvEpisodeNameTag => {
-                    add_generic_tag(&mut iter, &mut mb, map_std_str!(StandardTag::TvEpisodeTitle))?
+                    add_generic_tag(it, &mut mb, map_std_str!(StandardTag::TvEpisodeTitle))?
                 }
-                AtomType::TvEpisodeNumberTag => add_generic_tag(
-                    &mut iter,
-                    &mut mb,
-                    map_std_uint!(StandardTag::TvEpisodeNumber),
-                )?,
+                AtomType::TvEpisodeNumberTag => {
+                    add_generic_tag(it, &mut mb, map_std_uint!(StandardTag::TvEpisodeNumber))?
+                }
                 AtomType::TvNetworkNameTag => {
-                    add_generic_tag(&mut iter, &mut mb, map_std_str!(StandardTag::TvNetwork))?
+                    add_generic_tag(it, &mut mb, map_std_str!(StandardTag::TvNetwork))?
                 }
                 AtomType::TvSeasonNumberTag => {
-                    add_generic_tag(&mut iter, &mut mb, map_std_uint!(StandardTag::TvSeasonNumber))?
+                    add_generic_tag(it, &mut mb, map_std_uint!(StandardTag::TvSeasonNumber))?
                 }
                 AtomType::TvShowNameTag => {
-                    add_generic_tag(&mut iter, &mut mb, map_std_str!(StandardTag::TvSeriesTitle))?
+                    add_generic_tag(it, &mut mb, map_std_str!(StandardTag::TvSeriesTitle))?
                 }
                 AtomType::UrlPodcastTag => {
-                    add_generic_tag(&mut iter, &mut mb, map_std_str!(StandardTag::UrlPodcast))?
+                    add_generic_tag(it, &mut mb, map_std_str!(StandardTag::UrlPodcast))?
                 }
                 AtomType::ShowMovementTag => {
-                    add_flag_tag(&mut iter, &mut mb, |_| None)?;
+                    add_flag_tag(it, &mut mb, |_| None)?;
                 }
                 AtomType::SoloistTag => {
-                    add_generic_tag(&mut iter, &mut mb, map_std_str!(StandardTag::Soloist))?
+                    add_generic_tag(it, &mut mb, map_std_str!(StandardTag::Soloist))?
                 }
                 AtomType::TrackArtistUrl => {
-                    add_generic_tag(&mut iter, &mut mb, map_std_str!(StandardTag::UrlArtist))?
+                    add_generic_tag(it, &mut mb, map_std_str!(StandardTag::UrlArtist))?
                 }
-                AtomType::WorkTag => {
-                    add_generic_tag(&mut iter, &mut mb, map_std_str!(StandardTag::Work))?
-                }
+                AtomType::WorkTag => add_generic_tag(it, &mut mb, map_std_str!(StandardTag::Work))?,
                 AtomType::WriterTag => {
-                    add_generic_tag(&mut iter, &mut mb, map_std_str!(StandardTag::Writer))?
+                    add_generic_tag(it, &mut mb, map_std_str!(StandardTag::Writer))?
                 }
                 // Free-form tag atom.
-                AtomType::FreeFormTag => add_freeform_tag(&mut iter, &mut mb)?,
+                AtomType::FreeFormTag => add_freeform_tag(it, &mut mb)?,
                 // Completely unknown tag atom.
                 AtomType::Other(atom_type) => {
                     debug!("unknown metadata sub-atom {atom_type:x?}");
                 }
                 // Known tag atom, but has no standard tag or special handling.
                 _ => {
-                    add_generic_tag(&mut iter, &mut mb, |_| None)?;
+                    add_generic_tag(it, &mut mb, |_| None)?;
                 }
             }
         }

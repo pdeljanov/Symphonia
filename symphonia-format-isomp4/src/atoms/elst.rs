@@ -5,11 +5,10 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::errors::{Result, decode_error};
-use symphonia_core::io::ReadBytes;
 use symphonia_core::util::bits;
 
-use crate::atoms::{Atom, AtomHeader};
+use crate::atoms::{Atom, AtomHeader, AtomIterator, ReadAtom, Result};
+use crate::atoms::{decode_error, limits::*};
 
 /// Edit list entry.
 #[allow(dead_code)]
@@ -29,29 +28,31 @@ pub struct ElstAtom {
 }
 
 impl Atom for ElstAtom {
-    fn read<B: ReadBytes>(reader: &mut B, mut header: AtomHeader) -> Result<Self> {
-        let (version, _) = header.read_extended_header(reader)?;
+    fn read<R: ReadAtom>(it: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
+        let (version, _) = it.read_extended_header()?;
 
-        // TODO: Apply a limit.
-        let entry_count = reader.read_be_u32()?;
+        if version > 1 {
+            return decode_error("isomp4 (elst): invalid tkhd version");
+        }
 
-        let mut entries = Vec::new();
+        let entry_count = it.read_u32()?;
+
+        // Limit the maximum initial capacity to prevent malicious files from using all the
+        // available memory.
+        let mut entries = Vec::with_capacity(MAX_TABLE_INITIAL_CAPACITY.min(entry_count as usize));
 
         for _ in 0..entry_count {
             let (segment_duration, media_time) = match version {
                 0 => (
-                    u64::from(reader.read_be_u32()?),
-                    i64::from(bits::sign_extend_leq32_to_i32(reader.read_be_u32()?, 32)),
+                    u64::from(it.read_u32()?),
+                    i64::from(bits::sign_extend_leq32_to_i32(it.read_u32()?, 32)),
                 ),
-                1 => (
-                    reader.read_be_u64()?,
-                    bits::sign_extend_leq64_to_i64(reader.read_be_u64()?, 64),
-                ),
-                _ => return decode_error("isomp4: invalid tkhd version"),
+                1 => (it.read_u64()?, bits::sign_extend_leq64_to_i64(it.read_u64()?, 64)),
+                _ => unreachable!(),
             };
 
-            let media_rate_int = bits::sign_extend_leq16_to_i16(reader.read_be_u16()?, 16);
-            let media_rate_frac = bits::sign_extend_leq16_to_i16(reader.read_be_u16()?, 16);
+            let media_rate_int = bits::sign_extend_leq16_to_i16(it.read_u16()?, 16);
+            let media_rate_frac = bits::sign_extend_leq16_to_i16(it.read_u16()?, 16);
 
             entries.push(ElstEntry {
                 segment_duration,

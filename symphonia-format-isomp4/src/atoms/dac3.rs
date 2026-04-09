@@ -6,13 +6,10 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use symphonia_core::codecs::audio::well_known::CODEC_ID_AC3;
-use symphonia_core::errors::{Error, Result};
-use symphonia_core::io::ReadBytes;
 
 use crate::atoms::stsd::AudioSampleEntry;
-use crate::atoms::{Atom, AtomHeader};
+use crate::atoms::{Atom, AtomHeader, AtomIterator, ReadAtom, Result, decode_error};
 
-#[allow(dead_code)]
 #[derive(Debug)]
 pub struct Dac3Atom {
     /// AC3SpecificBox
@@ -20,13 +17,18 @@ pub struct Dac3Atom {
 }
 
 impl Atom for Dac3Atom {
-    fn read<B: ReadBytes>(reader: &mut B, header: AtomHeader) -> Result<Self> {
-        // AC3SpecificBox should have length
-        let len = header
-            .data_len()
-            .ok_or(Error::DecodeError("isomp4 (dac3): expected atom size to be known"))?;
+    fn read<R: ReadAtom>(it: &mut AtomIterator<R>, header: &AtomHeader) -> Result<Self> {
+        // TODO: Validate.
+        const MAX_DAC3_ATOM_SIZE: u64 = 4 * 1024;
 
-        let extra_data = reader.read_boxed_slice_exact(len as usize)?;
+        // AC3SpecificBox should have length
+        let len = match header.data_size() {
+            Some(len) if len <= MAX_DAC3_ATOM_SIZE => len as usize,
+            Some(_) => return decode_error("isomp4 (dac3): atom size is greater than 4 kb"),
+            None => return decode_error("isomp4 (dac3): expected atom size to be known"),
+        };
+
+        let extra_data = it.read_boxed_slice_exact(len)?;
 
         Ok(Dac3Atom { extra_data })
     }

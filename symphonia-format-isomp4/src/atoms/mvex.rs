@@ -5,10 +5,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::errors::Result;
-use symphonia_core::io::ReadBytes;
-
-use crate::atoms::{Atom, AtomHeader, AtomIterator, AtomType, MehdAtom, TrexAtom};
+use crate::atoms::{
+    Atom, AtomHeader, AtomIterator, AtomType, MehdAtom, ReadAtom, Result, TrexAtom,
+};
 
 /// Movie extends atom.
 #[allow(dead_code)]
@@ -21,19 +20,17 @@ pub struct MvexAtom {
 }
 
 impl Atom for MvexAtom {
-    fn read<B: ReadBytes>(reader: &mut B, header: AtomHeader) -> Result<Self> {
-        let mut iter = AtomIterator::new(reader, header);
-
+    fn read<R: ReadAtom>(it: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
         let mut mehd = None;
         let mut trexs = Vec::new();
 
-        while let Some(header) = iter.next()? {
+        while let Some(header) = it.next_header()? {
             match header.atom_type {
                 AtomType::MovieExtendsHeader => {
-                    mehd = Some(iter.read_atom::<MehdAtom>()?);
+                    mehd = Some(it.read_atom::<MehdAtom>()?);
                 }
                 AtomType::TrackExtends => {
-                    let trex = iter.read_atom::<TrexAtom>()?;
+                    let trex = it.read_atom::<TrexAtom>()?;
                     trexs.push(trex);
                 }
                 _ => (),

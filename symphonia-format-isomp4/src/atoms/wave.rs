@@ -5,11 +5,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::errors::Result;
-use symphonia_core::io::ReadBytes;
-
 use crate::atoms::stsd::AudioSampleEntry;
-use crate::atoms::{Atom, AtomHeader, AtomIterator, AtomType, EsdsAtom};
+use crate::atoms::{Atom, AtomHeader, AtomIterator, AtomType, EsdsAtom, ReadAtom, Result};
 
 #[allow(dead_code)]
 #[derive(Debug)]
@@ -18,14 +15,12 @@ pub struct WaveAtom {
 }
 
 impl Atom for WaveAtom {
-    fn read<B: ReadBytes>(reader: &mut B, header: AtomHeader) -> Result<Self> {
-        let mut iter = AtomIterator::new(reader, header);
-
+    fn read<R: ReadAtom>(it: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
         let mut esds = None;
 
-        while let Some(header) = iter.next()? {
+        while let Some(header) = it.next_header()? {
             if header.atom_type == AtomType::Esds {
-                esds = Some(iter.read_atom::<EsdsAtom>()?);
+                esds = Some(it.read_atom::<EsdsAtom>()?);
             }
         }
 

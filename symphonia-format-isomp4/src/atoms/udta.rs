@@ -5,11 +5,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::errors::Result;
-use symphonia_core::io::ReadBytes;
 use symphonia_core::meta::MetadataRevision;
 
-use crate::atoms::{Atom, AtomHeader, AtomIterator, AtomType, MetaAtom};
+use crate::atoms::{Atom, AtomHeader, AtomIterator, AtomType, MetaAtom, ReadAtom, Result};
 
 /// User data atom.
 #[allow(dead_code)]
@@ -28,15 +26,13 @@ impl UdtaAtom {
 
 impl Atom for UdtaAtom {
     #[allow(clippy::single_match)]
-    fn read<B: ReadBytes>(reader: &mut B, header: AtomHeader) -> Result<Self> {
-        let mut iter = AtomIterator::new(reader, header);
-
+    fn read<R: ReadAtom>(it: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
         let mut meta = None;
 
-        while let Some(header) = iter.next()? {
+        while let Some(header) = it.next_header()? {
             match header.atom_type {
                 AtomType::Meta => {
-                    meta = Some(iter.read_atom::<MetaAtom>()?);
+                    meta = Some(it.read_atom::<MetaAtom>()?);
                 }
                 // TODO: Support older QuickTime-style user data lists. Need sample files.
                 _ => (),

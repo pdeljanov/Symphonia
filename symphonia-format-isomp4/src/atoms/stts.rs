@@ -5,10 +5,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::errors::Result;
-use symphonia_core::io::ReadBytes;
-
-use crate::atoms::{Atom, AtomHeader};
+use crate::atoms::limits::*;
+use crate::atoms::{Atom, AtomHeader, AtomIterator, ReadAtom, Result};
 
 #[derive(Debug)]
 pub struct SampleDurationEntry {
@@ -75,19 +73,20 @@ impl SttsAtom {
 }
 
 impl Atom for SttsAtom {
-    fn read<B: ReadBytes>(reader: &mut B, mut header: AtomHeader) -> Result<Self> {
-        let (_, _) = header.read_extended_header(reader)?;
+    fn read<R: ReadAtom>(it: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
+        let (_, _) = it.read_extended_header()?;
 
-        let entry_count = reader.read_be_u32()?;
+        let entry_count = it.read_u32()?;
+
+        // Limit the maximum initial capacity to prevent malicious files from using all the
+        // available memory.
+        let mut entries = Vec::with_capacity(MAX_TABLE_INITIAL_CAPACITY.min(entry_count as usize));
 
         let mut total_duration = 0;
 
-        // TODO: Limit table length.
-        let mut entries = Vec::with_capacity(entry_count as usize);
-
         for _ in 0..entry_count {
-            let sample_count = reader.read_be_u32()?;
-            let sample_delta = reader.read_be_u32()?;
+            let sample_count = it.read_u32()?;
+            let sample_delta = it.read_u32()?;
 
             total_duration += u64::from(sample_count) * u64::from(sample_delta);
 

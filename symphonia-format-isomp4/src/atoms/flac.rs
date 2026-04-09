@@ -8,11 +8,12 @@
 use symphonia_common::xiph::audio::flac::{MetadataBlockHeader, MetadataBlockType, StreamInfo};
 use symphonia_core::codecs::audio::VerificationCheck;
 use symphonia_core::codecs::audio::well_known::CODEC_ID_FLAC;
-use symphonia_core::errors::{Result, decode_error, unsupported_error};
-use symphonia_core::io::{BufReader, ReadBytes};
+use symphonia_core::io::BufReader;
 
 use crate::atoms::stsd::AudioSampleEntry;
-use crate::atoms::{Atom, AtomHeader};
+use crate::atoms::{
+    Atom, AtomHeader, AtomIterator, ReadAtom, Result, decode_error, unsupported_error,
+};
 
 /// FLAC atom.
 #[allow(dead_code)]
@@ -25,8 +26,8 @@ pub struct FlacAtom {
 }
 
 impl Atom for FlacAtom {
-    fn read<B: ReadBytes>(reader: &mut B, mut header: AtomHeader) -> Result<Self> {
-        let (version, flags) = header.read_extended_header(reader)?;
+    fn read<R: ReadAtom>(it: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
+        let (version, flags) = it.read_extended_header()?;
 
         if version != 0 {
             return unsupported_error("isomp4 (flac): unsupported flac version");
@@ -37,7 +38,7 @@ impl Atom for FlacAtom {
         }
 
         // The first block must be the stream information block.
-        let block_header = MetadataBlockHeader::read(reader)?;
+        let block_header = MetadataBlockHeader::read(&mut BufReader::new(&it.read_quad_bytes()?))?;
 
         if block_header.block_type != MetadataBlockType::StreamInfo {
             return decode_error("isomp4 (flac): first block is not stream info");
@@ -49,7 +50,7 @@ impl Atom for FlacAtom {
             return decode_error("isomp4 (flac): invalid stream info block length");
         }
 
-        let extra_data = reader.read_boxed_slice_exact(block_header.block_len as usize)?;
+        let extra_data = it.read_boxed_slice_exact(block_header.block_len as usize)?;
         let stream_info = StreamInfo::read(&mut BufReader::new(&extra_data))?;
 
         Ok(FlacAtom { stream_info, extra_data })

@@ -20,7 +20,7 @@ use symphonia_core::units::Time;
 use std::io::{Seek, SeekFrom};
 use std::sync::Arc;
 
-use crate::atoms::{AtomIterator, AtomType};
+use crate::atoms::{AtomError, AtomIterator, AtomType, ReadAtom};
 use crate::atoms::{FtypAtom, MetaAtom, MoofAtom, MoovAtom, SidxAtom, TrakAtom};
 use crate::stream::*;
 
@@ -137,29 +137,29 @@ impl<'s> IsoMp4Reader<'s> {
         let mut metadata = opts.external_data.metadata.unwrap_or_default();
 
         // Parse all atoms if the stream is seekable, otherwise parse all atoms up-to the mdat atom.
-        let mut iter = AtomIterator::new_root(mss, total_len);
+        let mut it = AtomIterator::new(mss, total_len);
 
-        while let Some(header) = iter.next()? {
+        while let Some(header) = it.next_header()? {
             // Top-level atoms.
             match header.atom_type() {
                 AtomType::FileType => {
-                    ftyp = Some(iter.read_atom::<FtypAtom>()?);
+                    ftyp = Some(it.read_atom::<FtypAtom>()?);
                 }
                 AtomType::Movie => {
-                    moov = Some(iter.read_atom::<MoovAtom>()?);
+                    moov = Some(it.read_atom::<MoovAtom>()?);
                 }
                 AtomType::SegmentIndex => {
                     // If the stream is not seekable, then it can only be assumed that the first
                     // segment index atom is indeed the first segment index because the format
                     // reader cannot practically skip past this point.
                     if !is_seekable {
-                        sidx = Some(iter.read_atom::<SidxAtom>()?);
+                        sidx = Some(it.read_atom::<SidxAtom>()?);
                         break;
                     }
                     else {
                         // If the stream is seekable, examine all segment indexes and select the
                         // index with the earliest presentation timestamp to be the first.
-                        let new_sidx = iter.read_atom::<SidxAtom>()?;
+                        let new_sidx = it.read_atom::<SidxAtom>()?;
 
                         let is_earlier = match &sidx {
                             Some(sidx) => new_sidx.earliest_pts < sidx.earliest_pts,
@@ -172,23 +172,25 @@ impl<'s> IsoMp4Reader<'s> {
                     }
                 }
                 AtomType::MediaData | AtomType::MovieFragment => {
-                    // The mdat atom contains the codec bitstream data. For segmented streams, a
-                    // moof + mdat pair is required for playback. If the source is unseekable then
-                    // the format reader cannot skip past these atoms without dropping samples.
-                    if !is_seekable {
-                        // If the moov atom hasn't been seen before the moof and/or mdat atom, and
-                        // the stream is not seekable, then the mp4 is not streamable.
-                        if moov.is_none() || ftyp.is_none() {
+                    // The mdat atom contains the codec bitstream data. For fragmented streams, a
+                    // moof + mdat pair is required. If the ftyp and moov atoms have been read, then
+                    // the top-level atom scan can exit here and begin playback immediately as an
+                    // optimization. If not, then the scan must continue.
+                    //
+                    // The scan must also exit if the source is unseekable because in that case
+                    // the format reader cannot skip past these atoms without dropping packets.
+                    let is_playable = moov.is_some() && ftyp.is_some();
+
+                    if is_playable || !is_seekable {
+                        if !is_playable {
                             warn!("mp4 is not streamable.");
                         }
-
-                        // The remainder of the stream will be read incrementally.
                         break;
                     }
                 }
                 AtomType::Meta => {
                     // Read the metadata atom and append it to the log.
-                    let mut meta = iter.read_atom::<MetaAtom>()?;
+                    let mut meta = it.read_atom::<MetaAtom>()?;
 
                     if let Some(rev) = meta.take_metadata() {
                         metadata.push(rev);
@@ -210,21 +212,28 @@ impl<'s> IsoMp4Reader<'s> {
             return unsupported_error("isomp4: missing moov atom");
         }
 
-        // If the stream was seekable, then all atoms in the media source stream were scanned. Seek
-        // back to the first mdat atom for playback. If the stream is not seekable, then the atom
-        // iterator is currently positioned at the first mdat atom.
-        if is_seekable {
-            let mut mss = iter.into_inner();
+        // If the top-level atom scan iterated across the entire source (e.g., if moov was the last
+        // atom), then the iterator must return to the first moof or mdat atom. This is only
+        // possible if the source is seekable. If it's not, then the media will be effectively
+        // unplayable.
+        if is_seekable && it.pending().is_none() {
+            let mut mss = it.into_inner();
             mss.seek(SeekFrom::Start(0))?;
 
-            iter = AtomIterator::new_root(mss, total_len);
+            it = AtomIterator::new(mss, total_len);
 
-            while let Some(header) = iter.next_no_consume()? {
-                match header.atom_type() {
-                    AtomType::MediaData | AtomType::MovieFragment => break,
-                    _ => (),
+            while let Some(header) = it.next_header()? {
+                if let AtomType::MovieFragment | AtomType::MediaData = header.atom_type() {
+                    break;
                 }
-                iter.consume_atom();
+            }
+        }
+
+        // Fragments (moof + mdat pairs) are streamed. So if the pending atom is a moof, seek the
+        // iterator to the start of the moof atom.
+        if let Some(atom) = it.pending() {
+            if atom.atom_type() == AtomType::MovieFragment {
+                it.seek_atom_start()?;
             }
         }
 
@@ -267,7 +276,7 @@ impl<'s> IsoMp4Reader<'s> {
 
         let segs: Vec<Box<dyn StreamSegment>> = vec![Box::new(MoovSegment::new(moov.clone()))];
 
-        Ok(IsoMp4Reader { iter, tracks, metadata, track_states, segs, moov })
+        Ok(IsoMp4Reader { iter: it, tracks, metadata, track_states, segs, moov })
     }
 
     /// Idempotently gets information regarding the next sample of the media stream. This function
@@ -372,13 +381,9 @@ impl<'s> IsoMp4Reader<'s> {
 
         // Continue iterating over atoms until a segment (a moof + mdat atom pair) is found. All
         // other atoms will be ignored.
-        while let Some(header) = self.iter.next_no_consume()? {
+        while let Some(header) = self.iter.next_header()? {
             match header.atom_type() {
                 AtomType::MediaData => {
-                    // Consume the atom from the iterator so that on the next iteration a new atom
-                    // will be read.
-                    self.iter.consume_atom();
-
                     return Ok(true);
                 }
                 AtomType::MovieFragment => {
@@ -401,13 +406,11 @@ impl<'s> IsoMp4Reader<'s> {
                         self.segs.push(Box::new(seg));
                     }
                     else {
-                        // TODO: This is a fatal error.
                         return decode_error("isomp4: moof atom present without mvex atom");
                     }
                 }
                 _ => {
                     trace!("skipping atom: {:?}.", header.atom_type());
-                    self.iter.consume_atom();
                 }
             }
         }
@@ -531,6 +534,16 @@ impl FormatReader for IsoMp4Reader<'_> {
                 break info;
             }
             else {
+                // The inner reader of the atom iterator has been used/seeked around to read
+                // packets, so resync the reader and iterator by seeking to the end of the current
+                // pending atom. Under regular circumstances, no actual expensive seek operation is
+                // performed since the reader should be at the end of the last iterated atom if we
+                // are trying to read another.
+                match self.iter.seek_atom_end() {
+                    Ok(_) | Err(AtomError::NoPendingAtom) => (),
+                    Err(_) => return decode_error("sync lost"),
+                };
+
                 // No more segments. If the stream is unseekable, it may be the case that there are
                 // more segments coming. If the stream is seekable it might be fragmented and no
                 // segments are found in the moov atom. Iterate atoms until a new segment is found
@@ -544,32 +557,14 @@ impl FormatReader for IsoMp4Reader<'_> {
         // Get the position and length information of the next sample.
         let sample_info = self.consume_next_sample(&next_sample_info)?.unwrap();
 
-        let reader = self.iter.inner_mut();
-
-        // Attempt a fast seek within the buffer cache.
-        if reader.seek_buffered(sample_info.pos) != sample_info.pos {
-            if reader.is_seekable() {
-                // Fallback to a slow seek if the stream is seekable.
-                reader.seek(SeekFrom::Start(sample_info.pos))?;
-            }
-            else if sample_info.pos > reader.pos() {
-                // The stream is not seekable but the desired seek position is ahead of the reader's
-                // current position, thus the seek can be emulated by ignoring the bytes up to the
-                // the desired seek position.
-                reader.ignore_bytes(sample_info.pos - reader.pos())?;
-            }
-            else {
-                // The stream is not seekable and the desired seek position falls outside the lower
-                // bound of the buffer cache. This sample cannot be read.
-                return decode_error("isomp4: packet out-of-bounds for a non-seekable stream");
-            }
-        }
+        let data =
+            self.iter.read_raw_boxed_slice_exact(sample_info.pos, sample_info.len as usize)?;
 
         Ok(Some(Packet::new(
             next_sample_info.track_id,
             next_sample_info.ts,
             next_sample_info.dur,
-            reader.read_boxed_slice_exact(sample_info.len as usize)?,
+            data,
         )))
     }
 
@@ -645,5 +640,29 @@ impl FormatReader for IsoMp4Reader<'_> {
         Self: 's,
     {
         self.iter.into_inner()
+    }
+}
+
+impl ReadAtom for MediaSourceStream<'_> {}
+
+impl From<AtomError> for Error {
+    fn from(value: AtomError) -> Self {
+        // Map all atom iteration errors to decode errors.
+        let msg = match value {
+            AtomError::InvalidAtomSize => "isomp4: invalid atom size",
+            AtomError::InvalidUtf8 => "isomp4: invalid utf-8 string",
+            AtomError::MaximumDepthReached => "isomp4: maximum recursion depth reached",
+            AtomError::NoParentAtom => "isomp4: no parent atom",
+            AtomError::NoPendingAtom => "isomp4: no atom pending read",
+            AtomError::Overrun => "isomp4: overrun while reading atom",
+            AtomError::SeekOutOfRange => "isomp4: out-of-bounds seek for a non-seekable stream",
+            AtomError::UnexpectedEndOfAtom => "isomp4: unexpected end of atom",
+            AtomError::UnexpectedPosition => "isomp4: unexpected position",
+            AtomError::UnexpectedUnknownSizeAtom => "isomp4: unknown size atom has sized parent",
+            AtomError::UnexpectedReadOperation => "isomp4: unexpected read operation",
+            AtomError::UnknownAtomSize => "isomp4: unknown atom size",
+            AtomError::Other(err) => return err,
+        };
+        Error::DecodeError(msg)
     }
 }

@@ -5,10 +5,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::errors::{Result, decode_error};
-use symphonia_core::io::ReadBytes;
-
-use crate::atoms::{Atom, AtomHeader};
+use crate::atoms::{Atom, AtomHeader, AtomIterator, ReadAtom, Result, decode_error};
 use crate::fp::FpU8;
 
 /// Track header atom.
@@ -37,8 +34,8 @@ pub struct TkhdAtom {
 }
 
 impl Atom for TkhdAtom {
-    fn read<B: ReadBytes>(reader: &mut B, mut header: AtomHeader) -> Result<Self> {
-        let (version, flags) = header.read_extended_header(reader)?;
+    fn read<R: ReadAtom>(it: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
+        let (version, flags) = it.read_extended_header()?;
 
         let mut tkhd = TkhdAtom {
             flags,
@@ -54,28 +51,28 @@ impl Atom for TkhdAtom {
         // Version 0 uses 32-bit time values, verion 1 used 64-bit values.
         match version {
             0 => {
-                tkhd.ctime = u64::from(reader.read_be_u32()?);
-                tkhd.mtime = u64::from(reader.read_be_u32()?);
-                tkhd.id = reader.read_be_u32()?;
-                let _ = reader.read_be_u32()?; // Reserved
-                tkhd.duration = u64::from(reader.read_be_u32()?);
+                tkhd.ctime = u64::from(it.read_u32()?);
+                tkhd.mtime = u64::from(it.read_u32()?);
+                tkhd.id = it.read_u32()?;
+                let _ = it.read_u32()?; // Reserved
+                tkhd.duration = u64::from(it.read_u32()?);
             }
             1 => {
-                tkhd.ctime = reader.read_be_u64()?;
-                tkhd.mtime = reader.read_be_u64()?;
-                tkhd.id = reader.read_be_u32()?;
-                let _ = reader.read_be_u32()?; // Reserved
-                tkhd.duration = reader.read_be_u64()?;
+                tkhd.ctime = it.read_u64()?;
+                tkhd.mtime = it.read_u64()?;
+                tkhd.id = it.read_u32()?;
+                let _ = it.read_u32()?; // Reserved
+                tkhd.duration = it.read_u64()?;
             }
-            _ => return decode_error("isomp4: invalid tkhd version"),
+            _ => return decode_error("isomp4 (tkhd): invalid version"),
         }
 
         // Reserved
-        let _ = reader.read_be_u64()?;
+        let _ = it.read_u64()?;
 
-        tkhd.layer = reader.read_be_u16()?;
-        tkhd.alternate_group = reader.read_be_u16()?;
-        tkhd.volume = FpU8::parse_raw(reader.read_be_u16()?);
+        tkhd.layer = it.read_u16()?;
+        tkhd.alternate_group = it.read_u16()?;
+        tkhd.volume = FpU8::parse_raw(it.read_u16()?);
 
         // The remainder of the header is only useful for video tracks.
 

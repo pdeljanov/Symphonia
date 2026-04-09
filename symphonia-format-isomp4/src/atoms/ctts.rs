@@ -5,10 +5,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::errors::Result;
-use symphonia_core::io::ReadBytes;
-
-use crate::atoms::{Atom, AtomHeader};
+use crate::atoms::{Atom, AtomHeader, AtomIterator, ReadAtom, Result};
 
 /// Composition time atom.
 #[allow(dead_code)]
@@ -16,7 +13,7 @@ use crate::atoms::{Atom, AtomHeader};
 pub struct CttsAtom {}
 
 impl Atom for CttsAtom {
-    fn read<B: ReadBytes>(_reader: &mut B, _header: AtomHeader) -> Result<Self> {
+    fn read<R: ReadAtom>(_it: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
         todo!()
     }
 }

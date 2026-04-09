@@ -5,11 +5,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::errors::{Result, decode_error};
-use symphonia_core::io::ReadBytes;
 use symphonia_core::util::bits;
 
-use crate::atoms::{Atom, AtomHeader};
+use crate::atoms::{Atom, AtomHeader, AtomIterator, ReadAtom, Result, decode_error};
 
 /// Track fragment run atom.
 #[allow(dead_code)]
@@ -242,19 +240,19 @@ impl TrunAtom {
 }
 
 impl Atom for TrunAtom {
-    fn read<B: ReadBytes>(reader: &mut B, mut header: AtomHeader) -> Result<Self> {
-        let (_, flags) = header.read_extended_header(reader)?;
+    fn read<R: ReadAtom>(it: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
+        let (_, flags) = it.read_extended_header()?;
 
-        let sample_count = reader.read_be_u32()?;
+        let sample_count = it.read_u32()?;
 
         let data_offset = match flags & TrunAtom::DATA_OFFSET_PRESENT {
             0 => None,
-            _ => Some(bits::sign_extend_leq32_to_i32(reader.read_be_u32()?, 32)),
+            _ => Some(bits::sign_extend_leq32_to_i32(it.read_u32()?, 32)),
         };
 
         let first_sample_flags = match flags & TrunAtom::FIRST_SAMPLE_FLAGS_PRESENT {
             0 => None,
-            _ => Some(reader.read_be_u32()?),
+            _ => Some(it.read_u32()?),
         };
 
         // If the first-sample-flags-present flag is set, then the sample-flags-present flag should
@@ -273,29 +271,28 @@ impl Atom for TrunAtom {
         let mut total_sample_size = 0;
         let mut total_sample_duration = 0;
 
-        // TODO: Apply a limit.
         for _ in 0..sample_count {
             if (flags & TrunAtom::SAMPLE_DURATION_PRESENT) != 0 {
-                let duration = reader.read_be_u32()?;
+                let duration = it.read_u32()?;
                 total_sample_duration += u64::from(duration);
                 sample_duration.push(duration);
             }
 
             if (flags & TrunAtom::SAMPLE_SIZE_PRESENT) != 0 {
-                let size = reader.read_be_u32()?;
+                let size = it.read_u32()?;
                 total_sample_size += u64::from(size);
                 sample_size.push(size);
             }
 
             if (flags & TrunAtom::SAMPLE_FLAGS_PRESENT) != 0 {
-                sample_flags.push(reader.read_be_u32()?);
+                sample_flags.push(it.read_u32()?);
             }
 
             // Ignoring composition time for now since it's a video thing...
             if (flags & TrunAtom::SAMPLE_COMPOSITION_TIME_OFFSETS_PRESENT) != 0 {
                 // For version 0, this is a u32.
                 // For version 1, this is a i32.
-                let _ = reader.read_be_u32()?;
+                let _ = it.read_u32()?;
             }
         }
 

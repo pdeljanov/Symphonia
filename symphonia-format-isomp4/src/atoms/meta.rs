@@ -7,11 +7,9 @@
 
 use std::fmt::Debug;
 
-use symphonia_core::errors::Result;
-use symphonia_core::io::ReadBytes;
 use symphonia_core::meta::MetadataRevision;
 
-use crate::atoms::{Atom, AtomHeader, AtomIterator, AtomType, IlstAtom};
+use crate::atoms::{Atom, AtomHeader, AtomIterator, AtomType, IlstAtom, ReadAtom, Result};
 
 /// User data atom.
 #[allow(dead_code)]
@@ -35,17 +33,15 @@ impl MetaAtom {
 
 impl Atom for MetaAtom {
     #[allow(clippy::single_match)]
-    fn read<B: ReadBytes>(reader: &mut B, mut header: AtomHeader) -> Result<Self> {
-        let (_, _) = header.read_extended_header(reader)?;
-
-        let mut iter = AtomIterator::new(reader, header);
+    fn read<R: ReadAtom>(it: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
+        let (_, _) = it.read_extended_header()?;
 
         let mut metadata = None;
 
-        while let Some(header) = iter.next()? {
+        while let Some(header) = it.next_header()? {
             match header.atom_type {
                 AtomType::MetaList => {
-                    metadata = Some(iter.read_atom::<IlstAtom>()?.metadata);
+                    metadata = Some(it.read_atom::<IlstAtom>()?.metadata);
                 }
                 // TODO: Support country and language lists.
                 _ => (),

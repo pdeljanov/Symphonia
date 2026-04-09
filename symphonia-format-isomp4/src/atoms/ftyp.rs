@@ -6,10 +6,10 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use symphonia_core::common::FourCc;
-use symphonia_core::errors::{Error, Result, decode_error};
-use symphonia_core::io::ReadBytes;
+use symphonia_core::errors::Error;
 
-use crate::atoms::{Atom, AtomHeader};
+use crate::atoms::{Atom, AtomHeader, AtomIterator, ReadAtom, Result};
+use crate::atoms::{decode_error, limits::*};
 
 /// File type atom.
 #[allow(dead_code)]
@@ -21,30 +21,32 @@ pub struct FtypAtom {
 }
 
 impl Atom for FtypAtom {
-    fn read<B: ReadBytes>(reader: &mut B, header: AtomHeader) -> Result<Self> {
+    fn read<R: ReadAtom>(it: &mut AtomIterator<R>, header: &AtomHeader) -> Result<Self> {
         // The Ftyp atom must be have a data length that is known, and it must be a multiple of 4
         // since it only stores FourCCs.
         let data_len = header
-            .data_len()
+            .data_size()
             .ok_or(Error::DecodeError("isomp4 (ftyp): expected atom size to be known"))?;
 
         if data_len < 8 || data_len & 0x3 != 0 {
-            return decode_error("isomp4: invalid ftyp data length");
+            return decode_error("isomp4 (ftyp): invalid data length");
         }
 
         // Major
-        let major = FourCc::new(reader.read_quad_bytes()?);
+        let major = FourCc::new(it.read_quad_bytes()?);
 
         // Minor
-        let minor = reader.read_quad_bytes()?;
+        let minor = it.read_quad_bytes()?;
 
         // The remainder of the Ftyp atom contains the FourCCs of compatible brands.
         let n_brands = (data_len - 8) / 4;
 
-        let mut compatible = Vec::new();
+        // Limit the maximum initial capacity to prevent malicious files from using all the
+        // available memory.
+        let mut compatible = Vec::with_capacity(MAX_TABLE_INITIAL_CAPACITY.min(n_brands as usize));
 
         for _ in 0..n_brands {
-            let brand = reader.read_quad_bytes()?;
+            let brand = it.read_quad_bytes()?;
             compatible.push(FourCc::new(brand));
         }
 

@@ -5,10 +5,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::errors::{Result, decode_error};
-use symphonia_core::io::ReadBytes;
-
-use crate::atoms::{Atom, AtomHeader};
+use crate::atoms::limits::*;
+use crate::atoms::{Atom, AtomHeader, AtomIterator, ReadAtom, Result, decode_error};
 
 #[derive(Debug)]
 pub struct StscEntry {
@@ -56,20 +54,21 @@ impl StscAtom {
 }
 
 impl Atom for StscAtom {
-    fn read<B: ReadBytes>(reader: &mut B, mut header: AtomHeader) -> Result<Self> {
-        let (_, _) = header.read_extended_header(reader)?;
+    fn read<R: ReadAtom>(it: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
+        let (_, _) = it.read_extended_header()?;
 
-        let entry_count = reader.read_be_u32()?;
+        let entry_count = it.read_u32()?;
 
-        // TODO: Apply a limit.
-        let mut entries = Vec::with_capacity(entry_count as usize);
+        // Limit the maximum initial capacity to prevent malicious files from using all the
+        // available memory.
+        let mut entries = Vec::with_capacity(MAX_TABLE_INITIAL_CAPACITY.min(entry_count as usize));
 
         for _ in 0..entry_count {
             entries.push(StscEntry {
-                first_chunk: reader.read_be_u32()? - 1,
+                first_chunk: it.read_u32()? - 1,
                 first_sample: 0,
-                samples_per_chunk: reader.read_be_u32()?,
-                sample_desc_index: reader.read_be_u32()?,
+                samples_per_chunk: it.read_u32()?,
+                sample_desc_index: it.read_u32()?,
             });
         }
 
@@ -78,12 +77,12 @@ impl Atom for StscAtom {
             for i in 0..entry_count as usize - 1 {
                 // Validate that first_chunk is monotonic across all entries.
                 if entries[i + 1].first_chunk < entries[i].first_chunk {
-                    return decode_error("isomp4: stsc entry first chunk not monotonic");
+                    return decode_error("isomp4 (stsc): entry first chunk not monotonic");
                 }
 
                 // Validate that samples per chunk is > 0. Could the entry be ignored?
                 if entries[i].samples_per_chunk == 0 {
-                    return decode_error("isomp4: stsc entry has 0 samples per chunk");
+                    return decode_error("isomp4 (stsc): entry has 0 samples per chunk");
                 }
 
                 let n = entries[i + 1].first_chunk - entries[i].first_chunk;
@@ -94,7 +93,7 @@ impl Atom for StscAtom {
 
             // Validate that samples per chunk is > 0. Could the entry be ignored?
             if entries[entry_count as usize - 1].samples_per_chunk == 0 {
-                return decode_error("isomp4: stsc entry has 0 samples per chunk");
+                return decode_error("isomp4 (stsc): entry has 0 samples per chunk");
             }
         }
 

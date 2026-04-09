@@ -5,10 +5,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::errors::Result;
-use symphonia_core::io::ReadBytes;
-
-use crate::atoms::{Atom, AtomHeader};
+use crate::atoms::{Atom, AtomHeader, AtomIterator, ReadAtom, Result};
 
 /// Track fragment header atom.
 #[allow(dead_code)]
@@ -28,34 +25,34 @@ pub struct TfhdAtom {
 }
 
 impl Atom for TfhdAtom {
-    fn read<B: ReadBytes>(reader: &mut B, mut header: AtomHeader) -> Result<Self> {
-        let (_, flags) = header.read_extended_header(reader)?;
+    fn read<R: ReadAtom>(it: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
+        let (_, flags) = it.read_extended_header()?;
 
-        let track_id = reader.read_be_u32()?;
+        let track_id = it.read_u32()?;
 
         let base_data_offset = match flags & 0x1 {
             0 => None,
-            _ => Some(reader.read_be_u64()?),
+            _ => Some(it.read_u64()?),
         };
 
         let sample_desc_idx = match flags & 0x2 {
             0 => None,
-            _ => Some(reader.read_be_u32()?),
+            _ => Some(it.read_u32()?),
         };
 
         let default_sample_duration = match flags & 0x8 {
             0 => None,
-            _ => Some(reader.read_be_u32()?),
+            _ => Some(it.read_u32()?),
         };
 
         let default_sample_size = match flags & 0x10 {
             0 => None,
-            _ => Some(reader.read_be_u32()?),
+            _ => Some(it.read_u32()?),
         };
 
         let default_sample_flags = match flags & 0x20 {
             0 => None,
-            _ => Some(reader.read_be_u32()?),
+            _ => Some(it.read_u32()?),
         };
 
         let duration_is_empty = (flags & 0x1_0000) != 0;

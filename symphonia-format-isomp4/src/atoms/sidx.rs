@@ -5,10 +5,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::errors::{Error, Result, decode_error};
-use symphonia_core::io::ReadBytes;
+use symphonia_core::errors::Error;
 
-use crate::atoms::{Atom, AtomHeader};
+use crate::atoms::{Atom, AtomHeader, AtomIterator, ReadAtom, Result, decode_error};
 
 #[derive(Debug)]
 pub enum ReferenceType {
@@ -39,34 +38,32 @@ pub struct SidxAtom {
 }
 
 impl Atom for SidxAtom {
-    fn read<B: ReadBytes>(reader: &mut B, mut header: AtomHeader) -> Result<Self> {
-        let (version, _) = header.read_extended_header(reader)?;
+    fn read<R: ReadAtom>(it: &mut AtomIterator<R>, header: &AtomHeader) -> Result<Self> {
+        let (version, _) = it.read_extended_header()?;
 
-        let reference_id = reader.read_be_u32()?;
-        let timescale = reader.read_be_u32()?;
+        let reference_id = it.read_u32()?;
+        let timescale = it.read_u32()?;
 
         // The anchor point for segment offsets is the first byte after this atom.
         let anchor = header
-            .atom_len()
-            .map(|atom_len| header.atom_pos() + atom_len.get())
+            .size()
+            .map(|atom_len| header.pos() + atom_len.get())
             .ok_or(Error::DecodeError("isomp4 (sidx): expected atom size to be known"))?;
 
         let (earliest_pts, first_offset) = match version {
-            0 => (u64::from(reader.read_be_u32()?), anchor + u64::from(reader.read_be_u32()?)),
-            1 => (reader.read_be_u64()?, anchor + reader.read_be_u64()?),
-            _ => {
-                return decode_error("isomp4: invalid sidx version");
-            }
+            0 => (u64::from(it.read_u32()?), anchor + u64::from(it.read_u32()?)),
+            1 => (it.read_u64()?, anchor + it.read_u64()?),
+            _ => return decode_error("isomp4 (sidx): invalid version"),
         };
 
-        let _reserved = reader.read_be_u16()?;
-        let reference_count = reader.read_be_u16()?;
+        let _reserved = it.read_u16()?;
+        let reference_count = it.read_u16()?;
 
         let mut references = Vec::new();
 
         for _ in 0..reference_count {
-            let reference = reader.read_be_u32()?;
-            let subsegment_duration = reader.read_be_u32()?;
+            let reference = it.read_u32()?;
+            let subsegment_duration = it.read_u32()?;
 
             let reference_type = match (reference & 0x8000_0000) != 0 {
                 false => ReferenceType::Media,
@@ -76,7 +73,7 @@ impl Atom for SidxAtom {
             let reference_size = reference & !0x8000_0000;
 
             // Ignore SAP
-            let _ = reader.read_be_u32()?;
+            let _ = it.read_u32()?;
 
             references.push(SidxReference { reference_type, reference_size, subsegment_duration });
         }

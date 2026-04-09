@@ -6,11 +6,12 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use symphonia_core::codecs::audio::well_known::CODEC_ID_OPUS;
-use symphonia_core::errors::{Error, Result, decode_error, unsupported_error};
-use symphonia_core::io::ReadBytes;
+use symphonia_core::errors::Error;
 
 use crate::atoms::stsd::AudioSampleEntry;
-use crate::atoms::{Atom, AtomHeader};
+use crate::atoms::{
+    Atom, AtomHeader, AtomIterator, ReadAtom, Result, decode_error, unsupported_error,
+};
 
 /// Opus atom.
 #[allow(dead_code)]
@@ -21,7 +22,7 @@ pub struct OpusAtom {
 }
 
 impl Atom for OpusAtom {
-    fn read<B: ReadBytes>(reader: &mut B, header: AtomHeader) -> Result<Self> {
+    fn read<R: ReadAtom>(reader: &mut AtomIterator<R>, header: &AtomHeader) -> Result<Self> {
         const OPUS_MAGIC: &[u8] = b"OpusHead";
         const OPUS_MAGIC_LEN: usize = OPUS_MAGIC.len();
 
@@ -35,7 +36,7 @@ impl Atom for OpusAtom {
         // signature. Therefore, the atom data length should be atleast as long as the shortest
         // Opus identification header.
         let data_len = header
-            .data_len()
+            .data_size()
             .ok_or(Error::DecodeError("isomp4 (opus): expected atom size to be known"))?
             as usize;
 

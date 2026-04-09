@@ -10,15 +10,10 @@ use symphonia_core::codecs::CodecProfile;
 use symphonia_core::codecs::video::VideoExtraData;
 use symphonia_core::codecs::video::well_known::CODEC_ID_H264;
 use symphonia_core::codecs::video::well_known::extra_data::VIDEO_EXTRA_DATA_ID_AVC_DECODER_CONFIG;
-use symphonia_core::errors::{Result, decode_error};
-use symphonia_core::io::ReadBytes;
 
 use crate::atoms::stsd::VisualSampleEntry;
-use crate::atoms::{Atom, AtomHeader};
+use crate::atoms::{Atom, AtomHeader, AtomIterator, ReadAtom, Result, decode_error};
 
-const MAX_ATOM_SIZE: u64 = 1024;
-
-#[allow(dead_code)]
 #[derive(Debug)]
 pub struct AvcCAtom {
     /// AVC extra data (AVCDecoderConfigurationRecord).
@@ -28,18 +23,25 @@ pub struct AvcCAtom {
 }
 
 impl Atom for AvcCAtom {
-    fn read<B: ReadBytes>(reader: &mut B, header: AtomHeader) -> Result<Self> {
+    fn read<R: ReadAtom>(it: &mut AtomIterator<R>, header: &AtomHeader) -> Result<Self> {
+        // TODO: Validate.
+        const MAX_AVCC_ATOM_SIZE: u64 = 1 * 1024;
+
         // The AVCConfiguration atom payload is a single AVCDecoderConfigurationRecord. This record
-        // forms the defacto codec extra data. It should not exceed 1kb
-        let len = match header.data_len() {
-            Some(len) if len <= MAX_ATOM_SIZE => len as usize,
-            Some(_) => return decode_error("isomp4 (avcC): atom size is greater than 1kb"),
-            None => return decode_error("isomp4 (avcC): expected atom size to be known"),
+        // forms the defacto codec extra data. It should not exceed 1 kB.
+        let len = match header.data_size() {
+            Some(len) if len <= MAX_AVCC_ATOM_SIZE => len as usize,
+            Some(_) => {
+                return decode_error("isomp4 (avcC): atom size is greater than 1 kb");
+            }
+            None => {
+                return decode_error("isomp4 (avcC): expected atom size to be known");
+            }
         };
 
         let extra_data = VideoExtraData {
             id: VIDEO_EXTRA_DATA_ID_AVC_DECODER_CONFIG,
-            data: reader.read_boxed_slice_exact(len)?,
+            data: it.read_boxed_slice_exact(len)?,
         };
 
         let avc_config = AVCDecoderConfigurationRecord::read(&extra_data.data)?;

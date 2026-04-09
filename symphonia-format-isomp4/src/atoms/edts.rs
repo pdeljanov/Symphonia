@@ -5,10 +5,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::errors::Result;
-use symphonia_core::io::ReadBytes;
-
-use crate::atoms::{Atom, AtomHeader, AtomIterator, AtomType, ElstAtom};
+use crate::atoms::{Atom, AtomHeader, AtomIterator, AtomType, ElstAtom, ReadAtom, Result};
 
 /// Edits atom.
 #[allow(dead_code)]
@@ -19,15 +16,13 @@ pub struct EdtsAtom {
 
 impl Atom for EdtsAtom {
     #[allow(clippy::single_match)]
-    fn read<B: ReadBytes>(reader: &mut B, header: AtomHeader) -> Result<Self> {
-        let mut iter = AtomIterator::new(reader, header);
-
+    fn read<R: ReadAtom>(it: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
         let mut elst = None;
 
-        while let Some(header) = iter.next()? {
+        while let Some(header) = it.next_header()? {
             match header.atom_type {
                 AtomType::EditList => {
-                    elst = Some(iter.read_atom::<ElstAtom>()?);
+                    elst = Some(it.read_atom::<ElstAtom>()?);
                 }
                 _ => (),
             }

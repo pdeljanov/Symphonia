@@ -5,10 +5,10 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::errors::{Result, decode_error};
-use symphonia_core::io::ReadBytes;
-
-use crate::atoms::{Atom, AtomHeader, AtomIterator, AtomType, HdlrAtom, MdhdAtom, MinfAtom};
+use crate::atoms::{
+    Atom, AtomHeader, AtomIterator, AtomType, HdlrAtom, MdhdAtom, MinfAtom, ReadAtom, Result,
+    decode_error,
+};
 
 #[allow(dead_code)]
 #[derive(Debug)]
@@ -19,38 +19,36 @@ pub struct MdiaAtom {
 }
 
 impl Atom for MdiaAtom {
-    fn read<B: ReadBytes>(reader: &mut B, header: AtomHeader) -> Result<Self> {
-        let mut iter = AtomIterator::new(reader, header);
-
+    fn read<R: ReadAtom>(it: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
         let mut mdhd = None;
         let mut hdlr = None;
         let mut minf = None;
 
-        while let Some(header) = iter.next()? {
+        while let Some(header) = it.next_header()? {
             match header.atom_type {
                 AtomType::MediaHeader => {
-                    mdhd = Some(iter.read_atom::<MdhdAtom>()?);
+                    mdhd = Some(it.read_atom::<MdhdAtom>()?);
                 }
                 AtomType::Handler => {
-                    hdlr = Some(iter.read_atom::<HdlrAtom>()?);
+                    hdlr = Some(it.read_atom::<HdlrAtom>()?);
                 }
                 AtomType::MediaInfo => {
-                    minf = Some(iter.read_atom::<MinfAtom>()?);
+                    minf = Some(it.read_atom::<MinfAtom>()?);
                 }
                 _ => (),
             }
         }
 
         if mdhd.is_none() {
-            return decode_error("isomp4: missing mdhd atom");
+            return decode_error("isomp4 (mdia): missing mdhd atom");
         }
 
         if hdlr.is_none() {
-            return decode_error("isomp4: missing hdlr atom");
+            return decode_error("isomp4 (mdia): missing hdlr atom");
         }
 
         if minf.is_none() {
-            return decode_error("isomp4: missing minf atom");
+            return decode_error("isomp4 (mdia): missing minf atom");
         }
 
         Ok(MdiaAtom { mdhd: mdhd.unwrap(), hdlr: hdlr.unwrap(), minf: minf.unwrap() })

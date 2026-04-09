@@ -5,10 +5,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::errors::{Result, decode_error};
-use symphonia_core::io::ReadBytes;
-
-use crate::atoms::{Atom, AtomHeader};
+use crate::atoms::{Atom, AtomHeader, AtomIterator, ReadAtom, Result, decode_error};
 
 /// Movie extends header atom.
 #[allow(dead_code)]
@@ -19,15 +16,13 @@ pub struct MehdAtom {
 }
 
 impl Atom for MehdAtom {
-    fn read<B: ReadBytes>(reader: &mut B, mut header: AtomHeader) -> Result<Self> {
-        let (version, _) = header.read_extended_header(reader)?;
+    fn read<R: ReadAtom>(it: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
+        let (version, _) = it.read_extended_header()?;
 
         let fragment_duration = match version {
-            0 => u64::from(reader.read_be_u32()?),
-            1 => reader.read_be_u64()?,
-            _ => {
-                return decode_error("isomp4: invalid mehd version");
-            }
+            0 => u64::from(it.read_u32()?),
+            1 => it.read_u64()?,
+            _ => return decode_error("isomp4 (mehd): invalid version"),
         };
 
         Ok(MehdAtom { fragment_duration })

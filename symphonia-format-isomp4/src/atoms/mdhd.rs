@@ -7,10 +7,9 @@
 
 use std::num::NonZero;
 
-use symphonia_core::errors::{Error, Result, decode_error};
-use symphonia_core::io::ReadBytes;
+use symphonia_core::errors::Error;
 
-use crate::atoms::{Atom, AtomHeader};
+use crate::atoms::{Atom, AtomHeader, AtomIterator, ReadAtom, Result, decode_error};
 
 fn parse_language(code: u16) -> String {
     // An ISO language code outside of these bounds is not valid.
@@ -45,8 +44,8 @@ pub struct MdhdAtom {
 }
 
 impl Atom for MdhdAtom {
-    fn read<B: ReadBytes>(reader: &mut B, mut header: AtomHeader) -> Result<Self> {
-        let (version, _) = header.read_extended_header(reader)?;
+    fn read<R: ReadAtom>(it: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
+        let (version, _) = it.read_extended_header()?;
 
         let mut mdhd = MdhdAtom {
             ctime: 0,
@@ -58,32 +57,32 @@ impl Atom for MdhdAtom {
 
         match version {
             0 => {
-                mdhd.ctime = u64::from(reader.read_be_u32()?);
-                mdhd.mtime = u64::from(reader.read_be_u32()?);
-                mdhd.timescale = NonZero::new(reader.read_be_u32()?)
-                    .ok_or(Error::DecodeError("isomp4: timescale is zero"))?;
+                mdhd.ctime = u64::from(it.read_u32()?);
+                mdhd.mtime = u64::from(it.read_u32()?);
+                mdhd.timescale = NonZero::new(it.read_u32()?)
+                    .ok_or(Error::DecodeError("isomp4 (mdhd): timescale is zero"))?;
                 // 0xffff_ffff is a special case.
-                mdhd.duration = match reader.read_be_u32()? {
+                mdhd.duration = match it.read_u32()? {
                     u32::MAX => u64::MAX,
                     duration => u64::from(duration),
                 };
             }
             1 => {
-                mdhd.ctime = reader.read_be_u64()?;
-                mdhd.mtime = reader.read_be_u64()?;
-                mdhd.timescale = NonZero::new(reader.read_be_u32()?)
-                    .ok_or(Error::DecodeError("isomp4: timescale is zero"))?;
-                mdhd.duration = reader.read_be_u64()?;
+                mdhd.ctime = it.read_u64()?;
+                mdhd.mtime = it.read_u64()?;
+                mdhd.timescale = NonZero::new(it.read_u32()?)
+                    .ok_or(Error::DecodeError("isomp4 (mdhd): timescale is zero"))?;
+                mdhd.duration = it.read_u64()?;
             }
             _ => {
-                return decode_error("isomp4: invalid mdhd version");
+                return decode_error("isomp4 (mdhd): invalid mdhd version");
             }
         }
 
-        mdhd.language = parse_language(reader.read_be_u16()?);
+        mdhd.language = parse_language(it.read_u16()?);
 
         // Quality
-        let _ = reader.read_be_u16()?;
+        let _ = it.read_u16()?;
 
         Ok(mdhd)
     }

@@ -6,10 +6,9 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use symphonia_core::common::FourCc;
-use symphonia_core::errors::{Error, Result};
-use symphonia_core::io::ReadBytes;
+use symphonia_core::errors::Error;
 
-use crate::atoms::{Atom, AtomHeader};
+use crate::atoms::{Atom, AtomHeader, AtomIterator, ReadAtom, Result};
 
 use log::warn;
 
@@ -41,13 +40,16 @@ pub struct HdlrAtom {
 }
 
 impl Atom for HdlrAtom {
-    fn read<B: ReadBytes>(reader: &mut B, mut header: AtomHeader) -> Result<Self> {
-        let (_, _) = header.read_extended_header(reader)?;
+    fn read<R: ReadAtom>(it: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
+        /// The maximum size in bytes acceptable for a handler name.
+        pub const MAX_HDLR_NAME_BYTES: usize = 4 * 1024;
+
+        let (_, _) = it.read_extended_header()?;
 
         // Always 0 for MP4, but for Quicktime this contains the component type.
-        let _ = reader.read_quad_bytes()?;
+        let _ = it.read_quad_bytes()?;
 
-        let handler_type = match &reader.read_quad_bytes()? {
+        let handler_type = match &it.read_quad_bytes()? {
             b"vide" => HandlerType::Video,
             b"soun" => HandlerType::Sound,
             b"meta" => HandlerType::Metadata,
@@ -61,14 +63,16 @@ impl Atom for HdlrAtom {
 
         // These bytes are reserved for MP4, but for QuickTime they contain the component
         // manufacturer, flags, and flags mask.
-        reader.ignore_bytes(4 * 3)?;
+        it.ignore_bytes(4 * 3)?;
 
         // Human readable UTF-8 string of the track type.
         let name = {
-            let size = header
-                .data_unread_at(reader.pos())
-                .ok_or(Error::DecodeError("isomp4 (hdlr): expected atom size to be known"))?;
-            let buf = reader.read_boxed_slice_exact(size as usize)?;
+            let size = it
+                .data_left()?
+                .ok_or(Error::DecodeError("isomp4 (hdlr): expected atom size to be known"))?
+                .min(MAX_HDLR_NAME_BYTES as u64);
+
+            let buf = it.read_boxed_slice_exact(size as usize)?;
             String::from_utf8_lossy(&buf).to_string()
         };
 

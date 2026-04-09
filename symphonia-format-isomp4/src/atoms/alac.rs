@@ -6,11 +6,11 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use symphonia_core::codecs::audio::well_known::CODEC_ID_ALAC;
-use symphonia_core::errors::{Result, decode_error, unsupported_error};
-use symphonia_core::io::ReadBytes;
 
 use crate::atoms::stsd::AudioSampleEntry;
-use crate::atoms::{Atom, AtomHeader};
+use crate::atoms::{
+    Atom, AtomHeader, AtomIterator, ReadAtom, Result, decode_error, unsupported_error,
+};
 
 #[allow(dead_code)]
 #[derive(Debug)]
@@ -20,8 +20,8 @@ pub struct AlacAtom {
 }
 
 impl Atom for AlacAtom {
-    fn read<B: ReadBytes>(reader: &mut B, mut header: AtomHeader) -> Result<Self> {
-        let (version, flags) = header.read_extended_header(reader)?;
+    fn read<B: ReadAtom>(it: &mut AtomIterator<B>, _header: &AtomHeader) -> Result<Self> {
+        let (version, flags) = it.read_extended_header()?;
 
         if version != 0 {
             return unsupported_error("isomp4 (alac): unsupported alac version");
@@ -32,14 +32,16 @@ impl Atom for AlacAtom {
         }
 
         // The ALAC magic cookie (aka extra data) is either 24 or 48 bytes long.
-        let magic_len = match header.data_len() {
+        let magic_len = match it.data_left()? {
             Some(len @ 24) | Some(len @ 48) => len as usize,
-            Some(_) => return decode_error("isomp4 (alac): invalid magic cookie length"),
+            Some(_) => {
+                return decode_error("isomp4 (alac): invalid magic cookie length");
+            }
             None => return decode_error("isomp4 (alac): unknown magic cookie length"),
         };
 
         // Read the magic cookie.
-        let extra_data = reader.read_boxed_slice_exact(magic_len)?;
+        let extra_data = it.read_boxed_slice_exact(magic_len)?;
 
         Ok(AlacAtom { extra_data })
     }

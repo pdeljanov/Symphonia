@@ -5,10 +5,10 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::errors::{Result, decode_error};
-use symphonia_core::io::ReadBytes;
-
-use crate::atoms::{Atom, AtomHeader, AtomIterator, AtomType, EdtsAtom, MdiaAtom, TkhdAtom};
+use crate::atoms::{
+    Atom, AtomHeader, AtomIterator, AtomType, EdtsAtom, MdiaAtom, ReadAtom, Result, TkhdAtom,
+    decode_error,
+};
 
 /// Track atom.
 #[allow(dead_code)]
@@ -25,23 +25,21 @@ pub struct TrakAtom {
 }
 
 impl Atom for TrakAtom {
-    fn read<B: ReadBytes>(reader: &mut B, header: AtomHeader) -> Result<Self> {
-        let mut iter = AtomIterator::new(reader, header);
-
+    fn read<R: ReadAtom>(it: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
         let mut tkhd = None;
         let mut edts = None;
         let mut mdia = None;
 
-        while let Some(header) = iter.next()? {
+        while let Some(header) = it.next_header()? {
             match header.atom_type {
                 AtomType::TrackHeader => {
-                    tkhd = Some(iter.read_atom::<TkhdAtom>()?);
+                    tkhd = Some(it.read_atom::<TkhdAtom>()?);
                 }
                 AtomType::Edit => {
-                    edts = Some(iter.read_atom::<EdtsAtom>()?);
+                    edts = Some(it.read_atom::<EdtsAtom>()?);
                 }
                 AtomType::Media => {
-                    mdia = Some(iter.read_atom::<MdiaAtom>()?);
+                    mdia = Some(it.read_atom::<MdiaAtom>()?);
                 }
                 _ => (),
             }
@@ -49,12 +47,12 @@ impl Atom for TrakAtom {
 
         let Some(tkhd_atom) = tkhd
         else {
-            return decode_error("isomp4: missing tkhd atom");
+            return decode_error("isomp4 (trak): missing tkhd atom");
         };
 
         let Some(mdia_atom) = mdia
         else {
-            return decode_error("isomp4: missing mdia atom");
+            return decode_error("isomp4 (trak): missing mdia atom");
         };
 
         let duration =

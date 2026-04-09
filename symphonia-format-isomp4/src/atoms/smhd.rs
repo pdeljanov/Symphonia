@@ -5,10 +5,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::errors::Result;
-use symphonia_core::io::ReadBytes;
-
-use crate::atoms::{Atom, AtomHeader};
+use crate::atoms::{Atom, AtomHeader, AtomIterator, ReadAtom, Result};
 use crate::fp::FpI8;
 
 /// Sound header atom.
@@ -20,14 +17,14 @@ pub struct SmhdAtom {
 }
 
 impl Atom for SmhdAtom {
-    fn read<B: ReadBytes>(reader: &mut B, mut header: AtomHeader) -> Result<Self> {
-        let (_, _) = header.read_extended_header(reader)?;
+    fn read<R: ReadAtom>(it: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
+        let (_, _) = it.read_extended_header()?;
 
         // Stereo balance
-        let balance = FpI8::parse_raw(reader.read_be_u16()? as i16);
+        let balance = FpI8::parse_raw(it.read_u16()? as i16);
 
         // Reserved.
-        let _ = reader.read_be_u16()?;
+        let _ = it.read_u16()?;
 
         Ok(SmhdAtom { balance })
     }
