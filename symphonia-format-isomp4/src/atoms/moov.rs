@@ -81,6 +81,12 @@ impl Atom for MoovAtom {
                 }
             }
         }
+        else {
+            // for non fragmented mp4 mdhd.duration must be equal to stts.total_duration
+            for trak in traks.iter_mut() {
+                trak.mdia.mdhd.duration = trak.mdia.minf.stbl.stts.total_duration;
+            }
+        }
 
         Ok(MoovAtom { mvhd: mvhd.unwrap(), traks, mvex, udta })
     }

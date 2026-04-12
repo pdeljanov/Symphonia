@@ -910,6 +910,24 @@ impl fmt::Display for TimeBase {
     }
 }
 
+#[derive(Debug)]
+pub struct TimeSpan {
+    pub timescale: NonZero<u32>,
+    pub duration: u64,
+}
+
+impl Default for TimeSpan {
+    fn default() -> Self {
+        Self { timescale: NonZero::new(1).unwrap(), duration: 0 }
+    }
+}
+
+impl TimeSpan {
+    pub fn new(timescale: NonZero<u32>, duration: u64) -> Self {
+        TimeSpan { timescale, duration }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{Time, TimeBase, Timestamp};
