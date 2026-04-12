@@ -310,9 +310,11 @@ fn add_pair_tag<R: ReadAtom>(
 
     // There should be exactly 1 value.
     if let Some(value) = tag.values.first() {
-        // The "trkn" and "disk" atoms contain an 8 byte value buffer consisting of 4-tuple of
-        // 16-bit big-endian values. The data type is no-type.
-        if value.data.len() == 8 {
+        let data_len = value.data.len();
+
+        // The "trkn"/"disk" atoms contain a 8/6 byte value buffer consisting of 4/3-tuple of 16-bit
+        // big-endian values. The data type is no-type.
+        if data_len == 8 || data_len == 6 {
             let raw_key = get_raw_tag_key(tag.atom_type);
 
             // The first value is reserved, the second value is the track or disk number, the third
