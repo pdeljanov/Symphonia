@@ -15,10 +15,11 @@ use symphonia_core::errors::{Result, decode_error};
 use symphonia_core::io::ReadBitsLtr;
 use symphonia_core::io::vlc::{Codebook, Entry8x16};
 
+use symphonia_common::mpeg::audio::AudioObjectType;
+
 use crate::aac::codebooks;
 use crate::aac::common::*;
 use crate::aac::dsp;
-use crate::common::M4AType;
 
 use lazy_static::lazy_static;
 use log::debug;
@@ -410,7 +411,7 @@ impl Ics {
         &mut self,
         bs: &mut B,
         lcg: &mut Lcg,
-        m4atype: M4AType,
+        aot: AudioObjectType,
         common_window: bool,
     ) -> Result<()> {
         self.global_gain = bs.read_bits_leq32(8)? as u8;
@@ -429,12 +430,12 @@ impl Ics {
 
         validate!(self.pulse.is_none() || self.info.long_win);
 
-        let is_aac_lc = m4atype == M4AType::Lc;
+        let is_aac_lc = aot == AudioObjectType::Lc;
 
         self.tns = tns::Tns::read(bs, &self.info, is_aac_lc)?;
 
-        match m4atype {
-            M4AType::Ssr => self.gain = gain::GainControl::read(bs)?,
+        match aot {
+            AudioObjectType::Ssr => self.gain = gain::GainControl::read(bs)?,
             _ => {
                 let gain_control_data_present = bs.read_bool()?;
                 validate!(!gain_control_data_present);

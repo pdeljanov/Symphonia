@@ -19,9 +19,9 @@ use symphonia_core::formats::well_known::FORMAT_ID_ADTS;
 use symphonia_core::io::*;
 use symphonia_core::meta::{Metadata, MetadataLog};
 
-use std::io::{Seek, SeekFrom};
+use symphonia_common::mpeg::audio::*;
 
-use super::common::{AAC_CHANNELS, AAC_SAMPLE_RATES, M4A_TYPES, M4AType, map_to_channels};
+use std::io::{Seek, SeekFrom};
 
 use log::{debug, info};
 
@@ -110,7 +110,7 @@ impl Scoreable for AdtsReader<'_> {
 #[allow(dead_code)]
 struct AdtsHeader {
     /// Audio profile.
-    profile: M4AType,
+    profile: AudioObjectType,
     /// Audio channel configuration.
     channels: Option<Channels>,
     /// The sample rate in Hertz.
@@ -141,23 +141,27 @@ impl AdtsHeader {
 
         let mut bs = BitReaderLtr::new(&buf);
 
-        // Profile.
-        let profile = M4A_TYPES[bs.read_bits_leq32(2)? as usize + 1];
+        // Profile (audio object type).
+        // UNWRAP:
+        let profile = get_mpeg4_audio_object_type_by_index(bs.read_bits_leq32(2)? + 1).unwrap();
 
-        // Sample rate index.
-        let sample_rate = match bs.read_bits_leq32(4)? as usize {
-            15 => return decode_error("adts: forbidden sample rate"),
-            13 | 14 => return decode_error("adts: reserved sample rate"),
-            idx => AAC_SAMPLE_RATES[idx],
+        // Sample rate from sample rate index.
+        let sample_rate = match get_mpeg4_audio_sample_rate_by_index(bs.read_bits_leq32(4)?) {
+            Mpeg4AudioSampleRate::SampleRate(rate) => rate,
+            Mpeg4AudioSampleRate::Escape => return decode_error("adts: forbidden sample rate"),
+            Mpeg4AudioSampleRate::Invalid => return decode_error("adts: invalid sample rate"),
         };
 
         // Private bit.
         bs.ignore_bit()?;
 
         // Channel configuration.
-        let channels = match bs.read_bits_leq32(3)? {
-            0 => None,
-            idx => map_to_channels(AAC_CHANNELS[idx as usize]),
+        let channels = match get_mpeg4_audio_channels_by_config_index(bs.read_bits_leq32(3)?) {
+            Mpeg4AudioChannels::Channels(channels) => Some(channels),
+            Mpeg4AudioChannels::Escape => None,
+            Mpeg4AudioChannels::Invalid => {
+                return decode_error("adts: invalid channel configuration");
+            }
         };
 
         // Originality, Home, Copyrighted ID bit, Copyright ID start bits. Only used for encoding.

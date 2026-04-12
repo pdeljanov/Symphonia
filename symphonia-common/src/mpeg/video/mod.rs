@@ -26,7 +26,7 @@ impl AVCDecoderConfigurationRecord {
 
         if configuration_version != 1 {
             return decode_error(
-                "utils (avc): unexpected avc decoder configuration record version",
+                "common (avc): unexpected avc decoder configuration record version",
             );
         }
 
@@ -59,7 +59,7 @@ impl HEVCDecoderConfigurationRecord {
 
         if configuration_version != 1 {
             return decode_error(
-                "utils (hevc): unexpected hevc decoder configuration record version",
+                "common (hevc): unexpected hevc decoder configuration record version",
             );
         }
 

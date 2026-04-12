@@ -15,10 +15,11 @@ use symphonia_core::audio::{AudioBuffer, AudioMut};
 use symphonia_core::errors::{Result, decode_error};
 use symphonia_core::io::ReadBitsLtr;
 
+use symphonia_common::mpeg::audio::AudioObjectType;
+
 use crate::aac::common::*;
 use crate::aac::dsp;
 use crate::aac::ics;
-use crate::common::M4AType;
 
 #[derive(Clone)]
 pub struct ChannelPair {
@@ -49,12 +50,20 @@ impl ChannelPair {
         self.ics1.reset();
     }
 
-    pub fn decode_ga_sce<B: ReadBitsLtr>(&mut self, bs: &mut B, m4atype: M4AType) -> Result<()> {
-        self.ics0.decode(bs, &mut self.lcg, m4atype, false)?;
+    pub fn decode_ga_sce<B: ReadBitsLtr>(
+        &mut self,
+        bs: &mut B,
+        aot: AudioObjectType,
+    ) -> Result<()> {
+        self.ics0.decode(bs, &mut self.lcg, aot, false)?;
         Ok(())
     }
 
-    pub fn decode_ga_cpe<B: ReadBitsLtr>(&mut self, bs: &mut B, m4atype: M4AType) -> Result<()> {
+    pub fn decode_ga_cpe<B: ReadBitsLtr>(
+        &mut self,
+        bs: &mut B,
+        aot: AudioObjectType,
+    ) -> Result<()> {
         let common_window = bs.read_bool()?;
 
         if common_window {
@@ -94,8 +103,8 @@ impl ChannelPair {
             self.ics1.info.copy_from_common(&self.ics0.info);
         }
 
-        self.ics0.decode(bs, &mut self.lcg, m4atype, common_window)?;
-        self.ics1.decode(bs, &mut self.lcg, m4atype, common_window)?;
+        self.ics0.decode(bs, &mut self.lcg, aot, common_window)?;
+        self.ics1.decode(bs, &mut self.lcg, aot, common_window)?;
 
         // Joint-stereo decoding
         if common_window {

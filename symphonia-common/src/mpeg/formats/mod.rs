@@ -15,6 +15,7 @@ use log::debug;
 pub const MIN_OBJECT_DESCRIPTOR_SIZE: u64 = 2;
 
 /// Object descriptor tags as defined in ISO/IEC 14496-1.
+#[non_exhaustive]
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ClassTag {
     ObjectDescriptor,
@@ -30,7 +31,7 @@ pub enum ClassTag {
 /// Read an ISO/IEC 14496-1 Object Descriptor header and return the class tag and size.
 pub fn read_object_descriptor_header<B: ReadBytes>(reader: &mut B) -> Result<(ClassTag, u64)> {
     let tag = match reader.read_u8()? {
-        0x0 | 0xff => return decode_error("common (mpeg): forbidden object descriptor tag"),
+        0x0 | 0xff => return decode_error("common (mp4): forbidden object descriptor tag"),
         0x1 => ClassTag::ObjectDescriptor,
         0x2 => ClassTag::InitialObjectDescriptor,
         0x3 => ClassTag::EsDescriptor,
@@ -154,6 +155,7 @@ class ES_Descriptor extends BaseDescriptor : bit(8) tag=ES_DescrTag {
 }
 */
 
+#[non_exhaustive]
 #[derive(Debug)]
 pub struct ESDescriptor {
     pub es_id: u16,
@@ -212,12 +214,12 @@ impl ObjectDescriptor for ESDescriptor {
 
         // Decoder configuration descriptor is mandatory.
         if dec_config.is_none() {
-            return decode_error("common (mpeg): missing decoder config descriptor");
+            return decode_error("common (mp4): missing decoder config descriptor");
         }
 
         // SL descriptor is mandatory.
         if sl_config.is_none() {
-            return decode_error("common (mpeg): missing sl config descriptor");
+            return decode_error("common (mp4): missing sl config descriptor");
         }
 
         Ok(ESDescriptor { es_id, dec_config: dec_config.unwrap(), sl_config: sl_config.unwrap() })
@@ -238,6 +240,7 @@ class DecoderConfigDescriptor extends BaseDescriptor : bit(8) tag=DecoderConfigD
 }
 */
 
+#[non_exhaustive]
 #[derive(Debug)]
 pub struct DecoderConfigDescriptor {
     pub object_type_indication: u8,
@@ -293,6 +296,7 @@ impl ObjectDescriptor for DecoderConfigDescriptor {
     }
 }
 
+#[non_exhaustive]
 #[derive(Debug)]
 pub struct DecoderSpecificInfo {
     pub extra_data: Box<[u8]>,
@@ -339,6 +343,7 @@ class SLConfigDescriptor extends BaseDescriptor : bit(8) tag=SLConfigDescrTag {
 }
 */
 
+#[non_exhaustive]
 #[derive(Debug)]
 pub struct SLConfigDescriptor;
 
@@ -356,7 +361,7 @@ impl ObjectDescriptor for SLConfigDescriptor {
         match scoped.read_u8()? {
             PREDEFINED_CUSTOM | PREDEFINED_NULL | PREDEFINED_MP4 => (),
             _ => {
-                return unsupported_error("common (mpeg): invalid sl config descriptor predefined");
+                return unsupported_error("common (mp4): invalid sl config descriptor predefined");
             }
         };
 

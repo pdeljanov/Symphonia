@@ -18,7 +18,6 @@
 
 mod aac;
 mod adts;
-mod common;
 
 pub use aac::AacDecoder;
 pub use adts::AdtsReader;
