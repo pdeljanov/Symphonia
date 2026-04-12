@@ -632,12 +632,12 @@ impl Floor1 {
         let mut hx = 0;
         let mut hy = 0;
         let mut lx = 0;
-        let mut ly = floor_final_y0 * multiplier;
+        let mut ly = (floor_final_y0 * multiplier).clamp(0, 255);
 
         // Iterate in sort-order.
         for i in self.setup.floor1_x_list_sort_order[1..].iter().map(|i| *i as usize) {
             if self.floor_step2_flag[i] {
-                hy = self.floor_final_y[i] * multiplier;
+                hy = (self.floor_final_y[i] * multiplier).clamp(0, 255);
                 hx = self.setup.floor1_x_list[i];
 
                 render_line(lx, ly, hx, hy, n as usize, floor);
@@ -783,6 +783,10 @@ fn render_point(x0: u32, y0: i32, x1: u32, y1: i32, x: u32) -> i32 {
 
 #[inline(always)]
 fn render_line(x0: u32, y0: i32, x1: u32, y1: i32, n: usize, v: &mut [f32]) {
+    if x0 as usize >= n {
+        return;
+    }
+
     let dy = y1 - y0;
     let adx = (x1 - x0) as i32;
 
@@ -800,6 +804,10 @@ fn render_line(x0: u32, y0: i32, x1: u32, y1: i32, n: usize, v: &mut [f32]) {
 
     let x_begin = x0 as usize + 1;
     let x_end = min(n, x1 as usize);
+
+    if x_begin > x_end {
+        return;
+    }
 
     for v in v[x_begin..x_end].iter_mut() {
         err += ady;
