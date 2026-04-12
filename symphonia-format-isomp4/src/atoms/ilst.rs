@@ -318,12 +318,21 @@ fn add_pair_tag<R: ReadAtom>(
             let raw_key = get_raw_tag_key(tag.atom_type);
 
             // The first value is reserved, the second value is the track or disk number, the third
-            // value is the track or disk total, and the fourth is reserved.
-            let rv0 = RawValue::from(u16::from_be_bytes(value.data[2..4].try_into().unwrap()));
-            let rv1 = RawValue::from(u16::from_be_bytes(value.data[4..6].try_into().unwrap()));
+            // value is the track or disk total, and the fourth is reserved (if present).
+            let d0 = u16::from_be_bytes(value.data[2..4].try_into().unwrap());
+            let d1 = u16::from_be_bytes(value.data[4..6].try_into().unwrap());
 
-            builder.add_tag(Tag::new_from_parts(raw_key, rv0.clone(), map0(&rv0)));
-            builder.add_tag(Tag::new_from_parts(raw_key, rv1.clone(), map1(&rv1)));
+            // Ignore a track/disk number of 0.
+            if d0 > 0 {
+                let rv0 = RawValue::from(d0);
+                builder.add_tag(Tag::new_from_parts(raw_key, rv0.clone(), map0(&rv0)));
+            }
+
+            // Ignore a track/disk total of 0.
+            if d1 > 0 {
+                let rv1 = RawValue::from(d1);
+                builder.add_tag(Tag::new_from_parts(raw_key, rv1.clone(), map1(&rv1)));
+            }
         }
     }
 
