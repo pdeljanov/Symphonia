@@ -75,15 +75,31 @@ pub struct DcaHeader {
     pub samples_per_frame: u32,
 }
 
+/// DCA core sync words. The four orderings cover 16-bit BE/LE and 14-bit BE/LE.
+/// FFmpeg `dca_syncwords.h` defines these as DCA_SYNCWORD_CORE_{BE,LE,14B_BE,14B_LE}.
+const SYNC_16_BE: u32 = 0x7FFE_8001; // most common (raw .dts and MKV)
+const SYNC_16_LE: u32 = 0xFE7F_0180;
+const SYNC_14_BE: u32 = 0x1FFF_E800;
+const SYNC_14_LE: u32 = 0xFF1F_00E8;
+
 impl DcaHeader {
     pub fn read<B: ReadBytes>(reader: &mut B) -> Result<Self> {
         let mut sync = 0u32;
-        
-        // Resync to the next sync word.
+
+        // Resync to the next sync word, accepting any of the four DCA encodings.
+        // Currently only 16-bit BE is forwarded to the decoder verbatim — other
+        // orderings would need bitstream conversion (FFmpeg `dca_convert_bitstream`)
+        // which we do not yet implement; reject them rather than silently misdecoding.
         loop {
             sync = (sync << 8) | u32::from(reader.read_u8()?);
-            if sync == 0x7FFE8001 {
-                break;
+            match sync {
+                SYNC_16_BE => break,
+                SYNC_16_LE | SYNC_14_BE | SYNC_14_LE => {
+                    return decode_error(
+                        "dca: 14-bit packed and little-endian sync words are not yet supported",
+                    );
+                }
+                _ => {}
             }
         }
 
