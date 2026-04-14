@@ -27,7 +27,7 @@
 
 <p>
     <strong>
-        Symphonia is a pure Rust audio decoding and media demuxing library supporting AAC, ADPCM, AIFF, ALAC, CAF, FLAC, MKV, MP1, MP2, MP3, MP4, OGG, Vorbis, WAV, and WebM.
+        Symphonia is a pure Rust audio decoding and media demuxing library supporting AAC, ADPCM, AIFF, ALAC, CAF, DCA, FLAC, MKV, MP1, MP2, MP3, MP4, OGG, Vorbis, WAV, and WebM.
     </strong>
 </p>
 
@@ -89,6 +89,7 @@ A status of *Excellent* is only assigned after the feature passes all compliance
 |----------|-----------|----------|--------------|---------|-----------------------------|
 | AIFF     | Great     | Yes      | `aiff`       | No      | [`symphonia-format-riff`]   |
 | CAF      | Good      | No       | `caf`        | No      | [`symphonia-format-caf`]    |
+| DCA      | Good      | No       | `dca`        | No      | `symphonia-codec-dca`       |
 | ISO/MP4  | Great     | No       | `isomp4`     | No      | [`symphonia-format-isomp4`] |
 | MKV/WebM | Good      | No       | `mkv`        | Yes     | [`symphonia-format-mkv`]    |
 | OGG      | Great     | Yes      | `ogg`        | Yes     | [`symphonia-format-ogg`]    |
@@ -111,6 +112,7 @@ A status of *Excellent* is only assigned after the feature passes all compliance
 | AAC-LC                       | Great     | No      | `aac`        | No      | [`symphonia-codec-aac`]    |
 | ADPCM                        | Good      | Yes     | `adpcm`      | Yes     | [`symphonia-codec-adpcm`]  |
 | ALAC                         | Great     | Yes     | `alac`       | No      | [`symphonia-codec-alac`]   |
+| DCA                          | Good      | No      | `dca`        | No      | `symphonia-codec-dca`      |
 | HE-AAC (AAC+, aacPlus)       | -         | -       | `he-aac`     | No      | [`symphonia-codec-aac`]    |
 | HE-AACv2 (eAAC+, aacPlus v2) | -         | -       | `he-aac-v2`  | No      | [`symphonia-codec-aac`]    |
 | FLAC                         | Excellent | Yes     | `flac`       | Yes     | [`symphonia-bundle-flac`]  |
