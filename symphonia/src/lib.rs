@@ -137,8 +137,8 @@ pub mod default {
         pub use symphonia_codec_adpcm::AdpcmDecoder;
         #[cfg(feature = "alac")]
         pub use symphonia_codec_alac::AlacDecoder;
-        #[cfg(feature = "opus")]
-        pub use symphonia_codec_opus::OpusDecoder;
+        #[cfg(feature = "dca")]
+        pub use symphonia_codec_dca::DcaDecoder;
         #[cfg(feature = "pcm")]
         pub use symphonia_codec_pcm::PcmDecoder;
         #[cfg(feature = "vorbis")]
@@ -160,8 +160,8 @@ pub mod default {
         pub use symphonia_bundle_mp3::MpaReader;
         #[cfg(feature = "aac")]
         pub use symphonia_codec_aac::AdtsReader;
-        #[cfg(feature = "wavpack")]
-        pub use symphonia_codec_wavpack::WavPackReader;
+        #[cfg(feature = "dca")]
+        pub use symphonia_codec_dca::DcaReader;
         #[cfg(feature = "caf")]
         pub use symphonia_format_caf::CafReader;
         #[cfg(feature = "isomp4")]
@@ -249,6 +249,9 @@ pub mod default {
         #[cfg(feature = "alac")]
         registry.register_audio_decoder::<codecs::AlacDecoder>();
 
+        #[cfg(feature = "dca")]
+        registry.register_audio_decoder::<codecs::DcaDecoder>();
+
         #[cfg(feature = "flac")]
         registry.register_audio_decoder::<codecs::FlacDecoder>();
 
@@ -277,6 +280,9 @@ pub mod default {
         // Formats
         #[cfg(feature = "aac")]
         probe.register_format::<formats::AdtsReader<'_>>();
+
+        #[cfg(feature = "dca")]
+        probe.register_format::<formats::DcaReader<'_>>();
 
         #[cfg(feature = "caf")]
         probe.register_format::<formats::CafReader<'_>>();

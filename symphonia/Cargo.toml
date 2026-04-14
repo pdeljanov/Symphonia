@@ -24,6 +24,7 @@ default = ["opt-simd", "all-meta", "adpcm", "flac", "mkv", "ogg", "opus", "pcm",
 aac = ["dep:symphonia-codec-aac"]
 adpcm = ["dep:symphonia-codec-adpcm"]
 alac = ["dep:symphonia-codec-alac"]
+dca = ["dep:symphonia-codec-dca"]
 flac = ["dep:symphonia-bundle-flac"]
 wavpack = ["dep:symphonia-codec-wavpack"]
 caf = ["dep:symphonia-format-caf"]
@@ -50,6 +51,7 @@ all-codecs = [
     "aac",
     "adpcm",
     "alac",
+    "dca",
     "flac",
     "wavpack",
     "mp1",
@@ -141,9 +143,9 @@ version = "0.6.1"
 path = "../symphonia-codec-alac"
 optional = true
 
-[dependencies.symphonia-codec-opus]
-version = "0.6.1"
-path = "../symphonia-codec-opus"
+[dependencies.symphonia-codec-dca]
+version = "0.6.0-alpha.1"
+path = "../symphonia-codec-dca"
 optional = true
 
 [dependencies.symphonia-codec-pcm]
