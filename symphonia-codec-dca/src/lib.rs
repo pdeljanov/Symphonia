@@ -14,8 +14,12 @@
 #![allow(clippy::identity_op)]
 #![allow(clippy::manual_range_contains)]
 
+mod adpcm_table;
 mod decoder;
 mod demuxer;
+mod hf_vq_table;
+mod tables;
+mod quant_tables;
 
 pub use decoder::DcaDecoder;
 pub use demuxer::DcaReader;
