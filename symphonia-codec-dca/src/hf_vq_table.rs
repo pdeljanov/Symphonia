@@ -1,6 +1,6 @@
 /// High-frequency VQ codebook (FFmpeg `ff_dca_high_freq_vq[1024][32]`). Each entry is
 /// 32 signed 8-bit pre-quantized samples that span 4 subsubframes (8 samples each).
-pub const HIGH_FREQ_VQ: [[i8; 32]; 1024] = [
+pub static HIGH_FREQ_VQ: [[i8; 32]; 1024] = [
     [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
     [-4, -2, 2, 1, -16, -10, 1, 3, 1, 0, 6, 1, -3, 7, 1, -22, 2, -4, -3, 11, 14, 6, -1, 1, -13, 29, -28, 10, 10, -8, 0, -9],
     [-8, 8, -7, 10, -3, -12, -5, -8, 1, -2, 9, -2, -5, -18, 1, 9, -8, -8, 3, 41, 7, -9, -9, 22, -42, -29, 14, -18, -14, -32, 1, -15],
