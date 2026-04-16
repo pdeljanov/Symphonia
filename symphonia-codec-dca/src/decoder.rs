@@ -160,6 +160,7 @@ impl DcaDecoder {
         })
     }
 
+    #[allow(clippy::field_reassign_with_default)]
     fn parse_core_header<'a>(&mut self, packet: &'a Packet) -> Result<BitReaderLtr<'a>> {
         let mut reader = packet.as_buf_reader();
         
@@ -236,6 +237,7 @@ impl DcaDecoder {
         Ok(bs)
     }
 
+    #[allow(clippy::field_reassign_with_default)]
     fn parse_coding_header(&mut self, bs: &mut BitReaderLtr<'_>) -> Result<()> {
         let mut coding = CodingHeader::default();
 
@@ -285,9 +287,9 @@ impl DcaDecoder {
         // Quantization index codebook selection — codebook-major iteration order
         // per FFmpeg dca_core.c parse_subframe_header (5.4.1.5). Always reads all
         // 10 codebooks per channel regardless of bit_allocation_sel.
-        for n in 0..10 {
+        for (n, &nbits) in QUANT_INDEX_SEL_NBITS.iter().enumerate() {
             for ch in 0..coding.nchannels as usize {
-                coding.quant_index_sel[ch][n] = bs.read_bits_leq32(QUANT_INDEX_SEL_NBITS[n])? as u8;
+                coding.quant_index_sel[ch][n] = bs.read_bits_leq32(nbits)? as u8;
             }
         }
 
@@ -295,9 +297,9 @@ impl DcaDecoder {
         // quant_index_sel selects a Huffman codebook (sel < group_size). The 2-bit
         // value indexes into SCALE_FACTOR_ADJ for the actual Q22 multiplier.
         use crate::tables::{QUANT_INDEX_GROUP_SIZE, SCALE_FACTOR_ADJ};
-        for n in 0..10 {
+        for (n, &group_size) in QUANT_INDEX_GROUP_SIZE.iter().enumerate() {
             for ch in 0..coding.nchannels as usize {
-                if coding.quant_index_sel[ch][n] < QUANT_INDEX_GROUP_SIZE[n] {
+                if coding.quant_index_sel[ch][n] < group_size {
                     let adj_idx = bs.read_bits_leq32(2)? as usize;
                     coding.scale_factor_adj[ch][n] = adj_idx as u8;
                     let _ = SCALE_FACTOR_ADJ[adj_idx]; // table presence check
@@ -508,8 +510,8 @@ impl DcaDecoder {
             let lfe_present = self.header.lfe as usize;
             let nlfesamples = 2 * lfe_present * nss;
             let mut raw = [0i32; 64];
-            for i in 0..nlfesamples {
-                raw[i] = bs.read_bits_leq32_signed(8)?;
+            for slot in raw.iter_mut().take(nlfesamples) {
+                *slot = bs.read_bits_leq32_signed(8)?;
             }
             let scale_idx = bs.read_bits_leq32(8)? as usize;
             // Out-of-range scale index indicates upstream bit misalignment (usually in
@@ -528,8 +530,8 @@ impl DcaDecoder {
             // `int_sample / 2^23` to normalize to [-1, +1]. Combined: /(2^46).
             const LFE_STEP: f64 = 4_663_904.0;
             let lfe_scale = scale_int * LFE_STEP / (1u64 << 46) as f64;
-            for i in 0..nlfesamples {
-                self.lfe_samples.push((raw[i] as f64 * lfe_scale) as f32);
+            for &sample in raw.iter().take(nlfesamples) {
+                self.lfe_samples.push((sample as f64 * lfe_scale) as f32);
             }
         }
 
@@ -555,7 +557,7 @@ impl DcaDecoder {
         const CLIP23_MIN: i64 = -(1 << 23);
 
         let clip23 = |v: i64| v.clamp(CLIP23_MIN, CLIP23_MAX) as i32;
-        let norm13 = |v: i64| ((v + (1 << 12)) >> 13) as i64;
+        let norm13 = |v: i64| (v + (1 << 12)) >> 13;
 
         for ch in 0..nchannels {
             for band in 0..self.coding_header.nsubbands[ch] as usize {
@@ -651,9 +653,9 @@ impl DcaDecoder {
                 // Huffman-coded indices. Our codebooks emit raw 0..levels-1 values;
                 // center them to signed -(levels/2)..(levels/2).
                 let codebook = &QUANT_INDEX_VLC[abits_idx][sel];
-                for i in 0..8 {
+                for slot in indices.iter_mut() {
                     let (val, _) = bs.read_codebook(codebook)?;
-                    indices[i] = (val as i32) - (levels / 2);
+                    *slot = (val as i32) - (levels / 2);
                 }
             } else if abits <= 7 {
                 // Block code path: two base-`levels` multi-symbol codes pack the 8 samples.
@@ -663,14 +665,14 @@ impl DcaDecoder {
                 let mut code1 = bs.read_bits_leq32(nbits)? as i32;
                 let mut code2 = bs.read_bits_leq32(nbits)? as i32;
                 let offset = (levels - 1) / 2;
-                for n in 0..4 {
+                for slot in indices[..4].iter_mut() {
                     let div = code1 / levels;
-                    indices[n] = code1 - div * levels - offset;
+                    *slot = code1 - div * levels - offset;
                     code1 = div;
                 }
-                for n in 4..8 {
+                for slot in indices[4..].iter_mut() {
                     let div = code2 / levels;
-                    indices[n] = code2 - div * levels - offset;
+                    *slot = code2 - div * levels - offset;
                     code2 = div;
                 }
                 if code1 | code2 != 0 {
@@ -682,15 +684,15 @@ impl DcaDecoder {
             } else {
                 // abits 8..10 with sel == group_size: direct read, `abits - 3` bits signed.
                 let nbits = abits as u32 - 3;
-                for i in 0..8 {
-                    indices[i] = bs.read_bits_leq32_signed(nbits)?;
+                for slot in indices.iter_mut() {
+                    *slot = bs.read_bits_leq32_signed(nbits)?;
                 }
             }
         } else if abits >= 11 && abits <= 26 {
             // Direct read only, `abits - 3` signed bits per sample.
             let nbits = abits as u32 - 3;
-            for i in 0..8 {
-                indices[i] = bs.read_bits_leq32_signed(nbits)?;
+            for slot in indices.iter_mut() {
+                *slot = bs.read_bits_leq32_signed(nbits)?;
             }
         } else {
             return symphonia_core::errors::decode_error("dca: abits out of range");
@@ -702,10 +704,10 @@ impl DcaDecoder {
             && (self.coding_header.quant_index_sel[ch][abits as usize - 1] as usize)
                 < QUANT_INDEX_GROUP_SIZE[abits as usize - 1] as usize;
 
-        for i in 0..8 {
+        for (i, &index) in indices.iter().enumerate() {
             let idx = (samples_offset + i) % 128;
             self.subband_samples[ch][band][idx] =
-                self.dequantize(indices[i], abits, ch, band, ssf, huffman);
+                self.dequantize(index, abits, ch, band, ssf, huffman);
         }
         Ok(())
     }
@@ -798,27 +800,23 @@ impl DcaDecoder {
         for ch in 0..nchannels {
             // 1. Cosine Modulation
             let mut ra = [0.0f32; 64];
-            for n in 0..64 {
+            for (n, slot) in ra.iter_mut().enumerate() {
                 let mut sum = 0.0f32;
                 for k in 0..32 {
                     let subband_sample = self.subband_samples[ch][k][block_idx % 128];
                     let angle = (2.0 * n as f32 + 1.0) * (2.0 * k as f32 + 1.0) * PI / 128.0;
                     sum += subband_sample * angle.cos();
                 }
-                ra[n] = sum;
+                *slot = sum;
             }
 
             // 2. Shift delay buffer and insert new samples
-            for i in (64..512).rev() {
-                self.qmf_state[ch][i] = self.qmf_state[ch][i - 64];
-            }
-            for i in 0..64 {
-                self.qmf_state[ch][i] = ra[i];
-            }
+            self.qmf_state[ch].copy_within(0..448, 64);
+            self.qmf_state[ch][..64].copy_from_slice(&ra);
 
             // 3. Windowing and Summation
             let mut pcm = [0.0f32; 32];
-            for i in 0..32 {
+            for (i, slot) in pcm.iter_mut().enumerate() {
                 let mut sum = 0.0f32;
                 for j in 0..8 {
                     let idx1 = i + 64 * j;
@@ -826,7 +824,7 @@ impl DcaDecoder {
                     sum += self.qmf_state[ch][idx1] * DCA_FIR_32BANDS_PERFECT[idx1];
                     sum -= self.qmf_state[ch][idx2] * DCA_FIR_32BANDS_PERFECT[idx2];
                 }
-                pcm[i] = sum;
+                *slot = sum;
             }
 
             // 4. Output to buffer (remap DCA primary channel order to layout planes).

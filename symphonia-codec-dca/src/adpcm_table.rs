@@ -1,6 +1,6 @@
 /// ADPCM VQ codebook (FFmpeg `ff_dca_adpcm_vb[4096][4]`). 4 Q13 prediction
 /// coefficients per entry. See ETSI TS 102 114 §5.5.4 / FFmpeg dcaadpcm.h.
-pub const ADPCM_VB: [[i16; 4]; 4096] = [
+pub static ADPCM_VB: [[i16; 4]; 4096] = [
     [9928, -2618, -1093, -1263],
     [11077, -2876, -1747, -308],
     [10503, -1082, -1426, -1167],
