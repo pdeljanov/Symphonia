@@ -790,3 +790,107 @@ where E::ValueType: From<u8> {
     
     builder.make(&codes, &lens, &values).expect("failed to make DCA codebook")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use symphonia_core::io::{BitReaderLtr, ReadBitsLtr};
+
+    // ---- table sizes & spec-cited anchor values ----
+
+    #[test]
+    fn fir_table_is_perfect_reconstruction_length_and_finite() {
+        assert_eq!(DCA_FIR_32BANDS_PERFECT.len(), 512);
+        assert!(DCA_FIR_32BANDS_PERFECT.iter().all(|x| x.is_finite()));
+    }
+
+    #[test]
+    fn scale_factor_tables_match_spec_shape() {
+        assert_eq!(SCALE_FACTOR_QUANT6.len(), 64);
+        assert_eq!(SCALE_FACTOR_QUANT7.len(), 128);
+        // ETSI TS 102 114 §5.5.3, extremes cross-checked with FFmpeg dcadata.c.
+        assert_eq!(SCALE_FACTOR_QUANT6[0], 1);
+        assert_eq!(SCALE_FACTOR_QUANT6[62], 8_317_638);
+        assert_eq!(SCALE_FACTOR_QUANT7[0], 1);
+        assert_eq!(SCALE_FACTOR_QUANT7[124], 8_317_638);
+    }
+
+    #[test]
+    fn quant_and_step_tables_match_ffmpeg() {
+        assert_eq!(QUANT_LEVELS.len(), 32);
+        assert_eq!(LOSSY_QUANT_STEP.len(), 32);
+        // A few anchor values from FFmpeg libavcodec/dcadata.c.
+        assert_eq!(QUANT_LEVELS[1], 3);
+        assert_eq!(QUANT_LEVELS[7], 25);
+        assert_eq!(QUANT_LEVELS[26], 8_388_608);
+        assert_eq!(LOSSY_QUANT_STEP[1], 6_710_886);
+        assert_eq!(LOSSY_QUANT_STEP[2], 4_194_304);
+        assert_eq!(LOSSY_QUANT_STEP[26], 21);
+    }
+
+    #[test]
+    fn quant_index_metadata_matches_ffmpeg() {
+        assert_eq!(QUANT_INDEX_GROUP_SIZE.len(), 10);
+        // Per ff_dca_quant_index_group_size[]: [1, 3, 3, 3, 3, 7, 7, 7, 7, 7].
+        assert_eq!(&QUANT_INDEX_GROUP_SIZE[..], &[1, 3, 3, 3, 3, 7, 7, 7, 7, 7]);
+    }
+
+    #[test]
+    fn block_code_nbits_match_ffmpeg() {
+        // block_code_nbits[7] in libavcodec/dca_core.c.
+        assert_eq!(BLOCK_CODE_NBITS.len(), 7);
+        assert_eq!(&BLOCK_CODE_NBITS[..], &[7, 10, 12, 13, 15, 17, 19]);
+    }
+
+    #[test]
+    fn scale_factor_adj_matches_ffmpeg() {
+        // ff_dca_scale_factor_adj[4].
+        assert_eq!(SCALE_FACTOR_ADJ, [4_194_304, 4_718_592, 5_242_880, 6_029_312]);
+    }
+
+    #[test]
+    fn huffman_source_table_shapes() {
+        assert_eq!(BIT_ALLOC_12_SOURCE.len(), 5);
+        assert!(BIT_ALLOC_12_SOURCE.iter().all(|row| row.len() == 12));
+        assert_eq!(SCALE_FACTOR_SOURCE.len(), 5);
+        assert!(SCALE_FACTOR_SOURCE.iter().all(|row| row.len() == 129));
+        assert_eq!(TRANSITION_MODE_SOURCE.len(), 4);
+        assert!(TRANSITION_MODE_SOURCE.iter().all(|row| row.len() == 4));
+    }
+
+    #[test]
+    fn huffman_source_bit_lengths_are_sane() {
+        // Every entry's code length fits within its declared VLC width — otherwise
+        // `make_dca_codebook` will refuse to build it.
+        for row in BIT_ALLOC_12_SOURCE.iter() {
+            assert!(row.iter().all(|&(_, len)| (1..=12).contains(&len)));
+        }
+        for row in SCALE_FACTOR_SOURCE.iter() {
+            assert!(row.iter().all(|&(_, len)| (1..=16).contains(&len)));
+        }
+    }
+
+    // ---- make_dca_codebook round-trip ----
+
+    /// Decode a canonical Huffman code bit-for-bit from a `BitReaderLtr` and verify
+    /// the (value, length) pair returned by `read_codebook` matches what the
+    /// canonical assignment encoded.
+    #[test]
+    fn make_dca_codebook_roundtrips_canonical_codes() {
+        // Three symbols with lengths [1, 2, 2] → canonical codes 0, 10, 11.
+        let source: &[(u8, u8)] = &[(42, 1), (7, 2), (99, 2)];
+
+        let mut builder = CodebookBuilder::new(BitOrder::Verbatim);
+        let cb: Codebook<Entry8x16> = make_dca_codebook(&mut builder, source);
+
+        // Bit stream: 0 | 10 | 11 | 10 | 0 → 0101_1100 (1 padding bit at the end).
+        // Reading MSB-first yields 42, 7, 99, 7, 42.
+        let bytes = [0b0101_1100u8];
+        let mut br = BitReaderLtr::new(&bytes);
+
+        for expected in [42u8, 7, 99, 7, 42] {
+            let (val, _len) = br.read_codebook(&cb).expect("codebook read");
+            assert_eq!(val, expected);
+        }
+    }
+}

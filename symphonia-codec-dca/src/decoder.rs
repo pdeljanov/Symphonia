@@ -971,3 +971,49 @@ impl RegisterableAudioDecoder for DcaDecoder {
         ]
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// AMODE 0 (Mono) — only a center channel, goes to plane 0.
+    #[test]
+    fn output_plane_amode_mono() {
+        assert_eq!(DcaDecoder::output_plane_for(0, 0), 0);
+    }
+
+    /// AMODE 2 (Stereo) — L/R pass through to planes 0/1.
+    #[test]
+    fn output_plane_amode_stereo() {
+        assert_eq!(DcaDecoder::output_plane_for(2, 0), 0); // L → FL
+        assert_eq!(DcaDecoder::output_plane_for(2, 1), 1); // R → FR
+    }
+
+    /// AMODE 9 (5.0) maps the DCA primary-channel order (C, L, R, Ls, Rs) — see
+    /// FFmpeg `prm_ch_to_spkr_map` in dca_core.c — onto our 5.1 layout plane order
+    /// (L, R, C, LFE, Ls, Rs). Getting this wrong plays center out of the fronts.
+    #[test]
+    fn output_plane_amode_5p1_reorders_dca_native_to_standard_layout() {
+        assert_eq!(DcaDecoder::output_plane_for(9, 0), 2); // C  → plane 2
+        assert_eq!(DcaDecoder::output_plane_for(9, 1), 0); // L  → plane 0
+        assert_eq!(DcaDecoder::output_plane_for(9, 2), 1); // R  → plane 1
+        assert_eq!(DcaDecoder::output_plane_for(9, 3), 4); // Ls → plane 4
+        assert_eq!(DcaDecoder::output_plane_for(9, 4), 5); // Rs → plane 5
+    }
+
+    /// Channel indices beyond the known primary-channel count for an AMODE fall
+    /// back to identity rather than panicking — higher-layer code guards against
+    /// this via `nchannels`.
+    #[test]
+    fn output_plane_out_of_range_falls_back_to_identity() {
+        assert_eq!(DcaDecoder::output_plane_for(9, 7), 7);
+    }
+
+    /// Unknown AMODEs fall back to identity mapping (safe default while we only
+    /// support AMODE 0 / 2 / 9).
+    #[test]
+    fn output_plane_unknown_amode_is_identity() {
+        assert_eq!(DcaDecoder::output_plane_for(5, 0), 0);
+        assert_eq!(DcaDecoder::output_plane_for(5, 3), 3);
+    }
+}
