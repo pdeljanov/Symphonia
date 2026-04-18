@@ -144,6 +144,7 @@ pub struct AudioSampleEntry {
     pub sample_size: u16,
     pub sample_rate: f64,
     pub codec_id: AudioCodecId,
+    pub profile: Option<CodecProfile>,
     pub bits_per_sample: Option<u32>,
     pub bits_per_coded_sample: Option<u32>,
     pub frames_per_packet: Option<u64>,
@@ -156,6 +157,7 @@ impl AudioSampleEntry {
     pub(crate) fn make_codec_params(&self) -> AudioCodecParameters {
         AudioCodecParameters {
             codec: self.codec_id,
+            profile: self.profile,
             sample_rate: Some(self.sample_rate as u32),
             bits_per_sample: self.bits_per_sample,
             bits_per_coded_sample: self.bits_per_coded_sample,

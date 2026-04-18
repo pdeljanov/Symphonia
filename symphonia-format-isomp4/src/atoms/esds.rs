@@ -77,6 +77,7 @@ impl EsdsAtom {
         if let Some(ds_config) = &self.es_desc.dec_config.dec_specific_info {
             // Try to read the audio specific configuration and populate the audio sample entry.
             if let Ok(asc) = AudioSpecificConfig::read(&ds_config.extra_data) {
+                entry.profile = get_audio_codec_profile(&asc);
                 entry.channels = asc.channels;
             }
 
