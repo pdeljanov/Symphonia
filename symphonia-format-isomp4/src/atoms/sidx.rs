@@ -5,6 +5,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+use std::num::NonZero;
+
 use symphonia_core::errors::Error;
 
 use crate::atoms::{Atom, AtomHeader, AtomIterator, ReadAtom, Result, decode_error};
@@ -31,10 +33,11 @@ pub struct SidxReference {
 #[derive(Debug)]
 pub struct SidxAtom {
     pub reference_id: u32,
-    pub timescale: u32,
+    pub timescale: NonZero<u32>,
     pub earliest_pts: u64,
     pub first_offset: u64,
     pub references: Vec<SidxReference>,
+    pub total_duration: u64,
 }
 
 impl Atom for SidxAtom {
@@ -42,7 +45,8 @@ impl Atom for SidxAtom {
         let (version, _) = it.read_extended_header()?;
 
         let reference_id = it.read_u32()?;
-        let timescale = it.read_u32()?;
+        let timescale = NonZero::new(it.read_u32()?)
+            .ok_or(Error::DecodeError("isomp4 (sidx): timescale is zero"))?;
 
         // The anchor point for segment offsets is the first byte after this atom.
         let anchor = header
@@ -60,10 +64,12 @@ impl Atom for SidxAtom {
         let reference_count = it.read_u16()?;
 
         let mut references = Vec::new();
+        let mut total_duration: u64 = 0;
 
         for _ in 0..reference_count {
             let reference = it.read_u32()?;
             let subsegment_duration = it.read_u32()?;
+            total_duration += u64::from(subsegment_duration);
 
             let reference_type = match (reference & 0x8000_0000) != 0 {
                 false => ReferenceType::Media,
@@ -78,6 +84,13 @@ impl Atom for SidxAtom {
             references.push(SidxReference { reference_type, reference_size, subsegment_duration });
         }
 
-        Ok(SidxAtom { reference_id, timescale, earliest_pts, first_offset, references })
+        Ok(SidxAtom {
+            reference_id,
+            timescale,
+            earliest_pts,
+            first_offset,
+            references,
+            total_duration,
+        })
     }
 }

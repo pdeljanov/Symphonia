@@ -17,7 +17,9 @@ use symphonia_core::io::*;
 use symphonia_core::meta::{Metadata, MetadataLog};
 use symphonia_core::units::Time;
 
+use std::collections::HashMap;
 use std::io::{Seek, SeekFrom};
+use std::num::NonZero;
 use std::sync::Arc;
 
 use crate::atoms::{AtomError, AtomIterator, AtomType, ReadAtom};
@@ -46,7 +48,12 @@ pub struct TrackState {
 }
 
 impl TrackState {
-    pub fn make(track_num: usize, trak: &TrakAtom) -> (Self, Track) {
+    pub fn make(
+        track_num: usize,
+        trak: &TrakAtom,
+        media_timespan: &TimeSpan,
+        duration: Duration,
+    ) -> (Self, Track) {
         let mut track = Track::new(trak.tkhd.id);
 
         // Create the codec parameters using the sample description atom.
@@ -55,8 +62,9 @@ impl TrackState {
         }
 
         track
-            .with_time_base(TimeBase::from_recip(trak.mdia.mdhd.timescale))
-            .with_num_frames(trak.duration);
+            .with_time_base(TimeBase::from_recip(media_timespan.timescale))
+            .with_num_frames(media_timespan.duration)
+            .with_duration(duration);
 
         let state = Self {
             track_num,
@@ -96,6 +104,25 @@ struct SampleDataInfo {
     len: u32,
 }
 
+/// A representation of time, defining a duration relative to a specific frequency
+#[derive(Debug)]
+pub struct TimeSpan {
+    pub timescale: NonZero<u32>,
+    pub duration: u64,
+}
+
+impl Default for TimeSpan {
+    fn default() -> Self {
+        Self { timescale: NonZero::new(1).unwrap(), duration: 0 }
+    }
+}
+
+impl TimeSpan {
+    pub fn new(timescale: NonZero<u32>, duration: u64) -> Self {
+        TimeSpan { timescale, duration }
+    }
+}
+
 /// ISO Base Media File Format (MP4, M4A, MOV, etc.) demultiplexer.
 ///
 /// `IsoMp4Reader` implements a demuxer for the ISO Base Media File Format.
@@ -121,7 +148,6 @@ impl<'s> IsoMp4Reader<'s> {
 
         let mut ftyp = None;
         let mut moov = None;
-        let mut sidx = None;
 
         // Get the total length of the stream, if possible.
         let total_len = if is_seekable {
@@ -139,6 +165,8 @@ impl<'s> IsoMp4Reader<'s> {
 
         // Parse all atoms if the stream is seekable, otherwise parse all atoms up-to the mdat atom.
         let mut it = AtomIterator::new(mss, total_len);
+        // Maps each track id to its cumulative duration (TimeSpan) as parsed from the segment index.
+        let mut sidx_timespans: HashMap<u32, TimeSpan> = HashMap::new();
 
         while let Some(header) = it.next_header()? {
             // Top-level atoms.
@@ -150,27 +178,18 @@ impl<'s> IsoMp4Reader<'s> {
                     moov = Some(it.read_atom::<MoovAtom>()?);
                 }
                 AtomType::SegmentIndex => {
-                    // If the stream is not seekable, then it can only be assumed that the first
-                    // segment index atom is indeed the first segment index because the format
-                    // reader cannot practically skip past this point.
-                    if !is_seekable {
-                        sidx = Some(it.read_atom::<SidxAtom>()?);
-                        break;
-                    }
-                    else {
-                        // If the stream is seekable, examine all segment indexes and select the
-                        // index with the earliest presentation timestamp to be the first.
-                        let new_sidx = it.read_atom::<SidxAtom>()?;
+                    let sidx = it.read_atom::<SidxAtom>()?;
 
-                        let is_earlier = match &sidx {
-                            Some(sidx) => new_sidx.earliest_pts < sidx.earliest_pts,
-                            _ => true,
-                        };
-
-                        if is_earlier {
-                            sidx = Some(new_sidx);
-                        }
+                    // calculate total_duration per track from segment indexes
+                    let sidx_timespan = sidx_timespans
+                        .entry(sidx.reference_id)
+                        .or_insert(TimeSpan::new(sidx.timescale, 0));
+                    if sidx_timespan.timescale != sidx.timescale {
+                        return unsupported_error(
+                            "isomp4: different sidx timescale for the same track",
+                        );
                     }
+                    sidx_timespan.duration += sidx.total_duration;
                 }
                 AtomType::MediaData | AtomType::MovieFragment => {
                     // The mdat atom contains the codec bitstream data. For fragmented streams, a
@@ -241,8 +260,7 @@ impl<'s> IsoMp4Reader<'s> {
         let mut moov = moov.unwrap();
 
         if moov.is_fragmented() {
-            // If a Segment Index (sidx) atom was found, add the segments contained within.
-            if sidx.is_some() {
+            if !sidx_timespans.is_empty() {
                 info!("stream is segmented with a segment index.");
             }
             else {
@@ -259,7 +277,45 @@ impl<'s> IsoMp4Reader<'s> {
         let mut track_states = Vec::with_capacity(moov.traks.len());
 
         for (t, trak) in moov.traks.iter().enumerate() {
-            let (track_state, track) = TrackState::make(t, trak);
+            // Determine media timespan and track duration converted to media timescale.
+            let mvhd_timespan = TimeSpan::new(trak.mdia.mdhd.timescale, trak.mdia.mdhd.duration);
+            let (media_timespan, duration) = if moov.is_fragmented() {
+                let timespan = sidx_timespans
+                    .get(&trak.tkhd.id)
+                    .map(|sidx_ts| TimeSpan::new(sidx_ts.timescale, sidx_ts.duration))
+                    .unwrap_or_else(|| mvhd_timespan);
+                // for fragmented try take duration from mehd.fragment_duration otherwise take duration from media
+                let duration = moov
+                    .mvex
+                    .as_ref()
+                    .and_then(|mvex| mvex.mehd.as_ref())
+                    .map(|mehd| {
+                        convert_duration(
+                            mehd.fragment_duration,
+                            moov.mvhd.timescale,
+                            timespan.timescale,
+                        )
+                    })
+                    .unwrap_or_else(|| Duration::from(timespan.duration));
+                (timespan, duration)
+            }
+            else {
+                // for non fragmented try take duration from tkhd.duration otherwise take duration from media
+                let duration = if trak.tkhd.duration > 0 {
+                    convert_duration(
+                        trak.tkhd.duration,
+                        moov.mvhd.timescale,
+                        mvhd_timespan.timescale,
+                    )
+                }
+                else {
+                    Duration::from(mvhd_timespan.duration)
+                };
+
+                (mvhd_timespan, duration)
+            };
+
+            let (track_state, track) = TrackState::make(t, trak, &media_timespan, duration);
 
             tracks.push(track);
             track_states.push(track_state);
@@ -678,4 +734,17 @@ impl From<AtomError> for Error {
         };
         Error::DecodeError(msg)
     }
+}
+
+fn convert_duration(
+    duration: u64,
+    src_timescale: NonZero<u32>,
+    dst_timescale: NonZero<u32>,
+) -> Duration {
+    if src_timescale == dst_timescale {
+        return Duration::from(duration);
+    }
+    Duration::from(
+        ((duration as u128 * dst_timescale.get() as u128) / src_timescale.get() as u128) as u64,
+    )
 }
