@@ -393,11 +393,11 @@ impl LogicalStream {
     /// end delay parameters. To obtain the end delay, at a minimum, the last two pages are
     /// required. The state returned by each iteration of this function should be passed into the
     /// subsequent iteration.
-    pub fn inspect_end_page(&mut self, mut state: InspectState, page: &Page<'_>) -> InspectState {
+    pub fn inspect_end_page(&mut self, state: &mut InspectState, page: &Page<'_>) {
         // Do nothing if the end bound was found.
         if self.end_bound.is_some() {
             debug!("end page already found");
-            return state;
+            return;
         }
 
         // Get and/or create the packet parser.
@@ -406,13 +406,13 @@ impl LogicalStream {
             None => {
                 state.parser = self.mapper.make_parser();
 
-                if let Some(parser) = &mut state.parser {
-                    parser
-                }
+                let Some(parser) = &mut state.parser
                 else {
                     debug!("failed to make end bound packet parser");
-                    return state;
-                }
+                    return;
+                };
+
+                parser
             }
         };
 
@@ -427,7 +427,7 @@ impl LogicalStream {
             // On overflow it will be impossible to determine the end bound.
             total_pkt_dur = match total_pkt_dur.checked_add(pkt_dur) {
                 Some(total) => total,
-                _ => return state,
+                _ => return,
             };
         }
 
@@ -507,8 +507,6 @@ impl LogicalStream {
 
         // Update the state's bound.
         state.bound = Some(bound);
-
-        state
     }
 
     /// Examine a page in isolation and return the start and end timestamps as a tuple.

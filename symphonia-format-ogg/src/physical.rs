@@ -153,30 +153,29 @@ fn scan_stream_end(
 
     let mut upper_pos = None;
 
-    let mut state: InspectState = Default::default();
+    // One inspection state is required per logical stream.
+    let mut states: BTreeMap<u32, InspectState> = Default::default();
 
     // Read pages until the provided end position or a new physical stream starts.
     loop {
         let page = pages.page();
 
-        // If the page does not belong to the current physical stream, then break out, the
-        // extent of the physical stream has been found.
-        let stream = if let Some(stream) = streams.get_mut(&page.header.serial) {
-            stream
-        }
+        // If the page does not belong to the current physical stream, then exit. The extent of the
+        // physical stream has been found.
+        let Some(stream) = streams.get_mut(&page.header.serial)
         else {
             break;
         };
 
-        state = stream.inspect_end_page(state, &page);
+        // Inspect the end page.
+        stream.inspect_end_page(states.entry(page.header.serial).or_default(), &page);
 
         // The new end of the physical stream is the position after this page.
         upper_pos = Some(scoped_reader.pos());
 
-        // Read to the next page.
-        match pages.next_page(&mut scoped_reader) {
-            Ok(_) => (),
-            _ => break,
+        // Read to the next page. Exit on error.
+        if pages.next_page(&mut scoped_reader).is_err() {
+            break;
         }
     }
 
