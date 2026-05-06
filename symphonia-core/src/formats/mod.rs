@@ -358,6 +358,19 @@ impl Track {
         self.flags |= flags;
         self
     }
+
+    /// Get the track type.
+    ///
+    /// Determining the track type requires knowing the codec parameters. If codec parameters is
+    /// `None`, then this function will also return `None`.
+    pub fn track_type(&self) -> Option<TrackType> {
+        match self.codec_params {
+            Some(CodecParameters::Audio(_)) => Some(TrackType::Audio),
+            Some(CodecParameters::Video(_)) => Some(TrackType::Video),
+            Some(CodecParameters::Subtitle(_)) => Some(TrackType::Subtitle),
+            None => None,
+        }
+    }
 }
 
 /// An attachment is additional data that is carried along with the container format.
