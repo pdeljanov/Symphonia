@@ -773,6 +773,136 @@ impl Time {
             (self.seconds + 1, 1_000_000_000 - self.nanos)
         }
     }
+
+    /// Negate the time, returning `None` if an overflow occurs.
+    pub fn checked_neg(self) -> Option<Self> {
+        if self.nanos == 0 {
+            Some(Self { seconds: self.seconds.checked_neg()?, nanos: 0 })
+        }
+        else {
+            let seconds = self.seconds.checked_neg()?.checked_sub(1)?;
+            Some(Self { seconds, nanos: 1_000_000_000 - self.nanos })
+        }
+    }
+
+    fn checked_add(self, delta_secs: i64, delta_nanos: i64) -> Option<Self> {
+        let seconds = self.seconds.checked_add(delta_secs)?;
+
+        // Never exceeds +/-2_000_000_000.
+        let nanos = i64::from(self.nanos) + delta_nanos;
+
+        // Normalize.
+        let time = if nanos >= Self::NS_PER_SEC {
+            Self { seconds: seconds.checked_add(1)?, nanos: (nanos - Self::NS_PER_SEC) as u32 }
+        }
+        else if nanos < 0 {
+            Self { seconds: seconds.checked_sub(1)?, nanos: (nanos + Self::NS_PER_SEC) as u32 }
+        }
+        else {
+            Self { seconds, nanos: nanos as u32 }
+        };
+
+        Some(time)
+    }
+
+    /// Add the provided number of nanoseconds to `self`, returning `None` if an overflow occurred.
+    pub fn checked_add_nanos(self, nanos: i64) -> Option<Self> {
+        let add_secs = nanos / Self::NS_PER_SEC;
+        let add_nanos = nanos % Self::NS_PER_SEC;
+        self.checked_add(add_secs, add_nanos)
+    }
+
+    /// Add the provided number of microseconds to `self`, returning `None` if an overflow occurred.
+    pub fn checked_add_micros(self, micros: i64) -> Option<Self> {
+        let add_secs = micros / Self::US_PER_SEC;
+        let add_micros = micros % Self::US_PER_SEC;
+        self.checked_add(add_secs, 1_000 * add_micros)
+    }
+
+    /// Add the provided number of milliseconds to `self`, returning `None` if an overflow occurred.
+    pub fn checked_add_millis(self, millis: i64) -> Option<Self> {
+        let add_secs = millis / Self::MS_PER_SEC;
+        let add_millis = millis % Self::MS_PER_SEC;
+        self.checked_add(add_secs, 1_000_000 * add_millis)
+    }
+
+    /// Add the provided number of seconds to `self`, returning `None` if an overflow occurred.
+    pub fn checked_add_secs(self, secs: i64) -> Option<Self> {
+        self.checked_add(secs, 0)
+    }
+
+    /// Add the provided number of minutes to `self`, returning `None` if an overflow occurred.
+    pub fn checked_add_mins(self, mins: i64) -> Option<Self> {
+        let add_secs = mins.checked_mul(Self::SECS_PER_MIN)?;
+        self.checked_add(add_secs, 0)
+    }
+
+    /// Add the provided number of hours to `self`, returning `None` if an overflow occurred.
+    pub fn checked_add_hours(self, hours: i64) -> Option<Self> {
+        let add_secs = hours.checked_mul(Self::SECS_PER_HR)?;
+        self.checked_add(add_secs, 0)
+    }
+
+    fn checked_sub(self, delta_secs: i64, delta_nanos: i64) -> Option<Self> {
+        let seconds = self.seconds.checked_sub(delta_secs)?;
+
+        // Never exceeds +/-2_000_000_000.
+        let nanos = i64::from(self.nanos) - delta_nanos;
+
+        // Normalize.
+        let time = if nanos >= Self::NS_PER_SEC {
+            Self { seconds: seconds.checked_add(1)?, nanos: (nanos - Self::NS_PER_SEC) as u32 }
+        }
+        else if nanos < 0 {
+            Self { seconds: seconds.checked_sub(1)?, nanos: (nanos + Self::NS_PER_SEC) as u32 }
+        }
+        else {
+            Self { seconds, nanos: nanos as u32 }
+        };
+
+        Some(time)
+    }
+
+    /// Subtract the provided number of nanoseconds to `self`, returning `None` if an overflow
+    /// occurred.
+    pub fn checked_sub_nanos(self, nanos: i64) -> Option<Self> {
+        let add_secs = nanos / Self::NS_PER_SEC;
+        let add_nanos = nanos % Self::NS_PER_SEC;
+        self.checked_sub(add_secs, add_nanos)
+    }
+
+    /// Subtract the provided number of microseconds to `self`, returning `None` if an overflow
+    /// occurred.
+    pub fn checked_sub_micros(self, micros: i64) -> Option<Self> {
+        let add_secs = micros / Self::US_PER_SEC;
+        let add_micros = micros % Self::US_PER_SEC;
+        self.checked_sub(add_secs, 1_000 * add_micros)
+    }
+
+    /// Subtract the provided number of milliseconds to `self`, returning `None` if an overflow
+    /// occurred.
+    pub fn checked_sub_millis(self, millis: i64) -> Option<Self> {
+        let add_secs = millis / Self::MS_PER_SEC;
+        let add_millis = millis % Self::MS_PER_SEC;
+        self.checked_sub(add_secs, 1_000_000 * add_millis)
+    }
+
+    /// Subtract the provided number of seconds to `self`, returning `None` if an overflow occurred.
+    pub fn checked_sub_secs(self, secs: i64) -> Option<Self> {
+        self.checked_sub(secs, 0)
+    }
+
+    /// Subtract the provided number of minutes to `self`, returning `None` if an overflow occurred.
+    pub fn checked_sub_mins(self, mins: i64) -> Option<Self> {
+        let add_secs = mins.checked_mul(Self::SECS_PER_MIN)?;
+        self.checked_sub(add_secs, 0)
+    }
+
+    /// Subtract the provided number of hours to `self`, returning `None` if an overflow occurred.
+    pub fn checked_sub_hours(self, hours: i64) -> Option<Self> {
+        let add_secs = hours.checked_mul(Self::SECS_PER_HR)?;
+        self.checked_sub(add_secs, 0)
+    }
 }
 
 impl From<u8> for Time {
@@ -865,6 +995,8 @@ impl TimeBase {
         }
     }
 
+    /// Calculate a `Time` upto nanosecond precision from the provided `TimeStamp` using `self` as
+    /// the conversion factor. Saturates if an overflow occurs.
     pub fn calc_time_saturating(&self, ts: Timestamp) -> Time {
         self.calc_time(ts).unwrap_or_else(|| if ts.is_negative() { Time::MIN } else { Time::MAX })
     }
@@ -934,6 +1066,8 @@ impl fmt::Display for TimeBase {
 
 #[cfg(test)]
 mod tests {
+    use std::i64;
+
     use super::{Time, TimeBase, Timestamp};
 
     #[test]
@@ -1011,6 +1145,93 @@ mod tests {
         assert_eq!(Time::try_new(100, 250_000_000).unwrap().as_secs_f64(), 100.25);
         assert_eq!(Time::try_new(0, 100_000_000).unwrap().as_secs_f64(), 0.1);
         assert_eq!(Time::try_new(-100, 250_000_000).unwrap().as_secs_f64(), -99.75);
+
+        // Negation.
+        assert_eq!(Time::default().checked_neg().unwrap(), Time::default());
+        assert_eq!(Time::try_new(-1, 0).unwrap().checked_neg().unwrap().as_millis(), 1000);
+        assert_eq!(Time::try_new(1, 0).unwrap().checked_neg().unwrap().as_millis(), -1000);
+        assert_eq!(Time::try_new(-1, 250_000_000).unwrap().checked_neg().unwrap().as_millis(), 750);
+        assert_eq!(
+            Time::try_new(1, 250_000_000).unwrap().checked_neg().unwrap().as_millis(),
+            -1250
+        );
+        assert_eq!(Time::try_new(i64::MIN, 0).unwrap().checked_neg(), None);
+        assert_eq!(
+            Time::try_new(i64::MIN + 1, 0).unwrap().checked_neg(),
+            Time::try_new(i64::MAX, 0)
+        );
+
+        // Add nanoseconds.
+        assert_eq!(Time::default().checked_add_nanos(1_250_000_000).unwrap().as_millis(), 1250);
+        assert_eq!(Time::default().checked_add_nanos(250_000_000).unwrap().as_millis(), 250);
+        assert_eq!(Time::default().checked_add_nanos(0).unwrap().as_millis(), 0);
+        assert_eq!(Time::default().checked_add_nanos(-250_000_000).unwrap().as_millis(), -250);
+        assert_eq!(Time::default().checked_add_nanos(-1_250_000_000).unwrap().as_millis(), -1250);
+
+        // Subtract nanoseconds.
+        assert_eq!(Time::default().checked_sub_nanos(1_250_000_000).unwrap().as_millis(), -1250);
+        assert_eq!(Time::default().checked_sub_nanos(250_000_000).unwrap().as_millis(), -250);
+        assert_eq!(Time::default().checked_sub_nanos(0).unwrap().as_millis(), 0);
+        assert_eq!(Time::default().checked_sub_nanos(-250_000_000).unwrap().as_millis(), 250);
+        assert_eq!(Time::default().checked_sub_nanos(-1_250_000_000).unwrap().as_millis(), 1250);
+
+        // Add microseconds.
+        assert_eq!(Time::default().checked_add_micros(1_250_000).unwrap().as_millis(), 1250);
+        assert_eq!(Time::default().checked_add_micros(250_000).unwrap().as_millis(), 250);
+        assert_eq!(Time::default().checked_add_micros(0).unwrap().as_millis(), 0);
+        assert_eq!(Time::default().checked_add_micros(-250_000).unwrap().as_millis(), -250);
+        assert_eq!(Time::default().checked_add_micros(-1_250_000).unwrap().as_millis(), -1250);
+
+        // Subtract microseconds.
+        assert_eq!(Time::default().checked_sub_micros(1_250_000).unwrap().as_millis(), -1250);
+        assert_eq!(Time::default().checked_sub_micros(250_000).unwrap().as_millis(), -250);
+        assert_eq!(Time::default().checked_sub_micros(0).unwrap().as_millis(), 0);
+        assert_eq!(Time::default().checked_sub_micros(-250_000).unwrap().as_millis(), 250);
+        assert_eq!(Time::default().checked_sub_micros(-1_250_000).unwrap().as_millis(), 1250);
+
+        // Add milliseconds.
+        assert_eq!(Time::default().checked_add_millis(1_250).unwrap().as_millis(), 1250);
+        assert_eq!(Time::default().checked_add_millis(250).unwrap().as_millis(), 250);
+        assert_eq!(Time::default().checked_add_millis(0).unwrap().as_millis(), 0);
+        assert_eq!(Time::default().checked_add_millis(-250).unwrap().as_millis(), -250);
+        assert_eq!(Time::default().checked_add_millis(-1_250).unwrap().as_millis(), -1250);
+
+        // Subtract milliseconds.
+        assert_eq!(Time::default().checked_sub_millis(1_250).unwrap().as_millis(), -1250);
+        assert_eq!(Time::default().checked_sub_millis(250).unwrap().as_millis(), -250);
+        assert_eq!(Time::default().checked_sub_millis(0).unwrap().as_millis(), 0);
+        assert_eq!(Time::default().checked_sub_millis(-250).unwrap().as_millis(), 250);
+        assert_eq!(Time::default().checked_sub_millis(-1_250).unwrap().as_millis(), 1250);
+
+        // Add seconds.
+        assert_eq!(Time::default().checked_add_secs(2).unwrap().as_millis(), 2000);
+        assert_eq!(Time::default().checked_add_secs(0).unwrap().as_millis(), 0);
+        assert_eq!(Time::default().checked_add_secs(-2).unwrap().as_millis(), -2000);
+
+        // Subtract seconds.
+        assert_eq!(Time::default().checked_sub_secs(2).unwrap().as_millis(), -2000);
+        assert_eq!(Time::default().checked_sub_secs(0).unwrap().as_millis(), 0);
+        assert_eq!(Time::default().checked_sub_secs(-2).unwrap().as_millis(), 2000);
+
+        // Add minutes.
+        assert_eq!(Time::default().checked_add_mins(2).unwrap().as_secs(), 120);
+        assert_eq!(Time::default().checked_add_mins(0).unwrap().as_secs(), 0);
+        assert_eq!(Time::default().checked_add_mins(-2).unwrap().as_secs(), -120);
+
+        // Subtract minutes.
+        assert_eq!(Time::default().checked_sub_mins(2).unwrap().as_secs(), -120);
+        assert_eq!(Time::default().checked_sub_mins(0).unwrap().as_secs(), 0);
+        assert_eq!(Time::default().checked_sub_mins(-2).unwrap().as_secs(), 120);
+
+        // Add hours.
+        assert_eq!(Time::default().checked_add_hours(2).unwrap().as_secs(), 2 * 60 * 60);
+        assert_eq!(Time::default().checked_add_hours(0).unwrap().as_secs(), 0);
+        assert_eq!(Time::default().checked_add_hours(-2).unwrap().as_secs(), -2 * 60 * 60);
+
+        // Subtract hours.
+        assert_eq!(Time::default().checked_sub_hours(2).unwrap().as_secs(), -2 * 60 * 60);
+        assert_eq!(Time::default().checked_sub_hours(0).unwrap().as_secs(), 0);
+        assert_eq!(Time::default().checked_sub_hours(-2).unwrap().as_secs(), 2 * 60 * 60);
     }
 
     #[test]
