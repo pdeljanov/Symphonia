@@ -896,6 +896,28 @@ impl TimeBase {
             ts.try_into().ok().map(Timestamp)
         }
     }
+
+    pub fn scale(self, factor: f64) -> Option<Self> {
+        // Nothing to do if the scale factor is exactly 1.0.
+        if factor == 1.0 {
+            return Some(self);
+        }
+
+        // The timebase cannot become negative or 0.
+        if !factor.is_finite() || factor <= 0.0 {
+            return None;
+        }
+
+        // The numerator is an u32 which can be represented without any loss as a f64.
+        let numer = (self.numer.get() as f64 * factor).round();
+
+        // Do not exceed the bounds of the numerator u32.
+        if numer > f64::from(u32::MAX) {
+            return None;
+        }
+
+        Some(TimeBase { numer: NonZero::new(numer as u32)?, denom: self.denom })
+    }
 }
 
 impl From<TimeBase> for f64 {

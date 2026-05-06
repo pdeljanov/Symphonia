@@ -20,7 +20,7 @@ use symphonia_core::meta::{
     Chapter, ChapterGroup, ChapterGroupItem, MetadataBuilder, MetadataInfo, MetadataRevision,
     PerTrackMetadataBuilder, RawTag, RawTagSubField, RawValue, StandardTag, Tag,
 };
-use symphonia_core::units::Time;
+use symphonia_core::units::{Duration, Time, TimeBase, Timestamp};
 
 use crate::ebml::{EbmlElement, EbmlElementHeader, EbmlError, EbmlIterator, ReadEbml, Result};
 use crate::schema::{MkvElement, MkvSchema};
@@ -101,6 +101,246 @@ const MKV_METADATA_INFO: MetadataInfo = MetadataInfo {
 type MkvEbmlIterator<R> = EbmlIterator<R, MkvSchema>;
 type MkvEbmlElementHeader = EbmlElementHeader<MkvSchema>;
 
+/// Matroska ticks.
+///
+/// Matroska ticks are unsigned timestamps or durations stored in nanoseconds.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub struct MatroskaTicks(u64);
+
+impl MatroskaTicks {
+    /// Get the underlying value.
+    #[inline]
+    pub const fn get(self) -> u64 {
+        self.0
+    }
+
+    /// Convert `self` into Segment ticks using the segment timebase.
+    ///
+    /// The Segment timebase is the media timebase.
+    #[inline]
+    pub fn into_segment_ticks(self, segment_time_base: TimeBase) -> SegmentTicks {
+        SegmentTicks(self.0 / u64::from(segment_time_base.numer.get()))
+    }
+
+    /// Convert `self` into Track ticks using the track timebase.
+    #[inline]
+    pub fn into_track_ticks(self, track_time_base: TimeBase) -> TrackTicks {
+        TrackTicks(self.0 / u64::from(track_time_base.numer.get()))
+    }
+}
+
+impl From<u64> for MatroskaTicks {
+    #[inline]
+    fn from(value: u64) -> Self {
+        MatroskaTicks(value)
+    }
+}
+
+impl std::fmt::Display for MatroskaTicks {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+/// Non-zero Matroska ticks.
+///
+/// Matroska ticks are unsigned timestamps or durations stored in nanoseconds.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct NonZeroMatroskaTicks(NonZeroU64);
+
+impl NonZeroMatroskaTicks {
+    /// Get the underlying value.
+    #[inline]
+    pub const fn get(&self) -> u64 {
+        self.0.get()
+    }
+}
+
+impl From<NonZeroU64> for NonZeroMatroskaTicks {
+    #[inline]
+    fn from(value: NonZeroU64) -> Self {
+        Self(value)
+    }
+}
+
+/// Signed Matroska ticks.
+///
+/// Matroska ticks are timestamps or durations stored in nanoseconds.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub struct SignedMatroskaTicks(i64);
+
+impl From<i64> for SignedMatroskaTicks {
+    #[inline]
+    fn from(value: i64) -> Self {
+        SignedMatroskaTicks(value)
+    }
+}
+
+/// Segment ticks.
+///
+/// Segment ticks are scaled by `TimestampScale`, the timebase of the Segment.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub struct SegmentTicks(u64);
+
+impl SegmentTicks {
+    /// Get the underlying value.
+    #[allow(dead_code)]
+    #[inline]
+    pub const fn get(self) -> u64 {
+        self.0
+    }
+
+    /// Convert `self` into Track ticks using the track's timestamp scale.
+    #[inline]
+    pub fn into_track_ticks(self, track_timestamp_scale: f64) -> TrackTicks {
+        if track_timestamp_scale == 1.0 {
+            return TrackTicks(self.0);
+        }
+        TrackTicks((self.0 as f64 * track_timestamp_scale).round() as u64)
+    }
+}
+
+impl From<u64> for SegmentTicks {
+    #[inline]
+    fn from(value: u64) -> Self {
+        Self(value)
+    }
+}
+
+impl std::fmt::Display for SegmentTicks {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+/// Floating point segment ticks.
+///
+/// Segment ticks are scaled by `TimestampScale`, the timebase of the Segment.
+#[derive(Copy, Clone, Debug, Default, PartialEq, PartialOrd)]
+pub struct FloatingPointSegmentTicks(f64);
+
+impl From<f64> for FloatingPointSegmentTicks {
+    #[inline]
+    fn from(value: f64) -> Self {
+        Self(value)
+    }
+}
+
+impl FloatingPointSegmentTicks {
+    /// Get the underlying value.
+    #[inline]
+    pub const fn get(self) -> f64 {
+        self.0
+    }
+}
+
+/// Track ticks.
+///
+/// Track ticks are scaled by `TimescapeScale * TrackTimestampScale`, the timebase of the track.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub struct TrackTicks(u64);
+
+impl TrackTicks {
+    /// Get the underlying value.
+    #[inline]
+    pub const fn get(&self) -> u64 {
+        self.0
+    }
+
+    /// Try to convert into signed Track ticks.
+    #[inline]
+    pub fn try_into_signed(self) -> Option<SignedTrackTicks> {
+        self.0.try_into().map(SignedTrackTicks).ok()
+    }
+
+    /// Convert into a `Duration`.
+    #[inline]
+    pub fn into_dur(self) -> Duration {
+        Duration::new(self.0)
+    }
+}
+
+impl From<u64> for TrackTicks {
+    #[inline]
+    fn from(value: u64) -> Self {
+        Self(value)
+    }
+}
+
+impl std::fmt::Display for TrackTicks {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+/// Signed Track ticks.
+///
+/// Tracck ticks are scaled by `TimescapeScale * TrackTimestampScale`, the timebase of the track.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub struct SignedTrackTicks(i64);
+
+impl SignedTrackTicks {
+    /// Get the underlying value.
+    #[allow(dead_code)]
+    #[inline]
+    pub const fn get(&self) -> i64 {
+        self.0
+    }
+
+    // Convert into a Timestamp.
+    #[inline]
+    pub fn into_ts(self) -> Timestamp {
+        Timestamp::new(self.0)
+    }
+
+    /// Add the provided signed track ticks to `self`, returning `None` if an overflow occurred.
+    #[inline]
+    pub fn checked_add(self, other: Self) -> Option<Self> {
+        self.0.checked_add(other.0).map(SignedTrackTicks)
+    }
+
+    /// Add the provided track ticks to `self`, returning `None` if an overflow occurred.
+    #[inline]
+    pub fn checked_add_unsigned(self, other: TrackTicks) -> Option<Self> {
+        self.0.checked_add_unsigned(other.0).map(SignedTrackTicks)
+    }
+
+    /// Subtract the provided track ticks to `self`, returning `None` if an overflow occurred.
+    #[inline]
+    pub fn checked_sub_unsigned(self, other: TrackTicks) -> Option<Self> {
+        self.0.checked_add_unsigned(other.0).map(SignedTrackTicks)
+    }
+
+    /// Try to convert Segment ticks to Matroska ticks using the track timebase.
+    #[inline]
+    pub fn try_into_matroska_ticks(self, track_time_base: TimeBase) -> Option<MatroskaTicks> {
+        if self.0.is_negative() {
+            return None;
+        }
+        (self.0 as u64).checked_mul(u64::from(track_time_base.numer.get())).map(MatroskaTicks)
+    }
+}
+
+impl From<i64> for SignedTrackTicks {
+    #[inline]
+    fn from(value: i64) -> Self {
+        Self(value)
+    }
+}
+
+impl From<Timestamp> for SignedTrackTicks {
+    #[inline]
+    fn from(value: Timestamp) -> Self {
+        Self(value.get())
+    }
+}
+
+impl std::fmt::Display for SignedTrackTicks {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
 #[allow(dead_code)]
 #[derive(Debug)]
 pub(crate) struct TrackElement {
@@ -110,12 +350,14 @@ pub(crate) struct TrackElement {
     pub(crate) lang_bcp47: Option<String>,
     pub(crate) codec_id: String,
     pub(crate) codec_private: Option<Box<[u8]>>,
-    pub(crate) codec_delay: u64,
+    pub(crate) codec_delay: MatroskaTicks,
     pub(crate) block_addition_mappings: Vec<BlockAdditionMappingElement>,
     pub(crate) audio: Option<AudioElement>,
     pub(crate) video: Option<VideoElement>,
-    pub(crate) default_duration: Option<NonZeroU64>,
+    pub(crate) default_duration: Option<NonZeroMatroskaTicks>,
+    pub(crate) default_decoded_field_duration: Option<NonZeroMatroskaTicks>,
     pub(crate) track_timestamp_scale: f64,
+    pub(crate) seek_pre_roll: MatroskaTicks,
     pub(crate) flags: TrackFlags,
 }
 
@@ -134,7 +376,9 @@ impl EbmlElement<MkvSchema> for TrackElement {
         let mut codec_private = None;
         let mut codec_delay = None;
         let mut default_duration = None;
+        let mut default_decoded_field_duration = None;
         let mut track_timestamp_scale = None;
+        let mut seek_pre_roll = None;
         let mut flags = Default::default();
 
         while let Some(child) = it.next_header()? {
@@ -171,7 +415,7 @@ impl EbmlElement<MkvSchema> for TrackElement {
                 }
                 MkvElement::CodecDelay => {
                     // Mandatory element. Schema-defined default is 0.
-                    codec_delay = it.read_u64()?;
+                    codec_delay = it.read_u64()?.map(MatroskaTicks);
                 }
                 MkvElement::Audio => {
                     // Non-mandatory element.
@@ -191,11 +435,25 @@ impl EbmlElement<MkvSchema> for TrackElement {
                         EbmlError::ElementError("mkv: invalid (0) track default duration"),
                     )?;
 
-                    default_duration = Some(val);
+                    default_duration = Some(NonZeroMatroskaTicks::from(val));
+                }
+                MkvElement::DefaultDecodedFieldDuration => {
+                    // Non-mandatory. May not be 0. No schema-defined default.
+                    let val = NonZeroU64::new(it.read_u64_no_default()?).ok_or(
+                        EbmlError::ElementError(
+                            "mkv: invalid (0) track default decoded field duration",
+                        ),
+                    )?;
+
+                    default_decoded_field_duration = Some(NonZeroMatroskaTicks::from(val));
                 }
                 MkvElement::TrackTimestampScale => {
                     // Mandatory element. Schema-defined default is 1.0. Deprecated v3.
                     track_timestamp_scale = Some(it.read_f64_default(1.0)?);
+                }
+                MkvElement::SeekPreRoll => {
+                    // Mandatory element. Schema-defined default is 0.
+                    seek_pre_roll = it.read_u64()?.map(MatroskaTicks);
                 }
                 MkvElement::FlagDefault => {
                     // Mandatory element. Schema-defined default is 1 (set).
@@ -248,8 +506,9 @@ impl EbmlElement<MkvSchema> for TrackElement {
 
         // Populate missing or empty mandatory elements that have default values.
         let lang = lang.unwrap_or_else(|| "eng".into());
-        let codec_delay = codec_delay.unwrap_or(0);
+        let codec_delay = codec_delay.unwrap_or(MatroskaTicks(0));
         let track_timestamp_scale = track_timestamp_scale.unwrap_or(1.0);
+        let seek_pre_roll = seek_pre_roll.unwrap_or(MatroskaTicks(0));
 
         Ok(Self {
             number: number.ok_or(EbmlError::ElementError("mkv: missing track number"))?,
@@ -263,7 +522,9 @@ impl EbmlElement<MkvSchema> for TrackElement {
             audio,
             video,
             default_duration,
+            default_decoded_field_duration,
             track_timestamp_scale,
+            seek_pre_roll,
             flags,
         })
     }
@@ -696,7 +957,7 @@ impl EbmlElement<MkvSchema> for EbmlHeaderElement {
 #[derive(Debug)]
 pub(crate) struct InfoElement {
     pub(crate) timestamp_scale: NonZeroU64,
-    pub(crate) duration: Option<f64>,
+    pub(crate) duration: Option<FloatingPointSegmentTicks>,
     title: Option<Box<str>>,
     muxing_app: Box<str>,
     writing_app: Box<str>,
@@ -728,7 +989,7 @@ impl EbmlElement<MkvSchema> for InfoElement {
                 MkvElement::Duration => {
                     // Non-mandatory element. No schema-defined default.
                     // TODO: Must not be > 0.0.
-                    duration = Some(it.read_f64_no_default()?);
+                    duration = Some(FloatingPointSegmentTicks::from(it.read_f64_no_default()?));
                 }
                 MkvElement::Title => {
                     // Non-mandatory element. No schema-defined default.
@@ -799,7 +1060,7 @@ impl EbmlElement<MkvSchema> for CuesElement {
 #[derive(Debug)]
 pub(crate) struct CuePointElement {
     /// Time in segment ticks.
-    pub(crate) time: u64,
+    pub(crate) time: MatroskaTicks,
     pub(crate) positions: CueTrackPositionsElement,
 }
 
@@ -814,7 +1075,7 @@ impl EbmlElement<MkvSchema> for CuePointElement {
             match child.element_type() {
                 MkvElement::CueTime => {
                     // Mandatory element. No schema-defined default.
-                    time = Some(it.read_u64_no_default()?);
+                    time = Some(MatroskaTicks(it.read_u64_no_default()?));
                 }
                 MkvElement::CueTrackPositions => {
                     // Mandatory element.
@@ -894,8 +1155,9 @@ impl EbmlElement<MkvSchema> for CueTrackPositionsElement {
 #[derive(Debug)]
 pub(crate) struct BlockGroupElement {
     pub(crate) data: Box<[u8]>,
-    pub(crate) duration: Option<u64>,
+    pub(crate) duration: Option<TrackTicks>,
     pub(crate) reference_block: Option<i64>,
+    pub(crate) discard_padding: Option<SignedMatroskaTicks>,
 }
 
 impl EbmlElement<MkvSchema> for BlockGroupElement {
@@ -905,13 +1167,13 @@ impl EbmlElement<MkvSchema> for BlockGroupElement {
         let mut data = None;
         let mut block_duration = None;
         let mut reference_block = None;
+        let mut discard_padding = None;
 
         while let Some(child) = it.next_header()? {
             match child.element_type() {
                 MkvElement::DiscardPadding => {
                     // Non-mandatory element. No schema-defined default.
-                    // TODO: Use it!
-                    let _nanos = it.read_i64_no_default()?;
+                    discard_padding = Some(SignedMatroskaTicks::from(it.read_i64_no_default()?));
                 }
                 MkvElement::Block => {
                     // Mandatory element.
@@ -919,7 +1181,7 @@ impl EbmlElement<MkvSchema> for BlockGroupElement {
                 }
                 MkvElement::BlockDuration => {
                     // Non-mandatory element. Schema-defined default is TBD.
-                    block_duration = it.read_u64()?;
+                    block_duration = it.read_u64()?.map(TrackTicks);
                 }
                 MkvElement::ReferenceBlock => {
                     // Non-mandatory element. No schema-defined default.
@@ -936,6 +1198,7 @@ impl EbmlElement<MkvSchema> for BlockGroupElement {
             data: data.ok_or(EbmlError::ElementError("mkv: missing block inside block group"))?,
             duration: block_duration,
             reference_block,
+            discard_padding,
         })
     }
 }
@@ -1675,8 +1938,8 @@ pub(crate) struct ChapterAtomElement {
     #[allow(dead_code)]
     pub(crate) is_enabled: bool,
     pub(crate) is_hidden: bool,
-    pub(crate) time_start: u64,
-    pub(crate) time_end: Option<u64>,
+    pub(crate) time_start: MatroskaTicks,
+    pub(crate) time_end: Option<MatroskaTicks>,
     pub(crate) skip_type: Option<u8>,
     pub(crate) display: Box<[ChapterDisplayElement]>,
     pub(crate) chapters: Box<[ChapterAtomElement]>,
@@ -1707,11 +1970,11 @@ impl EbmlElement<MkvSchema> for ChapterAtomElement {
                 MkvElement::ChapterStringUid => {}
                 MkvElement::ChapterTimeStart => {
                     // Mandatory element. No schema-defined default.
-                    time_start = Some(it.read_u64_no_default()?);
+                    time_start = Some(MatroskaTicks(it.read_u64_no_default()?));
                 }
                 MkvElement::ChapterTimeEnd => {
                     // Non-mandatory element. No schema-defined default.
-                    time_end = Some(it.read_u64_no_default()?);
+                    time_end = Some(MatroskaTicks(it.read_u64_no_default()?));
                 }
                 MkvElement::ChapterFlagEnabled => {
                     // Mandatory element. Schema-defined default is 1 (set).
@@ -1810,8 +2073,8 @@ impl ChapterAtomElement {
         }
 
         let chapter = Chapter {
-            start_time: Time::from_nanos_u64(self.time_start),
-            end_time: self.time_end.map(Time::from_nanos_u64),
+            start_time: Time::from_nanos_u64(self.time_start.get()),
+            end_time: self.time_end.map(|t| Time::from_nanos_u64(t.get())),
             start_byte: None,
             end_byte: None,
             tags,

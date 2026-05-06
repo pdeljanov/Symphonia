@@ -7,12 +7,12 @@
 
 use std::collections::{HashMap, VecDeque};
 
-use symphonia_core::errors::{Result, decode_error};
+use symphonia_core::errors::{Error, Result, decode_error};
 use symphonia_core::io::{BufReader, ReadBytes};
-use symphonia_core::units::{Duration, Timestamp};
 
 use crate::demuxer::TrackState;
 use crate::ebml::{read_signed_vint, read_unsigned_vint};
+use crate::segment::{MatroskaTicks, SegmentTicks, SignedTrackTicks, TrackTicks};
 
 enum Lacing {
     None,
@@ -66,45 +66,87 @@ pub(crate) fn read_xiph_sizes<R: ReadBytes>(mut reader: R, num_frames: usize) ->
 }
 
 pub(crate) struct Frame {
-    pub(crate) track: u32,
-    /// Absolute frame timestamp.
-    pub(crate) pts: Timestamp,
-    pub(crate) duration: Duration,
+    /// The Matroska track number (Symphonia's track ID).
+    pub(crate) track_num: u32,
+    /// The frame's presentation timestamp.
+    pub(crate) pts: SignedTrackTicks,
+    /// The frame's duration.
+    pub(crate) dur: TrackTicks,
+    /// Frame data.
     pub(crate) data: Box<[u8]>,
 }
 
-pub(crate) fn calc_abs_block_timestamp(
-    cluster_ts: u64,
-    rel_block_ts: i16,
-    codec_delay: u64,
-) -> Option<Timestamp> {
-    let cluster_ts: i64 = cluster_ts.try_into().ok()?;
-    cluster_ts
-        .checked_add(i64::from(rel_block_ts))
-        .and_then(|ts| ts.checked_sub_unsigned(codec_delay))
-        .map(Timestamp::from)
+/// Calculate the PTS of a block. This is the PTS of the first frame in the block.
+fn calculate_block_pts(
+    cluster_ts: SegmentTicks,
+    block_rel_ts: SignedTrackTicks,
+    track: &TrackState,
+) -> Option<SignedTrackTicks> {
+    // Convert the cluster timestamp into Track ticks from Segment ticks.
+    let cluster_ts = cluster_ts.into_track_ticks(track.track_timestamp_scale).try_into_signed()?;
+
+    cluster_ts.checked_add(block_rel_ts).and_then(|ts| {
+        // Codec delay must be converted into Track ticks from Matroska ticks.
+        let codec_delay = track.codec_delay.into_track_ticks(track.track_time_base);
+        ts.checked_sub_unsigned(codec_delay)
+    })
+}
+
+/// Iterator-like utility to precisely compute the duration of frames in a block.
+struct FrameDurationIter {
+    block_dur: TrackTicks,
+    num_frames: u64,
+    accumulator: u64,
+}
+
+impl FrameDurationIter {
+    fn new(block_dur: Option<TrackTicks>, track: &TrackState, num_frames: u64) -> Self {
+        // If the block duration is known, use it. Otherwise, derive the block duration from the
+        // default frame duration if it is known. Otherwise, assume a 0 duration.
+        let block_dur = block_dur
+            .or_else(|| {
+                // Compute the total block duration from the default frame duration. Convert to
+                // track ticks after multiplying to maintain as much accuracy as possible. If the
+                // multiplication overflows, it won't be possible to calculate the correct duration,
+                // so don't.
+                track
+                    .default_frame_duration
+                    .and_then(|frame_dur| {
+                        frame_dur.get().checked_mul(num_frames).map(MatroskaTicks::from)
+                    })
+                    .map(|dur| dur.into_track_ticks(track.track_time_base))
+            })
+            .unwrap_or_default();
+        FrameDurationIter { block_dur, num_frames, accumulator: 0 }
+    }
+
+    fn next(&mut self) -> TrackTicks {
+        // Accumulate the remainder after each computation since integer division rounds down.
+        self.accumulator = self.accumulator.saturating_add(self.block_dur.get());
+        let dur = TrackTicks::from(self.accumulator / self.num_frames);
+        self.accumulator %= self.num_frames;
+        dur
+    }
 }
 
 pub(crate) fn extract_frames(
     block: &[u8],
-    block_duration: Option<u64>,
+    block_duration: Option<TrackTicks>,
+    cluster_ts: SegmentTicks,
     tracks: &HashMap<u32, TrackState>,
-    cluster_timestamp: u64,
-    timestamp_scale: u64,
     frames: &mut VecDeque<Frame>,
 ) -> Result<bool> {
     let mut reader = BufReader::new(block);
-    let track = read_unsigned_vint(&mut reader)? as u32;
-    let rel_ts = reader.read_be_u16()? as i16;
+    let track_num = read_unsigned_vint(&mut reader)? as u32;
+    let block_rel_ts = SignedTrackTicks::from((reader.read_be_u16()? as i16) as i64);
     let flags = reader.read_byte()?;
     let lacing = parse_flags(flags)?;
 
-    let (default_frame_duration, codec_delay) = match tracks.get(&track) {
-        Some(t) => (t.default_frame_duration.map(|d| d / timestamp_scale), t.codec_delay),
-        None => (None, 0),
-    };
+    // Get the track associated with the block. It's an error if the track doesn't exist.
+    let track =
+        tracks.get(&track_num).ok_or(Error::DecodeError("mkv: unvalid track number for block"))?;
 
-    let mut pts = match calc_abs_block_timestamp(cluster_timestamp, rel_ts, codec_delay) {
+    let mut pts = match calculate_block_pts(cluster_ts, block_rel_ts, track) {
         Some(pts) => pts,
         _ => return Ok(false),
     };
@@ -112,8 +154,8 @@ pub(crate) fn extract_frames(
     match lacing {
         Lacing::None => {
             let data = reader.read_boxed_slice_exact(block.len() - reader.pos() as usize)?;
-            let duration = Duration::from(block_duration.or(default_frame_duration).unwrap_or(0));
-            frames.push_back(Frame { track, pts, data, duration });
+            let dur = FrameDurationIter::new(block_duration, track, 1).next();
+            frames.push_back(Frame { track_num, pts, data, dur });
         }
         Lacing::Xiph | Lacing::Ebml => {
             // Read number of stored sizes which is actually `number of frames` - 1
@@ -134,18 +176,16 @@ pub(crate) fn extract_frames(
                 _ => return decode_error("mkv: total of laced frame sizes exceeds block"),
             }
 
-            let frame_duration = block_duration
-                .map(|it| it / (num_frames + 1) as u64)
-                .or(default_frame_duration)
-                .map(Duration::from)
-                .unwrap_or_default();
+            let mut dur_it = FrameDurationIter::new(block_duration, track, num_frames as u64 + 1);
 
             for frame_size in sizes {
                 let data = reader.read_boxed_slice_exact(frame_size as usize)?;
-                frames.push_back(Frame { track, pts, data, duration: frame_duration });
+                let dur = dur_it.next();
+
+                frames.push_back(Frame { track_num, pts, data, dur });
 
                 // If PTS overflows, end the stream.
-                pts = match pts.checked_add(frame_duration) {
+                pts = match pts.checked_add_unsigned(dur) {
                     Some(pts) => pts,
                     None => return Ok(false),
                 };
@@ -154,7 +194,7 @@ pub(crate) fn extract_frames(
             // Size of last frame is not provided so we read to the end of the block.
             let size = block.len() - reader.pos() as usize;
             let data = reader.read_boxed_slice_exact(size)?;
-            frames.push_back(Frame { track, pts, data, duration: frame_duration });
+            frames.push_back(Frame { track_num, pts, data, dur: dur_it.next() });
         }
         Lacing::FixedSize => {
             let num_frames = reader.read_byte()? as usize + 1;
@@ -163,19 +203,17 @@ pub(crate) fn extract_frames(
                 return decode_error("mkv: invalid block size");
             }
 
-            let frame_duration = block_duration
-                .map(|it| it / num_frames as u64)
-                .or(default_frame_duration)
-                .map(Duration::from)
-                .unwrap_or_default();
+            let mut dur_it = FrameDurationIter::new(block_duration, track, num_frames as u64);
 
             let frame_size = total_size / num_frames;
             for _ in 0..num_frames {
                 let data = reader.read_boxed_slice_exact(frame_size)?;
-                frames.push_back(Frame { track, pts, data, duration: frame_duration });
+                let dur = dur_it.next();
+
+                frames.push_back(Frame { track_num, pts, data, dur });
 
                 // If PTS overflows, end the stream.
-                pts = match pts.checked_add(frame_duration) {
+                pts = match pts.checked_add_unsigned(dur) {
                     Some(pts) => pts,
                     None => return Ok(false),
                 };
