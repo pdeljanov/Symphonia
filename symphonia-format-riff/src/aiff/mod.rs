@@ -55,6 +55,7 @@ const AIFF_METADATA_INFO: MetadataInfo = MetadataInfo {
 /// `AiffReader` implements a demuxer for the AIFF container format.
 pub struct AiffReader<'s> {
     reader: MediaSourceStream<'s>,
+    media_info: MediaInfo,
     tracks: Vec<Track>,
     attachments: Vec<Attachment>,
     chapters: Option<ChapterGroup>,
@@ -227,6 +228,7 @@ impl<'s> AiffReader<'s> {
 
         Ok(AiffReader {
             reader: mss,
+            media_info: MediaInfo::from_track(&track),
             tracks: vec![track],
             attachments,
             chapters: chapters.or(opts.external_data.chapters),
@@ -355,6 +357,10 @@ impl FormatReader for AiffReader<'_> {
         &AIFF_FORMAT_INFO
     }
 
+    fn media_info(&self) -> &MediaInfo {
+        &self.media_info
+    }
+
     fn next_packet(&mut self) -> Result<Option<Packet>> {
         next_packet(
             &mut self.reader,
@@ -390,7 +396,7 @@ impl FormatReader for AiffReader<'_> {
 
         let required_ts = match to {
             // Frame timestamp given.
-            SeekTo::TimeStamp { ts, .. } => ts,
+            SeekTo::Timestamp { ts, .. } => ts,
             // Time value given, calculate frame timestamp using the timebase.
             SeekTo::Time { time, .. } => {
                 // The timebase is required to calculate the timestamp.

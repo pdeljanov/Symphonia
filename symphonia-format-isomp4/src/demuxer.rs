@@ -101,6 +101,7 @@ struct SampleDataInfo {
 /// `IsoMp4Reader` implements a demuxer for the ISO Base Media File Format.
 pub struct IsoMp4Reader<'s> {
     iter: AtomIterator<MediaSourceStream<'s>>,
+    media_info: MediaInfo,
     tracks: Vec<Track>,
     metadata: MetadataLog,
     /// Segments of the movie. Sorted in ascending order by sequence number.
@@ -276,7 +277,15 @@ impl<'s> IsoMp4Reader<'s> {
 
         let segs: Vec<Box<dyn StreamSegment>> = vec![Box::new(MoovSegment::new(moov.clone()))];
 
-        Ok(IsoMp4Reader { iter: it, tracks, metadata, track_states, segs, moov })
+        Ok(IsoMp4Reader {
+            iter: it,
+            media_info: Default::default(),
+            tracks,
+            metadata,
+            track_states,
+            segs,
+            moov,
+        })
     }
 
     /// Idempotently gets information regarding the next sample of the media stream. This function
@@ -526,6 +535,10 @@ impl FormatReader for IsoMp4Reader<'_> {
         &ISOMP4_FORMAT_INFO
     }
 
+    fn media_info(&self) -> &MediaInfo {
+        &self.media_info
+    }
+
     fn next_packet(&mut self) -> Result<Option<Packet>> {
         // Get the index of the track with the next-nearest (minimum) timestamp.
         let next_sample_info = loop {
@@ -582,7 +595,7 @@ impl FormatReader for IsoMp4Reader<'_> {
         }
 
         match to {
-            SeekTo::TimeStamp { ts, track_id } => {
+            SeekTo::Timestamp { ts, track_id } => {
                 // The seek timestamp is in timebase units specific to the selected track. Get the
                 // selected track and use the timebase to convert the timestamp into time units so
                 // that the other tracks can be seeked.

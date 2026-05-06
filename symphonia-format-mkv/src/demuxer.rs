@@ -48,6 +48,7 @@ pub struct TrackState {
 pub struct MkvReader<'s> {
     /// Iterator over EBML element headers
     iter: EbmlIterator<MediaSourceStream<'s>, MkvSchema>,
+    media_info: MediaInfo,
     tracks: Vec<Track>,
     track_states: HashMap<u32, TrackState>,
     attachments: Vec<Attachment>,
@@ -318,6 +319,7 @@ impl<'s> MkvReader<'s> {
 
         Ok(Self {
             iter: it,
+            media_info: Default::default(),
             tracks,
             track_states,
             attachments,
@@ -546,6 +548,10 @@ impl FormatReader for MkvReader<'_> {
         &MKV_FORMAT_INFO
     }
 
+    fn media_info(&self) -> &MediaInfo {
+        &self.media_info
+    }
+
     fn attachments(&self) -> &[Attachment] {
         &self.attachments
     }
@@ -581,7 +587,7 @@ impl FormatReader for MkvReader<'_> {
                 let track_id = track.id;
                 self.seek_track_by_ts_atomic(track_id, ts)
             }
-            SeekTo::TimeStamp { ts, track_id } => {
+            SeekTo::Timestamp { ts, track_id } => {
                 match self.tracks.iter().find(|t| t.id == track_id) {
                     Some(_) => self.seek_track_by_ts_atomic(track_id, ts),
                     None => seek_error(SeekErrorKind::InvalidTrack),

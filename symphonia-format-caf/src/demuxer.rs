@@ -41,6 +41,7 @@ const CAF_FORMAT_INFO: FormatInfo =
 /// `CafReader` implements a demuxer for Core Audio Format containers.
 pub struct CafReader<'s> {
     reader: MediaSourceStream<'s>,
+    media_info: MediaInfo,
     tracks: Vec<Track>,
     chapters: Option<ChapterGroup>,
     metadata: MetadataLog,
@@ -84,6 +85,10 @@ impl ProbeableFormat<'_> for CafReader<'_> {
 impl FormatReader for CafReader<'_> {
     fn format_info(&self) -> &FormatInfo {
         &CAF_FORMAT_INFO
+    }
+
+    fn media_info(&self) -> &MediaInfo {
+        &self.media_info
     }
 
     fn next_packet(&mut self) -> Result<Option<Packet>> {
@@ -171,7 +176,7 @@ impl FormatReader for CafReader<'_> {
 
     fn seek(&mut self, _mode: SeekMode, to: SeekTo) -> Result<SeekedTo> {
         let required_ts = match to {
-            SeekTo::TimeStamp { ts, .. } => ts,
+            SeekTo::Timestamp { ts, .. } => ts,
             SeekTo::Time { time, .. } => {
                 // The timebase is required to calculate the timestamp.
                 let tb = self.time_base().ok_or(Error::SeekError(SeekErrorKind::Unseekable))?;
@@ -314,6 +319,7 @@ impl<'s> CafReader<'s> {
     pub fn try_new(mss: MediaSourceStream<'s>, opts: FormatOptions) -> Result<Self> {
         let mut reader = Self {
             reader: mss,
+            media_info: Default::default(),
             tracks: vec![],
             chapters: opts.external_data.chapters,
             metadata: opts.external_data.metadata.unwrap_or_default(),
@@ -325,6 +331,8 @@ impl<'s> CafReader<'s> {
         reader.check_file_header()?;
         let track = reader.read_chunks()?;
 
+        // TODO: Fix this weird initialization pattern.
+        reader.media_info = MediaInfo::from_track(&track);
         reader.tracks.push(track);
 
         Ok(reader)
@@ -557,6 +565,8 @@ impl<'s> CafReader<'s> {
 
         if let Some(num_frames) = num_frames {
             track.with_num_frames(num_frames);
+            // Duration equals the number of frames because the timebase is always 1 / sample rate.
+            track.with_duration(Duration::from(num_frames));
         }
 
         Ok(track)

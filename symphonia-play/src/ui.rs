@@ -11,7 +11,7 @@ use std::path::Path;
 
 use lazy_static::lazy_static;
 use symphonia::core::codecs::{CodecInfo, CodecParameters, CodecProfile};
-use symphonia::core::formats::{Attachment, FormatReader, Track, TrackFlags};
+use symphonia::core::formats::{Attachment, FormatReader, MediaInfo, Track, TrackFlags};
 use symphonia::core::meta::{
     Chapter, ChapterGroup, ChapterGroupItem, ColorMode, ColorModel, ContentAdvisory, MetadataInfo,
     MetadataRevision, StandardTag, Tag, Visual,
@@ -39,6 +39,7 @@ pub fn print_format(path: &Path, format: &mut Box<dyn FormatReader>) {
     );
     print_pair("Format ID:", &format_info.format, Bullet::None, 1);
 
+    print_media(format.media_info());
     print_tracks(format.tracks());
 
     // Consume all metadata revisions up-to and including the latest.
@@ -64,6 +65,43 @@ pub fn print_update(rev: &MetadataRevision) {
     print_meta_revision(rev);
     println!(":");
     println!();
+}
+
+pub fn print_media(media_info: &MediaInfo) {
+    print_blank();
+    print_header("Media");
+
+    if let Some(tb) = media_info.time_base {
+        print_pair("Time Base:", &tb, Bullet::None, 1);
+    }
+
+    if media_info.start_ts.is_positive() {
+        if let Some(tb) = media_info.time_base {
+            print_pair(
+                "Start Time:",
+                &format!("{} ({})", fmt_ts(media_info.start_ts, tb), media_info.start_ts),
+                Bullet::None,
+                1,
+            );
+        }
+        else {
+            print_pair("Start Time:", &media_info.start_ts, Bullet::None, 1);
+        }
+    }
+
+    if let Some(duration) = media_info.duration {
+        if let Some(tb) = media_info.time_base {
+            print_pair(
+                "Duration:",
+                &format!("{} ({})", fmt_dur(duration, tb), duration),
+                Bullet::None,
+                1,
+            );
+        }
+        else {
+            print_pair("Frames:", &duration, Bullet::None, 1);
+        }
+    }
 }
 
 pub fn print_tracks(tracks: &[Track]) {
@@ -165,16 +203,20 @@ pub fn print_tracks(tracks: &[Track]) {
             }
 
             if let Some(num_frames) = track.num_frames {
+                print_pair("Frames:", &num_frames, Bullet::None, 1);
+            }
+
+            if let Some(duration) = track.duration {
                 if let Some(tb) = track.time_base {
                     print_pair(
                         "Duration:",
-                        &format!("{} ({})", fmt_dur(num_frames.into(), tb), num_frames),
+                        &format!("{} ({})", fmt_dur(duration, tb), duration),
                         Bullet::None,
                         1,
                     );
                 }
                 else {
-                    print_pair("Frames:", &num_frames, Bullet::None, 1);
+                    print_pair("Duration:", &duration, Bullet::None, 1);
                 }
             }
 

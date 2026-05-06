@@ -38,6 +38,7 @@ const ADTS_FORMAT_INFO: FormatInfo = FormatInfo {
 /// `AdtsReader` implements a demuxer for ADTS (AAC native frames).
 pub struct AdtsReader<'s> {
     reader: MediaSourceStream<'s>,
+    media_info: MediaInfo,
     tracks: Vec<Track>,
     chapters: Option<ChapterGroup>,
     metadata: MetadataLog,
@@ -67,13 +68,16 @@ impl<'s> AdtsReader<'s> {
 
         let first_frame_pos = mss.pos();
 
-        if let Some(n_frames) = approximate_frame_count(&mut mss)? {
+        if let Some(num_frames) = approximate_frame_count(&mut mss)? {
             info!("estimating duration from bitrate, may be inaccurate for vbr files");
-            track.with_num_frames(n_frames);
+            track.with_num_frames(num_frames);
+            // Duration equals the number of frames because the timebase is always 1 / sample rate.
+            track.with_duration(Duration::from(num_frames));
         }
 
         Ok(AdtsReader {
             reader: mss,
+            media_info: MediaInfo::from_track(&track),
             tracks: vec![track],
             chapters: opts.external_data.chapters,
             metadata: opts.external_data.metadata.unwrap_or_default(),
@@ -270,6 +274,10 @@ impl FormatReader for AdtsReader<'_> {
         &ADTS_FORMAT_INFO
     }
 
+    fn media_info(&self) -> &MediaInfo {
+        &self.media_info
+    }
+
     fn next_packet(&mut self) -> Result<Option<Packet>> {
         // Parse the header to get the calculated frame size.
         let header = match AdtsHeader::read(&mut self.reader) {
@@ -315,7 +323,7 @@ impl FormatReader for AdtsReader<'_> {
         // Get the timestamp of the desired audio frame.
         let required_ts = match to {
             // Frame timestamp given.
-            SeekTo::TimeStamp { ts, .. } => ts,
+            SeekTo::Timestamp { ts, .. } => ts,
             // Time value given, calculate frame timestamp using the timebase.
             SeekTo::Time { time, .. } => {
                 // The timebase is required to calculate the timestamp.

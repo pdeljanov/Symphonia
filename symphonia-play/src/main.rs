@@ -341,7 +341,7 @@ fn play(mut reader: Box<dyn FormatReader>, opts: PlayOptions) -> Result<i32> {
     let seek_ts = if let Some(seek_pos) = opts.seek_pos {
         let seek_to = match seek_pos {
             SeekPosition::Time(time) => SeekTo::Time { time, track_id: Some(track_id) },
-            SeekPosition::Timestamp(ts) => SeekTo::TimeStamp { ts, track_id },
+            SeekPosition::Timestamp(ts) => SeekTo::Timestamp { ts, track_id },
         };
 
         // Attempt the seek. If the seek fails, ignore the error and return a seek timestamp of 0 so

@@ -112,6 +112,8 @@ pub fn detect(serial: u32, buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> {
 
     if let Some(num_frames) = stream_info.n_samples {
         track.with_num_frames(num_frames);
+        // Duration equals the number of frames because the timebase is always 1 / sample rate.
+        track.with_duration(Duration::from(num_frames));
     }
 
     track.with_codec_params(CodecParameters::Audio(codec_params));

@@ -33,6 +33,7 @@ const OGG_FORMAT_INFO: FormatInfo =
 /// `OggReader` implements a demuxer for Xiph's OGG container format.
 pub struct OggReader<'s> {
     reader: MediaSourceStream<'s>,
+    media_info: MediaInfo,
     tracks: Vec<Track>,
     chapters: Option<ChapterGroup>,
     metadata: MetadataLog,
@@ -59,6 +60,7 @@ impl<'s> OggReader<'s> {
 
         let mut ogg = OggReader {
             reader: mss,
+            media_info: Default::default(),
             tracks: Default::default(),
             chapters: opts.external_data.chapters,
             metadata: opts.external_data.metadata.unwrap_or_default(),
@@ -399,10 +401,10 @@ impl<'s> OggReader<'s> {
 
         // At this point it can safely be assumed that a new physical stream is starting.
 
-        // First, clear the existing track listing.
+        // Clear the existing track listing.
         self.tracks.clear();
 
-        // Second, add a track for all streams.
+        // Add a track for each logical stream.
         for (&serial, stream) in streams.iter() {
             // Warn if the track is not ready. This should not happen if the physical stream was
             // muxed properly.
@@ -413,10 +415,13 @@ impl<'s> OggReader<'s> {
             self.tracks.push(stream.track().clone());
         }
 
-        // Third, replace all logical streams with the new set.
+        // Update media information.
+        self.media_info = MediaInfo::from_tracks(&self.tracks);
+
+        // Replace all logical streams with the new set.
         self.streams = streams;
 
-        // Last, store the lower and upper byte boundaries of the physical stream for seeking.
+        // Store the lower and upper byte boundaries of the physical stream for seeking.
         self.phys_byte_range_start = byte_range_start;
         self.phys_byte_range_end = byte_range_end;
 
@@ -453,6 +458,10 @@ impl FormatReader for OggReader<'_> {
         &OGG_FORMAT_INFO
     }
 
+    fn media_info(&self) -> &MediaInfo {
+        &self.media_info
+    }
+
     fn next_packet(&mut self) -> Result<Option<Packet>> {
         self.next_logical_packet()
     }
@@ -473,7 +482,7 @@ impl FormatReader for OggReader<'_> {
         // Get the timestamp of the desired audio frame.
         let (required_ts, serial) = match to {
             // Frame timestamp given.
-            SeekTo::TimeStamp { ts, track_id } => {
+            SeekTo::Timestamp { ts, track_id } => {
                 // Check if the user provided an invalid track ID.
                 if let Some(stream) = self.streams.get(&track_id) {
                     let track = stream.track();

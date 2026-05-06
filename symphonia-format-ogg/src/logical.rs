@@ -488,12 +488,15 @@ impl LogicalStream {
         // If this is the last page, update the codec parameters.
         if page.header.is_last_page {
             // TODO: What if this is negative?
+            // TODO: Bounds are in timestamp units, not number of frames. Fix this up because it
+            // only works for audio codecs.
             let num_frames = bound.ts.get() as u64;
             let num_padding_frames = bound.discard.get() as u32;
 
             let track = self.mapper.track_mut();
 
             track.with_num_frames(num_frames);
+            track.with_duration(Duration::from(num_frames));
 
             if num_padding_frames > 0 {
                 track.with_padding(num_padding_frames);

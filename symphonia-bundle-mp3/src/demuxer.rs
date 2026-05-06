@@ -39,6 +39,7 @@ const MP3_FORMAT_INFO: FormatInfo =
 /// `MpaReader` implements a demuxer for the MPEG1 and MPEG2 audio elementary stream.
 pub struct MpaReader<'s> {
     reader: MediaSourceStream<'s>,
+    media_info: MediaInfo,
     tracks: Vec<Track>,
     chapters: Option<ChapterGroup>,
     metadata: MetadataLog,
@@ -145,6 +146,10 @@ impl FormatReader for MpaReader<'_> {
         }
     }
 
+    fn media_info(&self) -> &MediaInfo {
+        &self.media_info
+    }
+
     fn next_packet(&mut self) -> Result<Option<Packet>> {
         let (header, data) = loop {
             // Read the next MPEG frame.
@@ -224,7 +229,7 @@ impl FormatReader for MpaReader<'_> {
         // Get the timestamp of the desired audio frame.
         let required_ts = match to {
             // Frame timestamp given.
-            SeekTo::TimeStamp { ts, .. } => ts,
+            SeekTo::Timestamp { ts, .. } => ts,
             // Time value given, calculate frame timestamp using the timebase.
             SeekTo::Time { time, .. } => {
                 // The timebase is required to calculate the timestamp.
@@ -459,11 +464,17 @@ impl<'s> MpaReader<'s> {
             }
         }
 
+        if let Some(num_frames) = track.num_frames {
+            // Duration equals the number of frames because the timebase is always 1 / sample rate.
+            track.with_duration(Duration::from(num_frames));
+        }
+
         let first_packet_pos = mss.pos();
         let next_packet_ts = Timestamp::from(-i64::from(track.delay.unwrap_or(0)));
 
         Ok(MpaReader {
             reader: mss,
+            media_info: MediaInfo::from_track(&track),
             tracks: vec![track],
             chapters: opts.external_data.chapters,
             metadata: opts.external_data.metadata.unwrap_or_default(),

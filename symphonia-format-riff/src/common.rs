@@ -474,4 +474,6 @@ pub fn append_data_params(track: &mut Track, data_len: u64, packet_info: &Packet
     // Prefer the duration in the FACT chunk.
     let num_frames = packet_info.get_num_frames_at(data_len);
     track.with_num_frames(num_frames);
+    // Duration equals the number of frames because the timebase is always 1 / sample rate.
+    track.with_duration(Duration::from(num_frames));
 }
