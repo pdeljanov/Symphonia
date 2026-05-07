@@ -14,7 +14,7 @@ use crate::audio::{Channels, GenericAudioBufferRef};
 use crate::codecs::{CodecInfo, CodecProfile};
 use crate::common::FourCc;
 use crate::errors::Result;
-use crate::packet::Packet;
+use crate::packet::{Packet, PacketRef};
 
 /// An `AudioCodecId` is a unique identifier used to identify a specific audio codec.
 ///
@@ -276,7 +276,15 @@ pub trait AudioDecoder: Send + Sync {
     /// the decoded audio buffer to change. All other errors are unrecoverable.
     ///
     /// Implementors of decoders *must* `clear` the internal audio buffer if an error occurs.
-    fn decode(&mut self, packet: &Packet) -> Result<GenericAudioBufferRef<'_>>;
+    fn decode(&mut self, packet: &Packet) -> Result<GenericAudioBufferRef<'_>> {
+        self.decode_ext(&packet.as_packet_ref())
+    }
+
+    /// Decodes a `PacketRef` of audio data and returns a generic (untyped) audio buffer reference
+    /// containing the decoded audio.
+    ///
+    /// This method is identical to `decode` but takes a `PacketRef` for zero-copy packet passing.
+    fn decode_ext(&mut self, packet: &PacketRef<'_>) -> Result<GenericAudioBufferRef<'_>>;
 
     /// Optionally, obtain post-decode information such as the verification status.
     fn finalize(&mut self) -> FinalizeResult;

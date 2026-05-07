@@ -29,7 +29,7 @@ use symphonia_core::codecs::audio::{AudioDecoder, FinalizeResult};
 use symphonia_core::codecs::registry::{RegisterableAudioDecoder, SupportedAudioCodec};
 use symphonia_core::errors::{Result, decode_error, unsupported_error};
 use symphonia_core::io::{BitReaderLtr, BufReader, FiniteStream, ReadBitsLtr, ReadBytes};
-use symphonia_core::packet::Packet;
+use symphonia_core::packet::PacketRef;
 use symphonia_core::support_audio_codec;
 
 /// Supported ALAC version.
@@ -457,7 +457,7 @@ impl AlacDecoder {
         Ok(AlacDecoder { params: params.clone(), tail_bits: vec![0; max_tail_values], buf, config })
     }
 
-    fn decode_inner(&mut self, packet: &Packet) -> Result<()> {
+    fn decode_inner(&mut self, packet: &PacketRef<'_>) -> Result<()> {
         let mut bs = BitReaderLtr::new(packet.buf());
 
         let channel_map = map_channels(&self.config.channels);
@@ -577,7 +577,7 @@ impl AudioDecoder for AlacDecoder {
         &self.params
     }
 
-    fn decode(&mut self, packet: &Packet) -> Result<GenericAudioBufferRef<'_>> {
+    fn decode_ext(&mut self, packet: &PacketRef<'_>) -> Result<GenericAudioBufferRef<'_>> {
         if let Err(e) = self.decode_inner(packet) {
             self.buf.clear();
             Err(e)

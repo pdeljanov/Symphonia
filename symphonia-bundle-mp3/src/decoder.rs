@@ -13,7 +13,7 @@ use symphonia_core::codecs::audio::{
 use symphonia_core::codecs::registry::{RegisterableAudioDecoder, SupportedAudioCodec};
 use symphonia_core::errors::{Result, decode_error, unsupported_error};
 use symphonia_core::io::FiniteStream;
-use symphonia_core::packet::Packet;
+use symphonia_core::packet::PacketRef;
 use symphonia_core::support_audio_codec;
 
 #[cfg(feature = "mp1")]
@@ -82,7 +82,7 @@ impl MpaDecoder {
         Ok(MpaDecoder { opts: *opts, params: params.clone(), state, buf: Default::default() })
     }
 
-    fn decode_inner(&mut self, packet: &Packet) -> Result<()> {
+    fn decode_inner(&mut self, packet: &PacketRef<'_>) -> Result<()> {
         let mut reader = packet.as_buf_reader();
 
         let header = header::read_frame_header(&mut reader)?;
@@ -150,7 +150,7 @@ impl AudioDecoder for MpaDecoder {
         self.state = State::new(self.params.codec);
     }
 
-    fn decode(&mut self, packet: &Packet) -> Result<GenericAudioBufferRef<'_>> {
+    fn decode_ext(&mut self, packet: &PacketRef<'_>) -> Result<GenericAudioBufferRef<'_>> {
         if let Err(e) = self.decode_inner(packet) {
             self.buf.clear();
             Err(e)

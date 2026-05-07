@@ -27,7 +27,7 @@ use symphonia_core::codecs::registry::{RegisterableAudioDecoder, SupportedAudioC
 use symphonia_core::dsp::mdct::Imdct;
 use symphonia_core::errors::{Result, decode_error, unsupported_error};
 use symphonia_core::io::{BitReaderRtl, BufReader, FiniteBitStream, ReadBitsRtl, ReadBytes};
-use symphonia_core::packet::Packet;
+use symphonia_core::packet::PacketRef;
 use symphonia_core::support_audio_codec;
 
 use symphonia_common::xiph::audio::vorbis::*;
@@ -143,7 +143,7 @@ impl VorbisDecoder {
         })
     }
 
-    fn decode_inner(&mut self, packet: &Packet) -> Result<()> {
+    fn decode_inner(&mut self, packet: &PacketRef<'_>) -> Result<()> {
         let mut bs = BitReaderRtl::new(packet.buf());
 
         // Section 4.3.1 - Packet Type, Mode, and Window Decode
@@ -347,7 +347,7 @@ impl AudioDecoder for VorbisDecoder {
         &self.params
     }
 
-    fn decode(&mut self, packet: &Packet) -> Result<GenericAudioBufferRef<'_>> {
+    fn decode_ext(&mut self, packet: &PacketRef<'_>) -> Result<GenericAudioBufferRef<'_>> {
         if let Err(e) = self.decode_inner(packet) {
             self.buf.clear();
             Err(e)
