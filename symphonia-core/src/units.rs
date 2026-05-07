@@ -1029,6 +1029,10 @@ impl TimeBase {
         }
     }
 
+    /// Scale the timebase by a positive, non-zero, floating-point scale factor.
+    ///
+    /// Returns `None` if the scale factor is <= 0.0, or if the timebase would become invalid
+    /// (i.e., the numerator or denominator becomes 0 or overflow).
     pub fn scale(self, factor: f64) -> Option<Self> {
         // Nothing to do if the scale factor is exactly 1.0.
         if factor == 1.0 {
