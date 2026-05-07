@@ -124,14 +124,14 @@ pub trait SubtitleDecoder: Send + Sync {
     ///
     /// Implementors of decoders *must* `clear` the last decoded subtitle if an error occurs.
     fn decode(&mut self, packet: &Packet) -> Result<GenericSubtitleBufferRef<'_>> {
-        self.decode_ext(&packet.as_packet_ref())
+        self.decode_ref(&packet.as_packet_ref())
     }
 
     /// Decodes a `PacketRef` of subtitle data and returns a generic (untyped) subtitle buffer reference
     /// containing the decoded subtitles.
     ///
     /// This method is identical to `decode` but takes a `PacketRef` for zero-copy packet passing.
-    fn decode_ext(&mut self, packet: &PacketRef<'_>) -> Result<GenericSubtitleBufferRef<'_>>;
+    fn decode_ref(&mut self, packet: &PacketRef<'_>) -> Result<GenericSubtitleBufferRef<'_>>;
 
     /// Allows read access to the internal audio buffer.
     ///

@@ -150,7 +150,7 @@ impl AudioDecoder for MpaDecoder {
         self.state = State::new(self.params.codec);
     }
 
-    fn decode_ext(&mut self, packet: &PacketRef<'_>) -> Result<GenericAudioBufferRef<'_>> {
+    fn decode_ref(&mut self, packet: &PacketRef<'_>) -> Result<GenericAudioBufferRef<'_>> {
         if let Err(e) = self.decode_inner(packet) {
             self.buf.clear();
             Err(e)
