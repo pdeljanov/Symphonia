@@ -46,9 +46,10 @@ use crate::units::{Duration, Timestamp};
 /// while the sum of `dur`, `trim_start`, and `trim_end` must equal the amount of frames the decoder
 /// would produce if no trimming occurs.
 #[derive(Clone)]
+#[non_exhaustive]
 pub struct Packet {
     /// The track ID.
-    track_id: u32,
+    pub track_id: u32,
     /// The presentation timestamp (PTS) of the packet in `TimeBase` units.
     pub pts: Timestamp,
     /// The decode timestamp (DTS) of the packet in `TimeBase` units.
@@ -148,25 +149,31 @@ impl Packet {
         BufReader::new(&self.data)
     }
 
-    /// Get a `PacketRef` borrowing this packet.
+    /// Get a `PacketRef` borrowing this packet's data buffer.
     #[inline]
     pub fn as_packet_ref(&self) -> PacketRef<'_> {
-        PacketRef::new(self.track_id, self.pts, self.dur, &self.data)
-            .with_dts(self.dts)
-            .with_trim_start(self.trim_start)
-            .with_trim_end(self.trim_end)
+        PacketRef {
+            track_id: self.track_id,
+            pts: self.pts,
+            dts: self.dts,
+            dur: self.dur,
+            trim_start: self.trim_start,
+            trim_end: self.trim_end,
+            data: &self.data,
+        }
     }
 }
 
-/// A borrowed reference to a packet.
+/// A non-owning equivalent to `Packet`.
 ///
-/// `PacketRef` is the zero-copy equivalent of `Packet`. It is particularly useful when
+/// `PacketRef` is the zero-copy, non-owning, equivalent of `Packet`. It is particularly useful when
 /// packet data is already residing in an application-managed fixed buffer or when data is
 /// passed in from external environments like C/C++ via FFI. This allows decoders to process
 /// the data directly without forcing a heap allocation and deep copy.
 #[derive(Clone, Copy)]
+#[non_exhaustive]
 pub struct PacketRef<'a> {
-    track_id: u32,
+    pub track_id: u32,
     pub pts: Timestamp,
     pub dts: Timestamp,
     pub dur: Duration,
@@ -190,24 +197,6 @@ impl<'a> PacketRef<'a> {
             trim_end: Duration::ZERO,
             data,
         }
-    }
-
-    /// Provide the decode timestamp (DTS).
-    pub fn with_dts(mut self, dts: Timestamp) -> Self {
-        self.dts = dts;
-        self
-    }
-
-    /// Provide the trim start duration.
-    pub fn with_trim_start(mut self, trim_start: Duration) -> Self {
-        self.trim_start = trim_start;
-        self
-    }
-
-    /// Provide the trim end duration.
-    pub fn with_trim_end(mut self, trim_end: Duration) -> Self {
-        self.trim_end = trim_end;
-        self
     }
 
     /// The track identifier of the track this packet belongs to.
@@ -274,7 +263,7 @@ impl<'a> From<&'a Packet> for PacketRef<'a> {
 }
 
 mod builder {
-    use crate::packet::Packet;
+    use crate::packet::{Packet, PacketRef};
     use crate::units::{Duration, Timestamp};
 
     pub struct HasTrackId(u32);
@@ -287,9 +276,10 @@ mod builder {
     pub struct NoDur;
 
     pub struct HasBuf(Box<[u8]>);
+    pub struct HasBufRef<'a>(&'a [u8]);
     pub struct NoBuf;
 
-    /// A builder for creating packets.
+    /// A builder for creating owning or non-owning packets.
     ///
     /// See [`Packet`] for a detailed description of all packet fields.
     ///
@@ -330,6 +320,21 @@ mod builder {
         /// Build the packet.
         pub fn build(self) -> Packet {
             Packet {
+                track_id: self.track_id.0,
+                pts: self.pts.0,
+                dts: self.dts.unwrap_or(self.pts.0),
+                dur: self.dur.0,
+                trim_start: self.trim_start,
+                trim_end: self.trim_end,
+                data: self.buf.0,
+            }
+        }
+    }
+
+    impl<'a> PacketBuilder<HasTrackId, HasPts, HasDur, HasBufRef<'a>> {
+        /// Build a non-owning packet.
+        pub fn build_packet_ref(self) -> PacketRef<'a> {
+            PacketRef {
                 track_id: self.track_id.0,
                 pts: self.pts.0,
                 dts: self.dts.unwrap_or(self.pts.0),
@@ -409,9 +414,19 @@ mod builder {
         }
 
         /// Provide the packet's data buffer.
+        ///
+        /// When holding an owned data buffer, an owning `Packet` is built.
         pub fn data(self, buf: impl Into<Box<[u8]>>) -> PacketBuilder<T, P, D, HasBuf> {
             let Self { track_id, pts, dur, dts, trim_start, trim_end, .. } = self;
             PacketBuilder { track_id, pts, dur, buf: HasBuf(buf.into()), dts, trim_start, trim_end }
+        }
+
+        /// Provide the packet's data buffer as a non-owning reference.
+        ///
+        /// When holding a non-owning data buffer reference, a non-owning `PacketRef` is built.
+        pub fn data_by_ref<'a>(self, buf: &'a [u8]) -> PacketBuilder<T, P, D, HasBufRef<'a>> {
+            let Self { track_id, pts, dur, dts, trim_start, trim_end, .. } = self;
+            PacketBuilder { track_id, pts, dur, buf: HasBufRef(buf), dts, trim_start, trim_end }
         }
 
         /// Provide the decode timestamp (DTS).
@@ -438,45 +453,57 @@ pub use builder::PacketBuilder;
 
 #[cfg(test)]
 mod tests {
-    use super::{Packet, PacketRef};
+    use super::PacketBuilder;
     use crate::units::{Duration, Timestamp};
 
     #[test]
     fn verify_packet_ref_creation() {
         let data: &[u8] = &[1, 2, 3, 4];
-        let pkt_ref = PacketRef::new(1, Timestamp::new(100), Duration::from(50_u64), data)
-            .with_dts(Timestamp::new(90))
-            .with_trim_start(Duration::from(10_u64))
-            .with_trim_end(Duration::from(5_u64));
+
+        let pkt_ref = PacketBuilder::new()
+            .track_id(1)
+            .pts(Timestamp::new(100))
+            .dts(Timestamp::new(90))
+            .dur(Duration::new(50))
+            .data_by_ref(data)
+            .trim_start(Duration::new(10))
+            .trim_end(Duration::new(5))
+            .build_packet_ref();
 
         assert_eq!(pkt_ref.track_id(), 1);
         assert_eq!(pkt_ref.pts(), Timestamp::new(100));
         assert_eq!(pkt_ref.dts(), Timestamp::new(90));
-        assert_eq!(pkt_ref.dur(), Duration::from(50_u64));
-        assert_eq!(pkt_ref.trim_start(), Duration::from(10_u64));
-        assert_eq!(pkt_ref.trim_end(), Duration::from(5_u64));
+        assert_eq!(pkt_ref.dur(), Duration::new(50));
+        assert_eq!(pkt_ref.trim_start(), Duration::new(10));
+        assert_eq!(pkt_ref.trim_end(), Duration::new(5));
         assert_eq!(pkt_ref.buf(), &[1, 2, 3, 4]);
 
         // block_dur = dur + trim_start + trim_end = 50 + 10 + 5 = 65
-        assert_eq!(pkt_ref.block_dur(), Duration::from(65_u64));
+        assert_eq!(pkt_ref.block_dur(), Duration::new(65));
     }
 
     #[test]
     fn verify_packet_to_packet_ref() {
         let data = vec![5, 6, 7, 8];
-        let mut pkt = Packet::new(2, Timestamp::new(200), Duration::from(100_u64), data);
-        pkt.dts = Timestamp::new(190);
-        pkt.trim_start = Duration::from(20_u64);
-        pkt.trim_end = Duration::from(10_u64);
+
+        let pkt = PacketBuilder::new()
+            .track_id(2)
+            .pts(Timestamp::new(200))
+            .dur(Duration::new(100))
+            .data(data)
+            .dts(Timestamp::new(190))
+            .trim_start(Duration::new(20))
+            .trim_end(Duration::new(10))
+            .build();
 
         let pkt_ref = pkt.as_packet_ref();
 
         assert_eq!(pkt_ref.track_id(), 2);
         assert_eq!(pkt_ref.pts(), Timestamp::new(200));
         assert_eq!(pkt_ref.dts(), Timestamp::new(190));
-        assert_eq!(pkt_ref.dur(), Duration::from(100_u64));
-        assert_eq!(pkt_ref.trim_start(), Duration::from(20_u64));
-        assert_eq!(pkt_ref.trim_end(), Duration::from(10_u64));
+        assert_eq!(pkt_ref.dur(), Duration::new(100));
+        assert_eq!(pkt_ref.trim_start(), Duration::new(20));
+        assert_eq!(pkt_ref.trim_end(), Duration::new(10));
         assert_eq!(pkt_ref.buf(), &[5, 6, 7, 8]);
     }
 }
