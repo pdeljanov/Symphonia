@@ -146,14 +146,19 @@ fn synthesize_codewords(code_lens: &[u8]) -> Result<Vec<u32>> {
             return decode_error("vorbis: codebook overspecified");
         }
 
-        for i in (0..codeword_len + 1).rev() {
+        for i in (1..codeword_len + 1).rev() {
             // If the least significant bit (LSb) of the next codeword for codewords of length N
             // toggles from 1 to 0, that indicates the next-least-LSb will toggle. This means that
             // the next codeword will branch off a new parent node. Therefore, the next codeword for
             // codewords of length N will use the next codeword for codewords of length N-1 as its
             // prefix.
             if next_codeword[i] & 1 == 1 {
-                next_codeword[i] = next_codeword[i - 1] << 1;
+                if i == 1 {
+                    next_codeword[1] += 1;
+                }
+                else {
+                    next_codeword[i] = next_codeword[i - 1] << 1;
+                }
                 break;
             }
 
@@ -429,5 +434,12 @@ mod tests {
         const EXPECTED_CODEWORDS: &[u32] = &[0, 0x4, 0x5, 0x6, 0x7, 0x2, 0x6, 0x7];
         let codewords = synthesize_codewords(CODEWORD_LENGTHS).unwrap();
         assert_eq!(&codewords, EXPECTED_CODEWORDS);
+    }
+
+    #[test]
+    fn verify_synthesize_codewords_overspecified() {
+        // These codebooks are overspecified and shouldn't panic.
+        assert!(synthesize_codewords(&[1, 1, 1]).is_err());
+        assert!(synthesize_codewords(&[1, 1, 32]).is_err());
     }
 }
