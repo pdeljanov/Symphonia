@@ -333,15 +333,12 @@ impl<'s> IsoMp4Reader<'s> {
 
         let segs: Vec<Box<dyn StreamSegment>> = vec![Box::new(MoovSegment::new(moov.clone()))];
 
-        Ok(IsoMp4Reader {
-            iter: it,
-            media_info: Default::default(),
-            tracks,
-            metadata,
-            track_states,
-            segs,
-            moov,
-        })
+        // Populate media information.
+        let mut media_info = MediaInfo::new();
+        media_info.with_time_base(TimeBase::from_recip(moov.mvhd.timescale));
+        media_info.with_duration(Duration::new(moov.mvhd.duration));
+
+        Ok(IsoMp4Reader { iter: it, media_info, tracks, metadata, track_states, segs, moov })
     }
 
     /// Idempotently gets information regarding the next sample of the media stream. This function
