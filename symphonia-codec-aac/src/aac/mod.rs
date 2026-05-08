@@ -21,7 +21,7 @@ use symphonia_core::codecs::audio::{AudioDecoder, FinalizeResult};
 use symphonia_core::codecs::registry::{RegisterableAudioDecoder, SupportedAudioCodec};
 use symphonia_core::errors::{Result, unsupported_error};
 use symphonia_core::io::{BitReaderLtr, FiniteBitStream, ReadBitsLtr};
-use symphonia_core::packet::Packet;
+use symphonia_core::packet::PacketRef;
 use symphonia_core::{codec_profile, support_audio_codec};
 
 use symphonia_common::mpeg::audio::{AudioObjectType, AudioSpecificConfig};
@@ -228,7 +228,7 @@ impl AacDecoder {
     //     }
     // }
 
-    fn decode_inner(&mut self, packet: &Packet) -> Result<()> {
+    fn decode_inner(&mut self, packet: &PacketRef<'_>) -> Result<()> {
         // Clear the audio output buffer.
         self.buf.clear();
         self.buf.render_uninit(None);
@@ -261,7 +261,7 @@ impl AudioDecoder for AacDecoder {
         &self.params
     }
 
-    fn decode(&mut self, packet: &Packet) -> Result<GenericAudioBufferRef<'_>> {
+    fn decode_ref(&mut self, packet: &PacketRef<'_>) -> Result<GenericAudioBufferRef<'_>> {
         if let Err(e) = self.decode_inner(packet) {
             self.buf.clear();
             Err(e)

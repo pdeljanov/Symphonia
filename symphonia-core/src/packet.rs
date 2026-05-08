@@ -147,6 +147,130 @@ impl Packet {
     pub fn as_buf_reader(&self) -> BufReader<'_> {
         BufReader::new(&self.data)
     }
+
+    /// Get a `PacketRef` borrowing this packet.
+    #[inline]
+    pub fn as_packet_ref(&self) -> PacketRef<'_> {
+        PacketRef::new(self.track_id, self.pts, self.dur, &self.data)
+            .with_dts(self.dts)
+            .with_trim_start(self.trim_start)
+            .with_trim_end(self.trim_end)
+    }
+}
+
+/// A borrowed reference to a packet.
+///
+/// `PacketRef` is the zero-copy equivalent of `Packet`. It is particularly useful when
+/// packet data is already residing in an application-managed fixed buffer or when data is
+/// passed in from external environments like C/C++ via FFI. This allows decoders to process
+/// the data directly without forcing a heap allocation and deep copy.
+#[derive(Clone, Copy)]
+pub struct PacketRef<'a> {
+    track_id: u32,
+    pub pts: Timestamp,
+    pub dts: Timestamp,
+    pub dur: Duration,
+    pub trim_start: Duration,
+    pub trim_end: Duration,
+    pub data: &'a [u8],
+}
+
+impl<'a> PacketRef<'a> {
+    /// Create a new untrimmed `PacketRef`.
+    ///
+    /// The `data` slice can be constructed directly from a fixed-size buffer, or from
+    /// raw FFI pointers (e.g., a C++ `std::vector` payload) using `std::slice::from_raw_parts`.
+    pub fn new(track_id: u32, pts: Timestamp, dur: Duration, data: &'a [u8]) -> Self {
+        PacketRef {
+            track_id,
+            pts,
+            dts: pts,
+            dur,
+            trim_start: Duration::ZERO,
+            trim_end: Duration::ZERO,
+            data,
+        }
+    }
+
+    /// Provide the decode timestamp (DTS).
+    pub fn with_dts(mut self, dts: Timestamp) -> Self {
+        self.dts = dts;
+        self
+    }
+
+    /// Provide the trim start duration.
+    pub fn with_trim_start(mut self, trim_start: Duration) -> Self {
+        self.trim_start = trim_start;
+        self
+    }
+
+    /// Provide the trim end duration.
+    pub fn with_trim_end(mut self, trim_end: Duration) -> Self {
+        self.trim_end = trim_end;
+        self
+    }
+
+    /// The track identifier of the track this packet belongs to.
+    #[inline]
+    pub const fn track_id(&self) -> u32 {
+        self.track_id
+    }
+
+    /// Get the presentation timestamp (PTS) of the packet in `TimeBase` units.
+    #[inline]
+    pub const fn pts(&self) -> Timestamp {
+        self.pts
+    }
+
+    /// Get the decode timestamp (DTS) of the packet in `TimeBase` units.
+    #[inline]
+    pub const fn dts(&self) -> Timestamp {
+        self.dts
+    }
+
+    /// Get the duration of all *valid* frames in the packet in `TimeBase` units.
+    #[inline]
+    pub const fn dur(&self) -> Duration {
+        self.dur
+    }
+
+    /// Get the duration of all *decoded* frames in the packet in `TimeBase` units.
+    #[inline]
+    pub const fn block_dur(&self) -> Duration {
+        self.dur.saturating_add(self.trim_start).saturating_add(self.trim_end)
+    }
+
+    /// Get the duration of *decoded* frames that should be trimmed from the start of the decoded
+    /// buffer to remove encoder delay.
+    #[inline]
+    pub const fn trim_start(&self) -> Duration {
+        self.trim_start
+    }
+
+    /// Get the duration of *decoded* frames that should be trimmed from the end of the decoded
+    /// buffer to remove encoder padding.
+    #[inline]
+    pub const fn trim_end(&self) -> Duration {
+        self.trim_end
+    }
+
+    /// Get an immutable slice to the packet data buffer.
+    #[inline]
+    pub const fn buf(&self) -> &[u8] {
+        self.data
+    }
+
+    /// Get a `BufReader` to read the packet data buffer sequentially.
+    #[inline]
+    pub fn as_buf_reader(&self) -> BufReader<'_> {
+        BufReader::new(self.data)
+    }
+}
+
+impl<'a> From<&'a Packet> for PacketRef<'a> {
+    fn from(packet: &'a Packet) -> Self {
+        packet.as_packet_ref()
+    }
 }
 
 mod builder {
@@ -311,3 +435,48 @@ mod builder {
 }
 
 pub use builder::PacketBuilder;
+
+#[cfg(test)]
+mod tests {
+    use super::{Packet, PacketRef};
+    use crate::units::{Duration, Timestamp};
+
+    #[test]
+    fn verify_packet_ref_creation() {
+        let data: &[u8] = &[1, 2, 3, 4];
+        let pkt_ref = PacketRef::new(1, Timestamp::new(100), Duration::from(50_u64), data)
+            .with_dts(Timestamp::new(90))
+            .with_trim_start(Duration::from(10_u64))
+            .with_trim_end(Duration::from(5_u64));
+
+        assert_eq!(pkt_ref.track_id(), 1);
+        assert_eq!(pkt_ref.pts(), Timestamp::new(100));
+        assert_eq!(pkt_ref.dts(), Timestamp::new(90));
+        assert_eq!(pkt_ref.dur(), Duration::from(50_u64));
+        assert_eq!(pkt_ref.trim_start(), Duration::from(10_u64));
+        assert_eq!(pkt_ref.trim_end(), Duration::from(5_u64));
+        assert_eq!(pkt_ref.buf(), &[1, 2, 3, 4]);
+
+        // block_dur = dur + trim_start + trim_end = 50 + 10 + 5 = 65
+        assert_eq!(pkt_ref.block_dur(), Duration::from(65_u64));
+    }
+
+    #[test]
+    fn verify_packet_to_packet_ref() {
+        let data = vec![5, 6, 7, 8];
+        let mut pkt = Packet::new(2, Timestamp::new(200), Duration::from(100_u64), data);
+        pkt.dts = Timestamp::new(190);
+        pkt.trim_start = Duration::from(20_u64);
+        pkt.trim_end = Duration::from(10_u64);
+
+        let pkt_ref = pkt.as_packet_ref();
+
+        assert_eq!(pkt_ref.track_id(), 2);
+        assert_eq!(pkt_ref.pts(), Timestamp::new(200));
+        assert_eq!(pkt_ref.dts(), Timestamp::new(190));
+        assert_eq!(pkt_ref.dur(), Duration::from(100_u64));
+        assert_eq!(pkt_ref.trim_start(), Duration::from(20_u64));
+        assert_eq!(pkt_ref.trim_end(), Duration::from(10_u64));
+        assert_eq!(pkt_ref.buf(), &[5, 6, 7, 8]);
+    }
+}

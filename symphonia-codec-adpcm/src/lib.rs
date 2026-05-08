@@ -28,7 +28,7 @@ use symphonia_core::codecs::audio::{AudioCodecId, AudioCodecParameters, AudioDec
 use symphonia_core::codecs::audio::{AudioDecoder, FinalizeResult};
 use symphonia_core::errors::{Result, unsupported_error};
 use symphonia_core::io::ReadBytes;
-use symphonia_core::packet::Packet;
+use symphonia_core::packet::PacketRef;
 
 mod codec_ima_qt;
 mod codec_ima_wav;
@@ -119,7 +119,7 @@ impl AdpcmDecoder {
         })
     }
 
-    fn decode_inner(&mut self, packet: &Packet) -> Result<()> {
+    fn decode_inner(&mut self, packet: &PacketRef<'_>) -> Result<()> {
         let mut stream = packet.as_buf_reader();
 
         let frames_per_block = self.params.frames_per_block.unwrap() as usize;
@@ -173,7 +173,7 @@ impl AudioDecoder for AdpcmDecoder {
         &self.params
     }
 
-    fn decode(&mut self, packet: &Packet) -> Result<GenericAudioBufferRef<'_>> {
+    fn decode_ref(&mut self, packet: &PacketRef<'_>) -> Result<GenericAudioBufferRef<'_>> {
         if let Err(e) = self.decode_inner(packet) {
             self.buf.clear();
             Err(e)

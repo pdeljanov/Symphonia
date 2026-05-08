@@ -45,7 +45,7 @@ use symphonia_core::audio::sample::SampleFormat;
 use symphonia_core::codecs::audio::well_known::{CODEC_ID_PCM_ALAW, CODEC_ID_PCM_MULAW};
 use symphonia_core::errors::{Result, decode_error, unsupported_error};
 use symphonia_core::io::ReadBytes;
-use symphonia_core::packet::Packet;
+use symphonia_core::packet::PacketRef;
 
 macro_rules! read_pcm_signed {
     ($buf:expr, $fmt:tt, $read:expr, $width:expr, $shift:expr) => {
@@ -315,7 +315,7 @@ impl PcmDecoder {
         Ok(PcmDecoder { params: params.clone(), shift, bytes_per_coded_frame, buf })
     }
 
-    fn decode_inner(&mut self, packet: &Packet) -> Result<()> {
+    fn decode_inner(&mut self, packet: &PacketRef<'_>) -> Result<()> {
         // Calculate the number of complete audio frames per-packet.
         let num_frames = packet.buf().len() / self.bytes_per_coded_frame;
 
@@ -425,7 +425,7 @@ impl AudioDecoder for PcmDecoder {
         &self.params
     }
 
-    fn decode(&mut self, packet: &Packet) -> Result<GenericAudioBufferRef<'_>> {
+    fn decode_ref(&mut self, packet: &PacketRef<'_>) -> Result<GenericAudioBufferRef<'_>> {
         if let Err(e) = self.decode_inner(packet) {
             self.buf.clear();
             Err(e)
