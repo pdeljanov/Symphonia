@@ -118,6 +118,21 @@ impl Packet {
     }
 }
 
+impl std::fmt::Debug for Packet {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Packet")
+            .field("track_id", &self.track_id)
+            .field("pts", &self.pts)
+            .field("dts", &self.dts)
+            .field("dur", &self.dur)
+            .field("trim_start", &self.trim_start)
+            .field("trim_end", &self.trim_end)
+            // Omit the data buffer contents.
+            .field("data", &format_args!("<{} bytes>", self.data.len()))
+            .finish()
+    }
+}
+
 /// A non-owning equivalent to `Packet`.
 ///
 /// `PacketRef` is the zero-copy, non-owning, equivalent of `Packet`. It is particularly useful when
@@ -182,6 +197,21 @@ impl<'a> PacketRef<'a> {
     #[inline]
     pub fn as_buf_reader(&self) -> BufReader<'_> {
         BufReader::new(self.data)
+    }
+}
+
+impl std::fmt::Debug for PacketRef<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PacketRef")
+            .field("track_id", &self.track_id)
+            .field("pts", &self.pts)
+            .field("dts", &self.dts)
+            .field("dur", &self.dur)
+            .field("trim_start", &self.trim_start)
+            .field("trim_end", &self.trim_end)
+            // Omit the data buffer contents.
+            .field("data", &format_args!("<{} bytes>", self.data.len()))
+            .finish()
     }
 }
 
