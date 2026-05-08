@@ -195,7 +195,7 @@ impl DecoderInstance {
             };
 
             // Skip packets that do not belong to the track being decoded.
-            if packet.track_id() != self.track_id {
+            if packet.track_id != self.track_id {
                 continue;
             }
 

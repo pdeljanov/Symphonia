@@ -233,7 +233,7 @@ impl AacDecoder {
         self.buf.clear();
         self.buf.render_uninit(None);
 
-        let mut bs = BitReaderLtr::new(packet.buf());
+        let mut bs = BitReaderLtr::new(packet.data);
 
         // Choose decode step based on the object type.
         match self.asc.object_type {

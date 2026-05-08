@@ -317,7 +317,7 @@ impl PcmDecoder {
 
     fn decode_inner(&mut self, packet: &PacketRef<'_>) -> Result<()> {
         // Calculate the number of complete audio frames per-packet.
-        let num_frames = packet.buf().len() / self.bytes_per_coded_frame;
+        let num_frames = packet.data.len() / self.bytes_per_coded_frame;
 
         // Clear and grow the audio buffer to the required capacity.
         self.buf.clear();

@@ -458,7 +458,7 @@ impl AlacDecoder {
     }
 
     fn decode_inner(&mut self, packet: &PacketRef<'_>) -> Result<()> {
-        let mut bs = BitReaderLtr::new(packet.buf());
+        let mut bs = BitReaderLtr::new(packet.data);
 
         let channel_map = map_channels(&self.config.channels);
         let num_channels = self.config.num_channels as usize;

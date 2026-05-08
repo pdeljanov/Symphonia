@@ -48,15 +48,21 @@ use crate::units::{Duration, Timestamp};
 #[derive(Clone)]
 #[non_exhaustive]
 pub struct Packet {
-    /// The track ID.
+    /// The track ID of the track this packet belongs to.
     pub track_id: u32,
-    /// The presentation timestamp (PTS) of the packet in `TimeBase` units.
+    /// The presentation timestamp (PTS) of the packet in `TimeBase` units.+
+    ///
+    /// This is the time relative to the start of the media that the decoded packet should be
+    /// presented to the user.
     pub pts: Timestamp,
     /// The decode timestamp (DTS) of the packet in `TimeBase` units.
+    ///
+    /// This is the time relative to the start of the media that the packet should be decoded.
     pub dts: Timestamp,
     /// The duration of all *valid* frames in the packet in `TimeBase` units.
     ///
     /// This duration excludes any delay or padding frames that may be produced by the decoder.
+    /// Generally, delay or padding frames should not be presented to the user.
     pub dur: Duration,
     /// The duration of *decoded* frames that should be trimmed from the start of the decoded
     /// buffer to remove encoder delay.
@@ -82,38 +88,6 @@ impl Packet {
         }
     }
 
-    /// The track identifier of the track this packet belongs to.
-    #[inline]
-    pub const fn track_id(&self) -> u32 {
-        self.track_id
-    }
-
-    /// Get the presentation timestamp (PTS) of the packet in `TimeBase` units.
-    ///
-    /// This is the time relative to the start of the media that the decoded packet should be
-    /// presented to the user.
-    #[inline]
-    pub const fn pts(&self) -> Timestamp {
-        self.pts
-    }
-
-    /// Get the decode timestamp (DTS) of the packet in `TimeBase` units.
-    ///
-    /// This is the time relative to the start of the media that the packet should be decoded.
-    #[inline]
-    pub const fn dts(&self) -> Timestamp {
-        self.dts
-    }
-
-    /// Get the duration of all *valid* frames in the packet in `TimeBase` units.
-    ///
-    /// This duration excludes any delay or padding frames that may be produced by the decoder.
-    /// Generally, delay or padding frames should not be presented to the user.
-    #[inline]
-    pub const fn dur(&self) -> Duration {
-        self.dur
-    }
-
     /// Get the duration of all *decoded* frames in the packet in `TimeBase` units.
     ///
     /// This duration includes any delay or padding frames that may be produced by the decoder. As
@@ -121,26 +95,6 @@ impl Packet {
     #[inline]
     pub const fn block_dur(&self) -> Duration {
         self.dur.saturating_add(self.trim_start).saturating_add(self.trim_end)
-    }
-
-    /// Get the duration of *decoded* frames that should be trimmed from the start of the decoded
-    /// buffer to remove encoder delay.
-    #[inline]
-    pub const fn trim_start(&self) -> Duration {
-        self.trim_start
-    }
-
-    /// Get the duration of *decoded* frames that should be trimmed from the end of the decoded
-    /// buffer to remove encoder padding.
-    #[inline]
-    pub const fn trim_end(&self) -> Duration {
-        self.trim_end
-    }
-
-    /// Get an immutable slice to the packet data buffer.
-    #[inline]
-    pub const fn buf(&self) -> &[u8] {
-        &self.data
     }
 
     /// Get a `BufReader` to read the packet data buffer sequentially.
@@ -170,15 +124,34 @@ impl Packet {
 /// packet data is already residing in an application-managed fixed buffer or when data is
 /// passed in from external environments like C/C++ via FFI. This allows decoders to process
 /// the data directly without forcing a heap allocation and deep copy.
+///
+/// See [`Packet`] for more details on the various timing and implementation details.
 #[derive(Clone, Copy)]
 #[non_exhaustive]
 pub struct PacketRef<'a> {
+    /// The track ID of the track this packet belongs to.
     pub track_id: u32,
+    /// The presentation timestamp (PTS) of the packet in `TimeBase` units.+
+    ///
+    /// This is the time relative to the start of the media that the decoded packet should be
+    /// presented to the user.
     pub pts: Timestamp,
+    /// The decode timestamp (DTS) of the packet in `TimeBase` units.
+    ///
+    /// This is the time relative to the start of the media that the packet should be decoded.
     pub dts: Timestamp,
+    /// The duration of all *valid* frames in the packet in `TimeBase` units.
+    ///
+    /// This duration excludes any delay or padding frames that may be produced by the decoder.
+    /// Generally, delay or padding frames should not be presented to the user.
     pub dur: Duration,
+    /// The duration of *decoded* frames that should be trimmed from the start of the decoded
+    /// buffer to remove encoder delay.
     pub trim_start: Duration,
+    /// The duration of *decoded* frames that should be trimmed from the end of the decoded
+    /// buffer to remove encoder padding.
     pub trim_end: Duration,
+    /// The packet data buffer.
     pub data: &'a [u8],
 }
 
@@ -199,54 +172,10 @@ impl<'a> PacketRef<'a> {
         }
     }
 
-    /// The track identifier of the track this packet belongs to.
-    #[inline]
-    pub const fn track_id(&self) -> u32 {
-        self.track_id
-    }
-
-    /// Get the presentation timestamp (PTS) of the packet in `TimeBase` units.
-    #[inline]
-    pub const fn pts(&self) -> Timestamp {
-        self.pts
-    }
-
-    /// Get the decode timestamp (DTS) of the packet in `TimeBase` units.
-    #[inline]
-    pub const fn dts(&self) -> Timestamp {
-        self.dts
-    }
-
-    /// Get the duration of all *valid* frames in the packet in `TimeBase` units.
-    #[inline]
-    pub const fn dur(&self) -> Duration {
-        self.dur
-    }
-
     /// Get the duration of all *decoded* frames in the packet in `TimeBase` units.
     #[inline]
     pub const fn block_dur(&self) -> Duration {
         self.dur.saturating_add(self.trim_start).saturating_add(self.trim_end)
-    }
-
-    /// Get the duration of *decoded* frames that should be trimmed from the start of the decoded
-    /// buffer to remove encoder delay.
-    #[inline]
-    pub const fn trim_start(&self) -> Duration {
-        self.trim_start
-    }
-
-    /// Get the duration of *decoded* frames that should be trimmed from the end of the decoded
-    /// buffer to remove encoder padding.
-    #[inline]
-    pub const fn trim_end(&self) -> Duration {
-        self.trim_end
-    }
-
-    /// Get an immutable slice to the packet data buffer.
-    #[inline]
-    pub const fn buf(&self) -> &[u8] {
-        self.data
     }
 
     /// Get a `BufReader` to read the packet data buffer sequentially.
@@ -470,13 +399,13 @@ mod tests {
             .trim_end(Duration::new(5))
             .build_packet_ref();
 
-        assert_eq!(pkt_ref.track_id(), 1);
-        assert_eq!(pkt_ref.pts(), Timestamp::new(100));
-        assert_eq!(pkt_ref.dts(), Timestamp::new(90));
-        assert_eq!(pkt_ref.dur(), Duration::new(50));
-        assert_eq!(pkt_ref.trim_start(), Duration::new(10));
-        assert_eq!(pkt_ref.trim_end(), Duration::new(5));
-        assert_eq!(pkt_ref.buf(), &[1, 2, 3, 4]);
+        assert_eq!(pkt_ref.track_id, 1);
+        assert_eq!(pkt_ref.pts, Timestamp::new(100));
+        assert_eq!(pkt_ref.dts, Timestamp::new(90));
+        assert_eq!(pkt_ref.dur, Duration::new(50));
+        assert_eq!(pkt_ref.trim_start, Duration::new(10));
+        assert_eq!(pkt_ref.trim_end, Duration::new(5));
+        assert_eq!(&pkt_ref.data, &[1, 2, 3, 4]);
 
         // block_dur = dur + trim_start + trim_end = 50 + 10 + 5 = 65
         assert_eq!(pkt_ref.block_dur(), Duration::new(65));
@@ -498,12 +427,12 @@ mod tests {
 
         let pkt_ref = pkt.as_packet_ref();
 
-        assert_eq!(pkt_ref.track_id(), 2);
-        assert_eq!(pkt_ref.pts(), Timestamp::new(200));
-        assert_eq!(pkt_ref.dts(), Timestamp::new(190));
-        assert_eq!(pkt_ref.dur(), Duration::new(100));
-        assert_eq!(pkt_ref.trim_start(), Duration::new(20));
-        assert_eq!(pkt_ref.trim_end(), Duration::new(10));
-        assert_eq!(pkt_ref.buf(), &[5, 6, 7, 8]);
+        assert_eq!(pkt_ref.track_id, 2);
+        assert_eq!(pkt_ref.pts, Timestamp::new(200));
+        assert_eq!(pkt_ref.dts, Timestamp::new(190));
+        assert_eq!(pkt_ref.dur, Duration::new(100));
+        assert_eq!(pkt_ref.trim_start, Duration::new(20));
+        assert_eq!(pkt_ref.trim_end, Duration::new(10));
+        assert_eq!(&pkt_ref.data, &[5, 6, 7, 8]);
     }
 }

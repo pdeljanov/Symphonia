@@ -258,7 +258,7 @@ impl<'s> OggReader<'s> {
             match self.peek_logical_packet() {
                 Some(packet) => {
                     // Skip packets not belonging to the stream being seeked.
-                    if packet.track_id() != serial {
+                    if packet.track_id != serial {
                         continue;
                     }
 

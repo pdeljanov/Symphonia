@@ -144,7 +144,7 @@ impl VorbisDecoder {
     }
 
     fn decode_inner(&mut self, packet: &PacketRef<'_>) -> Result<()> {
-        let mut bs = BitReaderRtl::new(packet.buf());
+        let mut bs = BitReaderRtl::new(packet.data);
 
         // Section 4.3.1 - Packet Type, Mode, and Window Decode
 
@@ -322,7 +322,7 @@ impl VorbisDecoder {
                 self.buf.clear();
             }
             else {
-                self.buf.trim(packet.trim_start().get() as usize, packet.trim_end().get() as usize);
+                self.buf.trim(packet.trim_start.get() as usize, packet.trim_end.get() as usize);
             }
         }
 

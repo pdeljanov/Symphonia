@@ -286,7 +286,7 @@ fn decode_only(mut reader: Box<dyn FormatReader>, opts: DecodeOptions) -> Result
     // Decode all packets, ignoring all decode errors.
     while let Some(packet) = reader.next_packet()? {
         // If the packet does not belong to the selected track, skip over it.
-        if packet.track_id() != track_id {
+        if packet.track_id != track_id {
             continue;
         }
 
@@ -429,7 +429,7 @@ fn play_track(
     // Decode and play the packets belonging to the selected track.
     while let Some(packet) = reader.next_packet()? {
         // If the packet does not belong to the selected track, skip it.
-        if packet.track_id() != opts.track_id {
+        if packet.track_id != opts.track_id {
             continue;
         }
 
@@ -465,9 +465,9 @@ fn play_track(
                 // should be decoded and *samples* discarded up-to the exact *sample* indicated by
                 // required_ts. The current approach will discard extra samples if seeking to a
                 // sample within a packet.
-                if packet.pts() >= opts.seek_ts {
+                if packet.pts >= opts.seek_ts {
                     if !opts.no_progress {
-                        ui::print_progress(packet.pts(), dur, tb);
+                        ui::print_progress(packet.pts, dur, tb);
                     }
 
                     if let Some(audio_output) = audio_output {
