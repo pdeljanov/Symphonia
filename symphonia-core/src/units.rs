@@ -1054,6 +1054,31 @@ impl TimeBase {
 
         Some(TimeBase { numer: NonZero::new(numer as u32)?, denom: self.denom })
     }
+
+    /// Reduce the timebase.
+    pub fn reduce(self) -> Self {
+        // Compute the GCD using the Euclidean algorithm.
+        let gcd = {
+            let mut a = self.numer.get();
+            let mut b = self.denom.get();
+
+            while b != 0 {
+                let r = a % b;
+                a = b;
+                b = r;
+            }
+
+            a
+        };
+
+        // Reduce the timebase.
+        // UNWRAP: Division by GCD cannot produce zero because the GCD is always <= the numerator
+        // and denominator.
+        Self {
+            numer: NonZero::new(self.numer.get() / gcd).unwrap(),
+            denom: NonZero::new(self.denom.get() / gcd).unwrap(),
+        }
+    }
 }
 
 impl From<TimeBase> for f64 {
@@ -1308,6 +1333,52 @@ mod tests {
 
         assert!(tb4.calc_timestamp(Time::MIN).is_none());
         assert!(tb4.calc_timestamp(Time::MAX).is_none());
+    }
+
+    #[test]
+    fn verify_timebase_reduce() {
+        // Reduceable.
+        assert_eq!(TimeBase::try_new(42, 42).unwrap().reduce(), TimeBase::try_new(1, 1).unwrap());
+        assert_eq!(TimeBase::try_new(8, 12).unwrap().reduce(), TimeBase::try_new(2, 3).unwrap());
+        assert_eq!(TimeBase::try_new(100, 250).unwrap().reduce(), TimeBase::try_new(2, 5).unwrap());
+        assert_eq!(
+            TimeBase::try_new(1000, 10000).unwrap().reduce(),
+            TimeBase::try_new(1, 10).unwrap()
+        );
+        assert_eq!(
+            TimeBase::try_new(10000, 1000).unwrap().reduce(),
+            TimeBase::try_new(10, 1).unwrap()
+        );
+        assert_eq!(TimeBase::try_new(24, 6).unwrap().reduce(), TimeBase::try_new(4, 1).unwrap());
+        assert_eq!(TimeBase::try_new(5, 25).unwrap().reduce(), TimeBase::try_new(1, 5).unwrap());
+
+        // Unreduceable.
+        assert_eq!(TimeBase::try_new(1, 2).unwrap().reduce(), TimeBase::try_new(1, 2).unwrap());
+        assert_eq!(TimeBase::try_new(17, 29).unwrap().reduce(), TimeBase::try_new(17, 29).unwrap());
+        assert_eq!(
+            TimeBase::try_new(u32::MAX, u32::MAX - 1).unwrap().reduce(),
+            TimeBase::try_new(u32::MAX, u32::MAX - 1).unwrap()
+        );
+        assert_eq!(
+            // Worst-case with largest possible Fibonacci numbers.
+            TimeBase::try_new(2_971_215_073, 1_836_311_903).unwrap().reduce(),
+            TimeBase::try_new(2_971_215_073, 1_836_311_903).unwrap()
+        );
+
+        // Extremes.
+        assert_eq!(TimeBase::try_new(1, 1).unwrap().reduce(), TimeBase::try_new(1, 1).unwrap());
+        assert_eq!(
+            TimeBase::try_new(u32::MAX, 1).unwrap().reduce(),
+            TimeBase::try_new(u32::MAX, 1).unwrap()
+        );
+        assert_eq!(
+            TimeBase::try_new(1, u32::MAX).unwrap().reduce(),
+            TimeBase::try_new(1, u32::MAX).unwrap()
+        );
+        assert_eq!(
+            TimeBase::try_new(u32::MAX, u32::MAX).unwrap().reduce(),
+            TimeBase::try_new(1, 1).unwrap()
+        );
     }
 
     #[test]

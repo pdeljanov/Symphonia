@@ -268,12 +268,14 @@ impl<'s> MkvReader<'s> {
             .unwrap_or_default();
 
         // Should TimeBase use a u64/u64 rational?
+        // Reduce the timebase to reduce the chance of overflows later.
         let time_base = TimeBase::new(
             info.timestamp_scale
                 .try_into()
                 .map_err(|_| Error::Unsupported("mkv: timestamp scale too large (report this)"))?,
             NonZero::new(1_000_000_000).unwrap(),
-        );
+        )
+        .reduce();
 
         let mut tracks = Vec::new();
         let mut track_states = HashMap::new();

@@ -119,13 +119,21 @@ impl MatroskaTicks {
     /// The Segment timebase is the media timebase.
     #[inline]
     pub fn into_segment_ticks(self, segment_time_base: TimeBase) -> SegmentTicks {
-        SegmentTicks(self.0 / u64::from(segment_time_base.numer.get()))
+        // The timebase may have been reduced so it is not possible to assume a 1_000_000_000
+        // denominator.
+        let factor = (1_000_000_000 * u64::from(segment_time_base.numer.get()))
+            / u64::from(segment_time_base.denom.get());
+        SegmentTicks(self.0 / factor)
     }
 
     /// Convert `self` into Track ticks using the track timebase.
     #[inline]
     pub fn into_track_ticks(self, track_time_base: TimeBase) -> TrackTicks {
-        TrackTicks(self.0 / u64::from(track_time_base.numer.get()))
+        // The timebase may have been reduced so it is not possible to assume a 1_000_000_000
+        // denominator.
+        let factor = (1_000_000_000 * u64::from(track_time_base.numer.get()))
+            / u64::from(track_time_base.denom.get());
+        TrackTicks(self.0 / factor)
     }
 }
 
