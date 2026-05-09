@@ -21,11 +21,24 @@ pub fn probe_stream_start(
     streams: &mut BTreeMap<u32, LogicalStream>,
     byte_range_start: u64,
 ) -> Result<()> {
-    // Save the original position to jump back to.
+    // Save the original reader position. This position is immediately after the end of the current
+    // page. If the current page is not consumed and no additional pages are read, then the reader
+    // needs to be repositioned here.
     let original_pos = reader.pos();
 
+    // However, if the current page is consumed while probing and a new page is read, then we need
+    // to be able to return to the start of the current page so that it may be re-read. This
+    // position is indicated by `byte_range_start`. To be able to do this using the seekback buffer,
+    // no more than OGG_PAGE_MAX_SIZE bytes should be read from `byte_range_start`. Do not probe if
+    // that's not possible.
+    if original_pos < byte_range_start || original_pos - byte_range_start > OGG_PAGE_MAX_SIZE as u64
+    {
+        return Ok(());
+    }
+
     // Scope the reader the prevent overruning the seekback region.
-    let mut scoped_reader = ScopedStream::new(reader, OGG_PAGE_MAX_SIZE as u64);
+    let mut scoped_reader =
+        ScopedStream::new(reader, OGG_PAGE_MAX_SIZE as u64 - (original_pos - byte_range_start));
 
     let mut probed = BTreeSet::<u32>::new();
     let mut page_changed = false;
@@ -67,14 +80,14 @@ pub fn probe_stream_start(
     }
 
     let reader = scoped_reader.into_inner();
-    // The page is only changed in the less common case of having >1 logical streams
+
     if page_changed {
-        // Restore the original page
+        // Restore the original page that was read when entering this probe function.
         reader.seek_buffered(byte_range_start);
         pages.next_page(reader)
     }
     else {
-        // Restore the original position
+        // Just restore the original reader position, the page has not changed.
         reader.seek_buffered(original_pos);
         Ok(())
     }
