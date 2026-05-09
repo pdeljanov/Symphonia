@@ -360,10 +360,20 @@ impl std::fmt::Display for Channels {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Channels::Positioned(positions) => std::fmt::Display::fmt(positions, f),
-            Channels::Discrete(count) => write!(f, "[D0,..,D{count}]"),
-            Channels::Ambisonic(order) => {
-                write!(f, "[ACN0,..,ACN{}]", (1 + usize::from(*order)) * (1 + usize::from(*order)))
-            }
+            Channels::Discrete(count) => match count {
+                0 => write!(f, "[]"),
+                1 => write!(f, "[D0]"),
+                2 => write!(f, "[D0,D1]"),
+                _ => write!(f, "[D0,..,D{}]", count - 1),
+            },
+            Channels::Ambisonic(order) => match order {
+                0 => write!(f, "[]"),
+                _ => write!(
+                    f,
+                    "[ACN0,..,ACN{}]",
+                    (1 + usize::from(*order)) * (1 + usize::from(*order)) - 1
+                ),
+            },
             Channels::Custom(labels) => {
                 let mut list = Vec::new();
 
