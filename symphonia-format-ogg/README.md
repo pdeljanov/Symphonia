@@ -1,10 +1,11 @@
 # Symphonia OGG Demuxer
 
-[![Docs](https://docs.rs/symphonia-format-ogg/badge.svg)](https://docs.rs/symphonia-format-ogg)
+[<img alt="Docs.rs" src="https://img.shields.io/badge/docs.rs-symphonia_format_ogg-brightgreen?style=for-the-badge" height="22"/>](https://docs.rs/symphonia-format-ogg)
 
 OGG demuxer for Project Symphonia.
 
-**Note:** This crate is part of Symphonia. Please use the [`symphonia`](https://crates.io/crates/symphonia) crate instead of this one directly.
+> [!NOTE]
+> This crate is part of Symphonia. Please use the [`symphonia`](https://crates.io/crates/symphonia) crate instead of this one directly.
 
 ## License
 

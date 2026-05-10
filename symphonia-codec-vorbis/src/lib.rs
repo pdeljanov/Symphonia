@@ -769,7 +769,7 @@ fn read_mode(bs: &mut BitReaderRtl<'_>, max_mapping: u8) -> Result<Mode> {
 /// total number of channels.
 ///
 /// See channel map as defined in section 4.3.9 of the Vorbis I specification.
-pub fn map_vorbis_channel(num_channels: u8, ch: usize) -> usize {
+fn map_vorbis_channel(num_channels: u8, ch: usize) -> usize {
     // This pre-condition should always be true.
     assert!(ch < usize::from(num_channels));
 

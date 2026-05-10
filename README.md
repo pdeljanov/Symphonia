@@ -8,7 +8,7 @@
 -->
 
 [<img alt="Crates.io" src="https://img.shields.io/crates/v/symphonia?style=for-the-badge" height="22"/>](https://crates.io/crates/symphonia)
-[<img alt="Docrs.rs" src="https://img.shields.io/badge/docs.rs-symphonia-brightgreen?style=for-the-badge" height="22"/>](https://docs.rs/symphonia)
+[<img alt="Docs.rs" src="https://img.shields.io/badge/docs.rs-symphonia-brightgreen?style=for-the-badge" height="22"/>](https://docs.rs/symphonia)
 [<img alt="GitHub Actions Status" src="https://img.shields.io/github/actions/workflow/status/pdeljanov/symphonia/ci.yml?branch=main&style=for-the-badge" height="22"/>](https://github.com/pdeljanov/Symphonia/actions/workflows/ci.yml)
 [<img alt="Deps.rs" src="https://deps.rs/repo/github/pdeljanov/symphonia/status.svg?style=for-the-badge" height="22"/>](https://deps.rs/repo/github/pdeljanov/symphonia)
 [<img alt="Crates.io MSRV" src="https://img.shields.io/crates/msrv/symphonia?style=for-the-badge" height="22"/>](https://blog.rust-lang.org/2025/02/20/Rust-1.85.0/)

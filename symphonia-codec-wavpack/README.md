@@ -4,7 +4,8 @@ This is a placeholder crate for Project Symphonia's WavPack decoder.
 
 Please consider contributing!
 
-**Note:** This crate is part of Symphonia. Please use the [`symphonia`](https://crates.io/crates/symphonia) crate instead of this one directly.
+> [!NOTE]
+> This crate is part of Symphonia. Please use the [`symphonia`](https://crates.io/crates/symphonia) crate instead of this one directly.
 
 ## License
 
