@@ -51,10 +51,10 @@ impl Atom for AvcCAtom {
 }
 
 impl AvcCAtom {
-    pub fn fill_video_sample_entry(&self, entry: &mut VisualSampleEntry) {
+    pub fn fill_video_sample_entry(self, entry: &mut VisualSampleEntry) {
         entry.codec_id = CODEC_ID_H264;
         entry.profile = Some(self.profile);
         entry.level = Some(self.level);
-        entry.extra_data.push(self.extra_data.clone());
+        entry.extra_data.push(self.extra_data);
     }
 }

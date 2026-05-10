@@ -40,7 +40,7 @@ impl Atom for DoviAtom {
 }
 
 impl DoviAtom {
-    pub fn fill_video_sample_entry(&self, entry: &mut VisualSampleEntry) {
-        entry.extra_data.push(self.extra_data.clone());
+    pub fn fill_video_sample_entry(self, entry: &mut VisualSampleEntry) {
+        entry.extra_data.push(self.extra_data);
     }
 }

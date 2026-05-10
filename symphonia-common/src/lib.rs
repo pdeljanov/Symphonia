@@ -12,5 +12,6 @@
 #![allow(clippy::identity_op)]
 #![allow(clippy::manual_range_contains)]
 
+pub mod apple;
 pub mod mpeg;
 pub mod xiph;

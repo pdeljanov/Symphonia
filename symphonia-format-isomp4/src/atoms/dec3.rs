@@ -35,8 +35,8 @@ impl Atom for Dec3Atom {
 }
 
 impl Dec3Atom {
-    pub fn fill_audio_sample_entry(&self, entry: &mut AudioSampleEntry) {
+    pub fn fill_audio_sample_entry(self, entry: &mut AudioSampleEntry) {
         entry.codec_id = CODEC_ID_EAC3;
-        entry.extra_data = Some(self.extra_data.clone());
+        entry.extra_data = Some(self.extra_data);
     }
 }

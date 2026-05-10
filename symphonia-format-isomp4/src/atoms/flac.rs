@@ -58,12 +58,12 @@ impl Atom for FlacAtom {
 }
 
 impl FlacAtom {
-    pub fn fill_audio_sample_entry(&self, entry: &mut AudioSampleEntry) {
+    pub fn fill_audio_sample_entry(self, entry: &mut AudioSampleEntry) {
         entry.codec_id = CODEC_ID_FLAC;
         entry.sample_rate = self.stream_info.sample_rate as f64;
         entry.bits_per_sample = Some(self.stream_info.bits_per_sample);
-        entry.channels = Some(self.stream_info.channels.clone());
-        entry.extra_data = Some(self.extra_data.clone());
+        entry.channels = Some(self.stream_info.channels);
+        entry.extra_data = Some(self.extra_data);
 
         if let Some(md5) = self.stream_info.md5 {
             entry.verification_check = Some(VerificationCheck::Md5(md5));

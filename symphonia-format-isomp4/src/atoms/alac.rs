@@ -7,6 +7,8 @@
 
 use symphonia_core::codecs::audio::well_known::CODEC_ID_ALAC;
 
+use symphonia_common::apple::audio::alac::MagicCookie;
+
 use crate::atoms::stsd::AudioSampleEntry;
 use crate::atoms::{
     Atom, AtomHeader, AtomIterator, ReadAtom, Result, decode_error, unsupported_error,
@@ -48,8 +50,15 @@ impl Atom for AlacAtom {
 }
 
 impl AlacAtom {
-    pub fn fill_audio_sample_entry(&self, entry: &mut AudioSampleEntry) {
+    pub fn fill_audio_sample_entry(self, entry: &mut AudioSampleEntry) {
         entry.codec_id = CODEC_ID_ALAC;
-        entry.extra_data = Some(self.extra_data.clone());
+
+        // Try to parse the magic cookie.
+        if let Ok(cookie) = MagicCookie::read(&self.extra_data) {
+            entry.channels = Some(cookie.channels);
+            entry.sample_rate = f64::from(cookie.sample_rate);
+        }
+
+        entry.extra_data = Some(self.extra_data);
     }
 }
