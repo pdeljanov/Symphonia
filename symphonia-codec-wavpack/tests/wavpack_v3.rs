@@ -5,19 +5,23 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! Integration tests for the WavPack v1–v3 RIFF/WAVE format reader.
-//!
-//! Tests construct minimal in-memory RIFF/WAVE files containing WavPack v3
-//! blocks and verify that the reader correctly parses codec parameters,
-//! sampler metadata tags, and PCM packet payloads.
+//! Integration tests for the WavPack v1–v3 RIFF/WAVE format reader and decoder.
 
+use std::fs::File;
 use std::io::Cursor;
 
-use symphonia_codec_wavpack::WavPackReader;
+use symphonia_codec_wavpack::{WavPackDecoder, WavPackReader};
+use symphonia_core::audio::layouts::{CHANNEL_LAYOUT_MONO, CHANNEL_LAYOUT_STEREO};
+use symphonia_core::audio::sample::SampleFormat;
+use symphonia_core::audio::{Audio, GenericAudioBufferRef};
+use symphonia_core::codecs::audio::well_known::CODEC_ID_WAVPACK;
+use symphonia_core::codecs::audio::{AudioCodecParameters, AudioDecoder, AudioDecoderOptions};
 use symphonia_core::codecs::CodecParameters;
 use symphonia_core::formats::{FormatOptions, FormatReader};
+use symphonia_core::formats::prelude::{Duration, Timestamp};
 use symphonia_core::io::MediaSourceStream;
 use symphonia_core::meta::RawValue;
+use symphonia_core::packet::Packet;
 
 // ---------------------------------------------------------------------------
 // Binary builders
@@ -49,31 +53,27 @@ fn smpl_chunk(midi_note: u32, pitch_fraction: u32, loops: &[(u32, u32)]) -> Vec<
     let mut c = Vec::new();
     c.extend_from_slice(b"smpl");
     c.extend_from_slice(&data_size.to_le_bytes());
-    // GO_WAVESAMPLERCHUNK (9 × u32)
     c.extend_from_slice(&0u32.to_le_bytes()); // manufacturer
     c.extend_from_slice(&0u32.to_le_bytes()); // product
-    c.extend_from_slice(&22675u32.to_le_bytes()); // sample_period ≈ 1/44100 ns
+    c.extend_from_slice(&22675u32.to_le_bytes()); // sample_period
     c.extend_from_slice(&midi_note.to_le_bytes());
     c.extend_from_slice(&pitch_fraction.to_le_bytes());
     c.extend_from_slice(&0u32.to_le_bytes()); // smpte_format
     c.extend_from_slice(&0u32.to_le_bytes()); // smpte_offset
     c.extend_from_slice(&loop_count.to_le_bytes());
     c.extend_from_slice(&0u32.to_le_bytes()); // sampler_data
-    // GO_WAVESAMPLERLOOP (6 × u32 each)
     for (i, (start, end)) in loops.iter().enumerate() {
-        c.extend_from_slice(&(i as u32).to_le_bytes()); // id
-        c.extend_from_slice(&0u32.to_le_bytes());        // loop_type
+        c.extend_from_slice(&(i as u32).to_le_bytes());
+        c.extend_from_slice(&0u32.to_le_bytes());
         c.extend_from_slice(&start.to_le_bytes());
         c.extend_from_slice(&end.to_le_bytes());
-        c.extend_from_slice(&0u32.to_le_bytes()); // fraction
-        c.extend_from_slice(&0u32.to_le_bytes()); // play_count
+        c.extend_from_slice(&0u32.to_le_bytes());
+        c.extend_from_slice(&0u32.to_le_bytes());
     }
     c
 }
 
 /// Build a `cue ` chunk (GrandOrgue layout).
-///
-/// Each entry has `dwSampleOffset == offset`; `fccChunk` is "data" as BE u32.
 fn cue_chunk(offsets: &[u32]) -> Vec<u8> {
     let count     = offsets.len() as u32;
     let data_size = 4 + count * 24;
@@ -84,57 +84,56 @@ fn cue_chunk(offsets: &[u32]) -> Vec<u8> {
     c.extend_from_slice(&data_size.to_le_bytes());
     c.extend_from_slice(&count.to_le_bytes());
     for (i, &off) in offsets.iter().enumerate() {
-        c.extend_from_slice(&(i as u32).to_le_bytes()); // dwName
-        c.extend_from_slice(&off.to_le_bytes());         // dwPosition
-        c.extend_from_slice(&data_fcc.to_le_bytes());   // fccChunk = "data"
-        c.extend_from_slice(&0u32.to_le_bytes());        // dwChunkStart
-        c.extend_from_slice(&0u32.to_le_bytes());        // dwBlockStart
-        c.extend_from_slice(&off.to_le_bytes());         // dwSampleOffset
+        c.extend_from_slice(&(i as u32).to_le_bytes());
+        c.extend_from_slice(&off.to_le_bytes());
+        c.extend_from_slice(&data_fcc.to_le_bytes());
+        c.extend_from_slice(&0u32.to_le_bytes());
+        c.extend_from_slice(&0u32.to_le_bytes());
+        c.extend_from_slice(&off.to_le_bytes());
     }
     c
 }
 
-/// Build a single WavPack v3 `wvpk` block embedding raw PCM bytes.
-fn wvpk_v3_block(num_channels: u16, bytes_per_sample: u16, pcm: &[u8]) -> Vec<u8> {
-    // v3 header overhead after ck_size: version(2)+bps(2)+flags(2)+shift(2)+
-    //   total_samples(4)+crc(4)+crc2(4)+ext(4)+extra_bc(1)+extras(3) = 28 bytes
-    const OVERHEAD: i32 = 28;
-    let ck_size    = OVERHEAD + pcm.len() as i32;
-    let bps        = (bytes_per_sample * 8) as i16;
-    // flags: bit 0 = mono flag (1 if mono, 0 if stereo)
-    let flags: i16 = if num_channels == 1 { 1 } else { 0 };
-    let n_frames   = (pcm.len() as i32) / (num_channels as i32 * bytes_per_sample as i32);
+/// Build a single WavPack v3 `wvpk` block with the given compressed audio bytes.
+///
+/// For reader-only tests, pass arbitrary bytes as `audio`; for decoder tests,
+/// `audio` must be a valid WavPack v3 compressed bitstream.
+fn wvpk_v3_block(num_channels: u16, bytes_per_sample: u16, n_frames: i32, audio: &[u8]) -> Vec<u8> {
+    const OVERHEAD: u32 = 28;
+    let ck_size = OVERHEAD + audio.len() as u32;
+    let bps     = (bytes_per_sample * 8) as i16;
+    let flags   = if num_channels == 1 { 1i16 } else { 0i16 }; // MONO_FLAG
 
     let mut b = Vec::new();
     b.extend_from_slice(b"wvpk");
-    b.extend_from_slice(&ck_size.to_le_bytes());
-    b.extend_from_slice(&3i16.to_le_bytes());   // version
+    b.extend_from_slice(&(ck_size as i32).to_le_bytes());
+    b.extend_from_slice(&3i16.to_le_bytes());       // version
     b.extend_from_slice(&bps.to_le_bytes());
     b.extend_from_slice(&flags.to_le_bytes());
-    b.extend_from_slice(&0i16.to_le_bytes());   // shift
-    b.extend_from_slice(&n_frames.to_le_bytes()); // total_samples
-    b.extend_from_slice(&0i32.to_le_bytes());   // crc
-    b.extend_from_slice(&0i32.to_le_bytes());   // crc2
-    b.extend_from_slice(&[0u8; 4]);             // ext
-    b.push(0);                                  // extra_bc
-    b.extend_from_slice(&[0u8; 3]);             // extras
-    b.extend_from_slice(pcm);
+    b.extend_from_slice(&0i16.to_le_bytes());       // shift
+    b.extend_from_slice(&n_frames.to_le_bytes());   // total_samples
+    b.extend_from_slice(&0i32.to_le_bytes());       // crc
+    b.extend_from_slice(&0i32.to_le_bytes());       // crc2
+    b.extend_from_slice(&[0u8; 4]);                 // ext
+    b.push(0);                                      // extra_bc
+    b.extend_from_slice(&[0u8; 3]);                 // extras
+    b.extend_from_slice(audio);
     b
 }
 
-/// Build a complete RIFF/WAVE file with WavPack v3 data blocks.
+/// Build a complete RIFF/WAVE file containing WavPack v3 blocks.
 fn build_riff(
-    num_channels:    u16,
-    sample_rate:     u32,
+    num_channels:     u16,
+    sample_rate:      u32,
     bytes_per_sample: u16,
-    extra_chunks:    &[Vec<u8>],
-    pcm_blocks:      &[Vec<u8>],
+    extra_chunks:     &[Vec<u8>],
+    blocks:           &[Vec<u8>],  // each element is a wvpk block (from wvpk_v3_block)
 ) -> Vec<u8> {
     let fmt = fmt_chunk(num_channels, sample_rate, bytes_per_sample);
 
     let mut data_payload = Vec::new();
-    for pcm in pcm_blocks {
-        data_payload.extend_from_slice(&wvpk_v3_block(num_channels, bytes_per_sample, pcm));
+    for block in blocks {
+        data_payload.extend_from_slice(block);
     }
 
     let mut data_chunk = Vec::new();
@@ -151,11 +150,23 @@ fn build_riff(
 
     let mut riff = Vec::new();
     riff.extend_from_slice(b"RIFF");
-    // RIFF size = "WAVE" (4) + rest
     riff.extend_from_slice(&((wave.len() as u32) + 4).to_le_bytes());
     riff.extend_from_slice(b"WAVE");
     riff.extend_from_slice(&wave);
     riff
+}
+
+/// Build a RIFF with a simple dummy compressed block (not decodable; reader tests only).
+fn build_riff_dummy(
+    num_channels:     u16,
+    sample_rate:      u32,
+    bytes_per_sample: u16,
+    extra_chunks:     &[Vec<u8>],
+    n_frames:         i32,
+    audio_bytes:      &[u8],
+) -> Vec<u8> {
+    let block = wvpk_v3_block(num_channels, bytes_per_sample, n_frames, audio_bytes);
+    build_riff(num_channels, sample_rate, bytes_per_sample, extra_chunks, &[block])
 }
 
 /// Open a RIFF blob as a `WavPackReader`.
@@ -187,8 +198,7 @@ fn collect_uint_tags(reader: &mut WavPackReader<'_>) -> std::collections::HashMa
 
 #[test]
 fn stereo_16bit_44100_codec_params() {
-    let pcm = vec![0u8; 44100 * 2 * 2]; // 1 s stereo 16-bit
-    let data = build_riff(2, 44100, 2, &[], &[pcm]);
+    let data = build_riff_dummy(2, 44100, 2, &[], 100, &[0u8; 4]);
     let reader = open(data);
 
     let track = &reader.tracks()[0];
@@ -202,8 +212,7 @@ fn stereo_16bit_44100_codec_params() {
 
 #[test]
 fn mono_8bit_22050_codec_params() {
-    let pcm = vec![0u8; 22050]; // 1 s mono 8-bit
-    let data = build_riff(1, 22050, 1, &[], &[pcm]);
+    let data = build_riff_dummy(1, 22050, 1, &[], 100, &[0u8; 4]);
     let reader = open(data);
 
     let track = &reader.tracks()[0];
@@ -217,8 +226,7 @@ fn mono_8bit_22050_codec_params() {
 
 #[test]
 fn stereo_24bit_48000_codec_params() {
-    let pcm = vec![0u8; 48000 * 2 * 3]; // 1 s stereo 24-bit
-    let data = build_riff(2, 48000, 3, &[], &[pcm]);
+    let data = build_riff_dummy(2, 48000, 3, &[], 100, &[0u8; 4]);
     let reader = open(data);
 
     let track = &reader.tracks()[0];
@@ -237,8 +245,7 @@ fn stereo_24bit_48000_codec_params() {
 #[test]
 fn smpl_chunk_single_loop_tags() {
     let smpl = smpl_chunk(69, 0, &[(11025, 33075)]);
-    let pcm  = vec![0u8; 100];
-    let data = build_riff(2, 44100, 2, &[smpl], &[pcm]);
+    let data = build_riff_dummy(2, 44100, 2, &[smpl], 10, &[0u8; 4]);
     let mut reader = open(data);
 
     let tags = collect_uint_tags(&mut reader);
@@ -251,8 +258,7 @@ fn smpl_chunk_single_loop_tags() {
 #[test]
 fn smpl_chunk_nonzero_pitch_fraction() {
     let smpl = smpl_chunk(60, 0x8000_0000, &[(1000, 9000)]);
-    let pcm  = vec![0u8; 100];
-    let data = build_riff(1, 44100, 2, &[smpl], &[pcm]);
+    let data = build_riff_dummy(1, 44100, 2, &[smpl], 10, &[0u8; 4]);
     let mut reader = open(data);
 
     let tags = collect_uint_tags(&mut reader);
@@ -263,8 +269,7 @@ fn smpl_chunk_nonzero_pitch_fraction() {
 #[test]
 fn smpl_chunk_multiple_loops() {
     let smpl = smpl_chunk(69, 0, &[(1000, 5000), (6000, 9000)]);
-    let pcm  = vec![0u8; 100];
-    let data = build_riff(2, 44100, 2, &[smpl], &[pcm]);
+    let data = build_riff_dummy(2, 44100, 2, &[smpl], 10, &[0u8; 4]);
     let mut reader = open(data);
 
     let tags = collect_uint_tags(&mut reader);
@@ -277,8 +282,7 @@ fn smpl_chunk_multiple_loops() {
 #[test]
 fn cue_chunk_single_point_release() {
     let cue  = cue_chunk(&[40000]);
-    let pcm  = vec![0u8; 100];
-    let data = build_riff(2, 44100, 2, &[cue], &[pcm]);
+    let data = build_riff_dummy(2, 44100, 2, &[cue], 10, &[0u8; 4]);
     let mut reader = open(data);
 
     let tags = collect_uint_tags(&mut reader);
@@ -287,10 +291,8 @@ fn cue_chunk_single_point_release() {
 
 #[test]
 fn cue_chunk_multiple_points_max_is_release() {
-    // GrandOrgue uses the highest dwSampleOffset as the release point.
     let cue  = cue_chunk(&[10000, 40000, 25000]);
-    let pcm  = vec![0u8; 100];
-    let data = build_riff(2, 44100, 2, &[cue], &[pcm]);
+    let data = build_riff_dummy(2, 44100, 2, &[cue], 10, &[0u8; 4]);
     let mut reader = open(data);
 
     let tags = collect_uint_tags(&mut reader);
@@ -299,8 +301,7 @@ fn cue_chunk_multiple_points_max_is_release() {
 
 #[test]
 fn no_smpl_chunk_no_mark_tags() {
-    let pcm  = vec![0u8; 100];
-    let data = build_riff(2, 44100, 2, &[], &[pcm]);
+    let data = build_riff_dummy(2, 44100, 2, &[], 10, &[0u8; 4]);
     let mut reader = open(data);
 
     let tags = collect_uint_tags(&mut reader);
@@ -311,8 +312,7 @@ fn no_smpl_chunk_no_mark_tags() {
 #[test]
 fn no_cue_chunk_no_release_point() {
     let smpl = smpl_chunk(69, 0, &[(1000, 5000)]);
-    let pcm  = vec![0u8; 100];
-    let data = build_riff(2, 44100, 2, &[smpl], &[pcm]);
+    let data = build_riff_dummy(2, 44100, 2, &[smpl], 10, &[0u8; 4]);
     let mut reader = open(data);
 
     let tags = collect_uint_tags(&mut reader);
@@ -323,8 +323,7 @@ fn no_cue_chunk_no_release_point() {
 fn all_grandorgue_marks_present() {
     let smpl = smpl_chunk(69, 0, &[(11025, 33075)]);
     let cue  = cue_chunk(&[40000]);
-    let pcm  = vec![0u8; 100];
-    let data = build_riff(2, 44100, 2, &[smpl, cue], &[pcm]);
+    let data = build_riff_dummy(2, 44100, 2, &[smpl, cue], 10, &[0u8; 4]);
     let mut reader = open(data);
 
     let tags = collect_uint_tags(&mut reader);
@@ -336,48 +335,65 @@ fn all_grandorgue_marks_present() {
 }
 
 // ---------------------------------------------------------------------------
-// Packet / PCM tests
+// Packet layout tests (reader output format)
 // ---------------------------------------------------------------------------
 
 #[test]
-fn next_packet_returns_pcm_bytes() {
-    let pcm  = vec![0xA5u8; 200];
-    let data = build_riff(2, 44100, 2, &[], &[pcm.clone()]);
+fn next_packet_has_32_byte_prefix() {
+    // The reader prepends a 32-byte structured prefix to the compressed audio.
+    let audio = vec![0xA5u8; 16];
+    let block = wvpk_v3_block(2, 2, 4, &audio);
+    let data  = build_riff(2, 44100, 2, &[], &[block]);
     let mut reader = open(data);
 
     let pkt = reader.next_packet().expect("io error").expect("no packet");
-    assert_eq!(pkt.data.as_ref(), pcm.as_slice());
+    assert_eq!(pkt.data.len(), 32 + 16, "packet must be prefix(32) + audio bytes");
+
+    // Verify prefix fields at known byte offsets:
+    let d = pkt.data.as_ref();
+    let version = i16::from_le_bytes([d[0], d[1]]);
+    let flags   = i16::from_le_bytes([d[4], d[5]]);
+    let n_ch    = u16::from_le_bytes([d[28], d[29]]);
+    let bps     = u16::from_le_bytes([d[30], d[31]]);
+    assert_eq!(version, 3);
+    assert_eq!(flags & 1, 0);   // stereo (MONO_FLAG not set)
+    assert_eq!(n_ch,  2);
+    assert_eq!(bps,   2);
+
+    // Compressed audio bytes are preserved verbatim after the prefix.
+    assert_eq!(&d[32..], audio.as_slice());
 }
 
 #[test]
 fn next_packet_end_of_stream_returns_none() {
-    let pcm  = vec![0u8; 40];
-    let data = build_riff(2, 44100, 2, &[], &[pcm]);
+    let block = wvpk_v3_block(2, 2, 10, &[0u8; 4]);
+    let data  = build_riff(2, 44100, 2, &[], &[block]);
     let mut reader = open(data);
 
     let _ = reader.next_packet().unwrap(); // first block
     let second = reader.next_packet().unwrap();
-    assert!(second.is_none(), "expected EOS");
+    assert!(second.is_none(), "expected EOS after single block");
 }
 
 #[test]
 fn multiple_blocks_correct_timestamps() {
-    let pcm1 = vec![0u8; 400]; // 100 stereo 16-bit frames
-    let pcm2 = vec![0u8; 400];
-    let data = build_riff(2, 44100, 2, &[], &[pcm1, pcm2]);
+    // Two blocks of 100 stereo 16-bit frames each.
+    let b1 = wvpk_v3_block(2, 2, 100, &[0u8; 4]);
+    let b2 = wvpk_v3_block(2, 2, 100, &[0u8; 4]);
+    let data = build_riff(2, 44100, 2, &[], &[b1, b2]);
     let mut reader = open(data);
 
     let p1 = reader.next_packet().unwrap().unwrap();
     let p2 = reader.next_packet().unwrap().unwrap();
 
     assert_eq!(p1.pts.get(), 0);
-    assert_eq!(p2.pts.get(), 100); // 100 frames after first block
+    assert_eq!(p2.pts.get(), 100);
 }
 
 #[test]
 fn multiple_blocks_drain_correctly() {
-    let block = vec![0u8; 200];
-    let data  = build_riff(1, 22050, 2, &[], &[block.clone(), block.clone(), block.clone()]);
+    let b = wvpk_v3_block(1, 2, 50, &[0u8; 4]);
+    let data = build_riff(1, 22050, 2, &[], &[b.clone(), b.clone(), b.clone()]);
     let mut reader = open(data);
 
     let mut count = 0usize;
@@ -388,10 +404,10 @@ fn multiple_blocks_drain_correctly() {
 }
 
 #[test]
-fn n_samples_computed_from_fmt_chunk() {
-    // 88 bytes / (2 ch * 2 bps) = 22 frames
-    let pcm  = vec![0u8; 88];
-    let data = build_riff(2, 44100, 2, &[], &[pcm]);
+fn packet_duration_from_total_samples_field() {
+    // 22 frames in total_samples → packet duration must be 22.
+    let block = wvpk_v3_block(2, 2, 22, &[0u8; 8]);
+    let data  = build_riff(2, 44100, 2, &[], &[block]);
     let mut reader = open(data);
 
     let pkt = reader.next_packet().unwrap().unwrap();
@@ -404,8 +420,7 @@ fn n_samples_computed_from_fmt_chunk() {
 
 #[test]
 fn missing_fmt_chunk_returns_error() {
-    // RIFF/WAVE with only a data chunk — no fmt
-    let payload = vec![0u8; 8]; // minimal wvpk placeholder
+    let payload = vec![0u8; 8];
     let mut wave = Vec::new();
     wave.extend_from_slice(b"data");
     wave.extend_from_slice(&(payload.len() as u32).to_le_bytes());
@@ -418,28 +433,26 @@ fn missing_fmt_chunk_returns_error() {
     riff.extend_from_slice(&wave);
 
     let mss = MediaSourceStream::new(Box::new(Cursor::new(riff)), Default::default());
-    let result = WavPackReader::try_new(mss, FormatOptions::default());
-    assert!(result.is_err(), "expected error for missing fmt chunk");
+    assert!(WavPackReader::try_new(mss, FormatOptions::default()).is_err());
 }
 
 #[test]
 fn non_pcm_format_tag_returns_error() {
-    // fmt chunk with format_tag = 3 (IEEE float)
     let mut fmt = Vec::new();
     fmt.extend_from_slice(b"fmt ");
     fmt.extend_from_slice(&16u32.to_le_bytes());
-    fmt.extend_from_slice(&3u16.to_le_bytes()); // IEEE float — not PCM
+    fmt.extend_from_slice(&3u16.to_le_bytes()); // IEEE float
     fmt.extend_from_slice(&2u16.to_le_bytes());
     fmt.extend_from_slice(&44100u32.to_le_bytes());
     fmt.extend_from_slice(&(44100u32 * 2 * 4).to_le_bytes());
     fmt.extend_from_slice(&8u16.to_le_bytes());
     fmt.extend_from_slice(&32u16.to_le_bytes());
 
-    let payload = wvpk_v3_block(2, 4, &[0u8; 16]);
+    let block = wvpk_v3_block(2, 4, 1, &[0u8; 4]);
     let mut data_chunk = Vec::new();
     data_chunk.extend_from_slice(b"data");
-    data_chunk.extend_from_slice(&(payload.len() as u32).to_le_bytes());
-    data_chunk.extend_from_slice(&payload);
+    data_chunk.extend_from_slice(&(block.len() as u32).to_le_bytes());
+    data_chunk.extend_from_slice(&block);
 
     let mut wave = Vec::new();
     wave.extend_from_slice(&fmt);
@@ -457,47 +470,266 @@ fn non_pcm_format_tag_returns_error() {
 
 #[test]
 fn v4v5_stream_starts_with_wvpk_not_riff() {
-    // A minimal v4/v5 wvpk stream — just needs to not panic/crash on try_new.
-    // We don't test full decoding here since v4/v5 decoding is out of scope.
     let mut block = Vec::new();
     block.extend_from_slice(b"wvpk");
-    // ck_size, version (0x0410 = v4/v5), block_index_u8, total_samples_u8
-    block.extend_from_slice(&32u32.to_le_bytes());  // ck_size
-    block.extend_from_slice(&0x0410u16.to_le_bytes()); // version = 4.16
-    block.push(0); // block_index_u8
-    block.push(0); // total_samples_u8
-    block.extend_from_slice(&0u32.to_le_bytes());   // total_samples_u32
-    block.extend_from_slice(&0u32.to_le_bytes());   // block_index_u32
-    block.extend_from_slice(&2u32.to_le_bytes());   // block_samples (stereo: 2 frames → n_samples=1)
-    // flags: stereo (bit2=0), 16-bit (bits 0-1 = 1 → bytes_per_sample=2)
-    // sample rate index 9 → 44100 Hz (bits 23-26 = 0b01001)
+    block.extend_from_slice(&32u32.to_le_bytes());
+    block.extend_from_slice(&0x0410u16.to_le_bytes()); // version 4.16
+    block.push(0);
+    block.push(0);
+    block.extend_from_slice(&0u32.to_le_bytes());
+    block.extend_from_slice(&0u32.to_le_bytes());
+    block.extend_from_slice(&2u32.to_le_bytes());
     let flags: u32 = 1 | (9 << 23);
     block.extend_from_slice(&flags.to_le_bytes());
-    block.extend_from_slice(&0u32.to_le_bytes());   // crc
-    block.extend_from_slice(&[0u8; 8]);             // padding to fill ck_size
+    block.extend_from_slice(&0u32.to_le_bytes());
+    block.extend_from_slice(&[0u8; 8]);
 
     let mss = MediaSourceStream::new(Box::new(Cursor::new(block)), Default::default());
-    // try_new must succeed (it returns Ok even if it can't fully decode later)
     let result = WavPackReader::try_new(mss, FormatOptions::default());
     assert!(result.is_ok(), "v4/v5 stream detection should succeed: {:?}", result.err());
 }
 
-// ---------------------------------------------------------------------------
-// Unknown chunk interleaving
-// ---------------------------------------------------------------------------
-
 #[test]
 fn unknown_chunks_are_skipped() {
-    // Insert an unknown "JUNK" chunk before the data; reader should skip it.
     let mut junk = Vec::new();
     junk.extend_from_slice(b"JUNK");
     junk.extend_from_slice(&16u32.to_le_bytes());
     junk.extend_from_slice(&[0u8; 16]);
 
-    let pcm  = vec![1u8; 40];
-    let data = build_riff(2, 44100, 2, &[junk], &[pcm.clone()]);
+    let audio = vec![0xBBu8; 8];
+    let block = wvpk_v3_block(2, 2, 4, &audio);
+    let data  = build_riff(2, 44100, 2, &[junk], &[block]);
     let mut reader = open(data);
 
     let pkt = reader.next_packet().unwrap().unwrap();
-    assert_eq!(pkt.data.as_ref(), pcm.as_slice());
+    // Reader should skip JUNK and return the block; audio bytes are after prefix.
+    assert_eq!(&pkt.data[32..], audio.as_slice());
+}
+
+// ---------------------------------------------------------------------------
+// Decoder tests
+// ---------------------------------------------------------------------------
+
+/// Build a 32-byte packet prefix (matches the layout defined in decoder/mod.rs).
+fn make_prefix(
+    version:          i16,
+    bits:             i16,
+    flags:            i16,
+    shift:            i16,
+    total_samples:    i32,
+    crc:              i32,
+    num_channels:     u16,
+    bytes_per_sample: u16,
+) -> [u8; 32] {
+    let mut p = [0u8; 32];
+    p[0..2].copy_from_slice(&version.to_le_bytes());
+    p[2..4].copy_from_slice(&bits.to_le_bytes());
+    p[4..6].copy_from_slice(&flags.to_le_bytes());
+    p[6..8].copy_from_slice(&shift.to_le_bytes());
+    p[8..12].copy_from_slice(&total_samples.to_le_bytes());
+    p[12..16].copy_from_slice(&crc.to_le_bytes());
+    // crc2=0, ext=[0;4], extra_bc=0, extras=[0;3] — already zero
+    p[28..30].copy_from_slice(&num_channels.to_le_bytes());
+    p[30..32].copy_from_slice(&bytes_per_sample.to_le_bytes());
+    p
+}
+
+/// Create a `WavPackDecoder` configured for the given parameters.
+fn make_decoder(
+    num_channels:     u16,
+    sample_format:    SampleFormat,
+) -> WavPackDecoder {
+    let channels = if num_channels == 1 {
+        CHANNEL_LAYOUT_MONO.clone()
+    } else {
+        CHANNEL_LAYOUT_STEREO.clone()
+    };
+    let mut params = AudioCodecParameters::new();
+    params.for_codec(CODEC_ID_WAVPACK);
+    params.with_channels(channels);
+    params.with_sample_format(sample_format);
+    params.with_sample_rate(44100);
+    WavPackDecoder::try_new(&params, &AudioDecoderOptions::default())
+        .expect("decoder construction failed")
+}
+
+#[test]
+fn decoder_zero_samples_returns_empty() {
+    let mut dec = make_decoder(1, SampleFormat::S32);
+    let prefix = make_prefix(3, 0, 1 /*MONO*/, 0, 0, 0, 1, 2);
+    let pkt = Packet::new(0, Timestamp::new(0), Duration::new(0), prefix.to_vec());
+
+    let buf = dec.decode(&pkt).expect("decode failed");
+    match buf {
+        GenericAudioBufferRef::S32(b) => assert_eq!(b.frames(), 0, "expected empty buffer"),
+        _ => panic!("expected S32 buffer"),
+    }
+}
+
+/// Mono lossless silence, v3 FAST_FLAG (flag bits: MONO=1, FAST=2 → flags=3).
+///
+/// Bitstream derivation for N=4 zero samples via get_word3 with ave_dbits=0:
+///   Each zero sample: bits [0,1] — while loop reads 0 (cbits=0), then
+///   secondary check reads 1 (cbits_final=1), giving delta_dbits=-1, dbits=0.
+///   4 samples × 2 bits = 8 bits = byte 0xAA (0b10101010, LSB-first).
+#[test]
+fn decoder_mono_fast_silence_4_samples() {
+    const MONO_FLAG: i16 = 1;
+    const FAST_FLAG: i16 = 2;
+
+    let mut dec = make_decoder(1, SampleFormat::S32);
+    let prefix = make_prefix(3, 0, MONO_FLAG | FAST_FLAG, 0, 4, 0, 1, 2);
+    let mut data = prefix.to_vec();
+    data.push(0xAA); // 4 zero samples: each [0,1] pair → 0b10101010
+
+    let pkt = Packet::new(0, Timestamp::new(0), Duration::new(4), data);
+    let buf = dec.decode(&pkt).expect("decode failed");
+
+    match buf {
+        GenericAudioBufferRef::S32(b) => {
+            assert_eq!(b.frames(), 4, "expected 4 decoded frames");
+            let plane = b.plane(0).expect("no plane 0");
+            assert!(plane.iter().all(|&s| s == 0), "all samples must be zero");
+        }
+        _ => panic!("expected S32 buffer"),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Fixture-based tests using real WavPack 3.97 encoded files
+// ---------------------------------------------------------------------------
+
+/// Open a .wv fixture file and return a WavPackReader over it.
+fn open_fixture(name: &str) -> WavPackReader<'static> {
+    let path = format!("tests/fixtures/{}", name);
+    let file = File::open(&path).unwrap_or_else(|e| panic!("cannot open {}: {}", path, e));
+    let mss = MediaSourceStream::new(Box::new(file), Default::default());
+    WavPackReader::try_new(mss, FormatOptions::default())
+        .unwrap_or_else(|e| panic!("try_new failed for {}: {:?}", path, e))
+}
+
+/// Decode all packets from a WavPackReader using WavPackDecoder.
+/// Returns a Vec<i32> of all samples from channel 0 (left/mono).
+fn decode_all(reader: &mut WavPackReader<'_>) -> Vec<i32> {
+    let track = &reader.tracks()[0];
+    let Some(CodecParameters::Audio(ap)) = &track.codec_params else {
+        panic!("no audio params");
+    };
+    let num_channels = ap.channels.as_ref().map(|c| c.count()).unwrap_or(1) as u16;
+    let sample_format = ap.sample_format.unwrap_or(SampleFormat::S32);
+
+    let mut dec = make_decoder(num_channels, sample_format);
+    let mut all_samples: Vec<i32> = Vec::new();
+
+    loop {
+        let pkt = reader.next_packet().expect("io error");
+        let Some(pkt) = pkt else { break };
+        let buf = dec.decode(&pkt).expect("decode error");
+        match buf {
+            GenericAudioBufferRef::S32(b) => {
+                let plane = b.plane(0).expect("missing plane 0");
+                all_samples.extend_from_slice(plane);
+            }
+            GenericAudioBufferRef::S16(b) => {
+                let plane = b.plane(0).expect("missing plane 0");
+                all_samples.extend(plane.iter().map(|&s| s as i32));
+            }
+            _ => panic!("unexpected sample format {:?}", sample_format),
+        }
+    }
+    all_samples
+}
+
+#[test]
+fn fixture_silence_mono_fast_decodes_to_zeros() {
+    let mut reader = open_fixture("test_silence_mono_fast.wv");
+    let samples = decode_all(&mut reader);
+    assert_eq!(samples.len(), 100, "expected 100 samples");
+    assert!(samples.iter().all(|&s| s == 0), "all samples must be zero");
+}
+
+#[test]
+fn fixture_silence_mono_high_decodes_to_zeros() {
+    let mut reader = open_fixture("test_silence_mono_high.wv");
+    let samples = decode_all(&mut reader);
+    assert_eq!(samples.len(), 100, "expected 100 samples");
+    assert!(samples.iter().all(|&s| s == 0), "all samples must be zero");
+}
+
+#[test]
+fn fixture_silence_stereo_fast_decodes_to_zeros() {
+    let mut reader = open_fixture("test_silence_stereo_fast.wv");
+    let samples = decode_all(&mut reader);
+    assert_eq!(samples.len(), 100, "expected 100 samples (left channel only)");
+    assert!(samples.iter().all(|&s| s == 0), "all samples must be zero");
+}
+
+#[test]
+fn fixture_ramp_mono_fast_decodes_correctly() {
+    let mut reader = open_fixture("test_ramp_mono_fast.wv");
+    let samples = decode_all(&mut reader);
+    assert_eq!(samples.len(), 100, "expected 100 samples");
+    for (i, &s) in samples.iter().enumerate() {
+        assert_eq!(s, (i as i32) * 100, "sample[{}]: expected {}, got {}", i, i * 100, s);
+    }
+}
+
+#[test]
+fn fixture_ramp_mono_high_decodes_correctly() {
+    let mut reader = open_fixture("test_ramp_mono_high.wv");
+    let samples = decode_all(&mut reader);
+    assert_eq!(samples.len(), 100, "expected 100 samples");
+    for (i, &s) in samples.iter().enumerate() {
+        assert_eq!(s, (i as i32) * 100, "sample[{}]: expected {}, got {}", i, i * 100, s);
+    }
+}
+
+/// Mono silence decoded through the reader→decoder pipeline.
+/// Uses a real RIFF/WAVE file with a FAST-mode mono block, decoding via
+/// WavPackDecoder fed the packet produced by WavPackReader.
+#[test]
+fn reader_decoder_pipeline_mono_silence() {
+    const MONO_FLAG: i16 = 1;
+    const FAST_FLAG: i16 = 2;
+    const N: i32 = 4;
+
+    // Build a RIFF file with the same 5-bit silence block used above.
+    // wvpk_v3_block uses flags=MONO_FLAG only; we need MONO|FAST, so build manually.
+    let prefix_block = {
+        let audio = [0xAAu8]; // 4 zero samples, 2 bits each = 0b10101010
+        let ck_size: i32 = 28 + audio.len() as i32;
+        let mut b = Vec::new();
+        b.extend_from_slice(b"wvpk");
+        b.extend_from_slice(&ck_size.to_le_bytes());
+        b.extend_from_slice(&3i16.to_le_bytes());               // version
+        b.extend_from_slice(&0i16.to_le_bytes());               // bits=0 (lossless)
+        b.extend_from_slice(&(MONO_FLAG | FAST_FLAG).to_le_bytes());
+        b.extend_from_slice(&0i16.to_le_bytes());               // shift
+        b.extend_from_slice(&N.to_le_bytes());                  // total_samples
+        b.extend_from_slice(&0i32.to_le_bytes());               // crc
+        b.extend_from_slice(&0i32.to_le_bytes());               // crc2
+        b.extend_from_slice(&[0u8; 4]);                         // ext
+        b.push(0);                                              // extra_bc
+        b.extend_from_slice(&[0u8; 3]);                         // extras
+        b.extend_from_slice(&audio);
+        b
+    };
+
+    let riff = build_riff(1, 44100, 2, &[], &[prefix_block]);
+    let mut reader = open(riff);
+
+    let pkt = reader.next_packet().unwrap().expect("expected a packet");
+    assert_eq!(pkt.dur.get(), N as u64);
+
+    // Now decode with WavPackDecoder.
+    let mut dec = make_decoder(1, SampleFormat::S32);
+    let buf = dec.decode(&pkt).expect("decode failed");
+
+    match buf {
+        GenericAudioBufferRef::S32(b) => {
+            assert_eq!(b.frames(), N as usize);
+            assert!(b.plane(0).expect("no plane 0").iter().all(|&s| s == 0));
+        }
+        _ => panic!("expected S32 buffer"),
+    }
 }

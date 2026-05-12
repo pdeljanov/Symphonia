@@ -16,3 +16,6 @@
 
 mod reader;
 pub use reader::WavPackReader;
+
+mod decoder;
+pub use decoder::WavPackDecoder;

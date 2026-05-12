@@ -184,12 +184,17 @@ impl<'s> WavPackReader<'s> {
         let bits_per_sample  = wav.bits_per_sample  as u32;
         let bytes_per_sample = wav.bytes_per_sample as u32;
 
+        if bytes_per_sample == 0 || bytes_per_sample > 4 {
+            return decode_error("wavpack v3: unsupported bytes per sample");
+        }
+
+        // The WavPackDecoder always outputs i32; sample_format matches the bit depth
+        // so downstream consumers know the effective range.
         let sample_format = match bytes_per_sample {
             1 => SampleFormat::S8,
             2 => SampleFormat::S16,
             3 => SampleFormat::S24,
-            4 => SampleFormat::S32,
-            _ => return decode_error("wavpack v3: unsupported bytes per sample"),
+            _ => SampleFormat::S32,
         };
 
         let mut codec_params = AudioCodecParameters::new();
@@ -356,33 +361,36 @@ impl WavPackReader<'_> {
         if find_next_block(&mut self.reader, 65536).is_err() {
             return Ok(None);
         }
-        let header3 = Header3::decode(&mut self.reader)?;
+        let hdr = Header3::decode(&mut self.reader)?;
 
-        let header_payload: u32 = match header3.version {
-            1 => 2,
-            2 => 4,
-            _ => 28,
-        };
-        let ck_size = header3.ck_size as u32;
-        if ck_size < header_payload {
-            return decode_error("wavpack v3: block ck_size too small");
+        let header_payload = Header3::header_payload_size(hdr.version);
+        let ck_size = hdr.ck_size as u32;
+
+        // Build packet: 32-byte prefix || compressed audio
+        let prefix = hdr.to_prefix(num_channels, bytes_per_sample);
+        let mut pkt_data = prefix.to_vec();
+
+        if ck_size > header_payload {
+            // Audio bytes are encoded within the block (ck_size includes them).
+            let audio_size = (ck_size - header_payload) as usize;
+            pkt_data.resize(32 + audio_size, 0u8);
+            self.reader.read_buf_exact(&mut pkt_data[32..])?;
+        } else {
+            // Real WavPack 3.97 files: ck_size == header only; compressed audio
+            // follows the block header and extends to the next "wvpk" or EOF.
+            let audio = read_v3_audio(&mut self.reader)?;
+            pkt_data.extend_from_slice(&audio);
         }
-        let audio_size = ck_size - header_payload;
 
-        let mut audio_data = vec![0u8; audio_size as usize];
-        self.reader.read_buf_exact(&mut audio_data)?;
-
-        let bytes_per_frame = bytes_per_sample as u32 * num_channels as u32;
-        let n_samples = if bytes_per_frame > 0 { audio_size / bytes_per_frame } else { 0 };
-
+        let n_samples = hdr.total_samples.max(0) as u64;
         let ts = self.next_packet_ts;
         self.next_packet_ts += n_samples as i64;
 
         Ok(Some(Packet::new(
             0,
             Timestamp::new(ts),
-            Duration::new(n_samples as u64),
-            audio_data,
+            Duration::new(n_samples),
+            pkt_data,
         )))
     }
 
@@ -554,13 +562,30 @@ struct WaveHeader3 {
 }
 
 struct Header3 {
-    ck_size: i32,
-    version: i16,
+    ck_size:       i32,
+    version:       i16,
+    bits:          i16,
+    flags:         i16,
+    shift:         i16,
+    total_samples: i32,
+    crc:           i32,
+    crc2:          i32,
+    ext:           [u8; 4],
+    extra_bc:      u8,
+    extras:        [u8; 3],
 }
 
 impl Header3 {
+    // Payload bytes consumed after ck_size, per version.
+    fn header_payload_size(version: i16) -> u32 {
+        match version {
+            1 => 2,
+            2 => 4,
+            _ => 28,
+        }
+    }
+
     fn decode(reader: &mut MediaSourceStream<'_>) -> Result<Header3> {
-        // `find_next_block` rewinds to the start of the "wvpk" marker; consume it here.
         let marker = reader.read_quad_bytes()?;
         if marker != STREAM_MARKER {
             return decode_error("wavpack v3: missing wvpk marker");
@@ -570,22 +595,44 @@ impl Header3 {
         if version < 1 || version > 3 {
             return decode_error("wavpack: unsupported v3 block version");
         }
-        if version >= 2 {
-            let _ = reader.read_i16()?; // bits per sample / channel flags
-        }
-        if version >= 3 {
-            let _ = reader.read_i16()?; // flags
-            let _ = reader.read_i16()?; // shift
-            let _ = reader.read_i32()?; // total_samples
-            let _ = reader.read_i32()?; // crc
-            let _ = reader.read_i32()?; // crc2
+
+        let bits = if version >= 2 { reader.read_i16()? } else { 0 };
+
+        let (flags, shift, total_samples, crc, crc2, ext, extra_bc, extras) = if version >= 3 {
+            let flags         = reader.read_i16()?;
+            let shift         = reader.read_i16()?;
+            let total_samples = reader.read_i32()?;
+            let crc           = reader.read_i32()?;
+            let crc2          = reader.read_i32()?;
             let mut ext = [0u8; 4];
             reader.read_buf_exact(&mut ext)?;
-            let _ = reader.read_u8()?;  // extra_bc
+            let extra_bc      = reader.read_u8()?;
             let mut extras = [0u8; 3];
             reader.read_buf_exact(&mut extras)?;
-        }
-        Ok(Header3 { ck_size, version })
+            (flags, shift, total_samples, crc, crc2, ext, extra_bc, extras)
+        } else {
+            (0, 0, 0, 0, 0, [0u8; 4], 0u8, [0u8; 3])
+        };
+
+        Ok(Header3 { ck_size, version, bits, flags, shift, total_samples, crc, crc2, ext, extra_bc, extras })
+    }
+
+    /// Serialise the header into a 32-byte packet prefix understood by `WavPackDecoder`.
+    fn to_prefix(&self, num_channels: u16, bytes_per_sample: u16) -> [u8; 32] {
+        let mut p = [0u8; 32];
+        p[0..2].copy_from_slice(&self.version.to_le_bytes());
+        p[2..4].copy_from_slice(&self.bits.to_le_bytes());
+        p[4..6].copy_from_slice(&self.flags.to_le_bytes());
+        p[6..8].copy_from_slice(&self.shift.to_le_bytes());
+        p[8..12].copy_from_slice(&self.total_samples.to_le_bytes());
+        p[12..16].copy_from_slice(&self.crc.to_le_bytes());
+        p[16..20].copy_from_slice(&self.crc2.to_le_bytes());
+        p[20..24].copy_from_slice(&self.ext);
+        p[24] = self.extra_bc;
+        p[25..28].copy_from_slice(&self.extras);
+        p[28..30].copy_from_slice(&num_channels.to_le_bytes());
+        p[30..32].copy_from_slice(&bytes_per_sample.to_le_bytes());
+        p
     }
 }
 
@@ -652,6 +699,31 @@ impl Header {
         let idx = (self.flags >> 23) & 0xF;
         if idx == 0xF { return None; }
         SAMPLE_RATES.get(idx as usize).copied()
+    }
+}
+
+/// Read compressed audio bytes from `reader` until the next `wvpk` marker or EOF.
+///
+/// Used for real WavPack 3.97 files where `ck_size` only covers the block header
+/// metadata and the compressed audio runs implicitly to the next block boundary.
+fn read_v3_audio(reader: &mut MediaSourceStream<'_>) -> Result<Vec<u8>> {
+    // We need 4 bytes of seekback so we can "unread" the next "wvpk" marker.
+    reader.ensure_seekback_buffer(4);
+
+    let mut audio: Vec<u8> = Vec::new();
+    loop {
+        let b = match reader.read_u8() {
+            Ok(b) => b,
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(audio),
+            Err(e) => return Err(symphonia_core::errors::Error::IoError(e)),
+        };
+        audio.push(b);
+        let n = audio.len();
+        if n >= 4 && &audio[n - 4..] == b"wvpk" {
+            audio.truncate(n - 4);
+            reader.seek_buffered_rev(4);
+            return Ok(audio);
+        }
     }
 }
 
