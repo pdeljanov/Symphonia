@@ -96,6 +96,7 @@ opt-simd = [
 # Experimental features.
 exp-subtitle-codecs = ["symphonia-core/exp-subtitle-codecs"]
 exp-video-codecs = ["symphonia-core/exp-video-codecs"]
+exp-format-wavpack = ["dep:symphonia-codec-wavpack"]
 
 [dependencies]
 lazy_static = { workspace = true }
@@ -172,6 +173,11 @@ optional = true
 [dependencies.symphonia-format-caf]
 version = "0.6.0"
 path = "../symphonia-format-caf"
+optional = true
+
+[dependencies.symphonia-codec-wavpack]
+version = "0.6.0"
+path = "../symphonia-codec-wavpack"
 optional = true
 
 [lints]
