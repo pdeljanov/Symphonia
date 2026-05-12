@@ -6,7 +6,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use crate::atoms::limits::*;
-use crate::atoms::{Atom, AtomHeader, AtomIterator, ReadAtom, Result};
+use crate::atoms::{Atom, AtomHeader, AtomIterator, ReadAtom, Result, decode_error};
 
 #[derive(Debug)]
 pub struct SampleDurationEntry {
@@ -82,13 +82,18 @@ impl Atom for SttsAtom {
         // available memory.
         let mut entries = Vec::with_capacity(MAX_TABLE_INITIAL_CAPACITY.min(entry_count as usize));
 
-        let mut total_duration = 0;
+        let mut total_duration: u64 = 0;
 
         for _ in 0..entry_count {
             let sample_count = it.read_u32()?;
             let sample_delta = it.read_u32()?;
 
-            total_duration += u64::from(sample_count) * u64::from(sample_delta);
+            let Some(next_duration) =
+                total_duration.checked_add(u64::from(sample_count) * u64::from(sample_delta))
+            else {
+                return decode_error("isomp4 (stts): total duration overflow");
+            };
+            total_duration = next_duration;
 
             entries.push(SampleDurationEntry { sample_count, sample_delta });
         }

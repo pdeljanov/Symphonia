@@ -33,7 +33,8 @@ impl Atom for FtypAtom {
         }
 
         // Major
-        let major = FourCc::new(it.read_quad_bytes()?);
+        let major = FourCc::try_new(it.read_quad_bytes()?)
+            .ok_or(Error::DecodeError("isomp4 (ftyp): major brand contains non-ASCII bytes"))?;
 
         // Minor
         let minor = it.read_quad_bytes()?;
@@ -47,7 +48,9 @@ impl Atom for FtypAtom {
 
         for _ in 0..n_brands {
             let brand = it.read_quad_bytes()?;
-            compatible.push(FourCc::new(brand));
+            if let Some(fourcc) = FourCc::try_new(brand) {
+                compatible.push(fourcc);
+            }
         }
 
         Ok(FtypAtom { major, minor, compatible })

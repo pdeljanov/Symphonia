@@ -530,6 +530,10 @@ impl Atom for VisualSampleEntry {
             let mut name = [0u8; 31];
             it.read_buf_exact(&mut name)?;
 
+            if len > 31 {
+                return decode_error("isomp4 (stsd): compressor name length exceeds 31 bytes");
+            }
+
             match str::from_utf8(&name[..len]) {
                 Ok(name) => Some(name.to_string()),
                 _ => None,

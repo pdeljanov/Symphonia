@@ -64,8 +64,14 @@ impl Atom for StscAtom {
         let mut entries = Vec::with_capacity(MAX_TABLE_INITIAL_CAPACITY.min(entry_count as usize));
 
         for _ in 0..entry_count {
+            let first_chunk_raw = it.read_u32()?;
+
+            if first_chunk_raw == 0 {
+                return decode_error("isomp4 (stsc): first_chunk must be >= 1");
+            }
+
             entries.push(StscEntry {
-                first_chunk: it.read_u32()? - 1,
+                first_chunk: first_chunk_raw - 1,
                 first_sample: 0,
                 samples_per_chunk: it.read_u32()?,
                 sample_desc_index: it.read_u32()?,
@@ -87,8 +93,14 @@ impl Atom for StscAtom {
 
                 let n = entries[i + 1].first_chunk - entries[i].first_chunk;
 
-                entries[i + 1].first_sample =
-                    entries[i].first_sample + (n * entries[i].samples_per_chunk);
+                let Some(chunk_samples) = n
+                    .checked_mul(entries[i].samples_per_chunk)
+                    .and_then(|v| entries[i].first_sample.checked_add(v))
+                else {
+                    return decode_error("isomp4 (stsc): sample count overflow");
+                };
+
+                entries[i + 1].first_sample = chunk_samples;
             }
 
             // Validate that samples per chunk is > 0. Could the entry be ignored?
