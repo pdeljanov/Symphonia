@@ -44,6 +44,9 @@ pub(crate) fn decode_stereo<B: ReadBytes>(
     buffers: [&mut [i32]; 2],
     frames_per_block: usize,
 ) -> Result<()> {
+    if frames_per_block == 0 || (frames_per_block - 1) % 8 != 0 {
+        return decode_error("adpcm (ima): frames_per_block - 1 must be a multiple of 8");
+    }
     let data_bytes_per_channel = frames_per_block - 1;
     let mut status = [read_preamble(stream)?, read_preamble(stream)?];
     buffers[0][0] = from_i16_shift!(status[0].predictor);
