@@ -231,6 +231,7 @@ impl<'s> WavPackReader<'s> {
 
     fn try_new_v4v5(mut mss: MediaSourceStream<'s>, original_pos: u64) -> Result<Self> {
         let _ = find_next_block(&mut mss, 100);
+        let header_pos = mss.pos();
         let header = Header::decode(&mut mss)?;
         if header.get_block_index() != 0 {
             debug!("First block is not first block after all.");
@@ -267,12 +268,37 @@ impl<'s> WavPackReader<'s> {
         let mut track = Track::new(0);
         track.with_codec_params(CodecParameters::Audio(codec_params));
 
+        // Scan the rest of block 0 for a RiffHeader sub-block. GrandOrgue /
+        // Hauptwerk store loop points (`smpl`) and the release marker (`cue `)
+        // inside the WAV chunks that WavPack preserves there. Routing them
+        // through the same parsers used by the v3 path keeps the tag layout
+        // identical between the two flavors.
+        let mut meta_builder = MetadataBuilder::new(MetadataInfo {
+            metadata: well_known::METADATA_ID_WAVE,
+            short_name: "riff",
+            long_name: "RIFF/WAVE Sampler Metadata",
+        });
+        // ck_size counts everything after the ck_size field itself; the
+        // remaining 24 bytes of the 32-byte header have already been consumed.
+        let sub_blocks_len = (header.ck_size as u64).saturating_sub(24);
+        let mut sub_buf = vec![0u8; sub_blocks_len as usize];
+        if mss.read_buf_exact(&mut sub_buf).is_ok() {
+            scan_v4v5_riff_meta(&sub_buf, &mut meta_builder)?;
+        }
+
+        let mut metadata: MetadataLog = Default::default();
+        let revision = meta_builder.build();
+        if !revision.media.tags.is_empty() {
+            metadata.push(revision);
+        }
+
         mss.seek(std::io::SeekFrom::Start(original_pos))?;
+        let _ = header_pos; // silence unused if logging gets dropped
 
         Ok(WavPackReader {
             reader: mss,
             tracks: vec![track],
-            metadata: Default::default(),
+            metadata,
             chapters: None,
             next_packet_ts: 0,
             format_version: FormatVersion::V4V5,
@@ -395,29 +421,83 @@ impl WavPackReader<'_> {
     }
 
     fn next_packet_v4v5(&mut self) -> Result<Option<Packet>> {
+        // Skip non-block bytes and locate the next wvpk marker.
         if find_next_block(&mut self.reader, 10000).is_err() {
             return Ok(None);
         }
         let header = Header::decode(&mut self.reader)?;
+
+        // Collect sub-blocks until we see the audio bitstream.
+        let mut terms_data:   Vec<u8> = Vec::new();
+        let mut weights_data: Vec<u8> = Vec::new();
+        let mut samples_data: Vec<u8> = Vec::new();
+        let mut entropy_data: Vec<u8> = Vec::new();
+        let mut int32_data:   Vec<u8> = Vec::new();
+        let mut audio_data:   Vec<u8> = Vec::new();
+
         loop {
-            match decode_sub_block(&mut self.reader)? {
-                SubBlock::WvBitStream(data) => {
-                    let ts = self.next_packet_ts;
-                    let n  = header.get_n_samples() as i64;
-                    self.next_packet_ts += n;
-                    return Ok(Some(Packet::new(
-                        0,
-                        Timestamp::new(ts),
-                        Duration::new(n as u64),
-                        data,
-                    )));
+            // Check for end-of-block: the block covers ck_size bytes after the
+            // first 4 (the ck_size field itself is not counted by WavPack).
+            // We detect end-of-block by trying to peek; if the next bytes form
+            // a new block header we stop.  The simplest approach: just process
+            // all sub-blocks until we get the audio bitstream, then break.
+            let sb = decode_sub_block(&mut self.reader)?;
+            match sb {
+                SubBlock::DecorrelationTerms(d)   => terms_data   = d,
+                SubBlock::DecorrelationWeights(d) => weights_data = d,
+                SubBlock::DecorrelationSamples(d) => samples_data = d,
+                SubBlock::EntropyVariables(d)     => entropy_data = d,
+                SubBlock::Int32Info(d)             => int32_data   = d,
+                SubBlock::WvBitStream(d) => {
+                    audio_data = d;
+                    break;
                 }
-                SubBlock::WvcBitStream(_) => debug!("wvc stream"),
-                SubBlock::WvxBitStream(_) => debug!("wvx stream"),
-                SubBlock::DsdBlock(_)     => todo!("DSD audio"),
-                _                         => debug!("non-audio sub-block"),
+                SubBlock::DsdBlock(_) => {
+                    return symphonia_core::errors::unsupported_error("wavpack: DSD not supported");
+                }
+                // Skip everything else (metadata, checksums, RIFF headers, wvc/wvx)
+                _ => debug!("v4v5: skipping non-audio sub-block"),
             }
         }
+
+        // Serialise into a packet understood by the decoder:
+        //   magic(4) + flags(4) + block_samples(4) + crc(4)
+        //   + terms_len(2) + weights_len(2) + samples_len(2) + entropy_len(2)
+        //   + int32_len(1) + pad(3)
+        //   followed by the raw sub-block bytes then the audio bitstream.
+        let tl = terms_data.len()   as u16;
+        let wl = weights_data.len() as u16;
+        let sl = samples_data.len() as u16;
+        let el = entropy_data.len() as u16;
+        let il = int32_data.len()   as u8;
+
+        let mut pkt: Vec<u8> = Vec::with_capacity(
+            28 + terms_data.len() + weights_data.len() + samples_data.len()
+               + entropy_data.len() + int32_data.len() + audio_data.len()
+        );
+        pkt.extend_from_slice(b"WV45");
+        pkt.extend_from_slice(&header.flags.to_le_bytes());
+        pkt.extend_from_slice(&header.block_samples.to_le_bytes());
+        pkt.extend_from_slice(&header.crc.to_le_bytes());
+        pkt.extend_from_slice(&tl.to_le_bytes());
+        pkt.extend_from_slice(&wl.to_le_bytes());
+        pkt.extend_from_slice(&sl.to_le_bytes());
+        pkt.extend_from_slice(&el.to_le_bytes());
+        pkt.push(il);
+        pkt.extend_from_slice(&[0u8; 3]); // pad to 28 bytes
+        pkt.extend_from_slice(&terms_data);
+        pkt.extend_from_slice(&weights_data);
+        pkt.extend_from_slice(&samples_data);
+        pkt.extend_from_slice(&entropy_data);
+        pkt.extend_from_slice(&int32_data);
+        pkt.extend_from_slice(&audio_data);
+
+        // block_samples is the per-channel frame count
+        let n  = header.block_samples as i64;
+        let ts = self.next_packet_ts;
+        self.next_packet_ts += n;
+
+        Ok(Some(Packet::new(0, Timestamp::new(ts), Duration::new(n as u64), pkt)))
     }
 }
 
@@ -449,7 +529,7 @@ fn parse_smpl_chunk(
 
     let _manufacturer  = source.read_u32()?;
     let _product       = source.read_u32()?;
-    let _sample_period = source.read_u32()?;
+    let sample_period  = source.read_u32()?;
     let midi_note      = source.read_u32()?;
     let pitch_fraction = source.read_u32()?;
     let _smpte_format  = source.read_u32()?;
@@ -459,6 +539,13 @@ fn parse_smpl_chunk(
 
     builder.add_tag(Tag::new_from_parts("WavPack/MidiNote",      midi_note,      None));
     builder.add_tag(Tag::new_from_parts("WavPack/PitchFraction", pitch_fraction, None));
+    // Sample period (ns/sample) is used by Hauptwerk for fine tuning when it
+    // disagrees with the format chunk's sample rate. Skip the trivial case
+    // (0 = "unspecified") so the tag set stays meaningful.
+    if sample_period != 0 {
+        builder.add_tag(Tag::new_from_parts("WavPack/SamplePeriod", sample_period, None));
+    }
+    builder.add_tag(Tag::new_from_parts("WavPack/LoopCount", num_loops, None));
 
     let loops_size = num_loops.saturating_mul(LOOP_ENTRY);
     let remaining  = chunk_size.saturating_sub(SAMPLER_HDR);
@@ -471,13 +558,23 @@ fn parse_smpl_chunk(
 
     for i in 0..num_loops {
         let _id        = source.read_u32()?;
-        let _loop_type = source.read_u32()?;
+        let loop_type  = source.read_u32()?;
         let start      = source.read_u32()?;
         let end        = source.read_u32()?;
-        let _fraction  = source.read_u32()?;
-        let _play_cnt  = source.read_u32()?;
-        builder.add_tag(Tag::new_from_parts(format!("WavPack/Loop{i}/Start"), start, None));
-        builder.add_tag(Tag::new_from_parts(format!("WavPack/Loop{i}/End"),   end,   None));
+        let fraction   = source.read_u32()?;
+        let play_cnt   = source.read_u32()?;
+        // Hauptwerk uses Type (0=forward, 1=alternating, 2=reverse) and
+        // PlayCount (0 = infinite). GrandOrgue only consults Start/End but
+        // is fine with the extras being present.
+        builder.add_tag(Tag::new_from_parts(format!("WavPack/Loop{i}/Type"),      loop_type, None));
+        builder.add_tag(Tag::new_from_parts(format!("WavPack/Loop{i}/Start"),     start,     None));
+        builder.add_tag(Tag::new_from_parts(format!("WavPack/Loop{i}/End"),       end,       None));
+        if fraction != 0 {
+            builder.add_tag(Tag::new_from_parts(format!("WavPack/Loop{i}/Fraction"),  fraction, None));
+        }
+        if play_cnt != 0 {
+            builder.add_tag(Tag::new_from_parts(format!("WavPack/Loop{i}/PlayCount"), play_cnt, None));
+        }
     }
 
     let consumed = SAMPLER_HDR + loops_size;
@@ -519,14 +616,22 @@ fn parse_cue_chunk(
         return Ok(());
     }
 
+    builder.add_tag(Tag::new_from_parts("WavPack/CueCount", num_cues, None));
+
+    // Keep two views: each cue point individually (Hauptwerk's
+    // multi-release-stage convention) and the highest sample offset as
+    // "ReleasePoint" (GrandOrgue's single-marker convention).
     let mut release_point: Option<u32> = None;
-    for _ in 0..num_cues {
-        let _name         = source.read_u32()?;
+    for i in 0..num_cues {
+        let name          = source.read_u32()?;
         let _position     = source.read_u32()?;
         let _fcc_chunk    = source.read_u32()?;
         let _chunk_start  = source.read_u32()?;
         let _block_start  = source.read_u32()?;
         let sample_offset = source.read_u32()?;
+
+        builder.add_tag(Tag::new_from_parts(format!("WavPack/Cue{i}/Name"),         name,          None));
+        builder.add_tag(Tag::new_from_parts(format!("WavPack/Cue{i}/SampleOffset"), sample_offset, None));
 
         release_point = Some(match release_point {
             Some(prev) => prev.max(sample_offset),
@@ -548,6 +653,101 @@ fn parse_cue_chunk(
 #[inline]
 fn mss_skip(source: &mut MediaSourceStream<'_>, n: u64) -> Result<()> {
     source.ignore_bytes(n).map_err(symphonia_core::errors::Error::IoError)
+}
+
+// ---------------------------------------------------------------------------
+// V4/V5 RIFF metadata scan
+// ---------------------------------------------------------------------------
+
+// Sub-block IDs we care about for metadata extraction.
+const SBID_RIFF_HEADER:  u8 = 0x21;
+const SBID_RIFF_TRAILER: u8 = 0x22;
+
+/// Walk the sub-blocks contained in the first wvpk block body, locate any
+/// RIFF header bytes WavPack stashed there (sub-block IDs 0x21 / 0x22), and
+/// parse `smpl` and `cue ` chunks out of them into builder tags.
+fn scan_v4v5_riff_meta(body: &[u8], builder: &mut MetadataBuilder) -> Result<()> {
+    let mut p = 0usize;
+    while p + 2 <= body.len() {
+        let id = body[p];
+        // ID_LARGE_BLOCK uses a 3-byte size field, otherwise 1-byte.
+        let (hdr_len, words) = if id & 0x80 != 0 {
+            if p + 4 > body.len() { break; }
+            let w = (body[p + 1] as u32)
+                  | ((body[p + 2] as u32) << 8)
+                  | ((body[p + 3] as u32) << 16);
+            (4usize, w)
+        } else {
+            (2usize, body[p + 1] as u32)
+        };
+
+        let data_len = (words as usize) * 2;
+        let pad      = if id & 0x40 != 0 { 1 } else { 0 };
+        let start    = p + hdr_len;
+        let end_full = start + data_len;
+        if end_full > body.len() { break; }
+        let end_used = end_full - pad;
+
+        let fn_id = id & 0x3F;
+        if fn_id == SBID_RIFF_HEADER || fn_id == SBID_RIFF_TRAILER {
+            parse_riff_meta_bytes(&body[start..end_used], builder)?;
+        }
+
+        p = end_full;
+    }
+    Ok(())
+}
+
+/// Parse RIFF chunks out of a raw byte buffer (with or without a leading
+/// `RIFF....WAVE` envelope) and feed `smpl` / `cue ` into the existing
+/// chunk parsers via a Cursor-backed MediaSourceStream.
+fn parse_riff_meta_bytes(buf: &[u8], builder: &mut MetadataBuilder) -> Result<()> {
+    use symphonia_core::io::MediaSourceStreamOptions;
+
+    let mut start = 0usize;
+    if buf.len() >= 12 && &buf[0..4] == b"RIFF" && &buf[8..12] == b"WAVE" {
+        start = 12;
+    } else if buf.len() >= 4 && &buf[0..4] == b"WAVE" {
+        start = 4;
+    }
+
+    let chunks = buf[start..].to_vec();
+    let cursor = std::io::Cursor::new(chunks);
+    let mut mss = MediaSourceStream::new(Box::new(cursor), MediaSourceStreamOptions::default());
+
+    loop {
+        let chunk_id = match mss.read_quad_bytes() {
+            Ok(v) => v,
+            Err(_) => break,
+        };
+        let chunk_size = match mss.read_u32() {
+            Ok(v) => v,
+            Err(_) => break,
+        };
+
+        match &chunk_id {
+            b"smpl" => {
+                parse_smpl_chunk(&mut mss, chunk_size, builder)?;
+                if chunk_size % 2 != 0 { let _ = mss.read_u8(); }
+            }
+            b"cue " => {
+                parse_cue_chunk(&mut mss, chunk_size, builder)?;
+                if chunk_size % 2 != 0 { let _ = mss.read_u8(); }
+            }
+            b"data" => {
+                // We don't expect 'data' inside a RiffHeader sub-block payload
+                // (audio is in the WvBitStream sub-block), but if encountered
+                // the bytes after it would be PCM and we should stop walking
+                // metadata.
+                break;
+            }
+            _ => {
+                let skip = (chunk_size as u64) + (chunk_size as u64 % 2);
+                if mss.ignore_bytes(skip).is_err() { break; }
+            }
+        }
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------

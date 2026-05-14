@@ -63,18 +63,20 @@ pub(super) fn decode_sub_block(source: &mut MediaSourceStream<'_>) -> Result<Sub
         source.read_byte()? as u32
     };
     let datasize = size_in_words * 2;
-    if id & 0x40 == 0x40 {
-        debug!("actual data byte len is 1 less");
-    }
-
     let mut data = vec![0u8; datasize as usize];
     source.read_buf_exact(&mut data)?;
-
-    if id & 0x20 == 0x20 {
-        return Ok(SubBlock::Unknown(data));
+    // ID_ODD_SIZE: the stored length is padded up to a 16-bit word; the
+    // last byte is padding and must not be exposed to the sub-block parser.
+    // The byte still occupies space in the stream (already read above) but
+    // is stripped from the returned slice.
+    if id & 0x40 == 0x40 && !data.is_empty() {
+        data.pop();
     }
 
-    Ok(match id & 0x1F {
+    // Match on the 6-bit function ID (bits 0..5); the 0x20 OPTIONAL flag is
+    // informational — known optional sub-blocks (0x21..0x2F) must still be
+    // identified, and unknown ones fall through to SubBlock::Unknown below.
+    Ok(match id & 0x3F {
         0x00 => SubBlock::Dummy(data),
         0x02 => SubBlock::DecorrelationTerms(data),
         0x03 => SubBlock::DecorrelationWeights(data),
@@ -103,7 +105,7 @@ pub(super) fn decode_sub_block(source: &mut MediaSourceStream<'_>) -> Result<Sub
         0x2F => SubBlock::BlockChecksum(data),
         id => {
             debug!("WavPack: unknown sub-block id: {:#x}", id);
-            return decode_error("wavpack: unknown sub-block");
+            SubBlock::Unknown(data)
         }
     })
 }
