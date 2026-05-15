@@ -16,5 +16,5 @@ version.workspace = true
 [dependencies]
 log = { workspace = true }
 lazy_static = { workspace = true }
-symphonia-core = { version = "0.6.0-alpha.2", path = "../symphonia-core" }
-symphonia-common = { version = "0.6.0-alpha.2", path = "../symphonia-common" }
+symphonia-core = { version = "0.6.0", path = "../symphonia-core" }
+symphonia-common = { version = "0.6.0", path = "../symphonia-common" }
