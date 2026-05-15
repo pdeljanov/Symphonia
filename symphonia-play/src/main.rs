@@ -424,7 +424,7 @@ fn play_track(
 
     // Get the selected track's timebase and duration.
     let tb = track.time_base;
-    let dur = track.num_frames.map(Duration::new);
+    let dur = track.duration;
 
     // Decode and play the packets belonging to the selected track.
     while let Some(packet) = reader.next_packet()? {
