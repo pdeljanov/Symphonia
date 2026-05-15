@@ -5,6 +5,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+use symphonia_core::codecs::CodecParameters;
 use symphonia_core::support_format;
 
 use symphonia_core::errors::{
@@ -56,9 +57,22 @@ impl TrackState {
             track.with_codec_params(codec_params);
         }
 
+        // Populate timing information.
         track
             .with_time_base(TimeBase::from_recip(timespan.timescale))
             .with_duration(timespan.duration);
+
+        // If the track is an audio track, and the timescale is equal to the sample rate, then the
+        // number of frames is equal to the duration. This is the case for almost all audio tracks.
+        // If not, there is no generic, low overhead, & precise way to determine the number of
+        // frames.
+        if let Some(CodecParameters::Audio(audio)) = &track.codec_params {
+            if let Some(sample_rate) = audio.sample_rate {
+                if sample_rate == timespan.timescale.get() {
+                    track.with_num_frames(timespan.duration.get());
+                }
+            }
+        }
 
         let state = Self {
             track_num,
