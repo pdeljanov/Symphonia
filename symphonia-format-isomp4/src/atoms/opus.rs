@@ -5,6 +5,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+use symphonia_core::audio::{Channels, Position};
 use symphonia_core::codecs::audio::well_known::CODEC_ID_OPUS;
 use symphonia_core::errors::Error;
 
@@ -17,8 +18,10 @@ use crate::atoms::{
 #[allow(dead_code)]
 #[derive(Debug)]
 pub struct OpusAtom {
-    /// Opus extra data (identification header).
-    extra_data: Box<[u8]>,
+    /// Audio channels
+    channels: Channels,
+    /// Pre skip
+    pre_skip: u16,
 }
 
 impl Atom for OpusAtom {
@@ -28,9 +31,6 @@ impl Atom for OpusAtom {
 
         const MIN_OPUS_EXTRA_DATA_SIZE: usize = OPUS_MAGIC_LEN + 11;
         const MAX_OPUS_EXTRA_DATA_SIZE: usize = MIN_OPUS_EXTRA_DATA_SIZE + 257;
-
-        // Offset of the Opus version number in the extra data.
-        const OPUS_EXTRADATA_VERSION_OFFSET: usize = OPUS_MAGIC_LEN;
 
         // The dops atom contains an Opus identification header excluding the OpusHead magic
         // signature. Therefore, the atom data length should be atleast as long as the shortest
@@ -48,26 +48,90 @@ impl Atom for OpusAtom {
             return decode_error("isomp4 (opus): opus identification header too large");
         }
 
-        let mut extra_data = vec![0; OPUS_MAGIC_LEN + data_len].into_boxed_slice();
-
-        // The Opus magic is excluded in the atom, but the extra data must start with it.
-        extra_data[..OPUS_MAGIC_LEN].copy_from_slice(OPUS_MAGIC);
-
-        // Read the extra data from the atom.
-        reader.read_buf_exact(&mut extra_data[OPUS_MAGIC_LEN..])?;
+        let version = reader.read_byte()?;
 
         // Verify the version number is 0.
-        if extra_data[OPUS_EXTRADATA_VERSION_OFFSET] != 0 {
+        if version != 0 {
             return unsupported_error("isomp4 (opus): unsupported opus version");
         }
 
-        Ok(OpusAtom { extra_data })
+        let channel_count = reader.read_byte()?;
+
+        if channel_count == 0 {
+            return decode_error("isomp4 (opus): Invalid channel count");
+        }
+
+        let pre_skip = u16::from_be_bytes(reader.read_double_bytes()?);
+
+        let _input_sample_rate = u32::from_be_bytes(reader.read_quad_bytes()?);
+
+        let _output_gain = i16::from_be_bytes(reader.read_double_bytes()?);
+
+        let channel_mapping = reader.read_byte()?;
+
+        let positions = match channel_mapping {
+            // RTP Mapping
+            0 if channel_count == 1 => Position::FRONT_LEFT,
+            0 if channel_count == 2 => Position::FRONT_LEFT | Position::FRONT_RIGHT,
+            // Vorbis Mapping
+            1 => match channel_count {
+                1 => Position::FRONT_LEFT,
+                2 => Position::FRONT_LEFT | Position::FRONT_RIGHT,
+                3 => Position::FRONT_LEFT | Position::FRONT_CENTER | Position::FRONT_RIGHT,
+                4 => {
+                    Position::FRONT_LEFT
+                        | Position::FRONT_RIGHT
+                        | Position::REAR_LEFT
+                        | Position::REAR_RIGHT
+                }
+                5 => {
+                    Position::FRONT_LEFT
+                        | Position::FRONT_CENTER
+                        | Position::FRONT_RIGHT
+                        | Position::REAR_LEFT
+                        | Position::REAR_RIGHT
+                }
+                6 => {
+                    Position::FRONT_LEFT
+                        | Position::FRONT_CENTER
+                        | Position::FRONT_RIGHT
+                        | Position::REAR_LEFT
+                        | Position::REAR_RIGHT
+                        | Position::LFE1
+                }
+                7 => {
+                    Position::FRONT_LEFT
+                        | Position::FRONT_CENTER
+                        | Position::FRONT_RIGHT
+                        | Position::SIDE_LEFT
+                        | Position::SIDE_RIGHT
+                        | Position::REAR_CENTER
+                        | Position::LFE1
+                }
+                8 => {
+                    Position::FRONT_LEFT
+                        | Position::FRONT_CENTER
+                        | Position::FRONT_RIGHT
+                        | Position::SIDE_LEFT
+                        | Position::SIDE_RIGHT
+                        | Position::REAR_LEFT
+                        | Position::REAR_RIGHT
+                        | Position::LFE1
+                }
+                _ => return decode_error("isomp4 (opus): Invalid channel mapping"),
+            },
+            // Reserved, and should NOT be supported for playback.
+            _ => return decode_error("isomp4 (opus): Invalid channel mapping"),
+        };
+
+        Ok(OpusAtom { channels: Channels::Positioned(positions), pre_skip })
     }
 }
 
 impl OpusAtom {
     pub fn fill_audio_sample_entry(self, entry: &mut AudioSampleEntry) {
         entry.codec_id = CODEC_ID_OPUS;
-        entry.extra_data = Some(self.extra_data);
+        entry.channels = Some(self.channels);
+        entry.sample_rate = 48_000.0;
     }
 }
