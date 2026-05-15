@@ -550,6 +550,11 @@ impl AtomHeader {
             }
         };
 
+        // The end position of the atom must not exceed u64::MAX.
+        if atom_len.is_some_and(|len| len.get() > u64::MAX - atom_pos) {
+            return Err(AtomError::InvalidAtomSize);
+        }
+
         Ok(AtomHeader { atom_type, atom_pos, atom_len, header_len })
     }
 
