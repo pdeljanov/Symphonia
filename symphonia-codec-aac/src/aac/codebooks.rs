@@ -572,7 +572,7 @@ fn make_raw_codebook(table: &VlcTable) -> Codebook<Entry16x16> {
     // Read in 8-bit blocks.
     builder.bits_per_read(8);
 
-    builder.make(table.codes, table.lens, &indicies).unwrap()
+    builder.make(table.codes, table.lens, &indicies).expect("valid static codebook data")
 }
 
 /// Generate a codebook, but also generate a list of values for each variable length code using
@@ -664,6 +664,6 @@ lazy_static! {
         // Read in 8-bit blocks.
         builder.bits_per_read(8);
 
-        builder.make(&SCF_CODEBOOK_CODES, &SCF_CODEBOOK_LENS, &values).unwrap()
+        builder.make(&SCF_CODEBOOK_CODES, &SCF_CODEBOOK_LENS, &values).expect("valid static codebook data")
     };
 }

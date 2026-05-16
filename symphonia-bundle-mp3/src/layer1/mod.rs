@@ -186,7 +186,11 @@ impl Layer for Layer1 {
 
         for (ch, samples) in samples.iter().enumerate().take(num_channels) {
             // Perform polyphase synthesis and generate PCM samples.
-            synthesis::synthesis(&mut self.synthesis[ch], 12, samples, out.plane_mut(ch).unwrap());
+            let plane = match out.plane_mut(ch) {
+                Some(p) => p,
+                None => return decode_error("mp1: missing audio plane"),
+            };
+            synthesis::synthesis(&mut self.synthesis[ch], 12, samples, plane);
         }
 
         Ok(())

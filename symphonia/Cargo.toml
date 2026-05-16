@@ -173,3 +173,6 @@ optional = true
 version = "0.6.0"
 path = "../symphonia-format-caf"
 optional = true
+
+[lints]
+workspace = true

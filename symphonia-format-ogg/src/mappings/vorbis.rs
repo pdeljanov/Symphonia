@@ -233,16 +233,18 @@ impl Mapper for VorbisMapper {
                 VORBIS_PACKET_TYPE_SETUP => {
                     // Safety: Audio codec parameters are always available if mapper is
                     // instantiated.
-                    let mut extra_data = self
+                    let codec_params = self
                         .track
                         .codec_params
                         .as_mut()
-                        .unwrap()
+                        .expect("codec params always available if mapper is instantiated");
+                    let audio = codec_params
                         .audio_mut()
-                        .unwrap()
+                        .expect("codec params are always audio if mapper is instantiated");
+                    let mut extra_data = audio
                         .extra_data
                         .take()
-                        .unwrap()
+                        .expect("extra data always available if mapper is instantiated")
                         .into_vec();
 
                     // Append the setup headers to the extra data.
@@ -273,13 +275,17 @@ impl Mapper for VorbisMapper {
 
                     // Safety: Audio codec parameters are always available if mapper is
                     // instantiated.
-                    self.track
-                        .codec_params
-                        .as_mut()
-                        .unwrap()
-                        .audio_mut()
-                        .unwrap()
-                        .with_extra_data(extra_data.into_boxed_slice());
+                    let codec_params = match self.track.codec_params.as_mut() {
+                        Some(p) => p,
+                        None => return decode_error("ogg (vorbis): missing codec parameters"),
+                    };
+                    let audio = match codec_params.audio_mut() {
+                        Some(a) => a,
+                        None => {
+                            return decode_error("ogg (vorbis): codec parameters are not audio");
+                        }
+                    };
+                    audio.with_extra_data(extra_data.into_boxed_slice());
 
                     self.has_setup_header = true;
 

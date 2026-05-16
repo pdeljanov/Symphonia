@@ -422,7 +422,7 @@ impl AudioDecoder for AlacDecoder {
 
     fn codec_info(&self) -> &CodecInfo {
         // Only one codec is supported.
-        &Self::supported_codecs().first().unwrap().info
+        &Self::supported_codecs().first().expect("at least one codec registered").info
     }
 
     fn codec_params(&self) -> &AudioCodecParameters {
@@ -534,7 +534,10 @@ fn decode_sce_or_cpe<B: ReadBitsLtr>(
         elem0.predict(&mut out0[..num_samples])?;
 
         if let Some(out1) = out1.as_mut() {
-            let elem1 = elem1.as_mut().unwrap();
+            let elem1 = match elem1.as_mut() {
+                Some(e) => e,
+                None => return decode_error("alac: missing second channel element"),
+            };
 
             elem1.read_residuals(bs, &mut out1[..num_samples])?;
             elem1.predict(&mut out1[..num_samples])?;

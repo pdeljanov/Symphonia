@@ -34,3 +34,6 @@ libpulse-simple-binding = "2.5.0"
 cpal = "0.17.3"
 rb = "0.4.1"
 rubato = "2.0.0"
+
+[lints]
+workspace = true

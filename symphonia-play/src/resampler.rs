@@ -51,7 +51,7 @@ where
                     &mut AudioBufferAdapterMut(&mut self.buf_out),
                     None,
                 )
-                .unwrap()
+                .expect("resampler process failed")
             };
 
             // Remove consumed samples from the input buffer.
@@ -78,7 +78,7 @@ where
             spec_in.channels().count(),
             rubato::FixedSync::Input,
         )
-        .unwrap();
+        .expect("resampler construction failed");
 
         let spec_out = AudioSpec::new(out_sample_rate, spec_in.channels().clone());
 

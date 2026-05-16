@@ -24,5 +24,5 @@ path = "../symphonia-metadata"
 default-features = false
 features = ["flac"]
 
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)'] }
+[lints]
+workspace = true

@@ -503,7 +503,7 @@ fn try_parse_image_data(buf: Box<[u8]>, tags: &mut Vec<Tag>) -> (Box<[u8]>, Opti
         // Split at the null-terminator.
         let (left, right) = buf.split_at(pos);
         // Drop the null-terminator.
-        let right = right.split_first().unwrap().1;
+        let right = right.split_first().expect("right starts with null byte at pos").1;
 
         // Try to detect an image after the null-terminator.
         if let Some(info) = try_get_image_info(right) {

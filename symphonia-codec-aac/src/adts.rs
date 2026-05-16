@@ -146,8 +146,10 @@ impl AdtsHeader {
         let mut bs = BitReaderLtr::new(&buf);
 
         // Profile (audio object type).
-        // UNWRAP:
-        let profile = get_mpeg4_audio_object_type_by_index(bs.read_bits_leq32(2)? + 1).unwrap();
+        let profile = match get_mpeg4_audio_object_type_by_index(bs.read_bits_leq32(2)? + 1) {
+            Some(p) => p,
+            None => return decode_error("adts: invalid audio object type"),
+        };
 
         // Sample rate from sample rate index.
         let sample_rate = match get_mpeg4_audio_sample_rate_by_index(bs.read_bits_leq32(4)?) {

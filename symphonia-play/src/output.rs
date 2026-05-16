@@ -369,7 +369,7 @@ mod cpal {
                 return Err(AudioOutputError::OpenStreamError);
             }
 
-            let stream = stream_result.unwrap();
+            let stream = stream_result.expect("audio output stream open error was handled above");
 
             // Start the output stream.
             if let Err(err) = stream.play() {
