@@ -1,6 +1,6 @@
 [package]
 name = "symphonia-codec-wavpack"
-description = "Pure Rust WacPack decoder (a part of project Symphonia)."
+description = "Pure Rust WavPack decoder (a part of project Symphonia)."
 authors = ["Philip Deljanov <philip.deljanov@gmail.com>"]
 readme = "README.md"
 categories = ["multimedia", "multimedia::audio", "multimedia::encoding"]
