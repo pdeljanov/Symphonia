@@ -8,29 +8,32 @@
 use symphonia_core::audio::{Channels, Position};
 use symphonia_core::codecs::audio::well_known::CODEC_ID_OPUS;
 use symphonia_core::errors::Error;
+use symphonia_core::io::{BufReader, ReadBytes};
 
 use crate::atoms::stsd::AudioSampleEntry;
 use crate::atoms::{
     Atom, AtomHeader, AtomIterator, ReadAtom, Result, decode_error, unsupported_error,
 };
 
+const OPUS_MAGIC: &[u8] = b"OpusHead";
+const OPUS_MAGIC_LEN: usize = OPUS_MAGIC.len();
+
 /// Opus atom.
 #[allow(dead_code)]
 #[derive(Debug)]
 pub struct OpusAtom {
-    /// Audio channels
-    channels: Channels,
-    /// Pre skip
-    pre_skip: u16,
+    /// Opus extra data (identification header).
+    extra_data: Box<[u8]>,
 }
 
 impl Atom for OpusAtom {
     fn read<R: ReadAtom>(reader: &mut AtomIterator<R>, header: &AtomHeader) -> Result<Self> {
-        const OPUS_MAGIC: &[u8] = b"OpusHead";
-        const OPUS_MAGIC_LEN: usize = OPUS_MAGIC.len();
 
         const MIN_OPUS_EXTRA_DATA_SIZE: usize = OPUS_MAGIC_LEN + 11;
         const MAX_OPUS_EXTRA_DATA_SIZE: usize = MIN_OPUS_EXTRA_DATA_SIZE + 257;
+
+        // Offset of the Opus version number in the extra data.
+        const OPUS_EXTRADATA_VERSION_OFFSET: usize = OPUS_MAGIC_LEN;
 
         // The dops atom contains an Opus identification header excluding the OpusHead magic
         // signature. Therefore, the atom data length should be atleast as long as the shortest
@@ -48,26 +51,45 @@ impl Atom for OpusAtom {
             return decode_error("isomp4 (opus): opus identification header too large");
         }
 
-        let version = reader.read_byte()?;
+        let mut extra_data = vec![0; OPUS_MAGIC_LEN + data_len].into_boxed_slice();
+
+        // The Opus magic is excluded in the atom, but the extra data must start with it.
+        extra_data[..OPUS_MAGIC_LEN].copy_from_slice(OPUS_MAGIC);
+
+        // Read the extra data from the atom.
+        reader.read_buf_exact(&mut extra_data[OPUS_MAGIC_LEN..])?;
 
         // Verify the version number is 0.
-        if version != 0 {
+        if extra_data[OPUS_EXTRADATA_VERSION_OFFSET] != 0 {
             return unsupported_error("isomp4 (opus): unsupported opus version");
         }
 
-        let channel_count = reader.read_byte()?;
+        Ok(OpusAtom { extra_data })
+    }
+}
 
+impl OpusAtom {
+    pub fn fill_audio_sample_entry(self, entry: &mut AudioSampleEntry) -> Result<()> {
+        entry.codec_id = CODEC_ID_OPUS;
+
+        let mut reader = BufReader::new(&self.extra_data[OPUS_MAGIC_LEN..]);
+
+        // Version is already checked
+        let _version = reader.read_u8()?;
+
+        let channel_count = reader.read_u8()?;
+                
         if channel_count == 0 {
-            return decode_error("isomp4 (opus): Invalid channel count");
+            return Ok(());
         }
 
-        let pre_skip = u16::from_be_bytes(reader.read_double_bytes()?);
+        let _pre_skip = reader.read_be_u16()?;
 
-        let _input_sample_rate = u32::from_be_bytes(reader.read_quad_bytes()?);
+        let _input_sample_rate = reader.read_be_u32()?;
 
-        let _output_gain = i16::from_be_bytes(reader.read_double_bytes()?);
+        let _output_gain = reader.read_be_i16()?;
 
-        let channel_mapping = reader.read_byte()?;
+        let channel_mapping = reader.read_u8()?;
 
         let positions = match channel_mapping {
             // RTP Mapping
@@ -118,20 +140,15 @@ impl Atom for OpusAtom {
                         | Position::REAR_RIGHT
                         | Position::LFE1
                 }
-                _ => return decode_error("isomp4 (opus): Invalid channel mapping"),
+                _ => return Ok(()),
             },
             // Reserved, and should NOT be supported for playback.
-            _ => return decode_error("isomp4 (opus): Invalid channel mapping"),
+            _ => return Ok(()),
         };
 
-        Ok(OpusAtom { channels: Channels::Positioned(positions), pre_skip })
-    }
-}
-
-impl OpusAtom {
-    pub fn fill_audio_sample_entry(self, entry: &mut AudioSampleEntry) {
-        entry.codec_id = CODEC_ID_OPUS;
-        entry.channels = Some(self.channels);
+        entry.channels = Some(Channels::Positioned(positions));
         entry.sample_rate = 48_000.0;
+
+        Ok(())
     }
 }
