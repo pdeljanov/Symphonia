@@ -71,6 +71,7 @@ impl Atom for OpusAtom {
 impl OpusAtom {
     pub fn fill_audio_sample_entry(self, entry: &mut AudioSampleEntry) -> Result<()> {
         entry.codec_id = CODEC_ID_OPUS;
+        entry.extra_data = Some(self.extra_data.clone());
 
         let mut reader = BufReader::new(&self.extra_data[OPUS_MAGIC_LEN..]);
 
