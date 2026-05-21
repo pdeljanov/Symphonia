@@ -322,7 +322,7 @@ impl Atom for AudioSampleEntry {
                 }
                 AtomType::OpusDsConfig => {
                     let atom = it.read_atom::<OpusAtom>()?;
-                    atom.fill_audio_sample_entry(&mut entry)?;
+                    atom.fill_audio_sample_entry(&mut entry);
                 }
                 AtomType::AudioSampleEntryQtWave => {
                     // The QuickTime WAVE (aka. siDecompressionParam) atom may contain many

@@ -5,10 +5,12 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::audio::{Channels, Position};
+use std::convert::identity;
+
+use symphonia_common::xiph::audio::opus;
 use symphonia_core::codecs::audio::well_known::CODEC_ID_OPUS;
 use symphonia_core::errors::Error;
-use symphonia_core::io::{BufReader, ReadBytes};
+use symphonia_core::io::BufReader;
 
 use crate::atoms::stsd::AudioSampleEntry;
 use crate::atoms::{
@@ -28,7 +30,6 @@ pub struct OpusAtom {
 
 impl Atom for OpusAtom {
     fn read<R: ReadAtom>(reader: &mut AtomIterator<R>, header: &AtomHeader) -> Result<Self> {
-
         const MIN_OPUS_EXTRA_DATA_SIZE: usize = OPUS_MAGIC_LEN + 11;
         const MAX_OPUS_EXTRA_DATA_SIZE: usize = MIN_OPUS_EXTRA_DATA_SIZE + 257;
 
@@ -69,87 +70,15 @@ impl Atom for OpusAtom {
 }
 
 impl OpusAtom {
-    pub fn fill_audio_sample_entry(self, entry: &mut AudioSampleEntry) -> Result<()> {
-        entry.codec_id = CODEC_ID_OPUS;
-        entry.extra_data = Some(self.extra_data.clone());
+    pub fn fill_audio_sample_entry(self, entry: &mut AudioSampleEntry) {
+        let mut reader = BufReader::new(&self.extra_data);
 
-        let mut reader = BufReader::new(&self.extra_data[OPUS_MAGIC_LEN..]);
-
-        // Version is already checked
-        let _version = reader.read_u8()?;
-
-        let channel_count = reader.read_u8()?;
-                
-        if channel_count == 0 {
-            return Ok(());
+        if let Some(stream_info) = opus::StreamInfo::read(&mut reader, 0).ok().and_then(identity) {
+            entry.channels = Some(stream_info.channels);
+            entry.sample_rate = 48_000.0;
         }
 
-        let _pre_skip = reader.read_be_u16()?;
-
-        let _input_sample_rate = reader.read_be_u32()?;
-
-        let _output_gain = reader.read_be_i16()?;
-
-        let channel_mapping = reader.read_u8()?;
-
-        let positions = match channel_mapping {
-            // RTP Mapping
-            0 if channel_count == 1 => Position::FRONT_LEFT,
-            0 if channel_count == 2 => Position::FRONT_LEFT | Position::FRONT_RIGHT,
-            // Vorbis Mapping
-            1 => match channel_count {
-                1 => Position::FRONT_LEFT,
-                2 => Position::FRONT_LEFT | Position::FRONT_RIGHT,
-                3 => Position::FRONT_LEFT | Position::FRONT_CENTER | Position::FRONT_RIGHT,
-                4 => {
-                    Position::FRONT_LEFT
-                        | Position::FRONT_RIGHT
-                        | Position::REAR_LEFT
-                        | Position::REAR_RIGHT
-                }
-                5 => {
-                    Position::FRONT_LEFT
-                        | Position::FRONT_CENTER
-                        | Position::FRONT_RIGHT
-                        | Position::REAR_LEFT
-                        | Position::REAR_RIGHT
-                }
-                6 => {
-                    Position::FRONT_LEFT
-                        | Position::FRONT_CENTER
-                        | Position::FRONT_RIGHT
-                        | Position::REAR_LEFT
-                        | Position::REAR_RIGHT
-                        | Position::LFE1
-                }
-                7 => {
-                    Position::FRONT_LEFT
-                        | Position::FRONT_CENTER
-                        | Position::FRONT_RIGHT
-                        | Position::SIDE_LEFT
-                        | Position::SIDE_RIGHT
-                        | Position::REAR_CENTER
-                        | Position::LFE1
-                }
-                8 => {
-                    Position::FRONT_LEFT
-                        | Position::FRONT_CENTER
-                        | Position::FRONT_RIGHT
-                        | Position::SIDE_LEFT
-                        | Position::SIDE_RIGHT
-                        | Position::REAR_LEFT
-                        | Position::REAR_RIGHT
-                        | Position::LFE1
-                }
-                _ => return Ok(()),
-            },
-            // Reserved, and should NOT be supported for playback.
-            _ => return Ok(()),
-        };
-
-        entry.channels = Some(Channels::Positioned(positions));
-        entry.sample_rate = 48_000.0;
-
-        Ok(())
+        entry.codec_id = CODEC_ID_OPUS;
+        entry.extra_data = Some(self.extra_data);
     }
 }
