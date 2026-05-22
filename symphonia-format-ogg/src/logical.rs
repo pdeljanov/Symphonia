@@ -517,7 +517,7 @@ impl LogicalStream {
     }
 
     /// Examine a page in isolation and return the start and end timestamps as a tuple.
-    pub fn inspect_page(&mut self, page: &Page<'_>) -> Result<(Timestamp, Timestamp)> {
+    pub fn inspect_page(&mut self, page: &Page<'_>) -> (Timestamp, Timestamp) {
         // Get the cumulative duration of all packets within this page.
         let mut total_pkt_dur = Duration::ZERO;
         let mut total_pkt_discard = Duration::ZERO;
@@ -550,7 +550,7 @@ impl LogicalStream {
             None => page_start_ts_raw,
         };
 
-        Ok((page_start_ts, page_end_ts))
+        (page_start_ts, page_end_ts)
     }
 
     /// Returns true if the stream is only a single page.

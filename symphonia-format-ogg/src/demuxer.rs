@@ -210,7 +210,7 @@ impl<'s> OggReader<'s> {
                 }
 
                 // Probe the page to get the start and end timestamp.
-                let (start_ts, end_ts) = stream.inspect_page(&self.pages.page())?;
+                let (start_ts, end_ts) = stream.inspect_page(&self.pages.page());
 
                 debug!(
                     "seek: bisect step: page={{ start_ts={start_ts}, end_ts={end_ts} }} \

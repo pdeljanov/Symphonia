@@ -1,13 +1,20 @@
+// Symphonia
+// Copyright (c) 2019-2026 The Project Symphonia Developers.
+//
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 use symphonia_core::{
     audio::{Channels, Position},
-    errors::Result,
+    errors::{Result, decode_error, unsupported_error},
     io::ReadBytes,
 };
 
 const OPUS_MAGIC_SIGNATURE: &[u8] = b"OpusHead";
 
 #[derive(Debug, Default)]
-pub struct StreamInfo {
+pub struct OpusHead {
     pub version: u8,
     pub channels: Channels,
     pub original_sample_rate: u32,
@@ -15,32 +22,32 @@ pub struct StreamInfo {
     pub pre_skip: u16,
 }
 
-impl StreamInfo {
-    pub fn read<B: ReadBytes>(reader: &mut B, max_version: u8) -> Result<Option<Self>> {
+impl OpusHead {
+    pub fn read<B: ReadBytes>(reader: &mut B, max_version: u8) -> Result<Self> {
         // The first 8 bytes are the magic signature ASCII bytes.
         let mut magic = [0; 8];
         reader.read_buf_exact(&mut magic)?;
 
         if magic != *OPUS_MAGIC_SIGNATURE {
-            return Ok(None);
+            return unsupported_error("common (opus): invalid magic signature");
         }
 
-        // The next byte is the encapsulation version. The max version is specified by the caller since it
-        // depends on the container format used.
+        // The next byte is the encapsulation version. The max version is specified by the caller
+        // since it depends on the container format used.
         let version = reader.read_byte()?;
         if version > max_version {
-            return Ok(None);
+            return decode_error("common (opus): invalid version");
         }
 
         // The next byte is the number of channels and must not be 0.
         let channel_count = reader.read_byte()?;
 
         if channel_count == 0 {
-            return Ok(None);
+            return decode_error("common (opus): invalid channel count");
         }
 
-        // The next 16-bit integer is the pre-skip padding (# of samples at 48kHz to subtract from the
-        // OGG granule position to obtain the PCM sample position).
+        // The next 16-bit integer is the pre-skip padding (# of samples at 48kHz to subtract from
+        // the OGG granule position to obtain the PCM sample position).
         let pre_skip = reader.read_u16()?;
 
         // The next 32-bit integer is the sample rate of the original audio.
@@ -101,18 +108,18 @@ impl StreamInfo {
                         | Position::REAR_RIGHT
                         | Position::LFE1
                 }
-                _ => return Ok(None),
+                _ => return decode_error("common (opus): invalid vorbis channel mapping"),
             },
             // Reserved, and should NOT be supported for playback.
-            _ => return Ok(None),
+            _ => return unsupported_error("common (opus): unsupported channel mapping family"),
         };
 
-        Ok(Some(Self {
+        Ok(Self {
             version,
             channels: Channels::Positioned(positions),
             gain,
             original_sample_rate,
             pre_skip,
-        }))
+        })
     }
 }

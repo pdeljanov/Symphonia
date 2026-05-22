@@ -5,8 +5,6 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use std::convert::identity;
-
 use symphonia_common::xiph::audio::opus;
 use symphonia_core::codecs::audio::well_known::CODEC_ID_OPUS;
 use symphonia_core::errors::Error;
@@ -73,8 +71,8 @@ impl OpusAtom {
     pub fn fill_audio_sample_entry(self, entry: &mut AudioSampleEntry) {
         let mut reader = BufReader::new(&self.extra_data);
 
-        if let Some(stream_info) = opus::StreamInfo::read(&mut reader, 0).ok().and_then(identity) {
-            entry.channels = Some(stream_info.channels);
+        if let Ok(opus_head) = opus::OpusHead::read(&mut reader, 0) {
+            entry.channels = Some(opus_head.channels);
             entry.sample_rate = 48_000.0;
         }
 

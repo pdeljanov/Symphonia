@@ -40,7 +40,7 @@ pub fn detect(serial: u32, buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> {
 
     let mut reader = BufReader::new(buf);
 
-    let Some(stream_info) = opus::StreamInfo::read(&mut reader, OGG_OPUS_MAPPING_VERSION_MAX)?
+    let Ok(opus_head) = opus::OpusHead::read(&mut reader, OGG_OPUS_MAPPING_VERSION_MAX)
     else {
         return Ok(None);
     };
@@ -51,7 +51,7 @@ pub fn detect(serial: u32, buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> {
     codec_params
         .for_codec(CODEC_ID_OPUS)
         .with_sample_rate(48_000)
-        .with_channels(stream_info.channels)
+        .with_channels(opus_head.channels)
         .with_extra_data(Box::from(buf));
 
     // Create the track.
@@ -59,7 +59,7 @@ pub fn detect(serial: u32, buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> {
 
     track
         .with_codec_params(CodecParameters::Audio(codec_params))
-        .with_delay(u32::from(stream_info.pre_skip));
+        .with_delay(u32::from(opus_head.pre_skip));
 
     // Instantiate the Opus mapper.
     let mapper = Box::new(OpusMapper { track, need_comment: true });

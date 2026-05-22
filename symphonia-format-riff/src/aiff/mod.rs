@@ -195,7 +195,7 @@ impl<'s> AiffReader<'s> {
         let mut metadata = opts.external_data.metadata.unwrap_or_default();
 
         // Process markers and comments.
-        let chapters = process_markers(&comm, mark, comt, &mut builder)?;
+        let chapters = process_markers(&comm, mark, comt, &mut builder);
 
         // Add metadata generated from marker, comment, and text chunks.
         // TODO: Don't add if empty.
@@ -246,7 +246,7 @@ fn process_markers(
     mark: Option<MarkerChunk>,
     comt: Option<CommentsChunk>,
     builder: &mut MetadataBuilder,
-) -> Result<Option<ChapterGroup>> {
+) -> Option<ChapterGroup> {
     let mut chapters = Vec::new();
     let mut marker_index = HashMap::new();
 
@@ -270,6 +270,7 @@ fn process_markers(
             let start_time = tb
                 .calc_time(Timestamp::from(marker.ts))
                 .expect("aiff: chapter timestamp overflow is impossible");
+
             chapters.push(Chapter {
                 start_time,
                 end_time: None,
@@ -305,14 +306,14 @@ fn process_markers(
     }
 
     if !chapters.is_empty() {
-        Ok(Some(ChapterGroup {
+        Some(ChapterGroup {
             items: chapters.into_iter().map(ChapterGroupItem::Chapter).collect(),
             tags: vec![],
             visuals: vec![],
-        }))
+        })
     }
     else {
-        Ok(None)
+        None
     }
 }
 
