@@ -138,7 +138,14 @@ impl ProbeableFormat<'_> for MpaReader<'_> {
 impl FormatReader for MpaReader<'_> {
     fn format_info(&self) -> &FormatInfo {
         // Safety: MpaReader only supports/has audio tracks.
-        match self.tracks[0].codec_params.as_ref().unwrap().audio().unwrap().codec {
+        match self.tracks[0]
+            .codec_params
+            .as_ref()
+            .expect("track has codec params")
+            .audio()
+            .expect("codec params are audio")
+            .codec
+        {
             CODEC_ID_MP1 => &MP1_FORMAT_INFO,
             CODEC_ID_MP2 => &MP2_FORMAT_INFO,
             CODEC_ID_MP3 => &MP3_FORMAT_INFO,
@@ -545,9 +552,11 @@ impl<'s> MpaReader<'s> {
         // start of the audio to a packet boundary. Then add to the lower-bound timestamp. In
         // theory, this should never exceed the upper-bound timestamp.
         //
-        // UNWRAP: The packet duration is always non-zero, and no larger than 1152.
-        self.next_packet_ts =
-            min_ts.checked_add(dur_to_pkt.align_down(pkt_dur).unwrap()).unwrap_or(max_ts);
+        self.next_packet_ts = min_ts
+            .checked_add(
+                dur_to_pkt.align_down(pkt_dur).expect("packet duration is always non-zero"),
+            )
+            .unwrap_or(max_ts);
 
         Ok(())
     }

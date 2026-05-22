@@ -452,7 +452,9 @@ fn play_track(
                     let duration = Duration::from(decoded.capacity() as u64);
 
                     // Try to open the audio output.
-                    audio_output.replace(output::try_open(decoded.spec(), duration).unwrap());
+                    audio_output.replace(output::try_open(decoded.spec(), duration).map_err(
+                        |_| Error::IoError(std::io::Error::other("failed to open audio output")),
+                    )?);
                 }
                 else {
                     // TODO: Check the audio spec. and duration hasn't changed.
@@ -467,11 +469,13 @@ fn play_track(
                 // sample within a packet.
                 if packet.pts >= opts.seek_ts {
                     if !opts.no_progress {
-                        ui::print_progress(packet.pts, dur, tb);
+                        let _ = ui::print_progress(packet.pts, dur, tb);
                     }
 
                     if let Some(audio_output) = audio_output {
-                        audio_output.write(decoded).unwrap()
+                        audio_output.write(decoded).map_err(|_| {
+                            Error::IoError(std::io::Error::other("failed to write audio output"))
+                        })?;
                     }
                 }
             }

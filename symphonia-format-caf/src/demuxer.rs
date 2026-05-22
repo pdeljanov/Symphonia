@@ -436,10 +436,10 @@ impl<'s> CafReader<'s> {
         }
         else {
             PacketInfo::FixedAudioPacket {
-                // UNWRAP: Cannot reach this else block if either bytes/packet or frames/packet are
-                // zero.
-                bytes_per_packet: NonZero::new(desc.bytes_per_packet).unwrap(),
-                frames_per_packet: NonZero::new(desc.frames_per_packet).unwrap(),
+                bytes_per_packet: NonZero::new(desc.bytes_per_packet)
+                    .expect("bytes_per_packet is non-zero in this branch"),
+                frames_per_packet: NonZero::new(desc.frames_per_packet)
+                    .expect("frames_per_packet is non-zero in this branch"),
                 start_pts: Timestamp::new(0),
             }
         };

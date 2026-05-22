@@ -907,22 +907,19 @@ impl Time {
 
 impl From<u8> for Time {
     fn from(seconds: u8) -> Self {
-        // UNWRAP: Nanoseconds is < 1000000000.
-        Time::try_new(i64::from(seconds), 0).unwrap()
+        Time::try_new(i64::from(seconds), 0).expect("nanoseconds is 0, which is < 1_000_000_000")
     }
 }
 
 impl From<u16> for Time {
     fn from(seconds: u16) -> Self {
-        // UNWRAP: Nanoseconds is < 1000000000.
-        Time::try_new(i64::from(seconds), 0).unwrap()
+        Time::try_new(i64::from(seconds), 0).expect("nanoseconds is 0, which is < 1_000_000_000")
     }
 }
 
 impl From<u32> for Time {
     fn from(seconds: u32) -> Self {
-        // UNWRAP: Nanoseconds is < 1000000000.
-        Time::try_new(i64::from(seconds), 0).unwrap()
+        Time::try_new(i64::from(seconds), 0).expect("nanoseconds is 0, which is < 1_000_000_000")
     }
 }
 
@@ -941,8 +938,10 @@ pub struct TimeBase {
 
 impl Default for TimeBase {
     fn default() -> Self {
-        // UNWRAP: Never panics because 1 is non-zero.
-        Self { numer: NonZero::new(1).unwrap(), denom: NonZero::new(1).unwrap() }
+        Self {
+            numer: NonZero::new(1).expect("1 is non-zero"),
+            denom: NonZero::new(1).expect("1 is non-zero"),
+        }
     }
 }
 
@@ -961,16 +960,14 @@ impl TimeBase {
 
     /// Create a timebase from the reciprocal of the provided rate.
     pub const fn from_recip(rate: NonZero<u32>) -> Self {
-        // UNWRAP: Never panics because 1 is non-zero.
-        TimeBase { numer: NonZero::new(1).unwrap(), denom: rate }
+        TimeBase { numer: NonZero::new(1).expect("1 is non-zero"), denom: rate }
     }
 
     /// Try to create a timebase from the reciprocal of the provided rate. Returns `None` if the
     /// rate is 0.
     pub fn try_from_recip(rate: u32) -> Option<Self> {
         let denom = NonZero::new(rate)?;
-        // UNWRAP: Never panics because 1 is non-zero.
-        Some(TimeBase { numer: NonZero::new(1).unwrap(), denom })
+        Some(TimeBase { numer: NonZero::new(1).expect("1 is non-zero"), denom })
     }
 
     /// Calculate a `Time` upto nanosecond precision from the provided `TimeStamp` using `self` as
@@ -1071,12 +1068,10 @@ impl TimeBase {
             a
         };
 
-        // Reduce the timebase.
-        // UNWRAP: Division by GCD cannot produce zero because the GCD is always <= the numerator
-        // and denominator.
+        // GCD is always <= numerator and denominator, so division cannot produce zero.
         Self {
-            numer: NonZero::new(self.numer.get() / gcd).unwrap(),
-            denom: NonZero::new(self.denom.get() / gcd).unwrap(),
+            numer: NonZero::new(self.numer.get() / gcd).expect("gcd <= numer"),
+            denom: NonZero::new(self.denom.get() / gcd).expect("gcd <= denom"),
         }
     }
 }

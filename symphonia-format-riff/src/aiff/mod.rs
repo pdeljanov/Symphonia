@@ -136,7 +136,8 @@ impl<'s> AiffReader<'s> {
                     }
 
                     // The length of the sound data chunk must also be known.
-                    if let Some(len) = ssnd.as_ref().unwrap().len {
+                    let ssnd_ref = ssnd.as_ref().expect("ssnd assigned a few lines above");
+                    if let Some(len) = ssnd_ref.len {
                         mss.ignore_bytes(u64::from(len))?;
                     }
                     else {
@@ -194,7 +195,7 @@ impl<'s> AiffReader<'s> {
         let mut metadata = opts.external_data.metadata.unwrap_or_default();
 
         // Process markers and comments.
-        let chapters = process_markers(&comm, mark, comt, &mut builder);
+        let chapters = process_markers(&comm, mark, comt, &mut builder)?;
 
         // Add metadata generated from marker, comment, and text chunks.
         // TODO: Don't add if empty.
@@ -245,7 +246,7 @@ fn process_markers(
     mark: Option<MarkerChunk>,
     comt: Option<CommentsChunk>,
     builder: &mut MetadataBuilder,
-) -> Option<ChapterGroup> {
+) -> Result<Option<ChapterGroup>> {
     let mut chapters = Vec::new();
     let mut marker_index = HashMap::new();
 
@@ -265,8 +266,12 @@ fn process_markers(
             }
 
             // Add the chapter.
+            // marker.ts is u32; the result is seconds as i64, so overflow is impossible.
+            let start_time = tb
+                .calc_time(Timestamp::from(marker.ts))
+                .expect("aiff: chapter timestamp overflow is impossible");
             chapters.push(Chapter {
-                start_time: tb.calc_time(Timestamp::from(marker.ts)).unwrap(),
+                start_time,
                 end_time: None,
                 start_byte: None,
                 end_byte: None,
@@ -300,14 +305,14 @@ fn process_markers(
     }
 
     if !chapters.is_empty() {
-        Some(ChapterGroup {
+        Ok(Some(ChapterGroup {
             items: chapters.into_iter().map(ChapterGroupItem::Chapter).collect(),
             tags: vec![],
             visuals: vec![],
-        })
+        }))
     }
     else {
-        None
+        Ok(None)
     }
 }
 

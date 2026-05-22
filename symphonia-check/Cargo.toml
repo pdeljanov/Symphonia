@@ -16,3 +16,6 @@ clap = "4.6.0"
 log = { workspace = true, features = ["release_max_level_info"] }
 pretty_env_logger = "0.5"
 symphonia = { version = "0.6.0", path = "../symphonia", features = ["all"] }
+
+[lints]
+workspace = true

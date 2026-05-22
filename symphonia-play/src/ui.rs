@@ -523,7 +523,9 @@ pub fn print_pair_value(value: &str, lead: usize) {
                         .take_while(|(i, c)| *i <= 60 || *i <= 80 && !c.is_whitespace())
                         .map(|(_, c)| {
                             if text::filter::c0_control(&c) {
-                                char::from_u32(0x2400 + c as u32).unwrap()
+                                char::from_u32(0x2400 + c as u32).expect(
+                                    "C0 control chars map to valid Unicode Control Pictures block",
+                                )
                             }
                             else {
                                 c
@@ -562,7 +564,11 @@ pub fn print_blank() {
     println!("|")
 }
 
-pub fn print_progress(cur_ts: Timestamp, dur: Option<Duration>, tb: Option<TimeBase>) {
+pub fn print_progress(
+    cur_ts: Timestamp,
+    dur: Option<Duration>,
+    tb: Option<TimeBase>,
+) -> std::io::Result<()> {
     // Get a string slice containing a progress bar.
     fn progress_bar(ts: Timestamp, dur: Duration) -> &'static str {
         const NUM_STEPS: usize = 60;
@@ -590,25 +596,25 @@ pub fn print_progress(cur_ts: Timestamp, dur: Option<Duration>, tb: Option<TimeB
 
     if let Some(tb) = tb {
         let cur_time = tb.calc_time_saturating(cur_ts);
-        write!(output, "\r\u{25b6}\u{fe0f}  ").unwrap();
-        write_time(&mut output, cur_time).unwrap();
+        write!(output, "\r\u{25b6}\u{fe0f}  ")?;
+        write_time(&mut output, cur_time)?;
 
         if let Some(dur) = dur {
             let rem_ts = cur_ts.saturating_sub(dur);
             let rem_time = tb.calc_time_saturating(rem_ts);
-            write!(output, " {} ", progress_bar(cur_ts, dur)).unwrap();
-            write_time(&mut output, rem_time).unwrap()
+            write!(output, " {} ", progress_bar(cur_ts, dur))?;
+            write_time(&mut output, rem_time)?;
         }
     }
     else {
-        write!(output, "\r\u{25b6}\u{fe0f}  {cur_ts}").unwrap();
+        write!(output, "\r\u{25b6}\u{fe0f}  {cur_ts}")?;
     }
 
     // This extra space is a workaround for Konsole to correctly erase the previous line.
-    write!(output, " ").unwrap();
+    write!(output, " ")?;
 
     // Flush immediately since stdout is buffered.
-    output.flush().unwrap();
+    output.flush()
 }
 
 /// Calculate the appropriate length for tag key padding.

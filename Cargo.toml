@@ -43,3 +43,10 @@ smallvec = "1.13.1"
 inherits = "release"
 debug = true
 #rustflags = ["-C", "force-frame-pointers=y"]
+
+[workspace.lints.clippy]
+unwrap_used = "warn"
+
+[workspace.lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)'] }
+

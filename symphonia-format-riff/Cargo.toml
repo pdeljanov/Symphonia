@@ -28,3 +28,6 @@ version = "0.6.0"
 path = "../symphonia-metadata"
 default-features = false
 features = []
+
+[lints]
+workspace = true

@@ -210,7 +210,11 @@ impl LogicalStream {
             let page_end_ts = self.mapper.absgp_to_ts(page.header.absgp);
 
             // Update previous page information with the timestamp.
-            self.prev_page_info.as_mut().unwrap().end_ts = Some(page_end_ts);
+            let prev_page = self
+                .prev_page_info
+                .as_mut()
+                .expect("prev_page_info unconditionally assigned above");
+            prev_page.end_ts = Some(page_end_ts);
 
             // Compute the page's start timestamp.
             let page_start_ts = if let Some(ts) = prev_page_info.and_then(|prev| prev.end_ts) {
@@ -235,7 +239,10 @@ impl LogicalStream {
                     // whether frames should be discarded from the start or the end of the stream.
                     // Therefore, we assume t = 0 for the remainder.
                     let total_dur_no_padding =
-                        total_pkt_discard.checked_add((page_end_ts.get() as u64).into()).unwrap();
+                        match total_pkt_discard.checked_add((page_end_ts.get() as u64).into()) {
+                            Some(v) => v,
+                            None => return decode_error("ogg: duration overflow"),
+                        };
 
                     if total_pkt_dur >= total_dur_no_padding {
                         // The total packet duration is >= delay + valid (assuming t = 0) frames,
@@ -510,7 +517,7 @@ impl LogicalStream {
     }
 
     /// Examine a page in isolation and return the start and end timestamps as a tuple.
-    pub fn inspect_page(&mut self, page: &Page<'_>) -> (Timestamp, Timestamp) {
+    pub fn inspect_page(&mut self, page: &Page<'_>) -> Result<(Timestamp, Timestamp)> {
         // Get the cumulative duration of all packets within this page.
         let mut total_pkt_dur = Duration::ZERO;
         let mut total_pkt_discard = Duration::ZERO;
@@ -527,7 +534,7 @@ impl LogicalStream {
         let page_end_ts = self.mapper.absgp_to_ts(page.header.absgp);
 
         // Map the absolute granule position to a timestamp.
-        let page_start_ts_raw = page_end_ts.checked_sub(total_pkt_dur).unwrap();
+        let page_start_ts_raw = page_end_ts.saturating_sub(total_pkt_dur);
 
         let page_start_ts = match self.start_bound {
             // Start bound is known, and this is the first bitstream page.
@@ -543,7 +550,7 @@ impl LogicalStream {
             None => page_start_ts_raw,
         };
 
-        (page_start_ts, page_end_ts)
+        Ok((page_start_ts, page_end_ts))
     }
 
     /// Returns true if the stream is only a single page.

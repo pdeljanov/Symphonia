@@ -578,7 +578,7 @@ lazy_static! {
             // Decode a maximum of 8 bits per read.
             builder.bits_per_read(8);
 
-            *codebook = builder.make(table.codes, table.lens, &values).unwrap();
+            *codebook = builder.make(table.codes, table.lens, &values).expect("valid static codebook data");
         }
 
         codebooks
@@ -604,7 +604,7 @@ lazy_static! {
             // Decode a maximum of 8 bits per read.
             builder.bits_per_read(8);
 
-            *codebook = builder.make(table.codes, table.lens, &values).unwrap();
+            *codebook = builder.make(table.codes, table.lens, &values).expect("valid static codebook data");
         }
 
         codebooks

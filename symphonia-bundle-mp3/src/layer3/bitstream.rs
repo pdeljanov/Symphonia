@@ -294,7 +294,10 @@ pub(super) fn read_scale_factors_mpeg1<B: ReadBitsLtr>(
             // channel indicates that the scale factors should be copied from the first granule,
             // do so.
             if gr > 0 && frame_data.scfsi[ch][i] {
-                let (granule0, granule1) = frame_data.granules.split_first_mut().unwrap();
+                let (granule0, granule1) = match frame_data.granules.split_first_mut() {
+                    Some(v) => v,
+                    None => return decode_error("mp3: granule list is empty"),
+                };
 
                 granule1[0].channels[ch].scalefacs[*start..*end]
                     .copy_from_slice(&granule0.channels[ch].scalefacs[*start..*end]);

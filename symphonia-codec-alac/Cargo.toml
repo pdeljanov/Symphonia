@@ -17,3 +17,6 @@ version.workspace = true
 log = { workspace = true }
 symphonia-core = { version = "0.6.0", path = "../symphonia-core" }
 symphonia-common = { version = "0.6.0", path = "../symphonia-common" }
+
+[lints]
+workspace = true

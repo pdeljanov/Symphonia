@@ -160,7 +160,10 @@ impl DecoderInstance {
 
         let format = symphonia::default::get_probe().probe(&hint, mss, fmt_opts, meta_opts)?;
 
-        let track = format.default_track(TrackType::Audio).unwrap();
+        let track = match format.default_track(TrackType::Audio) {
+            Some(t) => t,
+            None => return unsupported_error("only audio tracks are supported"),
+        };
 
         let codec_params = match &track.codec_params {
             Some(CodecParameters::Audio(params)) => params,
@@ -348,7 +351,10 @@ fn run_test(path: &Path, opts: &TestOptions, result: &mut TestResult) -> Result<
     let mut ref_process = RefProcess::try_spawn(opts.ref_decoder, opts.gapless, path)?;
 
     // 2. Instantiate a Symphonia decoder for the reference process output.
-    let ref_ms = Box::new(ReadOnlySource::new(ref_process.child.stdout.take().unwrap()));
+    let ref_ms = Box::new(ReadOnlySource::new(match ref_process.child.stdout.take() {
+        Some(s) => s,
+        None => return unsupported_error("reference decoder has no stdout"),
+    }));
     let ref_mss = MediaSourceStream::new(ref_ms, Default::default());
 
     let mut ref_inst = DecoderInstance::try_open(ref_mss, Default::default(), Default::default())?;
@@ -423,7 +429,11 @@ fn main() {
 
     let path = matches.get_one::<PathBuf>("INPUT").expect("path is a required argument");
 
-    let ref_decoder = match matches.get_one::<String>("decoder").unwrap().as_ref() {
+    let ref_decoder = match matches
+        .get_one::<String>("decoder")
+        .expect("decoder is a required argument")
+        .as_ref()
+    {
         "ffmpeg" => RefDecoder::Ffmpeg,
         "flac" => RefDecoder::Flac,
         "mpg123" => RefDecoder::Mpg123,

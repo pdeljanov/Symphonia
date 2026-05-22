@@ -45,8 +45,7 @@ lazy_static! {
     /// Pre-computed table of y = x^(4/3).
     static ref POW43_TABLE: Box<[f32; POW43_TABLE_LEN]> = {
         let table: Vec<f32> = (0..POW43_TABLE_LEN).map(|i| (i as f32).powf(4.0 / 3.0)).collect();
-        // UNWRAP: The vector was initialized to be the correct size.
-        table.into_boxed_slice().try_into().unwrap()
+        table.into_boxed_slice().try_into().expect("vec initialized to correct table length")
     };
 }
 
@@ -62,8 +61,7 @@ lazy_static! {
             .map(|i| 2.0f32.powf(0.25 * f32::from(i as i16 - 56 + NORMAL_SCALE_MIN)))
             .collect();
 
-        // UNWRAP: The vector was initialized to be the correct size.
-        table.into_boxed_slice().try_into().unwrap()
+        table.into_boxed_slice().try_into().expect("vec initialized to correct table length")
     };
 }
 
@@ -79,8 +77,7 @@ lazy_static! {
             .map(|i| 0.5f32.powf(0.25 * f32::from(i as i16 + INTENSITY_SCALE_MIN)))
             .collect();
 
-        // UNWRAP: The vector was initialized to be the correct size.
-        table.into_boxed_slice().try_into().unwrap()
+        table.into_boxed_slice().try_into().expect("vec initialized to correct table length")
     };
 }
 

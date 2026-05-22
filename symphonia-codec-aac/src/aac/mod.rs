@@ -254,7 +254,7 @@ impl AudioDecoder for AacDecoder {
 
     fn codec_info(&self) -> &CodecInfo {
         // Only one codec is supported.
-        &Self::supported_codecs().first().unwrap().info
+        &Self::supported_codecs().first().expect("at least one codec registered").info
     }
 
     fn codec_params(&self) -> &AudioCodecParameters {
