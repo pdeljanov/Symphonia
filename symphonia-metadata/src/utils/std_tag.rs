@@ -385,7 +385,7 @@ pub fn parse_id3v2_genre(v: Arc<String>) -> StandardTagPair {
 
 fn parse_bool(v: Arc<String>) -> Option<bool> {
     match v.to_ascii_lowercase().as_str() {
-        "1" | "true" | "yes" | "y " => Some(true),
+        "1" | "true" | "yes" | "y" => Some(true),
         "0" | "false" | "no" | "n" => Some(false),
         _ => None,
     }
