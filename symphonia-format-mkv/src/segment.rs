@@ -316,7 +316,7 @@ impl SignedTrackTicks {
     /// Subtract the provided track ticks to `self`, returning `None` if an overflow occurred.
     #[inline]
     pub fn checked_sub_unsigned(self, other: TrackTicks) -> Option<Self> {
-        self.0.checked_add_unsigned(other.0).map(SignedTrackTicks)
+        self.0.checked_sub_unsigned(other.0).map(SignedTrackTicks)
     }
 
     /// Try to convert Segment ticks to Matroska ticks using the track timebase.
