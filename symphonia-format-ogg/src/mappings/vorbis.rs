@@ -233,22 +233,26 @@ impl Mapper for VorbisMapper {
                 VORBIS_PACKET_TYPE_SETUP => {
                     // Safety: Audio codec parameters are always available if mapper is
                     // instantiated.
-                    let codec_params = self
+                    let audio_codec_params = self
                         .track
                         .codec_params
                         .as_mut()
-                        .expect("codec params always available if mapper is instantiated");
-                    let audio = codec_params
+                        .expect("codec params always available if mapper is instantiated")
                         .audio_mut()
                         .expect("codec params are always audio if mapper is instantiated");
-                    let mut extra_data = audio
+
+                    // Take the extra to extend it with the additional setup header.
+                    let mut extra_data = audio_codec_params
                         .extra_data
                         .take()
                         .expect("extra data always available if mapper is instantiated")
                         .into_vec();
 
-                    // Append the setup headers to the extra data.
+                    // Append the setup header to the extra data.
                     extra_data.extend_from_slice(packet);
+
+                    // Put back the extra data on the audio codec parameters.
+                    audio_codec_params.with_extra_data(extra_data.into_boxed_slice());
 
                     // Try to read the setup header.
                     if let Ok(modes) = read_setup(&mut BufReader::new(packet), &self.ident) {
@@ -272,20 +276,6 @@ impl Mapper for VorbisMapper {
 
                         self.parser.replace(parser);
                     }
-
-                    // Safety: Audio codec parameters are always available if mapper is
-                    // instantiated.
-                    let codec_params = match self.track.codec_params.as_mut() {
-                        Some(p) => p,
-                        None => return decode_error("ogg (vorbis): missing codec parameters"),
-                    };
-                    let audio = match codec_params.audio_mut() {
-                        Some(a) => a,
-                        None => {
-                            return decode_error("ogg (vorbis): codec parameters are not audio");
-                        }
-                    };
-                    audio.with_extra_data(extra_data.into_boxed_slice());
 
                     self.has_setup_header = true;
 
