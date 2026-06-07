@@ -955,7 +955,7 @@ fn get_raw_tag_key(atom_type: AtomType) -> &'static str {
         AtomType::AuthorTag => "\u{a9}aut",
         AtomType::CommentTag => "\u{a9}cmt",
         AtomType::CompilationTag => "cpil",
-        AtomType::ComposerTag => "\u{a9}wrt",
+        AtomType::ComposerTag => "\u{a9}com",
         AtomType::ConductorTag => "\u{a9}con",
         AtomType::CopyrightTag => "cprt",
         AtomType::CoverTag => "covr",

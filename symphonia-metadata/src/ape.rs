@@ -84,7 +84,7 @@ lazy_static! {
         m.insert("mood"                        , parse_mood);
         m.insert("movement"                    , parse_movement_total);
         m.insert("movementname"                , parse_movement_name);
-        m.insert("movementtotal"               , parse_mood);
+        m.insert("movementtotal"               , parse_movement_total);
         m.insert("mp3gain_album_minmax"        , parse_mp3gain_album_min_max);
         m.insert("mp3gain_minmax"              , parse_mp3gain_min_max);
         m.insert("mp3gain_undo"                , parse_mp3gain_undo);
