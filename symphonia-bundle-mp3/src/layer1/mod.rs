@@ -100,7 +100,7 @@ impl Layer for Layer1 {
 
         // Read bit allocations for each non-intensity coded sub-bands.
         for sb in 0..bound {
-            for chan in &mut alloc {
+            for chan in &mut alloc[..num_channels] {
                 let bits = bs.read_bits_leq32(4)? as u8;
 
                 if bits > 0xe {
