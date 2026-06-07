@@ -81,6 +81,10 @@ impl Residue {
         let residue_classifications = bs.read_bits_leq32(6)? as u8 + 1;
         let residue_classbook = bs.read_bits_leq32(8)? as u8;
 
+        if residue_classbook >= max_codebook {
+            return decode_error("vorbis: invalid codebook for residue classbook");
+        }
+
         if residue_end < residue_begin {
             return decode_error("vorbis: invalid residue begin and end");
         }
