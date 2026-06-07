@@ -69,7 +69,7 @@ fn map_channels(channels: &Channels) -> [u8; 8] {
 
 #[derive(Debug)]
 struct ElementChannel {
-    pred_bits: u32,
+    bps: u32,
     kb: u32,
     mb: u32,
     mode: u32,
@@ -83,7 +83,7 @@ impl ElementChannel {
     fn try_read<B: ReadBitsLtr>(
         bs: &mut B,
         config: &MagicCookie,
-        pred_bits: u8,
+        bps: u8,
     ) -> Result<ElementChannel> {
         let mode = bs.read_bits_leq32(4)?;
         let shift = bs.read_bits_leq32(4)?;
@@ -98,7 +98,7 @@ impl ElementChannel {
         }
 
         Ok(ElementChannel {
-            pred_bits: u32::from(pred_bits),
+            bps: u32::from(bps),
             kb: u32::from(config.kb),
             mb: u32::from(config.mb),
             mode,
@@ -124,7 +124,7 @@ impl ElementChannel {
             }
 
             let k = lg3a(mb);
-            let val = read_rice_code(bs, k.min(self.kb), self.pred_bits)? + sign_toggle;
+            let val = read_rice_code(bs, k.min(self.kb), self.bps)?.wrapping_add(sign_toggle);
 
             *sample = rice_code_to_signed(val);
 
@@ -132,9 +132,12 @@ impl ElementChannel {
                 mb = 0xffff;
             }
             else {
-                // Order is important here.
-                mb -= (self.pb_factor * mb) >> 9;
-                mb += self.pb_factor * val;
+                // If `val` and `pb_factor` are forced to be very large by the bitstream, their
+                // product can't overflow a u32, but it can overflow `mb` when added over multiple
+                // iterations.
+                mb = mb
+                    .wrapping_add(self.pb_factor * val)
+                    .wrapping_sub(self.pb_factor.wrapping_mul(mb) >> 9);
             }
 
             sign_toggle = 0;
@@ -174,7 +177,7 @@ impl ElementChannel {
         // Decoding is performed on signed 32-bit numbers, however, the actual predicted samples
         // have a bit-width of `pred_bits`. Therefore, the top `32 - pred_bits` bits should be
         // clipped.
-        let num_clip_bits = 32 - self.pred_bits;
+        let num_clip_bits = 32 - self.bps;
 
         // An order of 31, or a mode of 15, are special cases where the predictor runs twice. The
         // first-pass uses a first-order prediction. The second pass is then the regular prediction
@@ -502,10 +505,14 @@ fn decode_sce_or_cpe<B: ReadBitsLtr>(
     }
 
     if !is_uncompressed {
-        // The number of upper sample bits that will be predicted per channel. This may be less-than
-        // the bit-depth if the lower sample bits will be encoded separately. If decoding a CPE,
-        // each channel gets an extra bit allocated to it for mid-side encoding.
-        let pred_bits = config.bit_depth - shift + u8::from(is_cpe);
+        // The bits per sample for samples that are not rice coded. This may be less-than the
+        // bit-depth if the lower sample bits will be encoded separately. If decoding a CPE, each
+        // channel gets an extra bit allocated to it for mid-side encoding.
+        let bps = config.bit_depth - shift + u8::from(is_cpe);
+
+        if bps > 32 {
+            return decode_error("alac: bits per coded sample exceed 32");
+        }
 
         let mid_side_shift = bs.read_bits_leq32(8)? as u8;
         let mid_side_weight = bs.read_bits_leq32_signed(8)?;
@@ -516,9 +523,9 @@ fn decode_sce_or_cpe<B: ReadBitsLtr>(
         }
 
         // Read the headers for each channel in the element.
-        let mut elem0 = ElementChannel::try_read(bs, config, pred_bits)?;
+        let mut elem0 = ElementChannel::try_read(bs, config, bps)?;
         let mut elem1 =
-            if is_cpe { Some(ElementChannel::try_read(bs, config, pred_bits)?) } else { None };
+            if is_cpe { Some(ElementChannel::try_read(bs, config, bps)?) } else { None };
 
         // If there is a shift, read and save the "tail" bits that will be appended to the predicted
         // samples.
@@ -602,12 +609,12 @@ fn lg3a(val: u32) -> u32 {
 
 /// Read a rice code from the bitstream.
 #[inline(always)]
-fn read_rice_code<B: ReadBitsLtr>(bs: &mut B, k: u32, kb: u32) -> Result<u32> {
+fn read_rice_code<B: ReadBitsLtr>(bs: &mut B, k: u32, bps: u32) -> Result<u32> {
     let prefix = bs.read_unary_ones_capped(9)?;
 
     // If the prefix is > 8, the value is read as an arbitrary width unsigned integer.
     let value = if prefix > 8 {
-        bs.read_bits_leq32(kb)?
+        bs.read_bits_leq32(bps)?
     }
     else if k > 1 {
         // The reference decoder specifies prefix to be multiplied by a parameter `m`. The parameter
