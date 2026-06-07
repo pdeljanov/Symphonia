@@ -228,6 +228,21 @@ impl VorbisCodebook {
         let codebook_dimensions = bs.read_bits_leq32(16)? as u16;
         let codebook_entries = bs.read_bits_leq32(24)?;
 
+        // The codebook dimensions cannot be 0 for VQ codebooks.
+        if codebook_dimensions == 0 {
+            return decode_error("vorbis: codebook dimenion cannot be 0");
+        }
+
+        // Limit the size of codebooks to something reasonable. This limits should never be seen in
+        // any real bitstream. These limits, together, limit the in-memory size of a VQ codebook to
+        // 16MB. A scalar codebook is limited to 512kB.
+        if codebook_dimensions > 32 {
+            return decode_error("vorbis: codebook dimension is too large (report this)");
+        }
+        if codebook_entries > 128 * 1024 {
+            return decode_error("vorbis: codebook entries too large (report this)");
+        }
+
         // Ordered flag.
         let is_length_ordered = bs.read_bool()?;
 
