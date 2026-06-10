@@ -26,6 +26,9 @@ use crate::embedded::vorbis;
 use crate::utils::id3v2::get_visual_key_from_picture_type;
 use crate::utils::images::try_get_image_info;
 
+/// Maximum length of a metadata block to prevent OOM on malformed files.
+const MAX_METADATA_BLOCK_SIZE: usize = 16 * 1024 * 1024;
+
 pub const FLAC_METADATA_INFO: MetadataInfo = MetadataInfo {
     metadata: METADATA_ID_FLAC,
     short_name: "flac",
@@ -63,8 +66,11 @@ pub fn read_flac_picture_block<B: ReadBytes>(reader: &mut B) -> Result<Visual> {
     let type_enc = reader.read_be_u32()?;
 
     // Read the Media Type length in bytes.
-    // TODO: Apply a limit.
     let media_type_len = reader.read_be_u32()? as usize;
+
+    if media_type_len > MAX_METADATA_BLOCK_SIZE {
+        return decode_error("meta (flac): media type length exceeds 16MiB limit");
+    }
 
     // Read the Media Type bytes
     let media_type_buf = reader.read_boxed_slice_exact(media_type_len)?;
@@ -113,8 +119,11 @@ pub fn read_flac_picture_block<B: ReadBytes>(reader: &mut B) -> Result<Visual> {
     let _color_mode = reader.read_be_u32()?;
 
     // Read the image data length in bytes.
-    // TODO: Apply a limit.
     let data_len = reader.read_be_u32()? as usize;
+
+    if data_len > MAX_METADATA_BLOCK_SIZE {
+        return decode_error("meta (flac): image data length exceeds 16MiB limit");
+    }
 
     // Read the image data.
     let data = reader.read_boxed_slice_exact(data_len)?;
