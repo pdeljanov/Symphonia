@@ -240,7 +240,8 @@ enum ApeItemValue {
     Locator(String),
 }
 
-/// Maximum length of an APE tag item to prevent OOM on malformed files.
+/// Maximum size of an APE tag item. APE tags can store embedded cover art, so a generous 16MiB
+/// limit is used to handle large images while preventing runaway allocations.
 const MAX_APE_ITEM_SIZE: usize = 16 * 1024 * 1024;
 
 /// An APE tag item.

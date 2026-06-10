@@ -23,7 +23,9 @@ use symphonia_core::meta::{MetadataRevision, StandardTag, Tag};
 use symphonia_core::util::text;
 use symphonia_metadata::embedded::riff;
 
-/// Maximum length of a metadata chunk to prevent OOM on malformed files.
+/// Maximum length of a metadata chunk (such as application-specific, comments, or text) to
+/// prevent OOM on malformed files. A generous 16MiB ceiling is used to accommodate any valid large
+/// chunks while preventing runaway allocations.
 const MAX_METADATA_CHUNK_SIZE: u32 = 16 * 1024 * 1024;
 
 use crate::common::{

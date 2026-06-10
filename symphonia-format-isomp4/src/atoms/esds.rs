@@ -35,10 +35,9 @@ impl Atom for EsdsAtom {
 
         let mut descriptor = None;
 
-        // In practice, esds atoms are incredibly small, typically between 30 to 150 bytes in size.
-        // While the specification allows for much larger sizes, we can put a reasonable upper bound
-        // on the size of an esds atom to prevent malformed files from causing us to allocate large
-        // amounts of memory.
+        // Elementary Stream Descriptors (esds) are exceptionally small (typically 30-150 bytes).
+        // We set a 4KiB limit to easily accommodate any valid esds while safely guarding against
+        // huge size fields on malformed files.
         const MAX_ESDS_ATOM_SIZE: u64 = 4 * 1024;
         if size > MAX_ESDS_ATOM_SIZE {
             return decode_error("isomp4 (esds): atom size is greater than limit");

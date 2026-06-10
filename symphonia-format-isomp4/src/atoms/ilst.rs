@@ -23,6 +23,11 @@ use crate::atoms::{Atom, AtomHeader, AtomIterator, AtomType, ReadAtom, Result, d
 
 use log::{debug, warn};
 
+/// Maximum size of a metadata atom (e.g. cover art, namespace) to prevent OOM on malformed files.
+/// We use a generous 16MiB limit to handle large embedded art while preventing runaway allocations.
+#[allow(dead_code)]
+const MAX_METADATA_ATOM_SIZE: u64 = 16 * 1024 * 1024;
+
 const ISOMP4_METADATA_INFO: MetadataInfo = MetadataInfo {
     metadata: METADATA_ID_ISOMP4,
     short_name: "isomp4",
