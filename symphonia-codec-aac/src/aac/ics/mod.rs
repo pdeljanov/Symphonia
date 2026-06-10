@@ -240,6 +240,8 @@ impl Ics {
             let mut l = 0;
 
             while k < self.info.max_sfb {
+                validate!(l < MAX_SFBS);
+
                 self.sect_cb[g][l] = bs.read_bits_leq32(4)? as u8;
                 self.sect_len[g][l] = 0;
 
