@@ -67,7 +67,6 @@ pub fn read_flac_picture_block<B: ReadBytes>(reader: &mut B) -> Result<Visual> {
 
     // Read the Media Type length in bytes.
     let media_type_len = reader.read_be_u32()? as usize;
-
     if media_type_len > MAX_METADATA_BLOCK_SIZE {
         return decode_error("meta (flac): media type length exceeds limit");
     }
@@ -88,9 +87,8 @@ pub fn read_flac_picture_block<B: ReadBytes>(reader: &mut B) -> Result<Visual> {
 
     // Read the description length in bytes.
     let desc_len = reader.read_be_u32()? as usize;
-
     if desc_len > MAX_METADATA_BLOCK_SIZE {
-        return decode_error("meta (flac): description length exceeds 16MiB limit");
+        return decode_error("meta (flac): description length exceeds limit");
     }
 
     // Read the description bytes.
@@ -123,9 +121,8 @@ pub fn read_flac_picture_block<B: ReadBytes>(reader: &mut B) -> Result<Visual> {
 
     // Read the image data length in bytes.
     let data_len = reader.read_be_u32()? as usize;
-
     if data_len > MAX_METADATA_BLOCK_SIZE {
-        return decode_error("meta (flac): image data length exceeds 16MiB limit");
+        return decode_error("meta (flac): image data length exceeds limit");
     }
 
     // Read the image data.

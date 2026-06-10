@@ -27,9 +27,6 @@ mod readers;
 
 use readers::*;
 
-/// Maximum length of a metadata block to prevent OOM on malformed files.
-const MAX_METADATA_BLOCK_SIZE: u64 = 256 * 1024 * 1024;
-
 // The following is a list of all standardized ID3v2.x frames for all ID3v2 major versions and their
 // implementation status ("S" column) in Symphonia.
 //
@@ -646,7 +643,11 @@ pub fn read_id3v2p4_frame<B: ReadBytes + FiniteStream>(reader: &mut B) -> Result
     // The size of the frame's body.
     let data_size = size - flag_data_size;
 
-    if u64::from(data_size) > MAX_METADATA_BLOCK_SIZE {
+    /// For ID3v2 frames, the total size of the tag is encoded using four bytes and
+    /// its integer format allows for 7 significant bits. This means that the
+    /// maximum total size for the ID3v2 container is 2^(4*7) = 256 MiB bytes.
+    const MAX_METADATA_BLOCK_SIZE: u32 = 256 * 1024 * 1024;
+    if data_size > MAX_METADATA_BLOCK_SIZE {
         return decode_error("id3v2: frame size exceeds limit");
     }
 

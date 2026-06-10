@@ -332,9 +332,10 @@ pub fn read_apic_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Resu
     }
 
     let bytes_avail = reader.bytes_available();
-    // APIC frames contain embedded cover art. We restrict this to 16MiB to easily handle
+
+    // APIC frames contain embedded cover art. We restrict this to easily handle
     // high-resolution images while preventing huge allocations from crafted tags.
-    const MAX_APIC_FRAME_SIZE: u64 = 16 * 1024 * 1024;
+    const MAX_APIC_FRAME_SIZE: u64 = 32 * 1024 * 1024;
     if bytes_avail > MAX_APIC_FRAME_SIZE {
         return decode_error("id3v2 (apic): image size exceeds limit");
     }

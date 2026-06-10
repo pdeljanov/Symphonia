@@ -598,9 +598,9 @@ pub struct InfoChunk {
 
 impl ParseChunk for InfoChunk {
     fn parse<B: ReadBytes>(reader: &mut B, tag: [u8; 4], len: u32) -> Result<InfoChunk> {
-        // INFO chunks contain textual metadata that should be relatively small. A 16MiB limit
+        // INFO chunks contain textual metadata that should be relatively small. This limit
         // acts as a safe guard against malicious sizes without truncating large valid metadata.
-        const MAX_INFO_CHUNK_SIZE: u32 = 16 * 1024 * 1024;
+        const MAX_INFO_CHUNK_SIZE: u32 = 32 * 1024 * 1024;
         if len > MAX_INFO_CHUNK_SIZE {
             return symphonia_core::errors::decode_error("riff (info): chunk size exceeds limit");
         }
