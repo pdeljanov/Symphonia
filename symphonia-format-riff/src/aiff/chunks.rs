@@ -23,6 +23,11 @@ use symphonia_core::meta::{MetadataRevision, StandardTag, Tag};
 use symphonia_core::util::text;
 use symphonia_metadata::embedded::riff;
 
+/// Maximum length of a metadata chunk (such as application-specific, comments, or text) to
+/// prevent OOM on malformed files. A generous ceiling is used to accommodate any valid large
+/// chunks while preventing runaway allocations.
+const MAX_METADATA_CHUNK_SIZE: u32 = 32 * 1024 * 1024;
+
 use crate::common::{
     ChunkParser, FormatALaw, FormatData, FormatIeeeFloat, FormatMuLaw, FormatPcm, PacketInfo,
     ParseChunk, ParseChunkTag,
@@ -389,7 +394,17 @@ impl ParseChunk for AppSpecificChunk {
             return decode_error("aiff: malformed application-specific chunk");
         }
 
-        let data = reader.read_boxed_slice_exact((len - consumed) as usize)?;
+        let rem = len - consumed;
+
+        // Individual application-specific chunks should be reasonably small. This limit is intended
+        // to prevent OOMs from invalid formats without trunacting large chunks. Note that the
+        // specific chunk size is different than the MAX_METADATA_CHUNK_SIZE limit.
+        const MAX_APPLICATION_SPECIFIC_CHUNK_SIZE: u32 = 16 * 1024 * 1024;
+        if rem > MAX_APPLICATION_SPECIFIC_CHUNK_SIZE {
+            return decode_error("aiff: application-specific chunk size exceeds limit");
+        }
+
+        let data = reader.read_boxed_slice_exact(rem as usize)?;
 
         Ok(AppSpecificChunk { application, data })
     }
@@ -417,6 +432,10 @@ impl ParseChunk for CommentsChunk {
             let timestamp = reader.read_be_u32()?;
             let marker_id = reader.read_be_i16()?;
             let len = reader.read_be_u16()?;
+            if len as u32 > MAX_METADATA_CHUNK_SIZE {
+                return decode_error("aiff: comment chunk size exceeds limit");
+            }
+
             let buf = reader.read_boxed_slice_exact(usize::from(len))?;
 
             comments.push(Comment { timestamp, marker_id, text: decode_string(&buf) });
@@ -432,6 +451,10 @@ pub struct TextChunk {
 
 impl ParseChunk for TextChunk {
     fn parse<B: ReadBytes>(reader: &mut B, tag: [u8; 4], len: u32) -> Result<Self> {
+        if len > MAX_METADATA_CHUNK_SIZE {
+            return decode_error("aiff: text chunk size exceeds limit");
+        }
+
         let text = reader.read_boxed_slice_exact(len as usize)?;
 
         let value = Arc::new(decode_string(&text));

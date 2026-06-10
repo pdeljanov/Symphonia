@@ -23,6 +23,10 @@ use crate::atoms::{Atom, AtomHeader, AtomIterator, AtomType, ReadAtom, Result, d
 
 use log::{debug, warn};
 
+/// Maximum size of a metadata atom (e.g. cover art, namespace) to prevent OOM on malformed files.
+/// We use a generous limit to handle large embedded art while preventing runaway allocations.
+const MAX_METADATA_ATOM_SIZE: u64 = 32 * 1024 * 1024;
+
 const ISOMP4_METADATA_INFO: MetadataInfo = MetadataInfo {
     metadata: METADATA_ID_ISOMP4,
     short_name: "isomp4",
@@ -595,10 +599,12 @@ impl Atom for MetaTagDataAtom {
 
         // The data payload is the remainder of the atom.
         let data = {
-            // TODO: Apply the metadata limit.
             let size = it
                 .data_left()?
                 .ok_or(Error::DecodeError("isomp4 (data): expected atom size to be known"))?;
+            if size > MAX_METADATA_ATOM_SIZE {
+                return decode_error("isomp4 (data): atom size exceeds limit");
+            }
 
             it.read_boxed_slice_exact(size as usize)?
         };
@@ -621,8 +627,10 @@ impl Atom for MetaTagNamespaceAtom {
         let size = it
             .data_left()?
             .ok_or(Error::DecodeError("isomp4 (ilst): expected atom size to be known"))?;
+        if size > MAX_METADATA_ATOM_SIZE {
+            return decode_error("isomp4 (ilst): atom size exceeds limit");
+        }
 
-        // TODO: Apply a metadata limit.
         let buf = it.read_boxed_slice_exact(size as usize)?;
 
         // Do a lossy conversion because metadata should not prevent the demuxer from working.

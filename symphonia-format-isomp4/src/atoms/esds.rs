@@ -35,6 +35,14 @@ impl Atom for EsdsAtom {
 
         let mut descriptor = None;
 
+        // Elementary Stream Descriptors (esds) are exceptionally small (typically 30-150 bytes).
+        // We set a generous limit to easily accommodate any valid esds while safely guarding against
+        // huge size fields on malformed files.
+        const MAX_ESDS_ATOM_SIZE: u64 = 8 * 1024;
+        if size > MAX_ESDS_ATOM_SIZE {
+            return decode_error("isomp4 (esds): atom size is greater than limit");
+        }
+
         if size > MIN_OBJECT_DESCRIPTOR_SIZE {
             // Read into buffer to be able to use a buffer reader.
             let buf = it.read_boxed_slice_exact(size as usize)?;
