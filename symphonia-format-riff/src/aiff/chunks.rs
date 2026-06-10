@@ -389,7 +389,12 @@ impl ParseChunk for AppSpecificChunk {
             return decode_error("aiff: malformed application-specific chunk");
         }
 
-        let data = reader.read_boxed_slice_exact((len - consumed) as usize)?;
+        let rem = len - consumed;
+        if rem > 16 * 1024 * 1024 {
+            return decode_error("aiff: application-specific chunk size exceeds 16MiB limit");
+        }
+
+        let data = reader.read_boxed_slice_exact(rem as usize)?;
 
         Ok(AppSpecificChunk { application, data })
     }
@@ -417,6 +422,11 @@ impl ParseChunk for CommentsChunk {
             let timestamp = reader.read_be_u32()?;
             let marker_id = reader.read_be_i16()?;
             let len = reader.read_be_u16()?;
+
+            if len as u32 > 16 * 1024 * 1024 {
+                return decode_error("aiff: comment chunk size exceeds 16MiB limit");
+            }
+
             let buf = reader.read_boxed_slice_exact(usize::from(len))?;
 
             comments.push(Comment { timestamp, marker_id, text: decode_string(&buf) });

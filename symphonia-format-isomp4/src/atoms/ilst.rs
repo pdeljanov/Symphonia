@@ -595,10 +595,13 @@ impl Atom for MetaTagDataAtom {
 
         // The data payload is the remainder of the atom.
         let data = {
-            // TODO: Apply the metadata limit.
             let size = it
                 .data_left()?
                 .ok_or(Error::DecodeError("isomp4 (data): expected atom size to be known"))?;
+
+            if size > 16 * 1024 * 1024 {
+                return decode_error("isomp4 (data): atom size exceeds 16MiB limit");
+            }
 
             it.read_boxed_slice_exact(size as usize)?
         };

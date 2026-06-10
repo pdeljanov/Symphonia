@@ -252,6 +252,10 @@ impl ApeItem {
         // The length of the value in bytes.
         let len = reader.read_u32()? as usize;
 
+        if len > 16 * 1024 * 1024 {
+            return decode_error("ape: item value length exceeds 16MiB limit");
+        }
+
         // Read flags.
         let flags = match header.version {
             ApeVersion::V1 => {

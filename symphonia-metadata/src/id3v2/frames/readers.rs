@@ -326,13 +326,17 @@ pub fn read_apic_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Resu
 
     let mut tags = vec![];
 
-    // Null-teriminated image description in specified encoding.
+    // Null-terminated image description in specified encoding.
     if let Some(desc) = read_string_ignore_empty(&mut reader, encoding)? {
         tags.push(Tag::new_from_parts("", "", Some(StandardTag::Description(Arc::from(desc)))));
     }
 
+    let bytes_avail = reader.bytes_available();
+    if bytes_avail > 16 * 1024 * 1024 {
+        return decode_error("id3v2 (apic): image size exceeds 16MiB limit");
+    }
+
     // The remainder of the APIC frame is the image data.
-    // TODO: Apply a limit.
     let data = Box::from(reader.read_buf_bytes_available_ref());
 
     // Try to get information about the image.

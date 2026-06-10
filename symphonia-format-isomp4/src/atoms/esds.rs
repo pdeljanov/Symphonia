@@ -35,6 +35,15 @@ impl Atom for EsdsAtom {
 
         let mut descriptor = None;
 
+        // In practice, esds atoms are incredibly small, typically between 30 to 150 bytes in size.
+        // While the specification allows for much larger sizes, we can put a reasonable upper bound
+        // on the size of an esds atom to prevent malformed files from causing us to allocate large
+        // amounts of memory.
+        const MAX_ESDS_ATOM_SIZE: u64 = 4 * 1024;
+        if size > MAX_ESDS_ATOM_SIZE {
+            return decode_error("isomp4 (esds): atom size is greater than limit");
+        }
+
         if size > MIN_OBJECT_DESCRIPTOR_SIZE {
             // Read into buffer to be able to use a buffer reader.
             let buf = it.read_boxed_slice_exact(size as usize)?;

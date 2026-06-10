@@ -29,7 +29,7 @@ use crate::utils::images::try_get_image_info;
 use crate::utils::std_tag::*;
 
 /// Maximum length of a metadata block to prevent OOM on malformed files.
-const MAX_METADATA_BLOCK_SIZE: usize = 16 * 1024 * 1024;
+const MAX_METADATA_BLOCK_SIZE: usize = 32 * 1024 * 1024;
 
 pub const VORBIS_COMMENT_METADATA_INFO: MetadataInfo = MetadataInfo {
     metadata: METADATA_ID_VORBIS_COMMENT,
@@ -392,7 +392,7 @@ pub fn read_vorbis_comment<B: ReadBytes>(
         let comment_length = reader.read_u32()?;
 
         if comment_length as usize > MAX_METADATA_BLOCK_SIZE {
-            return decode_error("meta (vorbis): comment length exceeds 16MiB limit");
+            return decode_error("meta (vorbis): comment length exceeds limit");
         }
 
         // Read the comment string.
