@@ -332,8 +332,9 @@ pub fn read_apic_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Resu
     }
 
     let bytes_avail = reader.bytes_available();
-    if bytes_avail > 16 * 1024 * 1024 {
-        return decode_error("id3v2 (apic): image size exceeds 16MiB limit");
+    const MAX_APIC_FRAME_SIZE: u64 = 16 * 1024 * 1024;
+    if bytes_avail > MAX_APIC_FRAME_SIZE {
+        return decode_error("id3v2 (apic): image size exceeds limit");
     }
 
     // The remainder of the APIC frame is the image data.

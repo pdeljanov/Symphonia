@@ -598,10 +598,9 @@ pub struct InfoChunk {
 
 impl ParseChunk for InfoChunk {
     fn parse<B: ReadBytes>(reader: &mut B, tag: [u8; 4], len: u32) -> Result<InfoChunk> {
-        if len > 16 * 1024 * 1024 {
-            return symphonia_core::errors::decode_error(
-                "riff (info): chunk size exceeds 16MiB limit",
-            );
+        const MAX_INFO_CHUNK_SIZE: u32 = 16 * 1024 * 1024;
+        if len > MAX_INFO_CHUNK_SIZE {
+            return symphonia_core::errors::decode_error("riff (info): chunk size exceeds limit");
         }
         let buf = reader.read_boxed_slice_exact(len as usize)?;
         Ok(InfoChunk { tag, buf })

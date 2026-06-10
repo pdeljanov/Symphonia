@@ -240,6 +240,9 @@ enum ApeItemValue {
     Locator(String),
 }
 
+/// Maximum length of an APE tag item to prevent OOM on malformed files.
+const MAX_APE_ITEM_SIZE: usize = 16 * 1024 * 1024;
+
 /// An APE tag item.
 struct ApeItem {
     key: String,
@@ -252,8 +255,8 @@ impl ApeItem {
         // The length of the value in bytes.
         let len = reader.read_u32()? as usize;
 
-        if len > 16 * 1024 * 1024 {
-            return decode_error("ape: item value length exceeds 16MiB limit");
+        if len > MAX_APE_ITEM_SIZE {
+            return decode_error("ape: item value length exceeds limit");
         }
 
         // Read flags.

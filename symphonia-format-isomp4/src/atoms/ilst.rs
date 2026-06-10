@@ -599,8 +599,9 @@ impl Atom for MetaTagDataAtom {
                 .data_left()?
                 .ok_or(Error::DecodeError("isomp4 (data): expected atom size to be known"))?;
 
-            if size > 16 * 1024 * 1024 {
-                return decode_error("isomp4 (data): atom size exceeds 16MiB limit");
+            const MAX_METADATA_ATOM_SIZE: u64 = 16 * 1024 * 1024;
+            if size > MAX_METADATA_ATOM_SIZE {
+                return decode_error("isomp4 (data): atom size exceeds limit");
             }
 
             it.read_boxed_slice_exact(size as usize)?
@@ -625,7 +626,11 @@ impl Atom for MetaTagNamespaceAtom {
             .data_left()?
             .ok_or(Error::DecodeError("isomp4 (ilst): expected atom size to be known"))?;
 
-        // TODO: Apply a metadata limit.
+        const MAX_METADATA_ATOM_SIZE: u64 = 16 * 1024 * 1024;
+        if size > MAX_METADATA_ATOM_SIZE {
+            return decode_error("isomp4 (ilst): atom size exceeds limit");
+        }
+
         let buf = it.read_boxed_slice_exact(size as usize)?;
 
         // Do a lossy conversion because metadata should not prevent the demuxer from working.

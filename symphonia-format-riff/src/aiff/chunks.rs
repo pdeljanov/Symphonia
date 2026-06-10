@@ -23,6 +23,9 @@ use symphonia_core::meta::{MetadataRevision, StandardTag, Tag};
 use symphonia_core::util::text;
 use symphonia_metadata::embedded::riff;
 
+/// Maximum length of a metadata chunk to prevent OOM on malformed files.
+const MAX_METADATA_CHUNK_SIZE: u32 = 16 * 1024 * 1024;
+
 use crate::common::{
     ChunkParser, FormatALaw, FormatData, FormatIeeeFloat, FormatMuLaw, FormatPcm, PacketInfo,
     ParseChunk, ParseChunkTag,
@@ -423,8 +426,8 @@ impl ParseChunk for CommentsChunk {
             let marker_id = reader.read_be_i16()?;
             let len = reader.read_be_u16()?;
 
-            if len as u32 > 16 * 1024 * 1024 {
-                return decode_error("aiff: comment chunk size exceeds 16MiB limit");
+            if len as u32 > MAX_METADATA_CHUNK_SIZE {
+                return decode_error("aiff: comment chunk size exceeds limit");
             }
 
             let buf = reader.read_boxed_slice_exact(usize::from(len))?;
@@ -442,6 +445,10 @@ pub struct TextChunk {
 
 impl ParseChunk for TextChunk {
     fn parse<B: ReadBytes>(reader: &mut B, tag: [u8; 4], len: u32) -> Result<Self> {
+        if len > MAX_METADATA_CHUNK_SIZE {
+            return decode_error("aiff: text chunk size exceeds limit");
+        }
+
         let text = reader.read_boxed_slice_exact(len as usize)?;
 
         let value = Arc::new(decode_string(&text));
