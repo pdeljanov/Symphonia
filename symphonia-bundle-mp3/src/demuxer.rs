@@ -1080,8 +1080,7 @@ mod tests {
         // Tag ID at offset 32 + 4 = 36
         buf[36..40].copy_from_slice(b"Xing");
 
-        // Currently this should return false because of the CRC, but it should return true.
-        // We want this to return true.
+        // Ensure the heuristic returns true even if a non-zero CRC is present.
         assert!(is_maybe_info_tag(&buf, &header));
     }
 
@@ -1111,7 +1110,7 @@ mod tests {
         // Tag ID at offset 36
         buf[36..40].copy_from_slice(b"VBRI");
 
-        // Currently this should return false because of the CRC, but it should return true.
+        // Ensure the heuristic returns true even if a non-zero CRC is present.
         assert!(is_maybe_vbri_tag(&buf, &header));
     }
 }
