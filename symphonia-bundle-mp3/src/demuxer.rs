@@ -1052,7 +1052,7 @@ fn is_maybe_vbri_tag(buf: &[u8], header: &FrameHeader) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::common::{MpegVersion, ChannelMode, Emphasis};
+    use crate::common::{ChannelMode, Emphasis, MpegVersion};
 
     #[test]
     fn test_is_maybe_info_tag_with_crc() {
@@ -1073,7 +1073,7 @@ mod tests {
 
         let mut buf = vec![0u8; 100];
         // Header
-        buf[0..4].copy_from_slice(&[0xff, 0xfa, 0x90, 0x44]); 
+        buf[0..4].copy_from_slice(&[0xff, 0xfa, 0x90, 0x44]);
         // CRC (non-zero)
         buf[4] = 0x12;
         buf[5] = 0x34;
@@ -1103,7 +1103,7 @@ mod tests {
 
         let mut buf = vec![0u8; 100];
         // Header
-        buf[0..4].copy_from_slice(&[0xff, 0xfa, 0x90, 0x44]); 
+        buf[0..4].copy_from_slice(&[0xff, 0xfa, 0x90, 0x44]);
         // CRC (non-zero)
         buf[4] = 0x12;
         buf[5] = 0x34;
