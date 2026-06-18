@@ -148,6 +148,14 @@ impl PsContext {
             ipd_hist: [0; PS_MAX_NR_IIDICC],
         }
     }
+
+    pub fn reset_decorrelator_state(&mut self) {
+        self.delay.fill([[0.0; 2]; PS_QMF_TIME_SLOTS + PS_MAX_DELAY]);
+        self.ap_delay.fill([[[0.0; 2]; PS_QMF_TIME_SLOTS + PS_MAX_AP_DELAY]; PS_AP_LINKS]);
+        self.peak_decay_nrg = [0.0; 34];
+        self.power_smooth = [0.0; 34];
+        self.peak_decay_diff_smooth = [0.0; 34];
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -307,15 +315,14 @@ fn analyze_hybrid(
 ) {
     let tables = &*PS_TABLES;
 
-    // Populate input history buffers with current frame's QMF data.
+    // Populate input history buffers with current frame QMF data plus the six
+    // SBR low-band lookahead slots required by the 13-tap hybrid filters.
     // The first 6 positions hold overlap from the previous frame.
     for qmf_band in 0..5 {
-        for time_idx in 0..38usize.min(num_slots + 6) {
-            if time_idx >= 6 && (time_idx - 6) < num_slots {
-                let slot = time_idx - 6;
-                history_buf[qmf_band][time_idx][0] = qmf_input[0][slot][qmf_band];
-                history_buf[qmf_band][time_idx][1] = qmf_input[1][slot][qmf_band];
-            }
+        for slot in 0..(num_slots + 6).min(qmf_input[0].len()) {
+            let time_idx = slot + 6;
+            history_buf[qmf_band][time_idx][0] = qmf_input[0][slot][qmf_band];
+            history_buf[qmf_band][time_idx][1] = qmf_input[1][slot][qmf_band];
         }
     }
 
@@ -913,7 +920,8 @@ fn remap_to_20(
 ///
 /// Remaps parameters to the active band resolution, computes the stereo
 /// mixing matrices H11/H12/H21/H22, and applies interpolated mixing:
-/// `L[k] = h11*S[k] + h12*D[k]`, `R[k] = h21*S[k] + h22*D[k]`.
+/// `L[k] = h11*S[k] + h21*D[k]`, `R[k] = h12*S[k] + h22*D[k]`.
+/// The internal LUT stores values as `[h11, h12, h21, h22]`.
 ///
 /// ISO/IEC 14496-3:2009, 8.6.4.6.3 -- stereo processing.
 fn apply_stereo_mixing(ps: &mut PsContext, use_34bands: bool) {
@@ -929,6 +937,7 @@ fn apply_stereo_mixing(ps: &mut PsContext, use_34bands: bool) {
     // Select mixing matrix (HA for baseline, HB for alternative modes).
     // ISO/IEC 14496-3:2009, 8.6.4.6.3, Table 8.52.
     let mixing_lut = if ctx.icc_mode < 3 { &tables.ha } else { &tables.hb };
+    let quant_fine = ps.common.iid_quant;
 
     // Carry forward the previous frame's final envelope H-values as the
     // starting point for interpolation in the current frame.
@@ -938,6 +947,20 @@ fn apply_stereo_mixing(ps: &mut PsContext, use_34bands: bool) {
             ps.h12[component][0] = ps.h12[component][ctx.num_env_old];
             ps.h21[component][0] = ps.h21[component][ctx.num_env_old];
             ps.h22[component][0] = ps.h22[component][ctx.num_env_old];
+        }
+    }
+    else {
+        // For the first stereo frame, the prior H coefficients used by
+        // interpolation are initialized to zero.
+        for band in 0..PS_MAX_NR_IIDICC {
+            ps.h11[0][0][band] = 0.0;
+            ps.h12[0][0][band] = 0.0;
+            ps.h21[0][0][band] = 0.0;
+            ps.h22[0][0][band] = 0.0;
+            ps.h11[1][0][band] = 0.0;
+            ps.h12[1][0][band] = 0.0;
+            ps.h21[1][0][band] = 0.0;
+            ps.h22[1][0][band] = 0.0;
         }
     }
 
@@ -990,7 +1013,6 @@ fn apply_stereo_mixing(ps: &mut PsContext, use_34bands: bool) {
     };
 
     let envelope_count = ps.common.num_env;
-    let quant_fine = ps.common.iid_quant;
     let phase_enabled = ps.common.enable_ipdopd;
     let num_phase_bands = NR_IPDOPD_BANDS[mode_idx];
 
@@ -1157,6 +1179,11 @@ fn apply_stereo_mixing(ps: &mut PsContext, use_34bands: bool) {
 // Public entry point
 // ---------------------------------------------------------------------------
 
+#[inline]
+fn hybrid_top_from_sbr_top(top: usize, total_subbands: usize) -> usize {
+    top.saturating_add(total_subbands).saturating_sub(64).min(total_subbands)
+}
+
 /// Apply Parametric Stereo processing.
 ///
 /// Implements the full PS decoding pipeline per ISO/IEC 14496-3:2009, 8.6.4.6:
@@ -1180,7 +1207,7 @@ pub fn ps_apply(
 
     // Zero out delay lines for unused bands above the SBR top frequency.
     let total_subbands = NR_BANDS[mode_idx];
-    let top_hybrid = top + total_subbands - 64;
+    let top_hybrid = hybrid_top_from_sbr_top(top, total_subbands);
     for subband in top_hybrid..total_subbands {
         ps.delay[subband] = [[0.0; 2]; PS_QMF_TIME_SLOTS + PS_MAX_DELAY];
     }
@@ -1232,6 +1259,76 @@ mod tests {
         assert_eq!(ctx.power_smooth, [0.0; 34]);
         assert_eq!(ctx.opd_hist, [0; PS_MAX_NR_IIDICC]);
         assert_eq!(ctx.ipd_hist, [0; PS_MAX_NR_IIDICC]);
+    }
+
+    #[test]
+    fn reset_decorrelator_state_clears_delay_and_energy_history() {
+        let mut ctx = PsContext::new();
+
+        ctx.delay[3][4] = [1.0, -2.0];
+        ctx.ap_delay[2][1][5] = [3.0, 4.0];
+        ctx.peak_decay_nrg[7] = 5.0;
+        ctx.power_smooth[7] = 6.0;
+        ctx.peak_decay_diff_smooth[7] = 7.0;
+        ctx.h11[0][1][2] = 8.0;
+
+        ctx.reset_decorrelator_state();
+
+        assert_eq!(ctx.delay[3][4], [0.0, 0.0]);
+        assert_eq!(ctx.ap_delay[2][1][5], [0.0, 0.0]);
+        assert_eq!(ctx.peak_decay_nrg[7], 0.0);
+        assert_eq!(ctx.power_smooth[7], 0.0);
+        assert_eq!(ctx.peak_decay_diff_smooth[7], 0.0);
+        assert_eq!(ctx.h11[0][1][2], 8.0);
+    }
+
+    #[test]
+    fn hybrid_top_from_sbr_top_does_not_underflow() {
+        assert_eq!(hybrid_top_from_sbr_top(32, 20), 0);
+        assert_eq!(hybrid_top_from_sbr_top(60, 20), 16);
+        assert_eq!(hybrid_top_from_sbr_top(64, 20), 20);
+        assert_eq!(hybrid_top_from_sbr_top(80, 20), 20);
+    }
+
+    #[test]
+    fn verify_hybrid_analysis_copies_sbr_lookahead_slots() {
+        let mut hybrid = Box::new([[[0.0f32; 2]; 32]; PS_MAX_SSB]);
+        let mut history = [[[0.0f32; 2]; 44]; 5];
+        let mut qmf = [[[0.0f32; 64]; 38]; 2];
+
+        for i in 0..6 {
+            qmf[0][32 + i][0] = 100.0 + i as f32;
+            qmf[1][32 + i][0] = 200.0 + i as f32;
+        }
+
+        analyze_hybrid(&mut hybrid, &mut history, &qmf, false, 32);
+
+        for i in 0..6 {
+            assert_eq!(history[0][38 + i][0], 100.0 + i as f32);
+            assert_eq!(history[0][38 + i][1], 200.0 + i as f32);
+        }
+    }
+
+    #[test]
+    fn verify_first_mixing_region_interpolates_from_zero_h_matrix() {
+        let mut ps = PsContext::new();
+        ps.common.start = true;
+        ps.common.enable_iid = true;
+        ps.common.nr_iid_par = 20;
+        ps.common.enable_icc = true;
+        ps.common.icc_mode = 1;
+        ps.common.nr_icc_par = 20;
+        ps.common.num_env = 1;
+        ps.common.num_env_old = 0;
+        ps.common.border_position[0] = -1;
+        ps.common.border_position[1] = 1;
+        ps.l_buf[0][0] = [1.0, 0.0];
+
+        apply_stereo_mixing(&mut ps, false);
+
+        let expected = PS_TABLES.ha[7][0];
+        assert!((ps.l_buf[0][0][0] - expected[0] * 0.5).abs() < 1e-6);
+        assert!((ps.r_buf[0][0][0] - expected[1] * 0.5).abs() < 1e-6);
     }
 
     #[test]

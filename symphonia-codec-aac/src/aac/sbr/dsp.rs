@@ -13,35 +13,19 @@
 //! QMF subbands; the synthesis bank reconstructs 64 time-domain samples
 //! from 64 complex QMF subbands at twice the bandwidth.
 //!
-//! Both filterbanks use FFT-based modulation for O(N log N) complexity.
-//!
-//! ## Analysis (32 subbands from 64 polyphase samples)
-//!
-//! The full QMF analysis output can be expressed as:
-//!   out[k] = (1/2) · Σ_{n=0}^{63} z[n] · exp(jπn(2k+1)/64)
-//!
-//! This equals `(1/2) · conj(FFT_64(q))[k]` where `q[n] = z[n] · exp(-jπn/64)`,
-//! reducing the computation from O(N²) to O(N log N) using a single 64-point FFT.
-//!
-//! ## Synthesis (64 samples from 64 subbands)
-//!
-//! The synthesis DCT-IV and DST-IV of size N are computed using 2N-point FFTs:
-//!   1. Pre-twiddle: q[n] = x[n] · exp(-jπn/(2N)), zero-padded to 2N
-//!   2. Forward 2N-point FFT → F[k]
-//!   3. Post-twiddle: T[k] = exp(jπ(2k+1)/(4N)) · conj(F[k])
-//!   4. DCT-IV[k] = Re(T[k]),  DST-IV[k] = Im(T[k])
-
-use std::sync::Arc;
+//! The ISO modulation equations are factored into fixed-size FFTs with
+//! precomputed twiddles, reducing the per-slot QMF work while preserving the
+//! direct matrix result.
 
 use super::Complex;
+
+use super::tables;
+use super::SBR_BANDS;
 use rustfft::num_complex::Complex32;
 use rustfft::{Fft, FftPlanner};
-
-use super::SBR_BANDS;
-use super::tables;
+use std::sync::Arc;
 
 const ZERO: Complex = Complex { re: 0.0, im: 0.0 };
-const CZ: Complex32 = Complex32 { re: 0.0, im: 0.0 };
 
 // ---------------------------------------------------------------------------
 // Shared DSP state
@@ -49,119 +33,77 @@ const CZ: Complex32 = Complex32 { re: 0.0, im: 0.0 };
 
 /// Shared pre-computed tables and scratch buffers for QMF operations.
 ///
-/// Uses FFT-based transforms for O(N log N) complexity:
-/// - Analysis: single 64-point FFT (replaces two 32×32 matrix multiplies)
-/// - Synthesis: two 128-point FFTs (replaces two 64×64 matrix multiplies)
+/// The trigonometric factors are derived from the ISO modulation equations and
+/// stored as pre/post twiddles around the FFTs.
 pub struct SbrDsp {
-    // --- Analysis filterbank (64-point FFT) ---
-    /// 64-point forward FFT plan.
+    /// Pre-twiddle for the 64-point FFT analysis path.
+    ana_pre_twiddle: [Complex32; 64],
+    /// Post-twiddle for the 64-point FFT analysis path.
+    ana_post_twiddle: [Complex32; 32],
+    /// 64-point inverse FFT used by the analysis filterbank.
     ana_fft: Arc<dyn Fft<f32>>,
-    /// Pre-twiddle factors for analysis: e^{-jπn/64}, n = 0..63.
-    ana_pre_tw: [Complex32; 64],
-    /// Pre-allocated FFT work buffer (64 entries).
-    ana_buf: Vec<Complex32>,
-    /// FFT scratch buffer.
+    /// Scratch buffer for the analysis FFT.
     ana_scratch: Vec<Complex32>,
-
-    // --- Synthesis filterbank (128-point FFT for 64-point DCT-IV/DST-IV) ---
-    /// 128-point forward FFT plan.
+    /// In-place FFT buffer for the analysis filterbank.
+    ana_fft_buf: [Complex32; 64],
+    /// Pre-twiddle for the 128-point FFT synthesis path.
+    syn_pre_twiddle: [Complex32; SBR_BANDS],
+    /// Post-twiddle for the 128-point FFT synthesis path.
+    syn_post_twiddle: [Complex32; 128],
+    /// 128-point inverse FFT used by the synthesis filterbank.
     syn_fft: Arc<dyn Fft<f32>>,
-    /// Pre-twiddle factors for synthesis: e^{-jπn/128}, n = 0..63.
-    syn_pre_tw: [Complex32; 64],
-    /// Post-twiddle factors for synthesis: e^{jπ(2k+1)/256}, k = 0..63.
-    syn_post_tw: [Complex32; 64],
-    /// Pre-allocated FFT work buffer (128 entries).
-    syn_buf: Vec<Complex32>,
-    /// FFT scratch buffer.
+    /// Scratch buffer for the synthesis FFT.
     syn_scratch: Vec<Complex32>,
-
-    // --- Scratch space for intermediate results ---
+    /// In-place FFT buffer for the synthesis filterbank.
+    syn_fft_buf: [Complex32; 128],
+    /// Scratch space for the analysis polyphase sum u[n].
     work_a: [f32; 64],
 }
 
 impl SbrDsp {
     pub fn new() -> Self {
+        let mut ana_pre_twiddle = [Complex32 { re: 0.0, im: 0.0 }; 64];
+        for (n, twiddle) in ana_pre_twiddle.iter_mut().enumerate() {
+            let angle = std::f32::consts::PI * n as f32 / 64.0;
+            *twiddle = Complex32 { re: angle.cos(), im: angle.sin() };
+        }
+
+        let mut ana_post_twiddle = [Complex32 { re: 0.0, im: 0.0 }; 32];
+        for (k, twiddle) in ana_post_twiddle.iter_mut().enumerate() {
+            let angle = -std::f32::consts::PI * (k as f32 + 0.5) / 128.0;
+            *twiddle = Complex32 { re: angle.cos(), im: angle.sin() };
+        }
+
+        let mut syn_pre_twiddle = [Complex32 { re: 0.0, im: 0.0 }; SBR_BANDS];
+        for (k, twiddle) in syn_pre_twiddle.iter_mut().enumerate() {
+            let angle = std::f32::consts::PI * k as f32 / 128.0;
+            *twiddle = Complex32 { re: angle.cos(), im: angle.sin() };
+        }
+
+        let mut syn_post_twiddle = [Complex32 { re: 0.0, im: 0.0 }; 128];
+        for (n, twiddle) in syn_post_twiddle.iter_mut().enumerate() {
+            let angle = std::f32::consts::PI * (n as f32 + 0.5) / 128.0;
+            *twiddle = Complex32 { re: angle.cos(), im: angle.sin() };
+        }
+
         let mut planner = FftPlanner::new();
-
-        // Analysis: 64-point FFT
-        let ana_fft = planner.plan_fft_forward(64);
-        let ana_scratch_len = ana_fft.get_inplace_scratch_len();
-
-        let mut ana_pre_tw = [CZ; 64];
-        for n in 0..64 {
-            let angle = std::f64::consts::PI * n as f64 / 64.0;
-            ana_pre_tw[n] = Complex32::new(angle.cos() as f32, -(angle.sin() as f32));
-        }
-
-        // Synthesis: 128-point FFT for 64-point DCT-IV/DST-IV
-        let syn_fft = planner.plan_fft_forward(128);
-        let syn_scratch_len = syn_fft.get_inplace_scratch_len();
-
-        let mut syn_pre_tw = [CZ; 64];
-        for n in 0..64 {
-            let angle = std::f64::consts::PI * n as f64 / 128.0;
-            syn_pre_tw[n] = Complex32::new(angle.cos() as f32, -(angle.sin() as f32));
-        }
-
-        let mut syn_post_tw = [CZ; 64];
-        for k in 0..64 {
-            let angle = std::f64::consts::PI * (2 * k + 1) as f64 / 256.0;
-            syn_post_tw[k] = Complex32::new(angle.cos() as f32, angle.sin() as f32);
-        }
+        let ana_fft = planner.plan_fft_inverse(64);
+        let ana_scratch = vec![Complex32 { re: 0.0, im: 0.0 }; ana_fft.get_inplace_scratch_len()];
+        let syn_fft = planner.plan_fft_inverse(128);
+        let syn_scratch = vec![Complex32 { re: 0.0, im: 0.0 }; syn_fft.get_inplace_scratch_len()];
 
         Self {
+            ana_pre_twiddle,
+            ana_post_twiddle,
             ana_fft,
-            ana_pre_tw,
-            ana_buf: vec![CZ; 64],
-            ana_scratch: vec![CZ; ana_scratch_len],
-
+            ana_scratch,
+            ana_fft_buf: [Complex32 { re: 0.0, im: 0.0 }; 64],
+            syn_pre_twiddle,
+            syn_post_twiddle,
             syn_fft,
-            syn_pre_tw,
-            syn_post_tw,
-            syn_buf: vec![CZ; 128],
-            syn_scratch: vec![CZ; syn_scratch_len],
-
+            syn_scratch,
+            syn_fft_buf: [Complex32 { re: 0.0, im: 0.0 }; 128],
             work_a: [0.0; 64],
-        }
-    }
-
-    /// Compute DCT-IV of `xr[0..63]` into `dct_out` and DST-IV of `xi[0..63]`
-    /// into `dst_out`, each via a 128-point FFT with pre/post-twiddle.
-    fn syn_dct4_xr_dst4_xi(
-        &mut self,
-        xr: &[f32; 64],
-        xi: &[f32; 64],
-        dct_out: &mut [f32; 64],
-        dst_out: &mut [f32; 64],
-    ) {
-        // DCT-IV of xr via 128-point FFT.
-        for n in 0..64 {
-            let tw = self.syn_pre_tw[n];
-            self.syn_buf[n] = Complex32::new(xr[n] * tw.re, xr[n] * tw.im);
-        }
-        for n in 64..128 {
-            self.syn_buf[n] = CZ;
-        }
-        self.syn_fft.process_with_scratch(&mut self.syn_buf, &mut self.syn_scratch);
-        for k in 0..64 {
-            let f = self.syn_buf[k];
-            let tw = self.syn_post_tw[k];
-            dct_out[k] = tw.re * f.re + tw.im * f.im;
-        }
-
-        // DST-IV of xi via 128-point FFT.
-        for n in 0..64 {
-            let tw = self.syn_pre_tw[n];
-            self.syn_buf[n] = Complex32::new(xi[n] * tw.re, xi[n] * tw.im);
-        }
-        for n in 64..128 {
-            self.syn_buf[n] = CZ;
-        }
-        self.syn_fft.process_with_scratch(&mut self.syn_buf, &mut self.syn_scratch);
-        for k in 0..64 {
-            let f = self.syn_buf[k];
-            let tw = self.syn_post_tw[k];
-            dst_out[k] = tw.im * f.re - tw.re * f.im;
         }
     }
 }
@@ -170,7 +112,7 @@ impl SbrDsp {
 // 32-band analysis filterbank
 // ---------------------------------------------------------------------------
 
-/// State for the QMF 32-band analysis filterbank (ISO/IEC 14496-3, 4.6.18.6.2).
+/// State for the QMF 32-band analysis filterbank (ISO/IEC 14496-3, 4.6.18.4.1).
 #[derive(Clone)]
 pub struct SbrAnalysis {
     /// Circular input sample history buffer (5 × 64 = 320 samples).
@@ -185,9 +127,6 @@ impl SbrAnalysis {
     }
 
     /// Feed 32 time-domain samples and produce 32 complex QMF subbands.
-    ///
-    /// Uses a single 64-point FFT based on the identity:
-    ///   out[k] = (1/2) · conj(FFT_64(z[n] · e^{-jπn/64}))[k],  k = 0..31
     pub fn analysis(&mut self, dsp: &mut SbrDsp, input: &[f32], out: &mut [Complex; SBR_BANDS]) {
         // Advance cursor and store new samples in time-reversed order.
         self.cursor = (self.cursor + 320 - 32) % 320;
@@ -207,22 +146,21 @@ impl SbrAnalysis {
             z[n] = s;
         }
 
-        // Pre-twiddle: q[n] = z[n] · e^{-jπn/64}
-        for n in 0..64 {
-            let tw = dsp.ana_pre_tw[n];
-            let v = z[n];
-            dsp.ana_buf[n] = Complex32::new(v * tw.re, v * tw.im);
+        for (dst, (&u, &twiddle)) in
+            dsp.ana_fft_buf.iter_mut().zip(z.iter().zip(dsp.ana_pre_twiddle.iter()))
+        {
+            dst.re = u * twiddle.re;
+            dst.im = u * twiddle.im;
         }
 
-        // 64-point FFT.
-        dsp.ana_fft.process_with_scratch(&mut dsp.ana_buf, &mut dsp.ana_scratch);
+        dsp.ana_fft.process_with_scratch(&mut dsp.ana_fft_buf, &mut dsp.ana_scratch);
 
-        // Output: out[k] = (1/2) · conj(F[k]) for k = 0..31
         *out = [ZERO; SBR_BANDS];
-        for k in 0..32 {
-            let f = dsp.ana_buf[k];
-            out[k].re = f.re * 0.5;
-            out[k].im = -f.im * 0.5;
+        for (dst, (&x, &twiddle)) in
+            out[..32].iter_mut().zip(dsp.ana_fft_buf[..32].iter().zip(dsp.ana_post_twiddle.iter()))
+        {
+            dst.re = 2.0 * (x.re * twiddle.re - x.im * twiddle.im);
+            dst.im = 2.0 * (x.re * twiddle.im + x.im * twiddle.re);
         }
     }
 }
@@ -231,7 +169,7 @@ impl SbrAnalysis {
 // 64-band synthesis filterbank
 // ---------------------------------------------------------------------------
 
-/// State for the QMF 64-band synthesis filterbank (ISO/IEC 14496-3, 4.6.18.6.3).
+/// State for the QMF 64-band synthesis filterbank (ISO/IEC 14496-3, 4.6.18.4.2).
 #[derive(Clone)]
 pub struct SbrSynthesis {
     /// Circular history buffer for polyphase output (10 × 128 = 1280 samples).
@@ -247,40 +185,34 @@ impl SbrSynthesis {
 
     /// Reconstruct 64 time-domain samples from 64 complex QMF subbands.
     ///
-    /// Uses FFT-based DCT-IV and DST-IV via 128-point FFTs.
-    pub fn synthesis(&mut self, dsp: &mut SbrDsp, input: &[Complex; SBR_BANDS], out: &mut [f32]) {
+    pub fn synthesis(
+        &mut self,
+        dsp: &mut SbrDsp,
+        input: &[Complex; SBR_BANDS],
+        active_bands: usize,
+        out: &mut [f32],
+    ) {
         // Advance cursor for new 128-sample segment.
         self.cursor = (self.cursor + 1280 - 128) % 1280;
 
-        // Scale for unity roundtrip gain (analysis × synthesis).
-        const NORM: f32 = 1.0 / 8.0;
+        let active_bands = active_bands.min(SBR_BANDS);
+        dsp.syn_fft_buf.fill(Complex32 { re: 0.0, im: 0.0 });
 
-        // Separate and scale real/imaginary parts into stack-local arrays.
-        let mut xr = [0.0f32; 64];
-        let mut xi = [0.0f32; 64];
-        for k in 0..64 {
-            xr[k] = input[k].re * NORM;
-            xi[k] = input[k].im * NORM;
+        for (dst, (&x, &twiddle)) in dsp.syn_fft_buf[..active_bands]
+            .iter_mut()
+            .zip(input[..active_bands].iter().zip(dsp.syn_pre_twiddle.iter()))
+        {
+            dst.re = x.re * twiddle.re - x.im * twiddle.im;
+            dst.im = x.re * twiddle.im + x.im * twiddle.re;
         }
 
-        // DCT-IV of real part and DST-IV of imaginary part via 128-point FFTs.
-        let mut cr = [0.0f32; 64];
-        let mut ci = [0.0f32; 64];
+        dsp.syn_fft.process_with_scratch(&mut dsp.syn_fft_buf, &mut dsp.syn_scratch);
 
-        dsp.syn_dct4_xr_dst4_xi(&xr, &xi, &mut cr, &mut ci);
-
-        // Combine DCT/DST outputs and write 128 samples into history ring.
         let h = &mut self.ring[self.cursor..self.cursor + 128];
-        for i in 0..32 {
-            let dr = -cr[i];
-            let di = -ci[i];
-            let er = -cr[63 - i];
-            let ei = -ci[63 - i];
-
-            h[i] = (dr - di) * 0.5;
-            h[64 + 63 - i] = -(dr + di) * 0.5;
-            h[63 - i] = (er - ei) * 0.5;
-            h[64 + i] = -(er + ei) * 0.5;
+        for ((v, &x), &twiddle) in
+            h.iter_mut().zip(dsp.syn_fft_buf.iter()).zip(dsp.syn_post_twiddle.iter())
+        {
+            *v = -(x.re * twiddle.re - x.im * twiddle.im) * (1.0 / 64.0);
         }
 
         // Polyphase windowed sum using the full 640-entry synthesis window.
@@ -300,6 +232,77 @@ impl SbrSynthesis {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn assert_close(actual: f32, expected: f32, tol: f32, what: &str) {
+        let delta = (actual - expected).abs();
+        assert!(
+            delta <= tol,
+            "{}: actual {}, expected {}, delta {} > {}",
+            what,
+            actual,
+            expected,
+            delta,
+            tol
+        );
+    }
+
+    #[test]
+    fn analysis_fft_matches_direct_matrix() {
+        let mut dsp = SbrDsp::new();
+        let mut ana = SbrAnalysis::new();
+        let input = std::array::from_fn::<_, 32, _>(|i| {
+            (i as f32 * 0.17).sin() * 0.75 + (i as f32 * 0.31).cos() * 0.25
+        });
+        let mut out = [ZERO; SBR_BANDS];
+
+        ana.analysis(&mut dsp, &input, &mut out);
+
+        let mut z = [0.0f64; 64];
+        for (n, zn) in z.iter_mut().enumerate() {
+            for p in 0..5 {
+                let idx = (ana.cursor + n + p * 64) % 320;
+                *zn += f64::from(ana.ring[idx]) * f64::from(tables::QMF_WINDOW[(n + p * 64) * 2]);
+            }
+        }
+
+        for (k, actual) in out[..32].iter().enumerate() {
+            let mut re = 0.0f64;
+            let mut im = 0.0f64;
+            for (n, &u) in z.iter().enumerate() {
+                let angle = std::f64::consts::PI / 64.0 * (k as f64 + 0.5) * (2.0 * n as f64 - 0.5);
+                re += 2.0 * u * angle.cos();
+                im += 2.0 * u * angle.sin();
+            }
+            assert_close(actual.re, re as f32, 1.0e-4, "analysis re");
+            assert_close(actual.im, im as f32, 1.0e-4, "analysis im");
+        }
+    }
+
+    #[test]
+    fn synthesis_fft_matches_direct_matrix() {
+        let mut dsp = SbrDsp::new();
+        let mut syn = SbrSynthesis::new();
+        let active_bands = 37;
+        let mut input = [ZERO; SBR_BANDS];
+        for (k, x) in input[..active_bands].iter_mut().enumerate() {
+            x.re = (k as f32 * 0.11).sin() * 0.5;
+            x.im = (k as f32 * 0.23).cos() * 0.25;
+        }
+        let mut out = [0.0f32; 64];
+
+        syn.synthesis(&mut dsp, &input, active_bands, &mut out);
+
+        for n in 0..128 {
+            let mut expected = 0.0f64;
+            for (k, x) in input[..active_bands].iter().enumerate() {
+                let angle =
+                    std::f64::consts::PI / 128.0 * (k as f64 + 0.5) * (2.0 * n as f64 - 255.0);
+                expected +=
+                    f64::from(x.re) * angle.cos() / 64.0 - f64::from(x.im) * angle.sin() / 64.0;
+            }
+            assert_close(syn.ring[syn.cursor + n], expected as f32, 1.0e-5, "synthesis");
+        }
+    }
 
     /// Verify that analysis followed by synthesis preserves signal energy.
     #[test]
@@ -327,7 +330,7 @@ mod tests {
             }
             let mut frame_out = vec![0.0f32; 30 * 64];
             for (slot, dst) in slots.iter().zip(frame_out.chunks_mut(64)) {
-                syn.synthesis(&mut dsp, slot, dst);
+                syn.synthesis(&mut dsp, slot, SBR_BANDS, dst);
             }
             output.extend_from_slice(&frame_out);
         }

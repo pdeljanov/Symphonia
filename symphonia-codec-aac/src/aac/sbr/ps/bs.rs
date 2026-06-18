@@ -14,14 +14,14 @@
 
 use std::convert::TryInto;
 
-use symphonia_core::errors::{Result, decode_error};
-use symphonia_core::io::ReadBitsLtr;
+use symphonia_core::errors::{decode_error, Result};
 use symphonia_core::io::vlc::*;
+use symphonia_core::io::ReadBitsLtr;
 
 use lazy_static::lazy_static;
 
-use super::PsCommonContext;
 use super::tables::*;
+use super::PsCommonContext;
 
 /// Identifies which Huffman codebook to use for a given parameter type and
 /// coding direction (ISO/IEC 14496-3:2009, Tables 8.54--8.57).
@@ -58,9 +58,8 @@ struct PsHuffmanSet {
 
 /// Construct a single Huffman codebook from the concatenated table data.
 ///
-/// Generates canonical codewords from (symbol, code_length) pairs using the
-/// same algorithm as FFmpeg's `ff_vlc_init_from_lengths`: entries are processed
-/// in order and codes are assigned canonically based on code lengths.
+/// Generates canonical codewords from (symbol, code_length) pairs: entries are
+/// processed in order and codes are assigned canonically based on code lengths.
 fn construct_codebook(table_start: usize, num_entries: usize) -> Codebook<Entry16x16> {
     let raw_entries = &AACPS_HUFF_TABS[table_start..table_start + num_entries];
 
@@ -133,6 +132,7 @@ fn huffman_decode<B: ReadBitsLtr>(
 fn decode_parameter_band<B: ReadBitsLtr>(
     bs: &mut B,
     params: &mut [[i8; PS_MAX_NR_IIDICC]],
+    prev_frame_params: &[i8; PS_MAX_NR_IIDICC],
     codebook: PsCodebookId,
     num_bands: usize,
     envelope: usize,
@@ -141,8 +141,10 @@ fn decode_parameter_band<B: ReadBitsLtr>(
     bits_used: &mut usize,
 ) -> Result<()> {
     if is_delta_time {
-        // Delta-time: each band is relative to the same band in the prior envelope.
-        let reference = if envelope > 0 { params[envelope - 1] } else { [0i8; PS_MAX_NR_IIDICC] };
+        // Delta-time: each band is relative to the same band in the prior
+        // envelope; for envelope 0, the prior envelope is the final envelope
+        // from the previous ps_data() element.
+        let reference = if envelope > 0 { params[envelope - 1] } else { *prev_frame_params };
         for band in 0..num_bands {
             let delta = huffman_decode(bs, codebook, bits_used)?;
             params[envelope][band] = reference[band].wrapping_add(delta);
@@ -172,9 +174,11 @@ fn decode_parameter_band<B: ReadBitsLtr>(
 /// (ISO/IEC 14496-3:2009, Section 8.6.4.4).
 ///
 /// Phase parameters are wrapped to 3 bits (modulo 8) after accumulation.
+#[allow(clippy::too_many_arguments)]
 fn decode_phase_parameters<B: ReadBitsLtr>(
     bs: &mut B,
     params: &mut [[i8; PS_MAX_NR_IIDICC]],
+    prev_frame_params: &[i8; PS_MAX_NR_IIDICC],
     codebook: PsCodebookId,
     num_bands: usize,
     envelope: usize,
@@ -182,7 +186,7 @@ fn decode_phase_parameters<B: ReadBitsLtr>(
     bits_used: &mut usize,
 ) -> Result<()> {
     if is_delta_time {
-        let reference = if envelope > 0 { params[envelope - 1] } else { [0i8; PS_MAX_NR_IIDICC] };
+        let reference = if envelope > 0 { params[envelope - 1] } else { *prev_frame_params };
         for band in 0..num_bands {
             let delta = huffman_decode(bs, codebook, bits_used)?;
             params[envelope][band] = (reference[band].wrapping_add(delta)) & 0x07;
@@ -207,13 +211,16 @@ fn parse_extension_payload<B: ReadBitsLtr>(
     bs: &mut B,
     ps: &mut PsCommonContext,
     ext_id: u32,
+    prev_ipd_ref: &[i8; PS_MAX_NR_IIDICC],
+    prev_opd_ref: &[i8; PS_MAX_NR_IIDICC],
     bits_used: &mut usize,
-) -> Result<()> {
+) -> Result<bool> {
     // Only extension ID 0 (IPD/OPD data) is specified.
     if ext_id != 0 {
-        return Ok(());
+        return Ok(true);
     }
 
+    let mut all_frequency_delta = true;
     ps.enable_ipdopd = bs.read_bool()?;
     *bits_used += 1;
 
@@ -222,11 +229,13 @@ fn parse_extension_payload<B: ReadBitsLtr>(
             // IPD parameters.
             let dt_ipd = bs.read_bool()?;
             *bits_used += 1;
+            all_frequency_delta &= !dt_ipd;
             let ipd_cb =
                 if dt_ipd { PsCodebookId::IpdDeltaTime } else { PsCodebookId::IpdDeltaFreq };
             decode_phase_parameters(
                 bs,
                 &mut ps.ipd_par,
+                prev_ipd_ref,
                 ipd_cb,
                 ps.nr_ipdopd_par,
                 env_idx,
@@ -237,11 +246,13 @@ fn parse_extension_payload<B: ReadBitsLtr>(
             // OPD parameters.
             let dt_opd = bs.read_bool()?;
             *bits_used += 1;
+            all_frequency_delta &= !dt_opd;
             let opd_cb =
                 if dt_opd { PsCodebookId::OpdDeltaTime } else { PsCodebookId::OpdDeltaFreq };
             decode_phase_parameters(
                 bs,
                 &mut ps.opd_par,
+                prev_opd_ref,
                 opd_cb,
                 ps.nr_ipdopd_par,
                 env_idx,
@@ -255,7 +266,7 @@ fn parse_extension_payload<B: ReadBitsLtr>(
     let _ = bs.read_bool()?;
     *bits_used += 1;
 
-    Ok(())
+    Ok(all_frequency_delta)
 }
 
 /// Reset PS state to safe defaults and skip any remaining bits in the PS
@@ -292,6 +303,18 @@ pub fn ps_read_data<B: ReadBitsLtr>(
 ) -> Result<usize> {
     // Manual bit accounting since ReadBitsLtr provides no bits_read() accessor.
     let mut consumed: usize = 0;
+    let prev_num_env = ps.num_env;
+    let was_started = ps.start;
+    let prev_iid_par = ps.iid_par;
+    let prev_icc_par = ps.icc_par;
+    let prev_ipd_par = ps.ipd_par;
+    let prev_opd_par = ps.opd_par;
+
+    let zero_ref = [0i8; PS_MAX_NR_IIDICC];
+    let prev_iid_ref = if prev_num_env > 0 { &prev_iid_par[prev_num_env - 1] } else { &zero_ref };
+    let prev_icc_ref = if prev_num_env > 0 { &prev_icc_par[prev_num_env - 1] } else { &zero_ref };
+    let prev_ipd_ref = if prev_num_env > 0 { &prev_ipd_par[prev_num_env - 1] } else { &zero_ref };
+    let prev_opd_ref = if prev_num_env > 0 { &prev_opd_par[prev_num_env - 1] } else { &zero_ref };
 
     // --- PS Header (ISO/IEC 14496-3:2009, Section 8.6.4.3) ---
     let has_header = bs.read_bool()?;
@@ -328,6 +351,9 @@ pub fn ps_read_data<B: ReadBitsLtr>(
         // Extension flag.
         ps.enable_ext = bs.read_bool()?;
         consumed += 1;
+        if !ps.enable_ext {
+            ps.enable_ipdopd = false;
+        }
     }
 
     // --- Envelope structure (ISO/IEC 14496-3:2009, Section 8.6.4.4) ---
@@ -338,6 +364,8 @@ pub fn ps_read_data<B: ReadBitsLtr>(
     let env_count_index = bs.read_bits_leq32(2)? as usize;
     consumed += 2;
     ps.num_env = NUM_ENV_TAB[ps.frame_class as usize][env_count_index];
+    let raw_num_env = ps.num_env;
+    let mut initial_header_all_frequency_delta = true;
 
     // --- Border positions ---
     ps.border_position[0] = -1;
@@ -364,9 +392,15 @@ pub fn ps_read_data<B: ReadBitsLtr>(
         for env_idx in 0..ps.num_env {
             let dt = bs.read_bool()?;
             consumed += 1;
+            initial_header_all_frequency_delta &= !dt;
 
             let codebook = if ps.iid_quant {
-                if dt { PsCodebookId::IidDeltaTimeFine } else { PsCodebookId::IidDeltaFreqFine }
+                if dt {
+                    PsCodebookId::IidDeltaTimeFine
+                }
+                else {
+                    PsCodebookId::IidDeltaFreqFine
+                }
             }
             else if dt {
                 PsCodebookId::IidDeltaTimeCoarse
@@ -378,6 +412,7 @@ pub fn ps_read_data<B: ReadBitsLtr>(
             if decode_parameter_band(
                 bs,
                 &mut ps.iid_par,
+                prev_iid_ref,
                 codebook,
                 ps.nr_iid_par,
                 env_idx,
@@ -400,12 +435,14 @@ pub fn ps_read_data<B: ReadBitsLtr>(
         for env_idx in 0..ps.num_env {
             let dt = bs.read_bool()?;
             consumed += 1;
+            initial_header_all_frequency_delta &= !dt;
 
             let codebook = if dt { PsCodebookId::IccDeltaTime } else { PsCodebookId::IccDeltaFreq };
 
             if decode_parameter_band(
                 bs,
                 &mut ps.icc_par,
+                prev_icc_ref,
                 codebook,
                 ps.nr_icc_par,
                 env_idx,
@@ -439,7 +476,9 @@ pub fn ps_read_data<B: ReadBitsLtr>(
             ext_bits_remaining -= 2;
 
             let before = consumed;
-            parse_extension_payload(bs, ps, ext_id, &mut consumed)?;
+            let ext_all_frequency_delta =
+                parse_extension_payload(bs, ps, ext_id, prev_ipd_ref, prev_opd_ref, &mut consumed)?;
+            initial_header_all_frequency_delta &= ext_all_frequency_delta;
             ext_bits_remaining -= (consumed - before) as i32;
         }
 
@@ -457,30 +496,51 @@ pub fn ps_read_data<B: ReadBitsLtr>(
     // If no envelopes were decoded, or the last border does not reach the
     // end of the QMF frame, append a synthetic envelope by copying the last
     // valid parameter set.
-    if ps.num_env == 0 || ps.border_position[ps.num_env] < (num_qmf_slots as i32 - 1) {
-        let copy_src = if ps.num_env > 0 {
-            ps.num_env - 1
-        }
-        else if ps.num_env_old > 0 {
-            // Fall back to the last envelope from the previous frame.
-            ps.num_env_old - 1
-        }
-        else {
-            // No prior data; zeros will remain.
-            ps.num_env
-        };
-
-        if copy_src < ps.num_env {
+    if ps.num_env == 0 {
+        if prev_num_env > 0 {
             if ps.enable_iid {
-                ps.iid_par[ps.num_env] = ps.iid_par[copy_src];
+                ps.iid_par[0] = prev_iid_par[prev_num_env - 1];
             }
             if ps.enable_icc {
-                ps.icc_par[ps.num_env] = ps.icc_par[copy_src];
+                ps.icc_par[0] = prev_icc_par[prev_num_env - 1];
             }
             if ps.enable_ipdopd {
-                ps.ipd_par[ps.num_env] = ps.ipd_par[copy_src];
-                ps.opd_par[ps.num_env] = ps.opd_par[copy_src];
+                ps.ipd_par[0] = prev_ipd_par[prev_num_env - 1];
+                ps.opd_par[0] = prev_opd_par[prev_num_env - 1];
             }
+        }
+
+        // Validate the copied/synthesized parameter values.
+        if ps.enable_iid {
+            let iid_limit = 7 + 8 * (ps.iid_quant as i8);
+            for band in 0..ps.nr_iid_par {
+                if ps.iid_par[ps.num_env][band].abs() > iid_limit {
+                    return reset_on_error(bs, ps, consumed, bits_left);
+                }
+            }
+        }
+        if ps.enable_icc {
+            for band in 0..ps.nr_icc_par {
+                if ps.icc_par[ps.num_env][band] < 0 || ps.icc_par[ps.num_env][band] > 7 {
+                    return reset_on_error(bs, ps, consumed, bits_left);
+                }
+            }
+        }
+
+        ps.num_env = 1;
+        ps.border_position[0] = -1;
+        ps.border_position[ps.num_env] = num_qmf_slots as i32 - 1;
+    }
+    else if ps.border_position[ps.num_env] < (num_qmf_slots as i32 - 1) {
+        if ps.enable_iid {
+            ps.iid_par[ps.num_env] = ps.iid_par[ps.num_env - 1];
+        }
+        if ps.enable_icc {
+            ps.icc_par[ps.num_env] = ps.icc_par[ps.num_env - 1];
+        }
+        if ps.enable_ipdopd {
+            ps.ipd_par[ps.num_env] = ps.ipd_par[ps.num_env - 1];
+            ps.opd_par[ps.num_env] = ps.opd_par[ps.num_env - 1];
         }
 
         // Validate the copied/synthesized parameter values.
@@ -517,11 +577,16 @@ pub fn ps_read_data<B: ReadBitsLtr>(
         ps.opd_par = [[0; PS_MAX_NR_IIDICC]; PS_MAX_NUM_ENV];
     }
 
-    if has_header {
+    if has_header && (was_started || (raw_num_env > 0 && initial_header_all_frequency_delta)) {
         ps.start = true;
     }
 
-    if consumed <= bits_left { Ok(consumed) } else { reset_on_error(bs, ps, consumed, bits_left) }
+    if consumed <= bits_left {
+        Ok(consumed)
+    }
+    else {
+        reset_on_error(bs, ps, consumed, bits_left)
+    }
 }
 
 #[cfg(test)]
@@ -665,11 +730,13 @@ mod tests {
         let data = [0x00];
         let mut bs = BitReaderLtr::new(&data);
         let mut par = [[0i8; PS_MAX_NR_IIDICC]; PS_MAX_NUM_ENV];
+        let prev = [0i8; PS_MAX_NR_IIDICC];
         let mut bits_used = 0;
 
         decode_parameter_band(
             &mut bs,
             &mut par,
+            &prev,
             PsCodebookId::IccDeltaFreq,
             3,
             0,
@@ -692,12 +759,14 @@ mod tests {
         let data = [0x00, 0x00];
         let mut bs = BitReaderLtr::new(&data);
         let mut par = [[0i8; PS_MAX_NR_IIDICC]; PS_MAX_NUM_ENV];
+        let prev = [0i8; PS_MAX_NR_IIDICC];
         let mut bits_used = 0;
 
         // env=1 with dt=true should reference env=0 (all zeros).
         decode_parameter_band(
             &mut bs,
             &mut par,
+            &prev,
             PsCodebookId::IccDeltaFreq,
             3,
             1,
@@ -713,17 +782,46 @@ mod tests {
     }
 
     #[test]
+    fn verify_delta_time_first_envelope_uses_previous_frame() {
+        let data = [0x00];
+        let mut bs = BitReaderLtr::new(&data);
+        let mut par = [[0i8; PS_MAX_NR_IIDICC]; PS_MAX_NUM_ENV];
+        let mut prev = [0i8; PS_MAX_NR_IIDICC];
+        prev[0] = 3;
+        prev[1] = -2;
+        let mut bits_used = 0;
+
+        decode_parameter_band(
+            &mut bs,
+            &mut par,
+            &prev,
+            PsCodebookId::IccDeltaFreq,
+            2,
+            0,
+            true,
+            1,
+            &mut bits_used,
+        )
+        .unwrap();
+
+        assert_eq!(par[0][0], 3);
+        assert_eq!(par[0][1], -2);
+    }
+
+    #[test]
     fn verify_read_par_data_stride() {
         // Test stride multiplication: values should be multiplied by stride.
         let data = [0x00];
         let mut bs = BitReaderLtr::new(&data);
         let mut par = [[0i8; PS_MAX_NR_IIDICC]; PS_MAX_NUM_ENV];
+        let prev = [0i8; PS_MAX_NR_IIDICC];
         let mut bits_used = 0;
 
         // With stride=2, decoded zero * 2 = 0 (trivial but verifies no crash).
         decode_parameter_band(
             &mut bs,
             &mut par,
+            &prev,
             PsCodebookId::IccDeltaFreq,
             2,
             0,
@@ -743,11 +841,13 @@ mod tests {
         let data = [0x00, 0x00];
         let mut bs = BitReaderLtr::new(&data);
         let mut par = [[0i8; PS_MAX_NR_IIDICC]; PS_MAX_NUM_ENV];
+        let prev = [0i8; PS_MAX_NR_IIDICC];
         let mut bits_used = 0;
 
         decode_phase_parameters(
             &mut bs,
             &mut par,
+            &prev,
             PsCodebookId::IpdDeltaFreq,
             3,
             0,
@@ -794,6 +894,25 @@ mod tests {
     }
 
     #[test]
+    fn verify_initial_header_with_delta_time_does_not_start_ps() {
+        // Header with IID enabled and one envelope, but iid_dt[0]=1. Before
+        // PS has started, the first valid header must use frequency deltas.
+        //
+        // Bits: header=1, iid=1, iid_mode=0, icc=0, ext=0,
+        // frame_class=0, num_env_idx=1, iid_dt=1, then ten zero IID deltas.
+        let data = [0xC0, 0x60, 0x00];
+        let mut bs = BitReaderLtr::new(&data);
+        let mut ps = PsCommonContext::new();
+
+        let bits = ps_read_data(&mut bs, &mut ps, 24, 32).unwrap();
+
+        assert!(ps.enable_iid);
+        assert_eq!(ps.num_env, 1);
+        assert!(!ps.start);
+        assert!(bits <= 24);
+    }
+
+    #[test]
     fn verify_ps_read_data_no_header() {
         // PS frame without header:
         // - header=0 (1 bit)
@@ -814,6 +933,47 @@ mod tests {
         // With 0 envelopes, a fake envelope should be created -> num_env becomes 1.
         assert_eq!(ps.num_env, 1);
         assert!(bits <= 32);
+    }
+
+    #[test]
+    fn verify_zero_envelopes_reuse_previous_parameters() {
+        // No header, fixed borders, num_env_idx=0 -> no new parameters.
+        let data = [0x00];
+        let mut bs = BitReaderLtr::new(&data);
+        let mut ps = PsCommonContext::new();
+        ps.start = true;
+        ps.enable_iid = true;
+        ps.nr_iid_par = 10;
+        ps.num_env = 1;
+        ps.iid_par[0][0] = 5;
+        ps.iid_par[0][1] = -3;
+
+        let bits = ps_read_data(&mut bs, &mut ps, 8, 32).unwrap();
+
+        assert_eq!(ps.num_env, 1);
+        assert_eq!(ps.border_position[0], -1);
+        assert_eq!(ps.border_position[1], 31);
+        assert_eq!(ps.iid_par[0][0], 5);
+        assert_eq!(ps.iid_par[0][1], -3);
+        assert!(bits <= 8);
+    }
+
+    #[test]
+    fn verify_header_without_extension_disables_ipdopd() {
+        let data = [0x82, 0x00];
+        let mut bs = BitReaderLtr::new(&data);
+        let mut ps = PsCommonContext::new();
+        ps.enable_ipdopd = true;
+        ps.ipd_par[0][0] = 4;
+        ps.opd_par[0][0] = 5;
+
+        let bits = ps_read_data(&mut bs, &mut ps, 16, 32).unwrap();
+
+        assert!(!ps.enable_ext);
+        assert!(!ps.enable_ipdopd);
+        assert_eq!(ps.ipd_par[0][0], 0);
+        assert_eq!(ps.opd_par[0][0], 0);
+        assert!(bits <= 16);
     }
 
     #[test]
@@ -842,7 +1002,7 @@ mod tests {
         assert_eq!(HUFF_OFFSETS[1], -30); // iid_dt1
         assert_eq!(HUFF_OFFSETS[2], -14); // iid_df0 (29 entries, center at 14)
         assert_eq!(HUFF_OFFSETS[3], -14); // iid_dt0
-        // ICC tables (indices 4-5) have offset -7.
+                                          // ICC tables (indices 4-5) have offset -7.
         assert_eq!(HUFF_OFFSETS[4], -7);
         assert_eq!(HUFF_OFFSETS[5], -7);
         // IPD/OPD tables (indices 6-9) have offset 0.

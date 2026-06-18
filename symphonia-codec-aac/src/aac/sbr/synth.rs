@@ -18,14 +18,14 @@ use super::Complex;
 use super::dsp::{SbrAnalysis, SbrDsp, SbrSynthesis};
 use super::tables;
 use super::{
-    FrameClass, HF_ADJ, MAX_SLOTS, NUM_ENVELOPES, QMF_DELAY, QuantMode, SBR_BANDS, SMOOTH_DELAY,
-    SbrChannel, SbrHeader, SbrState, sq_modulus,
+    sq_modulus, FrameClass, QuantMode, SbrChannel, SbrHeader, SbrState, HF_ADJ, MAX_SLOTS,
+    NUM_ENVELOPES, QMF_DELAY, SBR_BANDS, SMOOTH_DELAY,
 };
 
 const ZERO: Complex = Complex { re: 0.0, im: 0.0 };
 
 /// Limiter gain ceiling per bs_limiter_gains index (ISO/IEC 14496-3, 4.6.18.7.3).
-const LIMITER_GAINS: [f32; 4] = [0.70795, 1.0, 1.41254, 10000.0];
+const LIMITER_GAINS: [f32; 4] = [0.70795, 1.0, 1.41254, 10_000_000_000.0];
 
 /// Smoothing filter coefficients h_smooth[i], i = 0..4 (ISO/IEC 14496-3, 4.6.18.7.3).
 #[rustfmt::skip]
@@ -38,7 +38,7 @@ const SMOOTH_COEFS: [f32; 5] = [
 ];
 
 /// Chirp control factor lookup indexed by [old_mode][new_mode]
-/// (ISO/IEC 14496-3, Table 4.158).
+/// (ISO/IEC 14496-3:2019, Table 4.194).
 #[rustfmt::skip]
 const CHIRP_COEF: [[f32; 4]; 4] = [
     [0.0,  0.6,  0.9,  0.98],
@@ -47,20 +47,12 @@ const CHIRP_COEF: [[f32; 4]; 4] = [
     [0.0,  0.75, 0.9,  0.98],
 ];
 
-/// Phase rotation vectors for sinusoidal addition, indexed by (index_sine & 3).
-const SINE_PHASE: [Complex; 4] = [
-    Complex { re: 1.0, im: 0.0 },
-    Complex { re: 0.0, im: 1.0 },
-    Complex { re: -1.0, im: 0.0 },
-    Complex { re: 0.0, im: -1.0 },
-];
-
 /// Energy computation epsilon to avoid division by zero.
 const EPSILON: f32 = 1.0;
 /// Tiny epsilon for summation stability.
 const EPSILON_0: f32 = 1.0e-12;
-/// Energy range scaling factor 2^16.
-const E_RANGE: f32 = 65536.0;
+/// Full-scale range used to map ISO SBR envelope energies to normalized PCM.
+const E_RANGE: f32 = 32768.0;
 
 // ---------------------------------------------------------------------------
 // Public interface: wrappers around analysis/synthesis/processing
@@ -74,9 +66,15 @@ pub fn analysis(ch: &mut SbrChannel, sbr_a: &mut SbrAnalysis, dsp: &mut SbrDsp, 
 }
 
 /// Reconstruct time-domain output from QMF subbands via the 64-band synthesis filterbank.
-pub fn synthesis(ch: &mut SbrChannel, sbr_s: &mut SbrSynthesis, dsp: &mut SbrDsp, dst: &mut [f32]) {
+pub fn synthesis(
+    ch: &mut SbrChannel,
+    sbr_s: &mut SbrSynthesis,
+    dsp: &mut SbrDsp,
+    active_bands: usize,
+    dst: &mut [f32],
+) {
     for (x_slot, out_chunk) in ch.x.iter_mut().zip(dst.chunks_mut(64)) {
-        sbr_s.synthesis(dsp, x_slot, out_chunk);
+        sbr_s.synthesis(dsp, x_slot, active_bands, out_chunk);
     }
 }
 
@@ -84,8 +82,8 @@ pub fn synthesis(ch: &mut SbrChannel, sbr_s: &mut SbrSynthesis, dsp: &mut SbrDsp
 pub fn bypass(ch: &mut SbrChannel, num_time_slots: usize) {
     let n_qmf = (num_time_slots * 2).min(ch.x.len());
     for t in 0..n_qmf {
-        if QMF_DELAY + t < ch.w.len() {
-            ch.x[t] = ch.w[QMF_DELAY + t];
+        if HF_ADJ + t < ch.w.len() {
+            ch.x[t] = ch.w[HF_ADJ + t];
         }
     }
 }
@@ -95,8 +93,8 @@ pub fn x_gen(ch: &mut SbrChannel, state: &SbrState, num_time_slots: usize) {
     let n_qmf = (num_time_slots * 2).min(ch.x.len());
     let kx = state.k_x.min(SBR_BANDS);
     for t in 0..n_qmf {
-        if QMF_DELAY + t < ch.w.len() {
-            ch.x[t][..kx].copy_from_slice(&ch.w[QMF_DELAY + t][..kx]);
+        if HF_ADJ + t < ch.w.len() {
+            ch.x[t][..kx].copy_from_slice(&ch.w[HF_ADJ + t][..kx]);
         }
     }
 }
@@ -108,52 +106,41 @@ pub fn x_gen(ch: &mut SbrChannel, state: &SbrState, num_time_slots: usize) {
 /// Generate high-frequency QMF subbands from low-frequency content via patching.
 pub fn hf_generate(ch: &mut SbrChannel, state: &SbrState, num_time_slots: usize) {
     let kx = state.k_x.min(SBR_BANDS);
+    let prev_kx = ch.prev_k_x.min(SBR_BANDS);
 
     // Copy low-band subbands and clear high-band.
-    for (x_slot, w_slot) in ch.x.iter_mut().zip(ch.w.iter()) {
-        x_slot[..kx].copy_from_slice(&w_slot[..kx]);
-        for v in x_slot[kx..].iter_mut() {
-            *v = ZERO;
-        }
+    for (t, (x_slot, w_slot)) in ch.x.iter_mut().zip(ch.w.iter()).enumerate() {
+        *x_slot = [ZERO; SBR_BANDS];
+        let slot_kx = if t < QMF_DELAY { prev_kx } else { kx };
+        x_slot[..slot_kx].copy_from_slice(&w_slot[..slot_kx]);
     }
 
-    // Compute auto/cross-correlation matrices for inverse filtering (4.6.18.6.2).
+    // Compute auto/cross-correlation terms for inverse filtering (4.6.18.6.2).
     let k0 = state.f[0].min(SBR_BANDS);
     let n_slots = num_time_slots * 2;
-    let mut phi = [[[ZERO; SBR_BANDS]; 3]; 3];
-
-    for lag_a in 0..3u8 {
-        for lag_b in (lag_a + 1)..3u8 {
-            let start_a = HF_ADJ - lag_a as usize;
-            let start_b = HF_ADJ - lag_b as usize;
-            let len = (n_slots + 6 - 1).min(ch.x.len().saturating_sub(HF_ADJ));
-            for t in 0..len {
-                if start_a + t >= ch.x.len() || start_b + t >= ch.x.len() {
-                    break;
-                }
-                for k in 0..k0 {
-                    phi[lag_a as usize][lag_b as usize][k] +=
-                        ch.x[start_a + t][k] * ch.x[start_b + t][k].conj();
-                }
-            }
-        }
-    }
+    let corr_len = (n_slots + QMF_DELAY).min(ch.x.len());
 
     // Solve for prediction coefficients a0, a1 per subband.
     let mut coef_a0 = [ZERO; SBR_BANDS];
     let mut coef_a1 = [ZERO; SBR_BANDS];
 
+    if corr_len < 3 {
+        return;
+    }
+
     for k in 0..k0 {
-        let phi_12 = phi[1][2][k];
-        let phi_11_re = phi[1][1][k].re;
-        let phi_22_re = phi[2][2][k].re;
+        let phi_01 = delayed_correlation(ch, k, 1, corr_len - 1, 1);
+        let phi_02 = delayed_correlation(ch, k, 0, corr_len - 2, 2);
+        let phi_12 = delayed_correlation(ch, k, 0, corr_len - 2, 1);
+        let phi_11_re = delayed_energy(ch, k, 1, corr_len - 1);
+        let phi_22_re = delayed_energy(ch, k, 0, corr_len - 2);
 
         let det = phi_22_re * phi_11_re - sq_modulus(phi_12) / (1.0 + 1.0e-6);
         if det != 0.0 {
-            coef_a1[k] = (phi[0][1][k] * phi_12 - phi[0][2][k] * phi_11_re) * (1.0 / det);
+            coef_a1[k] = (phi_01 * phi_12 - phi_02 * phi_11_re) * (1.0 / det);
         }
         if phi_11_re != 0.0 {
-            coef_a0[k] = (phi[0][1][k] + coef_a1[k] * phi_12.conj()) * (-1.0 / phi_11_re);
+            coef_a0[k] = (phi_01 + coef_a1[k] * phi_12.conj()) * (-1.0 / phi_11_re);
         }
         // Stability check.
         if sq_modulus(coef_a0[k]) >= 16.0 || sq_modulus(coef_a1[k]) >= 16.0 {
@@ -213,6 +200,30 @@ pub fn hf_generate(ch: &mut SbrChannel, state: &SbrState, num_time_slots: usize)
     }
 }
 
+#[inline]
+fn delayed_correlation(
+    ch: &SbrChannel,
+    band: usize,
+    start: usize,
+    end: usize,
+    delay: usize,
+) -> Complex {
+    let mut sum = ZERO;
+    for t in start..end {
+        sum += ch.x[t][band].conj() * ch.x[t + delay][band];
+    }
+    sum
+}
+
+#[inline]
+fn delayed_energy(ch: &SbrChannel, band: usize, start: usize, end: usize) -> f32 {
+    let mut sum = 0.0;
+    for t in start..end {
+        sum += sq_modulus(ch.x[t][band]);
+    }
+    sum
+}
+
 // ---------------------------------------------------------------------------
 // HF adjustment (ISO/IEC 14496-3, 4.6.18.7)
 // ---------------------------------------------------------------------------
@@ -235,29 +246,7 @@ pub fn hf_adjust(ch: &mut SbrChannel, state: &SbrState, hdr: &SbrHeader, num_tim
     // Map sinusoidal coding flags to per-subband per-envelope.
     compute_sine_mapping(ch, f_hi, l_a);
 
-    // Build s_mapped: whether any sinusoidal is active in each scalefactor band.
-    let mut s_mapped = [[false; SBR_BANDS]; NUM_ENVELOPES];
-    for env in 0..ch.num_env {
-        let mut band_lo = kx;
-        if ch.freq_res[env] {
-            for (i, &band_hi) in f_hi[1..].iter().enumerate() {
-                let active = ch.add_harmonic[i];
-                for b in band_lo..band_hi {
-                    s_mapped[env][b] = active;
-                }
-                band_lo = band_hi;
-            }
-        }
-        else {
-            for &band_hi in f_lo[1..].iter() {
-                let active = ch.s_idx_mapped[env][band_lo..band_hi].contains(&true);
-                for b in band_lo..band_hi {
-                    s_mapped[env][b] = active;
-                }
-                band_lo = band_hi;
-            }
-        }
-    }
+    let s_mapped = compute_s_mapped(ch, f_hi, f_lo, kx);
 
     // Dequantize envelope scalefactors to linear energy E_orig (4.6.18.7.2).
     let mut e_orig = [[0.0f32; SBR_BANDS]; NUM_ENVELOPES];
@@ -270,26 +259,60 @@ pub fn hf_adjust(ch: &mut SbrChannel, state: &SbrState, hdr: &SbrHeader, num_tim
 
     // Measure current HF energy E_curr per envelope (4.6.18.7.3).
     let mut e_curr = [[0.0f32; SBR_BANDS]; NUM_ENVELOPES];
-    let mut t_lo = t_env_start;
-    for (env, &t_hi) in ch.env_border[1..=ch.num_env].iter().enumerate() {
-        let n_slots = ((t_hi - t_lo) * 2).max(1) as f32;
-        let scale = E_RANGE * E_RANGE / n_slots;
-        let hi_start = (HF_ADJ + t_lo * 2).min(ch.x_high.len());
-        let hi_end = (HF_ADJ + t_hi * 2).min(ch.x_high.len());
-        for slot in &ch.x_high[hi_start..hi_end] {
-            for k in kx..k_upper {
-                e_curr[env][k] += sq_modulus(slot[k]);
+    if hdr.interpol_freq {
+        let mut t_lo = t_env_start;
+        for (env, &t_hi) in ch.env_border[1..=ch.num_env].iter().enumerate() {
+            let n_slots = ((t_hi - t_lo) * 2).max(1) as f32;
+            let scale = E_RANGE * E_RANGE / n_slots;
+            let hi_start = (HF_ADJ + t_lo * 2).min(ch.x_high.len());
+            let hi_end = (HF_ADJ + t_hi * 2).min(ch.x_high.len());
+            for slot in &ch.x_high[hi_start..hi_end] {
+                for k in kx..k_upper {
+                    e_curr[env][k] += sq_modulus(slot[k]);
+                }
             }
+            for k in kx..k_upper {
+                e_curr[env][k] *= scale;
+            }
+            t_lo = t_hi;
         }
-        for k in kx..k_upper {
-            e_curr[env][k] *= scale;
+    }
+    else {
+        let mut t_lo = t_env_start;
+        for (env, &t_hi) in ch.env_border[1..=ch.num_env].iter().enumerate() {
+            let n_slots = ((t_hi - t_lo) * 2).max(1) as f32;
+            let hi_start = (HF_ADJ + t_lo * 2).min(ch.x_high.len());
+            let hi_end = (HF_ADJ + t_hi * 2).min(ch.x_high.len());
+            let bands = if ch.freq_res[env] { f_hi } else { f_lo };
+
+            for window in bands.windows(2) {
+                let band_lo = window[0].max(kx).min(k_upper);
+                let band_hi = window[1].max(kx).min(k_upper);
+                if band_lo >= band_hi {
+                    continue;
+                }
+
+                let mut sum = 0.0f32;
+                for slot in &ch.x_high[hi_start..hi_end] {
+                    for k in band_lo..band_hi {
+                        sum += sq_modulus(slot[k]);
+                    }
+                }
+
+                let scale = E_RANGE * E_RANGE / (n_slots * (band_hi - band_lo) as f32);
+                let avg = sum * scale;
+                for k in band_lo..band_hi {
+                    e_curr[env][k] = avg;
+                }
+            }
+            t_lo = t_hi;
         }
-        t_lo = t_hi;
     }
 
     // Gain computation (4.6.18.7.3).
     let la_prev: i8 = if ch.prev_l_a == ch.prev_num_env as i8 { 0 } else { -1 };
     let g_lim_max = LIMITER_GAINS[hdr.limiter_gains as usize];
+    let mut is_attack_env = [false; NUM_ENVELOPES];
 
     let mut g_boost_env = [[0.0f32; SBR_BANDS]; NUM_ENVELOPES];
     let mut q_boost_env = [[0.0f32; SBR_BANDS]; NUM_ENVELOPES];
@@ -322,6 +345,7 @@ pub fn hf_adjust(ch: &mut SbrChannel, state: &SbrState, hdr: &SbrHeader, num_tim
 
         // Pre-compute per-envelope flags (constant across all subbands).
         let is_attack = env as i8 == l_a || env as i8 == la_prev;
+        is_attack_env[env] = is_attack;
 
         // Per-subband gain, noise component, and sinusoidal component.
         for k in kx..k_upper {
@@ -410,7 +434,8 @@ pub fn hf_adjust(ch: &mut SbrChannel, state: &SbrState, hdr: &SbrHeader, num_tim
             if ti >= temp_slots {
                 break;
             }
-            if t as i8 == la_prev * 2 {
+            let env = slot_to_env[t];
+            if is_attack_env[env] {
                 g_filt[t].copy_from_slice(&ch.g_temp[ti]);
                 q_filt[t].copy_from_slice(&ch.q_temp[ti]);
                 continue;
@@ -436,10 +461,11 @@ pub fn hf_adjust(ch: &mut SbrChannel, state: &SbrState, hdr: &SbrHeader, num_tim
     }
 
     // Assemble final output: scaled HF + noise or sinusoidal (4.6.18.7.5).
-    let noise_base = ch.index_noise.wrapping_sub(t_env_start * 2) & 511;
+    let mut index_noise = ch.index_noise;
     for t in (t_env_start * 2)..(t_env_end * 2) {
         let y = &mut ch.y[HF_ADJ + t];
         let env = slot_to_env[t];
+        let is_attack = is_attack_env[env];
         for k in kx..k_upper {
             // Gain-scaled HF signal.
             y[k] = ch.x_high[HF_ADJ + t][k] * g_filt[t][k];
@@ -447,21 +473,19 @@ pub fn hf_adjust(ch: &mut SbrChannel, state: &SbrState, hdr: &SbrHeader, num_tim
             let sm = s_boost_env[env][k] / E_RANGE;
             if sm != 0.0 {
                 // Add sinusoidal component with phase alternation.
-                let sign = if (k & 1) != 0 { -sm } else { sm };
-                let phase = SINE_PHASE[ch.index_sine];
-                y[k].re += sign * phase.re;
-                y[k].im += sign * phase.im;
+                y[k] += sine_component(ch.index_sine, k, sm);
             }
-            else {
+            else if !is_attack {
                 // Add noise component from the pseudo-random noise table.
-                let ni = (noise_base + t * SBR_BANDS + k - kx + 1) & 511;
+                let ni = (index_noise + k - kx + 1) & 511;
                 let noise = tables::NOISE_TABLE[ni];
                 y[k] += noise * (q_filt[t][k] / E_RANGE);
             }
         }
+        index_noise = (index_noise + k_upper - kx) & 511;
         ch.index_sine = (ch.index_sine + 1) & 3;
     }
-    ch.index_noise = (noise_base + k_upper - kx) & 511;
+    ch.index_noise = index_noise;
 
     // Copy adjusted HF subbands into synthesis input buffer.
     let prev_overlap =
@@ -471,20 +495,28 @@ pub fn hf_adjust(ch: &mut SbrChannel, state: &SbrState, hdr: &SbrHeader, num_tim
     let x_len = ch.x.len();
     let prev_y_len = ch.prev_y.len();
     let y_len = ch.y.len();
+    let prev_kx = ch.prev_k_x.min(SBR_BANDS);
+    let prev_k_upper = ch.prev_k_upper.min(SBR_BANDS).max(prev_kx);
     for t in 0..prev_overlap.min(x_len) {
         let src_idx = HF_ADJ + num_time_slots * 2 + t;
         if src_idx < prev_y_len {
-            ch.x[t][kx..].copy_from_slice(&ch.prev_y[src_idx][kx..]);
+            ch.x[t] = [ZERO; SBR_BANDS];
+            ch.x[t][..prev_kx].copy_from_slice(&ch.w[HF_ADJ + t][..prev_kx]);
+            ch.x[t][prev_kx..prev_k_upper]
+                .copy_from_slice(&ch.prev_y[src_idx][prev_kx..prev_k_upper]);
         }
     }
     for t in prev_overlap..(t_env_end * 2).min(x_len) {
         let src_idx = HF_ADJ + t;
         if src_idx < y_len {
-            ch.x[t][kx..].copy_from_slice(&ch.y[src_idx][kx..]);
+            ch.x[t][kx..].fill(ZERO);
+            ch.x[t][kx..k_upper].copy_from_slice(&ch.y[src_idx][kx..k_upper]);
         }
     }
 
     ch.prev_l_a = l_a;
+    ch.prev_k_x = kx;
+    ch.prev_k_upper = k_upper;
 }
 
 /// Advance overlap state for the next frame.
@@ -517,6 +549,16 @@ fn compute_l_a(ch: &SbrChannel) -> i8 {
     }
 }
 
+#[inline]
+fn sine_component(index_sine: usize, k: usize, magnitude: f32) -> Complex {
+    match index_sine & 3 {
+        0 => Complex { re: magnitude, im: 0.0 },
+        1 => Complex { re: 0.0, im: if (k & 1) == 0 { magnitude } else { -magnitude } },
+        2 => Complex { re: -magnitude, im: 0.0 },
+        _ => Complex { re: 0.0, im: if (k & 1) == 0 { -magnitude } else { magnitude } },
+    }
+}
+
 /// Map bs_add_harmonic flags to per-subband per-envelope sinusoidal indices.
 fn compute_sine_mapping(ch: &mut SbrChannel, f_hi: &[usize], l_a: i8) {
     ch.s_idx_mapped = [[false; SBR_BANDS]; NUM_ENVELOPES];
@@ -533,6 +575,30 @@ fn compute_sine_mapping(ch: &mut SbrChannel, f_hi: &[usize], l_a: i8) {
         }
     }
     ch.prev_s_idx_mapped = ch.s_idx_mapped[ch.num_env - 1];
+}
+
+/// Map active sinusoidal indices to the envelope scalefactor resolution.
+fn compute_s_mapped(
+    ch: &SbrChannel,
+    f_hi: &[usize],
+    f_lo: &[usize],
+    kx: usize,
+) -> [[bool; SBR_BANDS]; NUM_ENVELOPES] {
+    let mut s_mapped = [[false; SBR_BANDS]; NUM_ENVELOPES];
+
+    for env in 0..ch.num_env {
+        let mut band_lo = kx;
+        let bands = if ch.freq_res[env] { f_hi } else { f_lo };
+        for &band_hi in bands[1..].iter() {
+            let active = ch.s_idx_mapped[env][band_lo..band_hi].contains(&true);
+            for b in band_lo..band_hi {
+                s_mapped[env][b] = active;
+            }
+            band_lo = band_hi;
+        }
+    }
+
+    s_mapped
 }
 
 /// Dequantize envelope scalefactors to linear domain (4.6.18.7.2).
@@ -641,6 +707,17 @@ fn populate_smooth_buffers(
         let prev_tail = ch.last_env_end * 2;
         g_head.copy_from_slice(&g_body[prev_tail - SMOOTH_DELAY..prev_tail]);
         q_head.copy_from_slice(&q_body[prev_tail - SMOOTH_DELAY..prev_tail]);
+
+        // If the current leading border is delayed, the synthesis matrix uses
+        // the previous frame's Y for those leading slots. The smoothing buffers
+        // need the matching previous GTemp/QTemp columns because the first
+        // current envelope can still read them through the FIR history.
+        let lead_slots = (ch.env_border[0] * 2).min(prev_tail).min(g_body.len());
+        if lead_slots > 0 {
+            let src_start = prev_tail - lead_slots;
+            g_body.copy_within(src_start..prev_tail, 0);
+            q_body.copy_within(src_start..prev_tail, 0);
+        }
     }
     else {
         // First frame: fill delay with the first envelope's gains.
@@ -661,5 +738,222 @@ fn populate_smooth_buffers(
             q_body[t] = q_env[env];
         }
         t_lo = t_hi;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn c(re: f32, im: f32) -> Complex {
+        Complex { re, im }
+    }
+
+    #[test]
+    fn x_gen_copies_low_band_at_envelope_adjustment_delay() {
+        let mut ch = SbrChannel::new();
+        let mut state = SbrState::new();
+        state.k_x = 2;
+
+        ch.w[HF_ADJ][0] = c(1.0, 2.0);
+        ch.w[HF_ADJ][1] = c(3.0, 4.0);
+        ch.w[QMF_DELAY][0] = c(10.0, 20.0);
+        ch.w[QMF_DELAY][1] = c(30.0, 40.0);
+
+        x_gen(&mut ch, &state, 1);
+
+        assert_eq!(ch.x[0][0], c(1.0, 2.0));
+        assert_eq!(ch.x[0][1], c(3.0, 4.0));
+    }
+
+    #[test]
+    fn bypass_uses_envelope_adjustment_delay() {
+        let mut ch = SbrChannel::new();
+        ch.w[HF_ADJ][0] = c(1.0, 2.0);
+        ch.w[HF_ADJ][1] = c(3.0, 4.0);
+        ch.w[QMF_DELAY][0] = c(10.0, 20.0);
+        ch.w[QMF_DELAY][1] = c(30.0, 40.0);
+
+        bypass(&mut ch, 1);
+
+        assert_eq!(ch.x[0][0], c(1.0, 2.0));
+        assert_eq!(ch.x[0][1], c(3.0, 4.0));
+    }
+
+    #[test]
+    fn delayed_correlation_uses_requested_window_and_delay() {
+        let mut ch = SbrChannel::new();
+        for t in 0..6 {
+            ch.x[t][0] = c(t as f32 + 1.0, 0.0);
+        }
+
+        // Sum over t=1..3 of conj(x[t]) * x[t + 2]:
+        // 2*4 + 3*5 + 4*6 = 47.
+        assert_eq!(delayed_correlation(&ch, 0, 1, 4, 2), c(47.0, 0.0));
+    }
+
+    #[test]
+    fn delayed_energy_uses_requested_window() {
+        let mut ch = SbrChannel::new();
+        ch.x[0][0] = c(3.0, 4.0);
+        ch.x[1][0] = c(1.0, 2.0);
+        ch.x[2][0] = c(2.0, 0.0);
+
+        assert_eq!(delayed_energy(&ch, 0, 0, 2), 30.0);
+    }
+
+    #[test]
+    fn smooth_buffers_preserve_previous_slots_before_delayed_border() {
+        let mut ch = SbrChannel::new();
+        let mut g_env = [[0.0f32; SBR_BANDS]; NUM_ENVELOPES];
+        let mut q_env = [[0.0f32; SBR_BANDS]; NUM_ENVELOPES];
+
+        ch.last_env_end = 4;
+        ch.num_env = 1;
+        ch.env_border[0] = 2;
+        ch.env_border[1] = 8;
+        g_env[0][0] = 100.0;
+        q_env[0][0] = 200.0;
+
+        for i in 0..4 {
+            ch.g_temp[SMOOTH_DELAY + 4 + i][0] = 10.0 + i as f32;
+            ch.q_temp[SMOOTH_DELAY + 4 + i][0] = 20.0 + i as f32;
+        }
+
+        populate_smooth_buffers(&mut ch, &g_env, &q_env);
+
+        for i in 0..4 {
+            assert_eq!(ch.g_temp[i][0], 10.0 + i as f32);
+            assert_eq!(ch.q_temp[i][0], 20.0 + i as f32);
+            assert_eq!(ch.g_temp[SMOOTH_DELAY + i][0], 10.0 + i as f32);
+            assert_eq!(ch.q_temp[SMOOTH_DELAY + i][0], 20.0 + i as f32);
+        }
+        assert_eq!(ch.g_temp[SMOOTH_DELAY + 4][0], 100.0);
+        assert_eq!(ch.q_temp[SMOOTH_DELAY + 4][0], 200.0);
+    }
+
+    #[test]
+    fn hf_generate_uses_previous_kx_for_delay_slots() {
+        let mut ch = SbrChannel::new();
+        let mut state = SbrState::new();
+        state.k_x = 4;
+
+        ch.prev_k_x = 2;
+        ch.w[0][0] = c(1.0, 0.0);
+        ch.w[0][1] = c(2.0, 0.0);
+        ch.w[0][2] = c(3.0, 0.0);
+        ch.w[0][3] = c(4.0, 0.0);
+        ch.w[QMF_DELAY][0] = c(10.0, 0.0);
+        ch.w[QMF_DELAY][1] = c(20.0, 0.0);
+        ch.w[QMF_DELAY][2] = c(30.0, 0.0);
+        ch.w[QMF_DELAY][3] = c(40.0, 0.0);
+
+        hf_generate(&mut ch, &state, 1);
+
+        assert_eq!(ch.x[0][0], c(1.0, 0.0));
+        assert_eq!(ch.x[0][1], c(2.0, 0.0));
+        assert_eq!(ch.x[0][2], ZERO);
+        assert_eq!(ch.x[0][3], ZERO);
+        assert_eq!(ch.x[QMF_DELAY][0], c(10.0, 0.0));
+        assert_eq!(ch.x[QMF_DELAY][1], c(20.0, 0.0));
+        assert_eq!(ch.x[QMF_DELAY][2], c(30.0, 0.0));
+        assert_eq!(ch.x[QMF_DELAY][3], c(40.0, 0.0));
+    }
+
+    #[test]
+    fn sine_component_matches_sbr_phase_sequence() {
+        assert_eq!(sine_component(0, 10, 2.0), c(2.0, 0.0));
+        assert_eq!(sine_component(1, 10, 2.0), c(0.0, 2.0));
+        assert_eq!(sine_component(1, 11, 2.0), c(0.0, -2.0));
+        assert_eq!(sine_component(2, 10, 2.0), c(-2.0, 0.0));
+        assert_eq!(sine_component(3, 10, 2.0), c(0.0, -2.0));
+        assert_eq!(sine_component(3, 11, 2.0), c(0.0, 2.0));
+    }
+
+    #[test]
+    fn limiter_gain_table_uses_limiter_off_value() {
+        assert_eq!(LIMITER_GAINS[0], 0.70795);
+        assert_eq!(LIMITER_GAINS[1], 1.0);
+        assert_eq!(LIMITER_GAINS[2], 1.41254);
+        assert_eq!(LIMITER_GAINS[3], 10_000_000_000.0);
+    }
+
+    #[test]
+    fn envelope_energy_range_uses_pcm_full_scale() {
+        assert_eq!(E_RANGE, 32768.0);
+    }
+
+    #[test]
+    fn s_mapped_uses_gated_sinusoidal_indices_for_high_res_envelopes() {
+        let mut ch = SbrChannel::new();
+        ch.num_env = 2;
+        ch.freq_res[0] = true;
+        ch.freq_res[1] = true;
+        ch.add_harmonic[0] = true;
+        ch.s_idx_mapped[1][3] = true;
+
+        let f_hi = [2, 4, 6];
+        let f_lo = [2, 6];
+        let s_mapped = compute_s_mapped(&ch, &f_hi, &f_lo, 2);
+
+        assert!(!s_mapped[0][2]);
+        assert!(!s_mapped[0][3]);
+        assert!(s_mapped[1][2]);
+        assert!(s_mapped[1][3]);
+        assert!(!s_mapped[1][4]);
+    }
+
+    #[test]
+    fn overlap_uses_previous_frame_sbr_band_limits() {
+        let mut ch = SbrChannel::new();
+        let mut state = SbrState::new();
+        let hdr = SbrHeader::new();
+
+        state.k_x = 4;
+        state.num_master = 1;
+        state.f[0] = 4;
+        state.f[1] = 10;
+        state.num_env_bands = [1, 1];
+        state.f_low[0] = 4;
+        state.f_low[1] = 10;
+        state.num_noise_bands = 1;
+        state.f_noise[0] = 4;
+        state.f_noise[1] = 10;
+        state.num_lim = 1;
+        state.f_lim[0] = 4;
+        state.f_lim[1] = 10;
+
+        ch.num_env = 1;
+        ch.num_noise = 1;
+        ch.env_border[0] = 0;
+        ch.env_border[1] = 8;
+        ch.noise_env_border[0] = 0;
+        ch.noise_env_border[1] = 8;
+        ch.prev_k_x = 3;
+        ch.prev_k_upper = 6;
+        ch.last_env_end = 10;
+
+        ch.x[0] = [c(99.0, 0.0); SBR_BANDS];
+        ch.w[HF_ADJ][0] = c(1.0, 0.0);
+        ch.w[HF_ADJ][1] = c(2.0, 0.0);
+        ch.w[HF_ADJ][2] = c(3.0, 0.0);
+
+        let prev_src = HF_ADJ + 8 * 2;
+        ch.prev_y[prev_src][3] = c(30.0, 0.0);
+        ch.prev_y[prev_src][4] = c(40.0, 0.0);
+        ch.prev_y[prev_src][5] = c(50.0, 0.0);
+        ch.prev_y[prev_src][6] = c(60.0, 0.0);
+
+        hf_adjust(&mut ch, &state, &hdr, 8);
+
+        assert_eq!(ch.x[0][0], c(1.0, 0.0));
+        assert_eq!(ch.x[0][1], c(2.0, 0.0));
+        assert_eq!(ch.x[0][2], c(3.0, 0.0));
+        assert_eq!(ch.x[0][3], c(30.0, 0.0));
+        assert_eq!(ch.x[0][4], c(40.0, 0.0));
+        assert_eq!(ch.x[0][5], c(50.0, 0.0));
+        assert_eq!(ch.x[0][6], ZERO);
+        assert_eq!(ch.prev_k_x, 4);
+        assert_eq!(ch.prev_k_upper, 10);
     }
 }

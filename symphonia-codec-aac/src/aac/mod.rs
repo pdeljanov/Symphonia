@@ -14,15 +14,17 @@
 use symphonia_core::audio::{
     AsGenericAudioBufferRef, AudioBuffer, AudioMut, AudioSpec, GenericAudioBufferRef,
 };
-use symphonia_core::codecs::CodecInfo;
 use symphonia_core::codecs::audio::well_known::CODEC_ID_AAC;
 use symphonia_core::codecs::audio::{AudioCodecParameters, AudioDecoderOptions};
 use symphonia_core::codecs::audio::{AudioDecoder, FinalizeResult};
 use symphonia_core::codecs::registry::{RegisterableAudioDecoder, SupportedAudioCodec};
-use symphonia_core::errors::{Result, unsupported_error};
+use symphonia_core::codecs::CodecInfo;
+use symphonia_core::errors::{unsupported_error, Result};
 use symphonia_core::io::{BitReaderLtr, FiniteBitStream, ReadBitsLtr};
 use symphonia_core::packet::Packet;
 use symphonia_core::{codec_profile, support_audio_codec};
+
+use log::debug;
 
 mod codebooks;
 mod common;
@@ -52,6 +54,16 @@ fn crc10_payload(data: &[u8], bit_offset: usize, num_bits: usize) -> u16 {
     sbr::sbr_crc10(&extracted, num_bits)
 }
 
+fn read_bits_to_vec<B: ReadBitsLtr>(bs: &mut B, num_bits: usize) -> Result<Vec<u8>> {
+    let mut data = vec![0u8; num_bits.div_ceil(8)];
+    for bit in 0..num_bits {
+        if bs.read_bool()? {
+            data[bit / 8] |= 1 << (7 - (bit & 7));
+        }
+    }
+    Ok(data)
+}
+
 /// SBR processing state, heap-allocated due to large per-channel buffers.
 struct SbrProcessor {
     header: sbr::SbrHeader,
@@ -66,6 +78,10 @@ struct SbrProcessor {
     ps: Option<Box<sbr::ps::PsContext>>,
     /// Whether PS data was parsed and should be applied this frame.
     ps_active: bool,
+    /// Whether the immediately preceding AAC frame carried a PS payload.
+    ps_data_prev_frame: bool,
+    /// Whether the current AAC frame carried a PS payload.
+    ps_data_this_frame: bool,
     /// Whether the current frame's SBR data was successfully decoded and CRC-verified.
     frame_valid: bool,
     /// Number of SBR time slots per frame (15 for 960-sample core, 16 for 1024-sample core).
@@ -84,9 +100,17 @@ impl SbrProcessor {
             active: false,
             ps: None,
             ps_active: false,
+            ps_data_prev_frame: false,
+            ps_data_this_frame: false,
             frame_valid: false,
             num_time_slots,
         }
+    }
+
+    fn begin_frame(&mut self) {
+        self.frame_valid = false;
+        self.ps_active = false;
+        self.ps_data_this_frame = false;
     }
 
     /// Parse SBR extension payload and update state.
@@ -96,6 +120,7 @@ impl SbrProcessor {
     fn decode_sbr_data(
         &mut self,
         sbr_payload: &[u8],
+        sbr_payload_bits: usize,
         has_crc: bool,
         is_pair: bool,
         srate: u32,
@@ -111,7 +136,7 @@ impl SbrProcessor {
 
             // CRC covers all bits after the 10-bit CRC field.
             let payload_bit_offset = 10;
-            let total_bits = sbr_payload.len() * 8;
+            let total_bits = sbr_payload_bits;
             if total_bits > payload_bit_offset {
                 let payload_bits = total_bits - payload_bit_offset;
                 let computed = crc10_payload(sbr_payload, payload_bit_offset, payload_bits);
@@ -131,7 +156,7 @@ impl SbrProcessor {
             match sbr::bs::sbr_read_header(&mut br) {
                 Ok(hdr) => {
                     let changed = self.header.differs_from(&hdr);
-                    if changed {
+                    if changed || !self.active {
                         self.active = self.state.init(&hdr, srate).is_ok();
                         self.channels[0].reset();
                         self.channels[1].reset();
@@ -174,17 +199,28 @@ impl SbrProcessor {
                 )
             };
 
-            if let Err(e) = parse_result {
-                log::warn!("sbr: channel parse error: {}, concealing frame", e);
-                self.ps_active = self.ps.as_ref().is_some_and(|p| p.common.start);
-                return Ok(());
+            let parsed_ps = match parse_result {
+                Ok(parsed_ps) => parsed_ps,
+                Err(e) => {
+                    log::warn!("sbr: channel parse error: {}, concealing frame", e);
+                    self.ps_active = false;
+                    return Ok(());
+                }
+            };
+
+            if parsed_ps && !self.ps_data_prev_frame {
+                if let Some(ps) = self.ps.as_deref_mut() {
+                    ps.reset_decorrelator_state();
+                }
             }
+            self.ps_data_this_frame = parsed_ps;
+            self.ps_active = parsed_ps && self.ps.as_ref().is_some_and(|p| p.common.start);
+        }
+        else {
+            self.ps_active = false;
         }
 
         self.frame_valid = true;
-
-        // Update PS active flag.
-        self.ps_active = self.ps.as_ref().is_some_and(|p| p.common.start);
 
         Ok(())
     }
@@ -203,27 +239,30 @@ impl SbrProcessor {
         if self.active && self.frame_valid {
             // HF generation and envelope adjustment.
             sbr::synth::hf_generate(&mut self.channels[ch], &self.state, self.num_time_slots);
+            sbr::synth::x_gen(&mut self.channels[ch], &self.state, self.num_time_slots);
             sbr::synth::hf_adjust(
                 &mut self.channels[ch],
                 &self.state,
                 &self.header,
                 self.num_time_slots,
             );
-            sbr::synth::x_gen(&mut self.channels[ch], &self.state, self.num_time_slots);
         }
         else {
             sbr::synth::bypass(&mut self.channels[ch], self.num_time_slots);
         }
 
         // QMF synthesis: reconstruct time-domain output at 2x rate.
+        let top = self.synthesis_top_band();
         sbr::synth::synthesis(
             &mut self.channels[ch],
             &mut self.synthesis[ch],
             &mut self.dsp,
+            top,
             output,
         );
 
         sbr::synth::update_frame(&mut self.channels[ch], self.num_time_slots);
+        self.ps_data_prev_frame = self.ps_data_this_frame;
     }
 
     /// Process a mono SBR channel through PS to produce stereo output.
@@ -240,13 +279,13 @@ impl SbrProcessor {
         if self.active && self.frame_valid {
             // HF generation and adjustment (mono).
             sbr::synth::hf_generate(&mut self.channels[0], &self.state, self.num_time_slots);
+            sbr::synth::x_gen(&mut self.channels[0], &self.state, self.num_time_slots);
             sbr::synth::hf_adjust(
                 &mut self.channels[0],
                 &self.state,
                 &self.header,
                 self.num_time_slots,
             );
-            sbr::synth::x_gen(&mut self.channels[0], &self.state, self.num_time_slots);
         }
         else {
             sbr::synth::bypass(&mut self.channels[0], self.num_time_slots);
@@ -264,10 +303,20 @@ impl SbrProcessor {
                 qmf_l[1][t][k] = self.channels[0].x[t][k].im;
             }
         }
+        for t in num_slots..(num_slots + 6).min(qmf_l[0].len()) {
+            let w_idx = sbr::HF_ADJ + t;
+            if w_idx < self.channels[0].w.len() {
+                for k in 0..5 {
+                    qmf_l[0][t][k] = self.channels[0].w[w_idx][k].re;
+                    qmf_l[1][t][k] = self.channels[0].w[w_idx][k].im;
+                }
+            }
+        }
 
         // Apply Parametric Stereo processing.
-        if let Some(ps) = &mut self.ps {
-            let top = self.state.k_x + self.state.num_env_bands[1];
+        if self.ps_active {
+            let ps = self.ps.as_deref_mut().expect("active PS frame has context");
+            let top = self.state.f[self.state.num_master.min(sbr::SBR_BANDS - 1)];
             sbr::ps::ps_apply(ps, &mut qmf_l, &mut qmf_r, top, self.num_time_slots * 2);
         }
         else {
@@ -286,12 +335,36 @@ impl SbrProcessor {
         }
 
         // QMF synthesis for both channels.
-        sbr::synth::synthesis(&mut self.channels[0], &mut self.synthesis[0], &mut self.dsp, out_l);
-        sbr::synth::synthesis(&mut self.channels[1], &mut self.synthesis[1], &mut self.dsp, out_r);
+        let top = self.synthesis_top_band();
+        sbr::synth::synthesis(
+            &mut self.channels[0],
+            &mut self.synthesis[0],
+            &mut self.dsp,
+            top,
+            out_l,
+        );
+        sbr::synth::synthesis(
+            &mut self.channels[1],
+            &mut self.synthesis[1],
+            &mut self.dsp,
+            top,
+            out_r,
+        );
 
         // Update overlap state.
         sbr::synth::update_frame(&mut self.channels[0], self.num_time_slots);
         sbr::synth::update_frame(&mut self.channels[1], self.num_time_slots);
+        self.ps_data_prev_frame = self.ps_data_this_frame;
+    }
+
+    #[inline]
+    fn synthesis_top_band(&self) -> usize {
+        if self.active && self.frame_valid {
+            self.state.f[self.state.num_master.min(sbr::SBR_BANDS - 1)].min(sbr::SBR_BANDS)
+        }
+        else {
+            32
+        }
     }
 }
 
@@ -321,6 +394,57 @@ impl M4AInfo {
         }
     }
 
+    fn has_sbr(&self) -> bool {
+        self.sbr_present || self.sbr_ps_info.is_some()
+    }
+
+    fn output_sample_rate(&self) -> u32 {
+        if self.has_sbr() && !self.sbr_downsampled {
+            self.sbr_ps_info
+                .map(|(srate, _)| srate)
+                .filter(|&srate| srate > 0)
+                .unwrap_or_else(|| self.srate.saturating_mul(2))
+        }
+        else {
+            self.srate
+        }
+    }
+
+    fn output_channels(&self) -> usize {
+        if self.ps_present {
+            2
+        }
+        else {
+            self.channels
+        }
+    }
+
+    fn apply_container_hints(&mut self, params: &AudioCodecParameters) {
+        let container_rate = params.sample_rate.unwrap_or(0);
+        let container_channels =
+            params.channels.as_ref().map(|channels| channels.count()).unwrap_or(0);
+
+        // Backward-compatible implicit SBR leaves the ASC as AAC-LC. In MP4,
+        // the sample entry may still carry the final output sample rate. Use
+        // that as a configuration hint so the public codec parameters match
+        // the eventual SBR output before the first frame is decoded.
+        if !self.has_sbr()
+            && matches!(self.otype, M4AType::Lc | M4AType::ER_AAC_LC)
+            && self.channels <= 2
+            && self.srate > 0
+            && container_rate == self.srate.saturating_mul(2)
+        {
+            self.sbr_ps_info = Some((container_rate, 0));
+        }
+
+        // PS may also be implicitly signalled in the SBR extension payload.
+        // When the core is mono but the container advertises stereo output,
+        // expose stereo parameters up front and enable PS parsing.
+        if self.has_sbr() && !self.ps_present && self.channels == 1 && container_channels == 2 {
+            self.ps_present = true;
+        }
+    }
+
     fn read_object_type<B: ReadBitsLtr>(bs: &mut B) -> Result<M4AType> {
         let otypeidx = match bs.read_bits_leq32(5)? {
             idx if idx < 31 => idx as usize,
@@ -328,22 +452,29 @@ impl M4AInfo {
             _ => unreachable!(),
         };
 
-        if otypeidx >= M4A_TYPES.len() { Ok(M4AType::Unknown) } else { Ok(M4A_TYPES[otypeidx]) }
+        if otypeidx >= M4A_TYPES.len() {
+            Ok(M4AType::Unknown)
+        }
+        else {
+            Ok(M4A_TYPES[otypeidx])
+        }
     }
 
     fn read_sampling_frequency<B: ReadBitsLtr>(bs: &mut B) -> Result<u32> {
         match bs.read_bits_leq32(4)? {
             idx if idx < 15 => Ok(AAC_SAMPLE_RATES[idx as usize]),
-            _ => {
-                let srate = (0xf << 20) & bs.read_bits_leq32(20)?;
-                Ok(srate)
-            }
+            _ => Ok(bs.read_bits_leq32(24)?),
         }
     }
 
     fn read_channel_config<B: ReadBitsLtr>(bs: &mut B) -> Result<usize> {
         let chidx = bs.read_bits_leq32(4)? as usize;
-        if chidx < AAC_CHANNELS.len() { Ok(AAC_CHANNELS[chidx]) } else { Ok(chidx) }
+        if chidx < AAC_CHANNELS.len() {
+            Ok(AAC_CHANNELS[chidx])
+        }
+        else {
+            Ok(chidx)
+        }
     }
 
     fn read(&mut self, buf: &[u8]) -> Result<()> {
@@ -356,7 +487,11 @@ impl M4AInfo {
 
         self.channels = Self::read_channel_config(&mut bs)?;
 
+        let signaled_otype = self.otype;
         if (self.otype == M4AType::Sbr) || (self.otype == M4AType::PS) {
+            self.sbr_present = true;
+            self.ps_present = self.otype == M4AType::PS;
+
             let ext_srate = Self::read_sampling_frequency(&mut bs)?;
             if ext_srate > 0 && ext_srate == self.srate {
                 self.sbr_downsampled = true;
@@ -519,6 +654,7 @@ impl M4AInfo {
                         if ext_srate > 0 && ext_srate == self.srate {
                             self.sbr_downsampled = true;
                         }
+                        self.sbr_ps_info = Some((ext_srate, 0));
                         if bs.bits_left() >= 12 {
                             let sync = bs.read_bits_leq32(11)?;
                             if sync == 0x548 {
@@ -528,16 +664,22 @@ impl M4AInfo {
                     }
                 }
                 if ext_otype == M4AType::PS {
+                    self.ps_present = true;
                     self.sbr_present = bs.read_bool()?;
                     if self.sbr_present {
                         let ext_srate = Self::read_sampling_frequency(&mut bs)?;
                         if ext_srate > 0 && ext_srate == self.srate {
                             self.sbr_downsampled = true;
                         }
+                        self.sbr_ps_info = Some((ext_srate, 0));
                     }
                     let _ext_channels = bs.read_bits_leq32(4)?;
                 }
             }
+        }
+
+        if signaled_otype == M4AType::PS {
+            self.ps_present = true;
         }
 
         Ok(())
@@ -560,6 +702,7 @@ impl std::fmt::Display for M4AInfo {
 /// ISO/IEC 13818-7 and ISO/IEC 14496-3. Supports HE-AAC v1 (SBR) for bandwidth extension.
 pub struct AacDecoder {
     m4ainfo: M4AInfo,
+    opts: AudioDecoderOptions,
     pairs: Vec<cpe::ChannelPair>,
     dsp: dsp::Dsp,
     sbinfo: GASubbandInfo,
@@ -577,7 +720,7 @@ pub struct AacDecoder {
 }
 
 impl AacDecoder {
-    pub fn try_new(params: &AudioCodecParameters, _opts: &AudioDecoderOptions) -> Result<Self> {
+    pub fn try_new(params: &AudioCodecParameters, opts: &AudioDecoderOptions) -> Result<Self> {
         // This decoder only supports AAC.
         if params.codec != CODEC_ID_AAC {
             return unsupported_error("aac: invalid codec");
@@ -589,6 +732,7 @@ impl AacDecoder {
         if let Some(extra_data_buf) = &params.extra_data {
             validate!(extra_data_buf.len() >= 2);
             m4ainfo.read(extra_data_buf)?;
+            m4ainfo.apply_container_hints(params);
         }
         else {
             // Otherwise, assume there is no ASC and use the codec parameters for ADTS.
@@ -608,10 +752,17 @@ impl AacDecoder {
             };
         }
 
-        eprintln!(
-            "[SYMPHONIA-AAC] init: otype={} srate={} channels={} samples={} sbr={} ps={} sbr_ds={}",
-            m4ainfo.otype, m4ainfo.srate, m4ainfo.channels, m4ainfo.samples,
-            m4ainfo.sbr_present, m4ainfo.ps_present, m4ainfo.sbr_downsampled,
+        debug!(
+            "aac: init otype={} srate={} output_srate={} channels={} output_channels={} samples={} sbr={} ps={} sbr_ds={}",
+            m4ainfo.otype,
+            m4ainfo.srate,
+            m4ainfo.output_sample_rate(),
+            m4ainfo.channels,
+            m4ainfo.output_channels(),
+            m4ainfo.samples,
+            m4ainfo.sbr_present,
+            m4ainfo.ps_present,
+            m4ainfo.sbr_downsampled,
         );
 
         if !matches!(m4ainfo.otype, M4AType::Lc | M4AType::ER_AAC_LC)
@@ -629,10 +780,12 @@ impl AacDecoder {
 
         // Map channel count to a set of channels.
         let channels = map_to_channels(m4ainfo.channels).unwrap();
+        let output_channels = map_to_channels(m4ainfo.output_channels()).unwrap();
+        let output_sample_rate = m4ainfo.output_sample_rate();
 
         // Clone and amend the codec parameters with information from the extra data.
         let mut params = params.clone();
-        params.with_channels(channels.clone()).with_sample_rate(m4ainfo.srate);
+        params.with_channels(output_channels.clone()).with_sample_rate(output_sample_rate);
 
         // Select the correct scalefactor band tables based on frame length.
         let sbinfo = GASubbandInfo::find_for_frame_len(frame_len, m4ainfo.srate);
@@ -645,28 +798,28 @@ impl AacDecoder {
         // If SBR is signaled in the AudioSpecificConfig, pre-allocate the SBR output buffer.
         // SBR is only used with mono/stereo content. Multi-channel AAC uses plain AAC-LC.
         // For PS (parametric stereo), output is always stereo even when core is mono.
-        let (sbr, sbr_buf) =
-            if (m4ainfo.sbr_present || m4ainfo.sbr_ps_info.is_some()) && m4ainfo.channels <= 2 {
-                let sbr_channels = if m4ainfo.ps_present {
-                    // PS produces stereo from mono.
-                    map_to_channels(2).unwrap()
-                }
-                else {
-                    channels.clone()
-                };
-                let sbr_spec = AudioSpec::new(m4ainfo.srate * 2, sbr_channels);
-                let sbr_output_samples = frame_len * 2;
-                (
-                    Some(Box::new(SbrProcessor::with_num_time_slots(num_time_slots))),
-                    Some(AudioBuffer::new(sbr_spec, sbr_output_samples)),
-                )
+        let (sbr, sbr_buf) = if m4ainfo.has_sbr() && m4ainfo.channels <= 2 {
+            let sbr_channels = if m4ainfo.ps_present {
+                // PS produces stereo from mono.
+                map_to_channels(2).unwrap()
             }
             else {
-                (None, None)
+                channels.clone()
             };
+            let sbr_spec = AudioSpec::new(output_sample_rate, sbr_channels);
+            let sbr_output_samples = frame_len * 2;
+            (
+                Some(Box::new(SbrProcessor::with_num_time_slots(num_time_slots))),
+                Some(AudioBuffer::new(sbr_spec, sbr_output_samples)),
+            )
+        }
+        else {
+            (None, None)
+        };
 
         Ok(AacDecoder {
             m4ainfo,
+            opts: *opts,
             pairs: Vec::new(),
             dsp: dsp::Dsp::with_frame_len(frame_len),
             sbinfo,
@@ -695,8 +848,8 @@ impl AacDecoder {
         let mut cur_pair = 0;
         let mut cur_ch = 0;
 
-        // Collect SBR fill data: (pair_index, payload_bytes, has_crc).
-        let mut sbr_fills: Vec<(usize, Vec<u8>, bool)> = Vec::new();
+        // Collect SBR fill data: (pair_index, payload bytes, payload bit length, has_crc).
+        let mut sbr_fills: Vec<(usize, Vec<u8>, usize, bool)> = Vec::new();
 
         while bs.bits_left() > 3 {
             let id = bs.read_bits_leq32(3)?;
@@ -763,18 +916,12 @@ impl AacDecoder {
                             0xd | 0xe => {
                                 let has_crc = ext_type == 0xe;
 
-                                // Read remaining fill payload bytes into a buffer.
-                                // After ext_type (4 bits), we have count*8 - 4 bits left.
-                                // Read (count-1) full bytes + 4 remaining bits.
-                                let mut sbr_data = vec![0u8; count];
-                                for byte in sbr_data[..count - 1].iter_mut() {
-                                    *byte = bs.read_bits_leq32(8)? as u8;
-                                }
-                                sbr_data[count - 1] = (bs.read_bits_leq32(4)? as u8) << 4;
+                                let payload_bits = count * 8 - 4;
+                                let sbr_data = read_bits_to_vec(bs, payload_bits)?;
 
                                 // Associate with the most recently decoded channel pair.
                                 if cur_pair > 0 {
-                                    sbr_fills.push((cur_pair - 1, sbr_data, has_crc));
+                                    sbr_fills.push((cur_pair - 1, sbr_data, payload_bits, has_crc));
                                 }
                             }
                             _ => {
@@ -798,6 +945,13 @@ impl AacDecoder {
         // Check if we have SBR data to process.
         let have_sbr = !sbr_fills.is_empty();
 
+        // SBR payload is frame-local. If this AAC frame has no valid SBR
+        // extension, the processing path must conceal/bypass instead of
+        // reusing the previous frame's envelope or PS extension data.
+        if let Some(sbr) = &mut self.sbr {
+            sbr.begin_frame();
+        }
+
         // Lazily initialize SBR processor on first SBR fill element.
         // SBR is only supported for mono/stereo (channels <= 2).
         if have_sbr && self.sbr.is_none() && self.m4ainfo.channels <= 2 {
@@ -811,20 +965,22 @@ impl AacDecoder {
                 map_to_channels(self.m4ainfo.channels).unwrap()
             };
             let sbr_output_samples = self.m4ainfo.samples * 2;
-            let sbr_spec = AudioSpec::new(self.m4ainfo.srate * 2, sbr_channels);
+            let sbr_spec = AudioSpec::new(self.m4ainfo.output_sample_rate(), sbr_channels);
             self.sbr_buf = Some(AudioBuffer::new(sbr_spec, sbr_output_samples));
         }
 
         // Parse SBR extension data.
         if let Some(sbr) = &mut self.sbr {
             let ps_enabled = self.m4ainfo.ps_present;
-            for (pair_idx, sbr_data, has_crc) in &sbr_fills {
+            let sbr_sample_rate = self.m4ainfo.output_sample_rate();
+            for (pair_idx, sbr_data, payload_bits, has_crc) in &sbr_fills {
                 let is_pair = self.pairs[*pair_idx].is_pair;
                 if let Err(e) = sbr.decode_sbr_data(
                     sbr_data,
+                    *payload_bits,
                     *has_crc,
                     is_pair,
-                    self.m4ainfo.srate * 2,
+                    sbr_sample_rate,
                     ps_enabled,
                 ) {
                     log::warn!("sbr: decode error: {}", e);
@@ -951,9 +1107,18 @@ impl AudioDecoder for AacDecoder {
             Err(e)
         }
         else if self.sbr_output {
+            if self.opts.gapless {
+                self.sbr_buf
+                    .as_mut()
+                    .unwrap()
+                    .trim(packet.trim_start().get() as usize, packet.trim_end().get() as usize);
+            }
             Ok(self.sbr_buf.as_ref().unwrap().as_generic_audio_buffer_ref())
         }
         else {
+            if self.opts.gapless {
+                self.buf.trim(packet.trim_start().get() as usize, packet.trim_end().get() as usize);
+            }
             Ok(self.buf.as_generic_audio_buffer_ref())
         }
     }
@@ -992,5 +1157,177 @@ impl RegisterableAudioDecoder for AacDecoder {
             "Advanced Audio Coding",
             &[codec_profile!(CODEC_PROFILE_AAC_LC, "aac-lc", "Low Complexity"),]
         )]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pack_bits(fields: &[(u32, u8)]) -> Vec<u8> {
+        let num_bits = fields.iter().map(|&(_, n)| n as usize).sum::<usize>();
+        let mut out = vec![0u8; num_bits.div_ceil(8)];
+        let mut bit_pos = 0;
+
+        for &(value, width) in fields {
+            for bit in (0..width).rev() {
+                if ((value >> bit) & 1) != 0 {
+                    out[bit_pos / 8] |= 1 << (7 - (bit_pos & 7));
+                }
+                bit_pos += 1;
+            }
+        }
+
+        out
+    }
+
+    fn make_decoder_from_asc(asc: Vec<u8>) -> AacDecoder {
+        let mut params = AudioCodecParameters::new();
+        params.for_codec(CODEC_ID_AAC).with_extra_data(asc.into_boxed_slice());
+        AacDecoder::try_new(&params, &AudioDecoderOptions::default()).unwrap()
+    }
+
+    fn make_decoder_from_asc_with_container(
+        asc: Vec<u8>,
+        sample_rate: u32,
+        channels: usize,
+    ) -> AacDecoder {
+        let mut params = AudioCodecParameters::new();
+        params
+            .for_codec(CODEC_ID_AAC)
+            .with_sample_rate(sample_rate)
+            .with_channels(map_to_channels(channels).unwrap())
+            .with_extra_data(asc.into_boxed_slice());
+        AacDecoder::try_new(&params, &AudioDecoderOptions::default()).unwrap()
+    }
+
+    #[test]
+    fn implicit_sbr_sets_output_sample_rate() {
+        // AOT=SBR, core sample rate 22050 Hz, extension/output sample rate 44100 Hz,
+        // stereo AAC-LC core. This matches the YouTube HE-AAC AudioSpecificConfig shape.
+        let asc =
+            vec![0x2b, 0x92, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+        let mut info = M4AInfo::new();
+        info.read(&asc).unwrap();
+
+        assert!(info.has_sbr());
+        assert!(info.sbr_present);
+        assert!(!info.ps_present);
+        assert_eq!(info.srate, 22_050);
+        assert_eq!(info.output_sample_rate(), 44_100);
+        assert_eq!(info.output_channels(), 2);
+
+        let decoder = make_decoder_from_asc(asc);
+        assert_eq!(decoder.codec_params().sample_rate, Some(44_100));
+        assert_eq!(decoder.codec_params().channels.as_ref().map(|ch| ch.count()), Some(2));
+    }
+
+    #[test]
+    fn implicit_ps_sets_stereo_output() {
+        // AOT=PS, mono AAC-LC core. PS must advertise stereo output even though
+        // the underlying AAC core decodes one channel.
+        let asc = pack_bits(&[
+            (29, 5), // audioObjectType = PS.
+            (7, 4),  // core sample rate = 22050 Hz.
+            (1, 4),  // mono core channel configuration.
+            (4, 4),  // extension/output sample rate = 44100 Hz.
+            (2, 5),  // extension audioObjectType = AAC-LC.
+            (0, 1),  // frameLengthFlag.
+            (0, 1),  // dependsOnCoreCoder.
+            (0, 1),  // extensionFlag.
+        ]);
+        let mut info = M4AInfo::new();
+        info.read(&asc).unwrap();
+
+        assert!(info.has_sbr());
+        assert!(info.sbr_present);
+        assert!(info.ps_present);
+        assert_eq!(info.channels, 1);
+        assert_eq!(info.output_channels(), 2);
+        assert_eq!(info.output_sample_rate(), 44_100);
+
+        let decoder = make_decoder_from_asc(asc);
+        assert_eq!(decoder.codec_params().sample_rate, Some(44_100));
+        assert_eq!(decoder.codec_params().channels.as_ref().map(|ch| ch.count()), Some(2));
+    }
+
+    #[test]
+    fn container_hints_enable_implicit_sbr_and_ps_output() {
+        // Fraunhofer SBRtestStereoAot29Sig0.mp4: AAC-LC ASC with mono core
+        // 22050 Hz, while the MP4 sample entry advertises 44100 Hz stereo.
+        let asc = vec![0x13, 0x88];
+
+        let decoder = make_decoder_from_asc_with_container(asc, 44_100, 2);
+
+        assert!(decoder.m4ainfo.has_sbr());
+        assert!(decoder.m4ainfo.ps_present);
+        assert_eq!(decoder.m4ainfo.srate, 22_050);
+        assert_eq!(decoder.codec_params().sample_rate, Some(44_100));
+        assert_eq!(decoder.codec_params().channels.as_ref().map(|ch| ch.count()), Some(2));
+    }
+
+    #[test]
+    fn container_hints_enable_implicit_ps_for_aot5_sbr() {
+        // Fraunhofer SBRtestStereoAot5SigusePS.mp4: AOT=SBR with mono AAC-LC
+        // core and PS carried implicitly in the SBR extension payload.
+        let asc = vec![0x2b, 0x8a, 0x08, 0x00];
+
+        let decoder = make_decoder_from_asc_with_container(asc, 44_100, 2);
+
+        assert!(decoder.m4ainfo.has_sbr());
+        assert!(decoder.m4ainfo.sbr_present);
+        assert!(decoder.m4ainfo.ps_present);
+        assert_eq!(decoder.m4ainfo.channels, 1);
+        assert_eq!(decoder.codec_params().sample_rate, Some(44_100));
+        assert_eq!(decoder.codec_params().channels.as_ref().map(|ch| ch.count()), Some(2));
+    }
+
+    #[test]
+    fn explicit_sampling_frequency_reads_24_bits() {
+        // AOT=AAC-LC, explicit core sample rate 12345 Hz, mono, standard GA config.
+        let asc = pack_bits(&[
+            (2, 5),       // audioObjectType = AAC-LC.
+            (15, 4),      // samplingFrequencyIndex = explicit.
+            (12_345, 24), // samplingFrequency.
+            (1, 4),       // mono channel configuration.
+            (0, 1),       // frameLengthFlag.
+            (0, 1),       // dependsOnCoreCoder.
+            (0, 1),       // extensionFlag.
+        ]);
+        let mut info = M4AInfo::new();
+        info.read(&asc).unwrap();
+
+        assert_eq!(info.srate, 12_345);
+        assert_eq!(info.output_sample_rate(), 12_345);
+    }
+
+    #[test]
+    fn sbr_frame_state_is_frame_local() {
+        let mut sbr = SbrProcessor::with_num_time_slots(16);
+        sbr.frame_valid = true;
+        sbr.ps_active = true;
+
+        sbr.begin_frame();
+
+        assert!(!sbr.frame_valid);
+        assert!(!sbr.ps_active);
+    }
+
+    #[test]
+    fn non_byte_aligned_sbr_payload_keeps_exact_bit_count() {
+        let mut reader = BitReaderLtr::new(&[0b1010_1100, 0b1111_0000]);
+        let payload = read_bits_to_vec(&mut reader, 9).unwrap();
+
+        assert_eq!(payload, vec![0b1010_1100, 0b1000_0000]);
+    }
+
+    #[test]
+    fn crc10_payload_ignores_padding_bits() {
+        // Ten leading CRC bits followed by a 9-bit SBR payload and seven padding bits.
+        let data = pack_bits(&[(0, 10), (0b101100101, 9), (0b1111111, 7)]);
+        let expected_payload = [0b1011_0010, 0b1000_0000];
+
+        assert_eq!(crc10_payload(&data, 10, 9), sbr::sbr_crc10(&expected_payload, 9));
+        assert_ne!(crc10_payload(&data, 10, 16), crc10_payload(&data, 10, 9));
     }
 }

@@ -11,15 +11,15 @@
 //! envelope and noise floor scalefactors, inverse filtering modes,
 //! sinusoidal coding flags, and optional PS extension data.
 
-use symphonia_core::errors::{Result, decode_error};
-use symphonia_core::io::ReadBitsLtr;
+use symphonia_core::errors::{decode_error, Result};
 use symphonia_core::io::vlc::*;
+use symphonia_core::io::ReadBitsLtr;
 
 use lazy_static::lazy_static;
 
 use super::ps::PsCommonContext;
 use super::tables;
-use super::{FrameClass, NUM_ENVELOPES, QuantMode, SBR_BANDS, SbrChannel, SbrHeader, SbrState};
+use super::{FrameClass, QuantMode, SbrChannel, SbrHeader, SbrState, NUM_ENVELOPES, SBR_BANDS};
 
 // ---------------------------------------------------------------------------
 // Huffman codebooks for SBR scalefactor decoding
@@ -121,6 +121,18 @@ fn decode_delta<B: ReadBitsLtr>(bs: &mut B, cb: &Codebook<Entry16x16>, mid: i8) 
     Ok(sym as i8 - mid)
 }
 
+fn scale_sbr_delta(value: i8, step: i8) -> Result<i8> {
+    value
+        .checked_mul(step)
+        .ok_or(symphonia_core::errors::Error::DecodeError("sbr: scalefactor delta overflow"))
+}
+
+fn add_sbr_delta(base: i8, delta: i8, step: i8) -> Result<i8> {
+    let scaled = scale_sbr_delta(delta, step)?;
+    base.checked_add(scaled)
+        .ok_or(symphonia_core::errors::Error::DecodeError("sbr: scalefactor delta overflow"))
+}
+
 // ---------------------------------------------------------------------------
 // Public bitstream entry points
 // ---------------------------------------------------------------------------
@@ -153,7 +165,7 @@ pub fn sbr_read_header<B: ReadBitsLtr>(bs: &mut B) -> Result<SbrHeader> {
     Ok(hdr)
 }
 
-/// Parse SBR single channel element (SCE) data (ISO/IEC 14496-3, Table 4.57).
+/// Parse SBR single channel element (SCE) data (ISO/IEC 14496-3:2019, Table 4.70).
 pub fn sbr_read_sce<B: ReadBitsLtr>(
     bs: &mut B,
     orig_amp_res: bool,
@@ -161,7 +173,7 @@ pub fn sbr_read_sce<B: ReadBitsLtr>(
     ch: &mut SbrChannel,
     ps: Option<&mut PsCommonContext>,
     num_time_slots: usize,
-) -> Result<()> {
+) -> Result<bool> {
     let huff = &*HUFF;
     ch.qmode = QuantMode::Single;
 
@@ -177,12 +189,12 @@ pub fn sbr_read_sce<B: ReadBitsLtr>(
     parse_envelope_data(bs, ch, false, huff, state)?;
     parse_noise_data(bs, ch, false, huff, state)?;
     parse_sinusoidal_flags(bs, ch, state)?;
-    parse_extension_data(bs, ps, num_time_slots)?;
+    let parsed_ps = parse_extension_data(bs, ps, num_time_slots)?;
 
-    Ok(())
+    Ok(parsed_ps)
 }
 
-/// Parse SBR channel pair element (CPE) data (ISO/IEC 14496-3, Table 4.58).
+/// Parse SBR channel pair element (CPE) data (ISO/IEC 14496-3:2019, Table 4.71).
 pub fn sbr_read_cpe<B: ReadBitsLtr>(
     bs: &mut B,
     orig_amp_res: bool,
@@ -190,7 +202,7 @@ pub fn sbr_read_cpe<B: ReadBitsLtr>(
     ch: &mut [SbrChannel; 2],
     ps: Option<&mut PsCommonContext>,
     num_time_slots: usize,
-) -> Result<()> {
+) -> Result<bool> {
     let huff = &*HUFF;
 
     // bs_data_extra: reserved bits for both channels.
@@ -258,9 +270,9 @@ pub fn sbr_read_cpe<B: ReadBitsLtr>(
 
     parse_sinusoidal_flags(bs, &mut ch[0], state)?;
     parse_sinusoidal_flags(bs, &mut ch[1], state)?;
-    parse_extension_data(bs, ps, num_time_slots)?;
+    let parsed_ps = parse_extension_data(bs, ps, num_time_slots)?;
 
-    Ok(())
+    Ok(parsed_ps)
 }
 
 // ---------------------------------------------------------------------------
@@ -449,14 +461,7 @@ fn derive_noise_borders(ch: &mut SbrChannel) {
     if ch.num_env > 1 {
         ch.num_noise = 2;
         // Determine the envelope index that splits the two noise floors.
-        let split = match (ch.fclass, ch.pointer) {
-            (FrameClass::FixFix, _) => ch.num_env / 2,
-            (FrameClass::VarFix, 0) => 1,
-            (FrameClass::VarFix, 1) => ch.num_env - 1,
-            (FrameClass::VarFix, p) => (p as usize) - 1,
-            (_, 0) | (_, 1) => ch.num_env - 1,
-            (_, p) => ch.num_env + 1 - (p as usize),
-        };
+        let split = middle_border(ch.fclass, ch.pointer, ch.num_env);
         ch.noise_env_border[0] = ch.env_border[0];
         ch.noise_env_border[1] = ch.env_border[split];
         ch.noise_env_border[2] = ch.env_border[ch.num_env];
@@ -465,6 +470,22 @@ fn derive_noise_borders(ch: &mut SbrChannel) {
         ch.num_noise = 1;
         ch.noise_env_border[0] = ch.env_border[0];
         ch.noise_env_border[1] = ch.env_border[1];
+    }
+}
+
+/// Middle noise-floor border index (ISO/IEC 14496-3:2019, Table 4.193).
+fn middle_border(fclass: FrameClass, pointer: u8, num_env: usize) -> usize {
+    match fclass {
+        FrameClass::FixFix => num_env / 2,
+        FrameClass::FixVar | FrameClass::VarVar => match pointer {
+            0 => 1,
+            1 => num_env - 1,
+            p => num_env + 1 - p as usize,
+        },
+        FrameClass::VarFix => match pointer {
+            0 | 1 => num_env - 1,
+            p => p as usize - 1,
+        },
     }
 }
 
@@ -530,12 +551,12 @@ fn parse_envelope_data<B: ReadBitsLtr>(
             // Delta-frequency: first band is PCM-coded, rest are Huffman deltas.
             let pcm_bits =
                 if balance { 5 + u32::from(!ch.amp_res) } else { 6 + u32::from(!ch.amp_res) };
-            ch.data_env[l][0] = (bs.read_bits_leq32(pcm_bits)? as i8) * step;
+            ch.data_env[l][0] = scale_sbr_delta(bs.read_bits_leq32(pcm_bits)? as i8, step)?;
 
             let mut prev = ch.data_env[l][0];
             for k in 1..n_bands {
                 let d = decode_delta(bs, freq_cb, centre)?;
-                ch.data_env[l][k] = prev + d * step;
+                ch.data_env[l][k] = add_sbr_delta(prev, d, step)?;
                 prev = ch.data_env[l][k];
             }
         }
@@ -548,7 +569,7 @@ fn parse_envelope_data<B: ReadBitsLtr>(
                     (true, false) => ch.last_envelope[state.low_to_high_res[k]],
                     _ => ch.last_envelope[k],
                 };
-                ch.data_env[l][k] = ref_val + d * step;
+                ch.data_env[l][k] = add_sbr_delta(ref_val, d, step)?;
             }
         }
 
@@ -580,11 +601,11 @@ fn parse_noise_data<B: ReadBitsLtr>(
     for q in 0..ch.num_noise {
         if !ch.df_noise[q] {
             // Delta-frequency direction.
-            ch.data_noise[q][0] = (bs.read_bits_leq32(5)? as i8) * step;
+            ch.data_noise[q][0] = scale_sbr_delta(bs.read_bits_leq32(5)? as i8, step)?;
             let mut prev = ch.data_noise[q][0];
             for k in 1..state.num_noise_bands {
                 let d = decode_delta(bs, freq_cb, centre)?;
-                ch.data_noise[q][k] = prev + step * d;
+                ch.data_noise[q][k] = add_sbr_delta(prev, d, step)?;
                 prev = ch.data_noise[q][k];
             }
         }
@@ -592,7 +613,7 @@ fn parse_noise_data<B: ReadBitsLtr>(
             // Delta-time direction.
             for k in 0..state.num_noise_bands {
                 let d = decode_delta(bs, time_cb, centre)?;
-                ch.data_noise[q][k] = ch.last_noise_env[k] + d * step;
+                ch.data_noise[q][k] = add_sbr_delta(ch.last_noise_env[k], d, step)?;
             }
         }
 
@@ -624,10 +645,10 @@ fn parse_extension_data<B: ReadBitsLtr>(
     bs: &mut B,
     mut ps: Option<&mut PsCommonContext>,
     num_time_slots: usize,
-) -> Result<()> {
+) -> Result<bool> {
     let has_ext = bs.read_bool()?;
     if !has_ext {
-        return Ok(());
+        return Ok(false);
     }
 
     let mut byte_count = bs.read_bits_leq32(4)? as usize;
@@ -636,6 +657,7 @@ fn parse_extension_data<B: ReadBitsLtr>(
     }
     let total_bits = byte_count * 8;
     let mut consumed: usize = 0;
+    let mut parsed_ps = false;
 
     while consumed + 7 < total_bits {
         let ext_type = bs.read_bits_leq32(2)? as u8;
@@ -652,6 +674,7 @@ fn parse_extension_data<B: ReadBitsLtr>(
                     num_time_slots * 2,
                 )?;
                 consumed += used;
+                parsed_ps = true;
             }
             _ => {
                 // Unknown or unavailable extension — skip remainder.
@@ -667,11 +690,48 @@ fn parse_extension_data<B: ReadBitsLtr>(
         bs.ignore_bits((total_bits - consumed) as u32)?;
     }
 
-    Ok(())
+    Ok(parsed_ps)
 }
 
 /// Minimum number of bits needed to represent `n` (ceiling of log2).
 #[inline]
 fn ceil_log2(n: u32) -> u32 {
-    if n == 0 { 0 } else { 32 - (n - 1).leading_zeros() }
+    if n == 0 {
+        0
+    }
+    else {
+        32 - (n - 1).leading_zeros()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sbr_delta_arithmetic_reports_overflow() {
+        assert_eq!(scale_sbr_delta(63, 2).unwrap(), 126);
+        assert!(scale_sbr_delta(64, 2).is_err());
+        assert_eq!(add_sbr_delta(120, 3, 2).unwrap(), 126);
+        assert!(add_sbr_delta(120, 4, 2).is_err());
+        assert!(add_sbr_delta(-120, -5, 2).is_err());
+    }
+
+    #[test]
+    fn middle_border_matches_iso_table_4_193() {
+        assert_eq!(middle_border(FrameClass::FixFix, 0, 4), 2);
+        assert_eq!(middle_border(FrameClass::FixFix, 3, 4), 2);
+
+        assert_eq!(middle_border(FrameClass::FixVar, 0, 4), 1);
+        assert_eq!(middle_border(FrameClass::VarVar, 0, 4), 1);
+        assert_eq!(middle_border(FrameClass::FixVar, 1, 4), 3);
+        assert_eq!(middle_border(FrameClass::VarVar, 1, 4), 3);
+        assert_eq!(middle_border(FrameClass::FixVar, 2, 4), 3);
+        assert_eq!(middle_border(FrameClass::VarVar, 3, 4), 2);
+
+        assert_eq!(middle_border(FrameClass::VarFix, 0, 4), 3);
+        assert_eq!(middle_border(FrameClass::VarFix, 1, 4), 3);
+        assert_eq!(middle_border(FrameClass::VarFix, 2, 4), 1);
+        assert_eq!(middle_border(FrameClass::VarFix, 3, 4), 2);
+    }
 }

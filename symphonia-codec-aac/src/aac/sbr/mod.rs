@@ -8,7 +8,7 @@
 //! Spectral Band Replication (SBR) core types and frequency table derivation.
 //!
 //! Implements the SBR frequency band table algorithms defined in
-//! ISO/IEC 14496-3:2009, subpart 4, section 4.6.18.3.
+//! ISO/IEC 14496-3:2019, subpart 4, section 4.6.18.3.
 
 pub mod bs;
 pub mod dsp;
@@ -16,12 +16,12 @@ pub mod ps;
 pub mod synth;
 mod tables;
 
-use symphonia_core::errors::{Result, decode_error};
+use symphonia_core::errors::{decode_error, Result};
 
 /// Complex number type alias — uses `num_complex` (re-exported by symphonia-core).
 pub type Complex = symphonia_core::dsp::complex::Complex<f32>;
 
-/// Maximum number of envelopes per SBR frame (ISO/IEC 14496-3, Table 4.155).
+/// Maximum number of envelopes per SBR frame (ISO/IEC 14496-3:2019, 4.6.18.3.6).
 pub const NUM_ENVELOPES: usize = 8;
 
 /// Maximum number of HF reconstruction patches.
@@ -42,7 +42,7 @@ pub const MAX_SLOTS: usize = 16;
 /// Smoothing filter delay for gain interpolation.
 const SMOOTH_DELAY: usize = 4;
 
-/// SBR time-frequency grid classification (ISO/IEC 14496-3, Table 4.160).
+/// SBR time-frequency grid classification (ISO/IEC 14496-3:2019, Table 4.74).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum FrameClass {
     FixFix,
@@ -166,14 +166,14 @@ impl SbrState {
 
     /// Derive all frequency band tables from the SBR header and core sample rate.
     ///
-    /// `sample_rate` is the AAC-LC output rate prior to SBR doubling.
+    /// `sample_rate` is the SBR internal/output sampling frequency.
     /// Implements ISO/IEC 14496-3, 4.6.18.3.
     pub fn init(&mut self, hdr: &SbrHeader, sample_rate: u32) -> Result<()> {
         // Step 1: Derive start and stop subbands (Tables 4.64, 4.65).
         let k0 = compute_start_subband(hdr.start_freq, sample_rate);
         let k2 = compute_stop_subband(hdr.stop_freq, k0, sample_rate);
 
-        // Validate against sample-rate-dependent maximum (Table 4.66).
+        // Validate against the sample-rate-dependent maximum in 4.6.18.3.6.
         let band_limit = match sample_rate {
             0..=32000 => 48,
             32001..=47999 => 35,
@@ -366,7 +366,7 @@ impl SbrState {
             return;
         }
 
-        // limBandsPerOctave from bs_limiter_bands (Table 4.63).
+        // limBandsPerOctave from bs_limiter_bands (Table 4.114).
         let octave_res: f32 = match limiter_bands {
             1 => 1.2,
             2 => 2.0,
@@ -432,7 +432,7 @@ impl SbrState {
 
 /// Compute start subband k0 from bs_start_freq and sample rate.
 ///
-/// ISO/IEC 14496-3, Table 4.64.
+/// ISO/IEC 14496-3:2019, 4.6.18.3.2.1.
 fn compute_start_subband(start_freq: usize, sample_rate: u32) -> usize {
     // Select the offset row for this sample rate.
     let row = match sample_rate {
@@ -458,7 +458,7 @@ fn compute_start_subband(start_freq: usize, sample_rate: u32) -> usize {
 
 /// Compute stop subband k2 from bs_stop_freq, k0, and sample rate.
 ///
-/// ISO/IEC 14496-3, Table 4.65.
+/// ISO/IEC 14496-3:2019, 4.6.18.3.2.1.
 fn compute_stop_subband(stop_freq: usize, k0: usize, sample_rate: u32) -> usize {
     let raw = match stop_freq {
         14 => 2 * k0,
@@ -599,6 +599,7 @@ fn build_master_logarithmic(
         let adjustment = (w0[n0 - 1] - w1[0]).min(headroom);
         w1[0] += adjustment;
         w1[n1 - 1] -= adjustment;
+        w1[..n1].sort_unstable();
     }
 
     // Append region 1 boundaries after region 0.
@@ -635,6 +636,10 @@ pub struct SbrChannel {
     pub y: [[Complex; SBR_BANDS]; QMF_DELAY + MAX_SLOTS * 2],
     /// Previous frame Y for overlap continuity.
     pub prev_y: [[Complex; SBR_BANDS]; QMF_DELAY + MAX_SLOTS * 2],
+    /// Previous frame crossover subband index k_x.
+    pub prev_k_x: usize,
+    /// Previous frame upper SBR subband, k_x + M.
+    pub prev_k_upper: usize,
 
     /// Current chirp control factors alpha_q (4.6.18.6.3).
     pub bw_array: [f32; SBR_BANDS],
@@ -686,6 +691,8 @@ impl SbrChannel {
             x_high: [[COMPLEX_ZERO; SBR_BANDS]; QMF_DELAY + MAX_SLOTS * 2],
             y: [[COMPLEX_ZERO; SBR_BANDS]; QMF_DELAY + MAX_SLOTS * 2],
             prev_y: [[COMPLEX_ZERO; SBR_BANDS]; QMF_DELAY + MAX_SLOTS * 2],
+            prev_k_x: 0,
+            prev_k_upper: 0,
             bw_array: [0.0; SBR_BANDS],
             old_bw_array: [0.0; SBR_BANDS],
             qmode: QuantMode::Single,
@@ -723,16 +730,25 @@ impl SbrChannel {
 
     pub fn reset(&mut self) {
         self.prev_y = [[COMPLEX_ZERO; SBR_BANDS]; QMF_DELAY + MAX_SLOTS * 2];
+        self.prev_k_x = 0;
+        self.prev_k_upper = 0;
+        self.bw_array = [0.0; SBR_BANDS];
         self.old_bw_array = [0.0; SBR_BANDS];
         self.last_envelope = [0; SBR_BANDS];
         self.last_noise_env = [0; SBR_BANDS];
         self.last_freq_res = false;
         self.last_env_end = 0;
         self.prev_num_env = 0;
+        self.invf_mode = [0; NUM_PATCHES];
         self.old_invf_mode = [0; NUM_PATCHES];
+        self.add_harmonic = [false; SBR_BANDS];
+        self.prev_l_a = -1;
+        self.s_idx_mapped = [[false; SBR_BANDS]; NUM_ENVELOPES];
         self.prev_s_idx_mapped = [false; SBR_BANDS];
         self.index_sine = 0;
         self.index_noise = 0;
+        self.g_temp = [[0.0; SBR_BANDS]; MAX_SLOTS * 2 + QMF_DELAY + SMOOTH_DELAY];
+        self.q_temp = [[0.0; SBR_BANDS]; MAX_SLOTS * 2 + QMF_DELAY + SMOOTH_DELAY];
     }
 
     pub fn set_amp_res(&mut self, amp_res: bool) {
@@ -845,5 +861,66 @@ mod tests {
         for pair in w[..8].windows(2) {
             assert!(pair[0] <= pair[1]);
         }
+    }
+
+    #[test]
+    fn log_master_second_region_widths_stay_sorted_after_adjustment() {
+        let mut f_master = [0usize; SBR_BANDS];
+        let n_master = build_master_logarithmic(&mut f_master, 9, 35, 3, false);
+
+        assert_eq!(n_master, 16);
+        assert_eq!(
+            &f_master[..=n_master],
+            &[9, 10, 11, 12, 13, 14, 15, 16, 18, 20, 22, 24, 26, 28, 30, 32, 35]
+        );
+    }
+
+    #[test]
+    fn channel_reset_clears_transient_sbr_state() {
+        let mut ch = SbrChannel::new();
+
+        ch.prev_y[3][4] = Complex { re: 1.0, im: -1.0 };
+        ch.prev_k_x = 12;
+        ch.prev_k_upper = 34;
+        ch.bw_array[0] = 0.75;
+        ch.old_bw_array[0] = 0.5;
+        ch.last_envelope[0] = 7;
+        ch.last_noise_env[0] = -3;
+        ch.last_freq_res = true;
+        ch.last_env_end = 19;
+        ch.prev_num_env = 3;
+        ch.invf_mode[0] = 2;
+        ch.old_invf_mode[0] = 1;
+        ch.add_harmonic[2] = true;
+        ch.prev_l_a = 2;
+        ch.s_idx_mapped[0][2] = true;
+        ch.prev_s_idx_mapped[2] = true;
+        ch.index_sine = 3;
+        ch.index_noise = 77;
+        ch.g_temp[0][2] = 1.0;
+        ch.q_temp[0][2] = 2.0;
+
+        ch.reset();
+
+        assert_eq!(ch.prev_y, [[COMPLEX_ZERO; SBR_BANDS]; QMF_DELAY + MAX_SLOTS * 2]);
+        assert_eq!(ch.prev_k_x, 0);
+        assert_eq!(ch.prev_k_upper, 0);
+        assert_eq!(ch.bw_array, [0.0; SBR_BANDS]);
+        assert_eq!(ch.old_bw_array, [0.0; SBR_BANDS]);
+        assert_eq!(ch.last_envelope, [0; SBR_BANDS]);
+        assert_eq!(ch.last_noise_env, [0; SBR_BANDS]);
+        assert!(!ch.last_freq_res);
+        assert_eq!(ch.last_env_end, 0);
+        assert_eq!(ch.prev_num_env, 0);
+        assert_eq!(ch.invf_mode, [0; NUM_PATCHES]);
+        assert_eq!(ch.old_invf_mode, [0; NUM_PATCHES]);
+        assert_eq!(ch.add_harmonic, [false; SBR_BANDS]);
+        assert_eq!(ch.prev_l_a, -1);
+        assert_eq!(ch.s_idx_mapped, [[false; SBR_BANDS]; NUM_ENVELOPES]);
+        assert_eq!(ch.prev_s_idx_mapped, [false; SBR_BANDS]);
+        assert_eq!(ch.index_sine, 0);
+        assert_eq!(ch.index_noise, 0);
+        assert_eq!(ch.g_temp, [[0.0; SBR_BANDS]; MAX_SLOTS * 2 + QMF_DELAY + SMOOTH_DELAY]);
+        assert_eq!(ch.q_temp, [[0.0; SBR_BANDS]; MAX_SLOTS * 2 + QMF_DELAY + SMOOTH_DELAY]);
     }
 }
