@@ -9,24 +9,24 @@ use core::str;
 
 use log::debug;
 use symphonia_core::audio::{Channels, Position};
-use symphonia_core::codecs::audio::well_known::CODEC_ID_MP3;
+use symphonia_core::codecs::audio::well_known::{CODEC_ID_AAC, CODEC_ID_MP3};
 use symphonia_core::codecs::audio::well_known::{CODEC_ID_PCM_F32BE, CODEC_ID_PCM_F32LE};
 use symphonia_core::codecs::audio::well_known::{CODEC_ID_PCM_F64BE, CODEC_ID_PCM_F64LE};
-use symphonia_core::codecs::audio::well_known::{CODEC_ID_PCM_S8, CODEC_ID_PCM_U8};
 use symphonia_core::codecs::audio::well_known::{CODEC_ID_PCM_S16BE, CODEC_ID_PCM_S16LE};
 use symphonia_core::codecs::audio::well_known::{CODEC_ID_PCM_S24BE, CODEC_ID_PCM_S24LE};
 use symphonia_core::codecs::audio::well_known::{CODEC_ID_PCM_S32BE, CODEC_ID_PCM_S32LE};
+use symphonia_core::codecs::audio::well_known::{CODEC_ID_PCM_S8, CODEC_ID_PCM_U8};
 use symphonia_core::codecs::audio::well_known::{CODEC_ID_PCM_U16BE, CODEC_ID_PCM_U16LE};
 use symphonia_core::codecs::audio::well_known::{CODEC_ID_PCM_U24BE, CODEC_ID_PCM_U24LE};
 use symphonia_core::codecs::audio::well_known::{CODEC_ID_PCM_U32BE, CODEC_ID_PCM_U32LE};
 use symphonia_core::codecs::audio::{
-    AudioCodecId, AudioCodecParameters, CODEC_ID_NULL_AUDIO, VerificationCheck,
+    AudioCodecId, AudioCodecParameters, VerificationCheck, CODEC_ID_NULL_AUDIO,
 };
-use symphonia_core::codecs::subtitle::SubtitleCodecParameters;
 use symphonia_core::codecs::subtitle::well_known::CODEC_ID_MOV_TEXT;
+use symphonia_core::codecs::subtitle::SubtitleCodecParameters;
 use symphonia_core::codecs::video::{VideoCodecId, VideoCodecParameters, VideoExtraData};
 use symphonia_core::codecs::{CodecParameters, CodecProfile};
-use symphonia_core::errors::{Result, decode_error, unsupported_error};
+use symphonia_core::errors::{decode_error, unsupported_error, Result};
 use symphonia_core::io::ReadBytes;
 
 use crate::atoms::{
@@ -150,12 +150,25 @@ pub struct AudioSampleEntry {
 
 impl AudioSampleEntry {
     pub(crate) fn make_codec_params(&self) -> AudioCodecParameters {
+        let channels = self.channels.clone().or_else(|| {
+            if self.codec_id == CODEC_ID_AAC {
+                match self.num_channels {
+                    1 => Some(Channels::Positioned(Position::FRONT_LEFT)),
+                    2 => Some(Channels::Positioned(Position::FRONT_LEFT | Position::FRONT_RIGHT)),
+                    _ => None,
+                }
+            }
+            else {
+                None
+            }
+        });
+
         AudioCodecParameters {
             codec: self.codec_id,
             sample_rate: Some(self.sample_rate as u32),
             bits_per_sample: self.bits_per_sample,
             bits_per_coded_sample: self.bits_per_coded_sample,
-            channels: self.channels.clone(),
+            channels,
             max_frames_per_packet: self.frames_per_packet,
             verification_check: self.verification_check,
             extra_data: self.extra_data.clone(),

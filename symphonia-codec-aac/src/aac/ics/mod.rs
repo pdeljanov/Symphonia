@@ -42,7 +42,7 @@ const POW43_TABLE_LEN: usize = 8192;
 
 lazy_static! {
     /// Pre-computed table of y = x^(4/3).
-    static ref POW43_TABLE: Box<[f32; POW43_TABLE_LEN]> = {
+    pub static ref POW43_TABLE: Box<[f32; POW43_TABLE_LEN]> = {
         let table: Vec<f32> = (0..POW43_TABLE_LEN).map(|i| (i as f32).powf(4.0 / 3.0)).collect();
         // UNWRAP: The vector was initialized to be the correct size.
         table.into_boxed_slice().try_into().unwrap()
@@ -181,6 +181,7 @@ impl IcsInfo {
         self.prev_window_shape = prev_window_shape;
     }
 
+    #[inline(always)]
     fn get_group_start(&self, g: usize) -> usize {
         if g == 0 {
             0
@@ -207,12 +208,14 @@ pub struct Ics {
     num_sec: [usize; MAX_WINDOWS],
     pub scales: [[f32; MAX_SFBS]; MAX_WINDOWS],
     sbinfo: GASubbandInfo,
+    pub short_win_len: usize,
     pub coeffs: [f32; 1024],
     delay: [f32; 1024],
 }
 
 impl Ics {
     pub fn new(sbinfo: GASubbandInfo) -> Self {
+        let short_win_len = sbinfo.short_bands.last().copied().unwrap_or(128);
         Self {
             global_gain: 0,
             info: IcsInfo::new(),
@@ -225,6 +228,7 @@ impl Ics {
             scales: [[0.0; MAX_SFBS]; MAX_WINDOWS],
             num_sec: [0; MAX_WINDOWS],
             sbinfo,
+            short_win_len,
             coeffs: [0.0; 1024],
             delay: [0.0; 1024],
         }
@@ -357,6 +361,7 @@ impl Ics {
         Ok(())
     }
 
+    #[inline(always)]
     pub fn get_bands(&self) -> &'static [usize] {
         if self.info.long_win { self.sbinfo.long_bands } else { self.sbinfo.short_bands }
     }
@@ -378,7 +383,7 @@ impl Ics {
                 let scale = self.scales[g][sfb];
 
                 for w in cur_w..next_w {
-                    let dst = &mut self.coeffs[start + w * 128..end + w * 128];
+                    let dst = &mut self.coeffs[start + w * self.short_win_len..end + w * self.short_win_len];
 
                     // Derived from ISO/IEC-14496-3 Table 4.151.
                     match cb_idx {
@@ -429,7 +434,7 @@ impl Ics {
 
         validate!(self.pulse.is_none() || self.info.long_win);
 
-        let is_aac_lc = m4atype == M4AType::Lc;
+        let is_aac_lc = matches!(m4atype, M4AType::Lc | M4AType::ER_AAC_LC);
 
         self.tns = tns::Tns::read(bs, &self.info, is_aac_lc)?;
 
@@ -445,6 +450,7 @@ impl Ics {
         Ok(())
     }
 
+    #[inline]
     pub fn synth_channel(&mut self, dsp: &mut dsp::Dsp, rate_idx: usize, dst: &mut [f32]) {
         let bands = self.get_bands();
 
@@ -453,7 +459,7 @@ impl Ics {
         }
 
         if let Some(tns) = &self.tns {
-            tns.synth(&self.info, bands, rate_idx, &mut self.coeffs);
+            tns.synth(&self.info, bands, rate_idx, self.short_win_len, &mut self.coeffs);
         }
 
         dsp.synth(
@@ -525,16 +531,14 @@ fn decode_quads_signed<B: ReadBitsLtr>(
     scale: f32,
     dst: &mut [f32],
 ) -> Result<()> {
-    // Table of dequantized samples for all possible quantized values.
-    let iquant = [-scale, 0.0, scale];
-
     for out in dst.chunks_exact_mut(4) {
         let (a, b, c, d) = cb.read_quant(bs)?;
 
-        out[0] = iquant[a as usize];
-        out[1] = iquant[b as usize];
-        out[2] = iquant[c as usize];
-        out[3] = iquant[d as usize];
+        // Branchless: maps 0->-scale, 1->0, 2->scale without array lookup/bounds check.
+        out[0] = (a as f32 - 1.0) * scale;
+        out[1] = (b as f32 - 1.0) * scale;
+        out[2] = (c as f32 - 1.0) * scale;
+        out[3] = (d as f32 - 1.0) * scale;
     }
     Ok(())
 }

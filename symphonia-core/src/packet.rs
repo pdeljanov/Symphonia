@@ -240,6 +240,7 @@ mod builder {
 
             // Cap to the number of decoded frames.
             let trim_start = negative.min(block_dur);
+            let trimmed_block_dur = block_dur.saturating_sub(trim_start);
             let mut trim_end = Duration::ZERO;
 
             // It is only possible to trim the end of a packet if the end PTS is known.
@@ -248,8 +249,9 @@ mod builder {
                     trim_end = pkt_end_pts.duration_from(end_pts).unwrap_or(Duration::ZERO);
                 }
             }
+            trim_end = trim_end.min(trimmed_block_dur);
 
-            let dur = block_dur.saturating_sub(self.trim_start).saturating_sub(self.trim_end);
+            let dur = trimmed_block_dur.saturating_sub(trim_end);
 
             PacketBuilder { track_id, pts, dur: HasDur(dur), buf, dts, trim_start, trim_end }
         }
@@ -311,3 +313,38 @@ mod builder {
 }
 
 pub use builder::PacketBuilder;
+
+#[cfg(test)]
+mod tests {
+    use super::{Duration, PacketBuilder, Timestamp};
+
+    #[test]
+    fn trimmed_dur_subtracts_calculated_start_and_end_trims() {
+        let packet = PacketBuilder::new()
+            .track_id(1)
+            .pts(Timestamp::new(-3))
+            .data([0u8; 1])
+            .trimmed_dur(Duration::from(10u64), Some(Timestamp::new(5)))
+            .build();
+
+        assert_eq!(packet.trim_start(), Duration::from(3u64));
+        assert_eq!(packet.trim_end(), Duration::from(2u64));
+        assert_eq!(packet.dur(), Duration::from(5u64));
+        assert_eq!(packet.block_dur(), Duration::from(10u64));
+    }
+
+    #[test]
+    fn trimmed_dur_caps_end_trim_to_remaining_decoded_frames() {
+        let packet = PacketBuilder::new()
+            .track_id(1)
+            .pts(Timestamp::new(-3))
+            .data([0u8; 1])
+            .trimmed_dur(Duration::from(10u64), Some(Timestamp::new(-1)))
+            .build();
+
+        assert_eq!(packet.trim_start(), Duration::from(3u64));
+        assert_eq!(packet.trim_end(), Duration::from(7u64));
+        assert_eq!(packet.dur(), Duration::ZERO);
+        assert_eq!(packet.block_dur(), Duration::from(10u64));
+    }
+}

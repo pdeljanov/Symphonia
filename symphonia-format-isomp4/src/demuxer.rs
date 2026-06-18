@@ -8,13 +8,14 @@
 use symphonia_core::support_format;
 
 use symphonia_core::errors::{
-    Error, Result, SeekErrorKind, decode_error, seek_error, unsupported_error,
+    decode_error, seek_error, unsupported_error, Error, Result, SeekErrorKind,
 };
 use symphonia_core::formats::prelude::*;
 use symphonia_core::formats::probe::{ProbeFormatData, ProbeableFormat, Score, Scoreable};
 use symphonia_core::formats::well_known::FORMAT_ID_ISOMP4;
 use symphonia_core::io::*;
 use symphonia_core::meta::{Metadata, MetadataLog};
+use symphonia_core::packet::PacketBuilder;
 use symphonia_core::units::Time;
 
 use std::io::{Seek, SeekFrom};
@@ -43,11 +44,16 @@ pub struct TrackState {
     next_sample: u32,
     /// The current sample byte position relative to the start of the track.
     next_sample_pos: u64,
+    /// Presentation timestamp offset derived from a simple edit list.
+    ts_offset: i64,
+    /// Presentation end timestamp derived from a simple edit list.
+    ts_end: Option<Timestamp>,
 }
 
 impl TrackState {
-    pub fn make(track_num: usize, trak: &TrakAtom) -> (Self, Track) {
+    pub fn make(track_num: usize, trak: &TrakAtom, movie_timescale: u32) -> (Self, Track) {
         let mut track = Track::new(trak.tkhd.id);
+        let (ts_offset, ts_end) = edit_list_timing(trak, movie_timescale).unwrap_or((0, None));
 
         // Create the codec parameters using the sample description atom.
         if let Some(codec_params) = trak.mdia.minf.stbl.stsd.make_codec_params() {
@@ -56,7 +62,13 @@ impl TrackState {
 
         track
             .with_time_base(TimeBase::from_recip(trak.mdia.mdhd.timescale))
-            .with_num_frames(trak.duration);
+            .with_num_frames(trak.duration)
+            .with_start_ts(Timestamp::new(-ts_offset));
+        if ts_offset > 0 {
+            if let Ok(delay) = u32::try_from(ts_offset) {
+                track.with_delay(delay);
+            }
+        }
 
         let state = Self {
             track_num,
@@ -64,10 +76,46 @@ impl TrackState {
             cur_seg: 0,
             next_sample: 0,
             next_sample_pos: 0,
+            ts_offset,
+            ts_end,
         };
 
         (state, track)
     }
+}
+
+fn edit_list_timing(trak: &TrakAtom, movie_timescale: u32) -> Option<(i64, Option<Timestamp>)> {
+    let elst = trak.edts.as_ref()?.elst.as_ref()?;
+    edit_list_timing_from_entries(
+        elst.entries.as_slice(),
+        movie_timescale,
+        trak.mdia.mdhd.timescale.get(),
+    )
+}
+
+fn edit_list_timing_from_entries(
+    entries: &[crate::atoms::elst::ElstEntry],
+    movie_timescale: u32,
+    media_timescale: u32,
+) -> Option<(i64, Option<Timestamp>)> {
+    let entry = entries.first()?;
+
+    if entries.len() != 1
+        || entry.media_time < 0
+        || entry.media_rate_int != 1
+        || entry.media_rate_frac != 0
+        || movie_timescale == 0
+        || media_timescale == 0
+    {
+        return None;
+    }
+
+    let duration = u128::from(entry.segment_duration)
+        .checked_mul(u128::from(media_timescale))?
+        .checked_div(u128::from(movie_timescale))?;
+    let end_ts = i64::try_from(duration).ok().map(Timestamp::new);
+
+    Some((entry.media_time, end_ts))
 }
 
 /// Information regarding the next sample.
@@ -83,6 +131,8 @@ struct NextSampleInfo {
     time: Time,
     /// The duration of the next sample.
     dur: Duration,
+    /// The timestamp at which the edited presentation ends.
+    end_ts: Option<Timestamp>,
     /// The segment containing the next sample.
     seg_idx: usize,
 }
@@ -249,7 +299,7 @@ impl<'s> IsoMp4Reader<'s> {
         let mut track_states = Vec::with_capacity(moov.traks.len());
 
         for (t, trak) in moov.traks.iter().enumerate() {
-            let (track_state, track) = TrackState::make(t, trak);
+            let (track_state, track) = TrackState::make(t, trak, moov.mvhd.timescale);
 
             tracks.push(track);
             track_states.push(track_state);
@@ -288,10 +338,12 @@ impl<'s> IsoMp4Reader<'s> {
                 // Try to get the timestamp for the next sample of the track from the segment.
                 if let Some(timing) = seg.sample_timing(state.track_num, state.next_sample)? {
                     // Calculate the presentation time using the timestamp.
-                    let Some(ts) = timing.ts.try_into().ok()
+                    let raw_ts = i64::try_from(timing.ts).ok();
+                    let Some(ts) = raw_ts.and_then(|ts| ts.checked_sub(state.ts_offset))
                     else {
                         return Ok(None);
                     };
+                    let ts = Timestamp::new(ts);
 
                     let Some(sample_time) = tb.calc_time(ts)
                     else {
@@ -314,6 +366,7 @@ impl<'s> IsoMp4Reader<'s> {
                                 ts,
                                 time: sample_time,
                                 dur: Duration::from(timing.dur),
+                                end_ts: state.ts_end,
                                 seg_idx: seg_idx_delta + state.cur_seg,
                             });
                         }
@@ -565,12 +618,14 @@ impl FormatReader for IsoMp4Reader<'_> {
             }
         }
 
-        Ok(Some(Packet::new(
-            next_sample_info.track_id,
-            next_sample_info.ts,
-            next_sample_info.dur,
-            reader.read_boxed_slice_exact(sample_info.len as usize)?,
-        )))
+        Ok(Some(
+            PacketBuilder::new()
+                .track_id(next_sample_info.track_id)
+                .pts(next_sample_info.ts)
+                .data(reader.read_boxed_slice_exact(sample_info.len as usize)?)
+                .trimmed_dur(next_sample_info.dur, next_sample_info.end_ts)
+                .build(),
+        ))
     }
 
     fn metadata(&mut self) -> Metadata<'_> {
@@ -645,5 +700,48 @@ impl FormatReader for IsoMp4Reader<'_> {
         Self: 's,
     {
         self.iter.into_inner()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::atoms::elst::ElstEntry;
+
+    fn entry(segment_duration: u64, media_time: i64) -> ElstEntry {
+        ElstEntry { segment_duration, media_time, media_rate_int: 1, media_rate_frac: 0 }
+    }
+
+    #[test]
+    fn simple_edit_list_sets_offset_and_end_timestamp() {
+        let entries = [entry(1_485_443, 5_119)];
+
+        let (offset, end_ts) = edit_list_timing_from_entries(&entries, 44_100, 44_100).unwrap();
+
+        assert_eq!(offset, 5_119);
+        assert_eq!(end_ts, Some(Timestamp::new(1_485_443)));
+    }
+
+    #[test]
+    fn simple_edit_list_rescales_movie_duration_to_media_timebase() {
+        let entries = [entry(1_000, 2_048)];
+
+        let (offset, end_ts) = edit_list_timing_from_entries(&entries, 1_000, 48_000).unwrap();
+
+        assert_eq!(offset, 2_048);
+        assert_eq!(end_ts, Some(Timestamp::new(48_000)));
+    }
+
+    #[test]
+    fn edit_list_timing_rejects_non_simple_edits() {
+        let mut bad_rate = entry(1_000, 0);
+        bad_rate.media_rate_frac = 1;
+
+        assert!(edit_list_timing_from_entries(&[entry(1_000, -1)], 1_000, 48_000).is_none());
+        assert!(edit_list_timing_from_entries(&[bad_rate], 1_000, 48_000).is_none());
+        assert!(edit_list_timing_from_entries(&[entry(1_000, 0), entry(1_000, 1)], 1_000, 48_000)
+            .is_none());
+        assert!(edit_list_timing_from_entries(&[entry(1_000, 0)], 0, 48_000).is_none());
+        assert!(edit_list_timing_from_entries(&[entry(1_000, 0)], 1_000, 0).is_none());
     }
 }
