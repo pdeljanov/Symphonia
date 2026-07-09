@@ -223,7 +223,10 @@ impl ApeHeader {
                 let is_header = flags & 0x2000_0000 != 0;
 
                 // The header size is not included in the size written to the tag.
-                let real_size = size + if has_header { 32 } else { 0 };
+                let real_size = match size.checked_add(if has_header { 32 } else { 0 }) {
+                    Some(s) => s,
+                    None => return decode_error("ape: tag size field overflows u32"),
+                };
 
                 (real_size, has_footer, has_header, is_header)
             }
@@ -531,4 +534,25 @@ fn try_parse_image_data(buf: Box<[u8]>, tags: &mut Vec<Tag>) -> (Box<[u8]>, Opti
     // An image could not be detected. The image format may be unsupported, or the buffer contains
     // something else. Return the original buffer.
     (buf, None)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use symphonia_core::io::BufReader;
+
+    #[test]
+    fn test_ape_header_overflow() {
+        // Reproduced from issue #526
+        let hex_data = [
+            0x2b, 0xe3, 0xe3, 0x41, 0x50, 0x45, 0x54, 0x41, 0x47, 0x45, 0x58, 0xd0, 0x07, 0x00, 0x00, 0xe3,
+            0xff, 0xff, 0xff, 0xff, 0xe3, 0xff, 0xe3, 0x13, 0x0a, 0xff, 0xff, 0xf1, 0xdf, 0x41, 0x50, 0x3f,
+            0x13, 0xa3, 0x0a
+        ];
+        
+        let mut reader = BufReader::new(&hex_data[3..]);
+        let result = ApeHeader::read(&mut reader);
+
+        assert!(result.is_err());
+    }
 }
