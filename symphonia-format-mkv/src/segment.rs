@@ -1269,7 +1269,7 @@ impl TagsElement {
 
         /// Append tags to all items in the UID map.
         fn append_to_map_all(map: &mut UidMap, raw_tags: &Vec<RawTag>, target: &Target) {
-            for (_, item) in map.iter_mut() {
+            for item in map.values_mut() {
                 // Attempt to generate a standard tag for each raw tag using the last context for
                 // the current item, and push a new tag.
                 for raw in raw_tags {
@@ -1307,7 +1307,7 @@ impl TagsElement {
         let mut attachments: UidMap = Default::default();
 
         // Pre-populate maps using known track, edition, chapter, and attachment UIDs.
-        for (uid, _) in target_tags.iter() {
+        for uid in target_tags.keys() {
             let default = (media_target.clone(), Vec::new());
             match uid {
                 TargetUid::Track(uid) => tracks.insert(*uid, default),
