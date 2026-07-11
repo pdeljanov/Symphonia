@@ -196,6 +196,7 @@ pub enum FormatData {
     Extensible(FormatExtensible),
     ALaw(FormatALaw),
     MuLaw(FormatMuLaw),
+    Mpeg(FormatMpeg),
 }
 
 pub struct FormatPcm {
@@ -324,6 +325,22 @@ impl FormatMuLaw {
     pub fn make_packet_info(&self) -> Result<PacketInfo> {
         let num_channels = self.channels.count() as u32;
         PacketInfo::without_blocks(num_channels)
+    }
+}
+
+pub struct FormatMpeg {
+    /// Channel bitmask.
+    pub channels: Channels,
+    /// Codec ID (`CODEC_ID_MP1`, `CODEC_ID_MP2`, or `CODEC_ID_MP3`).
+    pub codec: AudioCodecId,
+}
+
+impl FormatMpeg {
+    pub fn make_packet_info(&self) -> Result<PacketInfo> {
+        // MPEG audio frames are variable-length and are packetized frame-by-frame directly from
+        // the data chunk (see `wave::mpeg`), so the block-based packet model is not used for
+        // framing. A unit block keeps the shared duration/seek helpers well-defined.
+        PacketInfo::without_blocks(1)
     }
 }
 
@@ -464,6 +481,9 @@ pub fn append_format_params(
         }
         FormatData::MuLaw(mulaw) => {
             codec_params.for_codec(mulaw.codec).with_channels(mulaw.channels);
+        }
+        FormatData::Mpeg(mpeg) => {
+            codec_params.for_codec(mpeg.codec).with_channels(mpeg.channels);
         }
     }
 }
