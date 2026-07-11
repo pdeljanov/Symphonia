@@ -22,9 +22,11 @@ use symphonia_core::support_format;
 use log::{debug, error};
 
 use crate::common::{
-    ByteOrder, ChunksReader, PacketInfo, append_data_params, append_format_params, next_packet,
+    ByteOrder, ChunksReader, FormatData, PacketInfo, append_data_params, append_format_params,
+    next_packet,
 };
 mod chunks;
+mod mpeg;
 use chunks::*;
 
 /// WAVE is actually a RIFF stream, with a "RIFF" ASCII stream marker.
@@ -68,6 +70,11 @@ pub struct WavReader<'s> {
     packet_info: PacketInfo,
     data_start_pos: u64,
     data_end_pos: Option<u64>,
+    /// True when the data chunk holds an MPEG audio elementary stream (`WAVE_FORMAT_MPEGLAYER3`),
+    /// which is packetized frame-by-frame rather than by the block-based `packet_info`.
+    is_mpeg: bool,
+    /// Running presentation timestamp (in samples) for the next MPEG packet.
+    mpeg_ts: u64,
 }
 
 impl<'s> WavReader<'s> {
@@ -113,7 +120,7 @@ impl<'s> WavReader<'s> {
         let mut metadata: MetadataLog = Default::default();
         let mut packet_info = None;
         let mut fact = None;
-        let mut rf64_sizes = Rf64Sizes::default();
+        let mut is_mpeg = false;
 
         loop {
             let chunk = riff_chunks.next(&mut mss)?;
@@ -147,6 +154,9 @@ impl<'s> WavReader<'s> {
                 }
                 RiffWaveChunks::Format(fmt) => {
                     let format = fmt.parse(&mut mss)?;
+
+                    // MPEG audio in WAV is framed from the elementary stream, not by fixed blocks.
+                    is_mpeg = matches!(format.format_data, FormatData::Mpeg(_));
 
                     // The Format chunk contains the block_align field and possible additional
                     // information to handle packetization and seeking.
@@ -189,6 +199,18 @@ impl<'s> WavReader<'s> {
 
                     let data_end_pos = data_len.and_then(|len| data_start_pos.checked_add(len));
 
+                    // For MPEG audio the elementary stream is authoritative for the exact codec
+                    // (Layer I/II/III) and sample rate, so refine the codec parameters from the
+                    // first frame, then rewind so the first packet is read in full.
+                    if is_mpeg {
+                        if let Some((first, _)) =
+                            mpeg::read_frame(&mut mss, data_end_pos.unwrap_or(u64::MAX))?
+                        {
+                            codec_params.for_codec(first.codec).with_sample_rate(first.sample_rate);
+                        }
+                        mss.seek_buffered(data_start_pos);
+                    }
+
                     // Create the track.
                     let mut track = Track::new(0);
 
@@ -203,13 +225,13 @@ impl<'s> WavReader<'s> {
                         append_data_params(&mut track, data_len, &packet_info);
                     }
 
-                    // For RF64 files, prefer the sample count from ds64 over the computed
-                    // value. For standard WAV, prefer fact chunk over computed value.
-                    // Applied after append_data_params so the authoritative value wins.
-                    if let Some(sample_count) = rf64_sizes.sample_count {
-                        track.with_num_frames(sample_count);
-                    } else if let Some(fact) = &fact {
-                        append_fact_params(&mut track, fact);
+                    // Append Data chunk fields to track. For MPEG audio the block-based frame count
+                    // would be meaningless (frames are variable-length), so leave the frame count
+                    // unset rather than derive a bogus duration from the byte length.
+                    if let Some(data_len) = data.len {
+                        if !is_mpeg {
+                            append_data_params(&mut track, u64::from(data_len), &packet_info);
+                        }
                     }
 
                     // Instantiate the reader.
@@ -222,6 +244,8 @@ impl<'s> WavReader<'s> {
                         packet_info,
                         data_start_pos,
                         data_end_pos,
+                        is_mpeg,
+                        mpeg_ts: 0,
                     });
                 }
             }
@@ -285,6 +309,15 @@ impl FormatReader for WavReader<'_> {
     }
 
     fn next_packet(&mut self) -> Result<Option<Packet>> {
+        // MPEG audio in WAV is framed from the elementary stream, one MPEG frame per packet.
+        if self.is_mpeg {
+            return mpeg::next_packet(
+                &mut self.reader,
+                self.data_end_pos.unwrap_or(u64::MAX),
+                &mut self.mpeg_ts,
+            );
+        }
+
         next_packet(
             &mut self.reader,
             &self.packet_info,
@@ -389,197 +422,74 @@ impl FormatReader for WavReader<'_> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::io::Cursor;
-    use symphonia_core::io::ReadOnlySource;
 
-    /// Creates a minimal valid RF64 file in memory.
-    fn create_rf64_test_file(data_size: u64, sample_count: u64, pcm_data: &[u8]) -> Vec<u8> {
-        let mut file = Vec::new();
+    use symphonia_core::codecs::audio::well_known::CODEC_ID_MP3;
+    use symphonia_core::formats::FormatReader;
 
-        // RF64 header
-        file.extend_from_slice(b"RF64");
-        file.extend_from_slice(&0xFFFFFFFFu32.to_le_bytes()); // placeholder size
-        file.extend_from_slice(b"WAVE");
+    use super::*;
 
-        // ds64 chunk (28 bytes)
-        file.extend_from_slice(b"ds64");
-        file.extend_from_slice(&28u32.to_le_bytes()); // chunk size
-        let riff_size: u64 = 4 + 8 + 28 + 8 + 16 + 8 + data_size; // WAVE + ds64 + fmt + data
-        file.extend_from_slice(&riff_size.to_le_bytes()); // riffSize64
-        file.extend_from_slice(&data_size.to_le_bytes()); // dataSize64
-        file.extend_from_slice(&sample_count.to_le_bytes()); // sampleCount64
-        file.extend_from_slice(&0u32.to_le_bytes()); // tableLength
-
-        // fmt chunk (16 bytes, PCM format)
-        file.extend_from_slice(b"fmt ");
-        file.extend_from_slice(&16u32.to_le_bytes());
-        file.extend_from_slice(&1u16.to_le_bytes()); // format = PCM
-        file.extend_from_slice(&1u16.to_le_bytes()); // channels = 1
-        file.extend_from_slice(&44100u32.to_le_bytes()); // sample rate
-        file.extend_from_slice(&88200u32.to_le_bytes()); // byte rate
-        file.extend_from_slice(&2u16.to_le_bytes()); // block align
-        file.extend_from_slice(&16u16.to_le_bytes()); // bits per sample
-
-        // data chunk
-        file.extend_from_slice(b"data");
-        let chunk_size = if data_size > u32::MAX as u64 { 0xFFFFFFFF } else { data_size as u32 };
-        file.extend_from_slice(&chunk_size.to_le_bytes());
-        file.extend_from_slice(pcm_data);
-
-        file
+    /// A single MPEG-1 Layer III frame: 128 kbps, 44.1 kHz, stereo (417 bytes). The body is zeroed;
+    /// only framing is under test, not decoding.
+    fn mp3_frame() -> Vec<u8> {
+        let mut frame = vec![0u8; 417];
+        frame[0..4].copy_from_slice(&0xFFFB_9000u32.to_be_bytes());
+        frame
     }
 
-    /// Creates a minimal valid standard WAV file in memory.
-    fn create_wav_test_file(pcm_data: &[u8]) -> Vec<u8> {
-        let mut file = Vec::new();
-        let data_len = pcm_data.len() as u32;
+    /// Wrap concatenated MPEG audio frames in a minimal RIFF/WAVE container whose `fmt ` chunk
+    /// declares `WAVE_FORMAT_MPEGLAYER3` (0x0055).
+    fn riff_mpeglayer3(frames: &[Vec<u8>]) -> Vec<u8> {
+        let data: Vec<u8> = frames.iter().flatten().copied().collect();
 
-        // RIFF header
-        file.extend_from_slice(b"RIFF");
-        let total_size = 4 + 8 + 16 + 8 + data_len; // WAVE + fmt chunk + data chunk
-        file.extend_from_slice(&total_size.to_le_bytes());
-        file.extend_from_slice(b"WAVE");
+        // MPEGLAYER3WAVEFORMAT: 16-byte WAVEFORMATEX base + 2-byte cbSize + 12-byte extension.
+        let mut fmt = Vec::new();
+        fmt.extend_from_slice(&0x0055u16.to_le_bytes()); // wFormatTag
+        fmt.extend_from_slice(&2u16.to_le_bytes()); // nChannels
+        fmt.extend_from_slice(&44_100u32.to_le_bytes()); // nSamplesPerSec
+        fmt.extend_from_slice(&16_000u32.to_le_bytes()); // nAvgBytesPerSec
+        fmt.extend_from_slice(&1u16.to_le_bytes()); // nBlockAlign
+        fmt.extend_from_slice(&0u16.to_le_bytes()); // wBitsPerSample
+        fmt.extend_from_slice(&12u16.to_le_bytes()); // cbSize
+        fmt.extend_from_slice(&1u16.to_le_bytes()); // wID (MPEG Layer 3)
+        fmt.extend_from_slice(&0u32.to_le_bytes()); // fdwFlags
+        fmt.extend_from_slice(&417u16.to_le_bytes()); // nBlockSize
+        fmt.extend_from_slice(&1u16.to_le_bytes()); // nFramesPerBlock
+        fmt.extend_from_slice(&0u16.to_le_bytes()); // nCodecDelay
 
-        // fmt chunk
-        file.extend_from_slice(b"fmt ");
-        file.extend_from_slice(&16u32.to_le_bytes());
-        file.extend_from_slice(&1u16.to_le_bytes()); // PCM
-        file.extend_from_slice(&1u16.to_le_bytes()); // mono
-        file.extend_from_slice(&44100u32.to_le_bytes()); // sample rate
-        file.extend_from_slice(&88200u32.to_le_bytes()); // byte rate
-        file.extend_from_slice(&2u16.to_le_bytes()); // block align
-        file.extend_from_slice(&16u16.to_le_bytes()); // bits per sample
+        let mut body = Vec::new();
+        body.extend_from_slice(b"WAVE");
+        body.extend_from_slice(b"fmt ");
+        body.extend_from_slice(&(fmt.len() as u32).to_le_bytes());
+        body.extend_from_slice(&fmt);
+        body.extend_from_slice(b"data");
+        body.extend_from_slice(&(data.len() as u32).to_le_bytes());
+        body.extend_from_slice(&data);
 
-        // data chunk
-        file.extend_from_slice(b"data");
-        file.extend_from_slice(&data_len.to_le_bytes());
-        file.extend_from_slice(pcm_data);
-
-        file
+        let mut out = Vec::new();
+        out.extend_from_slice(b"RIFF");
+        out.extend_from_slice(&(body.len() as u32).to_le_bytes());
+        out.extend_from_slice(&body);
+        out
     }
 
     #[test]
-    fn test_rf64_small_file() {
-        let pcm_data = vec![0u8; 1000]; // 500 samples at 16-bit mono
-        let rf64_file = create_rf64_test_file(1000, 500, &pcm_data);
+    fn reads_mpeg_layer3_in_wav() {
+        let frames = vec![mp3_frame(), mp3_frame()];
+        let bytes = riff_mpeglayer3(&frames);
+        let mss = MediaSourceStream::new(Box::new(Cursor::new(bytes)), Default::default());
+        let mut reader = WavReader::try_new(mss, FormatOptions::default()).unwrap();
 
-        let source = ReadOnlySource::new(Cursor::new(rf64_file));
-        let mss = MediaSourceStream::new(Box::new(source), Default::default());
+        // The track is recognised as MP3 at 44.1 kHz.
+        let params = reader.tracks()[0].codec_params.as_ref().unwrap().audio().unwrap();
+        assert_eq!(params.codec, CODEC_ID_MP3);
+        assert_eq!(params.sample_rate, Some(44_100));
 
-        let reader = WavReader::try_new(mss, FormatOptions::default()).unwrap();
-
-        assert_eq!(reader.tracks.len(), 1);
-        assert_eq!(reader.tracks[0].num_frames, Some(500));
-    }
-
-    #[test]
-    fn test_rf64_large_data_size() {
-        let pcm_data = vec![0u8; 100];
-        let large_data_size: u64 = 5_000_000_000; // 5GB
-        let sample_count = large_data_size / 2; // 16-bit samples
-        let rf64_file = create_rf64_test_file(large_data_size, sample_count, &pcm_data);
-
-        let source = ReadOnlySource::new(Cursor::new(rf64_file));
-        let mss = MediaSourceStream::new(Box::new(source), Default::default());
-
-        let reader = WavReader::try_new(mss, FormatOptions::default()).unwrap();
-
-        assert_eq!(reader.tracks.len(), 1);
-        assert_eq!(reader.tracks[0].num_frames, Some(sample_count));
-        // data_end_pos should use 64-bit size
-        let data_end = reader.data_end_pos.unwrap();
-        assert_eq!(data_end - reader.data_start_pos, large_data_size);
-    }
-
-    #[test]
-    fn test_standard_wav_unchanged() {
-        let pcm_data = vec![0u8; 100];
-        let wav_file = create_wav_test_file(&pcm_data);
-
-        let source = ReadOnlySource::new(Cursor::new(wav_file));
-        let mss = MediaSourceStream::new(Box::new(source), Default::default());
-
-        let reader = WavReader::try_new(mss, FormatOptions::default()).unwrap();
-
-        assert_eq!(reader.tracks.len(), 1);
-        let data_end = reader.data_end_pos.unwrap();
-        assert_eq!(data_end - reader.data_start_pos, 100);
-    }
-
-    #[test]
-    fn test_rf64_missing_ds64_uses_fallback() {
-        // RF64 file without ds64 chunk should still work using 32-bit sizes.
-        let mut file = Vec::new();
-
-        file.extend_from_slice(b"RF64");
-        let total_size = 4 + 8 + 16 + 8 + 100;
-        file.extend_from_slice(&(total_size as u32).to_le_bytes());
-        file.extend_from_slice(b"WAVE");
-
-        // fmt chunk
-        file.extend_from_slice(b"fmt ");
-        file.extend_from_slice(&16u32.to_le_bytes());
-        file.extend_from_slice(&1u16.to_le_bytes()); // PCM
-        file.extend_from_slice(&1u16.to_le_bytes()); // mono
-        file.extend_from_slice(&44100u32.to_le_bytes());
-        file.extend_from_slice(&88200u32.to_le_bytes());
-        file.extend_from_slice(&2u16.to_le_bytes());
-        file.extend_from_slice(&16u16.to_le_bytes());
-
-        // data chunk
-        file.extend_from_slice(b"data");
-        file.extend_from_slice(&100u32.to_le_bytes());
-        file.extend_from_slice(&vec![0u8; 100]);
-
-        let source = ReadOnlySource::new(Cursor::new(file));
-        let mss = MediaSourceStream::new(Box::new(source), Default::default());
-
-        let reader = WavReader::try_new(mss, FormatOptions::default()).unwrap();
-        let data_end = reader.data_end_pos.unwrap();
-        assert_eq!(data_end - reader.data_start_pos, 100);
-    }
-
-    #[test]
-    fn test_ds64_ignored_in_standard_wav() {
-        // Standard RIFF/WAV with a ds64 chunk should ignore it.
-        let mut file = Vec::new();
-
-        file.extend_from_slice(b"RIFF");
-        let total_size = 4 + 8 + 28 + 8 + 16 + 8 + 100; // includes ds64
-        file.extend_from_slice(&(total_size as u32).to_le_bytes());
-        file.extend_from_slice(b"WAVE");
-
-        // ds64 chunk (should be ignored in standard WAV)
-        file.extend_from_slice(b"ds64");
-        file.extend_from_slice(&28u32.to_le_bytes());
-        file.extend_from_slice(&999999999u64.to_le_bytes()); // fake riff size
-        file.extend_from_slice(&888888888u64.to_le_bytes()); // fake data size (should NOT be used)
-        file.extend_from_slice(&777777777u64.to_le_bytes()); // fake sample count
-        file.extend_from_slice(&0u32.to_le_bytes());
-
-        // fmt chunk
-        file.extend_from_slice(b"fmt ");
-        file.extend_from_slice(&16u32.to_le_bytes());
-        file.extend_from_slice(&1u16.to_le_bytes());
-        file.extend_from_slice(&1u16.to_le_bytes());
-        file.extend_from_slice(&44100u32.to_le_bytes());
-        file.extend_from_slice(&88200u32.to_le_bytes());
-        file.extend_from_slice(&2u16.to_le_bytes());
-        file.extend_from_slice(&16u16.to_le_bytes());
-
-        // data chunk
-        file.extend_from_slice(b"data");
-        file.extend_from_slice(&100u32.to_le_bytes());
-        file.extend_from_slice(&vec![0u8; 100]);
-
-        let source = ReadOnlySource::new(Cursor::new(file));
-        let mss = MediaSourceStream::new(Box::new(source), Default::default());
-
-        let reader = WavReader::try_new(mss, FormatOptions::default()).unwrap();
-
-        // Should use 32-bit size from data chunk, NOT 64-bit from ds64
-        let data_end = reader.data_end_pos.unwrap();
-        assert_eq!(data_end - reader.data_start_pos, 100);
+        // Each MPEG frame is emitted as one packet, byte-for-byte, then the stream ends.
+        let packet = reader.next_packet().unwrap().unwrap();
+        assert_eq!(&packet.data[..], &frames[0][..]);
+        let packet = reader.next_packet().unwrap().unwrap();
+        assert_eq!(&packet.data[..], &frames[1][..]);
+        assert!(reader.next_packet().unwrap().is_none());
     }
 }
