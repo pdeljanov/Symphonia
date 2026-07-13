@@ -4,7 +4,7 @@ use symphonia::core::formats::FormatOptions;
 use symphonia::core::formats::probe::Hint;
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
-use symphonia_core::formats::TrackType;
+use symphonia::core::formats::TrackType;
 
 fn main() {
     // Get the first command line argument.
