@@ -853,7 +853,9 @@ impl<R: ReadAtom> AtomIterator<R> {
         R: MediaSource,
     {
         // Must currently have a pending atom to allow resynchronizing to it.
-        let _ = self.pending.as_ref().ok_or(AtomError::NoPendingAtom)?;
+        if !self.reader.is_seekable() {
+            let _ = self.pending.as_ref().ok_or(AtomError::NoPendingAtom)?;
+        }
 
         // Seek to the desired position. Doesn't seek if already in position.
         self.seek_reader(pos)?;
