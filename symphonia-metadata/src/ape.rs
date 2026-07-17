@@ -174,7 +174,7 @@ enum ApeVersion {
 struct ApeHeader {
     version: ApeVersion,
     num_items: u32,
-    size: u32,
+    size: u64,
     is_header: bool,
     has_header: bool,
     has_footer: bool,
@@ -205,7 +205,7 @@ impl ApeHeader {
         let version = ApeHeader::read_identity(reader)?;
 
         // The size of the tag excluding any header.
-        let size = reader.read_u32()?;
+        let size = u64::from(reader.read_u32()?);
         let num_items = reader.read_u32()?;
         let flags = reader.read_u32()?;
         let _reserved = reader.read_u64()?;
@@ -363,7 +363,7 @@ impl MetadataReader for ApeReader<'_> {
         if !header.is_header {
             // The current position is the first byte after the APE footer. After the seek, the
             // reader will be at the header (if the tag contains one), or the first item.
-            self.reader.seek(SeekFrom::Current(-(i64::from(header.size))))?;
+            self.reader.seek(SeekFrom::Current(-(header.size as i64)))?;
 
             // If the APE tag contains a header, read it and do some verification checks. All header
             // and footer fields should match other than the `is_header` flag.
