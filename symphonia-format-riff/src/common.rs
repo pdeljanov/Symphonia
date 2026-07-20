@@ -20,7 +20,7 @@ use symphonia_core::errors::{Result, decode_error};
 use symphonia_core::formats::prelude::*;
 use symphonia_core::io::{MediaSourceStream, ReadBytes};
 
-use log::{debug, info};
+use log::{info, warn};
 
 pub enum ByteOrder {
     LittleEndian,
@@ -89,7 +89,7 @@ impl<T: ParseChunkTag> ChunksReader<T> {
             // Read chunk tag and length (the chunk header).
             let tag = reader.read_quad_bytes()?;
 
-            let chunk_len = match self.byte_order {
+            let mut chunk_len = match self.byte_order {
                 ByteOrder::LittleEndian => reader.read_u32()?,
                 ByteOrder::BigEndian => reader.read_be_u32()?,
             };
@@ -100,12 +100,13 @@ impl<T: ParseChunkTag> ChunksReader<T> {
             if let Some(len) = self.len {
                 // Warning: The formulation of this conditional is critical because chunk_len is an
                 // untrusted input, it may overflow when if added to anything.
-                if len - self.consumed < u64::from(chunk_len) {
-                    debug!(
+                let remaining = len - self.consumed;
+                if remaining < u64::from(chunk_len) {
+                    warn!(
                         "chunk length of {} exceeds parent (list) chunk length",
                         String::from_utf8_lossy(&tag)
                     );
-                    return decode_error("riff: chunk length exceeds parent (list) chunk length");
+                    chunk_len = remaining as u32;
                 }
             }
 
