@@ -52,11 +52,15 @@ impl Atom for StsdAtom {
             return decode_error("isomp4 (stsd): missing sample entry");
         }
 
+        // A track may declare more than one sample entry — for example a chapter-image or
+        // timed-text track in a podcast. Symphonia represents a track with a single codec, so use
+        // the first sample entry and let the enclosing `read_atom` skip the remaining ones, rather
+        // than failing to demux the whole file (including its audio track) over an auxiliary track.
         if num_entries > 1 {
-            return unsupported_error("isomp4 (stsd): more than 1 sample entry");
+            debug!("isomp4 (stsd): {num_entries} sample entries, using the first");
         }
 
-        // Read exactly one sample entry atom.
+        // Read the first sample entry atom.
         let header = match it.next_header()? {
             Some(header) => header,
             _ => return decode_error("isomp4 (stsd): missing expected sample entry"),
@@ -740,5 +744,76 @@ impl Atom for PaspAtom {
             vert_off_n: it.read_u32()?,
             vert_off_d: it.read_u32()?,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Cursor;
+
+    use symphonia_core::codecs::CodecParameters;
+    use symphonia_core::io::MediaSourceStream;
+
+    use super::StsdAtom;
+    use crate::atoms::AtomIterator;
+
+    /// Build a minimal `stsd` atom declaring `entry_count` sample entries: a first `mp4a` audio
+    /// entry (44.1 kHz, stereo) followed by a throwaway `jpeg` entry that must be skipped.
+    fn stsd_with_two_entries() -> Vec<u8> {
+        // First entry: an mp4a audio sample entry (version 0, no codec-specific sub-atoms).
+        let mut mp4a_body = Vec::new();
+        mp4a_body.extend_from_slice(&[0u8; 6]); // reserved
+        mp4a_body.extend_from_slice(&[0, 0]); // data reference index
+        mp4a_body.extend_from_slice(&[0, 0]); // version 0
+        mp4a_body.extend_from_slice(&[0u8; 6]); // revision + vendor
+        mp4a_body.extend_from_slice(&2u16.to_be_bytes()); // channels
+        mp4a_body.extend_from_slice(&16u16.to_be_bytes()); // sample size
+        mp4a_body.extend_from_slice(&[0u8; 4]); // compression id + packet size
+        mp4a_body.extend_from_slice(&(44_100u32 << 16).to_be_bytes()); // sample rate (16.16)
+        let mut mp4a = Vec::new();
+        mp4a.extend_from_slice(&((8 + mp4a_body.len()) as u32).to_be_bytes());
+        mp4a.extend_from_slice(b"mp4a");
+        mp4a.extend_from_slice(&mp4a_body);
+
+        // Second entry: a throwaway image entry (as a podcast chapter-image track carries).
+        let mut jpeg = Vec::new();
+        jpeg.extend_from_slice(&12u32.to_be_bytes());
+        jpeg.extend_from_slice(b"jpeg");
+        jpeg.extend_from_slice(&[0u8; 4]);
+
+        let mut body = Vec::new();
+        body.extend_from_slice(&[0u8; 4]); // version + flags
+        body.extend_from_slice(&2u32.to_be_bytes()); // entry count
+        body.extend_from_slice(&mp4a);
+        body.extend_from_slice(&jpeg);
+
+        let mut atom = Vec::new();
+        atom.extend_from_slice(&((8 + body.len()) as u32).to_be_bytes());
+        atom.extend_from_slice(b"stsd");
+        atom.extend_from_slice(&body);
+        atom
+    }
+
+    #[test]
+    fn reads_first_entry_when_multiple_present() {
+        let bytes = stsd_with_two_entries();
+        let len = bytes.len() as u64;
+        let mss = MediaSourceStream::new(Box::new(Cursor::new(bytes)), Default::default());
+        let mut it = AtomIterator::new(mss, Some(len));
+
+        assert!(it.next_header().ok().flatten().is_some(), "stsd header should be read");
+        // A second sample entry must not fail the whole atom (previously an unsupported error).
+        let stsd = match it.read_atom::<StsdAtom>() {
+            Ok(stsd) => stsd,
+            Err(_) => panic!("stsd with two entries should parse"),
+        };
+
+        // The first (audio) entry is the one used.
+        match stsd.make_codec_params() {
+            Some(CodecParameters::Audio(params)) => {
+                assert_eq!(params.sample_rate, Some(44_100));
+            }
+            _ => panic!("expected the first entry's audio codec parameters"),
+        }
     }
 }
