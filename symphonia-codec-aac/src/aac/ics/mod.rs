@@ -240,6 +240,11 @@ impl Ics {
             let mut l = 0;
 
             while k < self.info.max_sfb {
+                // `l` counts sections, not bands, and advances once per section. A crafted
+                // stream with many zero-length sections can push it past the section arrays
+                // even though `k` (the band index) stays below `max_sfb`, so bound it here.
+                validate!(l < MAX_SFBS);
+
                 self.sect_cb[g][l] = bs.read_bits_leq32(4)? as u8;
                 self.sect_len[g][l] = 0;
 
@@ -602,4 +607,30 @@ fn read_escape<B: ReadBitsLtr>(bs: &mut B) -> Result<u16> {
     let word = (1 << (n + 4)) + bs.read_bits_leq32(n + 4)? as u16;
 
     Ok(word)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use symphonia_core::io::BitReaderLtr;
+
+    #[test]
+    fn decode_section_data_rejects_excess_zero_length_sections() {
+        // For a long window each section is a 4-bit codebook followed by 5-bit
+        // length increments. An all-zero bitstream therefore reads codebook 0
+        // and a zero-length section every time, so the band index never reaches
+        // `max_sfb` while the section index keeps climbing. More than MAX_SFBS
+        // such sections used to run off the end of `sect_cb`; parsing must now
+        // fail cleanly instead of panicking. (MAX_SFBS + 1) sections at 9 bits
+        // each fit comfortably in this buffer.
+        let buf = [0u8; (MAX_SFBS + 1) * 9 / 8 + 1];
+
+        let mut ics = Ics::new(GASubbandInfo::find(44100));
+        ics.info.long_win = true;
+        ics.info.window_groups = 1;
+        ics.info.max_sfb = 1;
+
+        let mut bs = BitReaderLtr::new(&buf);
+        assert!(ics.decode_section_data(&mut bs).is_err());
+    }
 }
