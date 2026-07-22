@@ -42,3 +42,5 @@
 msrv = "1.85"
 
 allow-unwrap-in-tests = true
+
+array-size-threshold = 256
