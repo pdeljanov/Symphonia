@@ -98,6 +98,7 @@
 //! |------------------------|-----------------------|
 //! | Subtitle codec support | `exp-subtitle-codecs` |
 //! | Video codec support    | `exp-video-codecs`    |
+//! | WavPack format support | `exp-format-wavpack`  |
 //!
 //! ## Warnings
 //!
@@ -140,6 +141,9 @@ pub mod default {
         #[cfg(feature = "vorbis")]
         pub use symphonia_codec_vorbis::VorbisDecoder;
 
+        #[cfg(feature = "exp-format-wavpack")]
+        pub use symphonia_codec_wavpack::WavPackDecoder;
+
         #[deprecated = "use `default::codecs::MpaDecoder` instead"]
         #[cfg(any(feature = "mp1", feature = "mp2", feature = "mp3"))]
         pub type Mp3Decoder = MpaDecoder;
@@ -166,6 +170,10 @@ pub mod default {
         pub use symphonia_format_riff::AiffReader;
         #[cfg(feature = "wav")]
         pub use symphonia_format_riff::WavReader;
+        #[cfg(feature = "exp-format-wavpack")]
+        pub use symphonia_codec_wavpack::WavPackReader;
+        #[cfg(feature = "exp-format-wavpack")]
+        pub use symphonia_codec_wavpack::WavPackDecoder;
 
         #[deprecated = "use `default::formats::MpaReader` instead"]
         #[cfg(any(feature = "mp1", feature = "mp2", feature = "mp3"))]
@@ -252,6 +260,9 @@ pub mod default {
 
         #[cfg(feature = "vorbis")]
         registry.register_audio_decoder::<codecs::VorbisDecoder>();
+
+        #[cfg(feature = "exp-format-wavpack")]
+        registry.register_audio_decoder::<codecs::WavPackDecoder>();
     }
 
     /// Registers all the formats selected by the `feature` flags in the includer's `Cargo.toml` on
@@ -287,6 +298,9 @@ pub mod default {
 
         #[cfg(feature = "mkv")]
         probe.register_format::<formats::MkvReader<'_>>();
+
+        #[cfg(feature = "exp-format-wavpack")]
+        probe.register_format::<formats::WavPackReader<'_>>();
 
         // Metadata
         #[cfg(feature = "ape")]
