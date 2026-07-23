@@ -22,7 +22,7 @@ use crate::{common::*, synthesis};
 
 use common::BlockType;
 
-use log::warn;
+use log::debug;
 
 /// `BitResevoir` implements the bit resevoir mechanism for main_data. Since frames have a
 /// deterministic length based on the bit-rate, low-complexity portions of the audio may not need
@@ -83,7 +83,7 @@ impl BitResevoir {
             // The number of bytes that will be missing.
             let underflow = (main_data_begin - unread) as u32;
 
-            warn!("mpa: invalid main_data_begin, underflow by {underflow} bytes");
+            debug!("mpa: invalid main_data_begin, underflow by {underflow} bytes");
 
             underflow
         };
