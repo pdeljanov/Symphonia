@@ -964,7 +964,9 @@ fn is_maybe_info_tag(buf: &[u8], header: &FrameHeader) -> bool {
     }
 
     // The side information should be zeroed.
-    !buf[MPEG_HEADER_LEN..offset].iter().any(|&b| b != 0)
+    let start = MPEG_HEADER_LEN + if header.has_crc { 2 } else { 0 };
+
+    !buf[start..offset].iter().any(|&b| b != 0)
 }
 
 const VBRI_TAG_ID: [u8; 4] = *b"VBRI";
@@ -1042,5 +1044,73 @@ fn is_maybe_vbri_tag(buf: &[u8], header: &FrameHeader) -> bool {
     }
 
     // The bytes preceeding the VBRI tag (mostly the side information) should be all 0.
-    !buf[MPEG_HEADER_LEN..VBRI_TAG_OFFSET].iter().any(|&b| b != 0)
+    let start = MPEG_HEADER_LEN + if header.has_crc { 2 } else { 0 };
+
+    !buf[start..VBRI_TAG_OFFSET].iter().any(|&b| b != 0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::common::{ChannelMode, Emphasis, MpegVersion};
+
+    #[test]
+    fn test_is_maybe_info_tag_with_crc() {
+        let header = FrameHeader {
+            version: MpegVersion::Mpeg1,
+            layer: MpegLayer::Layer3,
+            bitrate: 128000,
+            sample_rate: 44100,
+            sample_rate_idx: 0,
+            channel_mode: ChannelMode::Stereo,
+            emphasis: Emphasis::None,
+            is_copyrighted: false,
+            is_original: false,
+            has_padding: false,
+            has_crc: true,
+            frame_size: 417,
+        };
+
+        let mut buf = vec![0u8; 100];
+        // Header
+        buf[0..4].copy_from_slice(&[0xff, 0xfa, 0x90, 0x44]);
+        // CRC (non-zero)
+        buf[4] = 0x12;
+        buf[5] = 0x34;
+        // Tag ID at offset 32 + 4 = 36
+        buf[36..40].copy_from_slice(b"Xing");
+
+        // Ensure the heuristic returns true even if a non-zero CRC is present.
+        assert!(is_maybe_info_tag(&buf, &header));
+    }
+
+    #[test]
+    fn test_is_maybe_vbri_tag_with_crc() {
+        let header = FrameHeader {
+            version: MpegVersion::Mpeg1,
+            layer: MpegLayer::Layer3,
+            bitrate: 128000,
+            sample_rate: 44100,
+            sample_rate_idx: 0,
+            channel_mode: ChannelMode::Stereo,
+            emphasis: Emphasis::None,
+            is_copyrighted: false,
+            is_original: false,
+            has_padding: false,
+            has_crc: true,
+            frame_size: 417,
+        };
+
+        let mut buf = vec![0u8; 100];
+        // Header
+        buf[0..4].copy_from_slice(&[0xff, 0xfa, 0x90, 0x44]);
+        // CRC (non-zero)
+        buf[4] = 0x12;
+        buf[5] = 0x34;
+        // Tag ID at offset 36
+        buf[36..40].copy_from_slice(b"VBRI");
+
+        // Ensure the heuristic returns true even if a non-zero CRC is present.
+        assert!(is_maybe_vbri_tag(&buf, &header));
+    }
 }
