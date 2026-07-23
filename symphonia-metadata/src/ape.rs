@@ -240,6 +240,10 @@ enum ApeItemValue {
     Locator(String),
 }
 
+/// Maximum size of an APE tag item. APE tags can store embedded cover art, so a generous
+/// limit is used to handle large images while preventing runaway allocations.
+const MAX_APE_ITEM_SIZE: usize = 32 * 1024 * 1024;
+
 /// An APE tag item.
 struct ApeItem {
     key: String,
@@ -251,6 +255,9 @@ impl ApeItem {
     fn read<B: ReadBytes>(reader: &mut B, header: &ApeHeader) -> Result<ApeItem> {
         // The length of the value in bytes.
         let len = reader.read_u32()? as usize;
+        if len > MAX_APE_ITEM_SIZE {
+            return decode_error("ape: item value length exceeds limit");
+        }
 
         // Read flags.
         let flags = match header.version {

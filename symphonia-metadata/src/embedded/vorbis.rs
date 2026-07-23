@@ -388,7 +388,11 @@ pub fn read_vorbis_comment<B: ReadBytes>(
         // Read the comment string length in bytes.
         let comment_length = reader.read_u32()?;
 
-        // TODO: Apply a limit.
+        /// Maximum length of a metadata block to prevent OOM on malformed files.
+        const MAX_METADATA_BLOCK_SIZE: usize = 32 * 1024 * 1024;
+        if comment_length as usize > MAX_METADATA_BLOCK_SIZE {
+            return decode_error("meta (vorbis): comment length exceeds limit");
+        }
 
         // Read the comment string.
         let mut comment_data = vec![0; comment_length as usize];
