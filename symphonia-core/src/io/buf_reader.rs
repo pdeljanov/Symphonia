@@ -72,7 +72,9 @@ impl<'a> BufReader<'a> {
             i += align;
         }
 
-        self.pos = cmp::min(j, self.buf.len());
+        // When the pattern is not matched, `j` may have advanced past `end` by up to `align - 1`
+        // bytes. Clamp to `end` so the scan never consumes more than `scan_len` bytes.
+        self.pos = cmp::min(j, end);
         Ok(&self.buf[start..self.pos])
     }
 
@@ -205,5 +207,47 @@ impl FiniteStream for BufReader<'_> {
     #[inline(always)]
     fn bytes_available(&self) -> u64 {
         (self.buf.len() - self.pos) as u64
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::BufReader;
+    use crate::io::ReadBytes;
+
+    #[test]
+    fn verify_scan_bytes_aligned_ref_finds_pattern() {
+        let mut reader = BufReader::new(b"AB\0\0CD");
+        let scanned = reader.scan_bytes_aligned_ref(&[0x00, 0x00], 2, 6).unwrap();
+        assert_eq!(scanned, b"AB\0\0");
+        assert_eq!(reader.pos(), 4);
+    }
+
+    #[test]
+    fn verify_scan_bytes_aligned_ref_no_match_returns_remainder() {
+        let mut reader = BufReader::new(b"ABCDEF");
+        let scanned = reader.scan_bytes_aligned_ref(&[0x00, 0x00], 2, 6).unwrap();
+        assert_eq!(scanned, b"ABCDEF");
+        assert_eq!(reader.pos(), 6);
+    }
+
+    #[test]
+    fn verify_scan_bytes_aligned_ref_respects_scan_len() {
+        // No match, scan_len smaller than the remaining bytes, alignment greater than one. The
+        // scan must not consume or return more than scan_len bytes.
+        let mut reader = BufReader::new(b"ABCDEF");
+        let scanned = reader.scan_bytes_aligned_ref(&[0x00, 0x00], 2, 3).unwrap();
+        assert_eq!(scanned, b"ABC");
+        assert_eq!(reader.pos(), 3);
+    }
+
+    #[test]
+    fn verify_scan_bytes_aligned_into_smaller_buffer() {
+        // No match and a destination buffer smaller than the remaining input must not panic.
+        let mut reader = BufReader::new(b"ABCDEF");
+        let mut buf = [0u8; 3];
+        let scanned = reader.scan_bytes_aligned(&[0x00, 0x00], 2, &mut buf).unwrap();
+        assert_eq!(scanned, b"ABC");
+        assert_eq!(reader.pos(), 3);
     }
 }
