@@ -166,6 +166,34 @@ impl ReadBytes for BufReader<'_> {
         Ok(())
     }
 
+    fn read_boxed_slice(&mut self, len: usize) -> io::Result<Box<[u8]>> {
+        let len = cmp::min(self.buf.len() - self.pos, len);
+
+        // The boxed slice will always have a length <= the length of the inner buffer. Therefore,
+        // preallocating the entire boxed slice buffer is safe because it can't be maliciously
+        // large.
+        let mut buf = vec![0u8; len];
+        buf[..len].copy_from_slice(&self.buf[self.pos..self.pos + len]);
+        self.pos += len;
+
+        Ok(buf.into_boxed_slice())
+    }
+
+    fn read_boxed_slice_exact(&mut self, len: usize) -> io::Result<Box<[u8]>> {
+        if self.buf.len() - self.pos < len {
+            return underrun_error();
+        }
+
+        // The boxed slice will always have a length <= the length of the inner buffer. Therefore,
+        // preallocating the entire boxed slice buffer is safe because it can't be maliciously
+        // large.
+        let mut buf = vec![0u8; len];
+        buf.copy_from_slice(&self.buf[self.pos..self.pos + len]);
+        self.pos += len;
+
+        Ok(buf.into_boxed_slice())
+    }
+
     fn scan_bytes_aligned<'b>(
         &mut self,
         pattern: &[u8],
