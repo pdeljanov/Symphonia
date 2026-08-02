@@ -536,7 +536,7 @@ impl<R: ReadEbml, S: EbmlSchema> EbmlIterator<R, S> {
             // parent element, then the parent element has ended. Return `None` in such a case.
             if parent_end.is_none() {
                 for ancestor in self.stack.iter().rev().skip(1) {
-                    if header.is_valid_at(ancestor.depth, ancestor.id).unwrap_or(false) {
+                    if header.is_valid_at(ancestor.depth + 1, ancestor.id).unwrap_or(false) {
                         // This element is a direct child of an ancestor. Iteration will be
                         // terminated to indicate the end of the parent element.
                         return Ok(None);
