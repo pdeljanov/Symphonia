@@ -1,10 +1,7 @@
 #![no_main]
 use libfuzzer_sys::fuzz_target;
 use symphonia::core::audio::layouts::CHANNEL_LAYOUT_STEREO;
-use symphonia::core::codecs::audio::{
-    AudioCodecParameters,
-    well_known::*,
-};
+use symphonia::core::codecs::audio::{AudioCodecParameters, well_known::*};
 use symphonia::core::codecs::registry::RegisterableAudioDecoder;
 use symphonia::default::codecs::PcmDecoder;
 use symphonia_fuzz::fuzz_audio_decoder;
@@ -25,9 +22,7 @@ fuzz_target!(|data: Vec<u8>| {
     let packet_data = data[1..].to_vec();
 
     let mut codec_params = AudioCodecParameters::new();
-    codec_params.for_codec(codec_id)
-        .with_sample_rate(44100)
-        .with_channels(CHANNEL_LAYOUT_STEREO);
+    codec_params.for_codec(codec_id).with_sample_rate(44100).with_channels(CHANNEL_LAYOUT_STEREO);
 
     // Set bits_per_sample based on the codec.
     // PcmDecoder requires this for Integer PCM formats (S16, U24, etc.) because it
@@ -37,7 +32,8 @@ fuzz_target!(|data: Vec<u8>| {
         CODEC_ID_PCM_S8 | CODEC_ID_PCM_U8 | CODEC_ID_PCM_ALAW | CODEC_ID_PCM_MULAW => 8,
         CODEC_ID_PCM_S16LE | CODEC_ID_PCM_S16BE | CODEC_ID_PCM_U16LE | CODEC_ID_PCM_U16BE => 16,
         CODEC_ID_PCM_S24LE | CODEC_ID_PCM_S24BE | CODEC_ID_PCM_U24LE | CODEC_ID_PCM_U24BE => 24,
-        CODEC_ID_PCM_S32LE | CODEC_ID_PCM_S32BE | CODEC_ID_PCM_U32LE | CODEC_ID_PCM_U32BE | CODEC_ID_PCM_F32LE | CODEC_ID_PCM_F32BE => 32,
+        CODEC_ID_PCM_S32LE | CODEC_ID_PCM_S32BE | CODEC_ID_PCM_U32LE | CODEC_ID_PCM_U32BE => 32,
+        CODEC_ID_PCM_F32LE | CODEC_ID_PCM_F32BE => 32,
         CODEC_ID_PCM_F64LE | CODEC_ID_PCM_F64BE => 64,
         _ => 0, // Should be covered above
     };

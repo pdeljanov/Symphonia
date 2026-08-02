@@ -1,8 +1,6 @@
 #![no_main]
 use libfuzzer_sys::fuzz_target;
-use symphonia::core::codecs::audio::{
-    AudioCodecParameters, well_known::CODEC_ID_FLAC,
-};
+use symphonia::core::codecs::audio::{AudioCodecParameters, well_known::CODEC_ID_FLAC};
 use symphonia::default::codecs::FlacDecoder;
 use symphonia_fuzz::fuzz_audio_decoder;
 
@@ -17,7 +15,8 @@ fuzz_target!(|data: Vec<u8>| {
     let (header, packet_data) = if data.len() >= 34 {
         let (h, b) = data.split_at(34);
         (Some(h.to_vec().into_boxed_slice()), b)
-    } else {
+    }
+    else {
         (Some(data.to_vec().into_boxed_slice()), &[][..])
     };
 

@@ -1,8 +1,6 @@
 #![no_main]
 use libfuzzer_sys::fuzz_target;
-use symphonia::core::codecs::audio::{
-    AudioCodecParameters, well_known::CODEC_ID_VORBIS,
-};
+use symphonia::core::codecs::audio::{AudioCodecParameters, well_known::CODEC_ID_VORBIS};
 use symphonia::default::codecs::VorbisDecoder;
 use symphonia_fuzz::fuzz_audio_decoder;
 
@@ -15,7 +13,7 @@ fuzz_target!(|data: Vec<u8>| {
     // If the fuzzer manages to generate valid headers, the decoder is created,
     // and we call decode with an empty packet (or remaining data if we implemented splitting).
     // For now, we focus on fuzzing the header parser (try_new).
-    
+
     // Check if we have enough data to potentially be a header.
     if data.is_empty() {
         return;

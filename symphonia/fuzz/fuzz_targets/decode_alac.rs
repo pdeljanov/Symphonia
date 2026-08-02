@@ -1,8 +1,6 @@
 #![no_main]
 use libfuzzer_sys::fuzz_target;
-use symphonia::core::codecs::audio::{
-    AudioCodecParameters, well_known::CODEC_ID_ALAC,
-};
+use symphonia::core::codecs::audio::{AudioCodecParameters, well_known::CODEC_ID_ALAC};
 use symphonia::default::codecs::AlacDecoder;
 use symphonia_fuzz::fuzz_audio_decoder;
 
@@ -21,7 +19,8 @@ fuzz_target!(|data: Vec<u8>| {
         let split_idx = if data.len() >= 48 { 48 } else { 24 };
         let (h, b) = data.split_at(split_idx);
         (Some(h.to_vec().into_boxed_slice()), b)
-    } else {
+    }
+    else {
         (Some(data.to_vec().into_boxed_slice()), &[][..])
     };
 
@@ -31,8 +30,9 @@ fuzz_target!(|data: Vec<u8>| {
     // If successful, we decode the remaining data.
     if !packet_data.is_empty() {
         fuzz_audio_decoder::<AlacDecoder>(&codec_params, packet_data.to_vec());
-    } else {
-         // Even if empty, we might want to check if try_new doesn't panic on just header
-         fuzz_audio_decoder::<AlacDecoder>(&codec_params, vec![]);
+    }
+    else {
+        // Even if empty, we might want to check if try_new doesn't panic on just header
+        fuzz_audio_decoder::<AlacDecoder>(&codec_params, vec![]);
     }
 });
