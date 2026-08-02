@@ -14,7 +14,8 @@ macro_rules! fuzz_demuxer {
         if let Ok(mut reader) = $constructor(mss, &format_opts, &meta_opts) {
             loop {
                 match reader.next_packet() {
-                    Ok(_) => (),
+                    Ok(Some(_)) => (),
+                    Ok(None) => break,
                     Err(_) => break,
                 }
             }
