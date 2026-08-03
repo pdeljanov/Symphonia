@@ -192,6 +192,9 @@ impl CommonChunk {
             FormatData::Adpcm(_) => {
                 unsupported_error("aiff: packet info not implemented for format Adpcm")
             }
+            FormatData::Mpeg(_) => {
+                unsupported_error("aiff: packet info not implemented for format Mpeg")
+            }
         }
     }
 }
@@ -244,6 +247,9 @@ impl fmt::Display for CommonChunk {
             }
             FormatData::Adpcm(_) => {
                 writeln!(f, "\tformat_data: Adpcm DISPLAY UNSUPPORTED {{")?;
+            }
+            FormatData::Mpeg(_) => {
+                writeln!(f, "\tformat_data: Mpeg DISPLAY UNSUPPORTED {{")?;
             }
         };
 
