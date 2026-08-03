@@ -276,10 +276,75 @@ impl PacketBuilder {
         Some(ParsedPacket { buf: data, sync })
     }
 
+    /// At end-of-stream, attempt to recover a final frame whose delimiter — the next frame's sync
+    /// word — was replaced by a metadata tag wrongly appended after the audio (e.g. an ID3v1 or
+    /// APEv2 tag). Such a tag gets merged onto the last fragment, breaking its CRC-16 footer so the
+    /// frame is never built. Removing the tag re-exposes the frame's own CRC-16, letting it build.
+    /// Returns `None` when there is nothing to recover or the trimmed data is not a valid frame, in
+    /// which case the caller falls back to its normal truncation handling.
+    fn recover_final_fragment(&mut self) -> Option<Fragment> {
+        if self.frags.is_empty() {
+            return None;
+        }
+
+        // Reassemble the pending fragments into a single buffer.
+        let mut buf = Vec::new();
+        for frag in &self.frags {
+            buf.extend_from_slice(&frag.data);
+        }
+
+        // Trim a recognised trailing tag; bail if there is nothing to trim.
+        let len = len_without_trailing_tag(&buf);
+        if len == buf.len() || len < 2 {
+            return None;
+        }
+        buf.truncate(len);
+
+        // Only accept the recovery if what remains is a self-consistent frame — i.e. its trailing
+        // two bytes are the CRC-16 of everything before them. This distinguishes a genuine trailing
+        // tag from a truncated final frame (which must still be reported as an error).
+        let frag = Fragment::new(buf.into_boxed_slice());
+        if !frag.crc_match {
+            return None;
+        }
+
+        self.frags.clear();
+        Some(frag)
+    }
+
     fn reset(&mut self) {
         self.frags.clear();
         self.last_header = None;
     }
+}
+
+/// If `buf` ends with a metadata tag that some taggers wrongly append after FLAC audio, return the
+/// length of `buf` with that tag removed; otherwise return `buf.len()`. Recognises a 128-byte ID3v1
+/// tag and an APEv2 tag. Such a tag is not part of the FLAC bitstream but, lacking a next-frame sync
+/// word, the demuxer cannot otherwise tell where the final audio frame ends.
+fn len_without_trailing_tag(buf: &[u8]) -> usize {
+    let len = buf.len();
+
+    // ID3v1 / ID3v1.1: exactly 128 bytes beginning with "TAG".
+    if len >= 128 && &buf[len - 128..len - 125] == b"TAG" {
+        return len - 128;
+    }
+
+    // APEv2: a 32-byte footer ending the stream with the magic "APETAGEX". The footer's size field
+    // covers the tag items plus the footer; a matching header (a further 32 bytes) precedes them
+    // when the "has header" flag is set.
+    if len >= 32 && &buf[len - 32..len - 24] == b"APETAGEX" {
+        let size = u32::from_le_bytes([buf[len - 20], buf[len - 19], buf[len - 18], buf[len - 17]])
+            as usize;
+        let flags = u32::from_le_bytes([buf[len - 12], buf[len - 11], buf[len - 10], buf[len - 9]]);
+        let has_header = flags & 0x8000_0000 != 0;
+        let total = size + if has_header { 32 } else { 0 };
+        if total >= 32 && total <= len {
+            return len - total;
+        }
+    }
+
+    len
 }
 
 /// Frame resynchronization information.
@@ -453,6 +518,13 @@ impl PacketParser {
         match self.read_fragment(reader, avg_frame_size) {
             Ok(fragment) => Ok(Some(fragment)),
             Err(Error::IoError(err)) if err.kind() == std::io::ErrorKind::UnexpectedEof => {
+                // A metadata tag (e.g. ID3v1) appended after the audio replaces the final frame's
+                // next-sync delimiter, leaving it un-built. Try to recover that frame before
+                // treating the end-of-stream as a truncation.
+                if let Some(frag) = self.builder.recover_final_fragment() {
+                    return Ok(Some(frag));
+                }
+
                 // If the required information is available, verify that atleast the expected number
                 // of audio frames were demuxed.
                 if let Some(num_total_frames) = self.info.n_samples {
@@ -685,4 +757,81 @@ fn scan_for_sync_preamble(buf: &[u8]) -> Option<(usize, u16)> {
 
     // No preamble found.
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use symphonia_core::checksum::Crc16Ansi;
+    use symphonia_core::io::Monitor;
+
+    use super::{Fragment, PacketBuilder, len_without_trailing_tag};
+
+    /// Build a synthetic frame: arbitrary content followed by its CRC-16 footer, exactly as a real
+    /// FLAC frame ends.
+    fn frame_with_crc(content: &[u8]) -> Vec<u8> {
+        let mut crc = Crc16Ansi::new(0);
+        crc.process_buf_bytes(content);
+        let mut frame = content.to_vec();
+        frame.extend_from_slice(&crc.crc().to_be_bytes());
+        frame
+    }
+
+    fn id3v1() -> Vec<u8> {
+        let mut tag = vec![0u8; 128];
+        tag[0..3].copy_from_slice(b"TAG");
+        tag
+    }
+
+    #[test]
+    fn strips_id3v1_trailer() {
+        let audio = vec![1u8, 2, 3, 4, 5, 6, 7, 8];
+        let buf = [audio.clone(), id3v1()].concat();
+        assert_eq!(len_without_trailing_tag(&buf), audio.len());
+    }
+
+    #[test]
+    fn strips_apev2_trailer() {
+        let audio = vec![9u8; 40];
+        let items = vec![0u8; 8];
+        let mut footer = Vec::new();
+        footer.extend_from_slice(b"APETAGEX");
+        footer.extend_from_slice(&2000u32.to_le_bytes()); // version
+        footer.extend_from_slice(&((items.len() + 32) as u32).to_le_bytes()); // size: items + footer
+        footer.extend_from_slice(&1u32.to_le_bytes()); // item count
+        footer.extend_from_slice(&0u32.to_le_bytes()); // flags: no header
+        footer.extend_from_slice(&[0u8; 8]); // reserved
+        let buf = [audio.clone(), items, footer].concat();
+        assert_eq!(len_without_trailing_tag(&buf), audio.len());
+    }
+
+    #[test]
+    fn keeps_untagged_buffer() {
+        let buf = vec![0xABu8; 200];
+        assert_eq!(len_without_trailing_tag(&buf), buf.len());
+        assert_eq!(len_without_trailing_tag(&[1, 2, 3]), 3);
+    }
+
+    #[test]
+    fn recovers_final_frame_behind_id3v1() {
+        let frame = frame_with_crc(&[0x11, 0x22, 0x33, 0x44, 0x55]);
+        let buf = [frame.clone(), id3v1()].concat();
+
+        // The parser has merged the final frame and the trailing tag into one pending fragment.
+        let mut builder = PacketBuilder::default();
+        builder.frags.push(Fragment::new(buf.into_boxed_slice()));
+
+        let recovered = builder.recover_final_fragment().expect("final frame should be recovered");
+        assert!(recovered.crc_match);
+        assert_eq!(&recovered.data[..], &frame[..]);
+        assert!(builder.frags.is_empty());
+    }
+
+    #[test]
+    fn does_not_recover_a_clean_final_frame() {
+        // Without a trailing tag there is nothing to recover; the normal delimiting path handles it.
+        let frame = frame_with_crc(&[1, 2, 3, 4, 5, 6]);
+        let mut builder = PacketBuilder::default();
+        builder.frags.push(Fragment::new(frame.into_boxed_slice()));
+        assert!(builder.recover_final_fragment().is_none());
+    }
 }
