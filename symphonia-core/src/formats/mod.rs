@@ -262,7 +262,8 @@ pub struct Track {
     /// The duration of the track in timebase units.
     ///
     /// If a timebase is available, this field can be used to calculate the total duration of the
-    /// track in seconds by using [`TimeBase::calc_time`] and passing the duration as the argument.
+    /// track in seconds by using [`TimeBase::calc_duration`]. The conversion returns `None` if the
+    /// result cannot be represented by [`Time`], which callers must handle.
     pub duration: Option<Duration>,
     /// The timestamp of the first frame.
     pub start_ts: Timestamp,
@@ -420,7 +421,8 @@ pub struct MediaInfo {
     /// The duration of the media in timebase units.
     ///
     /// If a timebase is available, this field can be used to calculate the total duration of the
-    /// media in seconds by using [`TimeBase::calc_time`] and passing the duration as the argument.
+    /// media in seconds by using [`TimeBase::calc_duration`]. The conversion returns `None` if the
+    /// result cannot be represented by [`Time`], which callers must handle.
     ///
     /// # For Implementations
     ///
@@ -489,10 +491,7 @@ impl MediaInfo {
                         // Calculate the duration of the track in seconds. Saturate here because if
                         // the track is too long then skipping this track to pick a shorter one that
                         // does not saturate is more wrong.
-                        let dur_as_ts =
-                            dur.timestamp_from(Timestamp::ZERO).unwrap_or(Timestamp::MAX);
-
-                        let dur_time = tb.calc_time_saturating(dur_as_ts);
+                        let dur_time = tb.calc_duration_saturating(dur);
 
                         Some((dur_time, t))
                     })
@@ -528,6 +527,38 @@ impl MediaInfo {
     pub fn with_start_ts(&mut self, start_ts: Timestamp) -> &mut Self {
         self.start_ts = start_ts;
         self
+    }
+}
+
+#[cfg(test)]
+mod media_info_tests {
+    use super::{MediaInfo, Track};
+    use crate::units::{Duration, TimeBase};
+
+    #[test]
+    fn verify_from_tracks_selects_longest_duration() {
+        let mut narrowed_longest = Track::new(0);
+        narrowed_longest
+            .with_time_base(TimeBase::try_new(1, u32::MAX).unwrap())
+            .with_duration(Duration::MAX);
+
+        let mut shorter = Track::new(1);
+        shorter
+            .with_time_base(TimeBase::try_new(1, 1).unwrap())
+            .with_duration(Duration::new(3_000_000_000));
+
+        let media_info = MediaInfo::from_tracks(&[narrowed_longest.clone(), shorter.clone()]);
+        assert_eq!(media_info.time_base, narrowed_longest.time_base);
+        assert_eq!(media_info.duration, narrowed_longest.duration);
+
+        let mut saturating_longest = Track::new(2);
+        saturating_longest
+            .with_time_base(TimeBase::try_new(u32::MAX, 1).unwrap())
+            .with_duration(Duration::MAX);
+
+        let media_info = MediaInfo::from_tracks(&[shorter, saturating_longest.clone()]);
+        assert_eq!(media_info.time_base, saturating_longest.time_base);
+        assert_eq!(media_info.duration, saturating_longest.duration);
     }
 }
 
