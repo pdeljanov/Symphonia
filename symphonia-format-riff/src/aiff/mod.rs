@@ -6,7 +6,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use std::collections::HashMap;
-use std::io::{Seek, SeekFrom};
+use std::io::{ErrorKind, Seek, SeekFrom};
 use std::sync::Arc;
 
 use symphonia_core::codecs::CodecParameters;
@@ -107,7 +107,23 @@ impl<'s> AiffReader<'s> {
         let mut builder = MetadataBuilder::new(AIFF_METADATA_INFO);
 
         // Scan over all chunks.
-        while let Some(chunk) = riff_chunks.next(&mut mss)? {
+        loop {
+            let chunk = match riff_chunks.next(&mut mss) {
+                Ok(chunk) => chunk,
+
+                // Stop reading without erroring on EOF since `riff_len` can be incorrect.
+                Err(Error::IoError(err)) if err.kind() == ErrorKind::UnexpectedEof => {
+                    break;
+                }
+
+                Err(err) => return Err(err),
+            };
+
+            let Some(chunk) = chunk
+            else {
+                break;
+            };
+
             match chunk {
                 RiffAiffChunks::Common(chunk) => {
                     // Only one common chunk is allowed.
