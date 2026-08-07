@@ -963,10 +963,8 @@ fn is_maybe_info_tag(buf: &[u8], header: &FrameHeader) -> bool {
         return false;
     }
 
-    // The side information should be zeroed.
-    let start = MPEG_HEADER_LEN + if header.has_crc { 2 } else { 0 };
-
-    !buf[start..offset].iter().any(|&b| b != 0)
+    // The side information, which follows the header and optional CRC, should be zeroed.
+    !buf[header.header_size()..offset].iter().any(|&b| b != 0)
 }
 
 const VBRI_TAG_ID: [u8; 4] = *b"VBRI";
@@ -1044,9 +1042,7 @@ fn is_maybe_vbri_tag(buf: &[u8], header: &FrameHeader) -> bool {
     }
 
     // The bytes preceeding the VBRI tag (mostly the side information) should be all 0.
-    let start = MPEG_HEADER_LEN + if header.has_crc { 2 } else { 0 };
-
-    !buf[start..VBRI_TAG_OFFSET].iter().any(|&b| b != 0)
+    !buf[header.header_size()..VBRI_TAG_OFFSET].iter().any(|&b| b != 0)
 }
 
 #[cfg(test)]
