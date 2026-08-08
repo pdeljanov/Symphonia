@@ -16,6 +16,7 @@ use super::{
 };
 
 /// An immutable slice of planar audio.
+#[derive(Clone)]
 pub struct AudioSlice<'a, S: Sample> {
     spec: &'a AudioSpec,
     planes: &'a [Vec<S>],
