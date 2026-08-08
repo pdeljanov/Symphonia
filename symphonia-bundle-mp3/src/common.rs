@@ -112,6 +112,7 @@ pub struct FrameHeader {
     #[allow(dead_code)]
     pub has_padding: bool,
     pub has_crc: bool,
+    /// The size of the frame, including the optional CRC, but excluding the standard frame header.
     pub frame_size: usize,
 }
 

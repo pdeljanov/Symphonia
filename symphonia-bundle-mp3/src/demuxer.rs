@@ -771,15 +771,15 @@ fn try_read_info_tag_inner(buf: &[u8], header: &FrameHeader) -> Result<Option<Xi
     }
 
     // The position of the Xing/Info tag relative to the end of the header. This is equal to the
-    // side information length for the frame.
-    let offset = header.side_info_len();
+    // side information length for the frame. The CRC is not included in this offset calculation.
+    let offset = MPEG_HEADER_LEN + header.side_info_len();
 
     // Start the CRC with the header and side information.
     let mut crc16 = Crc16AnsiLe::new(0);
-    crc16.process_buf_bytes(&buf[..offset + MPEG_HEADER_LEN]);
+    crc16.process_buf_bytes(&buf[..offset]);
 
     // Start reading the Xing/Info tag after the side information.
-    let mut reader = MonitorStream::new(BufReader::new(&buf[offset + MPEG_HEADER_LEN..]), crc16);
+    let mut reader = MonitorStream::new(BufReader::new(&buf[offset..]), crc16);
 
     // Check for Xing/Info header.
     let id = reader.read_quad_bytes()?;
@@ -948,8 +948,8 @@ fn is_maybe_info_tag(buf: &[u8], header: &FrameHeader) -> bool {
     }
 
     // The position of the Xing/Info tag relative to the start of the packet. This is equal to the
-    // side information length for the frame.
-    let offset = header.side_info_len() + MPEG_HEADER_LEN;
+    // side information length for the frame. The CRC is not included in this offset calculation.
+    let offset = MPEG_HEADER_LEN + header.side_info_len();
 
     // The packet must be big enough to contain a tag.
     if buf.len() < offset + MIN_XING_TAG_LEN {
@@ -1022,7 +1022,7 @@ fn try_read_vbri_tag_inner(buf: &[u8], header: &FrameHeader) -> Result<Option<Vb
 /// packet should be parsed fully to ensure it is in fact a tag.
 fn is_maybe_vbri_tag(buf: &[u8], header: &FrameHeader) -> bool {
     const MIN_VBRI_TAG_LEN: usize = 26;
-    const VBRI_TAG_OFFSET: usize = 36;
+    const VBRI_TAG_OFFSET: usize = MPEG_HEADER_LEN + 32;
 
     // Only supported with layer 3 packets.
     if header.layer != MpegLayer::Layer3 {
