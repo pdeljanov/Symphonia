@@ -255,24 +255,11 @@ impl FormatReader for CafReader<'_> {
                 Ok(SeekedTo { track_id: 0, required_ts, actual_ts })
             }
             PacketInfo::VariableAudioPacket { packets, current_packet_index } => {
-                let current_ts = if let Some(packet) = packets.get(*current_packet_index) {
-                    packet.start_frame
-                }
+                let Some(seek_packet_index) = find_seek_packet_index(packets, required_ts)
                 else {
-                    error!("invalid packet index: {current_packet_index}");
-                    return decode_error("caf: invalid packet index");
+                    return decode_error("caf: no packets to seek to");
                 };
 
-                let search_range = if current_ts < required_ts {
-                    *current_packet_index..packets.len()
-                }
-                else {
-                    0..*current_packet_index
-                };
-
-                let packet_after_ts = packets[search_range]
-                    .partition_point(|packet| packet.start_frame < required_ts);
-                let seek_packet_index = packet_after_ts.saturating_sub(1);
                 let seek_packet = &packets[seek_packet_index];
 
                 let seek_pos = self.data_start_pos + seek_packet.data_offset;
@@ -313,6 +300,25 @@ impl FormatReader for CafReader<'_> {
     {
         self.reader
     }
+}
+
+/// Find the index of the packet to seek to for the required timestamp.
+///
+/// The returned packet is the last packet starting before the required timestamp so that a seek
+/// never lands after it. If no packet starts before the required timestamp, then the first packet
+/// is returned. Returns `None` if there are no packets.
+fn find_seek_packet_index(packets: &[CafPacket], required_ts: Timestamp) -> Option<usize> {
+    if packets.is_empty() {
+        return None;
+    }
+
+    // The start frame of a packet never decreases, therefore the first packet starting at, or
+    // after, the required timestamp may be found with a binary search.
+    let packet_after_ts = packets.partition_point(|packet| packet.start_frame < required_ts);
+
+    // Seek to the packet preceding it, or to the first packet if the required timestamp precedes
+    // all packets.
+    Some(packet_after_ts.saturating_sub(1))
 }
 
 impl<'s> CafReader<'s> {
@@ -570,5 +576,116 @@ impl<'s> CafReader<'s> {
         }
 
         Ok(track)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Create a list of packets each containing 100 frames.
+    fn make_packets(count: u64) -> Vec<CafPacket> {
+        (0..count)
+            .map(|i| CafPacket {
+                data_offset: 10 * i,
+                start_frame: Timestamp::new(100 * i as i64),
+                frames: Duration::new(100),
+                size: 10,
+            })
+            .collect()
+    }
+
+    /// An obviously correct, but linear, implementation of `find_seek_packet_index` to test
+    /// against.
+    fn find_seek_packet_index_linear(
+        packets: &[CafPacket],
+        required_ts: Timestamp,
+    ) -> Option<usize> {
+        if packets.is_empty() {
+            return None;
+        }
+
+        let num_packets_before_ts =
+            packets.iter().filter(|packet| packet.start_frame < required_ts).count();
+
+        Some(num_packets_before_ts.saturating_sub(1))
+    }
+
+    #[test]
+    fn verify_find_seek_packet_index_without_packets() {
+        assert_eq!(find_seek_packet_index(&[], Timestamp::new(0)), None);
+    }
+
+    #[test]
+    fn verify_find_seek_packet_index_with_one_packet() {
+        let packets = make_packets(1);
+
+        assert_eq!(find_seek_packet_index(&packets, Timestamp::new(0)), Some(0));
+        assert_eq!(find_seek_packet_index(&packets, Timestamp::new(50)), Some(0));
+        assert_eq!(find_seek_packet_index(&packets, Timestamp::new(1000)), Some(0));
+    }
+
+    #[test]
+    fn verify_find_seek_packet_index_within_a_packet() {
+        let packets = make_packets(5);
+
+        assert_eq!(find_seek_packet_index(&packets, Timestamp::new(50)), Some(0));
+        assert_eq!(find_seek_packet_index(&packets, Timestamp::new(150)), Some(1));
+        assert_eq!(find_seek_packet_index(&packets, Timestamp::new(250)), Some(2));
+        assert_eq!(find_seek_packet_index(&packets, Timestamp::new(450)), Some(4));
+    }
+
+    #[test]
+    fn verify_find_seek_packet_index_outside_the_packets() {
+        let packets = make_packets(5);
+
+        // Before the first packet, the first packet is used.
+        assert_eq!(find_seek_packet_index(&packets, Timestamp::new(-100)), Some(0));
+        assert_eq!(find_seek_packet_index(&packets, Timestamp::new(0)), Some(0));
+
+        // After the last packet, the last packet is used.
+        assert_eq!(find_seek_packet_index(&packets, Timestamp::new(10000)), Some(4));
+    }
+
+    #[test]
+    fn verify_find_seek_packet_index_with_zero_length_packets() {
+        // Zero length packets yield repeated start frames. The packets are still ordered, so the
+        // search is still valid.
+        let packets: Vec<CafPacket> = [0, 100, 100, 100, 200]
+            .iter()
+            .map(|&start_frame| CafPacket {
+                data_offset: 0,
+                start_frame: Timestamp::new(start_frame),
+                frames: Duration::new(0),
+                size: 10,
+            })
+            .collect();
+
+        for ts in -10..300 {
+            let ts = Timestamp::new(ts);
+            assert_eq!(
+                find_seek_packet_index(&packets, ts),
+                find_seek_packet_index_linear(&packets, ts),
+                "packet index mismatch for {ts}"
+            );
+        }
+    }
+
+    #[test]
+    fn verify_find_seek_packet_index_matches_a_linear_search() {
+        // Exhaustively verify the binary search returns the same packet as a linear search for
+        // every timestamp in, and around, a set of packets.
+        for num_packets in 0..8 {
+            let packets = make_packets(num_packets);
+
+            for ts in -100..(100 * num_packets as i64 + 100) {
+                let ts = Timestamp::new(ts);
+                assert_eq!(
+                    find_seek_packet_index(&packets, ts),
+                    find_seek_packet_index_linear(&packets, ts),
+                    "packet index mismatch for {ts} with {num_packets} packets"
+                );
+            }
+        }
     }
 }
