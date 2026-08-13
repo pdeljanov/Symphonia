@@ -337,7 +337,7 @@ mod builder {
                 }
             }
 
-            let dur = block_dur.saturating_sub(self.trim_start).saturating_sub(self.trim_end);
+            let dur = block_dur.saturating_sub(trim_start).saturating_sub(trim_end);
 
             PacketBuilder { track_id, pts, dur: HasDur(dur), buf, dts, trim_start, trim_end }
         }
@@ -464,5 +464,66 @@ mod tests {
         assert_eq!(pkt_ref.trim_start, Duration::new(20));
         assert_eq!(pkt_ref.trim_end, Duration::new(10));
         assert_eq!(&pkt_ref.data, &[5, 6, 7, 8]);
+    }
+
+    /// Build a packet with a trimmed duration and return its duration, trim start, and trim end.
+    fn trimmed_dur(
+        pts: i64,
+        block_dur: u64,
+        end_pts: Option<i64>,
+    ) -> (Duration, Duration, Duration) {
+        let data: &[u8] = &[];
+
+        let pkt_ref = PacketBuilder::new()
+            .track_id(0)
+            .pts(Timestamp::new(pts))
+            .trimmed_dur(Duration::new(block_dur), end_pts.map(Timestamp::new))
+            .data_by_ref(data)
+            .build_packet_ref();
+
+        // The duration of all decoded frames must always be preserved.
+        assert_eq!(pkt_ref.block_dur(), Duration::new(block_dur));
+
+        (pkt_ref.dur, pkt_ref.trim_start, pkt_ref.trim_end)
+    }
+
+    #[test]
+    fn verify_trimmed_dur_without_trimming() {
+        assert_eq!(trimmed_dur(0, 100, None), (Duration::new(100), Duration::ZERO, Duration::ZERO));
+    }
+
+    #[test]
+    fn verify_trimmed_dur_with_delay() {
+        // The first 10 frames are encoder delay.
+        assert_eq!(
+            trimmed_dur(-10, 100, None),
+            (Duration::new(90), Duration::new(10), Duration::ZERO)
+        );
+    }
+
+    #[test]
+    fn verify_trimmed_dur_with_padding() {
+        // The packet ends 40 frames after the end of the stream.
+        assert_eq!(
+            trimmed_dur(90, 100, Some(150)),
+            (Duration::new(60), Duration::ZERO, Duration::new(40))
+        );
+    }
+
+    #[test]
+    fn verify_trimmed_dur_with_delay_and_padding() {
+        assert_eq!(
+            trimmed_dur(-10, 100, Some(50)),
+            (Duration::new(50), Duration::new(10), Duration::new(40))
+        );
+    }
+
+    #[test]
+    fn verify_trimmed_dur_with_delay_exceeding_block() {
+        // The delay exceeds the number of decoded frames, so all frames are trimmed.
+        assert_eq!(
+            trimmed_dur(-200, 100, None),
+            (Duration::ZERO, Duration::new(100), Duration::ZERO)
+        );
     }
 }
