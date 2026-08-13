@@ -32,6 +32,7 @@
 //! | MKV/WebM | `mkv`        | No       | Yes     |
 //! | OGG      | `ogg`        | Yes      | Yes     |
 //! | Wave     | `wav`        | Yes      | Yes     |
+//! | WavPack  | `wavpack`    | No       | No      |
 //!
 //! \* Gapless playback requires support from both the demuxer and decoder.
 //!
@@ -52,6 +53,7 @@
 //! | MP3      | `mp3`, `mpa` | Yes     | No      |
 //! | PCM      | `pcm`        | Yes     | Yes     |
 //! | Vorbis   | `vorbis`     | Yes     | Yes     |
+//! | WavPack  | `wavpack`    | No      | No      |
 //!
 //! **Tip:** All codecs can be enabled with the `all-codecs` feature flag. Similarly, all MPEG
 //! audio codecs can be enabled with the `mpa` feature flag.
@@ -139,6 +141,8 @@ pub mod default {
         pub use symphonia_codec_pcm::PcmDecoder;
         #[cfg(feature = "vorbis")]
         pub use symphonia_codec_vorbis::VorbisDecoder;
+        #[cfg(feature = "wavpack")]
+        pub use symphonia_codec_wavpack::WavPackDecoder;
 
         #[deprecated = "use `default::codecs::MpaDecoder` instead"]
         #[cfg(any(feature = "mp1", feature = "mp2", feature = "mp3"))]
@@ -154,6 +158,8 @@ pub mod default {
         pub use symphonia_bundle_mp3::MpaReader;
         #[cfg(feature = "aac")]
         pub use symphonia_codec_aac::AdtsReader;
+        #[cfg(feature = "wavpack")]
+        pub use symphonia_codec_wavpack::WavPackReader;
         #[cfg(feature = "caf")]
         pub use symphonia_format_caf::CafReader;
         #[cfg(feature = "isomp4")]
@@ -252,6 +258,9 @@ pub mod default {
 
         #[cfg(feature = "vorbis")]
         registry.register_audio_decoder::<codecs::VorbisDecoder>();
+
+        #[cfg(feature = "wavpack")]
+        registry.register_audio_decoder::<codecs::WavPackDecoder>();
     }
 
     /// Registers all the formats selected by the `feature` flags in the includer's `Cargo.toml` on
@@ -281,6 +290,9 @@ pub mod default {
 
         #[cfg(feature = "wav")]
         probe.register_format::<formats::WavReader<'_>>();
+
+        #[cfg(feature = "wavpack")]
+        probe.register_format::<formats::WavPackReader<'_>>();
 
         #[cfg(feature = "ogg")]
         probe.register_format::<formats::OggReader<'_>>();
