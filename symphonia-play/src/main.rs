@@ -225,7 +225,8 @@ fn run(args: &ArgMatches) -> Result<i32> {
                         .map(SeekPosition::Time)
                 }
                 else {
-                    args.get_one::<Timestamp>("seek-ts").map(|&ts| SeekPosition::Timestamp(ts))
+                    args.get_one::<i64>("seek-ts")
+                        .map(|&ts| SeekPosition::Timestamp(Timestamp::from(ts)))
                 };
 
                 // Setup playback options.
