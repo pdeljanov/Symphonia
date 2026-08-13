@@ -141,7 +141,14 @@ jobs:
         uses: taiki-e/install-action@cargo-llvm-cov
 
       - name: Generate Code Coverage
-        run: cargo llvm-cov --workspace --all-features --exclude symphonia-play --lcov --output-path lcov.info
+        run: |
+          cargo llvm-cov --no-report --workspace --all-features --exclude symphonia-play
+          cargo llvm-cov report --lcov --output-path lcov.info
+          cargo llvm-cov report --html --output-dir coverage-html
+          echo "### 📊 Code Coverage Summary" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          cargo llvm-cov report --summary-only >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
@@ -149,10 +156,16 @@ jobs:
           files: lcov.info
           fail_ci_if_error: false
 
-      - name: Upload coverage artifact
+      - name: Upload HTML coverage report
         uses: actions/upload-artifact@v4
         with:
-          name: code-coverage-report
+          name: code-coverage-html
+          path: coverage-html
+
+      - name: Upload LCOV report
+        uses: actions/upload-artifact@v4
+        with:
+          name: code-coverage-lcov
           path: lcov.info
 
   fmt:
