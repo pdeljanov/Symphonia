@@ -262,12 +262,7 @@ impl<'s> OggReader<'s> {
         // Consume packets until reaching the desired timestamp.
         let actual_ts = loop {
             match self.peek_logical_packet() {
-                Some(packet) => {
-                    // Skip packets not belonging to the stream being seeked.
-                    if packet.track_id != serial {
-                        continue;
-                    }
-
+                Some(packet) if packet.track_id == serial => {
                     match packet.pts.checked_add(packet.dur) {
                         Some(next_packet_ts) if next_packet_ts < target_ts => (),
                         // Packet exceeds the requested timestamp, or the representable range.
@@ -276,6 +271,9 @@ impl<'s> OggReader<'s> {
 
                     self.discard_logical_packet();
                 }
+                // The packet does not belong to the stream being seeked. Discard it so that the
+                // next packet, or page, may be examined. Peeking alone makes no progress.
+                Some(_) => self.discard_logical_packet(),
                 _ => match self.read_page() {
                     Ok(_) => (),
                     Err(Error::IoError(err)) if err.kind() == std::io::ErrorKind::UnexpectedEof => {
