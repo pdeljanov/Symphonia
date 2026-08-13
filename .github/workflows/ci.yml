@@ -118,14 +118,10 @@ jobs:
         uses: taiki-e/install-action@cross
 
       - name: Test (default features)
-        run: |
-          CARGO="${{ matrix.config.use-cross && 'cross' || 'cargo' }}"
-          $CARGO test --target ${{ matrix.config.target }} --workspace --exclude symphonia-play
+        run: ${{ matrix.config.use-cross && 'cross' || 'cargo' }} test --target ${{ matrix.config.target }} --workspace --exclude symphonia-play
 
       - name: Test (all features)
-        run: |
-          CARGO="${{ matrix.config.use-cross && 'cross' || 'cargo' }}"
-          $CARGO test --target ${{ matrix.config.target }} --workspace --all-features --exclude symphonia-play
+        run: ${{ matrix.config.use-cross && 'cross' || 'cargo' }} test --target ${{ matrix.config.target }} --workspace --all-features --exclude symphonia-play
 
   coverage:
     name: Code Coverage
