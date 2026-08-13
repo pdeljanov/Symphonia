@@ -998,6 +998,34 @@ impl TimeBase {
         self.calc_time(ts).unwrap_or_else(|| if ts.is_negative() { Time::MIN } else { Time::MAX })
     }
 
+    /// Calculate a `Time` upto nanosecond precision from the provided `Duration` using `self` as
+    /// the conversion factor. Returns `None` if an overflow occurs.
+    pub fn calc_duration(&self, dur: Duration) -> Option<Time> {
+        const NS_PER_SEC_64: u64 = 1_000_000_000;
+        const NS_PER_SEC_128: u128 = 1_000_000_000;
+
+        let numer = u64::from(self.numer.get());
+        let denom = u64::from(self.denom.get());
+
+        if let Some(product) =
+            dur.get().checked_mul(numer).and_then(|x| x.checked_mul(NS_PER_SEC_64))
+        {
+            let total_nanos = product / denom;
+            Some(Time::from_nanos_u64(total_nanos))
+        }
+        else {
+            let product = u128::from(dur.get()) * u128::from(numer) * NS_PER_SEC_128;
+            let total_nanos = product / u128::from(denom);
+            Time::try_from_nanos_u128(total_nanos)
+        }
+    }
+
+    /// Calculate a `Time` upto nanosecond precision from the provided `Duration` using `self` as
+    /// the conversion factor. Saturates at [`Time::MAX`] if an overflow occurs.
+    pub fn calc_duration_saturating(&self, dur: Duration) -> Time {
+        self.calc_duration(dur).unwrap_or(Time::MAX)
+    }
+
     /// Calculate a `TimeStamp` from the provided `Time` using `self` as the conversion factor.
     /// Returns `None` if an overflow occurs.
     pub fn calc_timestamp(&self, time: Time) -> Option<Timestamp> {
@@ -1092,7 +1120,7 @@ impl fmt::Display for TimeBase {
 mod tests {
     use std::i64;
 
-    use super::{Time, TimeBase, Timestamp};
+    use super::{Duration, Time, TimeBase, Timestamp};
 
     #[test]
     fn verify_time() {
@@ -1328,6 +1356,29 @@ mod tests {
 
         assert!(tb4.calc_timestamp(Time::MIN).is_none());
         assert!(tb4.calc_timestamp(Time::MAX).is_none());
+    }
+
+    #[test]
+    fn verify_timebase_duration() {
+        let tb1 = TimeBase::try_new(1, 320).unwrap(); // 1 tick = 3.125 ms
+        let tb2 = TimeBase::try_new(1_000_000, 320_000_000).unwrap(); // 1 tick = 3.125 ms
+
+        for tb in [tb1, tb2] {
+            assert_eq!(tb.calc_duration(Duration::ZERO), Some(Time::ZERO));
+            assert_eq!(tb.calc_duration(Duration::new(12345)), tb.calc_time(Timestamp::new(12345)));
+        }
+
+        // Durations greater than i64::MAX can still be converted without narrowing through a
+        // Timestamp when the timebase is sufficiently small.
+        let small_tb = TimeBase::try_new(1, u32::MAX).unwrap();
+        let expected_seconds = 2_147_483_649u32;
+        let large_duration = Duration::new(u64::from(u32::MAX) * u64::from(expected_seconds));
+        assert_eq!(small_tb.calc_duration(large_duration), Some(Time::from(expected_seconds)));
+
+        // Test overflow and saturation.
+        let large_tb = TimeBase::try_new(u32::MAX, 1).unwrap();
+        assert!(large_tb.calc_duration(Duration::MAX).is_none());
+        assert_eq!(large_tb.calc_duration_saturating(Duration::MAX), Time::MAX);
     }
 
     #[test]
