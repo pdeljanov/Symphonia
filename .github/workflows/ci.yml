@@ -127,13 +127,8 @@ jobs:
   coverage:
     name: Code Coverage
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: write
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -146,114 +141,11 @@ jobs:
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
 
-      - name: Measure Base Branch Coverage
-        if: github.event_name == 'pull_request'
-        run: |
-          git checkout ${{ github.base_ref }}
-          cargo llvm-cov --no-report --workspace --all-features --exclude symphonia-play
-          cargo llvm-cov report --json --output-path base-cov.json
-          git checkout -
-
-      - name: Measure PR Coverage
+      - name: Measure Coverage
         run: |
           cargo llvm-cov --no-report --workspace --all-features --exclude symphonia-play
           cargo llvm-cov report --lcov --output-path lcov.info
           cargo llvm-cov report --html --output-dir coverage-html
-          cargo llvm-cov report --json --output-path pr-cov.json
-          cargo llvm-cov report --summary-only > coverage-summary.txt
-
-      - name: Generate Summary & Comment
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const fs = require('fs');
-
-            let prTotals = null;
-            if (fs.existsSync('pr-cov.json')) {
-              const prData = JSON.parse(fs.readFileSync('pr-cov.json', 'utf8'));
-              prTotals = prData.data?.[0]?.totals;
-            }
-
-            let baseTotals = null;
-            if (fs.existsSync('base-cov.json')) {
-              const baseData = JSON.parse(fs.readFileSync('base-cov.json', 'utf8'));
-              baseTotals = baseData.data?.[0]?.totals;
-            }
-
-            const summaryText = fs.existsSync('coverage-summary.txt')
-              ? fs.readFileSync('coverage-summary.txt', 'utf8')
-              : '';
-
-            function formatDelta(base, current) {
-              if (base === undefined || base === null) return 'N/A';
-              const diff = current - base;
-              const sign = diff > 0 ? '+' : '';
-              const icon = diff > 0 ? '🟢' : (diff < 0 ? '🔴' : '⚪');
-              return `${sign}${diff.toFixed(2)}% ${icon}`;
-            }
-
-            let markdown = `## 📊 Code Coverage Report\n\n`;
-
-            if (prTotals) {
-              markdown += `| Metric | Base (\`${context.payload.pull_request?.base?.ref || 'base'}\`) | Current PR | Delta |\n`;
-              markdown += `| :--- | :--- | :--- | :--- |\n`;
-
-              const baseLinePct = baseTotals?.lines?.percent;
-              const prLinePct = prTotals.lines?.percent ?? 0;
-              markdown += `| **Line Coverage** | ${baseLinePct !== undefined ? baseLinePct.toFixed(2) + '%' : 'N/A'} | **${prLinePct.toFixed(2)}%** | ${formatDelta(baseLinePct, prLinePct)} |\n`;
-
-              const baseFnPct = baseTotals?.functions?.percent;
-              const prFnPct = prTotals.functions?.percent ?? 0;
-              markdown += `| **Function Coverage** | ${baseFnPct !== undefined ? baseFnPct.toFixed(2) + '%' : 'N/A'} | **${prFnPct.toFixed(2)}%** | ${formatDelta(baseFnPct, prFnPct)} |\n`;
-
-              const baseRegPct = baseTotals?.regions?.percent;
-              const prRegPct = prTotals.regions?.percent ?? 0;
-              markdown += `| **Region Coverage** | ${baseRegPct !== undefined ? baseRegPct.toFixed(2) + '%' : 'N/A'} | **${prRegPct.toFixed(2)}%** | ${formatDelta(baseRegPct, prRegPct)} |\n`;
-              markdown += `\n`;
-            }
-
-            if (summaryText) {
-              markdown += `<details>\n<summary><b>Detailed Coverage by Crate / Module</b></summary>\n\n\`\`\`\n${summaryText}\n\`\`\`\n</details>\n\n`;
-            }
-
-            markdown += `*Interactive HTML coverage report is downloadable from the workflow summary artifacts.*\n`;
-
-            // Output to GitHub Actions Step Summary
-            await core.summary.addRaw(markdown).write();
-
-            // Post sticky comment on PR if event is pull_request
-            if (context.eventName === 'pull_request') {
-              try {
-                const header = '<!-- cargo-llvm-cov-coverage-report -->';
-                const commentBody = `${header}\n${markdown}`;
-
-                const { data: comments } = await github.rest.issues.listComments({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  issue_number: context.issue.number,
-                });
-
-                const existingComment = comments.find(c => c.body.includes(header));
-
-                if (existingComment) {
-                  await github.rest.issues.updateComment({
-                    owner: context.repo.owner,
-                    repo: context.repo.repo,
-                    comment_id: existingComment.id,
-                    body: commentBody,
-                  });
-                } else {
-                  await github.rest.issues.createComment({
-                    owner: context.repo.owner,
-                    repo: context.repo.repo,
-                    issue_number: context.issue.number,
-                    body: commentBody,
-                  });
-                }
-              } catch (err) {
-                core.warning(`Failed to post PR comment: ${err.message}`);
-              }
-            }
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
