@@ -12,6 +12,7 @@ members = [
     "symphonia-codec-pcm",
     "symphonia-codec-vorbis",
     "symphonia-codec-wavpack",
+    "symphonia-codec-dca",
     "symphonia-common",
     "symphonia-core",
     "symphonia-format-isomp4",
