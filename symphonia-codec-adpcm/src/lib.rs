@@ -89,6 +89,13 @@ impl AdpcmDecoder {
             return unsupported_error("adpcm: valid frames per block is required");
         }
 
+        // A QuickTime IMA ADPCM packet is always 34 bytes and decodes to exactly 64
+        // samples. Any other frames per block value would make the decoder write past
+        // the output slice.
+        if params.codec == CODEC_ID_ADPCM_IMA_QT && params.frames_per_block != Some(64) {
+            return unsupported_error("adpcm (ima-qt): frames per block must be 64");
+        }
+
         let rate = match params.sample_rate {
             Some(rate) => rate,
             _ => return unsupported_error("adpcm: sample rate is required"),
@@ -222,5 +229,52 @@ impl RegisterableAudioDecoder for AdpcmDecoder {
             support_audio_codec!(CODEC_ID_ADPCM_IMA_WAV, "adpcm_ima_wav", "ADPCM IMA WAV"),
             support_audio_codec!(CODEC_ID_ADPCM_IMA_QT, "adpcm_ima_qt", "ADPCM IMA QT"),
         ]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use symphonia_core::audio::Channels;
+
+    fn adpcm_params(codec: AudioCodecId, frames_per_block: u64) -> AudioCodecParameters {
+        let mut params = AudioCodecParameters::new();
+        params
+            .for_codec(codec)
+            .with_sample_rate(44100)
+            .with_channels(Channels::Discrete(1))
+            .with_max_frames_per_packet(frames_per_block)
+            .with_frames_per_block(frames_per_block);
+        params
+    }
+
+    #[test]
+    fn ima_qt_rejects_frames_per_block_not_64() {
+        // Issue #561: a CAF ima4 track whose frames_per_packet is a legal value
+        // below 64 made the decoder write past the output slice and abort. QuickTime
+        // IMA ADPCM packets always decode to exactly 64 samples, so any other frames
+        // per block value is rejected.
+        let opts = AudioDecoderOptions::default();
+        for frames_per_block in [2, 32, 63, 65, 128] {
+            let params = adpcm_params(CODEC_ID_ADPCM_IMA_QT, frames_per_block);
+            assert!(AdpcmDecoder::try_new(&params, &opts).is_err());
+        }
+    }
+
+    #[test]
+    fn ima_qt_accepts_64_frames_per_block() {
+        let params = adpcm_params(CODEC_ID_ADPCM_IMA_QT, 64);
+        assert!(AdpcmDecoder::try_new(&params, &AudioDecoderOptions::default()).is_ok());
+    }
+
+    #[test]
+    fn other_adpcm_codecs_frames_per_block_unchanged() {
+        // ADPCM IMA WAV and MS derive their bounds from frames_per_block and must not
+        // be restricted by the ima-qt check.
+        let opts = AudioDecoderOptions::default();
+        let params = adpcm_params(CODEC_ID_ADPCM_IMA_WAV, 505);
+        assert!(AdpcmDecoder::try_new(&params, &opts).is_ok());
+        let params = adpcm_params(CODEC_ID_ADPCM_MS, 500);
+        assert!(AdpcmDecoder::try_new(&params, &opts).is_ok());
     }
 }
