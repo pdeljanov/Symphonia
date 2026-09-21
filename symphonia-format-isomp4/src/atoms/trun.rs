@@ -47,12 +47,11 @@ impl TrunAtom {
         self.flags & TrunAtom::SAMPLE_DURATION_PRESENT != 0
     }
 
-    // Indicates if the duration of the first sample is provided.
+    // Indicates if the duration of the first sample is provided. Per ISO-BMFF, sample
+    // durations are only stored in the sample_duration array when the trun flag
+    // SAMPLE_DURATION_PRESENT is set; the first_sample_flags value carries no duration.
     pub fn is_first_sample_duration_present(&self) -> bool {
-        match self.first_sample_flags {
-            Some(flags) => flags & TrunAtom::FIRST_SAMPLE_FLAGS_PRESENT != 0,
-            None => false,
-        }
+        !self.sample_duration.is_empty()
     }
 
     /// Indicates if sample sizes are provided.
@@ -60,12 +59,11 @@ impl TrunAtom {
         self.flags & TrunAtom::SAMPLE_SIZE_PRESENT != 0
     }
 
-    /// Indicates if the size for the first sample is provided.
+    /// Indicates if the size for the first sample is provided. As with the duration, a
+    /// per-sample size is only stored when SAMPLE_SIZE_PRESENT populated the array; the
+    /// first_sample_flags value carries no size.
     pub fn is_first_sample_size_present(&self) -> bool {
-        match self.first_sample_flags {
-            Some(flags) => flags & TrunAtom::SAMPLE_SIZE_PRESENT != 0,
-            None => false,
-        }
+        !self.sample_size.is_empty()
     }
 
     /// Indicates if sample flags are provided.
@@ -307,5 +305,89 @@ impl Atom for TrunAtom {
             total_sample_size,
             total_sample_duration,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Cursor;
+    use symphonia_core::io::{MediaSourceStream, MediaSourceStreamOptions};
+
+    /// Build a complete trun atom with the given trun `flags` and `fields` (the atom
+    /// body following the extended header), and read it back through the atom iterator.
+    fn trun_atom(flags: u32, fields: &[u8]) -> TrunAtom {
+        let mut body = Vec::new();
+        body.push(0); // Version.
+        body.extend_from_slice(&flags.to_be_bytes()[1..]); // Flags (u24).
+        body.extend_from_slice(fields);
+
+        let mut data = Vec::with_capacity(8 + body.len());
+        data.extend_from_slice(&(body.len() as u32 + 8).to_be_bytes());
+        data.extend_from_slice(b"trun");
+        data.extend_from_slice(&body);
+
+        let len = data.len() as u64;
+        let mss = MediaSourceStream::new(
+            Box::new(Cursor::new(data)),
+            MediaSourceStreamOptions::default(),
+        );
+        let mut it = AtomIterator::new(mss, Some(len));
+        assert!(it.next_header().map(|h| h.is_some()).unwrap_or(false));
+        it.read_atom::<TrunAtom>().ok().expect("read trun atom")
+    }
+
+    #[test]
+    fn trun_first_sample_flags_value_is_not_a_presence_flag() {
+        // Issue #559: the trun flags only set FIRST_SAMPLE_FLAGS_PRESENT. The
+        // first_sample_flags VALUE happens to carry bits colliding with the
+        // FIRST_SAMPLE_FLAGS_PRESENT (0x4) and SAMPLE_SIZE_PRESENT (0x200)
+        // constants, which used to make the accessors index empty per-sample
+        // arrays and panic.
+        let mut fields = Vec::new();
+        fields.extend_from_slice(&1u32.to_be_bytes()); // sample_count.
+        fields.extend_from_slice(&0x0000_0204u32.to_be_bytes()); // first_sample_flags.
+        let trun = trun_atom(TrunAtom::FIRST_SAMPLE_FLAGS_PRESENT, &fields);
+
+        assert!(trun.first_sample_flags.is_some());
+        assert!(!trun.is_sample_duration_present());
+        assert!(!trun.is_sample_size_present());
+        assert!(!trun.is_first_sample_duration_present());
+        assert!(!trun.is_first_sample_size_present());
+
+        // All samples fall back to the track defaults.
+        assert_eq!(trun.total_duration(1024), 1024);
+        assert_eq!(trun.total_size(64), 64);
+        assert_eq!(trun.sample_size(0, 64), 64);
+        assert_eq!(trun.sample_timing(0, 1024), (0, 1024));
+        assert_eq!(trun.sample_offset(0, 64), (0, 64));
+        assert_eq!(trun.ts_sample(0, 1024), 0);
+    }
+
+    #[test]
+    fn trun_present_sample_arrays_still_drive_totals() {
+        // With SAMPLE_DURATION_PRESENT | SAMPLE_SIZE_PRESENT |
+        // FIRST_SAMPLE_FLAGS_PRESENT all set, the populated arrays keep driving
+        // the totals and per-sample accessors.
+        let mut fields = Vec::new();
+        fields.extend_from_slice(&2u32.to_be_bytes()); // sample_count.
+        fields.extend_from_slice(&0x4u32.to_be_bytes()); // first_sample_flags.
+        fields.extend_from_slice(&7u32.to_be_bytes()); // sample_duration[0].
+        fields.extend_from_slice(&5u32.to_be_bytes()); // sample_size[0].
+        fields.extend_from_slice(&8u32.to_be_bytes()); // sample_duration[1].
+        fields.extend_from_slice(&6u32.to_be_bytes()); // sample_size[1].
+        let flags = TrunAtom::FIRST_SAMPLE_FLAGS_PRESENT
+            | TrunAtom::SAMPLE_DURATION_PRESENT
+            | TrunAtom::SAMPLE_SIZE_PRESENT;
+        let trun = trun_atom(flags, &fields);
+
+        assert!(trun.is_first_sample_duration_present());
+        assert!(trun.is_first_sample_size_present());
+        assert_eq!(trun.total_duration(1024), 15);
+        assert_eq!(trun.total_size(64), 11);
+        assert_eq!(trun.sample_timing(1, 1024), (7, 8));
+        assert_eq!(trun.sample_size(1, 64), 6);
+        assert_eq!(trun.sample_offset(1, 64), (5, 6));
+        assert_eq!(trun.ts_sample(7, 1024), 1);
     }
 }
