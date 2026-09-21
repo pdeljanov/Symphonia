@@ -461,12 +461,23 @@ impl ChapterGroupBuilder {
 
     /// Build a chapter group from the added ID3v2 table of contents and chapters.
     fn build(mut self) -> Option<ChapterGroup> {
+        /// The maximum table of contents nesting depth. Elements beyond this depth are treated
+        /// as broken references so that a deeply chained table of contents cannot exhaust the
+        /// call stack via unbounded recursion.
+        const MAX_TOC_DEPTH: usize = 32;
+
         /// Depth-first traversal of TOC elements to build the chapter hierarchy.
         fn dfs(
             id: &str,
             tocs: &mut HashMap<String, Id3v2TableOfContents>,
             chaps: &mut HashMap<String, Id3v2Chapter>,
+            depth: usize,
         ) -> Option<ChapterGroup> {
+            if depth == 0 {
+                debug!("id3v2: maximum toc nesting depth exceeded");
+                return None;
+            }
+
             // Attempt to remove the TOC with the provided TOC ID. If it was removed, create a
             // chapter group from it.
             tocs.remove(id).map(|toc| {
@@ -481,7 +492,7 @@ impl ChapterGroupBuilder {
                         // Item is a chapter.
                         parent.items.push(ChapterGroupItem::Chapter(chap.chapter));
                     }
-                    else if let Some(child) = dfs(&child_id, tocs, chaps) {
+                    else if let Some(child) = dfs(&child_id, tocs, chaps, depth - 1) {
                         // Item is a TOC.
                         parent.items.push(ChapterGroupItem::Group(child));
                     }
@@ -501,7 +512,9 @@ impl ChapterGroupBuilder {
         }
 
         // Build a chapter group starting at top-level table of contents (TOC), if one exists.
-        let top = self.root_toc_id.and_then(|toc_id| dfs(&toc_id, &mut self.tocs, &mut self.chaps));
+        let top = self
+            .root_toc_id
+            .and_then(|toc_id| dfs(&toc_id, &mut self.tocs, &mut self.chaps, MAX_TOC_DEPTH));
 
         // After building the chapter group from the top-level TOC, any remaining TOC elements are
         // unreferenced. The behaviour in this case is not specified by the standard. Therefore,
@@ -700,4 +713,80 @@ pub mod sub_fields {
     // WXXX frames
 
     pub const WXXX_DESCRIPTION: &str = "DESCRIPTION";
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use std::io::Cursor;
+
+    /// Generate an ID3v2.3 tag containing a linear chain of `count` CTOC elements where each
+    /// element references the next. The first element is marked as top-level.
+    fn toc_chain(count: usize) -> Vec<u8> {
+        let mut frames = Vec::new();
+        for i in 0..count {
+            let mut body = format!("t{:06}", i).into_bytes();
+            body.push(0);
+            body.push(if i == 0 { 2 } else { 0 });
+            body.push(u8::from(i + 1 < count));
+            if i + 1 < count {
+                body.extend_from_slice(format!("t{:06}", i + 1).as_bytes());
+                body.push(0);
+            }
+            frames.extend_from_slice(b"CTOC");
+            frames.extend_from_slice(&(body.len() as u32).to_be_bytes());
+            frames.extend_from_slice(&[0, 0]);
+            frames.extend_from_slice(&body);
+        }
+
+        let mut tag = b"ID3\x03\x00\x00".to_vec();
+        tag.extend_from_slice(&[
+            ((frames.len() >> 21) & 0x7f) as u8,
+            ((frames.len() >> 14) & 0x7f) as u8,
+            ((frames.len() >> 7) & 0x7f) as u8,
+            (frames.len() & 0x7f) as u8,
+        ]);
+        tag.extend_from_slice(&frames);
+        tag
+    }
+
+    fn read_chapters(tag: Vec<u8>) -> Option<ChapterGroup> {
+        let mss =
+            MediaSourceStream::new(Box::new(Cursor::new(tag)), MediaSourceStreamOptions::default());
+        let mut reader = Id3v2Reader::try_new(mss, MetadataOptions::default()).unwrap();
+        reader.read_all().unwrap().side_data.iter().find_map(|sd| match sd {
+            MetadataSideData::Chapters(group) => Some(group.clone()),
+            _ => None,
+        })
+    }
+
+    fn group_depth(group: &ChapterGroup) -> usize {
+        group
+            .items
+            .iter()
+            .map(|item| match item {
+                ChapterGroupItem::Group(child) => 1 + group_depth(child),
+                ChapterGroupItem::Chapter(_) => 1,
+            })
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// A deeply nested table of contents must not cause unbounded recursion. Elements beyond
+    /// the maximum nesting depth are dropped.
+    #[test]
+    fn verify_deep_toc_chain_is_bounded() {
+        let group = read_chapters(toc_chain(10_000)).expect("expected a chapter group");
+        // The group contains 32 nested levels; the innermost level is empty.
+        assert_eq!(group_depth(&group), 31);
+    }
+
+    /// A normally nested table of contents builds the full hierarchy.
+    #[test]
+    fn verify_nested_toc_chain() {
+        let group = read_chapters(toc_chain(4)).expect("expected a chapter group");
+        // A chain of 4 elements nests 4 groups; the innermost group is empty.
+        assert_eq!(group_depth(&group), 3);
+    }
 }
