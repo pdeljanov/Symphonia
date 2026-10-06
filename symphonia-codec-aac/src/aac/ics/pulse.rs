@@ -16,18 +16,28 @@ use symphonia_core::io::ReadBitsLtr;
 
 use crate::aac::common::{MAX_SFBS, MAX_WINDOWS};
 
+/// Inverse quantization, sign(x) * |x|^(4/3).
 #[inline(always)]
 fn iquant(val: f32) -> f32 {
-    if val < 0.0 { -((-val).powf(4.0 / 3.0)) } else { val.powf(4.0 / 3.0) }
+    let tab: &[f32; 8192] = &super::POW43_TABLE;
+    let abs_val = val.abs();
+    let idx = abs_val as usize;
+    let result = if idx < tab.len() { tab[idx] } else { abs_val.powf(4.0 / 3.0) };
+    if val < 0.0 { -result } else { result }
 }
 
+/// Re-quantization (x^{3/4}) for pulse data synthesis.
+///
+/// Recovers the integer quantized value from a dequantized coefficient, `val = iquant(q) * scale`
+/// (ISO/IEC 14496-3, 4.6.3.3).
 #[inline(always)]
 fn requant(val: f32, scale: f32) -> f32 {
     if scale == 0.0 {
         return 0.0;
     }
-    let bval = val / scale;
-    if bval >= 0.0 { val.powf(3.0 / 4.0) } else { -((-val).powf(3.0 / 4.0)) }
+    // Round since the quantized value is an integer and is used to index the x^(4/3) table.
+    let result = (val / scale).abs().powf(3.0 / 4.0).round();
+    if val < 0.0 { -result } else { result }
 }
 
 #[derive(Clone, Copy)]
@@ -101,6 +111,39 @@ impl Pulse {
                 base -= f32::from(self.pulse_amp[pno]);
             }
             coeffs[k] = iquant(base) * scale;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::aac::common::SWB_OFFSET_48K_LONG;
+
+    #[test]
+    fn pulse_synth_adds_amplitude_to_quantized_value() {
+        let pulse = Pulse {
+            number_pulse: 3,
+            pulse_start_sfb: 1,
+            pulse_offset: [0, 1, 1, 0],
+            pulse_amp: [2, 3, 4, 0],
+        };
+
+        let mut scales = [[0.0; MAX_SFBS]; MAX_WINDOWS];
+        scales[0][1] = 0.75;
+
+        // Band 1 starts at coefficient 4.
+        let mut coeffs = [0.0; 1024];
+        coeffs[4] = iquant(3.0) * 0.75;
+        coeffs[5] = iquant(-7.0) * 0.75;
+        coeffs[6] = 0.0;
+
+        pulse.synth(&SWB_OFFSET_48K_LONG, &scales, &mut coeffs);
+
+        let expected = [iquant(5.0) * 0.75, iquant(-10.0) * 0.75, iquant(-4.0) * 0.75];
+
+        for (actual, expected) in coeffs[4..7].iter().zip(expected) {
+            assert!((actual - expected).abs() <= 1e-4 * expected.abs(), "{actual} != {expected}");
         }
     }
 }
