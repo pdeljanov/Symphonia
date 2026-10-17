@@ -53,3 +53,9 @@ ehthumbs_vista.db
 *.stackdump
 [Dd]esktop.ini
 *.lnk
+
+# agentic
+AGENTS.md
+.cursor
+.cursorrules
+CLAUDE.md
