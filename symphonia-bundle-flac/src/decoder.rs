@@ -482,11 +482,32 @@ fn decode_linear<B: ReadBitsLtr>(bs: &mut B, bps: u32, order: u32, buf: &mut [i3
 
         decode_residual(bs, order, buf)?;
 
+        // A prediction is at most the sum of the absolute values of the coefficients times the
+        // largest sample magnitude. If that fits in 32 bits, as it usually does, a 32-bit
+        // accumulator gives the same result as a 64-bit one. On 32-bit targets, where 64-bit
+        // multiply-accumulates are slow, it is also faster. On 64-bit targets it isn't, since the
+        // predictor is bound by latency rather than throughput.
+        let narrow = cfg!(target_pointer_width = "32") && {
+            let coeffs_abs_sum: u64 = qlp_coeffs.iter().map(|&c| u64::from(c.unsigned_abs())).sum();
+            coeffs_abs_sum << bps.saturating_sub(1) <= i32::MAX as u64
+        };
+
         // Helper function to dispatch to a predictor with a maximum order of N.
         #[inline(always)]
-        fn lpc<const N: usize>(order: u32, coeffs: &[i32; 32], coeff_shift: i32, buf: &mut [i32]) {
+        fn lpc<const N: usize>(
+            order: u32,
+            coeffs: &[i32; 32],
+            coeff_shift: i32,
+            narrow: bool,
+            buf: &mut [i32],
+        ) {
             let coeffs_n = (&coeffs[32 - N..32]).try_into().expect("slice has exactly N elements");
-            lpc_predict::<N>(order as usize, coeffs_n, coeff_shift as u32, buf);
+            if narrow {
+                lpc_predict::<N, i32>(order as usize, coeffs_n, coeff_shift as u32, buf);
+            }
+            else {
+                lpc_predict::<N, i64>(order as usize, coeffs_n, coeff_shift as u32, buf);
+            }
         }
 
         // Pick the best length linear predictor to use based on the order. Most FLAC streams use
@@ -496,14 +517,14 @@ fn decode_linear<B: ReadBitsLtr>(bs: &mut B, bps: u32, order: u32, buf: &mut [i3
         // order, then there will be wasted computations. On the other hand, it is not worth the
         // code bloat to specialize for every order.
         match order {
-            0..=4 => lpc::<4>(order, &qlp_coeffs, qlp_coeff_shift, buf),
-            5..=6 => lpc::<6>(order, &qlp_coeffs, qlp_coeff_shift, buf),
-            7..=8 => lpc::<8>(order, &qlp_coeffs, qlp_coeff_shift, buf),
-            9..=10 => lpc::<10>(order, &qlp_coeffs, qlp_coeff_shift, buf),
-            11..=12 => lpc::<12>(order, &qlp_coeffs, qlp_coeff_shift, buf),
-            13..=16 => lpc::<16>(order, &qlp_coeffs, qlp_coeff_shift, buf),
-            17..=24 => lpc::<24>(order, &qlp_coeffs, qlp_coeff_shift, buf),
-            _ => lpc::<32>(order, &qlp_coeffs, qlp_coeff_shift, buf),
+            0..=4 => lpc::<4>(order, &qlp_coeffs, qlp_coeff_shift, narrow, buf),
+            5..=6 => lpc::<6>(order, &qlp_coeffs, qlp_coeff_shift, narrow, buf),
+            7..=8 => lpc::<8>(order, &qlp_coeffs, qlp_coeff_shift, narrow, buf),
+            9..=10 => lpc::<10>(order, &qlp_coeffs, qlp_coeff_shift, narrow, buf),
+            11..=12 => lpc::<12>(order, &qlp_coeffs, qlp_coeff_shift, narrow, buf),
+            13..=16 => lpc::<16>(order, &qlp_coeffs, qlp_coeff_shift, narrow, buf),
+            17..=24 => lpc::<24>(order, &qlp_coeffs, qlp_coeff_shift, narrow, buf),
+            _ => lpc::<32>(order, &qlp_coeffs, qlp_coeff_shift, narrow, buf),
         };
     }
     else {
@@ -712,11 +733,70 @@ fn fixed_predict(order: u32, buf: &mut [i32]) {
     };
 }
 
+/// An accumulator for [`lpc_predict`].
+trait LpcAccumulator: Copy {
+    const ZERO: Self;
+
+    /// Multiplies a coefficient by a sample.
+    fn mul(coeff: i32, sample: i32) -> Self;
+
+    fn add(self, other: Self) -> Self;
+
+    /// Shifts the prediction right and converts it to a sample.
+    fn shr(self, shift: u32) -> i32;
+}
+
+impl LpcAccumulator for i64 {
+    const ZERO: Self = 0;
+
+    #[inline(always)]
+    fn mul(coeff: i32, sample: i32) -> Self {
+        i64::from(coeff) * i64::from(sample)
+    }
+
+    #[inline(always)]
+    fn add(self, other: Self) -> Self {
+        self + other
+    }
+
+    #[inline(always)]
+    fn shr(self, shift: u32) -> i32 {
+        (self >> shift) as i32
+    }
+}
+
+/// Only for predictions known to fit in 32 bits. Wraps rather than panics if they don't, as with
+/// a corrupt stream.
+impl LpcAccumulator for i32 {
+    const ZERO: Self = 0;
+
+    #[inline(always)]
+    fn mul(coeff: i32, sample: i32) -> Self {
+        coeff.wrapping_mul(sample)
+    }
+
+    #[inline(always)]
+    fn add(self, other: Self) -> Self {
+        self.wrapping_add(other)
+    }
+
+    #[inline(always)]
+    fn shr(self, shift: u32) -> i32 {
+        self >> shift
+    }
+}
+
 /// Generalized Linear Predictive Coding (LPC) decoder. The exact number of coefficients given is
 /// specified by `order`. Coefficients must be stored in reverse order in `coeffs` with the first
 /// coefficient at index 31. Coefficients at indices less than 31 - `order` must be 0.
-/// It is expected that the first `order` samples in `buf` are warm-up samples.
-fn lpc_predict<const N: usize>(order: usize, coeffs: &[i32; N], coeff_shift: u32, buf: &mut [i32]) {
+/// It is expected that the first `order` samples in `buf` are warm-up samples. Predictions are
+/// accumulated in `A`.
+fn lpc_predict<const N: usize, A: LpcAccumulator>(
+    order: usize,
+    coeffs: &[i32; N],
+    coeff_shift: u32,
+    buf: &mut [i32],
+) {
     // Order must be less than or equal to the number of coefficients.
     debug_assert!(order <= coeffs.len());
 
@@ -731,10 +811,10 @@ fn lpc_predict<const N: usize>(order: usize, coeffs: &[i32; N], coeff_shift: u32
         let predicted = coeffs[N - order..N]
             .iter()
             .zip(&buf[i - order..i])
-            .map(|(&c, &sample)| c as i64 * sample as i64)
-            .sum::<i64>();
+            .map(|(&c, &sample)| A::mul(c, sample))
+            .fold(A::ZERO, A::add);
 
-        buf[i] += (predicted >> coeff_shift) as i32;
+        buf[i] += predicted.shr(coeff_shift);
     }
 
     // If the pre-fill operation filled the entire sample buffer, return immediately.
@@ -744,12 +824,9 @@ fn lpc_predict<const N: usize>(order: usize, coeffs: &[i32; N], coeff_shift: u32
 
     // Main predictor loop. Calculate each sample by applying what is essentially an IIR filter.
     for i in N..buf.len() {
-        let predicted = coeffs
-            .iter()
-            .zip(&buf[i - N..i])
-            .map(|(&c, &s)| i64::from(c) * i64::from(s))
-            .sum::<i64>();
+        let predicted =
+            coeffs.iter().zip(&buf[i - N..i]).map(|(&c, &s)| A::mul(c, s)).fold(A::ZERO, A::add);
 
-        buf[i] += (predicted >> coeff_shift) as i32;
+        buf[i] += predicted.shr(coeff_shift);
     }
 }
