@@ -670,6 +670,29 @@ pub trait ReadBitsLtr: private::FetchBitsLtr {
         Ok(num)
     }
 
+    /// Reads a Rice code with parameter `k`: a unary zeros encoded quotient followed by a `k`-bit
+    /// remainder. Returns `quotient << k | remainder` or an error.
+    #[inline(always)]
+    fn read_rice(&mut self, k: u32) -> io::Result<u32> {
+        debug_assert!(k < u32::BITS);
+
+        let bits = self.get_bits();
+        let num_zeros = bits.leading_zeros();
+
+        // Fast path: the whole code is in the cache.
+        if num_zeros + 1 + k <= self.num_bits_left() {
+            // As in read_bits_leq32, shift in two steps so that k == 0 doesn't shift by 64 bits.
+            let rem = ((bits << num_zeros << 1) >> u32::BITS) >> (u32::BITS - k);
+            self.consume_bits(num_zeros);
+            self.consume_bits(1 + k);
+            return Ok((num_zeros << k) | rem as u32);
+        }
+
+        let quotient = self.read_unary_zeros()?;
+        let rem = self.read_bits_leq32(k)?;
+        Ok((quotient << k) | rem)
+    }
+
     /// Reads and returns a unary zeros encoded integer that is capped to a maximum value.
     #[inline(always)]
     fn read_unary_zeros_capped(&mut self, mut limit: u32) -> io::Result<u32> {
@@ -1584,6 +1607,47 @@ mod tests {
         let mut bs = BitReaderLtr::new(&[0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
 
         assert!(bs.read_unary_zeros().is_err());
+    }
+
+    #[test]
+    fn verify_bitstreamltr_read_rice() {
+        // General tests: 00 1 011 | 1 | 01 10
+        let mut bs = BitReaderLtr::new(&[0b0010_1110, 0b1100_0000]);
+
+        assert_eq!(bs.read_rice(3).unwrap(), (2 << 3) | 0b011);
+        assert_eq!(bs.read_rice(0).unwrap(), 0);
+        assert_eq!(bs.read_rice(2).unwrap(), (1 << 2) | 0b10);
+
+        // Cache fetch test: 00000 1 1010_0101 straddles the first 8 bytes.
+        let mut bs = BitReaderLtr::new(&[
+            0xff,
+            0xff,
+            0xff,
+            0xff,
+            0xff,
+            0xff,
+            0xff,
+            0b0000_0110,
+            0b1001_0100,
+        ]);
+
+        assert_eq!(bs.read_bits_leq32(32).unwrap(), u32::MAX);
+        assert_eq!(bs.read_bits_leq32(24).unwrap(), 0xff_ffff);
+        assert_eq!(bs.read_rice(8).unwrap(), (5 << 8) | 0xa5);
+
+        // Upper limit test: 1 followed by a 30-bit remainder.
+        let mut bs = BitReaderLtr::new(&[0xff, 0xff, 0xff, 0xfe]);
+
+        assert_eq!(bs.read_rice(30).unwrap(), (1 << 30) - 1);
+
+        // Error tests.
+        let mut bs = BitReaderLtr::new(&[]);
+
+        assert!(bs.read_rice(0).is_err());
+
+        let mut bs = BitReaderLtr::new(&[0b1000_0000]);
+
+        assert!(bs.read_rice(9).is_err());
     }
 
     #[test]

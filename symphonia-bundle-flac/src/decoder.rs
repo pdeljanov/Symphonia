@@ -591,9 +591,7 @@ fn decode_rice_partition<B: ReadBitsLtr>(
 
         // Read each rice encoded residual and store in buffer.
         for sample in buf.iter_mut() {
-            let q = bs.read_unary_zeros()?;
-            let r = bs.read_bits_leq32(rice_param)?;
-            *sample = rice_signed_to_i32((q << rice_param) | r);
+            *sample = rice_signed_to_i32(bs.read_rice(rice_param)?);
         }
     }
     else {
