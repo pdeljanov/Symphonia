@@ -491,15 +491,18 @@ fn decode_linear<B: ReadBitsLtr>(bs: &mut B, bps: u32, order: u32, buf: &mut [i3
 
         // Pick the best length linear predictor to use based on the order. Most FLAC streams use
         // the subset format and have an order <= 12. Therefore, for orders <= 12, dispatch to
-        // predictors that roughly match the order. If a predictor is too long for a given order,
-        // then there will be wasted computations. On the other hand, it is not worth the code bloat
-        // to specialize for every order <= 12.
+        // predictors that roughly match the order. Streams outside the subset commonly use orders
+        // up to 24, so dispatch those to coarser predictors. If a predictor is too long for a given
+        // order, then there will be wasted computations. On the other hand, it is not worth the
+        // code bloat to specialize for every order.
         match order {
             0..=4 => lpc::<4>(order, &qlp_coeffs, qlp_coeff_shift, buf),
             5..=6 => lpc::<6>(order, &qlp_coeffs, qlp_coeff_shift, buf),
             7..=8 => lpc::<8>(order, &qlp_coeffs, qlp_coeff_shift, buf),
             9..=10 => lpc::<10>(order, &qlp_coeffs, qlp_coeff_shift, buf),
             11..=12 => lpc::<12>(order, &qlp_coeffs, qlp_coeff_shift, buf),
+            13..=16 => lpc::<16>(order, &qlp_coeffs, qlp_coeff_shift, buf),
+            17..=24 => lpc::<24>(order, &qlp_coeffs, qlp_coeff_shift, buf),
             _ => lpc::<32>(order, &qlp_coeffs, qlp_coeff_shift, buf),
         };
     }
