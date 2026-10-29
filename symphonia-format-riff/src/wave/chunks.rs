@@ -247,7 +247,7 @@ impl WaveFormatChunk {
         ];
         #[rustfmt::skip]
         const KSDATAFORMAT_SUBTYPE_MULAW: [u8; 16] = [
-            0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00,
+            0x07, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00,
             0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71,
         ];
         #[rustfmt::skip]
@@ -502,6 +502,28 @@ impl ParseChunk for WaveFormatChunk {
             block_align,
             format_data,
         })
+    }
+}
+
+#[test]
+fn test_read_ext_fmt_mulaw() {
+    use symphonia_core::io::BufReader;
+
+    // WAVE_FORMAT_EXTENSIBLE fmt chunk for mono 8 kHz mu-law audio. The sub-format GUID is
+    // KSDATAFORMAT_SUBTYPE_MULAW, 00000007-0000-0010-8000-00aa00389b71.
+    #[rustfmt::skip]
+    let buf = [
+        0xfe, 0xff, 0x01, 0x00, 0x40, 0x1f, 0x00, 0x00, 0x40, 0x1f, 0x00, 0x00, 0x01, 0x00,
+        0x08, 0x00, 0x16, 0x00, 0x08, 0x00, 0x04, 0x00, 0x00, 0x00,
+        0x07, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00,
+        0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71,
+    ];
+
+    match WaveFormatChunk::parse(&mut BufReader::new(&buf), *b"fmt ", 40) {
+        Ok(WaveFormatChunk { format_data: FormatData::Extensible(ext), .. }) => {
+            assert_eq!(ext.codec, CODEC_ID_PCM_MULAW)
+        }
+        _ => panic!("expected an extensible mu-law format"),
     }
 }
 
