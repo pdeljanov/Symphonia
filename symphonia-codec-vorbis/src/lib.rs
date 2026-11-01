@@ -530,7 +530,9 @@ fn read_setup(reader: &mut BufReader<'_>, ident: &IdentHeader) -> Result<Setup> 
         return decode_error("vorbis: setup header framing flag unset");
     }
 
-    if bs.bits_left() > 0 {
+    // Extra bits less than a byte (< 8 bits) are expected padding to align to
+    // a byte boundary. Only log if there are leftover full bytes.
+    if bs.bits_left() >= 8 {
         debug!("vorbis: leftover bits in setup head extra data");
     }
 
