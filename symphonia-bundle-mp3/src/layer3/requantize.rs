@@ -371,7 +371,7 @@ pub(super) fn requantize(header: &FrameHeader, channel: &GranuleChannel, buf: &m
             let bands = SFB_MIXED_BANDS[header.sample_rate_idx];
             let switch = SFB_MIXED_SWITCH_POINT[header.sample_rate_idx];
 
-            requantize_long(channel, &bands[..switch], buf);
+            requantize_long(channel, &bands[..=switch], buf);
             requantize_short(channel, &bands[switch..], switch, buf);
         }
         _ => {
