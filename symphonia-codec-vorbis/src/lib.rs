@@ -249,7 +249,7 @@ impl VorbisDecoder {
 
         // Section 4.3.5 - Inverse Coupling
 
-        for coupling in mapping.couplings.iter() {
+        for coupling in mapping.couplings.iter().rev() {
             debug_assert!(coupling.magnitude_ch != coupling.angle_ch);
 
             // Get mutable reference to each channel in the pair.
