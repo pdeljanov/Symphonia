@@ -337,7 +337,10 @@ mod builder {
                 }
             }
 
-            let dur = block_dur.saturating_sub(self.trim_start).saturating_sub(self.trim_end);
+            // Cap to the number of decoded frames remaining after the start is trimmed.
+            let trim_end = trim_end.min(block_dur.saturating_sub(trim_start));
+
+            let dur = block_dur.saturating_sub(trim_start).saturating_sub(trim_end);
 
             PacketBuilder { track_id, pts, dur: HasDur(dur), buf, dts, trim_start, trim_end }
         }
@@ -464,5 +467,35 @@ mod tests {
         assert_eq!(pkt_ref.trim_start, Duration::new(20));
         assert_eq!(pkt_ref.trim_end, Duration::new(10));
         assert_eq!(&pkt_ref.data, &[5, 6, 7, 8]);
+    }
+
+    #[test]
+    fn verify_trimmed_dur_subtracts_trims() {
+        let pkt = PacketBuilder::new()
+            .track_id(1)
+            .pts(Timestamp::new(-3))
+            .data([0u8; 1])
+            .trimmed_dur(Duration::new(10), Some(Timestamp::new(5)))
+            .build();
+
+        assert_eq!(pkt.trim_start, Duration::new(3));
+        assert_eq!(pkt.trim_end, Duration::new(2));
+        assert_eq!(pkt.dur, Duration::new(5));
+        assert_eq!(pkt.block_dur(), Duration::new(10));
+    }
+
+    #[test]
+    fn verify_trimmed_dur_caps_trim_end_to_remaining_frames() {
+        let pkt = PacketBuilder::new()
+            .track_id(1)
+            .pts(Timestamp::new(-3))
+            .data([0u8; 1])
+            .trimmed_dur(Duration::new(10), Some(Timestamp::new(-1)))
+            .build();
+
+        assert_eq!(pkt.trim_start, Duration::new(3));
+        assert_eq!(pkt.trim_end, Duration::new(7));
+        assert_eq!(pkt.dur, Duration::ZERO);
+        assert_eq!(pkt.block_dur(), Duration::new(10));
     }
 }
