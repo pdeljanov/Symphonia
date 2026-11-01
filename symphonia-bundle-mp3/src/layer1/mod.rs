@@ -14,16 +14,16 @@ use crate::common::*;
 use crate::layer12::LAYER12_SCALEFACTORS;
 use crate::synthesis;
 
-use alloc::boxed::Box;
-use once_cell::race::OnceBox;
+/// Sample dequantization factors.
+static FACTOR: [f32; 16] = factor();
 
-static FACTOR: OnceBox<[f32; 16]> = OnceBox::new();
-
-/// Builds the sample dequantization factor table on first use.
-fn init_factor() -> Box<[f32; 16]> {
+/// Builds the sample dequantization factor table at compile time.
+const fn factor() -> [f32; 16] {
     let mut factor = [0f32; 16];
 
-    for (i, factor) in factor.iter_mut().enumerate().skip(2) {
+    let mut nb = 2;
+
+    while nb < 16 {
         // As per ISO/IEC 11172-3, given the nb-bit signed raw sample, val, dequantization is
         // defined as follows.
         //
@@ -39,13 +39,15 @@ fn init_factor() -> Box<[f32; 16]> {
         //
         // Therefore, dequantization can be reduced to a single multiplication and addition.
         // This lookup table generator computes factor for nb-bits between 2..15, inclusive.
-        let a = 1 << i;
-        let b = 1 << (i - 1);
+        let a = (1u32 << nb) as f32;
+        let b = (1u32 << (nb - 1)) as f32;
 
-        *factor = (a as f32 / (a - 1) as f32) * (b as f32).recip();
+        factor[nb] = (a / (a - 1.0)) * (1.0 / b);
+
+        nb += 1;
     }
 
-    Box::new(factor)
+    factor
 }
 
 /// Dequantize a sample, `raw`, of length `bits` bits.
@@ -139,8 +141,6 @@ impl Layer for Layer1 {
             }
         }
 
-        let factor = FACTOR.get_or_init(init_factor);
-
         // Decode samples.
         let mut samples = [[0f32; 384]; 2];
 
@@ -155,7 +155,7 @@ impl Layer for Layer1 {
                         let raw = bs.read_bits_leq32(bits)?;
 
                         // Dequantize the raw sample.
-                        let sample = dequantize(bits, factor[bits as usize], raw);
+                        let sample = dequantize(bits, FACTOR[bits as usize], raw);
 
                         // Unscale the sample.
                         samples[ch][12 * sb + s] = scalefacs[ch][sb] * sample;
@@ -172,7 +172,7 @@ impl Layer for Layer1 {
                     let raw = bs.read_bits_leq32(bits)?;
 
                     // Dequantize the raw sample.
-                    let sample = dequantize(bits, factor[bits as usize], raw);
+                    let sample = dequantize(bits, FACTOR[bits as usize], raw);
 
                     // Unscale the sample and copy it into both channels.
                     for ch in 0..num_channels {
