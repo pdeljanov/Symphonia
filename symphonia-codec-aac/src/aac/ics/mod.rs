@@ -473,9 +473,7 @@ fn decode_noise(lcg: &mut Lcg, sf: f32, dst: &mut [f32]) {
     let mut energy = 0.0;
 
     for spec in dst.iter_mut() {
-        // The random number generator outputs i32, but the largest signed
-        // integer that can convert to f32 is i16.
-        *spec = f32::from((lcg.next() >> 16) as i16);
+        *spec = lcg.next() as f32;
         energy += *spec * *spec;
     }
 
