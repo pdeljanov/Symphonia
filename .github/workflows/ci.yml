@@ -45,8 +45,37 @@ jobs:
       - name: Setup Toolchain
         run: rustup install stable --profile minimal && rustup target add thumbv7m-none-eabi
 
-      - name: Check no_std
+      - name: Check no_std for symphonia
         run: cargo check -p symphonia --target thumbv7m-none-eabi --no-default-features --features all,no_std
+
+      - name: Check no_std for individual crates
+        run: |
+          set -euo pipefail
+
+          target=thumbv7m-none-eabi
+
+          while read -r package features; do
+            cargo check -p "$package" --target "$target" --no-default-features \
+              --features "no_std${features:+,$features}"
+          done <<'EOF'
+          symphonia-core
+          symphonia-common
+          symphonia-metadata ape,id3v1,id3v2,flac,riff,vorbis
+          symphonia-bundle-flac
+          symphonia-bundle-mp3 mp1,mp2,mp3
+          symphonia-codec-aac
+          symphonia-codec-adpcm
+          symphonia-codec-alac
+          symphonia-codec-opus
+          symphonia-codec-pcm
+          symphonia-codec-vorbis
+          symphonia-codec-wavpack
+          symphonia-format-caf
+          symphonia-format-isomp4
+          symphonia-format-mkv
+          symphonia-format-ogg
+          symphonia-format-riff aiff,wav
+          EOF
 
   clippy:
     name: Clippy ${{ matrix.os }}

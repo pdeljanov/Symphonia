@@ -18,6 +18,11 @@
 #[macro_use]
 extern crate alloc;
 
+#[cfg(not(any(feature = "std", feature = "no_std")))]
+compile_error!(
+    "symphonia-format-caf: enable either the `std` feature (default) or the `no_std` feature"
+);
+
 mod chunks;
 mod demuxer;
 

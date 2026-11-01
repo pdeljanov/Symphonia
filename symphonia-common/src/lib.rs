@@ -16,6 +16,11 @@
 
 extern crate alloc;
 
+#[cfg(not(any(feature = "std", feature = "no_std")))]
+compile_error!(
+    "symphonia-common: enable either the `std` feature (default) or the `no_std` feature"
+);
+
 pub mod apple;
 pub mod mpeg;
 pub mod xiph;

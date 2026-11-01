@@ -38,6 +38,11 @@
 )]
 extern crate alloc;
 
+#[cfg(not(any(feature = "std", feature = "no_std")))]
+compile_error!(
+    "symphonia-metadata: enable either the `std` feature (default) or the `no_std` feature"
+);
+
 #[cfg(feature = "ape")]
 pub mod ape;
 #[cfg(feature = "id3v1")]

@@ -19,6 +19,9 @@ default = ["std"]
 # Enable standard-library I/O support. Disable for `no_std` (default-features = false).
 std = ["symphonia-core/std", "symphonia-common/std", "num-traits/std"]
 
+# Enable no_std support with `default-features = false`.
+no_std = ["symphonia-core/no_std", "symphonia-common/no_std", "num-traits/libm"]
+
 [dependencies]
 once_cell = { version = "1.21", default-features = false, features = ["alloc", "race"] }
 num-traits = { version = "0.2.19", default-features = false }

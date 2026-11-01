@@ -18,6 +18,11 @@
 #[cfg_attr(any(feature = "aiff", feature = "wav"), macro_use)]
 extern crate alloc;
 
+#[cfg(not(any(feature = "std", feature = "no_std")))]
+compile_error!(
+    "symphonia-format-riff: enable either the `std` feature (default) or the `no_std` feature"
+);
+
 mod common;
 
 #[cfg(feature = "aiff")]

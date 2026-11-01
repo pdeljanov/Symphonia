@@ -20,6 +20,11 @@
 #[macro_use]
 extern crate alloc;
 
+#[cfg(not(any(feature = "std", feature = "no_std")))]
+compile_error!(
+    "symphonia-codec-vorbis: enable either the `std` feature (default) or the `no_std` feature"
+);
+
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 

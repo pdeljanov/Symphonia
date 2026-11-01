@@ -120,6 +120,9 @@
 
 extern crate alloc;
 
+#[cfg(not(any(feature = "std", feature = "no_std")))]
+compile_error!("symphonia: enable either the `std` feature (default) or the `no_std` feature");
+
 pub mod default {
     //! The `default` module provides convenience functions and registries to get an implementer
     //! up-and-running as quickly as possible, and to reduce boiler-plate. Using the `default`

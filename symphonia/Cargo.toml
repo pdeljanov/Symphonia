@@ -37,7 +37,22 @@ std = [
 ]
 
 # Enable no_std support with `default-features = false`.
-no_std = ["symphonia-core/no_std"]
+no_std = [
+    "symphonia-core/no_std",
+    "symphonia-metadata/no_std",
+    "symphonia-bundle-flac?/no_std",
+    "symphonia-bundle-mp3?/no_std",
+    "symphonia-codec-aac?/no_std",
+    "symphonia-codec-adpcm?/no_std",
+    "symphonia-codec-alac?/no_std",
+    "symphonia-codec-pcm?/no_std",
+    "symphonia-codec-vorbis?/no_std",
+    "symphonia-format-riff?/no_std",
+    "symphonia-format-ogg?/no_std",
+    "symphonia-format-isomp4?/no_std",
+    "symphonia-format-mkv?/no_std",
+    "symphonia-format-caf?/no_std",
+]
 
 # Only royalty-free open standard codecs and formats are enabled by default.
 default = ["std", "opt-simd", "all-meta", "adpcm", "flac", "mkv", "ogg", "pcm", "vorbis", "wav"]

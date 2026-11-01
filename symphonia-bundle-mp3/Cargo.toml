@@ -19,6 +19,9 @@ default = ["mp1", "mp2", "mp3", "std"]
 # Enable standard-library I/O support. Disable for `no_std` (default-features = false).
 std = ["symphonia-core/std", "num-traits/std"]
 
+# Enable no_std support with `default-features = false`.
+no_std = ["symphonia-core/no_std", "num-traits/libm"]
+
 mp1 = []
 mp2 = []
 mp3 = []

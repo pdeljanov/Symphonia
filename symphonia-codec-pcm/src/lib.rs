@@ -17,6 +17,11 @@
 
 extern crate alloc;
 
+#[cfg(not(any(feature = "std", feature = "no_std")))]
+compile_error!(
+    "symphonia-codec-pcm: enable either the `std` feature (default) or the `no_std` feature"
+);
+
 use alloc::boxed::Box;
 
 use symphonia_core::codecs::CodecInfo;

@@ -19,6 +19,9 @@ default = ["std", "ape", "id3v1", "id3v2"]
 # Enable standard-library I/O support. Disable for `no_std` (default-features = false).
 std = ["symphonia-core/std"]
 
+# Enable no_std support with `default-features = false`.
+no_std = ["symphonia-core/no_std"]
+
 # Standalone metadata format readers.
 ape = []
 id3v1 = []

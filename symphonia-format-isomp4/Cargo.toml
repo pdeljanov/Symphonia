@@ -19,6 +19,9 @@ default = ["std"]
 # Enable standard-library I/O support. Disable for `no_std` (default-features = false).
 std = ["symphonia-core/std", "symphonia-common/std", "symphonia-metadata/std"]
 
+# Enable no_std support with `default-features = false`.
+no_std = ["symphonia-core/no_std", "symphonia-common/no_std", "symphonia-metadata/no_std"]
+
 [dependencies]
 log = { workspace = true }
 
