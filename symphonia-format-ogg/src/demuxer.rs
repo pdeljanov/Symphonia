@@ -505,12 +505,7 @@ impl FormatReader for OggReader<'_> {
 
                     // Timestamp upper-bound out-of-range.
                     if let Some(num_frames) = track.num_frames {
-                        let max_ts = track
-                            .start_ts
-                            .checked_add(Duration::from(num_frames))
-                            .ok_or(Error::SeekError(SeekErrorKind::Unseekable))?;
-
-                        if ts > max_ts {
+                        if ts.get() > num_frames as i64 {
                             return seek_error(SeekErrorKind::OutOfRange);
                         }
                     }
@@ -554,12 +549,7 @@ impl FormatReader for OggReader<'_> {
 
                     // Timestamp upper-bound out-of-range.
                     if let Some(num_frames) = track.num_frames {
-                        let max_ts = track
-                            .start_ts
-                            .checked_add(Duration::from(num_frames))
-                            .ok_or(Error::SeekError(SeekErrorKind::Unseekable))?;
-
-                        if ts > max_ts {
+                        if ts.get() > num_frames as i64 {
                             return seek_error(SeekErrorKind::OutOfRange);
                         }
                     }
