@@ -878,17 +878,28 @@ impl<'a> BitReaderLtr<'a> {
 impl private::FetchBitsLtr for BitReaderLtr<'_> {
     #[inline]
     fn fetch_bits_partial(&mut self) -> io::Result<()> {
-        let num_bytes = (u64::BITS - self.n_bits_left) as usize >> 3;
+        const WORD_LEN: usize = std::mem::size_of::<u64>();
 
-        let mut num_bytes_read = 0;
+        let num_bytes = (u64::BITS - self.n_bits_left) as usize / 8;
+        let read_len = min(self.buf.len(), num_bytes);
 
-        for &byte in self.buf.iter().take(num_bytes) {
-            self.bits |= u64::from(byte) << (u64::BITS - 8 - self.n_bits_left);
-            self.n_bits_left += 8;
-            num_bytes_read += 1;
+        if read_len > 0 {
+            // Load a full word if available.
+            if let Some(bytes) = self.buf.first_chunk::<WORD_LEN>() {
+                let read_bits = read_len as u32 * 8;
+                // Remove lookahead bytes that will not be consumed by this refill.
+                let word = u64::from_be_bytes(*bytes) & (u64::MAX << (u64::BITS - read_bits));
+                self.bits |= word >> self.n_bits_left;
+                self.n_bits_left += read_bits;
+            }
+            else {
+                for &byte in &self.buf[..read_len] {
+                    self.bits |= u64::from(byte) << (u64::BITS - 8 - self.n_bits_left);
+                    self.n_bits_left += 8;
+                }
+            }
+            self.buf = &self.buf[read_len..];
         }
-
-        self.buf = &self.buf[num_bytes_read..];
 
         Ok(())
     }
@@ -1318,17 +1329,28 @@ impl<'a> BitReaderRtl<'a> {
 impl private::FetchBitsRtl for BitReaderRtl<'_> {
     #[inline]
     fn fetch_bits_partial(&mut self) -> io::Result<()> {
-        let num_bytes = (u64::BITS - self.n_bits_left) as usize >> 3;
+        const WORD_LEN: usize = std::mem::size_of::<u64>();
 
-        let mut num_bytes_read = 0;
+        let num_bytes = (u64::BITS - self.n_bits_left) as usize / 8;
+        let read_len = min(self.buf.len(), num_bytes);
 
-        for &byte in self.buf.iter().take(num_bytes) {
-            self.bits |= u64::from(byte) << self.n_bits_left;
-            self.n_bits_left += 8;
-            num_bytes_read += 1;
+        if read_len > 0 {
+            // Load a full word if available.
+            if let Some(bytes) = self.buf.first_chunk::<WORD_LEN>() {
+                let read_bits = read_len as u32 * 8;
+                // Remove lookahead bytes that will not be consumed by this refill.
+                let word = u64::from_le_bytes(*bytes) & (u64::MAX >> (u64::BITS - read_bits));
+                self.bits |= word << self.n_bits_left;
+                self.n_bits_left += read_bits;
+            }
+            else {
+                for &byte in &self.buf[..read_len] {
+                    self.bits |= u64::from(byte) << self.n_bits_left;
+                    self.n_bits_left += 8;
+                }
+            }
+            self.buf = &self.buf[read_len..];
         }
-
-        self.buf = &self.buf[num_bytes_read..];
 
         Ok(())
     }
