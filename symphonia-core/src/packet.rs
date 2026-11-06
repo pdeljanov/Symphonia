@@ -7,6 +7,8 @@
 
 //! The `packet` module defines the packet structure.
 
+use alloc::boxed::Box;
+
 use crate::io::BufReader;
 use crate::units::{Duration, Timestamp};
 
@@ -118,8 +120,8 @@ impl Packet {
     }
 }
 
-impl std::fmt::Debug for Packet {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Debug for Packet {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("Packet")
             .field("track_id", &self.track_id)
             .field("pts", &self.pts)
@@ -174,7 +176,7 @@ impl<'a> PacketRef<'a> {
     /// Create a new untrimmed `PacketRef`.
     ///
     /// The `data` slice can be constructed directly from a fixed-size buffer, or from
-    /// raw FFI pointers (e.g., a C++ `std::vector` payload) using `std::slice::from_raw_parts`.
+    /// raw FFI pointers (e.g., a C++ `std::vector` payload) using `core::slice::from_raw_parts`.
     pub fn new(track_id: u32, pts: Timestamp, dur: Duration, data: &'a [u8]) -> Self {
         PacketRef {
             track_id,
@@ -200,8 +202,8 @@ impl<'a> PacketRef<'a> {
     }
 }
 
-impl std::fmt::Debug for PacketRef<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Debug for PacketRef<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("PacketRef")
             .field("track_id", &self.track_id)
             .field("pts", &self.pts)
@@ -222,6 +224,8 @@ impl<'a> From<&'a Packet> for PacketRef<'a> {
 }
 
 mod builder {
+    use alloc::boxed::Box;
+
     use crate::packet::{Packet, PacketRef};
     use crate::units::{Duration, Timestamp};
 

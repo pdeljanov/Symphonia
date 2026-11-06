@@ -18,7 +18,7 @@ libfuzzer-sys = "0.4"
 [dependencies.symphonia]
 path = ".."
 default-features = false
-features = ["all"]
+features = ["all", "std"]
 
 # Prevent this from interfering with workspaces
 [workspace]

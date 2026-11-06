@@ -23,7 +23,9 @@
 //! each enumerator corresponds to one of the aforementioned standard sample formats. Functions on
 //! the generic wrappers match closely with that of the typed interface and are dispatch to the
 //! active enumerator.
-use std::ops::Range;
+use alloc::vec::Vec;
+
+use core::ops::Range;
 
 mod buf;
 mod channels;
@@ -113,7 +115,7 @@ impl<'a, S: Sample> Iterator for AudioPlanesMut<'a, S> {
     type Item = &'a mut [S];
 
     fn next(&mut self) -> Option<Self::Item> {
-        match std::mem::take(&mut self.planes).split_first_mut() {
+        match core::mem::take(&mut self.planes).split_first_mut() {
             Some((next, rest)) => {
                 self.planes = rest;
                 Some(&mut next[self.bound.clone()])
@@ -441,7 +443,7 @@ pub trait AudioBytes<S: Sample + SampleBytes>: Audio<S> {
     where
         Sout: SampleBytes + FromSample<S>,
     {
-        std::mem::size_of::<Sout::RawType>() * self.samples_interleaved()
+        core::mem::size_of::<Sout::RawType>() * self.samples_interleaved()
     }
 
     /// Get the length in bytes of all samples in a single plane if converted to a new sample
@@ -450,7 +452,7 @@ pub trait AudioBytes<S: Sample + SampleBytes>: Audio<S> {
     where
         Sout: SampleBytes + FromSample<S>,
     {
-        std::mem::size_of::<Sout::RawType>() * self.samples_planar()
+        core::mem::size_of::<Sout::RawType>() * self.samples_planar()
     }
 
     /// Get the length of bytes of a single interleaved audio frame if converted to a new sample
@@ -459,7 +461,7 @@ pub trait AudioBytes<S: Sample + SampleBytes>: Audio<S> {
     where
         Sout: SampleBytes + FromSample<S>,
     {
-        std::mem::size_of::<Sout::RawType>() * self.num_planes()
+        core::mem::size_of::<Sout::RawType>() * self.num_planes()
     }
 
     /// Copy interleaved audio to the destination byte slice after converting to a different sample
@@ -496,17 +498,17 @@ pub trait AudioBytes<S: Sample + SampleBytes>: Audio<S> {
 
     /// Get the length in bytes of all samples.
     fn byte_len(&self) -> usize {
-        std::mem::size_of::<S::RawType>() * self.samples_interleaved()
+        core::mem::size_of::<S::RawType>() * self.samples_interleaved()
     }
 
     /// Get the length in bytes of all samples in a single plane.
     fn byte_len_per_plane(&self) -> usize {
-        std::mem::size_of::<S::RawType>() * self.samples_planar()
+        core::mem::size_of::<S::RawType>() * self.samples_planar()
     }
 
     /// Get the length of bytes of a single interleaved audio frame.
     fn byte_len_per_frame(&self) -> usize {
-        std::mem::size_of::<S::RawType>() * self.num_planes()
+        core::mem::size_of::<S::RawType>() * self.num_planes()
     }
 
     /// Copy interleaved audio to the destination byte slice.

@@ -5,6 +5,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+use alloc::boxed::Box;
+use alloc::vec::Vec;
+
 use super::{MapResult, Mapper, PacketParser};
 use crate::common::SideData;
 
@@ -18,6 +21,9 @@ use symphonia_core::io::{BitReaderRtl, BufReader, ReadBitsRtl, ReadBytes};
 use symphonia_core::meta::MetadataBuilder;
 use symphonia_core::units::Duration;
 use symphonia_metadata::embedded::vorbis::*;
+
+#[cfg(not(feature = "std"))]
+use num_traits::float::Float;
 
 use log::warn;
 

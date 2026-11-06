@@ -13,15 +13,22 @@ repository.workspace = true
 rust-version.workspace = true
 version.workspace = true
 
+[features]
+default = ["std"]
+
+# Enable standard-library I/O support. Disable for `no_std` (default-features = false).
+std = ["symphonia-core/std"]
+
+# Enable no_std support with `default-features = false`.
+no_std = ["symphonia-core/no_std"]
+
 [dependencies]
 log = { workspace = true }
-symphonia-core = { version = "0.6.1", path = "../symphonia-core" }
 
-[dependencies.symphonia-metadata]
+[dependencies.symphonia-core]
 version = "0.6.1"
-path = "../symphonia-metadata"
+path = "../symphonia-core"
 default-features = false
-features = ["flac"]
 
 [lints]
 workspace = true

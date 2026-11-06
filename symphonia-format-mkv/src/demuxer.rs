@@ -5,9 +5,18 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use std::collections::{HashMap, VecDeque};
-use std::convert::TryFrom;
-use std::num::NonZero;
+#[cfg(feature = "std")]
+use std::collections::HashMap;
+
+use alloc::{boxed::Box, collections::VecDeque, vec::Vec};
+use core::convert::TryFrom;
+use core::num::NonZero;
+
+#[cfg(not(feature = "std"))]
+use symphonia_core::collections::HashMap;
+
+#[cfg(not(feature = "std"))]
+use num_traits::float::Float;
 
 use symphonia_core::errors::{Error, Result, SeekErrorKind, seek_error, unsupported_error};
 use symphonia_core::formats::prelude::*;

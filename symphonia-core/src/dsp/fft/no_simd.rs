@@ -5,34 +5,40 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use std::convert::TryInto;
-use std::f32;
+use alloc::{boxed::Box, vec::Vec};
 
-use lazy_static::lazy_static;
+use core::convert::TryInto;
+use core::f32;
+
+use once_cell::race::OnceBox;
+
+#[cfg(not(feature = "std"))]
+use num_traits::float::Float;
 
 use crate::dsp::complex::Complex;
 use crate::dsp::fft::MAX_SIZE;
 
 macro_rules! fft_twiddle_table {
     ($bi:expr, $name:ident) => {
-        lazy_static! {
-            static ref $name: Box<[Complex<f32>; (1 << $bi) >> 1]> = {
-                const N: usize = 1 << $bi;
-                const TABLE_SIZE: usize = N >> 1;
-                let theta = std::f64::consts::PI / TABLE_SIZE as f64;
-
-                let table: Vec<Complex<f32>> = (0..TABLE_SIZE)
-                    .map(|k| {
-                        let angle = theta * k as f64;
-                        Complex::new(angle.cos() as f32, -angle.sin() as f32)
-                    })
-                    .collect();
-
-                // UNWRAP: The vector was initialized to be the correct size.
-                table.into_boxed_slice().try_into().unwrap()
-            };
-        }
+        static $name: OnceBox<[Complex<f32>; (1 << $bi) >> 1]> = OnceBox::new();
     };
+}
+
+/// Build the twiddle table for a FFT of size `2 * n`.
+///
+/// The table contains the `n` complex roots of unity distributed over the upper-half plane.
+fn build_fft_twiddle_table<const N: usize>() -> Box<[Complex<f32>; N]> {
+    let theta = core::f64::consts::PI / N as f64;
+
+    let table: Vec<Complex<f32>> = (0..N)
+        .map(|k| {
+            let angle = theta * k as f64;
+            Complex::new(angle.cos() as f32, -angle.sin() as f32)
+        })
+        .collect();
+
+    // UNWRAP: The vector was initialized to be the correct size.
+    table.into_boxed_slice().try_into().unwrap()
 }
 
 fft_twiddle_table!(6, FFT_TWIDDLE_TABLE_64);
@@ -51,17 +57,17 @@ fft_twiddle_table!(16, FFT_TWIDDLE_TABLE_65536);
 fn fft_twiddle_factors(n: usize) -> &'static [Complex<f32>] {
     // FFT sizes <= 32 use unrolled FFT implementations with hard-coded twiddle factors.
     match n {
-        64 => FFT_TWIDDLE_TABLE_64.as_ref(),
-        128 => FFT_TWIDDLE_TABLE_128.as_ref(),
-        256 => FFT_TWIDDLE_TABLE_256.as_ref(),
-        512 => FFT_TWIDDLE_TABLE_512.as_ref(),
-        1024 => FFT_TWIDDLE_TABLE_1024.as_ref(),
-        2048 => FFT_TWIDDLE_TABLE_2048.as_ref(),
-        4096 => FFT_TWIDDLE_TABLE_4096.as_ref(),
-        8192 => FFT_TWIDDLE_TABLE_8192.as_ref(),
-        16384 => FFT_TWIDDLE_TABLE_16384.as_ref(),
-        32768 => FFT_TWIDDLE_TABLE_32768.as_ref(),
-        65536 => FFT_TWIDDLE_TABLE_65536.as_ref(),
+        64 => FFT_TWIDDLE_TABLE_64.get_or_init(build_fft_twiddle_table::<32>).as_ref(),
+        128 => FFT_TWIDDLE_TABLE_128.get_or_init(build_fft_twiddle_table::<64>).as_ref(),
+        256 => FFT_TWIDDLE_TABLE_256.get_or_init(build_fft_twiddle_table::<128>).as_ref(),
+        512 => FFT_TWIDDLE_TABLE_512.get_or_init(build_fft_twiddle_table::<256>).as_ref(),
+        1024 => FFT_TWIDDLE_TABLE_1024.get_or_init(build_fft_twiddle_table::<512>).as_ref(),
+        2048 => FFT_TWIDDLE_TABLE_2048.get_or_init(build_fft_twiddle_table::<1024>).as_ref(),
+        4096 => FFT_TWIDDLE_TABLE_4096.get_or_init(build_fft_twiddle_table::<2048>).as_ref(),
+        8192 => FFT_TWIDDLE_TABLE_8192.get_or_init(build_fft_twiddle_table::<4096>).as_ref(),
+        16384 => FFT_TWIDDLE_TABLE_16384.get_or_init(build_fft_twiddle_table::<8192>).as_ref(),
+        32768 => FFT_TWIDDLE_TABLE_32768.get_or_init(build_fft_twiddle_table::<16384>).as_ref(),
+        65536 => FFT_TWIDDLE_TABLE_65536.get_or_init(build_fft_twiddle_table::<32768>).as_ref(),
         _ => panic!("fft size is invalid"),
     }
 }

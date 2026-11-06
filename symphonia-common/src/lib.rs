@@ -11,6 +11,15 @@
 #![allow(clippy::excessive_precision)]
 #![allow(clippy::identity_op)]
 #![allow(clippy::manual_range_contains)]
+// Build without the standard library when the `std` feature is disabled.
+#![cfg_attr(not(feature = "std"), no_std)]
+
+extern crate alloc;
+
+#[cfg(not(any(feature = "std", feature = "no_std")))]
+compile_error!(
+    "symphonia-common: enable either the `std` feature (default) or the `no_std` feature"
+);
 
 pub mod apple;
 pub mod mpeg;

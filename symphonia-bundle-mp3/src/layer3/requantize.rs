@@ -12,23 +12,29 @@ use crate::common::FrameHeader;
 
 use super::{GranuleChannel, codebooks, common::*};
 
-use std::cmp::min;
-use std::{f32, f64};
+use core::cmp::min;
+use core::{f32, f64};
 
-use lazy_static::lazy_static;
+use alloc::{boxed::Box, vec::Vec};
+
+#[cfg(not(feature = "std"))]
+use num_traits::float::Float;
+
+use once_cell::race::OnceBox;
 
 use log::info;
 
 /// The length of the `POW43` table.
 const POW43_LEN: usize = 8207;
 
-lazy_static! {
-    /// Lookup table for computing x(i) = s(i)^(4/3) where s(i) is a decoded Huffman sample. The
-    /// value of s(i) is bound between 0..8207.
-    static ref POW43: Box<[f32; POW43_LEN]> = {
-        let pow43: Vec<f32> = (0..POW43_LEN).map(|i| f32::powf(i as f32, 4.0 / 3.0)).collect();
-        pow43.into_boxed_slice().try_into().expect("vec initialized to POW43_LEN")
-    };
+/// Lookup table for computing x(i) = s(i)^(4/3) where s(i) is a decoded Huffman sample. The
+/// value of s(i) is bound between 0..8207.
+static POW43: OnceBox<[f32; POW43_LEN]> = OnceBox::new();
+
+/// Builds the `POW43` table on first use.
+fn init_pow43() -> Box<[f32; POW43_LEN]> {
+    let pow43: Vec<f32> = (0..POW43_LEN).map(|i| (i as f32).powf(4.0 / 3.0)).collect();
+    pow43.into_boxed_slice().try_into().expect("vec initialized to POW43_LEN")
 }
 
 /// Zero a sample buffer.
@@ -57,8 +63,8 @@ pub(super) fn read_huffman_samples<B: ReadBitsLtr>(
     }
 
     // Dereference the POW43 table once per granule since there is a tiny overhead each time a
-    // lazy_static is dereferenced that should be amortized over as many samples as possible.
-    let pow43: &[f32; POW43_LEN] = &POW43;
+    // lazy initializer is dereferenced that should be amortized over as many samples as possible.
+    let pow43: &[f32; POW43_LEN] = POW43.get_or_init(init_pow43);
 
     let mut bits_read = 0;
     let mut i = 0;
@@ -83,9 +89,9 @@ pub(super) fn read_huffman_samples<B: ReadBitsLtr>(
         // Tables 0..16 are all unique, while tables 16..24 and 24..32 each use one table but
         // differ in the number of linbits to use.
         let codebook = match table_select {
-            0..=15 => &codebooks::CODEBOOK_TABLES[table_select],
-            16..=23 => &codebooks::CODEBOOK_TABLES[16],
-            24..=31 => &codebooks::CODEBOOK_TABLES[17],
+            0..=15 => &codebooks::codebook_tables()[table_select],
+            16..=23 => &codebooks::codebook_tables()[16],
+            24..=31 => &codebooks::codebook_tables()[17],
             _ => unreachable!(),
         };
 
@@ -152,7 +158,8 @@ pub(super) fn read_huffman_samples<B: ReadBitsLtr>(
         }
     }
 
-    let count1_codebook = &codebooks::QUADS_CODEBOOK_TABLE[usize::from(channel.count1table_select)];
+    let count1_codebook =
+        &codebooks::quads_codebook_table()[usize::from(channel.count1table_select)];
 
     // Read the count1 partition.
     while i <= 572 && bits_read < part3_bits {

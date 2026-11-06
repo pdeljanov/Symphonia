@@ -7,7 +7,11 @@
 
 //! Image utilities.
 
-use std::num::NonZeroU8;
+use alloc::string::String;
+use core::num::NonZeroU8;
+
+#[cfg(not(feature = "std"))]
+use alloc::string::ToString;
 
 use symphonia_core::errors::{Result, decode_error, unsupported_error};
 use symphonia_core::io::{BufReader, ReadBytes};

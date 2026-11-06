@@ -13,10 +13,30 @@ repository.workspace = true
 rust-version.workspace = true
 version.workspace = true
 
+[features]
+default = ["std"]
+
+# Enable standard-library I/O support. Disable for `no_std` (default-features = false).
+#
+# Forward `symphonia-metadata/std` so the metadata reader stays on the standard library in `std`
+# builds (it is otherwise pulled in `no_std`).
+std = ["symphonia-core/std", "symphonia-common/std", "symphonia-metadata/std"]
+
+# Enable no_std support with `default-features = false`.
+no_std = ["symphonia-core/no_std", "symphonia-common/no_std", "symphonia-metadata/no_std"]
+
 [dependencies]
 log = { workspace = true }
-symphonia-core = { version = "0.6.1", path = "../symphonia-core" }
-symphonia-common = { version = "0.6.1", path = "../symphonia-common" }
+
+[dependencies.symphonia-common]
+version = "0.6.1"
+path = "../symphonia-common"
+default-features = false
+
+[dependencies.symphonia-core]
+version = "0.6.1"
+path = "../symphonia-core"
+default-features = false
 
 [dependencies.symphonia-metadata]
 version = "0.6.1"

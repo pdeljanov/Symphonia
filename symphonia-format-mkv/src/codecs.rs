@@ -11,6 +11,11 @@ use extra_data::{
 };
 use log::warn;
 
+use alloc::{boxed::Box, vec::Vec};
+
+#[cfg(not(feature = "std"))]
+use num_traits::float::Float;
+
 use symphonia_common::mpeg::video::{
     AVCDecoderConfigurationRecord, HEVCDecoderConfigurationRecord,
 };

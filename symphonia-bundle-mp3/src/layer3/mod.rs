@@ -5,10 +5,19 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use std::fmt;
+use core::fmt;
+
+use alloc::boxed::Box;
+
+#[cfg(feature = "std")]
+use std::io;
 
 use symphonia_core::audio::{AudioBuffer, AudioMut};
 use symphonia_core::errors::{Error, Result, decode_error};
+#[cfg(not(feature = "std"))]
+use symphonia_core::io::MediaError;
+#[cfg(not(feature = "std"))]
+use symphonia_core::io::MediaErrorKind;
 use symphonia_core::io::{BitReaderLtr, BufReader, ReadBitsLtr, ReadBytes};
 
 mod bitstream;
@@ -23,6 +32,20 @@ use crate::{common::*, synthesis};
 use common::BlockType;
 
 use log::warn;
+
+/// Returns `true` if the IO error is of the unrecoverable "other" kind. Huffman decoding errors are
+/// reported as such by the bit reader, as opposed to eof/overshoot errors that are recoverable.
+#[cfg(feature = "std")]
+fn is_other_io_error(err: &io::Error) -> bool {
+    err.kind() == io::ErrorKind::Other
+}
+
+/// Returns `true` if the IO error is of the unrecoverable "other" kind. Huffman decoding errors are
+/// reported as such by the bit reader, as opposed to eof/overshoot errors that are recoverable.
+#[cfg(not(feature = "std"))]
+fn is_other_io_error(err: &MediaError) -> bool {
+    matches!(err.kind(), MediaErrorKind::Message(_) | MediaErrorKind::EndOfBitstream)
+}
 
 /// `BitResevoir` implements the bit resevoir mechanism for main_data. Since frames have a
 /// deterministic length based on the bit-rate, low-complexity portions of the audio may not need
@@ -356,7 +379,7 @@ impl Layer3 {
                 // IO error to a decode error.
                 frame_data.granules[gr].channels[ch].rzero = match huffman_result {
                     Ok(rzero) => rzero,
-                    Err(Error::IoError(e)) if e.kind() == std::io::ErrorKind::Other => {
+                    Err(Error::IoError(e)) if is_other_io_error(&e) => {
                         return decode_error("mpa: huffman decode overrun");
                     }
                     Err(err) => return Err(err),

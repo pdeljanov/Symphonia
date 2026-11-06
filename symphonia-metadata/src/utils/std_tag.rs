@@ -11,7 +11,15 @@
 // would be too difficult to individually waive the lint.
 #![allow(dead_code)]
 
-use std::{collections::HashMap, sync::Arc};
+use alloc::string::String;
+use alloc::sync::Arc;
+
+#[cfg(not(feature = "std"))]
+use alloc::borrow::ToOwned;
+#[cfg(feature = "std")]
+use std::collections::HashMap;
+#[cfg(not(feature = "std"))]
+use symphonia_core::collections::HashMap;
 
 use symphonia_core::meta::{ContentAdvisory, MetadataBuilder, RawTag, RawValue, StandardTag, Tag};
 
@@ -346,7 +354,7 @@ pub fn parse_itunes_content_advisory(v: Arc<String>) -> StandardTagPair {
 }
 
 pub fn parse_id3v2_genre(v: Arc<String>) -> StandardTagPair {
-    use regex_lite::Regex;
+    use regex::Regex;
 
     use crate::utils::id3v1::get_genre_name;
 
@@ -393,7 +401,7 @@ fn parse_bool(v: Arc<String>) -> Option<bool> {
 
 /// Parse a string in the format "NUM/TOTAL" or "NUM" into a pair of optional integers.
 fn parse_m_of_n(v: Arc<String>) -> (Option<u64>, Option<u64>) {
-    use regex_lite::Regex;
+    use regex::Regex;
 
     let re = Regex::new(r"^(?P<m>[0-9]+)(/(?P<n>[0-9]+))?$").expect("valid regex");
 

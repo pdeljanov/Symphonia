@@ -7,7 +7,7 @@
 
 //! The `common` module defines common enums, structs, types, etc.
 
-use std::fmt;
+use core::fmt;
 
 /// A four character code.
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
@@ -41,7 +41,7 @@ impl FourCc {
 
 impl fmt::Debug for FourCc {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match std::str::from_utf8(&self.0) {
+        match core::str::from_utf8(&self.0) {
             Ok(name) => f.write_str(name),
             _ => write!(f, "{:x?}", self.0),
         }

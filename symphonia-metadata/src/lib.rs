@@ -22,6 +22,7 @@
 //! An embedded metadata format is one that is embedded into the media container. This crate
 //! implements reading or parsing functions for these metadata formats in the [`embedded`] module.
 
+#![cfg_attr(not(feature = "std"), no_std)]
 #![warn(rust_2018_idioms)]
 #![forbid(unsafe_code)]
 // The following lints are allowed in all Symphonia crates. Please see clippy.toml for their
@@ -30,6 +31,17 @@
 #![allow(clippy::excessive_precision)]
 #![allow(clippy::identity_op)]
 #![allow(clippy::manual_range_contains)]
+
+#[cfg_attr(
+    any(feature = "ape", feature = "id3v2", feature = "flac", feature = "vorbis"),
+    macro_use
+)]
+extern crate alloc;
+
+#[cfg(not(any(feature = "std", feature = "no_std")))]
+compile_error!(
+    "symphonia-metadata: enable either the `std` feature (default) or the `no_std` feature"
+);
 
 #[cfg(feature = "ape")]
 pub mod ape;

@@ -12,141 +12,139 @@ use crate::common::FrameHeader;
 
 use super::{GranuleChannel, common::*};
 
-use std::{convert::TryInto, f64};
+use core::{convert::TryInto, f64};
 
-use lazy_static::lazy_static;
+use alloc::boxed::Box;
 
-lazy_static! {
-    /// Hybrid synthesesis IMDCT window coefficients for: Long, Start, Short, and End block, in that
-    /// order.
-    ///
-    /// For long blocks:
-    ///
-    /// ```text
-    /// W[ 0..36] = sin(PI/36.0 * (i + 0.5))
-    /// ```
-    ///
-    /// For start blocks:
-    ///
-    /// ```text
-    /// W[ 0..18] = sin(PI/36.0 * (i + 0.5))
-    /// W[18..24] = 1.0
-    /// W[24..30] = sin(PI/12.0 * ((i - 18) - 0.5))
-    /// W[30..36] = 0.0
-    /// ```
-    ///
-    /// For short blocks (to be applied to each 12 sample window):
-    ///
-    /// ```text
-    /// W[ 0..12] = sin(PI/12.0 * (i + 0.5))
-    /// W[12..36] = 0.0
-    /// ```
-    ///
-    /// For end blocks:
-    ///
-    /// ```text
-    /// W[ 0..6 ] = 0.0
-    /// W[ 6..12] = sin(PI/12.0 * ((i - 6) + 0.5))
-    /// W[12..18] = 1.0
-    /// W[18..36] = sin(PI/36.0 * (i + 0.5))
-    /// ```
-    static ref IMDCT_WINDOWS: [[f32; 36]; 4] = {
-        const PI_36: f64 = f64::consts::PI / 36.0;
-        const PI_12: f64 = f64::consts::PI / 12.0;
+#[cfg(not(feature = "std"))]
+use num_traits::float::Float;
 
-        let mut windows = [[0f32; 36]; 4];
+use once_cell::race::OnceBox;
 
-        // Window for Long blocks.
-        for i in 0..36 {
-            windows[0][i] = (PI_36 * (i as f64 + 0.5)).sin() as f32;
-        }
+static IMDCT_WINDOWS: OnceBox<[[f32; 36]; 4]> = OnceBox::new();
 
-        // Window for Start blocks (indicies 30..36 implictly 0.0).
-        for i in 0..18 {
-            windows[1][i] = (PI_36 * (i as f64 + 0.5)).sin() as f32;
-        }
-        for i in 18..24 {
-            windows[1][i] = 1.0;
-        }
-        for i in 24..30 {
-            windows[1][i] = (PI_12 * ((i - 18) as f64 + 0.5)).sin() as f32;
-        }
+/// Hybrid synthesesis IMDCT window coefficients for: Long, Start, Short, and End block, in that
+/// order.
+///
+/// For long blocks:
+///
+/// ```text
+/// W[ 0..36] = sin(PI/36.0 * (i + 0.5))
+/// ```
+///
+/// For start blocks:
+///
+/// ```text
+/// W[ 0..18] = sin(PI/36.0 * (i + 0.5))
+/// W[18..24] = 1.0
+/// W[24..30] = sin(PI/12.0 * ((i - 18) - 0.5))
+/// W[30..36] = 0.0
+/// ```
+///
+/// For short blocks (to be applied to each 12 sample window):
+///
+/// ```text
+/// W[ 0..12] = sin(PI/12.0 * (i + 0.5))
+/// W[12..36] = 0.0
+/// ```
+///
+/// For end blocks:
+///
+/// ```text
+/// W[ 0..6 ] = 0.0
+/// W[ 6..12] = sin(PI/12.0 * ((i - 6) + 0.5))
+/// W[12..18] = 1.0
+/// W[18..36] = sin(PI/36.0 * (i + 0.5))
+/// ```
+fn init_imdct_windows() -> Box<[[f32; 36]; 4]> {
+    const PI_36: f64 = f64::consts::PI / 36.0;
+    const PI_12: f64 = f64::consts::PI / 12.0;
 
-        // Window for Short blocks.
-        for i in 0..12 {
-            windows[2][i] = (PI_12 * (i as f64 + 0.5)).sin() as f32;
-        }
+    let mut windows = [[0f32; 36]; 4];
 
-        // Window for End blocks (indicies 0..6 implicitly 0.0).
-        for i in 6..12 {
-            windows[3][i] = (PI_12 * ((i - 6) as f64 + 0.5)).sin() as f32;
-        }
-        for i in 12..18 {
-            windows[3][i] = 1.0;
-        }
-        for i in 18..36 {
-            windows[3][i] = (PI_36 * (i as f64 + 0.5)).sin() as f32;
-        }
+    // Window for Long blocks.
+    for i in 0..36 {
+        windows[0][i] = (PI_36 * (i as f64 + 0.5)).sin() as f32;
+    }
 
-        windows
-   };
+    // Window for Start blocks (indicies 30..36 implictly 0.0).
+    for i in 0..18 {
+        windows[1][i] = (PI_36 * (i as f64 + 0.5)).sin() as f32;
+    }
+    for i in 18..24 {
+        windows[1][i] = 1.0;
+    }
+    for i in 24..30 {
+        windows[1][i] = (PI_12 * ((i - 18) as f64 + 0.5)).sin() as f32;
+    }
+
+    // Window for Short blocks.
+    for i in 0..12 {
+        windows[2][i] = (PI_12 * (i as f64 + 0.5)).sin() as f32;
+    }
+
+    // Window for End blocks (indicies 0..6 implicitly 0.0).
+    for i in 6..12 {
+        windows[3][i] = (PI_12 * ((i - 6) as f64 + 0.5)).sin() as f32;
+    }
+    for i in 12..18 {
+        windows[3][i] = 1.0;
+    }
+    for i in 18..36 {
+        windows[3][i] = (PI_36 * (i as f64 + 0.5)).sin() as f32;
+    }
+
+    Box::new(windows)
 }
 
-lazy_static! {
-    /// Lookup table of cosine coefficients for half of a 12-point IMDCT.
-    ///
-    /// This table is derived from the general expression:
-    ///
-    /// ```text
-    /// cos12[i][k] = cos(PI/24.0 * (2*i + 1 + N/2) * (2*k + 1))
-    /// ```
-    /// where:
-    ///     `N=12`, `i=N/4..3N/4`, and `k=0..N/2`.
-    static ref IMDCT_HALF_COS_12: [[f32; 6]; 6] = {
-        const PI_24: f64 = f64::consts::PI / 24.0;
+static IMDCT_HALF_COS_12: OnceBox<[[f32; 6]; 6]> = OnceBox::new();
 
-        let mut cos = [[0f32; 6]; 6];
+/// Builds the half 12-point IMDCT cosine coefficient table on first use.
+fn init_imdct_half_cos_12() -> Box<[[f32; 6]; 6]> {
+    const PI_24: f64 = f64::consts::PI / 24.0;
 
-        for (i, cos_i) in cos.iter_mut().enumerate() {
-            for (k, cos_ik) in cos_i.iter_mut().enumerate() {
-                // Only compute the middle half of the cosine lookup table (i offset by 3).
-                let n = (2 * (i + 3) + (12 / 2) + 1) * (2 * k + 1);
-                *cos_ik = (PI_24 * n as f64).cos() as f32;
-            }
+    let mut cos = [[0f32; 6]; 6];
+
+    for (i, cos_i) in cos.iter_mut().enumerate() {
+        for (k, cos_ik) in cos_i.iter_mut().enumerate() {
+            // Only compute the middle half of the cosine lookup table (i offset by 3).
+            let n = (2 * (i + 3) + (12 / 2) + 1) * (2 * k + 1);
+            *cos_ik = (PI_24 * n as f64).cos() as f32;
         }
+    }
 
-        cos
-    };
+    Box::new(cos)
 }
 
-lazy_static! {
-    /// Pair of lookup tables, CS and CA, for alias reduction.
-    ///
-    /// As per ISO/IEC 11172-3, CS and CA are calculated as follows:
-    ///
-    /// ```text
-    /// cs[i] =  1.0 / sqrt(1.0 + c[i]^2)
-    /// ca[i] = c[i] / sqrt(1.0 + c[i]^2)
-    /// ```
-    ///
-    /// where:
-    /// ```text
-    /// c[i] = [ -0.6, -0.535, -0.33, -0.185, -0.095, -0.041, -0.0142, -0.0037 ]
-    /// ```
-    static ref ANTIALIAS_CS_CA: ([f32; 8], [f32; 8]) = {
-        const C: [f64; 8] = [ -0.6, -0.535, -0.33, -0.185, -0.095, -0.041, -0.0142, -0.0037 ];
+/// Pair of lookup tables, CS and CA, for alias reduction.
+///
+/// As per ISO/IEC 11172-3, CS and CA are calculated as follows:
+///
+/// ```text
+/// cs[i] =  1.0 / sqrt(1.0 + c[i]^2)
+/// ca[i] = c[i] / sqrt(1.0 + c[i]^2)
+/// ```
+///
+/// where:
+/// ```text
+/// c[i] = [ -0.6, -0.535, -0.33, -0.185, -0.095, -0.041, -0.0142, -0.0037 ]
+/// ```
+static ANTIALIAS_CS_CA: OnceBox<([f32; 8], [f32; 8])> = OnceBox::new();
 
-        let mut cs = [0f32; 8];
-        let mut ca = [0f32; 8];
+/// Builds the alias reduction coefficient tables on first use.
+fn init_antialias_cs_ca() -> Box<([f32; 8], [f32; 8])> {
+    const C: [f64; 8] = [-0.6, -0.535, -0.33, -0.185, -0.095, -0.041, -0.0142, -0.0037];
 
-        for i in 0..8 {
-            let sqrt = f64::sqrt(1.0 + (C[i] * C[i]));
-            cs[i] = (1.0 / sqrt) as f32;
-            ca[i] = (C[i] / sqrt) as f32;
-        }
+    let mut cs = [0f32; 8];
+    let mut ca = [0f32; 8];
 
-        (cs, ca)
-    };
+    for i in 0..8 {
+        let sqrt = (1.0 + C[i] * C[i]).sqrt();
+        cs[i] = (1.0 / sqrt) as f32;
+        ca[i] = (C[i] / sqrt) as f32;
+    }
+
+    Box::new((cs, ca))
 }
 
 /// Reorder samples that are part of short blocks into sub-band order.
@@ -227,8 +225,8 @@ pub(super) fn antialias(channel: &mut GranuleChannel, samples: &mut [f32; 576]) 
         _ => 32,
     };
 
-    // Amortize the lazy_static fetch over the entire anti-aliasing operation.
-    let (cs, ca): &([f32; 8], [f32; 8]) = &ANTIALIAS_CS_CA;
+    // Amortize the lazy initializer fetch over the entire anti-aliasing operation.
+    let (cs, ca): &([f32; 8], [f32; 8]) = ANTIALIAS_CS_CA.get_or_init(init_antialias_cs_ca);
 
     // The sub-band that intersects the start of the rzero partition. All sub-bands after this one
     // are zeroed and do-not need anti-aliasing.
@@ -302,9 +300,9 @@ pub(super) fn hybrid_synthesis(
     if sb_split > 0 {
         // Select the appropriate window given the block type.
         let window: &[f32; 36] = match channel.block_type {
-            BlockType::Start => &IMDCT_WINDOWS[1],
-            BlockType::End => &IMDCT_WINDOWS[3],
-            _ => &IMDCT_WINDOWS[0],
+            BlockType::Start => &IMDCT_WINDOWS.get_or_init(init_imdct_windows)[1],
+            BlockType::End => &IMDCT_WINDOWS.get_or_init(init_imdct_windows)[3],
+            _ => &IMDCT_WINDOWS.get_or_init(init_imdct_windows)[0],
         };
 
         let sb_long_end = sb_split.min(sb_limit);
@@ -327,7 +325,7 @@ pub(super) fn hybrid_synthesis(
     // using the 12-point IMDCT on each of the three windows.
     if sb_split < 32 {
         // Select the short block window.
-        let window: &[f32; 36] = &IMDCT_WINDOWS[2];
+        let window: &[f32; 36] = &IMDCT_WINDOWS.get_or_init(init_imdct_windows)[2];
 
         let sb_short_begin = sb_split.min(sb_limit);
 
@@ -361,7 +359,7 @@ pub(super) fn hybrid_synthesis(
 /// Performs the 12-point IMDCT, and windowing for each of the 3 short windows of a short block, and
 /// then overlap-adds the result.
 fn imdct12_win(x: &mut [f32; 18], window: &[f32; 36], overlap: &mut [f32; 18]) {
-    let cos12: &[[f32; 6]; 6] = &IMDCT_HALF_COS_12;
+    let cos12: &[[f32; 6]; 6] = IMDCT_HALF_COS_12.get_or_init(init_imdct_half_cos_12);
 
     let mut tmp = [0.0; 36];
 
@@ -488,7 +486,8 @@ pub fn frequency_inversion(samples: &mut [f32; 576]) {
 mod tests {
     use super::IMDCT_WINDOWS;
     use super::imdct12_win;
-    use std::f64;
+    use super::init_imdct_windows;
+    use core::f64;
 
     fn imdct12_analytical(x: &[f32; 6]) -> [f32; 12] {
         const PI_24: f64 = f64::consts::PI / 24.0;
@@ -515,7 +514,7 @@ mod tests {
             0.2994, 0.7157,
         ];
 
-        let window = &IMDCT_WINDOWS[2];
+        let window = &IMDCT_WINDOWS.get_or_init(init_imdct_windows)[2];
 
         let mut actual = TEST_VECTOR;
         let mut overlap = [0.0; 18];
@@ -666,15 +665,15 @@ mod imdct36 {
         // Scale factors for odd input samples. Computed from (23).
         // 2 * cos(PI * (2*m + 1) / 36)
         const SCALE: [f32; 9] = [
-            1.992_389_396_183_491_1,  // m=0
-            1.931_851_652_578_136_6,  // m=1
-            1.812_615_574_073_299_9,  // m=2
-            1.638_304_088_577_983_6,  // m=3
-            std::f32::consts::SQRT_2, // m=4
-            1.147_152_872_702_092_3,  // m=5
-            0.845_236_523_481_398_9,  // m=6
-            0.517_638_090_205_041_9,  // m=7
-            0.174_311_485_495_316_3,  // m=8
+            1.992_389_396_183_491_1,   // m=0
+            1.931_851_652_578_136_6,   // m=1
+            1.812_615_574_073_299_9,   // m=2
+            1.638_304_088_577_983_6,   // m=3
+            core::f32::consts::SQRT_2, // m=4
+            1.147_152_872_702_092_3,   // m=5
+            0.845_236_523_481_398_9,   // m=6
+            0.517_638_090_205_041_9,   // m=7
+            0.174_311_485_495_316_3,   // m=8
         ];
 
         let even = [
@@ -781,7 +780,7 @@ mod imdct36 {
     #[cfg(test)]
     mod tests {
         use super::imdct36;
-        use std::f64;
+        use core::f64;
 
         fn imdct36_analytical(x: &[f32; 18]) -> [f32; 36] {
             let mut result = [0f32; 36];

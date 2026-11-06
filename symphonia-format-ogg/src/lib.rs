@@ -5,6 +5,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+#![cfg_attr(not(feature = "std"), no_std)]
 #![warn(rust_2018_idioms)]
 #![forbid(unsafe_code)]
 // The following lints are allowed in all Symphonia crates. Please see clippy.toml for their
@@ -13,6 +14,14 @@
 #![allow(clippy::excessive_precision)]
 #![allow(clippy::identity_op)]
 #![allow(clippy::manual_range_contains)]
+
+#[macro_use]
+extern crate alloc;
+
+#[cfg(not(any(feature = "std", feature = "no_std")))]
+compile_error!(
+    "symphonia-format-ogg: enable either the `std` feature (default) or the `no_std` feature"
+);
 
 mod common;
 mod demuxer;

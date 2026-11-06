@@ -5,10 +5,17 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+use core::fmt;
+use core::num::NonZero;
 use core::str;
-use std::fmt;
-use std::num::NonZero;
+
+use alloc::{boxed::Box, string::String, vec::Vec};
+
+#[cfg(feature = "std")]
 use std::sync::Arc;
+
+#[cfg(not(feature = "std"))]
+use alloc::sync::Arc;
 
 use log::debug;
 use symphonia_core::audio::{Channels, layouts};

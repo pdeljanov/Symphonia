@@ -14,14 +14,25 @@ rust-version.workspace = true
 version.workspace = true
 
 [features]
-default = ["aiff", "wav"]
+default = ["std", "aiff", "wav"]
+
+# Enable standard-library I/O support. Disable for `no_std` (default-features = false).
+std = ["symphonia-core/std", "symphonia-metadata/std"]
+
+# Enable no_std support with `default-features = false`.
+no_std = ["symphonia-core/no_std", "symphonia-metadata/no_std"]
+
 aiff = ["symphonia-metadata/riff-id3"]
 wav = ["symphonia-metadata/riff-info"]
 
 [dependencies]
-extended = "0.1.0"
+extended = "0.2.0"
 log = { workspace = true }
-symphonia-core = { version = "0.6.1", path = "../symphonia-core" }
+
+[dependencies.symphonia-core]
+version = "0.6.1"
+path = "../symphonia-core"
+default-features = false
 
 [dependencies.symphonia-metadata]
 version = "0.6.1"

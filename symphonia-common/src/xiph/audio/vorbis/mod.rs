@@ -117,6 +117,7 @@ pub fn unpack_xiph_laced_extradata(extradata: &[u8]) -> Result<(&[u8], &[u8])> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec::Vec;
 
     #[test]
     fn test_unpack_xiph_laced_extradata_valid() {

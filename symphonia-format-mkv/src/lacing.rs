@@ -5,7 +5,13 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use std::collections::{HashMap, VecDeque};
+#[cfg(feature = "std")]
+use std::collections::HashMap;
+
+use alloc::{boxed::Box, collections::VecDeque, vec::Vec};
+
+#[cfg(not(feature = "std"))]
+use symphonia_core::collections::HashMap;
 
 use symphonia_core::errors::{Error, Result, decode_error};
 use symphonia_core::io::{BufReader, ReadBytes};

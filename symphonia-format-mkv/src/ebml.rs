@@ -5,9 +5,14 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+#[cfg(feature = "std")]
 use std::io::SeekFrom;
 
-use symphonia_core::io::{MediaSource, ReadBytes, SeekBuffered};
+use alloc::{boxed::Box, string::String, vec::Vec};
+#[cfg(not(feature = "std"))]
+use symphonia_core::io::SeekFrom;
+
+use symphonia_core::io::{MediaError, MediaSource, ReadBytes, SeekBuffered};
 use symphonia_core::util::bits::sign_extend_leq64_to_i64;
 
 /// `EbmlError` provides an enumeration of all possible EBML iterator errors.
@@ -15,7 +20,11 @@ use symphonia_core::util::bits::sign_extend_leq64_to_i64;
 #[derive(Debug)]
 pub enum EbmlError {
     /// An IO error occured while reading, writing, or seeking the EBML document.
+    #[cfg(feature = "std")]
     IoError(std::io::Error),
+    /// An IO error occured while reading, writing, or seeking the EBML document.
+    #[cfg(not(feature = "std"))]
+    IoError(MediaError),
     /// The encoding of an EBML element ID was invalid.
     InvalidEbmlElementIdLength,
     /// The encoding of an EBML element data size was invalid.
@@ -52,13 +61,28 @@ pub enum EbmlError {
     ElementError(&'static str),
 }
 
+#[cfg(feature = "std")]
 impl From<std::io::Error> for EbmlError {
     fn from(err: std::io::Error) -> EbmlError {
         EbmlError::IoError(err)
     }
 }
 
-pub type Result<T> = std::result::Result<T, EbmlError>;
+#[cfg(feature = "std")]
+impl From<MediaError> for EbmlError {
+    fn from(err: MediaError) -> EbmlError {
+        EbmlError::IoError(err.into())
+    }
+}
+
+#[cfg(not(feature = "std"))]
+impl From<MediaError> for EbmlError {
+    fn from(err: MediaError) -> EbmlError {
+        EbmlError::IoError(err)
+    }
+}
+
+pub type Result<T> = core::result::Result<T, EbmlError>;
 
 /// A super-trait of `ReadBytes` and `SeekBuffered` that all readers of `EbmlIterator` must
 /// implement.
@@ -79,7 +103,7 @@ pub(crate) enum EbmlDataType {
 /// Trait for an object providing element information in an EBML document schema.
 pub(crate) trait EbmlElementInfo: Copy + Clone {
     /// The element type enumeration for the schema.
-    type ElementType: Copy + Clone + Default + PartialEq + Eq + PartialOrd + Ord + std::fmt::Debug;
+    type ElementType: Copy + Clone + Default + PartialEq + Eq + PartialOrd + Ord + core::fmt::Debug;
 
     /// Get the element type.
     fn element_type(&self) -> Self::ElementType;

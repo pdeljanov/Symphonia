@@ -7,21 +7,30 @@
 
 //! Frame body readers.
 
-use std::char;
+use alloc::boxed::Box;
+use alloc::string::String;
+use alloc::sync::Arc;
+use alloc::vec::Vec;
+use core::char;
+use core::str;
+
+use once_cell::race::OnceBox;
+
+#[cfg(not(feature = "std"))]
+use alloc::string::ToString;
+#[cfg(feature = "std")]
 use std::collections::HashMap;
-use std::io;
-use std::str;
-use std::sync::Arc;
+#[cfg(not(feature = "std"))]
+use symphonia_core::collections::HashMap;
 
 use symphonia_core::errors::{Result, decode_error, unsupported_error};
-use symphonia_core::io::{BufReader, FiniteStream, ReadBytes};
+use symphonia_core::io::{BufReader, FiniteStream, MediaResult, ReadBytes};
 use symphonia_core::meta::RawTag;
 use symphonia_core::meta::RawTagSubField;
 use symphonia_core::meta::{Chapter, RawValue, StandardTag, Tag, Visual};
 use symphonia_core::units::Time;
 use symphonia_core::util::text;
 
-use lazy_static::lazy_static;
 use log::debug;
 use smallvec::{SmallVec, smallvec};
 
@@ -55,7 +64,7 @@ impl<'a> FrameInfo<'a> {
     /// Panics if the frame ID is invalid.
     pub fn new(id: &'a [u8], major_version: u8, raw_tag_parser: Option<RawTagParser>) -> Self {
         FrameInfo {
-            id: std::str::from_utf8(id).expect("validated frame id bytes"),
+            id: core::str::from_utf8(id).expect("validated frame id bytes"),
             major_version,
             raw_tag_parser,
         }
@@ -175,7 +184,7 @@ fn read_lang_code(reader: &mut BufReader<'_>) -> Result<Option<String>> {
     else {
         // Convert to lowercase string.
         Some(
-            std::str::from_utf8(&code)
+            core::str::from_utf8(&code)
                 .expect("lang code contains only ASCII alphabetic chars")
                 .to_ascii_lowercase(),
         )
@@ -216,7 +225,7 @@ fn read_play_counter(reader: &mut BufReader<'_>) -> Result<Option<u64>> {
 /// Read a null-terminated string of the specified encoding from the stream. If the stream ends
 /// before the null-terminator is reached, all the bytes up-to that point are interpreted as the
 /// string.
-fn read_string(reader: &mut BufReader<'_>, encoding: Encoding) -> io::Result<String> {
+fn read_string(reader: &mut BufReader<'_>, encoding: Encoding) -> MediaResult<String> {
     let max_len = reader.bytes_available() as usize;
 
     let buf = match encoding {
@@ -247,7 +256,7 @@ fn read_string(reader: &mut BufReader<'_>, encoding: Encoding) -> io::Result<Str
 fn read_string_ignore_empty(
     reader: &mut BufReader<'_>,
     encoding: Encoding,
-) -> io::Result<Option<String>> {
+) -> MediaResult<Option<String>> {
     Ok(Some(read_string(reader, encoding)?).filter(|text| !text.is_empty()))
 }
 
@@ -838,9 +847,9 @@ pub fn read_tipl_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Resu
     // Pre-validate these conditions to prevent doing extra work in the case all conditions do not
     // match.
     let is_parseable = match text {
-        RawValue::StringList(ref list) if list.len() % 2 == 0 => {
-            list.chunks_exact(2).all(|pair| TIPL_FUNC_PARSERS.contains_key(pair[0].as_str()))
-        }
+        RawValue::StringList(ref list) if list.len() % 2 == 0 => list.chunks_exact(2).all(|pair| {
+            TIPL_FUNC_PARSERS.get_or_init(init_tipl_func_parsers).contains_key(pair[0].as_str())
+        }),
         _ => false,
     };
 
@@ -855,7 +864,9 @@ pub fn read_tipl_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Resu
             for pair in list.chunks_exact(2) {
                 // Safety: Pre-checked above all pairs can be parsed.
                 let parser = TIPL_FUNC_PARSERS
-                    .get(pair[0].as_str())
+                    .get_or_init(init_tipl_func_parsers)
+                    .get(pair[1].as_str())
+                    .copied()
                     .expect("pre-checked that pair key exists in TIPL_FUNC_PARSERS");
 
                 // Parse raw value into standard tag.
@@ -890,7 +901,10 @@ pub fn read_txxx_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Resu
 
     // Some TXXX frames may be mapped to standard tags. Try to find a parser based on the
     // description string.
-    let raw_tag_parser = TXXX_DESC_PARSERS.get(desc.to_ascii_lowercase().as_str()).copied();
+    let raw_tag_parser = TXXX_DESC_PARSERS
+        .get_or_init(init_txxx_desc_parsers)
+        .get(desc.to_ascii_lowercase().as_str())
+        .copied();
 
     let sub_fields = vec![RawTagSubField::new(TXXX_DESCRIPTION, desc)];
 
@@ -1033,57 +1047,57 @@ fn map_raw_tag(raw: RawTag, parser: Option<RawTagParser>) -> FrameResult {
 // Loopup tables.
 
 // Mapping TXXX descriptions to raw tag parsers.
-lazy_static! {
-    static ref TXXX_DESC_PARSERS: RawTagParserMap = {
-        let mut m: RawTagParserMap = HashMap::new();
-        m.insert("acoustid fingerprint", parse_acoustid_fingerprint);
-        m.insert("acoustid id", parse_acoustid_id);
-        m.insert("albumartistsort", parse_sort_album_artist);
-        m.insert("asin", parse_ident_asin);
-        m.insert("barcode", parse_ident_barcode);
-        m.insert("catalognumber", parse_ident_catalog_number);
-        m.insert("composersort", parse_sort_composer);
-        m.insert("itunesadvistory", parse_itunes_content_advisory);
-        m.insert("license", parse_license);
-        m.insert("musicbrainz album artist id", parse_musicbrainz_album_artist_id);
-        m.insert("musicbrainz album id", parse_musicbrainz_album_id);
-        m.insert("musicbrainz album release country", parse_release_country);
-        m.insert("musicbrainz album status", parse_musicbrainz_release_status);
-        m.insert("musicbrainz album type", parse_musicbrainz_release_type);
-        m.insert("musicbrainz artist id", parse_musicbrainz_artist_id);
-        m.insert("musicbrainz disc id", parse_musicbrainz_disc_id);
-        m.insert("musicbrainz original album id", parse_musicbrainz_original_album_id);
-        m.insert("musicbrainz original artist id", parse_musicbrainz_original_artist_id);
-        m.insert("musicbrainz release group id", parse_musicbrainz_release_group_id);
-        m.insert("musicbrainz release track id", parse_musicbrainz_release_track_id);
-        m.insert("musicbrainz trm id", parse_musicbrainz_trm_id);
-        m.insert("musicbrainz work id", parse_musicbrainz_work_id);
-        m.insert("releasedate", parse_release_date);
-        m.insert("replaygain_album_gain", parse_replaygain_album_gain);
-        m.insert("replaygain_album_peak", parse_replaygain_album_peak);
-        m.insert("replaygain_album_range", parse_replaygain_album_range);
-        m.insert("replaygain_reference_loudness", parse_replaygain_reference_loudness);
-        m.insert("replaygain_track_gain", parse_replaygain_track_gain);
-        m.insert("replaygain_track_peak", parse_replaygain_track_peak);
-        m.insert("replaygain_track_range", parse_replaygain_track_range);
-        m.insert("script", parse_script);
-        m.insert("work", parse_work);
-        m.insert("writer", parse_writer);
-        m
-    };
+static TXXX_DESC_PARSERS: OnceBox<RawTagParserMap> = OnceBox::new();
+
+fn init_txxx_desc_parsers() -> Box<RawTagParserMap> {
+    let mut m: RawTagParserMap = HashMap::new();
+    m.insert("acoustid fingerprint", parse_acoustid_fingerprint);
+    m.insert("acoustid id", parse_acoustid_id);
+    m.insert("albumartistsort", parse_sort_album_artist);
+    m.insert("asin", parse_ident_asin);
+    m.insert("barcode", parse_ident_barcode);
+    m.insert("catalognumber", parse_ident_catalog_number);
+    m.insert("composersort", parse_sort_composer);
+    m.insert("itunesadvistory", parse_itunes_content_advisory);
+    m.insert("license", parse_license);
+    m.insert("musicbrainz album artist id", parse_musicbrainz_album_artist_id);
+    m.insert("musicbrainz album id", parse_musicbrainz_album_id);
+    m.insert("musicbrainz album release country", parse_release_country);
+    m.insert("musicbrainz album status", parse_musicbrainz_release_status);
+    m.insert("musicbrainz album type", parse_musicbrainz_release_type);
+    m.insert("musicbrainz artist id", parse_musicbrainz_artist_id);
+    m.insert("musicbrainz disc id", parse_musicbrainz_disc_id);
+    m.insert("musicbrainz original album id", parse_musicbrainz_original_album_id);
+    m.insert("musicbrainz original artist id", parse_musicbrainz_original_artist_id);
+    m.insert("musicbrainz release group id", parse_musicbrainz_release_group_id);
+    m.insert("musicbrainz release track id", parse_musicbrainz_release_track_id);
+    m.insert("musicbrainz trm id", parse_musicbrainz_trm_id);
+    m.insert("musicbrainz work id", parse_musicbrainz_work_id);
+    m.insert("releasedate", parse_release_date);
+    m.insert("replaygain_album_gain", parse_replaygain_album_gain);
+    m.insert("replaygain_album_peak", parse_replaygain_album_peak);
+    m.insert("replaygain_album_range", parse_replaygain_album_range);
+    m.insert("replaygain_reference_loudness", parse_replaygain_reference_loudness);
+    m.insert("replaygain_track_gain", parse_replaygain_track_gain);
+    m.insert("replaygain_track_peak", parse_replaygain_track_peak);
+    m.insert("replaygain_track_range", parse_replaygain_track_range);
+    m.insert("script", parse_script);
+    m.insert("work", parse_work);
+    m.insert("writer", parse_writer);
+    Box::new(m)
 }
 
 // Mapping TIPL "functions" to raw tag parsers.
-lazy_static! {
-    static ref TIPL_FUNC_PARSERS: RawTagParserMap = {
-        let mut m: RawTagParserMap = HashMap::new();
-        m.insert("arranger", parse_arranger);
-        m.insert("engineer", parse_engineer);
-        m.insert("dj-mix", parse_mix_dj);
-        m.insert("mix", parse_mix_engineer);
-        m.insert("producer", parse_producer);
-        m
-    };
+static TIPL_FUNC_PARSERS: OnceBox<RawTagParserMap> = OnceBox::new();
+
+fn init_tipl_func_parsers() -> Box<RawTagParserMap> {
+    let mut m: RawTagParserMap = HashMap::new();
+    m.insert("arranger", parse_arranger);
+    m.insert("engineer", parse_engineer);
+    m.insert("dj-mix", parse_mix_dj);
+    m.insert("mix", parse_mix_engineer);
+    m.insert("producer", parse_producer);
+    Box::new(m)
 }
 
 #[cfg(test)]

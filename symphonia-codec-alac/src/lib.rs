@@ -15,8 +15,18 @@
 #![allow(clippy::manual_range_contains)]
 // Disable to better express the specification.
 #![allow(clippy::collapsible_else_if)]
+#![cfg_attr(not(feature = "std"), no_std)]
 
-use std::cmp::min;
+#[macro_use]
+extern crate alloc;
+
+#[cfg(not(any(feature = "std", feature = "no_std")))]
+compile_error!(
+    "symphonia-codec-alac: enable either the `std` feature (default) or the `no_std` feature"
+);
+
+use alloc::{boxed::Box, vec::Vec};
+use core::cmp::min;
 
 use symphonia_core::audio::{
     AsGenericAudioBufferRef, AudioBuffer, AudioMut, AudioSpec, Channels, GenericAudioBufferRef,

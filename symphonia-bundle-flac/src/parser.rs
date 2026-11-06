@@ -5,6 +5,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+use alloc::{boxed::Box, vec::Vec};
+
 use symphonia_common::xiph::audio::flac::StreamInfo;
 use symphonia_core::checksum::Crc16Ansi;
 use symphonia_core::errors::{Error, Result};
@@ -16,6 +18,20 @@ use symphonia_core::util::bits;
 use log::warn;
 
 use crate::frame::*;
+
+/// Returns true if the provided error is an unexpected end-of-stream from the underlying source.
+#[cfg(feature = "std")]
+fn is_unexpected_eof(err: &Error) -> bool {
+    matches!(err, Error::IoError(e) if e.kind() == std::io::ErrorKind::UnexpectedEof)
+}
+
+#[cfg(not(feature = "std"))]
+fn is_unexpected_eof(err: &Error) -> bool {
+    matches!(err, Error::IoError(e) if e.kind() == MediaErrorKind::Eof)
+}
+
+#[cfg(not(feature = "std"))]
+use symphonia_core::io::MediaErrorKind;
 
 struct MovingAverage<const N: usize> {
     samples: [usize; N],
@@ -452,7 +468,7 @@ impl PacketParser {
     {
         match self.read_fragment(reader, avg_frame_size) {
             Ok(fragment) => Ok(Some(fragment)),
-            Err(Error::IoError(err)) if err.kind() == std::io::ErrorKind::UnexpectedEof => {
+            Err(err) if is_unexpected_eof(&err) => {
                 // If the required information is available, verify that atleast the expected number
                 // of audio frames were demuxed.
                 if let Some(num_total_frames) = self.info.n_samples {
@@ -466,7 +482,7 @@ impl PacketParser {
                             warn!(
                                 "expected {num_total_frames} frames but only read {num_frames} before end of stream"
                             );
-                            return Err(Error::IoError(err));
+                            return Err(err);
                         }
                     }
                 }

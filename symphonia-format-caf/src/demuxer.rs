@@ -5,12 +5,17 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+#[cfg(feature = "std")]
+use std::io::{Seek, SeekFrom};
+
+use alloc::{boxed::Box, vec::Vec};
+use core::num::NonZero;
+
+#[cfg(not(feature = "std"))]
+use symphonia_core::io::SeekFrom;
+
 use crate::chunks::*;
 use log::{debug, error, info, warn};
-use std::{
-    io::{Seek, SeekFrom},
-    num::NonZero,
-};
 use symphonia_core::{
     audio::{Channels, Position},
     codecs::{
