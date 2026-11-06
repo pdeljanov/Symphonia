@@ -15,7 +15,10 @@ use symphonia_core::{
     audio::{Channels, Position},
     codecs::{
         CodecParameters,
-        audio::{well_known::CODEC_ID_AAC, *},
+        audio::{
+            well_known::{CODEC_ID_AAC, CODEC_ID_ALAC},
+            *,
+        },
     },
     errors::{Error, Result, SeekErrorKind, decode_error, seek_error, unsupported_error},
     formats::{
@@ -29,6 +32,7 @@ use symphonia_core::{
     units::{TimeBase, Timestamp},
 };
 
+use symphonia_common::apple::audio::alac::MagicCookie as AlacMagicCookie;
 use symphonia_common::mpeg::formats::*;
 
 const MAX_FRAMES_PER_PACKET: u64 = 1152;
@@ -534,6 +538,14 @@ impl<'s> CafReader<'s> {
                                     codec_params.with_extra_data(info.extra_data);
                                 }
                             }
+                        }
+                        CODEC_ID_ALAC => {
+                            // For ALAC, the bits per channel field of the audio description is
+                            // 0. The bit depth is stored in the magic cookie.
+                            if let Ok(cookie) = AlacMagicCookie::read(&data) {
+                                codec_params.with_bits_per_sample(u32::from(cookie.bit_depth));
+                            }
+                            codec_params.with_extra_data(data);
                         }
                         _ => {
                             // For all other formats attach the entire magic cookie.

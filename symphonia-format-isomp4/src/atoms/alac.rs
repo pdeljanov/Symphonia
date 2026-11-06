@@ -57,6 +57,7 @@ impl AlacAtom {
         if let Ok(cookie) = MagicCookie::read(&self.extra_data) {
             entry.channels = Some(cookie.channels);
             entry.sample_rate = f64::from(cookie.sample_rate);
+            entry.bits_per_sample = Some(u32::from(cookie.bit_depth));
         }
 
         entry.extra_data = Some(self.extra_data);

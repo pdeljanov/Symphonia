@@ -308,6 +308,7 @@ impl AlacDecoder {
         let mut params = params.clone();
         params.with_channels(cookie.channels.clone());
         params.with_sample_rate(cookie.sample_rate);
+        params.with_bits_per_sample(u32::from(cookie.bit_depth));
 
         Ok(AlacDecoder { params, tail_bits: vec![0; max_tail_values], buf, config: cookie })
     }
