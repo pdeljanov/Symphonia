@@ -94,8 +94,7 @@ impl Spread {
 pub const fn effective_ebands(bandwidth: Bandwidth) -> usize {
     return match bandwidth {
         Bandwidth::NarrowBand => 13,
-        Bandwidth::MediumBand => 15,
-        Bandwidth::WideBand => 17,
+        Bandwidth::MediumBand | Bandwidth::WideBand => 17,
         Bandwidth::SuperWideBand => 19,
         Bandwidth::FullBand => 21,
     };
