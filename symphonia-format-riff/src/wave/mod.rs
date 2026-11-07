@@ -1,5 +1,5 @@
 // Symphonia
-// Copyright (c) 2019-2022 The Project Symphonia Developers.
+// Copyright (c) 2019-2026 The Project Symphonia Developers.
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -49,6 +49,7 @@ const WAVE_METADATA_INFO: MetadataInfo = MetadataInfo {
 /// `WavReader` implements a demuxer for the WAVE container format.
 pub struct WavReader<'s> {
     reader: MediaSourceStream<'s>,
+    media_info: MediaInfo,
     tracks: Vec<Track>,
     chapters: Option<ChapterGroup>,
     metadata: MetadataLog,
@@ -102,11 +103,12 @@ impl<'s> WavReader<'s> {
 
             // The last chunk should always be a data chunk, if it is not, then the stream is
             // unsupported.
-            if chunk.is_none() {
+            let Some(chunk) = chunk
+            else {
                 return unsupported_error("wav: missing data chunk");
-            }
+            };
 
-            match chunk.unwrap() {
+            match chunk {
                 RiffWaveChunks::Format(fmt) => {
                     let format = fmt.parse(&mut mss)?;
 
@@ -165,6 +167,7 @@ impl<'s> WavReader<'s> {
                     // Instantiate the reader.
                     return Ok(WavReader {
                         reader: mss,
+                        media_info: MediaInfo::from_track(&track),
                         tracks: vec![track],
                         chapters: opts.external_data.chapters,
                         metadata: opts.external_data.metadata.unwrap_or_default(),
@@ -220,6 +223,10 @@ impl FormatReader for WavReader<'_> {
         &WAVE_FORMAT_INFO
     }
 
+    fn media_info(&self) -> &MediaInfo {
+        &self.media_info
+    }
+
     fn next_packet(&mut self) -> Result<Option<Packet>> {
         next_packet(
             &mut self.reader,
@@ -251,7 +258,7 @@ impl FormatReader for WavReader<'_> {
 
         let required_ts = match to {
             // Frame timestamp given.
-            SeekTo::TimeStamp { ts, .. } => ts,
+            SeekTo::Timestamp { ts, .. } => ts,
             // Time value given, calculate frame timestamp using the time base.
             SeekTo::Time { time, .. } => {
                 // The timebase is required to calculate the timestamp.

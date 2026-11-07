@@ -1,5 +1,5 @@
 // Symphonia
-// Copyright (c) 2019-2022 The Project Symphonia Developers.
+// Copyright (c) 2019-2026 The Project Symphonia Developers.
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -46,7 +46,7 @@ lazy_static! {
         m.insert("com.apple.itunes:musicbrainz album type", parse_musicbrainz_release_type);
         m.insert("com.apple.itunes:musicbrainz artist id", parse_musicbrainz_artist_id);
         m.insert("com.apple.itunes:musicbrainz disc id", parse_musicbrainz_disc_id);
-        m.insert("com.apple.itunes:musicbrainz original album id", parse_musicbrainz_album_id);
+        m.insert("com.apple.itunes:musicbrainz original album id", parse_musicbrainz_original_album_id);
         m.insert(
             "com.apple.itunes:musicbrainz original artist id",
             parse_musicbrainz_original_artist_id,

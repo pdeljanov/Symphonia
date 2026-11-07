@@ -1,5 +1,5 @@
 // Symphonia
-// Copyright (c) 2019-2022 The Project Symphonia Developers.
+// Copyright (c) 2019-2026 The Project Symphonia Developers.
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -26,9 +26,9 @@ use symphonia_core::codecs::audio::well_known::{
 };
 use symphonia_core::codecs::audio::{AudioCodecId, AudioCodecParameters, AudioDecoderOptions};
 use symphonia_core::codecs::audio::{AudioDecoder, FinalizeResult};
-use symphonia_core::errors::{Result, unsupported_error};
+use symphonia_core::errors::{Result, decode_error, unsupported_error};
 use symphonia_core::io::ReadBytes;
-use symphonia_core::packet::Packet;
+use symphonia_core::packet::PacketRef;
 
 mod codec_ima_qt;
 mod codec_ima_wav;
@@ -85,7 +85,7 @@ impl AdpcmDecoder {
             _ => return unsupported_error("adpcm: maximum frames per packet is required"),
         };
 
-        if params.frames_per_block.is_none() || params.frames_per_block.unwrap() == 0 {
+        if params.frames_per_block.is_none_or(|v| v == 0) {
             return unsupported_error("adpcm: valid frames per block is required");
         }
 
@@ -119,10 +119,13 @@ impl AdpcmDecoder {
         })
     }
 
-    fn decode_inner(&mut self, packet: &Packet) -> Result<()> {
+    fn decode_inner(&mut self, packet: &PacketRef<'_>) -> Result<()> {
         let mut stream = packet.as_buf_reader();
 
-        let frames_per_block = self.params.frames_per_block.unwrap() as usize;
+        let frames_per_block = match self.params.frames_per_block {
+            Some(v) => v as usize,
+            None => return decode_error("adpcm: missing frames_per_block"),
+        };
 
         let block_count = packet.block_dur().get() as usize / frames_per_block;
 
@@ -132,7 +135,10 @@ impl AdpcmDecoder {
         let channel_count = self.buf.spec().channels().count();
         match channel_count {
             1 => {
-                let buffer = self.buf.plane_mut(0).unwrap();
+                let buffer = match self.buf.plane_mut(0) {
+                    Some(b) => b,
+                    None => return decode_error("adpcm: missing audio plane 0"),
+                };
                 let decode_mono = self.inner_decoder.decode_mono_fn();
                 for block_id in 0..block_count {
                     let offset = frames_per_block * block_id;
@@ -142,7 +148,10 @@ impl AdpcmDecoder {
                 }
             }
             2 => {
-                let buffers = self.buf.plane_pair_mut(0, 1).unwrap();
+                let buffers = match self.buf.plane_pair_mut(0, 1) {
+                    Some(b) => b,
+                    None => return decode_error("adpcm: missing audio planes 0 and 1"),
+                };
                 let decode_stereo = self.inner_decoder.decode_stereo_fn();
                 for block_id in 0..block_count {
                     let offset = frames_per_block * block_id;
@@ -166,14 +175,18 @@ impl AudioDecoder for AdpcmDecoder {
 
     fn codec_info(&self) -> &CodecInfo {
         // Return the codec that's in-use.
-        &Self::supported_codecs().iter().find(|desc| desc.id == self.params.codec).unwrap().info
+        &Self::supported_codecs()
+            .iter()
+            .find(|desc| desc.id == self.params.codec)
+            .expect("codec registered in supported_codecs")
+            .info
     }
 
     fn codec_params(&self) -> &AudioCodecParameters {
         &self.params
     }
 
-    fn decode(&mut self, packet: &Packet) -> Result<GenericAudioBufferRef<'_>> {
+    fn decode_ref(&mut self, packet: &PacketRef<'_>) -> Result<GenericAudioBufferRef<'_>> {
         if let Err(e) = self.decode_inner(packet) {
             self.buf.clear();
             Err(e)

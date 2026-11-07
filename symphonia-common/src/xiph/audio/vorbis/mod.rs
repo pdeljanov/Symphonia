@@ -1,5 +1,5 @@
 // Symphonia
-// Copyright (c) 2019-2022 The Project Symphonia Developers.
+// Copyright (c) 2019-2026 The Project Symphonia Developers.
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -11,6 +11,7 @@ use symphonia_core::errors::{Result, decode_error};
 /// Get the mapping 0 channel listing for the given number of channels.
 pub fn vorbis_channels_to_channels(num_channels: u8) -> Option<Channels> {
     let positions = match num_channels {
+        0 => return None,
         1 => Position::FRONT_LEFT,
         2 => Position::FRONT_LEFT | Position::FRONT_RIGHT,
         3 => Position::FRONT_LEFT | Position::FRONT_CENTER | Position::FRONT_RIGHT,
@@ -54,7 +55,7 @@ pub fn vorbis_channels_to_channels(num_channels: u8) -> Option<Channels> {
                 | Position::REAR_RIGHT
                 | Position::LFE1
         }
-        _ => return None,
+        _ => return Some(Channels::Discrete(u16::from(num_channels))),
     };
 
     Some(Channels::Positioned(positions))

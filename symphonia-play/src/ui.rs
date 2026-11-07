@@ -1,5 +1,5 @@
 // Symphonia
-// Copyright (c) 2019-2024 The Project Symphonia Developers.
+// Copyright (c) 2019-2026 The Project Symphonia Developers.
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -11,7 +11,7 @@ use std::path::Path;
 
 use lazy_static::lazy_static;
 use symphonia::core::codecs::{CodecInfo, CodecParameters, CodecProfile};
-use symphonia::core::formats::{Attachment, FormatReader, Track, TrackFlags};
+use symphonia::core::formats::{Attachment, FormatReader, MediaInfo, Track, TrackFlags};
 use symphonia::core::meta::{
     Chapter, ChapterGroup, ChapterGroupItem, ColorMode, ColorModel, ContentAdvisory, MetadataInfo,
     MetadataRevision, StandardTag, Tag, Visual,
@@ -39,6 +39,7 @@ pub fn print_format(path: &Path, format: &mut Box<dyn FormatReader>) {
     );
     print_pair("Format ID:", &format_info.format, Bullet::None, 1);
 
+    print_media(format.media_info());
     print_tracks(format.tracks());
 
     // Consume all metadata revisions up-to and including the latest.
@@ -64,6 +65,43 @@ pub fn print_update(rev: &MetadataRevision) {
     print_meta_revision(rev);
     println!(":");
     println!();
+}
+
+pub fn print_media(media_info: &MediaInfo) {
+    print_blank();
+    print_header("Media");
+
+    if let Some(tb) = media_info.time_base {
+        print_pair("Time Base:", &tb, Bullet::None, 1);
+    }
+
+    if media_info.start_ts.is_positive() {
+        if let Some(tb) = media_info.time_base {
+            print_pair(
+                "Start Time:",
+                &format!("{} ({})", fmt_ts(media_info.start_ts, tb), media_info.start_ts),
+                Bullet::None,
+                1,
+            );
+        }
+        else {
+            print_pair("Start Time:", &media_info.start_ts, Bullet::None, 1);
+        }
+    }
+
+    if let Some(duration) = media_info.duration {
+        if let Some(tb) = media_info.time_base {
+            print_pair(
+                "Duration:",
+                &format!("{} ({})", fmt_dur(duration, tb), duration),
+                Bullet::None,
+                1,
+            );
+        }
+        else {
+            print_pair("Frames:", &duration, Bullet::None, 1);
+        }
+    }
 }
 
 pub fn print_tracks(tracks: &[Track]) {
@@ -165,16 +203,20 @@ pub fn print_tracks(tracks: &[Track]) {
             }
 
             if let Some(num_frames) = track.num_frames {
+                print_pair("Frames:", &num_frames, Bullet::None, 1);
+            }
+
+            if let Some(duration) = track.duration {
                 if let Some(tb) = track.time_base {
                     print_pair(
                         "Duration:",
-                        &format!("{} ({})", fmt_dur(num_frames.into(), tb), num_frames),
+                        &format!("{} ({})", fmt_dur(duration, tb), duration),
                         Bullet::None,
                         1,
                     );
                 }
                 else {
-                    print_pair("Frames:", &num_frames, Bullet::None, 1);
+                    print_pair("Duration:", &duration, Bullet::None, 1);
                 }
             }
 
@@ -481,7 +523,9 @@ pub fn print_pair_value(value: &str, lead: usize) {
                         .take_while(|(i, c)| *i <= 60 || *i <= 80 && !c.is_whitespace())
                         .map(|(_, c)| {
                             if text::filter::c0_control(&c) {
-                                char::from_u32(0x2400 + c as u32).unwrap()
+                                char::from_u32(0x2400 + c as u32).expect(
+                                    "C0 control chars map to valid Unicode Control Pictures block",
+                                )
                             }
                             else {
                                 c
@@ -520,7 +564,11 @@ pub fn print_blank() {
     println!("|")
 }
 
-pub fn print_progress(cur_ts: Timestamp, dur: Option<Duration>, tb: Option<TimeBase>) {
+pub fn print_progress(
+    cur_ts: Timestamp,
+    dur: Option<Duration>,
+    tb: Option<TimeBase>,
+) -> std::io::Result<()> {
     // Get a string slice containing a progress bar.
     fn progress_bar(ts: Timestamp, dur: Duration) -> &'static str {
         const NUM_STEPS: usize = 60;
@@ -548,25 +596,25 @@ pub fn print_progress(cur_ts: Timestamp, dur: Option<Duration>, tb: Option<TimeB
 
     if let Some(tb) = tb {
         let cur_time = tb.calc_time_saturating(cur_ts);
-        write!(output, "\r\u{25b6}\u{fe0f}  ").unwrap();
-        write_time(&mut output, cur_time).unwrap();
+        write!(output, "\r\u{25b6}\u{fe0f}  ")?;
+        write_time(&mut output, cur_time)?;
 
         if let Some(dur) = dur {
             let rem_ts = cur_ts.saturating_sub(dur);
             let rem_time = tb.calc_time_saturating(rem_ts);
-            write!(output, " {} ", progress_bar(cur_ts, dur)).unwrap();
-            write_time(&mut output, rem_time).unwrap()
+            write!(output, " {} ", progress_bar(cur_ts, dur))?;
+            write_time(&mut output, rem_time)?;
         }
     }
     else {
-        write!(output, "\r\u{25b6}\u{fe0f}  {cur_ts}").unwrap();
+        write!(output, "\r\u{25b6}\u{fe0f}  {cur_ts}")?;
     }
 
     // This extra space is a workaround for Konsole to correctly erase the previous line.
-    write!(output, " ").unwrap();
+    write!(output, " ")?;
 
     // Flush immediately since stdout is buffered.
-    output.flush().unwrap();
+    output.flush()
 }
 
 /// Calculate the appropriate length for tag key padding.

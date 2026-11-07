@@ -1,5 +1,5 @@
 // Symphonia
-// Copyright (c) 2019-2022 The Project Symphonia Developers.
+// Copyright (c) 2019-2026 The Project Symphonia Developers.
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -100,7 +100,7 @@ impl Layer for Layer1 {
 
         // Read bit allocations for each non-intensity coded sub-bands.
         for sb in 0..bound {
-            for chan in &mut alloc {
+            for chan in &mut alloc[..num_channels] {
                 let bits = bs.read_bits_leq32(4)? as u8;
 
                 if bits > 0xe {
@@ -186,7 +186,11 @@ impl Layer for Layer1 {
 
         for (ch, samples) in samples.iter().enumerate().take(num_channels) {
             // Perform polyphase synthesis and generate PCM samples.
-            synthesis::synthesis(&mut self.synthesis[ch], 12, samples, out.plane_mut(ch).unwrap());
+            let plane = match out.plane_mut(ch) {
+                Some(p) => p,
+                None => return decode_error("mp1: missing audio plane"),
+            };
+            synthesis::synthesis(&mut self.synthesis[ch], 12, samples, plane);
         }
 
         Ok(())

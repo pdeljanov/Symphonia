@@ -1,5 +1,5 @@
 // Symphonia
-// Copyright (c) 2019-2022 The Project Symphonia Developers.
+// Copyright (c) 2019-2026 The Project Symphonia Developers.
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 use std::io::{Seek, SeekFrom};
 
 use symphonia_core::errors::{Error, Result, SeekErrorKind};
-use symphonia_core::errors::{reset_error, seek_error, unsupported_error};
+use symphonia_core::errors::{decode_error, reset_error, seek_error, unsupported_error};
 use symphonia_core::formats::prelude::*;
 use symphonia_core::formats::probe::{ProbeFormatData, ProbeableFormat, Score, Scoreable};
 use symphonia_core::formats::well_known::FORMAT_ID_OGG;
@@ -33,6 +33,7 @@ const OGG_FORMAT_INFO: FormatInfo =
 /// `OggReader` implements a demuxer for Xiph's OGG container format.
 pub struct OggReader<'s> {
     reader: MediaSourceStream<'s>,
+    media_info: MediaInfo,
     tracks: Vec<Track>,
     chapters: Option<ChapterGroup>,
     metadata: MetadataLog,
@@ -59,6 +60,7 @@ impl<'s> OggReader<'s> {
 
         let mut ogg = OggReader {
             reader: mss,
+            media_info: Default::default(),
             tracks: Default::default(),
             chapters: opts.external_data.chapters,
             metadata: opts.external_data.metadata.unwrap_or_default(),
@@ -160,7 +162,10 @@ impl<'s> OggReader<'s> {
 
     fn do_seek(&mut self, serial: u32, required_ts: Timestamp) -> Result<SeekedTo> {
         // The stream being seeked.
-        let stream = self.streams.get_mut(&serial).unwrap();
+        let stream = match self.streams.get_mut(&serial) {
+            Some(s) => s,
+            None => return decode_error("ogg: serial not found in streams"),
+        };
 
         // Subtract the maximum duration between random access points from the required timestamp.
         // This ensures any frames that need to be consumed or discarded by the decoder on reset
@@ -175,7 +180,10 @@ impl<'s> OggReader<'s> {
             // Bisection method byte ranges. When these two values are equal, the bisection has
             // converged on the position of the correct page.
             let mut start_byte_pos = self.phys_byte_range_start;
-            let mut end_byte_pos = self.phys_byte_range_end.unwrap();
+            let mut end_byte_pos = match self.phys_byte_range_end {
+                Some(v) => v,
+                None => return decode_error("ogg: physical byte range end is unknown"),
+            };
 
             // Bisect the stream while the byte range is large. For smaller ranges, a linear scan is
             // faster than having the the binary search converge.
@@ -256,7 +264,7 @@ impl<'s> OggReader<'s> {
             match self.peek_logical_packet() {
                 Some(packet) => {
                     // Skip packets not belonging to the stream being seeked.
-                    if packet.track_id() != serial {
+                    if packet.track_id != serial {
                         continue;
                     }
 
@@ -379,7 +387,12 @@ impl<'s> OggReader<'s> {
         }
 
         // Probe the logical streams for their start and end pages.
-        physical::probe_stream_start(&mut self.reader, &mut self.pages, &mut streams);
+        physical::probe_stream_start(
+            &mut self.reader,
+            &mut self.pages,
+            &mut streams,
+            byte_range_start,
+        )?;
 
         let mut byte_range_end = Default::default();
 
@@ -399,10 +412,10 @@ impl<'s> OggReader<'s> {
 
         // At this point it can safely be assumed that a new physical stream is starting.
 
-        // First, clear the existing track listing.
+        // Clear the existing track listing.
         self.tracks.clear();
 
-        // Second, add a track for all streams.
+        // Add a track for each logical stream.
         for (&serial, stream) in streams.iter() {
             // Warn if the track is not ready. This should not happen if the physical stream was
             // muxed properly.
@@ -413,10 +426,13 @@ impl<'s> OggReader<'s> {
             self.tracks.push(stream.track().clone());
         }
 
-        // Third, replace all logical streams with the new set.
+        // Update media information.
+        self.media_info = MediaInfo::from_tracks(&self.tracks);
+
+        // Replace all logical streams with the new set.
         self.streams = streams;
 
-        // Last, store the lower and upper byte boundaries of the physical stream for seeking.
+        // Store the lower and upper byte boundaries of the physical stream for seeking.
         self.phys_byte_range_start = byte_range_start;
         self.phys_byte_range_end = byte_range_end;
 
@@ -453,6 +469,10 @@ impl FormatReader for OggReader<'_> {
         &OGG_FORMAT_INFO
     }
 
+    fn media_info(&self) -> &MediaInfo {
+        &self.media_info
+    }
+
     fn next_packet(&mut self) -> Result<Option<Packet>> {
         self.next_logical_packet()
     }
@@ -473,7 +493,7 @@ impl FormatReader for OggReader<'_> {
         // Get the timestamp of the desired audio frame.
         let (required_ts, serial) = match to {
             // Frame timestamp given.
-            SeekTo::TimeStamp { ts, track_id } => {
+            SeekTo::Timestamp { ts, track_id } => {
                 // Check if the user provided an invalid track ID.
                 if let Some(stream) = self.streams.get(&track_id) {
                     let track = stream.track();

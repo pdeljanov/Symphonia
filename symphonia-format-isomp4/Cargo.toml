@@ -14,7 +14,10 @@ rust-version.workspace = true
 version.workspace = true
 
 [dependencies]
-log = "0.4"
-symphonia-core = { version = "0.6.0-alpha.1", path = "../symphonia-core" }
-symphonia-common = { version = "0.6.0-alpha.1", path = "../symphonia-common" }
-symphonia-metadata = { version = "0.6.0-alpha.1", path = "../symphonia-metadata", default-features = false }
+log = { workspace = true }
+symphonia-core = { version = "0.6.1", path = "../symphonia-core" }
+symphonia-common = { version = "0.6.1", path = "../symphonia-common" }
+symphonia-metadata = { version = "0.6.1", path = "../symphonia-metadata", default-features = false }
+
+[lints]
+workspace = true

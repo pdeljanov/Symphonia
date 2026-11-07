@@ -1,5 +1,5 @@
 // Symphonia
-// Copyright (c) 2019-2024 The Project Symphonia Developers.
+// Copyright (c) 2019-2026 The Project Symphonia Developers.
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -458,6 +458,11 @@ impl PacketTable {
         desc: &Option<AudioDescription>,
         chunk_size: i64,
     ) -> Result<Self> {
+        /// The maximum number of packet table entries to preallocate before reading from the
+        /// source. Since the source could be malicious and choose a very large number, this
+        /// prevents exhausting system memory.
+        pub const MAX_TABLE_INITIAL_CAPACITY: usize = 32 * 1024;
+
         if chunk_size < 24 {
             return invalid_chunk_size_error("Packet Table", chunk_size);
         }
@@ -482,7 +487,9 @@ impl PacketTable {
         let priming_frames = reader.read_be_i32()?;
         let remainder_frames = reader.read_be_i32()?;
 
-        let mut packets = Vec::with_capacity(total_packets as usize);
+        let mut packets =
+            Vec::with_capacity((total_packets as usize).min(MAX_TABLE_INITIAL_CAPACITY));
+
         let mut current_frame =
             Timestamp::from(-i64::from(if priming_frames > 0 { priming_frames } else { 0 }));
         let mut packet_offset = 0;

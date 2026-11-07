@@ -1,5 +1,5 @@
 // Symphonia
-// Copyright (c) 2019-2022 The Project Symphonia Developers.
+// Copyright (c) 2019-2026 The Project Symphonia Developers.
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -12,6 +12,8 @@ use symphonia_core::errors::Result;
 
 use symphonia_core::io::BufReader;
 use symphonia_core::units::Duration;
+
+use crate::header::MPEG_HEADER_LEN;
 
 /// The MPEG audio version.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -110,6 +112,7 @@ pub struct FrameHeader {
     #[allow(dead_code)]
     pub has_padding: bool,
     pub has_crc: bool,
+    /// The size of the frame, including the optional CRC, but excluding the standard frame header.
     pub frame_size: usize,
 }
 
@@ -189,6 +192,12 @@ impl FrameHeader {
             ChannelMode::JointStereo(Mode::Layer3 { intensity, .. }) => intensity,
             _ => false,
         }
+    }
+
+    /// The size of the header itself including the optional CRC.
+    #[inline(always)]
+    pub fn header_size(&self) -> usize {
+        MPEG_HEADER_LEN + if self.has_crc { 2 } else { 0 }
     }
 
     /// Get the side information length.

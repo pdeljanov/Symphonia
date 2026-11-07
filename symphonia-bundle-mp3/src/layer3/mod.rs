@@ -1,5 +1,5 @@
 // Symphonia
-// Copyright (c) 2019-2022 The Project Symphonia Developers.
+// Copyright (c) 2019-2026 The Project Symphonia Developers.
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -305,7 +305,7 @@ impl Layer3 {
                 let byte_index = part2_3_begin >> 3;
 
                 // Create a bit reader at the expected starting bit position.
-                let mut bs = if byte_index < main_data.len() {
+                let mut bs = if byte_index <= main_data.len() {
                     let mut bs = BitReaderLtr::new(&main_data[byte_index..]);
 
                     let bit_index = part2_3_begin & 0x7;
@@ -462,7 +462,10 @@ impl Layer for Layer3 {
                 hybrid_synthesis::frequency_inversion(&mut self.samples[gr][ch]);
 
                 // Perform polyphase synthesis and generate PCM samples.
-                let out_ch_samples = out.plane_mut(ch).unwrap();
+                let out_ch_samples = match out.plane_mut(ch) {
+                    Some(p) => p,
+                    None => return decode_error("mp3: missing audio plane"),
+                };
 
                 synthesis::synthesis(
                     &mut self.synthesis[ch],

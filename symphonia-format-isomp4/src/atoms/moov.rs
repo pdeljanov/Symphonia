@@ -1,16 +1,15 @@
 // Symphonia
-// Copyright (c) 2019-2022 The Project Symphonia Developers.
+// Copyright (c) 2019-2026 The Project Symphonia Developers.
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::errors::{Result, decode_error};
-use symphonia_core::io::ReadBytes;
 use symphonia_core::meta::MetadataRevision;
 
 use crate::atoms::{
-    Atom, AtomHeader, AtomIterator, AtomType, MvexAtom, MvhdAtom, TrakAtom, UdtaAtom,
+    Atom, AtomHeader, AtomIterator, AtomType, MvexAtom, MvhdAtom, ReadAtom, Result, TrakAtom,
+    UdtaAtom, decode_error,
 };
 
 use log::warn;
@@ -42,36 +41,35 @@ impl MoovAtom {
 }
 
 impl Atom for MoovAtom {
-    fn read<B: ReadBytes>(reader: &mut B, header: AtomHeader) -> Result<Self> {
-        let mut iter = AtomIterator::new(reader, header);
-
+    fn read<R: ReadAtom>(it: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
         let mut mvhd = None;
         let mut traks = Vec::new();
         let mut mvex = None;
         let mut udta = None;
 
-        while let Some(header) = iter.next()? {
+        while let Some(header) = it.next_header()? {
             match header.atom_type {
                 AtomType::MovieHeader => {
-                    mvhd = Some(iter.read_atom::<MvhdAtom>()?);
+                    mvhd = Some(it.read_atom::<MvhdAtom>()?);
                 }
                 AtomType::Track => {
-                    let trak = iter.read_atom::<TrakAtom>()?;
+                    let trak = it.read_atom::<TrakAtom>()?;
                     traks.push(trak);
                 }
                 AtomType::MovieExtends => {
-                    mvex = Some(iter.read_atom::<MvexAtom>()?);
+                    mvex = Some(it.read_atom::<MvexAtom>()?);
                 }
                 AtomType::UserData => {
-                    udta = Some(iter.read_atom::<UdtaAtom>()?);
+                    udta = Some(it.read_atom::<UdtaAtom>()?);
                 }
                 _ => (),
             }
         }
 
-        if mvhd.is_none() {
-            return decode_error("isomp4: missing mvhd atom");
-        }
+        let Some(mvhd) = mvhd
+        else {
+            return decode_error("isomp4 (moov): missing mvhd atom");
+        };
 
         // If fragmented, the mvex atom should contain a trex atom for each trak atom in moov.
         if let Some(mvex) = mvex.as_ref() {
@@ -85,6 +83,6 @@ impl Atom for MoovAtom {
             }
         }
 
-        Ok(MoovAtom { mvhd: mvhd.unwrap(), traks, mvex, udta })
+        Ok(MoovAtom { mvhd, traks, mvex, udta })
     }
 }

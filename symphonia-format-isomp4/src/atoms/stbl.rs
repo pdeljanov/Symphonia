@@ -1,17 +1,16 @@
 // Symphonia
-// Copyright (c) 2019-2022 The Project Symphonia Developers.
+// Copyright (c) 2019-2026 The Project Symphonia Developers.
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::errors::{Result, decode_error};
-use symphonia_core::io::ReadBytes;
+use crate::atoms::{
+    Atom, AtomHeader, AtomIterator, AtomType, Co64Atom, ReadAtom, Result, StcoAtom, StscAtom,
+    StsdAtom, StszAtom, SttsAtom, decode_error,
+};
 
-use crate::atoms::{Atom, AtomHeader, AtomIterator, AtomType};
-use crate::atoms::{Co64Atom, StcoAtom, StscAtom, StsdAtom, StszAtom, SttsAtom};
-
-use log::warn;
+use log::{debug, warn};
 
 /// Sample table atom.
 #[allow(dead_code)]
@@ -26,9 +25,7 @@ pub struct StblAtom {
 }
 
 impl Atom for StblAtom {
-    fn read<B: ReadBytes>(reader: &mut B, header: AtomHeader) -> Result<Self> {
-        let mut iter = AtomIterator::new(reader, header);
-
+    fn read<R: ReadAtom>(it: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
         let mut stsd = None;
         let mut stts = None;
         let mut stsc = None;
@@ -36,52 +33,36 @@ impl Atom for StblAtom {
         let mut stco = None;
         let mut co64 = None;
 
-        while let Some(header) = iter.next()? {
+        while let Some(header) = it.next_header()? {
             match header.atom_type {
                 AtomType::SampleDescription => {
-                    stsd = Some(iter.read_atom::<StsdAtom>()?);
+                    stsd = Some(it.read_atom::<StsdAtom>()?);
                 }
                 AtomType::TimeToSample => {
-                    stts = Some(iter.read_atom::<SttsAtom>()?);
+                    stts = Some(it.read_atom::<SttsAtom>()?);
                 }
                 AtomType::CompositionTimeToSample => {
                     // Composition time to sample atom is only required for video.
-                    warn!("ignoring ctts atom.");
+                    debug!("ignoring ctts atom.");
                 }
                 AtomType::SyncSample => {
                     // Sync sample atom is only required for video.
-                    warn!("ignoring stss atom.");
+                    debug!("ignoring stss atom.");
                 }
                 AtomType::SampleToChunk => {
-                    stsc = Some(iter.read_atom::<StscAtom>()?);
+                    stsc = Some(it.read_atom::<StscAtom>()?);
                 }
                 AtomType::SampleSize => {
-                    stsz = Some(iter.read_atom::<StszAtom>()?);
+                    stsz = Some(it.read_atom::<StszAtom>()?);
                 }
                 AtomType::ChunkOffset => {
-                    stco = Some(iter.read_atom::<StcoAtom>()?);
+                    stco = Some(it.read_atom::<StcoAtom>()?);
                 }
                 AtomType::ChunkOffset64 => {
-                    co64 = Some(iter.read_atom::<Co64Atom>()?);
+                    co64 = Some(it.read_atom::<Co64Atom>()?);
                 }
                 _ => (),
             }
-        }
-
-        if stsd.is_none() {
-            return decode_error("isomp4: missing stsd atom");
-        }
-
-        if stts.is_none() {
-            return decode_error("isomp4: missing stts atom");
-        }
-
-        if stsc.is_none() {
-            return decode_error("isomp4: missing stsc atom");
-        }
-
-        if stsz.is_none() {
-            return decode_error("isomp4: missing stsz atom");
         }
 
         if stco.is_none() && co64.is_none() {
@@ -89,13 +70,23 @@ impl Atom for StblAtom {
             warn!("missing stco or co64 atom");
         }
 
-        Ok(StblAtom {
-            stsd: stsd.unwrap(),
-            stts: stts.unwrap(),
-            stsc: stsc.unwrap(),
-            stsz: stsz.unwrap(),
-            stco,
-            co64,
-        })
+        let Some(stsd) = stsd
+        else {
+            return decode_error("isomp4 (stbl): missing stsd atom");
+        };
+        let Some(stts) = stts
+        else {
+            return decode_error("isomp4 (stbl): missing stts atom");
+        };
+        let Some(stsc) = stsc
+        else {
+            return decode_error("isomp4 (stbl): missing stsc atom");
+        };
+        let Some(stsz) = stsz
+        else {
+            return decode_error("isomp4 (stbl): missing stsz atom");
+        };
+
+        Ok(StblAtom { stsd, stts, stsc, stsz, stco, co64 })
     }
 }

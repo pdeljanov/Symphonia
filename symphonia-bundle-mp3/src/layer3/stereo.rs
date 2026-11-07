@@ -1,5 +1,5 @@
 // Symphonia
-// Copyright (c) 2019-2022 The Project Symphonia Developers.
+// Copyright (c) 2019-2026 The Project Symphonia Developers.
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -499,14 +499,12 @@ pub(super) fn stereo(
         _ => return Ok(()),
     };
 
-    // The block types must be the same.
-    if granule.channels[0].block_type != granule.channels[1].block_type {
-        return decode_error("mpa: stereo channel pair block_type mismatch");
-    }
-
     // Split the sample buffer into two channels.
     let (ch0, ch1) = {
-        let (ch0, ch1) = ch.split_first_mut().unwrap();
+        let (ch0, ch1) = match ch.split_first_mut() {
+            Some(v) => v,
+            None => return decode_error("mp3: stereo channel pair is empty"),
+        };
         (ch0, &mut ch1[0])
     };
 

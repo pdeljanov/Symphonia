@@ -1,5 +1,5 @@
 // Symphonia
-// Copyright (c) 2019-2022 The Project Symphonia Developers.
+// Copyright (c) 2019-2026 The Project Symphonia Developers.
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -11,6 +11,10 @@ use std::marker::PhantomData;
 use std::num::NonZero;
 
 use symphonia_core::audio::Channels;
+use symphonia_core::codecs::audio::well_known::{
+    CODEC_ID_ADPCM_IMA_WAV, CODEC_ID_ADPCM_MS, CODEC_ID_PCM_F32BE, CODEC_ID_PCM_F32LE,
+    CODEC_ID_PCM_F64BE, CODEC_ID_PCM_F64LE,
+};
 use symphonia_core::codecs::audio::{AudioCodecId, AudioCodecParameters};
 use symphonia_core::errors::{Result, decode_error};
 use symphonia_core::formats::prelude::*;
@@ -144,7 +148,24 @@ impl<T: ParseChunkTag> ChunksReader<T> {
 
 /// Common trait implemented for all chunks that are parsed by a `ChunkParser`.
 pub trait ParseChunk: Sized {
+    /// Parse the chunk.
     fn parse<B: ReadBytes>(reader: &mut B, tag: [u8; 4], len: u32) -> Result<Self>;
+
+    /// Parse the chunk and discard any unread data in the chunk.
+    fn parse_and_skip_unread<B: ReadBytes>(reader: &mut B, tag: [u8; 4], len: u32) -> Result<Self> {
+        let pos = reader.pos();
+        let result = Self::parse(reader, tag, len);
+
+        // Only discard unread data if parsing was successful.
+        if result.is_ok() {
+            let bytes_read = reader.pos() - pos;
+            if bytes_read < u64::from(len) {
+                reader.ignore_bytes(u64::from(len) - bytes_read)?;
+            }
+        }
+
+        result
+    }
 }
 
 /// `ChunkParser` is a utility struct for unifying the parsing of chunks.
@@ -162,6 +183,10 @@ impl<P: ParseChunk> ChunkParser<P> {
     pub fn parse<B: ReadBytes>(&self, reader: &mut B) -> Result<P> {
         P::parse(reader, self.tag, self.len)
     }
+
+    pub fn parse_and_skip_unread<B: ReadBytes>(&self, reader: &mut B) -> Result<P> {
+        P::parse_and_skip_unread(reader, self.tag, self.len)
+    }
 }
 
 pub enum FormatData {
@@ -174,7 +199,27 @@ pub enum FormatData {
 }
 
 pub struct FormatPcm {
-    /// The number of bits per sample. In the PCM format, this is always a multiple of 8-bits.
+    /// The number of bits per sample as written.
+    pub bits_per_sample: u16,
+    /// The number of bits per sample that are valid. Must be <= `bits_per_sample`.
+    pub valid_bits_per_sample: u16,
+    /// Channel bitmask.
+    pub channels: Channels,
+    /// Codec ID.
+    pub codec: AudioCodecId,
+}
+
+impl FormatPcm {
+    pub fn make_packet_info(&self) -> Result<PacketInfo> {
+        let num_channels = self.channels.count() as u16;
+        let frame_len = (self.bits_per_sample / 8) * num_channels;
+        PacketInfo::without_blocks(u32::from(frame_len))
+    }
+}
+
+pub struct FormatAdpcm {
+    pub block_align: u16,
+    /// The number of bits per sample. At the moment only 4bit is supported.
     pub bits_per_sample: u16,
     /// Channel bitmask.
     pub channels: Channels,
@@ -182,13 +227,33 @@ pub struct FormatPcm {
     pub codec: AudioCodecId,
 }
 
-pub struct FormatAdpcm {
-    /// The number of bits per sample. At the moment only 4bit is supported.
-    pub bits_per_sample: u16,
-    /// Channel bitmask.
-    pub channels: Channels,
-    /// Codec ID.
-    pub codec: AudioCodecId,
+impl FormatAdpcm {
+    pub fn make_packet_info(&self) -> Result<PacketInfo> {
+        let num_channels = self.channels.count() as u16;
+        let bits_per_frame = (self.bits_per_sample * num_channels) as u64;
+
+        match self.codec {
+            CODEC_ID_ADPCM_MS => {
+                // Don't allow underflow to occur.
+                if 7 * num_channels > self.block_align {
+                    return decode_error("riff (adpcm_ms): block align too small");
+                }
+                let frames_per_block =
+                    (8 * u64::from(self.block_align - 7 * num_channels)) / bits_per_frame + 2;
+                PacketInfo::with_blocks(self.block_align, frames_per_block)
+            }
+            CODEC_ID_ADPCM_IMA_WAV => {
+                // Don't allow underflow to occur.
+                if 4 * num_channels > self.block_align {
+                    return decode_error("riff (adpcm_ima_wav): block align too small");
+                }
+                let frames_per_block =
+                    (8 * u64::from(self.block_align - 4 * num_channels)) / bits_per_frame + 1;
+                PacketInfo::with_blocks(self.block_align, frames_per_block)
+            }
+            _ => unimplemented!("incomplete new adpcm codec"),
+        }
+    }
 }
 
 pub struct FormatIeeeFloat {
@@ -198,19 +263,40 @@ pub struct FormatIeeeFloat {
     pub codec: AudioCodecId,
 }
 
+impl FormatIeeeFloat {
+    pub fn make_packet_info(&self) -> Result<PacketInfo> {
+        let num_channels = self.channels.count() as u32;
+        let bytes_per_sample = match self.codec {
+            CODEC_ID_PCM_F32LE | CODEC_ID_PCM_F32BE => 4,
+            CODEC_ID_PCM_F64LE | CODEC_ID_PCM_F64BE => 8,
+            _ => unreachable!(),
+        };
+        let frame_len = num_channels * bytes_per_sample;
+        PacketInfo::without_blocks(frame_len)
+    }
+}
+
 pub struct FormatExtensible {
-    /// The number of bits per sample as stored in the stream. This value is always a multiple of
-    /// 8-bits.
+    /// The number of bits per sample as written. This value is always a multiple of 8-bits.
     pub bits_per_sample: u16,
     /// The number of bits per sample that are valid. This number is always less than the number
     /// of bits per sample.
-    pub bits_per_coded_sample: u16,
+    pub valid_bits_per_sample: u16,
     /// Channel bitmask.
     pub channels: Channels,
     /// Globally unique identifier of the format.
     pub sub_format_guid: [u8; 16],
     /// Codec ID.
     pub codec: AudioCodecId,
+}
+
+impl FormatExtensible {
+    pub fn make_packet_info(&self) -> Result<PacketInfo> {
+        // NOTE: This is only valid for compressed sub-types.
+        let num_channels = self.channels.count() as u16;
+        let frame_len = (self.bits_per_sample / 8) * num_channels;
+        PacketInfo::without_blocks(u32::from(frame_len))
+    }
 }
 
 pub struct FormatALaw {
@@ -220,11 +306,25 @@ pub struct FormatALaw {
     pub codec: AudioCodecId,
 }
 
+impl FormatALaw {
+    pub fn make_packet_info(&self) -> Result<PacketInfo> {
+        let num_channels = self.channels.count() as u32;
+        PacketInfo::without_blocks(num_channels)
+    }
+}
+
 pub struct FormatMuLaw {
     /// Channel bitmask.
     pub channels: Channels,
     /// Codec ID.
     pub codec: AudioCodecId,
+}
+
+impl FormatMuLaw {
+    pub fn make_packet_info(&self) -> Result<PacketInfo> {
+        let num_channels = self.channels.count() as u32;
+        PacketInfo::without_blocks(num_channels)
+    }
 }
 
 pub struct PacketInfo {
@@ -274,7 +374,7 @@ impl PacketInfo {
 
         Ok(Self {
             block_size,
-            frames_per_block: NonZero::new(1).unwrap(),
+            frames_per_block: NonZero::new(1).expect("1 is non-zero"),
             max_blocks_per_packet: MAX_FRAMES_PER_PACKET,
             max_frames_per_packet: MAX_FRAMES_PER_PACKET,
         })
@@ -286,8 +386,8 @@ impl PacketInfo {
 
     pub fn get_actual_ts(&self, ts: Timestamp) -> Timestamp {
         let max_frames_per_packet = self.max_frames_per_packet.get();
-        // UNWRAP: Maximum frames/packet is non-zero 0.
-        ts.align_towards_zero(Duration::from(max_frames_per_packet)).unwrap()
+        ts.align_towards_zero(Duration::from(max_frames_per_packet))
+            .expect("max_frames_per_packet is non-zero")
     }
 }
 
@@ -342,8 +442,8 @@ pub fn append_format_params(
         FormatData::Pcm(pcm) => {
             codec_params
                 .for_codec(pcm.codec)
-                .with_bits_per_coded_sample(u32::from(pcm.bits_per_sample))
-                .with_bits_per_sample(u32::from(pcm.bits_per_sample))
+                .with_bits_per_coded_sample(u32::from(pcm.valid_bits_per_sample))
+                .with_bits_per_sample(u32::from(pcm.valid_bits_per_sample))
                 .with_channels(pcm.channels);
         }
         FormatData::Adpcm(adpcm) => {
@@ -355,8 +455,8 @@ pub fn append_format_params(
         FormatData::Extensible(ext) => {
             codec_params
                 .for_codec(ext.codec)
-                .with_bits_per_coded_sample(u32::from(ext.bits_per_coded_sample))
-                .with_bits_per_sample(u32::from(ext.bits_per_sample))
+                .with_bits_per_coded_sample(u32::from(ext.valid_bits_per_sample))
+                .with_bits_per_sample(u32::from(ext.valid_bits_per_sample))
                 .with_channels(ext.channels);
         }
         FormatData::ALaw(alaw) => {
@@ -374,4 +474,6 @@ pub fn append_data_params(track: &mut Track, data_len: u64, packet_info: &Packet
     // Prefer the duration in the FACT chunk.
     let num_frames = packet_info.get_num_frames_at(data_len);
     track.with_num_frames(num_frames);
+    // Duration equals the number of frames because the timebase is always 1 / sample rate.
+    track.with_duration(Duration::from(num_frames));
 }

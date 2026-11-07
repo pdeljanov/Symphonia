@@ -1,5 +1,5 @@
 // Symphonia
-// Copyright (c) 2019-2022 The Project Symphonia Developers.
+// Copyright (c) 2019-2026 The Project Symphonia Developers.
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -112,6 +112,8 @@ pub fn detect(serial: u32, buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> {
 
     if let Some(num_frames) = stream_info.n_samples {
         track.with_num_frames(num_frames);
+        // Duration equals the number of frames because the timebase is always 1 / sample rate.
+        track.with_duration(Duration::from(num_frames));
     }
 
     track.with_codec_params(CodecParameters::Audio(codec_params));

@@ -1,5 +1,5 @@
 // Symphonia
-// Copyright (c) 2019-2022 The Project Symphonia Developers.
+// Copyright (c) 2019-2026 The Project Symphonia Developers.
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -14,7 +14,7 @@ use log::warn;
 use symphonia_common::mpeg::video::{
     AVCDecoderConfigurationRecord, HEVCDecoderConfigurationRecord,
 };
-use symphonia_common::xiph::audio::flac::{MetadataBlockHeader, MetadataBlockType};
+use symphonia_common::xiph::audio::flac::{MetadataBlockHeader, MetadataBlockType, StreamInfo};
 use symphonia_core::audio::Channels;
 use symphonia_core::audio::sample::SampleFormat;
 use symphonia_core::codecs::audio::AudioCodecParameters;
@@ -228,11 +228,18 @@ fn flac_extra_data_from_codec_private(codec_private: &[u8]) -> Result<Box<[u8]>>
         return decode_error("mkv (flac): missing flac stream marker");
     }
 
-    let header = MetadataBlockHeader::read(&mut reader)?;
-
+    // The codec private data contains all header/matadata blocks. Extract the stream information
+    // block (typically the first).
     loop {
+        let header = MetadataBlockHeader::read(&mut reader)?;
+
         match header.block_type {
             MetadataBlockType::StreamInfo => {
+                // Ensure the stream information block is the expected size.
+                if !StreamInfo::is_valid_size(u64::from(header.block_len)) {
+                    return decode_error("isomp4 (flac): invalid stream info block length");
+                }
+
                 break Ok(reader.read_boxed_slice_exact(header.block_len as usize)?);
             }
             _ => reader.ignore_bytes(u64::from(header.block_len))?,
@@ -332,7 +339,7 @@ fn get_codec_id(track: &TrackElement) -> Option<CodecId> {
 
         // Other Codecs
         _ => {
-            log::info!("unknown codec: {}", &track.codec_id);
+            log::info!("unknown codec: {}", track.codec_id);
             return None;
         }
     };

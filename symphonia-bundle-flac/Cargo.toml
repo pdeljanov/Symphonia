@@ -14,15 +14,15 @@ rust-version.workspace = true
 version.workspace = true
 
 [dependencies]
-log = "0.4"
-symphonia-core = { version = "0.6.0-alpha.1", path = "../symphonia-core" }
-symphonia-common = { version = "0.6.0-alpha.1", path = "../symphonia-common" }
+log = { workspace = true }
+symphonia-core = { version = "0.6.1", path = "../symphonia-core" }
+symphonia-common = { version = "0.6.1", path = "../symphonia-common" }
 
 [dependencies.symphonia-metadata]
-version = "0.6.0-alpha.1"
+version = "0.6.1"
 path = "../symphonia-metadata"
 default-features = false
 features = ["flac"]
 
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)'] }
+[lints]
+workspace = true

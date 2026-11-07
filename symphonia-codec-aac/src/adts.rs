@@ -1,5 +1,5 @@
 // Symphonia
-// Copyright (c) 2019-2022 The Project Symphonia Developers.
+// Copyright (c) 2019-2026 The Project Symphonia Developers.
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -19,9 +19,9 @@ use symphonia_core::formats::well_known::FORMAT_ID_ADTS;
 use symphonia_core::io::*;
 use symphonia_core::meta::{Metadata, MetadataLog};
 
-use std::io::{Seek, SeekFrom};
+use symphonia_common::mpeg::audio::*;
 
-use super::common::{AAC_CHANNELS, AAC_SAMPLE_RATES, M4A_TYPES, M4AType, map_to_channels};
+use std::io::{Seek, SeekFrom};
 
 use log::{debug, info};
 
@@ -38,6 +38,7 @@ const ADTS_FORMAT_INFO: FormatInfo = FormatInfo {
 /// `AdtsReader` implements a demuxer for ADTS (AAC native frames).
 pub struct AdtsReader<'s> {
     reader: MediaSourceStream<'s>,
+    media_info: MediaInfo,
     tracks: Vec<Track>,
     chapters: Option<ChapterGroup>,
     metadata: MetadataLog,
@@ -67,13 +68,16 @@ impl<'s> AdtsReader<'s> {
 
         let first_frame_pos = mss.pos();
 
-        if let Some(n_frames) = approximate_frame_count(&mut mss)? {
+        if let Some(num_frames) = approximate_frame_count(&mut mss)? {
             info!("estimating duration from bitrate, may be inaccurate for vbr files");
-            track.with_num_frames(n_frames);
+            track.with_num_frames(num_frames);
+            // Duration equals the number of frames because the timebase is always 1 / sample rate.
+            track.with_duration(Duration::from(num_frames));
         }
 
         Ok(AdtsReader {
             reader: mss,
+            media_info: MediaInfo::from_track(&track),
             tracks: vec![track],
             chapters: opts.external_data.chapters,
             metadata: opts.external_data.metadata.unwrap_or_default(),
@@ -110,7 +114,7 @@ impl Scoreable for AdtsReader<'_> {
 #[allow(dead_code)]
 struct AdtsHeader {
     /// Audio profile.
-    profile: M4AType,
+    profile: AudioObjectType,
     /// Audio channel configuration.
     channels: Option<Channels>,
     /// The sample rate in Hertz.
@@ -141,23 +145,29 @@ impl AdtsHeader {
 
         let mut bs = BitReaderLtr::new(&buf);
 
-        // Profile.
-        let profile = M4A_TYPES[bs.read_bits_leq32(2)? as usize + 1];
+        // Profile (audio object type).
+        let profile = match get_mpeg4_audio_object_type_by_index(bs.read_bits_leq32(2)? + 1) {
+            Some(p) => p,
+            None => return decode_error("adts: invalid audio object type"),
+        };
 
-        // Sample rate index.
-        let sample_rate = match bs.read_bits_leq32(4)? as usize {
-            15 => return decode_error("adts: forbidden sample rate"),
-            13 | 14 => return decode_error("adts: reserved sample rate"),
-            idx => AAC_SAMPLE_RATES[idx],
+        // Sample rate from sample rate index.
+        let sample_rate = match get_mpeg4_audio_sample_rate_by_index(bs.read_bits_leq32(4)?) {
+            Mpeg4AudioSampleRate::SampleRate(rate) => rate,
+            Mpeg4AudioSampleRate::Escape => return decode_error("adts: forbidden sample rate"),
+            Mpeg4AudioSampleRate::Invalid => return decode_error("adts: invalid sample rate"),
         };
 
         // Private bit.
         bs.ignore_bit()?;
 
         // Channel configuration.
-        let channels = match bs.read_bits_leq32(3)? {
-            0 => None,
-            idx => map_to_channels(AAC_CHANNELS[idx as usize]),
+        let channels = match get_mpeg4_audio_channels_by_config_index(bs.read_bits_leq32(3)?) {
+            Mpeg4AudioChannels::Channels(channels) => Some(channels),
+            Mpeg4AudioChannels::Escape => None,
+            Mpeg4AudioChannels::Invalid => {
+                return decode_error("adts: invalid channel configuration");
+            }
         };
 
         // Originality, Home, Copyrighted ID bit, Copyright ID start bits. Only used for encoding.
@@ -266,6 +276,10 @@ impl FormatReader for AdtsReader<'_> {
         &ADTS_FORMAT_INFO
     }
 
+    fn media_info(&self) -> &MediaInfo {
+        &self.media_info
+    }
+
     fn next_packet(&mut self) -> Result<Option<Packet>> {
         // Parse the header to get the calculated frame size.
         let header = match AdtsHeader::read(&mut self.reader) {
@@ -311,7 +325,7 @@ impl FormatReader for AdtsReader<'_> {
         // Get the timestamp of the desired audio frame.
         let required_ts = match to {
             // Frame timestamp given.
-            SeekTo::TimeStamp { ts, .. } => ts,
+            SeekTo::Timestamp { ts, .. } => ts,
             // Time value given, calculate frame timestamp using the timebase.
             SeekTo::Time { time, .. } => {
                 // The timebase is required to calculate the timestamp.
@@ -414,12 +428,7 @@ fn approximate_frame_count(mut source: &mut MediaSourceStream<'_>) -> Result<Opt
         source.ensure_seekback_buffer(MAX_LEN as usize);
         let mut scoped_stream = ScopedStream::new(&mut source, MAX_LEN);
 
-        loop {
-            let Ok(header) = AdtsHeader::read(&mut scoped_stream)
-            else {
-                break;
-            };
-
+        while let Ok(header) = AdtsHeader::read(&mut scoped_stream) {
             if scoped_stream.ignore_bytes(u64::from(header.payload_len())).is_err() {
                 break;
             }

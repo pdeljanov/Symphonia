@@ -1,5 +1,5 @@
 // Symphonia Check Tool
-// Copyright (c) 2019-2022 The Project Symphonia Developers.
+// Copyright (c) 2019-2026 The Project Symphonia Developers.
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -13,7 +13,7 @@
 #![allow(clippy::needless_update)]
 
 use std::fs::File;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use symphonia::core::audio::GenericAudioBufferRef;
@@ -25,7 +25,7 @@ use symphonia::core::formats::{FormatOptions, FormatReader, TrackType};
 use symphonia::core::io::{MediaSourceStream, ReadOnlySource};
 use symphonia::core::meta::MetadataOptions;
 
-use clap::Arg;
+use clap::{Arg, ArgAction};
 use log::warn;
 
 /// The absolute maximum allowable sample delta. Around 2^-17 (-102.4dB).
@@ -66,7 +66,7 @@ struct TestResult {
     ref_unchecked_samples: u64,
 }
 
-fn build_ffmpeg_command(path: &str, gapless: bool) -> Command {
+fn build_ffmpeg_command(path: &Path, gapless: bool) -> Command {
     let mut cmd = Command::new("ffmpeg");
 
     // Gapless argument must come before everything else.
@@ -91,7 +91,7 @@ fn build_ffmpeg_command(path: &str, gapless: bool) -> Command {
     cmd
 }
 
-fn build_flac_command(path: &str) -> Command {
+fn build_flac_command(path: &Path) -> Command {
     let mut cmd = Command::new("flac");
 
     cmd.arg("--stdout").arg("-d").arg(path).stdout(Stdio::piped()).stderr(Stdio::null());
@@ -99,7 +99,7 @@ fn build_flac_command(path: &str) -> Command {
     cmd
 }
 
-fn build_mpg123_command(path: &str, gapless: bool) -> Command {
+fn build_mpg123_command(path: &Path, gapless: bool) -> Command {
     let mut cmd = Command::new("mpg123");
 
     if !gapless {
@@ -111,7 +111,7 @@ fn build_mpg123_command(path: &str, gapless: bool) -> Command {
     cmd
 }
 
-fn build_oggdec_command(path: &str) -> Command {
+fn build_oggdec_command(path: &Path) -> Command {
     let mut cmd = Command::new("oggdec");
     cmd.arg(path).arg("-o").arg("-").stdout(Stdio::piped()).stderr(Stdio::null());
     cmd
@@ -122,7 +122,7 @@ struct RefProcess {
 }
 
 impl RefProcess {
-    fn try_spawn(decoder: RefDecoder, gapless: bool, path: &str) -> Result<RefProcess> {
+    fn try_spawn(decoder: RefDecoder, gapless: bool, path: &Path) -> Result<RefProcess> {
         let mut cmd = match decoder {
             RefDecoder::Ffmpeg => build_ffmpeg_command(path, gapless),
             RefDecoder::Flac => build_flac_command(path),
@@ -160,7 +160,10 @@ impl DecoderInstance {
 
         let format = symphonia::default::get_probe().probe(&hint, mss, fmt_opts, meta_opts)?;
 
-        let track = format.default_track(TrackType::Audio).unwrap();
+        let track = match format.default_track(TrackType::Audio) {
+            Some(t) => t,
+            None => return unsupported_error("only audio tracks are supported"),
+        };
 
         let codec_params = match &track.codec_params {
             Some(CodecParameters::Audio(params)) => params,
@@ -195,7 +198,7 @@ impl DecoderInstance {
             };
 
             // Skip packets that do not belong to the track being decoded.
-            if packet.track_id() != self.track_id {
+            if packet.track_id != self.track_id {
                 continue;
             }
 
@@ -343,18 +346,21 @@ fn run_check(
     Ok(())
 }
 
-fn run_test(path: &str, opts: &TestOptions, result: &mut TestResult) -> Result<()> {
+fn run_test(path: &Path, opts: &TestOptions, result: &mut TestResult) -> Result<()> {
     // 1. Start the reference decoder process.
     let mut ref_process = RefProcess::try_spawn(opts.ref_decoder, opts.gapless, path)?;
 
     // 2. Instantiate a Symphonia decoder for the reference process output.
-    let ref_ms = Box::new(ReadOnlySource::new(ref_process.child.stdout.take().unwrap()));
+    let ref_ms = Box::new(ReadOnlySource::new(match ref_process.child.stdout.take() {
+        Some(s) => s,
+        None => return unsupported_error("reference decoder has no stdout"),
+    }));
     let ref_mss = MediaSourceStream::new(ref_ms, Default::default());
 
     let mut ref_inst = DecoderInstance::try_open(ref_mss, Default::default(), Default::default())?;
 
     // 3. Instantiate a Symphonia decoder for the test target.
-    let tgt_ms = Box::new(File::open(Path::new(path))?);
+    let tgt_ms = Box::new(File::open(path)?);
     let tgt_mss = MediaSourceStream::new(tgt_ms, Default::default());
 
     let tgt_fmt_opts = Default::default();
@@ -373,34 +379,61 @@ fn main() {
         .version("1.0")
         .author("Philip Deljanov <philip.deljanov@gmail.com>")
         .about("Check Symphonia output with a reference decoding")
-        .arg(Arg::new("samples").long("samples").help("Print failures per sample"))
+        .arg(
+            Arg::new("samples")
+                .long("samples")
+                .action(ArgAction::SetTrue)
+                .help("Print failures per sample"),
+        )
         .arg(
             Arg::new("stop-after-fail")
                 .long("first-fail")
                 .short('f')
+                .action(ArgAction::SetTrue)
                 .help("Stop testing after the first failed packet"),
         )
-        .arg(Arg::new("quiet").long("quiet").short('q').help("Only print test results"))
+        .arg(
+            Arg::new("quiet")
+                .long("quiet")
+                .short('q')
+                .action(ArgAction::SetTrue)
+                .help("Only print test results"),
+        )
         .arg(
             Arg::new("keep-going")
                 .long("keep-going")
+                .action(ArgAction::SetTrue)
                 .help("Continue after a decode error (may cause many failures)"),
         )
         .arg(
             Arg::new("decoder")
                 .long("ref")
-                .takes_value(true)
-                .possible_values(["ffmpeg", "flac", "mpg123", "oggdec"])
+                .value_parser(["ffmpeg", "flac", "mpg123", "oggdec"])
                 .default_value("ffmpeg")
                 .help("Specify a particular decoder to be used as the reference"),
         )
-        .arg(Arg::new("no-gapless").long("no-gapless").help("Disable gapless decoding"))
-        .arg(Arg::new("INPUT").help("The input file path").required(true).index(1))
+        .arg(
+            Arg::new("no-gapless")
+                .long("no-gapless")
+                .action(ArgAction::SetTrue)
+                .help("Disable gapless decoding"),
+        )
+        .arg(
+            Arg::new("INPUT")
+                .help("The input file path")
+                .value_parser(clap::value_parser!(PathBuf))
+                .required(true)
+                .index(1),
+        )
         .get_matches();
 
-    let path = matches.value_of("INPUT").unwrap();
+    let path = matches.get_one::<PathBuf>("INPUT").expect("path is a required argument");
 
-    let ref_decoder = match matches.value_of("decoder").unwrap() {
+    let ref_decoder = match matches
+        .get_one::<String>("decoder")
+        .expect("decoder is a required argument")
+        .as_ref()
+    {
         "ffmpeg" => RefDecoder::Ffmpeg,
         "flac" => RefDecoder::Flac,
         "mpg123" => RefDecoder::Mpg123,
@@ -414,17 +447,17 @@ fn main() {
 
     let opts = TestOptions {
         ref_decoder,
-        is_per_sample: matches.is_present("samples"),
-        is_quiet: matches.is_present("quiet"),
-        stop_after_fail: matches.is_present("stop-after-fail"),
-        keep_going: matches.is_present("keep-going"),
-        gapless: !matches.is_present("no-gapless"),
+        is_per_sample: matches.get_flag("samples"),
+        is_quiet: matches.get_flag("quiet"),
+        stop_after_fail: matches.get_flag("stop-after-fail"),
+        keep_going: matches.get_flag("keep-going"),
+        gapless: !matches.get_flag("no-gapless"),
         ..Default::default()
     };
 
     let mut res: TestResult = Default::default();
 
-    println!("Input Path: {path}");
+    println!("Input Path: {}", path.to_string_lossy());
     println!();
 
     if let Err(err) = run_test(path, &opts, &mut res) {

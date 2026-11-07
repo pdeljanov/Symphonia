@@ -1,5 +1,5 @@
 // Symphonia
-// Copyright (c) 2019-2022 The Project Symphonia Developers.
+// Copyright (c) 2019-2026 The Project Symphonia Developers.
 //
 // Previous Author: Kostya Shishkov <kostya.shiskov@gmail.com>
 //
@@ -15,10 +15,11 @@ use symphonia_core::errors::{Result, decode_error};
 use symphonia_core::io::ReadBitsLtr;
 use symphonia_core::io::vlc::{Codebook, Entry8x16};
 
+use symphonia_common::mpeg::audio::AudioObjectType;
+
 use crate::aac::codebooks;
 use crate::aac::common::*;
 use crate::aac::dsp;
-use crate::common::M4AType;
 
 use lazy_static::lazy_static;
 use log::debug;
@@ -44,8 +45,7 @@ lazy_static! {
     /// Pre-computed table of y = x^(4/3).
     static ref POW43_TABLE: Box<[f32; POW43_TABLE_LEN]> = {
         let table: Vec<f32> = (0..POW43_TABLE_LEN).map(|i| (i as f32).powf(4.0 / 3.0)).collect();
-        // UNWRAP: The vector was initialized to be the correct size.
-        table.into_boxed_slice().try_into().unwrap()
+        table.into_boxed_slice().try_into().expect("vec initialized to correct table length")
     };
 }
 
@@ -61,8 +61,7 @@ lazy_static! {
             .map(|i| 2.0f32.powf(0.25 * f32::from(i as i16 - 56 + NORMAL_SCALE_MIN)))
             .collect();
 
-        // UNWRAP: The vector was initialized to be the correct size.
-        table.into_boxed_slice().try_into().unwrap()
+        table.into_boxed_slice().try_into().expect("vec initialized to correct table length")
     };
 }
 
@@ -78,8 +77,7 @@ lazy_static! {
             .map(|i| 0.5f32.powf(0.25 * f32::from(i as i16 + INTENSITY_SCALE_MIN)))
             .collect();
 
-        // UNWRAP: The vector was initialized to be the correct size.
-        table.into_boxed_slice().try_into().unwrap()
+        table.into_boxed_slice().try_into().expect("vec initialized to correct table length")
     };
 }
 
@@ -127,21 +125,19 @@ impl IcsInfo {
         self.window_sequence = bs.read_bits_leq32(2)? as u8;
 
         match self.prev_window_sequence {
-            ONLY_LONG_SEQUENCE | LONG_STOP_SEQUENCE => {
+            ONLY_LONG_SEQUENCE | LONG_STOP_SEQUENCE
                 if (self.window_sequence != ONLY_LONG_SEQUENCE)
-                    && (self.window_sequence != LONG_START_SEQUENCE)
-                {
-                    debug!("previous window is invalid");
-                }
+                    && (self.window_sequence != LONG_START_SEQUENCE) =>
+            {
+                debug!("previous window is invalid");
             }
-            LONG_START_SEQUENCE | EIGHT_SHORT_SEQUENCE => {
+            LONG_START_SEQUENCE | EIGHT_SHORT_SEQUENCE
                 if (self.window_sequence != EIGHT_SHORT_SEQUENCE)
-                    && (self.window_sequence != LONG_STOP_SEQUENCE)
-                {
-                    debug!("previous window is invalid");
-                }
+                    && (self.window_sequence != LONG_STOP_SEQUENCE) =>
+            {
+                debug!("previous window is invalid");
             }
-            _ => {}
+            _ => (),
         };
 
         self.window_shape = bs.read_bool()?;
@@ -244,6 +240,11 @@ impl Ics {
             let mut l = 0;
 
             while k < self.info.max_sfb {
+                // `l` counts sections, not bands, and advances once per section. A crafted
+                // stream with many zero-length sections can push it past the section arrays
+                // even though `k` (the band index) stays below `max_sfb`, so bound it here.
+                validate!(l < MAX_SFBS);
+
                 self.sect_cb[g][l] = bs.read_bits_leq32(4)? as u8;
                 self.sect_len[g][l] = 0;
 
@@ -410,7 +411,7 @@ impl Ics {
         &mut self,
         bs: &mut B,
         lcg: &mut Lcg,
-        m4atype: M4AType,
+        aot: AudioObjectType,
         common_window: bool,
     ) -> Result<()> {
         self.global_gain = bs.read_bits_leq32(8)? as u8;
@@ -429,12 +430,12 @@ impl Ics {
 
         validate!(self.pulse.is_none() || self.info.long_win);
 
-        let is_aac_lc = m4atype == M4AType::Lc;
+        let is_aac_lc = aot == AudioObjectType::Lc;
 
         self.tns = tns::Tns::read(bs, &self.info, is_aac_lc)?;
 
-        match m4atype {
-            M4AType::Ssr => self.gain = gain::GainControl::read(bs)?,
+        match aot {
+            AudioObjectType::Ssr => self.gain = gain::GainControl::read(bs)?,
             _ => {
                 let gain_control_data_present = bs.read_bool()?;
                 validate!(!gain_control_data_present);
@@ -472,9 +473,7 @@ fn decode_noise(lcg: &mut Lcg, sf: f32, dst: &mut [f32]) {
     let mut energy = 0.0;
 
     for spec in dst.iter_mut() {
-        // The random number generator outputs i32, but the largest signed
-        // integer that can convert to f32 is i16.
-        *spec = f32::from((lcg.next() >> 16) as i16);
+        *spec = lcg.next() as f32;
         energy += *spec * *spec;
     }
 
@@ -606,4 +605,30 @@ fn read_escape<B: ReadBitsLtr>(bs: &mut B) -> Result<u16> {
     let word = (1 << (n + 4)) + bs.read_bits_leq32(n + 4)? as u16;
 
     Ok(word)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use symphonia_core::io::BitReaderLtr;
+
+    #[test]
+    fn decode_section_data_rejects_excess_zero_length_sections() {
+        // For a long window each section is a 4-bit codebook followed by 5-bit
+        // length increments. An all-zero bitstream therefore reads codebook 0
+        // and a zero-length section every time, so the band index never reaches
+        // `max_sfb` while the section index keeps climbing. More than MAX_SFBS
+        // such sections used to run off the end of `sect_cb`; parsing must now
+        // fail cleanly instead of panicking. (MAX_SFBS + 1) sections at 9 bits
+        // each fit comfortably in this buffer.
+        let buf = [0u8; (MAX_SFBS + 1) * 9 / 8 + 1];
+
+        let mut ics = Ics::new(GASubbandInfo::find(44100));
+        ics.info.long_win = true;
+        ics.info.window_groups = 1;
+        ics.info.max_sfb = 1;
+
+        let mut bs = BitReaderLtr::new(&buf);
+        assert!(ics.decode_section_data(&mut bs).is_err());
+    }
 }

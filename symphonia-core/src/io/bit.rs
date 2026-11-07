@@ -1,5 +1,5 @@
 // Symphonia
-// Copyright (c) 2019-2022 The Project Symphonia Developers.
+// Copyright (c) 2019-2026 The Project Symphonia Developers.
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -261,12 +261,9 @@ pub mod vlc {
             }
 
             // Traverse the tree in breadth-first order.
-            while !queue.is_empty() {
+            while let Some(block_id) = queue.pop_front() {
                 // Count of the total number of entries added to the table by this block.
                 let mut entry_count = 0;
-
-                // Get the block id at the front of the queue.
-                let block_id = queue.pop_front().unwrap();
 
                 // Get the block at the front of the queue.
                 let block = &blocks[block_id];
@@ -1382,7 +1379,7 @@ impl FiniteBitStream for BitReaderRtl<'_> {
 
 #[cfg(test)]
 mod tests {
-    use rand::{RngCore, SeedableRng};
+    use rand::{Rng, SeedableRng};
 
     use super::vlc::{BitOrder, Codebook, CodebookBuilder, Entry8x8};
     use super::{BitReaderLtr, ReadBitsLtr};

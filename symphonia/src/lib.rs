@@ -1,5 +1,5 @@
 // Symphonia
-// Copyright (c) 2019-2022 The Project Symphonia Developers.
+// Copyright (c) 2019-2026 The Project Symphonia Developers.
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -76,15 +76,15 @@
 //!
 //! ## Optimizations
 //!
-//! SIMD optimizations are **not** enabled by default. They may be enabled on a per-instruction
-//! set basis using the following feature flags. Enabling any SIMD support feature flags will pull
-//! in the `rustfft` dependency.
+//! SIMD optimizations are enabled by default. Precise control over which SIMD instruction sets are
+//! supported may be controlled using the following feature flags. Enabling any SIMD support feature
+//! flag will pull in the `rustfft` dependency.
 //!
 //! | Instruction Set | Feature Flag    | Default |
 //! |-----------------|-----------------|---------|
-//! | SSE             | `opt-simd-sse`  | No      |
-//! | AVX             | `opt-simd-avx`  | No      |
-//! | Neon            | `opt-simd-neon` | No      |
+//! | SSE             | `opt-simd-sse`  | Yes     |
+//! | AVX             | `opt-simd-avx`  | Yes     |
+//! | Neon            | `opt-simd-neon` | Yes     |
 //!
 //! **Tip:** All SIMD optimizations can be enabled with the `opt-simd` feature flag.
 //!
@@ -135,6 +135,8 @@ pub mod default {
         pub use symphonia_codec_adpcm::AdpcmDecoder;
         #[cfg(feature = "alac")]
         pub use symphonia_codec_alac::AlacDecoder;
+        #[cfg(feature = "opus")]
+        pub use symphonia_codec_opus::OpusDecoder;
         #[cfg(feature = "pcm")]
         pub use symphonia_codec_pcm::PcmDecoder;
         #[cfg(feature = "vorbis")]
@@ -246,6 +248,9 @@ pub mod default {
 
         #[cfg(any(feature = "mp1", feature = "mp2", feature = "mp3"))]
         registry.register_audio_decoder::<codecs::MpaDecoder>();
+
+        #[cfg(feature = "opus")]
+        registry.register_audio_decoder::<codecs::OpusDecoder>();
 
         #[cfg(feature = "pcm")]
         registry.register_audio_decoder::<codecs::PcmDecoder>();

@@ -1,5 +1,5 @@
 // Symphonia
-// Copyright (c) 2019-2022 The Project Symphonia Developers.
+// Copyright (c) 2019-2026 The Project Symphonia Developers.
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -28,12 +28,13 @@ pub mod prelude {
     pub use crate::units::{Duration, TimeBase, Timestamp};
 
     pub use super::{
-        Attachment, FileAttachment, FormatId, FormatInfo, FormatOptions, FormatReader, SeekMode,
-        SeekTo, SeekedTo, Track, VendorDataAttachment,
+        Attachment, FileAttachment, FormatId, FormatInfo, FormatOptions, FormatReader, MediaInfo,
+        SeekMode, SeekTo, SeekedTo, Track, VendorDataAttachment,
     };
 }
 
 pub mod probe;
+pub mod util;
 
 /// A `FormatId` is a unique identifier used to identify a specific container format.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -75,7 +76,7 @@ pub struct FormatInfo {
 
 /// `SeekTo` specifies a position to seek to.
 pub enum SeekTo {
-    /// Seek to a `Time` in regular time units.
+    /// Seek to a `Time` in regular time units (i.e., seconds).
     Time {
         /// The `Time` to seek to.
         time: Time,
@@ -84,9 +85,9 @@ pub enum SeekTo {
         /// a default track, then the first track's timestamp is returned.
         track_id: Option<u32>,
     },
-    /// Seek to a track's `TimeStamp` in that track's timebase units.
-    TimeStamp {
-        /// The `TimeStamp` to seek to.
+    /// Seek to a track's `Timestamp` in that track's timebase units.
+    Timestamp {
+        /// The `Timestamp` to seek to.
         ts: Timestamp,
         /// Specifies which track `ts` is relative to.
         track_id: u32,
@@ -262,7 +263,8 @@ pub struct Track {
     /// The duration of the track in timebase units.
     ///
     /// If a timebase is available, this field can be used to calculate the total duration of the
-    /// track in seconds by using [`TimeBase::calc_time`] and passing the duration as the argument.
+    /// track in seconds by using [`TimeBase::calc_duration`]. The conversion returns `None` if the
+    /// result cannot be represented by [`Time`], which callers must handle.
     pub duration: Option<Duration>,
     /// The timestamp of the first frame.
     pub start_ts: Timestamp,
@@ -358,6 +360,19 @@ impl Track {
         self.flags |= flags;
         self
     }
+
+    /// Get the track type.
+    ///
+    /// Determining the track type requires knowing the codec parameters. If codec parameters is
+    /// `None`, then this function will also return `None`.
+    pub fn track_type(&self) -> Option<TrackType> {
+        match self.codec_params {
+            Some(CodecParameters::Audio(_)) => Some(TrackType::Audio),
+            Some(CodecParameters::Video(_)) => Some(TrackType::Video),
+            Some(CodecParameters::Subtitle(_)) => Some(TrackType::Subtitle),
+            None => None,
+        }
+    }
 }
 
 /// An attachment is additional data that is carried along with the container format.
@@ -389,8 +404,136 @@ pub struct VendorDataAttachment {
     pub data: Box<[u8]>,
 }
 
-/// A `FormatReader` is a container demuxer. It provides methods to probe a media container for
-/// information and access the tracks encapsulated in the container.
+/// Information about a piece of media as a whole.
+#[non_exhaustive]
+#[derive(Copy, Clone, Debug, Default)]
+pub struct MediaInfo {
+    /// The timebase of the media.
+    ///
+    /// The timebase is the length of time in seconds of a single tick of a timestamp or duration.
+    /// It can be used to convert any timestamp or duration related to the media into seconds.
+    ///
+    /// # For Implementations
+    ///
+    /// If a container writes an explicit timebase for the media as a whole, then this field should
+    /// be populated using that timebase. Otherwise, this field should make sense for the duration
+    /// and start timestamp fields (i.e., use the timebase of the track they're derived from).
+    pub time_base: Option<TimeBase>,
+    /// The duration of the media in timebase units.
+    ///
+    /// If a timebase is available, this field can be used to calculate the total duration of the
+    /// media in seconds by using [`TimeBase::calc_duration`]. The conversion returns `None` if the
+    /// result cannot be represented by [`Time`], which callers must handle.
+    ///
+    /// # For Implementations
+    ///
+    /// If a container writes an explicit duration for the media as a whole, then this field should
+    /// be populated using that value. Otherwise, for single track media, this field should be
+    /// duration of the sole track. For media with multiple tracks, but an explicit media duration
+    /// is not provided, this should usually be equal to the duration of the longest track.
+    pub duration: Option<Duration>,
+    /// The timestamp of the first frame in timebase units.
+    ///
+    /// If a timebase is available, this field can be used to calculate the start time of the
+    /// media in seconds by using [`TimeBase::calc_time`] and passing the timestamp as the argument.
+    ///
+    /// # For Implementations
+    ///
+    /// If a container writes an explicit start timestamp for the media as a whole, then this field
+    /// should be populated using that value. Otherwise, for single track media, this field should
+    /// be the start timestamp of the sole track. For media with multiple tracks, but an explicit
+    /// start timestamp is not provided, this should usually be equal to the start timestamp of the
+    /// track that has the earliest start timestamp.
+    pub start_ts: Timestamp,
+}
+
+impl MediaInfo {
+    /// For media that contains a single track, populates and returns `MediaInfo` from that track.
+    ///
+    /// # For Implementations
+    ///
+    /// This function only populates the timebase, duration, and start timestamp. Other fields
+    /// are defaulted and must be populated manually.
+    pub fn from_track(track: &Track) -> Self {
+        MediaInfo { time_base: track.time_base, duration: track.duration, start_ts: track.start_ts }
+    }
+
+    /// For media that contains multiple tracks, populates and returns `MediaInfo` using the
+    /// documented recommendations.
+    ///
+    /// If `tracks` is an empty slice, returns a default media information.
+    ///
+    /// # For Implementations
+    ///
+    /// This function only populates the timebase, duration, and start timestamp. Other fields
+    /// are defaulted and must be populated manually.
+    pub fn from_tracks(tracks: &[Track]) -> Self {
+        match tracks {
+            // No tracks, return defaulted media information.
+            [] => Default::default(),
+            // Single track, use information from the sole track.
+            [track] => Self::from_track(track),
+            // Multiple tracks.
+            tracks => {
+                let mut media_info: MediaInfo = Default::default();
+
+                // Earliest start timestamp.
+                if let Some(track) = tracks.iter().min_by_key(|t| t.start_ts) {
+                    media_info.start_ts = track.start_ts;
+                }
+
+                // Longest duration (only considering tracks with a timebase and duration).
+                if let Some(track) = tracks
+                    .iter()
+                    .filter_map(|t| {
+                        let tb = t.time_base?;
+                        let dur = t.duration?;
+
+                        // Calculate the duration of the track in seconds. Saturate here because if
+                        // the track is too long then skipping this track to pick a shorter one that
+                        // does not saturate is more wrong.
+                        let dur_time = tb.calc_duration_saturating(dur);
+
+                        Some((dur_time, t))
+                    })
+                    .max_by_key(|(dur_time, _)| *dur_time)
+                    .map(|(_, t)| t)
+                {
+                    media_info.time_base = track.time_base;
+                    media_info.duration = track.duration;
+                }
+
+                media_info
+            }
+        }
+    }
+
+    pub fn new() -> Self {
+        Default::default()
+    }
+
+    /// Provide the `TimeBase`.
+    pub fn with_time_base(&mut self, time_base: TimeBase) -> &mut Self {
+        self.time_base = Some(time_base);
+        self
+    }
+
+    /// Provide the duration in timebase units.
+    pub fn with_duration(&mut self, duration: Duration) -> &mut Self {
+        self.duration = Some(duration);
+        self
+    }
+
+    /// Provide the timestamp of the first frame.
+    pub fn with_start_ts(&mut self, start_ts: Timestamp) -> &mut Self {
+        self.start_ts = start_ts;
+        self
+    }
+}
+
+/// A `FormatReader` is a media container demuxer. It provides methods to read a media container
+/// and iterate over the codec bitstream packets of all encapsulated tracks. Additionally, it
+/// provides methods to access any metadata, chapters, or attachments.
 ///
 /// Most, if not all, media containers contain metadata, then a number of packetized, and
 /// interleaved codec bitstreams. These bitstreams are usually referred to as tracks. Generally,
@@ -408,6 +551,9 @@ pub struct VendorDataAttachment {
 pub trait FormatReader: Send + Sync {
     /// Get basic information about the container format.
     fn format_info(&self) -> &FormatInfo;
+
+    /// Get information about the media as a whole.
+    fn media_info(&self) -> &MediaInfo;
 
     /// Get a list of all attachments.
     ///
@@ -515,222 +661,35 @@ fn matches_track_type(track: &Track, track_type: TrackType) -> bool {
     }
 }
 
-pub mod util {
-    //! Helper utilities for implementing `FormatReader`s.
+#[cfg(test)]
+mod tests {
+    use super::{MediaInfo, Track};
+    use crate::units::{Duration, TimeBase};
 
-    use crate::units::Timestamp;
+    #[test]
+    fn verify_from_tracks_selects_longest_duration() {
+        let mut narrowed_longest = Track::new(0);
+        narrowed_longest
+            .with_time_base(TimeBase::try_new(1, u32::MAX).unwrap())
+            .with_duration(Duration::MAX);
 
-    /// A `SeekPoint` is a mapping between a sample or frame number to byte offset within a media
-    /// stream.
-    #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-    pub struct SeekPoint {
-        /// The frame or sample timestamp of the `SeekPoint`.
-        pub frame_ts: Timestamp,
-        /// The byte offset of the `SeekPoint`s timestamp relative to a format-specific location.
-        pub byte_offset: u64,
-        /// The number of frames the `SeekPoint` covers.
-        pub n_frames: u32,
-    }
+        let mut shorter = Track::new(1);
+        shorter
+            .with_time_base(TimeBase::try_new(1, 1).unwrap())
+            .with_duration(Duration::new(3_000_000_000));
 
-    impl SeekPoint {
-        fn new(frame_ts: Timestamp, byte_offset: u64, n_frames: u32) -> Self {
-            SeekPoint { frame_ts, byte_offset, n_frames }
-        }
-    }
+        let media_info = MediaInfo::from_tracks(&[narrowed_longest.clone(), shorter.clone()]);
+        assert_eq!(media_info.time_base, narrowed_longest.time_base);
+        assert_eq!(media_info.duration, narrowed_longest.duration);
 
-    /// A `SeekIndex` stores `SeekPoint`s (generally a sample or frame number to byte offset) within
-    /// a media stream and provides methods to efficiently search for the nearest `SeekPoint`(s)
-    /// given a timestamp.
-    ///
-    /// A `SeekIndex` does not require complete coverage of the entire media stream. However, the
-    /// better the coverage, the smaller the manual search range the `SeekIndex` will return.
-    #[derive(Default)]
-    pub struct SeekIndex {
-        points: Vec<SeekPoint>,
-    }
+        let mut saturating_longest = Track::new(2);
+        saturating_longest
+            .with_time_base(TimeBase::try_new(u32::MAX, 1).unwrap())
+            .with_duration(Duration::MAX);
 
-    /// `SeekSearchResult` is the return value for a search on a `SeekIndex`. It returns a range of
-    /// `SeekPoint`s a `FormatReader` should search to find the desired timestamp. Ranges are
-    /// lower-bound inclusive, and upper-bound exclusive.
-    #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-    pub enum SeekSearchResult {
-        /// The `SeekIndex` is empty so the desired timestamp could not be found. The entire stream
-        /// should be searched for the desired timestamp.
-        Stream,
-        /// The desired timestamp can be found before, the `SeekPoint`. The stream should be
-        /// searched for the desired timestamp from the start of the stream up-to, but not
-        /// including, the `SeekPoint`.
-        Upper(SeekPoint),
-        /// The desired timestamp can be found at, or after, the `SeekPoint`. The stream should be
-        /// searched for the desired timestamp starting at the provided `SeekPoint` up-to the end of
-        /// the stream.
-        Lower(SeekPoint),
-        /// The desired timestamp can be found within the range. The stream should be searched for
-        /// the desired starting at the first `SeekPoint` up-to, but not-including, the second
-        /// `SeekPoint`.
-        Range(SeekPoint, SeekPoint),
-    }
-
-    impl SeekIndex {
-        /// Create an empty `SeekIndex`
-        pub fn new() -> SeekIndex {
-            SeekIndex { points: Vec::new() }
-        }
-
-        /// Insert a `SeekPoint` into the index.
-        pub fn insert(&mut self, ts: Timestamp, byte_offset: u64, n_frames: u32) {
-            // Create the seek point.
-            let seek_point = SeekPoint::new(ts, byte_offset, n_frames);
-
-            // Get the timestamp of the last entry in the index.
-            let (last_ts, last_offset) =
-                self.points.last().map_or((Timestamp::MIN, 0), |p| (p.frame_ts, p.byte_offset));
-
-            // If the seek point has a timestamp greater-than and byte offset greater-than or equal to
-            // the last entry in the index, then simply append it to the index.
-            if ts > last_ts && byte_offset >= last_offset {
-                self.points.push(seek_point)
-            }
-            else if ts < last_ts {
-                // If the seek point has a timestamp less-than the last entry in the index, then the
-                // insertion point must be found. This case should rarely occur.
-                let i = self
-                    .points
-                    .partition_point(|p| ts > p.frame_ts && byte_offset >= p.byte_offset);
-
-                // Insert if the point found or if the points are empty
-                if i < self.points.len() || i == 0 {
-                    self.points.insert(i, seek_point);
-                }
-            }
-        }
-
-        /// Search the index to find a bounded range of bytes wherein the specified frame timestamp
-        /// will be contained. If the index is empty, this function simply returns a result
-        /// indicating the entire stream should be searched manually.
-        pub fn search(&self, frame_ts: Timestamp) -> SeekSearchResult {
-            // The index must contain atleast one SeekPoint to return a useful result.
-            if !self.points.is_empty() {
-                let mut lower = 0;
-                let mut upper = self.points.len() - 1;
-
-                // If the desired timestamp is less than the first SeekPoint within the index,
-                // indicate that the stream should be searched from the beginning.
-                if frame_ts < self.points[lower].frame_ts {
-                    return SeekSearchResult::Upper(self.points[lower]);
-                }
-                // If the desired timestamp is greater than or equal to the last SeekPoint within
-                // the index, indicate that the stream should be searched from the last SeekPoint.
-                else if frame_ts >= self.points[upper].frame_ts {
-                    return SeekSearchResult::Lower(self.points[upper]);
-                }
-
-                // Desired timestamp is between the lower and upper indicies. Perform a binary
-                // search to find a range of SeekPoints containing the desired timestamp. The binary
-                // search exits when either two adjacent SeekPoints or a single SeekPoint is found.
-                while upper - lower > 1 {
-                    let mid = (lower + upper) / 2;
-                    let mid_ts = self.points[mid].frame_ts;
-
-                    if frame_ts < mid_ts {
-                        upper = mid;
-                    }
-                    else {
-                        lower = mid;
-                    }
-                }
-
-                return SeekSearchResult::Range(self.points[lower], self.points[upper]);
-            }
-
-            // The index is empty, the stream must be searched manually.
-            SeekSearchResult::Stream
-        }
-    }
-
-    #[cfg(test)]
-    mod tests {
-        use crate::units::Timestamp;
-
-        use super::{SeekIndex, SeekPoint, SeekSearchResult};
-
-        #[test]
-        fn verify_seek_index_search() {
-            let mut index = SeekIndex::new();
-            // Normal index insert
-            index.insert(Timestamp::new(479232), 706812, 1152);
-            index.insert(Timestamp::new(959616), 1421536, 1152);
-            index.insert(Timestamp::new(1919232), 2833241, 1152);
-            index.insert(Timestamp::new(2399616), 3546987, 1152);
-            index.insert(Timestamp::new(2880000), 4259455, 1152);
-
-            // Search for point lower than the first entry
-            assert_eq!(
-                index.search(Timestamp::new(0)),
-                SeekSearchResult::Upper(SeekPoint::new(Timestamp::new(479232), 706812, 1152))
-            );
-
-            // Search for point higher than last entry
-            assert_eq!(
-                index.search(Timestamp::new(3000000)),
-                SeekSearchResult::Lower(SeekPoint::new(Timestamp::new(2880000), 4259455, 1152))
-            );
-
-            // Search for point that has equal timestamp with some index
-            assert_eq!(
-                index.search(Timestamp::new(959616)),
-                SeekSearchResult::Range(
-                    SeekPoint::new(Timestamp::new(959616), 1421536, 1152),
-                    SeekPoint::new(Timestamp::new(1919232), 2833241, 1152)
-                )
-            );
-
-            // Index insert out of order
-            index.insert(Timestamp::new(1440000), 2132419, 1152);
-            index.insert(Timestamp::new(-78000), 20, 1152);
-            index.insert(Timestamp::new(-50000), 45000, 1152);
-
-            // Search for a negative timestamp.
-            assert_eq!(
-                index.search(Timestamp::MIN),
-                SeekSearchResult::Upper(SeekPoint::new(Timestamp::new(-78000), 20, 1152))
-            );
-
-            assert_eq!(
-                index.search(Timestamp::new(-69000)),
-                SeekSearchResult::Range(
-                    SeekPoint::new(Timestamp::new(-78000), 20, 1152),
-                    SeekPoint::new(Timestamp::new(-50000), 45000, 1152)
-                )
-            );
-
-            // Search for 0 again.
-            assert_eq!(
-                index.search(Timestamp::new(0)),
-                SeekSearchResult::Range(
-                    SeekPoint::new(Timestamp::new(-50000), 45000, 1152),
-                    SeekPoint::new(Timestamp::new(479232), 706812, 1152)
-                )
-            );
-
-            // Search for point that have out of order index when inserting
-            assert_eq!(
-                index.search(Timestamp::new(1000000)),
-                SeekSearchResult::Range(
-                    SeekPoint::new(Timestamp::new(959616), 1421536, 1152),
-                    SeekPoint::new(Timestamp::new(1440000), 2132419, 1152)
-                )
-            );
-
-            // Index insert with byte_offset less than last entry
-            index.insert(Timestamp::new(3359232), 0, 0);
-
-            // Search for ignored point because byte_offset less than last entry
-            assert_eq!(
-                index.search(Timestamp::new(3359232)),
-                SeekSearchResult::Lower(SeekPoint::new(Timestamp::new(2880000), 4259455, 1152))
-            );
-        }
+        let media_info = MediaInfo::from_tracks(&[shorter, saturating_longest.clone()]);
+        assert_eq!(media_info.time_base, saturating_longest.time_base);
+        assert_eq!(media_info.duration, saturating_longest.duration);
     }
 }
 

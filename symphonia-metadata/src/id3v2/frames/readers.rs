@@ -1,5 +1,5 @@
 // Symphonia
-// Copyright (c) 2019-2022 The Project Symphonia Developers.
+// Copyright (c) 2019-2026 The Project Symphonia Developers.
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -22,7 +22,7 @@ use symphonia_core::units::Time;
 use symphonia_core::util::text;
 
 use lazy_static::lazy_static;
-use log::debug;
+use log::{debug, warn};
 use smallvec::{SmallVec, smallvec};
 
 use crate::id3v2::frames::{FrameResult, Id3v2Chapter, Id3v2TableOfContents};
@@ -44,6 +44,8 @@ pub struct FrameInfo<'a> {
     id: &'a str,
     /// The major version of the ID3v2 tag containing the frame.
     major_version: u8,
+    /// The depth of the frame (0 for top-level).
+    depth: u8,
     /// An optional raw tag parser to be applied if the frame is generic.
     raw_tag_parser: Option<RawTagParser>,
 }
@@ -53,12 +55,23 @@ impl<'a> FrameInfo<'a> {
     /// raw tag parser.
     ///
     /// Panics if the frame ID is invalid.
-    pub fn new(id: &'a [u8], major_version: u8, raw_tag_parser: Option<RawTagParser>) -> Self {
+    pub fn new(
+        id: &'a [u8],
+        major_version: u8,
+        depth: u8,
+        raw_tag_parser: Option<RawTagParser>,
+    ) -> Self {
         FrameInfo {
             id: std::str::from_utf8(id).expect("validated frame id bytes"),
             major_version,
+            depth,
             raw_tag_parser,
         }
+    }
+
+    /// Returns true if this frame is at the top-level.
+    pub fn is_top_level(&self) -> bool {
+        self.depth == 0
     }
 }
 
@@ -145,7 +158,7 @@ fn read_date(reader: &mut BufReader<'_>) -> Result<String> {
     }
 
     // Safety: The data array only contains ASCII digits.
-    Ok(str::from_utf8(&date).unwrap().to_string())
+    Ok(str::from_utf8(&date).expect("date contains only ASCII digits").to_string())
 }
 
 /// Read and validate an encoding indicator.
@@ -174,7 +187,11 @@ fn read_lang_code(reader: &mut BufReader<'_>) -> Result<Option<String>> {
     }
     else {
         // Convert to lowercase string.
-        Some(std::str::from_utf8(&code).unwrap().to_ascii_lowercase())
+        Some(
+            std::str::from_utf8(&code)
+                .expect("lang code contains only ASCII alphabetic chars")
+                .to_ascii_lowercase(),
+        )
     };
 
     Ok(code)
@@ -386,6 +403,12 @@ pub fn read_chap_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Resu
         min_frame_size, read_id3v2p2_frame, read_id3v2p3_frame, read_id3v2p4_frame,
     };
 
+    // Nesting a CHAP frame is illogical and would allow infinite recursion.
+    if !frame.is_top_level() {
+        warn!("skipping nested 'CHAP' frame");
+        return Ok(FrameResult::Skipped);
+    }
+
     // Read the element ID.
     let id = read_string(&mut reader, Encoding::Iso8859_1)?;
 
@@ -410,14 +433,14 @@ pub fn read_chap_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Resu
 
     while reader.bytes_available() >= min_frame_size(frame.major_version) {
         let frame = match frame.major_version {
-            2 => read_id3v2p2_frame(&mut reader),
-            3 => read_id3v2p3_frame(&mut reader),
-            4 => read_id3v2p4_frame(&mut reader),
+            2 => read_id3v2p2_frame(&mut reader, frame.depth + 1),
+            3 => read_id3v2p3_frame(&mut reader, frame.depth + 1),
+            4 => read_id3v2p4_frame(&mut reader, frame.depth + 1),
             _ => break,
         }?;
 
         match frame {
-            FrameResult::MultipleTags(tag_list) => tags.extend(tag_list.into_iter()),
+            FrameResult::MultipleTags(tag_list) => tags.extend(tag_list),
             FrameResult::Tag(mut tag) => {
                 // The TIT2 (track title) and TIT3 (track subtitle/description) ID3v2 frames are
                 // repurposed for chapter title and description, respectively.
@@ -558,6 +581,12 @@ pub fn read_ctoc_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Resu
         min_frame_size, read_id3v2p2_frame, read_id3v2p3_frame, read_id3v2p4_frame,
     };
 
+    // Nesting a CTOC frame is illogical and would allow infinite recursion.
+    if !frame.is_top_level() {
+        warn!("skipping nested 'CTOC' frame");
+        return Ok(FrameResult::Skipped);
+    }
+
     // Read for the element ID.
     let id = read_string(&mut reader, Encoding::Iso8859_1)?;
 
@@ -583,14 +612,14 @@ pub fn read_ctoc_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Resu
 
     while reader.bytes_available() >= min_frame_size(frame.major_version) {
         let frame = match frame.major_version {
-            2 => read_id3v2p2_frame(&mut reader),
-            3 => read_id3v2p3_frame(&mut reader),
-            4 => read_id3v2p4_frame(&mut reader),
+            2 => read_id3v2p2_frame(&mut reader, frame.depth + 1),
+            3 => read_id3v2p3_frame(&mut reader, frame.depth + 1),
+            4 => read_id3v2p4_frame(&mut reader, frame.depth + 1),
             _ => break,
         }?;
 
         match frame {
-            FrameResult::MultipleTags(tag_list) => tags.extend(tag_list.into_iter()),
+            FrameResult::MultipleTags(tag_list) => tags.extend(tag_list),
             FrameResult::Tag(tag) => tags.push(tag),
             FrameResult::Visual(visual) => visuals.push(visual),
             _ => {}
@@ -850,7 +879,9 @@ pub fn read_tipl_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Resu
             // Iterate over all pairs, and parse them into standard tags.
             for pair in list.chunks_exact(2) {
                 // Safety: Pre-checked above all pairs can be parsed.
-                let parser = TIPL_FUNC_PARSERS.get(pair[0].as_str()).unwrap();
+                let parser = TIPL_FUNC_PARSERS
+                    .get(pair[0].as_str())
+                    .expect("pre-checked that pair key exists in TIPL_FUNC_PARSERS");
 
                 // Parse raw value into standard tag.
                 match parser(Arc::new(pair[1].clone())) {

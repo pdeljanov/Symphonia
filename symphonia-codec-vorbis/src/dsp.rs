@@ -1,5 +1,5 @@
 // Symphonia
-// Copyright (c) 2019-2022 The Project Symphonia Developers.
+// Copyright (c) 2019-2026 The Project Symphonia Developers.
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -119,11 +119,6 @@ impl DspChannel {
 
             // Unity samples (no overlap).
             buf[self.bs0 / 2..].copy_from_slice(&self.imdct[end..self.bs1 / 2]);
-        }
-
-        // Clamp the output samples.
-        for s in buf.iter_mut() {
-            *s = s.clamp(-1.0, 1.0);
         }
 
         // Save right-half of IMDCT buffer for later.

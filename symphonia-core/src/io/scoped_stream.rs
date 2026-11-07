@@ -1,5 +1,5 @@
 // Symphonia
-// Copyright (c) 2019-2022 The Project Symphonia Developers.
+// Copyright (c) 2019-2026 The Project Symphonia Developers.
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -122,8 +122,27 @@ impl<B: ReadBytes> ReadBytes for ScopedStream<B> {
             return out_of_bounds_error();
         }
 
+        self.inner.read_buf_exact(buf)?;
         self.read += buf.len() as u64;
-        self.inner.read_buf_exact(buf)
+        Ok(())
+    }
+
+    fn read_boxed_slice(&mut self, len: usize) -> io::Result<Box<[u8]>> {
+        // Limit read_boxed_slice() to the remainder of the scoped bytes if len is greater.
+        let scoped_len = cmp::min(self.len - self.read, len as u64) as usize;
+        let data = self.inner.read_boxed_slice(scoped_len)?;
+        self.read += data.len() as u64;
+        Ok(data)
+    }
+
+    fn read_boxed_slice_exact(&mut self, len: usize) -> io::Result<Box<[u8]>> {
+        if self.len - self.read < len as u64 {
+            return out_of_bounds_error();
+        }
+
+        let data = self.inner.read_boxed_slice_exact(len)?;
+        self.read += len as u64;
+        Ok(data)
     }
 
     #[inline(always)]

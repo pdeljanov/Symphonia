@@ -46,16 +46,23 @@ use crate::units::{Duration, Timestamp};
 /// while the sum of `dur`, `trim_start`, and `trim_end` must equal the amount of frames the decoder
 /// would produce if no trimming occurs.
 #[derive(Clone)]
+#[non_exhaustive]
 pub struct Packet {
-    /// The track ID.
-    track_id: u32,
-    /// The presentation timestamp (PTS) of the packet in `TimeBase` units.
+    /// The track ID of the track this packet belongs to.
+    pub track_id: u32,
+    /// The presentation timestamp (PTS) of the packet in `TimeBase` units.+
+    ///
+    /// This is the time relative to the start of the media that the decoded packet should be
+    /// presented to the user.
     pub pts: Timestamp,
     /// The decode timestamp (DTS) of the packet in `TimeBase` units.
+    ///
+    /// This is the time relative to the start of the media that the packet should be decoded.
     pub dts: Timestamp,
     /// The duration of all *valid* frames in the packet in `TimeBase` units.
     ///
     /// This duration excludes any delay or padding frames that may be produced by the decoder.
+    /// Generally, delay or padding frames should not be presented to the user.
     pub dur: Duration,
     /// The duration of *decoded* frames that should be trimmed from the start of the decoded
     /// buffer to remove encoder delay.
@@ -81,38 +88,6 @@ impl Packet {
         }
     }
 
-    /// The track identifier of the track this packet belongs to.
-    #[inline]
-    pub const fn track_id(&self) -> u32 {
-        self.track_id
-    }
-
-    /// Get the presentation timestamp (PTS) of the packet in `TimeBase` units.
-    ///
-    /// This is the time relative to the start of the media that the decoded packet should be
-    /// presented to the user.
-    #[inline]
-    pub const fn pts(&self) -> Timestamp {
-        self.pts
-    }
-
-    /// Get the decode timestamp (DTS) of the packet in `TimeBase` units.
-    ///
-    /// This is the time relative to the start of the media that the packet should be decoded.
-    #[inline]
-    pub const fn dts(&self) -> Timestamp {
-        self.dts
-    }
-
-    /// Get the duration of all *valid* frames in the packet in `TimeBase` units.
-    ///
-    /// This duration excludes any delay or padding frames that may be produced by the decoder.
-    /// Generally, delay or padding frames should not be presented to the user.
-    #[inline]
-    pub const fn dur(&self) -> Duration {
-        self.dur
-    }
-
     /// Get the duration of all *decoded* frames in the packet in `TimeBase` units.
     ///
     /// This duration includes any delay or padding frames that may be produced by the decoder. As
@@ -122,35 +97,132 @@ impl Packet {
         self.dur.saturating_add(self.trim_start).saturating_add(self.trim_end)
     }
 
-    /// Get the duration of *decoded* frames that should be trimmed from the start of the decoded
-    /// buffer to remove encoder delay.
-    #[inline]
-    pub const fn trim_start(&self) -> Duration {
-        self.trim_start
-    }
-
-    /// Get the duration of *decoded* frames that should be trimmed from the end of the decoded
-    /// buffer to remove encoder padding.
-    #[inline]
-    pub const fn trim_end(&self) -> Duration {
-        self.trim_end
-    }
-
-    /// Get an immutable slice to the packet data buffer.
-    #[inline]
-    pub const fn buf(&self) -> &[u8] {
-        &self.data
-    }
-
     /// Get a `BufReader` to read the packet data buffer sequentially.
     #[inline]
     pub fn as_buf_reader(&self) -> BufReader<'_> {
         BufReader::new(&self.data)
     }
+
+    /// Get a `PacketRef` borrowing this packet's data buffer.
+    #[inline]
+    pub fn as_packet_ref(&self) -> PacketRef<'_> {
+        PacketRef {
+            track_id: self.track_id,
+            pts: self.pts,
+            dts: self.dts,
+            dur: self.dur,
+            trim_start: self.trim_start,
+            trim_end: self.trim_end,
+            data: &self.data,
+        }
+    }
+}
+
+impl std::fmt::Debug for Packet {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Packet")
+            .field("track_id", &self.track_id)
+            .field("pts", &self.pts)
+            .field("dts", &self.dts)
+            .field("dur", &self.dur)
+            .field("trim_start", &self.trim_start)
+            .field("trim_end", &self.trim_end)
+            // Omit the data buffer contents.
+            .field("data", &format_args!("<{} bytes>", self.data.len()))
+            .finish()
+    }
+}
+
+/// A non-owning equivalent to `Packet`.
+///
+/// `PacketRef` is the zero-copy, non-owning, equivalent of `Packet`. It is particularly useful when
+/// packet data is already residing in an application-managed fixed buffer or when data is
+/// passed in from external environments like C/C++ via FFI. This allows decoders to process
+/// the data directly without forcing a heap allocation and deep copy.
+///
+/// See [`Packet`] for more details on the various timing and implementation details.
+#[derive(Clone, Copy)]
+#[non_exhaustive]
+pub struct PacketRef<'a> {
+    /// The track ID of the track this packet belongs to.
+    pub track_id: u32,
+    /// The presentation timestamp (PTS) of the packet in `TimeBase` units.+
+    ///
+    /// This is the time relative to the start of the media that the decoded packet should be
+    /// presented to the user.
+    pub pts: Timestamp,
+    /// The decode timestamp (DTS) of the packet in `TimeBase` units.
+    ///
+    /// This is the time relative to the start of the media that the packet should be decoded.
+    pub dts: Timestamp,
+    /// The duration of all *valid* frames in the packet in `TimeBase` units.
+    ///
+    /// This duration excludes any delay or padding frames that may be produced by the decoder.
+    /// Generally, delay or padding frames should not be presented to the user.
+    pub dur: Duration,
+    /// The duration of *decoded* frames that should be trimmed from the start of the decoded
+    /// buffer to remove encoder delay.
+    pub trim_start: Duration,
+    /// The duration of *decoded* frames that should be trimmed from the end of the decoded
+    /// buffer to remove encoder padding.
+    pub trim_end: Duration,
+    /// The packet data buffer.
+    pub data: &'a [u8],
+}
+
+impl<'a> PacketRef<'a> {
+    /// Create a new untrimmed `PacketRef`.
+    ///
+    /// The `data` slice can be constructed directly from a fixed-size buffer, or from
+    /// raw FFI pointers (e.g., a C++ `std::vector` payload) using `std::slice::from_raw_parts`.
+    pub fn new(track_id: u32, pts: Timestamp, dur: Duration, data: &'a [u8]) -> Self {
+        PacketRef {
+            track_id,
+            pts,
+            dts: pts,
+            dur,
+            trim_start: Duration::ZERO,
+            trim_end: Duration::ZERO,
+            data,
+        }
+    }
+
+    /// Get the duration of all *decoded* frames in the packet in `TimeBase` units.
+    #[inline]
+    pub const fn block_dur(&self) -> Duration {
+        self.dur.saturating_add(self.trim_start).saturating_add(self.trim_end)
+    }
+
+    /// Get a `BufReader` to read the packet data buffer sequentially.
+    #[inline]
+    pub fn as_buf_reader(&self) -> BufReader<'_> {
+        BufReader::new(self.data)
+    }
+}
+
+impl std::fmt::Debug for PacketRef<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PacketRef")
+            .field("track_id", &self.track_id)
+            .field("pts", &self.pts)
+            .field("dts", &self.dts)
+            .field("dur", &self.dur)
+            .field("trim_start", &self.trim_start)
+            .field("trim_end", &self.trim_end)
+            // Omit the data buffer contents.
+            .field("data", &format_args!("<{} bytes>", self.data.len()))
+            .finish()
+    }
+}
+
+impl<'a> From<&'a Packet> for PacketRef<'a> {
+    fn from(packet: &'a Packet) -> Self {
+        packet.as_packet_ref()
+    }
 }
 
 mod builder {
-    use crate::packet::Packet;
+    use crate::packet::{Packet, PacketRef};
     use crate::units::{Duration, Timestamp};
 
     pub struct HasTrackId(u32);
@@ -163,9 +235,10 @@ mod builder {
     pub struct NoDur;
 
     pub struct HasBuf(Box<[u8]>);
+    pub struct HasBufRef<'a>(&'a [u8]);
     pub struct NoBuf;
 
-    /// A builder for creating packets.
+    /// A builder for creating owning or non-owning packets.
     ///
     /// See [`Packet`] for a detailed description of all packet fields.
     ///
@@ -217,6 +290,21 @@ mod builder {
         }
     }
 
+    impl<'a> PacketBuilder<HasTrackId, HasPts, HasDur, HasBufRef<'a>> {
+        /// Build a non-owning packet.
+        pub fn build_packet_ref(self) -> PacketRef<'a> {
+            PacketRef {
+                track_id: self.track_id.0,
+                pts: self.pts.0,
+                dts: self.dts.unwrap_or(self.pts.0),
+                dur: self.dur.0,
+                trim_start: self.trim_start,
+                trim_end: self.trim_end,
+                data: self.buf.0,
+            }
+        }
+    }
+
     impl<T, B> PacketBuilder<T, HasPts, NoDur, B> {
         /// Provide the packet's duration and calculate the trim fields.
         ///
@@ -249,7 +337,7 @@ mod builder {
                 }
             }
 
-            let dur = block_dur.saturating_sub(self.trim_start).saturating_sub(self.trim_end);
+            let dur = block_dur.saturating_sub(trim_start).saturating_sub(trim_end);
 
             PacketBuilder { track_id, pts, dur: HasDur(dur), buf, dts, trim_start, trim_end }
         }
@@ -285,9 +373,19 @@ mod builder {
         }
 
         /// Provide the packet's data buffer.
+        ///
+        /// When holding an owned data buffer, an owning `Packet` is built.
         pub fn data(self, buf: impl Into<Box<[u8]>>) -> PacketBuilder<T, P, D, HasBuf> {
             let Self { track_id, pts, dur, dts, trim_start, trim_end, .. } = self;
             PacketBuilder { track_id, pts, dur, buf: HasBuf(buf.into()), dts, trim_start, trim_end }
+        }
+
+        /// Provide the packet's data buffer as a non-owning reference.
+        ///
+        /// When holding a non-owning data buffer reference, a non-owning `PacketRef` is built.
+        pub fn data_by_ref<'a>(self, buf: &'a [u8]) -> PacketBuilder<T, P, D, HasBufRef<'a>> {
+            let Self { track_id, pts, dur, dts, trim_start, trim_end, .. } = self;
+            PacketBuilder { track_id, pts, dur, buf: HasBufRef(buf), dts, trim_start, trim_end }
         }
 
         /// Provide the decode timestamp (DTS).
@@ -311,3 +409,121 @@ mod builder {
 }
 
 pub use builder::PacketBuilder;
+
+#[cfg(test)]
+mod tests {
+    use super::PacketBuilder;
+    use crate::units::{Duration, Timestamp};
+
+    #[test]
+    fn verify_packet_ref_creation() {
+        let data: &[u8] = &[1, 2, 3, 4];
+
+        let pkt_ref = PacketBuilder::new()
+            .track_id(1)
+            .pts(Timestamp::new(100))
+            .dts(Timestamp::new(90))
+            .dur(Duration::new(50))
+            .data_by_ref(data)
+            .trim_start(Duration::new(10))
+            .trim_end(Duration::new(5))
+            .build_packet_ref();
+
+        assert_eq!(pkt_ref.track_id, 1);
+        assert_eq!(pkt_ref.pts, Timestamp::new(100));
+        assert_eq!(pkt_ref.dts, Timestamp::new(90));
+        assert_eq!(pkt_ref.dur, Duration::new(50));
+        assert_eq!(pkt_ref.trim_start, Duration::new(10));
+        assert_eq!(pkt_ref.trim_end, Duration::new(5));
+        assert_eq!(&pkt_ref.data, &[1, 2, 3, 4]);
+
+        // block_dur = dur + trim_start + trim_end = 50 + 10 + 5 = 65
+        assert_eq!(pkt_ref.block_dur(), Duration::new(65));
+    }
+
+    #[test]
+    fn verify_packet_to_packet_ref() {
+        let data = vec![5, 6, 7, 8];
+
+        let pkt = PacketBuilder::new()
+            .track_id(2)
+            .pts(Timestamp::new(200))
+            .dur(Duration::new(100))
+            .data(data)
+            .dts(Timestamp::new(190))
+            .trim_start(Duration::new(20))
+            .trim_end(Duration::new(10))
+            .build();
+
+        let pkt_ref = pkt.as_packet_ref();
+
+        assert_eq!(pkt_ref.track_id, 2);
+        assert_eq!(pkt_ref.pts, Timestamp::new(200));
+        assert_eq!(pkt_ref.dts, Timestamp::new(190));
+        assert_eq!(pkt_ref.dur, Duration::new(100));
+        assert_eq!(pkt_ref.trim_start, Duration::new(20));
+        assert_eq!(pkt_ref.trim_end, Duration::new(10));
+        assert_eq!(&pkt_ref.data, &[5, 6, 7, 8]);
+    }
+
+    /// Build a packet with a trimmed duration and return its duration, trim start, and trim end.
+    fn trimmed_dur(
+        pts: i64,
+        block_dur: u64,
+        end_pts: Option<i64>,
+    ) -> (Duration, Duration, Duration) {
+        let data: &[u8] = &[];
+
+        let pkt_ref = PacketBuilder::new()
+            .track_id(0)
+            .pts(Timestamp::new(pts))
+            .trimmed_dur(Duration::new(block_dur), end_pts.map(Timestamp::new))
+            .data_by_ref(data)
+            .build_packet_ref();
+
+        // The duration of all decoded frames must always be preserved.
+        assert_eq!(pkt_ref.block_dur(), Duration::new(block_dur));
+
+        (pkt_ref.dur, pkt_ref.trim_start, pkt_ref.trim_end)
+    }
+
+    #[test]
+    fn verify_trimmed_dur_without_trimming() {
+        assert_eq!(trimmed_dur(0, 100, None), (Duration::new(100), Duration::ZERO, Duration::ZERO));
+    }
+
+    #[test]
+    fn verify_trimmed_dur_with_delay() {
+        // The first 10 frames are encoder delay.
+        assert_eq!(
+            trimmed_dur(-10, 100, None),
+            (Duration::new(90), Duration::new(10), Duration::ZERO)
+        );
+    }
+
+    #[test]
+    fn verify_trimmed_dur_with_padding() {
+        // The packet ends 40 frames after the end of the stream.
+        assert_eq!(
+            trimmed_dur(90, 100, Some(150)),
+            (Duration::new(60), Duration::ZERO, Duration::new(40))
+        );
+    }
+
+    #[test]
+    fn verify_trimmed_dur_with_delay_and_padding() {
+        assert_eq!(
+            trimmed_dur(-10, 100, Some(50)),
+            (Duration::new(50), Duration::new(10), Duration::new(40))
+        );
+    }
+
+    #[test]
+    fn verify_trimmed_dur_with_delay_exceeding_block() {
+        // The delay exceeds the number of decoded frames, so all frames are trimmed.
+        assert_eq!(
+            trimmed_dur(-200, 100, None),
+            (Duration::ZERO, Duration::new(100), Duration::ZERO)
+        );
+    }
+}

@@ -1,5 +1,5 @@
 // Symphonia
-// Copyright (c) 2019-2022 The Project Symphonia Developers.
+// Copyright (c) 2019-2026 The Project Symphonia Developers.
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -37,17 +37,13 @@ impl<const N: usize> MovingAverage<N> {
     /// Calculate the moving average.
     pub fn average(&self) -> usize {
         if self.count >= N {
-            // If greater-than N values were pushed, then all samples must be averaged.
+            // If greater-than N values were pushed, then N samples must be averaged.
             self.samples.iter().sum::<usize>() / N
         }
-        else if self.count > 0 {
-            // If less-than N values were pushed, then only the first 0..N samples need to be
-            // averaged.
-            self.samples.iter().take(self.count).sum::<usize>() / self.count
-        }
         else {
-            // No samples.
-            0
+            // If less-than N values were pushed, then only the available samples need to be
+            // averaged. If 0 samples were pushed, then the average is also 0.
+            self.samples.iter().take(self.count).sum::<usize>().checked_div(self.count).unwrap_or(0)
         }
     }
 }
@@ -142,10 +138,10 @@ impl Fragment {
     }
 
     /// Parse the frame header from the fragment.
-    fn parse_header(&self) -> FrameHeader {
+    fn parse_header(&self) -> Option<FrameHeader> {
         let mut reader = BufReader::new(&self.data);
-        let sync = reader.read_be_u16().unwrap();
-        read_frame_header(&mut reader, sync).unwrap()
+        let sync = reader.read_be_u16().ok()?;
+        read_frame_header(&mut reader, sync).ok()
     }
 }
 
@@ -233,7 +229,7 @@ impl PacketBuilder {
     fn try_build(&mut self, stream_info: &StreamInfo, frag: Fragment) -> Option<ParsedPacket> {
         let (header, data) = if frag.crc_match {
             // The fragment has a CRC that matches the expected CRC.
-            (frag.parse_header(), frag.data)
+            (frag.parse_header()?, frag.data)
         }
         else {
             // The fragment does not have a CRC that matches the expected CRC.
@@ -260,7 +256,7 @@ impl PacketBuilder {
 
                 data.extend_from_slice(&frag.data);
 
-                (self.frags[i].parse_header(), data.into_boxed_slice())
+                (self.frags[i].parse_header()?, data.into_boxed_slice())
             }
             else {
                 // A range of fragments has not been found that forms a packet.

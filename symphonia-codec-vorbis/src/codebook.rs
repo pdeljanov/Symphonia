@@ -1,5 +1,5 @@
 // Symphonia
-// Copyright (c) 2019-2022 The Project Symphonia Developers.
+// Copyright (c) 2019-2026 The Project Symphonia Developers.
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -32,13 +32,17 @@ fn float32_unpack(x: u32) -> f32 {
 /// return value to the power of `dimensions` is less than or equal to `entries`.
 #[inline(always)]
 fn lookup1_values(entries: u32, dimensions: u16) -> u32 {
+    // Prevent division by 0.
+    if dimensions == 0 {
+        return 0;
+    }
+
     // (value ^ dimensions) <= entries
     // [(value ^ dimensions) ^ (1 / dimensions)] = lower[entries ^ (1 / dimensions)]
     // value = lower[entries ^ (1 / dimensions)]
     let value = (entries as f32).powf(1.0f32 / f32::from(dimensions)).floor() as u32;
 
     assert!(value.pow(u32::from(dimensions)) <= entries);
-    assert!((value + 1).pow(u32::from(dimensions)) > entries);
 
     value
 }
@@ -92,16 +96,14 @@ fn unpack_vq_lookup_type2(
         vq_lookup.chunks_exact_mut(codebook_dimensions as usize).enumerate()
     {
         let mut last = 0.0;
-        let mut multiplicand_offset = lookup_offset * codebook_dimensions as usize;
+        let offset = lookup_offset * codebook_dimensions as usize;
 
-        for value in value_vector.iter_mut() {
-            *value = f32::from(multiplicands[multiplicand_offset]) * delta_value + min_value + last;
+        for (offset, value) in (offset..).zip(value_vector.iter_mut()) {
+            *value = f32::from(multiplicands[offset]) * delta_value + min_value + last;
 
             if sequence_p {
                 last = *value;
             }
-
-            multiplicand_offset += 1;
         }
     }
 
@@ -130,8 +132,10 @@ fn synthesize_codewords(code_lens: &[u8]) -> Result<Vec<u32>> {
     let mut next_codeword = [0u32; 33];
 
     for &len in code_lens.iter() {
-        // This should always be true.
-        debug_assert!(len <= 32);
+        // The Vorbis I specification limits codewords to 32 bits.
+        if len > 32 {
+            return decode_error("vorbis: codebook codeword length exceeds 32 bits");
+        }
 
         // Zero length codewords are invalid and ignored.
         if len == 0 {
@@ -148,14 +152,19 @@ fn synthesize_codewords(code_lens: &[u8]) -> Result<Vec<u32>> {
             return decode_error("vorbis: codebook overspecified");
         }
 
-        for i in (0..codeword_len + 1).rev() {
+        for i in (1..codeword_len + 1).rev() {
             // If the least significant bit (LSb) of the next codeword for codewords of length N
             // toggles from 1 to 0, that indicates the next-least-LSb will toggle. This means that
             // the next codeword will branch off a new parent node. Therefore, the next codeword for
             // codewords of length N will use the next codeword for codewords of length N-1 as its
             // prefix.
             if next_codeword[i] & 1 == 1 {
-                next_codeword[i] = next_codeword[i - 1] << 1;
+                if i == 1 {
+                    next_codeword[1] += 1;
+                }
+                else {
+                    next_codeword[i] = next_codeword[i - 1] << 1;
+                }
                 break;
             }
 
@@ -221,6 +230,21 @@ impl VorbisCodebook {
         let codebook_dimensions = bs.read_bits_leq32(16)? as u16;
         let codebook_entries = bs.read_bits_leq32(24)?;
 
+        // The codebook dimensions cannot be 0 for VQ codebooks.
+        if codebook_dimensions == 0 {
+            return decode_error("vorbis: codebook dimenion cannot be 0");
+        }
+
+        // Limit the size of codebooks to something reasonable. This limits should never be seen in
+        // any real bitstream. These limits, together, limit the in-memory size of a VQ codebook to
+        // 16MB. A scalar codebook is limited to 512kB.
+        if codebook_dimensions > 32 {
+            return decode_error("vorbis: codebook dimension is too large (report this)");
+        }
+        if codebook_entries > 128 * 1024 {
+            return decode_error("vorbis: codebook entries too large (report this)");
+        }
+
         // Ordered flag.
         let is_length_ordered = bs.read_bool()?;
 
@@ -262,6 +286,10 @@ impl VorbisCodebook {
             let mut cur_len = bs.read_bits_leq32(5)? + 1;
 
             loop {
+                if cur_len > 32 {
+                    return decode_error("vorbis: codebook codeword length exceeds 32 bits");
+                }
+
                 let num_bits = if codebook_entries > cur_entry {
                     ilog(codebook_entries - cur_entry)
                 }
@@ -409,20 +437,41 @@ mod tests {
 
     fn naive_lookup1_values(entries: u32, dimensions: u16) -> u32 {
         let mut x = 1u32;
-        loop {
-            let xpow = x.pow(u32::from(dimensions));
-            if xpow > entries {
-                break;
+
+        // If dimensions is 0, then the only acceptable value for entries is 0 because 0 ^ 0 = 1.
+        if dimensions > 0 {
+            loop {
+                // Since entries is 24-bit, an overflow of u32 will by definition exceed the number
+                // of entries.
+                let Some(x_pow) = x.checked_pow(u32::from(dimensions))
+                else {
+                    break;
+                };
+
+                if x_pow > entries {
+                    break;
+                }
+                x += 1;
             }
-            x += 1;
         }
+
         x - 1
     }
 
     #[test]
     fn verify_lookup1_values() {
+        assert_eq!(lookup1_values(0, 0), naive_lookup1_values(0, 1));
+        assert_eq!(lookup1_values(1, 0), naive_lookup1_values(1, 0));
+        assert_eq!(lookup1_values(0, 1), naive_lookup1_values(0, 1));
         assert_eq!(lookup1_values(1, 1), naive_lookup1_values(1, 1));
         assert_eq!(lookup1_values(361, 2), naive_lookup1_values(361, 2));
+        assert_eq!(lookup1_values(361, 2), naive_lookup1_values(361, 2));
+        assert_eq!(lookup1_values(560, 3), naive_lookup1_values(560, 3));
+        assert_eq!(lookup1_values(3, 950), naive_lookup1_values(3, 950));
+        assert_eq!(lookup1_values(0xffff, 0xff), naive_lookup1_values(0xffff, 0xff));
+        assert_eq!(lookup1_values(0, u16::MAX), naive_lookup1_values(0, u16::MAX));
+        assert_eq!(lookup1_values(1, u16::MAX), naive_lookup1_values(1, u16::MAX));
+        assert_eq!(lookup1_values(0xff_ffff, u16::MAX), naive_lookup1_values(0xff_ffff, u16::MAX));
     }
 
     #[test]
@@ -431,5 +480,12 @@ mod tests {
         const EXPECTED_CODEWORDS: &[u32] = &[0, 0x4, 0x5, 0x6, 0x7, 0x2, 0x6, 0x7];
         let codewords = synthesize_codewords(CODEWORD_LENGTHS).unwrap();
         assert_eq!(&codewords, EXPECTED_CODEWORDS);
+    }
+
+    #[test]
+    fn verify_synthesize_codewords_overspecified() {
+        // These codebooks are overspecified and shouldn't panic.
+        assert!(synthesize_codewords(&[1, 1, 1]).is_err());
+        assert!(synthesize_codewords(&[1, 1, 32]).is_err());
     }
 }

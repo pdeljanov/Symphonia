@@ -1,5 +1,5 @@
 // Symphonia
-// Copyright (c) 2019-2022 The Project Symphonia Developers.
+// Copyright (c) 2019-2026 The Project Symphonia Developers.
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -33,7 +33,7 @@ use super::WAVE_METADATA_INFO;
 
 pub struct WaveFormatChunk {
     /// The number of channels.
-    pub n_channels: u16,
+    pub num_channels: u16,
     /// The sample rate in Hz. For non-PCM formats, this value must be interpreted as per the
     /// format's specifications.
     pub sample_rate: u32,
@@ -41,7 +41,7 @@ pub struct WaveFormatChunk {
     /// must be interpreted as per the format's specifications.
     pub avg_bytes_per_sec: u32,
     /// The byte alignment of one audio frame. For PCM formats, this is equal to
-    /// `(n_channels * format_data.bits_per_sample) / 8`. For non-PCM formats, this value must be
+    /// `(num_channels * format_data.bits_per_sample) / 8`. For non-PCM formats, this value must be
     /// interpreted as per the format's specifications.
     pub block_align: u16,
     /// Extra data associated with the format block conditional upon the format tag.
@@ -51,8 +51,9 @@ pub struct WaveFormatChunk {
 impl WaveFormatChunk {
     fn read_pcm_fmt<B: ReadBytes>(
         reader: &mut B,
+        block_align: u16,
         bits_per_sample: u16,
-        n_channels: u16,
+        num_channels: u16,
         len: u32,
     ) -> Result<FormatData> {
         // WaveFormat for a PCM format may be extended with an extra data length field followed by
@@ -94,14 +95,29 @@ impl WaveFormatChunk {
             }
         };
 
-        let channels = map_wave_channel_count(n_channels)?;
-        Ok(FormatData::Pcm(FormatPcm { bits_per_sample, channels, codec }))
+        // Block align is redundant for this format, but ideally it should be set correctly. Log if
+        // it's incorrect.
+        let expected_block_align = num_channels * (bits_per_sample / 8);
+
+        if block_align != expected_block_align {
+            info!("fmt_pcm expected block align of {}, got {}", expected_block_align, block_align);
+        }
+
+        let channels = map_wave_channel_count(num_channels)?;
+
+        Ok(FormatData::Pcm(FormatPcm {
+            bits_per_sample,
+            valid_bits_per_sample: bits_per_sample,
+            channels,
+            codec,
+        }))
     }
 
     fn read_adpcm_fmt<B: ReadBytes>(
         reader: &mut B,
+        block_align: u16,
         bits_per_sample: u16,
-        n_channels: u16,
+        num_channels: u16,
         len: u32,
         codec: AudioCodecId,
     ) -> Result<FormatData> {
@@ -127,14 +143,14 @@ impl WaveFormatChunk {
         }
         reader.ignore_bytes(extra_size)?;
 
-        let channels = map_wave_channel_count(n_channels)?;
-        Ok(FormatData::Adpcm(FormatAdpcm { bits_per_sample, channels, codec }))
+        let channels = map_wave_channel_count(num_channels)?;
+        Ok(FormatData::Adpcm(FormatAdpcm { block_align, bits_per_sample, channels, codec }))
     }
 
     fn read_ieee_fmt<B: ReadBytes>(
         reader: &mut B,
         bits_per_sample: u16,
-        n_channels: u16,
+        num_channels: u16,
         len: u32,
     ) -> Result<FormatData> {
         // WaveFormat for a IEEE format should not be extended, but it may still have an extra data
@@ -166,15 +182,15 @@ impl WaveFormatChunk {
             _ => return decode_error("wav: bits per sample for fmt_ieee must be 32 or 64 bits"),
         };
 
-        let channels = map_wave_channel_count(n_channels)?;
+        let channels = map_wave_channel_count(num_channels)?;
 
         Ok(FormatData::IeeeFloat(FormatIeeeFloat { channels, codec }))
     }
 
     fn read_ext_fmt<B: ReadBytes>(
         reader: &mut B,
-        bits_per_coded_sample: u16,
-        n_channels: u16,
+        bits_per_sample: u16,
+        num_channels: u16,
         len: u32,
     ) -> Result<FormatData> {
         // WaveFormat for the extensible format must be extended to 40 bytes in length.
@@ -189,21 +205,15 @@ impl WaveFormatChunk {
             return decode_error("wav: extra data size not 22 bytes for fmt_ext chunk");
         }
 
-        let bits_per_sample = reader.read_u16()?;
+        // The number of valid bits per sample for uncompressed PCM audio, but if the data is
+        // compressed, then this is the samples per block.
+        let valid_bits_per_sample = reader.read_u16()?;
 
-        // Bits per coded sample for extensible formats is the width per sample as stored in the
-        // stream. This must be a multiple of 8.
-        if (bits_per_coded_sample & 0x7) != 0 {
+        // Bits per sample for extensible formats is the bits per sample as written in the stream.
+        // This must be a multiple of 8, even for compressed data formats. However, compressed data
+        // formats may also set this to 0.
+        if bits_per_sample & 0x7 != 0 {
             return decode_error("wav: bits per coded sample for fmt_ext must be a multiple of 8");
-        }
-
-        // Bits per sample indicates the number of valid bits in the encoded sample. The sample is
-        // encoded in a bits per coded sample width value, therefore the valid number of bits must
-        // be at most bits per coded sample long.
-        if bits_per_sample > bits_per_coded_sample {
-            return decode_error(
-                "wav: bits per sample must be <= bits per coded sample for fmt_ext",
-            );
         }
 
         // The channel mask.
@@ -254,15 +264,23 @@ impl WaveFormatChunk {
         let codec = match sub_format_guid {
             KSDATAFORMAT_SUBTYPE_PCM | KSDATAFORMAT_SUBTYPE_AMBISONIC_B_FORMAT_PCM => {
                 // Only support up-to 32-bit integer samples.
-                if bits_per_coded_sample > 32 {
+                if bits_per_sample == 0 || bits_per_sample > 32 {
                     return decode_error(
-                        "bits per sample for fmt_ext PCM sub-type must be <= 32 bits",
+                        "wav: bits per sample for fmt_ext PCM sub-type must be 8, 16, 24, or 32 bits",
+                    );
+                }
+
+                // The number of valid bits per sample must be less-than the number of written bits
+                // per sample.
+                if valid_bits_per_sample > bits_per_sample {
+                    return decode_error(
+                        "wav: valid bits per sample for fmt_ext PCM sub-type must be <= bits per sample",
                     );
                 }
 
                 // Use bits per coded sample to select the codec to use. If bits per sample is less
                 // than the bits per coded sample, the codec will expand the sample during decode.
-                match bits_per_coded_sample {
+                match bits_per_sample {
                     8 => CODEC_ID_PCM_U8,
                     16 => CODEC_ID_PCM_S16LE,
                     24 => CODEC_ID_PCM_S24LE,
@@ -273,14 +291,14 @@ impl WaveFormatChunk {
             KSDATAFORMAT_SUBTYPE_IEEE_FLOAT
             | KSDATAFORMAT_SUBTYPE_AMBISONIC_B_FORMAT_IEEE_FLOAT => {
                 // IEEE floating formats do not support truncated sample widths.
-                if bits_per_sample != bits_per_coded_sample {
+                if valid_bits_per_sample != bits_per_sample {
                     return decode_error(
-                        "wav: bits per sample for fmt_ext IEEE sub-type must equal bits per coded sample",
+                        "wav: valid bits per sample for fmt_ext IEEE sub-type must equal bits per sample",
                     );
                 }
 
                 // Select the appropriate codec based on the bits per coded sample.
-                match bits_per_coded_sample {
+                match bits_per_sample {
                     32 => CODEC_ID_PCM_F32LE,
                     64 => CODEC_ID_PCM_F64LE,
                     _ => {
@@ -290,8 +308,22 @@ impl WaveFormatChunk {
                     }
                 }
             }
-            KSDATAFORMAT_SUBTYPE_ALAW => CODEC_ID_PCM_ALAW,
-            KSDATAFORMAT_SUBTYPE_MULAW => CODEC_ID_PCM_MULAW,
+            KSDATAFORMAT_SUBTYPE_ALAW => {
+                if bits_per_sample != 8 {
+                    return decode_error(
+                        "wav: bits per sample for fmt_ext a-law sub-type must be 8 bits",
+                    );
+                }
+                CODEC_ID_PCM_ALAW
+            }
+            KSDATAFORMAT_SUBTYPE_MULAW => {
+                if bits_per_sample != 8 {
+                    return decode_error(
+                        "wav: bits per sample for fmt_ext u-law sub-type must be 8 bits",
+                    );
+                }
+                CODEC_ID_PCM_MULAW
+            }
             _ => return unsupported_error("wav: unsupported fmt_ext sub-type"),
         };
 
@@ -300,14 +332,14 @@ impl WaveFormatChunk {
             | KSDATAFORMAT_SUBTYPE_AMBISONIC_B_FORMAT_IEEE_FLOAT => {
                 // For Ambisonic B-format, use the number of channels to map to Ambisonic B-Format
                 // channel components.
-                map_amb_channel_count(n_channels)?
+                map_amb_channel_count(num_channels)?
             }
             _ => {
                 // For PCM audio, use the channel mask and number of channels to map to positioned
                 // channels.
 
                 // Fix the channel mask if it is invalid for the stated number of channels.
-                let channel_mask = fix_wave_channel_mask(channel_mask, n_channels);
+                let channel_mask = fix_wave_channel_mask(channel_mask, num_channels);
 
                 // Try to map the channel mask to positioned channels.
                 match Position::from_wave_channel_mask(channel_mask) {
@@ -319,7 +351,7 @@ impl WaveFormatChunk {
 
         Ok(FormatData::Extensible(FormatExtensible {
             bits_per_sample,
-            bits_per_coded_sample,
+            valid_bits_per_sample,
             channels,
             sub_format_guid,
             codec,
@@ -328,7 +360,7 @@ impl WaveFormatChunk {
 
     fn read_alaw_pcm_fmt<B: ReadBytes>(
         reader: &mut B,
-        n_channels: u16,
+        num_channels: u16,
         len: u32,
     ) -> Result<FormatData> {
         if len != 18 {
@@ -341,13 +373,13 @@ impl WaveFormatChunk {
             reader.ignore_bytes(u64::from(extra_size))?;
         }
 
-        let channels = map_wave_channel_count(n_channels)?;
+        let channels = map_wave_channel_count(num_channels)?;
         Ok(FormatData::ALaw(FormatALaw { codec: CODEC_ID_PCM_ALAW, channels }))
     }
 
     fn read_mulaw_pcm_fmt<B: ReadBytes>(
         reader: &mut B,
-        n_channels: u16,
+        num_channels: u16,
         len: u32,
     ) -> Result<FormatData> {
         if len != 18 {
@@ -360,30 +392,18 @@ impl WaveFormatChunk {
             reader.ignore_bytes(u64::from(extra_size))?;
         }
 
-        let channels = map_wave_channel_count(n_channels)?;
+        let channels = map_wave_channel_count(num_channels)?;
         Ok(FormatData::MuLaw(FormatMuLaw { codec: CODEC_ID_PCM_MULAW, channels }))
     }
 
     pub(crate) fn packet_info(&self) -> Result<PacketInfo> {
-        match self.format_data {
-            FormatData::Adpcm(FormatAdpcm { codec, bits_per_sample, .. })
-            //| WaveFormatData::Extensible(WaveFormatExtensible { codec, bits_per_sample, .. })
-                if codec == CODEC_ID_ADPCM_MS =>
-            {
-                let frames_per_block = ((self.block_align - (7 * self.n_channels)) as u64 * 8)
-                    / (bits_per_sample * self.n_channels) as u64
-                    + 2;
-                PacketInfo::with_blocks(self.block_align, frames_per_block)
-            }
-            FormatData::Adpcm(FormatAdpcm { codec, bits_per_sample, .. })
-                if codec == CODEC_ID_ADPCM_IMA_WAV =>
-            {
-                let frames_per_block = ((self.block_align - (4 * self.n_channels)) as u64 * 8)
-                    / (bits_per_sample * self.n_channels) as u64
-                    + 1;
-                PacketInfo::with_blocks(self.block_align, frames_per_block)
-            }
-            _ => PacketInfo::without_blocks(u32::from(self.block_align)),
+        match &self.format_data {
+            FormatData::Pcm(pcm) => pcm.make_packet_info(),
+            FormatData::Adpcm(adpcm) => adpcm.make_packet_info(),
+            FormatData::IeeeFloat(ieee) => ieee.make_packet_info(),
+            FormatData::ALaw(alaw) => alaw.make_packet_info(),
+            FormatData::MuLaw(mulaw) => mulaw.make_packet_info(),
+            FormatData::Extensible(ext) => ext.make_packet_info(),
         }
     }
 }
@@ -397,7 +417,7 @@ impl ParseChunk for WaveFormatChunk {
         }
 
         let format = reader.read_u16()?;
-        let n_channels = reader.read_u16()?;
+        let num_channels = reader.read_u16()?;
         let sample_rate = reader.read_u32()?;
         let avg_bytes_per_sec = reader.read_u32()?;
         let block_align = reader.read_u16()?;
@@ -415,24 +435,36 @@ impl ParseChunk for WaveFormatChunk {
 
         let format_data = match format {
             // The PCM Wave Format
-            WAVE_FORMAT_PCM => Self::read_pcm_fmt(reader, bits_per_sample, n_channels, len),
-            // The Microsoft ADPCM Format
-            WAVE_FORMAT_ADPCM => {
-                Self::read_adpcm_fmt(reader, bits_per_sample, n_channels, len, CODEC_ID_ADPCM_MS)
+            WAVE_FORMAT_PCM => {
+                Self::read_pcm_fmt(reader, block_align, bits_per_sample, num_channels, len)
             }
+            // The Microsoft ADPCM Format
+            WAVE_FORMAT_ADPCM => Self::read_adpcm_fmt(
+                reader,
+                block_align,
+                bits_per_sample,
+                num_channels,
+                len,
+                CODEC_ID_ADPCM_MS,
+            ),
             // The IEEE Float Wave Format
-            WAVE_FORMAT_IEEE_FLOAT => Self::read_ieee_fmt(reader, bits_per_sample, n_channels, len),
+            WAVE_FORMAT_IEEE_FLOAT => {
+                Self::read_ieee_fmt(reader, bits_per_sample, num_channels, len)
+            }
             // The Extensible Wave Format
-            WAVE_FORMAT_EXTENSIBLE => Self::read_ext_fmt(reader, bits_per_sample, n_channels, len),
+            WAVE_FORMAT_EXTENSIBLE => {
+                Self::read_ext_fmt(reader, bits_per_sample, num_channels, len)
+            }
             // The Alaw Wave Format.
-            WAVE_FORMAT_ALAW => Self::read_alaw_pcm_fmt(reader, n_channels, len),
+            WAVE_FORMAT_ALAW => Self::read_alaw_pcm_fmt(reader, num_channels, len),
             // The MuLaw Wave Format.
-            WAVE_FORMAT_MULAW => Self::read_mulaw_pcm_fmt(reader, n_channels, len),
+            WAVE_FORMAT_MULAW => Self::read_mulaw_pcm_fmt(reader, num_channels, len),
             // The IMA ADPCM Format
             WAVE_FORMAT_ADPCM_IMA => Self::read_adpcm_fmt(
                 reader,
+                block_align,
                 bits_per_sample,
-                n_channels,
+                num_channels,
                 len,
                 CODEC_ID_ADPCM_IMA_WAV,
             ),
@@ -440,14 +472,20 @@ impl ParseChunk for WaveFormatChunk {
             _ => return unsupported_error("wav: unsupported wave format"),
         }?;
 
-        Ok(WaveFormatChunk { n_channels, sample_rate, avg_bytes_per_sec, block_align, format_data })
+        Ok(WaveFormatChunk {
+            num_channels,
+            sample_rate,
+            avg_bytes_per_sec,
+            block_align,
+            format_data,
+        })
     }
 }
 
 impl fmt::Display for WaveFormatChunk {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "WaveFormatChunk {{")?;
-        writeln!(f, "\tn_channels: {},", self.n_channels)?;
+        writeln!(f, "\tnum_channels: {},", self.num_channels)?;
         writeln!(f, "\tsample_rate: {} Hz,", self.sample_rate)?;
         writeln!(f, "\tavg_bytes_per_sec: {},", self.avg_bytes_per_sec)?;
         writeln!(f, "\tblock_align: {},", self.block_align)?;
@@ -456,11 +494,13 @@ impl fmt::Display for WaveFormatChunk {
             FormatData::Pcm(ref pcm) => {
                 writeln!(f, "\tformat_data: Pcm {{")?;
                 writeln!(f, "\t\tbits_per_sample: {},", pcm.bits_per_sample)?;
+                writeln!(f, "\t\tvalid_bits_per_sample: {},", pcm.valid_bits_per_sample)?;
                 writeln!(f, "\t\tchannels: {},", pcm.channels)?;
                 writeln!(f, "\t\tcodec: {},", pcm.codec)?;
             }
             FormatData::Adpcm(ref adpcm) => {
                 writeln!(f, "\tformat_data: Adpcm {{")?;
+                writeln!(f, "\t\tblock_align: {},", adpcm.block_align)?;
                 writeln!(f, "\t\tbits_per_sample: {},", adpcm.bits_per_sample)?;
                 writeln!(f, "\t\tchannels: {},", adpcm.channels)?;
                 writeln!(f, "\t\tcodec: {},", adpcm.codec)?;
@@ -473,9 +513,9 @@ impl fmt::Display for WaveFormatChunk {
             FormatData::Extensible(ref ext) => {
                 writeln!(f, "\tformat_data: Extensible {{")?;
                 writeln!(f, "\t\tbits_per_sample: {},", ext.bits_per_sample)?;
-                writeln!(f, "\t\tbits_per_coded_sample: {},", ext.bits_per_coded_sample)?;
+                writeln!(f, "\t\tvalid_bits_per_sample: {},", ext.valid_bits_per_sample)?;
                 writeln!(f, "\t\tchannels: {},", ext.channels)?;
-                writeln!(f, "\t\tsub_format_guid: {:?},", &ext.sub_format_guid)?;
+                writeln!(f, "\t\tsub_format_guid: {:?},", ext.sub_format_guid)?;
                 writeln!(f, "\t\tcodec: {},", ext.codec)?;
             }
             FormatData::ALaw(ref alaw) => {
@@ -496,7 +536,7 @@ impl fmt::Display for WaveFormatChunk {
 }
 
 pub struct FactChunk {
-    pub n_frames: u32,
+    pub num_frames: u32,
 }
 
 impl ParseChunk for FactChunk {
@@ -507,14 +547,14 @@ impl ParseChunk for FactChunk {
             return decode_error("wav: malformed fact chunk");
         }
 
-        Ok(FactChunk { n_frames: reader.read_u32()? })
+        Ok(FactChunk { num_frames: reader.read_u32()? })
     }
 }
 
 impl fmt::Display for FactChunk {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "FactChunk {{")?;
-        writeln!(f, "\tn_frames: {},", self.n_frames)?;
+        writeln!(f, "\tnum_frames: {},", self.num_frames)?;
         writeln!(f, "}}")
     }
 }
@@ -616,7 +656,7 @@ impl ParseChunkTag for RiffInfoListChunks {
 }
 
 pub fn append_fact_params(track: &mut Track, fact: &FactChunk) {
-    track.with_num_frames(u64::from(fact.n_frames));
+    track.with_num_frames(u64::from(fact.num_frames));
 }
 
 pub fn read_info_chunk(source: &mut MediaSourceStream<'_>, len: u32) -> Result<MetadataRevision> {
@@ -636,8 +676,8 @@ pub fn read_info_chunk(source: &mut MediaSourceStream<'_>, len: u32) -> Result<M
 }
 
 /// Corrects a WAVE channel mask that doesn't is not valid for the stated number of channels.
-fn fix_wave_channel_mask(mut channel_mask: u32, n_channels: u16) -> u32 {
-    let channel_diff = n_channels as i32 - channel_mask.count_ones() as i32;
+fn fix_wave_channel_mask(mut channel_mask: u32, num_channels: u16) -> u32 {
+    let channel_diff = num_channels as i32 - channel_mask.count_ones() as i32;
 
     if channel_diff != 0 {
         info!("channel mask not set correctly, channel positions may be incorrect!");
@@ -651,7 +691,7 @@ fn fix_wave_channel_mask(mut channel_mask: u32, n_channels: u16) -> u32 {
     }
     else {
         // Too many ones in mask so remove the most significant extra ones
-        while channel_mask.count_ones() != n_channels as u32 {
+        while channel_mask.count_ones() != num_channels as u32 {
             let highest_one = 31 - (!channel_mask).leading_ones();
             channel_mask &= !(1 << highest_one);
         }

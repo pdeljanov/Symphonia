@@ -10,43 +10,40 @@ fuzz_target!(|data: Vec<u8>| {
 
     let source = MediaSourceStream::new(Box::new(data), Default::default());
 
-    match symphonia::default::get_probe().probe(
+    if let Ok(mut format) = symphonia::default::get_probe().probe(
         &Hint::new(),
         source,
         FormatOptions::default(),
         MetadataOptions::default(),
     ) {
-        Ok(mut format) => {
-            let Some(track) = format.default_track(TrackType::Audio)
-            else {
-                return;
-            };
+        let Some(track) = format.default_track(TrackType::Audio)
+        else {
+            return;
+        };
 
-            let Some(codec_params) = track.codec_params.as_ref()
-            else {
-                return;
-            };
+        let Some(codec_params) = track.codec_params.as_ref()
+        else {
+            return;
+        };
 
-            let Some(audio_codec_params) = codec_params.audio()
-            else {
-                return;
-            };
+        let Some(audio_codec_params) = codec_params.audio()
+        else {
+            return;
+        };
 
-            let mut decoder = match symphonia::default::get_codecs()
-                .make_audio_decoder(&audio_codec_params, &Default::default())
-            {
-                Ok(d) => d,
-                Err(_) => return,
-            };
+        let mut decoder = match symphonia::default::get_codecs()
+            .make_audio_decoder(audio_codec_params, &Default::default())
+        {
+            Ok(d) => d,
+            Err(_) => return,
+        };
 
-            loop {
-                let packet = match format.next_packet() {
-                    Ok(Some(p)) => p,
-                    _ => return,
-                };
-                let _ = decoder.decode(&packet);
-            }
+        loop {
+            let packet = match format.next_packet() {
+                Ok(Some(p)) => p,
+                _ => return,
+            };
+            let _ = decoder.decode(&packet);
         }
-        Err(_) => {}
     }
 });

@@ -1,5 +1,5 @@
 // Symphonia
-// Copyright (c) 2019-2022 The Project Symphonia Developers.
+// Copyright (c) 2019-2026 The Project Symphonia Developers.
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -279,13 +279,9 @@ impl PageReader {
         B: ReadBytes + SeekBuffered,
     {
         loop {
+            // Exit if a page with the specific serial is found.
             match self.try_next_page(reader) {
-                Ok(_) => {
-                    // Exit if a page with the specific serial is found.
-                    if self.header.serial == serial && !self.header.is_continuation {
-                        break;
-                    }
-                }
+                Ok(_) if self.header.serial == serial && !self.header.is_continuation => break,
                 Err(Error::IoError(e)) => return Err(Error::from(e)),
                 _ => (),
             }

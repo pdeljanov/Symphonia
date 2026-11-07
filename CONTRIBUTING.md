@@ -53,6 +53,28 @@ In general, we won't accept PRs for the following changes without prior discussi
 - Replacing most, or all, of a crate or feature's implementation with an out-of-tree dependency.
 - Changing an API or modifying the behaviour of Symphonia to specifically match the requirements of one project or application.
 
+A PR will **never** be accepted if:
+
+- The PR contains a human or AI generated transcription of another library or implementation.
+- The PR contains portions of human or AI generated code that copies or heavily borrows from another library or implementation.
+
+The only acceptable sources to reference for the implementation of a decoder or demuxer will be the specification or standard of the codec or format itself, any pseudo-code therein, or **public domain** reference implementations with proper attribution.
+
+### AI Usage
+
+Responsible use of AI as a coding assistant is acceptable. However, using AI to generate the entire implementation of a feature is discouraged.
+
+As a user of AI, you are fully responsible for the code it generates. Before submitting a PR you should:
+
+1. Study and understand how the code works and be comfortable with modifying it and fixing bugs.
+2. Test the change to ensure it works as expected. Do not fully rely on AI generated tests. Use real-world, non-AI generated test vectors.
+3. Clean up generated code to remove overly verbose comments, non-idiomatic coding patterns, and to make it generally fit the existing coding style of Symphonia.
+4. Cross-check the implementation of any major features against existing open-source libraries and implementations to ensure the AI did not reproduce it.
+
+Do not use AI for any communications (e.g., issue or PR comments) unless it is being used for translation if English is not a language you can speak.
+
+**In all cases: Please disclose the use of AI.**
+
 ### Quality
 
 Symphonia reads untrusted data which may be corrupted or deliberately malicious. It is critical that Symphonia validates and sanity-checks all data. Under no circumstance should Symphonia panic or consume an unbounded amount of system resources (e.g., RAM).

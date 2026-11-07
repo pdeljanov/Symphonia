@@ -30,7 +30,12 @@ license = "MPL-2.0"
 license-file = "LICENSE"
 repository = "https://github.com/pdeljanov/Symphonia"
 rust-version = "1.85"
-version = "0.6.0-alpha.1"
+version = "0.6.1"
+
+[workspace.dependencies]
+lazy_static = "1.4.0"
+log = "0.4"
+smallvec = "1.13.1"
 
 #cargo-features = ["profile-rustflags"]
 
@@ -38,3 +43,9 @@ version = "0.6.0-alpha.1"
 inherits = "release"
 debug = true
 #rustflags = ["-C", "force-frame-pointers=y"]
+
+[workspace.lints.clippy]
+unwrap_used = "warn"
+
+[workspace.lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)'] }

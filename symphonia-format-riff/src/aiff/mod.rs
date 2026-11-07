@@ -1,5 +1,5 @@
 // Symphonia
-// Copyright (c) 2019-2022 The Project Symphonia Developers.
+// Copyright (c) 2019-2026 The Project Symphonia Developers.
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -55,6 +55,7 @@ const AIFF_METADATA_INFO: MetadataInfo = MetadataInfo {
 /// `AiffReader` implements a demuxer for the AIFF container format.
 pub struct AiffReader<'s> {
     reader: MediaSourceStream<'s>,
+    media_info: MediaInfo,
     tracks: Vec<Track>,
     attachments: Vec<Attachment>,
     chapters: Option<ChapterGroup>,
@@ -95,7 +96,7 @@ impl<'s> AiffReader<'s> {
 
         // Chunks can be read in any order, so collect them to be processed later.
         let mut comm = None;
-        let mut data = None;
+        let mut ssnd = None;
         let mut mark = None;
         let mut comt = None;
         let mut id3 = None;
@@ -122,11 +123,11 @@ impl<'s> AiffReader<'s> {
                 }
                 RiffAiffChunks::Sound(chunk) => {
                     // Only one sound data chunk is allowed.
-                    if data.is_some() {
+                    if ssnd.is_some() {
                         return decode_error("aiff: multiple sound data chunks");
                     }
 
-                    data = Some(chunk.parse(&mut mss)?);
+                    ssnd = Some(chunk.parse(&mut mss)?);
 
                     // If the media source is not seekable, then it is not possible to scan for
                     // chunks past the sound data chunk.
@@ -135,7 +136,8 @@ impl<'s> AiffReader<'s> {
                     }
 
                     // The length of the sound data chunk must also be known.
-                    if let Some(len) = data.as_ref().unwrap().len {
+                    let ssnd_ref = ssnd.as_ref().expect("ssnd assigned a few lines above");
+                    if let Some(len) = ssnd_ref.len {
                         mss.ignore_bytes(u64::from(len))?;
                     }
                     else {
@@ -158,11 +160,11 @@ impl<'s> AiffReader<'s> {
                     }
 
                     // Save comments chunk for post-processing.
-                    comt = Some(chunk.parse(&mut mss)?);
+                    comt = Some(chunk.parse_and_skip_unread(&mut mss)?);
                 }
                 RiffAiffChunks::AppSpecific(chunk) => {
                     // Add application-specific data.
-                    let appl = chunk.parse(&mut mss)?;
+                    let appl = chunk.parse_and_skip_unread(&mut mss)?;
 
                     attachments.push(Attachment::VendorData(VendorDataAttachment {
                         ident: appl.application,
@@ -171,21 +173,22 @@ impl<'s> AiffReader<'s> {
                 }
                 RiffAiffChunks::Text(chunk) => {
                     // Add tag.
-                    let text = chunk.parse(&mut mss)?;
+                    let text = chunk.parse_and_skip_unread(&mut mss)?;
                     builder.add_tag(text.tag);
                 }
-                RiffAiffChunks::Id3(chunk) => id3 = Some(chunk.parse(&mut mss)?),
+                RiffAiffChunks::Id3(chunk) => id3 = Some(chunk.parse_and_skip_unread(&mut mss)?),
             }
         }
 
         // The common element is mandatory.
         let comm = comm.ok_or(Error::DecodeError("aiff: missing common element"))?;
-        // The sound data element is mandatory.
-        let data = data.ok_or(Error::DecodeError("aiff: missing sound data chunk"))?;
 
-        // Seek to the sound data.
+        // If the sound data element is not present, then assume an empty one.
+        let ssnd = ssnd.unwrap_or_else(|| SoundChunk::empty(mss.pos()));
+
+        // Seek to the start of the sound data.
         if is_seekable {
-            mss.seek(SeekFrom::Start(data.data_start_pos))?;
+            mss.seek(SeekFrom::Start(ssnd.data_start_pos))?;
         }
 
         // Metadata processing.
@@ -220,19 +223,20 @@ impl<'s> AiffReader<'s> {
         track.with_codec_params(CodecParameters::Audio(codec_params));
 
         // Append sound data chunk fields to track.
-        if let Some(data_len) = data.len {
+        if let Some(data_len) = ssnd.len {
             append_data_params(&mut track, u64::from(data_len), &packet_info);
         }
 
         Ok(AiffReader {
             reader: mss,
+            media_info: MediaInfo::from_track(&track),
             tracks: vec![track],
             attachments,
             chapters: chapters.or(opts.external_data.chapters),
             metadata,
             packet_info,
-            data_start_pos: data.data_start_pos,
-            data_end_pos: data.len.map(|len| data.data_start_pos + u64::from(len)),
+            data_start_pos: ssnd.data_start_pos,
+            data_end_pos: ssnd.len.map(|data_len| ssnd.data_start_pos + u64::from(data_len)),
         })
     }
 }
@@ -262,8 +266,13 @@ fn process_markers(
             }
 
             // Add the chapter.
+            // marker.ts is u32; the result is seconds as i64, so overflow is impossible.
+            let start_time = tb
+                .calc_time(Timestamp::from(marker.ts))
+                .expect("aiff: chapter timestamp overflow is impossible");
+
             chapters.push(Chapter {
-                start_time: tb.calc_time(Timestamp::from(marker.ts)).unwrap(),
+                start_time,
                 end_time: None,
                 start_byte: None,
                 end_byte: None,
@@ -354,6 +363,10 @@ impl FormatReader for AiffReader<'_> {
         &AIFF_FORMAT_INFO
     }
 
+    fn media_info(&self) -> &MediaInfo {
+        &self.media_info
+    }
+
     fn next_packet(&mut self) -> Result<Option<Packet>> {
         next_packet(
             &mut self.reader,
@@ -389,7 +402,7 @@ impl FormatReader for AiffReader<'_> {
 
         let required_ts = match to {
             // Frame timestamp given.
-            SeekTo::TimeStamp { ts, .. } => ts,
+            SeekTo::Timestamp { ts, .. } => ts,
             // Time value given, calculate frame timestamp using the timebase.
             SeekTo::Time { time, .. } => {
                 // The timebase is required to calculate the timestamp.
@@ -407,8 +420,8 @@ impl FormatReader for AiffReader<'_> {
 
         // If the total number of frames in the track is known, verify the desired frame timestamp
         // does not exceed it.
-        if let Some(n_frames) = track.num_frames {
-            if required_ts.get() as u64 > n_frames {
+        if let Some(num_frames) = track.num_frames {
+            if required_ts.get() as u64 > num_frames {
                 return seek_error(SeekErrorKind::OutOfRange);
             }
         }

@@ -6,10 +6,10 @@ use symphonia::core::audio::sample::Sample;
 use symphonia::core::codecs::audio::AudioDecoderOptions;
 use symphonia::core::errors::Error;
 use symphonia::core::formats::FormatOptions;
+use symphonia::core::formats::TrackType;
 use symphonia::core::formats::probe::Hint;
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
-use symphonia_core::formats::TrackType;
 
 fn main() {
     // Get command line arguments.
@@ -52,7 +52,7 @@ fn main() {
     // Read and decode all packets from the format reader.
     while let Some(packet) = format.next_packet().unwrap() {
         // If the packet does not belong to the selected track, skip it.
-        if packet.track_id() != track_id {
+        if packet.track_id != track_id {
             continue;
         }
 

@@ -1,5 +1,5 @@
 // Symphonia
-// Copyright (c) 2019-2024 The Project Symphonia Developers.
+// Copyright (c) 2019-2026 The Project Symphonia Developers.
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -15,7 +15,10 @@ use symphonia_core::{
     audio::{Channels, Position},
     codecs::{
         CodecParameters,
-        audio::{well_known::CODEC_ID_AAC, *},
+        audio::{
+            well_known::{CODEC_ID_AAC, CODEC_ID_ALAC},
+            *,
+        },
     },
     errors::{Error, Result, SeekErrorKind, decode_error, seek_error, unsupported_error},
     formats::{
@@ -29,6 +32,7 @@ use symphonia_core::{
     units::{TimeBase, Timestamp},
 };
 
+use symphonia_common::apple::audio::alac::MagicCookie as AlacMagicCookie;
 use symphonia_common::mpeg::formats::*;
 
 const MAX_FRAMES_PER_PACKET: u64 = 1152;
@@ -41,6 +45,7 @@ const CAF_FORMAT_INFO: FormatInfo =
 /// `CafReader` implements a demuxer for Core Audio Format containers.
 pub struct CafReader<'s> {
     reader: MediaSourceStream<'s>,
+    media_info: MediaInfo,
     tracks: Vec<Track>,
     chapters: Option<ChapterGroup>,
     metadata: MetadataLog,
@@ -84,6 +89,10 @@ impl ProbeableFormat<'_> for CafReader<'_> {
 impl FormatReader for CafReader<'_> {
     fn format_info(&self) -> &FormatInfo {
         &CAF_FORMAT_INFO
+    }
+
+    fn media_info(&self) -> &MediaInfo {
+        &self.media_info
     }
 
     fn next_packet(&mut self) -> Result<Option<Packet>> {
@@ -171,7 +180,7 @@ impl FormatReader for CafReader<'_> {
 
     fn seek(&mut self, _mode: SeekMode, to: SeekTo) -> Result<SeekedTo> {
         let required_ts = match to {
-            SeekTo::TimeStamp { ts, .. } => ts,
+            SeekTo::Timestamp { ts, .. } => ts,
             SeekTo::Time { time, .. } => {
                 // The timebase is required to calculate the timestamp.
                 let tb = self.time_base().ok_or(Error::SeekError(SeekErrorKind::Unseekable))?;
@@ -314,6 +323,7 @@ impl<'s> CafReader<'s> {
     pub fn try_new(mss: MediaSourceStream<'s>, opts: FormatOptions) -> Result<Self> {
         let mut reader = Self {
             reader: mss,
+            media_info: Default::default(),
             tracks: vec![],
             chapters: opts.external_data.chapters,
             metadata: opts.external_data.metadata.unwrap_or_default(),
@@ -325,6 +335,8 @@ impl<'s> CafReader<'s> {
         reader.check_file_header()?;
         let track = reader.read_chunks()?;
 
+        // TODO: Fix this weird initialization pattern.
+        reader.media_info = MediaInfo::from_track(&track);
         reader.tracks.push(track);
 
         Ok(reader)
@@ -428,10 +440,10 @@ impl<'s> CafReader<'s> {
         }
         else {
             PacketInfo::FixedAudioPacket {
-                // UNWRAP: Cannot reach this else block if either bytes/packet or frames/packet are
-                // zero.
-                bytes_per_packet: NonZero::new(desc.bytes_per_packet).unwrap(),
-                frames_per_packet: NonZero::new(desc.frames_per_packet).unwrap(),
+                bytes_per_packet: NonZero::new(desc.bytes_per_packet)
+                    .expect("bytes_per_packet is non-zero in this branch"),
+                frames_per_packet: NonZero::new(desc.frames_per_packet)
+                    .expect("frames_per_packet is non-zero in this branch"),
                 start_pts: Timestamp::new(0),
             }
         };
@@ -494,10 +506,10 @@ impl<'s> CafReader<'s> {
                     }
 
                     match &mut self.packet_info {
-                        PacketInfo::FixedAudioPacket { start_pts, .. } => {
-                            if table.priming_frames > 0 {
-                                *start_pts = Timestamp::from(-i64::from(table.priming_frames));
-                            }
+                        PacketInfo::FixedAudioPacket { start_pts, .. }
+                            if table.priming_frames > 0 =>
+                        {
+                            *start_pts = Timestamp::from(-i64::from(table.priming_frames));
                         }
                         PacketInfo::VariableAudioPacket { packets, .. } => {
                             num_frames = Some(table.valid_frames as u64);
@@ -526,6 +538,14 @@ impl<'s> CafReader<'s> {
                                     codec_params.with_extra_data(info.extra_data);
                                 }
                             }
+                        }
+                        CODEC_ID_ALAC => {
+                            // For ALAC, the bits per channel field of the audio description is
+                            // 0. The bit depth is stored in the magic cookie.
+                            if let Ok(cookie) = AlacMagicCookie::read(&data) {
+                                codec_params.with_bits_per_sample(u32::from(cookie.bit_depth));
+                            }
+                            codec_params.with_extra_data(data);
                         }
                         _ => {
                             // For all other formats attach the entire magic cookie.
@@ -557,6 +577,8 @@ impl<'s> CafReader<'s> {
 
         if let Some(num_frames) = num_frames {
             track.with_num_frames(num_frames);
+            // Duration equals the number of frames because the timebase is always 1 / sample rate.
+            track.with_duration(Duration::from(num_frames));
         }
 
         Ok(track)

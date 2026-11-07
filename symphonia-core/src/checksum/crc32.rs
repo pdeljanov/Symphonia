@@ -1,5 +1,5 @@
 // Symphonia
-// Copyright (c) 2019-2022 The Project Symphonia Developers.
+// Copyright (c) 2019-2026 The Project Symphonia Developers.
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -8,7 +8,7 @@
 use crate::io::Monitor;
 
 #[rustfmt::skip]
-const CRC32: [[u32; 256]; 8] =
+static CRC32: [[u32; 256]; 8] =
 [
     [
         0x00000000, 0x04c11db7, 0x09823b6e, 0x0d4326d9,

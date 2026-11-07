@@ -1,5 +1,5 @@
 // Symphonia
-// Copyright (c) 2019-2022 The Project Symphonia Developers.
+// Copyright (c) 2019-2026 The Project Symphonia Developers.
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -28,12 +28,11 @@ use symphonia_core::codecs::audio::{AudioCodecParameters, AudioDecoderOptions};
 use symphonia_core::codecs::audio::{AudioDecoder, FinalizeResult};
 use symphonia_core::codecs::registry::{RegisterableAudioDecoder, SupportedAudioCodec};
 use symphonia_core::errors::{Result, decode_error, unsupported_error};
-use symphonia_core::io::{BitReaderLtr, BufReader, FiniteStream, ReadBitsLtr, ReadBytes};
-use symphonia_core::packet::Packet;
+use symphonia_core::io::{BitReaderLtr, ReadBitsLtr};
+use symphonia_core::packet::PacketRef;
 use symphonia_core::support_audio_codec;
 
-/// Supported ALAC version.
-const ALAC_VERSION: u8 = 0;
+use symphonia_common::apple::audio::alac::MagicCookie;
 
 /// Single Channel Element (SCE) tag.
 const ALAC_ELEM_TAG_SCE: u32 = 0;
@@ -68,168 +67,9 @@ fn map_channels(channels: &Channels) -> [u8; 8] {
     }
 }
 
-/// The ALAC "magic cookie" or codec specific configuration.
-#[derive(Debug)]
-#[allow(dead_code)]
-struct MagicCookie {
-    frame_length: u32,
-    compatible_version: u8,
-    bit_depth: u8,
-    pb: u8,
-    mb: u8,
-    kb: u8,
-    num_channels: u8,
-    max_run: u16,
-    max_frame_bytes: u32,
-    avg_bit_rate: u32,
-    sample_rate: u32,
-    channels: Channels,
-}
-
-impl MagicCookie {
-    fn try_parse(mut buf: &[u8]) -> Result<MagicCookie> {
-        // The magic cookie must be atleast 24 bytes long.
-        if buf.len() < 24 {
-            return unsupported_error("alac: magic cookie size too small");
-        }
-
-        // The magic cookie may be preceeded by a FRMA atom. Skip over the FRMA atom.
-        if buf[4..8] == *b"frma" {
-            buf = &buf[12..];
-        }
-
-        // The magic cookie may be preceeded by an ALAC atom. Skip over the ALAC atom.
-        if buf[4..8] == *b"alac" {
-            buf = &buf[12..];
-        }
-
-        // The magic cookie must be either 24 or 48 bytes long.
-        if buf.len() != 24 && buf.len() != 48 {
-            return unsupported_error("alac: invalid magic cookie size");
-        }
-
-        let mut reader = BufReader::new(buf);
-
-        let mut config = MagicCookie {
-            frame_length: reader.read_be_u32()?,
-            compatible_version: reader.read_u8()?,
-            bit_depth: reader.read_u8()?,
-            pb: reader.read_u8()?,
-            mb: reader.read_u8()?,
-            kb: reader.read_u8()?,
-            num_channels: reader.read_u8()?,
-            max_run: reader.read_be_u16()?,
-            max_frame_bytes: reader.read_be_u32()?,
-            avg_bit_rate: reader.read_be_u32()?,
-            sample_rate: reader.read_be_u32()?,
-            channels: Default::default(),
-        };
-
-        // Only support up-to the currently implemented ALAC version.
-        if config.compatible_version > ALAC_VERSION {
-            return unsupported_error("alac: not compatible with alac version 0");
-        }
-
-        // A bit-depth greater than 32 is not allowed.
-        if config.bit_depth > 32 {
-            return decode_error("alac: invalid bit depth");
-        }
-
-        // Limit the frame length to a reasonable value to prevent a single, 4-byte integer
-        // value from crashing the entire application via memory exhaustion.
-        const STANDARD_FRAME_SIZE: u32 = 4096;
-        if config.frame_length > STANDARD_FRAME_SIZE * 16 {
-            return unsupported_error("alac: frame length too large");
-        }
-
-        // Only 8 channel layouts exist.
-        // TODO: Support discrete/auxiliary channels.
-        if config.num_channels < 1 || config.num_channels > 8 {
-            return unsupported_error("alac: more than 8 channels");
-        }
-
-        // If the magic cookie is 48 bytes, the channel layout is explictly set, otherwise select a
-        // channel layout from the number of channels.
-        config.channels = if reader.byte_len() == 48 {
-            // The first field is the size of the channel layout info. This should always be 24.
-            if reader.read_be_u32()? != 24 {
-                return decode_error("alac: invalid channel layout info size");
-            }
-
-            // The channel layout info identifier should be the ascii string "chan".
-            if reader.read_quad_bytes()? != *b"chan" {
-                return decode_error("alac: invalid channel layout info id");
-            }
-
-            // The channel layout info version must be 0.
-            if reader.read_be_u32()? != 0 {
-                return decode_error("alac: invalid channel layout info version");
-            }
-
-            // Read the channel layout tag. The numerical value of this tag is defined by the Apple
-            // CoreAudio API.
-            let layout_channels = match reader.read_be_u32()? {
-                // 100 << 16
-                0x64_0001 => layouts::CHANNEL_LAYOUT_MONO,
-                // 101 << 16
-                0x65_0002 => layouts::CHANNEL_LAYOUT_STEREO,
-                // 113 << 16
-                0x71_0003 => layouts::CHANNEL_LAYOUT_MPEG_3P0_B,
-                // 116 << 16
-                0x74_0004 => layouts::CHANNEL_LAYOUT_MPEG_4P0_B,
-                // 120 << 16
-                0x78_0005 => layouts::CHANNEL_LAYOUT_MPEG_5P0_D,
-                // 124 << 16
-                0x7c_0006 => layouts::CHANNEL_LAYOUT_MPEG_5P1_D,
-                // 142 << 16
-                0x8e_0007 => layouts::CHANNEL_LAYOUT_AAC_6P1,
-                // 127 << 16
-                0x7f_0008 => layouts::CHANNEL_LAYOUT_MPEG_7P1_B,
-                _ => return decode_error("alac: invalid channel layout tag"),
-            };
-
-            // The number of channels stated in the mandatory part of the magic cookie should match
-            // the number of channels implicit to the channel layout.
-            if config.num_channels != layout_channels.count() as u8 {
-                return decode_error(
-                    "alac: the number of channels differs from the channel layout",
-                );
-            }
-
-            // The next two fields are reserved and should be 0.
-            if reader.read_be_u32()? != 0 || reader.read_be_u32()? != 0 {
-                return decode_error("alac: reserved values in channel layout info are not 0");
-            }
-
-            layout_channels
-        }
-        else {
-            // If extra channel information is not provided, use the number of channels to assign
-            // a channel layout.
-            //
-            // TODO: If the number of channels is > 2, then the additional channels are considered
-            // discrete and not part of a channel layout. However, Symphonia does not support
-            // discrete/auxiliary channels so the standard ALAC channel layouts are used for now.
-            match config.num_channels {
-                1 => layouts::CHANNEL_LAYOUT_MONO,
-                2 => layouts::CHANNEL_LAYOUT_STEREO,
-                3 => layouts::CHANNEL_LAYOUT_MPEG_3P0_B,
-                4 => layouts::CHANNEL_LAYOUT_MPEG_4P0_B,
-                5 => layouts::CHANNEL_LAYOUT_MPEG_5P0_D,
-                6 => layouts::CHANNEL_LAYOUT_MPEG_5P1_D,
-                7 => layouts::CHANNEL_LAYOUT_AAC_6P1,
-                8 => layouts::CHANNEL_LAYOUT_MPEG_7P1_B,
-                _ => return decode_error("alac: unknown channel layout for number of channels"),
-            }
-        };
-
-        Ok(config)
-    }
-}
-
 #[derive(Debug)]
 struct ElementChannel {
-    pred_bits: u32,
+    bps: u32,
     kb: u32,
     mb: u32,
     mode: u32,
@@ -243,7 +83,7 @@ impl ElementChannel {
     fn try_read<B: ReadBitsLtr>(
         bs: &mut B,
         config: &MagicCookie,
-        pred_bits: u8,
+        bps: u8,
     ) -> Result<ElementChannel> {
         let mode = bs.read_bits_leq32(4)?;
         let shift = bs.read_bits_leq32(4)?;
@@ -258,7 +98,7 @@ impl ElementChannel {
         }
 
         Ok(ElementChannel {
-            pred_bits: u32::from(pred_bits),
+            bps: u32::from(bps),
             kb: u32::from(config.kb),
             mb: u32::from(config.mb),
             mode,
@@ -284,7 +124,7 @@ impl ElementChannel {
             }
 
             let k = lg3a(mb);
-            let val = read_rice_code(bs, k.min(self.kb), self.pred_bits)? + sign_toggle;
+            let val = read_rice_code(bs, k.min(self.kb), self.bps)?.wrapping_add(sign_toggle);
 
             *sample = rice_code_to_signed(val);
 
@@ -292,9 +132,12 @@ impl ElementChannel {
                 mb = 0xffff;
             }
             else {
-                // Order is important here.
-                mb -= (self.pb_factor * mb) >> 9;
-                mb += self.pb_factor * val;
+                // If `val` and `pb_factor` are forced to be very large by the bitstream, their
+                // product can't overflow a u32, but it can overflow `mb` when added over multiple
+                // iterations.
+                mb = mb
+                    .wrapping_add(self.pb_factor * val)
+                    .wrapping_sub(self.pb_factor.wrapping_mul(mb) >> 9);
             }
 
             sign_toggle = 0;
@@ -334,7 +177,7 @@ impl ElementChannel {
         // Decoding is performed on signed 32-bit numbers, however, the actual predicted samples
         // have a bit-width of `pred_bits`. Therefore, the top `32 - pred_bits` bits should be
         // clipped.
-        let num_clip_bits = 32 - self.pred_bits;
+        let num_clip_bits = 32 - self.bps;
 
         // An order of 31, or a mode of 15, are special cases where the predictor runs twice. The
         // first-pass uses a first-order prediction. The second pass is then the regular prediction
@@ -442,23 +285,36 @@ impl AlacDecoder {
         }
 
         // Read the config (magic cookie).
-        let config = if let Some(extra_data) = &params.extra_data {
-            MagicCookie::try_parse(extra_data)?
+        let cookie = if let Some(extra_data) = &params.extra_data {
+            MagicCookie::read(extra_data)?
         }
         else {
             return unsupported_error("alac: missing extra data");
         };
 
-        let spec = AudioSpec::new(config.sample_rate, config.channels.clone());
-        let buf = AudioBuffer::new(spec, config.frame_length as usize);
+        // Limit the frame length to a reasonable value to prevent a single, 4-byte integer
+        // value from crashing the entire application via memory exhaustion.
+        const STANDARD_FRAME_SIZE: u32 = 4096;
+        if cookie.frame_length > STANDARD_FRAME_SIZE * 16 {
+            return unsupported_error("common (alac): frame length too large");
+        }
 
-        let max_tail_values = min(2, config.num_channels) as usize * config.frame_length as usize;
+        let spec = AudioSpec::new(cookie.sample_rate, cookie.channels.clone());
+        let buf = AudioBuffer::new(spec, cookie.frame_length as usize);
 
-        Ok(AlacDecoder { params: params.clone(), tail_bits: vec![0; max_tail_values], buf, config })
+        let max_tail_values = min(2, cookie.num_channels) as usize * cookie.frame_length as usize;
+
+        // Update codec parameters using the cookie.
+        let mut params = params.clone();
+        params.with_channels(cookie.channels.clone());
+        params.with_sample_rate(cookie.sample_rate);
+        params.with_bits_per_sample(u32::from(cookie.bit_depth));
+
+        Ok(AlacDecoder { params, tail_bits: vec![0; max_tail_values], buf, config: cookie })
     }
 
-    fn decode_inner(&mut self, packet: &Packet) -> Result<()> {
-        let mut bs = BitReaderLtr::new(packet.buf());
+    fn decode_inner(&mut self, packet: &PacketRef<'_>) -> Result<()> {
+        let mut bs = BitReaderLtr::new(packet.data);
 
         let channel_map = map_channels(&self.config.channels);
         let num_channels = self.config.num_channels as usize;
@@ -570,14 +426,14 @@ impl AudioDecoder for AlacDecoder {
 
     fn codec_info(&self) -> &CodecInfo {
         // Only one codec is supported.
-        &Self::supported_codecs().first().unwrap().info
+        &Self::supported_codecs().first().expect("at least one codec registered").info
     }
 
     fn codec_params(&self) -> &AudioCodecParameters {
         &self.params
     }
 
-    fn decode(&mut self, packet: &Packet) -> Result<GenericAudioBufferRef<'_>> {
+    fn decode_ref(&mut self, packet: &PacketRef<'_>) -> Result<GenericAudioBufferRef<'_>> {
         if let Err(e) = self.decode_inner(packet) {
             self.buf.clear();
             Err(e)
@@ -650,10 +506,14 @@ fn decode_sce_or_cpe<B: ReadBitsLtr>(
     }
 
     if !is_uncompressed {
-        // The number of upper sample bits that will be predicted per channel. This may be less-than
-        // the bit-depth if the lower sample bits will be encoded separately. If decoding a CPE,
-        // each channel gets an extra bit allocated to it for mid-side encoding.
-        let pred_bits = config.bit_depth - shift + u8::from(is_cpe);
+        // The bits per sample for samples that are not rice coded. This may be less-than the
+        // bit-depth if the lower sample bits will be encoded separately. If decoding a CPE, each
+        // channel gets an extra bit allocated to it for mid-side encoding.
+        let bps = config.bit_depth - shift + u8::from(is_cpe);
+
+        if bps > 32 {
+            return decode_error("alac: bits per coded sample exceed 32");
+        }
 
         let mid_side_shift = bs.read_bits_leq32(8)? as u8;
         let mid_side_weight = bs.read_bits_leq32_signed(8)?;
@@ -664,9 +524,9 @@ fn decode_sce_or_cpe<B: ReadBitsLtr>(
         }
 
         // Read the headers for each channel in the element.
-        let mut elem0 = ElementChannel::try_read(bs, config, pred_bits)?;
+        let mut elem0 = ElementChannel::try_read(bs, config, bps)?;
         let mut elem1 =
-            if is_cpe { Some(ElementChannel::try_read(bs, config, pred_bits)?) } else { None };
+            if is_cpe { Some(ElementChannel::try_read(bs, config, bps)?) } else { None };
 
         // If there is a shift, read and save the "tail" bits that will be appended to the predicted
         // samples.
@@ -682,7 +542,10 @@ fn decode_sce_or_cpe<B: ReadBitsLtr>(
         elem0.predict(&mut out0[..num_samples])?;
 
         if let Some(out1) = out1.as_mut() {
-            let elem1 = elem1.as_mut().unwrap();
+            let elem1 = match elem1.as_mut() {
+                Some(e) => e,
+                None => return decode_error("alac: missing second channel element"),
+            };
 
             elem1.read_residuals(bs, &mut out1[..num_samples])?;
             elem1.predict(&mut out1[..num_samples])?;
@@ -747,12 +610,12 @@ fn lg3a(val: u32) -> u32 {
 
 /// Read a rice code from the bitstream.
 #[inline(always)]
-fn read_rice_code<B: ReadBitsLtr>(bs: &mut B, k: u32, kb: u32) -> Result<u32> {
+fn read_rice_code<B: ReadBitsLtr>(bs: &mut B, k: u32, bps: u32) -> Result<u32> {
     let prefix = bs.read_unary_ones_capped(9)?;
 
     // If the prefix is > 8, the value is read as an arbitrary width unsigned integer.
     let value = if prefix > 8 {
-        bs.read_bits_leq32(kb)?
+        bs.read_bits_leq32(bps)?
     }
     else if k > 1 {
         // The reference decoder specifies prefix to be multiplied by a parameter `m`. The parameter

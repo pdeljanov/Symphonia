@@ -1,5 +1,5 @@
 // Symphonia
-// Copyright (c) 2019-2022 The Project Symphonia Developers.
+// Copyright (c) 2019-2026 The Project Symphonia Developers.
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -27,7 +27,7 @@ use symphonia_core::codecs::registry::{RegisterableAudioDecoder, SupportedAudioC
 use symphonia_core::dsp::mdct::Imdct;
 use symphonia_core::errors::{Result, decode_error, unsupported_error};
 use symphonia_core::io::{BitReaderRtl, BufReader, FiniteBitStream, ReadBitsRtl, ReadBytes};
-use symphonia_core::packet::Packet;
+use symphonia_core::packet::PacketRef;
 use symphonia_core::support_audio_codec;
 
 use symphonia_common::xiph::audio::vorbis::*;
@@ -143,8 +143,8 @@ impl VorbisDecoder {
         })
     }
 
-    fn decode_inner(&mut self, packet: &Packet) -> Result<()> {
-        let mut bs = BitReaderRtl::new(packet.buf());
+    fn decode_inner(&mut self, packet: &PacketRef<'_>) -> Result<()> {
+        let mut bs = BitReaderRtl::new(packet.data);
 
         // Section 4.3.1 - Packet Type, Mode, and Window Decode
 
@@ -249,7 +249,7 @@ impl VorbisDecoder {
 
         // Section 4.3.5 - Inverse Coupling
 
-        for coupling in mapping.couplings.iter() {
+        for coupling in mapping.couplings.iter().rev() {
             debug_assert!(coupling.magnitude_ch != coupling.angle_ch);
 
             // Get mutable reference to each channel in the pair.
@@ -306,13 +306,12 @@ impl VorbisDecoder {
 
         // Render all the audio channels.
         for (i, channel) in self.dsp.channels.iter_mut().enumerate() {
-            channel.synth(
-                mode.block_flag,
-                prev_block_flag,
-                &self.dsp.windows,
-                imdct,
-                self.buf.plane_mut(map_vorbis_channel(self.ident.n_channels, i)).unwrap(),
-            );
+            let ch_idx = map_vorbis_channel(self.ident.n_channels, i);
+            let plane = match self.buf.plane_mut(ch_idx) {
+                Some(p) => p,
+                None => return decode_error("vorbis: missing audio plane"),
+            };
+            channel.synth(mode.block_flag, prev_block_flag, &self.dsp.windows, imdct, plane);
         }
 
         // Trim gaps.
@@ -322,7 +321,7 @@ impl VorbisDecoder {
                 self.buf.clear();
             }
             else {
-                self.buf.trim(packet.trim_start().get() as usize, packet.trim_end().get() as usize);
+                self.buf.trim(packet.trim_start.get() as usize, packet.trim_end.get() as usize);
             }
         }
 
@@ -340,14 +339,14 @@ impl AudioDecoder for VorbisDecoder {
 
     fn codec_info(&self) -> &CodecInfo {
         // Only one codec is supported.
-        &Self::supported_codecs().first().unwrap().info
+        &Self::supported_codecs().first().expect("at least one codec registered").info
     }
 
     fn codec_params(&self) -> &AudioCodecParameters {
         &self.params
     }
 
-    fn decode(&mut self, packet: &Packet) -> Result<GenericAudioBufferRef<'_>> {
+    fn decode_ref(&mut self, packet: &PacketRef<'_>) -> Result<GenericAudioBufferRef<'_>> {
         if let Err(e) = self.decode_inner(packet) {
             self.buf.clear();
             Err(e)
@@ -531,7 +530,9 @@ fn read_setup(reader: &mut BufReader<'_>, ident: &IdentHeader) -> Result<Setup> 
         return decode_error("vorbis: setup header framing flag unset");
     }
 
-    if bs.bits_left() > 0 {
+    // Extra bits less than a byte (< 8 bits) are expected padding to align to
+    // a byte boundary. Only log if there are leftover full bytes.
+    if bs.bits_left() >= 8 {
         debug!("vorbis: leftover bits in setup head extra data");
     }
 
@@ -769,7 +770,7 @@ fn read_mode(bs: &mut BitReaderRtl<'_>, max_mapping: u8) -> Result<Mode> {
 /// total number of channels.
 ///
 /// See channel map as defined in section 4.3.9 of the Vorbis I specification.
-pub fn map_vorbis_channel(num_channels: u8, ch: usize) -> usize {
+fn map_vorbis_channel(num_channels: u8, ch: usize) -> usize {
     // This pre-condition should always be true.
     assert!(ch < usize::from(num_channels));
 
