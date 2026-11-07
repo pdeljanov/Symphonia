@@ -149,7 +149,10 @@ impl StreamSegment for MoofSegment {
             None => return Ok(None),
         };
 
-        let mut sample_num_rel = sample_num - self.seq[track_num].first_sample;
+        let mut sample_num_rel = match sample_num.checked_sub(self.seq[track_num].first_sample) {
+            Some(rel) => rel,
+            None => return decode_error("isomp4: sample precedes the track fragment"),
+        };
         let mut trun_ts_offset = self.seq[track_num].first_ts;
 
         let mvex = match self.moov.mvex.as_ref() {
@@ -234,7 +237,10 @@ impl StreamSegment for MoofSegment {
             _ => self.moof.moof_base_pos,
         };
 
-        let mut sample_num_rel = sample_num - self.seq[track_num].first_sample;
+        let mut sample_num_rel = match sample_num.checked_sub(self.seq[track_num].first_sample) {
+            Some(rel) => rel,
+            None => return decode_error("isomp4: sample precedes the track fragment"),
+        };
         let mut trun_offset = traf_base_pos;
 
         let mvex = match self.moov.mvex.as_ref() {
