@@ -376,13 +376,18 @@ impl Decoder {
         let d_lpc = self.state.lpc_order;
         let mut res_q10 = vec![0i16; d_lpc];
 
-        let codebook = match self.state.bandwidth {
-            Bandwidth::NarrowBand | Bandwidth::MediumBand => &constant::CODEBOOK_NORMALIZED_LSF_STAGE_TWO_INDEX_NARROWBAND_OR_MEDIUMBAND,
-            Bandwidth::WideBand | Bandwidth::SuperWideBand | Bandwidth::FullBand => &constant::CODEBOOK_NORMALIZED_LSF_STAGE_TWO_INDEX_WIDEBAND,
+        let codebook_selector: &[u8] = match self.state.bandwidth {
+            Bandwidth::NarrowBand | Bandwidth::MediumBand => {
+                &constant::CODEBOOK_NORMALIZED_LSF_STAGE_TWO_INDEX_NARROWBAND_OR_MEDIUMBAND[i1 as usize]
+            }
+            Bandwidth::WideBand | Bandwidth::SuperWideBand | Bandwidth::FullBand => {
+                &constant::CODEBOOK_NORMALIZED_LSF_STAGE_TWO_INDEX_WIDEBAND[i1 as usize]
+            }
         };
 
-        for res_q10 in res_q10.iter_mut() {
-            let icdf = codebook[i1 as usize];
+        for (k, res_q10) in res_q10.iter_mut().enumerate() {
+            let codebook_idx = codebook_selector[k] as usize;
+            let icdf = &constant::ICDF_NORMALIZED_LSF_STAGE_TWO_INDEX[codebook_idx];
 
             let symbol = decoder.decode_symbol_with_icdf(icdf)?;
 
@@ -404,15 +409,21 @@ impl Decoder {
 
     fn reconstruct_nlsf(&self, d_lpc: usize, res_q10: &[i16], i1: u32) -> Result<Vec<i16>> {
         let mut nlsf_q15 = vec![0i16; d_lpc];
-        let cb1_q8 = match self.state.bandwidth {
-            Bandwidth::WideBand => &constant::CODEBOOK_NORMALIZED_LSF_STAGE_ONE_WIDEBAND,
-            _ => &constant::CODEBOOK_NORMALIZED_LSF_STAGE_ONE_NARROWBAND_OR_MEDIUMBAND,
+        let (cb1_q8, step_q16): (&[u8], &[i32]) = match self.state.bandwidth {
+            Bandwidth::WideBand | Bandwidth::SuperWideBand | Bandwidth::FullBand => (
+                &constant::CODEBOOK_NORMALIZED_LSF_STAGE_ONE_WIDEBAND[i1 as usize],
+                &constant::LSF_STAGE_TWO_QUANTIZATION_STEP_Q16_WB,
+            ),
+            Bandwidth::NarrowBand | Bandwidth::MediumBand => (
+                &constant::CODEBOOK_NORMALIZED_LSF_STAGE_ONE_NARROWBAND_OR_MEDIUMBAND[i1 as usize],
+                &constant::LSF_STAGE_TWO_QUANTIZATION_STEP_Q16_NB_MB,
+            ),
         };
 
         for k in 0..d_lpc {
-            let cb_value = cb1_q8[i1 as usize][k] as i32;
+            let cb_value = cb1_q8[k] as i32;
             let res_value = res_q10[k] as i32;
-            nlsf_q15[k] = ((cb_value << 7) + (res_value << 14) / 10) as i16;
+            nlsf_q15[k] = ((cb_value << 7) + ((res_value * step_q16[k]) >> 16)) as i16;
         }
 
         return Ok(nlsf_q15);
@@ -501,20 +512,15 @@ impl Decoder {
     }
 
     fn decode_ltp_scaling<R: RangeDecoder>(&self, decoder: &mut R) -> Result<f32> {
-        const LTP_SCALE_Q14_0: f32 = 15565.0 / 16384.0;
-        const LTP_SCALE_Q14_1: f32 = 12288.0 / 16384.0;
-        const LTP_SCALE_Q14_2: f32 = 8192.0 / 16384.0;
+        const LTP_SCALE_Q14_DIVISOR: f32 = 16384.0;
 
-        let i = decoder.decode_symbol_with_icdf(&constant::ICDF_LTP_SCALING_PARAMETER)?;
+        let i = decoder.decode_symbol_with_icdf(&constant::ICDF_LTP_SCALING_PARAMETER)? as usize;
 
-        let scale = match i {
-            0 => LTP_SCALE_Q14_0,
-            1 => LTP_SCALE_Q14_1,
-            2 => LTP_SCALE_Q14_2,
-            _ => return Err(Error::InvalidLTPScalingIndex.into()),
-        };
+        let scale_q14 = *constant::CODEBOOK_LTP_SCALING_Q14
+            .get(i)
+            .ok_or(Error::InvalidLTPScalingIndex)?;
 
-        return Ok(scale);
+        return Ok(scale_q14 as f32 / LTP_SCALE_Q14_DIVISOR);
     }
 
     /// Decodes Long-Term Prediction (LTP) parameters.
@@ -654,14 +660,16 @@ impl Decoder {
     }
 
     fn get_quantization_offset(&self, signal_type: SignalType, quantization_offset_type: QuantizationOffsetType) -> i32 {
-        return match (signal_type, quantization_offset_type) {
-            (SignalType::Inactive, QuantizationOffsetType::Low) => 25,
-            (SignalType::Inactive, QuantizationOffsetType::High) => 60,
-            (SignalType::Unvoiced, QuantizationOffsetType::Low) => 25,
-            (SignalType::Unvoiced, QuantizationOffsetType::High) => 60,
-            (SignalType::Voiced, QuantizationOffsetType::Low) => 8,
-            (SignalType::Voiced, QuantizationOffsetType::High) => 25,
+        let signal_idx = match signal_type {
+            SignalType::Inactive => 0,
+            SignalType::Unvoiced => 1,
+            SignalType::Voiced => 2,
         };
+        let quant_idx = match quantization_offset_type {
+            QuantizationOffsetType::Low => 0,
+            QuantizationOffsetType::High => 1,
+        };
+        return constant::QUANTIZATION_OFFSETS[signal_idx][quant_idx];
     }
     fn decode_rate_level<R: RangeDecoder>(&self, decoder: &mut R, signal_type: SignalType) -> Result<u32> {
         let icdf = match signal_type {
@@ -758,55 +766,17 @@ impl Decoder {
             return Ok(());
         }
 
-        let icdf = match (signal_type, quantization_offset_type, pulse_count) {
-            (SignalType::Inactive, QuantizationOffsetType::Low, 0) => &constant::ICDF_EXCITATION_SIGN_INACTIVE_SIGNAL_LOW_QUANTIZATION_0_PULSE,
-            (SignalType::Inactive, QuantizationOffsetType::Low, 1) => &constant::ICDF_EXCITATION_SIGN_INACTIVE_SIGNAL_LOW_QUANTIZATION_1_PULSE,
-            (SignalType::Inactive, QuantizationOffsetType::Low, 2) => &constant::ICDF_EXCITATION_SIGN_INACTIVE_SIGNAL_LOW_QUANTIZATION_2_PULSE,
-            (SignalType::Inactive, QuantizationOffsetType::Low, 3) => &constant::ICDF_EXCITATION_SIGN_INACTIVE_SIGNAL_LOW_QUANTIZATION_3_PULSE,
-            (SignalType::Inactive, QuantizationOffsetType::Low, 4) => &constant::ICDF_EXCITATION_SIGN_INACTIVE_SIGNAL_LOW_QUANTIZATION_4_PULSE,
-            (SignalType::Inactive, QuantizationOffsetType::Low, 5) => &constant::ICDF_EXCITATION_SIGN_INACTIVE_SIGNAL_LOW_QUANTIZATION_5_PULSE,
-            (SignalType::Inactive, QuantizationOffsetType::Low, _) => &constant::ICDF_EXCITATION_SIGN_INACTIVE_SIGNAL_LOW_QUANTIZATION_6_PLUS_PULSE,
-
-            (SignalType::Inactive, QuantizationOffsetType::High, 0) => &constant::ICDF_EXCITATION_SIGN_INACTIVE_SIGNAL_HIGH_QUANTIZATION_0_PULSE,
-            (SignalType::Inactive, QuantizationOffsetType::High, 1) => &constant::ICDF_EXCITATION_SIGN_INACTIVE_SIGNAL_HIGH_QUANTIZATION_1_PULSE,
-            (SignalType::Inactive, QuantizationOffsetType::High, 2) => &constant::ICDF_EXCITATION_SIGN_INACTIVE_SIGNAL_HIGH_QUANTIZATION_2_PULSE,
-            (SignalType::Inactive, QuantizationOffsetType::High, 3) => &constant::ICDF_EXCITATION_SIGN_INACTIVE_SIGNAL_HIGH_QUANTIZATION_3_PULSE,
-            (SignalType::Inactive, QuantizationOffsetType::High, 4) => &constant::ICDF_EXCITATION_SIGN_INACTIVE_SIGNAL_HIGH_QUANTIZATION_4_PULSE,
-            (SignalType::Inactive, QuantizationOffsetType::High, 5) => &constant::ICDF_EXCITATION_SIGN_INACTIVE_SIGNAL_HIGH_QUANTIZATION_5_PULSE,
-            (SignalType::Inactive, QuantizationOffsetType::High, _) => &constant::ICDF_EXCITATION_SIGN_INACTIVE_SIGNAL_HIGH_QUANTIZATION_6_PLUS_PULSE,
-
-            (SignalType::Unvoiced, QuantizationOffsetType::Low, 0) => &constant::ICDF_EXCITATION_SIGN_UNVOICED_SIGNAL_LOW_QUANTIZATION_0_PULSE,
-            (SignalType::Unvoiced, QuantizationOffsetType::Low, 1) => &constant::ICDF_EXCITATION_SIGN_UNVOICED_SIGNAL_LOW_QUANTIZATION_1_PULSE,
-            (SignalType::Unvoiced, QuantizationOffsetType::Low, 2) => &constant::ICDF_EXCITATION_SIGN_UNVOICED_SIGNAL_LOW_QUANTIZATION_2_PULSE,
-            (SignalType::Unvoiced, QuantizationOffsetType::Low, 3) => &constant::ICDF_EXCITATION_SIGN_UNVOICED_SIGNAL_LOW_QUANTIZATION_3_PULSE,
-            (SignalType::Unvoiced, QuantizationOffsetType::Low, 4) => &constant::ICDF_EXCITATION_SIGN_UNVOICED_SIGNAL_LOW_QUANTIZATION_4_PULSE,
-            (SignalType::Unvoiced, QuantizationOffsetType::Low, 5) => &constant::ICDF_EXCITATION_SIGN_UNVOICED_SIGNAL_LOW_QUANTIZATION_5_PULSE,
-            (SignalType::Unvoiced, QuantizationOffsetType::Low, _) => &constant::ICDF_EXCITATION_SIGN_UNVOICED_SIGNAL_LOW_QUANTIZATION_6_PLUS_PULSE,
-
-            (SignalType::Unvoiced, QuantizationOffsetType::High, 0) => &constant::ICDF_EXCITATION_SIGN_UNVOICED_SIGNAL_HIGH_QUANTIZATION_0_PULSE,
-            (SignalType::Unvoiced, QuantizationOffsetType::High, 1) => &constant::ICDF_EXCITATION_SIGN_UNVOICED_SIGNAL_HIGH_QUANTIZATION_1_PULSE,
-            (SignalType::Unvoiced, QuantizationOffsetType::High, 2) => &constant::ICDF_EXCITATION_SIGN_UNVOICED_SIGNAL_HIGH_QUANTIZATION_2_PULSE,
-            (SignalType::Unvoiced, QuantizationOffsetType::High, 3) => &constant::ICDF_EXCITATION_SIGN_UNVOICED_SIGNAL_HIGH_QUANTIZATION_3_PULSE,
-            (SignalType::Unvoiced, QuantizationOffsetType::High, 4) => &constant::ICDF_EXCITATION_SIGN_UNVOICED_SIGNAL_HIGH_QUANTIZATION_4_PULSE,
-            (SignalType::Unvoiced, QuantizationOffsetType::High, 5) => &constant::ICDF_EXCITATION_SIGN_UNVOICED_SIGNAL_HIGH_QUANTIZATION_5_PULSE,
-            (SignalType::Unvoiced, QuantizationOffsetType::High, _) => &constant::ICDF_EXCITATION_SIGN_UNVOICED_SIGNAL_HIGH_QUANTIZATION_6_PLUS_PULSE,
-
-            (SignalType::Voiced, QuantizationOffsetType::Low, 0) => &constant::ICDF_EXCITATION_SIGN_VOICED_SIGNAL_LOW_QUANTIZATION_0_PULSE,
-            (SignalType::Voiced, QuantizationOffsetType::Low, 1) => &constant::ICDF_EXCITATION_SIGN_VOICED_SIGNAL_LOW_QUANTIZATION_1_PULSE,
-            (SignalType::Voiced, QuantizationOffsetType::Low, 2) => &constant::ICDF_EXCITATION_SIGN_VOICED_SIGNAL_LOW_QUANTIZATION_2_PULSE,
-            (SignalType::Voiced, QuantizationOffsetType::Low, 3) => &constant::ICDF_EXCITATION_SIGN_VOICED_SIGNAL_LOW_QUANTIZATION_3_PULSE,
-            (SignalType::Voiced, QuantizationOffsetType::Low, 4) => &constant::ICDF_EXCITATION_SIGN_VOICED_SIGNAL_LOW_QUANTIZATION_4_PULSE,
-            (SignalType::Voiced, QuantizationOffsetType::Low, 5) => &constant::ICDF_EXCITATION_SIGN_VOICED_SIGNAL_LOW_QUANTIZATION_5_PULSE,
-            (SignalType::Voiced, QuantizationOffsetType::Low, _) => &constant::ICDF_EXCITATION_SIGN_VOICED_SIGNAL_LOW_QUANTIZATION_6_PLUS_PULSE,
-
-            (SignalType::Voiced, QuantizationOffsetType::High, 0) => &constant::ICDF_EXCITATION_SIGN_VOICED_SIGNAL_HIGH_QUANTIZATION_0_PULSE,
-            (SignalType::Voiced, QuantizationOffsetType::High, 1) => &constant::ICDF_EXCITATION_SIGN_VOICED_SIGNAL_HIGH_QUANTIZATION_1_PULSE,
-            (SignalType::Voiced, QuantizationOffsetType::High, 2) => &constant::ICDF_EXCITATION_SIGN_VOICED_SIGNAL_HIGH_QUANTIZATION_2_PULSE,
-            (SignalType::Voiced, QuantizationOffsetType::High, 3) => &constant::ICDF_EXCITATION_SIGN_VOICED_SIGNAL_HIGH_QUANTIZATION_3_PULSE,
-            (SignalType::Voiced, QuantizationOffsetType::High, 4) => &constant::ICDF_EXCITATION_SIGN_VOICED_SIGNAL_HIGH_QUANTIZATION_4_PULSE,
-            (SignalType::Voiced, QuantizationOffsetType::High, 5) => &constant::ICDF_EXCITATION_SIGN_VOICED_SIGNAL_HIGH_QUANTIZATION_5_PULSE,
-            (SignalType::Voiced, QuantizationOffsetType::High, _) => &constant::ICDF_EXCITATION_SIGN_VOICED_SIGNAL_HIGH_QUANTIZATION_6_PLUS_PULSE,
+        let signal_idx = match signal_type {
+            SignalType::Inactive => 0,
+            SignalType::Unvoiced => 1,
+            SignalType::Voiced => 2,
         };
+        let quant_idx = match quantization_offset_type {
+            QuantizationOffsetType::Low => 0,
+            QuantizationOffsetType::High => 1,
+        };
+        let pulse_idx = (pulse_count as usize).min(6);
+        let icdf = &constant::ICDF_EXCITATION_SIGN[signal_idx][quant_idx][pulse_idx];
 
         for sample in excitation.iter_mut() {
             if *sample != 0.0 {
