@@ -1011,38 +1011,20 @@ pub mod lsf {
     ];
 
 
-    /// Quantization Step Sizes for Normalized LSF Stage-2 Decoding
+    /// Quantization Step Sizes and Level Offset for Normalized LSF Stage-2 Decoding
     /// ```text
-    /// +-------------+-----------+-------+
-    /// | Coefficient | NB and MB |    WB |
-    /// +-------------+-----------+-------+
-    /// | 0           |     10923 |  9930 |
-    /// | 1           |     10923 |  9930 |
-    /// | 2           |      9930 |  9102 |
-    /// | 3           |      9930 |  9102 |
-    /// | 4           |      9102 |  8738 |
-    /// | 5           |      9102 |  8402 |
-    /// | 6           |      8738 |  8402 |
-    /// | 7           |      8738 |  8402 |
-    /// | 8           |      9930 |  8402 |
-    /// | 9           |     10923 |  8402 |
-    /// | 10          |           |  8402 |
-    /// | 11          |           |  8402 |
-    /// | 12          |           |  8402 |
-    /// | 13          |           |  8738 |
-    /// | 14          |           |  9102 |
-    /// | 15          |           |  9930 |
-    /// +-------------+-----------+-------+
-    /// Table 25 (RFC 6716 §4.2.7.5.3): Normalized LSF Stage-2 Quantization Step Sizes (Q16)
+    /// +-----------------+-----------+-------+
+    /// | Parameter       | NB and MB |    WB |
+    /// +-----------------+-----------+-------+
+    /// | qstep_Q16       |     11796 |  9830 |
+    /// | level_adj_Q10   |       102 |   102 |
+    /// +-----------------+-----------+-------+
+    /// RFC 6716 Section 4.2.7.5.2: Normalized LSF Stage-2 Dequantization Constants
     /// ```
-    /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.5.3>
-    pub const LSF_STAGE_TWO_QUANTIZATION_STEP_Q16_NB_MB: [i32; 10] = [
-        10923, 10923, 9930, 9930, 9102, 9102, 8738, 8738, 9930, 10923,
-    ];
-    pub const LSF_STAGE_TWO_QUANTIZATION_STEP_Q16_WB: [i32; 16] = [
-        9930, 9930, 9102, 9102, 8738, 8402, 8402, 8402,
-        8402, 8402, 8402, 8402, 8402, 8738, 9102, 9930,
-    ];
+    /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.5.2>
+    pub const LSF_STAGE_TWO_QUANTIZATION_STEP_Q16_NB_MB: i32 = 11796;
+    pub const LSF_STAGE_TWO_QUANTIZATION_STEP_Q16_WB: i32 = 9830;
+    pub const LSF_STAGE_TWO_QUANTIZATION_LEVEL_OFFSET_Q10: i32 = 102;
 
     /// Minimum Spacing for Normalized LSF Coefficients
     /// ```text
