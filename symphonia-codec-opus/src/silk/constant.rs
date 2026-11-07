@@ -43,7 +43,7 @@ pub use self::resampler::*;
 /// SILK Header, Stereo & Frame Type Constants (RFC 6716 §4.2.2–4.2.4, §4.2.7.3)
 pub mod header {
     /// TLDR;
-    ///``` text
+    /// ```text
     /// +----------+-----------------------------+
     /// | VAD Flag | PDF                         |
     /// +----------+-----------------------------+
@@ -51,7 +51,7 @@ pub mod header {
     /// |          |                             |
     /// | Active   | [0, 0, 24, 74, 148, 10]/256 |
     /// +----------+-----------------------------+
-    ///  https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.3
+    ///  <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.3>
     /// ``` 
     pub const ICDF_FRAME_TYPE_VAD_INACTIVE: [u32; 3] = [256, 26, 256];
     pub const ICDF_FRAME_TYPE_VAD_ACTIVE: [u32; 5] = [256, 24, 98, 246, 256];
@@ -69,7 +69,7 @@ pub mod header {
     /// +-------+---------------------------------------------------------+
     /// Table 7: PDFs for Stereo Prediction Weight Decoding
     /// ```
-    /// https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.2
+    /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.2>
     pub const ICDF_STEREO_PREDICTION_WEIGHT_STAGE_ONE: [u32; 17] = [
         256, 7, 16, 26, 35, 45, 76, 137, 200, 224, 241, 250, 252, 253, 254, 255, 256,
     ];
@@ -90,7 +90,7 @@ pub mod header {
     /// +-----+--------+-----+--------+-----+--------+
     /// Table 8: Stereo Prediction Weight Quantization Boundaries (Q13)
     /// ```
-    /// https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.2
+    /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.2>
     pub const CODEBOOK_STEREO_QUANTIZATION_BOUNDARIES_Q13: [i16; 17] = [
         -13732, -10050, -8266, -7526, -6500, -5000, -2950, -820,
         820, 2950, 5000, 6500, 7526, 8266, 10050, 13732, 16384,
@@ -104,7 +104,7 @@ pub mod header {
     /// | [192, 64]/256  |
     /// +----------------+
     /// ```
-    /// https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.2
+    /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.2>
     pub const ICDF_STEREO_MID_ONLY: [u32; 3] = [256, 192, 256];
 
     /// PDFs for Per-Frame LBRR Flags
@@ -117,14 +117,14 @@ pub mod header {
     /// +-------------------+-------------------------------------+
     /// Table 9: PDFs for Per-Frame LBRR Flags
     /// ```
-    /// https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.4
+    /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.4>
     pub const ICDF_PER_FRAME_LBRR_FLAGS_40_MS: [u32; 4] = [256, 53, 203, 256];
     pub const ICDF_PER_FRAME_LBRR_FLAGS_60_MS: [u32; 8] = [256, 41, 61, 176, 185, 215, 239, 256];
 }
 
 /// SILK Subframe Quantization Gain Constants (RFC 6716 §4.2.7.4)
 pub mod gain {
-    ///``` text
+    /// ```text
     /// +-------------+------------------------------------+
     /// | Signal Type | PDF                                |
     /// +-------------+------------------------------------+
@@ -134,23 +134,23 @@ pub mod gain {
     /// |             |                                    |
     /// | Voiced      | [1, 3, 26, 71, 94, 50, 9, 2]/256   |
     /// +-------------+------------------------------------+
-    /// https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.4
+    /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.4>
     /// ```
     pub const ICDF_INDEPENDENT_QUANTIZATION_GAIN_MSB_INACTIVE: [u32; 9] = [256, 32, 144, 212, 241, 253, 254, 255, 256];
     pub const ICDF_INDEPENDENT_QUANTIZATION_GAIN_MSB_UNVOICED: [u32; 9] = [256, 2, 19, 64, 124, 186, 233, 252, 256];
     pub const ICDF_INDEPENDENT_QUANTIZATION_GAIN_MSB_VOICED: [u32; 9] = [256, 1, 4, 30, 101, 195, 245, 254, 256];
 
-    ///``` text
+    /// ```text
     /// +--------------------------------------+
     /// | PDF                                  |
     /// +--------------------------------------+
     /// | [32, 32, 32, 32, 32, 32, 32, 32]/256 |
     /// +--------------------------------------+
-    /// https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.4
+    /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.4>
     /// ```
     pub const ICDF_INDEPENDENT_QUANTIZATION_GAIN_LSB: [u32; 9] = [256, 32, 64, 96, 128, 160, 192, 224, 256];
 
-    ///``` text
+    /// ```text
     /// +-------------------------------------------------------------------+
     /// | PDF                                                               |
     /// +-------------------------------------------------------------------+
@@ -242,8 +242,8 @@ pub mod lsf {
     ///   +----+---------------------+
     ///   Table 17: Codebook Selection for NB/MB Normalized LSF Stage-2 Index
     ///             Decoding
-    ///```
-    /// https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.5.2
+    /// ```
+    /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.5.2>
     pub const CODEBOOK_NORMALIZED_LSF_STAGE_TWO_INDEX_NARROWBAND_OR_MEDIUMBAND: [[u8; 10]; 32] = [
         [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         [1, 3, 1, 2, 2, 1, 2, 1, 1, 1],
@@ -353,8 +353,8 @@ pub mod lsf {
     ///  +----+------------------------------------------------+
     ///  Table 18: Codebook Selection for WB Normalized LSF Stage-2 Index
     ///            Decoding
-    ///```
-    /// https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.5.2
+    /// ```
+    /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.5.2>
     pub const CODEBOOK_NORMALIZED_LSF_STAGE_TWO_INDEX_WIDEBAND: [[u8; 16]; 32] = [
         [8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8],
         [10, 11, 11, 11, 11, 11, 10, 10, 10, 10, 10, 9, 9, 9, 8, 11],
@@ -428,7 +428,7 @@ pub mod lsf {
     /// |             |     |     |     |     |
     /// | 14          |     |     | 182 | 155 |
     /// +-------------+-----+-----+-----+-----+
-    ///```
+    /// ```
     /// Table 20: Prediction Weights for Normalized LSF Decoding
     pub const PREDICTION_WEIGHTS_NB_MB: [[u16; 9]; 2] = [
         [179, 138, 140, 148, 151, 149, 153, 151, 163],
@@ -514,8 +514,8 @@ pub mod lsf {
     ///  +----+-------------------+
     ///  Table 21: Prediction Weight Selection for NB/MB Normalized LSF
     ///            Decoding
-    ///```
-    /// https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.5.2
+    /// ```
+    /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.5.2>
     pub const PREDICTION_WEIGHT_SELECTION_NB_MB: [[u8; 9]; 32] = [
         [0, 1, 0, 0, 0, 0, 0, 0, 0],
         [1, 0, 0, 0, 0, 0, 0, 0, 0],
@@ -553,7 +553,7 @@ pub mod lsf {
 
     /// Prediction Weight Selection for WB Normalized LSF Decoding
     /// Table 22 from RFC 6716 Section 4.2.7.5.2
-    ///```text
+    /// ```text
     /// +----+---------------------------------------------+
     /// | I1 | Coefficient                                 |
     /// +----+---------------------------------------------+
@@ -879,6 +879,7 @@ pub mod lsf {
     ];
 
     /// LSF Ordering for Polynomial Evaluation
+    /// ```text
     ///  +-------------+-----------+----+
     ///  | Coefficient | NB and MB | WB |
     ///  +-------------+-----------+----+
@@ -1034,7 +1035,7 @@ pub mod lsf {
     /// +-------------+-----------+-------+
     /// Table 25 (RFC 6716 §4.2.7.5.3): Normalized LSF Stage-2 Quantization Step Sizes (Q16)
     /// ```
-    /// https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.5.3
+    /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.5.3>
     pub const LSF_STAGE_TWO_QUANTIZATION_STEP_Q16_NB_MB: [i32; 10] = [
         10923, 10923, 9930, 9930, 9102, 9102, 8738, 8738, 9930, 10923,
     ];
@@ -1084,11 +1085,11 @@ pub mod lsf {
     ///  +-------------+-----------+-----+
     /// Table 25: Minimum Spacing for Normalized LSF Coefficients
     /// ```
-    /// https:///datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.5.4
+    /// <https:///datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.5.4>
     pub const MINIMUM_SPACING_NORMALIZED_LSF_NARROWBAND_MEDIUMBAND: [i32; 11] = [250, 3, 6, 3, 3, 3, 4, 3, 3, 3, 461];
     pub const MINIMUM_SPACING_NORMALIZED_LSF_WB: [i32; 17] = [100, 3, 40, 3, 3, 3, 5, 14, 14, 10, 11, 3, 8, 9, 7, 3, 347];
 
-    ///``` text
+    /// ```text
     /// +-----------+----------+--------------------------------------------+
     /// | Audio     | Signal   | PDF                                        |
     /// | Bandwidth | Type     |                                            |
@@ -1129,7 +1130,7 @@ pub mod lsf {
         180, 186, 187, 199, 211, 222, 232, 235, 245, 250, 251, 252, 253, 256,
     ];
 
-    ///``` text
+    /// ```text
     /// +-------------------------------+
     /// | PDF                           |
     /// +-------------------------------+
@@ -1139,7 +1140,7 @@ pub mod lsf {
     /// ```
     pub const ICDF_NORMALIZED_LSF_STAGE_TWO_INDEX_EXTENSION: [u32; 8] = [256, 156, 216, 240, 249, 253, 255, 256];
 
-    ///``` text
+    /// ```text
     /// +----------+--------------------------------------+
     /// | Codebook | PDF                                  |
     /// +----------+--------------------------------------+
@@ -1204,7 +1205,7 @@ pub mod lsf {
         [256, 1, 8, 29, 79, 156, 237, 254, 255, 256],
     ];
 
-    ///``` text
+    /// ```text
     /// +---------------------------+
     /// | PDF                       |
     /// +---------------------------+
@@ -1641,7 +1642,7 @@ pub mod ltp {
         [2, 0, 9, 10, 88],
     ];
 
-    ///``` text
+    /// ```text
     /// +-------------------------------------------------------------------+
     /// | PDF                                                               |
     /// +-------------------------------------------------------------------+
@@ -1650,7 +1651,7 @@ pub mod ltp {
     /// +-------------------------------------------------------------------+
     /// Table 29: PDF for High Part of Primary Pitch Lag
     /// 
-    /// https://www.rfc-editor.org/rfc/rfc6716.html#section-4.2.7.6.1
+    /// <https://www.rfc-editor.org/rfc/rfc6716.html#section-4.2.7.6.1>
     /// ```
     pub const ICDF_PRIMARY_PITCH_LAG_HIGH_PART: [u32; 33] = [
         256, 3, 6, 12, 23, 44, 74, 106, 125, 136,
@@ -1659,7 +1660,7 @@ pub mod ltp {
         254, 255, 256,
     ];
 
-    ///``` text
+    /// ```text
     /// +------------+------------------------+-------+----------+----------+
     /// | Audio      | PDF                    | Scale | Minimum  | Maximum  |
     /// | Bandwidth  |                        |       | Lag      | Lag      |
@@ -1679,7 +1680,7 @@ pub mod ltp {
     pub const ICDF_PRIMARY_PITCH_LAG_LOW_PART_MEDIUMBAND: [u32; 7] = [256, 43, 85, 128, 171, 213, 256];
     pub const ICDF_PRIMARY_PITCH_LAG_LOW_PART_WIDEBAND: [u32; 9] = [256, 32, 64, 96, 128, 160, 192, 224, 256];
 
-    ///``` text
+    /// ```text
     /// +-----------+--------+----------+-----------------------------------+
     /// | Audio     | SILK   | Codebook | PDF                               |
     /// | Bandwidth | Frame  |     Size |                                   |
@@ -1699,7 +1700,7 @@ pub mod ltp {
     /// |           |        |          | 2, 1, 1, 1, 1]/256                |
     /// +-----------+--------+----------+-----------------------------------+
     /// Table 32: PDFs for Subframe Pitch Contour
-    /// https://www.rfc-editor.org/rfc/rfc6716.html#section-4.2.7.6.1
+    /// <https://www.rfc-editor.org/rfc/rfc6716.html#section-4.2.7.6.1>
     /// ```
     pub const ICDF_SUBFRAME_PITCH_CONTOUR_NARROWBAND_10_MS: [u32; 4] = [256, 143, 193, 256, ];
     pub const ICDF_SUBFRAME_PITCH_CONTOUR_NARROWBAND_20_MS: [u32; 12] = [
@@ -1714,18 +1715,18 @@ pub mod ltp {
         240, 242, 244, 246, 248, 250, 252, 253, 254, 255, 256,
     ];
 
-    ///``` text
+    /// ```text
     /// +------------------+
     /// | PDF              |
     /// +------------------+
     /// | [77, 80, 99]/256 |
     /// +------------------+
     /// Table 37: Periodicity Index PDF
-    /// https://www.rfc-editor.org/rfc/rfc6716.html#section-4.2.7.6.2
+    /// <https://www.rfc-editor.org/rfc/rfc6716.html#section-4.2.7.6.2>
     /// ```
     pub const ICDF_PERIODICITY_INDEX: [u32; 4] = [256, 77, 157, 256, ];
 
-    ///``` text
+    /// ```text
     /// +-------------+----------+------------------------------------------+
     /// | Periodicity | Codebook | PDF                                      |
     /// | Index       |     Size |                                          |
@@ -1755,7 +1756,7 @@ pub mod ltp {
         218, 223, 227, 232, 236, 240, 244, 247, 251, 254, 256,
     ];
 
-    ///``` text
+    /// ```text
     /// +-------------------+
     /// | PDF               |
     /// +-------------------+
@@ -1777,7 +1778,7 @@ pub mod ltp {
     /// +-------------------------------------------------------------------+
     /// Table 31: PDF for Relative Pitch Lag
     /// ```
-    /// https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.6.1
+    /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.6.1>
     pub const ICDF_RELATIVE_DELTA_PITCH_LAG: [u32; 22] = [
         256, 16, 18, 21, 27, 37, 52, 75, 106, 140, 172,
         198, 217, 229, 237, 242, 245, 248, 250, 252, 254, 256,
@@ -1794,13 +1795,13 @@ pub mod ltp {
     /// +-------+-----------------+
     /// Table 42: Codebook for LTP Scaling Parameter
     /// ```
-    /// https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.6.3
+    /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.6.3>
     pub const CODEBOOK_LTP_SCALING_Q14: [i16; 3] = [15565, 12288, 8192];
 }
 
 /// SILK Excitation PVQ Shell Coding, Signs & LCG Constants (RFC 6716 §4.2.7.8)
 pub mod excitation {
-    ///``` text
+    /// ```text
     /// +----------------------+
     /// | PDF                  |
     /// +----------------------+
@@ -1810,7 +1811,7 @@ pub mod excitation {
     /// ```
     pub const ICDF_LINEAR_CONGRUENTIAL_GENERATOR_SEED: [u32; 5] = [256, 64, 128, 192, 256, ];
 
-    ///``` text
+    /// ```text
     /// +----------------------+------------------------------------------+
     /// | Signal Type          | PDF                                      |
     /// +----------------------+------------------------------------------+
@@ -1823,7 +1824,7 @@ pub mod excitation {
     pub const ICDF_RATE_LEVEL_UNVOICED: [u32; 10] = [256, 15, 66, 78, 124, 169, 182, 215, 242, 256];
     pub const ICDF_RATE_LEVEL_VOICED: [u32; 10] = [256, 33, 63, 99, 116, 150, 199, 217, 238, 256];
 
-    ///``` text
+    /// ```text
     /// +----------+--------------------------------------------------------+
     /// | Rate     | PDF                                                    |
     /// | Level    |                                                        |
@@ -1877,7 +1878,7 @@ pub mod excitation {
         [256, 2, 3, 9, 36, 94, 150, 189, 214, 228, 238, 244, 247, 250, 252, 253, 254, 256, 256],
     ];
 
-    ///``` text
+    /// ```text
     /// +------------+------------------------------------------------------+
     /// | Pulse      | PDF                                                  |
     /// | Count      |                                                      |
@@ -1939,7 +1940,7 @@ pub mod excitation {
         &[256, 1, 2, 3, 4, 17, 35, 62, 98, 139, 180, 214, 238, 252, 253, 254, 255, 256],
     ];
 
-    ///``` text
+    /// ```text
     /// +------------+------------------------------------------------------+
     /// | Pulse      | PDF                                                  |
     /// | Count      |                                                      |
@@ -2001,7 +2002,7 @@ pub mod excitation {
         &[256, 1, 2, 4, 10, 22, 43, 73, 109, 147, 183, 213, 234, 246, 252, 254, 255, 256],
     ];
 
-    ///``` text
+    /// ```text
     /// +------------+------------------------------------------------------+
     /// | Pulse      | PDF                                                  |
     /// | Count      |                                                      |
@@ -2043,7 +2044,7 @@ pub mod excitation {
     /// |            | 4, 1, 1]/256                                         |
     /// +------------+------------------------------------------------------+
     /// Table 49: PDFs for Pulse Count Split, 4 Sample Partitions
-    ///```
+    /// ```
     pub const ICDF_PULSE_COUNT_SPLIT_4_SAMPLE_PARTITIONS: [&[u32]; 16] = [
         &[256, 127, 256],
         &[256, 49, 206, 256],
@@ -2063,7 +2064,7 @@ pub mod excitation {
         &[256, 1, 2, 6, 15, 30, 51, 79, 111, 145, 177, 205, 226, 241, 250, 254, 255, 256],
     ];
 
-    ///``` text
+    /// ```text
     /// +------------+------------------------------------------------------+
     /// | Pulse      | PDF                                                  |
     /// | Count      |                                                      |
@@ -2105,7 +2106,7 @@ pub mod excitation {
     /// |            | 4, 2, 1]/256                                         |
     /// +------------+------------------------------------------------------+
     /// Table 50: PDFs for Pulse Count Split, 2 Sample Partitions
-    ///```
+    /// ```
     pub const ICDF_PULSE_COUNT_SPLIT_2_SAMPLE_PARTITIONS: [&[u32]; 16] = [
         &[256, 128, 256],
         &[256, 42, 214, 256],
@@ -2125,7 +2126,7 @@ pub mod excitation {
         &[256, 1, 3, 7, 14, 27, 48, 76, 110, 146, 180, 208, 229, 242, 249, 253, 255, 256],
     ];
 
-    ///``` text
+    /// ```text
     /// +----------------+
     /// | PDF            |
     /// +----------------+
@@ -2135,7 +2136,7 @@ pub mod excitation {
     /// ```
     pub const ICDF_EXCITATION_LSB: [u32; 3] = [256, 136, 256];
 
-    ///``` text
+    /// ```text
     /// +-------------+-----------------------+-------------+---------------+
     /// | Signal Type | Quantization Offset   | Pulse Count | PDF           |
     /// |             | Type                  |             |               |
@@ -2278,7 +2279,7 @@ pub mod excitation {
     /// - `quantization_offset_type`: `0 = Low`, `1 = High`
     /// - `pulse_count`: `0..=6` (where `6` represents `6 or more` pulses)
     ///
-    /// https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.8.5
+    /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.8.5>
     pub const ICDF_EXCITATION_SIGN: [[[[u32; 3]; 7]; 2]; 3] = [
         // SignalType::Inactive
         [
@@ -2365,7 +2366,7 @@ pub mod excitation {
     /// +-------------+--------------------------+--------+
     /// Table 13 / §4.2.7.8.6: Excitation Quantization Offsets
     /// ```
-    /// https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.8.6
+    /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.8.6>
     pub const QUANTIZATION_OFFSETS: [[i32; 2]; 3] = [
         [25, 60], // Inactive: [Low, High]
         [25, 60], // Unvoiced: [Low, High]
@@ -2386,12 +2387,12 @@ pub mod resampler {
     /// +-------------+------------------------+
     /// Table 53: Resampler IIR Filter Coefficients
     /// ```
-    /// https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.9
+    /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.9>
     pub const RESAMPLER_IIR_COEFFICIENTS_Q14: [i32; 3] = [4892, -13363, 7306];
 
     /// Resampler Interpolation FIR Coefficients for 8 kHz (NB -> 48 kHz)
     /// Table 54: FIR Coefficients for 8 kHz SILK Resampler
-    /// https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.9
+    /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.9>
     pub const RESAMPLER_FIR_COEFFICIENTS_8KHZ: [[i32; 3]; 12] = [
         [153, -890, 3901],
         [105, -737, 10847],
@@ -2409,7 +2410,7 @@ pub mod resampler {
 
     /// Resampler Interpolation FIR Coefficients for 12 kHz (MB -> 48 kHz)
     /// Table 54: FIR Coefficients for 12 kHz SILK Resampler
-    /// https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.9
+    /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.9>
     pub const RESAMPLER_FIR_COEFFICIENTS_12KHZ: [[i32; 4]; 8] = [
         [-142, 588, -1732, 3783],
         [-24, 172, -1028, 12802],
@@ -2423,7 +2424,7 @@ pub mod resampler {
 
     /// Resampler Interpolation FIR Coefficients for 16 kHz (WB -> 48 kHz)
     /// Table 54: FIR Coefficients for 16 kHz SILK Resampler
-    /// https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.9
+    /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.9>
     pub const RESAMPLER_FIR_COEFFICIENTS_16KHZ: [[i32; 3]; 8] = [
         [98, -778, 3840],
         [49, -564, 12868],
