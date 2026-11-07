@@ -56,7 +56,7 @@ use crate::silk::constant;
 use symphonia_core::audio::{AsGenericAudioBufferRef, Audio, AudioBuffer, AudioMut, AudioSpec, Channels, GenericAudioBufferRef};
 use symphonia_core::codecs::audio::{AudioCodecParameters, FinalizeResult};
 use symphonia_core::errors::Result;
-use symphonia_core::io::{BitReaderLtr, FiniteBitStream, ReadBitsLtr};
+use symphonia_core::io::BitReaderLtr;
 use symphonia_core::packet::PacketRef;
 
 /// SILK Frame Structure
@@ -197,111 +197,288 @@ impl Decoder {
         }
 
         for frame_data in frame_packet.frames.iter() {
-            let frame = self.decode_frame(frame_data)?;
-            self.synthesize_frame(&frame)?;
-        }
+            if frame_data.is_empty() {
+                continue;
+            }
 
-        if self.state.lbrr_flag {
-            let lbrr_frames_data = self.extract_lbrr_frames(packet.data)?;
-            for lbrr_data in lbrr_frames_data.iter() {
-                let lbrr_frame = self.decode_frame(lbrr_data)?;
-                self.synthesize_frame(&lbrr_frame)?;
+            let decoded_opus_frame = self.decode_opus_frame(frame_data, frame_packet.stereo)?;
+
+            for lbrr_frame in decoded_opus_frame.lbrr_frames.iter() {
+                self.synthesize_frame(&lbrr_frame.mid)?;
+            }
+
+            for regular_frame in decoded_opus_frame.regular_frames.iter() {
+                self.synthesize_frame(&regular_frame.mid)?;
             }
         }
 
         return Ok(self.buffer.as_generic_audio_buffer_ref());
     }
 
-    fn extract_lbrr_frames<'a>(&self, packet_data: &'a [u8]) -> Result<Vec<&'a [u8]>> {
-        let mut lbrr_frames = Vec::new();
-        let mut reader = BitReaderLtr::new(packet_data);
-        let mut offset = 0;
-
-        const MAX_LBRR_FRAME_SIZE: usize = 4096;
-        while reader.bits_left() >= 8 {
-            let frame_length = self.read_lbrr_frame_length(&mut reader)?;
-
-            if frame_length > MAX_LBRR_FRAME_SIZE {
-                return Err(Error::FrameLengthExceedsMaximum.into());
-            }
-
-            if frame_length as u64 * 8 > reader.bits_left() {
-                return Err(Error::InvalidLBRRFrame.into());
-            }
-
-            let frame_start = offset;
-            reader.ignore_bits(frame_length as u32 * 8)?;
-            offset += frame_length;
-
-            if offset > packet_data.len() {
-                return Err(Error::FrameLengthExceedsDataSize.into());
-            }
-
-            lbrr_frames.push(&packet_data[frame_start..offset]);
-        }
-
-        return Ok(lbrr_frames);
-    }
-
-
-    fn read_lbrr_frame_length(&self, reader: &mut BitReaderLtr) -> Result<usize> {
-        let mut length = 0;
-        loop {
-            let byte = reader.read_bits_leq32(8)? as u8;
-            length += byte as usize;
-            if byte != 0xFF {
-                break;
-            }
-        }
-
-        return Ok(length);
-    }
-
-    fn decode_frame(&mut self, data: &[u8]) -> Result<Frame> {
-        let sample_count = State::calculate_frame_length(self.state.sample_rate, self.state.frame_size)?;
-        let num_subframes = SubframeSize::from(self.state.frame_size);
-        let mut frame = Frame::new(sample_count, num_subframes);
-
+    /// Decodes a single Opus frame payload (10, 20, 40, or 60 ms) containing 1 to 3 SILK frames.
+    ///
+    /// ```text
+    /// +-------------------------------------------------------------------+
+    /// | 1. Header Bits (RFC 6716 Section 4.2.3)                           |
+    /// |    - Mono:   [VAD_0 .. VAD_{F-1}, LBRR_0]                         |
+    /// |    - Stereo: [VAD_mid_0 .. VAD_mid_{F-1}, LBRR_mid,               |
+    /// |               VAD_side_0 .. VAD_side_{F-1}, LBRR_side]            |
+    /// +-------------------------------------------------------------------+
+    /// | 2. Per-Frame LBRR Flags (RFC 6716 Section 4.2.4, Table 4)         |
+    /// |    - Coded per channel c where LBRR_c == 1 (40 ms or 60 ms only)  |
+    /// +-------------------------------------------------------------------+
+    /// | 3. LBRR Frames 0..F-1 (RFC 6716 Section 4.2.5 - 4.2.6)            |
+    /// |    - Present for SILK sub-frame f if any channel has LBRR[c][f]   |
+    /// +-------------------------------------------------------------------+
+    /// | 4. Regular SILK Frames 0..F-1 (RFC 6716 Section 4.2.7)            |
+    /// |    - Stereo weights + conditional mid-only flag (if stereo)       |
+    /// |    - Mid (or Mono) SILK frame                                     |
+    /// |    - Side SILK frame (if stereo and !mid_only)                    |
+    /// +-------------------------------------------------------------------+
+    /// ```
+    ///
+    /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.2>
+    fn decode_opus_frame(&mut self, data: &[u8], is_stereo: bool) -> Result<DecodedOpusFrame> {
         let reader = BitReaderLtr::new(data);
         let mut range_decoder = entropy::Decoder::new(reader)?;
 
-        let (vad_flag, lbrr_flag) = self.decode_header_bits(&mut range_decoder)?;
+        return self.decode_opus_frame_from_range_decoder(&mut range_decoder, is_stereo);
+    }
+
+    fn decode_opus_frame_from_range_decoder<R: RangeDecoder>(
+        &mut self,
+        range_decoder: &mut R,
+        is_stereo: bool,
+    ) -> Result<DecodedOpusFrame> {
+        let header = self.decode_silk_header(range_decoder, is_stereo, self.state.frame_size)?;
+        self.state.lbrr_flag = header.has_any_lbrr();
+
+        let silk_frame_duration = State::silk_frame_duration(self.state.frame_size)?;
+
+        let mut lbrr_frames = Vec::new();
+        for f in 0..header.num_silk_frames {
+            if header.has_frame_lbrr(f) {
+                let lbrr_pair = self.decode_silk_frame_pair(
+                    range_decoder,
+                    silk_frame_duration,
+                    is_stereo,
+                    header.per_frame_lbrr[0][f],
+                    header.per_frame_lbrr[1][f],
+                    true,
+                )?;
+                lbrr_frames.push(lbrr_pair);
+            }
+        }
+
+        let mut regular_frames = Vec::with_capacity(header.num_silk_frames);
+        for f in 0..header.num_silk_frames {
+            let regular_pair = self.decode_silk_frame_pair(
+                range_decoder,
+                silk_frame_duration,
+                is_stereo,
+                header.vad_flags[0][f],
+                header.vad_flags[1][f],
+                header.per_frame_lbrr[0][f] || header.per_frame_lbrr[1][f],
+            )?;
+            regular_frames.push(regular_pair);
+        }
+
+        return Ok(DecodedOpusFrame {
+            header,
+            lbrr_frames,
+            regular_frames,
+        });
+    }
+
+    fn decode_silk_frame_pair<R: RangeDecoder>(
+        &mut self,
+        range_decoder: &mut R,
+        silk_frame_duration: FrameDuration,
+        is_stereo: bool,
+        mid_vad: bool,
+        side_vad: bool,
+        lbrr_flag: bool,
+    ) -> Result<SilkChannelFramePair> {
+        let (stereo_weights, mid_only) = if is_stereo {
+            let weights = self.decode_stereo_prediction_weights(range_decoder)?;
+            let mid_only_flag = self.decode_mid_only_flag(range_decoder, side_vad)?;
+            (Some(weights), mid_only_flag)
+        } else {
+            (None, false)
+        };
+
+        let mut mid = self.decode_single_silk_frame(
+            range_decoder,
+            silk_frame_duration,
+            mid_vad,
+            lbrr_flag,
+        )?;
+        mid.stereo_weights = stereo_weights;
+        mid.mid_only = mid_only;
+
+        let side = if is_stereo && !mid_only {
+            let mut side_frame = self.decode_single_silk_frame(
+                range_decoder,
+                silk_frame_duration,
+                side_vad,
+                lbrr_flag,
+            )?;
+            side_frame.stereo_weights = stereo_weights;
+            side_frame.mid_only = mid_only;
+            Some(side_frame)
+        } else {
+            None
+        };
+
+        return Ok(SilkChannelFramePair {
+            stereo_weights,
+            mid_only,
+            mid,
+            side,
+        });
+    }
+
+    fn decode_single_silk_frame<R: RangeDecoder>(
+        &mut self,
+        range_decoder: &mut R,
+        silk_frame_duration: FrameDuration,
+        vad_flag: bool,
+        lbrr_flag: bool,
+    ) -> Result<Frame> {
+        let sample_count = State::calculate_frame_length(self.state.sample_rate, silk_frame_duration)?;
+        let num_subframes = SubframeSize::from(silk_frame_duration);
+        let mut frame = Frame::new(sample_count, num_subframes);
         frame.vad_flag = vad_flag;
         frame.lbrr_flag = lbrr_flag;
 
-        frame.frame_type = self.decode_frame_type(&mut range_decoder, vad_flag)?;
+        frame.frame_type = self.decode_frame_type(range_decoder, vad_flag)?;
 
-        self.decode_gains(&mut range_decoder, &mut frame)?;
+        self.decode_gains(range_decoder, &mut frame)?;
 
-        self.decode_lsf(&mut range_decoder, &mut frame)?;
-
-        if self.state.frame_size == FrameDuration::Ms20 {
-            frame.lsf_interpolation_index = Some(range_decoder.decode_symbol_with_icdf(&constant::ICDF_NORMALIZED_LSF_INTERPOLATION_INDEX)?);
-        }
+        self.decode_lsf(range_decoder, &mut frame, silk_frame_duration)?;
 
         if frame.frame_type.signal_type == SignalType::Voiced {
-            self.decode_ltp(&mut range_decoder, &mut frame)?;
+            self.decode_ltp(range_decoder, &mut frame, silk_frame_duration)?;
         }
 
-        self.decode_excitation(&mut range_decoder, &mut frame)?;
+        self.decode_excitation(range_decoder, &mut frame)?;
 
         return Ok(frame);
     }
 
-    /// Decodes the SILK frame header
+    /// Decodes the SILK header bits and optional per-frame LBRR flags at the start of an Opus frame.
     ///
-    /// The SILK frame begins with two to eight header bits, which consist of
-    /// one Voice Activity Detection (VAD) bit per frame (up to 3), followed by
-    /// a single flag indicating the presence of LBRR frames.
+    /// The SILK layer begins with two to eight header bits depending on frame duration (10/20/40/60 ms)
+    /// and channel count (mono vs. stereo). Each channel codes `1..=3` VAD flags (one per 10/20 ms
+    /// SILK frame) followed by one global channel LBRR flag. Immediately afterward, any channel with
+    /// `lbrr_flag == true` in a 40 ms or 60 ms packet codes a per-frame LBRR bitmask using Table 4.
     ///
     /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.3>
-    fn decode_header_bits<R: RangeDecoder>(&self, decoder: &mut R) -> Result<(bool, bool)> {
-        let vad_flag = decoder.decode_symbol_logp(1)? == 1;
-        let lbrr_flag = decoder.decode_symbol_logp(1)? == 1;
+    /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.4>
+    fn decode_silk_header<R: RangeDecoder>(
+        &self,
+        decoder: &mut R,
+        is_stereo: bool,
+        frame_size: FrameDuration,
+    ) -> Result<SilkHeaderFlags> {
+        let num_channels = if is_stereo { 2 } else { 1 };
+        let num_silk_frames = State::silk_frame_count(frame_size)?;
 
-        return Ok((vad_flag, lbrr_flag));
+        let mut vad_flags = [[false; 3]; 2];
+        let mut lbrr_flags = [false; 2];
+        let mut per_frame_lbrr = [[false; 3]; 2];
+
+        for ch in 0..num_channels {
+            for vad_flag in vad_flags[ch].iter_mut().take(num_silk_frames) {
+                *vad_flag = decoder.decode_symbol_logp(1)? == 1;
+            }
+            lbrr_flags[ch] = decoder.decode_symbol_logp(1)? == 1;
+        }
+
+        for ch in 0..num_channels {
+            if lbrr_flags[ch] {
+                match frame_size {
+                    FrameDuration::Ms10 | FrameDuration::Ms20 => {
+                        per_frame_lbrr[ch][0] = true;
+                    }
+                    FrameDuration::Ms40 => {
+                        let mask = decoder.decode_symbol_with_icdf(&constant::ICDF_PER_FRAME_LBRR_FLAGS_40_MS)? + 1;
+                        for (f, flag) in per_frame_lbrr[ch].iter_mut().enumerate().take(num_silk_frames) {
+                            *flag = ((mask >> f) & 1) != 0;
+                        }
+                    }
+                    FrameDuration::Ms60 => {
+                        let mask = decoder.decode_symbol_with_icdf(&constant::ICDF_PER_FRAME_LBRR_FLAGS_60_MS)? + 1;
+                        for (f, flag) in per_frame_lbrr[ch].iter_mut().enumerate().take(num_silk_frames) {
+                            *flag = ((mask >> f) & 1) != 0;
+                        }
+                    }
+                    FrameDuration::Ms2_5 | FrameDuration::Ms5 => {
+                        return Err(Error::UnsupportedFrameSize.into());
+                    }
+                }
+            }
+        }
+
+        return Ok(SilkHeaderFlags {
+            num_channels,
+            num_silk_frames,
+            vad_flags,
+            lbrr_flags,
+            per_frame_lbrr,
+        });
     }
 
+    /// Decodes stereo prediction weights (`w0_Q13`, `w1_Q13`) at the start of a stereo SILK frame.
+    ///
+    /// ```text
+    /// wi0 = i0 + 3 * (n / 5)
+    /// wi1 = i2 + 3 * (n % 5)
+    /// w1_Q13 = w_Q13[wi1] + (((w_Q13[wi1 + 1] - w_Q13[wi1]) * 6554) >> 16) * (2 * i3 + 1)
+    /// w0_Q13 = w_Q13[wi0] + (((w_Q13[wi0 + 1] - w_Q13[wi0]) * 6554) >> 16) * (2 * i1 + 1) - w1_Q13
+    /// ```
+    ///
+    /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.1>
+    fn decode_stereo_prediction_weights<R: RangeDecoder>(&self, decoder: &mut R) -> Result<StereoWeights> {
+        let n = decoder.decode_symbol_with_icdf(&constant::ICDF_STEREO_PREDICTION_WEIGHT_STAGE_ONE)? as usize;
+        let i0 = decoder.decode_symbol_with_icdf(&constant::ICDF_STEREO_PREDICTION_WEIGHT_STAGE_TWO)? as usize;
+        let i1 = decoder.decode_symbol_with_icdf(&constant::ICDF_STEREO_PREDICTION_WEIGHT_STAGE_THREE)? as i32;
+        let i2 = decoder.decode_symbol_with_icdf(&constant::ICDF_STEREO_PREDICTION_WEIGHT_STAGE_TWO)? as usize;
+        let i3 = decoder.decode_symbol_with_icdf(&constant::ICDF_STEREO_PREDICTION_WEIGHT_STAGE_THREE)? as i32;
+
+        let wi0 = i0 + 3 * (n / 5);
+        let wi1 = i2 + 3 * (n % 5);
+
+        let w_q13 = &constant::CODEBOOK_STEREO_QUANTIZATION_BOUNDARIES_Q13;
+        if wi0 + 1 >= w_q13.len() || wi1 + 1 >= w_q13.len() {
+            return Err(Error::InvalidData.into());
+        }
+
+        let w1_low = w_q13[wi1] as i32;
+        let w1_high = w_q13[wi1 + 1] as i32;
+        let w1_q13 = w1_low + ((((w1_high - w1_low) * 6554) >> 16) * (2 * i3 + 1));
+
+        let w0_low = w_q13[wi0] as i32;
+        let w0_high = w_q13[wi0 + 1] as i32;
+        let w0_q13 = w0_low + ((((w0_high - w0_low) * 6554) >> 16) * (2 * i1 + 1)) - w1_q13;
+
+        return Ok(StereoWeights { w0_q13, w1_q13 });
+    }
+
+    /// Decodes the conditional mid-only stereo flag when the side channel is inactive.
+    ///
+    /// When `side_active` is `true` (side VAD is 1 for a regular frame, or side LBRR is 1 for an
+    /// LBRR frame), the side channel must be coded and the mid-only flag is omitted (`false`).
+    ///
+    /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.2>
+    fn decode_mid_only_flag<R: RangeDecoder>(&self, decoder: &mut R, side_active: bool) -> Result<bool> {
+        if side_active {
+            return Ok(false);
+        }
+
+        let mid_only = decoder.decode_symbol_with_icdf(&constant::ICDF_STEREO_MID_ONLY)?;
+        return Ok(mid_only == 1);
+    }
 
     /// Decodes the SILK frame type
     ///
@@ -332,7 +509,12 @@ impl Decoder {
     /// interpolation for 20 ms frames.
     ///
     /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.5>
-    fn decode_lsf<R: RangeDecoder>(&self, decoder: &mut R, frame: &mut Frame) -> Result<()> {
+    fn decode_lsf<R: RangeDecoder>(
+        &self,
+        decoder: &mut R,
+        frame: &mut Frame,
+        silk_frame_duration: FrameDuration,
+    ) -> Result<()> {
         for subframe in frame.subframes.iter_mut() {
             let i1 = self.decode_lsf_stage1(decoder, frame.vad_flag, frame.frame_type.signal_type)?;
             let (d_lpc, res_q10) = self.decode_lsf_stage2(decoder, i1)?;
@@ -341,7 +523,7 @@ impl Decoder {
             subframe.nlsf_q15 = stabilized_nlsf_q15;
         }
 
-        if self.state.frame_size == FrameDuration::Ms20 {
+        if silk_frame_duration == FrameDuration::Ms20 {
             let interpolation_index = decoder.decode_symbol_with_icdf(&constant::ICDF_NORMALIZED_LSF_INTERPOLATION_INDEX)?;
             frame.lsf_interpolation_index = Some(interpolation_index);
 
@@ -460,17 +642,21 @@ impl Decoder {
         return Ok(stable_nlsf);
     }
 
-    fn decode_pitch_lags<R: RangeDecoder>(&self, decoder: &mut R) -> Result<Vec<u16>> {
-        let num_subframes = SubframeSize::from(self.state.frame_size);
+    fn decode_pitch_lags<R: RangeDecoder>(
+        &self,
+        decoder: &mut R,
+        silk_frame_duration: FrameDuration,
+    ) -> Result<Vec<u16>> {
+        let num_subframes = SubframeSize::from(silk_frame_duration);
 
         let mut pitch_lags = vec![0u16; num_subframes];
 
         let primary_lag = self.decode_primary_lag(decoder)?;
 
-        for i in 0..num_subframes {
+        for pitch_lag in pitch_lags.iter_mut().take(num_subframes) {
             let k = decoder.decode_symbol_with_icdf(&constant::ICDF_SUBFRAME_PITCH_CONTOUR_NARROWBAND_20_MS)?;
             let contour = constant::CODEBOOK_SUBFRAME_PITCH_CONTOUR_NARROWBAND_20MS[k as usize];
-            pitch_lags[i] = (primary_lag as i32 + contour[i] as i32) as u16;
+            *pitch_lag = (primary_lag as i32 + contour[0] as i32) as u16;
         }
 
         return Ok(pitch_lags);
@@ -483,8 +669,12 @@ impl Decoder {
         return Ok((high_part as u16 * 4) + low_part as u16 + 16);
     }
 
-    fn decode_ltp_coeffs<R: RangeDecoder>(&self, decoder: &mut R) -> Result<Vec<Vec<i8>>> {
-        let num_subframes = self.state.frame_size.into();
+    fn decode_ltp_coeffs<R: RangeDecoder>(
+        &self,
+        decoder: &mut R,
+        silk_frame_duration: FrameDuration,
+    ) -> Result<Vec<Vec<i8>>> {
+        let num_subframes = SubframeSize::from(silk_frame_duration);
         let mut ltp_coeffs = vec![vec![0i8; 5]; num_subframes];
 
         let periodicity_index = decoder.decode_symbol_with_icdf(&constant::ICDF_PERIODICITY_INDEX)?;
@@ -527,9 +717,14 @@ impl Decoder {
     /// This includes pitch lags, LTP coefficients, and LTP scaling.
     ///
     /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.6>
-    fn decode_ltp<R: RangeDecoder>(&mut self, decoder: &mut R, frame: &mut Frame) -> Result<()> {
-        let pitch_lags = self.decode_pitch_lags(decoder)?;
-        let ltp_coeffs = self.decode_ltp_coeffs(decoder)?;
+    fn decode_ltp<R: RangeDecoder>(
+        &mut self,
+        decoder: &mut R,
+        frame: &mut Frame,
+        silk_frame_duration: FrameDuration,
+    ) -> Result<()> {
+        let pitch_lags = self.decode_pitch_lags(decoder, silk_frame_duration)?;
+        let ltp_coeffs = self.decode_ltp_coeffs(decoder, silk_frame_duration)?;
         let ltp_scale = self.decode_ltp_scaling(decoder)?;
 
         if pitch_lags.len() != frame.subframes.len() || ltp_coeffs.len() != frame.subframes.len() {
@@ -655,7 +850,7 @@ impl Decoder {
             lcg_seed = lcg_seed.wrapping_add(e_raw as u32);
         }
 
-        Ok(())
+        return Ok(());
     }
 
     fn get_quantization_offset(&self, signal_type: SignalType, quantization_offset_type: QuantizationOffsetType) -> i32 {
@@ -889,6 +1084,79 @@ impl Decoder {
     }
 }
 
+/// Decoded SILK header flags for a single Opus frame (10, 20, 40, or 60 ms).
+///
+/// ```text
+/// +---------------------------------------------------------------+
+/// | Channel c in 0..channels (1 = Mono, 2 = Mid/Side Stereo)      |
+/// |   +-------------------------------------------------------+   |
+/// |   | VAD flags: 1 bit per SILK frame (1 for 10/20 ms,      |   |
+/// |   |            2 for 40 ms, 3 for 60 ms)                  |   |
+/// |   +-------------------------------------------------------+   |
+/// |   | LBRR flag: 1 bit indicating LBRR presence in channel  |   |
+/// |   +-------------------------------------------------------+   |
+/// +---------------------------------------------------------------+
+/// | Per-Frame LBRR Flags (for each channel c where lbrr_flag[c]): |
+/// |   - 10/20 ms: implicit frame 0 active (0 range coder bits)    |
+/// |   - 40 ms:    Table 4 2-bit mask (1..=3)                      |
+/// |   - 60 ms:    Table 4 3-bit mask (1..=7)                      |
+/// +---------------------------------------------------------------+
+/// ```
+///
+/// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.3>
+/// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.4>
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct SilkHeaderFlags {
+    pub num_channels: usize,
+    pub num_silk_frames: usize,
+    pub vad_flags: [[bool; 3]; 2],
+    pub lbrr_flags: [bool; 2],
+    pub per_frame_lbrr: [[bool; 3]; 2],
+}
+
+impl SilkHeaderFlags {
+    /// Returns `true` if any channel has LBRR data enabled in this Opus frame.
+    pub fn has_any_lbrr(&self) -> bool {
+        return self.lbrr_flags[0] || (self.num_channels > 1 && self.lbrr_flags[1]);
+    }
+
+    /// Returns `true` if SILK sub-frame `frame_idx` (`0..num_silk_frames`) has LBRR data
+    /// in either the mid (mono) or side channel.
+    pub fn has_frame_lbrr(&self, frame_idx: usize) -> bool {
+        if frame_idx >= self.num_silk_frames {
+            return false;
+        }
+
+        return self.per_frame_lbrr[0][frame_idx]
+            || (self.num_channels > 1 && self.per_frame_lbrr[1][frame_idx]);
+    }
+}
+
+/// Stereo prediction weights (`w0_Q13`, `w1_Q13`) decoded at the start of a stereo SILK frame.
+///
+/// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.1>
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct StereoWeights {
+    pub w0_q13: i32,
+    pub w1_q13: i32,
+}
+
+/// Decoded SILK frame pair for one 10 ms or 20 ms SILK interval (Mid/Mono + optional Side).
+#[derive(Debug, Default)]
+pub struct SilkChannelFramePair {
+    pub stereo_weights: Option<StereoWeights>,
+    pub mid_only: bool,
+    pub mid: Frame,
+    pub side: Option<Frame>,
+}
+
+/// Decoded SILK frames (LBRR and regular) for one 10/20/40/60 ms Opus frame.
+#[derive(Debug, Default)]
+pub struct DecodedOpusFrame {
+    pub header: SilkHeaderFlags,
+    pub lbrr_frames: Vec<SilkChannelFramePair>,
+    pub regular_frames: Vec<SilkChannelFramePair>,
+}
 
 /// SILK Decoder State
 ///
@@ -911,6 +1179,7 @@ pub struct State {
 
 impl State {
     pub fn try_new(channels: Channels, frame_size: FrameDuration, bandwidth: Bandwidth) -> Result<Self> {
+        let _ = Self::silk_frame_count(frame_size)?;
         let sample_rate = bandwidth.sample_rate();
         let frame_length = Self::calculate_frame_length(sample_rate, frame_size)?;
         let channel_count = channels.count();
@@ -934,6 +1203,33 @@ impl State {
     pub fn reset(&mut self) {
         self.lbrr_flag = false;
         self.prev_samples.fill(0.0);
+    }
+
+    /// Returns the number of 10 ms or 20 ms SILK frames contained in an Opus frame of `frame_size`.
+    ///
+    /// - `10 ms` and `20 ms` Opus frames contain `1` SILK frame.
+    /// - `40 ms` Opus frames contain `2` 20-ms SILK frames.
+    /// - `60 ms` Opus frames contain `3` 20-ms SILK frames.
+    ///
+    /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.2>
+    pub fn silk_frame_count(frame_size: FrameDuration) -> Result<usize> {
+        return match frame_size {
+            FrameDuration::Ms10 | FrameDuration::Ms20 => Ok(1),
+            FrameDuration::Ms40 => Ok(2),
+            FrameDuration::Ms60 => Ok(3),
+            FrameDuration::Ms2_5 | FrameDuration::Ms5 => Err(Error::UnsupportedFrameSize.into()),
+        };
+    }
+
+    /// Returns the duration of each individual SILK frame inside an Opus frame of `frame_size`.
+    ///
+    /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.2>
+    pub fn silk_frame_duration(frame_size: FrameDuration) -> Result<FrameDuration> {
+        return match frame_size {
+            FrameDuration::Ms10 => Ok(FrameDuration::Ms10),
+            FrameDuration::Ms20 | FrameDuration::Ms40 | FrameDuration::Ms60 => Ok(FrameDuration::Ms20),
+            FrameDuration::Ms2_5 | FrameDuration::Ms5 => Err(Error::UnsupportedFrameSize.into()),
+        };
     }
 
     fn calculate_frame_length(sample_rate: u32, frame_size: FrameDuration) -> Result<usize> {
@@ -961,6 +1257,8 @@ pub struct Frame {
     pub subframes: Vec<Subframe>,
     pub ltp_scale: f32,
     pub lsf_interpolation_index: Option<u32>,
+    pub stereo_weights: Option<StereoWeights>,
+    pub mid_only: bool,
 }
 
 impl Frame {
@@ -973,6 +1271,8 @@ impl Frame {
             subframes: vec![Subframe::default(); num_subframes],
             ltp_scale: 0.0,
             lsf_interpolation_index: None,
+            stereo_weights: None,
+            mid_only: false,
         };
     }
 }
@@ -1078,4 +1378,205 @@ impl From<Bandwidth> for LpcOrder {
         };
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::VecDeque;
+    use symphonia_core::audio::Position;
+    use symphonia_core::codecs::audio::well_known::CODEC_ID_OPUS;
+
+    /// Deterministic scripted `RangeDecoder` for testing exact RFC 6716 symbol sequences.
+    struct MockRangeDecoder {
+        logp_bits: VecDeque<u32>,
+        icdf_symbols: VecDeque<u32>,
+    }
+
+    impl MockRangeDecoder {
+        fn new(logp_bits: &[u32], icdf_symbols: &[u32]) -> Self {
+            return Self {
+                logp_bits: logp_bits.iter().copied().collect(),
+                icdf_symbols: icdf_symbols.iter().copied().collect(),
+            };
+        }
+    }
+
+    impl RangeDecoder for MockRangeDecoder {
+        fn decode_symbol_logp(&mut self, _logp: u32) -> Result<u32> {
+            return Ok(self.logp_bits.pop_front().unwrap_or(0));
+        }
+
+        fn decode_symbol_with_icdf(&mut self, _icdf: &[u32]) -> Result<u32> {
+            return Ok(self.icdf_symbols.pop_front().unwrap_or(0));
+        }
+    }
+
+    fn create_test_silk_decoder(stereo: bool, frame_size: FrameDuration) -> Decoder {
+        let mut params = AudioCodecParameters::new();
+        let channels = if stereo {
+            Channels::Positioned(Position::FRONT_LEFT | Position::FRONT_RIGHT)
+        } else {
+            Channels::Positioned(Position::FRONT_LEFT)
+        };
+        params
+            .for_codec(CODEC_ID_OPUS)
+            .with_sample_rate(48000)
+            .with_channels(channels.clone());
+
+        let mut decoder = Decoder::try_new(params).unwrap();
+        decoder.state = State::try_new(channels, frame_size, Bandwidth::NarrowBand).unwrap();
+        return decoder;
+    }
+
+    #[test]
+    fn silk_header_mono_10ms_and_20ms_flags() {
+        let decoder = create_test_silk_decoder(false, FrameDuration::Ms20);
+
+        // Mono 20 ms: [VAD_0 = 1, LBRR = 0] -> 2 header bits, no per-frame LBRR iCDF symbol
+        let mut mock = MockRangeDecoder::new(&[1, 0], &[]);
+        let header = decoder
+            .decode_silk_header(&mut mock, false, FrameDuration::Ms20)
+            .unwrap();
+
+        assert_eq!(header.num_channels, 1);
+        assert_eq!(header.num_silk_frames, 1);
+        assert_eq!(header.vad_flags[0], [true, false, false]);
+        assert!(!header.lbrr_flags[0]);
+        assert_eq!(header.per_frame_lbrr[0], [false, false, false]);
+        assert!(!header.has_any_lbrr());
+
+        // Mono 10 ms with LBRR = 1: [VAD_0 = 0, LBRR = 1] -> implicit per_frame_lbrr[0][0] = true
+        let mut mock_lbrr = MockRangeDecoder::new(&[0, 1], &[]);
+        let header_lbrr = decoder
+            .decode_silk_header(&mut mock_lbrr, false, FrameDuration::Ms10)
+            .unwrap();
+
+        assert!(header_lbrr.lbrr_flags[0]);
+        assert_eq!(header_lbrr.per_frame_lbrr[0], [true, false, false]);
+        assert!(header_lbrr.has_any_lbrr());
+        assert!(header_lbrr.has_frame_lbrr(0));
+    }
+
+    #[test]
+    fn silk_header_mono_40ms_and_60ms_per_frame_lbrr_masks() {
+        let decoder = create_test_silk_decoder(false, FrameDuration::Ms40);
+
+        // Mono 40 ms: [VAD_0 = 1, VAD_1 = 0, LBRR = 1], Table 4 symbol = 1 -> mask = 2 (0b10)
+        let mut mock_40 = MockRangeDecoder::new(&[1, 0, 1], &[1]);
+        let header_40 = decoder
+            .decode_silk_header(&mut mock_40, false, FrameDuration::Ms40)
+            .unwrap();
+
+        assert_eq!(header_40.num_silk_frames, 2);
+        assert_eq!(header_40.vad_flags[0], [true, false, false]);
+        assert_eq!(header_40.per_frame_lbrr[0], [false, true, false]);
+        assert!(!header_40.has_frame_lbrr(0));
+        assert!(header_40.has_frame_lbrr(1));
+
+        // Mono 60 ms: [VAD_0 = 1, VAD_1 = 1, VAD_2 = 0, LBRR = 1], Table 4 symbol = 4 -> mask = 5 (0b101)
+        let mut mock_60 = MockRangeDecoder::new(&[1, 1, 0, 1], &[4]);
+        let header_60 = decoder
+            .decode_silk_header(&mut mock_60, false, FrameDuration::Ms60)
+            .unwrap();
+
+        assert_eq!(header_60.num_silk_frames, 3);
+        assert_eq!(header_60.vad_flags[0], [true, true, false]);
+        assert_eq!(header_60.per_frame_lbrr[0], [true, false, true]);
+        assert!(header_60.has_frame_lbrr(0));
+        assert!(!header_60.has_frame_lbrr(1));
+        assert!(header_60.has_frame_lbrr(2));
+    }
+
+    #[test]
+    fn silk_header_stereo_60ms_8_bits_and_dual_channel_lbrr() {
+        let decoder = create_test_silk_decoder(true, FrameDuration::Ms60);
+
+        // Stereo 60 ms reads 8 header bits:
+        // Mid:  VAD = [1, 0, 1], LBRR = 1
+        // Side: VAD = [0, 1, 0], LBRR = 1
+        // Followed by 2 Table 4 symbols:
+        // Mid symbol = 0 -> mask = 1 (0b001 -> frame 0)
+        // Side symbol = 5 -> mask = 6 (0b110 -> frames 1 and 2)
+        let mut mock = MockRangeDecoder::new(&[1, 0, 1, 1, 0, 1, 0, 1], &[0, 5]);
+        let header = decoder
+            .decode_silk_header(&mut mock, true, FrameDuration::Ms60)
+            .unwrap();
+
+        assert_eq!(header.num_channels, 2);
+        assert_eq!(header.num_silk_frames, 3);
+        assert_eq!(header.vad_flags[0], [true, false, true]);
+        assert_eq!(header.vad_flags[1], [false, true, false]);
+        assert_eq!(header.lbrr_flags, [true, true]);
+        assert_eq!(header.per_frame_lbrr[0], [true, false, false]);
+        assert_eq!(header.per_frame_lbrr[1], [false, true, true]);
+        assert!(header.has_frame_lbrr(0));
+        assert!(header.has_frame_lbrr(1));
+        assert!(header.has_frame_lbrr(2));
+    }
+
+    #[test]
+    fn silk_stereo_prediction_weights_rfc6716_formula() {
+        let decoder = create_test_silk_decoder(true, FrameDuration::Ms20);
+
+        // Choose n = 7 (n/5 = 1, n%5 = 2), i0 = 1, i1 = 2, i2 = 2, i3 = 0:
+        // wi0 = 1 + 3*1 = 4 (w_Q13[4] = -6500, w_Q13[5] = -5000, diff = 1500)
+        // wi1 = 2 + 3*2 = 8 (w_Q13[8] = 820,   w_Q13[9] = 2950,  diff = 2130)
+        // w1_Q13 = 820 + (((2130 * 6554) >> 16) * (2*0 + 1)) = 820 + 213 * 1 = 1033
+        // w0_Q13 = -6500 + (((1500 * 6554) >> 16) * (2*2 + 1)) - 1033 = -6500 + 150 * 5 - 1033 = -6783
+        let mut mock = MockRangeDecoder::new(&[], &[7, 1, 2, 2, 0]);
+        let weights = decoder.decode_stereo_prediction_weights(&mut mock).unwrap();
+
+        assert_eq!(
+            weights,
+            StereoWeights {
+                w0_q13: -6783,
+                w1_q13: 1033,
+            }
+        );
+    }
+
+    #[test]
+    fn silk_mid_only_flag_conditional_decoding() {
+        let decoder = create_test_silk_decoder(true, FrameDuration::Ms20);
+
+        // When side channel is active, mid-only flag is omitted (not read from range coder)
+        let mut mock_active = MockRangeDecoder::new(&[], &[1]);
+        assert!(!decoder.decode_mid_only_flag(&mut mock_active, true).unwrap());
+        assert_eq!(mock_active.icdf_symbols.len(), 1);
+
+        // When side channel is inactive, mid-only flag is decoded from ICDF_STEREO_MID_ONLY
+        assert!(decoder.decode_mid_only_flag(&mut mock_active, false).unwrap());
+        assert_eq!(mock_active.icdf_symbols.len(), 0);
+    }
+
+    #[test]
+    fn silk_multi_frame_40ms_and_lbrr_full_opus_frame_decode() {
+        let mut decoder = create_test_silk_decoder(false, FrameDuration::Ms40);
+
+        // 40 ms Mono with LBRR on frame 0 only:
+        // Header bits: VAD_0 = 0, VAD_1 = 0, LBRR = 1
+        // Per-frame LBRR symbol: 0 -> mask = 1 (LBRR frame 0 active)
+        // Remaining iCDF symbols default to 0 (valid zero-pulse frame parameters)
+        let mut mock = MockRangeDecoder::new(&[0, 0, 1], &[0]);
+        let decoded = decoder
+            .decode_opus_frame_from_range_decoder(&mut mock, false)
+            .unwrap();
+
+        assert_eq!(decoded.header.num_silk_frames, 2);
+        assert_eq!(decoded.lbrr_frames.len(), 1);
+        assert_eq!(decoded.regular_frames.len(), 2);
+
+        // Each 20-ms SILK frame in a 40-ms Opus frame has 4 subframes and 160 samples at 8 kHz NB
+        assert_eq!(decoded.lbrr_frames[0].mid.subframes.len(), 4);
+        assert_eq!(decoded.lbrr_frames[0].mid.sample_count, 160);
+        assert!(decoded.lbrr_frames[0].mid.lsf_interpolation_index.is_some());
+
+        for reg in decoded.regular_frames.iter() {
+            assert_eq!(reg.mid.subframes.len(), 4);
+            assert_eq!(reg.mid.sample_count, 160);
+            assert!(reg.mid.lsf_interpolation_index.is_some());
+        }
+    }
+}
+
 
