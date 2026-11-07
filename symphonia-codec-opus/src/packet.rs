@@ -110,10 +110,6 @@ impl<'a> FramePacket<'a> {
     pub fn new(buf: &'a [u8]) -> Result<Self> {
         let (toc_byte, data) = buf.split_first().ok_or(Error::PacketTooShort)?;
 
-        if data.is_empty() {
-            return Err(Error::EmptyFrameData.into());
-        }
-
         let Toc {
             stereo,
             frame_count,
@@ -136,6 +132,38 @@ impl<'a> FramePacket<'a> {
             FrameCount::TwoEqual => packet.two_equal_frames(data),
             FrameCount::TwoDifferent => packet.two_different_frames(data),
             FrameCount::Arbitrary => packet.signaled_number_of_frames(data),
+        };
+    }
+
+    /// Parses a self-delimited Opus packet from the beginning of `buf`, returning the parsed
+    /// [`FramePacket`] and the exact number of bytes consumed from `buf`
+    /// (RFC 6716 Appendix B / RFC 7845 Section 5.1.1).
+    pub fn parse_self_delimited(buf: &'a [u8]) -> Result<(Self, usize)> {
+        let (&toc_byte, data) = buf.split_first().ok_or(Error::PacketTooShort)?;
+
+        let Toc {
+            stereo,
+            frame_count,
+            audio_mode,
+            bandwidth,
+            frame_size,
+            ..
+        } = Toc::try_new(toc_byte).map_err(Error::Toc)?;
+
+        let packet = Self {
+            stereo,
+            audio_mode,
+            bandwidth,
+            frame_size,
+            frames: vec![],
+            padding: None,
+        };
+
+        return match frame_count {
+            FrameCount::One => packet.one_self_delimited(data),
+            FrameCount::TwoEqual => packet.two_equal_self_delimited(data),
+            FrameCount::TwoDifferent => packet.two_different_self_delimited(data),
+            FrameCount::Arbitrary => packet.signaled_self_delimited(data),
         };
     }
 
@@ -199,11 +227,200 @@ impl<'a> FramePacket<'a> {
         let frame_size = data.len() / 2;
         Self::check_frame_size(frame_size)?;
 
+        if frame_size == 0 {
+            return Ok(Self {
+                frames: vec![&[][..], &[][..]],
+                padding: None,
+                ..self
+            });
+        }
+
         return Ok(Self {
             frames: data.chunks(frame_size).collect(),
             padding: None,
             ..self
         });
+    }
+
+    fn one_self_delimited(self, data: &'a [u8]) -> Result<(Self, usize)> {
+        let (n1, len_offset) = Self::get_frame_length(data)?;
+        Self::check_frame_size(n1)?;
+
+        let frame_start = len_offset;
+        let frame_end = frame_start + n1;
+        let frame = data
+            .get(frame_start..frame_end)
+            .ok_or(Error::FrameLengthExceedsDataSize)?;
+
+        let consumed = 1 + frame_end;
+        return Ok((
+            Self {
+                frames: vec![frame],
+                padding: None,
+                ..self
+            },
+            consumed,
+        ));
+    }
+
+    fn two_equal_self_delimited(self, data: &'a [u8]) -> Result<(Self, usize)> {
+        let (n1, len_offset) = Self::get_frame_length(data)?;
+        Self::check_frame_size(n1)?;
+
+        let frame_1_start = len_offset;
+        let frame_1_end = frame_1_start + n1;
+        let frame_2_end = frame_1_end + n1;
+
+        if data.len() < frame_2_end {
+            return Err(Error::FrameLengthExceedsDataSize.into());
+        }
+
+        let frame_1 = &data[frame_1_start..frame_1_end];
+        let frame_2 = &data[frame_1_end..frame_2_end];
+        let consumed = 1 + frame_2_end;
+
+        return Ok((
+            Self {
+                frames: vec![frame_1, frame_2],
+                padding: None,
+                ..self
+            },
+            consumed,
+        ));
+    }
+
+    fn two_different_self_delimited(self, data: &'a [u8]) -> Result<(Self, usize)> {
+        let (n1, offset1) = Self::get_frame_length(data)?;
+        Self::check_frame_size(n1)?;
+
+        if data.len() < offset1 + n1 {
+            return Err(Error::FirstFrameLengthExceedsData.into());
+        }
+
+        let (n2, offset2) = Self::get_frame_length(&data[offset1..])?;
+        Self::check_frame_size(n2)?;
+
+        let header_len = offset1 + offset2;
+        let frame_1_end = header_len + n1;
+        let frame_2_end = frame_1_end + n2;
+
+        if data.len() < frame_2_end {
+            return Err(Error::FrameLengthExceedsDataSize.into());
+        }
+
+        let frame_1 = &data[header_len..frame_1_end];
+        let frame_2 = &data[frame_1_end..frame_2_end];
+        let consumed = 1 + frame_2_end;
+
+        return Ok((
+            Self {
+                frames: vec![frame_1, frame_2],
+                padding: None,
+                ..self
+            },
+            consumed,
+        ));
+    }
+
+    fn signaled_self_delimited(self, data: &'a [u8]) -> Result<(Self, usize)> {
+        let (&frame_count_byte, rest) = data.split_first().ok_or(Error::PacketTooShort)?;
+
+        let buf = [frame_count_byte];
+        let mut reader = BitReaderLtr::new(&buf);
+
+        let vbr = reader.read_bool()?;
+        let padding_flag = reader.read_bool()?;
+        let m = reader.read_bits_leq32(6)? as u8;
+
+        let frame_count = NonZeroU8::new(m).ok_or(Error::ZeroFrameCount)?;
+        let count = frame_count.get() as usize;
+
+        Self::check_total_duration(frame_count.get(), self.frame_size)?;
+
+        let mut offset = 0usize;
+
+        let (padding_length, padding_offset) = if padding_flag {
+            if rest.is_empty() {
+                return Err(Error::InsufficientDataAfterPadding.into());
+            }
+            let (pad_len, pad_off) = Self::get_padding_length(&rest[offset..])?;
+            if rest[offset + pad_off - 1] == 255 {
+                return Err(Error::InsufficientDataAfterPadding.into());
+            }
+            (pad_len, pad_off)
+        } else {
+            (0, 0)
+        };
+
+        offset += padding_offset;
+
+        if rest.len() < offset + padding_length {
+            return Err(Error::InsufficientDataAfterPadding.into());
+        }
+
+        let avail_without_padding = rest.len() - padding_length;
+        let mut frames = Vec::with_capacity(count);
+
+        if vbr {
+            let mut frame_sizes = Vec::with_capacity(count);
+            let mut total_frames_bytes = 0usize;
+
+            for _ in 0..count {
+                let (flen, len_bytes) =
+                    Self::get_frame_length(&rest[offset..avail_without_padding])?;
+                Self::check_frame_size(flen)?;
+                offset += len_bytes;
+                total_frames_bytes = total_frames_bytes
+                    .checked_add(flen)
+                    .ok_or(Error::FrameLengthExceedsDataSize)?;
+                if offset + total_frames_bytes > avail_without_padding {
+                    return Err(Error::FrameLengthExceedsDataSize.into());
+                }
+                frame_sizes.push(flen);
+            }
+
+            for flen in frame_sizes {
+                let frame = &rest[offset..(offset + flen)];
+                offset += flen;
+                frames.push(frame);
+            }
+        } else {
+            let (cbr_frame_size, len_bytes) =
+                Self::get_frame_length(&rest[offset..avail_without_padding])?;
+            Self::check_frame_size(cbr_frame_size)?;
+            offset += len_bytes;
+
+            let total_frames_bytes = cbr_frame_size
+                .checked_mul(count)
+                .ok_or(Error::FrameLengthExceedsDataSize)?;
+            if offset + total_frames_bytes > avail_without_padding {
+                return Err(Error::FrameLengthExceedsDataSize.into());
+            }
+
+            for _ in 0..count {
+                let frame = &rest[offset..(offset + cbr_frame_size)];
+                offset += cbr_frame_size;
+                frames.push(frame);
+            }
+        }
+
+        let padding = if padding_length > 0 {
+            let pad_slice = &rest[offset..(offset + padding_length)];
+            offset += padding_length;
+            Some(pad_slice)
+        } else {
+            None
+        };
+
+        let consumed = 2 + offset;
+        return Ok((
+            Self {
+                frames,
+                padding,
+                ..self
+            },
+            consumed,
+        ));
     }
 
     /// Code 2: Two Frames in the Packet, with Different CompressedSizes
@@ -309,17 +526,13 @@ impl<'a> FramePacket<'a> {
             return Err(Error::InsufficientDataAfterPadding.into());
         }
 
+        let avail_without_padding = rest.len() - padding_length;
+        let frames_data = &rest[offset..avail_without_padding];
         let padding_data = if padding_length > 0 {
-            let padding_start = offset;
-            let padding_end = offset + padding_length;
-            let padding_data = &rest[padding_start..padding_end];
-            offset = padding_end;
-            Some(padding_data)
+            Some(&rest[avail_without_padding..])
         } else {
             None
         };
-
-        let frames_data = &rest[offset..];
 
         let frames = if vbr {
             Self::get_vbr_frames(frames_data, frame_count.get())?
@@ -338,25 +551,33 @@ impl<'a> FramePacket<'a> {
     ///
     /// <https://datatracker.ietf.org/doc/html/rfc6716#section-3.2.5>
     fn get_vbr_frames(data: &'a [u8], frame_count: u8) -> Result<Vec<&'a [u8]>> {
-        let mut frames = Vec::with_capacity(frame_count as usize);
-        let mut offset = 0;
+        let count = frame_count as usize;
+        let mut frame_sizes = Vec::with_capacity(count);
+        let mut offset = 0usize;
+        let mut total_prefix_frames = 0usize;
 
-        for i in 0..frame_count {
-            let (frame_len, len_offset) = if i == frame_count - 1 {
-                (data.len() - offset, 0)
-            } else {
-                let (frame_len, len_offset) = Self::get_frame_length(&data[offset..])?;
-                (frame_len, len_offset)
-            };
+        for _ in 0..count.saturating_sub(1) {
+            let (frame_len, len_offset) = Self::get_frame_length(&data[offset..])?;
+            Self::check_frame_size(frame_len)?;
+            offset += len_offset;
+            total_prefix_frames = total_prefix_frames
+                .checked_add(frame_len)
+                .ok_or(Error::FrameLengthExceedsDataSize)?;
+            if offset + total_prefix_frames > data.len() {
+                return Err(Error::FrameLengthExceedsDataSize.into());
+            }
+            frame_sizes.push(frame_len);
+        }
 
-            let frame_start = offset + len_offset;
-            let frame_end = frame_start + frame_len;
+        let last_frame_len = data.len() - offset - total_prefix_frames;
+        Self::check_frame_size(last_frame_len)?;
+        frame_sizes.push(last_frame_len);
 
-            let frame = data.get(frame_start..frame_end).ok_or(Error::FrameLengthExceedsDataSize)?;
-
-            Self::check_frame_size(frame.len())?;
+        let mut frames = Vec::with_capacity(count);
+        for frame_len in frame_sizes {
+            let frame = &data[offset..(offset + frame_len)];
+            offset += frame_len;
             frames.push(frame);
-            offset = frame_end;
         }
 
         return Ok(frames);
@@ -542,7 +763,6 @@ mod tests {
                     remaining_padding -= MAX_PADDING_VALUE as usize;
                 }
                 data.push(remaining_padding as u8);
-                data.extend(vec![0u8; self.padding_length]);
             }
 
             if self.vbr {
@@ -555,12 +775,18 @@ mod tests {
                         );
                         data.push(frame_len as u8);
                     }
+                }
+                for frame in self.frames {
                     data.extend(frame);
                 }
             } else {
                 for frame in self.frames {
                     data.extend(frame);
                 }
+            }
+
+            if self.padding_flag {
+                data.extend(vec![0u8; self.padding_length]);
             }
 
             return data;
@@ -782,5 +1008,104 @@ mod tests {
         assert_eq!(packet.frames.len(), 1);
         assert_eq!(packet.frames[0], &frame[..]);
         assert_eq!(packet.padding.unwrap().len(), 300);
+        return;
+    }
+
+    #[test]
+    fn code0_and_code1_zero_byte_dtx_frames() {
+        let code0_dtx = [0x00u8];
+        let pkt0 = FramePacket::new(&code0_dtx).expect("1-byte Code 0 DTX packet should be valid");
+        assert_eq!(pkt0.frames.len(), 1);
+        assert!(pkt0.frames[0].is_empty());
+        assert!(pkt0.padding.is_none());
+
+        let code1_dtx = [0x01u8];
+        let pkt1 = FramePacket::new(&code1_dtx).expect("1-byte Code 1 DTX packet should be valid");
+        assert_eq!(pkt1.frames.len(), 2);
+        assert!(pkt1.frames[0].is_empty());
+        assert!(pkt1.frames[1].is_empty());
+        assert!(pkt1.padding.is_none());
+
+        assert!(FramePacket::new(&[0x02u8]).is_err());
+        assert!(FramePacket::new(&[0x03u8]).is_err());
+        return;
+    }
+
+    #[test]
+    fn self_delimited_multistream_packets() {
+        let mut stream_buf = Vec::new();
+
+        // Stream 0: Code 0 self-delimited (TOC=0x00, len=3, payload=[0x11, 0x22, 0x33])
+        let s0_start = stream_buf.len();
+        stream_buf.extend_from_slice(&[0x00, 3, 0x11, 0x22, 0x33]);
+        let s0_expected_len = stream_buf.len() - s0_start;
+
+        // Stream 1: Code 1 self-delimited (TOC=0x01, len=2 per frame, payloads=[0x44, 0x55], [0x66, 0x77])
+        let s1_start = stream_buf.len();
+        stream_buf.extend_from_slice(&[0x01, 2, 0x44, 0x55, 0x66, 0x77]);
+        let s1_expected_len = stream_buf.len() - s1_start;
+
+        // Stream 2: Code 2 self-delimited (TOC=0x02, n1=2, n2=3, payloads=[0x88, 0x99], [0xAA, 0xBB, 0xCC])
+        let s2_start = stream_buf.len();
+        stream_buf.extend_from_slice(&[0x02, 2, 3, 0x88, 0x99, 0xAA, 0xBB, 0xCC]);
+        let s2_expected_len = stream_buf.len() - s2_start;
+
+        // Stream 3: Code 3 CBR self-delimited with 2 bytes trailing padding
+        // TOC=0x03, ch=(padding=1, m=3) = 0x43, pad_len=2, cbr_size=2, 3 frames of 2 bytes, 2 pad bytes
+        let s3_start = stream_buf.len();
+        stream_buf.extend_from_slice(&[
+            0x03, 0x43, 2, 2, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0xF0, 0xF1,
+        ]);
+        let s3_expected_len = stream_buf.len() - s3_start;
+
+        // Stream 4: Code 3 VBR self-delimited with 3 bytes trailing padding
+        // TOC=0x03, ch=(vbr=1, padding=1, m=2) = 0xC2, pad_len=3, n1=1, n2=3, frames=[0x10], [0x20, 0x30, 0x40], pad=[0, 0, 0]
+        let s4_start = stream_buf.len();
+        stream_buf.extend_from_slice(&[
+            0x03, 0xC2, 3, 1, 3, 0x10, 0x20, 0x30, 0x40, 0x00, 0x00, 0x00,
+        ]);
+        let s4_expected_len = stream_buf.len() - s4_start;
+
+        // Final undelimited stream at end: Code 0 [0x00, 0x9A, 0xBC]
+        stream_buf.extend_from_slice(&[0x00, 0x9A, 0xBC]);
+
+        let mut cursor = &stream_buf[..];
+
+        let (p0, c0) = FramePacket::parse_self_delimited(cursor).expect("Stream 0 failed");
+        assert_eq!(c0, s0_expected_len);
+        assert_eq!(p0.frames, vec![&[0x11, 0x22, 0x33][..]]);
+        cursor = &cursor[c0..];
+
+        let (p1, c1) = FramePacket::parse_self_delimited(cursor).expect("Stream 1 failed");
+        assert_eq!(c1, s1_expected_len);
+        assert_eq!(p1.frames, vec![&[0x44, 0x55][..], &[0x66, 0x77][..]]);
+        cursor = &cursor[c1..];
+
+        let (p2, c2) = FramePacket::parse_self_delimited(cursor).expect("Stream 2 failed");
+        assert_eq!(c2, s2_expected_len);
+        assert_eq!(
+            p2.frames,
+            vec![&[0x88, 0x99][..], &[0xAA, 0xBB, 0xCC][..]]
+        );
+        cursor = &cursor[c2..];
+
+        let (p3, c3) = FramePacket::parse_self_delimited(cursor).expect("Stream 3 failed");
+        assert_eq!(c3, s3_expected_len);
+        assert_eq!(
+            p3.frames,
+            vec![&[0x01, 0x02][..], &[0x03, 0x04][..], &[0x05, 0x06][..]]
+        );
+        assert_eq!(p3.padding, Some(&[0xF0, 0xF1][..]));
+        cursor = &cursor[c3..];
+
+        let (p4, c4) = FramePacket::parse_self_delimited(cursor).expect("Stream 4 failed");
+        assert_eq!(c4, s4_expected_len);
+        assert_eq!(p4.frames, vec![&[0x10][..], &[0x20, 0x30, 0x40][..]]);
+        assert_eq!(p4.padding, Some(&[0x00, 0x00, 0x00][..]));
+        cursor = &cursor[c4..];
+
+        let p_final = FramePacket::new(cursor).expect("Final stream failed");
+        assert_eq!(p_final.frames, vec![&[0x9A, 0xBC][..]]);
+        return;
     }
 }
