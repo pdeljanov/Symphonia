@@ -1,75 +1,77 @@
+//! Opus Range Decoder (Entropy Coding)
+//!
+//! Opus uses an entropy coder based on range coding
+//! [RANGE-CODING](https://datatracker.ietf.org/doc/html/rfc6716#ref-RANGE-CODING)
+//! [MARTIN79](https://datatracker.ietf.org/doc/html/rfc6716#ref-MARTIN79),
+//! which is itself a rediscovery of the FIFO arithmetic code
+//! introduced by [CODING-THESIS](https://datatracker.ietf.org/doc/html/rfc6716#ref-CODING-THESIS).
+//! It is very similar to arithmetic
+//! encoding, except that encoding is done with digits in any base
+//! instead of with bits, so it is faster when using larger bases (i.e.,
+//! a byte). All of the calculations in the range coder must use bit-
+//! exact integer arithmetic.
+//!
+//! Symbols may also be coded as "raw bits" packed directly into the
+//! bitstream, bypassing the range coder. These are packed backwards
+//! starting at the end of the frame, as illustrated in Figure 12. This
+//! reduces complexity and makes the stream more resilient to bit errors,
+//! as corruption in the raw bits will not desynchronize the decoding
+//! process, unlike corruption in the input to the range decoder. Raw
+//! bits are only used in the CELT layer.
+//! ```text
+//!      0                   1                   2                   3
+//!      0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+//!     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+//!     | Range coder data (packed MSB to LSB) ->                       :
+//!     +                                                               +
+//!     :                                                               :
+//!     +     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+//!     :     | <- Boundary occurs at an arbitrary bit position         :
+//!     +-+-+-+                                                         +
+//!     :                          <- Raw bits data (packed LSB to MSB) |
+//!     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+//!
+//!     Legend:
+//!
+//!     LSB = Least Significant Bit
+//!     MSB = Most Significant Bit
+//!
+//!          Figure 12: Illustrative Example of Packing Range Coder
+//!                             and Raw Bits Data
+//! ```
+//! Each symbol coded by the range coder is drawn from a finite alphabet
+//! and coded in a separate "context", which describes the size of the
+//! alphabet and the relative frequency of each symbol in that alphabet.
+//!
+//! Suppose there is a context with n symbols, identified with an index
+//! that ranges from 0 to n-1. The parameters needed to encode or decode
+//! symbol k in this context are represented by a three-tuple
+//! (fl[k], fh[k], ft), all 16-bit unsigned integers, with
+//! 0 <= fl[k] < fh[k] <= ft <= 65535. The values of this tuple are
+//! derived from the probability model for the symbol, represented by
+//! traditional "frequency counts". Because Opus uses static contexts,
+//! those are not updated as symbols are decoded. Let f[i] be the
+//! frequency of symbol i. Then, the three-tuple corresponding to symbol
+//! k is given by the following:
+//! ```text
+//!         k-1                                   n-1
+//!         __                                    __
+//! fl[k] = \  f[i],  fh[k] = fl[k] + f[k],  ft = \  f[i]
+//!         /_                                    /_
+//!         i=0                                   i=0
+//! ```
+//! The range decoder extracts the symbols and integers encoded using the
+//! range encoder in Section 5.1. The range decoder maintains an
+//! internal state vector composed of the two-tuple (val, rng), where val
+//! represents the difference between the high end of the current range
+//! and the actual coded value, minus one, and rng represents the size of
+//! the current range. Both val and rng are 32-bit unsigned integer
+//! values.
+//!
+//! <https://datatracker.ietf.org/doc/html/rfc6716#section-4.1>
+
 use symphonia_core::io::{BitReaderLtr, FiniteBitStream, ReadBitsLtr};
 use symphonia_core::errors::{Error, Result};
-
-/// Opus uses an entropy coder based on range coding
-/// [RANGE-CODING](https://datatracker.ietf.org/doc/html/rfc6716#ref-RANGE-CODING)
-/// [MARTIN79](https://datatracker.ietf.org/doc/html/rfc6716#ref-MARTIN79), 
-/// which is itself a rediscovery of the FIFO arithmetic code
-/// introduced by [CODING-THESIS](https://datatracker.ietf.org/doc/html/rfc6716#ref-CODING-THESIS). 
-/// It is very similar to arithmetic
-/// encoding, except that encoding is done with digits in any base
-/// instead of with bits, so it is faster when using larger bases (i.e.,
-/// a byte). All of the calculations in the range coder must use bit-
-/// exact integer arithmetic.
-///
-/// Symbols may also be coded as "raw bits" packed directly into the
-/// bitstream, bypassing the range coder. These are packed backwards
-/// starting at the end of the frame, as illustrated in Figure 12. This
-/// reduces complexity and makes the stream more resilient to bit errors,
-/// as corruption in the raw bits will not desynchronize the decoding
-/// process, unlike corruption in the input to the range decoder. Raw
-/// bits are only used in the CELT layer.
-///```text
-///      0                   1                   2                   3
-///      0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
-///     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-///     | Range coder data (packed MSB to LSB) ->                       :
-///     +                                                               +
-///     :                                                               :
-///     +     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-///     :     | <- Boundary occurs at an arbitrary bit position         :
-///     +-+-+-+                                                         +
-///     :                          <- Raw bits data (packed LSB to MSB) |
-///     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-///
-///     Legend:
-///
-///     LSB = Least Significant Bit
-///     MSB = Most Significant Bit
-///
-///          Figure 12: Illustrative Example of Packing Range Coder
-///                             and Raw Bits Data
-///```
-/// Each symbol coded by the range coder is drawn from a finite alphabet
-/// and coded in a separate "context", which describes the size of the
-/// alphabet and the relative frequency of each symbol in that alphabet.
-///
-/// Suppose there is a context with n symbols, identified with an index
-/// that ranges from 0 to n-1. The parameters needed to encode or decode
-/// symbol k in this context are represented by a three-tuple
-/// (fl[k], fh[k], ft), all 16-bit unsigned integers, with
-/// 0 <= fl[k] < fh[k] <= ft <= 65535. The values of this tuple are
-/// derived from the probability model for the symbol, represented by
-/// traditional "frequency counts". Because Opus uses static contexts,
-/// those are not updated as symbols are decoded. Let f[i] be the
-/// frequency of symbol i. Then, the three-tuple corresponding to symbol
-/// k is given by the following:
-///```text
-///         k-1                                   n-1
-///         __                                    __
-/// fl[k] = \  f[i],  fh[k] = fl[k] + f[k],  ft = \  f[i]
-///         /_                                    /_
-///         i=0                                   i=0
-///```
-/// The range decoder extracts the symbols and integers encoded using the
-/// range encoder in Section 5.1. The range decoder maintains an
-/// internal state vector composed of the two-tuple (val, rng), where val
-/// represents the difference between the high end of the current range
-/// and the actual coded value, minus one, and rng represents the size of
-/// the current range. Both val and rng are 32-bit unsigned integer
-/// values.
-/// 
-/// https://datatracker.ietf.org/doc/html/rfc6716#section-4.1
 
 const INITIAL_RANGE: u32 = 128;
 const INITIAL_VALUE_OFFSET: u32 = 127;
@@ -111,7 +113,7 @@ impl<R: ReadBitsLtr + FiniteBitStream> Decoder<R> {
     /// immediately after initialization to read additional bits and
     /// establish the invariant that `rng > 2**23`.
     ///
-    /// https://datatracker.ietf.org/doc/html/rfc6716#section-4.1.1
+    /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.1.1>
     pub fn new(mut reader: R) -> Result<Self> {
         let rng = INITIAL_RANGE;
         let val = INITIAL_VALUE_OFFSET - reader.read_bits_leq32(BYTE_BITS - 1)?;
@@ -127,7 +129,7 @@ impl<R: ReadBitsLtr + FiniteBitStream> Decoder<R> {
     /// using an inverse cumulative distribution function (ICDF) and
     /// returns the decoded symbol index.
     ///
-    /// https://datatracker.ietf.org/doc/html/rfc6716#section-4.1.3.3
+    /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.1.3.3>
     fn decode_symbol_with_icdf(&mut self, table: &[u32]) -> Result<u32> {
         let (total, table) = table.split_first()
             .ok_or_else(|| Error::DecodeError("cumulative distribution table is empty"))?;
@@ -163,7 +165,7 @@ impl<R: ReadBitsLtr + FiniteBitStream> Decoder<R> {
     /// The context is described by a single parameter, `logp`, which
     /// is the absolute value of the base-2 logarithm of the probability of a "1".
     ///
-    /// https://datatracker.ietf.org/doc/html/rfc6716#section-4.1.3.2
+    /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.1.3.2>
     fn decode_symbol_logp(&mut self, logp: u32) -> Result<u32> {
         let scale = self.rng >> logp;
 
@@ -186,7 +188,7 @@ impl<R: ReadBitsLtr + FiniteBitStream> Decoder<R> {
     /// val = ((val<<8) + (255-sym)) & 0x7FFFFFFF
     /// ```
     ///
-    /// https://datatracker.ietf.org/doc/html/rfc6716#section-4.1.2.1
+    /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.1.2.1>
     fn normalize(&mut self) -> Result<()> {
         while self.rng <= MIN_RANGE_SIZE {
             self.rng <<= BYTE_BITS;
