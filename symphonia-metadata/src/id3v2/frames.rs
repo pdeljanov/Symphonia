@@ -463,7 +463,7 @@ fn find_legacy_frame_reader(id: [u8; 3]) -> (FrameReader, Option<RawTagParser>) 
 }
 
 /// Read an ID3v2.2 frame.
-pub fn read_id3v2p2_frame<B: ReadBytes>(reader: &mut B) -> Result<FrameResult> {
+pub fn read_id3v2p2_frame<B: ReadBytes>(reader: &mut B, depth: u8) -> Result<FrameResult> {
     let id = reader.read_triple_bytes()?;
 
     // Check if the frame id contains valid characters. If it does not, then assume the rest of the
@@ -494,7 +494,7 @@ pub fn read_id3v2p2_frame<B: ReadBytes>(reader: &mut B) -> Result<FrameResult> {
     let data = reader.read_boxed_slice_exact(size as usize)?;
 
     // Prepare frame information for the frame reader.
-    let info = FrameInfo::new(&id, 2, raw_tag_parser);
+    let info = FrameInfo::new(&id, 2, depth, raw_tag_parser);
 
     // An error while reading the frame from the frame buffer is not fatal.
     match read_frame(BufReader::new(&data), &info) {
@@ -508,7 +508,7 @@ pub fn read_id3v2p2_frame<B: ReadBytes>(reader: &mut B) -> Result<FrameResult> {
 }
 
 /// Read an ID3v2.3 frame.
-pub fn read_id3v2p3_frame<B: ReadBytes>(reader: &mut B) -> Result<FrameResult> {
+pub fn read_id3v2p3_frame<B: ReadBytes>(reader: &mut B, depth: u8) -> Result<FrameResult> {
     let id = reader.read_quad_bytes()?;
 
     // Check if the frame id contains valid characters. If it does not, then assume the rest of the
@@ -588,7 +588,7 @@ pub fn read_id3v2p3_frame<B: ReadBytes>(reader: &mut B) -> Result<FrameResult> {
         if !is_encrypted { find_frame_reader(id) } else { null_frame_reader() };
 
     // Prepare frame information for the frame reader.
-    let info = FrameInfo::new(&id, 3, raw_tag_parser);
+    let info = FrameInfo::new(&id, 3, depth, raw_tag_parser);
 
     // Read the frame from the frame buffer. An error here is not fatal.
     match read_frame(BufReader::new(&data), &info) {
@@ -608,7 +608,10 @@ pub fn read_id3v2p3_frame<B: ReadBytes>(reader: &mut B) -> Result<FrameResult> {
 }
 
 /// Read an ID3v2.4 frame.
-pub fn read_id3v2p4_frame<B: ReadBytes + FiniteStream>(reader: &mut B) -> Result<FrameResult> {
+pub fn read_id3v2p4_frame<B: ReadBytes + FiniteStream>(
+    reader: &mut B,
+    depth: u8,
+) -> Result<FrameResult> {
     let id = reader.read_quad_bytes()?;
 
     // Check if the frame id contains valid characters. If it does not, then assume the rest of the
@@ -700,7 +703,7 @@ pub fn read_id3v2p4_frame<B: ReadBytes + FiniteStream>(reader: &mut B) -> Result
         if !is_encrypted { find_frame_reader(id) } else { null_frame_reader() };
 
     // Prepare frame information for the frame reader.
-    let info = FrameInfo::new(&id, 4, raw_tag_parser);
+    let info = FrameInfo::new(&id, 4, depth, raw_tag_parser);
 
     // Read the frame.
     let result = if is_unsynchronised {
