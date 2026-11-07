@@ -112,14 +112,14 @@ pub mod header {
     /// +-------------------+-------------------------------------+
     /// | Packet Frame Size | PDF                                 |
     /// +-------------------+-------------------------------------+
-    /// | 40 ms             | [53, 150, 53]/256                   |
-    /// | 60 ms             | [41, 20, 115, 9, 30, 24, 17]/256    |
+    /// | 40 ms             | {0, 53, 53, 150}/256                |
+    /// | 60 ms             | {0, 41, 20, 29, 41, 15, 28, 82}/256 |
     /// +-------------------+-------------------------------------+
-    /// Table 9: PDFs for Per-Frame LBRR Flags
+    /// Table 4: PDFs for Per-Frame LBRR Flags (non-zero symbols 1..=3 and 1..=7)
     /// ```
     /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.4>
-    pub const ICDF_PER_FRAME_LBRR_FLAGS_40_MS: [u32; 4] = [256, 53, 203, 256];
-    pub const ICDF_PER_FRAME_LBRR_FLAGS_60_MS: [u32; 8] = [256, 41, 61, 176, 185, 215, 239, 256];
+    pub const ICDF_PER_FRAME_LBRR_FLAGS_40_MS: [u32; 4] = [256, 53, 106, 256];
+    pub const ICDF_PER_FRAME_LBRR_FLAGS_60_MS: [u32; 8] = [256, 41, 61, 90, 131, 146, 174, 256];
 }
 
 /// SILK Subframe Quantization Gain Constants (RFC 6716 §4.2.7.4)
