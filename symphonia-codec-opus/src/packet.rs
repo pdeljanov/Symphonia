@@ -4,7 +4,7 @@
 //! It includes structures and methods to handle various packet configurations and frame counts.
 //!
 //! References:
-//! - RFC 6716: Definition of the Opus Audio Codec (https://tools.ietf.org/html/rfc6716)
+//! - RFC 6716: Definition of the Opus Audio Codec (<https://tools.ietf.org/html/rfc6716>)
 use crate::toc::{AudioMode, Bandwidth, FrameCount, FrameDuration, Toc};
 use std::num::NonZeroU8;
 use std::time::Duration;
@@ -89,24 +89,18 @@ const MAX_FRAMES: usize = 48;
 ///     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 ///
 ///                    Figure 1: A Code 0 Packet
-///```
+/// ```
 ///
-/// https://datatracker.ietf.org/doc/html/rfc6716#section-3.2.2
+/// <https://datatracker.ietf.org/doc/html/rfc6716#section-3.2.2>
 pub struct FramePacket<'a> {
-    /// Table of Contents (TOC) byte
-    /// ```text
-    ///  0 1 2 3 4 5 6 7
-    /// +-+-+-+-+-+-+-+-+
-    /// | config  |s| c |
-    /// +-+-+-+-+-+-+-+-+
-    ///
-    ///                Figure 2: The TOC byte
-    ///```
-    ///
-    /// https://datatracker.ietf.org/doc/html/rfc6716#section-3.1
+    /// Stereo flag (`s` bit of the [`Toc`] byte: `false` = mono, `true` = stereo).
+    /// <https://datatracker.ietf.org/doc/html/rfc6716#section-3.1>
     pub stereo: bool,
+    /// Operating mode decoded from the 5-bit `config` field of the [`Toc`] byte.
     pub audio_mode: AudioMode,
+    /// Audio bandwidth decoded from the 5-bit `config` field of the [`Toc`] byte.
     pub bandwidth: Bandwidth,
+    /// Duration of a single frame decoded from the 5-bit `config` field of the [`Toc`] byte.
     pub frame_size: FrameDuration,
     pub frames: Vec<&'a [u8]>,
     pub padding: Option<&'a [u8]>,
@@ -149,7 +143,7 @@ impl<'a> FramePacket<'a> {
     /// For code 0 packets, the TOC byte is immediately followed by N-1 bytes
     /// of compressed data for a single frame (where N is the size of the
     /// packet), as illustrated in Figure 2.
-    ///```text
+    /// ```text
     ///       0                   1                   2                   3
     ///       0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
     ///      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
@@ -161,8 +155,8 @@ impl<'a> FramePacket<'a> {
     ///      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
     /// 
     ///                          Figure 2: A Code 0 Packet
-    ///``` 
-    /// https://datatracker.ietf.org/doc/html/rfc6716#section-3.2.2
+    /// ``` 
+    /// <https://datatracker.ietf.org/doc/html/rfc6716#section-3.2.2>
     fn one(self, data: &'a [u8]) -> Result<Self> {
         Self::check_frame_size(data.len())?;
 
@@ -179,7 +173,7 @@ impl<'a> FramePacket<'a> {
     /// (N-1)/2 bytes of compressed data for the second frame, as illustrated
     /// in Figure 3. The number of payload bytes available for compressed
     /// data, N-1, MUST be even for all code 1 packets [R3].
-    ///```text
+    /// ```text
     ///      0                   1                   2                   3
     ///      0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
     ///     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
@@ -196,7 +190,7 @@ impl<'a> FramePacket<'a> {
     ///
     ///                         Figure 3: A Code 1 Packet
     /// ```
-    /// https://datatracker.ietf.org/doc/html/rfc6716#section-3.2.3j
+    /// <https://datatracker.ietf.org/doc/html/rfc6716#section-3.2.3j>
     fn two_equal_frames(self, data: &'a [u8]) -> Result<Self> {
         if data.len() % 2 != 0 {
             return Err(Error::InvalidCode1PacketLength.into());
@@ -242,7 +236,7 @@ impl<'a> FramePacket<'a> {
     ///   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
     ///                         Figure 4: A Code 2 Packet
     /// ```
-    /// https://datatracker.ietf.org/doc/html/rfc6716#section-3.2.4
+    /// <https://datatracker.ietf.org/doc/html/rfc6716#section-3.2.4>
     fn two_different_frames(self, data: &'a [u8]) -> Result<Self> {
         let (n1, offset) = Self::get_frame_length(data)?;
 
@@ -277,7 +271,7 @@ impl<'a> FramePacket<'a> {
     /// limits the maximum frame count for any frame size to 48 (for 2.5 ms
     /// frames), with lower limits for longer frame sizes.  Figure 5
     /// illustrates the layout of the frame count byte.
-    ///```text
+    /// ```text
     ///                             0
     ///                             0 1 2 3 4 5 6 7
     ///                            +-+-+-+-+-+-+-+-+
@@ -285,8 +279,8 @@ impl<'a> FramePacket<'a> {
     ///                            +-+-+-+-+-+-+-+-+
     ///
     ///                     Figure 5: The frame count byte
-    ///```
-    /// https://datatracker.ietf.org/doc/html/rfc6716#section-3.2.5
+    /// ```
+    /// <https://datatracker.ietf.org/doc/html/rfc6716#section-3.2.5>
     fn signaled_number_of_frames(self, data: &'a [u8]) -> Result<Self> {
         let (frame_count_byte, rest) = data.split_first().ok_or(Error::PacketTooShort)?;
 
@@ -342,7 +336,7 @@ impl<'a> FramePacket<'a> {
 
     /// Parse frames for VBR (Variable Bit Rate) packets.
     ///
-    /// https://datatracker.ietf.org/doc/html/rfc6716#section-3.2.5
+    /// <https://datatracker.ietf.org/doc/html/rfc6716#section-3.2.5>
     fn get_vbr_frames(data: &'a [u8], frame_count: u8) -> Result<Vec<&'a [u8]>> {
         let mut frames = Vec::with_capacity(frame_count as usize);
         let mut offset = 0;
@@ -371,7 +365,7 @@ impl<'a> FramePacket<'a> {
 
     /// Parse frames for CBR (Constant Bit Rate) packets.
     ///
-    /// https://datatracker.ietf.org/doc/html/rfc6716#section-3.2.5
+    /// <https://datatracker.ietf.org/doc/html/rfc6716#section-3.2.5>
     fn get_cbr_frames(data: &'a [u8], frame_count: NonZeroU8) -> Result<Vec<&'a [u8]>> {
         let frame_count = frame_count.get() as usize;
         let frame_size = data.len() / frame_count;
@@ -395,9 +389,9 @@ impl<'a> FramePacket<'a> {
     /// in addition to the bytes used to indicate the size of the padding.
     /// If the value is 255, then the size of the additional padding is 254 bytes,
     /// plus the padding value encoded in the next byte.
-    ///```
+    /// ```
     ///
-    /// https://datatracker.ietf.org/doc/html/rfc6716#section-3.2.5
+    /// <https://datatracker.ietf.org/doc/html/rfc6716#section-3.2.5>
     fn get_padding_length(data: &[u8]) -> Result<(usize, usize)> {
         let mut total_padding: usize = 0;
         let mut offset: usize = 0;
@@ -428,9 +422,9 @@ impl<'a> FramePacket<'a> {
     /// 0: No frame (DTX or lost packet)
     /// 1...251: Length of the frame in bytes
     /// 252...255: A second byte is needed. The total length is (second_byte*4)+first_byte
-    ///```
+    /// ```
     ///
-    /// https://datatracker.ietf.org/doc/html/rfc6716#section-3.2.1
+    /// <https://datatracker.ietf.org/doc/html/rfc6716#section-3.2.1>
     fn get_frame_length(data: &[u8]) -> Result<(usize, usize)> {
         let (&first_byte, rest) = data.split_first()
             .ok_or(Error::InsufficientDataForFrameLength)?;

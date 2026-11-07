@@ -1,21 +1,22 @@
 //! The TOC Byte (Table of Contents Byte)
-/// A well-formed Opus packet MUST contain at least one byte. 
-/// This byte forms a table-of-contents (TOC) header that signals which of the
-/// various modes and configurations a given packet uses.  It is composed
-/// of a configuration number, "config", a stereo flag, "s", and a frame
-/// count code, "c", arranged as illustrated in Figure 1.  A description
-/// of each of these fields follows.
-/// ```text
-///                               0
-///                               0 1 2 3 4 5 6 7
-///                              +-+-+-+-+-+-+-+-+
-///                              | config  |s| c |
-///                              +-+-+-+-+-+-+-+-+
-///
-///                           Figure 1: The TOC Byte
-/// ```
-///
-/// https://datatracker.ietf.org/doc/html/rfc6716#section-3.1
+//!
+//! A well-formed Opus packet MUST contain at least one byte.
+//! This byte forms a table-of-contents (TOC) header that signals which of the
+//! various modes and configurations a given packet uses. It is composed
+//! of a configuration number, "config", a stereo flag, "s", and a frame
+//! count code, "c", arranged as illustrated in Figure 1. A description
+//! of each of these fields follows.
+//! ```text
+//!                               0
+//!                               0 1 2 3 4 5 6 7
+//!                              +-+-+-+-+-+-+-+-+
+//!                              | config  |s| c |
+//!                              +-+-+-+-+-+-+-+-+
+//!
+//!                           Figure 1: The TOC Byte
+//! ```
+//!
+//! <https://datatracker.ietf.org/doc/html/rfc6716#section-3.1>
 use log::debug;
 use std::convert::TryFrom;
 use std::time::Duration;
@@ -44,7 +45,7 @@ pub enum Error {
 /// Represents the Table of Contents (TOC) byte of an Opus packet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Toc {
-    config: u8,
+    pub config: u8,
     pub stereo: bool,
     pub frame_count: FrameCount,
     pub audio_mode: AudioMode,
@@ -62,7 +63,7 @@ impl Toc {
 
         // 'config' field (bits 0-4).
         let config = reader.read_bits_leq32(5).map_err(Error::Io)? as u8;
-        debug!("config: {config:#05b}" );
+        debug!("config: {config:#07b}");
 
         // 's' (stereo) flag (bit 5).
         //  One additional bit, labeled "s", signals mono vs. stereo, with 0
@@ -72,7 +73,7 @@ impl Toc {
 
         // 'c' (frame count code) field (bits 6-7).
         let frame_count_code = reader.read_bits_leq32(2).map_err(Error::Io)? as u8;
-        debug!("frame Count Code: {frame_count_code:#02b}" );
+        debug!("frame Count Code: {frame_count_code:#04b}");
 
         let frame_count = FrameCount::try_from(frame_count_code)?;
 
@@ -151,7 +152,7 @@ impl TryFrom<u8> for AudioMode {
 /// | FB (fullband)        |      20 kHz (*) |                  48 kHz |
 /// +----------------------+-----------------+-------------------------+
 /// ```
-/// https://datatracker.ietf.org/doc/html/rfc6716#section-2
+/// <https://datatracker.ietf.org/doc/html/rfc6716#section-2>
 ///
 ///  Just like for the number of channels, any decoder can decode audio that is
 ///  encoded at any bandwidth.  For example, any Opus decoder operating at
@@ -162,8 +163,9 @@ impl TryFrom<u8> for AudioMode {
 ///  quality.  The audio bandwidth can be explicitly specified in
 ///  real-time, but, by default, the reference encoder attempts to make the
 ///  best bandwidth decision possible given the current bitrate.
-/// https://datatracker.ietf.org/doc/html/rfc6716#section-2.1.3
+/// <https://datatracker.ietf.org/doc/html/rfc6716#section-2.1.3>
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[repr(u32)]
 pub enum Bandwidth {
     NarrowBand = 8_000,
     MediumBand = 12_000,
@@ -176,13 +178,7 @@ pub enum Bandwidth {
 /// Effective sample rate for a given bandwidth, Hz.
 impl Bandwidth {
     pub fn sample_rate(&self) -> u32 {
-        return match self {
-            Bandwidth::NarrowBand => 8_000,
-            Bandwidth::MediumBand => 12_000,
-            Bandwidth::WideBand => 16_000,
-            Bandwidth::SuperWideBand => 24_000,
-            Bandwidth::FullBand => 48_000,
-        };
+        return *self as u32;
     }
 }
 
@@ -214,7 +210,7 @@ impl TryFrom<u8> for Bandwidth {
 /// Increasing the frame duration also slightly improves coding
 /// efficiency, but the gain becomes small for frame sizes above 20 ms.
 /// For this reason, 20 ms frames are a good choice for most applications.
-/// https://datatracker.ietf.org/doc/html/rfc6716#section-2.1.4
+/// <https://datatracker.ietf.org/doc/html/rfc6716#section-2.1.4>
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[repr(u64)]
 pub enum FrameDuration {
@@ -315,7 +311,7 @@ impl TryFrom<u8> for FrameDuration {
 ///
 /// These values correspond to the `c` field in the TOC byte.
 ///
-/// https://datatracker.ietf.org/doc/html/rfc6716#section-3.1
+/// <https://datatracker.ietf.org/doc/html/rfc6716#section-3.1>
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FrameCount {
     /// 1 frame in the packet (c = 0)

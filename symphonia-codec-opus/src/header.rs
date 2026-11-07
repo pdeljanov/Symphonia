@@ -13,34 +13,32 @@
 //! It includes structures and methods to handle both the identification header and the comment header.
 //!
 //! References:
-//! - RFC 7845: Ogg Encapsulation for the Opus Audio Codec (https://tools.ietf.org/html/rfc7845)
-//! - RFC 6716: Definition of the Opus Audio Codec (https://tools.ietf.org/html/rfc6716)
-//! 
-
-///
-/// Packet Organization of opus stream
-/// ```text
-///
-///         Page 0         Pages 1 ... n        Pages (n+1) ...
-///      +------------+ +---+ +---+ ... +---+ +-----------+ +---------+ +--
-///      |            | |   | |   |     |   | |           | |         | |
-///      |+----------+| |+-----------------+| |+-------------------+ +-----
-///      |||ID Header|| ||  Comment Header || ||Audio Data Packet 1| | ...
-///      |+----------+| |+-----------------+| |+-------------------+ +-----
-///      |            | |   | |   |     |   | |           | |         | |
-///      +------------+ +---+ +---+ ... +---+ +-----------+ +---------+ +--
-///      ^      ^                           ^
-///      |      |                           |
-///      |      |                           Mandatory Page Break
-///      |      |
-///      |      ID header is contained on a single page
-///      |
-///      'Beginning Of Stream'
-///
-///     Figure 1: Example Packet Organization for a Logical Ogg Opus Stream
-///```
-///
-/// https://datatracker.ietf.org/doc/html/rfc7845#section-3
+//! - RFC 7845: Ogg Encapsulation for the Opus Audio Codec (<https://tools.ietf.org/html/rfc7845>)
+//! - RFC 6716: Definition of the Opus Audio Codec (<https://tools.ietf.org/html/rfc6716>)
+//!
+//! Packet Organization of opus stream
+//! ```text
+//!
+//!         Page 0         Pages 1 ... n        Pages (n+1) ...
+//!      +------------+ +---+ +---+ ... +---+ +-----------+ +---------+ +--
+//!      |            | |   | |   |     |   | |           | |         | |
+//!      |+----------+| |+-----------------+| |+-------------------+ +-----
+//!      |||ID Header|| ||  Comment Header || ||Audio Data Packet 1| | ...
+//!      |+----------+| |+-----------------+| |+-------------------+ +-----
+//!      |            | |   | |   |     |   | |           | |         | |
+//!      +------------+ +---+ +---+ ... +---+ +-----------+ +---------+ +--
+//!      ^      ^                           ^
+//!      |      |                           |
+//!      |      |                           Mandatory Page Break
+//!      |      |
+//!      |      ID header is contained on a single page
+//!      |
+//!      'Beginning Of Stream'
+//!
+//!     Figure 1: Example Packet Organization for a Logical Ogg Opus Stream
+//! ```
+//!
+//! <https://datatracker.ietf.org/doc/html/rfc7845#section-3>
 
 use symphonia_core::io::ReadBytes;
 
@@ -91,7 +89,7 @@ pub enum Error {
 }
 
 /// Identification Header
-///```text
+/// ```text
 ///       0                   1                   2                   3
 ///       0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
 ///      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
@@ -111,9 +109,9 @@ pub enum Error {
 ///      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 ///
 ///                         Figure 2: ID Header Packet
-///```
+/// ```
 ///
-/// https://datatracker.ietf.org/doc/html/rfc7845#section-5.1
+/// <https://datatracker.ietf.org/doc/html/rfc7845#section-5.1>
 #[derive(Debug, Clone, PartialEq)]
 pub struct ID {
     pub version: u8,
@@ -223,7 +221,7 @@ impl TryFrom<u8> for ChannelMappingFamily {
 }
 
 /// Channel Mapping
-///```text
+/// ```text
 ///    An Ogg Opus stream allows mapping one number of Opus streams (N) to a
 ///    possibly larger number of decoded channels (M + N) to yet another
 ///    number of output channels (C), which might be larger or smaller than
@@ -242,9 +240,9 @@ impl TryFrom<u8> for ChannelMappingFamily {
 ///      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 ///
 ///                       Figure 3: Channel Mapping Table
-///```
+/// ```
 ///
-///https://datatracker.ietf.org/doc/html/rfc7845#section-5.1.1
+///<https://datatracker.ietf.org/doc/html/rfc7845#section-5.1.1>
 ///
 #[derive(Debug, Clone, PartialEq)]
 pub struct ChannelMappingTable {
@@ -343,9 +341,9 @@ impl ChannelInterpretation {
 ///      :                                                               :
 ///
 ///                      Figure 10: Comment Header Packet
-///```
+/// ```
 ///
-/// https://datatracker.ietf.org/doc/html/rfc7845#section-5.2
+/// <https://datatracker.ietf.org/doc/html/rfc7845#section-5.2>
 #[derive(Debug, Clone, PartialEq)]
 pub struct Comment {
     pub vendor_string: String,
