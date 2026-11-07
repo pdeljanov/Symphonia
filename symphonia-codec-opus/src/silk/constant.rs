@@ -62,18 +62,19 @@ pub mod header {
     /// +-------+---------------------------------------------------------+
     /// | Stage | PDF                                                     |
     /// +-------+---------------------------------------------------------+
-    /// | 1     | [7, 9, 10, 9, 10, 31, 61, 63, 24, 17, 9, 2, 1, 1, 1,    |
-    /// |       | 1]/256                                                  |
-    /// | 2     | [85, 85, 86]/256                                        |
+    /// | 1     | [7, 2, 1, 1, 1, 10, 24, 8, 1, 1, 3, 23, 92, 23, 3, 1,   |
+    /// |       | 1, 8, 24, 10, 1, 1, 1, 2, 7]/256                        |
+    /// | 2     | [85, 86, 85]/256                                        |
     /// | 3     | [51, 51, 52, 51, 51]/256                                |
     /// +-------+---------------------------------------------------------+
     /// Table 7: PDFs for Stereo Prediction Weight Decoding
     /// ```
-    /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.2>
-    pub const ICDF_STEREO_PREDICTION_WEIGHT_STAGE_ONE: [u32; 17] = [
-        256, 7, 16, 26, 35, 45, 76, 137, 200, 224, 241, 250, 252, 253, 254, 255, 256,
+    /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.1>
+    pub const ICDF_STEREO_PREDICTION_WEIGHT_STAGE_ONE: [u32; 26] = [
+        256, 7, 9, 10, 11, 12, 22, 46, 54, 55, 56, 59, 82, 174,
+        197, 200, 201, 202, 210, 234, 244, 245, 246, 247, 249, 256,
     ];
-    pub const ICDF_STEREO_PREDICTION_WEIGHT_STAGE_TWO: [u32; 4] = [256, 85, 170, 256];
+    pub const ICDF_STEREO_PREDICTION_WEIGHT_STAGE_TWO: [u32; 4] = [256, 85, 171, 256];
     pub const ICDF_STEREO_PREDICTION_WEIGHT_STAGE_THREE: [u32; 6] = [256, 51, 102, 154, 205, 256];
 
     /// Quantization Boundaries for Stereo Prediction Weights (Q13)
@@ -85,15 +86,15 @@ pub mod header {
     /// |   1 | -10050 |   7 |   -820 |  13 |   8266 |
     /// |   2 |  -8266 |   8 |    820 |  14 |  10050 |
     /// |   3 |  -7526 |   9 |   2950 |  15 |  13732 |
-    /// |   4 |  -6500 |  10 |   5000 |  16 |  16384 |
+    /// |   4 |  -6500 |  10 |   5000 |     |        |
     /// |   5 |  -5000 |  11 |   6500 |     |        |
     /// +-----+--------+-----+--------+-----+--------+
     /// Table 8: Stereo Prediction Weight Quantization Boundaries (Q13)
     /// ```
-    /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.2>
-    pub const CODEBOOK_STEREO_QUANTIZATION_BOUNDARIES_Q13: [i16; 17] = [
+    /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.1>
+    pub const CODEBOOK_STEREO_QUANTIZATION_BOUNDARIES_Q13: [i16; 16] = [
         -13732, -10050, -8266, -7526, -6500, -5000, -2950, -820,
-        820, 2950, 5000, 6500, 7526, 8266, 10050, 13732, 16384,
+        820, 2950, 5000, 6500, 7526, 8266, 10050, 13732,
     ];
 
     /// PDF for Mid-Only Stereo Flag
@@ -1755,15 +1756,15 @@ pub mod ltp {
     /// +-------------------------------------------------------------------+
     /// | PDF                                                               |
     /// +-------------------------------------------------------------------+
-    /// | [16, 2, 3, 6, 10, 15, 23, 31, 34, 32, 26, 19, 12, 8, 5, 3, 3, 2,  |
+    /// | [46, 2, 2, 3, 4, 6, 10, 15, 26, 38, 30, 22, 15, 10, 7, 6, 4, 4,   |
     /// | 2, 2, 2]/256                                                      |
     /// +-------------------------------------------------------------------+
     /// Table 31: PDF for Relative Pitch Lag
     /// ```
     /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.6.1>
     pub const ICDF_RELATIVE_DELTA_PITCH_LAG: [u32; 22] = [
-        256, 16, 18, 21, 27, 37, 52, 75, 106, 140, 172,
-        198, 217, 229, 237, 242, 245, 248, 250, 252, 254, 256,
+        256, 46, 48, 50, 53, 57, 63, 73, 88, 114, 152,
+        182, 204, 219, 229, 236, 242, 246, 250, 252, 254, 256,
     ];
 
     /// Codebook for LTP Scaling Parameter (Q14)
