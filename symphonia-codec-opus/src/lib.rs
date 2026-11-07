@@ -5,6 +5,7 @@
 #![allow(dead_code)]
 #![allow(unreachable_patterns)]
 
+mod celt;
 mod entropy;
 mod decoder;
 mod header;

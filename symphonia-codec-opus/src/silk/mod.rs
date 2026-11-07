@@ -17,6 +17,7 @@ pub(crate) mod error;
 pub(crate) mod excitation;
 pub(crate) mod lsf;
 pub(crate) mod params;
+pub(crate) mod plc;
 pub(crate) mod resampler;
 pub(crate) mod synthesis;
 
