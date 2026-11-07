@@ -1,37 +1,9 @@
-///  Contents
-///
-/// Codebooks:
-/// These are predefined sets of vectors used for quantizing various parameters like LSFs, 
-/// pitch contours, and LTP filters. The encoder selects the closest vector from the codebook 
-/// to represent the parameter, reducing the amount of data needed to transmit.
-///
-/// Probability Distribution Functions (PDFs) and Cumulative Distribution Functions (CDFs):
-/// PDFs define the probability of each possible symbol (like a codebook index) occurring.
-/// CDFs are used in entropy coding (e.g., range coding) to efficiently encode symbols based on their probabilities.
-///
-/// LSF (Line Spectral Frequencies):
-/// LSFs are used to represent the spectral envelope of the audio signal. 
-/// They are quantized using codebooks to ensure efficient transmission and reconstruction.
-///
-/// VAD (Voice Activity Detection):
-/// Determines whether a frame contains speech or is silent/inactive, influencing how the frame is encoded.
-///
-/// LTP (Long-Term Prediction):
-/// Utilizes past audio samples to predict future ones, 
-/// improving compression efficiency, especially in voiced speech.
-///
-/// Pitch Contour:
-/// Represents the pitch variations over time, crucial for natural-sounding speech synthesis.
-///
-/// Excitation Coding:
-/// Deals with representing the excitation signal, which, when combined with the filter,
-/// recreates the original audio signal.
-///
-/// Rate Level:
-/// Determines the bit rate used for encoding, balancing audio quality against bandwidth usage.
-///
-///
-///
+//! SILK Codebooks, iCDFs, and Resampler Constants (RFC 6716 Section 4.2)
+//!
+//! Predefined quantization codebooks, inverse cumulative distribution functions (iCDFs),
+//! LSF conversion tables, and resampler filter coefficients for the SILK layer.
+
+#![allow(clippy::large_const_arrays)]
 
 pub use self::excitation::*;
 pub use self::gain::*;
@@ -40,7 +12,7 @@ pub use self::lsf::*;
 pub use self::ltp::*;
 pub use self::resampler::*;
 
-/// SILK Header, Stereo & Frame Type Constants (RFC 6716 §4.2.2–4.2.4, §4.2.7.3)
+/// SILK Header, Stereo & Frame Type Constants (RFC 6716 Section 4.2.2-4.2.4, Section 4.2.7.3)
 pub mod header {
     /// TLDR;
     /// ```text
@@ -2357,66 +2329,90 @@ pub mod excitation {
     ];
 }
 
-/// SILK Resampler Filter Coefficients (RFC 6716 §4.2.9)
+/// SILK Resampler Filter Coefficients (RFC 6716 Section 4.2.9)
 pub mod resampler {
-    /// Resampler 2x Upsampler IIR Filter Coefficients (Q14)
-    /// ```text
-    /// +-------------+------------------------+
-    /// | Coefficient | Value (Q14)            |
-    /// +-------------+------------------------+
-    /// | 0           |                   4892 |
-    /// | 1           |                 -13363 |
-    /// | 2           |                   7306 |
-    /// +-------------+------------------------+
-    /// Table 53: Resampler IIR Filter Coefficients
-    /// ```
-    /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.9>
-    pub const RESAMPLER_IIR_COEFFICIENTS_Q14: [i32; 3] = [4892, -13363, 7306];
+    /// Maximum batch duration in milliseconds processed per resampler iteration.
+    pub const RESAMPLER_MAX_BATCH_SIZE_MS: usize = 10;
 
-    /// Resampler Interpolation FIR Coefficients for 8 kHz (NB -> 48 kHz)
-    /// Table 54: FIR Coefficients for 8 kHz SILK Resampler
+    /// Order of the 12-phase polyphase FIR interpolation filter (`RESAMPLER_ORDER_FIR_12`).
+    pub const RESAMPLER_ORDER_FIR_12: usize = 8;
+
+    /// Downsampler FIR filter orders (`RESAMPLER_DOWN_ORDER_FIR0/1/2`).
+    pub const RESAMPLER_DOWN_ORDER_FIR0: usize = 18;
+    pub const RESAMPLER_DOWN_ORDER_FIR1: usize = 24;
+    pub const RESAMPLER_DOWN_ORDER_FIR2: usize = 36;
+
+    /// Decoder resampler delay matrix in input samples (`[in_rate_id][out_rate_id]`),
+    /// where `in_rate_id` is `[8, 12, 16]` kHz and `out_rate_id` is `[8, 12, 16, 24, 48]` kHz.
+    ///
     /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.9>
-    pub const RESAMPLER_FIR_COEFFICIENTS_8KHZ: [[i32; 3]; 12] = [
-        [153, -890, 3901],
-        [105, -737, 10847],
-        [23, -384, 17962],
-        [-31, 68, 24423],
-        [-32, 463, 29436],
-        [27, 622, 32336],
-        [142, 381, 32336],
-        [271, -304, 29436],
-        [342, -1336, 24423],
-        [277, -2387, 17962],
-        [30, -2966, 10847],
-        [-408, -2455, 3901],
+    pub const RESAMPLER_DELAY_MATRIX_DEC: [[u8; 5]; 3] = [
+        [4, 0, 2, 0, 0],
+        [0, 9, 4, 7, 4],
+        [0, 3, 12, 7, 7],
     ];
 
-    /// Resampler Interpolation FIR Coefficients for 12 kHz (MB -> 48 kHz)
-    /// Table 54: FIR Coefficients for 12 kHz SILK Resampler
+    /// High-quality 2x allpass upsampler coefficients for even output samples (Q16, third wrapped by -65536).
+    ///
     /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.9>
-    pub const RESAMPLER_FIR_COEFFICIENTS_12KHZ: [[i32; 4]; 8] = [
-        [-142, 588, -1732, 3783],
-        [-24, 172, -1028, 12802],
-        [103, -415, 650, 22493],
-        [107, -692, 2328, 30137],
-        [-54, -278, 2500, 33319],
-        [-289, 868, -287, 30137],
-        [-381, 2117, -6064, 22493],
-        [-47, 2376, -13922, 12802],
+    pub const RESAMPLER_UP2_HQ_0: [i16; 3] = [1746, 14986, -26453];
+
+    /// High-quality 2x allpass upsampler coefficients for odd output samples (Q16, third wrapped by -65536).
+    ///
+    /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.9>
+    pub const RESAMPLER_UP2_HQ_1: [i16; 3] = [6854, 25769, -9994];
+
+    /// 12-phase symmetric 8-tap FIR interpolation coefficients for fractions 1/24, 3/24, ..., 23/24 (Q15).
+    ///
+    /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.9>
+    pub const RESAMPLER_FRAC_FIR_12: [[i16; 4]; 12] = [
+        [189, -600, 617, 30567],
+        [117, -159, -1070, 29704],
+        [52, 221, -2392, 28276],
+        [-4, 529, -3350, 26341],
+        [-48, 758, -3956, 23973],
+        [-80, 905, -4235, 21254],
+        [-99, 972, -4222, 18278],
+        [-107, 967, -3957, 15143],
+        [-103, 896, -3487, 11950],
+        [-91, 773, -2865, 8798],
+        [-71, 611, -2143, 5784],
+        [-46, 425, -1375, 2996],
     ];
 
-    /// Resampler Interpolation FIR Coefficients for 16 kHz (WB -> 48 kHz)
-    /// Table 54: FIR Coefficients for 16 kHz SILK Resampler
-    /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.9>
-    pub const RESAMPLER_FIR_COEFFICIENTS_16KHZ: [[i32; 3]; 8] = [
-        [98, -778, 3840],
-        [49, -564, 12868],
-        [-22, -47, 22452],
-        [-31, 495, 30005],
-        [81, 567, 33118],
-        [258, -193, 30005],
-        [324, -1556, 22452],
-        [80, -2673, 12868],
+    /// Fractional downsampler AR2 + FIR coefficients for ratio 3:4 (`16 kHz -> 12 kHz`).
+    pub const RESAMPLER_3_4_COEFS: [i16; 29] = [
+        -20694, -13867, -49, 64, 17, -157, 353, -496, 163, 11047, 22205, -39, 6, 91, -170, 186,
+        23, -896, 6336, 19928, -19, -36, 102, -89, -24, 328, -951, 2568, 15909,
+    ];
+
+    /// Fractional downsampler AR2 + FIR coefficients for ratio 2:3 (`12 kHz -> 8 kHz`).
+    pub const RESAMPLER_2_3_COEFS: [i16; 20] = [
+        -14457, -14019, 64, 128, -122, 36, 310, -768, 584, 9267, 17733, 12, 128, 18, -142, 288,
+        -117, -865, 4123, 14459,
+    ];
+
+    /// Fractional downsampler AR2 + FIR coefficients for ratio 1:2 (`16 kHz -> 8 kHz`).
+    pub const RESAMPLER_1_2_COEFS: [i16; 14] = [
+        616, -14323, -10, 39, 58, -46, -84, 120, 184, -315, -541, 1284, 5380, 9024,
+    ];
+
+    /// Fractional downsampler AR2 + FIR coefficients for ratio 1:3.
+    pub const RESAMPLER_1_3_COEFS: [i16; 20] = [
+        16102, -15162, -13, 0, 20, 26, 5, -31, -43, -4, 65, 90, 7, -157, -248, -44, 593, 1583,
+        2612, 3271,
+    ];
+
+    /// Fractional downsampler AR2 + FIR coefficients for ratio 1:4.
+    pub const RESAMPLER_1_4_COEFS: [i16; 20] = [
+        22500, -15099, 3, -14, -20, -15, 2, 25, 37, 25, -16, -71, -107, -79, 50, 292, 623, 982,
+        1288, 1464,
+    ];
+
+    /// Fractional downsampler AR2 + FIR coefficients for ratio 1:6.
+    pub const RESAMPLER_1_6_COEFS: [i16; 20] = [
+        27540, -15257, 17, 12, 8, 1, -10, -22, -30, -32, -22, 3, 44, 100, 168, 243, 317, 381, 429,
+        455,
     ];
 }
 

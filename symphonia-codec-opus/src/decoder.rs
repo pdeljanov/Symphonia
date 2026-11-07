@@ -81,7 +81,8 @@ impl OpusDecoder {
         let channels = params.channels.clone().ok_or(SilkError::UnsupportedConfig)?;
         let spec = AudioSpec::new(sample_rate, channels.clone());
         let buffer = AudioBuffer::new(spec, sample_rate as usize);
-        let silk_decoder = silk::Decoder::new();
+        let mut silk_decoder = silk::Decoder::new();
+        silk_decoder.set_output_sample_rate(sample_rate);
 
         return Ok(Self {
             params: params.to_owned(),
@@ -190,5 +191,157 @@ mod tests {
 
         let result = OpusDecoder::try_new(&params, &AudioDecoderOptions::default());
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn opus_decoder_end_to_end_mono_and_stereo_silk_packets_match_libopus() {
+        use symphonia_core::audio::Audio;
+        use symphonia_core::units::{Duration, Timestamp};
+
+        // 3 consecutive Mono WideBand 20 ms SILK packets encoded by libopus opus_encode()
+        // and decoded at 48 kHz by libopus opus_decode():
+        const MONO_WB_PKT_0: [u8; 47] = [
+            0x48, 0x82, 0xb6, 0x0a, 0x70, 0x7e, 0xfb, 0xbd, 0xd2, 0x4d, 0x85, 0xcd, 0x78, 0xed,
+            0xb6, 0xdf, 0x64, 0x19, 0xe8, 0x13, 0x99, 0x45, 0x17, 0x57, 0xcb, 0xc7, 0x4b, 0xf0,
+            0x86, 0xdc, 0x1b, 0xe2, 0x1a, 0xc0, 0xd0, 0x76, 0xa0, 0xd1, 0xbd, 0x0d, 0x17, 0x34,
+            0xc7, 0x2b, 0xba, 0x74, 0xa0,
+        ];
+        const MONO_WB_OUT_0_HEAD: [i16; 24] = [0; 24];
+        const MONO_WB_OUT_0_TAIL: [i16; 24] = [
+            4426, 4426, 4429, 4427, 4415, 4385, 4336, 4276, 4219, 4182, 4169, 4175, 4181, 4169,
+            4133, 4076, 4010, 3948, 3899, 3863, 3837, 3815, 3793, 3767,
+        ];
+
+        const MONO_WB_PKT_1: [u8; 73] = [
+            0x48, 0xad, 0xe4, 0x00, 0xd2, 0x1d, 0x46, 0x85, 0x7a, 0x36, 0x9b, 0x87, 0xb0, 0x89,
+            0xa5, 0xf7, 0xb4, 0xfd, 0x0f, 0x78, 0x05, 0x65, 0x14, 0x71, 0x11, 0x88, 0x36, 0xbc,
+            0x0f, 0xcd, 0x35, 0xa1, 0xe4, 0xdc, 0x77, 0xf2, 0xf8, 0x4c, 0x65, 0x3a, 0xb0, 0x69,
+            0x4b, 0x94, 0x60, 0xcc, 0xe8, 0x15, 0x48, 0x64, 0xff, 0xec, 0xf3, 0xfb, 0xc2, 0x18,
+            0x1f, 0x5d, 0xf2, 0x27, 0x6d, 0x86, 0x26, 0x66, 0x65, 0x5d, 0x41, 0xc7, 0x12, 0xd2,
+            0x61, 0x69, 0x62,
+        ];
+        const MONO_WB_OUT_1_HEAD: [i16; 24] = [
+            3732, 3683, 3622, 3558, 3500, 3455, 3421, 3385, 3337, 3273, 3204, 3144, 3105, 3083,
+            3071, 3060, 3046, 3031, 3012, 2985, 2947, 2907, 2880, 2877,
+        ];
+        const MONO_WB_OUT_1_TAIL: [i16; 24] = [
+            -1599, -1137, -659, -176, 302, 774, 1248, 1732, 2230, 2738, 3245, 3744, 4232, 4711,
+            5186, 5660, 6134, 6601, 7053, 7487, 7900, 8298, 8687, 9067,
+        ];
+
+        const MONO_WB_PKT_2: [u8; 27] = [
+            0x48, 0x9d, 0x68, 0xf6, 0x16, 0x52, 0xd4, 0x44, 0x2e, 0x8f, 0xec, 0xfa, 0x23, 0xdb,
+            0x55, 0xd6, 0x7c, 0x00, 0x4e, 0xe8, 0x89, 0x69, 0x21, 0x5b, 0x61, 0x48, 0x80,
+        ];
+        const MONO_WB_OUT_2_HEAD: [i16; 24] = [
+            9436, 9787, 10117, 10426, 10716, 10994, 11255, 11495, 11707, 11892, 12056, 12204,
+            12336, 12448, 12534, 12592, 12630, 12658, 12679, 12683, 12660, 12598, 12503, 12392,
+        ];
+        const MONO_WB_OUT_2_TAIL: [i16; 24] = [
+            -4111, -4172, -4228, -4278, -4322, -4358, -4389, -4415, -4437, -4456, -4472, -4488,
+            -4502, -4513, -4518, -4516, -4510, -4501, -4492, -4485, -4483, -4485, -4488, -4490,
+        ];
+
+        let mut mono_params = AudioCodecParameters::new();
+        mono_params
+            .for_codec(CODEC_ID_OPUS)
+            .with_sample_rate(48000)
+            .with_channels(Channels::Positioned(Position::FRONT_CENTER));
+        let mut mono_decoder =
+            OpusDecoder::try_new(&mono_params, &AudioDecoderOptions::default()).unwrap();
+
+        for (pkt_bytes, expected_head, expected_tail) in [
+            (&MONO_WB_PKT_0[..], &MONO_WB_OUT_0_HEAD, &MONO_WB_OUT_0_TAIL),
+            (&MONO_WB_PKT_1[..], &MONO_WB_OUT_1_HEAD, &MONO_WB_OUT_1_TAIL),
+            (&MONO_WB_PKT_2[..], &MONO_WB_OUT_2_HEAD, &MONO_WB_OUT_2_TAIL),
+        ] {
+            let pkt = PacketRef::new(0, Timestamp::from(0u32), Duration::from(960u64), pkt_bytes);
+            mono_decoder.decode_ref(&pkt).unwrap();
+            assert_eq!(mono_decoder.buffer.frames(), 960);
+            let ch0 = mono_decoder.buffer.plane(0).unwrap();
+            let head_i16: Vec<i16> = ch0[..24]
+                .iter()
+                .map(|&s| (s * 32768.0).round() as i16)
+                .collect();
+            let tail_i16: Vec<i16> = ch0[960 - 24..]
+                .iter()
+                .map(|&s| (s * 32768.0).round() as i16)
+                .collect();
+            assert_eq!(head_i16.as_slice(), expected_head);
+            assert_eq!(tail_i16.as_slice(), expected_tail);
+        }
+
+        // 2 consecutive Stereo MediumBand 20 ms SILK packets encoded by libopus opus_encode()
+        // and decoded at 48 kHz by libopus opus_decode():
+        const STEREO_MB_PKT_0: [u8; 83] = [
+            0x2c, 0xa4, 0xd1, 0xb0, 0xc4, 0xb7, 0x87, 0xab, 0x55, 0x78, 0x1c, 0x0b, 0x60, 0x22,
+            0xff, 0x6b, 0xf3, 0x0a, 0xae, 0xb0, 0x53, 0x72, 0x31, 0xd3, 0x5a, 0xdb, 0x47, 0x3d,
+            0x29, 0x53, 0xd7, 0xcc, 0x19, 0x14, 0x89, 0x5a, 0x36, 0xf2, 0xf7, 0x69, 0xfb, 0x5a,
+            0x69, 0xca, 0x00, 0x46, 0x96, 0x77, 0xb4, 0xf1, 0xa5, 0x26, 0x2d, 0xe3, 0x66, 0x13,
+            0x9b, 0xb4, 0x1c, 0x8e, 0x34, 0x8f, 0xca, 0x48, 0x87, 0xd8, 0x61, 0x43, 0xf2, 0xe4,
+            0xc2, 0xe0, 0x7e, 0x8a, 0x88, 0x82, 0xb6, 0x7d, 0xa8, 0x07, 0xe8, 0x97, 0x58,
+        ];
+        const STEREO_MB_OUT_L_0_TAIL: [i16; 24] = [
+            -2480, -2233, -2000, -1777, -1558, -1337, -1109, -875, -639, -403, -174, 47, 260, 469,
+            674, 878, 1079, 1276, 1464, 1645, 1818, 1986, 2151, 2317,
+        ];
+        const STEREO_MB_OUT_R_0_TAIL: [i16; 24] = [
+            1806, 1686, 1557, 1414, 1254, 1080, 899, 718, 543, 370, 194, 7, -193, -405, -620, -830,
+            -1029, -1217, -1398, -1583, -1776, -1979, -2189, -2399,
+        ];
+
+        const STEREO_MB_PKT_1: [u8; 81] = [
+            0x2c, 0xa9, 0x89, 0x67, 0x1d, 0xbe, 0x46, 0x11, 0x74, 0x23, 0x93, 0x7f, 0xec, 0x8b,
+            0xb7, 0x10, 0x4e, 0x98, 0xe6, 0x5d, 0x20, 0x79, 0xff, 0x19, 0x92, 0xcf, 0xf5, 0xaa,
+            0x90, 0xe3, 0x6b, 0x05, 0x4f, 0x03, 0x95, 0xfc, 0xfc, 0xbc, 0xf8, 0x45, 0xc6, 0x9d,
+            0x87, 0x57, 0x02, 0x67, 0x21, 0xba, 0x5f, 0xbf, 0x7a, 0xaa, 0x2e, 0xf4, 0xbc, 0x6e,
+            0xd6, 0x3f, 0xb3, 0x34, 0x02, 0x2e, 0x8a, 0xf8, 0x8e, 0x43, 0x6e, 0xfd, 0x81, 0x3f,
+            0xd7, 0xf1, 0xd1, 0x97, 0xd2, 0x79, 0x6e, 0x19, 0x0b, 0x30, 0x60,
+        ];
+        const STEREO_MB_OUT_L_1_TAIL: [i16; 24] = [
+            3192, 3168, 3148, 3133, 3123, 3117, 3116, 3120, 3128, 3139, 3149, 3159, 3167, 3174,
+            3180, 3185, 3190, 3192, 3190, 3183, 3170, 3154, 3136, 3119,
+        ];
+        const STEREO_MB_OUT_R_1_TAIL: [i16; 24] = [
+            -697, -391, -81, 233, 549, 870, 1191, 1512, 1830, 2145, 2455, 2760, 3061, 3360, 3657,
+            3953, 4247, 4535, 4817, 5091, 5355, 5612, 5860, 6102,
+        ];
+
+        let mut stereo_params = AudioCodecParameters::new();
+        stereo_params
+            .for_codec(CODEC_ID_OPUS)
+            .with_sample_rate(48000)
+            .with_channels(Channels::Positioned(
+                Position::FRONT_LEFT | Position::FRONT_RIGHT,
+            ));
+        let mut stereo_decoder =
+            OpusDecoder::try_new(&stereo_params, &AudioDecoderOptions::default()).unwrap();
+
+        for (pkt_bytes, expected_l_tail, expected_r_tail) in [
+            (
+                &STEREO_MB_PKT_0[..],
+                &STEREO_MB_OUT_L_0_TAIL,
+                &STEREO_MB_OUT_R_0_TAIL,
+            ),
+            (
+                &STEREO_MB_PKT_1[..],
+                &STEREO_MB_OUT_L_1_TAIL,
+                &STEREO_MB_OUT_R_1_TAIL,
+            ),
+        ] {
+            let pkt = PacketRef::new(0, Timestamp::from(0u32), Duration::from(960u64), pkt_bytes);
+            stereo_decoder.decode_ref(&pkt).unwrap();
+            assert_eq!(stereo_decoder.buffer.frames(), 960);
+            let left_tail: Vec<i16> = stereo_decoder.buffer.plane(0).unwrap()[960 - 24..]
+                .iter()
+                .map(|&s| (s * 32768.0).round() as i16)
+                .collect();
+            let right_tail: Vec<i16> = stereo_decoder.buffer.plane(1).unwrap()[960 - 24..]
+                .iter()
+                .map(|&s| (s * 32768.0).round() as i16)
+                .collect();
+            assert_eq!(left_tail.as_slice(), expected_l_tail);
+            assert_eq!(right_tail.as_slice(), expected_r_tail);
+        }
     }
 }

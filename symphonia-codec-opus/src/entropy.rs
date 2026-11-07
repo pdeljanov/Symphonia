@@ -146,7 +146,7 @@ impl<'a> Decoder<'a> {
     pub fn decode_symbol_with_icdf(&mut self, table: &[u32]) -> Result<u32> {
         let (&total, cdf) = table
             .split_first()
-            .ok_or_else(|| Error::DecodeError("cumulative distribution table is empty"))?;
+            .ok_or(Error::DecodeError("cumulative distribution table is empty"))?;
         if total == 0 {
             return Err(Error::DecodeError("cumulative distribution table total is zero"));
         }
@@ -158,7 +158,7 @@ impl<'a> Decoder<'a> {
         let symbol_index = cdf
             .iter()
             .position(|&high| high > target)
-            .ok_or_else(|| Error::DecodeError("invalid cumulative distribution table"))?;
+            .ok_or(Error::DecodeError("invalid cumulative distribution table"))?;
 
         let low = symbol_index
             .checked_sub(1)

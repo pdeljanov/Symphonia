@@ -3,7 +3,7 @@
 //! Coordinates multi-frame SILK header decoding, optional LBRR frame decoding,
 //! regular mid/side SILK frame decoding, and subframe synthesis (RFC 6716 Section 4.2).
 
-use symphonia_core::audio::{AudioBuffer, Channels};
+use symphonia_core::audio::{Audio, AudioBuffer, Channels};
 use symphonia_core::errors::Result;
 
 use crate::entropy;
@@ -27,6 +27,11 @@ impl Decoder {
         };
     }
 
+    /// Sets the target API output sample rate (`8000`, `12000`, `16000`, `24000`, or `48000` Hz).
+    pub fn set_output_sample_rate(&mut self, output_sample_rate: u32) {
+        self.state.output_sample_rate = output_sample_rate;
+    }
+
     /// Resets the SILK decoder state across stream discontinuities.
     pub fn reset(&mut self) {
         self.state.reset();
@@ -39,31 +44,37 @@ impl Decoder {
         frame_size: FrameDuration,
         bandwidth: Bandwidth,
     ) -> Result<()> {
-        if self.state.frame_size != frame_size
-            || self.state.bandwidth != bandwidth
-            || self.state.channels != channels
-        {
-            self.state = State::try_new(channels, frame_size, bandwidth)?;
-        }
+        let output_sample_rate = self.state.output_sample_rate;
+        self.state
+            .configure(channels, frame_size, bandwidth, output_sample_rate)?;
 
         return Ok(());
     }
 
-    /// Decodes a single Opus frame's SILK layer from `range_decoder` and synthesizes output into `buffer`.
+    /// Decodes a single Opus frame's SILK layer from `range_decoder`, unmixes Mid-Side stereo
+    /// when applicable, resamples to `output_sample_rate`, and appends `f32` PCM to `buffer`.
     pub fn decode_frame(
         &mut self,
         range_decoder: &mut entropy::Decoder<'_>,
         is_stereo: bool,
         buffer: &mut AudioBuffer<f32>,
     ) -> Result<()> {
+        let api_channels = buffer.spec().channels().count();
+        let internal_channels = if is_stereo { 2 } else { 1 };
+        let stereo_to_mono = api_channels == 2
+            && internal_channels == 1
+            && self.state.prev_internal_channels == 2;
+
+        if api_channels == 2 && internal_channels == 2 && self.state.prev_internal_channels == 1 {
+            self.state.stereo_state.reset_side();
+            self.state.channel_states[1].resampler = self.state.channel_states[0].resampler;
+        }
+        self.state.prev_internal_channels = internal_channels;
+
         let decoded_opus_frame = self.decode_opus_frame(range_decoder, is_stereo)?;
 
-        for lbrr_frame in decoded_opus_frame.lbrr_frames.iter() {
-            self.synthesize_frame(&lbrr_frame.mid, buffer)?;
-        }
-
-        for regular_frame in decoded_opus_frame.regular_frames.iter() {
-            self.synthesize_frame(&regular_frame.mid, buffer)?;
+        for (f, regular_frame) in decoded_opus_frame.regular_frames.iter().enumerate() {
+            self.output_frame_pair(regular_frame, is_stereo, stereo_to_mono && f == 0, buffer)?;
         }
 
         return Ok(());
@@ -100,8 +111,6 @@ impl Decoder {
                     };
                     let side_coding_mode = if f == 0 || !header.per_frame_lbrr[1][f - 1] {
                         CodingMode::CodeIndependently
-                    } else if self.state.prev_decode_only_middle {
-                        CodingMode::CodeIndependentlyNoLtpScaling
                     } else {
                         CodingMode::CodeConditionally
                     };
@@ -173,27 +182,48 @@ impl Decoder {
         side_coding_mode: CodingMode,
     ) -> Result<SilkChannelFramePair> {
         let (stereo_weights, mid_only) = if is_stereo {
-            let weights = self.decode_stereo_prediction_weights(range_decoder)?;
-            let mid_only_flag = self.decode_mid_only_flag(range_decoder, side_vad)?;
-            (Some(weights), mid_only_flag)
+            if !is_lbrr_frame || mid_vad {
+                let weights = self.decode_stereo_prediction_weights(range_decoder)?;
+                let mid_only_flag = self.decode_mid_only_flag(range_decoder, side_vad)?;
+                (Some(weights), mid_only_flag)
+            } else {
+                (None, false)
+            }
         } else {
             (None, false)
         };
 
-        let mut mid = self.decode_single_silk_frame(
-            range_decoder,
-            0,
-            mid_coding_mode,
-            silk_frame_duration,
-            mid_vad,
-            lbrr_flag,
-            is_lbrr_frame,
-        )?;
+        let mut mid = if !is_lbrr_frame || mid_vad {
+            let mut m = self.decode_single_silk_frame(
+                range_decoder,
+                0,
+                mid_coding_mode,
+                silk_frame_duration,
+                mid_vad,
+                lbrr_flag,
+                is_lbrr_frame,
+            )?;
+            m.stereo_weights = stereo_weights;
+            m.mid_only = mid_only;
+            m
+        } else {
+            let sample_count =
+                State::calculate_frame_length(self.state.sample_rate, silk_frame_duration)?;
+            let num_subframes = SubframeSize::from(silk_frame_duration);
+            let lpc_order = LpcOrder::from(self.state.bandwidth);
+            Frame::new(sample_count, num_subframes, lpc_order)
+        };
         mid.stereo_weights = stereo_weights;
         mid.mid_only = mid_only;
 
-        let side = if is_stereo && !mid_only {
-            if self.state.prev_decode_only_middle {
+        let decode_side = if is_lbrr_frame {
+            is_stereo && side_vad
+        } else {
+            is_stereo && !mid_only
+        };
+
+        let side = if decode_side {
+            if !is_lbrr_frame && self.state.prev_decode_only_middle {
                 self.state.channel_states[1].reset_after_mid_only();
             }
             let mut side_frame = self.decode_single_silk_frame(
@@ -212,7 +242,7 @@ impl Decoder {
             None
         };
 
-        if is_stereo {
+        if is_stereo && !is_lbrr_frame {
             self.state.prev_decode_only_middle = mid_only;
         }
 
@@ -235,7 +265,8 @@ impl Decoder {
         lbrr_flag: bool,
         is_lbrr_frame: bool,
     ) -> Result<Frame> {
-        let sample_count = State::calculate_frame_length(self.state.sample_rate, silk_frame_duration)?;
+        let sample_count =
+            State::calculate_frame_length(self.state.sample_rate, silk_frame_duration)?;
         let num_subframes = SubframeSize::from(silk_frame_duration);
         let lpc_order = LpcOrder::from(self.state.bandwidth);
         let mut frame = Frame::new(sample_count, num_subframes, lpc_order);
@@ -249,10 +280,22 @@ impl Decoder {
         self.decode_lsf(range_decoder, &mut frame, channel, silk_frame_duration)?;
 
         if frame.frame_type.signal_type == SignalType::Voiced {
-            self.decode_ltp(range_decoder, &mut frame, channel, coding_mode, silk_frame_duration)?;
+            self.decode_ltp(
+                range_decoder,
+                &mut frame,
+                channel,
+                coding_mode,
+                silk_frame_duration,
+            )?;
         }
 
+        self.state.channel_states[channel].ec_prev_signal_type = frame.frame_type.signal_type;
+
+        self.decode_lcg_seed(range_decoder, &mut frame)?;
+
         self.decode_excitation(range_decoder, &mut frame)?;
+
+        self.synthesize_channel_frame(&mut frame, channel)?;
 
         self.state.prev_frame_type = frame.frame_type;
         self.state.channel_states[channel].prev_signal_type = frame.frame_type.signal_type;
@@ -675,5 +718,182 @@ mod tests {
             vec![80, 80, 80, 80]
         );
         assert_eq!(frame.ltp_scale_q14, 15565);
+
+        const REAL_WB_FIRST_32_PCM: [i16; 32] = [
+            3, 3, 61, 112, 156, 198, 298, 394, 476, 552, 615, 678, 737, 789, 830, 864, 897, 927,
+            947, 963, 967, 958, 944, 919, 886, 845, 797, 749, 695, 639, 579, 520,
+        ];
+        const REAL_WB_LAST_32_PCM: [i16; 32] = [
+            40, -60, -139, -208, -306, -407, -495, -575, -649, -716, -784, -848, -888, -897,
+            -918, -948, -957, -968, -1000, -1027, -1054, -1115, -1160, -1192, -1258, -1320,
+            -1373, -1421, -1447, -1434, -1389, -1324,
+        ];
+        const REAL_WB_SLPC_Q14_BUF: [i32; 16] = [
+            -245066, -247746, -256088, -262800, -269758, -285468, -296864, -305186, -322048,
+            -337976, -351410, -363806, -370326, -366994, -355556, -339060,
+        ];
+
+        decoder.decode_lcg_seed(&mut dec, &mut frame).unwrap();
+        assert_eq!(frame.lcg_seed, 0);
+
+        decoder.decode_excitation(&mut dec, &mut frame).unwrap();
+        assert_eq!(dec.tell(), 209);
+
+        decoder
+            .synthesize_channel_frame(&mut frame, 0)
+            .unwrap();
+        assert_eq!(&frame.output_pcm[..32], &REAL_WB_FIRST_32_PCM);
+        assert_eq!(&frame.output_pcm[320 - 32..320], &REAL_WB_LAST_32_PCM);
+        assert_eq!(
+            &decoder.state.channel_states[0].s_lpc_q14_buf,
+            &REAL_WB_SLPC_Q14_BUF
+        );
+        assert_eq!(decoder.state.channel_states[0].lag_prev, 80);
+    }
+
+    #[test]
+    fn silk_nlsf2a_nb_wb_and_resonant_stabilization_match_libopus() {
+        // Generated from libopus 1.6.1 C silk_NLSF2A and silk_LPC_inverse_pred_gain_c:
+        const NLSF_Q15_NB: [i16; 10] = [
+            1547, 4508, 7814, 10871, 14261, 17641, 21363, 25184, 26336, 26339,
+        ];
+        const EXPECTED_A_Q12_NB: [i16; 10] = [
+            1545, 716, 1663, -2049, 2207, -1542, 1286, -805, 595, -332,
+        ];
+
+        const NLSF_Q15_WB: [i16; 16] = [
+            674, 1292, 2214, 4949, 6390, 9088, 11264, 13184, 15232, 17536, 19712, 21888, 24192,
+            26240, 28416, 30336,
+        ];
+        const EXPECTED_A_Q12_WB: [i16; 16] = [
+            7772, -3675, 43, -45, 264, -676, 460, -283, 541, -219, 61, -369, 301, -381, 139, 146,
+        ];
+
+        const NLSF_Q15_RESONANT: [i16; 10] = [100, 120, 140, 160, 180, 200, 220, 240, 260, 280];
+        const EXPECTED_A_Q12_RESONANT: [i16; 10] = [
+            16591, -30244, 32672, -23164, 11261, -3802, 880, -134, 12, -1,
+        ];
+
+        let a_nb = Decoder::lsf_to_lpc(&NLSF_Q15_NB).unwrap();
+        assert_eq!(&a_nb[..10], &EXPECTED_A_Q12_NB);
+        assert_eq!(Decoder::lpc_inverse_pred_gain(&a_nb[..10]), 3_238_224);
+
+        let a_wb = Decoder::lsf_to_lpc(&NLSF_Q15_WB).unwrap();
+        assert_eq!(&a_wb, &EXPECTED_A_Q12_WB);
+        assert_eq!(Decoder::lpc_inverse_pred_gain(&a_wb), 864_548);
+
+        let a_res = Decoder::lsf_to_lpc(&NLSF_Q15_RESONANT).unwrap();
+        assert_eq!(&a_res[..10], &EXPECTED_A_Q12_RESONANT);
+        assert_eq!(Decoder::lpc_inverse_pred_gain(&a_res[..10]), 386_396);
+    }
+
+    #[test]
+    fn silk_excitation_shell_splits_lsb_escape_and_signs_match_libopus() {
+        // Bitstream encoded by libopus C silk_encode_pulses covering:
+        // - block 0: pulse_count = 0 with lsb_count = 1 (escape 17 -> 0, LSB-only pulses + signs)
+        // - block 1: pulse_count = 4
+        // - block 2: pulse_count = 0, lsb_count = 0 (all-zero block)
+        // - block 3: pulse_count = 7 with lsb_count = 2 (double escape 17 -> 17 -> 7)
+        // - block 4: pulse_count = 12 (dense shell split)
+        const EXCITATION_TEST_BYTES: [u8; 25] = [
+            0xa5, 0x77, 0x85, 0xab, 0xf8, 0xf2, 0x89, 0xdb, 0xac, 0xa9, 0x0e, 0xcf, 0xec, 0x43,
+            0xbc, 0xb5, 0x5f, 0x16, 0x0f, 0x72, 0xaf, 0xa7, 0x7c, 0xc4, 0x80,
+        ];
+        const EXPECTED_DECODED_PULSES: [i16; 80] = [
+            -1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, -1, 1, 0, 2, 0, 0, -1, 0, 0, 0, 0, 1,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 2, -3, 4, 1, -2,
+            3, 0, -1, 2, 3, 0, 1, 2, -7, -2, 1, 0, 1, -1, 0, -2, 0, -1, 1, 0, 0, -1, 0, -1, 1,
+        ];
+
+        let mut decoder =
+            create_test_silk_decoder(false, FrameDuration::Ms10, Bandwidth::NarrowBand);
+        let mut dec = entropy::Decoder::new(&EXCITATION_TEST_BYTES).unwrap();
+        let mut frame = Frame::new(80, 2, 10);
+        frame.frame_type = FrameType::new(SignalType::Voiced, QuantizationOffsetType::High);
+
+        decoder.decode_lcg_seed(&mut dec, &mut frame).unwrap();
+        assert_eq!(frame.lcg_seed, 2);
+
+        decoder.decode_excitation(&mut dec, &mut frame).unwrap();
+        assert_eq!(dec.tell(), 193);
+        assert_eq!(&frame.pulses[..80], &EXPECTED_DECODED_PULSES);
+    }
+
+    #[test]
+    fn silk_stereo_ms_to_lr_and_resampler_modes_match_libopus() {
+        use crate::silk::resampler::ResamplerState;
+
+        const EXPECTED_STEREO_LEFT: [i16; 16] = [
+            -594, -1014, 1478, -861, 406, -183, -967, 1568, -465, 673, -3352, 3939, -1276, 1470,
+            -5677, 6250,
+        ];
+        const EXPECTED_STEREO_RIGHT: [i16; 16] = [
+            -246, -1386, 288, -271, 92, 319, 197, -164, -1573, 1999, 46, 1, -3298, 3738, -165, 226,
+        ];
+        const EXPECTED_RESAMP_8_TO_16_TAIL: [i16; 16] = [
+            3819, 4356, 4647, 4591, 4133, 3279, 2094, 701, -745, -2085, -3176, -3920, -4275,
+            -4262, -3957, -3473,
+        ];
+        const EXPECTED_RESAMP_16_TO_8_TAIL: [i16; 16] = [
+            4383, 829, -468, -1852, -4765, -3335, 1948, 3713, 2445, 2516, 728, -4079, -4964,
+            -1025, 1123, 1766,
+        ];
+        const EXPECTED_RESAMP_16_TO_12_TAIL: [i16; 16] = [
+            -2456, 1230, 3540, 3513, 2585, 2376, 2525, 1311, -1750, -4749, -5277, -3110, -368,
+            997, 1279, 2097,
+        ];
+
+        let mut decoder = create_test_silk_decoder(true, FrameDuration::Ms20, Bandwidth::MediumBand);
+        decoder.state.stereo_state.pred_prev_q13 = [-1524, 2816];
+        decoder.state.stereo_state.s_mid = [310, -420];
+        decoder.state.stereo_state.s_side = [95, -110];
+
+        let mut x_mid = [0i16; 18];
+        let mut x_side = [0i16; 18];
+        for i in 0..16 {
+            let sign_m = if (i & 1) != 0 { -1 } else { 1 };
+            let sign_s = if (i & 2) != 0 { 1 } else { -1 };
+            x_mid[i + 2] = ((i as i32 * 317 - 1200) * sign_m) as i16;
+            x_side[i + 2] = ((i as i32 * 193 - 500) * sign_s) as i16;
+        }
+        Decoder::unmix_mid_side_to_left_right(
+            &mut decoder.state.stereo_state,
+            &mut x_mid,
+            &mut x_side,
+            crate::silk::StereoWeights {
+                w0_q13: 3120,
+                w1_q13: -1840,
+            },
+            12,
+            16,
+        );
+        assert_eq!(&x_mid[1..17], &EXPECTED_STEREO_LEFT);
+        assert_eq!(&x_side[1..17], &EXPECTED_STEREO_RIGHT);
+
+        let mut in_sig = [0i16; 80];
+        for (i, sample) in in_sig.iter_mut().enumerate() {
+            let v = 4000.0 * (2.0 * std::f64::consts::PI * i as f64 / 16.0).sin()
+                + 1500.0 * (2.0 * std::f64::consts::PI * i as f64 / 7.0).cos();
+            *sample = v as i16;
+        }
+
+        let mut res_up2 = ResamplerState::default();
+        res_up2.init(8000, 16000).unwrap();
+        let mut out_up2 = [0i16; 160];
+        res_up2.resample(&mut out_up2, &in_sig).unwrap();
+        assert_eq!(&out_up2[160 - 16..], &EXPECTED_RESAMP_8_TO_16_TAIL);
+
+        let mut res_down_1_2 = ResamplerState::default();
+        res_down_1_2.init(16000, 8000).unwrap();
+        let mut out_down_1_2 = [0i16; 40];
+        res_down_1_2.resample(&mut out_down_1_2, &in_sig).unwrap();
+        assert_eq!(&out_down_1_2[40 - 16..], &EXPECTED_RESAMP_16_TO_8_TAIL);
+
+        let mut res_down_3_4 = ResamplerState::default();
+        res_down_3_4.init(16000, 12000).unwrap();
+        let mut out_down_3_4 = [0i16; 60];
+        res_down_3_4.resample(&mut out_down_3_4, &in_sig).unwrap();
+        assert_eq!(&out_down_3_4[60 - 16..], &EXPECTED_RESAMP_16_TO_12_TAIL);
     }
 }
+
