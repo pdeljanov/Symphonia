@@ -278,15 +278,16 @@ impl Decoder {
     }
 
     /// Unmixes (or mono-buffers) a decoded `SilkChannelFramePair`, resamples from the internal
-    /// SILK sample rate (`8`, `12`, or `16` kHz) to `self.state.output_sample_rate`, and appends
-    /// normalized `f32` PCM (`i16 / 32768.0`) to `buffer` (`dec_API.c:382-468`).
-    pub(crate) fn output_frame_pair(
+    /// SILK sample rate (`8`, `12`, or `16` kHz) to `self.state.output_sample_rate`, and writes
+    /// normalized `f32` PCM (`i16 / 32768.0`) into planar slices `out_ch0` and `out_ch1`.
+    pub(crate) fn output_frame_pair_planar(
         &mut self,
         pair: &SilkChannelFramePair,
         is_stereo_packet: bool,
         stereo_to_mono: bool,
-        buffer: &mut AudioBuffer<f32>,
-    ) -> Result<()> {
+        out_ch0: &mut [f32],
+        out_ch1: Option<&mut [f32]>,
+    ) -> Result<usize> {
         const INT16_TO_F32_SCALE: f32 = 1.0 / 32768.0;
 
         let frame_length = pair.mid.sample_count;
@@ -294,7 +295,7 @@ impl Decoder {
             return Err(Error::InvalidFrameSize.into());
         }
 
-        let api_channels = buffer.spec().channels().count();
+        let api_channels = if out_ch1.is_some() { 2 } else { 1 };
         let internal_channels = if is_stereo_packet { 2 } else { 1 };
         let fs_khz = self.state.channel_states[0].fs_khz;
 
@@ -333,30 +334,26 @@ impl Decoder {
             &samples_tmp0[1..1 + frame_length],
         )?;
 
-        if buffer.frames() + n_out > buffer.capacity() {
+        if out_ch0.len() < n_out {
             return Err(Error::BufferOverflow.into());
         }
 
-        let start = buffer.frames();
-        buffer.render_uninit(Some(n_out));
-
-        {
-            let dst0 = buffer.plane_mut(0).ok_or(Error::BufferOverflow)?;
-            for i in 0..n_out {
-                dst0[start + i] = (resampled0[i] as f32) * INT16_TO_F32_SCALE;
-            }
+        for (dst, &src) in out_ch0[..n_out].iter_mut().zip(resampled0[..n_out].iter()) {
+            *dst = (src as f32) * INT16_TO_F32_SCALE;
         }
 
-        if api_channels == 2 {
+        if let Some(dst1) = out_ch1 {
+            if dst1.len() < n_out {
+                return Err(Error::BufferOverflow.into());
+            }
             if internal_channels == 2 {
                 let mut resampled1 = [0i16; MAX_RESAMPLED_FRAME_SAMPLES];
                 let n_out1 = self.state.channel_states[1].resampler.resample(
                     &mut resampled1,
                     &samples_tmp1[1..1 + frame_length],
                 )?;
-                let dst1 = buffer.plane_mut(1).ok_or(Error::BufferOverflow)?;
-                for i in 0..n_out1 {
-                    dst1[start + i] = (resampled1[i] as f32) * INT16_TO_F32_SCALE;
+                for (dst, &src) in dst1[..n_out1].iter_mut().zip(resampled1[..n_out1].iter()) {
+                    *dst = (src as f32) * INT16_TO_F32_SCALE;
                 }
             } else if stereo_to_mono {
                 let mut resampled1 = [0i16; MAX_RESAMPLED_FRAME_SAMPLES];
@@ -364,16 +361,68 @@ impl Decoder {
                     &mut resampled1,
                     &samples_tmp0[1..1 + frame_length],
                 )?;
-                let dst1 = buffer.plane_mut(1).ok_or(Error::BufferOverflow)?;
-                for i in 0..n_out1 {
-                    dst1[start + i] = (resampled1[i] as f32) * INT16_TO_F32_SCALE;
+                for (dst, &src) in dst1[..n_out1].iter_mut().zip(resampled1[..n_out1].iter()) {
+                    *dst = (src as f32) * INT16_TO_F32_SCALE;
                 }
             } else {
-                let dst1 = buffer.plane_mut(1).ok_or(Error::BufferOverflow)?;
-                for i in 0..n_out {
-                    dst1[start + i] = (resampled0[i] as f32) * INT16_TO_F32_SCALE;
-                }
+                dst1[..n_out].copy_from_slice(&out_ch0[..n_out]);
             }
+        }
+
+        return Ok(n_out);
+    }
+
+    /// Unmixes (or mono-buffers) a decoded `SilkChannelFramePair`, resamples from the internal
+    /// SILK sample rate (`8`, `12`, or `16` kHz) to `self.state.output_sample_rate`, and appends
+    /// normalized `f32` PCM (`i16 / 32768.0`) to `buffer` (`dec_API.c:382-468`).
+    pub(crate) fn output_frame_pair(
+        &mut self,
+        pair: &SilkChannelFramePair,
+        is_stereo_packet: bool,
+        stereo_to_mono: bool,
+        buffer: &mut AudioBuffer<f32>,
+    ) -> Result<()> {
+        let frame_length = pair.mid.sample_count;
+        if frame_length == 0 || frame_length > MAX_FRAME_SAMPLES {
+            return Err(Error::InvalidFrameSize.into());
+        }
+
+        let api_channels = buffer.spec().channels().count();
+        let fs_khz = self.state.channel_states[0].fs_khz.max(8);
+        let expected_out = (frame_length * (self.state.output_sample_rate as usize)) / (fs_khz * 1000);
+        if buffer.frames() + expected_out > buffer.capacity() {
+            return Err(Error::BufferOverflow.into());
+        }
+
+        let mut ch0_buf = [0.0f32; MAX_RESAMPLED_FRAME_SAMPLES];
+        let mut ch1_buf = [0.0f32; MAX_RESAMPLED_FRAME_SAMPLES];
+        let n_out = if api_channels == 2 {
+            self.output_frame_pair_planar(
+                pair,
+                is_stereo_packet,
+                stereo_to_mono,
+                &mut ch0_buf,
+                Some(&mut ch1_buf),
+            )?
+        } else {
+            self.output_frame_pair_planar(
+                pair,
+                is_stereo_packet,
+                stereo_to_mono,
+                &mut ch0_buf,
+                None,
+            )?
+        };
+
+        let start = buffer.frames();
+        buffer.render_uninit(Some(n_out));
+        {
+            let dst0 = buffer.plane_mut(0).ok_or(Error::BufferOverflow)?;
+            dst0[start..start + n_out].copy_from_slice(&ch0_buf[..n_out]);
+        }
+        if api_channels == 2 {
+            let dst1 = buffer.plane_mut(1).ok_or(Error::BufferOverflow)?;
+            dst1[start..start + n_out].copy_from_slice(&ch1_buf[..n_out]);
         }
 
         return Ok(());
