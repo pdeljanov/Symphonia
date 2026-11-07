@@ -110,6 +110,26 @@ impl<'a> Decoder<'a> {
         return Ok(decoder);
     }
 
+    /// Returns the current active storage length in bytes (`ec_dec::storage`).
+    #[inline]
+    pub fn storage_bytes(&self) -> usize {
+        return self.data.len();
+    }
+
+    /// Shrinks the active frame slice from the end by `bytes` (used when trailing
+    /// CELT redundancy bytes are stripped before CELT raw-bit decoding).
+    #[inline]
+    pub fn shrink_storage(&mut self, bytes: usize) {
+        let new_len = self.data.len().saturating_sub(bytes);
+        self.data = &self.data[..new_len];
+    }
+
+    /// Returns the current internal range state (`ec_dec::rng`, used for `OPUS_GET_FINAL_RANGE`).
+    #[inline]
+    pub fn final_range(&self) -> u32 {
+        return self.range;
+    }
+
     /// Returns the number of whole bits consumed by decoded symbols and raw bits so far
     /// (RFC 6716 Section 4.1.2).
     ///
@@ -537,5 +557,16 @@ mod tests {
         assert_eq!(dec.decode_raw_bits(5).unwrap(), 0x15);
         assert_eq!(dec.tell(), 50);
         assert_eq!(dec.tell_frac(), 393);
+        assert_eq!(dec.storage_bytes(), 12);
+        assert!(dec.final_range() > MIN_RANGE_SIZE);
+
+        // Shrinking storage by 2 bytes redirects subsequent backward raw-bit reads
+        // to the new end of the active slice (used when stripping trailing CELT redundancy).
+        let mut shrink_dec = Decoder::new(&[0x00, 0x00, 0x00, 0xA5, 0xFF, 0xFF]).unwrap();
+        assert_eq!(shrink_dec.storage_bytes(), 6);
+        shrink_dec.shrink_storage(2);
+        assert_eq!(shrink_dec.storage_bytes(), 4);
+        assert_eq!(shrink_dec.decode_raw_bits(8).unwrap(), 0xA5);
     }
 }
+
