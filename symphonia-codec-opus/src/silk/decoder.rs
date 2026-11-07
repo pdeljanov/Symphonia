@@ -256,22 +256,61 @@ impl Decoder {
         let silk_frame_duration = State::silk_frame_duration(self.state.frame_size)?;
 
         let mut lbrr_frames = Vec::new();
-        for f in 0..header.num_silk_frames {
-            if header.has_frame_lbrr(f) {
-                let lbrr_pair = self.decode_silk_frame_pair(
-                    range_decoder,
-                    silk_frame_duration,
-                    is_stereo,
-                    header.per_frame_lbrr[0][f],
-                    header.per_frame_lbrr[1][f],
-                    true,
-                )?;
-                lbrr_frames.push(lbrr_pair);
+        if header.has_any_lbrr() {
+            let saved_channel_states = self.state.channel_states.clone();
+            let saved_prev_decode_only_middle = self.state.prev_decode_only_middle;
+            for ch_state in self.state.channel_states.iter_mut() {
+                ch_state.reset(self.state.lpc_order);
             }
+            self.state.prev_decode_only_middle = false;
+
+            for f in 0..header.num_silk_frames {
+                if header.has_frame_lbrr(f) {
+                    let mid_coding_mode = if f > 0 && header.per_frame_lbrr[0][f - 1] {
+                        CodingMode::CodeConditionally
+                    } else {
+                        CodingMode::CodeIndependently
+                    };
+                    let side_coding_mode = if f == 0 || !header.per_frame_lbrr[1][f - 1] {
+                        CodingMode::CodeIndependently
+                    } else if self.state.prev_decode_only_middle {
+                        CodingMode::CodeIndependentlyNoLtpScaling
+                    } else {
+                        CodingMode::CodeConditionally
+                    };
+                    let lbrr_pair = self.decode_silk_frame_pair(
+                        range_decoder,
+                        silk_frame_duration,
+                        is_stereo,
+                        header.per_frame_lbrr[0][f],
+                        header.per_frame_lbrr[1][f],
+                        true,
+                        true,
+                        mid_coding_mode,
+                        side_coding_mode,
+                    )?;
+                    lbrr_frames.push(lbrr_pair);
+                }
+            }
+
+            self.state.channel_states = saved_channel_states;
+            self.state.prev_decode_only_middle = saved_prev_decode_only_middle;
         }
 
         let mut regular_frames = Vec::with_capacity(header.num_silk_frames);
         for f in 0..header.num_silk_frames {
+            let mid_coding_mode = if f == 0 {
+                CodingMode::CodeIndependently
+            } else {
+                CodingMode::CodeConditionally
+            };
+            let side_coding_mode = if f == 0 {
+                CodingMode::CodeIndependently
+            } else if self.state.prev_decode_only_middle {
+                CodingMode::CodeIndependentlyNoLtpScaling
+            } else {
+                CodingMode::CodeConditionally
+            };
             let regular_pair = self.decode_silk_frame_pair(
                 range_decoder,
                 silk_frame_duration,
@@ -279,6 +318,9 @@ impl Decoder {
                 header.vad_flags[0][f],
                 header.vad_flags[1][f],
                 header.per_frame_lbrr[0][f] || header.per_frame_lbrr[1][f],
+                false,
+                mid_coding_mode,
+                side_coding_mode,
             )?;
             regular_frames.push(regular_pair);
         }
@@ -290,6 +332,7 @@ impl Decoder {
         });
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn decode_silk_frame_pair<R: RangeDecoder>(
         &mut self,
         range_decoder: &mut R,
@@ -298,6 +341,9 @@ impl Decoder {
         mid_vad: bool,
         side_vad: bool,
         lbrr_flag: bool,
+        is_lbrr_frame: bool,
+        mid_coding_mode: CodingMode,
+        side_coding_mode: CodingMode,
     ) -> Result<SilkChannelFramePair> {
         let (stereo_weights, mid_only) = if is_stereo {
             let weights = self.decode_stereo_prediction_weights(range_decoder)?;
@@ -309,19 +355,28 @@ impl Decoder {
 
         let mut mid = self.decode_single_silk_frame(
             range_decoder,
+            0,
+            mid_coding_mode,
             silk_frame_duration,
             mid_vad,
             lbrr_flag,
+            is_lbrr_frame,
         )?;
         mid.stereo_weights = stereo_weights;
         mid.mid_only = mid_only;
 
         let side = if is_stereo && !mid_only {
+            if self.state.prev_decode_only_middle {
+                self.state.channel_states[1].reset_after_mid_only();
+            }
             let mut side_frame = self.decode_single_silk_frame(
                 range_decoder,
+                1,
+                side_coding_mode,
                 silk_frame_duration,
                 side_vad,
                 lbrr_flag,
+                is_lbrr_frame,
             )?;
             side_frame.stereo_weights = stereo_weights;
             side_frame.mid_only = mid_only;
@@ -329,6 +384,10 @@ impl Decoder {
         } else {
             None
         };
+
+        if is_stereo {
+            self.state.prev_decode_only_middle = mid_only;
+        }
 
         return Ok(SilkChannelFramePair {
             stereo_weights,
@@ -338,12 +397,16 @@ impl Decoder {
         });
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn decode_single_silk_frame<R: RangeDecoder>(
         &mut self,
         range_decoder: &mut R,
+        channel: usize,
+        coding_mode: CodingMode,
         silk_frame_duration: FrameDuration,
         vad_flag: bool,
         lbrr_flag: bool,
+        is_lbrr_frame: bool,
     ) -> Result<Frame> {
         let sample_count = State::calculate_frame_length(self.state.sample_rate, silk_frame_duration)?;
         let num_subframes = SubframeSize::from(silk_frame_duration);
@@ -351,17 +414,21 @@ impl Decoder {
         frame.vad_flag = vad_flag;
         frame.lbrr_flag = lbrr_flag;
 
-        frame.frame_type = self.decode_frame_type(range_decoder, vad_flag)?;
+        frame.frame_type = self.decode_frame_type(range_decoder, vad_flag, is_lbrr_frame)?;
 
-        self.decode_gains(range_decoder, &mut frame)?;
+        self.decode_gains(range_decoder, &mut frame, channel, coding_mode)?;
 
-        self.decode_lsf(range_decoder, &mut frame, silk_frame_duration)?;
+        self.decode_lsf(range_decoder, &mut frame, channel, silk_frame_duration)?;
 
         if frame.frame_type.signal_type == SignalType::Voiced {
-            self.decode_ltp(range_decoder, &mut frame, silk_frame_duration)?;
+            self.decode_ltp(range_decoder, &mut frame, channel, coding_mode, silk_frame_duration)?;
         }
 
         self.decode_excitation(range_decoder, &mut frame)?;
+
+        self.state.prev_frame_type = frame.frame_type;
+        self.state.channel_states[channel].prev_signal_type = frame.frame_type.signal_type;
+        self.state.channel_states[channel].first_frame_after_reset = false;
 
         return Ok(frame);
     }
@@ -480,16 +547,27 @@ impl Decoder {
         return Ok(mid_only == 1);
     }
 
-    /// Decodes the SILK frame type
+    /// Decodes the SILK frame type (RFC 6716 Section 4.2.7.3).
     ///
-    /// The frame type is encoded using a context-dependent codebook.
+    /// The frame type is encoded using a context-dependent codebook selected by
+    /// whether the frame is active (`vad_flag || is_lbrr_frame`).
     ///
     /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.3>
-    fn decode_frame_type<R: RangeDecoder>(&mut self, decoder: &mut R, vad_flag: bool) -> Result<FrameType> {
-        let icdf: &[u32] = if vad_flag { &constant::ICDF_FRAME_TYPE_VAD_ACTIVE } else { &constant::ICDF_FRAME_TYPE_VAD_INACTIVE };
+    fn decode_frame_type<R: RangeDecoder>(
+        &mut self,
+        decoder: &mut R,
+        vad_flag: bool,
+        is_lbrr_frame: bool,
+    ) -> Result<FrameType> {
+        let active = vad_flag || is_lbrr_frame;
+        let icdf: &[u32] = if active {
+            &constant::ICDF_FRAME_TYPE_VAD_ACTIVE
+        } else {
+            &constant::ICDF_FRAME_TYPE_VAD_INACTIVE
+        };
         let frame_type_symbol = decoder.decode_symbol_with_icdf(icdf)?;
 
-        let (signal_type, quantization_offset_type) = match (vad_flag, frame_type_symbol) {
+        let (signal_type, quantization_offset_type) = match (active, frame_type_symbol) {
             (false, 0) => (SignalType::Inactive, QuantizationOffsetType::Low),
             (false, 1) => (SignalType::Inactive, QuantizationOffsetType::High),
             (true, 0) => (SignalType::Unvoiced, QuantizationOffsetType::Low),
@@ -502,52 +580,74 @@ impl Decoder {
         return Ok(FrameType::new(signal_type, quantization_offset_type));
     }
 
-
-    /// Decodes the Line Spectral Frequencies (LSF).
-    ///
-    /// LSF coefficients are decoded using a two-stage process and may include
-    /// interpolation for 20 ms frames.
+    /// Decodes the Normalized Line Spectral Frequencies (NLSF) for a SILK frame
+    /// and interpolates across subframes when applicable (RFC 6716 Section 4.2.7.5).
     ///
     /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.5>
     fn decode_lsf<R: RangeDecoder>(
-        &self,
+        &mut self,
         decoder: &mut R,
         frame: &mut Frame,
+        channel: usize,
         silk_frame_duration: FrameDuration,
     ) -> Result<()> {
-        for subframe in frame.subframes.iter_mut() {
-            let i1 = self.decode_lsf_stage1(decoder, frame.vad_flag, frame.frame_type.signal_type)?;
-            let (d_lpc, res_q10) = self.decode_lsf_stage2(decoder, i1)?;
-            let nlsf_q15 = self.reconstruct_nlsf(d_lpc, &res_q10, i1)?;
-            let stabilized_nlsf_q15 = self.stabilize_nlsf(&nlsf_q15)?;
-            subframe.nlsf_q15 = stabilized_nlsf_q15;
-        }
+        let i1 = self.decode_lsf_stage1(decoder, frame.frame_type.signal_type)?;
+        let (d_lpc, res_q10) = self.decode_lsf_stage2(decoder, i1)?;
+        let raw_nlsf_q15 = self.reconstruct_nlsf(d_lpc, &res_q10, i1)?;
+        let nlsf_q15 = self.stabilize_nlsf(&raw_nlsf_q15)?;
 
-        if silk_frame_duration == FrameDuration::Ms20 {
-            let interpolation_index = decoder.decode_symbol_with_icdf(&constant::ICDF_NORMALIZED_LSF_INTERPOLATION_INDEX)?;
-            frame.lsf_interpolation_index = Some(interpolation_index);
+        let raw_interp_idx = if silk_frame_duration == FrameDuration::Ms20 {
+            let idx = decoder.decode_symbol_with_icdf(&constant::ICDF_NORMALIZED_LSF_INTERPOLATION_INDEX)?;
+            frame.lsf_interpolation_index = Some(idx);
+            idx
+        } else {
+            frame.lsf_interpolation_index = None;
+            4
+        };
 
-            if let Some(w_q2) = frame.lsf_interpolation_index {
-                let n0_q15 = &frame.subframes[0].nlsf_q15;
-                let n2_q15 = &frame.subframes[2].nlsf_q15;
-                let mut n1_q15 = vec![0; self.state.lpc_order];
+        let ch_state = &mut self.state.channel_states[channel];
+        let effective_w_q2 = if ch_state.first_frame_after_reset || ch_state.prev_nlsf_q15.len() != d_lpc {
+            4
+        } else {
+            raw_interp_idx
+        };
 
-                for k in 0..self.state.lpc_order {
-                    n1_q15[k] = n0_q15[k] + ((w_q2 as i32 * (n2_q15[k] as i32 - n0_q15[k] as i32)) >> 2) as i16;
-                }
-
-                frame.subframes[1].nlsf_q15 = n1_q15;
+        if effective_w_q2 < 4 && frame.subframes.len() == 4 {
+            let mut nlsf0_q15 = vec![0i16; d_lpc];
+            for k in 0..d_lpc {
+                let prev = ch_state.prev_nlsf_q15[k] as i32;
+                let curr = nlsf_q15[k] as i32;
+                nlsf0_q15[k] = (prev + (((curr - prev) * (effective_w_q2 as i32)) >> 2)) as i16;
+            }
+            frame.subframes[0].nlsf_q15 = nlsf0_q15.clone();
+            frame.subframes[1].nlsf_q15 = nlsf0_q15;
+            frame.subframes[2].nlsf_q15 = nlsf_q15.clone();
+            frame.subframes[3].nlsf_q15 = nlsf_q15.clone();
+        } else {
+            for subframe in frame.subframes.iter_mut() {
+                subframe.nlsf_q15 = nlsf_q15.clone();
             }
         }
+
+        ch_state.prev_nlsf_q15 = nlsf_q15;
 
         return Ok(());
     }
 
-    fn decode_lsf_stage1(&self, decoder: &mut impl RangeDecoder, vad_flag: bool, signal_type: SignalType) -> Result<u32> {
-        let icdf = match (vad_flag, signal_type) {
-            (false, _) => &constant::ICDF_NORMALIZED_LSF_STAGE_ONE_INDEX_NARROWBAND_OR_MEDIUMBAND_UNVOICED,
-            (true, SignalType::Voiced) => &constant::ICDF_NORMALIZED_LSF_STAGE_ONE_INDEX_NARROWBAND_OR_MEDIUMBAND_VOICED,
-            (true, _) => &constant::ICDF_NORMALIZED_LSF_STAGE_ONE_INDEX_WIDEBAND_UNVOICED,
+    fn decode_lsf_stage1(&self, decoder: &mut impl RangeDecoder, signal_type: SignalType) -> Result<u32> {
+        let icdf: &[u32] = match (self.state.bandwidth, signal_type) {
+            (Bandwidth::NarrowBand | Bandwidth::MediumBand, SignalType::Voiced) => {
+                &constant::ICDF_NORMALIZED_LSF_STAGE_ONE_INDEX_NARROWBAND_OR_MEDIUMBAND_VOICED
+            }
+            (Bandwidth::NarrowBand | Bandwidth::MediumBand, SignalType::Inactive | SignalType::Unvoiced) => {
+                &constant::ICDF_NORMALIZED_LSF_STAGE_ONE_INDEX_NARROWBAND_OR_MEDIUMBAND_UNVOICED
+            }
+            (Bandwidth::WideBand | Bandwidth::SuperWideBand | Bandwidth::FullBand, SignalType::Voiced) => {
+                &constant::ICDF_NORMALIZED_LSF_STAGE_ONE_INDEX_WIDEBAND_VOICED
+            }
+            (Bandwidth::WideBand | Bandwidth::SuperWideBand | Bandwidth::FullBand, SignalType::Inactive | SignalType::Unvoiced) => {
+                &constant::ICDF_NORMALIZED_LSF_STAGE_ONE_INDEX_WIDEBAND_UNVOICED
+            }
         };
 
         return decoder.decode_symbol_with_icdf(icdf);
@@ -555,118 +655,280 @@ impl Decoder {
 
     fn decode_lsf_stage2<R: RangeDecoder>(&self, decoder: &mut R, i1: u32) -> Result<(usize, Vec<i16>)> {
         let d_lpc = self.state.lpc_order;
-        let mut res_q10 = vec![0i16; d_lpc];
+        let i1_idx = i1 as usize;
+        if i1_idx >= 32 {
+            return Err(Error::InvalidLSFCoefficients.into());
+        }
 
         let codebook_selector: &[u8] = match self.state.bandwidth {
             Bandwidth::NarrowBand | Bandwidth::MediumBand => {
-                &constant::CODEBOOK_NORMALIZED_LSF_STAGE_TWO_INDEX_NARROWBAND_OR_MEDIUMBAND[i1 as usize]
+                &constant::CODEBOOK_NORMALIZED_LSF_STAGE_TWO_INDEX_NARROWBAND_OR_MEDIUMBAND[i1_idx]
             }
             Bandwidth::WideBand | Bandwidth::SuperWideBand | Bandwidth::FullBand => {
-                &constant::CODEBOOK_NORMALIZED_LSF_STAGE_TWO_INDEX_WIDEBAND[i1 as usize]
+                &constant::CODEBOOK_NORMALIZED_LSF_STAGE_TWO_INDEX_WIDEBAND[i1_idx]
             }
         };
 
-        for (k, res_q10) in res_q10.iter_mut().enumerate() {
+        let mut stage2_indices = vec![0i16; d_lpc];
+        for (k, idx_out) in stage2_indices.iter_mut().enumerate() {
             let codebook_idx = codebook_selector[k] as usize;
             let icdf = &constant::ICDF_NORMALIZED_LSF_STAGE_TWO_INDEX[codebook_idx];
 
             let symbol = decoder.decode_symbol_with_icdf(icdf)?;
+            let mut idx = (symbol as i16) - 4;
 
-            *res_q10 = (symbol as i16) - 4;
-
-            if *res_q10 == -4 || *res_q10 == 4 {
-                let extension = decoder.decode_symbol_with_icdf(&constant::ICDF_NORMALIZED_LSF_STAGE_TWO_INDEX_EXTENSION)?;
-                *res_q10 += if *res_q10 < 0 {
-                    -(extension as i16)
-                } else {
-                    extension as i16
-                };
+            if idx == -4 || idx == 4 {
+                let extension = decoder.decode_symbol_with_icdf(&constant::ICDF_NORMALIZED_LSF_STAGE_TWO_INDEX_EXTENSION)? as i16;
+                idx += if idx < 0 { -extension } else { extension };
             }
+
+            *idx_out = idx;
+        }
+
+        let qstep_q16 = match self.state.bandwidth {
+            Bandwidth::NarrowBand | Bandwidth::MediumBand => {
+                constant::LSF_STAGE_TWO_QUANTIZATION_STEP_Q16_NB_MB
+            }
+            Bandwidth::WideBand | Bandwidth::SuperWideBand | Bandwidth::FullBand => {
+                constant::LSF_STAGE_TWO_QUANTIZATION_STEP_Q16_WB
+            }
+        };
+
+        let mut res_q10 = vec![0i16; d_lpc];
+        for k in (0..d_lpc).rev() {
+            let pred_q10 = if k + 1 < d_lpc {
+                let pred_q8 = match self.state.bandwidth {
+                    Bandwidth::NarrowBand | Bandwidth::MediumBand => {
+                        let sel = constant::PREDICTION_WEIGHT_SELECTION_NB_MB[i1_idx][k] as usize;
+                        constant::PREDICTION_WEIGHTS_NB_MB[sel][k] as i32
+                    }
+                    Bandwidth::WideBand | Bandwidth::SuperWideBand | Bandwidth::FullBand => {
+                        let sel = constant::PREDICTION_WEIGHT_SELECTION_WB[i1_idx][k] as usize;
+                        constant::PREDICTION_WEIGHTS_WB[sel][k] as i32
+                    }
+                };
+                ((res_q10[k + 1] as i32) * pred_q8) >> 8
+            } else {
+                0
+            };
+
+            let i2_k = stage2_indices[k] as i32;
+            let out_q10 = if i2_k > 0 {
+                (i2_k << 10) - constant::LSF_STAGE_TWO_QUANTIZATION_LEVEL_OFFSET_Q10
+            } else if i2_k < 0 {
+                (i2_k << 10) + constant::LSF_STAGE_TWO_QUANTIZATION_LEVEL_OFFSET_Q10
+            } else {
+                0
+            };
+
+            res_q10[k] = (pred_q10 + ((((out_q10 as i64) * (qstep_q16 as i64)) >> 16) as i32)) as i16;
         }
 
         return Ok((d_lpc, res_q10));
     }
 
-
     fn reconstruct_nlsf(&self, d_lpc: usize, res_q10: &[i16], i1: u32) -> Result<Vec<i16>> {
-        let mut nlsf_q15 = vec![0i16; d_lpc];
-        let (cb1_q8, step_q16): (&[u8], &[i32]) = match self.state.bandwidth {
-            Bandwidth::WideBand | Bandwidth::SuperWideBand | Bandwidth::FullBand => (
-                &constant::CODEBOOK_NORMALIZED_LSF_STAGE_ONE_WIDEBAND[i1 as usize],
-                &constant::LSF_STAGE_TWO_QUANTIZATION_STEP_Q16_WB,
-            ),
-            Bandwidth::NarrowBand | Bandwidth::MediumBand => (
-                &constant::CODEBOOK_NORMALIZED_LSF_STAGE_ONE_NARROWBAND_OR_MEDIUMBAND[i1 as usize],
-                &constant::LSF_STAGE_TWO_QUANTIZATION_STEP_Q16_NB_MB,
-            ),
+        let i1_idx = i1 as usize;
+        if i1_idx >= 32 {
+            return Err(Error::InvalidLSFCoefficients.into());
+        }
+
+        let cb1_q8: &[u8] = match self.state.bandwidth {
+            Bandwidth::WideBand | Bandwidth::SuperWideBand | Bandwidth::FullBand => {
+                &constant::CODEBOOK_NORMALIZED_LSF_STAGE_ONE_WIDEBAND[i1_idx]
+            }
+            Bandwidth::NarrowBand | Bandwidth::MediumBand => {
+                &constant::CODEBOOK_NORMALIZED_LSF_STAGE_ONE_NARROWBAND_OR_MEDIUMBAND[i1_idx]
+            }
         };
 
+        let mut nlsf_q15 = vec![0i16; d_lpc];
         for k in 0..d_lpc {
-            let cb_value = cb1_q8[k] as i32;
-            let res_value = res_q10[k] as i32;
-            nlsf_q15[k] = ((cb_value << 7) + ((res_value * step_q16[k]) >> 16)) as i16;
+            let cb1_cur = cb1_q8[k] as i32;
+            let cb1_prev = if k == 0 { 0 } else { cb1_q8[k - 1] as i32 };
+            let cb1_next = if k + 1 == d_lpc { 256 } else { cb1_q8[k + 1] as i32 };
+
+            let diff_prev = (cb1_cur - cb1_prev).max(1);
+            let diff_next = (cb1_next - cb1_cur).max(1);
+            let w2_q18 = ((1024 / diff_prev) + (1024 / diff_next)) << 16;
+
+            let i = 32 - (w2_q18 as u32).leading_zeros() as i32;
+            let f = (w2_q18 >> (i - 8)) & 0x7F;
+            let y = (if (i & 1) != 0 { 32768 } else { 46214 }) >> ((32 - i) >> 1);
+            let w_q9 = (y + ((((213 * f * y) as i64) >> 16) as i32)).max(1);
+
+            let nlsf = ((cb1_cur << 7) + (((res_q10[k] as i32) << 14) / w_q9)).clamp(0, 32767);
+            nlsf_q15[k] = nlsf as i16;
         }
 
         return Ok(nlsf_q15);
     }
 
     fn stabilize_nlsf(&self, nlsf_q15: &[i16]) -> Result<Vec<i16>> {
+        let d_lpc = nlsf_q15.len();
         let mut stable_nlsf = nlsf_q15.to_vec();
         let min_delta: &[i32] = match self.state.bandwidth {
-            Bandwidth::WideBand => &constant::MINIMUM_SPACING_NORMALIZED_LSF_WB,
-            _ => &constant::MINIMUM_SPACING_NORMALIZED_LSF_NARROWBAND_MEDIUMBAND,
+            Bandwidth::WideBand | Bandwidth::SuperWideBand | Bandwidth::FullBand => {
+                &constant::MINIMUM_SPACING_NORMALIZED_LSF_WB
+            }
+            Bandwidth::NarrowBand | Bandwidth::MediumBand => {
+                &constant::MINIMUM_SPACING_NORMALIZED_LSF_NARROWBAND_MEDIUMBAND
+            }
         };
 
-        const MAX_STABILIZATION_ITERATIONS: usize = 20;
-        for _ in 0..MAX_STABILIZATION_ITERATIONS {
-            let mut min_diff = i32::MAX;
-            let mut min_diff_index = 0;
+        if d_lpc == 0 || min_delta.len() < d_lpc + 1 {
+            return Err(Error::InvalidLSFCoefficients.into());
+        }
 
-            for i in 1..stable_nlsf.len() {
-                let diff = stable_nlsf[i] as i32 - stable_nlsf[i - 1] as i32 - min_delta[i];
+        const MAX_STABILIZATION_ITERATIONS: usize = 20;
+        let mut loops = 0;
+        while loops < MAX_STABILIZATION_ITERATIONS {
+            let mut min_diff = stable_nlsf[0] as i32 - min_delta[0];
+            let mut min_diff_index = 0usize;
+
+            for i in 1..d_lpc {
+                let diff = stable_nlsf[i] as i32 - (stable_nlsf[i - 1] as i32 + min_delta[i]);
                 if diff < min_diff {
                     min_diff = diff;
                     min_diff_index = i;
                 }
             }
 
-            if min_diff >= 0 {
-                break;
+            let upper_diff = (1 << 15) - (stable_nlsf[d_lpc - 1] as i32 + min_delta[d_lpc]);
+            if upper_diff < min_diff {
+                min_diff = upper_diff;
+                min_diff_index = d_lpc;
             }
 
-            let center = (stable_nlsf[min_diff_index - 1] as i32 + stable_nlsf[min_diff_index] as i32) / 2;
-            stable_nlsf[min_diff_index - 1] = (center - min_delta[min_diff_index] / 2) as i16;
-            stable_nlsf[min_diff_index] = (stable_nlsf[min_diff_index - 1] as i32 + min_delta[min_diff_index]) as i16;
+            if min_diff >= 0 {
+                return Ok(stable_nlsf);
+            }
+
+            if min_diff_index == 0 {
+                stable_nlsf[0] = min_delta[0] as i16;
+            } else if min_diff_index == d_lpc {
+                stable_nlsf[d_lpc - 1] = ((1 << 15) - min_delta[d_lpc]) as i16;
+            } else {
+                let min_center_q15: i32 = min_delta[0..min_diff_index].iter().sum::<i32>()
+                    + (min_delta[min_diff_index] >> 1);
+                let max_center_q15: i32 = (1 << 15)
+                    - min_delta[(min_diff_index + 1)..=d_lpc].iter().sum::<i32>()
+                    - (min_delta[min_diff_index] - (min_delta[min_diff_index] >> 1));
+
+                let raw_center = (stable_nlsf[min_diff_index - 1] as i32 + stable_nlsf[min_diff_index] as i32 + 1) >> 1;
+                let center_freq_q15 = raw_center.clamp(min_center_q15, max_center_q15);
+
+                stable_nlsf[min_diff_index - 1] = (center_freq_q15 - (min_delta[min_diff_index] >> 1)) as i16;
+                stable_nlsf[min_diff_index] = (stable_nlsf[min_diff_index - 1] as i32 + min_delta[min_diff_index]) as i16;
+            }
+
+            loops += 1;
+        }
+
+        // Fallback after MAX_STABILIZATION_ITERATIONS: sort and enforce lower/upper spacing bounds
+        stable_nlsf.sort_unstable();
+        for i in 0..d_lpc {
+            let prev = if i == 0 { 0 } else { stable_nlsf[i - 1] as i32 };
+            stable_nlsf[i] = (stable_nlsf[i] as i32).max(prev + min_delta[i]) as i16;
+        }
+        for i in (0..d_lpc).rev() {
+            let next = if i + 1 == d_lpc { 1 << 15 } else { stable_nlsf[i + 1] as i32 };
+            stable_nlsf[i] = (stable_nlsf[i] as i32).min(next - min_delta[i + 1]) as i16;
         }
 
         return Ok(stable_nlsf);
     }
 
+    /// Decodes subframe pitch lags (primary lag and pitch contour) for a voiced SILK frame
+    /// (RFC 6716 Section 4.2.7.6.1).
+    ///
+    /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.6.1>
     fn decode_pitch_lags<R: RangeDecoder>(
-        &self,
+        &mut self,
         decoder: &mut R,
+        channel: usize,
+        coding_mode: CodingMode,
         silk_frame_duration: FrameDuration,
     ) -> Result<Vec<u16>> {
         let num_subframes = SubframeSize::from(silk_frame_duration);
+        let (min_lag, max_lag) = Self::pitch_lag_bounds(self.state.bandwidth);
 
-        let mut pitch_lags = vec![0u16; num_subframes];
+        let lag_index = self.decode_primary_lag_index(decoder, channel, coding_mode)?;
+        let base_lag = min_lag + lag_index;
 
-        let primary_lag = self.decode_primary_lag(decoder)?;
+        let contour: &[i8] = match (self.state.bandwidth, silk_frame_duration) {
+            (Bandwidth::NarrowBand, FrameDuration::Ms10) => {
+                let idx = decoder.decode_symbol_with_icdf(&constant::ICDF_SUBFRAME_PITCH_CONTOUR_NARROWBAND_10_MS)? as usize;
+                &constant::CODEBOOK_SUBFRAME_PITCH_CONTOUR_NB_10MS[idx]
+            }
+            (Bandwidth::NarrowBand, _) => {
+                let idx = decoder.decode_symbol_with_icdf(&constant::ICDF_SUBFRAME_PITCH_CONTOUR_NARROWBAND_20_MS)? as usize;
+                &constant::CODEBOOK_SUBFRAME_PITCH_CONTOUR_NARROWBAND_20MS[idx]
+            }
+            (Bandwidth::MediumBand | Bandwidth::WideBand | Bandwidth::SuperWideBand | Bandwidth::FullBand, FrameDuration::Ms10) => {
+                let idx = decoder.decode_symbol_with_icdf(&constant::ICDF_SUBFRAME_PITCH_CONTOUR_MEDIUMBAND_OR_WIDEBAND_10_MS)? as usize;
+                &constant::CODEBOOK_SUBFRAME_PITCH_CONTOUR_MEDIUMBAND_WIDEBAND_10MS[idx]
+            }
+            (Bandwidth::MediumBand | Bandwidth::WideBand | Bandwidth::SuperWideBand | Bandwidth::FullBand, _) => {
+                let idx = decoder.decode_symbol_with_icdf(&constant::ICDF_SUBFRAME_PITCH_CONTOUR_MEDIUMBAND_OR_WIDEBAND_20_MS)? as usize;
+                &constant::CODEBOOK_SUBFRAME_PITCH_CONTOUR_MEDIUMBAND_WIDEBAND_20MS[idx]
+            }
+        };
 
-        for pitch_lag in pitch_lags.iter_mut().take(num_subframes) {
-            let k = decoder.decode_symbol_with_icdf(&constant::ICDF_SUBFRAME_PITCH_CONTOUR_NARROWBAND_20_MS)?;
-            let contour = constant::CODEBOOK_SUBFRAME_PITCH_CONTOUR_NARROWBAND_20MS[k as usize];
-            *pitch_lag = (primary_lag as i32 + contour[0] as i32) as u16;
+        let mut pitch_lags = Vec::with_capacity(num_subframes);
+        for &offset in contour.iter().take(num_subframes) {
+            let lag = (base_lag + (offset as i32)).clamp(min_lag, max_lag) as u16;
+            pitch_lags.push(lag);
         }
 
         return Ok(pitch_lags);
     }
 
-    fn decode_primary_lag<R: RangeDecoder>(&self, decoder: &mut R) -> Result<u16> {
-        let high_part = decoder.decode_symbol_with_icdf(&constant::ICDF_PRIMARY_PITCH_LAG_HIGH_PART)?;
-        let low_part = decoder.decode_symbol_with_icdf(&constant::ICDF_PRIMARY_PITCH_LAG_LOW_PART_NARROWBAND)?;
+    fn pitch_lag_bounds(bandwidth: Bandwidth) -> (i32, i32) {
+        return match bandwidth {
+            Bandwidth::NarrowBand => (16, 144),
+            Bandwidth::MediumBand => (24, 216),
+            Bandwidth::WideBand | Bandwidth::SuperWideBand | Bandwidth::FullBand => (32, 288),
+        };
+    }
 
-        return Ok((high_part as u16 * 4) + low_part as u16 + 16);
+    fn decode_primary_lag_index<R: RangeDecoder>(
+        &mut self,
+        decoder: &mut R,
+        channel: usize,
+        coding_mode: CodingMode,
+    ) -> Result<i32> {
+        let prev_signal_type = self.state.channel_states[channel].prev_signal_type;
+        let prev_lag_index = self.state.channel_states[channel].prev_lag_index as i32;
+
+        let mut lag_index = 0i32;
+        let decode_absolute = if coding_mode == CodingMode::CodeConditionally && prev_signal_type == SignalType::Voiced {
+            let delta_lag_index = decoder.decode_symbol_with_icdf(&constant::ICDF_RELATIVE_DELTA_PITCH_LAG)? as i32;
+            if delta_lag_index > 0 {
+                lag_index = prev_lag_index + delta_lag_index - 9;
+                false
+            } else {
+                true
+            }
+        } else {
+            true
+        };
+
+        if decode_absolute {
+            let high_part = decoder.decode_symbol_with_icdf(&constant::ICDF_PRIMARY_PITCH_LAG_HIGH_PART)? as i32;
+            let (low_icdf, scale): (&[u32], i32) = match self.state.bandwidth {
+                Bandwidth::NarrowBand => (&constant::ICDF_PRIMARY_PITCH_LAG_LOW_PART_NARROWBAND, 4),
+                Bandwidth::MediumBand => (&constant::ICDF_PRIMARY_PITCH_LAG_LOW_PART_MEDIUMBAND, 6),
+                Bandwidth::WideBand | Bandwidth::SuperWideBand | Bandwidth::FullBand => {
+                    (&constant::ICDF_PRIMARY_PITCH_LAG_LOW_PART_WIDEBAND, 8)
+                }
+            };
+            let low_part = decoder.decode_symbol_with_icdf(low_icdf)? as i32;
+            lag_index = high_part * scale + low_part;
+        }
+
+        self.state.channel_states[channel].prev_lag_index = lag_index as i16;
+        return Ok(lag_index);
     }
 
     fn decode_ltp_coeffs<R: RangeDecoder>(
@@ -700,37 +962,48 @@ impl Decoder {
         return Ok(ltp_coeffs);
     }
 
-    fn decode_ltp_scaling<R: RangeDecoder>(&self, decoder: &mut R) -> Result<f32> {
+    fn decode_ltp_scaling<R: RangeDecoder>(
+        &self,
+        decoder: &mut R,
+        coding_mode: CodingMode,
+    ) -> Result<(i16, f32)> {
         const LTP_SCALE_Q14_DIVISOR: f32 = 16384.0;
 
-        let i = decoder.decode_symbol_with_icdf(&constant::ICDF_LTP_SCALING_PARAMETER)? as usize;
+        let i = if coding_mode == CodingMode::CodeIndependently {
+            decoder.decode_symbol_with_icdf(&constant::ICDF_LTP_SCALING_PARAMETER)? as usize
+        } else {
+            0
+        };
 
         let scale_q14 = *constant::CODEBOOK_LTP_SCALING_Q14
             .get(i)
             .ok_or(Error::InvalidLTPScalingIndex)?;
 
-        return Ok(scale_q14 as f32 / LTP_SCALE_Q14_DIVISOR);
+        return Ok((scale_q14, scale_q14 as f32 / LTP_SCALE_Q14_DIVISOR));
     }
 
-    /// Decodes Long-Term Prediction (LTP) parameters.
+    /// Decodes Long-Term Prediction (LTP) parameters (RFC 6716 Section 4.2.7.6).
     ///
-    /// This includes pitch lags, LTP coefficients, and LTP scaling.
+    /// This includes pitch lags, LTP coefficients, and conditional LTP scaling.
     ///
     /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.6>
     fn decode_ltp<R: RangeDecoder>(
         &mut self,
         decoder: &mut R,
         frame: &mut Frame,
+        channel: usize,
+        coding_mode: CodingMode,
         silk_frame_duration: FrameDuration,
     ) -> Result<()> {
-        let pitch_lags = self.decode_pitch_lags(decoder, silk_frame_duration)?;
+        let pitch_lags = self.decode_pitch_lags(decoder, channel, coding_mode, silk_frame_duration)?;
         let ltp_coeffs = self.decode_ltp_coeffs(decoder, silk_frame_duration)?;
-        let ltp_scale = self.decode_ltp_scaling(decoder)?;
+        let (ltp_scale_q14, ltp_scale) = self.decode_ltp_scaling(decoder, coding_mode)?;
 
         if pitch_lags.len() != frame.subframes.len() || ltp_coeffs.len() != frame.subframes.len() {
             return Err(Error::MismatchFrameSubframes.into());
         }
 
+        frame.ltp_scale_q14 = ltp_scale_q14;
         frame.ltp_scale = ltp_scale;
 
         frame.subframes.iter_mut()
@@ -759,30 +1032,106 @@ impl Decoder {
         return ltp_signal;
     }
 
-    fn decode_gains<R: RangeDecoder>(&self, decoder: &mut R, frame: &mut Frame) -> Result<()> {
-        for subframe in frame.subframes.iter_mut() {
-            let gain = self.decode_subframe_gain(decoder)?;
+    /// Decodes quantization gains for all subframes in a SILK frame (RFC 6716 Section 4.2.7.4).
+    ///
+    /// Subframe 0 is coded independently when `coding_mode != CodingMode::CodeConditionally`,
+    /// and via a delta quantization index otherwise. Subframes `1..num_subframes` are always
+    /// coded via delta quantization indices relative to the previous subframe's `log_gain`.
+    ///
+    /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.4>
+    fn decode_gains<R: RangeDecoder>(
+        &mut self,
+        decoder: &mut R,
+        frame: &mut Frame,
+        channel: usize,
+        coding_mode: CodingMode,
+    ) -> Result<()> {
+        let signal_type = frame.frame_type.signal_type;
+        for (subframe_idx, subframe) in frame.subframes.iter_mut().enumerate() {
+            let is_independent = subframe_idx == 0 && coding_mode != CodingMode::CodeConditionally;
+            let (log_gain, gain_q16, gain) = self.decode_subframe_gain(
+                decoder,
+                channel,
+                signal_type,
+                is_independent,
+            )?;
+            subframe.log_gain = log_gain;
+            subframe.gain_q16 = gain_q16;
             subframe.gain = gain;
         }
 
         return Ok(());
     }
 
-    fn decode_subframe_gain<R: RangeDecoder>(&self, decoder: &mut R) -> Result<f32> {
-        let icdf_gain_msb = match self.state.prev_frame_type.signal_type {
-            SignalType::Voiced => &constant::ICDF_INDEPENDENT_QUANTIZATION_GAIN_MSB_VOICED,
-            SignalType::Unvoiced | SignalType::Inactive => &constant::ICDF_INDEPENDENT_QUANTIZATION_GAIN_MSB_UNVOICED,
+    fn decode_subframe_gain<R: RangeDecoder>(
+        &mut self,
+        decoder: &mut R,
+        channel: usize,
+        signal_type: SignalType,
+        is_independent: bool,
+    ) -> Result<(i32, i32, f32)> {
+        let prev_log_gain = self.state.channel_states[channel].last_gain_index;
+
+        let log_gain = if is_independent {
+            let icdf_gain_msb: &[u32] = match signal_type {
+                SignalType::Inactive => &constant::ICDF_INDEPENDENT_QUANTIZATION_GAIN_MSB_INACTIVE,
+                SignalType::Unvoiced => &constant::ICDF_INDEPENDENT_QUANTIZATION_GAIN_MSB_UNVOICED,
+                SignalType::Voiced => &constant::ICDF_INDEPENDENT_QUANTIZATION_GAIN_MSB_VOICED,
+            };
+
+            let gain_msb = decoder.decode_symbol_with_icdf(icdf_gain_msb)? as i32;
+            let gain_lsb = decoder.decode_symbol_with_icdf(&constant::ICDF_INDEPENDENT_QUANTIZATION_GAIN_LSB)? as i32;
+            let gain_index = (gain_msb << 3) + gain_lsb;
+
+            gain_index.max(prev_log_gain - 16).clamp(0, 63)
+        } else {
+            let delta_gain = decoder.decode_symbol_with_icdf(&constant::ICDF_DELTA_QUANTIZATION_GAIN)? as i32;
+
+            (2 * delta_gain - 16)
+                .max(prev_log_gain + delta_gain - 4)
+                .clamp(0, 63)
         };
 
-        let gain_msb = decoder.decode_symbol_with_icdf(icdf_gain_msb)? as u8;
-        let gain_lsb = decoder.decode_symbol_with_icdf(&constant::ICDF_INDEPENDENT_QUANTIZATION_GAIN_LSB)? as u8;
+        self.state.channel_states[channel].last_gain_index = log_gain;
 
-        let gain = ((gain_msb as u16) << 8) | (gain_lsb as u16);
+        let gain_q16 = Self::quantized_log_gain_to_linear_q16(log_gain);
+        let gain = gain_q16 as f32 / 65536.0;
 
-        const GAIN_NORMALIZATION_FACTOR: f32 = 256.0;
-        let normalized_gain = gain as f32 / GAIN_NORMALIZATION_FACTOR;
+        return Ok((log_gain, gain_q16, gain));
+    }
 
-        return Ok(normalized_gain);
+    /// Converts a quantized logarithmic gain index (`0..=63`) to a Q16 linear gain
+    /// using the `silk_gains_dequant` and `silk_log2lin` approximation (RFC 6716 Section 4.2.7.4).
+    ///
+    /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.4>
+    fn quantized_log_gain_to_linear_q16(log_gain: i32) -> i32 {
+        const INV_SCALE_Q16: i64 = 1_907_828;
+        const OFFSET_Q7: i32 = 2090;
+
+        let in_log_q7 = (((INV_SCALE_Q16 * (log_gain as i64)) >> 16) as i32 + OFFSET_Q7).min(3967);
+        return Self::silk_log2lin(in_log_q7);
+    }
+
+    /// Evaluates the SILK base-2 exponential approximation `2^(in_log_q7 / 128.0)`.
+    ///
+    /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.4>
+    fn silk_log2lin(in_log_q7: i32) -> i32 {
+        if in_log_q7 < 0 {
+            return 0;
+        }
+        if in_log_q7 >= 3968 {
+            return i32::MAX;
+        }
+
+        let out = 1_i32 << (in_log_q7 >> 7);
+        let frac_q7 = in_log_q7 & 0x7F;
+        let parabolic = frac_q7 + ((((frac_q7 * (128 - frac_q7)) as i64 * -174) >> 16) as i32);
+
+        if in_log_q7 < 2048 {
+            return out + ((out * parabolic) >> 7);
+        } else {
+            return out + (out >> 7) * parabolic;
+        }
     }
 
     /// Decodes the excitation signal.
@@ -1158,6 +1507,63 @@ pub struct DecodedOpusFrame {
     pub regular_frames: Vec<SilkChannelFramePair>,
 }
 
+/// SILK Frame Conditional Coding Mode (RFC 6716 Section 4.2.7).
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum CodingMode {
+    /// Frame parameters are coded independently (`CODE_INDEPENDENTLY`).
+    #[default]
+    CodeIndependently,
+    /// Frame parameters are coded independently, but LTP scaling is omitted (`CODE_INDEPENDENTLY_NO_LTP_SCALING`).
+    CodeIndependentlyNoLtpScaling,
+    /// Frame parameters are coded conditionally relative to the previous frame (`CODE_CONDITIONALLY`).
+    CodeConditionally,
+}
+
+/// Per-channel SILK decoder state maintained across consecutive frames
+/// (RFC 6716 Section 4.2.7.4 - 4.2.7.6).
+#[derive(Debug, Clone)]
+pub struct ChannelState {
+    pub last_gain_index: i32,
+    pub prev_nlsf_q15: Vec<i16>,
+    pub first_frame_after_reset: bool,
+    pub prev_signal_type: SignalType,
+    pub prev_lag_index: i16,
+}
+
+impl Default for ChannelState {
+    fn default() -> Self {
+        return Self::new(16);
+    }
+}
+
+impl ChannelState {
+    pub fn new(lpc_order: usize) -> Self {
+        return Self {
+            last_gain_index: 10,
+            prev_nlsf_q15: vec![0i16; lpc_order],
+            first_frame_after_reset: true,
+            prev_signal_type: SignalType::Inactive,
+            prev_lag_index: 0,
+        };
+    }
+
+    pub fn reset(&mut self, lpc_order: usize) {
+        self.last_gain_index = 10;
+        self.prev_nlsf_q15.clear();
+        self.prev_nlsf_q15.resize(lpc_order, 0);
+        self.first_frame_after_reset = true;
+        self.prev_signal_type = SignalType::Inactive;
+        self.prev_lag_index = 0;
+    }
+
+    pub fn reset_after_mid_only(&mut self) {
+        self.last_gain_index = 10;
+        self.first_frame_after_reset = true;
+        self.prev_signal_type = SignalType::Inactive;
+        self.prev_lag_index = 0;
+    }
+}
+
 /// SILK Decoder State
 ///
 /// This structure maintains the state of the SILK decoder across frames,
@@ -1174,6 +1580,8 @@ pub struct State {
     prev_samples: Vec<f32>,
     lbrr_flag: bool,
     lpc_order: usize,
+    channel_states: [ChannelState; 2],
+    prev_decode_only_middle: bool,
 }
 
 
@@ -1187,6 +1595,8 @@ impl State {
         let prev_frame_type = FrameType::default();
         let prev_samples = vec![0.0; frame_length * channel_count];
         let lbrr_flag = false;
+        let channel_states = [ChannelState::new(lpc_order), ChannelState::new(lpc_order)];
+        let prev_decode_only_middle = false;
 
         return Ok(Self {
             sample_rate,
@@ -1197,12 +1607,19 @@ impl State {
             prev_samples,
             lbrr_flag,
             lpc_order,
+            channel_states,
+            prev_decode_only_middle,
         });
     }
 
     pub fn reset(&mut self) {
         self.lbrr_flag = false;
         self.prev_samples.fill(0.0);
+        self.prev_frame_type = FrameType::default();
+        self.prev_decode_only_middle = false;
+        for ch_state in self.channel_states.iter_mut() {
+            ch_state.reset(self.lpc_order);
+        }
     }
 
     /// Returns the number of 10 ms or 20 ms SILK frames contained in an Opus frame of `frame_size`.
@@ -1256,6 +1673,7 @@ pub struct Frame {
     pub sample_count: usize,
     pub subframes: Vec<Subframe>,
     pub ltp_scale: f32,
+    pub ltp_scale_q14: i16,
     pub lsf_interpolation_index: Option<u32>,
     pub stereo_weights: Option<StereoWeights>,
     pub mid_only: bool,
@@ -1270,6 +1688,7 @@ impl Frame {
             sample_count,
             subframes: vec![Subframe::default(); num_subframes],
             ltp_scale: 0.0,
+            ltp_scale_q14: 0,
             lsf_interpolation_index: None,
             stereo_weights: None,
             mid_only: false,
@@ -1286,6 +1705,8 @@ impl Frame {
 #[derive(Debug, Clone, Default)]
 pub struct Subframe {
     pub gain: f32,
+    pub gain_q16: i32,
+    pub log_gain: i32,
     pub nlsf_q15: Vec<i16>,
     pub ltp_coeffs: Vec<i8>,
     pub pitch_lag: u16,
@@ -1549,6 +1970,17 @@ mod tests {
         assert_eq!(mock_active.icdf_symbols.len(), 0);
     }
 
+    fn create_test_silk_decoder_with_bw(
+        stereo: bool,
+        frame_size: FrameDuration,
+        bandwidth: Bandwidth,
+    ) -> Decoder {
+        let mut decoder = create_test_silk_decoder(stereo, frame_size);
+        let channels = decoder.channels.clone();
+        decoder.state = State::try_new(channels, frame_size, bandwidth).unwrap();
+        return decoder;
+    }
+
     #[test]
     fn silk_multi_frame_40ms_and_lbrr_full_opus_frame_decode() {
         let mut decoder = create_test_silk_decoder(false, FrameDuration::Ms40);
@@ -1576,6 +2008,261 @@ mod tests {
             assert_eq!(reg.mid.sample_count, 160);
             assert!(reg.mid.lsf_interpolation_index.is_some());
         }
+    }
+
+    #[test]
+    fn silk_gains_independent_delta_clamping_and_log2lin() {
+        let mut decoder = create_test_silk_decoder(false, FrameDuration::Ms20);
+        let mut frame = Frame::new(160, 4);
+        frame.frame_type = FrameType::new(SignalType::Voiced, QuantizationOffsetType::Low);
+
+        // Initial last_gain_index is 10.
+        // Subframe 0 (independent): MSB = 3, LSB = 5 -> gain_index = (3 << 3) + 5 = 29 -> log_gain = 29.
+        // Subframe 1 (delta): delta_gain = 2 -> max(2*2 - 16, 29 + 2 - 4) = max(-12, 27) = 27.
+        // Subframe 2 (delta, double-step): delta_gain = 30 -> max(2*30 - 16, 27 + 30 - 4) = max(44, 53) = 53.
+        //   Wait: for double-step to win, 2*delta - 16 > prev + delta - 4 <=> delta > prev + 12.
+        //   With prev = 27, choose delta_gain = 40 -> max(2*40 - 16, 27 + 40 - 4) = max(64, 63) -> clamped to 63.
+        //   Choose delta_gain = 35 with prev = 10 -> max(54, 41) = 54.
+        // Let's test Subframe 1 with delta_gain = 0 -> log_gain = 29 - 4 = 25;
+        // Subframe 2 with delta_gain = 38 -> max(2*38 - 16, 25 + 38 - 4) = max(60, 59) = 60;
+        // Subframe 3 with delta_gain = 10 -> max(4, 60 + 10 - 4) = 66 -> clamped to 63.
+        let mut mock = MockRangeDecoder::new(&[], &[3, 5, 0, 38, 10]);
+        decoder
+            .decode_gains(&mut mock, &mut frame, 0, CodingMode::CodeIndependently)
+            .unwrap();
+
+        assert_eq!(frame.subframes[0].log_gain, 29);
+        assert_eq!(frame.subframes[0].gain_q16, 7_929_856);
+        assert_eq!(frame.subframes[1].log_gain, 25);
+        assert_eq!(frame.subframes[2].log_gain, 60);
+        assert_eq!(frame.subframes[3].log_gain, 63);
+        assert_eq!(decoder.state.channel_states[0].last_gain_index, 63);
+
+        // Next frame coded independently with MSB = 0, LSB = 0 (gain_index = 0):
+        // Clamped by prev_log_gain - 16 = 63 - 16 = 47.
+        let mut frame2 = Frame::new(80, 2);
+        let mut mock2 = MockRangeDecoder::new(&[], &[0, 0, 4]);
+        decoder
+            .decode_gains(&mut mock2, &mut frame2, 0, CodingMode::CodeIndependently)
+            .unwrap();
+        assert_eq!(frame2.subframes[0].log_gain, 47);
+        assert_eq!(frame2.subframes[1].log_gain, 47);
+
+        // Conditional frame (CodeConditionally) uses delta coding even on Subframe 0:
+        // delta_gain = 1 -> log_gain = 47 + 1 - 4 = 44.
+        let mut frame3 = Frame::new(80, 2);
+        let mut mock3 = MockRangeDecoder::new(&[], &[1, 4]);
+        decoder
+            .decode_gains(&mut mock3, &mut frame3, 0, CodingMode::CodeConditionally)
+            .unwrap();
+        assert_eq!(frame3.subframes[0].log_gain, 44);
+        assert_eq!(frame3.subframes[1].log_gain, 44);
+        assert_eq!(mock3.icdf_symbols.len(), 0);
+    }
+
+    #[test]
+    fn silk_lsf_stage1_stage2_backward_prediction_and_stabilization_nb_and_wb() {
+        // Test NB (10 coefficients) with Stage-2 extension symbol and backward prediction
+        let decoder_nb = create_test_silk_decoder_with_bw(false, FrameDuration::Ms20, Bandwidth::NarrowBand);
+        // Symbol 4 -> i2 = 0; Symbol 8 -> i2 = +4, followed by extension = 2 -> i2 = +6;
+        // Symbol 0 -> i2 = -4, followed by extension = 1 -> i2 = -5.
+        let stage2_symbols_nb = [4, 4, 4, 4, 4, 4, 4, 4, 8, 2, 0, 1];
+        let mut mock_nb = MockRangeDecoder::new(&[], &stage2_symbols_nb);
+        let (d_lpc_nb, res_q10_nb) = decoder_nb.decode_lsf_stage2(&mut mock_nb, 0).unwrap();
+        assert_eq!(d_lpc_nb, 10);
+        assert_eq!(mock_nb.icdf_symbols.len(), 0);
+
+        // Verify backward prediction at k = 9 and k = 8:
+        // k = 9: i2 = -5 -> out_q10 = (-5 << 10) + 102 = -5018
+        //   res_q10[9] = (-5018 * 11796) >> 16 = -904
+        // k = 8: i2 = +6 -> out_q10 = (6 << 10) - 102 = 6042
+        //   For i1 = 0, k = 8: PREDICTION_WEIGHT_SELECTION_NB_MB[0][8] = 0 -> weight = 163
+        //   pred_q10 = (-904 * 163) >> 8 = -576
+        //   step_term = (6042 * 11796) >> 16 = 1087
+        //   res_q10[8] = -576 + 1087 = 511
+        assert_eq!(res_q10_nb[9], -904);
+        assert_eq!(res_q10_nb[8], 511);
+
+        let raw_nlsf_nb = decoder_nb.reconstruct_nlsf(d_lpc_nb, &res_q10_nb, 0).unwrap();
+        let stable_nb = decoder_nb.stabilize_nlsf(&raw_nlsf_nb).unwrap();
+        assert_eq!(stable_nb.len(), 10);
+
+        // Check strict minimum spacing invariants for NB/MB (including lower and upper borders)
+        let min_delta_nb = &constant::MINIMUM_SPACING_NORMALIZED_LSF_NARROWBAND_MEDIUMBAND;
+        assert!(stable_nb[0] as i32 >= min_delta_nb[0]);
+        for i in 1..10 {
+            assert!(
+                stable_nb[i] as i32 - stable_nb[i - 1] as i32 >= min_delta_nb[i],
+                "NB NLSF spacing violated at index {i}"
+            );
+        }
+        assert!((1 << 15) - (stable_nb[9] as i32) >= min_delta_nb[10]);
+
+        // Test WB (16 coefficients) stabilization with pathological disordered/out-of-bounds input
+        let decoder_wb = create_test_silk_decoder_with_bw(false, FrameDuration::Ms20, Bandwidth::WideBand);
+        let pathological_wb = [32760, 10, 32700, 5, 20000, 100, 50, 40, 30, 20, 15, 12, 8, 4, 2, 0];
+        let stable_wb = decoder_wb.stabilize_nlsf(&pathological_wb).unwrap();
+        let min_delta_wb = &constant::MINIMUM_SPACING_NORMALIZED_LSF_WB;
+        assert!(stable_wb[0] as i32 >= min_delta_wb[0]);
+        for i in 1..16 {
+            assert!(
+                stable_wb[i] as i32 - stable_wb[i - 1] as i32 >= min_delta_wb[i],
+                "WB NLSF spacing violated at index {i}"
+            );
+        }
+        assert!((1 << 15) - (stable_wb[15] as i32) >= min_delta_wb[16]);
+    }
+
+    #[test]
+    fn silk_lsf_4_subframe_interpolation_across_consecutive_frames() {
+        let mut decoder = create_test_silk_decoder_with_bw(false, FrameDuration::Ms20, Bandwidth::NarrowBand);
+
+        // Frame 0 (first frame after reset):
+        // Stage-1 i1 = 0, Stage-2 all 4 (zero residual), interp index w_q2 = 1.
+        // Because first_frame_after_reset == true, all 4 subframes must use Frame 0's NLSF without interpolating with 0.
+        let mut symbols_f0 = vec![0]; // Stage-1 i1 = 0
+        symbols_f0.extend(std::iter::repeat_n(4, 10)); // 10 Stage-2 symbols (i2 = 0)
+        symbols_f0.push(1); // w_q2 = 1
+        let mut mock_f0 = MockRangeDecoder::new(&[], &symbols_f0);
+        let mut frame0 = Frame::new(160, 4);
+        decoder
+            .decode_lsf(&mut mock_f0, &mut frame0, 0, FrameDuration::Ms20)
+            .unwrap();
+        decoder.state.channel_states[0].first_frame_after_reset = false;
+
+        assert_eq!(mock_f0.icdf_symbols.len(), 0);
+        assert_eq!(frame0.lsf_interpolation_index, Some(1));
+        let nlsf_f0 = frame0.subframes[2].nlsf_q15.clone();
+        assert_eq!(frame0.subframes[0].nlsf_q15, nlsf_f0);
+        assert_eq!(frame0.subframes[1].nlsf_q15, nlsf_f0);
+        assert_eq!(frame0.subframes[3].nlsf_q15, nlsf_f0);
+
+        // Frame 1 (second frame, first_frame_after_reset == false):
+        // Stage-1 i1 = 10, Stage-2 all 4 (zero residual), interp index w_q2 = 2 (50% interpolation).
+        let mut symbols_f1 = vec![10];
+        symbols_f1.extend(std::iter::repeat_n(4, 10));
+        symbols_f1.push(2);
+        let mut mock_f1 = MockRangeDecoder::new(&[], &symbols_f1);
+        let mut frame1 = Frame::new(160, 4);
+        decoder
+            .decode_lsf(&mut mock_f1, &mut frame1, 0, FrameDuration::Ms20)
+            .unwrap();
+
+        let nlsf_f1 = frame1.subframes[2].nlsf_q15.clone();
+        assert_ne!(nlsf_f0, nlsf_f1);
+        assert_eq!(frame1.subframes[2].nlsf_q15, nlsf_f1);
+        assert_eq!(frame1.subframes[3].nlsf_q15, nlsf_f1);
+
+        // Subframes 0 and 1 must equal nlsf_f0 + ((nlsf_f1 - nlsf_f0) * 2 >> 2)
+        for k in 0..10 {
+            let expected = nlsf_f0[k] + (((nlsf_f1[k] as i32 - nlsf_f0[k] as i32) * 2) >> 2) as i16;
+            assert_eq!(frame1.subframes[0].nlsf_q15[k], expected);
+            assert_eq!(frame1.subframes[1].nlsf_q15[k], expected);
+        }
+    }
+
+    #[test]
+    fn silk_pitch_lags_nb_mb_wb_absolute_relative_delta_and_ltp_scaling() {
+        // 1. WideBand 20 ms independent voiced frame:
+        //    high_part = 5, low_part = 3 -> lag_index = 5 * 8 + 3 = 43 -> base_lag = 32 + 43 = 75.
+        //    contour_idx = 8 -> CODEBOOK_SUBFRAME_PITCH_CONTOUR_MEDIUMBAND_WIDEBAND_20MS[8] = [-1, 0, 1, 2]
+        //    subframe pitch lags = [74, 75, 76, 77]
+        //    periodicity_index = 1, filter_indices = [0, 1, 2, 3], ltp_scaling_idx = 2 (8192 Q14 = 0.5)
+        let mut decoder = create_test_silk_decoder_with_bw(false, FrameDuration::Ms20, Bandwidth::WideBand);
+        let mut frame1 = Frame::new(320, 4);
+        frame1.frame_type = FrameType::new(SignalType::Voiced, QuantizationOffsetType::Low);
+
+        let mut mock1 = MockRangeDecoder::new(&[], &[5, 3, 8, 1, 0, 1, 2, 3, 2]);
+        decoder
+            .decode_ltp(
+                &mut mock1,
+                &mut frame1,
+                0,
+                CodingMode::CodeIndependently,
+                FrameDuration::Ms20,
+            )
+            .unwrap();
+        decoder.state.channel_states[0].prev_signal_type = SignalType::Voiced;
+
+        assert_eq!(mock1.icdf_symbols.len(), 0);
+        assert_eq!(decoder.state.channel_states[0].prev_lag_index, 43);
+        assert_eq!(
+            frame1.subframes.iter().map(|s| s.pitch_lag).collect::<Vec<_>>(),
+            vec![74, 75, 76, 77]
+        );
+        assert_eq!(frame1.ltp_scale_q14, 8192);
+        assert!((frame1.ltp_scale - 0.5).abs() < f32::EPSILON);
+
+        // 2. Conditional voiced frame with non-zero relative delta pitch lag:
+        //    delta_lag_index = 12 -> lag_index = 43 + 12 - 9 = 46 -> base_lag = 32 + 46 = 78.
+        //    contour_idx = 0 -> [0, 0, 0, 0] -> lags = [78, 78, 78, 78].
+        //    periodicity_index = 0, filter_indices = [0, 0, 0, 0].
+        //    LTP scaling is NOT read in CodeConditionally (defaults to index 0 -> 15565 Q14).
+        let mut frame2 = Frame::new(320, 4);
+        frame2.frame_type = FrameType::new(SignalType::Voiced, QuantizationOffsetType::Low);
+        let mut mock2 = MockRangeDecoder::new(&[], &[12, 0, 0, 0, 0, 0, 0]);
+        decoder
+            .decode_ltp(
+                &mut mock2,
+                &mut frame2,
+                0,
+                CodingMode::CodeConditionally,
+                FrameDuration::Ms20,
+            )
+            .unwrap();
+
+        assert_eq!(mock2.icdf_symbols.len(), 0);
+        assert_eq!(decoder.state.channel_states[0].prev_lag_index, 46);
+        assert_eq!(
+            frame2.subframes.iter().map(|s| s.pitch_lag).collect::<Vec<_>>(),
+            vec![78, 78, 78, 78]
+        );
+        assert_eq!(frame2.ltp_scale_q14, 15565);
+
+        // 3. Conditional voiced frame with delta_lag_index == 0 falls back to absolute lag decoding:
+        //    delta_lag_index = 0 -> high_part = 0, low_part = 0 -> lag_index = 0 -> base_lag = 32.
+        //    contour_idx = 33 -> [-9, -3, 3, 9] -> clamped at min_lag = 32 -> [32, 32, 35, 41].
+        let mut frame3 = Frame::new(320, 4);
+        frame3.frame_type = FrameType::new(SignalType::Voiced, QuantizationOffsetType::Low);
+        let mut mock3 = MockRangeDecoder::new(&[], &[0, 0, 0, 33, 0, 0, 0, 0, 0]);
+        decoder
+            .decode_ltp(
+                &mut mock3,
+                &mut frame3,
+                0,
+                CodingMode::CodeConditionally,
+                FrameDuration::Ms20,
+            )
+            .unwrap();
+
+        assert_eq!(mock3.icdf_symbols.len(), 0);
+        assert_eq!(
+            frame3.subframes.iter().map(|s| s.pitch_lag).collect::<Vec<_>>(),
+            vec![32, 32, 35, 41]
+        );
+
+        // 4. MediumBand 10 ms frame (2 subframes, scale = 6, min_lag = 24, max_lag = 216):
+        let mut decoder_mb = create_test_silk_decoder_with_bw(false, FrameDuration::Ms10, Bandwidth::MediumBand);
+        let mut frame_mb = Frame::new(120, 2);
+        frame_mb.frame_type = FrameType::new(SignalType::Voiced, QuantizationOffsetType::Low);
+        // high_part = 2, low_part = 5 -> lag_index = 2 * 6 + 5 = 17 -> base_lag = 24 + 17 = 41.
+        // contour_idx = 5 -> CODEBOOK_SUBFRAME_PITCH_CONTOUR_MEDIUMBAND_WIDEBAND_10MS[5] = [-1, 2] -> [40, 43].
+        let mut mock_mb = MockRangeDecoder::new(&[], &[2, 5, 5, 0, 0, 0, 1]);
+        decoder_mb
+            .decode_ltp(
+                &mut mock_mb,
+                &mut frame_mb,
+                0,
+                CodingMode::CodeIndependently,
+                FrameDuration::Ms10,
+            )
+            .unwrap();
+        assert_eq!(mock_mb.icdf_symbols.len(), 0);
+        assert_eq!(
+            frame_mb.subframes.iter().map(|s| s.pitch_lag).collect::<Vec<_>>(),
+            vec![40, 43]
+        );
+        assert_eq!(frame_mb.ltp_scale_q14, 12288);
     }
 }
 
