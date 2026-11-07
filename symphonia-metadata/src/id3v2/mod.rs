@@ -301,9 +301,9 @@ fn read_id3v2_body<B: ReadBytes + FiniteStream>(
     loop {
         // Read frames based on the major version of the tag.
         let frame = match header.major_version {
-            2 => read_id3v2p2_frame(reader),
-            3 => read_id3v2p3_frame(reader),
-            4 => read_id3v2p4_frame(reader),
+            2 => read_id3v2p2_frame(reader, 0),
+            3 => read_id3v2p3_frame(reader, 0),
+            4 => read_id3v2p4_frame(reader, 0),
             _ => break,
         };
 

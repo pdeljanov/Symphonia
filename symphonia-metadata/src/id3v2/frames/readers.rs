@@ -22,7 +22,7 @@ use symphonia_core::units::Time;
 use symphonia_core::util::text;
 
 use lazy_static::lazy_static;
-use log::debug;
+use log::{debug, warn};
 use smallvec::{SmallVec, smallvec};
 
 use crate::id3v2::frames::{FrameResult, Id3v2Chapter, Id3v2TableOfContents};
@@ -44,6 +44,8 @@ pub struct FrameInfo<'a> {
     id: &'a str,
     /// The major version of the ID3v2 tag containing the frame.
     major_version: u8,
+    /// The depth of the frame (0 for top-level).
+    depth: u8,
     /// An optional raw tag parser to be applied if the frame is generic.
     raw_tag_parser: Option<RawTagParser>,
 }
@@ -53,12 +55,23 @@ impl<'a> FrameInfo<'a> {
     /// raw tag parser.
     ///
     /// Panics if the frame ID is invalid.
-    pub fn new(id: &'a [u8], major_version: u8, raw_tag_parser: Option<RawTagParser>) -> Self {
+    pub fn new(
+        id: &'a [u8],
+        major_version: u8,
+        depth: u8,
+        raw_tag_parser: Option<RawTagParser>,
+    ) -> Self {
         FrameInfo {
             id: std::str::from_utf8(id).expect("validated frame id bytes"),
             major_version,
+            depth,
             raw_tag_parser,
         }
+    }
+
+    /// Returns true if this frame is at the top-level.
+    pub fn is_top_level(&self) -> bool {
+        self.depth == 0
     }
 }
 
@@ -390,6 +403,12 @@ pub fn read_chap_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Resu
         min_frame_size, read_id3v2p2_frame, read_id3v2p3_frame, read_id3v2p4_frame,
     };
 
+    // Nesting a CHAP frame is illogical and would allow infinite recursion.
+    if !frame.is_top_level() {
+        warn!("skipping nested 'CHAP' frame");
+        return Ok(FrameResult::Skipped);
+    }
+
     // Read the element ID.
     let id = read_string(&mut reader, Encoding::Iso8859_1)?;
 
@@ -414,9 +433,9 @@ pub fn read_chap_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Resu
 
     while reader.bytes_available() >= min_frame_size(frame.major_version) {
         let frame = match frame.major_version {
-            2 => read_id3v2p2_frame(&mut reader),
-            3 => read_id3v2p3_frame(&mut reader),
-            4 => read_id3v2p4_frame(&mut reader),
+            2 => read_id3v2p2_frame(&mut reader, frame.depth + 1),
+            3 => read_id3v2p3_frame(&mut reader, frame.depth + 1),
+            4 => read_id3v2p4_frame(&mut reader, frame.depth + 1),
             _ => break,
         }?;
 
@@ -562,6 +581,12 @@ pub fn read_ctoc_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Resu
         min_frame_size, read_id3v2p2_frame, read_id3v2p3_frame, read_id3v2p4_frame,
     };
 
+    // Nesting a CTOC frame is illogical and would allow infinite recursion.
+    if !frame.is_top_level() {
+        warn!("skipping nested 'CTOC' frame");
+        return Ok(FrameResult::Skipped);
+    }
+
     // Read for the element ID.
     let id = read_string(&mut reader, Encoding::Iso8859_1)?;
 
@@ -587,9 +612,9 @@ pub fn read_ctoc_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Resu
 
     while reader.bytes_available() >= min_frame_size(frame.major_version) {
         let frame = match frame.major_version {
-            2 => read_id3v2p2_frame(&mut reader),
-            3 => read_id3v2p3_frame(&mut reader),
-            4 => read_id3v2p4_frame(&mut reader),
+            2 => read_id3v2p2_frame(&mut reader, frame.depth + 1),
+            3 => read_id3v2p3_frame(&mut reader, frame.depth + 1),
+            4 => read_id3v2p4_frame(&mut reader, frame.depth + 1),
             _ => break,
         }?;
 
