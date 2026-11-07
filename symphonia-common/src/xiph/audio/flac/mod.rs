@@ -144,10 +144,10 @@ impl StreamInfo {
 
         let mut br = BitStreamLtr::new(reader);
 
-        // Read sample rate, valid rates are [1, 655350] Hz.
+        // Read sample rate, valid rates are [1, 1048575] Hz.
         info.sample_rate = br.read_bits_leq32(20)?;
 
-        if info.sample_rate < 1 || info.sample_rate > 655_350 {
+        if info.sample_rate < 1 || info.sample_rate > 1_048_575 {
             return decode_error("flac: stream sample rate out of bounds");
         }
 
@@ -224,5 +224,38 @@ impl MetadataBlockHeader {
         let block_len = reader.read_be_u24()?;
 
         Ok(MetadataBlockHeader { is_last, block_type, block_len })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::StreamInfo;
+    use symphonia_core::io::BufReader;
+
+    #[test]
+    fn verify_streaminfo_high_sample_rate() {
+        let mut data = [0u8; 34];
+
+        // minimum and maximum block FLAC
+        data[0..2].copy_from_slice(&16u16.to_be_bytes());
+        data[2..4].copy_from_slice(&16u16.to_be_bytes());
+
+        // sample rate and audio properties into 64 bits.
+        let sample_rate = 768_000u64;
+        let channels_minus_one = 1u64;
+        let bits_per_sample_minus_one = 23u64;
+        let total_samples = 0u64;
+
+        let packed = (sample_rate << 44)
+            | (channels_minus_one << 41)
+            | (bits_per_sample_minus_one << 36)
+            | total_samples;
+
+        data[10..18].copy_from_slice(&packed.to_be_bytes());
+
+        let mut stream = BufReader::new(&data);
+        let info = StreamInfo::read(&mut stream).unwrap();
+
+        assert_eq!(info.sample_rate, 768_000);
     }
 }
