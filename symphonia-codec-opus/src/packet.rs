@@ -5,13 +5,6 @@
 //!
 //! References:
 //! - RFC 6716: Definition of the Opus Audio Codec (https://tools.ietf.org/html/rfc6716)
-//! Opus packet parsing implementation.
-//!
-//! This module provides functionality to parse Opus packets as specified in RFC 6716.
-//! It includes structures and methods to handle various packet configurations and frame counts.
-//!
-//! References:
-//! - RFC 6716: Definition of the Opus Audio Codec (https://tools.ietf.org/html/rfc6716)
 use crate::toc::{AudioMode, Bandwidth, FrameCount, FrameDuration, Toc};
 use std::num::NonZeroU8;
 use std::time::Duration;
@@ -78,7 +71,7 @@ impl From<Error> for symphonia_core::errors::Error {
 }
 
 const MAX_FRAME_LENGTH: usize = 255 * 4 + 255; // 1275
-const MAX_TOTAL_DURATION_MS: u128 = 120;
+const MAX_TOTAL_DURATION_US: u128 = 120_000;
 const MAX_PADDING_VALUE: u8 = 254;
 const MAX_FRAMES: usize = 48;
 
@@ -389,6 +382,10 @@ impl<'a> FramePacket<'a> {
 
         Self::check_frame_size(frame_size)?;
 
+        if frame_size == 0 {
+            return Ok(vec![&[][..]; frame_count]);
+        }
+
         return Ok(data.chunks_exact(frame_size).collect());
     }
 
@@ -408,7 +405,15 @@ impl<'a> FramePacket<'a> {
         for &byte in data {
             offset += 1;
 
-            total_padding = total_padding.checked_add(byte as usize).ok_or(Error::PaddingLengthOverflow)?;
+            let pad_increment = if byte == 255 {
+                MAX_PADDING_VALUE as usize
+            } else {
+                byte as usize
+            };
+
+            total_padding = total_padding
+                .checked_add(pad_increment)
+                .ok_or(Error::PaddingLengthOverflow)?;
 
             if byte != 255 {
                 break;
@@ -444,11 +449,16 @@ impl<'a> FramePacket<'a> {
     }
 
     fn check_total_duration(frame_count: u8, frame_duration: FrameDuration) -> Result<()> {
-        let total_duration_ms = Duration::from(frame_duration).as_millis()
+        if frame_count as usize > MAX_FRAMES {
+            return Err(Error::ExcessiveTotalDuration.into());
+        }
+
+        let total_duration_us = Duration::from(frame_duration)
+            .as_micros()
             .checked_mul(frame_count as u128)
             .ok_or(Error::TotalDurationOverflow)?;
 
-        if total_duration_ms > MAX_TOTAL_DURATION_MS {
+        if total_duration_us > MAX_TOTAL_DURATION_US {
             return Err(Error::ExcessiveTotalDuration.into());
         }
 
@@ -535,7 +545,7 @@ mod tests {
                 let mut remaining_padding = self.padding_length;
                 while remaining_padding >= 255 {
                     data.push(255u8);
-                    remaining_padding -= 255;
+                    remaining_padding -= MAX_PADDING_VALUE as usize;
                 }
                 data.push(remaining_padding as u8);
                 data.extend(vec![0u8; self.padding_length]);
@@ -714,5 +724,69 @@ mod tests {
             },
             _ => panic!("Expected an error"),
         }
+    }
+
+    #[test]
+    fn total_duration_limits_all_frame_sizes() {
+        // (config_index, max_valid_frames_for_120ms)
+        // Config 16 = 2.5 ms (CELT NB) -> max 48 frames
+        // Config 17 = 5 ms   (CELT NB) -> max 24 frames
+        // Config 0  = 10 ms  (SILK NB) -> max 12 frames
+        // Config 1  = 20 ms  (SILK NB) -> max 6 frames
+        // Config 2  = 40 ms  (SILK NB) -> max 3 frames
+        // Config 3  = 60 ms  (SILK NB) -> max 2 frames
+        let cases: [(u8, u8); 6] = [
+            (16, 48),
+            (17, 24),
+            (0, 12),
+            (1, 6),
+            (2, 3),
+            (3, 2),
+        ];
+
+        for (config, max_frames) in cases {
+            let toc_byte = (config << 3) | 0b011; // Code 3
+
+            // Exactly 120 ms -> valid
+            let mut valid_builder = Packet::new(toc_byte).frame_count(max_frames);
+            for _ in 0..max_frames {
+                valid_builder = valid_builder.add_frame(&[0xAA]);
+            }
+            let valid_data = valid_builder.build();
+            let valid_packet = FramePacket::new(&valid_data)
+                .expect("Packet at 120 ms boundary should be valid");
+            assert_eq!(valid_packet.frames.len(), max_frames as usize);
+
+            // Exceeding 120 ms (max_frames + 1) -> ExcessiveTotalDuration error
+            let invalid_count = max_frames + 1;
+            let mut invalid_builder = Packet::new(toc_byte).frame_count(invalid_count);
+            for _ in 0..invalid_count {
+                invalid_builder = invalid_builder.add_frame(&[0xAA]);
+            }
+            let invalid_data = invalid_builder.build();
+            let invalid_res = FramePacket::new(&invalid_data);
+            assert!(
+                invalid_res.is_err(),
+                "Config {config} with {invalid_count} frames should exceed 120 ms"
+            );
+        }
+    }
+
+    #[test]
+    fn packet_with_extended_padding() {
+        let toc_byte = 0b0000_0011;
+        let frame_count = 1u8;
+        let frame = [0xAA, 0xBB];
+
+        let data = Packet::new(toc_byte)
+            .frame_count(frame_count)
+            .padding(300)
+            .add_frame(&frame)
+            .build();
+
+        let packet = FramePacket::new(&data).expect("Failed to parse packet with 300-byte padding");
+        assert_eq!(packet.frames.len(), 1);
+        assert_eq!(packet.frames[0], &frame[..]);
+        assert_eq!(packet.padding.unwrap().len(), 300);
     }
 }
