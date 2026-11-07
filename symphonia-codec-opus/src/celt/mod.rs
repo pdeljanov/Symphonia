@@ -27,6 +27,8 @@ pub(crate) mod vq;
 use crate::celt::error::Error;
 use crate::toc::{Bandwidth, FrameDuration};
 
+pub use decoder::Decoder;
+
 /// Number of Bark-scale frequency bands in the 48 kHz CELT mode (RFC 6716 Section 4.3).
 pub const MAX_BANDS: usize = 21;
 
