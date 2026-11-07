@@ -251,11 +251,9 @@ impl StreamSegment for MoofSegment {
             if let Some(offset) = trun.data_offset {
                 // The offset for the run is relative to the anchor-point defined in the track
                 // fragment header.
-                trun_offset = if offset.is_negative() {
-                    traf_base_pos - u64::from(offset.wrapping_abs() as u32)
-                }
-                else {
-                    traf_base_pos + offset as u64
+                trun_offset = match traf_base_pos.checked_add_signed(i64::from(offset)) {
+                    Some(pos) => pos,
+                    None => return decode_error("isomp4: invalid trun data offset"),
                 };
             }
 
