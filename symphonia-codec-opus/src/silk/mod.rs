@@ -324,6 +324,8 @@ pub struct ChannelState {
     pub fs_api_hz: u32,
     pub ltp_mem_length: usize,
     pub resampler: ResamplerState,
+    pub plc_state: plc::PlcState,
+    pub cng_state: plc::CngState,
 }
 
 impl Default for ChannelState {
@@ -349,6 +351,8 @@ impl ChannelState {
             fs_api_hz: 0,
             ltp_mem_length: MAX_LTP_MEM_SAMPLES,
             resampler: ResamplerState::new(),
+            plc_state: plc::PlcState::new(),
+            cng_state: plc::CngState::new(),
         };
     }
 
@@ -364,6 +368,9 @@ impl ChannelState {
     /// Resets side-channel prediction state when transitioning from `mid_only == true`
     /// to active side coding (`dec_API.c:320-327`).
     pub fn reset_after_mid_only(&mut self) {
+        let frame_length = (self.fs_khz * 20).max(160);
+        self.plc_state.reset_frame_parameters(frame_length);
+        self.cng_state.reset();
         self.out_buf = [0; OUT_BUF_SAMPLES];
         self.s_lpc_q14_buf = [0; MAX_LPC_ORDER];
         self.lag_prev = 100;
@@ -380,6 +387,8 @@ impl ChannelState {
         }
 
         if self.fs_khz != fs_khz {
+            let frame_length = (fs_khz * 20).max(160);
+            let lpc_order = if fs_khz == 16 { 16 } else { 10 };
             self.ltp_mem_length = LTP_MEM_LENGTH_MS * fs_khz;
             self.first_frame_after_reset = true;
             self.lag_prev = 100;
@@ -387,6 +396,8 @@ impl ChannelState {
             self.prev_signal_type = SignalType::Inactive;
             self.out_buf = [0; OUT_BUF_SAMPLES];
             self.s_lpc_q14_buf = [0; MAX_LPC_ORDER];
+            self.plc_state.ensure_sample_rate(fs_khz as u32, frame_length);
+            self.cng_state.ensure_sample_rate(fs_khz as u32, lpc_order);
             self.fs_khz = fs_khz;
         }
 
@@ -451,7 +462,7 @@ impl State {
         output_sample_rate: u32,
     ) -> Result<()> {
         let _ = Self::silk_frame_count(frame_size)?;
-        let sample_rate = bandwidth.sample_rate();
+        let sample_rate = bandwidth.sample_rate().min(16_000);
         let _ = Self::calculate_frame_length(sample_rate, frame_size)?;
         let lpc_order = LpcOrder::from(bandwidth);
         let fs_khz = (sample_rate / 1000) as usize;

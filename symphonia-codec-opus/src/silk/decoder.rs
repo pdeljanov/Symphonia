@@ -52,6 +52,242 @@ impl Decoder {
     }
 
     /// Decodes a single Opus frame's SILK layer from `range_decoder`, unmixes Mid-Side stereo
+    /// when applicable, resamples to `output_sample_rate`, and writes `f32` PCM into planar
+    /// output slices `out_ch0` and `out_ch1`. Returns the total number of samples per channel written.
+    pub fn decode_frame_planar(
+        &mut self,
+        range_decoder: &mut entropy::Decoder<'_>,
+        is_stereo: bool,
+        out_ch0: &mut [f32],
+        mut out_ch1: Option<&mut [f32]>,
+    ) -> Result<usize> {
+        let api_channels = if out_ch1.is_some() { 2 } else { 1 };
+        let internal_channels = if is_stereo { 2 } else { 1 };
+        let stereo_to_mono = api_channels == 2
+            && internal_channels == 1
+            && self.state.prev_internal_channels == 2;
+
+        if api_channels == 2 && internal_channels == 2 && self.state.prev_internal_channels == 1 {
+            self.state.stereo_state.reset_side();
+            self.state.channel_states[1].resampler = self.state.channel_states[0].resampler;
+        }
+        self.state.prev_internal_channels = internal_channels;
+
+        let decoded_opus_frame = self.decode_opus_frame(range_decoder, is_stereo)?;
+        let mut total_written = 0usize;
+
+        for (f, regular_frame) in decoded_opus_frame.regular_frames.iter().enumerate() {
+            let ch1_slice = out_ch1
+                .as_deref_mut()
+                .map(|s| &mut s[total_written..]);
+            let n_out = self.output_frame_pair_planar(
+                regular_frame,
+                is_stereo,
+                stereo_to_mono && f == 0,
+                &mut out_ch0[total_written..],
+                ch1_slice,
+            )?;
+            total_written += n_out;
+        }
+
+        return Ok(total_written);
+    }
+
+    /// Conceals a lost or DTX SILK Opus frame using stateful Packet Loss Concealment (`PlcState`)
+    /// and Comfort Noise Generation (`CngState`), unmixes stereo when applicable, and writes
+    /// resampled `f32` PCM into planar slices `out_ch0` and `out_ch1`.
+    pub fn conceal_frame_planar(
+        &mut self,
+        is_stereo: bool,
+        out_ch0: &mut [f32],
+        mut out_ch1: Option<&mut [f32]>,
+    ) -> Result<usize> {
+        let api_channels = if out_ch1.is_some() { 2 } else { 1 };
+        let internal_channels = if is_stereo { 2 } else { 1 };
+        let stereo_to_mono = api_channels == 2
+            && internal_channels == 1
+            && self.state.prev_internal_channels == 2;
+        self.state.prev_internal_channels = internal_channels;
+
+        let num_silk_frames = State::silk_frame_count(self.state.frame_size)?;
+        let silk_frame_duration = State::silk_frame_duration(self.state.frame_size)?;
+        let sample_count =
+            State::calculate_frame_length(self.state.sample_rate, silk_frame_duration)?;
+        let num_subframes = SubframeSize::from(silk_frame_duration);
+        let lpc_order = LpcOrder::from(self.state.bandwidth);
+
+        let mut total_written = 0usize;
+        for f in 0..num_silk_frames {
+            let mut mid = Frame::new(sample_count, num_subframes, lpc_order);
+            {
+                let ch_state = &mut self.state.channel_states[0];
+                let mut plc_state = ch_state.plc_state;
+                let mut cng_state = ch_state.cng_state;
+                plc_state.conceal_lost_frame(
+                    ch_state,
+                    sample_count,
+                    num_subframes,
+                    lpc_order,
+                    &mut mid.output_pcm[..sample_count],
+                );
+                cng_state.apply(
+                    ch_state,
+                    &plc_state,
+                    None,
+                    lpc_order,
+                    &mut mid.output_pcm[..sample_count],
+                )?;
+                plc_state.glue_frames(&mut mid.output_pcm[..sample_count]);
+                ch_state.last_gain_index = 10;
+                ch_state.plc_state = plc_state;
+                ch_state.cng_state = cng_state;
+            }
+
+            let side = if is_stereo && !self.state.prev_decode_only_middle {
+                let mut side_frame = Frame::new(sample_count, num_subframes, lpc_order);
+                let ch_state = &mut self.state.channel_states[1];
+                let mut plc_state = ch_state.plc_state;
+                let mut cng_state = ch_state.cng_state;
+                plc_state.conceal_lost_frame(
+                    ch_state,
+                    sample_count,
+                    num_subframes,
+                    lpc_order,
+                    &mut side_frame.output_pcm[..sample_count],
+                );
+                cng_state.apply(
+                    ch_state,
+                    &plc_state,
+                    None,
+                    lpc_order,
+                    &mut side_frame.output_pcm[..sample_count],
+                )?;
+                plc_state.glue_frames(&mut side_frame.output_pcm[..sample_count]);
+                ch_state.last_gain_index = 10;
+                ch_state.plc_state = plc_state;
+                ch_state.cng_state = cng_state;
+                Some(side_frame)
+            } else {
+                if is_stereo {
+                    self.state.channel_states[1].last_gain_index = 10;
+                }
+                None
+            };
+
+            let pair = SilkChannelFramePair {
+                stereo_weights: None,
+                mid_only: self.state.prev_decode_only_middle,
+                mid,
+                side,
+            };
+
+            let ch1_slice = out_ch1
+                .as_deref_mut()
+                .map(|s| &mut s[total_written..]);
+            let n_out = self.output_frame_pair_planar(
+                &pair,
+                is_stereo,
+                stereo_to_mono && f == 0,
+                &mut out_ch0[total_written..],
+                ch1_slice,
+            )?;
+            total_written += n_out;
+        }
+
+        return Ok(total_written);
+    }
+
+    /// Conceals a lost or DTX SILK Opus frame and appends `f32` PCM to `buffer`.
+    pub fn decode_lost_frame(
+        &mut self,
+        is_stereo: bool,
+        buffer: &mut AudioBuffer<f32>,
+    ) -> Result<()> {
+        let api_channels = buffer.spec().channels().count();
+        let internal_channels = if is_stereo { 2 } else { 1 };
+        let stereo_to_mono = api_channels == 2
+            && internal_channels == 1
+            && self.state.prev_internal_channels == 2;
+        self.state.prev_internal_channels = internal_channels;
+
+        let num_silk_frames = State::silk_frame_count(self.state.frame_size)?;
+        let silk_frame_duration = State::silk_frame_duration(self.state.frame_size)?;
+        let sample_count =
+            State::calculate_frame_length(self.state.sample_rate, silk_frame_duration)?;
+        let num_subframes = SubframeSize::from(silk_frame_duration);
+        let lpc_order = LpcOrder::from(self.state.bandwidth);
+
+        for f in 0..num_silk_frames {
+            let mut mid = Frame::new(sample_count, num_subframes, lpc_order);
+            {
+                let ch_state = &mut self.state.channel_states[0];
+                let mut plc_state = ch_state.plc_state;
+                let mut cng_state = ch_state.cng_state;
+                plc_state.conceal_lost_frame(
+                    ch_state,
+                    sample_count,
+                    num_subframes,
+                    lpc_order,
+                    &mut mid.output_pcm[..sample_count],
+                );
+                cng_state.apply(
+                    ch_state,
+                    &plc_state,
+                    None,
+                    lpc_order,
+                    &mut mid.output_pcm[..sample_count],
+                )?;
+                plc_state.glue_frames(&mut mid.output_pcm[..sample_count]);
+                ch_state.last_gain_index = 10;
+                ch_state.plc_state = plc_state;
+                ch_state.cng_state = cng_state;
+            }
+
+            let side = if is_stereo && !self.state.prev_decode_only_middle {
+                let mut side_frame = Frame::new(sample_count, num_subframes, lpc_order);
+                let ch_state = &mut self.state.channel_states[1];
+                let mut plc_state = ch_state.plc_state;
+                let mut cng_state = ch_state.cng_state;
+                plc_state.conceal_lost_frame(
+                    ch_state,
+                    sample_count,
+                    num_subframes,
+                    lpc_order,
+                    &mut side_frame.output_pcm[..sample_count],
+                );
+                cng_state.apply(
+                    ch_state,
+                    &plc_state,
+                    None,
+                    lpc_order,
+                    &mut side_frame.output_pcm[..sample_count],
+                )?;
+                plc_state.glue_frames(&mut side_frame.output_pcm[..sample_count]);
+                ch_state.last_gain_index = 10;
+                ch_state.plc_state = plc_state;
+                ch_state.cng_state = cng_state;
+                Some(side_frame)
+            } else {
+                if is_stereo {
+                    self.state.channel_states[1].last_gain_index = 10;
+                }
+                None
+            };
+
+            let pair = SilkChannelFramePair {
+                stereo_weights: None,
+                mid_only: self.state.prev_decode_only_middle,
+                mid,
+                side,
+            };
+
+            self.output_frame_pair(&pair, is_stereo, stereo_to_mono && f == 0, buffer)?;
+        }
+
+        return Ok(());
+    }
+
+    /// Decodes a single Opus frame's SILK layer from `range_decoder`, unmixes Mid-Side stereo
     /// when applicable, resamples to `output_sample_rate`, and appends `f32` PCM to `buffer`.
     pub fn decode_frame(
         &mut self,
@@ -278,6 +514,11 @@ impl Decoder {
         self.decode_gains(range_decoder, &mut frame, channel, coding_mode)?;
 
         self.decode_lsf(range_decoder, &mut frame, channel, silk_frame_duration)?;
+        if !is_lbrr_frame {
+            self.state.channel_states[channel]
+                .plc_state
+                .expand_lpc_after_loss(&mut frame);
+        }
 
         if frame.frame_type.signal_type == SignalType::Voiced {
             self.decode_ltp(
@@ -296,6 +537,25 @@ impl Decoder {
         self.decode_excitation(range_decoder, &mut frame)?;
 
         self.synthesize_channel_frame(&mut frame, channel)?;
+
+        if !is_lbrr_frame {
+            let ch_state = &mut self.state.channel_states[channel];
+            let mut plc_state = ch_state.plc_state;
+            let mut cng_state = ch_state.cng_state;
+            let mut pcm_buf = frame.output_pcm;
+            plc_state.update_from_decoded_frame(ch_state, &frame);
+            cng_state.apply(
+                ch_state,
+                &plc_state,
+                Some(&frame),
+                lpc_order,
+                &mut pcm_buf[..sample_count],
+            )?;
+            plc_state.glue_frames(&mut pcm_buf[..sample_count]);
+            frame.output_pcm[..sample_count].copy_from_slice(&pcm_buf[..sample_count]);
+            ch_state.plc_state = plc_state;
+            ch_state.cng_state = cng_state;
+        }
 
         self.state.prev_frame_type = frame.frame_type;
         self.state.channel_states[channel].prev_signal_type = frame.frame_type.signal_type;
