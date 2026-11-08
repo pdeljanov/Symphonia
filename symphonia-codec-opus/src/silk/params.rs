@@ -47,16 +47,18 @@ impl Decoder {
                     FrameDuration::Ms10 | FrameDuration::Ms20 => {
                         per_frame_lbrr[ch][0] = true;
                     }
-                    FrameDuration::Ms40 => {
-                        let mask = decoder.decode_symbol_with_icdf(&constant::ICDF_PER_FRAME_LBRR_FLAGS_40_MS)? + 1;
-                        for (f, flag) in per_frame_lbrr[ch].iter_mut().enumerate().take(num_silk_frames) {
-                            *flag = ((mask >> f) & 1) != 0;
-                        }
-                    }
-                    FrameDuration::Ms60 => {
-                        let mask = decoder.decode_symbol_with_icdf(&constant::ICDF_PER_FRAME_LBRR_FLAGS_60_MS)? + 1;
-                        for (f, flag) in per_frame_lbrr[ch].iter_mut().enumerate().take(num_silk_frames) {
-                            *flag = ((mask >> f) & 1) != 0;
+                    FrameDuration::Ms40 | FrameDuration::Ms60 => {
+                        let icdf: &[u32] = match frame_size {
+                            FrameDuration::Ms40 => &constant::ICDF_PER_FRAME_LBRR_FLAGS_40_MS,
+                            _ => &constant::ICDF_PER_FRAME_LBRR_FLAGS_60_MS,
+                        };
+                        let mask = decoder.decode_symbol_with_icdf(icdf)? + 1;
+                        for (i, flag) in per_frame_lbrr[ch]
+                            .iter_mut()
+                            .enumerate()
+                            .take(num_silk_frames)
+                        {
+                            *flag = ((mask >> i) & 1) != 0;
                         }
                     }
                     FrameDuration::Ms2_5 | FrameDuration::Ms5 => {
@@ -166,15 +168,15 @@ impl Decoder {
         let signal_type = frame.frame_type.signal_type;
         let num_subframes = frame.num_subframes;
 
-        for subframe_idx in 0..num_subframes {
-            let is_independent = subframe_idx == 0 && coding_mode != CodingMode::CodeConditionally;
+        for i in 0..num_subframes {
+            let is_independent = i == 0 && coding_mode != CodingMode::CodeConditionally;
             let (log_gain, gain_q16, gain) = self.decode_subframe_gain(
                 decoder,
                 channel,
                 signal_type,
                 is_independent,
             )?;
-            let subframe = &mut frame.subframes[subframe_idx];
+            let subframe = &mut frame.subframes[i];
             subframe.log_gain = log_gain;
             subframe.gain_q16 = gain_q16;
             subframe.gain = gain;
@@ -281,9 +283,9 @@ impl Decoder {
         frame.ltp_scale_q14 = ltp_scale_q14;
         frame.ltp_scale = ltp_scale;
 
-        for (idx, subframe) in frame.active_subframes_mut().iter_mut().enumerate() {
-            subframe.pitch_lag = pitch_lags[idx];
-            subframe.ltp_coeffs = ltp_coeffs[idx];
+        for (i, subframe) in frame.active_subframes_mut().iter_mut().enumerate() {
+            subframe.pitch_lag = pitch_lags[i];
+            subframe.ltp_coeffs = ltp_coeffs[i];
         }
 
         return Ok(());
@@ -308,20 +310,20 @@ impl Decoder {
 
         let contour: &[i8] = match (self.state.bandwidth, silk_frame_duration) {
             (Bandwidth::NarrowBand, FrameDuration::Ms10) => {
-                let idx = decoder.decode_symbol_with_icdf(&constant::ICDF_SUBFRAME_PITCH_CONTOUR_NARROWBAND_10_MS)? as usize;
-                &constant::CODEBOOK_SUBFRAME_PITCH_CONTOUR_NB_10MS[idx]
+                let i = decoder.decode_symbol_with_icdf(&constant::ICDF_SUBFRAME_PITCH_CONTOUR_NARROWBAND_10_MS)? as usize;
+                &constant::CODEBOOK_SUBFRAME_PITCH_CONTOUR_NB_10MS[i]
             }
             (Bandwidth::NarrowBand, _) => {
-                let idx = decoder.decode_symbol_with_icdf(&constant::ICDF_SUBFRAME_PITCH_CONTOUR_NARROWBAND_20_MS)? as usize;
-                &constant::CODEBOOK_SUBFRAME_PITCH_CONTOUR_NARROWBAND_20MS[idx]
+                let i = decoder.decode_symbol_with_icdf(&constant::ICDF_SUBFRAME_PITCH_CONTOUR_NARROWBAND_20_MS)? as usize;
+                &constant::CODEBOOK_SUBFRAME_PITCH_CONTOUR_NARROWBAND_20MS[i]
             }
             (Bandwidth::MediumBand | Bandwidth::WideBand | Bandwidth::SuperWideBand | Bandwidth::FullBand, FrameDuration::Ms10) => {
-                let idx = decoder.decode_symbol_with_icdf(&constant::ICDF_SUBFRAME_PITCH_CONTOUR_MEDIUMBAND_OR_WIDEBAND_10_MS)? as usize;
-                &constant::CODEBOOK_SUBFRAME_PITCH_CONTOUR_MEDIUMBAND_WIDEBAND_10MS[idx]
+                let i = decoder.decode_symbol_with_icdf(&constant::ICDF_SUBFRAME_PITCH_CONTOUR_MEDIUMBAND_OR_WIDEBAND_10_MS)? as usize;
+                &constant::CODEBOOK_SUBFRAME_PITCH_CONTOUR_MEDIUMBAND_WIDEBAND_10MS[i]
             }
             (Bandwidth::MediumBand | Bandwidth::WideBand | Bandwidth::SuperWideBand | Bandwidth::FullBand, _) => {
-                let idx = decoder.decode_symbol_with_icdf(&constant::ICDF_SUBFRAME_PITCH_CONTOUR_MEDIUMBAND_OR_WIDEBAND_20_MS)? as usize;
-                &constant::CODEBOOK_SUBFRAME_PITCH_CONTOUR_MEDIUMBAND_WIDEBAND_20MS[idx]
+                let i = decoder.decode_symbol_with_icdf(&constant::ICDF_SUBFRAME_PITCH_CONTOUR_MEDIUMBAND_OR_WIDEBAND_20_MS)? as usize;
+                &constant::CODEBOOK_SUBFRAME_PITCH_CONTOUR_MEDIUMBAND_WIDEBAND_20MS[i]
             }
         };
 
@@ -390,21 +392,25 @@ impl Decoder {
         let mut ltp_coeffs = [[0i8; LTP_ORDER]; MAX_SUBFRAMES];
 
         let periodicity_index = decoder.decode_symbol_with_icdf(&constant::ICDF_PERIODICITY_INDEX)?;
+        let (icdf, codebook): (&[u32], &[[i8; LTP_ORDER]]) = match periodicity_index {
+            0 => (
+                &constant::ICDF_LTP_FILTER_INDEX_0,
+                &constant::CODEBOOK_LTP_FILTER_PERIODICITY_INDEX_0,
+            ),
+            1 => (
+                &constant::ICDF_LTP_FILTER_INDEX_1,
+                &constant::CODEBOOK_LTP_FILTER_PERIODICITY_INDEX_1,
+            ),
+            2 => (
+                &constant::ICDF_LTP_FILTER_INDEX_2,
+                &constant::CODEBOOK_LTP_FILTER_PERIODICITY_INDEX_2,
+            ),
+            _ => return Err(Error::InvalidPeriodicityIndex.into()),
+        };
 
         for subframe_coeffs in ltp_coeffs.iter_mut().take(num_subframes) {
-            let filter_index = match periodicity_index {
-                0 => decoder.decode_symbol_with_icdf(&constant::ICDF_LTP_FILTER_INDEX_0)?,
-                1 => decoder.decode_symbol_with_icdf(&constant::ICDF_LTP_FILTER_INDEX_1)?,
-                2 => decoder.decode_symbol_with_icdf(&constant::ICDF_LTP_FILTER_INDEX_2)?,
-                _ => return Err(Error::InvalidPeriodicityIndex.into()),
-            } as usize;
-
-            *subframe_coeffs = match periodicity_index {
-                0 => constant::CODEBOOK_LTP_FILTER_PERIODICITY_INDEX_0[filter_index],
-                1 => constant::CODEBOOK_LTP_FILTER_PERIODICITY_INDEX_1[filter_index],
-                2 => constant::CODEBOOK_LTP_FILTER_PERIODICITY_INDEX_2[filter_index],
-                _ => return Err(Error::InvalidPeriodicityIndex.into()),
-            };
+            let filter_index = decoder.decode_symbol_with_icdf(icdf)? as usize;
+            *subframe_coeffs = codebook[filter_index];
         }
 
         return Ok(ltp_coeffs);

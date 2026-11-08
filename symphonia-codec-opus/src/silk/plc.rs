@@ -45,6 +45,59 @@ use crate::silk::{
 /// Number of loss-stage attenuation entries (`loss_count == 0` vs `loss_count >= 1`).
 const NUM_ATTENUATION_STAGES: usize = 2;
 
+/// Unit gain (`1.0`) in Q16 fixed-point representation (`65_536`).
+const UNIT_GAIN_Q16: i32 = 1 << 16;
+
+/// Unit scale (`1.0`) in Q14 fixed-point representation (`16_384`).
+const UNIT_SCALE_Q14: i16 = 1 << 14;
+
+/// Fixed-point bit shift for Q16 quantities (`16`).
+const Q16_SHIFT: u32 = 16;
+
+/// Fixed-point bit shift for Q15 quantities (`15`).
+const Q15_SHIFT: u32 = 15;
+
+/// Fixed-point bit shift for Q14 quantities (`14`).
+const Q14_SHIFT: u32 = 14;
+
+/// Fixed-point bit shift for Q8 quantities (`8`).
+const Q8_SHIFT: u32 = 8;
+
+/// Bit shift converting Q16 gains down to Q10 (`16 - 10 = 6`).
+const Q16_TO_Q10_SHIFT: u32 = 6;
+
+/// Bit shift converting Q7 LTP tap coefficients up to Q14 (`14 - 7 = 7`).
+const LTP_COEFF_Q7_TO_Q14_SHIFT: u32 = 7;
+
+/// Bit shift converting integer pitch lag into Q8 (`8`).
+const PITCH_LAG_Q8_SHIFT: u32 = 8;
+
+/// Bit shift for minimum voiced LTP gain clamping factor (`Q10`).
+const MIN_CLAMP_SCALE_SHIFT: u32 = 10;
+
+/// Bit shift for maximum voiced LTP gain clamping factor (`Q14`).
+const MAX_CLAMP_SCALE_SHIFT: u32 = 14;
+
+/// Target fractional bit precision (`Q24`) for energy ratio in `glue_frames`.
+const GLUE_FRAC_Q24_SHIFT: i32 = 24;
+
+/// Bit shift converting `sqrt_approx(Q24)` (`Q12`) up to `Q16` (`16 - 12 = 4`).
+const GLUE_SQRT_Q12_TO_Q16_SHIFT: u32 = 4;
+
+/// Bit shift applied to the per-sample linear fade-in slope in `glue_frames` (`2`).
+const GLUE_SLOPE_Q16_SHIFT: u32 = 2;
+
+/// High PLC noise gain threshold in Q16 (`32.0` in Q16 = `1 << 21`) above which integer
+/// square roots are computed at unscaled integer precision to avoid 32-bit overflow.
+const CNG_HIGH_PLC_GAIN_THRES_Q16: i32 = 1 << 21;
+
+/// High smoothed CNG gain threshold in Q16 (`128.0` in Q16 = `1 << 23`) above which integer
+/// square roots are computed at unscaled integer precision to avoid 32-bit overflow.
+const CNG_HIGH_SMTH_GAIN_THRES_Q16: i32 = 1 << 23;
+
+/// Energy penalty bit shift (`* 32`) applied to squared PLC gain when computing CNG gain.
+const CNG_PLC_ENERGY_PENALTY_SHIFT: u32 = 5;
+
 /// Harmonic (voiced LTP) attenuation factors in Q15 (`0.99` and `0.95`).
 const HARMONIC_ATTENUATION_Q15: [i16; NUM_ATTENUATION_STAGES] = [32_440, 31_130];
 
@@ -147,12 +200,12 @@ pub(crate) fn chirp_bandwidth_expand(coeffs_q12: &mut [i16], mut factor_q16: i32
         return;
     };
 
-    let step_q16 = factor_q16 - 65_536;
+    let step_q16 = factor_q16 - UNIT_GAIN_Q16;
     for coeff in head_coeffs.iter_mut() {
-        *coeff = rshift_round(factor_q16 * (*coeff as i32), 16) as i16;
-        factor_q16 += rshift_round(factor_q16 * step_q16, 16);
+        *coeff = rshift_round(factor_q16 * (*coeff as i32), Q16_SHIFT) as i16;
+        factor_q16 += rshift_round(factor_q16 * step_q16, Q16_SHIFT);
     }
-    *last_coeff = rshift_round(factor_q16 * (*last_coeff as i32), 16) as i16;
+    *last_coeff = rshift_round(factor_q16 * (*last_coeff as i32), Q16_SHIFT) as i16;
     return;
 }
 
@@ -234,7 +287,7 @@ impl PlcState {
             pitch_l_q8: 0,
             ltp_coef_q14: [0; LTP_ORDER],
             ltp_scale_q14: 0,
-            prev_gain_q16: [1 << 16, 1 << 16],
+            prev_gain_q16: [UNIT_GAIN_Q16, UNIT_GAIN_Q16],
             rand_seed: 0,
             rand_scale_q14: 0,
             conc_energy: 0,
@@ -260,8 +313,8 @@ impl PlcState {
     /// Resets only the frame-dependent pitch lag, unit gains, and default subframe geometry
     /// when the internal SILK sample rate changes (`silk_PLC_Reset` in `silk/PLC.c`).
     pub fn reset_frame_parameters(&mut self, frame_length: usize) {
-        self.pitch_l_q8 = (frame_length as i32) << 7;
-        self.prev_gain_q16 = [1 << 16, 1 << 16];
+        self.pitch_l_q8 = (frame_length as i32) << (PITCH_LAG_Q8_SHIFT - 1);
+        self.prev_gain_q16 = [UNIT_GAIN_Q16, UNIT_GAIN_Q16];
         self.subfr_length = 20;
         self.nb_subfr = 2;
         return;
@@ -317,7 +370,7 @@ impl PlcState {
             self.ltp_scale_q14 = frame.ltp_scale_q14;
             ch_state.lag_prev = frame.subframes[nb_subfr - 1].pitch_lag as i32;
         } else {
-            self.pitch_l_q8 = ((fs_khz as i32) * MAX_PITCH_LAG_MS) << 8;
+            self.pitch_l_q8 = ((fs_khz as i32) * MAX_PITCH_LAG_MS) << PITCH_LAG_Q8_SHIFT;
             self.ltp_coef_q14 = [0; LTP_ORDER];
             self.ltp_scale_q14 = 0;
             ch_state.lag_prev = 0;
@@ -346,33 +399,48 @@ impl PlcState {
         nb_subfr: usize,
     ) {
         let last_pitch_lag = frame.subframes[nb_subfr - 1].pitch_lag as usize;
-        let mut max_ltp_gain_q14 = 0i32;
+        let (max_ltp_gain_q14, selected_lag_q8) = frame.subframes[..nb_subfr]
+            .iter()
+            .rev()
+            .enumerate()
+            .take_while(|&(i, _)| i * subfr_length < last_pitch_lag)
+            .fold(
+                (0i32, self.pitch_l_q8),
+                |(max_gain, best_lag_q8), (_, subfr)| {
+                    let gain_q14: i32 = subfr
+                        .ltp_coeffs
+                        .iter()
+                        .map(|&c| (c as i32) << LTP_COEFF_Q7_TO_Q14_SHIFT)
+                        .sum();
+                    if gain_q14 > max_gain {
+                        (gain_q14, (subfr.pitch_lag as i32) << PITCH_LAG_Q8_SHIFT)
+                    } else {
+                        (max_gain, best_lag_q8)
+                    }
+                },
+            );
 
-        for j in 0..nb_subfr {
-            if j * subfr_length >= last_pitch_lag {
-                break;
-            }
-            let subfr = &frame.subframes[nb_subfr - 1 - j];
-            let gain_q14: i32 = subfr.ltp_coeffs.iter().map(|&c| (c as i32) << 7).sum();
-            if gain_q14 > max_ltp_gain_q14 {
-                max_ltp_gain_q14 = gain_q14;
-                self.pitch_l_q8 = (subfr.pitch_lag as i32) << 8;
-            }
-        }
-
+        self.pitch_l_q8 = selected_lag_q8;
         self.ltp_coef_q14 = [0; LTP_ORDER];
         self.ltp_coef_q14[LTP_ORDER / 2] = max_ltp_gain_q14 as i16;
 
-        if max_ltp_gain_q14 < VOICED_PITCH_GAIN_MIN_Q14 {
-            let scale_q10 = (VOICED_PITCH_GAIN_MIN_Q14 << 10) / max_ltp_gain_q14.max(1);
-            for coeff in self.ltp_coef_q14.iter_mut() {
-                *coeff = (((*coeff as i32) * (scale_q10 as i16 as i32)) >> 10) as i16;
-            }
-        } else if max_ltp_gain_q14 > VOICED_PITCH_GAIN_MAX_Q14 {
-            let scale_q14 = (VOICED_PITCH_GAIN_MAX_Q14 << 14) / max_ltp_gain_q14.max(1);
-            for coeff in self.ltp_coef_q14.iter_mut() {
-                *coeff = (((*coeff as i32) * (scale_q14 as i16 as i32)) >> 14) as i16;
-            }
+        let clamp_scale = match max_ltp_gain_q14 {
+            g if g < VOICED_PITCH_GAIN_MIN_Q14 => Some((
+                (VOICED_PITCH_GAIN_MIN_Q14 << MIN_CLAMP_SCALE_SHIFT) / g.max(1),
+                MIN_CLAMP_SCALE_SHIFT,
+            )),
+            g if g > VOICED_PITCH_GAIN_MAX_Q14 => Some((
+                (VOICED_PITCH_GAIN_MAX_Q14 << MAX_CLAMP_SCALE_SHIFT) / g.max(1),
+                MAX_CLAMP_SCALE_SHIFT,
+            )),
+            _ => None,
+        };
+
+        if let Some((scale, shift)) = clamp_scale {
+            let scale_i32 = scale as i16 as i32;
+            self.ltp_coef_q14
+                .iter_mut()
+                .for_each(|coeff| *coeff = (((*coeff as i32) * scale_i32) >> shift) as i16);
         }
         return;
     }
@@ -399,7 +467,10 @@ impl PlcState {
             self.prev_lpc_q12.fill(0);
         }
 
-        let prev_gain_q10 = [self.prev_gain_q16[0] >> 6, self.prev_gain_q16[1] >> 6];
+        let prev_gain_q10 = [
+            self.prev_gain_q16[0] >> Q16_TO_Q10_SHIFT,
+            self.prev_gain_q16[1] >> Q16_TO_Q10_SHIFT,
+        ];
         let noise_offset =
             self.select_noise_excitation_offset(prev_gain_q10, subfr_length, nb_subfr);
         let mut noise_window = [0i32; RAND_BUF_SIZE];
@@ -426,7 +497,7 @@ impl PlcState {
                 base_noise_attenuation_q15,
             );
 
-        let initial_lag = rshift_round(self.pitch_l_q8, 8) as usize;
+        let initial_lag = rshift_round(self.pitch_l_q8, PITCH_LAG_Q8_SHIFT) as usize;
         let ltp_mem_length = ch_state.ltp_mem_length.min(MAX_LTP_MEM_SAMPLES);
         let mut s_ltp_q14 = [0i32; MAX_LTP_MEM_SAMPLES + MAX_FRAME_SAMPLES];
 
@@ -500,15 +571,15 @@ impl PlcState {
     ) -> usize {
         let mut scaled_exc = [0i16; 2 * MAX_SUBFRAME_SAMPLES];
 
-        for (k, &gain_q10) in prev_gain_q10.iter().enumerate() {
-            let src_start = (k + nb_subfr - 2) * subfr_length;
-            let dst_start = k * subfr_length;
-            for (dst, &exc_q14) in scaled_exc[dst_start..dst_start + subfr_length]
+        for (i, &gain_q10) in prev_gain_q10.iter().enumerate() {
+            let src_start = (i + nb_subfr - 2) * subfr_length;
+            let dst_start = i * subfr_length;
+            scaled_exc[dst_start..dst_start + subfr_length]
                 .iter_mut()
                 .zip(self.prev_exc_q14[src_start..src_start + subfr_length].iter())
-            {
-                *dst = sat16(mul_q16(exc_q14, gain_q10) >> 8);
-            }
+                .for_each(|(dst, &exc_q14)| {
+                    *dst = sat16(mul_q16(exc_q14, gain_q10) >> Q8_SHIFT);
+                });
         }
 
         let (energy1, shift1) = sum_sqr_shift(&scaled_exc[..subfr_length]);
@@ -535,27 +606,26 @@ impl PlcState {
             return (self.rand_scale_q14, base_noise_attenuation_q15);
         }
 
-        let mut rand_scale_q14: i16 = 1 << 14;
-        let mut noise_attenuation_q15 = base_noise_attenuation_q15;
-
         if signal_type == SignalType::Voiced {
-            for &tap_q14 in self.ltp_coef_q14.iter() {
-                rand_scale_q14 = rand_scale_q14.wrapping_sub(tap_q14);
-            }
-            rand_scale_q14 = rand_scale_q14.max(VOICED_MIN_RAND_SCALE_Q14);
-            rand_scale_q14 =
-                (((rand_scale_q14 as i32) * (self.ltp_scale_q14 as i32)) >> 14) as i16;
-        } else {
-            let inv_gain_q30 = Decoder::lpc_inverse_pred_gain(&self.prev_lpc_q12[..lpc_order]);
-            let high_limit_q30 = (1i32 << 30) >> LOG2_INV_LPC_GAIN_HIGH_THRES;
-            let low_limit_q30 = (1i32 << 30) >> LOG2_INV_LPC_GAIN_LOW_THRES;
-            let down_scale_q30 = inv_gain_q30.clamp(low_limit_q30, high_limit_q30)
-                << LOG2_INV_LPC_GAIN_HIGH_THRES;
-            noise_attenuation_q15 =
-                mul_q16_i16(down_scale_q30, noise_attenuation_q15 as i16) >> 14;
+            let residual_scale_q14 = self
+                .ltp_coef_q14
+                .iter()
+                .fold(UNIT_SCALE_Q14, |acc, &tap_q14| acc.wrapping_sub(tap_q14))
+                .max(VOICED_MIN_RAND_SCALE_Q14);
+            let rand_scale_q14 =
+                (((residual_scale_q14 as i32) * (self.ltp_scale_q14 as i32)) >> Q14_SHIFT) as i16;
+            return (rand_scale_q14, base_noise_attenuation_q15);
         }
 
-        return (rand_scale_q14, noise_attenuation_q15);
+        let inv_gain_q30 = Decoder::lpc_inverse_pred_gain(&self.prev_lpc_q12[..lpc_order]);
+        let high_limit_q30 = (1i32 << 30) >> LOG2_INV_LPC_GAIN_HIGH_THRES;
+        let low_limit_q30 = (1i32 << 30) >> LOG2_INV_LPC_GAIN_LOW_THRES;
+        let down_scale_q30 =
+            inv_gain_q30.clamp(low_limit_q30, high_limit_q30) << LOG2_INV_LPC_GAIN_HIGH_THRES;
+        let noise_attenuation_q15 =
+            mul_q16_i16(down_scale_q30, base_noise_attenuation_q15 as i16) >> Q14_SHIFT;
+
+        return (UNIT_SCALE_Q14, noise_attenuation_q15);
     }
 
     /// Rewhitens the tail of `out_buf` through the LPC analysis filter `a_q12` and scales
@@ -581,12 +651,12 @@ impl PlcState {
 
         let inv_gain_q30 = inverse32_var_q(self.prev_gain_q16[1], 46).min(i32::MAX >> 1);
         let scale_start = rewhiten_start + lpc_order;
-        for (dst, &whitened) in s_ltp_q14[scale_start..ltp_mem_length]
+        s_ltp_q14[scale_start..ltp_mem_length]
             .iter_mut()
             .zip(s_ltp[scale_start..ltp_mem_length].iter())
-        {
-            *dst = mul_q16_i16(inv_gain_q30, whitened);
-        }
+            .for_each(|(dst, &whitened)| {
+                *dst = mul_q16_i16(inv_gain_q30, whitened);
+            });
         return;
     }
 
@@ -610,17 +680,18 @@ impl PlcState {
         let mut lag = initial_lag;
         let mut rand_seed = self.rand_seed;
         let mut rand_scale_q14 = initial_rand_scale_q14;
-        let max_pitch_lag_q8 = (MAX_PITCH_LAG_MS * (fs_khz as i32)) << 8;
+        let max_pitch_lag_q8 = (MAX_PITCH_LAG_MS * (fs_khz as i32)) << PITCH_LAG_Q8_SHIFT;
 
-        for _subfr in 0..nb_subfr {
+        for _ in 0..nb_subfr {
             let pred_lag_base = s_ltp_buf_idx + (LTP_ORDER / 2) - lag;
             for i in 0..subfr_length {
                 let pred_idx = pred_lag_base + i;
-                let mut ltp_pred_q12 = 2i32;
-                for (tap, &coeff_q14) in self.ltp_coef_q14.iter().enumerate() {
-                    ltp_pred_q12 =
-                        mla_q16_i16(ltp_pred_q12, s_ltp_q14[pred_idx - tap], coeff_q14);
-                }
+                let ltp_pred_q12 = self.ltp_coef_q14.iter().enumerate().fold(
+                    2i32,
+                    |acc, (tap, &coeff_q14)| {
+                        mla_q16_i16(acc, s_ltp_q14[pred_idx - tap], coeff_q14)
+                    },
+                );
 
                 rand_seed = advance_lcg_seed(rand_seed);
                 let noise_idx = ((rand_seed >> 25) & RAND_BUF_MASK) as usize;
@@ -630,16 +701,16 @@ impl PlcState {
                 s_ltp_buf_idx += 1;
             }
 
-            for coeff_q14 in self.ltp_coef_q14.iter_mut() {
-                *coeff_q14 =
-                    (((harmonic_attenuation_q15 as i16 as i32) * (*coeff_q14 as i32)) >> 15) as i16;
-            }
-            rand_scale_q14 =
-                (((rand_scale_q14 as i32) * (noise_attenuation_q15 as i16 as i32)) >> 15) as i16;
+            let harm_att_i32 = harmonic_attenuation_q15 as i16 as i32;
+            self.ltp_coef_q14.iter_mut().for_each(|coeff_q14| {
+                *coeff_q14 = ((harm_att_i32 * (*coeff_q14 as i32)) >> Q15_SHIFT) as i16;
+            });
+            rand_scale_q14 = (((rand_scale_q14 as i32) * (noise_attenuation_q15 as i16 as i32))
+                >> Q15_SHIFT) as i16;
 
             self.pitch_l_q8 = mla_q16_i16(self.pitch_l_q8, self.pitch_l_q8, PITCH_DRIFT_FACTOR_Q16)
                 .min(max_pitch_lag_q8);
-            lag = rshift_round(self.pitch_l_q8, 8) as usize;
+            lag = rshift_round(self.pitch_l_q8, PITCH_LAG_Q8_SHIFT) as usize;
         }
 
         self.rand_seed = rand_seed;
@@ -666,10 +737,10 @@ impl PlcState {
         let mut lag = initial_lag;
         let mut rand_seed = self.rand_seed;
         let mut rand_scale_q14 = initial_rand_scale_q14;
-        let max_pitch_lag_q8 = (MAX_PITCH_LAG_MS * (fs_khz as i32)) << 8;
+        let max_pitch_lag_q8 = (MAX_PITCH_LAG_MS * (fs_khz as i32)) << PITCH_LAG_Q8_SHIFT;
 
-        for _subfr in 0..nb_subfr {
-            for _i in 0..subfr_length {
+        for _ in 0..nb_subfr {
+            for _ in 0..subfr_length {
                 rand_seed = advance_lcg_seed(rand_seed);
                 let noise_idx = ((rand_seed >> 25) & RAND_BUF_MASK) as usize;
                 // Preserve the Q12 rounding bias of 2 from the zero-tap LTP accumulator.
@@ -678,12 +749,12 @@ impl PlcState {
                 s_ltp_buf_idx += 1;
             }
 
-            rand_scale_q14 =
-                (((rand_scale_q14 as i32) * (noise_attenuation_q15 as i16 as i32)) >> 15) as i16;
+            rand_scale_q14 = (((rand_scale_q14 as i32) * (noise_attenuation_q15 as i16 as i32))
+                >> Q15_SHIFT) as i16;
 
             self.pitch_l_q8 = mla_q16_i16(self.pitch_l_q8, self.pitch_l_q8, PITCH_DRIFT_FACTOR_Q16)
                 .min(max_pitch_lag_q8);
-            lag = rshift_round(self.pitch_l_q8, 8) as usize;
+            lag = rshift_round(self.pitch_l_q8, PITCH_LAG_Q8_SHIFT) as usize;
         }
 
         self.rand_seed = rand_seed;
@@ -706,21 +777,23 @@ impl PlcState {
         excitation_and_state_q14[..MAX_LPC_ORDER].copy_from_slice(s_lpc_q14_buf);
 
         for (i, out_sample) in out_pcm[..frame_length].iter_mut().enumerate() {
-            let mut lpc_pred_q10 = (lpc_order >> 1) as i32;
-            for (tap, &coeff_q12) in a_q12.iter().enumerate() {
-                lpc_pred_q10 = mla_q16_i16(
-                    lpc_pred_q10,
-                    excitation_and_state_q14[MAX_LPC_ORDER + i - 1 - tap],
-                    coeff_q12,
-                );
-            }
+            let lpc_pred_q10 = a_q12.iter().enumerate().fold(
+                (lpc_order >> 1) as i32,
+                |acc, (tap, &coeff_q12)| {
+                    mla_q16_i16(
+                        acc,
+                        excitation_and_state_q14[MAX_LPC_ORDER + i - 1 - tap],
+                        coeff_q12,
+                    )
+                },
+            );
 
             let synthesized_q14 = add_sat32(
                 excitation_and_state_q14[MAX_LPC_ORDER + i],
                 lshift_sat32(lpc_pred_q10, 4),
             );
             excitation_and_state_q14[MAX_LPC_ORDER + i] = synthesized_q14;
-            *out_sample = sat16(rshift_round(mul_q16(synthesized_q14, gain_q10), 8));
+            *out_sample = sat16(rshift_round(mul_q16(synthesized_q14, gain_q10), Q8_SHIFT));
         }
 
         s_lpc_q14_buf
@@ -743,51 +816,46 @@ impl PlcState {
             return;
         }
 
-        if self.last_frame_lost {
-            let (mut energy, energy_shift) = sum_sqr_shift(frame_pcm);
+        if !self.last_frame_lost {
+            return;
+        }
+        self.last_frame_lost = false;
 
-            if energy_shift > self.conc_energy_shift {
+        let (mut energy, energy_shift) = sum_sqr_shift(frame_pcm);
+        match energy_shift.cmp(&self.conc_energy_shift) {
+            std::cmp::Ordering::Greater => {
                 let shift_diff = (energy_shift - self.conc_energy_shift) as u32;
-                self.conc_energy = if shift_diff < 32 {
-                    self.conc_energy >> shift_diff
-                } else {
-                    0
-                };
-            } else if energy_shift < self.conc_energy_shift {
+                self.conc_energy = self.conc_energy.checked_shr(shift_diff).unwrap_or(0);
+            }
+            std::cmp::Ordering::Less => {
                 let shift_diff = (self.conc_energy_shift - energy_shift) as u32;
-                energy = if shift_diff < 32 {
-                    energy >> shift_diff
-                } else {
-                    0
-                };
+                energy = energy.checked_shr(shift_diff).unwrap_or(0);
             }
-
-            if energy > self.conc_energy {
-                let leading_zeros = ((self.conc_energy as u32).leading_zeros() as i32) - 1;
-                self.conc_energy = self.conc_energy.wrapping_shl(leading_zeros as u32);
-                let energy_rshift = (24 - leading_zeros).max(0) as u32;
-                energy = if energy_rshift < 32 {
-                    energy >> energy_rshift
-                } else {
-                    0
-                };
-
-                let frac_q24 = self.conc_energy / energy.max(1);
-                let mut gain_q16 = sqrt_approx(frac_q24).wrapping_shl(4);
-                let slope_q16 =
-                    (((1i32 << 16) - gain_q16) / (frame_pcm.len() as i16 as i32)).wrapping_shl(2);
-
-                for sample in frame_pcm.iter_mut() {
-                    *sample = mul_q16_i16(gain_q16, *sample) as i16;
-                    gain_q16 += slope_q16;
-                    if gain_q16 > (1i32 << 16) {
-                        break;
-                    }
-                }
-            }
+            std::cmp::Ordering::Equal => {}
         }
 
-        self.last_frame_lost = false;
+        if energy <= self.conc_energy {
+            return;
+        }
+
+        let leading_zeros = ((self.conc_energy as u32).leading_zeros() as i32) - 1;
+        self.conc_energy = self.conc_energy.wrapping_shl(leading_zeros as u32);
+        let energy_rshift = (GLUE_FRAC_Q24_SHIFT - leading_zeros).max(0) as u32;
+        energy = energy.checked_shr(energy_rshift).unwrap_or(0);
+
+        let frac_q24 = self.conc_energy / energy.max(1);
+        let gain_q16 = sqrt_approx(frac_q24).wrapping_shl(GLUE_SQRT_Q12_TO_Q16_SHIFT);
+        let slope_q16 = ((UNIT_GAIN_Q16 - gain_q16) / (frame_pcm.len() as i16 as i32))
+            .wrapping_shl(GLUE_SLOPE_Q16_SHIFT);
+
+        frame_pcm
+            .iter_mut()
+            .enumerate()
+            .map(|(i, sample)| (sample, gain_q16 + (i as i32) * slope_q16))
+            .take_while(|&(_, g_q16)| g_q16 <= UNIT_GAIN_Q16)
+            .for_each(|(sample, g_q16)| {
+                *sample = mul_q16_i16(g_q16, *sample) as i16;
+            });
         return;
     }
 }
@@ -815,14 +883,9 @@ impl Default for CngState {
 
 impl CngState {
     /// Creates a new `CngState` with uniformly spaced initial NLSFs and the RFC 6716 LCG seed.
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
         let step_q15 = (i16::MAX as i32) / ((MAX_LPC_ORDER as i32) + 1);
-        let mut smth_nlsf_q15 = [0i16; MAX_LPC_ORDER];
-        let mut i = 0;
-        while i < MAX_LPC_ORDER {
-            smth_nlsf_q15[i] = (((i as i32) + 1) * step_q15) as i16;
-            i += 1;
-        }
+        let smth_nlsf_q15 = std::array::from_fn(|i| (((i as i32) + 1) * step_q15) as i16);
 
         return Self {
             cng_exc_buf_q14: [0; MAX_FRAME_SAMPLES],
@@ -851,11 +914,10 @@ impl CngState {
     pub fn reset_for_lpc_order(&mut self, lpc_order: usize) {
         let order = lpc_order.clamp(1, MAX_LPC_ORDER);
         let step_q15 = (i16::MAX as i32) / ((order as i32) + 1);
-        let mut acc_q15 = 0i32;
-        for nlsf in self.cng_smth_nlsf_q15[..order].iter_mut() {
-            acc_q15 += step_q15;
-            *nlsf = acc_q15 as i16;
-        }
+        self.cng_smth_nlsf_q15[..order]
+            .iter_mut()
+            .enumerate()
+            .for_each(|(i, nlsf)| *nlsf = (((i as i32) + 1) * step_q15) as i16);
         self.cng_smth_gain_q16 = 0;
         self.rand_seed = CNG_INITIAL_RAND_SEED;
         return;
@@ -884,23 +946,26 @@ impl CngState {
         lpc_order: usize,
     ) {
         let order = lpc_order.min(MAX_LPC_ORDER).min(prev_nlsf_q15.len());
-        for (smth_nlsf, &target_nlsf) in self.cng_smth_nlsf_q15[..order]
+        self.cng_smth_nlsf_q15[..order]
             .iter_mut()
             .zip(prev_nlsf_q15[..order].iter())
-        {
-            let delta = (target_nlsf as i32) - (*smth_nlsf as i32);
-            *smth_nlsf = (*smth_nlsf).wrapping_add(mul_q16_i16(delta, CNG_NLSF_SMOOTH_Q16) as i16);
-        }
+            .for_each(|(smth_nlsf, &target_nlsf)| {
+                let delta = (target_nlsf as i32) - (*smth_nlsf as i32);
+                *smth_nlsf =
+                    (*smth_nlsf).wrapping_add(mul_q16_i16(delta, CNG_NLSF_SMOOTH_Q16) as i16);
+            });
 
         let active_subfr = nb_subfr.min(subframe_gains_q16.len());
-        let mut max_gain_q16 = 0i32;
-        let mut max_subfr = 0usize;
-        for (idx, &gain_q16) in subframe_gains_q16[..active_subfr].iter().enumerate() {
-            if gain_q16 > max_gain_q16 {
-                max_gain_q16 = gain_q16;
-                max_subfr = idx;
-            }
-        }
+        let (_, max_subfr) = subframe_gains_q16[..active_subfr]
+            .iter()
+            .enumerate()
+            .fold((0i32, 0usize), |(max_gain, best_i), (i, &gain_q16)| {
+                if gain_q16 > max_gain {
+                    (gain_q16, i)
+                } else {
+                    (max_gain, best_i)
+                }
+            });
 
         if active_subfr > 0 && subfr_length > 0 {
             let move_samples = (active_subfr - 1) * subfr_length;
@@ -937,11 +1002,11 @@ impl CngState {
         }
 
         let mut seed = self.rand_seed;
-        for dst in out_exc_q14.iter_mut() {
+        out_exc_q14.iter_mut().for_each(|dst| {
             seed = advance_lcg_seed(seed);
-            let idx = ((seed >> 24) as usize) & exc_mask;
-            *dst = self.cng_exc_buf_q14[idx];
-        }
+            let i = ((seed >> 24) as usize) & exc_mask;
+            *dst = self.cng_exc_buf_q14[i];
+        });
         self.rand_seed = seed;
         return;
     }
@@ -950,20 +1015,25 @@ impl CngState {
     /// the current PLC random noise gain (`silk/CNG.c:134-144`).
     fn compute_comfort_noise_gain_q10(&self, plc_state: &PlcState) -> i32 {
         let plc_gain_q16 = mul_q16(plc_state.rand_scale_q14 as i32, plc_state.prev_gain_q16[1]);
+        let use_unscaled_int_sq = plc_gain_q16 >= CNG_HIGH_PLC_GAIN_THRES_Q16
+            || self.cng_smth_gain_q16 > CNG_HIGH_SMTH_GAIN_THRES_Q16;
 
-        let cng_gain_q16 = if plc_gain_q16 >= (1 << 21) || self.cng_smth_gain_q16 > (1 << 23) {
-            let plc_gain_sq = (plc_gain_q16 >> 16) * (plc_gain_q16 >> 16);
-            let smth_gain_sq = (self.cng_smth_gain_q16 >> 16) * (self.cng_smth_gain_q16 >> 16);
-            let diff = smth_gain_sq.wrapping_sub(plc_gain_sq.wrapping_shl(5));
-            sqrt_approx(diff).wrapping_shl(16)
+        let (plc_gain_sq, smth_gain_sq, sqrt_to_q16_shift) = if use_unscaled_int_sq {
+            let plc_int = plc_gain_q16 >> Q16_SHIFT;
+            let smth_int = self.cng_smth_gain_q16 >> Q16_SHIFT;
+            (plc_int * plc_int, smth_int * smth_int, Q16_SHIFT)
         } else {
-            let plc_gain_sq = mul_q16(plc_gain_q16, plc_gain_q16);
-            let smth_gain_sq = mul_q16(self.cng_smth_gain_q16, self.cng_smth_gain_q16);
-            let diff = smth_gain_sq.wrapping_sub(plc_gain_sq.wrapping_shl(5));
-            sqrt_approx(diff).wrapping_shl(8)
+            (
+                mul_q16(plc_gain_q16, plc_gain_q16),
+                mul_q16(self.cng_smth_gain_q16, self.cng_smth_gain_q16),
+                Q8_SHIFT,
+            )
         };
 
-        return cng_gain_q16 >> 6;
+        let diff = smth_gain_sq.wrapping_sub(plc_gain_sq.wrapping_shl(CNG_PLC_ENERGY_PENALTY_SHIFT));
+        let cng_gain_q16 = sqrt_approx(diff).wrapping_shl(sqrt_to_q16_shift);
+
+        return cng_gain_q16 >> Q16_TO_Q10_SHIFT;
     }
 
     /// Synthesizes comfort noise through the smoothed NLSF-derived LPC filter and
@@ -985,14 +1055,16 @@ impl CngState {
         let a_q12 = Decoder::lsf_to_lpc(&self.cng_smth_nlsf_q15[..order])?;
 
         for (i, sample) in frame_pcm[..length].iter_mut().enumerate() {
-            let mut lpc_pred_q10 = (order >> 1) as i32;
-            for (tap, &coeff_q12) in a_q12[..order].iter().enumerate() {
-                lpc_pred_q10 = mla_q16_i16(
-                    lpc_pred_q10,
-                    cng_sig_q14[MAX_LPC_ORDER + i - 1 - tap],
-                    coeff_q12,
-                );
-            }
+            let lpc_pred_q10 = a_q12[..order].iter().enumerate().fold(
+                (order >> 1) as i32,
+                |acc, (tap, &coeff_q12)| {
+                    mla_q16_i16(
+                        acc,
+                        cng_sig_q14[MAX_LPC_ORDER + i - 1 - tap],
+                        coeff_q12,
+                    )
+                },
+            );
 
             let synth_q14 = add_sat32(
                 cng_sig_q14[MAX_LPC_ORDER + i],
@@ -1000,7 +1072,7 @@ impl CngState {
             );
             cng_sig_q14[MAX_LPC_ORDER + i] = synth_q14;
 
-            let cng_sample = sat16(rshift_round(mul_q16(synth_q14, gain_q10), 8));
+            let cng_sample = sat16(rshift_round(mul_q16(synth_q14, gain_q10), Q8_SHIFT));
             *sample = sample.saturating_add(cng_sample);
         }
 
@@ -1035,7 +1107,7 @@ impl CngState {
                     .unwrap_or(0)
                     .min(MAX_SUBFRAME_SAMPLES);
                 let gains_q16: [i32; MAX_SUBFRAMES] =
-                    std::array::from_fn(|k| decoded_frame.subframes[k].gain_q16);
+                    std::array::from_fn(|i| decoded_frame.subframes[i].gain_q16);
                 self.update_comfort_noise(
                     &ch_state.prev_nlsf_q15[..order],
                     &gains_q16[..nb_subfr],
@@ -1101,6 +1173,45 @@ pub fn silk_cng(
 mod tests {
     use super::*;
     use crate::silk::{FrameType, QuantizationOffsetType};
+
+    /// Executes one lost-frame concealment + CNG + glue step and asserts the resulting
+    /// PLC state and PCM head/tail slices against `libopus 1.6.1` C oracle expectations.
+    macro_rules! assert_plc_loss_step {
+        (
+            $plc:expr,
+            $ch:expr,
+            $cng:expr,
+            $pcm:expr,
+            frame_len: $frame_len:expr,
+            nb_subfr: $nb_subfr:expr,
+            lpc_order: $lpc_order:expr,
+            loss_count: $loss_count:expr,
+            rand_seed: $rand_seed:expr,
+            rand_scale_q14: $rand_scale:expr,
+            conc_energy: $conc_energy:expr,
+            head: $expected_head:expr,
+            tail: $expected_tail:expr
+            $(, pitch_l_q8: $pitch_l_q8:expr)?
+            $(, conc_energy_shift: $conc_shift:expr)?
+            $(, lag_prev: $lag_prev:expr)?
+            $(, s_lpc: $expected_slpc:expr)?
+        ) => {{
+            silk_plc_conceal(&mut $plc, &mut $ch, $frame_len, $nb_subfr, $lpc_order, &mut $pcm[..$frame_len]);
+            silk_cng(&mut $cng, &$ch, &$plc, None, $lpc_order, &mut $pcm[..$frame_len]).unwrap();
+            silk_plc_glue_frames(&mut $plc, &mut $pcm[..$frame_len]);
+
+            assert_eq!($plc.loss_count, $loss_count);
+            assert_eq!($plc.rand_seed, $rand_seed);
+            assert_eq!($plc.rand_scale_q14, $rand_scale);
+            assert_eq!($plc.conc_energy, $conc_energy);
+            assert_eq!(&$pcm[..16], &$expected_head);
+            assert_eq!(&$pcm[$frame_len - 16..$frame_len], &$expected_tail);
+            $(assert_eq!($plc.pitch_l_q8, $pitch_l_q8);)?
+            $(assert_eq!($plc.conc_energy_shift, $conc_shift);)?
+            $(assert_eq!($ch.lag_prev, $lag_prev);)?
+            $(assert_eq!(&$ch.s_lpc_q14_buf, &$expected_slpc);)?
+        }};
+    }
 
     /// Verifies `silk_plc_update`, `silk_plc_conceal`, `silk_cng`, and `silk_plc_glue_frames`
     /// on a WideBand (16 kHz, 20 ms, 16-tap LPC) Voiced frame across 3 consecutive lost frames
@@ -1169,11 +1280,11 @@ mod tests {
         let mut frame = Frame::new(320, 4, 16);
         frame.frame_type = FrameType::new(SignalType::Voiced, QuantizationOffsetType::Low);
         frame.ltp_scale_q14 = 12_288;
-        for k in 0..4 {
-            frame.subframes[k].pitch_lag = PITCH_LAGS[k];
-            frame.subframes[k].ltp_coeffs = LTP_Q7[k];
-            frame.subframes[k].gain_q16 = GAINS_Q16[k];
-            frame.subframes[k].lpc_coeffs_q12 = A_Q12_WB;
+        for i in 0..4 {
+            frame.subframes[i].pitch_lag = PITCH_LAGS[i];
+            frame.subframes[i].ltp_coeffs = LTP_Q7[i];
+            frame.subframes[i].gain_q16 = GAINS_Q16[i];
+            frame.subframes[i].lpc_coeffs_q12 = A_Q12_WB;
         }
         for i in 0..320 {
             frame.exc_q14[i] = (((i as i32) * 173 + 29) % 2001 - 1000) * 16;
@@ -1203,53 +1314,27 @@ mod tests {
         assert_eq!(plc_state.ltp_coef_q14, [0, 0, 11_648, 0, 0]);
         assert_eq!(plc_state.prev_lpc_q12, A_Q12_WB);
 
-        // Lost frame 1
-        silk_plc_conceal(&mut plc_state, &mut ch_state, 320, 4, 16, &mut pcm_buf[..320]);
-        silk_cng(&mut cng_state, &ch_state, &plc_state, None, 16, &mut pcm_buf[..320]).unwrap();
-        silk_plc_glue_frames(&mut plc_state, &mut pcm_buf[..320]);
-
-        assert_eq!(plc_state.loss_count, 1);
-        assert_eq!(plc_state.pitch_l_q8, 20_509);
-        assert_eq!(plc_state.rand_seed, -1_783_179_200);
-        assert_eq!(plc_state.rand_scale_q14, 2_891);
-        assert_eq!(plc_state.conc_energy, 74_254_257);
-        assert_eq!(plc_state.conc_energy_shift, 0);
-        assert_eq!(ch_state.lag_prev, 80);
-        assert_eq!(&pcm_buf[..16], &EXPECTED_LOSS_1_HEAD);
-        assert_eq!(&pcm_buf[320 - 16..320], &EXPECTED_LOSS_1_TAIL);
-        assert_eq!(&ch_state.s_lpc_q14_buf, &EXPECTED_LOSS_1_SLPC);
-
-        // Lost frame 2
-        silk_plc_conceal(&mut plc_state, &mut ch_state, 320, 4, 16, &mut pcm_buf[..320]);
-        silk_cng(&mut cng_state, &ch_state, &plc_state, None, 16, &mut pcm_buf[..320]).unwrap();
-        silk_plc_glue_frames(&mut plc_state, &mut pcm_buf[..320]);
-
-        assert_eq!(plc_state.loss_count, 2);
-        assert_eq!(plc_state.pitch_l_q8, 21_340);
-        assert_eq!(plc_state.rand_seed, -451_448_704);
-        assert_eq!(plc_state.rand_scale_q14, 1_183);
-        assert_eq!(plc_state.conc_energy, 5_530_189);
-        assert_eq!(plc_state.conc_energy_shift, 0);
-        assert_eq!(ch_state.lag_prev, 83);
-        assert_eq!(&pcm_buf[..16], &EXPECTED_LOSS_2_HEAD);
-        assert_eq!(&pcm_buf[320 - 16..320], &EXPECTED_LOSS_2_TAIL);
-        assert_eq!(&ch_state.s_lpc_q14_buf, &EXPECTED_LOSS_2_SLPC);
-
-        // Lost frame 3
-        silk_plc_conceal(&mut plc_state, &mut ch_state, 320, 4, 16, &mut pcm_buf[..320]);
-        silk_cng(&mut cng_state, &ch_state, &plc_state, None, 16, &mut pcm_buf[..320]).unwrap();
-        silk_plc_glue_frames(&mut plc_state, &mut pcm_buf[..320]);
-
-        assert_eq!(plc_state.loss_count, 3);
-        assert_eq!(plc_state.pitch_l_q8, 22_204);
-        assert_eq!(plc_state.rand_seed, -765_343_552);
-        assert_eq!(plc_state.rand_scale_q14, 483);
-        assert_eq!(plc_state.conc_energy, 890_239);
-        assert_eq!(plc_state.conc_energy_shift, 0);
-        assert_eq!(ch_state.lag_prev, 87);
-        assert_eq!(&pcm_buf[..16], &EXPECTED_LOSS_3_HEAD);
-        assert_eq!(&pcm_buf[320 - 16..320], &EXPECTED_LOSS_3_TAIL);
-        assert_eq!(&ch_state.s_lpc_q14_buf, &EXPECTED_LOSS_3_SLPC);
+        assert_plc_loss_step!(
+            plc_state, ch_state, cng_state, pcm_buf,
+            frame_len: 320, nb_subfr: 4, lpc_order: 16,
+            loss_count: 1, rand_seed: -1_783_179_200, rand_scale_q14: 2_891, conc_energy: 74_254_257,
+            head: EXPECTED_LOSS_1_HEAD, tail: EXPECTED_LOSS_1_TAIL,
+            pitch_l_q8: 20_509, conc_energy_shift: 0, lag_prev: 80, s_lpc: EXPECTED_LOSS_1_SLPC
+        );
+        assert_plc_loss_step!(
+            plc_state, ch_state, cng_state, pcm_buf,
+            frame_len: 320, nb_subfr: 4, lpc_order: 16,
+            loss_count: 2, rand_seed: -451_448_704, rand_scale_q14: 1_183, conc_energy: 5_530_189,
+            head: EXPECTED_LOSS_2_HEAD, tail: EXPECTED_LOSS_2_TAIL,
+            pitch_l_q8: 21_340, conc_energy_shift: 0, lag_prev: 83, s_lpc: EXPECTED_LOSS_2_SLPC
+        );
+        assert_plc_loss_step!(
+            plc_state, ch_state, cng_state, pcm_buf,
+            frame_len: 320, nb_subfr: 4, lpc_order: 16,
+            loss_count: 3, rand_seed: -765_343_552, rand_scale_q14: 483, conc_energy: 890_239,
+            head: EXPECTED_LOSS_3_HEAD, tail: EXPECTED_LOSS_3_TAIL,
+            pitch_l_q8: 22_204, conc_energy_shift: 0, lag_prev: 87, s_lpc: EXPECTED_LOSS_3_SLPC
+        );
 
         // Recovery frame with higher energy triggers glue_frames ramp
         for (i, sample) in pcm_buf[..320].iter_mut().enumerate() {
@@ -1306,9 +1391,9 @@ mod tests {
 
         let mut frame = Frame::new(160, 4, 10);
         frame.frame_type = FrameType::new(SignalType::Unvoiced, QuantizationOffsetType::High);
-        for (k, &gain) in GAINS_Q16.iter().enumerate() {
-            frame.subframes[k].gain_q16 = gain;
-            frame.subframes[k].lpc_coeffs_q12[..10].copy_from_slice(&A_Q12_NB);
+        for (i, &gain) in GAINS_Q16.iter().enumerate() {
+            frame.subframes[i].gain_q16 = gain;
+            frame.subframes[i].lpc_coeffs_q12[..10].copy_from_slice(&A_Q12_NB);
         }
         for i in 0..160 {
             let scale = if (80..120).contains(&i) { 4 } else { 24 };
@@ -1339,43 +1424,25 @@ mod tests {
         assert_eq!(plc_state.prev_gain_q16, [1_572_864, 1_310_720]);
         assert_eq!(ch_state.lag_prev, 0);
 
-        // Lost frame 1
-        silk_plc_conceal(&mut plc_state, &mut ch_state, 160, 4, 10, &mut pcm_buf);
-        silk_cng(&mut cng_state, &ch_state, &plc_state, None, 10, &mut pcm_buf).unwrap();
-        silk_plc_glue_frames(&mut plc_state, &mut pcm_buf);
-
-        assert_eq!(plc_state.loss_count, 1);
-        assert_eq!(plc_state.pitch_l_q8, 36_864);
-        assert_eq!(plc_state.rand_seed, -932_563_936);
-        assert_eq!(plc_state.rand_scale_q14, 15_736);
-        assert_eq!(plc_state.conc_energy, 16_240);
-        assert_eq!(ch_state.lag_prev, 144);
-        assert_eq!(&pcm_buf[..16], &EXPECTED_LOSS_1_HEAD);
-        assert_eq!(&pcm_buf[160 - 16..160], &EXPECTED_LOSS_1_TAIL);
-
-        // Lost frame 2
-        silk_plc_conceal(&mut plc_state, &mut ch_state, 160, 4, 10, &mut pcm_buf);
-        silk_cng(&mut cng_state, &ch_state, &plc_state, None, 10, &mut pcm_buf).unwrap();
-        silk_plc_glue_frames(&mut plc_state, &mut pcm_buf);
-
-        assert_eq!(plc_state.loss_count, 2);
-        assert_eq!(plc_state.rand_seed, -1_783_179_200);
-        assert_eq!(plc_state.rand_scale_q14, 10_322);
-        assert_eq!(plc_state.conc_energy, 20_320);
-        assert_eq!(&pcm_buf[..16], &EXPECTED_LOSS_2_HEAD);
-        assert_eq!(&pcm_buf[160 - 16..160], &EXPECTED_LOSS_2_TAIL);
-
-        // Lost frame 3
-        silk_plc_conceal(&mut plc_state, &mut ch_state, 160, 4, 10, &mut pcm_buf);
-        silk_cng(&mut cng_state, &ch_state, &plc_state, None, 10, &mut pcm_buf).unwrap();
-        silk_plc_glue_frames(&mut plc_state, &mut pcm_buf);
-
-        assert_eq!(plc_state.loss_count, 3);
-        assert_eq!(plc_state.rand_seed, 443_411_552);
-        assert_eq!(plc_state.rand_scale_q14, 6_770);
-        assert_eq!(plc_state.conc_energy, 9_662);
-        assert_eq!(&pcm_buf[..16], &EXPECTED_LOSS_3_HEAD);
-        assert_eq!(&pcm_buf[160 - 16..160], &EXPECTED_LOSS_3_TAIL);
+        assert_plc_loss_step!(
+            plc_state, ch_state, cng_state, pcm_buf,
+            frame_len: 160, nb_subfr: 4, lpc_order: 10,
+            loss_count: 1, rand_seed: -932_563_936, rand_scale_q14: 15_736, conc_energy: 16_240,
+            head: EXPECTED_LOSS_1_HEAD, tail: EXPECTED_LOSS_1_TAIL,
+            pitch_l_q8: 36_864, lag_prev: 144
+        );
+        assert_plc_loss_step!(
+            plc_state, ch_state, cng_state, pcm_buf,
+            frame_len: 160, nb_subfr: 4, lpc_order: 10,
+            loss_count: 2, rand_seed: -1_783_179_200, rand_scale_q14: 10_322, conc_energy: 20_320,
+            head: EXPECTED_LOSS_2_HEAD, tail: EXPECTED_LOSS_2_TAIL
+        );
+        assert_plc_loss_step!(
+            plc_state, ch_state, cng_state, pcm_buf,
+            frame_len: 160, nb_subfr: 4, lpc_order: 10,
+            loss_count: 3, rand_seed: 443_411_552, rand_scale_q14: 6_770, conc_energy: 9_662,
+            head: EXPECTED_LOSS_3_HEAD, tail: EXPECTED_LOSS_3_TAIL
+        );
     }
 
     /// Verifies `silk_cng` parameter smoothing across consecutive inactive frames
@@ -1431,9 +1498,9 @@ mod tests {
         let a_f0 = Decoder::lsf_to_lpc(&NLSF_F0).unwrap();
         ch_state.prev_nlsf_q15[..10].copy_from_slice(&NLSF_F0);
         let gains_f0 = [655_360, 983_040, 786_432, 524_288];
-        for (k, &gain) in gains_f0.iter().enumerate() {
-            frame1.subframes[k].gain_q16 = gain;
-            frame1.subframes[k].lpc_coeffs_q12 = a_f0;
+        for (i, &gain) in gains_f0.iter().enumerate() {
+            frame1.subframes[i].gain_q16 = gain;
+            frame1.subframes[i].lpc_coeffs_q12 = a_f0;
         }
         for i in 0..160 {
             frame1.exc_q14[i] = (((i as i32) * 131 + 17) % 601 - 300) * 32;
@@ -1464,8 +1531,8 @@ mod tests {
         // Inactive frame 2 (triggers -3 dB rapid gain adaptation)
         ch_state.prev_nlsf_q15[..10].copy_from_slice(&NLSF_F1);
         let gains_f1 = [262_144, 196_608, 327_680, 294_912];
-        for (k, &gain) in gains_f1.iter().enumerate() {
-            frame1.subframes[k].gain_q16 = gain;
+        for (i, &gain) in gains_f1.iter().enumerate() {
+            frame1.subframes[i].gain_q16 = gain;
         }
         for i in 0..160 {
             frame1.exc_q14[i] = (((i as i32) * 193 + 7) % 501 - 250) * 28;
@@ -1519,17 +1586,17 @@ mod tests {
         let mut frame = Frame::new(320, 4, 16);
         frame.frame_type = FrameType::new(SignalType::Voiced, QuantizationOffsetType::Low);
         frame.ltp_scale_q14 = 15_565;
-        for k in 0..4 {
-            frame.subframes[k].pitch_lag = 60;
-            frame.subframes[k].ltp_coeffs = [0, 0, 20, 0, 0];
-            frame.subframes[k].gain_q16 = 65_536;
+        for i in 0..4 {
+            frame.subframes[i].pitch_lag = 60;
+            frame.subframes[i].ltp_coeffs = [0, 0, 20, 0, 0];
+            frame.subframes[i].gain_q16 = 65_536;
         }
         silk_plc_update(&mut plc_state, &mut ch_state, &frame);
         assert_eq!(plc_state.pitch_l_q8, 15_360);
         assert_eq!(plc_state.ltp_coef_q14, [0, 0, 11_467, 0, 0]);
 
-        for k in 0..4 {
-            frame.subframes[k].ltp_coeffs = [0, 40, 60, 40, 0];
+        for i in 0..4 {
+            frame.subframes[i].ltp_coeffs = [0, 40, 60, 40, 0];
         }
         silk_plc_update(&mut plc_state, &mut ch_state, &frame);
         assert_eq!(plc_state.ltp_coef_q14, [0, 0, 15_564, 0, 0]);
@@ -1543,9 +1610,9 @@ mod tests {
         ch_state.prev_nlsf_q15 = NLSF_WB;
         frame.frame_type = FrameType::new(SignalType::Inactive, QuantizationOffsetType::Low);
         let a_wb = Decoder::lsf_to_lpc(&NLSF_WB).unwrap();
-        for k in 0..4 {
-            frame.subframes[k].gain_q16 = 50_000_000;
-            frame.subframes[k].lpc_coeffs_q12 = a_wb;
+        for i in 0..4 {
+            frame.subframes[i].gain_q16 = 50_000_000;
+            frame.subframes[i].lpc_coeffs_q12 = a_wb;
         }
         for i in 0..320 {
             frame.exc_q14[i] = (((i as i32) * 97 + 13) % 401 - 200) * 64;

@@ -37,15 +37,12 @@ impl Decoder {
 
         out[..d].fill(0);
 
-        for ix in d..len {
-            let mut out32_q12 = (input[ix - 1] as i32) * (b_q12[0] as i32);
-            for j in 1..d {
-                out32_q12 =
-                    out32_q12.wrapping_add((input[ix - 1 - j] as i32) * (b_q12[j] as i32));
-            }
-
-            out32_q12 = ((input[ix] as i32) << 12).wrapping_sub(out32_q12);
-            out[ix] = sat16(rshift_round(out32_q12, 12));
+        for i in d..len {
+            let out32_q12 = b_q12[..d].iter().enumerate().fold(0i32, |acc, (j, &b)| {
+                acc.wrapping_add((input[i - 1 - j] as i32) * (b as i32))
+            });
+            let residual_q12 = ((input[i] as i32) << 12).wrapping_sub(out32_q12);
+            out[i] = sat16(rshift_round(residual_q12, 12));
         }
     }
 
@@ -88,7 +85,7 @@ impl Decoder {
         for k in 0..nb_subfr {
             let a_q12: [i16; MAX_LPC_ORDER] = frame.subframes[k].lpc_coeffs_q12;
             let b_q14: [i16; LTP_ORDER] =
-                std::array::from_fn(|t| (frame.subframes[k].ltp_coeffs[t] as i16) << 7);
+                std::array::from_fn(|j| (frame.subframes[k].ltp_coeffs[j] as i16) << 7);
             let gain_q16 = frame.subframes[k].gain_q16;
             let gain_q10 = gain_q16 >> 6;
             let mut inv_gain_q31 = inverse32_var_q(gain_q16, 47);
@@ -108,47 +105,49 @@ impl Decoder {
 
             if signal_type == SignalType::Voiced {
                 let lag = frame.subframes[k].pitch_lag as usize;
+                let rewhiten = k == 0 || (k == 2 && nlsf_interp_flag);
 
-                if k == 0 || (k == 2 && nlsf_interp_flag) {
-                    let start_idx = ltp_mem_length - lag - lpc_order - (LTP_ORDER / 2);
+                match (rewhiten, gain_adj_q16 != (1i32 << 16)) {
+                    (true, _) => {
+                        let start_idx = ltp_mem_length - lag - lpc_order - (LTP_ORDER / 2);
 
-                    if k == 2 {
-                        ch_state.out_buf[ltp_mem_length..ltp_mem_length + 2 * subfr_length]
-                            .copy_from_slice(&frame.output_pcm[..2 * subfr_length]);
-                    }
+                        if k == 2 {
+                            ch_state.out_buf[ltp_mem_length..ltp_mem_length + 2 * subfr_length]
+                                .copy_from_slice(&frame.output_pcm[..2 * subfr_length]);
+                        }
 
-                    let in_start = start_idx + k * subfr_length;
-                    let filter_len = ltp_mem_length - start_idx;
-                    Self::lpc_analysis_filter(
-                        &mut s_ltp[start_idx..ltp_mem_length],
-                        &ch_state.out_buf[in_start..in_start + filter_len],
-                        &a_q12[..lpc_order],
-                        lpc_order,
-                    );
+                        let in_start = start_idx + k * subfr_length;
+                        let filter_len = ltp_mem_length - start_idx;
+                        Self::lpc_analysis_filter(
+                            &mut s_ltp[start_idx..ltp_mem_length],
+                            &ch_state.out_buf[in_start..in_start + filter_len],
+                            &a_q12[..lpc_order],
+                            lpc_order,
+                        );
 
-                    if k == 0 {
-                        inv_gain_q31 = mul_q16_i16(inv_gain_q31, frame.ltp_scale_q14) << 2;
+                        if k == 0 {
+                            inv_gain_q31 = mul_q16_i16(inv_gain_q31, frame.ltp_scale_q14) << 2;
+                        }
+                        for i in 0..(lag + LTP_ORDER / 2) {
+                            s_ltp_q15[s_ltp_buf_idx - i - 1] =
+                                mul_q16_i16(inv_gain_q31, s_ltp[ltp_mem_length - i - 1]);
+                        }
                     }
-                    for i in 0..(lag + LTP_ORDER / 2) {
-                        s_ltp_q15[s_ltp_buf_idx - i - 1] =
-                            mul_q16_i16(inv_gain_q31, s_ltp[ltp_mem_length - i - 1]);
+                    (false, true) => {
+                        for i in 0..(lag + LTP_ORDER / 2) {
+                            s_ltp_q15[s_ltp_buf_idx - i - 1] =
+                                mul_q16(gain_adj_q16, s_ltp_q15[s_ltp_buf_idx - i - 1]);
+                        }
                     }
-                } else if gain_adj_q16 != (1i32 << 16) {
-                    for i in 0..(lag + LTP_ORDER / 2) {
-                        s_ltp_q15[s_ltp_buf_idx - i - 1] =
-                            mul_q16(gain_adj_q16, s_ltp_q15[s_ltp_buf_idx - i - 1]);
-                    }
+                    (false, false) => {}
                 }
 
                 let pred_lag_base = s_ltp_buf_idx - lag + (LTP_ORDER / 2);
                 for i in 0..subfr_length {
                     let pred_lag_idx = pred_lag_base + i;
-                    let mut ltp_pred_q13 = 2i32;
-                    ltp_pred_q13 = mla_q16_i16(ltp_pred_q13, s_ltp_q15[pred_lag_idx], b_q14[0]);
-                    ltp_pred_q13 = mla_q16_i16(ltp_pred_q13, s_ltp_q15[pred_lag_idx - 1], b_q14[1]);
-                    ltp_pred_q13 = mla_q16_i16(ltp_pred_q13, s_ltp_q15[pred_lag_idx - 2], b_q14[2]);
-                    ltp_pred_q13 = mla_q16_i16(ltp_pred_q13, s_ltp_q15[pred_lag_idx - 3], b_q14[3]);
-                    ltp_pred_q13 = mla_q16_i16(ltp_pred_q13, s_ltp_q15[pred_lag_idx - 4], b_q14[4]);
+                    let ltp_pred_q13 = b_q14.iter().enumerate().fold(2i32, |acc, (j, &b_tap)| {
+                        mla_q16_i16(acc, s_ltp_q15[pred_lag_idx - j], b_tap)
+                    });
 
                     res_q14[i] = pexc_q14[i].wrapping_add(ltp_pred_q13 << 1);
                     s_ltp_q15[s_ltp_buf_idx] = res_q14[i] << 1;
@@ -160,14 +159,12 @@ impl Decoder {
 
             let pxq = &mut frame.output_pcm[k * subfr_length..(k + 1) * subfr_length];
             for i in 0..subfr_length {
-                let mut lpc_pred_q10 = (lpc_order >> 1) as i32;
-                for tap in 0..lpc_order {
-                    lpc_pred_q10 = mla_q16_i16(
-                        lpc_pred_q10,
-                        s_lpc_q14[MAX_LPC_ORDER + i - 1 - tap],
-                        a_q12[tap],
-                    );
-                }
+                let lpc_pred_q10 = a_q12[..lpc_order]
+                    .iter()
+                    .enumerate()
+                    .fold((lpc_order >> 1) as i32, |acc, (j, &a_tap)| {
+                        mla_q16_i16(acc, s_lpc_q14[MAX_LPC_ORDER + i - 1 - j], a_tap)
+                    });
 
                 let lpc_out_q14 = add_sat32(res_q14[i], lshift_sat32(lpc_pred_q10, 4));
                 s_lpc_q14[MAX_LPC_ORDER + i] = lpc_out_q14;
@@ -234,33 +231,33 @@ impl Decoder {
         );
 
         let interp_end = interp_samples.min(frame_length);
-        for n in 0..interp_end {
+        for i in 0..interp_end {
             pred0_q13 += delta0_q13;
             pred1_q13 += delta1_q13;
             let sum_lpf_q11 =
-                (((x1[n] as i32) + (x1[n + 2] as i32)) + ((x1[n + 1] as i32) << 1)) << 9;
-            let mut sum_q8 = mla_q16_i16((x2[n + 1] as i32) << 8, sum_lpf_q11, pred0_q13 as i16);
-            sum_q8 = mla_q16_i16(sum_q8, (x1[n + 1] as i32) << 11, pred1_q13 as i16);
-            x2[n + 1] = sat16(rshift_round(sum_q8, 8));
+                (((x1[i] as i32) + (x1[i + 2] as i32)) + ((x1[i + 1] as i32) << 1)) << 9;
+            let mut sum_q8 = mla_q16_i16((x2[i + 1] as i32) << 8, sum_lpf_q11, pred0_q13 as i16);
+            sum_q8 = mla_q16_i16(sum_q8, (x1[i + 1] as i32) << 11, pred1_q13 as i16);
+            x2[i + 1] = sat16(rshift_round(sum_q8, 8));
         }
 
         pred0_q13 = weights.w0_q13;
         pred1_q13 = weights.w1_q13;
-        for n in interp_end..frame_length {
+        for i in interp_end..frame_length {
             let sum_lpf_q11 =
-                (((x1[n] as i32) + (x1[n + 2] as i32)) + ((x1[n + 1] as i32) << 1)) << 9;
-            let mut sum_q8 = mla_q16_i16((x2[n + 1] as i32) << 8, sum_lpf_q11, pred0_q13 as i16);
-            sum_q8 = mla_q16_i16(sum_q8, (x1[n + 1] as i32) << 11, pred1_q13 as i16);
-            x2[n + 1] = sat16(rshift_round(sum_q8, 8));
+                (((x1[i] as i32) + (x1[i + 2] as i32)) + ((x1[i + 1] as i32) << 1)) << 9;
+            let mut sum_q8 = mla_q16_i16((x2[i + 1] as i32) << 8, sum_lpf_q11, pred0_q13 as i16);
+            sum_q8 = mla_q16_i16(sum_q8, (x1[i + 1] as i32) << 11, pred1_q13 as i16);
+            x2[i + 1] = sat16(rshift_round(sum_q8, 8));
         }
 
         stereo_state.pred_prev_q13 = [weights.w0_q13, weights.w1_q13];
 
-        for n in 0..frame_length {
-            let mid_val = x1[n + 1] as i32;
-            let side_val = x2[n + 1] as i32;
-            x1[n + 1] = sat16(mid_val + side_val);
-            x2[n + 1] = sat16(mid_val - side_val);
+        for i in 0..frame_length {
+            let mid_val = x1[i + 1] as i32;
+            let side_val = x2[i + 1] as i32;
+            x1[i + 1] = sat16(mid_val + side_val);
+            x2[i + 1] = sat16(mid_val - side_val);
         }
     }
 
@@ -346,26 +343,24 @@ impl Decoder {
             if dst1.len() < n_out {
                 return Err(Error::BufferOverflow.into());
             }
-            if internal_channels == 2 {
-                let mut resampled1 = [0i16; MAX_RESAMPLED_FRAME_SAMPLES];
-                let n_out1 = self.state.channel_states[1].resampler.resample(
-                    &mut resampled1,
-                    &samples_tmp1[1..1 + frame_length],
-                )?;
-                for (dst, &src) in dst1[..n_out1].iter_mut().zip(resampled1[..n_out1].iter()) {
-                    *dst = (src as f32) * INT16_TO_F32_SCALE;
+            match (internal_channels == 2, stereo_to_mono) {
+                (true, _) | (false, true) => {
+                    let src_samples = if internal_channels == 2 {
+                        &samples_tmp1[1..1 + frame_length]
+                    } else {
+                        &samples_tmp0[1..1 + frame_length]
+                    };
+                    let mut resampled1 = [0i16; MAX_RESAMPLED_FRAME_SAMPLES];
+                    let n_out1 = self.state.channel_states[1]
+                        .resampler
+                        .resample(&mut resampled1, src_samples)?;
+                    for (dst, &src) in dst1[..n_out1].iter_mut().zip(resampled1[..n_out1].iter()) {
+                        *dst = (src as f32) * INT16_TO_F32_SCALE;
+                    }
                 }
-            } else if stereo_to_mono {
-                let mut resampled1 = [0i16; MAX_RESAMPLED_FRAME_SAMPLES];
-                let n_out1 = self.state.channel_states[1].resampler.resample(
-                    &mut resampled1,
-                    &samples_tmp0[1..1 + frame_length],
-                )?;
-                for (dst, &src) in dst1[..n_out1].iter_mut().zip(resampled1[..n_out1].iter()) {
-                    *dst = (src as f32) * INT16_TO_F32_SCALE;
+                (false, false) => {
+                    dst1[..n_out].copy_from_slice(&out_ch0[..n_out]);
                 }
-            } else {
-                dst1[..n_out].copy_from_slice(&out_ch0[..n_out]);
             }
         }
 

@@ -53,12 +53,15 @@ impl Decoder {
         };
 
         if effective_w_q2 < 4 && frame.num_subframes == 4 {
-            let mut nlsf0_q15 = [0i16; MAX_LPC_ORDER];
-            for k in 0..d_lpc {
-                let prev = ch_state.prev_nlsf_q15[k] as i32;
-                let curr = nlsf_q15[k] as i32;
-                nlsf0_q15[k] = (prev + (((curr - prev) * (effective_w_q2 as i32)) >> 2)) as i16;
-            }
+            let nlsf0_q15: [i16; MAX_LPC_ORDER] = std::array::from_fn(|i| {
+                if i < d_lpc {
+                    let prev = ch_state.prev_nlsf_q15[i] as i32;
+                    let curr = nlsf_q15[i] as i32;
+                    (prev + (((curr - prev) * (effective_w_q2 as i32)) >> 2)) as i16
+                } else {
+                    0
+                }
+            });
             let a0_q12 = Self::lsf_to_lpc(&nlsf0_q15[..d_lpc])?;
 
             frame.subframes[0].nlsf_q15 = nlsf0_q15;
@@ -127,21 +130,21 @@ impl Decoder {
         };
 
         let mut stage2_indices = [0i16; MAX_LPC_ORDER];
-        for (k, idx_out) in stage2_indices[..d_lpc].iter_mut().enumerate() {
-            let codebook_idx = codebook_selector[k] as usize;
+        for (i, stage2_out) in stage2_indices[..d_lpc].iter_mut().enumerate() {
+            let codebook_idx = codebook_selector[i] as usize;
             let icdf = &constant::ICDF_NORMALIZED_LSF_STAGE_TWO_INDEX[codebook_idx];
 
             let symbol = decoder.decode_symbol_with_icdf(icdf)?;
-            let mut idx = (symbol as i16) - 4;
+            let mut stage2_val = (symbol as i16) - 4;
 
-            if idx == -4 || idx == 4 {
+            if stage2_val == -4 || stage2_val == 4 {
                 let extension = decoder.decode_symbol_with_icdf(
                     &constant::ICDF_NORMALIZED_LSF_STAGE_TWO_INDEX_EXTENSION,
                 )? as i16;
-                idx += if idx < 0 { -extension } else { extension };
+                stage2_val += if stage2_val < 0 { -extension } else { extension };
             }
 
-            *idx_out = idx;
+            *stage2_out = stage2_val;
         }
 
         let qstep_q16 = match self.state.bandwidth {
@@ -154,33 +157,35 @@ impl Decoder {
         };
 
         let mut res_q10 = [0i16; MAX_LPC_ORDER];
-        for k in (0..d_lpc).rev() {
-            let pred_q10 = if k + 1 < d_lpc {
+        for i in (0..d_lpc).rev() {
+            let pred_q10 = if i + 1 < d_lpc {
                 let pred_q8 = match self.state.bandwidth {
                     Bandwidth::NarrowBand | Bandwidth::MediumBand => {
-                        let sel = constant::PREDICTION_WEIGHT_SELECTION_NB_MB[i1_idx][k] as usize;
-                        constant::PREDICTION_WEIGHTS_NB_MB[sel][k] as i32
+                        let sel = constant::PREDICTION_WEIGHT_SELECTION_NB_MB[i1_idx][i] as usize;
+                        constant::PREDICTION_WEIGHTS_NB_MB[sel][i] as i32
                     }
                     Bandwidth::WideBand | Bandwidth::SuperWideBand | Bandwidth::FullBand => {
-                        let sel = constant::PREDICTION_WEIGHT_SELECTION_WB[i1_idx][k] as usize;
-                        constant::PREDICTION_WEIGHTS_WB[sel][k] as i32
+                        let sel = constant::PREDICTION_WEIGHT_SELECTION_WB[i1_idx][i] as usize;
+                        constant::PREDICTION_WEIGHTS_WB[sel][i] as i32
                     }
                 };
-                ((res_q10[k + 1] as i32) * pred_q8) >> 8
+                ((res_q10[i + 1] as i32) * pred_q8) >> 8
             } else {
                 0
             };
 
-            let i2_k = stage2_indices[k] as i32;
-            let out_q10 = if i2_k > 0 {
-                (i2_k << 10) - constant::LSF_STAGE_TWO_QUANTIZATION_LEVEL_OFFSET_Q10
-            } else if i2_k < 0 {
-                (i2_k << 10) + constant::LSF_STAGE_TWO_QUANTIZATION_LEVEL_OFFSET_Q10
-            } else {
-                0
+            let i2_i = stage2_indices[i] as i32;
+            let out_q10 = match i2_i.cmp(&0) {
+                std::cmp::Ordering::Greater => {
+                    (i2_i << 10) - constant::LSF_STAGE_TWO_QUANTIZATION_LEVEL_OFFSET_Q10
+                }
+                std::cmp::Ordering::Less => {
+                    (i2_i << 10) + constant::LSF_STAGE_TWO_QUANTIZATION_LEVEL_OFFSET_Q10
+                }
+                std::cmp::Ordering::Equal => 0,
             };
 
-            res_q10[k] =
+            res_q10[i] =
                 (pred_q10 + ((((out_q10 as i64) * (qstep_q16 as i64)) >> 16) as i32)) as i16;
         }
 
@@ -208,26 +213,26 @@ impl Decoder {
         };
 
         let mut nlsf_q15 = [0i16; MAX_LPC_ORDER];
-        for k in 0..d_lpc {
-            let cb1_cur = cb1_q8[k] as i32;
-            let cb1_prev = if k == 0 { 0 } else { cb1_q8[k - 1] as i32 };
-            let cb1_next = if k + 1 == d_lpc {
+        for i in 0..d_lpc {
+            let cb1_cur = cb1_q8[i] as i32;
+            let cb1_prev = if i == 0 { 0 } else { cb1_q8[i - 1] as i32 };
+            let cb1_next = if i + 1 == d_lpc {
                 256
             } else {
-                cb1_q8[k + 1] as i32
+                cb1_q8[i + 1] as i32
             };
 
             let diff_prev = (cb1_cur - cb1_prev).max(1);
             let diff_next = (cb1_next - cb1_cur).max(1);
             let w2_q18 = ((1024 / diff_prev) + (1024 / diff_next)) << 16;
 
-            let i = 32 - (w2_q18 as u32).leading_zeros() as i32;
-            let f = (w2_q18 >> (i - 8)) & 0x7F;
-            let y = (if (i & 1) != 0 { 32768 } else { 46214 }) >> ((32 - i) >> 1);
+            let msb_pos = 32 - (w2_q18 as u32).leading_zeros() as i32;
+            let f = (w2_q18 >> (msb_pos - 8)) & 0x7F;
+            let y = (if (msb_pos & 1) != 0 { 32768 } else { 46214 }) >> ((32 - msb_pos) >> 1);
             let w_q9 = (y + ((((213 * f * y) as i64) >> 16) as i32)).max(1);
 
-            let nlsf = ((cb1_cur << 7) + (((res_q10[k] as i32) << 14) / w_q9)).clamp(0, 32767);
-            nlsf_q15[k] = nlsf as i16;
+            let nlsf = ((cb1_cur << 7) + (((res_q10[i] as i32) << 14) / w_q9)).clamp(0, 32767);
+            nlsf_q15[i] = nlsf as i16;
         }
 
         return Ok(nlsf_q15);
@@ -249,18 +254,18 @@ impl Decoder {
         }
 
         const MAX_STABILIZATION_ITERATIONS: usize = 20;
-        let mut loops = 0;
-        while loops < MAX_STABILIZATION_ITERATIONS {
-            let mut min_diff = nlsf_q15[0] as i32 - min_delta[0];
-            let mut min_diff_index = 0usize;
-
-            for i in 1..d_lpc {
-                let diff = nlsf_q15[i] as i32 - (nlsf_q15[i - 1] as i32 + min_delta[i]);
-                if diff < min_diff {
-                    min_diff = diff;
-                    min_diff_index = i;
-                }
-            }
+        for _ in 0..MAX_STABILIZATION_ITERATIONS {
+            let (mut min_diff, mut min_diff_index) = (1..d_lpc).fold(
+                (nlsf_q15[0] as i32 - min_delta[0], 0usize),
+                |(best_diff, best_i), i| {
+                    let diff = nlsf_q15[i] as i32 - (nlsf_q15[i - 1] as i32 + min_delta[i]);
+                    if diff < best_diff {
+                        (diff, i)
+                    } else {
+                        (best_diff, best_i)
+                    }
+                },
+            );
 
             let upper_diff = (1 << 15) - (nlsf_q15[d_lpc - 1] as i32 + min_delta[d_lpc]);
             if upper_diff < min_diff {
@@ -272,29 +277,27 @@ impl Decoder {
                 return Ok(());
             }
 
-            if min_diff_index == 0 {
-                nlsf_q15[0] = min_delta[0] as i16;
-            } else if min_diff_index == d_lpc {
-                nlsf_q15[d_lpc - 1] = ((1 << 15) - min_delta[d_lpc]) as i16;
-            } else {
-                let min_center_q15: i32 = min_delta[0..min_diff_index].iter().sum::<i32>()
-                    + (min_delta[min_diff_index] >> 1);
-                let max_center_q15: i32 = (1 << 15)
-                    - min_delta[(min_diff_index + 1)..=d_lpc].iter().sum::<i32>()
-                    - (min_delta[min_diff_index] - (min_delta[min_diff_index] >> 1));
+            match min_diff_index {
+                0 => {
+                    nlsf_q15[0] = min_delta[0] as i16;
+                }
+                i if i == d_lpc => {
+                    nlsf_q15[d_lpc - 1] = ((1 << 15) - min_delta[d_lpc]) as i16;
+                }
+                i => {
+                    let min_center_q15: i32 =
+                        min_delta[0..i].iter().sum::<i32>() + (min_delta[i] >> 1);
+                    let max_center_q15: i32 = (1 << 15)
+                        - min_delta[(i + 1)..=d_lpc].iter().sum::<i32>()
+                        - (min_delta[i] - (min_delta[i] >> 1));
 
-                let raw_center =
-                    (nlsf_q15[min_diff_index - 1] as i32 + nlsf_q15[min_diff_index] as i32 + 1)
-                        >> 1;
-                let center_freq_q15 = raw_center.clamp(min_center_q15, max_center_q15);
+                    let raw_center = (nlsf_q15[i - 1] as i32 + nlsf_q15[i] as i32 + 1) >> 1;
+                    let center_freq_q15 = raw_center.clamp(min_center_q15, max_center_q15);
 
-                nlsf_q15[min_diff_index - 1] =
-                    (center_freq_q15 - (min_delta[min_diff_index] >> 1)) as i16;
-                nlsf_q15[min_diff_index] =
-                    (nlsf_q15[min_diff_index - 1] as i32 + min_delta[min_diff_index]) as i16;
+                    nlsf_q15[i - 1] = (center_freq_q15 - (min_delta[i] >> 1)) as i16;
+                    nlsf_q15[i] = (nlsf_q15[i - 1] as i32 + min_delta[i]) as i16;
+                }
             }
-
-            loops += 1;
         }
 
         nlsf_q15.sort_unstable();
@@ -331,15 +334,15 @@ impl Decoder {
         };
 
         let mut cos_lsf_qa = [0i32; MAX_LPC_ORDER];
-        for k in 0..d {
-            let nlsf = (nlsf_q15[k] as i32).clamp(0, 32767);
+        for i in 0..d {
+            let nlsf = (nlsf_q15[i] as i32).clamp(0, 32767);
             let f_int = (nlsf >> 8) as usize;
             let f_frac = nlsf - ((f_int as i32) << 8);
 
             let cos_val = constant::Q12_COSINE_TABLE_FOR_LSF_CONVERSION[f_int];
             let delta = constant::Q12_COSINE_TABLE_FOR_LSF_CONVERSION[f_int + 1] - cos_val;
 
-            cos_lsf_qa[ordering[k] as usize] =
+            cos_lsf_qa[ordering[i] as usize] =
                 rshift_round((cos_val << 8) + delta * f_frac, 19 - QA);
         }
 
@@ -348,12 +351,12 @@ impl Decoder {
         let q = Self::find_lpc_polynomial(&cos_lsf_qa, 1, dd);
 
         let mut a32_qa1 = [0i32; MAX_LPC_ORDER];
-        for k in 0..dd {
-            let p_tmp = p[k + 1].wrapping_add(p[k]);
-            let q_tmp = q[k + 1].wrapping_sub(q[k]);
+        for i in 0..dd {
+            let p_tmp = p[i + 1].wrapping_add(p[i]);
+            let q_tmp = q[i + 1].wrapping_sub(q[i]);
 
-            a32_qa1[k] = (-q_tmp).wrapping_sub(p_tmp);
-            a32_qa1[d - k - 1] = q_tmp.wrapping_sub(p_tmp);
+            a32_qa1[i] = (-q_tmp).wrapping_sub(p_tmp);
+            a32_qa1[d - i - 1] = q_tmp.wrapping_sub(p_tmp);
         }
 
         let mut a_q12 = [0i16; MAX_LPC_ORDER];
@@ -364,8 +367,8 @@ impl Decoder {
                 break;
             }
             Self::bwexpander_32(&mut a32_qa1[..d], 65_536 - (2 << i));
-            for k in 0..d {
-                a_q12[k] = rshift_round(a32_qa1[k], QA + 1 - 12) as i16;
+            for j in 0..d {
+                a_q12[j] = rshift_round(a32_qa1[j], QA + 1 - 12) as i16;
             }
         }
 
@@ -385,14 +388,14 @@ impl Decoder {
         out[0] = 1 << QA;
         out[1] = -cos_lsf_qa[start_offset];
 
-        for k in 1..dd {
-            let ftmp = cos_lsf_qa[start_offset + 2 * k] as i64;
-            out[k + 1] = (out[k - 1] << 1)
-                .wrapping_sub(rshift_round64(ftmp * (out[k] as i64), QA) as i32);
-            for n in (2..=k).rev() {
-                out[n] = out[n]
-                    .wrapping_add(out[n - 2])
-                    .wrapping_sub(rshift_round64(ftmp * (out[n - 1] as i64), QA) as i32);
+        for i in 1..dd {
+            let ftmp = cos_lsf_qa[start_offset + 2 * i] as i64;
+            out[i + 1] = (out[i - 1] << 1)
+                .wrapping_sub(rshift_round64(ftmp * (out[i] as i64), QA) as i32);
+            for j in (2..=i).rev() {
+                out[j] = out[j]
+                    .wrapping_add(out[j - 2])
+                    .wrapping_sub(rshift_round64(ftmp * (out[j - 1] as i64), QA) as i32);
             }
             out[1] = out[1].wrapping_sub(ftmp as i32);
         }
@@ -408,22 +411,25 @@ impl Decoder {
         let mut iter = 0usize;
 
         while iter < 10 {
-            let mut maxabs = 0i32;
-            let mut idx = 0usize;
-            for (k, &val) in a_qin.iter().enumerate() {
-                let absval = val.saturating_abs();
-                if absval > maxabs {
-                    maxabs = absval;
-                    idx = k;
-                }
-            }
+            let (mut maxabs, max_i) =
+                a_qin
+                    .iter()
+                    .enumerate()
+                    .fold((0i32, 0usize), |(best_abs, best_i), (i, &val)| {
+                        let absval = val.saturating_abs();
+                        if absval > best_abs {
+                            (absval, i)
+                        } else {
+                            (best_abs, best_i)
+                        }
+                    });
 
             maxabs = rshift_round(maxabs, shift);
             if maxabs > i16::MAX as i32 {
                 maxabs = maxabs.min(163_838);
                 // SILK_FIX_CONST(0.999, 16) = 65470
                 let numer = (maxabs - (i16::MAX as i32)) << 14;
-                let denom = (maxabs * ((idx as i32) + 1)) >> 2;
+                let denom = (maxabs * ((max_i as i32) + 1)) >> 2;
                 let chirp_q16 = 65_470 - (numer / denom);
                 Self::bwexpander_32(a_qin, chirp_q16);
                 iter += 1;
@@ -433,30 +439,29 @@ impl Decoder {
         }
 
         if iter == 10 {
-            for k in 0..d {
-                a_qout[k] = sat16(rshift_round(a_qin[k], shift));
-                a_qin[k] = (a_qout[k] as i32) << shift;
+            for i in 0..d {
+                a_qout[i] = sat16(rshift_round(a_qin[i], shift));
+                a_qin[i] = (a_qout[i] as i32) << shift;
             }
         } else {
-            for k in 0..d {
-                a_qout[k] = rshift_round(a_qin[k], shift) as i16;
+            for i in 0..d {
+                a_qout[i] = rshift_round(a_qin[i], shift) as i16;
             }
         }
     }
 
     /// Applies a Q16 chirp bandwidth expansion factor across `ar` (`silk_bwexpander_32`).
     pub(crate) fn bwexpander_32(ar: &mut [i32], mut chirp_q16: i32) {
-        let d = ar.len();
-        if d == 0 {
+        let Some((last_coeff, head_coeffs)) = ar.split_last_mut() else {
             return;
-        }
+        };
 
         let chirp_minus_one_q16 = chirp_q16 - 65_536;
-        for coeff in ar[..d - 1].iter_mut() {
+        for coeff in head_coeffs.iter_mut() {
             *coeff = mul_q16(chirp_q16, *coeff);
             chirp_q16 += rshift_round(chirp_q16 * chirp_minus_one_q16, 16);
         }
-        ar[d - 1] = mul_q16(chirp_q16, ar[d - 1]);
+        *last_coeff = mul_q16(chirp_q16, *last_coeff);
     }
 
     /// Computes the inverse LPC prediction gain in Q30 and tests filter stability
@@ -477,9 +482,9 @@ impl Decoder {
 
         let mut a_qa = [0i32; MAX_LPC_ORDER];
         let mut dc_resp = 0i32;
-        for (k, &coeff) in a_q12.iter().enumerate() {
+        for (i, &coeff) in a_q12.iter().enumerate() {
             dc_resp += coeff as i32;
-            a_qa[k] = (coeff as i32) << (QA - 12);
+            a_qa[i] = (coeff as i32) << (QA - 12);
         }
 
         if dc_resp >= 4096 {
@@ -487,12 +492,12 @@ impl Decoder {
         }
 
         let mut inv_gain_q30 = 1i32 << 30;
-        for k in (1..order).rev() {
-            if a_qa[k] > A_LIMIT || a_qa[k] < -A_LIMIT {
+        for i in (1..order).rev() {
+            if a_qa[i] > A_LIMIT || a_qa[i] < -A_LIMIT {
                 return 0;
             }
 
-            let rc_q31 = -(a_qa[k] << (31 - QA));
+            let rc_q31 = -(a_qa[i] << (31 - QA));
             let rc_mult1_q30 = (1i32 << 30) - mul_high_i32(rc_q31, rc_q31);
 
             inv_gain_q30 = mul_high_i32(inv_gain_q30, rc_mult1_q30) << 2;
@@ -503,9 +508,9 @@ impl Decoder {
             let mult2_q = 32 - (rc_mult1_q30.unsigned_abs().leading_zeros() as i32);
             let rc_mult2 = inverse32_var_q(rc_mult1_q30, mult2_q + 30);
 
-            for n in 0..((k + 1) >> 1) {
-                let tmp1 = a_qa[n];
-                let tmp2 = a_qa[k - n - 1];
+            for j in 0..((i + 1) >> 1) {
+                let tmp1 = a_qa[j];
+                let tmp2 = a_qa[i - j - 1];
 
                 let prod2 = rshift_round64((tmp2 as i64) * (rc_q31 as i64), 31) as i32;
                 let diff1 = sub_sat32(tmp1, prod2) as i64;
@@ -513,7 +518,7 @@ impl Decoder {
                 if tmp64_1 > i32::MAX as i64 || tmp64_1 < i32::MIN as i64 {
                     return 0;
                 }
-                a_qa[n] = tmp64_1 as i32;
+                a_qa[j] = tmp64_1 as i32;
 
                 let prod1 = rshift_round64((tmp1 as i64) * (rc_q31 as i64), 31) as i32;
                 let diff2 = sub_sat32(tmp2, prod1) as i64;
@@ -521,7 +526,7 @@ impl Decoder {
                 if tmp64_2 > i32::MAX as i64 || tmp64_2 < i32::MIN as i64 {
                     return 0;
                 }
-                a_qa[k - n - 1] = tmp64_2 as i32;
+                a_qa[i - j - 1] = tmp64_2 as i32;
             }
         }
 
