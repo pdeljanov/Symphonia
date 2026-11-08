@@ -108,11 +108,20 @@ fn compute_output_gain_scale(output_gain: i16) -> f32 {
 /// Applies the squared-window cross-fade `out[i] = w * out[i] + (1 - w) * in1[i]`
 /// where `w = CELT_WINDOW[i * downsample]^2` (`smooth_fade` in `opus_decoder.c:262`).
 #[inline]
-fn smooth_fade_into_second(in1: &[f32], in2_and_out: &mut [f32], overlap: usize, downsample: usize) {
-    for i in 0..overlap {
+fn smooth_fade_into_second(
+    in1: &[f32],
+    in2_and_out: &mut [f32],
+    overlap: usize,
+    downsample: usize,
+) {
+    for (i, (out_sample, &in1_sample)) in in2_and_out[..overlap]
+        .iter_mut()
+        .zip(&in1[..overlap])
+        .enumerate()
+    {
         let w0 = CELT_WINDOW[i * downsample];
         let w = w0 * w0;
-        in2_and_out[i] = w * in2_and_out[i] + (1.0_f32 - w) * in1[i];
+        *out_sample = w * *out_sample + (1.0_f32 - w) * in1_sample;
     }
     return;
 }
@@ -120,13 +129,31 @@ fn smooth_fade_into_second(in1: &[f32], in2_and_out: &mut [f32], overlap: usize,
 /// Applies the squared-window cross-fade `out[i] = w * in2[i] + (1 - w) * out[i]`
 /// where `w = CELT_WINDOW[i * downsample]^2` (`smooth_fade` in `opus_decoder.c:262`).
 #[inline]
-fn smooth_fade_from_first(in1_and_out: &mut [f32], in2: &[f32], overlap: usize, downsample: usize) {
-    for i in 0..overlap {
+fn smooth_fade_from_first(
+    in1_and_out: &mut [f32],
+    in2: &[f32],
+    overlap: usize,
+    downsample: usize,
+) {
+    for (i, (out_sample, &in2_sample)) in in1_and_out[..overlap]
+        .iter_mut()
+        .zip(&in2[..overlap])
+        .enumerate()
+    {
         let w0 = CELT_WINDOW[i * downsample];
         let w = w0 * w0;
-        in1_and_out[i] = w * in2[i] + (1.0_f32 - w) * in1_and_out[i];
+        *out_sample = w * in2_sample + (1.0_f32 - w) * *out_sample;
     }
     return;
+}
+
+/// Parsed 5 ms CELT redundancy metadata from a SILK or Hybrid frame (RFC 6716 Section 4.4).
+#[derive(Debug, Clone, Copy)]
+struct RedundancyHeader {
+    active_len: usize,
+    redundancy: bool,
+    celt_to_silk: bool,
+    redundancy_bytes: usize,
 }
 
 /// Elementary Opus stream decoder pairing a SILK decoder and a CELT decoder for either a
@@ -188,6 +215,52 @@ impl StreamDecoder {
         return Channels::Positioned(Position::FRONT_LEFT);
     }
 
+    /// Decodes all frames of an elementary stream [`FramePacket`] into `pcm_ch0` and `pcm_ch1`.
+    fn decode_packet(
+        &mut self,
+        pkt: &FramePacket<'_>,
+        pcm_ch0: &mut [f32; MAX_PACKET_SAMPLES_48K],
+        pcm_ch1: &mut [f32; MAX_PACKET_SAMPLES_48K],
+    ) -> Result<usize> {
+        let samples_per_frame = duration_samples(pkt.frame_size, self.sample_rate);
+        let mut offset = 0usize;
+
+        for &frame_bytes in &pkt.frames {
+            let ch0_slice = &mut pcm_ch0[offset..(offset + samples_per_frame)];
+            let ch1_opt = (self.output_channels == 2)
+                .then(|| &mut pcm_ch1[offset..(offset + samples_per_frame)]);
+            let written = self.decode_opus_frame(
+                Some(frame_bytes),
+                pkt.audio_mode,
+                pkt.bandwidth,
+                pkt.frame_size,
+                pkt.stereo,
+                ch0_slice,
+                ch1_opt,
+            )?;
+            offset += written;
+        }
+
+        return Ok(offset);
+    }
+
+    /// Conceals a lost packet of duration `loss_dur` into `pcm_ch0` and `pcm_ch1`.
+    fn conceal_lost_packet(
+        &mut self,
+        loss_dur: FrameDuration,
+        pcm_ch0: &mut [f32; MAX_PACKET_SAMPLES_48K],
+        pcm_ch1: &mut [f32; MAX_PACKET_SAMPLES_48K],
+    ) -> Result<usize> {
+        let total_samples = duration_samples(loss_dur, self.sample_rate);
+        let mode = self.prev_mode.unwrap_or(AudioMode::SILK);
+        let bw = self.last_bandwidth;
+        let st = self.last_stereo;
+        let ch0_slice = &mut pcm_ch0[..total_samples];
+        let ch1_opt = (self.output_channels == 2).then(|| &mut pcm_ch1[..total_samples]);
+
+        return self.decode_opus_frame(None, mode, bw, loss_dur, st, ch0_slice, ch1_opt);
+    }
+
     /// Conceals a single lost/DTX frame of duration `frame_size` ($\le 20\text{ ms}$) into
     /// `out_ch0` and `out_ch1` (`opus_decode_frame` with `data == NULL` in `opus_decoder.c:302-360`).
     fn conceal_up_to_20ms(
@@ -221,11 +294,7 @@ impl StreamDecoder {
                 let mut tmp1 = [0.0_f32; MAX_20MS_SAMPLES_48K];
                 self.silk_decoder
                     .configure(silk_channels, FrameDuration::Ms10, bandwidth)?;
-                let tmp1_slice = if self.output_channels == 2 {
-                    Some(&mut tmp1[..f10])
-                } else {
-                    None
-                };
+                let tmp1_slice = (self.output_channels == 2).then(|| &mut tmp1[..f10]);
                 self.silk_decoder
                     .conceal_frame_planar(packet_stereo, &mut tmp0[..f10], tmp1_slice)?;
                 out_ch0[..audiosize].copy_from_slice(&tmp0[..audiosize]);
@@ -263,6 +332,74 @@ impl StreamDecoder {
         return Ok(audiosize);
     }
 
+    /// Parses the optional 5 ms CELT redundancy header from a SILK or Hybrid frame
+    /// (RFC 6716 Section 4.4 / `opus_decoder.c:500-528`).
+    fn parse_redundancy_header(
+        mode: AudioMode,
+        range_decoder: &mut entropy::Decoder<'_>,
+        raw_len: usize,
+    ) -> Result<RedundancyHeader> {
+        let mut active_len = raw_len;
+        let mut redundancy = false;
+        let mut celt_to_silk = false;
+        let mut redundancy_bytes = 0usize;
+
+        if mode != AudioMode::CELT {
+            let min_bits = 17 + if mode == AudioMode::Hybrid { 20 } else { 0 };
+            if range_decoder.tell() + min_bits <= (active_len as i32) * 8 {
+                redundancy = if mode == AudioMode::Hybrid {
+                    range_decoder.decode_symbol_logp(12)? != 0
+                } else {
+                    true
+                };
+                if redundancy {
+                    celt_to_silk = range_decoder.decode_symbol_logp(1)? != 0;
+                    redundancy_bytes = if mode == AudioMode::Hybrid {
+                        (range_decoder.decode_uint(256)? as usize) + 2
+                    } else {
+                        active_len.saturating_sub(((range_decoder.tell() + 7) >> 3) as usize)
+                    };
+                    active_len = active_len.saturating_sub(redundancy_bytes);
+                    if (active_len as i32) * 8 < range_decoder.tell() {
+                        active_len = 0;
+                        redundancy_bytes = 0;
+                        redundancy = false;
+                    } else {
+                        range_decoder.shrink_storage(redundancy_bytes);
+                    }
+                }
+            }
+        }
+
+        return Ok(RedundancyHeader {
+            active_len,
+            redundancy,
+            celt_to_silk,
+            redundancy_bytes,
+        });
+    }
+
+    /// Decodes a 5 ms (`MAX_5MS_SAMPLES_48K`) redundant CELT frame into `redundant_ch0` and `redundant_ch1`.
+    fn decode_redundant_celt_frame(
+        &mut self,
+        red_slice: &[u8],
+        f5: usize,
+        redundant_ch0: &mut [f32; MAX_5MS_SAMPLES_48K],
+        redundant_ch1: &mut [f32; MAX_5MS_SAMPLES_48K],
+    ) -> Result<u32> {
+        self.celt_decoder.set_start_band(0)?;
+        let red_ch1 = (self.output_channels == 2).then(|| &mut redundant_ch1[..f5]);
+        self.celt_decoder.decode_frame_planar(
+            Some(red_slice),
+            None,
+            MAX_5MS_SAMPLES_48K,
+            &mut redundant_ch0[..f5],
+            red_ch1,
+            false,
+        )?;
+        return Ok(self.celt_decoder.final_range());
+    }
+
     /// Decodes a single Opus frame (active or lost/DTX) of `frame_size` into planar slices
     /// `out_ch0` and `out_ch1`, returning the number of output samples written per channel
     /// (`opus_decode_frame` in `opus_decoder.c:285-693`).
@@ -284,10 +421,7 @@ impl StreamDecoder {
         let audiosize = duration_samples(frame_size, self.sample_rate);
         let frame_size_48k = duration_samples(frame_size, 48_000);
 
-        let active_bytes = match frame_data {
-            Some(b) if !b.is_empty() => Some(b),
-            _ => None,
-        };
+        let active_bytes = frame_data.filter(|b| !b.is_empty());
 
         let Some(raw_bytes) = active_bytes else {
             if self.prev_mode.is_none() {
@@ -345,11 +479,8 @@ impl StreamDecoder {
                 FrameDuration::Ms5
             };
             let trans_samples = f5.min(audiosize);
-            let trans_ch1 = if self.output_channels == 2 {
-                Some(&mut pcm_transition_ch1[..trans_samples])
-            } else {
-                None
-            };
+            let trans_ch1 =
+                (self.output_channels == 2).then(|| &mut pcm_transition_ch1[..trans_samples]);
             self.conceal_up_to_20ms(
                 trans_dur,
                 &mut pcm_transition_ch0[..trans_samples],
@@ -376,38 +507,13 @@ impl StreamDecoder {
         }
 
         // 2. Redundancy Frame Header Check (RFC 6716 Section 4.4 / opus_decoder.c:500-528).
-        let mut active_len = raw_bytes.len();
-        let mut redundancy = false;
-        let mut celt_to_silk = false;
-        let mut redundancy_bytes = 0usize;
+        let RedundancyHeader {
+            active_len,
+            redundancy,
+            celt_to_silk,
+            redundancy_bytes,
+        } = Self::parse_redundancy_header(mode, &mut range_decoder, raw_bytes.len())?;
         let mut redundant_rng = 0u32;
-
-        if mode != AudioMode::CELT {
-            let min_bits = 17 + if mode == AudioMode::Hybrid { 20 } else { 0 };
-            if range_decoder.tell() + min_bits <= (active_len as i32) * 8 {
-                redundancy = if mode == AudioMode::Hybrid {
-                    range_decoder.decode_symbol_logp(12)? != 0
-                } else {
-                    true
-                };
-                if redundancy {
-                    celt_to_silk = range_decoder.decode_symbol_logp(1)? != 0;
-                    redundancy_bytes = if mode == AudioMode::Hybrid {
-                        (range_decoder.decode_uint(256)? as usize) + 2
-                    } else {
-                        active_len.saturating_sub(((range_decoder.tell() + 7) >> 3) as usize)
-                    };
-                    active_len = active_len.saturating_sub(redundancy_bytes);
-                    if (active_len as i32) * 8 < range_decoder.tell() {
-                        active_len = 0;
-                        redundancy_bytes = 0;
-                        redundancy = false;
-                    } else {
-                        range_decoder.shrink_storage(redundancy_bytes);
-                    }
-                }
-            }
-        }
 
         if redundancy {
             transition = false;
@@ -421,11 +527,8 @@ impl StreamDecoder {
                 FrameDuration::Ms5
             };
             let trans_samples = f5.min(audiosize);
-            let trans_ch1 = if self.output_channels == 2 {
-                Some(&mut pcm_transition_ch1[..trans_samples])
-            } else {
-                None
-            };
+            let trans_ch1 =
+                (self.output_channels == 2).then(|| &mut pcm_transition_ch1[..trans_samples]);
             self.conceal_up_to_20ms(
                 trans_dur,
                 &mut pcm_transition_ch0[..trans_samples],
@@ -442,22 +545,13 @@ impl StreamDecoder {
 
         // 5. Decode 5 ms redundant CELT frame for CELT -> SILK/Hybrid transition.
         if redundancy && celt_to_silk {
-            self.celt_decoder.set_start_band(0)?;
             let red_slice = &raw_bytes[active_len..(active_len + redundancy_bytes)];
-            let red_ch1 = if self.output_channels == 2 {
-                Some(&mut redundant_ch1[..f5])
-            } else {
-                None
-            };
-            self.celt_decoder.decode_frame_planar(
-                Some(red_slice),
-                None,
-                MAX_5MS_SAMPLES_48K,
-                &mut redundant_ch0[..f5],
-                red_ch1,
-                false,
+            redundant_rng = self.decode_redundant_celt_frame(
+                red_slice,
+                f5,
+                &mut redundant_ch0,
+                &mut redundant_ch1,
             )?;
-            redundant_rng = self.celt_decoder.final_range();
         }
 
         // 6. Set active CELT start band (17 for Hybrid/SILK, 0 for CELT-only).
@@ -508,22 +602,13 @@ impl StreamDecoder {
         // 8. Decode 5 ms redundant CELT frame for SILK/Hybrid -> CELT transition and cross-fade tail.
         if redundancy && !celt_to_silk {
             self.celt_decoder.reset();
-            self.celt_decoder.set_start_band(0)?;
             let red_slice = &raw_bytes[active_len..(active_len + redundancy_bytes)];
-            let red_ch1 = if self.output_channels == 2 {
-                Some(&mut redundant_ch1[..f5])
-            } else {
-                None
-            };
-            self.celt_decoder.decode_frame_planar(
-                Some(red_slice),
-                None,
-                MAX_5MS_SAMPLES_48K,
-                &mut redundant_ch0[..f5],
-                red_ch1,
-                false,
+            redundant_rng = self.decode_redundant_celt_frame(
+                red_slice,
+                f5,
+                &mut redundant_ch0,
+                &mut redundant_ch1,
             )?;
-            redundant_rng = self.celt_decoder.final_range();
 
             let tail_start = audiosize - f2_5;
             smooth_fade_from_first(
@@ -628,6 +713,8 @@ pub struct OpusDecoder {
     sample_rate: u32,
     buffer: AudioBuffer<f32>,
     streams: Vec<StreamDecoder>,
+    scratch_ch0: [f32; MAX_PACKET_SAMPLES_48K],
+    scratch_ch1: [f32; MAX_PACKET_SAMPLES_48K],
     coupled_count: usize,
     channel_mapping: Vec<u8>,
     pre_skip: u16,
@@ -678,7 +765,7 @@ impl OpusDecoder {
                             "opus: RTP mapping family 0 only supports 1 or 2 channels",
                         ));
                     }
-                    coupled_count = if num_output_channels == 2 { 1 } else { 0 };
+                    coupled_count = usize::from(num_output_channels == 2);
                     streams = vec![StreamDecoder::new(sample_rate, num_output_channels)?];
                     channel_mapping = if num_output_channels == 2 {
                         vec![0, 1]
@@ -693,8 +780,8 @@ impl OpusDecoder {
                     let stream_count = table.stream_count as usize;
                     coupled_count = table.coupled_count as usize;
                     streams = Vec::with_capacity(stream_count);
-                    for s in 0..stream_count {
-                        let stream_out_channels = if s < coupled_count { 2 } else { 1 };
+                    for i in 0..stream_count {
+                        let stream_out_channels = if i < coupled_count { 2 } else { 1 };
                         streams.push(StreamDecoder::new(sample_rate, stream_out_channels)?);
                     }
                     channel_mapping = table.channel_mapping;
@@ -707,7 +794,7 @@ impl OpusDecoder {
             if num_output_channels > 2 {
                 return Err(SilkError::UnsupportedConfig.into());
             }
-            coupled_count = if num_output_channels == 2 { 1 } else { 0 };
+            coupled_count = usize::from(num_output_channels == 2);
             streams = vec![StreamDecoder::new(sample_rate, num_output_channels)?];
             channel_mapping = if num_output_channels == 2 {
                 vec![0, 1]
@@ -726,6 +813,8 @@ impl OpusDecoder {
             sample_rate,
             buffer,
             streams,
+            scratch_ch0: [0.0; MAX_PACKET_SAMPLES_48K],
+            scratch_ch1: [0.0; MAX_PACKET_SAMPLES_48K],
             coupled_count,
             channel_mapping,
             pre_skip,
@@ -756,91 +845,74 @@ impl OpusDecoder {
     /// Conceals a lost packet across all elementary streams using each stream's last frame duration
     /// and writes the resulting audio into the internal [`AudioBuffer<f32>`].
     pub fn decode_lost_packet(&mut self) -> Result<GenericAudioBufferRef<'_>> {
-        self.buffer.clear();
-        let num_streams = self.streams.len();
         let loss_dur = self
             .streams
             .first()
             .map(|s| s.last_frame_size)
             .unwrap_or(FrameDuration::Ms20);
         let total_samples = duration_samples(loss_dur, self.sample_rate);
+        self.prepare_output_buffer(total_samples)?;
 
-        let mut stream_ch0 = vec![vec![0.0_f32; total_samples]; num_streams];
-        let mut stream_ch1 = vec![vec![0.0_f32; total_samples]; num_streams];
-
-        for (s_idx, stream) in self.streams.iter_mut().enumerate() {
-            let mode = stream.prev_mode.unwrap_or(AudioMode::SILK);
-            let bw = stream.last_bandwidth;
-            let st = stream.last_stereo;
-            let ch1_opt = if stream.output_channels == 2 {
-                Some(&mut stream_ch1[s_idx][..total_samples])
-            } else {
-                None
-            };
-            stream.decode_opus_frame(
-                None,
-                mode,
-                bw,
+        for i in 0..self.streams.len() {
+            self.streams[i].conceal_lost_packet(
                 loss_dur,
-                st,
-                &mut stream_ch0[s_idx][..total_samples],
-                ch1_opt,
+                &mut self.scratch_ch0,
+                &mut self.scratch_ch1,
             )?;
+            self.route_stream_to_buffer(i, total_samples)?;
         }
 
         self.range_final = 0;
-        self.route_streams_to_buffer(&stream_ch0, &stream_ch1, total_samples)?;
         return Ok(self.buffer.as_generic_audio_buffer_ref());
     }
 
-    /// Routes decoded per-stream planar channel buffers (`stream_ch0`, `stream_ch1`) to
-    /// `self.buffer` according to `self.channel_mapping` and applies `self.gain_scale`.
-    fn route_streams_to_buffer(
-        &mut self,
-        stream_ch0: &[Vec<f32>],
-        stream_ch1: &[Vec<f32>],
-        total_samples: usize,
-    ) -> Result<()> {
-        let start = self.buffer.frames();
+    /// Clears `self.buffer`, renders `total_samples` frames, and zeroes any unmapped (`255`) output planes.
+    fn prepare_output_buffer(&mut self, total_samples: usize) -> Result<()> {
+        self.buffer.clear();
         self.buffer.render_uninit(Some(total_samples));
+        let num_output_channels = self.channels.count();
+        for ch in 0..num_output_channels {
+            if self.channel_mapping.get(ch).copied().unwrap_or(255) == 255 {
+                let dst = self
+                    .buffer
+                    .plane_mut(ch)
+                    .ok_or(SymphoniaError::DecodeError("opus: missing output plane"))?;
+                dst[..total_samples].fill(0.0);
+            }
+        }
+        return Ok(());
+    }
 
+    /// Routes the decoded planar samples of `stream_i` from `self.scratch_ch0` and `self.scratch_ch1`
+    /// into `self.buffer` according to `self.channel_mapping` and applies `self.gain_scale`.
+    fn route_stream_to_buffer(&mut self, stream_i: usize, total_samples: usize) -> Result<()> {
         let num_output_channels = self.channels.count();
         let coupled = self.coupled_count;
         let apply_gain = self.output_gain != 0;
         let scale = self.gain_scale;
 
         for ch in 0..num_output_channels {
-            let map_val = self.channel_mapping.get(ch).copied().unwrap_or(255);
-            let dst = self
-                .buffer
-                .plane_mut(ch)
-                .ok_or(SymphoniaError::DecodeError("opus: missing output plane"))?;
-            let dst_slice = &mut dst[start..(start + total_samples)];
-
-            if map_val == 255 {
-                dst_slice.fill(0.0);
-                continue;
-            }
-
-            let idx = map_val as usize;
-            let src_slice = if idx < 2 * coupled {
-                let s_idx = idx / 2;
-                if idx % 2 == 0 {
-                    &stream_ch0[s_idx][..total_samples]
-                } else {
-                    &stream_ch1[s_idx][..total_samples]
-                }
-            } else {
-                let s_idx = idx - coupled;
-                &stream_ch0[s_idx][..total_samples]
+            let map_val = self.channel_mapping.get(ch).copied().unwrap_or(255) as usize;
+            let src_opt = match stream_i < coupled {
+                true if map_val == 2 * stream_i => Some(&self.scratch_ch0[..total_samples]),
+                true if map_val == 2 * stream_i + 1 => Some(&self.scratch_ch1[..total_samples]),
+                false if map_val == stream_i + coupled => Some(&self.scratch_ch0[..total_samples]),
+                _ => None,
             };
 
-            if apply_gain {
-                for (d, &s) in dst_slice.iter_mut().zip(src_slice.iter()) {
-                    *d = s * scale;
+            if let Some(src_slice) = src_opt {
+                let dst = self
+                    .buffer
+                    .plane_mut(ch)
+                    .ok_or(SymphoniaError::DecodeError("opus: missing output plane"))?;
+                let dst_slice = &mut dst[..total_samples];
+                if apply_gain {
+                    for (d, &s) in dst_slice.iter_mut().zip(src_slice.iter()) {
+                        *d = s * scale;
+                    }
+                } else {
+                    dst_slice.copy_from_slice(src_slice);
                 }
-            } else {
-                dst_slice.copy_from_slice(src_slice);
             }
         }
 
@@ -853,6 +925,8 @@ impl AudioDecoder for OpusDecoder {
         for stream in self.streams.iter_mut() {
             stream.reset();
         }
+        self.scratch_ch0.fill(0.0);
+        self.scratch_ch1.fill(0.0);
         self.range_final = 0;
         self.buffer.clear();
         return;
@@ -874,66 +948,45 @@ impl AudioDecoder for OpusDecoder {
         self.buffer.clear();
         let num_streams = self.streams.len();
         let mut cursor = packet.data;
-        let mut stream_packets = Vec::with_capacity(num_streams);
-
-        for s_idx in 0..num_streams {
-            if s_idx + 1 < num_streams {
-                let (pkt, consumed) = FramePacket::parse_self_delimited(cursor)?;
-                cursor = &cursor[consumed..];
-                stream_packets.push(pkt);
-            } else {
-                let pkt = FramePacket::new(cursor)?;
-                stream_packets.push(pkt);
-            }
-        }
-
-        let first_frame_count = stream_packets[0].frames.len();
-        let first_frame_size = stream_packets[0].frame_size;
-        for pkt in stream_packets.iter().skip(1) {
-            if pkt.frames.len() != first_frame_count || pkt.frame_size != first_frame_size {
-                return Err(SymphoniaError::DecodeError(
-                    "opus: inconsistent frame count or frame duration across elementary streams",
-                ));
-            }
-        }
-
-        let samples_per_frame = duration_samples(first_frame_size, self.sample_rate);
-        let total_samples = first_frame_count * samples_per_frame;
-
-        let mut stream_ch0 = vec![vec![0.0_f32; total_samples]; num_streams];
-        let mut stream_ch1 = vec![vec![0.0_f32; total_samples]; num_streams];
+        let mut expected_frame_count = 0usize;
+        let mut expected_frame_size = FrameDuration::Ms20;
+        let mut total_samples = 0usize;
         let mut combined_rng = 0u32;
 
-        for (s_idx, (stream, pkt)) in self
-            .streams
-            .iter_mut()
-            .zip(stream_packets.iter())
-            .enumerate()
-        {
-            let mut offset = 0usize;
-            for frame_bytes in pkt.frames.iter() {
-                let ch1_opt = if stream.output_channels == 2 {
-                    Some(&mut stream_ch1[s_idx][offset..(offset + samples_per_frame)])
-                } else {
-                    None
-                };
-                let written = stream.decode_opus_frame(
-                    Some(*frame_bytes),
-                    pkt.audio_mode,
-                    pkt.bandwidth,
-                    pkt.frame_size,
-                    pkt.stereo,
-                    &mut stream_ch0[s_idx][offset..(offset + samples_per_frame)],
-                    ch1_opt,
-                )?;
-                offset += written;
+        for i in 0..num_streams {
+            let pkt = if i + 1 < num_streams {
+                let (parsed, consumed) = FramePacket::parse_self_delimited(cursor)?;
+                cursor = &cursor[consumed..];
+                parsed
+            } else {
+                FramePacket::new(cursor)?
+            };
+
+            match i {
+                0 => {
+                    expected_frame_count = pkt.frames.len();
+                    expected_frame_size = pkt.frame_size;
+                    total_samples = expected_frame_count
+                        * duration_samples(expected_frame_size, self.sample_rate);
+                    self.prepare_output_buffer(total_samples)?;
+                }
+                _ if pkt.frames.len() != expected_frame_count
+                    || pkt.frame_size != expected_frame_size =>
+                {
+                    self.buffer.clear();
+                    return Err(SymphoniaError::DecodeError(
+                        "opus: inconsistent frame count or frame duration across elementary streams",
+                    ));
+                }
+                _ => {}
             }
-            combined_rng ^= stream.range_final;
+
+            self.streams[i].decode_packet(&pkt, &mut self.scratch_ch0, &mut self.scratch_ch1)?;
+            combined_rng ^= self.streams[i].range_final;
+            self.route_stream_to_buffer(i, total_samples)?;
         }
 
         self.range_final = combined_rng;
-        self.route_streams_to_buffer(&stream_ch0, &stream_ch1, total_samples)?;
-
         return Ok(self.buffer.as_generic_audio_buffer_ref());
     }
 
@@ -965,6 +1018,10 @@ mod tests {
     use symphonia_core::audio::{Audio, Position};
     use symphonia_core::codecs::audio::well_known::CODEC_ID_VORBIS;
     use symphonia_core::units::{Duration, Timestamp};
+
+    fn quantize_i16_24(slice: &[f32]) -> [i16; 24] {
+        return std::array::from_fn(|i| (slice[i] * 32768.0).round() as i16);
+    }
 
     fn assert_plane_matches_f32_oracle(
         plane: &[f32],
@@ -1003,6 +1060,34 @@ mod tests {
             "rms mismatch: actual={rms}, expected={expected_rms}, diff={rms_diff}, tol={tol}"
         );
         return;
+    }
+
+    macro_rules! assert_mono_f32_packets {
+        ($params:expr, $samples:expr, [ $( ($pkt:expr, $head:expr, $tail:expr, $rms:expr $(,)?) ),+ $(,)? ]) => {{
+            let mut dec = OpusDecoder::try_new($params, &AudioDecoderOptions::default()).unwrap();
+            for (pkt_bytes, head, tail, rms) in [ $( (&$pkt[..], &$head, &$tail, $rms) ),+ ] {
+                let pkt = PacketRef::new(0, Timestamp::from(0u32), Duration::from($samples as u64), pkt_bytes);
+                dec.decode_ref(&pkt).unwrap();
+                let ch0 = dec.buffer.plane(0).unwrap();
+                assert_plane_matches_f32_oracle(ch0, $samples, head, tail, rms, 1e-4);
+            }
+        }};
+    }
+
+    macro_rules! assert_stereo_f32_packets {
+        ($params:expr, $samples:expr, [ $( ($pkt:expr, $l_head:expr, $l_tail:expr, $l_rms:expr, $r_head:expr, $r_tail:expr, $r_rms:expr $(,)?) ),+ $(,)? ]) => {{
+            let mut dec = OpusDecoder::try_new($params, &AudioDecoderOptions::default()).unwrap();
+            for (pkt_bytes, l_head, l_tail, l_rms, r_head, r_tail, r_rms) in [
+                $( (&$pkt[..], &$l_head, &$l_tail, $l_rms, &$r_head, &$r_tail, $r_rms) ),+
+            ] {
+                let pkt = PacketRef::new(0, Timestamp::from(0u32), Duration::from($samples as u64), pkt_bytes);
+                dec.decode_ref(&pkt).unwrap();
+                let ch0 = dec.buffer.plane(0).unwrap();
+                let ch1 = dec.buffer.plane(1).unwrap();
+                assert_plane_matches_f32_oracle(ch0, $samples, l_head, l_tail, l_rms, 1e-4);
+                assert_plane_matches_f32_oracle(ch1, $samples, r_head, r_tail, r_rms, 1e-4);
+            }
+        }};
     }
 
     #[test]
@@ -1100,20 +1185,8 @@ mod tests {
             mono_decoder.decode_ref(&pkt).unwrap();
             assert_eq!(mono_decoder.buffer.frames(), 960);
             let ch0 = mono_decoder.buffer.plane(0).unwrap();
-            let head_i16: Vec<i16> = ch0[..24]
-                .iter()
-                .map(|&s| {
-                    return (s * 32768.0).round() as i16;
-                })
-                .collect();
-            let tail_i16: Vec<i16> = ch0[960 - 24..]
-                .iter()
-                .map(|&s| {
-                    return (s * 32768.0).round() as i16;
-                })
-                .collect();
-            assert_eq!(head_i16.as_slice(), expected_head);
-            assert_eq!(tail_i16.as_slice(), expected_tail);
+            assert_eq!(&quantize_i16_24(&ch0[..24]), expected_head);
+            assert_eq!(&quantize_i16_24(&ch0[960 - 24..]), expected_tail);
         }
 
         const STEREO_MB_PKT_0: [u8; 83] = [
@@ -1175,20 +1248,10 @@ mod tests {
             let pkt = PacketRef::new(0, Timestamp::from(0u32), Duration::from(960u64), pkt_bytes);
             stereo_decoder.decode_ref(&pkt).unwrap();
             assert_eq!(stereo_decoder.buffer.frames(), 960);
-            let left_tail: Vec<i16> = stereo_decoder.buffer.plane(0).unwrap()[960 - 24..]
-                .iter()
-                .map(|&s| {
-                    return (s * 32768.0).round() as i16;
-                })
-                .collect();
-            let right_tail: Vec<i16> = stereo_decoder.buffer.plane(1).unwrap()[960 - 24..]
-                .iter()
-                .map(|&s| {
-                    return (s * 32768.0).round() as i16;
-                })
-                .collect();
-            assert_eq!(left_tail.as_slice(), expected_l_tail);
-            assert_eq!(right_tail.as_slice(), expected_r_tail);
+            let ch0 = stereo_decoder.buffer.plane(0).unwrap();
+            let ch1 = stereo_decoder.buffer.plane(1).unwrap();
+            assert_eq!(&quantize_i16_24(&ch0[960 - 24..]), expected_l_tail);
+            assert_eq!(&quantize_i16_24(&ch1[960 - 24..]), expected_r_tail);
         }
         return;
     }
@@ -2247,61 +2310,55 @@ mod tests {
             .with_sample_rate(48000)
             .with_channels(Channels::Positioned(Position::FRONT_CENTER));
 
-        let mut swb_dec =
-            OpusDecoder::try_new(&mono_params, &AudioDecoderOptions::default()).unwrap();
-        for (pkt_bytes, head, tail, rms) in [
-            (
-                &HYBRID_MONO_SWB_10MS_PKT_0[..],
-                &HYBRID_MONO_SWB_10MS_OUT_0_HEAD_F32,
-                &HYBRID_MONO_SWB_10MS_OUT_0_TAIL_F32,
-                HYBRID_MONO_SWB_10MS_OUT_0_RMS,
-            ),
-            (
-                &HYBRID_MONO_SWB_10MS_PKT_1[..],
-                &HYBRID_MONO_SWB_10MS_OUT_1_HEAD_F32,
-                &HYBRID_MONO_SWB_10MS_OUT_1_TAIL_F32,
-                HYBRID_MONO_SWB_10MS_OUT_1_RMS,
-            ),
-            (
-                &HYBRID_MONO_SWB_10MS_PKT_2[..],
-                &HYBRID_MONO_SWB_10MS_OUT_2_HEAD_F32,
-                &HYBRID_MONO_SWB_10MS_OUT_2_TAIL_F32,
-                HYBRID_MONO_SWB_10MS_OUT_2_RMS,
-            ),
-        ] {
-            let pkt = PacketRef::new(0, Timestamp::from(0u32), Duration::from(480u64), pkt_bytes);
-            swb_dec.decode_ref(&pkt).unwrap();
-            let ch0 = swb_dec.buffer.plane(0).unwrap();
-            assert_plane_matches_f32_oracle(ch0, 480, head, tail, rms, 1e-4);
-        }
+        assert_mono_f32_packets!(
+            &mono_params,
+            480,
+            [
+                (
+                    HYBRID_MONO_SWB_10MS_PKT_0,
+                    HYBRID_MONO_SWB_10MS_OUT_0_HEAD_F32,
+                    HYBRID_MONO_SWB_10MS_OUT_0_TAIL_F32,
+                    HYBRID_MONO_SWB_10MS_OUT_0_RMS,
+                ),
+                (
+                    HYBRID_MONO_SWB_10MS_PKT_1,
+                    HYBRID_MONO_SWB_10MS_OUT_1_HEAD_F32,
+                    HYBRID_MONO_SWB_10MS_OUT_1_TAIL_F32,
+                    HYBRID_MONO_SWB_10MS_OUT_1_RMS,
+                ),
+                (
+                    HYBRID_MONO_SWB_10MS_PKT_2,
+                    HYBRID_MONO_SWB_10MS_OUT_2_HEAD_F32,
+                    HYBRID_MONO_SWB_10MS_OUT_2_TAIL_F32,
+                    HYBRID_MONO_SWB_10MS_OUT_2_RMS,
+                ),
+            ]
+        );
 
-        let mut fb_dec =
-            OpusDecoder::try_new(&mono_params, &AudioDecoderOptions::default()).unwrap();
-        for (pkt_bytes, head, tail, rms) in [
-            (
-                &HYBRID_MONO_FB_20MS_PKT_0[..],
-                &HYBRID_MONO_FB_20MS_OUT_0_HEAD_F32,
-                &HYBRID_MONO_FB_20MS_OUT_0_TAIL_F32,
-                HYBRID_MONO_FB_20MS_OUT_0_RMS,
-            ),
-            (
-                &HYBRID_MONO_FB_20MS_PKT_1[..],
-                &HYBRID_MONO_FB_20MS_OUT_1_HEAD_F32,
-                &HYBRID_MONO_FB_20MS_OUT_1_TAIL_F32,
-                HYBRID_MONO_FB_20MS_OUT_1_RMS,
-            ),
-            (
-                &HYBRID_MONO_FB_20MS_PKT_2[..],
-                &HYBRID_MONO_FB_20MS_OUT_2_HEAD_F32,
-                &HYBRID_MONO_FB_20MS_OUT_2_TAIL_F32,
-                HYBRID_MONO_FB_20MS_OUT_2_RMS,
-            ),
-        ] {
-            let pkt = PacketRef::new(0, Timestamp::from(0u32), Duration::from(960u64), pkt_bytes);
-            fb_dec.decode_ref(&pkt).unwrap();
-            let ch0 = fb_dec.buffer.plane(0).unwrap();
-            assert_plane_matches_f32_oracle(ch0, 960, head, tail, rms, 1e-4);
-        }
+        assert_mono_f32_packets!(
+            &mono_params,
+            960,
+            [
+                (
+                    HYBRID_MONO_FB_20MS_PKT_0,
+                    HYBRID_MONO_FB_20MS_OUT_0_HEAD_F32,
+                    HYBRID_MONO_FB_20MS_OUT_0_TAIL_F32,
+                    HYBRID_MONO_FB_20MS_OUT_0_RMS,
+                ),
+                (
+                    HYBRID_MONO_FB_20MS_PKT_1,
+                    HYBRID_MONO_FB_20MS_OUT_1_HEAD_F32,
+                    HYBRID_MONO_FB_20MS_OUT_1_TAIL_F32,
+                    HYBRID_MONO_FB_20MS_OUT_1_RMS,
+                ),
+                (
+                    HYBRID_MONO_FB_20MS_PKT_2,
+                    HYBRID_MONO_FB_20MS_OUT_2_HEAD_F32,
+                    HYBRID_MONO_FB_20MS_OUT_2_TAIL_F32,
+                    HYBRID_MONO_FB_20MS_OUT_2_RMS,
+                ),
+            ]
+        );
 
         let mut stereo_params = AudioCodecParameters::new();
         stereo_params
@@ -2311,65 +2368,55 @@ mod tests {
                 Position::FRONT_LEFT | Position::FRONT_RIGHT,
             ));
 
-        let mut st_swb_dec =
-            OpusDecoder::try_new(&stereo_params, &AudioDecoderOptions::default()).unwrap();
-        for (pkt_bytes, l_head, l_tail, l_rms, r_head, r_tail, r_rms) in [
-            (
-                &HYBRID_STEREO_SWB_20MS_PKT_0[..],
-                &HYBRID_STEREO_SWB_20MS_OUT_L_0_HEAD_F32,
-                &HYBRID_STEREO_SWB_20MS_OUT_L_0_TAIL_F32,
-                HYBRID_STEREO_SWB_20MS_OUT_L_0_RMS,
-                &HYBRID_STEREO_SWB_20MS_OUT_R_0_HEAD_F32,
-                &HYBRID_STEREO_SWB_20MS_OUT_R_0_TAIL_F32,
-                HYBRID_STEREO_SWB_20MS_OUT_R_0_RMS,
-            ),
-            (
-                &HYBRID_STEREO_SWB_20MS_PKT_1[..],
-                &HYBRID_STEREO_SWB_20MS_OUT_L_1_HEAD_F32,
-                &HYBRID_STEREO_SWB_20MS_OUT_L_1_TAIL_F32,
-                HYBRID_STEREO_SWB_20MS_OUT_L_1_RMS,
-                &HYBRID_STEREO_SWB_20MS_OUT_R_1_HEAD_F32,
-                &HYBRID_STEREO_SWB_20MS_OUT_R_1_TAIL_F32,
-                HYBRID_STEREO_SWB_20MS_OUT_R_1_RMS,
-            ),
-        ] {
-            let pkt = PacketRef::new(0, Timestamp::from(0u32), Duration::from(960u64), pkt_bytes);
-            st_swb_dec.decode_ref(&pkt).unwrap();
-            let ch0 = st_swb_dec.buffer.plane(0).unwrap();
-            let ch1 = st_swb_dec.buffer.plane(1).unwrap();
-            assert_plane_matches_f32_oracle(ch0, 960, l_head, l_tail, l_rms, 1e-4);
-            assert_plane_matches_f32_oracle(ch1, 960, r_head, r_tail, r_rms, 1e-4);
-        }
+        assert_stereo_f32_packets!(
+            &stereo_params,
+            960,
+            [
+                (
+                    HYBRID_STEREO_SWB_20MS_PKT_0,
+                    HYBRID_STEREO_SWB_20MS_OUT_L_0_HEAD_F32,
+                    HYBRID_STEREO_SWB_20MS_OUT_L_0_TAIL_F32,
+                    HYBRID_STEREO_SWB_20MS_OUT_L_0_RMS,
+                    HYBRID_STEREO_SWB_20MS_OUT_R_0_HEAD_F32,
+                    HYBRID_STEREO_SWB_20MS_OUT_R_0_TAIL_F32,
+                    HYBRID_STEREO_SWB_20MS_OUT_R_0_RMS,
+                ),
+                (
+                    HYBRID_STEREO_SWB_20MS_PKT_1,
+                    HYBRID_STEREO_SWB_20MS_OUT_L_1_HEAD_F32,
+                    HYBRID_STEREO_SWB_20MS_OUT_L_1_TAIL_F32,
+                    HYBRID_STEREO_SWB_20MS_OUT_L_1_RMS,
+                    HYBRID_STEREO_SWB_20MS_OUT_R_1_HEAD_F32,
+                    HYBRID_STEREO_SWB_20MS_OUT_R_1_TAIL_F32,
+                    HYBRID_STEREO_SWB_20MS_OUT_R_1_RMS,
+                ),
+            ]
+        );
 
-        let mut st_fb_dec =
-            OpusDecoder::try_new(&stereo_params, &AudioDecoderOptions::default()).unwrap();
-        for (pkt_bytes, l_head, l_tail, l_rms, r_head, r_tail, r_rms) in [
-            (
-                &HYBRID_STEREO_FB_20MS_PKT_0[..],
-                &HYBRID_STEREO_FB_20MS_OUT_L_0_HEAD_F32,
-                &HYBRID_STEREO_FB_20MS_OUT_L_0_TAIL_F32,
-                HYBRID_STEREO_FB_20MS_OUT_L_0_RMS,
-                &HYBRID_STEREO_FB_20MS_OUT_R_0_HEAD_F32,
-                &HYBRID_STEREO_FB_20MS_OUT_R_0_TAIL_F32,
-                HYBRID_STEREO_FB_20MS_OUT_R_0_RMS,
-            ),
-            (
-                &HYBRID_STEREO_FB_20MS_PKT_1[..],
-                &HYBRID_STEREO_FB_20MS_OUT_L_1_HEAD_F32,
-                &HYBRID_STEREO_FB_20MS_OUT_L_1_TAIL_F32,
-                HYBRID_STEREO_FB_20MS_OUT_L_1_RMS,
-                &HYBRID_STEREO_FB_20MS_OUT_R_1_HEAD_F32,
-                &HYBRID_STEREO_FB_20MS_OUT_R_1_TAIL_F32,
-                HYBRID_STEREO_FB_20MS_OUT_R_1_RMS,
-            ),
-        ] {
-            let pkt = PacketRef::new(0, Timestamp::from(0u32), Duration::from(960u64), pkt_bytes);
-            st_fb_dec.decode_ref(&pkt).unwrap();
-            let ch0 = st_fb_dec.buffer.plane(0).unwrap();
-            let ch1 = st_fb_dec.buffer.plane(1).unwrap();
-            assert_plane_matches_f32_oracle(ch0, 960, l_head, l_tail, l_rms, 1e-4);
-            assert_plane_matches_f32_oracle(ch1, 960, r_head, r_tail, r_rms, 1e-4);
-        }
+        assert_stereo_f32_packets!(
+            &stereo_params,
+            960,
+            [
+                (
+                    HYBRID_STEREO_FB_20MS_PKT_0,
+                    HYBRID_STEREO_FB_20MS_OUT_L_0_HEAD_F32,
+                    HYBRID_STEREO_FB_20MS_OUT_L_0_TAIL_F32,
+                    HYBRID_STEREO_FB_20MS_OUT_L_0_RMS,
+                    HYBRID_STEREO_FB_20MS_OUT_R_0_HEAD_F32,
+                    HYBRID_STEREO_FB_20MS_OUT_R_0_TAIL_F32,
+                    HYBRID_STEREO_FB_20MS_OUT_R_0_RMS,
+                ),
+                (
+                    HYBRID_STEREO_FB_20MS_PKT_1,
+                    HYBRID_STEREO_FB_20MS_OUT_L_1_HEAD_F32,
+                    HYBRID_STEREO_FB_20MS_OUT_L_1_TAIL_F32,
+                    HYBRID_STEREO_FB_20MS_OUT_L_1_RMS,
+                    HYBRID_STEREO_FB_20MS_OUT_R_1_HEAD_F32,
+                    HYBRID_STEREO_FB_20MS_OUT_R_1_TAIL_F32,
+                    HYBRID_STEREO_FB_20MS_OUT_R_1_RMS,
+                ),
+            ]
+        );
         return;
     }
 
@@ -2382,120 +2429,108 @@ mod tests {
             .with_channels(Channels::Positioned(Position::FRONT_CENTER));
 
         // 2.5 ms (120 samples)
-        let mut dec_2_5 =
-            OpusDecoder::try_new(&mono_params, &AudioDecoderOptions::default()).unwrap();
-        for (pkt_bytes, head, tail, rms) in [
-            (
-                &CELT_MONO_FB_2_5MS_PKT_0[..],
-                &CELT_MONO_FB_2_5MS_OUT_0_HEAD_F32,
-                &CELT_MONO_FB_2_5MS_OUT_0_TAIL_F32,
-                CELT_MONO_FB_2_5MS_OUT_0_RMS,
-            ),
-            (
-                &CELT_MONO_FB_2_5MS_PKT_1[..],
-                &CELT_MONO_FB_2_5MS_OUT_1_HEAD_F32,
-                &CELT_MONO_FB_2_5MS_OUT_1_TAIL_F32,
-                CELT_MONO_FB_2_5MS_OUT_1_RMS,
-            ),
-            (
-                &CELT_MONO_FB_2_5MS_PKT_2[..],
-                &CELT_MONO_FB_2_5MS_OUT_2_HEAD_F32,
-                &CELT_MONO_FB_2_5MS_OUT_2_TAIL_F32,
-                CELT_MONO_FB_2_5MS_OUT_2_RMS,
-            ),
-        ] {
-            let pkt = PacketRef::new(0, Timestamp::from(0u32), Duration::from(120u64), pkt_bytes);
-            dec_2_5.decode_ref(&pkt).unwrap();
-            let ch0 = dec_2_5.buffer.plane(0).unwrap();
-            assert_plane_matches_f32_oracle(ch0, 120, head, tail, rms, 1e-4);
-        }
+        assert_mono_f32_packets!(
+            &mono_params,
+            120,
+            [
+                (
+                    CELT_MONO_FB_2_5MS_PKT_0,
+                    CELT_MONO_FB_2_5MS_OUT_0_HEAD_F32,
+                    CELT_MONO_FB_2_5MS_OUT_0_TAIL_F32,
+                    CELT_MONO_FB_2_5MS_OUT_0_RMS,
+                ),
+                (
+                    CELT_MONO_FB_2_5MS_PKT_1,
+                    CELT_MONO_FB_2_5MS_OUT_1_HEAD_F32,
+                    CELT_MONO_FB_2_5MS_OUT_1_TAIL_F32,
+                    CELT_MONO_FB_2_5MS_OUT_1_RMS,
+                ),
+                (
+                    CELT_MONO_FB_2_5MS_PKT_2,
+                    CELT_MONO_FB_2_5MS_OUT_2_HEAD_F32,
+                    CELT_MONO_FB_2_5MS_OUT_2_TAIL_F32,
+                    CELT_MONO_FB_2_5MS_OUT_2_RMS,
+                ),
+            ]
+        );
 
         // 5 ms (240 samples)
-        let mut dec_5 =
-            OpusDecoder::try_new(&mono_params, &AudioDecoderOptions::default()).unwrap();
-        for (pkt_bytes, head, tail, rms) in [
-            (
-                &CELT_MONO_FB_5MS_PKT_0[..],
-                &CELT_MONO_FB_5MS_OUT_0_HEAD_F32,
-                &CELT_MONO_FB_5MS_OUT_0_TAIL_F32,
-                CELT_MONO_FB_5MS_OUT_0_RMS,
-            ),
-            (
-                &CELT_MONO_FB_5MS_PKT_1[..],
-                &CELT_MONO_FB_5MS_OUT_1_HEAD_F32,
-                &CELT_MONO_FB_5MS_OUT_1_TAIL_F32,
-                CELT_MONO_FB_5MS_OUT_1_RMS,
-            ),
-            (
-                &CELT_MONO_FB_5MS_PKT_2[..],
-                &CELT_MONO_FB_5MS_OUT_2_HEAD_F32,
-                &CELT_MONO_FB_5MS_OUT_2_TAIL_F32,
-                CELT_MONO_FB_5MS_OUT_2_RMS,
-            ),
-        ] {
-            let pkt = PacketRef::new(0, Timestamp::from(0u32), Duration::from(240u64), pkt_bytes);
-            dec_5.decode_ref(&pkt).unwrap();
-            let ch0 = dec_5.buffer.plane(0).unwrap();
-            assert_plane_matches_f32_oracle(ch0, 240, head, tail, rms, 1e-4);
-        }
+        assert_mono_f32_packets!(
+            &mono_params,
+            240,
+            [
+                (
+                    CELT_MONO_FB_5MS_PKT_0,
+                    CELT_MONO_FB_5MS_OUT_0_HEAD_F32,
+                    CELT_MONO_FB_5MS_OUT_0_TAIL_F32,
+                    CELT_MONO_FB_5MS_OUT_0_RMS,
+                ),
+                (
+                    CELT_MONO_FB_5MS_PKT_1,
+                    CELT_MONO_FB_5MS_OUT_1_HEAD_F32,
+                    CELT_MONO_FB_5MS_OUT_1_TAIL_F32,
+                    CELT_MONO_FB_5MS_OUT_1_RMS,
+                ),
+                (
+                    CELT_MONO_FB_5MS_PKT_2,
+                    CELT_MONO_FB_5MS_OUT_2_HEAD_F32,
+                    CELT_MONO_FB_5MS_OUT_2_TAIL_F32,
+                    CELT_MONO_FB_5MS_OUT_2_RMS,
+                ),
+            ]
+        );
 
         // 10 ms (480 samples)
-        let mut dec_10 =
-            OpusDecoder::try_new(&mono_params, &AudioDecoderOptions::default()).unwrap();
-        for (pkt_bytes, head, tail, rms) in [
-            (
-                &CELT_MONO_FB_10MS_PKT_0[..],
-                &CELT_MONO_FB_10MS_OUT_0_HEAD_F32,
-                &CELT_MONO_FB_10MS_OUT_0_TAIL_F32,
-                CELT_MONO_FB_10MS_OUT_0_RMS,
-            ),
-            (
-                &CELT_MONO_FB_10MS_PKT_1[..],
-                &CELT_MONO_FB_10MS_OUT_1_HEAD_F32,
-                &CELT_MONO_FB_10MS_OUT_1_TAIL_F32,
-                CELT_MONO_FB_10MS_OUT_1_RMS,
-            ),
-            (
-                &CELT_MONO_FB_10MS_PKT_2[..],
-                &CELT_MONO_FB_10MS_OUT_2_HEAD_F32,
-                &CELT_MONO_FB_10MS_OUT_2_TAIL_F32,
-                CELT_MONO_FB_10MS_OUT_2_RMS,
-            ),
-        ] {
-            let pkt = PacketRef::new(0, Timestamp::from(0u32), Duration::from(480u64), pkt_bytes);
-            dec_10.decode_ref(&pkt).unwrap();
-            let ch0 = dec_10.buffer.plane(0).unwrap();
-            assert_plane_matches_f32_oracle(ch0, 480, head, tail, rms, 1e-4);
-        }
+        assert_mono_f32_packets!(
+            &mono_params,
+            480,
+            [
+                (
+                    CELT_MONO_FB_10MS_PKT_0,
+                    CELT_MONO_FB_10MS_OUT_0_HEAD_F32,
+                    CELT_MONO_FB_10MS_OUT_0_TAIL_F32,
+                    CELT_MONO_FB_10MS_OUT_0_RMS,
+                ),
+                (
+                    CELT_MONO_FB_10MS_PKT_1,
+                    CELT_MONO_FB_10MS_OUT_1_HEAD_F32,
+                    CELT_MONO_FB_10MS_OUT_1_TAIL_F32,
+                    CELT_MONO_FB_10MS_OUT_1_RMS,
+                ),
+                (
+                    CELT_MONO_FB_10MS_PKT_2,
+                    CELT_MONO_FB_10MS_OUT_2_HEAD_F32,
+                    CELT_MONO_FB_10MS_OUT_2_TAIL_F32,
+                    CELT_MONO_FB_10MS_OUT_2_RMS,
+                ),
+            ]
+        );
 
         // 20 ms (960 samples)
-        let mut dec_20 =
-            OpusDecoder::try_new(&mono_params, &AudioDecoderOptions::default()).unwrap();
-        for (pkt_bytes, head, tail, rms) in [
-            (
-                &CELT_MONO_FB_20MS_PKT_0[..],
-                &CELT_MONO_FB_20MS_OUT_0_HEAD_F32,
-                &CELT_MONO_FB_20MS_OUT_0_TAIL_F32,
-                CELT_MONO_FB_20MS_OUT_0_RMS,
-            ),
-            (
-                &CELT_MONO_FB_20MS_PKT_1[..],
-                &CELT_MONO_FB_20MS_OUT_1_HEAD_F32,
-                &CELT_MONO_FB_20MS_OUT_1_TAIL_F32,
-                CELT_MONO_FB_20MS_OUT_1_RMS,
-            ),
-            (
-                &CELT_MONO_FB_20MS_PKT_2[..],
-                &CELT_MONO_FB_20MS_OUT_2_HEAD_F32,
-                &CELT_MONO_FB_20MS_OUT_2_TAIL_F32,
-                CELT_MONO_FB_20MS_OUT_2_RMS,
-            ),
-        ] {
-            let pkt = PacketRef::new(0, Timestamp::from(0u32), Duration::from(960u64), pkt_bytes);
-            dec_20.decode_ref(&pkt).unwrap();
-            let ch0 = dec_20.buffer.plane(0).unwrap();
-            assert_plane_matches_f32_oracle(ch0, 960, head, tail, rms, 1e-4);
-        }
+        assert_mono_f32_packets!(
+            &mono_params,
+            960,
+            [
+                (
+                    CELT_MONO_FB_20MS_PKT_0,
+                    CELT_MONO_FB_20MS_OUT_0_HEAD_F32,
+                    CELT_MONO_FB_20MS_OUT_0_TAIL_F32,
+                    CELT_MONO_FB_20MS_OUT_0_RMS,
+                ),
+                (
+                    CELT_MONO_FB_20MS_PKT_1,
+                    CELT_MONO_FB_20MS_OUT_1_HEAD_F32,
+                    CELT_MONO_FB_20MS_OUT_1_TAIL_F32,
+                    CELT_MONO_FB_20MS_OUT_1_RMS,
+                ),
+                (
+                    CELT_MONO_FB_20MS_PKT_2,
+                    CELT_MONO_FB_20MS_OUT_2_HEAD_F32,
+                    CELT_MONO_FB_20MS_OUT_2_TAIL_F32,
+                    CELT_MONO_FB_20MS_OUT_2_RMS,
+                ),
+            ]
+        );
 
         let mut stereo_params = AudioCodecParameters::new();
         stereo_params
@@ -2506,66 +2541,56 @@ mod tests {
             ));
 
         // Stereo 10 ms
-        let mut st_10 =
-            OpusDecoder::try_new(&stereo_params, &AudioDecoderOptions::default()).unwrap();
-        for (pkt_bytes, l_head, l_tail, l_rms, r_head, r_tail, r_rms) in [
-            (
-                &CELT_STEREO_FB_10MS_PKT_0[..],
-                &CELT_STEREO_FB_10MS_OUT_L_0_HEAD_F32,
-                &CELT_STEREO_FB_10MS_OUT_L_0_TAIL_F32,
-                CELT_STEREO_FB_10MS_OUT_L_0_RMS,
-                &CELT_STEREO_FB_10MS_OUT_R_0_HEAD_F32,
-                &CELT_STEREO_FB_10MS_OUT_R_0_TAIL_F32,
-                CELT_STEREO_FB_10MS_OUT_R_0_RMS,
-            ),
-            (
-                &CELT_STEREO_FB_10MS_PKT_1[..],
-                &CELT_STEREO_FB_10MS_OUT_L_1_HEAD_F32,
-                &CELT_STEREO_FB_10MS_OUT_L_1_TAIL_F32,
-                CELT_STEREO_FB_10MS_OUT_L_1_RMS,
-                &CELT_STEREO_FB_10MS_OUT_R_1_HEAD_F32,
-                &CELT_STEREO_FB_10MS_OUT_R_1_TAIL_F32,
-                CELT_STEREO_FB_10MS_OUT_R_1_RMS,
-            ),
-        ] {
-            let pkt = PacketRef::new(0, Timestamp::from(0u32), Duration::from(480u64), pkt_bytes);
-            st_10.decode_ref(&pkt).unwrap();
-            let ch0 = st_10.buffer.plane(0).unwrap();
-            let ch1 = st_10.buffer.plane(1).unwrap();
-            assert_plane_matches_f32_oracle(ch0, 480, l_head, l_tail, l_rms, 1e-4);
-            assert_plane_matches_f32_oracle(ch1, 480, r_head, r_tail, r_rms, 1e-4);
-        }
+        assert_stereo_f32_packets!(
+            &stereo_params,
+            480,
+            [
+                (
+                    CELT_STEREO_FB_10MS_PKT_0,
+                    CELT_STEREO_FB_10MS_OUT_L_0_HEAD_F32,
+                    CELT_STEREO_FB_10MS_OUT_L_0_TAIL_F32,
+                    CELT_STEREO_FB_10MS_OUT_L_0_RMS,
+                    CELT_STEREO_FB_10MS_OUT_R_0_HEAD_F32,
+                    CELT_STEREO_FB_10MS_OUT_R_0_TAIL_F32,
+                    CELT_STEREO_FB_10MS_OUT_R_0_RMS,
+                ),
+                (
+                    CELT_STEREO_FB_10MS_PKT_1,
+                    CELT_STEREO_FB_10MS_OUT_L_1_HEAD_F32,
+                    CELT_STEREO_FB_10MS_OUT_L_1_TAIL_F32,
+                    CELT_STEREO_FB_10MS_OUT_L_1_RMS,
+                    CELT_STEREO_FB_10MS_OUT_R_1_HEAD_F32,
+                    CELT_STEREO_FB_10MS_OUT_R_1_TAIL_F32,
+                    CELT_STEREO_FB_10MS_OUT_R_1_RMS,
+                ),
+            ]
+        );
 
         // Stereo 20 ms
-        let mut st_20 =
-            OpusDecoder::try_new(&stereo_params, &AudioDecoderOptions::default()).unwrap();
-        for (pkt_bytes, l_head, l_tail, l_rms, r_head, r_tail, r_rms) in [
-            (
-                &CELT_STEREO_FB_20MS_PKT_0[..],
-                &CELT_STEREO_FB_20MS_OUT_L_0_HEAD_F32,
-                &CELT_STEREO_FB_20MS_OUT_L_0_TAIL_F32,
-                CELT_STEREO_FB_20MS_OUT_L_0_RMS,
-                &CELT_STEREO_FB_20MS_OUT_R_0_HEAD_F32,
-                &CELT_STEREO_FB_20MS_OUT_R_0_TAIL_F32,
-                CELT_STEREO_FB_20MS_OUT_R_0_RMS,
-            ),
-            (
-                &CELT_STEREO_FB_20MS_PKT_1[..],
-                &CELT_STEREO_FB_20MS_OUT_L_1_HEAD_F32,
-                &CELT_STEREO_FB_20MS_OUT_L_1_TAIL_F32,
-                CELT_STEREO_FB_20MS_OUT_L_1_RMS,
-                &CELT_STEREO_FB_20MS_OUT_R_1_HEAD_F32,
-                &CELT_STEREO_FB_20MS_OUT_R_1_TAIL_F32,
-                CELT_STEREO_FB_20MS_OUT_R_1_RMS,
-            ),
-        ] {
-            let pkt = PacketRef::new(0, Timestamp::from(0u32), Duration::from(960u64), pkt_bytes);
-            st_20.decode_ref(&pkt).unwrap();
-            let ch0 = st_20.buffer.plane(0).unwrap();
-            let ch1 = st_20.buffer.plane(1).unwrap();
-            assert_plane_matches_f32_oracle(ch0, 960, l_head, l_tail, l_rms, 1e-4);
-            assert_plane_matches_f32_oracle(ch1, 960, r_head, r_tail, r_rms, 1e-4);
-        }
+        assert_stereo_f32_packets!(
+            &stereo_params,
+            960,
+            [
+                (
+                    CELT_STEREO_FB_20MS_PKT_0,
+                    CELT_STEREO_FB_20MS_OUT_L_0_HEAD_F32,
+                    CELT_STEREO_FB_20MS_OUT_L_0_TAIL_F32,
+                    CELT_STEREO_FB_20MS_OUT_L_0_RMS,
+                    CELT_STEREO_FB_20MS_OUT_R_0_HEAD_F32,
+                    CELT_STEREO_FB_20MS_OUT_R_0_TAIL_F32,
+                    CELT_STEREO_FB_20MS_OUT_R_0_RMS,
+                ),
+                (
+                    CELT_STEREO_FB_20MS_PKT_1,
+                    CELT_STEREO_FB_20MS_OUT_L_1_HEAD_F32,
+                    CELT_STEREO_FB_20MS_OUT_L_1_TAIL_F32,
+                    CELT_STEREO_FB_20MS_OUT_L_1_RMS,
+                    CELT_STEREO_FB_20MS_OUT_R_1_HEAD_F32,
+                    CELT_STEREO_FB_20MS_OUT_R_1_TAIL_F32,
+                    CELT_STEREO_FB_20MS_OUT_R_1_RMS,
+                ),
+            ]
+        );
         return;
     }
 
@@ -2577,39 +2602,36 @@ mod tests {
             .with_sample_rate(48000)
             .with_channels(Channels::Positioned(Position::FRONT_CENTER));
 
-        let mut dec = OpusDecoder::try_new(&mono_params, &AudioDecoderOptions::default()).unwrap();
-
-        for (pkt_bytes, head, tail, rms) in [
-            (
-                &TRANSITION_0_SILK_WB_PKT[..],
-                &TRANSITION_0_SILK_WB_OUT_HEAD_F32,
-                &TRANSITION_0_SILK_WB_OUT_TAIL_F32,
-                TRANSITION_0_SILK_WB_OUT_RMS,
-            ),
-            (
-                &TRANSITION_1_HYBRID_FB_PKT[..],
-                &TRANSITION_1_HYBRID_FB_OUT_HEAD_F32,
-                &TRANSITION_1_HYBRID_FB_OUT_TAIL_F32,
-                TRANSITION_1_HYBRID_FB_OUT_RMS,
-            ),
-            (
-                &TRANSITION_2_CELT_FB_PKT[..],
-                &TRANSITION_2_CELT_FB_OUT_HEAD_F32,
-                &TRANSITION_2_CELT_FB_OUT_TAIL_F32,
-                TRANSITION_2_CELT_FB_OUT_RMS,
-            ),
-            (
-                &TRANSITION_3_SILK_WB_RETURN_PKT[..],
-                &TRANSITION_3_SILK_WB_RETURN_OUT_HEAD_F32,
-                &TRANSITION_3_SILK_WB_RETURN_OUT_TAIL_F32,
-                TRANSITION_3_SILK_WB_RETURN_OUT_RMS,
-            ),
-        ] {
-            let pkt = PacketRef::new(0, Timestamp::from(0u32), Duration::from(960u64), pkt_bytes);
-            dec.decode_ref(&pkt).unwrap();
-            let ch0 = dec.buffer.plane(0).unwrap();
-            assert_plane_matches_f32_oracle(ch0, 960, head, tail, rms, 1e-4);
-        }
+        assert_mono_f32_packets!(
+            &mono_params,
+            960,
+            [
+                (
+                    TRANSITION_0_SILK_WB_PKT,
+                    TRANSITION_0_SILK_WB_OUT_HEAD_F32,
+                    TRANSITION_0_SILK_WB_OUT_TAIL_F32,
+                    TRANSITION_0_SILK_WB_OUT_RMS,
+                ),
+                (
+                    TRANSITION_1_HYBRID_FB_PKT,
+                    TRANSITION_1_HYBRID_FB_OUT_HEAD_F32,
+                    TRANSITION_1_HYBRID_FB_OUT_TAIL_F32,
+                    TRANSITION_1_HYBRID_FB_OUT_RMS,
+                ),
+                (
+                    TRANSITION_2_CELT_FB_PKT,
+                    TRANSITION_2_CELT_FB_OUT_HEAD_F32,
+                    TRANSITION_2_CELT_FB_OUT_TAIL_F32,
+                    TRANSITION_2_CELT_FB_OUT_RMS,
+                ),
+                (
+                    TRANSITION_3_SILK_WB_RETURN_PKT,
+                    TRANSITION_3_SILK_WB_RETURN_OUT_HEAD_F32,
+                    TRANSITION_3_SILK_WB_RETURN_OUT_TAIL_F32,
+                    TRANSITION_3_SILK_WB_RETURN_OUT_RMS,
+                ),
+            ]
+        );
         return;
     }
 

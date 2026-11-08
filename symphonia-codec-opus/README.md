@@ -1,104 +1,67 @@
-# Symphonia Opus Codec
+# Symphonia Opus Codec (`symphonia-codec-opus`)
 
-This is a SILK-focused Opus decoder as an addition to the [Symphonia project](https://github.com/pdeljanov/Symphonia) 
-offering a pure-Rust implementation of the Opus audio codec, designed for decoding audio stream.
-The Opus codec handles a wide range of audio applications, and this module focuses on implementing the Opus decoder, with plans to support all modes (SILK, CELT, and Hybrid) as described in the [Opus specification](https://datatracker.ietf.org/doc/html/rfc6716).
+A 100% safe Rust implementation of the [RFC 6716](https://datatracker.ietf.org/doc/html/rfc6716) (Opus Interactive Audio Codec) and [RFC 7845](https://datatracker.ietf.org/doc/html/rfc7845) (Ogg Encapsulation for the Opus Audio Codec) specifications for the [Symphonia](https://github.com/pdeljanov/Symphonia) multimedia framework.
 
-**Note:** This crate is part of Symphonia. Please use the [`symphonia`](https://crates.io/crates/symphonia) crate
-instead of this one directly.
----
+## Architecture & Module Structure
 
-
-## 🏗 **Project Structure**
-```sourcegraph
-/symphonia/symphonia-codec-opus
-├── Cargo.toml
-├── README.md
-├── src
-│   ├── decoder.rs      # Main Opus decoder implementation (SILK Mode)
-│   ├── entropy.rs      # Entropy decoding using range coding
-│   ├── header.rs       # Handles Opus headers
-│   ├── lib.rs          # Library entry point
-│   ├── packet.rs       # Packet processing
-│   ├── toc.rs          # Handles TOC byte processing
-│   └── silk            # SILK decoder components
-│       ├── decoder.rs  # SILK decoder (prototype)
-│       ├── error.rs    # SILK-specific error handling
-|       └── constant.rs # codebooks, tables, pdfs, etc.
-└── tests               # Unit tests for each component
-```
----
-## 📜 **Features Overview**
-
-| Feature                 | Status         | Notes                                                             |
-|-------------------------|----------------|-------------------------------------------------------------------|
-| **SILK Decoder**        | 🟡 Prototype   | Draft that needs refactoring and testing. Handles speech streams. |
-| **CELT Decoder**        | 🔴 Missing     | Placeholder. Needed for high-quality music decoding.              |
-| **Hybrid Decoder**      | 🔴 Missing     | Placeholder. Needed for mixed music and speech decoding.          |
-| **Range Coding**        | 🟢 Implemented | Based on RFC 6716, tested and working.                            |
-| **Packet Handling**     | 🟢 Implemented | Basic packet parsing and processing is working fine.              |
-| **Finalize Method**     | 🟢 Implemented | Returns post-decode finalization status.                          |
-| **Last Decoded Buffer** | 🟢 Implemented | Returns a generic reference to the last decoded audio buffer.     |
-
----
-## 🛠 **Roadmap**
-```mermaid
-gantt
-    title Silk Decoder Implementation Roadmap (Single Person Workflow)
-    dateFormat  YYYY-MM-DD
-
-    section Phase 1: Frame Parsing
-    Parse Frame Header               :done, 2024-10-14, 5d
-    Parse Frame Control Parameters    :2024-10-19, 5d
-    
-    section Phase 2: LPC Coefficients
-    Extract LPC Coefficients          :2024-10-24, 7d
-    Predict and Filter                :2024-11-01, 5d
-
-    section LSF and LPC
-    Implement LSF decoding            :2024-11-06, 3d
-    Develop LSF to LPC conversion     :2024-11-09, 2d
-    
-    section Phase 3: Quantization and Coding
-    Excitation Signal Quantization    :2024-11-11, 7d
-    Decode Excitation Signal          :2024-11-18, 5d
-    
-    section Excitation Decoding
-    Implement PVQ codebook decoding   :2024-11-23, 4d
-    Develop pulse location decoding   :2024-11-27, 3d
-    Implement sign and LSB decoding   :2024-11-30, 2d
-
-    section LTP and LPC Synthesis
-    Implement LTP filter              :2024-12-02, 3d
-    Develop LPC synthesis             :2024-12-05, 4d
-
-    section Phase 4: Gain Control
-    Gain Quantization                 :2024-12-10, 5d
-    Apply Gain                        :2024-12-15, 5d
-
-    section Post-processing
-    Implement stereo unmixing         :2024-12-20, 2d
-    Develop resampling module         :2024-12-22, 3d
-    De-emphasis Filtering             :2024-12-27, 3d
-    Packet Reconstruction             :2024-12-30, 4d
-
-    section Finalization
-    Implement Finalize method         :2025-01-03, 1d
-    Develop Last Decoded Buffer       :2025-01-04, 1d
-
-    section Integration and Testing
-    Integrate with symphonia          :2025-01-06, 3d
-    Comprehensive testing             :2025-01-09, 4d
-    End-to-End Decoder Testing        :2025-01-14, 5d
-    Final Optimizations               :2025-01-19, 5d
+```text
+symphonia-codec-opus
+├── src/
+│   ├── lib.rs            - Crate root, public exports, #![forbid(unsafe_code)]
+│   ├── toc.rs            - Table of Contents (TOC) byte parser (RFC 6716 Section 3.1)
+│   ├── packet.rs         - Opus packet framing (Codes 0-3, VBR/CBR, self-delimited, padding)
+│   ├── header.rs         - Ogg Opus Identification (OpusHead) and Comment (OpusTags) headers
+│   ├── entropy.rs        - Forward range coder and backward raw-bit reader (RFC 6716 Section 4.1)
+│   ├── decoder.rs        - Top-level OpusDecoder, Hybrid fusion, mode transitions, multi-stream
+│   ├── silk/             - SILK LP layer decoder (RFC 6716 Section 4.2)
+│   │   ├── mod.rs        - SILK decoder state, LBRR, DTX, and 48 kHz output orchestration
+│   │   ├── constant.rs   - RFC 6716 SILK iCDF tables, codebooks, and filter coefficients
+│   │   ├── error.rs      - SILK error definitions
+│   │   ├── params.rs     - Header, stereo weights, logarithmic gain, and LTP unpacking
+│   │   ├── lsf.rs        - Two-stage VQ NLSF decoding, stabilization, and interpolation
+│   │   ├── excitation.rs - Rate-distortion LCG, shell coding, pulse signs, and scaling
+│   │   ├── synthesis.rs  - NLSF-to-LPC conversion, LTP synthesis, LPC IIR, stereo unmixing
+│   │   ├── resampler.rs  - Stateful polyphase IIR/FIR resampler (8/12/16 kHz -> 48 kHz)
+│   │   └── plc.rs        - Packet Loss Concealment (PLC) and Comfort Noise Generation (CNG)
+│   └── celt/             - CELT MDCT layer decoder (RFC 6716 Section 4.3)
+│       ├── mod.rs        - CELT module exports
+│       ├── constant.rs   - Bark frequency bands, bit-allocation tables, window & trig tables
+│       ├── error.rs      - CELT error definitions
+│       ├── energy.rs     - Coarse (2D IIR + Laplace) and fine energy quantization
+│       ├── rate.rs       - Dynamic bit allocation, trim, intensity stereo, dual stereo
+│       ├── cwrs.rs       - Combinatorial Pulse Vector Quantization (CWRS) index decoding
+│       ├── vq.rs         - Algebraic PVQ search, Haar1 spreading rotations, pitch folding
+│       ├── mdct.rs       - Short/long IMDCT wrapper over symphonia_core::dsp::mdct::Imdct
+│       └── decoder.rs    - Complete CELT frame synthesis, pre-filter, post-filter, and PLC
+└── tests/
+    └── rfc6716_conformance.rs - Official IETF RFC 6716 / RFC 8251 testvector01..12 suite
 ```
 
-## License
+## Implementation Status
 
-Symphonia is provided under the MPL v2.0 license. Please refer to the LICENSE file for more details.
+| Component | Specification | Status | Details |
+| :--- | :--- | :--- | :--- |
+| **TOC Byte** | RFC 6716 Section 3.1 | 🟢 Implemented | All 32 configurations, modes (SILK, Hybrid, CELT), bandwidths (NB..FB), frame durations (2.5..60 ms) |
+| **Packet Framing** | RFC 6716 Section 3.2, App. B | 🟢 Implemented | Code 0, 1, 2, 3 (CBR/VBR), padding, 120 ms validation, self-delimited multi-stream packets |
+| **Ogg Headers** | RFC 7845 Section 5 | 🟢 Implemented | `OpusHead` (Mapping Families 0, 1, 255) and `OpusTags` vendor/comment parsing |
+| **Entropy Decoder** | RFC 6716 Section 4.1 | 🟢 Implemented | 32-bit range decoder (`icdf`, `logp`, `uint`, Laplace) and backward bit reader (`raw_bits`) |
+| **SILK Layer** | RFC 6716 Section 4.2 | 🟢 Implemented | NB/MB/WB mono & stereo, NLSF/LTP/LPC synthesis, 48 kHz resampler, LBRR, DTX/CNG, PLC |
+| **CELT Layer** | RFC 6716 Section 4.3 | 🟢 Implemented | Transient/short blocks, coarse/fine/leftover energy, dynamic bit allocation, PVQ/CWRS, IMDCT, post-filter, PLC |
+| **Hybrid Mode** | RFC 6716 Section 3.1, 4.3 | 🟢 Implemented | Simultaneous SILK (0..8 kHz) + CELT (8..20 kHz, bands 17..21) synthesis and delay compensation |
+| **Mode Transitions** | RFC 6716 Section 4.4 | 🟢 Implemented | 5 ms redundant CELT frame transitions and window crossfades across SILK/Hybrid/CELT boundaries |
+| **Multi-Stream** | RFC 7845 Section 5.1.1 | 🟢 Implemented | Coupled (2-channel) and uncoupled (1-channel) stream routing, Vorbis Family 1 (1..8 channels), Q8 output gain |
+| **RFC Conformance** | RFC 6716 Section 6.1, RFC 8251 | 🟢 Verified | Verified against `libopus` C oracle and official IETF `testvector01`..`testvector12` |
 
+## Design Principles
 
-## Contributing
+- **100% Safe Rust**: Enforced via `#![forbid(unsafe_code)]`.
+- **Zero Per-Frame Heap Allocation**: Uses fixed-size RFC-bounded stack arrays and pre-allocated planar stream buffers inside `OpusDecoder`.
+- **Deterministic Fixed-Point & Float DSP**: Uses exact RFC 6716 fixed-point integer arithmetic (`Q7`, `Q8`, `Q10`, `Q12`, `Q14`, `Q15`, `Q16`, `Q23`) across SILK stages and `symphonia_core::dsp::mdct::Imdct` `f32` synthesis in CELT.
 
-Symphonia is a free and open-source project that welcomes contributions! To get started, please read
-our [Contribution Guidelines](https://github.com/pdeljanov/Symphonia/tree/master/CONTRIBUTING.md).
+## Verification
+
+```bash
+cargo test -p symphonia-codec-opus -- --test-threads=1
+cargo clippy -p symphonia-codec-opus --all-targets
+cargo doc -p symphonia-codec-opus --no-deps
+```
