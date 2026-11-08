@@ -61,8 +61,8 @@ All code in `symphonia-codec-opus/` must preserve the readability, transparency,
   - Use explicit `return expr;` statements at the end of functions and methods (`return Ok(...);`, `return Err(...);`, `return value;`) rather than implicit tail expressions.
 - **RFC ASCII Diagrams & Doc Comments**:
   - Use `//!` for module-level documentation at the top of files. Never place `///` doc comments immediately above `use` imports.
-  - Include RFC 6716 / RFC 7845 ASCII bit-layout diagrams, block diagrams, and lookup tables inside ```` ```text ```` code fences with a single space after `///` or `//!` (`/// ```text`).
-  - Surround all URLs in doc comments with angle brackets (`<https://datatracker.ietf.org/doc/html/rfc6716#section-...>`) so `cargo doc` renders clickable hyperlinks with zero warnings.
+  - Use RFC 6716 / RFC 7845 ASCII bit-layout diagrams, block diagrams, and lookup tables inside ```` ```text ```` code fences with a single space after `///` or `//!` (`/// ```text`) consistently across all crate documentation (`symphonia-codec-opus/README.md` and rustdoc). Never mix Mermaid diagrams with RFC ASCII diagrams, and keep crate documentation unified in `symphonia-codec-opus/README.md` and rustdoc rather than separate presentation markdown files.
+  - Accompany every RFC diagram, table, and submodule with clickable links to the exact RFC 6716 / RFC 7845 / RFC 8251 section and figure (`<https://datatracker.ietf.org/doc/html/rfc6716#section-...>`) so `cargo doc` renders clickable hyperlinks with zero warnings.
 - **Safety & Error Handling**:
   - Maintain `#![forbid(unsafe_code)]` in `symphonia-codec-opus/src/lib.rs`.
   - Never use `.unwrap()` or `.expect()` on external packet or header input in non-test code; validate untrusted bitstream data at boundaries and propagate errors with `?`.

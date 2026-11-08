@@ -1,14 +1,48 @@
-//! SILK Low-Bitrate Speech Layer
+//! SILK Low-Bitrate Speech Layer ([RFC 6716 Section 4.2](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.2>)).
 //!
-//! This module implements the SILK LP layer of the Opus audio codec (RFC 6716 Section 4.2),
-//! decomposed into focused stages:
-//! - [`constant`]: Static codebooks, ICDF tables, and filter coefficients.
-//! - [`params`]: Header flags, stereo weights, frame type, subframe gains, and LTP parameters.
+//! This module implements the SILK linear-predictive speech layer of the Opus audio codec
+//! ([RFC 6716 Section 4.2.1, Figure 13](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.1>)):
+//! ```text
+//!         +---------+    +------------+
+//!      -->| Range   |--->| Decode     |---------------------------+
+//!       1 | Decoder | 2  | Parameters |----------+       5        |
+//!         +---------+    +------------+     4    |                |
+//!                             3 |                |                |
+//!                              \/               \/               \/
+//!                        +------------+   +------------+   +------------+
+//!                        | Generate   |-->| LTP        |-->| LPC        |
+//!                        | Excitation |   | Synthesis  |   | Synthesis  |
+//!                        +------------+   +------------+   +------------+
+//!                                                ^                |
+//!                                                |                |
+//!                            +-------------------+----------------+
+//!                            |                                      6
+//!                            |   +------------+   +-------------+
+//!                            +-->| Stereo     |-->| Sample Rate |-->
+//!                                | Unmixing   | 7 | Conversion  | 8
+//!                                +------------+   +-------------+
+//! ```
+//!
+//! Decomposed into focused submodules with direct RFC 6716 references:
+//! - [`constant`]: Static codebooks, inverse-CDF tables, and filter coefficients
+//!   ([RFC 6716 Section 4.2.7](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7>)).
+//! - [`params`]: Header flags ([Section 4.2.3](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.3>)),
+//!   stereo weights ([Section 4.2.7.1](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.1>)),
+//!   frame type ([Section 4.2.7.2](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.2>)),
+//!   subframe gains ([Section 4.2.7.3](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.3>)),
+//!   and LTP parameters ([Section 4.2.7.6](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.6>)).
 //! - [`lsf`]: Two-stage Normalized Line Spectral Frequency (NLSF) decoding, stabilization,
-//!   subframe interpolation, and NLSF-to-LPC conversion.
-//! - [`excitation`]: Rate level, pulse count, shell location, sign, and LCG scaling decoding.
-//! - [`synthesis`]: LTP and LPC synthesis filtering and Mid-Side stereo unmixing.
-//! - [`resampler`]: Polyphase IIR/FIR resampling from internal SILK rate to output sample rate.
+//!   and subframe interpolation ([RFC 6716 Section 4.2.7.5](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.5>)).
+//! - [`excitation`]: Rate level, pulse count, shell location, sign, and LCG scaling decoding
+//!   ([RFC 6716 Section 4.2.7.8](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.8>)).
+//! - [`synthesis`]: NLSF-to-LPC Chebyshev conversion ([Section 4.2.7.5.5](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.5.5>)),
+//!   LTP synthesis ([Section 4.2.7.9.1](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.9.1>)),
+//!   LPC synthesis ([Section 4.2.7.9.2](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.9.2>)),
+//!   and Mid-Side stereo unmixing ([Section 4.2.7.9.3](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.9.3>)).
+//! - [`resampler`]: Polyphase IIR/FIR resampling from internal SILK rate to output sample rate
+//!   ([RFC 6716 Section 4.2.7.9.4](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.9.4>)).
+//! - [`plc`]: SILK Packet Loss Concealment and DTX Comfort Noise Generation
+//!   ([RFC 6716 Section 4.2.5](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.5>)).
 //! - [`decoder`]: Frame-level SILK decoder state and LBRR/regular frame orchestration.
 
 pub(crate) mod constant;

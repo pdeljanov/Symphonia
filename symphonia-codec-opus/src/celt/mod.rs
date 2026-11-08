@@ -1,19 +1,57 @@
-//! CELT Full-Bandwidth MDCT Audio Layer
+//! CELT Full-Bandwidth MDCT Audio Layer ([RFC 6716 Section 4.3](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3>)).
 //!
-//! This module implements the CELT transform layer of the Opus audio codec
-//! (RFC 6716 Section 4.3), decomposed into focused submodules:
-//! - [`constant`]: Bark-scale frequency band boundaries, coarse/fine energy tables,
-//!   bit-allocation curves, windowing coefficients, and post-filter tapsets.
-//! - [`energy`]: Coarse energy (Laplace + 2D prediction), fine energy, and final energy bits.
+//! This module implements the Constrained Energy Lapped Transform (CELT) layer of the Opus
+//! audio codec ([RFC 6716 Section 4.3, Figure 14](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3>)):
+//! ```text
+//!                                      +--+
+//!                                      |  |
+//!                                      |  +------------+
+//!                                      |               |
+//!                                      v               |
+//!    +---------+    +--------+    +---------+     +----+----+
+//! -->|  Range  |--->| Decode |--->|  Shape  |---->| Stereo  |--+
+//!  1 | Decoder | 2  | Pulses | 3  | Unquant |     |  Unmix  |  |
+//!    +---------+    +--------+    +---------+     +---------+  |
+//!         |                            ^               ^       |
+//!         | 4                          | 5             | 6     | 7
+//!         |      +----------------+    |               |       |
+//!         +----->|Bit Allocation &|----+---------------+       |
+//!         |      |    Parameters   |                            |
+//!         |      +----------------+                            v
+//!         |                                                 /-----\
+//!         | 8    +----------------+    +--------------+     |  x  |---+
+//!         +----->| Decode  Coarse |--->| Decode Fine  |---->|     |   |
+//!                |     Energy     | 9  |    Energy    | 10  \-----/   |
+//!                +----------------+    +--------------+               |
+//!                                                                     |
+//!         +-----------------------------------------------------------+
+//!         | 11
+//!         v
+//!    +---------+    +------------+    +---------------+
+//!    | Inverse |--->| Windowing &|--->| Post-Filter & |-->
+//!    |  MDCT   | 12 | Overlap-Add| 13 |  De-Emphasis  | 14
+//!    +---------+    +------------+    +---------------+
+//! ```
+//!
+//! Decomposed into focused submodules with direct RFC 6716 references:
+//! - [`constant`]: Bark-scale frequency band boundaries ([Table 52](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3>)),
+//!   coarse/fine energy tables, bit-allocation curves, windowing coefficients, and post-filter tapsets.
+//! - [`energy`]: Coarse energy (Laplace + 2D prediction), fine energy, and final energy bits
+//!   ([RFC 6716 Section 4.3.2](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.2>)).
 //! - [`rate`]: Dynamic bit allocation (`clt_compute_allocation`), band boost, trim,
-//!   intensity stereo, and dual stereo bit splitting.
-//! - [`cwrs`]: Combinatorial Waveform / Pyramid Vector Quantizer index decoding (`decode_pulses`).
+//!   intensity stereo, and dual stereo bit splitting
+//!   ([RFC 6716 Section 4.3.3](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.3>)).
+//! - [`cwrs`]: Combinatorial Waveform / Pyramid Vector Quantizer index decoding (`decode_pulses`,
+//!   [RFC 6716 Section 4.3.4.1](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.4.1>)).
 //! - [`vq`]: PVQ algebraic shape unquantization (`alg_unquant`), spreading rotations
-//!   (`exp_rotation`), pitch folding, stereo Mid-Side / Intensity unmixing, and anti-collapse.
+//!   (`exp_rotation`), pitch folding, stereo Mid-Side / Intensity unmixing, and anti-collapse
+//!   ([RFC 6716 Section 4.3.4](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.4>)).
 //! - [`mdct`]: Inverse Modified Discrete Cosine Transform (`IMDCT`) for block sizes
-//!   120, 240, 480, and 960, Vorbis-like windowing, overlap-add, comb post-filter, and de-emphasis.
+//!   120, 240, 480, and 960, Vorbis-like windowing, overlap-add, comb post-filter, and de-emphasis
+//!   ([RFC 6716 Section 4.3.5](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.5>) -
+//!   [Section 4.3.6](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.6>)).
 //! - [`decoder`]: Frame-level CELT decoder state, Hybrid mode (`start_band = 17`) support,
-//!   and CELT Packet Loss Concealment (PLC).
+//!   and CELT Packet Loss Concealment ([RFC 6716 Section 4.3.7](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.7>)).
 
 pub(crate) mod constant;
 pub(crate) mod cwrs;
