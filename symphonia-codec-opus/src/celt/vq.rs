@@ -310,14 +310,11 @@ pub fn alg_unquant(
 /// Renormalizes `x[..n]` in place so that its Euclidean norm equals `gain`
 /// (`renormalise_vector` in `vq.c`, RFC 6716 Section 4.3.4.3).
 pub fn renormalise_vector(x: &mut [f32], n: usize, gain: f32) {
-    let mut energy = NORM_EPSILON;
-    for &val in &x[..n] {
-        energy += val * val;
-    }
+    let energy = x[..n]
+        .iter()
+        .fold(NORM_EPSILON, |acc, &val| acc + val * val);
     let scale = gain / energy.sqrt();
-    for val in &mut x[..n] {
-        *val *= scale;
-    }
+    x[..n].iter_mut().for_each(|val| *val *= scale);
     return;
 }
 
@@ -339,10 +336,7 @@ pub fn op_pvq_search(x: &mut [f32], iy: &mut [i32], k: usize, n: usize) -> f32 {
     let mut pulses_left = k as i32;
 
     if k > (n >> 1) {
-        let mut sum = 0.0_f32;
-        for &val in &x[..n] {
-            sum += val;
-        }
+        let mut sum = x[..n].iter().fold(0.0_f32, |acc, &val| acc + val);
 
         if !(sum > NORM_EPSILON && sum < 64.0_f32) {
             x[0] = 1.0_f32;
@@ -392,9 +386,9 @@ pub fn op_pvq_search(x: &mut [f32], iy: &mut [i32], k: usize, n: usize) -> f32 {
         iy[best_id] += 1;
     }
 
-    for j in 0..n {
-        if signx[j] {
-            iy[j] = -iy[j];
+    for (iy_slot, &is_neg) in iy[..n].iter_mut().zip(&signx[..n]) {
+        if is_neg {
+            *iy_slot = -*iy_slot;
         }
     }
 
@@ -404,22 +398,14 @@ pub fn op_pvq_search(x: &mut [f32], iy: &mut [i32], k: usize, n: usize) -> f32 {
 /// Computes the split angle $\theta = \frac{2}{\pi} \arctan(\|\text{side}\| / \|\text{mid}\|)$
 /// in Q30 fixed-point units (`stereo_itheta` in `vq.c`).
 pub fn stereo_itheta(x: &[f32], y: &[f32], stereo: bool, n: usize) -> i32 {
-    let mut emid = NORM_EPSILON;
-    let mut eside = NORM_EPSILON;
-
-    if stereo {
-        for (&vx, &vy) in x[..n].iter().zip(y[..n].iter()) {
-            let m = vx + vy;
-            let s = vy - vx;
-            emid += m * m;
-            eside += s * s;
-        }
-    } else {
-        for (&vx, &vy) in x[..n].iter().zip(y[..n].iter()) {
-            emid += vx * vx;
-            eside += vy * vy;
-        }
-    }
+    let (emid, eside) =
+        x[..n]
+            .iter()
+            .zip(&y[..n])
+            .fold((NORM_EPSILON, NORM_EPSILON), |(em, es), (&vx, &vy)| {
+                let (m, s) = if stereo { (vx + vy, vy - vx) } else { (vx, vy) };
+                (em + m * m, es + s * s)
+            });
 
     let mid = emid.sqrt();
     let side = eside.sqrt();
@@ -456,19 +442,12 @@ fn hadamard_ordery(stride: usize) -> &'static [usize] {
 pub fn deinterleave_hadamard(x: &mut [f32], n0: usize, stride: usize, hadamard: bool) {
     let total = n0 * stride;
     let mut tmp = [0.0_f32; MAX_BAND_WIDTH];
+    let ordery = hadamard.then(|| hadamard_ordery(stride));
 
-    if hadamard {
-        let ordery = hadamard_ordery(stride);
-        for (i, &ord) in ordery.iter().enumerate() {
-            for j in 0..n0 {
-                tmp[ord * n0 + j] = x[j * stride + i];
-            }
-        }
-    } else {
-        for i in 0..stride {
-            for j in 0..n0 {
-                tmp[i * n0 + j] = x[j * stride + i];
-            }
+    for i in 0..stride {
+        let row = ordery.map_or(i, |ord| ord[i]);
+        for j in 0..n0 {
+            tmp[row * n0 + j] = x[j * stride + i];
         }
     }
 
@@ -482,19 +461,12 @@ pub fn deinterleave_hadamard(x: &mut [f32], n0: usize, stride: usize, hadamard: 
 pub fn interleave_hadamard(x: &mut [f32], n0: usize, stride: usize, hadamard: bool) {
     let total = n0 * stride;
     let mut tmp = [0.0_f32; MAX_BAND_WIDTH];
+    let ordery = hadamard.then(|| hadamard_ordery(stride));
 
-    if hadamard {
-        let ordery = hadamard_ordery(stride);
-        for (i, &ord) in ordery.iter().enumerate() {
-            for j in 0..n0 {
-                tmp[j * stride + i] = x[ord * n0 + j];
-            }
-        }
-    } else {
-        for i in 0..stride {
-            for j in 0..n0 {
-                tmp[j * stride + i] = x[i * n0 + j];
-            }
+    for i in 0..stride {
+        let row = ordery.map_or(i, |ord| ord[i]);
+        for j in 0..n0 {
+            tmp[j * stride + i] = x[row * n0 + j];
         }
     }
 
@@ -587,69 +559,80 @@ fn decode_split_angle(
     }
 
     let tell = dec.tell_frac() as i32;
-    let mut itheta = 0i32;
     let mut invert_side = false;
 
-    if qn != 1 {
-        let qn_usize = qn as usize;
-        if stereo && n > 2 {
-            // Step PDF: weight p0 = 3 up to x0 = qn / 2, weight 1 above x0.
-            let p0 = 3i32;
-            let x0 = qn / 2;
-            let ft = p0 * (x0 + 1) + x0;
-            let mut icdf = [0u32; 258];
-            icdf[0] = ft as u32;
-            for x in 0..=qn {
-                let fh = if x <= x0 {
-                    p0 * (x + 1)
-                } else {
-                    (x - x0) + (x0 + 1) * p0
-                };
-                icdf[(x as usize) + 1] = fh as u32;
-            }
-            itheta = dec.decode_symbol_with_icdf(&icdf[..=(qn_usize + 1)])? as i32;
-        } else if b0 > 1 || stereo {
-            // Uniform PDF on 0..=qn.
-            itheta = dec.decode_uint((qn + 1) as u32)? as i32;
-        } else {
-            // Symmetric triangular PDF peaking at qn / 2.
-            let half_qn = qn >> 1;
-            let ft = (half_qn + 1) * (half_qn + 1);
-            let mut icdf = [0u32; 258];
-            icdf[0] = ft as u32;
-            for x in 0..=qn {
-                let (fl, fs) = if x <= half_qn {
-                    ((x * (x + 1)) >> 1, x + 1)
-                } else {
-                    let rem = qn + 1 - x;
-                    (ft - ((rem * (rem + 1)) >> 1), rem)
-                };
-                icdf[(x as usize) + 1] = (fl + fs) as u32;
-            }
-            itheta = dec.decode_symbol_with_icdf(&icdf[..=(qn_usize + 1)])? as i32;
+    let itheta = match (qn != 1, stereo) {
+        (true, _) => {
+            let qn_usize = qn as usize;
+            let raw_itheta = match (stereo && n > 2, b0 > 1 || stereo) {
+                (true, _) => {
+                    // Step PDF: weight p0 = 3 up to x0 = qn / 2, weight 1 above x0.
+                    let p0 = 3i32;
+                    let x0 = qn / 2;
+                    let ft = p0 * (x0 + 1) + x0;
+                    let mut icdf = [0u32; 258];
+                    icdf[0] = ft as u32;
+                    for x in 0..=qn {
+                        let fh = if x <= x0 {
+                            p0 * (x + 1)
+                        } else {
+                            (x - x0) + (x0 + 1) * p0
+                        };
+                        icdf[(x as usize) + 1] = fh as u32;
+                    }
+                    dec.decode_symbol_with_icdf(&icdf[..=(qn_usize + 1)])? as i32
+                }
+                (false, true) => {
+                    // Uniform PDF on 0..=qn.
+                    dec.decode_uint((qn + 1) as u32)? as i32
+                }
+                (false, false) => {
+                    // Symmetric triangular PDF peaking at qn / 2.
+                    let half_qn = qn >> 1;
+                    let ft = (half_qn + 1) * (half_qn + 1);
+                    let mut icdf = [0u32; 258];
+                    icdf[0] = ft as u32;
+                    for x in 0..=qn {
+                        let (fl, fs) = if x <= half_qn {
+                            ((x * (x + 1)) >> 1, x + 1)
+                        } else {
+                            let rem = qn + 1 - x;
+                            (ft - ((rem * (rem + 1)) >> 1), rem)
+                        };
+                        icdf[(x as usize) + 1] = (fl + fs) as u32;
+                    }
+                    dec.decode_symbol_with_icdf(&icdf[..=(qn_usize + 1)])? as i32
+                }
+            };
+            (raw_itheta * 16384) / qn
         }
-        itheta = (itheta * 16384) / qn;
-    } else if stereo {
-        if *b > (2 << BITRES) && ctx.remaining_bits > (2 << BITRES) {
-            invert_side = dec.decode_symbol_logp(2)? != 0;
+        (false, true) => {
+            if *b > (2 << BITRES) && ctx.remaining_bits > (2 << BITRES) {
+                invert_side = dec.decode_symbol_logp(2)? != 0;
+            }
+            0
         }
-        itheta = 0;
-    }
+        (false, false) => 0,
+    };
 
     let qalloc = (dec.tell_frac() as i32) - tell;
     *b -= qalloc;
 
-    let (imid, iside, delta) = if itheta == 0 {
-        *fill &= (1u32 << b_blocks) - 1;
-        (32767, 0, -16384)
-    } else if itheta == 16384 {
-        *fill &= ((1u32 << b_blocks) - 1) << b_blocks;
-        (0, 32767, 16384)
-    } else {
-        let im = i32::from(bitexact_cos(itheta as i16));
-        let is = i32::from(bitexact_cos((16384 - itheta) as i16));
-        let dl = frac_mul16(((n as i32) - 1) << 7, bitexact_log2tan(is, im));
-        (im, is, dl)
+    let (imid, iside, delta) = match itheta {
+        0 => {
+            *fill &= (1u32 << b_blocks) - 1;
+            (32767, 0, -16384)
+        }
+        16384 => {
+            *fill &= ((1u32 << b_blocks) - 1) << b_blocks;
+            (0, 32767, 16384)
+        }
+        _ => {
+            let im = i32::from(bitexact_cos(itheta as i16));
+            let is = i32::from(bitexact_cos((16384 - itheta) as i16));
+            let dl = frac_mul16(((n as i32) - 1) << 7, bitexact_log2tan(is, im));
+            (im, is, dl)
+        }
     };
 
     return Ok(SplitAngle {
@@ -1358,86 +1341,89 @@ pub fn quant_all_bands(
         }
 
         let x_band = &mut x_full[band_start..(band_start + n)];
-        if dual_stereo {
-            let y_band = y_full
-                .as_deref_mut()
-                .map(|yf| &mut yf[band_start..(band_start + n)])
-                .ok_or(Error::InvalidChannelCount(1))?;
+        match (dual_stereo, y_full.as_deref_mut()) {
+            (true, yf_opt) => {
+                let y_band = yf_opt
+                    .map(|yf| &mut yf[band_start..(band_start + n)])
+                    .ok_or(Error::InvalidChannelCount(1))?;
 
-            x_cm = quant_band(
-                &mut ctx,
-                dec,
-                x_band,
-                n,
-                b / 2,
-                b_blocks,
-                effective_lowband.map(|_| &lb_src1[..n]),
-                lm as isize,
-                if last {
-                    None
-                } else {
-                    Some(&mut norm[norm_write_pos..(norm_write_pos + n)])
-                },
-                1.0_f32,
-                x_cm,
-            )?;
+                x_cm = quant_band(
+                    &mut ctx,
+                    dec,
+                    x_band,
+                    n,
+                    b / 2,
+                    b_blocks,
+                    effective_lowband.map(|_| &lb_src1[..n]),
+                    lm as isize,
+                    if last {
+                        None
+                    } else {
+                        Some(&mut norm[norm_write_pos..(norm_write_pos + n)])
+                    },
+                    1.0_f32,
+                    x_cm,
+                )?;
 
-            y_cm = quant_band(
-                &mut ctx,
-                dec,
-                y_band,
-                n,
-                b / 2,
-                b_blocks,
-                effective_lowband.map(|_| &lb_src2[..n]),
-                lm as isize,
-                if last {
-                    None
-                } else {
-                    Some(&mut norm2[norm_write_pos..(norm_write_pos + n)])
-                },
-                1.0_f32,
-                y_cm,
-            )?;
-        } else if let Some(yf) = y_full.as_deref_mut() {
-            let y_band = &mut yf[band_start..(band_start + n)];
-            x_cm = quant_band_stereo(
-                &mut ctx,
-                dec,
-                x_band,
-                y_band,
-                n,
-                b,
-                b_blocks,
-                effective_lowband.map(|_| &lb_src1[..n]),
-                lm as isize,
-                if last {
-                    None
-                } else {
-                    Some(&mut norm[norm_write_pos..(norm_write_pos + n)])
-                },
-                x_cm | y_cm,
-            )?;
-            y_cm = x_cm;
-        } else {
-            x_cm = quant_band(
-                &mut ctx,
-                dec,
-                x_band,
-                n,
-                b,
-                b_blocks,
-                effective_lowband.map(|_| &lb_src1[..n]),
-                lm as isize,
-                if last {
-                    None
-                } else {
-                    Some(&mut norm[norm_write_pos..(norm_write_pos + n)])
-                },
-                1.0_f32,
-                x_cm | y_cm,
-            )?;
-            y_cm = x_cm;
+                y_cm = quant_band(
+                    &mut ctx,
+                    dec,
+                    y_band,
+                    n,
+                    b / 2,
+                    b_blocks,
+                    effective_lowband.map(|_| &lb_src2[..n]),
+                    lm as isize,
+                    if last {
+                        None
+                    } else {
+                        Some(&mut norm2[norm_write_pos..(norm_write_pos + n)])
+                    },
+                    1.0_f32,
+                    y_cm,
+                )?;
+            }
+            (false, Some(yf)) => {
+                let y_band = &mut yf[band_start..(band_start + n)];
+                x_cm = quant_band_stereo(
+                    &mut ctx,
+                    dec,
+                    x_band,
+                    y_band,
+                    n,
+                    b,
+                    b_blocks,
+                    effective_lowband.map(|_| &lb_src1[..n]),
+                    lm as isize,
+                    if last {
+                        None
+                    } else {
+                        Some(&mut norm[norm_write_pos..(norm_write_pos + n)])
+                    },
+                    x_cm | y_cm,
+                )?;
+                y_cm = x_cm;
+            }
+            (false, None) => {
+                x_cm = quant_band(
+                    &mut ctx,
+                    dec,
+                    x_band,
+                    n,
+                    b,
+                    b_blocks,
+                    effective_lowband.map(|_| &lb_src1[..n]),
+                    lm as isize,
+                    if last {
+                        None
+                    } else {
+                        Some(&mut norm[norm_write_pos..(norm_write_pos + n)])
+                    },
+                    1.0_f32,
+                    x_cm | y_cm,
+                )?;
+                y_cm = x_cm;
+            }
         }
 
         collapse_masks[i * channels] = x_cm as u8;

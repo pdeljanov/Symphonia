@@ -186,8 +186,8 @@ pub const fn celt_pvq_u(n: usize, k: usize) -> u32 {
         1 => 1,
         2 => (2 * col - 1) as u32,
         _ => {
-            let idx = (CELT_PVQ_U_ROW_OFFSETS[row] + col as isize) as usize;
-            CELT_PVQ_U_DATA[idx]
+            let offset = (CELT_PVQ_U_ROW_OFFSETS[row] + col as isize) as usize;
+            CELT_PVQ_U_DATA[offset]
         }
     };
 }
@@ -303,18 +303,18 @@ mod tests {
                 }
                 let v = celt_pvq_v(n, k);
                 let samples = [0, 1.min(v - 1), v / 3, v / 2, v.saturating_sub(2), v - 1];
-                for &idx in &samples {
-                    let yy = cwrsi(n, k, idx, &mut y[..n]);
+                for &codeword in &samples {
+                    let yy = cwrsi(n, k, codeword, &mut y[..n]);
                     let l1_norm: usize = y[..n].iter().map(|&p| p.unsigned_abs() as usize).sum();
                     let l2_sq: f32 = y[..n].iter().map(|&p| (p * p) as f32).sum();
-                    assert_eq!(l1_norm, k, "L1 norm mismatch for n={n}, k={k}, idx={idx}");
-                    assert_eq!(yy, l2_sq, "L2 energy mismatch for n={n}, k={k}, idx={idx}");
+                    assert_eq!(l1_norm, k, "L1 norm mismatch for n={n}, k={k}, codeword={codeword}");
+                    assert_eq!(yy, l2_sq, "L2 energy mismatch for n={n}, k={k}, codeword={codeword}");
 
-                    let (encoded_idx, encoded_v) = icwrs(n, &y[..n]);
+                    let (encoded_codeword, encoded_v) = icwrs(n, &y[..n]);
                     assert_eq!(encoded_v, v);
                     assert_eq!(
-                        encoded_idx, idx,
-                        "Roundtrip mismatch for n={n}, k={k}, idx={idx}"
+                        encoded_codeword, codeword,
+                        "Roundtrip mismatch for n={n}, k={k}, codeword={codeword}"
                     );
                 }
             }
@@ -326,48 +326,44 @@ mod tests {
     fn test_cwrsi_matches_libopus_oracle() {
         let mut y = [0i32; 176];
 
-        // (n=2, k=1, idx=3) -> v=4, yy=1, y=[-1, 0]
-        assert_eq!(celt_pvq_v(2, 1), 4);
-        assert_eq!(cwrsi(2, 1, 3, &mut y[..2]), 1.0);
-        assert_eq!(&y[..2], &[-1, 0]);
+        macro_rules! assert_cwrsi_oracle {
+            ($n:expr, $k:expr, $codeword:expr, $expected_v:expr, $expected_yy:expr, $expected_y:expr) => {
+                assert_eq!(celt_pvq_v($n, $k), $expected_v);
+                assert_eq!(cwrsi($n, $k, $codeword, &mut y[..$n]), $expected_yy);
+                assert_eq!(&y[..$n], $expected_y);
+            };
+        }
 
-        // (n=2, k=128, idx=345) -> v=512, yy=8992, y=[-84, -44]
-        assert_eq!(celt_pvq_v(2, 128), 512);
-        assert_eq!(cwrsi(2, 128, 345, &mut y[..2]), 8992.0);
-        assert_eq!(&y[..2], &[-84, -44]);
-
-        // (n=3, k=5, idx=67) -> v=102, yy=11, y=[-3, 1, 1]
-        assert_eq!(celt_pvq_v(3, 5), 102);
-        assert_eq!(cwrsi(3, 5, 67, &mut y[..3]), 11.0);
-        assert_eq!(&y[..3], &[-3, 1, 1]);
-
-        // (n=6, k=20, idx=1234567) -> v=1749456, yy=86, y=[-4, 6, 5, 2, -2, 1]
-        assert_eq!(celt_pvq_v(6, 20), 1_749_456);
-        assert_eq!(cwrsi(6, 20, 1_234_567, &mut y[..6]), 86.0);
-        assert_eq!(&y[..6], &[-4, 6, 5, 2, -2, 1]);
-
-        // (n=11, k=10, idx=424242) -> v=11414898, yy=18, y=[3, -1, -2, -1, 0, 0, 0, 0, 1, -1, 1]
-        assert_eq!(celt_pvq_v(11, 10), 11_414_898);
-        assert_eq!(cwrsi(11, 10, 424_242, &mut y[..11]), 18.0);
-        assert_eq!(&y[..11], &[3, -1, -2, -1, 0, 0, 0, 0, 1, -1, 1]);
-
-        // (n=14, k=13, idx=123456789) -> v=1989102444, yy=29
-        assert_eq!(celt_pvq_v(14, 13), 1_989_102_444);
-        assert_eq!(cwrsi(14, 13, 123_456_789, &mut y[..14]), 29.0);
-        assert_eq!(
-            &y[..14],
+        assert_cwrsi_oracle!(2, 1, 3, 4, 1.0, &[-1, 0]);
+        assert_cwrsi_oracle!(2, 128, 345, 512, 8992.0, &[-84, -44]);
+        assert_cwrsi_oracle!(3, 5, 67, 102, 11.0, &[-3, 1, 1]);
+        assert_cwrsi_oracle!(6, 20, 1_234_567, 1_749_456, 86.0, &[-4, 6, 5, 2, -2, 1]);
+        assert_cwrsi_oracle!(
+            11,
+            10,
+            424_242,
+            11_414_898,
+            18.0,
+            &[3, -1, -2, -1, 0, 0, 0, 0, 1, -1, 1]
+        );
+        assert_cwrsi_oracle!(
+            14,
+            13,
+            123_456_789,
+            1_989_102_444,
+            29.0,
             &[2, 0, 3, -1, -1, 3, 0, 0, 0, 0, -2, 0, 0, -1]
         );
-
-        // (n=16, k=8, idx=999999) -> v=30316544, yy=10
-        assert_eq!(celt_pvq_v(16, 8), 30_316_544);
-        assert_eq!(cwrsi(16, 8, 999_999, &mut y[..16]), 10.0);
-        assert_eq!(
-            &y[..16],
+        assert_cwrsi_oracle!(
+            16,
+            8,
+            999_999,
+            30_316_544,
+            10.0,
             &[2, 0, 0, -1, -1, 0, -1, 0, 0, 1, 0, 0, -1, 0, -1, 0]
         );
 
-        // (n=176, k=3, idx=5000000) -> v=7269152, yy=3, nonzeros at 49 (-1), 50 (-1), 94 (+1)
+        // (n=176, k=3, codeword=5000000) -> v=7269152, yy=3, nonzeros at 49 (-1), 50 (-1), 94 (+1)
         assert_eq!(celt_pvq_v(176, 3), 7_269_152);
         assert_eq!(cwrsi(176, 3, 5_000_000, &mut y[..176]), 3.0);
         assert_eq!(y[49], -1);

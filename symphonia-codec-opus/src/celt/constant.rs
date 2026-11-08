@@ -374,11 +374,11 @@ mod tests {
         assert_eq!(icdf.last().copied(), Some(total), "{name}: last entry must equal total {total}");
 
         let mut prev = 0;
-        for (idx, &val) in icdf[1..].iter().enumerate() {
+        for (i, &val) in icdf[1..].iter().enumerate() {
             assert!(
                 val > prev && val <= total,
                 "{name}[{}]: cumulative bound {val} must be strictly greater than {prev} and <= {total}",
-                idx + 1
+                i + 1
             );
             prev = val;
         }
@@ -429,14 +429,14 @@ mod tests {
             if slot < 8 {
                 assert_eq!(offset, -1, "N0=1 bands at LM=-1 are never split");
             } else {
-                let idx = offset as usize;
-                let max_k = CACHE_BITS[idx] as usize;
+                let base = offset as usize;
+                let max_k = CACHE_BITS[base] as usize;
                 assert!((1..=MAX_PSEUDO).contains(&max_k));
-                assert!(idx + max_k < CACHE_BITS.len());
+                assert!(base + max_k < CACHE_BITS.len());
                 for k in 1..max_k {
                     assert!(
-                        CACHE_BITS[idx + k] <= CACHE_BITS[idx + k + 1],
-                        "CACHE_BITS sub-table at {idx} must be non-decreasing"
+                        CACHE_BITS[base + k] <= CACHE_BITS[base + k + 1],
+                        "CACHE_BITS sub-table at {base} must be non-decreasing"
                     );
                 }
             }

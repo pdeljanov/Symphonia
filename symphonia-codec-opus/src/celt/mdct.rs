@@ -645,12 +645,12 @@ pub fn comb_filter(
     let xfade_len = if same_filter { 0 } else { overlap.min(n) };
 
     for i in 0..xfade_len {
-        let idx = history_offset + i;
-        let x0 = x_buf[idx];
+        let pos = history_offset + i;
+        let x0 = x_buf[pos];
         let f = window[i] * window[i];
 
-        let p0 = idx - period0;
-        let p1 = idx - period1;
+        let p0 = pos - period0;
+        let p1 = pos - period1;
 
         let old_comb = g00 * x_buf[p0]
             + g01 * (x_buf[p0 + 1] + x_buf[p0 - 1])
@@ -669,9 +669,9 @@ pub fn comb_filter(
     }
 
     for (i, y_slot) in y_out.iter_mut().enumerate().take(n).skip(xfade_len) {
-        let idx = history_offset + i;
-        let p1 = idx - period1;
-        *y_slot = x_buf[idx]
+        let pos = history_offset + i;
+        let p1 = pos - period1;
+        *y_slot = x_buf[pos]
             + g10 * x_buf[p1]
             + g11 * (x_buf[p1 + 1] + x_buf[p1 - 1])
             + g12 * (x_buf[p1 + 2] + x_buf[p1 - 2]);
@@ -892,12 +892,13 @@ pub fn celt_fir(x_with_history: &[f32], num: &[f32], y: &mut [f32], n: usize, or
     debug_assert!(num.len() >= ord);
     debug_assert!(y.len() >= n);
 
-    for i in 0..n {
-        let mut sum = x_with_history[ord + i];
-        for j in 0..ord {
-            sum += num[j] * x_with_history[ord + i - 1 - j];
-        }
-        y[i] = sum;
+    for (i, y_slot) in y[..n].iter_mut().enumerate() {
+        *y_slot = num[..ord]
+            .iter()
+            .enumerate()
+            .fold(x_with_history[ord + i], |acc, (j, &c)| {
+                acc + c * x_with_history[ord + i - 1 - j]
+            });
     }
     return;
 }
@@ -920,18 +921,18 @@ pub fn celt_iir(
     debug_assert!(y.len() >= n);
     debug_assert!(mem.len() >= ord);
 
-    for i in 0..n {
-        let mut sum = x[i];
-        for j in 0..ord {
-            sum -= den[j] * mem[j];
-        }
-        for j in (1..ord).rev() {
-            mem[j] = mem[j - 1];
+    for (&x_val, y_slot) in x[..n].iter().zip(&mut y[..n]) {
+        let sum = den[..ord]
+            .iter()
+            .zip(&mem[..ord])
+            .fold(x_val, |acc, (&d, &m)| acc - d * m);
+        if ord > 1 {
+            mem.copy_within(0..ord - 1, 1);
         }
         if ord > 0 {
             mem[0] = sum;
         }
-        y[i] = sum;
+        *y_slot = sum;
     }
     return;
 }
@@ -975,32 +976,66 @@ pub fn pitch_downsample(x: &[&[f32]], x_lp: &mut [f32], len: usize, channels: us
         *coeff *= tmp;
     }
 
-    let mut lpc2 = [0.0f32; 5];
     let c1 = 0.8f32;
-    lpc2[0] = lpc[0] + c1;
-    lpc2[1] = lpc[1] + c1 * lpc[0];
-    lpc2[2] = lpc[2] + c1 * lpc[1];
-    lpc2[3] = lpc[3] + c1 * lpc[2];
-    lpc2[4] = c1 * lpc[3];
+    let lpc2 = [
+        lpc[0] + c1,
+        lpc[1] + c1 * lpc[0],
+        lpc[2] + c1 * lpc[1],
+        lpc[3] + c1 * lpc[2],
+        c1 * lpc[3],
+    ];
 
     // Apply 5-tap in-place FIR whitening filter using a 5-sample history shift register
     let mut mem = [0.0f32; 5];
     for sample in &mut x_lp[..half_len] {
         let x0 = *sample;
-        let out = x0
-            + lpc2[0] * mem[0]
-            + lpc2[1] * mem[1]
-            + lpc2[2] * mem[2]
-            + lpc2[3] * mem[3]
-            + lpc2[4] * mem[4];
-        mem[4] = mem[3];
-        mem[3] = mem[2];
-        mem[2] = mem[1];
-        mem[1] = mem[0];
+        let out = lpc2.iter().zip(&mem).fold(x0, |acc, (&c, &m)| acc + c * m);
+        mem.copy_within(0..4, 1);
         mem[0] = x0;
         *sample = out;
     }
     return;
+}
+
+/// Scans `xcorr[..max_pitch]` and `y` with window length `window_len` to find the top 2
+/// normalized cross-correlation pitch candidates.
+fn find_top2_pitch_candidates(
+    xcorr: &[f32],
+    y: &[f32],
+    window_len: usize,
+    max_pitch: usize,
+) -> [usize; 2] {
+    let mut best_num = [-1.0f32, -1.0f32];
+    let mut best_ener = [0.0f32, 1.0f32];
+    let mut best_pitch = [0usize, 1usize];
+
+    let mut syy = y[..window_len].iter().fold(1.0f32, |acc, &yv| acc + yv * yv);
+
+    for (i, &xc) in xcorr[..max_pitch].iter().enumerate() {
+        if xc > 0.0 {
+            let xcorr16 = xc * 1.0e-12;
+            let num = xcorr16 * xcorr16;
+            if num * best_ener[1] > best_num[1] * syy {
+                if num * best_ener[0] > best_num[0] * syy {
+                    best_num[1] = best_num[0];
+                    best_ener[1] = best_ener[0];
+                    best_pitch[1] = best_pitch[0];
+                    best_num[0] = num;
+                    best_ener[0] = syy;
+                    best_pitch[0] = i;
+                } else {
+                    best_num[1] = num;
+                    best_ener[1] = syy;
+                    best_pitch[1] = i;
+                }
+            }
+        }
+        let y_enter = y[i + window_len];
+        let y_leave = y[i];
+        syy = (syy + y_enter * y_enter - y_leave * y_leave).max(1.0);
+    }
+
+    return best_pitch;
 }
 
 /// Computes the normalized open-loop pitch lag in 48 kHz samples via two-stage decimated
@@ -1013,108 +1048,47 @@ pub fn pitch_search(x_lp: &[f32], y: &[f32], len: usize, max_pitch: usize) -> us
 
     let mut x_lp4 = [0.0f32; DECODE_BUFFER_SIZE >> 2];
     let mut y_lp4 = [0.0f32; DECODE_BUFFER_SIZE >> 2];
-    for j in 0..len_quarter {
-        x_lp4[j] = x_lp[2 * j];
+    for (j, slot) in x_lp4[..len_quarter].iter_mut().enumerate() {
+        *slot = x_lp[2 * j];
     }
-    for j in 0..lag_quarter {
-        y_lp4[j] = y[2 * j];
+    for (j, slot) in y_lp4[..lag_quarter].iter_mut().enumerate() {
+        *slot = y[2 * j];
     }
 
     let mut xcorr = [0.0f32; PLC_PITCH_LAG_MAX >> 1];
-    for i in 0..max_pitch_quarter {
-        let mut sum = 0.0f32;
-        for j in 0..len_quarter {
-            sum += x_lp4[j] * y_lp4[i + j];
-        }
-        xcorr[i] = sum.max(-1.0);
+    for (i, xc_slot) in xcorr[..max_pitch_quarter].iter_mut().enumerate() {
+        let sum = x_lp4[..len_quarter]
+            .iter()
+            .zip(&y_lp4[i..i + len_quarter])
+            .fold(0.0f32, |acc, (&xv, &yv)| acc + xv * yv);
+        *xc_slot = sum.max(-1.0);
     }
 
     // Coarse 2-candidate search on 4x-decimated correlation
-    let mut best_num = [-1.0f32, -1.0f32];
-    let mut best_ener = [0.0f32, 1.0f32];
-    let mut best_pitch = [0usize, 1usize];
-
-    let mut syy = 1.0f32;
-    for &yv in &y_lp4[..len_quarter] {
-        syy += yv * yv;
-    }
-
-    for i in 0..max_pitch_quarter {
-        if xcorr[i] > 0.0 {
-            let xcorr16 = xcorr[i] * 1.0e-12;
-            let num = xcorr16 * xcorr16;
-            if num * best_ener[1] > best_num[1] * syy {
-                if num * best_ener[0] > best_num[0] * syy {
-                    best_num[1] = best_num[0];
-                    best_ener[1] = best_ener[0];
-                    best_pitch[1] = best_pitch[0];
-                    best_num[0] = num;
-                    best_ener[0] = syy;
-                    best_pitch[0] = i;
-                } else {
-                    best_num[1] = num;
-                    best_ener[1] = syy;
-                    best_pitch[1] = i;
-                }
-            }
-        }
-        syy += y_lp4[i + len_quarter] * y_lp4[i + len_quarter] - y_lp4[i] * y_lp4[i];
-        syy = syy.max(1.0);
-    }
-
-    best_pitch[0] *= 2;
-    best_pitch[1] *= 2;
+    let coarse_pitch =
+        find_top2_pitch_candidates(&xcorr, &y_lp4, len_quarter, max_pitch_quarter);
+    let coarse_candidates = [coarse_pitch[0] * 2, coarse_pitch[1] * 2];
 
     // Fine refinement on 2x-decimated signal around the top 2 coarse candidates
     let half_max_pitch = max_pitch >> 1;
     let half_len = len >> 1;
     xcorr[..half_max_pitch].fill(0.0);
 
-    for &candidate in &best_pitch {
+    for &candidate in &coarse_candidates {
         let lower = candidate.saturating_sub(2);
         let upper = (candidate + 2).min(half_max_pitch.saturating_sub(1));
         for i in lower..=upper {
             if xcorr[i] == 0.0 {
-                let mut sum = 0.0f32;
-                for j in 0..half_len {
-                    sum += x_lp[j] * y[i + j];
-                }
+                let sum = x_lp[..half_len]
+                    .iter()
+                    .zip(&y[i..i + half_len])
+                    .fold(0.0f32, |acc, (&xv, &yv)| acc + xv * yv);
                 xcorr[i] = sum.max(-1.0);
             }
         }
     }
 
-    best_num = [-1.0, -1.0];
-    best_ener = [0.0, 1.0];
-    best_pitch = [0, 1];
-
-    syy = 1.0;
-    for &yv in &y[..half_len] {
-        syy += yv * yv;
-    }
-
-    for i in 0..half_max_pitch {
-        if xcorr[i] > 0.0 {
-            let xcorr16 = xcorr[i] * 1.0e-12;
-            let num = xcorr16 * xcorr16;
-            if num * best_ener[1] > best_num[1] * syy {
-                if num * best_ener[0] > best_num[0] * syy {
-                    best_num[1] = best_num[0];
-                    best_ener[1] = best_ener[0];
-                    best_pitch[1] = best_pitch[0];
-                    best_num[0] = num;
-                    best_ener[0] = syy;
-                    best_pitch[0] = i;
-                } else {
-                    best_num[1] = num;
-                    best_ener[1] = syy;
-                    best_pitch[1] = i;
-                }
-            }
-        }
-        syy += y[i + half_len] * y[i + half_len] - y[i] * y[i];
-        syy = syy.max(1.0);
-    }
+    let best_pitch = find_top2_pitch_candidates(&xcorr, y, half_len, half_max_pitch);
 
     // Sub-sample parabolic interpolation offset in 48 kHz samples
     let p0 = best_pitch[0];
@@ -1122,12 +1096,10 @@ pub fn pitch_search(x_lp: &[f32], y: &[f32], len: usize, max_pitch: usize) -> us
         let a = xcorr[p0 - 1];
         let b = xcorr[p0];
         let c = xcorr[p0 + 1];
-        if (c - a) > 0.7 * (b - a) {
-            1
-        } else if (a - c) > 0.7 * (b - c) {
-            -1
-        } else {
-            0
+        match ((c - a) > 0.7 * (b - a), (a - c) > 0.7 * (b - c)) {
+            (true, _) => 1,
+            (false, true) => -1,
+            (false, false) => 0,
         }
     } else {
         0
@@ -1259,13 +1231,13 @@ mod tests {
 
     fn assert_f32_slice_close(actual: &[f32], expected: &[f32], rel_tol: f32, abs_tol: f32) {
         assert_eq!(actual.len(), expected.len());
-        for (idx, (&a, &e)) in actual.iter().zip(expected.iter()).enumerate() {
+        for (i, (&a, &e)) in actual.iter().zip(expected.iter()).enumerate() {
             let diff = (a - e).abs();
             let limit = abs_tol.max(e.abs() * rel_tol);
             assert!(
                 diff <= limit,
                 "mismatch at index {}: actual = {:.8e}, expected = {:.8e}, diff = {:.8e}, limit = {:.8e}",
-                idx,
+                i,
                 a,
                 e,
                 diff,
