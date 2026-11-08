@@ -76,6 +76,100 @@ All code in `symphonia-codec-opus/` must preserve the readability, transparency,
 - **Workspace Membership**:
   - `symphonia-codec-opus` is a member of the root Cargo workspace (`Cargo.toml`). Never add a `[workspace]` table to a member crate.
 
+### 4.1 Concrete Anti-Patterns vs. Required Idiomatic Rust Examples
+
+```rust
+// 1. Control flow: NEVER write `else if` cascades or deeply nested `if / else`.
+// BAD:
+if frame_type == SignalType::Voiced {
+    pitch_lag = last_pitch;
+} else if prev_frame_type == SignalType::Voiced {
+    pitch_lag = prev_pitch;
+} else {
+    pitch_lag = default_pitch;
+}
+// REQUIRED (`match` with tuple / guards / `Ordering` + early return):
+let pitch_lag = match (frame_type, prev_frame_type) {
+    (SignalType::Voiced, _) => last_pitch,
+    (_, SignalType::Voiced) => prev_pitch,
+    _ => default_pitch,
+};
+
+// 2. Shift bounds: NEVER write multi-line shift-guard `if / else` blocks.
+// BAD:
+energy = if energy_rshift < 32 {
+    energy >> energy_rshift
+} else {
+    0
+};
+// REQUIRED (one-line standard library method):
+energy = energy.checked_shr(energy_rshift).unwrap_or(0);
+
+// 3. Array construction: NEVER mutate a zeroed array with a `while` or `for` loop.
+// BAD:
+let mut buf = [0i16; MAX_LPC_ORDER];
+let mut i = 0;
+while i < MAX_LPC_ORDER {
+    buf[i] = ((i as i32 * step) >> 15) as i16;
+    i += 1;
+}
+// REQUIRED (`std::array::from_fn` without extra allocations or borrows):
+let buf = std::array::from_fn(|i| ((i as i32 * step) >> 15) as i16);
+
+// 4. Conditional slice mutation: Prefer iterator combinators over imperative `for` + `break`.
+// BAD:
+for sample in frame_pcm.iter_mut() {
+    gain_q16 += step_q16;
+    if gain_q16 >= target_q16 {
+        break;
+    }
+    *sample = ((*sample as i64 * gain_q16 as i64) >> 16) as i16;
+}
+// REQUIRED (`.iter_mut().take_while(...).for_each(...)`):
+frame_pcm
+    .iter_mut()
+    .take_while(|_| {
+        gain_q16 += step_q16;
+        return gain_q16 < target_q16;
+    })
+    .for_each(|sample| {
+        *sample = ((*sample as i64 * gain_q16 as i64) >> 16) as i16;
+    });
+
+// 5. Reductions & index naming: Always use `i` (never `idx` or `ix`) and `.fold(...)`.
+// BAD:
+let mut max_subfr = 0usize;
+let mut max_gain = 0i32;
+for (idx, &gain_q16) in subframe_gains[..active].iter().enumerate() {
+    if gain_q16 > max_gain {
+        max_gain = gain_q16;
+        max_subfr = idx;
+    }
+}
+// REQUIRED:
+let (max_subfr, _) = subframe_gains[..active]
+    .iter()
+    .enumerate()
+    .fold((0usize, 0i32), |(best_i, best_gain), (i, &gain_q16)| {
+        if gain_q16 > best_gain {
+            return (i, gain_q16);
+        }
+        return (best_i, best_gain);
+    });
+
+// 6. Named Q-format constants: NEVER inline unexplained fixed-point shifts or thresholds.
+// BAD:
+let cng_gain_q16 = if plc_gain_q16 >= (1 << 21) || smth_gain_q16 > (1 << 23) {
+    smulww(plc_gain_q16, plc_gain_q16) >> 5
+} else {
+    smulwb(smth_gain_q16, plc_gain_q16)
+};
+// REQUIRED:
+const CNG_HIGH_PLC_GAIN_THRES_Q16: i32 = 1 << 21;
+const CNG_HIGH_SMTH_GAIN_THRES_Q16: i32 = 1 << 23;
+const CNG_PLC_ENERGY_SUB_SHIFT: i32 = 5;
+```
+
 ## 5. Testing approach and verification gate
 
 Testing in `symphonia-codec-opus` follows a five-layer strategy from static table invariants up to end-to-end RFC conformance:
